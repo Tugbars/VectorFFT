@@ -2146,6 +2146,9 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             FP__P(il2d_rows), FP__P(il2d_natperm), FP__P(pq_inner));
     /* the rank-N INTERLEAVED tier (fftnd_il.h): the raced structure and
      * each column axis's chain length + Bluestein M (0 = a chain) */
+    FP__ADD(" ilfd=[mt=%d/%d tw=%d/%d]",
+            h->k1ilfd ? h->k1ilfd->mt : 0, h->k1ilfd ? h->k1ilfd->mt_t : 0,
+            h->k1ilfd ? h->k1ilfd->tw : 0, h->k1ilfd ? h->k1ilfd->mt_tw : 0);
     FP__ADD(" ilnd=[arm=%d ax0=%d/%d/wl%d ax1=%d/%d mt=%d/%d/%d]\n",
             h->ilnd ? h->ilnd->arm : 0,
             h->ilnd ? h->ilnd->ax0.nst : 0, h->ilnd ? h->ilnd->ax0.blu : 0,

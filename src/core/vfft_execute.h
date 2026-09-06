@@ -381,6 +381,25 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
     return 0;
 }
 
+/* the flat DIT's serving: the threaded verdict at the plan's T when it
+ * engages (il_flatdit_mt.h), the bound serial lists otherwise. Both
+ * directions, both order classes, z -> z legal in both. */
+static void _ilfd_serve(struct vfft_plan_s *h, vfft_dir_t dir,
+                        const double *zin, double *zout)
+{
+    const vfft_ilfd_plan_t *p = h->k1ilfd;
+    if (p->mt > 0 && h->nthreads > 1)
+    {
+        _vfft_pool_arm(h->nthreads); /* re-assert the snapshot pool */
+        if (vfft_ilfd_execute_mt(p, zin, zout, dir == VFFT_BACKWARD))
+            return;
+    }
+    if (dir == VFFT_FORWARD)
+        vfft_ilfd_execute_fwd(p, zin, zout);
+    else
+        vfft_ilfd_execute_bwd(p, zin, zout);
+}
+
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim)
 {

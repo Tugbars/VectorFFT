@@ -22,6 +22,12 @@
  *   7. OOP backward consumes the comb: roundtrip N * x;
  *   8. IN-PLACE scrambled forward + backward roundtrip;
  *   9. a second SCRAMBLED create replays bit-identically.
+ * MT pass, per cell and class (2026-09-07, il_flatdit_mt.h): the same cell
+ * created at T=8 — its threading verdict raced and banked (il_mt= il_mt_t=
+ * il_mt_tw= on the class's kind-3 row) — must produce the T=1 forward
+ * BITWISE (both arms are loop restrictions of the serving lists), roundtrip
+ * N * x, and its engagement counter moves once per execute when the verdict
+ * is threaded (a serial verdict is legal: it is printed, not required).
  *
  * Run:   flatdit_gate.exe --wisdir <scratch dir>
  * Build: python build_tuned/build.py --compile --src build_tuned/benches/flatdit_gate.c --vfft */
@@ -31,6 +37,7 @@
 #include <string.h>
 #include <windows.h>
 #include "vfft.h"
+long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h */
 
 static const int NS[] = { 405, 1215, 4095, 6561, 19683, 59049, 98415, 177147 };   /* 177147: above the L2 edge, the tile axis's cell */
 
@@ -106,13 +113,15 @@ static double permerr(const double *a, const double *b, int N, const int *R, int
     }
     return m > 0 ? e / m : e;
 }
-static vfft_plan mk(vfft_wisdom *W, int N, int ip, int order)
+static vfft_plan mk_t(vfft_wisdom *W, int N, int ip, int order, int T);
+static vfft_plan mk(vfft_wisdom *W, int N, int ip, int order) { return mk_t(W, N, ip, order, 1); }
+static vfft_plan mk_t(vfft_wisdom *W, int N, int ip, int order, int T)
 {
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
     cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.order = order; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
     return vfft_create(&cfg);
 }
 /* the cell's banked ROUTE (+ the flat chain and forms tokens) read back from
@@ -174,8 +183,9 @@ int main(int argc, char **argv)
         const int N = NS[i];
         double *x = calloc(2 * (size_t)N, 8), *y = calloc(2 * (size_t)N, 8);
         double *r = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8), *y2 = calloc(2 * (size_t)N, 8);
-        double eo = 1, ero = 1, ei = 1, eri = 1, t_race = 0, t_replay = 0;
-        int route = -1, ok, same = 0;
+        double eo = 1, ero = 1, ei = 1, eri = 1, t_race = 0, t_replay = 0, mt_rt = 1;
+        int route = -1, ok, same = 0, mt_bit = 0, mt_ok = 0;
+        long mt_eng = 0;
         char chain[64] = "", forms[32] = "";
         srand(1000 + N);
         for (int j = 0; j < 2 * N; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
@@ -213,18 +223,39 @@ int main(int argc, char **argv)
                 vfft_destroy(ho);
             }
         }
+        /* ── MT pass (natural class): T=8, bitwise the T=1 forward ── */
+        {
+            const long e0 = vfft_ilfd_mt_passes();
+            long e1;
+            vfft_plan hm = mk_t(W, N, 0, VFFT_ORDER_DEFAULT, 8);
+            e1 = vfft_ilfd_mt_passes();
+            if (hm)
+            {
+                vfft_execute(hm, VFFT_FORWARD, x, NULL, y2, NULL);
+                mt_bit = (memcmp(y, y2, 2 * (size_t)N * 8) == 0);
+                vfft_execute(hm, VFFT_BACKWARD, y2, NULL, r, NULL);
+                mt_rt = relerr(r, x, N, 1.0 / N);
+                mt_eng = vfft_ilfd_mt_passes() - e1;
+                mt_ok = mt_bit && mt_rt < 1e-11;
+                vfft_destroy(hm);
+            }
+            (void)e0;
+        }
         ok = route >= 0 && eo < 1e-11 && ero < 1e-11 && ei < 1e-11 && eri < 1e-11 && same &&
-             (N <= 19683 || route == 8);
+             (N <= 19683 || route == 8) && mt_ok;
         if (!ok) fails++;
         printf("%-6d | %-6s %-18s %-14s | %.1e  %.1e | %.1e  %.1e | %7.0f %7.0f | %s%s\n", N,
                route_name(route), chain[0] ? chain : "-", forms[0] ? forms : "-",
                eo, ero, ei, eri, t_race, t_replay,
                same ? "replay bitwise" : "replay DIFFERS", ok ? "" : "   *** FAIL ***");
+        printf("   mt | T=8 %s rt %.1e engaged=%ld/2%s\n", mt_bit ? "BITWISE" : "NOT BITWISE", mt_rt, mt_eng,
+               mt_eng == 2 ? " (threaded)" : mt_eng == 0 ? " (serial verdict)" : " (PARTIAL)");
         /* ── SCRAMBLED pass (explicit ORDER_SCRAMBLED) ── */
         {
             double *ys = calloc(2 * (size_t)N, 8), *rs = calloc(2 * (size_t)N, 8), *ys2 = calloc(2 * (size_t)N, 8);
-            double eperm = 1, eid = 1, ers = 1, eis = 1, eris = 1;
-            int sroute = -1, sok, ssame = 0, served_scr = 0, Rc[16], Kc = 0;
+            double eperm = 1, eid = 1, ers = 1, eis = 1, eris = 1, smt_rt = 1;
+            int sroute = -1, sok, ssame = 0, served_scr = 0, Rc[16], Kc = 0, smt_bit = 0, smt_ok = 0;
+            long smt_eng = 0;
             char schain[64] = "", sforms[32] = "";
             vfft_plan hs = mk(W, N, 0, VFFT_ORDER_SCRAMBLED);
             if (hs)
@@ -257,14 +288,31 @@ int main(int argc, char **argv)
                 }
                 vfft_destroy(hs);
             }
+            /* ── MT pass (scrambled class) ── */
+            {
+                vfft_plan hm = hs ? mk_t(W, N, 0, VFFT_ORDER_SCRAMBLED, 8) : NULL;
+                const long e1 = vfft_ilfd_mt_passes();
+                if (hm)
+                {
+                    vfft_execute(hm, VFFT_FORWARD, x, NULL, ys2, NULL);
+                    smt_bit = (memcmp(ys, ys2, 2 * (size_t)N * 8) == 0);
+                    vfft_execute(hm, VFFT_BACKWARD, ys2, NULL, rs, NULL);
+                    smt_rt = relerr(rs, x, N, 1.0 / N);
+                    smt_eng = vfft_ilfd_mt_passes() - e1;
+                    smt_ok = smt_bit && smt_rt < 1e-11;
+                    vfft_destroy(hm);
+                }
+            }
             sok = hs && (served_scr || eid < 1e-11) && ers < 1e-11 && eis < 1e-11 && eris < 1e-11 && ssame &&
-                  (N <= 19683 || (sroute == 8 && served_scr));
+                  (N <= 19683 || (sroute == 8 && served_scr)) && smt_ok;
             if (!sok) fails++;
             printf("  scr | %-6s %-18s %-14s | %s %.1e  rt %.1e | ip %.1e  rt %.1e | %s%s\n",
                    route_name(sroute), schain[0] ? schain : "-", sforms[0] ? sforms : "-",
                    served_scr ? "DIGIT-REVERSED" : (eid < 1e-11 ? "natural served" : "NEITHER ORDER"),
                    served_scr ? eperm : eid, ers, eis, eris,
                    ssame ? "replay bitwise" : "replay DIFFERS", sok ? "" : "   *** FAIL ***");
+            printf("   mt | T=8 %s rt %.1e engaged=%ld/2%s\n", smt_bit ? "BITWISE" : "NOT BITWISE", smt_rt, smt_eng,
+                   smt_eng == 2 ? " (threaded)" : smt_eng == 0 ? " (serial verdict)" : " (PARTIAL)");
             free(ys); free(rs); free(ys2);
         }
         free(x); free(y); free(r); free(z); free(y2);

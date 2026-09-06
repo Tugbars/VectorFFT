@@ -652,6 +652,88 @@ static void _zt_mt_replay_or_race(struct vfft_plan_s *h,
     }
 }
 
+/* ── the FLAT DIT's threading verdict (2026-09-07, il_flatdit_mt.h; the
+ * same law as the cascade's above): env pin > the banked il_mt at THIS T
+ * on the cell's kind-3 IL row (ord=nat or ord=scr — the plan's own class)
+ * > the race at T (serial vs blocks vs tiles at every legal width, steady-
+ * state samples), banked il_mt= il_mt_t= il_mt_tw=. The one-thread width
+ * il_tw= stays what a T=1 plan replays. */
+static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
+                                    struct vfft_wisdom_s *W,
+                                    const vfft_config_t *cfg, int N)
+{
+    vfft_ilfd_plan_t *p = h->k1ilfd;
+    const int T = h->nthreads;
+    const int tw0 = p->tw;
+    const vw2_rec_t *r = NULL;
+    const char *pin = getenv("VFFT_ILFD_MT");
+    int mt_tw = 0;
+    if (!p || T < 2)
+        return;
+    if (W && !W->vw2_off_oop)
+        r = vw2__oop_k1_scan_ord(&W->vw2, N, VW2_LAY_IL, p->scr);
+    if (pin)
+    {
+        const int v = atoi(pin);
+        p->mt = (v >= 0 && v <= 2) ? v : 0;
+        p->mt_t = T;
+        p->mt_tw = tw0;
+        if (p->mt > 0 && !vfft_ilfd_mt_bind(p, T))
+            p->mt = 0;
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[k1fd-mt] N=%d T=%d %s: mt=%d src=env\n", N, T, p->scr ? "scr" : "nat", p->mt);
+        return;
+    }
+    if (r && !cfg->recalibrate && vw2__oop_geti(r, "il_mt_t", 0) == T)
+    {
+        const int v = vw2__oop_geti(r, "il_mt", 0);
+        const int w = vw2__oop_geti(r, "il_mt_tw", 0);
+        p->mt = (v >= 0 && v <= 2) ? v : 0;
+        p->mt_t = T;
+        p->mt_tw = w;
+        if (p->mt == 2 && w > 0 && !vfft_ilfd_apply_tw(p, w))
+        {
+            _vfft_warn("banked il_mt_tw=%d does not fit the flat chain at N=%d — serial", w, N);
+            p->mt = 0;
+        }
+        if (p->mt > 0 && !vfft_ilfd_mt_bind(p, T))
+            p->mt = 0;
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[k1fd-mt] N=%d T=%d %s: replay mt=%d tw=%d src=wisdom\n",
+                    N, T, p->scr ? "scr" : "nat", p->mt, p->tw);
+        return;
+    }
+    {   /* the race on scratch, out of place (the in-place serving is the same lists) */
+        double *zi = (double *)malloc(2 * (size_t)N * sizeof(double));
+        double *zo = (double *)malloc(2 * (size_t)N * sizeof(double));
+        size_t i;
+        if (!zi || !zo)
+        {
+            free(zi); free(zo);
+            p->mt = 0;
+            return;
+        }
+        for (i = 0; i < 2 * (size_t)N; i++)
+            zi[i] = 1.0 + 1e-6 * (double)(i & 1023);
+        vfft_ilfd_mt_race(p, T, tw0, zi, zo, &mt_tw);
+        p->mt_tw = mt_tw;
+        free(zi); free(zo);
+    }
+    if (r && !W->vw2_off_oop)
+    {
+        char b[16];
+        int ok = 1;
+        snprintf(b, sizeof b, "%d", p->mt);
+        ok = ok && vw2_update_field(&W->vw2, &r->key, "il_mt", b) == VW2_OK;
+        snprintf(b, sizeof b, "%d", T);
+        ok = ok && vw2_update_field(&W->vw2, &r->key, "il_mt_t", b) == VW2_OK;
+        snprintf(b, sizeof b, "%d", mt_tw);
+        ok = ok && vw2_update_field(&W->vw2, &r->key, "il_mt_tw", b) == VW2_OK;
+        if (ok)
+            _vw2_persist(W, cfg);
+    }
+}
+
 /* ── the IN-PLACE mono candidate (2026-09-04) ──
  * Served when the cell's kind-3 row (already planned by _k1_il_candidate's
  * race on a miss) says MONO: the alias-tolerant n1c solo, both directions.
