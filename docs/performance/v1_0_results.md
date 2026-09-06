@@ -829,8 +829,10 @@ pass is alias-tolerant, and the in-place output is bitwise the
 out-of-place output at every probed cell, at one thread and at T=8 — so
 its numbers are these.
 
-Arms (one process, `bench_1d_vs_mkl.c --3dil`, 9 rounds with reversed
-arm order, cachebust between arms, medians, all arms OUT OF PLACE):
+Arms (one process, `bench_1d_vs_mkl.c --3dil`; one-thread samples
+pinned to core 2 at HIGH priority, a 300 ms pace before each sample's
+cachebust and >= 5 ms untimed warm-up, 9 rounds with reversed arm order,
+medians, all arms OUT OF PLACE):
 O-NATIVE = this tier; M-inter = MKL rank-3 `DFTI_COMPLEX_COMPLEX`
 `DFTI_NOT_INPLACE` (its measured-fastest 3D configuration — its
 `REAL_REAL` split arm ran 1.6–2.2× slower in the same runs). Correctness
@@ -839,34 +841,35 @@ across the two digit-reversed column axes, both structure arms, the
 banded walk BITWISE the unbanded one, the raced verdict, replay with
 zero races), `api_matrix_gate`.
 
-⚠ **Noise note:** measured while the machine was in use; arm spreads
-are in parentheses and a ratio marked `~` sits inside the control
-(memcpy) spread — sign-reliable, not two-decimal quotable.
+⚠ **Noise note:** measured under load (a six-core game process was
+running); the one-thread pin absorbs it — control (memcpy) spreads 9–24%.
+Arm spreads are in parentheses; a ratio marked `~` sits inside the
+control spread — sign-reliable, not two-decimal quotable.
 
 ```
  N1×N2×N3    s / wl     O-NATIVE (ns)     MKL-CCE (ns)     vs MKL-CCE
 ──────────────────────────────────────────────────────────────────────
- 16³         flat  8          6,416 (78%)       7,077  (4%)    1.10×~
- 32³         child 8         51,734 (10%)      65,989  (6%)    1.28×
- 64³         flat  16       562,312  (8%)     838,813 (29%)    1.49×
- 128³        child 8      6,982,763  (6%)  10,320,225  (7%)    1.48×
- 32×16×64    child 8         46,867 (15%)      54,470 (11%)    1.16×~
- 64×128×32   child 8        597,663 (21%)     829,650  (7%)    1.39×~
- 256×64×16   flat  32       711,612 (11%)     841,825 (22%)    1.18×~
- 27×9×15     flat  9          8,336 (60%)       8,861 (19%)    1.06×~
- 36×20×28    flat  0         33,290 (80%)      60,926 (11%)    1.83×~
- 45³         flat  0        214,014 (33%)     290,305 (10%)    1.36×~
- 81×27×27    flat  0        121,361 (17%)     175,430  (9%)    1.45×
+ 16³         flat  8          6,367  (7%)       6,976  (8%)    1.10×~
+ 32³         child 8         50,944 (10%)      64,521 (10%)    1.27×
+ 64³         flat  16       554,388  (4%)     847,325  (7%)    1.53×
+ 128³        child 8      7,633,500  (6%)  11,486,050  (6%)    1.50×
+ 32×16×64    child 8         42,816 (12%)      52,387 (11%)    1.22×
+ 64×128×32   child 8        583,913 (10%)     824,825 (10%)    1.41×
+ 256×64×16   flat  32       690,425 (13%)     798,038 (12%)    1.16×~
+ 27×9×15     flat  9          7,787 (11%)       8,809  (9%)    1.13×
+ 36×20×28    flat  0         32,281 (29%)      57,545 (11%)    1.78×
+ 45³         flat  0        190,829 (11%)     275,238  (7%)    1.44×
+ 81×27×27    flat  0        122,236  (8%)     178,212 (14%)    1.46×
 ──────────────────────────────────────────────────────────────────────
-                                              11/11 win, median ~1.36×
+                                              11/11 win, median ~1.41×
 ```
 
 **The axis-0 banded walk (same day).** Before it, the long-axis-0 cell
 256×64×16 was the one loss (0.86×: 256 rows over a 1024-complex plane,
 the column pass streaming the cube per stage). With the width raced
 (`wl=32`, the band = 32 planes = 512 KB, L2-resident), the cell moved
-925,163 → 711,612 ns (the race's own arms: unbanded 857 µs, wl32 630 µs)
-and wins 1.18×; 64³ moved 1.35× → 1.49× (`wl=16`). The odd cells have
+0.86× → 1.16× (the race's own arms: unbanded 857 µs, wl32 630 µs); 64³
+moved 1.35× → 1.53× (`wl=16`). The odd cells have
 only the chain's own spans as legal widths (9 at 27/45/81) and raced to
 unbanded or to a tie.
 
@@ -1137,41 +1140,56 @@ a plane the natural 2D child or the natural axis-1 pass plus the row plan
 give natural order. Both placements; threaded with a cycles phase
 (disjoint cycles per worker, one buffer each). This is the LIKE-FOR-LIKE
 order against MKL, whose output is natural. Same protocol as the tables
-above (`--3dil` with `VFFT_3DIL_ORDER=nat`; medians, spreads, `~` =
-inside the control spread); machine in use, MKL's spreads to 290% at T=8.
+above (`--3dil` with `VFFT_3DIL_ORDER=nat`; one-thread samples pinned to
+core 2 at HIGH priority, 300 ms pace before each sample's cachebust and
+>= 5 ms untimed warm-up, 9 rounds, medians, spreads, `~` = inside the
+control spread). One thread measured under the same six-core load as the
+scrambled table, control spreads 8–30%. T=8 on the idle machine with
+steady-state samples and NO per-sample pace (a pace parks the teams and
+widens both engines' spreads without moving the medians); MKL's spreads
+to 290%.
 
 ```
  cell         natural T=1 (ns)   MKL T=1 (ns)   vs MKL   over scrambled   | natural T=8 (ns)   MKL T=8 (ns)   vs MKL
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- 16³                 6,828 (8%)     7,175 (16%)   1.05×      1.06×          |     3,686 (13%)      2,852 (17%)   0.77×
- 32³                51,964 (8%)    63,116  (6%)   1.21×      1.00×          |    23,472 (20%)     13,944 (291%)  0.59×
- 64³               772,688 (22%)  891,000 (12%)   1.15×~     1.37×          |    99,075 (15%)    112,450 (120%)  1.13×~
- 128³            8,557,762 (9%) 9,905,325 (14%)   1.16×~     1.23×          | 1,564,175 (24%)  1,323,250 (14%)   0.85×~
- 32×16×64           57,718 (6%)    53,048 (15%)   0.92×~     1.23×          |    16,695 (27%)     14,728 (24%)   0.88×~
- 64×128×32         884,663 (25%)  926,013 (22%)   1.05×~     1.48×          |   116,025 (36%)    110,950  (5%)   0.96×~
- 256×64×16         857,300 (19%)  743,825 (17%)   0.87×~     1.20×          |   124,075 (12%)    108,375 (66%)   0.87×~
- 27×9×15             8,261 (9%)     9,215  (8%)   1.12×~     1.46×          |     4,943 (23%)      5,359 (42%)   1.08×
- 36×20×28           38,594 (32%)   58,317  (7%)   1.51×      1.16×          |    17,585 (51%)     16,397 (27%)   0.93×~
- 45³               221,100 (4%)   271,905  (7%)   1.23×~     1.03×          |    63,776 (34%)     43,938 (138%)  0.69×
- 81×27×27          138,585 (22%)  171,315  (8%)   1.24×~     1.14×          |    34,194 (78%)     32,842 (37%)   0.96×~
+ 16³                 6,781 (14%)     7,297 (13%)   1.08×~     1.07×         |     3,686 (13%)      2,852 (17%)   0.77×
+ 32³                51,739 (12%)    67,859  (7%)   1.31×      1.02×         |    23,472 (20%)     13,944 (291%)  0.59×
+ 64³               784,562 (12%)   906,862 (13%)   1.16×~     1.42×         |    99,075 (15%)    112,450 (120%)  1.13×~
+ 128³           10,051,650 (3%) 12,040,950  (6%)   1.20×~     1.32×         | 1,564,175 (24%)  1,323,250 (14%)   0.85×~
+ 32×16×64           60,879 (12%)    52,620 (13%)   0.86×      1.42×         |    16,695 (27%)     14,728 (24%)   0.88×~
+ 64×128×32         968,850  (9%)   911,062 (14%)   0.94×~     1.66×         |   116,025 (36%)    110,950  (5%)   0.96×~
+ 256×64×16         869,450  (7%)   780,263  (9%)   0.90×~     1.26×         |   124,075 (12%)    108,375 (66%)   0.87×~
+ 27×9×15             7,673  (8%)     8,797  (6%)   1.15×      0.99×         |     4,943 (23%)      5,359 (42%)   1.08×
+ 36×20×28           35,177  (7%)    57,632  (8%)   1.64×      1.09×         |    17,585 (51%)     16,397 (27%)   0.93×~
+ 45³               222,619  (2%)   278,933  (7%)   1.25×      1.17×         |    63,776 (34%)     43,938 (138%)  0.69×
+ 81×27×27          135,409 (10%)   171,233  (9%)   1.26×      1.11×         |    34,194 (78%)     32,842 (37%)   0.96×~
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-                                                9/11 win or tie             |                                     2/11
+                                    5 win · 3 tie · 3 loss (1 outside spread)  |                                  2/11
 ```
 
 "Over scrambled" is the natural cell's one-thread time divided by the
-scrambled cell's from the table above: the natural class costs nothing
-at the small cubes and up to 37% at 64³. That cost is the band fusion it
-gives up, not the cold writes: the natural cell's width race banks `wl=0`
-at 64³ because a band with nothing fused into it buys nothing, so every
-axis-0 stage streams the cube and the plane pass streams it once more.
+scrambled cell's from the table above, both under the same protocol in
+the same session: the natural class costs 0–9% at the small cubes and
+the odd cells (27×9×15 0.99×, 16³ 1.07×, 36×20×28 1.09×) and 17–66% at
+the large and the long cells (45³ 1.17×, 256×64×16 1.26×, 128³ 1.32×,
+64³ and 32×16×64 1.42×, 64×128×32 1.66×). That cost is the band fusion
+it gives up, not the cold writes: the natural cell's width race banks
+`wl=0` at 64³ because a band with nothing fused into it buys nothing, so
+every axis-0 stage streams the cube and the plane pass streams it once
+more.
 Threaded, the same fusion loss is what separates the natural cell from
 the scrambled one (whose threaded verdicts are band arms at most cells);
 the cycles-per-worker balance is 0.75–1.0 of ideal at every cell and is
 not the cause. Levers, both measured items for the natural cell's race:
 a fused natural arm (the scratch-cube form, which keeps band fusion at
 the price of a cube of scratch), and the natural axis-1 pass's own
-scratch sweep per plane. The single-thread standing — natural beats MKL's
-natural at 9 of 11 cells — is the like-for-like order result.
+scratch sweep per plane. The single-thread standing is the like-for-like
+order result: natural beats MKL's natural at 5 cells (32³ 1.31×, 27×9×15
+1.15×, 36×20×28 1.64×, 45³ 1.25×, 81×27×27 1.26×), ties at the three
+pow2 cubes 16³/64³/128³ (1.08–1.20× inside the control spread), and
+loses at the long-axis cells: 32×16×64 by 14% (outside the spread),
+64×128×32 by 6% and 256×64×16 by 10% (inside it) — the cells where the
+fusion it gives up is largest.
 
 ### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-06)
 

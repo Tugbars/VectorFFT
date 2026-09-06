@@ -2256,6 +2256,15 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
     DFTI_DESCRIPTOR_HANDLE hMi = 0, hMs = 0;
 #endif
     if (rounds > 64) rounds = 64;
+    if (T <= 1 && !(getenv("VFFT_3DIL_PIN") && !strcmp(getenv("VFFT_3DIL_PIN"), "0"))) {
+        /* the one-thread protocol: the calling thread PINNED to core 2 (mask 0x4)
+         * at HIGH priority. Without the pin a paced sample wakes on whichever core
+         * the scheduler picks (cold caches, that core's own frequency ramp) and the
+         * pace measures the migration, not the transform. MKL at one thread runs on
+         * this same calling thread: both arms on the same core. VFFT_3DIL_PIN=0 lifts. */
+        SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x4);
+        SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    }
     fprintf(stderr, "[3dil] %dx%dx%d create (wisdom miss => races here)...\n", N1, N2, N3);
     srand(17 + N1 + N2 + N3);
     for (i = 0; i < TN; i++) {
@@ -2325,7 +2334,28 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
             double t0, ns;
             a = (r & 1) ? 3 - a0 : a0;
             if (!have[a]) continue;
+            if (g_trial_pace_ms > 0)
+                pace(g_trial_pace_ms); /* the per-SAMPLE pace (env VFFT_TRIAL_PACE_MS): thermal
+                                        * headroom between arms. BEFORE the cachebust and the
+                                        * untimed warm-up, never right before the timed region:
+                                        * whatever the sleep cost the core (frequency, caches,
+                                        * a parked team) is paid in the warm-up, not the reps */
             cachebust();
+            if (T <= 1 && g_trial_pace_ms > 0) {
+                /* paced one-thread samples: the same >= 5 ms untimed warm-up
+                 * on every arm, so the pace never lands in the timed reps */
+                const double tw = vfft_proto_now_ns();
+                do {
+                    switch (a) {
+                    case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); nexec++; break;
+#ifdef VFFT_HAS_MKL
+                    case 1: DftiComputeForward(hMi, mz, mo); break;
+                    case 2: DftiComputeForward(hMs, xr, xi, mr, mi); break;
+#endif
+                    default: memcpy(cd, cs, 2 * TN * 8); break;
+                    }
+                } while (vfft_proto_now_ns() - tw < 5e6);
+            }
             if (T > 1) {
                 /* THREAD HYGIENE (the --ilmt traps): (a) the library's pool
                  * workers spin forever, so every MKL arm is preceded by a
@@ -2368,8 +2398,6 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
                     } while (a != 3 && vfft_proto_now_ns() - tw < 5e6);
                 }
             }
-            if (g_trial_pace_ms > 0)
-                pace(g_trial_pace_ms); /* the per-SAMPLE pace (env VFFT_TRIAL_PACE_MS): thermal headroom between arms */
             t0 = vfft_proto_now_ns();
             for (k = 0; k < reps; k++) {
                 switch (a) {
@@ -4702,6 +4730,17 @@ int main(int argc, char **argv)
                wd, W ? "loaded" : "MISSING", rounds, mt ? g_mt : 1, core);
         printf("# order: %s\n", (getenv("VFFT_3DIL_ORDER") && !strcmp(getenv("VFFT_3DIL_ORDER"), "nat"))
                                     ? "NATURAL (the like-for-like order: MKL's output is natural)" : "DEFAULT (scrambled)");
+        if (mt)
+            printf("# threaded protocol (T=%d): two-team hygiene per sample (pool torn down before "
+                   "MKL arms, MKL's team born before our pool pins), >= 5 ms untimed warm-up, "
+                   "steady-state reps; per-sample pace %d ms (VFFT_TRIAL_PACE_MS) — a pace PARKS "
+                   "the teams, the warm-up re-wakes them, spreads still widen: quote the unpaced run.\n",
+                   g_mt, g_trial_pace_ms);
+        else
+            printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority%s; "
+                   "per-sample pace %d ms (VFFT_TRIAL_PACE_MS) before the cachebust + >= 5 ms warm-up.\n",
+                   (getenv("VFFT_3DIL_PIN") && !strcmp(getenv("VFFT_3DIL_PIN"), "0")) ? " (LIFTED: VFFT_3DIL_PIN=0)" : "",
+                   g_trial_pace_ms);
         printf("# arms, all OUT OF PLACE: O-NATIVE = vfft 3D INTERLEAVED (fftnd_il.h, "
                "structure from wisdom); M-inter = DFTI 3D CCE NOT_INPLACE (MKL best); "
                "M-split = DFTI REAL_REAL NOT_INPLACE; ctl = memcpy. '~' = delta "

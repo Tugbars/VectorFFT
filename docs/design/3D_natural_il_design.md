@@ -204,13 +204,16 @@ its partitions at the plan's T and banks `cmt= cmtt= cmts=` on its own row.
 | 2D-style natural (scratch cube, leaf scatter at axis 0) | one cube write and one cube read | a whole cube | yes, through a natural banded walk |
 | cycle natural (this design) | cold destination writes for the plane pass; one plane copy per cycle | one plane per worker | no: planes are visited in cycle order, not band order |
 
-The cycle form shipped first. Measured 2026-09-07 (one thread, the same
-run as the scrambled cells): the natural cell costs 0–6% over the
-scrambled cell at the small cubes and 14–48% at the large ones (64³ 1.37×,
-64×128×32 1.48×), which is the band fusion it gives up — its width race
+The cycle form shipped first. Measured 2026-09-07 (one thread, pinned,
+paced, the scrambled cells under the same protocol in the same session):
+the natural cell costs 0–9% over the scrambled cell at the small cubes
+and the odd cells and 17–66% at the large and the long cells (64³ 1.42×,
+64×128×32 1.66×), which is the band fusion it gives up — its width race
 banks `wl=0` there because a band with nothing fused into it buys
-nothing. Against MKL's natural output it wins or ties at 9 of 11 cells at
-one thread (36×20×28 1.51×, 81×27×27 1.24×, 45³ 1.23×); threaded it
+nothing. Against MKL's natural output it wins at 5 of 11 cells at one
+thread (36×20×28 1.64×, 32³ 1.31×, 81×27×27 1.26×, 45³ 1.25×, 27×9×15
+1.15×), ties at the pow2 cubes and loses at the long-axis cells
+(32×16×64 by 14%, the other two inside the control spread); threaded it
 trails at most cells, for the same reason. The cycles-per-worker balance
 is 0.75–1.0 of ideal at every probed cell and is not the cause. The two
 levers, both arms for the natural cell's race and never compared with the
