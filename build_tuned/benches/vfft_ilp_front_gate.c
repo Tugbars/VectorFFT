@@ -15,6 +15,11 @@
  *      matched roundtrip must hold. If the verdict is tape, the scrambled
  *      handle serves the classic convert path — matched roundtrip only.
  *   4. Boundary: 2048 NATURAL must still go ZCASC (no ILP shadowing).
+ *   Since the sub-2048 cascade admission (2026-09-07) every natural and
+ *   scrambled in-place cell below 2048 races ILP vs ZCASC on its own; the
+ *   measure's verdict (attach ILP / attach ZCASC) is what the consume must
+ *   replay, and a scrambled cell served by the cascade emits the engine's
+ *   comb — checked as a permutation of the spectrum plus the roundtrip.
  *
  * Run:   vfft_ilp_front_gate.exe --wisdir <scratch dir>
  * Build: python build.py --src benches/vfft_ilp_front_gate.c --vfft --compile
@@ -80,6 +85,11 @@ static void fz(double *p)
 #endif
 }
 
+static int cmp_dbl(const void *a, const void *b)
+{
+    const double x = *(const double *)a, y = *(const double *)b;
+    return x < y ? -1 : x > y ? 1 : 0;
+}
 static vfft_plan mk(vfft_wisdom *W, int N, int order /*0=nat 1=scr*/)
 {
     vfft_config_t cfg;
@@ -158,7 +168,13 @@ int main(int argc, char **argv)
         vfft_plan hn = mk(W, N, 0);
         const char *log = err_tap_read();
         const int raced = strstr(log, "ilp=") != NULL;
-        const int ilp_won = strstr(log, "-> ILP") != NULL;
+        /* the cell's served engine: since the sub-2048 cascade admission
+         * (2026-09-07) the natural in-place race is ILP vs ZCASC and either
+         * may win ("attach ZCASC (natord)" / "attach ILP"); the consume must
+         * replay THAT verdict. "-> ILP" alone is the k1plan line and says
+         * nothing about the cell's route. */
+        const int zcasc_won = strstr(log, "attach ZCASC") != NULL;
+        const int ilp_won = !zcasc_won && strstr(log, "-> ILP") != NULL;
         if (!hn) { printf("%-7d create FAILED\n", N); fails++; continue; }
         memcpy(a, x, 2 * (size_t)N * sizeof(double));
         vfft_execute(hn, VFFT_FORWARD, a, NULL, a, NULL);
@@ -177,7 +193,7 @@ int main(int argc, char **argv)
         vfft_plan hc = mk(W, N, 0);
         const char *log2 = err_tap_read();
         const int reraced = strstr(log2, "ilp=") != NULL;
-        const int replayed = strstr(log2, "replay ILP") != NULL;
+        const int replayed = strstr(log2, zcasc_won ? "replay ZCASC" : "replay ILP") != NULL;
         if (hc)
         {
             memcpy(a, x, 2 * (size_t)N * sizeof(double));
@@ -188,7 +204,7 @@ int main(int argc, char **argv)
         }
         else
             ok = 0;
-        if (reraced || (ilp_won && !replayed))
+        if (reraced || ((ilp_won || zcasc_won) && !replayed))
             ok = 0;
 
         /* 3. SCRAMBLED in-place: the cell's OWN verdict (owner 2026-09-05:
@@ -201,7 +217,15 @@ int main(int argc, char **argv)
         const char *scrarm = "rt-only(tape)";
         {
             vfft_plan hs = mk(W, N, 1);
-            (void)err_tap_read();
+            /* the scrambled cell's own verdict: since the sub-2048 cascade
+             * admission (2026-09-07) it may attach the SCRAMBLED cascade,
+             * whose output is the engine's comb — a legal scrambled
+             * permutation of the spectrum, checked as a permutation (sorted
+             * magnitudes) + the roundtrip below; an IL engine's output is
+             * natural and must match the reference in order. */
+            const char *logs = err_tap_read();
+            const int scr_zcasc = strstr(logs, "attach ZCASC") != NULL ||
+                                  strstr(logs, "replay ZCASC") != NULL;
             if (!hs)
                 ok = 0;
             else
@@ -211,7 +235,29 @@ int main(int argc, char **argv)
                 memcpy(a, x, nb);
                 vfft_execute(hs, VFFT_FORWARD, a, NULL, a, NULL);
                 memcpy(ys, a, nb);
-                if (ilp_won)
+                if (scr_zcasc)
+                {
+                    double *ma = (double *)malloc(sizeof(double) * (size_t)N);
+                    double *mx = (double *)malloc(sizeof(double) * (size_t)N);
+                    double ep = 0, mm = 0;
+                    for (long j = 0; j < N; j++)
+                    {
+                        ma[j] = a[2 * j] * a[2 * j] + a[2 * j + 1] * a[2 * j + 1];
+                        mx[j] = X[2 * j] * X[2 * j] + X[2 * j + 1] * X[2 * j + 1];
+                    }
+                    qsort(ma, (size_t)N, sizeof(double), cmp_dbl);
+                    qsort(mx, (size_t)N, sizeof(double), cmp_dbl);
+                    for (long j = 0; j < N; j++)
+                    {
+                        if (mx[j] > mm) mm = mx[j];
+                        if (fabs(ma[j] - mx[j]) > ep) ep = fabs(ma[j] - mx[j]);
+                    }
+                    free(ma); free(mx);
+                    scrarm = (mm > 0 && ep / mm < 1e-9) ? "OK(zcasc-comb)" : "WRONG(zcasc!)";
+                    if (!(mm > 0 && ep / mm < 1e-9))
+                        ok = 0;
+                }
+                else if (ilp_won || strstr(logs, "ILP") != NULL)
                 {
                     const int ident = memcmp(a, yn, nb) == 0;
                     const double es = relerr(a, X, 2L * N);
@@ -254,7 +300,7 @@ int main(int argc, char **argv)
         if (!ok) fails++;
         printf("%-7d %-8s | %.2e   %.2e | %-12s | %s%s\n",
                N, "m+c+s", ef, eb,
-               ilp_won ? "ILP(raced)" : (raced ? "tape(raced)" : "NO RACE"),
+               zcasc_won ? "ZCASC(raced)" : ilp_won ? "ILP(raced)" : (raced ? "tape(raced)" : "NO RACE"),
                scrarm, ok ? "" : "   *** FAIL ***");
         fz(x); fz(X); fz(a); fz(yn);
     }

@@ -31,10 +31,15 @@
  * Re-measured 2026-09-07 (il_dp_cand_census, cap 1024): N=1024 scrambled
  * enumerates 30 — the K=1 IL tier's SCRAMBLED cell got its OWN pool on
  * 2026-09-05 (pairs x forms, keyed ord=scr), so the scrambled census at a
- * sub-2048 pow2 cell is the IL pool, not the cascade's. */
+ * sub-2048 pow2 cell is the IL pool, not the cascade's.
+ * Re-measured 2026-09-07 (il_dp_cand_census, cap 1024) after the r0 = 8
+ * INGEST axis: vfft_zturn2_create_chain admits chain[0] in {4, 8}, so every
+ * scrambled cascade cell enumerates the 8-first chains under the ZTURN
+ * engine too (legacy zsplit always did) — 50/80/117/171/253/349 became
+ * 56/87/127/184/270/372. */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 30 }, { 2048, 50 }, { 4096, 80 }, { 8192, 117 },
-    { 16384, 171 }, { 32768, 253 }, { 65536, 349 }
+    { 1024, 30 }, { 2048, 56 }, { 4096, 87 }, { 8192, 127 },
+    { 16384, 184 }, { 32768, 270 }, { 65536, 372 }
 };
 
 int main(void)

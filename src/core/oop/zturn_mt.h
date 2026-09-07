@@ -252,8 +252,10 @@ static int _zt_execute_mt(struct vfft_plan_s *h, vfft_dir_t dir,
     const int fwd = (dir == VFFT_FORWARD);
     const int smax = p->tiled ? p->tcut : p->nf - 2;
     int s;
-    if (p->natord || p->tiled == 2)
-        return 0; /* rho-order table walks; A1 = gate-only control arm */
+    if (p->natord || p->tiled == 2 || p->r0 != 4)
+        return 0; /* rho-order table walks; A1 = gate-only control arm; the
+                   * r0 = 8 geometry is one-thread (its section split is the
+                   * two quartets, not the 4-section phases below) */
     /* T arrives as the plan's snapshot (h->nthreads); the pool's one clamp
      * bounds it by the live pool and the arg-array size. */
     T = stride_pool_workers_for(T);

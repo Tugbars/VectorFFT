@@ -90,6 +90,27 @@ VFFT_ZT_DECL(radix8_z_stfl_r4_fwd_avx2)  /* LOADED-STREAM terminator twins
 VFFT_ZT_DECL(radix4_z_stfl_r4_fwd_avx2)
 VFFT_ZT_DECL(radix8_z_stfnl_r4_fwd_avx2)
 VFFT_ZT_DECL(radix4_z_stfnl_r4_fwd_avx2)
+VFFT_ZT_DECL(radix8_z_s0t_r8_fwd_avx2)   /* r0 = 8 INGEST GEOMETRY (2026-09-07,
+                                          * the sub-2048 campaign): 8 sections
+                                          * of N/8, the radix-8 DIF ingest as
+                                          * two radix-4 butterflies + the r4
+                                          * turn lattice twice per half; the
+                                          * terminator runs PER HALF (sections
+                                          * 4h..4h+3 -> bins 4h..4h+3 of every
+                                          * 8-bin column group, z pitch 8);
+                                          * mids unchanged (Gp = G[s]/8, the
+                                          * +4h lane term in the tables). One
+                                          * pass fewer than 4.x.x at the same
+                                          * N; a RACED chain axis, never a
+                                          * default. Fwd + bwd, both orders,
+                                          * both terminator forms. */
+VFFT_ZT_DECL(radix8_z_s0t_r8_bwd_avx2)
+VFFT_ZT_DECL(radix8_z_stf_r8_fwd_avx2)   VFFT_ZT_DECL(radix4_z_stf_r8_fwd_avx2)
+VFFT_ZT_DECL(radix8_z_stf_r8_bwd_avx2)   VFFT_ZT_DECL(radix4_z_stf_r8_bwd_avx2)
+VFFT_ZT_DECL(radix8_z_stfn_r8_fwd_avx2)  VFFT_ZT_DECL(radix4_z_stfn_r8_fwd_avx2)
+VFFT_ZT_DECL(radix8_z_stfn_r8_bwd_avx2)  VFFT_ZT_DECL(radix4_z_stfn_r8_bwd_avx2)
+VFFT_ZT_DECL(radix8_z_stfl_r8_fwd_avx2)  VFFT_ZT_DECL(radix4_z_stfl_r8_fwd_avx2)
+VFFT_ZT_DECL(radix8_z_stfnl_r8_fwd_avx2) VFFT_ZT_DECL(radix4_z_stfnl_r8_fwd_avx2)
 VFFT_ZT_DECL(radix8_z_dts_r4_fwd_avx2)  /* DIT-FORWARD boundary kinds
                                          * (dit_cascade_spec.md): conj of
                                          * stfb/stfbn/s0tb — bwd DATAFLOW,
@@ -157,6 +178,13 @@ static inline _vfft_zt_msg_fn _vfft_zt_stf8_fwd_pick(int lanes_u, int t2q)
 
 typedef struct {
     int N, nf;
+    int r0;                            /* INGEST radix = chain[0] in {4, 8}: the
+                                        * plane's section count (SEC = N/r0
+                                        * complex). 4 = the original ZTURN-S
+                                        * geometry (every tiled / MT / DIT /
+                                        * unordered-lane path); 8 = the two-
+                                        * quartet geometry: untiled, one thread,
+                                        * ordered lanes, terminator per half. */
     int chain[VFFT_ZSPLIT_MAX_NF];
     long D[VFFT_ZSPLIT_MAX_NF], G[VFFT_ZSPLIT_MAX_NF];
     /* mid kernels resolved ONCE at create: chain[] is plan-invariant, so
@@ -283,6 +311,7 @@ static inline void vfft_zturn2_destroy(vfft_zturn2_plan_t *p)
  * it instead of assuming it. Returns 1 = periodic (reset legal). */
 static inline int _vfft_zt_tw_periodic(const vfft_zturn2_plan_t *p)
 {
+    if (p->r0 != 4) return 0;   /* r0 = 8: the two quartets' tables differ (+4h) */
     for (int s = 1; s <= p->nf - 2; s++) {
         const size_t rec = (size_t)(p->chain[s] - 1) * 8 * 8; /* bytes/group */
         const long Gp = p->G[s] / 4;
@@ -325,6 +354,7 @@ static inline int _vfft_zt_tile_legal_w(const vfft_zturn2_plan_t *p, int tiled,
 {
     const int nf = p->nf;
     if (!tiled) return 1;                       /* untiled is always legal   */
+    if (p->r0 != 4) return 0;                   /* tiling is the r0 = 4 geometry */
     if (tiled == 2) {                           /* A1 control: section split */
         for (int s = 1; s <= nf - 2; s++)
             if (p->G[s] % 4) return 0;
@@ -429,7 +459,7 @@ static inline int vfft_zturn2_set_natord(vfft_zturn2_plan_t *p, int on)
         return (p->tzl && p->tzl_nat) ? vfft_zturn2_set_tforms(p, p->tform, p->ntform) : 1;
     }
     const long Rt = p->chain[p->nf - 1];
-    const long M = (long)p->N / (4 * Rt);
+    const long M = (long)p->N / (p->r0 * Rt);   /* r0 = 8: per half; both halves share it */
     size_t *tf = (size_t *)malloc(sizeof(size_t) * (size_t)M);
     size_t *tb = (size_t *)malloc(sizeof(size_t) * (size_t)M);
     if (!tf || !tb) { free(tf); free(tb); return 0; }
@@ -479,16 +509,19 @@ static inline int vfft_zturn2_set_tforms(vfft_zturn2_plan_t *p, int tf, int ntf)
          * cyc/pt). */
         const double TAU = 2.0 * M_PI;
         const long N = p->N, Rt = p->chain[p->nf - 1], K2 = N / (4 * Rt);
+        const long K2h = (p->r0 == 8) ? K2 / 2 : K2;   /* r0 = 8: per half at h*K2h */
         const int nat = (p->natord && p->ntf) ? 1 : 0;
         double *tl = (double *)VFFT_ZS_ALLOC((size_t)K2 * (size_t)(Rt - 1) * 8 * sizeof(double));
         if (!tl) return 0;
         for (long t = 0; t < K2; t++) {
-            const long k2 = nat ? (long)p->ntf[t] : t;
+            const int h = (int)(t / K2h);
+            const long tt = t - (long)h * K2h;
+            const long k2 = nat ? (long)p->ntf[tt] : tt;
             const long br = _vfft_zs_brev(k2, p->nf - 2, p->chain + 1);
             for (int l = 1; l < Rt; l++) {
                 double *r = tl + ((size_t)t * (size_t)(Rt - 1) + (size_t)(l - 1)) * 8;
                 for (int j = 0; j < 4; j++) {
-                    const double a = -TAU * (double)((j + 4 * br) % N) / (double)N;
+                    const double a = -TAU * (double)(((j + 4 * h) + p->r0 * br) % N) / (double)N;
                     r[j] = cos((double)l * a);
                     r[4 + j] = sin((double)l * a);
                 }
@@ -549,7 +582,7 @@ static inline int vfft_zturn2_tile_candidates(const vfft_zturn2_plan_t *p,
 {
     int n = 0;
     if (dropped) *dropped = 0;
-    if (!p || p->nf < 3) return 0;
+    if (!p || p->nf < 3 || p->r0 != 4) return 0;   /* no tiled axis at r0 = 8 */
     const long SEC = (long)p->N / 4;
 
     for (long w = 1; w <= SEC; w++) {
@@ -720,7 +753,10 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain_u(int N,
                                                              int lanes_u)
 {
     if (nf < 3 || nf > VFFT_ZSPLIT_MAX_NF) return NULL;
-    if (chain[0] != 4) return NULL;    /* ZTURN-S fence: 4-section geometry */
+    /* ZTURN-S fence: the ingest radix r0 in {4, 8} = 4 or 8 sections of N/r0.
+     * r0 = 8 has no unordered-lane twins (lanes_u is the r0 = 4 race). */
+    if (chain[0] != 4 && chain[0] != 8) return NULL;
+    if (chain[0] == 8 && lanes_u) return NULL;
     /* terminator in {8, 4}: last==8 = the original ZTURN-S map (stf/stf2);
      * last==4 = the RADIX-4 terminator (radix4_z_stf_r4_*, r4term_sim
      * derivation E6-E15, all gates passed at 2048/4096/8192/16384) — what
@@ -736,11 +772,12 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain_u(int N,
     /* terminator integrality: count = N/r_t must be a whole number of
      * 4-column groups (r8: (N/8)%4 — the original fence; r4: (N/4)%4,
      * automatic for N >= 64 but asserted, spec §4(vi)). */
-    if (prod != N || (N / chain[nf - 1]) % 4) return NULL;
+    if (prod != N || (N / chain[nf - 1]) % (chain[0] == 8 ? 8 : 4)) return NULL;
+    /* (r0 = 8: the terminator runs per half over N/(2*Rt) columns) */
 
     vfft_zturn2_plan_t *p = (vfft_zturn2_plan_t *)calloc(1, sizeof(*p));
     if (!p) return NULL;
-    p->N = N; p->nf = nf; p->lanes_u = !!lanes_u;
+    p->N = N; p->nf = nf; p->lanes_u = !!lanes_u; p->r0 = chain[0];
     for (int s = 0; s < nf; s++) p->chain[s] = chain[s];
     for (int s = 0; s < nf; s++) {
         p->msg_f[s] = _vfft_zt_msg_pick(chain[s], 1);
@@ -757,20 +794,24 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain_u(int N,
         for (int s = 1; s <= nf - 2; s++) {
             const int R = chain[s], Rm1 = R - 1;
             const long M = (long)N / p->D[s];          /* = G_{s+1}       */
-            const long Gp = p->G[s] / 4;               /* section period  */
+            const long Gp = p->G[s] / p->r0;           /* section period  */
             p->twz[s]  = (double *)VFFT_ZS_ALLOC((size_t)p->G[s] * Rm1 * 8 * 8);
             p->twzb[s] = (double *)VFFT_ZS_ALLOC((size_t)p->G[s] * Rm1 * 8 * 8);
             if (!p->twz[s] || !p->twzb[s]) goto fail;
             for (long g = 0; g < p->G[s]; g++) {
-                const long g2 = g % Gp;                /* x4 section tiling */
+                const long g2 = g % Gp;                /* x r0 section tiling */
                 const long br = _vfft_zs_brev(g2, s - 1, chain + 1);
+                /* r0 = 8: the section's quartet h = (g/Gp)>>2 carries the
+                 * digit's high bit — lane j of quartet h is column index
+                 * (j + 4h) of the 8-wide group; r0 = 4: h = 0 always */
+                const int hq = (p->r0 == 8) ? (int)((g / Gp) >> 2) : 0;
                 for (int l = 1; l < R; l++)
                     for (int j = 0; j < 4; j++) {
                         const int ju = p->lanes_u ? _VFFT_ZT_LANE_P[j] : j;
                         const double a = -TAU
-                            * (double)(((long)l * (j + 4 * br)) % M) / (double)M;
+                            * (double)(((long)l * ((j + 4 * hq) + p->r0 * br)) % M) / (double)M;
                         const double au = -TAU
-                            * (double)(((long)l * (ju + 4 * br)) % M) / (double)M;
+                            * (double)(((long)l * ((ju + 4 * hq) + p->r0 * br)) % M) / (double)M;
                         double *f = p->twz[s]  + ((size_t)g * Rm1 + (l - 1)) * 8;
                         double *b = p->twzb[s] + ((size_t)g * Rm1 + (l - 1)) * 8;
                         f[j] = cos(au); f[4 + j] = sin(au);   /* fwd: lane j = digit P[j] */
@@ -784,20 +825,26 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain_u(int N,
              * per-(k',lane) angle formula is radix-INDEPENDENT: the group
              * index k' always spans the MIDDLE digits (chain[1..nf-2]). */
             const long K2 = (long)N / (4 * chain[nf - 1]);
+            /* r0 = 8: the SAME total, laid out per half — K2h = N/(8*Rt)
+             * groups for half h at h*K2h, lane j of half h = column
+             * (j + 4h) of the 8-wide group, angle ((j+4h) + 8*rho(k')) */
+            const long K2h = (p->r0 == 8) ? K2 / 2 : K2;
             p->tzq   = (double *)VFFT_ZS_ALLOC((size_t)K2 * 8 * 8);
             p->tzqb  = (double *)VFFT_ZS_ALLOC((size_t)K2 * 8 * 8);
             p->plane = (double *)VFFT_ZS_ALLOC((size_t)2 * N * 8);
             if (!p->tzq || !p->tzqb || !p->plane) goto fail;
-            for (long k2 = 0; k2 < K2; k2++) {
+            for (long t = 0; t < K2; t++) {
+                const int h = (int)(t / K2h);
+                const long k2 = t - (long)h * K2h;
                 const long br = _vfft_zs_brev(k2, nf - 2, chain + 1);
                 for (int j = 0; j < 4; j++) {
                     const int ju = p->lanes_u ? _VFFT_ZT_LANE_P[j] : j;
                     const double a = -TAU
-                        * (double)((j + 4 * br) % (long)N) / (double)N;
+                        * (double)(((j + 4 * h) + p->r0 * br) % (long)N) / (double)N;
                     const double au = -TAU
-                        * (double)((ju + 4 * br) % (long)N) / (double)N;
-                    p->tzq[8 * k2 + j] = cos(au); p->tzq[8 * k2 + 4 + j] = sin(au);
-                    p->tzqb[8 * k2 + j] = cos(a); p->tzqb[8 * k2 + 4 + j] = -sin(a);
+                        * (double)(((ju + 4 * h) + p->r0 * br) % (long)N) / (double)N;
+                    p->tzq[8 * t + j] = cos(au); p->tzq[8 * t + 4 + j] = sin(au);
+                    p->tzqb[8 * t + j] = cos(a); p->tzqb[8 * t + 4 + j] = -sin(a);
                 }
             }
         }
@@ -809,7 +856,7 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain_u(int N,
      * t2q), and _calibrate_zturn_t2q (vfft.c) refuses to race a last==4
      * plan; the planner races CHAINS instead (dp_planner_il.h emits only
      * t2q=0 candidates for last==4). */
-    if (p->chain[nf - 1] == 4) p->t2q = 0;
+    if (p->chain[nf - 1] == 4 || p->r0 == 8) p->t2q = 0;   /* no stf2 twin at r0 = 8 either */
     /* TILING axis, LAST (it validates against the finished D/G/twz tables and
      * must never be able to fail this create — an illegal request degrades to
      * the untiled default, loudly; see _vfft_zt_apply_env). */
@@ -956,6 +1003,43 @@ static inline void _vfft_zt_mids_a1(const vfft_zturn2_plan_t *p, int fwd)
     }
 }
 
+/* r0 = 8 TERMINATOR, per half h: sections 4h..4h+3 (plane + h*N doubles)
+ * -> bins 4h..4h+3 of every 8-bin column group (zout + 8h, the kernels' z
+ * pitch 8); N/(2*Rt) columns per half; tables per half at h*K2h (K2h =
+ * N/(8*Rt) groups): tzq/tzqb 8 doubles per group, tzl (Rt-1)*8; the rho
+ * tables (ntf / ntb) span the middle digits only, so ONE table serves both
+ * halves. Same kind matrix as r0 = 4 (order x form), no stf2 / unordered
+ * twins. In place: fwd reads only the plane; bwd reads zin half by half
+ * before the mids and s0tb8 is the sole writer of zout. */
+static inline void _vfft_zt_term8_fwd(const vfft_zturn2_plan_t *p, double *zout)
+{
+    const long N = p->N, Rt = p->chain[p->nf - 1], K2h = N / (8 * Rt);
+    const int loaded = ((p->natord ? p->ntform : p->tform) && p->tzl) ? 1 : 0;
+    const _vfft_zt_msg_fn f = p->natord
+        ? (loaded ? (Rt == 4 ? radix4_z_stfnl_r8_fwd_avx2 : radix8_z_stfnl_r8_fwd_avx2)
+                  : (Rt == 4 ? radix4_z_stfn_r8_fwd_avx2 : radix8_z_stfn_r8_fwd_avx2))
+        : (loaded ? (Rt == 4 ? radix4_z_stfl_r8_fwd_avx2 : radix8_z_stfl_r8_fwd_avx2)
+                  : (Rt == 4 ? radix4_z_stf_r8_fwd_avx2 : radix8_z_stf_r8_fwd_avx2));
+    for (int h = 0; h < 2; h++)
+        f(p->plane + (size_t)h * (size_t)N, 0, zout + 8 * h, 0,
+          loaded ? p->tzl + (size_t)h * (size_t)K2h * (size_t)(Rt - 1) * 8
+                 : p->tzq + (size_t)h * (size_t)K2h * 8,
+          p->natord ? (const double *)p->ntf : 0,
+          0, 0, (unsigned long long)(N / Rt), 0, (unsigned long long)(N / (2 * Rt)));
+}
+static inline void _vfft_zt_term8_bwd(const vfft_zturn2_plan_t *p, const double *zin)
+{
+    const long N = p->N, Rt = p->chain[p->nf - 1], K2h = N / (8 * Rt);
+    const _vfft_zt_msg_fn f = p->natord
+        ? (Rt == 4 ? radix4_z_stfn_r8_bwd_avx2 : radix8_z_stfn_r8_bwd_avx2)
+        : (Rt == 4 ? radix4_z_stf_r8_bwd_avx2 : radix8_z_stf_r8_bwd_avx2);
+    for (int h = 0; h < 2; h++)
+        f(zin + 8 * h, 0, p->plane + (size_t)h * (size_t)N, 0,
+          p->tzqb + (size_t)h * (size_t)K2h * 8,
+          p->natord ? (const double *)p->ntb : 0,
+          0, 0, (unsigned long long)(N / Rt), 0, (unsigned long long)(N / (2 * Rt)));
+}
+
 /* natural z in -> ZTURN-S scrambled comb out. zin == zout OK (the
  * terminator is the only writer of zout and reads only the plane).
  * Kernel arg tuples = the Phase-3 GATE0-proven calls (zturn_proto_gate.c
@@ -964,8 +1048,12 @@ static inline void _vfft_zt_mids_a1(const vfft_zturn2_plan_t *p, int fwd)
 static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
                                            const double *zin, double *zout)
 {
-    _vfft_zt_s0t_fwd_pick(p->lanes_u)(zin, 0, p->plane, 0, 0, 0,
-                             (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
+    if (p->r0 == 8)
+        radix8_z_s0t_r8_fwd_avx2(zin, 0, p->plane, 0, 0, 0,
+                                 (size_t)p->N / 8, 0, 0, 0, (size_t)p->N / 8);
+    else
+        _vfft_zt_s0t_fwd_pick(p->lanes_u)(zin, 0, p->plane, 0, 0, 0,
+                                 (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
     /* the ingest is NEVER fused (spec §1.6): mid 1's group span is a WHOLE
      * section (SPAN(1) = D[0] = SEC for every legal chain), so mid 1 cannot
      * start on section q until the ingest has swept its entire k range. MKL's
@@ -1031,6 +1119,10 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
             return;                             /* terminator already done   */
         }
     }
+    if (p->r0 == 8) {
+        _vfft_zt_term8_fwd(p, zout);            /* per half; untiled only    */
+        return;
+    }
     if ((p->natord ? p->ntform : p->tform) && p->tzl)
         /* the LOADED-STREAM twins: natord -> stfnl (rho walk via ntf, the
          * stream in loop order = tzl built with tzl_nat), else stfl; t2q
@@ -1072,7 +1164,9 @@ static inline void vfft_zturn2_execute_bwd(const vfft_zturn2_plan_t *p,
     const long SECD = (long)p->N / 2, SEC = (long)p->N / 4;
     const int fused = (p->tiled == 1 && p->tfuse);
     if (!fused) {
-        if (p->natord)
+        if (p->r0 == 8)
+            _vfft_zt_term8_bwd(p, zin);         /* per half; untiled only    */
+        else if (p->natord)
             /* NATURAL bwd terminator: consumes a NATURAL spectrum — reads
              * zin in rho order via ntb (NOT ntf: distinct on mixed-radix
              * chains, the B2 gate's own first failure), conj-w^1 and plane
@@ -1154,8 +1248,12 @@ static inline void vfft_zturn2_execute_bwd(const vfft_zturn2_plan_t *p,
     /* s0tb is ALWAYS the untiled last stage — §2.5: it is the only writer of
      * zout, so zin == zout stays legal. 🔴 If anyone ever fuses s0tb into the
      * tile loop, in-place breaks. */
-    radix4_z_s0t_r4_bwd_avx2(p->plane, 0, zout, 0, 0, 0,
-                             (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
+    if (p->r0 == 8)
+        radix8_z_s0t_r8_bwd_avx2(p->plane, 0, zout, 0, 0, 0,
+                                 (size_t)p->N / 8, 0, 0, 0, (size_t)p->N / 8);
+    else
+        radix4_z_s0t_r4_bwd_avx2(p->plane, 0, zout, 0, 0, 0,
+                                 (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
 }
 
 /* ── DIT-FORWARD execute (Phase C, dit_cascade_spec.md §2): the conj∘B∘conj
@@ -1175,6 +1273,11 @@ static inline void vfft_zturn2_execute_dit_fwd(const vfft_zturn2_plan_t *p,
                                                const double *zin, double *zout)
 {
     const size_t OLt = (size_t)p->N / (size_t)p->chain[p->nf - 1];
+    if (p->r0 != 4) {   /* no DIT kinds at r0 = 8: refuse loudly, write nothing */
+        fprintf(stderr, "[zturn] execute_dit_fwd: N=%d chain[0]=%d — the DIT "
+                        "boundary kinds are the r0 = 4 geometry only\n", p->N, p->r0);
+        return;
+    }
     if (p->natord)
         ((p->chain[p->nf - 1] == 4) ? radix4_z_dtsn_r4_fwd_avx2
                                     : radix8_z_dtsn_r4_fwd_avx2)(
@@ -1212,6 +1315,11 @@ static inline void vfft_zturn2_execute_dit2_fwd(const vfft_zturn2_plan_t *p,
                                                 double *zout)
 {
     const size_t OLt = (size_t)p->N / (size_t)p->chain[p->nf - 1];
+    if (p->r0 != 4) {   /* no DIT kinds at r0 = 8: refuse loudly, write nothing */
+        fprintf(stderr, "[zturn] execute_dit2_fwd: N=%d chain[0]=%d — the DIT "
+                        "boundary kinds are the r0 = 4 geometry only\n", p->N, p->r0);
+        return;
+    }
     ((p->chain[p->nf - 1] == 4) ? radix4_z_dtso_r4_fwd_avx2
                                 : radix8_z_dtso_r4_fwd_avx2)(
         zin, 0, p->plane, 0, p->tzq, (const double *)p->ntf,

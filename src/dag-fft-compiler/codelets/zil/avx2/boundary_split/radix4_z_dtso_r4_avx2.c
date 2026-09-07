@@ -29,6 +29,7 @@ void radix4_z_dtso_r4_fwd_avx2(
     for (size_t k = 0; k + 4 <= count; k += 4) {
         /* natural-order: in-side block index via the rho table (tw_im repurposed; natterm_spec.md) */
         const size_t kn = 4*((const size_t *)tw_im)[(size_t)k >> 2];
+        double *zon = zout + 2*kn;
         /* Z load edge (DEINT) */
         const __m256d _zl_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d _zh_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
@@ -84,13 +85,13 @@ void radix4_z_dtso_r4_fwd_avx2(
         const __m256d t45 = _mm256_fnmadd_pd(t44, t43, _mm256_mul_pd(t41, t42));
         const __m256d t46 = _mm256_fmadd_pd(t41, t43, _mm256_mul_pd(t44, t42));
         /* ZTURN-S direct record store edge (no TR4) */
-        _mm256_storeu_pd(&zout[2*(size_t)kn + 0], t14);
-        _mm256_storeu_pd(&zout[2*(size_t)kn + 4], t15);
-        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + kn) + 0], t31);
-        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + kn) + 4], t32);
-        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + kn) + 0], t39);
-        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + kn) + 4], t40);
-        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + kn) + 0], t45);
-        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + kn) + 4], t46);
+        _mm256_storeu_pd(&zon[0], t14);
+        _mm256_storeu_pd(&zon[4], t15);
+        _mm256_storeu_pd(&zon[2*((size_t)2*OLs) + 0], t31);
+        _mm256_storeu_pd(&zon[2*((size_t)2*OLs) + 4], t32);
+        _mm256_storeu_pd(&zon[2*((size_t)1*OLs) + 0], t39);
+        _mm256_storeu_pd(&zon[2*((size_t)1*OLs) + 4], t40);
+        _mm256_storeu_pd(&zon[2*((size_t)3*OLs) + 0], t45);
+        _mm256_storeu_pd(&zon[2*((size_t)3*OLs) + 4], t46);
     }
 }

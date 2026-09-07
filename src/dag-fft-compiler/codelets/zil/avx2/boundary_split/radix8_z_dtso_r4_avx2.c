@@ -29,6 +29,7 @@ void radix8_z_dtso_r4_fwd_avx2(
     for (size_t k = 0; k + 4 <= count; k += 4) {
         /* natural-order: in-side block index via the rho table (tw_im repurposed; natterm_spec.md) */
         const size_t kn = 4*((const size_t *)tw_im)[(size_t)k >> 2];
+        double *zon = zout + 4*kn;
         /* Z load edge (DEINT) */
         const __m256d _zl_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d _zh_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
@@ -161,21 +162,21 @@ void radix8_z_dtso_r4_fwd_avx2(
         const __m256d t145 = _mm256_fnmadd_pd(t144, t127, _mm256_mul_pd(t143, t126));
         const __m256d t146 = _mm256_fmadd_pd(t143, t127, _mm256_mul_pd(t144, t126));
         /* ZTURN-S direct record store edge (no TR4) */
-        _mm256_storeu_pd(&zout[4*(size_t)kn + 0], t30);
-        _mm256_storeu_pd(&zout[4*(size_t)kn + 4], t31);
-        _mm256_storeu_pd(&zout[4*((size_t)2*OLs + kn) + 0], t133);
-        _mm256_storeu_pd(&zout[4*((size_t)2*OLs + kn) + 4], t134);
-        _mm256_storeu_pd(&zout[4*((size_t)1*OLs + kn) + 0], t84);
-        _mm256_storeu_pd(&zout[4*((size_t)1*OLs + kn) + 4], t85);
-        _mm256_storeu_pd(&zout[4*((size_t)3*OLs + kn) + 0], t137);
-        _mm256_storeu_pd(&zout[4*((size_t)3*OLs + kn) + 4], t138);
-        _mm256_storeu_pd(&zout[4*(size_t)kn + 8], t109);
-        _mm256_storeu_pd(&zout[4*(size_t)kn + 12], t110);
-        _mm256_storeu_pd(&zout[4*((size_t)2*OLs + kn) + 8], t141);
-        _mm256_storeu_pd(&zout[4*((size_t)2*OLs + kn) + 12], t142);
-        _mm256_storeu_pd(&zout[4*((size_t)1*OLs + kn) + 8], t123);
-        _mm256_storeu_pd(&zout[4*((size_t)1*OLs + kn) + 12], t124);
-        _mm256_storeu_pd(&zout[4*((size_t)3*OLs + kn) + 8], t145);
-        _mm256_storeu_pd(&zout[4*((size_t)3*OLs + kn) + 12], t146);
+        _mm256_storeu_pd(&zon[0], t30);
+        _mm256_storeu_pd(&zon[4], t31);
+        _mm256_storeu_pd(&zon[4*((size_t)2*OLs) + 0], t133);
+        _mm256_storeu_pd(&zon[4*((size_t)2*OLs) + 4], t134);
+        _mm256_storeu_pd(&zon[4*((size_t)1*OLs) + 0], t84);
+        _mm256_storeu_pd(&zon[4*((size_t)1*OLs) + 4], t85);
+        _mm256_storeu_pd(&zon[4*((size_t)3*OLs) + 0], t137);
+        _mm256_storeu_pd(&zon[4*((size_t)3*OLs) + 4], t138);
+        _mm256_storeu_pd(&zon[8], t109);
+        _mm256_storeu_pd(&zon[12], t110);
+        _mm256_storeu_pd(&zon[4*((size_t)2*OLs) + 8], t141);
+        _mm256_storeu_pd(&zon[4*((size_t)2*OLs) + 12], t142);
+        _mm256_storeu_pd(&zon[4*((size_t)1*OLs) + 8], t123);
+        _mm256_storeu_pd(&zon[4*((size_t)1*OLs) + 12], t124);
+        _mm256_storeu_pd(&zon[4*((size_t)3*OLs) + 8], t145);
+        _mm256_storeu_pd(&zon[4*((size_t)3*OLs) + 12], t146);
     }
 }

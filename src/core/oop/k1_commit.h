@@ -816,6 +816,12 @@ static void _bank_natoop_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     nn.nat_ns = ns;
     nn.nf = 1;
     nn.factors[0] = N;
+    /* the recipe row that SERVED: below 2048 the cascade recipe is the
+     * role=comp row (the sub-2048 chain race banks comp, never a verdict),
+     * so the signpost must name it — a problem-space ref dangles there,
+     * ref_ok reports MISS and every second natural OOP create re-raced
+     * (vfft_ilp_front_gate, 2026-09-07: the consume handle flipped verdicts) */
+    nn.ref_comp = _zcasc_ref_is_comp(W, N, mode);
     /* wave-4 flip: the dummy-chain shape becomes the ref= SIGNPOST record
      * in the store (the family codec detects nf==1 && factors[0]==N). */
     vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/1, _vw2_lay_of(cfg));
@@ -1234,9 +1240,21 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
     }
     {
         double zns = 0.0;
-        if (zforce != 1)
+        if (zforce != 1 && N < 2048)
+        {
+            /* SUB-2048 (the natural tier): the CHAIN is the raced axis —
+             * every ordered {4,8} chain, both ingest radices, the natural
+             * forward timed per chain in one race; the winner arrives with
+             * its forms calibrated (cascade_calibrate.h). No t2q race: no
+             * stf2 twin at last==4 or r0==8, and the natural class never
+             * consults it. */
+            zt_pending = _calibrate_zturn_chain_sub2048(N, cfg->rigor, ip, &zns);
+            if (zt_pending && zns > 0.0)
+                zroute_pending = 1;
+        }
+        else if (zforce != 1)
             zt_pending = vfft_zturn2_create(N);
-        if (zt_pending)
+        if (zt_pending && N >= 2048)
         {
             zns = _calibrate_zturn_t2q(zt_pending, cfg->rigor, ip);
             if (zns > 0.0)
@@ -1260,11 +1278,10 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
             ne.kind = VFFT_OOP_KIND_ZSPLIT;
             ne.zs_t2q = zs_pending ? zs_pending->t2q : 0;
             /* cc_chain = the WINNING route's chain (the reader contract).
-             * At this create-time race both routes still run the same
-             * default chain, so the encode is byte-identical either way
-             * today — the chain-searched winners come from the offline
-             * planner (dp_planner_il.h route axis / the calibrate_zchain
-             * driver), not this race. */
+             * At >= 2048 both routes run the same default chain here (the
+             * chain-searched winners come from the offline planner,
+             * dp_planner_il.h); below 2048 it is the chain race's winner
+             * (r0 = 4 or 8), replayed through vfft_zturn2_create_chain. */
             if (zroute_pending && zt_pending)
                 ne.cc_chain = vfft_k1_cc_chain_encode(zt_pending->chain,
                                                       zt_pending->nf);

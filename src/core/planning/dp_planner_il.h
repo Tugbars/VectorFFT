@@ -70,8 +70,9 @@
  *
  * SCRAMBLED candidates now carry an ENGINE dimension, `zroute`: every legal
  * chain is benched under the LEGACY zsplit builder AND — when it clears the
- * ZTURN-S fence (chain[0] == 4, last in {4, 8} — last==4 = the radix-4
- * terminator, t2q pinned 0 — D checks; vfft_zturn2_create_chain
+ * ZTURN-S fence (chain[0] in {4, 8} — 8 = the two-quartet ingest geometry,
+ * 2026-09-07 — last in {4, 8} — last==4 = the radix-4 terminator, t2q
+ * pinned 0 (also at chain[0] == 8) — D checks; vfft_zturn2_create_chain
  * validates, NULL == skipped, never force-fit) — under the ZTURN builder too.
  * The chain is re-searched PER ROUTE, not transplanted: ZTURN's sectioned
  * layout moves per-stage cost, so a chain that lost under legacy can win under
@@ -1690,8 +1691,10 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * (legacy zsplit / ZTURN-S), each validated by ITS OWN route's create —
      * the validator is the law, twice: vfft_zsplit_create for the legacy
      * space (chain[0] in {4,8}) and vfft_zturn2_create_chain for the fenced
-     * ZTURN-S subset (chain[0] == 4; a fence-invalid chain simply yields no
-     * zturn candidates — skipped, never force-fit). t2q stays a SEARCHED
+     * ZTURN-S subset (chain[0] in {4,8} since 2026-09-07 — the r0 = 8
+     * two-quartet ingest geometry, one pass fewer, is a raced chain like any
+     * other; a fence-invalid chain simply yields no zturn candidates —
+     * skipped, never force-fit). t2q stays a SEARCHED
      * axis on BOTH engines — sterm/sterm2 and stf/stf2 are placement-order-
      * sensitive twins that must be measured on the installed binary, never
      * hand-set.

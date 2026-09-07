@@ -802,12 +802,12 @@ let emit_codelet
        terminator taps ONE record/section, so instance B's +1-record-group column offset \
        has no analog; zturn.h forces t2q=0 for last==4 chains and the planner races \
        chains instead)";
-  if (k.base = "s0tu" || k.base = "dtt" || (k.base = "s0t" && k.bwd)) && radix <> 4
+  if (k.base = "s0tu" || k.base = "dtt") && radix <> 4
   then
-    failwith "codelet_zsplit: s0tb/s0tu/dtt are radix-4 only (the r0=4 4-section geometry)";
-  if k.base = "s0t" && not k.bwd && radix <> 4 && radix <> 8
-  then failwith "codelet_zsplit: s0t is radix 4 (r0=4) or radix 8 (r0=8)";
-  if k.base = "s0t" && not k.bwd && (match r0 with Some r -> r <> radix | None -> true)
+    failwith "codelet_zsplit: s0tu/dtt are radix-4 only (the r0=4 4-section geometry)";
+  if k.base = "s0t" && radix <> 4 && radix <> 8
+  then failwith "codelet_zsplit: s0t/s0tb are radix 4 (r0=4) or radix 8 (r0=8)";
+  if k.base = "s0t" && (match r0 with Some r -> r <> radix | None -> true)
   then failwith "codelet_zsplit: the ingest radix IS r0 — pass --zp-r0 equal to the radix";
   let vw = isa.Isa.vec_width in
   if vw <> 4
@@ -1225,11 +1225,11 @@ let emit_codelet
         (plus : int)
     : string
     =
-    (* ivscale = 2: the r0 = 8 terminator's OUTPUT pitch — 8 bins per column
+    (* ivscale = 2: the r0 = 8 terminator's z pitch — 8 bins per column
        group (the two section quartets interleave in the output; +4h via the
-       zout pointer), so the column term is 2*k *)
+       zout / zin pointer), so the column term is 2*k *)
     let base =
-      if iv = "kn" && ivscale = 1
+      if iv = "kn"
       then (
         (* natural-order edge: the column term lives in the per-iteration
            base pointer zn = zin + 2*kn (declared with kn); only the
@@ -1255,7 +1255,7 @@ let emit_codelet
         | l, 0 -> Printf.sprintf "2*((size_t)%d*%s + %s)" l stride ivs
         | l, o -> Printf.sprintf "2*((size_t)%d*%s + %s + %d)" l stride ivs o)
     in
-    let buf_name = if iv = "kn" && ivscale = 1 then "zn" else buf_name in
+    let buf_name = if iv = "kn" then "zn" else buf_name in
     if base = "0"
     then Printf.sprintf "%s[%d]" buf_name plus
     else if plus = 0
@@ -1311,6 +1311,11 @@ let emit_codelet
     | s, o ->
       Printf.sprintf "%s[%d*(%s + %s + %d) + %d]" buf_name sc (sterm s) iv o off
   in
+  (* the z-side column pitch: the r0 = 8 TERMINATOR reads/writes 8 bins per
+     4-column group (the two section quartets interleave; +4h via the base
+     pointer) — leg_addr ivscale 2; the ingest (s0t/s0tb) keeps pitch 1 (its
+     z edge is the leg-strided natural signal, the same at every r0). *)
+  let zpitch = if r0 = Some 8 && k.base <> "s0t" then 2 else 1 in
   (* natural-order in-side index: `kn` (declared per iteration, nat_in only). *)
   let ivin = if k.nat_in then "kn" else "k" in
   (* nat_out (dtso): the OUT-side edge walks kn instead. *)
@@ -1359,7 +1364,11 @@ let emit_codelet
           Buffer.add_string
             buf
             (Printf.sprintf "        const double *zn = zin + %d*kn;\n" (radix / 2))
-        | E_z _ -> Buffer.add_string buf "        const double *zn = zin + 2*kn;\n"
+        | E_z _ ->
+          (* the terminator's z pitch at r0 = 8 is 8 bins per group (2*(2*kn)) *)
+          Buffer.add_string
+            buf
+            (Printf.sprintf "        const double *zn = zin + %d*kn;\n" (2 * zpitch))
         | _ -> ());
       if k.nat_out
       then (
@@ -1422,11 +1431,11 @@ let emit_codelet
               (Isa.const_decl
                  isa
                  (Printf.sprintf "_zl_%d" sl)
-                 (Isa.loadu_pd isa (leg_addr ~iv:ivin "zin" leg s colo 0)))
+                 (Isa.loadu_pd isa (leg_addr ~iv:ivin ~ivscale:zpitch "zin" leg s colo 0)))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "_zh_%d" sl)
-                 (Isa.loadu_pd isa (leg_addr ~iv:ivin "zin" leg s colo vw)))
+                 (Isa.loadu_pd isa (leg_addr ~iv:ivin ~ivscale:zpitch "zin" leg s colo vw)))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_re_%d" sl)
@@ -1520,32 +1529,43 @@ let emit_codelet
              order) + 4x4 lane transpose = the un-turn. ── *)
        load_hdr
          "        /* ZTURN-S section-record load edge + 4x4 lane transpose (un-turn) */\n";
-       if ninst <> 1 || radix <> vw
-       then failwith "codelet_zsplit: E_sect_tr4 assumes radix = VW = 4, ninst = 1";
+       if ninst <> 1 || vw <> 4 || (radix <> 4 && radix <> 8)
+       then failwith "codelet_zsplit: E_sect_tr4 assumes VW = 4, radix in {4, 8}, ninst = 1";
+       if radix = 8 && r0 <> Some 8
+       then failwith "codelet_zsplit: E_sect_tr4 at radix 8 is the r0 = 8 geometry (--zp-r0 8)";
+       (* r0 = 8 (s0tb at radix 8): the 8 digits of a column live in TWO
+          section quartets — digit d in section 4*(d/4) + SEC[position] at
+          lane d mod 4 (the s0t8 turn) — so the granule loads 8 records
+          (quartet qd = sections 4qd + {0,2,1,3}, N/8 complex apart = Ls)
+          and un-turns each quartet with its own 4x4 transpose; legs
+          4qd..4qd+3 = the quartet's transposed rows. *)
        let sec = [| 0; 2; 1; 3 |] in
-       for m = 0 to 3 do
+       for m = 0 to radix - 1 do
+         let sm = (4 * (m / 4)) + sec.(m mod 4) in
          load_chunk
            (Printf.sprintf
               "        %s\n        %s\n"
               (Isa.const_decl
                  isa
                  (Printf.sprintf "_sr_%d" m)
-                 (Isa.loadu_pd isa (leg_addr "zin" sec.(m) s 0 0)))
+                 (Isa.loadu_pd isa (leg_addr "zin" sm s 0 0)))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "_si_%d" m)
-                 (Isa.loadu_pd isa (leg_addr "zin" sec.(m) s 0 vw))))
+                 (Isa.loadu_pd isa (leg_addr "zin" sm s 0 vw))))
        done;
-       load_chunk
-         (tr4_str
-            ~qid:"lr0_0"
-            (Array.init 4 (Printf.sprintf "_sr_%d"))
-            (Array.init 4 (Printf.sprintf "lane_re_%d")));
-       load_chunk
-         (tr4_str
-            ~qid:"li0_0"
-            (Array.init 4 (Printf.sprintf "_si_%d"))
-            (Array.init 4 (Printf.sprintf "lane_im_%d"))));
+       for qd = 0 to (radix / 4) - 1 do
+         load_chunk
+           (tr4_str
+              ~qid:(Printf.sprintf "lr0_%d" qd)
+              (Array.init 4 (fun j -> Printf.sprintf "_sr_%d" ((4 * qd) + j)))
+              (Array.init 4 (fun j -> Printf.sprintf "lane_re_%d" ((4 * qd) + j))));
+         load_chunk
+           (tr4_str
+              ~qid:(Printf.sprintf "li0_%d" qd)
+              (Array.init 4 (fun j -> Printf.sprintf "_si_%d" ((4 * qd) + j)))
+              (Array.init 4 (fun j -> Printf.sprintf "lane_im_%d" ((4 * qd) + j))))
+       done);
     (* per-slot output tag arrays (all edge shapes consume pairs) — built
        BEFORE the body walk so sink_stores can interleave stores at defs *)
     let re_tag = Array.make nslots (-1)
@@ -1621,13 +1641,13 @@ let emit_codelet
                       else Printf.sprintf "%s(t%d, 0xD8)" p44 im_tag.(sl)))
                   (Isa.storeu_pd
                      isa
-                     (leg_addr ~ivscale:(if r0 = Some 8 then 2 else 1) "zout" leg s colo 0)
+                     (leg_addr ~ivscale:zpitch "zout" leg s colo 0)
                      (if vw = 1
                       then Printf.sprintf "_pr_%d" sl
                       else Printf.sprintf "%s(_pr_%d, _qi_%d)" unlo sl sl))
                   (Isa.storeu_pd
                      isa
-                     (leg_addr ~ivscale:(if r0 = Some 8 then 2 else 1) "zout" leg s colo vw)
+                     (leg_addr ~ivscale:zpitch "zout" leg s colo vw)
                      (if vw = 1
                       then Printf.sprintf "_qi_%d" sl
                       else Printf.sprintf "%s(_pr_%d, _qi_%d)" unhi sl sl))

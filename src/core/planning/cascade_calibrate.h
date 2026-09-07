@@ -210,9 +210,10 @@ static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor,
      * reachable if the default chain ever ends in 4 — today the defaults
      * (vfft_zsplit_default_chain) all end in 8; last==4 winners come from
      * the offline planner (dp_planner_il.h), which banks t2q=0. */
-    if (zt->chain[zt->nf - 1] == 4)
+    if (zt->chain[zt->nf - 1] == 4 || zt->r0 == 8)
     {
-        /* one form, so no race — but the candidate must still carry a
+        /* (r0 = 8 chains have no stf2 twin either: create pins t2q = 0)
+         * one form, so no race — but the candidate must still carry a
          * time: 0.0 read as "no verdict" destroyed every last==4 seed
          * before it could race the cell (the sub-2048 natural seeds all
          * end in 4). One batch >= 1 ms, its median-of-one. */
@@ -414,6 +415,155 @@ static void _calibrate_zturn_tform(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor, i
     zt->tfuse = tfuse0;                     /* set_natord(1) clears it; restore the scrambled plan's */
     if (!zt->tform && !zt->ntform) (void)vfft_zturn2_set_tforms(zt, 0, 0);
     vfft_proto_aligned_free(zi); vfft_proto_aligned_free(zo); vfft_proto_aligned_free(zo2);
+}
+
+/* ═══════════ SUB-2048 CHAIN RACE (the natural tier, 2026-09-07) ═══════════
+ * Below 2048 the cascade serves NATURAL cells only and the dp planner does
+ * not enumerate there, so the CHAIN is raced at the create: every ordered
+ * {4,8} chain with product N (nf 3..VFFT_ZSPLIT_MAX_NF), BOTH ingest radices
+ * (r0 = 4: the 4-section geometry; r0 = 8: the two-quartet geometry, one
+ * pass fewer), each the zturn create's to admit. Per chain the natural
+ * twin's terminator form is raced (stfn vs stfnl, _zt_tf_race_class), then
+ * every chain's whole natural forward is one arm of ONE race — same-run
+ * arms, alternated rounds, batches >= 1 ms, median — and the fastest chain
+ * survives with its forms calibrated (the scrambled class too, so the
+ * banked zt_tf / zt_ntf pair is complete). Returns the plan with natord
+ * OFF (the caller's natural site sets it), *ns_out = its natural forward
+ * time; NULL when no chain is admitted (the caller's "no zturn arm").
+ * The arm count is the chain count (<= 12 at 1024); the cost is one
+ * create-time race per cell, banked as the comp row's cc_chain. */
+typedef struct { vfft_zturn2_plan_t *p; const double *zi; double *zd; } _zt_chain_arm_t;
+static void _zt_chain_arm(void *v)
+{
+    const _zt_chain_arm_t *c = (const _zt_chain_arm_t *)v;
+    vfft_zturn2_execute_fwd(c->p, c->zi, c->zd);
+}
+/* in place: re-seed the aliased buffer before every timed sample (repeated
+ * in-place forwards walk into inf; the race protocol's reset hook) */
+typedef struct { double *zi; const double *seed; size_t sz; } _zt_chain_reset_t;
+static void _zt_chain_reset(void *v)
+{
+    const _zt_chain_reset_t *r = (const _zt_chain_reset_t *)v;
+    memcpy(r->zi, r->seed, r->sz);
+}
+#define _ZT_CHAIN_RACE_MAX 32
+static vfft_zturn2_plan_t *_calibrate_zturn_chain_sub2048(int N, vfft_rigor_t rigor,
+                                                          int aliased, double *ns_out)
+{
+    vfft_zturn2_plan_t *plans[_ZT_CHAIN_RACE_MAX];
+    vfft_race_arm_t arms[_ZT_CHAIN_RACE_MAX];
+    _zt_chain_arm_t ctx[_ZT_CHAIN_RACE_MAX];
+    char names[_ZT_CHAIN_RACE_MAX][24];
+    double ns[_ZT_CHAIN_RACE_MAX];
+    int nplan = 0, dropped = 0, best = -1;
+    const size_t sz = (size_t)2 * (size_t)N * sizeof(double);
+    const int RR = (rigor == VFFT_MEASURE) ? 9 : 21;
+    double *zi = NULL, *zo = NULL, *zo2 = NULL, *seed = NULL, *zd;
+    if (ns_out) *ns_out = 0.0;
+    if (vfft_proto_posix_memalign((void **)&zi, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&zo, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&zo2, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&seed, 64, sz))
+    {
+        vfft_proto_aligned_free(zi); vfft_proto_aligned_free(zo);
+        vfft_proto_aligned_free(zo2); vfft_proto_aligned_free(seed);
+        return NULL;
+    }
+    srand(29 + N);
+    for (int i = 0; i < 2 * N; i++) zi[i] = (double)rand() / RAND_MAX - 0.5;
+    memcpy(seed, zi, sz);
+    zd = aliased ? zi : zo;
+    /* enumerate: ordered {4,8} chains with product N — the same walk as the
+     * dp planner's scrambled cell; legality is the create's (the law) */
+    for (int nf = 3; nf <= VFFT_ZSPLIT_MAX_NF; nf++)
+    {
+        const long combos = 1L << nf;
+        for (long mask = 0; mask < combos; mask++)
+        {
+            int chain[VFFT_ZSPLIT_MAX_NF];
+            long prod = 1;
+            for (int i = 0; i < nf; i++)
+            {
+                chain[i] = ((mask >> i) & 1) ? 8 : 4;
+                prod *= chain[i];
+            }
+            if (prod != (long)N) continue;
+            vfft_zturn2_plan_t *p = vfft_zturn2_create_chain(N, chain, nf);
+            if (!p) continue;
+            if (nplan >= _ZT_CHAIN_RACE_MAX) { dropped++; vfft_zturn2_destroy(p); continue; }
+            /* the natural twin, its terminator form raced */
+            if (!vfft_zturn2_set_natord(p, 1) || !vfft_zturn2_set_tforms(p, 1, 1))
+            {
+                vfft_zturn2_destroy(p);
+                continue;
+            }
+            if (aliased) memcpy(zo2, zi, sz);
+            (void)_zt_tf_race_class(p, 1, zi, zd, zo2, sz, RR, NULL);
+            if (aliased) memcpy(zi, seed, sz);
+            {
+                int off = 0;
+                for (int s = 0; s < nf && off < 20; s++)
+                    off += snprintf(names[nplan] + off, sizeof names[nplan] - (size_t)off,
+                                    "%s%d", s ? "." : "", chain[s]);
+            }
+            plans[nplan] = p;
+            ctx[nplan].p = p; ctx[nplan].zi = zi; ctx[nplan].zd = zd;
+            arms[nplan].name = names[nplan];
+            arms[nplan].run = _zt_chain_arm;
+            arms[nplan].ctx = &ctx[nplan];
+            nplan++;
+        }
+    }
+    if (dropped)
+        fprintf(stderr, "[zroute] N=%d: %d cascade chains did not fit the race array "
+                        "(_ZT_CHAIN_RACE_MAX=%d) — raise it\n", N, dropped, _ZT_CHAIN_RACE_MAX);
+    if (nplan)
+    {
+        double est;
+        int reps;
+        _vfft_create_race_count++;   /* HARNESS: this racer is about to time */
+        vfft_zturn2_execute_fwd(plans[0], zi, zd);
+        est = vfft_proto_now_ns();
+        vfft_zturn2_execute_fwd(plans[0], zi, zd);
+        est = vfft_proto_now_ns() - est;
+        if (est < 1.0) est = 1.0;
+        reps = (int)(1.0e6 / est);           /* >= 1 ms per batch */
+        if (reps < 2) reps = 2;
+        if (reps > (1 << 16)) reps = 1 << 16;
+        {
+            _zt_chain_reset_t rs = { zi, seed, sz };
+            const vfft_race_proto_t proto = { RR, reps, VFFT_RACE_MEDIAN, 1, 1,
+                                              aliased ? _zt_chain_reset : NULL,
+                                              aliased ? (void *)&rs : NULL };
+            vfft_race_run(&proto, arms, nplan, ns);
+        }
+        for (int i = 0; i < nplan; i++)
+            if (best < 0 || ns[i] < ns[best]) best = i;
+        if (getenv("VFFT_ZRACE_VERBOSE"))
+        {
+            fprintf(stderr, "[zroute] N=%d sub-2048 chain race (natural, %s): reps=%d RR=%d |",
+                    N, aliased ? "in place" : "oop", reps, RR);
+            for (int i = 0; i < nplan; i++)
+                fprintf(stderr, " %s%s=%.0f(ntf%d)", i == best ? "*" : "", names[i], ns[i],
+                        plans[i]->ntform);
+            fprintf(stderr, "\n");
+        }
+    }
+    for (int i = 0; i < nplan; i++)
+        if (i != best) vfft_zturn2_destroy(plans[i]);
+    vfft_proto_aligned_free(zi); vfft_proto_aligned_free(zo);
+    vfft_proto_aligned_free(zo2); vfft_proto_aligned_free(seed);
+    if (best < 0) return NULL;
+    {
+        /* the winner: natord off for the caller; its scrambled form raced
+         * too so the banked (zt_tf, zt_ntf) pair is complete — the natural
+         * class is re-raced inside, on ONE plan (create-time only) */
+        vfft_zturn2_plan_t *w = plans[best];
+        (void)vfft_zturn2_set_natord(w, 0);
+        _calibrate_zturn_tform(w, rigor, aliased);
+        if (ns_out) *ns_out = ns[best];
+        return w;
+    }
 }
 
 #endif /* VFFT_PLANNING_CASCADE_CALIBRATE_H */
