@@ -19,11 +19,13 @@
  *   3. IN-PLACE forward + backward on the same handle (z -> z), the forward
  *      bitwise the OOP forward;
  *   4. a SECOND create replays the banked verdict bit-identically;
- *   5. T=8: the same cell created threaded produces the T=1 forward BITWISE
- *      and roundtrips; its engagement is printed (a serial verdict is legal).
+ *   5. T=8: the same cell created threaded reproduces the T=1 forward to
+ *      1e-11 (BITWISE when the same engine serves — a create at T races its
+ *      own verdicts) and roundtrips; engagement printed (serial is legal).
  * SCRAMBLED pass, per cell (ORDER_SCRAMBLED, explicit): forward + backward
- *   roundtrip N * x out of place and in place, replay bit-identical, T=8
- *   bitwise + roundtrip; whether the served order is the natural spectrum
+ *   roundtrip N * x out of place and in place (the in-place cell's comb may
+ *   differ from the OOP cell's — each is its own verdict; printed), replay
+ *   bit-identical, T=8 same to 1e-11 + roundtrip; whether the served order is the natural spectrum
  *   (the identity, legal) or a comb is PRINTED, never asserted — the cell's
  *   comb is the served engine's own, which this gate does not decode.
  * PROPERTY: vfft_ilfd_race_short_samples() reads 0 at the end — every flat
@@ -139,12 +141,12 @@ static void route_of_store(const char *wisdir, int N, const char *ord, char *out
     }
 }
 
-typedef struct { double fwd, rt, ip, iprt; int replay, mt_bit, mt_ok; long mt_eng; double mt_rt, t_race, t_replay; int ok; } cell_t;
+typedef struct { double fwd, rt, ip, iprt; int replay, mt_bit, mt_ok; long mt_eng; double mt_rt, mt_err, t_race, t_replay; int ok; } cell_t;
 
 /* one order class of one cell: OOP fwd/bwd, IP fwd/bwd, replay, T=8 */
 static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, double *y_ref, int check_dft)
 {
-    cell_t c; memset(&c, 0, sizeof c); c.fwd = c.rt = c.ip = c.iprt = c.mt_rt = 1;
+    cell_t c; memset(&c, 0, sizeof c); c.fwd = c.rt = c.ip = c.iprt = c.mt_rt = c.mt_err = 1;
     double *y = calloc(2 * (size_t)N, 8), *r = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8), *y2 = calloc(2 * (size_t)N, 8);
     double t0 = now_ms();
     vfft_plan ho = mk(W, N, 0, order);
@@ -184,16 +186,17 @@ static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, doubl
             {
                 vfft_execute(hm, VFFT_FORWARD, (double *)x, NULL, y2, NULL);
                 c.mt_bit = (memcmp(y, y2, 2 * (size_t)N * 8) == 0);
+                c.mt_err = relerr(y2, y, N, 1.0);   /* a T-raced create may serve another engine */
                 vfft_execute(hm, VFFT_BACKWARD, y2, NULL, r, NULL);
                 c.mt_rt = relerr(r, x, N, 1.0 / N);
                 c.mt_eng = (vfft_ilfd_mt_passes() + vfft_zt_mt_passes()) - e1;
-                c.mt_ok = c.mt_bit && c.mt_rt < 1e-11;
+                c.mt_ok = (c.mt_bit || c.mt_err < 1e-11) && c.mt_rt < 1e-11;
                 vfft_destroy(hm);
             }
         }
         if (y_ref) memcpy(y_ref, y, 2 * (size_t)N * 8);
         vfft_destroy(ho);
-        c.ok = c.fwd < 1e-11 && c.rt < 1e-11 && c.ip < 1e-11 && c.iprt < 1e-11 && c.replay && c.mt_ok;
+        c.ok = c.fwd < 1e-11 && c.rt < 1e-11 && (c.ip < 1e-11 || !check_dft) && c.iprt < 1e-11 && c.replay && c.mt_ok;
     }
     free(y); free(r); free(z); free(y2);
     return c;
@@ -224,7 +227,7 @@ int main(int argc, char **argv)
         printf("%-5d | %-22s | %.1e  %.1e | %.1e  %.1e | %7.0f %7.0f | %s%s\n", N, route,
                nat.fwd, nat.rt, nat.ip, nat.iprt, nat.t_race, nat.t_replay,
                nat.replay ? "replay bitwise" : "replay DIFFERS", nat.ok ? "" : "   *** FAIL ***");
-        printf("   mt | T=8 %s rt %.1e engaged=%ld%s\n", nat.mt_bit ? "BITWISE" : "NOT BITWISE", nat.mt_rt, nat.mt_eng,
+        printf("   mt | T=8 %s rt %.1e engaged=%ld%s\n", nat.mt_bit ? "BITWISE" : nat.mt_err < 1e-11 ? "same to 1e-11" : "DIFFERS", nat.mt_rt, nat.mt_eng,
                nat.mt_eng > 0 ? " (threaded)" : " (serial verdict)");
         scr = run_class(W, N, VFFT_ORDER_SCRAMBLED, x, ys, 0);
         route_of_store(wisdir, N, "scr", sroute, sizeof sroute);
@@ -233,8 +236,9 @@ int main(int argc, char **argv)
             const double eid = relerr(ys, yn, N, 1.0);
             printf("  scr | %-22s | %s   rt %.1e | ip %.1e  rt %.1e | %7.0f %7.0f | %s%s\n", sroute,
                    eid < 1e-11 ? "natural served" : "comb served  ", scr.rt, scr.ip, scr.iprt, scr.t_race, scr.t_replay,
+                   /* ip column: the in-place cell's forward vs the OOP cell's — its OWN comb is legal */
                    scr.replay ? "replay bitwise" : "replay DIFFERS", scr.ok ? "" : "   *** FAIL ***");
-            printf("   mt | T=8 %s rt %.1e engaged=%ld%s\n", scr.mt_bit ? "BITWISE" : "NOT BITWISE", scr.mt_rt, scr.mt_eng,
+            printf("   mt | T=8 %s rt %.1e engaged=%ld%s\n", scr.mt_bit ? "BITWISE" : scr.mt_err < 1e-11 ? "same to 1e-11" : "DIFFERS", scr.mt_rt, scr.mt_eng,
                    scr.mt_eng > 0 ? " (threaded)" : " (serial verdict)");
         }
         free(x); free(yn); free(ys);

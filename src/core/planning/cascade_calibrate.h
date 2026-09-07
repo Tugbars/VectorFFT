@@ -212,8 +212,29 @@ static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor,
      * the offline planner (dp_planner_il.h), which banks t2q=0. */
     if (zt->chain[zt->nf - 1] == 4)
     {
+        /* one form, so no race — but the candidate must still carry a
+         * time: 0.0 read as "no verdict" destroyed every last==4 seed
+         * before it could race the cell (the sub-2048 natural seeds all
+         * end in 4). One batch >= 1 ms, its median-of-one. */
+        const int N4 = zt->N;
+        const size_t sz4 = (size_t)2 * (size_t)N4 * sizeof(double);
+        double *a = NULL, *b = NULL, est, t0;
+        int reps, i;
         zt->t2q = 0;
-        return 0.0;
+        if (vfft_proto_posix_memalign((void **)&a, 64, sz4) ||
+            vfft_proto_posix_memalign((void **)&b, 64, sz4))
+        { vfft_proto_aligned_free(a); vfft_proto_aligned_free(b); return 1.0; }
+        srand(11 + N4);
+        for (i = 0; i < 2 * N4; i++) a[i] = (double)rand() / RAND_MAX - 0.5;
+        vfft_zturn2_execute_fwd(zt, a, aliased ? a : b);
+        t0 = vfft_proto_now_ns(); vfft_zturn2_execute_fwd(zt, a, aliased ? a : b); est = vfft_proto_now_ns() - t0;
+        if (est < 1.0) est = 1.0;
+        reps = (int)(1.0e6 / est); if (reps < 2) reps = 2; if (reps > (1 << 16)) reps = 1 << 16;
+        t0 = vfft_proto_now_ns();
+        for (i = 0; i < reps; i++) vfft_zturn2_execute_fwd(zt, a, aliased ? a : b);
+        est = (vfft_proto_now_ns() - t0) / reps;
+        vfft_proto_aligned_free(a); vfft_proto_aligned_free(b);
+        return est > 0.0 ? est : 1.0;
     }
     const int N = zt->N;
     const size_t sz = (size_t)2 * (size_t)N * sizeof(double);
@@ -287,6 +308,112 @@ static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor,
     vfft_proto_aligned_free(zo);
     vfft_proto_aligned_free(zo2);
     return win ? n1 : n0;
+}
+
+/* ── the terminator FORM race (2026-09-07, the sub-2048 campaign) ───────────
+ * Both order classes of ONE cascade recipe: the SCRAMBLED terminator
+ * (tform: stf/stf2 by the t2q just picked, vs stfl) and the NATURAL one
+ * (ntform: stfn vs stfnl), each a two-arm whole-forward race, median of RR
+ * alternated rounds, batches >= 1 ms, 3% hysteresis toward form 0. The
+ * loaded twin differs from the squaring tree at ROUNDING level (exact
+ * cos/sin per power vs products), so the sanity check is a relative-error
+ * bound, never memcmp; a form that fails it is pinned to 0 and not raced.
+ * Runs after _calibrate_zturn_t2q on the same plan; leaves the plan at the
+ * winning forms with the stream built (freed when both are 0). Never reads
+ * the env: the pin (VFFT_ZT_TFORM) is applied by the commit, after banking. */
+typedef struct { vfft_zturn2_plan_t *p; double *zi, *zd; int nat; int form; } _zt_tf_arm_t;
+static void _zt_tf_arm(void *v)
+{
+    _zt_tf_arm_t *c = (_zt_tf_arm_t *)v;
+    if (c->nat) c->p->ntform = c->form; else c->p->tform = c->form;
+    vfft_zturn2_execute_fwd(c->p, c->zi, c->zd);
+}
+static double _zt_tf_relerr(const double *a, const double *b, long n2)
+{
+    double m = 0, e = 0;
+    for (long i = 0; i < n2; i++) {
+        const double d = a[i] - b[i] < 0 ? b[i] - a[i] : a[i] - b[i];
+        const double v = b[i] < 0 ? -b[i] : b[i];
+        if (v > m) m = v;
+        if (d > e) e = d;
+    }
+    return m > 0 ? e / m : e;
+}
+/* one class: form 0 vs 1 on the plan as configured (natord set by the caller) */
+static int _zt_tf_race_class(vfft_zturn2_plan_t *zt, int nat, double *zi, double *zd,
+                             double *zo2, size_t sz, int RR, int *ns_out)
+{
+    int *slot = nat ? &zt->ntform : &zt->tform;
+    double n0, n1, err;
+    _zt_tf_arm_t c0 = { zt, zi, zd, nat, 0 }, c1 = { zt, zi, zd, nat, 1 };
+    /* sanity at rounding level (the forms are not bitwise twins) */
+    *slot = 0; vfft_zturn2_execute_fwd(zt, zi, zd);
+    *slot = 1; vfft_zturn2_execute_fwd(zt, zi, zo2);
+    err = _zt_tf_relerr(zo2, zd, (long)(sz / sizeof(double)));
+    if (!(err < 1e-12)) { *slot = 0; (void)ns_out; return -1; }
+    {
+        double est, ns[2];
+        int reps;
+        *slot = 0;
+        vfft_zturn2_execute_fwd(zt, zi, zd);
+        est = vfft_proto_now_ns();
+        vfft_zturn2_execute_fwd(zt, zi, zd);
+        est = vfft_proto_now_ns() - est;
+        if (est < 1.0) est = 1.0;
+        reps = (int)(1.0e6 / est);           /* >= 1 ms per batch */
+        if (reps < 2) reps = 2;
+        if (reps > (1 << 16)) reps = 1 << 16;
+        {
+            const vfft_race_arm_t arms[2] = { { nat ? "stfn" : "stf", _zt_tf_arm, &c0 },
+                                              { nat ? "stfnl" : "stfl", _zt_tf_arm, &c1 } };
+            const vfft_race_proto_t proto = { RR, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL };
+            vfft_race_run(&proto, arms, 2, ns);
+            n0 = ns[0]; n1 = ns[1];
+        }
+        *slot = (n1 < n0 * 0.97) ? 1 : 0;    /* 3% hysteresis toward the squaring tree */
+        if (getenv("VFFT_ZRACE_VERBOSE"))
+            fprintf(stderr, "[zroute] N=%d zturn-tform race (%s): reps=%d RR=%d | form0=%.0f "
+                            "form1=%.0f -> %s=%d\n", zt->N, nat ? "natural" : "scrambled",
+                    reps, RR, n0, n1, nat ? "ntform" : "tform", *slot);
+    }
+    return *slot;
+}
+static void _calibrate_zturn_tform(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor, int aliased)
+{
+    const int N = zt->N;
+    const size_t sz = (size_t)2 * (size_t)N * sizeof(double);
+    const int RR = (rigor == VFFT_MEASURE) ? 9 : 21;
+    const int tfuse0 = zt->tfuse;
+    double *zi = NULL, *zo = NULL, *zo2 = NULL, *zd;
+    if (zt->lanes_u) return;                          /* no loaded twin of stfu */
+    if (!vfft_zturn2_set_tforms(zt, 1, 1)) return;    /* the stream, both forms available */
+    if (vfft_proto_posix_memalign((void **)&zi, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&zo, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&zo2, 64, sz))
+    {
+        vfft_proto_aligned_free(zi); vfft_proto_aligned_free(zo); vfft_proto_aligned_free(zo2);
+        (void)vfft_zturn2_set_tforms(zt, 0, 0);
+        return;
+    }
+    _vfft_create_race_count++;   /* HARNESS: this racer is about to time */
+    srand(13 + N);
+    for (int i = 0; i < 2 * N; i++) zi[i] = (double)rand() / RAND_MAX - 0.5;
+    zd = aliased ? zi : zo;
+    /* SCRAMBLED class (the plan as built: natord off) */
+    if (aliased) memcpy(zo2, zi, sz);   /* zd == zi: reseed for the second arm's sanity run */
+    (void)_zt_tf_race_class(zt, 0, zi, zd, zo2, sz, RR, NULL);
+    /* NATURAL class: the natord twin of the same recipe, then back */
+    if (aliased) { srand(13 + N); for (int i = 0; i < 2 * N; i++) zi[i] = (double)rand() / RAND_MAX - 0.5; }
+    if (vfft_zturn2_set_natord(zt, 1))
+    {
+        (void)_zt_tf_race_class(zt, 1, zi, zd, zo2, sz, RR, NULL);
+        (void)vfft_zturn2_set_natord(zt, 0);
+    }
+    else
+        zt->ntform = 0;
+    zt->tfuse = tfuse0;                     /* set_natord(1) clears it; restore the scrambled plan's */
+    if (!zt->tform && !zt->ntform) (void)vfft_zturn2_set_tforms(zt, 0, 0);
+    vfft_proto_aligned_free(zi); vfft_proto_aligned_free(zo); vfft_proto_aligned_free(zo2);
 }
 
 #endif /* VFFT_PLANNING_CASCADE_CALIBRATE_H */

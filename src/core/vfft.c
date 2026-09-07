@@ -2126,8 +2126,9 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->padded, h->exec_me);
 
     /* 2 — route selectors: the "chose differently" surface */
-    FP__ADD(" | k1=%d sp=%d il=%d zroute=%d ztmt=%d zr2c=%d",
+    FP__ADD(" | k1=%d sp=%d il=%d zroute=%d ztmt=%d ztf=%d/%d zr2c=%d",
             h->k1_on, h->k1_sp_route, h->k1_il_route, h->zroute, h->zt_mt,
+            h->zturn ? h->zturn->tform : 0, h->zturn ? h->zturn->ntform : 0,
             h->zr2c_route); /* ilme/ilrace retired 2026-09-03 with the convert machinery */
     FP__ADD(" nat=%d nat2d=%d natpairs=%d natcyc=%d nat2dcyc=%d mtunsafe=%d",
             h->nat_mode, h->nat2d, h->nat2d_row_is_pairs, h->nat_ncyc,

@@ -159,6 +159,13 @@ typedef struct {
      * fwd-only t2q-race median (informational either way). */
     int    zs_t2q;
     int    zs_route, zt_t2q;
+    /* the zturn terminator FORMS (2026-09-07): 0 = the packed squaring-tree
+     * terminators, 1 = the loaded-stream twins (stfl / stfnl); zt_tf = the
+     * SCRAMBLED class's, zt_ntf = the NATURAL class's — raced together with
+     * t2q on the recipe, emitted only when 1 (older lines stay byte-identical). */
+    int    zt_tf, zt_ntf;
+    int    role;     /* VW2_ROLE_COMP when the entry is a component RECIPE (set by the
+                      * role bank helper); the sub-2048 floor applies to verdicts only */
     /* kind 5 (ZR2C / K=1 INTERLEAVED real composite): packed child-route
      * verdicts, 2 bits per (transform, placement) combo — codec below
      * (vfft_zr2c_kv_*). 0-field = UNMEASURED = the structural default,

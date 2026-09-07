@@ -213,7 +213,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     }
 
     /* 3. the cascade candidate at N >= 2048 (natord under NATURAL) */
-    if (N >= _vfft_zcasc_min_n() && !getenv("VFFT_NO_K1Z_IP") &&
+    if (N >= _vfft_zcasc_nat_min_n() && !getenv("VFFT_NO_K1Z_IP") &&
         !getenv("VFFT_NO_NAT_ZCASC") && W && !W->vw2_off_stride &&
         (mode != VFFT_NAT_ILP || !have_k1))
     {
@@ -221,8 +221,8 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         vfft_zsplit_plan_t *zs = NULL;
         int zr = 0;
         rcfg.recalibrate = 0;
-        if (_k1z_wisdom_replay(&rcfg, W, N, &zs, &zt, &zr) ||
-            _k1z_race_and_bank(&rcfg, W, N, /*ip=*/1, &zs, &zt, &zr))
+        if (_k1z_wisdom_replay_nat(&rcfg, W, N, &zs, &zt, &zr) ||
+            _k1z_race_and_bank_nat(&rcfg, W, N, /*ip=*/1, &zs, &zt, &zr))
         {
             if (zs)
                 vfft_zsplit_destroy(zs);

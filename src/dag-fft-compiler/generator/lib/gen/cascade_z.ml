@@ -418,12 +418,15 @@ let kind_of_string (s : string) : zs_kind =
   | "stfnl" ->
     (* the NATURAL-ORDER loaded-stream terminator: stfn's edges (section
        taps at kn, stores contiguous ascending) with the loaded stream
-       addressed at kn — ONE table (the plane column's records) serves
-       stfl and stfnl. *)
+       walked in LOOP order (k): the driver builds the natural plan's table
+       in rho order (record t = the plane column ntf[t]'s twiddles), so the
+       stream is a linear pointer walk with no kn-derived address — the
+       09-07 loop census charged the kn-addressed stream (an imul per
+       iteration) + the rebuilt section addresses ~0.4 cyc/pt. *)
     { mid with
       base = "stfnl"
     ; policy = Dft.TP_Flat
-    ; tw_off = "%TWF*(size_t)kn"
+    ; tw_off = "%TWF*(size_t)k"
     ; in_edge = E_sect_tap "OLs"
     ; out_edge = E_z "OLs"
     ; nat_in = true
@@ -754,6 +757,16 @@ let emit_codelet
      failwith
        "codelet_zsplit: s0t/stf bake r0 into their section addressing; pass --zp-r0 \
         (plan INPUT, chain[0]; no default)"
+   | Some 8, true
+     when k.base = "s0t" || k.base = "stf" || k.base = "stfn" || k.base = "stfl"
+          || k.base = "stfnl" ->
+     (* the RADIX-8 INGEST geometry (2026-09-07, the sub-2048 campaign): 8
+        sections of N/8 complex; the ingest digit's high bit selects the
+        section quartet; the terminators tap the quartet the driver hands
+        them (plane + h*N doubles) and store with pitch 8 per column group
+        (+4h complex via the zout pointer). Derived and DFT-exact in the
+        scalar model (campaign_state/probes/P1b/r8_model.c). *)
+     ()
    | Some r, true when r <> 4 ->
      failwith
        (Printf.sprintf
@@ -789,9 +802,13 @@ let emit_codelet
        terminator taps ONE record/section, so instance B's +1-record-group column offset \
        has no analog; zturn.h forces t2q=0 for last==4 chains and the planner races \
        chains instead)";
-  if (k.base = "s0t" || k.base = "s0tu" || k.base = "dtt") && radix <> 4
+  if (k.base = "s0tu" || k.base = "dtt" || (k.base = "s0t" && k.bwd)) && radix <> 4
   then
-    failwith "codelet_zsplit: s0t/s0tb/dtt are radix-4 only (the r0=4 4-section geometry)";
+    failwith "codelet_zsplit: s0tb/s0tu/dtt are radix-4 only (the r0=4 4-section geometry)";
+  if k.base = "s0t" && not k.bwd && radix <> 4 && radix <> 8
+  then failwith "codelet_zsplit: s0t is radix 4 (r0=4) or radix 8 (r0=8)";
+  if k.base = "s0t" && not k.bwd && (match r0 with Some r -> r <> radix | None -> true)
+  then failwith "codelet_zsplit: the ingest radix IS r0 — pass --zp-r0 equal to the radix";
   let vw = isa.Isa.vec_width in
   if vw <> 4
   then
@@ -962,6 +979,11 @@ let emit_codelet
         | "mszt", true ->
           "mszt (msz's TRANSPOSED backward: IDFT + POST-twiddle conj — the scrambled class), \
            bwd."
+        | "s0t", false when radix = 8 ->
+          "s0t@r8 (ZTURN-S RADIX-8 fused-turn ingest, r0=8: natural z leg loads at \
+           stride N/8, twiddle-free radix-8, TWO 64-B records per position — digits \
+           0..3 at section bitrev2(p mod 4), digits 4..7 at section 4 + bitrev2(p mod 4); \
+           8 sections of N/8 complex), fwd."
         | "s0t", false ->
           "s0t (ZTURN-S fused-turn ingest: natural z leg loads, twiddle-free radix-4, \
            ONE 64-B record per position at section bitrev2(p mod 4), 4 rate-matched \
@@ -1013,9 +1035,10 @@ let emit_codelet
            power w^1..w^(R-1) a loaded [c x4][s x4] record as a memory operand — no \
            squaring tree, no live twiddle registers — REINT drev-comb stores), fwd."
         | "stfnl", false ->
-          "stfnl (NATURAL-ORDER ZTURN-S terminator, LOADED twiddle stream at kn = \
-           4*rhoinv[k/4] via the tw_im-carried table, REINT stores contiguous ascending \
-           = natural interleaved out), fwd."
+          "stfnl (NATURAL-ORDER ZTURN-S terminator: section taps at kn = 4*rhoinv[k/4] \
+           via the tw_im-carried table, LOADED twiddle stream in LOOP order (the plan \
+           builds the natural table in rho order), REINT stores contiguous ascending = \
+           natural interleaved out), fwd."
         | "msd", false ->
           "msd (DIT-FORWARD mid = conj(msgb): group loop over DFT + POST-twiddle body, \
            fwd table twz as loaded), fwd."
@@ -1057,15 +1080,17 @@ let emit_codelet
         else if k.base = "stfl" || k.base = "stfnl"
         then
           Printf.sprintf
-            "tw_re = LOADED per-column stream at tw_re + %d*%s: per %d-column group \
+            "tw_re = LOADED per-column stream at tw_re + %d*k: per %d-column group \
              (R-1) records [c(k..k+%d)][s(k..k+%d)] of w^1..w^%d in leg order. %s"
             (2 * (radix - 1))
-            (if k.nat_in then "kn" else "k")
             vw
             (vw - 1)
             (vw - 1)
             (radix - 1)
-            (if k.nat_in then "tw_im carries the rho table." else "tw_im unused.")
+            (if k.nat_in
+             then "tw_im carries the rho table; the stream is in LOOP order (record k/4 \
+                   = plane column kn's twiddles)."
+             else "tw_im unused.")
         else if k.policy = Dft.TP_PowW1
         then
           Printf.sprintf
@@ -1129,6 +1154,12 @@ let emit_codelet
      _vzt_mim, zturn_proto.h). *)
   if (k.base = "s0t" || k.base = "s0tu") && not k.bwd
   then Buffer.add_string buf (Isa.im_mask_decl isa "_zs0t_mim" ^ "\n\n");
+  if k.base = "s0t" && not k.bwd && radix = 8
+  then
+    Buffer.add_string
+      buf
+      "static const __m256d _zs0t_rh = { 0.70710678118654752440, 0.70710678118654752440, \
+       0.70710678118654752440, 0.70710678118654752440 };  /* 1/sqrt2: W8^1 = (1-i)/sqrt2 */\n\n";
   (* TR4 rendering helper (E_blocks): 4 unpacks + 4 permute2f128 turning
      four column vectors into four leg/index vectors (or back). srcs/dsts
      are C variable names; dsts are declared const. Returns the fragment
@@ -1186,6 +1217,7 @@ let emit_codelet
      colo is the instance's column offset (0 for instance A). *)
   let leg_addr
         ?(iv = "k")
+        ?(ivscale = 1)
         (buf_name : string)
         (leg : int)
         (stride : string)
@@ -1193,14 +1225,40 @@ let emit_codelet
         (plus : int)
     : string
     =
+    (* ivscale = 2: the r0 = 8 terminator's OUTPUT pitch — 8 bins per column
+       group (the two section quartets interleave in the output; +4h via the
+       zout pointer), so the column term is 2*k *)
     let base =
-      match leg, colo with
-      | 0, 0 -> Printf.sprintf "2*(size_t)%s" iv
-      | 0, o -> Printf.sprintf "2*((size_t)%s + %d)" iv o
-      | l, 0 -> Printf.sprintf "2*((size_t)%d*%s + %s)" l stride iv
-      | l, o -> Printf.sprintf "2*((size_t)%d*%s + %s + %d)" l stride iv o
+      if iv = "kn" && ivscale = 1
+      then (
+        (* natural-order edge: the column term lives in the per-iteration
+           base pointer zn = zin + 2*kn (declared with kn); only the
+           loop-invariant leg term is rendered, so the compiler keeps ONE
+           address register per iteration instead of rebuilding R of them *)
+        match leg, colo with
+        | 0, 0 -> "0"
+        | 0, o -> Printf.sprintf "2*(size_t)%d" o
+        | l, 0 -> Printf.sprintf "2*((size_t)%d*%s)" l stride
+        | l, o -> Printf.sprintf "2*((size_t)%d*%s + %d)" l stride o)
+      else if ivscale = 1
+      then (
+        match leg, colo with
+        | 0, 0 -> Printf.sprintf "2*(size_t)%s" iv
+        | 0, o -> Printf.sprintf "2*((size_t)%s + %d)" iv o
+        | l, 0 -> Printf.sprintf "2*((size_t)%d*%s + %s)" l stride iv
+        | l, o -> Printf.sprintf "2*((size_t)%d*%s + %s + %d)" l stride iv o)
+      else (
+        let ivs = Printf.sprintf "%d*(size_t)%s" ivscale iv in
+        match leg, colo with
+        | 0, 0 -> Printf.sprintf "2*%s" ivs
+        | 0, o -> Printf.sprintf "2*(%s + %d)" ivs o
+        | l, 0 -> Printf.sprintf "2*((size_t)%d*%s + %s)" l stride ivs
+        | l, o -> Printf.sprintf "2*((size_t)%d*%s + %s + %d)" l stride ivs o)
     in
-    if plus = 0
+    let buf_name = if iv = "kn" && ivscale = 1 then "zn" else buf_name in
+    if base = "0"
+    then Printf.sprintf "%s[%d]" buf_name plus
+    else if plus = 0
     then Printf.sprintf "%s[%s]" buf_name base
     else Printf.sprintf "%s[%s + %d]" buf_name base plus
   in
@@ -1228,13 +1286,30 @@ let emit_codelet
     let sec = [| 0; 2; 1; 3 |].(q land 3) in
     let sc = radix / 2 in
     let off = (8 * (q asr 2)) + plus in
+    (* r0 = 8: a section holds N/8 complex, half of the r0 = 4 section, so
+       the section term is s*stride/2 (stride = OLs = N/radix is even at
+       every cell); the in-section (granule) term is geometry-independent *)
+    let sterm s = if r0 = Some 8 then Printf.sprintf "(size_t)%d*%s/2" s stride
+                  else Printf.sprintf "(size_t)%d*%s" s stride in
+    if iv = "kn"
+    then (
+      (* natural-order edge: the column term lives in the per-iteration base
+         pointer (zn = zin + sc*kn on the load side, zon = zout + sc*kn on
+         the store side); only the loop-invariant section term is rendered *)
+      let b = if buf_name = "zin" then "zn" else "zon" in
+      match sec, colo with
+      | 0, 0 -> Printf.sprintf "%s[%d]" b off
+      | 0, o -> Printf.sprintf "%s[%d*(size_t)%d + %d]" b sc o off
+      | s, 0 -> Printf.sprintf "%s[%d*(%s) + %d]" b sc (sterm s) off
+      | s, o -> Printf.sprintf "%s[%d*(%s + %d) + %d]" b sc (sterm s) o off)
+    else
     match sec, colo with
     | 0, 0 -> Printf.sprintf "%s[%d*(size_t)%s + %d]" buf_name sc iv off
     | 0, o -> Printf.sprintf "%s[%d*((size_t)%s + %d) + %d]" buf_name sc iv o off
     | s, 0 ->
-      Printf.sprintf "%s[%d*((size_t)%d*%s + %s) + %d]" buf_name sc s stride iv off
+      Printf.sprintf "%s[%d*(%s + %s) + %d]" buf_name sc (sterm s) iv off
     | s, o ->
-      Printf.sprintf "%s[%d*((size_t)%d*%s + %s + %d) + %d]" buf_name sc s stride iv o off
+      Printf.sprintf "%s[%d*(%s + %s + %d) + %d]" buf_name sc (sterm s) iv o off
   in
   (* natural-order in-side index: `kn` (declared per iteration, nat_in only). *)
   let ivin = if k.nat_in then "kn" else "k" in
@@ -1268,12 +1343,33 @@ let emit_codelet
     let nslots = ninst * radix in
     Buffer.add_string buf open_line;
     if k.nat_in || k.nat_out
-    then
+    then begin
       Buffer.add_string
         buf
         "        /* natural-order: in-side block index via the rho table (tw_im \
          repurposed; natterm_spec.md) */\n\
         \        const size_t kn = 4*((const size_t *)tw_im)[(size_t)k >> 2];\n";
+      (* the kn-addressed edges walk from ONE base pointer per side, computed
+         once per iteration (leg_addr / sect_addr render only the invariant
+         leg/section term against it) *)
+      if k.nat_in
+      then (
+        match k.in_edge with
+        | E_sect_tap _ ->
+          Buffer.add_string
+            buf
+            (Printf.sprintf "        const double *zn = zin + %d*kn;\n" (radix / 2))
+        | E_z _ -> Buffer.add_string buf "        const double *zn = zin + 2*kn;\n"
+        | _ -> ());
+      if k.nat_out
+      then (
+        match k.out_edge with
+        | E_sect_tap _ ->
+          Buffer.add_string
+            buf
+            (Printf.sprintf "        double *zon = zout + %d*kn;\n" (radix / 2))
+        | _ -> ())
+    end;
     (* ── B2 chunk sinks: every load-edge fragment is rendered through a
           sink function. Flag-off (ZS_off): the sinks ARE
           Buffer.add_string buf, called in the exact order of the pre-B2
@@ -1525,13 +1621,13 @@ let emit_codelet
                       else Printf.sprintf "%s(t%d, 0xD8)" p44 im_tag.(sl)))
                   (Isa.storeu_pd
                      isa
-                     (leg_addr "zout" leg s colo 0)
+                     (leg_addr ~ivscale:(if r0 = Some 8 then 2 else 1) "zout" leg s colo 0)
                      (if vw = 1
                       then Printf.sprintf "_pr_%d" sl
                       else Printf.sprintf "%s(_pr_%d, _qi_%d)" unlo sl sl))
                   (Isa.storeu_pd
                      isa
-                     (leg_addr "zout" leg s colo vw)
+                     (leg_addr ~ivscale:(if r0 = Some 8 then 2 else 1) "zout" leg s colo vw)
                      (if vw = 1
                       then Printf.sprintf "_qi_%d" sl
                       else Printf.sprintf "%s(_pr_%d, _qi_%d)" unhi sl sl))
@@ -2029,7 +2125,92 @@ let emit_codelet
       [ "a", 0, 0, 2, "k", "k+1"; "b", vw, 1, 3, "k+2", "k+3" ];
     Buffer.add_string buf "    }\n"
   in
-  if (k.base = "s0t" || k.base = "s0tu") && not k.bwd
+  let emit_s0t8_body () =
+    (* ── s0t at RADIX 8 (r0 = 8): legs a0..a7 at stride Ls = N/8; the
+          radix-8 DIF as two radix-4 butterflies over b_m = a_m + a_{m+4}
+          (even outputs) and c_m = (a_m - a_{m+4}) W8^m (odd outputs), the
+          W8 powers as the (-i) mask (x(-i) = cflip + sign) and ONE 1/sqrt2
+          multiply; then the r0 = 4 turn lattice TWICE per half: digits
+          0..3 to sections {sec_a, sec_b}, digits 4..7 to {sec_a+4, sec_b+4}
+          (8 sections of N/8 complex: the digit's high bit picks the
+          quartet). Output digit d = 2e (even) / 2e+1 (odd) with e the
+          radix-4 output of the b / c butterfly. ── *)
+    let unlo = Isa.intr isa "unpacklo_pd"
+    and unhi = Isa.intr isa "unpackhi_pd"
+    and p2f = Isa.intr isa "permute2f128_pd" in
+    let line s = Buffer.add_string buf ("        " ^ s ^ "\n") in
+    let sline s = Buffer.add_string buf ("        " ^ s ^ ";\n") in
+    Buffer.add_string buf "    for (size_t k = 0; k + 4 <= count; k += 4) {\n";
+    List.iter
+      (fun (p, plus, sec_a, sec_b, pos_a, pos_b) ->
+         let v n = p ^ n in
+         let r4 (i0, i1, i2, i3) (o0, o1, o2, o3) =
+           (* the radix-4 DIF butterfly in the s0t source order *)
+           line (Isa.const_decl isa (v (o0 ^ "t0")) (Isa.add_pd isa (v i0) (v i2)));
+           line (Isa.const_decl isa (v (o0 ^ "t1")) (Isa.sub_pd isa (v i0) (v i2)));
+           line (Isa.const_decl isa (v (o0 ^ "t2")) (Isa.add_pd isa (v i1) (v i3)));
+           line (Isa.const_decl isa (v (o0 ^ "t3")) (Isa.sub_pd isa (v i1) (v i3)));
+           line
+             (Isa.const_decl
+                isa
+                (v (o0 ^ "r"))
+                (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v (o0 ^ "t3"))) "_zs0t_mim"));
+           line (Isa.const_decl isa (v o0) (Isa.add_pd isa (v (o0 ^ "t0")) (v (o0 ^ "t2"))));
+           line (Isa.const_decl isa (v o2) (Isa.sub_pd isa (v (o0 ^ "t0")) (v (o0 ^ "t2"))));
+           line (Isa.const_decl isa (v o1) (Isa.add_pd isa (v (o0 ^ "t1")) (v (o0 ^ "r"))));
+           line (Isa.const_decl isa (v o3) (Isa.sub_pd isa (v (o0 ^ "t1")) (v (o0 ^ "r"))))
+         in
+         let turn (ya, yb, yc, yd) sa sb tag =
+           line (Isa.const_decl isa (v (tag ^ "u0")) (Printf.sprintf "%s(%s, %s)" unlo (v ya) (v yb)));
+           line (Isa.const_decl isa (v (tag ^ "u1")) (Printf.sprintf "%s(%s, %s)" unhi (v ya) (v yb)));
+           line (Isa.const_decl isa (v (tag ^ "u2")) (Printf.sprintf "%s(%s, %s)" unlo (v yc) (v yd)));
+           line (Isa.const_decl isa (v (tag ^ "u3")) (Printf.sprintf "%s(%s, %s)" unhi (v yc) (v yd)));
+           sline (Isa.storeu_pd isa (leg_addr "zout" sa "Ls" 0 0)
+                    (Printf.sprintf "%s(%s, %s, 0x20)" p2f (v (tag ^ "u0")) (v (tag ^ "u2"))));
+           sline (Isa.storeu_pd isa (leg_addr "zout" sa "Ls" 0 vw)
+                    (Printf.sprintf "%s(%s, %s, 0x20)" p2f (v (tag ^ "u1")) (v (tag ^ "u3"))));
+           sline (Isa.storeu_pd isa (leg_addr "zout" sb "Ls" 0 0)
+                    (Printf.sprintf "%s(%s, %s, 0x31)" p2f (v (tag ^ "u0")) (v (tag ^ "u2"))));
+           sline (Isa.storeu_pd isa (leg_addr "zout" sb "Ls" 0 vw)
+                    (Printf.sprintf "%s(%s, %s, 0x31)" p2f (v (tag ^ "u1")) (v (tag ^ "u3"))))
+         in
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        /* ---- half %s: positions %s, %s -> sections %d, %d (digits 0..3) and %d, %d (digits 4..7) ---- */\n"
+              (String.uppercase_ascii p) pos_a pos_b sec_a sec_b (sec_a + 4) (sec_b + 4));
+         for l = 0 to 7 do
+           line (Isa.const_decl isa (v (string_of_int l)) (Isa.loadu_pd isa (leg_addr "zin" l "Ls" 0 plus)))
+         done;
+         (* b_m = a_m + a_{m+4}; c_m = (a_m - a_{m+4}) W8^m *)
+         for m = 0 to 3 do
+           line (Isa.const_decl isa (v ("b" ^ string_of_int m))
+                   (Isa.add_pd isa (v (string_of_int m)) (v (string_of_int (m + 4)))));
+           line (Isa.const_decl isa (v ("d" ^ string_of_int m))
+                   (Isa.sub_pd isa (v (string_of_int m)) (v (string_of_int (m + 4)))))
+         done;
+         line (Isa.const_decl isa (v "c0") (v "d0"));
+         line (Isa.const_decl isa (v "d1i") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d1")) "_zs0t_mim"));
+         line (Isa.const_decl isa (v "c1") (Isa.mul_pd isa (Isa.add_pd isa (v "d1") (v "d1i")) "_zs0t_rh"));
+         line (Isa.const_decl isa (v "c2") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d2")) "_zs0t_mim"));
+         line (Isa.const_decl isa (v "d3i") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d3")) "_zs0t_mim"));
+         line (Isa.const_decl isa (v "c3") (Isa.mul_pd isa (Isa.sub_pd isa (v "d3i") (v "d3")) "_zs0t_rh"));
+         (* even digits Y0,Y2,Y4,Y6 = DFT4(b); odd digits Y1,Y3,Y5,Y7 = DFT4(c) *)
+         r4 ("b0", "b1", "b2", "b3") ("E0", "E1", "E2", "E3");
+         r4 ("c0", "c1", "c2", "c3") ("O0", "O1", "O2", "O3");
+         (* digit d = 2e (E_e) / 2e+1 (O_e): quartet 0 = Y0..Y3 = E0,O0,E1,O1;
+            quartet 1 = Y4..Y7 = E2,O2,E3,O3 *)
+         turn ("E0", "O0", "E1", "O1") sec_a sec_b "q0";
+         turn ("E2", "O2", "E3", "O3") (sec_a + 4) (sec_b + 4) "q1")
+      [ "a", 0, 0, 2, "k", "k+1"; "b", vw, 1, 3, "k+2", "k+3" ];
+    Buffer.add_string buf "    }\n"
+  in
+  if k.base = "s0t" && not k.bwd && radix = 8
+  then (
+    emit_signature ();
+    emit_s0t8_body ();
+    Buffer.add_string buf "}\n")
+  else if (k.base = "s0t" || k.base = "s0tu") && not k.bwd
   then (
     (* ── s0t fwd: closed-form template — no DAG, no prepare ── *)
     emit_signature ();

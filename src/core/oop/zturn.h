@@ -75,6 +75,21 @@ VFFT_ZT_DECL(radix8_z_stfn_r4_fwd_avx2) /* NATURAL-ORDER terminator kinds
 VFFT_ZT_DECL(radix8_z_stfn_r4_bwd_avx2)
 VFFT_ZT_DECL(radix4_z_stfn_r4_fwd_avx2)
 VFFT_ZT_DECL(radix4_z_stfn_r4_bwd_avx2)
+VFFT_ZT_DECL(radix8_z_stfl_r4_fwd_avx2)  /* LOADED-STREAM terminator twins
+                                         * (2026-09-07, the sub-2048 campaign):
+                                         * stf / stfn edges with the MIDS'
+                                         * twiddle policy — every power
+                                         * w^1..w^(R-1) of every column a
+                                         * loaded [c x4][s x4] record (tzl),
+                                         * no packed squaring tree, no live
+                                         * twiddle registers (stfn8's 18+12
+                                         * spills -> 6+4). Per-cell RACED
+                                         * forms (tform / ntform), banked
+                                         * zt_tf / zt_ntf; fwd only — the
+                                         * bwd cascade keeps stfb / stfbn. */
+VFFT_ZT_DECL(radix4_z_stfl_r4_fwd_avx2)
+VFFT_ZT_DECL(radix8_z_stfnl_r4_fwd_avx2)
+VFFT_ZT_DECL(radix4_z_stfnl_r4_fwd_avx2)
 VFFT_ZT_DECL(radix8_z_dts_r4_fwd_avx2)  /* DIT-FORWARD boundary kinds
                                          * (dit_cascade_spec.md): conj of
                                          * stfb/stfbn/s0tb — bwd DATAFLOW,
@@ -152,6 +167,21 @@ typedef struct {
     double *twz[VFFT_ZSPLIT_MAX_NF];   /* mid tables, lane-varying, fwd     */
     double *twzb[VFFT_ZSPLIT_MAX_NF];  /* mid tables, bwd (sin negated)     */
     double *tzq, *tzqb;                /* terminator per-(k',lane) w^1      */
+    /* THE TERMINATOR FORMS (2026-09-07): tform = the SCRAMBLED class's
+     * (0 = stf / stf2 by t2q, 1 = stfl), ntform = the NATURAL class's
+     * (0 = stfn, 1 = stfnl). Form 1 reads tzl — (N/(4*Rt)) groups x (Rt-1)
+     * legs x one [c x4][s x4] record of w^l, 2N*(Rt-1)/Rt doubles, built
+     * by vfft_zturn2_set_tforms. Raced per cell at the recipe's bank (the
+     * loaded twin wins the L1-resident cells — 512..4096 natural r8 by
+     * 25-33% — and loses at 32768 where the 14N-byte stream streams from
+     * L2); fwd only; no unordered-lane twin (lanes_u pins both to 0). */
+    int tform, ntform;
+    double *tzl;
+    int tzl_nat;                       /* tzl's ORDER: 1 = rho (loop) order for the
+                                        * natural kernel (record t = plane column
+                                        * ntf[t]), 0 = plane-column order (stfl).
+                                        * Rebuilt by set_tforms when it mismatches
+                                        * natord. */
     double *plane;                     /* sectioned plane, 2N doubles, 64B  */
     int t2q;                           /* fwd terminator schedule: 0 = stf
                                         * (single-quad), 1 = stf2 (2-quad
@@ -220,6 +250,7 @@ static inline void vfft_zturn2_destroy(vfft_zturn2_plan_t *p)
     }
     VFFT_ZS_FREE(p->tzq);
     VFFT_ZS_FREE(p->tzqb);
+    VFFT_ZS_FREE(p->tzl);
     free(p->ntf);
     free(p->ntb);
     VFFT_ZS_FREE(p->plane);
@@ -384,6 +415,7 @@ static inline long _vfft_zt_rho0(long v, const int *r, int m)
  * Builds both block tables and forces tfuse off. Idempotent; on=0 frees the
  * tables and restores the scrambled terminator. Returns 1, or 0 on alloc
  * failure (plan left scrambled — a refusal, never a half-state). */
+static inline int vfft_zturn2_set_tforms(vfft_zturn2_plan_t *p, int tf, int ntf);
 static inline int vfft_zturn2_set_natord(vfft_zturn2_plan_t *p, int on)
 {
     if (!p) return 0;
@@ -393,7 +425,8 @@ static inline int vfft_zturn2_set_natord(vfft_zturn2_plan_t *p, int on)
         free(p->ntf); free(p->ntb);
         p->ntf = p->ntb = NULL;
         p->natord = 0;
-        return 1;
+        /* the loaded table is laid out per order: rebuild it for the scrambled twin */
+        return (p->tzl && p->tzl_nat) ? vfft_zturn2_set_tforms(p, p->tform, p->ntform) : 1;
     }
     const long Rt = p->chain[p->nf - 1];
     const long M = (long)p->N / (4 * Rt);
@@ -411,6 +444,61 @@ static inline int vfft_zturn2_set_natord(vfft_zturn2_plan_t *p, int on)
     p->ntb = tb;
     p->natord = 1;
     p->tfuse = 0;    /* rho spans the section; per-tile terminator is illegal */
+    /* the loaded table is laid out per order: rebuild it in rho order */
+    return (p->tzl && !p->tzl_nat) ? vfft_zturn2_set_tforms(p, p->tform, p->ntform) : 1;
+}
+
+/* the terminator FORMS: builds the loaded stream when either class runs
+ * form 1, frees it when neither does. Refuses form 1 on an unordered-lane
+ * plan (no loaded twin of stfu / stf2u). The record for group k2, leg l,
+ * lane j is w^l of column 4*k2 + j — the angle tzq carries as w^1 (lanes_u
+ * == 0 here, so ju == j); exact cos/sin per power, not the squaring tree's
+ * products, so the two forms differ at rounding level, never bitwise. */
+static inline int vfft_zturn2_set_tforms(vfft_zturn2_plan_t *p, int tf, int ntf)
+{
+    if (!p) return 0;
+    tf = tf ? 1 : 0;
+    ntf = ntf ? 1 : 0;
+    if ((tf || ntf) && p->lanes_u) return 0;
+    if (!tf && !ntf) {
+        VFFT_ZS_FREE(p->tzl);
+        p->tzl = NULL;
+        p->tform = p->ntform = 0;
+        return 1;
+    }
+    if (p->tzl && p->tzl_nat != (p->natord ? 1 : 0)) {
+        VFFT_ZS_FREE(p->tzl);          /* built for the other order: rebuild */
+        p->tzl = NULL;
+    }
+    if (!p->tzl) {
+        /* record t holds plane column k2's (Rt-1) [c x4][s x4] records; the
+         * scrambled twin (stfl) walks k2 = t, the natural twin (stfnl) walks
+         * the loop order t with k2 = ntf[t] — its table is laid out in that
+         * order so the kernel's stream is a linear pointer walk (no
+         * kn-derived address: the 09-07 loop census charged that ~0.3
+         * cyc/pt). */
+        const double TAU = 2.0 * M_PI;
+        const long N = p->N, Rt = p->chain[p->nf - 1], K2 = N / (4 * Rt);
+        const int nat = (p->natord && p->ntf) ? 1 : 0;
+        double *tl = (double *)VFFT_ZS_ALLOC((size_t)K2 * (size_t)(Rt - 1) * 8 * sizeof(double));
+        if (!tl) return 0;
+        for (long t = 0; t < K2; t++) {
+            const long k2 = nat ? (long)p->ntf[t] : t;
+            const long br = _vfft_zs_brev(k2, p->nf - 2, p->chain + 1);
+            for (int l = 1; l < Rt; l++) {
+                double *r = tl + ((size_t)t * (size_t)(Rt - 1) + (size_t)(l - 1)) * 8;
+                for (int j = 0; j < 4; j++) {
+                    const double a = -TAU * (double)((j + 4 * br) % N) / (double)N;
+                    r[j] = cos((double)l * a);
+                    r[4 + j] = sin((double)l * a);
+                }
+            }
+        }
+        p->tzl = tl;
+        p->tzl_nat = nat;
+    }
+    p->tform = tf;
+    p->ntform = ntf;
     return 1;
 }
 
@@ -788,6 +876,20 @@ static inline void _vfft_zt_term_fwd(const vfft_zturn2_plan_t *p, double *zout,
                                      long t, int whole, long w)
 {
     const long N = p->N;
+    if (p->tform && p->tzl) {
+        /* loaded stream: the record pitch per column is 2*(Rt-1) doubles, so
+         * the tile's stream offset is k0 * 2*(Rt-1) with k0 = t*w (r4) or
+         * t*w/2 (r8) — the same k0 as zout's. The scrambled twin only: the
+         * natural terminator is never cut per tile (tfuse = 0 under natord). */
+        const long Rt = p->chain[p->nf - 1];
+        const long k0 = whole ? 0 : (Rt == 4 ? t * w : t * w / 2);
+        ((Rt == 4) ? radix4_z_stfl_r4_fwd_avx2 : radix8_z_stfl_r4_fwd_avx2)(
+            p->plane + (whole ? 0 : 2 * t * w), 0,
+            zout + (Rt == 4 ? 2 * k0 : k0), 0,
+            p->tzl + k0 * 2 * (Rt - 1), 0,
+            0, 0, (size_t)N / Rt, 0, whole ? (size_t)N / Rt : (size_t)(Rt == 4 ? w : w / 2));
+        return;
+    }
     if (p->chain[p->nf - 1] == 4) {
         if (whole)
             _vfft_zt_stf4_fwd_pick(p->lanes_u)(p->plane, 0, zout, 0, p->tzq, 0,
@@ -929,7 +1031,18 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
             return;                             /* terminator already done   */
         }
     }
-    if (p->natord)
+    if ((p->natord ? p->ntform : p->tform) && p->tzl)
+        /* the LOADED-STREAM twins: natord -> stfnl (rho walk via ntf, the
+         * stream in loop order = tzl built with tzl_nat), else stfl; t2q
+         * structurally ignored */
+        (p->natord ? ((p->chain[p->nf - 1] == 4) ? radix4_z_stfnl_r4_fwd_avx2
+                                                 : radix8_z_stfnl_r4_fwd_avx2)
+                   : ((p->chain[p->nf - 1] == 4) ? radix4_z_stfl_r4_fwd_avx2
+                                                 : radix8_z_stfl_r4_fwd_avx2))(
+            p->plane, 0, zout, 0, p->tzl, (const double *)p->ntf,
+            0, 0, (size_t)p->N / p->chain[p->nf - 1], 0,
+            (size_t)p->N / p->chain[p->nf - 1]);
+    else if (p->natord)
         /* NATURAL terminator: same pass, columns walked in rho order via the
          * ntf table (tw_im slot), stores contiguous ascending. t2q is
          * structurally ignored (single-quad kind only). B2 gate: EXACT vs

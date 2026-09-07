@@ -1596,9 +1596,19 @@ static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int 
                 const int R1 = N / R2;
                 if (R1 < 9) continue;   /* A, B >= 3 each */
                 {
+                    /* PURE POW2: the pair route's — a MEASURED verdict, not a
+                     * rule (2026-09-07, the sub-2048 campaign's Phase 2). With
+                     * this skip lifted, every legal three-pass chain raced the
+                     * pairs in this planner at 128/256/512/1024 (natural, cold
+                     * store, the batched protocol) and LOST at every cell:
+                     * best chain3 vs best pair 75.1/60.7, 155.4/133.6,
+                     * 349.0/295.8, 1079.3/792.6 ns (+24/+16/+18/+36%), at the
+                     * price of 6/23/64/138 extra candidates (cold create x3-5).
+                     * The unresolved "+7.6-8.8% at 512" (U6 L10) is refuted.
+                     * Re-lift only with a new chain3 kind, never on taste. */
                     int o = R1;
                     while ((o & 1) == 0) o >>= 1;
-                    if (o == 1) continue;          /* pure pow2: the pair route's */
+                    if (o == 1) continue;
                 }
                 for (int A = 3; A <= R1 / 2; A++)
                 {

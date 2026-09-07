@@ -257,6 +257,7 @@ static const vw2_field_t vw2_fields[] = {
     { "zr_kv",   VW2_FC_LOCAL },
     { "t2q",     VW2_FC_LOCAL }, { "zs_t2q", VW2_FC_LOCAL },
     { "zt_t2q",  VW2_FC_LOCAL }, { "kv",     VW2_FC_LOCAL },
+    { "zt_tf",   VW2_FC_LOCAL }, { "zt_ntf", VW2_FC_LOCAL },   /* terminator forms (2026-09-07) */
     { "il_kv",   VW2_FC_LOCAL }, { "sp_kv",  VW2_FC_LOCAL }, /* reserved (D9) */
     { "zt_tw",   VW2_FC_LOCAL }, { "zt_l1",  VW2_FC_LOCAL },
     /* 3D pass-A lane block: cache-geometry pick, absent = heuristic. */

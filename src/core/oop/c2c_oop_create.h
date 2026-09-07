@@ -539,7 +539,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                      * Both outcomes bank to @natoop, its own table — @nat stays the in-place single writer. Kill switch VFFT_NO_NAT_ZCASC; under it nothing is banked.
                      * See docs/design/vfft_front_door.md. */
                     if (cfg->order == VFFT_ORDER_NATURAL &&
-                        N >= _vfft_zcasc_min_n() &&
+                        N >= _vfft_zcasc_nat_min_n() &&
                         cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                         !getenv("VFFT_NO_NAT_ZCASC"))
                     {
@@ -556,8 +556,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                             rcfg.recalibrate = 0;
                             vfft_zsplit_plan_t *zcs = NULL;
                             int zcr = 0;
-                            if (_k1z_wisdom_replay(&rcfg, W, N, &zcs,
-                                                   &zct, &zcr))
+                            if (_k1z_wisdom_replay_nat(&rcfg, W, N, &zcs, &zct, &zcr) ||
+                                _k1z_race_and_bank_nat(&rcfg, W, N, /*ip=*/0, &zcs, &zct, &zcr))
                             {
                                 if (zcs)
                                     vfft_zsplit_destroy(zcs);

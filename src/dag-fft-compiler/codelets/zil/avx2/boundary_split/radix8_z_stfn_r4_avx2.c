@@ -29,23 +29,24 @@ void radix8_z_stfn_r4_fwd_avx2(
     for (size_t k = 0; k + 4 <= count; k += 4) {
         /* natural-order: in-side block index via the rho table (tw_im repurposed; natterm_spec.md) */
         const size_t kn = 4*((const size_t *)tw_im)[(size_t)k >> 2];
+        const double *zn = zin + 4*kn;
         /* ZTURN-S section-tap load edge (2 records/section, 128 B contiguous, no shuffles) */
-        const __m256d lane_re_0 = _mm256_loadu_pd(&zin[4*(size_t)kn + 0]);
-        const __m256d lane_im_0 = _mm256_loadu_pd(&zin[4*(size_t)kn + 4]);
-        const __m256d lane_re_1 = _mm256_loadu_pd(&zin[4*((size_t)2*OLs + kn) + 0]);
-        const __m256d lane_im_1 = _mm256_loadu_pd(&zin[4*((size_t)2*OLs + kn) + 4]);
-        const __m256d lane_re_2 = _mm256_loadu_pd(&zin[4*((size_t)1*OLs + kn) + 0]);
-        const __m256d lane_im_2 = _mm256_loadu_pd(&zin[4*((size_t)1*OLs + kn) + 4]);
-        const __m256d lane_re_3 = _mm256_loadu_pd(&zin[4*((size_t)3*OLs + kn) + 0]);
-        const __m256d lane_im_3 = _mm256_loadu_pd(&zin[4*((size_t)3*OLs + kn) + 4]);
-        const __m256d lane_re_4 = _mm256_loadu_pd(&zin[4*(size_t)kn + 8]);
-        const __m256d lane_im_4 = _mm256_loadu_pd(&zin[4*(size_t)kn + 12]);
-        const __m256d lane_re_5 = _mm256_loadu_pd(&zin[4*((size_t)2*OLs + kn) + 8]);
-        const __m256d lane_im_5 = _mm256_loadu_pd(&zin[4*((size_t)2*OLs + kn) + 12]);
-        const __m256d lane_re_6 = _mm256_loadu_pd(&zin[4*((size_t)1*OLs + kn) + 8]);
-        const __m256d lane_im_6 = _mm256_loadu_pd(&zin[4*((size_t)1*OLs + kn) + 12]);
-        const __m256d lane_re_7 = _mm256_loadu_pd(&zin[4*((size_t)3*OLs + kn) + 8]);
-        const __m256d lane_im_7 = _mm256_loadu_pd(&zin[4*((size_t)3*OLs + kn) + 12]);
+        const __m256d lane_re_0 = _mm256_loadu_pd(&zn[0]);
+        const __m256d lane_im_0 = _mm256_loadu_pd(&zn[4]);
+        const __m256d lane_re_1 = _mm256_loadu_pd(&zn[4*((size_t)2*OLs) + 0]);
+        const __m256d lane_im_1 = _mm256_loadu_pd(&zn[4*((size_t)2*OLs) + 4]);
+        const __m256d lane_re_2 = _mm256_loadu_pd(&zn[4*((size_t)1*OLs) + 0]);
+        const __m256d lane_im_2 = _mm256_loadu_pd(&zn[4*((size_t)1*OLs) + 4]);
+        const __m256d lane_re_3 = _mm256_loadu_pd(&zn[4*((size_t)3*OLs) + 0]);
+        const __m256d lane_im_3 = _mm256_loadu_pd(&zn[4*((size_t)3*OLs) + 4]);
+        const __m256d lane_re_4 = _mm256_loadu_pd(&zn[8]);
+        const __m256d lane_im_4 = _mm256_loadu_pd(&zn[12]);
+        const __m256d lane_re_5 = _mm256_loadu_pd(&zn[4*((size_t)2*OLs) + 8]);
+        const __m256d lane_im_5 = _mm256_loadu_pd(&zn[4*((size_t)2*OLs) + 12]);
+        const __m256d lane_re_6 = _mm256_loadu_pd(&zn[4*((size_t)1*OLs) + 8]);
+        const __m256d lane_im_6 = _mm256_loadu_pd(&zn[4*((size_t)1*OLs) + 12]);
+        const __m256d lane_re_7 = _mm256_loadu_pd(&zn[4*((size_t)3*OLs) + 8]);
+        const __m256d lane_im_7 = _mm256_loadu_pd(&zn[4*((size_t)3*OLs) + 12]);
         /* SU-scheduled body (pipeline) */
         const __m256d t44 = _mm256_set1_pd(0.70710678118654757);
         const __m256d t0 = lane_re_7;

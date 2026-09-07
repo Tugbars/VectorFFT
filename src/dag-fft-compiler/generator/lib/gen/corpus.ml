@@ -130,6 +130,33 @@ let zil_boundary_cells : (string * string list) list =
   ; ( "radix4_z_stfn_r4_avx2.c"
     , [ "4"; "--zp-stfn"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
     )
+  ; ( "radix8_z_s0t_r8_avx2.c"
+    , [ "8"; "--zp-s0t"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix8_z_stf_r8_avx2.c"
+    , [ "8"; "--zp-stf"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix4_z_stf_r8_avx2.c"
+    , [ "4"; "--zp-stf"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix8_z_stfn_r8_avx2.c"
+    , [ "8"; "--zp-stfn"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix4_z_stfn_r8_avx2.c"
+    , [ "4"; "--zp-stfn"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix8_z_stfl_r8_avx2.c"
+    , [ "8"; "--zp-stfl"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix4_z_stfl_r8_avx2.c"
+    , [ "4"; "--zp-stfl"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix8_z_stfnl_r8_avx2.c"
+    , [ "8"; "--zp-stfnl"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix4_z_stfnl_r8_avx2.c"
+    , [ "4"; "--zp-stfnl"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
   ; ( "radix8_z_stfl_r4_avx2.c"
     , [ "8"; "--zp-stfl"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
     )

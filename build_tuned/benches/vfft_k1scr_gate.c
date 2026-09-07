@@ -97,6 +97,17 @@ static vfft_plan mk(vfft_wisdom *W, int N, int scrambled)
     return vfft_create(&cfg);
 }
 
+/* max |a-b| / max |b| over n2 doubles (the rounding-level identity check) */
+static double relerr(const double *a, const double *b, long n2)
+{
+    double m = 0, e = 0;
+    for (long j = 0; j < n2; j++)
+    {
+        if (fabs(b[j]) > m) m = fabs(b[j]);
+        if (fabs(a[j] - b[j]) > e) e = fabs(a[j] - b[j]);
+    }
+    return m > 0 ? e / m : e;
+}
 static void naive_dft(const double *x, double *X, long N)
 {
     for (long k = 0; k < N; k++)
@@ -152,7 +163,12 @@ int main(int argc, char **argv)
         /* arm 1: identity == route proof */
         vfft_execute(hs, VFFT_FORWARD, x, NULL, ys, NULL);
         vfft_execute(hn, VFFT_FORWARD, x, NULL, yn, NULL);
-        const int eq = memcmp(ys, yn, 2 * (size_t)N * sizeof(double)) == 0;
+        /* the identity at ROUNDING level (2026-09-07): the NATURAL cell may
+         * now serve the cascade (a raced candidate below 2048) while the
+         * SCRAMBLED cell keeps the identity engine — two engines, one
+         * spectrum, not bitwise. A permuted comb still fails by 1e0. */
+        const int eq = memcmp(ys, yn, 2 * (size_t)N * sizeof(double)) == 0 ||
+                       relerr(ys, yn, 2L * N) < 1e-11;
 
         /* arm 2: natural vs naive IN ORDER */
         naive_dft(x, X, N);
@@ -239,7 +255,8 @@ int main(int argc, char **argv)
             vfft_execute(hs, VFFT_FORWARD, x, NULL, ys, NULL);
             vfft_execute(hn, VFFT_FORWARD, x, NULL, yn, NULL);
             const int ident =
-                memcmp(ys, yn, 2 * (size_t)N * sizeof(double)) == 0;
+                memcmp(ys, yn, 2 * (size_t)N * sizeof(double)) == 0 ||
+                relerr(ys, yn, 2L * N) < 1e-11;
             vfft_execute(hs, VFFT_BACKWARD, ys, NULL, rt, NULL);
             double m = 0, e = 0;
             const double inv = 1.0 / N;

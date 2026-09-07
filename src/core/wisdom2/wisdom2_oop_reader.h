@@ -368,6 +368,8 @@ static inline int vw2_oop_lookup_zsplit_role(const vw2_store_t *s, int N,
         e->zs_route = zs_route;
         e->zs_t2q = vw2__oop_geti(r, "zs_t2q", 0);
         e->zt_t2q = vw2__oop_geti(r, "zt_t2q", 0);
+        e->zt_tf  = vw2__oop_geti(r, "zt_tf", 0);
+        e->zt_ntf = vw2__oop_geti(r, "zt_ntf", 0);
         e->zt_tw  = vw2__oop_geti(r, "zt_tw", 0);
         e->zt_l1  = vw2__oop_geti(r, "zt_l1", 0);
         e->zt_mt_t = vw2__oop_geti(r, "zt_mt_t", 0);
@@ -626,7 +628,9 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
     }
     else if (e->kind == VFFT_OOP_KIND_ZSPLIT) {
         int ch[VFFT_K1_CC_MAX_NF], nf;
-        if (e->N < 2048) { *why = "sub2048-wrong-slot"; return -1; }
+        if (e->N < 2048 && e->role != VW2_ROLE_COMP) { *why = "sub2048-wrong-slot"; return -1; }
+        /* a role=comp RECIPE below 2048 is the natural cascade candidate's
+         * (2026-09-07) — never a verdict, never read by a scrambled path */
         r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = e->N;
         r->key.q = 1; r->key.ord = VW2_ORD_SCR; r->key.pl = VW2_PL_OOP;
         VW2__OB_SET(1, "eng", e->zs_route == 1 ? "zturn" : "zsplit");
@@ -648,6 +652,8 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
             if (e->zs_route == 1) {
                 snprintf(tb, sizeof tb, "%d", e->zt_t2q);
                 VW2__OB_SET(1, "zt_t2q", tb);
+                if (e->zt_tf) VW2__OB_SET(1, "zt_tf", "1");     /* the terminator forms, when loaded */
+                if (e->zt_ntf) VW2__OB_SET(1, "zt_ntf", "1");
             }
             if (e->zt_tw > 0) {
                 snprintf(tb, sizeof tb, "%d", e->zt_tw);
@@ -937,8 +943,12 @@ static inline int vw2_oop_bank_entry_role(vw2_store_t *s,
     vw2_rec_t r;
     const char *why = NULL;
     int rc;
+    vfft_oop_wisdom_entry_t ec;
     if (e->kind != VFFT_OOP_KIND_ZSPLIT || role == VW2_ROLE_NONE)
         return vw2_oop_bank_entry(s, e);
+    ec = *e;
+    ec.role = role;
+    e = &ec;
     if (vw2_oop_rec_from_entry(&r, e, "race", NULL, &why) != VW2_OK) {
         fprintf(stderr, "[wisdom2] oop comp bank refused (%s)\n", why ? why : "?");
         return -1;

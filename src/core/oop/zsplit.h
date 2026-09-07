@@ -95,13 +95,16 @@ typedef struct {
 static inline int vfft_zsplit_default_chain(int N, int *chain)
 {
     switch (N) {
-    case 1024:  /* cold-start seed ONLY — below the production ZCASC gate
-                 * (2048), so unreachable unless VFFT_NAT_ZCASC_MINN lowers it.
-                 * Exists so the tier boundary can be RACED: 1024 is the child
-                 * of the zr2c N=2048 cell whose c2r arm is the outlier.
-                 * Legacy-legal (last==8) so both routes can build it; a
-                 * calibrated better chain would arrive via wisdom replay. */
-        chain[0]=4; chain[1]=4; chain[2]=8; chain[3]=8; return 4;
+    /* SUB-2048 NATURAL seeds (2026-09-07): the small-radix chains the
+     * stage-decomposition run measured as the natural winners (M4:
+     * 128 4.8.4 83.5 vs 4.4.8 104.1 ns; 256 4.4.4.4; 512 4.4.8.4; 1024
+     * 4.4.4.4.4 — the r4 terminator did not spill). zturn-only (no legacy
+     * twin builds a last==4 chain); the natural race decides against the
+     * pair, and the chain axis is the planner's. */
+    case 128:   chain[0]=4; chain[1]=8; chain[2]=4; return 3;
+    case 256:   chain[0]=4; chain[1]=4; chain[2]=4; chain[3]=4; return 4;
+    case 512:   chain[0]=4; chain[1]=4; chain[2]=8; chain[3]=4; return 4;
+    case 1024:  chain[0]=4; chain[1]=4; chain[2]=4; chain[3]=4; chain[4]=4; return 5;
     case 2048:  chain[0]=4; chain[1]=8; chain[2]=8; chain[3]=8; return 4;
     case 4096:  chain[0]=4; chain[1]=4; chain[2]=4; chain[3]=8; chain[4]=8; return 5;
     case 8192:  chain[0]=4; chain[1]=4; chain[2]=8; chain[3]=8; chain[4]=8; return 5;
@@ -209,12 +212,24 @@ static inline int vfft_zsplit_default_chain(int N, int *chain)
  * ship a cell. */
 static inline int _vfft_zcasc_min_n(void)
 {
+    return 2048;   /* the SCRAMBLED tier boundary (the identity contract below it) */
+}
+
+/* THE NATURAL CANDIDATE FLOOR (2026-09-07, the sub-2048 campaign): the
+ * cascade with its natural terminator enters the NATURAL cell's race from
+ * this N up, as a candidate beside the K=1 IL engines — small radix-4/8
+ * stages that fit L1 against the Bailey pair's radix-32/64 leaf on a
+ * 16-register file. Its recipe below 2048 banks as a role=comp row (never
+ * the ord=scr verdict, which keeps the scrambled cell's identity contract
+ * and the k1scr gate intact). VFFT_NAT_ZCASC_MINN overrides for a probe. */
+static inline int _vfft_zcasc_nat_min_n(void)
+{
     static int cached = 0;
     if (!cached)
     {
         const char *e = getenv("VFFT_NAT_ZCASC_MINN");
         int v = e ? atoi(e) : 0;
-        cached = (v >= 8) ? v : 2048;
+        cached = (v >= 8) ? v : 128;
     }
     return cached;
 }

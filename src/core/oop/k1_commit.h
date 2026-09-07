@@ -858,6 +858,50 @@ static void _bank_scrmode_oop_1d(struct vfft_wisdom_s *W,
  * 0 (outputs untouched) on miss/recalibrate/create-failure — the caller
  * decides what a miss means (OOP: race + bank; in-place: classic path).
  * PLANNING side only; the exec purity audit watches this. */
+/* THE NATURAL LIFT (2026-09-07, the sub-2048 campaign): the replay and the
+ * race-and-bank keep their 2048 floor for every scrambled path (the identity
+ * contract below it), and lift it only while a NATURAL candidate site calls
+ * through these wrappers — the cascade with its natural terminator as a
+ * candidate against the K=1 IL engines at 128..1024. Below 2048 the recipe
+ * lives on a role=comp row and only the comp row is ever read back. */
+static int _k1z_nat_lift = 0;
+static int _k1z_wisdom_replay(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N,
+                              vfft_zsplit_plan_t **zs_out, vfft_zturn2_plan_t **zt_out,
+                              int *zroute_out);
+static int _k1z_race_and_bank(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N, int ip,
+                              vfft_zsplit_plan_t **zs_out, vfft_zturn2_plan_t **zt_out,
+                              int *zroute_out);
+static int _k1z_wisdom_replay_nat(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N,
+                                  vfft_zsplit_plan_t **zs_out, vfft_zturn2_plan_t **zt_out,
+                                  int *zroute_out)
+{
+    int r;
+    _k1z_nat_lift = 1;
+    r = _k1z_wisdom_replay(cfg, W, N, zs_out, zt_out, zroute_out);
+    _k1z_nat_lift = 0;
+    return r;
+}
+static int _k1z_race_and_bank_nat(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N,
+                                  int ip, vfft_zsplit_plan_t **zs_out,
+                                  vfft_zturn2_plan_t **zt_out, int *zroute_out)
+{
+    int r;
+    _k1z_nat_lift = 1;
+    r = _k1z_race_and_bank(cfg, W, N, ip, zs_out, zt_out, zroute_out);
+    _k1z_nat_lift = 0;
+    return r;
+}
+
+/* the terminator-form ENV PIN (VFFT_ZT_TFORM=0|1, both classes): applied at
+ * the plan, after the bank on a race and after the replay on a hit — an
+ * override is an experiment and never writes to the store (the tcut law). */
+static void _zt_tform_env(vfft_zturn2_plan_t *zt)
+{
+    const char *e = getenv("VFFT_ZT_TFORM");
+    if (!zt || !e || !e[0]) return;
+    (void)vfft_zturn2_set_tforms(zt, e[0] == '1', e[0] == '1');
+}
+
 static int _k1z_wisdom_replay(const vfft_config_t *cfg,
                               struct vfft_wisdom_s *W, int N,
                               vfft_zsplit_plan_t **zs_out,
@@ -873,7 +917,7 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
      * went DIFF at 128..1024 with the cascade 2.2× SLOWER than the engine
      * it displaced. The driver no longer banks them; this guard makes any
      * such row in a user's wisdom file inert as well. */
-    if (N < 2048)
+    if (N < 2048 && !_k1z_nat_lift)
         return 0;
     vfft_zsplit_plan_t *zs_pending = NULL;
     vfft_zturn2_plan_t *zt_pending = NULL;
@@ -893,7 +937,15 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
      * served. */
     const int ip_call = (cfg->placement == VFFT_INPLACE);
     const vfft_oop_wisdom_entry_t *ze = NULL;
-    if (W->vw2_off_oop)
+    if (N < 2048)
+    {   /* the NATURAL candidate below the scrambled tier: ONLY its own
+         * comp recipe (chain + t2q + forms raced by the natural race);
+         * the ord=scr verdict slot does not exist here by law */
+        if (!W->vw2_off_oop &&
+            vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &zeb))
+            ze = &zeb;
+    }
+    else if (W->vw2_off_oop)
         ze = vfft_oop_wisdom_lookup_zsplit(&W->oop, N);
     else if (vw2_oop_lookup_zsplit(&W->vw2, N, &zeb))
         ze = &zeb;                 /* the SEARCHED verdict (planner / OOP race) */
@@ -1009,6 +1061,8 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
     if (zt_pending)
     {
         zt_pending->t2q = ze->zt_t2q ? 1 : 0;
+        (void)vfft_zturn2_set_tforms(zt_pending, ze->zt_tf, ze->zt_ntf);   /* the banked forms */
+        _zt_tform_env(zt_pending);                                        /* the pin beats them */
         zroute_pending = 1;
         /* tcut WIDTH replay. Absent field (zt_tw == 0) leaves
          * the plan calloc-untiled, i.e. exactly today's driver.
@@ -1141,7 +1195,7 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
     int zroute_pending = 0;
     int zch[VFFT_ZSPLIT_MAX_NF];
     int znf;
-    if (N < 2048)
+    if (N < 2048 && !_k1z_nat_lift)
         return 0; /* the cascade tier boundary — same guard as replay */
     znf = vfft_zsplit_default_chain(N, zch);
     /* Route forcing for the MISS race (the HIT path reads it inside
@@ -1168,6 +1222,9 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
         for (s2 = 0; znf && s2 < znf; s2++)
             if (zch[s2] & 1)
                 zodd = 1;
+        if (N < 2048)
+            zodd = 1;   /* the sub-2048 natural seeds are zturn-only (last==4 chains
+                         * have no legacy twin); the flag means "no legacy arm" here */
         if (znf && !zodd)
             zs_pending = vfft_zsplit_create(N, zch, znf);
         if (!zs_pending && (!znf || !zodd))
@@ -1183,7 +1240,12 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
         {
             zns = _calibrate_zturn_t2q(zt_pending, cfg->rigor, ip);
             if (zns > 0.0)
+            {
                 zroute_pending = 1;
+                /* the terminator FORMS of the same recipe, both order classes
+                 * (cascade_calibrate.h); banked below as zt_tf / zt_ntf */
+                _calibrate_zturn_tform(zt_pending, cfg->rigor, ip);
+            }
         }
         if (!zroute_pending && zs_pending)
             zns = _calibrate_zsplit_t2q(zs_pending, cfg->rigor, ip);
@@ -1211,6 +1273,8 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
                                                       zs_pending->nf);
             ne.zs_route = zroute_pending;
             ne.zt_t2q = zt_pending ? zt_pending->t2q : 0;
+            ne.zt_tf = zt_pending ? zt_pending->tform : 0;    /* the terminator forms */
+            ne.zt_ntf = zt_pending ? zt_pending->ntform : 0;
             /* tcut width + the cache it was tuned against. 0 when untiled,
              * which keeps the banked line byte-identical to the pre-width
              * format. This race does not SEARCH widths (that is the
@@ -1231,7 +1295,7 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
              * true incumbent incl. the k1 IL routes) before any banking
              * — banking here would make replay attach it by fiat. The
              * sweep owns banking those winners. */
-            if (!ip && !zodd) /* kind-4 = the OOP create's cell */
+            if (!ip && !zodd && N >= 2048) /* kind-4 = the OOP create's cell */
                 vw2_oop_bank_entry(&W->vw2, &ne);
             else
                 /* the in-place / odd race's RECIPE, as a COMPONENT row
@@ -1249,6 +1313,7 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
         {
             vfft_zsplit_destroy(zs_pending);
             zs_pending = NULL;
+            _zt_tform_env(zt_pending);      /* the pin, after the bank */
         }
         else
         {

@@ -29,21 +29,22 @@ void radix4_z_stfn_r4_bwd_avx2(
     for (size_t k = 0; k + 4 <= count; k += 4) {
         /* natural-order: in-side block index via the rho table (tw_im repurposed; natterm_spec.md) */
         const size_t kn = 4*((const size_t *)tw_im)[(size_t)k >> 2];
+        const double *zn = zin + 2*kn;
         /* Z load edge (DEINT) */
-        const __m256d _zl_0 = _mm256_loadu_pd(&zin[2*(size_t)kn]);
-        const __m256d _zh_0 = _mm256_loadu_pd(&zin[2*(size_t)kn + 4]);
+        const __m256d _zl_0 = _mm256_loadu_pd(&zn[0]);
+        const __m256d _zh_0 = _mm256_loadu_pd(&zn[4]);
         const __m256d lane_re_0 = _mm256_permute4x64_pd(_mm256_unpacklo_pd(_zl_0, _zh_0), 0xD8);
         const __m256d lane_im_0 = _mm256_permute4x64_pd(_mm256_unpackhi_pd(_zl_0, _zh_0), 0xD8);
-        const __m256d _zl_1 = _mm256_loadu_pd(&zin[2*((size_t)1*OLs + kn)]);
-        const __m256d _zh_1 = _mm256_loadu_pd(&zin[2*((size_t)1*OLs + kn) + 4]);
+        const __m256d _zl_1 = _mm256_loadu_pd(&zn[2*((size_t)1*OLs)]);
+        const __m256d _zh_1 = _mm256_loadu_pd(&zn[2*((size_t)1*OLs) + 4]);
         const __m256d lane_re_1 = _mm256_permute4x64_pd(_mm256_unpacklo_pd(_zl_1, _zh_1), 0xD8);
         const __m256d lane_im_1 = _mm256_permute4x64_pd(_mm256_unpackhi_pd(_zl_1, _zh_1), 0xD8);
-        const __m256d _zl_2 = _mm256_loadu_pd(&zin[2*((size_t)2*OLs + kn)]);
-        const __m256d _zh_2 = _mm256_loadu_pd(&zin[2*((size_t)2*OLs + kn) + 4]);
+        const __m256d _zl_2 = _mm256_loadu_pd(&zn[2*((size_t)2*OLs)]);
+        const __m256d _zh_2 = _mm256_loadu_pd(&zn[2*((size_t)2*OLs) + 4]);
         const __m256d lane_re_2 = _mm256_permute4x64_pd(_mm256_unpacklo_pd(_zl_2, _zh_2), 0xD8);
         const __m256d lane_im_2 = _mm256_permute4x64_pd(_mm256_unpackhi_pd(_zl_2, _zh_2), 0xD8);
-        const __m256d _zl_3 = _mm256_loadu_pd(&zin[2*((size_t)3*OLs + kn)]);
-        const __m256d _zh_3 = _mm256_loadu_pd(&zin[2*((size_t)3*OLs + kn) + 4]);
+        const __m256d _zl_3 = _mm256_loadu_pd(&zn[2*((size_t)3*OLs)]);
+        const __m256d _zh_3 = _mm256_loadu_pd(&zn[2*((size_t)3*OLs) + 4]);
         const __m256d lane_re_3 = _mm256_permute4x64_pd(_mm256_unpacklo_pd(_zl_3, _zh_3), 0xD8);
         const __m256d lane_im_3 = _mm256_permute4x64_pd(_mm256_unpackhi_pd(_zl_3, _zh_3), 0xD8);
         /* SU-scheduled body (pipeline) */

@@ -27,9 +27,13 @@
  * (93 dropped), which is why the cap is now 1024.
  * Re-measured 2026-09-02 (il_dp_cand_census, cap 1024): N=1024 scrambled now
  * enumerates ZERO candidates (the cascade tier starts at 2048; 1024 belongs
- * to the pair/chain engines) — the row asserts that measured fact. */
+ * to the pair/chain engines) — the row asserted that measured fact.
+ * Re-measured 2026-09-07 (il_dp_cand_census, cap 1024): N=1024 scrambled
+ * enumerates 30 — the K=1 IL tier's SCRAMBLED cell got its OWN pool on
+ * 2026-09-05 (pairs x forms, keyed ord=scr), so the scrambled census at a
+ * sub-2048 pow2 cell is the IL pool, not the cascade's. */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 0 }, { 2048, 50 }, { 4096, 80 }, { 8192, 117 },
+    { 1024, 30 }, { 2048, 50 }, { 4096, 80 }, { 8192, 117 },
     { 16384, 171 }, { 32768, 253 }, { 65536, 349 }
 };
 
