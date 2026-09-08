@@ -106,9 +106,9 @@ apply to every future race in this tree:
 
 ## 4. Stage fusion — mechanism transfers, value does not
 
-Removing the per-stage call is worth **7.3% at N=128 and under 0.5% at
-N ≥ 2048** (see `cascade_stage_fusion.md`). The saving is a fixed ~2 ns per
-stage, so it is diluted by any transform long enough to matter at ≥2048.
+Removing the per-stage call is worth **9–12% at N=128 and under 0.5% at
+N ≥ 2048** (see `cascade_stage_fusion.md`). The saving is a fixed 2.4–4.5 ns
+per stage, so it is diluted by any transform long enough to matter at ≥2048.
 
 The mechanism would work there; it simply is not worth its emitter corpus for
 a sub-0.5% return. **Do not transfer for speed.** The one reason it might come

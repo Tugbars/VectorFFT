@@ -5,7 +5,7 @@ in `src/` yet.
 
 **Scope:** K=1, 1D, C2C, interleaved, sub-2048. The saving is a fixed cost per
 stage, so it matters where the transform is short and fades where it is long:
-7.3% at N=128, under 0.5% at N ≥ 2048. The exclusion above 2048 is because the
+9–12% at N=128, under 0.5% at N ≥ 2048. The exclusion above 2048 is because the
 GAIN vanishes there, not because of corpus cost — see the decision below.
 
 ---
@@ -79,29 +79,43 @@ save/restore pair. A narrower 3-argument ABI measures 1.88 ns and a
 ### 2.2 End to end, fused vs unfused
 
 Same kernels, same arithmetic, same chain — the only difference is whether the
-stage bodies are separate functions or inlined into one. One cell per process,
-21 rounds, alternating arm order, three rotations:
+stage bodies are separate functions or inlined into one. Measured by crossing
+EVERY chain at a cell against {unfused, fused} in one process and one round, so
+the gain is read per chain rather than assumed constant: 41 rounds, 4 paced
+runs per cell, control (`chain0` timed twice) **−0.06%** at 128 and **−0.01%**
+at 256.
 
-| N | stages | unfused | fused | saved | share |
-|---|---|---|---|---|---|
-| 128 | 3 | 78.5 ns | 72.8 ns | 5.7 ns | **7.3%** |
-| 256 | 3 | 164.1 ns | 159.2 ns | 4.9 ns | 3.0% |
-| 512 | 3 | 353.8 ns | 348.8 ns | 5.0 ns | 1.4% |
-| 1024 | 4 | 759.8 ns | 746.0 ns | 13.8 ns | 1.8% |
+| N | chain | stages | unfused | fused | gain | absolute | per stage |
+|---|---|---|---|---|---|---|---|
+| 128 | **4.4.8** | 3 | 77.30 | **68.28** | **11.68%** | 9.03 ns | 3.01 ns |
+| 128 | 4.8.4 | 3 | 78.48 | 71.33 | 9.11% | 7.15 ns | 2.38 ns |
+| 128 | 8.4.4 | 3 | 80.94 | 73.06 | 9.74% | 7.88 ns | 2.63 ns |
+| 256 | **4.8.8** | 3 | 159.12 | **148.69** | 6.55% | 10.42 ns | 3.47 ns |
+| 256 | 4.4.4.4 | **4** | 164.49 | 151.87 | **7.67%** | **12.62 ns** | 3.15 ns |
+| 256 | 8.4.8 | 3 | 164.73 | 154.88 | 5.98% | 9.84 ns | 3.28 ns |
+| 256 | 8.8.4 | 3 | 164.71 | 156.05 | 5.26% | 8.66 ns | 2.89 ns |
+| 512 | 4.4.8.4 | 4 | 357.63 | 339.46 | 5.08% | 18.17 ns | 4.54 ns |
+| 512 | 4.8.4.4 | 4 | 353.89 | 339.03 | 4.20% | 14.86 ns | 3.71 ns |
+| 512 | 8.8.8 | 3 | 354.36 | 341.76 | 3.55% | 12.60 ns | 4.20 ns |
+| 1024 | 8.8.4.4 | 4 | 759.8 | 746.0 | 1.8% | 13.8 ns | 3.45 ns |
 
-That is **≈1.7–2.0 ns per stage removed**, which agrees with the stub table and
-confirms the saving is the ABI and not something else.
+**2.4–4.5 ns per stage removed**, which brackets the stub table and confirms
+the saving is the ABI rather than something else.
 
-Two consequences worth stating plainly:
+Three consequences worth stating plainly:
 
-- At **N=128 this is the largest single execute-side effect measured in the
-  sub-2048 work** — larger than the chain choice (2.7% at 512) and larger than
-  any kernel-body change.
-- It scales with **stage count**, not with N, so it is worth more on longer
-  chains. That couples it to the chain axis: a 4-stage chain that loses to a
-  3-stage one unfused may win once both are fused. **The two must be raced
-  together, never separately** — measuring either alone gets the answer wrong
-  in both directions.
+- The gain is **9–12% at N=128**, far and away the largest single execute-side
+  effect measured in the sub-2048 work — larger than the chain choice (2.7% at
+  512) and larger than any kernel-body change. At `4.4.8` it puts the cell at
+  **68.28 ns** against a same-process MKL anchor of ~71 ns: fusion alone moves
+  that cell from behind to ahead.
+- **The gain is not constant across chains at the same N** (5.26–7.67% at 256),
+  so quoting one number per size is misleading.
+- It scales with **stage count**, not N, so it is worth more on longer chains.
+  That couples it to the chain axis: a 4-stage chain that loses to a 3-stage one
+  unfused may win once both are fused. **The two must be raced together, never
+  separately** — measuring either alone gets the answer wrong in both directions,
+  and §4.4 shows it happening.
 
 ---
 
@@ -228,22 +242,18 @@ None of them transfers, and for the chain this is measured, not argued —
 the crossing (every chain x {unfused, fused}, one process, one round) reorders
 the ranking wherever chains of different stage COUNT compete:
 
-| N | unfused ranking | fused ranking | runs differing |
-|---|---|---|---|
-| 128 | 4.4.8 > 4.8.4 > 8.4.4 | *same* | 1/4 (all chains are 3-stage — the mechanism cannot bite) |
-| 256 | 4.8.8 > 8.8.4 > 8.4.8 > **4.4.4.4** | 4.8.8 > **4.4.4.4** > 8.4.8 > 8.8.4 | 4/4 |
-| 512 | 4.8.4.4 > **8.8.8** > 4.4.8.4 | 4.8.4.4 > 4.4.8.4 > **8.8.8** | 3/4 |
+| N | unfused ranking | fused ranking | runs differing | control |
+|---|---|---|---|---|
+| 128 | 4.4.8 > 4.8.4 > 8.4.4 | *same* | 0/4 — every chain is 3-stage, so the mechanism cannot bite | −0.06% |
+| 256 | 4.8.8 > **4.4.4.4** > 8.8.4 > 8.4.8 | 4.8.8 > **4.4.4.4** > **8.4.8 > 8.8.4** | **3/4** | −0.01% |
+| 512 | 4.8.4.4 > **8.8.8** > 4.4.8.4 | 4.8.4.4 > 4.4.8.4 > **8.8.8** | **3/4** | +0.20% |
 
 The cause is arithmetic: the saving is per stage, so the ABSOLUTE gain tracks
-stage count — 4-stage chains collect 12–18 ns, 3-stage chains 7–13 ns. A
-3-stage chain that leads unfused can therefore fall behind a 4-stage one once
-both are fused. `8.8.8` at N=512 goes from second to last; `4.4.4.4` at N=256
-goes from last to second.
-
-(Control was clean at 512 (+0.20%) but large at 256 (+2.85%) and 128 (+5.22%),
-an arm-position artifact rather than drift. 512's reordering stands on its own;
-256's is consistent with the mechanism and with 4/4 runs, but its control wants
-fixing before the number is quoted as final.)
+stage count. At N=256 the 4-stage `4.4.4.4` takes the largest absolute gain of
+the four (12.62 ns against 8.66–10.42 ns), and at N=512 the only 3-stage chain,
+`8.8.8`, takes the smallest (12.60 ns against 14.86 and 18.17) and falls from
+second to last. Where every chain has the same stage count — N=128 — the
+ranking does not move at all, which is the control the mechanism predicts.
 
 **What this does and does not imply.** It is NOT an extra cost item for
 shipping fusion: banked verdicts are disposable during development, and a full
