@@ -90,14 +90,6 @@ build_tuned/benches/mb_256.txt
 # wisdom2 store rides the same negation — belt-and-suspenders line so a future
 # pattern reshuffle cannot silently untrack it. See src/core/wisdom2/README.md.
 !src/dag-fft-compiler/generator/generated/wisdom2_*.txt
-# PER-HOST STORES (2026-09-03). A wisdom record is "which plan won a real race
-# on THIS machine", and a placement-luck verdict raced on one uarch is not
-# valid on another — so a second calibration host gets its own directory
-# (pointed at by VFFT_WISDOM_DIR) rather than merging into the first host's
-# store. One level: generated/wisdom/<host>/*.txt, nothing deeper.
-# 🔴 This SUPERSEDES the former "never a subfolder" rule for per-host stores
-# only; the flat generated/*.txt layout remains correct for everything else.
-!src/dag-fft-compiler/generator/generated/wisdom/*/*.txt
 
 # Refactor-safety baseline artifacts are COMMITTED — they are the reference the
 # migration diffs against, so an ignored baseline means the harness reports green
@@ -122,3 +114,7 @@ build_tuned/benches/smallre_split_probe.c
 # personal living dashboard (session-maintained, not a tracked doc)
 IL_SUPPORT_MATRIX.md
 CODELET_TAXONOMY.md
+
+# owner 2026-09-07: design comparison notes kept local
+docs/design/cascade_vs_mkl_method.md
+docs/design/cascade_zturn_t_plan.md
