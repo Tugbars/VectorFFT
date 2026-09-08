@@ -212,9 +212,7 @@ performance argument.
 would need a chain roughly ten times the current stage count. Until a measured
 cell approaches that, emit the full cross-product.
 
-## 4.4 Every banked verdict was raced on the executor this replaces
-
-This is the part that makes fusion more than a drop-in faster executor.
+## 4.4 The banked verdicts were raced on the executor this replaces
 
 All of the create-time calibrators time the SAME function — the unfused,
 one-call-per-stage path (`src/core/planning/cascade_calibrate.h`):
@@ -226,24 +224,37 @@ static void _zt_tf_arm(void *v)    { ... vfft_zturn2_execute_fwd(c->p, c->zi, c-
 
 so the **chain** verdict, the **tform/ntform** verdict and the **t2q**
 terminator-twin verdict were each measured on an executor that fusion removes.
-None of them is automatically transferable:
+None of them transfers, and for the chain this is measured, not argued —
+the crossing (every chain x {unfused, fused}, one process, one round) reorders
+the ranking wherever chains of different stage COUNT compete:
 
-| axis | why fusion can move it |
-|---|---|
-| chain | the saving is per STAGE, so a longer chain collects more of it; a chain that loses unfused can win fused |
-| tform / ntform | the terminator stops being its own function and is inlined beside the mids, so its register pressure and schedule change |
-| t2q | same argument — these are schedule twins whose whole delta is placement, and fusion changes the placement |
+| N | unfused ranking | fused ranking | runs differing |
+|---|---|---|---|
+| 128 | 4.4.8 > 4.8.4 > 8.4.4 | *same* | 1/4 (all chains are 3-stage — the mechanism cannot bite) |
+| 256 | 4.8.8 > 8.8.4 > 8.4.8 > **4.4.4.4** | 4.8.8 > **4.4.4.4** > 8.4.8 > 8.8.4 | 4/4 |
+| 512 | 4.8.4.4 > **8.8.8** > 4.4.8.4 | 4.8.4.4 > 4.4.8.4 > **8.8.8** | 3/4 |
 
-The rule this implies is the one the calibrators already state for their own
-reason: **race what will actually run.** A verdict measured on a different
-executor is a verdict for a different question. So shipping fusion is not
-"add a faster path"; it is "add a faster path AND re-race every axis banked
-against the old one", and the two cannot be separated without invalidating the
-store.
+The cause is arithmetic: the saving is per stage, so the ABSOLUTE gain tracks
+stage count — 4-stage chains collect 12–18 ns, 3-stage chains 7–13 ns. A
+3-stage chain that leads unfused can therefore fall behind a 4-stage one once
+both are fused. `8.8.8` at N=512 goes from second to last; `4.4.4.4` at N=256
+goes from last to second.
 
-Practical consequence for sequencing: the fused executor must exist and be
-gated BEFORE the calibrators are pointed at it, and the re-calibration is a
-restamp of every sub-2048 cascade row, not a patch to a few.
+(Control was clean at 512 (+0.20%) but large at 256 (+2.85%) and 128 (+5.22%),
+an arm-position artifact rather than drift. 512's reordering stands on its own;
+256's is consistent with the mechanism and with 4/4 runs, but its control wants
+fixing before the number is quoted as final.)
+
+**What this does and does not imply.** It is NOT an extra cost item for
+shipping fusion: banked verdicts are disposable during development, and a full
+re-race is already the plan once the method stops changing (race once while
+shipping, then save). What it does imply is a constraint on HOW that final race
+is run:
+
+1. it must be run **on the fused executor**, because a verdict from the unfused
+   one answers a different question; and
+2. **every candidate chain must exist in fused form** for it to be raced at all
+   — which is the decision in §0, arrived at independently.
 
 ## 5. Gate
 
