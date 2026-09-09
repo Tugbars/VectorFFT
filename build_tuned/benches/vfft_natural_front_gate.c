@@ -1,33 +1,38 @@
 /* vfft_natural_front_gate.c — B5: order=NATURAL through the PUBLIC front
- * door, K=1 interleaved IN-PLACE, cascade tier.
+ * door, K=1 interleaved, in place and out of place, the pow2 cells 2048..32768.
  *
- * The cold-start flow, per cell (SCRATCH wisdom dir — never generated/):
- *   1. a SCRAMBLED OOP create races + banks the kind-4 cascade line;
- *   2. the NATURAL in-place create must build the ZCASC candidate from that
- *      line (stfn terminator, no reorder pass), race it END-TO-END against
- *      the tape incumbent, win, bank mode=6, attach ([natorder] log line);
- *   3. correctness — 🔴 roundtrip cannot gate this; each direction gates
+ * RESTAMPED 2026-09-09 to the owner's law (design_contracts.md section 4):
+ * at a power of two up to ZTURN-T's ceiling NO door builds or races a
+ * cascade candidate — "no cascade race arm please, eliminate". The cells
+ * below are ZTURN-T's alone, so the flow per cell is now:
+ *   1. a SCRAMBLED OOP create banks the kind-4 cascade line on the scratch
+ *      (the cascade is still the scrambled writer there); the natural
+ *      creates below must never read it as a candidate;
+ *   2. MEASURE (recalibrate) in place: NO race fires ([ipil] never prints a
+ *      "zcasc=" line); the K=1 engine serves ("attach ILP" or "replay ILP"
+ *      in the tap) and banks mode=ilp;
+ *   3. correctness — roundtrip cannot gate this; each direction gates
  *      against an independent reference:
  *        fwd:  execute(z,NULL,z,NULL) == naive DFT, elementwise IN ORDER;
  *        bwd:  execute(naive spectrum) == N*x, elementwise;
- *   4. CONSUME: a second create on the same wisdom must replay mode=ZCASC
- *      with NO race (no [natorder] race line), same correctness.
- *   5. small-N regression: N=256 natural in-place (tape tier, no cascade)
- *      still correct — the ZCASC arm must not perturb the classic path.
+ *   4. CONSUME in place: no race, the banked ILP verdict replays (or the
+ *      engine attaches when the cell had only a stale cascade row — the
+ *      door treats such a row as unset in the band);
+ *   5. small-N regression: N=256 natural in-place (tape tier) still correct.
  *
- * Phase D arm (il_coverage_plan.md, 2026-08-04) — order=NATURAL OOP ≥2048:
- *   6. the NATURAL OOP create must race the natord cascade against the K=1
- *      engine incumbent END-TO-END, attach on win, bank @natoop; src->dst
- *      distinct buffers, src must come back UNTOUCHED; fwd/bwd each gate
- *      against the same independent references as the in-place arm;
- *   7. OOP CONSUME must replay with NO race, and measure-vs-consume fwd
- *      outputs must be BITWISE identical (create-race coherence rule: the
- *      candidates are not bit-identical, the banked verdict is the memo);
- *   8. round-trip: free+reload the wisdom (exercising the @natoop save/load
- *      cycle) — both the in-place @nat and the OOP @natoop verdicts must
- *      still consume silently;
- *   9. small-N OOP regression: N=256 natural OOP (native il2p tier, no
- *      cascade) still correct.
+ * Out of place (the former Phase D arm, same law):
+ *   6. MEASURE: NO [natorder] OOP race fires; the K=1 engine serves; src->dst
+ *      distinct buffers, src must come back UNTOUCHED; fwd/bwd gate against
+ *      the same references;
+ *   7. CONSUME: no race; measure-vs-consume fwd outputs must be BITWISE
+ *      identical;
+ *   8. round-trip: free+reload the wisdom — both verdicts still consume
+ *      silently;
+ *   9. small-N OOP regression: N=256 natural OOP still correct.
+ *
+ * Before this restamp the gate asserted the OLD law: a MEASURE create had to
+ * race the natord cascade, and from 8192 up the cascade had to win ("3-5x",
+ * a 2026-08 measurement that ZTURN-T overturned on 2026-09-09).
  *
  * Run:   vfft_natural_front_gate.exe --wisdir <scratch dir>
  * Build: python build.py --src benches/vfft_natural_front_gate.c --vfft --compile
@@ -168,11 +173,10 @@ static int run_cell(vfft_wisdom *W, int N, const double *x, const double *X,
         printf("%-7d %-8s create FAILED\n", N, tag);
         return 0;
     }
-    const int raced = strstr(log, "zcasc=") != NULL;      /* MEASURE race ran */
-    const int zwon = strstr(log, "-> ZCASC") != NULL;     /* ...and ZCASC won */
-    const int iwon = strstr(log, "-> ILP") != NULL;       /* ...or the IL engine did (2026-09-03: an IL arm) */
-    const int replayed = strstr(log, "replay ZCASC") != NULL || /* CONSUME hit */
-                         strstr(log, "replay ILP") != NULL;
+    const int raced = strstr(log, "zcasc=") != NULL;      /* a race ran — never, in the band */
+    const int served = strstr(log, "attach ILP") != NULL || /* the K=1 engine serves */
+                       strstr(log, "replay ILP") != NULL;
+    const int replayed = strstr(log, "replay ILP") != NULL; /* CONSUME hit the banked row */
 
     double *a = az((size_t)N);
     memcpy(a, x, 2 * (size_t)N * sizeof(double));
@@ -192,17 +196,17 @@ static int run_cell(vfft_wisdom *W, int N, const double *x, const double *X,
     const char *eng = "tape";
     if (expect == 1)
     {
-        /* MEASURE must race; the winner is the race's business (2026-09-03:
-         * the in-place IL create races its K=1 engine vs the cascade — no
-         * split tape arm exists any more) */
-        ok = ok && raced && (zwon || iwon);
-        eng = zwon ? "ZCASC(raced)" : (iwon ? "ILP(raced)" : (raced ? "?(raced)" : "NO RACE"));
+        /* MEASURE: no cascade arm exists in the band, so NO race may fire;
+         * the K=1 engine must serve (owner's law, 2026-09-09) */
+        ok = ok && !raced && served;
+        eng = raced ? "RACED(!)" : (served ? "ILP(no race)" : "tape(!)");
     }
     else if (expect == 2)
     {
-        /* CONSUME must NOT race AND must replay the banked IL verdict */
-        ok = ok && !raced && replayed;
-        eng = raced ? "RACED(!)" : (replayed ? "replay" : "tape(!)");
+        /* CONSUME: no race; the banked ILP verdict replays, or the engine
+         * attaches where the cell carried only a stale cascade row */
+        ok = ok && !raced && served;
+        eng = raced ? "RACED(!)" : (replayed ? "replay" : (served ? "attach" : "tape(!)"));
     }
     printf("%-7d %-8s fwd=%.1e bwd=%.1e  %-13s%s\n",
            N, tag, ef, eb, eng, ok ? "" : "   *** FAIL ***");
@@ -256,17 +260,13 @@ static int run_cell_oop(vfft_wisdom *W, int N, const double *x,
 
     int ok = ef < 1e-9 && eb < 1e-9 && src_ok;
     const char *eng = "engine";
-    if (expect == 1 || expect == 3)
-    {
-        ok = ok && raced && (expect == 1 || zwon);
-        eng = zwon ? "ZCASC(raced)" : (raced ? "engine(raced)" : "NO RACE");
-    }
-    else if (expect == 2 || expect == 4)
-    {
-        ok = ok && !raced && (expect == 4 || replayed);
-        eng = raced ? "RACED(!)"
-                    : (replayed ? "ZCASC(replay)" : "engine(free)");
-    }
+    /* every expect value, MEASURE or CONSUME: in ZTURN-T's band no cascade
+     * arm exists, so no [natorder] OOP race may fire and the K=1 engine
+     * serves (owner's law, 2026-09-09). A ZCASC replay would mean a stale
+     * cascade verdict got read as one — a failure too. */
+    (void)expect;
+    ok = ok && !raced && !replayed;
+    eng = raced ? "RACED(!)" : (replayed ? "ZCASC(!)" : (zwon ? "ZCASC(!)" : "engine(no race)"));
     printf("%-7d %-8s fwd=%.1e bwd=%.1e  %-13s%s%s\n",
            N, tag, ef, eb, eng, src_ok ? "" : " SRC-CLOBBERED",
            ok ? "" : "   *** FAIL ***");
@@ -315,14 +315,10 @@ int main(int argc, char **argv)
          * @natoop; consume replays; the two fwd spectra must be BITWISE
          * identical (the banked verdict is the coherence memo). */
         double *f1 = az((size_t)N), *f2 = az((size_t)N);
-        /* 2048 AND 4096 are competitive cells — either winner is legal.
-         * (4096 re-measured 2026-09-01: a 20-sample cold A/B on two library
-         * vintages picked the engine 9/10 and 10/10 with the arms ~1-10%
-         * apart, i.e. the old "≥4096 an engine win = wiring bug" rule was
-         * asserting a race outcome for a cell inside the noise band — the
-         * same class as the two banked-axis gate-flake lessons. ≥8192 the
-         * cascade wins by 3-5x and the rule still bites.) */
-        const int em = (N >= 8192) ? 3 : 1, ec = (N >= 8192) ? 2 : 4;
+        /* 2026-09-09: every cell here is in ZTURN-T's band — no race, the
+         * engine serves, measure and consume alike (em/ec kept for the
+         * call shape only). */
+        const int em = 1, ec = 4;
         if (!run_cell_oop(W, N, x, X, em, "oop-meas", f1)) fails++;
         if (!run_cell_oop(W, N, x, X, ec, "oop-cons", f2)) fails++;
         if (memcmp(f1, f2, 2 * (size_t)N * sizeof(double)) != 0)

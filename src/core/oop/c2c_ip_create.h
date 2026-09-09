@@ -220,8 +220,8 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         if (ztt) vfft_ztt_bind(ztt, 1);   /* in place: the plane drivers */
         if (!il2 && !il3 && !ifd && !ztt)
             (void)_k1_il_mono_candidate(W, N, &mono_f, &mono_b);
-        if (!il2 && !il3 && !ifd && !ztt && !mono_f)
-            ilp = _ilprime_create_banked(W, cfg, N);
+        if (!il2 && !il3 && !ifd && !ztt && !mono_f && (N & (N - 1)) != 0)
+            ilp = _ilprime_create_banked(W, cfg, N);   /* a route, never a fallback: no pow2 cell */
         have_k1 = (il2 || il3 || ifd || ztt || mono_f || ilp) ? 1 : 0;
     }
 

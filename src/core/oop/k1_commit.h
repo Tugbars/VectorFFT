@@ -322,13 +322,26 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
 {
     vfft_il_cand_t top;
     int lines;
-    /* the Bailey tier's race: every N below 2048, and above it only an N
-     * with no factor of 4 (no cascade route; 2026-09-04) — bounded by the
-     * planner context's scratch (VFFT_K1_IL_PLAN_MAX_N). */
-    if (!W || W->vw2_off_oop || N < 2 || (N >= 2048 && !(N & 3)) ||
-        N > ((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N) ||
-        getenv("VFFT_NO_K1PLAN"))
+    /* WISDOM OR RACE, never a fallback (owner's law, 2026-09-09): a request
+     * names (N, layout, order, placement); the door looks that cell up and
+     * on a miss RACES the interleaved planner's pool, banks the winner and
+     * serves it. Every N the planner covers races here: below 2048, the odd
+     * cells above it (no factor of 4), and — since 2026-09-09 — the pow2
+     * cells of ZTURN-T's band up to its ceiling. Until then a pow2 N >= 2048
+     * returned 0 here and a cold band cell fell through to the prime engine
+     * (Bluestein at 32768, seen in the natural front gate's tap). The
+     * 2^a * odd cells with a factor of 4 above 2048 stay out: they are the
+     * odd machinery's (the cascade's) until its turn. */
+    if (!W || W->vw2_off_oop || N < 2 || getenv("VFFT_NO_K1PLAN"))
         return 0;
+    {
+        const int pow2 = (N & (N - 1)) == 0;
+        if (!pow2 && N >= 2048 && !(N & 3))
+            return 0;
+        if (N > (pow2 ? VFFT_ZTT_MAX_N
+                      : ((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N)))
+            return 0;
+    }
     if (!_k1_il_dp_ctx_ready)
     {
         vfft_il_dp_init(&_k1_il_dp_ctx, VFFT_K1_IL_PLAN_MAX_N);
@@ -345,8 +358,9 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     else
         _k1_il_dp_ctx.beam = VFFT_IL_DP_BEAM_MEASURE;
     if (getenv("VFFT_NAT_LOG"))
-        fprintf(stderr, "[k1plan] N=%d: IL plan race (pair x forms, chain3 x forms, "
-                        "bwd forms) — a cold cell takes seconds\n", N);
+        fprintf(stderr, "[k1plan] N=%d: IL plan race (solos, pairs x forms, ZTURN-T "
+                        "chains x widths, chain3 x forms, bwd forms) — a cold cell "
+                        "takes seconds\n", N);
     lines = vfft_il_dp_plan_and_bank(&_k1_il_dp_ctx, &W->vw2, N,
                                      getenv("VFFT_IL_DP_VERBOSE") != NULL);
     if (lines > 0)
@@ -392,7 +406,11 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * and would otherwise fall to Bluestein unraced — the Bailey tier's
      * race is the only measurement it can get. N with a factor of 4 stay
      * the cascade's, exactly as before. */
-    if ((N < 2048 || (N & 3)) && !W->vw2_off_oop &&
+    /* WISDOM OR RACE (owner's law, 2026-09-09): every interleaved miss races,
+     * the pow2 band included — _k1_il_plan_race carries the N gate. Until
+     * 2026-09-09 this call was fenced to N < 2048 or odd N and a cold in-place
+     * band cell refused with "no interleaved engine". */
+    if (!W->vw2_off_oop &&
         (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)

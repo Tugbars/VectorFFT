@@ -172,8 +172,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * below is never the source of a served IL plan any more (it
              * kept building a form-less pair on the cold create while the
              * replay took the planner's pair WITH forms: different bits). */
-            if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && (N < 2048 || (N & 3)) &&
-                !W->vw2_off_oop &&   /* odd N >= 2048: no cascade route (2026-09-04) */
+            /* WISDOM OR RACE (owner's law, 2026-09-09): every interleaved miss
+             * races here, the pow2 band included — _k1_il_plan_race carries
+             * the N gate (the 2^a * odd cells above 2048 stay the odd
+             * machinery's). Until 2026-09-09 this call was fenced to
+             * N < 2048 or odd N and a cold band cell fell through. */
+            if (cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+                !W->vw2_off_oop &&
                 (cfg->recalibrate || !ki || !ki->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
             {
                 if (_k1_il_plan_race(W, cfg, N) > 0)
@@ -460,7 +465,10 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * (il_prime.h) — the OOP INTERLEAVED prime coverage the split
              * OOP path refuses. Same IL-only-handle rules as the chain. */
             vfft_ilprime_plan_t *ilpr = NULL;
-            if (ilr == VFFT_K1_IL_NONE && !il2p && !il3p &&
+            /* the prime engine is a route, not a fallback: a power of two is
+             * never its cell (the pow2 tiers race on a miss, above) */
+            if (ilr == VFFT_K1_IL_NONE && !il2p && !il3p && !ilfd && !ztt &&
+                (N & (N - 1)) != 0 &&
                 !getenv("VFFT_NO_IL2P") &&
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED)
             {
