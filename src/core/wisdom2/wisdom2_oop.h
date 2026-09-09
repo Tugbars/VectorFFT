@@ -72,6 +72,10 @@ typedef struct {
     char   il_flf[24];
     int    il_tw;                            /* il_tw= the flat DIT's tile width in
                                               * complex (0 = untiled), 2026-09-05 */
+    int    il_zt[7];                         /* kind 3, il_route=ztt: ZTURN-T's chain
+                                              * as il_ztt=R0.R1...; il_zt_n stages
+                                              * (0 = absent), 2026-09-09 */
+    int    il_zt_n;
     int    ord_scr;                          /* kind 3 IL row keyed ord=scr: the flat
                                               * DIT's SCRAMBLED class (its own chain +
                                               * forms, raced under the scrambled

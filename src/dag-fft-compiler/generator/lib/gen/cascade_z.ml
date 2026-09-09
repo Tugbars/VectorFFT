@@ -74,6 +74,13 @@ type zs_edge =
        4*(size_t)k, second record +8, im +VW). Plain loadu/storeu,
        shuffle-free. stf load side / stfb store side. *)
   | E_sect_tr4 of string
+  | E_runs
+    (* ZTURN-T run-contiguous ingest store (t0tp, CONTRACT.md 5 / 7.1):
+       column c's R0 outputs land at PLANE complex rb[c]*R0 .. +R0-1 =
+       R0/4 consecutive 64-B blocks from doubles zout + 2*R0*rb[c]; rb[]
+       (one size_t per column) rides in the tw_im slot. The turn lattice
+       is s0t's, so the whole edge is s0t's store side with the address
+       changed -- template-emitted, like E_sect_tr4's store side. *)
 (* ZTURN-S backward-ingest load network: 4 section records at
        leg_addr(l = SEC[m], STRIDE) + two tr4_str lane transposes
        (the un-turn). LOAD-ONLY. *)
@@ -138,6 +145,12 @@ type zs_kind =
        whose per-slot stores are SINGLETON-ready (one direct storeu per
        sink tag, no cross-slot shuffle/transpose network) can sink;
        today that is E_sect_tap alone (stfb). *)
+  ; tw_group_reset : bool
+    (* ZTURN-T mids/last (tmg/tlf): the twiddle w_{RL}^{r*b} depends on the
+       column b inside the run and NOT on the group, so ONE stream serves
+       every group -- the record offset advances with k inside the body
+       (tw_off = %TWF*k) and the group-loop wrapper does NOT bump twg
+       (CONTRACT.md 3, "the one real difference from msg"). *)
   ; nat_in : bool
     (* NATURAL-ORDER variant (stfn/stfbn -- docs/research/natterm_spec.md):
        the IN-side edge and (fwd only) the twiddle stream are addressed
@@ -196,6 +209,7 @@ let kind_of_string (s : string) : zs_kind =
     ; twiddled = true
     ; policy = Dft.TP_Flat
     ; tw_off = ""
+    ; tw_group_reset = false
     ; in_edge = E_planes "Ls"
     ; out_edge = E_planes "Ls"
     ; sink_stores = false
@@ -397,6 +411,56 @@ let kind_of_string (s : string) : zs_kind =
     ; in_edge = E_sect_tap "OLs"
     ; out_edge = E_z "OLs"
     ; nat_in = true
+    }
+  | "t0tp" | "t0tpb" ->
+    (* ZTURN-T INGEST (CONTRACT.md 5, 7.1): natural packed z legs at
+       stride Ls = N/R0 (s0s/s0t's load), twiddle-free radix R0 (the
+       ingest's own radix IS R0 -- no _r0 tag), s0t's turn lattice, stores
+       run-contiguous through rb[] (E_runs). The packed-through form the
+       sub-2048 campaign raced in ("t0tp": 1.42-1.78x over the split-
+       butterfly t0t). bwd = the same leaf with conjugate roots (the +i
+       mask): the inverse pipeline keeps the DIT order, natural in and
+       out, tables conjugated by the create. *)
+    { mid with
+      base = "t0tp"
+    ; bwd = s = "t0tpb"
+    ; twiddled = false
+    ; in_edge = E_z "Ls"
+    ; out_edge = E_runs
+    }
+  | "tmg" | "tmgb" ->
+    (* ZTURN-T MID (CONTRACT.md 3, 7.2): msg's group-looped in-place
+       block combine with the COLUMN-VARYING pre-twiddle: records advance
+       with k inside the body ((R-1) records of [c x4][s x4] per column
+       quad -- stfl's stream shape) and the cursor RESETS per group. *)
+    { mid with
+      base = "tmg"
+    ; bwd = s = "tmgb"
+      (* the inverse keeps the DIT ORDER: PRE-twiddle (conj, table_conj) then
+         the IDFT butterfly. Placement travels with (direction, sign) in
+         dft.ml, so (DIT, Bwd) would be IDFT-then-POST (the transposed
+         ZTURN-S pipeline); dif = true at Bwd lands on PRE -- mszb's rule. *)
+    ; dif = s = "tmgb"
+    ; group_loop = true
+    ; tw_off = "%TWF*(size_t)k"
+    ; tw_group_reset = true
+    }
+  | "tlf" | "tlfb" ->
+    (* ZTURN-T LAST (CONTRACT.md 6, 7.3): tmg's combine with stf's REINT
+       packed store at leg*OLs + k -- natural interleaved output, no
+       reordering pass anywhere. Group-looped over distinct in/out
+       pointers (Gs = 1 at the terminal stage of a K-stage chain). Alias-
+       tolerant: with Ls == OLs an in-place call rewrites exactly the
+       blocks it read (zt_last.c, "ALIASING"), which is what lets the
+       fused driver run the whole pipeline in the destination. *)
+    { mid with
+      base = "tlf"
+    ; bwd = s = "tlfb"
+    ; dif = s = "tlfb"   (* PRE-twiddle at Bwd, as tmgb *)
+    ; group_loop = true
+    ; tw_off = "%TWF*(size_t)k"
+    ; tw_group_reset = true
+    ; out_edge = E_z "OLs"
     }
   | "stfl" ->
     (* LOADED-STREAM terminator twin of stf (2026-09-07, the sub-2048
@@ -650,7 +714,15 @@ let resolve_tw_off (radix : int) (s : string) : string =
 
 let zu_noperm = ref false
 
+(* ZTURN-T body names (the probe's: zt_ingest2.c / zt_mid.c / zt_last.c):
+   the fused driver TU (ztt_drivers.ml) re-emits these bodies beside the
+   per-kind codelets, so the name is shared here. *)
+let ztt_body_name ~(base : string) ~(radix : int) ~(bwd : bool) : string =
+  Printf.sprintf "_z%s%d%s_body" base radix (if bwd then "b" else "f")
+;;
+
 let emit_codelet
+      ~(body_only : bool)
       ~store_on_compute
       ~(kind : string)
       ~(radix : int)
@@ -680,7 +752,7 @@ let emit_codelet
     else (
       match k.out_edge with
       | E_sect_tap _ -> { k with sink_stores = true }
-      | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ ->
+      | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ | E_runs ->
         failwith
           (Printf.sprintf
              "codelet_zsplit: --zp-sink: kind %s's store edge is not sink-capable (only \
@@ -715,7 +787,7 @@ let emit_codelet
             text, so the sequence path reproduces the committed sk kernel
             under the same symbol (A/B side by side with the incumbent). *)
          { k with sched = ZS_afterdef; sink_stores = true }
-       | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ ->
+       | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ | E_runs ->
          failwith
            (Printf.sprintf
               "codelet_zsplit: --zp-sched afterdef: kind %s's store edge is not \
@@ -828,7 +900,7 @@ let emit_codelet
     &&
     match k.in_edge with
     | E_sect_tap _ -> true
-    | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ -> false
+    | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ | E_runs -> false
   then (
     match r0 with
     | Some r when r = vw -> ()
@@ -958,6 +1030,24 @@ let emit_codelet
         | "sterm2", _ ->
           "sterm2: 2-quad unroll-and-jam terminator twin (SU-braided 2-instance DAG + \
            baseline-shaped tail; bit-identical pair with sterm, per-cell t2q pick)."
+        | "t0tp", b ->
+          Printf.sprintf
+            "t0tp (ZTURN-T ingest: natural packed z legs at stride N/R0, twiddle-free \
+             radix-%d, s0t's turn lattice, RUN-CONTIGUOUS block stores at plane complex \
+             rb[c]*R0 through the tw_im-carried run-base table), %s."
+            radix
+            (if b then "bwd (conjugate roots)" else "fwd")
+        | "tmg", b ->
+          Printf.sprintf
+            "tmg (ZTURN-T mid: msg's in-place group-looped combine with the COLUMN-VARYING \
+             pre-twiddle w_RL^(r*b): (R-1) records per column quad advancing with k, \
+             cursor RESET per group), %s."
+            (if b then "bwd (table conjugated by the create)" else "fwd")
+        | "tlf", b ->
+          Printf.sprintf
+            "tlf (ZTURN-T last: tmg's combine + REINT packed stores at leg*OLs + k = \
+             natural interleaved out, group-looped over distinct in/out pointers), %s."
+            (if b then "bwd (table conjugated by the create)" else "fwd")
         | "sterm", false ->
           "sterm (SPLIT-INPUT terminator: TR4 loads, packed w^1 squaring tree, REINT \
            drev-comb stores), fwd."
@@ -1103,7 +1193,9 @@ let emit_codelet
           Printf.sprintf
             "tw_re = %s: legs 1..R-1, %d doubles/leg [c×%d][s×%d]. tw_im unused."
             (if k.group_loop
-             then "Gs per-group splat-pair sets, in-kernel cursor (twg bump/group)"
+             then (if k.tw_group_reset
+                   then "(R-1) records of [c x4][s x4] PER COLUMN QUAD at %TWF*k, ONE stream for every group (cursor resets per group)"
+                   else "Gs per-group splat-pair sets, in-kernel cursor (twg bump/group)")
              else "ONE per-group splat-pair set, no cursor (group-constant)")
             (2 * vw)
             vw
@@ -1154,6 +1246,21 @@ let emit_codelet
      _vzt_mim, zturn_proto.h). *)
   if (k.base = "s0t" || k.base = "s0tu") && not k.bwd
   then Buffer.add_string buf (Isa.im_mask_decl isa "_zs0t_mim" ^ "\n\n");
+  (* t0tp: the same lattice both ways; the quarter-turn mask picks the sign
+     (x(-i) fwd = im_mask, x(+i) bwd = re_mask). *)
+  if k.base = "t0tp" && not body_only
+  then
+    Buffer.add_string
+      buf
+      ((if k.bwd then Isa.re_mask_decl isa "_zs0t_pim" else Isa.im_mask_decl isa "_zs0t_mim")
+       ^ "\n\n");
+  if k.base = "t0tp" && radix = 8 && not body_only
+  then
+    Buffer.add_string
+      buf
+      "static const __m256d _zs0t_rh = { 0.70710678118654752440, 0.70710678118654752440, \
+       0.70710678118654752440, 0.70710678118654752440 };  /* 1/sqrt2: |W8^1| */\n\n";
+  let body_start = ref 0 in
   if k.base = "s0t" && not k.bwd && radix = 8
   then
     Buffer.add_string
@@ -1565,7 +1672,8 @@ let emit_codelet
               ~qid:(Printf.sprintf "li0_%d" qd)
               (Array.init 4 (fun j -> Printf.sprintf "_si_%d" ((4 * qd) + j)))
               (Array.init 4 (fun j -> Printf.sprintf "lane_im_%d" ((4 * qd) + j))))
-       done);
+       done
+     | E_runs -> failwith "codelet_zsplit: E_runs is a store-only edge (t0tp)");
     (* per-slot output tag arrays (all edge shapes consume pairs) — built
        BEFORE the body walk so sink_stores can interleave stores at defs *)
     let re_tag = Array.make nslots (-1)
@@ -1729,7 +1837,7 @@ let emit_codelet
                        (sect_addr ~iv:ivout "zout" q s 0 plus)
                        (Printf.sprintf "t%d" tag))
               }) )
-      | E_sect_tr4 _ ->
+      | E_sect_tr4 _ | E_runs ->
         failwith
           "codelet_zsplit: E_sect_tr4 is load-only (s0t's record stores are \
            template-emitted)"
@@ -2007,7 +2115,7 @@ let emit_codelet
       (* section bases are stride-scaled, so the ZTURN-S edges USE their
          stride (E_sect_tap "OLs" reads/writes at 4*(sec*OLs + k)). *)
       | E_planes s | E_z s | E_sect_tap s | E_sect_tr4 s -> s = stride
-      | E_blocks -> false
+      | E_blocks | E_runs -> false
     in
     edge_uses k.in_edge || edge_uses k.out_edge
   in
@@ -2018,7 +2126,7 @@ let emit_codelet
          (fun p -> Printf.sprintf "(void)%s;" p)
          (List.concat
             [ ([ "zin_unused"; "zout_unused" ]
-               @ if k.nat_in || k.nat_out then [] else [ "tw_im" ])
+               @ if k.nat_in || k.nat_out || k.base = "t0tp" then [] else [ "tw_im" ])
             ; (if uses "Ls" then [] else [ "Ls" ])
             ; [ "Gs" ]
             ; (if uses "OLs" then [] else [ "OLs" ])
@@ -2059,7 +2167,8 @@ let emit_codelet
         ar; aY0, aY2, aY1, aY3 (Y2 BEFORE Y1); au0..au3; stores sec re,
         sec im, sec' re, sec' im. Prototype's noinline/used dropped at
         emitter transcription (consensus doc §6). ── *)
-  let emit_s0t_body () =
+  let s0t_mask = if k.bwd then "_zs0t_pim" else "_zs0t_mim" in
+  let emit_s0t_body ?(runs = false) () =
     let unlo = Isa.intr isa "unpacklo_pd"
     and unhi = Isa.intr isa "unpackhi_pd"
     and p2f = Isa.intr isa "permute2f128_pd" in
@@ -2072,6 +2181,20 @@ let emit_codelet
     List.iter
       (fun (p, plus, sec_a, sec_b, pos_a, pos_b) ->
          let v n = p ^ n in
+         (* E_runs: the two columns' run bases, one scalar rb[] load each *)
+         let st sec off =
+           if runs
+           then Printf.sprintf "%s[%d]" (v (if sec = sec_a then "pl" else "ph")) off
+           else leg_addr "zout" sec "Ls" 0 off
+         in
+         if runs
+         then
+           Buffer.add_string
+             buf
+             (Printf.sprintf
+                "        /* ---- half %s: columns %s, %s -> runs rb[%s], rb[%s] ---- */\n"
+                (String.uppercase_ascii p) pos_a pos_b pos_a pos_b)
+         else
          Buffer.add_string
            buf
            (Printf.sprintf
@@ -2097,7 +2220,7 @@ let emit_codelet
            (Isa.const_decl
               isa
               (v "r")
-              (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "t3")) "_zs0t_mim"));
+              (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "t3")) s0t_mask));
          line (Isa.const_decl isa (v "Y0") (Isa.add_pd isa (v "t0") (v "t2")));
          line (Isa.const_decl isa (v "Y2") (Isa.sub_pd isa (v "t0") (v "t2")));
          line (Isa.const_decl isa (v "Y1") (Isa.add_pd isa (v "t1") (v "r")));
@@ -2122,30 +2245,36 @@ let emit_codelet
               isa
               (v "u3")
               (Printf.sprintf "%s(%s, %s)" unhi (v yc) (v yd)));
+         if runs
+         then (
+           line
+             (Printf.sprintf "double * __restrict__ %s = zout + %d*rb[%s];" (v "pl") (2 * radix) pos_a);
+           line
+             (Printf.sprintf "double * __restrict__ %s = zout + %d*rb[%s];" (v "ph") (2 * radix) pos_b));
          sline
            (Isa.storeu_pd
               isa
-              (leg_addr "zout" sec_a "Ls" 0 0)
+              (st sec_a 0)
               (Printf.sprintf "%s(%s, %s, 0x20)" p2f (v "u0") (v "u2")));
          sline
            (Isa.storeu_pd
               isa
-              (leg_addr "zout" sec_a "Ls" 0 vw)
+              (st sec_a vw)
               (Printf.sprintf "%s(%s, %s, 0x20)" p2f (v "u1") (v "u3")));
          sline
            (Isa.storeu_pd
               isa
-              (leg_addr "zout" sec_b "Ls" 0 0)
+              (st sec_b 0)
               (Printf.sprintf "%s(%s, %s, 0x31)" p2f (v "u0") (v "u2")));
          sline
            (Isa.storeu_pd
               isa
-              (leg_addr "zout" sec_b "Ls" 0 vw)
+              (st sec_b vw)
               (Printf.sprintf "%s(%s, %s, 0x31)" p2f (v "u1") (v "u3"))))
       [ "a", 0, 0, 2, "k", "k+1"; "b", vw, 1, 3, "k+2", "k+3" ];
     Buffer.add_string buf "    }\n"
   in
-  let emit_s0t8_body () =
+  let emit_s0t8_body ?(runs = false) () =
     (* ── s0t at RADIX 8 (r0 = 8): legs a0..a7 at stride Ls = N/8; the
           radix-8 DIF as two radix-4 butterflies over b_m = a_m + a_{m+4}
           (even outputs) and c_m = (a_m - a_{m+4}) W8^m (odd outputs), the
@@ -2174,26 +2303,46 @@ let emit_codelet
              (Isa.const_decl
                 isa
                 (v (o0 ^ "r"))
-                (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v (o0 ^ "t3"))) "_zs0t_mim"));
+                (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v (o0 ^ "t3"))) s0t_mask));
            line (Isa.const_decl isa (v o0) (Isa.add_pd isa (v (o0 ^ "t0")) (v (o0 ^ "t2"))));
            line (Isa.const_decl isa (v o2) (Isa.sub_pd isa (v (o0 ^ "t0")) (v (o0 ^ "t2"))));
            line (Isa.const_decl isa (v o1) (Isa.add_pd isa (v (o0 ^ "t1")) (v (o0 ^ "r"))));
            line (Isa.const_decl isa (v o3) (Isa.sub_pd isa (v (o0 ^ "t1")) (v (o0 ^ "r"))))
          in
+         (* E_runs: quartet q (digits 4q..4q+3) = block q of the column's run,
+            doubles 2*R0*rb[c] + 8q (+0 re, +VW im) *)
+         let st sec qoff off =
+           if runs
+           then Printf.sprintf "%s[%d]" (v (if sec land 3 = sec_a then "pl" else "ph")) (qoff + off)
+           else leg_addr "zout" sec "Ls" 0 off
+         in
          let turn (ya, yb, yc, yd) sa sb tag =
+           let qoff = 8 * (sa / 4) in
            line (Isa.const_decl isa (v (tag ^ "u0")) (Printf.sprintf "%s(%s, %s)" unlo (v ya) (v yb)));
            line (Isa.const_decl isa (v (tag ^ "u1")) (Printf.sprintf "%s(%s, %s)" unhi (v ya) (v yb)));
            line (Isa.const_decl isa (v (tag ^ "u2")) (Printf.sprintf "%s(%s, %s)" unlo (v yc) (v yd)));
            line (Isa.const_decl isa (v (tag ^ "u3")) (Printf.sprintf "%s(%s, %s)" unhi (v yc) (v yd)));
-           sline (Isa.storeu_pd isa (leg_addr "zout" sa "Ls" 0 0)
+           sline (Isa.storeu_pd isa (st sa qoff 0)
                     (Printf.sprintf "%s(%s, %s, 0x20)" p2f (v (tag ^ "u0")) (v (tag ^ "u2"))));
-           sline (Isa.storeu_pd isa (leg_addr "zout" sa "Ls" 0 vw)
+           sline (Isa.storeu_pd isa (st sa qoff vw)
                     (Printf.sprintf "%s(%s, %s, 0x20)" p2f (v (tag ^ "u1")) (v (tag ^ "u3"))));
-           sline (Isa.storeu_pd isa (leg_addr "zout" sb "Ls" 0 0)
+           sline (Isa.storeu_pd isa (st sb qoff 0)
                     (Printf.sprintf "%s(%s, %s, 0x31)" p2f (v (tag ^ "u0")) (v (tag ^ "u2"))));
-           sline (Isa.storeu_pd isa (leg_addr "zout" sb "Ls" 0 vw)
+           sline (Isa.storeu_pd isa (st sb qoff vw)
                     (Printf.sprintf "%s(%s, %s, 0x31)" p2f (v (tag ^ "u1")) (v (tag ^ "u3"))))
          in
+         if runs
+         then (
+           Buffer.add_string
+             buf
+             (Printf.sprintf
+                "        /* ---- half %s: columns %s, %s -> runs rb[%s], rb[%s] (2 blocks each) ---- */\n"
+                (String.uppercase_ascii p) pos_a pos_b pos_a pos_b);
+           line
+             (Printf.sprintf "double * __restrict__ %s = zout + %d*rb[%s];" (v "pl") (2 * radix) pos_a);
+           line
+             (Printf.sprintf "double * __restrict__ %s = zout + %d*rb[%s];" (v "ph") (2 * radix) pos_b))
+         else
          Buffer.add_string
            buf
            (Printf.sprintf
@@ -2210,10 +2359,10 @@ let emit_codelet
                    (Isa.sub_pd isa (v (string_of_int m)) (v (string_of_int (m + 4)))))
          done;
          line (Isa.const_decl isa (v "c0") (v "d0"));
-         line (Isa.const_decl isa (v "d1i") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d1")) "_zs0t_mim"));
+         line (Isa.const_decl isa (v "d1i") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d1")) s0t_mask));
          line (Isa.const_decl isa (v "c1") (Isa.mul_pd isa (Isa.add_pd isa (v "d1") (v "d1i")) "_zs0t_rh"));
-         line (Isa.const_decl isa (v "c2") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d2")) "_zs0t_mim"));
-         line (Isa.const_decl isa (v "d3i") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d3")) "_zs0t_mim"));
+         line (Isa.const_decl isa (v "c2") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d2")) s0t_mask));
+         line (Isa.const_decl isa (v "d3i") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d3")) s0t_mask));
          line (Isa.const_decl isa (v "c3") (Isa.mul_pd isa (Isa.sub_pd isa (v "d3i") (v "d3")) "_zs0t_rh"));
          (* even digits Y0,Y2,Y4,Y6 = DFT4(b); odd digits Y1,Y3,Y5,Y7 = DFT4(c) *)
          r4 ("b0", "b1", "b2", "b3") ("E0", "E1", "E2", "E3");
@@ -2236,6 +2385,29 @@ let emit_codelet
     emit_signature ();
     emit_s0t_body ();
     Buffer.add_string buf "}\n")
+  else if k.base = "t0tp"
+  then (
+    (* -- t0tp: s0t's closed-form template as an always_inline BODY (the
+          fused driver TU inlines it), stores through rb[]; the exported
+          wrapper hands rb over from the tw_im slot (CONTRACT.md 7.1). -- *)
+    let body_name = ztt_body_name ~base:"t0tp" ~radix ~bwd:k.bwd in
+    body_start := Buffer.length buf;
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "static __attribute__((always_inline)) inline void %s(\n\
+         \    const double * __restrict__ zin, double * __restrict__ zout,\n\
+         \    const size_t * __restrict__ rb, size_t Ls, size_t count)\n\
+          {\n"
+         body_name);
+    if radix = 8 then emit_s0t8_body ~runs:true () else emit_s0t_body ~runs:true ();
+    Buffer.add_string buf "}\n\n";
+    if not body_only
+    then (
+      emit_signature ();
+      Buffer.add_string
+        buf
+        (Printf.sprintf "    %s(zin, zout, (const size_t *)tw_im, Ls, count);\n}\n" body_name)))
   else if k.uj2
   then (
     (* ── sterm2: one function, shared k cursor, 2-instance main loop
@@ -2280,13 +2452,19 @@ let emit_codelet
            callee's target ⊆ caller's; it inlines into the attributed
            wrapper). Wrapper shape mirrors legacy codelet_zil byte-for-byte:
            in-place on zout (zin voided), bp += 2·R·Ls, twg += (R-1)·2·VW. ── *)
-    let body_name = Printf.sprintf "_zsg%d%s_body" radix (if k.bwd then "b" else "f") in
+    let ztt = k.base = "tmg" || k.base = "tlf" in
+    let body_name =
+      if ztt
+      then ztt_body_name ~base:k.base ~radix ~bwd:k.bwd
+      else Printf.sprintf "_zsg%d%s_body" radix (if k.bwd then "b" else "f")
+    in
+    body_start := Buffer.length buf;
     Buffer.add_string
       buf
       (Printf.sprintf
          "static __attribute__((always_inline)) inline void %s(\n\
          \    const double *%szin, double *%szout,\n\
-         \    const double *tw_re, size_t Ls, size_t count)\n\
+         \    const double *tw_re, size_t Ls, %ssize_t count)\n\
           {\n"
          body_name
          (* 🔴 The helper is ALWAYS_INLINE, so its qualifiers apply to the
@@ -2294,8 +2472,9 @@ let emit_codelet
             only the z11 signature would leave the promise intact here and the
             fix would be cosmetic. zturn/zsplit call msg/msd as
             f(plane, 0, plane, 0, ...), so BOTH levels must drop it. *)
-         (if k.base = "msg" || k.base = "msd" then " " else " __restrict__ ")
-         (if k.base = "msg" || k.base = "msd" then " " else " __restrict__ "));
+         (if k.base = "msg" || k.base = "msd" || ztt then " " else " __restrict__ ")
+         (if k.base = "msg" || k.base = "msd" || ztt then " " else " __restrict__ ")
+         (if uses "OLs" then "size_t OLs, " else ""));
     let dag = prepare ~two_inst:false in
     if not k.narrow_arms
     then
@@ -2329,6 +2508,7 @@ let emit_codelet
         ~ninst:1
         dag);
     Buffer.add_string buf "}\n\n";
+    if not body_only then begin
     (* M4 phase 3: the driver wrapper's FROZEN z ABI also comes from
         Abi.z11_signature (the third of the three hand prints). *)
     Buffer.add_string
@@ -2342,25 +2522,50 @@ let emit_codelet
             260->237 insns and 50->26 stack spills, msd 272->241 and 60->29,
             because __restrict__ was licensing the compiler to hoist every
             load above the stores and blow register pressure. *)
-         ~alias_tolerant:(k.base = "msg" || k.base = "msd")
+         ~alias_tolerant:(k.base = "msg" || k.base = "msd" || ztt)
          ~symbol:fname
          ~target_attr:isa.Isa.target_attr
          ());
-    Buffer.add_string
-      buf
-      (Printf.sprintf
-         "    (void)zin; (void)zin_unused; (void)zout_unused; (void)tw_im;\n\
-         \    (void)OLs; (void)OGs;\n\
-         \    double *bp = zout;\n\
-         \    const double *twg = tw_re;\n\
-         \    for (size_t g = 0; g < Gs; g++) {\n\
-         \        %s(bp, bp, twg, Ls, count);\n\
-         \        bp += 2 * (size_t)%d * Ls;\n\
-         \        twg += %d;\n\
-         \    }\n\
-          }\n"
-         body_name
-         radix
-         ((radix - 1) * 2 * vw)));
-  Buffer.contents buf
+    if k.base = "tlf"
+    then
+      (* distinct in/out pointers: the plane is read at 2*R*Ls per group,
+         the packed output written at 2*R*OLs; ONE stream for every group *)
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)OGs;\n\
+           \    const double *ip = zin;\n\
+           \    double *op = zout;\n\
+           \    for (size_t g = 0; g < Gs; g++) {\n\
+           \        %s(ip, op, tw_re, Ls, OLs, count);\n\
+           \        ip += 2 * (size_t)%d * Ls;\n\
+           \        op += 2 * (size_t)%d * OLs;\n\
+           \    }\n\
+            }\n"
+           body_name
+           radix
+           radix)
+    else
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "    (void)zin; (void)zin_unused; (void)zout_unused; (void)tw_im;\n\
+           \    (void)OLs; (void)OGs;\n\
+           \    double *bp = zout;\n\
+           \    const double *twg = tw_re;\n\
+           \    for (size_t g = 0; g < Gs; g++) {\n\
+           \        %s(bp, bp, twg, Ls, count);\n\
+           \        bp += 2 * (size_t)%d * Ls;\n\
+           %s\
+           \    }\n\
+            }\n"
+           body_name
+           radix
+           (if k.tw_group_reset
+            then "        /* ZTURN-T: the cursor RESETS per group (CONTRACT.md 3) */\n"
+            else Printf.sprintf "        twg += %d;\n" ((radix - 1) * 2 * vw)))
+    end);
+  if body_only
+  then Buffer.sub buf !body_start (Buffer.length buf - !body_start)
+  else Buffer.contents buf
 ;;

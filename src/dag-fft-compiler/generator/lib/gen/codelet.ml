@@ -100,6 +100,12 @@ type zs_kind =
   | Stfn
   | Stfl (* loaded-stream terminator twin of Stf (2026-09-07) *)
   | Stfnl (* its natural-order twin *)
+  | T0tp (* ZTURN-T ingest / mid / last and their bwd twins (zturn_t_ship_plan.md) *)
+  | T0tpb
+  | Tmg
+  | Tmgb
+  | Tlf
+  | Tlfb
   | Sterm
   | Sterm2
   | Stermb
@@ -222,6 +228,12 @@ let zs_name = function
   | Stfn -> "stfn"
   | Stfl -> "stfl"
   | Stfnl -> "stfnl"
+  | T0tp -> "t0tp"
+  | T0tpb -> "t0tpb"
+  | Tmg -> "tmg"
+  | Tmgb -> "tmgb"
+  | Tlf -> "tlf"
+  | Tlfb -> "tlfb"
   | Sterm -> "sterm"
   | Sterm2 -> "sterm2"
   | Stermb -> "stermb"
@@ -252,6 +264,12 @@ let zs_of_name = function
   | "stfn" -> Stfn
   | "stfl" -> Stfl
   | "stfnl" -> Stfnl
+  | "t0tp" -> T0tp
+  | "t0tpb" -> T0tpb
+  | "tmg" -> Tmg
+  | "tmgb" -> Tmgb
+  | "tlf" -> Tlf
+  | "tlfb" -> Tlfb
   | "sterm" -> Sterm
   | "sterm2" -> Sterm2
   | "stermb" -> Stermb

@@ -508,6 +508,18 @@ let run (argv : string array) : unit =
     then zp_kind := "stfl"
     else if arg = "--zp-stfnl"
     then zp_kind := "stfnl"
+    else if arg = "--zp-t0tp"
+    then zp_kind := "t0tp"
+    else if arg = "--zp-t0tpb"
+    then zp_kind := "t0tpb"
+    else if arg = "--zp-tmg"
+    then zp_kind := "tmg"
+    else if arg = "--zp-tmgb"
+    then zp_kind := "tmgb"
+    else if arg = "--zp-tlf"
+    then zp_kind := "tlf"
+    else if arg = "--zp-tlfb"
+    then zp_kind := "tlfb"
     else if arg = "--zp-dts"
     then zp_kind := "dts"
     else if arg = "--zp-dtsn"
@@ -1437,6 +1449,7 @@ let run (argv : string array) : unit =
          codelet_zil raw-template branch below. *)
       print_string
         (Cascade_z.emit_codelet
+           ~body_only:false
            ~store_on_compute:!store_on_compute
            ~kind:!zp_kind
            ~radix:n

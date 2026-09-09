@@ -34,8 +34,8 @@
 static const char *vw2_oop_sp_name[8] = {
     "3p", "2pa", "2pb", "twl", "mono", "2pa_l3", "3p_l3", "ccol"
 };
-static const char *vw2_oop_il_name[9] = {
-    "none", "legacy3p", "legacy2p", "mono", "cascade", "2p", "chain3", "prime", "flat"
+static const char *vw2_oop_il_name[10] = {
+    "none", "legacy3p", "legacy2p", "mono", "cascade", "2p", "chain3", "prime", "flat", "ztt"
 };
 static const char *vw2_oop_var_name[3] = { "flat", "log3", "t1s" };
 
@@ -230,7 +230,7 @@ static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_sc
             if (si == 1) { e->k1_il_route = VFFT_K1_IL_NONE; got = 1; }
             continue;                          /* il CELLS always carry one */
         }
-        ilr = vw2__oop_name_idx(vw2_oop_il_name, 9, il);
+        ilr = vw2__oop_name_idx(vw2_oop_il_name, 10, il);
         if (ilr < 0) continue;                 /* undecodable: next tier    */
         e->k1_il_route = ilr;
         if (ilr > VFFT_K1_IL_NONE) {
@@ -251,6 +251,11 @@ static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_sc
                 if (nfl >= 2) { memcpy(e->il_fl, fl, sizeof(int) * (size_t)nfl); e->il_fl_n = nfl; }
                 if (ff) { strncpy(e->il_flf, ff, sizeof e->il_flf - 1); e->il_flf[sizeof e->il_flf - 1] = 0; }
                 e->il_tw = vw2__oop_geti(ri, "il_tw", 0);
+            }
+            {                                  /* ZTURN-T payload (2026-09-09) */
+                int zt[7];
+                const int nzt = vw2__oop_split_ints(vw2_rec_get(ri, "il_ztt"), zt, 7);
+                if (nzt >= 2) { memcpy(e->il_zt, zt, sizeof(int) * (size_t)nzt); e->il_zt_n = nzt; }
             }
             /* K/ns keep the pre-1.2 dual-line convention: when an IL
              * verdict is present they are the IL natural champion's
@@ -580,7 +585,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 VW2__OB_SET(1, "vars", vars);
             }
         }
-        if (e->k1_il_route < 0 || e->k1_il_route > 8) { vw2_rec_free(r); *why = "il-route-out-of-range"; return -1; }
+        if (e->k1_il_route < 0 || e->k1_il_route > 9) { vw2_rec_free(r); *why = "il-route-out-of-range"; return -1; }
         if (e->k1_il_route != VFFT_K1_IL_NONE) {
             VW2__OB_SET(1, "il_route", vw2_oop_il_name[e->k1_il_route]);
             if (e->il_R1 || e->il_R2) {
@@ -603,6 +608,16 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 VW2__OB_SET(1, "il_flat", flb);
                 if (e->il_flf[0]) VW2__OB_SET(1, "il_forms", e->il_flf);
                 if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }
+            }
+            if (e->k1_il_route == VFFT_K1_IL_ZTT && e->il_zt_n >= 2) {
+                char ztb[48];              /* ZTURN-T: the chain IS the verdict (2026-09-09) */
+                size_t off = 0;
+                for (i = 0; i < e->il_zt_n; i++) {
+                    int rr = snprintf(ztb + off, sizeof ztb - off, "%s%d", i ? "." : "", e->il_zt[i]);
+                    if (rr < 0 || (size_t)rr >= sizeof ztb - off) break;
+                    off += (size_t)rr;
+                }
+                VW2__OB_SET(1, "il_ztt", ztb);
             }
             if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
                 char ref[96];   /* the signpost: recipe lives in the cascade cell */
@@ -1022,7 +1037,7 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             }
         }
     } else if (lay == VW2_LAY_IL) {
-        if (e->k1_il_route <= VFFT_K1_IL_NONE || e->k1_il_route > 8) {
+        if (e->k1_il_route <= VFFT_K1_IL_NONE || e->k1_il_route > 9) {
             vw2_rec_free(r); *why = "no-il-verdict"; return -1;
         }
         VW2__OB_SET(1, "il_route", vw2_oop_il_name[e->k1_il_route]);
@@ -1046,6 +1061,16 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             VW2__OB_SET(1, "il_flat", flb);
             if (e->il_flf[0]) VW2__OB_SET(1, "il_forms", e->il_flf);
             if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }
+        }
+        if (e->k1_il_route == VFFT_K1_IL_ZTT && e->il_zt_n >= 2) {
+            char ztb[48];              /* ZTURN-T: the chain IS the verdict (2026-09-09) */
+            size_t off = 0;
+            for (i = 0; i < e->il_zt_n; i++) {
+                int rr = snprintf(ztb + off, sizeof ztb - off, "%s%d", i ? "." : "", e->il_zt[i]);
+                if (rr < 0 || (size_t)rr >= sizeof ztb - off) break;
+                off += (size_t)rr;
+            }
+            VW2__OB_SET(1, "il_ztt", ztb);
         }
         if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
             char ref[96];   /* the signpost: recipe lives in the cascade cell */

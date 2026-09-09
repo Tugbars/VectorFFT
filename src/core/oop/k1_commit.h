@@ -191,7 +191,8 @@ static void _k1ord_reseed(void *v)
 static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              int N, vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out,
-                             vfft_ilfd_plan_t **ilfd_out);   /* defined below */
+                             vfft_ilfd_plan_t **ilfd_out,
+                             vfft_ztt_plan_t **ztt_out);     /* defined below */
 typedef struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; } _ilprime_inner_ctx_t;
 static int _k1z_wisdom_replay(const vfft_config_t *cfg,
                               struct vfft_wisdom_s *W, int N,
@@ -222,7 +223,7 @@ static int _ilprime_inner_from_wisdom(int M, _ilprime_inner_t *in, void *v)
         if (zt) vfft_zturn2_destroy(zt);
         return 0;
     }
-    _k1_il_candidate(c->W, c->cfg, M, &in->p2, &in->p3, NULL);   /* the prime inner takes no flat plan yet */
+    _k1_il_candidate(c->W, c->cfg, M, &in->p2, &in->p3, NULL, NULL);   /* the prime inner takes no flat / ZTURN-T plan yet */
     return (in->p2 || in->p3) ? 1 : 0;
 }
 
@@ -335,11 +336,13 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              int N,
                              vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out,
-                             vfft_ilfd_plan_t **ilfd_out)   /* NULL = caller cannot take a flat plan */
+                             vfft_ilfd_plan_t **ilfd_out,   /* NULL = caller cannot take a flat plan */
+                             vfft_ztt_plan_t **ztt_out)     /* NULL = caller cannot take a ZTURN-T plan */
 {
     *il2p_out = NULL;
     *il3p_out = NULL;
     if (ilfd_out) *ilfd_out = NULL;
+    if (ztt_out) *ztt_out = NULL;
     if (getenv("VFFT_NO_IL2P"))
         return;
     int iR1 = 0, iR2 = 0;
@@ -417,6 +420,25 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 fprintf(stderr, "[k1fd] N=%d: replay flat chain %s (forms %s, tw %d, %s) src=wisdom\n",
                         N, chs, ke->il_flf[0] ? ke->il_flf : "-", ke->il_tw,
                         scr_req ? "SCRAMBLED class" : "natural");
+            }
+            return;
+        }
+    }
+    /* ZTURN-T verdict (2026-09-09): the banked chain replays as written
+     * (validated by the create: legality, the quarter-wave's octave, the
+     * registry cell). Natural output serves both order classes. A refusal
+     * falls through to the pair/default path. */
+    if (ke && ke->k1_il_route == VFFT_K1_IL_ZTT && ke->il_zt_n >= 2 && ztt_out)
+    {
+        vfft_ztt_plan_t *zp = vfft_ztt_create_chain(N, ke->il_zt, ke->il_zt_n);
+        if (zp)
+        {
+            *ztt_out = zp;
+            if (getenv("VFFT_NAT_LOG"))
+            {
+                char chs[48];
+                vfft_ztt_chain_str(zp, chs, sizeof chs);
+                fprintf(stderr, "[k1ztt] N=%d: replay ZTURN-T chain %s src=wisdom\n", N, chs);
             }
             return;
         }

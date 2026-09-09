@@ -95,6 +95,12 @@ type zs_kind =
   | Stfn
   | Stfl
   | Stfnl
+  | T0tp
+  | T0tpb
+  | Tmg
+  | Tmgb
+  | Tlf
+  | Tlfb
   | Sterm
   | Sterm2
   | Stermb

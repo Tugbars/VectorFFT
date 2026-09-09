@@ -186,6 +186,13 @@ struct vfft_plan_s
      * consumes zin before the last stage writes zout). Same IL-only-handle
      * rules as k1il3p. Owned. */
     vfft_ilfd_plan_t *k1ilfd;
+    /* K=1 NATURAL interleaved z->z on ZTURN-T (oop/ztt.h; route
+     * VFFT_K1_IL_ZTT, 2026-09-09): the run-contiguous DIT cascade, chain
+     * replayed from the kind-3 row (il_ztt=), both directions, ONE fused
+     * driver per direction, in place legal (the ingest consumes zin before
+     * the last stage writes zout). Same IL-only-handle rules as k1il3p.
+     * Owned. */
+    vfft_ztt_plan_t *k1ztt;
     /* THE BOUND K=1 IL DISPATCH (2026-09-07, feedback_execution_purity: bind
      * at plan time, execute = pure dispatch). For a 1D c2c INTERLEAVED K=1
      * plan served by one of the IL engines above or the mono solo, create

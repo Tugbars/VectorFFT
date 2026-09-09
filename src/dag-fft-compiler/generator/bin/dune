@@ -10,6 +10,8 @@
   emit_trig_registry
   emit_strided_registry
   emit_c2r_registry
+  emit_ztt_registry
+  emit_ztt_drivers
   gen_set
   dbg_eval
   dbg_zil_math)

@@ -427,6 +427,12 @@ static int _k1x_ilfd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
     _ilfd_serve(h, dir, zin, zout);
     return 0;
 }
+static int _k1x_ztt(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{   /* ZTURN-T: ONE fused driver per direction, bound at create (ztt.h) */
+    if (dir == VFFT_FORWARD) vfft_ztt_execute_fwd(h->k1ztt, zin, zout);
+    else vfft_ztt_execute_bwd(h->k1ztt, zin, zout);
+    return 0;
+}
 static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
     if (dir == VFFT_FORWARD) vfft_ilprime_execute_fwd(h->k1ilpr, zin, zout);
@@ -456,6 +462,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         case VFFT_K1_IL_2P_PURE: if (h->k1il2p) h->k1_exec = _k1x_il2p; break;
         case VFFT_K1_IL_CHAIN3:  if (h->k1il3p) h->k1_exec = _k1x_il3p; break;
         case VFFT_K1_IL_FLAT:    if (h->k1ilfd) h->k1_exec = _k1x_ilfd; break;
+        case VFFT_K1_IL_ZTT:     if (h->k1ztt)  h->k1_exec = _k1x_ztt;  break;
         case VFFT_K1_IL_PRIME:   if (h->k1ilpr) h->k1_exec = _k1x_ilpr; break;
         default: break;
         }
@@ -466,6 +473,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
     else if (h->k1il2p) h->k1_exec = _k1x_il2p;
     else if (h->k1il3p) h->k1_exec = _k1x_il3p;
     else if (h->k1ilfd) h->k1_exec = _k1x_ilfd;
+    else if (h->k1ztt) h->k1_exec = _k1x_ztt;
     else if (h->k1ilpr) h->k1_exec = _k1x_ilpr;
     return hp;
 }
@@ -998,7 +1006,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                     (sre, 0, zo, 0, 0, 0, 1, 0, 1, 0, 1);
                 return;
             }
-            if (h->k1il2p || h->k1il3p || h->k1ilpr || h->k1ilfd)
+            if (h->k1il2p || h->k1il3p || h->k1ilpr || h->k1ilfd || h->k1ztt)
             { /* Phase B (il_coverage_plan.md): sub-2048 native IL tier,
                * ALIASED — two-stage engines through internal scratch, zout
                * written only by the last stage (alias-gated, A3 record);
@@ -1024,6 +1032,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 else if (h->k1ilfd)
                 {   /* the flat DIT, z -> z legal (the leaf consumes zin first) */
                     _ilfd_serve(h, dir, sre, zo);
+                }
+                else if (h->k1ztt)
+                {   /* ZTURN-T, z -> z legal (the ingest consumes zin first) */
+                    if (dir == VFFT_FORWARD)
+                        vfft_ztt_execute_fwd(h->k1ztt, sre, zo);
+                    else
+                        vfft_ztt_execute_bwd(h->k1ztt, sre, zo);
                 }
                 else
                 {
@@ -1104,6 +1119,18 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                     if (h->k1ilfd)
                     {
                         _ilfd_serve(h, dir, sre, dre);
+                        return;
+                    }
+                    break; /* -> convert fallback (NEVER a silent no-op) */
+                case VFFT_K1_IL_ZTT:
+                    /* ZTURN-T: both directions, natural order; route
+                     * truthfulness at create makes k1ztt non-NULL here. */
+                    if (h->k1ztt)
+                    {
+                        if (fwd)
+                            vfft_ztt_execute_fwd(h->k1ztt, sre, dre);
+                        else
+                            vfft_ztt_execute_bwd(h->k1ztt, sre, dre);
                         return;
                     }
                     break; /* -> convert fallback (NEVER a silent no-op) */
@@ -1353,6 +1380,7 @@ void vfft_destroy(vfft_plan h)
     vfft_il3p_destroy(h->k1il3p);
     vfft_ilprime_destroy(h->k1ilpr);
     vfft_ilfd_destroy(h->k1ilfd);
+    vfft_ztt_destroy(h->k1ztt);
     if (h->k1sp)
         vfft_oop_plan_destroy(h->k1sp);
     if (h->zr2c_child)

@@ -416,6 +416,25 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             }
             if (ilr == VFFT_K1_IL_FLAT && !ilfd)
                 ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
+            /* ZTURN-T (route 9, 2026-09-09): a banked verdict replays its chain
+             * (il_ztt=) through the create — the registry cell's fused drivers;
+             * NO default build (the planner is the only source). Natural
+             * output is a legal answer to a scrambled request, so the same
+             * plan serves both order classes. */
+            vfft_ztt_plan_t *ztt = NULL;
+            if (ilr == VFFT_K1_IL_ZTT && !il2p && !il3p && !ilfd && !getenv("VFFT_NO_IL2P") &&
+                cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_zt_n >= 2)
+            {
+                ztt = vfft_ztt_create_chain(N, ki->il_zt, ki->il_zt_n);
+                if (ztt && getenv("VFFT_NAT_LOG"))
+                {
+                    char chs[48];
+                    vfft_ztt_chain_str(ztt, chs, sizeof chs);
+                    fprintf(stderr, "[k1ztt] N=%d: replay ZTURN-T chain %s src=wisdom (oop)\n", N, chs);
+                }
+            }
+            if (ilr == VFFT_K1_IL_ZTT && !ztt)
+                ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
             /* PRIME N (route 7): Rader/Bluestein on the IL machinery
              * (il_prime.h) — the OOP INTERLEAVED prime coverage the split
              * OOP path refuses. Same IL-only-handle rules as the chain. */
@@ -514,6 +533,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     hk->k1ilpr = ilpr;
                     /* flat DIT route (non-NULL iff ilr==IL_FLAT). */
                     hk->k1ilfd = ilfd;
+                    /* ZTURN-T route (non-NULL iff ilr==IL_ZTT). */
+                    hk->k1ztt = ztt;
                     hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
                     {   /* MONO form = the banked il_kv on a MONO verdict
                          * (0 = solo n1, 1 = mono64); form 0 otherwise */
@@ -843,6 +864,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             vfft_il3p_destroy(il3p);
             vfft_ilprime_destroy(ilpr);
             vfft_ilfd_destroy(ilfd);
+            vfft_ztt_destroy(ztt);
             if (psp)
                 vfft_oop_plan_destroy(psp);
             /* fall through to the classic OOP path */

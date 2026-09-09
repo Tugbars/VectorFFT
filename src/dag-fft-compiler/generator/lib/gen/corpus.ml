@@ -130,6 +130,34 @@ let zil_boundary_cells : (string * string list) list =
   ; ( "radix4_z_stfn_r4_avx2.c"
     , [ "4"; "--zp-stfn"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
     )
+  (* ZTURN-T (zturn_t_ship_plan.md 1-2): the three kinds x {4,8} x {fwd,bwd},
+     no _r0 tag (the ingest's own radix is R0). The fused driver TU is NOT a
+     codelet: it is derived from these cells by bin/emit_ztt_drivers.ml into
+     generated/, beside the registries. *)
+  ; ( "radix4_z_t0tp_avx2.c"
+    , [ "4"; "--zp-t0tp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_t0tp_bwd_avx2.c"
+    , [ "4"; "--zp-t0tpb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t0tp_avx2.c"
+    , [ "8"; "--zp-t0tp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t0tp_bwd_avx2.c"
+    , [ "8"; "--zp-t0tpb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_tmg_avx2.c"
+    , [ "4"; "--zp-tmg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_tmg_bwd_avx2.c"
+    , [ "4"; "--zp-tmgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_tmg_avx2.c"
+    , [ "8"; "--zp-tmg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_tmg_bwd_avx2.c"
+    , [ "8"; "--zp-tmgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_tlf_avx2.c"
+    , [ "4"; "--zp-tlf"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_tlf_bwd_avx2.c"
+    , [ "4"; "--zp-tlfb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_tlf_avx2.c"
+    , [ "8"; "--zp-tlf"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_tlf_bwd_avx2.c"
+    , [ "8"; "--zp-tlfb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_s0t_r8_avx2.c"
     , [ "8"; "--zp-s0t"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
     )

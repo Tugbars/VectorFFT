@@ -144,6 +144,9 @@ ARGSTYLE = {
     # COLD: the FLAT DIT (odd N) races once per cell, banks, replays bit-identically; route=flat above 27^3
     "flatdit_gate":            ("flag", False),
     "k1_pow2_gate":            ("flag", False),   # the K=1 IL tier at pow2 N through the front door (sub-2048 campaign)
+    # COLD: ZTURN-T (route 9) — every registry cell on the engine, then the front door races the
+    # tier and any cell banked as ztt must replay bitwise the direct engine (2026-09-09)
+    "ztt_gate":                ("flag", False),
     # COLD on purpose: seeding makes every measure cell report NO RACE, because it
     # correctly replays the banked verdict instead of racing.
     "vfft_natural_front_gate": ("flag", False),

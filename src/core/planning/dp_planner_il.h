@@ -112,6 +112,7 @@
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
 #include "il_flatdit.h" /* the FLAT mixed-radix DIT: the odd-N engine (2026-09-05) */
 #include "il_flatdit_race.h" /* its FORM and TILE races on the shared race body (2026-09-07) */
+#include "ztt.h"        /* ZTURN-T: the run-contiguous DIT, one fused driver per cell (2026-09-09) */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
 #include "wisdom2_oop.h" /* THE oop family entry struct + codecs (wisdom2 folder) */
 
@@ -241,6 +242,9 @@ typedef struct
                                               * empty = unraced yet             */
     int    il_tw;                            /* FLAT only: the raced tile width
                                               * (il_tw=), 0 = untiled / unraced */
+    int    il_zt[7];                         /* ZTT only: the chain (a registry
+                                              * cell; the chain IS the plan)    */
+    int    il_zt_n;                          /* ZTT only: stages, else 0         */
     /* Blocked-kernel VARIANT verdict for the 2P/IL routes, packed
      * mid | leaf<<4 (VFFT_IL_KV_PACK, il2p.h). 0 = the monolithic registry
      * kernels, i.e. exactly pre-axis behavior — so every existing candidate
@@ -424,6 +428,7 @@ typedef struct
     vfft_il3p_plan_t   *i3;    /* CHAIN3 (3-stage IL chain, 2026-09-02) */
     vfft_oop11_fn       mono;  /* MONO    */
     vfft_ilfd_plan_t   *ifd;   /* FLAT (the flat DIT, 2026-09-05) */
+    vfft_ztt_plan_t    *ztt;   /* ZTT (ZTURN-T, 2026-09-09) */
 } _il_dp_built_t;              /* (the hybrid 2P/3P op arm was deleted
                                 * 2026-07-29 with the il_in/il_out routes) */
 
@@ -501,6 +506,14 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         { vfft_ilfd_destroy(b->ifd); b->ifd = NULL; return -1; }
         return 0;
     }
+    if (c->route == VFFT_K1_IL_ZTT)
+    {
+        /* the validator is the law: chain legality, the quarter-wave's octave
+         * and the registry cell (the fused drivers) live in
+         * vfft_ztt_create_chain; both directions come with the cell */
+        b->ztt = vfft_ztt_create_chain(N, c->il_zt, c->il_zt_n);
+        return b->ztt ? 0 : -1;
+    }
     if (c->route == VFFT_K1_IL_MONO)
     {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64) */
         b->mono = vfft_k1_mono_il_form_fn(N, c->il_kv, 0);
@@ -516,6 +529,7 @@ static void _il_dp_free(_il_dp_built_t *b)
     if (b->ip) vfft_il2p_destroy(b->ip);
     if (b->i3) vfft_il3p_destroy(b->i3);
     if (b->ifd) vfft_ilfd_destroy(b->ifd);
+    if (b->ztt) vfft_ztt_destroy(b->ztt);
     memset(b, 0, sizeof(*b));
 }
 
@@ -546,6 +560,11 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
         vfft_ilfd_execute_fwd(b->ifd, ctx->z_in, ctx->z_out);
         return 0;
     }
+    if (c->route == VFFT_K1_IL_ZTT)
+    {
+        vfft_ztt_execute_fwd(b->ztt, ctx->z_in, ctx->z_out);
+        return 0;
+    }
     if (c->route == VFFT_K1_IL_MONO)
     {
         b->mono(ctx->z_in, 0, ctx->z_out, 0, 0, 0, 1, 0, 1, 0, 1); /* one leg */
@@ -571,6 +590,11 @@ static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     if (c->route == VFFT_K1_IL_FLAT)
     {   /* the conjugate pipeline: same forms, backward kernels */
         vfft_ilfd_execute_bwd(b->ifd, ctx->z_in, ctx->z_out);
+        return 0;
+    }
+    if (c->route == VFFT_K1_IL_ZTT)
+    {   /* the conjugate pipeline: the bwd driver on the s-negated streams */
+        vfft_ztt_execute_bwd(b->ztt, ctx->z_in, ctx->z_out);
         return 0;
     }
     if (c->route != VFFT_K1_IL_2P_PURE) return -1;
@@ -849,6 +873,7 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
     case VFFT_K1_IL_3P:
     case VFFT_K1_IL_2P_PURE:
     case VFFT_K1_IL_CHAIN3:
+    case VFFT_K1_IL_ZTT:
         return idx;                                  /* natural by contract */
     case VFFT_K1_IL_FLAT:
         if (!c->il_scr) return idx;                  /* natural by contract */
@@ -1462,6 +1487,28 @@ static void _il_dp_enumerate_flat_ord(int N, vfft_il_cand_sink_t *s, int scr)
     }
 }
 
+/* ZTURN-T (2026-09-09): every registry cell at N. The fused drivers exist
+ * exactly for these chains (ztt_registry_avx2.h, derived from the corpus),
+ * so the enumeration IS the registry walk and the create refuses anything
+ * else. Natural output, both directions: it enters the natural pool and the
+ * scrambled pool's natural-engine set, and races the pairs on the same
+ * clock — the owner's "ZTURN-T ships, racing Bailey below 2048". */
+static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
+{
+    vfft_il_cand_t c;
+    int i, q;
+    for (i = 0; i < VFFT_ZTT_NCELLS_AVX2; i++)
+    {
+        const vfft_ztt_cell_t *cell = &vfft_ztt_cells_avx2[i];
+        if (cell->n != N) continue;
+        memset(&c, 0, sizeof c);
+        c.route = VFFT_K1_IL_ZTT;
+        for (q = 0; q < cell->nf; q++) c.il_zt[q] = cell->chain[q];
+        c.il_zt_n = cell->nf;
+        _il_dp_push(s, &c);
+    }
+}
+
 /* The natural-output engines' candidates: mono forms, pairs x forms,
  * chain3 x forms and (with_flat) the natural flat DIT. The NATURAL pool is
  * exactly this; the SCRAMBLED pool takes the same engines — natural output
@@ -1676,6 +1723,8 @@ static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int 
          * and the flat chains then decide by measurement. */
         if (with_flat && (N & (N - 1)) != 0 && (N < 2048 || (N & 3)))
             _il_dp_enumerate_flat(N, s);
+        /* ZTURN-T: the pow2 cells 16..2048 (every registry chain) */
+        _il_dp_enumerate_ztt(N, s);
     }
 }
 
@@ -2036,6 +2085,11 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                 memcpy(e.il_flf, nat->il_flf, sizeof e.il_flf);
                 e.il_tw = nat->il_tw;
             }
+            if (nat->route == VFFT_K1_IL_ZTT)
+            {                          /* ZTURN-T: the chain IS the verdict (2026-09-09) */
+                memcpy(e.il_zt, nat->il_zt, sizeof e.il_zt);
+                e.il_zt_n = nat->il_zt_n;
+            }
             e.ns = nat->cost_ns;
             if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
                 lines++;
@@ -2110,6 +2164,11 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
             e.il_fl_n = scr->il_fl_n;
             memcpy(e.il_flf, scr->il_flf, sizeof e.il_flf);
             e.il_tw = scr->il_tw;
+        }
+        if (scr->route == VFFT_K1_IL_ZTT)
+        {
+            memcpy(e.il_zt, scr->il_zt, sizeof e.il_zt);
+            e.il_zt_n = scr->il_zt_n;
         }
         e.ord_scr = 1;
         e.ns = scr->cost_ns;

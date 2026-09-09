@@ -145,3 +145,24 @@
   (with-stdout-to
    c2r_registry_avx512.h
    (run %{exe:../bin/emit_c2r_registry.exe} --isa avx512))))
+
+; ZTURN-T (zturn_t_ship_plan.md 2): the fused driver TU and its registry are
+; DERIVED from the corpus cells (Ztt_drivers.cells) -- not codelets -- so they
+; are emitted here like the registries. build.py compiles generated/*.c.
+(rule
+ (targets ztt_drivers_avx2.c)
+ (deps %{exe:../bin/emit_ztt_drivers.exe})
+ (mode promote)
+ (action
+  (with-stdout-to
+   ztt_drivers_avx2.c
+   (run %{exe:../bin/emit_ztt_drivers.exe} --isa avx2 --uarch raptor_lake_avx2))))
+
+(rule
+ (targets ztt_registry_avx2.h)
+ (deps %{exe:../bin/emit_ztt_registry.exe})
+ (mode promote)
+ (action
+  (with-stdout-to
+   ztt_registry_avx2.h
+   (run %{exe:../bin/emit_ztt_registry.exe} --isa avx2))))

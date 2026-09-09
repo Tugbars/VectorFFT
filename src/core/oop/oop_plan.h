@@ -137,7 +137,17 @@ enum
      * (the inverse is the conjugate pipeline), in place by construction.
      * Chain + forms are PLAN INPUT from the kind-3 row (il_flat=, il_forms=);
      * there is no default build — the planner is the only source. */
-    VFFT_K1_IL_FLAT = 8
+    VFFT_K1_IL_FLAT = 8,
+    /* 9 = ZTURN-T (oop/ztt.h, 2026-09-09; docs/design/zturn_t_ship_plan.md):
+     * the RUN-CONTIGUOUS DIT arrangement on the split-plane kinds t0tp /
+     * tmg / tlf, {4,8} chains, 16 <= N <= 2048, natural order both
+     * directions (the inverse = conjugate roots, same stage order), in
+     * place legal. Served as ONE fused driver per direction (the generated
+     * ztt_drivers_<isa>.c: stage bodies inlined, literal trip counts,
+     * carried twiddle cursor, zero calls). The chain is PLAN INPUT from the
+     * kind-3 row (il_ztt=R0.R1...); no default build — the planner races
+     * every registry cell against the pairs and is the only source. */
+    VFFT_K1_IL_ZTT = 9
 };
 
 typedef enum
