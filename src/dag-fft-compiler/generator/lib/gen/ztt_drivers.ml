@@ -21,15 +21,19 @@
  *              an unaligned destination); the last stage writes zout.
  *   The registry (bin/emit_ztt_registry.ml) lists the same cells, so
  *   "exists" and "reachable" cannot diverge.
+ *   TILING (2026-09-09): every driver takes the tile width as a RUNTIME
+ *   argument (the mids with R*L <= tile run per tile, the rest sweep the
+ *   plane; the hot loops inside a group stay literal) — one driver per cell,
+ *   the width a raced plan parameter, as the cascade's tcut.
  *
  * CELLS: every ordered {4,8} chain with product N, nf >= 2, R0 % 4 == 0 and
  * (N / R0) % 4 == 0 (CONTRACT.md §1 — every plane address a kernel touches
- * is a whole 64-B block), for 16 <= N <= 2048. The ceiling is STRUCTURAL:
- * the create expands its streams from a baked quarter-wave at M = 2048 by an
+ * is a whole 64-B block), for 16 <= N <= 16384. The ceiling is STRUCTURAL:
+ * the create expands its streams from a baked quarter-wave at M = 16384 by an
  * index shift, which cannot resolve RL > M (zt_bake.c: "table resolution
  * refusal"). *)
 
-let max_n = 2048
+let max_n = 16384
 let max_nf = 7 (* VFFT_ZSPLIT_MAX_NF *)
 
 (* every ordered {4,8} chain with product n, nf >= 2, (n / r0) mod 4 = 0;
@@ -88,15 +92,23 @@ let driver_name ~(isa : string) (n : int) (ch : int list) ~(bwd : bool) ~(dest :
     isa
 ;;
 
-(* the driver ABI, shared with the registry: (zin, zout, plane, tw, rb) *)
-let driver_params = "const double *zin, double *zout, double *plane, const double *tw, const size_t *rb"
+(* the driver ABI, shared with the registry: (zin, zout, plane, tw, rb, tile).
+   tile = the TILE WIDTH in complexes (0 = untiled): the mid stages whose run
+   length R*L <= tile run PER TILE — a contiguous plane span of `tile`
+   complexes holds WHOLE groups of every such stage — the rest sweep the plane
+   (docs/design/zturn_t_2048plus_plan.md step 2). A RACED plan parameter
+   (il_tw=, validated by vfft_ztt_tile_legal), never a rule; the tile changes
+   group ORDER only, so every width is bitwise the untiled result. *)
+let driver_params =
+  "const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile"
+;;
 
 let emit_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) ~(dest : bool) : string =
   let g = geom n ch in
   let r = Array.of_list ch in
   let k = Array.length r in
   let body base radix = Cascade_z.ztt_body_name ~base ~radix ~bwd in
-  let b = Buffer.create 2048 in
+  let b = Buffer.create 4096 in
   let add = Buffer.add_string b in
   add (Printf.sprintf "__attribute__((target(\"%s\")))\n" isa.Isa.target_attr);
   add
@@ -114,31 +126,60 @@ let emit_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) ~(dest : 
        (body "t0tp" r.(0))
        g.ncol
        g.ncol);
-  (* mids s = 1..K-2: in place on W, group pitch 2*R*L doubles, ONE stream
-     per stage, cursor carried: tw advances by the stage's stream length *)
-  for s = 1 to k - 2 do
-    let pitch = 2 * r.(s) * g.l.(s) in
-    if g.gs.(s) = 1
-    then
+  (* stage s's stream starts at a LITERAL offset into the plan's ONE contiguous
+     stream (stage order) — a tile re-enters every stage from its stream base *)
+  let off = Array.make k 0 in
+  for s = 2 to k - 1 do
+    off.(s) <- off.(s - 1) + g.twd.(s - 1)
+  done;
+  let rl s = r.(s) * g.l.(s) in
+  let pitch s = 2 * rl s in
+  let mid s base =
+    Printf.sprintf
+      "%s(%s, %s, tw + %d, (size_t)%d, (size_t)%d);"
+      (body "tmg" r.(s))
+      base
+      base
+      off.(s)
+      g.l.(s)
+      g.l.(s)
+  in
+  if k >= 3
+  then (
+    (* IN-TILE: the mids with R*L <= tile (a PREFIX of the mids: R*L grows
+       with s), per tile, stage-major inside the tile, tile/(R*L) groups each *)
+    add "    if (tile)\n    {\n";
+    add (Printf.sprintf "        const size_t ntile = (size_t)%d / tile;\n" n);
+    add "#pragma GCC unroll 1\n        for (size_t t = 0; t < ntile; t++)\n        {\n";
+    add "            double *B = W + t * tile * 2;\n";
+    for s = 1 to k - 2 do
       add
         (Printf.sprintf
-           "    %s(W, W, tw, (size_t)%d, (size_t)%d);\n"
-           (body "tmg" r.(s))
-           g.l.(s)
-           g.l.(s))
+           "            if ((size_t)%d <= tile)   /* stage %d: R*L = %d */\n            {\n"
+           (rl s)
+           s
+           (rl s));
+      add "#pragma GCC unroll 1\n";
+      add
+        (Printf.sprintf
+           "                for (size_t g = 0; g < tile / (size_t)%d; g++)\n                    %s\n            }\n"
+           (rl s)
+           (mid s (Printf.sprintf "B + g * (size_t)%d" (pitch s))))
+    done;
+    add "        }\n    }\n")
+  else add "    (void)tile;   /* no mids: nothing to tile */\n";
+  (* CROSS-TILE: the mids with R*L > tile (every mid when untiled), whole plane *)
+  for s = 1 to k - 2 do
+    add (Printf.sprintf "    if ((size_t)%d > tile)   /* stage %d: R*L = %d */\n    {\n" (rl s) s (rl s));
+    if g.gs.(s) = 1
+    then add (Printf.sprintf "        %s\n" (mid s "W"))
     else
       add
         (Printf.sprintf
-           "#pragma GCC unroll 1\n\
-           \    for (size_t g = 0; g < (size_t)%d; g++)\n\
-           \        %s(W + g * (size_t)%d, W + g * (size_t)%d, tw, (size_t)%d, (size_t)%d);\n"
+           "#pragma GCC unroll 1\n        for (size_t g = 0; g < (size_t)%d; g++)\n            %s\n"
            g.gs.(s)
-           (body "tmg" r.(s))
-           pitch
-           pitch
-           g.l.(s)
-           g.l.(s));
-    add (Printf.sprintf "    tw += %d;   /* stage %d stream: 2*(R-1)*L doubles */\n" g.twd.(s) s)
+           (mid s (Printf.sprintf "W + g * (size_t)%d" (pitch s))));
+    add "    }\n"
   done;
   (* last: (W, zout, tw, Ls = L, OLs = L, count = L); Gs == 1 for the
      terminal stage of a K-stage chain — a direct call.       CONTRACT 7.3 *)
@@ -146,8 +187,9 @@ let emit_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) ~(dest : 
   assert (g.gs.(s) = 1);
   add
     (Printf.sprintf
-       "    %s(W, zout, tw, (size_t)%d, (size_t)%d, (size_t)%d);\n"
+       "    %s(W, zout, tw + %d, (size_t)%d, (size_t)%d, (size_t)%d);\n"
        (body "tlf" r.(s))
+       off.(s)
        g.l.(s)
        g.l.(s)
        g.l.(s));
@@ -166,8 +208,9 @@ let emit_tu ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
        \ * bodies below inlined with LITERAL trip counts and the twiddle cursor carried\n\
        \ * in a register across stages (docs/design/cascade_stage_fusion.md).\n\
        \ * %d cells x {fwd, bwd} x {dest, plane} = %d drivers. ABI: (zin, zout, plane,\n\
-       \ * tw, rb) — tw = the plan's ONE contiguous stream (stage order), rb = the\n\
-       \ * run-base table (CONTRACT.md 5). Generated by: gen_radix.exe 4 --ztt-drivers\n\
+       \ * tw, rb, tile) — tw = the plan's ONE contiguous stream (stage order), rb = the\n\
+       \ * run-base table (CONTRACT.md 5), tile = the tile width in complexes (0 =\n\
+       \ * untiled; the mids with R*L <= tile run per tile). Generated by: gen_radix.exe 4 --ztt-drivers\n\
        \ * --isa %s --uarch %s --emit-c */\n"
        (List.length cells)
        (4 * List.length cells)

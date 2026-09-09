@@ -249,8 +249,11 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
             /* the IL-vs-IL race: this cell's K=1 engine vs the cascade, both
              * aliased z -> z on scratch, the tier's protocol (5 rounds,
              * alternated, median, re-seeded per burst) */
-            double *rz = (double *)malloc(2 * (size_t)N * sizeof(double));
-            double *r0 = (double *)malloc(2 * (size_t)N * sizeof(double));
+            /* 64-B aligned like the planner's and the bench's buffers (malloc's 16-B
+             * alignment split ZTURN-T's stores across lines; 2026-09-09). Owner's law:
+             * aligned, always. */
+            double *rz = (double *)VFFT_ZS_ALLOC(((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
+            double *r0 = (double *)VFFT_ZS_ALLOC(((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
             if (rz && r0)
             {
                 const int reps = N <= 256 ? 200 : (N <= 1024 ? 80 : 32);
@@ -272,8 +275,8 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
                             N, ns[0], ns[1], mode == VFFT_NAT_ZCASC ? "ZCASC" : "ILP");
                 _bank_ipmode_1d(W, cfg, N, mode, mode == VFFT_NAT_ZCASC ? ns[1] : ns[0]);
             }
-            free(rz);
-            free(r0);
+            VFFT_ZS_FREE(rz);
+            VFFT_ZS_FREE(r0);
             if (mode == VFFT_NAT_UNSET) mode = have_k1 ? VFFT_NAT_ILP : VFFT_NAT_ZCASC;
         }
         else if (have_k1)

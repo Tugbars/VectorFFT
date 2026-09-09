@@ -255,7 +255,8 @@ static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_sc
             {                                  /* ZTURN-T payload (2026-09-09) */
                 int zt[7];
                 const int nzt = vw2__oop_split_ints(vw2_rec_get(ri, "il_ztt"), zt, 7);
-                if (nzt >= 2) { memcpy(e->il_zt, zt, sizeof(int) * (size_t)nzt); e->il_zt_n = nzt; }
+                if (nzt >= 2) { memcpy(e->il_zt, zt, sizeof(int) * (size_t)nzt); e->il_zt_n = nzt;
+                                e->il_tw = vw2__oop_geti(ri, "il_tw", 0); }   /* the raced tile */
             }
             /* K/ns keep the pre-1.2 dual-line convention: when an IL
              * verdict is present they are the IL natural champion's
@@ -618,6 +619,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                     off += (size_t)rr;
                 }
                 VW2__OB_SET(1, "il_ztt", ztb);
+                if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }
             }
             if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
                 char ref[96];   /* the signpost: recipe lives in the cascade cell */
@@ -1071,6 +1073,7 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
                 off += (size_t)rr;
             }
             VW2__OB_SET(1, "il_ztt", ztb);
+            if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }   /* the raced tile (2026-09-09) */
         }
         if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
             char ref[96];   /* the signpost: recipe lives in the cascade cell */

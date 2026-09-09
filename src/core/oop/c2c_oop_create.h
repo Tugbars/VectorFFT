@@ -426,11 +426,16 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_zt_n >= 2)
             {
                 ztt = vfft_ztt_create_chain(N, ki->il_zt, ki->il_zt_n);
+                if (ztt && ki->il_tw > 0 && !vfft_ztt_set_tile(ztt, (size_t)ki->il_tw))
+                {   /* the row names a tile the cell refuses: not a plan that exists */
+                    vfft_ztt_destroy(ztt);
+                    ztt = NULL;
+                }
                 if (ztt && getenv("VFFT_NAT_LOG"))
                 {
                     char chs[48];
                     vfft_ztt_chain_str(ztt, chs, sizeof chs);
-                    fprintf(stderr, "[k1ztt] N=%d: replay ZTURN-T chain %s src=wisdom (oop)\n", N, chs);
+                    fprintf(stderr, "[k1ztt] N=%d: replay ZTURN-T chain %s tile=%zu src=wisdom (oop)\n", N, chs, ztt->tile);
                 }
             }
             if (ilr == VFFT_K1_IL_ZTT && !ztt)
@@ -612,10 +617,14 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                              * natord cascade, src->dst distinct (src is
                              * read-only in OOP fwd — no reseed hazard).
                              * 5 rounds, alternated order, medians (B5). */
-                            double *rz = (double *)malloc(
-                                2 * (size_t)N * sizeof(double));
-                            double *r0 = (double *)malloc(
-                                2 * (size_t)N * sizeof(double));
+                            /* 64-B ALIGNED like the planner's (VFFT_ZS_ALLOC) and the bench's arenas:
+                             * malloc's 16-B alignment split ZTURN-T's unaligned stores across lines
+                             * and this race banked the cascade at 4096 against the paced verdict
+                             * (2026-09-09, zturn_t_2048plus_plan.md). Owner's law: aligned, always. */
+                            double *rz = (double *)VFFT_ZS_ALLOC(
+                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
+                            double *r0 = (double *)VFFT_ZS_ALLOC(
+                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
                             if (rz && r0)
                             {
                                 for (long i = 0; i < 2L * N; i++)
@@ -662,8 +671,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                             hk->zturn ? "ZCASC-OOP"
                                                       : "engine");
                             }
-                            free(rz);
-                            free(r0);
+                            VFFT_ZS_FREE(rz);
+                            VFFT_ZS_FREE(r0);
                         }
                         if (zct)
                             vfft_zturn2_destroy(zct);
@@ -721,10 +730,14 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                         }
                         if (smode == VFFT_NAT_UNSET && zct)
                         {
-                            double *rz = (double *)malloc(
-                                2 * (size_t)N * sizeof(double));
-                            double *r0 = (double *)malloc(
-                                2 * (size_t)N * sizeof(double));
+                            /* 64-B ALIGNED like the planner's (VFFT_ZS_ALLOC) and the bench's arenas:
+                             * malloc's 16-B alignment split ZTURN-T's unaligned stores across lines
+                             * and this race banked the cascade at 4096 against the paced verdict
+                             * (2026-09-09, zturn_t_2048plus_plan.md). Owner's law: aligned, always. */
+                            double *rz = (double *)VFFT_ZS_ALLOC(
+                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
+                            double *r0 = (double *)VFFT_ZS_ALLOC(
+                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
                             if (rz && r0)
                             {
                                 for (long i = 0; i < 2L * N; i++)
@@ -760,8 +773,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                             N, K, ns[1], ns[0],
                                             hk->zturn ? "ZCASC-OOP" : "engine");
                             }
-                            free(rz);
-                            free(r0);
+                            VFFT_ZS_FREE(rz);
+                            VFFT_ZS_FREE(r0);
                         }
                         if (zct)
                             vfft_zturn2_destroy(zct);
@@ -783,10 +796,11 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                 zodd2 = 1;
                         if (zodd2)
                         {
-                            double *zi2 = (double *)malloc(
-                                2 * (size_t)N * sizeof(double));
-                            double *zo2b = (double *)malloc(
-                                2 * (size_t)N * sizeof(double));
+                            /* 64-B aligned, as the two door races above (2026-09-09) */
+                            double *zi2 = (double *)VFFT_ZS_ALLOC(
+                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
+                            double *zo2b = (double *)VFFT_ZS_ALLOC(
+                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
                             double tzc = 1e300, tkc = 1e300;
                             if (zi2 && zo2b)
                             {
@@ -835,8 +849,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                     hk->zturn = NULL;
                                 }
                             }
-                            free(zi2);
-                            free(zo2b);
+                            VFFT_ZS_FREE(zi2);
+                            VFFT_ZS_FREE(zo2b);
                         }
                     }
                     if (zt_pending)

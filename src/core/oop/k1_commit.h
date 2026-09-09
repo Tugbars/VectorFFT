@@ -431,6 +431,11 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     if (ke && ke->k1_il_route == VFFT_K1_IL_ZTT && ke->il_zt_n >= 2 && ztt_out)
     {
         vfft_ztt_plan_t *zp = vfft_ztt_create_chain(N, ke->il_zt, ke->il_zt_n);
+        if (zp && ke->il_tw > 0 && !vfft_ztt_set_tile(zp, (size_t)ke->il_tw))
+        {   /* the row names a tile the cell refuses: not a plan that exists */
+            vfft_ztt_destroy(zp);
+            zp = NULL;
+        }
         if (zp)
         {
             *ztt_out = zp;
@@ -438,7 +443,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             {
                 char chs[48];
                 vfft_ztt_chain_str(zp, chs, sizeof chs);
-                fprintf(stderr, "[k1ztt] N=%d: replay ZTURN-T chain %s src=wisdom\n", N, chs);
+                fprintf(stderr, "[k1ztt] N=%d: replay ZTURN-T chain %s tile=%zu src=wisdom\n", N, chs, zp->tile);
             }
             return;
         }

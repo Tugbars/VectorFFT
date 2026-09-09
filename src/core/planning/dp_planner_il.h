@@ -240,8 +240,8 @@ typedef struct
     char   il_flf[24];                       /* FLAT only: the per-stage forms
                                               * the bench raced (il_forms=);
                                               * empty = unraced yet             */
-    int    il_tw;                            /* FLAT only: the raced tile width
-                                              * (il_tw=), 0 = untiled / unraced */
+    int    il_tw;                            /* FLAT + ZTT: the raced tile width in
+                                              * complexes (il_tw=), 0 = untiled */
     int    il_zt[7];                         /* ZTT only: the chain (a registry
                                               * cell; the chain IS the plan)    */
     int    il_zt_n;                          /* ZTT only: stages, else 0         */
@@ -512,7 +512,10 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
          * and the registry cell (the fused drivers) live in
          * vfft_ztt_create_chain; both directions come with the cell */
         b->ztt = vfft_ztt_create_chain(N, c->il_zt, c->il_zt_n);
-        return b->ztt ? 0 : -1;
+        if (!b->ztt) return -1;
+        if (c->il_tw > 0 && !vfft_ztt_set_tile(b->ztt, (size_t)c->il_tw))
+        { vfft_ztt_destroy(b->ztt); b->ztt = NULL; return -1; }
+        return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
     {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64) */
@@ -1505,7 +1508,20 @@ static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
         c.route = VFFT_K1_IL_ZTT;
         for (q = 0; q < cell->nf; q++) c.il_zt[q] = cell->chain[q];
         c.il_zt_n = cell->nf;
-        _il_dp_push(s, &c);
+        _il_dp_push(s, &c);                       /* untiled */
+        /* TILING is an AXIS (owner's law, 2026-09-09): every legal tile width
+         * on the cascade's own ladder (1 KB .. 64 KB of plane per tile, in
+         * complexes) is its own candidate beside untiled; the race decides
+         * per cell, the row banks il_tw=. vfft_ztt_tile_legal is the law. */
+        {
+            static const int ladder[] = { 64, 128, 256, 512, 1024, 2048, 4096 };
+            for (q = 0; q < (int)(sizeof ladder / sizeof ladder[0]); q++)
+                if (vfft_ztt_tile_legal(N, cell->chain, cell->nf, (size_t)ladder[q]))
+                {
+                    c.il_tw = ladder[q];
+                    _il_dp_push(s, &c);
+                }
+        }
     }
 }
 
@@ -1914,8 +1930,9 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
              * audited — the same defect the A/B harness had when it labelled
              * arms instead of reporting what they engaged. */
             char wbuf[24];
-            if (cand[i].zt_tw > 0)
-                snprintf(wbuf, sizeof wbuf, " w=%dKB", cand[i].zt_tw * 16 / 1024);
+            const int twc = cand[i].route == VFFT_K1_IL_ZTT ? cand[i].il_tw : cand[i].zt_tw;
+            if (twc > 0)
+                snprintf(wbuf, sizeof wbuf, " w=%dKB", twc * 16 / 1024);
             else
                 snprintf(wbuf, sizeof wbuf, " w=untiled");
             fprintf(stderr, "  [il-dp] N=%d ord=%d route=%d eng=%s %dx%d "
@@ -2091,9 +2108,10 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                 e.il_tw = nat->il_tw;
             }
             if (nat->route == VFFT_K1_IL_ZTT)
-            {                          /* ZTURN-T: the chain IS the verdict (2026-09-09) */
+            {                          /* ZTURN-T: the chain + its raced tile ARE the verdict (2026-09-09) */
                 memcpy(e.il_zt, nat->il_zt, sizeof e.il_zt);
                 e.il_zt_n = nat->il_zt_n;
+                e.il_tw = nat->il_tw;
             }
             e.ns = nat->cost_ns;
             if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
@@ -2174,6 +2192,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
         {
             memcpy(e.il_zt, scr->il_zt, sizeof e.il_zt);
             e.il_zt_n = scr->il_zt_n;
+            e.il_tw = scr->il_tw;
         }
         e.ord_scr = 1;
         e.ns = scr->cost_ns;

@@ -70,8 +70,9 @@ typedef struct {
                                               * per-stage form letters (2026-09-05) */
     int    il_fl_n;
     char   il_flf[24];
-    int    il_tw;                            /* il_tw= the flat DIT's tile width in
-                                              * complex (0 = untiled), 2026-09-05 */
+    int    il_tw;                            /* il_tw= the raced tile width in complex
+                                              * (0 = untiled): the flat DIT's (2026-09-05)
+                                              * and ZTURN-T's (2026-09-09) */
     int    il_zt[7];                         /* kind 3, il_route=ztt: ZTURN-T's chain
                                               * as il_ztt=R0.R1...; il_zt_n stages
                                               * (0 = absent), 2026-09-09 */

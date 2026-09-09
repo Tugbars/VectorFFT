@@ -1,5 +1,5 @@
 /* ztt.h — ZTURN-T: the RUN-CONTIGUOUS DIT engine for K=1 interleaved c2c,
- * 16 <= N <= 2048, route VFFT_K1_IL_ZTT (docs/design/zturn_t_ship_plan.md;
+ * 16 <= N <= 16384, route VFFT_K1_IL_ZTT (docs/design/zturn_t_ship_plan.md;
  * the probe's contract: docs/research/sub2048_mkl_method/campaign_state/
  * probes/ZT/CONTRACT.md).
  *
@@ -25,8 +25,17 @@
  * keeps one predictable compare so an aliased call on an out-of-place plan
  * is still correct.
  *
+ * TILING (docs/design/zturn_t_2048plus_plan.md step 2): the mid stages whose
+ * run length R*L <= tile run PER TILE — a contiguous plane span of `tile`
+ * complexes holds WHOLE groups of every such stage, so the tile stays L1-hot
+ * across those stages — the rest sweep the plane; the ingest is untiled (a
+ * per-tile ingest would re-read every input line once per tile). The tile
+ * changes group ORDER only: every width is bitwise the untiled result. It is
+ * a RACED plan parameter (the planner's ladder, banked as il_tw=), never a
+ * rule; vfft_ztt_tile_legal is the one law for it.
+ *
  * CREATE builds no trig: every stream is expanded from the baked quarter-wave
- * (ztt_qw2048.h) by index shift + reflection + sign flip. That table's
+ * (ztt_qw16384.h) by index shift + reflection + sign flip. That table's
  * octave is the engine's ceiling (VFFT_ZTT_MAX_N): above it the shift cannot
  * resolve RL, and the create refuses. The validator is the law: an illegal
  * chain, a size out of range, or a cell without a registry driver returns
@@ -41,13 +50,14 @@
 #include <string.h>
 
 #include "ztt_registry_avx2.h"   /* the cells and their four drivers (generated) */
-#include "ztt_qw2048.h"          /* the baked quarter-wave (generated)            */
+#include "ztt_qw16384.h"         /* the baked quarter-wave (generated)            */
 
 #define VFFT_ZTT_MAX_NF 7        /* == the registry's chain[7]; VFFT_ZSPLIT_MAX_NF */
-#define VFFT_ZTT_MAX_N 2048      /* the quarter-wave's octave: RL <= 2048         */
-#define VFFT_ZTT_QW_M 2048
-#define VFFT_ZTT_QW_Q 512        /* M / 4 */
-#define VFFT_ZTT_QW_LGQ 9
+#define VFFT_ZTT_MAX_N 16384     /* the quarter-wave's octave: RL <= 16384        */
+#define VFFT_ZTT_QW_M 16384
+#define VFFT_ZTT_QW_LGM 14       /* log2 M */
+#define VFFT_ZTT_QW_Q 4096       /* M / 4 */
+#define VFFT_ZTT_QW_LGQ 12
 
 #if defined(_WIN32)
 #include <malloc.h>
@@ -73,6 +83,8 @@ typedef struct
     const vfft_ztt_cell_t *cell;      /* the registry row: the four drivers          */
     vfft_ztt_fn fwd, bwd;             /* BOUND by placement (vfft_ztt_bind)          */
     int inplace;
+    size_t tile;                      /* TILE WIDTH in complexes, 0 = untiled (raced,
+                                       * il_tw=; vfft_ztt_set_tile)                  */
 } vfft_ztt_plan_t;
 
 /* the registry row for (N, chain), NULL when the cell was not emitted */
@@ -125,8 +137,8 @@ static inline double _ztt_qsin(long u)
 {
     const long q = u >> VFFT_ZTT_QW_LGQ;
     const long rem = u & (VFFT_ZTT_QW_Q - 1);
-    const double v = (q & 1) ? VFFT_ZTT_QW2048_SIN[VFFT_ZTT_QW_Q - rem]
-                             : VFFT_ZTT_QW2048_SIN[rem];
+    const double v = (q & 1) ? VFFT_ZTT_QW16384_SIN[VFFT_ZTT_QW_Q - rem]
+                             : VFFT_ZTT_QW16384_SIN[rem];
     return (q & 2) ? -v : v;
 }
 
@@ -143,7 +155,7 @@ static inline int _ztt_log2(long v)
  * bwd s = +sin. Returns the doubles written = 2*(R-1)*L. */
 static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd)
 {
-    const int sh = 11 - _ztt_log2(RL);       /* M = 2048 = 2^11 */
+    const int sh = VFFT_ZTT_QW_LGM - _ztt_log2(RL);   /* M = 2^LGM */
     long k;
     int r, lane;
     for (k = 0; k < L; k += 4)
@@ -174,7 +186,7 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain(int N, const int *chain, in
     size_t off;
     const char *why = NULL;
     if (nf < 2 || nf > VFFT_ZTT_MAX_NF) why = "nf outside 2..7";
-    else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16..2048 (the quarter-wave's octave)";
+    else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16..16384 (the quarter-wave's octave)";
     for (s = 0; !why && s < nf; s++)
     {
         if (chain[s] != 4 && chain[s] != 8) why = "radix not in {4, 8}";
@@ -236,6 +248,7 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain(int N, const int *chain, in
         p->rb[c] = (size_t)j;
     }
     p->inplace = 0;
+    p->tile = 0;
     p->fwd = cell->fwd_dest;
     p->bwd = cell->bwd_dest;
     return p;
@@ -251,16 +264,36 @@ static inline void vfft_ztt_bind(vfft_ztt_plan_t *p, int inplace)
     p->bwd = inplace ? p->cell->bwd_plane : p->cell->bwd_dest;
 }
 
+/* the tile law: 0 (untiled) is always legal; else a power of two, at least
+ * the first mid's R*L (below it no stage tiles) and below N; a chain without
+ * mids (nf == 2) tiles nothing and refuses every width. Shared by the create,
+ * the planner's ladder and the gate. */
+static inline int vfft_ztt_tile_legal(int N, const int *chain, int nf, size_t tile)
+{
+    if (tile == 0) return 1;
+    if (nf < 3) return 0;
+    if (tile & (tile - 1)) return 0;
+    if (tile < (size_t)chain[0] * (size_t)chain[1]) return 0;
+    return tile < (size_t)N;
+}
+
+static inline int vfft_ztt_set_tile(vfft_ztt_plan_t *p, size_t tile)
+{
+    if (!vfft_ztt_tile_legal(p->N, p->chain, p->nf, tile)) return 0;
+    p->tile = tile;
+    return 1;
+}
+
 static inline void vfft_ztt_execute_fwd(const vfft_ztt_plan_t *p,
                                         const double *zin, double *zout)
 {
-    (zin == zout ? p->cell->fwd_plane : p->fwd)(zin, zout, p->plane, p->tw, p->rb);
+    (zin == zout ? p->cell->fwd_plane : p->fwd)(zin, zout, p->plane, p->tw, p->rb, p->tile);
 }
 
 static inline void vfft_ztt_execute_bwd(const vfft_ztt_plan_t *p,
                                         const double *zin, double *zout)
 {
-    (zin == zout ? p->cell->bwd_plane : p->bwd)(zin, zout, p->plane, p->twb, p->rb);
+    (zin == zout ? p->cell->bwd_plane : p->bwd)(zin, zout, p->plane, p->twb, p->rb, p->tile);
 }
 
 /* "4.4.8" for logs and the wisdom token il_ztt= */

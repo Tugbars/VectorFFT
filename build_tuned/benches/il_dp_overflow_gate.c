@@ -40,10 +40,17 @@
  * Re-measured 2026-09-09 (il_dp_cand_census, cap 1024) after ZTURN-T (route
  * 9, oop/ztt.h): its registry chains enter the natural-engine set that the
  * sub-2048 scrambled pool races, so N=1024 scrambled 30 -> 37 (the seven
- * {4,8} chains with product 1024); 2048 and above unchanged (ZTURN-T is
- * natural-only at 2048, absent above). */
+ * {4,8} chains with product 1024); 2048 and above unchanged: ZTURN-T is
+ * natural-only, and the scrambled pool at N >= 2048 (N % 4 == 0) enumerates
+ * no natural engine — so its 2026-09-09 ceiling raise to 16384 (the 2048+
+ * investigation) changes no row here either.
+ * Re-measured 2026-09-09 (il_dp_overflow_gate census) after ZTURN-T's TILING
+ * axis: every legal tile width on the 1 KB..64 KB ladder is its own candidate
+ * beside untiled (vfft_ztt_tile_legal: pow2, >= R0*R1, < N), so N=1024
+ * scrambled 37 -> 65 (the seven chains x four widths 64..512); 2048 and
+ * above unchanged (no natural engine in those scrambled pools). */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 37 }, { 2048, 56 }, { 4096, 87 }, { 8192, 127 },
+    { 1024, 65 }, { 2048, 56 }, { 4096, 87 }, { 8192, 127 },
     { 16384, 184 }, { 32768, 270 }, { 65536, 372 }
 };
 

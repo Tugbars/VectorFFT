@@ -89,16 +89,28 @@ cascade's driver would carry the tcut tiling and the tform/t2q picks as
 literal variants per cell, which is a larger corpus than ZTURN-T's 33 cells.
 Gate it as ZTURN-T was: fused == unfused bitwise, then the race.
 
-## 6. ZTURN-T above 2048 — a TILED ZTURN-T as the cascade's challenger (owner's
-question, 2026-09-09: "isn't tiling the only advantage zcascade has?")
+## 6. ZTURN-T above 2048 — a tiled ZTURN-T as the natural-cell challenger
 
-**What ZTURN-S has that ZTURN-T does not:** (a) TILING — structural above L1
-(plane = 16N B: 32 KB at 2048, 64 KB at 4096); (b) the SCRAMBLED class — the
-comb skips the ordering work and is the whole scrambled column's lead;
-(c) an MT arm; (d) inventory: the raced terminator/placement twins, r0 = 8.
-**What ZTURN-T holds:** twiddle footprint ~half the cascade's (one stream per
-stage serves every group), a pre-twiddle backward that does not spill
-(vs 33/49), natural order paid on the ingest instead of the terminator.
+Owner's question, 2026-09-09: "isn't tiling the only advantage zcascade has
+over zt-t?" — in the cell where the two are compared, yes.
+
+**Features first (owner's correction, 2026-09-09).** Scrambled output and MT
+are FEATURES — product contracts — not optimization angles and not
+measurement arms. Scrambled output is featured for the users who do not
+need natural order (they skip the ordering cost by contract); natural order
+is its own contract for the users who need it; the two cells are never
+compared. MT is likewise a contract the cascade covers and ZTURN-T does not.
+So they are not "advantages" of the cascade over ZTURN-T: they are cells
+ZTURN-T does not serve. The cascade keeps the scrambled cells and every T > 1
+cell regardless of any natural T = 1 verdict.
+
+**In the natural T = 1 cell above 2048** the cascade's only optimization
+advantage is TILING — structural above L1 (plane = 16N B: 32 KB at 2048,
+64 KB at 4096). Its other differences are inventory: the raced
+terminator/placement twins, r0 = 8. **What ZTURN-T holds:** twiddle
+footprint ~half the cascade's (one stream per stage serves every group), a
+pre-twiddle backward that does not spill (vs 33/49), natural order paid on
+the ingest instead of the terminator.
 
 **Tiling maps onto ZTURN-T cleanly** — runs are contiguous, so a tile of T
 complexes holds WHOLE groups of every stage with RL <= T. The tiled driver is
@@ -110,15 +122,17 @@ L1-resident), run every stage with RL <= T while the tile is hot, then the
 cross-tile stages sweep the plane. Kernels unchanged (they take Ls/Gs/count);
 new: the `t0tl` kind emitted properly, the tiled driver shape in
 `ztt_drivers.ml`, the two-level twiddle create (item 2), registry cells
-above 2048, and the race against the tiled cascade per cell.
+above 2048, and the race against the tiled cascade per natural cell.
 
 **Evidence today:** one datum — same chain at 2048, ZTURN-T and ZTURN-S TIE
 (the 2048 win was the chain). Tiled vs tiled above L1 is unmeasured; the
 footprint and backward edges are reasons to expect competitiveness, not a
-guarantee. A scrambled ZTURN-T class (`t0ts`: store runs in column order, no
-rb[] — the cheapest possible ingest — output digit-reversed) would be what
-lets it challenge the scrambled column too; without it the cascade keeps
-that column regardless of the natural result.
+guarantee.
+
+**Coverage, if ever wanted (feature work, not a race):** a scrambled
+ZTURN-T class (`t0ts`: store runs in column order, no rb[], output
+digit-reversed) would let ZTURN-T serve the scrambled contract; an MT arm
+would let it serve T > 1. Neither is implied by the natural verdict.
 
 ## 7. Not transferring (measured)
 

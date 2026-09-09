@@ -16,7 +16,8 @@ let () =
   p "#ifndef VFFT_ZTT_REGISTRY_AVX2_H\n#define VFFT_ZTT_REGISTRY_AVX2_H\n#include <stddef.h>\n\n";
   p "/* the fused driver ABI: zin (natural packed z), zout (natural packed z), plane\n";
   p " * (2N doubles, 64-B; unused by the dest drivers), tw (ONE contiguous stream in\n";
-  p " * stage order), rb (the run-base table, N/R0 entries) */\n";
+  p " * stage order), rb (the run-base table, N/R0 entries), tile (the tile width in\n";
+  p " * complexes, 0 = untiled: the mids with R*L <= tile run per tile) */\n";
   Printf.printf "typedef void (*vfft_ztt_fn)(%s);\n\n" Ztt_drivers.driver_params;
   List.iter
     (fun (n, ch) ->

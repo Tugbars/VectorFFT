@@ -2,7 +2,7 @@
  * the engine on EVERY registry cell, and its front-door replay.
  *
  * ENGINE pass, per registry cell (ztt_registry_avx2.h: every {4,8} chain
- * with product N, 16 <= N <= 2048; 33 cells at avx2):
+ * with product N, 16 <= N <= VFFT_ZTT_MAX_N = 16384; 82 cells at avx2):
  *   1. create (vfft_ztt_create_chain) — the validator is the law, a refusal
  *      is a FAIL here because the registry says the cell exists;
  *   2. OOP forward (the `dest` driver: the pipeline runs in zout) against an
@@ -14,7 +14,7 @@
  *   5. the create built no trig: its streams come from the baked quarter-wave,
  *      so the forward error above IS the accuracy verdict of that table.
  * FRONT-DOOR pass (COLD scratch store, run_gates: ("flag", False)): the K=1
- *   OOP NATURAL create at every pow2 N in 16..2048 races the tier (the pairs,
+ *   OOP NATURAL create at every pow2 N in 16..VFFT_ZTT_MAX_N races the tier (the pairs,
  *   mono, ZTURN-T) and banks; this gate PRINTS the banked route and, for every
  *   cell whose route is ztt, asserts that vfft_execute's forward and backward
  *   are BITWISE the direct engine's on the banked chain (the replay serves
@@ -96,8 +96,28 @@ static int engine_pass(void)
         const int ipbit = memcmp(z, y, 2 * (size_t)N * 8) == 0;
         vfft_ztt_execute_bwd(p, z, z);
         const double eir = relerr(z, x, N, 1.0 / N);
-        const int ok = ef < TOL && er < TOL && ipbit && eir < TOL;
-        printf("%-16s %9.1e %9.1e %6s %9.1e  %s\n", tag, ef, er, ipbit ? "bits" : "DIFF", eir, ok ? "PASS" : "FAIL");
+        /* TILING (2026-09-09): every legal tile width must reproduce the untiled
+         * result BITWISE — the tile changes group ORDER only — fwd (dest), bwd
+         * (dest) and in place (plane) */
+        static const size_t ladder[] = { 64, 128, 256, 512, 1024, 2048, 4096 };
+        int ntile = 0, tbad = 0;
+        for (size_t t = 0; t < sizeof ladder / sizeof ladder[0]; t++)
+        {
+            if (!vfft_ztt_tile_legal(N, c->chain, c->nf, ladder[t])) continue;
+            ntile++;
+            vfft_ztt_bind(p, 0);
+            if (!vfft_ztt_set_tile(p, ladder[t])) { tbad++; continue; }
+            vfft_ztt_execute_fwd(p, x, z);
+            if (memcmp(z, y, 2 * (size_t)N * 8) != 0) tbad++;
+            vfft_ztt_execute_bwd(p, y, z);
+            if (memcmp(z, r, 2 * (size_t)N * 8) != 0) tbad++;
+            vfft_ztt_bind(p, 1);
+            memcpy(z, x, 2 * (size_t)N * 8);
+            vfft_ztt_execute_fwd(p, z, z);
+            if (memcmp(z, y, 2 * (size_t)N * 8) != 0) tbad++;
+        }
+        const int ok = ef < TOL && er < TOL && ipbit && eir < TOL && tbad == 0;
+        printf("%-16s %9.1e %9.1e %6s %9.1e  tiles %d/%d bits  %s\n", tag, ef, er, ipbit ? "bits" : "DIFF", eir, ntile - tbad, ntile, ok ? "PASS" : "FAIL");
         if (!ok) fails++;
         vfft_ztt_destroy(p);
         free(x); free(y); free(r); free(z);
@@ -150,7 +170,7 @@ static int frontdoor_pass(const char *wisdir)
     vfft_wisdom *W = vfft_wisdom_load(wisdir);
     printf("\n=== FRONT DOOR (cold): K=1 OOP NATURAL at pow2 N; ztt cells replay BITWISE the direct engine ===\n");
     printf("%-6s %-22s %s\n", "N", "banked route", "verdict");
-    for (int N = 16; N <= 2048; N *= 2)
+    for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
     {
         char route[24]; int chain[7], nf = 0;
         vfft_plan h = mk(W, N, 0);
@@ -223,7 +243,7 @@ static int seeded_pass(const char *wisdir)
         FILE *f = fopen(path, "w");
         if (!f) { printf("seeded: cannot write %s  FAIL\n", path); return 1; }
         fprintf(f, "@vw2 1.2\n");
-        for (int N = 16; N <= 2048; N *= 2)
+        for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
         {
             const vfft_ztt_cell_t *c = NULL;
             for (int i = 0; i < VFFT_ZTT_NCELLS_AVX2 && !c; i++)
@@ -231,6 +251,9 @@ static int seeded_pass(const char *wisdir)
             if (!c) continue;
             fprintf(f, "@cell t=c2c n=%d q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=ztt il_ztt=", N);
             for (int i = 0; i < c->nf; i++) fprintf(f, "%s%d", i ? "." : "", c->chain[i]);
+            /* a TILED row where the cell admits it (N >= 4096: 16 KB tiles), so
+             * the replay path parses/applies il_tw= (bitwise the untiled engine) */
+            if (vfft_ztt_tile_legal(N, c->chain, c->nf, 1024)) fprintf(f, " il_tw=1024");
             /* src=race, not src=seed: the kind-3 scan skips seed rows by law
              * (vw2__is_seed) — a seed is a hint, never a verdict to replay */
             fprintf(f, " il_kv=0 | ran=1 ns=100.0 metric=fwd1 units=ns src=race date=2026-09-09\n");
@@ -240,7 +263,7 @@ static int seeded_pass(const char *wisdir)
     vfft_wisdom *W = vfft_wisdom_load(dir);
     printf("\n=== SEEDED REPLAY: one il_route=ztt row per pow2 N; the front door must serve it BITWISE ===\n");
     printf("%-6s %-14s %s\n", "N", "seeded chain", "verdict");
-    for (int N = 16; N <= 2048; N *= 2)
+    for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
     {
         const vfft_ztt_cell_t *c = NULL;
         for (int i = 0; i < VFFT_ZTT_NCELLS_AVX2 && !c; i++)
