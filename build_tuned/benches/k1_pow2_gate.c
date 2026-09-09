@@ -104,6 +104,12 @@ static void route_of_store(const char *wisdir, int N, const char *ord, char *out
     snprintf(out, n, "NOROW");
     snprintf(key, sizeof key, "n=%d ", N);
     snprintf(okey, sizeof okey, "ord=%s ", ord);
+    /* TWO TIERS (2026-09-09, the ztt_gate's route_of_store law): the lay=il
+     * K=1 row is the served verdict; the older lay-less K=1 row (the split +
+     * IL pair recipe of the pre-ZTURN-T store) is read only when no lay=il
+     * row exists. Reading the first match printed "2p 64.32" at 2048 while
+     * the front door served ZTURN-T from the lay=il row below it. */
+    for (int tier = 0; tier < 2; tier++)
     for (int fi = 0; fi < 2; fi++)
     {
         FILE *f;
@@ -115,6 +121,7 @@ static void route_of_store(const char *wisdir, int N, const char *ord, char *out
             const char *r;
             char tok[64] = "";
             if (!strstr(line, "t=c2c") || !strstr(line, key) || !strstr(line, "q=1 ") || !strstr(line, okey)) continue;
+            if (tier == 0 && !strstr(line, "lay=il")) continue;
             if (strstr(line, "dir=bwd")) continue;   /* the OOP verdict row may carry role=comp (the pair recipe IS the verdict) */
             if ((r = strstr(line, "il_route=")) != NULL)
             {

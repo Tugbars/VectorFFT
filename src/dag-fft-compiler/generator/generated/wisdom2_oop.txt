@@ -240,7 +240,7 @@
 @cell t=c2c n=128 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=87.50 metric=fwd1 units=ns src=race date=2026-09-09
 @cell t=c2c n=256 q=1 ord=scr place=oop role=comp | eng=zturn chain=8.8.4 zs_t2q=0 zt_t2q=0 zt_tf=1 zt_ntf=1 | ran=1 src=race date=2026-09-09
 @cell t=c2c n=256 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=162.50 metric=fwd1 units=ns src=race date=2026-09-09
-@cell t=c2c n=512 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.4.8.4 zs_t2q=0 zt_t2q=0 zt_ntf=1 | ran=1 src=race date=2026-09-09
+@cell t=c2c n=512 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.4.8.4 zs_t2q=0 zt_t2q=0 zt_ntf=1 zt_mt_t=8 zt_mt=0 | ran=1 src=race date=2026-09-09
 @cell t=c2c n=512 q=1 ord=nat place=oop lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=512,q=1,ord=scr,place=oop,role=comp) dif=0 | ran=1 ns=400.00 metric=fwd1 units=ns src=race date=2026-09-09
 @cell t=c2c n=1024 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.8.8.4 zs_t2q=0 zt_t2q=0 zt_ntf=1 | ran=1 src=race date=2026-09-09
 @cell t=c2c n=1024 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=725.00 metric=fwd1 units=ns src=race date=2026-09-09

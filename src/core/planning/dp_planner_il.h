@@ -1592,12 +1592,28 @@ static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int 
              * tighter, and it was what made every non-pow2 cell enumerate
              * ZERO candidates and therefore never bank a verdict. */
             if (R1 < 3 || R1 > 64) continue;
+            /* POW2 SUNSET (owner's ruling 2026-09-09 evening, the pool-sunset
+             * policy of 2026-08-11 finally applied to the pow2 pair pools):
+             *   - no radix-64 slot at a power of two ("drop R64 mid, leaf.
+             *     it's not needed") — the 64xR / Rx64 arrangements never won
+             *     a live cell on any host;
+             *   - the radix-8 and radix-16 slots race the TANGENT kernel
+             *     alone ("tangent should stay, the rest will be gone"): the
+             *     classic interiors, the blocked 4.4 and the M-128 edge lost
+             *     to it bit-identically or by 20-25% and are superseded;
+             *   - the radix-32 slots keep all four forms (owner: "all can
+             *     stay"); radix 4 has one form.
+             * Pow2 cells only — the odd-N machinery (chain3, the flat DIT,
+             * the pair at 2^a * odd) is untouched until its turn, and the
+             * superseded kernels stay in the resolvers for the backward side
+             * (no tangent twins yet) and for those cells' banked rows. */
+            const int pow2_cell = (N & (N - 1)) == 0;
+            if (pow2_cell && (R1 == 64 || R2 == 64)) continue;
             memset(&c, 0, sizeof c);
             c.R1 = R1; c.R2 = R2;
             if (vfft_il2p_leaf_fn(R2, 0) && vfft_il2p_mid_fn(R1, 0))
             {
                 c.route = VFFT_K1_IL_2P_PURE;
-                _il_dp_push(s, &c);
                 /* BLOCKED-FORM axis (il_kv, 2026-08-06): the base candidate
                  * above measures the structural default create resolves
                  * (R>=32 slots get the 4·8 forms). The within-blocked form
@@ -1641,6 +1657,14 @@ static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int 
                      * pair and the 3-stage chain. Same codes, same order. */
                     nm = vfft_il2p_mid_arm_pool(R1, msv, &dm);
                     nl = vfft_il2p_leaf_arm_pool(R2, lsv, &dl);
+                    if (pow2_cell && (R1 == 8 || R1 == 16)) { nm = 1; msv[0] = 3; dm = 3; }
+                    if (pow2_cell && (R2 == 8 || R2 == 16)) { nl = 1; lsv[0] = 3; dl = 3; }
+                    /* the BASE candidate: the structural default of each slot
+                     * (nibble 0 = what create resolves), except that a sunset
+                     * slot names its one surviving kernel explicitly so the
+                     * banked row says which kernel ran. */
+                    c.il_kv = VFFT_IL_KV_PACK(dm == 3 ? 3 : 0, dl == 3 ? 3 : 0);
+                    _il_dp_push(s, &c);
                     for (int mi = 0; mi < nm; mi++)
                         for (int li = 0; li < nl; li++)
                         {

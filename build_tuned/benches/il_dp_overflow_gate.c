@@ -66,9 +66,12 @@
  * Re-measured 2026-09-09 (evening) after the ZTURN-T-ALONE gate in
  * _il_dp_enumerate_natural_engines (owner: no Bailey pair in the pow2 pools
  * at 2048 and above): the 16 pairs at 2048 and the 4 at 4096 left both
- * pools, 90 -> 74 and 127 -> 123; the other cells never had a pair. */
+ * pools, 90 -> 74 and 127 -> 123; the other cells never had a pair.
+ * Re-measured 2026-09-09 (evening) after the pow2 pair-pool SUNSET (owner:
+ * no radix-64 slot, radix 8/16 slots race the tangent kernel alone, radix 32
+ * keeps its four forms): 1024 = 32x32 (16 forms) + 7 ZTURN-T chains = 23. */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 37 }, { 2048, 74 }, { 4096, 123 }, { 8192, 175 },
+    { 1024, 23 }, { 2048, 74 }, { 4096, 123 }, { 8192, 175 },
     { 16384, 247 }, { 32768, 354 }, { 65536, 480 }
 };
 
