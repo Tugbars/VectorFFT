@@ -409,10 +409,6 @@ static __attribute__((always_inline)) inline void _ztlf4f_body(
     const double *tw_re, size_t Ls, size_t OLs, size_t count)
 {
     for (size_t k = 0; k + 4 <= count; k += 4) {
-        _mm_prefetch((const char *)&zout[2*((size_t)0*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)1*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)2*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)3*Ls + k + 64)], _MM_HINT_T0);
         /* ZBlockSplit load edge */
         const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
@@ -485,14 +481,247 @@ static __attribute__((always_inline)) inline void _ztlf8f_body(
     const double *tw_re, size_t Ls, size_t OLs, size_t count)
 {
     for (size_t k = 0; k + 4 <= count; k += 4) {
-        _mm_prefetch((const char *)&zout[2*((size_t)0*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)1*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)2*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)3*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)4*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)5*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)6*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)7*Ls + k + 64)], _MM_HINT_T0);
+        /* ZBlockSplit load edge */
+        const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
+        const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
+        const __m256d lane_re_1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
+        const __m256d lane_im_1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k) + 4]);
+        const __m256d lane_re_2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
+        const __m256d lane_im_2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k) + 4]);
+        const __m256d lane_re_3 = _mm256_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
+        const __m256d lane_im_3 = _mm256_loadu_pd(&zin[2*((size_t)3*Ls + k) + 4]);
+        const __m256d lane_re_4 = _mm256_loadu_pd(&zin[2*((size_t)4*Ls + k)]);
+        const __m256d lane_im_4 = _mm256_loadu_pd(&zin[2*((size_t)4*Ls + k) + 4]);
+        const __m256d lane_re_5 = _mm256_loadu_pd(&zin[2*((size_t)5*Ls + k)]);
+        const __m256d lane_im_5 = _mm256_loadu_pd(&zin[2*((size_t)5*Ls + k) + 4]);
+        const __m256d lane_re_6 = _mm256_loadu_pd(&zin[2*((size_t)6*Ls + k)]);
+        const __m256d lane_im_6 = _mm256_loadu_pd(&zin[2*((size_t)6*Ls + k) + 4]);
+        const __m256d lane_re_7 = _mm256_loadu_pd(&zin[2*((size_t)7*Ls + k)]);
+        const __m256d lane_im_7 = _mm256_loadu_pd(&zin[2*((size_t)7*Ls + k) + 4]);
+        /* SU-scheduled body (pipeline) */
+        const __m256d t40 = _mm256_set1_pd(0.70710678118654757);
+        const __m256d t0 = lane_re_7;
+        const __m256d t1 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 48]);
+        const __m256d t2 = lane_im_7;
+        const __m256d t3 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 52]);
+        const __m256d t4 = _mm256_fnmadd_pd(t2, t3, _mm256_mul_pd(t0, t1));
+        const __m256d t5 = _mm256_fmadd_pd(t0, t3, _mm256_mul_pd(t2, t1));
+        const __m256d t9 = lane_re_3;
+        const __m256d t10 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 16]);
+        const __m256d t11 = lane_im_3;
+        const __m256d t12 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 20]);
+        const __m256d t13 = _mm256_fnmadd_pd(t11, t12, _mm256_mul_pd(t9, t10));
+        const __m256d t14 = _mm256_fmadd_pd(t9, t12, _mm256_mul_pd(t11, t10));
+        const __m256d t16 = _mm256_sub_pd(t14, t5);
+        const __m256d t18 = _mm256_sub_pd(t13, t4);
+        const __m256d t81 = _mm256_add_pd(t5, t14);
+        const __m256d t82 = _mm256_add_pd(t4, t13);
+        const __m256d t21 = lane_re_5;
+        const __m256d t22 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 32]);
+        const __m256d t23 = lane_im_5;
+        const __m256d t24 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 36]);
+        const __m256d t25 = _mm256_fnmadd_pd(t23, t24, _mm256_mul_pd(t21, t22));
+        const __m256d t26 = _mm256_fmadd_pd(t21, t24, _mm256_mul_pd(t23, t22));
+        const __m256d t28 = lane_re_1;
+        const __m256d t29 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 0]);
+        const __m256d t30 = lane_im_1;
+        const __m256d t31 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 4]);
+        const __m256d t32 = _mm256_fnmadd_pd(t30, t31, _mm256_mul_pd(t28, t29));
+        const __m256d t33 = _mm256_fmadd_pd(t28, t31, _mm256_mul_pd(t30, t29));
+        const __m256d t34 = _mm256_sub_pd(t33, t26);
+        const __m256d t36 = _mm256_sub_pd(t32, t25);
+        const __m256d t84 = _mm256_add_pd(t26, t33);
+        const __m256d t85 = _mm256_add_pd(t25, t32);
+        const __m256d t37 = _mm256_add_pd(t18, t34);
+        const __m256d t38 = _mm256_sub_pd(t36, t16);
+        const __m256d t101 = _mm256_sub_pd(t34, t18);
+        const __m256d t103 = _mm256_add_pd(t16, t36);
+        const __m256d t86 = _mm256_sub_pd(t84, t81);
+        const __m256d t88 = _mm256_sub_pd(t85, t82);
+        const __m256d t115 = _mm256_add_pd(t81, t84);
+        const __m256d t116 = _mm256_add_pd(t82, t85);
+        const __m256d t39 = _mm256_sub_pd(t38, t37);
+        const __m256d t44 = _mm256_add_pd(t37, t38);
+        const __m256d t104 = _mm256_add_pd(t101, t103);
+        const __m256d t107 = _mm256_sub_pd(t101, t103);
+        const __m256d t47 = lane_re_6;
+        const __m256d t48 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 40]);
+        const __m256d t49 = lane_im_6;
+        const __m256d t50 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 44]);
+        const __m256d t51 = _mm256_fnmadd_pd(t49, t50, _mm256_mul_pd(t47, t48));
+        const __m256d t52 = _mm256_fmadd_pd(t47, t50, _mm256_mul_pd(t49, t48));
+        const __m256d t54 = lane_re_2;
+        const __m256d t55 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 8]);
+        const __m256d t56 = lane_im_2;
+        const __m256d t57 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 12]);
+        const __m256d t58 = _mm256_fnmadd_pd(t56, t57, _mm256_mul_pd(t54, t55));
+        const __m256d t59 = _mm256_fmadd_pd(t54, t57, _mm256_mul_pd(t56, t55));
+        const __m256d t60 = _mm256_sub_pd(t59, t52);
+        const __m256d t62 = _mm256_sub_pd(t58, t51);
+        const __m256d t91 = _mm256_add_pd(t52, t59);
+        const __m256d t92 = _mm256_add_pd(t51, t58);
+        const __m256d t65 = lane_re_4;
+        const __m256d t66 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 24]);
+        const __m256d t67 = lane_im_4;
+        const __m256d t68 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 28]);
+        const __m256d t69 = _mm256_fnmadd_pd(t67, t68, _mm256_mul_pd(t65, t66));
+        const __m256d t70 = _mm256_fmadd_pd(t65, t68, _mm256_mul_pd(t67, t66));
+        const __m256d t72 = lane_re_0;
+        const __m256d t76 = _mm256_sub_pd(t72, t69);
+        const __m256d t95 = _mm256_add_pd(t69, t72);
+        const __m256d t78 = _mm256_sub_pd(t76, t60);
+        const __m256d t131 = _mm256_fmadd_pd(t39, t40, t78);
+        const __m256d t135 = _mm256_fnmadd_pd(t39, t40, t78);
+        const __m256d t98 = _mm256_sub_pd(t95, t92);
+        const __m256d t99 = _mm256_sub_pd(t98, t86);
+        const __m256d t125 = _mm256_add_pd(t86, t98);
+        const __m256d t111 = _mm256_add_pd(t60, t76);
+        const __m256d t133 = _mm256_fnmadd_pd(t40, t104, t111);
+        const __m256d t137 = _mm256_fmadd_pd(t40, t104, t111);
+        const __m256d t119 = _mm256_add_pd(t92, t95);
+        const __m256d t120 = _mm256_sub_pd(t119, t116);
+        const __m256d t129 = _mm256_add_pd(t116, t119);
+        const __m256d t73 = lane_im_0;
+        const __m256d t74 = _mm256_sub_pd(t73, t70);
+        const __m256d t94 = _mm256_add_pd(t70, t73);
+        const __m256d t77 = _mm256_add_pd(t62, t74);
+        const __m256d t132 = _mm256_fmadd_pd(t40, t44, t77);
+        const __m256d t136 = _mm256_fnmadd_pd(t40, t44, t77);
+        const __m256d t96 = _mm256_sub_pd(t94, t91);
+        const __m256d t100 = _mm256_add_pd(t88, t96);
+        const __m256d t126 = _mm256_sub_pd(t96, t88);
+        const __m256d t110 = _mm256_sub_pd(t74, t62);
+        const __m256d t134 = _mm256_fnmadd_pd(t40, t107, t110);
+        const __m256d t138 = _mm256_fmadd_pd(t40, t107, t110);
+        const __m256d t118 = _mm256_add_pd(t91, t94);
+        const __m256d t122 = _mm256_sub_pd(t118, t115);
+        const __m256d t130 = _mm256_add_pd(t115, t118);
+        /* Z store edge (REINT) */
+        const __m256d _pr_0 = _mm256_permute4x64_pd(t129, 0xD8);
+        const __m256d _qi_0 = _mm256_permute4x64_pd(t130, 0xD8);
+        _mm256_storeu_pd(&zout[2*(size_t)k], _mm256_unpacklo_pd(_pr_0, _qi_0));
+        _mm256_storeu_pd(&zout[2*(size_t)k + 4], _mm256_unpackhi_pd(_pr_0, _qi_0));
+        const __m256d _pr_1 = _mm256_permute4x64_pd(t137, 0xD8);
+        const __m256d _qi_1 = _mm256_permute4x64_pd(t138, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k)], _mm256_unpacklo_pd(_pr_1, _qi_1));
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k) + 4], _mm256_unpackhi_pd(_pr_1, _qi_1));
+        const __m256d _pr_2 = _mm256_permute4x64_pd(t125, 0xD8);
+        const __m256d _qi_2 = _mm256_permute4x64_pd(t126, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k)], _mm256_unpacklo_pd(_pr_2, _qi_2));
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k) + 4], _mm256_unpackhi_pd(_pr_2, _qi_2));
+        const __m256d _pr_3 = _mm256_permute4x64_pd(t135, 0xD8);
+        const __m256d _qi_3 = _mm256_permute4x64_pd(t136, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k)], _mm256_unpacklo_pd(_pr_3, _qi_3));
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k) + 4], _mm256_unpackhi_pd(_pr_3, _qi_3));
+        const __m256d _pr_4 = _mm256_permute4x64_pd(t120, 0xD8);
+        const __m256d _qi_4 = _mm256_permute4x64_pd(t122, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)4*OLs + k)], _mm256_unpacklo_pd(_pr_4, _qi_4));
+        _mm256_storeu_pd(&zout[2*((size_t)4*OLs + k) + 4], _mm256_unpackhi_pd(_pr_4, _qi_4));
+        const __m256d _pr_5 = _mm256_permute4x64_pd(t133, 0xD8);
+        const __m256d _qi_5 = _mm256_permute4x64_pd(t134, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)5*OLs + k)], _mm256_unpacklo_pd(_pr_5, _qi_5));
+        _mm256_storeu_pd(&zout[2*((size_t)5*OLs + k) + 4], _mm256_unpackhi_pd(_pr_5, _qi_5));
+        const __m256d _pr_6 = _mm256_permute4x64_pd(t99, 0xD8);
+        const __m256d _qi_6 = _mm256_permute4x64_pd(t100, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)6*OLs + k)], _mm256_unpacklo_pd(_pr_6, _qi_6));
+        _mm256_storeu_pd(&zout[2*((size_t)6*OLs + k) + 4], _mm256_unpackhi_pd(_pr_6, _qi_6));
+        const __m256d _pr_7 = _mm256_permute4x64_pd(t131, 0xD8);
+        const __m256d _qi_7 = _mm256_permute4x64_pd(t132, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)7*OLs + k)], _mm256_unpacklo_pd(_pr_7, _qi_7));
+        _mm256_storeu_pd(&zout[2*((size_t)7*OLs + k) + 4], _mm256_unpackhi_pd(_pr_7, _qi_7));
+    }
+}
+
+/* ---- tlfi radix 4 fwd (as in radix4_z_tlfi_avx2.c) ---- */
+static __attribute__((always_inline)) inline void _ztlfi4f_body(
+    const double * zin, double * zout,
+    const double *tw_re, size_t Ls, size_t OLs, size_t count)
+{
+    for (size_t k = 0; k + 4 <= count; k += 4) {
+        _mm_prefetch((const char *)&zout[2*((size_t)0*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)1*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)2*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)3*OLs + k + 16)], _MM_HINT_T0);
+        /* ZBlockSplit load edge */
+        const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
+        const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
+        const __m256d lane_re_1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
+        const __m256d lane_im_1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k) + 4]);
+        const __m256d lane_re_2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
+        const __m256d lane_im_2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k) + 4]);
+        const __m256d lane_re_3 = _mm256_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
+        const __m256d lane_im_3 = _mm256_loadu_pd(&zin[2*((size_t)3*Ls + k) + 4]);
+        /* SU-scheduled body (pipeline) */
+        const __m256d t0 = lane_re_3;
+        const __m256d t1 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 16]);
+        const __m256d t2 = lane_im_3;
+        const __m256d t3 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 20]);
+        const __m256d t4 = _mm256_fnmadd_pd(t2, t3, _mm256_mul_pd(t0, t1));
+        const __m256d t5 = _mm256_fmadd_pd(t0, t3, _mm256_mul_pd(t2, t1));
+        const __m256d t9 = lane_re_1;
+        const __m256d t10 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 0]);
+        const __m256d t11 = lane_im_1;
+        const __m256d t12 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 4]);
+        const __m256d t13 = _mm256_fnmadd_pd(t11, t12, _mm256_mul_pd(t9, t10));
+        const __m256d t14 = _mm256_fmadd_pd(t9, t12, _mm256_mul_pd(t11, t10));
+        const __m256d t16 = _mm256_sub_pd(t14, t5);
+        const __m256d t18 = _mm256_sub_pd(t13, t4);
+        const __m256d t35 = _mm256_add_pd(t5, t14);
+        const __m256d t36 = _mm256_add_pd(t4, t13);
+        const __m256d t21 = lane_re_2;
+        const __m256d t22 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 8]);
+        const __m256d t23 = lane_im_2;
+        const __m256d t24 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 12]);
+        const __m256d t25 = _mm256_fnmadd_pd(t23, t24, _mm256_mul_pd(t21, t22));
+        const __m256d t26 = _mm256_fmadd_pd(t21, t24, _mm256_mul_pd(t23, t22));
+        const __m256d t28 = lane_re_0;
+        const __m256d t32 = _mm256_sub_pd(t28, t25);
+        const __m256d t33 = _mm256_sub_pd(t32, t16);
+        const __m256d t43 = _mm256_add_pd(t16, t32);
+        const __m256d t39 = _mm256_add_pd(t25, t28);
+        const __m256d t40 = _mm256_sub_pd(t39, t36);
+        const __m256d t45 = _mm256_add_pd(t36, t39);
+        const __m256d t29 = lane_im_0;
+        const __m256d t30 = _mm256_sub_pd(t29, t26);
+        const __m256d t34 = _mm256_add_pd(t18, t30);
+        const __m256d t44 = _mm256_sub_pd(t30, t18);
+        const __m256d t38 = _mm256_add_pd(t26, t29);
+        const __m256d t42 = _mm256_sub_pd(t38, t35);
+        const __m256d t46 = _mm256_add_pd(t35, t38);
+        /* Z store edge (REINT) */
+        const __m256d _pr_0 = _mm256_permute4x64_pd(t45, 0xD8);
+        const __m256d _qi_0 = _mm256_permute4x64_pd(t46, 0xD8);
+        _mm256_storeu_pd(&zout[2*(size_t)k], _mm256_unpacklo_pd(_pr_0, _qi_0));
+        _mm256_storeu_pd(&zout[2*(size_t)k + 4], _mm256_unpackhi_pd(_pr_0, _qi_0));
+        const __m256d _pr_1 = _mm256_permute4x64_pd(t43, 0xD8);
+        const __m256d _qi_1 = _mm256_permute4x64_pd(t44, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k)], _mm256_unpacklo_pd(_pr_1, _qi_1));
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k) + 4], _mm256_unpackhi_pd(_pr_1, _qi_1));
+        const __m256d _pr_2 = _mm256_permute4x64_pd(t40, 0xD8);
+        const __m256d _qi_2 = _mm256_permute4x64_pd(t42, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k)], _mm256_unpacklo_pd(_pr_2, _qi_2));
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k) + 4], _mm256_unpackhi_pd(_pr_2, _qi_2));
+        const __m256d _pr_3 = _mm256_permute4x64_pd(t33, 0xD8);
+        const __m256d _qi_3 = _mm256_permute4x64_pd(t34, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k)], _mm256_unpacklo_pd(_pr_3, _qi_3));
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k) + 4], _mm256_unpackhi_pd(_pr_3, _qi_3));
+    }
+}
+
+/* ---- tlfi radix 8 fwd (as in radix8_z_tlfi_avx2.c) ---- */
+static __attribute__((always_inline)) inline void _ztlfi8f_body(
+    const double * zin, double * zout,
+    const double *tw_re, size_t Ls, size_t OLs, size_t count)
+{
+    for (size_t k = 0; k + 4 <= count; k += 4) {
+        _mm_prefetch((const char *)&zout[2*((size_t)0*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)1*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)2*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)3*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)4*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)5*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)6*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)7*OLs + k + 16)], _MM_HINT_T0);
         /* ZBlockSplit load edge */
         const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
@@ -1039,10 +1268,6 @@ static __attribute__((always_inline)) inline void _ztlf4b_body(
     const double *tw_re, size_t Ls, size_t OLs, size_t count)
 {
     for (size_t k = 0; k + 4 <= count; k += 4) {
-        _mm_prefetch((const char *)&zout[2*((size_t)0*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)1*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)2*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)3*Ls + k + 64)], _MM_HINT_T0);
         /* ZBlockSplit load edge */
         const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
@@ -1115,14 +1340,247 @@ static __attribute__((always_inline)) inline void _ztlf8b_body(
     const double *tw_re, size_t Ls, size_t OLs, size_t count)
 {
     for (size_t k = 0; k + 4 <= count; k += 4) {
-        _mm_prefetch((const char *)&zout[2*((size_t)0*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)1*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)2*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)3*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)4*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)5*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)6*Ls + k + 64)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&zout[2*((size_t)7*Ls + k + 64)], _MM_HINT_T0);
+        /* ZBlockSplit load edge */
+        const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
+        const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
+        const __m256d lane_re_1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
+        const __m256d lane_im_1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k) + 4]);
+        const __m256d lane_re_2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
+        const __m256d lane_im_2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k) + 4]);
+        const __m256d lane_re_3 = _mm256_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
+        const __m256d lane_im_3 = _mm256_loadu_pd(&zin[2*((size_t)3*Ls + k) + 4]);
+        const __m256d lane_re_4 = _mm256_loadu_pd(&zin[2*((size_t)4*Ls + k)]);
+        const __m256d lane_im_4 = _mm256_loadu_pd(&zin[2*((size_t)4*Ls + k) + 4]);
+        const __m256d lane_re_5 = _mm256_loadu_pd(&zin[2*((size_t)5*Ls + k)]);
+        const __m256d lane_im_5 = _mm256_loadu_pd(&zin[2*((size_t)5*Ls + k) + 4]);
+        const __m256d lane_re_6 = _mm256_loadu_pd(&zin[2*((size_t)6*Ls + k)]);
+        const __m256d lane_im_6 = _mm256_loadu_pd(&zin[2*((size_t)6*Ls + k) + 4]);
+        const __m256d lane_re_7 = _mm256_loadu_pd(&zin[2*((size_t)7*Ls + k)]);
+        const __m256d lane_im_7 = _mm256_loadu_pd(&zin[2*((size_t)7*Ls + k) + 4]);
+        /* SU-scheduled body (pipeline) */
+        const __m256d t41 = _mm256_set1_pd(0.70710678118654757);
+        const __m256d t0 = lane_re_7;
+        const __m256d t1 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 48]);
+        const __m256d t2 = lane_im_7;
+        const __m256d t3 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 52]);
+        const __m256d t5 = _mm256_fmadd_pd(t0, t3, _mm256_mul_pd(t2, t1));
+        const __m256d t4 = _mm256_fnmadd_pd(t2, t3, _mm256_mul_pd(t0, t1));
+        const __m256d t9 = lane_re_3;
+        const __m256d t10 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 16]);
+        const __m256d t11 = lane_im_3;
+        const __m256d t12 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 20]);
+        const __m256d t14 = _mm256_fmadd_pd(t9, t12, _mm256_mul_pd(t11, t10));
+        const __m256d t13 = _mm256_fnmadd_pd(t11, t12, _mm256_mul_pd(t9, t10));
+        const __m256d t16 = _mm256_sub_pd(t14, t5);
+        const __m256d t18 = _mm256_sub_pd(t13, t4);
+        const __m256d t82 = _mm256_add_pd(t5, t14);
+        const __m256d t83 = _mm256_add_pd(t4, t13);
+        const __m256d t21 = lane_re_5;
+        const __m256d t22 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 32]);
+        const __m256d t23 = lane_im_5;
+        const __m256d t24 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 36]);
+        const __m256d t25 = _mm256_fnmadd_pd(t23, t24, _mm256_mul_pd(t21, t22));
+        const __m256d t26 = _mm256_fmadd_pd(t21, t24, _mm256_mul_pd(t23, t22));
+        const __m256d t28 = lane_re_1;
+        const __m256d t29 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 0]);
+        const __m256d t30 = lane_im_1;
+        const __m256d t31 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 4]);
+        const __m256d t32 = _mm256_fnmadd_pd(t30, t31, _mm256_mul_pd(t28, t29));
+        const __m256d t33 = _mm256_fmadd_pd(t28, t31, _mm256_mul_pd(t30, t29));
+        const __m256d t36 = _mm256_sub_pd(t32, t25);
+        const __m256d t34 = _mm256_sub_pd(t33, t26);
+        const __m256d t38 = _mm256_add_pd(t16, t36);
+        const __m256d t85 = _mm256_add_pd(t26, t33);
+        const __m256d t86 = _mm256_add_pd(t25, t32);
+        const __m256d t37 = _mm256_sub_pd(t34, t18);
+        const __m256d t102 = _mm256_add_pd(t18, t34);
+        const __m256d t103 = _mm256_sub_pd(t36, t16);
+        const __m256d t87 = _mm256_sub_pd(t85, t82);
+        const __m256d t89 = _mm256_sub_pd(t86, t83);
+        const __m256d t114 = _mm256_add_pd(t82, t85);
+        const __m256d t115 = _mm256_add_pd(t83, t86);
+        const __m256d t40 = _mm256_sub_pd(_mm256_xor_pd(t38, _mm256_set1_pd(-0.0)), t37);
+        const __m256d t44 = _mm256_sub_pd(t38, t37);
+        const __m256d t104 = _mm256_sub_pd(t103, t102);
+        const __m256d t106 = _mm256_add_pd(t102, t103);
+        const __m256d t47 = lane_re_6;
+        const __m256d t48 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 40]);
+        const __m256d t49 = lane_im_6;
+        const __m256d t50 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 44]);
+        const __m256d t51 = _mm256_fnmadd_pd(t49, t50, _mm256_mul_pd(t47, t48));
+        const __m256d t52 = _mm256_fmadd_pd(t47, t50, _mm256_mul_pd(t49, t48));
+        const __m256d t54 = lane_re_2;
+        const __m256d t55 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 8]);
+        const __m256d t56 = lane_im_2;
+        const __m256d t57 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 12]);
+        const __m256d t58 = _mm256_fnmadd_pd(t56, t57, _mm256_mul_pd(t54, t55));
+        const __m256d t59 = _mm256_fmadd_pd(t54, t57, _mm256_mul_pd(t56, t55));
+        const __m256d t60 = _mm256_sub_pd(t59, t52);
+        const __m256d t62 = _mm256_sub_pd(t58, t51);
+        const __m256d t91 = _mm256_add_pd(t52, t59);
+        const __m256d t92 = _mm256_add_pd(t51, t58);
+        const __m256d t65 = lane_re_4;
+        const __m256d t66 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 24]);
+        const __m256d t67 = lane_im_4;
+        const __m256d t68 = _mm256_loadu_pd(&tw_re[14*(size_t)k + 28]);
+        const __m256d t69 = _mm256_fnmadd_pd(t67, t68, _mm256_mul_pd(t65, t66));
+        const __m256d t70 = _mm256_fmadd_pd(t65, t68, _mm256_mul_pd(t67, t66));
+        const __m256d t72 = lane_re_0;
+        const __m256d t76 = _mm256_sub_pd(t72, t69);
+        const __m256d t95 = _mm256_add_pd(t69, t72);
+        const __m256d t78 = _mm256_add_pd(t60, t76);
+        const __m256d t130 = _mm256_fnmadd_pd(t40, t41, t78);
+        const __m256d t134 = _mm256_fmadd_pd(t40, t41, t78);
+        const __m256d t98 = _mm256_sub_pd(t95, t92);
+        const __m256d t99 = _mm256_add_pd(t87, t98);
+        const __m256d t124 = _mm256_sub_pd(t98, t87);
+        const __m256d t110 = _mm256_sub_pd(t76, t60);
+        const __m256d t132 = _mm256_fnmadd_pd(t41, t104, t110);
+        const __m256d t136 = _mm256_fmadd_pd(t41, t104, t110);
+        const __m256d t118 = _mm256_add_pd(t92, t95);
+        const __m256d t119 = _mm256_sub_pd(t118, t115);
+        const __m256d t128 = _mm256_add_pd(t115, t118);
+        const __m256d t73 = lane_im_0;
+        const __m256d t74 = _mm256_sub_pd(t73, t70);
+        const __m256d t94 = _mm256_add_pd(t70, t73);
+        const __m256d t77 = _mm256_sub_pd(t74, t62);
+        const __m256d t131 = _mm256_fnmadd_pd(t41, t44, t77);
+        const __m256d t135 = _mm256_fmadd_pd(t41, t44, t77);
+        const __m256d t96 = _mm256_sub_pd(t94, t91);
+        const __m256d t101 = _mm256_sub_pd(t96, t89);
+        const __m256d t125 = _mm256_add_pd(t89, t96);
+        const __m256d t109 = _mm256_add_pd(t62, t74);
+        const __m256d t133 = _mm256_fnmadd_pd(t41, t106, t109);
+        const __m256d t137 = _mm256_fmadd_pd(t41, t106, t109);
+        const __m256d t117 = _mm256_add_pd(t91, t94);
+        const __m256d t121 = _mm256_sub_pd(t117, t114);
+        const __m256d t129 = _mm256_add_pd(t114, t117);
+        /* Z store edge (REINT) */
+        const __m256d _pr_0 = _mm256_permute4x64_pd(t128, 0xD8);
+        const __m256d _qi_0 = _mm256_permute4x64_pd(t129, 0xD8);
+        _mm256_storeu_pd(&zout[2*(size_t)k], _mm256_unpacklo_pd(_pr_0, _qi_0));
+        _mm256_storeu_pd(&zout[2*(size_t)k + 4], _mm256_unpackhi_pd(_pr_0, _qi_0));
+        const __m256d _pr_1 = _mm256_permute4x64_pd(t136, 0xD8);
+        const __m256d _qi_1 = _mm256_permute4x64_pd(t137, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k)], _mm256_unpacklo_pd(_pr_1, _qi_1));
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k) + 4], _mm256_unpackhi_pd(_pr_1, _qi_1));
+        const __m256d _pr_2 = _mm256_permute4x64_pd(t124, 0xD8);
+        const __m256d _qi_2 = _mm256_permute4x64_pd(t125, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k)], _mm256_unpacklo_pd(_pr_2, _qi_2));
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k) + 4], _mm256_unpackhi_pd(_pr_2, _qi_2));
+        const __m256d _pr_3 = _mm256_permute4x64_pd(t134, 0xD8);
+        const __m256d _qi_3 = _mm256_permute4x64_pd(t135, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k)], _mm256_unpacklo_pd(_pr_3, _qi_3));
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k) + 4], _mm256_unpackhi_pd(_pr_3, _qi_3));
+        const __m256d _pr_4 = _mm256_permute4x64_pd(t119, 0xD8);
+        const __m256d _qi_4 = _mm256_permute4x64_pd(t121, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)4*OLs + k)], _mm256_unpacklo_pd(_pr_4, _qi_4));
+        _mm256_storeu_pd(&zout[2*((size_t)4*OLs + k) + 4], _mm256_unpackhi_pd(_pr_4, _qi_4));
+        const __m256d _pr_5 = _mm256_permute4x64_pd(t132, 0xD8);
+        const __m256d _qi_5 = _mm256_permute4x64_pd(t133, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)5*OLs + k)], _mm256_unpacklo_pd(_pr_5, _qi_5));
+        _mm256_storeu_pd(&zout[2*((size_t)5*OLs + k) + 4], _mm256_unpackhi_pd(_pr_5, _qi_5));
+        const __m256d _pr_6 = _mm256_permute4x64_pd(t99, 0xD8);
+        const __m256d _qi_6 = _mm256_permute4x64_pd(t101, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)6*OLs + k)], _mm256_unpacklo_pd(_pr_6, _qi_6));
+        _mm256_storeu_pd(&zout[2*((size_t)6*OLs + k) + 4], _mm256_unpackhi_pd(_pr_6, _qi_6));
+        const __m256d _pr_7 = _mm256_permute4x64_pd(t130, 0xD8);
+        const __m256d _qi_7 = _mm256_permute4x64_pd(t131, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)7*OLs + k)], _mm256_unpacklo_pd(_pr_7, _qi_7));
+        _mm256_storeu_pd(&zout[2*((size_t)7*OLs + k) + 4], _mm256_unpackhi_pd(_pr_7, _qi_7));
+    }
+}
+
+/* ---- tlfi radix 4 bwd (as in radix4_z_tlfi_bwd_avx2.c) ---- */
+static __attribute__((always_inline)) inline void _ztlfi4b_body(
+    const double * zin, double * zout,
+    const double *tw_re, size_t Ls, size_t OLs, size_t count)
+{
+    for (size_t k = 0; k + 4 <= count; k += 4) {
+        _mm_prefetch((const char *)&zout[2*((size_t)0*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)1*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)2*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)3*OLs + k + 16)], _MM_HINT_T0);
+        /* ZBlockSplit load edge */
+        const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
+        const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
+        const __m256d lane_re_1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
+        const __m256d lane_im_1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k) + 4]);
+        const __m256d lane_re_2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
+        const __m256d lane_im_2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k) + 4]);
+        const __m256d lane_re_3 = _mm256_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
+        const __m256d lane_im_3 = _mm256_loadu_pd(&zin[2*((size_t)3*Ls + k) + 4]);
+        /* SU-scheduled body (pipeline) */
+        const __m256d t0 = lane_re_3;
+        const __m256d t1 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 16]);
+        const __m256d t2 = lane_im_3;
+        const __m256d t3 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 20]);
+        const __m256d t4 = _mm256_fnmadd_pd(t2, t3, _mm256_mul_pd(t0, t1));
+        const __m256d t5 = _mm256_fmadd_pd(t0, t3, _mm256_mul_pd(t2, t1));
+        const __m256d t9 = lane_re_1;
+        const __m256d t10 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 0]);
+        const __m256d t11 = lane_im_1;
+        const __m256d t12 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 4]);
+        const __m256d t13 = _mm256_fnmadd_pd(t11, t12, _mm256_mul_pd(t9, t10));
+        const __m256d t14 = _mm256_fmadd_pd(t9, t12, _mm256_mul_pd(t11, t10));
+        const __m256d t16 = _mm256_sub_pd(t14, t5);
+        const __m256d t18 = _mm256_sub_pd(t13, t4);
+        const __m256d t35 = _mm256_add_pd(t5, t14);
+        const __m256d t36 = _mm256_add_pd(t4, t13);
+        const __m256d t20 = lane_re_2;
+        const __m256d t21 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 8]);
+        const __m256d t22 = lane_im_2;
+        const __m256d t23 = _mm256_loadu_pd(&tw_re[6*(size_t)k + 12]);
+        const __m256d t24 = _mm256_fnmadd_pd(t22, t23, _mm256_mul_pd(t20, t21));
+        const __m256d t25 = _mm256_fmadd_pd(t20, t23, _mm256_mul_pd(t22, t21));
+        const __m256d t27 = lane_re_0;
+        const __m256d t31 = _mm256_sub_pd(t27, t24);
+        const __m256d t32 = _mm256_add_pd(t16, t31);
+        const __m256d t43 = _mm256_sub_pd(t31, t16);
+        const __m256d t39 = _mm256_add_pd(t24, t27);
+        const __m256d t40 = _mm256_sub_pd(t39, t36);
+        const __m256d t45 = _mm256_add_pd(t36, t39);
+        const __m256d t28 = lane_im_0;
+        const __m256d t29 = _mm256_sub_pd(t28, t25);
+        const __m256d t34 = _mm256_sub_pd(t29, t18);
+        const __m256d t44 = _mm256_add_pd(t18, t29);
+        const __m256d t38 = _mm256_add_pd(t25, t28);
+        const __m256d t42 = _mm256_sub_pd(t38, t35);
+        const __m256d t46 = _mm256_add_pd(t35, t38);
+        /* Z store edge (REINT) */
+        const __m256d _pr_0 = _mm256_permute4x64_pd(t45, 0xD8);
+        const __m256d _qi_0 = _mm256_permute4x64_pd(t46, 0xD8);
+        _mm256_storeu_pd(&zout[2*(size_t)k], _mm256_unpacklo_pd(_pr_0, _qi_0));
+        _mm256_storeu_pd(&zout[2*(size_t)k + 4], _mm256_unpackhi_pd(_pr_0, _qi_0));
+        const __m256d _pr_1 = _mm256_permute4x64_pd(t43, 0xD8);
+        const __m256d _qi_1 = _mm256_permute4x64_pd(t44, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k)], _mm256_unpacklo_pd(_pr_1, _qi_1));
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k) + 4], _mm256_unpackhi_pd(_pr_1, _qi_1));
+        const __m256d _pr_2 = _mm256_permute4x64_pd(t40, 0xD8);
+        const __m256d _qi_2 = _mm256_permute4x64_pd(t42, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k)], _mm256_unpacklo_pd(_pr_2, _qi_2));
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k) + 4], _mm256_unpackhi_pd(_pr_2, _qi_2));
+        const __m256d _pr_3 = _mm256_permute4x64_pd(t32, 0xD8);
+        const __m256d _qi_3 = _mm256_permute4x64_pd(t34, 0xD8);
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k)], _mm256_unpacklo_pd(_pr_3, _qi_3));
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k) + 4], _mm256_unpackhi_pd(_pr_3, _qi_3));
+    }
+}
+
+/* ---- tlfi radix 8 bwd (as in radix8_z_tlfi_bwd_avx2.c) ---- */
+static __attribute__((always_inline)) inline void _ztlfi8b_body(
+    const double * zin, double * zout,
+    const double *tw_re, size_t Ls, size_t OLs, size_t count)
+{
+    for (size_t k = 0; k + 4 <= count; k += 4) {
+        _mm_prefetch((const char *)&zout[2*((size_t)0*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)1*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)2*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)3*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)4*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)5*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)6*OLs + k + 16)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)7*OLs + k + 16)], _MM_HINT_T0);
         /* ZBlockSplit load edge */
         const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
@@ -1291,7 +1749,7 @@ void ztt_16_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, c
     double *W = plane;  /* plane: the plan's scratch; the last stage writes zout */
     _zt0tp4f_body(zin, W, rb, (size_t)4, (size_t)4);
     (void)tile;   /* no mids: nothing to tile */
-    _ztlf4f_body(W, zout, tw + 0, (size_t)4, (size_t)4, (size_t)4);
+    _ztlfi4f_body(W, zout, tw + 0, (size_t)4, (size_t)4, (size_t)4);
 }
 
 __attribute__((target("avx2,fma")))
@@ -1310,7 +1768,7 @@ void ztt_16_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, c
     double *W = plane;  /* plane: the plan's scratch; the last stage writes zout */
     _zt0tp4b_body(zin, W, rb, (size_t)4, (size_t)4);
     (void)tile;   /* no mids: nothing to tile */
-    _ztlf4b_body(W, zout, tw + 0, (size_t)4, (size_t)4, (size_t)4);
+    _ztlfi4b_body(W, zout, tw + 0, (size_t)4, (size_t)4, (size_t)4);
 }
 
 /* ==== N=32 chain 4.8 ==== */
@@ -1330,7 +1788,7 @@ void ztt_32_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, c
     double *W = plane;  /* plane: the plan's scratch; the last stage writes zout */
     _zt0tp4f_body(zin, W, rb, (size_t)8, (size_t)8);
     (void)tile;   /* no mids: nothing to tile */
-    _ztlf8f_body(W, zout, tw + 0, (size_t)4, (size_t)4, (size_t)4);
+    _ztlfi8f_body(W, zout, tw + 0, (size_t)4, (size_t)4, (size_t)4);
 }
 
 __attribute__((target("avx2,fma")))
@@ -1349,7 +1807,7 @@ void ztt_32_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, c
     double *W = plane;  /* plane: the plan's scratch; the last stage writes zout */
     _zt0tp4b_body(zin, W, rb, (size_t)8, (size_t)8);
     (void)tile;   /* no mids: nothing to tile */
-    _ztlf8b_body(W, zout, tw + 0, (size_t)4, (size_t)4, (size_t)4);
+    _ztlfi8b_body(W, zout, tw + 0, (size_t)4, (size_t)4, (size_t)4);
 }
 
 /* ==== N=32 chain 8.4 ==== */
@@ -1369,7 +1827,7 @@ void ztt_32_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, c
     double *W = plane;  /* plane: the plan's scratch; the last stage writes zout */
     _zt0tp8f_body(zin, W, rb, (size_t)4, (size_t)4);
     (void)tile;   /* no mids: nothing to tile */
-    _ztlf4f_body(W, zout, tw + 0, (size_t)8, (size_t)8, (size_t)8);
+    _ztlfi4f_body(W, zout, tw + 0, (size_t)8, (size_t)8, (size_t)8);
 }
 
 __attribute__((target("avx2,fma")))
@@ -1388,7 +1846,7 @@ void ztt_32_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, c
     double *W = plane;  /* plane: the plan's scratch; the last stage writes zout */
     _zt0tp8b_body(zin, W, rb, (size_t)4, (size_t)4);
     (void)tile;   /* no mids: nothing to tile */
-    _ztlf4b_body(W, zout, tw + 0, (size_t)8, (size_t)8, (size_t)8);
+    _ztlfi4b_body(W, zout, tw + 0, (size_t)8, (size_t)8, (size_t)8);
 }
 
 /* ==== N=64 chain 4.4.4 ==== */
@@ -1448,7 +1906,7 @@ void ztt_64_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane,
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)32, W + g * (size_t)32, tw + 0, (size_t)4, (size_t)4);
     }
-    _ztlf4f_body(W, zout, tw + 24, (size_t)16, (size_t)16, (size_t)16);
+    _ztlfi4f_body(W, zout, tw + 24, (size_t)16, (size_t)16, (size_t)16);
 }
 
 __attribute__((target("avx2,fma")))
@@ -1507,7 +1965,7 @@ void ztt_64_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane,
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)32, W + g * (size_t)32, tw + 0, (size_t)4, (size_t)4);
     }
-    _ztlf4b_body(W, zout, tw + 24, (size_t)16, (size_t)16, (size_t)16);
+    _ztlfi4b_body(W, zout, tw + 24, (size_t)16, (size_t)16, (size_t)16);
 }
 
 /* ==== N=64 chain 8.8 ==== */
@@ -1527,7 +1985,7 @@ void ztt_64_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, c
     double *W = plane;  /* plane: the plan's scratch; the last stage writes zout */
     _zt0tp8f_body(zin, W, rb, (size_t)8, (size_t)8);
     (void)tile;   /* no mids: nothing to tile */
-    _ztlf8f_body(W, zout, tw + 0, (size_t)8, (size_t)8, (size_t)8);
+    _ztlfi8f_body(W, zout, tw + 0, (size_t)8, (size_t)8, (size_t)8);
 }
 
 __attribute__((target("avx2,fma")))
@@ -1546,7 +2004,7 @@ void ztt_64_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, c
     double *W = plane;  /* plane: the plan's scratch; the last stage writes zout */
     _zt0tp8b_body(zin, W, rb, (size_t)8, (size_t)8);
     (void)tile;   /* no mids: nothing to tile */
-    _ztlf8b_body(W, zout, tw + 0, (size_t)8, (size_t)8, (size_t)8);
+    _ztlfi8b_body(W, zout, tw + 0, (size_t)8, (size_t)8, (size_t)8);
 }
 
 /* ==== N=128 chain 4.4.8 ==== */
@@ -1606,7 +2064,7 @@ void ztt_128_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)32, W + g * (size_t)32, tw + 0, (size_t)4, (size_t)4);
     }
-    _ztlf8f_body(W, zout, tw + 24, (size_t)16, (size_t)16, (size_t)16);
+    _ztlfi8f_body(W, zout, tw + 24, (size_t)16, (size_t)16, (size_t)16);
 }
 
 __attribute__((target("avx2,fma")))
@@ -1665,7 +2123,7 @@ void ztt_128_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)32, W + g * (size_t)32, tw + 0, (size_t)4, (size_t)4);
     }
-    _ztlf8b_body(W, zout, tw + 24, (size_t)16, (size_t)16, (size_t)16);
+    _ztlfi8b_body(W, zout, tw + 24, (size_t)16, (size_t)16, (size_t)16);
 }
 
 /* ==== N=128 chain 4.8.4 ==== */
@@ -1725,7 +2183,7 @@ void ztt_128_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)64, W + g * (size_t)64, tw + 0, (size_t)4, (size_t)4);
     }
-    _ztlf4f_body(W, zout, tw + 56, (size_t)32, (size_t)32, (size_t)32);
+    _ztlfi4f_body(W, zout, tw + 56, (size_t)32, (size_t)32, (size_t)32);
 }
 
 __attribute__((target("avx2,fma")))
@@ -1784,7 +2242,7 @@ void ztt_128_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)64, W + g * (size_t)64, tw + 0, (size_t)4, (size_t)4);
     }
-    _ztlf4b_body(W, zout, tw + 56, (size_t)32, (size_t)32, (size_t)32);
+    _ztlfi4b_body(W, zout, tw + 56, (size_t)32, (size_t)32, (size_t)32);
 }
 
 /* ==== N=128 chain 8.4.4 ==== */
@@ -1844,7 +2302,7 @@ void ztt_128_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)64, W + g * (size_t)64, tw + 0, (size_t)8, (size_t)8);
     }
-    _ztlf4f_body(W, zout, tw + 48, (size_t)32, (size_t)32, (size_t)32);
+    _ztlfi4f_body(W, zout, tw + 48, (size_t)32, (size_t)32, (size_t)32);
 }
 
 __attribute__((target("avx2,fma")))
@@ -1903,7 +2361,7 @@ void ztt_128_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)64, W + g * (size_t)64, tw + 0, (size_t)8, (size_t)8);
     }
-    _ztlf4b_body(W, zout, tw + 48, (size_t)32, (size_t)32, (size_t)32);
+    _ztlfi4b_body(W, zout, tw + 48, (size_t)32, (size_t)32, (size_t)32);
 }
 
 /* ==== N=256 chain 4.4.4.4 ==== */
@@ -1987,7 +2445,7 @@ void ztt_256_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *pla
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)128, W + g * (size_t)128, tw + 24, (size_t)16, (size_t)16);
     }
-    _ztlf4f_body(W, zout, tw + 120, (size_t)64, (size_t)64, (size_t)64);
+    _ztlfi4f_body(W, zout, tw + 120, (size_t)64, (size_t)64, (size_t)64);
 }
 
 __attribute__((target("avx2,fma")))
@@ -2070,7 +2528,7 @@ void ztt_256_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *pla
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)128, W + g * (size_t)128, tw + 24, (size_t)16, (size_t)16);
     }
-    _ztlf4b_body(W, zout, tw + 120, (size_t)64, (size_t)64, (size_t)64);
+    _ztlfi4b_body(W, zout, tw + 120, (size_t)64, (size_t)64, (size_t)64);
 }
 
 /* ==== N=256 chain 4.8.8 ==== */
@@ -2130,7 +2588,7 @@ void ztt_256_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)64, W + g * (size_t)64, tw + 0, (size_t)4, (size_t)4);
     }
-    _ztlf8f_body(W, zout, tw + 56, (size_t)32, (size_t)32, (size_t)32);
+    _ztlfi8f_body(W, zout, tw + 56, (size_t)32, (size_t)32, (size_t)32);
 }
 
 __attribute__((target("avx2,fma")))
@@ -2189,7 +2647,7 @@ void ztt_256_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)64, W + g * (size_t)64, tw + 0, (size_t)4, (size_t)4);
     }
-    _ztlf8b_body(W, zout, tw + 56, (size_t)32, (size_t)32, (size_t)32);
+    _ztlfi8b_body(W, zout, tw + 56, (size_t)32, (size_t)32, (size_t)32);
 }
 
 /* ==== N=256 chain 8.4.8 ==== */
@@ -2249,7 +2707,7 @@ void ztt_256_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)64, W + g * (size_t)64, tw + 0, (size_t)8, (size_t)8);
     }
-    _ztlf8f_body(W, zout, tw + 48, (size_t)32, (size_t)32, (size_t)32);
+    _ztlfi8f_body(W, zout, tw + 48, (size_t)32, (size_t)32, (size_t)32);
 }
 
 __attribute__((target("avx2,fma")))
@@ -2308,7 +2766,7 @@ void ztt_256_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)64, W + g * (size_t)64, tw + 0, (size_t)8, (size_t)8);
     }
-    _ztlf8b_body(W, zout, tw + 48, (size_t)32, (size_t)32, (size_t)32);
+    _ztlfi8b_body(W, zout, tw + 48, (size_t)32, (size_t)32, (size_t)32);
 }
 
 /* ==== N=256 chain 8.8.4 ==== */
@@ -2368,7 +2826,7 @@ void ztt_256_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)128, W + g * (size_t)128, tw + 0, (size_t)8, (size_t)8);
     }
-    _ztlf4f_body(W, zout, tw + 112, (size_t)64, (size_t)64, (size_t)64);
+    _ztlfi4f_body(W, zout, tw + 112, (size_t)64, (size_t)64, (size_t)64);
 }
 
 __attribute__((target("avx2,fma")))
@@ -2427,7 +2885,7 @@ void ztt_256_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)128, W + g * (size_t)128, tw + 0, (size_t)8, (size_t)8);
     }
-    _ztlf4b_body(W, zout, tw + 112, (size_t)64, (size_t)64, (size_t)64);
+    _ztlfi4b_body(W, zout, tw + 112, (size_t)64, (size_t)64, (size_t)64);
 }
 
 /* ==== N=512 chain 4.4.4.8 ==== */
@@ -2511,7 +2969,7 @@ void ztt_512_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *pla
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)128, W + g * (size_t)128, tw + 24, (size_t)16, (size_t)16);
     }
-    _ztlf8f_body(W, zout, tw + 120, (size_t)64, (size_t)64, (size_t)64);
+    _ztlfi8f_body(W, zout, tw + 120, (size_t)64, (size_t)64, (size_t)64);
 }
 
 __attribute__((target("avx2,fma")))
@@ -2594,7 +3052,7 @@ void ztt_512_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *pla
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)128, W + g * (size_t)128, tw + 24, (size_t)16, (size_t)16);
     }
-    _ztlf8b_body(W, zout, tw + 120, (size_t)64, (size_t)64, (size_t)64);
+    _ztlfi8b_body(W, zout, tw + 120, (size_t)64, (size_t)64, (size_t)64);
 }
 
 /* ==== N=512 chain 4.4.8.4 ==== */
@@ -2678,7 +3136,7 @@ void ztt_512_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *pla
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)256, W + g * (size_t)256, tw + 24, (size_t)16, (size_t)16);
     }
-    _ztlf4f_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi4f_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
 }
 
 __attribute__((target("avx2,fma")))
@@ -2761,7 +3219,7 @@ void ztt_512_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *pla
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)256, W + g * (size_t)256, tw + 24, (size_t)16, (size_t)16);
     }
-    _ztlf4b_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi4b_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
 }
 
 /* ==== N=512 chain 4.8.4.4 ==== */
@@ -2845,7 +3303,7 @@ void ztt_512_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *pla
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)256, W + g * (size_t)256, tw + 56, (size_t)32, (size_t)32);
     }
-    _ztlf4f_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi4f_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
 }
 
 __attribute__((target("avx2,fma")))
@@ -2928,7 +3386,7 @@ void ztt_512_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *pla
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)256, W + g * (size_t)256, tw + 56, (size_t)32, (size_t)32);
     }
-    _ztlf4b_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi4b_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
 }
 
 /* ==== N=512 chain 8.4.4.4 ==== */
@@ -3012,7 +3470,7 @@ void ztt_512_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *pla
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)256, W + g * (size_t)256, tw + 48, (size_t)32, (size_t)32);
     }
-    _ztlf4f_body(W, zout, tw + 240, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi4f_body(W, zout, tw + 240, (size_t)128, (size_t)128, (size_t)128);
 }
 
 __attribute__((target("avx2,fma")))
@@ -3095,7 +3553,7 @@ void ztt_512_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *pla
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)256, W + g * (size_t)256, tw + 48, (size_t)32, (size_t)32);
     }
-    _ztlf4b_body(W, zout, tw + 240, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi4b_body(W, zout, tw + 240, (size_t)128, (size_t)128, (size_t)128);
 }
 
 /* ==== N=512 chain 8.8.8 ==== */
@@ -3155,7 +3613,7 @@ void ztt_512_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)128, W + g * (size_t)128, tw + 0, (size_t)8, (size_t)8);
     }
-    _ztlf8f_body(W, zout, tw + 112, (size_t)64, (size_t)64, (size_t)64);
+    _ztlfi8f_body(W, zout, tw + 112, (size_t)64, (size_t)64, (size_t)64);
 }
 
 __attribute__((target("avx2,fma")))
@@ -3214,7 +3672,7 @@ void ztt_512_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)128, W + g * (size_t)128, tw + 0, (size_t)8, (size_t)8);
     }
-    _ztlf8b_body(W, zout, tw + 112, (size_t)64, (size_t)64, (size_t)64);
+    _ztlfi8b_body(W, zout, tw + 112, (size_t)64, (size_t)64, (size_t)64);
 }
 
 /* ==== N=1024 chain 4.4.4.4.4 ==== */
@@ -3322,7 +3780,7 @@ void ztt_1024_4_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)512, W + g * (size_t)512, tw + 120, (size_t)64, (size_t)64);
     }
-    _ztlf4f_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi4f_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
 }
 
 __attribute__((target("avx2,fma")))
@@ -3429,7 +3887,7 @@ void ztt_1024_4_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)512, W + g * (size_t)512, tw + 120, (size_t)64, (size_t)64);
     }
-    _ztlf4b_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi4b_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
 }
 
 /* ==== N=1024 chain 4.4.8.8 ==== */
@@ -3513,7 +3971,7 @@ void ztt_1024_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)256, W + g * (size_t)256, tw + 24, (size_t)16, (size_t)16);
     }
-    _ztlf8f_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi8f_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
 }
 
 __attribute__((target("avx2,fma")))
@@ -3596,7 +4054,7 @@ void ztt_1024_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)256, W + g * (size_t)256, tw + 24, (size_t)16, (size_t)16);
     }
-    _ztlf8b_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi8b_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
 }
 
 /* ==== N=1024 chain 4.8.4.8 ==== */
@@ -3680,7 +4138,7 @@ void ztt_1024_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)256, W + g * (size_t)256, tw + 56, (size_t)32, (size_t)32);
     }
-    _ztlf8f_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi8f_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
 }
 
 __attribute__((target("avx2,fma")))
@@ -3763,7 +4221,7 @@ void ztt_1024_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)256, W + g * (size_t)256, tw + 56, (size_t)32, (size_t)32);
     }
-    _ztlf8b_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi8b_body(W, zout, tw + 248, (size_t)128, (size_t)128, (size_t)128);
 }
 
 /* ==== N=1024 chain 4.8.8.4 ==== */
@@ -3847,7 +4305,7 @@ void ztt_1024_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)512, W + g * (size_t)512, tw + 56, (size_t)32, (size_t)32);
     }
-    _ztlf4f_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi4f_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
 }
 
 __attribute__((target("avx2,fma")))
@@ -3930,7 +4388,7 @@ void ztt_1024_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)512, W + g * (size_t)512, tw + 56, (size_t)32, (size_t)32);
     }
-    _ztlf4b_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi4b_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
 }
 
 /* ==== N=1024 chain 8.4.4.8 ==== */
@@ -4014,7 +4472,7 @@ void ztt_1024_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)256, W + g * (size_t)256, tw + 48, (size_t)32, (size_t)32);
     }
-    _ztlf8f_body(W, zout, tw + 240, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi8f_body(W, zout, tw + 240, (size_t)128, (size_t)128, (size_t)128);
 }
 
 __attribute__((target("avx2,fma")))
@@ -4097,7 +4555,7 @@ void ztt_1024_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)256, W + g * (size_t)256, tw + 48, (size_t)32, (size_t)32);
     }
-    _ztlf8b_body(W, zout, tw + 240, (size_t)128, (size_t)128, (size_t)128);
+    _ztlfi8b_body(W, zout, tw + 240, (size_t)128, (size_t)128, (size_t)128);
 }
 
 /* ==== N=1024 chain 8.4.8.4 ==== */
@@ -4181,7 +4639,7 @@ void ztt_1024_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)512, W + g * (size_t)512, tw + 48, (size_t)32, (size_t)32);
     }
-    _ztlf4f_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi4f_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
 }
 
 __attribute__((target("avx2,fma")))
@@ -4264,7 +4722,7 @@ void ztt_1024_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)512, W + g * (size_t)512, tw + 48, (size_t)32, (size_t)32);
     }
-    _ztlf4b_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi4b_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
 }
 
 /* ==== N=1024 chain 8.8.4.4 ==== */
@@ -4348,7 +4806,7 @@ void ztt_1024_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)512, W + g * (size_t)512, tw + 112, (size_t)64, (size_t)64);
     }
-    _ztlf4f_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi4f_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
 }
 
 __attribute__((target("avx2,fma")))
@@ -4431,7 +4889,7 @@ void ztt_1024_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)512, W + g * (size_t)512, tw + 112, (size_t)64, (size_t)64);
     }
-    _ztlf4b_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi4b_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
 }
 
 /* ==== N=2048 chain 4.4.4.4.8 ==== */
@@ -4539,7 +4997,7 @@ void ztt_2048_4_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)512, W + g * (size_t)512, tw + 120, (size_t)64, (size_t)64);
     }
-    _ztlf8f_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi8f_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
 }
 
 __attribute__((target("avx2,fma")))
@@ -4646,7 +5104,7 @@ void ztt_2048_4_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)512, W + g * (size_t)512, tw + 120, (size_t)64, (size_t)64);
     }
-    _ztlf8b_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi8b_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
 }
 
 /* ==== N=2048 chain 4.4.4.8.4 ==== */
@@ -4754,7 +5212,7 @@ void ztt_2048_4_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 120, (size_t)64, (size_t)64);
     }
-    _ztlf4f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi4f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 __attribute__((target("avx2,fma")))
@@ -4861,7 +5319,7 @@ void ztt_2048_4_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 120, (size_t)64, (size_t)64);
     }
-    _ztlf4b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi4b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 /* ==== N=2048 chain 4.4.8.4.4 ==== */
@@ -4969,7 +5427,7 @@ void ztt_2048_4_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf4f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi4f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 __attribute__((target("avx2,fma")))
@@ -5076,7 +5534,7 @@ void ztt_2048_4_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf4b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi4b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 /* ==== N=2048 chain 4.8.4.4.4 ==== */
@@ -5184,7 +5642,7 @@ void ztt_2048_4_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf4f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi4f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 __attribute__((target("avx2,fma")))
@@ -5291,7 +5749,7 @@ void ztt_2048_4_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf4b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi4b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 /* ==== N=2048 chain 4.8.8.8 ==== */
@@ -5375,7 +5833,7 @@ void ztt_2048_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)512, W + g * (size_t)512, tw + 56, (size_t)32, (size_t)32);
     }
-    _ztlf8f_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi8f_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
 }
 
 __attribute__((target("avx2,fma")))
@@ -5458,7 +5916,7 @@ void ztt_2048_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)512, W + g * (size_t)512, tw + 56, (size_t)32, (size_t)32);
     }
-    _ztlf8b_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi8b_body(W, zout, tw + 504, (size_t)256, (size_t)256, (size_t)256);
 }
 
 /* ==== N=2048 chain 8.4.4.4.4 ==== */
@@ -5566,7 +6024,7 @@ void ztt_2048_8_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 240, (size_t)128, (size_t)128);
     }
-    _ztlf4f_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi4f_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
 }
 
 __attribute__((target("avx2,fma")))
@@ -5673,7 +6131,7 @@ void ztt_2048_8_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 240, (size_t)128, (size_t)128);
     }
-    _ztlf4b_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi4b_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
 }
 
 /* ==== N=2048 chain 8.4.8.8 ==== */
@@ -5757,7 +6215,7 @@ void ztt_2048_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)512, W + g * (size_t)512, tw + 48, (size_t)32, (size_t)32);
     }
-    _ztlf8f_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi8f_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
 }
 
 __attribute__((target("avx2,fma")))
@@ -5840,7 +6298,7 @@ void ztt_2048_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)512, W + g * (size_t)512, tw + 48, (size_t)32, (size_t)32);
     }
-    _ztlf8b_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi8b_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
 }
 
 /* ==== N=2048 chain 8.8.4.8 ==== */
@@ -5924,7 +6382,7 @@ void ztt_2048_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)512, W + g * (size_t)512, tw + 112, (size_t)64, (size_t)64);
     }
-    _ztlf8f_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi8f_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
 }
 
 __attribute__((target("avx2,fma")))
@@ -6007,7 +6465,7 @@ void ztt_2048_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)512, W + g * (size_t)512, tw + 112, (size_t)64, (size_t)64);
     }
-    _ztlf8b_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
+    _ztlfi8b_body(W, zout, tw + 496, (size_t)256, (size_t)256, (size_t)256);
 }
 
 /* ==== N=2048 chain 8.8.8.4 ==== */
@@ -6091,7 +6549,7 @@ void ztt_2048_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 112, (size_t)64, (size_t)64);
     }
-    _ztlf4f_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi4f_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
 }
 
 __attribute__((target("avx2,fma")))
@@ -6174,7 +6632,7 @@ void ztt_2048_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 112, (size_t)64, (size_t)64);
     }
-    _ztlf4b_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi4b_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
 }
 
 /* ==== N=4096 chain 4.4.4.4.4.4 ==== */
@@ -6306,7 +6764,7 @@ void ztt_4096_4_4_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf4f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -6437,7 +6895,7 @@ void ztt_4096_4_4_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf4b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=4096 chain 4.4.4.8.8 ==== */
@@ -6545,7 +7003,7 @@ void ztt_4096_4_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 120, (size_t)64, (size_t)64);
     }
-    _ztlf8f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi8f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 __attribute__((target("avx2,fma")))
@@ -6652,7 +7110,7 @@ void ztt_4096_4_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 120, (size_t)64, (size_t)64);
     }
-    _ztlf8b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi8b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 /* ==== N=4096 chain 4.4.8.4.8 ==== */
@@ -6760,7 +7218,7 @@ void ztt_4096_4_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf8f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi8f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 __attribute__((target("avx2,fma")))
@@ -6867,7 +7325,7 @@ void ztt_4096_4_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf8b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi8b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 /* ==== N=4096 chain 4.4.8.8.4 ==== */
@@ -6975,7 +7433,7 @@ void ztt_4096_4_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf4f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -7082,7 +7540,7 @@ void ztt_4096_4_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf4b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=4096 chain 4.8.4.4.8 ==== */
@@ -7190,7 +7648,7 @@ void ztt_4096_4_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf8f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi8f_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 __attribute__((target("avx2,fma")))
@@ -7297,7 +7755,7 @@ void ztt_4096_4_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf8b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi8b_body(W, zout, tw + 1016, (size_t)512, (size_t)512, (size_t)512);
 }
 
 /* ==== N=4096 chain 4.8.4.8.4 ==== */
@@ -7405,7 +7863,7 @@ void ztt_4096_4_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf4f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -7512,7 +7970,7 @@ void ztt_4096_4_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf4b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=4096 chain 4.8.8.4.4 ==== */
@@ -7620,7 +8078,7 @@ void ztt_4096_4_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf4f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -7727,7 +8185,7 @@ void ztt_4096_4_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf4b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=4096 chain 8.4.4.4.8 ==== */
@@ -7835,7 +8293,7 @@ void ztt_4096_8_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 240, (size_t)128, (size_t)128);
     }
-    _ztlf8f_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi8f_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
 }
 
 __attribute__((target("avx2,fma")))
@@ -7942,7 +8400,7 @@ void ztt_4096_8_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 240, (size_t)128, (size_t)128);
     }
-    _ztlf8b_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi8b_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
 }
 
 /* ==== N=4096 chain 8.4.4.8.4 ==== */
@@ -8050,7 +8508,7 @@ void ztt_4096_8_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 240, (size_t)128, (size_t)128);
     }
-    _ztlf4f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -8157,7 +8615,7 @@ void ztt_4096_8_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 240, (size_t)128, (size_t)128);
     }
-    _ztlf4b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=4096 chain 8.4.8.4.4 ==== */
@@ -8265,7 +8723,7 @@ void ztt_4096_8_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf4f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -8372,7 +8830,7 @@ void ztt_4096_8_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf4b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=4096 chain 8.8.4.4.4 ==== */
@@ -8480,7 +8938,7 @@ void ztt_4096_8_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf4f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -8587,7 +9045,7 @@ void ztt_4096_8_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf4b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi4b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=4096 chain 8.8.8.8 ==== */
@@ -8671,7 +9129,7 @@ void ztt_4096_8_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 112, (size_t)64, (size_t)64);
     }
-    _ztlf8f_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi8f_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
 }
 
 __attribute__((target("avx2,fma")))
@@ -8754,7 +9212,7 @@ void ztt_4096_8_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *pl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)1024, W + g * (size_t)1024, tw + 112, (size_t)64, (size_t)64);
     }
-    _ztlf8b_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
+    _ztlfi8b_body(W, zout, tw + 1008, (size_t)512, (size_t)512, (size_t)512);
 }
 
 /* ==== N=8192 chain 4.4.4.4.4.8 ==== */
@@ -8886,7 +9344,7 @@ void ztt_8192_4_4_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf8f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -9017,7 +9475,7 @@ void ztt_8192_4_4_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf8b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=8192 chain 4.4.4.4.8.4 ==== */
@@ -9149,7 +9607,7 @@ void ztt_8192_4_4_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf4f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -9280,7 +9738,7 @@ void ztt_8192_4_4_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf4b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=8192 chain 4.4.4.8.4.4 ==== */
@@ -9412,7 +9870,7 @@ void ztt_8192_4_4_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -9543,7 +10001,7 @@ void ztt_8192_4_4_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=8192 chain 4.4.8.4.4.4 ==== */
@@ -9675,7 +10133,7 @@ void ztt_8192_4_4_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -9806,7 +10264,7 @@ void ztt_8192_4_4_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=8192 chain 4.4.8.8.8 ==== */
@@ -9914,7 +10372,7 @@ void ztt_8192_4_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf8f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -10021,7 +10479,7 @@ void ztt_8192_4_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf8b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=8192 chain 4.8.4.4.4.4 ==== */
@@ -10153,7 +10611,7 @@ void ztt_8192_4_8_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -10284,7 +10742,7 @@ void ztt_8192_4_8_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=8192 chain 4.8.4.8.8 ==== */
@@ -10392,7 +10850,7 @@ void ztt_8192_4_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf8f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -10499,7 +10957,7 @@ void ztt_8192_4_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 248, (size_t)128, (size_t)128);
     }
-    _ztlf8b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=8192 chain 4.8.8.4.8 ==== */
@@ -10607,7 +11065,7 @@ void ztt_8192_4_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf8f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8f_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -10714,7 +11172,7 @@ void ztt_8192_4_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf8b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8b_body(W, zout, tw + 2040, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=8192 chain 4.8.8.8.4 ==== */
@@ -10822,7 +11280,7 @@ void ztt_8192_4_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf4f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -10929,7 +11387,7 @@ void ztt_8192_4_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf4b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=8192 chain 8.4.4.4.4.4 ==== */
@@ -11061,7 +11519,7 @@ void ztt_8192_8_4_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf4f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -11192,7 +11650,7 @@ void ztt_8192_8_4_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf4b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=8192 chain 8.4.4.8.8 ==== */
@@ -11300,7 +11758,7 @@ void ztt_8192_8_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 240, (size_t)128, (size_t)128);
     }
-    _ztlf8f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -11407,7 +11865,7 @@ void ztt_8192_8_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 240, (size_t)128, (size_t)128);
     }
-    _ztlf8b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=8192 chain 8.4.8.4.8 ==== */
@@ -11515,7 +11973,7 @@ void ztt_8192_8_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf8f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -11622,7 +12080,7 @@ void ztt_8192_8_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf8b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=8192 chain 8.4.8.8.4 ==== */
@@ -11730,7 +12188,7 @@ void ztt_8192_8_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf4f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -11837,7 +12295,7 @@ void ztt_8192_8_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf4b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=8192 chain 8.8.4.4.8 ==== */
@@ -11945,7 +12403,7 @@ void ztt_8192_8_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf8f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8f_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 __attribute__((target("avx2,fma")))
@@ -12052,7 +12510,7 @@ void ztt_8192_8_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)2048, W + g * (size_t)2048, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf8b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
+    _ztlfi8b_body(W, zout, tw + 2032, (size_t)1024, (size_t)1024, (size_t)1024);
 }
 
 /* ==== N=8192 chain 8.8.4.8.4 ==== */
@@ -12160,7 +12618,7 @@ void ztt_8192_8_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf4f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -12267,7 +12725,7 @@ void ztt_8192_8_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf4b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=8192 chain 8.8.8.4.4 ==== */
@@ -12375,7 +12833,7 @@ void ztt_8192_8_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf4f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -12482,7 +12940,7 @@ void ztt_8192_8_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf4b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi4b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=16384 chain 4.4.4.4.4.4.4 ==== */
@@ -12638,7 +13096,7 @@ void ztt_16384_4_4_4_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, dou
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2040, (size_t)1024, (size_t)1024);
     }
-    _ztlf4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -12793,7 +13251,7 @@ void ztt_16384_4_4_4_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, dou
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2040, (size_t)1024, (size_t)1024);
     }
-    _ztlf4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 4.4.4.4.8.8 ==== */
@@ -12925,7 +13383,7 @@ void ztt_16384_4_4_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf8f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -13056,7 +13514,7 @@ void ztt_16384_4_4_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf8b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=16384 chain 4.4.4.8.4.8 ==== */
@@ -13188,7 +13646,7 @@ void ztt_16384_4_4_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf8f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -13319,7 +13777,7 @@ void ztt_16384_4_4_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf8b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=16384 chain 4.4.4.8.8.4 ==== */
@@ -13451,7 +13909,7 @@ void ztt_16384_4_4_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -13582,7 +14040,7 @@ void ztt_16384_4_4_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 4.4.8.4.4.8 ==== */
@@ -13714,7 +14172,7 @@ void ztt_16384_4_4_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf8f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -13845,7 +14303,7 @@ void ztt_16384_4_4_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf8b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=16384 chain 4.4.8.4.8.4 ==== */
@@ -13977,7 +14435,7 @@ void ztt_16384_4_4_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -14108,7 +14566,7 @@ void ztt_16384_4_4_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 4.4.8.8.4.4 ==== */
@@ -14240,7 +14698,7 @@ void ztt_16384_4_4_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2040, (size_t)1024, (size_t)1024);
     }
-    _ztlf4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -14371,7 +14829,7 @@ void ztt_16384_4_4_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2040, (size_t)1024, (size_t)1024);
     }
-    _ztlf4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 4.8.4.4.4.8 ==== */
@@ -14503,7 +14961,7 @@ void ztt_16384_4_8_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf8f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -14634,7 +15092,7 @@ void ztt_16384_4_8_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf8b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=16384 chain 4.8.4.4.8.4 ==== */
@@ -14766,7 +15224,7 @@ void ztt_16384_4_8_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -14897,7 +15355,7 @@ void ztt_16384_4_8_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 1016, (size_t)512, (size_t)512);
     }
-    _ztlf4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 4.8.4.8.4.4 ==== */
@@ -15029,7 +15487,7 @@ void ztt_16384_4_8_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2040, (size_t)1024, (size_t)1024);
     }
-    _ztlf4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -15160,7 +15618,7 @@ void ztt_16384_4_8_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2040, (size_t)1024, (size_t)1024);
     }
-    _ztlf4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 4.8.8.4.4.4 ==== */
@@ -15292,7 +15750,7 @@ void ztt_16384_4_8_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2040, (size_t)1024, (size_t)1024);
     }
-    _ztlf4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -15423,7 +15881,7 @@ void ztt_16384_4_8_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2040, (size_t)1024, (size_t)1024);
     }
-    _ztlf4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8184, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 4.8.8.8.8 ==== */
@@ -15531,7 +15989,7 @@ void ztt_16384_4_8_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double 
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf8f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8f_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -15638,7 +16096,7 @@ void ztt_16384_4_8_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double 
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 504, (size_t)256, (size_t)256);
     }
-    _ztlf8b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8b_body(W, zout, tw + 4088, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=16384 chain 8.4.4.4.4.8 ==== */
@@ -15770,7 +16228,7 @@ void ztt_16384_8_4_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf8f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -15901,7 +16359,7 @@ void ztt_16384_8_4_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf8b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=16384 chain 8.4.4.4.8.4 ==== */
@@ -16033,7 +16491,7 @@ void ztt_16384_8_4_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf4f_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -16164,7 +16622,7 @@ void ztt_16384_8_4_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf4b_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 8.4.4.8.4.4 ==== */
@@ -16296,7 +16754,7 @@ void ztt_16384_8_4_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2032, (size_t)1024, (size_t)1024);
     }
-    _ztlf4f_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -16427,7 +16885,7 @@ void ztt_16384_8_4_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2032, (size_t)1024, (size_t)1024);
     }
-    _ztlf4b_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 8.4.8.4.4.4 ==== */
@@ -16559,7 +17017,7 @@ void ztt_16384_8_4_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2032, (size_t)1024, (size_t)1024);
     }
-    _ztlf4f_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -16690,7 +17148,7 @@ void ztt_16384_8_4_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2032, (size_t)1024, (size_t)1024);
     }
-    _ztlf4b_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 8.4.8.8.8 ==== */
@@ -16798,7 +17256,7 @@ void ztt_16384_8_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double 
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf8f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -16905,7 +17363,7 @@ void ztt_16384_8_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double 
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf8b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=16384 chain 8.8.4.4.4.4 ==== */
@@ -17037,7 +17495,7 @@ void ztt_16384_8_8_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2032, (size_t)1024, (size_t)1024);
     }
-    _ztlf4f_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -17168,7 +17626,7 @@ void ztt_16384_8_8_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, doubl
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg4b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 2032, (size_t)1024, (size_t)1024);
     }
-    _ztlf4b_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 /* ==== N=16384 chain 8.8.4.8.8 ==== */
@@ -17276,7 +17734,7 @@ void ztt_16384_8_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double 
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf8f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -17383,7 +17841,7 @@ void ztt_16384_8_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double 
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg8b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 496, (size_t)256, (size_t)256);
     }
-    _ztlf8b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=16384 chain 8.8.8.4.8 ==== */
@@ -17491,7 +17949,7 @@ void ztt_16384_8_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double 
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4f_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf8f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8f_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 __attribute__((target("avx2,fma")))
@@ -17598,7 +18056,7 @@ void ztt_16384_8_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double 
         for (size_t g = 0; g < (size_t)8; g++)
             _ztmg4b_body(W + g * (size_t)4096, W + g * (size_t)4096, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf8b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
+    _ztlfi8b_body(W, zout, tw + 4080, (size_t)2048, (size_t)2048, (size_t)2048);
 }
 
 /* ==== N=16384 chain 8.8.8.8.4 ==== */
@@ -17706,7 +18164,7 @@ void ztt_16384_8_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double 
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8f_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf4f_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4f_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 
 __attribute__((target("avx2,fma")))
@@ -17813,6 +18271,6 @@ void ztt_16384_8_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double 
         for (size_t g = 0; g < (size_t)4; g++)
             _ztmg8b_body(W + g * (size_t)8192, W + g * (size_t)8192, tw + 1008, (size_t)512, (size_t)512);
     }
-    _ztlf4b_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
+    _ztlfi4b_body(W, zout, tw + 8176, (size_t)4096, (size_t)4096, (size_t)4096);
 }
 

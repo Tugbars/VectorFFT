@@ -15,6 +15,12 @@
  *   inverse      : the same pipeline with conjugate roots (the bwd kinds +
  *                  the s-negated streams); unnormalised, roundtrip = N * x.
  *
+ * IN PLACE (2026-09-09, zturn_t_ship_plan.md 9): the `plane` drivers end in
+ * tlfi, the in-place terminator — tlf with its output streams prefetched. The
+ * caller's buffer goes cold under the plane, and a store into it waited on
+ * its line fill (+17..25% over out of place); the prefetch issues those
+ * fills ahead. Same arithmetic: in place stays bitwise the dest result.
+ *
  * EXECUTION is one indirect call: the plan binds ONE FUSED DRIVER per
  * direction (generated/ztt_drivers_avx2.c — the three kind bodies inlined
  * with literal trip counts and the twiddle cursor carried in a register, zero
@@ -79,9 +85,7 @@ typedef struct
                                        * fwd, and bwd (the s half negated)          */
     size_t twdoubles;
     size_t *rb;                       /* the run-base table, ncol entries            */
-    double *plane;                    /* 2N doubles + 4 KB of slack, 64-B: the `plane`
-                                       * mode scratch; the execute picks a page offset
-                                       * 2 KB from the caller's buffer (_ztt_plane_for) */
+    double *plane;                    /* 2N doubles, 64-B (the `plane` mode scratch) */
     const vfft_ztt_cell_t *cell;      /* the registry row: the four drivers          */
     vfft_ztt_fn fwd, bwd;             /* BOUND by placement (vfft_ztt_bind)          */
     int inplace;
@@ -224,7 +228,7 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain(int N, const int *chain, in
     p->tw = (double *)VFFT_ZTT_ALLOC(p->twdoubles * sizeof(double));
     p->twb = (double *)VFFT_ZTT_ALLOC(p->twdoubles * sizeof(double));
     p->rb = (size_t *)VFFT_ZTT_ALLOC((size_t)p->ncol * sizeof(size_t));
-    p->plane = (double *)VFFT_ZTT_ALLOC((size_t)2 * (size_t)N * sizeof(double) + 4096u);
+    p->plane = (double *)VFFT_ZTT_ALLOC((size_t)2 * (size_t)N * sizeof(double));
     if (!p->tw || !p->twb || !p->rb || !p->plane) { vfft_ztt_destroy(p); return NULL; }
     /* the streams, stage order, ONE allocation each (the fused driver's
      * carried cursor walks straight from one stage's end into the next) */
@@ -286,38 +290,16 @@ static inline int vfft_ztt_set_tile(vfft_ztt_plan_t *p, size_t tile)
     return 1;
 }
 
-/* the plane's PAGE OFFSET against the caller's buffer (measured 2026-09-09,
- * probes/ZT/zt_plane_skew.c): with the plane just below zout in its 4 KB
- * slot, the terminator's stores to zout sit in the same 4K slot as its loads
- * from the plane a few columns ahead — a 4K-alias stall, +12% at 2048..16384
- * in place. The plane carries 4 KB of slack, and each in-place call starts it
- * 2 KB (mod 4 KB) from zout, 64-B aligned: the alias distance becomes 128
- * columns, beyond anything in flight. Arithmetic is untouched (the gate's
- * in-place bitwise law holds). */
-static inline double *_ztt_plane_for(const vfft_ztt_plan_t *p, const double *zout)
-{
-    const uintptr_t base = (uintptr_t)p->plane;
-    const uintptr_t want = ((uintptr_t)zout + 2048u) & 4095u;
-    const uintptr_t off = ((want - (base & 4095u)) & 4095u) & ~(uintptr_t)63u;
-    return (double *)(base + off);
-}
-
 static inline void vfft_ztt_execute_fwd(const vfft_ztt_plan_t *p,
                                         const double *zin, double *zout)
 {
-    if (zin == zout || p->inplace)
-        p->cell->fwd_plane(zin, zout, _ztt_plane_for(p, zout), p->tw, p->rb, p->tile);
-    else
-        p->fwd(zin, zout, p->plane, p->tw, p->rb, p->tile);
+    (zin == zout ? p->cell->fwd_plane : p->fwd)(zin, zout, p->plane, p->tw, p->rb, p->tile);
 }
 
 static inline void vfft_ztt_execute_bwd(const vfft_ztt_plan_t *p,
                                         const double *zin, double *zout)
 {
-    if (zin == zout || p->inplace)
-        p->cell->bwd_plane(zin, zout, _ztt_plane_for(p, zout), p->twb, p->rb, p->tile);
-    else
-        p->bwd(zin, zout, p->plane, p->twb, p->rb, p->tile);
+    (zin == zout ? p->cell->bwd_plane : p->bwd)(zin, zout, p->plane, p->twb, p->rb, p->tile);
 }
 
 /* "4.4.8" for logs and the wisdom token il_ztt= */

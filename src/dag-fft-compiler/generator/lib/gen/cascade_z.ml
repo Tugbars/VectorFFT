@@ -198,6 +198,18 @@ type zs_kind =
        sequence (see zs_sched above). NEVER a kind-table default —
        set only by emit_codelet from the flag, so default regeneration
        stays on the pre-B2 path (not even entered). *)
+  ; prefetch_out : int
+    (* IN-PLACE terminator (tlfi, 2026-09-09, zturn_t_ship_plan.md 9): the
+       distance, in COLUMN QUADS, at which every output stream's line is
+       prefetched (T0) at the top of each column-quad iteration — R
+       prefetches of zout[2*(r*OLs + k + VW*prefetch_out)]. 0 = none. Why:
+       in place the terminator's stores land in the caller's buffer, whose
+       lines left L1 while the plane was the working set, and each store
+       waits on its line fill (+17..25% measured); out of place the same
+       stores hit lines the terminator's own loads just filled, so the
+       dest driver needs nothing. Arithmetic is untouched: the in-place
+       result stays bitwise the out-of-place one. Measured band 4..8 quads;
+       32 overshoots the L1 set. *)
   }
 
 let kind_of_string (s : string) : zs_kind =
@@ -219,6 +231,7 @@ let kind_of_string (s : string) : zs_kind =
     ; dif = false
     ; lanes_u = false
     ; narrow_arms = false
+    ; prefetch_out = 0
     }
   in
   match s with
@@ -461,6 +474,22 @@ let kind_of_string (s : string) : zs_kind =
     ; tw_off = "%TWF*(size_t)k"
     ; tw_group_reset = true
     ; out_edge = E_z "OLs"
+    }
+  | "tlfi" | "tlfib" ->
+    (* ZTURN-T IN-PLACE LAST (2026-09-09, zturn_t_ship_plan.md 9): tlf with
+       its OUTPUT STREAMS PREFETCHED four column quads ahead — the one thing
+       that separates the placements' terminators (see prefetch_out). Bound
+       by the `plane` drivers; the `dest` drivers keep tlf. Same arithmetic,
+       same edges, same stream: in place bitwise the out-of-place result. *)
+    { mid with
+      base = "tlfi"
+    ; bwd = s = "tlfib"
+    ; dif = s = "tlfib"   (* PRE-twiddle at Bwd, as tmgb *)
+    ; group_loop = true
+    ; tw_off = "%TWF*(size_t)k"
+    ; tw_group_reset = true
+    ; out_edge = E_z "OLs"
+    ; prefetch_out = 4
     }
   | "stfl" ->
     (* LOADED-STREAM terminator twin of stf (2026-09-07, the sub-2048
@@ -1048,6 +1077,12 @@ let emit_codelet
             "tlf (ZTURN-T last: tmg's combine + REINT packed stores at leg*OLs + k = \
              natural interleaved out, group-looped over distinct in/out pointers), %s."
             (if b then "bwd (table conjugated by the create)" else "fwd")
+        | "tlfi", b ->
+          Printf.sprintf
+            "tlfi (ZTURN-T IN-PLACE last: tlf with every output stream prefetched 4 \
+             column quads ahead — the caller's buffer went cold under the plane; same \
+             arithmetic, bitwise tlf), %s."
+            (if b then "bwd (table conjugated by the create)" else "fwd")
         | "sterm", false ->
           "sterm (SPLIT-INPUT terminator: TR4 loads, packed w^1 squaring tree, REINT \
            drev-comb stores), fwd."
@@ -1454,6 +1489,18 @@ let emit_codelet
     let vw = isa.Isa.vec_width in
     let nslots = ninst * radix in
     Buffer.add_string buf open_line;
+    (* tlfi: R output-stream prefetches per column quad, prefetch_out quads
+       ahead (in the WIDE loop's columns: wide_vw * prefetch_out) *)
+    if k.prefetch_out > 0
+    then
+      for r = 0 to radix - 1 do
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        _mm_prefetch((const char *)&zout[2*((size_t)%d*OLs + k + %d)], _MM_HINT_T0);\n"
+             r
+             (wide_vw * k.prefetch_out))
+      done;
     if k.nat_in || k.nat_out
     then begin
       Buffer.add_string
@@ -2452,7 +2499,7 @@ let emit_codelet
            callee's target ⊆ caller's; it inlines into the attributed
            wrapper). Wrapper shape mirrors legacy codelet_zil byte-for-byte:
            in-place on zout (zin voided), bp += 2·R·Ls, twg += (R-1)·2·VW. ── *)
-    let ztt = k.base = "tmg" || k.base = "tlf" in
+    let ztt = k.base = "tmg" || k.base = "tlf" || k.base = "tlfi" in
     let body_name =
       if ztt
       then ztt_body_name ~base:k.base ~radix ~bwd:k.bwd
@@ -2526,7 +2573,7 @@ let emit_codelet
          ~symbol:fname
          ~target_attr:isa.Isa.target_attr
          ());
-    if k.base = "tlf"
+    if k.base = "tlf" || k.base = "tlfi"
     then
       (* distinct in/out pointers: the plane is read at 2*R*Ls per group,
          the packed output written at 2*R*OLs; ONE stream for every group *)

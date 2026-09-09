@@ -106,6 +106,8 @@ type zs_kind =
   | Tmgb
   | Tlf
   | Tlfb
+  | Tlfi (* the IN-PLACE last: tlf + output-stream prefetch (2026-09-09) *)
+  | Tlfib
   | Sterm
   | Sterm2
   | Stermb
@@ -234,6 +236,8 @@ let zs_name = function
   | Tmgb -> "tmgb"
   | Tlf -> "tlf"
   | Tlfb -> "tlfb"
+  | Tlfi -> "tlfi"
+  | Tlfib -> "tlfib"
   | Sterm -> "sterm"
   | Sterm2 -> "sterm2"
   | Stermb -> "stermb"
@@ -270,6 +274,8 @@ let zs_of_name = function
   | "tmgb" -> Tmgb
   | "tlf" -> Tlf
   | "tlfb" -> Tlfb
+  | "tlfi" -> Tlfi
+  | "tlfib" -> Tlfib
   | "sterm" -> Sterm
   | "sterm2" -> Sterm2
   | "stermb" -> Stermb

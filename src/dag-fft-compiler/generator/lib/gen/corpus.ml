@@ -158,6 +158,14 @@ let zil_boundary_cells : (string * string list) list =
     , [ "8"; "--zp-tlf"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_tlf_bwd_avx2.c"
     , [ "8"; "--zp-tlfb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_tlfi_avx2.c"
+    , [ "4"; "--zp-tlfi"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_tlfi_bwd_avx2.c"
+    , [ "4"; "--zp-tlfib"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_tlfi_avx2.c"
+    , [ "8"; "--zp-tlfi"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_tlfi_bwd_avx2.c"
+    , [ "8"; "--zp-tlfib"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_s0t_r8_avx2.c"
     , [ "8"; "--zp-s0t"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
     )

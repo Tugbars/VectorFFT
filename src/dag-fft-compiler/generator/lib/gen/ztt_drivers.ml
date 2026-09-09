@@ -11,14 +11,17 @@
  * cascade_stage_fusion.md §2).
  *
  * WHAT THIS MODULE EMITS (one TU per ISA, --ztt-drivers):
- *   - the six kind bodies x two directions, static always_inline, re-emitted
+ *   - the eight kind bodies (tlfi = the in-place last) x two directions, static always_inline, re-emitted
  *     by Cascade_z.emit_codelet ~body_only:true (byte-identical to the bodies
  *     inside the per-kind codelets, so fused == unfused is gate-able bitwise);
  *   - for every cell: {fwd, bwd} x {dest, plane} drivers.
  *       dest : the pipeline runs IN THE DESTINATION (zin != zout, zout
  *              64-B aligned); the plane argument is unused.
  *       plane: the pipeline runs in the plan's scratch plane (in place, or
- *              an unaligned destination); the last stage writes zout.
+ *              an unaligned destination); the last stage writes zout — as
+ *              tlfi, the IN-PLACE terminator (tlf with its output streams
+ *              prefetched: zout's lines went cold under the plane, and each
+ *              store waited on its fill, +17..25%; zturn_t_ship_plan.md 9).
  *   The registry (bin/emit_ztt_registry.ml) lists the same cells, so
  *   "exists" and "reachable" cannot diverge.
  *   TILING (2026-09-09): every driver takes the tile width as a RUNTIME
@@ -188,7 +191,7 @@ let emit_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) ~(dest : 
   add
     (Printf.sprintf
        "    %s(W, zout, tw + %d, (size_t)%d, (size_t)%d, (size_t)%d);\n"
-       (body "tlf" r.(s))
+       (body (if dest then "tlf" else "tlfi") r.(s))
        off.(s)
        g.l.(s)
        g.l.(s)
@@ -247,7 +250,7 @@ let emit_tu ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
                  ~sched:None
                  ~isa
                  ~uarch))
-         [ "t0tp", 4; "t0tp", 8; "tmg", 4; "tmg", 8; "tlf", 4; "tlf", 8 ])
+         [ "t0tp", 4; "t0tp", 8; "tmg", 4; "tmg", 8; "tlf", 4; "tlf", 8; "tlfi", 4; "tlfi", 8 ])
     [ false; true ];
   (* the drivers *)
   List.iter

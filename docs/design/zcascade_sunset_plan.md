@@ -78,7 +78,11 @@ candidate only when the cell's banked in-place door row is not `mode=zcasc`
 the in-place create never even constructs ZTURN-T, and under
 `VFFT_NO_NAT_ZCASC` it fails outright ("no interleaved engine"). The door
 restamp is the fix; until the cascade goes, that guard also decides whether
-ZTURN-T is a candidate in place at all.
+ZTURN-T is a candidate in place at all. The in-place door's verdict on the
+plain plane driver is the CASCADE at 2048..16384, and it is right: ZTURN-T
+in place ran 25..31% over its out-of-place time. The cause and the remedy —
+the in-place terminator kind `tlfi` (the terminator with its output stream
+prefetched) — are `zturn_t_ship_plan.md` §9; S1b re-runs after it lands.
 
 S2 — **Scrambled pool admission at >= 2048.** `dp_planner_il.h`
 `_il_dp_enumerate` admits the natural engines into the scrambled pool only
