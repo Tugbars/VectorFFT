@@ -2076,15 +2076,16 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
  *      this planner's JOINT fwd+bwd ns/iter for either engine (route-
  *      comparable by construction; informational in the file).
  *
- *   NATURAL winner   -> kind 3:  "N 1 3 sp_route sp_R1 sp_R2 il_route il_R1 il_R2 ns"
- *      A kind-3 line carries BOTH axes because the buffer layout is an
- *      execute-time contract, so the SPLIT verdict must come from the caller
- *      (calibrate_k1.c already computes it as win[1]).
+ *   NATURAL winner   -> the lay=il kind-3 row (il_route, pair/chain/tile,
+ *      forms, ns), plus the dir=bwd sibling and the ord=scr row.
  *
- * Pass sp_route < 0 when no split verdict is available: the kind-3 line is
- * then SKIPPED rather than zero-filled. Zero is a VALID route (VFFT_K1_SP_3P),
- * so zero-filling would assert a split plan that was never measured — the same
- * class of lie this planner exists to remove.
+ * TWO LIBRARIES (owner's law, design_contracts.md section 2, 2026-09-09):
+ * this emitter writes INTERLEAVED rows only. The split verdict is banked by
+ * the split planner itself (dp_planner_split_oop.h, vfft_sp_dp_emit_wisdom)
+ * on its own lay=split row; the two libraries never meet in one call, one
+ * row or one calibrator (benches/calibrate_k1_il.c, calibrate_k1_split.c).
+ * Until 2026-09-09 this function took the split verdict as arguments and
+ * wrote the lay=split row beside the interleaved ones.
  *
  * NOTE ON IL_CASCADE: when the cascade wins a cell, it is recorded by its
  * kind-4 line; setting il_route = VFFT_K1_IL_CASCADE on the kind-3 line is a
@@ -2096,49 +2097,24 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
  * wave-1 flip; the caller owns opening/saving the store). */
 static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                                   const vfft_il_cand_t *nat,
-                                  int sp_route, int sp_R1, int sp_R2,
-                                  int sp_cc_chain, int sp_cc_vars,
-                                  double sp_ns,
                                   const vfft_il_cand_t *scr,
                                   const vfft_il_cand_t *scr_leg)
 {
     int lines = 0;
     if (!st) return 0;
 
-    /* PER-LAYOUT CELLS (v1.2, 2026-08-24). The kind-3 verdict banks as two
-     * INDEPENDENT records — lay=split and lay=il — each on its own
-     * evidence. The old dual line's `sp_route >= 0` whole-line refusal is
-     * GONE for the IL side: it discarded measured IL verdicts whenever
-     * split could not plan (structural at non-pow2 N — the %4 pair gate
-     * plus the t1 registry; N=400 repro: a raced 1.5-2x IL backward win
-     * banked 0). The owner's rule: split and IL are CALLER LAYOUTS
-     * (AoS/SoA), never optimization directions — one layout's absence must
-     * not veto the other's verdict, and one layout's re-race must not
-     * erase the other's cell. B2.1's mirror fix (split-only cells bank) is
-     * subsumed: each side now simply banks when IT raced.
-     * ns/ran are per-record and honest: the split record carries the split
-     * lane-batch verdict (ran = VFFT_OOP_GROUPW), the il record the IL
-     * natural champion (ran = 1) — the pre-1.2 dual line could only carry
-     * one of the two numbers. */
+    /* PER-LAYOUT CELLS (v1.2, 2026-08-24) and, since 2026-09-09, PER-LIBRARY
+     * EMITTERS: this function banks the lay=il records only — the natural
+     * champion, its backward forms, the ord=scr cell. The lay=split record
+     * is the split planner's own (dp_planner_split_oop.h,
+     * vfft_sp_dp_emit_wisdom). The owner's rule: split and IL are CALLER
+     * LAYOUTS (AoS/SoA), never optimization directions — one layout's
+     * absence must not veto the other's verdict, one layout's re-race must
+     * not erase the other's cell, and the two libraries never meet in one
+     * call or one row. ns/ran are per-record and honest: the il record
+     * carries the IL natural champion (ran = 1). */
     {
         int il_ok = (nat && nat->cost_ns < 1e17);
-        if (sp_route >= 0)
-        {
-            vfft_oop_wisdom_entry_t e;
-            memset(&e, 0, sizeof e);
-            e.N = N;
-            e.K = VFFT_OOP_GROUPW;     /* the split lane-batch run count   */
-            e.kind = VFFT_OOP_KIND_BAILEY2V;
-            e.k1_sp_route = sp_route;
-            e.R1 = sp_R1;
-            e.R2 = sp_R2;
-            e.k1_il_route = VFFT_K1_IL_NONE;   /* il lives in its own cell */
-            e.cc_chain = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_chain : 0;
-            e.cc_vars  = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_vars  : 0;
-            e.ns = sp_ns;
-            if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_SPLIT) == VW2_OK)
-                lines++;
-        }
         if (il_ok)
         {
             vfft_oop_wisdom_entry_t e;
@@ -2324,9 +2300,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
  * (route diversity guarantees it is there whenever one survived) so a
  * ZTURN-winner line still carries the fallback route's terminator pick. */
 static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, vw2_store_t *st, int N,
-                                    int sp_route, int sp_R1, int sp_R2,
-                                    int sp_cc_chain, int sp_cc_vars,
-                                    double sp_ns, int verbose)
+                                    int verbose)
 {
     vfft_il_cand_t nat, scr;
     double nns = vfft_il_dp_plan(ctx, N, VFFT_IL_ORD_NATURAL,   &nat, verbose);
@@ -2343,8 +2317,7 @@ static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, vw2_store_t *st, 
                     e->top[i].zroute == 0)
                     leg = &e->top[i];
     }
-    return vfft_il_dp_emit_wisdom(st, N, &nat, sp_route, sp_R1, sp_R2,
-                                  sp_cc_chain, sp_cc_vars, sp_ns, &scr, leg);
+    return vfft_il_dp_emit_wisdom(st, N, &nat, &scr, leg);
 }
 
 /* Ranked rows for a deploy pool / wisdom writer. Returns how many were filled. */
@@ -2375,8 +2348,7 @@ static int vfft_il_dp_bank_scr_top(vw2_store_t *st, int N,
     for (i = 0; i < ntop && !leg; i++)
         if (top[i].route == VFFT_K1_IL_CASCADE && !top[i].zroute)
             leg = &top[i];
-    return vfft_il_dp_emit_wisdom(st, N, NULL, -1, 0, 0, 0, 0, 0.0,
-                                  &top[0], leg);
+    return vfft_il_dp_emit_wisdom(st, N, NULL, &top[0], leg);
 }
 
 #endif /* VFFT_DP_PLANNER_IL_H */

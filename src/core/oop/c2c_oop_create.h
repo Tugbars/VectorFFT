@@ -182,13 +182,24 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     ki = scr_req ? (vw2_oop_lookup_k1_scr(&W->vw2, N, &kib) ? &kib : NULL) : ke;
                 }
             }
-            const int sp_banked = (ke && ke->k1_sp_route >= 0);
+            /* TWO LIBRARIES (design_contracts.md section 2, owner 2026-09-09):
+             * a request names ONE layout and this door resolves, builds and
+             * commits that layout's axis only. An interleaved request never
+             * builds a split K=1 plan (psp) and a split request never builds
+             * an interleaved one; the other axis reads as absent from here on
+             * (no route, no pair, no plan). Until 2026-09-09 an interleaved
+             * request built and committed a split plan (hk->k1sp) beside its
+             * engine whenever a split route resolved. */
+            const int want_il = (cfg->layout == VFFT_LAYOUT_INTERLEAVED);
+            if (want_il) { spr = -1; sR1 = sR2 = 0; }
+            else         { ilr = VFFT_K1_IL_NONE; iR1 = iR2 = 0; }
+            const int sp_banked = (!want_il && ke && ke->k1_sp_route >= 0);
             /* il_banked mirrors sp_banked (review fix): k1_il_route = -1
              * means the IL axis was never raced at this cell — run the IL
              * heuristic, exactly as an unbanked cell would. IL_NONE (0) is
              * a VERDICT ("raced: no IL route available", the B2.1 meaning)
              * and is consumed as one. */
-            const int il_banked = (ki && ki->k1_il_route >= 0);
+            const int il_banked = (want_il && ki && ki->k1_il_route >= 0);
             if (sp_banked)
             {
                 spr = ke->k1_sp_route;
@@ -201,7 +212,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 iR1 = ki->il_R1;
                 iR2 = ki->il_R2;
             }
-            if (!sp_banked)
+            if (!want_il && !sp_banked)
             {
                 /* heuristic default (uncalibrated cell): mono when emitted,
                  * else 2pb on the most balanced valid pair. The offline
@@ -237,7 +248,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     }
                 }
             }
-            if (!il_banked)
+            if (want_il && !il_banked)
             {
                 /* IL runs its OWN pair search — it must NOT inherit sR1/sR2.
                  *
@@ -342,8 +353,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * it names 2P_PURE iff the plan exists, else NONE — execute never
              * dereferences a NULL k1il2p. Kill-switch: env VFFT_NO_IL2P
              * disables the whole pair-based IL axis (mono is unaffected). */
-            if (ilr == VFFT_K1_IL_2P || ilr == VFFT_K1_IL_3P ||
-                ilr == VFFT_K1_IL_2P_PURE)
+            if (want_il && (ilr == VFFT_K1_IL_2P || ilr == VFFT_K1_IL_3P ||
+                            ilr == VFFT_K1_IL_2P_PURE))
             {
                 if (iR1 && !getenv("VFFT_NO_IL2P"))
                 {   /* braces are load-bearing: apply_kv must not run when the

@@ -348,7 +348,6 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
         fprintf(stderr, "[k1plan] N=%d: IL plan race (pair x forms, chain3 x forms, "
                         "bwd forms) — a cold cell takes seconds\n", N);
     lines = vfft_il_dp_plan_and_bank(&_k1_il_dp_ctx, &W->vw2, N,
-                                     /*sp_route=*/-1, 0, 0, 0, 0, 0.0,
                                      getenv("VFFT_IL_DP_VERBOSE") != NULL);
     if (lines > 0)
         _vw2_persist(W, cfg);

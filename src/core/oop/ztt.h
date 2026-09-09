@@ -307,16 +307,19 @@ static inline void vfft_ztt_bind(vfft_ztt_plan_t *p, int inplace)
     p->bwd = inplace ? p->cell->bwd_plane : p->cell->bwd_dest;
 }
 
-/* THE ZTURN-T BAND (owner's law, design_contracts.md section 4, 2026-09-09):
- * at a power of two in 2048..VFFT_ZTT_MAX_N the interleaved K=1 cell is
- * ZTURN-T's ALONE — no Bailey pair in the pool and NO cascade race arm at
- * any door (natural, DEFAULT, in place): "no cascade race arm please,
- * eliminate". The doors consult this before building a cascade candidate;
- * outside the band (below 2048, above the ceiling, any odd factor) they
- * behave as before. */
+/* THE PURE-POW2 BAND (owner's law, design_contracts.md section 4,
+ * 2026-09-09): at a power of two in 16..VFFT_ZTT_MAX_N the interleaved K=1
+ * cell belongs to the solo kernels and the pairs (<= 64), the pairs and
+ * ZTURN-T (128..1024) and ZTURN-T alone (2048 and up) — and NO cascade race
+ * arm exists at any door (natural, DEFAULT, in place): "no cascade race arm
+ * please, eliminate". Before this the natural door raced the natord cascade
+ * from 128 up and had banked it at 512 (400 ns over a 300 ns pair — a door
+ * clock's verdict, not the tier's). The doors consult this before building a
+ * cascade candidate; outside the band (above the ceiling, any odd factor)
+ * they behave as before. */
 static inline int vfft_ztt_band(int N)
 {
-    return N >= 2048 && N <= VFFT_ZTT_MAX_N && (N & (N - 1)) == 0;
+    return N >= 16 && N <= VFFT_ZTT_MAX_N && (N & (N - 1)) == 0;
 }
 
 /* the tile law: 0 (untiled) is always legal; else a power of two, at least
