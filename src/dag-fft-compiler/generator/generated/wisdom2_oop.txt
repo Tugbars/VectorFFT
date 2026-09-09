@@ -254,3 +254,7 @@
 @cell t=c2c n=4096 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=3595.83 metric=fwd1 units=ns src=race date=2026-09-09
 @cell t=c2c n=8192 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=10490.00 metric=fwd1 units=ns src=race date=2026-09-09
 @cell t=c2c n=16384 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=17550.00 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=2048 q=1 ord=nat place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=2048,q=1,ord=nat,place=oop,role=comp,lay=il) dif=0 | ran=1 ns=1796.88 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=4096 q=1 ord=nat place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=4096,q=1,ord=nat,place=oop,role=comp,lay=il) dif=0 | ran=1 ns=4037.50 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=8192 q=1 ord=nat place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=8192,q=1,ord=nat,place=oop,role=comp,lay=il) dif=0 | ran=1 ns=8309.38 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=16384 q=1 ord=nat place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=16384,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=18862.50 metric=fwd1 units=ns src=race date=2026-09-09

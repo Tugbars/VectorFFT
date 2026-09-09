@@ -202,6 +202,37 @@ static int _zt_mt_served_key(struct vfft_wisdom_s *W, int N, vw2_key_t *k);
 static int _ilprime_inner_from_wisdom(int M, _ilprime_inner_t *in, void *v)
 {
     _ilprime_inner_ctx_t *c = (_ilprime_inner_ctx_t *)v;
+#ifdef VFFT_ZTT_H
+    /* ZTURN-T inner (2026-09-09, zcascade_sunset_plan.md S2b): the prime's
+     * convolution wants a matched roundtrip in ANY order, which is exactly
+     * the SCRAMBLED cell's contract — so the banked ord=scr K=1 verdict at M
+     * (the pool where ZTURN-T's chains and tiles race the cascade's comb,
+     * S2) decides the inner. When it names ZTURN-T, that plan serves, tile
+     * applied; anything else falls through to the rules below. */
+    if (c->W && !c->W->vw2_off_oop)
+    {
+        vfft_oop_wisdom_entry_t e;
+        memset(&e, 0, sizeof e);
+        if (vw2_oop_lookup_k1_scr(&c->W->vw2, M, &e) &&
+            e.k1_il_route == VFFT_K1_IL_ZTT && e.il_zt_n >= 2)
+        {
+            vfft_ztt_plan_t *zp = vfft_ztt_create_chain(M, e.il_zt, e.il_zt_n);
+            if (zp && e.il_tw > 0 && !vfft_ztt_set_tile(zp, (size_t)e.il_tw))
+            { vfft_ztt_destroy(zp); zp = NULL; }
+            if (zp)
+            {
+                in->pt = zp;
+                if (getenv("VFFT_ILPR_LOG"))
+                {
+                    char chs[48];
+                    vfft_ztt_chain_str(zp, chs, sizeof chs);
+                    fprintf(stderr, "[ilprime] inner M=%d: ZTURN-T %s tile=%zu src=wisdom(ord=scr)\n", M, chs, zp->tile);
+                }
+                return 1;
+            }
+        }
+    }
+#endif
     if (M > 4096)
     {
         /* the cascade inner: the banked kind-4 RECIPE (chain, terminator

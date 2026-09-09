@@ -688,9 +688,53 @@ cascade everywhere and at MKL parity except 8192 (0.97). The tile closes
 8192 (1.05) and is noise-level at 4096 and 16384 on this clock; the
 planner's own clock prefers it at all three, and the race decides per cell.
 
+**In place, 2048..16384** (`probes/ZT/phaseE3_inplace.sh`: `--k1nat`,
+in-place natural K=1 through the front door vs MKL DFTI_INPLACE in the same
+process, 7 paced runs per arm; ZTURN-T in place = the `plane` drivers ending
+in `tlfi`, the in-place terminator with its output streams prefetched, and
+the plane placed 2 KB off the caller's buffer — `zturn_t_ship_plan.md` §9):
+
+```
+ N      ZTURN-T in place   natord cascade in place   MKL in place   MKL/vfft   wins
+──────────────────────────────────────────────────────────────────────────────────
+ 2048        1836                 1999                  2119          1.15     7/7
+ 4096        3931                 4069                  4016          1.02     6/7
+ 8192        8527                 8602                  8818          1.03     7/7
+ 16384      19562                18548                 18986          0.97     1/7
+──────────────────────────────────────────────────────────────────────────────────
+```
+
+In place costs ZTURN-T 5..11% over its out-of-place time (an out-of-place
+engine through a scratch plane, MKL's own in-place shape; MKL's tax is
+1..6%). The in-place door banks the engine at all four cells; 16384 is a tie
+cell on the door's clock (ILP 2 of 3 cool-box races) and the bench's cascade
+win there sits inside ZTURN-T's spread.
+
+**Scrambled order, 2048..16384** (`probes/ZT/phaseE4_scr.sh`: the bench's
+default mode = an explicit SCRAMBLED K=1 OOP request through the front door
+vs MKL natural OOP in the same process; 7 paced runs per arm). SCRAMBLED
+means order-agnostic: every engine that answers with a self-consistent
+permutation competes in the cell's race, natural output included, and the
+scrambled door banks the winner. ZTURN-T, writing natural order, beats the
+cascade's digit-reversed comb at every cell:
+
+```
+ N      ZTURN-T (natural out)   cascade comb   MKL natural   ZTURN-T ahead   MKL/vfft
+──────────────────────────────────────────────────────────────────────────────────────
+ 2048        1657                  1991           2148          20%          1.30
+ 4096        3661                  3971           3817          8.5%         1.04
+ 8192        8109                  8335           8395          2.8%         1.05
+ 16384      17243                 17848          18516          3.5%         1.07
+──────────────────────────────────────────────────────────────────────────────────────
+```
+
+The comb is 4..15% faster than the cascade's own natural terminator, which
+is not enough; and a scrambled ZTURN-T class could recover at most 0..4%
+at its ingest (measured with an identity run-base table), so none is built.
+
 Not yet served by ZTURN-T: 32768 and above (the quarter-wave's octave is
-16384; the two-level create is `TODO_zcascade.md` item 2), the SCRAMBLED
-contract and T > 1 (the cascade's, by feature). The natural door's race
+16384; the two-level create is `TODO_zcascade.md` item 2) and T > 1 (the
+cascade's threaded arm). The natural door's race
 buffers were made 64-B aligned on 2026-09-09; before that its 16-B `malloc`
 buffers split ZTURN-T's stores across lines and banked the cascade at 4096
 against this verdict.

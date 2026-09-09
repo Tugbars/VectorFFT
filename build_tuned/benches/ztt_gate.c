@@ -171,6 +171,23 @@ static int route_of_store(const char *wisdir, int N, char *route, size_t rn, int
     }
     return 0;
 }
+/* the IN-PLACE natural door's banked verdict for N: 1 when its lay=il row says
+ * mode=zcasc (the cascade serves in place there by the door's own race) */
+static int ip_door_is_zcasc(const char *wisdir, int N)
+{
+    char path[1024], line[4096], key[96];
+    FILE *f;
+    int z = 0;
+    snprintf(path, sizeof path, "%s/wisdom2_oop.txt", wisdir);
+    snprintf(key, sizeof key, "n=%d q=1 ord=nat place=ip lay=il | ", N);
+    f = fopen(path, "r");
+    if (!f) return 0;
+    while (fgets(line, sizeof line, f))
+        if (strstr(line, "t=c2c") && strstr(line, key) && strstr(line, "mode=zcasc")) { z = 1; break; }
+    fclose(f);
+    return z;
+}
+
 static int frontdoor_pass(const char *wisdir)
 {
     int fails = 0;
@@ -206,6 +223,12 @@ static int frontdoor_pass(const char *wisdir)
                 const int fbit = memcmp(y, yd, 2 * (size_t)N * 8) == 0;
                 const int bbit = memcmp(r, rd, 2 * (size_t)N * 8) == 0;
                 int ibit = -1;
+                if (ip_door_is_zcasc(wisdir, N))
+                    ibit = 2;   /* the IN-PLACE door banked the cascade for this cell: its own
+                                 * race, its own verdict (a mode=zcasc place=ip lay=il row) —
+                                 * in place is not ZTURN-T's to assert here; under
+                                 * VFFT_NO_NAT_ZCASC that create would have no engine at all */
+                else
                 {   /* the in-place handle on the same cell: bitwise the OOP forward */
                     vfft_plan hi = mk(W, N, 1);
                     if (hi)
@@ -216,12 +239,14 @@ static int frontdoor_pass(const char *wisdir)
                         vfft_destroy(hi);
                     }
                 }
-                ok = fbit && bbit && ibit == 1;
+                ok = fbit && bbit && (ibit == 1 || ibit == 2);
                 if (!ok)
                     printf("       fwd %s (rel %.1e)  bwd %s (rel %.1e)  in-place %s (rel %.1e)\n",
                            fbit ? "bits" : "DIFF", relerr(y, yd, N, 1.0),
                            bbit ? "bits" : "DIFF", relerr(r, rd, N, 1.0),
-                           ibit == 1 ? "bits" : ibit == 0 ? "DIFF" : "no handle", ibit >= 0 ? relerr(z, y, N, 1.0) : 0.0);
+                           ibit == 1 ? "bits" : ibit == 0 ? "DIFF" : "no handle", ibit == 0 || ibit == 1 ? relerr(z, y, N, 1.0) : 0.0);
+                else if (ibit == 2)
+                    printf("       (in place: the cascade by the in-place door's own verdict — not asserted)\n");
                 vfft_ztt_destroy(p);
             }
             printf("%-6d ztt %-18s %s\n", N, chs, ok ? "PASS (fwd, bwd, in place bitwise the direct engine)" : "FAIL");

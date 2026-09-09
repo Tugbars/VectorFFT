@@ -1785,9 +1785,15 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * engines' own race — without it the cell had NO scrambled verdict and
      * every SCRAMBLED create re-raced and served a form-less default pair.
      * The cascade's own gate follows. */
+    /* The natural engines compete at EVERY N (2026-09-09, zcascade_sunset_plan.md
+     * S2): natural output is a legal answer to a scrambled request, and at
+     * N >= 2048 ZTURN-T (raced here with its chains and tile widths) beat the
+     * natord cascade in the natural cell — whether it beats the cascade's
+     * scrambled comb is this pool's own race, never a rule. Until 2026-09-09
+     * the gate below kept them out at pow2 N >= 2048. */
+    _il_dp_enumerate_natural_engines(N, s, 0);
     if (N < 2048 || (N & 3))
     {
-        _il_dp_enumerate_natural_engines(N, s, 0);
         if ((N & (N - 1)) != 0) _il_dp_enumerate_flat_ord(N, s, 1);
     }
     if (N < _vfft_zcasc_min_n()) return;

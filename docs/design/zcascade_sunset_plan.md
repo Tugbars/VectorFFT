@@ -82,7 +82,13 @@ ZTURN-T is a candidate in place at all. The in-place door's verdict on the
 plain plane driver is the CASCADE at 2048..16384, and it is right: ZTURN-T
 in place ran 25..31% over its out-of-place time. The cause and the remedy —
 the in-place terminator kind `tlfi` (the terminator with its output stream
-prefetched) — are `zturn_t_ship_plan.md` §9; S1b re-runs after it lands.
+prefetched) plus the plane's per-call page offset — are
+`zturn_t_ship_plan.md` §9. **S1b MEASURED 2026-09-09 with `tlfi`:** in place
+ZTURN-T 1836 / 3931 / 8527 / 19562 ns vs the in-place cascade 1999 / 4069 /
+8602 / 18548 vs MKL in place 2119 / 4016 / 8818 / 18986 at 2048 / 4096 /
+8192 / 16384; the re-raced in-place door banked the ENGINE (`mode=ilp`) at
+all four cells (16384 a tie cell on the door's clock). Promote after the
+sweep. The cascade's in-place path leaves the served set at 2048..16384.
 
 S2 — **Scrambled pool admission at >= 2048.** `dp_planner_il.h`
 `_il_dp_enumerate` admits the natural engines into the scrambled pool only
@@ -90,6 +96,47 @@ below 2048; admit them at every N (the pool's own law: "every engine that
 legally answers a scrambled request competes"). Recount
 `il_dp_overflow_gate`'s rows; calibrate ord=scr at 4096..16384; where
 ZTURN-T wins, the scrambled cell serves natural output and says so.
+IN THE TREE 2026-09-09 (evening), with two findings from its first verdict:
+(a) the pool admission alone changed nothing served — an explicit SCRAMBLED
+pow2 request at N >= 2048 attached the kind-4 cascade by fiat in
+`c2c_oop_create.h` before the K=1 admission ran, so the ord=scr K=1 row
+(ZTURN-T at 2048..16384) was banked and never read; the scrambled door (the
+DEFAULT-order one) now also runs for explicit SCRAMBLED when that row names
+a K=1 engine, with the request's own kind-4 cascade as the arm, banking
+mode=free|zcasc on the ord=scr mode row; (b) the planner's clock reads the
+cascade candidates at ~2x their bench time in the scrambled pool (3960 /
+8313 / 17748 / 38144 vs ~1900 / 4050 / 8600 / 18500 at 2048..16384) while
+ZTURN-T's read true — uniform across chains, so the chain pick stands and
+the door's own race decides engine vs engine, but the pool's cross-engine
+ranking is not a verdict until this bias is found (probe queued). Census
+rows: 2048 / 4096 / 8192 / 16384 = 126 / 175 / 255 / 352.
+
+**S2 MEASURED (2026-09-09, 15:55, `probes/ZT/phaseE4_scr.final.txt`):** an
+explicit SCRAMBLED request, the K=1 arm (ZTURN-T, natural output) vs the
+cascade's comb, 7 paced runs each, arms verified distinct, MKL natural OOP
+in every process; the scrambled door's own race on the same store agreed
+at all four cells ("engine"):
+
+| N | ZTURN-T natural | cascade comb | MKL | ZTURN-T ahead |
+| --- | --- | --- | --- | --- |
+| 2048 | 1657 ns | 1991 | 2148 | 20% |
+| 4096 | 3661 | 3971 | 3817 | 8.5% |
+| 8192 | 8109 | 8335 | 8395 | 2.8% |
+| 16384 | 17243 | 17848 | 18516 | 3.5% |
+
+The comb's 4..15% over the cascade's OWN natural terminator (same-day
+passes: 1900 / 3915 / 8350 / 18000 vs 2237 / 4041..4100 / 8731 / 18693)
+does not carry against ZTURN-T. **The bound on a scrambled ZTURN-T class**
+(owner's question, "scrambled zt-t vs scrambled zcascade"): the same plans
+with an IDENTITY run-base table — the ingest storing runs sequentially,
+everything else unchanged, output invalid, timing exact — gain 0..4%
+(2048 1597 vs 1593; 4096 3554 vs 3518; 8192 7826 vs 7598; 16384 17502 vs
+17299; two repeats). That is the most such a class could recover at the
+ingest, and it would need strided-run mids and a re-derived tile law to
+exist. Not worth building for speed; the natural-writing ZTURN-T already
+beats the comb. **The cascade wins no cell in 2048..16384** (natural OOP,
+in place 2048..8192, scrambled); it keeps 32768+ (ZTURN-T's octave), the
+threaded arm, the odd cascade, and the 16384 in-place tie.
 
 S2b — **The prime path's inner transform** (`il_prime.h`): an inner
 provider that fills a ZTURN-T plan from the banked `il_ztt=` (+ `il_tw=`)
@@ -113,7 +160,19 @@ S5 — **MT arm for ZTURN-T**, raced at T; then `zturn_mt.h` and `zt_mt` go.
 
 S6 — **The odd cascade** (msz/mszt/mszb, `K=1 ODD cascade — N = 2^a·odd`):
 owner's call — either odd radices for ZTURN-T or the odd cascade stays as
-its own engine. Nothing of it is stripped by S1–S5.
+its own engine. Nothing of it is stripped by S1–S5. **Owner 2026-09-09
+(16:00): the cascade WILL be deleted**, so its odd cells need an engine: the
+flat DIT (route 8) already serves every odd-factor N below 2048 and every
+N % 4 != 0 above it; only a gate in `_il_dp_enumerate_natural_engines`
+(`N < 2048 || (N & 3)`) keeps it out of the 2^a·odd, N % 4 == 0 cells at
+>= 2048 that the odd cascade holds. Admit it there and race — no new
+kernels; the odd cascade goes when the flat DIT's rows are banked.
+
+**Decision record, 2026-09-09 (15:55..16:00).** The owner floated keeping
+the cascade as the explicit scrambled engine; the pressure test above (the
+comb loses to natural-writing ZTURN-T at every cell, a scrambled ZTURN-T
+class bounded at 0..4%) settled it: the sunset stays on, the cascade will be
+deleted, S2 completes as built (the scrambled cell is a race).
 
 S7 — **K > 1 at >= 4096** (not a cascade cell; the owner's "everywhere"):
 a "ZTURN-T x K" candidate — the fused driver looped over the batch — in the

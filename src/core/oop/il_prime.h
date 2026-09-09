@@ -105,6 +105,12 @@ typedef struct {
 #ifdef VFFT_ZTURN_H
     vfft_zturn2_plan_t *pz;
 #endif
+#ifdef VFFT_ZTT_H
+    vfft_ztt_plan_t *pt;    /* ZTURN-T (2026-09-09, zcascade_sunset_plan.md S2b): the
+                             * banked ord=scr K=1 verdict at M when it names ZTURN-T —
+                             * natural fwd/bwd is a matched roundtrip too, so the
+                             * convolution's pointwise multiply runs in natural order */
+#endif
 } _ilprime_inner_t;
 
 /* INNER PROVIDER (2026-09-02): the banked wrapper installs a function that
@@ -121,6 +127,9 @@ static inline int _ilprime_inner_make(int M, _ilprime_inner_t *in)
     in->p2 = 0; in->p3 = 0;
 #ifdef VFFT_ZTURN_H
     in->pz = 0;
+#endif
+#ifdef VFFT_ZTT_H
+    in->pt = 0;
 #endif
     if (_ilprime_inner_provider)
     {
@@ -174,10 +183,17 @@ static inline void _ilprime_inner_free(_ilprime_inner_t *in)
     if (in->pz) vfft_zturn2_destroy(in->pz);
     in->pz = 0;
 #endif
+#ifdef VFFT_ZTT_H
+    if (in->pt) vfft_ztt_destroy(in->pt);
+    in->pt = 0;
+#endif
 }
 static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
                                       const double *zi, double *zo)
 {
+#ifdef VFFT_ZTT_H
+    if (in->pt) { vfft_ztt_execute_fwd(in->pt, zi, zo); return; }   /* za -> zb, distinct */
+#endif
 #ifdef VFFT_ZTURN_H
     if (in->pz) { vfft_zturn2_execute_fwd(in->pz, zi, zo); return; }
 #endif
@@ -187,6 +203,9 @@ static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
 static inline void _ilprime_inner_bwd(const _ilprime_inner_t *in,
                                       const double *zi, double *zo)
 {
+#ifdef VFFT_ZTT_H
+    if (in->pt) { vfft_ztt_execute_bwd(in->pt, zi, zo); return; }
+#endif
 #ifdef VFFT_ZTURN_H
     if (in->pz) { vfft_zturn2_execute_bwd(in->pz, zi, zo); return; }
 #endif

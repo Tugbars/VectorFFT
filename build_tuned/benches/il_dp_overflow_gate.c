@@ -48,10 +48,16 @@
  * axis: every legal tile width on the 1 KB..64 KB ladder is its own candidate
  * beside untiled (vfft_ztt_tile_legal: pow2, >= R0*R1, < N), so N=1024
  * scrambled 37 -> 65 (the seven chains x four widths 64..512); 2048 and
- * above unchanged (no natural engine in those scrambled pools). */
+ * above unchanged (no natural engine in those scrambled pools).
+ * Re-measured 2026-09-09 (evening) after zcascade_sunset_plan.md S2: the
+ * natural engines enter the SCRAMBLED pool at EVERY N (natural output is a
+ * legal scrambled answer; ZTURN-T x chains x tiles beside the cascade chains),
+ * so 2048 56 -> 126, 4096 87 -> 175, 8192 127 -> 255, 16384 184 -> 352;
+ * 32768 and 65536 unchanged (no natural engine reaches them yet — ZTURN-T's
+ * octave is 16384, the pairs stop at R = 128). */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 65 }, { 2048, 56 }, { 4096, 87 }, { 8192, 127 },
-    { 16384, 184 }, { 32768, 270 }, { 65536, 372 }
+    { 1024, 65 }, { 2048, 126 }, { 4096, 175 }, { 8192, 255 },
+    { 16384, 352 }, { 32768, 270 }, { 65536, 372 }
 };
 
 int main(void)

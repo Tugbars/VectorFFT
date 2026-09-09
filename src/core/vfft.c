@@ -31,9 +31,9 @@
 #include "cpu_cache.h"          /* L1d capacity for the tcut width stamp; PLANNING ONLY */
 #include "il2p.h"               /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
 #include "transforms/fft2d/il2d_col.h" /* the column-axis pass descriptor the plan embeds */
+#include "ztt.h"                /* ZTURN-T: the run-contiguous DIT, 16..16384 (2026-09-09); before il_prime.h: the prime inner's ZTURN-T branch is #ifdef VFFT_ZTT_H */
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
-#include "ztt.h"                /* ZTURN-T: the run-contiguous DIT, 16..2048 (2026-09-09) */
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
 #include "il_flatdit_race.h"    /* its FORM / TILE races on the shared race body      */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
