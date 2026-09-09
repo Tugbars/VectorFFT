@@ -143,25 +143,32 @@ static int route_of_store(const char *wisdir, int N, char *route, size_t rn, int
     snprintf(route, rn, "NOROW"); *nf = 0;
     snprintf(path, sizeof path, "%s/wisdom2_oop.txt", wisdir);
     snprintf(key, sizeof key, "n=%d ", N);
-    f = fopen(path, "r");
-    if (!f) return 0;
-    while (fgets(line, sizeof line, f))
+    /* the reader's TWO TIERS (wisdom2_oop_reader.h): a lay=il row before a
+     * lay-less pre-1.2 row — the store carries both at 512..8192, and the
+     * first row in file order is the legacy one (2026-09-09) */
+    for (int tier = 0; tier < 2; tier++)
     {
-        const char *r, *q;
-        if (!strstr(line, "t=c2c") || !strstr(line, key) || !strstr(line, "q=1 ") || !strstr(line, "ord=nat ")) continue;
-        if (strstr(line, "dir=bwd")) continue;
-        if ((r = strstr(line, "il_route=")) == NULL) continue;
-        sscanf(r + 9, "%15s", route);
-        if ((q = strstr(line, "il_ztt=")) != NULL)
+        f = fopen(path, "r");
+        if (!f) return 0;
+        while (fgets(line, sizeof line, f))
         {
-            char chs[48] = "";
-            sscanf(q + 7, "%47s", chs);
-            for (char *t = strtok(chs, "."); t && *nf < 7; t = strtok(NULL, ".")) chain[(*nf)++] = atoi(t);
+            const char *r, *q;
+            if (!strstr(line, "t=c2c") || !strstr(line, key) || !strstr(line, "q=1 ") || !strstr(line, "ord=nat ")) continue;
+            if (strstr(line, "dir=bwd")) continue;
+            if (tier == 0 && !strstr(line, " lay=il ")) continue;
+            if ((r = strstr(line, "il_route=")) == NULL) continue;
+            sscanf(r + 9, "%15s", route);
+            if ((q = strstr(line, "il_ztt=")) != NULL)
+            {
+                char chs[48] = "";
+                sscanf(q + 7, "%47s", chs);
+                for (char *t = strtok(chs, "."); t && *nf < 7; t = strtok(NULL, ".")) chain[(*nf)++] = atoi(t);
+            }
+            fclose(f);
+            return 1;
         }
         fclose(f);
-        return 1;
     }
-    fclose(f);
     return 0;
 }
 static int frontdoor_pass(const char *wisdir)

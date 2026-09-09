@@ -40,14 +40,14 @@
 @cell t=c2c n=32768 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.16.16.32 vars=flat.t1s.t1s.t1s | ran=256 ns=37452035.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:29
 @cell t=c2c n=65536 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.8.16.32 vars=flat.t1s.t1s.flat.t1s | ran=256 ns=87478040.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:30
 @cell t=c2c n=128 q=1024 ord=scr place=oop | eng=classic route=modeb chain=2.4.4.4 vars=flat.t1s.t1s.t1s | ran=1024 ns=157282.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:31
-@cell t=c2c n=8192 q=1 ord=scr place=oop | eng=zturn chain=4.8.4.4.4.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=18007.0 metric=joint2 units=ns src=race date=2026-08-20
-@cell t=c2c n=16384 q=1 ord=scr place=oop | eng=zturn chain=4.4.4.4.4.4.4 zs_t2q=1 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=38075.0 metric=joint2 units=ns src=race date=2026-08-20
+@cell t=c2c n=8192 q=1 ord=scr place=oop | eng=zturn chain=4.4.8.4.4.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=17752.3 metric=joint2 units=ns src=race date=2026-09-09
+@cell t=c2c n=16384 q=1 ord=scr place=oop | eng=zturn chain=4.8.4.4.8.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=38015.6 metric=joint2 units=ns src=race date=2026-09-09
 @cell t=c2c n=32768 q=1 ord=scr place=oop | eng=zturn chain=4.8.4.4.4.4.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=83503.1 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:53
 @cell t=c2c n=65536 q=1 ord=scr place=oop | eng=zturn chain=4.8.8.4.8.8 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=205075.0 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:96
 @cell t=c2c n=131072 q=1 ord=scr place=oop | eng=zturn chain=4.8.8.8.8.8 zs_t2q=1 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=498912.5 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:97
 @cell t=c2c n=262144 q=1 ord=scr place=oop | eng=zturn chain=4.8.8.8.4.4.8 zs_t2q=0 zt_t2q=1 zt_tw=1024 zt_l1=49152 | ran=1 ns=1091900.0 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:98
 @cell t=c2c n=2048 q=1 ord=scr place=oop | eng=zturn chain=8.8.8.4 zs_t2q=0 zt_t2q=0 | ran=1 ns=3996.1 metric=joint2 units=ns src=race date=2026-09-09
-@cell t=c2c n=4096 q=1 ord=scr place=oop | eng=zturn chain=4.4.4.4.4.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=8363.3 metric=joint2 units=ns src=race date=2026-08-20
+@cell t=c2c n=4096 q=1 ord=scr place=oop | eng=zturn chain=4.8.4.8.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=8232.0 metric=joint2 units=ns src=race date=2026-09-09
 @cell t=c2c n=128 q=* ord=* place=* role=comp | eng=k1 sp_route=2pb sp_pair=4.32 il_route=2p il_pair=4.32 il_kv=64 | ran=1 ns=63.6 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:103
 @cell t=c2c n=256 q=* ord=* place=* role=comp | eng=k1 sp_route=2pb sp_pair=8.32 il_route=2p il_pair=16.16 il_kv=51 | ran=1 ns=133.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:104
 @cell t=c2c n=1024 q=* ord=* place=* role=comp | eng=k1 sp_route=2pb sp_pair=32.32 il_route=2p il_pair=32.32 | ran=1 ns=874.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:105
@@ -245,3 +245,12 @@
 @cell t=c2c n=1024 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.8.8.4 zs_t2q=0 zt_t2q=0 zt_ntf=1 | ran=1 src=race date=2026-09-09
 @cell t=c2c n=1024 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=725.00 metric=fwd1 units=ns src=race date=2026-09-09
 @cell t=c2c n=2048 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=2237.50 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=4096 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=2pb sp_pair=64.64 | ran=4 ns=7208.0 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=4096 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=ztt il_ztt=8.8.8.8 il_tw=1024 il_kv=0 | ran=1 ns=3555.8 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=8192 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=ccol sp_pair=64.128 chain=4.8.4 vars=flat.t1s.t1s | ran=4 ns=18809.4 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=8192 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=ztt il_ztt=8.8.4.4.8 il_tw=2048 il_kv=0 | ran=1 ns=7936.7 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=16384 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=ccol sp_pair=8.2048 chain=8.16.16 vars=flat.t1s.t1s | ran=4 ns=61711.5 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=16384 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=ztt il_ztt=8.8.4.8.8 il_tw=2048 il_kv=0 | ran=1 ns=17577.3 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=4096 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=3595.83 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=8192 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=10490.00 metric=fwd1 units=ns src=race date=2026-09-09
+@cell t=c2c n=16384 q=1 ord=nat place=oop lay=il | eng=stride mode=free dif=0 | ran=1 ns=17550.00 metric=fwd1 units=ns src=race date=2026-09-09
