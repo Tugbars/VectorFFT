@@ -77,10 +77,51 @@ Asked 2026-09-09 ("our split codelets are diversity: t1 / t1s / log3").
   already targets. Cheap test if ever wanted: one kind entry, raced on a
   tform-style axis at 32768+ only. Not expected to pay below that.
 
-## 5. Not transferring (measured)
+## 5. Fused calls for the cascade
 
-- **Stage fusion:** < 0.5% at >= 2048 (`cascade_stage_fusion.md`); the
-  mechanism is in the tree for ZTURN-T, not worth an emitter corpus here.
+Owner decision 2026-09-09: "zcascade should get fused call treatment too."
+Per-stage call cost measured < 0.5% at >= 2048 (`cascade_stage_fusion.md`), so
+the value there is not the calls: it is what fusion enables — literal trip
+counts and cross-stage register scheduling in one body — and that is
+unmeasured for the cascade. The mechanism exists (ZTURN-T's `body_only`
+emission + a per-cell driver TU with a registry, `ztt_drivers.ml`); the
+cascade's driver would carry the tcut tiling and the tform/t2q picks as
+literal variants per cell, which is a larger corpus than ZTURN-T's 33 cells.
+Gate it as ZTURN-T was: fused == unfused bitwise, then the race.
+
+## 6. ZTURN-T above 2048 — a TILED ZTURN-T as the cascade's challenger (owner's
+question, 2026-09-09: "isn't tiling the only advantage zcascade has?")
+
+**What ZTURN-S has that ZTURN-T does not:** (a) TILING — structural above L1
+(plane = 16N B: 32 KB at 2048, 64 KB at 4096); (b) the SCRAMBLED class — the
+comb skips the ordering work and is the whole scrambled column's lead;
+(c) an MT arm; (d) inventory: the raced terminator/placement twins, r0 = 8.
+**What ZTURN-T holds:** twiddle footprint ~half the cascade's (one stream per
+stage serves every group), a pre-twiddle backward that does not spill
+(vs 33/49), natural order paid on the ingest instead of the terminator.
+
+**Tiling maps onto ZTURN-T cleanly** — runs are contiguous, so a tile of T
+complexes holds WHOLE groups of every stage with RL <= T. The tiled driver is
+MKL's large path (the RE'd spec: "a 16 KB tile loop that runs stages up to
+L=1024 per tile before the cross-tile stages"): per tile, ingest the tile
+CONTIGUOUSLY from its strided columns (the load-permuted ingest — the probe's
+`t0tl`, refuted sub-1024 for a reason that only holds while the plane is
+L1-resident), run every stage with RL <= T while the tile is hot, then the
+cross-tile stages sweep the plane. Kernels unchanged (they take Ls/Gs/count);
+new: the `t0tl` kind emitted properly, the tiled driver shape in
+`ztt_drivers.ml`, the two-level twiddle create (item 2), registry cells
+above 2048, and the race against the tiled cascade per cell.
+
+**Evidence today:** one datum — same chain at 2048, ZTURN-T and ZTURN-S TIE
+(the 2048 win was the chain). Tiled vs tiled above L1 is unmeasured; the
+footprint and backward edges are reasons to expect competitiveness, not a
+guarantee. A scrambled ZTURN-T class (`t0ts`: store runs in column order, no
+rb[] — the cheapest possible ingest — output digit-reversed) would be what
+lets it challenge the scrambled column too; without it the cascade keeps
+that column regardless of the natural result.
+
+## 7. Not transferring (measured)
+
 - **Carried twiddle cursor / contiguous stream:** timing-null everywhere.
 - **Chain-shape preference (radix-4 ingest):** contradicted at 2048; the
   chain is a searched axis above 2048.
