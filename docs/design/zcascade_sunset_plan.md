@@ -183,6 +183,17 @@ N % 4 != 0 above it; only a gate in `_il_dp_enumerate_natural_engines`
 >= 2048 that the odd cascade holds. Admit it there and race — no new
 kernels; the odd cascade goes when the flat DIT's rows are banked.
 
+**S2 REVERTED 2026-09-09 (evening), under the order law
+(`design_contracts.md` section 3): a scrambled request races scrambled
+writers only, so the natural engines leave the pow2 scrambled pools at
+2048 and above (`_il_dp_enumerate`), the explicit-SCRAMBLED door takes the
+cascade again (`c2c_oop_create.h`), and the promoted ord=scr K=1 rows plus
+the scrambled mode rows at 2048..32768 are out of the store. The pow2
+scrambled cell is the ZTURN-S cascade's comb until the scrambled ZTURN-T
+class exists; the legacy zsplit engine is out of those pools for good
+(never banked on any host). S2b (the prime inner) keys on the NATURAL row
+at M — section 7 of the contracts. The record below stands as history.**
+
 **S2 PROMOTED 2026-09-09 16:20** (selective: the ord=scr K=1 rows naming
 ZTURN-T and the scrambled door rows `mode=free` at 2048..16384;
 `probes/ZT/promote_scr_rows.py` — the same calibration's re-raced ord=nat

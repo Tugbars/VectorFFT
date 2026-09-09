@@ -1293,6 +1293,12 @@ static void _il_dp_push_cascade_chain(int N, const int *chain, int nf,
 {
     vfft_il_cand_t c;
         int eng_ok[2] = { 0, 0 };
+        /* LEGACY zsplit (zroute=0): superseded by ZTURN-S in July 2026 and
+         * never banked by any store row on any host since; the owner ruled it
+         * out of the pow2 scrambled pools 2026-09-09 ("should not be part of
+         * the runs, it doesn't win anything"). It still validates the
+         * 2^a * odd cells until the odd machinery has its turn. */
+        if ((N & (N - 1)) != 0)
         {
             vfft_zsplit_plan_t *p = vfft_zsplit_create(N, chain, nf);
             if (p) { eng_ok[0] = 1; vfft_zsplit_destroy(p); }
@@ -1829,15 +1835,17 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * engines' own race — without it the cell had NO scrambled verdict and
      * every SCRAMBLED create re-raced and served a form-less default pair.
      * The cascade's own gate follows. */
-    /* The natural engines compete at EVERY N (2026-09-09, zcascade_sunset_plan.md
-     * S2): natural output is a legal answer to a scrambled request, and at
-     * N >= 2048 ZTURN-T (raced here with its chains and tile widths) beat the
-     * natord cascade in the natural cell — whether it beats the cascade's
-     * scrambled comb is this pool's own race, never a rule. Until 2026-09-09
-     * the gate below kept them out at pow2 N >= 2048. */
-    _il_dp_enumerate_natural_engines(N, s, 0);
+    /* ORDER IS A CONTRACT (design_contracts.md section 3, owner 2026-09-09
+     * evening): the scrambled pool races scrambled writers only. S2's
+     * admission of the natural engines at pow2 N >= 2048 (2026-09-09, 15:55)
+     * is REVERTED the same day — "scrambled belongs to only scrambled. when
+     * the user wants scrambled, then only then they are raced." Below 2048
+     * and at the 2^a * odd cells the natural engines still enter this pool
+     * (the 2026-09-05 design above); the owner's ruling on those cells is
+     * pending and the odd machinery is not touched. */
     if (N < 2048 || (N & 3))
     {
+        _il_dp_enumerate_natural_engines(N, s, 0);
         if ((N & (N - 1)) != 0) _il_dp_enumerate_flat_ord(N, s, 1);
     }
     if (N < _vfft_zcasc_min_n()) return;

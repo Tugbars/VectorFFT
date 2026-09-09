@@ -69,10 +69,18 @@
  * pools, 90 -> 74 and 127 -> 123; the other cells never had a pair.
  * Re-measured 2026-09-09 (evening) after the pow2 pair-pool SUNSET (owner:
  * no radix-64 slot, radix 8/16 slots race the tangent kernel alone, radix 32
- * keeps its four forms): 1024 = 32x32 (16 forms) + 7 ZTURN-T chains = 23. */
+ * keeps its four forms): 1024 = 32x32 (16 forms) + 7 ZTURN-T chains = 23.
+ * Re-measured 2026-09-09 (evening) after the ORDER law (design_contracts.md
+ * section 3): S2 reverted — the natural engines (ZTURN-T chains x widths)
+ * leave the pow2 scrambled pools at 2048 and above — and the LEGACY zsplit
+ * engine (zroute=0, superseded by ZTURN-S, never banked) leaves them too:
+ * 74 -> 48, 123 -> 77, 175 -> 113, 247 -> 166, 354 -> 246, 480 -> 340.
+ * What remains at a pow2 cell >= 2048 is the ZTURN-S cascade alone (chains x
+ * stf/stf2 x its tile widths), the only scrambled writer until the scrambled
+ * ZTURN-T class exists. */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 23 }, { 2048, 74 }, { 4096, 123 }, { 8192, 175 },
-    { 16384, 247 }, { 32768, 354 }, { 65536, 480 }
+    { 1024, 23 }, { 2048, 48 }, { 4096, 77 }, { 8192, 113 },
+    { 16384, 166 }, { 32768, 246 }, { 65536, 340 }
 };
 
 int main(void)

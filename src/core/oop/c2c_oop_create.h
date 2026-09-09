@@ -136,28 +136,14 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 for (s2o = 0; s2o < zt_pending->nf; s2o++)
                     if (zt_pending->chain[s2o] & 1)
                         ztodd = 1;
-        /* S2 (2026-09-09, zcascade_sunset_plan.md): an explicit SCRAMBLED pow2
-         * request at N >= 2048 used to take the kind-4 cascade by fiat — the K=1
-         * admission below never ran, so the ord=scr K=1 verdict (where ZTURN-T's
-         * chains and tiles now race the cascade's comb, S2's pool) was never
-         * read. When that row names a K=1 engine, the engine is admitted and
-         * the scrambled door below races it against the pending cascade,
-         * banking the verdict on the ord=scr mode row (the DEFAULT-order door's
-         * own protocol); the cascade serves only by winning. */
-        int scr_k1_row = 0;
-        if (K == 1 && !ob && cfg->order == VFFT_ORDER_SCRAMBLED &&
-            cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop &&
-            zt_pending && !ztodd)
-        {
-            vfft_oop_wisdom_entry_t sk;
-            memset(&sk, 0, sizeof sk);
-            if (vw2_oop_lookup_k1_scr(&W->vw2, N, &sk) &&
-                sk.k1_il_route >= 0 && sk.k1_il_route != VFFT_K1_IL_CASCADE)
-                scr_k1_row = 1;
-        }
+        /* S2 REVERTED (2026-09-09 evening, design_contracts.md section 3): an
+         * explicit SCRAMBLED pow2 request at N >= 2048 takes the kind-4
+         * cascade, the only scrambled writer there, until the scrambled
+         * ZTURN-T class exists; the natural K=1 engines are never admitted to
+         * a scrambled request ("scrambled belongs to only scrambled"). */
         if (K == 1 && !ob &&
             (cfg->order != VFFT_ORDER_SCRAMBLED || ztodd ||
-             (!zs_pending && !zt_pending) || scr_k1_row))
+             (!zs_pending && !zt_pending)))
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
             int sR1 = 0, sR2 = 0, iR1 = 0, iR2 = 0;
@@ -713,8 +699,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                      * 4096. So: race THIS handle's real execute against the
                      * scrambled cascade (the natural race's protocol), bank the
                      * verdict on the OOP ord=scr mode row, replay it. */
-                    if ((cfg->order == VFFT_ORDER_DEFAULT ||
-                         (cfg->order == VFFT_ORDER_SCRAMBLED && scr_k1_row && zt_pending)) &&
+                    if (cfg->order == VFFT_ORDER_DEFAULT &&
                         N >= _vfft_zcasc_min_n() &&
                         cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                         !getenv("VFFT_NO_NAT_ZCASC"))
@@ -727,14 +712,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                         int smode = (soe && !cfg->recalibrate)
                                         ? soe->mode : VFFT_NAT_UNSET;
                         vfft_zturn2_plan_t *zct = NULL;
-                        if (cfg->order == VFFT_ORDER_SCRAMBLED)
-                        {   /* S2: the explicit request built its kind-4 cascade above — that
-                             * plan IS the cascade arm (the door owns it from here: attached by
-                             * winning, destroyed by losing) */
-                            zct = zt_pending;
-                            zt_pending = NULL;
-                        }
-                        else if (smode != VFFT_NAT_FREE)
+                        if (smode != VFFT_NAT_FREE)
                         {
                             vfft_config_t rcfg = *cfg;
                             vfft_zsplit_plan_t *zcs = NULL;
