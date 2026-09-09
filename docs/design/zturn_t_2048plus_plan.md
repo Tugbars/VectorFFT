@@ -96,6 +96,36 @@ bitwise (6 widths at 4096, 7 at 8192 and 16384) + seeded `il_tw=1024` replay
 11/11; `k1_pow2_gate` PASS; `il_dp_overflow_gate` PASS after its 1024 census
 row moved 37 -> 65 (the seven 1024 chains x four legal widths).
 
+**Measured 2026-09-09** (`probes/ZT/phaseE2_2048plus.sh`, the calibrated
+scratch store, 7 paced runs per arm, one process per (cell, arm, run), MKL in
+every process; arms: the served plan = ZTURN-T with its raced tile, the SAME
+chain untiled, the natord cascade via a `mode=zcasc` door row):
+
+| N | served (chain @ tile) | ZTURN-T tiled | same chain untiled | natord cascade | MKL | MKL / tiled | wins |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 4096 | 8.8.8.8 @ 16 KB | 3728 ns (x-run 193) | 3811 | 4041 | 3799 | 1.02 | 6/7 |
+| 8192 | 8.8.4.4.8 @ 32 KB | 8115 (370) | 9052 | 8731 | 8557 | **1.05** | 6/7 |
+| 16384 | 8.8.4.8.8 @ 32 KB | 18463 (617) | 19816 | 18693 | 18748 | 1.02 | 6/7 |
+
+The tile pays at 8192 (untiled lost to MKL 0.97; tiled 1.05, +7.6% over
+the cascade); at 4096 it is noise-level (the untiled best of step 1 read
+3768) and at 16384 a tie with step 1's untiled best (18358) and with the
+cascade. The planner's own clock prefers the tile at all three cells — the
+race decides per cell, and a tie is a tie. Tiles chosen: L1-sized (16 / 32
+KB), radix-4 tails appearing as N grows. The calibrator's ZTURN-T
+candidates trade near-equal chains between calibrations (as below 2048).
+
+Two defects of mine caught by this verdict, both fixed the same day: the
+K=1 IL row has TWO serializers in `wisdom2_oop_reader.h` (the replay print
+and the bank path) and the tile reached only one, so the first pass banked
+winners without `il_tw=`; and a forced `mode=zcasc` door row without
+`eng=zturn` + the `ref=` signpost degrades to a re-race, so the "cascade"
+arm served ZTURN-T. Both are recorded in memory as traps.
+
+**Step 2 verdict:** ZTURN-T, tiled where its race says so, wins the natural
+T=1 cell at 4096..16384 against the cascade and against MKL. The owner's
+decision on it: strip the cascade — `docs/design/zcascade_sunset_plan.md`.
+
 ## Step 2 — the tiled ZTURN-T (the tiling axis) — IN THE TREE 2026-09-09
 
 Shipped as designed below with one refinement: the tile width is a RUNTIME

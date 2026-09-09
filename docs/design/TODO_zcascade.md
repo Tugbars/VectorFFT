@@ -1,10 +1,12 @@
 # To-do: the N >= 2048 cascade (ZTURN-S), after ZTURN-T shipped
 
-**Status:** decided by the owner 2026-09-09 ("we'll fix that and also bring
-some of the zt-t optimizations to zcascade"); none started. Each item names
-what is measured and what is not. Everything here is the cascade's — ZTURN-T
-(`oop/ztt.h`, 16..2048) is shipped and separately parked for its own
-improvements.
+**Status:** SUPERSEDED 2026-09-09 (evening) by `zcascade_sunset_plan.md` —
+after ZTURN-T (tiled) beat the cascade and MKL at 4096..16384 the owner
+decided to strip the cascade per contract. Items 1, 4 and 5 (the cascade's
+terminator, mids and fused calls) are therefore not built; item 2 (the
+two-level baked create) and item 3 (calibrator pacing) carry over to
+ZTURN-T; item 6 became `zturn_t_2048plus_plan.md`. Kept as the record of
+what was measured and decided.
 
 ## 1. The backward terminator's spills — the loaded-stream backward twin
 
