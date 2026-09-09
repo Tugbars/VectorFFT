@@ -85,7 +85,9 @@ typedef struct
                                        * fwd, and bwd (the s half negated)          */
     size_t twdoubles;
     size_t *rb;                       /* the run-base table, ncol entries            */
-    double *plane;                    /* 2N doubles, 64-B (the `plane` mode scratch) */
+    double *plane;                    /* 2N doubles + 4 KB of slack, 64-B: the `plane`
+                                       * mode scratch; each in-place call starts it 2 KB
+                                       * (mod 4 KB) from the caller's buffer (_ztt_plane_for) */
     const vfft_ztt_cell_t *cell;      /* the registry row: the four drivers          */
     vfft_ztt_fn fwd, bwd;             /* BOUND by placement (vfft_ztt_bind)          */
     int inplace;
@@ -228,7 +230,7 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain(int N, const int *chain, in
     p->tw = (double *)VFFT_ZTT_ALLOC(p->twdoubles * sizeof(double));
     p->twb = (double *)VFFT_ZTT_ALLOC(p->twdoubles * sizeof(double));
     p->rb = (size_t *)VFFT_ZTT_ALLOC((size_t)p->ncol * sizeof(size_t));
-    p->plane = (double *)VFFT_ZTT_ALLOC((size_t)2 * (size_t)N * sizeof(double));
+    p->plane = (double *)VFFT_ZTT_ALLOC((size_t)2 * (size_t)N * sizeof(double) + 4096u);
     if (!p->tw || !p->twb || !p->rb || !p->plane) { vfft_ztt_destroy(p); return NULL; }
     /* the streams, stage order, ONE allocation each (the fused driver's
      * carried cursor walks straight from one stage's end into the next) */
@@ -290,16 +292,39 @@ static inline int vfft_ztt_set_tile(vfft_ztt_plan_t *p, size_t tile)
     return 1;
 }
 
+/* the plane's PAGE OFFSET against the caller's buffer (measured 2026-09-09,
+ * probes/ZT/zt_plane_skew.c, and again with tlfi in the tree): with the plane
+ * just below zout in its 4 KB slot, the terminator's stores to zout sit in the
+ * same 4K slot as its loads from the plane a few column quads ahead — a
+ * 4K-alias stall worth +20..30% in place at 4096..16384, SEPARATE from the
+ * store-miss latency tlfi's prefetch removes (both are needed). The plane
+ * carries 4 KB of slack and each in-place call starts it 2 KB (mod 4 KB) from
+ * zout, 64-B aligned: the alias distance becomes 128 columns. Arithmetic is
+ * untouched (the gate's in-place bitwise law holds). */
+static inline double *_ztt_plane_for(const vfft_ztt_plan_t *p, const double *zout)
+{
+    const uintptr_t base = (uintptr_t)p->plane;
+    const uintptr_t want = ((uintptr_t)zout + 2048u) & 4095u;
+    const uintptr_t off = ((want - (base & 4095u)) & 4095u) & ~(uintptr_t)63u;
+    return (double *)(base + off);
+}
+
 static inline void vfft_ztt_execute_fwd(const vfft_ztt_plan_t *p,
                                         const double *zin, double *zout)
 {
-    (zin == zout ? p->cell->fwd_plane : p->fwd)(zin, zout, p->plane, p->tw, p->rb, p->tile);
+    if (zin == zout || p->inplace)
+        p->cell->fwd_plane(zin, zout, _ztt_plane_for(p, zout), p->tw, p->rb, p->tile);
+    else
+        p->fwd(zin, zout, p->plane, p->tw, p->rb, p->tile);
 }
 
 static inline void vfft_ztt_execute_bwd(const vfft_ztt_plan_t *p,
                                         const double *zin, double *zout)
 {
-    (zin == zout ? p->cell->bwd_plane : p->bwd)(zin, zout, p->plane, p->twb, p->rb, p->tile);
+    if (zin == zout || p->inplace)
+        p->cell->bwd_plane(zin, zout, _ztt_plane_for(p, zout), p->twb, p->rb, p->tile);
+    else
+        p->bwd(zin, zout, p->plane, p->twb, p->rb, p->tile);
 }
 
 /* "4.4.8" for logs and the wisdom token il_ztt= */
