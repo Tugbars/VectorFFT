@@ -1903,6 +1903,10 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
             for (int s = 0; s < cand[i].nf; s++)
                 cn += snprintf(ch + cn, sizeof ch - (size_t)cn, "%s%d",
                                s ? "." : "", cand[i].chain[s]);
+            /* ZTURN-T carries its chain in il_zt (the chain IS the plan) */
+            for (int s = 0; s < cand[i].il_zt_n; s++)
+                cn += snprintf(ch + cn, sizeof ch - (size_t)cn, "%s%d",
+                               s ? "." : "", cand[i].il_zt[s]);
             if (!cn) snprintf(ch, sizeof ch, "-");
             /* WIDTH is part of a candidate's IDENTITY. Without it two
              * candidates differing only in tile width print identically, and a
@@ -1918,7 +1922,8 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
                     "chain=%s t2q=%d%s -> %.1f ns (gate %.1e)\n",
                     N, ord, cand[i].route,
                     cand[i].route == VFFT_K1_IL_CASCADE
-                        ? (cand[i].zroute ? "zturn" : "zsplit") : "-",
+                        ? (cand[i].zroute ? "zturn" : "zsplit")
+                        : cand[i].route == VFFT_K1_IL_ZTT ? "ztt" : "-",
                     cand[i].R1, cand[i].R2, ch,
                     cand[i].t2q, wbuf, cand[i].cost_ns, gerr);
         }

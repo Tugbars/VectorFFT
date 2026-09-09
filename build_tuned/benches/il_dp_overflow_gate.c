@@ -36,9 +36,14 @@
  * INGEST axis: vfft_zturn2_create_chain admits chain[0] in {4, 8}, so every
  * scrambled cascade cell enumerates the 8-first chains under the ZTURN
  * engine too (legacy zsplit always did) — 50/80/117/171/253/349 became
- * 56/87/127/184/270/372. */
+ * 56/87/127/184/270/372.
+ * Re-measured 2026-09-09 (il_dp_cand_census, cap 1024) after ZTURN-T (route
+ * 9, oop/ztt.h): its registry chains enter the natural-engine set that the
+ * sub-2048 scrambled pool races, so N=1024 scrambled 30 -> 37 (the seven
+ * {4,8} chains with product 1024); 2048 and above unchanged (ZTURN-T is
+ * natural-only at 2048, absent above). */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 30 }, { 2048, 56 }, { 4096, 87 }, { 8192, 127 },
+    { 1024, 37 }, { 2048, 56 }, { 4096, 87 }, { 8192, 127 },
     { 16384, 184 }, { 32768, 270 }, { 65536, 372 }
 };
 
