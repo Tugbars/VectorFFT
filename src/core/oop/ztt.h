@@ -311,8 +311,10 @@ static inline void vfft_ztt_bind(vfft_ztt_plan_t *p, int inplace)
  * 2026-09-09): at a power of two in 16..VFFT_ZTT_MAX_N the interleaved K=1
  * cell belongs to the solo kernels and the pairs (<= 64), the pairs and
  * ZTURN-T (128..1024) and ZTURN-T alone (2048 and up) — and NO cascade race
- * arm exists at any door (natural, DEFAULT, in place): "no cascade race arm
- * please, eliminate". Before this the natural door raced the natord cascade
+ * arm exists at any NATURAL or DEFAULT door, out of place or in place: "no
+ * cascade race arm please, eliminate". The explicit SCRAMBLED cell (out of
+ * place and in place) keeps the cascade, its only scrambled writer, until
+ * the scrambled ZTURN-T class exists. Before this the natural door raced the natord cascade
  * from 128 up and had banked it at 512 (400 ns over a 300 ns pair — a door
  * clock's verdict, not the tier's). The doors consult this before building a
  * cascade candidate; outside the band (above the ceiling, any odd factor)

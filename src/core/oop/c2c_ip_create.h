@@ -123,6 +123,17 @@ static void _c2c_race_reseed(void *v)
  * split K-lane plan behind a convert. Census before this path: 177 of 255
  * sizes below 257 executed through the convert in place; 3 of 255 out of
  * place, with the same kernels. */
+/* DEFAULT = NATURAL (design_contracts.md section 3, owner 2026-09-09) at the
+ * pow2 cells: a DEFAULT in-place request reads and banks the @nat row and is
+ * served natural order, exactly as NATURAL. The odd cells keep their pre-law
+ * DEFAULT path (the @scrmode row) until the odd machinery has its turn. The
+ * lookup (step 1 below) and the bank use this one classification. */
+static inline int _ip_order_is_nat(const vfft_config_t *cfg, int N)
+{
+    return cfg->order == VFFT_ORDER_NATURAL ||
+           (cfg->order == VFFT_ORDER_DEFAULT && (N & (N - 1)) == 0);
+}
+
 static void _bank_ipmode_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                             int N, int mode, double ns)
 {
@@ -140,7 +151,7 @@ static void _bank_ipmode_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     nn.factors[0] = N;
     nn.ref_comp = _zcasc_ref_is_comp(W, N, mode); /* the recipe row that SERVED */
     nn.ref_ilp = _ilp_ref_of(W, N, mode, cfg->order == VFFT_ORDER_SCRAMBLED);   /* the row that SERVED */
-    if (cfg->order == VFFT_ORDER_NATURAL)
+    if (_ip_order_is_nat(cfg, N))
         vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0, _vw2_lay_of(cfg));
     else
         vw2_stride_bank_scrmode(&W->vw2, &nn, _vw2_lay_of(cfg));
@@ -156,7 +167,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
                                    const vfft_proto_registry_t *reg,
                                    int N, size_t K)
 {
-    const int nat = (cfg->order == VFFT_ORDER_NATURAL);
+    const int nat = _ip_order_is_nat(cfg, N);   /* DEFAULT = NATURAL at pow2 */
     struct vfft_plan_s *h;
     vfft_il2p_plan_t *il2 = NULL;
     vfft_il3p_plan_t *il3 = NULL;
@@ -203,10 +214,12 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         }
         /* mode=conv / tape / free rows: not IL verdicts — fall to the race */
     }
-    /* ZTURN-T's band (owner's law, 2026-09-09): a pow2 cell in 2048..the
-     * ceiling has no cascade arm in place either; a stale ZCASC row there is
-     * not a verdict — the K=1 engine builds and banks as ILP. */
-    if (vfft_ztt_band(N) && mode == VFFT_NAT_ZCASC)
+    /* ZTURN-T's band (owner's law, 2026-09-09): a NATURAL (or DEFAULT) pow2
+     * cell up to the ceiling has no cascade arm in place either; a stale
+     * ZCASC row there is not a verdict — the K=1 engine builds and banks as
+     * ILP. The explicit SCRAMBLED cell keeps the cascade: it is the only
+     * scrambled writer until the scrambled ZTURN-T class exists. */
+    if (nat && vfft_ztt_band(N) && mode == VFFT_NAT_ZCASC)
     {
         mode = VFFT_NAT_UNSET;
         raced_row = 0;
@@ -226,7 +239,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     }
 
     /* 3. the cascade candidate at N >= 2048 (natord under NATURAL) */
-    if (N >= _vfft_zcasc_nat_min_n() && !vfft_ztt_band(N) &&   /* no cascade arm in ZTURN-T's band */
+    if (N >= _vfft_zcasc_nat_min_n() && !(nat && vfft_ztt_band(N)) &&   /* no cascade arm for a natural pow2 cell; scrambled keeps it */
         !getenv("VFFT_NO_K1Z_IP") &&
         !getenv("VFFT_NO_NAT_ZCASC") && W && !W->vw2_off_stride &&
         (mode != VFFT_NAT_ILP || !have_k1))

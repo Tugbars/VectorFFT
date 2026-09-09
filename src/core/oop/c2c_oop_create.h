@@ -179,6 +179,14 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * N < 2048 or odd N and a cold band cell fell through. */
             if (cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                 !W->vw2_off_oop &&
+                /* an explicit SCRAMBLED request at a cascade cell (pow2 >= 2048
+                 * today) is the cascade machinery's own — replay / race above,
+                 * kind-4 rows — not the K=1 tier's: the K=1 tier has no
+                 * scrambled writer there until the scrambled ZTURN-T class
+                 * exists (design_contracts.md section 5). Racing it here banked
+                 * a fresh cascade chain on EVERY create (12-24 s each, T=1 and
+                 * T=8 serving different combs; k1_pow2_gate 2026-09-09). */
+                !(cfg->order == VFFT_ORDER_SCRAMBLED && (zs_pending || zt_pending)) &&
                 (cfg->recalibrate || !ki || !ki->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
             {
                 if (_k1_il_plan_race(W, cfg, N) > 0)

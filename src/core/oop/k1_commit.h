@@ -411,12 +411,22 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * 2026-09-09 this call was fenced to N < 2048 or odd N and a cold in-place
      * band cell refused with "no interleaved engine". */
     if (!W->vw2_off_oop &&
+        /* the cascade's scrambled cells (pow2 >= 2048) are its own machinery,
+         * not the K=1 tier's — no scrambled K=1 writer exists there yet */
+        !(scr_req && (N & (N - 1)) == 0 && N >= _vfft_zcasc_min_n()) &&
         (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)
             ke = (scr_req ? vw2_oop_lookup_k1_scr(&W->vw2, N, &keb)
                           : vw2_oop_lookup_k1(&W->vw2, N, &keb)) ? &keb : NULL;
     }
+    /* a SCRAMBLED request at a cascade cell (pow2 >= 2048) with no scrambled
+     * K=1 row builds NOTHING here — no default pair, no heuristic: the cell
+     * is the cascade machinery's until the scrambled ZTURN-T class exists
+     * (design_contracts.md section 5). Seen 2026-09-09: the in-place
+     * scrambled create at 2048 attached a natural-writing pair 64.32. */
+    if (scr_req && (N & (N - 1)) == 0 && N >= _vfft_zcasc_min_n() && !ke)
+        return;
     /* MONO verdict (2026-09-04): the cell's plan is ONE solo kernel; no pair
      * is built here — the caller serves the mono door (the OOP block reads
      * the form itself; in place, _k1_il_mono_candidate). Without this an
