@@ -409,6 +409,10 @@ static __attribute__((always_inline)) inline void _ztlf4f_body(
     const double *tw_re, size_t Ls, size_t OLs, size_t count)
 {
     for (size_t k = 0; k + 4 <= count; k += 4) {
+        _mm_prefetch((const char *)&zout[2*((size_t)0*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)1*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)2*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)3*Ls + k + 64)], _MM_HINT_T0);
         /* ZBlockSplit load edge */
         const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
@@ -481,6 +485,14 @@ static __attribute__((always_inline)) inline void _ztlf8f_body(
     const double *tw_re, size_t Ls, size_t OLs, size_t count)
 {
     for (size_t k = 0; k + 4 <= count; k += 4) {
+        _mm_prefetch((const char *)&zout[2*((size_t)0*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)1*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)2*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)3*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)4*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)5*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)6*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)7*Ls + k + 64)], _MM_HINT_T0);
         /* ZBlockSplit load edge */
         const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
@@ -1027,6 +1039,10 @@ static __attribute__((always_inline)) inline void _ztlf4b_body(
     const double *tw_re, size_t Ls, size_t OLs, size_t count)
 {
     for (size_t k = 0; k + 4 <= count; k += 4) {
+        _mm_prefetch((const char *)&zout[2*((size_t)0*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)1*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)2*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)3*Ls + k + 64)], _MM_HINT_T0);
         /* ZBlockSplit load edge */
         const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
@@ -1099,6 +1115,14 @@ static __attribute__((always_inline)) inline void _ztlf8b_body(
     const double *tw_re, size_t Ls, size_t OLs, size_t count)
 {
     for (size_t k = 0; k + 4 <= count; k += 4) {
+        _mm_prefetch((const char *)&zout[2*((size_t)0*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)1*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)2*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)3*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)4*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)5*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)6*Ls + k + 64)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&zout[2*((size_t)7*Ls + k + 64)], _MM_HINT_T0);
         /* ZBlockSplit load edge */
         const __m256d lane_re_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d lane_im_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
