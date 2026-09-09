@@ -132,12 +132,38 @@ Shipped as designed below with one refinement: the tile width is a RUNTIME
 argument of every driver (`size_t tile`, 0 = untiled), not a corpus axis —
 one driver per cell (82 cells, 328 drivers), the hot loops inside a group
 literal, the tile loop and the per-tile group count runtime. The planner
-enumerates untiled + every legal width on the cascade's ladder (1 KB .. 64 KB
-of plane, `vfft_ztt_tile_legal` the law: a power of two, >= the first mid's
-R*L, < N) as separate candidates; the winner banks `il_tw=` beside `il_ztt=`
-and every replay applies it (`vfft_ztt_set_tile`). Gate: every legal width
-bitwise the untiled result (fwd, bwd, in place) on every cell, and a seeded
-`il_tw=1024` row replayed through the front door.
+enumerates untiled + each legal width of the ladder (`vfft_ztt_tile_legal`
+the law: a power of two, >= the first mid's R*L, < N) as separate
+candidates; the winner banks `il_tw=` beside `il_ztt=` and every replay
+applies it (`vfft_ztt_set_tile`). Gate: every legal width bitwise the untiled
+result (fwd, bwd, in place) on every cell, and a seeded `il_tw=1024` row
+replayed through the front door.
+
+**The ladder is 16 KB and 32 KB of plane** (1024 / 2048 complexes; owner's
+ruling 2026-09-09 evening). The first ladder was the cascade's, 1 KB .. 64 KB;
+the race over it at 2048..32768 (every chain x every width, planner clock,
+`probes/ZT/phaseE2_calibrate.log`, `phaseE5_calibrate.log`) settled it:
+
+- A width matters only through the stages it admits into L1: a stage runs in
+  the tile iff its extent (the radix product through it) fits the tile; all
+  other stages sweep the plane. Two widths that admit the same stages tie
+  (8.8.8.8 at 4096: 16 KB 3556 ns, 32 KB 3565); a width that admits one more
+  stage pays 5..8% (8.8.8.4.4 at 8192: 16 KB 8511, 32 KB 8007).
+- 32 KB is the largest width that leaves L1 room for the twiddle streams
+  (a 48 KB tile would fill the L1D; 64 KB never won a chain), so it admits
+  the most stages and wins wherever it brings a stage in; 16 KB wins where
+  it does not.
+- No width below 16 KB ever admits a stage 16 KB leaves out. The 1..8 KB
+  "wins" were ties on radix-4-heavy chains, which lose the cell anyway: at
+  every cell the 8-first chains beat every 4-first chain by 8..15% (the
+  ingest is the one untiled pass, and a radix-8 ingest does twice the work
+  per gathered point there), and 6/7-stage chains sit 3..20% behind.
+- Untiled stays the datum and wins 2048, whose 32 KB plane is L1-resident.
+
+The cell winner is unchanged at 4096..16384 in both orders under the cut;
+the calibration per ZTURN-T chain drops from up to 8 candidates to 3.
+Widths of 3 * 2^k (12 / 24 / 48 KB) divide only planes with a factor of 3;
+they belong to the 2^a * odd engine's ladder when it is built.
 
 Runs are contiguous, so a tile of T complexes holds WHOLE groups of every
 stage with RL <= T. The tiled driver is MKL's large path: per tile, the

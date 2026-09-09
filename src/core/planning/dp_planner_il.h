@@ -1509,12 +1509,19 @@ static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
         for (q = 0; q < cell->nf; q++) c.il_zt[q] = cell->chain[q];
         c.il_zt_n = cell->nf;
         _il_dp_push(s, &c);                       /* untiled */
-        /* TILING is an AXIS (owner's law, 2026-09-09): every legal tile width
-         * on the cascade's own ladder (1 KB .. 64 KB of plane per tile, in
-         * complexes) is its own candidate beside untiled; the race decides
-         * per cell, the row banks il_tw=. vfft_ztt_tile_legal is the law. */
+        /* TILING is an AXIS (owner's law, 2026-09-09): each legal tile width
+         * is its own candidate beside untiled; the race decides per cell, the
+         * row banks il_tw=. vfft_ztt_tile_legal is the law. The ladder is
+         * 16 KB and 32 KB of plane (1024 / 2048 complexes), ruled by the
+         * owner 2026-09-09 from the measured race at 2048..32768 (every chain
+         * x the old 1 KB..64 KB ladder): a width matters only through the
+         * stages it admits into L1, 32 KB is the largest width that still
+         * leaves L1 room for the twiddle streams, and no width below 16 KB
+         * ever admits a stage 16 KB leaves out — the 1..8 KB widths only tied
+         * on chains that lose the cell; 64 KB never won a chain. Untiled
+         * stays the datum (the 2048 winner: its 32 KB plane is L1-resident). */
         {
-            static const int ladder[] = { 64, 128, 256, 512, 1024, 2048, 4096 };
+            static const int ladder[] = { 1024, 2048 };
             for (q = 0; q < (int)(sizeof ladder / sizeof ladder[0]); q++)
                 if (vfft_ztt_tile_legal(N, cell->chain, cell->nf, (size_t)ladder[q]))
                 {
@@ -1533,6 +1540,19 @@ static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
 static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int with_flat)
 {
     vfft_il_cand_t c;
+    /* ZTURN-T ALONE band (owner's law, design_contracts.md section 4,
+     * 2026-09-09): at a power of two >= 2048 nothing but ZTURN-T enters the
+     * pool — no Bailey pair, no chain3, no mono. The pairs there were raced
+     * and lost at every cell (4096: 64x64 5293 ns vs ZTURN-T 3550) and the
+     * owner ruled them out of the search: "for 2048 and 4096, bailey
+     * shouldn't be in the search pool." A cell without a ZTURN-T chain
+     * enumerates nothing and refuses; it is never filled from another band. */
+    if ((N & (N - 1)) == 0 && N >= 2048)
+    {
+        (void)with_flat;
+        _il_dp_enumerate_ztt(N, s);
+        return;
+    }
     {
         /* MONO forms (2026-09-04): every solo kernel the registry has enters
          * the pool as its own candidate — form 0 = the solo n1 kind at each

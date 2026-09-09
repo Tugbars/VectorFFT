@@ -57,10 +57,19 @@
  * octave is 16384, the pairs stop at R = 128).
  * Re-measured 2026-09-09 (evening) after S4 (ZTURN-T's ceiling 262144 via the
  * two-level create): its 28 / 36 chains x tile widths enter the 32768 / 65536
- * scrambled pools too, 270 -> 494 and 372 -> 660. */
+ * scrambled pools too, 270 -> 494 and 372 -> 660.
+ * Re-measured 2026-09-09 (evening) after the owner cut ZTURN-T's tile ladder
+ * to 16 KB and 32 KB (dp_planner_il.h, _il_dp_enumerate_ztt): each ZTURN-T
+ * chain is now untiled + the legal widths of {1024, 2048} complexes, so
+ * 65 -> 37, 126 -> 90, 175 -> 127, 255 -> 175, 352 -> 247, 494 -> 354,
+ * 660 -> 480 (il_dp_cand_census, cap 1024).
+ * Re-measured 2026-09-09 (evening) after the ZTURN-T-ALONE gate in
+ * _il_dp_enumerate_natural_engines (owner: no Bailey pair in the pow2 pools
+ * at 2048 and above): the 16 pairs at 2048 and the 4 at 4096 left both
+ * pools, 90 -> 74 and 127 -> 123; the other cells never had a pair. */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 65 }, { 2048, 126 }, { 4096, 175 }, { 8192, 255 },
-    { 16384, 352 }, { 32768, 494 }, { 65536, 660 }
+    { 1024, 37 }, { 2048, 74 }, { 4096, 123 }, { 8192, 175 },
+    { 16384, 247 }, { 32768, 354 }, { 65536, 480 }
 };
 
 int main(void)
