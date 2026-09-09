@@ -31,12 +31,12 @@
  *
  * CELLS: every ordered {4,8} chain with product N, nf >= 2, R0 % 4 == 0 and
  * (N / R0) % 4 == 0 (CONTRACT.md §1 — every plane address a kernel touches
- * is a whole 64-B block), for 16 <= N <= 16384. The ceiling is STRUCTURAL:
- * the create expands its streams from a baked quarter-wave at M = 16384 by an
- * index shift, which cannot resolve RL > M (zt_bake.c: "table resolution
+ * is a whole 64-B block), for 16 <= N <= 262144 (the cascade's ceiling, S4
+ * 2026-09-09). Up to RL = 16384 the create expands its streams from the baked
+ * quarter-wave by an index shift; above it by the two-level product (ztt.h) (zt_bake.c: "table resolution
  * refusal"). *)
 
-let max_n = 16384
+let max_n = 262144
 let max_nf = 7 (* VFFT_ZSPLIT_MAX_NF *)
 
 (* every ordered {4,8} chain with product n, nf >= 2, (n / r0) mod 4 = 0;

@@ -531,7 +531,12 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * IL-only handles are INTERLEAVED-committed by construction
              * (every IL attempt above is layout-gated for the spr < 0 case),
              * so the split dispatch never sees k1_sp_route == -1. */
-            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr || ilfd ||
+            /* ztt joined this list 2026-09-09 (S4): without it a ZTURN-T plan was
+             * committed only when the SPLIT axis also had a route (spr >= 0) —
+             * true at every cell up to 65536, so it went unseen until 131072,
+             * where no split route exists and a replayed ZTURN-T plan fell
+             * through to the "no interleaved engine" refusal. */
+            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr || ilfd || ztt ||
                 (ilr == VFFT_K1_IL_MONO && cfg->layout == VFFT_LAYOUT_INTERLEAVED)) /* the solo tier has no plan object */
             {
                 struct vfft_plan_s *hk =

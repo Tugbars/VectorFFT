@@ -337,6 +337,570 @@ extern void ztt_16384_8_8_8_8_4_fwd_dest_avx2(const double *zin, double *zout, d
 extern void ztt_16384_8_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
 extern void ztt_16384_8_8_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
 extern void ztt_16384_8_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_8_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_8_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_4_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_4_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_4_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_4_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_4_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_4_8_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_4_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_4_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_4_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_8_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_8_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_32768_8_8_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_4_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_8_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_8_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_4_8_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_8_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_8_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_4_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_4_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_4_8_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_8_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_8_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_4_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_4_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_4_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_4_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_4_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_65536_8_8_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_4_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_4_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_4_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_4_8_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_4_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_8_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_8_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_4_8_8_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_4_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_8_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_8_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_4_8_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_8_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_8_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_4_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_4_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_4_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_4_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_131072_8_8_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_4_8_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_4_8_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_4_8_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_4_8_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_4_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_4_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_4_8_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_4_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_4_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_4_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_4_8_8_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_4_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_4_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_4_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_4_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_4_8_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_4_8_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_4_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_4_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_4_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_4_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_8_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_8_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_8_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_8_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_8_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_8_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_8_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_4_8_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_4_8_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_4_4_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_4_4_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_4_4_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_4_4_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_4_8_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_4_8_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_4_8_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_4_8_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_8_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_8_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_8_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_4_8_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_8_4_4_4_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_8_4_4_4_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_8_4_4_4_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_8_4_4_4_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_8_8_8_fwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_8_8_8_fwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_8_8_8_bwd_dest_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
+extern void ztt_262144_8_8_8_8_8_8_bwd_plane_avx2(const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile);
 
 typedef struct {
     int n, nf;
@@ -344,7 +908,7 @@ typedef struct {
     vfft_ztt_fn fwd_dest, fwd_plane, bwd_dest, bwd_plane;
 } vfft_ztt_cell_t;
 
-#define VFFT_ZTT_NCELLS_AVX2 82
+#define VFFT_ZTT_NCELLS_AVX2 223
 static const vfft_ztt_cell_t vfft_ztt_cells_avx2[VFFT_ZTT_NCELLS_AVX2] = {
     { 16, 2, { 4, 4, 0, 0, 0, 0, 0 }, ztt_16_4_4_fwd_dest_avx2, ztt_16_4_4_fwd_plane_avx2, ztt_16_4_4_bwd_dest_avx2, ztt_16_4_4_bwd_plane_avx2 },
     { 32, 2, { 4, 8, 0, 0, 0, 0, 0 }, ztt_32_4_8_fwd_dest_avx2, ztt_32_4_8_fwd_plane_avx2, ztt_32_4_8_bwd_dest_avx2, ztt_32_4_8_bwd_plane_avx2 },
@@ -428,6 +992,147 @@ static const vfft_ztt_cell_t vfft_ztt_cells_avx2[VFFT_ZTT_NCELLS_AVX2] = {
     { 16384, 5, { 8, 8, 4, 8, 8, 0, 0 }, ztt_16384_8_8_4_8_8_fwd_dest_avx2, ztt_16384_8_8_4_8_8_fwd_plane_avx2, ztt_16384_8_8_4_8_8_bwd_dest_avx2, ztt_16384_8_8_4_8_8_bwd_plane_avx2 },
     { 16384, 5, { 8, 8, 8, 4, 8, 0, 0 }, ztt_16384_8_8_8_4_8_fwd_dest_avx2, ztt_16384_8_8_8_4_8_fwd_plane_avx2, ztt_16384_8_8_8_4_8_bwd_dest_avx2, ztt_16384_8_8_8_4_8_bwd_plane_avx2 },
     { 16384, 5, { 8, 8, 8, 8, 4, 0, 0 }, ztt_16384_8_8_8_8_4_fwd_dest_avx2, ztt_16384_8_8_8_8_4_fwd_plane_avx2, ztt_16384_8_8_8_8_4_bwd_dest_avx2, ztt_16384_8_8_8_8_4_bwd_plane_avx2 },
+    { 32768, 7, { 4, 4, 4, 4, 4, 4, 8 }, ztt_32768_4_4_4_4_4_4_8_fwd_dest_avx2, ztt_32768_4_4_4_4_4_4_8_fwd_plane_avx2, ztt_32768_4_4_4_4_4_4_8_bwd_dest_avx2, ztt_32768_4_4_4_4_4_4_8_bwd_plane_avx2 },
+    { 32768, 7, { 4, 4, 4, 4, 4, 8, 4 }, ztt_32768_4_4_4_4_4_8_4_fwd_dest_avx2, ztt_32768_4_4_4_4_4_8_4_fwd_plane_avx2, ztt_32768_4_4_4_4_4_8_4_bwd_dest_avx2, ztt_32768_4_4_4_4_4_8_4_bwd_plane_avx2 },
+    { 32768, 7, { 4, 4, 4, 4, 8, 4, 4 }, ztt_32768_4_4_4_4_8_4_4_fwd_dest_avx2, ztt_32768_4_4_4_4_8_4_4_fwd_plane_avx2, ztt_32768_4_4_4_4_8_4_4_bwd_dest_avx2, ztt_32768_4_4_4_4_8_4_4_bwd_plane_avx2 },
+    { 32768, 7, { 4, 4, 4, 8, 4, 4, 4 }, ztt_32768_4_4_4_8_4_4_4_fwd_dest_avx2, ztt_32768_4_4_4_8_4_4_4_fwd_plane_avx2, ztt_32768_4_4_4_8_4_4_4_bwd_dest_avx2, ztt_32768_4_4_4_8_4_4_4_bwd_plane_avx2 },
+    { 32768, 6, { 4, 4, 4, 8, 8, 8, 0 }, ztt_32768_4_4_4_8_8_8_fwd_dest_avx2, ztt_32768_4_4_4_8_8_8_fwd_plane_avx2, ztt_32768_4_4_4_8_8_8_bwd_dest_avx2, ztt_32768_4_4_4_8_8_8_bwd_plane_avx2 },
+    { 32768, 7, { 4, 4, 8, 4, 4, 4, 4 }, ztt_32768_4_4_8_4_4_4_4_fwd_dest_avx2, ztt_32768_4_4_8_4_4_4_4_fwd_plane_avx2, ztt_32768_4_4_8_4_4_4_4_bwd_dest_avx2, ztt_32768_4_4_8_4_4_4_4_bwd_plane_avx2 },
+    { 32768, 6, { 4, 4, 8, 4, 8, 8, 0 }, ztt_32768_4_4_8_4_8_8_fwd_dest_avx2, ztt_32768_4_4_8_4_8_8_fwd_plane_avx2, ztt_32768_4_4_8_4_8_8_bwd_dest_avx2, ztt_32768_4_4_8_4_8_8_bwd_plane_avx2 },
+    { 32768, 6, { 4, 4, 8, 8, 4, 8, 0 }, ztt_32768_4_4_8_8_4_8_fwd_dest_avx2, ztt_32768_4_4_8_8_4_8_fwd_plane_avx2, ztt_32768_4_4_8_8_4_8_bwd_dest_avx2, ztt_32768_4_4_8_8_4_8_bwd_plane_avx2 },
+    { 32768, 6, { 4, 4, 8, 8, 8, 4, 0 }, ztt_32768_4_4_8_8_8_4_fwd_dest_avx2, ztt_32768_4_4_8_8_8_4_fwd_plane_avx2, ztt_32768_4_4_8_8_8_4_bwd_dest_avx2, ztt_32768_4_4_8_8_8_4_bwd_plane_avx2 },
+    { 32768, 7, { 4, 8, 4, 4, 4, 4, 4 }, ztt_32768_4_8_4_4_4_4_4_fwd_dest_avx2, ztt_32768_4_8_4_4_4_4_4_fwd_plane_avx2, ztt_32768_4_8_4_4_4_4_4_bwd_dest_avx2, ztt_32768_4_8_4_4_4_4_4_bwd_plane_avx2 },
+    { 32768, 6, { 4, 8, 4, 4, 8, 8, 0 }, ztt_32768_4_8_4_4_8_8_fwd_dest_avx2, ztt_32768_4_8_4_4_8_8_fwd_plane_avx2, ztt_32768_4_8_4_4_8_8_bwd_dest_avx2, ztt_32768_4_8_4_4_8_8_bwd_plane_avx2 },
+    { 32768, 6, { 4, 8, 4, 8, 4, 8, 0 }, ztt_32768_4_8_4_8_4_8_fwd_dest_avx2, ztt_32768_4_8_4_8_4_8_fwd_plane_avx2, ztt_32768_4_8_4_8_4_8_bwd_dest_avx2, ztt_32768_4_8_4_8_4_8_bwd_plane_avx2 },
+    { 32768, 6, { 4, 8, 4, 8, 8, 4, 0 }, ztt_32768_4_8_4_8_8_4_fwd_dest_avx2, ztt_32768_4_8_4_8_8_4_fwd_plane_avx2, ztt_32768_4_8_4_8_8_4_bwd_dest_avx2, ztt_32768_4_8_4_8_8_4_bwd_plane_avx2 },
+    { 32768, 6, { 4, 8, 8, 4, 4, 8, 0 }, ztt_32768_4_8_8_4_4_8_fwd_dest_avx2, ztt_32768_4_8_8_4_4_8_fwd_plane_avx2, ztt_32768_4_8_8_4_4_8_bwd_dest_avx2, ztt_32768_4_8_8_4_4_8_bwd_plane_avx2 },
+    { 32768, 6, { 4, 8, 8, 4, 8, 4, 0 }, ztt_32768_4_8_8_4_8_4_fwd_dest_avx2, ztt_32768_4_8_8_4_8_4_fwd_plane_avx2, ztt_32768_4_8_8_4_8_4_bwd_dest_avx2, ztt_32768_4_8_8_4_8_4_bwd_plane_avx2 },
+    { 32768, 6, { 4, 8, 8, 8, 4, 4, 0 }, ztt_32768_4_8_8_8_4_4_fwd_dest_avx2, ztt_32768_4_8_8_8_4_4_fwd_plane_avx2, ztt_32768_4_8_8_8_4_4_bwd_dest_avx2, ztt_32768_4_8_8_8_4_4_bwd_plane_avx2 },
+    { 32768, 7, { 8, 4, 4, 4, 4, 4, 4 }, ztt_32768_8_4_4_4_4_4_4_fwd_dest_avx2, ztt_32768_8_4_4_4_4_4_4_fwd_plane_avx2, ztt_32768_8_4_4_4_4_4_4_bwd_dest_avx2, ztt_32768_8_4_4_4_4_4_4_bwd_plane_avx2 },
+    { 32768, 6, { 8, 4, 4, 4, 8, 8, 0 }, ztt_32768_8_4_4_4_8_8_fwd_dest_avx2, ztt_32768_8_4_4_4_8_8_fwd_plane_avx2, ztt_32768_8_4_4_4_8_8_bwd_dest_avx2, ztt_32768_8_4_4_4_8_8_bwd_plane_avx2 },
+    { 32768, 6, { 8, 4, 4, 8, 4, 8, 0 }, ztt_32768_8_4_4_8_4_8_fwd_dest_avx2, ztt_32768_8_4_4_8_4_8_fwd_plane_avx2, ztt_32768_8_4_4_8_4_8_bwd_dest_avx2, ztt_32768_8_4_4_8_4_8_bwd_plane_avx2 },
+    { 32768, 6, { 8, 4, 4, 8, 8, 4, 0 }, ztt_32768_8_4_4_8_8_4_fwd_dest_avx2, ztt_32768_8_4_4_8_8_4_fwd_plane_avx2, ztt_32768_8_4_4_8_8_4_bwd_dest_avx2, ztt_32768_8_4_4_8_8_4_bwd_plane_avx2 },
+    { 32768, 6, { 8, 4, 8, 4, 4, 8, 0 }, ztt_32768_8_4_8_4_4_8_fwd_dest_avx2, ztt_32768_8_4_8_4_4_8_fwd_plane_avx2, ztt_32768_8_4_8_4_4_8_bwd_dest_avx2, ztt_32768_8_4_8_4_4_8_bwd_plane_avx2 },
+    { 32768, 6, { 8, 4, 8, 4, 8, 4, 0 }, ztt_32768_8_4_8_4_8_4_fwd_dest_avx2, ztt_32768_8_4_8_4_8_4_fwd_plane_avx2, ztt_32768_8_4_8_4_8_4_bwd_dest_avx2, ztt_32768_8_4_8_4_8_4_bwd_plane_avx2 },
+    { 32768, 6, { 8, 4, 8, 8, 4, 4, 0 }, ztt_32768_8_4_8_8_4_4_fwd_dest_avx2, ztt_32768_8_4_8_8_4_4_fwd_plane_avx2, ztt_32768_8_4_8_8_4_4_bwd_dest_avx2, ztt_32768_8_4_8_8_4_4_bwd_plane_avx2 },
+    { 32768, 6, { 8, 8, 4, 4, 4, 8, 0 }, ztt_32768_8_8_4_4_4_8_fwd_dest_avx2, ztt_32768_8_8_4_4_4_8_fwd_plane_avx2, ztt_32768_8_8_4_4_4_8_bwd_dest_avx2, ztt_32768_8_8_4_4_4_8_bwd_plane_avx2 },
+    { 32768, 6, { 8, 8, 4, 4, 8, 4, 0 }, ztt_32768_8_8_4_4_8_4_fwd_dest_avx2, ztt_32768_8_8_4_4_8_4_fwd_plane_avx2, ztt_32768_8_8_4_4_8_4_bwd_dest_avx2, ztt_32768_8_8_4_4_8_4_bwd_plane_avx2 },
+    { 32768, 6, { 8, 8, 4, 8, 4, 4, 0 }, ztt_32768_8_8_4_8_4_4_fwd_dest_avx2, ztt_32768_8_8_4_8_4_4_fwd_plane_avx2, ztt_32768_8_8_4_8_4_4_bwd_dest_avx2, ztt_32768_8_8_4_8_4_4_bwd_plane_avx2 },
+    { 32768, 6, { 8, 8, 8, 4, 4, 4, 0 }, ztt_32768_8_8_8_4_4_4_fwd_dest_avx2, ztt_32768_8_8_8_4_4_4_fwd_plane_avx2, ztt_32768_8_8_8_4_4_4_bwd_dest_avx2, ztt_32768_8_8_8_4_4_4_bwd_plane_avx2 },
+    { 32768, 5, { 8, 8, 8, 8, 8, 0, 0 }, ztt_32768_8_8_8_8_8_fwd_dest_avx2, ztt_32768_8_8_8_8_8_fwd_plane_avx2, ztt_32768_8_8_8_8_8_bwd_dest_avx2, ztt_32768_8_8_8_8_8_bwd_plane_avx2 },
+    { 65536, 7, { 4, 4, 4, 4, 4, 8, 8 }, ztt_65536_4_4_4_4_4_8_8_fwd_dest_avx2, ztt_65536_4_4_4_4_4_8_8_fwd_plane_avx2, ztt_65536_4_4_4_4_4_8_8_bwd_dest_avx2, ztt_65536_4_4_4_4_4_8_8_bwd_plane_avx2 },
+    { 65536, 7, { 4, 4, 4, 4, 8, 4, 8 }, ztt_65536_4_4_4_4_8_4_8_fwd_dest_avx2, ztt_65536_4_4_4_4_8_4_8_fwd_plane_avx2, ztt_65536_4_4_4_4_8_4_8_bwd_dest_avx2, ztt_65536_4_4_4_4_8_4_8_bwd_plane_avx2 },
+    { 65536, 7, { 4, 4, 4, 4, 8, 8, 4 }, ztt_65536_4_4_4_4_8_8_4_fwd_dest_avx2, ztt_65536_4_4_4_4_8_8_4_fwd_plane_avx2, ztt_65536_4_4_4_4_8_8_4_bwd_dest_avx2, ztt_65536_4_4_4_4_8_8_4_bwd_plane_avx2 },
+    { 65536, 7, { 4, 4, 4, 8, 4, 4, 8 }, ztt_65536_4_4_4_8_4_4_8_fwd_dest_avx2, ztt_65536_4_4_4_8_4_4_8_fwd_plane_avx2, ztt_65536_4_4_4_8_4_4_8_bwd_dest_avx2, ztt_65536_4_4_4_8_4_4_8_bwd_plane_avx2 },
+    { 65536, 7, { 4, 4, 4, 8, 4, 8, 4 }, ztt_65536_4_4_4_8_4_8_4_fwd_dest_avx2, ztt_65536_4_4_4_8_4_8_4_fwd_plane_avx2, ztt_65536_4_4_4_8_4_8_4_bwd_dest_avx2, ztt_65536_4_4_4_8_4_8_4_bwd_plane_avx2 },
+    { 65536, 7, { 4, 4, 4, 8, 8, 4, 4 }, ztt_65536_4_4_4_8_8_4_4_fwd_dest_avx2, ztt_65536_4_4_4_8_8_4_4_fwd_plane_avx2, ztt_65536_4_4_4_8_8_4_4_bwd_dest_avx2, ztt_65536_4_4_4_8_8_4_4_bwd_plane_avx2 },
+    { 65536, 7, { 4, 4, 8, 4, 4, 4, 8 }, ztt_65536_4_4_8_4_4_4_8_fwd_dest_avx2, ztt_65536_4_4_8_4_4_4_8_fwd_plane_avx2, ztt_65536_4_4_8_4_4_4_8_bwd_dest_avx2, ztt_65536_4_4_8_4_4_4_8_bwd_plane_avx2 },
+    { 65536, 7, { 4, 4, 8, 4, 4, 8, 4 }, ztt_65536_4_4_8_4_4_8_4_fwd_dest_avx2, ztt_65536_4_4_8_4_4_8_4_fwd_plane_avx2, ztt_65536_4_4_8_4_4_8_4_bwd_dest_avx2, ztt_65536_4_4_8_4_4_8_4_bwd_plane_avx2 },
+    { 65536, 7, { 4, 4, 8, 4, 8, 4, 4 }, ztt_65536_4_4_8_4_8_4_4_fwd_dest_avx2, ztt_65536_4_4_8_4_8_4_4_fwd_plane_avx2, ztt_65536_4_4_8_4_8_4_4_bwd_dest_avx2, ztt_65536_4_4_8_4_8_4_4_bwd_plane_avx2 },
+    { 65536, 7, { 4, 4, 8, 8, 4, 4, 4 }, ztt_65536_4_4_8_8_4_4_4_fwd_dest_avx2, ztt_65536_4_4_8_8_4_4_4_fwd_plane_avx2, ztt_65536_4_4_8_8_4_4_4_bwd_dest_avx2, ztt_65536_4_4_8_8_4_4_4_bwd_plane_avx2 },
+    { 65536, 6, { 4, 4, 8, 8, 8, 8, 0 }, ztt_65536_4_4_8_8_8_8_fwd_dest_avx2, ztt_65536_4_4_8_8_8_8_fwd_plane_avx2, ztt_65536_4_4_8_8_8_8_bwd_dest_avx2, ztt_65536_4_4_8_8_8_8_bwd_plane_avx2 },
+    { 65536, 7, { 4, 8, 4, 4, 4, 4, 8 }, ztt_65536_4_8_4_4_4_4_8_fwd_dest_avx2, ztt_65536_4_8_4_4_4_4_8_fwd_plane_avx2, ztt_65536_4_8_4_4_4_4_8_bwd_dest_avx2, ztt_65536_4_8_4_4_4_4_8_bwd_plane_avx2 },
+    { 65536, 7, { 4, 8, 4, 4, 4, 8, 4 }, ztt_65536_4_8_4_4_4_8_4_fwd_dest_avx2, ztt_65536_4_8_4_4_4_8_4_fwd_plane_avx2, ztt_65536_4_8_4_4_4_8_4_bwd_dest_avx2, ztt_65536_4_8_4_4_4_8_4_bwd_plane_avx2 },
+    { 65536, 7, { 4, 8, 4, 4, 8, 4, 4 }, ztt_65536_4_8_4_4_8_4_4_fwd_dest_avx2, ztt_65536_4_8_4_4_8_4_4_fwd_plane_avx2, ztt_65536_4_8_4_4_8_4_4_bwd_dest_avx2, ztt_65536_4_8_4_4_8_4_4_bwd_plane_avx2 },
+    { 65536, 7, { 4, 8, 4, 8, 4, 4, 4 }, ztt_65536_4_8_4_8_4_4_4_fwd_dest_avx2, ztt_65536_4_8_4_8_4_4_4_fwd_plane_avx2, ztt_65536_4_8_4_8_4_4_4_bwd_dest_avx2, ztt_65536_4_8_4_8_4_4_4_bwd_plane_avx2 },
+    { 65536, 6, { 4, 8, 4, 8, 8, 8, 0 }, ztt_65536_4_8_4_8_8_8_fwd_dest_avx2, ztt_65536_4_8_4_8_8_8_fwd_plane_avx2, ztt_65536_4_8_4_8_8_8_bwd_dest_avx2, ztt_65536_4_8_4_8_8_8_bwd_plane_avx2 },
+    { 65536, 7, { 4, 8, 8, 4, 4, 4, 4 }, ztt_65536_4_8_8_4_4_4_4_fwd_dest_avx2, ztt_65536_4_8_8_4_4_4_4_fwd_plane_avx2, ztt_65536_4_8_8_4_4_4_4_bwd_dest_avx2, ztt_65536_4_8_8_4_4_4_4_bwd_plane_avx2 },
+    { 65536, 6, { 4, 8, 8, 4, 8, 8, 0 }, ztt_65536_4_8_8_4_8_8_fwd_dest_avx2, ztt_65536_4_8_8_4_8_8_fwd_plane_avx2, ztt_65536_4_8_8_4_8_8_bwd_dest_avx2, ztt_65536_4_8_8_4_8_8_bwd_plane_avx2 },
+    { 65536, 6, { 4, 8, 8, 8, 4, 8, 0 }, ztt_65536_4_8_8_8_4_8_fwd_dest_avx2, ztt_65536_4_8_8_8_4_8_fwd_plane_avx2, ztt_65536_4_8_8_8_4_8_bwd_dest_avx2, ztt_65536_4_8_8_8_4_8_bwd_plane_avx2 },
+    { 65536, 6, { 4, 8, 8, 8, 8, 4, 0 }, ztt_65536_4_8_8_8_8_4_fwd_dest_avx2, ztt_65536_4_8_8_8_8_4_fwd_plane_avx2, ztt_65536_4_8_8_8_8_4_bwd_dest_avx2, ztt_65536_4_8_8_8_8_4_bwd_plane_avx2 },
+    { 65536, 7, { 8, 4, 4, 4, 4, 4, 8 }, ztt_65536_8_4_4_4_4_4_8_fwd_dest_avx2, ztt_65536_8_4_4_4_4_4_8_fwd_plane_avx2, ztt_65536_8_4_4_4_4_4_8_bwd_dest_avx2, ztt_65536_8_4_4_4_4_4_8_bwd_plane_avx2 },
+    { 65536, 7, { 8, 4, 4, 4, 4, 8, 4 }, ztt_65536_8_4_4_4_4_8_4_fwd_dest_avx2, ztt_65536_8_4_4_4_4_8_4_fwd_plane_avx2, ztt_65536_8_4_4_4_4_8_4_bwd_dest_avx2, ztt_65536_8_4_4_4_4_8_4_bwd_plane_avx2 },
+    { 65536, 7, { 8, 4, 4, 4, 8, 4, 4 }, ztt_65536_8_4_4_4_8_4_4_fwd_dest_avx2, ztt_65536_8_4_4_4_8_4_4_fwd_plane_avx2, ztt_65536_8_4_4_4_8_4_4_bwd_dest_avx2, ztt_65536_8_4_4_4_8_4_4_bwd_plane_avx2 },
+    { 65536, 7, { 8, 4, 4, 8, 4, 4, 4 }, ztt_65536_8_4_4_8_4_4_4_fwd_dest_avx2, ztt_65536_8_4_4_8_4_4_4_fwd_plane_avx2, ztt_65536_8_4_4_8_4_4_4_bwd_dest_avx2, ztt_65536_8_4_4_8_4_4_4_bwd_plane_avx2 },
+    { 65536, 6, { 8, 4, 4, 8, 8, 8, 0 }, ztt_65536_8_4_4_8_8_8_fwd_dest_avx2, ztt_65536_8_4_4_8_8_8_fwd_plane_avx2, ztt_65536_8_4_4_8_8_8_bwd_dest_avx2, ztt_65536_8_4_4_8_8_8_bwd_plane_avx2 },
+    { 65536, 7, { 8, 4, 8, 4, 4, 4, 4 }, ztt_65536_8_4_8_4_4_4_4_fwd_dest_avx2, ztt_65536_8_4_8_4_4_4_4_fwd_plane_avx2, ztt_65536_8_4_8_4_4_4_4_bwd_dest_avx2, ztt_65536_8_4_8_4_4_4_4_bwd_plane_avx2 },
+    { 65536, 6, { 8, 4, 8, 4, 8, 8, 0 }, ztt_65536_8_4_8_4_8_8_fwd_dest_avx2, ztt_65536_8_4_8_4_8_8_fwd_plane_avx2, ztt_65536_8_4_8_4_8_8_bwd_dest_avx2, ztt_65536_8_4_8_4_8_8_bwd_plane_avx2 },
+    { 65536, 6, { 8, 4, 8, 8, 4, 8, 0 }, ztt_65536_8_4_8_8_4_8_fwd_dest_avx2, ztt_65536_8_4_8_8_4_8_fwd_plane_avx2, ztt_65536_8_4_8_8_4_8_bwd_dest_avx2, ztt_65536_8_4_8_8_4_8_bwd_plane_avx2 },
+    { 65536, 6, { 8, 4, 8, 8, 8, 4, 0 }, ztt_65536_8_4_8_8_8_4_fwd_dest_avx2, ztt_65536_8_4_8_8_8_4_fwd_plane_avx2, ztt_65536_8_4_8_8_8_4_bwd_dest_avx2, ztt_65536_8_4_8_8_8_4_bwd_plane_avx2 },
+    { 65536, 7, { 8, 8, 4, 4, 4, 4, 4 }, ztt_65536_8_8_4_4_4_4_4_fwd_dest_avx2, ztt_65536_8_8_4_4_4_4_4_fwd_plane_avx2, ztt_65536_8_8_4_4_4_4_4_bwd_dest_avx2, ztt_65536_8_8_4_4_4_4_4_bwd_plane_avx2 },
+    { 65536, 6, { 8, 8, 4, 4, 8, 8, 0 }, ztt_65536_8_8_4_4_8_8_fwd_dest_avx2, ztt_65536_8_8_4_4_8_8_fwd_plane_avx2, ztt_65536_8_8_4_4_8_8_bwd_dest_avx2, ztt_65536_8_8_4_4_8_8_bwd_plane_avx2 },
+    { 65536, 6, { 8, 8, 4, 8, 4, 8, 0 }, ztt_65536_8_8_4_8_4_8_fwd_dest_avx2, ztt_65536_8_8_4_8_4_8_fwd_plane_avx2, ztt_65536_8_8_4_8_4_8_bwd_dest_avx2, ztt_65536_8_8_4_8_4_8_bwd_plane_avx2 },
+    { 65536, 6, { 8, 8, 4, 8, 8, 4, 0 }, ztt_65536_8_8_4_8_8_4_fwd_dest_avx2, ztt_65536_8_8_4_8_8_4_fwd_plane_avx2, ztt_65536_8_8_4_8_8_4_bwd_dest_avx2, ztt_65536_8_8_4_8_8_4_bwd_plane_avx2 },
+    { 65536, 6, { 8, 8, 8, 4, 4, 8, 0 }, ztt_65536_8_8_8_4_4_8_fwd_dest_avx2, ztt_65536_8_8_8_4_4_8_fwd_plane_avx2, ztt_65536_8_8_8_4_4_8_bwd_dest_avx2, ztt_65536_8_8_8_4_4_8_bwd_plane_avx2 },
+    { 65536, 6, { 8, 8, 8, 4, 8, 4, 0 }, ztt_65536_8_8_8_4_8_4_fwd_dest_avx2, ztt_65536_8_8_8_4_8_4_fwd_plane_avx2, ztt_65536_8_8_8_4_8_4_bwd_dest_avx2, ztt_65536_8_8_8_4_8_4_bwd_plane_avx2 },
+    { 65536, 6, { 8, 8, 8, 8, 4, 4, 0 }, ztt_65536_8_8_8_8_4_4_fwd_dest_avx2, ztt_65536_8_8_8_8_4_4_fwd_plane_avx2, ztt_65536_8_8_8_8_4_4_bwd_dest_avx2, ztt_65536_8_8_8_8_4_4_bwd_plane_avx2 },
+    { 131072, 7, { 4, 4, 4, 4, 8, 8, 8 }, ztt_131072_4_4_4_4_8_8_8_fwd_dest_avx2, ztt_131072_4_4_4_4_8_8_8_fwd_plane_avx2, ztt_131072_4_4_4_4_8_8_8_bwd_dest_avx2, ztt_131072_4_4_4_4_8_8_8_bwd_plane_avx2 },
+    { 131072, 7, { 4, 4, 4, 8, 4, 8, 8 }, ztt_131072_4_4_4_8_4_8_8_fwd_dest_avx2, ztt_131072_4_4_4_8_4_8_8_fwd_plane_avx2, ztt_131072_4_4_4_8_4_8_8_bwd_dest_avx2, ztt_131072_4_4_4_8_4_8_8_bwd_plane_avx2 },
+    { 131072, 7, { 4, 4, 4, 8, 8, 4, 8 }, ztt_131072_4_4_4_8_8_4_8_fwd_dest_avx2, ztt_131072_4_4_4_8_8_4_8_fwd_plane_avx2, ztt_131072_4_4_4_8_8_4_8_bwd_dest_avx2, ztt_131072_4_4_4_8_8_4_8_bwd_plane_avx2 },
+    { 131072, 7, { 4, 4, 4, 8, 8, 8, 4 }, ztt_131072_4_4_4_8_8_8_4_fwd_dest_avx2, ztt_131072_4_4_4_8_8_8_4_fwd_plane_avx2, ztt_131072_4_4_4_8_8_8_4_bwd_dest_avx2, ztt_131072_4_4_4_8_8_8_4_bwd_plane_avx2 },
+    { 131072, 7, { 4, 4, 8, 4, 4, 8, 8 }, ztt_131072_4_4_8_4_4_8_8_fwd_dest_avx2, ztt_131072_4_4_8_4_4_8_8_fwd_plane_avx2, ztt_131072_4_4_8_4_4_8_8_bwd_dest_avx2, ztt_131072_4_4_8_4_4_8_8_bwd_plane_avx2 },
+    { 131072, 7, { 4, 4, 8, 4, 8, 4, 8 }, ztt_131072_4_4_8_4_8_4_8_fwd_dest_avx2, ztt_131072_4_4_8_4_8_4_8_fwd_plane_avx2, ztt_131072_4_4_8_4_8_4_8_bwd_dest_avx2, ztt_131072_4_4_8_4_8_4_8_bwd_plane_avx2 },
+    { 131072, 7, { 4, 4, 8, 4, 8, 8, 4 }, ztt_131072_4_4_8_4_8_8_4_fwd_dest_avx2, ztt_131072_4_4_8_4_8_8_4_fwd_plane_avx2, ztt_131072_4_4_8_4_8_8_4_bwd_dest_avx2, ztt_131072_4_4_8_4_8_8_4_bwd_plane_avx2 },
+    { 131072, 7, { 4, 4, 8, 8, 4, 4, 8 }, ztt_131072_4_4_8_8_4_4_8_fwd_dest_avx2, ztt_131072_4_4_8_8_4_4_8_fwd_plane_avx2, ztt_131072_4_4_8_8_4_4_8_bwd_dest_avx2, ztt_131072_4_4_8_8_4_4_8_bwd_plane_avx2 },
+    { 131072, 7, { 4, 4, 8, 8, 4, 8, 4 }, ztt_131072_4_4_8_8_4_8_4_fwd_dest_avx2, ztt_131072_4_4_8_8_4_8_4_fwd_plane_avx2, ztt_131072_4_4_8_8_4_8_4_bwd_dest_avx2, ztt_131072_4_4_8_8_4_8_4_bwd_plane_avx2 },
+    { 131072, 7, { 4, 4, 8, 8, 8, 4, 4 }, ztt_131072_4_4_8_8_8_4_4_fwd_dest_avx2, ztt_131072_4_4_8_8_8_4_4_fwd_plane_avx2, ztt_131072_4_4_8_8_8_4_4_bwd_dest_avx2, ztt_131072_4_4_8_8_8_4_4_bwd_plane_avx2 },
+    { 131072, 7, { 4, 8, 4, 4, 4, 8, 8 }, ztt_131072_4_8_4_4_4_8_8_fwd_dest_avx2, ztt_131072_4_8_4_4_4_8_8_fwd_plane_avx2, ztt_131072_4_8_4_4_4_8_8_bwd_dest_avx2, ztt_131072_4_8_4_4_4_8_8_bwd_plane_avx2 },
+    { 131072, 7, { 4, 8, 4, 4, 8, 4, 8 }, ztt_131072_4_8_4_4_8_4_8_fwd_dest_avx2, ztt_131072_4_8_4_4_8_4_8_fwd_plane_avx2, ztt_131072_4_8_4_4_8_4_8_bwd_dest_avx2, ztt_131072_4_8_4_4_8_4_8_bwd_plane_avx2 },
+    { 131072, 7, { 4, 8, 4, 4, 8, 8, 4 }, ztt_131072_4_8_4_4_8_8_4_fwd_dest_avx2, ztt_131072_4_8_4_4_8_8_4_fwd_plane_avx2, ztt_131072_4_8_4_4_8_8_4_bwd_dest_avx2, ztt_131072_4_8_4_4_8_8_4_bwd_plane_avx2 },
+    { 131072, 7, { 4, 8, 4, 8, 4, 4, 8 }, ztt_131072_4_8_4_8_4_4_8_fwd_dest_avx2, ztt_131072_4_8_4_8_4_4_8_fwd_plane_avx2, ztt_131072_4_8_4_8_4_4_8_bwd_dest_avx2, ztt_131072_4_8_4_8_4_4_8_bwd_plane_avx2 },
+    { 131072, 7, { 4, 8, 4, 8, 4, 8, 4 }, ztt_131072_4_8_4_8_4_8_4_fwd_dest_avx2, ztt_131072_4_8_4_8_4_8_4_fwd_plane_avx2, ztt_131072_4_8_4_8_4_8_4_bwd_dest_avx2, ztt_131072_4_8_4_8_4_8_4_bwd_plane_avx2 },
+    { 131072, 7, { 4, 8, 4, 8, 8, 4, 4 }, ztt_131072_4_8_4_8_8_4_4_fwd_dest_avx2, ztt_131072_4_8_4_8_8_4_4_fwd_plane_avx2, ztt_131072_4_8_4_8_8_4_4_bwd_dest_avx2, ztt_131072_4_8_4_8_8_4_4_bwd_plane_avx2 },
+    { 131072, 7, { 4, 8, 8, 4, 4, 4, 8 }, ztt_131072_4_8_8_4_4_4_8_fwd_dest_avx2, ztt_131072_4_8_8_4_4_4_8_fwd_plane_avx2, ztt_131072_4_8_8_4_4_4_8_bwd_dest_avx2, ztt_131072_4_8_8_4_4_4_8_bwd_plane_avx2 },
+    { 131072, 7, { 4, 8, 8, 4, 4, 8, 4 }, ztt_131072_4_8_8_4_4_8_4_fwd_dest_avx2, ztt_131072_4_8_8_4_4_8_4_fwd_plane_avx2, ztt_131072_4_8_8_4_4_8_4_bwd_dest_avx2, ztt_131072_4_8_8_4_4_8_4_bwd_plane_avx2 },
+    { 131072, 7, { 4, 8, 8, 4, 8, 4, 4 }, ztt_131072_4_8_8_4_8_4_4_fwd_dest_avx2, ztt_131072_4_8_8_4_8_4_4_fwd_plane_avx2, ztt_131072_4_8_8_4_8_4_4_bwd_dest_avx2, ztt_131072_4_8_8_4_8_4_4_bwd_plane_avx2 },
+    { 131072, 7, { 4, 8, 8, 8, 4, 4, 4 }, ztt_131072_4_8_8_8_4_4_4_fwd_dest_avx2, ztt_131072_4_8_8_8_4_4_4_fwd_plane_avx2, ztt_131072_4_8_8_8_4_4_4_bwd_dest_avx2, ztt_131072_4_8_8_8_4_4_4_bwd_plane_avx2 },
+    { 131072, 6, { 4, 8, 8, 8, 8, 8, 0 }, ztt_131072_4_8_8_8_8_8_fwd_dest_avx2, ztt_131072_4_8_8_8_8_8_fwd_plane_avx2, ztt_131072_4_8_8_8_8_8_bwd_dest_avx2, ztt_131072_4_8_8_8_8_8_bwd_plane_avx2 },
+    { 131072, 7, { 8, 4, 4, 4, 4, 8, 8 }, ztt_131072_8_4_4_4_4_8_8_fwd_dest_avx2, ztt_131072_8_4_4_4_4_8_8_fwd_plane_avx2, ztt_131072_8_4_4_4_4_8_8_bwd_dest_avx2, ztt_131072_8_4_4_4_4_8_8_bwd_plane_avx2 },
+    { 131072, 7, { 8, 4, 4, 4, 8, 4, 8 }, ztt_131072_8_4_4_4_8_4_8_fwd_dest_avx2, ztt_131072_8_4_4_4_8_4_8_fwd_plane_avx2, ztt_131072_8_4_4_4_8_4_8_bwd_dest_avx2, ztt_131072_8_4_4_4_8_4_8_bwd_plane_avx2 },
+    { 131072, 7, { 8, 4, 4, 4, 8, 8, 4 }, ztt_131072_8_4_4_4_8_8_4_fwd_dest_avx2, ztt_131072_8_4_4_4_8_8_4_fwd_plane_avx2, ztt_131072_8_4_4_4_8_8_4_bwd_dest_avx2, ztt_131072_8_4_4_4_8_8_4_bwd_plane_avx2 },
+    { 131072, 7, { 8, 4, 4, 8, 4, 4, 8 }, ztt_131072_8_4_4_8_4_4_8_fwd_dest_avx2, ztt_131072_8_4_4_8_4_4_8_fwd_plane_avx2, ztt_131072_8_4_4_8_4_4_8_bwd_dest_avx2, ztt_131072_8_4_4_8_4_4_8_bwd_plane_avx2 },
+    { 131072, 7, { 8, 4, 4, 8, 4, 8, 4 }, ztt_131072_8_4_4_8_4_8_4_fwd_dest_avx2, ztt_131072_8_4_4_8_4_8_4_fwd_plane_avx2, ztt_131072_8_4_4_8_4_8_4_bwd_dest_avx2, ztt_131072_8_4_4_8_4_8_4_bwd_plane_avx2 },
+    { 131072, 7, { 8, 4, 4, 8, 8, 4, 4 }, ztt_131072_8_4_4_8_8_4_4_fwd_dest_avx2, ztt_131072_8_4_4_8_8_4_4_fwd_plane_avx2, ztt_131072_8_4_4_8_8_4_4_bwd_dest_avx2, ztt_131072_8_4_4_8_8_4_4_bwd_plane_avx2 },
+    { 131072, 7, { 8, 4, 8, 4, 4, 4, 8 }, ztt_131072_8_4_8_4_4_4_8_fwd_dest_avx2, ztt_131072_8_4_8_4_4_4_8_fwd_plane_avx2, ztt_131072_8_4_8_4_4_4_8_bwd_dest_avx2, ztt_131072_8_4_8_4_4_4_8_bwd_plane_avx2 },
+    { 131072, 7, { 8, 4, 8, 4, 4, 8, 4 }, ztt_131072_8_4_8_4_4_8_4_fwd_dest_avx2, ztt_131072_8_4_8_4_4_8_4_fwd_plane_avx2, ztt_131072_8_4_8_4_4_8_4_bwd_dest_avx2, ztt_131072_8_4_8_4_4_8_4_bwd_plane_avx2 },
+    { 131072, 7, { 8, 4, 8, 4, 8, 4, 4 }, ztt_131072_8_4_8_4_8_4_4_fwd_dest_avx2, ztt_131072_8_4_8_4_8_4_4_fwd_plane_avx2, ztt_131072_8_4_8_4_8_4_4_bwd_dest_avx2, ztt_131072_8_4_8_4_8_4_4_bwd_plane_avx2 },
+    { 131072, 7, { 8, 4, 8, 8, 4, 4, 4 }, ztt_131072_8_4_8_8_4_4_4_fwd_dest_avx2, ztt_131072_8_4_8_8_4_4_4_fwd_plane_avx2, ztt_131072_8_4_8_8_4_4_4_bwd_dest_avx2, ztt_131072_8_4_8_8_4_4_4_bwd_plane_avx2 },
+    { 131072, 6, { 8, 4, 8, 8, 8, 8, 0 }, ztt_131072_8_4_8_8_8_8_fwd_dest_avx2, ztt_131072_8_4_8_8_8_8_fwd_plane_avx2, ztt_131072_8_4_8_8_8_8_bwd_dest_avx2, ztt_131072_8_4_8_8_8_8_bwd_plane_avx2 },
+    { 131072, 7, { 8, 8, 4, 4, 4, 4, 8 }, ztt_131072_8_8_4_4_4_4_8_fwd_dest_avx2, ztt_131072_8_8_4_4_4_4_8_fwd_plane_avx2, ztt_131072_8_8_4_4_4_4_8_bwd_dest_avx2, ztt_131072_8_8_4_4_4_4_8_bwd_plane_avx2 },
+    { 131072, 7, { 8, 8, 4, 4, 4, 8, 4 }, ztt_131072_8_8_4_4_4_8_4_fwd_dest_avx2, ztt_131072_8_8_4_4_4_8_4_fwd_plane_avx2, ztt_131072_8_8_4_4_4_8_4_bwd_dest_avx2, ztt_131072_8_8_4_4_4_8_4_bwd_plane_avx2 },
+    { 131072, 7, { 8, 8, 4, 4, 8, 4, 4 }, ztt_131072_8_8_4_4_8_4_4_fwd_dest_avx2, ztt_131072_8_8_4_4_8_4_4_fwd_plane_avx2, ztt_131072_8_8_4_4_8_4_4_bwd_dest_avx2, ztt_131072_8_8_4_4_8_4_4_bwd_plane_avx2 },
+    { 131072, 7, { 8, 8, 4, 8, 4, 4, 4 }, ztt_131072_8_8_4_8_4_4_4_fwd_dest_avx2, ztt_131072_8_8_4_8_4_4_4_fwd_plane_avx2, ztt_131072_8_8_4_8_4_4_4_bwd_dest_avx2, ztt_131072_8_8_4_8_4_4_4_bwd_plane_avx2 },
+    { 131072, 6, { 8, 8, 4, 8, 8, 8, 0 }, ztt_131072_8_8_4_8_8_8_fwd_dest_avx2, ztt_131072_8_8_4_8_8_8_fwd_plane_avx2, ztt_131072_8_8_4_8_8_8_bwd_dest_avx2, ztt_131072_8_8_4_8_8_8_bwd_plane_avx2 },
+    { 131072, 7, { 8, 8, 8, 4, 4, 4, 4 }, ztt_131072_8_8_8_4_4_4_4_fwd_dest_avx2, ztt_131072_8_8_8_4_4_4_4_fwd_plane_avx2, ztt_131072_8_8_8_4_4_4_4_bwd_dest_avx2, ztt_131072_8_8_8_4_4_4_4_bwd_plane_avx2 },
+    { 131072, 6, { 8, 8, 8, 4, 8, 8, 0 }, ztt_131072_8_8_8_4_8_8_fwd_dest_avx2, ztt_131072_8_8_8_4_8_8_fwd_plane_avx2, ztt_131072_8_8_8_4_8_8_bwd_dest_avx2, ztt_131072_8_8_8_4_8_8_bwd_plane_avx2 },
+    { 131072, 6, { 8, 8, 8, 8, 4, 8, 0 }, ztt_131072_8_8_8_8_4_8_fwd_dest_avx2, ztt_131072_8_8_8_8_4_8_fwd_plane_avx2, ztt_131072_8_8_8_8_4_8_bwd_dest_avx2, ztt_131072_8_8_8_8_4_8_bwd_plane_avx2 },
+    { 131072, 6, { 8, 8, 8, 8, 8, 4, 0 }, ztt_131072_8_8_8_8_8_4_fwd_dest_avx2, ztt_131072_8_8_8_8_8_4_fwd_plane_avx2, ztt_131072_8_8_8_8_8_4_bwd_dest_avx2, ztt_131072_8_8_8_8_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 4, 4, 4, 8, 8, 8, 8 }, ztt_262144_4_4_4_8_8_8_8_fwd_dest_avx2, ztt_262144_4_4_4_8_8_8_8_fwd_plane_avx2, ztt_262144_4_4_4_8_8_8_8_bwd_dest_avx2, ztt_262144_4_4_4_8_8_8_8_bwd_plane_avx2 },
+    { 262144, 7, { 4, 4, 8, 4, 8, 8, 8 }, ztt_262144_4_4_8_4_8_8_8_fwd_dest_avx2, ztt_262144_4_4_8_4_8_8_8_fwd_plane_avx2, ztt_262144_4_4_8_4_8_8_8_bwd_dest_avx2, ztt_262144_4_4_8_4_8_8_8_bwd_plane_avx2 },
+    { 262144, 7, { 4, 4, 8, 8, 4, 8, 8 }, ztt_262144_4_4_8_8_4_8_8_fwd_dest_avx2, ztt_262144_4_4_8_8_4_8_8_fwd_plane_avx2, ztt_262144_4_4_8_8_4_8_8_bwd_dest_avx2, ztt_262144_4_4_8_8_4_8_8_bwd_plane_avx2 },
+    { 262144, 7, { 4, 4, 8, 8, 8, 4, 8 }, ztt_262144_4_4_8_8_8_4_8_fwd_dest_avx2, ztt_262144_4_4_8_8_8_4_8_fwd_plane_avx2, ztt_262144_4_4_8_8_8_4_8_bwd_dest_avx2, ztt_262144_4_4_8_8_8_4_8_bwd_plane_avx2 },
+    { 262144, 7, { 4, 4, 8, 8, 8, 8, 4 }, ztt_262144_4_4_8_8_8_8_4_fwd_dest_avx2, ztt_262144_4_4_8_8_8_8_4_fwd_plane_avx2, ztt_262144_4_4_8_8_8_8_4_bwd_dest_avx2, ztt_262144_4_4_8_8_8_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 4, 8, 4, 4, 8, 8, 8 }, ztt_262144_4_8_4_4_8_8_8_fwd_dest_avx2, ztt_262144_4_8_4_4_8_8_8_fwd_plane_avx2, ztt_262144_4_8_4_4_8_8_8_bwd_dest_avx2, ztt_262144_4_8_4_4_8_8_8_bwd_plane_avx2 },
+    { 262144, 7, { 4, 8, 4, 8, 4, 8, 8 }, ztt_262144_4_8_4_8_4_8_8_fwd_dest_avx2, ztt_262144_4_8_4_8_4_8_8_fwd_plane_avx2, ztt_262144_4_8_4_8_4_8_8_bwd_dest_avx2, ztt_262144_4_8_4_8_4_8_8_bwd_plane_avx2 },
+    { 262144, 7, { 4, 8, 4, 8, 8, 4, 8 }, ztt_262144_4_8_4_8_8_4_8_fwd_dest_avx2, ztt_262144_4_8_4_8_8_4_8_fwd_plane_avx2, ztt_262144_4_8_4_8_8_4_8_bwd_dest_avx2, ztt_262144_4_8_4_8_8_4_8_bwd_plane_avx2 },
+    { 262144, 7, { 4, 8, 4, 8, 8, 8, 4 }, ztt_262144_4_8_4_8_8_8_4_fwd_dest_avx2, ztt_262144_4_8_4_8_8_8_4_fwd_plane_avx2, ztt_262144_4_8_4_8_8_8_4_bwd_dest_avx2, ztt_262144_4_8_4_8_8_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 4, 8, 8, 4, 4, 8, 8 }, ztt_262144_4_8_8_4_4_8_8_fwd_dest_avx2, ztt_262144_4_8_8_4_4_8_8_fwd_plane_avx2, ztt_262144_4_8_8_4_4_8_8_bwd_dest_avx2, ztt_262144_4_8_8_4_4_8_8_bwd_plane_avx2 },
+    { 262144, 7, { 4, 8, 8, 4, 8, 4, 8 }, ztt_262144_4_8_8_4_8_4_8_fwd_dest_avx2, ztt_262144_4_8_8_4_8_4_8_fwd_plane_avx2, ztt_262144_4_8_8_4_8_4_8_bwd_dest_avx2, ztt_262144_4_8_8_4_8_4_8_bwd_plane_avx2 },
+    { 262144, 7, { 4, 8, 8, 4, 8, 8, 4 }, ztt_262144_4_8_8_4_8_8_4_fwd_dest_avx2, ztt_262144_4_8_8_4_8_8_4_fwd_plane_avx2, ztt_262144_4_8_8_4_8_8_4_bwd_dest_avx2, ztt_262144_4_8_8_4_8_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 4, 8, 8, 8, 4, 4, 8 }, ztt_262144_4_8_8_8_4_4_8_fwd_dest_avx2, ztt_262144_4_8_8_8_4_4_8_fwd_plane_avx2, ztt_262144_4_8_8_8_4_4_8_bwd_dest_avx2, ztt_262144_4_8_8_8_4_4_8_bwd_plane_avx2 },
+    { 262144, 7, { 4, 8, 8, 8, 4, 8, 4 }, ztt_262144_4_8_8_8_4_8_4_fwd_dest_avx2, ztt_262144_4_8_8_8_4_8_4_fwd_plane_avx2, ztt_262144_4_8_8_8_4_8_4_bwd_dest_avx2, ztt_262144_4_8_8_8_4_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 4, 8, 8, 8, 8, 4, 4 }, ztt_262144_4_8_8_8_8_4_4_fwd_dest_avx2, ztt_262144_4_8_8_8_8_4_4_fwd_plane_avx2, ztt_262144_4_8_8_8_8_4_4_bwd_dest_avx2, ztt_262144_4_8_8_8_8_4_4_bwd_plane_avx2 },
+    { 262144, 7, { 8, 4, 4, 4, 8, 8, 8 }, ztt_262144_8_4_4_4_8_8_8_fwd_dest_avx2, ztt_262144_8_4_4_4_8_8_8_fwd_plane_avx2, ztt_262144_8_4_4_4_8_8_8_bwd_dest_avx2, ztt_262144_8_4_4_4_8_8_8_bwd_plane_avx2 },
+    { 262144, 7, { 8, 4, 4, 8, 4, 8, 8 }, ztt_262144_8_4_4_8_4_8_8_fwd_dest_avx2, ztt_262144_8_4_4_8_4_8_8_fwd_plane_avx2, ztt_262144_8_4_4_8_4_8_8_bwd_dest_avx2, ztt_262144_8_4_4_8_4_8_8_bwd_plane_avx2 },
+    { 262144, 7, { 8, 4, 4, 8, 8, 4, 8 }, ztt_262144_8_4_4_8_8_4_8_fwd_dest_avx2, ztt_262144_8_4_4_8_8_4_8_fwd_plane_avx2, ztt_262144_8_4_4_8_8_4_8_bwd_dest_avx2, ztt_262144_8_4_4_8_8_4_8_bwd_plane_avx2 },
+    { 262144, 7, { 8, 4, 4, 8, 8, 8, 4 }, ztt_262144_8_4_4_8_8_8_4_fwd_dest_avx2, ztt_262144_8_4_4_8_8_8_4_fwd_plane_avx2, ztt_262144_8_4_4_8_8_8_4_bwd_dest_avx2, ztt_262144_8_4_4_8_8_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 8, 4, 8, 4, 4, 8, 8 }, ztt_262144_8_4_8_4_4_8_8_fwd_dest_avx2, ztt_262144_8_4_8_4_4_8_8_fwd_plane_avx2, ztt_262144_8_4_8_4_4_8_8_bwd_dest_avx2, ztt_262144_8_4_8_4_4_8_8_bwd_plane_avx2 },
+    { 262144, 7, { 8, 4, 8, 4, 8, 4, 8 }, ztt_262144_8_4_8_4_8_4_8_fwd_dest_avx2, ztt_262144_8_4_8_4_8_4_8_fwd_plane_avx2, ztt_262144_8_4_8_4_8_4_8_bwd_dest_avx2, ztt_262144_8_4_8_4_8_4_8_bwd_plane_avx2 },
+    { 262144, 7, { 8, 4, 8, 4, 8, 8, 4 }, ztt_262144_8_4_8_4_8_8_4_fwd_dest_avx2, ztt_262144_8_4_8_4_8_8_4_fwd_plane_avx2, ztt_262144_8_4_8_4_8_8_4_bwd_dest_avx2, ztt_262144_8_4_8_4_8_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 8, 4, 8, 8, 4, 4, 8 }, ztt_262144_8_4_8_8_4_4_8_fwd_dest_avx2, ztt_262144_8_4_8_8_4_4_8_fwd_plane_avx2, ztt_262144_8_4_8_8_4_4_8_bwd_dest_avx2, ztt_262144_8_4_8_8_4_4_8_bwd_plane_avx2 },
+    { 262144, 7, { 8, 4, 8, 8, 4, 8, 4 }, ztt_262144_8_4_8_8_4_8_4_fwd_dest_avx2, ztt_262144_8_4_8_8_4_8_4_fwd_plane_avx2, ztt_262144_8_4_8_8_4_8_4_bwd_dest_avx2, ztt_262144_8_4_8_8_4_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 8, 4, 8, 8, 8, 4, 4 }, ztt_262144_8_4_8_8_8_4_4_fwd_dest_avx2, ztt_262144_8_4_8_8_8_4_4_fwd_plane_avx2, ztt_262144_8_4_8_8_8_4_4_bwd_dest_avx2, ztt_262144_8_4_8_8_8_4_4_bwd_plane_avx2 },
+    { 262144, 7, { 8, 8, 4, 4, 4, 8, 8 }, ztt_262144_8_8_4_4_4_8_8_fwd_dest_avx2, ztt_262144_8_8_4_4_4_8_8_fwd_plane_avx2, ztt_262144_8_8_4_4_4_8_8_bwd_dest_avx2, ztt_262144_8_8_4_4_4_8_8_bwd_plane_avx2 },
+    { 262144, 7, { 8, 8, 4, 4, 8, 4, 8 }, ztt_262144_8_8_4_4_8_4_8_fwd_dest_avx2, ztt_262144_8_8_4_4_8_4_8_fwd_plane_avx2, ztt_262144_8_8_4_4_8_4_8_bwd_dest_avx2, ztt_262144_8_8_4_4_8_4_8_bwd_plane_avx2 },
+    { 262144, 7, { 8, 8, 4, 4, 8, 8, 4 }, ztt_262144_8_8_4_4_8_8_4_fwd_dest_avx2, ztt_262144_8_8_4_4_8_8_4_fwd_plane_avx2, ztt_262144_8_8_4_4_8_8_4_bwd_dest_avx2, ztt_262144_8_8_4_4_8_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 8, 8, 4, 8, 4, 4, 8 }, ztt_262144_8_8_4_8_4_4_8_fwd_dest_avx2, ztt_262144_8_8_4_8_4_4_8_fwd_plane_avx2, ztt_262144_8_8_4_8_4_4_8_bwd_dest_avx2, ztt_262144_8_8_4_8_4_4_8_bwd_plane_avx2 },
+    { 262144, 7, { 8, 8, 4, 8, 4, 8, 4 }, ztt_262144_8_8_4_8_4_8_4_fwd_dest_avx2, ztt_262144_8_8_4_8_4_8_4_fwd_plane_avx2, ztt_262144_8_8_4_8_4_8_4_bwd_dest_avx2, ztt_262144_8_8_4_8_4_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 8, 8, 4, 8, 8, 4, 4 }, ztt_262144_8_8_4_8_8_4_4_fwd_dest_avx2, ztt_262144_8_8_4_8_8_4_4_fwd_plane_avx2, ztt_262144_8_8_4_8_8_4_4_bwd_dest_avx2, ztt_262144_8_8_4_8_8_4_4_bwd_plane_avx2 },
+    { 262144, 7, { 8, 8, 8, 4, 4, 4, 8 }, ztt_262144_8_8_8_4_4_4_8_fwd_dest_avx2, ztt_262144_8_8_8_4_4_4_8_fwd_plane_avx2, ztt_262144_8_8_8_4_4_4_8_bwd_dest_avx2, ztt_262144_8_8_8_4_4_4_8_bwd_plane_avx2 },
+    { 262144, 7, { 8, 8, 8, 4, 4, 8, 4 }, ztt_262144_8_8_8_4_4_8_4_fwd_dest_avx2, ztt_262144_8_8_8_4_4_8_4_fwd_plane_avx2, ztt_262144_8_8_8_4_4_8_4_bwd_dest_avx2, ztt_262144_8_8_8_4_4_8_4_bwd_plane_avx2 },
+    { 262144, 7, { 8, 8, 8, 4, 8, 4, 4 }, ztt_262144_8_8_8_4_8_4_4_fwd_dest_avx2, ztt_262144_8_8_8_4_8_4_4_fwd_plane_avx2, ztt_262144_8_8_8_4_8_4_4_bwd_dest_avx2, ztt_262144_8_8_8_4_8_4_4_bwd_plane_avx2 },
+    { 262144, 7, { 8, 8, 8, 8, 4, 4, 4 }, ztt_262144_8_8_8_8_4_4_4_fwd_dest_avx2, ztt_262144_8_8_8_8_4_4_4_fwd_plane_avx2, ztt_262144_8_8_8_8_4_4_4_bwd_dest_avx2, ztt_262144_8_8_8_8_4_4_4_bwd_plane_avx2 },
+    { 262144, 6, { 8, 8, 8, 8, 8, 8, 0 }, ztt_262144_8_8_8_8_8_8_fwd_dest_avx2, ztt_262144_8_8_8_8_8_8_fwd_plane_avx2, ztt_262144_8_8_8_8_8_8_bwd_dest_avx2, ztt_262144_8_8_8_8_8_8_bwd_plane_avx2 },
 };
 
 #endif /* VFFT_ZTT_REGISTRY_AVX2_H */

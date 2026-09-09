@@ -1,5 +1,5 @@
 /* ztt.h — ZTURN-T: the RUN-CONTIGUOUS DIT engine for K=1 interleaved c2c,
- * 16 <= N <= 16384, route VFFT_K1_IL_ZTT (docs/design/zturn_t_ship_plan.md;
+ * 16 <= N <= 262144, route VFFT_K1_IL_ZTT (docs/design/zturn_t_ship_plan.md;
  * the probe's contract: docs/research/sub2048_mkl_method/campaign_state/
  * probes/ZT/CONTRACT.md).
  *
@@ -40,10 +40,14 @@
  * a RACED plan parameter (the planner's ladder, banked as il_tw=), never a
  * rule; vfft_ztt_tile_legal is the one law for it.
  *
- * CREATE builds no trig: every stream is expanded from the baked quarter-wave
- * (ztt_qw16384.h) by index shift + reflection + sign flip. That table's
- * octave is the engine's ceiling (VFFT_ZTT_MAX_N): above it the shift cannot
- * resolve RL, and the create refuses. The validator is the law: an illegal
+ * CREATE builds (almost) no trig: up to the table's octave (RL <= 16384)
+ * every stream is expanded from the baked quarter-wave (ztt_qw16384.h) by
+ * index shift + reflection + sign flip. Above it (S4, zcascade_sunset_plan.md,
+ * 2026-09-09) a stage's record is the TWO-LEVEL product: the angle
+ * 2*pi*pw/RL splits as pw = a*2^u + b (u = log2 RL - 14, b < 2^u <= 16 at
+ * 262144), w = table(a) * fine(b) with fine(b) = exp(-2*pi*i*b/RL) — one
+ * 2^u-entry cos/sin table per stage at create, one complex product per
+ * record, ~1 ulp. The ceiling is the cascade's, 262144. The validator is the law: an illegal
  * chain, a size out of range, or a cell without a registry driver returns
  * NULL loudly — no fallback, no default chain (the planner is the only
  * source of a chain). */
@@ -54,12 +58,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>              /* the fine table above the octave (S4, 2026-09-09)  */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #include "ztt_registry_avx2.h"   /* the cells and their four drivers (generated) */
 #include "ztt_qw16384.h"         /* the baked quarter-wave (generated)            */
 
 #define VFFT_ZTT_MAX_NF 7        /* == the registry's chain[7]; VFFT_ZSPLIT_MAX_NF */
-#define VFFT_ZTT_MAX_N 16384     /* the quarter-wave's octave: RL <= 16384        */
+#define VFFT_ZTT_MAX_N 262144    /* the cascade's ceiling; above the octave the
+                                  * streams are the TWO-LEVEL product (below)     */
 #define VFFT_ZTT_QW_M 16384
 #define VFFT_ZTT_QW_LGM 14       /* log2 M */
 #define VFFT_ZTT_QW_Q 4096       /* M / 4 */
@@ -163,9 +172,22 @@ static inline int _ztt_log2(long v)
  * bwd s = +sin. Returns the doubles written = 2*(R-1)*L. */
 static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd)
 {
-    const int sh = VFFT_ZTT_QW_LGM - _ztt_log2(RL);   /* M = 2^LGM */
-    long k;
+    const int lg = _ztt_log2(RL);
+    /* up = the bits of pw ABOVE the table's octave (0 within it): the fine
+     * table has 2^up entries, cos/sin of 2*pi*b/RL, b < 2^up (<= 16 at the
+     * ceiling) — the only trig the create ever runs */
+    const int up = lg > VFFT_ZTT_QW_LGM ? lg - VFFT_ZTT_QW_LGM : 0;
+    const int sh = up ? 0 : VFFT_ZTT_QW_LGM - lg;    /* M = 2^LGM */
+    double fc[64], fs[64];
+    long k, bf;
     int r, lane;
+    if (up)
+        for (bf = 0; bf < (1L << up); bf++)
+        {
+            const double a = 2.0 * M_PI * (double)bf / (double)RL;
+            fc[bf] = cos(a);
+            fs[bf] = sin(a);
+        }
     for (k = 0; k < L; k += 4)
         for (r = 1; r < R; r++)
         {
@@ -174,9 +196,22 @@ static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd
             {
                 const long b = k + lane;
                 const long pw = ((long)r * b) % RL;
-                const long idx = pw << sh;
-                const double s = _ztt_qsin(idx);
-                rec[lane] = _ztt_qsin((idx + VFFT_ZTT_QW_Q) & (VFFT_ZTT_QW_M - 1));
+                double c, s;
+                if (!up)
+                {
+                    const long idx = pw << sh;
+                    s = _ztt_qsin(idx);
+                    c = _ztt_qsin((idx + VFFT_ZTT_QW_Q) & (VFFT_ZTT_QW_M - 1));
+                }
+                else
+                {   /* pw = a*2^up + bb: w = table(a) * fine(bb) */
+                    const long a = pw >> up, bb = pw & ((1L << up) - 1);
+                    const double sa = _ztt_qsin(a);
+                    const double ca = _ztt_qsin((a + VFFT_ZTT_QW_Q) & (VFFT_ZTT_QW_M - 1));
+                    c = ca * fc[bb] - sa * fs[bb];
+                    s = sa * fc[bb] + ca * fs[bb];
+                }
+                rec[lane] = c;
                 rec[4 + lane] = bwd ? s : -s;
             }
         }
@@ -194,7 +229,7 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain(int N, const int *chain, in
     size_t off;
     const char *why = NULL;
     if (nf < 2 || nf > VFFT_ZTT_MAX_NF) why = "nf outside 2..7";
-    else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16..16384 (the quarter-wave's octave)";
+    else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16..262144";
     for (s = 0; !why && s < nf; s++)
     {
         if (chain[s] != 4 && chain[s] != 8) why = "radix not in {4, 8}";

@@ -54,10 +54,13 @@
  * legal scrambled answer; ZTURN-T x chains x tiles beside the cascade chains),
  * so 2048 56 -> 126, 4096 87 -> 175, 8192 127 -> 255, 16384 184 -> 352;
  * 32768 and 65536 unchanged (no natural engine reaches them yet — ZTURN-T's
- * octave is 16384, the pairs stop at R = 128). */
+ * octave is 16384, the pairs stop at R = 128).
+ * Re-measured 2026-09-09 (evening) after S4 (ZTURN-T's ceiling 262144 via the
+ * two-level create): its 28 / 36 chains x tile widths enter the 32768 / 65536
+ * scrambled pools too, 270 -> 494 and 372 -> 660. */
 static const struct { int N, total; } EXPECT[] = {
     { 1024, 65 }, { 2048, 126 }, { 4096, 175 }, { 8192, 255 },
-    { 16384, 352 }, { 32768, 270 }, { 65536, 372 }
+    { 16384, 352 }, { 32768, 494 }, { 65536, 660 }
 };
 
 int main(void)

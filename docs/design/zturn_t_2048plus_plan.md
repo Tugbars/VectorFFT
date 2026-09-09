@@ -159,6 +159,29 @@ complex multiply per twiddle, ~1 ulp), registry cells to the cascade's
 ceiling, the same tiling axis, the same protocol. MKL auto-threads 1D c2c at
 N >= 8192 — the bench pins it to one thread already.
 
+**IN THE TREE 2026-09-09 (evening).** `ztt.h`: ceiling 262144; above the
+16384 octave `_ztt_fill_stage` splits pw = a*2^u + b (u = log2 RL - 14) and
+takes table(a) x fine(b) with a per-stage fine table of 2^u <= 16 cos/sin
+entries — the only trig the create runs. `ztt_drivers.ml max_n = 262144`:
+223 cells, 892 drivers, the driver TU 2.5 MB. Gate: engine pass 223/223,
+forward error ~1e-14 at 131072 (the two-level product's accuracy), every
+tile bitwise. **Defect found by the seeded replay at 131072:** the
+out-of-place commit condition in `c2c_oop_create.h` listed every K=1 IL
+engine except ZTURN-T, so a ZTURN-T handle was committed only when the
+SPLIT axis also had a route — true at every cell up to 65536 (masked), false
+at 131072 where no split route exists: the replayed plan fell through to
+"no interleaved engine". Fixed (`|| ztt`). Cold seeded 65536 served at 1.10x
+MKL before any calibration. **Fused execution verified on this file**
+(gcc -O2 -mavx2 -mfma, objdump): 892 driver functions, ZERO call
+instructions inside any of them, no body left as a function; the 4096
+8.8.8.8 dest driver is 1252 straight-line instructions, its plane twin 1279
+with the 8 prefetches, the 262144 8^6 driver 2031. **Build cost:** the
+2.5 MB TU compiles in ~90 s inside build.py's parallel build but took 17
+minutes as a lone gcc -O2 compile on a loaded box; if it grows again, split
+the TU per size or trim the chain enumeration above 65536 to what the
+planner ever picks (a measured question). Calibration + paced verdict at
+32768..262144: `probes/ZT/phaseE5_32k.sh`, running.
+
 ## Step 4 — if ZTURN-T wins the natural cell
 
 Coverage before any sunset: the scrambled class (`t0ts`: runs stored in

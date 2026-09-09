@@ -2,7 +2,7 @@
  * the engine on EVERY registry cell, and its front-door replay.
  *
  * ENGINE pass, per registry cell (ztt_registry_avx2.h: every {4,8} chain
- * with product N, 16 <= N <= VFFT_ZTT_MAX_N = 16384; 82 cells at avx2):
+ * with product N, 16 <= N <= VFFT_ZTT_MAX_N = 262144; 223 cells at avx2):
  *   1. create (vfft_ztt_create_chain) — the validator is the law, a refusal
  *      is a FAIL here because the registry says the cell exists;
  *   2. OOP forward (the `dest` driver: the pipeline runs in zout) against an

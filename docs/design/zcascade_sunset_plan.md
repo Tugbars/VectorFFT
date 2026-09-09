@@ -144,6 +144,21 @@ row at the padded length M; the cascade inner stays only above ZTURN-T's
 ceiling until S4. Gate: the prime gates bitwise-unchanged in output class
 (natural roundtrip), and the prime cells re-raced.
 
+**Order change (2026-09-09, 16:25):** S3 folds into the FINAL deletion —
+the legacy arm's plumbing (the `zroute` axis, the `eng=` engine value, the
+dispatcher, 13 files) is the cascade's plumbing, and removing it twice is
+waste. The coverage stages come first, since they are what keeps the
+cascade alive: S4 (32768..262144), S5 (the MT arm), S6 (the flat DIT into
+the odd cells), then one deletion of the whole family.
+
+**S4 IN FLIGHT (16:30):** `ztt.h` ceiling 262144 with the TWO-LEVEL create
+(above the 16384 octave: table(a) x a per-stage fine table of <= 16 cos/sin
+entries, one complex product per record); `ztt_drivers.ml` `max_n = 262144`
+-> 223 cells / 892 drivers (driver TU 2.5 MB); plane 512 KB..4 MB, twiddle
+streams up to 4 MB per direction at 262144 (the cascade's own footprint
+there). Gates, calibration and the paced verdict follow; the natural door
+rows at 32768+ (`mode=zcasc` at 32768, none above) re-race on the restamp.
+
 S3 — **Strip the dead arm first: `zsplit.h`.** It wins nowhere (measured:
 0 banked rows). Move `VFFT_ZS_ALLOC/FREE` (the tree's 64-B allocator, used by
 the planner and both doors) and `_vfft_zs_brev/_vfft_zs_base` (used by
@@ -167,6 +182,18 @@ N % 4 != 0 above it; only a gate in `_il_dp_enumerate_natural_engines`
 (`N < 2048 || (N & 3)`) keeps it out of the 2^a·odd, N % 4 == 0 cells at
 >= 2048 that the odd cascade holds. Admit it there and race — no new
 kernels; the odd cascade goes when the flat DIT's rows are banked.
+
+**S2 PROMOTED 2026-09-09 16:20** (selective: the ord=scr K=1 rows naming
+ZTURN-T and the scrambled door rows `mode=free` at 2048..16384;
+`probes/ZT/promote_scr_rows.py` — the same calibration's re-raced ord=nat
+siblings were NOT taken, the paced verdict's rows stand). Sweep
+`gates_after_s2.txt` 25/26: `flatdit_gate` failed once under the sweep and
+passed on a direct run and on a runner re-run — a flap, recorded, not
+attributed; the ZTURN-T gate's cold front-door pass on the promoted store is
+green. `include/vfft.h` now states the SCRAMBLED contract (order-agnostic,
+any self-consistent permutation, natural included, matched roundtrip the
+only decode). S2b (the prime inner on the banked ord=scr verdict) shipped
+with it, `vfft_ilp_front_gate` PASS.
 
 **Decision record, 2026-09-09 (15:55..16:00).** The owner floated keeping
 the cascade as the explicit scrambled engine; the pressure test above (the

@@ -237,9 +237,17 @@ extern "C"
                   VFFT_ORDER_DEFAULT (0) = engine-native = fastest, order-
                     agnostic (in-place: digit-scrambled; OOP: whichever kind
                     wins calibration — may be MODEB/scrambled or LEAF/BAILEY2).
-                  VFFT_ORDER_SCRAMBLED = force the scrambled/fast path (in-place:
-                    native, == DEFAULT; OOP: the MODEB kind). Explicit "I am
-                    order-agnostic" — MKL's DFTI_BACKWARD_SCRAMBLED intent.
+                  VFFT_ORDER_SCRAMBLED = explicit "I am order-agnostic" (MKL's
+                    DFTI_BACKWARD_SCRAMBLED intent): the output may come in ANY
+                    self-consistent permutation of the bins — natural order
+                    included — and the only supported decode is the matched
+                    roundtrip through the same plan (backward inverts forward).
+                    The cell's own scrambled race picks the fastest such engine
+                    and banks it (2026-09-09: ZTURN-T writing natural order
+                    beats the cascade's digit-reversed comb at 2048..16384, so
+                    that is what a scrambled request gets there). No API
+                    reports the permutation; nothing here promises a
+                    particular one.
                   VFFT_ORDER_NATURAL = spectrum in natural bin order, bin-for-bin
                     MKL/FFTW-comparable, served by whichever natural-native
                     engine wins the cell's race (the natural-writing cascade
