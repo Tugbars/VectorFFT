@@ -576,6 +576,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                      * See docs/design/vfft_front_door.md. */
                     if (cfg->order == VFFT_ORDER_NATURAL &&
                         N >= _vfft_zcasc_nat_min_n() &&
+                        !vfft_ztt_band(N) &&       /* ZTURN-T's band: no cascade arm (owner, 2026-09-09) */
                         cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                         !getenv("VFFT_NO_NAT_ZCASC"))
                     {
@@ -701,6 +702,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                      * verdict on the OOP ord=scr mode row, replay it. */
                     if (cfg->order == VFFT_ORDER_DEFAULT &&
                         N >= _vfft_zcasc_min_n() &&
+                        !vfft_ztt_band(N) &&       /* ZTURN-T's band: no cascade arm (owner, 2026-09-09) */
                         cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                         !getenv("VFFT_NO_NAT_ZCASC"))
                     {

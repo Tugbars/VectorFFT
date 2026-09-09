@@ -203,6 +203,14 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         }
         /* mode=conv / tape / free rows: not IL verdicts — fall to the race */
     }
+    /* ZTURN-T's band (owner's law, 2026-09-09): a pow2 cell in 2048..the
+     * ceiling has no cascade arm in place either; a stale ZCASC row there is
+     * not a verdict — the K=1 engine builds and banks as ILP. */
+    if (vfft_ztt_band(N) && mode == VFFT_NAT_ZCASC)
+    {
+        mode = VFFT_NAT_UNSET;
+        raced_row = 0;
+    }
 
     /* 2. the K=1 IL engine candidate: the planned row's route — MONO (the
      *    alias-tolerant solo, 2026-09-04), pair, chain3, else prime */
@@ -218,7 +226,8 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     }
 
     /* 3. the cascade candidate at N >= 2048 (natord under NATURAL) */
-    if (N >= _vfft_zcasc_nat_min_n() && !getenv("VFFT_NO_K1Z_IP") &&
+    if (N >= _vfft_zcasc_nat_min_n() && !vfft_ztt_band(N) &&   /* no cascade arm in ZTURN-T's band */
+        !getenv("VFFT_NO_K1Z_IP") &&
         !getenv("VFFT_NO_NAT_ZCASC") && W && !W->vw2_off_stride &&
         (mode != VFFT_NAT_ILP || !have_k1))
     {

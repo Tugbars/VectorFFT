@@ -342,6 +342,14 @@ order, element `e` of lane `t` at `[2*(e*K+t)]`. The destination may alias the s
 Three routes, in order:
 
 1. the cascade (`h->zturn`, both orders; natord under NATURAL);
+   — except in ZTURN-T's band: at a power of two in 2048..`VFFT_ZTT_MAX_N`
+   (`vfft_ztt_band`, ztt.h) NO door builds or races a cascade candidate for an
+   interleaved K=1 cell — not the natural OOP door, not the DEFAULT door, not
+   the in-place door (owner's law, `design_contracts.md` section 4, 2026-09-09:
+   ZTURN-T alone). A stale in-place `mode=zcasc` row in the band is treated as
+   unset and the K=1 engine banks as ILP. The explicit SCRAMBLED request in the
+   band still takes the cascade, its only scrambled writer, until the scrambled
+   ZTURN-T class exists.
 2. the K=1 IL engines (`k1il2p` / `k1il3p` / `k1ilpr`);
 3. nothing else: a handle with neither is a create bug and the execute warns and computes
    nothing. The padded arm, the folded `z->z` adapters and the convert fallback were DELETED
