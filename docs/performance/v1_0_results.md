@@ -635,6 +635,71 @@ bitwise gated at every N including forced-on:
 The knee sits exactly where the barrier+exchange cost meets the
 transform's work; the race finds it per cell rather than by a constant.
 
+### K=1 INTERLEAVED natural order — ZTURN-T beside the pairs and the cascade (2026-09-09)
+
+ZTURN-T (route 9, `src/core/oop/ztt.h`; `docs/design/zturn_t_ship_plan.md`,
+`zturn_t_2048plus_plan.md`) is the run-contiguous DIT: a packed-through
+ingest into a plane of runs, in-place mid stages with one twiddle stream per
+stage, a REINT terminator that writes natural order, ONE fused driver per
+cell (zero calls), every stream expanded from a baked quarter-wave. It is
+raced per cell by the dp planner beside the pairs (below 2048) and, at 2048
+and above, as the K=1 plan the natural door races against the natord
+ZTURN-S cascade; above 2048 its TILE WIDTH is a raced axis (`il_tw=`, the
+cascade's 1 KB..64 KB ladder; untiled is a candidate too). The best is
+served; below 2048 the pairs keep several cells by measurement.
+
+**16..2048** (`probes/ZT/phaseD_verdict.sh`): the canonical bench in
+`--k1noop` mode (K=1 natural OOP through the front door, MKL DFTI in the
+same process), one fresh process per (cell, run), 7 runs, 12 s cooldowns,
+alternated order, core 2 + HIGH, best-of-5 trials per process:
+
+```
+ N      served                     vfft ns   MKL ns   MKL/vfft   wins
+──────────────────────────────────────────────────────────────────────
+ 16     ZTURN-T 4.4                    11       13     1.18       7/7
+ 32     pair 4.8                       19       17     0.90       0/7
+ 64     pair 4.16                      34       31     0.91       0/7
+ 128    pair 4.32                      69       70     1.01       4/7
+ 256    pair 16.16                    141      140     0.99       2/7
+ 512    pair 16.32                    301      294     0.98       0/7
+ 1024   ZTURN-T 4.8.8.4 (fused)       730      862     1.18       7/7
+ 2048   ZTURN-T 8.8.8.4 (fused, nat) 1657     2149     1.30       7/7
+──────────────────────────────────────────────────────────────────────
+```
+
+**4096..16384** (`probes/ZT/phaseE2_2048plus.sh`, same protocol, three
+arms per cell through pinned scratch stores in one session: the served
+plan = ZTURN-T with its raced tile, the SAME chain untiled, and the natord
+cascade by a `mode=zcasc` door row; MKL in every process):
+
+```
+ N      served (chain @ tile)      ZTURN-T   untiled   cascade   MKL     MKL/vfft  wins
+──────────────────────────────────────────────────────────────────────────────────────
+ 4096   8.8.8.8   @ 16 KB            3728      3811      4041    3799     1.02      6/7
+ 8192   8.8.4.4.8 @ 32 KB            8115      9052      8731    8557     1.05      6/7
+ 16384  8.8.4.8.8 @ 32 KB           18463     19816     18693   18748     1.02      6/7
+──────────────────────────────────────────────────────────────────────────────────────
+```
+
+The untiled arrangement alone (`phaseE_2048plus.sh`, its own best chains
+8.8.8.8 / 8.8.8.4.4 / 8.8.8.8.4) measured 3768 / 8783 / 18358 ns against the
+cascade's 4100 / 8919 / 19003 and MKL's 3854 / 8546 / 18702 — ahead of the
+cascade everywhere and at MKL parity except 8192 (0.97). The tile closes
+8192 (1.05) and is noise-level at 4096 and 16384 on this clock; the
+planner's own clock prefers it at all three, and the race decides per cell.
+
+Not yet served by ZTURN-T: 32768 and above (the quarter-wave's octave is
+16384; the two-level create is `TODO_zcascade.md` item 2), the SCRAMBLED
+contract and T > 1 (the cascade's, by feature). The natural door's race
+buffers were made 64-B aligned on 2026-09-09; before that its 16-B `malloc`
+buffers split ZTURN-T's stores across lines and banked the cascade at 4096
+against this verdict.
+
+Reproduce: `calibrate_k1.exe <scratch> 1 4096 8192 16384` (scratch copy of
+`generated/`), `probes/ZT/natoop_restamp.exe <scratch> 4096 8192 16384`,
+then `sh probes/ZT/phaseE2_2048plus.sh` (`SKIP_CAL=1` re-runs the bench
+only; the script refuses a second concurrent instance).
+
 ## 2. vs MKL — 2D C2C
 
 dag tiled 2D (`fft2d.h`, B=8: gather→K=B row FFT→scatter via SIMD transpose, native
