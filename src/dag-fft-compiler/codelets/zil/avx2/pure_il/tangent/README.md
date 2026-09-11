@@ -66,8 +66,14 @@ Two details the registry encodes deliberately:
   stays legal at odd counts (verified at N=240, pair 16×15). Only the R32 mid
   is blocked and needs the gate.
 - **The R32 tangent leaf is absent on purpose** — it lost its race by 32%.
-- Forward only; there are no backward tangent twins, the same scope the
-  blocked forms already have.
+- BACKWARD twins since 2026-09-11 at radix 8 and 16 (`t2tan_bwd` mid,
+  `n1tan_bwd` leaf), backward variant 3 of `vfft_il2p_t2t_bwd_v_fn` /
+  `vfft_il2p_n1_bwd_v_fn`; radix 8 is BIT-IDENTICAL to the classic backward
+  kernel at every count (odd tail included), radix 16 within 5e-17
+  (`benches/tangent_bwd_gate.c`). They close the 2026-09-09 coverage gap in
+  which every backward row banked the classic form by default. No radix-32
+  backward twin yet: the wing32 construction is forward-only in the emitter.
+  Speed is the backward forms race's verdict per cell, not a claim here.
 
 **Wiring is not selection.** The kernels are in the pool and correct, but a
 cell only uses one once the plan search measures it and banks the winning
