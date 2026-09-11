@@ -66,7 +66,7 @@ Two details the registry encodes deliberately:
   stays legal at odd counts (verified at N=240, pair 16×15). Only the R32 mid
   is blocked and needs the gate.
 - **The R32 tangent leaf is absent on purpose** — it lost its race by 32%.
-- BACKWARD twins since 2026-09-11 at radix 8 and 16 (`t2tan_bwd` mid,
+- BACKWARD twins since 2026-09-11 at radix 8 and 16 (`t2ttan_bwd` mid, the turned-store kind the pair's backward stage 1 runs,
   `n1tan_bwd` leaf), backward variant 3 of `vfft_il2p_t2t_bwd_v_fn` /
   `vfft_il2p_n1_bwd_v_fn`; radix 8 is BIT-IDENTICAL to the classic backward
   kernel at every count (odd tail included), radix 16 within 5e-17

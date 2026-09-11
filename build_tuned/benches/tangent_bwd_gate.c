@@ -1,4 +1,4 @@
-/* tangent_bwd_gate.c — the tangent BACKWARD twins vs the classic backward kernels
+/* tangent_bwd_gate.c — the tangent BACKWARD twins (t2ttan mid: turned store, n1tan leaf) vs the classic backward kernels
  * they would replace: identical inputs, identical VTW2 table, identical
  * geometry; the classic kernel is the reference (it is gated elsewhere).
  * R8 must be BIT-IDENTICAL (the tangent rewrite at radix 8 is exact: only the
@@ -14,9 +14,9 @@
 #include <malloc.h>
 #define K(n) void n(const double*,const double*,double*,double*,const double*, \
                     const double*,size_t,size_t,size_t,size_t,size_t)
-K(radix8_z_t2_bwd_avx2);   K(radix8_z_t2tan_bwd_avx2);
+K(radix8_z_t2t_bwd_avx2);   K(radix8_z_t2ttan_bwd_avx2);
 K(radix8_z_n1_bwd_avx2);   K(radix8_z_n1tan_bwd_avx2);
-K(radix16_z_t2_bwd_avx2);  K(radix16_z_t2tan_bwd_avx2);
+K(radix16_z_t2t_bwd_avx2);  K(radix16_z_t2ttan_bwd_avx2);
 K(radix16_z_n1_bwd_avx2);  K(radix16_z_n1tan_bwd_avx2);
 typedef void (*krn)(const double*,const double*,double*,double*,const double*,
                     const double*,size_t,size_t,size_t,size_t,size_t);
@@ -47,7 +47,7 @@ static double cmp(krn a, krn b, int R, int cols, int mid, int *bit){
     for(int i=0;i<N2;i++) zin[i] = rnd();
     for(int g=0; g<ncol2; g++) genT(T + (size_t)g*rec, R, 2*g, +1.0);
     memset(za, 0, (size_t)N2*8); memset(zb, 0, (size_t)N2*8);
-    if (mid) { a(zin,0,za,0,T,0,cols,0,cols,0,cols); b(zin,0,zb,0,T,0,cols,0,cols,0,cols); }
+    if (mid) { a(zin,0,za,0,T,0,cols,0,R,0,cols); b(zin,0,zb,0,T,0,cols,0,R,0,cols); } /* t2t: turned store zout[k*OLs + o], OLs = R */
     else     { a(zin,0,za,0,(double*)0,0,cols,0,cols,0,cols); b(zin,0,zb,0,(double*)0,0,cols,0,cols,0,cols); } /* n1: zout[o*OLs + k], OLs = cols */
     double w = 0, scale = 0;
     for(int i=0;i<N2;i++){ double e = fabs(za[i]-zb[i]); if(e>w) w=e; if(fabs(za[i])>scale) scale=fabs(za[i]); }
@@ -57,9 +57,9 @@ static double cmp(krn a, krn b, int R, int cols, int mid, int *bit){
 }
 int main(void){
     struct { const char *nm; krn a, b; int R, mid; double tol; } t[] = {
-        { "radix8  t2  bwd (mid)  ", radix8_z_t2_bwd_avx2,  radix8_z_t2tan_bwd_avx2,  8,  1, 0.0   },
+        { "radix8  t2t bwd (mid)  ", radix8_z_t2t_bwd_avx2,  radix8_z_t2ttan_bwd_avx2,  8,  1, 0.0   },
         { "radix8  n1  bwd (leaf) ", radix8_z_n1_bwd_avx2,  radix8_z_n1tan_bwd_avx2,  8,  0, 0.0   },
-        { "radix16 t2  bwd (mid)  ", radix16_z_t2_bwd_avx2, radix16_z_t2tan_bwd_avx2, 16, 1, 1e-13 },
+        { "radix16 t2t bwd (mid)  ", radix16_z_t2t_bwd_avx2, radix16_z_t2ttan_bwd_avx2, 16, 1, 1e-13 },
         { "radix16 n1  bwd (leaf) ", radix16_z_n1_bwd_avx2, radix16_z_n1tan_bwd_avx2, 16, 0, 1e-13 },
     };
     static const int counts[] = { 2, 4, 6, 3, 5, 32 };
