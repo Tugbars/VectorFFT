@@ -80,8 +80,10 @@ Two details the registry encodes deliberately:
   forward pairs (`benches/bwd_forms_race.c`, PATIENT, 3 repeats with 3 s
   cooldowns, every winner identical in all 3): 32 (4x8) leaf tangent 15.4 vs
   15.8 ns; 64 (4x16) leaf tangent 31.8 vs 32.8; 256 (16x16) both tangent
-  156.4 vs 164.7; 512 (16x32) mid tangent 364.4 vs 370.4; 128 (4x32) stays
-  classic (no radix-32 twin). Banked as the cells' dir=bwd rows.
+  156.4 vs 164.7; 512 (16x32) mid tangent 364.4 vs 370.4, then BOTH slots
+  tangent 353.2 vs 369.6 once the radix-32 leaf twin existed; 128 (4x32)
+  leaf tangent 72.6 vs 74.0. Banked as the cells' dir=bwd rows. Every
+  backward slot of every shipped pow2 pair now runs a tangent kernel.
 
 **Wiring is not selection.** The kernels are in the pool and correct, but a
 cell only uses one once the plan search measures it and banks the winning
