@@ -72,10 +72,15 @@ Two details the registry encodes deliberately:
   kernel at every count (odd tail included), radix 16 within 5e-17
   (`benches/tangent_bwd_gate.c`). They close the 2026-09-09 coverage gap in
   which every backward row banked the classic form by default. Radix 32
-  (`radix32_z_n1bw32_bwd`, the LEAF only — the shipped pairs never carry a
-  radix-32 mid): the tangent interior on the blocked 2.16 split WITHOUT the
-  wing combine, which the emitter allows for the forward only
-  (`VFFT_CX_W32TG`); 5e-17 vs the classic blocked 2.16 backward leaf.
+  (the LEAF only — the shipped pairs never carry a radix-32 mid):
+  `radix32_z_n1btan216_bwd`, the tangent interior on the blocked 2.16
+  split, 5e-17 vs the classic blocked 2.16 backward leaf. Its WING-combine
+  sibling was built the same day (the emitter runs `VFFT_CX_W32TG` in both
+  directions since 2026-09-11: `butterfly_pair_w32 ~sign`, +i composed
+  rotations, the mirrored CRotPI ROTFMA fold — bit-exact, forward emission
+  byte-identical), gated to 1e-16, and LOST the backward race to this one
+  at both cells (128: 71.4 vs 70.7 ns; 512: 347 vs 344, 5/5 repeats): the
+  forward wing's 3-5% does not transfer to the backward leaf. Retired.
   Measured 2026-09-11 with the planner's own backward race for the SHIPPED
   forward pairs (`benches/bwd_forms_race.c`, PATIENT, 3 repeats with 3 s
   cooldowns, every winner identical in all 3): 32 (4x8) leaf tangent 15.4 vs

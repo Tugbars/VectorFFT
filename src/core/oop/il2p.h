@@ -615,12 +615,14 @@ extern void radix16_z_t2ttan_bwd_avx2(const double *, const double *,
 extern void radix16_z_n1tan_bwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
-/* the radix-32 backward LEAF twin (2026-09-11): tangent interior on the
- * blocked 2.16 split WITHOUT the wing combine (VFFT_CX_W32TG is the radix-32
- * FORWARD combine by an explicit emitter check); 5e-17 vs the classic
- * blocked 2.16 backward leaf. The emitter tags it "w32" (tangent + blocked)
- * — the name is the emitter's, the interior is the plain tangent 2.16. */
-extern void radix32_z_n1bw32_bwd_avx2(const double *, const double *,
+/* the radix-32 backward LEAF twin (2026-09-11): n1btan216_bwd = the tangent
+ * interior on the blocked 2.16 split, 5e-17 vs the classic blocked 2.16
+ * backward leaf. Its WING-combine sibling (the emitter runs VFFT_CX_W32TG
+ * in both directions since 2026-09-11) was raced the same day and LOST to
+ * this one at both cells that carry a radix-32 leaf (128: 71.4 vs 70.7 ns,
+ * 512: 347 vs 344, 5/5 repeats) — the forward wing's 3-5% does not transfer
+ * to the backward leaf — and was retired (pool-sunset policy). */
+extern void radix32_z_n1btan216_bwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
 extern void radix32_z_t2bw32_fwd_avx2(const double *, const double *,
@@ -878,10 +880,11 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_o
     (void)count_ok;
     if (!variant) return 0;
     /* variant 3 = the TANGENT interior (2026-09-11), see t2t_bwd_v_fn;
-     * at radix 32 the tangent 2.16 leaf (no wing combine — forward-only) */
+     * at radix 32 the tangent 2.16 leaf (its wing-combine sibling lost the
+     * race and retired the same day) */
     if (R == 8  && variant == 3) return radix8_z_n1tan_bwd_avx2;
     if (R == 16 && variant == 3) return radix16_z_n1tan_bwd_avx2;
-    if (R == 32 && variant == 3) return radix32_z_n1bw32_bwd_avx2;
+    if (R == 32 && variant == 3) return radix32_z_n1btan216_bwd_avx2;
     if (R == 32 && variant == 1) return radix32_z_n1b216_bwd_avx2;
     if (R == 32 && variant == 2) return radix32_z_n1b48_bwd_avx2;
     if (R == 64 && variant == 1) return radix64_z_n1b416_bwd_avx2;

@@ -18,7 +18,7 @@ K(radix8_z_t2t_bwd_avx2);   K(radix8_z_t2ttan_bwd_avx2);
 K(radix8_z_n1_bwd_avx2);   K(radix8_z_n1tan_bwd_avx2);
 K(radix16_z_t2t_bwd_avx2);  K(radix16_z_t2ttan_bwd_avx2);
 K(radix16_z_n1_bwd_avx2);  K(radix16_z_n1tan_bwd_avx2);
-K(radix32_z_n1b216_bwd_avx2); K(radix32_z_n1bw32_bwd_avx2);
+K(radix32_z_n1b216_bwd_avx2); K(radix32_z_n1btan216_bwd_avx2);
 typedef void (*krn)(const double*,const double*,double*,double*,const double*,
                     const double*,size_t,size_t,size_t,size_t,size_t);
 typedef double _Complex cx;
@@ -62,7 +62,7 @@ int main(void){
         { "radix8  n1  bwd (leaf) ", radix8_z_n1_bwd_avx2,  radix8_z_n1tan_bwd_avx2,  8,  0, 0.0   },
         { "radix16 t2t bwd (mid)  ", radix16_z_t2t_bwd_avx2, radix16_z_t2ttan_bwd_avx2, 16, 1, 1e-13 },
         { "radix16 n1  bwd (leaf) ", radix16_z_n1_bwd_avx2, radix16_z_n1tan_bwd_avx2, 16, 0, 1e-13 },
-        { "radix32 n1  bwd (leaf) ", radix32_z_n1b216_bwd_avx2, radix32_z_n1bw32_bwd_avx2, 32, 0, 1e-13 }, /* vs the classic blocked 2.16 */
+        { "radix32 n1  bwd (leaf) ", radix32_z_n1b216_bwd_avx2, radix32_z_n1btan216_bwd_avx2, 32, 0, 1e-13 }, /* the tangent 2.16 vs the classic blocked 2.16 */
     };
     static const int counts[] = { 2, 4, 6, 3, 5, 32 };
     int fails = 0;
