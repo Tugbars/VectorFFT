@@ -593,14 +593,15 @@ let emit
           if ctx.w32_combine
           then (
             (* VFFT_CX_W32TG: the hand w32tg pass-B combine — canonical
-               angles + composed -i rotations (see butterfly_pair_w32).
-               Scope = the construction it was validated for. *)
-            if radix <> 32 || dir <> Fwd
+               angles + composed -i rotations (see butterfly_pair_w32);
+               the backward is its conjugate (+i, mirrored render fold). *)
+            if radix <> 32
             then
               failwith
-                "codelet_cil: VFFT_CX_W32TG is the radix-32 FWD wing combine (hand w32tg \
-                 pass-B); other radices/directions keep butterfly_pair";
-            let a, b = Cx_math.butterfly_pair_w32 ~k:jv ins.(0) ins.(1) in
+                "codelet_cil: VFFT_CX_W32TG is the radix-32 wing combine (hand w32tg \
+                 pass-B, both directions since 2026-09-11); other radices keep \
+                 butterfly_pair";
+            let a, b = Cx_math.butterfly_pair_w32 ~sign ~k:jv ins.(0) ins.(1) in
             [| a; b |])
           else (
             (* m=2 is a single top-level butterfly, so use the CLASS-aware

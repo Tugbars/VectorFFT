@@ -202,6 +202,15 @@ let render
   | CSub (a, { node = CRotNI y; _ }) when ctx.rotfma ->
     let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 in
     Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v a)
+  (* the +i mirror (2026-09-11, the backward wing combine): (+i)·y =
+     [-1,+1]·cflip y, so a + (+i)·y is the fmadd and a - (+i)·y the fnmadd —
+     the same exact constant, the opposite opcode. BIT-EXACT as above. *)
+  | CAdd (a, { node = CRotPI y; _ }) when ctx.rotfma ->
+    let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 in
+    Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v a)
+  | CSub (a, { node = CRotPI y; _ }) when ctx.rotfma ->
+    let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 in
+    Isa.fnmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v a)
   | CAdd (a, b) -> Isa.add_pd isa (v a) (v b)
   | CSub (a, b) -> Isa.sub_pd isa (v a) (v b)
   (* complex negation: flip both lanes' signs — same rendering the real side
@@ -223,6 +232,13 @@ let render
   | CFnmaC (c, { node = CRotNI y; _ }, acc) when ctx.rotfma ->
     let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 c in
     Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v acc)
+  | CFmaC (c, { node = CRotPI y; _ }, acc) when ctx.rotfma ->
+    (* acc + c·(+i·y) = acc + [-c,+c]·cflip y *)
+    let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 c in
+    Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v acc)
+  | CFnmaC (c, { node = CRotPI y; _ }, acc) when ctx.rotfma ->
+    let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 c in
+    Isa.fnmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v acc)
   | CFmaC (c, x, acc) ->
     Isa.fmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
   | CFnmaC (c, x, acc) ->
