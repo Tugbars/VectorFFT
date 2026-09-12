@@ -634,6 +634,11 @@ static int _il_dp_exec_joint(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
 }
 
 /* Build + run once (for the correctness gate). Not used for timing. */
+/* 0 = ran; -1 = NO SUCH KERNEL (build refused); -2 = BUILT but the executor
+ * refused it. The two were one value until 2026-09-11 and the caller's
+ * `continue` was silent either way — the same blindness the backward race
+ * had (see _il_dp_bench_dir's `why`). Callers test != 0, so the split is
+ * additive. */
 static int _il_dp_run_once(vfft_il_dp_context_t *ctx, int N,
                            const vfft_il_cand_t *c)
 {
@@ -642,7 +647,7 @@ static int _il_dp_run_once(vfft_il_dp_context_t *ctx, int N,
     memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
     int rc = _il_dp_exec(ctx, c, &b);
     _il_dp_free(&b);
-    return rc;
+    return rc ? -2 : 0;
 }
 
 /* ── the independent correctness reference ─────────────────────────────── */
@@ -994,13 +999,33 @@ static int _il_dp_exec_dir(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     return _il_dp_exec(ctx, c, b);
 }
 
+/* WHY a candidate was refused (2026-09-11). Every refusal below returned
+ * 1e18 with no reason, so "no such kernel" and "a kernel EXISTS but is wrong
+ * in this slot" were indistinguishable: a wrong-kind backward twin (a
+ * plain-store t2 where the pair's backward stage 1 runs the turned-store
+ * t2t) sat in a resolver, built, computed garbage, and the race simply
+ * showed one arm fewer with nothing said. `why` (NULL = don't care) names
+ * the reason; the backward race prints it under verbose and
+ * benches/bwd_forms_gate.c turns the correctness reasons into a FAILURE.
+ * The buffer is file-static: this planner is single-threaded by
+ * construction (one static context per process, k1_commit.h). */
+#define _ILDP_WHY(w, s) do { if (w) *(w) = (s); } while (0)
+static char _ildp_why_buf[128];
+
 static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
-                               vfft_il_cand_t *c, int bwd)
+                               vfft_il_cand_t *c, int bwd, const char **why)
 {
     /* the roundtrip refusal below only makes sense for the joint metric */
     const int joint = (!bwd && c->route == VFFT_K1_IL_CASCADE);
     _il_dp_built_t b;
-    if (_il_dp_build(N, c, &b) != 0) return 1e18;
+    _ILDP_WHY(why, NULL);
+    if (_il_dp_build(N, c, &b) != 0)
+    {   /* NO SUCH KERNEL: a requested nibble has no emitted twin, or the
+         * route's own create refused the shape. Expected coverage, not a
+         * defect — the pools offer more variants than every radix has. */
+        _ILDP_WHY(why, "no such kernel (build refused)");
+        return 1e18;
+    }
     if (c->route == VFFT_K1_IL_FLAT && !bwd)
     {   /* the flat DIT's per-stage FORM race, on the planner's own data and
          * clock (real stage inputs, pipeline order); the verdict rides in
@@ -1018,7 +1043,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
     /* warmup (+ joint roundtrip refusal for cascades) */
     memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
     if (_il_dp_exec_dir(ctx, c, &b, bwd) != 0)
-    { _il_dp_free(&b); return 1e18; }
+    { _ILDP_WHY(why, "BUILT but the executor refused it"); _il_dp_free(&b); return 1e18; }
     /* BACKWARD arms are correctness-checked HERE, because nothing else
      * checks them: the candidate loop's gate-before-time runs the FORWARD
      * (_il_dp_gate_err), so without this a backward variant that is fast and
@@ -1030,7 +1055,8 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
     {
         double worst = 0.0;
         long i;
-        if (_il_dp_exec(ctx, c, &b) != 0) { _il_dp_free(&b); return 1e18; }
+        if (_il_dp_exec(ctx, c, &b) != 0)
+        { _ILDP_WHY(why, "BUILT but the forward executor refused it"); _il_dp_free(&b); return 1e18; }
         /* zin == zout is safe for il2p: stage 1 reads zin into p->mid and
          * stage 2 reads mid into zout, so the input is fully consumed. The
          * chain (il3p) documents the same contract (2026-09-03: this gate
@@ -1038,14 +1064,23 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
         if (c->route == VFFT_K1_IL_CHAIN3)
             vfft_il3p_execute_bwd(b.i3, ctx->z_out, ctx->z_out);
         else if (vfft_il2p_execute_bwd(b.ip, ctx->z_out, ctx->z_out) != 0)
-        { _il_dp_free(&b); return 1e18; }
+        { _ILDP_WHY(why, "BUILT but the backward executor refused it"); _il_dp_free(&b); return 1e18; }
         for (i = 0; i < 2L * N; i++)
         {
             double d = fabs(ctx->z_out[i] / (double)N - ctx->z_orig[i]);
             if (!(d < 1e300)) { worst = 1e30; break; }   /* NaN/Inf -> refuse */
             if (d > worst) worst = d;
         }
-        if (worst > 1e-11) { _il_dp_free(&b); return 1e18; }
+        if (worst > 1e-11)
+        {   /* BUILT, RAN, AND WRONG — the kernel the resolver handed back
+             * does not compute this slot's transform. A defect in the
+             * resolver (wrong kind for the slot), never "missing coverage". */
+            snprintf(_ildp_why_buf, sizeof _ildp_why_buf,
+                     "BUILT but WRONG: backward roundtrip err %.1e > 1e-11", worst);
+            _ILDP_WHY(why, _ildp_why_buf);
+            _il_dp_free(&b);
+            return 1e18;
+        }
     }
     if (joint)
     {
@@ -1056,7 +1091,14 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
             if (!(d < 1e300)) { worst = 1e30; break; }   /* NaN/Inf -> refuse */
             if (d > worst) worst = d;
         }
-        if (worst > 1e-11) { _il_dp_free(&b); return 1e18; }
+        if (worst > 1e-11)
+        {
+            snprintf(_ildp_why_buf, sizeof _ildp_why_buf,
+                     "BUILT but WRONG: joint roundtrip err %.1e > 1e-11", worst);
+            _ILDP_WHY(why, _ildp_why_buf);
+            _il_dp_free(&b);
+            return 1e18;
+        }
     }
 
     double best = 1e30, elapsed = 0.0;
@@ -1103,7 +1145,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
 static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
                            vfft_il_cand_t *c)
 {
-    return _il_dp_bench_dir(ctx, N, c, 0);
+    return _il_dp_bench_dir(ctx, N, c, 0, NULL);
 }
 
 /* ── the BACKWARD variant pass ─────────────────────────────────────────── */
@@ -1225,8 +1267,18 @@ static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
                                : VFFT_IL_KV_PACK(msv[mi], lsv[li]);
             if (arms >= VFFT_IL_DP_BKV_MAX_ARMS) { dropped++; continue; }
             t.il_bkv = bkv;
-            double ns = _il_dp_bench_dir(ctx, N, &t, 1);
-            if (ns > 1e17) continue;      /* no such backward twin — not an arm */
+            const char *why = NULL;
+            double ns = _il_dp_bench_dir(ctx, N, &t, 1, &why);
+            if (ns > 1e17)
+            {   /* not an arm — and SAY WHY (2026-09-11): "no such kernel" is
+                 * expected coverage, "BUILT but WRONG" is a resolver defect
+                 * that used to vanish into a silently shorter arm list. */
+                if (verbose)
+                    fprintf(stderr,
+                            "  [il-dp] N=%d bwd %dx%d bkv=0x%02x -> not an arm: %s\n",
+                            N, w->R1, w->R2, bkv, why ? why : "?");
+                continue;
+            }
             arms++;
             if (verbose)
                 fprintf(stderr, "  [il-dp] N=%d bwd %dx%d bkv=0x%02x -> %.1f ns\n",
@@ -1949,7 +2001,18 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     for (int i = 0; i < ncand; i++)
     {
         cand[i].cost_ns = 1e18;
-        if (_il_dp_run_once(ctx, N, &cand[i]) != 0) continue;
+        {
+            const int rc1 = _il_dp_run_once(ctx, N, &cand[i]);
+            if (rc1 != 0)
+            {
+                if (verbose)
+                    fprintf(stderr, "  [il-dp] N=%d ord=%d cand %d not a candidate: %s\n",
+                            N, ord, i,
+                            rc1 == -1 ? "no such kernel (build refused)"
+                                      : "BUILT but the executor refused it");
+                continue;
+            }
+        }
         double gerr = _il_dp_gate_err(ctx, N, &cand[i]);
         if (!(gerr >= 0.0) || gerr > VFFT_IL_DP_GATE_TOL)   /* NaN -> reject */
         {
