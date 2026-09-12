@@ -1010,6 +1010,9 @@ static int _il_dp_exec_dir(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
  * The buffer is file-static: this planner is single-threaded by
  * construction (one static context per process, k1_commit.h). */
 #define _ILDP_WHY(w, s) do { if (w) *(w) = (s); } while (0)
+/* the ABSENT reason is a shared literal, not a substring to grep for: a
+ * classifier (support/slot_check.h's callers) compares against THIS. */
+#define VFFT_IL_DP_WHY_ABSENT "no such kernel (build refused)"
 static char _ildp_why_buf[128];
 
 static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
@@ -1023,7 +1026,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
     {   /* NO SUCH KERNEL: a requested nibble has no emitted twin, or the
          * route's own create refused the shape. Expected coverage, not a
          * defect — the pools offer more variants than every radix has. */
-        _ILDP_WHY(why, "no such kernel (build refused)");
+        _ILDP_WHY(why, VFFT_IL_DP_WHY_ABSENT);
         return 1e18;
     }
     if (c->route == VFFT_K1_IL_FLAT && !bwd)

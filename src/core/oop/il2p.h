@@ -603,6 +603,10 @@ extern void radix16_z_n1ttan_fwd_avx2(const double *, const double *,
  * classic backward at every count, radix 16 within 5e-17
  * (benches/tangent_bwd_gate.c). Backward variant 3 in the resolvers below;
  * the backward forms race (il_bkv) offers them and the cell decides. */
+/* TEMP DEFECT INJECTION (gate proof) */
+extern void radix8_z_t2tan_bwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
 extern void radix8_z_t2ttan_bwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
@@ -845,6 +849,7 @@ static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_
      * correctness gate and is silently not an arm (found 2026-09-11). No
      * radix-32 twin yet: the wing32 construction is forward-only. */
     if (R == 8  && variant == 3) return radix8_z_t2ttan_bwd_avx2;
+    if (R == 8  && variant == 2) return radix8_z_t2tan_bwd_avx2; /* TEMP DEFECT INJECTION (gate proof) */
     if (R == 16 && variant == 3) return radix16_z_t2ttan_bwd_avx2;
     if (R == 32 && variant == 1) return radix32_z_t2bt216_bwd_avx2;
     if (R == 32 && variant == 2) return radix32_z_t2bt48_bwd_avx2;
