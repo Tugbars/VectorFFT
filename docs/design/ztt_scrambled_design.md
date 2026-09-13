@@ -139,12 +139,13 @@ Backward, one new kind; the rest is shipped:
 `E_blocks` transpose. Nothing here touches `rb`, and no kind has a plane
 argument.
 
-Shuffle accounting, honestly: the plain engine has the same de-interleave at
-the ingest as `t0tp`'s turn (one shuffle per complex), and its terminator
-carries a TR4 plus an interleaving store (about 1.5 per complex) where `tlf`
-carries 0.75. Over the pipeline that is roughly 0.75 more shuffles per
-complex, in a twiddle-free stage. It is why the plain engine is expected to
-tie or lose slightly where there is no sweep or scatter to win, below 4096.
+Shuffle accounting, measured: `t0d`'s de-interleave is one shuffle per
+complex where `t0tp`'s turn lattice does transpose and de-interleave together
+in half of one; `tld` carries a TR4 plus the interleaving stores, 1.5 per
+complex, where `tlf` carries 0.75. At 16384 `tld` costs 5.5 us against
+`tlf`'s 4.4 (1.9 cycles per complex against a tiled mid's 0.94): the
+transpose network, not memory, bounds the plain last stage. Below the tile
+band the class is ~11% slower than natural in both modes for this reason.
 
 ## The output order
 
@@ -191,15 +192,40 @@ correctness only.
 The natural driver at this cell is `t0tp8` sweep, per tile `tmg8` x32,
 `tmg4` x8, `tmg8` x1, then the `tlf8` sweep. Same tile work, one sweep fewer.
 
-## What it is expected to buy, and where it is not
+## What it buys, measured (2026-09-14, `probes/ZT/zt_scr_spike_results.md`)
 
-Projection from the profile, `ident_total - terminator sweep + one tiled
-stage`: +0.2% at 2048, -8% at 4096, -15% at 8192 and 16384, -13% at 32768,
--12% at 65536, -21% at 131072, -22% at 262144. The projection is optimistic
-by the terminator's extra shuffles and by the post-twiddle moving into the
-memory-bound ingest; plan on two thirds of it until a kernel runs. Below the
-tile band there is nothing to win and the class is not expected to win there;
-it is served there all the same, because the order is a contract (ruling 1).
+Plain against the banked natural, same tile, percent of the natural:
+
+| N | OOP fwd | OOP bwd | in place fwd | in place bwd |
+| --- | --- | --- | --- | --- |
+| 512 | +11 | +12 | +10 | +11 |
+| 2048 | +25..+30 | +5..+8 | -3..-5 | -3..-6 |
+| 4096 | +6..+17 | +5..+22 | -3..-5 | -5..-6 |
+| 8192 | +16..+17 | +2..+16 | -2..-5 | -3..-5 |
+| 16384 | +13..+18 | -2..+1 | -5..-9 | -7..-10 |
+| 32768 | +8..+17 | -2..-3 | -11 | -15 |
+| 65536 | +7..+12 | -2..+1 | -17 | -26 |
+| 131072 | -2..-6 | -6..-14 | -28..-30 | -21..-30 |
+| 262144 | -7..-10 | -16..-17 | -23..-24 | -18..-20 |
+
+**In place the class wins at every cell from 2048 up, both directions**,
+because every plain stage is in place and the natural pays its plane path
+there. **Out of place the backward is at parity from 16384 up and wins above
+L2; the forward loses at L2-resident sizes and wins above L2.** Below 2048
+the class loses ~11% in both modes and is served regardless (ruling 1).
+
+Why the earlier projection (-15% at 16384) was wrong: the natural
+terminator's sweep is mostly its own work at L2 sizes, not traffic, so
+removing it saves little, while the plain last stage's 4x4 lane transpose
+plus interleaving stores (1.5 shuffles per complex against `tlf`'s 0.75)
+cost 25% more than the terminator they replace. The transpose is the price
+of an in-place stage 0 — row-major is the only layout in which stage 0 reads
+and writes the same offsets, and it forces adjacent legs at the last stage.
+The sweep is real traffic only above L2, and there the class wins in every
+mode. The out-of-place forward additionally pays its destination's
+write-allocate inside its one memory-bound sweep (stage 0: +15..27% over the
+same stage in place), which the backward pays inside an L1-resident block
+stage; that asymmetry is the next optimization target (build order 1b).
 
 ## Gates
 
@@ -219,13 +245,20 @@ it is served there all the same, because the order is a contract (ruling 1).
 
 ## Build order
 
-0. **Spike, forward only.** `t0d`, `tmgd`, `tld` for radices 4 and 8; the
-   plain forward driver path in `ztt_drivers.ml` with the suffix block loop;
-   a probe that builds the permutation, runs gates 1, 3 and 5 at 4096, 8192
-   and 16384 against the banked natural chain reversed and the banked tile.
-   Go/no-go against the projection. No create, no doors, no wisdom.
-1. **Backward.** `tldb`; the plain backward driver (`tldb`, `tmgb`, `tlfb`);
-   gate 2; the backward raced against the natural backward at the spike cell.
+0. **Spike — DONE 2026-09-13/14.** `t0d`, `tmgd`, `tld`, `tldb` for radices
+   4 and 8 (corpus rows, corpus law 103/103); both plain drivers per cell in
+   `ztt_drivers.ml` (446 drivers, registry fields `fwd_scr`/`bwd_scr`);
+   `probes/ZT/zt_scr_spike.c` — gates 1-4 pass at every cell 512..262144,
+   both chains tried, both modes; the races are the table above.
+0b. **Split the driver TU.** One 3.9 MB file compiles 47 minutes at -O3 on
+   one thread; emit one file per family and N band so a change recompiles
+   only its files, in parallel (build.py already globs `generated/*.c`).
+1. **Backward — DONE with the spike.** `tldb` + the shipped `tmgb`/`tlfb`;
+   gate 2 passes everywhere; raced (the table).
+1b. **`t0d` output prefetch.** The `tlfi` mechanism on the plain stage 0: R
+   prefetches of the output streams a few column quads ahead, so the
+   out-of-place destination's line fills leave the critical path of the one
+   memory-bound sweep. Re-measure the OOP forward at 4096..65536.
 2. **Create.** The plain plan: stream layout in stage order, the conjugate
    stream, the tile law on the plain ladder, the permutation table, no plane,
    no `rb`, one driver per direction.
