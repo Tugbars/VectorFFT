@@ -19,15 +19,27 @@ let () =
   p " * stage order), rb (the run-base table, N/R0 entries), tile (the tile width in\n";
   p " * complexes, 0 = untiled: the mids with R*L <= tile run per tile) */\n";
   Printf.printf "typedef void (*vfft_ztt_fn)(%s);\n\n" Ztt_drivers.driver_params;
+  p "/* the PLAIN (scrambled-class) driver ABI (docs/design/ztt_scrambled_design.md):\n";
+  p " * zin (natural packed z), zout (the scrambled spectrum; zin == zout is the same\n";
+  p " * driver), tw (ONE contiguous stream in stage order, the plain schedule's), tile\n";
+  p " * (the stages with Len_s <= tile, the last one always, run per block). No plane,\n";
+  p " * no run-base table. */\n";
+  Printf.printf "typedef void (*vfft_zttp_fn)(%s);\n\n" Ztt_drivers.plain_params;
   List.iter
     (fun (n, ch) ->
        List.iter
          (fun (bwd, dest) ->
             Printf.printf "extern void %s(%s);\n" (Ztt_drivers.driver_name ~isa n ch ~bwd ~dest) Ztt_drivers.driver_params)
-         [ false, true; false, false; true, true; true, false ])
+         [ false, true; false, false; true, true; true, false ];
+       List.iter
+         (fun bwd ->
+            Printf.printf "extern void %s(%s);\n" (Ztt_drivers.plain_driver_name ~isa n ch ~bwd) Ztt_drivers.plain_params)
+         [ false; true ])
     cells;
   p "\ntypedef struct {\n    int n, nf;\n    int chain[7];\n";
-  p "    vfft_ztt_fn fwd_dest, fwd_plane, bwd_dest, bwd_plane;\n} vfft_ztt_cell_t;\n\n";
+  p "    vfft_ztt_fn fwd_dest, fwd_plane, bwd_dest, bwd_plane;   /* natural order */\n";
+  p "    vfft_zttp_fn fwd_scr, bwd_scr;                            /* the plain schedule: scrambled order */\n";
+  p "} vfft_ztt_cell_t;\n\n";
   Printf.printf "#define VFFT_ZTT_NCELLS_AVX2 %d\n" (List.length cells);
   p "static const vfft_ztt_cell_t vfft_ztt_cells_avx2[VFFT_ZTT_NCELLS_AVX2] = {\n";
   List.iter
@@ -35,14 +47,16 @@ let () =
        let nf = List.length ch in
        let chain = String.concat ", " (List.map string_of_int (ch @ List.init (7 - nf) (fun _ -> 0))) in
        Printf.printf
-         "    { %d, %d, { %s }, %s, %s, %s, %s },\n"
+         "    { %d, %d, { %s }, %s, %s, %s, %s, %s, %s },\n"
          n
          nf
          chain
          (Ztt_drivers.driver_name ~isa n ch ~bwd:false ~dest:true)
          (Ztt_drivers.driver_name ~isa n ch ~bwd:false ~dest:false)
          (Ztt_drivers.driver_name ~isa n ch ~bwd:true ~dest:true)
-         (Ztt_drivers.driver_name ~isa n ch ~bwd:true ~dest:false))
+         (Ztt_drivers.driver_name ~isa n ch ~bwd:true ~dest:false)
+         (Ztt_drivers.plain_driver_name ~isa n ch ~bwd:false)
+         (Ztt_drivers.plain_driver_name ~isa n ch ~bwd:true))
     cells;
   p "};\n\n#endif /* VFFT_ZTT_REGISTRY_AVX2_H */\n"
 ;;

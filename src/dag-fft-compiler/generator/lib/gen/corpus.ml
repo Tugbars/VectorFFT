@@ -166,6 +166,25 @@ let zil_boundary_cells : (string * string list) list =
     , [ "8"; "--zp-tlfi"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_tlfi_bwd_avx2.c"
     , [ "8"; "--zp-tlfib"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  (* ZTURN-T PLAIN = the scrambled class (docs/design/ztt_scrambled_design.md,
+     2026-09-13): ingest t0d, mid tmgd, last tld (forward only -- the backward
+     is the stage-by-stage inverse: tldb, then the shipped tmgb and tlfb). *)
+  ; ( "radix4_z_t0d_avx2.c"
+    , [ "4"; "--zp-t0d"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t0d_avx2.c"
+    , [ "8"; "--zp-t0d"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_tmgd_avx2.c"
+    , [ "4"; "--zp-tmgd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_tmgd_avx2.c"
+    , [ "8"; "--zp-tmgd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_tld_avx2.c"
+    , [ "4"; "--zp-tld"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_tld_bwd_avx2.c"
+    , [ "4"; "--zp-tldb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_tld_avx2.c"
+    , [ "8"; "--zp-tld"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_tld_bwd_avx2.c"
+    , [ "8"; "--zp-tldb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_s0t_r8_avx2.c"
     , [ "8"; "--zp-s0t"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
     )
