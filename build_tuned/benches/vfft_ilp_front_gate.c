@@ -9,11 +9,13 @@
  *      cannot gate ordering.
  *   2. NATURAL consume: NO race; if measure banked ILP, the replay line
  *      must appear (mode coherence).
- *   3. SCRAMBLED in-place (B3, hit-only): if the banked verdict is ILP,
- *      the scrambled handle's fwd output must be memcmp-EXACT == the
- *      natural handle's (identity permutation, same engine) and its
- *      matched roundtrip must hold. If the verdict is tape, the scrambled
- *      handle serves the classic convert path — matched roundtrip only.
+ *   3. SCRAMBLED in-place: the cell's own verdict is a SCRAMBLED WRITER
+ *      (since 2026-09-14 the plain ZTURN-T at every pow2 band cell): its
+ *      fwd output must be a REAL permutation of the spectrum (sorted
+ *      magnitudes agree, never the identity) and its matched roundtrip must
+ *      hold; the second create replays the same bits. (Until 2026-09-15
+ *      this arm required the identity — the pre-ruling world.) The 2048
+ *      boundary cell asserts NO cascade arm and an ILP verdict.
  *   4. Boundary: 2048 NATURAL must still go ZCASC (no ILP shadowing).
  *   Since the sub-2048 cascade admission (2026-09-07) every natural and
  *   scrambled in-place cell below 2048 races ILP vs ZCASC on its own; the
@@ -235,7 +237,13 @@ int main(int argc, char **argv)
                 memcpy(a, x, nb);
                 vfft_execute(hs, VFFT_FORWARD, a, NULL, a, NULL);
                 memcpy(ys, a, nb);
-                if (scr_zcasc)
+                /* ORDER IS A CONTRACT (2026-09-15, design_contracts.md 8b): the
+                 * scrambled cell's writer is a SCRAMBLED writer — at every pow2
+                 * cell in ZTURN-T's band the plain schedule, a real permutation
+                 * of the spectrum — so the arm is always checked as a
+                 * permutation (sorted magnitudes) plus the roundtrip below;
+                 * identity is reported, never accepted as the verdict. */
+                if (scr_zcasc || 1)
                 {
                     double *ma = (double *)malloc(sizeof(double) * (size_t)N);
                     double *mx = (double *)malloc(sizeof(double) * (size_t)N);
@@ -253,8 +261,11 @@ int main(int argc, char **argv)
                         if (fabs(ma[j] - mx[j]) > ep) ep = fabs(ma[j] - mx[j]);
                     }
                     free(ma); free(mx);
-                    scrarm = (mm > 0 && ep / mm < 1e-9) ? "OK(zcasc-comb)" : "WRONG(zcasc!)";
-                    if (!(mm > 0 && ep / mm < 1e-9))
+                    const int ident = memcmp(a, yn, nb) == 0;
+                    scrarm = ident ? "IDENT(!)"
+                           : (mm > 0 && ep / mm < 1e-9) ? (scr_zcasc ? "OK(zcasc-comb)" : "OK(perm)")
+                           : "WRONG(!)";
+                    if (ident || !(mm > 0 && ep / mm < 1e-9))
                         ok = 0;
                 }
                 else if (ilp_won || strstr(logs, "ILP") != NULL)
@@ -335,12 +346,15 @@ int main(int argc, char **argv)
         const int zc = strstr(log, "zcasc=") != NULL ||
                        strstr(log, "replay ZCASC") != NULL;
         const int ilp = strstr(log, "ilp=") != NULL ||
-                        strstr(log, "replay ILP") != NULL;
-        const int ok = hn && zc;   /* 2026-09-03: an ilp ARM is present at 2048 (the
-                                    * IL-vs-IL race); ZCASC must still appear */
+                        strstr(log, "replay ILP") != NULL ||
+                        strstr(log, "attach ILP") != NULL;   /* the in-place door's own line */
+        /* 2026-09-14: the cascade is OUT of pow2 — no ZCASC arm at 2048 in
+         * any order class; the natural in-place cell is the K=1 IL tier's
+         * (ZTURN-T), so an ilp verdict must appear and zcasc must not */
+        const int ok = hn && !zc && ilp;
         if (!ok) fails++;
-        printf("%-7d %-8s | boundary: %s%s\n", N, "zcasc",
-               zc ? (ilp ? "ZCASC+ILP(!)" : "ZCASC") : "NO ZCASC(!)",
+        printf("%-7d %-8s | boundary: %s%s\n", N, "no-zcasc",
+               zc ? "ZCASC(!)" : (ilp ? "ILP, no cascade" : "NO ILP(!)"),
                ok ? "" : "   *** FAIL ***");
         if (hn) vfft_destroy(hn);
     }

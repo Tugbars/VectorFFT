@@ -1724,6 +1724,12 @@ static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int 
         return;
     }
     {
+        /* ZTURN-T at 2^a*odd (2026-09-14/15): the staged chains enter the
+         * natural pool FIRST — they are the engine the band is defined by,
+         * so a candidate cap can only ever truncate the chain3 and pair arms
+         * that enumerate below them (kept until the band is banked and the
+         * losers sunset, design_contracts.md section 4). */
+        if (vfft_ztt_odd_band(N)) _il_dp_enumerate_ztt_odd(N, s, 0);
         /* MONO forms (2026-09-04): every solo kernel the registry has enters
          * the pool as its own candidate — form 0 = the solo n1 kind at each
          * N in VFFT_IL_N1_PAIR_RADICES, form 1 = mono64's fused 8x8 (N=64).
@@ -1888,9 +1894,20 @@ static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int 
                     while ((o & 1) == 0) o >>= 1;
                     if (o == 1) continue;
                 }
+                /* the leaf and BOTH mids must have kernels (the create's own
+                 * checks, vfft_il3p_create): before 2026-09-15 every divisor
+                 * split of R1 was pushed and refused at build, and at a large
+                 * 2^a*odd N (245760: 899 such splits) they overflowed the
+                 * candidate cap — a refused CELL, served by Bluestein at 4.7 ms
+                 * where ZTURN-T measures 1.0. Kernels that do not exist are
+                 * not candidates. */
+                if (!vfft_il2p_leaf_fn(R2, 0) || !vfft_il2p_n1_bwd_fn(R2)) continue;
                 for (int A = 3; A <= R1 / 2; A++)
                 {
                     if (R1 % A) continue;
+                    if (!vfft_il2p_mid_fn(A, 0) || !vfft_il2p_mid_fn(A, 1) ||
+                        !vfft_il2p_mid_fn(R1 / A, 0) || !vfft_il2p_t2tg_bwd_fn(R1 / A))
+                        continue;
                     memset(&c, 0, sizeof c);
                     c.route = VFFT_K1_IL_CHAIN3;
                     c.R1 = R1; c.R2 = R2;
@@ -1955,10 +1972,6 @@ static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int 
             _il_dp_enumerate_flat(N, s);
         /* ZTURN-T: the pow2 cells 16..2048 (every registry chain) */
         _il_dp_enumerate_ztt(N, s);
-        /* ZTURN-T at 2^a*odd (2026-09-14): the staged chains enter the natural
-         * pool beside the chain3 and pair arms that enumerate here today; the
-         * pool sunset policy applies once the band is banked. */
-        if (vfft_ztt_odd_band(N)) _il_dp_enumerate_ztt_odd(N, s, 0);
     }
 }
 
