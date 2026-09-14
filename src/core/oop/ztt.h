@@ -3,7 +3,10 @@
  * the probe's contract: docs/research/sub2048_mkl_method/campaign_state/
  * probes/ZT/CONTRACT.md).
  *
- *   N = R[0] * ... * R[nf-1], R in {4, 8}, (N / R[0]) % 4 == 0.
+ *   N = R[0] * ... * R[nf-1], R[0] and R[nf-1] in {4, 8}, a mid in {4, 8} or
+ *   3/5/7/9/15 (the 2^a*odd band, docs/design/ztt_odd_design.md, 2026-09-14),
+ *   (N / R[0]) % 4 == 0. A pow2 cell binds its FUSED codelet; a 2^a*odd cell
+ *   is STAGED (one kernel call per stage and block, vfft_ztt_odd_band).
  *   ingest  t0tp : natural packed z legs at stride N/R0 -> the PLANE, one
  *                  run of R0 per column at run rb[c] (64-B [re x4][im x4]
  *                  blocks); twiddle-free.
@@ -73,6 +76,42 @@
  * be recombined. README.md beside the fused files. */
 #include "ztt_registry_avx2.h"   /* the cells and their fused codelets (generated) */
 #include "ztt_qw16384.h"         /* the baked quarter-wave (generated)            */
+/* THE STAGE KERNELS, for the STAGED executor (docs/design/ztt_odd_design.md,
+ * 2026-09-14): a cell with no fused codelet — every 2^a*odd cell in the odd
+ * band, or a pow2 cell under the gate's force — runs its stage table, one
+ * kernel call per (stage, block), each kind's exported function in the frozen
+ * 11-arg z ABI with the group loop inside it. The radix lists come from the
+ * corpus through il_registry_avx2.h, so a chain whose radix has no kernel is
+ * refused at create, never at run time. The odd radices 3/5/7/9/15 exist for
+ * the MIDS only (tmg, tmgb, tmgd): the ingest and the terminators are lane
+ * lattices and stay 4/8 — the odd radix is always a mid. */
+#include "il_registry_avx2.h"
+typedef void (*vfft_ztt_kfn)(const double *, const double *, double *, double *,
+                             const double *, const double *,
+                             size_t, size_t, size_t, size_t, size_t);
+#define _ZTT_KFN2(NAME, KIND, MF, MB) static inline vfft_ztt_kfn NAME(int R, int bwd) {     if (bwd) { switch (R) { MB(_ZTT_KB_##KIND) default: return 0; } }     switch (R) { MF(_ZTT_KF_##KIND) default: return 0; } }
+#define _ZTT_KF_t0tp(R) case R: return radix##R##_z_t0tp_fwd_avx2;
+#define _ZTT_KB_t0tp(R) case R: return radix##R##_z_t0tp_bwd_avx2;
+#define _ZTT_KF_tmg(R)  case R: return radix##R##_z_tmg_fwd_avx2;
+#define _ZTT_KB_tmg(R)  case R: return radix##R##_z_tmg_bwd_avx2;
+#define _ZTT_KF_tlf(R)  case R: return radix##R##_z_tlf_fwd_avx2;
+#define _ZTT_KB_tlf(R)  case R: return radix##R##_z_tlf_bwd_avx2;
+#define _ZTT_KF_tlfi(R) case R: return radix##R##_z_tlfi_fwd_avx2;
+#define _ZTT_KB_tlfi(R) case R: return radix##R##_z_tlfi_bwd_avx2;
+#define _ZTT_KF_tld(R)  case R: return radix##R##_z_tld_fwd_avx2;
+#define _ZTT_KB_tld(R)  case R: return radix##R##_z_tld_bwd_avx2;
+#define _ZTT_KF_t0d(R)  case R: return radix##R##_z_t0d_fwd_avx2;
+#define _ZTT_KB_t0d(R)
+#define _ZTT_KF_tmgd(R) case R: return radix##R##_z_tmgd_fwd_avx2;
+#define _ZTT_KB_tmgd(R)
+#define _ZTT_NONE(X)
+_ZTT_KFN2(_ztt_kfn_t0tp, t0tp, VFFT_IL_T0TP_FWD_RADICES, VFFT_IL_T0TP_BWD_RADICES)
+_ZTT_KFN2(_ztt_kfn_tmg,  tmg,  VFFT_IL_TMG_FWD_RADICES,  VFFT_IL_TMG_BWD_RADICES)
+_ZTT_KFN2(_ztt_kfn_tlf,  tlf,  VFFT_IL_TLF_FWD_RADICES,  VFFT_IL_TLF_BWD_RADICES)
+_ZTT_KFN2(_ztt_kfn_tlfi, tlfi, VFFT_IL_TLFI_FWD_RADICES, VFFT_IL_TLFI_BWD_RADICES)
+_ZTT_KFN2(_ztt_kfn_tld,  tld,  VFFT_IL_TLD_FWD_RADICES,  VFFT_IL_TLD_BWD_RADICES)
+_ZTT_KFN2(_ztt_kfn_t0d,  t0d,  VFFT_IL_T0D_FWD_RADICES,  _ZTT_NONE)
+_ZTT_KFN2(_ztt_kfn_tmgd, tmgd, VFFT_IL_TMGD_FWD_RADICES, _ZTT_NONE)
 
 #define VFFT_ZTT_MAX_NF 7        /* == the registry's chain[7]; VFFT_ZSPLIT_MAX_NF */
 #define VFFT_ZTT_MAX_N 262144    /* the cascade's ceiling; above the octave the
@@ -123,6 +162,17 @@ typedef struct
     int scr;
     long len[VFFT_ZTT_MAX_NF + 1];    /* plain: Len_s = prod_{u >= s} R_u, Len_nf = 1 */
     size_t *perm;                     /* plain: N entries, frequency -> position      */
+    /* THE STAGED EXECUTOR (ztt_odd_design.md, 2026-09-14): staged = 1 when the
+     * cell has no fused codelet (cell == NULL) — the stage table below runs
+     * the fused driver's exact loop nest with run-time bounds, one call per
+     * (stage, block). st_fwd/st_bwd[s] = stage s's kernel (natural: t0tp,
+     * tmg.., tlf; plain fwd: t0d, tmgd.., tld; plain bwd: tlfb, tmgb.., tldb —
+     * indexed by the FORWARD stage they invert); tl_*_plane = the natural
+     * in-place terminator (tlfi); twoff[s] = stage s's offset into tw/twb. */
+    int staged;
+    vfft_ztt_kfn st_fwd[VFFT_ZTT_MAX_NF], st_bwd[VFFT_ZTT_MAX_NF];
+    vfft_ztt_kfn tl_fwd_plane, tl_bwd_plane;
+    size_t twoff[VFFT_ZTT_MAX_NF];
 } vfft_ztt_plan_t;
 
 /* the registry row for (N, chain), NULL when the cell was not emitted */
@@ -194,6 +244,32 @@ static inline int _ztt_log2(long v)
  * bwd s = +sin. Returns the doubles written = 2*(R-1)*L. */
 static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd)
 {
+    if (RL & (RL - 1))
+    {   /* a 2^a*odd modulus (an odd mid, and every stage after it in the
+         * chain): no octave, no quarter wave — the angle 2*pi*pw/RL from libm,
+         * reduced to [-pi, pi] (the cascade's odd stages did the same). The
+         * fwd s = -sin(0) = -0.0 at r*b == 0, as the record contract wants. */
+        long k;
+        int r, lane;
+        for (k = 0; k < L; k += 4)
+            for (r = 1; r < R; r++)
+            {
+                double *rec = tw + ((size_t)(k / 4) * (size_t)(R - 1) + (size_t)(r - 1)) * 8;
+                for (lane = 0; lane < 4; lane++)
+                {
+                    const long b = k + lane;
+                    long pw = ((long)r * b) % RL;
+                    double a, c, sn;
+                    if (2 * pw > RL) pw -= RL;
+                    a = 2.0 * M_PI * (double)pw / (double)RL;
+                    c = cos(a);
+                    sn = sin(a);
+                    rec[lane] = c;
+                    rec[4 + lane] = bwd ? sn : -sn;
+                }
+            }
+        return (size_t)2 * (size_t)(R - 1) * (size_t)L;
+    }
     const int lg = _ztt_log2(RL);
     /* up = the bits of pw ABOVE the table's octave (0 within it): the fine
      * table has 2^up entries, cos/sin of 2*pi*b/RL, b < 2^up (<= 16 at the
@@ -240,27 +316,44 @@ static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd
     return (size_t)2 * (size_t)(R - 1) * (size_t)L;
 }
 
+/* the chain grammar (ztt_odd_design.md): the ends are 4 or 8 (the ingest's
+ * turn lattice and the terminators' lane transposes), a mid is 4, 8 or an odd
+ * 3/5/7/9/15 (its edges are radix-agnostic) */
+static inline int _ztt_radix_ok(int R, int mid)
+{
+    if (R == 4 || R == 8) return 1;
+    return mid && (R == 3 || R == 5 || R == 7 || R == 9 || R == 15);
+}
+
 /* create: the validator is the law (NULL = not a ZTURN-T cell, loudly under
- * VFFT_NAT_LOG). Bound out of place; vfft_ztt_bind(p, 1) rebinds in place. */
-static inline vfft_ztt_plan_t *vfft_ztt_create_chain_ord(int N, const int *chain, int nf, int scr)
+ * VFFT_NAT_LOG). Bound out of place; vfft_ztt_bind(p, 1) rebinds in place.
+ * A cell with a fused codelet binds it; a cell without one (every 2^a*odd
+ * cell) is STAGED — its stage table is resolved here from the kind registry
+ * and refused if a radix has no kernel. force_staged builds the staged form
+ * at a pow2 cell too: the gate's tool (staged == fused bitwise), nothing
+ * else's. */
+static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int scr, int force_staged)
 {
     vfft_ztt_plan_t *p;
     const vfft_ztt_cell_t *cell;
     long prod = 1, j;
-    int s;
+    int s, staged = 0;
     size_t off;
     const char *why = NULL;
     if (nf < 2 || nf > VFFT_ZTT_MAX_NF) why = "nf outside 2..7";
     else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16..262144";
     for (s = 0; !why && s < nf; s++)
     {
-        if (chain[s] != 4 && chain[s] != 8) why = "radix not in {4, 8}";
+        if (!_ztt_radix_ok(chain[s], s > 0 && s < nf - 1))
+            why = "radix not in {4, 8} at an end, or not in {4, 8, 3, 5, 7, 9, 15} in a mid";
         prod *= chain[s];
     }
     if (!why && prod != (long)N) why = "chain product != N";
     if (!why && (N / chain[0]) % 4) why = "(N / R0) % 4 != 0";
     cell = why ? NULL : vfft_ztt_lookup(N, chain, nf);
-    if (!why && !cell) why = "no fused driver for this cell (ztt_registry_avx2.h)";
+    if (!why) staged = force_staged || !cell;
+    if (!why && staged && !force_staged && (N & (N - 1)) == 0)
+        why = "no fused driver for this pow2 cell (ztt_registry_avx2.h)";
     if (why)
     {
         if (getenv("VFFT_NAT_LOG"))
@@ -275,6 +368,37 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain_ord(int N, const int *chain
     p->cell = cell;
     p->ncol = N / chain[0];
     p->scr = scr ? 1 : 0;
+    p->staged = staged;
+    if (staged)
+    {   /* the stage table: every kernel resolved now, none looked up at run time */
+        int ok = 1;
+        for (s = 0; s < nf; s++)
+        {
+            const int R = chain[s];
+            if (p->scr)
+            {
+                if (s == 0)           { p->st_fwd[s] = _ztt_kfn_t0d(R, 0);  p->st_bwd[s] = _ztt_kfn_tlf(R, 1); }
+                else if (s == nf - 1) { p->st_fwd[s] = _ztt_kfn_tld(R, 0);  p->st_bwd[s] = _ztt_kfn_tld(R, 1); }
+                else                  { p->st_fwd[s] = _ztt_kfn_tmgd(R, 0); p->st_bwd[s] = _ztt_kfn_tmg(R, 1); }
+            }
+            else
+            {
+                if (s == 0)           { p->st_fwd[s] = _ztt_kfn_t0tp(R, 0); p->st_bwd[s] = _ztt_kfn_t0tp(R, 1); }
+                else if (s == nf - 1) { p->st_fwd[s] = _ztt_kfn_tlf(R, 0);  p->st_bwd[s] = _ztt_kfn_tlf(R, 1);
+                                        p->tl_fwd_plane = _ztt_kfn_tlfi(R, 0); p->tl_bwd_plane = _ztt_kfn_tlfi(R, 1);
+                                        ok = ok && p->tl_fwd_plane && p->tl_bwd_plane; }
+                else                  { p->st_fwd[s] = _ztt_kfn_tmg(R, 0);  p->st_bwd[s] = _ztt_kfn_tmg(R, 1); }
+            }
+            ok = ok && p->st_fwd[s] && p->st_bwd[s];
+        }
+        if (!ok)
+        {
+            if (getenv("VFFT_NAT_LOG"))
+                fprintf(stderr, "[ztt] N=%d: refused: no stage kernel for a radix in this chain\n", N);
+            free(p);
+            return NULL;
+        }
+    }
     if (p->scr)
     {
         /* THE PLAIN SCHEDULE (ztt_scrambled_design.md): Len_0 = N,
@@ -295,8 +419,10 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain_ord(int N, const int *chain
         {
             const size_t n = _ztt_fill_stage(p->tw + off, p->len[s + 1], chain[s], p->len[s], 0);
             (void)_ztt_fill_stage(p->twb + off, p->len[s + 1], chain[s], p->len[s], 1);
+            p->twoff[s] = off;
             off += n;
         }
+        p->twoff[nf - 1] = off;   /* the last stage carries no stream */
         /* the permutation: frequency k sits at the in-place DIF position
          * ic = digitrev(k) over the chain, then inside the last stage's
          * 4-column span at tld's unpack-only lane order [c, c+2 | c+1, c+3]:
@@ -338,6 +464,7 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain_ord(int N, const int *chain
     {
         const size_t n = _ztt_fill_stage(p->tw + off, p->L[s], chain[s], p->L[s] * chain[s], 0);
         (void)_ztt_fill_stage(p->twb + off, p->L[s], chain[s], p->L[s] * chain[s], 1);
+        p->twoff[s] = off;
         off += n;
     }
     /* the run-base table: rb[c] = the run j whose digit reversal (over the
@@ -357,16 +484,23 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain_ord(int N, const int *chain
     }
     p->inplace = 0;
     p->tile = 0;
-    p->fwd = cell->fwd_dest;
-    p->bwd = cell->bwd_dest;
+    p->fwd = cell ? cell->fwd_dest : NULL;   /* staged: the stage table runs */
+    p->bwd = cell ? cell->bwd_dest : NULL;
     return p;
+}
+
+/* the order-class create: scr = 0 natural, 1 the plain schedule; fused where
+ * the cell has a codelet, staged where it has none */
+static inline vfft_ztt_plan_t *vfft_ztt_create_chain_ord(int N, const int *chain, int nf, int scr)
+{
+    return _ztt_create(N, chain, nf, scr, 0);
 }
 
 /* the natural-order create: the order class is a property of the plan for
  * its whole life (scr = 0 here, 1 = the plain schedule, ..._ord above) */
 static inline vfft_ztt_plan_t *vfft_ztt_create_chain(int N, const int *chain, int nf)
 {
-    return vfft_ztt_create_chain_ord(N, chain, nf, 0);
+    return _ztt_create(N, chain, nf, 0, 0);
 }
 
 /* plain plans: the output position of frequency k (gates, introspection) */
@@ -381,7 +515,7 @@ static inline size_t vfft_ztt_perm(const vfft_ztt_plan_t *p, long k)
 static inline void vfft_ztt_bind(vfft_ztt_plan_t *p, int inplace)
 {
     p->inplace = inplace ? 1 : 0;
-    if (p->scr) return;   /* the plain codelets are placement-free: one function either way */
+    if (p->scr || p->staged) return;   /* plain: placement-free; staged: the walk reads inplace */
     p->fwd = inplace ? p->cell->fwd_plane : p->cell->fwd_dest;
     p->bwd = inplace ? p->cell->bwd_plane : p->cell->bwd_dest;
 }
@@ -403,29 +537,53 @@ static inline int vfft_ztt_band(int N)
     return N >= 16 && N <= VFFT_ZTT_MAX_N && (N & (N - 1)) == 0;
 }
 
-/* the tile law: 0 (untiled) is always legal; else a power of two, at least
- * the first mid's R*L (below it no stage tiles) and below N; a chain without
- * mids (nf == 2) tiles nothing and refuses every width. Shared by the create,
- * the planner's ladder and the gate. */
+/* THE ODD BAND (ztt_odd_design.md, 2026-09-14): N = 2^a * m, a >= 4, m > 1 a
+ * product over {3, 5, 7, 9, 15} with at most five odd mids (nf <= 7 with the
+ * two pow2 ends), 2048 <= N <= the ceiling — the cascade's exact odd cell
+ * set. The chain grammar is the planner's (_il_dp_enumerate_odd_mids): the
+ * odd part decomposed greedily largest-first, its mids at every interior
+ * position, the pow2 slots over ordered {4, 8}. */
+static inline int vfft_ztt_odd_band(int N)
+{
+    static const int OP[5] = { 15, 9, 7, 5, 3 };
+    int m = N, a = 0, nm = 0, i;
+    if (N < 2048 || N > VFFT_ZTT_MAX_N) return 0;
+    while ((m & 1) == 0) { m >>= 1; a++; }
+    if (m == 1 || a < 4) return 0;
+    for (i = 0; i < 5; i++)
+        while (m % OP[i] == 0) { m /= OP[i]; nm++; }
+    return m == 1 && nm <= VFFT_ZTT_MAX_NF - 2;
+}
+
+/* the tile law: 0 (untiled) is always legal; else a width that DIVIDES N
+ * (the tiles partition the array), that the first mid's group R0*R1 divides
+ * (below it no stage tiles: a tile holds whole groups of every tiled stage,
+ * and the tiled stages are the mids whose R*L divides the width) and that is
+ * below N; a chain without mids (nf == 2) tiles nothing and refuses every
+ * width. At a pow2 N this is exactly "a power of two, >= R0*R1, < N"; at a
+ * 2^a*odd N it admits the ladder's 48 KB (3072) where the chain's products
+ * allow it and refuses a pow2 width the odd mid's group does not divide.
+ * Shared by the create, the planner's ladder and the gate. */
 static inline int vfft_ztt_tile_legal(int N, const int *chain, int nf, size_t tile)
 {
     if (tile == 0) return 1;
     if (nf < 3) return 0;
-    if (tile & (tile - 1)) return 0;
-    if (tile < (size_t)chain[0] * (size_t)chain[1]) return 0;
+    if ((size_t)N % tile) return 0;
+    if (tile % ((size_t)chain[0] * (size_t)chain[1])) return 0;
     return tile < (size_t)N;
 }
 
 /* the same law for the plain schedule, mirrored: its tiled stages are the
- * SUFFIX (Len shrinks with s), so the smallest tile that tiles anything is
- * the last mid's block, R_{nf-2} * R_{nf-1} */
+ * SUFFIX (Len shrinks with s), so the smallest block that tiles anything is
+ * the last mid's, R_{nf-2} * R_{nf-1}, and the per-block stages are those
+ * whose Len divides the width */
 static inline int vfft_ztt_tile_legal_ord(int N, const int *chain, int nf, size_t tile, int scr)
 {
     if (!scr) return vfft_ztt_tile_legal(N, chain, nf, tile);
     if (tile == 0) return 1;
     if (nf < 3) return 0;
-    if (tile & (tile - 1)) return 0;
-    if (tile < (size_t)chain[nf - 2] * (size_t)chain[nf - 1]) return 0;
+    if ((size_t)N % tile) return 0;
+    if (tile % ((size_t)chain[nf - 2] * (size_t)chain[nf - 1])) return 0;
     return tile < (size_t)N;
 }
 
@@ -453,9 +611,101 @@ static inline double *_ztt_plane_for(const vfft_ztt_plan_t *p, const double *zou
     return (double *)(base + off);
 }
 
+/* THE STAGED WALK (ztt_odd_design.md): the fused drivers' loop nests
+ * (ztt_drivers.ml emit_driver / emit_plain_driver) with run-time bounds. A
+ * mid runs per tile when its group (natural: R*L; plain: Len) divides the
+ * width, else it sweeps — at a pow2 cell that is the drivers' "<= tile", and
+ * the gate holds the two bitwise. Natural: ingest sweep; per tile the mids
+ * whose R*L divides it; the other mids as sweeps; the terminator (tlf in the
+ * destination, tlfi from the plane in place). Plain fwd: t0d sweep; the
+ * sweeping mids in stage order; per block the dividing mids then tld. Plain
+ * bwd: per block tldb then the dividing mids high to low; the other mids
+ * high to low as sweeps; tlfb in place. */
+static inline void _ztt_staged_run(const vfft_ztt_plan_t *p, const double *zin, double *zout, int bwd)
+{
+    const int nf = p->nf;
+    const size_t N = (size_t)p->N, tile = p->tile;
+    const vfft_ztt_kfn *st = bwd ? p->st_bwd : p->st_fwd;
+    const double *tw = bwd ? p->twb : p->tw;
+    int s;
+    size_t t;
+    if (p->scr)
+    {
+        const size_t Rl = (size_t)p->chain[nf - 1];
+        if (!bwd)
+        {
+            st[0](zin, 0, zout, 0, tw, 0, (size_t)p->len[1], 1, 0, 0, (size_t)p->len[1]);
+            for (s = 1; s < nf - 1; s++)
+                if (!tile || tile % (size_t)p->len[s])
+                    st[s](zout, 0, zout, 0, tw + p->twoff[s], 0,
+                          (size_t)p->len[s + 1], N / (size_t)p->len[s], 0, 0, (size_t)p->len[s + 1]);
+            if (tile)
+                for (t = 0; t < N / tile; t++)
+                {
+                    double *B = zout + t * tile * 2;
+                    for (s = 1; s < nf - 1; s++)
+                        if (tile % (size_t)p->len[s] == 0)
+                            st[s](B, 0, B, 0, tw + p->twoff[s], 0,
+                                  (size_t)p->len[s + 1], tile / (size_t)p->len[s], 0, 0, (size_t)p->len[s + 1]);
+                    st[nf - 1](B, 0, B, 0, tw, 0, 0, 1, 0, 0, tile / Rl);
+                }
+            else
+                st[nf - 1](zout, 0, zout, 0, tw, 0, 0, 1, 0, 0, N / Rl);
+        }
+        else
+        {
+            if (tile)
+                for (t = 0; t < N / tile; t++)
+                {
+                    const double *Bi = zin + t * tile * 2;
+                    double *B = zout + t * tile * 2;
+                    st[nf - 1](Bi, 0, B, 0, tw, 0, 0, 1, 0, 0, tile / Rl);
+                    for (s = nf - 2; s >= 1; s--)
+                        if (tile % (size_t)p->len[s] == 0)
+                            st[s](B, 0, B, 0, tw + p->twoff[s], 0,
+                                  (size_t)p->len[s + 1], tile / (size_t)p->len[s], 0, 0, (size_t)p->len[s + 1]);
+                }
+            else
+                st[nf - 1](zin, 0, zout, 0, tw, 0, 0, 1, 0, 0, N / Rl);
+            for (s = nf - 2; s >= 1; s--)
+                if (!tile || tile % (size_t)p->len[s])
+                    st[s](zout, 0, zout, 0, tw + p->twoff[s], 0,
+                          (size_t)p->len[s + 1], N / (size_t)p->len[s], 0, 0, (size_t)p->len[s + 1]);
+            st[0](zout, 0, zout, 0, tw, 0, (size_t)p->len[1], 1, (size_t)p->len[1], 0, (size_t)p->len[1]);
+        }
+        return;
+    }
+    {
+        const int ip = (zin == zout || p->inplace);
+        double *W = ip ? _ztt_plane_for(p, zout) : zout;
+        const vfft_ztt_kfn last = ip ? (bwd ? p->tl_bwd_plane : p->tl_fwd_plane) : st[nf - 1];
+        const size_t L = (size_t)p->L[nf - 1];
+        st[0](zin, 0, W, 0, 0, (const double *)p->rb, (size_t)p->ncol, 0, 0, 0, (size_t)p->ncol);
+        if (tile)
+            for (t = 0; t < N / tile; t++)
+            {
+                double *B = W + t * tile * 2;
+                for (s = 1; s < nf - 1; s++)
+                {
+                    const size_t RL = (size_t)p->L[s] * (size_t)p->chain[s];
+                    if (tile % RL == 0)
+                        st[s](B, 0, B, 0, tw + p->twoff[s], 0, (size_t)p->L[s], tile / RL, 0, 0, (size_t)p->L[s]);
+                }
+            }
+        for (s = 1; s < nf - 1; s++)
+        {
+            const size_t RL = (size_t)p->L[s] * (size_t)p->chain[s];
+            if (!tile || tile % RL)
+                st[s](W, 0, W, 0, tw + p->twoff[s], 0, (size_t)p->L[s], (size_t)p->Gs[s], 0, 0, (size_t)p->L[s]);
+        }
+        last(W, 0, zout, 0, tw + p->twoff[nf - 1], 0, L, 1, L, 0, L);
+    }
+}
+
 static inline void vfft_ztt_execute_fwd(const vfft_ztt_plan_t *p,
                                         const double *zin, double *zout)
 {
+    if (p->staged) { _ztt_staged_run(p, zin, zout, 0); return; }
     if (p->scr) { p->cell->fwd_scr(zin, zout, p->tw, p->tile); return; }   /* the plain schedule: one function, either placement */
     if (zin == zout || p->inplace)
         p->cell->fwd_plane(zin, zout, _ztt_plane_for(p, zout), p->tw, p->rb, p->tile);
@@ -466,6 +716,7 @@ static inline void vfft_ztt_execute_fwd(const vfft_ztt_plan_t *p,
 static inline void vfft_ztt_execute_bwd(const vfft_ztt_plan_t *p,
                                         const double *zin, double *zout)
 {
+    if (p->staged) { _ztt_staged_run(p, zin, zout, 1); return; }
     if (p->scr) { p->cell->bwd_scr(zin, zout, p->twb, p->tile); return; }   /* the plain schedule's stage-by-stage inverse */
     if (zin == zout || p->inplace)
         p->cell->bwd_plane(zin, zout, _ztt_plane_for(p, zout), p->twb, p->rb, p->tile);

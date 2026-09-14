@@ -340,10 +340,11 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
         return 0;
     {
         const int pow2 = (N & (N - 1)) == 0;
-        if (!pow2 && N >= 2048 && !(N & 3))
+        const int oddband = vfft_ztt_odd_band(N);   /* 2^a*odd, ZTURN-T's since 2026-09-14 */
+        if (!pow2 && !oddband && N >= 2048 && !(N & 3))
             return 0;
-        if (N > (pow2 ? VFFT_ZTT_MAX_N
-                      : ((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N)))
+        if (N > ((pow2 || oddband) ? VFFT_ZTT_MAX_N
+                                   : ((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N)))
             return 0;
     }
     if (!_k1_il_dp_ctx_ready)
@@ -430,7 +431,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * race is the only source of a scrambled plan, and a natural-writing pair
      * is not one. Seen 2026-09-09: the in-place scrambled create at 2048
      * attached a natural-writing pair 64.32. */
-    if (scr_req && (N & (N - 1)) == 0 && !ke)
+    if (scr_req && ((N & (N - 1)) == 0 || vfft_ztt_odd_band(N)) && !ke)
         return;
     /* MONO verdict (2026-09-04): the cell's plan is ONE solo kernel; no pair
      * is built here — the caller serves the mono door (the OOP block reads
