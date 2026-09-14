@@ -99,9 +99,10 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
         /* THE CASCADE IS OUT OF POW2 (owner 2026-09-13/15): at a power of two in
          * ZTURN-T's band a scrambled request is the K=1 tier's — the PLAIN
          * ZTURN-T schedule on the ord=scr row (ztt_scrambled_design.md) — and
-         * no cascade plan is built or raced for it. The 2^a * odd scrambled
-         * cells keep the cascade until their own ZTURN-T exists. */
-        if (K == 1 && !ob && cfg->order == VFFT_ORDER_SCRAMBLED && !vfft_ztt_band(N))
+         * no cascade plan is built or raced for it. The 2^a * odd cells of
+         * ZTURN-T's odd band (2026-09-14, ztt_odd_design.md) are the same:
+         * the plain schedule on the staged chains. */
+        if (K == 1 && !ob && cfg->order == VFFT_ORDER_SCRAMBLED && !vfft_ztt_band(N) && !vfft_ztt_odd_band(N))
         {
             /* SCRAMBLED K=1: wisdom replay (>=2048 only, _k1z_wisdom_replay) else default chain + the stf/stf2 t2q race; the winning cascade attaches to the classic handle below.
              * t2q picks must be MEASURED on the installed binary — stf/stf2 are bit-identical, so the delta is code-placement order, never a hand-set constant.
@@ -612,7 +613,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                      * See docs/design/vfft_front_door.md. */
                     if (cfg->order == VFFT_ORDER_NATURAL &&
                         N >= _vfft_zcasc_nat_min_n() &&
-                        !vfft_ztt_band(N) &&       /* ZTURN-T's band: no cascade arm (owner, 2026-09-09) */
+                        !vfft_ztt_band(N) && !vfft_ztt_odd_band(N) &&   /* ZTURN-T's bands, pow2 and 2^a*odd: no cascade arm (2026-09-09/14) */
                         cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                         !getenv("VFFT_NO_NAT_ZCASC"))
                     {
@@ -738,7 +739,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                      * verdict on the OOP ord=scr mode row, replay it. */
                     if (cfg->order == VFFT_ORDER_DEFAULT &&
                         N >= _vfft_zcasc_min_n() &&
-                        !vfft_ztt_band(N) &&       /* ZTURN-T's band: no cascade arm (owner, 2026-09-09) */
+                        !vfft_ztt_band(N) && !vfft_ztt_odd_band(N) &&   /* ZTURN-T's bands, pow2 and 2^a*odd: no cascade arm (2026-09-09/14) */
                         cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                         !getenv("VFFT_NO_NAT_ZCASC"))
                     {

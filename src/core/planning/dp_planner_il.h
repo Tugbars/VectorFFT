@@ -1633,6 +1633,75 @@ static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
     _il_dp_enumerate_ztt_ord(N, s, 0);   /* natural order */
 }
 
+/* ZTURN-T at 2^a*odd (docs/design/ztt_odd_design.md, 2026-09-14): the
+ * STAGED cells — no registry row; the chain GRAMMAR instead. The ends are 4
+ * or 8 (the ingest's turn lattice and the terminators' lane transposes), the
+ * odd part of N is decomposed greedily largest-first over {15, 9, 7, 5, 3}
+ * and its mids are placed at every interior position, the pow2 slots walk
+ * ordered {4, 8}, nf <= 7 — the cascade's _il_dp_enumerate_odd_mids grammar,
+ * relaxed to need no pow2 mid beside the odd ones. Each chain x {untiled,
+ * the owner's odd-cell ladder 8 / 16 / 32 / 48 KB (2026-09-14: "8-16-32kb
+ * gives the best results, we can try 48kb here too since we have odds")
+ * where the tile law admits it (a width divides N and holds the first mid's
+ * group)}. Both order classes: scr = 1 is the plain schedule, the scrambled
+ * pool's only writer here as at pow2. The create resolves each chain's stage
+ * table and refuses a radix without a kernel; the planner pushes nothing the
+ * create would refuse (the same grammar, checked twice, as at pow2). */
+static void _il_dp_enumerate_ztt_odd(int N, vfft_il_cand_sink_t *s, int scr)
+{
+    static const int OP[] = { 15, 9, 7, 5, 3 };
+    static const int ladder[] = { 512, 1024, 2048, 3072 };
+    int mids[VFFT_ZTT_MAX_NF], nm = 0, m = N, i, nf;
+    long pw;
+    if (!vfft_ztt_odd_band(N)) return;
+    while ((m & 1) == 0) m >>= 1;
+    for (i = 0; i < 5; i++)
+        while (m % OP[i] == 0) { mids[nm++] = OP[i]; m /= OP[i]; }
+    pw = N;
+    for (i = 0; i < nm; i++) pw /= mids[i];
+    for (nf = nm + 2; nf <= VFFT_ZTT_MAX_NF; nf++)
+    {
+        const int np = nf - nm;                /* power-of-two slots */
+        long mask;
+        for (mask = 0; mask < (1L << np); mask++)
+        {
+            int pchain[VFFT_ZTT_MAX_NF], pos[VFFT_ZTT_MAX_NF];
+            long prod = 1;
+            for (i = 0; i < np; i++) { pchain[i] = ((mask >> i) & 1) ? 8 : 4; prod *= pchain[i]; }
+            if (prod != pw) continue;
+            for (i = 0; i < nm; i++) pos[i] = i + 1;
+            for (;;)
+            {
+                int chain[VFFT_ZTT_MAX_NF], pi = 0, mi = 0, q, k;
+                for (i = 0; i < nf; i++)
+                    chain[i] = (mi < nm && pos[mi] == i) ? mids[mi++] : pchain[pi++];
+                if ((N / chain[0]) % 4 == 0)
+                {
+                    vfft_il_cand_t c;
+                    memset(&c, 0, sizeof c);
+                    c.route = VFFT_K1_IL_ZTT;
+                    c.il_scr = scr;
+                    for (q = 0; q < nf; q++) c.il_zt[q] = chain[q];
+                    c.il_zt_n = nf;
+                    _il_dp_push(s, &c);                       /* untiled */
+                    for (q = 0; q < (int)(sizeof ladder / sizeof ladder[0]); q++)
+                        if (vfft_ztt_tile_legal_ord(N, chain, nf, (size_t)ladder[q], scr))
+                        {
+                            c.il_tw = ladder[q];
+                            _il_dp_push(s, &c);
+                        }
+                }
+                /* next combination of mid positions within [1, nf-2] */
+                k = nm - 1;
+                while (k >= 0 && pos[k] == nf - 2 - (nm - 1 - k)) k--;
+                if (k < 0) break;
+                pos[k]++;
+                for (q = k + 1; q < nm; q++) pos[q] = pos[q - 1] + 1;
+            }
+        }
+    }
+}
+
 /* The natural-output engines' candidates: mono forms, pairs x forms,
  * chain3 x forms and (with_flat) the natural flat DIT. The NATURAL pool is
  * exactly this; the SCRAMBLED pool takes the same engines — natural output
@@ -1886,6 +1955,10 @@ static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int 
             _il_dp_enumerate_flat(N, s);
         /* ZTURN-T: the pow2 cells 16..2048 (every registry chain) */
         _il_dp_enumerate_ztt(N, s);
+        /* ZTURN-T at 2^a*odd (2026-09-14): the staged chains enter the natural
+         * pool beside the chain3 and pair arms that enumerate here today; the
+         * pool sunset policy applies once the band is banked. */
+        if (vfft_ztt_odd_band(N)) _il_dp_enumerate_ztt_odd(N, s, 0);
     }
 }
 
@@ -1939,12 +2012,19 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * probes/ZT/zt_scr_spike_results.md) — and nothing else: no natural
      * engine (S2's admission, and the sub-2048 leftover below it, are gone
      * at pow2 as of 2026-09-14), no cascade chain (its last pow2 role was
-     * this door; the pow2 cascade is deleted). The 2^a * odd cells keep the
-     * 2026-09-05 design below until their own ZTURN-T exists (owner's earlier
-     * ruling: the odd machinery is not touched). */
+     * this door; the pow2 cascade is deleted). At a 2^a * odd cell in
+     * ZTURN-T's odd band (2026-09-14, ztt_odd_design.md) the writer is the
+     * plain schedule on the STAGED chains of the odd grammar — the cascade's
+     * last role anywhere. Outside both bands the cascade's enumeration below
+     * stands until its deletion. */
     if (vfft_ztt_band(N))
     {
         _il_dp_enumerate_ztt_ord(N, s, 1);
+        return;
+    }
+    if (vfft_ztt_odd_band(N))
+    {
+        _il_dp_enumerate_ztt_odd(N, s, 1);
         return;
     }
     if (N < 2048 || (N & 3))

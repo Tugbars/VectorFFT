@@ -256,11 +256,15 @@ extern "C"
                     they came from the same plan. A natural-writing engine is
                     never raced or served for a scrambled request, and a cell
                     with no scrambled writer refuses at create. At a power of
-                    two (16..262144, either placement) the writer is the
-                    scrambled ZTURN-T class (2026-09-14): every stage in
-                    place, no scratch, its order fixed by the plan's chain;
-                    at the remaining composite cells the cascade's
-                    digit-reversed comb serves until their own ZTURN-T exists.
+                    two (16..262144) and at N = 2^a * m, a >= 4, m a product
+                    of 3, 5, 7, 9 and 15 (2048..262144, at most five odd
+                    factors), either placement, the writer is the scrambled
+                    ZTURN-T class (2026-09-14/15): every stage in place, no
+                    scratch, its order fixed by the plan's chain — the pow2
+                    cells as fused codelets, the 2^a * odd cells as the same
+                    stage kernels called per stage with the odd radix as a
+                    mid; at the remaining composite cells the cascade's
+                    digit-reversed comb serves until its deletion.
                   1D and 2D C2C (in-place + OOP; 2D NATURAL is native for any
                   factorization — the column chain's leaf writes rows in
                   natural order); for 2D INTERLEAVED r2c/c2r it is the
