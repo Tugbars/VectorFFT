@@ -63,7 +63,15 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-#include "ztt_registry_avx2.h"   /* the cells and their four drivers (generated) */
+/* FUSED CODELETS (owner's ruling 2026-09-14): the drivers this plan binds are
+ * whole-transform functions, one per pow2 cell (N, chain, direction, buffer
+ * mode), generated into generator/generated/fused_codelets/ with the stage
+ * kernels INLINED and literal trip counts — the pow2 ZTURN-T solution's
+ * executable form, and only that. The composable STAGE KERNELS (t0tp/tmg/tlf/
+ * tlfi and the plain t0d/tmgd/tld/tldb in codelets/zil/avx2/boundary_split)
+ * are the product every other solution is built from; a fused codelet cannot
+ * be recombined. README.md beside the fused files. */
+#include "ztt_registry_avx2.h"   /* the cells and their fused codelets (generated) */
 #include "ztt_qw16384.h"         /* the baked quarter-wave (generated)            */
 
 #define VFFT_ZTT_MAX_NF 7        /* == the registry's chain[7]; VFFT_ZSPLIT_MAX_NF */
@@ -102,6 +110,19 @@ typedef struct
     int inplace;
     size_t tile;                      /* TILE WIDTH in complexes, 0 = untiled (raced,
                                        * il_tw=; vfft_ztt_set_tile)                  */
+    /* THE PLAIN SCHEDULE = the scrambled order class (2026-09-15,
+     * docs/design/ztt_scrambled_design.md). scr = 1 executes the cell's
+     * fwd_scr / bwd_scr fused codelets (ABI zin, zout, tw, tile: no plane,
+     * no run-base table, zin == zout is the same function). Then tw / twb
+     * hold the PLAIN layout — stage s < nf-1 carries 2*(R_s-1)*Len_{s+1}
+     * doubles of w_{Len_s}^(p*b), the last stage none — rb and plane stay
+     * NULL, len[] is the block ladder, and perm[k] is the output position of
+     * frequency k: built once for the gates and introspection, never read at
+     * run time. A plan is ONE order class for its whole life: the two never
+     * mix (design_contracts.md 8b). */
+    int scr;
+    long len[VFFT_ZTT_MAX_NF + 1];    /* plain: Len_s = prod_{u >= s} R_u, Len_nf = 1 */
+    size_t *perm;                     /* plain: N entries, frequency -> position      */
 } vfft_ztt_plan_t;
 
 /* the registry row for (N, chain), NULL when the cell was not emitted */
@@ -126,6 +147,7 @@ static inline void vfft_ztt_destroy(vfft_ztt_plan_t *p)
     VFFT_ZTT_FREE(p->twb);
     VFFT_ZTT_FREE(p->rb);
     VFFT_ZTT_FREE(p->plane);
+    VFFT_ZTT_FREE(p->perm);
     free(p);
 }
 
@@ -220,7 +242,7 @@ static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd
 
 /* create: the validator is the law (NULL = not a ZTURN-T cell, loudly under
  * VFFT_NAT_LOG). Bound out of place; vfft_ztt_bind(p, 1) rebinds in place. */
-static inline vfft_ztt_plan_t *vfft_ztt_create_chain(int N, const int *chain, int nf)
+static inline vfft_ztt_plan_t *vfft_ztt_create_chain_ord(int N, const int *chain, int nf, int scr)
 {
     vfft_ztt_plan_t *p;
     const vfft_ztt_cell_t *cell;
@@ -252,6 +274,49 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain(int N, const int *chain, in
     for (s = 0; s < nf; s++) p->chain[s] = chain[s];
     p->cell = cell;
     p->ncol = N / chain[0];
+    p->scr = scr ? 1 : 0;
+    if (p->scr)
+    {
+        /* THE PLAIN SCHEDULE (ztt_scrambled_design.md): Len_0 = N,
+         * Len_{s+1} = Len_s / R_s; stage s < nf-1 has Len_{s+1} columns at
+         * root Len_s — the natural fill routine with (columns, R, modulus) =
+         * (Len_{s+1}, R_s, Len_s); the last stage is twiddle-free. No run-base
+         * table, no plane. */
+        p->len[nf] = 1;
+        for (s = nf - 1; s >= 0; s--) p->len[s] = p->len[s + 1] * chain[s];
+        p->twdoubles = 0;
+        for (s = 0; s < nf - 1; s++)
+            p->twdoubles += (size_t)2 * (size_t)(chain[s] - 1) * (size_t)p->len[s + 1];
+        p->tw = (double *)VFFT_ZTT_ALLOC(p->twdoubles * sizeof(double));
+        p->twb = (double *)VFFT_ZTT_ALLOC(p->twdoubles * sizeof(double));
+        p->perm = (size_t *)VFFT_ZTT_ALLOC((size_t)N * sizeof(size_t));
+        if (!p->tw || !p->twb || !p->perm) { vfft_ztt_destroy(p); return NULL; }
+        for (s = 0, off = 0; s < nf - 1; s++)
+        {
+            const size_t n = _ztt_fill_stage(p->tw + off, p->len[s + 1], chain[s], p->len[s], 0);
+            (void)_ztt_fill_stage(p->twb + off, p->len[s + 1], chain[s], p->len[s], 1);
+            off += n;
+        }
+        /* the permutation: frequency k sits at the in-place DIF position
+         * ic = digitrev(k) over the chain, then inside the last stage's
+         * 4-column span at tld's unpack-only lane order [c, c+2 | c+1, c+3]:
+         * R*(col & ~3) + 4*p + [0,2,1,3][col & 3], col = ic / R, p = ic % R */
+        {
+            static const size_t sig[4] = { 0, 2, 1, 3 };
+            const long R = chain[nf - 1];
+            for (j = 0; j < (long)N; j++)
+            {
+                const long ic = _ztt_digitrev(j, chain, nf);
+                const long col = ic / R, pp = ic % R;
+                p->perm[j] = (size_t)(R * (col & ~3L) + 4 * pp) + sig[col & 3];
+            }
+        }
+        p->inplace = 0;
+        p->tile = 0;
+        p->fwd = NULL;   /* the plain fused codelets are reached through the cell */
+        p->bwd = NULL;
+        return p;
+    }
     /* geometry: L[1] = R0, L[s+1] = L[s]*R[s], Gs[s] = N / (R[s]*L[s]) */
     p->L[1] = chain[0];
     p->twdoubles = 0;
@@ -297,12 +362,26 @@ static inline vfft_ztt_plan_t *vfft_ztt_create_chain(int N, const int *chain, in
     return p;
 }
 
+/* the natural-order create: the order class is a property of the plan for
+ * its whole life (scr = 0 here, 1 = the plain schedule, ..._ord above) */
+static inline vfft_ztt_plan_t *vfft_ztt_create_chain(int N, const int *chain, int nf)
+{
+    return vfft_ztt_create_chain_ord(N, chain, nf, 0);
+}
+
+/* plain plans: the output position of frequency k (gates, introspection) */
+static inline size_t vfft_ztt_perm(const vfft_ztt_plan_t *p, long k)
+{
+    return p->scr ? p->perm[k] : (size_t)k;
+}
+
 /* placement binding: out of place = the `dest` drivers (the pipeline runs
  * in zout), in place = the `plane` drivers (zin is consumed by the ingest
  * before the last stage writes zout, so zin == zout is legal) */
 static inline void vfft_ztt_bind(vfft_ztt_plan_t *p, int inplace)
 {
     p->inplace = inplace ? 1 : 0;
+    if (p->scr) return;   /* the plain codelets are placement-free: one function either way */
     p->fwd = inplace ? p->cell->fwd_plane : p->cell->fwd_dest;
     p->bwd = inplace ? p->cell->bwd_plane : p->cell->bwd_dest;
 }
@@ -337,9 +416,22 @@ static inline int vfft_ztt_tile_legal(int N, const int *chain, int nf, size_t ti
     return tile < (size_t)N;
 }
 
+/* the same law for the plain schedule, mirrored: its tiled stages are the
+ * SUFFIX (Len shrinks with s), so the smallest tile that tiles anything is
+ * the last mid's block, R_{nf-2} * R_{nf-1} */
+static inline int vfft_ztt_tile_legal_ord(int N, const int *chain, int nf, size_t tile, int scr)
+{
+    if (!scr) return vfft_ztt_tile_legal(N, chain, nf, tile);
+    if (tile == 0) return 1;
+    if (nf < 3) return 0;
+    if (tile & (tile - 1)) return 0;
+    if (tile < (size_t)chain[nf - 2] * (size_t)chain[nf - 1]) return 0;
+    return tile < (size_t)N;
+}
+
 static inline int vfft_ztt_set_tile(vfft_ztt_plan_t *p, size_t tile)
 {
-    if (!vfft_ztt_tile_legal(p->N, p->chain, p->nf, tile)) return 0;
+    if (!vfft_ztt_tile_legal_ord(p->N, p->chain, p->nf, tile, p->scr)) return 0;
     p->tile = tile;
     return 1;
 }
@@ -364,6 +456,7 @@ static inline double *_ztt_plane_for(const vfft_ztt_plan_t *p, const double *zou
 static inline void vfft_ztt_execute_fwd(const vfft_ztt_plan_t *p,
                                         const double *zin, double *zout)
 {
+    if (p->scr) { p->cell->fwd_scr(zin, zout, p->tw, p->tile); return; }   /* the plain schedule: one function, either placement */
     if (zin == zout || p->inplace)
         p->cell->fwd_plane(zin, zout, _ztt_plane_for(p, zout), p->tw, p->rb, p->tile);
     else
@@ -373,6 +466,7 @@ static inline void vfft_ztt_execute_fwd(const vfft_ztt_plan_t *p,
 static inline void vfft_ztt_execute_bwd(const vfft_ztt_plan_t *p,
                                         const double *zin, double *zout)
 {
+    if (p->scr) { p->cell->bwd_scr(zin, zout, p->twb, p->tile); return; }   /* the plain schedule's stage-by-stage inverse */
     if (zin == zout || p->inplace)
         p->cell->bwd_plane(zin, zout, _ztt_plane_for(p, zout), p->twb, p->rb, p->tile);
     else

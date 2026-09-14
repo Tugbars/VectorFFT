@@ -214,12 +214,14 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         }
         /* mode=conv / tape / free rows: not IL verdicts — fall to the race */
     }
-    /* ZTURN-T's band (owner's law, 2026-09-09): a NATURAL (or DEFAULT) pow2
-     * cell up to the ceiling has no cascade arm in place either; a stale
-     * ZCASC row there is not a verdict — the K=1 engine builds and banks as
-     * ILP. The explicit SCRAMBLED cell keeps the cascade: it is the only
-     * scrambled writer until the scrambled ZTURN-T class exists. */
-    if (nat && vfft_ztt_band(N) && mode == VFFT_NAT_ZCASC)
+    /* ZTURN-T's band (owner's law, 2026-09-09; the cascade out of pow2
+     * 2026-09-15): a pow2 cell up to the ceiling has no cascade arm in
+     * place in ANY order class; a stale ZCASC row there is not a verdict —
+     * the K=1 engine builds and banks as ILP. A SCRAMBLED request takes the
+     * ord=scr K=1 row, whose writer is the PLAIN ZTURN-T schedule
+     * (ztt_scrambled_design.md: every stage in place, no plane — the class's
+     * measured strength is exactly this cell). */
+    if (vfft_ztt_band(N) && mode == VFFT_NAT_ZCASC)
     {
         mode = VFFT_NAT_UNSET;
         raced_row = 0;
@@ -239,7 +241,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     }
 
     /* 3. the cascade candidate at N >= 2048 (natord under NATURAL) */
-    if (N >= _vfft_zcasc_nat_min_n() && !(nat && vfft_ztt_band(N)) &&   /* no cascade arm for a natural pow2 cell; scrambled keeps it */
+    if (N >= _vfft_zcasc_nat_min_n() && !vfft_ztt_band(N) &&   /* no cascade arm at a pow2 band cell, in any order class (2026-09-15) */
         !getenv("VFFT_NO_K1Z_IP") &&
         !getenv("VFFT_NO_NAT_ZCASC") && W && !W->vw2_off_stride &&
         (mode != VFFT_NAT_ILP || !have_k1))

@@ -216,7 +216,11 @@ static int _ilprime_inner_from_wisdom(int M, _ilprime_inner_t *in, void *v)
         if (vw2_oop_lookup_k1_scr(&c->W->vw2, M, &e) &&
             e.k1_il_route == VFFT_K1_IL_ZTT && e.il_zt_n >= 2)
         {
-            vfft_ztt_plan_t *zp = vfft_ztt_create_chain(M, e.il_zt, e.il_zt_n);
+            /* the ord=scr row names the PLAIN schedule (2026-09-15): the
+             * scrambled class's matched roundtrip is exactly the inner's
+             * contract, and its in-place forward/backward is the class's
+             * measured strength (zt_scr_spike_results.md) */
+            vfft_ztt_plan_t *zp = vfft_ztt_create_chain_ord(M, e.il_zt, e.il_zt_n, 1);
             if (zp && e.il_tw > 0 && !vfft_ztt_set_tile(zp, (size_t)e.il_tw))
             { vfft_ztt_destroy(zp); zp = NULL; }
             if (zp)
@@ -410,22 +414,23 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * the pow2 band included — _k1_il_plan_race carries the N gate. Until
      * 2026-09-09 this call was fenced to N < 2048 or odd N and a cold in-place
      * band cell refused with "no interleaved engine". */
+    /* the scrambled pow2 band is the K=1 tier's since 2026-09-15: its writer is
+     * the PLAIN ZTURN-T schedule (ztt_scrambled_design.md), raced and banked
+     * on the ord=scr row like every other cell; the cascade's fence that stood
+     * here is gone with the cascade's last pow2 role */
     if (!W->vw2_off_oop &&
-        /* the cascade's scrambled cells (pow2 >= 2048) are its own machinery,
-         * not the K=1 tier's — no scrambled K=1 writer exists there yet */
-        !(scr_req && (N & (N - 1)) == 0 && N >= _vfft_zcasc_min_n()) &&
         (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)
             ke = (scr_req ? vw2_oop_lookup_k1_scr(&W->vw2, N, &keb)
                           : vw2_oop_lookup_k1(&W->vw2, N, &keb)) ? &keb : NULL;
     }
-    /* a SCRAMBLED request at a cascade cell (pow2 >= 2048) with no scrambled
-     * K=1 row builds NOTHING here — no default pair, no heuristic: the cell
-     * is the cascade machinery's until the scrambled ZTURN-T class exists
-     * (design_contracts.md section 5). Seen 2026-09-09: the in-place
-     * scrambled create at 2048 attached a natural-writing pair 64.32. */
-    if (scr_req && (N & (N - 1)) == 0 && N >= _vfft_zcasc_min_n() && !ke)
+    /* a SCRAMBLED request at a pow2 cell with no scrambled row after the race
+     * builds NOTHING here — no default pair, no heuristic (NO FALLBACKS): the
+     * race is the only source of a scrambled plan, and a natural-writing pair
+     * is not one. Seen 2026-09-09: the in-place scrambled create at 2048
+     * attached a natural-writing pair 64.32. */
+    if (scr_req && (N & (N - 1)) == 0 && !ke)
         return;
     /* MONO verdict (2026-09-04): the cell's plan is ONE solo kernel; no pair
      * is built here — the caller serves the mono door (the OOP block reads
@@ -484,11 +489,13 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     }
     /* ZTURN-T verdict (2026-09-09): the banked chain replays as written
      * (validated by the create: legality, the quarter-wave's octave, the
-     * registry cell). Natural output serves both order classes. A refusal
+     * registry cell). The ORDER CLASS is the row's: an ord=nat row replays
+     * the natural drivers, an ord=scr row the PLAIN schedule's (2026-09-15,
+     * ztt_scrambled_design.md) — one plan, one order, never mixed. A refusal
      * falls through to the pair/default path. */
     if (ke && ke->k1_il_route == VFFT_K1_IL_ZTT && ke->il_zt_n >= 2 && ztt_out)
     {
-        vfft_ztt_plan_t *zp = vfft_ztt_create_chain(N, ke->il_zt, ke->il_zt_n);
+        vfft_ztt_plan_t *zp = vfft_ztt_create_chain_ord(N, ke->il_zt, ke->il_zt_n, scr_req);
         if (zp && ke->il_tw > 0 && !vfft_ztt_set_tile(zp, (size_t)ke->il_tw))
         {   /* the row names a tile the cell refuses: not a plan that exists */
             vfft_ztt_destroy(zp);

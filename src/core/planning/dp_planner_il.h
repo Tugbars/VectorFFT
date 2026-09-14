@@ -233,10 +233,11 @@ typedef struct
                                               * composite mid B); 2026-09-02 */
     int    il_fl[VFFT_ILFD_MAX_K];           /* FLAT only: the chain (leaf first) */
     int    il_fl_n;                          /* FLAT only: stages, else 0        */
-    int    il_scr;                           /* FLAT only: 1 = the SCRAMBLED class
-                                              * (block-order output, transposed
-                                              * backward); the SCRAMBLED pool's
-                                              * flat candidates (2026-09-05)   */
+    int    il_scr;                           /* FLAT and ZTT: 1 = the SCRAMBLED
+                                              * class — the flat DIT's block-order
+                                              * output (2026-09-05) or ZTURN-T's
+                                              * PLAIN schedule (2026-09-15); the
+                                              * SCRAMBLED pool's own candidates  */
     char   il_flf[24];                       /* FLAT only: the per-stage forms
                                               * the bench raced (il_forms=);
                                               * empty = unraced yet             */
@@ -511,7 +512,9 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         /* the validator is the law: chain legality, the quarter-wave's octave
          * and the registry cell (the fused drivers) live in
          * vfft_ztt_create_chain; both directions come with the cell */
-        b->ztt = vfft_ztt_create_chain(N, c->il_zt, c->il_zt_n);
+        /* il_scr = the PLAIN schedule (the scrambled pool's candidate): the
+         * order class is a property of the plan for its whole life */
+        b->ztt = vfft_ztt_create_chain_ord(N, c->il_zt, c->il_zt_n, c->il_scr);
         if (!b->ztt) return -1;
         if (c->il_tw > 0 && !vfft_ztt_set_tile(b->ztt, (size_t)c->il_tw))
         { vfft_ztt_destroy(b->ztt); b->ztt = NULL; return -1; }
@@ -881,8 +884,31 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
     case VFFT_K1_IL_3P:
     case VFFT_K1_IL_2P_PURE:
     case VFFT_K1_IL_CHAIN3:
-    case VFFT_K1_IL_ZTT:
         return idx;                                  /* natural by contract */
+    case VFFT_K1_IL_ZTT:
+        if (!c->il_scr) return idx;                  /* natural by contract */
+        {   /* the PLAIN schedule (ztt_scrambled_design.md, 2026-09-15) — an
+             * INDEPENDENT re-derivation, as this gate demands (file header):
+             * frequency k lands at the in-place Sande-Tukey position
+             * ic = digitrev(k) over the chain, then inside the last stage's
+             * 4-column span at tld's unpack-only lane order, so position
+             *   idx = R*(col & ~3) + 4*p + [0,2,1,3][col & 3], col = ic/R, p = ic%R.
+             * Invert: span = idx/(4R), j = idx%4, p = (idx%(4R))/4, col = 4*span +
+             * [0,2,1,3][j] (the lane order is its own inverse), ic = col*R + p,
+             * and digitrev over the REVERSED chain undoes digitrev over the
+             * chain (the digits read in the opposite radix system). */
+            static const long sig[4] = { 0, 2, 1, 3 };
+            const int K = c->il_zt_n;
+            const long R = c->il_zt[K - 1];
+            const long span = idx / (4 * R), within = idx % (4 * R);
+            const long p = within / 4, j = within % 4;
+            const long col = 4 * span + sig[j];
+            const long ic = col * R + p;
+            int rch[VFFT_ZTT_MAX_NF], i;
+            if (K < 2 || K > VFFT_ZTT_MAX_NF) return -1;
+            for (i = 0; i < K; i++) rch[i] = c->il_zt[K - 1 - i];
+            return _ztt_digitrev(ic, rch, K);
+        }
     case VFFT_K1_IL_FLAT:
         if (!c->il_scr) return idx;                  /* natural by contract */
         {   /* the SCRAMBLED class: position b*R_last + l holds bin
@@ -1551,13 +1577,17 @@ static void _il_dp_enumerate_flat_ord(int N, vfft_il_cand_sink_t *s, int scr)
     }
 }
 
-/* ZTURN-T (2026-09-09): every registry cell at N. The fused drivers exist
- * exactly for these chains (ztt_registry_avx2.h, derived from the corpus),
- * so the enumeration IS the registry walk and the create refuses anything
- * else. Natural output, both directions: it enters the natural pool and the
+/* ZTURN-T (2026-09-09): every registry cell at N. The FUSED CODELETS — one
+ * whole-transform function per pow2 cell with the stage kernels inlined, the
+ * pow2 solution's executable form and only that (owner's ruling 2026-09-14;
+ * generator/generated/fused_codelets/README.md) — exist exactly for these
+ * chains (ztt_registry_avx2.h, derived from the corpus), so the enumeration
+ * IS the registry walk and the create refuses anything else. The composable
+ * stage kernels in codelets/zil/avx2/boundary_split are what every other
+ * solution is built from. Natural output, both directions: it enters the natural pool and the
  * scrambled pool's natural-engine set, and races the pairs on the same
  * clock — the owner's "ZTURN-T ships, racing Bailey below 2048". */
-static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
+static void _il_dp_enumerate_ztt_ord(int N, vfft_il_cand_sink_t *s, int scr)
 {
     vfft_il_cand_t c;
     int i, q;
@@ -1567,6 +1597,11 @@ static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
         if (cell->n != N) continue;
         memset(&c, 0, sizeof c);
         c.route = VFFT_K1_IL_ZTT;
+        /* scr = the PLAIN schedule (ztt_scrambled_design.md, 2026-09-15): the
+         * same registry chain, the cell's fwd_scr / bwd_scr fused codelets,
+         * its own tile law (the last mid's block), scrambled output. It is the
+         * scrambled pool's ONLY writer at pow2 (design_contracts.md 8b). */
+        c.il_scr = scr;
         for (q = 0; q < cell->nf; q++) c.il_zt[q] = cell->chain[q];
         c.il_zt_n = cell->nf;
         _il_dp_push(s, &c);                       /* untiled */
@@ -1584,13 +1619,18 @@ static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
         {
             static const int ladder[] = { 1024, 2048 };
             for (q = 0; q < (int)(sizeof ladder / sizeof ladder[0]); q++)
-                if (vfft_ztt_tile_legal(N, cell->chain, cell->nf, (size_t)ladder[q]))
+                if (vfft_ztt_tile_legal_ord(N, cell->chain, cell->nf, (size_t)ladder[q], scr))
                 {
                     c.il_tw = ladder[q];
                     _il_dp_push(s, &c);
                 }
         }
     }
+}
+
+static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
+{
+    _il_dp_enumerate_ztt_ord(N, s, 0);   /* natural order */
 }
 
 /* The natural-output engines' candidates: mono forms, pairs x forms,
@@ -1890,14 +1930,23 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * engines' own race — without it the cell had NO scrambled verdict and
      * every SCRAMBLED create re-raced and served a form-less default pair.
      * The cascade's own gate follows. */
-    /* ORDER IS A CONTRACT (design_contracts.md section 3, owner 2026-09-09
-     * evening): the scrambled pool races scrambled writers only. S2's
-     * admission of the natural engines at pow2 N >= 2048 (2026-09-09, 15:55)
-     * is REVERTED the same day — "scrambled belongs to only scrambled. when
-     * the user wants scrambled, then only then they are raced." Below 2048
-     * and at the 2^a * odd cells the natural engines still enter this pool
-     * (the 2026-09-05 design above); the owner's ruling on those cells is
-     * pending and the odd machinery is not touched. */
+    /* ORDER IS A CONTRACT (design_contracts.md 8b, owner 2026-09-09 and
+     * again 2026-09-13: "natorder and scrambled are contracts not
+     * optimization angles"): the scrambled pool races scrambled writers
+     * ONLY, at every cell. At a power of two in ZTURN-T's band the writer is
+     * the PLAIN schedule — every registry chain x the tile ladder, the cell's
+     * fwd_scr / bwd_scr fused codelets (ztt_scrambled_design.md; measured
+     * probes/ZT/zt_scr_spike_results.md) — and nothing else: no natural
+     * engine (S2's admission, and the sub-2048 leftover below it, are gone
+     * at pow2 as of 2026-09-15), no cascade chain (its last pow2 role was
+     * this door; the pow2 cascade is deleted). The 2^a * odd cells keep the
+     * 2026-09-05 design below until their own ZTURN-T exists (owner's earlier
+     * ruling: the odd machinery is not touched). */
+    if (vfft_ztt_band(N))
+    {
+        _il_dp_enumerate_ztt_ord(N, s, 1);
+        return;
+    }
     if (N < 2048 || (N & 3))
     {
         _il_dp_enumerate_natural_engines(N, s, 0);

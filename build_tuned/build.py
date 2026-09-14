@@ -68,7 +68,7 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'pure_il' / 'tangent',  # tangent-interior variants (il_kv variant 3); see that dir's README
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'boundary_split',  # cascade N>=2048: IL at the edges, SPLIT interior (codelet_zsplit.ml)
         DAG / 'codelets' / 'trig' / DAG_ISA,   # trig (DCT/DST) specializations
-        DAG / 'generator' / 'generated',       # ZTURN-T fused drivers: ztt_drivers_<isa>.c, DERIVED from the corpus cells by a promote rule (ztt_drivers.ml); the headers there are not sources
+        DAG / 'generator' / 'generated' / 'fused_codelets',  # ZTURN-T FUSED CODELETS: one whole-transform function per pow2 cell with the boundary_split stage kernels inlined — the pow2 solution's executable form ONLY (owner's ruling 2026-09-14, README.md there); one file per (family, N), DERIVED from the corpus cells by a promote rule (ztt_drivers.ml)
     ]
     srcs: list[str] = []
     for d in dirs:

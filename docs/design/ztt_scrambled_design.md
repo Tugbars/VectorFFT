@@ -139,6 +139,17 @@ Backward, one new kind; the rest is shipped:
 `E_blocks` transpose. Nothing here touches `rb`, and no kind has a plane
 argument.
 
+**Two kinds of generated code, both kept (owner's ruling 2026-09-14).** The
+stage kernels above are the product: one stage each, composable, the same
+files that a 2^a·odd chain, the 2D/3D pow2 passes and both order classes'
+backwards are built from. The **fused codelets** in
+`generator/generated/fused_codelets/` (README there) are one whole-transform
+function per pow2 cell with those bodies inlined and literal trip counts —
+the pow2 solution's executable form, and only that: nothing else may bind
+one, and none can be recombined. Measured, the fusion is worth 4-12% below
+2048 and 0-3% above; its cost is 7 MB of generated text, split per family
+and size so a kernel change rebuilds in about a minute.
+
 Shuffle accounting, measured: `t0d`'s de-interleave is one shuffle per
 complex where `t0tp`'s turn lattice does transpose and de-interleave together
 in half of one; `tld` carries a TR4 plus the interleaving stores, 1.5 per
@@ -250,15 +261,24 @@ stage; that asymmetry is the next optimization target (build order 1b).
    `ztt_drivers.ml` (446 drivers, registry fields `fwd_scr`/`bwd_scr`);
    `probes/ZT/zt_scr_spike.c` — gates 1-4 pass at every cell 512..262144,
    both chains tried, both modes; the races are the table above.
-0b. **Split the driver TU.** One 3.9 MB file compiles 47 minutes at -O3 on
-   one thread; emit one file per family and N band so a change recompiles
-   only its files, in parallel (build.py already globs `generated/*.c`).
+0b. **Split the driver TU — DONE 2026-09-14.** One file per (family, N):
+   `ztt_drivers_avx2_<N>.c` and `zttp_drivers_avx2_<N>.c`, 30 files; a
+   plain-family change rebuilds in 84 s against 47 minutes.
 1. **Backward — DONE with the spike.** `tldb` + the shipped `tmgb`/`tlfb`;
    gate 2 passes everywhere; raced (the table).
-1b. **`t0d` output prefetch.** The `tlfi` mechanism on the plain stage 0: R
-   prefetches of the output streams a few column quads ahead, so the
-   out-of-place destination's line fills leave the critical path of the one
-   memory-bound sweep. Re-measure the OOP forward at 4096..65536.
+1b. **The out-of-place forward — BOTH LEVERS REFUTED 2026-09-14.** The
+   `tlfi`-style output prefetch on `t0d`: no gain (removed). The packed
+   per-column w^1 stream with the squaring tree, `t0dq` (`TP_PowW1`, 224 KB
+   to 32 KB at 16384, raced twin `zttpq_*`, registry `fwd_scrq`): correct
+   and SLOWER at every L2-resident cell (+12..+48% against `t0d`'s
+   +5..+22%), a 3-6% gain only above L2. The stage is bound by neither
+   store-miss latency nor its twiddle bytes; ~0.85 us at 16384 is the second
+   buffer's write-allocate and ~1.1 us is a fused-driver-only excess with a
+   single copy of the loop and the same instruction mix, unexplained. The
+   class stands as measured: in place from 2048 up and out of place above
+   L2 it wins; out of place at L2-resident sizes its forward loses 5-22%.
+   `t0dq` was not dominant and was DELETED 2026-09-15 (owner's ruling); the
+   results doc keeps its table so it is not rebuilt.
 2. **Create.** The plain plan: stream layout in stage order, the conjugate
    stream, the tile law on the plain ladder, the permutation table, no plane,
    no `rb`, one driver per direction.

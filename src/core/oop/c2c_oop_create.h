@@ -96,7 +96,12 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
         vfft_zsplit_plan_t *zs_pending = NULL;
         vfft_zturn2_plan_t *zt_pending = NULL;
         int zroute_pending = 0; /* 0 = legacy zsplit, 1 = ZTURN-S */
-        if (K == 1 && !ob && cfg->order == VFFT_ORDER_SCRAMBLED)
+        /* THE CASCADE IS OUT OF POW2 (owner 2026-09-13/15): at a power of two in
+         * ZTURN-T's band a scrambled request is the K=1 tier's — the PLAIN
+         * ZTURN-T schedule on the ord=scr row (ztt_scrambled_design.md) — and
+         * no cascade plan is built or raced for it. The 2^a * odd scrambled
+         * cells keep the cascade until their own ZTURN-T exists. */
+        if (K == 1 && !ob && cfg->order == VFFT_ORDER_SCRAMBLED && !vfft_ztt_band(N))
         {
             /* SCRAMBLED K=1: wisdom replay (>=2048 only, _k1z_wisdom_replay) else default chain + the stf/stf2 t2q race; the winning cascade attaches to the classic handle below.
              * t2q picks must be MEASURED on the installed binary — stf/stf2 are bit-identical, so the delta is code-placement order, never a hand-set constant.
@@ -136,11 +141,14 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 for (s2o = 0; s2o < zt_pending->nf; s2o++)
                     if (zt_pending->chain[s2o] & 1)
                         ztodd = 1;
-        /* S2 REVERTED (2026-09-09 evening, design_contracts.md section 3): an
-         * explicit SCRAMBLED pow2 request at N >= 2048 takes the kind-4
-         * cascade, the only scrambled writer there, until the scrambled
-         * ZTURN-T class exists; the natural K=1 engines are never admitted to
-         * a scrambled request ("scrambled belongs to only scrambled"). */
+        /* ORDER IS A CONTRACT (design_contracts.md 8b): a scrambled request is
+         * served by scrambled writers only. At pow2 in ZTURN-T's band no
+         * cascade is pending (above), so an explicit SCRAMBLED request enters
+         * the K=1 tier here and reads the ord=scr row — the PLAIN ZTURN-T
+         * schedule's verdict, raced on a miss; the natural K=1 engines are
+         * never admitted to a scrambled request ("scrambled belongs to only
+         * scrambled", 2026-09-09; "contracts not optimization angles",
+         * 2026-09-13). */
         if (K == 1 && !ob &&
             (cfg->order != VFFT_ORDER_SCRAMBLED || ztodd ||
              (!zs_pending && !zt_pending)))
@@ -179,13 +187,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * N < 2048 or odd N and a cold band cell fell through. */
             if (cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                 !W->vw2_off_oop &&
-                /* an explicit SCRAMBLED request at a cascade cell (pow2 >= 2048
-                 * today) is the cascade machinery's own — replay / race above,
-                 * kind-4 rows — not the K=1 tier's: the K=1 tier has no
-                 * scrambled writer there until the scrambled ZTURN-T class
-                 * exists (design_contracts.md section 5). Racing it here banked
-                 * a fresh cascade chain on EVERY create (12-24 s each, T=1 and
-                 * T=8 serving different combs; k1_pow2_gate 2026-09-09). */
+                /* an explicit SCRAMBLED request with a cascade plan pending
+                 * (a 2^a * odd cell: the cascade's own replay / race above,
+                 * kind-4 rows) is not the K=1 tier's. At pow2 nothing is
+                 * pending since 2026-09-15 and the scrambled K=1 writer is the
+                 * PLAIN ZTURN-T schedule, raced here like every other cell.
+                 * (Racing a cascade cell here banked a fresh cascade chain on
+                 * EVERY create, 12-24 s each; k1_pow2_gate 2026-09-09.) */
                 !(cfg->order == VFFT_ORDER_SCRAMBLED && (zs_pending || zt_pending)) &&
                 (cfg->recalibrate || !ki || !ki->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
             {
@@ -446,15 +454,16 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             if (ilr == VFFT_K1_IL_FLAT && !ilfd)
                 ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
             /* ZTURN-T (route 9, 2026-09-09): a banked verdict replays its chain
-             * (il_ztt=) through the create — the registry cell's fused drivers;
-             * NO default build (the planner is the only source). Natural
-             * output is a legal answer to a scrambled request, so the same
-             * plan serves both order classes. */
+             * (il_ztt=) through the create — the registry cell's fused codelets;
+             * NO default build (the planner is the only source). The ORDER
+             * CLASS is the row's (2026-09-15): ord=nat replays the natural
+             * drivers, ord=scr the PLAIN schedule (ztt_scrambled_design.md) —
+             * one plan, one order, never mixed. */
             vfft_ztt_plan_t *ztt = NULL;
             if (ilr == VFFT_K1_IL_ZTT && !il2p && !il3p && !ilfd && !getenv("VFFT_NO_IL2P") &&
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_zt_n >= 2)
             {
-                ztt = vfft_ztt_create_chain(N, ki->il_zt, ki->il_zt_n);
+                ztt = vfft_ztt_create_chain_ord(N, ki->il_zt, ki->il_zt_n, scr_req);
                 if (ztt && ki->il_tw > 0 && !vfft_ztt_set_tile(ztt, (size_t)ki->il_tw))
                 {   /* the row names a tile the cell refuses: not a plan that exists */
                     vfft_ztt_destroy(ztt);

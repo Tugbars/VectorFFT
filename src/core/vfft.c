@@ -1419,10 +1419,13 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
                 return 0;
     }
     if (a->k1ztt)
-    {   /* ZTURN-T: the same chain (the chain IS the plan; one driver per cell) */
+    {   /* ZTURN-T: the same chain, ORDER CLASS (natural or the plain schedule,
+         * 2026-09-15), tile width and placement binding — each names a
+         * different fused codelet or a different walk of the same one */
         const vfft_ztt_plan_t *x = a->k1ztt, *y = b->k1ztt;
         int s;
-        if (!y || x->N != y->N || x->nf != y->nf)
+        if (!y || x->N != y->N || x->nf != y->nf || x->scr != y->scr ||
+            x->tile != y->tile || x->inplace != y->inplace)
             return 0;
         for (s = 0; s < x->nf; s++)
             if (x->chain[s] != y->chain[s])
