@@ -428,8 +428,8 @@ static int frontdoor_pass(const char *wisdir)
             const int hs = store_row(wisdir, N, " ord=scr ", rs, sizeof rs, cs, sizeof cs);
             CHECK(hn && strcmp(rn, "zcasc") && strcmp(rn, "?"), "N=%d: the ord=nat comp row is not a K=1 IL engine (%s)", N, hn ? rn : "none");
             CHECK(hs && !strcmp(rs, "ztt") && chain_has_odd(cs), "N=%d: the ord=scr comp row is not the plain ZTURN-T on an odd chain (%s %s)", N, hs ? rs : "none", cs);
-            printf("  %-6d banked: ord=nat il_route=%s %s, ord=scr il_route=%s il_ztt=%s
-", N, hn ? rn : "none", cn[0] ? cn : "", hs ? rs : "none", cs);
+            printf("  %-6d banked: ord=nat il_route=%s %s, ord=scr il_route=%s il_ztt=%s\n",
+                   N, hn ? rn : "none", cn[0] ? cn : "", hs ? rs : "none", cs);
         }
         VFFT_ZTT_FREE(x); VFFT_ZTT_FREE(ref); VFFT_ZTT_FREE(o); VFFT_ZTT_FREE(b);
     }

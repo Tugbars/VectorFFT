@@ -303,23 +303,60 @@ Inventory, from the sunset plan's section 1, verified 2026-09-14:
 The deletion is one change after the last banked verdict in the band, not
 a series: a half-deleted cascade serves nothing and gates nothing.
 
+## What it measures (2026-09-14/15, `probes/ZT/zt_odd_spike_results.md`)
+
+Staged ZTURN-T against what the front door served before it, ns, medians of
+5 paced races on core 2:
+
+| N | cell | ztt natural | ztt plain | door natural (chain3 / cascade) | door scrambled (cascade) |
+| --- | --- | --- | --- | --- | --- |
+| 3072 | OOP fwd / IP fwd | 2891 / 3279 | 3466 / 2989 | 3192 / 3177 | 2969 / 3045 |
+| 12288 | OOP fwd / IP fwd | 13156 / 13875 | 15862 / 14000 | 17488 / 17462 | 15931 / 15744 |
+| 245760 | OOP fwd / IP bwd | 1002 us / 1152 us | 832 us / 749 us | 1198 us / 1706 us | 933 us / 991 us |
+
+The natural class beats the door's natural engine at every cell and placement
+(9-25% forward, 23-47% backward); the plain class wins the scrambled cell in
+place everywhere and out of place above L2, and trails the cascade's comb out
+of place at L2 sizes by up to 17% forward — the pow2 class's known forward
+weakness, now against a scrambled incumbent. The planner's own race at 3072
+(`benches/il_dp_odd_probe.c`, 248 natural candidates of which 52 ZTURN-T, 52
+plain) puts `8.4.4.3.8` untiled at 2720 ns natural and `4.3.4.4.4.4` at 16 KB
+at 3201 ns plain; chain3's best there is ~4000. Staging costs nothing
+measurable: the spread at 12288 is 0.2%.
+
 ## Build order
 
-1. **Kernels.** Open the generator gate for `tmg`/`tmgd`/`tmgb` at the odd
-   set; emit the 15 files; corpus rows; corpus law.
-2. **Create + staged executor.** The grammar, the stage table, the odd tile
-   law, the walk in both classes and directions, `cell == NULL` dispatch.
-   Gate 4 first, at pow2, before any odd cell runs.
-3. **Spike.** 12288 both classes, both placements, the grammar's chains and
-   widths, gates 1-5, then the race against the cascade's banked rows and
-   the chain3 row (gate 6).
-4. **Planner, doors, wisdom.** The band union, the enumerator move, the
-   pools as above, the prime inner. Cold front-door gates at every band
-   size.
-5. **Tree gates + contract text.** `ztt_gate` over the band; the `vfft.h`
-   band paragraph names 2^a·odd.
+1. **Kernels — DONE 2026-09-14.** The generator gate admits `tmg`/`tmgb`/
+   `tmgd` at 3/5/7/9/15; 15 files in `boundary_split/`; corpus 118/118
+   byte-identical; `il_registry_avx2.h` lists the odd radices for the three
+   kinds.
+2. **Create + staged executor — DONE 2026-09-14.** `_ztt_create(N, chain,
+   nf, scr, force_staged)` behind the two public creates: the grammar
+   (`_ztt_radix_ok`), the stage table (`st_fwd/st_bwd`, `tl_*_plane`,
+   `twoff`) resolved from `il_registry_avx2.h`'s lists, the twiddle fill's
+   odd-modulus branch (libm, reduced angle), the tile law as divisibility
+   (`vfft_ztt_tile_legal[_ord]`), `vfft_ztt_odd_band`, `_ztt_staged_run`.
+   Gate 4 holds at every pow2 registry cell: 6544 executions bitwise.
+3. **Spike — DONE 2026-09-14.** `benches/ztt_odd_gate.c` (17 odd chains:
+   exact to 6e-16, in place / tiles / alignment bitwise, roundtrips 2e-15)
+   and `probes/ZT/zt_odd_spike.c` (the table above).
+4. **Planner, doors, wisdom — DONE 2026-09-15.** `_il_dp_enumerate_ztt_odd`
+   (the grammar times the odd ladder) in the natural pool beside chain3 and
+   the pairs and ALONE in the scrambled pool; `_k1_il_plan_race` admits the
+   band to the ceiling; the no-row guard covers it; every door's cascade arm
+   is fenced by both bands. The stale odd-band cascade rows (six `mode=zcasc`
+   in-place signposts, six `eng=zturn` comp targets, four seeded `route=modeb`
+   rows) and the pre-ruling `ord=scr il_route=2p` rows at 32..512 and 2048
+   with their in-place signposts are purged from the store. Verified cold
+   through the front door (`ztt_odd_gate --wisdir`): at 3072 and 12288 every
+   (placement, order) cell builds, computes and banks ZTURN-T odd chains
+   (the natural 3072 replays its banked chain3 row, as the law says).
+5. **Tree gates + contract text — DONE 2026-09-15.** `ztt_odd_gate` in the
+   sweep (`run_gates.py`, seeded); `ztt_gate`, `k1_pow2_gate`,
+   `il_dp_overflow_gate` unchanged and green; `include/vfft.h` names the
+   band.
 6. **Calibrate the band** (with the pow2 `ord=scr` rows: one calibrator
-   run, owner's word).
+   run, owner's word). Until then a cold band cell races at create.
 7. **Delete the cascade**, the inventory above, in one change.
 
 ## Assumptions stated for the owner's ruling
