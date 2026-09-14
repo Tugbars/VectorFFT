@@ -277,20 +277,43 @@ stage; that asymmetry is the next optimization target (build order 1b).
    single copy of the loop and the same instruction mix, unexplained. The
    class stands as measured: in place from 2048 up and out of place above
    L2 it wins; out of place at L2-resident sizes its forward loses 5-22%.
-   `t0dq` was not dominant and was DELETED 2026-09-15 (owner's ruling); the
+   `t0dq` was not dominant and was DELETED 2026-09-14 (owner's ruling); the
    results doc keeps its table so it is not rebuilt.
-2. **Create.** The plain plan: stream layout in stage order, the conjugate
-   stream, the tile law on the plain ladder, the permutation table, no plane,
-   no `rb`, one driver per direction.
-3. **Planner, doors, wisdom.** The scrambled pow2 cell's pool = plain chains
-   times the tile ladder; the doors route a scrambled interleaved request in
-   the band to the K=1 race; `k1_commit` binds the plain driver; the
-   calibrator covers the scrambled rows under `ord=scr` (rulings 1 and 2).
-4. **Tree gates.** The plain arms in `ztt_gate`; EXPECT restamps where pool
-   sizes change.
-5. **Contract text.** The order paragraph in `include/vfft.h`, replacing the
-   three texts that disagree today.
-6. **The cascade leaves pow2.** Its last pow2 role was the scrambled door.
+2. **Create — DONE 2026-09-14.** One plan type, one order class per plan:
+   `vfft_ztt_create_chain_ord(N, chain, nf, scr)` (`vfft_ztt_create_chain`
+   = the natural wrapper). `scr` builds the plain streams (the natural fill
+   with `(Len_{s+1}, R_s, Len_s)`), the conjugate stream, the plain tile law
+   (`vfft_ztt_tile_legal_ord`: the last mid's block), the permutation table
+   (`vfft_ztt_perm`, gates and introspection only), no `rb`, no plane;
+   `vfft_ztt_bind` is a no-op for it and `vfft_ztt_execute_*` dispatches to
+   the cell's `fwd_scr` / `bwd_scr` codelets. The fingerprint compares
+   order class, tile and placement beside the chain.
+3. **Planner, doors, wisdom — DONE 2026-09-14.** `_il_dp_enumerate_ztt_ord`
+   pushes plain candidates (`il_scr = 1`) with the plain tile law; the
+   scrambled pool at a pow2 band cell is that and nothing else (the
+   sub-2048 natural-writer leftover and the cascade chains are gone there);
+   the bench binds through `_ord`; `_il_dp_bin_of` carries the plain
+   permutation's independent re-derivation; the commit's replay and the OOP
+   door's create pass the request's order, the prime inner takes the plain
+   plan from its `ord=scr` row; the doors build no cascade at pow2 in any
+   order class. Verified cold through the front door: `k1_pow2_gate` and
+   `ztt_gate` (the scrambled create at every pow2 N replays the plain engine
+   bitwise; one race banks both classes).
+4. **Tree gates — DONE 2026-09-14.** `ztt_gate` gained the plain pass over
+   every registry cell (permutation, exact order vs natural, in place
+   bitwise, roundtrip, tiles bitwise) and the scrambled front-door
+   assertion; `il_dp_overflow_gate` restamped (7/18/36/48/63/84/108).
+5. **Contract text — DONE 2026-09-14.** `include/vfft.h`'s order paragraph
+   names the class and the same-plan rule for combining spectra.
+6. **The cascade leaves pow2 — ROLE DONE, CODE PENDING.** No door builds or
+   races it at a pow2 band cell in any order class, the planner enumerates
+   none of its chains there, and its 24 pow2 rows are purged from the shipped
+   store. Its code (`zturn.h`, `zsplit.h`, the `_k1z_*` paths, the
+   `stf*/s0t*/ms*` kernels) is shared with the 2^a·odd cells it still serves
+   and is deleted with the 2^a·odd ZTURN-T, per the owner's earlier ruling.
+7. **Calibration — owner's word.** The shipped store has no `ord=scr`
+   ZTURN-T rows yet; a cold scrambled pow2 request races at create (wisdom
+   or race). Banking the band on core 2 with pacing is the calibrator's run.
 
 ## Rulings (owner, 2026-09-13)
 

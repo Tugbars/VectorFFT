@@ -75,12 +75,21 @@
  * leave the pow2 scrambled pools at 2048 and above — and the LEGACY zsplit
  * engine (zroute=0, superseded by ZTURN-S, never banked) leaves them too:
  * 74 -> 48, 123 -> 77, 175 -> 113, 247 -> 166, 354 -> 246, 480 -> 340.
- * What remains at a pow2 cell >= 2048 is the ZTURN-S cascade alone (chains x
+ * What remained at a pow2 cell >= 2048 was the ZTURN-S cascade alone (chains x
  * stf/stf2 x its tile widths), the only scrambled writer until the scrambled
- * ZTURN-T class exists. */
+ * ZTURN-T class existed.
+ * Re-measured 2026-09-14 after the scrambled ZTURN-T class shipped into the
+ * planner (design_contracts.md 8b and 10; docs/design/ztt_scrambled_design.md):
+ * at every pow2 cell in ZTURN-T's band the scrambled pool is the PLAIN
+ * schedule ALONE — every registry chain x {untiled, the legal widths of
+ * {1024, 2048} under the plain tile law (the last mid's block)} — no natural
+ * engine (the sub-2048 leftover is gone too), no cascade chain (the cascade's
+ * last pow2 role was this pool). 1024 = 7 chains untiled (no width below N is
+ * legal there); 2048 = 9 x 2; 4096 = 12 x 3; 8192 = 16 x 3; 16384 = 21 x 3;
+ * 32768 = 28 x 3; 65536 = 36 x 3. */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 23 }, { 2048, 48 }, { 4096, 77 }, { 8192, 113 },
-    { 16384, 166 }, { 32768, 246 }, { 65536, 340 }
+    { 1024, 7 }, { 2048, 18 }, { 4096, 36 }, { 8192, 48 },
+    { 16384, 63 }, { 32768, 84 }, { 65536, 108 }
 };
 
 int main(void)

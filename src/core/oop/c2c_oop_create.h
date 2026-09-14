@@ -190,7 +190,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 /* an explicit SCRAMBLED request with a cascade plan pending
                  * (a 2^a * odd cell: the cascade's own replay / race above,
                  * kind-4 rows) is not the K=1 tier's. At pow2 nothing is
-                 * pending since 2026-09-15 and the scrambled K=1 writer is the
+                 * pending since 2026-09-14 and the scrambled K=1 writer is the
                  * PLAIN ZTURN-T schedule, raced here like every other cell.
                  * (Racing a cascade cell here banked a fresh cascade chain on
                  * EVERY create, 12-24 s each; k1_pow2_gate 2026-09-09.) */
@@ -456,7 +456,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             /* ZTURN-T (route 9, 2026-09-09): a banked verdict replays its chain
              * (il_ztt=) through the create — the registry cell's fused codelets;
              * NO default build (the planner is the only source). The ORDER
-             * CLASS is the row's (2026-09-15): ord=nat replays the natural
+             * CLASS is the row's (2026-09-14): ord=nat replays the natural
              * drivers, ord=scr the PLAIN schedule (ztt_scrambled_design.md) —
              * one plan, one order, never mixed. */
             vfft_ztt_plan_t *ztt = NULL;

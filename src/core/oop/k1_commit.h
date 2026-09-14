@@ -216,7 +216,7 @@ static int _ilprime_inner_from_wisdom(int M, _ilprime_inner_t *in, void *v)
         if (vw2_oop_lookup_k1_scr(&c->W->vw2, M, &e) &&
             e.k1_il_route == VFFT_K1_IL_ZTT && e.il_zt_n >= 2)
         {
-            /* the ord=scr row names the PLAIN schedule (2026-09-15): the
+            /* the ord=scr row names the PLAIN schedule (2026-09-14): the
              * scrambled class's matched roundtrip is exactly the inner's
              * contract, and its in-place forward/backward is the class's
              * measured strength (zt_scr_spike_results.md) */
@@ -414,7 +414,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * the pow2 band included — _k1_il_plan_race carries the N gate. Until
      * 2026-09-09 this call was fenced to N < 2048 or odd N and a cold in-place
      * band cell refused with "no interleaved engine". */
-    /* the scrambled pow2 band is the K=1 tier's since 2026-09-15: its writer is
+    /* the scrambled pow2 band is the K=1 tier's since 2026-09-14: its writer is
      * the PLAIN ZTURN-T schedule (ztt_scrambled_design.md), raced and banked
      * on the ord=scr row like every other cell; the cascade's fence that stood
      * here is gone with the cascade's last pow2 role */
@@ -490,7 +490,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     /* ZTURN-T verdict (2026-09-09): the banked chain replays as written
      * (validated by the create: legality, the quarter-wave's octave, the
      * registry cell). The ORDER CLASS is the row's: an ord=nat row replays
-     * the natural drivers, an ord=scr row the PLAIN schedule's (2026-09-15,
+     * the natural drivers, an ord=scr row the PLAIN schedule's (2026-09-14,
      * ztt_scrambled_design.md) — one plan, one order, never mixed. A refusal
      * falls through to the pair/default path. */
     if (ke && ke->k1_il_route == VFFT_K1_IL_ZTT && ke->il_zt_n >= 2 && ztt_out)

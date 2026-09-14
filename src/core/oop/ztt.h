@@ -110,7 +110,7 @@ typedef struct
     int inplace;
     size_t tile;                      /* TILE WIDTH in complexes, 0 = untiled (raced,
                                        * il_tw=; vfft_ztt_set_tile)                  */
-    /* THE PLAIN SCHEDULE = the scrambled order class (2026-09-15,
+    /* THE PLAIN SCHEDULE = the scrambled order class (2026-09-14,
      * docs/design/ztt_scrambled_design.md). scr = 1 executes the cell's
      * fwd_scr / bwd_scr fused codelets (ABI zin, zout, tw, tile: no plane,
      * no run-base table, zin == zout is the same function). Then tw / twb
