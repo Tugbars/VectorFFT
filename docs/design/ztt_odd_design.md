@@ -357,7 +357,26 @@ measurable: the spread at 12288 is 0.2%.
    band.
 6. **Calibrate the band** (with the pow2 `ord=scr` rows: one calibrator
    run, owner's word). Until then a cold band cell races at create.
-7. **Delete the cascade**, the inventory above, in one change.
+7. **ZTURN-T's threaded arm** (owner, 2026-09-15: "we will make zturn-t
+   threaded too") — its own design doc; the cascade's `zt_mt` sectioned walk
+   is the last cell shape it serves in either band.
+8. **Delete the cascade whole** — the inventory above: runtime, doors,
+   route id, wisdom tokens, calibrators, gates, corpus rows and every
+   codelet only it used — in one change (owner, 2026-09-15: "we need a clean
+   library, not a piled-up history of everything we developed before").
+
+## Rulings (owner, 2026-09-15)
+
+0. **The library is clean, not a history.** Superseded engines are deleted
+   whole with their codelets and wirings once their replacement serves every
+   cell they served; the cascade goes after ZTURN-T's threaded arm exists.
+1. **The cascade is not kept for its one remaining edge.** Out of place,
+   scrambled, forward, at L2-resident sizes (2048..~65536) the cascade's comb
+   beats the plain class by 0-8% while losing the same cell's backward by
+   20-24% and every other cell outright. The pow2 band retired the cascade
+   with the identical weakness; the odd band does the same. The fix, if
+   any, is in the plain class's out-of-place forward (the pow2 doc's open
+   item), never a cascade arm.
 
 ## Assumptions stated for the owner's ruling
 
