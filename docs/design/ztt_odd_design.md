@@ -324,6 +324,14 @@ plain) puts `8.4.4.3.8` untiled at 2720 ns natural and `4.3.4.4.4.4` at 16 KB
 at 3201 ns plain; chain3's best there is ~4000. Staging costs nothing
 measurable: the spread at 12288 is 0.2%.
 
+**Against MKL** (2026-09-15, `bench_1d_vs_mkl --k1noop` / `--k1nat`, one
+process per cell, cold store): 1.73-1.94x out of place and 1.47-1.98x in
+place at 3072, 6144, 12288, 24576, 61440 and 245760, errors 4-6e-16. The
+first 245760 reading (0.24x) was a planner defect, fixed the same day: the
+chain3 enumerator pushed kernel-less divisor splits that overflowed the
+candidate cap, the cell was refused and Bluestein served; kernels that do
+not exist are no longer candidates and ZTURN-T enumerates first.
+
 ## Build order
 
 1. **Kernels — DONE 2026-09-14.** The generator gate admits `tmg`/`tmgb`/

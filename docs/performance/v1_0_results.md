@@ -568,42 +568,58 @@ whenever LEAF/BAILEY2 win.
 > used), so they are **directional** — several cells show order-flip spread from thermal noise.
 > The calibrated even-K cells in §1 are the publication reference; the odd-K numbers track them.
 
-### K=1 ODD cascade — N = 2^a·odd vs MKL (2026-08-27)
+### K=1 INTERLEAVED — N = 2^a·odd, the ZTURN-T odd band vs MKL (2026-09-15)
 
-New coverage: the boundary-split cascade now takes **odd mid stages**
-(radix 3/5/7 msg codelets — the full gauntlet: the s0t turn ingest, the
-shared block-split interior, the stf/stf2 terminators with the t2q bit
-raced at create), so N = 2^a·odd gets a native cascade instead of the
-pair/chain engines. **The route has no fixed tier boundary**: an
-odd-chain cascade attaches only by *winning a create-time race against
-the handle's full serving* (the k1 IL routes included) — the verdict is
-measured per cell, never assumed. Against that incumbent it wins every
-cell at 1.5–2.0×.
+N = 2^a·m with m a product of 3, 5, 7, 9 and 15 (a ≥ 4, 2048..262144: 339
+sizes) is ZTURN-T's **odd band** (`docs/design/ztt_odd_design.md`): the same
+engine as the pow2 band with the odd radix as a **mid** stage — the ingest
+and the terminators are radix-4/8 lane lattices, the mids' edges are
+radix-agnostic — executed **staged** (one stage-kernel call per stage and
+block, the fused codelets being the pow2 solution's form only). Both order
+classes: natural with the `tlf` terminator, scrambled with the plain
+schedule. The planner races the chain grammar (the odd part decomposed
+largest-first, its mids at every interior position, the pow2 slots over
+{4, 8}) times the tile ladder 8/16/32/48 KB per cell; the row banks
+`il_route=ztt il_ztt=<chain> il_tw=<width>`. This replaces the odd
+ZTURN-S cascade of 2026-08-27 (its 1.46–1.62× vs MKL, scrambled contract
+against MKL's natural); the cascade serves no cell in the band.
 
-vs **MKL DFTI** (1D complex, out-of-place, `mkl_set_num_threads(1)` —
-MKL auto-threads 1D C2C at N≥8192), same process, alternated arms,
-min-of-15. Ours is the scrambled (order-agnostic) contract, MKL's
-natural — the same frame as the §1 tables:
+vs **MKL DFTI** through the front door with the canonical bench
+(`bench_1d_vs_mkl --k1noop` = natural out of place on both engines,
+`--k1nat` = natural in place on both, `mkl_set_num_threads(1)`), one fresh
+process per cell, core 2 + HIGH, 300 ms pace, 400 ms cool, a cold scratch
+store (every cell races at create). **Natural order on both sides** — the
+same spectrum, bin for bin (the 08-27 table compared our scrambled contract
+against MKL's natural):
 
 ```
- N          vfft (ns)   MKL (ns)   vs MKL
-──────────────────────────────────────────
- 3072           3,300      5,300    1.61×
- 6144           8,100     11,900    1.47×
- 12288         15,600     25,200    1.62×
- 20480         30,400     44,300    1.46×
- 24576         38,400     56,900    1.48×
-──────────────────────────────────────────
- 4096 (anchor) 13,700     13,200    0.96×
- 8192          29,700     31,800    1.07×
- 16384         62,500     60,600    0.97×
+ N        OOP vfft   OOP MKL   MKL/vfft     IP vfft   IP MKL   MKL/vfft   err
+─────────────────────────────────────────────────────────────────────────────
+ 3072        2,892     5,354     1.85×        3,114    5,259     1.69×   5e-16
+ 6144        6,208    11,895     1.92×        6,507   11,852     1.82×   4e-16
+ 12288      13,104    25,080     1.91×       13,983   24,946     1.78×   4e-16
+ 24576      28,419    55,110     1.94×       29,338   58,179     1.98×   5e-16
+ 61440      97,606   169,222     1.73×      106,819  156,569     1.47×   6e-16
+ 245760    633,712 1,102,950     1.74×      615,938 1,112,100    1.81×   6e-16
+─────────────────────────────────────────────────────────────────────────────
 ```
 
-The pow2 anchors sit at the known parity, so the odd wins are not a
-measurement artifact: **mixed-radix is MKL's soft spot** (its 12288
-costs nearly its 16384) while the odd cascade scales like the pow2 one.
-Measured on a live host — the pre-release sweep re-races these pinned
-before publication rank.
+Against what the door served before it (`probes/ZT/zt_odd_spike_results.md`,
+paced core-2 races): the natural class beats chain3 out of place and the
+cascade's natural path in place by 9–47% at 3072, 12288 and 245760; the
+plain (scrambled) class beats the cascade's comb in place everywhere and
+out of place above L2, and trails it out of place at L2 sizes forward by
+0–8% (the pow2 class's known forward weakness; owner's ruling 2026-09-15:
+the cascade is not kept for it). Correctness: `benches/ztt_odd_gate.c` —
+staged equals fused bitwise at every pow2 registry cell, 17 odd chains
+exact against a scalar DFT, in place / tiles / alignment bitwise, and the
+front door banks ZTURN-T odd chains in both order classes.
+
+Found on the way and fixed the same day: the chain3 enumerator pushed every
+divisor split of N/R2 without checking kernels — 899 at 245760 — overflowing
+the candidate cap; the planner refused the cell and Bluestein served it at
+4.7 ms (0.24×). Kernels that do not exist are no longer candidates, and
+ZTURN-T enumerates first in the natural pool.
 
 ### K=1 scrambled cascade — intra-transform MT (2026-08-27)
 
@@ -728,13 +744,26 @@ cascade's digit-reversed comb at every cell:
 ──────────────────────────────────────────────────────────────────────────────────────
 ```
 
-The comb is 4..15% faster than the cascade's own natural terminator, which
-is not enough; and a scrambled ZTURN-T class could recover at most 0..4%
-at its ingest (measured with an identity run-base table), so none is built.
+That table is the 2026-09-09 world. Since 2026-09-14 **order is a contract**
+(`design_contracts.md` 8b): a scrambled request is served by a scrambled
+writer only, and at every pow2 cell 16..262144 that writer is the
+**scrambled ZTURN-T class** — the plain schedule (`ztt_scrambled_design.md`:
+in-place Sande-Tukey on the chain, post-twiddle, no scatter, no plane, one
+sweep fewer than natural), banked on the `ord=scr` row with the same
+tokens. Measured against the natural class on the same chain and tile
+(`probes/ZT/zt_scr_spike_results.md`, paced core-2 races): **in place it is
+faster at every cell from 2048 up, both directions** (−3..−6% at 2048..8192,
+−5..−10% at 16384, −11/−15% at 32768, −17/−26% at 65536, −20..−30% at
+131072..262144); out of place the backward is at parity from 16384 and
+wins above L2, the forward loses 5..30% at 2048..65536 and wins above L2
+(the class's one open item); below 2048 it costs ~11% and is served
+regardless, the contract being the contract. It is not benched against
+MKL: MKL's DFTI serves natural order, a different contract.
 
-Not yet served by ZTURN-T: 32768 and above (the quarter-wave's octave is
-16384; the two-level create is `TODO_zcascade.md` item 2) and T > 1 (the
-cascade's threaded arm). The natural door's race
+ZTURN-T serves every pow2 cell to 262144 since 2026-09-09 (the two-level
+create above the quarter-wave's octave) and the 2^a·odd band since
+2026-09-15 (the section above). Not yet served: T > 1 (the cascade's
+threaded arm, until ZTURN-T's own). The natural door's race
 buffers were made 64-B aligned on 2026-09-09; before that its 16-B `malloc`
 buffers split ZTURN-T's stores across lines and banked the cascade at 4096
 against this verdict.
