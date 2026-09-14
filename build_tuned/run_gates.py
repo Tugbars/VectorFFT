@@ -132,7 +132,6 @@ STORE = os.path.normpath(os.path.join(
 #   seeded=True   - a scratch COPY of the store, for gates that decode real wisdom
 ARGSTYLE = {
     "ztt_odd_gate":            ("flag", True),   # the 2^a*odd staged class (2026-09-15): its front-door pass decodes and banks on a store copy
-    "k1z_inplace_gate":        ("flag", True),
     "mt_c2c_gate":             ("flag", True),
     # COLD on purpose, same class as vfft_natural_front_gate: it asserts a RACE
     # OCCURRED. Seeded, it correctly replays the banked verdict and reports
