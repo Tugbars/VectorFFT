@@ -947,11 +947,16 @@ let emit_codelet
         carry it (provenance stability)"
    | _ -> ());
   if radix <> 4 && radix <> 8
-     && not ((k.base = "msg" || k.base = "msz" || k.base = "mszt") && List.mem radix [ 3; 5; 7; 9; 15 ])
+     && not
+          ((k.base = "msg" || k.base = "msz" || k.base = "mszt" || k.base = "tmg"
+           || k.base = "tmgd")
+           && List.mem radix [ 3; 5; 7; 9; 15 ])
   then
     failwith
       "codelet_zsplit: split family is radix 4/8 only (see TIER GATE) — except the \
-       MID (msg/msgb), which carries no section geometry and emits odd radices \
+       MIDS (msg/msgb; ZTURN-T's tmg/tmgb/tmgd since 2026-09-14, ztt_odd_design.md; \
+       t0tp/tlf/tld are lane lattices and stay 4/8), which carry no section geometry \
+       and emit odd radices \
        3/5/7/9/15 (2026-08-27, the odd-cascade arc: N = 2^a*odd mids; s0t stays the \
        r0=4 turn)";
   if (k.base = "sterm" || k.base = "sterm2") && radix <> 8

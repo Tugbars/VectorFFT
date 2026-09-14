@@ -185,6 +185,42 @@ let zil_boundary_cells : (string * string list) list =
     , [ "8"; "--zp-tld"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_tld_bwd_avx2.c"
     , [ "8"; "--zp-tldb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  (* ZTURN-T at 2^a*odd (docs/design/ztt_odd_design.md, 2026-09-14): the odd
+     radix is a MID in both order classes (the ingest and the terminators are
+     radix-4/8 lane lattices; the mids' edges are radix-agnostic), so the
+     band's whole kernel need is tmg + tmgb (natural mid, plain backward mid)
+     and tmgd (plain mid) at 3/5/7/9/15. Called by the STAGED executor, never
+     fused (design_contracts.md section 10). *)
+  ; ( "radix3_z_tmg_avx2.c"
+    , [ "3"; "--zp-tmg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_tmg_bwd_avx2.c"
+    , [ "3"; "--zp-tmgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_tmgd_avx2.c"
+    , [ "3"; "--zp-tmgd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_tmg_avx2.c"
+    , [ "5"; "--zp-tmg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_tmg_bwd_avx2.c"
+    , [ "5"; "--zp-tmgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_tmgd_avx2.c"
+    , [ "5"; "--zp-tmgd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_tmg_avx2.c"
+    , [ "7"; "--zp-tmg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_tmg_bwd_avx2.c"
+    , [ "7"; "--zp-tmgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_tmgd_avx2.c"
+    , [ "7"; "--zp-tmgd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_tmg_avx2.c"
+    , [ "9"; "--zp-tmg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_tmg_bwd_avx2.c"
+    , [ "9"; "--zp-tmgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_tmgd_avx2.c"
+    , [ "9"; "--zp-tmgd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_tmg_avx2.c"
+    , [ "15"; "--zp-tmg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_tmg_bwd_avx2.c"
+    , [ "15"; "--zp-tmgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_tmgd_avx2.c"
+    , [ "15"; "--zp-tmgd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_s0t_r8_avx2.c"
     , [ "8"; "--zp-s0t"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
     )
