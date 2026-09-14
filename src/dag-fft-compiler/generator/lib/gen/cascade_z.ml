@@ -635,6 +635,12 @@ let kind_of_string (s : string) : zs_kind =
     ; tw_group_reset = true
     ; in_edge = E_z "Ls"
     ; out_edge = E_planes "Ls"
+      (* Two twins were MEASURED here 2026-09-14 (zt_scr_spike_results.md)
+         and REFUTED, do not re-try: prefetch_out = 4 (the tlfi mechanism) —
+         no gain out of place, none in place; and a TP_PowW1 packed-w^1
+         ingest (the stream 7x smaller, the powers from a squaring tree) —
+         correct and 12..48% SLOWER at every L2-resident cell. The stage is
+         bound by neither store-miss latency nor its twiddle bytes. *)
     }
   | "tmgd" ->
     (* tmg's dataflow with DIF placement (dft.ml: (DIF, Fwd) lands on POST) --
@@ -1248,7 +1254,8 @@ let emit_codelet
           "t0d (ZTURN-T PLAIN ingest, the scrambled class: natural packed z legs at \
            stride Ls = N/R0, DEINT, radix-R0 DFT, POST-twiddle w_N^(p*b) as tlf's \
            column-quad stream, block-split LEG-MAJOR stores at 2*(p*Ls + k) -- R0 \
-           sequential streams, no rb[]; in place when zin == zout), fwd."
+           sequential streams, no rb[]; in place when zin == zout; every output \
+           stream prefetched 4 column quads ahead, the tlfi mechanism), fwd."
         | "tmgd", false ->
           "tmgd (ZTURN-T PLAIN mid = tmg with the twiddle AFTER the butterfly: in-place \
            group-looped combine, POST-twiddle w_Len^(p*b), cursor reset per group), fwd."
@@ -1568,15 +1575,23 @@ let emit_codelet
     (* tlfi: R output-stream prefetches per column quad, prefetch_out quads
        ahead (in the WIDE loop's columns: wide_vw * prefetch_out) *)
     if k.prefetch_out > 0
-    then
+    then (
+      (* the output streams' stride: the terminators' OLs (tlfi), the plain
+         ingest's Ls (t0d: leg-major block-split stores at 2*(p*Ls + k)) *)
+      let ostride =
+        match k.out_edge with
+        | E_planes s | E_z s -> s
+        | E_blocks | E_sect_tap _ | E_sect_tr4 _ | E_runs | E_zcol -> "OLs"
+      in
       for r = 0 to radix - 1 do
         Buffer.add_string
           buf
           (Printf.sprintf
-             "        _mm_prefetch((const char *)&zout[2*((size_t)%d*OLs + k + %d)], _MM_HINT_T0);\n"
+             "        _mm_prefetch((const char *)&zout[2*((size_t)%d*%s + k + %d)], _MM_HINT_T0);\n"
              r
+             ostride
              (wide_vw * k.prefetch_out))
-      done;
+      done);
     if k.nat_in || k.nat_out
     then begin
       Buffer.add_string
