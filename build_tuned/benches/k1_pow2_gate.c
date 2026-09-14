@@ -131,6 +131,7 @@ static void route_of_store(const char *wisdir, int N, const char *ord, char *out
                 if ((q = strstr(line, "il_pair=")) != NULL) sscanf(q + 8, "%31s", pair);
                 if ((q = strstr(line, "il_flat=")) != NULL) sscanf(q + 8, "%47s", chain);
                 if ((q = strstr(line, "il_chain=")) != NULL) sscanf(q + 9, "%47s", chain);
+                if ((q = strstr(line, "il_ztt=")) != NULL) sscanf(q + 7, "%47s", chain);   /* ZTURN-T: natural (ord=nat) or the plain schedule (ord=scr) */
                 snprintf(tok, sizeof tok, "%s %s", route, chain[0] ? chain : pair);
             }
             else if (strstr(line, "eng=zturn") || strstr(line, "mode=zcasc"))

@@ -236,7 +236,7 @@ typedef struct
     int    il_scr;                           /* FLAT and ZTT: 1 = the SCRAMBLED
                                               * class — the flat DIT's block-order
                                               * output (2026-09-05) or ZTURN-T's
-                                              * PLAIN schedule (2026-09-15); the
+                                              * PLAIN schedule (2026-09-14); the
                                               * SCRAMBLED pool's own candidates  */
     char   il_flf[24];                       /* FLAT only: the per-stage forms
                                               * the bench raced (il_forms=);
@@ -887,7 +887,7 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
         return idx;                                  /* natural by contract */
     case VFFT_K1_IL_ZTT:
         if (!c->il_scr) return idx;                  /* natural by contract */
-        {   /* the PLAIN schedule (ztt_scrambled_design.md, 2026-09-15) — an
+        {   /* the PLAIN schedule (ztt_scrambled_design.md, 2026-09-14) — an
              * INDEPENDENT re-derivation, as this gate demands (file header):
              * frequency k lands at the in-place Sande-Tukey position
              * ic = digitrev(k) over the chain, then inside the last stage's
@@ -1597,7 +1597,7 @@ static void _il_dp_enumerate_ztt_ord(int N, vfft_il_cand_sink_t *s, int scr)
         if (cell->n != N) continue;
         memset(&c, 0, sizeof c);
         c.route = VFFT_K1_IL_ZTT;
-        /* scr = the PLAIN schedule (ztt_scrambled_design.md, 2026-09-15): the
+        /* scr = the PLAIN schedule (ztt_scrambled_design.md, 2026-09-14): the
          * same registry chain, the cell's fwd_scr / bwd_scr fused codelets,
          * its own tile law (the last mid's block), scrambled output. It is the
          * scrambled pool's ONLY writer at pow2 (design_contracts.md 8b). */
@@ -1938,7 +1938,7 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * fwd_scr / bwd_scr fused codelets (ztt_scrambled_design.md; measured
      * probes/ZT/zt_scr_spike_results.md) — and nothing else: no natural
      * engine (S2's admission, and the sub-2048 leftover below it, are gone
-     * at pow2 as of 2026-09-15), no cascade chain (its last pow2 role was
+     * at pow2 as of 2026-09-14), no cascade chain (its last pow2 role was
      * this door; the pow2 cascade is deleted). The 2^a * odd cells keep the
      * 2026-09-05 design below until their own ZTURN-T exists (owner's earlier
      * ruling: the odd machinery is not touched). */

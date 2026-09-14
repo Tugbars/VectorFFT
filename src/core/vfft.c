@@ -1420,7 +1420,7 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
     }
     if (a->k1ztt)
     {   /* ZTURN-T: the same chain, ORDER CLASS (natural or the plain schedule,
-         * 2026-09-15), tile width and placement binding — each names a
+         * 2026-09-14), tile width and placement binding — each names a
          * different fused codelet or a different walk of the same one */
         const vfft_ztt_plan_t *x = a->k1ztt, *y = b->k1ztt;
         int s;

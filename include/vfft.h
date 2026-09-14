@@ -251,13 +251,16 @@ extern "C"
                     own self-consistent permutation of the bins, and the only
                     supported decode is the matched roundtrip through the same
                     plan (backward inverts forward). No API reports the
-                    permutation; nothing here promises a particular one. A
-                    natural-writing engine is never raced or served for a
-                    scrambled request, and a cell with no scrambled writer
-                    refuses at create (the scrambled ZTURN-T class is under
-                    development, 2026-09-09; until it exists the cascade's
-                    digit-reversed comb serves the power-of-two cells from
-                    2048 up).
+                    permutation; nothing here promises a particular one, and
+                    two scrambled spectra may be combined bin-by-bin only when
+                    they came from the same plan. A natural-writing engine is
+                    never raced or served for a scrambled request, and a cell
+                    with no scrambled writer refuses at create. At a power of
+                    two (16..262144, either placement) the writer is the
+                    scrambled ZTURN-T class (2026-09-14): every stage in
+                    place, no scratch, its order fixed by the plan's chain;
+                    at the remaining composite cells the cascade's
+                    digit-reversed comb serves until their own ZTURN-T exists.
                   1D and 2D C2C (in-place + OOP; 2D NATURAL is native for any
                   factorization — the column chain's leaf writes rows in
                   natural order); for 2D INTERLEAVED r2c/c2r it is the
