@@ -58,6 +58,7 @@ long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h: the odd-N flat DIT MT eng
 #endif
 #include "generator/generated/registry.h"
 #include "prime_dispatch.h"     /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
+#include "oop/ztt.h"            /* vfft_ztt_odd_band: the --k1nat/--k1noop direct cell at 2^a*odd (2026-09-15) */
 #include "oop_dp.h"             /* --oop: vfft_oop_plan_create_dp_best (fallback) */
 #include "wisdom2_oop.h"        /* --oop: entry struct + plan_from_entry */
 #include "wisdom2_oop_reader.h"    /* the PRODUCTION read twins (the store is what
@@ -5676,7 +5677,10 @@ int main(int argc, char **argv)
     /* ... and (2026-09-05) any N above 2048 WITHOUT a factor of 4: the flat
      * mixed-radix DIT's cells, served natively by the same K=1 IL tier
      * (route=flat) — no kind-4 line exists there either. */
-    if (g_k1nat && target_N && (target_N < 2048 || (target_N & 3)) && benched == 0)
+    /* ... and (2026-09-15) the 2^a * odd cells of ZTURN-T's odd band
+     * (docs/design/ztt_odd_design.md): the K=1 IL tier serves them through
+     * the same front door; their kind-4 cascade lines are purged. */
+    if (g_k1nat && target_N && (target_N < 2048 || (target_N & 3) || vfft_ztt_odd_band(target_N)) && benched == 0)
     {
         run_k1z_cell(target_N, NULL, out, cool_ms, flip);
         benched++;
