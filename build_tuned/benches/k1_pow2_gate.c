@@ -104,6 +104,12 @@ static void route_of_store(const char *wisdir, int N, const char *ord, char *out
     snprintf(out, n, "NOROW");
     snprintf(key, sizeof key, "n=%d ", N);
     snprintf(okey, sizeof okey, "ord=%s ", ord);
+    /* TWO TIERS (2026-09-09, the ztt_gate's route_of_store law): the lay=il
+     * K=1 row is the served verdict; the older lay-less K=1 row (the split +
+     * IL pair recipe of the pre-ZTURN-T store) is read only when no lay=il
+     * row exists. Reading the first match printed "2p 64.32" at 2048 while
+     * the front door served ZTURN-T from the lay=il row below it. */
+    for (int tier = 0; tier < 2; tier++)
     for (int fi = 0; fi < 2; fi++)
     {
         FILE *f;
@@ -115,6 +121,7 @@ static void route_of_store(const char *wisdir, int N, const char *ord, char *out
             const char *r;
             char tok[64] = "";
             if (!strstr(line, "t=c2c") || !strstr(line, key) || !strstr(line, "q=1 ") || !strstr(line, okey)) continue;
+            if (tier == 0 && !strstr(line, "lay=il")) continue;
             if (strstr(line, "dir=bwd")) continue;   /* the OOP verdict row may carry role=comp (the pair recipe IS the verdict) */
             if ((r = strstr(line, "il_route=")) != NULL)
             {
@@ -124,6 +131,7 @@ static void route_of_store(const char *wisdir, int N, const char *ord, char *out
                 if ((q = strstr(line, "il_pair=")) != NULL) sscanf(q + 8, "%31s", pair);
                 if ((q = strstr(line, "il_flat=")) != NULL) sscanf(q + 8, "%47s", chain);
                 if ((q = strstr(line, "il_chain=")) != NULL) sscanf(q + 9, "%47s", chain);
+                if ((q = strstr(line, "il_ztt=")) != NULL) sscanf(q + 7, "%47s", chain);   /* ZTURN-T: natural (ord=nat) or the plain schedule (ord=scr) */
                 snprintf(tok, sizeof tok, "%s %s", route, chain[0] ? chain : pair);
             }
             else if (strstr(line, "eng=zturn") || strstr(line, "mode=zcasc"))
@@ -178,9 +186,9 @@ static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, doubl
             vfft_destroy(hi);
         }
         {   /* T=8: bitwise the T=1 forward, roundtrip; engagement printed */
-            const long e0 = vfft_ilfd_mt_passes() + vfft_zt_mt_passes();
+            const long e0 = vfft_ilfd_mt_passes() + vfft_ztt_mt_passes();
             vfft_plan hm = mk_t(W, N, 0, order, 8);
-            const long e1 = vfft_ilfd_mt_passes() + vfft_zt_mt_passes();
+            const long e1 = vfft_ilfd_mt_passes() + vfft_ztt_mt_passes();
             (void)e0;
             if (hm)
             {
@@ -189,7 +197,7 @@ static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, doubl
                 c.mt_err = relerr(y2, y, N, 1.0);   /* a T-raced create may serve another engine */
                 vfft_execute(hm, VFFT_BACKWARD, y2, NULL, r, NULL);
                 c.mt_rt = relerr(r, x, N, 1.0 / N);
-                c.mt_eng = (vfft_ilfd_mt_passes() + vfft_zt_mt_passes()) - e1;
+                c.mt_eng = (vfft_ilfd_mt_passes() + vfft_ztt_mt_passes()) - e1;
                 c.mt_ok = (c.mt_bit || c.mt_err < 1e-11) && c.mt_rt < 1e-11;
                 vfft_destroy(hm);
             }

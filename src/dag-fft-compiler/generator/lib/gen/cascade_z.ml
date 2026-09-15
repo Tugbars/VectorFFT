@@ -81,6 +81,19 @@ type zs_edge =
        (one size_t per column) rides in the tw_im slot. The turn lattice
        is s0t's, so the whole edge is s0t's store side with the address
        changed -- template-emitted, like E_sect_tr4's store side. *)
+  | E_zcol
+    (* ZTURN-T PLAIN (scrambled) column run, INTERLEAVED, IN PLACE
+       (docs/design/ztt_scrambled_design.md): column c's R consecutive
+       complexes at doubles 2*R*(k+c) -- the same span E_blocks addresses,
+       in the caller's z format. Leg p's four column outputs leave as TWO
+       registers by unpacklo/hi ALONE: [col k, col k+2] at 2*R*k + 8p and
+       [col k+1, col k+3] at +4 -- no permute; the lane order inside the
+       4-column span is part of the plan's permutation (tabulated at
+       create, never read at run time). Store side = tld (the plain last),
+       load side = tldb (its mirror): two loads + unpacklo/hi per leg give
+       the ORDERED lanes k..k+3 back. Because the 4 columns' span is exactly
+       what the E_blocks edge on the other side reads/writes, both kinds are
+       in place. *)
 (* ZTURN-S backward-ingest load network: 4 section records at
        leg_addr(l = SEC[m], STRIDE) + two tr4_str lane transposes
        (the un-turn). LOAD-ONLY. *)
@@ -198,6 +211,18 @@ type zs_kind =
        sequence (see zs_sched above). NEVER a kind-table default —
        set only by emit_codelet from the flag, so default regeneration
        stays on the pre-B2 path (not even entered). *)
+  ; prefetch_out : int
+    (* IN-PLACE terminator (tlfi, 2026-09-09, zturn_t_ship_plan.md 9): the
+       distance, in COLUMN QUADS, at which every output stream's line is
+       prefetched (T0) at the top of each column-quad iteration — R
+       prefetches of zout[2*(r*OLs + k + VW*prefetch_out)]. 0 = none. Why:
+       in place the terminator's stores land in the caller's buffer, whose
+       lines left L1 while the plane was the working set, and each store
+       waits on its line fill (+17..25% measured); out of place the same
+       stores hit lines the terminator's own loads just filled, so the
+       dest driver needs nothing. Arithmetic is untouched: the in-place
+       result stays bitwise the out-of-place one. Measured band 4..8 quads;
+       32 overshoots the L1 set. *)
   }
 
 let kind_of_string (s : string) : zs_kind =
@@ -219,6 +244,7 @@ let kind_of_string (s : string) : zs_kind =
     ; dif = false
     ; lanes_u = false
     ; narrow_arms = false
+    ; prefetch_out = 0
     }
   in
   match s with
@@ -462,6 +488,22 @@ let kind_of_string (s : string) : zs_kind =
     ; tw_group_reset = true
     ; out_edge = E_z "OLs"
     }
+  | "tlfi" | "tlfib" ->
+    (* ZTURN-T IN-PLACE LAST (2026-09-09, zturn_t_ship_plan.md 9): tlf with
+       its OUTPUT STREAMS PREFETCHED four column quads ahead — the one thing
+       that separates the placements' terminators (see prefetch_out). Bound
+       by the `plane` drivers; the `dest` drivers keep tlf. Same arithmetic,
+       same edges, same stream: in place bitwise the out-of-place result. *)
+    { mid with
+      base = "tlfi"
+    ; bwd = s = "tlfib"
+    ; dif = s = "tlfib"   (* PRE-twiddle at Bwd, as tmgb *)
+    ; group_loop = true
+    ; tw_off = "%TWF*(size_t)k"
+    ; tw_group_reset = true
+    ; out_edge = E_z "OLs"
+    ; prefetch_out = 4
+    }
   | "stfl" ->
     (* LOADED-STREAM terminator twin of stf (2026-09-07, the sub-2048
        campaign): stf's section-tap loads and REINT drev-comb stores, with
@@ -575,11 +617,64 @@ let kind_of_string (s : string) : zs_kind =
     ; in_edge = E_sect_tr4 "Ls"
     ; out_edge = E_z "Ls"
     }
+  (* ── ZTURN-T PLAIN = the scrambled class (docs/design/ztt_scrambled_design.md):
+        Sande-Tukey in place on the chain. Stage 0 t0d (interleaved legs at
+        stride Ls = N/R0, DFT, POST-twiddle, block-split LEG-MAJOR stores at
+        2*(p*Ls + k): R0 sequential streams, no rb[]); mids tmgd (tmg with the
+        twiddle AFTER the butterfly); last tld (adjacent legs, twiddle-free,
+        interleaved stores IN PLACE). The backward is the stage-by-stage
+        inverse: tldb (tld's mirror) then the SHIPPED tmgb (PRE conj + IDFT)
+        and tlfb (PRE conj + IDFT, natural interleaved out). No table, no
+        plane, no buffer-mode axis. ── *)
+  | "t0d" ->
+    { mid with
+      base = "t0d"
+    ; dif = true
+    ; group_loop = true
+    ; tw_off = "%TWF*(size_t)k"
+    ; tw_group_reset = true
+    ; in_edge = E_z "Ls"
+    ; out_edge = E_planes "Ls"
+      (* Two twins were MEASURED here 2026-09-14 (zt_scr_spike_results.md)
+         and REFUTED, do not re-try: prefetch_out = 4 (the tlfi mechanism) —
+         no gain out of place, none in place; and a TP_PowW1 packed-w^1
+         ingest (the stream 7x smaller, the powers from a squaring tree) —
+         correct and 12..48% SLOWER at every L2-resident cell. The stage is
+         bound by neither store-miss latency nor its twiddle bytes. *)
+    }
+  | "tmgd" ->
+    (* tmg's dataflow with DIF placement (dft.ml: (DIF, Fwd) lands on POST) --
+       the msd-to-msg relation, on the ZTURN-T stream shape *)
+    { mid with
+      base = "tmgd"
+    ; dif = true
+    ; group_loop = true
+    ; tw_off = "%TWF*(size_t)k"
+    ; tw_group_reset = true
+    }
+  | "tld" ->
+    { mid with
+      base = "tld"
+    ; twiddled = false
+    ; group_loop = true
+    ; in_edge = E_blocks
+    ; out_edge = E_zcol
+    }
+  | "tldb" ->
+    { mid with
+      base = "tld"
+    ; bwd = true
+    ; twiddled = false
+    ; group_loop = true
+    ; in_edge = E_zcol
+    ; out_edge = E_blocks
+    }
   | other ->
     failwith
       (Printf.sprintf
          "codelet_zsplit: unknown kind %s (supported: ms msb msg msgb s0s s0sb sterm \
-          stermb sterm2 s0t s0tb stf stfb stf2 stfn stfbn dts dtsn dtt msd dtso)"
+          stermb sterm2 s0t s0tb stf stfb stf2 stfn stfbn dts dtsn dtt msd dtso t0tp \
+          t0tpb tmg tmgb tlf tlfb tlfi tlfib t0d tmgd tld tldb)"
          other)
 ;;
 
@@ -752,7 +847,7 @@ let emit_codelet
     else (
       match k.out_edge with
       | E_sect_tap _ -> { k with sink_stores = true }
-      | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ | E_runs ->
+      | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ | E_runs | E_zcol ->
         failwith
           (Printf.sprintf
              "codelet_zsplit: --zp-sink: kind %s's store edge is not sink-capable (only \
@@ -787,7 +882,7 @@ let emit_codelet
             text, so the sequence path reproduces the committed sk kernel
             under the same symbol (A/B side by side with the incumbent). *)
          { k with sched = ZS_afterdef; sink_stores = true }
-       | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ | E_runs ->
+       | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ | E_runs | E_zcol ->
          failwith
            (Printf.sprintf
               "codelet_zsplit: --zp-sched afterdef: kind %s's store edge is not \
@@ -852,11 +947,16 @@ let emit_codelet
         carry it (provenance stability)"
    | _ -> ());
   if radix <> 4 && radix <> 8
-     && not ((k.base = "msg" || k.base = "msz" || k.base = "mszt") && List.mem radix [ 3; 5; 7; 9; 15 ])
+     && not
+          ((k.base = "msg" || k.base = "msz" || k.base = "mszt" || k.base = "tmg"
+           || k.base = "tmgd")
+           && List.mem radix [ 3; 5; 7; 9; 15 ])
   then
     failwith
       "codelet_zsplit: split family is radix 4/8 only (see TIER GATE) — except the \
-       MID (msg/msgb), which carries no section geometry and emits odd radices \
+       MIDS (msg/msgb; ZTURN-T's tmg/tmgb/tmgd since 2026-09-14, ztt_odd_design.md; \
+       t0tp/tlf/tld are lane lattices and stay 4/8), which carry no section geometry \
+       and emit odd radices \
        3/5/7/9/15 (2026-08-27, the odd-cascade arc: N = 2^a*odd mids; s0t stays the \
        r0=4 turn)";
   if (k.base = "sterm" || k.base = "sterm2") && radix <> 8
@@ -900,7 +1000,7 @@ let emit_codelet
     &&
     match k.in_edge with
     | E_sect_tap _ -> true
-    | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ | E_runs -> false
+    | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ | E_runs | E_zcol -> false
   then (
     match r0 with
     | Some r when r = vw -> ()
@@ -1048,6 +1148,12 @@ let emit_codelet
             "tlf (ZTURN-T last: tmg's combine + REINT packed stores at leg*OLs + k = \
              natural interleaved out, group-looped over distinct in/out pointers), %s."
             (if b then "bwd (table conjugated by the create)" else "fwd")
+        | "tlfi", b ->
+          Printf.sprintf
+            "tlfi (ZTURN-T IN-PLACE last: tlf with every output stream prefetched 4 \
+             column quads ahead — the caller's buffer went cold under the plane; same \
+             arithmetic, bitwise tlf), %s."
+            (if b then "bwd (table conjugated by the create)" else "fwd")
         | "sterm", false ->
           "sterm (SPLIT-INPUT terminator: TR4 loads, packed w^1 squaring tree, REINT \
            drev-comb stores), fwd."
@@ -1149,6 +1255,23 @@ let emit_codelet
           "dtt (DIT-FORWARD ZTURN-S finisher = conj(s0tb): twiddle-free leaf, \
            section-record loads + 4x4 lane transpose, REINT stores contiguous ascending \
            = NATURAL interleaved out), fwd."
+        | "t0d", false ->
+          "t0d (ZTURN-T PLAIN ingest, the scrambled class: natural packed z legs at \
+           stride Ls = N/R0, DEINT, radix-R0 DFT, POST-twiddle w_N^(p*b) as tlf's \
+           column-quad stream, block-split LEG-MAJOR stores at 2*(p*Ls + k) -- R0 \
+           sequential streams, no rb[]; in place when zin == zout; every output \
+           stream prefetched 4 column quads ahead, the tlfi mechanism), fwd."
+        | "tmgd", false ->
+          "tmgd (ZTURN-T PLAIN mid = tmg with the twiddle AFTER the butterfly: in-place \
+           group-looped combine, POST-twiddle w_Len^(p*b), cursor reset per group), fwd."
+        | "tld", false ->
+          "tld (ZTURN-T PLAIN last, IN PLACE: TR4 loads of R adjacent block-split \
+           complexes per column, twiddle-free radix-R DFT, unpack-only interleaved \
+           stores back into the same span = the scrambled output), fwd."
+        | "tld", true ->
+          "tldb (ZTURN-T PLAIN backward ingest, IN PLACE = tld's mirror: unpack-only \
+           interleaved loads of the scrambled input, twiddle-free IDFT, TR4 block-split \
+           stores into the same span), bwd."
         | _, true ->
           "ms bwd twin (IDFT + POST-twiddle; table twspb pre-conjugated -> table_conj)."
         | _, false ->
@@ -1454,6 +1577,26 @@ let emit_codelet
     let vw = isa.Isa.vec_width in
     let nslots = ninst * radix in
     Buffer.add_string buf open_line;
+    (* tlfi: R output-stream prefetches per column quad, prefetch_out quads
+       ahead (in the WIDE loop's columns: wide_vw * prefetch_out) *)
+    if k.prefetch_out > 0
+    then (
+      (* the output streams' stride: the terminators' OLs (tlfi), the plain
+         ingest's Ls (t0d: leg-major block-split stores at 2*(p*Ls + k)) *)
+      let ostride =
+        match k.out_edge with
+        | E_planes s | E_z s -> s
+        | E_blocks | E_sect_tap _ | E_sect_tr4 _ | E_runs | E_zcol -> "OLs"
+      in
+      for r = 0 to radix - 1 do
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        _mm_prefetch((const char *)&zout[2*((size_t)%d*%s + k + %d)], _MM_HINT_T0);\n"
+             r
+             ostride
+             (wide_vw * k.prefetch_out))
+      done);
     if k.nat_in || k.nat_out
     then begin
       Buffer.add_string
@@ -1673,6 +1816,38 @@ let emit_codelet
               (Array.init 4 (fun j -> Printf.sprintf "_si_%d" ((4 * qd) + j)))
               (Array.init 4 (fun j -> Printf.sprintf "lane_im_%d" ((4 * qd) + j))))
        done
+     | E_zcol ->
+       (* ── Column-run z load edge (tldb, the plain backward ingest): column
+             c's R consecutive INTERLEAVED complexes at 2*R*(k+c), laid out by
+             tld as leg-pair registers -- leg p's pair at doubles 2*R*k + 8p:
+             [col k, col k+2] then [col k+1, col k+3]. Two loads + unpacklo/hi
+             per leg give the ORDERED lanes k..k+3 back; no permute. ── *)
+       load_hdr "        /* Column-run z load edge (leg-pair unpack, no permute) */\n";
+       if ninst <> 1 || vw <> 4
+       then failwith "codelet_zsplit: E_zcol assumes VW = 4, ninst = 1";
+       let unlo = Isa.intr isa "unpacklo_pd"
+       and unhi = Isa.intr isa "unpackhi_pd" in
+       for p = 0 to radix - 1 do
+         load_chunk
+           (Printf.sprintf
+              "        %s\n        %s\n        %s\n        %s\n"
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "_zl_%d" p)
+                 (Isa.loadu_pd isa (blk_addr "zin" 0 (2 * vw * p))))
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "_zh_%d" p)
+                 (Isa.loadu_pd isa (blk_addr "zin" 0 ((2 * vw * p) + vw))))
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "lane_re_%d" p)
+                 (Printf.sprintf "%s(_zl_%d, _zh_%d)" unlo p p))
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "lane_im_%d" p)
+                 (Printf.sprintf "%s(_zl_%d, _zh_%d)" unhi p p)))
+       done
      | E_runs -> failwith "codelet_zsplit: E_runs is a store-only edge (t0tp)");
     (* per-slot output tag arrays (all edge shapes consume pairs) — built
        BEFORE the body walk so sink_stores can interleave stores at defs *)
@@ -1837,6 +2012,34 @@ let emit_codelet
                        (sect_addr ~iv:ivout "zout" q s 0 plus)
                        (Printf.sprintf "t%d" tag))
               }) )
+      | E_zcol ->
+        (* ── Column-run z store edge (tld, the plain last, IN PLACE): the
+              4 columns' span [2*R*k, 2*R*k + 8R) doubles is exactly what the
+              E_blocks load edge read, so the stage is in place. Leg p's four
+              column outputs leave as TWO interleaved registers by unpacklo/hi
+              alone -- [col k, col k+2] at 2*R*k + 8p, [col k+1, col k+3] at
+              +4 -- no permute; the lane order inside the span is part of the
+              plan's permutation. Unit = one slot (leg), as E_z. ── *)
+        let unlo = Isa.intr isa "unpacklo_pd"
+        and unhi = Isa.intr isa "unpackhi_pd" in
+        if ninst <> 1 || vw <> 4
+        then failwith "codelet_zsplit: E_zcol assumes VW = 4, ninst = 1";
+        ( "        /* Column-run z store edge (leg-pair unpack, in place, no permute) */\n"
+        , Array.init nslots (fun sl ->
+            { su_tags = [ re_tag.(sl); im_tag.(sl) ]
+            ; su_orefs = [ Expr.Output (sl, true); Expr.Output (sl, false) ]
+            ; su_text =
+                Printf.sprintf
+                  "        %s;\n        %s;\n"
+                  (Isa.storeu_pd
+                     isa
+                     (blk_addr "zout" 0 (2 * vw * sl))
+                     (Printf.sprintf "%s(t%d, t%d)" unlo re_tag.(sl) im_tag.(sl)))
+                  (Isa.storeu_pd
+                     isa
+                     (blk_addr "zout" 0 ((2 * vw * sl) + vw))
+                     (Printf.sprintf "%s(t%d, t%d)" unhi re_tag.(sl) im_tag.(sl)))
+            }) )
       | E_sect_tr4 _ | E_runs ->
         failwith
           "codelet_zsplit: E_sect_tr4 is load-only (s0t's record stores are \
@@ -2115,7 +2318,7 @@ let emit_codelet
       (* section bases are stride-scaled, so the ZTURN-S edges USE their
          stride (E_sect_tap "OLs" reads/writes at 4*(sec*OLs + k)). *)
       | E_planes s | E_z s | E_sect_tap s | E_sect_tr4 s -> s = stride
-      | E_blocks | E_runs -> false
+      | E_blocks | E_runs | E_zcol -> false
     in
     edge_uses k.in_edge || edge_uses k.out_edge
   in
@@ -2452,7 +2655,7 @@ let emit_codelet
            callee's target ⊆ caller's; it inlines into the attributed
            wrapper). Wrapper shape mirrors legacy codelet_zil byte-for-byte:
            in-place on zout (zin voided), bp += 2·R·Ls, twg += (R-1)·2·VW. ── *)
-    let ztt = k.base = "tmg" || k.base = "tlf" in
+    let ztt = List.mem k.base [ "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] in
     let body_name =
       if ztt
       then ztt_body_name ~base:k.base ~radix ~bwd:k.bwd
@@ -2475,6 +2678,9 @@ let emit_codelet
          (if k.base = "msg" || k.base = "msd" || ztt then " " else " __restrict__ ")
          (if k.base = "msg" || k.base = "msd" || ztt then " " else " __restrict__ ")
          (if uses "OLs" then "size_t OLs, " else ""));
+    (* a twiddle-free group-looped body (tld/tldb) keeps the shared body
+       signature; silence its unused stream pointer *)
+    if not k.twiddled then Buffer.add_string buf "    (void)tw_re;\n";
     let dag = prepare ~two_inst:false in
     if not k.narrow_arms
     then
@@ -2526,7 +2732,7 @@ let emit_codelet
          ~symbol:fname
          ~target_attr:isa.Isa.target_attr
          ());
-    if k.base = "tlf"
+    if k.base = "tlf" || k.base = "tlfi"
     then
       (* distinct in/out pointers: the plane is read at 2*R*Ls per group,
          the packed output written at 2*R*OLs; ONE stream for every group *)
@@ -2545,6 +2751,30 @@ let emit_codelet
            body_name
            radix
            radix)
+    else if k.base = "t0d" || k.base = "tld"
+    then
+      (* the PLAIN boundary kinds: distinct in/out pointers (t0d reads the
+         caller's z and writes the block-split working buffer; tld/tldb are in
+         place when the caller passes one pointer). Gs groups; the group pitch
+         is 2*R*Ls for t0d (its columns stride Ls, Gs = 1 at stage 0) and
+         2*R*count for tld (a "column" is one R-run, count of them per group). *)
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)OLs; (void)OGs;\n\
+           \    const double *ip = zin;\n\
+           \    double *op = zout;\n\
+           \    for (size_t g = 0; g < Gs; g++) {\n\
+           \        %s(ip, op, tw_re, Ls, count);\n\
+           \        ip += 2 * (size_t)%d * %s;\n\
+           \        op += 2 * (size_t)%d * %s;\n\
+           \    }\n\
+            }\n"
+           body_name
+           radix
+           (if k.base = "t0d" then "Ls" else "count")
+           radix
+           (if k.base = "t0d" then "Ls" else "count"))
     else
       Buffer.add_string
         buf

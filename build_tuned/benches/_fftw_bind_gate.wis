@@ -7,6 +7,6 @@
   (fftw_dft_r2hc_register 0 #x11bdd #x11bdd #x0 #xa1b3f9e3 #x6d3b4741 #xd843ee95 #x223e75c6)
   (fftw_codelet_n1_4 0 #x10bdd #x10bdd #x0 #xd8ebe5e1 #xc733f2d6 #x766b0570 #xd68497c2)
   (fftw_dft_vrank_geq1_register 0 #x10bdd #x10bdd #x0 #xa49c3b11 #x174bd01d #xd1fd487b #x396b803f)
-  (fftw_codelet_t2fv_10_avx2 0 #x10bdd #x10bdd #x0 #xa3383bf8 #xb6eb0385 #x7fc2d9f9 #xb111236d)
+  (fftw_codelet_t1fv_10_avx2 0 #x10bdd #x10bdd #x0 #xa3383bf8 #xb6eb0385 #x7fc2d9f9 #xb111236d)
   (fftw_codelet_t2fv_25_avx2 0 #x10bdd #x10bdd #x0 #xde90c45a #xeb1bb67b #x40bf8703 #x0e05da9d)
 )

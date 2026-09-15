@@ -1,24 +1,26 @@
-/* vfft_k1scr_gate.c — Phase A gate: explicit-SCRAMBLED sub-2048 K=1
- * interleaved OOP now routes to the native K=1 IL engines (identity
- * permutation — contract-legal, il_coverage_plan.md Phase A).
+/* vfft_k1scr_gate.c — the explicit-SCRAMBLED K=1 interleaved OOP cell
+ * through the front door, sub-2048 and one cell above.
+ *
+ * ORDER IS A CONTRACT (design_contracts.md 8b, owner 2026-09-13): the
+ * scrambled pool races SCRAMBLED WRITERS only, and at every pow2 cell in
+ * ZTURN-T's band the writer is the PLAIN schedule (ztt_scrambled_design.md)
+ * — a REAL permutation of the natural spectrum, never the identity. Until
+ * 2026-09-15 this gate asserted the opposite (Phase A, 2026-08: the natural
+ * K=1 engines served the scrambled request as the identity permutation);
+ * that world is gone and the assertion is inverted.
  *
  * ARMS per sub-2048 cell (128/256/512/1024), OOP INTERLEAVED, scratch W:
- *   1. IDENTITY == ROUTE PROOF: fwd(SCRAMBLED handle) memcmp-EXACT ==
- *      fwd(NATURAL handle) on the same input. The old route (convert
- *      fallback -> split MODEB) emits a genuinely permuted comb, so a
- *      routing regression CANNOT pass this arm.
+ *   1. A REAL PERMUTATION: fwd(SCRAMBLED handle) is NOT the natural
+ *      spectrum bin for bin, and IS it as a multiset (the sorted (re, im)
+ *      pairs agree to a tolerance). ztt_gate holds the exact permutation
+ *      against the direct plain engine; this arm holds the contract.
  *   2. REFERENCE: the NATURAL handle vs naive DFT IN ORDER (tolerance) —
  *      anchors arm 1 to ground truth (🔴 roundtrip cannot gate ordering).
  *   3. MATCHED ROUNDTRIP on the SCRAMBLED handle: bwd(fwd(x)) == N·x.
- *   4. SPEED: scrambled/natural paced ratio ≈ 1.0 (same engine, same plan;
- *      the convert path would be visibly slower). Informational + <1.25
- *      green line (thermal).
+ *   4. SPEED: scrambled/natural paced ratio, informational (two engines:
+ *      the plain class measures ~1.1x the natural below 2048).
  *
- * ≥2048 regression (A3): a 4096 SCRAMBLED handle must NOT be identity-
- * served (its cascade comb is a real permutation) and must roundtrip.
- * (Structural note: execute prefers an attached cascade over k1_on, so
- * the only ≥2048 failure mode of the A1 gate change is dead weight — the
- * non-identity check plus the standing k1zip gates cover behavior.)
+ * A3: a 4096 SCRAMBLED handle is a real permutation too and roundtrips.
  *
  * Run:   vfft_k1scr_gate.exe --wisdir <scratch dir>
  * Build: python build.py --src benches/vfft_k1scr_gate.c --vfft --compile
@@ -35,6 +37,17 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+/* (re, im) pairs in lexicographic order, for arm 1's multiset compare */
+static int cxcmp(const void *a, const void *b)
+{
+    const double *x = (const double *)a, *y = (const double *)b;
+    if (x[0] < y[0]) return -1;
+    if (x[0] > y[0]) return 1;
+    if (x[1] < y[1]) return -1;
+    if (x[1] > y[1]) return 1;
+    return 0;
+}
 
 static double now_ns(void)
 {
@@ -138,9 +151,9 @@ int main(int argc, char **argv)
     vfft_wisdom *W = vfft_wisdom_load(wisdir);
     if (!W) { printf("vfft_wisdom_load FAILED\n"); return 2; }
 
-    printf("\n=== Phase A: explicit-SCRAMBLED sub-2048 IL -> native K=1 engine ===\n");
+    printf("\n=== explicit-SCRAMBLED K=1 IL: a real permutation of the natural spectrum (the plain ZTURN-T) ===\n");
     printf("%-7s | %-9s %-10s %-10s %-9s\n",
-           "N", "scr==nat", "nat vs ref", "scr rt", "scr/nat");
+           "N", "scr order", "nat vs ref", "scr rt", "scr/nat");
     int fails = 0;
 
     static const int NS[] = { 128, 256, 512, 1024 };
@@ -160,15 +173,32 @@ int main(int argc, char **argv)
         for (long j = 0; j < 2L * N; j++)
             x[j] = (double)rand() / RAND_MAX - 0.5;
 
-        /* arm 1: identity == route proof */
+        /* arm 1: a REAL permutation of the natural spectrum (2026-09-15):
+         * not the identity bin for bin, and the same spectrum as a multiset
+         * (sorted (re, im) pairs agree). ztt_gate holds the exact permutation
+         * against the direct plain engine; this holds the contract. */
         vfft_execute(hs, VFFT_FORWARD, x, NULL, ys, NULL);
         vfft_execute(hn, VFFT_FORWARD, x, NULL, yn, NULL);
-        /* the identity at ROUNDING level (2026-09-07): the NATURAL cell may
-         * now serve the cascade (a raced candidate below 2048) while the
-         * SCRAMBLED cell keeps the identity engine — two engines, one
-         * spectrum, not bitwise. A permuted comb still fails by 1e0. */
-        const int eq = memcmp(ys, yn, 2 * (size_t)N * sizeof(double)) == 0 ||
-                       relerr(ys, yn, 2L * N) < 1e-11;
+        const int ident = memcmp(ys, yn, 2 * (size_t)N * sizeof(double)) == 0 ||
+                          relerr(ys, yn, 2L * N) < 1e-11;
+        int eq;
+        {
+            double *ps = (double *)malloc(2 * (size_t)N * sizeof(double));
+            double *pn = (double *)malloc(2 * (size_t)N * sizeof(double));
+            double mx = 0, ee = 0;
+            memcpy(ps, ys, 2 * (size_t)N * sizeof(double));
+            memcpy(pn, yn, 2 * (size_t)N * sizeof(double));
+            qsort(ps, (size_t)N, 2 * sizeof(double), cxcmp);
+            qsort(pn, (size_t)N, 2 * sizeof(double), cxcmp);
+            for (long j = 0; j < 2L * N; j++)
+            {
+                if (fabs(pn[j]) > mx) mx = fabs(pn[j]);
+                if (fabs(ps[j] - pn[j]) > ee) ee = fabs(ps[j] - pn[j]);
+            }
+            eq = !ident && ee / mx < 1e-9;
+            free(ps);
+            free(pn);
+        }
 
         /* arm 2: natural vs naive IN ORDER */
         naive_dft(x, X, N);
@@ -225,10 +255,12 @@ int main(int argc, char **argv)
         qsort(sn, 9, sizeof(double), dcmp);
         const double ratio = ss[4] / sn[4];
 
-        const int ok = eq && ref < 1e-9 && rte < 1e-9 && ratio < 1.25;
+        /* the speed ratio is informational since 2026-09-15: two engines now
+         * (the plain class measures ~1.1x the natural below 2048) */
+        const int ok = eq && ref < 1e-9 && rte < 1e-9;
         if (!ok) fails++;
         printf("%-7d | %-9s %.2e   %.2e   %5.3fx%s\n",
-               N, eq ? "EXACT" : "DIFF!", ref, rte, ratio,
+               N, eq ? "PERMUTED" : (ident ? "IDENT(!)" : "NOT-PERM"), ref, rte, ratio,
                ok ? "" : "   *** FAIL ***");
 
         fz(x); fz(X); fz(ys); fz(yn); fz(rt);
@@ -236,7 +268,7 @@ int main(int argc, char **argv)
         vfft_destroy(hn);
     }
 
-    /* A3: ≥2048 SCRAMBLED must stay on the cascade (non-identity comb). */
+    /* A3: 4096 SCRAMBLED is a real permutation too (the plain class there). */
     {
         const int N = 4096;
         vfft_plan hs = mk(W, N, 1), hn = mk(W, N, 0);
@@ -267,7 +299,7 @@ int main(int argc, char **argv)
             }
             const int ok = !ident && (e / m) < 1e-9;
             if (!ok) fails++;
-            printf("%-7d | %-9s rt=%.2e  (A3: cascade comb must be a REAL "
+            printf("%-7d | %-9s rt=%.2e  (A3: the scrambled writer must be a REAL "
                    "permutation)%s\n",
                    N, ident ? "IDENT(!)" : "permuted", e / m,
                    ok ? "" : "   *** FAIL ***");

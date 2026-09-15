@@ -48,10 +48,48 @@
  * axis: every legal tile width on the 1 KB..64 KB ladder is its own candidate
  * beside untiled (vfft_ztt_tile_legal: pow2, >= R0*R1, < N), so N=1024
  * scrambled 37 -> 65 (the seven chains x four widths 64..512); 2048 and
- * above unchanged (no natural engine in those scrambled pools). */
+ * above unchanged (no natural engine in those scrambled pools).
+ * Re-measured 2026-09-09 (evening) after zcascade_sunset_plan.md S2: the
+ * natural engines enter the SCRAMBLED pool at EVERY N (natural output is a
+ * legal scrambled answer; ZTURN-T x chains x tiles beside the cascade chains),
+ * so 2048 56 -> 126, 4096 87 -> 175, 8192 127 -> 255, 16384 184 -> 352;
+ * 32768 and 65536 unchanged (no natural engine reaches them yet — ZTURN-T's
+ * octave is 16384, the pairs stop at R = 128).
+ * Re-measured 2026-09-09 (evening) after S4 (ZTURN-T's ceiling 262144 via the
+ * two-level create): its 28 / 36 chains x tile widths enter the 32768 / 65536
+ * scrambled pools too, 270 -> 494 and 372 -> 660.
+ * Re-measured 2026-09-09 (evening) after the owner cut ZTURN-T's tile ladder
+ * to 16 KB and 32 KB (dp_planner_il.h, _il_dp_enumerate_ztt): each ZTURN-T
+ * chain is now untiled + the legal widths of {1024, 2048} complexes, so
+ * 65 -> 37, 126 -> 90, 175 -> 127, 255 -> 175, 352 -> 247, 494 -> 354,
+ * 660 -> 480 (il_dp_cand_census, cap 1024).
+ * Re-measured 2026-09-09 (evening) after the ZTURN-T-ALONE gate in
+ * _il_dp_enumerate_natural_engines (owner: no Bailey pair in the pow2 pools
+ * at 2048 and above): the 16 pairs at 2048 and the 4 at 4096 left both
+ * pools, 90 -> 74 and 127 -> 123; the other cells never had a pair.
+ * Re-measured 2026-09-09 (evening) after the pow2 pair-pool SUNSET (owner:
+ * no radix-64 slot, radix 8/16 slots race the tangent kernel alone, radix 32
+ * keeps its four forms): 1024 = 32x32 (16 forms) + 7 ZTURN-T chains = 23.
+ * Re-measured 2026-09-09 (evening) after the ORDER law (design_contracts.md
+ * section 3): S2 reverted — the natural engines (ZTURN-T chains x widths)
+ * leave the pow2 scrambled pools at 2048 and above — and the LEGACY zsplit
+ * engine (zroute=0, superseded by ZTURN-S, never banked) leaves them too:
+ * 74 -> 48, 123 -> 77, 175 -> 113, 247 -> 166, 354 -> 246, 480 -> 340.
+ * What remained at a pow2 cell >= 2048 was the ZTURN-S cascade alone (chains x
+ * stf/stf2 x its tile widths), the only scrambled writer until the scrambled
+ * ZTURN-T class existed.
+ * Re-measured 2026-09-14 after the scrambled ZTURN-T class shipped into the
+ * planner (design_contracts.md 8b and 10; docs/design/ztt_scrambled_design.md):
+ * at every pow2 cell in ZTURN-T's band the scrambled pool is the PLAIN
+ * schedule ALONE — every registry chain x {untiled, the legal widths of
+ * {1024, 2048} under the plain tile law (the last mid's block)} — no natural
+ * engine (the sub-2048 leftover is gone too), no cascade chain (the cascade's
+ * last pow2 role was this pool). 1024 = 7 chains untiled (no width below N is
+ * legal there); 2048 = 9 x 2; 4096 = 12 x 3; 8192 = 16 x 3; 16384 = 21 x 3;
+ * 32768 = 28 x 3; 65536 = 36 x 3. */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 65 }, { 2048, 56 }, { 4096, 87 }, { 8192, 127 },
-    { 16384, 184 }, { 32768, 270 }, { 65536, 372 }
+    { 1024, 7 }, { 2048, 18 }, { 4096, 36 }, { 8192, 48 },
+    { 16384, 63 }, { 32768, 84 }, { 65536, 108 }
 };
 
 int main(void)

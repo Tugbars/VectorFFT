@@ -66,8 +66,29 @@ Two details the registry encodes deliberately:
   stays legal at odd counts (verified at N=240, pair 16×15). Only the R32 mid
   is blocked and needs the gate.
 - **The R32 tangent leaf is absent on purpose** — it lost its race by 32%.
-- Forward only; there are no backward tangent twins, the same scope the
-  blocked forms already have.
+- BACKWARD twins since 2026-09-11 at radix 8 and 16 (`t2ttan_bwd` mid, the turned-store kind the pair's backward stage 1 runs,
+  `n1tan_bwd` leaf), backward variant 3 of `vfft_il2p_t2t_bwd_v_fn` /
+  `vfft_il2p_n1_bwd_v_fn`; radix 8 is BIT-IDENTICAL to the classic backward
+  kernel at every count (odd tail included), radix 16 within 5e-17
+  (`benches/tangent_bwd_gate.c`). They close the 2026-09-09 coverage gap in
+  which every backward row banked the classic form by default. Radix 32
+  (the LEAF only — the shipped pairs never carry a radix-32 mid):
+  `radix32_z_n1btan216_bwd`, the tangent interior on the blocked 2.16
+  split, 5e-17 vs the classic blocked 2.16 backward leaf. Its WING-combine
+  sibling was built the same day (the emitter runs `VFFT_CX_W32TG` in both
+  directions since 2026-09-11: `butterfly_pair_w32 ~sign`, +i composed
+  rotations, the mirrored CRotPI ROTFMA fold — bit-exact, forward emission
+  byte-identical), gated to 1e-16, and LOST the backward race to this one
+  at both cells (128: 71.4 vs 70.7 ns; 512: 347 vs 344, 5/5 repeats): the
+  forward wing's 3-5% does not transfer to the backward leaf. Retired.
+  Measured 2026-09-11 with the planner's own backward race for the SHIPPED
+  forward pairs (`benches/bwd_forms_race.c`, PATIENT, 3 repeats with 3 s
+  cooldowns, every winner identical in all 3): 32 (4x8) leaf tangent 15.4 vs
+  15.8 ns; 64 (4x16) leaf tangent 31.8 vs 32.8; 256 (16x16) both tangent
+  156.4 vs 164.7; 512 (16x32) mid tangent 364.4 vs 370.4, then BOTH slots
+  tangent 353.2 vs 369.6 once the radix-32 leaf twin existed; 128 (4x32)
+  leaf tangent 72.6 vs 74.0. Banked as the cells' dir=bwd rows. Every
+  backward slot of every shipped pow2 pair now runs a tangent kernel.
 
 **Wiring is not selection.** The kernels are in the pool and correct, but a
 cell only uses one once the plan search measures it and banks the winning

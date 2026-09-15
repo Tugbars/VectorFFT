@@ -339,69 +339,6 @@ static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
     return kv;
 }
 
-/* ------------------------------------------------------ kind-4 (cascade) */
-
-/* the kind-4 key: one builder for lookup, bank and in-place field updates */
-static inline void vw2_oop_zsplit_key(int N, int role, vw2_key_t *k)
-{
-    memset(k, 0, sizeof *k);
-    k->t = VW2_T_C2C; k->rank = 1; k->n[0] = N;
-    k->q = 1; k->ord = VW2_ORD_SCR; k->pl = VW2_PL_OOP;
-    k->role = (uint8_t)role;
-}
-
-/* role: VW2_ROLE_NONE = the OOP create's problem verdict (a hit attaches
- * the cascade); VW2_ROLE_COMP = the component RECIPE an in-place / odd race
- * banked (2026-09-02) — same fields, never a route verdict for OOP. */
-static inline int vw2_oop_lookup_zsplit_role(const vw2_store_t *s, int N,
-                                             int role,
-                                             vfft_oop_wisdom_entry_t *e)
-{
-    vw2_key_t k;
-    const vw2_rec_t *r;
-    vw2_oop_zsplit_key(N, role, &k);
-    r = vw2_lookup(s, &k);
-    if (!r) return 0;
-    {
-        const char *eng = vw2__oop_eng(r);
-        int zs_route;
-        if (!strcmp(eng, "zturn")) zs_route = 1;
-        else if (!strcmp(eng, "zsplit")) zs_route = 0;
-        else return 0;                             /* a different engine won */
-        memset(e, 0, sizeof *e);
-        e->kind = VFFT_OOP_KIND_ZSPLIT;
-        e->N = N; e->K = 1;
-        e->zs_route = zs_route;
-        e->zs_t2q = vw2__oop_geti(r, "zs_t2q", 0);
-        e->zt_t2q = vw2__oop_geti(r, "zt_t2q", 0);
-        e->zt_tf  = vw2__oop_geti(r, "zt_tf", 0);
-        e->zt_ntf = vw2__oop_geti(r, "zt_ntf", 0);
-        e->zt_tw  = vw2__oop_geti(r, "zt_tw", 0);
-        e->zt_l1  = vw2__oop_geti(r, "zt_l1", 0);
-        e->zt_mt_t = vw2__oop_geti(r, "zt_mt_t", 0);
-        e->zt_mt   = vw2__oop_geti(r, "zt_mt", 0);
-        e->zt_mt_ip_t = vw2__oop_geti(r, "zt_mt_ip_t", 0);
-        e->zt_mt_ip   = vw2__oop_geti(r, "zt_mt_ip", 0);
-        {
-            int ch[VFFT_K1_CC_MAX_NF], nf;
-            nf = vw2__oop_split_ints(vw2_rec_get(r, "chain"), ch, VFFT_K1_CC_MAX_NF);
-            if (nf <= 0) return 0;                 /* a cascade needs a chain */
-            e->cc_chain = vfft_k1_cc_chain_encode(ch, nf);
-        }
-        {
-            const char *ns = vw2_rec_get(r, "ns");
-            e->ns = ns ? atof(ns) : 0.0;
-        }
-    }
-    return 1;
-}
-
-static inline int vw2_oop_lookup_zsplit(const vw2_store_t *s, int N,
-                                        vfft_oop_wisdom_entry_t *e)
-{
-    return vw2_oop_lookup_zsplit_role(s, N, VW2_ROLE_NONE, e);
-}
-
 /* --------------------------------------------------- kinds 0/1/2 (classic) */
 
 /* Mirrors legacy lookup_ord for one order class (1 = natural, 2 = scrambled).
@@ -621,11 +558,6 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 VW2__OB_SET(1, "il_ztt", ztb);
                 if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }
             }
-            if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
-                char ref[96];   /* the signpost: recipe lives in the cascade cell */
-                snprintf(ref, sizeof ref, "cell(t=c2c,n=%d,q=1,ord=scr,place=oop)", e->N);
-                VW2__OB_SET(1, "ref", ref);
-            }
         }
         if (e->il_kv || e->il_kv_raced) {   /* a raced verdict emits il_kv even when 0 (2026-09-04) */
             char kvb[16];
@@ -640,74 +572,6 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
         if (e->ns > 0.0) {
             VW2__OB_SET(2, "ns", nsbuf);
             VW2__OB_SET(2, "metric", "fwd1");
-            VW2__OB_SET(2, "units", "ns");
-        }
-    }
-    else if (e->kind == VFFT_OOP_KIND_ZSPLIT) {
-        int ch[VFFT_K1_CC_MAX_NF], nf;
-        if (e->N < 2048 && e->role != VW2_ROLE_COMP) { *why = "sub2048-wrong-slot"; return -1; }
-        /* a role=comp RECIPE below 2048 is the natural cascade candidate's
-         * (2026-09-07) — never a verdict, never read by a scrambled path */
-        r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = e->N;
-        r->key.q = 1; r->key.ord = VW2_ORD_SCR; r->key.pl = VW2_PL_OOP;
-        VW2__OB_SET(1, "eng", e->zs_route == 1 ? "zturn" : "zsplit");
-        nf = vfft_k1_cc_chain_decode(e->cc_chain, ch);
-        if (nf <= 0) { vw2_rec_free(r); *why = "ccchain-decode-refused"; return -1; }
-        {
-            size_t off = 0;
-            for (i = 0; i < nf; i++) {
-                int rr = snprintf(chain + off, sizeof chain - off, "%s%d", i ? "." : "", ch[i]);
-                if (rr < 0 || (size_t)rr >= sizeof chain - off) break;
-                off += (size_t)rr;
-            }
-        }
-        VW2__OB_SET(1, "chain", chain);
-        {
-            char tb[16];
-            snprintf(tb, sizeof tb, "%d", e->zs_t2q);
-            VW2__OB_SET(1, "zs_t2q", tb);
-            if (e->zs_route == 1) {
-                snprintf(tb, sizeof tb, "%d", e->zt_t2q);
-                VW2__OB_SET(1, "zt_t2q", tb);
-                if (e->zt_tf) VW2__OB_SET(1, "zt_tf", "1");     /* the terminator forms, when loaded */
-                if (e->zt_ntf) VW2__OB_SET(1, "zt_ntf", "1");
-            }
-            if (e->zt_tw > 0) {
-                snprintf(tb, sizeof tb, "%d", e->zt_tw);
-                VW2__OB_SET(1, "zt_tw", tb);
-                snprintf(tb, sizeof tb, "%d", e->zt_l1);
-                VW2__OB_SET(1, "zt_l1", tb);
-            }
-            if (e->zt_mt_t > 0) {              /* per-T MT verdict (C1.9) */
-                snprintf(tb, sizeof tb, "%d", e->zt_mt_t);
-                VW2__OB_SET(1, "zt_mt_t", tb);
-                snprintf(tb, sizeof tb, "%d", e->zt_mt ? 1 : 0);
-                VW2__OB_SET(1, "zt_mt", tb);
-            }
-            if (e->zt_mt_ip_t > 0) {           /* the in-place caller's pair */
-                snprintf(tb, sizeof tb, "%d", e->zt_mt_ip_t);
-                VW2__OB_SET(1, "zt_mt_ip_t", tb);
-                snprintf(tb, sizeof tb, "%d", e->zt_mt_ip ? 1 : 0);
-                VW2__OB_SET(1, "zt_mt_ip", tb);
-            }
-        }
-        VW2__OB_SET(2, "ran", "1");
-        if (e->ns > 0.0) {
-            /* Kind-4 metric law: a MEASURED kind-4 verdict is joint2 — the
-             * dp planner (the family's only measured-kind-4 banker) races
-             * BOTH routes whole-plan joint fwd+bwd, so the label must not
-             * depend on which route won (route-inferred fwd1 once made a
-             * fresh zsplit winner unable to replace a zturn incumbent under
-             * the metric-identity law). The fwd1 label survives ONLY as
-             * migrated vintage: plain pre-route legacy lines were banked by
-             * the fwd-only racer, and route-inference is exactly right for
-             * that corpus (keeps migration idempotent). The create-time t2q
-             * race is fwd-only and banks MEASURE-LESS (ns=0 skips this
-             * block) — its median is placement luck, not a cell verdict. */
-            VW2__OB_SET(2, "ns", nsbuf);
-            VW2__OB_SET(2, "metric",
-                        (src && !strcmp(src, "migrated") && e->zs_route != 1)
-                            ? "fwd1" : "joint2");
             VW2__OB_SET(2, "units", "ns");
         }
     }
@@ -961,8 +825,8 @@ static inline int vw2_oop_bank_entry_role(vw2_store_t *s,
     const char *why = NULL;
     int rc;
     vfft_oop_wisdom_entry_t ec;
-    if (e->kind != VFFT_OOP_KIND_ZSPLIT || role == VW2_ROLE_NONE)
-        return vw2_oop_bank_entry(s, e);
+    (void)role;   /* the comp-role recipe rows were the cascade's (deleted 2026-09-15) */
+    return vw2_oop_bank_entry(s, e);
     ec = *e;
     ec.role = role;
     e = &ec;
@@ -1074,11 +938,6 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             }
             VW2__OB_SET(1, "il_ztt", ztb);
             if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }   /* the raced tile (2026-09-09) */
-        }
-        if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
-            char ref[96];   /* the signpost: recipe lives in the cascade cell */
-            snprintf(ref, sizeof ref, "cell(t=c2c,n=%d,q=1,ord=scr,place=oop)", e->N);
-            VW2__OB_SET(1, "ref", ref);
         }
         if (e->il_kv || e->il_kv_raced) {   /* a raced verdict emits il_kv even when 0 (2026-09-04) */
             char kvb[16];
