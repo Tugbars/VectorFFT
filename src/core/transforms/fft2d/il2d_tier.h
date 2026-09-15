@@ -842,8 +842,13 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
          * split keeps the full T regardless (its axis is D, not nb). */
         const size_t nb = (size_t)h->N / (size_t)h->il2d_col.wl;
         const int Tb = nb < (size_t)T ? (int)nb : T;
+        /* VFFT_IL2D_PHASES: per-phase ns of this walk on stderr (a probe
+         * instrument for the large-plane question, 2026-09-15) */
+        const int phlog = getenv("VFFT_IL2D_PHASES") != NULL;
+        double ph0 = 0, ph1 = 0, ph2 = 0, ph3 = 0;
         if (Tb < 2)
             return 0;
+        if (phlog) ph0 = _il_ab_now();
         if (fwd && h->il2d_col.cut > 0)
             for (s = 0; s < h->il2d_col.cut; s++)
             {
@@ -864,10 +869,19 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
             _il2d_c2c_mt_phase(h, dre, dre, dir, fwd, 2, (size_t)h->N, T);
             sre = dre;
         }
+        if (phlog) ph1 = _il_ab_now();
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 0, nb, Tb);
+        if (phlog) ph2 = _il_ab_now();
         if (!h->il2d_col.tfuse && !(h->il2d_fs_tw && !fwd))
             _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N,
                                T);
+        if (phlog)
+        {
+            ph3 = _il_ab_now();
+            fprintf(stderr, "[il2d-phases] %dx%d T=%d wl=%d cut=%d nst=%d tfuse=%d: prefix=%.0f bands=%.0f rows=%.0f ns\n",
+                    h->N, (int)rn, T, h->il2d_col.wl, h->il2d_col.cut, h->il2d_col.nst, h->il2d_col.tfuse,
+                    ph1 - ph0, ph2 - ph1, ph3 - ph2);
+        }
         if (!fwd && h->il2d_col.cut > 0)
             for (s = h->il2d_col.cut - 1; s >= 0; s--)
                 if (!_il2d_stage_digits_mt(dre, dre, h->N, rn, rn,
@@ -2154,6 +2168,18 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                     dup = 1;
             if (!dup)
                 wlc[nwl++] = w;
+        }
+    }
+    {   /* VFFT_IL2D_WL=w pins the band width for a PROBE (0 = unbanded):
+         * the race keeps that one candidate; a width the ladder does not
+         * hold is ignored. Beside VFFT_IL2D_CHAIN, on a scratch store. */
+        const char *e = getenv("VFFT_IL2D_WL");
+        if (e)
+        {
+            const int w = atoi(e);
+            int p2, hit = 0;
+            for (p2 = 0; p2 < nwl; p2++) if (wlc[p2] == w) hit = 1;
+            if (hit) { wlc[0] = w; nwl = 1; }
         }
     }
     /* the OOP row child for the rowoop arms (kept only if it wins) */

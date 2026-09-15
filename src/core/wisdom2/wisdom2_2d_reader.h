@@ -697,6 +697,35 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
     return vw2_ilcol_chain_bank(st, &ck, Rs, nst, wl, tf, ro, cmt, cmtt, blu, ns);
 }
 
+/* one integer token on the 2D il c2c chain row — the strip width (sw=, the
+ * serial unbanded walk's tile) and the threaded arm's shape (mtarm=, msw=,
+ * valid at cmtt's T): il2d_large_plane_design.md, 2026-09-15. Absent =
+ * dflt; a set on a missing row is refused (the chain bank makes the row). */
+static inline int vw2_2d_il_tok_geti(const vw2_store_t *s, int N1, int N2, int ord,
+                                     const char *name, int dflt)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *v;
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0 };
+    vw2__ilcol_key(&ck, &k);
+    r = vw2_lookup(s, &k);
+    if (!r) return dflt;
+    v = vw2_rec_get(r, name);
+    return v ? atoi(v) : dflt;
+}
+static inline int vw2_2d_il_tok_seti(vw2_store_t *st, int N1, int N2, int ord,
+                                     const char *name, int val)
+{
+    vw2_key_t k;
+    char vb[24];
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0 };
+    vw2__ilcol_key(&ck, &k);
+    if (!vw2_lookup(st, &k)) return -1;
+    snprintf(vb, sizeof vb, "%d", val);
+    return vw2_update_field(st, &k, name, vb) == VW2_OK ? 0 : -1;
+}
+
 /* ═══ native IL 2D REAL tier cells (lay=il ord=scr —
  * fft2d_real_il_design.md M3). Key {t=r2c rank=2 n=N1xN2 q=1 ord=scr
  * pl=OOP lay=il} — DIRECTION-SHARED: the c2r create reads the
