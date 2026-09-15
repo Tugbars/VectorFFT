@@ -527,14 +527,16 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     if (ke && ke->k1_il_route == VFFT_K1_IL_FS && fs_out && ke->il_R1 > 0 && ke->il_R2 > 0 &&
         (long)ke->il_R1 * (long)ke->il_R2 == (long)N)
     {
-        vfft_k1fs_plan_t *fp = vfft_k1fs_create(N, ke->il_R1, ke->il_R2, scr_req, W, cfg,
+        int pn1 = ke->il_R1, pn2 = ke->il_R2;
+        const int pinned = _k1fs_pin(N, &pn1, &pn2);
+        vfft_k1fs_plan_t *fp = vfft_k1fs_create(N, pn1, pn2, scr_req, W, cfg,
                                                 cfg->placement == VFFT_INPLACE, _vfft_plan_threads(cfg));
         if (fp)
         {
             *fs_out = fp;
             if (getenv("VFFT_NAT_LOG"))
-                fprintf(stderr, "[k1fs] N=%d: replay FOUR-STEP %dx%d src=wisdom (%s)\n", N, fp->N1, fp->N2,
-                        cfg->placement == VFFT_INPLACE ? "ip" : "oop");
+                fprintf(stderr, "[k1fs] N=%d: replay FOUR-STEP %dx%d src=%s (%s)\n", N, fp->N1, fp->N2,
+                        pinned ? "pin" : "wisdom", cfg->placement == VFFT_INPLACE ? "ip" : "oop");
             return;
         }
     }
