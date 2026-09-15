@@ -215,10 +215,19 @@ thread (36×20×28 1.64×, 32³ 1.31×, 81×27×27 1.26×, 45³ 1.25×, 27×9×1
 1.15×), ties at the pow2 cubes and loses at the long-axis cells
 (32×16×64 by 14%, the other two inside the control spread); threaded it
 trails at most cells, for the same reason. The cycles-per-worker balance
-is 0.75–1.0 of ideal at every probed cell and is not the cause. The two
-levers, both arms for the natural cell's race and never compared with the
-scrambled cell: the fused natural form (a scratch cube, band fusion kept)
-and the natural axis-1 pass's own per-plane scratch sweep.
+is 0.75–1.0 of ideal at every probed cell and is not the cause.
+
+Both levers were taken 2026-09-15 (`ilnd_natural_fused_design.md`). The
+fused natural form (the scratch cube, band fusion kept) was built, gated
+bitwise and raced at every cell: it LOST to this cycle form at every
+one-thread cell by 3–27% and at 13 of 14 threaded cells, and was deleted —
+the permuting plane pass is one extra cube sweep however it is arranged,
+and this form pays it cheapest. The natural axis-1 pass's per-plane
+scratch sweep is gone: out of place one plane is always dead (forward the
+vacated source position, backward the destination), and the pass runs its
+pre-leaf stages there; `natscr` serves only the fixed points. The residual
+over the scrambled class is structural; a form without the extra sweep
+would need bands closed under the axis-0 permutation, a design of its own.
 
 ## 7. Wisdom
 

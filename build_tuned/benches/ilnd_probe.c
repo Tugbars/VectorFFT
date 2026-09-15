@@ -57,7 +57,8 @@ int main(int argc, char **argv)
      * store the bench replays from */
     static const int C[][3] = { { 16, 16, 16 }, { 32, 16, 64 }, { 27, 9, 15 }, { 36, 20, 28 },
                                 { 64, 64, 64 }, { 128, 64, 32 }, { 32, 32, 32 }, { 128, 128, 128 },
-                                { 64, 128, 32 }, { 256, 64, 16 }, { 45, 45, 45 }, { 81, 27, 27 } };
+                                { 64, 128, 32 }, { 256, 64, 16 }, { 45, 45, 45 }, { 81, 27, 27 },
+                                { 16, 16, 4096 } };
     const int TMT = getenv("VFFT_ILND_PROBE_T") ? atoi(getenv("VFFT_ILND_PROBE_T")) : 8;
     const int nc = (int)(sizeof C / sizeof C[0]);
     const char *mode = argc > 2 ? argv[2] : "all";

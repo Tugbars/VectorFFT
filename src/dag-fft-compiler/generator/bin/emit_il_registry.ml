@@ -44,8 +44,8 @@ let chop_suffix_opt sfx s =
   if ends_with sfx s then Some (String.sub s 0 (String.length s - String.length sfx)) else None
 ;;
 
-(* "radix12_z_stf_r4_bwd_avx2" -> (12, "stf_r4", `Bwd)
-   "radix12_z_stf_r4_avx2"     -> (12, "stf_r4", `Fwd)   (fwd implicit) *)
+(* "radix8_z_tmg_bwd_avx2" -> (8, "tmg", `Bwd)
+   "radix8_z_tmg_avx2"     -> (8, "tmg", `Fwd)   (fwd implicit) *)
 let parse_stem (stem : string) : (int * string * [ `Fwd | `Bwd ]) option =
   match chop_suffix_opt "_avx2" stem with
   | None -> None

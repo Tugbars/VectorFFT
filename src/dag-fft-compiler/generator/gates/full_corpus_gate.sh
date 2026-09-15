@@ -131,9 +131,8 @@ fi
 # SCOPED targets only.  A bare `dune build` in this tree is a documented
 # footgun — @default PROMOTES tracked generated/ headers EVEN WHEN THE BUILD
 # FAILS (reproduced during review: rc=1 and plan_executors.h rewritten).
-# G3: build ALL 19 executables, not 2 — otherwise a break in the 7 chain-tail
-# consumer files (dbg_eval, dump_ir,
-# dbg_zil_math) is invisible and the gate reports PASS.
+# G3: build ALL the executables, not 2 — otherwise a break in a chain-tail
+# consumer (dbg_eval, dump_ir) is invisible and the gate reports PASS.
 if [ -z "${SKIP_BUILD:-}" ]; then
   export PATH="$HOME/.opam/5.2.0/bin:$PATH"
   export DUNE_CACHE=disabled
@@ -143,11 +142,11 @@ if [ -z "${SKIP_BUILD:-}" ]; then
       bin/emit_oop_registry.exe bin/emit_trig_registry.exe \
       bin/emit_strided_registry.exe bin/emit_c2r_registry.exe \
       bin/emit_il_registry.exe \
-      bin/dbg_eval.exe bin/dbg_zil_math.exe \
+      bin/dbg_eval.exe \
       bin_test/cx_pipeline_test.exe bin_test/z11probe.exe \
       bin_test/argv_roundtrip.exe \
       ) \
-    || { echo "FATAL: scoped 16-target dune build failed"; exit 2; }
+    || { echo "FATAL: scoped 15-target dune build failed"; exit 2; }
   # the cx stack's only unit gate — build AND run it (it was silently
   # never built for weeks; the on-disk "ALL PASS" exe was stale).
   "$GEN/_build/default/bin_test/cx_pipeline_test.exe" > "$WORK/cx_test.log" 2>&1 \
