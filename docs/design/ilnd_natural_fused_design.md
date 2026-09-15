@@ -46,11 +46,10 @@ known way to pay it.
 ## Ruling
 
 Refuted and deleted the same day (the pool-sunset law: an arm that wins one
-cell inside the noise is not kept). Do not rebuild this form. A form that
-pays no extra sweep would need bands CLOSED under the axis-0 permutation
-(a cycle-closed banding: the suffix stages and the plane pass over a set of
-planes that maps onto itself), which is a different design, not a variant
-of this one; nothing here builds it.
+cell inside the noise is not kept). Do not rebuild this form. The form that
+pays no extra sweep is the column STRIP: a strip is closed under the axis-0
+permutation, so the reordering happens inside it in cache — built the same
+day as `ilnd_natural_strip_design.md`, and it is what won.
 
 What stayed in the tree from this work:
 

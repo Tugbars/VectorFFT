@@ -103,6 +103,32 @@ table. The expectation to test: the large pow2 cells move from 0.89-0.99x
 of MKL to the scrambled class's neighbourhood (about 13 ms against MKL's
 16.7 ms at 32×32×4096); the small cells, cache-resident whole, do not move.
 
+## Measured (2026-09-15, two quiet runs, the race's own arm times)
+
+The strip form won the one-thread race at 128³ (flat/strip512 6.24 ms vs
+the cycle form's 6.79 ms) and 32×32×4096 (flat/strip256 15.0 vs 16.6 ms;
+the bench 0.89x -> 1.17x of MKL), tied at 36×20×28, and lost where the cube
+fits L3 (64³, 256×64×16, 64×128×32: the strided strip reads cost more than
+the cheap move pass; the race keeps the cycle form). At T=8 it won 10 of 14
+cells, on both runs: 32×32×4096 3.07 vs 5.06 ms, 81×27×27 31 vs 49 µs,
+36×20×28 10.0 vs 16.5 µs, 45³ 38 vs 51 µs, 256×64×16 116 vs 170 µs, 32×16×64
+18 vs 30 µs, 16³ 4.5 vs 5.4 µs — the strips give every worker independent
+in-scratch work with no cold scattered plane writes. Against MKL CCE at
+T=8 the natural class went from 0.67-0.74x at 16³, 32³, 81×27×27,
+32×32×4096 to parity or better at every cell. Width: the arm times fall
+monotonically to 256-512 columns at the long cells (one page visit per
+plane per strip), so the pool runs to 1024 under the L2 budget. Full table:
+`v1_0_results.md`.
+
+## Ruling
+
+Shipped: the strip form is a raced form of the natural class beside the
+cycle form (`nf=`, `nsw=`, `cmtf=` on the rank-3 `ord=nat` row), never a
+default. Open item, not built here: the axis-0 chain is raced as a bare
+column pass and can pick a single-stage axis (natural already, no strip
+form to race) that serves slower than a two-stage chain with strips; a
+joint chain × form race for the natural cell is its own design.
+
 ## Checklist
 
 - [x] 1. This design.
@@ -121,10 +147,10 @@ of MKL to the scrambled class's neighbourhood (about 13 ms against MKL's
 - [x] 6. `ilnd_probe` passes 12-15 (pinned NF=2 SW=16): T=1 both placements
       bitwise the cycle form; T=8 bitwise own serial, engaged. ALL OK at 13
       cells, 2026-09-15.
-- [ ] 7. Measure: the 14 natural cells, T=1 and T=8, the create log.
-- [ ] 8. Rule from the numbers (the race already serves the winner per cell;
-      the record states what won where); if the strip form never wins, it
-      goes the way of the fused form.
-- [ ] 9. Records: `v1_0_results.md`, `3D_natural_il_design.md` §6, this doc's
-      measured section, `vfft.h`'s 3D paragraph if the natural standing
-      changes, memory.
+- [x] 7. Measure: the 14 natural cells, T=1 and T=8, the create log (two
+      quiet runs; a third was discarded, the machine was loaded).
+- [x] 8. Rule from the numbers: shipped as a raced form; wins T=8 at 10/14
+      cells and T=1 at the large pow2 cells; the cycle form stays where the
+      cube fits L3.
+- [x] 9. Records: `v1_0_results.md`, `3D_natural_il_design.md` §6, this doc's
+      measured section, `vfft.h`'s 3D paragraph, memory.
