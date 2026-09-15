@@ -105,21 +105,22 @@ of MKL to the scrambled class's neighbourhood (about 13 ms against MKL's
 
 ## Checklist
 
-- [ ] 1. This design.
-- [ ] 2. `_il2d_col_pass_nat_strip` in `il2d_cols.h`: the strip pass with a
+- [x] 1. This design.
+- [x] 2. `_il2d_col_pass_nat_strip` in `il2d_cols.h`: the strip pass with a
       strip-pitched scratch, both directions (the per-digit stage-0 loop, the
       in-place mids, the leaf scatter/gather). No kernel or table change.
-- [ ] 3. The strip form in `fftnd_il.h`: `natf`-style flag (`nf`), the strip
-      width and the per-worker strip scratches, the serial execute (strips
-      then planes; backward the mirror), both placements.
-- [ ] 4. Threading: the strip phase (one scratch per worker) then the plane
+- [x] 3. The strip form in `fftnd_il.h`: the form (`nf`), the strip width and
+      the per-worker strip scratches, the serial execute (strips then
+      planes; backward the mirror), both placements.
+- [x] 4. Threading: the strip phase (one scratch per worker) then the plane
       phase; the cycle binding only for the cycle form.
-- [ ] 5. The race: the form × width axis in the one-thread race, the strip
-      form's plane arm in the threaded race; `nf= nsw= cmtf=` banked and
-      replayed; `VFFT_ILND_NF` / `VFFT_ILND_SW` pins.
-- [ ] 6. `ilnd_probe`: strip passes (pinned, T=1 both placements bitwise the
-      cycle form; T=8 bitwise own serial, engaged). Gate ALL OK at every
-      cell.
+- [x] 5. The race: the form × width axis in the one-thread race (widths
+      8..256 under the L2 budget), the strip form's plane arm in the
+      threaded race; `nf= nsw= cmtf=` banked and replayed; `VFFT_ILND_NF` /
+      `VFFT_ILND_SW` pins.
+- [x] 6. `ilnd_probe` passes 12-15 (pinned NF=2 SW=16): T=1 both placements
+      bitwise the cycle form; T=8 bitwise own serial, engaged. ALL OK at 13
+      cells, 2026-09-15.
 - [ ] 7. Measure: the 14 natural cells, T=1 and T=8, the create log.
 - [ ] 8. Rule from the numbers (the race already serves the winner per cell;
       the record states what won where); if the strip form never wins, it
