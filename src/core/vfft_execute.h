@@ -426,6 +426,13 @@ static int _k1x_ztt(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, do
     _ztt_serve(h, dir, zin, zout);
     return 0;
 }
+static int _k1x_fs(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    if (h->nthreads > 1)
+        _vfft_pool_arm(h->nthreads); /* the 2D child's threaded verdict runs on the snapshot pool */
+    vfft_k1fs_execute(h->k1fs, dir, zin, zout);
+    return 0;
+}
 static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
     if (dir == VFFT_FORWARD) vfft_ilprime_execute_fwd(h->k1ilpr, zin, zout);
@@ -455,6 +462,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         case VFFT_K1_IL_CHAIN3:  if (h->k1il3p) h->k1_exec = _k1x_il3p; break;
         case VFFT_K1_IL_FLAT:    if (h->k1ilfd) h->k1_exec = _k1x_ilfd; break;
         case VFFT_K1_IL_ZTT:     if (h->k1ztt)  h->k1_exec = _k1x_ztt;  break;
+        case VFFT_K1_IL_FS:      if (h->k1fs)   h->k1_exec = _k1x_fs;   break;
         case VFFT_K1_IL_PRIME:   if (h->k1ilpr) h->k1_exec = _k1x_ilpr; break;
         default: break;
         }
@@ -466,6 +474,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
     else if (h->k1il3p) h->k1_exec = _k1x_il3p;
     else if (h->k1ilfd) h->k1_exec = _k1x_ilfd;
     else if (h->k1ztt) h->k1_exec = _k1x_ztt;
+    else if (h->k1fs) h->k1_exec = _k1x_fs;
     else if (h->k1ilpr) h->k1_exec = _k1x_ilpr;
     return hp;
 }
@@ -658,7 +667,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                        h->il2d_col.bluscr);
                         for (i = 0; i < (size_t)h->N; i++)
                             _il2d_row_exec(h, dir, dre + 2 * i * rn,
-                                           rn);
+                                           rn, i);
                         return;
                     }
                     /* strip loop-interchange: all stages depth-first per
@@ -737,13 +746,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                             _il2d_row_exec(
                                                 h, dir,
                                                 dre + 2 * (r0 + i * nstride) * rn,
-                                                rn);
+                                                rn, r0 + i * nstride);
                                     }
                             }
                             if (!h->il2d_col.tfuse)
                                 for (i = 0; i < (size_t)h->N; i++)
                                     _il2d_row_exec(h, dir, dre + 2 * i * rn,
-                                                   rn);
+                                                   rn, i);
                             return;
                         }
                         for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
@@ -765,7 +774,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                              h->il2d_col.R, h->il2d_col.L, fns, tabs,
                                              1);
                         for (i = 0; i < (size_t)h->N; i++)
-                            _il2d_row_exec(h, dir, dre + 2 * i * rn, rn);
+                            _il2d_row_exec(h, dir, dre + 2 * i * rn, rn, i);
                         return;
                     }
                     if (h->il2d_col.wl > 0)
@@ -794,6 +803,19 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         double *const *tabs = fwd ? h->il2d_col.tf
                                                   : h->il2d_col.tb;
                         size_t b0;
+                        /* the four-step's backward (il2d_fs_tw): its rows carry
+                         * the conjugate inter-pass twiddle and must precede
+                         * every column stage — unfused rows run here on dst
+                         * first, fused rows run first in their band below */
+                        const int hookb = (h->il2d_fs_tw != NULL) && !fwd;
+                        if (hookb && !h->il2d_col.tfuse)
+                        {
+                            if (dre != sre)
+                                memcpy(dre, sre, 2 * (size_t)h->N * rn * sizeof(double));
+                            for (i = 0; i < (size_t)h->N; i++)
+                                _il2d_row_exec(h, dir, dre + 2 * i * rn, rn, i);
+                            sre = dre;
+                        }
                         if (fwd && cut > 0)
                             _il2d_col_stages(sre, dre, h->N, rn, 0, cut,
                                              h->il2d_col.R, h->il2d_col.L, fns,
@@ -818,37 +840,60 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                     memcpy(sc + 2 * i * pit,
                                            bs + 2 * i * rn,
                                            2 * rn * sizeof(double));
+                                if (hookb && h->il2d_col.tfuse)
+                                    for (i = 0; i < wl; i++)
+                                        _il2d_row_exec(h, dir, sc + 2 * i * pit, rn, b0 + i);
                                 _il2d_col_stages2(sc, sc, (int)wl,
                                                   pit, rn, cut, nst,
                                                   h->il2d_col.R, h->il2d_col.L,
                                                   fns, tabs, !fwd);
-                                if (h->il2d_col.tfuse)
+                                if (h->il2d_col.tfuse && !hookb)
                                     for (i = 0; i < wl; i++)
                                         _il2d_row_exec(h, dir,
                                                        sc + 2 * i * pit,
-                                                       rn);
+                                                       rn, b0 + i);
                                 for (i = 0; i < wl; i++)
                                     memcpy(bd + 2 * i * rn,
                                            sc + 2 * i * pit,
                                            2 * rn * sizeof(double));
                                 continue;
                             }
+                            if (hookb && h->il2d_col.tfuse)
+                            {
+                                if (bd != bs)
+                                    memcpy(bd, bs, 2 * wl * rn * sizeof(double));
+                                for (i = 0; i < wl; i++)
+                                    _il2d_row_exec(h, dir, bd + 2 * i * rn, rn, b0 + i);
+                                bs = bd;
+                            }
                             _il2d_col_stages(bs, bd, (int)wl, rn, cut,
                                              nst, h->il2d_col.R, h->il2d_col.L,
                                              fns, tabs, !fwd);
-                            if (h->il2d_col.tfuse)
+                            if (h->il2d_col.tfuse && !hookb)
                                 for (i = 0; i < wl; i++)
                                     _il2d_row_exec(h, dir,
-                                                   bd + 2 * i * rn, rn);
+                                                   bd + 2 * i * rn, rn, b0 + i);
                         }
                         if (!fwd && cut > 0)
                             _il2d_col_stages(dre, dre, h->N, rn, 0, cut,
                                              h->il2d_col.R, h->il2d_col.L, fns,
                                              tabs, 1);
-                        if (!h->il2d_col.tfuse)
+                        if (!h->il2d_col.tfuse && !hookb)
                             for (i = 0; i < (size_t)h->N; i++)
                                 _il2d_row_exec(h, dir, dre + 2 * i * rn,
-                                               rn);
+                                               rn, i);
+                        return;
+                    }
+                    if (h->il2d_fs_tw && !fwd)
+                    {   /* the four-step's backward: the twiddled rows first,
+                         * then the column pass reversed in place on dst */
+                        if (dre != sre)
+                            memcpy(dre, sre, 2 * (size_t)h->N * rn * sizeof(double));
+                        for (i = 0; i < (size_t)h->N; i++)
+                            _il2d_row_exec(h, dir, dre + 2 * i * rn, rn, i);
+                        _il2d_col_pass(dre, dre, h->N, rn, wc, h->il2d_col.nst,
+                                       h->il2d_col.R, h->il2d_col.L, h->il2d_col.b,
+                                       h->il2d_col.tb, 1);
                         return;
                     }
                     if (h->il2d_col.nat)
@@ -869,7 +914,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                        fwd ? h->il2d_col.tf : h->il2d_col.tb,
                                        /*reverse=*/!fwd);
                     for (i = 0; i < (size_t)h->N; i++)
-                        _il2d_row_exec(h, dir, dre + 2 * i * rn, rn);
+                        _il2d_row_exec(h, dir, dre + 2 * i * rn, rn, i);
                     return;
                 }
                 /* OWNER LAW (2026-08-25): the convert wrapper is
@@ -990,7 +1035,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                     (sre, 0, zo, 0, 0, 0, 1, 0, 1, 0, 1);
                 return;
             }
-            if (h->k1il2p || h->k1il3p || h->k1ilpr || h->k1ilfd || h->k1ztt)
+            if (h->k1il2p || h->k1il3p || h->k1ilpr || h->k1ilfd || h->k1ztt || h->k1fs)
             { /* Phase B (il_coverage_plan.md): sub-2048 native IL tier,
                * ALIASED — two-stage engines through internal scratch, zout
                * written only by the last stage (alias-gated, A3 record);
@@ -1020,6 +1065,11 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 else if (h->k1ztt)
                 {   /* ZTURN-T, z -> z legal (the ingest consumes zin first) */
                     _ztt_serve(h, dir, sre, zo);
+                }
+                else if (h->k1fs)
+                {   /* the four-step in place: the 2D child in place, the natural
+                     * class through its scratch plane */
+                    _k1x_fs(h, dir, sre, zo);
                 }
                 else
                 {
@@ -1103,6 +1153,14 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         return;
                     }
                     break; /* -> convert fallback (NEVER a silent no-op) */
+                case VFFT_K1_IL_FS:
+                    /* the four-step: both directions, both classes */
+                    if (h->k1fs)
+                    {
+                        _k1x_fs(h, dir, sre, dre);
+                        return;
+                    }
+                    break;
                 case VFFT_K1_IL_PRIME:
                     /* PRIME N via Rader/Bluestein on IL inner plans
                      * (il_prime.h); both directions, natural order,
@@ -1346,6 +1404,7 @@ void vfft_destroy(vfft_plan h)
     vfft_ilprime_destroy(h->k1ilpr);
     vfft_ilfd_destroy(h->k1ilfd);
     vfft_ztt_destroy(h->k1ztt);
+    vfft_k1fs_destroy(h->k1fs);
     if (h->k1sp)
         vfft_oop_plan_destroy(h->k1sp);
     if (h->zr2c_child)

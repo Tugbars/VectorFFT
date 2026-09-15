@@ -58,6 +58,7 @@ long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h: the odd-N flat DIT MT eng
 #endif
 #include "generator/generated/registry.h"
 #include "prime_dispatch.h"     /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
+#include "oop/k1_fourstep_band.h" /* vfft_k1fs_band: the upper band 2^19..2^22 (2026-09-15) */
 #include "oop/ztt.h"            /* vfft_ztt_odd_band: the --k1nat/--k1noop direct cell at 2^a*odd (2026-09-15) */
 #include "oop_dp.h"             /* --oop: vfft_oop_plan_create_dp_best (fallback) */
 #include "wisdom2_oop.h"        /* --oop: entry struct + plan_from_entry */
@@ -5640,7 +5641,7 @@ int main(int argc, char **argv)
     /* ... and (2026-09-15) the 2^a * odd cells of ZTURN-T's odd band
      * (docs/design/ztt_odd_design.md): the K=1 IL tier serves them through
      * the same front door; their kind-4 cascade lines are purged. */
-    if (g_k1nat && target_N && (target_N < 2048 || (target_N & 3) || vfft_ztt_odd_band(target_N) || vfft_ztt_band(target_N)) && benched == 0)   /* the pow2 band too since the kind-4 lines left (2026-09-15) */
+    if (g_k1nat && target_N && (target_N < 2048 || (target_N & 3) || vfft_ztt_odd_band(target_N) || vfft_ztt_band(target_N) || vfft_k1fs_band(target_N)) && benched == 0)   /* the pow2 band too since the kind-4 lines left (2026-09-15) */
     {
         run_k1z_cell(target_N, NULL, out, cool_ms, flip);
         benched++;

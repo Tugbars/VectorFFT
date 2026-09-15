@@ -81,13 +81,46 @@
 /* Defined in vfft.c with external linkage; see the note above. */
 extern long _vfft_il2d_col_mt_count;
 
+/* the K=1 FOUR-STEP's inter-pass twiddle on one row (oop/k1_fourstep.h):
+ * the row at plane position p times W_N^(k1(p) * n2), n2 = a*B + b, from
+ * the per-position two-level record [coarse C[a] (N2/B)][fine F[b] (B)];
+ * conj = the backward's conjugate. Straight C: the row is L2-hot and the
+ * multiply is small against the row transform. */
+static void _il2d_fs_twiddle(double *row, const double *rec, int B, size_t n2, int conj)
+{
+    const size_t na = n2 / (size_t)B;
+    const double *C = rec, *F = rec + 2 * na;
+    size_t a, b;
+    for (a = 0; a < na; a++)
+    {
+        const double cr = C[2 * a], ci = conj ? -C[2 * a + 1] : C[2 * a + 1];
+        double *r = row + 2 * a * (size_t)B;
+        for (b = 0; b < (size_t)B; b++)
+        {
+            const double fr = F[2 * b], fi = conj ? -F[2 * b + 1] : F[2 * b + 1];
+            const double wr = cr * fr - ci * fi, wi = cr * fi + ci * fr;
+            const double xr = r[2 * b], xi = r[2 * b + 1];
+            r[2 * b] = xr * wr - xi * wi;
+            r[2 * b + 1] = xr * wi + xi * wr;
+        }
+    }
+}
+static const double *_il2d_fs_rec(const struct vfft_plan_s *h, size_t rn, size_t p)
+{
+    return h->il2d_fs_tw ? h->il2d_fs_tw + p * 2 * (rn / (size_t)h->il2d_fs_B + (size_t)h->il2d_fs_B) : NULL;
+}
+
 /* one row of the row pass, by the plan's row route: in-place child
  * (default) or OOP child into the L1-hot scratch + copy back (the
  * small-N2 lever — the in-place K=1 IL service floor is ~6x the mono
- * math at tiny N). */
+ * math at tiny N). p = the row's plane position (the four-step's twiddle
+ * hook keys on it; every other plan ignores it). */
 static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
-                           double *row, size_t rn)
+                           double *row, size_t rn, size_t p)
 {
+    const double *tw = _il2d_fs_rec(h, rn, p);
+    if (tw && dir == VFFT_FORWARD)
+        _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 0);
     if (h->il2d_rowoop)
     {
         vfft_execute(h->il2d_rowo, dir, row, NULL, h->il2d_rowscr, NULL);
@@ -95,6 +128,8 @@ static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
     }
     else
         vfft_execute(h->il2d_row, dir, row, NULL, row, NULL);
+    if (tw && dir != VFFT_FORWARD)
+        _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 1);
 }
 
 /* ── native IL 2D REAL row passes (fft2d_real_il_design.md §2.4): ONE
@@ -558,15 +593,18 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
  * at build) and, on the rowoop route, its own rowscr slot. Every arm is
  * a loop restriction of the serving walk => MT == ST bitwise. */
 static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid,
-                             vfft_dir_t dir, double *row, size_t rn)
+                             vfft_dir_t dir, double *row, size_t rn, size_t p)
 {
     if (tid <= 0)
     {
-        _il2d_row_exec(h, dir, row, rn);
+        _il2d_row_exec(h, dir, row, rn, p);
         return;
     }
     {
         struct vfft_plan_s *c = h->il2d_roww[tid - 1];
+        const double *tw = _il2d_fs_rec(h, rn, p);
+        if (tw && dir == VFFT_FORWARD)
+            _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 0);
         if (h->il2d_rowoop)
         {
             double *scr = h->il2d_rowscr_w + 2 * rn * (size_t)(tid - 1);
@@ -575,6 +613,8 @@ static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid,
         }
         else
             vfft_execute((vfft_plan)c, dir, row, NULL, row, NULL);
+        if (tw && dir != VFFT_FORWARD)
+            _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 1);
     }
 }
 
@@ -601,7 +641,11 @@ static void _il2d_c2c_mt_tramp(void *v)
     {
     case 0: /* bands: suffix stages, then (tfuse) the band's rows —
              * rows LAST in the band in BOTH directions, the serving
-             * order (bwd runs the reversed suffix via !fwd) */
+             * order (bwd runs the reversed suffix via !fwd). The one
+             * exception is the four-step's backward (il2d_fs_tw): its rows
+             * carry the conjugate inter-pass twiddle and must precede every
+             * column stage, so the band is moved to dst first and its rows
+             * run BEFORE the reversed suffix. */
         for (b = a->lo; b < a->hi; b++)
         {
             const size_t b0 = b * (size_t)h->il2d_col.wl;
@@ -609,13 +653,22 @@ static void _il2d_c2c_mt_tramp(void *v)
                                    ? a->dst + 2 * b0 * rn
                                    : a->src + 2 * b0 * rn;
             double *bd = a->dst + 2 * b0 * rn;
+            const int hookb = (h->il2d_fs_tw != NULL) && !a->fwd;
+            if (hookb && h->il2d_col.tfuse)
+            {
+                if (bd != bs)
+                    memcpy(bd, bs, 2 * (size_t)h->il2d_col.wl * rn * sizeof(double));
+                for (i = 0; i < (size_t)h->il2d_col.wl; i++)
+                    _il2d_row_exec_t(h, a->tid, a->dir, bd + 2 * i * rn, rn, b0 + i);
+                bs = bd;
+            }
             _il2d_col_stages(bs, bd, h->il2d_col.wl, rn, h->il2d_col.cut,
                              h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
                              tabs, !a->fwd);
-            if (h->il2d_col.tfuse)
+            if (h->il2d_col.tfuse && !hookb)
                 for (i = 0; i < (size_t)h->il2d_col.wl; i++)
                     _il2d_row_exec_t(h, a->tid, a->dir,
-                                     bd + 2 * i * rn, rn);
+                                     bd + 2 * i * rn, rn, b0 + i);
         }
         break;
     case 1: /* column strip: the whole chain over [lo,hi) columns */
@@ -648,7 +701,7 @@ static void _il2d_c2c_mt_tramp(void *v)
     default: /* row slab on the destination plane */
         for (i = a->lo; i < a->hi; i++)
             _il2d_row_exec_t(h, a->tid, a->dir, a->dst + 2 * i * rn,
-                             rn);
+                             rn, i);
     }
 }
 
@@ -803,8 +856,16 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                                      h->il2d_col.R, h->il2d_col.L, h->il2d_col.f,
                                      h->il2d_col.tf, 0);
             }
+        if (h->il2d_fs_tw && !fwd && !h->il2d_col.tfuse)
+        {   /* the four-step's backward: the rows (conjugate twiddle) before
+             * any column stage — on dst, moved there first out of place */
+            if (dre != sre)
+                memcpy(dre, sre, 2 * (size_t)h->N * rn * sizeof(double));
+            _il2d_c2c_mt_phase(h, dre, dre, dir, fwd, 2, (size_t)h->N, T);
+            sre = dre;
+        }
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 0, nb, Tb);
-        if (!h->il2d_col.tfuse)
+        if (!h->il2d_col.tfuse && !(h->il2d_fs_tw && !fwd))
             _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N,
                                T);
         if (!fwd && h->il2d_col.cut > 0)
@@ -820,12 +881,27 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         return 1;
     }
     /* unbanded: column strips, then row slabs (rows follow the column
-     * pass in the serving order for BOTH directions — rows commute) */
+     * pass in the serving order for BOTH directions — rows commute; the
+     * four-step's backward runs its twiddled rows FIRST) */
     {
         const int Ts = rn < (size_t)T ? (int)rn : T;
         const int Tr = (size_t)h->N < (size_t)T ? h->N : T;
         if (Ts < 2 && Tr < 2)
             return 0;
+        if (h->il2d_fs_tw && !fwd)
+        {
+            if (dre != sre)
+                memcpy(dre, sre, 2 * (size_t)h->N * rn * sizeof(double));
+            _il2d_c2c_mt_phase(h, dre, dre, dir, fwd, 2, (size_t)h->N, Tr);
+            if (Ts >= 2)
+                _il2d_c2c_mt_phase(h, dre, dre, dir, fwd, 1, rn, Ts);
+            else
+                _il2d_col_pass(dre, dre, h->N, rn, rn, h->il2d_col.nst,
+                               h->il2d_col.R, h->il2d_col.L, h->il2d_col.b,
+                               h->il2d_col.tb, 1);
+            _vfft_il2d_col_mt_count++;
+            return 1;
+        }
         if (Ts >= 2)
             _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 1, rn, Ts);
         else

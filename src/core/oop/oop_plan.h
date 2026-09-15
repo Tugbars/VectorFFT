@@ -147,7 +147,15 @@ enum
      * carried twiddle cursor, zero calls). The chain is PLAN INPUT from the
      * kind-3 row (il_ztt=R0.R1...); no default build — the planner races
      * every registry cell against the pairs and is the only source. */
-    VFFT_K1_IL_ZTT = 9
+    VFFT_K1_IL_ZTT = 9,
+    /* 10 = the FOUR-STEP above ZTURN-T's ceiling (oop/k1_fourstep.h,
+     * 2026-09-15; docs/design/k1_fourstep_design.md): N = N1 x N2 on the 2D
+     * interleaved tier with the inter-pass twiddle fused into its row pass,
+     * both directions, both order classes (scrambled = the plane as is,
+     * natural = the permuting transpose), both placements, 262144 (raced
+     * beside ZTURN-T) to 4194304. The split (il_R1, il_R2) is PLAN INPUT from
+     * the kind-3 row; the planner races the ladder and is the only source. */
+    VFFT_K1_IL_FS = 10
 };
 
 typedef enum
