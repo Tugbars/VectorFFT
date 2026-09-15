@@ -481,7 +481,8 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
          * own verdicts, raced and banked there), the twiddle records and
          * the natural class's plane live in vfft_k1fs_create; the planner
          * races out of place at one thread with the wisdom it was handed */
-        b->fs = vfft_k1fs_create(N, c->R1, c->R2, c->il_scr, _k1fs_ctx.W, _k1fs_ctx.cfg, 0, 1);
+        b->fs = vfft_k1fs_create(N, c->R1, c->R2, c->il_scr, _k1fs_ctx.W, _k1fs_ctx.cfg, 0, 1,
+                                 c->il_kv, c->il_zt, c->il_zt_n);
         if (!b->fs) return -1;
         if (_il_dp_fs_map_cap < b->fs->N1)
         {
@@ -1355,6 +1356,20 @@ static void _il_dp_enumerate_fs(int N, vfft_il_cand_sink_t *s, int scr)
         c.R2 = n2[i];
         c.il_scr = scr;
         _il_dp_push(s, &c);
+        if (!scr)
+        {   /* the SUPER-BAND form (il2d_large_plane_design.md §3): form 1 with
+             * every chain of N1 the run law admits; il_zt carries the chain */
+            int ch[24][8], cl[24], k;
+            const int nch = _k1fs_sb_chains(n1[i], ch, cl, 24, 0);
+            for (k = 0; k < nch; k++)
+            {
+                c.il_kv = 1;
+                memcpy(c.il_zt, ch[k], (size_t)cl[k] * sizeof(int));
+                c.il_zt_n = cl[k];
+                _il_dp_push(s, &c);
+            }
+            c.il_kv = 0; c.il_zt_n = 0; memset(c.il_zt, 0, sizeof c.il_zt);
+        }
     }
 }
 
@@ -2059,6 +2074,15 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
             e.ns = nat->cost_ns;
             if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
                 lines++;
+            if (nat->route == VFFT_K1_IL_FS && nat->il_kv == 1 && nat->il_zt_n >= 2)
+            {   /* the super-band's chain beside il_pair (il2d_large_plane_design.md §3) */
+                const vw2_rec_t *r = vw2__oop_k1_scan_ord(st, N, VW2_LAY_IL, 0);
+                char cb[48];
+                int off = 0, k;
+                for (k = 0; k < nat->il_zt_n && off < (int)sizeof cb - 4; k++)
+                    off += snprintf(cb + off, sizeof cb - (size_t)off, "%s%d", k ? "." : "", nat->il_zt[k]);
+                if (r) vw2_update_field(st, &r->key, "il_sb", cb);
+            }
         }
         /* The dir=bwd SIBLING (2026-08-21) — moved OUTSIDE the sp_route
          * guard 2026-08-24. It is its OWN cell (keyed dir=bwd) carrying

@@ -432,12 +432,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_R1 > 0 && ki->il_R2 > 0 &&
                 (long)ki->il_R1 * (long)ki->il_R2 == (long)N)
             {
-                int pn1 = ki->il_R1, pn2 = ki->il_R2;
+                int pn1 = ki->il_R1, pn2 = ki->il_R2, sbc[8], sbn = 0, form = 0;
                 const int pinned = _k1fs_pin(N, &pn1, &pn2);
-                fs = vfft_k1fs_create(N, pn1, pn2, scr_req, W, cfg, 0, _vfft_plan_threads(cfg));
+                if (!scr_req) sbn = _k1fs_row_sb(W, N, ki->il_kv, sbc, &form);
+                fs = vfft_k1fs_create(N, pn1, pn2, scr_req, W, cfg, 0, _vfft_plan_threads(cfg), form, sbc, sbn);
                 if (fs && getenv("VFFT_NAT_LOG"))
-                    fprintf(stderr, "[k1fs] N=%d: replay FOUR-STEP %dx%d src=%s (oop)\n", N, fs->N1, fs->N2,
-                            pinned ? "pin" : "wisdom");
+                    fprintf(stderr, "[k1fs] N=%d: replay FOUR-STEP %dx%d form=%d src=%s (oop)\n", N, fs->N1, fs->N2,
+                            fs->form, pinned ? "pin" : "wisdom");
             }
             if (ilr == VFFT_K1_IL_FS && !fs)
                 ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
