@@ -102,8 +102,11 @@ static inline int _ilprime_find_generator(int N)
 typedef struct {
     vfft_il2p_plan_t *p2;
     vfft_il3p_plan_t *p3;
-#ifdef VFFT_ZTURN_H
-    vfft_zturn2_plan_t *pz;
+#ifdef VFFT_ZTT_H
+    vfft_ztt_plan_t *pt;    /* ZTURN-T (2026-09-09, zcascade_sunset_plan.md S2b): the
+                             * banked ord=scr K=1 verdict at M when it names ZTURN-T —
+                             * natural fwd/bwd is a matched roundtrip too, so the
+                             * convolution's pointwise multiply runs in natural order */
 #endif
 } _ilprime_inner_t;
 
@@ -122,6 +125,9 @@ static inline int _ilprime_inner_make(int M, _ilprime_inner_t *in)
 #ifdef VFFT_ZTURN_H
     in->pz = 0;
 #endif
+#ifdef VFFT_ZTT_H
+    in->pt = 0;
+#endif
     if (_ilprime_inner_provider)
     {
         _ilprime_inner_t w;
@@ -132,14 +138,6 @@ static inline int _ilprime_inner_make(int M, _ilprime_inner_t *in)
             return 1;
         }
     }
-#ifdef VFFT_ZTURN_H
-    in->pz = 0;
-    if (M > 4096 && (M & (M - 1)) == 0)
-    {
-        in->pz = vfft_zturn2_create(M); /* self-validates its own band */
-        if (in->pz) return 1;
-    }
-#endif
     if (M > 4096)
         return 0; /* il2p/il3p ceiling */
     /* balanced il2p pair first (any pair the registries cover — no parity
@@ -170,16 +168,16 @@ static inline void _ilprime_inner_free(_ilprime_inner_t *in)
     vfft_il2p_destroy(in->p2);
     vfft_il3p_destroy(in->p3);
     in->p2 = 0; in->p3 = 0;
-#ifdef VFFT_ZTURN_H
-    if (in->pz) vfft_zturn2_destroy(in->pz);
-    in->pz = 0;
+#ifdef VFFT_ZTT_H
+    if (in->pt) vfft_ztt_destroy(in->pt);
+    in->pt = 0;
 #endif
 }
 static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
                                       const double *zi, double *zo)
 {
-#ifdef VFFT_ZTURN_H
-    if (in->pz) { vfft_zturn2_execute_fwd(in->pz, zi, zo); return; }
+#ifdef VFFT_ZTT_H
+    if (in->pt) { vfft_ztt_execute_fwd(in->pt, zi, zo); return; }   /* za -> zb, distinct */
 #endif
     if (in->p2) vfft_il2p_execute_fwd(in->p2, zi, zo);
     else        vfft_il3p_execute_fwd(in->p3, zi, zo);
@@ -187,8 +185,8 @@ static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
 static inline void _ilprime_inner_bwd(const _ilprime_inner_t *in,
                                       const double *zi, double *zo)
 {
-#ifdef VFFT_ZTURN_H
-    if (in->pz) { vfft_zturn2_execute_bwd(in->pz, zi, zo); return; }
+#ifdef VFFT_ZTT_H
+    if (in->pt) { vfft_ztt_execute_bwd(in->pt, zi, zo); return; }
 #endif
     if (in->p2) (void)vfft_il2p_execute_bwd(in->p2, zi, zo);
     else        vfft_il3p_execute_bwd(in->p3, zi, zo);

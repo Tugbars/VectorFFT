@@ -26,15 +26,14 @@
                                            family codec. See src/core/wisdom2/README.md */
 #include "natorder_perm.h"      /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
-#include "zsplit.h"             /* K=1 SCRAMBLED interleaved: block-split cascade (§4.99+) */
-#include "zturn.h"              /* ZTURN-S route twin (Phase 5 tranche 2; cascade_load_path_restructure §6.4) */
 #include "cpu_cache.h"          /* L1d capacity for the tcut width stamp; PLANNING ONLY */
 #include "il2p.h"               /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
 #include "transforms/fft2d/il2d_col.h" /* the column-axis pass descriptor the plan embeds */
+#include "ztt.h"                /* ZTURN-T: the run-contiguous DIT, 16..16384 (2026-09-09); before il_prime.h: the prime inner's ZTURN-T branch is #ifdef VFFT_ZTT_H */
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
-#include "ztt.h"                /* ZTURN-T: the run-contiguous DIT, 16..2048 (2026-09-09) */
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
+#include "oop/ztt_mt.h"         /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
 #include "il_flatdit_race.h"    /* its FORM / TILE races on the shared race body      */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
@@ -88,23 +87,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-/* _vfft_zcasc_min_n() now lives in oop/zsplit.h, beside the chain seeds
- * it gates, so the PLANNER can consult the same gate the runtime does.
- * It used to sit here, after the include block, which is exactly why
- * dp_planner_il.h could not see it and enumerated cascade candidates at
- * N=1024 that neither this file nor the wisdom writer would accept. */
-
-/* 🔴 CHAIN-CAP COHERENCE (P2, 2026-07-29). vfft_k1_cc_chain_decode writes up
- * to VFFT_K1_CC_MAX_NF ints into caller arrays that are sized by EITHER that
- * macro (ccf/ccf_ here, cc_chain in the plan) or by VFFT_ZSPLIT_MAX_NF (zwch
- * here, chain[] throughout zsplit/zturn/dp_planner_il). If the codec cap ever
- * exceeds the cascade cap, decode overruns those arrays — a silent
- * out-of-bounds WRITE, not a compile error, which is exactly how this class of
- * bug hides. This is the only translation unit that sees both headers, so the
- * check lives here and converts the whole class into a build failure. */
-typedef char _vfft_chain_cap_coherent
-    [(VFFT_K1_CC_MAX_NF <= VFFT_ZSPLIT_MAX_NF) ? 1 : -1];
-
 /* _vfft_warn / _vfft_tname moved to support/diag.h (migration step 6a).
  * They moved FIRST because _vfft_warn has 92 call sites across 10 functions
  * spanning several later steps: any refuses-loudly function moved into a
@@ -141,6 +123,45 @@ long vfft_ilnd_mt_passes(void) { return _vfft_ilnd_mt_count; }
 /* the flat DIT's (odd-N K=1 IL) intra-transform MT engagement (il_flatdit_mt.h) */
 long _vfft_ilfd_mt_count = 0;
 long vfft_ilfd_mt_passes(void) { return _vfft_ilfd_mt_count; }
+/* ZTURN-T's threaded arm (ztt_mt.h): threaded executes actually run */
+long _vfft_ztt_mt_count = 0;
+long vfft_ztt_mt_passes(void) { return _vfft_ztt_mt_count; }
+/* the gate's hook (benches/ztt_mt_gate.c): build a ZTURN-T plan, bind the
+ * arm for T, run it threaded on the process pool, write y; returns 1 when
+ * the threaded walk ran, 0 when it declined (then y is untouched), -1 when
+ * the plan refused. Lives here because the pool is this TU's. */
+static void _vfft_pool_arm(int n);   /* defined below: grow-only */
+int vfft__ztt_mt_probe(int N, const int *chain, int nf, int scr, int inplace, size_t tile,
+                       int T, int arm, int bwd, const double *x, double *y)
+{
+    vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(N, chain, nf, scr);
+    int rc;
+    if (!p) return -1;
+    if (tile && !vfft_ztt_set_tile(p, tile)) { vfft_ztt_destroy(p); return -1; }
+    vfft_ztt_bind(p, inplace);
+    if (!vfft_ztt_mt_bind(p, T, arm)) { vfft_ztt_destroy(p); return 0; }
+    _vfft_pool_arm(T);
+    if (inplace) { memcpy(y, x, (size_t)2 * N * sizeof(double)); rc = vfft_ztt_execute_mt(p, y, y, bwd); }
+    else rc = vfft_ztt_execute_mt(p, x, y, bwd);
+    vfft_ztt_destroy(p);
+    return rc;
+}
+/* the spike's hook: race serial / blocks / tiles at T on a plan bound as
+ * asked, ns per arm into ns3 (-1 = not an arm); returns the winning arm */
+int vfft__ztt_mt_race_probe(int N, const int *chain, int nf, int scr, int inplace, size_t tile,
+                            int T, const double *x, double *y, double *ns3)
+{
+    vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(N, chain, nf, scr);
+    int mt;
+    if (!p) return -1;
+    if (tile && !vfft_ztt_set_tile(p, tile)) { vfft_ztt_destroy(p); return -1; }
+    vfft_ztt_bind(p, inplace);
+    _vfft_pool_arm(T);
+    if (inplace) { memcpy(y, x, (size_t)2 * N * sizeof(double)); mt = vfft_ztt_mt_race(p, T, y, y, ns3); }
+    else mt = vfft_ztt_mt_race(p, T, x, y, ns3);
+    vfft_ztt_destroy(p);
+    return mt;
+}
 /* the flat DIT's race property (il_flatdit_race.h): arms whose timed batch
  * was under half the sample target — reads 0 when every verdict was
  * decided above the clock's tick */
@@ -168,9 +189,6 @@ long vfft_ilfd_race_short_samples(void) { return _vfft_ilfd_short_count; }
 long _vfft_trig_mt_count = 0;
 long _vfft_create_race_count = 0;
 
-/* INC-Z: the K=1 cascade MT race, defined with the executor near
- * _exec_zcascade; called from the OOP scrambled commit in create. */
-static void _zt_mt_race(struct vfft_plan_s *h);
 /* the 2D plane queue's loop-vs-queue race, defined with its executor;
  * called from the dims==2 howmany>1 create branch through the replay-or-
  * race wrapper (banked per (P, T) on the primary's row, 2026-09-02). */
@@ -344,8 +362,6 @@ static int _oop_kind_class(int kind)
         return 0;
     if (kind == VFFT_OOP_KIND_BAILEY2V)
         return 2;
-    if (kind == VFFT_OOP_KIND_ZSPLIT)
-        return 3;
     if (kind == VFFT_OOP_KIND_ZR2C)
         return 4;
     return 1;
@@ -416,7 +432,6 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
 
 #include "planning/pad_calibrate.h" /* pad-vs-tail calibrator + _VFFT_PADVW (step 13) */
 
-#include "planning/cascade_calibrate.h" /* zsplit/zturn terminator t2q calibrators (step 12) */
 
 /* [2026-07-27] The 4-arm ROUTE race (_calibrate_zroute: legacy{sterm,sterm2}
  * x zturn{stf,stf2}, joint fwd+bwd verdict) was DELETED here when the runtime
@@ -1189,8 +1204,6 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
          * same question. Depth is 1 by construction: a zr2c child is a plain
          * c2c(N/2) and never itself carries a zr2c_child. */
         return _tc_inner_mt_safe(g->zr2c_child);
-    if (g->zsplit || g->zturn)
-        return 1; /* _exec_zcascade: pure engine calls, both placements */
     if (g->placement == VFFT_INPLACE)
         /* in-place interleaved: k1il2p/k1il3p arms are engine-pure; the
          * else-arm is _exec_c2c_interleaved (pool-touching). */
@@ -1365,30 +1378,10 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
             return 0;
         return _tc_clone_equiv(a->zr2c_child, b->zr2c_child);
     }
-    if (a->zroute != b->zroute ||
-        !a->zturn != !b->zturn || !a->zsplit != !b->zsplit ||
-        !a->k1il2p != !b->k1il2p || !a->k1il3p != !b->k1il3p ||
+    if (!a->k1il2p != !b->k1il2p || !a->k1il3p != !b->k1il3p ||
         !a->k1ilpr != !b->k1ilpr ||
         a->k1_on != b->k1_on || a->k1_il_route != b->k1_il_route)
         return 0;
-    if (a->zturn)
-    {
-        const vfft_zturn2_plan_t *x = a->zturn, *y = b->zturn;
-        if (x->nf != y->nf || x->natord != y->natord)
-            return 0;
-        for (int s = 0; s < x->nf; s++)
-            if (x->chain[s] != y->chain[s])
-                return 0;
-    }
-    if (a->zsplit)
-    {
-        const vfft_zsplit_plan_t *x = a->zsplit, *y = b->zsplit;
-        if (x->nf != y->nf)
-            return 0;
-        for (int s = 0; s < x->nf; s++)
-            if (x->chain[s] != y->chain[s])
-                return 0;
-    }
     if (a->k1il2p)
     {
         const vfft_il2p_plan_t *x = a->k1il2p, *y = b->k1il2p;
@@ -1419,10 +1412,13 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
                 return 0;
     }
     if (a->k1ztt)
-    {   /* ZTURN-T: the same chain (the chain IS the plan; one driver per cell) */
+    {   /* ZTURN-T: the same chain, ORDER CLASS (natural or the plain schedule,
+         * 2026-09-14), tile width and placement binding — each names a
+         * different fused codelet or a different walk of the same one */
         const vfft_ztt_plan_t *x = a->k1ztt, *y = b->k1ztt;
         int s;
-        if (!y || x->N != y->N || x->nf != y->nf)
+        if (!y || x->N != y->N || x->nf != y->nf || x->scr != y->scr ||
+            x->tile != y->tile || x->inplace != y->inplace)
             return 0;
         for (s = 0; s < x->nf; s++)
             if (x->chain[s] != y->chain[s])
@@ -1885,12 +1881,9 @@ static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir,
  * report a confident zero. Same rule that kept _il_ab_runs behind in step 5.
  * _zt_execute_mt, which increments it and also dereferences vfft_plan_s,
  * stays for both reasons; the racer stays with the wisdom write path. */
-long _vfft_zt_mt_count = 0;
-long vfft_zt_mt_passes(void) { return _vfft_zt_mt_count; }
 
 
 
-#include "oop/zturn_mt.h"  /* zturn cascade MT tile/phase kernels (step 10) */
 
 /* ══ 2D PLANE QUEUE execute (howmany > 1) ════════════════════════════
  * Serial mode: loop the PRIMARY over the planes (it intra-MTs per its
@@ -2139,10 +2132,9 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->padded, h->exec_me);
 
     /* 2 — route selectors: the "chose differently" surface */
-    FP__ADD(" | k1=%d sp=%d il=%d zroute=%d ztmt=%d ztf=%d/%d zr2c=%d",
-            h->k1_on, h->k1_sp_route, h->k1_il_route, h->zroute, h->zt_mt,
-            h->zturn ? h->zturn->tform : 0, h->zturn ? h->zturn->ntform : 0,
-            h->zr2c_route); /* ilme/ilrace retired 2026-09-03 with the convert machinery */
+    FP__ADD(" | k1=%d sp=%d il=%d zr2c=%d",
+            h->k1_on, h->k1_sp_route, h->k1_il_route,
+            h->zr2c_route);   /* zroute/ztmt/ztf left with the cascade 2026-09-15 */ /* ilme/ilrace retired 2026-09-03 with the convert machinery */
     FP__ADD(" nat=%d nat2d=%d natpairs=%d natcyc=%d nat2dcyc=%d mtunsafe=%d",
             h->nat_mode, h->nat2d, h->nat2d_row_is_pairs, h->nat_ncyc,
             h->nat2d_ncyc, h->mt_unsafe);
@@ -2156,9 +2148,9 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->il2d_col.nat, h->il2d_col.blu, h->il2d_norowz);
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
-    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
-            FP__P(cplan), FP__P(oplan), FP__P(k1sp), FP__P(zsplit),
-            FP__P(zturn), FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr), FP__P(k1ilfd), FP__P(k1ztt),
+    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
+            FP__P(cplan), FP__P(oplan), FP__P(k1sp),
+            FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr), FP__P(k1ilfd), FP__P(k1ztt),
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
             FP__P(zr2c_child), FP__P(oddr_child), FP__P(tplan),
             FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */
@@ -2214,7 +2206,7 @@ void vfft__fp_counters(long *out6)
     if (!out6) return;
     out6[0] = _vfft_tc_mt_dispatch_count;
     out6[1] = _vfft_il2d_col_mt_count;
-    out6[2] = _vfft_zt_mt_count;
+    out6[2] = 0;   /* the cascade MT counter, retired 2026-09-15 */
     out6[3] = _vfft_pq_mt_count;
     out6[4] = _vfft_trig_mt_count;
     out6[5] = _vfft_create_race_count;

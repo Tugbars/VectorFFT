@@ -574,8 +574,36 @@ static int vfft_sp_ccol_line_served(const vfft_oop_wisdom_entry_t *ke,
  * Split race (this header) + IL race (delegated WHOLE to dp_planner_il)
  * + kind-3/kind-4 banking into the wisdom2 store at <wisdir>. Returns
  * verdicts banked, or -1 on a poisoned cell. */
-static int vfft_sp_dp_plan_and_bank(vfft_il_dp_context_t *ilctx,
-                                    const vfft_proto_registry_t *reg,
+/* The SPLIT library's own wisdom row (TWO LIBRARIES — owner's law,
+ * design_contracts.md section 2, 2026-09-09): the lay=split kind-3 row for
+ * the K=1 split verdict, written here and nowhere else. Until 2026-09-09 this
+ * block lived inside dp_planner_il.h's emitter, which took the split verdict
+ * as arguments — the two libraries met in one call and one calibrator. */
+static int vfft_sp_dp_emit_wisdom(vw2_store_t *st, int N, int sp_route,
+                                  int sp_R1, int sp_R2, int sp_cc_chain,
+                                  int sp_cc_vars, double sp_ns)
+{
+    vfft_oop_wisdom_entry_t e;
+    if (!st || sp_route < 0) return 0;
+    memset(&e, 0, sizeof e);
+    e.N = N;
+    e.K = VFFT_OOP_GROUPW;     /* the split lane-batch run count   */
+    e.kind = VFFT_OOP_KIND_BAILEY2V;
+    e.k1_sp_route = sp_route;
+    e.R1 = sp_R1;
+    e.R2 = sp_R2;
+    e.k1_il_route = VFFT_K1_IL_NONE;   /* il lives in its own library  */
+    e.cc_chain = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_chain : 0;
+    e.cc_vars  = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_vars  : 0;
+    e.ns = sp_ns;
+    return vw2_oop_bank_k1_lay(st, &e, VW2_LAY_SPLIT) == VW2_OK ? 1 : 0;
+}
+
+/* Plan the SPLIT K=1 cell at N and bank its lay=split row. Split only: the
+ * interleaved library has its own entry (dp_planner_il.h
+ * vfft_il_dp_plan_and_bank) and its own calibrator; this function never
+ * enumerates, races, reads or writes anything interleaved. */
+static int vfft_sp_dp_plan_and_bank(const vfft_proto_registry_t *reg,
                                     const char *wisdir, int N, int rigor,
                                     int verbose)
 {
@@ -602,20 +630,20 @@ static int vfft_sp_dp_plan_and_bank(vfft_il_dp_context_t *ilctx,
                    win_oop >= 0 ? cand[win_oop].best : 0.0);
     } else if (verbose)
         printf("# N=%d NO gated split candidate — no lay=split cell banks "
-               "(sp_route<0; the IL cells bank independently since v1.2)\n", N);
+               "(sp_route<0)\n", N);
 
     int banked = 0;
+    if (spr >= 0)
     {
         vw2_store_t st;
-        double sp_ns = (win_ip >= 0) ? cand[win_ip].best : 1e18;
         vw2_open(&st, wisdir, 1);   /* explicit dir from the driver = writable */
-        banked = vfft_il_dp_plan_and_bank(ilctx, &st, N, spr, sR1, sR2, scc,
-                                          scv, sp_ns, verbose);
+        banked = vfft_sp_dp_emit_wisdom(&st, N, spr, sR1, sR2, scc, scv,
+                                        cand[win_ip].best);
         if (banked > 0)
             vw2_save(&st);
         vw2_close(&st);
         if (verbose)
-            printf("# N=%d banked %d verdict(s) into the wisdom2 store at %s\n",
+            printf("# N=%d banked %d split verdict(s) into the wisdom2 store at %s\n",
                    N, banked, wisdir);
     }
     vfft_sp_dp_release(plans, np);

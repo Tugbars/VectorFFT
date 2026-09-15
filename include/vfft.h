@@ -234,18 +234,37 @@ extern "C"
     int nthreads; /* 0 = use the current pool / single-thread  */
 
     int order; /* Output-order axis for 1D C2C (the MKL DFTI_ORDERING knob).
-                  VFFT_ORDER_DEFAULT (0) = engine-native = fastest, order-
-                    agnostic (in-place: digit-scrambled; OOP: whichever kind
-                    wins calibration — may be MODEB/scrambled or LEAF/BAILEY2).
-                  VFFT_ORDER_SCRAMBLED = force the scrambled/fast path (in-place:
-                    native, == DEFAULT; OOP: the MODEB kind). Explicit "I am
-                    order-agnostic" — MKL's DFTI_BACKWARD_SCRAMBLED intent.
-                  VFFT_ORDER_NATURAL = spectrum in natural bin order, bin-for-bin
-                    MKL/FFTW-comparable, served by whichever natural-native
-                    engine wins the cell's race (the natural-writing cascade
-                    terminator at large N, the natural IL kinds below it,
-                    PURE/PSWAP reorders where they win) — a per-cell verdict
-                    in wisdom, never a reorder pass by default.
+                  ORDER IS A CONTRACT: a request names an order class and the
+                  library serves, races and banks engines of that class only.
+                  VFFT_ORDER_DEFAULT (0) = NATURAL. The spectrum comes back in
+                    natural bin order; nothing about DEFAULT is engine-native
+                    or order-agnostic.
+                  VFFT_ORDER_NATURAL = the same, said explicitly: natural bin
+                    order, bin-for-bin MKL/FFTW-comparable, served by whichever
+                    natural-writing engine wins the cell's race (the solo
+                    kernels, the Bailey pairs, ZTURN-T with its natural
+                    terminator, the flat DIT and the chains at odd N) — a
+                    per-cell verdict in wisdom, never a reorder pass by default.
+                  VFFT_ORDER_SCRAMBLED = "I do not need the bins in order"
+                    (MKL's DFTI_BACKWARD_SCRAMBLED intent): served by a
+                    SCRAMBLED-WRITING engine only — the output is the engine's
+                    own self-consistent permutation of the bins, and the only
+                    supported decode is the matched roundtrip through the same
+                    plan (backward inverts forward). No API reports the
+                    permutation; nothing here promises a particular one, and
+                    two scrambled spectra may be combined bin-by-bin only when
+                    they came from the same plan. A natural-writing engine is
+                    never raced or served for a scrambled request, and a cell
+                    with no scrambled writer refuses at create. At a power of
+                    two (16..262144) and at N = 2^a * m, a >= 4, m a product
+                    of 3, 5, 7, 9 and 15 (2048..262144, at most five odd
+                    factors), either placement, the writer is the scrambled
+                    ZTURN-T class (2026-09-14/15): every stage in place, no
+                    scratch, its order fixed by the plan's chain — the pow2
+                    cells as fused codelets, the 2^a * odd cells as the same
+                    stage kernels called per stage with the odd radix as a
+                    mid; at the remaining composite cells the cascade's
+                    digit-reversed comb serves until its deletion.
                   1D and 2D C2C (in-place + OOP; 2D NATURAL is native for any
                   factorization — the column chain's leaf writes rows in
                   natural order); for 2D INTERLEAVED r2c/c2r it is the

@@ -64,9 +64,6 @@
 #include "vfft_internal.h"                  /* struct vfft_plan_s / vfft_wisdom_s */
 #include "il2p.h"                           /* the Bailey pair plan + kernel resolvers */
 #include "il_prime.h"                       /* the prime IL engine */
-#include "zsplit.h"                         /* the legacy cascade route */
-#include "zturn.h"                          /* the ZTURN cascade route */
-#include "planning/cascade_calibrate.h"     /* the t2q terminator calibrators */
 #include "wisdom2/wisdom2_oop_reader.h"     /* the kind-3/kind-4 codecs */
 #include "wisdom2/wisdom2_stride_reader.h"  /* the @nat / @natoop / mode cells */
 #include "support/race.h"                   /* the shared race body */
@@ -194,35 +191,45 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              vfft_ilfd_plan_t **ilfd_out,
                              vfft_ztt_plan_t **ztt_out);     /* defined below */
 typedef struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; } _ilprime_inner_ctx_t;
-static int _k1z_wisdom_replay(const vfft_config_t *cfg,
-                              struct vfft_wisdom_s *W, int N,
-                              vfft_zsplit_plan_t **zs_out,
-                              vfft_zturn2_plan_t **zt_out, int *zroute_out);
-static int _zt_mt_served_key(struct vfft_wisdom_s *W, int N, vw2_key_t *k);
 static int _ilprime_inner_from_wisdom(int M, _ilprime_inner_t *in, void *v)
 {
     _ilprime_inner_ctx_t *c = (_ilprime_inner_ctx_t *)v;
-    if (M > 4096)
+#ifdef VFFT_ZTT_H
+    /* ZTURN-T inner (2026-09-09, zcascade_sunset_plan.md S2b): the prime's
+     * convolution wants a matched roundtrip in ANY order, which is exactly
+     * the SCRAMBLED cell's contract — so the banked ord=scr K=1 verdict at M
+     * (the pool where ZTURN-T's chains and tiles race the cascade's comb,
+     * S2) decides the inner. When it names ZTURN-T, that plan serves, tile
+     * applied; anything else falls through to the rules below. */
+    if (c->W && !c->W->vw2_off_oop)
     {
-        /* the cascade inner: the banked kind-4 RECIPE (chain, terminator
-         * pick, tile width, fence) instead of the engine's default build;
-         * pow2 only (the cascade tier), zturn route only (the inner's own
-         * executor). A legacy-route or absent verdict leaves the engine's
-         * structural rule in charge. */
-        vfft_zsplit_plan_t *zs = 0;
-        vfft_zturn2_plan_t *zt = 0;
-        int zr = 0;
-        if ((M & (M - 1)) == 0 && c->W && !c->W->vw2_off_oop &&
-            _k1z_wisdom_replay(c->cfg, c->W, M, &zs, &zt, &zr) && zr && zt)
+        vfft_oop_wisdom_entry_t e;
+        memset(&e, 0, sizeof e);
+        if (vw2_oop_lookup_k1_scr(&c->W->vw2, M, &e) &&
+            e.k1_il_route == VFFT_K1_IL_ZTT && e.il_zt_n >= 2)
         {
-            if (zs) vfft_zsplit_destroy(zs);
-            in->pz = zt;
-            return 1;
+            /* the ord=scr row names the PLAIN schedule (2026-09-14): the
+             * scrambled class's matched roundtrip is exactly the inner's
+             * contract, and its in-place forward/backward is the class's
+             * measured strength (zt_scr_spike_results.md) */
+            vfft_ztt_plan_t *zp = vfft_ztt_create_chain_ord(M, e.il_zt, e.il_zt_n, 1);
+            if (zp && e.il_tw > 0 && !vfft_ztt_set_tile(zp, (size_t)e.il_tw))
+            { vfft_ztt_destroy(zp); zp = NULL; }
+            if (zp)
+            {
+                in->pt = zp;
+                if (getenv("VFFT_ILPR_LOG"))
+                {
+                    char chs[48];
+                    vfft_ztt_chain_str(zp, chs, sizeof chs);
+                    fprintf(stderr, "[ilprime] inner M=%d: ZTURN-T %s tile=%zu src=wisdom(ord=scr)\n", M, chs, zp->tile);
+                }
+                return 1;
+            }
         }
-        if (zs) vfft_zsplit_destroy(zs);
-        if (zt) vfft_zturn2_destroy(zt);
-        return 0;
     }
+#endif
+    if (M > 4096) return 0;   /* past the pairs' and chain3's reach only a banked ZTURN-T row (above) serves; the cascade inner left with the cascade (2026-09-15) */
     _k1_il_candidate(c->W, c->cfg, M, &in->p2, &in->p3, NULL, NULL);   /* the prime inner takes no flat / ZTURN-T plan yet */
     return (in->p2 || in->p3) ? 1 : 0;
 }
@@ -258,9 +265,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
          * banked by the pair race); an il3p chain inner has no row */
         const int ref_lay = p->inner.p2 ? vw2_oop_k1_row_lay(&W->vw2, p->M) : -1;
         const int ref_M = ref_lay >= 0 ? p->M : 0;
-        vw2_key_t zk;
-        const int ref_z = (!p->inner.p2 && p->inner.pz &&
-                           _zt_mt_served_key(W, p->M, &zk)) ? (zk.role == VW2_ROLE_COMP ? 2 : 1) : 0;
+        const int ref_z = 0;   /* the cascade inner and its signpost left with the cascade (2026-09-15) */
         if (vw2_prime_method_bank(&W->vw2, N, p->method ? 1 : 2,
                                   ref_z ? p->M : ref_M,
                                   ref_z ? -2 - (ref_z - 1) : ref_lay) == VW2_OK)
@@ -291,13 +296,27 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
 {
     vfft_il_cand_t top;
     int lines;
-    /* the Bailey tier's race: every N below 2048, and above it only an N
-     * with no factor of 4 (no cascade route; 2026-09-04) — bounded by the
-     * planner context's scratch (VFFT_K1_IL_PLAN_MAX_N). */
-    if (!W || W->vw2_off_oop || N < 2 || (N >= 2048 && !(N & 3)) ||
-        N > ((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N) ||
-        getenv("VFFT_NO_K1PLAN"))
+    /* WISDOM OR RACE, never a fallback (owner's law, 2026-09-09): a request
+     * names (N, layout, order, placement); the door looks that cell up and
+     * on a miss RACES the interleaved planner's pool, banks the winner and
+     * serves it. Every N the planner covers races here: below 2048, the odd
+     * cells above it (no factor of 4), and — since 2026-09-09 — the pow2
+     * cells of ZTURN-T's band up to its ceiling. Until then a pow2 N >= 2048
+     * returned 0 here and a cold band cell fell through to the prime engine
+     * (Bluestein at 32768, seen in the natural front gate's tap). The
+     * 2^a * odd cells with a factor of 4 above 2048 stay out: they are the
+     * odd machinery's (the cascade's) until its turn. */
+    if (!W || W->vw2_off_oop || N < 2 || getenv("VFFT_NO_K1PLAN"))
         return 0;
+    {
+        const int pow2 = (N & (N - 1)) == 0;
+        const int oddband = vfft_ztt_odd_band(N);   /* 2^a*odd, ZTURN-T's since 2026-09-14 */
+        if (!pow2 && !oddband && N >= 2048 && !(N & 3))
+            return 0;
+        if (N > ((pow2 || oddband) ? VFFT_ZTT_MAX_N
+                                   : ((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N)))
+            return 0;
+    }
     if (!_k1_il_dp_ctx_ready)
     {
         vfft_il_dp_init(&_k1_il_dp_ctx, VFFT_K1_IL_PLAN_MAX_N);
@@ -314,10 +333,10 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     else
         _k1_il_dp_ctx.beam = VFFT_IL_DP_BEAM_MEASURE;
     if (getenv("VFFT_NAT_LOG"))
-        fprintf(stderr, "[k1plan] N=%d: IL plan race (pair x forms, chain3 x forms, "
-                        "bwd forms) — a cold cell takes seconds\n", N);
+        fprintf(stderr, "[k1plan] N=%d: IL plan race (solos, pairs x forms, ZTURN-T "
+                        "chains x widths, chain3 x forms, bwd forms) — a cold cell "
+                        "takes seconds\n", N);
     lines = vfft_il_dp_plan_and_bank(&_k1_il_dp_ctx, &W->vw2, N,
-                                     /*sp_route=*/-1, 0, 0, 0, 0, 0.0,
                                      getenv("VFFT_IL_DP_VERBOSE") != NULL);
     if (lines > 0)
         _vw2_persist(W, cfg);
@@ -362,13 +381,28 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * and would otherwise fall to Bluestein unraced — the Bailey tier's
      * race is the only measurement it can get. N with a factor of 4 stay
      * the cascade's, exactly as before. */
-    if ((N < 2048 || (N & 3)) && !W->vw2_off_oop &&
+    /* WISDOM OR RACE (owner's law, 2026-09-09): every interleaved miss races,
+     * the pow2 band included — _k1_il_plan_race carries the N gate. Until
+     * 2026-09-09 this call was fenced to N < 2048 or odd N and a cold in-place
+     * band cell refused with "no interleaved engine". */
+    /* the scrambled pow2 band is the K=1 tier's since 2026-09-14: its writer is
+     * the PLAIN ZTURN-T schedule (ztt_scrambled_design.md), raced and banked
+     * on the ord=scr row like every other cell; the cascade's fence that stood
+     * here is gone with the cascade's last pow2 role */
+    if (!W->vw2_off_oop &&
         (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)
             ke = (scr_req ? vw2_oop_lookup_k1_scr(&W->vw2, N, &keb)
                           : vw2_oop_lookup_k1(&W->vw2, N, &keb)) ? &keb : NULL;
     }
+    /* a SCRAMBLED request at a pow2 cell with no scrambled row after the race
+     * builds NOTHING here — no default pair, no heuristic (NO FALLBACKS): the
+     * race is the only source of a scrambled plan, and a natural-writing pair
+     * is not one. Seen 2026-09-09: the in-place scrambled create at 2048
+     * attached a natural-writing pair 64.32. */
+    if (scr_req && ((N & (N - 1)) == 0 || vfft_ztt_odd_band(N)) && !ke)
+        return;
     /* MONO verdict (2026-09-04): the cell's plan is ONE solo kernel; no pair
      * is built here — the caller serves the mono door (the OOP block reads
      * the form itself; in place, _k1_il_mono_candidate). Without this an
@@ -426,11 +460,13 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     }
     /* ZTURN-T verdict (2026-09-09): the banked chain replays as written
      * (validated by the create: legality, the quarter-wave's octave, the
-     * registry cell). Natural output serves both order classes. A refusal
+     * registry cell). The ORDER CLASS is the row's: an ord=nat row replays
+     * the natural drivers, an ord=scr row the PLAIN schedule's (2026-09-14,
+     * ztt_scrambled_design.md) — one plan, one order, never mixed. A refusal
      * falls through to the pair/default path. */
     if (ke && ke->k1_il_route == VFFT_K1_IL_ZTT && ke->il_zt_n >= 2 && ztt_out)
     {
-        vfft_ztt_plan_t *zp = vfft_ztt_create_chain(N, ke->il_zt, ke->il_zt_n);
+        vfft_ztt_plan_t *zp = vfft_ztt_create_chain_ord(N, ke->il_zt, ke->il_zt_n, scr_req);
         if (zp && ke->il_tw > 0 && !vfft_ztt_set_tile(zp, (size_t)ke->il_tw))
         {   /* the row names a tile the cell refuses: not a plan that exists */
             vfft_ztt_destroy(zp);
@@ -614,71 +650,6 @@ static int _ilp_ref_of(struct vfft_wisdom_s *W, int N, int mode, int scr_req)
     return 0;
 }
 
-static int _zcasc_ref_is_comp(struct vfft_wisdom_s *W, int N, int mode)
-{
-    vfft_oop_wisdom_entry_t tmp;
-    /* the row that SERVES (mirrors _k1z_wisdom_replay's order): the searched
-     * verdict when a cascade engine holds it, else the comp recipe */
-    return mode == VFFT_NAT_ZCASC && !W->vw2_off_oop &&
-           !vw2_oop_lookup_zsplit(&W->vw2, N, &tmp) &&
-           vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &tmp);
-}
-
-/* ── C1.9 zt_mt: the cascade MT verdict, banked PER THREAD COUNT ──────────
- * (arm audit 2026-09-02: it was raced on every OOP create and never
- * persisted). The verdict rides the recipe row that served the cascade —
- * the searched verdict, else the comp recipe — as zt_mt_t=<T> zt_mt=<0|1>;
- * a T match replays, a mismatch re-races and re-banks (validity-condition
- * banking, measurement_arms 'cores sharing one transform'). A re-raced
- * recipe row is rebuilt fresh, so it drops the MT verdict with the recipe.
- * VFFT_ZT_NO_MT (env) beats wisdom: the race helper applies it, so an env
- * pin never replays and never banks (the tcut law). */
-static int _zt_mt_served_key(struct vfft_wisdom_s *W, int N, vw2_key_t *k)
-{
-    vfft_oop_wisdom_entry_t tmp;
-    if (!W || W->vw2_off_oop) return 0;
-    if (vw2_oop_lookup_zsplit(&W->vw2, N, &tmp)) { vw2_oop_zsplit_key(N, VW2_ROLE_NONE, k); return 1; }
-    if (vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &tmp)) { vw2_oop_zsplit_key(N, VW2_ROLE_COMP, k); return 1; }
-    return 0;
-}
-
-static void _zt_mt_replay_or_race(struct vfft_plan_s *h,
-                                  struct vfft_wisdom_s *W,
-                                  const vfft_config_t *cfg, int N)
-{
-    vw2_key_t k;
-    const int T = h->nthreads;
-    const int ip = (h->placement == VFFT_INPLACE);
-    /* one pair per PLACEMENT: the in-place arms are aliased z->z, the OOP
-     * arms z->z', so the two verdicts are different measurements and must
-     * never overwrite each other (2026-09-02, the in-place exit joined). */
-    const char *tok_t = ip ? "zt_mt_ip_t" : "zt_mt_t";
-    const char *tok_v = ip ? "zt_mt_ip"   : "zt_mt";
-    const vw2_rec_t *r = NULL;
-    if (!getenv("VFFT_ZT_NO_MT") && !cfg->recalibrate &&
-        _zt_mt_served_key(W, N, &k) && (r = vw2_lookup(&W->vw2, &k)) != NULL)
-    {
-        const int bt = vw2__oop_geti(r, tok_t, 0);
-        if (bt == T)
-        {
-            h->zt_mt = vw2__oop_geti(r, tok_v, 0) ? 1 : 0;
-            if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
-                fprintf(stderr, "[zt-mt] N=%d T=%d %s replay zt_mt=%d src=wisdom\n",
-                        N, T, ip ? "ip" : "oop", h->zt_mt);
-            return;
-        }
-    }
-    _zt_mt_race(h);
-    if (!getenv("VFFT_ZT_NO_MT") && _zt_mt_served_key(W, N, &k))
-    {
-        char tb[16];
-        snprintf(tb, sizeof tb, "%d", T);
-        if (vw2_update_field(&W->vw2, &k, tok_t, tb) == VW2_OK &&
-            vw2_update_field(&W->vw2, &k, tok_v, h->zt_mt ? "1" : "0") == VW2_OK)
-            _vw2_persist(W, cfg);
-    }
-}
-
 /* ── the FLAT DIT's threading verdict (2026-09-07, il_flatdit_mt.h; the
  * same law as the cascade's above): env pin > the banked il_mt at THIS T
  * on the cell's kind-3 IL row (ord=nat or ord=scr — the plan's own class)
@@ -761,6 +732,70 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
     }
 }
 
+/* ── ZTURN-T's threading verdict (2026-09-15, ztt_mt.h, ztt_mt_design.md;
+ * the flat DIT's law above): env pin VFFT_ZTT_MT=0|1|2 (never banked) > the
+ * banked arm at THIS T on the cell's il_route=ztt row of the plan's own
+ * order class > the race at T (serial vs blocks vs tiles, steady-state
+ * samples, hot). Out of place banks il_mt= il_mt_t=; a plan bound IN PLACE
+ * races aliased arms through the plane — a different measurement — and
+ * banks its own pair il_mt_ip= il_mt_ip_t=. The one-thread tile il_tw= is
+ * untouched: the arm sections the walk the row already names. */
+static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
+                                   struct vfft_wisdom_s *W,
+                                   const vfft_config_t *cfg, int N)
+{
+    vfft_ztt_plan_t *p = h->k1ztt;
+    const int T = h->nthreads;
+    const int ip = (h->placement == VFFT_INPLACE);
+    const char *tok_v = ip ? "il_mt_ip" : "il_mt", *tok_t = ip ? "il_mt_ip_t" : "il_mt_t";
+    const vw2_rec_t *r = NULL;
+    const char *pin = getenv("VFFT_ZTT_MT");
+    if (!p || T < 2)
+        return;
+    if (W && !W->vw2_off_oop)
+        r = vw2__oop_k1_scan_ord(&W->vw2, N, VW2_LAY_IL, p->scr);
+    if (pin)
+    {
+        const int v = atoi(pin);
+        if (!vfft_ztt_mt_bind(p, T, (v >= 0 && v <= 2) ? v : 0)) p->mt = 0;
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[ztt-mt] N=%d T=%d %s%s: mt=%d src=env\n", N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", p->mt);
+        return;
+    }
+    if (r && !cfg->recalibrate && vw2__oop_geti(r, tok_t, 0) == T)
+    {
+        const int v = vw2__oop_geti(r, tok_v, 0);
+        if (!vfft_ztt_mt_bind(p, T, (v >= 0 && v <= 2) ? v : 0)) p->mt = 0;
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[ztt-mt] N=%d T=%d %s%s: replay mt=%d src=wisdom\n",
+                    N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", p->mt);
+        return;
+    }
+    {   /* the race on 64-B aligned scratch, in the plan's own placement */
+        const size_t nb = (size_t)2 * N * sizeof(double);
+        double *zi = (double *)VFFT_ZS_ALLOC(nb);
+        double *zo = (double *)VFFT_ZS_ALLOC(nb);
+        size_t i;
+        if (!zi || !zo) { VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo); p->mt = 0; return; }
+        for (i = 0; i < 2 * (size_t)N; i++) zi[i] = 1.0 + 1e-6 * (double)(i & 1023);
+        _vfft_pool_arm(T);
+        if (ip) { memcpy(zo, zi, nb); vfft_ztt_mt_race(p, T, zo, zo, NULL); }
+        else vfft_ztt_mt_race(p, T, zi, zo, NULL);
+        VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo);
+    }
+    if (r && !W->vw2_off_oop)
+    {
+        char b[16];
+        int ok = 1;
+        snprintf(b, sizeof b, "%d", p->mt);
+        ok = ok && vw2_update_field(&W->vw2, &r->key, tok_v, b) == VW2_OK;
+        snprintf(b, sizeof b, "%d", T);
+        ok = ok && vw2_update_field(&W->vw2, &r->key, tok_t, b) == VW2_OK;
+        if (ok)
+            _vw2_persist(W, cfg);
+    }
+}
+
 /* ── the IN-PLACE mono candidate (2026-09-04) ──
  * Served when the cell's kind-3 row (already planned by _k1_il_candidate's
  * race on a miss) says MONO: the alias-tolerant n1c solo, both directions.
@@ -794,7 +829,7 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     nn.nat_ns = ns;
     nn.nf = nf;
     nn.use_dif = use_dif;
-    nn.ref_comp = _zcasc_ref_is_comp(W, N, mode);
+    nn.ref_comp = 0 /* no cascade recipe rows since 2026-09-15 */;
     nn.ref_ilp = _ilp_ref_of(W, N, mode, 0);   /* the @nat cell: the ord=nat recipe */
     for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
     {
@@ -848,7 +883,7 @@ static void _bank_natoop_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * so the signpost must name it — a problem-space ref dangles there,
      * ref_ok reports MISS and every second natural OOP create re-raced
      * (vfft_ilp_front_gate, 2026-09-07: the consume handle flipped verdicts) */
-    nn.ref_comp = _zcasc_ref_is_comp(W, N, mode);
+    nn.ref_comp = 0 /* no cascade recipe rows since 2026-09-15 */;
     /* wave-4 flip: the dummy-chain shape becomes the ref= SIGNPOST record
      * in the store (the family codec detects nf==1 && factors[0]==N). */
     vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/1, _vw2_lay_of(cfg));
@@ -891,490 +926,4 @@ static void _bank_scrmode_oop_1d(struct vfft_wisdom_s *W,
  * 0 (outputs untouched) on miss/recalibrate/create-failure — the caller
  * decides what a miss means (OOP: race + bank; in-place: classic path).
  * PLANNING side only; the exec purity audit watches this. */
-/* THE NATURAL LIFT (2026-09-07, the sub-2048 campaign): the replay and the
- * race-and-bank keep their 2048 floor for every scrambled path (the identity
- * contract below it), and lift it only while a NATURAL candidate site calls
- * through these wrappers — the cascade with its natural terminator as a
- * candidate against the K=1 IL engines at 128..1024. Below 2048 the recipe
- * lives on a role=comp row and only the comp row is ever read back. */
-static int _k1z_nat_lift = 0;
-static int _k1z_wisdom_replay(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N,
-                              vfft_zsplit_plan_t **zs_out, vfft_zturn2_plan_t **zt_out,
-                              int *zroute_out);
-static int _k1z_race_and_bank(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N, int ip,
-                              vfft_zsplit_plan_t **zs_out, vfft_zturn2_plan_t **zt_out,
-                              int *zroute_out);
-static int _k1z_wisdom_replay_nat(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N,
-                                  vfft_zsplit_plan_t **zs_out, vfft_zturn2_plan_t **zt_out,
-                                  int *zroute_out)
-{
-    int r;
-    _k1z_nat_lift = 1;
-    r = _k1z_wisdom_replay(cfg, W, N, zs_out, zt_out, zroute_out);
-    _k1z_nat_lift = 0;
-    return r;
-}
-static int _k1z_race_and_bank_nat(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N,
-                                  int ip, vfft_zsplit_plan_t **zs_out,
-                                  vfft_zturn2_plan_t **zt_out, int *zroute_out)
-{
-    int r;
-    _k1z_nat_lift = 1;
-    r = _k1z_race_and_bank(cfg, W, N, ip, zs_out, zt_out, zroute_out);
-    _k1z_nat_lift = 0;
-    return r;
-}
-
-/* the terminator-form ENV PIN (VFFT_ZT_TFORM=0|1, both classes): applied at
- * the plan, after the bank on a race and after the replay on a hit — an
- * override is an experiment and never writes to the store (the tcut law). */
-static void _zt_tform_env(vfft_zturn2_plan_t *zt)
-{
-    const char *e = getenv("VFFT_ZT_TFORM");
-    if (!zt || !e || !e[0]) return;
-    (void)vfft_zturn2_set_tforms(zt, e[0] == '1', e[0] == '1');
-}
-
-static int _k1z_wisdom_replay(const vfft_config_t *cfg,
-                              struct vfft_wisdom_s *W, int N,
-                              vfft_zsplit_plan_t **zs_out,
-                              vfft_zturn2_plan_t **zt_out, int *zroute_out)
-{
-    /* The cascade is the ≥2048 tier, period. A kind-4 row BELOW that is a
-     * wrong-slot verdict (the sub-2048 SCRAMBLED champion is the identity
-     * ILP engine — Phase A doctrine, k1scr-gated) and replaying it would
-     * flip explicit-SCRAMBLED cells onto a cascade comb, silently breaking
-     * the scr==nat identity contract while every correctness column stays
-     * green — exactly how it was caught (2026-08-06): calibrate_k1's
-     * plan_and_bank side-banked sub-2048 kind-4 rows and the k1scr gate
-     * went DIFF at 128..1024 with the cascade 2.2× SLOWER than the engine
-     * it displaced. The driver no longer banks them; this guard makes any
-     * such row in a user's wisdom file inert as well. */
-    if (N < 2048 && !_k1z_nat_lift)
-        return 0;
-    vfft_zsplit_plan_t *zs_pending = NULL;
-    vfft_zturn2_plan_t *zt_pending = NULL;
-    int zroute_pending = 0;
-    int zch[VFFT_ZSPLIT_MAX_NF];
-    int znf = 0;
-    vfft_oop_wisdom_entry_t zeb;
-    /* RECIPE source (owner, 2026-09-02): an in-place caller replays the
-     * role=comp kind-4 row its own race banked (chain + t2q terminator
-     * pick + tcut width + L1 fence, raced IN PLACE), falling back to the
-     * OOP problem verdict. An OOP caller reads its verdict first; with no
-     * verdict it may replay a comp recipe ONLY for an ODD chain — the odd
-     * candidate never attaches by fiat (it races the finished handle at
-     * the commit, the hk block), so the comp row just spares the per-
-     * create t2q re-race. A pow2 comp row came from an in-place race and
-     * must not decide the OOP route. The mode row's ref= names whichever
-     * served. */
-    const int ip_call = (cfg->placement == VFFT_INPLACE);
-    const vfft_oop_wisdom_entry_t *ze = NULL;
-    if (N < 2048)
-    {   /* the NATURAL candidate below the scrambled tier: ONLY its own
-         * comp recipe (chain + t2q + forms raced by the natural race);
-         * the ord=scr verdict slot does not exist here by law */
-        if (!W->vw2_off_oop &&
-            vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &zeb))
-            ze = &zeb;
-    }
-    else if (W->vw2_off_oop)
-        ze = vfft_oop_wisdom_lookup_zsplit(&W->oop, N);
-    else if (vw2_oop_lookup_zsplit(&W->vw2, N, &zeb))
-        ze = &zeb;                 /* the SEARCHED verdict (planner / OOP race) */
-    else if (ip_call &&
-             vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &zeb))
-        ze = &zeb;                 /* in-place: the comp recipe (default chain,
-                                    * raced t2q) when nothing searched exists */
-    else if (vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &zeb))
-    {
-        int cch[VFFT_K1_CC_MAX_NF], cnf = 0, ci, codd = 0;
-        if (zeb.cc_chain)
-            cnf = vfft_k1_cc_chain_decode(zeb.cc_chain, cch);
-        for (ci = 0; ci < cnf; ci++)
-            if (cch[ci] & 1)
-                codd = 1;
-        if (codd)
-            ze = &zeb;
-    }
-    int ze_hit = (ze && !cfg->recalibrate);
-    /* Route forcing, read at CREATE (both directions follow — the
-     * route is one plan field): VFFT_NO_ZTURN pins legacy (kill
-     * switch; VFFT_NO_IL2P precedent) and wins over everything;
-     * VFFT_FORCE_ZROUTE=legacy|zturn (or 0|1) is the gate/test hook
-     * (VFFT_IL_PAD precedent). Unforced DEFAULT on a MISS is ZTURN
-     * (2026-07-27 cutover); on a HIT the banked route verdict is
-     * honored, whichever way it points. */
-    int zforce = 0; /* 0 = none, 1 = legacy, 2 = zturn */
-    {
-        const char *fz = getenv("VFFT_FORCE_ZROUTE");
-        if (fz && fz[0])
-            zforce = (fz[0] == 'z' || fz[0] == 'Z' || fz[0] == '1')
-                         ? 2
-                         : 1;
-        if (getenv("VFFT_NO_ZTURN"))
-            zforce = 1;
-    }
-    /* The BANKED chain survives zsplit's rejection: a route-1 line
-     * may carry a last==4 chain (the ZTURN radix-4 terminator) that
-     * ONLY vfft_zturn2_create_chain can build — zsplit's create
-     * rejects it (last==8-only), which previously zeroed znf and
-     * OVERWROTE zch with the legacy default before the zturn replay
-     * ever saw the banked bytes. zwch/zwnf keep them; zch/znf stay
-     * the LEGACY arm's working copy (validator-is-the-law, per arm). */
-    int zwch[VFFT_ZSPLIT_MAX_NF];
-    int zwnf = 0;
-    if (ze_hit && ze->cc_chain)
-        zwnf = vfft_k1_cc_chain_decode(ze->cc_chain, zwch);
-    if (zwnf)
-    {
-        memcpy(zch, zwch, sizeof zch);
-        znf = zwnf;
-        zs_pending = vfft_zsplit_create(N, zch, znf);
-        if (!zs_pending)
-            znf = 0; /* not legacy-legal (e.g. last==4): fall back */
-    }
-    if (!zs_pending)
-    {
-        znf = vfft_zsplit_default_chain(N, zch);
-        if (znf)
-            zs_pending = vfft_zsplit_create(N, zch, znf);
-    }
-    if (!ze_hit)
-    {
-        if (zs_pending)
-            vfft_zsplit_destroy(zs_pending);
-        if (getenv("VFFT_ZRACE_VERBOSE"))
-            fprintf(stderr, "[zroute] N=%d replay MISS: %s (l1d=%ld)\n", N,
-                    ze ? "recalibrate" : "no kind-4 recipe row (verdict/comp)",
-                    vfft_cpu_l1d_bytes());
-        return 0;
-    }
-    /* 🔴 zs_pending MAY BE NULL past this point, and that is a FIX, not an
-     * accident (found 2026-08-02 by the replay probe): a route-1 line can
-     * carry a legacy-illegal chain (last==4) at an N with NO
-     * vfft_zsplit_default_chain entry (32768+). The old code required the
-     * legacy fallback plan to exist before it would even ATTEMPT the zturn
-     * replay, so the whole cascade silently dropped to the classic path —
-     * at 32768 that served ~394us where the cascade serves ~44us, and the
-     * bench labeled the row with the banked chain it never ran. A banked
-     * ZTURN verdict must be replayable WITHOUT a legacy escort; the only
-     * cost is that a later zturn-create failure then has no cascade
-     * fallback (classic path, same as before this feature existed). */
-    /* pure read: honor route + CHAIN + the winning route's
-     * pick. cc_chain is the WINNING route's chain (Phase-5
-     * planner tranche: dp_planner_il.h's route axis banks it
-     * that way), so a route-1 line replays its chain through
-     * vfft_zturn2_create_chain. Old race-banked route lines
-     * carried the legacy default — which IS the chain zturn
-     * shipped on, so replaying it is behavior-identical. A
-     * fence-invalid banked chain (hand-edited / stale) falls
-     * back to the calibrated-default create — skipped, never
-     * force-fit (and zch/znf already fell back to the default
-     * chain above if zsplit rejected it too). */
-    if (zs_pending)
-        zs_pending->t2q = ze->zs_t2q ? 1 : 0;
-    if (!zs_pending && !((ze->zs_route == 1 && zforce != 1) || zforce == 2))
-    {
-        if (getenv("VFFT_ZRACE_VERBOSE"))
-            fprintf(stderr, "[zroute] N=%d replay MISS: legacy verdict with "
-                            "no buildable legacy plan\n", N);
-        return 0;   /* legacy verdict with no buildable legacy plan */
-    }
-    if ((ze->zs_route == 1 && zforce != 1) || zforce == 2)
-    {
-        /* replay the BANKED chain (zwch — survives a legacy
-         * rejection above, e.g. a last==4 chain), not the
-         * legacy arm's working copy */
-        if (zwnf)
-            zt_pending = vfft_zturn2_create_chain(N, zwch, zwnf);
-        if (!zt_pending)
-            zt_pending = vfft_zturn2_create(N);
-    }
-    if (zt_pending)
-    {
-        zt_pending->t2q = ze->zt_t2q ? 1 : 0;
-        (void)vfft_zturn2_set_tforms(zt_pending, ze->zt_tf, ze->zt_ntf);   /* the banked forms */
-        _zt_tform_env(zt_pending);                                        /* the pin beats them */
-        zroute_pending = 1;
-        /* tcut WIDTH replay. Absent field (zt_tw == 0) leaves
-         * the plan calloc-untiled, i.e. exactly today's driver.
-         *
-         * 🔴 The banked width is only valid on the cache it was
-         * tuned against. A width tuned on a 48 KB P-core and
-         * replayed on a 32 KB E-core overshoots by 50%, and
-         * overshoot is the failure mode that costs the whole
-         * benefit at once instead of degrading. So a mismatch
-         * means UNTILED (safe, today's behaviour) and a loud
-         * line — never "use it anyway". */
-        /* 🔴 EXPLICIT ENV BEATS WISDOM — same convention as
-         * VFFT_FORCE_ZROUTE / VFFT_NO_ZTURN. If VFFT_TCUT is
-         * set to ANYTHING (including "off"), the env gate's
-         * verdict stands and the banked width is NOT applied.
-         * Without this, `bench_1d_vs_mkl --tcut=off` against a
-         * width-carrying wisdir would silently run TILED and
-         * every off-vs-tiled A/B would compare tiled vs tiled
-         * and read ~0%%. An arm that is not what its label says
-         * is the exact failure class the engagement taps were
-         * built to catch — this closes it at the source. */
-        const char *tcenv = getenv("VFFT_TCUT");
-        if (ze->zt_tw > 0 && tcenv && tcenv[0])
-        {
-            if (getenv("VFFT_TCUT_VERBOSE"))
-                fprintf(stderr,
-                        "[tcut] N=%d: banked width %d cplx "
-                        "SUPPRESSED by explicit VFFT_TCUT=%s "
-                        "(env override beats wisdom)\n",
-                        N, ze->zt_tw, tcenv);
-        }
-        else if (ze->zt_tw > 0)
-        {
-            if (!vfft_cpu_l1d_matches(ze->zt_l1))
-                fprintf(stderr,
-                        "[tcut] N=%d: banked width %d cplx was "
-                        "tuned for L1d=%d B, this machine has "
-                        "%ld B -> running UNTILED, re-measure "
-                        "this cell\n",
-                        N, ze->zt_tw, ze->zt_l1,
-                        vfft_cpu_l1d_bytes());
-            else if (!vfft_zturn2_set_tile_w(zt_pending, 1,
-                                            ze->zt_tw, 0, 0))
-                fprintf(stderr,
-                        "[tcut] N=%d: banked width %d cplx is "
-                        "ILLEGAL for the banked chain -> "
-                        "running UNTILED\n", N, ze->zt_tw);
-            else if (getenv("VFFT_TCUT_VERBOSE"))
-                /* Same shape as the env gate's line, so one
-                 * parser reads both. Without it a banked width
-                 * is INVISIBLE — the env path announces itself
-                 * and the wisdom path would not, which is the
-                 * asymmetry that lets a replay silently do
-                 * something other than what was banked. */
-                fprintf(stderr,
-                        "[tcut] N=%d nf=%d tiled=%d tcut=%d "
-                        "tfuse=%d tw=%s w=%ld NT=%ld "
-                        "src=wisdom l1=%d\n",
-                        N, zt_pending->nf, zt_pending->tiled,
-                        zt_pending->tcut, zt_pending->tfuse,
-                        zt_pending->thonest ? "honest" : "reset",
-                        zt_pending->tw,
-                        ((long)N / 4) / zt_pending->tw,
-                        ze->zt_l1);
-        }
-    }
-    if (getenv("VFFT_ZRACE_VERBOSE"))
-        fprintf(stderr, "[zroute] N=%d wisdom hit: banked "
-                        "route=%d zs_t2q=%d zt_t2q=%d force=%d -> "
-                        "serving route=%d t2q=%d\n",
-                N, ze->zs_route,
-                ze->zs_t2q, ze->zt_t2q, zforce, zroute_pending,
-                zroute_pending ? zt_pending->t2q
-                               : (zs_pending ? zs_pending->t2q : -1));
-    /* ROUTE ATOMICITY (structural): exactly ONE cascade plan
-     * survives to the handle — the loser dies here, before the
-     * handle exists — so fwd and bwd cannot pair across routes. */
-    if (zroute_pending && zt_pending)
-    {
-        vfft_zsplit_destroy(zs_pending);
-        zs_pending = NULL;
-    }
-    else
-    {
-        zroute_pending = 0;
-        if (zt_pending)
-        {
-            vfft_zturn2_destroy(zt_pending);
-            zt_pending = NULL;
-        }
-    }
-    if (!zs_pending && !zt_pending)
-    {
-        if (getenv("VFFT_ZRACE_VERBOSE"))
-            fprintf(stderr, "[zroute] N=%d replay MISS: route-1 create failed "
-                            "and no legacy escort\n", N);
-        return 0;   /* route-1 create failed and no legacy escort — a miss */
-    }
-    (void)znf;
-    *zs_out = zs_pending;
-    *zt_out = zt_pending;
-    *zroute_out = zroute_pending;
-    return 1;
-}
-
-/* K=1 SCRAMBLED-contract cascade MISS race (>=2048): default chain + the
- * stf/stf2 t2q race + bank kind-4 + route atomicity. THE single definition,
- * factored out of the OOP create (2026-08-25) so the IN-PLACE create can
- * run it too — before this, only the OOP create raced/banked and an
- * in-place caller on a cold store replayed nothing and fell to convert
- * forever (the same hit-only disease the ord=scr ILP fix cured sub-2048;
- * convert-arm census class 3). t2q picks must be MEASURED on the installed
- * binary — stf/stf2 are bit-identical, so the delta is code-placement
- * order, never a hand-set constant. See docs/design/vfft_front_door.md.
- * Returns 1 with exactly one plan attached (route atomicity), 0 = no
- * cascade for this N (caller keeps its previous serving).
- * ip=1: the IN-PLACE caller's CANDIDATE build — the t2q pick is timed on
- * the ALIASED call form (in-place has its own memory-access structure;
- * owner 2026-08-25), and the kind-4 cell is NOT banked: that cell is the
- * OOP create's verdict (single writer). The in-place verdict lives in the
- * ord=scr lay=il MODE cell (mode=zcasc|conv), banked by the caller after
- * its cascade-vs-convert race. */
-static int _k1z_race_and_bank(const vfft_config_t *cfg,
-                              struct vfft_wisdom_s *W, int N, int ip,
-                              vfft_zsplit_plan_t **zs_out,
-                              vfft_zturn2_plan_t **zt_out, int *zroute_out)
-{
-    vfft_zsplit_plan_t *zs_pending = NULL;
-    vfft_zturn2_plan_t *zt_pending = NULL;
-    int zroute_pending = 0;
-    int zch[VFFT_ZSPLIT_MAX_NF];
-    int znf;
-    if (N < 2048 && !_k1z_nat_lift)
-        return 0; /* the cascade tier boundary — same guard as replay */
-    znf = vfft_zsplit_default_chain(N, zch);
-    /* Route forcing for the MISS race (the HIT path reads it inside
-     * _k1z_wisdom_replay): VFFT_NO_ZTURN pins legacy,
-     * VFFT_FORCE_ZROUTE=legacy|zturn is the test hook. An env PARSE is
-     * not replay semantics, so this small read may live in both places
-     * without the two-writers hazard. */
-    int zforce = 0;
-    {
-        const char *fz = getenv("VFFT_FORCE_ZROUTE");
-        if (fz && fz[0])
-            zforce = (fz[0] == 'z' || fz[0] == 'Z' || fz[0] == '1') ? 2 : 1;
-        if (getenv("VFFT_NO_ZTURN"))
-            zforce = 1;
-    }
-    int zodd = 0;
-    {
-        /* ODD-MID chains (2026-08-27): the LEGACY zsplit engine's kind
-         * set is radix 4/8 only, so an odd-factor chain has NO legacy
-         * twin — the cell is ZTURN-ONLY. Skip the legacy build (its
-         * create on an odd chain would refuse anyway) and let the
-         * zturn arm carry the route alone. */
-        int s2;
-        for (s2 = 0; znf && s2 < znf; s2++)
-            if (zch[s2] & 1)
-                zodd = 1;
-        if (N < 2048)
-            zodd = 1;   /* the sub-2048 natural seeds are zturn-only (last==4 chains
-                         * have no legacy twin); the flag means "no legacy arm" here */
-        if (znf && !zodd)
-            zs_pending = vfft_zsplit_create(N, zch, znf);
-        if (!zs_pending && (!znf || !zodd))
-            return 0;
-        if (zodd && zforce == 1)
-            return 0; /* legacy pinned, but no legacy twin exists */
-    }
-    {
-        double zns = 0.0;
-        if (zforce != 1 && N < 2048)
-        {
-            /* SUB-2048 (the natural tier): the CHAIN is the raced axis —
-             * every ordered {4,8} chain, both ingest radices, the natural
-             * forward timed per chain in one race; the winner arrives with
-             * its forms calibrated (cascade_calibrate.h). No t2q race: no
-             * stf2 twin at last==4 or r0==8, and the natural class never
-             * consults it. */
-            zt_pending = _calibrate_zturn_chain_sub2048(N, cfg->rigor, ip, &zns);
-            if (zt_pending && zns > 0.0)
-                zroute_pending = 1;
-        }
-        else if (zforce != 1)
-            zt_pending = vfft_zturn2_create(N);
-        if (zt_pending && N >= 2048)
-        {
-            zns = _calibrate_zturn_t2q(zt_pending, cfg->rigor, ip);
-            if (zns > 0.0)
-            {
-                zroute_pending = 1;
-                /* the terminator FORMS of the same recipe, both order classes
-                 * (cascade_calibrate.h); banked below as zt_tf / zt_ntf */
-                _calibrate_zturn_tform(zt_pending, cfg->rigor, ip);
-            }
-        }
-        if (!zroute_pending && zs_pending)
-            zns = _calibrate_zsplit_t2q(zs_pending, cfg->rigor, ip);
-        else if (!zroute_pending)
-            zns = 0.0; /* zturn-only cell and the zturn arm failed */
-        if (zns > 0.0)
-        {
-            vfft_oop_wisdom_entry_t ne;
-            memset(&ne, 0, sizeof ne);
-            ne.N = N;
-            ne.K = 1;
-            ne.kind = VFFT_OOP_KIND_ZSPLIT;
-            ne.zs_t2q = zs_pending ? zs_pending->t2q : 0;
-            /* cc_chain = the WINNING route's chain (the reader contract).
-             * At >= 2048 both routes run the same default chain here (the
-             * chain-searched winners come from the offline planner,
-             * dp_planner_il.h); below 2048 it is the chain race's winner
-             * (r0 = 4 or 8), replayed through vfft_zturn2_create_chain. */
-            if (zroute_pending && zt_pending)
-                ne.cc_chain = vfft_k1_cc_chain_encode(zt_pending->chain,
-                                                      zt_pending->nf);
-            else if (zs_pending)
-                ne.cc_chain = vfft_k1_cc_chain_encode(zs_pending->chain,
-                                                      zs_pending->nf);
-            ne.zs_route = zroute_pending;
-            ne.zt_t2q = zt_pending ? zt_pending->t2q : 0;
-            ne.zt_tf = zt_pending ? zt_pending->tform : 0;    /* the terminator forms */
-            ne.zt_ntf = zt_pending ? zt_pending->ntform : 0;
-            /* tcut width + the cache it was tuned against. 0 when untiled,
-             * which keeps the banked line byte-identical to the pre-width
-             * format. This race does not SEARCH widths (that is the
-             * planner's job); it records whatever width the plan is
-             * carrying so a verdict is never banked as untiled when it
-             * was not. */
-            ne.zt_tw = (zt_pending && zt_pending->tiled == 1)
-                           ? (int)zt_pending->tw : 0;
-            ne.zt_l1 = ne.zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
-            /* MEASURE-LESS bank (ns=0): this race's median is fwd-only
-             * placement luck (§4.9993), not the cell's joint2 verdict —
-             * kind-4 carries ns only from the dp planner. A measure-less
-             * row can always be replaced by the planner's measured one;
-             * the reverse is refused by the merge law, exactly the
-             * intended authority order. */
-            ne.ns = 0.0;
-            /* an ODD chain must WIN the commit-site route race (vs the
-             * true incumbent incl. the k1 IL routes) before any banking
-             * — banking here would make replay attach it by fiat. The
-             * sweep owns banking those winners. */
-            if (!ip && !zodd && N >= 2048) /* kind-4 = the OOP create's cell */
-                vw2_oop_bank_entry(&W->vw2, &ne);
-            else
-                /* the in-place / odd race's RECIPE, as a COMPONENT row
-                 * (role=comp): the terminator pick and tile width it just
-                 * raced are banked, never re-raced per create, and the
-                 * mode row signposts it (owner, 2026-09-02). Not a
-                 * verdict: the OOP create never replays it. */
-                vw2_oop_bank_entry_role(&W->vw2, &ne, VW2_ROLE_COMP);
-            _vw2_persist(W, cfg);
-        }
-        /* ROUTE ATOMICITY (structural): exactly ONE cascade plan survives
-         * to the handle — the loser dies here, before the handle exists —
-         * so fwd and bwd cannot pair across routes. */
-        if (zroute_pending && zt_pending)
-        {
-            vfft_zsplit_destroy(zs_pending);
-            zs_pending = NULL;
-            _zt_tform_env(zt_pending);      /* the pin, after the bank */
-        }
-        else
-        {
-            zroute_pending = 0;
-            if (zt_pending)
-            {
-                vfft_zturn2_destroy(zt_pending);
-                zt_pending = NULL;
-            }
-        }
-    }
-    *zs_out = zs_pending;
-    *zt_out = zt_pending;
-    *zroute_out = zroute_pending;
-    /* a zturn-only (odd-mid) cell whose zturn arm failed has NOTHING —
-     * the caller must fall through to the classic OOP kinds. */
-    return (zs_pending || zt_pending) ? 1 : 0;
-}
-
 #endif /* VFFT_OOP_K1_COMMIT_H */

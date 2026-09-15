@@ -64,16 +64,13 @@ extern "C"
   /* the flat mixed-radix DIT (odd-N K=1 interleaved): threaded executes of
    * the blocks or tiles arm; serial serves leave it unchanged. */
   long vfft_ilfd_mt_passes(void);
+  /* ZTURN-T's threaded arm (the staged walk sectioned): threaded executes
+   * actually run; raced per T at create, VFFT_ZTT_MT=0|1|2 pins. */
+  long vfft_ztt_mt_passes(void);
   /* the flat DIT's create-time races (forms, tile): arms whose timed batch
    * was under half the sample target. A property, not an outcome: 0 means
    * every verdict was decided above the clock's tick. */
   long vfft_ilfd_race_short_samples(void);
-
-  /* And for the K=1 1D cascade (zturn): threaded cascade walks actually
-   * run. The verdict is raced per cell at create (VFFT_ZT_NO_MT=1 kills,
-   * =0 forces — the A/B hook); zero here after an execute means the
-   * serial walk served. */
-  long vfft_zt_mt_passes(void);
 
   /* And for the 2D plane queue (dims=2, howmany>1): queued (plane-per-
    * worker) executes actually run. Loop-vs-queue is raced at create

@@ -1,0 +1,25 @@
+; FUSED CODELETS (owner's ruling 2026-09-14, README.md beside this file).
+; One whole-transform function per pow2 cell (N, chain, direction, buffer mode)
+; with the ZTURN-T stage kernels of codelets/zil/avx2/boundary_split INLINED
+; and every trip count a literal — the pow2 solution's executable form, and
+; ONLY that: the composable stage kernels are the product every other solution
+; (2^a*odd chains, the 2D/3D passes) is built from; a fused codelet cannot be
+; recombined. Derived from the corpus cells (Ztt_drivers.cells), one file per
+; (family, N): ztt_ = natural order, zttp_ = the plain/scrambled order.
+; build.py compiles this directory's *.c (dag_codelet_srcs).
+(rule
+ (targets
+  ztt_drivers_avx2_16.c ztt_drivers_avx2_32.c ztt_drivers_avx2_64.c
+  ztt_drivers_avx2_128.c ztt_drivers_avx2_256.c ztt_drivers_avx2_512.c
+  ztt_drivers_avx2_1024.c ztt_drivers_avx2_2048.c ztt_drivers_avx2_4096.c
+  ztt_drivers_avx2_8192.c ztt_drivers_avx2_16384.c ztt_drivers_avx2_32768.c
+  ztt_drivers_avx2_65536.c ztt_drivers_avx2_131072.c ztt_drivers_avx2_262144.c
+  zttp_drivers_avx2_16.c zttp_drivers_avx2_32.c zttp_drivers_avx2_64.c
+  zttp_drivers_avx2_128.c zttp_drivers_avx2_256.c zttp_drivers_avx2_512.c
+  zttp_drivers_avx2_1024.c zttp_drivers_avx2_2048.c zttp_drivers_avx2_4096.c
+  zttp_drivers_avx2_8192.c zttp_drivers_avx2_16384.c zttp_drivers_avx2_32768.c
+  zttp_drivers_avx2_65536.c zttp_drivers_avx2_131072.c zttp_drivers_avx2_262144.c)
+ (deps %{exe:../../bin/emit_ztt_drivers.exe})
+ (mode promote)
+ (action
+  (run %{exe:../../bin/emit_ztt_drivers.exe} --isa avx2 --uarch raptor_lake_avx2 --split .)))

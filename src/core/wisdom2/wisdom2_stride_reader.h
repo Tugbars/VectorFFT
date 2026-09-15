@@ -428,27 +428,9 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
      * and stride for the tape modes (which genuinely run the stride
      * engine). Pre-change rows carry eng=stride regardless — vintage,
      * accepted by the reader. */
-    VW2__SB_SET(1, "eng",
-                e->mode == VFFT_NAT_ZCASC ? "zturn"
-                : e->mode == VFFT_NAT_ILP ? "k1"
-                                          : "stride");
+    VW2__SB_SET(1, "eng", e->mode == VFFT_NAT_ILP ? "k1" : "stride");
     VW2__SB_SET(1, "mode", vw2_stride_mode_name[e->mode]);
-    if (e->mode == VFFT_NAT_ZCASC
-        && (pl == VW2_PL_IP || (e->nf == 1 && e->factors[0] == e->N))) {
-        /* CASCADE mode row: SIGNPOST to the kind-4 RECIPE (chain, t2q
-         * terminator pick, tcut width, L1 fence) — owner #7, and the
-         * 2026-09-02 rule: a mode row never carries the caller's classic
-         * chain as if it were the served plan (the in-place rows used to
-         * bank the convert INCUMBENT's chain under mode=zcasc). Target:
-         * the role=comp recipe the in-place / odd race banked when one
-         * exists, else the OOP problem verdict. ref_ok keeps the verdict
-         * honest if the recipe vanishes (loud MISS, re-race). */
-        char refbuf[112];
-        snprintf(refbuf, sizeof refbuf,
-                 "cell(t=c2c,n=%d,q=1,ord=scr,place=oop%s)", e->N,
-                 e->ref_comp ? ",role=comp" : "");
-        VW2__SB_SET(1, "ref", refbuf);
-    } else if (e->mode == VFFT_NAT_ILP && e->ref_ilp > 0) {
+    if (e->mode == VFFT_NAT_ILP && e->ref_ilp > 0) {
         /* ILP mode row: the ROUTE verdict; the engine's RECIPE (pair /
          * chain3 with kernel forms, or Rader/Bluestein with its inner) is
          * signposted, never copied (2026-09-02, owner: "no arms on the

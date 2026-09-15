@@ -106,6 +106,13 @@ type zs_kind =
   | Tmgb
   | Tlf
   | Tlfb
+  | Tlfi (* the IN-PLACE last: tlf + output-stream prefetch (2026-09-09) *)
+  | Tlfib
+  | T0d (* ZTURN-T PLAIN = the scrambled class (ztt_scrambled_design.md, 2026-09-13):
+           ingest t0d, mid tmgd, last tld, backward ingest tldb *)
+  | Tmgd
+  | Tld
+  | Tldb
   | Sterm
   | Sterm2
   | Stermb
@@ -234,6 +241,12 @@ let zs_name = function
   | Tmgb -> "tmgb"
   | Tlf -> "tlf"
   | Tlfb -> "tlfb"
+  | Tlfi -> "tlfi"
+  | Tlfib -> "tlfib"
+  | T0d -> "t0d"
+  | Tmgd -> "tmgd"
+  | Tld -> "tld"
+  | Tldb -> "tldb"
   | Sterm -> "sterm"
   | Sterm2 -> "sterm2"
   | Stermb -> "stermb"
@@ -270,6 +283,12 @@ let zs_of_name = function
   | "tmgb" -> Tmgb
   | "tlf" -> Tlf
   | "tlfb" -> Tlfb
+  | "tlfi" -> Tlfi
+  | "tlfib" -> Tlfib
+  | "t0d" -> T0d
+  | "tmgd" -> Tmgd
+  | "tld" -> Tld
+  | "tldb" -> Tldb
   | "sterm" -> Sterm
   | "sterm2" -> Sterm2
   | "stermb" -> Stermb

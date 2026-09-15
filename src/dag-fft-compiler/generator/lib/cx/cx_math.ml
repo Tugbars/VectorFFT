@@ -142,7 +142,11 @@ let butterfly_pair
     cadd ek t, csub ek t)
 ;;
 
-(* ── W32 WING COMBINE (VFFT_CX_W32TG=1, FWD only) ──────────────────────
+(* ── W32 WING COMBINE (VFFT_CX_W32TG=1) ──────────────────────────────────
+   Both directions since 2026-09-11: the backward is the conjugate — the
+   shear's tangent sign flips (e^{+iθ} = cosθ·(1 + i·tanθ)) and the composed
+   rotation is +i (crotp) instead of -i (crot); the render fold has the
+   mirrored arm for CRotPI. Forward emission is byte-identical to before.
    Pass-B site of the HAND w32tg/w32tgL kernels, per the A-0 verdict
    (docs/roadmap/r32_tangent_parity_plan.md): the blocked m=2 combine at
    radix 32 with the angle CANONICALIZED to oe = k mod 8, so mirror sites
@@ -153,15 +157,18 @@ let butterfly_pair
    Default OFF: without the knob the blocked combine keeps butterfly_pair
    and every existing emission is byte-identical. *)
 
-let butterfly_pair_w32 ~(k : int) (ek : t) (ok : t) : t * t =
+let butterfly_pair_w32 ~(sign : [ `Fwd | `Bwd ]) ~(k : int) (ek : t) (ok : t) : t * t =
   let pi = 4.0 *. atan 1.0 in
+  let rot x = if sign = `Fwd then crot x else crotp x in
+  let sgn = if sign = `Fwd then -1.0 else 1.0 in
   if k = 0
   then cadd ek ok, csub ek ok
   else if k = 8
   then (
-    (* W32^8 = -i : rotation composed into the butterfly (ROTFMA folds
-       both consumers to fmadd/fnmadd([1,-1]·cflip) — 3 uops, no xor). *)
-    let r = crot ok in
+    (* W32^8 = -i (fwd) / +i (bwd): rotation composed into the butterfly
+       (ROTFMA folds both consumers to fmadd/fnmadd([1,-1]·cflip) — 3 uops,
+       no xor). *)
+    let r = rot ok in
     cadd ek r, csub ek r)
   else (
     let oe = k land 7 in
@@ -172,14 +179,16 @@ let butterfly_pair_w32 ~(k : int) (ek : t) (ok : t) : t * t =
         let th = pi *. float_of_int oe /. 16.0 in
         tan th, cos th)
     in
-    (* fwd shear at the CANONICAL angle: e^{-iθ} = cosθ·(1 - i·tanθ) *)
-    let sh = ctw 1.0 (-.tn) ok in
+    (* shear at the CANONICAL angle: fwd e^{-iθ} = cosθ·(1 - i·tanθ),
+       bwd e^{+iθ} = cosθ·(1 + i·tanθ) — the sign rides in the constant *)
+    let sh = ctw 1.0 (sgn *. tn) ok in
     if k < 8
     then cfma c sh ek, cfnma c sh ek
     else (
-      (* W32^k = -i·W32^{k-8}: same shear, rotation composed; ROTFMA
-         renders the pair as fmadd/fnmadd([c,-c]·cflip sh) + e. *)
-      let r = crot sh in
+      (* W32^k = -i·W32^{k-8} (fwd) / +i·W32^{-(k-8)} (bwd): same shear,
+         rotation composed; ROTFMA renders the pair as
+         fmadd/fnmadd([c,-c]·cflip sh) + e. *)
+      let r = rot sh in
       cfma c r ek, cfnma c r ek))
 ;;
 

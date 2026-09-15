@@ -41,24 +41,6 @@
 #ifndef VFFT_OOP_C2C_OOP_CREATE_H
 #define VFFT_OOP_C2C_OOP_CREATE_H
 
-/* the two arms of the odd-mid route race: one handle, zroute toggled
- * (the k1 arm runs with the cascade detached) */
-typedef struct { struct vfft_plan_s *hk; vfft_zturn2_plan_t *zt; double *zi, *zo; } _ztodd_arm_t;
-static void _ztodd_arm_cascade(void *v)
-{
-    _ztodd_arm_t *c = (_ztodd_arm_t *)v;
-    c->hk->zroute = 1;
-    c->hk->zturn = c->zt;
-    vfft_execute((vfft_plan)c->hk, VFFT_FORWARD, c->zi, NULL, c->zo, NULL);
-}
-static void _ztodd_arm_k1(void *v)
-{
-    _ztodd_arm_t *c = (_ztodd_arm_t *)v;
-    c->hk->zroute = 0;
-    c->hk->zturn = NULL;
-    vfft_execute((vfft_plan)c->hk, VFFT_FORWARD, c->zi, NULL, c->zo, NULL);
-    c->hk->zturn = c->zt;
-}
 /* ── the tier's ONE exit. Every handle this create returns passes through
  * here; a shared post-step cannot be skipped by a new early exit without
  * the skip being spelled at the call. zt_mt says whether this exit races
@@ -69,10 +51,11 @@ static vfft_plan _c2c_oop_finish(struct vfft_plan_s *h, int zt_mt,
                                  struct vfft_wisdom_s *W,
                                  const vfft_config_t *cfg, int N)
 {
-    if (zt_mt && h->zroute && h->zturn && h->K == 1 && h->nthreads > 1)
-        _zt_mt_replay_or_race(h, W, cfg, N);   /* per-T banked (C1.9) */
+    (void)zt_mt;   /* the cascade's MT verdict left with the cascade (2026-09-15) */
     if (h->k1ilfd && h->K == 1 && h->nthreads > 1)
         _ilfd_mt_replay_or_race(h, W, cfg, N); /* the flat DIT's, per-T banked (2026-09-07) */
+    if (h->k1ztt && h->K == 1 && h->nthreads > 1)
+        _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's, per-T banked (2026-09-15) */
     return h;
 }
 
@@ -93,26 +76,6 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
          * never K=1-safe). Classic path still serves SCRAMBLED-order
          * requests and is the fallback if engine create fails. Construction
          * is layout-independent (both axes' routes are built as before). */
-        vfft_zsplit_plan_t *zs_pending = NULL;
-        vfft_zturn2_plan_t *zt_pending = NULL;
-        int zroute_pending = 0; /* 0 = legacy zsplit, 1 = ZTURN-S */
-        if (K == 1 && !ob && cfg->order == VFFT_ORDER_SCRAMBLED)
-        {
-            /* SCRAMBLED K=1: wisdom replay (>=2048 only, _k1z_wisdom_replay) else default chain + the stf/stf2 t2q race; the winning cascade attaches to the classic handle below.
-             * t2q picks must be MEASURED on the installed binary — stf/stf2 are bit-identical, so the delta is code-placement order, never a hand-set constant.
-             * See docs/design/vfft_front_door.md. */
-            if (!_k1z_wisdom_replay(cfg, W, N, &zs_pending, &zt_pending,
-                                    &zroute_pending))
-            {
-                /* MISS / recalibrate -> _k1z_race_and_bank (the single
-                 * definition, shared with the IN-PLACE create). The HIT
-                 * path above is the shared definition of replay
-                 * semantics. */
-                (void)_k1z_race_and_bank(cfg, W, N, /*ip=*/0,
-                                         &zs_pending, &zt_pending,
-                                         &zroute_pending); /* oop: banks kind-4 */
-            }
-        }
         /* K=1 engine admission (il_coverage_plan.md Phase A, 2026-08-03):
          * DEFAULT and NATURAL as always — and now explicit SCRAMBLED too,
          * WHEN no cascade plan attached above. The scrambled contract is
@@ -125,20 +88,15 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
          * no-cascade guard keeps ≥2048 scrambled on the cascade dispatch
          * without building a dead-weight k1 engine beside it. */
         {
-            /* an ODD-mid cascade candidate must not suppress the k1
-             * admission: it has no fiat attach — it races the finished
-             * handle at the commit, and the k1 routes ARE that
-             * incumbent (without them the race timed the bare op
-             * route, ~3x slower than the true serving — the strawman
-             * caught 2026-08-27). */
-            int ztodd = 0, s2o;
-            if (zt_pending)
-                for (s2o = 0; s2o < zt_pending->nf; s2o++)
-                    if (zt_pending->chain[s2o] & 1)
-                        ztodd = 1;
-        if (K == 1 && !ob &&
-            (cfg->order != VFFT_ORDER_SCRAMBLED || ztodd ||
-             (!zs_pending && !zt_pending)))
+        /* ORDER IS A CONTRACT (design_contracts.md 8b): a scrambled request is
+         * served by scrambled writers only. At pow2 in ZTURN-T's band no
+         * cascade is pending (above), so an explicit SCRAMBLED request enters
+         * the K=1 tier here and reads the ord=scr row — the PLAIN ZTURN-T
+         * schedule's verdict, raced on a miss; the natural K=1 engines are
+         * never admitted to a scrambled request ("scrambled belongs to only
+         * scrambled", 2026-09-09; "contracts not optimization angles",
+         * 2026-09-13). */
+        if (K == 1 && !ob)
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
             int sR1 = 0, sR2 = 0, iR1 = 0, iR2 = 0;
@@ -167,8 +125,20 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * below is never the source of a served IL plan any more (it
              * kept building a form-less pair on the cold create while the
              * replay took the planner's pair WITH forms: different bits). */
-            if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && (N < 2048 || (N & 3)) &&
-                !W->vw2_off_oop &&   /* odd N >= 2048: no cascade route (2026-09-04) */
+            /* WISDOM OR RACE (owner's law, 2026-09-09): every interleaved miss
+             * races here, the pow2 band included — _k1_il_plan_race carries
+             * the N gate (the 2^a * odd cells above 2048 stay the odd
+             * machinery's). Until 2026-09-09 this call was fenced to
+             * N < 2048 or odd N and a cold band cell fell through. */
+            if (cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+                !W->vw2_off_oop &&
+                /* an explicit SCRAMBLED request with a cascade plan pending
+                 * (a 2^a * odd cell: the cascade's own replay / race above,
+                 * kind-4 rows) is not the K=1 tier's. At pow2 nothing is
+                 * pending since 2026-09-14 and the scrambled K=1 writer is the
+                 * PLAIN ZTURN-T schedule, raced here like every other cell.
+                 * (Racing a cascade cell here banked a fresh cascade chain on
+                 * EVERY create, 12-24 s each; k1_pow2_gate 2026-09-09.) */
                 (cfg->recalibrate || !ki || !ki->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
             {
                 if (_k1_il_plan_race(W, cfg, N) > 0)
@@ -177,13 +147,24 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     ki = scr_req ? (vw2_oop_lookup_k1_scr(&W->vw2, N, &kib) ? &kib : NULL) : ke;
                 }
             }
-            const int sp_banked = (ke && ke->k1_sp_route >= 0);
+            /* TWO LIBRARIES (design_contracts.md section 2, owner 2026-09-09):
+             * a request names ONE layout and this door resolves, builds and
+             * commits that layout's axis only. An interleaved request never
+             * builds a split K=1 plan (psp) and a split request never builds
+             * an interleaved one; the other axis reads as absent from here on
+             * (no route, no pair, no plan). Until 2026-09-09 an interleaved
+             * request built and committed a split plan (hk->k1sp) beside its
+             * engine whenever a split route resolved. */
+            const int want_il = (cfg->layout == VFFT_LAYOUT_INTERLEAVED);
+            if (want_il) { spr = -1; sR1 = sR2 = 0; }
+            else         { ilr = VFFT_K1_IL_NONE; iR1 = iR2 = 0; }
+            const int sp_banked = (!want_il && ke && ke->k1_sp_route >= 0);
             /* il_banked mirrors sp_banked (review fix): k1_il_route = -1
              * means the IL axis was never raced at this cell — run the IL
              * heuristic, exactly as an unbanked cell would. IL_NONE (0) is
              * a VERDICT ("raced: no IL route available", the B2.1 meaning)
              * and is consumed as one. */
-            const int il_banked = (ki && ki->k1_il_route >= 0);
+            const int il_banked = (want_il && ki && ki->k1_il_route >= 0);
             if (sp_banked)
             {
                 spr = ke->k1_sp_route;
@@ -196,7 +177,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 iR1 = ki->il_R1;
                 iR2 = ki->il_R2;
             }
-            if (!sp_banked)
+            if (!want_il && !sp_banked)
             {
                 /* heuristic default (uncalibrated cell): mono when emitted,
                  * else 2pb on the most balanced valid pair. The offline
@@ -232,7 +213,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     }
                 }
             }
-            if (!il_banked)
+            if (want_il && !il_banked)
             {
                 /* IL runs its OWN pair search — it must NOT inherit sR1/sR2.
                  *
@@ -337,8 +318,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * it names 2P_PURE iff the plan exists, else NONE — execute never
              * dereferences a NULL k1il2p. Kill-switch: env VFFT_NO_IL2P
              * disables the whole pair-based IL axis (mono is unaffected). */
-            if (ilr == VFFT_K1_IL_2P || ilr == VFFT_K1_IL_3P ||
-                ilr == VFFT_K1_IL_2P_PURE)
+            if (want_il && (ilr == VFFT_K1_IL_2P || ilr == VFFT_K1_IL_3P ||
+                            ilr == VFFT_K1_IL_2P_PURE))
             {
                 if (iR1 && !getenv("VFFT_NO_IL2P"))
                 {   /* braces are load-bearing: apply_kv must not run when the
@@ -417,15 +398,16 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             if (ilr == VFFT_K1_IL_FLAT && !ilfd)
                 ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
             /* ZTURN-T (route 9, 2026-09-09): a banked verdict replays its chain
-             * (il_ztt=) through the create — the registry cell's fused drivers;
-             * NO default build (the planner is the only source). Natural
-             * output is a legal answer to a scrambled request, so the same
-             * plan serves both order classes. */
+             * (il_ztt=) through the create — the registry cell's fused codelets;
+             * NO default build (the planner is the only source). The ORDER
+             * CLASS is the row's (2026-09-14): ord=nat replays the natural
+             * drivers, ord=scr the PLAIN schedule (ztt_scrambled_design.md) —
+             * one plan, one order, never mixed. */
             vfft_ztt_plan_t *ztt = NULL;
             if (ilr == VFFT_K1_IL_ZTT && !il2p && !il3p && !ilfd && !getenv("VFFT_NO_IL2P") &&
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_zt_n >= 2)
             {
-                ztt = vfft_ztt_create_chain(N, ki->il_zt, ki->il_zt_n);
+                ztt = vfft_ztt_create_chain_ord(N, ki->il_zt, ki->il_zt_n, scr_req);
                 if (ztt && ki->il_tw > 0 && !vfft_ztt_set_tile(ztt, (size_t)ki->il_tw))
                 {   /* the row names a tile the cell refuses: not a plan that exists */
                     vfft_ztt_destroy(ztt);
@@ -444,7 +426,10 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * (il_prime.h) — the OOP INTERLEAVED prime coverage the split
              * OOP path refuses. Same IL-only-handle rules as the chain. */
             vfft_ilprime_plan_t *ilpr = NULL;
-            if (ilr == VFFT_K1_IL_NONE && !il2p && !il3p &&
+            /* the prime engine is a route, not a fallback: a power of two is
+             * never its cell (the pow2 tiers race on a miss, above) */
+            if (ilr == VFFT_K1_IL_NONE && !il2p && !il3p && !ilfd && !ztt &&
+                (N & (N - 1)) != 0 &&
                 !getenv("VFFT_NO_IL2P") &&
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED)
             {
@@ -512,7 +497,12 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * IL-only handles are INTERLEAVED-committed by construction
              * (every IL attempt above is layout-gated for the spr < 0 case),
              * so the split dispatch never sees k1_sp_route == -1. */
-            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr || ilfd ||
+            /* ztt joined this list 2026-09-09 (S4): without it a ZTURN-T plan was
+             * committed only when the SPLIT axis also had a route (spr >= 0) —
+             * true at every cell up to 65536, so it went unseen until 131072,
+             * where no split route exists and a replayed ZTURN-T plan fell
+             * through to the "no interleaved engine" refusal. */
+            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr || ilfd || ztt ||
                 (ilr == VFFT_K1_IL_MONO && cfg->layout == VFFT_LAYOUT_INTERLEAVED)) /* the solo tier has no plan object */
             {
                 struct vfft_plan_s *hk =
@@ -561,317 +551,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                             hk->k1_jit = vfft_k1_jit_resolve(N, sR1, sR2, spr0);
                     }
 #endif
-                    /* OOP order=NATURAL at N >= _vfft_zcasc_min_n(): race this handle's real execute against a natord zturn cascade candidate; the winner attaches via hk->zturn on the existing zsplit||zturn-first dispatch.
-                     * Both outcomes bank to @natoop, its own table — @nat stays the in-place single writer. Kill switch VFFT_NO_NAT_ZCASC; under it nothing is banked.
-                     * See docs/design/vfft_front_door.md. */
-                    if (cfg->order == VFFT_ORDER_NATURAL &&
-                        N >= _vfft_zcasc_nat_min_n() &&
-                        cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-                        !getenv("VFFT_NO_NAT_ZCASC"))
-                    {
-                        vfft_proto_nat_entry_t noeb;
-                        const vfft_proto_nat_entry_t *noe =
-                            W->vw2_off_stride ? vfft_proto_natoop_lookup(&W->c2c, N, K)
-                                              : (vw2_stride_lookup_natoop(&W->vw2, _vw2_lay_of(cfg), N, K, &noeb) ? &noeb : NULL);
-                        int nmode = (noe && !cfg->recalibrate)
-                                        ? noe->mode : VFFT_NAT_UNSET;
-                        vfft_zturn2_plan_t *zct = NULL;
-                        if (nmode != VFFT_NAT_FREE)
-                        {
-                            vfft_config_t rcfg = *cfg;
-                            rcfg.recalibrate = 0;
-                            vfft_zsplit_plan_t *zcs = NULL;
-                            int zcr = 0;
-                            if (_k1z_wisdom_replay_nat(&rcfg, W, N, &zcs, &zct, &zcr) ||
-                                _k1z_race_and_bank_nat(&rcfg, W, N, /*ip=*/0, &zcs, &zct, &zcr))
-                            {
-                                if (zcs)
-                                    vfft_zsplit_destroy(zcs);
-                                if (zct && !vfft_zturn2_set_natord(zct, 1))
-                                {
-                                    vfft_zturn2_destroy(zct);
-                                    zct = NULL;
-                                }
-                            }
-                        }
-                        if (nmode == VFFT_NAT_ZCASC)
-                        {
-                            if (zct)
-                            {
-                                hk->zturn = zct;
-                                hk->zroute = 1;
-                                zct = NULL;
-                                if (getenv("VFFT_NAT_LOG"))
-                                    fprintf(stderr, "[natorder] N=%d K=%zu "
-                                            "replay ZCASC-OOP\n", N, K);
-                            }
-                            else /* banked chain vanished/refused: degrade to
-                                  * re-measure — but with no candidate the
-                                  * measure below is a no-op and the handle
-                                  * serves as built (never hard-fail). */
-                                nmode = VFFT_NAT_UNSET;
-                        }
-                        if (nmode == VFFT_NAT_UNSET && zct)
-                        {
-                            /* MEASURE: this handle's real OOP execute vs the
-                             * natord cascade, src->dst distinct (src is
-                             * read-only in OOP fwd — no reseed hazard).
-                             * 5 rounds, alternated order, medians (B5). */
-                            /* 64-B ALIGNED like the planner's (VFFT_ZS_ALLOC) and the bench's arenas:
-                             * malloc's 16-B alignment split ZTURN-T's unaligned stores across lines
-                             * and this race banked the cascade at 4096 against the paced verdict
-                             * (2026-09-09, zturn_t_2048plus_plan.md). Owner's law: aligned, always. */
-                            double *rz = (double *)VFFT_ZS_ALLOC(
-                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
-                            double *r0 = (double *)VFFT_ZS_ALLOC(
-                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
-                            if (rz && r0)
-                            {
-                                for (long i = 0; i < 2L * N; i++)
-                                    r0[i] = (double)rand() / RAND_MAX - 0.5;
-                                const int reps =
-                                    N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
-                                double ns[2]; /* [0] incumbent, [1] zcasc */
-                                /* DESIGNATED: the positional form drifted when the ctx gained
-                                 * .ifd (2026-09-05) — twelve values into thirteen slots put
-                                 * the seed pointer into .rz, the byte count into .r0, and
-                                 * every cold natural OOP create at N >= 2048 read its input
-                                 * from address 0x8000 (k1_pow2_gate, 2026-09-07). */
-                                _c2c_race_ctx_t rc = { .h = hk, .oop = 1, .zt = zct, .zroute = 1,
-                                                       .rz = rz, .r0 = r0, .nb = 2 * (size_t)N * sizeof(double) };
-                                const vfft_race_arm_t arms[2] = {
-                                    { "incumbent", _c2c_race_inc, &rc }, { "zcasc", _c2c_race_chal, &rc } };
-                                /* 5 rounds, odd rounds reversed, median-of-5; no reseed: src is
-                                 * read-only in OOP fwd (r0 -> rz) */
-                                const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MEDIAN, 1, 0, NULL, NULL };
-                                /* GROW-ONLY, like the five sibling copies of this
-                                 * race body (c2c_ip_create.h). The public setter
-                                 * SHRINKS: with the house spelling nthreads=1 for
-                                 * "this child is serial" it tore an 8-worker pool
-                                 * down to 1 for the whole process on every IL-2D
-                                 * OOP row child. pool_preserve_gate asserts this. */
-                                _vfft_pool_arm(hk->nthreads);
-                                vfft_race_run(&proto, arms, 2, ns);
-                                if (ns[1] < ns[0])
-                                {
-                                    hk->zturn = zct;
-                                    hk->zroute = 1;
-                                    zct = NULL;
-                                    _bank_natoop_1d(W, cfg, N, K, VFFT_NAT_ZCASC,
-                                                    ns[1]);
-                                }
-                                else
-                                    _bank_natoop_1d(W, cfg, N, K, VFFT_NAT_FREE,
-                                                    ns[0]);
-                                if (getenv("VFFT_NAT_LOG"))
-                                    fprintf(stderr,
-                                            "[natorder] N=%d K=%zu OOP "
-                                            "zcasc=%.0fns engine=%.0fns -> "
-                                            "%s\n", N, K, ns[1], ns[0],
-                                            hk->zturn ? "ZCASC-OOP"
-                                                      : "engine");
-                            }
-                            VFFT_ZS_FREE(rz);
-                            VFFT_ZS_FREE(r0);
-                        }
-                        if (zct)
-                            vfft_zturn2_destroy(zct);
-                    }
-                    /* OOP order=DEFAULT at N >= zcasc_min (2026-09-03). DEFAULT
-                     * is order-agnostic ("engine-native = fastest"), so the
-                     * SCRAMBLED cascade is a legal arm here exactly as the natord
-                     * cascade is for NATURAL above -- but it was never offered:
-                     * the cascade candidate is built only for an explicit
-                     * SCRAMBLED request, so DEFAULT served the pair where one
-                     * exists and the classic split champion behind a convert
-                     * above 4096 (4.7x at 8192, 7x at 16384, pinned). Not a
-                     * rule: the pair beats the cascade at 2048 and loses at
-                     * 4096. So: race THIS handle's real execute against the
-                     * scrambled cascade (the natural race's protocol), bank the
-                     * verdict on the OOP ord=scr mode row, replay it. */
-                    if (cfg->order == VFFT_ORDER_DEFAULT &&
-                        N >= _vfft_zcasc_min_n() &&
-                        cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-                        !getenv("VFFT_NO_NAT_ZCASC"))
-                    {
-                        vfft_proto_nat_entry_t soeb;
-                        const vfft_proto_nat_entry_t *soe =
-                            W->vw2_off_stride
-                                ? NULL
-                                : (vw2_stride_lookup_scrmode_oop(&W->vw2, _vw2_lay_of(cfg), N, K, &soeb) ? &soeb : NULL);
-                        int smode = (soe && !cfg->recalibrate)
-                                        ? soe->mode : VFFT_NAT_UNSET;
-                        vfft_zturn2_plan_t *zct = NULL;
-                        if (smode != VFFT_NAT_FREE)
-                        {
-                            vfft_config_t rcfg = *cfg;
-                            vfft_zsplit_plan_t *zcs = NULL;
-                            int zcr = 0;
-                            rcfg.recalibrate = 0;
-                            if (!_k1z_wisdom_replay(&rcfg, W, N, &zcs, &zct, &zcr))
-                                (void)_k1z_race_and_bank(&rcfg, W, N, /*ip=*/0,
-                                                         &zcs, &zct, &zcr); /* miss: the kind-4 race, banked */
-                            if (zcs)
-                                vfft_zsplit_destroy(zcs);
-                        }
-                        if (smode == VFFT_NAT_ZCASC)
-                        {
-                            if (zct)
-                            {
-                                hk->zturn = zct;
-                                hk->zroute = 1;
-                                zct = NULL;
-                                if (getenv("VFFT_NAT_LOG"))
-                                    fprintf(stderr, "[scrmode] N=%d K=%zu "
-                                            "replay ZCASC-OOP (default order)\n", N, K);
-                            }
-                            else
-                                smode = VFFT_NAT_UNSET;
-                        }
-                        if (smode == VFFT_NAT_UNSET && zct)
-                        {
-                            /* 64-B ALIGNED like the planner's (VFFT_ZS_ALLOC) and the bench's arenas:
-                             * malloc's 16-B alignment split ZTURN-T's unaligned stores across lines
-                             * and this race banked the cascade at 4096 against the paced verdict
-                             * (2026-09-09, zturn_t_2048plus_plan.md). Owner's law: aligned, always. */
-                            double *rz = (double *)VFFT_ZS_ALLOC(
-                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
-                            double *r0 = (double *)VFFT_ZS_ALLOC(
-                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
-                            if (rz && r0)
-                            {
-                                for (long i = 0; i < 2L * N; i++)
-                                    r0[i] = (double)rand() / RAND_MAX - 0.5;
-                                const int reps =
-                                    N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
-                                double ns[2]; /* [0] incumbent, [1] zcasc */
-                                /* DESIGNATED: the positional form drifted when the ctx gained
-                                 * .ifd (2026-09-05) — twelve values into thirteen slots put
-                                 * the seed pointer into .rz, the byte count into .r0, and
-                                 * every cold natural OOP create at N >= 2048 read its input
-                                 * from address 0x8000 (k1_pow2_gate, 2026-09-07). */
-                                _c2c_race_ctx_t rc = { .h = hk, .oop = 1, .zt = zct, .zroute = 1,
-                                                       .rz = rz, .r0 = r0, .nb = 2 * (size_t)N * sizeof(double) };
-                                const vfft_race_arm_t arms[2] = {
-                                    { "incumbent", _c2c_race_inc, &rc }, { "zcasc", _c2c_race_chal, &rc } };
-                                const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MEDIAN, 1, 0, NULL, NULL };
-                                _vfft_pool_arm(hk->nthreads);
-                                vfft_race_run(&proto, arms, 2, ns);
-                                if (ns[1] < ns[0])
-                                {
-                                    hk->zturn = zct;
-                                    hk->zroute = 1;
-                                    zct = NULL;
-                                    _bank_scrmode_oop_1d(W, cfg, N, K, VFFT_NAT_ZCASC, ns[1]);
-                                }
-                                else
-                                    _bank_scrmode_oop_1d(W, cfg, N, K, VFFT_NAT_FREE, ns[0]);
-                                if (getenv("VFFT_NAT_LOG"))
-                                    fprintf(stderr,
-                                            "[scrmode] N=%d K=%zu OOP default "
-                                            "zcasc=%.0fns engine=%.0fns -> %s\n",
-                                            N, K, ns[1], ns[0],
-                                            hk->zturn ? "ZCASC-OOP" : "engine");
-                            }
-                            VFFT_ZS_FREE(rz);
-                            VFFT_ZS_FREE(r0);
-                        }
-                        if (zct)
-                            vfft_zturn2_destroy(zct);
-                    }
-                    /* ── ODD-MID cascade, SCRAMBLED/DEFAULT (2026-08-27):
-                     * zt_pending (built + t2q'd by the race helper) has
-                     * NO fiat attach — it races THIS handle's real
-                     * serving (the k1 IL routes included; racing the
-                     * bare op route was the strawman caught today) and
-                     * attaches only by winning. min-of-3 alternated on
-                     * scratch; the loser dies here. The pow2 flow is
-                     * untouched (its admission gate keeps it on the
-                     * fiat commit, backed by calibration history). */
-                    if (zt_pending && cfg->order != VFFT_ORDER_NATURAL)
-                    {
-                        int s2o, zodd2 = 0;
-                        for (s2o = 0; s2o < zt_pending->nf; s2o++)
-                            if (zt_pending->chain[s2o] & 1)
-                                zodd2 = 1;
-                        if (zodd2)
-                        {
-                            /* 64-B aligned, as the two door races above (2026-09-09) */
-                            double *zi2 = (double *)VFFT_ZS_ALLOC(
-                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
-                            double *zo2b = (double *)VFFT_ZS_ALLOC(
-                                ((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
-                            double tzc = 1e300, tkc = 1e300;
-                            if (zi2 && zo2b)
-                            {
-                                size_t i2;
-                                int r2;
-                                for (i2 = 0; i2 < 2 * (size_t)N; i2++)
-                                    zi2[i2] = 1.0 +
-                                              1e-6 * (double)(i2 & 511);
-                                vfft_execute((vfft_plan)hk,
-                                             VFFT_FORWARD, zi2, NULL,
-                                             zo2b, NULL); /* warm k1 */
-                                hk->zturn = zt_pending;
-                                hk->zroute = 1;
-                                vfft_execute((vfft_plan)hk,
-                                             VFFT_FORWARD, zi2, NULL,
-                                             zo2b, NULL); /* warm zt */
-                                {
-                                    _ztodd_arm_t c = { hk, zt_pending, zi2, zo2b };
-                                    const vfft_race_arm_t arms[2] = {
-                                        { "cascade", _ztodd_arm_cascade, &c },
-                                        { "k1", _ztodd_arm_k1, &c } };
-                                    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
-                                    double ns[2];
-                                    (void)r2;
-                                    vfft_race_run(&proto, arms, 2, ns);
-                                    tzc = ns[0];
-                                    tkc = ns[1];
-                                }
-                                if (getenv("VFFT_ZT_LOG") ||
-                                    getenv("VFFT_NAT_LOG"))
-                                    fprintf(stderr,
-                                            "[zt-odd] route race N=%d: "
-                                            "cascade=%.0f k1=%.0f -> "
-                                            "%s\n",
-                                            N, tzc, tkc,
-                                            tzc < tkc ? "CASCADE"
-                                                      : "k1");
-                                if (tzc < tkc)
-                                {
-                                    hk->zroute = 1;
-                                    zt_pending = NULL; /* owned by hk */
-                                }
-                                else
-                                {
-                                    hk->zroute = 0;
-                                    hk->zturn = NULL;
-                                }
-                            }
-                            VFFT_ZS_FREE(zi2);
-                            VFFT_ZS_FREE(zo2b);
-                        }
-                    }
-                    if (zt_pending)
-                    { /* not attached (lost, pow2-stray, or NATURAL):
-                       * consume — the hk return path used to LEAK it. */
-                        vfft_zturn2_destroy(zt_pending);
-                        zt_pending = NULL;
-                    }
-                    if (zs_pending)
-                    {
-                        vfft_zsplit_destroy(zs_pending);
-                        zs_pending = NULL;
-                    }
-                    /* zt_mt=1 (SHIPPED 2026-09-02 after the priced trial):
-                     * cascades attached at THIS exit historically never got
-                     * an MT verdict — serial at any T. The INC-Z race now
-                     * runs here too; measured T=8, bitwise MT==ST IDENTICAL
-                     * on odd chains: 24576 3.0x, 49152 3.3x, 98304 4.2x
-                     * (MT wins), 3072/6144/12288 -> the race banks serial.
-                     * "Cannot engage" and the race keep small cells serial. */
-                    return _c2c_oop_finish(hk, /*zt_mt=*/1, W, cfg, N);
+                    return _c2c_oop_finish(hk, 0, W, cfg, N);
                 }
             }
             vfft_il2p_destroy(il2p);
@@ -905,7 +585,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             bK = b->Kp;
             padded = 1;
         }
-        if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && !zs_pending && !zt_pending)
+        if (cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {   /* (a pending cascade = the explicit-SCRAMBLED pow2 path: it attaches
              * at this function's exit, an IL engine, so it passes here)
              * OWNER LAW (2026-09-03): no split champion behind a convert for
@@ -1015,15 +695,11 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                            "Rader/Bluestein-class sizes are served IN-PLACE only (create "
                            "with placement=VFFT_INPLACE)",
                            N, bK);
-            vfft_zsplit_destroy(zs_pending);
-            vfft_zturn2_destroy(zt_pending);
             return NULL;
         }
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
-            vfft_zsplit_destroy(zs_pending);
-            vfft_zturn2_destroy(zt_pending);
             vfft_oop_plan_destroy(op);
             return NULL;
         }
@@ -1034,9 +710,6 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
         h->K = K;
         h->nthreads = _vfft_plan_threads(cfg);
         h->oplan = op;
-        h->zsplit = zs_pending; /* exactly one of zsplit/zturn is non-NULL */
-        h->zturn = zt_pending;
-        h->zroute = zroute_pending;
         h->padded = padded;
         h->exec_me = (int)bK;
 #ifdef VFFT_USE_JIT
@@ -1048,7 +721,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             op->mb_jit_bwd = vfft_proto_plan_jit_bwd(op->mb);
         }
 #endif
-        return _c2c_oop_finish(h, /*zt_mt=*/1, W, cfg, N);
+        return _c2c_oop_finish(h, 0, W, cfg, N);
     }
     return NULL; /* unreachable: the one call site guards on the same
                   * condition, and every path in the block above returns. */

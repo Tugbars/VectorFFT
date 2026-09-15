@@ -257,11 +257,8 @@ static const vw2_field_t vw2_fields[] = {
      * mismatch, never port (README §4.3; zr_kv included — it is a kernel
      * variant selector like its siblings). */
     { "zr_kv",   VW2_FC_LOCAL },
-    { "t2q",     VW2_FC_LOCAL }, { "zs_t2q", VW2_FC_LOCAL },
-    { "zt_t2q",  VW2_FC_LOCAL }, { "kv",     VW2_FC_LOCAL },
-    { "zt_tf",   VW2_FC_LOCAL }, { "zt_ntf", VW2_FC_LOCAL },   /* terminator forms (2026-09-07) */
+    { "t2q",     VW2_FC_LOCAL }, { "kv",     VW2_FC_LOCAL },
     { "il_kv",   VW2_FC_LOCAL }, { "sp_kv",  VW2_FC_LOCAL }, /* reserved (D9) */
-    { "zt_tw",   VW2_FC_LOCAL }, { "zt_l1",  VW2_FC_LOCAL },
     /* 3D pass-A lane block: cache-geometry pick, absent = heuristic. */
     { "ablock",  VW2_FC_LOCAL },
     /* pad-vs-tail winners in words (derived from pad_me vs q) */
@@ -291,10 +288,6 @@ static const vw2_envlaw_t vw2_env_law[] = {
     { "VFFT_C2R_ROUTE",   1, "route" },  /* §W2 c2r route racing hook       */
     { "VFFT_IL_BKV",      1, "il_bkv" }, /* dir=bwd kernel-form racing hook */
     { "VFFT_SP_ROUTE",    1, "route" },
-    { "VFFT_FORCE_ZROUTE",1, "route" },  /* demoted to debug switch (owner) */
-    { "VFFT_NO_ZTURN",    1, "route" },  /* demoted to debug switch (owner) */
-    { "VFFT_TCUT",        2, "zt_tw" },  /* also shape 3 for the same field  */
-    { "VFFT_TCUT",        3, "zt_tw" },
     { "VFFT_NO_ILBLK",    4, "il_kv" },
 };
 #define VW2_NENVLAW ((int)(sizeof vw2_env_law / sizeof vw2_env_law[0]))

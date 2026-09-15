@@ -101,6 +101,12 @@ type zs_kind =
   | Tmgb
   | Tlf
   | Tlfb
+  | Tlfi
+  | Tlfib
+  | T0d
+  | Tmgd
+  | Tld
+  | Tldb
   | Sterm
   | Sterm2
   | Stermb

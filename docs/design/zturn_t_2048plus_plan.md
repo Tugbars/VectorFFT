@@ -132,12 +132,38 @@ Shipped as designed below with one refinement: the tile width is a RUNTIME
 argument of every driver (`size_t tile`, 0 = untiled), not a corpus axis —
 one driver per cell (82 cells, 328 drivers), the hot loops inside a group
 literal, the tile loop and the per-tile group count runtime. The planner
-enumerates untiled + every legal width on the cascade's ladder (1 KB .. 64 KB
-of plane, `vfft_ztt_tile_legal` the law: a power of two, >= the first mid's
-R*L, < N) as separate candidates; the winner banks `il_tw=` beside `il_ztt=`
-and every replay applies it (`vfft_ztt_set_tile`). Gate: every legal width
-bitwise the untiled result (fwd, bwd, in place) on every cell, and a seeded
-`il_tw=1024` row replayed through the front door.
+enumerates untiled + each legal width of the ladder (`vfft_ztt_tile_legal`
+the law: a power of two, >= the first mid's R*L, < N) as separate
+candidates; the winner banks `il_tw=` beside `il_ztt=` and every replay
+applies it (`vfft_ztt_set_tile`). Gate: every legal width bitwise the untiled
+result (fwd, bwd, in place) on every cell, and a seeded `il_tw=1024` row
+replayed through the front door.
+
+**The ladder is 16 KB and 32 KB of plane** (1024 / 2048 complexes; owner's
+ruling 2026-09-09 evening). The first ladder was the cascade's, 1 KB .. 64 KB;
+the race over it at 2048..32768 (every chain x every width, planner clock,
+`probes/ZT/phaseE2_calibrate.log`, `phaseE5_calibrate.log`) settled it:
+
+- A width matters only through the stages it admits into L1: a stage runs in
+  the tile iff its extent (the radix product through it) fits the tile; all
+  other stages sweep the plane. Two widths that admit the same stages tie
+  (8.8.8.8 at 4096: 16 KB 3556 ns, 32 KB 3565); a width that admits one more
+  stage pays 5..8% (8.8.8.4.4 at 8192: 16 KB 8511, 32 KB 8007).
+- 32 KB is the largest width that leaves L1 room for the twiddle streams
+  (a 48 KB tile would fill the L1D; 64 KB never won a chain), so it admits
+  the most stages and wins wherever it brings a stage in; 16 KB wins where
+  it does not.
+- No width below 16 KB ever admits a stage 16 KB leaves out. The 1..8 KB
+  "wins" were ties on radix-4-heavy chains, which lose the cell anyway: at
+  every cell the 8-first chains beat every 4-first chain by 8..15% (the
+  ingest is the one untiled pass, and a radix-8 ingest does twice the work
+  per gathered point there), and 6/7-stage chains sit 3..20% behind.
+- Untiled stays the datum and wins 2048, whose 32 KB plane is L1-resident.
+
+The cell winner is unchanged at 4096..16384 in both orders under the cut;
+the calibration per ZTURN-T chain drops from up to 8 candidates to 3.
+Widths of 3 * 2^k (12 / 24 / 48 KB) divide only planes with a factor of 3;
+they belong to the 2^a * odd engine's ladder when it is built.
 
 Runs are contiguous, so a tile of T complexes holds WHOLE groups of every
 stage with RL <= T. The tiled driver is MKL's large path: per tile, the
@@ -158,6 +184,29 @@ The two-level twiddle create (baked coarse table x a per-N fine table, one
 complex multiply per twiddle, ~1 ulp), registry cells to the cascade's
 ceiling, the same tiling axis, the same protocol. MKL auto-threads 1D c2c at
 N >= 8192 — the bench pins it to one thread already.
+
+**IN THE TREE 2026-09-09 (evening).** `ztt.h`: ceiling 262144; above the
+16384 octave `_ztt_fill_stage` splits pw = a*2^u + b (u = log2 RL - 14) and
+takes table(a) x fine(b) with a per-stage fine table of 2^u <= 16 cos/sin
+entries — the only trig the create runs. `ztt_drivers.ml max_n = 262144`:
+223 cells, 892 drivers, the driver TU 2.5 MB. Gate: engine pass 223/223,
+forward error ~1e-14 at 131072 (the two-level product's accuracy), every
+tile bitwise. **Defect found by the seeded replay at 131072:** the
+out-of-place commit condition in `c2c_oop_create.h` listed every K=1 IL
+engine except ZTURN-T, so a ZTURN-T handle was committed only when the
+SPLIT axis also had a route — true at every cell up to 65536 (masked), false
+at 131072 where no split route exists: the replayed plan fell through to
+"no interleaved engine". Fixed (`|| ztt`). Cold seeded 65536 served at 1.10x
+MKL before any calibration. **Fused execution verified on this file**
+(gcc -O2 -mavx2 -mfma, objdump): 892 driver functions, ZERO call
+instructions inside any of them, no body left as a function; the 4096
+8.8.8.8 dest driver is 1252 straight-line instructions, its plane twin 1279
+with the 8 prefetches, the 262144 8^6 driver 2031. **Build cost:** the
+2.5 MB TU compiles in ~90 s inside build.py's parallel build but took 17
+minutes as a lone gcc -O2 compile on a loaded box; if it grows again, split
+the TU per size or trim the chain enumeration above 65536 to what the
+planner ever picks (a measured question). Calibration + paced verdict at
+32768..262144: `probes/ZT/phaseE5_32k.sh`, running.
 
 ## Step 4 — if ZTURN-T wins the natural cell
 
