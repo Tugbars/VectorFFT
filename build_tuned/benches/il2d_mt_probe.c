@@ -46,6 +46,18 @@ int main(int argc, char **argv)
     reps = (int)(300e6 / (t0 > 1 ? t0 : 1)); if (reps < 5) reps = 5; if (reps > 200) reps = 200;
     for (r = 0; r < reps; r++) { TIMED(); if (t0 < best) best = t0; }
     printf("%dx%d T=%d ours(scr %s) %10.0f ns", N1, N2, T, ip ? "ip" : "oop", best);
+    if (!getenv("VFFT_IL2D_PAIR"))
+    {   /* the prefix-pair probe: the same plan, the pair walk, bitwise the plain one */
+        double *yref = (double *)_aligned_malloc(nb, 64);
+        RUN(); memcpy(yref, y, nb);
+        _putenv("VFFT_IL2D_PAIR=1");
+        RUN();
+        best = 1e30;
+        for (r = 0; r < reps; r++) { TIMED(); if (t0 < best) best = t0; }
+        printf("   pair %10.0f ns %s", best, memcmp(y, yref, nb) == 0 ? "bitwise" : "NOT BITWISE");
+        _putenv("VFFT_IL2D_PAIR=");
+        _aligned_free(yref);
+    }
     vfft_destroy(p);
     if (want_mkl)
     {

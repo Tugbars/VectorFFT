@@ -65,9 +65,33 @@ in 2D form (`ilnd_natural_strip_design.md`): the ladder {16, 32, 64, 128,
   strips form then runs the rows as its own phase (row slabs across the
   pool) — the second sweep.
 
-Expected at 2048x2048, T=8: 128 MB (strips) + 128 MB (rows) against
-today's 384 MB — about 3.5 ms for 5.2. The race decides; a cell whose
-banded walk stays ahead keeps it.
+Raced 2026-09-15 (the four-step gate's children on a cold store, T=8,
+`[il2d-c2c] threaded arms`): the sized strips LOSE to the bands at every
+large plane — 2048x2048 bands 3.6 ms, strips64 7.3 ms; 4096x1024 3.7 vs
+7.6; 1024x4096 4.9 vs 6.5 — and the serial axis race kept its bands too.
+A strip of N1 rows at a 32-64 KB row pitch touches one page per row per
+stage: its floor is the TLB, not DRAM, and the sweep it saves never
+arrives. The arms stay in both races (the race is the law; they cost
+milliseconds per cold create) and the width plumbing stays as their
+plan parameter; the lever moves to the banded walk's own prefix.
+
+## 1b. The prefix pair — the wide stages two per sweep
+
+The banded walk's prefix runs each wide stage as a full-plane sweep (the
+digit-split phase). Two consecutive wide stages s, s+1 close over a set
+of R_s x R_{s+1} rows — stage s+1's digit e within a stage-s block (rows
+m*L_{s+1} + e + k*D_{s+1}, m < R_s, k < R_{s+1}) is exactly stage s's
+digits {e + k*D_{s+1}} across the block — so the pair runs as ONE sweep:
+per digit e and per column chunk (cw columns), stage s on its R_{s+1}
+digit ranges (src to dst), then stage s+1 on its R_s blocks in place, 64
+rows x cw x 16 B L2-resident per unit. The arithmetic per element is the
+two stages' own kernels on their own table entries in another traversal:
+bitwise the two-stage walk (`_il2d_col_prefix_pair`, il2d_cols.h). The
+pool cuts the digits e across the workers. Backward: the reversed pair
+(s+1 first, then s) — the reversed prefix's own order. Legal when both
+stages carry a digit axis and L_{s+1} = L_s / R_s (every DIT chain the
+tier builds). A cut of 2 (one pair) saves one of three sweeps at
+2048x2048; a cut of 1 has nothing to pair.
 
 ## 2. The four-step's transpose folded into the row pass
 
@@ -119,11 +143,18 @@ the phase instrument; then the canonical bench `--k1noop` and `--k1noop
 
 ## Checklist
 
-- [ ] 1. This design.
-- [ ] 2. The strip width: the `sw` field and ladder, the sub-strip loop in
+- [x] 1. This design.
+- [x] 2. The strip width: the `sw` field and ladder, the sub-strip loop in
       the strips tramp and the serial unbanded walk, the arms in both races
       (serial axis race, column-MT race, every class), the `sw=` / `mtarm=`
       / `msw=` tokens banked and replayed at the raced T.
+- [x] 2b. The strips arms raced at the large planes: REFUTED (above); the
+      arms stay, the width plumbing stays.
+- [ ] 2c. The prefix pair: the kernel walk, the serial and threaded prefix
+      of the banded walk in both directions and both classes, the serial
+      axis race and the threaded race each gaining the pair as an arm
+      (`pp=` on the row with wl; `mpp=` with cmt/cmtt), replayed at the
+      raced T. Gate: bitwise the two-stage walk at every cell.
 - [ ] 3. Re-race the shipped store's 2D rows above 16 MB at T=8 (their
       `cmt`/`cmtt` tokens dropped so the cold race runs) and the four-step's
       per-T splits; gates ALL PASS; measure.
