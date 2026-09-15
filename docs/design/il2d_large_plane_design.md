@@ -157,6 +157,63 @@ streaming transpose (`k1_fourstep_design.md`). Two findings stand:
   the contiguous band, with a chain whose last stage is small. Not built;
   the owner's call.
 
+## 3. The SUPER-BAND — the four-step's natural class folds its transpose (owner 2026-09-15: "let's pursue this")
+
+The natural class keeps the SCRAMBLED child (its chain, its row plans,
+its twiddle records) and walks the child's plane itself, in the four-step
+(`k1_fourstep.h`), so the row pass can store the k2-major output directly
+and the separate transpose sweep disappears.
+
+The column chain (R_0 ... R_{m-1}) digit-reverses the plane rows: column
+k1(p) has p's MOST significant digit (radix R_0) as its LEAST significant
+digit — k1 = m + R_0 * k1'(q) for p = m * N1/R_0 + q, m < R_0. So the R_0
+rows {m * N1/R_0 + q : m < R_0} hold R_0 CONSECUTIVE columns, a run of
+R_0 * 16 B = two whole lines at R_0 = 8. The SUPER-BAND j is R_0 blocks of
+wl contiguous rows at plane stride N1/R_0 (block m = rows m * N1/R_0 +
+j * wl + [0, wl)), wl = R_{m-1} = the last stage's span, so every block is
+closed under the last column stage (the n1c leaf) and the super-band
+holds wl runs of R_0 consecutive columns. Its walk, forward:
+
+1. the wide prefix, stages 0 .. m-2, on the whole plane — the tier's
+   digit-split stages, serial or across the pool (`_il2d_stage_digits_mt`),
+   the caller's array to the four-step's plane;
+2. per super-band, in a per-worker scratch of R_0 * wl rows: the blocks
+   copied in, the last stage on each block, the twiddled row plans on every
+   row (`_il2d_row_exec_t`, the position's own record), then for each row
+   index i the R_0 rows {block m, row i} stored as columns R_0 * K(j, i) + m
+   of every output row — an R_0 x 16 block transpose per 16 columns of k2
+   (lane permutes, streaming stores when 32-B aligned). The plane is READ
+   once here and never written: three sweeps, the scrambled class's count.
+   Super-bands are disjoint in plane rows and in output columns: the
+   pool's unit axis.
+
+Backward mirrors and runs the rows first: per super-band the R_0 rows of
+each i gathered from the k2-major source (the block transpose's inverse),
+the row plans backward with the conjugate twiddle, the last stage
+reversed on each block, the blocks written to the plane; then the reversed
+prefix, plane to the destination. In place the caller's array is the
+prefix's source (consumed before any run lands) and the reversed prefix's
+destination (written after every run was read): one plane, both
+placements. The map K(j, i) and the R_0-run law are COMPUTED at create
+from `_il2d_nat_perm` of the chain and checked (every super-band's runs
+R_0-aligned and complete); a chain that fails the check has no super-band
+form.
+
+The chain is the form's own axis: residency asks for a small R_0 * wl (64
+rows x 32 KB = 2 MB at 2048x2048: R_0 = 8, wl = 8 — a chain like 8.32.8),
+which the child's own race (8.8.32, wl = 32) does not choose, so the
+super-band form carries its chain. The natural 1D cell races, per split,
+form 0 (the child's banked chain + the streaming transpose) against form 1
+with every chain of the tier's enumerator whose R_0 and R_{m-1} are in
+{4, 8, 16} (the resolver and table builder are the tier's); the winner
+banks `il_kv=1 il_sb=<chain>` on the kind-3 row beside `il_pair`, and the
+per-T split race races the same arms at T, banking `il_mtsb=<chain|0>`
+beside `il_mt`. Replay builds the form from the row. `VFFT_K1_FSSB=<chain>`
+pins the form for a probe.
+
+Expected at 4194304: T=8 from 7.2 to ~5.3 ms (1.3x MKL), serial from 17.6
+to ~15 ms; at 2^19..2^21 the scrambled class's numbers. The race decides.
+
 ## Gates
 
 - `il2d_real_gate`, the four-step gate (T=8 bitwise the plan's own serial,
@@ -192,10 +249,18 @@ the phase instrument; then the canonical bench `--k1noop` and `--k1noop
       per-T splits; gates ALL PASS; measure.
 - [ ] 2d. The prefix pair as a raced arm (or deleted): the owner's ruling.
 - [x] 2d. The prefix pair: DELETED (owner 2026-09-15: a 4-10% arm that loses a cell is not worth its race cost and its code); the strip-width arms stay.
-- [x] 4. The folded transpose: BUILT (natural-child form), gated, REFUTED at every cell, DELETED. The super-band form is the owner's call. the `il2d_fs_out` / `il2d_fs_k1` hook, the
+- [x] 4. The folded transpose: BUILT (natural-child form), gated, REFUTED at every cell, DELETED. The super-band form is the owner's call.
+- [ ] 5. The SUPER-BAND (§3): form 1 in `k1_fourstep.h` (create: the chain's
+      kernels, tables, spans, the K map and the run check, the per-worker
+      scratch; execute both directions, both placements, serial and across
+      the pool; destroy), the natural 1D race's form x chain arms, the
+      `il_kv` / `il_sb` / `il_mtsb` tokens banked and replayed, the probe
+      pin. Gate: `k1_fourstep_gate` ALL PASS at 2^19..2^22.
+- [ ] 6. Re-race the natural cells on the shipped store (T=1 and T=8),
+      measure against MKL, records in place. the `il2d_fs_out` / `il2d_fs_k1` hook, the
       group store in the four walks both directions, both placements;
       `_k1fs_transpose` demoted to the kernel; the four-step's natural
       execute drops its separate sweep. Gates ALL PASS; measure.
-- [ ] 5. Records: `v1_0_results.md` (the upper-band table and the 2D
+- [ ] 7. Records: `v1_0_results.md` (the upper-band table and the 2D
       section, in place), `k1_fourstep_design.md` (the natural class
       paragraph), `design_contracts.md`, memory.
