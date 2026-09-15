@@ -337,7 +337,7 @@ static vfft_plan mk_door(vfft_wisdom *W, int N, int ip, int order) { return mk_d
  * plan's and the engagement counter moves; a second T=8 create REPLAYS
  * (the create-race counter does not move); a T=4 create re-races. */
 long vfft_ztt_mt_passes(void);
-void vfft__fp_counters(long *out6);
+extern long _vfft_create_race_count;   /* vfft.c: every race through support/race.h counts */
 static int frontdoor_mt_pass(const char *wisdir)
 {
     const int N = 245760;
@@ -345,9 +345,7 @@ static int frontdoor_mt_pass(const char *wisdir)
     int fails0 = g_fail;
     double *x = (double *)VFFT_ZTT_ALLOC(nb), *y1 = (double *)VFFT_ZTT_ALLOC(nb), *y8 = (double *)VFFT_ZTT_ALLOC(nb);
     vfft_wisdom *W = vfft_wisdom_load(wisdir);
-    long c6[6];
-    printf("THE FRONT DOOR, THREADED (N=%d natural OOP, T=8)
-", N);
+    printf("THE FRONT DOOR, THREADED (N=%d natural OOP, T=8)\n", N);
     CHECK(W != NULL, "wisdom load");
     if (W)
     {
@@ -366,31 +364,24 @@ static int frontdoor_mt_pass(const char *wisdir)
             vfft_execute(h8, VFFT_FORWARD, x, NULL, y8, NULL);
             CHECK(memcmp(y1, y8, nb) == 0, "T=8 forward != T=1 forward");
             CHECK(vfft_ztt_mt_passes() > e1, "T=8 execute did not engage the threaded arm");
-            printf("  T=8: %s, engaged %ld
-", memcmp(y1, y8, nb) == 0 ? "BITWISE the T=1 plan" : "DIFFERS", vfft_ztt_mt_passes() - e1);
+            printf("  T=8: %s, engaged %ld\n", memcmp(y1, y8, nb) == 0 ? "BITWISE the T=1 plan" : "DIFFERS", vfft_ztt_mt_passes() - e1);
             vfft_destroy(h8);
         }
-        vfft__fp_counters(c6); races0 = c6[5];
+        races0 = _vfft_create_race_count;
         h8b = mk_door_t(W, N, 0, VFFT_ORDER_NATURAL, 8);
-        vfft__fp_counters(c6);
-        CHECK(h8b && c6[5] == races0, "a second T=8 create raced again (%ld -> %ld): no replay", races0, c6[5]);
-        printf("  T=8 again: %s
-", c6[5] == races0 ? "replayed (no race)" : "RE-RACED");
+        CHECK(h8b && _vfft_create_race_count == races0, "a second T=8 create raced again (%ld -> %ld): no replay", races0, _vfft_create_race_count);
+        printf("  T=8 again: %s\n", _vfft_create_race_count == races0 ? "replayed (no race)" : "RE-RACED");
         if (h8b) vfft_destroy(h8b);
-        races0 = c6[5];
+        races0 = _vfft_create_race_count;
         h4 = mk_door_t(W, N, 0, VFFT_ORDER_NATURAL, 4);
-        vfft__fp_counters(c6);
-        CHECK(h4 && c6[5] > races0, "a T=4 create did not re-race the arm");
-        printf("  T=4: %s
-", c6[5] > races0 ? "re-raced (T mismatch)" : "REPLAYED(!)");
+        CHECK(h4 && _vfft_create_race_count > races0, "a T=4 create did not re-race the arm");
+        printf("  T=4: %s\n", _vfft_create_race_count > races0 ? "re-raced (T mismatch)" : "REPLAYED(!)");
         if (h4) vfft_destroy(h4);
         (void)e0;
         vfft_wisdom_free(W);
     }
     VFFT_ZTT_FREE(x); VFFT_ZTT_FREE(y1); VFFT_ZTT_FREE(y8);
-    printf("  %d failures
-
-", g_fail - fails0);
+    printf("  %d failures\n\n", g_fail - fails0);
     return g_fail == fails0;
 }
 

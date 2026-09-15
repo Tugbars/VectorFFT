@@ -71,30 +71,9 @@ type cil_turn =
   | Turnst_gs
 
 type zs_kind =
-  | Dts
-  | Dtsn
-  | Dtso
-  | Dtt
-  | Msd
-  | Msg
-  | Msgb
   | Msz
   | Mszb
   | Mszt
-  | S0s
-  | S0sb
-  | S0t
-  | S0tb
-  | S0tu
-  | Stf
-  | Stf2
-  | Stf2u
-  | Stfu
-  | Stfb
-  | Stfbn
-  | Stfn
-  | Stfl
-  | Stfnl
   | T0tp
   | T0tpb
   | Tmg
@@ -107,9 +86,6 @@ type zs_kind =
   | Tmgd
   | Tld
   | Tldb
-  | Sterm
-  | Sterm2
-  | Stermb
 
 type kind =
   | C2c_inplace_su of { il : il3 }
@@ -155,11 +131,7 @@ type kind =
         (* --cil-form-tag: name the FORM in the emitted symbol, so a split /
            tangent / wing variant is distinguishable without a post-emit sed *)
       }
-  | Zsplit of
-      { k : zs_kind
-      ; r0 : int option
-      ; sink : bool
-      }
+  | Zsplit of { k : zs_kind }
   | K1_mono of
       { r1 : int option
       ; il : bool

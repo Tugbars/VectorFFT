@@ -196,7 +196,17 @@ static void _ilnd_plane_t(const vfft_ilnd_t *d, int tid, vfft_dir_t dir,
         struct vfft_plan_s *row = tid > 0 ? d->roww[tid - 1] : d->row;
         const size_t rn = (size_t)d->N[2];
         size_t r;
-        _il2d_col_exec(ax1, src, dst, rev);
+        if (ax1->nat && ax1->natperm && src != dst)
+            /* out of place one plane is dead -- forward the source (a vacated
+             * cycle position, consumed), backward the destination (being
+             * produced) -- so the natural axis-1 pass runs its pre-leaf stages
+             * THERE and natscr serves only the fixed points: one plane sweep
+             * fewer per plane, the same arithmetic (2026-09-15) */
+            _il2d_col_pass_nat(src, dst, ax1->N, rn, ax1->nst, ax1->R, ax1->L,
+                               rev ? ax1->b : ax1->f, rev ? ax1->tb : ax1->tf, rev,
+                               ax1->natperm, rev ? dst : (double *)src);
+        else
+            _il2d_col_exec(ax1, src, dst, rev);
         for (r = 0; r < (size_t)d->N[1]; r++)
             vfft_execute((vfft_plan)row, dir, dst + 2 * r * rn, NULL,
                          dst + 2 * r * rn, NULL);

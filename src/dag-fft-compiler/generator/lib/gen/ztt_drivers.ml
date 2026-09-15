@@ -475,9 +475,6 @@ let emit_file ~(isa : Isa.t) ~(uarch : Uarch.t) ~(scr : bool) (n : int) : string
             ~store_on_compute:false
             ~kind:(kind ^ if bwd then "b" else "")
             ~radix
-            ~r0:None
-            ~sink_stores:false
-            ~sched:None
             ~isa
             ~uarch))
     (bodies ~scr);

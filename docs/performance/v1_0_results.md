@@ -763,9 +763,13 @@ MKL: MKL's DFTI serves natural order, a different contract.
 ZTURN-T serves every pow2 cell to 262144 since 2026-09-09 (the two-level
 create above the quarter-wave's octave) and the 2^a·odd band since
 2026-09-15 (the section above). The cascade itself was deleted from the
-library on 2026-09-15; T > 1 at these cells has no engine until ZTURN-T's
-own threaded arm (its method: `docs/design/cascade_mt_method.md`). The
-natural door's race
+library on 2026-09-15, and ZTURN-T's own **threaded arm** took over T > 1
+the same day (`docs/design/ztt_mt_design.md`: the stage walk sectioned
+across the pool, bitwise the serial result, raced and banked per thread
+count on the cell's row). Its measurements — T = 8 speedups of 1.4-2x at
+12288..16384, 3.3-5.4x at 65536, 6.2-7.9x at 245760..262144, and 1.51-1.87x
+over MKL at 8 threads through the canonical bench at 12288..262144 — are in
+`probes/ZT/zt_mt_spike_results.md`. The natural door's race
 buffers were made 64-B aligned on 2026-09-09; before that its 16-B `malloc`
 buffers split ZTURN-T's stores across lines and banked the cascade at 4096
 against this verdict.
@@ -922,6 +926,19 @@ re-calibrating.
 > every chain. Single-thread; banding (`+15–21%` where it wins) and the
 > small-N2 row route (`1.6–2×` at N2 ≤ 64) are measured but env-only
 > pending wisdom banking; MT over bands is the queued multiplier.
+
+#### 2D C2C — the rows on ZTURN-T (2026-09-15)
+
+The tier's row pass is a K=1 child plan through the front door, so since
+ZTURN-T became the K=1 natural engine (pow2 2048..262144 on 09-09, the
+2^a·odd band on 09-15; 1024 by verdict) every plane's rows of those lengths
+run it — nothing in the 2D tier changed (`docs/design/ztt_2d_design.md`).
+Re-measured single-thread on the same bench, same column verdicts:
+1024×1024 2,206,587 vs MKL 4,809,862 (2.18x, was 2.08x), 16×4096 90,763 vs
+135,127 (1.49x, our time -11%), 32×1024 40,002 vs 69,593 (1.74x); the
+pair-row cells 512×512 2.07x (was 1.91x) and 64×256 1.80x. 4096×64 read
+1.1x on a noisy run against 1.40x here — its rows are 64-point pairs, an
+open item for a quiet re-measure.
 
 ### 2D C2C — the native tier MULTITHREADED (2026-08-27)
 
@@ -1330,6 +1347,55 @@ pow2 cubes 16³/64³/128³ (1.08–1.20× inside the control spread), and
 loses at the long-axis cells: 32×16×64 by 14% (outside the spread),
 64×128×32 by 6% and 256×64×16 by 10% (inside it) — the cells where the
 fusion it gives up is largest.
+
+#### 3D C2C — long-N3 cells: the axis-2 row on ZTURN-T (2026-09-15)
+
+The tier's last axis is a K=1 natural interleaved plan created through the
+front door (`fftnd_il.h`, one thread), so a row length in ZTURN-T's band is
+served by ZTURN-T with no 3D change — the door's log at every create reads
+`[k1ztt] N=4096: replay ZTURN-T chain 8.8.8.8 tile=1024 src=wisdom` and
+`[k1ztt] N=12288: replay ZTURN-T chain 8.4.4.3.8.4 tile=3072 src=wisdom`,
+in both order classes (the rows are natural in both). Three cells added to
+the bench's list for it; the same protocol as the tables above (cool
+machine, 9 rounds, one-thread samples pinned to core 2 and paced 300 ms;
+T=8 unpaced, steady-state, engagement 162/162, 124/124, 81/81 executes
+threaded), roundtrips 6e-16..1e-15, all arms out of place, `~` = inside
+the control spread:
+
+```
+ cell          class       T   O-NATIVE (ns)     MKL-CCE (ns)    vs MKL-CCE
+──────────────────────────────────────────────────────────────────────────
+ 16×16×4096    scrambled   1     2,757,100  (6%)    3,511,725 (12%)   1.27×
+ 8×16×12288    scrambled   1     4,291,150  (3%)    6,990,275 (13%)   1.63×
+ 32×32×4096    scrambled   1    13,752,100 (14%)   18,261,437  (3%)   1.33×
+ 16×16×4096    natural     1     3,517,687 (15%)    3,465,250  (6%)   0.99×~
+ 8×16×12288    natural     1     4,875,012  (8%)    6,787,563  (6%)   1.39×
+ 32×32×4096    natural     1    18,463,900 (13%)   17,418,512  (6%)   0.94×
+ 16×16×4096    natural     8       443,837 (13%)      457,287 (52%)   1.03×~
+ 8×16×12288    natural     8       726,375  (4%)      884,075 (159%)  1.22×~
+ 32×32×4096    natural     8     5,904,212 (13%)    4,195,463 (66%)   0.71×
+──────────────────────────────────────────────────────────────────────────
+```
+
+The scrambled class wins every long-N3 cell. The natural class pays the
+tier's own cost above: 1.28× over scrambled at 16×16×4096 and 1.34× at
+32×32×4096, which lands the pow2 cells at parity or behind MKL's natural
+at one thread and 32×32×4096 at 0.71× at T=8 (ours 3.1× over its
+one-thread time, MKL 4.1×). That is the natural mechanism's, not the row
+engine's: the row plan is the 1D cell's own verdict.
+
+**The fused natural form, raced and refuted (2026-09-15,
+`docs/design/ilnd_natural_fused_design.md`).** The record's lever — the
+scrambled banded walk through a scratch cube with the plane pass writing
+each plane to its natural position, band fusion kept — was built, gated
+bitwise against the cycle form and raced beside it at every cell: it lost
+at every one-thread cell by 3–27% (64³ 582 vs 547 µs, 128³ 7.47 vs 6.61
+ms, 32×32×4096 19.1 vs 17.0 ms) and at 13 of 14 threaded cells, and was
+deleted. The permuting pass is one extra cube sweep however arranged; the
+cycle form pays it cheapest. What stayed: the natural axis-1 pass now runs
+its pre-leaf stages in the dead plane of every out-of-place call (one
+plane sweep fewer per plane, same arithmetic). The natural class's
+standing against MKL's natural output is therefore the table above.
 
 ### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-06)
 

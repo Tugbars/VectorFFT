@@ -593,22 +593,9 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
      * line exists for the IL-tier band — the front door serves the @nat
      * ILP verdict instead, and the label says so. */
     char plan_s[64];
-    if (ze)
-    {
-        int ch[8];
-        int nf = vfft_k1_cc_chain_decode(ze->cc_chain, ch);
-        size_t p = (size_t)snprintf(plan_s, sizeof plan_s, "z");
-        if (nf)
-            for (int s = 0; s < nf && p < sizeof plan_s - 8; s++)
-                p += (size_t)snprintf(plan_s + p, sizeof plan_s - p,
-                                      "%s%d", s ? "x" : ":", ch[s]);
-        else
-            p += (size_t)snprintf(plan_s + p, sizeof plan_s - p, ":default");
-        snprintf(plan_s + p, sizeof plan_s - p, "/R%d", ze->zs_route);
-    }
-    else
-        snprintf(plan_s, sizeof plan_s, "z:ilp");
-    const char *path = ze ? (ze->zs_route ? "zturn" : "zsplit") : "ilp";
+    (void)ze;   /* the kind-4 (cascade) lines are gone (2026-09-15): every K=1 cell is the IL tier's */
+    snprintf(plan_s, sizeof plan_s, "z:ilp");
+    const char *path = "ilp";
     if (g_k1nat && !g_k1zip)
         path = "nat-oop"; /* --k1noop: order=NATURAL OOP never attaches the
                            * cascade — the kind-4 label would lie; the real
@@ -3357,7 +3344,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
     {
         vfft_oop_wisdom_entry_t z4buf;
         const vfft_oop_wisdom_entry_t *z4 =
-            vw2_oop_lookup_zsplit(&g_k1z_store, half, &z4buf) ? &z4buf : NULL;
+            (0 /* no kind-4 cascade rows since 2026-09-15 */) ? &z4buf : NULL;
         if (z4)
         {
             c4row = 1;
@@ -4740,7 +4727,10 @@ int main(int argc, char **argv)
             int cells[][3] = { { 16, 16, 16 },   { 32, 32, 32 },   { 64, 64, 64 },
                                { 128, 128, 128 }, { 32, 16, 64 },  { 64, 128, 32 },
                                { 256, 64, 16 },   { 27, 9, 15 },   { 36, 20, 28 },
-                               { 45, 45, 45 },    { 81, 27, 27 } };
+                               { 45, 45, 45 },    { 81, 27, 27 },
+                               /* long-N3 cells: the axis-2 row plan is a K=1 cell
+                                * in ZTURN-T's band (pow2 4096; 2^a*odd 12288) */
+                               { 16, 16, 4096 },  { 8, 16, 12288 }, { 32, 32, 4096 } };
             int nc = (int)(sizeof cells / sizeof cells[0]), ci;
             const char *cf = getenv("VFFT_3DIL_CELLS"); /* "16x16x16,64x64x64" filter */
             for (ci = 0; ci < nc; ci++) {
@@ -5312,7 +5302,7 @@ int main(int argc, char **argv)
             if (dup || ndone >= 128)
                 continue;
             done[ndone++] = N4;
-            if (!vw2_oop_lookup_zsplit(&g_k1z_store, N4, &ze))
+            if (!(0 /* no kind-4 cascade rows since 2026-09-15 */))
             {
                 skipped++;
                 continue;
@@ -5650,7 +5640,7 @@ int main(int argc, char **argv)
     /* ... and (2026-09-15) the 2^a * odd cells of ZTURN-T's odd band
      * (docs/design/ztt_odd_design.md): the K=1 IL tier serves them through
      * the same front door; their kind-4 cascade lines are purged. */
-    if (g_k1nat && target_N && (target_N < 2048 || (target_N & 3) || vfft_ztt_odd_band(target_N)) && benched == 0)
+    if (g_k1nat && target_N && (target_N < 2048 || (target_N & 3) || vfft_ztt_odd_band(target_N) || vfft_ztt_band(target_N)) && benched == 0)   /* the pow2 band too since the kind-4 lines left (2026-09-15) */
     {
         run_k1z_cell(target_N, NULL, out, cool_ms, flip);
         benched++;
