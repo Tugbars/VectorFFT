@@ -48,7 +48,18 @@ the same values in the same order: bitwise the unstaged walk. The sweep
 count does not change — the staging is the band's own L2 — and the block
 arm of the threaded natural walk fuses its rows into the leaf phase (the
 row phase it ran afterwards, a re-read of the plane, is gone for that
-arm). The scratch plane and the staging are 64-B aligned (`VFFT_ZS_ALLOC`).
+arm). A finished row leaves by streaming stores; a row the walk will
+revisit (the strip arm, the unbanded walk: rows after the pass) leaves by
+a cached copy, so the row phase finds it in L2. The staging is 64-B
+aligned (`VFFT_ZS_ALLOC`).
+
+The leaf's form is a RACED plan parameter at T > 1 (built 2026-09-16, the
+raced-twin law): the serial walk is staged outright — staged wins every
+serial cell — and every threaded arm of a natural cell runs staged and
+strided ("block/str", "strips64/str"), the winner banked `nls=` beside
+`cmt`/`cmtt`/`mtarm`/`msw` and replayed at that T. At the 16 MB planes the
+strided block arm wins (the copy buys nothing where the stride's conflict
+is partial); at the 64 MB planes the staged arms win by 27-40%.
 
 ## Where
 
@@ -79,22 +90,43 @@ with the old path once the new one is proven. The four-step is untouched
 
 ## Measurement
 
-`il2d_mt_probe` with `VFFT_PROBE_NAT` at 2048x512, 512x2048, 1024x1024,
-2048x2048, 1024x4096, both thread counts, against the scrambled class on
-the same cells; then the 3D natural cells through `ilnd_probe`. Expected:
-the natural class within the leaf's own arithmetic of the scrambled class
-at every plane (the 3.4x gone); the shipped store's 2D natural rows re-race
-where their verdicts moved.
+`il2d_mt_probe` with `VFFT_PROBE_NAT`, cold-raced cells, quiet machine,
+2026-09-16, natural against scrambled on the same cell:
+
+```
+ plane       nat T=1   scr T=1   nat/scr   nat T=8   scr T=8   nat/scr   threaded verdict
+ 2048x512    2.97 ms   2.37 ms   1.25      0.63 ms   0.34 ms   1.85      block, strided
+ 512x2048    2.81      2.32      1.21      0.52      0.34      1.53      block, strided
+ 1024x1024   2.92      2.55      1.15      0.71      0.34      2.09      strips64, staged
+ 2048x2048  15.9      14.0       1.13      7.09      4.96      1.43      block, staged
+ 1024x4096  15.7      13.9       1.13      5.96      6.73      0.89      block, staged
+```
+
+Before (the strided leaf, 2026-09-15): 1.3x serial at 16 MB, 3.4x serial
+and 2x threaded at 64 MB. Bitwise the strided leaf in both directions at
+every plane (the A/B switch, deleted once the strided path became the
+raced arm). The 3D tier still calls the pass without a staging (its own
+scratch, its own campaign).
+
+A probe caveat, not a verdict defect: timing a 64 MB natural cell in the
+SAME process right after its cold race read 40-53 ms serial on several
+runs, while the banked verdicts replayed in fresh processes run 15.2-15.6
+ms and every pinned variant of a "slow" verdict (8.8.8.4 with wl 64/256,
+rows in place or out) runs 15-17 ms. The in-process reading after a race
+is the artifact (the race's plane churn), and nothing timed that way is
+quoted; the shipped store's rows stand.
 
 ## Checklist
 
-- [ ] 1. This design.
-- [ ] 2. The staging: allocation, the four leaf helpers, the three passes.
-- [ ] 3. The walks: serial banded (rows fused in the staging), unbanded,
-      the threaded block arm (rows fused, row phase dropped) and strip arm.
-- [ ] 4. Bitwise A/B against the scattered leaf at every probed plane,
-      both directions, both thread counts; the tier's gates; the 3D probes.
-- [ ] 5. Measure; delete the old path and the switch; re-race the shipped
-      store's affected 2D natural rows; records (`v1_0_results.md` 2D and
-      3D sections in place, `il2d_large_plane_design.md` §2's finding,
-      memory).
+- [x] 1. This design.
+- [x] 2. The staging: allocation, the four leaf helpers, the three passes.
+- [x] 3. The walks: serial banded (rows fused in the staging), unbanded,
+      the threaded block arm (rows fused, row phase dropped) and strip arm;
+      the leaf's form raced per threaded arm (`nls=`).
+- [x] 4. Bitwise A/B against the scattered leaf at every probed plane,
+      both directions, both thread counts; the real tier's gate and the
+      four-step gate (the 3D tier's call is unchanged).
+- [x] 5. Measure; the switch deleted; the shipped store's 2D natural rows
+      at 4 MB and above dropped and the five probed planes re-raced into it
+      (the 64 MB verdicts replay at 15.2-15.6 ms serial in fresh processes);
+      records.
