@@ -152,9 +152,7 @@ ARGSTYLE = {
     "vfft_natural_front_gate": ("flag", False),
     "nat_bankloss_gate": ("flag", False),      # cold: the banked-loss law races on pass 1 by design
     "vfft_tcbatch_gate":       ("flag", True),
-    "zturn_wisdom_width_gate": ("flag", True),
     # wants a dir containing oop_wisdom.txt -> needs real data, but a COPY
-    "zturn_tcut_gate":         ("flag", True),
 
     "il2d_m1_gate":            ("bare", True),
     "il2d_real_gate":          ("bare", True),
@@ -167,7 +165,7 @@ ARGSTYLE = {
     # decode real wisdom -> seeded copy
     "sp_ccol_decode_gate":     ("bare", True),
     "zr2c_fd_gate":            ("bare", True),
-    "pool_preserve_gate":      ("bare", True),   # SEEDED: the OOP natural race needs a banked K=1 cascade cell to replay into zct
+    "pool_preserve_gate":      ("bare", True),   # SEEDED: the OOP natural race replays banked K=1 cells
     "natorder_scratch_gate":   ("bare", True),   # SEEDED: must REPLAY mode=pcyc (cycle reorder is the scratch-using path)
 }
 
@@ -178,7 +176,6 @@ TEXTUAL = {"sp_ccol_decode_gate"}       # #includes vfft.c; must NOT add --vfft
 BUDGET_OVERRIDE = {
     "k1_pow2_gate":            900,    # cold races at 6 pow2 cells x 2 order classes x (T=1 + T=8)
     "vfft_natural_front_gate": 1800,   # cold races at 5 N x 4 passes + reload: 12-18 min on the i9
-    "zturn_tcut_gate":         900,    # 4 cells x (arms + naive-DFT reference per tiled arm): 576 s measured uncapped on a store that already serves its cells (2026-09-02); the time is the correctness work, not recalibration
     "odd_partner_cells_gate":  900,    # 20 cells x (correctness + A/B build pair) and wisdom_write=0: it cannot seed itself, so it recalibrates every run (464 s measured uncapped, 2026-09-02)
 }
 

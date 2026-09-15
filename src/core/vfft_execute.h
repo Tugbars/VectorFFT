@@ -94,29 +94,7 @@ static void _tc_mt_tramp(void *v)
  * NOT come with them -- both are also called from the CREATE side
  * (c2c_ip_create.h measures with _exec_c2c_interleaved at plan time), so
  * they must stay above this header's include point. */
-/* K=1 SCRAMBLED cascade: the single dispatch consumer of h->zroute, both directions.
- * Invariant and route axis are documented at the zroute field. */
-static void _exec_zcascade(struct vfft_plan_s *h, vfft_dir_t dir,
-                           const double *sre, double *dre)
-{
-    if (h->zroute)
-    {
-        if (h->zt_mt && h->nthreads > 1 &&
-            _zt_execute_mt(h, dir, sre, dre, h->nthreads))
-            return;
-        if (dir == VFFT_FORWARD)
-            vfft_zturn2_execute_fwd(h->zturn, sre, dre);
-        else
-            vfft_zturn2_execute_bwd(h->zturn, sre, dre);
-    }
-    else
-    {
-        if (dir == VFFT_FORWARD)
-            vfft_zsplit_execute_fwd(h->zsplit, sre, dre);
-        else
-            vfft_zsplit_execute_bwd(h->zsplit, sre, dre);
-    }
-}
+
 
 /* K=1 engine, SPLIT-plane side (natural order both directions; split bwd =
  * the pointer-swap identity on the forward route). Extracted verbatim from
@@ -452,7 +430,6 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
     h->k1_exec = NULL;
     if (h->transform != VFFT_C2C || h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
     if (h->K != 1 || h->N2 > 0 || h->tcb || h->pq_inner || h->oddr_child || h->ilnd) return hp;
-    if (h->zsplit || h->zturn) return hp;
     if (h->placement == VFFT_OUTOFPLACE)
     {
         if (!h->k1_on) return hp;
@@ -990,14 +967,6 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         { /* interleaved z contract: the IL engines only (the convert executor
            * was deleted 2026-09-03). Padded plans can't get here:
            * batch+INTERLEAVED is rejected at create. */
-            if (h->zsplit || h->zturn)
-            { /* K=1 SCRAMBLED cascade, ALIASED in==out — P0a memcmp-proven
-               * both directions incl tiled/tfuse. The documented in-place
-               * call form allows dre==NULL; normalize to the aliased buffer
-               * (dre==sre is the only other accepted form). */
-                _exec_zcascade(h, dir, sre, dre ? dre : sre);
-                return;
-            }
             if (h->k1_mono_ilf)
             { /* MONO tier in place (2026-09-04): the alias-tolerant n1c solo,
                * one leg, z -> z legal by construction (no __restrict__). */
@@ -1064,15 +1033,6 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     {
         if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
         { /* z -> z, by the committed axis (signature already validated). */
-            if (h->zsplit || h->zturn)
-            { /* K=1 SCRAMBLED: the cascade (legacy zsplit or ZTURN-S).
-               * fwd: natural -> the route's scrambled comb; bwd consumes
-               * the SAME route's comb -> N*natural (matched-permutation
-               * roundtrip). BOTH directions go through the one route
-               * dispatcher — see _exec_zcascade. */
-                _exec_zcascade(h, dir, sre, dre);
-                return;
-            }
             if (h->k1_on)
             { /* K=1 engine (§13), IL routes; natural order both directions. */
                 int fwd = (dir == VFFT_FORWARD);
@@ -1364,8 +1324,6 @@ void vfft_destroy(vfft_plan h)
         vfft_proto_plan_destroy(h->cplan);
     if (h->oplan)
         vfft_oop_plan_destroy(h->oplan);
-    if (h->zsplit)
-        vfft_zsplit_destroy(h->zsplit);
     if (h->tcb)
         vfft_destroy(h->tcb); /* transform-contiguous wrapper owns its K=1 plan */
     if (h->tcbw)
@@ -1374,8 +1332,6 @@ void vfft_destroy(vfft_plan h)
             vfft_destroy(h->tcbw[t]);
         free(h->tcbw);
     }
-    if (h->zturn)
-        vfft_zturn2_destroy(h->zturn);
     vfft_il2p_destroy(h->k1il2p);
     vfft_il3p_destroy(h->k1il3p);
     vfft_ilprime_destroy(h->k1ilpr);

@@ -368,10 +368,26 @@ not exist are no longer candidates and ZTURN-T enumerates first.
 7. **ZTURN-T's threaded arm** (owner, 2026-09-15: "we will make zturn-t
    threaded too") — its own design doc; the cascade's `zt_mt` sectioned walk
    is the last cell shape it serves in either band.
-8. **Delete the cascade whole** — the inventory above: runtime, doors,
-   route id, wisdom tokens, calibrators, gates, corpus rows and every
-   codelet only it used — in one change (owner, 2026-09-15: "we need a clean
-   library, not a piled-up history of everything we developed before").
+8. **Delete the cascade whole — DONE 2026-09-15** (owner: "you can start
+   deleting the old cascade"; the order in 6-7 was set aside for it). Gone:
+   `zturn.h`, `zsplit.h`, `zturn_mt.h`, `cascade_calibrate.h`,
+   `oop_width_gate.h`; every door arm, replay, race, execute dispatch,
+   plan field (`zsplit`, `zroute`, `zturn`, `zt_mt`) and fingerprint token;
+   the planner's cascade route (build, exec, joint metric, bin map, chain
+   pusher, odd-mid enumerator, banker, top-K diversity); the wisdom entry's
+   cascade fields, the kind-4 reader/writer/migration and the `zt_*` tokens
+   and env laws; the public `vfft_zt_mt_passes`; the benches and gates that
+   were the cascade's; 64 codelets and their corpus rows (the boundary
+   corpus is 54/54); `il_registry_avx2.h` regenerated. The house 64-B
+   allocator `VFFT_ZS_ALLOC/FREE` moved to `support/zalloc.h`. The full
+   gate sweep on the cascade-free tree: 26 of 26 pass. Kept on
+   purpose: the retired enum slots `VFFT_K1_IL_CASCADE`,
+   `VFFT_OOP_KIND_ZSPLIT`, `VFFT_NAT_ZCASC` and the `zcasc` mode name
+   (persisted numbering; a legacy kind-4 line is skipped), the wisdom
+   selftest's opaque token fixtures, and the generator's dead OCaml for the
+   deleted kinds (`cascade_z.ml` emitters, `codelet.ml` constructors,
+   `gen_main.ml` flags) — the last is the one cleanup left. The threading
+   method is recorded in `cascade_mt_method.md` for ZTURN-T's MT arm.
 
 ## Rulings (owner, 2026-09-15)
 

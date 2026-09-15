@@ -113,62 +113,6 @@ typedef struct {
      * tolerant of the short-lived pre-cc_vars form (an ns float in this
      * position is recognized by its '.'), so no banked file migrates. */
     int    cc_vars;
-    /* kind 4, tcut WIDTH axis (2026-08-02). OPTIONAL trailing pair AFTER
-     * "zs_route zt_t2q":
-     *   N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q [zt_tw zt_l1]]
-     *
-     * 🔴 zt_tw == 0 MEANS UNTILED, and that is the whole back-compat story:
-     * every line banked before this axis existed parses with zt_tw = 0 and
-     * therefore replays as exactly today's untiled driver. There is no
-     * sentinel to forget.
-     *
-     * zt_tw = tile width in COMPLEX POINTS (not bytes, not a cut index — the
-     * width is the input and the cut is derived from it, see zturn.h).
-     *
-     * 🔴 zt_l1 = the L1 DATA CACHE SIZE IN BYTES the width was tuned against,
-     * and it is not decoration. This is the first CACHE-OCCUPANCY quantity the
-     * library banks. A chain or a radix is a property of the transform and
-     * ports anywhere; a width is a property of one machine's L1, and on the
-     * wrong machine it fails as a mild slowdown rather than an error — the
-     * worst thing to inherit silently. Replay compares it
-     * (vfft_cpu_l1d_matches) and falls back to UNTILED on a mismatch rather
-     * than using a width tuned for a cache that isn't there. Relevant today:
-     * this CPU is hybrid, P-core L1d 48 KB vs E-core 32 KB. */
-    int    zt_tw;
-    int    zt_l1;
-    /* kind 4: the cascade MT verdict (serial vs threaded, _zt_mt_race) with
-     * its validity condition — the thread count it was raced at (the
-     * 'cores sharing one transform' banking class: bank per-T, re-race on a
-     * T mismatch; 2026-09-02). zt_mt_t == 0 = never raced/banked. */
-    int    zt_mt_t;
-    int    zt_mt;
-    /* the IN-PLACE caller's own pair: aliased z->z arms, its own T */
-    int    zt_mt_ip_t;
-    int    zt_mt_ip;
-    /* kind 4 (ZSPLIT / K=1 SCRAMBLED cascade): measured fwd terminator pick,
-     * 0 = sterm (single-quad), 1 = sterm2 (2-quad unroll-and-jam). Line:
-     *   N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q]
-     * The pick is placement-order-sensitive (§4.9993), so it is measured on
-     * the installed binary by the create-time race, never hand-set.
-     *
-     * ROUTE AXIS (Phase 5 tranche 2, cascade_load_path_restructure §6.4) —
-     * APPEND-style extension AFTER ns, so every pre-route banked line parses
-     * unchanged as route 0 = legacy zsplit (ns was already the last, optional
-     * token; the writer emits the trailing pair only for route!=0, keeping
-     * legacy lines byte-identical):
-     *   zs_route: 0 = legacy zsplit cascade, 1 = ZTURN-S (zturn.h).
-     *   zt_t2q:   zturn fwd terminator pick, 0 = stf, 1 = stf2 (the stf/stf2
-     *             analog of zs_t2q; measured by the same create race).
-     * A route line's ns is the route race's JOINT fwd+bwd median (the route
-     * verdict is joint by cutover atomicity); a legacy line's ns stays the
-     * fwd-only t2q-race median (informational either way). */
-    int    zs_t2q;
-    int    zs_route, zt_t2q;
-    /* the zturn terminator FORMS (2026-09-07): 0 = the packed squaring-tree
-     * terminators, 1 = the loaded-stream twins (stfl / stfnl); zt_tf = the
-     * SCRAMBLED class's, zt_ntf = the NATURAL class's — raced together with
-     * t2q on the recipe, emitted only when 1 (older lines stay byte-identical). */
-    int    zt_tf, zt_ntf;
     int    role;     /* VW2_ROLE_COMP when the entry is a component RECIPE (set by the
                       * role bank helper); the sub-2048 floor applies to verdicts only */
     /* kind 5 (ZR2C / K=1 INTERLEAVED real composite): packed child-route
@@ -261,10 +205,7 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
              * caller transforms". Legacy lines carry 1 and stay readable. */
             if (ok && e->K != 1 && e->K != 4 && e->K != 8) ok = 0;
         } else if (e->kind == VFFT_OOP_KIND_ZSPLIT) {
-            /* kind 4 = K=1 SCRAMBLED cascade: zs_t2q cc_chain */
-            tok = strtok(NULL, " \t\n\r"); if (tok) e->zs_t2q = atoi(tok); else ok = 0;
-            tok = strtok(NULL, " \t\n\r"); if (tok) e->cc_chain = atoi(tok); else ok = 0;
-            if (ok && e->K != 1) ok = 0;
+            ok = 0;   /* kind 4 = the deleted cascade's cell (2026-09-15): a legacy line is skipped */
         } else if (e->kind == VFFT_OOP_KIND_ZR2C) {
             /* kind 5 = K=1 zr2c composite: one packed token. atoi accepts a
              * "1234.0" survivor of a stale-writer strip cycle (it stops at
@@ -282,28 +223,6 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
             tok = strtok(NULL, " \t\n\r");
             e->il_kv = tok ? atoi(tok) : 0;
             e->il_kv_raced = tok != NULL;
-        }
-        /* kind-4 route axis: OPTIONAL trailing "zs_route zt_t2q" after ns.
-         * Old-format lines end at ns -> both stay 0 = legacy zsplit route
-         * with the stf pick — backward compatible by construction. */
-        if (e->kind == VFFT_OOP_KIND_ZSPLIT && tok) {
-            tok = strtok(NULL, " \t\n\r");
-            if (tok) {
-                e->zs_route = atoi(tok);
-                tok = strtok(NULL, " \t\n\r");
-                e->zt_t2q = tok ? atoi(tok) : 0;
-                /* tcut width axis: OPTIONAL pair after zt_t2q. Absent -> both
-                 * stay 0 -> zt_tw == 0 -> UNTILED, which is what every line
-                 * banked before this axis existed must keep meaning. */
-                if (tok) {
-                    tok = strtok(NULL, " \t\n\r");
-                    if (tok) {
-                        e->zt_tw = atoi(tok);
-                        tok = strtok(NULL, " \t\n\r");
-                        e->zt_l1 = tok ? atoi(tok) : 0;
-                    }
-                }
-            }
         }
         w->count++;
     }

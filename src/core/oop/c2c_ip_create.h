@@ -51,9 +51,6 @@ typedef struct
 {
     struct vfft_plan_s *h;
     int oop;                    /* 1: vfft_execute(h, FWD, r0 -> rz) */
-    vfft_zturn2_plan_t *zt;     /* cascade challenger, route by zroute */
-    vfft_zsplit_plan_t *zs;
-    int zroute;
     vfft_il2p_plan_t *il2;      /* IL challenger: first non-NULL serves */
     vfft_il3p_plan_t *il3;
     vfft_ilprime_plan_t *ilp;
@@ -75,14 +72,7 @@ static void _c2c_race_chal(void *v)
 {
     _c2c_race_ctx_t *c = (_c2c_race_ctx_t *)v;
     const double *in = c->oop ? c->r0 : c->rz;
-    if (c->zt || c->zs)
-    {
-        if (c->zroute)
-            vfft_zturn2_execute_fwd(c->zt, in, c->rz);
-        else
-            vfft_zsplit_execute_fwd(c->zs, in, c->rz);
-    }
-    else if (c->il2)
+    if (c->il2)
         vfft_il2p_execute_fwd(c->il2, in, c->rz);
     else if (c->il3)
         vfft_il3p_execute_fwd(c->il3, in, c->rz);
@@ -149,7 +139,7 @@ static void _bank_ipmode_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     nn.nf = 1;                 /* the dummy chain: mode=ilp emits no recipe,
                                 * mode=zcasc emits the ref= signpost */
     nn.factors[0] = N;
-    nn.ref_comp = _zcasc_ref_is_comp(W, N, mode); /* the recipe row that SERVED */
+    nn.ref_comp = 0;   /* no cascade recipe rows since 2026-09-15 */
     nn.ref_ilp = _ilp_ref_of(W, N, mode, cfg->order == VFFT_ORDER_SCRAMBLED);   /* the row that SERVED */
     if (_ip_order_is_nat(cfg, N))
         vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0, _vw2_lay_of(cfg));
@@ -175,7 +165,6 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     vfft_ztt_plan_t *ztt = NULL;            /* ZTURN-T (2026-09-09) */
     vfft_oop11_fn mono_f = 0, mono_b = 0;   /* the alias-tolerant solo (MONO verdict) */
     vfft_ilprime_plan_t *ilp = NULL;
-    vfft_zturn2_plan_t *zt = NULL;
     int have_k1 = 0, mode = VFFT_NAT_UNSET, raced_row = 0;
     (void)reg;
     if (K > 1)
@@ -221,7 +210,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
      * ord=scr K=1 row, whose writer is the PLAIN ZTURN-T schedule
      * (ztt_scrambled_design.md: every stage in place, no plane — the class's
      * measured strength is exactly this cell). */
-    if ((vfft_ztt_band(N) || vfft_ztt_odd_band(N)) && mode == VFFT_NAT_ZCASC)   /* both bands (2^a*odd since 2026-09-14) */
+    if (mode == VFFT_NAT_ZCASC)   /* the cascade is deleted (2026-09-15): a stale row is not a verdict */
     {
         mode = VFFT_NAT_UNSET;
         raced_row = 0;
@@ -229,7 +218,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
 
     /* 2. the K=1 IL engine candidate: the planned row's route — MONO (the
      *    alias-tolerant solo, 2026-09-04), pair, chain3, else prime */
-    if (!getenv("VFFT_NO_NAT_ILP") && (mode != VFFT_NAT_ZCASC || N < 2048))
+    if (!getenv("VFFT_NO_NAT_ILP"))
     {
         _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt);
         if (ztt) vfft_ztt_bind(ztt, 1);   /* in place: the plane drivers */
@@ -240,93 +229,16 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         have_k1 = (il2 || il3 || ifd || ztt || mono_f || ilp) ? 1 : 0;
     }
 
-    /* 3. the cascade candidate at N >= 2048 (natord under NATURAL) */
-    if (N >= _vfft_zcasc_nat_min_n() && !vfft_ztt_band(N) && !vfft_ztt_odd_band(N) &&   /* no cascade arm in either ZTURN-T band, in any order class (2026-09-14) */
-        !getenv("VFFT_NO_K1Z_IP") &&
-        !getenv("VFFT_NO_NAT_ZCASC") && W && !W->vw2_off_stride &&
-        (mode != VFFT_NAT_ILP || !have_k1))
-    {
-        vfft_config_t rcfg = *cfg;
-        vfft_zsplit_plan_t *zs = NULL;
-        int zr = 0;
-        rcfg.recalibrate = 0;
-        if (_k1z_wisdom_replay_nat(&rcfg, W, N, &zs, &zt, &zr) ||
-            _k1z_race_and_bank_nat(&rcfg, W, N, /*ip=*/1, &zs, &zt, &zr))
-        {
-            if (zs)
-                vfft_zsplit_destroy(zs);
-            if (zt && nat && !vfft_zturn2_set_natord(zt, 1))
-            {
-                vfft_zturn2_destroy(zt);
-                zt = NULL;
-            }
-        }
-    }
-
     /* 4. replay a banked verdict when its engine built */
     if (mode == VFFT_NAT_ILP && !have_k1) mode = VFFT_NAT_UNSET;
-    if (mode == VFFT_NAT_ZCASC && !zt)  mode = VFFT_NAT_UNSET;
-    if (mode == VFFT_NAT_UNSET)
+    if (mode == VFFT_NAT_UNSET && have_k1)
     {
-        if (have_k1 && zt)
-        {
-            /* the IL-vs-IL race: this cell's K=1 engine vs the cascade, both
-             * aliased z -> z on scratch, the tier's protocol (5 rounds,
-             * alternated, median, re-seeded per burst) */
-            /* 64-B aligned like the planner's and the bench's buffers (malloc's 16-B
-             * alignment split ZTURN-T's stores across lines; 2026-09-09). Owner's law:
-             * aligned, always. */
-            double *rz = (double *)VFFT_ZS_ALLOC(((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
-            double *r0 = (double *)VFFT_ZS_ALLOC(((2 * (size_t)N * sizeof(double)) + 63u) & ~(size_t)63u);
-            if (rz && r0)
-            {
-                const int reps = N <= 256 ? 200 : (N <= 1024 ? 80 : 32);
-                double ns[2]; /* [0] K=1 engine, [1] cascade */
-                _c2c_race_ctx_t ca = { h, 0, NULL, NULL, 0, il2, il3, ilp, ifd, ztt, mono_f, rz, r0,
-                                       2 * (size_t)N * sizeof(double) };
-                _c2c_race_ctx_t cb = { h, 0, zt, NULL, 1, NULL, NULL, NULL, NULL, NULL, 0, rz, r0,
-                                       2 * (size_t)N * sizeof(double) };
-                const vfft_race_arm_t arms[2] = {
-                    { "ilp", _c2c_race_chal, &ca }, { "zcasc", _c2c_race_chal, &cb } };
-                const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MEDIAN, 1, 0, _c2c_race_reseed, &ca };
-                for (long i = 0; i < 2L * N; i++)
-                    r0[i] = (double)rand() / RAND_MAX - 0.5;
-                _vfft_pool_arm(h->nthreads);
-                vfft_race_run(&proto, arms, 2, ns);
-                mode = (ns[1] < ns[0]) ? VFFT_NAT_ZCASC : VFFT_NAT_ILP;
-                if (getenv("VFFT_NAT_LOG"))
-                    fprintf(stderr, "[ipil] N=%d race: ilp=%.0fns zcasc=%.0fns -> %s\n",
-                            N, ns[0], ns[1], mode == VFFT_NAT_ZCASC ? "ZCASC" : "ILP");
-                _bank_ipmode_1d(W, cfg, N, mode, mode == VFFT_NAT_ZCASC ? ns[1] : ns[0]);
-            }
-            VFFT_ZS_FREE(rz);
-            VFFT_ZS_FREE(r0);
-            if (mode == VFFT_NAT_UNSET) mode = have_k1 ? VFFT_NAT_ILP : VFFT_NAT_ZCASC;
-        }
-        else if (have_k1)
-        {
-            mode = VFFT_NAT_ILP;
-            if (!raced_row) _bank_ipmode_1d(W, cfg, N, mode, 0.0);
-        }
-        else if (zt)
-        {
-            mode = VFFT_NAT_ZCASC;
-            if (!raced_row) _bank_ipmode_1d(W, cfg, N, mode, 0.0);
-        }
+        mode = VFFT_NAT_ILP;
+        if (!raced_row) _bank_ipmode_1d(W, cfg, N, mode, 0.0);
     }
 
     /* 5. attach the verdict; the loser dies here */
-    if (mode == VFFT_NAT_ZCASC && zt)
-    {
-        h->zturn = zt;
-        h->zroute = 1;
-        zt = NULL;
-        h->nat_mode = nat ? VFFT_NAT_ZCASC : 0;
-        if (getenv("VFFT_NAT_LOG"))
-            fprintf(stderr, "[ipil] N=%d: %s ZCASC%s\n", N,
-                    raced_row ? "replay" : "attach", nat ? " (natord)" : "");
-    }
-    else if (mode == VFFT_NAT_ILP && have_k1)
+    if (mode == VFFT_NAT_ILP && have_k1)
     {
         h->k1il2p = il2;
         h->k1il3p = il3;
@@ -348,14 +260,13 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     if (ilp) vfft_ilprime_destroy(ilp);
     if (ifd) vfft_ilfd_destroy(ifd);
     if (ztt) vfft_ztt_destroy(ztt);
-    if (zt)  vfft_zturn2_destroy(zt);
-    if (!h->zturn && !h->k1il2p && !h->k1il3p && !h->k1ilpr && !h->k1ilfd && !h->k1ztt && !h->k1_mono_ilf)
+    if (!h->k1il2p && !h->k1il3p && !h->k1ilpr && !h->k1ilfd && !h->k1ztt && !h->k1_mono_ilf)
     {
         _vfft_warn("vfft_create: in-place C2C N=%d with layout=INTERLEAVED has no "
                    "interleaved engine yet (no mono/pair/chain3/prime kernel serves "
                    "this N%s) — the IL kernel set does not cover it; nothing to fall "
                    "back to by design",
-                   N, N >= 2048 ? ", and no cascade recipe built" : "");
+                   N, "");
         free(h);
         return NULL;
     }
@@ -373,13 +284,6 @@ static vfft_plan _c2c_ip_finish(struct vfft_plan_s *h,
      * K-split, so single-threaded creates skip the check and its cost. */
     if (h->cplan)
         h->mt_unsafe = (h->nthreads > 1) ? !_c2c_mt_safe(h->cplan, h->exec_fwd) : 0;
-    /* the cascade MT verdict (C1.9) for the IN-PLACE cascade too (owner,
-     * 2026-09-02): until now only the OOP exit asked "serial or threaded?",
-     * so an in-place K=1 cascade at T>1 ran on one core. Same replay-or-
-     * race, aliased arms, its own per-T tokens; natord cascades cannot
-     * engage and bank the "no" implicitly. */
-    if (h->zroute && h->zturn && h->K == 1 && h->nthreads > 1)
-        _zt_mt_replay_or_race(h, W, cfg, N);
     return h;
 }
 

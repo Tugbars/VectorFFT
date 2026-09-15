@@ -762,8 +762,10 @@ MKL: MKL's DFTI serves natural order, a different contract.
 
 ZTURN-T serves every pow2 cell to 262144 since 2026-09-09 (the two-level
 create above the quarter-wave's octave) and the 2^a·odd band since
-2026-09-15 (the section above). Not yet served: T > 1 (the cascade's
-threaded arm, until ZTURN-T's own). The natural door's race
+2026-09-15 (the section above). The cascade itself was deleted from the
+library on 2026-09-15; T > 1 at these cells has no engine until ZTURN-T's
+own threaded arm (its method: `docs/design/cascade_mt_method.md`). The
+natural door's race
 buffers were made 64-B aligned on 2026-09-09; before that its 16-B `malloc`
 buffers split ZTURN-T's stores across lines and banked the cascade at 4096
 against this verdict.

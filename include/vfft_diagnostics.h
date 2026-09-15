@@ -69,12 +69,6 @@ extern "C"
    * every verdict was decided above the clock's tick. */
   long vfft_ilfd_race_short_samples(void);
 
-  /* And for the K=1 1D cascade (zturn): threaded cascade walks actually
-   * run. The verdict is raced per cell at create (VFFT_ZT_NO_MT=1 kills,
-   * =0 forces — the A/B hook); zero here after an execute means the
-   * serial walk served. */
-  long vfft_zt_mt_passes(void);
-
   /* And for the 2D plane queue (dims=2, howmany>1): queued (plane-per-
    * worker) executes actually run. Loop-vs-queue is raced at create
    * (VFFT_PQ_NO_MT=1 kills, =0 forces); zero after an execute means the
