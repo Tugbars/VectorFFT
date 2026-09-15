@@ -729,18 +729,18 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
         pace(cool_ms);
         if (g_k1noop_mt) vfft_set_num_threads(g_mt);
         {
-            const long e0 = vfft_ilfd_mt_passes();
+            const long e0 = vfft_ilfd_mt_passes() + vfft_ztt_mt_passes();
             vns = k1z_time_vfft(h, z0, S, total);
-            eng = vfft_ilfd_mt_passes() - e0;
+            eng = vfft_ilfd_mt_passes() + vfft_ztt_mt_passes() - e0;
         }
     }
     else
     { /* vfft first */
         if (g_k1noop_mt) vfft_set_num_threads(g_mt);
         {
-            const long e0 = vfft_ilfd_mt_passes();
+            const long e0 = vfft_ilfd_mt_passes() + vfft_ztt_mt_passes();
             vns = k1z_time_vfft(h, z0, S, total);
-            eng = vfft_ilfd_mt_passes() - e0;
+            eng = vfft_ilfd_mt_passes() + vfft_ztt_mt_passes() - e0;
         }
         cachebust();
         pace(cool_ms);
