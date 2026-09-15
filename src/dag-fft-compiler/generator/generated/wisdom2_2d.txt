@@ -97,3 +97,12 @@
 @cell t=c2c n=1024x4096 q=1 ord=scr place=oop lay=il | chain=8.4.4.8 wl=128 tf=1 ro=0 cmt=1 cmtt=8 | ran=1 ns=5118300.0 metric=fwd1 units=ns src=race date=2026-09-15
 @cell t=c2c n=2048x2048 q=1 ord=scr place=oop lay=il | chain=8.8.32 wl=32 tf=1 ro=0 cmt=1 cmtt=8 forms=-.-.b84 | ran=1 ns=3157300.0 metric=fwd1 units=ns src=race date=2026-09-15
 @cell t=c2c n=4096x1024 q=1 ord=scr place=oop lay=il | chain=16.4.8.8 wl=128 tf=1 ro=0 cmt=1 cmtt=8 | ran=1 ns=3483000.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=256x2048 q=1 ord=nat place=oop lay=il | chain=8.8.4 wl=32 tf=1 ro=0 cmt=1 cmtt=8 mtarm=1 msw=128 | ran=1 ns=170900.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=512x1024 q=1 ord=nat place=oop lay=il | chain=8.8.8 wl=16 tf=1 ro=0 cmt=1 cmtt=8 mtarm=1 msw=64 | ran=1 ns=201000.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=1024x512 q=1 ord=nat place=oop lay=il | chain=4.8.8.4 wl=64 tf=1 ro=0 cmt=1 cmtt=8 mtarm=1 msw=64 | ran=1 ns=315400.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=2048x256 q=1 ord=nat place=oop lay=il | chain=8.8.8.4 wl=256 tf=1 ro=0 cmt=1 cmtt=8 mtarm=1 msw=16 | ran=1 ns=341500.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=256x4096 q=1 ord=nat place=oop lay=il | chain=8.4.8 wl=64 tf=1 ro=0 cmt=1 cmtt=8 mtarm=1 msw=0 | ran=1 ns=392800.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=512x2048 q=1 ord=nat place=oop lay=il | chain=8.8.8 wl=64 tf=1 ro=0 cmt=1 cmtt=8 mtarm=1 msw=0 | ran=1 ns=407400.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=1024x1024 q=1 ord=nat place=oop lay=il | chain=8.4.8.4 wl=16 tf=1 ro=0 cmt=1 cmtt=8 mtarm=1 msw=32 | ran=1 ns=637800.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=2048x512 q=1 ord=nat place=oop lay=il | chain=8.8.8.4 wl=16 tf=1 ro=0 cmt=1 cmtt=8 mtarm=1 msw=0 | ran=1 ns=695100.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=4096x256 q=1 ord=nat place=oop lay=il | chain=8.64.8 wl=8 tf=1 ro=1 cmt=1 cmtt=8 mtarm=0 msw=0 | ran=1 ns=845600.0 metric=fwd1 units=ns src=race date=2026-09-15
