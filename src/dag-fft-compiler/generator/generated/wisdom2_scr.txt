@@ -2,11 +2,13 @@
 @legend signpost: a verdict references its component recipe (ref=), never copies it
 @legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
 @legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
-@legend lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = pre-1.2 record, served to concrete-lay requests only as the fallback tier
+@legend lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = a pre-1.2 record OR a shared-interior recipe (one engine serves both layouts - stamping a layout from the other door's timing would manufacture fake cells), served to concrete-lay requests as the fallback tier
+@legend eng-on-nat: on ord=nat rows eng= names the WINNING family (zturn|k1|stride) since 2026-09-02; earlier rows carry eng=stride regardless (vintage, still served)
 @legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
 @legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
+@meta host=intel-f6m183 isa=avx2 l1d=49152
 @cell t=c2c n=1024 q=128 ord=scr place=ip | eng=stride chain=4.4.4.4.4 vars=flat.t1s.t1s.t1s.t1s dif=0 | ran=128 src=migrated from=spike_wisdom.txt:5
 @cell t=c2c n=8 q=4 ord=scr place=ip | eng=stride chain=8 vars=flat dif=0 | ran=4 ns=6.98 metric=fwd1 units=ns src=migrated from=spike_wisdom.txt:6
 @cell t=c2c n=16 q=4 ord=scr place=ip | eng=stride chain=16 vars=flat dif=0 | ran=4 ns=15.26 metric=fwd1 units=ns src=migrated from=spike_wisdom.txt:7
@@ -288,6 +290,10 @@
 @cell t=c2c n=131 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=131,q=1,ord=scr,place=ip,role=comp,lay=il) dif=0 | ran=1 ns=383.50 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=251 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=251,q=1,ord=scr,place=ip,role=comp,lay=il) dif=0 | ran=1 ns=984.00 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=1024 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=1024,q=1,ord=nat,place=oop,role=comp) dif=0 | ran=1 ns=1096.25 metric=fwd1 units=ns src=race date=2026-09-02
-
 @cell t=c2c n=100 q=1 ord=scr place=ip | eng=stride chain=5.20 vars=flat.t1s dif=0 | ran=1 ns=339.59 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=50 q=1 ord=scr place=ip | eng=stride chain=10.5 vars=flat.t1s dif=0 | ran=1 ns=176.19 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=262144 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=262144,q=1,ord=scr,place=oop,role=comp,lay=il) dif=0 | ran=1 src=race date=2026-09-15
+@cell t=c2c n=524288 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=524288,q=1,ord=scr,place=oop,role=comp,lay=il) dif=0 | ran=1 src=race date=2026-09-15
+@cell t=c2c n=1048576 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=1048576,q=1,ord=scr,place=oop,role=comp,lay=il) dif=0 | ran=1 src=race date=2026-09-15
+@cell t=c2c n=2097152 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=2097152,q=1,ord=scr,place=oop,role=comp,lay=il) dif=0 | ran=1 src=race date=2026-09-15
+@cell t=c2c n=4194304 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=4194304,q=1,ord=scr,place=oop,role=comp,lay=il) dif=0 | ran=1 src=race date=2026-09-15

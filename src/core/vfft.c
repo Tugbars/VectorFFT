@@ -238,6 +238,7 @@ static int _vfft_plan_threads(const vfft_config_t *cfg)
 }
 
 #include "vfft_internal.h"   /* the three private structs (migration step 15) */
+#include "oop/k1_fourstep.h"  /* the K=1 interleaved FOUR-STEP above ZTURN-T's ceiling (2026-09-15) */
 
 static void _own_batch_free(vfft_batch b); /* defined below; used by vfft_destroy */
 
@@ -1207,7 +1208,7 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
     if (g->placement == VFFT_INPLACE)
         /* in-place interleaved: k1il2p/k1il3p arms are engine-pure; the
          * else-arm is _exec_c2c_interleaved (pool-touching). */
-        return (g->k1il2p || g->k1il3p || g->k1ilfd || g->k1ztt) ? 1 : 0;
+        return (g->k1il2p || g->k1il3p || g->k1ilfd || g->k1ztt || g->k1fs) ? 1 : 0;
     if (!g->k1_on)
         return 0; /* OOP classic path: _oop_mt re-asserts + slabs the pool */
     switch (g->k1_il_route)
@@ -1226,6 +1227,8 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
         return g->k1ilfd != NULL;   /* engine-pure: own staging plane, both dirs */
     case VFFT_K1_IL_ZTT:
         return g->k1ztt != NULL;    /* engine-pure: one fused driver, own plane, both dirs */
+    case VFFT_K1_IL_FS:
+        return g->k1fs != NULL;     /* the four-step: its 2D child owns its scratch, both dirs */
     case VFFT_K1_IL_PRIME:
         return g->k1ilpr != NULL;
     default:
@@ -1410,6 +1413,13 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         for (s = 0; s < x->K; s++)
             if (x->R[s] != y->R[s] || x->msz[s] != y->msz[s] || x->gl[s] != y->gl[s])
                 return 0;
+    }
+    if (a->k1fs)
+    {   /* the four-step: the same split and order class (the child's own
+         * verdicts are the rank-2 cell's, banked, so equal here) */
+        const vfft_k1fs_plan_t *x = a->k1fs, *y = b->k1fs;
+        if (!y || x->N != y->N || x->N1 != y->N1 || x->N2 != y->N2 || x->scr != y->scr)
+            return 0;
     }
     if (a->k1ztt)
     {   /* ZTURN-T: the same chain, ORDER CLASS (natural or the plain schedule,

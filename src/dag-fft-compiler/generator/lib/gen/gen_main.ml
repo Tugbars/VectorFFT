@@ -159,39 +159,14 @@ let run (argv : string array) : unit =
   let z_pow_tw = ref false in
   let z_tile_ld = ref false in
   let z_pow_tree = ref false in
-  let z_split_kind = ref "" in
-  (* "s0s"|"ms"|"msz" -> block-split family *)
   let z_strided_st = ref false in
   let z_post_tw = ref false in
   let z_trans_st = ref false in
-  (* pipeline-hosted zsplit family (codelet_zsplit.ml; zil_pipeline_port.md).
-     P1 kinds: "ms" | "msb". Distinct from z_split_kind (legacy emitter)
-     so the two are A/B-able side by side until cutover. *)
+  (* the block-split stage kernels (cascade_z.ml): the ZTURN-T kinds and
+     il2p's msz mids; --zp-<kind>, N (positional) = the radix. *)
   let zp_kind = ref "" in
-  (* --zp-r0: ZTURN-S sectioned kinds (s0t/s0tb/stf/stfb/stf2) bake chain[0]
-     into their section addressing — a PLAN INPUT with no default.
-     0 = unset; codelet_zsplit validates (required for ZTURN-S kinds,
-     forbidden for the legacy zp kinds). *)
-  let zp_r0 = ref 0 in
-  (* --zp-sink: B1 store-sinking on the zsplit pipeline — interleave the
-     store edge into the SU-scheduled body (store each sink at its def;
-     the Emit_state.current_store_on_compute thesis). OPT-IN modifier:
-     without it every kind's regeneration stays BYTE-IDENTICAL to the
-     committed files; with it the fname gains an "sk" tag (the r0_tag
-     mechanism) so both variants link side by side. codelet_zsplit fails
-     loudly for kinds whose store edge is not sink-capable (stfb only). *)
-  let zp_sink = ref false in
-  (* --zp-sched <policy>: B2 memory-ops-as-scheduled-nodes on the zsplit
-     pipeline — emit through the combined load/arith/store node sequence
-     (codelet_zsplit.ZNode). Policies are PINNED in B2: "legacy"
-     byte-reproduces the committed placement, "afterdef" reproduces the
-     B1 --zp-sink shape (and reuses its "sk" fname tag); the placement
-     SEARCH is B3. "" = flag absent = the pre-B2 emission path, not even
-     entered. Policy strings are validated by codelet_zsplit (loud on
-     typos). *)
-  let zp_sched = ref "" in
   (* interleaved-complex (full-IL) family — codelet_cil.ml, §11. Distinct
-     from zp_kind/z_split_kind so all three emitters stay A/B-able. *)
+     from zp_kind so the two emitters stay A/B-able. *)
   let cil_kind = ref "" in
   (* --cil-split m.p : the blocked (2-pass) CT factorization. REQUIRED for a
      non-pow2 blocked emission — the emitter validates it but never invents
@@ -420,94 +395,12 @@ let run (argv : string array) : unit =
       z_pow_tw := true;
       z_pow_tree := true;
       z_tile_ld := true)
-    else if arg = "--z-s0s"
-    then (
-      z_native := true;
-      z_split_kind := "s0s")
-    else if arg = "--z-ms"
-    then (
-      z_native := true;
-      z_split_kind := "ms")
-    else if arg = "--z-msz"
-    then (
-      z_native := true;
-      z_split_kind := "msz")
-    else if arg = "--z-sterm"
-    then (
-      z_native := true;
-      z_split_kind := "sterm")
-    else if arg = "--z-sterm2"
-    then (
-      z_native := true;
-      z_split_kind := "sterm2")
-    else if arg = "--z-s0sb"
-    then (
-      z_native := true;
-      z_split_kind := "s0sb")
-    else if arg = "--z-msb"
-    then (
-      z_native := true;
-      z_split_kind := "msb")
-    else if arg = "--z-stermb"
-    then (
-      z_native := true;
-      z_split_kind := "stermb")
-    else if arg = "--z-msg"
-    then (
-      z_native := true;
-      z_split_kind := "msg")
-    else if arg = "--z-msgb"
-    then (
-      z_native := true;
-      z_split_kind := "msgb")
-    else if arg = "--zp-ms"
-    then zp_kind := "ms"
-    else if arg = "--zp-msb"
-    then zp_kind := "msb"
-    else if arg = "--zp-msg"
-    then zp_kind := "msg"
     else if arg = "--zp-msz"
     then zp_kind := "msz"
     else if arg = "--zp-mszb"
     then zp_kind := "mszb"
     else if arg = "--zp-mszt"
     then zp_kind := "mszt"
-    else if arg = "--zp-msgb"
-    then zp_kind := "msgb"
-    else if arg = "--zp-s0s"
-    then zp_kind := "s0s"
-    else if arg = "--zp-s0sb"
-    then zp_kind := "s0sb"
-    else if arg = "--zp-sterm"
-    then zp_kind := "sterm"
-    else if arg = "--zp-stermb"
-    then zp_kind := "stermb"
-    else if arg = "--zp-sterm2"
-    then zp_kind := "sterm2"
-    else if arg = "--zp-s0t"
-    then zp_kind := "s0t"
-    else if arg = "--zp-s0tb"
-    then zp_kind := "s0tb"
-    else if arg = "--zp-stf"
-    then zp_kind := "stf"
-    else if arg = "--zp-stfb"
-    then zp_kind := "stfb"
-    else if arg = "--zp-stf2"
-    then zp_kind := "stf2"
-    else if arg = "--zp-s0tu"
-    then zp_kind := "s0tu"
-    else if arg = "--zp-stfu"
-    then zp_kind := "stfu"
-    else if arg = "--zp-stf2u"
-    then zp_kind := "stf2u"
-    else if arg = "--zp-stfn"
-    then zp_kind := "stfn"
-    else if arg = "--zp-stfbn"
-    then zp_kind := "stfbn"
-    else if arg = "--zp-stfl"
-    then zp_kind := "stfl"
-    else if arg = "--zp-stfnl"
-    then zp_kind := "stfnl"
     else if arg = "--zp-t0tp"
     then zp_kind := "t0tp"
     else if arg = "--zp-t0tpb"
@@ -532,31 +425,6 @@ let run (argv : string array) : unit =
     then zp_kind := "tld"
     else if arg = "--zp-tldb"
     then zp_kind := "tldb"
-    else if arg = "--zp-dts"
-    then zp_kind := "dts"
-    else if arg = "--zp-dtsn"
-    then zp_kind := "dtsn"
-    else if arg = "--zp-dtt"
-    then zp_kind := "dtt"
-    else if arg = "--zp-msd"
-    then zp_kind := "msd"
-    else if arg = "--zp-dtso"
-    then zp_kind := "dtso"
-    else if arg = "--zp-r0" && !i + 1 < Array.length arr
-    then (
-      zp_r0 := int_of_string arr.(!i + 1);
-      incr i)
-    else if arg = "--zp-sink"
-    then zp_sink := true
-    else if arg = "--zp-sched" && !i + 1 < Array.length arr
-    then (
-      zp_sched := arr.(!i + 1);
-      incr i)
-    else if arg = "--zp-sched"
-    then
-      failwith
-        "gen_main: --zp-sched requires a policy argument (legacy | afterdef); a bare \
-         flag must not silently default to a placement"
     else if arg = "--cil-split" && !i + 1 < Array.length arr
     then (
       cil_split := arr.(!i + 1);
@@ -1342,18 +1210,6 @@ let run (argv : string array) : unit =
             --z-*/--k1-mono/--oop flag in the same invocation. They emit identical \
             symbol names; pass exactly one family per run."
            !zp_kind);
-    if !zp_sink && !zp_kind = ""
-    then
-      failwith
-        "gen_main: --zp-sink is a zsplit-pipeline modifier; without a --zp-* kind it \
-         would silently no-op (an A/B script would then time the UNSUNK kernel under the \
-         sunk label), so fail loudly instead.";
-    if !zp_sched <> "" && !zp_kind = ""
-    then
-      failwith
-        "gen_main: --zp-sched is a zsplit-pipeline modifier; without a --zp-* kind it \
-         would silently no-op (the --zp-sink precedent: an A/B script would then label \
-         the pre-B2 emission as the sequence path), so fail loudly instead.";
     if !cil_k1
     then (
       (* FUSED full-IL K=1: the whole N-point transform as ONE function,
@@ -1455,33 +1311,29 @@ let run (argv : string array) : unit =
            ~uarch)
     else if !zp_kind <> ""
     then
-      (* pipeline-hosted zsplit family: N (positional) = the radix. Goes
-         through Dft -> Pipeline.prepare_codelet -> Schedule.su_schedule ->
-         Emit_c rendering (zil_pipeline_port.md), unlike the legacy
-         codelet_zil raw-template branch below. *)
+      (* the block-split stage kernels (cascade_z.ml): N (positional) = the
+         radix. Goes through Dft -> Pipeline.prepare_codelet ->
+         Schedule.su_schedule -> Emit_c rendering (zil_pipeline_port.md). *)
       print_string
         (Cascade_z.emit_codelet
            ~body_only:false
            ~store_on_compute:!store_on_compute
            ~kind:!zp_kind
            ~radix:n
-           ~r0:(if !zp_r0 = 0 then None else Some !zp_r0)
-           ~sink_stores:!zp_sink
-           ~sched:(if !zp_sched = "" then None else Some !zp_sched)
            ~isa
            ~uarch)
     else if !z_native
     then
       (* RETIRED 2026-07-29. codelet_zil.ml was the self-contained emitter used
          to develop the IL family; every idea in it was re-hosted on the full
-         DAG pipeline as codelet_cil.ml (IL kinds) and codelet_zsplit.ml (the
-         cascade). It bypassed the shared machinery, so it had no AVX-512/EPYC
-         path and pass improvements never reached it.
+         DAG pipeline as codelet_cil.ml (IL kinds) and cascade_z.ml (the
+         block-split stage kernels). It bypassed the shared machinery, so it
+         had no AVX-512/EPYC path and pass improvements never reached it.
          Use --cil-n1 / --cil-n1t / --cil-t2 (codelet_cil.ml) or the --zp-*
-         cascade flags (codelet_zsplit.ml) instead. *)
+         stage-kernel flags (cascade_z.ml) instead. *)
       failwith
         "--z-* is RETIRED: codelet_zil.ml is gone. Use --cil-{n1,n1t,t2} \
-         (codelet_cil.ml) or --zp-* (codelet_zsplit.ml)."
+         (codelet_cil.ml) or --zp-* (cascade_z.ml)."
     else if !k1_mono
     then
       (* §12.4 item 3: the whole K=1 four-step as ONE emitted function

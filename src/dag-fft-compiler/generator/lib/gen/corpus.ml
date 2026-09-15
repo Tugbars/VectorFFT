@@ -94,9 +94,8 @@ let oop_base (isa : string) : string list =
    that is THIS item, never silent drift. *)
 let zil_boundary_cells : (string * string list) list =
   (* the ZTURN-T stage kernels (natural: t0tp/tmg/tlf/tlfi; plain: t0d/tmgd/tld/tldb;
-     the odd mids tmg/tmgb/tmgd at 3/5/7/9/15) and the msz/mszt odd mids of il2p. The
-     ZTURN-S cascade's families (s0s, s0t, msg, msd, dts, stf, stfn, stfl, sterm)
-     were deleted with the cascade on 2026-09-15. *)
+     the odd mids tmg/tmgb/tmgd at 3/5/7/9/15) and the msz/mszt odd mids of il2p —
+     every kind cascade_z.ml emits. *)
   [ ( "radix4_z_t0tp_avx2.c"
     , [ "4"; "--zp-t0tp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix4_z_t0tp_bwd_avx2.c"

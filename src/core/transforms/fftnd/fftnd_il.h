@@ -176,6 +176,12 @@ typedef struct vfft_ilnd_s {
     double *buf;                  /* one plane: the serial walker's buffer */
     double **bufw;                /* mt_t - 1 planes: the workers' buffers */
     int nbufw;
+    /* THE STRIP FORM (nf = 2, ilnd_natural_strip_design.md): axis 0 in
+     * cache-resident column strips, natural order out, no move pass */
+    int nf;                       /* the natural FORM: 1 cycle (the walks above), 2 strip */
+    int nsw;                      /* strip width in columns (the raced parameter) */
+    double **sscr;                /* nsscr strip scratches of N[0] * nsw complexes, one per worker (tid = slot) */
+    int nsscr;
 } vfft_ilnd_t;
 
 /* ── the per-plane structure (tid 0 = the primary, t > 0 = its clone),
@@ -196,7 +202,17 @@ static void _ilnd_plane_t(const vfft_ilnd_t *d, int tid, vfft_dir_t dir,
         struct vfft_plan_s *row = tid > 0 ? d->roww[tid - 1] : d->row;
         const size_t rn = (size_t)d->N[2];
         size_t r;
-        _il2d_col_exec(ax1, src, dst, rev);
+        if (ax1->nat && ax1->natperm && src != dst)
+            /* out of place one plane is dead -- forward the source (a vacated
+             * cycle position, consumed), backward the destination (being
+             * produced) -- so the natural axis-1 pass runs its pre-leaf stages
+             * THERE and natscr serves only the fixed points: one plane sweep
+             * fewer per plane, the same arithmetic (2026-09-15) */
+            _il2d_col_pass_nat(src, dst, ax1->N, rn, ax1->nst, ax1->R, ax1->L,
+                               rev ? ax1->b : ax1->f, rev ? ax1->tb : ax1->tf, rev,
+                               ax1->natperm, rev ? dst : (double *)src);
+        else
+            _il2d_col_exec(ax1, src, dst, rev);
         for (r = 0; r < (size_t)d->N[1]; r++)
             vfft_execute((vfft_plan)row, dir, dst + 2 * r * rn, NULL,
                          dst + 2 * r * rn, NULL);
@@ -233,6 +249,46 @@ static void _ilnd_nat_cycles(const vfft_ilnd_t *d, int tid, vfft_dir_t dir, doub
     }
 }
 
+/* ── the natural class's STRIP form (ilnd_natural_strip_design.md): axis 0
+ * over columns [k_lo, k_hi) of the virtual plane in strips of nsw columns,
+ * each strip through its worker's strip scratch: natural order out, in
+ * place by construction, no move pass. ────────────────────────────────── */
+static void _ilnd_nats_strips(const vfft_ilnd_t *d, int tid, vfft_dir_t dir,
+                              const double *src, double *dst, size_t k_lo, size_t k_hi)
+{
+    const vfft_ilcol_t *c = &d->ax0;
+    const int rev = (dir == VFFT_BACKWARD);
+    const size_t rn = d->plane, sw = (size_t)d->nsw;
+    double *scr = d->sscr[tid];
+    size_t k;
+    for (k = k_lo; k < k_hi; k += sw)
+    {
+        const size_t w = (k_hi - k < sw) ? k_hi - k : sw;
+        _il2d_col_pass_nat_strip(src, dst, c->N, rn, k, w, c->nst, c->R, c->L,
+                                 rev ? c->b : c->f, rev ? c->tb : c->tf, rev, d->natp, scr);
+    }
+}
+static void _ilnd_nats_execute_st(const vfft_ilnd_t *d, vfft_dir_t dir,
+                                  const double *src, double *dst)
+{
+    const int rev = (dir == VFFT_BACKWARD);
+    const size_t N0 = (size_t)d->N[0], rn = d->plane;
+    size_t p;
+    if (!rev)
+    {   /* the strips write dst in natural order; the planes finish in place */
+        _ilnd_nats_strips(d, 0, dir, src, dst, 0, rn);
+        for (p = 0; p < N0; p++)
+            _ilnd_plane(d, dir, dst + 2 * p * rn);
+        return;
+    }
+    /* backward: the planes first (out of place = a plain per-plane copy,
+     * the natural structures are out-of-place capable), then the strips
+     * reversed in place on dst */
+    for (p = 0; p < N0; p++)
+        _ilnd_plane_t(d, 0, dir, src + 2 * p * rn, dst + 2 * p * rn);
+    _ilnd_nats_strips(d, 0, dir, dst, dst, 0, rn);
+}
+
 /* ── the serial execute ─────────────────────────────────────────────── */
 static void _ilnd_execute_st(const vfft_ilnd_t *d, vfft_dir_t dir,
                              const double *src, double *dst)
@@ -243,6 +299,11 @@ static void _ilnd_execute_st(const vfft_ilnd_t *d, vfft_dir_t dir,
     size_t p;
     if (d->nat)
     {   /* the natural class: the scrambled axis 0, the plane pass permuting */
+        if (d->nf == 2)
+        {
+            _ilnd_nats_execute_st(d, dir, src, dst);
+            return;
+        }
         if (!rev)
         {
             _il2d_col_exec(c, src, dst, 0);
@@ -321,7 +382,9 @@ typedef struct
     const double *src;
     double *dst;
     vfft_dir_t dir;
-    int mode, tid;   /* 0 bands, 1 column strips, 2 planes, 3 cycles (natural), 4 permuted planes (natural bwd, oop) */
+    int mode, tid;   /* 0 bands, 1 column strips, 2 planes, 3 cycles (natural), 4 permuted planes
+                      * (natural bwd, oop), 5 natural strips (the strip form), 6 planes src -> dst
+                      * at the same position (the strip form's backward, oop) */
     size_t lo, hi;
 } _ilnd_mt_arg;
 
@@ -378,6 +441,15 @@ static void _ilnd_mt_tramp(void *v)
         for (i = a->lo; i < a->hi; i++)
             _ilnd_plane_t(d, a->tid, a->dir, a->src + 2 * i * rn,
                           a->dst + 2 * (size_t)d->natinv[i] * rn);
+        break;
+    case 5: /* the strip form: this worker's columns [lo, hi) through its own
+             * strip scratch (natural order out, in place by construction) */
+        _ilnd_nats_strips(d, a->tid, a->dir, a->src, a->dst, a->lo, a->hi);
+        break;
+    case 6: /* the strip form's backward out of place: planes [lo, hi) src -> dst
+             * at the same position */
+        for (i = a->lo; i < a->hi; i++)
+            _ilnd_plane_t(d, a->tid, a->dir, a->src + 2 * i * rn, a->dst + 2 * i * rn);
         break;
     default: /* planes [lo, hi) on dst, in place */
         for (i = a->lo; i < a->hi; i++)
@@ -472,10 +544,40 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
         prof = getenv("VFFT_ILND_PROF") != NULL;
     if (T < 2 || _ilnd_clones_of(d) < T - 1 || c->nat || d->mt <= 0 || d->mt > 2)
         return 0; /* every arm runs the structure => clones are mandatory */
-    if (d->nat && (!d->cycw || d->nbufw < T - 1))
+    if (d->nat && d->nf != 2 && (!d->cycw || d->nbufw < T - 1))
+        return 0;
+    if (d->nat && d->nf == 2 && d->nsscr < T)
         return 0;
     if (prof)
         t0 = _il_ab_now();
+    if (d->nat && d->nf == 2)
+    {   /* the strip form threads as the PLANE arm: disjoint column ranges
+         * through per-worker strip scratches, then disjoint plane ranges */
+        const int Ts = rn < (size_t)T ? (int)rn : T;
+        const int Tp = N0 < (size_t)T ? (int)N0 : T;
+        if (Ts < 2 && Tp < 2)
+            return 0;
+        if (!rev)
+        {
+            _ilnd_mt_phase(d, src, dst, dir, 5, rn, Ts);
+            if (prof)
+                t1 = _il_ab_now();
+            _ilnd_mt_phase(d, dst, dst, dir, 2, N0, Tp);
+        }
+        else
+        {
+            _ilnd_mt_phase(d, src, dst, dir, src != dst ? 6 : 2, N0, Tp);
+            if (prof)
+                t1 = _il_ab_now();
+            _ilnd_mt_phase(d, dst, dst, dir, 5, rn, Ts);
+        }
+        if (prof)
+            fprintf(stderr, "[ilnd-prof] natural-strip s=%d T=%d sw=%d strips=%.0f planes=%.0f total=%.0f\n",
+                    d->arm, T, d->nsw, rev ? _il_ab_now() - t1 : t1 - t0,
+                    rev ? t1 - t0 : _il_ab_now() - t1, _il_ab_now() - t0);
+        _vfft_ilnd_mt_count++;
+        return 1;
+    }
     if (d->nat)
     {
         const int Tp = N0 < (size_t)T ? (int)N0 : T;
@@ -614,6 +716,73 @@ static void _ilnd_free_nat(vfft_ilnd_t *d)
     d->nbufw = 0;
 }
 
+/* the strip form's scratches: one dense N[0] x nsw block per worker (tid =
+ * slot), sized for the WIDEST width the race may try; 1 = present */
+static void _ilnd_free_strips(vfft_ilnd_t *d)
+{
+    int t;
+    if (d->sscr)
+    {
+        for (t = 0; t < d->nsscr; t++)
+            VFFT_ZS_FREE(d->sscr[t]);
+        free(d->sscr);
+        d->sscr = NULL;
+    }
+    d->nsscr = 0;
+}
+static int _ilnd_strips_ensure(vfft_ilnd_t *d, int T, int maxw)
+{
+    int t;
+    if (d->nsscr >= T)
+        return 1;
+    _ilnd_free_strips(d);
+    d->sscr = (double **)calloc((size_t)T, sizeof *d->sscr);
+    if (!d->sscr)
+        return 0;
+    for (t = 0; t < T; t++)
+    {
+        d->sscr[t] = (double *)VFFT_ZS_ALLOC(2 * (size_t)d->N[0] * (size_t)maxw * sizeof(double));
+        if (!d->sscr[t])
+        {
+            d->nsscr = t;
+            _ilnd_free_strips(d);
+            return 0;
+        }
+    }
+    d->nsscr = T;
+    return 1;
+}
+/* the strip form serves: the cycle walk's buffers go, the permutation stays */
+static void _ilnd_free_cycles(vfft_ilnd_t *d)
+{
+    int t;
+    free(d->cycw); d->cycw = NULL;
+    free(d->buf); d->buf = NULL;
+    if (d->bufw)
+    {
+        for (t = 0; t < d->nbufw; t++)
+            free(d->bufw[t]);
+        free(d->bufw);
+        d->bufw = NULL;
+    }
+    d->nbufw = 0;
+}
+/* the strip widths admitted at this cell: {8..1024} columns with the
+ * strip scratch under the L2 budget (N[0] * w * 16 bytes); the form itself
+ * needs a permuting chain (nst >= 2, no Bluestein) -- otherwise the axis is
+ * natural already and the cycle form is the whole story */
+static int _ilnd_sw_pool(const vfft_ilnd_t *d, int *out, int max)
+{
+    static const int SW[] = { 8, 16, 32, 64, 128, 256, 512, 1024 };
+    int n = 0, i;
+    if (d->ax0.blu || d->ax0.nst < 2)
+        return 0;
+    for (i = 0; i < 8 && n < max; i++)
+        if ((long)d->N[0] * SW[i] * 16 <= vfft_cpu_l2_bytes() && (size_t)SW[i] <= d->plane)
+            out[n++] = SW[i];
+    return n;
+}
+
 static void vfft_ilnd_destroy(vfft_ilnd_t *d)
 {
     if (!d)
@@ -621,6 +790,7 @@ static void vfft_ilnd_destroy(vfft_ilnd_t *d)
     _ilnd_free_arm(d, 1);
     _ilnd_free_arm(d, 2);
     _ilnd_free_nat(d);
+    _ilnd_free_strips(d);
     _il2d_col_free(&d->ax0);
     free(d);
 }
@@ -967,11 +1137,13 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
 
 /* the (structure, width) race: the whole forward, in place on scratch,
  * every configuration an arm of ONE alternated race */
-typedef struct { vfft_ilnd_t *d; double *z; int arm; int wl; char name[24]; } _ilnd_arm_ctx_t;
+typedef struct { vfft_ilnd_t *d; double *z; int arm; int wl; int nf; int sw; char name[24]; } _ilnd_arm_ctx_t;
 static void _ilnd_arm_run(void *v)
 {
     _ilnd_arm_ctx_t *c = (_ilnd_arm_ctx_t *)v;
     c->d->arm = c->arm;
+    c->d->nf = c->nf;
+    c->d->nsw = c->sw;
     _ilnd_apply_wl(&c->d->ax0, c->wl);
     _ilnd_execute_st(c->d, VFFT_FORWARD, c->z, c->z);
 }
@@ -979,11 +1151,12 @@ static void _ilnd_arm_run(void *v)
 /* the MT race at the plan's T: serial (the one-thread structure) vs each
  * (partition, structure) that can ENGAGE, the whole forward through the
  * very code execute serves with. Returns the winning (mt, structure). */
-typedef struct { vfft_ilnd_t *d; double *z; int mt; int arm; int ok; char name[24]; } _ilnd_mt_ctx_t;
+typedef struct { vfft_ilnd_t *d; double *z; int mt; int arm; int nf; int ok; char name[24]; } _ilnd_mt_ctx_t;
 static void _ilnd_mt_arm_run(void *v)
 {
     _ilnd_mt_ctx_t *c = (_ilnd_mt_ctx_t *)v;
     c->d->arm = c->arm;
+    c->d->nf = c->nf;
     if (c->mt == 0)
     {
         _ilnd_execute_st(c->d, VFFT_FORWARD, c->z, c->z);
@@ -993,19 +1166,22 @@ static void _ilnd_mt_arm_run(void *v)
     if (c->ok && !_ilnd_execute_mt(c->d, VFFT_FORWARD, c->z, c->z))
         c->ok = 0; /* the arm cannot engage on this cell */
 }
-static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, int *mt_out, int *arm_out)
+static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int strip_ok,
+                          int *mt_out, int *arm_out, int *nf_out)
 {
     const size_t T = (size_t)d->N[0] * d->plane;
     double *z = (double *)malloc(2 * T * sizeof(double));
-    _ilnd_mt_ctx_t cx[5];
-    vfft_race_arm_t arms[5];
-    double ns[5] = { 1e300, 1e300, 1e300, 1e300, 1e300 };
+    _ilnd_mt_ctx_t cx[7];
+    vfft_race_arm_t arms[7];
+    double ns[7] = { 1e300, 1e300, 1e300, 1e300, 1e300, 1e300, 1e300 };
     int na = 0, a, best = 0, st, reps;
     size_t i;
     *mt_out = 0;
     *arm_out = s0;
+    *nf_out = nf0;
     if (!z)
         return;
+    d->nf = nf0;
     for (i = 0; i < 2 * T; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 1023);
     /* reps from ONE serial timing: every sample runs >= ~20 ms of serial-
@@ -1021,20 +1197,23 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, int *mt_out, int *arm_ou
         if (reps < 2) reps = 2;
         if (reps > 256) reps = 256;
     }
-#define ILND_ARM(MT, ARM, NAME) do { \
-        cx[na].d = d; cx[na].z = z; cx[na].mt = (MT); cx[na].arm = (ARM); cx[na].ok = 1; \
-        snprintf(cx[na].name, sizeof cx[na].name, "%s/%s", NAME, (ARM) == 1 ? "child" : "flat"); \
+#define ILND_ARM(MT, ARM, NF, NAME) do { \
+        cx[na].d = d; cx[na].z = z; cx[na].mt = (MT); cx[na].arm = (ARM); cx[na].nf = (NF); cx[na].ok = 1; \
+        snprintf(cx[na].name, sizeof cx[na].name, "%s/%s%s", NAME, (ARM) == 1 ? "child" : "flat", \
+                 (NF) == 2 ? "/strip" : ""); \
         arms[na].name = cx[na].name; arms[na].run = _ilnd_mt_arm_run; arms[na].ctx = &cx[na]; na++; \
     } while (0)
-    ILND_ARM(0, s0, "serial");
+    ILND_ARM(0, s0, nf0, "serial");
     for (st = 1; st <= 2; st++)
     {
         const int have = (st == 1) ? (d->child != NULL && d->wn1 > 0) : (d->row != NULL && d->wn2 > 0);
         if (!have)
             continue;
         if (d->ax0.wl > 0 && !d->ax0.blu && (size_t)d->N[0] / (size_t)d->ax0.wl >= 2)
-            ILND_ARM(1, st, "band");
-        ILND_ARM(2, st, "plane");
+            ILND_ARM(1, st, 1, "band");
+        ILND_ARM(2, st, 1, "plane");
+        if (strip_ok)
+            ILND_ARM(2, st, 2, "plane");
     }
 #undef ILND_ARM
     {
@@ -1046,6 +1225,7 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, int *mt_out, int *arm_ou
             best = a;
     *mt_out = cx[best].mt;
     *arm_out = cx[best].arm;
+    *nf_out = cx[best].nf;
     free(z);
     if (getenv("VFFT_IL2D_LOG"))
     {
@@ -1053,8 +1233,8 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, int *mt_out, int *arm_ou
                 d->nat ? " nat" : "", d->mt_t, reps);
         for (a = 0; a < na; a++)
             fprintf(stderr, " %s=%.0f%s", cx[a].name, ns[a], cx[a].ok ? "" : "(no engage)");
-        fprintf(stderr, " -> %s/%s\n", *mt_out == 0 ? "serial" : *mt_out == 1 ? "band" : "plane",
-                *arm_out == 1 ? "child" : "flat");
+        fprintf(stderr, " -> %s/%s%s\n", *mt_out == 0 ? "serial" : *mt_out == 1 ? "band" : "plane",
+                *arm_out == 1 ? "child" : "flat", *nf_out == 2 ? "/strip" : "");
     }
 }
 
@@ -1073,6 +1253,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     int sarm[2], nsarm = 0, wls[16], nwl = 0;
     int arm = 0, wl = 0, s_src = 0, wl_src = 0, mt_src = 0; /* src: 1 env, 2 wisdom, 3 race, 4 only-buildable */
     int mts = 0; /* the structure the threaded verdict runs with */
+    int nfc[2], nnf = 0, nf = 1, mtf = 1, nf_src = 0, nf_raced = 0; /* the natural FORM: 1 cycle, 2 strip */
+    int sws[8], nsw = 0, sw = 0, maxsw = 0, sw_best = 0, tot = 0;    /* the strip widths */
     const int usable_w = (W && !W->vw2_off_2d);
     const int nthr = _vfft_plan_threads(cfg);
     const char *pin = getenv("VFFT_ILND_ARM");
@@ -1189,11 +1371,74 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         if (want1 + want2 == 2 && nsarm == 1)
             s_src = 4;
     }
-    if (nsarm * nwl == 1)
-    {   /* nothing to race: serve the one configuration */
-        arm = sarm[0];
-        wl = wls[0];
+    /* the FORM candidates of the natural class (ilnd_natural_strip_design.md):
+     * env pin > banked nf= > both; the strip form needs a permuting chain and
+     * the strip scratches, and carries its own width axis (env pin > banked
+     * nsw= > the pool) */
+    if (nat)
+    {
+        const char *fpin = getenv("VFFT_ILND_NF");
+        const char *spin = getenv("VFFT_ILND_SW");
+        int bnf = 0, i, sp[8], nsp;
+        nsp = _ilnd_sw_pool(d, sp, 8);
+        if (spin && atoi(spin) > 0 && nsp > 0)
+        {
+            sws[nsw++] = atoi(spin);
+        }
+        else if (usable_w && !cfg->recalibrate && nsp > 0 &&
+                 vw2_ilnd_int_lookup(&W->vw2, &key0, "nsw") > 0)
+        {
+            sws[nsw++] = vw2_ilnd_int_lookup(&W->vw2, &key0, "nsw");
+        }
+        else
+            for (i = 0; i < nsp; i++)
+                sws[nsw++] = sp[i];
+        for (i = 0; i < nsw; i++)
+            if (sws[i] > maxsw)
+                maxsw = sws[i];
+        if (fpin && (atoi(fpin) == 1 || atoi(fpin) == 2))
+        {
+            nfc[nnf++] = atoi(fpin);
+            nf_src = 1;
+        }
+        else if (usable_w && !cfg->recalibrate &&
+                 ((bnf = vw2_ilnd_int_lookup(&W->vw2, &key0, "nf")) == 1 || bnf == 2))
+        {
+            nfc[nnf++] = bnf;
+            nf_src = 2;
+        }
+        else
+        {
+            nfc[nnf++] = 1;
+            nfc[nnf++] = 2;
+        }
+        /* the strip form is a candidate only with a width and its scratch */
+        if ((nfc[0] == 2 || (nnf > 1 && nfc[1] == 2)) &&
+            (nsw == 0 || !_ilnd_strips_ensure(d, 1, maxsw)))
+        {
+            nnf = 0;
+            nfc[nnf++] = 1;
+            nsw = 0;
+            nf_src = 4;
+        }
     }
+    else
+        nfc[nnf++] = 1;
+    {
+        const int has_cycle = (nfc[0] == 1 || (nnf > 1 && nfc[1] == 1));
+        const int has_strip = (nfc[0] == 2 || (nnf > 1 && nfc[1] == 2));
+        tot = (has_cycle ? nsarm * nwl : 0) + (has_strip ? nsarm * nsw : 0);
+        nf_raced = (has_cycle && has_strip);
+        if (tot == 1)
+        {   /* nothing to race: serve the one configuration */
+            arm = sarm[0];
+            nf = has_strip ? 2 : 1;
+            wl = has_cycle ? wls[0] : 0;
+            sw = has_strip ? sws[0] : 0;
+        }
+    }
+    if (tot == 1)
+        ; /* served above */
     else
     {
         const size_t T = (size_t)N1 * d->plane;
@@ -1216,19 +1461,42 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 z[i] = 1.0 + 1e-6 * (double)(i & 1023);
         }
         for (si = 0; si < nsarm; si++)
-            for (wi = 0; wi < nwl && na < VFFT_RACE_MAX_ARMS; wi++)
-            {
-                ac[na].d = d;
-                ac[na].z = z;
-                ac[na].arm = sarm[si];
-                ac[na].wl = wls[wi];
-                snprintf(ac[na].name, sizeof ac[na].name, "%s/wl%d",
-                         sarm[si] == 1 ? "child" : "flat", wls[wi]);
-                arms[na].name = ac[na].name;
-                arms[na].run = _ilnd_arm_run;
-                arms[na].ctx = &ac[na];
-                na++;
-            }
+        {
+            const int has_cycle = (nfc[0] == 1 || (nnf > 1 && nfc[1] == 1));
+            const int has_strip = (nfc[0] == 2 || (nnf > 1 && nfc[1] == 2));
+            if (has_cycle)
+                for (wi = 0; wi < nwl && na < VFFT_RACE_MAX_ARMS; wi++)
+                {
+                    ac[na].d = d;
+                    ac[na].z = z;
+                    ac[na].arm = sarm[si];
+                    ac[na].wl = wls[wi];
+                    ac[na].nf = 1;
+                    ac[na].sw = 0;
+                    snprintf(ac[na].name, sizeof ac[na].name, "%s/wl%d",
+                             sarm[si] == 1 ? "child" : "flat", wls[wi]);
+                    arms[na].name = ac[na].name;
+                    arms[na].run = _ilnd_arm_run;
+                    arms[na].ctx = &ac[na];
+                    na++;
+                }
+            if (has_strip)
+                for (wi = 0; wi < nsw && na < VFFT_RACE_MAX_ARMS; wi++)
+                {
+                    ac[na].d = d;
+                    ac[na].z = z;
+                    ac[na].arm = sarm[si];
+                    ac[na].wl = 0;
+                    ac[na].nf = 2;
+                    ac[na].sw = sws[wi];
+                    snprintf(ac[na].name, sizeof ac[na].name, "%s/strip%d",
+                             sarm[si] == 1 ? "child" : "flat", sws[wi]);
+                    arms[na].name = ac[na].name;
+                    arms[na].run = _ilnd_arm_run;
+                    arms[na].ctx = &ac[na];
+                    na++;
+                }
+        }
         {
             const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 0, NULL, NULL };
             vfft_race_run(&proto, arms, na, ns);
@@ -1238,24 +1506,44 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 best = a;
         arm = ac[best].arm;
         wl = ac[best].wl;
+        nf = ac[best].nf;
+        sw = ac[best].sw;
+        {   /* the best STRIP width even when the cycle form won: the threaded
+             * race may still admit the strip form at that width */
+            double bs_ns = 1e300;
+            for (a = 0; a < na; a++)
+                if (ac[a].nf == 2 && ns[a] < bs_ns)
+                {
+                    bs_ns = ns[a];
+                    sw_best = ac[a].sw;
+                }
+        }
         free(z);
         if (getenv("VFFT_IL2D_LOG"))
         {
             fprintf(stderr, "[ilnd] %dx%dx%d%s: race", N1, N2, N3, nat ? " nat" : "");
             for (a = 0; a < na; a++)
                 fprintf(stderr, " %s=%.0f", ac[a].name, ns[a]);
-            fprintf(stderr, " -> %s wl=%d\n", arm == 1 ? "child" : "flat", wl);
+            fprintf(stderr, " -> %s %s\n", arm == 1 ? "child" : "flat",
+                    nf == 2 ? "strip" : "wl");
+            if (nf == 2) fprintf(stderr, "[ilnd]   strip width %d\n", sw);
+            else fprintf(stderr, "[ilnd]   wl=%d%s\n", wl, nat ? " cycles" : "");
         }
         if (nsarm > 1) s_src = 3;
         if (nwl > 1) wl_src = 3;
+        if (nf_raced) nf_src = 3;
         /* bank what was RACED (pins never bank) */
         if (usable_w && cfg->wisdom_write)
         {
             int banked = 0;
             if (nsarm > 1 && vw2_ilnd_arm_bank(&W->vw2, &key0, arm))
                 banked = 1;
-            if (nwl > 1 && vw2_ilcol_chain_bank(&W->vw2, &key0, d->ax0.R, d->ax0.nst,
-                                                wl, wl > 0, -1, -1, -1, -1, 0.0) == VW2_OK)
+            if (nwl > 1 && nf == 1 && vw2_ilcol_chain_bank(&W->vw2, &key0, d->ax0.R, d->ax0.nst,
+                                                           wl, wl > 0, -1, -1, -1, -1, 0.0) == VW2_OK)
+                banked = 1;
+            if (nf_raced && vw2_ilnd_int_bank(&W->vw2, &key0, "nf", nf))
+                banked = 1;
+            if (nf == 2 && nsw > 1 && !getenv("VFFT_ILND_SW") && vw2_ilnd_int_bank(&W->vw2, &key0, "nsw", sw))
                 banked = 1;
             if (banked)
                 _vw2_persist(W, cfg);
@@ -1263,6 +1551,9 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     }
     d->arm = arm;
     mts = arm;
+    mtf = nf;
+    d->nf = nf;
+    d->nsw = (nf == 2) ? sw : sw_best;   /* the strip arms of the threaded race run at sw_best */
     _ilnd_apply_wl(&d->ax0, wl);
     /* ── MT at the plan's T: env pin > the banked (cmt, cmts) at THIS T >
      * the race of (partition x structure) — the structure that wins at one
@@ -1290,8 +1581,14 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         else if (usable_w && !cfg->recalibrate && bcmt >= 0 && bcmtt == nthr)
         {
             const int bs = vw2_ilnd_mts_lookup(&W->vw2, &key0);
+            const int bf = nat ? vw2_ilnd_int_lookup(&W->vw2, &key0, "cmtf") : 0;
             d->mt = (bcmt >= 0 && bcmt <= 2) ? bcmt : 0;
             mts = (bs == 1 || bs == 2) ? bs : arm;
+            mtf = (bf == 1 || bf == 2) ? bf : nf;
+            if (mtf == 2 && d->nsw <= 0)
+                d->nsw = vw2_ilnd_int_lookup(&W->vw2, &key0, "nsw");
+            if (mtf == 2 && (d->nsw <= 0 || d->mt != 2 || _ilnd_sw_pool(d, sws, 8) == 0))
+                mtf = 1; /* the banked strip form needs a width, the plane partition and a permuting chain */
             if (d->mt > 0)
             {   /* the threaded structure may differ from the one-thread one */
                 const int okb = (mts == 1) ? _ilnd_build_child(d, cfg) : _ilnd_build_flat(d, W, cfg, &key0);
@@ -1308,15 +1605,19 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         else
         {
             /* both structures, each with its clones, race against serial */
-            int mt_v = 0, arm_v = arm;
+            int mt_v = 0, arm_v = arm, nf_v = nf;
+            /* the strip form threads iff its width is set and every worker has a scratch */
+            const int strip_ok = nat && (nf == 2 || (nnf > 1)) && d->nsw > 0 &&
+                                 _ilnd_strips_ensure(d, nthr, maxsw > d->nsw ? maxsw : d->nsw);
             if (_ilnd_build_child(d, cfg))
                 c1 = _ilnd_build_clones(d, cfg, nthr, 1);
             if (_ilnd_build_flat(d, W, cfg, &key0))
                 c2 = _ilnd_build_clones(d, cfg, nthr, 2);
             if (c1 || c2)
-                _ilnd_mt_race(d, arm, &mt_v, &arm_v);
+                _ilnd_mt_race(d, arm, nf, strip_ok, &mt_v, &arm_v, &nf_v);
             d->mt = mt_v;
             mts = (mt_v > 0) ? arm_v : arm;
+            mtf = (mt_v > 0) ? nf_v : nf;
             mt_src = (c1 || c2) ? 3 : 4;
             if (usable_w && cfg->wisdom_write && !pin && !wpin)
             {
@@ -1325,6 +1626,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                                          d->mt, nthr, -1, 0.0) == VW2_OK)
                     banked = 1;
                 if (vw2_ilnd_mts_bank(&W->vw2, &key0, mts))
+                    banked = 1;
+                if (strip_ok && vw2_ilnd_int_bank(&W->vw2, &key0, "cmtf", mtf))
                     banked = 1;
                 if (banked)
                     _vw2_persist(W, cfg);
@@ -1345,6 +1648,26 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     _ilnd_free_arm(d, d->arm == 1 ? 2 : 1);
     if (d->mt == 0)
         _ilnd_free_clones(d, d->arm);
+    /* the serving FORM: the threaded one when the plan threads, else the
+     * one-thread verdict; the strip scratches stay only for the strip form
+     * (one per worker the plan may run), the cycle buffers only for the
+     * cycle form */
+    d->nf = nat ? ((d->mt > 0) ? mtf : nf) : 1;
+    if (d->nf == 2)
+    {
+        if (d->nsw <= 0)
+            d->nsw = sw > 0 ? sw : sws[0];
+        if (!_ilnd_strips_ensure(d, d->mt > 0 ? nthr : 1, d->nsw))
+        {
+            _vfft_warn("ilnd: the strip form's scratches could not be allocated at %dx%dx%d — cycle form",
+                       N1, N2, N3);
+            d->nf = 1;
+        }
+    }
+    if (d->nf == 2)
+        _ilnd_free_cycles(d);
+    else
+        _ilnd_free_strips(d);
     if (getenv("VFFT_IL2D_LOG"))
     {
         static const char *SRC[] = { "?", "env", "wisdom", "race", "only-buildable" };
@@ -1355,9 +1678,9 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 d->mt == 0 ? "serial" : d->mt == 1 ? "band" : "plane",
                 d->arm == 1 ? "child" : "flat",
                 nthr > 1 ? SRC[mt_src] : "-", _ilnd_clones_of(d),
-                nat ? " (natural: cycles" : "");
+                nat ? (d->nf == 2 ? " (natural: STRIP form, width " : " (natural: cycle form, cycles ") : "");
         if (nat)
-            fprintf(stderr, "%d)\n", d->ncyc);
+            fprintf(stderr, "%d, src=%s)\n", d->nf == 2 ? d->nsw : d->ncyc, SRC[nf_src]);
     }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     if (!h)

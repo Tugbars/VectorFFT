@@ -550,6 +550,83 @@ static void _il2d_col_pass_nat_range(const double *src, double *dst,
     }
 }
 
+/* the natural pass over ONE STRIP [k, k+w) with a STRIP-PITCHED scratch
+ * (docs/design/ilnd_natural_strip_design.md, 2026-09-15): scr is a dense
+ * N1 x w block (pitch w) that lives in L1/L2, so the digit reversal is
+ * resolved in cache and the strip is written back in NATURAL order — in
+ * place by construction (every row of the strip is read into scr before
+ * any row of it is written). The stage kernels advance input and output by
+ * ONE pitch per digit, so the pitch change of stage 0 (rn -> w) is a caller
+ * loop over the digits (OGs = 1, the table advanced one digit's records =
+ * (R-1)*8 doubles, _il2d_build_tables' layout); the mids run in place on
+ * scr at pitch w; the leaf scatters scr -> dst (fwd) / gathers src -> scr
+ * (bwd) through its separate strides. Same kernels, tables and values as
+ * _il2d_col_pass_nat: the output is bitwise. Requires nst >= 2. */
+static void _il2d_col_pass_nat_strip(const double *src, double *dst, int N1,
+                                     size_t rn, size_t k, size_t w, int nst,
+                                     const int *Rst, const int *Lst,
+                                     vfft_il2p_fn const *fns,
+                                     double *const *tabs, int reverse,
+                                     const int *perm, double *scr)
+{
+    const int Rl = Rst[nst - 1];
+    const size_t nstride = (size_t)(N1 / Rl) * rn;
+    const int R0 = Rst[0], D0 = Lst[0] / R0;
+    int s, b, d;
+    if (!w)
+        return;
+    if (!reverse)
+    {
+        for (b = 0; b < N1 / Lst[0]; b++)
+            for (d = 0; d < D0; d++)
+            {
+                const size_t row = (size_t)b * Lst[0] + (size_t)d;
+                fns[0](src + 2 * (row * rn + k), NULL, scr + 2 * row * w, NULL,
+                       tabs[0] + (size_t)d * (R0 - 1) * 8, NULL,
+                       (size_t)D0 * rn, rn, (size_t)D0 * w, 1, w);
+            }
+        for (s = 1; s < nst - 1; s++)
+        {
+            const int R = Rst[s], D = Lst[s] / R;
+            for (b = 0; b < N1 / Lst[s]; b++)
+            {
+                const size_t off = 2 * (size_t)b * Lst[s] * w;
+                fns[s](scr + off, NULL, scr + off, NULL, tabs[s], NULL,
+                       (size_t)D * w, w, (size_t)D * w, (size_t)D, w);
+            }
+        }
+        for (b = 0; b < N1 / Rl; b++)
+            fns[nst - 1](scr + 2 * (size_t)b * Rl * w, NULL,
+                         dst + 2 * ((size_t)perm[b * Rl] * rn + k), NULL,
+                         NULL, NULL, w, 0, nstride, 0, w);
+    }
+    else
+    {
+        for (b = 0; b < N1 / Rl; b++)
+            fns[nst - 1](src + 2 * ((size_t)perm[b * Rl] * rn + k), NULL,
+                         scr + 2 * (size_t)b * Rl * w, NULL, NULL, NULL,
+                         nstride, 0, w, 0, w);
+        for (s = nst - 2; s >= 1; s--)
+        {
+            const int R = Rst[s], D = Lst[s] / R;
+            for (b = 0; b < N1 / Lst[s]; b++)
+            {
+                const size_t off = 2 * (size_t)b * Lst[s] * w;
+                fns[s](scr + off, NULL, scr + off, NULL, tabs[s], NULL,
+                       (size_t)D * w, w, (size_t)D * w, (size_t)D, w);
+            }
+        }
+        for (b = 0; b < N1 / Lst[0]; b++)
+            for (d = 0; d < D0; d++)
+            {
+                const size_t row = (size_t)b * Lst[0] + (size_t)d;
+                fns[0](scr + 2 * row * w, NULL, dst + 2 * (row * rn + k), NULL,
+                       tabs[0] + (size_t)d * (R0 - 1) * 8, NULL,
+                       (size_t)D0 * w, w, (size_t)D0 * rn, 1, w);
+            }
+    }
+}
+
 /* ── the COLUMN-AXIS BLUESTEIN, extracted (2026-08-27) so THREE users
  * share one implementation: the c2c no-chain path, the chain-vs-blu
  * RACE (the odd chains are now emitted, so both arms exist for odd

@@ -34,8 +34,8 @@
 static const char *vw2_oop_sp_name[8] = {
     "3p", "2pa", "2pb", "twl", "mono", "2pa_l3", "3p_l3", "ccol"
 };
-static const char *vw2_oop_il_name[10] = {
-    "none", "legacy3p", "legacy2p", "mono", "cascade", "2p", "chain3", "prime", "flat", "ztt"
+static const char *vw2_oop_il_name[11] = {
+    "none", "legacy3p", "legacy2p", "mono", "cascade", "2p", "chain3", "prime", "flat", "ztt", "fs"
 };
 static const char *vw2_oop_var_name[3] = { "flat", "log3", "t1s" };
 
@@ -230,7 +230,7 @@ static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_sc
             if (si == 1) { e->k1_il_route = VFFT_K1_IL_NONE; got = 1; }
             continue;                          /* il CELLS always carry one */
         }
-        ilr = vw2__oop_name_idx(vw2_oop_il_name, 10, il);
+        ilr = vw2__oop_name_idx(vw2_oop_il_name, 11, il);
         if (ilr < 0) continue;                 /* undecodable: next tier    */
         e->k1_il_route = ilr;
         if (ilr > VFFT_K1_IL_NONE) {
@@ -523,7 +523,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 VW2__OB_SET(1, "vars", vars);
             }
         }
-        if (e->k1_il_route < 0 || e->k1_il_route > 9) { vw2_rec_free(r); *why = "il-route-out-of-range"; return -1; }
+        if (e->k1_il_route < 0 || e->k1_il_route > 10) { vw2_rec_free(r); *why = "il-route-out-of-range"; return -1; }
         if (e->k1_il_route != VFFT_K1_IL_NONE) {
             VW2__OB_SET(1, "il_route", vw2_oop_il_name[e->k1_il_route]);
             if (e->il_R1 || e->il_R2) {
@@ -903,7 +903,7 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             }
         }
     } else if (lay == VW2_LAY_IL) {
-        if (e->k1_il_route <= VFFT_K1_IL_NONE || e->k1_il_route > 9) {
+        if (e->k1_il_route <= VFFT_K1_IL_NONE || e->k1_il_route > 10) {
             vw2_rec_free(r); *why = "no-il-verdict"; return -1;
         }
         VW2__OB_SET(1, "il_route", vw2_oop_il_name[e->k1_il_route]);

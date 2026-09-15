@@ -47,25 +47,13 @@ open Expr
  *             Saves twiddle loads, costs extra FMAs. Wins when L1
  *             twiddle pressure dominates (high K, deep transforms).
  *
- *   TP_PowW1 — load ONLY W^1 (slot 0) and derive EVERY higher power
- *             in-DAG: W^(2m) = (W^m)² (squaring), W^j = W^p·W^(j-p)
- *             with p the highest pow2 ≤ j. The zil terminator /
- *             t2sp/t2sq shape (z_cascade_plan §4.99): critical path for
- *             R=8 is w1→w2→w4→{w5,w6,w7} = 3 cmul links vs 6 for a
- *             running-product chain. At emission the single Twiddle(0)
- *             slot renders as a per-lane VECTOR load (packed per-column
- *             w¹, e.g. zsplit.h's twq 16 B/col), so each lane derives
- *             its own column's powers elementwise; the math layer stays
- *             lane-agnostic.
- *
- * The math-layer payoff: log3/poww1 are *substitutions* — wherever t1_dit
- * emits Load(Twiddle(j, ...)), they substitute the derivation tree.
+ * The math-layer payoff: log3 is a *substitution* — wherever t1_dit
+ * emits Load(Twiddle(j, ...)), it substitutes the derivation tree.
  * Algsimp's Cmul handling propagates; nothing else changes. *)
 
 type twiddle_policy =
   | TP_Flat
   | TP_Log3
-  | TP_PowW1
 
 (* DIT vs DIF — duals of each other:
  *   DIT (Decimation-In-Time):   y = DFT(W ⋅ x)   — twiddle on INPUT, pre-butterfly
@@ -162,37 +150,6 @@ let twiddle_expr (policy : twiddle_policy) (n : int) (j : int) : expr * expr =
         Load (Twiddle (j - 1, true)), Load (Twiddle (j - 1, false))
       else (
         (* Split j = p + q, derive W^j = W^p · W^q. *)
-        let p = highest_pow2_le j in
-        let q = j - p in
-        let wpr, wpi = lookup p in
-        let wqr, wqi = lookup q in
-        cmul_pattern wpr wpi wqr wqi)
-    | TP_PowW1 ->
-      (* Squaring-tree derivation from W^1 alone. Same binary split as
-       * TP_Log3 for non-pow2 j, but pow2 powers are DERIVED by squaring
-       * ((W^m)²) instead of loaded — the only Twiddle slot consulted is
-       * slot 0 (= W^1). Memoization + hash-consing share sub-powers, so
-       * for R=8 legs 2..7 cost exactly 6 cmuls at depth ≤ 3:
-       *   w2=w1², w3=w2·w1, w4=w2², w5=w4·w1, w6=w4·w2, w7=w4·w3
-       * — matching codelet_zil's index arrays [0;0;1;2;2;4;4;4] /
-       * [0;0;1;1;2;1;2;3]. Bwd note: a conjugated w¹ table (zsplit.h
-       * twqb) derives conj powers automatically (conj(a)·conj(b) =
-       * conj(a·b)); combine with ~table_conj:true so the cmul layer
-       * doesn't conjugate a second time. *)
-      let is_pow2 x = x > 0 && x land (x - 1) = 0 in
-      let highest_pow2_le j =
-        let rec loop p = if p * 2 > j then p else loop (p * 2) in
-        loop 1
-      in
-      if j < 1 || j >= n
-      then failwith (Printf.sprintf "TP_PowW1: j=%d out of range for n=%d" j n)
-      else if j = 1
-      then Load (Twiddle (0, true)), Load (Twiddle (0, false))
-      else if is_pow2 j
-      then (
-        let hr, hi = lookup (j / 2) in
-        cmul_pattern hr hi hr hi)
-      else (
         let p = highest_pow2_le j in
         let q = j - p in
         let wpr, wpi = lookup p in

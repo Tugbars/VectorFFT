@@ -189,7 +189,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              int N, vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out,
                              vfft_ilfd_plan_t **ilfd_out,
-                             vfft_ztt_plan_t **ztt_out);     /* defined below */
+                             vfft_ztt_plan_t **ztt_out,
+                             vfft_k1fs_plan_t **fs_out);     /* defined below */
 typedef struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; } _ilprime_inner_ctx_t;
 static int _ilprime_inner_from_wisdom(int M, _ilprime_inner_t *in, void *v)
 {
@@ -230,7 +231,7 @@ static int _ilprime_inner_from_wisdom(int M, _ilprime_inner_t *in, void *v)
     }
 #endif
     if (M > 4096) return 0;   /* past the pairs' and chain3's reach only a banked ZTURN-T row (above) serves; the cascade inner left with the cascade (2026-09-15) */
-    _k1_il_candidate(c->W, c->cfg, M, &in->p2, &in->p3, NULL, NULL);   /* the prime inner takes no flat / ZTURN-T plan yet */
+    _k1_il_candidate(c->W, c->cfg, M, &in->p2, &in->p3, NULL, NULL, NULL);   /* the prime inner takes no flat / ZTURN-T / four-step plan yet */
     return (in->p2 || in->p3) ? 1 : 0;
 }
 
@@ -285,6 +286,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
  * planner logs on entry. VFFT_NO_K1PLAN=1 skips it (probe hook). */
 static vfft_il_dp_context_t _k1_il_dp_ctx;      /* planning side, one create at a time */
 static int _k1_il_dp_ctx_ready = 0;
+static int _k1_il_dp_busy = 0;                  /* a race in progress: nested calls refuse */
 #ifndef VFFT_K1_IL_PLAN_MAX_N
 #define VFFT_K1_IL_PLAN_MAX_N 16384 /* odd N above 2048 race here; 4 scratch planes of this size */
 #endif
@@ -313,20 +315,51 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
         const int oddband = vfft_ztt_odd_band(N);   /* 2^a*odd, ZTURN-T's since 2026-09-14 */
         if (!pow2 && !oddband && N >= 2048 && !(N & 3))
             return 0;
-        if (N > ((pow2 || oddband) ? VFFT_ZTT_MAX_N
-                                   : ((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N)))
+        if (N > (pow2 ? VFFT_K1FS_MAX_N : oddband ? VFFT_ZTT_MAX_N
+                                        : ((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N)))
             return 0;
     }
+    /* the planner context is ONE static; the four-step's candidates create
+     * 2D children whose row plans come back through this door — a nested
+     * race would corrupt the outer one, so (a) the row cells are warmed
+     * BEFORE the race (created and destroyed once: a cold one races and
+     * banks its own row) and (b) a nested call refuses (2026-09-15) */
+    if (_k1_il_dp_busy)
+        return 0;
+    if ((N & (N - 1)) == 0 && vfft_k1fs_band(N))
+    {
+        int n1[8], n2[8], ns = vfft_k1fs_splits(N, n1, n2, 8), i, j;
+        for (i = 0; i < ns; i++)
+        {
+            int seen = 0;
+            for (j = 0; j < i; j++) if (n2[j] == n2[i]) seen = 1;
+            if (seen) continue;
+            {
+                vfft_config_t rc;
+                vfft_plan rp;
+                memset(&rc, 0, sizeof rc);
+                rc.transform = VFFT_C2C; rc.placement = VFFT_INPLACE; rc.rigor = cfg->rigor;
+                rc.dims = 1; rc.n[0] = n2[i]; rc.howmany = 1; rc.order = VFFT_ORDER_NATURAL;
+                rc.layout = VFFT_LAYOUT_INTERLEAVED; rc.nthreads = 1;
+                rc.wisdom = (vfft_wisdom *)W; rc.wisdom_write = cfg->wisdom_write;
+                rp = vfft_create(&rc);
+                if (rp) vfft_destroy(rp);
+            }
+        }
+    }
+    _k1fs_ctx.W = W;
+    _k1fs_ctx.cfg = cfg;
     if (!_k1_il_dp_ctx_ready)
     {
         vfft_il_dp_init(&_k1_il_dp_ctx, VFFT_K1_IL_PLAN_MAX_N);
         _k1_il_dp_ctx_ready = 1;
     }
     if (N > _k1_il_dp_ctx.max_N)
-    {   /* the flat DIT's cells (2026-09-05): grow the scratch planes on
-         * demand — the candidate cache restarts, wisdom is the memory */
+    {   /* the flat DIT's cells (2026-09-05) and the four-step's (2026-09-15):
+         * grow the scratch planes on demand — the candidate cache restarts,
+         * wisdom is the memory */
         vfft_il_dp_destroy(&_k1_il_dp_ctx);
-        vfft_il_dp_init(&_k1_il_dp_ctx, VFFT_K1_IL_PLAN_ODD_MAX_N);
+        vfft_il_dp_init(&_k1_il_dp_ctx, N > VFFT_K1_IL_PLAN_ODD_MAX_N ? N : VFFT_K1_IL_PLAN_ODD_MAX_N);
     }
     if (cfg->rigor != VFFT_MEASURE)
         vfft_il_dp_set_patient(&_k1_il_dp_ctx);
@@ -336,8 +369,10 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
         fprintf(stderr, "[k1plan] N=%d: IL plan race (solos, pairs x forms, ZTURN-T "
                         "chains x widths, chain3 x forms, bwd forms) — a cold cell "
                         "takes seconds\n", N);
+    _k1_il_dp_busy = 1;
     lines = vfft_il_dp_plan_and_bank(&_k1_il_dp_ctx, &W->vw2, N,
                                      getenv("VFFT_IL_DP_VERBOSE") != NULL);
+    _k1_il_dp_busy = 0;
     if (lines > 0)
         _vw2_persist(W, cfg);
     if (getenv("VFFT_NAT_LOG") &&
@@ -356,12 +391,14 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out,
                              vfft_ilfd_plan_t **ilfd_out,   /* NULL = caller cannot take a flat plan */
-                             vfft_ztt_plan_t **ztt_out)     /* NULL = caller cannot take a ZTURN-T plan */
+                             vfft_ztt_plan_t **ztt_out,     /* NULL = caller cannot take a ZTURN-T plan */
+                             vfft_k1fs_plan_t **fs_out)     /* NULL = caller cannot take a four-step plan */
 {
     *il2p_out = NULL;
     *il3p_out = NULL;
     if (ilfd_out) *ilfd_out = NULL;
     if (ztt_out) *ztt_out = NULL;
+    if (fs_out) *fs_out = NULL;
     if (getenv("VFFT_NO_IL2P"))
         return;
     int iR1 = 0, iR2 = 0;
@@ -481,6 +518,25 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 vfft_ztt_chain_str(zp, chs, sizeof chs);
                 fprintf(stderr, "[k1ztt] N=%d: replay ZTURN-T chain %s tile=%zu src=wisdom\n", N, chs, zp->tile);
             }
+            return;
+        }
+    }
+    /* the FOUR-STEP (route 10, 2026-09-15): a banked verdict replays its split
+     * (il_pair = N1.N2) through the create — the 2D child at the request's
+     * placement and thread count, the order class the row's */
+    if (ke && ke->k1_il_route == VFFT_K1_IL_FS && fs_out && ke->il_R1 > 0 && ke->il_R2 > 0 &&
+        (long)ke->il_R1 * (long)ke->il_R2 == (long)N)
+    {
+        int pn1 = ke->il_R1, pn2 = ke->il_R2;
+        const int pinned = _k1fs_pin(N, &pn1, &pn2);
+        vfft_k1fs_plan_t *fp = vfft_k1fs_create(N, pn1, pn2, scr_req, W, cfg,
+                                                cfg->placement == VFFT_INPLACE, _vfft_plan_threads(cfg));
+        if (fp)
+        {
+            *fs_out = fp;
+            if (getenv("VFFT_NAT_LOG"))
+                fprintf(stderr, "[k1fs] N=%d: replay FOUR-STEP %dx%d src=%s (%s)\n", N, fp->N1, fp->N2,
+                        pinned ? "pin" : "wisdom", cfg->placement == VFFT_INPLACE ? "ip" : "oop");
             return;
         }
     }

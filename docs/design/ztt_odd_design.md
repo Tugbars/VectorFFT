@@ -69,7 +69,7 @@ Three template facts fix this, none of them negotiable by the planner:
    leg count; the DFT body comes from `Dft_select` (direct conjugate-pair
    for 3, 5, 7; Cooley-Tukey 3x3 and 3x5 for 9 and 15), the same math the
    cascade's `msg`/`msz` odd mids ship today. The only thing that stops
-   `gen_radix.exe 3 --zp-tmg` is the kind-name gate at `cascade_z.ml:949`.
+   `gen_radix.exe 3 --zp-tmg` is the radix gate in `cascade_z.ml`'s `emit_codelet`.
 
 The lanes themselves do not forbid an odd end: every kind processes four
 columns per iteration and any leg count, and an odd ingest's column count
@@ -173,7 +173,7 @@ What is new in the tree:
 | piece | content |
 | --- | --- |
 | kernels | `radix{3,5,7,9,15}_z_{tmg,tmg_bwd,tmgd}_avx2.c` — 15 files, corpus rows, corpus law restamped |
-| generator | `cascade_z.ml:949` admits `tmg`/`tmgd`/`tmgb` at the odd set; nothing else in the emitter changes |
+| generator | the radix gate in `cascade_z.ml`'s `emit_codelet` admits `tmg`/`tmgd`/`tmgb` at the odd set; nothing else in the emitter changes |
 | registry | a per-kind, per-radix function table (`vfft_ztt_kind_fn(kind, R, dir)`), beside the pow2 cell table |
 | create | `vfft_ztt_create_chain_ord` accepts the grammar above, fills the stage table when no fused cell matches, and the odd tile law |
 | execute | the staged walk, natural and plain, both directions, dest and plane |
@@ -384,10 +384,15 @@ not exist are no longer candidates and ZTURN-T enumerates first.
    purpose: the retired enum slots `VFFT_K1_IL_CASCADE`,
    `VFFT_OOP_KIND_ZSPLIT`, `VFFT_NAT_ZCASC` and the `zcasc` mode name
    (persisted numbering; a legacy kind-4 line is skipped), the wisdom
-   selftest's opaque token fixtures, and the generator's dead OCaml for the
-   deleted kinds (`cascade_z.ml` emitters, `codelet.ml` constructors,
-   `gen_main.ml` flags) — the last is the one cleanup left. The threading
-   method is recorded in `cascade_mt_method.md` for ZTURN-T's MT arm.
+   selftest's opaque token fixtures. The generator's OCaml for the deleted
+   kinds is gone with them (2026-09-15): the `cascade_z.ml` kind arms,
+   edges (section taps, the un-turn), fields (sink/sched/uj2/nat_in/nat_out/
+   r0) and their emitters, the `codelet.ml` constructors, the `gen_main.ml`
+   flags and modifiers, the math layer's `TP_PowW1` squaring-tree policy and
+   its debug tool; the emitter now holds exactly the kinds in the corpus and
+   reproduces them 54/54 (fused codelets and registry unchanged). The
+   threading method is recorded in `cascade_mt_method.md` for ZTURN-T's MT
+   arm.
 
 ## Rulings (owner, 2026-09-15)
 

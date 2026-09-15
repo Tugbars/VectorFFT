@@ -5,7 +5,6 @@
 type twiddle_policy =
   | TP_Flat
   | TP_Log3
-  | TP_PowW1
 
 type direction =
   | DIT
