@@ -66,10 +66,9 @@ int main(int argc, char **argv)
     if (!p) { printf("%-20s REFUSE\n", CELLS[i].name); return 0; }
     vfft__fingerprint(p, buf, sizeof buf);
     {   /* pull just the route selectors out of the fp tree */
-        char *k1 = strstr(buf, "k1="), *zr = strstr(buf, "zroute=");
-        printf("%-20s races=%ld  %.*s\n", CELLS[i].name, c[5],
-               zr ? (int)(strstr(zr, " ilme=") ? strstr(zr, " ilme=") - k1 : 60) : 40,
-               k1 ? k1 : "(no k1)");
+        char *k1 = strstr(buf, "k1=");
+        printf("%-20s races=%ld  %.40s
+", CELLS[i].name, c[5], k1 ? k1 : "(no k1)");
     }
     vfft_destroy(p);
     return 0;

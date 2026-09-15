@@ -398,8 +398,6 @@ static inline int vw2_migrate_oop_verify(const char *legacy_path, const char *ou
                 k.pl = VW2_PL_OOP;
             } else if (e.kind == VFFT_OOP_KIND_BAILEY2V) {
                 k.t = VW2_T_C2C; k.q = -1; k.ord = VW2_ORD_ANY; k.pl = VW2_PL_ANY;
-            } else if (e.kind == VFFT_OOP_KIND_ZSPLIT) {
-                k.t = VW2_T_C2C; k.q = 1; k.ord = VW2_ORD_SCR; k.pl = VW2_PL_OOP;
             } else {
                 /* kind-5: check each measured slot */
                 int slot;
@@ -470,19 +468,6 @@ static inline int vw2_migrate_oop_verify(const char *legacy_path, const char *ou
                         v = vw2_rec_get(hit, "il_kv");
                         snprintf(want, sizeof want, "%d", e.il_kv);
                         if (!v || strcmp(v, want)) { bad++; fprintf(stderr, "[verify] kind-3 N=%d il_kv mismatch\n", e.N); }
-                    }
-                    break;
-                case VFFT_OOP_KIND_ZSPLIT:
-                    nf = vfft_k1_cc_chain_decode(e.cc_chain, ch);
-                    if (nf > 0) {
-                        vw2__mig_join(want, sizeof want, ch, nf);
-                        v = vw2_rec_get(hit, "chain");
-                        if (!v || strcmp(v, want)) bad++;
-                    }
-                    if (e.zt_tw > 0) {
-                        v = vw2_rec_get(hit, "zt_tw");
-                        snprintf(want, sizeof want, "%d", e.zt_tw);
-                        if (!v || strcmp(v, want)) { bad++; fprintf(stderr, "[verify] kind-4 N=%d zt_tw mismatch\n", e.N); }
                     }
                     break;
                 default: break;
@@ -587,23 +572,6 @@ static inline int vw2_migrate_oop_reader_gate(const char *legacy_path, const cha
             if (got.K != e->K) VW2__RG_BAD("kind-3 N=%d: ran %lld != K %lld", e->N, (long long)got.K, (long long)e->K);
             if (e->ns > 0.0 && (got.ns - e->ns > 0.05 || e->ns - got.ns > 0.05))
                 VW2__RG_BAD("kind-3 N=%d: ns mismatch", e->N);
-            checked++;
-        }
-        else if (e->kind == VFFT_OOP_KIND_ZSPLIT) {
-            if (e->N < 2048) {   /* reader-law inert rows must miss */
-                if (vw2_oop_lookup_zsplit(&st, e->N, &got))
-                    VW2__RG_BAD("kind-4 N=%d: sub-2048 wrong-slot row RESOLVED", e->N);
-                checked++;
-                continue;
-            }
-            if (!vw2_oop_lookup_zsplit(&st, e->N, &got)) { VW2__RG_BAD("kind-4 N=%d: MISSED", e->N); continue; }
-            if (got.zs_route != e->zs_route || got.zs_t2q != e->zs_t2q || got.zt_t2q != e->zt_t2q)
-                VW2__RG_BAD("kind-4 N=%d: route/t2q mismatch", e->N);
-            if (got.zt_tw != e->zt_tw || (e->zt_tw > 0 && got.zt_l1 != e->zt_l1))
-                VW2__RG_BAD("kind-4 N=%d: width pair mismatch", e->N);
-            if (got.cc_chain != e->cc_chain) VW2__RG_BAD("kind-4 N=%d: cc_chain %d != %d", e->N, got.cc_chain, e->cc_chain);
-            if (e->ns > 0.0 && (got.ns - e->ns > 0.05 || e->ns - got.ns > 0.05))
-                VW2__RG_BAD("kind-4 N=%d: ns mismatch", e->N);
             checked++;
         }
         else if (e->kind == VFFT_OOP_KIND_ZR2C) {

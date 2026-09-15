@@ -93,48 +93,11 @@ let oop_base (isa : string) : string list =
    zil-boundary before that regen shows 32 prologue-only diffs in git â
    that is THIS item, never silent drift. *)
 let zil_boundary_cells : (string * string list) list =
-  [ ( "radix4_z_dts_r4_avx2.c"
-    , [ "4"; "--zp-dts"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_dtsn_r4_avx2.c"
-    , [ "4"; "--zp-dtsn"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_dtso_r4_avx2.c"
-    , [ "4"; "--zp-dtso"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_dtt_r4_avx2.c"
-    , [ "4"; "--zp-dtt"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_msd_avx2.c"
-    , [ "4"; "--zp-msd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix4_z_msg_avx2.c"
-    , [ "4"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix4_z_msg_bwd_avx2.c"
-    , [ "4"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix4_z_s0s_avx2.c"
-    , [ "4"; "--zp-s0s"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix4_z_s0s_bwd_avx2.c"
-    , [ "4"; "--zp-s0sb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix4_z_s0t_r4_avx2.c"
-    , [ "4"; "--zp-s0t"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_s0t_r4_bwd_avx2.c"
-    , [ "4"; "--zp-s0tb"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stf_r4_avx2.c"
-    , [ "4"; "--zp-stf"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stf_r4_bwd_avx2.c"
-    , [ "4"; "--zp-stfb"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stfn_r4_avx2.c"
-    , [ "4"; "--zp-stfn"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  (* ZTURN-T (zturn_t_ship_plan.md 1-2): the three kinds x {4,8} x {fwd,bwd},
-     no _r0 tag (the ingest's own radix is R0). The fused driver TU is NOT a
-     codelet: it is derived from these cells by bin/emit_ztt_drivers.ml into
-     generated/, beside the registries. *)
-  ; ( "radix4_z_t0tp_avx2.c"
+  (* the ZTURN-T stage kernels (natural: t0tp/tmg/tlf/tlfi; plain: t0d/tmgd/tld/tldb;
+     the odd mids tmg/tmgb/tmgd at 3/5/7/9/15) and the msz/mszt odd mids of il2p. The
+     ZTURN-S cascade's families (s0s, s0t, msg, msd, dts, stf, stfn, stfl, sterm)
+     were deleted with the cascade on 2026-09-15. *)
+  [ ( "radix4_z_t0tp_avx2.c"
     , [ "4"; "--zp-t0tp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix4_z_t0tp_bwd_avx2.c"
     , [ "4"; "--zp-t0tpb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
@@ -166,9 +129,6 @@ let zil_boundary_cells : (string * string list) list =
     , [ "8"; "--zp-tlfi"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_tlfi_bwd_avx2.c"
     , [ "8"; "--zp-tlfib"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  (* ZTURN-T PLAIN = the scrambled class (docs/design/ztt_scrambled_design.md,
-     2026-09-13): ingest t0d, mid tmgd, last tld (forward only -- the backward
-     is the stage-by-stage inverse: tldb, then the shipped tmgb and tlfb). *)
   ; ( "radix4_z_t0d_avx2.c"
     , [ "4"; "--zp-t0d"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_t0d_avx2.c"
@@ -185,12 +145,6 @@ let zil_boundary_cells : (string * string list) list =
     , [ "8"; "--zp-tld"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_tld_bwd_avx2.c"
     , [ "8"; "--zp-tldb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  (* ZTURN-T at 2^a*odd (docs/design/ztt_odd_design.md, 2026-09-14): the odd
-     radix is a MID in both order classes (the ingest and the terminators are
-     radix-4/8 lane lattices; the mids' edges are radix-agnostic), so the
-     band's whole kernel need is tmg + tmgb (natural mid, plain backward mid)
-     and tmgd (plain mid) at 3/5/7/9/15. Called by the STAGED executor, never
-     fused (design_contracts.md section 10). *)
   ; ( "radix3_z_tmg_avx2.c"
     , [ "3"; "--zp-tmg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix3_z_tmg_bwd_avx2.c"
@@ -221,104 +175,6 @@ let zil_boundary_cells : (string * string list) list =
     , [ "15"; "--zp-tmgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix15_z_tmgd_avx2.c"
     , [ "15"; "--zp-tmgd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix8_z_s0t_r8_avx2.c"
-    , [ "8"; "--zp-s0t"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stf_r8_avx2.c"
-    , [ "8"; "--zp-stf"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stf_r8_avx2.c"
-    , [ "4"; "--zp-stf"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stfn_r8_avx2.c"
-    , [ "8"; "--zp-stfn"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stfn_r8_avx2.c"
-    , [ "4"; "--zp-stfn"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stfl_r8_avx2.c"
-    , [ "8"; "--zp-stfl"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stfl_r8_avx2.c"
-    , [ "4"; "--zp-stfl"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stfnl_r8_avx2.c"
-    , [ "8"; "--zp-stfnl"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stfnl_r8_avx2.c"
-    , [ "4"; "--zp-stfnl"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_s0t_r8_bwd_avx2.c"
-    , [ "8"; "--zp-s0tb"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stf_r8_bwd_avx2.c"
-    , [ "8"; "--zp-stfb"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stf_r8_bwd_avx2.c"
-    , [ "4"; "--zp-stfb"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stfn_r8_bwd_avx2.c"
-    , [ "8"; "--zp-stfbn"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stfn_r8_bwd_avx2.c"
-    , [ "4"; "--zp-stfbn"; "--zp-r0"; "8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stfl_r4_avx2.c"
-    , [ "8"; "--zp-stfl"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stfl_r4_avx2.c"
-    , [ "4"; "--zp-stfl"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stfnl_r4_avx2.c"
-    , [ "8"; "--zp-stfnl"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stfnl_r4_avx2.c"
-    , [ "4"; "--zp-stfnl"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stfn_r4_bwd_avx2.c"
-    , [ "4"
-      ; "--zp-stfbn"
-      ; "--zp-r0"
-      ; "4"
-      ; "--isa"
-      ; "avx2"
-      ; "--uarch"
-      ; "raptor_lake_avx2"
-      ] )
-  ; ( "radix8_z_dts_r4_avx2.c"
-    , [ "8"; "--zp-dts"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_dtsn_r4_avx2.c"
-    , [ "8"; "--zp-dtsn"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_dtso_r4_avx2.c"
-    , [ "8"; "--zp-dtso"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_msd_avx2.c"
-    , [ "8"; "--zp-msd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix3_z_msg_avx2.c"
-    , [ "3"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix3_z_msg_bwd_avx2.c"
-    , [ "3"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix5_z_msg_avx2.c"
-    , [ "5"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix5_z_msg_bwd_avx2.c"
-    , [ "5"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix7_z_msg_avx2.c"
-    , [ "7"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix7_z_msg_bwd_avx2.c"
-    , [ "7"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix9_z_msg_avx2.c"
-    , [ "9"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix9_z_msg_bwd_avx2.c"
-    , [ "9"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_msg_avx2.c"
-    , [ "15"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_msg_bwd_avx2.c"
-    , [ "15"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-    (* msz (2026-09-05): the msg mid with interleaved z on both edges —
-       MKL's Fact form on our contract (split body, kernel-level IL
-       boundary, unordered lanes). fwd only. *)
   ; ( "radix3_z_msz_avx2.c"
     , [ "3"; "--zp-msz"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix5_z_msz_avx2.c"
@@ -329,7 +185,6 @@ let zil_boundary_cells : (string * string list) list =
     , [ "9"; "--zp-msz"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix15_z_msz_avx2.c"
     , [ "15"; "--zp-msz"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-    (* mszb (2026-09-05): the conjugate pipeline's backward msz. *)
   ; ( "radix3_z_msz_bwd_avx2.c"
     , [ "3"; "--zp-mszb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix5_z_msz_bwd_avx2.c"
@@ -340,7 +195,6 @@ let zil_boundary_cells : (string * string list) list =
     , [ "9"; "--zp-mszb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix15_z_msz_bwd_avx2.c"
     , [ "15"; "--zp-mszb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-    (* mszt (2026-09-05): msz's transposed backward — the scrambled class. *)
   ; ( "radix3_z_mszt_bwd_avx2.c"
     , [ "3"; "--zp-mszt"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix5_z_mszt_bwd_avx2.c"
@@ -351,67 +205,6 @@ let zil_boundary_cells : (string * string list) list =
     , [ "9"; "--zp-mszt"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix15_z_mszt_bwd_avx2.c"
     , [ "15"; "--zp-mszt"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix8_z_msg_avx2.c"
-    , [ "8"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix8_z_msg_bwd_avx2.c"
-    , [ "8"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix8_z_s0s_avx2.c"
-    , [ "8"; "--zp-s0s"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix8_z_s0s_bwd_avx2.c"
-    , [ "8"; "--zp-s0sb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix8_z_sterm2_avx2.c"
-    , [ "8"; "--zp-sterm2"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix8_z_sterm_avx2.c"
-    , [ "8"; "--zp-sterm"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix8_z_sterm_bwd_avx2.c"
-    , [ "8"; "--zp-stermb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix8_z_stf2_r4_avx2.c"
-    , [ "8"; "--zp-stf2"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stf_r4_avx2.c"
-    , [ "8"; "--zp-stf"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-    (* unordered-lane twins (2026-09-05): the plane holds digit [0,2,1,3]
-       in lane j; stores unpack-only. fwd only; A/B beside the ordered kinds. *)
-  ; ( "radix4_z_s0tu_r4_avx2.c"
-    , [ "4"; "--zp-s0tu"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix4_z_stfu_r4_avx2.c"
-    , [ "4"; "--zp-stfu"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stfu_r4_avx2.c"
-    , [ "8"; "--zp-stfu"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stf2u_r4_avx2.c"
-    , [ "8"; "--zp-stf2u"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stf_r4_bwd_avx2.c"
-    , [ "8"; "--zp-stfb"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stf_r4sk_bwd_avx2.c"
-    , [ "8"
-      ; "--zp-stfb"
-      ; "--zp-r0"
-      ; "4"
-      ; "--zp-sink"
-      ; "--isa"
-      ; "avx2"
-      ; "--uarch"
-      ; "raptor_lake_avx2"
-      ] )
-  ; ( "radix8_z_stfn_r4_avx2.c"
-    , [ "8"; "--zp-stfn"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
-    )
-  ; ( "radix8_z_stfn_r4_bwd_avx2.c"
-    , [ "8"
-      ; "--zp-stfbn"
-      ; "--zp-r0"
-      ; "4"
-      ; "--isa"
-      ; "avx2"
-      ; "--uarch"
-      ; "raptor_lake_avx2"
-      ] )
   ]
 ;;
 

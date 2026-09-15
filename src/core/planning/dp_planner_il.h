@@ -107,11 +107,10 @@
                                               family constructor into the
                                               store — the frozen legacy file
                                               is never written again */
-#include "zsplit.h"     /* the CT cascade, LEGACY route: create / execute     */
-#include "zturn.h"      /* ZTURN-S route: create_chain / execute (route axis) */
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
 #include "il_flatdit.h" /* the FLAT mixed-radix DIT: the odd-N engine (2026-09-05) */
 #include "il_flatdit_race.h" /* its FORM and TILE races on the shared race body (2026-09-07) */
+#include "support/zalloc.h"   /* VFFT_ZS_ALLOC/FREE: the context arenas (rehomed 2026-09-15) */
 #include "ztt.h"        /* ZTURN-T: the run-contiguous DIT, one fused driver per cell (2026-09-09) */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
 #include "wisdom2_oop.h" /* THE oop family entry struct + codecs (wisdom2 folder) */
@@ -275,25 +274,7 @@ typedef struct
                                               * il_bkv of 0 is then a verdict
                                               * ("the defaults won"), not the
                                               * unraced sentinel (2026-09-02) */
-    int    chain[VFFT_ZSPLIT_MAX_NF];        /* CASCADE only                    */
-    int    nf;                               /* CASCADE only, else 0            */
-    int    t2q;                              /* CASCADE terminator schedule
-                                              * (legacy: sterm/sterm2; zturn:
-                                              * stf/stf2 — per-engine twins)    */
-    int    zroute;                           /* CASCADE engine: 0 = legacy
-                                              * zsplit, 1 = ZTURN-S (zturn.h);
-                                              * else 0                          */
-    int    zt_tw;                            /* CASCADE + zroute==1 only: tile
-                                              * WIDTH in complex points.
-                                              * 0 = UNTILED, which is both the
-                                              * default and the shipped
-                                              * behaviour, so a candidate that
-                                              * never sets it is today's plan.
-                                              * Widths are a ZTURN concept —
-                                              * zsplit has no tiled path — so
-                                              * this is always 0 when zroute==0. */
-    double cost_ns;                          /* CASCADE: JOINT fwd+bwd ns/iter;
-                                              * NATURAL routes: fwd ns/iter     */
+    double cost_ns;                          /* fwd ns/iter                     */
 } vfft_il_cand_t;
 
 typedef struct
@@ -423,8 +404,6 @@ static void _il_dp_maybe_pace(vfft_il_dp_context_t *ctx, int N)
  * table-building, not transforms. */
 typedef struct
 {
-    vfft_zsplit_plan_t *zp;    /* CASCADE, legacy engine  */
-    vfft_zturn2_plan_t *zt;    /* CASCADE, ZTURN-S engine */
     vfft_il2p_plan_t   *ip;    /* 2P_PURE (full IL, no split planes) */
     vfft_il3p_plan_t   *i3;    /* CHAIN3 (3-stage IL chain, 2026-09-02) */
     vfft_oop11_fn       mono;  /* MONO    */
@@ -436,36 +415,6 @@ typedef struct
 static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
 {
     memset(b, 0, sizeof(*b));
-    if (c->route == VFFT_K1_IL_CASCADE)
-    {
-        if (c->zroute)
-        {
-            /* ZTURN-S engine: the chain is PLAN INPUT and the fences live in
-             * the create (chain[0]==4 etc.) — an out-of-scope chain returns
-             * NULL here and the candidate is dropped, never force-fit. */
-            b->zt = vfft_zturn2_create_chain(N, c->chain, c->nf);
-            if (!b->zt) return -1;
-            b->zt->t2q = c->t2q;             /* stf/stf2 — the searched pick  */
-            /* tcut WIDTH — the searched tile. 0 leaves the plan calloc-untiled.
-             * A width that the create fence rejects DROPS the candidate rather
-             * than falling back to untiled: an untiled arm benched under a
-             * tiled label would be recorded as "this width is no faster" when
-             * it never ran, which is the same false-negative the A/B harness
-             * had to be fixed for. */
-            if (c->zt_tw > 0
-                && !vfft_zturn2_set_tile_w(b->zt, 1, c->zt_tw, 0, 0))
-            {
-                vfft_zturn2_destroy(b->zt);
-                b->zt = NULL;
-                return -1;
-            }
-            return 0;
-        }
-        b->zp = vfft_zsplit_create(N, c->chain, c->nf);
-        if (!b->zp) return -1;
-        b->zp->t2q = c->t2q;                 /* the searched terminator pick  */
-        return 0;
-    }
     if (c->route == VFFT_K1_IL_2P_PURE)
     {
         b->ip = vfft_il2p_create(N, c->R1, c->R2);
@@ -530,8 +479,6 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
 
 static void _il_dp_free(_il_dp_built_t *b)
 {
-    if (b->zp) vfft_zsplit_destroy(b->zp);
-    if (b->zt) vfft_zturn2_destroy(b->zt);
     if (b->ip) vfft_il2p_destroy(b->ip);
     if (b->i3) vfft_il3p_destroy(b->i3);
     if (b->ifd) vfft_ilfd_destroy(b->ifd);
@@ -543,14 +490,6 @@ static void _il_dp_free(_il_dp_built_t *b)
 static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                        const _il_dp_built_t *b)
 {
-    if (c->route == VFFT_K1_IL_CASCADE)
-    {
-        if (c->zroute)
-            vfft_zturn2_execute_fwd(b->zt, ctx->z_in, ctx->z_out);
-        else
-            vfft_zsplit_execute_fwd(b->zp, ctx->z_in, ctx->z_out);
-        return 0;
-    }
     if (c->route == VFFT_K1_IL_2P_PURE)
     {
         vfft_il2p_execute_fwd(b->ip, ctx->z_in, ctx->z_out);
@@ -610,30 +549,6 @@ static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
      * empty call: the arm posts a near-zero time, wins the race, and banks
      * a verdict for kernels that never ran. */
     return vfft_il2p_execute_bwd(b->ip, ctx->z_in, ctx->z_out);
-}
-
-/* Execute a built CASCADE candidate JOINT: fwd z_in -> z_out, then bwd
- * IN-PLACE on z_out (zin == zout is a documented contract of both engines:
- * zsplit.h:16-17, zturn.h:43-45). One call = one iteration of the metric the
- * shipped route verdict uses (vfft.c _calibrate_zroute level 2: "the route is
- * measured on both directions together" by cutover atomicity). After the call
- * z_out holds bwd(fwd(z_in)) = N * z_in — which is exactly what the warmup's
- * roundtrip refusal check reads. */
-static int _il_dp_exec_joint(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
-                             const _il_dp_built_t *b)
-{
-    if (c->route != VFFT_K1_IL_CASCADE) return -1;
-    if (c->zroute)
-    {
-        vfft_zturn2_execute_fwd(b->zt, ctx->z_in, ctx->z_out);
-        vfft_zturn2_execute_bwd(b->zt, ctx->z_out, ctx->z_out);
-    }
-    else
-    {
-        vfft_zsplit_execute_fwd(b->zp, ctx->z_in, ctx->z_out);
-        vfft_zsplit_execute_bwd(b->zp, ctx->z_out, ctx->z_out);
-    }
-    return 0;
 }
 
 /* Build + run once (for the correctness gate). Not used for timing. */
@@ -928,39 +843,6 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
             }
             return bin + l * W;                       /* W = N / R_last here */
         }
-    case VFFT_K1_IL_CASCADE:
-    {
-        if (c->nf < 1 || c->nf > VFFT_ZSPLIT_MAX_NF) return -1;
-        long Rt = c->chain[c->nf - 1];               /* terminator radix     */
-        if (Rt < 2 || ((long)N % Rt)) return -1;
-        long NR = (long)N / Rt;
-        long l = idx / NR, r = idx % NR;
-        if (c->zroute)
-        {
-            /* ZTURN-S differs from legacy by a pure per-row (NR/S x S) Gamma
-             * transpose (zturn.h:32-36, S = chain[0] = 4 sections by fence):
-             *   out_zt[l*NR + S*k' + j] = out_legacy[l*NR + j*(NR/S) + k'].
-             * Map the zturn slot back to its legacy slot, then fall through
-             * to the one legacy digit-reversal formula below — the route's
-             * OWN permutation, exactly what lets the shared reference gate
-             * admit both engines without weakening (file header). Verified
-             * against the terminator table builders: legacy col k has w^1
-             * power brev(k, nf-1, chain) = d0 + 4*brev(k', nf-2, chain+1)
-             * with k = d0*(NR/4) + k' (zsplit.h:175), and zturn (k2, lane j)
-             * has power j + 4*brev(k2, nf-2, chain+1) (zturn.h create) — so
-             * lane j <-> digit d0 and k2 <-> k', i.e. this transpose.
-             * RADIX-PARAMETRIC: at Rt = 4 (the radix-4 terminator) this
-             * same arm is PROVEN correct with no code change — r4term_sim
-             * (E16) / gate P2: brev((j*(N/16)+k2)*4 + l, nf, chain) =
-             * l*(N/4) + 4*rho(k2) + j, i.e. the per-row (N/16 x 4)
-             * Gamma transpose, 0 bad slots at all four cells. */
-            long S = c->chain[0];
-            if (S < 1 || (NR % S)) return -1;
-            long kq = r / S, j = r % S;
-            r = j * (NR / S) + kq;
-        }
-        return _vfft_zs_brev(r * Rt + l, c->nf, c->chain);
-    }
     default:
         return -1;
     }
@@ -1021,7 +903,6 @@ static int _il_dp_exec_dir(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                            const _il_dp_built_t *b, int bwd)
 {
     if (bwd) return _il_dp_exec_bwd(ctx, c, b);
-    if (c->route == VFFT_K1_IL_CASCADE) return _il_dp_exec_joint(ctx, c, b);
     return _il_dp_exec(ctx, c, b);
 }
 
@@ -1044,8 +925,6 @@ static char _ildp_why_buf[128];
 static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
                                vfft_il_cand_t *c, int bwd, const char **why)
 {
-    /* the roundtrip refusal below only makes sense for the joint metric */
-    const int joint = (!bwd && c->route == VFFT_K1_IL_CASCADE);
     _il_dp_built_t b;
     _ILDP_WHY(why, NULL);
     if (_il_dp_build(N, c, &b) != 0)
@@ -1111,25 +990,6 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
             return 1e18;
         }
     }
-    if (joint)
-    {
-        double worst = 0.0;
-        for (long i = 0; i < 2L * N; i++)
-        {
-            double d = fabs(ctx->z_out[i] / (double)N - ctx->z_in[i]);
-            if (!(d < 1e300)) { worst = 1e30; break; }   /* NaN/Inf -> refuse */
-            if (d > worst) worst = d;
-        }
-        if (worst > 1e-11)
-        {
-            snprintf(_ildp_why_buf, sizeof _ildp_why_buf,
-                     "BUILT but WRONG: joint roundtrip err %.1e > 1e-11", worst);
-            _ILDP_WHY(why, _ildp_why_buf);
-            _il_dp_free(&b);
-            return 1e18;
-        }
-    }
-
     double best = 1e30, elapsed = 0.0;
     int reps = 1, calibrated = 0;
 
@@ -1369,157 +1229,6 @@ static void _il_dp_push(vfft_il_cand_sink_t *s, const vfft_il_cand_t *c)
  * validator is the law), ZTURN's legal tile widths are enumerated from the
  * live plan, and t2q is a searched axis. Shared by the {4,8} generator and
  * the odd-mid generator (2026-09-02) so a new axis cannot be half-adopted. */
-static void _il_dp_push_cascade_chain(int N, const int *chain, int nf,
-                                      vfft_il_cand_sink_t *s)
-{
-    vfft_il_cand_t c;
-        int eng_ok[2] = { 0, 0 };
-        /* LEGACY zsplit (zroute=0): superseded by ZTURN-S in July 2026 and
-         * never banked by any store row on any host since; the owner ruled it
-         * out of the pow2 scrambled pools 2026-09-09 ("should not be part of
-         * the runs, it doesn't win anything"). It still validates the
-         * 2^a * odd cells until the odd machinery has its turn. */
-        if ((N & (N - 1)) != 0)
-        {
-            vfft_zsplit_plan_t *p = vfft_zsplit_create(N, chain, nf);
-            if (p) { eng_ok[0] = 1; vfft_zsplit_destroy(p); }
-        }
-        /* tcut WIDTHS for this chain, ZTURN engine only. The plan is
-         * kept alive long enough to enumerate them, because legality
-         * and the L1 cost are properties of (chain, D[], twiddle
-         * layout) and live in zturn.h — re-deriving them here would be
-         * a second copy that drifts, the same reason cascade legality
-         * is delegated to the create rather than reimplemented. */
-        vfft_zt_tile_cand_t wk[VFFT_IL_DP_TILE_KEEP];
-        int nw = 0;
-        {
-            vfft_zturn2_plan_t *p = vfft_zturn2_create_chain(N, chain, nf);
-            if (p) {
-                eng_ok[1] = 1;
-                vfft_zt_tile_cand_t all[64];
-                int dropped = 0, over = 0;
-                int n = vfft_zturn2_tile_candidates(p, all, 64, &dropped);
-                /* 🔴 NO FILTER. Every legal width is benched — see the
-                 * decision note in zturn.h. Occupancy is reported,
-                 * never used to narrow the set: a width that is never
-                 * timed leaves no trace, so a wrong filter would be
-                 * undetectable from its own output. Calibration time is
-                 * what this library trades for running well on chips
-                 * nobody tuned for. */
-                nw = vfft_zturn2_tile_all(all, n, VFFT_IL_DP_TILE_KEEP,
-                                          wk, &over);
-                if (dropped)
-                    fprintf(stderr, "[il-dp] N=%d: %d tile widths did "
-                                    "not fit the enumeration array\n",
-                            N, dropped);
-                /* Over-cap is a SIZING BUG. Loud, always. */
-                if (over)
-                    fprintf(stderr, "[il-dp] N=%d nf=%d: %d legal tile "
-                            "widths EXCEEDED VFFT_IL_DP_TILE_KEEP=%d and "
-                            "were NOT benched — raise it\n",
-                            N, nf, over, VFFT_IL_DP_TILE_KEEP);
-                if (nw && getenv("VFFT_IL_DP_VERBOSE"))
-                    fprintf(stderr, "  [il-dp] N=%d nf=%d: %d legal tile "
-                            "widths, all benched (L1 = %ld B)\n",
-                            N, nf, nw, vfft_cpu_l1d_bytes());
-                vfft_zturn2_destroy(p);
-            }
-        }
-        for (int rt = 0; rt < 2; rt++)
-        {
-            if (!eng_ok[rt]) continue;
-            /* last==4 x ZTURN (the radix-4 terminator) has NO
-             * stf2 twin — zturn.h forces t2q=0 — so the q=1
-             * candidate would bench the same binary twice.
-             * (Legacy zsplit never validates last==4, so rt==0
-             * cannot reach here with a last==4 chain.) */
-            const int nq =
-                (rt == 1 && chain[nf - 1] == 4) ? 1 : 2;
-            /* Width axis: ZTURN only (rt==1) — zsplit has no tiled
-             * path. Index -1 is the UNTILED candidate, which must stay
-             * in the search: tiling is a per-cell verdict, not a
-             * default, and 2048 measured a real +3.3% LOSS. Dropping
-             * the untiled arm would make "tiled" unfalsifiable. */
-            const int wlo = -1;
-            const int whi = (rt == 1) ? nw - 1 : -1;
-            for (int q = 0; q < nq; q++)
-            for (int wi = wlo; wi <= whi; wi++)
-            {
-                memset(&c, 0, sizeof c);
-                c.route = VFFT_K1_IL_CASCADE;
-                c.zroute = rt;
-                c.nf = nf;
-                c.t2q = q;
-                c.zt_tw = (wi >= 0) ? (int)wk[wi].w : 0;
-                memcpy(c.chain, chain, sizeof(int) * (size_t)nf);
-                _il_dp_push(s, &c);
-            }
-        }
-}
-
-/* odd-mid chains (2026-09-02, arm audit C1.2/C1.5): N = 2^a * odd, odd > 1.
- * The odd part is decomposed into the emitted msg radices {15,9,7,5,3}
- * (largest first, the default chain's own decomposition) and placed at
- * EVERY interior position (chain[0] is the ingest, chain[nf-1] the
- * terminator — both power-of-two by construction); the power-of-two slots
- * walk ordered {4,8} with product N/odd. Legality is still the creates'.
- * Before this, prod == N never held for an odd N and the cell silently got
- * vfft_zsplit_default_chain + UNTILED with nothing measured. */
-static void _il_dp_enumerate_odd_mids(int N, vfft_il_cand_sink_t *s)
-{
-    static const int OP[] = { 15, 9, 7, 5, 3 };
-    int mids[VFFT_ZSPLIT_MAX_NF], nm = 0, m = N, p2;
-    long pw;
-    while ((m & 1) == 0) m >>= 1;
-    if (m == 1) return;                        /* pure power of two: not ours */
-    for (p2 = 0; p2 < (int)(sizeof OP / sizeof OP[0]); p2++)
-        while (m % OP[p2] == 0) {
-            if (nm >= VFFT_ZSPLIT_MAX_NF - 2) return;
-            mids[nm++] = OP[p2];
-            m /= OP[p2];
-        }
-    if (m != 1) return;                        /* an odd factor outside msg */
-    pw = (long)N;
-    for (p2 = 0; p2 < nm; p2++) pw /= mids[p2];
-    for (int nf = nm + 3; nf <= VFFT_ZSPLIT_MAX_NF; nf++)
-    {
-        const int np = nf - nm;                /* power-of-two slots        */
-        long combos = 1;
-        for (int i = 0; i < np; i++) combos *= 2;
-        for (long mask = 0; mask < combos; mask++)
-        {
-            int pchain[VFFT_ZSPLIT_MAX_NF];
-            long prod = 1;
-            for (int i = 0; i < np; i++) {
-                pchain[i] = ((mask >> i) & 1) ? 8 : 4;
-                prod *= pchain[i];
-            }
-            if (prod != pw) continue;
-            /* place the mids: ordered positions 1..nf-2, mids in their
-             * decomposition order (identical mids are indistinguishable, so
-             * ordered placement with a strictly increasing position walk is
-             * exactly the set of distinct chains) */
-            int pos[VFFT_ZSPLIT_MAX_NF];
-            for (int i = 0; i < nm; i++) pos[i] = i + 1;
-            for (;;)
-            {
-                int chain[VFFT_ZSPLIT_MAX_NF], pi = 0, mi = 0;
-                for (int i = 0; i < nf; i++) {
-                    if (mi < nm && pos[mi] == i) chain[i] = mids[mi++];
-                    else chain[i] = pchain[pi++];
-                }
-                _il_dp_push_cascade_chain(N, chain, nf, s);
-                /* next combination of positions within [1, nf-2] */
-                int k = nm - 1;
-                while (k >= 0 && pos[k] == nf - 2 - (nm - 1 - k)) k--;
-                if (k < 0) break;
-                pos[k]++;
-                for (int j = k + 1; j < nm; j++) pos[j] = pos[j - 1] + 1;
-            }
-        }
-    }
-}
-
 /* FLAT DIT candidates (2026-09-05): ordered compositions of N over the
  * engine's radix pool in its seed order (so the greedy seed chain comes
  * first), depth 2..VFFT_ILFD_MAX_K, capped and LOGGED like the 2D tier's
@@ -1983,27 +1692,6 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
         return;
     }
 
-    /* SCRAMBLED: ordered chains of {4,8}, nf in [3, MAX_NF], x ENGINE
-     * (legacy zsplit / ZTURN-S), each validated by ITS OWN route's create —
-     * the validator is the law, twice: vfft_zsplit_create for the legacy
-     * space (chain[0] in {4,8}) and vfft_zturn2_create_chain for the fenced
-     * ZTURN-S subset (chain[0] in {4,8} since 2026-09-07 — the r0 = 8
-     * two-quartet ingest geometry, one pass fewer, is a raced chain like any
-     * other; a fence-invalid chain simply yields no zturn candidates —
-     * skipped, never force-fit). t2q stays a SEARCHED
-     * axis on BOTH engines — sterm/sterm2 and stf/stf2 are placement-order-
-     * sensitive twins that must be measured on the installed binary, never
-     * hand-set.
-     *
-     * TIER GATE (2026-08-23): below _vfft_zcasc_min_n() there is nothing to
-     * enumerate. The route's own create WOULD build a chain at N=1024 —
-     * vfft_zsplit_default_chain carries a cold-start seed there — so
-     * "validator is the law" is not enough on its own here: it admitted
-     * ~20 candidates per scrambled 1024 cell that the runtime refuses to
-     * serve and the kind-4 writer refuses to store ("sub2048-wrong-slot").
-     * Raced, then discarded, on every MEASURE create. Sharing the runtime's
-     * gate keeps the boundary raceable via VFFT_NAT_ZCASC_MINN while costing
-     * nothing by default. */
     /* the K=1 IL tier's SCRAMBLED cell (2026-09-05): at every cell the tier
      * races (below 2048, or any N without a factor of 4) every engine that
      * legally answers a scrambled request competes here — the natural-output
@@ -2044,27 +1732,6 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
     {
         _il_dp_enumerate_natural_engines(N, s, 0);
         if ((N & (N - 1)) != 0) _il_dp_enumerate_flat_ord(N, s, 1);
-    }
-    if (N < _vfft_zcasc_min_n()) return;
-    {
-        int chain[VFFT_ZSPLIT_MAX_NF];
-        for (int nf = 3; nf <= VFFT_ZSPLIT_MAX_NF; nf++)
-        {
-            long combos = 1;
-            for (int i = 0; i < nf; i++) combos *= 2;
-            for (long mask = 0; mask < combos; mask++)
-            {
-                long prod = 1;
-                for (int i = 0; i < nf; i++)
-                {
-                    chain[i] = ((mask >> i) & 1) ? 8 : 4;
-                    prod *= chain[i];
-                }
-                if (prod != (long)N) continue;
-                _il_dp_push_cascade_chain(N, chain, nf, s);
-            }
-        }
-        _il_dp_enumerate_odd_mids(N, s);       /* N = 2^a * odd (2026-09-02) */
     }
 }
 
@@ -2180,11 +1847,8 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
             /* The CHAIN, not just nf: it is the axis this gate exists to keep
              * searchable, and `nf=5` alone cannot tell 4.4.4.4.8 from
              * 8.4.4.4.4 in a race whose top-2 spread is often under 2%. */
-            char ch[VFFT_ZSPLIT_MAX_NF * 3 + 1];
+            char ch[VFFT_ZTT_MAX_NF * 3 + 1];
             int  cn = 0;
-            for (int s = 0; s < cand[i].nf; s++)
-                cn += snprintf(ch + cn, sizeof ch - (size_t)cn, "%s%d",
-                               s ? "." : "", cand[i].chain[s]);
             /* ZTURN-T carries its chain in il_zt (the chain IS the plan) */
             for (int s = 0; s < cand[i].il_zt_n; s++)
                 cn += snprintf(ch + cn, sizeof ch - (size_t)cn, "%s%d",
@@ -2196,19 +1860,17 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
              * audited — the same defect the A/B harness had when it labelled
              * arms instead of reporting what they engaged. */
             char wbuf[24];
-            const int twc = cand[i].route == VFFT_K1_IL_ZTT ? cand[i].il_tw : cand[i].zt_tw;
+            const int twc = cand[i].il_tw;
             if (twc > 0)
                 snprintf(wbuf, sizeof wbuf, " w=%dKB", twc * 16 / 1024);
             else
                 snprintf(wbuf, sizeof wbuf, " w=untiled");
             fprintf(stderr, "  [il-dp] N=%d ord=%d route=%d eng=%s %dx%d "
-                    "chain=%s t2q=%d%s -> %.1f ns (gate %.1e)\n",
+                    "chain=%s%s -> %.1f ns (gate %.1e)\n",
                     N, ord, cand[i].route,
-                    cand[i].route == VFFT_K1_IL_CASCADE
-                        ? (cand[i].zroute ? "zturn" : "zsplit")
-                        : cand[i].route == VFFT_K1_IL_ZTT ? "ztt" : "-",
+                    cand[i].route == VFFT_K1_IL_ZTT ? "ztt" : "-",
                     cand[i].R1, cand[i].R2, ch,
-                    cand[i].t2q, wbuf, cand[i].cost_ns, gerr);
+                    wbuf, cand[i].cost_ns, gerr);
         }
     }
     if (!nlive) return 1e18;
@@ -2230,37 +1892,6 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
         if (keep > VFFT_IL_DP_TOPK_MAX) keep = VFFT_IL_DP_TOPK_MAX;
         e->n_top = keep;
         for (int i = 0; i < keep; i++) e->top[i] = cand[i];
-        /* ROUTE DIVERSITY (SCRAMBLED only) — dp_planner.h:657's beam-diversity
-         * precedent (there: diverse multisets, not re-orderings of one),
-         * applied to the ENGINE axis: the kept set must carry the best LIVE
-         * candidate of EACH engine, so (a) a PATIENT cache hit re-races the
-         * ROUTES rather than one route's t2q twins, and (b) the wisdom
-         * emitter can always bank the fallback route's terminator pick.
-         * cand[] is cost-sorted, so the first match is that engine's best at
-         * its OWN best chain. May grow n_top one past beam (still <= TOPK). */
-        if (ord == VFFT_IL_ORD_SCRAMBLED)
-        {
-            for (int rt = 0; rt < 2; rt++)
-            {
-                int present = 0;
-                for (int i = 0; i < e->n_top && !present; i++)
-                    if (e->top[i].route == VFFT_K1_IL_CASCADE &&
-                        e->top[i].zroute == rt)
-                        present = 1;
-                if (present) continue;
-                for (int i = 0; i < ncand; i++)
-                    if (cand[i].cost_ns < 1e17 &&
-                        cand[i].route == VFFT_K1_IL_CASCADE &&
-                        cand[i].zroute == rt)
-                    {
-                        if (e->n_top < VFFT_IL_DP_TOPK_MAX)
-                            e->top[e->n_top++] = cand[i];
-                        else
-                            e->top[e->n_top - 1] = cand[i];
-                        break;
-                    }
-            }
-        }
     }
     if (best) *best = cand[0];
     return cand[0].cost_ns;
@@ -2305,8 +1936,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
  * wave-1 flip; the caller owns opening/saving the store). */
 static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                                   const vfft_il_cand_t *nat,
-                                  const vfft_il_cand_t *scr,
-                                  const vfft_il_cand_t *scr_leg)
+                                  const vfft_il_cand_t *scr)
 {
     int lines = 0;
     if (!st) return 0;
@@ -2401,8 +2031,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                         N, why ? why : "?");
         }
     }
-    if (scr && scr->cost_ns < 1e17 && scr->route != VFFT_K1_IL_CASCADE &&
-        scr->route > VFFT_K1_IL_NONE)
+    if (scr && scr->cost_ns < 1e17 && scr->route > VFFT_K1_IL_NONE)
     {   /* the K=1 IL tier's SCRAMBLED cell: its own kind-3 IL row keyed
          * ord=scr, the winner's full recipe (a natural-output engine, or
          * the flat DIT's scrambled class) — never merged with ord=nat */
@@ -2441,64 +2070,6 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
         if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
             lines++;
     }
-    if (scr && scr->cost_ns < 1e17 && scr->route == VFFT_K1_IL_CASCADE)
-    {
-        int code = vfft_k1_cc_chain_encode(scr->chain, scr->nf);
-        if (code)
-        {
-            /* 🔴 GO THROUGH THE SHIPPED WRITER, never fprintf the line here.
-             *
-             * This used to hand-print the kind-4 line, which meant TWO places
-             * knew the format — this one and the legacy line encoder. When
-             * the tcut width field was added, only one of them learned about
-             * it, and a run banked a TILED winner as UNTILED with nothing
-             * complaining. Building the entry and handing it to the shipped
-             * writer makes the format have exactly one definition, so a new
-             * field cannot be half-adopted. */
-            vfft_oop_wisdom_entry_t e;
-            memset(&e, 0, sizeof e);
-            e.N = N;
-            e.K = 1;
-            e.kind = VFFT_OOP_KIND_ZSPLIT;
-            e.cc_chain = code;
-            e.ns = scr->cost_ns;
-            if (scr->zroute)
-            {
-                e.zs_route = 1;
-                e.zt_t2q = scr->t2q;
-                /* zs_t2q = the best legacy candidate's pick (the fallback
-                 * route's terminator; 0 = the compiled default when no legacy
-                 * candidate survived — valid either way, twins are
-                 * bit-identical). */
-                e.zs_t2q = (scr_leg && scr_leg->cost_ns < 1e17) ? scr_leg->t2q : 0;
-                /* tcut width + THE CACHE IT WAS TUNED AGAINST. Zero when the
-                 * winner was untiled, and the writer then omits the pair, so
-                 * such a verdict re-banks byte-identically to the pre-width
-                 * format. The L1 stamp is what lets the reader refuse this line
-                 * on a machine with a different cache. */
-                e.zt_tw = scr->zt_tw;
-                e.zt_l1 = scr->zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
-            }
-            else
-                e.zs_t2q = scr->t2q;
-            /* ODD-MID cascade (2026-09-02): bank the searched recipe as a
-             * COMPONENT row (role=comp). The problem-verdict key at odd N
-             * belongs to whichever engine won the OOP cell (a classic modeb
-             * verdict, today) and an odd cascade never attaches by fiat —
-             * it races the finished handle at the commit, so the incumbent's
-             * own verdict must survive here or that race turns into a
-             * strawman (the 2026-08-27 lesson). Every replay path reads the
-             * comp recipe for an odd chain. */
-            {
-                int codd = 0, ci;
-                for (ci = 0; ci < scr->nf; ci++)
-                    if (scr->chain[ci] & 1) codd = 1;
-                if (vw2_oop_bank_entry_role(st, &e, codd ? VW2_ROLE_COMP
-                                                         : VW2_ROLE_NONE) == VW2_OK)
-                    lines++;
-            }
-        }
-    }
     return lines;
 }
 
@@ -2515,17 +2086,7 @@ static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, vw2_store_t *st, 
     double sns = vfft_il_dp_plan(ctx, N, VFFT_IL_ORD_SCRAMBLED, &scr, verbose);
     if (nns >= 1e17) nat.cost_ns = 1e18;
     if (sns >= 1e17) scr.cost_ns = 1e18;
-    const vfft_il_cand_t *leg = NULL;
-    {
-        const vfft_il_dp_entry_t *e =
-            _il_dp_lookup(ctx, N, VFFT_IL_ORD_SCRAMBLED);
-        if (e)
-            for (int i = 0; i < e->n_top && !leg; i++)
-                if (e->top[i].route == VFFT_K1_IL_CASCADE &&
-                    e->top[i].zroute == 0)
-                    leg = &e->top[i];
-    }
-    return vfft_il_dp_emit_wisdom(st, N, &nat, &scr, leg);
+    return vfft_il_dp_emit_wisdom(st, N, &nat, &scr);
 }
 
 /* Ranked rows for a deploy pool / wisdom writer. Returns how many were filled. */
@@ -2539,24 +2100,6 @@ static int vfft_il_dp_rank(vfft_il_dp_context_t *ctx, int N, int ord,
     int n = e->n_top < max_out ? e->n_top : max_out;
     for (int i = 0; i < n; i++) out[i] = e->top[i];
     return n;
-}
-
-/* Bank a SCRAMBLED ranking's winner (top[0]) as the cell's kind-4 verdict —
- * the calibrate_zchain entry point (drivers stay thin: the entry is built
- * HERE, by the same emit path every other banker uses). zs_t2q rides from
- * the best legacy-route candidate in the same ranking (0 = compiled default
- * when none survived — valid either way, the twins are bit-identical).
- * Returns verdicts banked (0 also when top[0] is not a cascade winner). */
-static int vfft_il_dp_bank_scr_top(vw2_store_t *st, int N,
-                                   const vfft_il_cand_t *top, int ntop)
-{
-    const vfft_il_cand_t *leg = NULL;
-    int i;
-    if (!st || ntop <= 0) return 0;
-    for (i = 0; i < ntop && !leg; i++)
-        if (top[i].route == VFFT_K1_IL_CASCADE && !top[i].zroute)
-            leg = &top[i];
-    return vfft_il_dp_emit_wisdom(st, N, NULL, &top[0], leg);
 }
 
 #endif /* VFFT_DP_PLANNER_IL_H */

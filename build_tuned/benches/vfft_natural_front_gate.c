@@ -282,8 +282,6 @@ int main(int argc, char **argv)
     if (!err_tap_open(wisdir)) { printf("stderr tap failed\n"); return 2; }
 
     env_set("VFFT_NAT_LOG", "1");
-    env_set("VFFT_NO_NAT_ZCASC", "");
-    env_set("VFFT_FORCE_ZROUTE", "");
 
     vfft_wisdom *W = vfft_wisdom_load(wisdir);
     if (!W) { printf("vfft_wisdom_load FAILED\n"); return 2; }

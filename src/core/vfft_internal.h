@@ -47,6 +47,8 @@
 #ifndef VFFT_INTERNAL_H
 #define VFFT_INTERNAL_H
 
+#include "support/zalloc.h"   /* the house 64-B allocator (VFFT_ZS_ALLOC/FREE) */
+
 /* ════════════════════════════════════════════════════════════════════════
  * OPAQUE TYPES
  * ════════════════════════════════════════════════════════════════════════ */
@@ -119,24 +121,6 @@ struct vfft_plan_s
     int k1_on;
     int k1_sp_route, k1_il_route;
     vfft_oop_plan_t *k1sp;
-    /* K=1 SCRAMBLED interleaved z->z: the block-split cascade (zsplit.h;
-     * ≥2048 cells, default chains = calibrated winners). Serves ONLY plans
-     * committed to layout=INTERLEAVED; split-layout plans and uncovered
-     * cells go through the classic path (uncovered IL cells convert). Owned. */
-    vfft_zsplit_plan_t *zsplit;
-    /* ROUTE AXIS for that cascade (cascade_load_path_restructure §6.4/§2.6):
-     * zroute is the ONE field BOTH execute directions dispatch on (0 = legacy
-     * zsplit, 1 = ZTURN-S). Cutover atomicity is STRUCTURAL: create keeps
-     * exactly one cascade plan (the loser is destroyed before the handle
-     * exists) and _exec_zcascade is the single consumer, so a mixed
-     * fwd-legacy/bwd-zturn pairing is inexpressible, not just unlikely.
-     * Invariant: zroute==1 <=> zturn!=NULL && zsplit==NULL. The SCRAMBLED
-     * contract permits the routes' different output permutations (§2.6) —
-     * a route's OWN bwd always consumes its OWN fwd comb. ZTURN is the
-     * DEFAULT route on a wisdom miss (2026-07-27 cutover; banked route
-     * verdicts — including old-format = legacy — are honored). Kill switch:
-     * env VFFT_NO_ZTURN at create pins legacy (VFFT_NO_IL2P precedent);
-     * VFFT_FORCE_ZROUTE=legacy|zturn is the gate/test forcing hook. */
     /* ── 2D PLANE QUEUE (howmany > 1, sequential contiguous planes —
      * the designed 2D batching feature; docs/design/il2d_real_mt.md
      * increment 5/M6). The handle is a thin wrapper: pq_inner is the
@@ -154,14 +138,6 @@ struct vfft_plan_s
     size_t pq_n;              /* plane count (howmany) */
     size_t pq_sdist, pq_ddist; /* plane strides, DOUBLES (contiguous) */
     int pq_mt;                /* raced verdict: 1 = queue, 0 = loop */
-    int zroute;
-    vfft_zturn2_plan_t *zturn;
-    /* K=1 cascade MT verdict (INC-Z, the 2D design ported to 1D): 1 =
-     * thread the zturn walk. RACED at the OOP scrambled commit when the
-     * pool is live (serial default everywhere else — natural/in-place
-     * commits inherit later). The cascade needs NO clones: one read-only
-     * plan, and every phase partitions the sectioned plane disjointly. */
-    int zt_mt;
     /* K=1 NATURAL interleaved z->z, PURE IL (il2p.h): n1t -> z scratch -> t2,
      * no split planes, BOTH directions (bwd = t2t then n1_bwd(R2), solved
      * 2026-07-29). THE IL 2-pass plan — the hybrid it displaced measured
