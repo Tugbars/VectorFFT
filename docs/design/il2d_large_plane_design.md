@@ -104,54 +104,58 @@ paid back in bandwidth. A real but small win; not dominant (one cell
 behind), so a raced arm if kept, never the walk. Held as the probe switch
 pending the owner's ruling.
 
-## 2. The four-step's transpose folded into the row pass
+## 2. The four-step's transpose folded into the row pass — REFUTED
 
-The natural class today: the 2D child writes its plane (rows in place on
-the plane after the column pass), then `_k1fs_transpose` reads the plane
-and streams the k2-major destination — a third sweep (read 64 + write 64
-MB: 2.6 ms serial, 1.5-2 ms at T=8 at 4194304). Folded: the row pass
-runs its rows in groups of G (16, or the band width when smaller) into a
-per-worker scratch of G rows, and the group leaves as the 16-column block
-store of `_k1fs_transpose_range` (lane permutes, streaming stores)
-straight into the k2-major destination at columns k1(p) of the group's
-plane rows — the plane row is read once (L2-hot after its column stage or
-its band) and never written back with row output. The child carries the
-hook as it carries the twiddle: `il2d_fs_out` (the destination) and
-`il2d_fs_k1` (the column map k1(p)), set by the four-step plan for the
-natural class before execute and absent otherwise; the walks — the serial
-banded (rows per band) and unbanded (rows after the pass), the threaded
-band arm (rows per band) and the row phase of the strips arm — take the
-group store in place of the in-place row when the hook is present.
-Backward mirrors: the group's rows are gathered from the k2-major source
-by the block load (the transpose's backward kernel into the scratch), the
-conjugate-twiddled row plan runs from the scratch into the plane, then the
-column pass runs reversed — rows first, as the four-step's backward already
-orders them. In place: the column pass consumes the caller's array before
-any row is stored back into it (strips: the whole pass; bands: the wide
-prefix), so the destination is the caller's array in both placements and
-the four-step's own plane is the child's only plane.
+The natural class pays a fourth sweep over the scrambled class's three:
+`_k1fs_transpose` reads the child's plane and streams the k2-major
+destination (2.6 ms serial, 1.5-2 ms at T=8 at 4194304). Two folds were
+designed and one built; neither stands.
 
-The four-step's natural class then costs the scrambled class's two sweeps
-plus the scattered k2-major write in place of the plane's row write —
-no separate transpose in either direction. `_k1fs_transpose` stays as the
-kernel the group store calls.
+The band-local fold (the row pass storing its group of 16 plane rows as
+16 output columns while the band is hot) is not available on a SCRAMBLED
+child: 16 consecutive plane rows hold columns k1(p) spaced N1/16 apart,
+so the block store writes 16-B pieces of 64 lines per output row — a 4x
+write amplification. Whole-line stores need 16 consecutive k1, and those
+rows sit in R0 different bands (k1 = R0*k + d0 puts them at plane stride
+N1/R0).
 
-THE CATCH (found at design review, 2026-09-15): a group of G consecutive
-PLANE rows holds columns k1(p) that are spaced N1/16 apart (the column
-chain's digit reversal), so its block store writes 16 B pieces of 64
-different lines per output row — a 4x write amplification that costs more
-than the sweep it saves. Whole-line stores need groups of CONSECUTIVE k1,
-and those rows lie in R0 different bands: k1 = R0*k + d0 puts the rows at
-plane stride N1/R0. The fold therefore needs the four-step's own band —
-the SUPER-BAND: R0 blocks of wl rows at stride N1/R0 (with the chain's
-last stage as the in-band suffix), which holds R0*wl consecutive k1 and
-is L2-resident at wl = 8 (64 rows x 32 KB = 2 MB at 2048x2048). Its walk:
-prefix as today; per super-band the suffix stages on its R0 blocks, the
-rows in k1 order (twiddled), the group store of 16 consecutive k1. That
-is a new band form for the 2D child (a raced arm beside the contiguous
-band: `wl` with a `sb=1` flag), not a hook — a larger build than the hook
-this section described. Expected at 4194304 T=8: 7.2 to ~5.3 ms (1.3x
-MKL); serial 17.6 to ~15 (1.6x). Awaiting the owner's ruling.
+The NATURAL-child fold was built (2026-09-15: a natural 2D child, always
+out of place into the four-step's plane, its rows in k1 order so 16
+consecutive rows are 16 consecutive columns; the row pass in groups of 16
+through a per-worker scratch, the 16 x 16 block store straight to the
+destination; backward mirrored, rows first; both placements; gate ALL
+PASS at 1M, T=8 bitwise). It LOSES at every cell and both thread counts,
+because the 2D tier's natural class costs far more than the transpose it
+saves — the natural pass (prefix into a natural scratch plane, the leaf's
+scattered row writes, rows after) against the scrambled banded walk,
+`il2d_mt_probe` on the shipped store:
+
+```
+ plane       class    T=1        T=8
+ 2048x512    scr      2.42 ms    0.34 ms
+ 2048x512    nat      3.12 ms    0.86 ms
+ 512x2048    scr      2.43 ms    0.29 ms
+ 512x2048    nat      3.28 ms    0.53 ms
+ 2048x2048   scr     15.6 ms     4.8 ms
+ 2048x2048   nat     52.3 ms     9.8 ms
+```
+
+Folded four-step natural vs the shipped form: 524288 T=1 1.92 vs 1.41 ms,
+T=8 348 vs 274 us; 1048576 T=1 5.19 vs 3.12 ms, T=8 1.21 vs 0.61 ms. The
+fold is deleted; the natural class keeps the scrambled child and the
+streaming transpose (`k1_fourstep_design.md`). Two findings stand:
+
+- The 2D tier's NATURAL class collapses at large planes: 3.4x the
+  scrambled class serial at 64 MB (52 ms), 2x at T=8; 1.3x at 16 MB. The
+  leaf scatter writes R rows at stride N1/R (2 MB apart at 2048x2048 —
+  the same L1 sets), and its own scratch plane is a sweep the scrambled
+  walk does not pay. A 2D-tier item of its own, outside this design.
+- The only fold that keeps the scrambled child is the SUPER-BAND: R0
+  blocks of wl rows at plane stride N1/R0 (holding R0*wl consecutive k1),
+  L2-resident at wl = 8, suffix per block, rows in k1 order, the block
+  store to the destination — a new band form for the 2D child raced beside
+  the contiguous band, with a chain whose last stage is small. Not built;
+  the owner's call.
 
 ## Gates
 
@@ -187,7 +191,8 @@ the phase instrument; then the canonical bench `--k1noop` and `--k1noop
       `cmt`/`cmtt` tokens dropped so the cold race runs) and the four-step's
       per-T splits; gates ALL PASS; measure.
 - [ ] 2d. The prefix pair as a raced arm (or deleted): the owner's ruling.
-- [ ] 4. The folded transpose (as the SUPER-BAND form above; the owner's ruling): the `il2d_fs_out` / `il2d_fs_k1` hook, the
+- [x] 2d. The prefix pair: DELETED (owner 2026-09-15: a 4-10% arm that loses a cell is not worth its race cost and its code); the strip-width arms stay.
+- [x] 4. The folded transpose: BUILT (natural-child form), gated, REFUTED at every cell, DELETED. The super-band form is the owner's call. the `il2d_fs_out` / `il2d_fs_k1` hook, the
       group store in the four walks both directions, both placements;
       `_k1fs_transpose` demoted to the kernel; the four-step's natural
       execute drops its separate sweep. Gates ALL PASS; measure.

@@ -34,7 +34,7 @@ int main(int argc, char **argv)
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
     cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1;
-    cfg.order = VFFT_ORDER_SCRAMBLED; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.order = (getenv("VFFT_PROBE_NAT") ? VFFT_ORDER_NATURAL : VFFT_ORDER_SCRAMBLED); cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
     p = vfft_create(&cfg);
     if (!p) { printf("%dx%d T=%d: create refused\n", N1, N2, T); return 1; }
