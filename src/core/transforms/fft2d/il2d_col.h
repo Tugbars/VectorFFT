@@ -50,6 +50,12 @@ typedef struct {
                                * worker's whole range); banked msw= beside cmt/cmtt */
     int *natperm;             /* N entries, scr row -> natural row */
     double *natscr;           /* 2*N*rn: the pre-leaf plane */
+    int natst;                /* the leaf STAGED (1) or at its natural stride (0): the serial
+                               * walk's form is staged (dominant); the threaded arms race both,
+                               * banked nls= beside cmt/cmtt (il2d_natural_leaf_design.md) */
+    double *natstage;         /* the leaf's STAGING, T x R_last x rn complexes, 64-B
+                               * aligned (il2d_natural_leaf_design.md, 2026-09-16);
+                               * NULL = the leaf stores at its natural stride */
     /* column-axis BLUESTEIN: chirp convolution at M = next pow2 >= 2N-1 over
      * an M x rn scratch plane; blu = M (0 = off); R/L/f/b/tf/tb hold the
      * M-chain */

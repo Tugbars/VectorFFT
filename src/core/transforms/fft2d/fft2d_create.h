@@ -1108,6 +1108,14 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         h->il2d_col.nat = il2d_nat;
         h->il2d_col.natperm = il2d_natperm;
         h->il2d_col.natscr = il2d_natscr;
+        h->il2d_col.natstage = NULL;
+        h->il2d_col.natst = 1;
+        if (il2d_nat && il2d_natscr && il2d_nst >= 1)
+        {   /* the leaf's staging, one block per worker (il2d_natural_leaf_design.md) */
+            const int Rl = il2d_R[il2d_nst - 1];
+            const int T = h->nthreads > 0 ? h->nthreads : 1;
+            h->il2d_col.natstage = (double *)VFFT_ZS_ALLOC((size_t)T * 2 * (size_t)Rl * h->il2d_col.rn * sizeof(double));
+        }
         h->il2d_col.blu = il2d_blu;
         h->il2d_col.bluchf = il2d_bluchf;
         h->il2d_col.bluchb = il2d_bluchb;
@@ -1158,6 +1166,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 h->il2d_col.colmt = il2d_bcmt;
                 h->il2d_col.natarm = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "mtarm", 0) : 0;
                 h->il2d_col.msw = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "msw", 0) : 0;
+                h->il2d_col.natst = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "nls", 1) : 1;
             }
             else
                 _il2d_c2c_mt_race(h, W, cfg, N1, N2);

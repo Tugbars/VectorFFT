@@ -210,7 +210,7 @@ static void _ilnd_plane_t(const vfft_ilnd_t *d, int tid, vfft_dir_t dir,
              * fewer per plane, the same arithmetic (2026-09-15) */
             _il2d_col_pass_nat(src, dst, ax1->N, rn, ax1->nst, ax1->R, ax1->L,
                                rev ? ax1->b : ax1->f, rev ? ax1->tb : ax1->tf, rev,
-                               ax1->natperm, rev ? dst : (double *)src);
+                               ax1->natperm, rev ? dst : (double *)src, NULL);
         else
             _il2d_col_exec(ax1, src, dst, rev);
         for (r = 0; r < (size_t)d->N[1]; r++)
