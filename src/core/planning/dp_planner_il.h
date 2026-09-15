@@ -1800,9 +1800,10 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * last role anywhere. Outside both bands the cascade's enumeration below
      * stands until its deletion. */
     if (vfft_ztt_band(N))
-    {
+    {   /* the plain ZTURN-T ALONE to its ceiling (design_contracts.md 8b, the
+         * ztt gate's law): the four-step's scrambled class begins above it —
+         * only the NATURAL cell races the two at 262144 (2026-09-16) */
         _il_dp_enumerate_ztt_ord(N, s, 1);
-        if (vfft_k1fs_band(N)) _il_dp_enumerate_fs(N, s, 1);   /* at the ceiling both race */
         return;
     }
     if ((N & (N - 1)) == 0 && vfft_k1fs_band(N))

@@ -246,6 +246,17 @@ depth <= 3: the serial race found nothing outside it that wins). Below
 the gate the natural class is form 0 without a race, the cells the
 transpose was never the cost of.
 
+RE-RACED 2026-09-16 on the quiet machine, the shipped store's 4194304
+natural cell at T=8: form 0 2048x2048 7.36 ms, super-band 2048x2048/8.32.8
+7.64, 4096x1024/8.64.8 7.92 — form 0 won and is banked (`il_mtsb=0`). The
+12% of the first quiet run (6.46 against 7.31) did not reproduce; the two
+forms sit inside the threaded race's own run-to-run spread at this size.
+The canonical bench at 4M, T=8: 7.09-8.03 ms against MKL 7.41-8.13,
+1.01-1.04x; serial 1.43-1.44x. The super-band has no cell it reliably
+wins on this host. RULING (owner 2026-09-16): KEPT — "technically sound";
+form 0 and the super-band race only in cells whose plane is above L3, as
+built (`_k1fs_sb_admit` in both races); below it, form 0 without a race.
+
 ## Gates
 
 - `il2d_real_gate`, the four-step gate (T=8 bitwise the plan's own serial,
@@ -282,17 +293,25 @@ the phase instrument; then the canonical bench `--k1noop` and `--k1noop
 - [ ] 2d. The prefix pair as a raced arm (or deleted): the owner's ruling.
 - [x] 2d. The prefix pair: DELETED (owner 2026-09-15: a 4-10% arm that loses a cell is not worth its race cost and its code); the strip-width arms stay.
 - [x] 4. The folded transpose: BUILT (natural-child form), gated, REFUTED at every cell, DELETED. The super-band form is the owner's call.
-- [x] 5. The SUPER-BAND (§3): BUILT, gated ALL PASS at 1M/2M/4M, raced — wins 4M T=8 by 12%, loses every other cell; KEPT as an arm above L3 (the owner's ruling). form 1 in `k1_fourstep.h` (create: the chain's
+- [x] 5. The SUPER-BAND (§3): BUILT, gated ALL PASS at 1M/2M/4M, raced — wins 4M T=8 by 12%, loses every other cell; KEPT as an arm above L3 (the owner's ruling, reaffirmed 2026-09-16 after the quiet re-race: form 0 and the super-band race only above L3). form 1 in `k1_fourstep.h` (create: the chain's
       kernels, tables, spans, the K map and the run check, the per-worker
       scratch; execute both directions, both placements, serial and across
       the pool; destroy), the natural 1D race's form x chain arms, the
       `il_kv` / `il_sb` / `il_mtsb` tokens banked and replayed, the probe
       pin. Gate: `k1_fourstep_gate` ALL PASS at 2^19..2^22.
-- [ ] 6. Re-race the natural cells on the shipped store (T=1 and T=8),
-      measure against MKL, records in place. the `il2d_fs_out` / `il2d_fs_k1` hook, the
+- [x] 6. Re-race the natural cells on the shipped store (T=1 and T=8),
+      measure against MKL, records in place. 2026-09-16: the shipped store
+      keeps its quiet-machine form-0 rows; the 4194304 natural cell's
+      threaded verdict is dropped and re-races (form 0 against the super-band
+      chains) at the next quiet window — the first attempt ran under a game's
+      load (MKL's own 4M number moved 6.9 to 9.4 ms in the same run) and was
+      discarded. Nothing measured under load is quoted. the `il2d_fs_out` / `il2d_fs_k1` hook, the
       group store in the four walks both directions, both placements;
       `_k1fs_transpose` demoted to the kernel; the four-step's natural
       execute drops its separate sweep. Gates ALL PASS; measure.
-- [ ] 7. Records: `v1_0_results.md` (the upper-band table and the 2D
+- [x] 6b. The ztt gate's law restored (2026-09-16): the scrambled pool inside
+      ZTURN-T's band is ZTURN-T's alone; the four-step's scrambled arms at
+      262144 are gone (a race under load had banked one).
+- [x] 7. Records: `v1_0_results.md` (the upper-band table and the 2D
       section, in place), `k1_fourstep_design.md` (the natural class
       paragraph), `design_contracts.md`, memory.

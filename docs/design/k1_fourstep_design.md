@@ -87,6 +87,21 @@ of the row terminator (the rows stored k2-major directly, the sweep
 folded into the band walk while the band is L2-hot) remains the lever
 beyond this; MKL's six-step pays its transposes too.
 
+The natural class carries a FORM axis since 2026-09-16
+(`il2d_large_plane_design.md` §3): form 0 = the streaming transpose
+above; form 1 = the SUPER-BAND, the four-step's own walk over the child's
+plane with its own chain (R_0 blocks of wl rows at stride N1/R_0, the last
+column stage per block, the twiddled rows, the R_0-wide column runs
+stored straight into the k2-major destination — no transpose sweep).
+Form 1 is an arm only where the plane outgrows the CPU's L3 (the owner's
+ruling: `_k1fs_sb_admit`, `vfft_cpu_l3_bytes`), with the residency
+sub-ladder of chains (R_0 = 8, last in {8, 16}, depth <= 3); the natural
+cell's race decides per split, serial and per thread count, and banks
+`il_kv=1 il_sb=<chain>` beside `il_pair` and `il_mtsb=<chain|0>` beside
+`il_mt`. `VFFT_K1_FSSB=<chain>` pins the form for a probe. On this host
+(36 MB L3) it is raced at 4194304 alone, where it wins the eight-thread
+cell by 12% (6.46 against 7.31 ms) and loses the serial one.
+
 ## The race, and what wisdom banks
 
 The 1D cell (N, il, order, placement) races its SPLITS: every (N1, N2) with
@@ -94,7 +109,11 @@ N1·N2 = N and both in {256, 512, 1024, 2048, 4096} — at most five arms per
 cell — each arm a 2D child on its own rank-2 cell (N1×N2, lay=il, ord=scr,
 in place), whose column chain, band width, row route and threading are that
 cell's own raced verdicts, banked on its own rows (one 2D cell serves both
-1D classes). At 262144 the standing ZTURN-T plan is an arm of the same race.
+1D classes). At 262144 the standing ZTURN-T plan is an arm of the same race
+in the NATURAL cell only: the scrambled pow2 cell to ZTURN-T's ceiling is
+the plain ZTURN-T's alone (design_contracts.md 8b, the ztt gate's law —
+enforced 2026-09-16 after a race under load banked a four-step split
+there), so the four-step's scrambled class begins at 524288.
 The 1D verdict banks `il_route=fs il_R1=N1 il_R2=N2` on the kind-3 row (the
 `il_R1/il_R2` fields exist; route 10). Threading: the plan's T is the 2D
 child's T, its verdict banked on the 2D row; the natural transpose threads
