@@ -671,17 +671,38 @@ static void _il2d_c2c_mt_tramp(void *v)
                                      bd + 2 * i * rn, rn, b0 + i);
         }
         break;
-    case 1: /* column strip: the whole chain over [lo,hi) columns */
-        _il2d_col_pass_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
-                             h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
-                             tabs, !a->fwd);
+    case 1: /* column strip: the whole chain over [lo,hi) columns, in
+             * sub-strips of msw columns when the verdict sized them (an
+             * L2-resident strip is the column pass in ONE sweep:
+             * il2d_large_plane_design.md, 2026-09-15) */
+        {
+            const size_t sw = h->il2d_col.msw > 0 ? (size_t)h->il2d_col.msw : a->hi - a->lo;
+            size_t k;
+            for (k = a->lo; k < a->hi; k += sw)
+                _il2d_col_pass_range(a->src, a->dst, h->N, rn, k,
+                                     (k + sw < a->hi) ? k + sw : a->hi,
+                                     h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
+                                     tabs, !a->fwd);
+        }
+        break;
+    case 6: /* the prefix pair over stage-1 digits [lo,hi) (probe) */
+        _il2d_col_prefix_pair(a->src, a->dst, h->N, rn, 0, h->il2d_col.R, h->il2d_col.L,
+                              fns, tabs, !a->fwd, (size_t)h->il2d_col.paircw,
+                              (int)a->lo, (int)a->hi);
         break;
     case 5: /* natural x MT, the STRIP arm: the whole natural pass over
-             * [lo,hi) columns (shared scratch, disjoint columns) */
-        _il2d_col_pass_nat_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
-                                 h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
-                                 tabs, !a->fwd, h->il2d_col.natperm,
-                                 h->il2d_col.natscr);
+             * [lo,hi) columns (shared scratch, disjoint columns), in
+             * sub-strips of msw when sized */
+        {
+            const size_t sw = h->il2d_col.msw > 0 ? (size_t)h->il2d_col.msw : a->hi - a->lo;
+            size_t k;
+            for (k = a->lo; k < a->hi; k += sw)
+                _il2d_col_pass_nat_range(a->src, a->dst, h->N, rn, k,
+                                         (k + sw < a->hi) ? k + sw : a->hi,
+                                         h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
+                                         tabs, !a->fwd, h->il2d_col.natperm,
+                                         h->il2d_col.natscr);
+        }
         break;
     case 4: /* natural x MT: the leaf scatter (fwd: src = scratch, dst =
              * plane) / gather (bwd: src = natural plane, dst = scratch)
@@ -835,8 +856,9 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         _vfft_il2d_col_mt_count++;
         return 1;
     }
-    if (h->il2d_col.wl > 0)
-    {
+    if (h->il2d_col.wl > 0 && h->il2d_col.natarm != 1)
+    {   /* (a strips verdict — natarm == 1, every class since 2026-09-15 —
+         * takes the unbanded strip walk below whatever the serial band) */
         /* fewer bands than workers is a CLAMP, not a decline: 4 bands
          * across 4 workers still beats serial, and the prefix digit
          * split keeps the full T regardless (its axis is D, not nb). */
@@ -849,6 +871,17 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         if (Tb < 2)
             return 0;
         if (phlog) ph0 = _il_ab_now();
+        {
+            size_t pcw;
+            if (fwd && h->il2d_col.cut == 2 && _il2d_pair_probe(&pcw) &&
+                _il2d_col_prefix_pair_ok(0, h->il2d_col.R, h->il2d_col.L))
+            {   /* the prefix pair: units = the digits of stage 1 */
+                const size_t D1 = (size_t)h->il2d_col.L[1] / (size_t)h->il2d_col.R[1];
+                const int Tp = D1 < (size_t)T ? (int)D1 : T;
+                h->il2d_col.paircw = (int)pcw;
+                _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 6, D1, Tp);
+            }
+            else
         if (fwd && h->il2d_col.cut > 0)
             for (s = 0; s < h->il2d_col.cut; s++)
             {
@@ -861,6 +894,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                                      h->il2d_col.R, h->il2d_col.L, h->il2d_col.f,
                                      h->il2d_col.tf, 0);
             }
+        }
         if (h->il2d_fs_tw && !fwd && !h->il2d_col.tfuse)
         {   /* the four-step's backward: the rows (conjugate twiddle) before
              * any column stage — on dst, moved there first out of place */
@@ -1017,6 +1051,7 @@ typedef struct
     int nat;
     const int *perm;
     double *nscr;
+    int sw;                   /* the strips arm's sub-strip width (0 = unsized) */
 } _il2d_race_ctx_t;
 static void _il2d_arm_cols(void *v)
 {
@@ -1055,7 +1090,32 @@ static void _il2d_arm_exec_mt_strip(void *v)
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
     c->h->il2d_col.colmt = 1;
     c->h->il2d_col.natarm = 1;
+    c->h->il2d_col.msw = 0;
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
+}
+static void _il2d_arm_exec_mt_sw(void *v)
+{   /* every class: strips of c->sw columns (il2d_large_plane_design.md) */
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    c->h->il2d_col.colmt = 1;
+    c->h->il2d_col.natarm = 1;
+    c->h->il2d_col.msw = c->sw;
+    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
+}
+/* the strip-width ladder: N1 x sw x 16 B under L2 (the hardware fence),
+ * sw a divisor of N2, and at T > 1 at least T sub-strips */
+static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max)
+{
+    static const int SW[] = { 16, 32, 64, 128, 256 };
+    int i, n = 0;
+    for (i = 0; i < 5 && n < max; i++)
+    {
+        const int w = SW[i];
+        if (w > N2 || N2 % w) continue;
+        if ((long)N1 * w * 16 > (long)vfft_cpu_l2_bytes()) continue;
+        if (T > 1 && N2 / w < T) continue;
+        out[n++] = w;
+    }
+    return n;
 }
 static void _il2d_arm_exec(void *v)
 {
@@ -2085,6 +2145,7 @@ typedef struct
     struct vfft_plan_s *rowo;
     double *rowscr;
     int wl, cut, ro;
+    int wc;                   /* the unbanded walk's column tile (0 = the whole plane) */
     char name[24];
 } _il2d_axis_arm_t;
 static void _il2d_arm_axis(void *v)
@@ -2094,6 +2155,7 @@ static void _il2d_arm_axis(void *v)
     h->il2d_col.wl = c->wl;
     h->il2d_col.cut = c->cut;
     h->il2d_col.tfuse = (c->wl > 0);
+    h->il2d_col.wc = c->wc;
     h->il2d_rowoop = c->ro;
     h->il2d_rowo = c->ro ? c->rowo : NULL;
     h->il2d_rowscr = c->ro ? c->rowscr : NULL;
@@ -2115,7 +2177,8 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     double *z = (double *)malloc(2 * T * sizeof(double));
     struct vfft_plan_s *rowo = NULL;
     double *rowscr = NULL;
-    int wlc[14], nwl = 1, wi, ro, bwl = 0, bro = 0;
+    int wlc[14], nwl = 1, wi, ro, bwl = 0, bro = 0, bwc = 0;
+    int swl[6], nsw = 0;
     double best = 1e300;
     size_t i;
     int reps = (int)(1e6 / (double)(T + 1));
@@ -2182,6 +2245,9 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             if (hit) { wlc[0] = w; nwl = 1; }
         }
     }
+    /* the unbanded walk's tile (il2d_large_plane_design.md, 2026-09-15):
+     * every ladder width an arm beside wl = 0 */
+    nsw = _il2d_sw_ladder(N1, N2, 1, swl, 6);
     /* the OOP row child for the rowoop arms (kept only if it wins) */
     {
         vfft_config_t rc;
@@ -2232,19 +2298,30 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             cut = s2;
                             break;
                         }
-                ac[na].h = h;
-                ac[na].z = z;
-                ac[na].rowo = rowo;
-                ac[na].rowscr = rowscr;
-                ac[na].wl = w;
-                ac[na].cut = cut;
-                ac[na].ro = ro;
-                snprintf(ac[na].name, sizeof ac[na].name, "wl%d%s", w,
-                         ro ? "+rowoop" : "");
-                arms[na].name = ac[na].name;
-                arms[na].run = _il2d_arm_axis;
-                arms[na].ctx = &ac[na];
-                na++;
+                {
+                    int sub;
+                    for (sub = 0; sub <= (w == 0 ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
+                    {
+                        ac[na].h = h;
+                        ac[na].z = z;
+                        ac[na].rowo = rowo;
+                        ac[na].rowscr = rowscr;
+                        ac[na].wl = w;
+                        ac[na].cut = cut;
+                        ac[na].ro = ro;
+                        ac[na].wc = sub ? swl[sub - 1] : 0;
+                        if (sub)
+                            snprintf(ac[na].name, sizeof ac[na].name, "sw%d%s", ac[na].wc,
+                                     ro ? "+rowoop" : "");
+                        else
+                            snprintf(ac[na].name, sizeof ac[na].name, "wl%d%s", w,
+                                     ro ? "+rowoop" : "");
+                        arms[na].name = ac[na].name;
+                        arms[na].run = _il2d_arm_axis;
+                        arms[na].ctx = &ac[na];
+                        na++;
+                    }
+                }
             }
         {
             const vfft_race_proto_t proto = { 2, reps, VFFT_RACE_MIN, 1, 0, NULL, NULL };
@@ -2256,6 +2333,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 best = ns[a];
                 bwl = ac[a].wl;
                 bro = ac[a].ro;
+                bwc = ac[a].wc;
             }
         if (getenv("VFFT_IL2D_LOG"))
         {
@@ -2263,7 +2341,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                     h->il2d_col.nat ? "nat" : "scr");
             for (a = 0; a < na; a++)
                 fprintf(stderr, " %s=%.0f", ac[a].name, ns[a]);
-            fprintf(stderr, " -> wl=%d ro=%d\n", bwl, bro);
+            fprintf(stderr, " -> wl=%d sw=%d ro=%d\n", bwl, bwc, bro);
         }
     }
     /* set the winner, keep or drop the OOP child */
@@ -2279,6 +2357,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         h->il2d_col.wl = bwl;
         h->il2d_col.cut = cut;
         h->il2d_col.tfuse = (bwl > 0);
+        h->il2d_col.wc = bwc;
         h->il2d_rowoop = bro;
         if (bro && rowo)
         {
@@ -2297,6 +2376,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
                          h->il2d_col.wl, h->il2d_col.tfuse, h->il2d_rowoop,
                          -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
+    vw2_2d_il_tok_seti(&W->vw2, N1, N2, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR), "sw", bwc);
     _vw2_persist(W, cfg);
     free(z);
 }
@@ -2407,31 +2487,43 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         return;
     }
     {
-        _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
-        const vfft_race_arm_t arms[3] = { { "serial", _il2d_arm_exec_st, &rc },
-                                          { "threaded", _il2d_arm_exec_mt, &rc },
-                                          { "strips", _il2d_arm_exec_mt_strip, &rc } };
+        _il2d_race_ctx_t rc0 = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
+        _il2d_race_ctx_t rc[8];
+        vfft_race_arm_t arms[8];
+        char names[8][16];
+        double ns[8];
+        int lad[6], nl, a, na = 0, best = 1, k;
         const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
-        double ns[3] = { 1e300, 1e300, 1e300 };
         (void)p;
-        /* natural cells race THREE arms (serial, block, strips — the
-         * natural pass has two legal partitions and no band arm); every
-         * other cell keeps its two. */
-        vfft_race_run(&proto, arms, h->il2d_col.nat ? 3 : 2, ns);
-        st = ns[0];
-        mt = ns[1];
-        h->il2d_col.natarm = 0;
-        if (h->il2d_col.nat && ns[2] < mt)
+        for (a = 0; a < 8; a++) { rc[a] = rc0; rc[a].sw = 0; ns[a] = 1e300; }
+        arms[na].name = "serial"; arms[na].run = _il2d_arm_exec_st; arms[na].ctx = &rc[na]; na++;
+        arms[na].name = h->il2d_col.nat ? "block" : "bands"; arms[na].run = _il2d_arm_exec_mt; arms[na].ctx = &rc[na]; na++;
+        /* natural cells keep their unsized strip partition as an arm */
+        if (h->il2d_col.nat) { arms[na].name = "strips"; arms[na].run = _il2d_arm_exec_mt_strip; arms[na].ctx = &rc[na]; na++; }
+        /* the SIZED strips (il2d_large_plane_design.md, 2026-09-15): an
+         * L2-resident strip is the column pass in one sweep — every class */
+        nl = _il2d_sw_ladder(N1, N2, h->nthreads, lad, 6);
+        for (k = 0; k < nl && na < 8; k++)
         {
-            mt = ns[2];
-            h->il2d_col.natarm = 1;
+            rc[na].sw = lad[k];
+            snprintf(names[na], sizeof names[na], "strips%d", lad[k]);
+            arms[na].name = names[na]; arms[na].run = _il2d_arm_exec_mt_sw; arms[na].ctx = &rc[na]; na++;
         }
-        if (getenv("VFFT_IL2D_LOG") && h->il2d_col.nat)
-            fprintf(stderr, "[il2d-c2c] natural arms %dx%d T=%d: block=%.0f "
-                            "strips=%.0f\n",
-                    N1, N2, h->nthreads, ns[1], ns[2]);
+        vfft_race_run(&proto, arms, na, ns);
+        st = ns[0];
+        for (a = 2; a < na; a++) if (ns[a] < ns[best]) best = a;
+        mt = ns[best];
+        h->il2d_col.natarm = (best >= 2) ? 1 : 0;
+        h->il2d_col.msw = (best >= 2) ? rc[best].sw : 0;
+        if (getenv("VFFT_IL2D_LOG"))
+        {
+            fprintf(stderr, "[il2d-c2c] threaded arms %dx%d T=%d (%s):", N1, N2, h->nthreads, h->il2d_col.nat ? "nat" : "scr");
+            for (a = 0; a < na; a++) fprintf(stderr, " %s=%.0f", arms[a].name, ns[a]);
+            fprintf(stderr, "\n");
+        }
     }
     h->il2d_col.colmt = (mt < st);
+    if (!h->il2d_col.colmt) { h->il2d_col.natarm = 0; h->il2d_col.msw = 0; }
     free(z);
     if (getenv("VFFT_IL2D_LOG"))
         fprintf(stderr, "[il2d-c2c] colmt race %dx%d T=%d: st=%.0f "
@@ -2444,6 +2536,11 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
                          h->il2d_col.colmt, h->nthreads,
                          (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
                          h->il2d_col.colmt ? mt : st, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
+    {   /* the threaded arm's shape beside cmt/cmtt, read back at that T only */
+        const int ord = (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR);
+        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "mtarm", h->il2d_col.natarm);
+        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "msw", h->il2d_col.msw);
+    }
     _vw2_persist(W, cfg);
 }
 

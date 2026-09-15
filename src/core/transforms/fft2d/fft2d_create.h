@@ -449,6 +449,13 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                             il2d_tfuse = !(tfe && atoi(tfe) == 0);
                         }
                     }
+                    /* the banked strip width of an unbanded serial verdict
+                     * (il2d_large_plane_design.md, 2026-09-15); env beats it */
+                    if (il2d_wl == 0 && il2d_bwl == 0 && !getenv("VFFT_IL2D_WC") && !getenv("VFFT_IL2D_WL") &&
+                        !cfg->recalibrate && W)
+                        il2d_wc = vw2_2d_il_tok_geti(&W->vw2, N1, N2,
+                                                     (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR),
+                                                     "sw", 0);
                     if (il2d_wl > 0 && !il2d_nat && getenv("VFFT_IL2D_STAGED") &&
                         atoi(getenv("VFFT_IL2D_STAGED")) == 1)
                     {
@@ -1146,7 +1153,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             if (ce)
                 h->il2d_col.colmt = (atoi(ce) == 0);
             else if (il2d_bcmt >= 0 && il2d_bcmtt == h->nthreads)
+            {   /* the verdict and its shape (mtarm/msw), at the T raced */
+                const int ord = (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR);
                 h->il2d_col.colmt = il2d_bcmt;
+                h->il2d_col.natarm = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "mtarm", 0) : 0;
+                h->il2d_col.msw = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "msw", 0) : 0;
+            }
             else
                 _il2d_c2c_mt_race(h, W, cfg, N1, N2);
         }
