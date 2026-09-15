@@ -54,7 +54,8 @@ Known violations at the time of writing — REMOVED 2026-09-09 (evening):
 | 128..1024 | the Bailey pairs and ZTURN-T |
 | 2048..262144 | ZTURN-T ALONE — no Bailey (the plans are too big to be efficient; the small L1-resident execution is unbeatable), no cascade |
 | odd factors | the flat DIT (pure odd and every odd-factor N < 2048); the 2^a * odd cells at N >= 2048 with the odd part over {3, 5, 7, 9, 15} are ZTURN-T's ODD BAND (built 2026-09-15, docs/design/ztt_odd_design.md: the odd radix as a mid, staged; the natural pool keeps chain3 and the pairs until the band is banked; the scrambled pool is the plain class alone) |
-| > 262144 | undecided; probably Bailey, after everything else is finished |
+| 262144 | ZTURN-T and the four-step race in the same cell; ZTURN-T keeps it (raced 2026-09-15 on a quiet machine: 682 us serial, 1.6x over MKL at T=8) |
+| 524288..4194304 (pow2) | the FOUR-STEP ALONE (owner 2026-09-15: "our Bailey engine is the best solution for this and MKL's code also shows that they are using Bailey for 256k and above"; docs/design/k1_fourstep_design.md): N = N1 x N2 on the 2D interleaved tier with the inter-pass twiddle fused into the row pass, every split with both sides in {256..4096} an arm, raced per cell at one thread and again per thread count; scrambled = the plane as it stands, natural = one blocked AVX2 streaming transpose; route 10, `il_route=fs il_pair=N1.N2`, per-T `il_mt=N1 il_mt_t=T`. Measured 2026-09-15: 1.0-1.44x over MKL at T=1, 1.15-1.58x at T=8, parity at 4194304 T=8 (v1_0_results.md). Above 2^22 and the 2^a*odd cells above 262144: not served |
 
 Owner, 2026-09-09 evening, on the upper band: the ZTURN-T-alone ruling is
 provisional above ~65536 — "we need to race cells above 65k, Bailey vs

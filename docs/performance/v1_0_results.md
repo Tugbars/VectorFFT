@@ -774,6 +774,56 @@ buffers were made 64-B aligned on 2026-09-09; before that its 16-B `malloc`
 buffers split ZTURN-T's stores across lines and banked the cascade at 4096
 against this verdict.
 
+### K=1 INTERLEAVED — the upper band 2^19..2^22, the four-step vs MKL (2026-09-15)
+
+Above ZTURN-T's ceiling the K=1 interleaved cell is the FOUR-STEP (route
+10, `src/core/oop/k1_fourstep.h`, `docs/design/k1_fourstep_design.md`):
+N = N1 x N2 on the 2D interleaved tier — the column chain and the fused row
+pass of a rank-2 cell (its own raced verdicts: chain, band width, ZTURN-T
+rows at 2048 and 4096), the inter-pass twiddle multiplied into the row pass
+as two-level records — and, for the natural class, one blocked AVX2
+transpose with the column permutation folded in (streaming stores, cut
+across the pool). The scrambled class is the plane as it stands. The split
+is a raced verdict per cell at one thread and, separately, per thread count
+(`il_pair` / `il_mt`): the children's threaded verdicts reorder the ladder.
+At 262144 the four-step's splits race beside ZTURN-T's chains in the same
+cell and ZTURN-T keeps it.
+
+Canonical bench, `--k1noop` (natural, out of place, both engines in one
+process, MKL `DFTI_NOT_INPLACE`), one process per (cell, order flip), core 2
++ HIGH at one thread, both engines on the 8 P-cores at T=8, best-of trials,
+the two flips shown as a range; quiet machine 2026-09-15:
+
+```
+ N          split (T=1 / T=8)      ours T=1 (ns)   MKL T=1 (ns)   vs MKL    ours T=8 (ns)   MKL T=8 (ns)   vs MKL
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 262144     ZTURN-T 4.8.4.4.8.8.8      650k-791k      730k-743k   0.94-1.12x     105k-112k      174k-176k   1.57-1.66x
+ 524288     2048x256 / 2048x256       1.41M-1.52M    1.52M-1.53M  1.00-1.08x     274k-289k      331k-350k   1.15-1.27x
+ 1048576    512x2048 / 2048x512       3.12M-3.29M    4.13M-4.19M  1.26-1.34x     611k-612k      830k-887k   1.36-1.45x
+ 2097152    512x4096 / 512x4096       7.30M-7.37M   10.32M-10.51M 1.40-1.44x    1.64M-1.69M    2.59M-2.59M  1.53-1.58x
+ 4194304    1024x4096 / 4096x1024    17.58M-17.69M 23.89M-24.06M  1.35-1.37x    7.16M-7.27M    6.90M-6.92M  0.95-0.96x
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+```
+
+Elementwise vs MKL 5.7e-16..2.7e-15 at every cell. What the numbers say:
+the natural class's whole cost over the scrambled class is the transpose
+(the store's race times at one thread: scrambled 1.15 / 2.81 / 6.34 /
+14.95 ms at 2^19..2^22 against natural 1.41 / 3.12 / 7.30 / 17.58 ms), and
+that transpose is bandwidth: the scalar 16 x 16 walk it shipped with ran
+10.3 ms at 1024 x 4096 against 2.9 ms for the lane-permute + streaming
+kernel (`benches/tp_probe.c`: block size, loop order and store kind raced,
+one and eight threads) — the scalar kernel lost every cell at one thread
+(0.67-0.94x) and this one wins them. At T=8 the 4194304 cell is at parity:
+its 2D child alone (the scrambled class, 4.6-4.9 ms) threads 3x over its
+serial 15 ms, and that is the 2D tier's threading at a 64 MB plane, not
+the four-step's. The 2^a·odd cells above 262144 are not served.
+
+Reproduce: `k1_fourstep_gate.exe <store> 4194304 8 262144` (races and
+banks the band on a store; ALL PASS = the gate), then
+`bench_1d_vs_mkl --k1noop [--mt] <store>/spike_wisdom.txt <csv> 300 <N> 1 300 <flip> 2`
+with `VFFT_WISDOM_DIR=<store>`; `benches/fs_split_probe.exe <store> <N>..`
+times both classes at T=1 and T=8 (`VFFT_K1_FS=N1xN2` pins a split).
+
 Reproduce: `calibrate_k1.exe <scratch> 1 4096 8192 16384` (scratch copy of
 `generated/`), `probes/ZT/natoop_restamp.exe <scratch> 4096 8192 16384`,
 then `sh probes/ZT/phaseE2_2048plus.sh` (`SKIP_CAL=1` re-runs the bench
