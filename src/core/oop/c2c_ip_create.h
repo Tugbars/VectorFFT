@@ -289,6 +289,8 @@ static vfft_plan _c2c_ip_finish(struct vfft_plan_s *h,
         h->mt_unsafe = (h->nthreads > 1) ? !_c2c_mt_safe(h->cplan, h->exec_fwd) : 0;
     if (h->k1ztt && h->K == 1 && h->nthreads > 1)
         _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's threaded arm, in place: its own per-T pair (2026-09-15) */
+    if (h->k1fs && h->K == 1 && h->nthreads > 1)
+        _k1fs_mt_replay_or_race(h, W, cfg, N); /* the four-step's split at T, in place: its own per-T pair (2026-09-15) */
     return h;
 }
 

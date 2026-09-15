@@ -216,15 +216,15 @@
 @cell t=c2c n=262144 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=ztt il_ztt=4.8.4.4.8.8.8 il_tw=2048 il_kv=0 il_mt=2 il_mt_t=8 | ran=1 ns=682075.0 metric=fwd1 units=ns src=race date=2026-09-15
 @cell t=c2c n=262144 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=ztt il_ztt=8.4.8.4.8.8.4 il_kv=0 il_mt=1 il_mt_t=8 | ran=1 ns=716375.0 metric=fwd1 units=ns src=race date=2026-09-15
 @cell t=c2c n=262144 q=1 ord=nat place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=262144,q=1,ord=nat,place=oop,role=comp,lay=il) dif=0 | ran=1 src=race date=2026-09-15
-@cell t=c2c n=524288 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=2048.256 il_kv=0 | ran=1 ns=2471800.0 metric=fwd1 units=ns src=race date=2026-09-15
-@cell t=c2c n=524288 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=512.1024 il_kv=0 | ran=1 ns=1265550.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=524288 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=2048.256 il_kv=0 il_mt=2048 il_mt_t=8 | ran=1 ns=2471800.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=524288 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=512.1024 il_kv=0 il_mt=512 il_mt_t=8 | ran=1 ns=1265550.0 metric=fwd1 units=ns src=race date=2026-09-15
 @cell t=c2c n=524288 q=1 ord=nat place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=524288,q=1,ord=nat,place=oop,role=comp,lay=il) dif=0 | ran=1 src=race date=2026-09-15
-@cell t=c2c n=1048576 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=512.2048 il_kv=0 | ran=1 ns=5279000.0 metric=fwd1 units=ns src=race date=2026-09-15
-@cell t=c2c n=1048576 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=512.2048 il_kv=0 | ran=1 ns=2936200.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=1048576 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=512.2048 il_kv=0 il_mt=2048 il_mt_t=8 | ran=1 ns=5279000.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=1048576 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=512.2048 il_kv=0 il_mt=256 il_mt_t=8 | ran=1 ns=2936200.0 metric=fwd1 units=ns src=race date=2026-09-15
 @cell t=c2c n=1048576 q=1 ord=nat place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=1048576,q=1,ord=nat,place=oop,role=comp,lay=il) dif=0 | ran=1 src=race date=2026-09-15
-@cell t=c2c n=2097152 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=512.4096 il_kv=0 | ran=1 ns=11238200.0 metric=fwd1 units=ns src=race date=2026-09-15
-@cell t=c2c n=2097152 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=512.4096 il_kv=0 | ran=1 ns=6532200.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=2097152 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=512.4096 il_kv=0 il_mt=512 il_mt_t=8 | ran=1 ns=11238200.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=2097152 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=512.4096 il_kv=0 il_mt=2048 il_mt_t=8 | ran=1 ns=6532200.0 metric=fwd1 units=ns src=race date=2026-09-15
 @cell t=c2c n=2097152 q=1 ord=nat place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=2097152,q=1,ord=nat,place=oop,role=comp,lay=il) dif=0 | ran=1 src=race date=2026-09-15
-@cell t=c2c n=4194304 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=1024.4096 il_kv=0 | ran=1 ns=25988000.0 metric=fwd1 units=ns src=race date=2026-09-15
-@cell t=c2c n=4194304 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=1024.4096 il_kv=0 | ran=1 ns=15670000.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=4194304 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=1024.4096 il_kv=0 il_mt=4096 il_mt_t=8 | ran=1 ns=25988000.0 metric=fwd1 units=ns src=race date=2026-09-15
+@cell t=c2c n=4194304 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=1024.4096 il_kv=0 il_mt=2048 il_mt_t=8 | ran=1 ns=15670000.0 metric=fwd1 units=ns src=race date=2026-09-15
 @cell t=c2c n=4194304 q=1 ord=nat place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=4194304,q=1,ord=nat,place=oop,role=comp,lay=il) dif=0 | ran=1 src=race date=2026-09-15
