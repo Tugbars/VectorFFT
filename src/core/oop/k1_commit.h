@@ -852,6 +852,117 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
     }
 }
 
+/* ── the FOUR-STEP's threaded arm (2026-09-15): the SPLIT is the per-T verdict ──
+ * The 1D race picks the split at one thread; at T > 1 the children's own
+ * threaded verdicts reorder the ladder (4194304 at T=8: the serial winner
+ * 1024x4096 runs 7.1 ms, 2048x2048 4.9 ms), so a plan at T races the
+ * ladder's splits AT T — every child a 2D cell created at T, its threaded
+ * verdict raced and banked on its own row — forward, in the plan's own
+ * placement, and banks il_mt=N1 il_mt_t=T (il_mt_ip / il_mt_ip_t in place)
+ * on the cell's row: ZTURN-T's tokens, each route reading them as its own
+ * arm. Replay rebuilds the banked split when it differs from the row's
+ * serial one. VFFT_K1_FS (the probe pin) skips both. */
+typedef struct { vfft_k1fs_plan_t *p; const double *zi; double *zo; int ip; } _k1fs_mt_ctx_t;
+typedef struct { double *dst; const double *src; size_t nb; } _k1fs_mt_rst_t;
+static void _k1fs_mt_arm_run(void *v)
+{
+    const _k1fs_mt_ctx_t *c = (const _k1fs_mt_ctx_t *)v;
+    vfft_k1fs_execute(c->p, VFFT_FORWARD, c->ip ? c->zo : c->zi, c->zo);
+}
+static void _k1fs_mt_reseed(void *v) { _k1fs_mt_rst_t *r = (_k1fs_mt_rst_t *)v; memcpy(r->dst, r->src, r->nb); }
+static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
+                                    struct vfft_wisdom_s *W,
+                                    const vfft_config_t *cfg, int N)
+{
+    vfft_k1fs_plan_t *p = h->k1fs;
+    const int T = h->nthreads;
+    const int ip = (h->placement == VFFT_INPLACE);
+    const char *tok_v = ip ? "il_mt_ip" : "il_mt", *tok_t = ip ? "il_mt_ip_t" : "il_mt_t";
+    const vw2_rec_t *r = NULL;
+    int n1[8], n2[8], ns, i;
+    if (!p || T < 2 || getenv("VFFT_K1_FS"))
+        return;
+    if (W && !W->vw2_off_oop)
+        r = vw2__oop_k1_scan_ord(&W->vw2, N, VW2_LAY_IL, p->scr);
+    ns = vfft_k1fs_splits(N, n1, n2, 8);
+    if (r && !cfg->recalibrate && vw2__oop_geti(r, tok_t, 0) == T)
+    {
+        const int v = vw2__oop_geti(r, tok_v, 0);
+        for (i = 0; i < ns; i++) if (n1[i] == v) break;
+        if (i < ns && v != p->N1)
+        {
+            vfft_k1fs_plan_t *q = vfft_k1fs_create(N, n1[i], n2[i], p->scr, W, cfg, ip, T);
+            if (q) { vfft_k1fs_destroy(p); h->k1fs = p = q; }
+        }
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[k1fs-mt] N=%d T=%d %s%s: replay split %dx%d src=wisdom\n",
+                    N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", p->N1, p->N2);
+        return;
+    }
+    {   /* the race: every split at T on 64-B aligned scratch, the plan's placement */
+        const size_t nb = (size_t)2 * N * sizeof(double);
+        double *zi = (double *)VFFT_ZS_ALLOC(nb);
+        double *zo = (double *)VFFT_ZS_ALLOC(nb);
+        vfft_k1fs_plan_t *cand[8];
+        _k1fs_mt_ctx_t cx[8];
+        vfft_race_arm_t arms[8];
+        char names[8][16];
+        double tns[8];
+        _k1fs_mt_rst_t rs;
+        int na = 0, best = 0, reps;
+        size_t k;
+        if (!zi || !zo) { VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo); return; }
+        for (k = 0; k < 2 * (size_t)N; k++) zi[k] = 1.0 + 1e-6 * (double)(k & 1023);
+        _vfft_pool_arm(T);
+        for (i = 0; i < ns; i++)
+        {
+            cand[i] = (n1[i] == p->N1) ? p : vfft_k1fs_create(N, n1[i], n2[i], p->scr, W, cfg, ip, T);
+            if (!cand[i]) continue;
+            cx[na].p = cand[i]; cx[na].zi = zi; cx[na].zo = zo; cx[na].ip = ip;
+            snprintf(names[na], sizeof names[na], "%dx%d", n1[i], n2[i]);
+            arms[na].name = names[na]; arms[na].run = _k1fs_mt_arm_run; arms[na].ctx = &cx[na];
+            na++;
+        }
+        {   /* reps from one timing of the serial verdict's split at T */
+            double t0;
+            if (ip) memcpy(zo, zi, nb);
+            vfft_k1fs_execute(p, VFFT_FORWARD, ip ? zo : zi, zo);
+            if (ip) memcpy(zo, zi, nb);
+            t0 = _il_ab_now(); vfft_k1fs_execute(p, VFFT_FORWARD, ip ? zo : zi, zo); t0 = _il_ab_now() - t0;
+            reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
+            if (reps < 2) reps = 2;
+            if (reps > 64) reps = 64;
+        }
+        rs.dst = zo; rs.src = zi; rs.nb = nb;
+        {
+            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, ip ? _k1fs_mt_reseed : NULL, ip ? &rs : NULL };
+            vfft_race_run(&proto, arms, na, tns);
+        }
+        for (i = 1; i < na; i++) if (tns[i] < tns[best]) best = i;
+        h->k1fs = cx[best].p;
+        for (i = 0; i < ns; i++) if (cand[i] && cand[i] != h->k1fs) vfft_k1fs_destroy(cand[i]);
+        p = h->k1fs;
+        if (getenv("VFFT_NAT_LOG"))
+        {
+            fprintf(stderr, "[k1fs-mt] N=%d T=%d %s%s: split race", N, T, p->scr ? "scr" : "nat", ip ? " ip" : "");
+            for (i = 0; i < na; i++) fprintf(stderr, " %s=%.0f", arms[i].name, tns[i]);
+            fprintf(stderr, " -> %dx%d\n", p->N1, p->N2);
+        }
+        VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo);
+    }
+    if (r && W && !W->vw2_off_oop)
+    {
+        char b[16];
+        int ok = 1;
+        snprintf(b, sizeof b, "%d", p->N1);
+        ok = ok && vw2_update_field(&W->vw2, &r->key, tok_v, b) == VW2_OK;
+        snprintf(b, sizeof b, "%d", T);
+        ok = ok && vw2_update_field(&W->vw2, &r->key, tok_t, b) == VW2_OK;
+        if (ok)
+            _vw2_persist(W, cfg);
+    }
+}
+
 /* ── the IN-PLACE mono candidate (2026-09-04) ──
  * Served when the cell's kind-3 row (already planned by _k1_il_candidate's
  * race on a miss) says MONO: the alias-tolerant n1c solo, both directions.
