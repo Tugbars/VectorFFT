@@ -39,6 +39,8 @@
 
 #include <math.h>
 #include <string.h>
+#include <immintrin.h>
+#include <stdint.h>
 #include "support/zalloc.h"
 
 /* the 2D tier's column map (il2d_cols.h, included after this header in the
@@ -46,6 +48,19 @@
 static int *_il2d_nat_perm(const int *Rs, int nst, int N1);
 
 #include "k1_fourstep_band.h"  /* the band + the side ladder (bench-visible) */
+
+/* VFFT_K1_FS=N1xN2 pins a split for a PROBE (the design's env pin): the
+ * replay builds the pinned split instead of the row's; never banks, and a
+ * pin that is not a split of N is ignored */
+static int _k1fs_pin(int N, int *n1, int *n2)
+{
+    const char *e = getenv("VFFT_K1_FS");
+    int a = 0, b = 0;
+    if (!e || sscanf(e, "%dx%d", &a, &b) != 2) return 0;
+    if (a < 4 || b < 4 || (long)a * (long)b != (long)N) return 0;
+    *n1 = a; *n2 = b;
+    return 1;
+}
 
 /* the splits (N1, N2) with N1 * N2 = N, both sides in the ladder; returns
  * the count (<= max) */
@@ -192,45 +207,108 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     return p;
 }
 
-/* the natural class's transposes, blocked 16 x 16 complexes, the row
+/* the natural class's transposes, 16 x 16 complexes per block, the row
  * permutation folded in: forward = plane row p -> output column k1(p)
- * (k2-major); backward = the inverse */
+ * (k2-major); backward = the inverse. The block goes through a 4 KB local
+ * buffer: 2 x 2 complexes turn as one 128-bit lane permute (AVX2), and the
+ * output rows leave as whole lines — streaming stores when the destination
+ * is 32-B aligned (no read-for-ownership: the sweep is bandwidth), plain
+ * unaligned stores otherwise, the bytes identical either way. Measured
+ * against the scalar 16 x 16 walk at 1024 x 4096 (benches/tp_probe.c):
+ * 10.3 -> 2.9 ms at one thread, 4.2 -> 1.5 ms at eight. One kernel over
+ * a k1 range, so the pool cuts the blocks across the workers: disjoint
+ * spans in both directions, the output bitwise the serial walk. Runs on
+ * the caller thread only, before or after the 2D child — never from a
+ * worker (the pool's nesting law). */
 #define VFFT_K1FS_TB 16
-static void _k1fs_transpose_fwd(const vfft_k1fs_plan_t *p, const double *src, double *dst)
+static void _k1fs_transpose_range(const vfft_k1fs_plan_t *p, const double *src, double *dst,
+                                  int bwd, int k1lo, int k1hi)
 {
     const int N1 = p->N1, N2 = p->N2;
-    int k1b, k2b, i, j;
-    for (k1b = 0; k1b < N1; k1b += VFFT_K1FS_TB)
+    const int stream = (((uintptr_t)dst & 31) == 0);
+    __attribute__((aligned(64))) double buf[VFFT_K1FS_TB * VFFT_K1FS_TB * 2];
+    int k1b, k2b, i, j, q;
+    for (k1b = k1lo; k1b < k1hi; k1b += VFFT_K1FS_TB)
         for (k2b = 0; k2b < N2; k2b += VFFT_K1FS_TB)
-            for (j = 0; j < VFFT_K1FS_TB; j++)
-            {
-                const int k1 = k1b + j;
-                const double *row = src + 2 * ((size_t)p->p_of_k1[k1] * (size_t)N2 + (size_t)k2b);
+        {
+            if (!bwd)
+            {   /* plane rows p(k1) in, output rows k2 out (k1 contiguous) */
+                for (j = 0; j < VFFT_K1FS_TB; j += 2)
+                {
+                    const double *r0 = src + 2 * ((size_t)p->p_of_k1[k1b + j] * (size_t)N2 + (size_t)k2b);
+                    const double *r1 = src + 2 * ((size_t)p->p_of_k1[k1b + j + 1] * (size_t)N2 + (size_t)k2b);
+                    for (i = 0; i < VFFT_K1FS_TB; i += 2)
+                    {
+                        const __m256d a = _mm256_loadu_pd(r0 + 2 * i), c = _mm256_loadu_pd(r1 + 2 * i);
+                        _mm256_store_pd(buf + 2 * (i * VFFT_K1FS_TB + j), _mm256_permute2f128_pd(a, c, 0x20));
+                        _mm256_store_pd(buf + 2 * ((i + 1) * VFFT_K1FS_TB + j), _mm256_permute2f128_pd(a, c, 0x31));
+                    }
+                }
                 for (i = 0; i < VFFT_K1FS_TB; i++)
                 {
-                    double *o = dst + 2 * ((size_t)(k2b + i) * (size_t)N1 + (size_t)k1);
-                    o[0] = row[2 * i];
-                    o[1] = row[2 * i + 1];
+                    double *o = dst + 2 * ((size_t)(k2b + i) * (size_t)N1 + (size_t)k1b);
+                    const double *b = buf + 2 * i * VFFT_K1FS_TB;
+                    if (stream) for (q = 0; q < 2 * VFFT_K1FS_TB; q += 4) _mm256_stream_pd(o + q, _mm256_load_pd(b + q));
+                    else        for (q = 0; q < 2 * VFFT_K1FS_TB; q += 4) _mm256_storeu_pd(o + q, _mm256_load_pd(b + q));
                 }
             }
+            else
+            {   /* k2-major rows in (k1 contiguous), plane rows p(k1) out */
+                for (i = 0; i < VFFT_K1FS_TB; i += 2)
+                {
+                    const double *r0 = src + 2 * ((size_t)(k2b + i) * (size_t)N1 + (size_t)k1b);
+                    const double *r1 = src + 2 * ((size_t)(k2b + i + 1) * (size_t)N1 + (size_t)k1b);
+                    for (j = 0; j < VFFT_K1FS_TB; j += 2)
+                    {
+                        const __m256d a = _mm256_loadu_pd(r0 + 2 * j), c = _mm256_loadu_pd(r1 + 2 * j);
+                        _mm256_store_pd(buf + 2 * (j * VFFT_K1FS_TB + i), _mm256_permute2f128_pd(a, c, 0x20));
+                        _mm256_store_pd(buf + 2 * ((j + 1) * VFFT_K1FS_TB + i), _mm256_permute2f128_pd(a, c, 0x31));
+                    }
+                }
+                for (j = 0; j < VFFT_K1FS_TB; j++)
+                {
+                    double *o = dst + 2 * ((size_t)p->p_of_k1[k1b + j] * (size_t)N2 + (size_t)k2b);
+                    const double *b = buf + 2 * j * VFFT_K1FS_TB;
+                    if (stream) for (q = 0; q < 2 * VFFT_K1FS_TB; q += 4) _mm256_stream_pd(o + q, _mm256_load_pd(b + q));
+                    else        for (q = 0; q < 2 * VFFT_K1FS_TB; q += 4) _mm256_storeu_pd(o + q, _mm256_load_pd(b + q));
+                }
+            }
+        }
+    if (stream) _mm_sfence();
 }
-static void _k1fs_transpose_bwd(const vfft_k1fs_plan_t *p, const double *src, double *dst)
+typedef struct
 {
-    const int N1 = p->N1, N2 = p->N2;
-    int k1b, k2b, i, j;
-    for (k1b = 0; k1b < N1; k1b += VFFT_K1FS_TB)
-        for (k2b = 0; k2b < N2; k2b += VFFT_K1FS_TB)
-            for (j = 0; j < VFFT_K1FS_TB; j++)
-            {
-                const int k1 = k1b + j;
-                double *row = dst + 2 * ((size_t)p->p_of_k1[k1] * (size_t)N2 + (size_t)k2b);
-                for (i = 0; i < VFFT_K1FS_TB; i++)
-                {
-                    const double *s = src + 2 * ((size_t)(k2b + i) * (size_t)N1 + (size_t)k1);
-                    row[2 * i] = s[0];
-                    row[2 * i + 1] = s[1];
-                }
-            }
+    const vfft_k1fs_plan_t *p;
+    const double *src;
+    double *dst;
+    int bwd, k1lo, k1hi;
+} _k1fs_tp_arg_t;
+static void _k1fs_tp_tramp(void *v)
+{
+    const _k1fs_tp_arg_t *a = (const _k1fs_tp_arg_t *)v;
+    if (a->k1lo < a->k1hi)
+        _k1fs_transpose_range(a->p, a->src, a->dst, a->bwd, a->k1lo, a->k1hi);
+}
+static void _k1fs_transpose(const vfft_k1fs_plan_t *p, const double *src, double *dst, int bwd)
+{
+    const int T = stride_pool_workers_for(p->nthreads);
+    if (T <= 1)
+    {
+        _k1fs_transpose_range(p, src, dst, bwd, 0, p->N1);
+        return;
+    }
+    {   /* the k1 blocks cut evenly at block multiples across T slots */
+        _k1fs_tp_arg_t a[STRIDE_POOL_MAX_DISPATCH];
+        const int nb = p->N1 / VFFT_K1FS_TB;
+        int t;
+        for (t = 0; t < T; t++)
+        {
+            a[t].p = p; a[t].src = src; a[t].dst = dst; a[t].bwd = bwd;
+            a[t].k1lo = (int)((long)nb * t / T) * VFFT_K1FS_TB;
+            a[t].k1hi = (int)((long)nb * (t + 1) / T) * VFFT_K1FS_TB;
+        }
+        stride_pool_run(T, _k1fs_tp_tramp, a, sizeof a[0]);
+    }
 }
 
 /* both directions, both placements (zin == zout in place), both classes */
@@ -247,24 +325,24 @@ static void vfft_k1fs_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const d
         if (zin != zout)
         {
             vfft_execute((vfft_plan)p->c2d, dir, (double *)zin, NULL, p->plane, NULL);
-            _k1fs_transpose_fwd(p, p->plane, zout);
+            _k1fs_transpose(p, p->plane, zout, 0);
         }
         else
         {
             vfft_execute((vfft_plan)p->c2d, dir, zout, NULL, zout, NULL);
-            _k1fs_transpose_fwd(p, zout, p->plane);
+            _k1fs_transpose(p, zout, p->plane, 0);
             memcpy(zout, p->plane, bytes);
         }
         return;
     }
     if (zin != zout)
     {
-        _k1fs_transpose_bwd(p, zin, p->plane);
+        _k1fs_transpose(p, zin, p->plane, 1);
         vfft_execute((vfft_plan)p->c2d, dir, p->plane, NULL, zout, NULL);
     }
     else
     {
-        _k1fs_transpose_bwd(p, zout, p->plane);
+        _k1fs_transpose(p, zout, p->plane, 1);
         memcpy(zout, p->plane, bytes);
         vfft_execute((vfft_plan)p->c2d, dir, zout, NULL, zout, NULL);
     }
