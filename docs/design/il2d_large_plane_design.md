@@ -214,6 +214,38 @@ pins the form for a probe.
 Expected at 4194304: T=8 from 7.2 to ~5.3 ms (1.3x MKL), serial from 17.6
 to ~15 ms; at 2^19..2^21 the scrambled class's numbers. The race decides.
 
+BUILT AND RACED 2026-09-16 (cold natural cells on a scratch store, the
+gate ALL PASS at 1M, 2M and 4M with every arm inside 1.2e-15 of the
+reference; T=8 bitwise the serial walk; in place bitwise out of place):
+
+```
+ cell            form 0 (best split)      form 1 (best split/chain)     verdict
+ 1048576  T=1    3.36 ms  512x2048         3.63 ms  256x4096/8.8.4       form 0
+ 1048576  T=8    670 us   512x2048         777 us   2048x512/8.32.8      form 0
+ 2097152  T=1    7.68 ms  512x4096         8.35 ms  512x4096/8.8.8       form 0
+ 2097152  T=8    1.99 ms  512x4096         3.04 ms  1024x2048/8.16.8     form 0
+ 4194304  T=1   18.3 ms   2048x2048       18.9 ms   2048x2048/8.8.8.4    form 0
+ 4194304  T=8    7.31 ms  4096x1024        6.46 ms  4096x1024/8.64.8     form 1 (-12%)
+```
+
+The fold does what it was built to do — at its own split and thread
+count it beats form 0 (2048x2048 T=8: 7.28 against 9.50 ms) — but the
+saved sweep comes back on the store: every k2-major run touches one page
+per output row, the TLB floor the strips met, and below 64 MB the
+transpose it replaces was never the cost. One cell, one thread count,
+12%: the four-step's largest cell from parity to ~1.07x MKL.
+
+RULING (owner 2026-09-16, "only race above where L3 can't cover the
+transforms anymore"): the form stays, and it is an ARM only where the
+plane outgrows the last-level cache — N x 16 B > `vfft_cpu_l3_bytes()`,
+the hardware's own L3 (an L3-less or unknown part admits it and the race
+decides), never a baked constant: on this host's 36 MB that is 4194304
+alone, on a 16 MB part the 2M cell too, on a 100 MB server part nowhere.
+Both races take the residency sub-ladder (R_0 = 8, last in {8, 16},
+depth <= 3: the serial race found nothing outside it that wins). Below
+the gate the natural class is form 0 without a race, the cells the
+transpose was never the cost of.
+
 ## Gates
 
 - `il2d_real_gate`, the four-step gate (T=8 bitwise the plan's own serial,
@@ -250,7 +282,7 @@ the phase instrument; then the canonical bench `--k1noop` and `--k1noop
 - [ ] 2d. The prefix pair as a raced arm (or deleted): the owner's ruling.
 - [x] 2d. The prefix pair: DELETED (owner 2026-09-15: a 4-10% arm that loses a cell is not worth its race cost and its code); the strip-width arms stay.
 - [x] 4. The folded transpose: BUILT (natural-child form), gated, REFUTED at every cell, DELETED. The super-band form is the owner's call.
-- [ ] 5. The SUPER-BAND (§3): form 1 in `k1_fourstep.h` (create: the chain's
+- [x] 5. The SUPER-BAND (§3): BUILT, gated ALL PASS at 1M/2M/4M, raced — wins 4M T=8 by 12%, loses every other cell; KEPT as an arm above L3 (the owner's ruling). form 1 in `k1_fourstep.h` (create: the chain's
       kernels, tables, spans, the K map and the run check, the per-worker
       scratch; execute both directions, both placements, serial and across
       the pool; destroy), the natural 1D race's form x chain arms, the
