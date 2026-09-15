@@ -263,7 +263,10 @@ extern "C"
                     scratch, its order fixed by the plan's chain — the pow2
                     cells as fused codelets, the 2^a * odd cells as the same
                     stage kernels called per stage with the odd radix as a
-                    mid; at the remaining composite cells the flat DIT's
+                    mid; at a power of two 524288..4194304 the writer is the
+                    four-step's scrambled class (2026-09-15): the N1 x N2
+                    plane as the 2D tier leaves it, no transpose, the class's
+                    permutation fixed by the split; at the remaining composite cells the flat DIT's
                     scrambled class is the writer where it admits N, and a
                     cell with no scrambled writer refuses at create.
                   1D and 2D C2C (in-place + OOP; 2D NATURAL is native for any
@@ -446,7 +449,10 @@ extern "C"
    *       INTERLEAVED: REJECT.
    *   1D C2C OOP        x INTERLEAVED: NATIVE z->z for K=1 at any N (the
    *       K=1 IL tiers — mono, pair, chain, ZTURN-T at every power of two
-   *       16..2^18 and every 2^a*odd cell of its band (natural and SCRAMBLED
+   *       16..2^18 and every 2^a*odd cell of its band, the FOUR-STEP at
+   *       2^19..2^22 (N = N1 x N2 on the 2D interleaved tier, the inter-pass
+   *       twiddle fused into the row pass; natural = one blocked transpose,
+   *       scrambled = the plane as is; 2026-09-15) (natural and SCRAMBLED
    *       classes, each its own raced wisdom cell; at nthreads > 1 its
    *       THREADED arm — the stage walk sectioned across the pool, bitwise
    *       the serial result — is raced and banked per thread count),

@@ -169,6 +169,12 @@ struct vfft_plan_s
      * the last stage writes zout). Same IL-only-handle rules as k1il3p.
      * Owned. */
     vfft_ztt_plan_t *k1ztt;
+    /* K=1 interleaved z->z on the FOUR-STEP (oop/k1_fourstep.h; route
+     * VFFT_K1_IL_FS, 2026-09-15): N = N1 x N2 on the 2D interleaved tier with
+     * the inter-pass twiddle fused into its row pass, both directions, both
+     * order classes, both placements; the split (il_R1, il_R2) replayed from
+     * the kind-3 row. Same IL-only-handle rules as k1il3p. Owned. */
+    struct vfft_k1fs_s *k1fs;
     /* THE BOUND K=1 IL DISPATCH (2026-09-07, feedback_execution_purity: bind
      * at plan time, execute = pure dispatch). For a 1D c2c INTERLEAVED K=1
      * plan served by one of the IL engines above or the mono solo, create
@@ -307,6 +313,15 @@ struct vfft_plan_s
     int il2d_roww_n;
     double *il2d_rowscr_w;          /* rowoop: T-1 slots x 2*N2 */
     double *il2d_rowscr;           /* 2*N2 doubles */
+    /* the K=1 FOUR-STEP's inter-pass twiddle (oop/k1_fourstep.h, 2026-09-15):
+     * per row POSITION p a two-level record [coarse C[a] (N2/B)][fine F[b] (B)],
+     * w(k1(p), n2) = C[a]*F[b] for n2 = a*B + b. Non-NULL only on a 2D child
+     * the four-step owns: _il2d_row_exec then multiplies the row before the
+     * row plan (forward) / after it with the conjugate (backward), and every
+     * backward walk runs its rows BEFORE any column stage. NULL = the plain
+     * 2D transform, bitwise its standing. */
+    const double *il2d_fs_tw;
+    int il2d_fs_B;
     /* staged band route (§10b): copy each band into scratch at il2d_col.pitch
      * (skew-selected so every suffix-stage leg stride and the leaf stride
      * are non-0 mod 4096 — the priced 2.4-3x aliasing cure), run the

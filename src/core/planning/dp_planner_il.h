@@ -409,8 +409,15 @@ typedef struct
     vfft_oop11_fn       mono;  /* MONO    */
     vfft_ilfd_plan_t   *ifd;   /* FLAT (the flat DIT, 2026-09-05) */
     vfft_ztt_plan_t    *ztt;   /* ZTT (ZTURN-T, 2026-09-09) */
-} _il_dp_built_t;              /* (the hybrid 2P/3P op arm was deleted
-                                * 2026-07-29 with the il_in/il_out routes) */
+    vfft_k1fs_plan_t   *fs;    /* FS (the four-step, 2026-09-15) */
+} _il_dp_built_t;
+/* the four-step candidate under the permutation gate: its column map is the
+ * 2D child's (the rank-2 cell's own, gated by the 2D tier), read here as a
+ * COPY, because the race builds, runs and frees an arm before the gate
+ * reads its permutation (2026-09-15) */
+static int *_il_dp_fs_map = NULL;
+static int  _il_dp_fs_map_n1 = 0, _il_dp_fs_map_n2 = 0, _il_dp_fs_map_cap = 0;
+/* (the hybrid 2P/3P op arm was deleted 2026-07-29 with the il_in/il_out routes) */
 
 static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
 {
@@ -469,6 +476,23 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         { vfft_ztt_destroy(b->ztt); b->ztt = NULL; return -1; }
         return 0;
     }
+    if (c->route == VFFT_K1_IL_FS)
+    {   /* the validator is the law: the split's 2D child (the rank-2 cell's
+         * own verdicts, raced and banked there), the twiddle records and
+         * the natural class's plane live in vfft_k1fs_create; the planner
+         * races out of place at one thread with the wisdom it was handed */
+        b->fs = vfft_k1fs_create(N, c->R1, c->R2, c->il_scr, _k1fs_ctx.W, _k1fs_ctx.cfg, 0, 1);
+        if (!b->fs) return -1;
+        if (_il_dp_fs_map_cap < b->fs->N1)
+        {
+            int *m = (int *)realloc(_il_dp_fs_map, (size_t)b->fs->N1 * sizeof(int));
+            if (!m) { vfft_k1fs_destroy(b->fs); b->fs = NULL; return -1; }
+            _il_dp_fs_map = m; _il_dp_fs_map_cap = b->fs->N1;
+        }
+        memcpy(_il_dp_fs_map, b->fs->k1_of_p, (size_t)b->fs->N1 * sizeof(int));
+        _il_dp_fs_map_n1 = b->fs->N1; _il_dp_fs_map_n2 = b->fs->N2;
+        return 0;
+    }
     if (c->route == VFFT_K1_IL_MONO)
     {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64) */
         b->mono = vfft_k1_mono_il_form_fn(N, c->il_kv, 0);
@@ -483,6 +507,7 @@ static void _il_dp_free(_il_dp_built_t *b)
     if (b->i3) vfft_il3p_destroy(b->i3);
     if (b->ifd) vfft_ilfd_destroy(b->ifd);
     if (b->ztt) vfft_ztt_destroy(b->ztt);
+    if (b->fs) vfft_k1fs_destroy(b->fs);
     memset(b, 0, sizeof(*b));
 }
 
@@ -508,6 +533,11 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     if (c->route == VFFT_K1_IL_ZTT)
     {
         vfft_ztt_execute_fwd(b->ztt, ctx->z_in, ctx->z_out);
+        return 0;
+    }
+    if (c->route == VFFT_K1_IL_FS)
+    {
+        vfft_k1fs_execute_fwd(b->fs, ctx->z_in, ctx->z_out);
         return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
@@ -540,6 +570,11 @@ static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     if (c->route == VFFT_K1_IL_ZTT)
     {   /* the conjugate pipeline: the bwd driver on the s-negated streams */
         vfft_ztt_execute_bwd(b->ztt, ctx->z_in, ctx->z_out);
+        return 0;
+    }
+    if (c->route == VFFT_K1_IL_FS)
+    {
+        vfft_k1fs_execute_bwd(b->fs, ctx->z_in, ctx->z_out);
         return 0;
     }
     if (c->route != VFFT_K1_IL_2P_PURE) return -1;
@@ -823,6 +858,15 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
             if (K < 2 || K > VFFT_ZTT_MAX_NF) return -1;
             for (i = 0; i < K; i++) rch[i] = c->il_zt[K - 1 - i];
             return _ztt_digitrev(ic, rch, K);
+        }
+    case VFFT_K1_IL_FS:
+        if (!c->il_scr) return idx;                  /* natural by contract */
+        {   /* the SCRAMBLED class: plane position p*N2 + k2 holds bin
+             * k1(p) + N1*k2, k1(p) = the 2D child's column map */
+            const long N1 = c->R1, N2 = c->R2;
+            const long p = idx / N2, k2 = idx % N2;
+            if (!_il_dp_fs_map || _il_dp_fs_map_n1 != N1 || _il_dp_fs_map_n2 != N2 || p >= N1) return -1;
+            return (long)_il_dp_fs_map[p] + N1 * k2;
         }
     case VFFT_K1_IL_FLAT:
         if (!c->il_scr) return idx;                  /* natural by contract */
@@ -1296,6 +1340,24 @@ static void _il_dp_enumerate_flat_ord(int N, vfft_il_cand_sink_t *s, int scr)
  * solution is built from. Natural output, both directions: it enters the natural pool and the
  * scrambled pool's natural-engine set, and races the pairs on the same
  * clock — the owner's "ZTURN-T ships, racing Bailey below 2048". */
+/* the FOUR-STEP's candidates (2026-09-15): every split of the ladder, each
+ * a 2D child on its own rank-2 cell; both order classes */
+static void _il_dp_enumerate_fs(int N, vfft_il_cand_sink_t *s, int scr)
+{
+    int n1[8], n2[8], i;
+    const int ns = vfft_k1fs_splits(N, n1, n2, 8);
+    for (i = 0; i < ns; i++)
+    {
+        vfft_il_cand_t c;
+        memset(&c, 0, sizeof c);
+        c.route = VFFT_K1_IL_FS;
+        c.R1 = n1[i];
+        c.R2 = n2[i];
+        c.il_scr = scr;
+        _il_dp_push(s, &c);
+    }
+}
+
 static void _il_dp_enumerate_ztt_ord(int N, vfft_il_cand_sink_t *s, int scr)
 {
     vfft_il_cand_t c;
@@ -1429,7 +1491,10 @@ static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int 
     if ((N & (N - 1)) == 0 && N >= 2048)
     {
         (void)with_flat;
-        _il_dp_enumerate_ztt(N, s);
+        /* above ZTURN-T's ceiling the FOUR-STEP alone; at the ceiling both
+         * race (k1_fourstep_design.md, 2026-09-15) */
+        if (N <= VFFT_ZTT_MAX_N) _il_dp_enumerate_ztt(N, s);
+        if (vfft_k1fs_band(N)) _il_dp_enumerate_fs(N, s, 0);
         return;
     }
     {
@@ -1721,6 +1786,12 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
     if (vfft_ztt_band(N))
     {
         _il_dp_enumerate_ztt_ord(N, s, 1);
+        if (vfft_k1fs_band(N)) _il_dp_enumerate_fs(N, s, 1);   /* at the ceiling both race */
+        return;
+    }
+    if ((N & (N - 1)) == 0 && vfft_k1fs_band(N))
+    {   /* above ZTURN-T's ceiling: the four-step's scrambled class alone */
+        _il_dp_enumerate_fs(N, s, 1);
         return;
     }
     if (vfft_ztt_odd_band(N))
@@ -1868,7 +1939,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
             fprintf(stderr, "  [il-dp] N=%d ord=%d route=%d eng=%s %dx%d "
                     "chain=%s%s -> %.1f ns (gate %.1e)\n",
                     N, ord, cand[i].route,
-                    cand[i].route == VFFT_K1_IL_ZTT ? "ztt" : "-",
+                    cand[i].route == VFFT_K1_IL_ZTT ? "ztt" : cand[i].route == VFFT_K1_IL_FS ? "fs" : "-",
                     cand[i].R1, cand[i].R2, ch,
                     wbuf, cand[i].cost_ns, gerr);
         }
