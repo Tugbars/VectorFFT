@@ -800,12 +800,15 @@ the two flips shown as a range; quiet machine 2026-09-15:
  262144     ZTURN-T 4.8.4.4.8.8.8      650k-791k      730k-743k   0.94-1.12x     105k-112k      174k-176k   1.57-1.66x
  524288     2048x256 / 2048x256       1.41M-1.52M    1.52M-1.53M  1.00-1.08x     274k-289k      331k-350k   1.15-1.27x
  1048576    512x2048 / 2048x512       3.12M-3.29M    4.13M-4.19M  1.26-1.34x     611k-612k      830k-887k   1.36-1.45x
- 2097152    512x4096 / 512x4096       7.30M-7.37M   10.32M-10.51M 1.40-1.44x    1.64M-1.69M    2.59M-2.59M  1.53-1.58x
- 4194304    1024x4096 / 4096x1024    17.58M-17.69M 23.89M-24.06M  1.35-1.37x    7.16M-7.27M    6.90M-6.92M  0.95-0.96x
+ 2097152    512x4096 / 512x4096       7.86M-8.04M   11.02M-11.45M 1.40-1.43x    1.82M-1.92M    2.76M-2.81M  1.46-1.51x
+ 4194304    1024x4096 / 2048x2048    18.77M-19.07M 26.83M-27.50M  1.43-1.44x    7.09M-8.03M    7.41M-8.13M  1.01-1.04x
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
-Elementwise vs MKL 5.7e-16..2.7e-15 at every cell. What the numbers say:
+(the 2M and 4M rows re-measured 2026-09-16 on a quiet machine after the
+per-thread split verdicts were re-raced; the other rows stand from
+2026-09-15.) Elementwise vs MKL 5.7e-16..2.7e-15 at every cell. What the
+numbers say:
 the natural class's whole cost over the scrambled class is the transpose
 (the store's race times at one thread: scrambled 1.15 / 2.81 / 6.34 /
 14.95 ms at 2^19..2^22 against natural 1.41 / 3.12 / 7.30 / 17.58 ms), and
@@ -814,9 +817,12 @@ that transpose is bandwidth: the scalar 16 x 16 walk it shipped with ran
 kernel (`benches/tp_probe.c`: block size, loop order and store kind raced,
 one and eight threads) — the scalar kernel lost every cell at one thread
 (0.67-0.94x) and this one wins them. At T=8 the 4194304 cell is at parity:
-its 2D child alone (the scrambled class, 4.6-4.9 ms) threads 3x over its
-serial 15 ms, and that is the 2D tier's threading at a 64 MB plane, not
-the four-step's. The 2^a·odd cells above 262144 are not served.
+a 64 MB plane is at the DRAM roof in every phase (73-75 GB/s), so its time
+is its sweep count, and every form raced to cut a sweep — column strips,
+a fused stage pair, a natural-child fold, the super-band fold of the
+transpose — either lost or landed inside the race's own spread
+(`docs/design/il2d_large_plane_design.md`). The 2^a·odd cells above
+262144 are not served.
 
 Reproduce: `k1_fourstep_gate.exe <store> 4194304 8 262144` (races and
 banks the band on a store; ALL PASS = the gate), then
