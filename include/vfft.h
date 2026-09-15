@@ -263,8 +263,12 @@ extern "C"
                     scratch, its order fixed by the plan's chain — the pow2
                     cells as fused codelets, the 2^a * odd cells as the same
                     stage kernels called per stage with the odd radix as a
-                    mid; at the remaining composite cells the cascade's
-                    digit-reversed comb serves until its deletion.
+                    mid; at a power of two 524288..4194304 the writer is the
+                    four-step's scrambled class (2026-09-15): the N1 x N2
+                    plane as the 2D tier leaves it, no transpose, the class's
+                    permutation fixed by the split; at the remaining composite cells the flat DIT's
+                    scrambled class is the writer where it admits N, and a
+                    cell with no scrambled writer refuses at create.
                   1D and 2D C2C (in-place + OOP; 2D NATURAL is native for any
                   factorization — the column chain's leaf writes rows in
                   natural order); for 2D INTERLEAVED r2c/c2r it is the
@@ -444,11 +448,16 @@ extern "C"
    *       howmany>1 in the transform-contiguous geometry. config.batch +
    *       INTERLEAVED: REJECT.
    *   1D C2C OOP        x INTERLEAVED: NATIVE z->z for K=1 at any N (the
-   *       K=1 IL tiers — mono, pair, chain, the flat mixed-radix DIT for
-   *       odd N to 2^18 in its natural or SCRAMBLED class (the mixed-radix
-   *       digit reversal; each order is its own raced wisdom cell),
-   *       Rader/Bluestein, the scrambled or natural-writing cascade — all
-   *       raced per cell) and for K>1 in the
+   *       K=1 IL tiers — mono, pair, chain, ZTURN-T at every power of two
+   *       16..2^18 and every 2^a*odd cell of its band, the FOUR-STEP at
+   *       2^19..2^22 (N = N1 x N2 on the 2D interleaved tier, the inter-pass
+   *       twiddle fused into the row pass; natural = one blocked transpose,
+   *       scrambled = the plane as is; 2026-09-15) (natural and SCRAMBLED
+   *       classes, each its own raced wisdom cell; at nthreads > 1 its
+   *       THREADED arm — the stage walk sectioned across the pool, bitwise
+   *       the serial result — is raced and banked per thread count),
+   *       the flat mixed-radix DIT for odd N to 2^18 in both classes,
+   *       Rader/Bluestein — all raced per cell) and for K>1 in the
    *       TRANSFORM_CONTIGUOUS geometry (K independent K=1 transforms; the
    *       threading verdict is raced and banked T-free). Lane-major
    *       INTERLEAVED batches: REJECT (not an IL route; nothing to fall
@@ -492,7 +501,10 @@ extern "C"
    *           as "same as sre" here, and a distinct dre is REFUSED (it used
    *           to be silently miscomputed on one of the two internal routes).
    *   2D C2C            x INTERLEAVED: NATIVE tier, both placements — the
-   *       n1c/t2c column chain (odd radices included) + K=1 IL row pass,
+   *       n1c/t2c column chain (odd radices included) + the K=1 IL row
+   *       plan created through this same door (so a row length is served
+   *       by its own 1D verdict: ZTURN-T at every band length, the solo
+   *       kernels, pairs and chain3 below it, the flat DIT at odd N),
    *       every axis raced and banked per cell (lay=il rows, keyed by
    *       order); prime / inexpressible N1 through the column-axis
    *       Bluestein (raced against an odd chain where one exists); odd or
@@ -511,8 +523,12 @@ extern "C"
    *       REJECT.
    *   3D C2C            x INTERLEAVED: NATIVE, either placement, howmany == 1,
    *       every order (DEFAULT/SCRAMBLED: each column axis digit-reversed
-   *       by its chain, rows natural; NATURAL: fully natural); howmany > 1:
-   *       REJECT.
+   *       by its chain, rows natural; NATURAL: fully natural, served by
+   *       one of two raced forms — the cycle walk of the plane pass, or
+   *       axis 0 in cache-resident column strips with no move pass — and
+   *       the strip width, all banked per cell); the last axis is the K=1
+   *       row plan through this door (ZTURN-T at band lengths, as in 2D);
+   *       howmany > 1: REJECT.
    *   3D real, 4D       x INTERLEAVED: REJECT ("the tier's next phases")
    *       — use SPLIT. 3D/4D SPLIT: C2C with
    *       howmany == 1 and order DEFAULT/SCRAMBLED, and out-of-place R2C/C2R
