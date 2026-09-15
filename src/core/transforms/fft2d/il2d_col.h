@@ -43,7 +43,11 @@ typedef struct {
      * redirection, any chain; bwd gathers from the natural positions.
      * natperm is block-affine by construction (asserted at create). */
     int nat;
-    int natarm;               /* natural x MT partition, RACED at create: 0 = block, 1 = strips */
+    int natarm;               /* the THREADED partition, RACED at create: 0 = bands (or the
+                               * natural block partition), 1 = strips — every class since
+                               * il2d_large_plane_design.md (2026-09-15) */
+    int msw;                  /* the threaded strips' sub-strip width in columns (0 = the
+                               * worker's whole range); banked msw= beside cmt/cmtt */
     int *natperm;             /* N entries, scr row -> natural row */
     double *natscr;           /* 2*N*rn: the pre-leaf plane */
     /* column-axis BLUESTEIN: chirp convolution at M = next pow2 >= 2N-1 over
