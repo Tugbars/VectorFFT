@@ -64,6 +64,9 @@ extern "C"
   /* the flat mixed-radix DIT (odd-N K=1 interleaved): threaded executes of
    * the blocks or tiles arm; serial serves leave it unchanged. */
   long vfft_ilfd_mt_passes(void);
+  /* ZTURN-T's threaded arm (the staged walk sectioned): threaded executes
+   * actually run; raced per T at create, VFFT_ZTT_MT=0|1|2 pins. */
+  long vfft_ztt_mt_passes(void);
   /* the flat DIT's create-time races (forms, tile): arms whose timed batch
    * was under half the sample target. A property, not an outcome: 0 means
    * every verdict was decided above the clock's tick. */

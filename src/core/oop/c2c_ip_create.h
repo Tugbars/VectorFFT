@@ -284,6 +284,8 @@ static vfft_plan _c2c_ip_finish(struct vfft_plan_s *h,
      * K-split, so single-threaded creates skip the check and its cost. */
     if (h->cplan)
         h->mt_unsafe = (h->nthreads > 1) ? !_c2c_mt_safe(h->cplan, h->exec_fwd) : 0;
+    if (h->k1ztt && h->K == 1 && h->nthreads > 1)
+        _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's threaded arm, in place: its own per-T pair (2026-09-15) */
     return h;
 }
 

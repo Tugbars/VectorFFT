@@ -732,6 +732,70 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
     }
 }
 
+/* ── ZTURN-T's threading verdict (2026-09-15, ztt_mt.h, ztt_mt_design.md;
+ * the flat DIT's law above): env pin VFFT_ZTT_MT=0|1|2 (never banked) > the
+ * banked arm at THIS T on the cell's il_route=ztt row of the plan's own
+ * order class > the race at T (serial vs blocks vs tiles, steady-state
+ * samples, hot). Out of place banks il_mt= il_mt_t=; a plan bound IN PLACE
+ * races aliased arms through the plane — a different measurement — and
+ * banks its own pair il_mt_ip= il_mt_ip_t=. The one-thread tile il_tw= is
+ * untouched: the arm sections the walk the row already names. */
+static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
+                                   struct vfft_wisdom_s *W,
+                                   const vfft_config_t *cfg, int N)
+{
+    vfft_ztt_plan_t *p = h->k1ztt;
+    const int T = h->nthreads;
+    const int ip = (h->placement == VFFT_INPLACE);
+    const char *tok_v = ip ? "il_mt_ip" : "il_mt", *tok_t = ip ? "il_mt_ip_t" : "il_mt_t";
+    const vw2_rec_t *r = NULL;
+    const char *pin = getenv("VFFT_ZTT_MT");
+    if (!p || T < 2)
+        return;
+    if (W && !W->vw2_off_oop)
+        r = vw2__oop_k1_scan_ord(&W->vw2, N, VW2_LAY_IL, p->scr);
+    if (pin)
+    {
+        const int v = atoi(pin);
+        if (!vfft_ztt_mt_bind(p, T, (v >= 0 && v <= 2) ? v : 0)) p->mt = 0;
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[ztt-mt] N=%d T=%d %s%s: mt=%d src=env\n", N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", p->mt);
+        return;
+    }
+    if (r && !cfg->recalibrate && vw2__oop_geti(r, tok_t, 0) == T)
+    {
+        const int v = vw2__oop_geti(r, tok_v, 0);
+        if (!vfft_ztt_mt_bind(p, T, (v >= 0 && v <= 2) ? v : 0)) p->mt = 0;
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[ztt-mt] N=%d T=%d %s%s: replay mt=%d src=wisdom\n",
+                    N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", p->mt);
+        return;
+    }
+    {   /* the race on 64-B aligned scratch, in the plan's own placement */
+        const size_t nb = (size_t)2 * N * sizeof(double);
+        double *zi = (double *)VFFT_ZS_ALLOC(nb);
+        double *zo = (double *)VFFT_ZS_ALLOC(nb);
+        size_t i;
+        if (!zi || !zo) { VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo); p->mt = 0; return; }
+        for (i = 0; i < 2 * (size_t)N; i++) zi[i] = 1.0 + 1e-6 * (double)(i & 1023);
+        _vfft_pool_arm(T);
+        if (ip) { memcpy(zo, zi, nb); vfft_ztt_mt_race(p, T, zo, zo, NULL); }
+        else vfft_ztt_mt_race(p, T, zi, zo, NULL);
+        VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo);
+    }
+    if (r && !W->vw2_off_oop)
+    {
+        char b[16];
+        int ok = 1;
+        snprintf(b, sizeof b, "%d", p->mt);
+        ok = ok && vw2_update_field(&W->vw2, &r->key, tok_v, b) == VW2_OK;
+        snprintf(b, sizeof b, "%d", T);
+        ok = ok && vw2_update_field(&W->vw2, &r->key, tok_t, b) == VW2_OK;
+        if (ok)
+            _vw2_persist(W, cfg);
+    }
+}
+
 /* ── the IN-PLACE mono candidate (2026-09-04) ──
  * Served when the cell's kind-3 row (already planned by _k1_il_candidate's
  * race on a miss) says MONO: the alias-tolerant n1c solo, both directions.

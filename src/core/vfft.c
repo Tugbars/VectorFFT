@@ -33,6 +33,7 @@
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
+#include "oop/ztt_mt.h"         /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
 #include "il_flatdit_race.h"    /* its FORM / TILE races on the shared race body      */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
@@ -122,6 +123,45 @@ long vfft_ilnd_mt_passes(void) { return _vfft_ilnd_mt_count; }
 /* the flat DIT's (odd-N K=1 IL) intra-transform MT engagement (il_flatdit_mt.h) */
 long _vfft_ilfd_mt_count = 0;
 long vfft_ilfd_mt_passes(void) { return _vfft_ilfd_mt_count; }
+/* ZTURN-T's threaded arm (ztt_mt.h): threaded executes actually run */
+long _vfft_ztt_mt_count = 0;
+long vfft_ztt_mt_passes(void) { return _vfft_ztt_mt_count; }
+/* the gate's hook (benches/ztt_mt_gate.c): build a ZTURN-T plan, bind the
+ * arm for T, run it threaded on the process pool, write y; returns 1 when
+ * the threaded walk ran, 0 when it declined (then y is untouched), -1 when
+ * the plan refused. Lives here because the pool is this TU's. */
+static void _vfft_pool_arm(int n);   /* defined below: grow-only */
+int vfft__ztt_mt_probe(int N, const int *chain, int nf, int scr, int inplace, size_t tile,
+                       int T, int arm, int bwd, const double *x, double *y)
+{
+    vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(N, chain, nf, scr);
+    int rc;
+    if (!p) return -1;
+    if (tile && !vfft_ztt_set_tile(p, tile)) { vfft_ztt_destroy(p); return -1; }
+    vfft_ztt_bind(p, inplace);
+    if (!vfft_ztt_mt_bind(p, T, arm)) { vfft_ztt_destroy(p); return 0; }
+    _vfft_pool_arm(T);
+    if (inplace) { memcpy(y, x, (size_t)2 * N * sizeof(double)); rc = vfft_ztt_execute_mt(p, y, y, bwd); }
+    else rc = vfft_ztt_execute_mt(p, x, y, bwd);
+    vfft_ztt_destroy(p);
+    return rc;
+}
+/* the spike's hook: race serial / blocks / tiles at T on a plan bound as
+ * asked, ns per arm into ns3 (-1 = not an arm); returns the winning arm */
+int vfft__ztt_mt_race_probe(int N, const int *chain, int nf, int scr, int inplace, size_t tile,
+                            int T, const double *x, double *y, double *ns3)
+{
+    vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(N, chain, nf, scr);
+    int mt;
+    if (!p) return -1;
+    if (tile && !vfft_ztt_set_tile(p, tile)) { vfft_ztt_destroy(p); return -1; }
+    vfft_ztt_bind(p, inplace);
+    _vfft_pool_arm(T);
+    if (inplace) { memcpy(y, x, (size_t)2 * N * sizeof(double)); mt = vfft_ztt_mt_race(p, T, y, y, ns3); }
+    else mt = vfft_ztt_mt_race(p, T, x, y, ns3);
+    vfft_ztt_destroy(p);
+    return mt;
+}
 /* the flat DIT's race property (il_flatdit_race.h): arms whose timed batch
  * was under half the sample target — reads 0 when every verdict was
  * decided above the clock's tick */

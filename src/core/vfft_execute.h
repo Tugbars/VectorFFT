@@ -405,10 +405,25 @@ static int _k1x_ilfd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
     _ilfd_serve(h, dir, zin, zout);
     return 0;
 }
+/* ZTURN-T's serving: the threaded arm at the plan's T when it engages
+ * (ztt_mt.h: the staged walk sectioned), else the serial form — the fused
+ * codelet at a pow2 cell, the staged walk at an odd cell. Both directions,
+ * both order classes, both placements. */
+static void _ztt_serve(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    const vfft_ztt_plan_t *p = h->k1ztt;
+    if (p->mt > 0 && h->nthreads > 1)
+    {
+        _vfft_pool_arm(h->nthreads); /* re-assert the snapshot pool */
+        if (vfft_ztt_execute_mt(p, zin, zout, dir == VFFT_BACKWARD))
+            return;
+    }
+    if (dir == VFFT_FORWARD) vfft_ztt_execute_fwd(p, zin, zout);
+    else vfft_ztt_execute_bwd(p, zin, zout);
+}
 static int _k1x_ztt(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
-{   /* ZTURN-T: ONE fused driver per direction, bound at create (ztt.h) */
-    if (dir == VFFT_FORWARD) vfft_ztt_execute_fwd(h->k1ztt, zin, zout);
-    else vfft_ztt_execute_bwd(h->k1ztt, zin, zout);
+{
+    _ztt_serve(h, dir, zin, zout);
     return 0;
 }
 static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
@@ -1004,10 +1019,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 }
                 else if (h->k1ztt)
                 {   /* ZTURN-T, z -> z legal (the ingest consumes zin first) */
-                    if (dir == VFFT_FORWARD)
-                        vfft_ztt_execute_fwd(h->k1ztt, sre, zo);
-                    else
-                        vfft_ztt_execute_bwd(h->k1ztt, sre, zo);
+                    _ztt_serve(h, dir, sre, zo);
                 }
                 else
                 {
@@ -1087,10 +1099,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                      * truthfulness at create makes k1ztt non-NULL here. */
                     if (h->k1ztt)
                     {
-                        if (fwd)
-                            vfft_ztt_execute_fwd(h->k1ztt, sre, dre);
-                        else
-                            vfft_ztt_execute_bwd(h->k1ztt, sre, dre);
+                        _ztt_serve(h, dir, sre, dre);
                         return;
                     }
                     break; /* -> convert fallback (NEVER a silent no-op) */
