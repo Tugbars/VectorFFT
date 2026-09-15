@@ -186,9 +186,9 @@ static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, doubl
             vfft_destroy(hi);
         }
         {   /* T=8: bitwise the T=1 forward, roundtrip; engagement printed */
-            const long e0 = vfft_ilfd_mt_passes();
+            const long e0 = vfft_ilfd_mt_passes() + vfft_ztt_mt_passes();
             vfft_plan hm = mk_t(W, N, 0, order, 8);
-            const long e1 = vfft_ilfd_mt_passes();
+            const long e1 = vfft_ilfd_mt_passes() + vfft_ztt_mt_passes();
             (void)e0;
             if (hm)
             {
@@ -197,7 +197,7 @@ static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, doubl
                 c.mt_err = relerr(y2, y, N, 1.0);   /* a T-raced create may serve another engine */
                 vfft_execute(hm, VFFT_BACKWARD, y2, NULL, r, NULL);
                 c.mt_rt = relerr(r, x, N, 1.0 / N);
-                c.mt_eng = (vfft_ilfd_mt_passes()) - e1;
+                c.mt_eng = (vfft_ilfd_mt_passes() + vfft_ztt_mt_passes()) - e1;
                 c.mt_ok = (c.mt_bit || c.mt_err < 1e-11) && c.mt_rt < 1e-11;
                 vfft_destroy(hm);
             }

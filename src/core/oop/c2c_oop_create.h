@@ -54,6 +54,8 @@ static vfft_plan _c2c_oop_finish(struct vfft_plan_s *h, int zt_mt,
     (void)zt_mt;   /* the cascade's MT verdict left with the cascade (2026-09-15) */
     if (h->k1ilfd && h->K == 1 && h->nthreads > 1)
         _ilfd_mt_replay_or_race(h, W, cfg, N); /* the flat DIT's, per-T banked (2026-09-07) */
+    if (h->k1ztt && h->K == 1 && h->nthreads > 1)
+        _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's, per-T banked (2026-09-15) */
     return h;
 }
 

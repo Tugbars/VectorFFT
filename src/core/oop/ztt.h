@@ -173,6 +173,11 @@ typedef struct
     vfft_ztt_kfn st_fwd[VFFT_ZTT_MAX_NF], st_bwd[VFFT_ZTT_MAX_NF];
     vfft_ztt_kfn tl_fwd_plane, tl_bwd_plane;
     size_t twoff[VFFT_ZTT_MAX_NF];
+    /* THE THREADED ARM (ztt_mt.h, docs/design/ztt_mt_design.md): mt = the
+     * raced arm (0 serial, 1 BLOCKS, 2 TILES), mt_t = the thread count it
+     * was bound and banked for; at T > 1 every cell runs the sectioned
+     * staged walk, the fused codelet is the serial form only. */
+    int mt, mt_t;
 } vfft_ztt_plan_t;
 
 /* the registry row for (N, chain), NULL when the cell was not emitted */
@@ -369,8 +374,9 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
     p->ncol = N / chain[0];
     p->scr = scr ? 1 : 0;
     p->staged = staged;
-    if (staged)
-    {   /* the stage table: every kernel resolved now, none looked up at run time */
+    {   /* the stage table: every kernel resolved now, none looked up at run
+         * time — for EVERY plan, the fused cells too: the threaded arm
+         * (ztt_mt.h) sections this table at any cell */
         int ok = 1;
         for (s = 0; s < nf; s++)
         {
