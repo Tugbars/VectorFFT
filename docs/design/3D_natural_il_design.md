@@ -225,9 +225,20 @@ the permuting plane pass is one extra cube sweep however it is arranged,
 and this form pays it cheapest. The natural axis-1 pass's per-plane
 scratch sweep is gone: out of place one plane is always dead (forward the
 vacated source position, backward the destination), and the pass runs its
-pre-leaf stages there; `natscr` serves only the fixed points. The residual
-over the scrambled class is structural; a form without the extra sweep
-would need bands closed under the axis-0 permutation, a design of its own.
+pre-leaf stages there; `natscr` serves only the fixed points. Measured
+2026-09-15 by a same-session A/B (two builds, five alternated runs of the
+small natural cells, one thread): 45³ 237 vs 273 µs and 81×27×27 133 vs
+157 µs with the dead-plane scratch, neutral within spread at 16³, 32³,
+64³, 27×9×15 and 36×20×28.
+
+The form without the extra sweep exists since the same day: the STRIP
+form (`ilnd_natural_strip_design.md`) — axis 0 in cache-resident column
+strips through a strip-pitched scratch, the digit reversal resolved inside
+the strip, natural order written back in place, then the planes in place.
+Raced beside this cycle form as `nf=` × `nsw=`; it wins the threaded race
+at 10 of 14 cells (32×32×4096 3.1 vs 5.1 ms at T=8) and the one-thread race
+at the large pow2 cells (32×32×4096 15.0 vs 16.6 ms); this cycle form
+keeps the cells whose cube fits L3.
 
 ## 7. Wisdom
 

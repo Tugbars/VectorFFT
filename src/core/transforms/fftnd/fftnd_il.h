@@ -767,17 +767,17 @@ static void _ilnd_free_cycles(vfft_ilnd_t *d)
     }
     d->nbufw = 0;
 }
-/* the strip widths admitted at this cell: {8..256} columns with the
+/* the strip widths admitted at this cell: {8..1024} columns with the
  * strip scratch under the L2 budget (N[0] * w * 16 bytes); the form itself
  * needs a permuting chain (nst >= 2, no Bluestein) -- otherwise the axis is
  * natural already and the cycle form is the whole story */
 static int _ilnd_sw_pool(const vfft_ilnd_t *d, int *out, int max)
 {
-    static const int SW[] = { 8, 16, 32, 64, 128, 256 };
+    static const int SW[] = { 8, 16, 32, 64, 128, 256, 512, 1024 };
     int n = 0, i;
     if (d->ax0.blu || d->ax0.nst < 2)
         return 0;
-    for (i = 0; i < 6 && n < max; i++)
+    for (i = 0; i < 8 && n < max; i++)
         if ((long)d->N[0] * SW[i] * 16 <= vfft_cpu_l2_bytes() && (size_t)SW[i] <= d->plane)
             out[n++] = SW[i];
     return n;
@@ -1254,7 +1254,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     int arm = 0, wl = 0, s_src = 0, wl_src = 0, mt_src = 0; /* src: 1 env, 2 wisdom, 3 race, 4 only-buildable */
     int mts = 0; /* the structure the threaded verdict runs with */
     int nfc[2], nnf = 0, nf = 1, mtf = 1, nf_src = 0, nf_raced = 0; /* the natural FORM: 1 cycle, 2 strip */
-    int sws[6], nsw = 0, sw = 0, maxsw = 0, sw_best = 0, tot = 0;    /* the strip widths */
+    int sws[8], nsw = 0, sw = 0, maxsw = 0, sw_best = 0, tot = 0;    /* the strip widths */
     const int usable_w = (W && !W->vw2_off_2d);
     const int nthr = _vfft_plan_threads(cfg);
     const char *pin = getenv("VFFT_ILND_ARM");
@@ -1379,8 +1379,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     {
         const char *fpin = getenv("VFFT_ILND_NF");
         const char *spin = getenv("VFFT_ILND_SW");
-        int bnf = 0, i, sp[6], nsp;
-        nsp = _ilnd_sw_pool(d, sp, 6);
+        int bnf = 0, i, sp[8], nsp;
+        nsp = _ilnd_sw_pool(d, sp, 8);
         if (spin && atoi(spin) > 0 && nsp > 0)
         {
             sws[nsw++] = atoi(spin);
@@ -1587,7 +1587,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
             mtf = (bf == 1 || bf == 2) ? bf : nf;
             if (mtf == 2 && d->nsw <= 0)
                 d->nsw = vw2_ilnd_int_lookup(&W->vw2, &key0, "nsw");
-            if (mtf == 2 && (d->nsw <= 0 || d->mt != 2 || _ilnd_sw_pool(d, sws, 6) == 0))
+            if (mtf == 2 && (d->nsw <= 0 || d->mt != 2 || _ilnd_sw_pool(d, sws, 8) == 0))
                 mtf = 1; /* the banked strip form needs a width, the plane partition and a permuting chain */
             if (d->mt > 0)
             {   /* the threaded structure may differ from the one-thread one */

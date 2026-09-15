@@ -847,7 +847,7 @@ the **column pass stays serial** — that's the 2D self-scaling ceiling. Source:
 > is ~6× *slower* than MKL-T1 (8,494 ns) — pure threading overhead — so dag wins 8.6×. Lifting
 > the ceiling (parallel column pass / full-plane tiling) is the 2D-MT follow-up.
 
-### 2D C2C — the NATIVE INTERLEAVED tier vs MKL CCE (2026-08-25)
+### 2D C2C — the NATIVE INTERLEAVED tier vs MKL CCE (standing as of 2026-09-15)
 
 The native interleaved 2D tier (`docs/roadmap/fft2d_il_c2c_design.md`:
 n1c/t2c column chain + K=1 IL row pass, per-cell raced chain, blocked
@@ -869,32 +869,40 @@ N·x), and race→bank→serve replay bitwise with roundtrip ~5e-16 — the
 `il2d_m1_gate` battery, ALL PASS.
 
 ```
- N1×N2      O-NATIVE (ns)  MKL-CCE (ns)  vs MKL-CCE  uplift vs old serving
-────────────────────────────────────────────────────────────────────────
- 128×128          19,849        31,538      1.59×          1.98×
- 256×256          85,603       130,823      1.53×          2.15×
- 512×512         528,700     1,007,650      1.91×          2.21×
- 1024×1024     2,747,300     5,725,600      2.08×          2.01×
- 16×4096         102,410       153,247      1.50×*         2.44×
- 64×256           18,457        35,268      1.91×*         2.21×
- 4096×64         646,288       904,375      1.40×            —
- 8192×64       1,650,375     2,066,875      1.25×*           —
- 16384×64      3,704,962     5,062,325      1.37×            —
- 32768×64      9,140,738    15,197,088      1.66×            —
-────────────────────────────────────────────────────────────────────────
-                                    10/10 win, median ~1.55×
+ N1×N2      O-NATIVE (ns)  MKL-CCE (ns)  vs MKL-CCE   rows
+─────────────────────────────────────────────────────────────────
+ 128×128          19,849        31,538      1.59×      pairs
+ 256×256          85,603       130,823      1.53×      pairs
+ 512×512         447,463       927,763      2.07×†     pairs
+ 1024×1024     2,206,587     4,809,862      2.18×†     ZTURN-T
+ 16×4096          90,763       135,127      1.49×†     ZTURN-T
+ 32×1024          40,002        69,593      1.74×†     ZTURN-T
+ 64×256           17,955        32,263      1.80×†     pairs
+ 4096×64         646,288       904,375      1.40×      pairs
+ 8192×64       1,650,375     2,066,875      1.25×*     pairs
+ 16384×64      3,704,962     5,062,325      1.37×      pairs
+ 32768×64      9,140,738    15,197,088      1.66×      pairs
+─────────────────────────────────────────────────────────────────
+                                    11/11 win, median ~1.59×
 ```
 
-The bottom four rows are the L2 band-threshold ladder (same-day addendum
-below: measured with the cascade widths in the race; no "old serving"
-column — the convert wrapper was already deleted when these cells were
-first measured). 16384/32768 are outside-noise results; at 32768 MKL's
+"rows" = the engine the row child's own 1D verdict serves: the K=1 pairs
+below 1024, ZTURN-T at 1024 and in its band (the row pass is a K=1 plan
+through the front door, so the 2D tier never names an engine;
+`docs/design/ztt_2d_design.md`). † = re-measured 2026-09-15 on the same
+bench with the same column verdicts once ZTURN-T served those rows
+(1024×1024 was 2.08×, 16×4096 1.50× at 102,410 ns, 512×512 1.91× from the
+pair-pool work of 09-09/11); 4096×64 keeps its 08-25 row — a 09-15 reading
+of 1.1× came with a 45% control spread and was ruled thermal.
+
+The ×64 rows are the L2 band-threshold ladder (same-day addendum
+below: measured with the cascade widths in the race). 16384/32768 are
+outside-noise results; at 32768 MKL's
 CCE arm loses even to its own REAL_REAL configuration (0.76).
 
-*aspect-cell arm spreads were wide in this run (up to 56% on the MKL arm,
+*aspect-cell arm spreads were wide in that run (up to 56% on the MKL arm,
 196% on one native arm) — the ratios there are sign-reliable, not
 two-decimal quotable; the square cells ran at 6–25% spreads.
-
 **Huge-column cells + the L2 cascade widths (2026-08-25, same-day
 addendum).** Long-column cells added to the `--2dil` ladder: band
 residency needs `wl ≤ L2/(16·N1)`, so the static width pool (max 256)
@@ -927,19 +935,6 @@ re-calibrating.
 > small-N2 row route (`1.6–2×` at N2 ≤ 64) are measured but env-only
 > pending wisdom banking; MT over bands is the queued multiplier.
 
-#### 2D C2C — the rows on ZTURN-T (2026-09-15)
-
-The tier's row pass is a K=1 child plan through the front door, so since
-ZTURN-T became the K=1 natural engine (pow2 2048..262144 on 09-09, the
-2^a·odd band on 09-15; 1024 by verdict) every plane's rows of those lengths
-run it — nothing in the 2D tier changed (`docs/design/ztt_2d_design.md`).
-Re-measured single-thread on the same bench, same column verdicts:
-1024×1024 2,206,587 vs MKL 4,809,862 (2.18x, was 2.08x), 16×4096 90,763 vs
-135,127 (1.49x, our time -11%), 32×1024 40,002 vs 69,593 (1.74x); the
-pair-row cells 512×512 2.07x (was 1.91x) and 64×256 1.80x. 4096×64 read
-1.1x on a noisy run against 1.40x here — its rows are 64-point pairs, an
-open item for a quiet re-measure.
-
 ### 2D C2C — the native tier MULTITHREADED (2026-08-27)
 
 Both passes of the native IL tier thread. Rows commute with column
@@ -971,136 +966,134 @@ min-of-20, MT == ST bitwise gated both directions:
 ──────────────────────────────────────────────
 ```
 
-### 3D C2C — the NATIVE INTERLEAVED tier vs MKL CCE (2026-09-06)
+### 3D C2C — the NATIVE INTERLEAVED tier vs MKL CCE (standing as of 2026-09-15)
 
 The rank-3 interleaved tier (`docs/roadmap/fftnd_il_design.md`,
-`src/core/transforms/fftnd/fftnd_il.h`): axis 0 = the 2D column-axis
-pass over the virtual N1 × (N2·N3) plane, walked in BANDS of `wl` planes
-with the per-plane structure fused into the band (the 2D tier's banded
-walk + tfuse at rank 3); per plane the RACED structure — a 2D IL child
-plan or the flat axis-1 column pass + K=1 rows. Structure × width are
-arms of one race at create, banked `s=` `wl=` on the rank-3 row. Out of
-place, order DEFAULT, single thread, served through the front door.
-IN PLACE (2026-09-07) is the same plan and the same wisdom row — every
-pass is alias-tolerant, and the in-place output is bitwise the
-out-of-place output at every probed cell, at one thread and at T=8 — so
-its numbers are these.
+`docs/design/3D_natural_il_design.md`, `ilnd_natural_strip_design.md`,
+`src/core/transforms/fftnd/fftnd_il.h`), both order classes, either
+placement (in place is the same plan and the same wisdom row; its output
+is bitwise the out-of-place output, probe-gated at one thread and at T=8):
 
-Arms (one process, `bench_1d_vs_mkl.c --3dil`; one-thread samples
-pinned to core 2 at HIGH priority, a 300 ms pace before each sample's
-cachebust and >= 5 ms untimed warm-up, 9 rounds with reversed arm order,
-medians, all arms OUT OF PLACE):
-O-NATIVE = this tier; M-inter = MKL rank-3 `DFTI_COMPLEX_COMPLEX`
-`DFTI_NOT_INPLACE` (its measured-fastest 3D configuration — its
-`REAL_REAL` split arm ran 1.6–2.2× slower in the same runs). Correctness
-behind the numbers: `ilnd_probe` (DC, roundtrip, naive-DFT spot bins
-across the two digit-reversed column axes, both structure arms, the
-banded walk BITWISE the unbanded one, the raced verdict, replay with
-zero races), `api_matrix_gate`.
+- **Axis 0** = the 2D column-axis pass over the virtual N1 × (N2·N3) plane.
+  SCRAMBLED (DEFAULT): walked in BANDS of `wl` planes with the per-plane
+  structure fused into the band while it is L2-hot. NATURAL: one of two
+  raced FORMS — the cycle walk (the scrambled pass, then the plane pass
+  permuting the planes along the cycles of the axis-0 permutation with one
+  plane of buffer) or the STRIP form (axis 0 in cache-resident column
+  strips of `nsw` columns through a strip-pitched scratch, the digit
+  reversal resolved inside the strip, natural order written back in place,
+  then the planes in place — the walk MKL uses per axis, with our kernels).
+- **Per plane** the raced STRUCTURE: a 2D IL child plan, or the flat axis-1
+  column pass + the K=1 row plan created through the front door (so N3 is
+  served by its own 1D verdict: ZTURN-T at every band length, `[k1ztt]
+  N=4096: replay ZTURN-T chain 8.8.8.8 tile=1024 src=wisdom` at every
+  create of the long-N3 cells, in both classes).
+- **One race at create** over structure × width (× form × strip width for
+  the natural cell), banked `s= wl= tf=` (`nf= nsw=`) on the rank-3 row of
+  the cell's order; **the threaded race** at the plan's T over partition ×
+  structure (× form): the BAND arm (prefix stages digit-split, disjoint
+  bands with the structure fused) and the PLANE arm (column strips, then
+  plane ranges), banked `cmt= cmtt= cmts=` (`cmtf=`). Per-worker clones are
+  route-equivalence-checked at create; `vfft_ilnd_mt_passes()` counts
+  engagement and every threaded number below carries it at 100%.
+- Correctness behind the numbers: `ilnd_probe` (DC, roundtrip, naive-DFT
+  spot bins; both structure arms; the banded walk, the in-place execute,
+  the threaded execute and the strip form each BITWISE their reference;
+  replay with zero races), `api_matrix_gate`.
 
-⚠ **Noise note:** measured under load (a six-core game process was
-running); the one-thread pin absorbs it — control (memcpy) spreads 9–24%.
-Arm spreads are in parentheses; a ratio marked `~` sits inside the
-control spread — sign-reliable, not two-decimal quotable.
-
-```
- N1×N2×N3    s / wl     O-NATIVE (ns)     MKL-CCE (ns)     vs MKL-CCE
-──────────────────────────────────────────────────────────────────────
- 16³         flat  8          6,367  (7%)       6,976  (8%)    1.10×~
- 32³         child 8         50,944 (10%)      64,521 (10%)    1.27×
- 64³         flat  16       554,388  (4%)     847,325  (7%)    1.53×
- 128³        child 8      7,633,500  (6%)  11,486,050  (6%)    1.50×
- 32×16×64    child 8         42,816 (12%)      52,387 (11%)    1.22×
- 64×128×32   child 8        583,913 (10%)     824,825 (10%)    1.41×
- 256×64×16   flat  32       690,425 (13%)     798,038 (12%)    1.16×~
- 27×9×15     flat  9          7,787 (11%)       8,809  (9%)    1.13×
- 36×20×28    flat  0         32,281 (29%)      57,545 (11%)    1.78×
- 45³         flat  0        190,829 (11%)     275,238  (7%)    1.44×
- 81×27×27    flat  0        122,236  (8%)     178,212 (14%)    1.46×
-──────────────────────────────────────────────────────────────────────
-                                              11/11 win, median ~1.41×
-```
-
-**The axis-0 banded walk (same day).** Before it, the long-axis-0 cell
-256×64×16 was the one loss (0.86×: 256 rows over a 1024-complex plane,
-the column pass streaming the cube per stage). With the width raced
-(`wl=32`, the band = 32 planes = 512 KB, L2-resident), the cell moved
-0.86× → 1.16× (the race's own arms: unbanded 857 µs, wl32 630 µs); 64³
-moved 1.35× → 1.53× (`wl=16`). The odd cells have
-only the chain's own spans as legal widths (9 at 27/45/81) and raced to
-unbanded or to a tie.
-
-#### 3D C2C — the native tier MULTITHREADED (2026-09-07)
-
-Two partition arms, both loop restrictions of the serving walk (MT == ST
-bitwise, probe-gated at every cell): the BAND arm (wide prefix stages
-digit-split, then workers take disjoint bands of `wl` planes with the
-per-plane structure fused) and the PLANE arm (column strips of the
-virtual plane for the whole axis-0 chain, then plane ranges). At the
-plan's T the partition and the STRUCTURE are raced together against
-serial (the one-thread winner is not the threaded winner: 64³ child +
-band 70 µs vs flat + plane 103 µs, a tie at one thread), banked `cmt=`
-`cmtt=` `cmts=`; the per-plane structure runs on per-worker clones
-(route-equivalence-checked at create); `vfft_ilnd_mt_passes()` counts
-engagement and every number below carries it.
-
-**Same-run, the create race itself** (T=8, every sample = REPS executes
-after two warm passes, min of 3 alternated rounds — the steady state, not
-the first-millisecond transient; serial = the same tier at one thread
-in the same race):
+Protocol (`bench_1d_vs_mkl.c --3dil`, one process per run, scratch copy of
+the shipped store): all arms OUT OF PLACE; O-NATIVE = this tier, MKL = rank-3
+`DFTI_COMPLEX_COMPLEX` `DFTI_NOT_INPLACE` (its measured-fastest 3D
+configuration; its `REAL_REAL` arm runs 1.4–2.2× slower in the same runs);
+one-thread samples pinned to core 2 at HIGH, a 300 ms pace before each
+sample's cachebust and ≥ 5 ms untimed warm-up, 9 rounds with reversed arm
+order, medians; T=8 unpaced (a pace parks both teams), both engines on
+the 8 P-cores, MKL's team created before our pool pins, our pool torn down
+before every MKL sample. `~` = the delta sits inside the control arm's
+spread (a tie). Ratio = MKL / ours. One session, cool machine, 2026-09-15:
 
 ```
- cell        serial (ns)    MT (ns)   speedup   verdict (arm/structure)
-────────────────────────────────────────────────────────────────────────
- 16³               5,239      2,987     1.8×    plane/flat
- 32³              42,909     17,600     2.4×    plane/child
- 64³             423,477     72,991     5.8×    plane/child
- 128³          4,935,300    590,500     8.4×    band/child
- 32×16×64         37,492     18,935     2.0×    plane/flat
- 64×128×32       463,286     75,916     6.1×    band/flat
- 256×64×16       545,200    139,572     3.9×    plane/flat
- 27×9×15           6,690      4,573     1.5×    plane/flat
- 36×20×28         30,714     13,757     2.2×    plane/flat
- 45³             162,146     44,616     3.6×    band/flat
- 81×27×27        107,903     27,700     3.9×    band/flat
-────────────────────────────────────────────────────────────────────────
+ cell          SCRAMBLED T=1              NATURAL T=1               SCRAMBLED T=8            NATURAL T=8
+               ours        MKL    ratio   ours        MKL    ratio  ours      MKL    ratio   ours      MKL    ratio
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 16³             6,463     7,099  1.10~     7,119     7,273  1.02~    4,251    3,026  0.71     3,086    3,197  1.04~
+ 32³            51,580    62,587  1.21     67,115    64,095  0.96    20,857   13,620  0.65    17,920   14,020  0.78~
+ 64³           512,775   773,225  1.51    732,362   833,963  1.14~   76,450  110,662  1.45~   94,687  114,650  1.21~
+ 128³        6,404,700 9,679,712  1.51  7,178,363 11,625,088 1.62 1,058,363 1,416,163 1.34 1,503,938 1,606,863 1.07~
+ 32×16×64       46,313    50,956  1.10     59,495    51,962  0.87    22,515   14,770  0.66    15,095   17,675  1.17~
+ 64×128×32     551,712   784,125  1.42    754,975   873,313  1.16~   76,113  111,013  1.46~  119,525  145,450  1.22~
+ 256×64×16     618,525   691,013  1.12~   724,700   706,163  0.97~  146,687  108,037  0.74~  109,138  107,800  0.99~
+ 27×9×15         8,693     9,090  1.05~     9,261     9,118  0.98~    5,282    5,819  1.10~    4,659    6,635  1.42
+ 36×20×28       33,499    60,281  1.80     34,423    59,174  1.72    20,422   17,035  0.83    10,199   19,236  1.89
+ 45³           188,238   273,976  1.46    230,914   269,348  1.17~   38,386   43,386  1.13~   37,895   47,919  1.26
+ 81×27×27      127,694   170,148  1.33    142,282   170,112  1.20~   33,124   32,615  0.98~   23,848   34,888  1.46
+ 16×16×4096  2,864,400 3,726,400  1.30  3,681,000 3,649,475  0.99~  333,563  449,512  1.35~  517,000  527,112  1.02~
+ 8×16×12288  4,395,350 7,356,538  1.67  4,907,763 7,489,638  1.53   636,350  896,312  1.41~  866,687 1,016,262 1.17~
+ 32×32×4096 13,603,162 18,541,325 1.36 15,484,150 18,167,375 1.17 4,916,088 4,963,975 1.01~ 5,036,162 5,212,275 1.03~
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ T=1: scrambled 14/14 (10 outside the spread); natural 4 win, 8 tie, 2 loss
+      (32³, 32×16×64: small cubes where MKL's natural output is cheap).
+ T=8: MKL's arm spreads 50–770% at most cells (ours as wide at some); the
+      natural class wins or ties at 14/14; the scrambled class loses the
+      four small cells (16³, 32³, 32×16×64, 36×20×28) — the two-phase
+      fork-join floor against MKL's one parallel region — and wins or ties
+      the rest.
 ```
 
-**vs MKL CCE at the same T=8** (`--3dil --mt`: both engines confined to
-the 8 P-cores, MKL's team created before our pool pins the caller, our
-pool torn down before every MKL sample, MKL parked before every one of
-ours, ≥ 5 ms of untimed warm executes per sample on both sides; 9
-rounds, medians, spreads in parentheses, `~` = inside the control
-spread). ⚠ Taken while the machine was in use — MKL's own spreads reach
-300% here; the steady-state column repeats the race's MT time above so
-the two can be read side by side:
+**The verdicts behind the table** (the same session's create logs). Scrambled
+one thread: structure/width per cell — 16³ flat/8, 32³ flat/32, 64³ child/8,
+128³ flat/8, 32×16×64 flat/8, 64×128×32 flat/16, 256×64×16 child/64, the odd
+cells flat/9 (their chain's span), 16×16×4096 flat/16, 8×16×12288 child/8,
+32×32×4096 child/8. Natural one thread: the cycle form everywhere except
+128³ (flat, strip 512) and 32×32×4096 (flat, strip 256), where the strip form
+won its race (6.24 vs 6.79 ms; 15.0 vs 16.6 ms), and 36×20×28 (a tie); the
+cycle form keeps the cells whose cube fits L3, where the strided strip reads
+cost more than the cheap move pass.
+
+**The threaded race at T=8** (the create's own arms, same run, alternated,
+min of 3 — the robust numbers at these sizes; serial = the same tier at one
+thread inside the race; natural = cycle form's best arm vs strip form's
+best arm):
 
 ```
- cell          O-NATIVE (ns)   steady (ns)   MKL-CCE T=8 (ns)   bench ratio   steady/MKL
-────────────────────────────────────────────────────────────────────────────────────────
- 16³                4,058 (11%)      2,987        2,859 (43%)      0.70×        1.0×
- 32³               16,400 (113%)    17,600       14,295 (127%)     0.87×~       0.8×
- 64³               71,512 (45%)     72,991      113,063 (18%)      1.58×        1.5×
- 128³           1,161,725 (34%)    590,500    1,663,163 (23%)      1.43×        2.8×
- 32×16×64          16,449 (32%)     18,935       14,977 (288%)     0.91×~       0.8×
- 64×128×32         83,950 (14%)     75,916      110,175  (8%)      1.31×~       1.5×
- 256×64×16        150,100 (19%)    139,572      107,337 (17%)      0.72×~       0.8×
- 27×9×15            5,659 (30%)      4,573        5,934 (45%)      1.05×~       1.3×
- 36×20×28          13,967 (23%)     13,757       16,287 (18%)      1.17×        1.2×
- 45³               56,262 (43%)     44,616       42,776 (304%)     0.76×~       1.0×
- 81×27×27          32,915 (90%)     27,700       31,900 (17%)      0.97×~       1.2×
-────────────────────────────────────────────────────────────────────────────────────────
+ cell         SCRAMBLED: serial      MT   speedup  verdict     | NATURAL: cycle    strip    gain   verdict
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 16³               5,422      4,589   1.2×  plane/flat   |          5,411     4,476   1.21×  plane/child/strip
+ 32³              48,109     21,998   2.2×  plane/flat   |         16,433        —      —    plane/flat (cycle)
+ 64³             445,698     79,119   5.6×  plane/flat   |        122,056   103,400   1.18×  plane/child/strip
+ 128³          4,950,267    599,433   8.3×  band/child   |      1,011,767   883,867   1.15×  plane/flat/strip
+ 32×16×64         42,897     19,117   2.2×  band/child   |         22,421    18,047   1.24×  plane/flat/strip
+ 64×128×32       466,626     76,728   6.1×  band/child   |        116,982   128,200     —    plane/flat (cycle)
+ 256×64×16       536,168    138,811   3.9×  plane/child  |        145,823   115,930   1.26×  plane/flat/strip
+ 27×9×15           7,107      4,651   1.5×  plane/flat   |          5,070     4,046   1.25×  plane/child/strip
+ 36×20×28         34,066     18,563   1.8×  band/child   |         16,463    10,026   1.64×  plane/child/strip
+ 45³             160,273     40,234   4.0×  plane/child  |         51,017    37,934   1.35×  plane/child/strip
+ 81×27×27        113,915     28,342   4.0×  band/child   |         48,646    31,458   1.55×  plane/flat/strip
+ 16×16×4096    2,217,756    306,711   7.2×  plane/flat   |        420,500        —      —    plane/child (cycle)
+ 8×16×12288    3,286,267    431,700   7.6×  plane/child  |        516,225        —      —    plane/flat (cycle)
+ 32×32×4096   11,396,650  3,345,450   3.4×  plane/flat   |      5,055,800 3,066,350   1.65×  plane/flat/strip
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ The strip form won the natural threaded race at 10 of 14 cells, on two
+ quiet runs: the strips give every worker independent in-scratch work with
+ no cold scattered plane writes. Strip width matters at the long cells
+ (one page visit per plane per strip): the arm times fall to 256–512
+ columns; the pool runs 8..1024 under the L2 budget.
 ```
 
-The reading: at T=8 the tier wins or ties at 8 of 11 cells once its
-steady state is what gets timed; the remaining losses are the two 512 KB
-cubes (32³, 32×16×64: a 15 µs transform where two fork-joins plus a
-per-plane child execute per plane cost more than MKL's fan-out) and
-256×64×16, whose one-thread width verdict (`wl=64` this run, `wl=32`
-the run before) decides the threaded arms' shape without being raced at
-T. Levers, all measured items: race `wl` at T with the structure and the
-partition; one fork-join per execute for the small cubes. The
-single-thread standings above are unchanged by any of this.
+**Refuted and deleted (2026-09-15):** the fused natural form — the
+scrambled banded walk through a scratch cube, each plane written to its
+natural position — lost to the cycle form at every one-thread cell by
+3–27% and at 13 of 14 threaded cells (record: `docs/research/.../probes/IL3D/`,
+`docs/design/ilnd_natural_fused_design.md`). A permuting plane pass is one
+extra cube sweep however it is arranged; the strip form is the one that
+pays none.
+
+**Open, not built:** the axis-0 chain is raced as a bare column pass. At
+N1 = 32 it sometimes picks a single radix-32 stage, which leaves the axis
+natural by itself and no strip form to race, and that cell then serves
+slower (20.1 ms) than a two-stage chain with strips (15.5 ms): the chain
+race does not see the natural class's form; a joint chain × form race for
+the natural cell is a design of its own.
 
 ## 3. vs MKL — 1D R2C
 
@@ -1285,117 +1278,6 @@ Source: `bench_1d_vs_mkl.c --zr2c` -> `vfft_perf_tuned_1d_zr2c_fd.csv`.
 > a kernel deficit: see the route-1 deltas in the block above. Day-to-day ratio drift on this
 > host is up to ~0.2 per cell (thermal) and MKL's own arm moved ~26% between runs at 2048 -
 > quote the **shape**, not one day's third digit.
-
-#### 3D C2C — the NATURAL class (2026-09-07)
-
-`order=NATURAL` is its own `ord=nat` cell (`docs/design/3D_natural_il_design.md`):
-axis 0 runs the scrambled pass unchanged, and the per-plane structure,
-which reads and writes every plane anyway, runs out of place and writes
-each finished plane to its natural position along the digit-reversal
-cycles with one plane of buffer — no scratch cube, no extra sweep. Inside
-a plane the natural 2D child or the natural axis-1 pass plus the row plan
-give natural order. Both placements; threaded with a cycles phase
-(disjoint cycles per worker, one buffer each). This is the LIKE-FOR-LIKE
-order against MKL, whose output is natural. Same protocol as the tables
-above (`--3dil` with `VFFT_3DIL_ORDER=nat`; one-thread samples pinned to
-core 2 at HIGH priority, 300 ms pace before each sample's cachebust and
->= 5 ms untimed warm-up, 9 rounds, medians, spreads, `~` = inside the
-control spread). One thread measured under the same six-core load as the
-scrambled table, control spreads 8–30%. T=8 on the idle machine with
-steady-state samples and NO per-sample pace (a pace parks the teams and
-widens both engines' spreads without moving the medians); MKL's spreads
-to 290%.
-
-```
- cell         natural T=1 (ns)   MKL T=1 (ns)   vs MKL   over scrambled   | natural T=8 (ns)   MKL T=8 (ns)   vs MKL
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- 16³                 6,781 (14%)     7,297 (13%)   1.08×~     1.07×         |     3,686 (13%)      2,852 (17%)   0.77×
- 32³                51,739 (12%)    67,859  (7%)   1.31×      1.02×         |    23,472 (20%)     13,944 (291%)  0.59×
- 64³               784,562 (12%)   906,862 (13%)   1.16×~     1.42×         |    99,075 (15%)    112,450 (120%)  1.13×~
- 128³           10,051,650 (3%) 12,040,950  (6%)   1.20×~     1.32×         | 1,564,175 (24%)  1,323,250 (14%)   0.85×~
- 32×16×64           60,879 (12%)    52,620 (13%)   0.86×      1.42×         |    16,695 (27%)     14,728 (24%)   0.88×~
- 64×128×32         968,850  (9%)   911,062 (14%)   0.94×~     1.66×         |   116,025 (36%)    110,950  (5%)   0.96×~
- 256×64×16         869,450  (7%)   780,263  (9%)   0.90×~     1.26×         |   124,075 (12%)    108,375 (66%)   0.87×~
- 27×9×15             7,673  (8%)     8,797  (6%)   1.15×      0.99×         |     4,943 (23%)      5,359 (42%)   1.08×
- 36×20×28           35,177  (7%)    57,632  (8%)   1.64×      1.09×         |    17,585 (51%)     16,397 (27%)   0.93×~
- 45³               222,619  (2%)   278,933  (7%)   1.25×      1.17×         |    63,776 (34%)     43,938 (138%)  0.69×
- 81×27×27          135,409 (10%)   171,233  (9%)   1.26×      1.11×         |    34,194 (78%)     32,842 (37%)   0.96×~
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-                                    5 win · 3 tie · 3 loss (1 outside spread)  |                                  2/11
-```
-
-"Over scrambled" is the natural cell's one-thread time divided by the
-scrambled cell's from the table above, both under the same protocol in
-the same session: the natural class costs 0–9% at the small cubes and
-the odd cells (27×9×15 0.99×, 16³ 1.07×, 36×20×28 1.09×) and 17–66% at
-the large and the long cells (45³ 1.17×, 256×64×16 1.26×, 128³ 1.32×,
-64³ and 32×16×64 1.42×, 64×128×32 1.66×). That cost is the band fusion
-it gives up, not the cold writes: the natural cell's width race banks
-`wl=0` at 64³ because a band with nothing fused into it buys nothing, so
-every axis-0 stage streams the cube and the plane pass streams it once
-more.
-Threaded, the same fusion loss is what separates the natural cell from
-the scrambled one (whose threaded verdicts are band arms at most cells);
-the cycles-per-worker balance is 0.75–1.0 of ideal at every cell and is
-not the cause. Levers, both measured items for the natural cell's race:
-a fused natural arm (the scratch-cube form, which keeps band fusion at
-the price of a cube of scratch), and the natural axis-1 pass's own
-scratch sweep per plane. The single-thread standing is the like-for-like
-order result: natural beats MKL's natural at 5 cells (32³ 1.31×, 27×9×15
-1.15×, 36×20×28 1.64×, 45³ 1.25×, 81×27×27 1.26×), ties at the three
-pow2 cubes 16³/64³/128³ (1.08–1.20× inside the control spread), and
-loses at the long-axis cells: 32×16×64 by 14% (outside the spread),
-64×128×32 by 6% and 256×64×16 by 10% (inside it) — the cells where the
-fusion it gives up is largest.
-
-#### 3D C2C — long-N3 cells: the axis-2 row on ZTURN-T (2026-09-15)
-
-The tier's last axis is a K=1 natural interleaved plan created through the
-front door (`fftnd_il.h`, one thread), so a row length in ZTURN-T's band is
-served by ZTURN-T with no 3D change — the door's log at every create reads
-`[k1ztt] N=4096: replay ZTURN-T chain 8.8.8.8 tile=1024 src=wisdom` and
-`[k1ztt] N=12288: replay ZTURN-T chain 8.4.4.3.8.4 tile=3072 src=wisdom`,
-in both order classes (the rows are natural in both). Three cells added to
-the bench's list for it; the same protocol as the tables above (cool
-machine, 9 rounds, one-thread samples pinned to core 2 and paced 300 ms;
-T=8 unpaced, steady-state, engagement 162/162, 124/124, 81/81 executes
-threaded), roundtrips 6e-16..1e-15, all arms out of place, `~` = inside
-the control spread:
-
-```
- cell          class       T   O-NATIVE (ns)     MKL-CCE (ns)    vs MKL-CCE
-──────────────────────────────────────────────────────────────────────────
- 16×16×4096    scrambled   1     2,757,100  (6%)    3,511,725 (12%)   1.27×
- 8×16×12288    scrambled   1     4,291,150  (3%)    6,990,275 (13%)   1.63×
- 32×32×4096    scrambled   1    13,752,100 (14%)   18,261,437  (3%)   1.33×
- 16×16×4096    natural     1     3,517,687 (15%)    3,465,250  (6%)   0.99×~
- 8×16×12288    natural     1     4,875,012  (8%)    6,787,563  (6%)   1.39×
- 32×32×4096    natural     1    18,463,900 (13%)   17,418,512  (6%)   0.94×
- 16×16×4096    natural     8       443,837 (13%)      457,287 (52%)   1.03×~
- 8×16×12288    natural     8       726,375  (4%)      884,075 (159%)  1.22×~
- 32×32×4096    natural     8     5,904,212 (13%)    4,195,463 (66%)   0.71×
-──────────────────────────────────────────────────────────────────────────
-```
-
-The scrambled class wins every long-N3 cell. The natural class pays the
-tier's own cost above: 1.28× over scrambled at 16×16×4096 and 1.34× at
-32×32×4096, which lands the pow2 cells at parity or behind MKL's natural
-at one thread and 32×32×4096 at 0.71× at T=8 (ours 3.1× over its
-one-thread time, MKL 4.1×). That is the natural mechanism's, not the row
-engine's: the row plan is the 1D cell's own verdict.
-
-**The fused natural form, raced and refuted (2026-09-15,
-`docs/design/ilnd_natural_fused_design.md`).** The record's lever — the
-scrambled banded walk through a scratch cube with the plane pass writing
-each plane to its natural position, band fusion kept — was built, gated
-bitwise against the cycle form and raced beside it at every cell: it lost
-at every one-thread cell by 3–27% (64³ 582 vs 547 µs, 128³ 7.47 vs 6.61
-ms, 32×32×4096 19.1 vs 17.0 ms) and at 13 of 14 threaded cells, and was
-deleted. The permuting pass is one extra cube sweep however arranged; the
-cycle form pays it cheapest. What stayed: the natural axis-1 pass now runs
-its pre-leaf stages in the dead plane of every out-of-place call (one
-plane sweep fewer per plane, same arithmetic). The natural class's
-standing against MKL's natural output is therefore the table above.
 
 ### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-06)
 

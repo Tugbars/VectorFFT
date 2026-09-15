@@ -517,9 +517,12 @@ extern "C"
    *       REJECT.
    *   3D C2C            x INTERLEAVED: NATIVE, either placement, howmany == 1,
    *       every order (DEFAULT/SCRAMBLED: each column axis digit-reversed
-   *       by its chain, rows natural; NATURAL: fully natural); the last
-   *       axis is the K=1 row plan through this door (ZTURN-T at band
-   *       lengths, as in 2D); howmany > 1: REJECT.
+   *       by its chain, rows natural; NATURAL: fully natural, served by
+   *       one of two raced forms — the cycle walk of the plane pass, or
+   *       axis 0 in cache-resident column strips with no move pass — and
+   *       the strip width, all banked per cell); the last axis is the K=1
+   *       row plan through this door (ZTURN-T at band lengths, as in 2D);
+   *       howmany > 1: REJECT.
    *   3D real, 4D       x INTERLEAVED: REJECT ("the tier's next phases")
    *       — use SPLIT. 3D/4D SPLIT: C2C with
    *       howmany == 1 and order DEFAULT/SCRAMBLED, and out-of-place R2C/C2R
