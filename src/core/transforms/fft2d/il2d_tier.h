@@ -685,11 +685,6 @@ static void _il2d_c2c_mt_tramp(void *v)
                                      tabs, !a->fwd);
         }
         break;
-    case 6: /* the prefix pair over stage-1 digits [lo,hi) (probe) */
-        _il2d_col_prefix_pair(a->src, a->dst, h->N, rn, 0, h->il2d_col.R, h->il2d_col.L,
-                              fns, tabs, !a->fwd, (size_t)h->il2d_col.paircw,
-                              (int)a->lo, (int)a->hi);
-        break;
     case 5: /* natural x MT, the STRIP arm: the whole natural pass over
              * [lo,hi) columns (shared scratch, disjoint columns), in
              * sub-strips of msw when sized */
@@ -871,17 +866,6 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         if (Tb < 2)
             return 0;
         if (phlog) ph0 = _il_ab_now();
-        {
-            size_t pcw;
-            if (fwd && h->il2d_col.cut == 2 && _il2d_pair_probe(&pcw) &&
-                _il2d_col_prefix_pair_ok(0, h->il2d_col.R, h->il2d_col.L))
-            {   /* the prefix pair: units = the digits of stage 1 */
-                const size_t D1 = (size_t)h->il2d_col.L[1] / (size_t)h->il2d_col.R[1];
-                const int Tp = D1 < (size_t)T ? (int)D1 : T;
-                h->il2d_col.paircw = (int)pcw;
-                _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 6, D1, Tp);
-            }
-            else
         if (fwd && h->il2d_col.cut > 0)
             for (s = 0; s < h->il2d_col.cut; s++)
             {
@@ -894,7 +878,6 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                                      h->il2d_col.R, h->il2d_col.L, h->il2d_col.f,
                                      h->il2d_col.tf, 0);
             }
-        }
         if (h->il2d_fs_tw && !fwd && !h->il2d_col.tfuse)
         {   /* the four-step's backward: the rows (conjugate twiddle) before
              * any column stage — on dst, moved there first out of place */
