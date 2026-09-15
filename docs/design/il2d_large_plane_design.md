@@ -145,11 +145,14 @@ T=8 348 vs 274 us; 1048576 T=1 5.19 vs 3.12 ms, T=8 1.21 vs 0.61 ms. The
 fold is deleted; the natural class keeps the scrambled child and the
 streaming transpose (`k1_fourstep_design.md`). Two findings stand:
 
-- The 2D tier's NATURAL class collapses at large planes: 3.4x the
+- The 2D tier's NATURAL class collapsed at large planes: 3.4x the
   scrambled class serial at 64 MB (52 ms), 2x at T=8; 1.3x at 16 MB. The
-  leaf scatter writes R rows at stride N1/R (2 MB apart at 2048x2048 —
-  the same L1 sets), and its own scratch plane is a sweep the scrambled
-  walk does not pay. A 2D-tier item of its own, outside this design.
+  leaf scatter wrote R rows at stride N1/R (2 MB apart at 2048x2048 —
+  the same cache sets). FIXED 2026-09-16 by the staged leaf
+  (`il2d_natural_leaf_design.md`): 1.13-1.25x serial, at or past the
+  scrambled class threaded at 64 MB. That reopens §2's natural-child
+  fold for the four-step, deleted on the strided leaf's numbers: a
+  re-race, not a rebuild (its patch is kept).
 - The only fold that keeps the scrambled child is the SUPER-BAND: R0
   blocks of wl rows at plane stride N1/R0 (holding R0*wl consecutive k1),
   L2-resident at wl = 8, suffix per block, rows in k1 order, the block
