@@ -162,6 +162,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     vfft_il2p_plan_t *il2 = NULL;
     vfft_il3p_plan_t *il3 = NULL;
     vfft_ilfd_plan_t *ifd = NULL;           /* the flat DIT (2026-09-05) */
+    vfft_k1fs_plan_t *fs = NULL;            /* the four-step (2026-09-15) */
     vfft_ztt_plan_t *ztt = NULL;            /* ZTURN-T (2026-09-09) */
     vfft_oop11_fn mono_f = 0, mono_b = 0;   /* the alias-tolerant solo (MONO verdict) */
     vfft_ilprime_plan_t *ilp = NULL;
@@ -220,13 +221,13 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
      *    alias-tolerant solo, 2026-09-04), pair, chain3, else prime */
     if (!getenv("VFFT_NO_NAT_ILP"))
     {
-        _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt);
+        _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs);
         if (ztt) vfft_ztt_bind(ztt, 1);   /* in place: the plane drivers */
-        if (!il2 && !il3 && !ifd && !ztt)
+        if (!il2 && !il3 && !ifd && !ztt && !fs)
             (void)_k1_il_mono_candidate(W, N, &mono_f, &mono_b);
-        if (!il2 && !il3 && !ifd && !ztt && !mono_f && (N & (N - 1)) != 0)
+        if (!il2 && !il3 && !ifd && !ztt && !fs && !mono_f && (N & (N - 1)) != 0)
             ilp = _ilprime_create_banked(W, cfg, N);   /* a route, never a fallback: no pow2 cell */
-        have_k1 = (il2 || il3 || ifd || ztt || mono_f || ilp) ? 1 : 0;
+        have_k1 = (il2 || il3 || ifd || ztt || fs || mono_f || ilp) ? 1 : 0;
     }
 
     /* 4. replay a banked verdict when its engine built */
@@ -245,22 +246,24 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         h->k1ilpr = ilp;
         h->k1ilfd = ifd;
         h->k1ztt = ztt;
+        h->k1fs = fs;
         h->k1_mono_ilf = mono_f;
         h->k1_mono_ilb = mono_b;
-        il2 = NULL; il3 = NULL; ilp = NULL; ifd = NULL; ztt = NULL;
+        il2 = NULL; il3 = NULL; ilp = NULL; ifd = NULL; ztt = NULL; fs = NULL;
         h->nat_mode = nat ? VFFT_NAT_ILP : 0;
         if (getenv("VFFT_NAT_LOG"))
             fprintf(stderr, "[ipil] N=%d: %s ILP (%s)\n", N,
                     raced_row ? "replay" : "attach",
                     h->k1il2p ? "il2p" : h->k1il3p ? "il3p" : h->k1ilfd ? "flat"
-                              : h->k1ztt ? "ztt" : h->k1_mono_ilf ? "mono" : "ilprime");
+                              : h->k1ztt ? "ztt" : h->k1fs ? "fs" : h->k1_mono_ilf ? "mono" : "ilprime");
     }
     if (il2) vfft_il2p_destroy(il2);
     if (il3) vfft_il3p_destroy(il3);
     if (ilp) vfft_ilprime_destroy(ilp);
     if (ifd) vfft_ilfd_destroy(ifd);
     if (ztt) vfft_ztt_destroy(ztt);
-    if (!h->k1il2p && !h->k1il3p && !h->k1ilpr && !h->k1ilfd && !h->k1ztt && !h->k1_mono_ilf)
+    if (fs) vfft_k1fs_destroy(fs);
+    if (!h->k1il2p && !h->k1il3p && !h->k1ilpr && !h->k1ilfd && !h->k1ztt && !h->k1fs && !h->k1_mono_ilf)
     {
         _vfft_warn("vfft_create: in-place C2C N=%d with layout=INTERLEAVED has no "
                    "interleaved engine yet (no mono/pair/chain3/prime kernel serves "

@@ -76,30 +76,9 @@ type cil_turn =
   | Turnst_gs
 
 type zs_kind =
-  | Dts
-  | Dtsn
-  | Dtso
-  | Dtt
-  | Msd
-  | Msg
-  | Msgb
-  | Msz
+  | Msz (* il2p's odd mids: the split body between interleaved edges *)
   | Mszb
   | Mszt
-  | S0s
-  | S0sb
-  | S0t
-  | S0tb
-  | S0tu
-  | Stf
-  | Stf2
-  | Stf2u
-  | Stfu
-  | Stfb
-  | Stfbn
-  | Stfn
-  | Stfl (* loaded-stream terminator twin of Stf (2026-09-07) *)
-  | Stfnl (* its natural-order twin *)
   | T0tp (* ZTURN-T ingest / mid / last and their bwd twins (zturn_t_ship_plan.md) *)
   | T0tpb
   | Tmg
@@ -113,9 +92,6 @@ type zs_kind =
   | Tmgd
   | Tld
   | Tldb
-  | Sterm
-  | Sterm2
-  | Stermb
 
 type kind =
   | C2c_inplace_su of { il : il3 } (* --in-place --su [--ip-il-*] *)
@@ -167,11 +143,7 @@ type kind =
         (* --cil-form-tag: name the FORM in the emitted symbol, so a split /
            tangent / wing variant is distinguishable without a post-emit sed *)
       }
-  | Zsplit of
-      { k : zs_kind
-      ; r0 : int option (* --zp-r0 N *)
-      ; sink : bool (* --zp-sink *)
-      }
+  | Zsplit of { k : zs_kind } (* --zp-<kind> *)
   | K1_mono of
       { r1 : int option (* --k1-r1 N *)
       ; il : bool (* --k1-il *)
@@ -211,30 +183,9 @@ let validate (c : t) =
 ;;
 
 let zs_name = function
-  | Dts -> "dts"
-  | Dtsn -> "dtsn"
-  | Dtso -> "dtso"
-  | Dtt -> "dtt"
-  | Msd -> "msd"
-  | Msg -> "msg"
-  | Msgb -> "msgb"
   | Msz -> "msz"
   | Mszb -> "mszb"
   | Mszt -> "mszt"
-  | S0s -> "s0s"
-  | S0sb -> "s0sb"
-  | S0t -> "s0t"
-  | S0tb -> "s0tb"
-  | S0tu -> "s0tu"
-  | Stfu -> "stfu"
-  | Stf2u -> "stf2u"
-  | Stf -> "stf"
-  | Stf2 -> "stf2"
-  | Stfb -> "stfb"
-  | Stfbn -> "stfbn"
-  | Stfn -> "stfn"
-  | Stfl -> "stfl"
-  | Stfnl -> "stfnl"
   | T0tp -> "t0tp"
   | T0tpb -> "t0tpb"
   | Tmg -> "tmg"
@@ -247,36 +198,12 @@ let zs_name = function
   | Tmgd -> "tmgd"
   | Tld -> "tld"
   | Tldb -> "tldb"
-  | Sterm -> "sterm"
-  | Sterm2 -> "sterm2"
-  | Stermb -> "stermb"
 ;;
 
 let zs_of_name = function
-  | "dts" -> Dts
-  | "dtsn" -> Dtsn
-  | "dtso" -> Dtso
-  | "dtt" -> Dtt
-  | "msd" -> Msd
-  | "msg" -> Msg
-  | "msgb" -> Msgb
   | "msz" -> Msz
   | "mszb" -> Mszb
   | "mszt" -> Mszt
-  | "s0s" -> S0s
-  | "s0sb" -> S0sb
-  | "s0t" -> S0t
-  | "s0tb" -> S0tb
-  | "s0tu" -> S0tu
-  | "stfu" -> Stfu
-  | "stf2u" -> Stf2u
-  | "stf" -> Stf
-  | "stf2" -> Stf2
-  | "stfb" -> Stfb
-  | "stfbn" -> Stfbn
-  | "stfn" -> Stfn
-  | "stfl" -> Stfl
-  | "stfnl" -> Stfnl
   | "t0tp" -> T0tp
   | "t0tpb" -> T0tpb
   | "tmg" -> Tmg
@@ -289,9 +216,6 @@ let zs_of_name = function
   | "tmgd" -> Tmgd
   | "tld" -> Tld
   | "tldb" -> Tldb
-  | "sterm" -> Sterm
-  | "sterm2" -> Sterm2
-  | "stermb" -> Stermb
   | s -> fail "unknown zp kind %s" s
 ;;
 
@@ -415,8 +339,6 @@ let of_argv ?(strict = true) (argv : string list) : t =
   and gen2 = ref false
   and grouploop = ref false
   and transposed = ref false in
-  let zp_r0 = ref None
-  and sink = ref false in
   let k1_r1 = ref None
   and k1_il = ref false
   and k1_sw = ref false in
@@ -636,12 +558,6 @@ let of_argv ?(strict = true) (argv : string list) : t =
     | "--cil-pretw" :: tl ->
       pre_tw := true;
       go tl
-    | "--zp-r0" :: v :: tl ->
-      zp_r0 := Some (int_of_string v);
-      go tl
-    | "--zp-sink" :: tl ->
-      sink := true;
-      go tl
     | "--k1-mono" :: tl ->
       push "k1-mono";
       go tl
@@ -743,11 +659,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
         }
     | [ "k1-mono" ] -> K1_mono { r1 = !k1_r1; il = !k1_il; sw = !k1_sw }
     | [ t ] when String.length t > 3 && String.sub t 0 3 = "zp:" ->
-      Zsplit
-        { k = zs_of_name (String.sub t 3 (String.length t - 3))
-        ; r0 = !zp_r0
-        ; sink = !sink
-        }
+      Zsplit { k = zs_of_name (String.sub t 3 (String.length t - 3)) }
     | sels -> fail "selector set: %s" (String.concat "+" sels)
   in
   validate
@@ -921,13 +833,9 @@ let to_argv (c : t) : string list =
     @ isa
     @ uarch
     @ emitc
-  | Zsplit { k; r0; sink } ->
+  | Zsplit { k } ->
     n
     @ [ "--zp-" ^ zs_name k ]
-    @ (match r0 with
-       | None -> []
-       | Some v -> [ "--zp-r0"; string_of_int v ])
-    @ g sink "--zp-sink"
     @ isa
     @ uarch
     @ emitc

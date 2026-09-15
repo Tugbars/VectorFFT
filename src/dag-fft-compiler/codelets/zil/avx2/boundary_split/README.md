@@ -36,13 +36,10 @@ Two consumers: `src/core/oop/ztt.h` calls these kernels per stage and block
 codelets in `generator/generated/fused_codelets/`, which inline these same
 bodies with literal trip counts (`ztt_gate` holds staged == fused bitwise).
 
-## History
+The table above is the whole directory and the whole of what `cascade_z.ml`
+emits: the corpus law (`gen_set --root <tmp> zil-boundary`, then byte
+comparison) holds 54 of 54, and `gates/full_corpus_gate.sh` replays it.
 
-The ZTURN-S cascade's families that lived here (`s0s`, `s0t`, `msg`, `msd`,
-`dts*`, `stf*`, `stfn`, `stfl`, `sterm*`) were deleted with the cascade on
-2026-09-15; its threading method is recorded in
-`docs/design/cascade_mt_method.md`.
-
-🔴 **A full-IL cascade interior was refuted twice by independent measurement
+🔴 **A full-IL split-interior replacement was refuted twice by independent measurement
 (-8.9% at 4096, -12.6% at 16384 against this split interior under identical
 chains). Do not propose it again.**

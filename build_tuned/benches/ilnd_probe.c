@@ -57,7 +57,8 @@ int main(int argc, char **argv)
      * store the bench replays from */
     static const int C[][3] = { { 16, 16, 16 }, { 32, 16, 64 }, { 27, 9, 15 }, { 36, 20, 28 },
                                 { 64, 64, 64 }, { 128, 64, 32 }, { 32, 32, 32 }, { 128, 128, 128 },
-                                { 64, 128, 32 }, { 256, 64, 16 }, { 45, 45, 45 }, { 81, 27, 27 } };
+                                { 64, 128, 32 }, { 256, 64, 16 }, { 45, 45, 45 }, { 81, 27, 27 },
+                                { 16, 16, 4096 } };
     const int TMT = getenv("VFFT_ILND_PROBE_T") ? atoi(getenv("VFFT_ILND_PROBE_T")) : 8;
     const int nc = (int)(sizeof C / sizeof C[0]);
     const char *mode = argc > 2 ? argv[2] : "all";
@@ -93,8 +94,13 @@ int main(int argc, char **argv)
          * passes 8..11 (the NATURAL cell): 8 = natural OOP T=1 (the spot bin
          * at its natural position), 9 = natural in place T=1 (bitwise vs 8),
          * 10 = natural OOP T=TMT (bitwise vs 8, engaged), 11 = natural in
-         * place T=TMT (bitwise vs 8) */
-        for (int arm = 1; arm <= 11; arm++)
+         * place T=TMT (bitwise vs 8);
+         * passes 12..15 (the natural STRIP form, ilnd_natural_strip_design.md,
+         * pinned NF=2 SW=16): 12 = child, OOP, T=1 and 13 = flat, in place,
+         * T=1 (both bitwise the CYCLE form under the same structure pin),
+         * 14 = flat, OOP, T=TMT and 15 = child, in place, T=TMT (plane
+         * partition, bitwise the plan's own serial, engaged) */
+        for (int arm = 1; arm <= 15; arm++)
         {
             vfft_config_t cfg;
             vfft_plan h;
@@ -102,16 +108,38 @@ int main(int argc, char **argv)
             int bit = 1;
             long eng0 = vfft_ilnd_mt_passes(), eng = 0;
             const int natural = (arm >= 8);
-            const int ip = (arm == 6 || arm == 7 || arm == 9 || arm == 11);
-            const int mt = (arm == 5 || arm == 7 || arm == 10 || arm == 11);
+            const int strip = (arm >= 12);
+            const int ip = (arm == 6 || arm == 7 || arm == 9 || arm == 11 || arm == 13 || arm == 15);
+            const int mt = (arm == 5 || arm == 7 || arm == 10 || arm == 11 || arm == 14 || arm == 15);
             static const char *LABEL[] = { "", "child", "flat", "flatwl", "raced", "mt", "ip", "ip-mt",
-                                           "nat", "nat-ip", "nat-mt", "nat-ipmt" };
+                                           "nat", "nat-ip", "nat-mt", "nat-ipmt",
+                                           "nats", "nats-ip", "nats-mt", "nats-ipmt" };
             const char *label = LABEL[arm];
             if (arm == 3 && !wlpin) continue;
             if (!natural && !do_scr) continue;
             if (natural && !do_nat) continue;
-            env_set("VFFT_ILND_ARM", arm >= 4 ? NULL : (arm == 1 ? "1" : "2"));
-            env_set("VFFT_ILND_WL", arm >= 4 ? NULL : (arm == 3 ? wlbuf : "0"));
+            env_set("VFFT_ILND_ARM", strip ? ((arm == 12 || arm == 15) ? "1" : "2")
+                                           : arm >= 4 ? NULL : (arm == 1 ? "1" : "2"));
+            env_set("VFFT_ILND_WL", strip ? "0" : arm >= 4 ? NULL : (arm == 3 ? wlbuf : "0"));
+            env_set("VFFT_ILND_NF", strip ? "2" : NULL);
+            env_set("VFFT_ILND_SW", strip ? "16" : NULL);
+            env_set("VFFT_ILND_MT", (arm == 14 || arm == 15) ? "2" : NULL);
+            if (arm == 12 || arm == 13)
+            {   /* the strip form's bitwise reference: the CYCLE form under the
+                 * same structure pin, out of place, one thread */
+                vfft_config_t rc;
+                vfft_plan hr;
+                env_set("VFFT_ILND_NF", "1");
+                memset(&rc, 0, sizeof rc);
+                rc.transform = VFFT_C2C; rc.placement = VFFT_OUTOFPLACE; rc.rigor = VFFT_MEASURE;
+                rc.dims = 3; rc.n[0] = N1; rc.n[1] = N2; rc.n[2] = N3; rc.howmany = 1;
+                rc.order = VFFT_ORDER_NATURAL; rc.layout = VFFT_LAYOUT_INTERLEAVED; rc.nthreads = 1;
+                rc.wisdom = W; rc.wisdom_write = 0;
+                hr = vfft_create(&rc);
+                if (hr) { vfft_execute(hr, VFFT_FORWARD, x, NULL, y, NULL); vfft_destroy(hr); }
+                else memset(y, 0, 2 * T * 8);
+                env_set("VFFT_ILND_NF", "2");
+            }
             memset(&cfg, 0, sizeof cfg);
             cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
             cfg.dims = 3; cfg.n[0] = N1; cfg.n[1] = N2; cfg.n[2] = N3; cfg.howmany = 1;
@@ -137,6 +165,7 @@ int main(int argc, char **argv)
             if (arm == 8) memcpy(nref, z, 2 * T * 8);
             if (arm == 3 || arm == 6) bit = memcmp(zref, z, 2 * T * 8) == 0;
             if (arm == 9) bit = memcmp(nref, z, 2 * T * 8) == 0;
+            if (arm == 12 || arm == 13) bit = memcmp(y, z, 2 * T * 8) == 0;
             if (mt) bit = memcmp(y, z, 2 * T * 8) == 0;
             dc = fabs(z[0] - s0r) + fabs(z[1] - s0i);
             if (natural)
@@ -170,7 +199,8 @@ int main(int argc, char **argv)
                        arm == 3 ? (bit ? " bitwise=unbanded" : " NOT BITWISE")
                        : mt ? (bit ? " bitwise=own-serial" : " NOT BITWISE")
                        : arm == 6 ? (bit ? " bitwise=oop" : " NOT BITWISE")
-                       : arm == 9 ? (bit ? " bitwise=nat-oop" : " NOT BITWISE") : "");
+                       : arm == 9 ? (bit ? " bitwise=nat-oop" : " NOT BITWISE")
+                       : (arm == 12 || arm == 13) ? (bit ? " bitwise=cycle-form" : " NOT BITWISE") : "");
                 if (mt) printf(" engaged=%ld/%d", eng, 7);
                 printf("\n");
                 if (!ok) bad++;

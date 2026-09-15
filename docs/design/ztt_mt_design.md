@@ -129,7 +129,21 @@ MKL's team created before our pin, 300 ms cool) the target is to keep the
    place and out) on the house protocol for MT: the arm must beat serial
    where the cascade did, and never be banked where it loses.
 
-## Build order
+## Build order (1-5 DONE 2026-09-15)
+
+`oop/ztt_mt.h` (included by `vfft.c` only): the cuts, the three dispatch
+shapes, both arms, the race; plan fields `mt`/`mt_t`; the stage table
+resolved for every plan; `vfft_ztt_mt_passes`; `_ztt_mt_replay_or_race` in
+`k1_commit.h` with the tokens above, called from both doors' exits;
+`_ztt_serve` behind every ZTURN-T dispatch. Gates: `benches/ztt_mt_gate.c`
+(1224 threaded executions bitwise the serial walk at T = 2/4/8, both arms,
+both classes, both placements, both directions, every width, pow2 and odd;
+engagement; roundtrip), the odd gate's threaded front-door pass (T = 8
+bitwise the T = 1 plan, engaged, a second T = 8 create replays, T = 4
+re-races), the pow2 gate's T = 8 arm reading both counters. Measured:
+`probes/ZT/zt_mt_spike_results.md` — T = 8 speedups 1.4-2x at 12288..16384,
+3.3-5.4x at 65536, 4.3-6.1x at 98304, 6.2-7.9x at 245760..262144; against
+MKL at T = 8 through the canonical bench 1.51-1.87x at 12288..262144.
 
 1. **The sectioned walk.** `vfft_ztt_mt_bind(p, T)` derives the per-stage
    cuts from the stage table (both arms); `vfft_ztt_execute_mt(p, zin,

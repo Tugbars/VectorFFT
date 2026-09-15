@@ -422,13 +422,30 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             }
             if (ilr == VFFT_K1_IL_ZTT && !ztt)
                 ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
+            /* the FOUR-STEP (route 10, 2026-09-15): a banked split (il_pair =
+             * N1.N2) replays through the create — the 2D child out of place at
+             * the plan's thread count, the order class the row's */
+            vfft_k1fs_plan_t *fs = NULL;
+            if (ilr == VFFT_K1_IL_FS && !il2p && !il3p && !ilfd && !ztt && !getenv("VFFT_NO_IL2P") &&
+                cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_R1 > 0 && ki->il_R2 > 0 &&
+                (long)ki->il_R1 * (long)ki->il_R2 == (long)N)
+            {
+                int pn1 = ki->il_R1, pn2 = ki->il_R2;
+                const int pinned = _k1fs_pin(N, &pn1, &pn2);
+                fs = vfft_k1fs_create(N, pn1, pn2, scr_req, W, cfg, 0, _vfft_plan_threads(cfg));
+                if (fs && getenv("VFFT_NAT_LOG"))
+                    fprintf(stderr, "[k1fs] N=%d: replay FOUR-STEP %dx%d src=%s (oop)\n", N, fs->N1, fs->N2,
+                            pinned ? "pin" : "wisdom");
+            }
+            if (ilr == VFFT_K1_IL_FS && !fs)
+                ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
             /* PRIME N (route 7): Rader/Bluestein on the IL machinery
              * (il_prime.h) — the OOP INTERLEAVED prime coverage the split
              * OOP path refuses. Same IL-only-handle rules as the chain. */
             vfft_ilprime_plan_t *ilpr = NULL;
             /* the prime engine is a route, not a fallback: a power of two is
              * never its cell (the pow2 tiers race on a miss, above) */
-            if (ilr == VFFT_K1_IL_NONE && !il2p && !il3p && !ilfd && !ztt &&
+            if (ilr == VFFT_K1_IL_NONE && !il2p && !il3p && !ilfd && !ztt && !fs &&
                 (N & (N - 1)) != 0 &&
                 !getenv("VFFT_NO_IL2P") &&
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED)
@@ -501,8 +518,9 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * committed only when the SPLIT axis also had a route (spr >= 0) —
              * true at every cell up to 65536, so it went unseen until 131072,
              * where no split route exists and a replayed ZTURN-T plan fell
-             * through to the "no interleaved engine" refusal. */
-            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr || ilfd || ztt ||
+             * through to the "no interleaved engine" refusal. fs (the four-step,
+             * 2026-09-15) joined for the same reason at 524288+. */
+            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr || ilfd || ztt || fs ||
                 (ilr == VFFT_K1_IL_MONO && cfg->layout == VFFT_LAYOUT_INTERLEAVED)) /* the solo tier has no plan object */
             {
                 struct vfft_plan_s *hk =
@@ -530,6 +548,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     hk->k1ilfd = ilfd;
                     /* ZTURN-T route (non-NULL iff ilr==IL_ZTT). */
                     hk->k1ztt = ztt;
+                    hk->k1fs = fs;
                     hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
                     {   /* MONO form = the banked il_kv on a MONO verdict
                          * (0 = solo n1, 1 = mono64); form 0 otherwise */

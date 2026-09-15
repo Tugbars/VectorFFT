@@ -1165,38 +1165,6 @@ trig/avx512/radix8_dst2_avx512.c	genset	-	-	-	-	-	a7d7a7c09b22521139d0393429211c
 trig/avx512/radix8_dst3_avx512.c	genset	-	-	-	-	-	8d49ee74b377aca0df9e3cb72d3317b1c3b01b1aafcc45fee05be0e65e93be90	11584
 trig/avx512/radix8_dst4_avx512.c	genset	-	-	-	-	-	1046c9e98c02935dadbe1a1f73b5a71d18523292070a4d1308dd9b11ea633a6a	11627
 trig/avx512/radix9_dct1_avx512.c	genset	-	-	-	-	-	0646fc6440f7201b6e169eedaec26168df2338e928beeb93575311c6f8353eb3	10664
-zil/avx2/boundary_split/radix4_z_dts_r4_avx2.c	replay	gen_radix.exe	-	4 --zp-dts --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	df6507edde9e5d40e962d063361f5146008a47b4a1caf3f3c05a7ed54fd876a1	5724
-zil/avx2/boundary_split/radix4_z_dtsn_r4_avx2.c	replay	gen_radix.exe	-	4 --zp-dtsn --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	32576c8ea3a4e7b77ae9e3a5f33825ff018d984d0d2df5b0965fb1383221dcfe	5911
-zil/avx2/boundary_split/radix4_z_dtso_r4_avx2.c	replay	gen_radix.exe	-	4 --zp-dtso --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	f3972f58569bb21d5ae1d7d78e900fa822872c8fb61a47a85334e6a3dc066c13	5960
-zil/avx2/boundary_split/radix4_z_dtt_r4_avx2.c	replay	gen_radix.exe	-	4 --zp-dtt --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	5c0c68d89bd9aafffa9198a9a76b7e53024c076a2e4f365b094e13e2192c44bf	5895
-zil/avx2/boundary_split/radix4_z_msd_avx2.c	replay	gen_radix.exe	-	4 --zp-msd --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	4eac307a6f3d32415ef1c0cdc685aeae8c3c5fc583c8a3460ce8afd3a52af9cd	5048
-zil/avx2/boundary_split/radix4_z_msg_avx2.c	replay	gen_radix.exe	-	4 --zp-msg --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	d97d97941cc84058346639e30f6a8d99d347200a40a9697e42d57d72db9b7978	5019
-zil/avx2/boundary_split/radix4_z_msg_bwd_avx2.c	replay	gen_radix.exe	-	4 --zp-msgb --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	762e0d76430103d582e33e283305cfdd6bc153e05f9b65b9dfd1c4b96d05d67f	5072
-zil/avx2/boundary_split/radix4_z_s0s_avx2.c	replay	gen_radix.exe	-	4 --zp-s0s --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	142bce09c3b5be79d14bd83bdfb59a36b9a77410aa0891dfaeeaee40aabf68f0	4491
-zil/avx2/boundary_split/radix4_z_s0s_bwd_avx2.c	replay	gen_radix.exe	-	4 --zp-s0sb --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	0e6e384b29633efac0cfa9199f1ad0b712155fdf60f6df3ef5f851984dc85665	4532
-zil/avx2/boundary_split/radix4_z_s0t_r4_avx2.c	replay	gen_radix.exe	-	4 --zp-s0t --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	e3fdf671cc63cdc7acedcc8566ff1a6184abd4ec5cd02522d97884953d41e65d	4530
-zil/avx2/boundary_split/radix4_z_s0t_r4_bwd_avx2.c	replay	gen_radix.exe	-	4 --zp-s0tb --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	3e7d209d1eb344ca76d5b07abc9ffe5255acdcfd5fc017b582d13d9e8f119d3c	5865
-zil/avx2/boundary_split/radix4_z_stf_r4_avx2.c	replay	gen_radix.exe	-	4 --zp-stf --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	9cb82d7256342aff4304be3856888262df600d29d74d6ae3596f1d987207cc80	5743
-zil/avx2/boundary_split/radix4_z_stf_r4_bwd_avx2.c	replay	gen_radix.exe	-	4 --zp-stfb --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	8209086ff4befd4e2ecd66ec4867991b043dd8859843e8910f9093defde13511	5791
-zil/avx2/boundary_split/radix4_z_stfn_r4_avx2.c	replay	gen_radix.exe	-	4 --zp-stfn --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	c6e4f4073e45004e98067f477f13d45eb67ecec1a44d5dcfa3f469b3809fe659	5931
-zil/avx2/boundary_split/radix4_z_stfn_r4_bwd_avx2.c	replay	gen_radix.exe	-	4 --zp-stfbn --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	98b65b8dbf07627af2b1549ca2056a2a99df7abd3dc67454cfe5e5e54fc27d64	5954
-zil/avx2/boundary_split/radix8_z_dts_r4_avx2.c	replay	gen_radix.exe	-	8 --zp-dts --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	0f5e69c962ca1c16dd3826c5d4ef6df929b421193b01457a6502fd81e3781174	11357
-zil/avx2/boundary_split/radix8_z_dtsn_r4_avx2.c	replay	gen_radix.exe	-	8 --zp-dtsn --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	0d79df2568f2e711e23cca7fefcb083070dfa212d2a74126d26c144cfc3f91d7	11552
-zil/avx2/boundary_split/radix8_z_dtso_r4_avx2.c	replay	gen_radix.exe	-	8 --zp-dtso --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	60573c92d350c7fc365f96a2360809de4e412895bd2378351531d413ce1639e7	11601
-zil/avx2/boundary_split/radix8_z_msd_avx2.c	replay	gen_radix.exe	-	8 --zp-msd --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	254f253bfa5af5dd7b8bcaeb00cb4c420528852c373acdee82c90024feb0c16f	9724
-zil/avx2/boundary_split/radix8_z_msg_avx2.c	replay	gen_radix.exe	-	8 --zp-msg --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	267d1c0738bfcdfeb52ff6794fbeb309d998301f6b67185fd6520db11775a81a	9668
-zil/avx2/boundary_split/radix8_z_msg_bwd_avx2.c	replay	gen_radix.exe	-	8 --zp-msgb --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	22677358c155622dbef91ede57d5352906b751b1cf08e27c2bfee665fab6360d	9782
-zil/avx2/boundary_split/radix8_z_s0s_avx2.c	replay	gen_radix.exe	-	8 --zp-s0s --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	0ad2494f6fb19c0a7c47db6e077d03edb31c4ca7100297c2b1aaac5ff871e692	8744
-zil/avx2/boundary_split/radix8_z_s0s_bwd_avx2.c	replay	gen_radix.exe	-	8 --zp-s0sb --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	741d8d81ee096c4d38acbe891bf6c41e19bd18cf2f2a857154aabb1943aad098	8822
-zil/avx2/boundary_split/radix8_z_sterm2_avx2.c	replay	gen_radix.exe	-	8 --zp-sterm2 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	90d42566086d601255957194b2f65fb9bbf24f04c42d72b29b5c24862f8941f3	38150
-zil/avx2/boundary_split/radix8_z_sterm_avx2.c	replay	gen_radix.exe	-	8 --zp-sterm --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	61cd48d84a202b659f3d65a05599f6efd5ebb2fad618c07a820d5d4eecdcba3c	13555
-zil/avx2/boundary_split/radix8_z_sterm_bwd_avx2.c	replay	gen_radix.exe	-	8 --zp-stermb --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	d25d1300cf90151768c412a64f2a27040efc646acdb951b4db3fbdd8ce68b4a8	13678
-zil/avx2/boundary_split/radix8_z_stf2_r4_avx2.c	replay	gen_radix.exe	-	8 --zp-stf2 --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	4938bc91b7d5d1ff4c57d6ee5a7af509d737fb5592420647ed01142da6c63732	31163
-zil/avx2/boundary_split/radix8_z_stf_r4_avx2.c	replay	gen_radix.exe	-	8 --zp-stf --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	19b70216b667aec4760cc97ef810e2b97f3c6bda352f95c4c7a46755d3a2cdae	11306
-zil/avx2/boundary_split/radix8_z_stf_r4_bwd_avx2.c	replay	gen_radix.exe	-	8 --zp-stfb --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	0f5a3e7fdc5d99aae12d68b5dbd0f0e6d3515adff8e28400e1d0dc9c42b416aa	11403
-zil/avx2/boundary_split/radix8_z_stf_r4sk_bwd_avx2.c	replay	gen_radix.exe	-	8 --zp-stfb --zp-r0 4 --zp-sink --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	2dc11c5810709071c34c84c584db39a9e826ea0cc76edbfc39e44c88bf901fbd	11439
-zil/avx2/boundary_split/radix8_z_stfn_r4_avx2.c	replay	gen_radix.exe	-	8 --zp-stfn --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	5af890372c96081af9617ec95bffa7f22d83e375b5633379ce6b157aebb05bf1	11517
-zil/avx2/boundary_split/radix8_z_stfn_r4_bwd_avx2.c	replay	gen_radix.exe	-	8 --zp-stfbn --zp-r0 4 --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	fe748417a2c4696c7607b37e41f5488f4f47cf34c5f2036a4be555c378e2ced2	11632
 zil/avx2/pure_il/radix10_z_n1_bwd_avx2.c	derive	gen_radix.exe	-	10 --cil-n1 --cil-bwd --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	042f35d3c36aaa512cfb689aebc3bdb5afd3f05ec36ef0d18ff6219575ee1f82	13246
 zil/avx2/pure_il/radix10_z_n1t_avx2.c	derive	gen_radix.exe	-	10 --cil-n1t --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	5405d5590f8ded7f4b7221bdf5639446b0726f6d432ad4485a1e78d9682d5cfc	13818
 zil/avx2/pure_il/radix10_z_n1t_bwd_avx2.c	derive	gen_radix.exe	-	10 --cil-n1t --cil-bwd --isa avx2 --uarch raptor_lake_avx2 --emit-c	-	-	bc14037a94b7ea10055a4d732010b54495883db17e73fc8894966c8e298947f0	13828
