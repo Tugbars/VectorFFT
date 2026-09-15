@@ -547,6 +547,15 @@ static void _k1fs_sb_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const do
  * and the last radix admitted by the run law and the block law; `tight`
  * = the per-T race's residency sub-ladder (R_0 = 8, last in {8, 16},
  * depth <= 3), else the full form axis */
+/* the super-band form is an arm only where the plane outgrows the
+ * last-level cache (owner 2026-09-16: "only race above where L3 can't
+ * cover the transforms anymore") — the hardware's L3, read from the CPU,
+ * never a baked constant; an L3-less part admits it everywhere */
+static int _k1fs_sb_admit(int N)
+{
+    const long l3 = vfft_cpu_l3_bytes();
+    return l3 <= 0 || (long)N * 16L > l3;
+}
 static int _k1fs_sb_chains(int N1, int (*out)[8], int *lens, int max, int tight)
 {
     int cand[24][8], cl[24], cur[8], nc = 0, dropped = 0, k, n = 0;

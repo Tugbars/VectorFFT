@@ -979,7 +979,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
                 arms[na].name = names[na]; arms[na].run = _k1fs_mt_arm_run; arms[na].ctx = &cx[na];
                 na++;
             }
-            if (p->scr) continue;
+            if (p->scr || !_k1fs_sb_admit(N)) continue;
             nch = _k1fs_sb_chains(n1[i], ch, cl, 24, 1);
             for (c = 0; c < nch && na < VFFT_RACE_MAX_ARMS; c++)
             {

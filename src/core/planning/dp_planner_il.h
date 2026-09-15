@@ -1356,11 +1356,12 @@ static void _il_dp_enumerate_fs(int N, vfft_il_cand_sink_t *s, int scr)
         c.R2 = n2[i];
         c.il_scr = scr;
         _il_dp_push(s, &c);
-        if (!scr)
-        {   /* the SUPER-BAND form (il2d_large_plane_design.md §3): form 1 with
-             * every chain of N1 the run law admits; il_zt carries the chain */
+        if (!scr && _k1fs_sb_admit(N))
+        {   /* the SUPER-BAND form (il2d_large_plane_design.md §3), where the
+             * plane outgrows L3: form 1 with the residency sub-ladder of
+             * chains; il_zt carries the chain */
             int ch[24][8], cl[24], k;
-            const int nch = _k1fs_sb_chains(n1[i], ch, cl, 24, 0);
+            const int nch = _k1fs_sb_chains(n1[i], ch, cl, 24, 1);
             for (k = 0; k < nch; k++)
             {
                 c.il_kv = 1;
