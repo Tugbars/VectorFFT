@@ -734,20 +734,8 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                                      h->il2d_col.L, fns, tabs, 0);
                                     lf_from = scr;
                                 }
-                                _il2d_nat_leaf_range(lf_from, dre, h->N, rn,
-                                                     Rl, fns[nst - 1], perm,
-                                                     blo, bhi, 0);
-                                if (h->il2d_col.tfuse)
-                                    for (b = blo; b < bhi; b++)
-                                    {
-                                        const size_t r0 =
-                                            (size_t)perm[b * (size_t)Rl];
-                                        for (i = 0; i < (size_t)Rl; i++)
-                                            _il2d_row_exec(
-                                                h, dir,
-                                                dre + 2 * (r0 + i * nstride) * rn,
-                                                rn, r0 + i * nstride);
-                                    }
+                                _il2d_nat_leaf_blocks(h, 0, dir, lf_from, dre, blo, bhi,
+                                                      h->il2d_col.tfuse);
                             }
                             if (!h->il2d_col.tfuse)
                                 for (i = 0; i < (size_t)h->N; i++)
@@ -759,9 +747,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         {
                             const size_t blo = b0 / (size_t)Rl;
                             const size_t bhi = (b0 + wl) / (size_t)Rl;
-                            _il2d_nat_leaf_range(sre, scr, h->N, rn, Rl,
-                                                 fns[nst - 1], perm, blo, bhi,
-                                                 1);
+                            _il2d_nat_leaf_blocks(h, 0, dir, sre, scr, blo, bhi, 0);
                             if (cut < nst - 1)
                                 _il2d_col_stages(scr + 2 * b0 * rn,
                                                  (cut > 0 ? scr : dre) + 2 * b0 * rn,
@@ -905,7 +891,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                                : h->il2d_col.tb,
                                            /*reverse=*/!fwd,
                                            h->il2d_col.natperm,
-                                           h->il2d_col.natscr);
+                                           h->il2d_col.natscr, _il2d_nat_stage_of(h, 0));
                     else
                         _il2d_col_pass(sre, dre, h->N, rn, wc,
                                        h->il2d_col.nst, h->il2d_col.R,
@@ -1361,6 +1347,7 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
             free(h->il2d_col.natperm);
             free(h->il2d_col.natscr);
+            VFFT_ZS_FREE(h->il2d_col.natstage);
             free(h->il2d_col.bluchf);
             free(h->il2d_col.bluchb);
             free(h->il2d_col.blukf);

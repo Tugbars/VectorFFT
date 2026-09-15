@@ -45,7 +45,7 @@ int main(int argc, char **argv)
     TIMED();
     reps = (int)(300e6 / (t0 > 1 ? t0 : 1)); if (reps < 5) reps = 5; if (reps > 200) reps = 200;
     for (r = 0; r < reps; r++) { TIMED(); if (t0 < best) best = t0; }
-    printf("%dx%d T=%d ours(scr %s) %10.0f ns", N1, N2, T, ip ? "ip" : "oop", best);
+    printf("%dx%d T=%d ours(%s %s) %10.0f ns", N1, N2, T, getenv("VFFT_PROBE_NAT") ? "nat" : "scr", ip ? "ip" : "oop", best);
     vfft_destroy(p);
     if (want_mkl)
     {

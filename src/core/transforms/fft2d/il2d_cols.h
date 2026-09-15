@@ -217,13 +217,80 @@ static void _il2d_col_stages(const double *src, double *dst, int nrows,
  * bijection), so any block partition is a pure map => MT == ST bitwise.
  * fwd: from = scratch, to = dst plane; bwd: from = natural src, to =
  * scratch. */
+/* ── the natural leaf's STAGING (il2d_natural_leaf_design.md, 2026-09-16) ──
+ * The leaf's R output rows sit N1/R rows apart — 2 MB at 2048x2048 — and
+ * map to the same L1/L2 sets, so stored at their stride the R streams
+ * evict each other line by line (3.4x the scrambled pass at 64 MB).
+ * Staged, the leaf writes R contiguous rows into a per-worker block and
+ * each row leaves as ONE sequential stream (non-temporal when aligned);
+ * backward each natural row is copied in sequentially before the leaf
+ * reads it. The kernels see the same values in the same order: bitwise
+ * the strided leaf. `stage` NULL = the strided leaf: the callers that
+ * carry no staging (the real tier, the 3D tier) and the threaded arm
+ * whose raced verdict is the stride (nls=0). */
+static void _il2d_row_stream(double *dst, const double *src, size_t w, int nt)
+{   /* nt: the row is FINISHED (its plan ran in the staging) — bypass the
+     * cache; else a cached copy, the row phase reads it back from L2 */
+    if (nt && (((uintptr_t)dst | (uintptr_t)src) & 31) == 0)
+    {
+        size_t q;
+        for (q = 0; q < 2 * w; q += 4)
+            _mm256_stream_pd(dst + q, _mm256_load_pd(src + q));
+    }
+    else
+        memcpy(dst, src, 2 * w * sizeof(double));
+}
+static void _il2d_nat_stage_out(const double *stage, double *dst, size_t nrow0,
+                                size_t nstride_rows, int R, size_t rn, size_t k_lo, size_t w, int nt)
+{
+    int r;
+    for (r = 0; r < R; r++)
+        _il2d_row_stream(dst + 2 * ((nrow0 + (size_t)r * nstride_rows) * rn + k_lo),
+                         stage + 2 * (size_t)r * w, w, nt);
+    if (nt) _mm_sfence();
+}
+static void _il2d_nat_stage_in(double *stage, const double *src, size_t nrow0,
+                               size_t nstride_rows, int R, size_t rn, size_t k_lo, size_t w)
+{
+    int r;
+    for (r = 0; r < R; r++)
+        memcpy(stage + 2 * (size_t)r * w,
+               src + 2 * ((nrow0 + (size_t)r * nstride_rows) * rn + k_lo),
+               2 * w * sizeof(double));
+}
+/* one leaf block, staged: forward from the scratch comb to the natural
+ * rows of `to`, backward from the natural rows of `from` to the comb */
+static void _il2d_nat_leaf_block_st(const double *from, double *to, int N1, size_t rn,
+                                    int Rl, vfft_il2p_fn fn, const int *perm, size_t b,
+                                    size_t k_lo, size_t w, int reverse, double *stage)
+{
+    const size_t nstride_rows = (size_t)(N1 / Rl);
+    const size_t coff = 2 * (b * (size_t)Rl * rn + k_lo);
+    const size_t nrow0 = (size_t)perm[b * (size_t)Rl];
+    if (!reverse)
+    {
+        fn(from + coff, NULL, stage, NULL, NULL, NULL, rn, 0, w, 0, w);
+        _il2d_nat_stage_out(stage, to, nrow0, nstride_rows, Rl, rn, k_lo, w, 0);   /* the rows come later: cached */
+    }
+    else
+    {
+        _il2d_nat_stage_in(stage, from, nrow0, nstride_rows, Rl, rn, k_lo, w);
+        fn(stage, NULL, to + coff, NULL, NULL, NULL, w, 0, rn, 0, w);
+    }
+}
 static void _il2d_nat_leaf_range(const double *from, double *to, int N1,
                                  size_t rn, int Rl, vfft_il2p_fn fn,
                                  const int *perm, size_t blo, size_t bhi,
-                                 int reverse)
+                                 int reverse, double *stage)
 {
     const size_t nstride = (size_t)(N1 / Rl) * rn;
     size_t b;
+    if (stage)
+    {
+        for (b = blo; b < bhi; b++)
+            _il2d_nat_leaf_block_st(from, to, N1, rn, Rl, fn, perm, b, 0, rn, reverse, stage);
+        return;
+    }
     for (b = blo; b < bhi; b++)
     {
         const size_t coff = 2 * b * (size_t)Rl * rn;
@@ -441,7 +508,7 @@ static void _il2d_col_pass_nat(const double *src, double *dst, int N1,
                                size_t rn, int nst, const int *Rst,
                                const int *Lst, vfft_il2p_fn const *fns,
                                double *const *tabs, int reverse,
-                               const int *perm, double *scr)
+                               const int *perm, double *scr, double *stage)
 {
     /* fwd: stages 0..nst-2 run src -> scr (stage 0 is the OOP move,
      * the rest in place on scr); the LEAF reads scr and SCATTERS to
@@ -451,7 +518,6 @@ static void _il2d_col_pass_nat(const double *src, double *dst, int N1,
      * no extra copy pass anywhere). The scatter/gather NEVER shares a
      * plane with the stages still reading it. */
     const int Rl = Rst[nst - 1];
-    const size_t nstride = (size_t)(N1 / Rl) * rn;
     int s, b;
     if (!reverse)
     {
@@ -467,17 +533,13 @@ static void _il2d_col_pass_nat(const double *src, double *dst, int N1,
                        rn);
             }
         }
-        for (b = 0; b < N1 / Rl; b++)
-            fns[nst - 1](scr + 2 * (size_t)b * Rl * rn, NULL,
-                         dst + 2 * (size_t)perm[b * Rl] * rn, NULL,
-                         NULL, NULL, rn, 0, nstride, 0, rn);
+        _il2d_nat_leaf_range(scr, dst, N1, rn, Rl, fns[nst - 1], perm, 0,
+                             (size_t)(N1 / Rl), 0, stage);
     }
     else
     {
-        for (b = 0; b < N1 / Rl; b++)
-            fns[nst - 1](src + 2 * (size_t)perm[b * Rl] * rn, NULL,
-                         scr + 2 * (size_t)b * Rl * rn, NULL, NULL,
-                         NULL, nstride, 0, rn, 0, rn);
+        _il2d_nat_leaf_range(src, scr, N1, rn, Rl, fns[nst - 1], perm, 0,
+                             (size_t)(N1 / Rl), 1, stage);
         for (s = nst - 2; s >= 0; s--)
         {
             const int R = Rst[s], D = Lst[s] / R;
@@ -504,11 +566,12 @@ static void _il2d_col_pass_nat_range(const double *src, double *dst,
                                      const int *Lst,
                                      vfft_il2p_fn const *fns,
                                      double *const *tabs, int reverse,
-                                     const int *perm, double *scr)
+                                     const int *perm, double *scr, double *stage)
 {
     const int Rl = Rst[nst - 1];
     const size_t nstride = (size_t)(N1 / Rl) * rn;
     const size_t w = k_hi - k_lo;
+    const int st = (stage != NULL);
     int s, b;
     if (!w)
         return;
@@ -526,16 +589,22 @@ static void _il2d_col_pass_nat_range(const double *src, double *dst,
             }
         }
         for (b = 0; b < N1 / Rl; b++)
-            fns[nst - 1](scr + 2 * ((size_t)b * Rl * rn + k_lo), NULL,
-                         dst + 2 * ((size_t)perm[b * Rl] * rn + k_lo),
-                         NULL, NULL, NULL, rn, 0, nstride, 0, w);
+            if (st)
+                _il2d_nat_leaf_block_st(scr, dst, N1, rn, Rl, fns[nst - 1], perm, (size_t)b, k_lo, w, 0, stage);
+            else
+                fns[nst - 1](scr + 2 * ((size_t)b * Rl * rn + k_lo), NULL,
+                             dst + 2 * ((size_t)perm[b * Rl] * rn + k_lo),
+                             NULL, NULL, NULL, rn, 0, nstride, 0, w);
     }
     else
     {
         for (b = 0; b < N1 / Rl; b++)
-            fns[nst - 1](src + 2 * ((size_t)perm[b * Rl] * rn + k_lo),
-                         NULL, scr + 2 * ((size_t)b * Rl * rn + k_lo),
-                         NULL, NULL, NULL, nstride, 0, rn, 0, w);
+            if (st)
+                _il2d_nat_leaf_block_st(src, scr, N1, rn, Rl, fns[nst - 1], perm, (size_t)b, k_lo, w, 1, stage);
+            else
+                fns[nst - 1](src + 2 * ((size_t)perm[b * Rl] * rn + k_lo),
+                             NULL, scr + 2 * ((size_t)b * Rl * rn + k_lo),
+                             NULL, NULL, NULL, nstride, 0, rn, 0, w);
         for (s = nst - 2; s >= 0; s--)
         {
             const int R = Rst[s], D = Lst[s] / R;
