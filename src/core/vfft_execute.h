@@ -817,18 +817,9 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                             sre = dre;
                         }
                         if (fwd && cut > 0)
-                        {
-                            size_t pcw;
-                            if (cut == 2 && _il2d_pair_probe(&pcw) &&
-                                _il2d_col_prefix_pair_ok(0, h->il2d_col.R, h->il2d_col.L))
-                                _il2d_col_prefix_pair(sre, dre, h->N, rn, 0, h->il2d_col.R, h->il2d_col.L,
-                                                      fns, tabs, 0, pcw, 0,
-                                                      h->il2d_col.L[1] / h->il2d_col.R[1]);
-                            else
-                                _il2d_col_stages(sre, dre, h->N, rn, 0, cut,
-                                                 h->il2d_col.R, h->il2d_col.L, fns,
-                                                 tabs, 0);
-                        }
+                            _il2d_col_stages(sre, dre, h->N, rn, 0, cut,
+                                             h->il2d_col.R, h->il2d_col.L, fns,
+                                             tabs, 0);
                         for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
                         {
                             const double *bs =

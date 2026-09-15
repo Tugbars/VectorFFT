@@ -93,6 +93,17 @@ stages carry a digit axis and L_{s+1} = L_s / R_s (every DIT chain the
 tier builds). A cut of 2 (one pair) saves one of three sweeps at
 2048x2048; a cut of 1 has nothing to pair.
 
+Probed 2026-09-15 (`VFFT_IL2D_PAIR=1`, `il2d_mt_probe`, bitwise at every
+cell): the pair moves the prefix from 3.5 to 3.0 ms at 2048x2048 T=8 —
+the whole 4.88 to 4.71 ms (3.6%), 4096x1024 5.50 to 4.96 (10%), serial
+2-4%, 512x4096 T=8 2.5% behind. Column chunks 256..2048 change nothing.
+The fused sweep streams at 43 GB/s against the plain stages' 75: its 64
+short runs per unit (one per row of the closed set) do not stream like
+the plain stage's contiguous digit ranges, and most of the saved sweep is
+paid back in bandwidth. A real but small win; not dominant (one cell
+behind), so a raced arm if kept, never the walk. Held as the probe switch
+pending the owner's ruling.
+
 ## 2. The four-step's transpose folded into the row pass
 
 The natural class today: the 2D child writes its plane (rows in place on
@@ -124,6 +135,23 @@ The four-step's natural class then costs the scrambled class's two sweeps
 plus the scattered k2-major write in place of the plane's row write —
 no separate transpose in either direction. `_k1fs_transpose` stays as the
 kernel the group store calls.
+
+THE CATCH (found at design review, 2026-09-15): a group of G consecutive
+PLANE rows holds columns k1(p) that are spaced N1/16 apart (the column
+chain's digit reversal), so its block store writes 16 B pieces of 64
+different lines per output row — a 4x write amplification that costs more
+than the sweep it saves. Whole-line stores need groups of CONSECUTIVE k1,
+and those rows lie in R0 different bands: k1 = R0*k + d0 puts the rows at
+plane stride N1/R0. The fold therefore needs the four-step's own band —
+the SUPER-BAND: R0 blocks of wl rows at stride N1/R0 (with the chain's
+last stage as the in-band suffix), which holds R0*wl consecutive k1 and
+is L2-resident at wl = 8 (64 rows x 32 KB = 2 MB at 2048x2048). Its walk:
+prefix as today; per super-band the suffix stages on its R0 blocks, the
+rows in k1 order (twiddled), the group store of 16 consecutive k1. That
+is a new band form for the 2D child (a raced arm beside the contiguous
+band: `wl` with a `sb=1` flag), not a hook — a larger build than the hook
+this section described. Expected at 4194304 T=8: 7.2 to ~5.3 ms (1.3x
+MKL); serial 17.6 to ~15 (1.6x). Awaiting the owner's ruling.
 
 ## Gates
 
@@ -158,7 +186,8 @@ the phase instrument; then the canonical bench `--k1noop` and `--k1noop
 - [ ] 3. Re-race the shipped store's 2D rows above 16 MB at T=8 (their
       `cmt`/`cmtt` tokens dropped so the cold race runs) and the four-step's
       per-T splits; gates ALL PASS; measure.
-- [ ] 4. The folded transpose: the `il2d_fs_out` / `il2d_fs_k1` hook, the
+- [ ] 2d. The prefix pair as a raced arm (or deleted): the owner's ruling.
+- [ ] 4. The folded transpose (as the SUPER-BAND form above; the owner's ruling): the `il2d_fs_out` / `il2d_fs_k1` hook, the
       group store in the four walks both directions, both placements;
       `_k1fs_transpose` demoted to the kernel; the four-step's natural
       execute drops its separate sweep. Gates ALL PASS; measure.
