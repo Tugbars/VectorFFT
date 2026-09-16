@@ -145,6 +145,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     T = (int)K;
                 ic.nthreads = 1;
                 ic.wisdom_write = 0;
+                ic.recalibrate = 0;   /* the PRIMARY above (:98) kept the caller's
+                                       * flag and has already re-raced and banked;
+                                       * a clone that also carries it re-races the
+                                       * same cell T more times and contradicts the
+                                       * law stated at :127-131 ("wisdom-served from
+                                       * the verdicts the primary just banked") */
                 ps = (double *)malloc(h->pq_sdist * sizeof(double));
                 p0 = (double *)malloc(h->pq_ddist * sizeof(double));
                 p1 = (double *)malloc(h->pq_ddist * sizeof(double));

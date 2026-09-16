@@ -23,8 +23,10 @@ int main(int argc, char **argv)
     const char *dir = argv[1];
     const int N1 = atoi(argv[2]), N2 = atoi(argv[3]), T = atoi(argv[4]);
     const int want_mkl = argc > 5 ? atoi(argv[5]) : 1;
+    const int Kb = argc > 7 ? atoi(argv[7]) : 1;   /* howmany: >1 wakes the plane queue */
     const int ip = argc > 6 ? atoi(argv[6]) : 0;   /* 1 = in place (y seeded from x before every timed run) */
-    const size_t PN = (size_t)N1 * N2, nb = 2 * PN * sizeof(double);
+    const size_t PN = (size_t)N1 * N2 * (size_t)(argc > 7 ? atoi(argv[7]) : 1),
+                 nb = 2 * PN * sizeof(double);
     double *x = (double *)_aligned_malloc(nb, 64), *y = (double *)_aligned_malloc(nb, 64);
     vfft_wisdom *W = vfft_wisdom_load(dir);
     vfft_config_t cfg; vfft_plan p;
@@ -33,7 +35,7 @@ int main(int argc, char **argv)
     for (size_t i = 0; i < 2 * PN; i++) x[i] = (double)((i * 2654435761u) % 1000) / 1000.0;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1;
+    cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = Kb;
     cfg.order = (getenv("VFFT_PROBE_NAT") ? VFFT_ORDER_NATURAL : VFFT_ORDER_SCRAMBLED); cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
     cfg.recalibrate = (getenv("VFFT_PROBE_RECAL") != NULL);  /* the caller's override */
