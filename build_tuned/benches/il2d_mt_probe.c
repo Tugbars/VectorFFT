@@ -36,6 +36,7 @@ int main(int argc, char **argv)
     cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1;
     cfg.order = (getenv("VFFT_PROBE_NAT") ? VFFT_ORDER_NATURAL : VFFT_ORDER_SCRAMBLED); cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.recalibrate = (getenv("VFFT_PROBE_RECAL") != NULL);  /* the caller's override */
     p = vfft_create(&cfg);
     if (!p) { printf("%dx%d T=%d: create refused\n", N1, N2, T); return 1; }
     vfft_set_num_threads(T);

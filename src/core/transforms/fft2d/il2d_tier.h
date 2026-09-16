@@ -1837,7 +1837,16 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         if (getenv("VFFT_IL2D_CHAIN"))
             chain_ok = _il2d_build_chain(N, c->R, c->f,
                                          c->b, &c->nst);
-        else if (vw2_ilcol_chain_lookup(&W->vw2, key, c->R,
+        else if (!cfg->recalibrate &&
+                 /* the caller's explicit override reaches THIS tier too
+                  * (2026-09-16): include/vfft.h promises recalibrate=1
+                  * "re-measures and overwrites the cell even on" a hit, and
+                  * this lookup used to ignore it — so a 2D c2c (and 3D, via
+                  * fftnd_il.h) cell replayed its banked chain/wl/ro/cmt no
+                  * matter what the caller asked. The real tier's twin
+                  * (fft2d_create.h) and five sibling lookups in this file
+                  * were already guarded; this one was the omission. */
+                 vw2_ilcol_chain_lookup(&W->vw2, key, c->R,
                                         &c->nst, &il2d_bwl,
                                         &il2d_btf, &il2d_bro,
                                         &il2d_bcmt,
