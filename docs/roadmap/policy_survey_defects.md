@@ -202,3 +202,17 @@ Worth a look; recorded so they are not re-derived, not acted on.
   `il_route=MONO il_kv=1` at N != 64 would build NULL pointers that
   `vfft_execute.h:1092` calls unguarded. Latent: the planner refuses to bank
   that form.
+
+## E. From the rank>=2 census (2026-09-17) -- verified by hand, and what became of them
+
+The census of the 2D/3D interleaved tiers (145 policy-shaped rules, 61
+claimed duplications) is a MAP, not evidence; only entries opened and read
+are listed.
+
+| finding | verified | state |
+| --- | --- | --- |
+| the column radix pool typed TWICE in `il2d_cols.h` (`_il2d_enum_rec` :129, `_il2d_build_chain` :372), and the two copies DISAGREE: depth 4 vs 8, and the greedy adds a remainder rule (`L/r == 1 \|\| L/r >= 4`) the race does not have | yes, both sites read | **CLOSED BY DELETION.** The owner ruled the greedy unacceptable; it is gone with its pool, so there is nothing left to unify. One-candidate cells now race (one arm) and bank; `il2d_onechain_gate` holds it |
+| the no-silent-caps law: the enumerator's cap is logged at `il2d_tier.h:1417/:1864` and DISCARDED at `fft2d_create.h:573` (the real tier) and `k1_fourstep.h:561` (the four-step super-band) -- both declare `dropped`, pass it, never read it | yes, all four sites read | open. Proposed: the enumerator logs its own cap, so no caller can forget |
+| `k1_fourstep.h:560` sizes `cand[24][8], cl[24]` with a literal while the enumerator fills up to `VFFT_IL2D_MAXCAND` (= 24 today) | yes | open, latent: raise the macro and this is a stack overflow |
+| the Bluestein M-chain provider hook installed ONLY by the 2D create (`fft2d_create.h:64`); the 3D tier set the ctx and never the hook, so its prime-axis inner was greedy -- or raced, depending on whether a 2D create had run earlier in the process | yes | **FIXED 2026-09-17** (`fftnd_il.h` installs it) |
+| the census's other ~57 claimed duplications (three width-ladder literals, the tcut law in six spellings, the form-axis rule in three, the real tier as a second copy of much of the c2c tier) | NOT verified | recorded as claims only |
