@@ -1141,7 +1141,7 @@ static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max)
     {
         const int w = SW[i];
         if (w > N2 || N2 % w) continue;
-        if ((long)N1 * w * 16 > (long)vfft_cpu_l2_bytes()) continue;
+        if (!vfft_policy_fits_l2((long)N1 * w * 16)) continue;
         if (T > 1 && N2 / w < T) continue;
         out[n++] = w;
     }
@@ -1269,7 +1269,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
         {
             const int w2 = h->il2d_col.L[s2];
             int dup = 0;
-            if ((long)w2 * (long)hp1 * 16 > vfft_cpu_l2_bytes())
+            if (!vfft_policy_fits_l2((long)w2 * (long)hp1 * 16))
                 continue;
             if (_il2d_real_wl_cut(h, w2) < 0 || w2 >= N1)
                 continue;
@@ -2257,7 +2257,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
          * L[s] themselves are the natural band widths: wl == L[s] pulls
          * every stage below s into the L2-resident depth-first suffix,
          * leaving s wide passes. Gate = live band residency
-         * (w * N2 * 16 <= vfft_cpu_l2_bytes(), the hardware-derived
+         * (vfft_policy_fits_l2(w * N2 * 16), the hardware-derived
          * fence — never a platform-baked constant), and the RACE still
          * decides: these are candidates, not defaults. */
         for (s2 = 1; s2 < h->il2d_col.nst && nwl < 14; s2++)
@@ -2266,7 +2266,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             int dup = 0, p2;
             if (w > N1 || N1 % w || w < 8)
                 continue;
-            if ((long)w * N2 * 16 > vfft_cpu_l2_bytes())
+            if (!vfft_policy_fits_l2((long)w * N2 * 16))
                 continue;
             for (p2 = 0; p2 < nwl; p2++)
                 if (wlc[p2] == w)

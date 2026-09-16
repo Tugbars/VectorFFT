@@ -553,8 +553,7 @@ static void _k1fs_sb_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const do
  * never a baked constant; an L3-less part admits it everywhere */
 static int _k1fs_sb_admit(int N)
 {
-    const long l3 = vfft_cpu_l3_bytes();
-    return l3 <= 0 || (long)N * 16L > l3;
+    return vfft_policy_exceeds_l3((long)N * 16L);
 }
 static int _k1fs_sb_chains(int N1, int (*out)[8], int *lens, int max, int tight)
 {

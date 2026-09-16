@@ -137,6 +137,48 @@ static unsigned _fam_mask(const vfft_fam_t *v, int n)
     return m;
 }
 
+/* ── steps 4-6 (2026-09-16): L3's fence, L6's presence, L8's two ladders ──
+ * Frozen the same way: each is the predicate as the call sites spelled it
+ * the moment before the migration touched them. */
+
+/* L3: seven sites, five token spellings, one comparison. */
+static int _ref_replays_at_T(int banked_T, int T)
+{
+    return banked_T == T;
+}
+
+/* L6: the three doors' lists. The out-of-place door carried its layout
+ * gates inside the OR; they are passed in already folded, exactly as the
+ * migrated call does, so this is the list itself. */
+static int _ref_engine_present_oop(int mono_route_lay, int pair_lay, int il3p,
+                                   int ilpr, int ilfd, int ztt, int fs)
+{
+    return (pair_lay || il3p || ilpr || ilfd || ztt || fs || mono_route_lay) ? 1 : 0;
+}
+static int _ref_have_k1_ip(int il2, int il3, int ifd, int ztt, int fs,
+                           int mono_f, int ilp)
+{
+    return (il2 || il3 || ifd || ztt || fs || mono_f || ilp) ? 1 : 0;
+}
+static int _ref_ip_refusal(int il2p, int il3p, int ilpr, int ilfd, int ztt,
+                           int fs, int mono_ilf)
+{   /* the refusal fired when NOTHING was present */
+    return (!il2p && !il3p && !ilpr && !ilfd && !ztt && !fs && !mono_ilf) ? 1 : 0;
+}
+
+/* L8: the ladders AS WRITTEN -- note neither carried a cache-unknown term.
+ * That term is the module's addition and the sweep below is what proves it
+ * changes no answer for a positive working set. */
+static int _ref_fits_l2(long bytes)
+{
+    return bytes <= vfft_cpu_l2_bytes();
+}
+static int _ref_exceeds_l3(long bytes)
+{
+    const long l3 = vfft_cpu_l3_bytes();
+    return l3 <= 0 || bytes > l3;
+}
+
 int main(void)
 {
     /* every band boundary and a spread inside each: pow2 from the solos to
@@ -155,7 +197,8 @@ int main(void)
     int i, o, nchk = 0;
 
     printf("PLANNING POLICY gate: the module vs the pre-migration sites "
-           "(L4 order, L9 ceilings), %d N x %d order classes\n", nn, 3);
+           "(L4 order, L9 ceilings, L1/L2 the band map, L3 the per-T fence, "
+           "L6 engine presence, L8 the ladders), %d N x %d order classes\n", nn, 3);
 
     for (i = 0; i < nn; i++)
     {
@@ -344,6 +387,72 @@ int main(void)
                bad_oop ? "DIFFERS" : "equal", bad_rankn ? "DIFFERS" : "equal");
         nchk += (NMAX - 1) * 4;
     }
+    /* ── steps 4-6: the three narrowed laws ─────────────────────────────
+     * L3, exhaustive over every (banked, requested) pair a plan can carry,
+     * the unraced sentinels included. */
+    {
+        long bad_t = 0, bad_e = 0, bad_l2 = 0, bad_l3 = 0;
+        int bt, rt, m;
+        for (bt = -2; bt <= 64; bt++)
+            for (rt = -2; rt <= 64; rt++)
+                if ((vfft_policy_replays_at_T(bt, rt) != 0) != (_ref_replays_at_T(bt, rt) != 0))
+                    bad_t++;
+        CHECK(bad_t == 0, "L3 per-T fence: %ld of %d pairs differ", bad_t, 67 * 67);
+        nchk += 67 * 67;
+
+        /* L6, every one of the 2^7 presence combinations, against all THREE
+         * doors' spellings -- including the refusal, which is the negation */
+        for (m = 0; m < 128; m++)
+        {
+            const int a = (m >> 0) & 1, b = (m >> 1) & 1, c = (m >> 2) & 1,
+                      d = (m >> 3) & 1, e = (m >> 4) & 1, f = (m >> 5) & 1,
+                      g = (m >> 6) & 1;
+            const int pol = vfft_policy_k1_engine_present(a, b, c, d, e, f, g);
+            if (pol != _ref_engine_present_oop(a, b, c, g, d, e, f)) bad_e++;
+            if (pol != _ref_have_k1_ip(b, c, d, e, f, a, g)) bad_e++;
+            if ((pol == 0) != (_ref_ip_refusal(b, c, g, d, e, f, a) != 0)) bad_e++;
+        }
+        CHECK(bad_e == 0, "L6 engine presence: %ld of %d door checks differ", bad_e, 128 * 3);
+        nchk += 128 * 3;
+
+        /* L8, the two ladders over every positive working set that matters:
+         * powers of two to 1 GiB and the two cache capacities +/- 1 byte */
+        {
+            long probes[96];
+            int np = 0, q;
+            const long l2 = vfft_cpu_l2_bytes(), l3 = vfft_cpu_l3_bytes();
+            long v;
+            for (v = 1; v > 0 && v <= (1L << 30); v <<= 1) probes[np++] = v;
+            probes[np++] = l2 - 1; probes[np++] = l2; probes[np++] = l2 + 1;
+            probes[np++] = l3 - 1; probes[np++] = l3; probes[np++] = l3 + 1;
+            for (q = 0; q < np; q++)
+            {
+                if (probes[q] <= 0) continue;   /* the contract: positive only */
+                if ((vfft_policy_fits_l2(probes[q]) != 0) != (_ref_fits_l2(probes[q]) != 0))
+                    bad_l2++;
+                if ((vfft_policy_exceeds_l3(probes[q]) != 0) != (_ref_exceeds_l3(probes[q]) != 0))
+                    bad_l3++;
+            }
+            CHECK(bad_l2 == 0, "L8 fits_l2: %ld of %d working sets differ (L2=%ld)",
+                  bad_l2, np, l2);
+            CHECK(bad_l3 == 0, "L8 exceeds_l3: %ld of %d working sets differ (L3=%ld)",
+                  bad_l3, np, l3);
+            /* and the polarity itself, which is the whole reason there are
+             * two functions: at a working set BETWEEN L2 and L3 they must
+             * BOTH say no -- it does not fit L2, and it does not exceed L3 */
+            if (l2 > 0 && l3 > l2)
+            {
+                const long mid = l2 + (l3 - l2) / 2;
+                CHECK(!vfft_policy_fits_l2(mid) && !vfft_policy_exceeds_l3(mid),
+                      "L8 polarity: a working set between L2 and L3 must fail BOTH "
+                      "(fits_l2=%d exceeds_l3=%d at %ld)",
+                      vfft_policy_fits_l2(mid), vfft_policy_exceeds_l3(mid), mid);
+                nchk++;
+            }
+            nchk += 2 * np;
+        }
+    }
+
     printf("%d checks, %s\n", nchk, g_fail ? "*** GATE FAILED ***" : "ALL PASS");
     return g_fail ? 1 : 0;
 }

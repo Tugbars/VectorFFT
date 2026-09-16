@@ -59,6 +59,13 @@ survives a noisy machine; the recorded nanoseconds do not, and are informational
 
 Layout branches first, because below that point the two sides share no code.
 
+The `N band` branch is implemented in exactly one place —
+[`src/core/planning/policy.h`](../../src/core/planning/policy.h),
+`vfft_policy_pool` — and the 1D interleaved engine names drawn below it
+(the Bailey pair, the cascade) predate the 2026-09 rebuild. Where this map
+and the module disagree, the module and
+[`design_contracts.md`](design_contracts.md) section 4 are the contract.
+
 ```mermaid
 flowchart TD
     CFG["vfft_create(config)"] --> ADM{"admission:<br/>legal config?"}

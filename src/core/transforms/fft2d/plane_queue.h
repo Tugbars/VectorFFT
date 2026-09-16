@@ -193,7 +193,7 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
         const char *vn = vw2_rec_get(r, "pqn");
         const char *vt = vw2_rec_get(r, "pqt");
         if (v && vn && vt && (size_t)atol(vn) == h->pq_n &&
-            atoi(vt) == h->pq_wn)
+            vfft_policy_replays_at_T(atoi(vt), h->pq_wn))
         {
             h->pq_mt = atoi(v) ? 1 : 0;
             if (getenv("VFFT_IL2D_LOG"))

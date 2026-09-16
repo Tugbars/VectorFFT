@@ -57,6 +57,18 @@ Known violations at the time of writing — REMOVED 2026-09-09 (evening):
 | 262144 | the NATURAL cell races ZTURN-T against the four-step's splits and ZTURN-T keeps it (raced 2026-09-15 on a quiet machine: 682 us serial, 1.6x over MKL at T=8); the SCRAMBLED cell is the plain ZTURN-T's alone (8b) — the four-step's scrambled class begins at 524288 |
 | 524288..4194304 (pow2) | the FOUR-STEP ALONE (owner 2026-09-15: "our Bailey engine is the best solution for this and MKL's code also shows that they are using Bailey for 256k and above"; docs/design/k1_fourstep_design.md): N = N1 x N2 on the 2D interleaved tier with the inter-pass twiddle fused into the row pass, every split with both sides in {256..4096} an arm, raced per cell at one thread and again per thread count; scrambled = the plane as it stands, natural = one blocked AVX2 streaming transpose; route 10, `il_route=fs il_pair=N1.N2`, per-T `il_mt=N1 il_mt_t=T`. Measured 2026-09-15: 1.0-1.44x over MKL at T=1, 1.15-1.58x at T=8, parity at 4194304 T=8 (v1_0_results.md). Above 2^22 and the 2^a*odd cells above 262144: not served |
 
+This table is not prose the code re-derives: it IS the code. Since
+2026-09-16 the band map is written once, in
+[`src/core/planning/policy.h`](../../src/core/planning/policy.h):
+`vfft_policy_pool` returns the families that race at a cell and
+`vfft_policy_admits` answers for one family, and both interleaved
+enumerators consume them, so no admission rule is left in the planner. The
+laws around it live beside it — section 3's order selector is
+`vfft_policy_ord`, section 5's no-fallback line is
+`vfft_policy_scr_writer_band`, and the race-or-refuse budget is
+`vfft_policy_races`. `benches/policy_gate.c` holds each one against the
+predicate it replaced at every N from 2 to 2^23.
+
 Owner, 2026-09-09 evening, on the upper band: the ZTURN-T-alone ruling is
 provisional above ~65536 — "we need to race cells above 65k, Bailey vs
 ZTURN-T, and only then can we derive an opinion." That race is in the

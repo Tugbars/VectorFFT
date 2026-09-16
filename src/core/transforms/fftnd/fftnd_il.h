@@ -778,7 +778,7 @@ static int _ilnd_sw_pool(const vfft_ilnd_t *d, int *out, int max)
     if (d->ax0.blu || d->ax0.nst < 2)
         return 0;
     for (i = 0; i < 8 && n < max; i++)
-        if ((long)d->N[0] * SW[i] * 16 <= vfft_cpu_l2_bytes() && (size_t)SW[i] <= d->plane)
+        if (vfft_policy_fits_l2((long)d->N[0] * SW[i] * 16) && (size_t)SW[i] <= d->plane)
             out[n++] = SW[i];
     return n;
 }
@@ -1067,7 +1067,7 @@ static int _ilnd_wl_pool(const vfft_ilcol_t *c, int *out, int max)
         int dup = 0, q;
         if (w < 8 || _ilnd_wl_cut(c, w) < 0)
             continue;
-        if ((long)w * (long)c->rn * 16 > vfft_cpu_l2_bytes())
+        if (!vfft_policy_fits_l2((long)w * (long)c->rn * 16))
             continue;
         for (q = 0; q < n; q++)
             if (out[q] == w)
@@ -1245,7 +1245,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                                        size_t K)
 {
     const int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
-    const int nat = (cfg->order == VFFT_ORDER_NATURAL);
+    const int nat = (vfft_policy_ord_rankn(cfg) == VW2_ORD_NAT);
     vfft_ilnd_t *d;
     struct vfft_plan_s *h;
     vw2_ilcol_key_t key0;
@@ -1578,7 +1578,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 d->mt = 0;
             mt_src = 1;
         }
-        else if (usable_w && !cfg->recalibrate && bcmt >= 0 && bcmtt == nthr)
+        else if (usable_w && !cfg->recalibrate && bcmt >= 0 &&
+                 vfft_policy_replays_at_T(bcmtt, nthr))
         {
             const int bs = vw2_ilnd_mts_lookup(&W->vw2, &key0);
             const int bf = nat ? vw2_ilnd_int_lookup(&W->vw2, &key0, "cmtf") : 0;
