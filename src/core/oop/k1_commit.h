@@ -734,7 +734,8 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
             fprintf(stderr, "[k1fd-mt] N=%d T=%d %s: mt=%d src=env\n", N, T, p->scr ? "scr" : "nat", p->mt);
         return;
     }
-    if (r && !cfg->recalibrate && vw2__oop_geti(r, "il_mt_t", 0) == T)
+    if (r && !cfg->recalibrate &&
+        vfft_policy_replays_at_T(vw2__oop_geti(r, "il_mt_t", 0), T))
     {
         const int v = vw2__oop_geti(r, "il_mt", 0);
         const int w = vw2__oop_geti(r, "il_mt_tw", 0);
@@ -814,7 +815,8 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
             fprintf(stderr, "[ztt-mt] N=%d T=%d %s%s: mt=%d src=env\n", N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", p->mt);
         return;
     }
-    if (r && !cfg->recalibrate && vw2__oop_geti(r, tok_t, 0) == T)
+    if (r && !cfg->recalibrate &&
+        vfft_policy_replays_at_T(vw2__oop_geti(r, tok_t, 0), T))
     {
         const int v = vw2__oop_geti(r, tok_v, 0);
         if (!vfft_ztt_mt_bind(p, T, (v >= 0 && v <= 2) ? v : 0)) p->mt = 0;
@@ -921,7 +923,8 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
     if (W && !W->vw2_off_oop)
         r = vw2__oop_k1_scan_ord(&W->vw2, N, VW2_LAY_IL, p->scr);
     ns = vfft_k1fs_splits(N, n1, n2, 8);
-    if (r && !cfg->recalibrate && vw2__oop_geti(r, tok_t, 0) == T)
+    if (r && !cfg->recalibrate &&
+        vfft_policy_replays_at_T(vw2__oop_geti(r, tok_t, 0), T))
     {
         const int v = vw2__oop_geti(r, tok_v, 0);
         const char *sv = vw2_rec_get(r, tok_s);

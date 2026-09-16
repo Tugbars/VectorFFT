@@ -111,7 +111,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * scrambled pool's own verdict (a natural-output engine, or the
              * flat DIT's scrambled class) — DEFAULT and NATURAL the ord=nat
              * row (ke). Two cells, never compared. The split axis keeps ke. */
-            const int scr_req = (cfg->order == VFFT_ORDER_SCRAMBLED &&
+            const int scr_req = (vfft_policy_ord_k1(cfg, N, /*inplace=*/0) == VW2_ORD_SCR &&
                                  cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop);
             const vfft_oop_wisdom_entry_t *ki =
                 scr_req ? (vw2_oop_lookup_k1_scr(&W->vw2, N, &kib) ? &kib : NULL) : ke;
@@ -523,8 +523,16 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * where no split route exists and a replayed ZTURN-T plan fell
              * through to the "no interleaved engine" refusal. fs (the four-step,
              * 2026-09-15) joined for the same reason at 524288+. */
-            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr || ilfd || ztt || fs ||
-                (ilr == VFFT_K1_IL_MONO && cfg->layout == VFFT_LAYOUT_INTERLEAVED)) /* the solo tier has no plan object */
+            if (spr >= 0 ||   /* the SPLIT axis's route: not engine presence, so it stays here */
+                vfft_policy_k1_engine_present(
+                    /* mono   */ ilr == VFFT_K1_IL_MONO && cfg->layout == VFFT_LAYOUT_INTERLEAVED,
+                    /* pair   */ il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED,
+                    /* chain3 */ il3p != NULL, /* flat */ ilfd != NULL,
+                    /* ztt    */ ztt != NULL,  /* fs   */ fs != NULL,
+                    /* prime  */ ilpr != NULL))
+                /* MONO is ROUTE presence, not pointer presence: the solo tier has no plan
+                 * object and its pointers are resolved ~30 lines below. Do NOT "correct"
+                 * this to hk->k1_mono_ilf -- that is a different question, asked later. */
             {
                 struct vfft_plan_s *hk =
                     (struct vfft_plan_s *)calloc(1, sizeof *hk);
@@ -581,6 +589,9 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             vfft_ilprime_destroy(ilpr);
             vfft_ilfd_destroy(ilfd);
             vfft_ztt_destroy(ztt);
+            vfft_k1fs_destroy(fs);   /* a FOURTH per-engine list that never learned the
+                                      * four-step (2026-09-15): it leaked the plan on
+                                      * this path. Found by the L6 survey, 2026-09-16. */
             if (psp)
                 vfft_oop_plan_destroy(psp);
             /* fall through to the classic OOP path */

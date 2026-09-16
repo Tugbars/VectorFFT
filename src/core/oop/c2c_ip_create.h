@@ -139,7 +139,12 @@ static void _bank_ipmode_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                 * mode=zcasc emits the ref= signpost */
     nn.factors[0] = N;
     nn.ref_comp = 0;   /* no cascade recipe rows since 2026-09-15 */
-    nn.ref_ilp = _ilp_ref_of(W, N, mode, cfg->order == VFFT_ORDER_SCRAMBLED);   /* the row that SERVED */
+    /* the row that SERVED. inplace=0 deliberately: the K=1 ENGINE row is the
+     * place=oop cell whatever this door's placement (k1_commit.h asks with 0
+     * from both doors), which is why this line and the _ip_order_is_nat below
+     * classify the SAME request by two different laws. */
+    nn.ref_ilp = _ilp_ref_of(W, N, mode,
+                             vfft_policy_ord_k1(cfg, N, /*inplace=*/0) == VW2_ORD_SCR);
     if (_ip_order_is_nat(cfg, N))
         vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0, _vw2_lay_of(cfg));
     else
@@ -226,7 +231,11 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
             (void)_k1_il_mono_candidate(W, N, &mono_f, &mono_b);
         if (!il2 && !il3 && !ifd && !ztt && !fs && !mono_f && (N & (N - 1)) != 0)
             ilp = _ilprime_create_banked(W, cfg, N);   /* a route, never a fallback: no pow2 cell */
-        have_k1 = (il2 || il3 || ifd || ztt || fs || mono_f || ilp) ? 1 : 0;
+        have_k1 = vfft_policy_k1_engine_present(
+            /* mono   */ mono_f != 0,   /* in place the solo tier IS a resolved fn pair */
+            /* pair   */ il2 != NULL, /* chain3 */ il3 != NULL,
+            /* flat   */ ifd != NULL, /* ztt    */ ztt != NULL,
+            /* fs     */ fs != NULL,  /* prime  */ ilp != NULL);
     }
 
     /* 4. replay a banked verdict when its engine built */
@@ -262,7 +271,11 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     if (ifd) vfft_ilfd_destroy(ifd);
     if (ztt) vfft_ztt_destroy(ztt);
     if (fs) vfft_k1fs_destroy(fs);
-    if (!h->k1il2p && !h->k1il3p && !h->k1ilpr && !h->k1ilfd && !h->k1ztt && !h->k1fs && !h->k1_mono_ilf)
+    if (!vfft_policy_k1_engine_present(
+            /* mono   */ h->k1_mono_ilf != 0,
+            /* pair   */ h->k1il2p != NULL, /* chain3 */ h->k1il3p != NULL,
+            /* flat   */ h->k1ilfd != NULL, /* ztt    */ h->k1ztt != NULL,
+            /* fs     */ h->k1fs != NULL,   /* prime  */ h->k1ilpr != NULL))
     {
         _vfft_warn("vfft_create: in-place C2C N=%d with layout=INTERLEAVED has no "
                    "interleaved engine yet (no mono/pair/chain3/prime kernel serves "

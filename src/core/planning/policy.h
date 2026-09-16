@@ -35,6 +35,13 @@
 #ifndef VFFT_PLANNING_POLICY_H
 #define VFFT_PLANNING_POLICY_H
 
+/* The ONE dependency: L8 asks the hardware how big a cache level is. Spelled
+ * bare because the include path carries src/core/support (dp_planner_il.h
+ * does the same); the guard makes it a no-op in the one-TU build, where
+ * cpu_cache.h is already in scope, and it is what lets benches/policy_gate.c
+ * compile this module on its own. */
+#include "cpu_cache.h"
+
 /* ── L9. the race CEILINGS ──────────────────────────────────────────────
  * How far up each band the K=1 IL planner may race. They live here, not
  * beside their engines, because the door combines them into ONE question
@@ -311,6 +318,122 @@ static inline int vfft_policy_admits(const vfft_cell_t *c, vfft_fam_t f)
     for (i = 0; i < n && i < VFFT_FAM_NFAM; i++)
         if (pool[i] == f) return 1;
     return 0;
+}
+
+/* -- L3 (narrowed). the PER-THREAD-COUNT FENCE --------------------------
+ * A threading verdict is a MEASUREMENT AT A THREAD COUNT: the row banks the
+ * verdict and the T it was raced at, and a T=4 verdict must never serve a
+ * T=8 request (il2d_tier.h, "WHY cmt BANKS ITS THREAD COUNT"). Seven sites
+ * spell it, in five token spellings: the flat DIT's, ZTURN-T's and the
+ * four-step's MT commits (il_mt_t / il_mt_ip_t), the 2D c2c and 2D real
+ * column-MT verdicts (cmtt), the 3D tier's (cmtt), the plane queue's (pqt).
+ *
+ * THIS IS THE ONLY PART OF RACE-OR-REPLAY THAT IS ONE LAW, and the rest of
+ * each site stays spelled AT the site, because the terms differ:
+ *   - recalibrate is written at the site in k1_commit.h and fftnd_il.h, but
+ *     UPSTREAM (in the lookup that produced cmt/cmtt) for the 2D tiers, and
+ *     order-scoped (scr_recalib) elsewhere;
+ *   - "the row carries a verdict" is r != NULL, or cmt >= 0, or a non-NULL
+ *     token -- three different tests;
+ *   - further fences sit beside it (the plane queue is valid for the PLANE
+ *     COUNT it was raced at as well as the worker count).
+ * One policy_replays() that swallowed those was REFUTED (the design's
+ * "Steps 4-6"): it would have picked one site's recalibrate semantics for
+ * all of them.
+ *
+ * DELIBERATELY NOT a "banked_T > 0" term. Each caller spells UNRACED its
+ * own way (-1, a geti default of 0, an absent token) and every site
+ * guarantees T >= 2 before asking, so the sentinel never matches; folding a
+ * fourth spelling in here would be a new law, not a move.
+ *
+ * NOT FOR tcmt/tcmtt (the K>1 transform-contiguous batch): that verdict is
+ * deliberately T-FREE -- one transform per core means nothing in the plan
+ * depends on T, so tcmtt RECORDS the count and is never compared. Putting
+ * it through this fence would refuse every replay at a different T.
+ * NOT FOR the execute-side clamps (ztt_mt.h, il_flatdit_mt.h): those
+ * compare the LIVE pool against the plan's own bound T, not a banked row
+ * against a request.
+ * NOT FOR fftnd_wisdom.h's lookup filter, the only site that NORMALIZES the
+ * requested T (`e.T != (T > 0 ? T : 1)`): the normalization is the law
+ * there, and it is not this one. */
+static inline int vfft_policy_replays_at_T(int banked_T, int T)
+{
+    return banked_T == T;
+}
+
+/* -- L6. ENGINE PRESENCE: "a K=1 interleaved handle exists for this cell" -
+ * THREE doors ask this and each kept its own list; the four-step was built,
+ * banked and then REFUSED at the door twice because two of the three never
+ * learned it. This is the one list, and it is a PARAMETER LIST on purpose:
+ *
+ *   - NOT a struct. A struct with designated initializers lets a new engine
+ *     default to 0 at a site nobody updated -- which IS the defect. Adding
+ *     a parameter here is a hard compile error at every call site; that
+ *     error is the mechanism.
+ *   - NOT a pointer list. Presence is not spelled the same way at the two
+ *     doors: OUT OF PLACE, MONO has no plan object -- it is admitted by
+ *     ROUTE and its function pointers are resolved ~30 lines BELOW the
+ *     guard -- so a pointer-list helper drops every out-of-place MONO cell,
+ *     and the fall-through then REFUSES the create (c2c_oop_create.h:617).
+ *     Each door passes its own term.
+ *   - ORDER-FREE: every term is a boolean folded into one OR, so a
+ *     mis-ordered call cannot change the answer.
+ *   - What is NOT engine presence stays AT the call site: the SPLIT axis's
+ *     route (spr >= 0) and each door's LAYOUT gate.
+ *
+ * PRIME is a parameter like the rest even though vfft_policy_pool omits it:
+ * Rader/Bluestein is a door ROUTE, never a raced family, and the question
+ * here is "did something build", not "who races". */
+static inline int vfft_policy_k1_engine_present(int mono, int pair, int chain3,
+                                                int flat, int ztt, int fs,
+                                                int prime)
+{
+    return (mono || pair || chain3 || flat || ztt || fs || prime) ? 1 : 0;
+}
+
+/* -- L8. a candidate's working set against the hardware -----------------
+ * TWO helpers, and NEITHER is the negation of the other. Both the POLARITY
+ * and the UNKNOWN-SIZE policy are written into the name and the body,
+ * because the two differ in both: one shared fits() flips the super-band
+ * exactly backwards (the design's step 6).
+ *
+ * Each takes the ALREADY-COMPUTED byte count as a long, and the multiply
+ * stays at the call site on purpose: long is 32-bit on this MinGW build, so
+ * taking the factors here -- or widening -- would change the wrap behaviour
+ * of an expression like (long)N1 * w * 16 and stop this being a move.
+ *
+ * CONTRACT, both helpers: the argument is a POSITIVE working-set size. The
+ * cache term is inert for any positive argument, whatever the hardware
+ * reports; it decides the answer only when bytes <= 0. Never hand either
+ * one a difference or a wrapped product. */
+
+/* The L2 ladder (five sites: the 2D tier's strip, real-wl and cascade
+ * widths, the 3D tier's strip and wl widths). ADMIT what fits the L2 the
+ * CPU reports; the ladder is a candidate list and the race still decides.
+ * UNKNOWN SIZE => REFUSE -- a ladder that cannot measure the cache
+ * contributes nothing and the caller keeps its ungated static pool. That
+ * rule is defensive rather than live (vfft_cpu_l2_bytes installs a fallback
+ * and is never 0, cpu_cache.h), and it is stated because the contrast with
+ * the L3 rule below is the whole reason there are two functions. */
+static inline int vfft_policy_fits_l2(long bytes)
+{
+    const long l2 = vfft_cpu_l2_bytes();
+    return l2 > 0 && bytes <= l2;
+}
+
+/* The super-band's gate (one site: _k1fs_sb_admit). The OPPOSITE law -- the
+ * form is an arm only where the plane OUTGROWS the last-level cache (owner
+ * 2026-09-16: "only race above where L3 can't cover the transforms
+ * anymore") -- so it admits what does NOT fit. UNKNOWN SIZE => ADMIT, and
+ * this one is LIVE: vfft_cpu_l3_bytes returns l3_seen, which has no
+ * fallback and is genuinely 0 on an L3-less part, where "bigger than L3" is
+ * vacuously true and the form is admitted everywhere.
+ * NEVER write this as a negation of the L2 helper: both terms would flip
+ * and every L3-less host would lose the super-band. */
+static inline int vfft_policy_exceeds_l3(long bytes)
+{
+    const long l3 = vfft_cpu_l3_bytes();
+    return l3 <= 0 || bytes > l3;
 }
 
 #endif /* VFFT_PLANNING_POLICY_H */

@@ -412,93 +412,96 @@ a probe binary that predated the same day's super-band ruling, so it
 compared two different engines and showed phantom differences. A census is
 only a baseline if its binary is built from the tree it claims to measure.
 
-## Steps 4-6 — what the survey found, and why they stop here
+## Steps 4-6 — the narrowed laws, and the differences that stayed
 
-Six parallel surveys (one per law) each with an independent completeness
-check. Every survey came back INCOMPLETE — the checkers found 9 to 49
-further sites apiece — and, more importantly, each found differences that
-look like duplication and are not. The migration's own rule applies: a step
-that cannot keep a verdict identical stops for a ruling.
+Six parallel surveys, each with an independent adversarial check that was
+told to refute it. Every survey came back INCOMPLETE (the checkers found 9
+to 49 further sites apiece), and each found differences that look like
+duplication and are not. The conclusion was not "these cannot be done" but
+"these are not one law each": what shipped is the shared part of each, with
+every load-bearing difference left spelled at its call site.
 
-**L3, race-or-replay (~75 sites).** `fft2d_create.h:1162` (c2c) and `:1220`
-(real) are textually the same line with OPPOSITE recalibrate semantics.
-CONFIRMED IN THE CODE, not merely surveyed: the real tier's `il2d_bcmtt`
-comes from `fft2d_create.h:545`, `else if (!cfg->recalibrate &&
-vw2_2d_rl_lookup(...))`, so under recalibrate it stays -1 and the branch is
-dead. The c2c tier's comes from `_il2d_col_build` →
-`vw2_ilcol_chain_lookup` (`il2d_tier.h:1840`), which carries NO recalibrate
-term — although `_il2d_col_build` RECEIVES `cfg`, and the same file guards
-five other lookups with `cfg->recalibrate` (:1401, :1559, :1785, :1975,
-:2026). So a 2D c2c create with `recalibrate = 1` replays the banked chain,
-band width, row route AND column-MT verdict instead of re-racing them. See
-"An open defect" below. There is also a deliberately T-FREE
-verdict (`tcmt`/`tcmtt`) that records the thread count and never compares
-it. And `recalibrate` is sometimes a parameter, sometimes order-scoped
-(`scr_recalib`). One `policy_replays()` would silently pick one of these.
+**L3 → `vfft_policy_replays_at_T(banked_T, T)`, seven sites.** A threading
+verdict is a measurement AT a thread count; a T=4 verdict must never serve a
+T=8 request. That comparison — five token spellings across the flat DIT,
+ZTURN-T, the four-step, the 2D c2c and real column-MT verdicts, the 3D
+tier and the plane queue — is the whole of what these sites share. What
+stayed at the sites: `recalibrate`, which is written at the site in
+`k1_commit.h` and `fftnd_il.h` but sits UPSTREAM in the lookup for the 2D
+tiers and is order-scoped (`scr_recalib`) elsewhere; "the row carries a
+verdict", which is three different tests; and the plane queue's second
+fence on the plane count. Deliberately excluded: the T-FREE `tcmt`/`tcmtt`
+(the batch verdict RECORDS T and never compares it — the fence would refuse
+every replay at another T), the execute-side clamps, and
+`fftnd_wisdom.h`'s filter, the only site that NORMALIZES the requested T.
 
-**L5, row keys (~124 sites).** `scr_req` is not one predicate:
-`c2c_oop_create.h:114` also ANDs `layout == INTERLEAVED && !vw2_off_oop`,
-so replacing it with the policy spelling changes what a SPLIT-layout
-scrambled request reads and what a kill-switched store does. The dir=bwd
-rows have NO order axis at all (`vw2_oop_rec_k1_bwd` hard-codes
-`ORD_NAT`), so "which row serves this cell" has a different answer there.
+**L5 → the existing L4 laws, six sites.** There is no new helper: the
+genuinely shared sub-question is "which order class is this cell", which
+`vfft_policy_ord_k1` / `vfft_policy_ord_rankn` already answer. Six sites
+that spelled it by hand now ask (`c2c_oop_create.h:114`'s `scr_req`,
+`c2c_ip_create.h:142`, three copies inside the single function
+`_vfft_create_2d`, and `fftnd_il.h`'s rank-N flag). The rest is
+documentation, because it is not one law: `scr_req` also ANDs `layout ==
+INTERLEAVED && !vw2_off_oop`, so the policy spelling alone would change what
+a SPLIT-layout scrambled request reads and what a kill-switched store does;
+and the dir=bwd rows have NO order axis at all (`vw2_oop_rec_k1_bwd`
+hard-codes `ORD_NAT`), so "which row serves this cell" has a different
+answer there.
 
-**L6, engine presence (~34 sites).** MONO has no plan object at the
-out-of-place door — it is admitted by ROUTE, and its function pointer is
-assigned sixteen lines after the guard — so a pointer-list helper drops
-every MONO cell out of place, and the fall-through serves a SCRAMBLED
-spectrum to a natural caller. That is the recorded 2026-07-29 regression.
-`spr >= 0` in the same guard is not an engine at all. The execute-side
-switches and the fingerprint bitmap are two more lists that are NOT the
-same list.
+**L6 → `vfft_policy_k1_engine_present(...)`, three doors.** Seven engines,
+passed as seven SEPARATE PARAMETERS rather than a struct or a pointer list,
+and that is the entire mechanism: adding an engine is a compile error at
+every call site. A struct with designated initializers would let a new
+engine default to 0 at a site nobody updated — which is the defect itself —
+and a pointer list would drop every out-of-place MONO cell, because MONO has
+no plan object there: it is admitted by ROUTE and its pointers are resolved
+thirty lines below the guard. What stayed at the sites: the SPLIT axis's
+route (`spr >= 0`, not an engine) and each door's layout gate.
 
-**L7, refusal (~82 sites).** `-1` and `IL_NONE` are different: -1 means
-"unraced, run the heuristic", IL_NONE means "raced, the answer is none —
-do NOT". Collapsing them re-runs a heuristic the planner already refuted.
+**L7 → documentation.** `-1` and `IL_NONE` are different: -1 means
+"unraced, run the heuristic", `IL_NONE` means "raced, the answer is none —
+do NOT". A demotion macro was proposed and is safe, but it would live in
+`oop_plan.h`, not in the module, so it would not move a law into the shared
+file; it is not worth a new symbol in the route namespace. Two findings the
+survey offered as live defects were REFUTED by its own checker and are
+recorded here so they are not re-derived: the "missing PRIME demotion" is
+refuted by the law shipped in `policy.h` this week (PRIME is a door route,
+never a raced arm), and the "missing MONO demotion" is unreachable because
+the planner refuses to bank the form that would reach it.
 
-**L8, ladders (~27 sites).** Polarity, above.
+**L8 → `vfft_policy_fits_l2` + `vfft_policy_exceeds_l3`, six sites.** Two
+helpers because the two laws differ in BOTH polarity and unknown-size rule:
+the five L2 ladders admit what fits and treat an unknown cache as refuse;
+the super-band admits what does NOT fit and treats an unknown L3 as admit —
+which is live, not theoretical, since `l3_seen` has no fallback and is 0 on
+an L3-less part. The single `fits()` is now impossible to reintroduce
+quietly: a gate arm asserts that a working set BETWEEN L2 and L3 fails both
+predicates, which is exactly what a negation would break. One site the
+inventory filed under L8 is NOT a fits() at all — `dp_planner_il.h:993`
+selects a byte BUDGET by N and hands it across an API boundary, and the
+predicate behind it (`il_flatdit.h:809`) treats a zero budget as NO GATE, a
+third unknown-policy opposite to both helpers. It stays as it is.
 
-### An API gap, found by the survey, confirmed — and FIXED (2026-09-16)
+### A correction to this document
 
-To be precise about what this is and is not: REPLAYING a banked cell is
-correct and is the whole design — nothing should re-race on its own. The
-only thing at stake is the caller's explicit override. `include/vfft.h`
-promises "force re-measurement with recalibrate=1 ... re-measures and
-overwrites the cell even on" a hit. That flag does not reach the 2D c2c
-tier's chain lookup, so for a 2D c2c cell it is silently ineffective: the
-banked chain, band width, row route and threading verdict are replayed
-anyway. The real tier honours it; five sibling lookups in the same file
-honour it; `_il2d_col_build` does receive `cfg`.
+The claim that `fft2d_create.h:1162` (c2c) and `:1220` (real) carry
+OPPOSITE recalibrate semantics described the tree BEFORE the fix recorded
+below. Since the chain lookup at `il2d_tier.h` learned `!cfg->recalibrate`,
+both tiers are guarded upstream and the pair is symmetric — which is why
+both could migrate to the same fence with the same terms around it.
 
-LATENT: no in-tree caller passes recalibrate for a 2D c2c cell — the flag's
-users are `pool_preserve_gate` and the three ZT restamp probes, all 1D K=1.
-And the practice already works around it: today's 2D natural re-races
-DROPPED the affected rows from the store instead of passing recalibrate,
-which is why they raced.
+### What the survey found that is not the migration
 
-FIXED on the owner's ruling ("that's an oversight"): the lookup in
-`_il2d_col_build` now carries `!cfg->recalibrate`, matching the real tier's
-twin and the five siblings. The behaviour change is confined to callers who
-explicitly raise the flag, which is what the flag is for — a normal create
-still replays its banked verdict, as it always did. The 3D tier gets the
-same fix for free: `fftnd_il.h` calls the same builder for both its axes.
+Recorded so they are not re-derived, in the order they are worth acting on.
 
-Proved on a warm store (a scratch copy), same cell, flag off then on:
-
-```
- recalibrate=off : 0 race lines          (replays the banked verdict)
- recalibrate=on  : chain race 512x512    (the caller's override honoured)
-                   axis race  512x512
-```
-
-Reproduce: `VFFT_IL2D_LOG=1 [VFFT_PROBE_RECAL=1] il2d_mt_probe.exe <store>
-512 512 1 0 0` — the `VFFT_PROBE_RECAL` knob exists for exactly this.
-
-Narrowed proposals, if the owner wants them later: for L3, a named
-`policy_replays_at_T()` for ONLY the five per-thread-count fences, leaving
-the recalibrate term at each site; for L6, one shared
-`vfft_policy_k1_engine_present()` taking the terms explicitly rather than a
-pointer list; for L5 and L7, documentation rather than unification.
+| where | what | state |
+| --- | --- | --- |
+| `c2c_oop_create.h` fall-through | the cleanup destroyed six engines and not the four-step — a FOURTH hand-maintained per-engine list that never learned it | FIXED 2026-09-16 (`vfft_k1fs_destroy(fs)`); the path is the calloc-failure fall-through, so it leaked rather than answered wrongly |
+| `vfft.c`'s fingerprint | no `FP__P(k1fs)` in the subplan presence bitmap, and no detail line — the four-step is invisible to the fingerprint | open |
+| `c2c_oop_create.h:508` vs `:560` | the MONO route is validated with `vfft_k1_mono_il_fn(N, 0)` (FORM 0) while the handle resolves the row's BANKED form; a row carrying `il_route=MONO il_kv=1` at N != 64 would build NULL pointers, and `vfft_execute.h:1092` calls them unguarded | latent — the planner refuses to bank that form |
+| `transpose.h:73-77` | bakes `TP_L1_BYTES` / `TP_L2_BYTES` and picks its recursion body from them, while the CPU query reports 1.5-2x more | open: two disagreeing cache authorities |
+| `il2d_tier.h:1265`, `:2237`, `fftnd_il.h:1061` | four of the five L2 ladders gate only the chain's own stage spans; the static width pool beside them is pushed ungated | open, by design or not — needs a ruling |
+| `cpu_cache.h:518,524` | `vfft_cpu_l2_matches` / `_l1d_matches` have zero callers: a banked-width replay rule nothing replays | open |
 
 ## Step 7 — the route set stops being five numbers
 
@@ -522,6 +525,22 @@ The first version of this assertion was CIRCULAR — the array was declared
 a NULL hole, which is exactly the bug it exists to catch. The negative test
 is what exposed it. An assertion nobody has watched fail is not a guard.
 
+## Steps 4-6 — the evidence
+
+| check | result |
+| --- | --- |
+| `policy_gate`, exhaustive | 83,892,082 checks, ALL PASS (the new arms add L3 over every (banked, requested) pair, L6 over all 2^7 presence combinations against all three doors' spellings, L8 over every power of two to 1 GiB plus both cache capacities +/- 1) |
+| NEGATIVE TEST: drop `fs` from the presence helper | gate FAILS, `L6 engine presence: 3 of 384 door checks differ` |
+| NEGATIVE TEST: write `exceeds_l3` as `!fits_l2` — the refuted shape | gate FAILS twice, including `L8 polarity: a working set between L2 and L3 must fail BOTH` |
+| the full sweep | 27 pass, the three known pre-existing gaps unchanged |
+
+`obj_equiv` is NOT the gate for this step and cannot be: the step adds inline
+functions and moves an include, so GCC's inlining budget shifts and the tool's
+EQUIVALENT verdict is unreachable by construction (its own header says so).
+Measured, like-for-like under one flag set: 1111 -> 1112 symbols, ten changed
+bodies, TU instructions +4917 of 11.1M. Every changed body is a function that
+contains a migrated site or inlines one.
+
 ## Checklist
 
 - [ ] 1. This design (the inventory above is the survey of 2026-09-16).
@@ -540,22 +559,26 @@ is what exposed it. An assertion nobody has watched fail is not a guard.
       `vfft_policy_pool` + a family switch; MONO, PAIR and CHAIN3 moved out
       of the old 269-line function into one enumerator each, body for body.
       Not one admission rule is left in the planner.
-- [!] 5. Steps 4-5: L5, L3, L6, L7 — REFUTED AS SCOPED (2026-09-16, the
-      survey below). These are not four laws written many times; they are
-      four FAMILIES of similar-looking predicates with load-bearing
-      differences. Unifying them as written changes behavior at named
-      cells. Narrowed proposals below; the owner's ruling, not a
-      continuation.
-- [!] 6. Step 6: L8, the ladders — REFUTED AS SCOPED. The L3 gate's
-      polarity is the OPPOSITE of the seven L2 gates (it admits what does
-      NOT fit) and treats "cache size unknown" as admit, where the L2 ones
-      must refuse. One shared `fits()` flips the super-band exactly
-      backwards. Leave them separate; the finding is the deliverable.
+- [x] 5. Steps 4-5 (2026-09-16), in their NARROWED form — the owner ruled
+      the narrowed proposals available. L3's per-thread-count fence
+      (`vfft_policy_replays_at_T`, 7 sites) and L6's engine presence
+      (`vfft_policy_k1_engine_present`, 3 doors) are in the module; L5
+      migrated its 6 order-class row selectors onto the EXISTING L4 laws and
+      is otherwise documentation; L7 is documentation, its two headline
+      findings having been refuted by the check.
+- [x] 6. Step 6 (2026-09-16): L8 is TWO helpers, not one —
+      `vfft_policy_fits_l2` and `vfft_policy_exceeds_l3`, each carrying its
+      own polarity AND its own unknown-size rule in its name and body. Six
+      sites migrated. The refuted single `fits()` is now a gate arm: the
+      polarity check fails the build's own gate if anyone writes one as the
+      negation of the other.
 - [x] 7. Step 7: L10, the IL ROUTE SET is one declaration
       (`VW2_OOP_IL_ROUTE_MAX`, from the enum) and the name table is checked
       against it AT COMPILE TIME. The five hardcoded bounds are gone. The
       two serializers are NOT unified — the survey proves they diverge at
       route 10 — and the bwd builder's lower bound is documented as
       deliberate, not stale.
-- [ ] 8. Records: `design_contracts.md` (its tables become the module's
-      tables, one reference each), `docs/design/planning_model.md`, memory.
+- [x] 8. Records (2026-09-16): `design_contracts.md` section 4 declares the
+      band table's one implementation and names the three laws beside it;
+      `planning_model.md` section 2 points the `N band` branch at the module
+      and says which of the two wins where they disagree; memory.
