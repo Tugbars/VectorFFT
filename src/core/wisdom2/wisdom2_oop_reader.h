@@ -34,9 +34,26 @@
 static const char *vw2_oop_sp_name[8] = {
     "3p", "2pa", "2pb", "twl", "mono", "2pa_l3", "3p_l3", "ccol"
 };
-static const char *vw2_oop_il_name[11] = {
+/* THE IL ROUTE SET, declared once (2026-09-16). Route ids come from
+ * VFFT_K1_IL_* in oop/oop_plan.h; the largest is the only number this file
+ * may know, and the table's length is checked against it at COMPILE time.
+ *
+ * Why: on 2026-09-15 route 10 (the four-step) was added to the enum and to
+ * this table, but the table's declared length stayed [10] and the lookup
+ * bound stayed 10 — so every four-step verdict banked as `il_route=?` and
+ * the store refused the token. The build said nothing. It does now.
+ *
+ * The table is declared UNSIZED on purpose: its length comes from the
+ * NAMES, so the assertion below compares the names against the enum. Give
+ * the array an explicit [MAX + 1] and the check becomes circular — it then
+ * measures the macro against itself and passes with a NULL hole, which is
+ * precisely the bug it is meant to catch (verified by negative test). */
+#define VW2_OOP_IL_ROUTE_MAX VFFT_K1_IL_FS
+static const char *vw2_oop_il_name[] = {   /* length from the NAMES, checked below */
     "none", "legacy3p", "legacy2p", "mono", "cascade", "2p", "chain3", "prime", "flat", "ztt", "fs"
 };
+typedef char vw2__il_name_table_is_complete[
+    (sizeof vw2_oop_il_name / sizeof vw2_oop_il_name[0]) == VW2_OOP_IL_ROUTE_MAX + 1 ? 1 : -1];
 static const char *vw2_oop_var_name[3] = { "flat", "log3", "t1s" };
 
 static inline int vw2__oop_name_idx(const char **tab, int n, const char *v)
@@ -230,7 +247,7 @@ static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_sc
             if (si == 1) { e->k1_il_route = VFFT_K1_IL_NONE; got = 1; }
             continue;                          /* il CELLS always carry one */
         }
-        ilr = vw2__oop_name_idx(vw2_oop_il_name, 11, il);
+        ilr = vw2__oop_name_idx(vw2_oop_il_name, VW2_OOP_IL_ROUTE_MAX + 1, il);
         if (ilr < 0) continue;                 /* undecodable: next tier    */
         e->k1_il_route = ilr;
         if (ilr > VFFT_K1_IL_NONE) {
@@ -523,7 +540,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 VW2__OB_SET(1, "vars", vars);
             }
         }
-        if (e->k1_il_route < 0 || e->k1_il_route > 10) { vw2_rec_free(r); *why = "il-route-out-of-range"; return -1; }
+        if (e->k1_il_route < 0 || e->k1_il_route > VW2_OOP_IL_ROUTE_MAX) { vw2_rec_free(r); *why = "il-route-out-of-range"; return -1; }
         if (e->k1_il_route != VFFT_K1_IL_NONE) {
             VW2__OB_SET(1, "il_route", vw2_oop_il_name[e->k1_il_route]);
             if (e->il_R1 || e->il_R2) {
@@ -604,7 +621,11 @@ static inline int vw2_oop_rec_k1_bwd(vw2_rec_t *r, int N, int il_route,
     if (kv < 0)                       { *why = "no-bwd-verdict";        return -1; }
     /* kv == 0 is a VERDICT ("the default forms won") and banks as an
      * explicit il_kv=0 (2026-09-02); only a negative kv means unraced */
-    if (il_route < 0 || il_route > 7) { *why = "il-route-out-of-range"; return -1; }
+    /* NOT VW2_OOP_IL_ROUTE_MAX, and not stale: the dir=bwd sibling row
+     * exists only for the routes that HAVE a backward form axis (the pair,
+     * the chain, prime). The flat DIT, ZTURN-T and the four-step never bank
+     * one, and admitting them here would create a row nothing reads. */
+    if (il_route < 0 || il_route > VFFT_K1_IL_PRIME) { *why = "il-route-out-of-range"; return -1; }
     if (R1 <= 0 || R2 <= 0)           { *why = "bwd-pair-missing";      return -1; }
 
     r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = N;
@@ -903,7 +924,7 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             }
         }
     } else if (lay == VW2_LAY_IL) {
-        if (e->k1_il_route <= VFFT_K1_IL_NONE || e->k1_il_route > 10) {
+        if (e->k1_il_route <= VFFT_K1_IL_NONE || e->k1_il_route > VW2_OOP_IL_ROUTE_MAX) {
             vw2_rec_free(r); *why = "no-il-verdict"; return -1;
         }
         VW2__OB_SET(1, "il_route", vw2_oop_il_name[e->k1_il_route]);

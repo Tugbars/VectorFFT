@@ -1304,7 +1304,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
                     cbest);
         vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_col.R, h->il2d_col.nst, bw,
                        bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                       bestns + cbest, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
+                       bestns + cbest, vfft_policy_ord_rankn(cfg));
         _vw2_persist(W, cfg);
     }
 }
@@ -1351,7 +1351,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                            h->il2d_col.R, h->il2d_col.nst,
                            h->il2d_rw, h->il2d_col.wl, 0, h->nthreads,
-                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
+                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, vfft_policy_ord_rankn(cfg));
             _vw2_persist(W, cfg);
             return;
         }
@@ -1367,7 +1367,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
                    h->il2d_col.R, h->il2d_col.nst, h->il2d_rw,
                    h->il2d_col.wl, h->il2d_col.colmt, h->nthreads,
                    (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                   h->il2d_col.colmt ? mt : st, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
+                   h->il2d_col.colmt ? mt : st, vfft_policy_ord_rankn(cfg));
     _vw2_persist(W, cfg);
 }
 
@@ -2408,8 +2408,8 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     }
     vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
                          h->il2d_col.wl, h->il2d_col.tfuse, h->il2d_rowoop,
-                         -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
-    vw2_2d_il_tok_seti(&W->vw2, N1, N2, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR), "sw", bwc);
+                         -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, vfft_policy_ord_rankn(cfg));
+    vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "sw", bwc);
     _vw2_persist(W, cfg);
     free(z);
 }
@@ -2515,7 +2515,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
                              h->il2d_col.wl, h->il2d_col.tfuse, h->il2d_rowoop,
                              0, h->nthreads,
-                             (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
+                             (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, vfft_policy_ord_rankn(cfg));
         _vw2_persist(W, cfg);
         return;
     }
@@ -2580,9 +2580,9 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
                          h->il2d_col.wl, h->il2d_col.tfuse, h->il2d_rowoop,
                          h->il2d_col.colmt, h->nthreads,
                          (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                         h->il2d_col.colmt ? mt : st, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
+                         h->il2d_col.colmt ? mt : st, vfft_policy_ord_rankn(cfg));
     {   /* the threaded arm's shape beside cmt/cmtt, read back at that T only */
-        const int ord = (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR);
+        const int ord = vfft_policy_ord_rankn(cfg);
         vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "mtarm", h->il2d_col.natarm);
         vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "msw", h->il2d_col.msw);
         if (h->il2d_col.nat) vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "nls", h->il2d_col.natst);

@@ -239,6 +239,9 @@ static int _vfft_plan_threads(const vfft_config_t *cfg)
 
 #include "vfft_internal.h"   /* the three private structs (migration step 15) */
 #include "oop/k1_fourstep.h"  /* the K=1 interleaved FOUR-STEP above ZTURN-T's ceiling (2026-09-15) */
+#include "planning/policy.h" /* THE planning policy: one place a law about a REQUEST is written
+                             * (planning_policy_design.md, 2026-09-16). Sits above every engine
+                             * (the bands are in scope by here) and below every planner and door. */
 
 static void _own_batch_free(vfft_batch b); /* defined below; used by vfft_destroy */
 

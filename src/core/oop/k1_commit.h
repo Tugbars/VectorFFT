@@ -288,13 +288,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
 static vfft_il_dp_context_t _k1_il_dp_ctx;      /* planning side, one create at a time */
 static int _k1_il_dp_ctx_ready = 0;
 static int _k1_il_dp_busy = 0;                  /* a race in progress: nested calls refuse */
-#ifndef VFFT_K1_IL_PLAN_MAX_N
-#define VFFT_K1_IL_PLAN_MAX_N 16384 /* odd N above 2048 race here; 4 scratch planes of this size */
-#endif
-#ifndef VFFT_K1_IL_PLAN_ODD_MAX_N
-#define VFFT_K1_IL_PLAN_ODD_MAX_N 262144 /* the flat DIT's cells (no factor of 4) race up to
-                                          * here; the planner context GROWS to it on demand */
-#endif
+/* the race CEILINGS live in planning/policy.h (L9, 2026-09-16) */
 static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
 {
     vfft_il_cand_t top;
@@ -311,13 +305,9 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
      * odd machinery's (the cascade's) until its turn. */
     if (!W || W->vw2_off_oop || N < 2 || getenv("VFFT_NO_K1PLAN"))
         return 0;
-    {
-        const int pow2 = (N & (N - 1)) == 0;
-        const int oddband = vfft_ztt_odd_band(N);   /* 2^a*odd, ZTURN-T's since 2026-09-14 */
-        if (!pow2 && !oddband && N >= 2048 && !(N & 3))
-            return 0;
-        if (N > (pow2 ? VFFT_K1FS_MAX_N : oddband ? VFFT_ZTT_MAX_N
-                                        : ((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N)))
+    {   /* ownership + budget, one question (planning/policy.h, L1/L9) */
+        vfft_cell_t pc = vfft_policy_cell(cfg, N, 1, 1, 0, 1);
+        if (!vfft_policy_races(&pc))
             return 0;
     }
     /* the planner context is ONE static; the four-step's candidates create
@@ -407,7 +397,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     /* the request's ORDER CELL (2026-09-05): an explicit SCRAMBLED request
      * reads the ord=scr row — the scrambled pool's own verdict — and nothing
      * else; DEFAULT and NATURAL read the ord=nat row. */
-    const int scr_req = (cfg->order == VFFT_ORDER_SCRAMBLED);
+    const int scr_req = (vfft_policy_ord_k1(cfg, N, 0) == VW2_ORD_SCR);
     const vfft_oop_wisdom_entry_t *ke =
         W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
                        : ((scr_req ? vw2_oop_lookup_k1_scr(&W->vw2, N, &keb)
@@ -439,8 +429,11 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * race is the only source of a scrambled plan, and a natural-writing pair
      * is not one. Seen 2026-09-09: the in-place scrambled create at 2048
      * attached a natural-writing pair 64.32. */
-    if (scr_req && ((N & (N - 1)) == 0 || vfft_ztt_odd_band(N)) && !ke)
-        return;
+    {   /* the writer-band law (planning/policy.h): no fallback here */
+        const vfft_cell_t sc = vfft_policy_cell(cfg, N, 1, 1, 0, 1);
+        if (scr_req && vfft_policy_scr_writer_band(&sc) && !ke)
+            return;
+    }
     /* MONO verdict (2026-09-04): the cell's plan is ONE solo kernel; no pair
      * is built here — the caller serves the mono door (the OOP block reads
      * the form itself; in place, _k1_il_mono_candidate). Without this an
