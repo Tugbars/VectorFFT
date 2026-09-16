@@ -78,6 +78,8 @@ long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h: the odd-N flat DIT MT eng
 #include "real_dispatch_config.h"
                                  * (vfft_create serves the banked route+chain
                                  * verdict). Requires build.py --vfft. */
+#include "planning/policy.h"    /* THE admission law: the bench asks, it does not
+                                 * keep its own copy (planning_policy_design.md L11) */
 
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
@@ -434,6 +436,7 @@ static int g_k1zip = 0;              /* --k1zip: K=1 kind-4 cells IN-PLACE
                                       * (both engines) — the apples-to-
                                       * apples in-place interleaved cell */
 static void bench_pin_one_thread(void); /* the one-thread protocol helper (defined beside ilmt_pin_pcores) */
+static int g_k1_direct_cell = 0;  /* the policy's admission for the direct K=1 cell */
 static int g_k1noop_mt = 0;          /* --k1noop --mt: the odd-N flat DIT's threaded verdict
                                        * (il_flatdit_mt.h) vs MKL at the same T — the
                                        * two-team protocol of --3dil --mt (traps a-d) */
@@ -5641,7 +5644,16 @@ int main(int argc, char **argv)
     /* ... and (2026-09-15) the 2^a * odd cells of ZTURN-T's odd band
      * (docs/design/ztt_odd_design.md): the K=1 IL tier serves them through
      * the same front door; their kind-4 cascade lines are purged. */
-    if (g_k1nat && target_N && (target_N < 2048 || (target_N & 3) || vfft_ztt_odd_band(target_N) || vfft_ztt_band(target_N) || vfft_k1fs_band(target_N)) && benched == 0)   /* the pow2 band too since the kind-4 lines left (2026-09-15) */
+    {   /* the K=1 IL direct cell: asked, not re-derived (planning/policy.h).
+         * NOT the same set as "the planner races here" — above the race
+         * ceiling an odd N is still served by the prime engine. */
+        vfft_cell_t bc;
+        memset(&bc, 0, sizeof bc);
+        bc.N = target_N; bc.K = 1; bc.rank = 1; bc.T = 1;
+        bc.layout = VW2_LAY_IL; bc.ord = VW2_ORD_NAT;
+        g_k1_direct_cell = vfft_policy_k1_direct_cell(&bc);
+    }
+    if (g_k1nat && target_N && g_k1_direct_cell && benched == 0)   /* the pow2 band too since the kind-4 lines left (2026-09-15) */
     {
         run_k1z_cell(target_N, NULL, out, cool_ms, flip);
         benched++;

@@ -229,8 +229,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         /* the wisdom ORDER axis of this cell (2026-09-04): natural cells
          * race their chain under the natural pass and bank on their own
          * ord=nat row — never sharing the scr row's chain. */
-        const int il2d_ord = (cfg->order == VFFT_ORDER_NATURAL)
-                                 ? VW2_ORD_NAT : VW2_ORD_SCR;
+        const int il2d_ord = vfft_policy_ord_rankn(cfg);
         int il2d_tbl_done = 0;     /* N1 tables built early (the N1-arm race) */
         double *il2d_bluchf = NULL, *il2d_bluchb = NULL;
         double *il2d_blukf = NULL, *il2d_blukb = NULL;

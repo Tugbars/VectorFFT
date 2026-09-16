@@ -147,7 +147,7 @@ static int _pq_row_key(const struct vfft_plan_s *h, const vfft_config_t *cfg,
 {
     const int il = (cfg->layout == (int)VFFT_LAYOUT_INTERLEAVED);
     const int real = (h->transform != VFFT_C2C);
-    const int nat = (cfg->order == VFFT_ORDER_NATURAL);
+    const int nat = (vfft_policy_ord_rankn(cfg) == VW2_ORD_NAT);
     int i;
     for (i = 0; i < 4; i++)
     {

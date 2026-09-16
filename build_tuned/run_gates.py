@@ -154,6 +154,9 @@ ARGSTYLE = {
     "vfft_tcbatch_gate":       ("flag", True),
     # wants a dir containing oop_wisdom.txt -> needs real data, but a COPY
 
+    # the four-step (2026-09-15): a bare scratch dir, SEEDED so the upper-band
+    # cells replay their banked verdicts instead of racing 2^19..2^21 cold
+    "k1_fourstep_gate":        ("bare", True),
     "il2d_m1_gate":            ("bare", True),
     "il2d_real_gate":          ("bare", True),
     "odd_partner_cells_gate":  ("bare", True),
@@ -174,6 +177,7 @@ TEXTUAL = {"sp_ccol_decode_gate"}       # #includes vfft.c; must NOT add --vfft
 # Wall-clock budget overrides, seconds (see run()). Only gates whose honest
 # runtime does not fit the flat seeded/cold split belong here.
 BUDGET_OVERRIDE = {
+    "k1_fourstep_gate":        900,    # 3 upper-band cells x 2 classes x 2 placements, T=8, even replayed
     "k1_pow2_gate":            900,    # cold races at 6 pow2 cells x 2 order classes x (T=1 + T=8)
     "vfft_natural_front_gate": 1800,   # cold races at 5 N x 4 passes + reload: 12-18 min on the i9
     "odd_partner_cells_gate":  900,    # 20 cells x (correctness + A/B build pair) and wisdom_write=0: it cannot seed itself, so it recalibrates every run (464 s measured uncapped, 2026-09-02)

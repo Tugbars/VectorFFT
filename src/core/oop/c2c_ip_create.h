@@ -119,9 +119,8 @@ static void _c2c_race_reseed(void *v)
  * DEFAULT path (the @scrmode row) until the odd machinery has its turn. The
  * lookup (step 1 below) and the bank use this one classification. */
 static inline int _ip_order_is_nat(const vfft_config_t *cfg, int N)
-{
-    return cfg->order == VFFT_ORDER_NATURAL ||
-           (cfg->order == VFFT_ORDER_DEFAULT && (N & (N - 1)) == 0);
+{   /* the law itself lives in planning/policy.h (L4, 2026-09-16) */
+    return vfft_policy_ord_k1(cfg, N, /*inplace=*/1) == VW2_ORD_NAT;
 }
 
 static void _bank_ipmode_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
