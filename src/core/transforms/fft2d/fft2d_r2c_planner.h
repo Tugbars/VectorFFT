@@ -151,7 +151,8 @@ static double vfft_fft2d_r2c_plan_measure(int N1, int N2,
                 N1, K_pad, col_cand[c].factors, col_cand[c].variants,
                 col_cand[c].nf, col_cand[c].use_dif_forward, reg);
             if (!pcc) { stride_plan_destroy(prc); continue; }
-            stride_plan_t *p = stride_plan_2d_r2c_from(N1, N2, B, K_pad, prc, pcc); /* owns both */
+            stride_plan_t *p = stride_plan_2d_r2c_from(N1, N2, B, K_pad, prc, pcc,
+                                                       /*recalib=*/0); /* owns both; an arm of an OUTER race */
             if (!p) continue;
             built++;
 

@@ -65,11 +65,17 @@ than the bug.
 
 | where | what a naive guard would do | what it needs |
 | --- | --- | --- |
-| `transforms/real/c2r_dispatch.h:350` | `vfft_c2r_layout_wisdom` falls back to `vfft_c2r_best_layout(K)` — a THRESHOLD rule. Hiding the row swaps a measurement for a heuristic | a racing path for the natural-vs-split layout choice, then the guard. `vfft_c2r_disp_create_auto` also has no `cfg`, so the flag needs plumbing |
+| ~~`transforms/real/c2r_dispatch.h:350`~~ | **VACUOUS, closed 2026-09-16**, and the survey's framing was wrong twice. (1) The race EXISTS: `_c2r_race_arms` in `real_route_race.h`, an alternating-order median-of-9 A/B with hysteresis, is step 4 of `_c2r_route_decide`. (2) `vfft_c2r_disp_create_auto` has exactly ONE caller — `vfft.c:591`, step 3, the "cannot race" fallback — and `vw2_real_route_bank` runs only behind `may_race`, so on that path no wisdom2 route row can exist for the flag to hide. Both arms are SPLIT-library engines (`VFFT_C2R_NATURAL` names the stage-0 natural initiator feeding split re/im through the packed cascade, NOT output order and NOT the interleaved library), so the bakeoff never crossed the library line. | closed |
+| `transforms/real/c2r_dispatch.h:307` | RESIDUE, not a recalibrate bug: `c2r_path.txt` is a SECOND, offline-seeded authority for a choice the bakeoff also makes, consulted only where the bakeoff is not allowed to run. Nothing refreshes it. Worth a sunset ruling | open, low |
 | `oop/k1_commit.h:209` | the prime engine's ZTURN-T inner falls through "to the rules below". At M <= 4096 it degrades to the il2p pair; above 4096 it loses the inner entirely (`return 0` at `:322`) | under the flag, RE-RACE the K=1 cell at M and then read the fresh row — a nested race, and `_k1_il_dp_busy` may refuse it |
 
-Same shape, same family, already recorded below: `vfft.c:506` and its c2r twin
-at `:585`.
+(`vfft.c:506` and its c2r twin were filed here too, and are now CLOSED as
+vacuous — see the table below.)
+
+A note for anyone writing a probe: `VFFT_MEASURE` is the CHEAPEST rigor tier,
+production uses `VFFT_PATIENT`, and several races are gated on
+`rigor != VFFT_MEASURE`. A probe that sets MEASURE has those windows SHUT and
+will not reproduce what a real caller sees.
 
 **the flag reached the wrong children, in both directions** — two one-line
 fixes, 2026-09-16:
@@ -103,7 +109,7 @@ appears once" on its own is equally consistent with the clones never having
 raced, which would have made the fix a no-op.
 
 ### Still open in this section
-| `vfft.c:506`, c2r twin `:585` | the banked route row IS correctly invisible under the flag, and the next step then returns the STRUCTURAL THRESHOLD DEFAULT, racing nothing | belongs with A2: needs the racing path first |
+| ~~`vfft.c:506`, c2r twin `:585`~~ | **VACUOUS, closed 2026-09-16.** The claim was that the flag hides the row and the next step returns the threshold default. It cannot bite. `may_race` is `rigor != VFFT_MEASURE && (N % 2) == 0 && bK > 1 && bK <= 64` (c2r: `bK <= 128`), and in each failing case there is no row to lose: the race is the only writer, so odd N and K above the window have none, and K=1 is explicitly unbankable ("nowhere legal to bank" — q=1 real cells are the interleaved zr2c verdicts'). The rigor term never blocks in practice because production uses PATIENT (owner, 2026-09-16), and it is not inverted: VFFT_MEASURE is the CHEAP tier, as every other rigor test in the tree confirms (`budget 0.02 vs 0.05`, `trials 2 vs 3`, `RR 31 vs 81`). | closed |
 | `transforms/fft2d/fft2d_r2c.h:988` | the rank-2 twin of the adopt verdict fixed above, same defect, not fixed: `stride_plan_2d_r2c_from` has five callers that would all need the flag | open |
 
 ## B. Order-class mismatches — a reader and a writer that disagree

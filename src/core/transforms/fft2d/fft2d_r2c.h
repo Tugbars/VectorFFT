@@ -835,10 +835,16 @@ static void _fft2d_r2c_execute_bwd_oop(stride_fft2d_r2c_data_t *d,
                                        const double *in_im,
                                        double *real_out);
 
+/* recalib: the caller's cfg->recalibrate, for the measured row-engine
+ * adoption below. Only the FRONT DOOR passes it; the calibrators and the
+ * plan-from-entry rebuilds pass 0 on purpose -- they build candidate plans to
+ * be timed by an OUTER race, and re-measuring a sub-decision per candidate
+ * would both cost a full A/B per arm and make the outer race unfair. */
 static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
                                                size_t K_pad,
                                                stride_plan_t *plan_r2c,
-                                               stride_plan_t *plan_col)
+                                               stride_plan_t *plan_col,
+                                               int recalib)
 {
     /* Caller must ensure:
      *   B == plan_r2c->K (they index the same row-pass scratch).
@@ -985,7 +991,13 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
         _f2d_sr2c_bwd_fn sb = _f2d_sr2c_bwd_resolve(N2, &d->str_blk);
         if (sf && sb && N1 >= 8) {
             int aw_f = 0, aw_b = 0;
-            if (vfft_adopt_lookup("2d", N1, N2, d->str_blk, &aw_f, &aw_b)) {
+            /* recalib (2026-09-17): the twin of the rank-3/4 "nd" verdict
+             * fixed a day earlier. This is a MEASURED A/B (timed arms, 5%
+             * hysteresis below) and replaying it under the flag threw away the
+             * measurement the caller asked for. The race that follows ends in
+             * vfft_adopt_record, which overwrites on key match. */
+            if (!recalib &&
+                vfft_adopt_lookup("2d", N1, N2, d->str_blk, &aw_f, &aw_b)) {
                 /* §6a49: warm create — apply the persisted verdicts, skip
                  * both A/B blocks entirely. */
                 d->strided_fwd = aw_f ? sf : 0;
