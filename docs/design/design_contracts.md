@@ -111,6 +111,19 @@ Chains, tile widths, kernel forms, backward forms: each is a candidate, the
 race decides, the row banks the winner. A ladder defines a pool; it is never
 a rule that picks a value.
 
+Applied to the 2D/3D interleaved COLUMN CHAIN, 2026-09-17 (owner: "greedy
+fallback is not acceptable ... it should be raced"). The column axis raced
+only when its enumerator produced two or more chains; a cell with exactly
+ONE legal chain (N1 in {3, 4, 5, 7, 8, 11, 13, 17, 19}) skipped the race and
+fell to a greedy-largest builder -- unmeasured, unbanked, re-derived on every
+create, and carrying a private copy of the radix pool with a depth of 8 where
+the race allows 4. The builder is DELETED (`_il2d_build_chain`); one arm is
+still a race and banks; a race with no buildable arm has no chain and falls
+to Bluestein or refuses; the `VFFT_IL2D_CHAIN` pin survives as its own
+function; the 3D tier installs the Bluestein M-chain provider it never had.
+Gate: `benches/il2d_onechain_gate.c` (watched to FAIL with the old guard
+re-injected: "cold create raced 0 time(s), expected 1").
+
 ## 7. Recorded corrections, so they are not re-derived
 
 - "Natural output is a legal scrambled answer" — no. The header's
