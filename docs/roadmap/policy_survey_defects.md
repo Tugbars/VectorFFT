@@ -71,12 +71,38 @@ than the bug.
 Same shape, same family, already recorded below: `vfft.c:506` and its c2r twin
 at `:585`.
 
-### Still open in this section
+**the flag reached the wrong children, in both directions** — two one-line
+fixes, 2026-09-16:
 
-| where | what | state |
+- `transforms/fftnd/fftnd_il.h` — `_ilnd_build_flat` copied rigor, wisdom and
+  wisdom_write into the axis-2 child config but NOT `recalibrate`, while its
+  twin `_ilnd_build_child` had always set it. So a recalibrate 3D IL create
+  re-raced the parent and replayed the child.
+- `transforms/fft2d/fft2d_create.h` — the opposite. `ic = *cfg` carries the
+  flag into the plane-queue's child config and `:147` cleared `wisdom_write`
+  but not `recalibrate`, so each of the T clones re-raced the cell the
+  PRIMARY had just banked. The primary at `:98` still keeps the flag, which
+  is correct; only the clones are cleared.
+
+Evidence, warm store, same cell, flag off then on:
+
+| cell | flag off | flag on |
 | --- | --- | --- |
-| `transforms/fftnd/fftnd_il.h:1128` | `_ilnd_build_flat` copies rigor, wisdom and wisdom_write into the child config but NOT `recalibrate`; its twin `_ilnd_build_child` sets it 28 lines earlier | VERIFIED in source, unfixed. Reachable on EVERY recalibrate=1 3D IL create |
-| `transforms/fft2d/fft2d_create.h:92` | `ic = *cfg` propagates the flag into the plane-queue's child config; `:147` clears `wisdom_write` but not `recalibrate`, so each of the T clones re-races instead of replaying what the primary just banked | VERIFIED in source, unfixed. Contradicts the design comment at `:127-131` |
+| 32x32x32 IL 3D c2c | 0 child race lines, 0.11 ms | 2 child race lines, 901.40 ms |
+
+and for the clones, a CONTROL build with the one line reverted, 512x512 K=4
+T=4 with the flag on, counting race lines:
+
+| | axis race | chain race | colmt race | pq race |
+| --- | --- | --- | --- | --- |
+| clones inherit the flag (the bug) | 5 | 5 | 1 | 1 |
+| clones cleared (the fix) | 1 | 1 | 1 | 1 |
+
+5 = the primary plus four clones. The control was necessary: "each line
+appears once" on its own is equally consistent with the clones never having
+raced, which would have made the fix a no-op.
+
+### Still open in this section
 | `vfft.c:506`, c2r twin `:585` | the banked route row IS correctly invisible under the flag, and the next step then returns the STRUCTURAL THRESHOLD DEFAULT, racing nothing | belongs with A2: needs the racing path first |
 | `transforms/fft2d/fft2d_r2c.h:988` | the rank-2 twin of the adopt verdict fixed above, same defect, not fixed: `stride_plan_2d_r2c_from` has five callers that would all need the flag | open |
 

@@ -1126,6 +1126,11 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
     rc.nthreads = 1;
     rc.wisdom = cfg->wisdom;
     rc.wisdom_write = cfg->wisdom_write;
+    rc.recalibrate = cfg->recalibrate;   /* the twin _ilnd_build_child has always
+                                          * carried it; this one did not, so a
+                                          * recalibrate 3D IL create re-raced the
+                                          * parent and replayed the flat child's
+                                          * row (2026-09-16) */
     d->row = (struct vfft_plan_s *)vfft_create(&rc);
     if (!d->row)
     {
