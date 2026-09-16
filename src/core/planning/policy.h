@@ -320,6 +320,17 @@ static inline int vfft_policy_admits(const vfft_cell_t *c, vfft_fam_t f)
     return 0;
 }
 
+/* -- L2, rank >= 2: the COLUMN CHAIN POOL's cap ---------------------------
+ * The 2D/3D interleaved column axis enumerates every ordered composition of
+ * N1 over the radix pool (il2d_cols.h, _il2d_enum_rec) and races them all;
+ * this is how many it will hold. A pool cap is policy: it decides which
+ * candidates EXIST. It lives here, ahead of every consumer, because the
+ * four-step's super-band (oop/k1_fourstep.h) sizes its arrays by it and is
+ * included long before the enumerator -- it used to carry the literal 24,
+ * which fit exactly and would have been a stack overflow the day this
+ * changed. The no-silent-caps law is enforced by the enumerator itself. */
+#define VFFT_IL2D_MAXCAND 24
+
 /* -- L3 (narrowed). the PER-THREAD-COUNT FENCE --------------------------
  * A threading verdict is a MEASUREMENT AT A THREAD COUNT: the row banks the
  * verdict and the T it was raced at, and a T=4 verdict must never serve a
