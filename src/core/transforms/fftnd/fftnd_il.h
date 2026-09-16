@@ -1295,9 +1295,14 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     d->plane = (size_t)N2 * (size_t)N3;
     d->mt_t = nthr;
     d->nat = nat;
-    /* the column build's Bluestein inner-chain provider reads this create */
+    /* the column build's Bluestein inner-chain provider reads this create.
+     * The HOOK too (2026-09-17): only the 2D create installed it, so a 3D
+     * cell whose axis is prime got its M chain from the greedy builder --
+     * or from the raced provider, depending on whether a 2D create had run
+     * earlier in the process. Now it is raced here as well. */
     _il2d_blu_ctx.W = W;
     _il2d_blu_ctx.cfg = cfg;
+    _il2d_blu_chain_hook = _il2d_blu_m_chain;
     /* axis 0: the rank-3 row's own tokens; the order cell is the plan's
      * (DEFAULT and SCRAMBLED spell the scrambled serving; NATURAL is its
      * own cell). The axis-0 PASS is the scrambled class in both: the natural

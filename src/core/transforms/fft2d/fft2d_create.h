@@ -542,12 +542,10 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             {
                 /* chain precedence: env > the banked lay=il real cell
                  * (direction-shared, keyed t=r2c ord=scr — the pair law
-                 * requires one chain for both directions) > greedy. The
+                 * requires one chain for both directions) > the RACE. The
                  * banked row also carries rw= (the row-route verdict). */
-                if (getenv("VFFT_IL2D_CHAIN"))
-                    rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
-                                            &il2d_nst);
-                else if (!cfg->recalibrate &&
+                rok = _il2d_env_chain(N1, il2d_R, il2d_f, il2d_b, &il2d_nst);
+                if (!rok && !cfg->recalibrate &&
                          vw2_2d_rl_lookup(&W->vw2, N1, N2,
                                           cfg->transform == VFFT_C2R,
                                           il2d_R,
@@ -559,20 +557,19 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                          _il2d_resolve(il2d_R, il2d_nst, il2d_f,
                                        il2d_b))
                     rok = 1;
-                else
+                if (!rok)
                 {
                     /* REAL cell, no banked row for this order
                      * (2026-09-04): race the composition pool over the
                      * hp1-wide plane — under the natural pass for
                      * ord=nat, the scrambled pass for ord=scr — and bank
-                     * the winner on this order's real row. Greedy is
-                     * only the fallback when nothing raced (a prime N1
-                     * has no chain and falls through to Bluestein). */
+                     * the winner on this order's real row. No greedy
+                     * (2026-09-17): no chain means Bluestein below. */
                     int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
                     int cur[8], ncand = 0, dropped = 0, raced = 0;
                     _il2d_enum_rec(N1, 0, cur, cand, lens, &ncand,
                                    &dropped);
-                    if (ncand > 1)
+                    if (ncand >= 1)   /* one arm is still a race (2026-09-17) */
                     {
                         double bns = 0;
                         int win = _il2d_race_chains(
@@ -599,12 +596,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                             _vw2_persist(W, cfg);
                         }
                     }
-                    /* rok enters this block already set: the greedy
-                     * fallback must ASSIGN it (a prime N1 has no chain
-                     * and must fall through to the Bluestein build). */
-                    if (!raced)
-                        rok = _il2d_build_chain(N1, il2d_R, il2d_f,
-                                                il2d_b, &il2d_nst);
+                    rok = raced;   /* no chain (prime N1, or no buildable arm)
+                                    * falls through to the Bluestein build */
                 }
             }
             if (rok && il2d_bblu <= 0)
