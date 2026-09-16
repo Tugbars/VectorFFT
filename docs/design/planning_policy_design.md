@@ -458,21 +458,41 @@ do NOT". Collapsing them re-runs a heuristic the planner already refuted.
 
 **L8, ladders (~27 sites).** Polarity, above.
 
-### An open defect, found by the survey and confirmed (2026-09-16)
+### An API gap, found by the survey, confirmed — and FIXED (2026-09-16)
 
-`cfg->recalibrate` does not reach the 2D c2c tier's own lookup. A caller
-asking for a recalibration of a 2D c2c cell gets its banked chain, axes and
-threading verdict replayed; only the real tier re-races. `cfg` is in scope
-at the site and its five siblings in the same file are guarded, so this
-reads as an omission rather than a policy.
+To be precise about what this is and is not: REPLAYING a banked cell is
+correct and is the whole design — nothing should re-race on its own. The
+only thing at stake is the caller's explicit override. `include/vfft.h`
+promises "force re-measurement with recalibrate=1 ... re-measures and
+overwrites the cell even on" a hit. That flag does not reach the 2D c2c
+tier's chain lookup, so for a 2D c2c cell it is silently ineffective: the
+banked chain, band width, row route and threading verdict are replayed
+anyway. The real tier honours it; five sibling lookups in the same file
+honour it; `_il2d_col_build` does receive `cfg`.
 
-NOT FIXED HERE. Adding the guard changes behavior: every recalibrate 2D c2c
-create would begin racing a chain pool (seconds per cell) and would rewrite
-banked verdicts. That is the owner's call, and it is exactly the class of
-change this migration refuses to make silently.
+LATENT: no in-tree caller passes recalibrate for a 2D c2c cell — the flag's
+users are `pool_preserve_gate` and the three ZT restamp probes, all 1D K=1.
+And the practice already works around it: today's 2D natural re-races
+DROPPED the affected rows from the store instead of passing recalibrate,
+which is why they raced.
 
-Today's 2D re-races are unaffected: they DROPPED the rows from the store
-rather than passing recalibrate, so they raced for the right reason.
+FIXED on the owner's ruling ("that's an oversight"): the lookup in
+`_il2d_col_build` now carries `!cfg->recalibrate`, matching the real tier's
+twin and the five siblings. The behaviour change is confined to callers who
+explicitly raise the flag, which is what the flag is for — a normal create
+still replays its banked verdict, as it always did. The 3D tier gets the
+same fix for free: `fftnd_il.h` calls the same builder for both its axes.
+
+Proved on a warm store (a scratch copy), same cell, flag off then on:
+
+```
+ recalibrate=off : 0 race lines          (replays the banked verdict)
+ recalibrate=on  : chain race 512x512    (the caller's override honoured)
+                   axis race  512x512
+```
+
+Reproduce: `VFFT_IL2D_LOG=1 [VFFT_PROBE_RECAL=1] il2d_mt_probe.exe <store>
+512 512 1 0 0` — the `VFFT_PROBE_RECAL` knob exists for exactly this.
 
 Narrowed proposals, if the owner wants them later: for L3, a named
 `policy_replays_at_T()` for ONLY the five per-thread-count fences, leaving
