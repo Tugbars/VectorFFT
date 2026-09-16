@@ -20,7 +20,7 @@
  *
  * WHY THE FORWARD DECLARATIONS SURVIVED THE MOVE
  * ----------------------------------------------
- * _il2d_build_chain calls _il2d_build_tables, which is defined at the bottom of
+ * the chain builders call _il2d_build_tables, which is defined at the bottom of
  * this file, and the Bluestein builder calls back into the column pass. The
  * original file resolved that with forward declarations; they are carried over
  * verbatim rather than reordered, because reordering definitions changes what
@@ -45,10 +45,12 @@
 #include "support/diag.h"     /* _vfft_warn - the chain builder refuses loudly */
 
 /* ── native IL 2D c2c: column-chain builders (fft2d_il_c2c_design.md).
- * _il2d_build_chain: factor N1 greedy-largest over the t2c/n1c radix set;
- * stages 0..m-2 resolve t2c pairs, the last resolves the n1c pair. v1
- * STRUCTURAL default — the chain is a lay=il wisdom axis at M3 (raced,
- * never a shipped constant). Returns 0 if N1 is not expressible.
+ * _il2d_enum_rec: every ordered composition of N1 over the t2c/n1c radix
+ * set (depth <= 4, capped) -- THE candidate pool; the race picks, wisdom
+ * banks. _il2d_env_chain: the VFFT_IL2D_CHAIN pin, and nothing else. (The
+ * greedy-largest builder that used to sit beside them was deleted
+ * 2026-09-17: a chain is raced, never derived.) A chain's stages 0..m-2
+ * resolve t2c pairs, the last resolves the n1c pair.
  * _il2d_build_tables: per t2c stage, the d-major record table — per digit
  * d in [0,D), per leg r in 1..R-1, [c x4][-s,+s,-s,+s] for
  * w = e^{sgn*2*pi*i*(d*r)/L} (fwd sgn=-1; bwd table CONJUGATED — the
@@ -366,77 +368,61 @@ static void _il2d_col_pass(const double *src, double *dst, int N1,
     }
 }
 
-static int _il2d_build_chain(int N1, int *Rs, vfft_il2p_fn *ff,
-                             vfft_il2p_fn *fb, int *nst)
+/* THE ENV PIN, and nothing else (2026-09-17). VFFT_IL2D_CHAIN="64.16"
+ * (dot-separated radices, product == N1) is the raced axis's escape hatch:
+ * env BEATS wisdom and never banks. Returns 1 with Rs/nst/ff/fb filled, 0
+ * when the variable is unset OR names an invalid chain (warned LOUDLY) --
+ * and 0 means the caller RACES, exactly as it would with no pin.
+ *
+ * This function used to carry a GREEDY builder after the env block: walk
+ * the radix pool largest-first, take the first divisor, never measure.
+ * Three sites used it as their fallback -- a cell with exactly ONE legal
+ * chain (raced nowhere, banked nowhere, re-derived on every create), a race
+ * whose every arm failed to build, and the Bluestein inner whenever its
+ * wisdom provider was not installed (the 3D tier never installed it). The
+ * owner's law is NEVER a heuristic, ALWAYS wisdom (2026-09-17: "greedy
+ * fallback is not acceptable ... it should be raced"). Now: a one-candidate
+ * cell goes through the same race as any other and BANKS; a race with no
+ * buildable arm has no chain and falls to Bluestein or refuses; the 3D tier
+ * installs the provider. The greedy's private copy of the radix pool --
+ * depth 8 where the race allows 4, and a remainder rule the race does not
+ * have, so it could build chains the race never raced -- went with it. */
+static int _il2d_env_chain(int N1, int *Rs, vfft_il2p_fn *ff,
+                           vfft_il2p_fn *fb, int *nst)
 {
-    static const int POOL[] = { 64, 32, 16, 8, 4,
-                                27, 25, 21, 19, 17, 15, 13, 11, 9, 7,
-                                5, 3 };
-    int L = N1, m = 0;
-    /* env override first: VFFT_IL2D_CHAIN="64.16" (dot-separated radices,
-     * product must equal N1) — the raced-axis escape hatch, env BEATS the
-     * structural default (and, later, wisdom). Invalid spec: warn LOUDLY
-     * and fall through to greedy — never a silent reinterpretation. */
-    {
-        const char *ce = getenv("VFFT_IL2D_CHAIN");
-        if (ce && *ce)
-        {
-            const char *p = ce;
-            long prod = 1;
-            m = 0;
-            while (*p && m < 8)
-            {
-                char *end;
-                long r = strtol(p, &end, 10);
-                if (end == p || r < 2)
-                    break;
-                Rs[m++] = (int)r;
-                prod *= r;
-                p = (*end == '.') ? end + 1 : end;
-                if (*end != '.' && *end != '\0')
-                    break;
-                if (*end == '\0')
-                {
-                    p = end;
-                    break;
-                }
-            }
-            if (*p == '\0' && m > 0 && prod == N1
-                && _il2d_resolve(Rs, m, ff, fb))
-            {
-                *nst = m;
-                return 1;
-            }
-            _vfft_warn("VFFT_IL2D_CHAIN=\"%s\" invalid for N1=%d "
-                       "(product/radix mismatch) — greedy default used",
-                       ce, N1);
-            m = 0;
-            L = N1;
-        }
-    }
-    while (L > 1)
-    {
-        int p, R = 0;
-        if (m >= 8)
-            return 0;
-        for (p = 0; p < (int)(sizeof POOL / sizeof POOL[0]); p++)
-        {
-            const int r = POOL[p];
-            if (L % r == 0 && (L / r == 1 || L / r >= 4))
-            {
-                R = r;
-                break;
-            }
-        }
-        if (!R)
-            return 0; /* leftover factor (2, odd) — tier not expressible */
-        Rs[m++] = R;
-        L /= R;
-    }
-    if (m == 0 || !_il2d_resolve(Rs, m, ff, fb))
+    const char *ce = getenv("VFFT_IL2D_CHAIN");
+    const char *p;
+    long prod = 1;
+    int m = 0;
+    if (!ce || !*ce)
         return 0;
-    *nst = m;
-    return 1;
+    p = ce;
+    while (*p && m < 8)
+    {
+        char *end;
+        long r = strtol(p, &end, 10);
+        if (end == p || r < 2)
+            break;
+        Rs[m++] = (int)r;
+        prod *= r;
+        p = (*end == '.') ? end + 1 : end;
+        if (*end != '.' && *end != '\0')
+            break;
+        if (*end == '\0')
+        {
+            p = end;
+            break;
+        }
+    }
+    if (*p == '\0' && m > 0 && prod == N1 && _il2d_resolve(Rs, m, ff, fb))
+    {
+        *nst = m;
+        return 1;
+    }
+    _vfft_warn("VFFT_IL2D_CHAIN=\"%s\" invalid for N1=%d "
+               "(product/radix mismatch) -- ignored, the cell races",
+               ce, N1);
+    return 0;
 }
 
 /* ── NATURAL n1 (M4-lite, struct comment at il2d_nat) ─────────────────
@@ -705,8 +691,6 @@ static void _il2d_col_pass_nat_strip(const double *src, double *dst, int N1,
 /* build the M-chain + tables + chirps + comb-order kernels + scratch
  * into the CALLER's arrays. Returns M (>0) or 0. rn = the plane's row
  * width in complex (N2 for c2c, hp1 for real). */
-static int _il2d_build_chain(int N1, int *Rs, vfft_il2p_fn *ff,
-                             vfft_il2p_fn *fb, int *nst);
 static void _il2d_col_pass(const double *src, double *dst, int N1,
                            size_t rn, size_t wc, int nst, const int *Rst,
                            const int *Lst, vfft_il2p_fn const *fns,
@@ -715,9 +699,10 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
                               double **tf, double **tb);
 /* BLUESTEIN INNER CHAIN HOOK (2026-09-02): the 2D create installs a
  * provider that fills the length-M column chain from wisdom (the (M, N2)
- * chain row, raced and banked there on a miss); NULL, or a provider that
- * declines, leaves the greedy chain in charge. Set once at the 2D create's
- * entry — planning side, one create at a time. */
+ * chain row, raced and banked there on a miss). NULL, or a provider that
+ * declines, means NO M chain (2026-09-17): the greedy that used to build
+ * one here is gone, and both the 2D create and the 3D tier install the
+ * provider. Set at each create's entry — planning side, one at a time. */
 typedef int (*_il2d_blu_chain_fn)(int M, int *Rs, int *nst, char *forms,
                                   size_t fsz);
 static _il2d_blu_chain_fn _il2d_blu_chain_hook = 0;
@@ -737,8 +722,8 @@ static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
     if (_il2d_blu_chain_hook && _il2d_blu_chain_hook(M, Rs, nst, forms, sizeof forms))
         served = _il2d_resolve(Rs, *nst, ff, fb) &&      /* the validator is the law */
                  _il2d_apply_forms(Rs, *nst, forms, ff, fb);
-    if (!served && !_il2d_build_chain(M, Rs, ff, fb, nst))
-        return 0;
+    if (!served)
+        return 0;   /* no provider, or it declined: no M chain, no heuristic */
     if (_il2d_build_tables(M, *nst, Rs, Ls, tf, tb))
         return 0;
     *chf = (double *)malloc(2 * (size_t)N1 * sizeof(double));

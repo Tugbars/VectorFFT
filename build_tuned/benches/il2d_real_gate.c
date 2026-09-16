@@ -72,8 +72,11 @@ static void naive_cols(const double *in, double *out, int N1, int hp1)
         }
 }
 
-/* the driver's greedy chain (MIRRORED from _il2d_build_chain; the gate
- * pins it via env so the map below is the binding) + the DIF output map:
+/* the gate's OWN chain generator (largest-first over the pow2 radices), fed
+ * to the library through the VFFT_IL2D_CHAIN pin so the map below is the
+ * binding. It once mirrored a library greedy builder; that builder is gone
+ * (2026-09-17, the library races instead) and this stays as the pin source.
+ * + the DIF output map:
  * the FIRST stage's digit is the MOST significant position digit. */
 static int chain_of(int N1, int *Rs)
 {

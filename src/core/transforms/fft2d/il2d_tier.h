@@ -1834,10 +1834,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
          * the full composition pool (multi-stage cells only;
          * component-pinned: the race times the column pass, the
          * only thing the axis changes) > greedy. */
-        if (getenv("VFFT_IL2D_CHAIN"))
-            chain_ok = _il2d_build_chain(N, c->R, c->f,
-                                         c->b, &c->nst);
-        else if (!cfg->recalibrate &&
+        chain_ok = _il2d_env_chain(N, c->R, c->f, c->b, &c->nst);   /* the pin */
+        if (!chain_ok && !cfg->recalibrate &&
                  /* the caller's explicit override reaches THIS tier too
                   * (2026-09-16): include/vfft.h promises recalibrate=1
                   * "re-measures and overwrites the cell even on" a hit, and
@@ -1855,7 +1853,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                      (il2d_bblu > 0 ? il2d_bblu : N) &&
                  _il2d_resolve(c->R, c->nst, c->f, c->b))
             chain_ok = 1;
-        else
+        if (!chain_ok)
         {
             int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
             int cur[8], ncand = 0, dropped = 0;
@@ -1865,7 +1863,12 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 _vfft_warn("il2d chain race: pool capped at %d "
                            "(%d candidate(s) dropped) at %dx%d",
                            VFFT_IL2D_MAXCAND, dropped, N, (int)rn);
-            if (ncand > 1)
+            /* ncand >= 1, not > 1 (2026-09-17): a cell with exactly ONE
+             * legal chain used to skip the race and drop to the greedy --
+             * unmeasured, UNBANKED, re-derived on every create, with no row
+             * for its forms and widths to hang off. One arm is still a
+             * race: it is timed, and it banks. */
+            if (ncand >= 1)
             {
                 double bns = 0;
                 int win = _il2d_race_chains(N, (int)rn, ncand, cand,
@@ -1892,9 +1895,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                     _vw2_persist(W, cfg);
                 }
             }
-            if (!chain_ok)
-                chain_ok = _il2d_build_chain(N, c->R, c->f,
-                                             c->b, &c->nst);
+            /* no greedy fallback (2026-09-17): a race with no buildable arm
+             * has no chain, and !chain_ok below is Bluestein or a refusal */
         }
     }
     if (chain_ok && il2d_bblu <= 0)
