@@ -122,11 +122,14 @@ static int _il2d_apply_forms(const int *Rs, int m, const char *forms,
     return *p == 0; /* exactly m names */
 }
 
-/* ordered compositions of N1 over the codelet radices, depth <= 4,
- * capped at 24 (no-silent-caps law: the cap is LOGGED when it bites). */
-#define VFFT_IL2D_MAXCAND 24
-static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
-                           int *lens, int *n, int *dropped)
+/* ordered compositions of N1 over the codelet radices, depth <= 4, capped
+ * at VFFT_IL2D_MAXCAND (planning/policy.h). The recursion is the body; the
+ * entry below it is what callers reach, and it enforces the no-silent-caps
+ * law ITSELF (2026-09-17): until then each of the five callers had to
+ * remember to warn, and two -- the real tier's chain race and the
+ * four-step's super-band -- never did, so their pools truncated silently. */
+static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
+                                int *lens, int *n, int *dropped)
 {
     static const int POOL[] = { 64, 32, 16, 8, 4,
                                 /* odd radices (2026-08-27): odd-N1
@@ -154,9 +157,18 @@ static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
         if (L % POOL[p] == 0)
         {
             cur[depth] = POOL[p];
-            _il2d_enum_rec(L / POOL[p], depth + 1, cur, out, lens, n,
-                           dropped);
+            _il2d_enum_rec_body(L / POOL[p], depth + 1, cur, out, lens, n,
+                                dropped);
         }
+}
+static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
+                           int *lens, int *n, int *dropped)
+{
+    _il2d_enum_rec_body(L, depth, cur, out, lens, n, dropped);
+    if (depth == 0 && *dropped)
+        _vfft_warn("il2d chain pool capped at %d (%d candidate(s) dropped) "
+                   "at N1=%d -- the race saw a truncated pool",
+                   VFFT_IL2D_MAXCAND, *dropped, L);
 }
 
 /* the column pass, shared by execute and the create-time chain race

@@ -1414,11 +1414,7 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
         int cur[8], ncand = 0, dropped = 0, win;
         double bns = 0;
         _il2d_enum_rec(M, 0, cur, cand, lens, &ncand, &dropped);
-        if (dropped)
-            _vfft_warn("il2d blu inner chain race: pool capped at %d "
-                       "(%d candidate(s) dropped) at M=%d x %d",
-                       VFFT_IL2D_MAXCAND, dropped, M, N2);
-        if (ncand < 1) return 0;
+        if (ncand < 1) return 0;   /* (a capped pool warns from inside the enumerator) */
         win = (ncand > 1) ? _il2d_race_chains(M, N2, ncand, cand, lens, &bns, 0) : 0;
         if (win < 0) return 0;
         memcpy(Rs, cand[win], sizeof cand[win]);
@@ -1859,10 +1855,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             int cur[8], ncand = 0, dropped = 0;
             _il2d_enum_rec(N, 0, cur, cand, lens, &ncand,
                            &dropped);
-            if (dropped)
-                _vfft_warn("il2d chain race: pool capped at %d "
-                           "(%d candidate(s) dropped) at %dx%d",
-                           VFFT_IL2D_MAXCAND, dropped, N, (int)rn);
+            /* (a capped pool warns from inside the enumerator, 2026-09-17) */
             /* ncand >= 1, not > 1 (2026-09-17): a cell with exactly ONE
              * legal chain used to skip the race and drop to the greedy --
              * unmeasured, UNBANKED, re-derived on every create, with no row

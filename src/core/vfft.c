@@ -1276,8 +1276,13 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
     struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();
     const int t = cfg->transform == VFFT_C2C ? VW2_T_C2C
                 : cfg->transform == VFFT_R2C ? VW2_T_R2C : VW2_T_C2R;
-    const int ord = cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR;
     const int pl = cfg->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP;
+    /* the RANK-1 law (2026-09-17), not the rank-N spelling this line carried:
+     * this is a rank-1 cell (vw2__tcmt_key keys rank 1, q = K) and the two
+     * laws differ at DEFAULT order, where rank-1 says NATURAL. Written the
+     * old way, a DEFAULT batch and a NATURAL batch of the same size filed
+     * their threading verdict under different labels and never shared it. */
+    const int ord = vfft_policy_ord_k1(cfg, N, cfg->placement == VFFT_INPLACE);
     const uint8_t lay = _vw2_lay_of(cfg);
     const int T = h->nthreads;
     const int ip = (cfg->placement == VFFT_INPLACE);

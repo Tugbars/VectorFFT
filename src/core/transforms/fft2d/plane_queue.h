@@ -149,21 +149,34 @@ static int _pq_row_key(const struct vfft_plan_s *h, const vfft_config_t *cfg,
     const int real = (h->transform != VFFT_C2C);
     const int nat = (vfft_policy_ord_rankn(cfg) == VW2_ORD_NAT);
     int i;
-    for (i = 0; i < 4; i++)
+    for (i = 0; i < 5; i++)
     {
         memset(k, 0, sizeof *k);
         switch (i)
         {
-        case 0: if (!il) continue;            /* the IL rows (lay=il, ord=scr) */
+        /* the IL rows. The plane-queue verdict (queue vs loop) is SHARED by
+         * both order classes (owner 2026-09-17: "they must share the same
+         * verdict"), so it rides whichever IL row the cell has, in this FIXED
+         * order -- scr first, then nat -- and both the replay and the bank
+         * walk the same order, so exactly one verdict is ever consulted or
+         * written. Before 2026-09-17 only the ord=scr row was tried: a store
+         * that had only ever seen NATURAL requests found no row, banked
+         * nothing, and re-raced on every create (proved: three creates,
+         * three races, "no primary row to bank the verdict on"). */
+        case 0: if (!il) continue;
             vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, 2, h->N, h->N2, 0,
                         VW2_ORD_SCR, VW2_LAY_IL);
             break;
-        case 1:                               /* split c2c, this order */
+        case 1: if (!il) continue;
+            vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, 2, h->N, h->N2, 0,
+                        VW2_ORD_NAT, VW2_LAY_IL);
+            break;
+        case 2:                               /* split c2c, this order */
             if (real) continue;
             vw2__2d_key(k, VW2_T_C2C, 2, h->N, h->N2, 0,
                         nat ? VW2_ORD_NAT : VW2_ORD_SCR, VW2_LAY_ANY);
             break;
-        case 2:                               /* split real (ord=nat rows) */
+        case 3:                               /* split real (ord=nat rows) */
             if (!real) continue;
             vw2__2d_key(k, h->transform == VFFT_C2R ? VW2_T_C2R : VW2_T_R2C,
                         2, h->N, h->N2, 0, VW2_ORD_NAT, VW2_LAY_ANY);
