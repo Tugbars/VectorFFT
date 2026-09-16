@@ -88,7 +88,7 @@ static vfft_plan _vfft_create_rank34(const vfft_config_t *cfg,
             K == 1 && cfg->placement == VFFT_OUTOFPLACE &&
             (cfg->n[3] % 2) == 0)
         {
-            stride_plan_t *tp = stride_plan_nd_r2c(4, cfg->n, reg);
+            stride_plan_t *tp = stride_plan_nd_r2c(4, cfg->n, reg, cfg->recalibrate);
             if (!tp)
                 return NULL;
             struct vfft_plan_s *h4 = (struct vfft_plan_s *)calloc(1, sizeof *h4);
@@ -145,7 +145,7 @@ static vfft_plan _vfft_create_rank34(const vfft_config_t *cfg,
             (cfg->n[2] % 2) == 0)
         { /* §6a47/Q1: 3D real transforms via the ND r2c engine (strided
            * row engines + measured adoption live inside the builder). */
-            stride_plan_t *tp = stride_plan_nd_r2c(3, cfg->n, reg);
+            stride_plan_t *tp = stride_plan_nd_r2c(3, cfg->n, reg, cfg->recalibrate);
             if (!tp)
                 return NULL;
             struct vfft_plan_s *h3 = (struct vfft_plan_s *)calloc(1, sizeof *h3);
@@ -186,6 +186,7 @@ static vfft_plan _vfft_create_rank34(const vfft_config_t *cfg,
          * the extraction is harvested into the store (measure-less
          * src=race — the extraction never measured; prime-axis cells bank
          * nothing, unchanged). No kill switch: nothing to fall back to. */
+        if (!cfg->recalibrate)   /* the flag hides the banked row (2026-09-16) */
         {
             vfft_fft3d_wisdom_entry_t e3;
             if (vw2_3d_lookup(&W->vw2, N1, N2, N3, _vw2_lay_of(cfg), &e3))
@@ -193,7 +194,8 @@ static vfft_plan _vfft_create_rank34(const vfft_config_t *cfg,
         }
         if (!tp)
         {
-            tp = vfft_fft3d_plan_create_wisdom(N1, N2, N3, &W->fft3d_c2c, reg, &banked);
+            tp = vfft_fft3d_plan_create_wisdom(N1, N2, N3, &W->fft3d_c2c, reg,
+                                               &banked, cfg->recalibrate);
             if (banked)
             {
                 const vfft_fft3d_wisdom_entry_t *ne =

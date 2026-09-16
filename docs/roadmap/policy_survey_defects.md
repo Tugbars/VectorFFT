@@ -14,19 +14,71 @@ survived that decision.
 
 ## A. `recalibrate` is not honored at all — owner ruled: FIX
 
-These are bugs independent of any refactor. The caller sets
-`cfg.recalibrate = 1` meaning "ignore what is banked, race it again", and
-these paths replay anyway.
+The caller sets `cfg.recalibrate = 1` meaning "ignore what is banked, race it
+again". These paths replayed anyway.
+
+A guard is only a fix where the miss-path RE-DERIVES AND OVERWRITES. Two of
+the four sites first listed here do neither: skipping the row hands them a
+heuristic, not a measurement, so they are moved to section A2.
+
+### FIXED 2026-09-16
+
+**rank-3 SPLIT c2c** — `transforms/fftnd/fftnd_create.h:189` now hides the
+wisdom2 row under the flag, and `wisdom2/wisdom2_fftnd.h`'s
+`vfft_fft3d_plan_create_wisdom` takes a `recalib` argument that hides the
+SECOND replay, the legacy in-process table. Guarding one and not the other
+would have left the stale plan serving. The greedy path below both re-derives
+and `vfft_fft3d_wisdom_put` replaces on `(N1,N2,N3)`, so the flag re-derives
+AND overwrites.
+
+**rank-3 / rank-4 SPLIT r2c and c2r** — `transforms/fftnd/fftnd_r2c.h:538`,
+the last-dim row engine's adopt verdict, which is a MEASURED A/B (eight timed
+reps per arm, 5% hysteresis). `stride_plan_nd_r2c` and its `_il` twin now take
+`recalib`; the three call sites pass `cfg->recalibrate`.
+
+**the adopt table could never be updated at all** —
+`planning/adopt_wisdom.h:113` ended its tmp+rename with a bare `rename()`,
+which does not replace an existing file on Windows. Every update after the
+first write was silently lost: the measured verdict landed in
+`strided_adopt.wis.tmp` and the stale row kept serving. PRE-EXISTING and
+independent of the flag; found because the r2c fix above is inert without it.
+The store's own writer has always done this properly
+(`vw2__replace_file`, `MOVEFILE_REPLACE_EXISTING`). Now: atomic rename first
+so POSIX keeps it, remove+rename as the fallback, no orphan `.tmp`.
+
+Evidence, `benches/recal_nd_probe.exe` (warm store, same cell, flag off then
+on):
+
+| cell | flag off | flag on |
+| --- | --- | --- |
+| 48x48x48 split c2c | 1.02 ms (replay) | 3073.34 ms (re-derive) |
+| 128x128x128 split r2c | 9.11 ms, poisoned verdict KEPT | 93.14 ms, poisoned verdict OVERWRITTEN with the measured one |
+
+The r2c row was deliberately poisoned to `nd 16384 128 4 0 0` before each
+run, so "overwritten" is the proof and the latency is only corroboration.
+
+### A2. Not a guard — the miss-path is a heuristic, not a race
+
+These two were mis-filed as one-line guards. Adding a guard would make
+`recalibrate` DEGRADE the plan instead of re-measuring it, which is worse
+than the bug.
+
+| where | what a naive guard would do | what it needs |
+| --- | --- | --- |
+| `transforms/real/c2r_dispatch.h:350` | `vfft_c2r_layout_wisdom` falls back to `vfft_c2r_best_layout(K)` — a THRESHOLD rule. Hiding the row swaps a measurement for a heuristic | a racing path for the natural-vs-split layout choice, then the guard. `vfft_c2r_disp_create_auto` also has no `cfg`, so the flag needs plumbing |
+| `oop/k1_commit.h:209` | the prime engine's ZTURN-T inner falls through "to the rules below". At M <= 4096 it degrades to the il2p pair; above 4096 it loses the inner entirely (`return 0` at `:322`) | under the flag, RE-RACE the K=1 cell at M and then read the fresh row — a nested race, and `_k1_il_dp_busy` may refuse it |
+
+Same shape, same family, already recorded below: `vfft.c:506` and its c2r twin
+at `:585`.
+
+### Still open in this section
 
 | where | what | state |
 | --- | --- | --- |
-| `transforms/fftnd/fftnd_create.h:191` | rank-3 SPLIT c2c: `vw2_3d_lookup` replays the banked row with no guard, and the second-level fallback at `:196` is unguarded too | checker CONFIRMED end to end, including that a guard there genuinely re-measures AND overwrites (`vw2_3d_bank_entry` stamps `LAY_ANY`, `vw2__bank_pinned` replaces on key equality) |
-| `transforms/fftnd/fftnd_r2c.h:538` | 3D and 4D SPLIT r2c/c2r: `vfft_adopt_lookup("nd", ...)` replays a MEASURED A/B verdict (timed arms, 5% hysteresis) with no guard | survey; checker did not refute |
-| `transforms/real/c2r_dispatch.h:350` | the per-cell measured NATURAL/STRIDE verdict is read from `c2r_path.txt` with no guard | survey; checker did not refute |
-| `vfft.c:506`, and its c2r twin at `:585` | the banked route row IS correctly invisible under the flag, but the next step then fires on `!may_race` and returns the STRUCTURAL THRESHOLD DEFAULT, racing nothing | confirmed for the MEASURE cell; one of the survey's two named cells was refuted as vacuous (`vw2_real_route_bank` is only reachable with `bK <= 64`, so no r2c K=128 route row can exist) |
-| `oop/k1_commit.h:209` | the prime engine's ZTURN-T inner reads the ord=scr K=1 row at M with no recalibrate term, while the same function honors the flag two hundred lines later | survey; checker did not refute |
-| `transforms/fftnd/fftnd_il.h:1128` | `_ilnd_build_flat` copies rigor, wisdom and wisdom_write into the child config but NOT `recalibrate`; its twin `_ilnd_build_child` sets it 28 lines earlier | checker UPGRADED from the survey's reading: reachable on EVERY recalibrate=1 3D IL create, not only when the flat arm wins |
-| `transforms/fft2d/fft2d_create.h:92` | `ic = *cfg` propagates the flag into the plane-queue's child config; `:147` clears `wisdom_write` but not `recalibrate`, so each of the T clones re-races everything instead of replaying what the primary just banked | found by the checker, missed by the survey; contradicts the design comment at `:127-131` |
+| `transforms/fftnd/fftnd_il.h:1128` | `_ilnd_build_flat` copies rigor, wisdom and wisdom_write into the child config but NOT `recalibrate`; its twin `_ilnd_build_child` sets it 28 lines earlier | VERIFIED in source, unfixed. Reachable on EVERY recalibrate=1 3D IL create |
+| `transforms/fft2d/fft2d_create.h:92` | `ic = *cfg` propagates the flag into the plane-queue's child config; `:147` clears `wisdom_write` but not `recalibrate`, so each of the T clones re-races instead of replaying what the primary just banked | VERIFIED in source, unfixed. Contradicts the design comment at `:127-131` |
+| `vfft.c:506`, c2r twin `:585` | the banked route row IS correctly invisible under the flag, and the next step then returns the STRUCTURAL THRESHOLD DEFAULT, racing nothing | belongs with A2: needs the racing path first |
+| `transforms/fft2d/fft2d_r2c.h:988` | the rank-2 twin of the adopt verdict fixed above, same defect, not fixed: `stride_plan_2d_r2c_from` has five callers that would all need the flag | open |
 
 ## B. Order-class mismatches — a reader and a writer that disagree
 

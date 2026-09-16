@@ -618,14 +618,22 @@ static inline stride_plan_t *vfft_fft3d_plan_from_entry(
 
 static inline stride_plan_t *vfft_fft3d_plan_create_wisdom(
     int N1, int N2, int N3, vfft_fft3d_wisdom_t *w,
-    const vfft_proto_registry_t *reg, int *banked)
+    const vfft_proto_registry_t *reg, int *banked, int recalib)
 {
     if (banked) *banked = 0;
-    const vfft_fft3d_wisdom_entry_t *e = vfft_fft3d_wisdom_lookup(w, N1, N2, N3);
-    if (e) {
-        stride_plan_t *p = vfft_fft3d_plan_from_entry(e, reg);
-        if (p) return p;
-        /* corrupt/incompatible entry: fall through to greedy */
+    /* recalib = the caller's cfg->recalibrate (2026-09-16). This table is the
+     * SECOND replay on the rank-3 path -- the store row is the first, at
+     * fftnd_create.h -- and honoring the flag at only one of them leaves the
+     * other serving the stale plan. The greedy path below re-derives and
+     * vfft_fft3d_wisdom_put REPLACES on (N1,N2,N3), so the flag re-derives
+     * AND overwrites, which is what include/vfft.h:325 promises. */
+    if (!recalib) {
+        const vfft_fft3d_wisdom_entry_t *e = vfft_fft3d_wisdom_lookup(w, N1, N2, N3);
+        if (e) {
+            stride_plan_t *p = vfft_fft3d_plan_from_entry(e, reg);
+            if (p) return p;
+            /* corrupt/incompatible entry: fall through to greedy */
+        }
     }
     /* greedy (stride_plan_3d body, inners kept visible for banking) */
     const size_t K0 = (size_t)N2 * (size_t)N3;

@@ -110,7 +110,20 @@ write:;
                 _vaw_tab[i].b, _vaw_tab[i].blk, _vaw_tab[i].fwd,
                 _vaw_tab[i].bwd);
     fclose(f);
-    rename(tp, p);
+    /* rename() does NOT replace an existing file on Windows (ISO C leaves it
+     * implementation-defined and the CRT fails with EEXIST), so every update
+     * after the FIRST write was silently lost: the measured verdict landed in
+     * strided_adopt.wis.tmp and the stale row kept serving. Found 2026-09-16
+     * while proving the recalibrate fix, which is inert without this. The
+     * store's own writer has always done it properly (vw2__replace_file,
+     * MOVEFILE_REPLACE_EXISTING); this is the one table that did not. Try the
+     * atomic form first so POSIX keeps it, then fall back to remove+rename. */
+    if (rename(tp, p) != 0)
+    {
+        remove(p);
+        if (rename(tp, p) != 0)
+            remove(tp);   /* leave no orphan .tmp behind */
+    }
 }
 
 #endif /* VFFT_ADOPT_WISDOM_H */

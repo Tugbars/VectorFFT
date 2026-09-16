@@ -402,11 +402,13 @@ static void _fndr_destroy(void *data) {
  *  row stride hp1; bwd consumes the same; im param unused on the complex
  *  side. Same cost as split (the boundary copies carry the layout). */
 static stride_plan_t *stride_plan_nd_r2c_il(int rank, const int *N,
-                                            const vfft_proto_registry_t *reg);
+                                            const vfft_proto_registry_t *reg,
+                                            int recalib);
 
 /** Rank-general r2c/c2r plan, auto inners. N[rank-1] must be even. */
 static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
-                                         const vfft_proto_registry_t *reg) {
+                                         const vfft_proto_registry_t *reg,
+                                         int recalib) {
     if (rank < 2 || rank > FFTND_MAX_RANK || !N) return NULL;
     for (int m = 0; m < rank; m++) if (N[m] < 2) return NULL;
     if (N[rank - 1] & 1) return NULL;
@@ -535,7 +537,13 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
             : NULL;
         if (xin_) {
             int awf_ = 0, awb_ = 0;
-            if (vfft_adopt_lookup("nd", (int)d->R, NL_, d->snd_blk,
+            /* recalib (2026-09-16): this verdict is a MEASURED A/B -- eight
+             * timed reps per arm with 5% hysteresis, below -- so replaying it
+             * under the flag threw away the measurement the caller asked for.
+             * The race that follows ends in vfft_adopt_record, which
+             * overwrites on key match, so the flag re-measures AND overwrites. */
+            if (!recalib &&
+                vfft_adopt_lookup("nd", (int)d->R, NL_, d->snd_blk,
                                   &awf_, &awb_)) {
                 d->snd_fwd = (awf_ && sf_) ? sf_ : 0;
                 d->snd_bwd = (awb_ && sb_) ? sb_ : 0;
@@ -599,8 +607,9 @@ awnd_done:;
 }
 
 static stride_plan_t *stride_plan_nd_r2c_il(int rank, const int *N,
-                                            const vfft_proto_registry_t *reg) {
-    stride_plan_t *p = stride_plan_nd_r2c(rank, N, reg);
+                                            const vfft_proto_registry_t *reg,
+                                            int recalib) {
+    stride_plan_t *p = stride_plan_nd_r2c(rank, N, reg, recalib);
     if (p) ((stride_fftnd_r2c_data_t *)p->override_data)->il_out = 1;
     return p;
 }
