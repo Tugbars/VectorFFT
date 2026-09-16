@@ -541,9 +541,45 @@ Measured, like-for-like under one flag set: 1111 -> 1112 symbols, ten changed
 bodies, TU instructions +4917 of 11.1M. Every changed body is a function that
 contains a migrated site or inlines one.
 
+## Where the migration stops, and why
+
+The eight steps are done. Two further unifications were costed on 2026-09-16
+— a 12-agent survey of the whole tree, each scope attacked by an independent
+checker — and the owner DECLINED both. They are not pending work; they are
+closed with a reason.
+
+**Unifying the `recalibrate` check on one shape: declined.** The flag is
+honored in three shapes (at the branch, at the lookup, order-scoped) and all
+three are correct today. Converting the tree to one shape is 31 edits across
+44 sites, three of which need new function signatures, and the naive form
+breaks two contracts: at `k1_commit.h:737/:818/:926` the same fetched row is
+both the replay source AND the bank key, so hiding it makes a recalibrate
+create re-measure and then bank nothing — the opposite of what `vfft.h:325`
+promises; and at `c2c_oop_create.h:144` a change aimed at the IL library
+costs the SPLIT library its banked route with no race to compensate. What
+survived is a defect list: the paths that do not honor the flag AT ALL
+(`docs/roadmap/policy_survey_defects.md`, section A).
+
+**Moving the banking side onto the order policy: declined, and largely
+moot.** The rank>=2 tiers (2D c2c, 2D real, 3D IL) already derive the banked
+order class from `vfft_policy_ord_rankn`, and the K=1 writer
+(`k1_commit.h:657`) takes it from `scr_req`, which is
+`vfft_policy_ord_k1`. The order axis is therefore already on the module at
+every live writer. What remains hardcoded is either deliberate (the
+planner's scrambled arm banks `ord_scr = 1` because it IS the scrambled
+bank) or a defect, not migration debt — see section B of the same file, which
+is where the audit's real return went.
+
+**L11, the bench and calibrator copies, needs no further work.** The only
+genuine copy was `bench_1d_vs_mkl.c`'s direct-cell admission, migrated in
+step 2. The three ZTURN-T gates reference `VFFT_ZTT_MAX_N` and
+`vfft_ztt_odd_band` — the engine's own band, which is the shared source the
+module itself calls — and `calibrate_k1_il.c` takes its cells from argv.
+Neither re-derives a law.
+
 ## Checklist
 
-- [ ] 1. This design (the inventory above is the survey of 2026-09-16).
+- [x] 1. This design (the inventory above is the survey of 2026-09-16).
 - [x] 2. Step 1: `policy.h`, `vfft_cell_t`, L4 + L9; `policy_gate` with the
       `_ref` twins (2026-09-16, evidence below).
 - [x] 3. Step 2: L1/L2, the BAND MAP (2026-09-16). The map
