@@ -439,7 +439,8 @@ static inline stride_plan_t *vfft_fft2d_r2c_plan_from_entry(
                     N1, eKpad, e->col_factors, e->col_variants, e->col_nf, e->col_use_dif, reg);
                 if (plan_col) {
                     stride_plan_t *p = stride_plan_2d_r2c_from(
-                        N1, N2, eB, eKpad, plan_r2c, plan_col); /* owns both */
+                        N1, N2, eB, eKpad, plan_r2c, plan_col,
+                        /*recalib=*/0); /* owns both; rebuilding a BANKED entry */
                     if (p) return p;
                     /* on failure stride_plan_2d_r2c_from already freed both */
                 } else {
@@ -475,7 +476,8 @@ static inline stride_plan_t *vfft_fft2d_r2c_plan_create_wisdom(
         if (!plan_r2c) return NULL;
         stride_plan_t *plan_col = vfft_proto_auto_plan(N1, K_pad, reg, NULL);
         if (!plan_col) { stride_plan_destroy(plan_r2c); return NULL; }
-        return stride_plan_2d_r2c_from(N1, N2, B, K_pad, plan_r2c, plan_col);
+        return stride_plan_2d_r2c_from(N1, N2, B, K_pad, plan_r2c, plan_col,
+                                      /*recalib=*/0);   /* the legacy greedy rebuild */
     }
 }
 

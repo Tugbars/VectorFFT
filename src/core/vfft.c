@@ -918,7 +918,8 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                 stride_plan_destroy(pcol);
             return NULL;
         }
-        stride_plan_t *fb = stride_plan_2d_r2c_from(N1, N2, B, K_pad, pr2c, pcol); /* owns both */
+        stride_plan_t *fb = stride_plan_2d_r2c_from(N1, N2, B, K_pad, pr2c, pcol,
+                                                    recalib); /* owns both */
         if (!fb)
             return NULL;
 

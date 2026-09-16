@@ -33,6 +33,7 @@ int main(int argc, char **argv)
     const int recal = getenv("VFFT_PROBE_RECAL") != NULL;
     const int is_r2c = strcmp(what, "r2c") == 0;
     const int is_il  = strcmp(what, "il3d") == 0;   /* the 3D INTERLEAVED tier */
+    const int is_2d  = strcmp(what, "r2c2d") == 0;  /* rank-2 split r2c: the "2d" adopt verdict */
     vfft_wisdom *W = vfft_wisdom_load(dir);
     vfft_config_t cfg;
     vfft_plan p;
@@ -42,14 +43,14 @@ int main(int argc, char **argv)
     for (i = 0; i < 2; i++)   /* [0] warm the store, [1] the timed create */
     {
         memset(&cfg, 0, sizeof cfg);
-        cfg.transform = is_r2c ? VFFT_R2C : VFFT_C2C;
+        cfg.transform = (is_r2c || is_2d) ? VFFT_R2C : VFFT_C2C;
         cfg.placement = VFFT_OUTOFPLACE;
         cfg.rigor = VFFT_MEASURE;
-        cfg.dims = 3;
-        cfg.n[0] = N; cfg.n[1] = N; cfg.n[2] = N;
+        cfg.dims = is_2d ? 2 : 3;
+        cfg.n[0] = N; cfg.n[1] = N; cfg.n[2] = is_2d ? 0 : N;
         cfg.howmany = 1;
         cfg.layout = is_il ? VFFT_LAYOUT_INTERLEAVED : VFFT_LAYOUT_SPLIT;
-        cfg.order = is_r2c ? VFFT_ORDER_DEFAULT
+        cfg.order = (is_r2c || is_2d) ? VFFT_ORDER_DEFAULT
                   : is_il ? VFFT_ORDER_NATURAL : VFFT_ORDER_SCRAMBLED;
         cfg.nthreads = 1;
         cfg.wisdom = W;
@@ -61,7 +62,7 @@ int main(int argc, char **argv)
         if (!p) { printf("%s %dx%dx%d: create refused\n", what, N, N, N); return 1; }
         if (i == 1)
             printf("%s %dx%dx%d %-5s recalibrate=%s  create %8.2f ms\n",
-                   what, N, N, N, is_il ? "IL" : "split",
+                   what, N, N, is_2d ? 1 : N, is_il ? "IL" : "split",
                    cfg.recalibrate ? "ON " : "off", t1 - t0);
         vfft_destroy(p);
     }

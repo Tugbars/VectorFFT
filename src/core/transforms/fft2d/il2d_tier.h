@@ -1869,7 +1869,14 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             {
                 double bns = 0;
                 int win = _il2d_race_chains(N, (int)rn, ncand, cand,
-                                            lens, &bns, key->ord == VW2_ORD_NAT);
+                                            lens, &bns, nat_req);
+                /* nat_req, NOT key->ord (2026-09-17): key->ord is the ROW
+                 * LABEL, nat_req is which PASS this build will run. They are
+                 * equal at the 2D tier and at the 3D tier's axis 1; they are
+                 * NOT equal at the 3D tier's axis 0, which is the scrambled
+                 * class for both order classes by design (fftnd_il.h). Racing
+                 * on the label there timed a pass the tier never runs and
+                 * excluded every chain with no natural leaf from the pool. */
                 if (win >= 0 &&
                     _il2d_resolve(cand[win], lens[win], c->f,
                                   c->b))
