@@ -18,6 +18,10 @@
 #ifndef VFFT_ADOPT_WISDOM_H
 #define VFFT_ADOPT_WISDOM_H
 
+#if defined(_WIN32)
+#include <windows.h>   /* MoveFileExA: the only replace that is atomic here */
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,14 +120,20 @@ write:;
      * strided_adopt.wis.tmp and the stale row kept serving. Found 2026-09-16
      * while proving the recalibrate fix, which is inert without this. The
      * store's own writer has always done it properly (vw2__replace_file,
-     * MOVEFILE_REPLACE_EXISTING); this is the one table that did not. Try the
-     * atomic form first so POSIX keeps it, then fall back to remove+rename. */
+     * MOVEFILE_REPLACE_EXISTING); this is the one table that did not.
+     *
+     * 🔴 The FIRST version of this fix did remove(p) then rename(tp, p), and
+     * that is WORSE than the bug: with a second process holding the file the
+     * remove succeeds, the rename then fails, and THE WHOLE TABLE IS GONE.
+     * Observed 2026-09-17, two probes on one directory. Replace atomically or
+     * do nothing -- never unlink the table we are trying to update. */
+#if defined(_WIN32)
+    if (!MoveFileExA(tp, p, MOVEFILE_REPLACE_EXISTING))
+        remove(tp);   /* the table on disk is left exactly as it was */
+#else
     if (rename(tp, p) != 0)
-    {
-        remove(p);
-        if (rename(tp, p) != 0)
-            remove(tp);   /* leave no orphan .tmp behind */
-    }
+        remove(tp);
+#endif
 }
 
 #endif /* VFFT_ADOPT_WISDOM_H */

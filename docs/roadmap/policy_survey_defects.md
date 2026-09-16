@@ -110,7 +110,7 @@ raced, which would have made the fix a no-op.
 
 ### Still open in this section
 | ~~`vfft.c:506`, c2r twin `:585`~~ | **VACUOUS, closed 2026-09-16.** The claim was that the flag hides the row and the next step returns the threshold default. It cannot bite. `may_race` is `rigor != VFFT_MEASURE && (N % 2) == 0 && bK > 1 && bK <= 64` (c2r: `bK <= 128`), and in each failing case there is no row to lose: the race is the only writer, so odd N and K above the window have none, and K=1 is explicitly unbankable ("nowhere legal to bank" — q=1 real cells are the interleaved zr2c verdicts'). The rigor term never blocks in practice because production uses PATIENT (owner, 2026-09-16), and it is not inverted: VFFT_MEASURE is the CHEAP tier, as every other rigor test in the tree confirms (`budget 0.02 vs 0.05`, `trials 2 vs 3`, `RR 31 vs 81`). | closed |
-| `transforms/fft2d/fft2d_r2c.h:988` | the rank-2 twin of the adopt verdict fixed above, same defect, not fixed: `stride_plan_2d_r2c_from` has five callers that would all need the flag | open |
+| `transforms/fft2d/fft2d_r2c.h:988` | the rank-2 twin of the adopt verdict | **FIXED 2026-09-17.** `stride_plan_2d_r2c_from` took a `recalib` argument. Only the FRONT DOOR forwards it (`vfft.c`, where `_build_2d` already had the flag in its signature); the two calibrators and the two plan-from-entry rebuilds pass 0 deliberately -- they build candidate plans for an OUTER race, and re-measuring a sub-decision per candidate would both cost an A/B per arm and make that race unfair. Proof (poisoned row `2d 128 128 4 0 0`, warm): flag off 0.20 ms, poison KEPT; flag on 74.0 s, poison OVERWRITTEN with the measured `1 1` |
 
 ## B. Order-class mismatches — a reader and a writer that disagree
 
@@ -135,7 +135,23 @@ served (a contract violation).
   2026-09-07 defects. OPEN QUESTION before this is called a contract
   violation: whether the solo kernel's output order makes the served
   spectrum actually wrong, or only the row choice.
-- **`transforms/fftnd/fftnd_il.h:1302`** — the comment three lines above
+- **`transforms/fftnd/fftnd_il.h:1302` — FIXED 2026-09-17.** The one-token
+  change is in `il2d_tier.h`: the chain race now takes `nat_req` (which pass
+  this build will RUN) instead of `key->ord == VW2_ORD_NAT` (which order cell
+  the ROW belongs to). The two are equal at the 2D tier and at the 3D tier's
+  axis 1, and differ only at the 3D tier's axis 0, which is the scrambled
+  class for both order classes by design. Proof by CONTROL BUILD, same cold
+  48x48x48 natural cell: with the bug the axis-0 race logs
+  `chain race 48x2304 (nat)`, with the fix `chain race 48x2304 (scr)` -- the
+  pass the tier actually runs.
+  WITHDRAWN: the prediction that this would also enlarge the candidate pool
+  (chains with no natural leaf are excluded when `nat` is set). Both builds
+  raced 5 arms at this cell, so the exclusion path did not fire here. It
+  exists in the code; it was not observed.
+  The banked axis-0 chains for natural 3D cells were chosen under the old
+  measurement and are worth re-racing.
+
+- ~~**`transforms/fftnd/fftnd_il.h:1302`**~~ — the comment three lines above
   states the axis-0 pass is the SCRAMBLED class for both order classes ("the
   natural class orders planes in its plane pass, never in the column pass"),
   and `nat_req = 0` honors that. But the same call hands `key0.ord`
