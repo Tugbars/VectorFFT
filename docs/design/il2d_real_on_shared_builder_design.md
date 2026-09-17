@@ -79,7 +79,7 @@ they still need.
 ## Checklist
 
 - [x] 1. This design.
-- [ ] 2. R2 applied and censused (before/after), so R6's census has a clean baseline.
-- [ ] 3. The real branch on the builder; the copy-out; the per-direction re-read.
-- [ ] 4. `il2d_real_gate`, the census diff (empty), the sweep.
-- [ ] 5. Records.
+- [x] 2. R2 applied and censused.
+- [x] 3. Done 2026-09-17: 298 lines -> 55.
+- [x] 4. `il2d_real_gate` ALL PASS both directions; census arms identical to R2's after.
+- [x] 5. Records.

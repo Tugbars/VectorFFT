@@ -115,6 +115,23 @@ provider; a cold Bluestein axis 0 banks the cell's row with the M chain and
 `blu = M`. 12/12 after the fix; the failing first run is the negative test.
 Pre-existing: R7 touches no banking.
 
+## R2, R5, R6 -- the evidence (2026-09-17)
+
+| step | check | result |
+| --- | --- | --- |
+| R2 | the real tier's ladder, before -> after, 64x64 real | `wl ladder 64x64: 16 32` -> `16 32 64`: the full-width band is an arm, as ruled; no other line of a six-cell census changed (the floor has no instance at those cells) |
+| R2 | `policy_gate`, `band_ok` vs the c2c spelling over stage spans and the 3D spelling over every width | equal; NEGATIVE TEST (floor 4) fails the arm |
+| R5 | `il2d_onechain_gate`, `il2d_real_gate`, `ilnd_gate` | ALL PASS |
+| R6 | `il2d_real_gate` (r2c and c2r, warm bitwise) | ALL PASS |
+| R6 | the six-cell real census vs R2's "after" | IDENTICAL arms; one line gone -- the deleted block's own summary log |
+| all | `policy_gate` | 131,571,790 checks, ALL PASS |
+
+A correction recorded on the way: the shared builder DID already rebuild a
+replayed Bluestein inner at every rank -- inside its N-arm block (E1.7,
+`il2d_tier.h` ~:2018), past the range read when the 3D fix was written. The
+rank >= 3 rebuild added that morning was redundant and is deleted; the 3D
+fix that mattered was the BANK (a). `ilnd_gate` passes on (a) alone.
+
 ## Checklist
 
 - [x] 0. This design (inventory verified by reading, 2026-09-17).
@@ -122,7 +139,7 @@ Pre-existing: R7 touches no banking.
 - [x] R3. The tcut law, as TWO helpers, each byte-exact (2026-09-17).
 - [x] R4. The form-axis rule asks its authority (2026-09-17).
 - [x] R7. The axis-pass law, once (2026-09-17).
-- [ ] R2. Ruling, then one predicate.
-- [ ] R5. One forms-serve.
-- [ ] R6. Real tier onto the shared builder (own design).
-- [ ] Records: `design_contracts.md`, `policy_survey_defects.md` section E, memory.
+- [x] R2. Ruled 2026-09-17 (the real tier follows c2c/3D): `vfft_policy_il2d_band_ok` (floor 8 + the tcut law) at all three cascade loops; the real tier's static ladder admits `w == N1`.
+- [x] R5. One forms-serve body (2026-09-17): the 2D-key twin is a 2-line wrapper, because `vw2_2d_forms_lookup/bank` were already wrappers building the same ilcol key.
+- [x] R6. The real tier's chain through the shared builder (2026-09-17, `il2d_real_on_shared_builder_design.md`): 298 lines -> 55.
+- [x] Records (2026-09-17).
