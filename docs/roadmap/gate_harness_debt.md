@@ -69,3 +69,43 @@ HEAD, not something this week introduced. NOT fixed here: including it may
 change the bench's real-transform dispatch configuration, which is the
 owner's call, and a bench that has been measured in this state should not
 change quietly. Reported, not touched.
+
+## 4. The sweep is the CERTIFICATION gate, not the iteration gate (2026-09-17)
+
+Owner: "the gate blindly runs things that the edited code pieces did not
+touch." True. Thirty-one gates take 20-30 minutes on an idle machine, most
+of it on tiers a given change never reaches, and running the sweep after
+every step also means nothing else may touch the machine meanwhile.
+
+The protocol from here: after a step, run the TARGETED set for what it
+touched (`run_gates.py --only SUBSTR`, one substring per call, seconds to a
+few minutes); run the FULL sweep once per batch, before records. A targeted
+green is iteration evidence; only the full sweep certifies, because the
+tree is one translation unit and a header edit can move inlining anywhere.
+
+The map, from what a change touches to what exercises it:
+
+| touched | targeted set (`--only`) | what it does NOT cover |
+| --- | --- | --- |
+| `planning/policy.h` | `policy` (83.9M-check equality against the frozen `_ref_` twins) + the sets of every consumer below | -- |
+| `oop/k1_commit.h`, `oop/c2c_*_create.h`, `oop/il2p.h` | `k1` (`k1_fourstep`, `k1_pow2`, `vfft_k1scr`), `il_solo`, `ilp_front`, `ztt` (three gates) | the 2D/3D rows that recurse into the 1D door -- covered by the 2D set |
+| `transforms/fft2d/il2d_tier.h`, `il2d_cols.h`, `fft2d_create.h` | `il2d` (`il2d_onechain`, `il2d_real`), `natorder_scratch`, `mt_c2c` | **the 3D tier** |
+| `transforms/fft2d/plane_queue.h`, `vfft.c`'s batch cell | `tcbatch`, `mt_c2c` | a 2D IL BATCH cell with T > 1 -- the plane queue has no gate of its own; the 2026-09-17 B1 fix was proved by probe (`il2d_mt_probe.exe ... K=4`), not by a gate |
+| `transforms/fftnd/fftnd_il.h` | **nothing** | the whole 3D interleaved tier. See 5. |
+| `wisdom2/*` (readers, writers, serializers) | `sp_ccol_decode`, `wisdom_cold_cell` (two-run, by hand), plus the set of whichever tier's rows changed | -- |
+| `oop/il_flatdit*.h`, `oop/ztt*.h` | `flatdit`, `ztt`, `ztt_mt`, `ztt_odd`, `odd_ct`, `odd_partner_cells` | -- |
+| `support/*` (race body, clocks, alloc, cpu_cache) | everything -- a full sweep | -- |
+
+## 5. There is no 3D interleaved gate
+
+`fftnd_il.h` (1709 lines: the 3D c2c IL tier, axis 0 cycle/strip forms, the
+flat child, plane threading) has NO gate in `benches/`. Its coverage in the
+sweep is indirect: `il2d_*` through the shared column builder, and the K=1
+gates through the recursive row create. On 2026-09-16/17 this tier received
+the `nat_req`/`key->ord` fix, the Bluestein provider install, the flat
+child's recalibrate copy, and steps R1/R3/R7 of the rank >= 2 policy -- each
+proved by a probe (`recal_nd_probe.exe il3d`), none held by a gate. The
+first 3D IL gate is worth more than most of the fixes it would have caught:
+cold create at a spread of (N1, N2, N3) covering prime and composite axes
+and both order classes; forward vs a naive 3D DFT at small cells; warm
+replay bitwise; the axis-0 race log reading `(scr)` for a natural cell.
