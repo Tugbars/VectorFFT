@@ -1277,8 +1277,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
              * gated by (design R2, 2026-09-17) */
             fprintf(stderr, "[il2d-real] wl ladder %dx%d:", h->N, h->N2);
             for (wi = 0; wi < nwl; wi++) fprintf(stderr, " %d", wlc[wi]);
-            fprintf(stderr, "
-");
+            fputc(10, stderr);
         }
         for (wi = 0; wi < nwl; wi++)
         {
