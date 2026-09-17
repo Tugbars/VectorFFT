@@ -235,3 +235,22 @@ are listed.
 | the Bluestein M-chain provider hook installed ONLY by the 2D create (`fft2d_create.h:64`); the 3D tier set the ctx and never the hook, so its prime-axis inner was greedy -- or raced, depending on whether a 2D create had run earlier in the process | yes | **FIXED 2026-09-17** (`fftnd_il.h` installs it) |
 | the census's other ~57 claimed duplications (three width-ladder literals, the tcut law in six spellings, the form-axis rule in three, the real tier as a second copy of much of the c2c tier) | NOT verified | recorded as claims only |
 | a 3D cell whose axis 0 is Bluestein never banks its own row; axis 1 and the structure verdict are refused and re-raced on every create -- and the shared builder had no replay-rebuild for a `blu` row, so banking alone would have served the M chain as the N chain | yes: found by `ilnd_gate`'s first run, traced in the tap (`bank refused (no row)`), the missing rebuild read in `_il2d_col_build` | **FIXED 2026-09-17**, `rank >= 3` only (the 2D create keeps its own rebuild) |
+
+## F. Race quality, from the band-map check (2026-09-18)
+
+Not a policy defect: every region banks the right method, and the shipped
+verdicts replay at their recorded cost on today's tree. But a recalibration
+is a single cold race, and at two cells it banked a verdict far worse than
+the recorded one:
+
+| where | re-raced verdict | recorded | cost |
+| --- | --- | --- | --- |
+| 15625, the flat DIT's forms | `t.m.t.t.o @ 625` | `t.t.t.t.o @ 3125` | 0.71 vs 1.06 vs MKL |
+| 512x4096, the four-step's child at 2097152 | `chain=64.8 wl=0 sw=64` (strip form) | `chain=8.8.8 wl=8` (band) | 14.4 M ns vs 8.6 M |
+
+Open: (1) whether the race body takes more than one cold sample per arm
+before banking; (2) the child race under the four-step's recalibrating
+create -- the strip arm won a race the DRAM-roof work says it loses, so its
+timing there is the first suspect. `build_tuned/band_recal_check.sh`
+reproduces the check; the outlier re-run is
+`scratchpad/outliers.sh`'s shape (re-race + bench twice).
