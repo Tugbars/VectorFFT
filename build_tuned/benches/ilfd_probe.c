@@ -18,10 +18,10 @@
 #include "../../src/core/oop/il_flatdit_race.h"
 /* il2d_cols.h reads VFFT_IL2D_MAXCAND from planning/policy.h (a pool cap is
  * policy, 2026-09-17); a standalone includer carries policy_gate.c's recipe */
-#include "../../src/core/wisdom2.h"
-#include "../../src/core/oop/ztt.h"
-#include "../../src/core/oop/k1_fourstep_band.h"
-#include "../../src/core/planning/policy.h"
+#include "wisdom2.h"                  /* the bare forms policy_gate.c uses: the */
+#include "oop/ztt.h"                  /* build's include dirs resolve them */
+#include "oop/k1_fourstep_band.h"
+#include "planning/policy.h"
 #include "../../src/core/transforms/fft2d/il2d_cols.h"   /* _il2d_enum_rec for --race */
 static double now_ns(void){LARGE_INTEGER f,t;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&t);return (double)t.QuadPart*1e9/(double)f.QuadPart;}
 static void chain_s(const int *R, int K, char *cs, size_t n) { int off = 0; for (int s = 0; s < K; s++) off += snprintf(cs + off, n - off, "%s%d", s ? "." : "", R[s]); }
