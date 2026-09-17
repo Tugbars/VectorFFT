@@ -1377,7 +1377,22 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
 /* the Bluestein inner's chain at M: the (M, N2) 2D chain row — replayed
  * when banked (prod == M), else the E1.1 chain race at (M, N2), banked
  * there. Context = the create in progress (set at _vfft_create_2d's entry). */
-static struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; int N2; } _il2d_blu_ctx;
+static struct {
+    struct vfft_wisdom_s *W;
+    const vfft_config_t *cfg;
+    int N2;
+    /* D1 (2026-09-18): the column-axis Bluestein's INNER chain at M is the
+     * cell's verdict and banks on THE CELL'S OWN row -- never on the
+     * (M, N2) row, which is the row a user's own scrambled M x N2 cell owns.
+     * key   = that row;
+     * rep_R = the M chain the builder already read from it (replay);
+     * commit= this build IS the cell's serving plan, so the chain and blu=M
+     *         bank here (a speculative N-arm arm banks nothing). */
+    const vw2_ilcol_key_t *key;
+    const int *rep_R;
+    int rep_nst;
+    int commit;
+} _il2d_blu_ctx;
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns, int nat);
 static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
@@ -1385,7 +1400,8 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             size_t fsz);
 static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
                                   const vfft_config_t *cfg,
-                                  const vw2_ilcol_key_t *key, int N, size_t rn,
+                                  const vw2_ilcol_key_t *key, const char *base,
+                                  int N, size_t rn,
                                   const int *Rs, int nst,
                                   vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                                   char *forms, size_t fsz);
@@ -1400,19 +1416,28 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
     struct vfft_wisdom_s *W = _il2d_blu_ctx.W;
     const vfft_config_t *cfg = _il2d_blu_ctx.cfg;
     const int N2 = _il2d_blu_ctx.N2;
-    int wl, tf, ro, cmt, cmtt, blu;
+    const vw2_ilcol_key_t *key = _il2d_blu_ctx.key;
     vfft_il2p_fn ff[8], fb[8];
     forms[0] = 0;
-    if (!W || W->vw2_off_2d || N2 <= 0) return 0;
-    if (!cfg->recalibrate &&
-        vw2_2d_il_chain_lookup(&W->vw2, M, N2, Rs, nst, &wl, &tf, &ro,
-                               &cmt, &cmtt, &blu, VW2_ORD_SCR) &&
-        _il2d_chain_prod(Rs, *nst) == M)
+    if (!W || W->vw2_off_2d || N2 <= 0 || !key) return 0;
+    /* REPLAY -- the M chain THE CELL'S OWN row carries, read by the builder
+     * (which checked prod == blu) and handed over here. Until 2026-09-18
+     * this was a lookup, and the race below a bank, on the (M, N2, scr) row:
+     * the row a user's own scrambled M x N2 cell owns. The bank passed a
+     * positive time with every axis verdict at -1, which is the REPLACE path
+     * of vw2_2d_il_chain_bank, so a user cell's width, form and column-MT
+     * verdicts were wiped and re-raced on its next create (D1). */
+    if (_il2d_blu_ctx.rep_R && _il2d_blu_ctx.rep_nst > 0 &&
+        _il2d_chain_prod(_il2d_blu_ctx.rep_R, _il2d_blu_ctx.rep_nst) == M)
     {
+        memcpy(Rs, _il2d_blu_ctx.rep_R,
+               (size_t)_il2d_blu_ctx.rep_nst * sizeof(int));
+        *nst = _il2d_blu_ctx.rep_nst;
         if (getenv("VFFT_IL2D_LOG"))
             fprintf(stderr, "[il2d] blu inner M=%d x %d: replay chain src=wisdom\n", M, N2);
         if (_il2d_resolve(Rs, *nst, ff, fb))
-            _il2d_forms_serve(W, cfg, 0, M, N2, Rs, *nst, ff, fb, forms, fsz, VW2_ORD_SCR);
+            _il2d_forms_serve_key(W, cfg, key, "bluforms", M, (size_t)N2,
+                                  Rs, *nst, ff, fb, forms, fsz);
         return 1;
     }
     {
@@ -1425,13 +1450,24 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
         if (win < 0) return 0;
         memcpy(Rs, cand[win], sizeof cand[win]);
         *nst = lens[win];
+        /* the winner banks on THE CELL'S row as chain= + blu=M, ns = 0 so an
+         * existing row is FIELD-UPDATED and its other verdicts survive. Only
+         * when this build is the cell's plan: a speculative N-arm arm leaves
+         * chain= naming the N chain until the race picks a winner. */
+        if (_il2d_blu_ctx.commit)
+        {
+            vw2_ilcol_chain_bank(&W->vw2, key, Rs, *nst,
+                                 -1, -1, -1, -1, -1, M, 0.0);
+            _vw2_persist(W, cfg);
+        }
         if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d] blu inner M=%d x %d: chain race -> %d candidates, "
-                            "winner banked\n", M, N2, ncand);
-        vw2_2d_il_chain_bank(&W->vw2, M, N2, Rs, *nst, -1, -1, -1, -1, -1, -1, bns, VW2_ORD_SCR);
-        _vw2_persist(W, cfg);
+            fprintf(stderr, "[il2d] blu inner M=%d x %d: chain race -> %d candidates,"
+                            " winner %s\n", M, N2, ncand,
+                    _il2d_blu_ctx.commit ? "banked on the cell's row"
+                                         : "(N-arm arm, unbanked)");
         if (_il2d_resolve(Rs, *nst, ff, fb))
-            _il2d_forms_serve(W, cfg, 0, M, N2, Rs, *nst, ff, fb, forms, fsz, VW2_ORD_SCR);
+            _il2d_forms_serve_key(W, cfg, key, "bluforms", M, (size_t)N2,
+                                  Rs, *nst, ff, fb, forms, fsz);
         return 1;
     }
 }
@@ -1545,7 +1581,7 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
      * twin that used to live here was byte-identical to _il2d_forms_serve_key
      * apart from the key. */
     const vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
-    _il2d_forms_serve_key(W, cfg, &ck, N1, (size_t)N2, Rs, nst, ff, fb, forms, fsz);
+    _il2d_forms_serve_key(W, cfg, &ck, "forms", N1, (size_t)N2, Rs, nst, ff, fb, forms, fsz);
 }
 
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
@@ -1726,7 +1762,8 @@ static void _il2d_col_free(vfft_ilcol_t *c)
  * _il2d_forms_serve, which keys rank 2 axis 0) */
 static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
                                   const vfft_config_t *cfg,
-                                  const vw2_ilcol_key_t *key, int N, size_t rn,
+                                  const vw2_ilcol_key_t *key, const char *base,
+                                  int N, size_t rn,
                                   const int *Rs, int nst,
                                   vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                                   char *forms, size_t fsz)
@@ -1754,25 +1791,25 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
     if (!W || W->vw2_off_2d)
         return;
     if (!cfg->recalibrate &&
-        vw2_ilcol_forms_lookup(&W->vw2, key, forms, fsz))
+        vw2_ilcol_forms_lookup_base(&W->vw2, key, base, forms, fsz))
     {
         if (_il2d_apply_forms(Rs, nst, forms, ff, fb))
         {
             if (getenv("VFFT_IL2D_LOG"))
-                fprintf(stderr, "[il2d] forms %dx%d: replay %s src=wisdom\n", N, (int)rn, forms);
+                fprintf(stderr, "[il2d] %s %dx%d: replay %s src=wisdom\n", base, N, (int)rn, forms);
             return;
         }
-        _vfft_warn("banked forms=%s does not fit chain at %dx%d - re-racing",
-                   forms, N, (int)rn);
+        _vfft_warn("banked %s=%s does not fit chain at %dx%d - re-racing",
+                   base, forms, N, (int)rn);
         (void)_il2d_resolve(Rs, nst, ff, fb);
     }
     if (_il2d_race_forms(N, (int)rn, Rs, nst, ff, fb, forms, fsz) && forms[0])
     {
-        const int banked = vw2_ilcol_forms_bank(&W->vw2, key, forms);
+        const int banked = vw2_ilcol_forms_bank_base(&W->vw2, key, base, forms);
         if (banked)
             _vw2_persist(W, cfg);
         if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d] forms %dx%d: raced -> %s, %s\n", N, (int)rn, forms,
+            fprintf(stderr, "[il2d] %s %dx%d: raced -> %s, %s\n", base, N, (int)rn, forms,
                     banked ? "banked" : "NOT banked yet (no chain row; the create re-banks once it lands)");
     }
 }
@@ -1799,6 +1836,10 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     int il2d_bcmt = -1, il2d_bcmtt = -1, il2d_bblu = -1;
     int il2d_tbl_done = 0;
     _il2d_blu_ctx.N2 = (int)rn;   /* the Bluestein inner's chain provider: this axis's row length */
+    _il2d_blu_ctx.key = key;      /* ... and the row its verdict belongs on (D1, 2026-09-18) */
+    _il2d_blu_ctx.rep_R = NULL;
+    _il2d_blu_ctx.rep_nst = 0;
+    _il2d_blu_ctx.commit = 0;
     int chain_ok = 0;
     {
         /* chain precedence: env > banked lay=il verdict > RACE
@@ -1874,7 +1915,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     if (chain_ok && il2d_bblu <= 0)
     {   /* E1.11 per-stage kernel forms (2026-09-02); a banked
          * Bluestein cell's forms live on its (M, (int)rn) row */
-        _il2d_forms_serve_key(W, cfg, key, N, rn, c->R, c->nst,
+        _il2d_forms_serve_key(W, cfg, key, "forms", N, rn, c->R, c->nst,
                           c->f, c->b, forms, fsz);
     }
     if (!chain_ok)
@@ -1886,27 +1927,21 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
          * n1 comes out NATURAL by construction, so ALL order
          * spellings are served (M4-lite closed the old
          * DEFAULT-only gate 2026-08-27). */
+        _il2d_blu_ctx.commit = 1;   /* no chain exists: this build IS the cell's plan */
         c->blu = _il2d_blu_build(N, rn, c->R,
                                    c->L, c->f, c->b,
                                    c->tf, c->tb, &c->nst,
                                    &c->bluchf, &c->bluchb,
                                    &c->blukf, &c->blukb,
                                    &c->bluscr);
+        _il2d_blu_ctx.commit = 0;
         if (c->blu)
             chain_ok = 1;
-        if (c->blu && key->rank >= 3 && W && !W->vw2_off_2d)
-        {
-            /* the cell's OWN row (2026-09-17). "Axis 0 creates the row, a
-             * later axis updates fields on it" -- and a Bluestein axis 0
-             * created none, so axis 1's chain and the structure verdict were
-             * refused ("il column axis 1 bank refused (no row)") and re-raced
-             * on EVERY create. Caught by ilnd_gate's first run. The row
-             * carries the M chain and blu = M, which is what the lookup above
-             * expects (prod == blu) and what (b) rebuilds from. */
-            vw2_ilcol_chain_bank(&W->vw2, key, c->R, c->nst,
-                                 -1, -1, -1, -1, -1, c->blu, 0.0);
-            _vw2_persist(W, cfg);
-        }
+        /* (the cell's own row is banked by the provider, at every rank and
+         * before it serves the inner's forms -- vw2_ilcol_forms_bank_base is
+         * a field update and needs the row to exist. The rank >= 3 bank that
+         * stood here, added 2026-09-17 for the un-bankable 3D Bluestein axis,
+         * moved there whole on 2026-09-18 with D1.) */
     }
     if (chain_ok && !c->blu && il2d_bblu <= 0 && c->nst > 1 &&
         nat_req)
@@ -1983,9 +2018,16 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             double *bchf, *bchb, *bkf, *bkb, *bscr;
             memset(btf, 0, sizeof btf);
             memset(btb, 0, sizeof btb);
+            /* the replayed row's chain IS the M chain (the lookup above
+             * checked prod == blu): hand it to the provider rather than have
+             * it re-read a row of its own (D1, 2026-09-18) */
+            _il2d_blu_ctx.rep_R = c->R;
+            _il2d_blu_ctx.rep_nst = c->nst;
             M2 = _il2d_blu_build(N, rn, bR, bL, bf, bb,
                                  btf, btb, &bnst, &bchf, &bchb,
                                  &bkf, &bkb, &bscr);
+            _il2d_blu_ctx.rep_R = NULL;
+            _il2d_blu_ctx.rep_nst = 0;
             if (M2 == il2d_bblu)
             {
                 memcpy(c->R, bR, sizeof bR);

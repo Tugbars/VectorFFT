@@ -505,8 +505,23 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             }
             /* (2P/3P/2P_PURE availability is settled by the normalize block
              * above — the route already names 2P_PURE iff il2p exists.) */
-            if (ilr == VFFT_K1_IL_MONO && !vfft_k1_mono_il_fn(N, 0))
-                ilr = VFFT_K1_IL_NONE;
+            /* validate the form the handle will RESOLVE, not form 0 (survey
+             * section D, 2026-09-18). The resolution below takes the row's
+             * banked il_kv, and form 1 exists only at N = 64 -- so a row
+             * carrying il_route=MONO il_kv=1 at any other N passed a form-0
+             * check here and then resolved to NULL pointers that
+             * vfft_execute.h calls unguarded. The planner never banks that
+             * pair, so reaching it means a hand-edited or foreign store,
+             * which is exactly what a validator is for. The expression is the
+             * resolution's own, character for character. */
+            if (ilr == VFFT_K1_IL_MONO)
+            {
+                const int mf = (ki && ki->k1_il_route == VFFT_K1_IL_MONO)
+                                   ? ki->il_kv : 0;
+                if (!vfft_k1_mono_il_form_fn(N, mf, 0) ||
+                    !vfft_k1_mono_il_form_fn(N, mf, 1))
+                    ilr = VFFT_K1_IL_NONE;
+            }
             /* Handle exists when the SPLIT axis has a route, OR when ANY
              * IL-only route does — pair, chain, or prime. 🔴 il2p MUST be in
              * this guard: with the odd-count tail, cells like 50 = 5x10 have

@@ -124,3 +124,13 @@ log on; `_il2d_real_rowrace` now logs its LADDER (`[il2d-real] wl ladder
 N1xN2: ...`) and not only its winner, so a change to what the ladder admits
 can be diffed arm by arm (R2 was). `il2d_real_probe` has an .exe and no
 source; this is its replacement for that purpose.
+
+## 7. The targeted-run map, 2026-09-18 additions
+
+| edited | run |
+| --- | --- |
+| `oop/il_prime.h`, the prime cell in `oop/k1_commit.h` | `ilprime_inner_gate` |
+| `transforms/fft2d/il2d_tier.h` (the Bluestein provider, the forms serve), `wisdom2/wisdom2_2d_reader.h` | `il2d_blu_row_gate`, `il2d_onechain_gate`, `ilnd_gate`, `il2d_real_gate` |
+| `transforms/fft2d/transpose.h` | `blocked_tail_gate`, `zr2c_fd_gate`, `odd_ct_gate`, `api_matrix_gate` (the split 2D/3D/4D doors) |
+| `vfft.c`'s fingerprint | `k1_fourstep_gate`, and RE-CAPTURE `capture_baseline.py` |
+| `oop/c2c_oop_create.h`'s MONO validation | `il_solo_gate`, `k1_pow2_gate`, `vfft_k1scr_gate` |

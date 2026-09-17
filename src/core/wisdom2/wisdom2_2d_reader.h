@@ -890,8 +890,13 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
  * ("-" = the stage's single form; r32 b48|b84, r64 b88|b416). Merged onto
  * the existing row (vw2_update_field) after the chain is banked; a row
  * without a chain carries no forms. */
-static inline int vw2_ilcol_forms_lookup(vw2_store_t *s, const vw2_ilcol_key_t *ck,
-                                         char *out, size_t osz)
+/* THE FORM TOKEN'S BASE NAME (2026-09-18): "forms" describes the row's own
+ * chain=; "bluforms" describes the column-axis Bluestein's INNER chain at M,
+ * which shares the row but not the chain. One row, two independent stage
+ * lists, neither able to overwrite the other -- the alternative was a second
+ * row keyed (M, N2), which is a row a user's own M x N2 cell owns (D1). */
+static inline int vw2_ilcol_forms_lookup_base(vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                              const char *base, char *out, size_t osz)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
@@ -900,18 +905,28 @@ static inline int vw2_ilcol_forms_lookup(vw2_store_t *s, const vw2_ilcol_key_t *
     vw2__ilcol_key(ck, &k);
     r = vw2_lookup(s, &k);
     if (!r || !vw2_rec_get(r, vw2__ilcol_tok(ck, "chain", tb, sizeof tb))) return 0;
-    v = vw2_rec_get(r, vw2__ilcol_tok(ck, "forms", tb, sizeof tb));
+    v = vw2_rec_get(r, vw2__ilcol_tok(ck, base, tb, sizeof tb));
     if (!v || !*v) return 0;
     snprintf(out, osz, "%s", v);
     return 1;
 }
-static inline int vw2_ilcol_forms_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck,
-                                       const char *forms)
+static inline int vw2_ilcol_forms_lookup(vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                         char *out, size_t osz)
+{
+    return vw2_ilcol_forms_lookup_base(s, ck, "forms", out, osz);
+}
+static inline int vw2_ilcol_forms_bank_base(vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                            const char *base, const char *forms)
 {
     vw2_key_t k;
     char tb[16];
     vw2__ilcol_key(ck, &k);
-    return vw2_update_field(s, &k, vw2__ilcol_tok(ck, "forms", tb, sizeof tb), forms) == VW2_OK;
+    return vw2_update_field(s, &k, vw2__ilcol_tok(ck, base, tb, sizeof tb), forms) == VW2_OK;
+}
+static inline int vw2_ilcol_forms_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                       const char *forms)
+{
+    return vw2_ilcol_forms_bank_base(s, ck, "forms", forms);
 }
 /* the rank-N IL tier's STRUCTURE verdict (fftnd_il.h): s= on the rank-3
  * lay=il row that axis 0's chain bank created — 1 = the child per plane,

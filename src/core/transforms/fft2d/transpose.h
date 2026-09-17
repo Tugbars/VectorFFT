@@ -67,14 +67,24 @@
 #include <immintrin.h>
 #endif
 
-/* Cache thresholds (bytes) — typical x86 client defaults. Override at
- * build time if targeting a specific machine, e.g. Zen4 1MB L2:
- *   gcc -DTP_L2_BYTES=1048576 ... */
-#ifndef TP_L1_BYTES
-#define TP_L1_BYTES (32 * 1024)
+/* Cache thresholds (bytes). THE AUTHORITY IS cpu_cache.h (2026-09-18, survey
+ * section D): these were baked client defaults -- 32 KB / 1 MB -- while the
+ * module reports what the host actually has (48 KB / 2 MB on the calibration
+ * host), so the recursion body was picked from numbers 1.5-2x off. Two
+ * disagreeing cache authorities, and in the `#ifndef default` spelling this
+ * tree has already been bitten by once (a second definer silently wins in a
+ * one-TU build). A build-time -DTP_L1_BYTES / -DTP_L2_BYTES still overrides,
+ * for cross-compiling to a named target. */
+#include "../../support/cpu_cache.h"
+#ifdef TP_L1_BYTES
+#define _TP_L1B ((size_t)(TP_L1_BYTES))
+#else
+#define _TP_L1B ((size_t)vfft_cpu_l1d_bytes())
 #endif
-#ifndef TP_L2_BYTES
-#define TP_L2_BYTES (1024 * 1024)
+#ifdef TP_L2_BYTES
+#define _TP_L2B ((size_t)(TP_L2_BYTES))
+#else
+#define _TP_L2B ((size_t)vfft_cpu_l2_bytes())
 #endif
 
 /* Base tile sizes. AVX-512 wants a bigger "large" tile because its
@@ -396,15 +406,15 @@ static void stride_transpose(
 {
     size_t ws = 2 * N1 * N2 * sizeof(double);
 #if defined(__AVX2__) || defined(__AVX512F__)
-    if ((N1 <= 8 || N2 <= 8) && ws <= TP_L1_BYTES
+    if ((N1 <= 8 || N2 <= 8) && ws <= _TP_L1B
         && (N1 % 8) == 0 && (N2 % 4) == 0) {
         _tp_skinny_8x4(src, ld_src, dst, ld_dst, N1, N2);
         return;
     }
 #endif
-    if (ws <= TP_L1_BYTES)
+    if (ws <= _TP_L1B)
         _rec_small(src, ld_src, dst, ld_dst, N1, N2);
-    else if (ws <= TP_L2_BYTES)
+    else if (ws <= _TP_L2B)
         _rec_medium(src, ld_src, dst, ld_dst, N1, N2);
     else
         _rec_large(src, ld_src, dst, ld_dst, N1, N2);
@@ -419,9 +429,9 @@ static void stride_transpose_pair(
 {
     size_t ws = 4 * N1 * N2 * sizeof(double);
     void (*rec)(const double *, size_t, double *, size_t, size_t, size_t);
-    if (ws <= TP_L1_BYTES)
+    if (ws <= _TP_L1B)
         rec = _rec_small;
-    else if (ws <= TP_L2_BYTES)
+    else if (ws <= _TP_L2B)
         rec = _rec_medium;
     else
         rec = _rec_large;
