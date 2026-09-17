@@ -476,7 +476,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
             if (getenv("VFFT_ILPR_LOG"))
                 fprintf(stderr, "[ilprime] N=%d: inner race %d arm(s) in %d heat(s) -> %s inner %s %s tw=%d, banked\n",
                         N, nbuilt, nfin, fin[w]->method == 1 ? "RADER" : "BLUESTEIN", kind, shape, cands[wci].d.tw);
-            if (0 && vw2_prime_method_bank(&W->vw2, N, fin[w]->method == 1 ? 1 : 2,
+            if (vw2_prime_method_bank(&W->vw2, N, fin[w]->method == 1 ? 1 : 2,
                                       kind, shape, cands[wci].d.tw) == VW2_OK)
                 _vw2_persist(W, cfg);
         }
