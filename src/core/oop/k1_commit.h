@@ -39,15 +39,20 @@
  * change here. This is one of the few places in the tree where obj_equiv is the
  * only guard.
  *
- * THREE BANKERS, THREE DIFFERENT CELLS
- * ------------------------------------
- * The order axis does not share a cell with the scrambled one:
- *   _bank_nat_1d      in-place natural   (ord=nat)
- *   _bank_natoop_1d   out-of-place natural
- *   _bank_scrmode_1d  the ord=scr mode cell (mode=ilp|zcasc|conv)
- * They are separate so that a natural-order create can never perturb the
- * scrambled plan, and vice versa - the regimes are calibrated independently
- * because they are genuinely different engines, not one engine with a flag.
+ * THE STRIDE-ROW BANKER
+ * ---------------------
+ * One is left (2026-09-18): _bank_nat_1d, the in-place natural cell
+ * (ord=nat), called from the in-place create. Its three siblings --
+ * _bank_natoop_1d (out-of-place natural), _bank_scrmode_oop_1d (the
+ * out-of-place ord=scr mode cell) and _bank_nat_raced (the banked-loss
+ * marker) -- had ZERO callers anywhere in src/ or benches/ and were deleted
+ * whole (clean library, not history; survey section D). Rows a shipped store
+ * already carries are still SERVED; nothing writes new ones.
+ * The order axis does not share a cell with the scrambled one, which is why
+ * the surviving banker is per-cell: a natural-order create can never perturb
+ * the scrambled plan, and vice versa - the regimes are calibrated
+ * independently because they are genuinely different engines, not one engine
+ * with a flag.
  *
  * INCLUSION CONTRACT
  * ------------------
@@ -1298,75 +1303,6 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0, _vw2_lay_of(cfg));
     _vw2_persist(W, cfg);
 }
-
-/* The banked LOSS (2026-09-02): the ZCASC/ILP challenger raced this @nat
- * cell and the tape won. Mark the EXISTING record with zr=1 in place
- * (vw2_update_field) — the tape's mode/chain line stays byte-for-byte as
- * the tape race banked it (re-banking here would re-encode a chain whose
- * provenance differs by mode — the SCR/dfac subtlety). A later re-bank of
- * the cell (recalibrate) drops the token: race once, mark again. Without
- * this, a losing race re-ran on EVERY create, forever — the exact disease
- * VFFT_NAT_CONV was minted to cure on the ord=scr cell. */
-static void _bank_nat_raced(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
-                            int N, size_t K)
-{
-    vw2_key_t k;
-    if (W->vw2_off_stride)
-        return; /* kill switch: legacy tables keep the old re-race behaviour */
-    vw2__stride_key(&k, VW2_T_C2C, N, K, VW2_ORD_NAT, VW2_PL_IP);
-    k.lay = _vw2_lay_of(cfg);
-    if (vw2_update_field(&W->vw2, &k, "zr", "1") == VW2_OK)
-        _vw2_persist(W, cfg);
-}
-
-/* OOP-natural verdict: same (N,K) cell as @nat but keyed place=oop, so the
- * placements cannot clobber each other — and keyed lay= (v1.2) so the
- * LAYOUTS cannot either, for exactly the same reason the placement split
- * existed. nf=1/factors[0]=N => ref= signpost.
- * See docs/design/vfft_front_door.md. */
-static void _bank_natoop_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
-                            int N, size_t K, int mode, double ns)
-{
-    vfft_proto_nat_entry_t nn;
-    memset(&nn, 0, sizeof nn);
-    nn.N = N;
-    nn.K = K;
-    nn.mode = mode;
-    nn.nat_ns = ns;
-    nn.nf = 1;
-    nn.factors[0] = N;
-    /* the recipe row that SERVED: below 2048 the cascade recipe is the
-     * role=comp row (the sub-2048 chain race banks comp, never a verdict),
-     * so the signpost must name it — a problem-space ref dangles there,
-     * ref_ok reports MISS and every second natural OOP create re-raced
-     * (vfft_ilp_front_gate, 2026-09-07: the consume handle flipped verdicts) */
-    nn.ref_comp = 0 /* no cascade recipe rows since 2026-09-15 */;
-    /* wave-4 flip: the dummy-chain shape becomes the ref= SIGNPOST record
-     * in the store (the family codec detects nf==1 && factors[0]==N). */
-    vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/1, _vw2_lay_of(cfg));
-    _vw2_persist(W, cfg);
-}
-
-/* the OOP ord=scr mode cell (2026-09-03): the DEFAULT-order OOP race's
- * verdict, mode=ZCASC (the scrambled cascade won) | mode=FREE (the handle's
- * own K=1 engine won; the banked loss). Dummy chain => the ref= signpost to
- * the kind-4 OOP verdict, exactly as @natoop. */
-static void _bank_scrmode_oop_1d(struct vfft_wisdom_s *W,
-                                 const vfft_config_t *cfg, int N, size_t K,
-                                 int mode, double ns)
-{
-    vfft_proto_nat_entry_t nn;
-    memset(&nn, 0, sizeof nn);
-    nn.N = N;
-    nn.K = K;
-    nn.mode = mode;
-    nn.nat_ns = ns;
-    nn.nf = 1;
-    nn.factors[0] = N;
-    vw2_stride_bank_scrmode_oop(&W->vw2, &nn, _vw2_lay_of(cfg));
-    _vw2_persist(W, cfg);
-}
-
 
 /* ════════════════════════════════════════════════════════════════════════
  * PUBLIC API

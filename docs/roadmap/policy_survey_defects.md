@@ -189,37 +189,27 @@ DEFAULT-order batch cell to a different wisdom row and change its plans;
 pointing it at `vfft_policy_ord_rankn` preserves today's behaviour exactly
 but names the wrong rank. Nobody has measured which is right.
 
-## D. Claimed but not yet verified
+## D. Claimed, then OPENED AND RULED (2026-09-18)
 
-Worth a look; recorded so they are not re-derived, not acted on.
+Every claim was read in source on 2026-09-18 and ruled by the owner the same
+day. Five were real and are FIXED; one is real and benign.
 
-- `transforms/fft2d/il2d_tier.h:1404` / `:1429` — the Bluestein inner
-  M-chain hardcodes `VW2_ORD_SCR` for both its lookup and its bank, and races
-  with `nat=0`, from a natural request. The checker confirmed the path is
-  reachable but downgraded the severity, on the grounds that the row
-  describes the length-M inner pass rather than the user's cell. Separately,
-  its bank at `:1429` (and the second half at `:2418`) passes `cmt=-1
-  cmtt=-1` with a positive time, which replaces the record — so it can wipe
-  the column-MT verdict of an unrelated user cell that happens to be (M, N2).
-- `wisdom2/wisdom2_oop_reader.h:302` — `vw2__oop_find_k1_bwd` filters on t,
-  rank, n[0], dir, role, lay and eng, and never on `key.ord`, while its
-  writer stamps `VW2_ORD_NAT`. The asymmetry is live; the consequence is not
-  established.
-- `oop/k1_commit.h:1111`, `:1138`, `:1094` — `_bank_natoop_1d`,
-  `_bank_scrmode_oop_1d` and `_bank_nat_raced` have zero callers anywhere in
-  `src/` or `benches/`. Two stride row families therefore have neither a live
-  writer nor a live reader.
-- `transforms/fft2d/transpose.h:73-77` — bakes `TP_L1_BYTES` / `TP_L2_BYTES`
-  and picks its recursion body from them, while `cpu_cache.h` reports 1.5-2x
-  more. Two disagreeing cache authorities.
-- `vfft.c:2164` — the four-step has no `FP__P(k1fs)` in the fingerprint's
-  subplan presence bitmap and no detail line: it is invisible to the
-  fingerprint.
-- `oop/c2c_oop_create.h:508` vs `:560` — the MONO route is validated with
-  form 0 while the handle resolves the row's BANKED form; a row carrying
-  `il_route=MONO il_kv=1` at N != 64 would build NULL pointers that
-  `vfft_execute.h:1092` calls unguarded. Latent: the planner refuses to bank
-  that form.
+| # | claim | verdict |
+| --- | --- | --- |
+| D1 | the 2D Bluestein inner's M-chain hardcodes `VW2_ORD_SCR` and banks on the (M, N2) row | **REAL, FIXED.** The order is right (a convolution is a matched roundtrip in any order, the prime cell's own reasoning); the ROW was not. The bank passed a positive time with every axis verdict at -1 -- the REPLACE path -- so a user's own scrambled M x N2 cell lost its width, fusion, row-route and column-MT verdicts and re-raced them on its next create. Now the inner's chain and `blu=M` bank on THE CELL'S OWN row (`_il2d_blu_ctx.key`), its per-stage forms under a separate token `bluforms=` on that row (so they can never overwrite the cell's own `forms=`), and a replay is handed the chain the builder already read rather than re-reading a row of its own. A speculative N-arm arm banks nothing (`commit`). Gate `il2d_blu_row_gate`, watched to fail |
+| D2 | `vw2__oop_find_k1_bwd` never filters on `key.ord` | **REAL, BENIGN.** One writer, and it stamps `VW2_ORD_NAT` (`wisdom2_oop_reader.h:634`); the row is a backward kernel-variant verdict keyed by direction and layout, so only one can exist per N. It becomes a defect the day a scrambled backward verdict is banked. Left as is, recorded here |
+| D3 | `_bank_natoop_1d`, `_bank_scrmode_oop_1d`, `_bank_nat_raced` have zero callers | **REAL, FIXED.** Confirmed by grep over `src/` and `benches/`; deleted whole (69 lines) with the header comment that described them. `_bank_nat_1d` is live (the in-place create). Leftover: `vw2_stride_bank_scrmode_oop` is now an orphan WRITER -- no caller -- but its reader still serves rows a shipped store carries, so it stays until a sunset ruling |
+| D4 | `transpose.h` bakes `TP_L1_BYTES` / `TP_L2_BYTES` while `cpu_cache.h` reports 1.5-2x more | **REAL, FIXED.** 32 KB / 1 MB baked against 48 KB / 2 MB measured, so the recursion body was picked from the wrong regime; and in the `#ifndef default` spelling this tree has been bitten by before. `cpu_cache.h` is now the authority; `-DTP_L*_BYTES` still overrides for a named cross-target. Split-library only (the four-step has its own transpose) |
+| D5 | the four-step is invisible to the fingerprint | **REAL, FIXED.** No `FP__P(k1fs)` bit and no detail line, so two four-step plans differing in their raced split hashed the same and a regression there was invisible to the refactor harness. Both added. NOTE: the `have=` bitmap is one digit wider and a new `k1fs=[...]` line exists, so baselines captured before 2026-09-18 do not compare -- re-capture with `capture_baseline.py` |
+| D6 | MONO validated at form 0, resolved at the banked form | **REAL, FIXED.** Form 1 exists only at N = 64, so a row carrying `il_route=MONO il_kv=1` at any other N passed the form-0 check and resolved to NULL pointers that `vfft_execute.h:1092` calls unguarded. The validator now asks for the form it will resolve, in the resolution's own expression, both directions. Latent (the planner never banks that pair), so this guards a hand-edited or foreign store |
+
+Evidence: `il2d_blu_row_gate` ALL PASS on the fix and, with the pre-2026-09-18
+foreign-row bank injected, failing exactly as described -- the 64 x 64
+scrambled owner row went from `chain=8.8 wl=32 tf=1 ro=0 sw=0 ns=3956.1` to
+`chain=8.8 ns=2300.0`, and the 23 x 64 cell banked no row of its own. Fourteen
+targeted gates green (`il2d_blu_row`, `il2d_onechain`, `ilnd`, `il2d_real`,
+`ilprime_inner`, `il_solo`, `k1_fourstep`, `policy` = 131,571,790 checks,
+`blocked_tail`, `zr2c_fd`, `odd_ct`, `k1_pow2`, `vfft_k1scr`, `api_matrix`).
 
 ## E. From the rank>=2 census (2026-09-17) -- verified by hand, and what became of them
 

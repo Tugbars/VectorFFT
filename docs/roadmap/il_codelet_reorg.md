@@ -162,6 +162,11 @@ is a permanent tax — see the required graft below.
 
 ## 5. Two grafts the judge made preconditions
 
+> 🔴 **Graft 1 is largely dissolved by §11.3.** The registry is derived from the argv cell
+> tables, not from disk, so it is invariant under the move; keeping the corpus at 2 quadrants
+> removes the forgotten-quadrant hazard rather than generalising around it. Graft 2 (the TSV
+> invariant) stands, and §11.7 strengthens it with an `nm` symbol-set check.
+
 1. **One `Corpus.il_quadrants` definition**, consumed by `corpus.ml`,
    `emit_il_registry.ml` and both build files. `emit_il_registry.ml:77-81` currently
    hard-codes `[ "zil-boundary"; "zil-pure" ]`; a forgotten quadrant drops that kind's
@@ -178,6 +183,11 @@ is a permanent tax — see the required graft below.
 ---
 
 ## 6. The exact edit list
+
+> 🔴 **Items 1, 2, 4 and 5 are superseded by §11** — read that first. In short: the corpus
+> stays at **2 quadrants** with a per-file classifier (so `emit_il_registry.ml` needs no
+> change at all), `dir_of_quadrant` keeps its `failwith`, and the build globs must **not**
+> become recursive.
 
 1. **`corpus.ml:2437-2449`** — delete the `"zil-boundary"` and `"zil-pure"` arms; generalise
    the fallback from `[fam; isa] -> fam ^ "/" ^ isa` to a join of all `-`-separated segments,
@@ -235,6 +245,9 @@ consumer in `src/` and are a delete candidate pending your ruling.
    more than the monolithic default. The library's most-selected non-default kernel family is
    the one a `gen_set` regen would not recreate. Do you want them brought *into* the corpus
    (a `tangent` quadrant + recorded argv), or left outside it deliberately?
+   🔴 **This one is a blocker, not just a preference** — §11.4: the per-file classifier must
+   return a directory for every file on disk, so phase 1 cannot be specified until this is
+   answered either way.
 4. **`t2cs`** — keep the `VFFT_ILFD_NO_GEN2` escape hatch, or retire the kind with the pin?
 5. **`b416`** — the r64 column form has **never won a banked cell** (§10.3: `b88` 12, `b48` 4,
    `b84` 1, `b416` 0). Under the pool sunset policy that is a re-race-then-retire candidate,
@@ -438,6 +451,149 @@ calibration; the four documented reachers from §3 (the blind backward 1..5 swee
 racer, so a form can be unbanked precisely *because* something else is banked. The
 cross-check is evidence **for** what is load-bearing, never evidence against what is not
 listed.
+
+---
+
+## 11. Code-change plan for the move
+
+Written after reading every path-bearing consumer. **It revises §5 and §6 in two places** —
+both revisions make the change smaller, and both are noted inline.
+
+### 11.1 What actually consumes a codelet path
+
+Four systems independently re-derive "which directories hold zil codelets". Today each
+names **3** directories. The proposed tree has **11**. That multiplication, not the `git mv`,
+is the whole risk.
+
+| # | consumer | how it names dirs | what a mistake does |
+|---|---|---|---|
+| 1 | `corpus.ml` — `quadrants` (`:2414-2433`) + `dir_of_quadrant` (`:2437-2450`) | two separate literals that can disagree | `gen_set` writes to the wrong dir, or `failwith` |
+| 2 | `emit_il_registry.ml:77-81` | hard-codes `[ "zil-boundary"; "zil-pure" ]` | a dropped tag ⇒ `VFFT_IL_<TAG>_*_RADICES` undefined ⇒ **`il2p.h` fails to compile** (108 X-macros are consumed there) |
+| 3 | `build_tuned/build.py:57-73` | explicit `dirs` list; missing dir ⇒ **`[warn]` on stderr only** | a family silently vanishes from the archive |
+| 4 | `CMakeLists.txt:200-272` | explicit `_zdir` loop + `VFFT_ABSENT_avx512` | guarded — see 11.2 |
+
+Plus three path-keyed TSVs — `recipes.tsv` (1437 rows), `baseline_manifest.tsv` (1740),
+`baseline_verdicts.tsv` (1463) — all keyed on the **relative path** as column 1.
+
+### 11.2 🔴 Reject §6 items 4 and 5: do not make the build globs recursive
+
+§6 proposed `rglob` in `build.py` and `file(GLOB_RECURSE)` in CMake. **Reading
+`CMakeLists.txt:186-195` shows why that is exactly backwards.** The per-directory loop and
+its zero-file `FATAL_ERROR` exist because of a real incident, documented in the file:
+
+> *this file globbed 7 families and printed a single plausible-looking "codelets: 598",
+> while the three zil dirs (265 files) were absent for weeks — one aggregate number cannot
+> show you a family that is missing.*
+
+A recursive glob restores precisely that failure mode, and it would do so at the moment the
+directory count goes 3 → 11. `build.py` is worse still: a missing directory there is a
+`[warn]` to stderr, not an error.
+
+**Keep the enumerate-and-count-each-directory shape.** The list grows from 3 entries to 11 in
+both files; the guard then protects 11 families instead of 3. That is the change being
+bought.
+
+### 11.3 🔴 Revision to §5/§6: keep the corpus at 2 quadrants, classify per file
+
+§6 item 2 wanted 11 new quadrant names *and* an unsplit `zil_pure_cells`. Those are in
+tension: `gen_set.ml:63` places files with `Filename.concat !root (dir_of_quadrant q)`, so
+one quadrant is one directory — 11 directories would force the 547-row cell table to be
+partitioned, which is the thing that preserves reproducibility.
+
+The resolution is the classifier §6 already gestured at, taken further: **`gen_set` places
+per file, not per quadrant.**
+
+```ocaml
+(* corpus.ml — ONE literal; quadrants and dir_of_quadrant both derive from it *)
+let quadrant_dirs : (string * string) list =
+  [ "zil-pure",     "zil/avx2/pure_il"       (* base dir; subdir per file below *)
+  ; "zil-boundary", "zil/avx2/boundary_split"
+  ; ... ]
+
+(* NEW: the only function that knows the 11-way split *)
+val zil_subdir_of_file : string -> string   (* "radix32_z_t2b48_avx2.c" -> "pair2p/blocked" *)
+```
+
+Consequences, and they are all reductions in scope:
+
+- **`emit_il_registry.ml` needs no change at all.** It consumes `Corpus.files q` — the
+  *argv cell tables*, never the disk — so its output is invariant under the move. §5's graft-1
+  hazard ("a forgotten quadrant drops a kind's X-macro") **evaporates**, because the quadrant
+  count stays at 2. Verified: the generated header's provenance line reads *"from
+  `Corpus.files "zil-boundary" + "zil-pure"`"*, and `parse_stem`'s `dir` is the *direction*
+  (`` `Fwd``/`` `Bwd``), not a directory.
+- **`zil_pure_cells` stays one table, byte-for-byte.** All 547 argv rows keep their recorded
+  form, which is what the 97.97% reproducibility result rests on.
+- **`dir_of_quadrant`'s `failwith` stays.** §6 wanted to generalise the fallback to a
+  segment-join; that trades a loud compile-time failure for a silent wrong path. Instead
+  derive both `quadrants` and `dir_of_quadrant` from the one association list above and keep
+  `failwith` for anything not in it.
+- Only **`gen_set.ml:63`** changes shape: compute the directory per file, `mkdir_p` it once
+  per distinct value. `mkdir_p` is already recursive (`gen_set.ml:16-22`), so nested paths
+  need nothing else.
+
+### 11.4 🔴 Blocker: ruling 3 gates this phase
+
+The classifier must return a directory for **every** file on disk. 26 files have no corpus
+row — including **all 20 tangent files**, which §10.2 shows hold 52% of banked pair slots.
+So:
+
+- If ruling 3 is **"bring them into the corpus"**: the argv rows must be recovered first, and
+  the classifier is total. Clean.
+- If ruling 3 is **"leave them outside"**: `tangent/` is a directory the corpus does not know
+  about, and any expected-count check must carry an explicit *"unreproducible, expected 20"*
+  declaration — the same "an absence nobody wrote down is a hard error" posture `CMakeLists.txt`
+  already takes with `VFFT_ABSENT_avx512`.
+
+**Either answer is workable; the phase cannot be specified until one is given.**
+
+### 11.5 Two hazards I checked and can rule out
+
+- **Stale object reuse is self-healing.** `git mv` preserves mtime, objects are named flat by
+  stem (`build.py:252`), and the cache prunes by object name — so a moved file looks like a
+  cache hit. But `_is_stale` iterates `[src] + deps` (`build.py:162-167`), the depfile lists
+  the *old* source path, that path is now gone, `d.stat()` raises `OSError`, and the handler
+  returns `True`. Every moved file rebuilds. **No `.obj/` wipe is required.**
+- **No basename collision.** `build.py` documents relying on unique basenames across families.
+  Measured: **0** duplicate basenames within the avx2 compiled set. The reorg moves and never
+  renames, and the 2 `mono` files coming in from `oop/avx2` were already being compiled, so
+  the compiled set is unchanged.
+
+One hazard that is real and cheap: `file(GLOB)` has no `CONFIGURE_DEPENDS`, so **an existing
+build tree must be re-configured** after the move or it will link the old file list.
+
+### 11.6 Phase order
+
+The ordering point is that **phase 2 lands before the files move**, so the refactor is
+provably a no-op against an unchanged tree. If the binary changes, it was the refactor; if it
+changes after phase 3, it was the move. They never confound.
+
+| phase | work | exit check |
+|---|---|---|
+| **0 — freeze** | Record the multiset of `(sha256_lf, basename)` over all 573 zil files, and `nm --defined-only` the codelet archive. | Baseline stored outside the tree. |
+| **1 — collapse the duplication** | `corpus.ml`: one `quadrant_dirs` literal; `quadrants` and `dir_of_quadrant` derive from it; add `zil_subdir_of_file`. `gen_set.ml:63`: place per file. | `gen_set.exe --root <scratch> all` reproduces the tree **in its current shape** — classifier returns today's 3 dirs. |
+| **2 — teach the build the 11 names** | `build.py` `dirs` list 3 → 11 entries; CMake `_zdir` loop 3 → 11 and `VFFT_ABSENT_avx512` updated. Directories do not exist yet, so each is declared absent. | Build succeeds; **`nm` symbol set identical to phase 0**; both totals unchanged and equal. |
+| **3 — move** | `git mv` 573 files + 2 `mono` files in. Remove the temporary absent-declarations. | CMake per-family counts sum to the same total; `nm` identical again. |
+| **4 — re-path the harness** | Rewrite column 1 of the three TSVs by matching `sha256_lf`, not by string-editing paths. | The §5 invariant: multiset of `(sha256_lf, basename)` identical to phase 0. Full gate sweep. |
+| **5 — prose** | 12 `README.md` files (§7); update the 4 in-tree comments that name a zil path (`il2p.h` ×2, `ztt.h`, `dp_planner_il.h`), 2 `dune` comments, `tangent_gate.c` ×2, `build_tuned/README.md`, `CODELET_SET.md` ×4, `CODELET_TAXONOMY.md` ×8, and ~31 mentions across `docs/design`, `docs/performance`, `docs/roadmap`. | `grep -r 'pure_il\|boundary_split'` returns only intended hits. |
+
+### 11.7 The verification that actually catches a dropped file
+
+Counts can coincide; symbol sets cannot. The load-bearing check at phases 2, 3 and 4 is
+**`nm --defined-only` over `libdagcodelets.a`, diffed against the phase-0 baseline**. A
+codelet that silently stops compiling is a missing symbol, and that is invisible to any file
+count. Per the standing rule: verify by content, `nm` the binary.
+
+Secondary, in order of strength: the `(sha256_lf, basename)` multiset; `gen_set` into a
+scratch root diffed against the real tree; CMake's per-family counts against `build.py`'s
+total; the gate sweep last.
+
+### 11.8 Net edit size
+
+Six source files change: `corpus.ml` (one literal replaces two, plus a classifier),
+`gen_set.ml` (one line), `build.py` (a list), `CMakeLists.txt` (a list and a declaration),
+plus the three TSVs rewritten mechanically by hash. **`emit_il_registry.ml` does not change**,
+which is the main thing 11.3 buys. Everything else is `git mv` and prose.
 
 ---
 

@@ -132,6 +132,31 @@ replayed Bluestein inner at every rank -- inside its N-arm block (E1.7,
 rank >= 3 rebuild added that morning was redundant and is deleted; the 3D
 fix that mattered was the BANK (a). `ilnd_gate` passes on (a) alone.
 
+## Where the column Bluestein's inner verdict lives (2026-09-18)
+
+A column axis with no chain runs a Bluestein at M, and its INNER chain over
+M x rn is a raced verdict like any other. It banks on **the cell's own row**:
+`chain=` is the M chain, `blu=M` says so, and the inner's per-stage forms sit
+under `bluforms=` -- a separate token base, because on a cell that HAS a chain
+the same row's `forms=` describes that chain, and the N-arm race builds a
+Bluestein arm before the winner is known.
+
+Until 2026-09-18 the provider kept its own row at (M, rn, scrambled) instead,
+which is the row a user's own scrambled M x rn cell owns, and its bank was the
+REPLACE path -- so building a prime-column cell wiped that user cell's
+verdicts (survey section D1). The rank >= 3 bank added on 2026-09-17 for the
+un-bankable 3D Bluestein axis moved into the provider whole and now runs at
+every rank; it must precede the forms serve, because a form bank is a field
+update and needs the row to exist.
+
+Three states, one flag (`_il2d_blu_ctx.commit`, `.rep_R`):
+
+| state | chain | banks |
+| --- | --- | --- |
+| cold, no chain exists | raced | `chain=` + `blu=M` on the cell's row, then `bluforms=` |
+| replay (`blu > 0` on the row) | handed in by the builder | nothing |
+| a speculative N-arm arm | raced | nothing -- `chain=` still names the N chain until the race picks a winner |
+
 ## Checklist
 
 - [x] 0. This design (inventory verified by reading, 2026-09-17).

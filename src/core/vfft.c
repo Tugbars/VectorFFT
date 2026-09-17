@@ -2171,15 +2171,27 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->il2d_col.nat, h->il2d_col.blu, h->il2d_norowz);
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
-    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
+    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
             FP__P(cplan), FP__P(oplan), FP__P(k1sp),
             FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr), FP__P(k1ilfd), FP__P(k1ztt),
+            FP__P(k1fs),   /* D5, 2026-09-18: route 10 had no bit and no line */
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
             FP__P(zr2c_child), FP__P(oddr_child), FP__P(tplan),
             FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */
     FP__ADD(" il2dhave=%d%d%d%d%d%d",
             FP__P(il2d_row), FP__P(il2d_rowo), FP__P(il2d_roww),
             FP__P(il2d_rows), FP__P(il2d_natperm), FP__P(pq_inner));
+    /* the K=1 FOUR-STEP (route 10, k1_fourstep.h): the raced split, the order
+     * class, the natural form and its band width. Until 2026-09-18 the plan
+     * had neither a presence bit nor a detail line, so two four-step plans
+     * differing in their split -- the verdict the tier races per cell and per
+     * thread count -- hashed the SAME and a regression there was invisible to
+     * the refactor harness (survey section D). */
+    FP__ADD(" k1fs=[%dx%d scr=%d form=%d wl=%d B=%d thr=%d]",
+            h->k1fs ? h->k1fs->N1 : 0, h->k1fs ? h->k1fs->N2 : 0,
+            h->k1fs ? h->k1fs->scr : 0, h->k1fs ? h->k1fs->form : 0,
+            h->k1fs ? h->k1fs->sbwl : 0, h->k1fs ? h->k1fs->B : 0,
+            h->k1fs ? h->k1fs->nthreads : 0);
     /* the rank-N INTERLEAVED tier (fftnd_il.h): the raced structure and
      * each column axis's chain length + Bluestein M (0 = a chain) */
     FP__ADD(" ilfd=[mt=%d/%d tw=%d/%d]",
