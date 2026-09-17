@@ -1256,21 +1256,29 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
         h->il2d_col.cut = 0;
         vfft_race_run(&proto, &cols_arm, 1, &cbest);
         for (wi = 0; wi < VFFT_IL2D_WL_LADDER_N && nwl < 14; wi++)
-            if (_il2d_real_wl_cut(h, VFFT_IL2D_WL_LADDER[wi]) >= 0 && VFFT_IL2D_WL_LADDER[wi] < N1)
+            if (_il2d_real_wl_cut(h, VFFT_IL2D_WL_LADDER[wi]) >= 0)   /* w == N1 admitted like c2c/3D (R2) */
                 wlc[nwl++] = VFFT_IL2D_WL_LADDER[wi];
         for (s2 = 1; s2 < h->il2d_col.nst && nwl < 14; s2++)
         {
             const int w2 = h->il2d_col.L[s2];
             int dup = 0;
+            if (!vfft_policy_il2d_band_ok(N1, h->il2d_col.nst, h->il2d_col.L, w2))
+                continue;   /* R2: the real tier follows c2c/3D (floor 8; w == N1 admitted) */
             if (!vfft_policy_fits_l2((long)w2 * (long)hp1 * 16))
-                continue;
-            if (_il2d_real_wl_cut(h, w2) < 0 || w2 >= N1)
                 continue;
             for (wi = 0; wi < nwl; wi++)
                 if (wlc[wi] == w2)
                     dup = 1;
             if (!dup)
                 wlc[nwl++] = w2;
+        }
+        if (getenv("VFFT_IL2D_LOG"))
+        {   /* the LADDER, not just the winner: the census a pool change is
+             * gated by (design R2, 2026-09-17) */
+            fprintf(stderr, "[il2d-real] wl ladder %dx%d:", h->N, h->N2);
+            for (wi = 0; wi < nwl; wi++) fprintf(stderr, " %d", wlc[wi]);
+            fprintf(stderr, "
+");
         }
         for (wi = 0; wi < nwl; wi++)
         {
@@ -1817,26 +1825,10 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                      (il2d_bblu > 0 ? il2d_bblu : N) &&
                  _il2d_resolve(c->R, c->nst, c->f, c->b))
             chain_ok = 1;
-        if (chain_ok && il2d_bblu > 0 && key->rank >= 3)
-        {
-            /* a REPLAYED Bluestein row (2026-09-17): c->R is the length-M
-             * inner chain, NOT an N chain. The 2D create rebuilds the inner
-             * around it (fft2d_create.h:670, since 2026-09-02); this builder
-             * never did, and the 3D tier -- its only other caller -- would
-             * have run the M chain as the N chain. It never bit only because
-             * no 3D Bluestein cell could bank a row (below). rank >= 3 so the
-             * 2D create's own rebuild is not doubled. */
-            const int M2 = _il2d_blu_build(N, rn, c->R,
-                                           c->L, c->f, c->b,
-                                           c->tf, c->tb, &c->nst,
-                                           &c->bluchf, &c->bluchb,
-                                           &c->blukf, &c->blukb,
-                                           &c->bluscr);
-            if (M2 > 0)
-                c->blu = M2;
-            else
-                chain_ok = 0;   /* the row is stale: race/build cold below */
-        }
+        /* a replayed Bluestein row (il2d_bblu > 0) rebuilds its inner in the
+         * N-arm block below (E1.7, 2026-09-02) -- at every rank. A rank >= 3
+         * copy of that rebuild lived here for one day (2026-09-17) on the
+         * belief the builder had none; it was redundant and is gone. */
         if (!chain_ok)
         {
             int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
@@ -2259,7 +2251,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         {
             const int w = h->il2d_col.L[s2];
             int dup = 0, p2;
-            if (w > N1 || N1 % w || w < 8)
+            if (!vfft_policy_il2d_band_ok(N1, h->il2d_col.nst, h->il2d_col.L, w))
                 continue;
             if (!vfft_policy_fits_l2((long)w * N2 * 16))
                 continue;

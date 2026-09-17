@@ -1058,7 +1058,7 @@ static int _ilnd_wl_pool(const vfft_ilcol_t *c, int *out, int max)
     {
         const int w = c->L[s];
         int dup = 0, q;
-        if (w < 8 || _ilnd_wl_cut(c, w) < 0)
+        if (!vfft_policy_il2d_band_ok(c->N, c->nst, c->L, w))
             continue;
         if (!vfft_policy_fits_l2((long)w * (long)c->rn * 16))
             continue;

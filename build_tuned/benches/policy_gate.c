@@ -212,6 +212,9 @@ static int _ref_axis_nat(int rank, int axis, int ord)
     if (axis == 1) return ord == VW2_ORD_NAT;
     return 0;
 }
+/* R2: the c2c cascade loop's spelling (its domain is stage spans) and the 3D one's */
+static int _ref_c2c_band(int N1, int w) { return !(w > N1 || N1 % w || w < 8); }
+static int _ref_3d_band(int N, int nst, const int *L, int w) { return !(w < 8 || _ref_wl_cut(N, nst, L, w) < 0); }
 /* every ordered composition of N over the column radix pool, depth <= 4 --
  * the enumerator's shape, re-spelled here so the gate needs no engine header */
 static int _ref_chains(int L, int depth, int *cur, int (*out)[8], int *lens, int *n)
@@ -513,7 +516,7 @@ int main(void)
 
     /* ── rank >= 2: R3 (both laws) over every chain to 4096, R7 over its table ── */
     {
-        long bad_a = 0, bad_b = 0, bad_7 = 0, nchains = 0, nwl = 0;
+        long bad_a = 0, bad_b = 0, bad_7 = 0, bad_r2 = 0, nchains = 0, nwl = 0;
         int N1, rk, ax, oi;
         for (N1 = 2; N1 <= 4096; N1++)
         {
@@ -525,8 +528,11 @@ int main(void)
                 int L[8], u, acc = N1, wl;
                 for (u = 0; u < lens[ci]; u++) { L[u] = acc; acc /= cand[ci][u]; }
                 nchains++;
+                for (u = 1; u < lens[ci]; u++)   /* R2 vs c2c, over the spans the loop visits */
+                    if (vfft_policy_il2d_band_ok(N1, lens[ci], L, L[u]) != _ref_c2c_band(N1, L[u])) bad_r2++;
                 for (wl = 0; wl <= N1 + 1; wl++)
                 {
+                    if (vfft_policy_il2d_band_ok(N1, lens[ci], L, wl) != _ref_3d_band(N1, lens[ci], L, wl)) bad_r2++;
                     const int a = vfft_policy_il2d_wl_cut(N1, lens[ci], L, wl);
                     const int b = _ref_wl_cut(N1, lens[ci], L, wl);
                     int r, c;
@@ -540,6 +546,7 @@ int main(void)
         }
         CHECK(bad_a == 0, "R3a wl_cut: %ld of %ld (chain, wl) pairs differ", bad_a, nwl);
         CHECK(bad_b == 0, "R3b cut_of: %ld of %ld (chain, wl) pairs differ", bad_b, nwl);
+        CHECK(bad_r2 == 0, "R2 band_ok: %ld disagreements with the c2c / 3D spellings", bad_r2);
         nchk += (int)(2 * nwl);
         for (rk = 2; rk <= 3; rk++)
             for (ax = 0; ax <= 1; ax++)
@@ -550,8 +557,9 @@ int main(void)
                     nchk++;
                 }
         CHECK(bad_7 == 0, "R7 axis pass: %ld of 8 (rank, axis, ord) cases differ", bad_7);
-        printf("rank>=2: %ld chains to 4096, R3 both laws %s over %ld widths, R7 %s\n",
-               nchains, (bad_a || bad_b) ? "DIFFER" : "equal", nwl, bad_7 ? "DIFFERS" : "equal");
+        printf("rank>=2: %ld chains to 4096, R3 both laws %s over %ld widths, R2 band_ok %s, R7 %s\n",
+               nchains, (bad_a || bad_b) ? "DIFFER" : "equal", nwl, bad_r2 ? "DIFFERS" : "equal",
+               bad_7 ? "DIFFERS" : "equal");
     }
 
     printf("%d checks, %s\n", nchk, g_fail ? "*** GATE FAILED ***" : "ALL PASS");
