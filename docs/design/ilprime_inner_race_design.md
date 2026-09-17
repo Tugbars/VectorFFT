@@ -112,6 +112,50 @@ defect of this design: at 65537 two cold races banked two chains
 (`8.8.8.4.8.4.4 @ 1024`, then `8.8.8.8.8.8 @ 2048`) -- the one-sample cold
 race, `policy_survey_defects.md` section F.
 
+## Against MKL (2026-09-18)
+
+`build_tuned/prime_vs_mkl.sh`: a scratch copy of the shipped store, one
+front-door create per prime (the cold race, banked), then the canonical
+bench in a fresh process (`--k1noop`: natural, out of place, T = 1, pace
+300 ms, core 2 + HIGH, MKL single-threaded). Primes on the bench's own
+split-library prime list (127, 251, 257, 263, ...) ride its `[override]`
+path there, not the front door, so they are not in this table.
+
+| N | banked verdict | vfft ns | MKL ns | vs MKL |
+| --- | --- | --- | --- | --- |
+| 31 | Rader, `2p 3.10` | 79 | 121 | 1.53 |
+| 131 | Rader, `2p 13.10` | 353 | 1067 | 3.02 |
+| 521 | Rader, `3p 8.5.13` | 1995 | 4572 | 2.29 |
+| 1021 | Rader, `3p 4.15.17` | 5169 | 6015 | 1.16 |
+| 2053 | Rader, `3p 4.19.27` | 19113 | 22576 | 1.18 |
+| 4099 | Bluestein, `ztt 8.8.8.8.4 @ 2048` | 48240 | 53283 | 1.11 |
+| 8191 | Bluestein, `ztt 8.8.8.8.4 @ 2048` | 54191 | 56791 | 1.05 |
+| 65537 | Bluestein, `ztt 8.8.8.4.8.4.4 @ 1024` | 1708287 | 1780833 | 1.04 |
+| 131071 | Bluestein, `ztt 8.8.8.8.8.8 @ 2048` | 1760487 | 1824260 | 1.04 |
+
+Before this design, on the same shipped store, the front door REFUSED 4099
+and 8191 outright: above M = 4096 the borrowed inner was lost entirely and
+the `ref=` signpost dangled ("dangling ref -- verdict treated as MISS", then
+"no interleaved engine ... nothing to fall back to"). They are served now.
+
+The race's verdicts, checked SAME-RUN (`benches/ilprime_chain_probe.c`: the
+scratch store's prime row rewritten to each named inner, replayed through
+the front door, 15 rounds, alternated, paced between rounds; min / median
+ns) against the chain the K=1 tier used to lend at M = 262144:
+
+| arm | 131071 | 65537 |
+| --- | --- | --- |
+| `8.4.8.4.8.8.4` untiled (the lent K=1 chain) | 2326400 / 2577800 | 2196500 / 2483000 |
+| `8.4.8.4.8.8.4 @ 2048` | 2149900 / 2319200 | 2031300 / 2200900 |
+| `8.8.8.8.8.8 @ 2048` (131071's verdict) | **2087000** / **2307200** | 1967500 / 2200700 |
+| `8.8.8.8.8.8` untiled | 2230200 / 2419700 | 2077400 / 2293200 |
+| `8.8.8.4.8.4.4 @ 1024` (65537's verdict) | 2115700 / 2348300 | **1928100** / 2221800 |
+
+Both banked verdicts are the fastest arms at their cells; the lent chain is
+the slowest, 10-12% behind. (A cross-run comparison of the old binary's
+bench numbers had suggested the opposite at 131071; it was the cross-run
+noise the protocol forbids quoting.)
+
 ## Cost, honestly
 
 A race per prime cell, once: about a second at 65537 (108 arms in eight

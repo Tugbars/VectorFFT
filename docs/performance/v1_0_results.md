@@ -835,6 +835,73 @@ Reproduce: `calibrate_k1.exe <scratch> 1 4096 8192 16384` (scratch copy of
 then `sh probes/ZT/phaseE2_2048plus.sh` (`SKIP_CAL=1` re-runs the bench
 only; the script refuses a second concurrent instance).
 
+### K=1 INTERLEAVED — PRIME N, the prime cell's own inner race vs MKL (2026-09-18)
+
+A prime N in the K=1 interleaved tier is a convolution done with an FFT of
+length M (Rader: M = N - 1; Bluestein: M = the next power of two >= 2N - 1,
+`src/core/oop/il_prime.h`). Since 2026-09-18 the prime cell RACES its inner
+(`docs/design/ilprime_inner_race_design.md`): every buildable (method,
+inner) pair — Rader's pool at N - 1 beside Bluestein's at its power of
+two; every il2p pair, the il3p chain, and at a power-of-two M every ZTURN-T
+registry chain untiled and at each legal tile — timed on the whole
+convolution, in heats of sixteen with a same-run final, the winner banked
+on the prime cell's own row (`in= in_sh= in_tw=` beside `eng=`) and
+replayed from there. Before, the inner was borrowed from the K=1 tier's row
+at M, and above M = 4096 lost entirely: on the shipped store the front door
+REFUSED 4099 and 8191.
+
+Canonical bench, `--k1noop` (natural, out of place, T = 1, both engines in
+one process, MKL `DFTI_NOT_INPLACE`), one process per cell, core 2 + HIGH,
+pace 300 ms; the cold race banked by one front-door create beforehand, the
+bench replaying it in a fresh process; quiet machine 2026-09-18:
+
+```
+ N        banked verdict                              ours (ns)    MKL (ns)   vs MKL
+────────────────────────────────────────────────────────────────────────────────────
+ 31       Rader,     il2p 3.10                               79         121    1.53x
+ 131      Rader,     il2p 13.10                             353        1067    3.02x
+ 521      Rader,     il3p 8.5.13                           1995        4572    2.29x
+ 1021     Rader,     il3p 4.15.17                          5169        6015    1.16x
+ 2053     Rader,     il3p 4.19.27                         19113       22576    1.18x
+ 4099     Bluestein, ZTURN-T 8.8.8.8.4 @ 2048            48240       53283    1.11x
+ 8191     Bluestein, ZTURN-T 8.8.8.8.4 @ 2048            54191       56791    1.05x
+ 65537    Bluestein, ZTURN-T 8.8.8.4.8.4.4 @ 1024      1708287     1780833    1.04x
+ 131071   Bluestein, ZTURN-T 8.8.8.8.8.8 @ 2048        1760487     1824260    1.04x
+```
+
+Every cell wins. The Rader cells with a small M lead (the inner is a pair
+or a chain in L1); the large Bluestein cells sit a few percent over
+parity — two FFTs at the next power of two beside MKL's own Bluestein.
+Primes on `bench_1d_vs_mkl`'s split-library prime list (127, 251, 257,
+263, 401, 641, 1009, ...) ride its `[override]` path there even under
+`--k1noop`, so they are not front-door cells and are not in this table;
+the "Rader primes / Bluestein primes" categories of section 1 are that
+split path, in place.
+
+The race's verdicts checked SAME-RUN (`benches/ilprime_chain_probe.c`: the
+scratch store's prime row rewritten to each named inner, replayed through
+the front door, 15 rounds, alternated, paced between rounds; min / median
+ns) against the chain the K=1 tier used to lend at M = 262144:
+
+```
+ arm                                              131071                65537
+ 8.4.8.4.8.8.4 untiled (the lent K=1 chain)      2326400 / 2577800     2196500 / 2483000
+ 8.4.8.4.8.8.4 @ 2048                            2149900 / 2319200     2031300 / 2200900
+ 8.8.8.8.8.8 @ 2048   (131071's verdict)         2087000 / 2307200     1967500 / 2200700
+ 8.8.8.8.8.8 untiled                             2230200 / 2419700     2077400 / 2293200
+ 8.8.8.4.8.4.4 @ 1024 (65537's verdict)          2115700 / 2348300     1928100 / 2221800
+```
+
+Both banked verdicts are the fastest arms at their cells; the lent chain is
+the slowest, 10-12% behind.
+
+Reproduce: `sh prime_vs_mkl.sh <out-dir>` from `build_tuned/` (a scratch
+copy of the shipped store; `recal_1d_probe.exe <store> <N> 0 0 1 0` races
+and banks each cell, then the bench as above with `VFFT_WISDOM_DIR=<store>`);
+`benches/ilprime_chain_probe.exe <store> <N> 15 ztt:8.8.8.8.8.8:2048 ...`
+for the same-run check. Rebuild both binaries on the current tree first: a
+stale bench benches the old code without a word.
+
 ## 2. vs MKL — 2D C2C
 
 dag tiled 2D (`fft2d.h`, B=8: gather→K=B row FFT→scatter via SIMD transpose, native
