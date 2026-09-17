@@ -96,8 +96,8 @@ optional.
 ## Checklist
 
 - [x] 1. This design.
-- [ ] 2. The candidate pool builder (from layer 3's enumeration + ZTURN-T's ladder at M).
-- [ ] 3. The race + bank inside `_ilprime_create_banked`; the row tokens in the reader/writer/serializer.
-- [ ] 4. Delete layers 1-2; the provider replays or races.
+- [x] 2. `_ilprime_inner_cands` (2026-09-18): every legal pair, the default chain, ZTURN-T's registry chains untiled and at each legal tile.
+- [x] 3. The race in `_ilprime_create_banked`; `in= in_sh= in_tw=` on the prime row (`vw2_prime_method_bank` / `vw2_prime_inner_lookup`).
+- [x] 4. Layers 1-2 deleted; `_ilprime_inner_from_desc` builds exactly one inner from a descriptor and flags a failed build so the structural fallback is never served in its place.
 - [ ] 5. The gate, watched to fail.
 - [ ] 6. Full sweep; records (`design_contracts.md` section 6, `docs/roadmap/policy_survey_defects.md`, memory).

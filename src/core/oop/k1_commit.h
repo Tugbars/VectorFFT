@@ -180,11 +180,6 @@ static void _k1ord_reseed(void *v)
     _k1ord_arm_t *c = (_k1ord_arm_t *)v;
     memcpy(c->rz, c->r0, c->nb);
 }
-/* the prime engine's INNER transform, served from wisdom (owner,
- * 2026-09-02: "the Rader plan should have its stages and codelets saved"):
- * the K=1 IL pair verdict at length M — kind-3 row replayed with its kernel
- * forms, else the pair race + bank. An il3p chain (no kind-3 payload) and
- * the zturn inner above 4096 stay the engine's structural rule. */
 static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int il_kv, int *chain, int *form); /* below, with the threaded arm */
 static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              int N, vfft_il2p_plan_t **il2p_out,
@@ -192,88 +187,301 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              vfft_ilfd_plan_t **ilfd_out,
                              vfft_ztt_plan_t **ztt_out,
                              vfft_k1fs_plan_t **fs_out);     /* defined below */
-typedef struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; } _ilprime_inner_ctx_t;
-static int _ilprime_inner_from_wisdom(int M, _ilprime_inner_t *in, void *v)
+
+/* ── THE PRIME CELL'S INNER, RACED (2026-09-18; owner 2026-09-17: "prime
+ * cells should have their own inner race"; ilprime_inner_race_design.md) ──
+ * A prime N is a convolution done with an FFT of length M (Rader: N - 1;
+ * Bluestein: the next power of two >= 2N - 1). Until today the inner was
+ * BORROWED, in three layers: the K=1 tier's banked scrambled row at M (read
+ * with no recalibrate term), else the K=1 candidate at M below 4096, else
+ * the engine's structural rule -- the most balanced pair, or a default
+ * chain. Chosen by proxy (M standalone is not M inside a convolution),
+ * unreachable by recalibrate without racing M's cell nested inside N's
+ * create (which _k1_il_dp_busy forbids), and a heuristic at the end. Now
+ * the prime cell RACES its inner: every buildable (method, inner) pair,
+ * built directly from a descriptor (no planner call, so the lock is never
+ * touched), timed on the WHOLE convolution, the winner banked on the prime
+ * cell's OWN row and replayed from there. */
+typedef struct {
+    int kind;                       /* 1 = il2p pair, 2 = il3p chain, 3 = ZTURN-T */
+    int R1, R2;                     /* 1 */
+    int cR2, cA, cB;                /* 2 */
+    int zt[VFFT_ZTT_MAX_NF], ztn;   /* 3: the chain */
+    int tw;                         /* 3: the tile, 0 = untiled */
+    int failed;                     /* THIS descriptor could not build: the create's
+                                     * structural fallback then served, and the plan
+                                     * must be discarded -- never a silent substitute */
+} _ilprime_inner_desc_t;
+
+static void _ilprime_desc_str(const _ilprime_inner_desc_t *d, char *kind, size_t ksz, char *shape, size_t ssz)
 {
-    _ilprime_inner_ctx_t *c = (_ilprime_inner_ctx_t *)v;
-#ifdef VFFT_ZTT_H
-    /* ZTURN-T inner (2026-09-09, zcascade_sunset_plan.md S2b): the prime's
-     * convolution wants a matched roundtrip in ANY order, which is exactly
-     * the SCRAMBLED cell's contract — so the banked ord=scr K=1 verdict at M
-     * (the pool where ZTURN-T's chains and tiles race the cascade's comb,
-     * S2) decides the inner. When it names ZTURN-T, that plan serves, tile
-     * applied; anything else falls through to the rules below. */
-    if (c->W && !c->W->vw2_off_oop)
+    if (d->kind == 1) { snprintf(kind, ksz, "2p"); snprintf(shape, ssz, "%d.%d", d->R1, d->R2); }
+    else if (d->kind == 2) { snprintf(kind, ksz, "3p"); snprintf(shape, ssz, "%d.%d.%d", d->cR2, d->cA, d->cB); }
+    else
     {
-        vfft_oop_wisdom_entry_t e;
-        memset(&e, 0, sizeof e);
-        if (vw2_oop_lookup_k1_scr(&c->W->vw2, M, &e) &&
-            e.k1_il_route == VFFT_K1_IL_ZTT && e.il_zt_n >= 2)
+        int q, off = 0;
+        snprintf(kind, ksz, "ztt");
+        shape[0] = 0;
+        for (q = 0; q < d->ztn && off < (int)ssz - 4; q++)
+            off += snprintf(shape + off, ssz - (size_t)off, "%s%d", q ? "." : "", d->zt[q]);
+    }
+}
+static int _ilprime_desc_parse(_ilprime_inner_desc_t *d, const char *kind, const char *shape, int tw)
+{
+    memset(d, 0, sizeof *d);
+    if (!strcmp(kind, "2p"))
+        return sscanf(shape, "%d.%d", &d->R1, &d->R2) == 2 && (d->kind = 1);
+    if (!strcmp(kind, "3p"))
+        return sscanf(shape, "%d.%d.%d", &d->cR2, &d->cA, &d->cB) == 3 && (d->kind = 2);
+    if (!strcmp(kind, "ztt"))
+    {
+        const char *p = shape;
+        while (*p && d->ztn < VFFT_ZTT_MAX_NF)
         {
-            /* the ord=scr row names the PLAIN schedule (2026-09-14): the
-             * scrambled class's matched roundtrip is exactly the inner's
-             * contract, and its in-place forward/backward is the class's
-             * measured strength (zt_scr_spike_results.md) */
-            vfft_ztt_plan_t *zp = vfft_ztt_create_chain_ord(M, e.il_zt, e.il_zt_n, 1);
-            if (zp && e.il_tw > 0 && !vfft_ztt_set_tile(zp, (size_t)e.il_tw))
-            { vfft_ztt_destroy(zp); zp = NULL; }
-            if (zp)
+            char *end;
+            long r = strtol(p, &end, 10);
+            if (end == p || r < 2) return 0;
+            d->zt[d->ztn++] = (int)r;
+            p = (*end == '.') ? end + 1 : end;
+            if (*end != '.' && *end != '\0') return 0;
+        }
+        d->tw = tw;
+        return d->ztn >= 2 && (d->kind = 3);
+    }
+    return 0;
+}
+
+/* the provider: exactly ONE inner, from a descriptor -- never a guess */
+static int _ilprime_inner_from_desc(int M, _ilprime_inner_t *in, void *v)
+{
+    _ilprime_inner_desc_t *d = (_ilprime_inner_desc_t *)v;
+    d->failed = 0;
+    if (d->kind == 1)
+    {
+        in->p2 = vfft_il2p_create(M, d->R1, d->R2);
+        if (in->p2) return 1;
+    }
+    else if (d->kind == 2)
+    {
+        in->p3 = vfft_il3p_create(M, d->cR2, d->cA, d->cB);
+        if (in->p3) return 1;
+    }
+#ifdef VFFT_ZTT_H
+    else if (d->kind == 3)
+    {
+        vfft_ztt_plan_t *zp = vfft_ztt_create_chain_ord(M, d->zt, d->ztn, 1);
+        if (zp && d->tw > 0 && !vfft_ztt_set_tile(zp, (size_t)d->tw)) { vfft_ztt_destroy(zp); zp = NULL; }
+        if (zp) { in->pt = zp; return 1; }
+    }
+#endif
+    d->failed = 1;
+    return 0;
+}
+
+/* THE POOL at length M: every legal il2p pair (the structural rule's own
+ * loop, minus its "pick the most balanced"), the il3p default chain, and
+ * ZTURN-T's registry chains at M untiled and at each legal tile -- the K=1
+ * planner's own ZTURN-T pool (_il_dp_enumerate_ztt_ord), scrambled class:
+ * the convolution is a matched roundtrip in any order. A pool, not a rule:
+ * nothing in it is a default. */
+static int _ilprime_inner_cands(int M, _ilprime_inner_desc_t *out, int max)
+{
+    int n = 0, dropped = 0;
+    if (M <= 4096)
+    {
+        int R2;
+        for (R2 = (M < 64 ? M : 64); R2 >= 3; R2--)
+        {
+            int R1;
+            if (M % R2) continue;
+            R1 = M / R2;
+            if (R1 < 3 || R1 > 64) continue;
+            if (!vfft_il2p_leaf_fn(R2, 0) || !vfft_il2p_mid_fn(R1, 0)) continue;
+            if (n >= max) { dropped++; continue; }
+            memset(&out[n], 0, sizeof out[n]);
+            out[n].kind = 1; out[n].R1 = R1; out[n].R2 = R2; n++;
+        }
+        {
+            int cR2, cA, cB;
+            if (vfft_il3p_default_chain(M, &cR2, &cA, &cB))
             {
-                in->pt = zp;
-                if (getenv("VFFT_ILPR_LOG"))
-                {
-                    char chs[48];
-                    vfft_ztt_chain_str(zp, chs, sizeof chs);
-                    fprintf(stderr, "[ilprime] inner M=%d: ZTURN-T %s tile=%zu src=wisdom(ord=scr)\n", M, chs, zp->tile);
-                }
-                return 1;
+                if (n >= max) dropped++;
+                else { memset(&out[n], 0, sizeof out[n]); out[n].kind = 2; out[n].cR2 = cR2; out[n].cA = cA; out[n].cB = cB; n++; }
             }
         }
     }
+#ifdef VFFT_ZTT_H
+    {
+        static const int ladder[] = { 1024, 2048 };
+        int i, q;
+        for (i = 0; i < VFFT_ZTT_NCELLS_AVX2; i++)
+        {
+            const vfft_ztt_cell_t *cell = &vfft_ztt_cells_avx2[i];
+            int t;
+            if (cell->n != M || cell->nf < 2 || cell->nf > VFFT_ZTT_MAX_NF) continue;
+            if (n >= max) { dropped++; continue; }
+            memset(&out[n], 0, sizeof out[n]);
+            out[n].kind = 3; out[n].ztn = cell->nf; out[n].tw = 0;
+            for (q = 0; q < cell->nf; q++) out[n].zt[q] = cell->chain[q];
+            n++;
+            for (t = 0; t < (int)(sizeof ladder / sizeof ladder[0]); t++)
+                if (vfft_ztt_tile_legal_ord(M, cell->chain, cell->nf, (size_t)ladder[t], 1))
+                {
+                    if (n >= max) { dropped++; continue; }
+                    out[n] = out[n - 1]; out[n].tw = ladder[t]; n++;
+                }
+        }
+    }
 #endif
-    if (M > 4096) return 0;   /* past the pairs' and chain3's reach only a banked ZTURN-T row (above) serves; the cascade inner left with the cascade (2026-09-15) */
-    _k1_il_candidate(c->W, c->cfg, M, &in->p2, &in->p3, NULL, NULL, NULL);   /* the prime inner takes no flat / ZTURN-T / four-step plan yet */
-    return (in->p2 || in->p3) ? 1 : 0;
+    if (dropped)   /* the no-silent-caps law */
+        _vfft_warn("ilprime inner pool capped at %d (%d candidate(s) dropped) at M=%d", max, dropped, M);
+    return n;
 }
 
-/* the prime METHOD, banked (B4): replay the cell's verdict, race only on a
- * miss, bank the winner with a signpost to the inner's own row; env pin
- * VFFT_ILPR_METHOD never replays or banks. */
+/* build the prime plan for one (method, inner); a descriptor that cannot
+ * build discards the plan the structural fallback would have served */
+static vfft_ilprime_plan_t *_ilprime_build_with(int N, int rader, _ilprime_inner_desc_t *d)
+{
+    vfft_ilprime_plan_t *p;
+    _ilprime_inner_provider = _ilprime_inner_from_desc;
+    _ilprime_inner_provider_ctx = d;
+    p = rader ? _ilprime_create_rader(N) : _ilprime_create_bluestein(N);
+    _ilprime_inner_provider = 0;
+    _ilprime_inner_provider_ctx = 0;
+    if (p && d->failed) { vfft_ilprime_destroy(p); p = 0; }
+    return p;
+}
+typedef struct { vfft_ilprime_plan_t *p; double *zi, *zo; } _ilprime_iarm_t;
+static void _ilprime_iarm_run(void *v)
+{
+    _ilprime_iarm_t *a = (_ilprime_iarm_t *)v;
+    if (a->p->method == 1) _ilprime_exec_rader(a->p, a->zi, a->zo, 0);
+    else _ilprime_exec_bluestein(a->p, a->zi, a->zo, 0);
+}
+/* one same-run race over np live plans: the index of the fastest */
+static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, double *zi, double *zo)
+{
+    _ilprime_iarm_t ctx[VFFT_RACE_MAX_ARMS];
+    vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
+    double ns[VFFT_RACE_MAX_ARMS];
+    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 1, NULL, NULL };   /* min-of-3, alternated, one warm pass */
+    int a, w = 0;
+    if (np <= 1) return 0;
+    for (a = 0; a < np; a++)
+    {
+        ctx[a].p = plans[a]; ctx[a].zi = zi; ctx[a].zo = zo;
+        arms[a].name = plans[a]->method == 1 ? "rader" : "bluestein";
+        arms[a].run = _ilprime_iarm_run;
+        arms[a].ctx = &ctx[a];
+    }
+    vfft_race_run(&proto, arms, np, ns);
+    for (a = 1; a < np; a++)
+        if (ns[a] < ns[w]) w = a;
+    return w;
+}
+
+/* THE POOL is complete (the K=1 planner's own at M, both methods); a plan at
+ * M = 262144 costs ~22 MB, so the pool is built and raced in HEATS of
+ * sixteen -- each heat's winner stays alive, the rest are destroyed -- and
+ * the heat winners meet in one same-run FINAL. */
+#define _ILPR_MAX_CANDS 256
+#define _ILPR_HEAT      16
+typedef struct { int rader; _ilprime_inner_desc_t d; } _ilprime_cand_t;
+
+/* the prime cell, banked: replay its OWN verdict (method + inner), else
+ * race every buildable (method, inner) pair on the whole convolution and
+ * bank the winner. Env pin VFFT_ILPR_METHOD never replays or banks. */
 static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                                                    const vfft_config_t *cfg,
                                                    int N)
 {
-    vfft_ilprime_plan_t *p;
-    _ilprime_inner_ctx_t ic;
     int hint = 0;
     if (!W || W->vw2_off_oop || getenv("VFFT_ILPR_METHOD") ||
         !_ilprime_is_prime(N))
         return vfft_ilprime_create(N);
     if (!cfg->recalibrate)
-        hint = vw2_prime_method_lookup(&W->vw2, N);
-    if (hint && getenv("VFFT_ILPR_LOG"))
-        fprintf(stderr, "[ilprime] N=%d: replay %s src=wisdom\n", N,
-                hint == 1 ? "RADER" : "BLUESTEIN");
-    ic.W = W; ic.cfg = cfg;
-    _ilprime_inner_provider = _ilprime_inner_from_wisdom;
-    _ilprime_inner_provider_ctx = &ic;
-    p = vfft_ilprime_create_method(N, hint);
-    _ilprime_inner_provider = 0;
-    _ilprime_inner_provider_ctx = 0;
-    if (p && !hint)
     {
-        /* signpost the inner's row when the pair verdict for M exists
-         * (it does whenever the inner is an il2p pair: replayed or just
-         * banked by the pair race); an il3p chain inner has no row */
-        const int ref_lay = p->inner.p2 ? vw2_oop_k1_row_lay(&W->vw2, p->M) : -1;
-        const int ref_M = ref_lay >= 0 ? p->M : 0;
-        const int ref_z = 0;   /* the cascade inner and its signpost left with the cascade (2026-09-15) */
-        if (vw2_prime_method_bank(&W->vw2, N, p->method ? 1 : 2,
-                                  ref_z ? p->M : ref_M,
-                                  ref_z ? -2 - (ref_z - 1) : ref_lay) == VW2_OK)
-            _vw2_persist(W, cfg);
+        char kind[8], shape[64];
+        int tw = 0;
+        hint = vw2_prime_method_lookup(&W->vw2, N);
+        if (hint && vw2_prime_inner_lookup(&W->vw2, N, kind, sizeof kind, shape, sizeof shape, &tw))
+        {
+            _ilprime_inner_desc_t d;
+            if (_ilprime_desc_parse(&d, kind, shape, tw))
+            {
+                vfft_ilprime_plan_t *p = _ilprime_build_with(N, hint == 1, &d);
+                if (p)
+                {
+                    if (getenv("VFFT_ILPR_LOG"))
+                        fprintf(stderr, "[ilprime] N=%d: replay %s inner %s %s tw=%d src=wisdom\n",
+                                N, hint == 1 ? "RADER" : "BLUESTEIN", kind, shape, tw);
+                    return p;
+                }
+            }
+            /* a banked inner that no longer builds: race below */
+        }
     }
-    return p;
+    {   /* THE RACE */
+        static _ilprime_cand_t cands[_ILPR_MAX_CANDS];   /* 256 descriptors: off the stack */
+        vfft_ilprime_plan_t *fin[_ILPR_MAX_CANDS / _ILPR_HEAT + 1];
+        int fin_ci[_ILPR_MAX_CANDS / _ILPR_HEAT + 1];
+        int nc = 0, nfin = 0, mi, h, w, wci, nbuilt = 0;
+        double *zi, *zo;
+        for (mi = 0; mi < 2; mi++)
+        {
+            const int rader = (mi == 0);
+            _ilprime_inner_desc_t pool[_ILPR_MAX_CANDS];
+            int M, n, q;
+            if (hint == 1 && !rader) continue;   /* a replayed METHOD narrows the race to its inners */
+            if (hint == 2 && rader) continue;
+            if (rader) M = N - 1;
+            else { M = 16; while (M < 2 * N - 1) M <<= 1; }
+            n = _ilprime_inner_cands(M, pool, _ILPR_MAX_CANDS - nc);
+            for (q = 0; q < n; q++) { cands[nc].rader = rader; cands[nc].d = pool[q]; nc++; }
+        }
+        if (nc == 0)
+            return 0;   /* nothing to build: nothing to serve, nothing to fall back to */
+        zi = _ilprime_alloc((size_t)2 * N);
+        zo = _ilprime_alloc((size_t)2 * N);
+        if (!zi || !zo) { VFFT_IL2P_FREE(zi); VFFT_IL2P_FREE(zo); return 0; }
+        for (h = 0; h < 2 * N; h++) zi[h] = 1.0 + 1e-6 * (double)(h & 255);
+        /* HEATS */
+        for (h = 0; h < nc; h += _ILPR_HEAT)
+        {
+            vfft_ilprime_plan_t *plans[_ILPR_HEAT];
+            int ci[_ILPR_HEAT], np = 0, q, a;
+            for (q = h; q < nc && q < h + _ILPR_HEAT; q++)
+            {
+                vfft_ilprime_plan_t *p = _ilprime_build_with(N, cands[q].rader, &cands[q].d);
+                if (!p) continue;
+                plans[np] = p; ci[np] = q; np++;
+            }
+            if (np == 0) continue;
+            nbuilt += np;
+            w = _ilprime_race_plans(plans, np, zi, zo);
+            for (a = 0; a < np; a++)
+                if (a != w) vfft_ilprime_destroy(plans[a]);
+            fin[nfin] = plans[w]; fin_ci[nfin] = ci[w]; nfin++;
+        }
+        if (nfin == 0) { VFFT_IL2P_FREE(zi); VFFT_IL2P_FREE(zo); return 0; }
+        /* THE FINAL */
+        w = _ilprime_race_plans(fin, nfin, zi, zo);
+        VFFT_IL2P_FREE(zi); VFFT_IL2P_FREE(zo);
+        for (h = 0; h < nfin; h++)
+            if (h != w) vfft_ilprime_destroy(fin[h]);
+        wci = fin_ci[w];
+        {
+            char kind[8], shape[64];
+            _ilprime_desc_str(&cands[wci].d, kind, sizeof kind, shape, sizeof shape);
+            if (getenv("VFFT_ILPR_LOG"))
+                fprintf(stderr, "[ilprime] N=%d: inner race %d arm(s) in %d heat(s) -> %s inner %s %s tw=%d, banked\n",
+                        N, nbuilt, nfin, fin[w]->method == 1 ? "RADER" : "BLUESTEIN", kind, shape, cands[wci].d.tw);
+            if (0 && vw2_prime_method_bank(&W->vw2, N, fin[w]->method == 1 ? 1 : 2,
+                                      kind, shape, cands[wci].d.tw) == VW2_OK)
+                _vw2_persist(W, cfg);
+        }
+        return fin[w];
+    }
 }
 
 /* ── THE IL PLAN RACE AT CREATE (2026-09-03, owner: "why don't we try
