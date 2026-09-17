@@ -116,3 +116,11 @@ Written 2026-09-17 (`benches/ilnd_gate.c`, registered cold): six cells
 the request's class; the small cells match a naive 3D DFT; the warm create
 must not race and must be bitwise. It failed on its first run and found a
 real defect (the design doc, "What the first 3D gate found").
+
+## 6. The real tier's census (2026-09-17)
+
+`benches/il2d_real_census.c` creates one 2D IL r2c cell cold with the race
+log on; `_il2d_real_rowrace` now logs its LADDER (`[il2d-real] wl ladder
+N1xN2: ...`) and not only its winner, so a change to what the ladder admits
+can be diffed arm by arm (R2 was). `il2d_real_probe` has an .exe and no
+source; this is its replacement for that purpose.
