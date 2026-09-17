@@ -228,7 +228,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs);
         if (ztt) vfft_ztt_bind(ztt, 1);   /* in place: the plane drivers */
         if (!il2 && !il3 && !ifd && !ztt && !fs)
-            (void)_k1_il_mono_candidate(W, N, &mono_f, &mono_b);
+            (void)_k1_il_mono_candidate(W, cfg, N, &mono_f, &mono_b);
         if (!il2 && !il3 && !ifd && !ztt && !fs && !mono_f && (N & (N - 1)) != 0)
             ilp = _ilprime_create_banked(W, cfg, N);   /* a route, never a fallback: no pow2 cell */
         have_k1 = vfft_policy_k1_engine_present(
