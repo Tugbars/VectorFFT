@@ -1043,14 +1043,22 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
  * The row's form axis names the OOP kernel family (solo n1 vs mono64); in
  * place both forms map onto the ONE alias-safe solo, n1c(N). Returns 1 and
  * fills the pair when served, 0 otherwise (nothing built, nothing to free). */
-static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, int N,
-                                 vfft_oop11_fn *ilf, vfft_oop11_fn *ilb)
+static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                                 int N, vfft_oop11_fn *ilf, vfft_oop11_fn *ilb)
 {
     vfft_oop_wisdom_entry_t keb;
     const vfft_oop_wisdom_entry_t *ke;
+    /* the REQUEST's order cell (2026-09-17), the same law _k1_il_candidate
+     * asks with (inplace=0: the K=1 ENGINE row is the place=oop cell at both
+     * doors). Until now this read the ord=nat row for EVERY in-place request,
+     * so an explicit SCRAMBLED cell whose own race had banked MONO looked at
+     * the wrong row, found no MONO there, built nothing, and was REFUSED
+     * ("no interleaved engine") with a perfectly good verdict on file. */
+    const int scr_req = (vfft_policy_ord_k1(cfg, N, 0) == VW2_ORD_SCR);
     *ilf = *ilb = 0;
     if (!W || W->vw2_off_oop) return 0;
-    ke = vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL;
+    ke = (scr_req ? vw2_oop_lookup_k1_scr(&W->vw2, N, &keb)
+                  : vw2_oop_lookup_k1(&W->vw2, N, &keb)) ? &keb : NULL;
     if (!ke || ke->k1_il_route != VFFT_K1_IL_MONO) return 0;
     *ilf = vfft_k1_mono_ilc_fn(N, 0);
     *ilb = vfft_k1_mono_ilc_fn(N, 1);

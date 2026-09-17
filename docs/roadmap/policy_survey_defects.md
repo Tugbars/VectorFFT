@@ -121,14 +121,27 @@ served (a contract violation).
 
 **Verified in the source, not merely surveyed:**
 
-- **`transforms/fft2d/plane_queue.h:157`** — `_pq_row_key` computes
+- **`transforms/fft2d/plane_queue.h:157` — FIXED 2026-09-17** by the owner's
+  ruling that both order classes SHARE the plane-queue verdict: the key
+  walker now tries the IL row under `scr` then `nat`, in that fixed order
+  for both the replay and the bank, so exactly one verdict is ever consulted
+  or written, and a natural-only store banks it instead of re-racing forever.
+- ~~**`transforms/fft2d/plane_queue.h:157`**~~ — `_pq_row_key` computes
   `nat` on the line above and then hardcodes `VW2_ORD_SCR` for the IL row
   anyway, while the 2D IL tier keys its rows by `vfft_policy_ord_rankn`. For
   a natural cell the plane-queue's MT verdict has nowhere to live: case 0
   looks at a row the tier never banks, and case 1 wants a `lay=ANY` split row
   an IL caller never writes. The stale comment beside it ("the IL rows
   (lay=il, ord=scr)") is what it was written from.
-- **`oop/k1_commit.h:1053`** — `_k1_il_mono_candidate` takes no `cfg` and
+- **`oop/k1_commit.h:1053` — FIXED 2026-09-17**: the mono candidate takes
+  `cfg` and reads the row of the request's order class, the same law
+  `_k1_il_candidate` asks with. The refusal it could cause -- a scrambled
+  in-place cell whose own race banked MONO finds no MONO on the natural row,
+  builds nothing, is refused -- was NOT reproduced: at N = 16/32/64 the
+  scrambled race picked ZTURN-T (the owner: "scrambled wins in-place
+  usually"), and the shipped store has zero scrambled rows (of 288) naming
+  mono. The misread was real; its trigger is latent.
+- ~~**`oop/k1_commit.h:1053`**~~ — `_k1_il_mono_candidate` takes no `cfg` and
   reads the ord=nat row unconditionally; `oop/c2c_ip_create.h:231` calls it
   for every in-place request, including an explicit SCRAMBLED one, three
   lines after the writer-band refusal fires. Same shape as the 2026-07-29 /
@@ -163,7 +176,12 @@ served (a contract violation).
 
 ## C. Needs a ruling, not a fix
 
-`vfft.c:1278` — the K>1 transform-contiguous batch derives its order class
+**FIXED 2026-09-17** (owner: "Default should be natural"): `_tc_mt_decide`'s
+one `ord` local -- it feeds both the lookup and the bank -- now comes from
+`vfft_policy_ord_k1(cfg, N, inplace)`, the rank-1 law. DEFAULT batch cells
+re-measure their threading verdict once, on the natural row.
+
+~~`vfft.c:1278`~~ — the K>1 transform-contiguous batch derives its order class
 with the rank>=2 spelling on a cell that is keyed rank 1. At DEFAULT order
 and a power of two the two laws disagree: the rank-1 law says natural, this
 line says scrambled. Pointing it at `vfft_policy_ord_k1` would send every
@@ -212,7 +230,7 @@ are listed.
 | finding | verified | state |
 | --- | --- | --- |
 | the column radix pool typed TWICE in `il2d_cols.h` (`_il2d_enum_rec` :129, `_il2d_build_chain` :372), and the two copies DISAGREE: depth 4 vs 8, and the greedy adds a remainder rule (`L/r == 1 \|\| L/r >= 4`) the race does not have | yes, both sites read | **CLOSED BY DELETION.** The owner ruled the greedy unacceptable; it is gone with its pool, so there is nothing left to unify. One-candidate cells now race (one arm) and bank; `il2d_onechain_gate` holds it |
-| the no-silent-caps law: the enumerator's cap is logged at `il2d_tier.h:1417/:1864` and DISCARDED at `fft2d_create.h:573` (the real tier) and `k1_fourstep.h:561` (the four-step super-band) -- both declare `dropped`, pass it, never read it | yes, all four sites read | open. Proposed: the enumerator logs its own cap, so no caller can forget |
-| `k1_fourstep.h:560` sizes `cand[24][8], cl[24]` with a literal while the enumerator fills up to `VFFT_IL2D_MAXCAND` (= 24 today) | yes | open, latent: raise the macro and this is a stack overflow |
+| the no-silent-caps law: the enumerator's cap is logged at `il2d_tier.h:1417/:1864` and DISCARDED at `fft2d_create.h:573` (the real tier) and `k1_fourstep.h:561` (the four-step super-band) -- both declare `dropped`, pass it, never read it | yes, all four sites read | **FIXED 2026-09-17**: `_il2d_enum_rec` is now an entry that warns ONCE when its recursive body dropped candidates; the two caller-side warnings are gone and the two silent callers are covered by construction |
+| `k1_fourstep.h:560` sizes `cand[24][8], cl[24]` with a literal while the enumerator fills up to `VFFT_IL2D_MAXCAND` (= 24 today) | yes | **FIXED 2026-09-17**: the macro moved to `planning/policy.h` (a pool cap is policy, and it is the one place ahead of every consumer -- `k1_fourstep.h` is included long before `il2d_cols.h`); the four-step sizes by it. `ilfd_probe.c`, the one standalone includer of `il2d_cols.h`, carries `policy_gate.c`'s include recipe |
 | the Bluestein M-chain provider hook installed ONLY by the 2D create (`fft2d_create.h:64`); the 3D tier set the ctx and never the hook, so its prime-axis inner was greedy -- or raced, depending on whether a 2D create had run earlier in the process | yes | **FIXED 2026-09-17** (`fftnd_il.h` installs it) |
 | the census's other ~57 claimed duplications (three width-ladder literals, the tcut law in six spellings, the form-axis rule in three, the real tier as a second copy of much of the c2c tier) | NOT verified | recorded as claims only |

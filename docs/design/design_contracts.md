@@ -45,6 +45,12 @@ Known violations at the time of writing — REMOVED 2026-09-09 (evening):
 - Order classes never share candidates. A natural-writing engine in a
   scrambled pool is wrong (stage 2 of the sunset plan, 2026-09-09, did this
   and is reverted); a scrambled writer in a natural pool is unusable output.
+- The one verdict the two classes DO share, by the owner's ruling
+  (2026-09-17): the plane queue's queue-vs-loop choice for a threaded 2D
+  batch. It rides whichever IL row the cell has, `scr` then `nat`, in a
+  fixed order for both replay and bank. "They must share the same verdict."
+- DEFAULT is natural at rank 1 (owner, 2026-09-17), the batch cell included:
+  `_tc_mt_decide` labels its row by `vfft_policy_ord_k1`.
 
 ## 4. Bands for 1D C2C interleaved K=1
 
