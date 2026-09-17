@@ -1848,6 +1848,26 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                      (il2d_bblu > 0 ? il2d_bblu : N) &&
                  _il2d_resolve(c->R, c->nst, c->f, c->b))
             chain_ok = 1;
+        if (chain_ok && il2d_bblu > 0 && key->rank >= 3)
+        {
+            /* a REPLAYED Bluestein row (2026-09-17): c->R is the length-M
+             * inner chain, NOT an N chain. The 2D create rebuilds the inner
+             * around it (fft2d_create.h:670, since 2026-09-02); this builder
+             * never did, and the 3D tier -- its only other caller -- would
+             * have run the M chain as the N chain. It never bit only because
+             * no 3D Bluestein cell could bank a row (below). rank >= 3 so the
+             * 2D create's own rebuild is not doubled. */
+            const int M2 = _il2d_blu_build(N, rn, c->R,
+                                           c->L, c->f, c->b,
+                                           c->tf, c->tb, &c->nst,
+                                           &c->bluchf, &c->bluchb,
+                                           &c->blukf, &c->blukb,
+                                           &c->bluscr);
+            if (M2 > 0)
+                c->blu = M2;
+            else
+                chain_ok = 0;   /* the row is stale: race/build cold below */
+        }
         if (!chain_ok)
         {
             int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
@@ -1914,6 +1934,19 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                    &c->bluscr);
         if (c->blu)
             chain_ok = 1;
+        if (c->blu && key->rank >= 3 && W && !W->vw2_off_2d)
+        {
+            /* the cell's OWN row (2026-09-17). "Axis 0 creates the row, a
+             * later axis updates fields on it" -- and a Bluestein axis 0
+             * created none, so axis 1's chain and the structure verdict were
+             * refused ("il column axis 1 bank refused (no row)") and re-raced
+             * on EVERY create. Caught by ilnd_gate's first run. The row
+             * carries the M chain and blu = M, which is what the lookup above
+             * expects (prod == blu) and what (b) rebuilds from. */
+            vw2_ilcol_chain_bank(&W->vw2, key, c->R, c->nst,
+                                 -1, -1, -1, -1, -1, c->blu, 0.0);
+            _vw2_persist(W, cfg);
+        }
     }
     if (chain_ok && !c->blu && il2d_bblu <= 0 && c->nst > 1 &&
         nat_req)

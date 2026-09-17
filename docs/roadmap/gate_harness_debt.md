@@ -96,7 +96,7 @@ The map, from what a change touches to what exercises it:
 | `oop/il_flatdit*.h`, `oop/ztt*.h` | `flatdit`, `ztt`, `ztt_mt`, `ztt_odd`, `odd_ct`, `odd_partner_cells` | -- |
 | `support/*` (race body, clocks, alloc, cpu_cache) | everything -- a full sweep | -- |
 
-## 5. There is no 3D interleaved gate
+## 5. There WAS no 3D interleaved gate -- `ilnd_gate` since 2026-09-17
 
 `fftnd_il.h` (1709 lines: the 3D c2c IL tier, axis 0 cycle/strip forms, the
 flat child, plane threading) has NO gate in `benches/`. Its coverage in the
@@ -109,3 +109,10 @@ first 3D IL gate is worth more than most of the fixes it would have caught:
 cold create at a spread of (N1, N2, N3) covering prime and composite axes
 and both order classes; forward vs a naive 3D DFT at small cells; warm
 replay bitwise; the axis-0 race log reading `(scr)` for a natural cell.
+
+Written 2026-09-17 (`benches/ilnd_gate.c`, registered cold): six cells
+(pow2, mixed, a single-radix axis, a Bluestein axis at 23, a replay-only
+32^3), both order classes; axis 0 must race once and log `(scr)` whatever
+the request's class; the small cells match a naive 3D DFT; the warm create
+must not race and must be bitwise. It failed on its first run and found a
+real defect (the design doc, "What the first 3D gate found").
