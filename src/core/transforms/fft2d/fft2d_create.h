@@ -260,7 +260,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 vfft_ilcol_t col;
                 memset(&col, 0, sizeof col);
                 if (!_il2d_col_build(W, cfg, &ck, N1, (size_t)N2,
-                                     il2d_ord == VW2_ORD_NAT, &col,
+                                     vfft_policy_rankn_axis_nat(2, 0, il2d_ord), &col,
                                      il2d_fm, sizeof il2d_fm, &il2d_bwl, &il2d_btf,
                                      &il2d_bro, &il2d_bcmt, &il2d_bcmtt, &il2d_bblu))
                     return NULL;

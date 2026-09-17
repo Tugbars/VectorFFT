@@ -179,6 +179,63 @@ static int _ref_exceeds_l3(long bytes)
     return l3 <= 0 || bytes > l3;
 }
 
+/* ── rank >= 2 (2026-09-17): R3's two laws and R7, frozen as the sites spelled them ──
+ * R3a: _il2d_real_wl_cut / _ilnd_wl_cut, the legality + cut. */
+static int _ref_wl_cut(int N, int nst, const int *L, int wl)
+{
+    int s2;
+    if (wl <= 0 || wl > N || N % wl != 0)
+        return -1;
+    for (s2 = 0; s2 < nst; s2++)
+        if (wl % L[s2] == 0)
+            return s2;
+    return -1;
+}
+/* R3b: the c2c axis race's recovery loop -- cut = 0 unless a stage divides */
+static int _ref_cut_recover(int nst, const int *L, int wl)
+{
+    int s2, cut = 0;
+    if (wl > 0)
+        for (s2 = 0; s2 < nst; s2++)
+            if (wl % L[s2] == 0)
+            {
+                cut = s2;
+                break;
+            }
+    return cut;
+}
+/* R7: the three call sites' literals. rank 2 axis 0: il2d_ord == NAT;
+ * rank 3 axis 1: d->nat; rank 3 axis 0: 0. */
+static int _ref_axis_nat(int rank, int axis, int ord)
+{
+    if (rank == 2) return ord == VW2_ORD_NAT;
+    if (axis == 1) return ord == VW2_ORD_NAT;
+    return 0;
+}
+/* every ordered composition of N over the column radix pool, depth <= 4 --
+ * the enumerator's shape, re-spelled here so the gate needs no engine header */
+static int _ref_chains(int L, int depth, int *cur, int (*out)[8], int *lens, int *n)
+{
+    static const int POOL[] = { 64, 32, 16, 8, 4, 27, 25, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3 };
+    int p;
+    if (L == 1)
+    {
+        if (depth == 0 || *n >= 64) return 0;
+        memcpy(out[*n], cur, 8 * sizeof(int));
+        lens[*n] = depth;
+        (*n)++;
+        return 0;
+    }
+    if (depth >= 4) return 0;
+    for (p = 0; p < (int)(sizeof POOL / sizeof POOL[0]); p++)
+        if (L % POOL[p] == 0)
+        {
+            cur[depth] = POOL[p];
+            _ref_chains(L / POOL[p], depth + 1, cur, out, lens, n);
+        }
+    return 0;
+}
+
 int main(void)
 {
     /* every band boundary and a spread inside each: pow2 from the solos to
@@ -198,7 +255,8 @@ int main(void)
 
     printf("PLANNING POLICY gate: the module vs the pre-migration sites "
            "(L4 order, L9 ceilings, L1/L2 the band map, L3 the per-T fence, "
-           "L6 engine presence, L8 the ladders), %d N x %d order classes\n", nn, 3);
+           "L6 engine presence, L8 the ladders; rank>=2: R3 the tcut laws, R7 the axis pass), "
+           "%d N x %d order classes\n", nn, 3);
 
     for (i = 0; i < nn; i++)
     {
@@ -451,6 +509,49 @@ int main(void)
             }
             nchk += 2 * np;
         }
+    }
+
+    /* ── rank >= 2: R3 (both laws) over every chain to 4096, R7 over its table ── */
+    {
+        long bad_a = 0, bad_b = 0, bad_7 = 0, nchains = 0, nwl = 0;
+        int N1, rk, ax, oi;
+        for (N1 = 2; N1 <= 4096; N1++)
+        {
+            int cand[64][8], lens[64], cur[8], nc = 0, ci;
+            _ref_chains(N1, 0, cur, cand, lens, &nc);
+            for (ci = 0; ci < nc; ci++)
+            {
+                /* the stage spans as the tier lays them: L[s] = N1 / prod_{u<s} R_u */
+                int L[8], u, acc = N1, wl;
+                for (u = 0; u < lens[ci]; u++) { L[u] = acc; acc /= cand[ci][u]; }
+                nchains++;
+                for (wl = 0; wl <= N1 + 1; wl++)
+                {
+                    const int a = vfft_policy_il2d_wl_cut(N1, lens[ci], L, wl);
+                    const int b = _ref_wl_cut(N1, lens[ci], L, wl);
+                    int r, c;
+                    if (a != b) bad_a++;
+                    r = vfft_policy_il2d_cut_of(lens[ci], L, wl);
+                    c = ((wl > 0 && r >= 0) ? r : 0);      /* the sites' exact spelling */
+                    if (c != _ref_cut_recover(lens[ci], L, wl)) bad_b++;
+                    nwl++;
+                }
+            }
+        }
+        CHECK(bad_a == 0, "R3a wl_cut: %ld of %ld (chain, wl) pairs differ", bad_a, nwl);
+        CHECK(bad_b == 0, "R3b cut_of: %ld of %ld (chain, wl) pairs differ", bad_b, nwl);
+        nchk += (int)(2 * nwl);
+        for (rk = 2; rk <= 3; rk++)
+            for (ax = 0; ax <= 1; ax++)
+                for (oi = 0; oi < 2; oi++)
+                {
+                    const int ord = oi ? VW2_ORD_SCR : VW2_ORD_NAT;
+                    if (vfft_policy_rankn_axis_nat(rk, ax, ord) != _ref_axis_nat(rk, ax, ord)) bad_7++;
+                    nchk++;
+                }
+        CHECK(bad_7 == 0, "R7 axis pass: %ld of 8 (rank, axis, ord) cases differ", bad_7);
+        printf("rank>=2: %ld chains to 4096, R3 both laws %s over %ld widths, R7 %s\n",
+               nchains, (bad_a || bad_b) ? "DIFFER" : "equal", nwl, bad_7 ? "DIFFERS" : "equal");
     }
 
     printf("%d checks, %s\n", nchk, g_fail ? "*** GATE FAILED ***" : "ALL PASS");

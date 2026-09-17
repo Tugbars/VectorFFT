@@ -134,6 +134,8 @@ ARGSTYLE = {
     # COLD: a 2D IL cell with ONE legal column chain must RACE (one arm) and bank,
     # never fall to a derived chain (the greedy builder was deleted 2026-09-17)
     "il2d_onechain_gate":      ("flag", False),
+    # COLD: the 3D IL tier had no gate until 2026-09-17 (gate_harness_debt.md 5)
+    "ilnd_gate":               ("flag", False),
     "ztt_odd_gate":            ("flag", True),   # the 2^a*odd staged class (2026-09-15): its front-door pass decodes and banks on a store copy
     "mt_c2c_gate":             ("flag", True),
     # COLD on purpose, same class as vfft_natural_front_gate: it asserts a RACE
