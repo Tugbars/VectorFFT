@@ -87,7 +87,7 @@ static void dft2(const double *x, double *X, int N1, int N2)
 
 int main(int argc, char **argv)
 {
-    static const int N1S[] = { 3, 4, 5, 7, 8, 11, 13, 17, 19 };   /* one composition each */
+    static const int N1S[] = { 3, 4, 5, 7, 8, 11, 13, 17, 19, 23 };   /* one composition each; 23 = Bluestein (no chain) */
     const int N2 = 64;
     const char *dir = NULL;
     int i, a, scr;
@@ -125,7 +125,8 @@ int main(int argc, char **argv)
             raced = tap_count(needle);
             CHECK(p != NULL, "%dx%d %s: create refused", N1, N2, cls);
             if (!p) { vfft_wisdom_free(W); free(x); free(y); free(y2); free(ref); continue; }
-            CHECK(raced == 1, "%dx%d %s: cold create raced %d time(s), expected 1 (one arm is still a race)", N1, N2, cls, raced);
+            if (N1 != 23)   /* 23 has no chain over the pool: Bluestein, no axis chain race */
+                CHECK(raced == 1, "%dx%d %s: cold create raced %d time(s), expected 1 (one arm is still a race)", N1, N2, cls, raced);
             vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
             vfft_destroy(p);
             if (!scr)
