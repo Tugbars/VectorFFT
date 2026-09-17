@@ -1376,6 +1376,12 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
 static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
                             size_t fsz);
+static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
+                                  const vfft_config_t *cfg,
+                                  const vw2_ilcol_key_t *key, int N, size_t rn,
+                                  const int *Rs, int nst,
+                                  vfft_il2p_fn *ff, vfft_il2p_fn *fb,
+                                  char *forms, size_t fsz);
 static void _il2d_forms_serve(struct vfft_wisdom_s *W,
                               const vfft_config_t *cfg, int is_real, int N1,
                               int N2, const int *Rs, int nst,
@@ -1525,51 +1531,14 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
                               int N2, const int *Rs, int nst,
                               vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                               char *forms, size_t fsz, int ord)
-{
-    const char *pin = getenv("VFFT_IL2D_FORMS");
-    int s, any = 0;
-    forms[0] = 0;
-    for (s = 0; s < nst; s++)
-    {   /* the AUTHORITY (vfft_il2p_col_forms), not a restatement of it (R4) */
-        const char *nm[2];
-        if (vfft_il2p_col_forms(Rs[s], nm) > 1)
-            any = 1;
-    }
-    if (!any)
-        return;
-    if (pin && *pin)
-    {
-        if (_il2d_apply_forms(Rs, nst, pin, ff, fb))
-            snprintf(forms, fsz, "%s", pin);
-        else
-            _vfft_warn("VFFT_IL2D_FORMS=%s does not fit chain at %dx%d - ignored",
-                       pin, N1, N2);
-        return;
-    }
-    if (!W || W->vw2_off_2d)
-        return;
-    if (!cfg->recalibrate &&
-        vw2_2d_forms_lookup(&W->vw2, is_real, N1, N2, forms, fsz, ord))
-    {
-        if (_il2d_apply_forms(Rs, nst, forms, ff, fb))
-        {
-            if (getenv("VFFT_IL2D_LOG"))
-                fprintf(stderr, "[il2d] forms %dx%d: replay %s src=wisdom\n", N1, N2, forms);
-            return;
-        }
-        _vfft_warn("banked forms=%s does not fit chain at %dx%d - re-racing",
-                   forms, N1, N2);
-        (void)_il2d_resolve(Rs, nst, ff, fb);
-    }
-    if (_il2d_race_forms(N1, N2, Rs, nst, ff, fb, forms, fsz) && forms[0])
-    {
-        const int banked = vw2_2d_forms_bank(&W->vw2, is_real, N1, N2, forms, ord);
-        if (banked)
-            _vw2_persist(W, cfg);
-        if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d] forms %dx%d: raced -> %s, %s\n", N1, N2, forms,
-                    banked ? "banked" : "NOT banked yet (no chain row; the create re-banks once it lands)");
-    }
+{   /* ONE body (R5, 2026-09-17): vw2_2d_forms_lookup/bank are themselves
+     * wrappers that build this key and call the ilcol pair, so the 2D-key
+     * spelling of the precedence law (env pin > banked forms= > the
+     * per-stage race) is the ilcol-key spelling with this key. The 45-line
+     * twin that used to live here was byte-identical to _il2d_forms_serve_key
+     * apart from the key. */
+    const vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
+    _il2d_forms_serve_key(W, cfg, &ck, N1, (size_t)N2, Rs, nst, ff, fb, forms, fsz);
 }
 
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
