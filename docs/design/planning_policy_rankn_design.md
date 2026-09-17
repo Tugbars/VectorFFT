@@ -120,7 +120,7 @@ Pre-existing: R7 touches no banking.
 | step | check | result |
 | --- | --- | --- |
 | R2 | the real tier's ladder, before -> after, 64x64 real | `wl ladder 64x64: 16 32` -> `16 32 64`: the full-width band is an arm, as ruled; no other line of a six-cell census changed (the floor has no instance at those cells) |
-| R2 | `policy_gate`, `band_ok` vs the c2c spelling over stage spans and the 3D spelling over every width | equal; NEGATIVE TEST (floor 4) fails the arm |
+| R2 | `policy_gate`, `band_ok` vs the c2c spelling over stage spans and the 3D spelling over every width | equal; NEGATIVE TEST (floor 4): `R2 band_ok: 9204 disagreements` -- watched to fail |
 | R5 | `il2d_onechain_gate`, `il2d_real_gate`, `ilnd_gate` | ALL PASS |
 | R6 | `il2d_real_gate` (r2c and c2r, warm bitwise) | ALL PASS |
 | R6 | the six-cell real census vs R2's "after" | IDENTICAL arms; one line gone -- the deleted block's own summary log |
