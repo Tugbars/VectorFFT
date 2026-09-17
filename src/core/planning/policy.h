@@ -375,7 +375,7 @@ static inline int vfft_policy_il2d_wl_cut(int N, int nst, const int *L, int wl)
  * (vfft_policy_fits_l2) stays beside it at each site: hardware, not law. */
 static inline int vfft_policy_il2d_band_ok(int N, int nst, const int *L, int w)
 {
-    return w >= 4 && vfft_policy_il2d_wl_cut(N, nst, L, w) >= 0;   /* NEGATIVE TEST: floor 4 */
+    return w >= 8 && vfft_policy_il2d_wl_cut(N, nst, L, w) >= 0;
 }
 
 /* -- rank >= 2: which PASS an axis runs (R7, 2026-09-17) --------------------
