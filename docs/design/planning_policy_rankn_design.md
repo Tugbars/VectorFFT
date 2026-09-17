@@ -89,13 +89,39 @@ per law watched to fail before it counts. Plus a rank >= 2 candidate census
 both tiers, both classes, prime and composite N1 -- the check that caught
 step 3's drift in rank 1.
 
+## Steps R1, R3, R4, R7 -- the evidence (2026-09-17)
+
+| check | result |
+| --- | --- |
+| `policy_gate`, the rank >= 2 arms | 131,571,790 checks, ALL PASS: R3's two laws equal to their frozen twins over 11,825 chains to N1 = 4096 x every width 0..N1+1 (23.8M pairs); R7 equal over its eight cases |
+| NEGATIVE TESTS, watched to fail | R3a with the divisibility term dropped: `3630683 of 23839850 (chain, wl) pairs differ`; R7 with 3D axis 0 returning the natural pass: `1 of 8 cases differ` -- exactly the 2026-09-17 drift |
+| `il2d_onechain_gate`, `ilnd_gate` | ALL PASS on the migrated tree |
+| the three `WPOOL[]` literals, the `== 32 \|\| == 64` copies, the inline tcut loops | gone (`grep`) |
+
+## What the first 3D gate found (2026-09-17)
+
+`ilnd_gate` -- the 3D interleaved tier's first gate, written the same day --
+failed on its first run at 23x8x8, both classes: a cell whose axis 0 is
+BLUESTEIN re-raced axis 1 and its structure verdict on every create. Cause:
+"axis 0 creates the row, a later axis updates fields on it", and a Bluestein
+axis 0 created none (`[wisdom2] il column axis 1 bank refused (no row)`).
+And the fix could not be "just bank the row": the shared builder had NO
+replay-rebuild for a `blu` row -- it would have run the length-M chain as
+the N chain (the 2D create has had that rebuild since 2026-09-02; the 3D
+tier, the builder's only other caller, never did, and never noticed only
+because no 3D Bluestein cell could bank). Fixed in `_il2d_col_build`,
+`rank >= 3` only: a replayed `blu` row rebuilds its inner through the
+provider; a cold Bluestein axis 0 banks the cell's row with the M chain and
+`blu = M`. 12/12 after the fix; the failing first run is the negative test.
+Pre-existing: R7 touches no banking.
+
 ## Checklist
 
 - [x] 0. This design (inventory verified by reading, 2026-09-17).
-- [ ] R1. The ladder, once.
-- [ ] R3. The tcut law, once.
-- [ ] R4. The form-axis rule asks its authority.
-- [ ] R7. The axis-pass law, once.
+- [x] R1. The ladder, once (2026-09-17).
+- [x] R3. The tcut law, as TWO helpers, each byte-exact (2026-09-17).
+- [x] R4. The form-axis rule asks its authority (2026-09-17).
+- [x] R7. The axis-pass law, once (2026-09-17).
 - [ ] R2. Ruling, then one predicate.
 - [ ] R5. One forms-serve.
 - [ ] R6. Real tier onto the shared builder (own design).
