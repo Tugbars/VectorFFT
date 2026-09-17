@@ -331,6 +331,58 @@ static inline int vfft_policy_admits(const vfft_cell_t *c, vfft_fam_t f)
  * changed. The no-silent-caps law is enforced by the enumerator itself. */
 #define VFFT_IL2D_MAXCAND 24
 
+/* -- L2, rank >= 2: the BAND-WIDTH LADDER (R1, 2026-09-17) ----------------
+ * The widths the 2D c2c tier, the 2D real tier and the 3D tier may race for
+ * their column band (wl). A ladder is a pool: the RACE decides. It was typed
+ * three times as a literal; a fourth copy would have drifted the way the
+ * bounds around it already have (design R2). The STRIP ladders are NOT here
+ * on purpose: the 2D tier's {16..256} and the 3D tier's {8..1024} are
+ * different lists by design. */
+static const int VFFT_IL2D_WL_LADDER[] = { 8, 16, 32, 64, 128, 256 };
+#define VFFT_IL2D_WL_LADDER_N \
+    ((int)(sizeof VFFT_IL2D_WL_LADDER / sizeof VFFT_IL2D_WL_LADDER[0]))
+
+/* -- rank >= 2: the TCUT law, as TWO laws (R3, 2026-09-17) ------------------
+ * A band width wl is LEGAL for a column chain iff wl divides N and some
+ * stage span L[s] divides wl; the cut is the FIRST such stage. Two helpers
+ * (the real tier's, the 3D tier's) and one inline loop spelled that. Two
+ * further inline loops in the c2c axis race spelled something ELSE: the cut
+ * of a width ALREADY admitted, with 0 where the law above says -1. They are
+ * not one predicate, so they are two functions; each site keeps its exact
+ * meaning. (The default is unreachable in practice -- an admitted width
+ * always has a cut -- and it is preserved anyway.) */
+static inline int vfft_policy_il2d_cut_of(int nst, const int *L, int wl)
+{
+    int s;
+    for (s = 0; s < nst; s++)
+        if (wl % L[s] == 0)
+            return s;
+    return -1;
+}
+static inline int vfft_policy_il2d_wl_cut(int N, int nst, const int *L, int wl)
+{
+    if (wl <= 0 || wl > N || N % wl != 0)
+        return -1;
+    return vfft_policy_il2d_cut_of(nst, L, wl);
+}
+
+/* -- rank >= 2: which PASS an axis runs (R7, 2026-09-17) --------------------
+ * The shared column builder races and builds either the NATURAL-leaf pass
+ * or the SCRAMBLED pass for one axis. Which one is a law of (rank, axis,
+ * order class), not of the caller: 2D = the request's class; 3D axis 0 =
+ * the scrambled class for BOTH (the natural class orders planes in its
+ * plane pass, never in the column pass -- fftnd_il.h); 3D axis 1 = the
+ * request's class. Three literals until today, and on 2026-09-17 the
+ * builder was found racing on the row LABEL instead, which agrees with this
+ * law everywhere except 3D axis 0 -- where it timed a pass the tier never
+ * runs. One function, so the next axis cannot get it a fourth way. */
+static inline int vfft_policy_rankn_axis_nat(int rank, int axis, int ord)
+{
+    if (rank >= 3 && axis == 0)
+        return 0;
+    return ord == VW2_ORD_NAT;
+}
+
 /* -- L3 (narrowed). the PER-THREAD-COUNT FENCE --------------------------
  * A threading verdict is a MEASUREMENT AT A THREAD COUNT: the row banks the
  * verdict and the T it was raced at, and a T=4 verdict must never serve a

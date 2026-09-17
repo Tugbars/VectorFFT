@@ -990,14 +990,8 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
 /* derive the banded walk's cut for a wl candidate: the first suffix
  * stage whose span divides wl. -1 = illegal (stay unbanded). */
 static int _il2d_real_wl_cut(const struct vfft_plan_s *h, int wl)
-{
-    int s2;
-    if (wl <= 0 || wl > h->N || h->N % wl != 0)
-        return -1;
-    for (s2 = 0; s2 < h->il2d_col.nst; s2++)
-        if (wl % h->il2d_col.L[s2] == 0)
-            return s2;
-    return -1;
+{   /* the tcut law lives in planning/policy.h (R3, 2026-09-17) */
+    return vfft_policy_il2d_wl_cut(h->N, h->il2d_col.nst, h->il2d_col.L, wl);
 }
 
 /* build one ROWSPLIT arm's engine + scratch (legality is the caller's:
@@ -1254,7 +1248,6 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
      * on the z scratch (compounding is benign — the c2c chain-race
      * precedent). */
     {
-        static const int WPOOL[] = { 8, 16, 32, 64, 128, 256 };
         const size_t hp1 = (size_t)N2 / 2 + 1;
         int wlc[14], nwl = 0, wi, s2;
         double cbest = 1e300;
@@ -1262,9 +1255,9 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
         h->il2d_col.wl = 0;
         h->il2d_col.cut = 0;
         vfft_race_run(&proto, &cols_arm, 1, &cbest);
-        for (wi = 0; wi < 6 && nwl < 14; wi++)
-            if (_il2d_real_wl_cut(h, WPOOL[wi]) >= 0 && WPOOL[wi] < N1)
-                wlc[nwl++] = WPOOL[wi];
+        for (wi = 0; wi < VFFT_IL2D_WL_LADDER_N && nwl < 14; wi++)
+            if (_il2d_real_wl_cut(h, VFFT_IL2D_WL_LADDER[wi]) >= 0 && VFFT_IL2D_WL_LADDER[wi] < N1)
+                wlc[nwl++] = VFFT_IL2D_WL_LADDER[wi];
         for (s2 = 1; s2 < h->il2d_col.nst && nwl < 14; s2++)
         {
             const int w2 = h->il2d_col.L[s2];
@@ -1537,8 +1530,11 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
     int s, any = 0;
     forms[0] = 0;
     for (s = 0; s < nst; s++)
-        if (Rs[s] == 32 || Rs[s] == 64)
+    {   /* the AUTHORITY (vfft_il2p_col_forms), not a restatement of it (R4) */
+        const char *nm[2];
+        if (vfft_il2p_col_forms(Rs[s], nm) > 1)
             any = 1;
+    }
     if (!any)
         return;
     if (pin && *pin)
@@ -1763,8 +1759,11 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
     int s, any = 0;
     forms[0] = 0;
     for (s = 0; s < nst; s++)
-        if (Rs[s] == 32 || Rs[s] == 64)
+    {   /* the AUTHORITY (vfft_il2p_col_forms), not a restatement of it (R4) */
+        const char *nm[2];
+        if (vfft_il2p_col_forms(Rs[s], nm) > 1)
             any = 1;
+    }
     if (!any)
         return;
     if (pin && *pin)
@@ -2234,20 +2233,12 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     /* wl candidates: 0 (unbanded) + legal widths */
     wlc[0] = 0;
     {
-        static const int WPOOL[] = { 8, 16, 32, 64, 128, 256 };
         int p, s2;
-        for (p = 0; p < 6 && nwl < 14; p++)
+        for (p = 0; p < VFFT_IL2D_WL_LADDER_N && nwl < 14; p++)
         {
-            const int w = WPOOL[p];
+            const int w = VFFT_IL2D_WL_LADDER[p];
             int cut = -1;
-            if (w > N1 || N1 % w)
-                continue;
-            for (s2 = 0; s2 < h->il2d_col.nst; s2++)
-                if (w % h->il2d_col.L[s2] == 0)
-                {
-                    cut = s2;
-                    break;
-                }
+            cut = vfft_policy_il2d_wl_cut(N1, h->il2d_col.nst, h->il2d_col.L, w);
             if (cut >= 0)
                 wlc[nwl++] = w;
         }
@@ -2335,13 +2326,12 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             {
                 int s2, cut = 0;
                 const int w = wlc[wi];
+                (void)s2;
                 if (w > 0)
-                    for (s2 = 0; s2 < h->il2d_col.nst; s2++)
-                        if (w % h->il2d_col.L[s2] == 0)
-                        {
-                            cut = s2;
-                            break;
-                        }
+                {   /* an admitted width's cut; 0 kept where none (R3) */
+                    const int r = vfft_policy_il2d_cut_of(h->il2d_col.nst, h->il2d_col.L, w);
+                    if (r >= 0) cut = r;
+                }
                 {
                     int sub;
                     for (sub = 0; sub <= (w == 0 ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
@@ -2391,13 +2381,12 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     /* set the winner, keep or drop the OOP child */
     {
         int s2, cut = 0;
+        (void)s2;
         if (bwl > 0)
-            for (s2 = 0; s2 < h->il2d_col.nst; s2++)
-                if (bwl % h->il2d_col.L[s2] == 0)
-                {
-                    cut = s2;
-                    break;
-                }
+        {   /* the winner's cut; 0 kept where none (R3) */
+            const int r = vfft_policy_il2d_cut_of(h->il2d_col.nst, h->il2d_col.L, bwl);
+            if (r >= 0) cut = r;
+        }
         h->il2d_col.wl = bwl;
         h->il2d_col.cut = cut;
         h->il2d_col.tfuse = (bwl > 0);

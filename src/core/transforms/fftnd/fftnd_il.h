@@ -1032,14 +1032,8 @@ static int _ilnd_nat_bind(vfft_ilnd_t *d, int T)
  * divides wl (the tcut law: the width is the INPUT, the cut is DERIVED);
  * -1 = illegal (stay unbanded) ─────────────────────────────────────── */
 static int _ilnd_wl_cut(const vfft_ilcol_t *c, int wl)
-{
-    int s;
-    if (wl <= 0 || wl > c->N || c->N % wl)
-        return -1;
-    for (s = 0; s < c->nst; s++)
-        if (wl % c->L[s] == 0)
-            return s;
-    return -1;
+{   /* the tcut law lives in planning/policy.h (R3, 2026-09-17) */
+    return vfft_policy_il2d_wl_cut(c->N, c->nst, c->L, wl);
 }
 static void _ilnd_apply_wl(vfft_ilcol_t *c, int wl)
 {
@@ -1053,14 +1047,13 @@ static void _ilnd_apply_wl(vfft_ilcol_t *c, int wl)
  * a band (w * plane * 16 <= L2) — candidates, never defaults */
 static int _ilnd_wl_pool(const vfft_ilcol_t *c, int *out, int max)
 {
-    static const int WPOOL[] = { 8, 16, 32, 64, 128, 256 };
     int n = 0, p, s;
     out[n++] = 0;
     if (c->blu || c->nat)
         return n;
-    for (p = 0; p < 6 && n < max; p++)
-        if (_ilnd_wl_cut(c, WPOOL[p]) >= 0)
-            out[n++] = WPOOL[p];
+    for (p = 0; p < VFFT_IL2D_WL_LADDER_N && n < max; p++)
+        if (_ilnd_wl_cut(c, VFFT_IL2D_WL_LADDER[p]) >= 0)
+            out[n++] = VFFT_IL2D_WL_LADDER[p];
     for (s = 1; s < c->nst && n < max; s++)
     {
         const int w = c->L[s];
@@ -1111,7 +1104,8 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
     if (d->row)
         return 1;
     key1.axis = 1;
-    if (!_il2d_col_build(W, cfg, &key1, d->N[1], (size_t)d->N[2], d->nat, &d->ax1,
+    if (!_il2d_col_build(W, cfg, &key1, d->N[1], (size_t)d->N[2],
+                         vfft_policy_rankn_axis_nat(3, 1, key1.ord), &d->ax1,
                          d->forms1, sizeof d->forms1, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
         return 0;
     memset(&rc, 0, sizeof rc);
@@ -1309,7 +1303,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
      * class orders planes in its plane pass, never in the column pass. */
     key0.rank = 3; key0.n0 = N1; key0.n1 = N2; key0.n2 = N3;
     key0.ord = nat ? VW2_ORD_NAT : VW2_ORD_SCR; key0.axis = 0; key0.real = 0;
-    if (!_il2d_col_build(W, cfg, &key0, N1, d->plane, 0, &d->ax0,
+    if (!_il2d_col_build(W, cfg, &key0, N1, d->plane,
+                         vfft_policy_rankn_axis_nat(3, 0, key0.ord), &d->ax0,
                          d->forms0, sizeof d->forms0, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
     {
         free(d);
