@@ -136,6 +136,8 @@ ARGSTYLE = {
     "il2d_onechain_gate":      ("flag", False),
     # COLD: the 3D IL tier had no gate until 2026-09-17 (gate_harness_debt.md 5)
     "ilnd_gate":               ("flag", False),
+    # COLD: the prime cell races its OWN inner (2026-09-18) and banks in= on its row
+    "ilprime_inner_gate":      ("flag", False),
     "ztt_odd_gate":            ("flag", True),   # the 2^a*odd staged class (2026-09-15): its front-door pass decodes and banks on a store copy
     "mt_c2c_gate":             ("flag", True),
     # COLD on purpose, same class as vfft_natural_front_gate: it asserts a RACE

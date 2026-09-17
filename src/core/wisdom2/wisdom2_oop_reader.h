@@ -798,11 +798,18 @@ static inline int vw2_oop_k1_row_lay(const vw2_store_t *s, int M)
     return vw2_oop_k1_row_lay_ord(s, M, 0);
 }
 
+/* THE PRIME CELL'S OWN VERDICT (2026-09-18, ilprime_inner_race_design.md):
+ * the METHOD and the INNER, raced together on the whole convolution and
+ * banked on this row. in= names the inner's kind (2p | 3p | ztt), in_sh= its
+ * shape (R1.R2 | R2.A.B | the chain), in_tw= ZTURN-T's tile (0 = none). The
+ * `ref=` signpost to the K=1 row at M went with the borrowing it served. */
 static inline int vw2_prime_method_bank(vw2_store_t *s, int N, int method,
-                                        int ref_M, int ref_lay)
+                                        const char *in_kind, const char *in_shape,
+                                        int in_tw)
 {
     vw2_rec_t r;
     int rc;
+    char b[24];
     memset(&r, 0, sizeof r);
     vw2__prime_method_key(N, &r.key);
     if (vw2_rec_set(&r, 1, "eng", method == 1 ? "rader" : "bluestein") != VW2_OK ||
@@ -811,27 +818,41 @@ static inline int vw2_prime_method_bank(vw2_store_t *s, int N, int method,
         vw2_rec_free(&r);
         return -1;
     }
-    /* ref_lay >= 0: the kind-3 pair row at M (its lay spelling);
-     * ref_lay == -2 / -3: the kind-4 CASCADE row at M (verdict / role=comp),
-     * for a prime whose inner is the cascade above 4096 (2026-09-02). */
-    if (ref_M > 0 && ref_lay >= 0) {
-        char ref[112];
-        snprintf(ref, sizeof ref,
-                 "cell(t=c2c,n=%d,q=1,ord=nat,place=oop,role=comp%s)", ref_M,
-                 ref_lay == VW2_LAY_IL ? ",lay=il"
-                 : ref_lay == VW2_LAY_SPLIT ? ",lay=split" : "");
-        if (vw2_rec_set(&r, 1, "ref", ref) != VW2_OK) { vw2_rec_free(&r); return -1; }
-    } else if (ref_M > 0 && (ref_lay == -2 || ref_lay == -3)) {
-        char ref[112];
-        snprintf(ref, sizeof ref,
-                 "cell(t=c2c,n=%d,q=1,ord=scr,place=oop%s)", ref_M,
-                 ref_lay == -3 ? ",role=comp" : "");
-        if (vw2_rec_set(&r, 1, "ref", ref) != VW2_OK) { vw2_rec_free(&r); return -1; }
+    if (in_kind && in_shape) {
+        snprintf(b, sizeof b, "%d", in_tw);
+        if (vw2_rec_set(&r, 1, "in", in_kind) != VW2_OK ||
+            vw2_rec_set(&r, 1, "in_sh", in_shape) != VW2_OK ||
+            vw2_rec_set(&r, 1, "in_tw", b) != VW2_OK) {
+            vw2_rec_free(&r);
+            return -1;
+        }
     }
     vw2__oop_stamp_date(&r);
     rc = vw2_bank(s, &r);
     if (rc != VW2_OK) vw2_rec_free(&r);
     return rc;
+}
+/* the inner's verdict on the prime row: 1 with the tokens filled, 0 when
+ * the row has none (a row from before 2026-09-18, or a miss) */
+static inline int vw2_prime_inner_lookup(const vw2_store_t *s, int N,
+                                         char *kind, size_t ksz,
+                                         char *shape, size_t ssz, int *tw)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *v;
+    vw2__prime_method_key(N, &k);
+    r = vw2_lookup(s, &k);
+    if (!r) return 0;
+    v = vw2_rec_get(r, "in");
+    if (!v) return 0;
+    snprintf(kind, ksz, "%s", v);
+    v = vw2_rec_get(r, "in_sh");
+    if (!v) return 0;
+    snprintf(shape, ssz, "%s", v);
+    v = vw2_rec_get(r, "in_tw");
+    *tw = v ? atoi(v) : 0;
+    return 1;
 }
 
 /* kind-4 bank under a role: role=comp = the cascade RECIPE as a component
