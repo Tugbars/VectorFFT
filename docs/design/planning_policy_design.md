@@ -577,6 +577,40 @@ step 2. The three ZTURN-T gates reference `VFFT_ZTT_MAX_N` and
 module itself calls — and `calibrate_k1_il.c` takes its cells from argv.
 Neither re-derives a law.
 
+## The band map, validated from the outside (2026-09-18)
+
+The owner's check: recalibrate one cell per region on a SCRATCH copy of the
+shipped store (`cfg.recalibrate = 1`: re-race, overwrite), read the route the
+store banked, and bench the cell with the canonical bench (`--k1noop`,
+natural, out of place, T = 1, the recorded protocol) beside the recorded
+ratio in `v1_0_results.md`. A wrong law in the module would show twice: a
+route by the wrong name, or the right route at the wrong cost.
+`build_tuned/band_recal_check.sh`, `benches/recal_1d_probe.c`.
+
+**Every region banked the method the map assigns** -- 24 cells: the mono
+band (ZTURN-T at 16, pairs at 32/64), pairs through 512, ZTURN-T 1024 to
+262144, the four-step above, ZTURN-T's odd band, chain3, the flat DIT. 17 of
+24 ratios within a few percent of the record.
+
+The other seven were run again, twice, and none is a policy or a plumbing
+defect. Replaying the SHIPPED verdicts on today's binary reproduces the
+record (2097152: 1.387 vs 1.40-1.43; 1048576: 1.347 vs 1.26-1.34). What the
+check found is one level down:
+
+| cell | what happened |
+| --- | --- |
+| 256 | same shipped verdict every time; the bench reads 0.99 or 0.68 depending on which engine runs first -- a 140 ns transform is order-sensitive |
+| 15625 | two cold races banked two forms: `t.m.t.t.o @ 625` (0.71) and the recorded `t.t.t.t.o @ 3125` (1.06) |
+| 3125 | chain3 wins over the flat DIT in today's races (both admitted: pure odd); one race picked a worse chain3 split (625.5, 0.80) than the next (125.25, 1.00) |
+| 512x4096, the four-step's child at 2097152 | the recalibration re-races the CHILD; it banked `chain=64.8 wl=0 sw=64` (the strip form) where the shipped row is `chain=8.8.8 wl=8` -- 14.4 M ns against 8.6 M. A single cold race at a 32 MB plane picked the form the DRAM-roof work refuted |
+
+So: a cold race is ONE sample, and at two cells one sample banked a verdict
+20-70% worse than the recorded one. Whether the race body should take more
+than one cold sample before banking a verdict that will serve for weeks is
+the owner's ruling; the child race's strip arm at the four-step's cells is
+the first thing to look at. The shipped store stays: the check proved it is
+the better one.
+
 ## Checklist
 
 - [x] 1. This design (the inventory above is the survey of 2026-09-16).
