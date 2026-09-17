@@ -135,8 +135,12 @@ re-injected: "cold create raced 0 time(s), expected 1").
 - "Natural output is a legal scrambled answer" — no. The header's
   "order-agnostic" wording was my reading; the owner authors the contract.
 - "The store needs both layouts' rows from one calibrator" — no.
-- "The prime path's inner may take the scrambled row" — no; a prime
-  transform's inner FFT at the padded length takes the NATURAL row at M.
+- "The prime path's inner may take the scrambled row" / "...takes the
+  NATURAL row at M" — neither, since 2026-09-18: a prime cell's inner takes
+  NO K=1 row at M. It is the prime cell's OWN raced verdict (every (method,
+  inner) pair on the whole convolution; `in= in_sh= in_tw=` on the prime
+  row; `ilprime_inner_race_design.md`). The pool's ZTURN-T arms are the
+  scrambled class: a convolution is a matched roundtrip in any order.
 - "Keep the cascade as the scrambled engine" — pressure-tested and dropped:
   the cascade wins no cell in 2048..16384.
 - "A cold pow2 cell in the band refuses until its row is banked" — no
