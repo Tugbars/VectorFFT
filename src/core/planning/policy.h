@@ -366,6 +366,18 @@ static inline int vfft_policy_il2d_wl_cut(int N, int nst, const int *L, int wl)
     return vfft_policy_il2d_cut_of(nst, L, wl);
 }
 
+/* -- rank >= 2: a legal CASCADE band width (R2, owner 2026-09-17) ------------
+ * A stage span may join the band-width race iff it is at least 8 rows and
+ * the tcut law admits it. The 2D c2c tier and the 3D tier spelled exactly
+ * this; the 2D real tier had no floor and, on its static ladder, refused a
+ * full-width band (w == N1) the other two admit. The owner ruled the real
+ * tier follows the other two, so this is one predicate now. The L2 gate
+ * (vfft_policy_fits_l2) stays beside it at each site: hardware, not law. */
+static inline int vfft_policy_il2d_band_ok(int N, int nst, const int *L, int w)
+{
+    return w >= 8 && vfft_policy_il2d_wl_cut(N, nst, L, w) >= 0;
+}
+
 /* -- rank >= 2: which PASS an axis runs (R7, 2026-09-17) --------------------
  * The shared column builder races and builds either the NATURAL-leaf pass
  * or the SCRAMBLED pass for one axis. Which one is a law of (rank, axis,
