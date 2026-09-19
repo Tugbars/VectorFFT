@@ -112,49 +112,73 @@ defect of this design: at 65537 two cold races banked two chains
 (`8.8.8.4.8.4.4 @ 1024`, then `8.8.8.8.8.8 @ 2048`) -- the one-sample cold
 race, `policy_survey_defects.md` section F.
 
-## Against MKL (2026-09-18)
+## Against MKL (2026-09-19)
 
-`build_tuned/prime_vs_mkl.sh`: a scratch copy of the shipped store, one
-front-door create per prime (the cold race, banked), then the canonical
-bench in a fresh process (`--k1noop`: natural, out of place, T = 1, pace
-300 ms, core 2 + HIGH, MKL single-threaded). Primes on the bench's own
-split-library prime list (127, 251, 257, 263, ...) ride its `[override]`
-path there, not the front door, so they are not in this table.
+`build_tuned/prime_vs_mkl.sh` and the canonical bench, `--k1noop` (natural,
+out of place, T = 1, pace 300 ms, core 2 + HIGH, MKL single-threaded), one
+process per cell on a scratch copy of the shipped store, the cold race banked
+by a front-door create beforehand, both engine orders shown.
 
-| N | banked verdict | vfft ns | MKL ns | vs MKL |
-| --- | --- | --- | --- | --- |
-| 31 | Rader, `2p 3.10` | 79 | 121 | 1.53 |
-| 131 | Rader, `2p 13.10` | 353 | 1067 | 3.02 |
-| 521 | Rader, `3p 8.5.13` | 1995 | 4572 | 2.29 |
-| 1021 | Rader, `3p 4.15.17` | 5169 | 6015 | 1.16 |
-| 2053 | Rader, `3p 4.19.27` | 19113 | 22576 | 1.18 |
-| 4099 | Bluestein, `ztt 8.8.8.8.4 @ 2048` | 48240 | 53283 | 1.11 |
-| 8191 | Bluestein, `ztt 8.8.8.8.4 @ 2048` | 54191 | 56791 | 1.05 |
-| 65537 | Bluestein, `ztt 8.8.8.4.8.4.4 @ 1024` | 1708287 | 1780833 | 1.04 |
-| 131071 | Bluestein, `ztt 8.8.8.8.8.8 @ 2048` | 1760487 | 1824260 | 1.04 |
+```
+ N        N-1                 banked verdict                      ours (ns)    MKL (ns)   vs MKL
+──────────────────────────────────────────────────────────────────────────────────────────────────
+ 31       2.3.5               RADER     il2p 3.10                        95          134   1.40 / 1.75
+ 131      2.5.13              RADER     il2p 13.10                      379         1066   2.81 / 2.58
+ 257      2^8                 RADER     il2p 4.64                       686         2159   3.15 / 3.32
+ 521      2^3.5.13            RADER     il3p 8.5.13                    2023         4573   2.26 / 2.14
+ 1021     2^2.3.5.17          BLUESTEIN ZTURN-T 8.8.4.8               5211         6013   1.15 / 1.16
+ 2053     2^2.3^3.19          RADER     il3p 4.19.27                  16160        22006   1.36 / 1.44
+ 4001     2^5.5^3             RADER     ZTURN-T 8.5.5.5.4             15731        27663   1.76 / 1.66
+ 4099     2.3.683             BLUESTEIN ZTURN-T 8.8.8.8.4 @ 2048     48222        54510   1.13 / 1.16
+ 8191     2.3^2.5.7.13        BLUESTEIN ZTURN-T 8.8.8.8.4 @ 2048     51420        57630   1.12 / 1.17
+ 12289    2^12.3              RADER     ZTURN-T 8.3.8.4.4.4 @ 2048    50803       112664   2.22 / 2.28
+ 40961    2^13.5              RADER     ZTURN-T 8.5.8.4.8.4 @ 1024   219487       795296   3.62 / 3.73
+ 65537    2^16                RADER     ZTURN-T 4.4.4.4.4.8.8       376547      1815207   4.82 / 4.23
+ 131071   2.3.5.17.257        BLUESTEIN ZTURN-T 8.8.8.8.4.4.4 @ 2048 1780033     1899607   1.07 / 1.19
+```
 
-Before this design, on the same shipped store, the front door REFUSED 4099
-and 8191 outright: above M = 4096 the borrowed inner was lost entirely and
-the `ref=` signpost dangled ("dangling ref -- verdict treated as MISS", then
-"no interleaved engine ... nothing to fall back to"). They are served now.
+The split between the two methods is not written anywhere. Rader turns a
+prime into a cyclic convolution of length N - 1, so it can only be built when
+the inner pool can express N - 1, and it is offered as race arms exactly then.
+Below 4096 the pool draws on every il2p pair and the il3p chain, so any radix
+with a codelet counts -- which is why 521 rides `8.5.13`. Above 4096 the inner
+must be a ZTURN-T chain, whose odd mids are 3, 5, 7, 9 and 15, so a prime
+whose N - 1 carries 13, 17, 683 or 257 offers Rader nothing and Bluestein
+takes the cell unopposed and correctly. That is the textbook rule -- smooth
+predecessors favour Rader, rough ones favour Bluestein -- arrived at by
+construction rather than by a threshold.
 
-The race's verdicts, checked SAME-RUN (`benches/ilprime_chain_probe.c`: the
-scratch store's prime row rewritten to each named inner, replayed through
-the front door, 15 rounds, alternated, paced between rounds; min / median
-ns) against the chain the K=1 tier used to lend at M = 262144:
+Three defects were found on the way there, all on 2026-09-19, and the table
+above is after all three:
 
-| arm | 131071 | 65537 |
-| --- | --- | --- |
-| `8.4.8.4.8.8.4` untiled (the lent K=1 chain) | 2326400 / 2577800 | 2196500 / 2483000 |
-| `8.4.8.4.8.8.4 @ 2048` | 2149900 / 2319200 | 2031300 / 2200900 |
-| `8.8.8.8.8.8 @ 2048` (131071's verdict) | **2087000** / **2307200** | 1967500 / 2200700 |
-| `8.8.8.8.8.8` untiled | 2230200 / 2419700 | 2077400 / 2293200 |
-| `8.8.8.4.8.4.4 @ 1024` (65537's verdict) | 2115700 / 2348300 | **1928100** / 2221800 |
+- **Rader carried a hard ceiling**, `if (nm1 > 4096) return 0;`, a vestige of
+  the STRUCTURAL inner: that rule could only build a balanced pair, and a pair
+  of radices <= 64 tops out at 4096. Since the inner became a raced pool the
+  ceiling was obsolete, and it made every larger prime bank Bluestein without
+  a contest. At 65537 Rader offered 108 inners and built NONE, so Bluestein
+  convolved at 262144 where Rader convolves at 65536: 1.04x vs MKL became
+  4.82x, our own time 1.71 ms to 0.38 ms.
+- **The inner pool was a hand-rolled copy** of the registry walk and the tile
+  ladder, and it knew only power-of-two chains. It now calls the K=1 planner's
+  own two enumerators, `_il_dp_enumerate_ztt_ord` and
+  `_il_dp_enumerate_ztt_odd` -- one law, one place -- which is what gives
+  Rader the smooth non-power-of-two predecessors: 4001, 12289 and 40961 all
+  flipped from Bluestein to Rader, at 1.76x, 2.22x and 3.62x.
+- **The banked METHOD used to filter the race.** A binary that could not build
+  that method was left with an empty race and REFUSED the cell -- a store
+  calibrated against a wider pool, or an engine whose reach changed, turned
+  into "no interleaved engine". Reaching the race at all means the row could
+  not be replayed, so its method is a preference, not a measurement of this
+  build: a verdict that cannot be built is a miss, and a miss races.
 
-Both banked verdicts are the fastest arms at their cells; the lent chain is
-the slowest, 10-12% behind. (A cross-run comparison of the old binary's
-bench numbers had suggested the opposite at 131071; it was the cross-run
-noise the protocol forbids quoting.)
+And one non-defect, recorded so it is not re-derived: 131071 read 0.88x once,
+against 1.07-1.24x on three fresh races that all picked the same chain. A
+single cold race is one sample (`policy_survey_defects.md` section F); it was
+not a regression.
+
+The method axis now obeys the no-silent-caps law: the race logs each method's
+pool and how much of it built, and warns when a method was offered arms and
+built none -- the exact shape of the 65537 defect.
 
 ## Cost, honestly
 

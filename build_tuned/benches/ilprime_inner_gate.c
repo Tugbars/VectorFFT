@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <windows.h>
 #include "vfft.h"
 
 static char g_tap[600];
@@ -58,6 +59,44 @@ static int row_has_inner(const char *dir, int N)
     fclose(f);
     return found;
 }
+/* rewrite n=<N>'s prime row to name a method with NO inner tokens: the shape
+ * a pre-2026-09-18 store has, and the shape a store calibrated against a
+ * wider pool leaves behind. At 4099 (N-1 = 2*3*683) Rader can never be built
+ * -- 683 has no codelet and never will -- so this row names a method this
+ * build cannot produce. It must be treated as a MISS and raced, not as a
+ * refusal (2026-09-19). */
+static int poison_method(const char *dir, int N, const char *eng)
+{
+    char path[700], tmp[700], line[4096], key[32];
+    FILE *f, *g;
+    int hit = 0;
+    snprintf(path, sizeof path, "%s/wisdom2_prime.txt", dir);
+    snprintf(tmp, sizeof tmp, "%s/wisdom2_prime.tmp", dir);
+    snprintf(key, sizeof key, "n=%d ", N);
+    f = fopen(path, "rb");
+    if (!f) return 0;
+    g = fopen(tmp, "wb");
+    if (!g) { fclose(f); return 0; }
+    while (fgets(line, sizeof line, f))
+    {
+        if (!strncmp(line, "@cell", 5) && strstr(line, key))
+        {
+            char *bar = strchr(line, '|');
+            if (bar)
+            {
+                *bar = 0;
+                fprintf(g, "%s| eng=%s | ran=1 src=probe date=2026-09-19\n", line, eng);
+                hit = 1;
+                continue;
+            }
+        }
+        fputs(line, g);
+    }
+    fclose(f); fclose(g);
+    if (!hit) { remove(tmp); return 0; }
+    return MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING) ? 1 : 0;
+}
+
 static vfft_plan mk(vfft_wisdom *W, int N, int recal)
 {
     vfft_config_t cfg;
@@ -150,6 +189,44 @@ int main(int argc, char **argv)
         printf("%s N=%d\n", ok ? "PASS" : "FAIL", N);
         if (!ok) fails++;
         free(x); free(y); free(y2);
+    }
+    /* 5. A BANKED METHOD THIS BUILD CANNOT PRODUCE IS A MISS, NOT A REFUSAL
+     * (2026-09-19). The row names rader at 4099, whose N - 1 = 2*3*683 no
+     * inner pool can ever express, because 683 has no codelet and never will.
+     * Until today the banked method FILTERED the race, so a row like this one
+     * left the race with no arms and the cell was REFUSED outright -- which is
+     * what a store calibrated against a wider pool, or a binary whose engine
+     * reach changed, hands you. A verdict that cannot be built is a miss, and
+     * a miss races. */
+    {
+        const int PN = 4099;
+        if (!poison_method(dir, PN, "rader"))
+        {
+            printf("FAIL N=%d: could not poison the row\n", PN);
+            fails++;
+        }
+        else
+        {
+            vfft_wisdom *W2 = vfft_wisdom_load(dir);   /* re-read: the poison is on disk */
+            vfft_plan p2 = W2 ? mk(W2, PN, 0) : NULL;
+            if (!p2)
+            {
+                printf("FAIL N=%d: an unbuildable banked method REFUSED the cell\n", PN);
+                fails++;
+            }
+            else
+            {
+                vfft_destroy(p2);
+                if (!row_has_inner(dir, PN))
+                {
+                    printf("FAIL N=%d: the race did not re-bank an inner over the poison\n", PN);
+                    fails++;
+                }
+                else
+                    printf("PASS N=%d unbuildable-method poison: raced and re-banked\n", PN);
+            }
+            if (W2) vfft_wisdom_free(W2);
+        }
     }
     vfft_wisdom_free(W);
     printf("%s ilprime_inner_gate: %d cell(s) failed\n", fails ? "FAIL" : "ALL PASS", fails);
