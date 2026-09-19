@@ -313,6 +313,18 @@ static inline vfft_ilprime_plan_t *_ilprime_create_bluestein(int N)
 static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
 {
     const int nm1 = N - 1;
+    /* RADER IS PRIME-ONLY, and this is the guard that makes it so (2026-09-19).
+     * The reduction to a cyclic convolution needs the multiplicative group mod
+     * N to be cyclic of order N - 1, i.e. a primitive root, which exists only
+     * for a prime modulus here. _ilprime_find_generator tests candidates with
+     * `powmod(g, (N-1)/f, N) != 1` for each prime factor f of N - 1 -- a test
+     * that characterises a primitive root ONLY modulo a prime. Handed a
+     * composite it can return a value that passes every check and generates
+     * nothing, and the plan would then build cleanly and compute the WRONG
+     * transform: a silent wrong answer, the worst failure this library has.
+     * Unreachable until today, when composites began reaching the banked
+     * race; the guard lives here so every caller is covered by construction. */
+    if (!_ilprime_is_prime(N)) return 0;
     /* NO CEILING (2026-09-19). `if (nm1 > 4096) return 0;` stood here, a
      * vestige of the STRUCTURAL inner: that rule could only build a balanced
      * il2p pair, and a pair of radices <= 64 tops out at 4096, so any larger

@@ -411,8 +411,15 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                                                    int N)
 {
     int hint = 0;
-    if (!W || W->vw2_off_oop || getenv("VFFT_ILPR_METHOD") ||
-        !_ilprime_is_prime(N))
+    /* COMPOSITES COME IN TOO (2026-09-19). `!_ilprime_is_prime(N)` stood in
+     * this condition, so a composite left on the first line and fell to
+     * vfft_ilprime_create -- no store, no pool, and a structural inner that
+     * is a balanced pair and therefore stops at M = 4096. That is why every
+     * composite above 2048 with no chain was REFUSED: not a missing
+     * algorithm, since Bluestein needs no primality, but a missing inner.
+     * Through here it gets the same raced pool the primes get, which reaches
+     * as far as the ZTURN-T grammars do. The Rader ARM is excluded below. */
+    if (!W || W->vw2_off_oop || getenv("VFFT_ILPR_METHOD"))
         return vfft_ilprime_create(N);
     if (!cfg->recalibrate)
     {
@@ -446,6 +453,10 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         for (mi = 0; mi < 2; mi++)
         {
             const int rader = (mi == 0);
+            /* Rader is prime-only (see _ilprime_create_rader): skip the arm
+             * rather than let it offer inners that can never build, which
+             * would also trip the built-none warning on every composite. */
+            if (rader && !_ilprime_is_prime(N)) continue;
             static _ilprime_inner_desc_t pool[_ILPR_MAX_CANDS];   /* off the stack */
             int M, n, q;
             /* The banked method is NOT a filter here (2026-09-19). It used

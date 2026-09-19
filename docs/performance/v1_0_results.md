@@ -896,6 +896,14 @@ primes" categories of section 1 are that SPLIT path, in place, and are not
 comparable to this table. The interception was removed on 2026-09-19; 257
 reads 0.30x on the old path and 3.15x through the front door.
 
+The same cell serves COMPOSITE lengths with no chain, since Bluestein needs
+no primality (2026-09-19). Before that a composite above 2048 was refused --
+not for want of an algorithm but for want of an inner, its structural rule
+stopping at M = 4096. Four that had refused: 2101 = 11 x 191 at 0.95, 3005 =
+5 x 601 at 1.34, 3007 = 31 x 97 at 1.35, 3013 = 23 x 131 at 1.33, all agreeing
+with MKL elementwise to 1e-15. Twenty consecutive lengths from 3000 went from
+five served to twenty.
+
 Reproduce: `sh prime_vs_mkl.sh <out-dir>` from `build_tuned/` (a scratch copy
 of the shipped store; `recal_1d_probe.exe <store> <N> 0 0 1 0` races and banks
 each cell, then the bench as above with `VFFT_WISDOM_DIR=<store>`);
