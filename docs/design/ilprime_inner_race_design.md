@@ -97,6 +97,12 @@ bands (Rader and Bluestein, M below and above 4096), cold store:
   the prime cell is the claim, and the race line under the flag is its
   direct proof (a poisoned legal token would be overwritten by the same
   line; latency is not consulted).
+- a row naming a method THIS BUILD CANNOT PRODUCE is raced, not refused: the
+  gate poisons 4099's row with `eng=rader` (its N - 1 = 2*3*683 can never be
+  expressed) and the cell must still be served and re-bank an inner. Watched
+  to fail on 2026-09-19 by restoring the method filter: `an unbuildable banked
+  method REFUSED the cell`.
+
 Watched to FAIL before it counted (2026-09-18, the bank disabled): every
 cell failed twice -- `prime row has no in= in_sh= tokens`, `warm create
 raced 1 / replayed 0`.

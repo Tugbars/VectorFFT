@@ -456,8 +456,6 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
              * all means the row could not be replayed, so its method is a
              * preference, not a measurement of what this build can do.
              * A verdict that cannot be built is a miss; a miss races. */
-            if (hint == 1 && !rader) continue;   /* DEFECT INJECTION (temporary) */
-            if (hint == 2 && rader) continue;    /* DEFECT INJECTION (temporary) */
             if (rader) M = N - 1;
             else { M = 16; while (M < 2 * N - 1) M <<= 1; }
             n = _ilprime_inner_cands(M, pool, _ILPR_MAX_CANDS - nc);
