@@ -2098,6 +2098,21 @@ int vfft_plan_tc_workers(vfft_plan p)
 }
 int vfft_get_num_threads(void) { return stride_get_num_threads(); }
 const char *vfft_isa(void) { return STRIDE_ISA_NAME; }
+/* the committed K=1 interleaved ROUTE, by name (2026-09-19). A bench asks
+ * the library which engine served a length instead of grepping the store for
+ * il_route=, which is what every band-map check did until today. The names
+ * are the wisdom row's own (vw2_oop_il_name), so a CSV column and a store row
+ * cannot drift apart. */
+const char *vfft_plan_route(vfft_plan p)
+{
+    const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
+    if (!h || !h->k1_on || h->layout != (int)VFFT_LAYOUT_INTERLEAVED)
+        return "-";
+    if (h->k1_il_route < 0 || h->k1_il_route > VW2_OOP_IL_ROUTE_MAX)
+        return "-";
+    return vw2_oop_il_name[h->k1_il_route];
+}
+
 const char *vfft_version(void) { return STRIDE_VERSION_STRING; }
 
 /* ════════════════════════════════════════════════════════════════════════

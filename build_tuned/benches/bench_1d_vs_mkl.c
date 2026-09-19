@@ -763,8 +763,9 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
                getenv("VFFT_NO_ILBLK") ? "1" : "0");
     if (out)
     {
-        fprintf(out, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e\n",
-                N, 1, plan_s, path, vns, mns, vgf, ratio, rel);
+        fprintf(out, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
+                N, 1, plan_s, path, vns, mns, vgf, ratio, rel,
+                vfft_plan_route(h), flip);
         fflush(out);
     }
     free_d(z0);
@@ -5099,7 +5100,18 @@ int main(int argc, char **argv)
         return 1;
     }
     FILE *out = fopen(csv, target_N ? "a" : "w");
-    if (out && !target_N)
+    /* THE HEADER GOES ON THE FILE, NOT ON THE MODE (2026-09-19): a gauntlet
+     * runs one process per cell -- the isolation the protocol requires -- and
+     * every one of them appends to the same CSV, so the header must be
+     * written by whichever process CREATES the file. Keyed on the file being
+     * empty, which is also true of the "w" sweep, so that path is unchanged. */
+    long csv_pos = 0;
+    if (out)
+    {
+        fseek(out, 0, SEEK_END);
+        csv_pos = ftell(out);
+    }
+    if (out && csv_pos == 0)
     {
         if (g_ilmt)
             fprintf(out, "N,K,path,threads,ours_mt_ns,ours_st_ns,mkl_mt_ns,mkl_st_ns,"
@@ -5115,7 +5127,11 @@ int main(int argc, char **argv)
         else if (oop)
             fprintf(out, "N,K,kind,factorization,gate,order,vfft_ns,mkl_ns,speedup\n");
         else
-            fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
+            /* route= the ENGINE the front door committed (vfft_plan_route),
+             * flip= which engine ran first in the pair -- the two columns a
+             * band-map gauntlet reads. APPENDED, so every column a consumer
+             * already parses by position keeps its index. */
+            fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
     }
     if (g_ilmt)
     {
@@ -5530,7 +5546,14 @@ int main(int argc, char **argv)
      * and wired into the plan, so the timed override path runs the inner at
      * specialized (baked-or-JIT) speed. ratio_vs_mkl is directly comparable to
      * production's vfft_perf_tuned_1d.csv (category=rader/bluestein). */
-    if (!oop) /* primes ride the in-place override path; OOP mode is pow2-only */
+    /* --k1nat / --k1noop name the INTERLEAVED front door (natural, and out of
+     * place for --k1noop), so a prime in those modes belongs to the prime
+     * cell, not to this block. Until 2026-09-19 the sixteen names below were
+     * claimed here even under --k1noop and benched on the SPLIT library's
+     * in-place override path -- the two-library line crossed inside the
+     * bench, and those sixteen are exactly the primes behind the published
+     * Rader/Bluestein rows, so the headline never measured the IL engine. */
+    if (!oop && !g_k1nat) /* primes ride the in-place override path; OOP mode is pow2-only */
     {
         static const int prime_N[] = {
             127,
