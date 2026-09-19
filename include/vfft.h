@@ -628,6 +628,20 @@ extern "C"
   const char *vfft_isa(void);
 
   /**
+   * @brief The ENGINE this plan committed to, as a short stable name.
+   *
+   * For a K=1 interleaved cell: @c "mono", @c "2p", @c "chain3", @c "prime",
+   * @c "flat", @c "ztt" or @c "fs" — the route the planner picked and banked,
+   * which is what a caller comparing methods across a range of N wants to
+   * read. @c "-" for every other plan (split layout, rank >= 2, batch), which
+   * have their own structure and no single route name.
+   *
+   * @param p A live plan from vfft_create(); @c NULL yields @c "-".
+   * @return Static storage — do NOT free it.
+   */
+  const char *vfft_plan_route(vfft_plan p);
+
+  /**
    * @brief Library version, @c "MAJOR.MINOR.PATCH".
    * @return Static storage — do NOT free it; valid for the lifetime of the
    *         process.

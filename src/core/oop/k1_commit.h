@@ -431,6 +431,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         vfft_ilprime_plan_t *fin[_ILPR_MAX_CANDS / _ILPR_HEAT + 1];
         int fin_ci[_ILPR_MAX_CANDS / _ILPR_HEAT + 1];
         int nc = 0, nfin = 0, mi, h, w, wci, nbuilt = 0;
+        int ncm[2] = { 0, 0 }, builtm[2] = { 0, 0 };   /* [0] = rader, [1] = bluestein */
         double *zi, *zo;
         for (mi = 0; mi < 2; mi++)
         {
@@ -442,6 +443,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
             if (rader) M = N - 1;
             else { M = 16; while (M < 2 * N - 1) M <<= 1; }
             n = _ilprime_inner_cands(M, pool, _ILPR_MAX_CANDS - nc);
+            ncm[mi] = n;   /* this method's pool: zero means it never raced */
             for (q = 0; q < n; q++) { cands[nc].rader = rader; cands[nc].d = pool[q]; nc++; }
         }
         if (nc == 0)
@@ -460,6 +462,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                 vfft_ilprime_plan_t *p = _ilprime_build_with(N, cands[q].rader, &cands[q].d);
                 if (!p) continue;
                 plans[np] = p; ci[np] = q; np++;
+                builtm[cands[q].rader ? 0 : 1]++;
             }
             if (np == 0) continue;
             nbuilt += np;
@@ -478,9 +481,23 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         {
             char kind[8], shape[64];
             _ilprime_desc_str(&cands[wci].d, kind, sizeof kind, shape, sizeof shape);
+            /* Rader's inner sits at M = N - 1, which is never a power of two,
+             * so it has no ZTURN-T chain -- and above M = 4096 the pair and
+             * the default chain3 run out too. When that happens Rader offers
+             * arms that do not build, they vanish, and the cell banks
+             * "bluestein" as though it had won a race it was alone in. Say so. */
+            if (ncm[0] > 0 && builtm[0] == 0)
+                _vfft_warn("ilprime N=%d: RADER offered %d inner(s) at M=%d and built NONE -- "
+                           "the banked verdict is Bluestein BY DEFAULT, not by race",
+                           N, ncm[0], N - 1);
+            if (ncm[1] > 0 && builtm[1] == 0)
+                _vfft_warn("ilprime N=%d: BLUESTEIN offered %d inner(s) and built NONE",
+                           N, ncm[1]);
             if (getenv("VFFT_ILPR_LOG"))
-                fprintf(stderr, "[ilprime] N=%d: inner race %d arm(s) in %d heat(s) -> %s inner %s %s tw=%d, banked\n",
-                        N, nbuilt, nfin, fin[w]->method == 1 ? "RADER" : "BLUESTEIN", kind, shape, cands[wci].d.tw);
+                fprintf(stderr, "[ilprime] N=%d: inner race %d arm(s) in %d heat(s) "
+                                "[rader %d/%d, blue %d/%d] -> %s inner %s %s tw=%d, banked\n",
+                        N, nbuilt, nfin, builtm[0], ncm[0], builtm[1], ncm[1],
+                        fin[w]->method == 1 ? "RADER" : "BLUESTEIN", kind, shape, cands[wci].d.tw);
             if (vw2_prime_method_bank(&W->vw2, N, fin[w]->method == 1 ? 1 : 2,
                                       kind, shape, cands[wci].d.tw) == VW2_OK)
                 _vw2_persist(W, cfg);

@@ -313,7 +313,18 @@ static inline vfft_ilprime_plan_t *_ilprime_create_bluestein(int N)
 static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
 {
     const int nm1 = N - 1;
-    if (nm1 > 4096) return 0;
+    /* NO CEILING (2026-09-19). `if (nm1 > 4096) return 0;` stood here, a
+     * vestige of the STRUCTURAL inner: that rule could only build a balanced
+     * il2p pair, and a pair of radices <= 64 tops out at 4096, so any larger
+     * Rader was refused before it was tried. The inner is a RACED POOL since
+     * 2026-09-18 and reaches every length the pool can express -- at a prime
+     * whose N - 1 is a power of two that is the whole ZTURN-T registry, up to
+     * 262144. The cap made the cell bank "bluestein" by default at every such
+     * prime: at 65537 Rader offered 108 inners and built NONE, and Bluestein
+     * convolved at 262144 where Rader would have convolved at 65536.
+     * The limit is now what it should be: the inner either builds or the arm
+     * drops out of the race, which is exactly the rule that Rader pays when
+     * N - 1 is smooth and loses when it is not. */
 
     vfft_ilprime_plan_t *p = (vfft_ilprime_plan_t *)calloc(1, sizeof(*p));
     if (!p) return 0;
