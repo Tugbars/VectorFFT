@@ -186,6 +186,43 @@ The method axis now obeys the no-silent-caps law: the race logs each method's
 pool and how much of it built, and warns when a method was offered arms and
 built none -- the exact shape of the 65537 defect.
 
+## Composite lengths (2026-09-19)
+
+The cell is no longer "the prime cell" in what it SERVES, only in what it is
+named after. Bluestein needs no primality, and a composite with no chain has
+no other engine, so it belongs here. Until 2026-09-19 a composite left
+`_ilprime_create_banked` on its first line -- the condition carried
+`!_ilprime_is_prime(N)` -- and fell to the storeless `vfft_ilprime_create`,
+whose structural inner is a balanced pair and therefore stops at M = 4096.
+That was the hard line at N = 2048: below it a composite was served, above it
+it was REFUSED, and the refusal read "no interleaved engine" as though the
+algorithm were missing rather than the inner.
+
+Through the banked path a composite gets the same raced pool the primes get.
+Measured the day it landed, all four previously refused:
+
+| N | factors | vs MKL, both orders | error vs MKL |
+| --- | --- | --- | --- |
+| 2101 | 11 x 191 | 0.95 / 0.94 | 8.0e-16 |
+| 3005 | 5 x 601 | 1.34 / 1.33 | 8.8e-16 |
+| 3007 | 31 x 97 | 1.35 / 1.35 | 1.0e-15 |
+| 3013 | 23 x 131 | 1.33 / 1.36 | 9.4e-16 |
+
+A window of twenty consecutive lengths, 3000 to 3019, went from five served
+to twenty served, in eleven seconds.
+
+**RADER DOES NOT FOLLOW IT THERE, and the guard is in the engine.** Rader's
+reduction needs a primitive root, which requires a cyclic multiplicative
+group -- a prime modulus here. `_ilprime_find_generator` tests candidates with
+`powmod(g, (N-1)/f, N) != 1` over the prime factors of N - 1, a test that
+characterises a primitive root ONLY modulo a prime; handed a composite it can
+return a value that passes every check and generates nothing. Rader would then
+build CLEANLY and compute the wrong transform, which is the worst failure mode
+this library has. `_ilprime_create_rader` now refuses a composite outright, so
+every caller is covered by construction, and the pool skips the arm so no work
+is wasted and the built-none warning does not fire on a method that was never
+eligible. The gate runs 3007 through all four checks, the naive DFT included.
+
 ## Cost, honestly
 
 A race per prime cell, once: about a second at 65537 (108 arms in eight

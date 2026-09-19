@@ -134,7 +134,14 @@ static double naive_err(int N, const double *x, const double *y)
 
 int main(int argc, char **argv)
 {
-    static const int primes[] = { 31, 127, 257, 4099, 65537 };
+    /* 3007 = 31 * 97 is a COMPOSITE (2026-09-19): no chain expresses it, so
+     * the prime cell's Bluestein serves it. Until today a composite left
+     * the banked create on its first line and fell to a structural inner
+     * that stops at M = 4096, so every such length above 2048 REFUSED.
+     * It runs the same four checks as a prime, the naive DFT included --
+     * the path is new and Bluestein needs no primality, but the RADER arm
+     * must stay out of it (a generator modulo a composite is meaningless). */
+    static const int primes[] = { 31, 127, 257, 3007, 4099, 65537 };
     const char *dir = ".";
     int i, fails = 0;
     vfft_wisdom *W;
