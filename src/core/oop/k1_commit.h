@@ -316,26 +316,34 @@ static int _ilprime_inner_cands(int M, _ilprime_inner_desc_t *out, int max)
         }
     }
 #ifdef VFFT_ZTT_H
+    /* ZTURN-T from the K=1 PLANNER'S OWN enumerators (2026-09-19) rather than
+     * a second copy of the registry walk and the tile ladder, which is what
+     * stood here for a day. Two grammars, each with its own ladder: the pow2
+     * registry, and the 2^a*odd chain grammar. The second one is the point --
+     * Rader's inner sits at M = N - 1, which is a power of two only at a
+     * Fermat-shaped prime, so without the odd grammar Rader offered NOTHING
+     * at 8191, 12289 and 40961 and the cell banked Bluestein unopposed.
+     * Scrambled class: a convolution is a matched roundtrip in any order. */
     {
-        static const int ladder[] = { 1024, 2048 };
+        static vfft_il_cand_t buf[VFFT_IL_DP_MAX_CAND];
+        vfft_il_cand_sink_t sink;
         int i, q;
-        for (i = 0; i < VFFT_ZTT_NCELLS_AVX2; i++)
+        memset(&sink, 0, sizeof sink);
+        sink.out = buf;
+        _il_dp_enumerate_ztt_ord(M, &sink, 1);
+        _il_dp_enumerate_ztt_odd(M, &sink, 1);
+        for (i = 0; i < sink.n; i++)
         {
-            const vfft_ztt_cell_t *cell = &vfft_ztt_cells_avx2[i];
-            int t;
-            if (cell->n != M || cell->nf < 2 || cell->nf > VFFT_ZTT_MAX_NF) continue;
+            if (buf[i].il_zt_n < 2 || buf[i].il_zt_n > VFFT_ZTT_MAX_NF) continue;
             if (n >= max) { dropped++; continue; }
             memset(&out[n], 0, sizeof out[n]);
-            out[n].kind = 3; out[n].ztn = cell->nf; out[n].tw = 0;
-            for (q = 0; q < cell->nf; q++) out[n].zt[q] = cell->chain[q];
+            out[n].kind = 3;
+            out[n].ztn = buf[i].il_zt_n;
+            out[n].tw = buf[i].il_tw;
+            for (q = 0; q < buf[i].il_zt_n; q++) out[n].zt[q] = buf[i].il_zt[q];
             n++;
-            for (t = 0; t < (int)(sizeof ladder / sizeof ladder[0]); t++)
-                if (vfft_ztt_tile_legal_ord(M, cell->chain, cell->nf, (size_t)ladder[t], 1))
-                {
-                    if (n >= max) { dropped++; continue; }
-                    out[n] = out[n - 1]; out[n].tw = ladder[t]; n++;
-                }
         }
+        dropped += sink.dropped;   /* the planner's own cap, reported here too */
     }
 #endif
     if (dropped)   /* the no-silent-caps law */
@@ -389,7 +397,9 @@ static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, double *zi, 
  * M = 262144 costs ~22 MB, so the pool is built and raced in HEATS of
  * sixteen -- each heat's winner stays alive, the rest are destroyed -- and
  * the heat winners meet in one same-run FINAL. */
-#define _ILPR_MAX_CANDS 256
+/* 480 / 16 = 30 heat winners, inside the race body's 32-arm final. The
+ * 2^a*odd grammar alone yields a few hundred chains at some M. */
+#define _ILPR_MAX_CANDS 480
 #define _ILPR_HEAT      16
 typedef struct { int rader; _ilprime_inner_desc_t d; } _ilprime_cand_t;
 
@@ -436,10 +446,18 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         for (mi = 0; mi < 2; mi++)
         {
             const int rader = (mi == 0);
-            _ilprime_inner_desc_t pool[_ILPR_MAX_CANDS];
+            static _ilprime_inner_desc_t pool[_ILPR_MAX_CANDS];   /* off the stack */
             int M, n, q;
-            if (hint == 1 && !rader) continue;   /* a replayed METHOD narrows the race to its inners */
-            if (hint == 2 && rader) continue;
+            /* The banked method is NOT a filter here (2026-09-19). It used
+             * to narrow the race to its own inners, and then a binary that
+             * cannot build that method -- a store calibrated against a
+             * wider pool, or an engine whose reach changed -- was left with
+             * an empty race and the cell REFUSED. Reaching this point at
+             * all means the row could not be replayed, so its method is a
+             * preference, not a measurement of what this build can do.
+             * A verdict that cannot be built is a miss; a miss races. */
+            if (hint == 1 && !rader) continue;   /* DEFECT INJECTION (temporary) */
+            if (hint == 2 && rader) continue;    /* DEFECT INJECTION (temporary) */
             if (rader) M = N - 1;
             else { M = 16; while (M < 2 * N - 1) M <<= 1; }
             n = _ilprime_inner_cands(M, pool, _ILPR_MAX_CANDS - nc);

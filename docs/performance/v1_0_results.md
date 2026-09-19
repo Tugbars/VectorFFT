@@ -835,72 +835,74 @@ Reproduce: `calibrate_k1.exe <scratch> 1 4096 8192 16384` (scratch copy of
 then `sh probes/ZT/phaseE2_2048plus.sh` (`SKIP_CAL=1` re-runs the bench
 only; the script refuses a second concurrent instance).
 
-### K=1 INTERLEAVED — PRIME N, the prime cell's own inner race vs MKL (2026-09-18)
+### K=1 INTERLEAVED — PRIME N, the prime cell's own raced method and inner (2026-09-19)
 
 A prime N in the K=1 interleaved tier is a convolution done with an FFT of
 length M (Rader: M = N - 1; Bluestein: M = the next power of two >= 2N - 1,
-`src/core/oop/il_prime.h`). Since 2026-09-18 the prime cell RACES its inner
-(`docs/design/ilprime_inner_race_design.md`): every buildable (method,
-inner) pair — Rader's pool at N - 1 beside Bluestein's at its power of
-two; every il2p pair, the il3p chain, and at a power-of-two M every ZTURN-T
-registry chain untiled and at each legal tile — timed on the whole
-convolution, in heats of sixteen with a same-run final, the winner banked
-on the prime cell's own row (`in= in_sh= in_tw=` beside `eng=`) and
-replayed from there. Before, the inner was borrowed from the K=1 tier's row
-at M, and above M = 4096 lost entirely: on the shipped store the front door
-REFUSED 4099 and 8191.
+`src/core/oop/il_prime.h`). Since 2026-09-18 the prime cell RACES both the
+METHOD and its INNER together
+(`docs/design/ilprime_inner_race_design.md`): every buildable (method, inner)
+pair, timed on the whole convolution, in heats of sixteen with a same-run
+final, the winner banked on the prime cell's own row (`eng=`, `in=`, `in_sh=`,
+`in_tw=`) and replayed from there. The inner pool is the K=1 planner's own --
+every il2p pair and the il3p chain below 4096, and above it the ZTURN-T
+enumerators, power-of-two and 2^a*odd, each with its own tile ladder.
 
-Canonical bench, `--k1noop` (natural, out of place, T = 1, both engines in
-one process, MKL `DFTI_NOT_INPLACE`), one process per cell, core 2 + HIGH,
-pace 300 ms; the cold race banked by one front-door create beforehand, the
-bench replaying it in a fresh process; quiet machine 2026-09-18:
-
-```
- N        banked verdict                              ours (ns)    MKL (ns)   vs MKL
-────────────────────────────────────────────────────────────────────────────────────
- 31       Rader,     il2p 3.10                               79         121    1.53x
- 131      Rader,     il2p 13.10                             353        1067    3.02x
- 521      Rader,     il3p 8.5.13                           1995        4572    2.29x
- 1021     Rader,     il3p 4.15.17                          5169        6015    1.16x
- 2053     Rader,     il3p 4.19.27                         19113       22576    1.18x
- 4099     Bluestein, ZTURN-T 8.8.8.8.4 @ 2048            48240       53283    1.11x
- 8191     Bluestein, ZTURN-T 8.8.8.8.4 @ 2048            54191       56791    1.05x
- 65537    Bluestein, ZTURN-T 8.8.8.4.8.4.4 @ 1024      1708287     1780833    1.04x
- 131071   Bluestein, ZTURN-T 8.8.8.8.8.8 @ 2048        1760487     1824260    1.04x
-```
-
-Every cell wins. The Rader cells with a small M lead (the inner is a pair
-or a chain in L1); the large Bluestein cells sit a few percent over
-parity — two FFTs at the next power of two beside MKL's own Bluestein.
-Primes on `bench_1d_vs_mkl`'s split-library prime list (127, 251, 257,
-263, 401, 641, 1009, ...) ride its `[override]` path there even under
-`--k1noop`, so they are not front-door cells and are not in this table;
-the "Rader primes / Bluestein primes" categories of section 1 are that
-split path, in place.
-
-The race's verdicts checked SAME-RUN (`benches/ilprime_chain_probe.c`: the
-scratch store's prime row rewritten to each named inner, replayed through
-the front door, 15 rounds, alternated, paced between rounds; min / median
-ns) against the chain the K=1 tier used to lend at M = 262144:
+Canonical bench, `--k1noop` (natural, out of place, T = 1, both engines in one
+process, MKL `DFTI_NOT_INPLACE`), one process per cell, core 2 + HIGH, pace
+300 ms, the cold race banked by a front-door create beforehand and the bench
+replaying it in a fresh process; both engine orders shown; quiet machine
+2026-09-19:
 
 ```
- arm                                              131071                65537
- 8.4.8.4.8.8.4 untiled (the lent K=1 chain)      2326400 / 2577800     2196500 / 2483000
- 8.4.8.4.8.8.4 @ 2048                            2149900 / 2319200     2031300 / 2200900
- 8.8.8.8.8.8 @ 2048   (131071's verdict)         2087000 / 2307200     1967500 / 2200700
- 8.8.8.8.8.8 untiled                             2230200 / 2419700     2077400 / 2293200
- 8.8.8.4.8.4.4 @ 1024 (65537's verdict)          2115700 / 2348300     1928100 / 2221800
+ N        N-1                 banked verdict                      ours (ns)    MKL (ns)   vs MKL
+──────────────────────────────────────────────────────────────────────────────────────────────────
+ 31       2.3.5               RADER     il2p 3.10                        95          134   1.40 / 1.75
+ 131      2.5.13              RADER     il2p 13.10                      379         1066   2.81 / 2.58
+ 257      2^8                 RADER     il2p 4.64                       686         2159   3.15 / 3.32
+ 521      2^3.5.13            RADER     il3p 8.5.13                    2023         4573   2.26 / 2.14
+ 1021     2^2.3.5.17          BLUESTEIN ZTURN-T 8.8.4.8               5211         6013   1.15 / 1.16
+ 2053     2^2.3^3.19          RADER     il3p 4.19.27                  16160        22006   1.36 / 1.44
+ 4001     2^5.5^3             RADER     ZTURN-T 8.5.5.5.4             15731        27663   1.76 / 1.66
+ 4099     2.3.683             BLUESTEIN ZTURN-T 8.8.8.8.4 @ 2048     48222        54510   1.13 / 1.16
+ 8191     2.3^2.5.7.13        BLUESTEIN ZTURN-T 8.8.8.8.4 @ 2048     51420        57630   1.12 / 1.17
+ 12289    2^12.3              RADER     ZTURN-T 8.3.8.4.4.4 @ 2048    50803       112664   2.22 / 2.28
+ 40961    2^13.5              RADER     ZTURN-T 8.5.8.4.8.4 @ 1024   219487       795296   3.62 / 3.73
+ 65537    2^16                RADER     ZTURN-T 4.4.4.4.4.8.8       376547      1815207   4.82 / 4.23
+ 131071   2.3.5.17.257        BLUESTEIN ZTURN-T 8.8.8.8.4.4.4 @ 2048 1780033     1899607   1.07 / 1.19
 ```
 
-Both banked verdicts are the fastest arms at their cells; the lent chain is
-the slowest, 10-12% behind.
+The split between the two methods is not written anywhere. Rader turns a
+prime into a cyclic convolution of length N - 1, so it can only be built when
+the inner pool can express N - 1, and it is offered as race arms exactly then.
+Below 4096 the pool draws on every il2p pair and the il3p chain, so any radix
+with a codelet counts -- which is why 521 rides `8.5.13`. Above 4096 the inner
+must be a ZTURN-T chain, whose odd mids are 3, 5, 7, 9 and 15, so a prime
+whose N - 1 carries 13, 17, 683 or 257 offers Rader nothing and Bluestein
+takes the cell unopposed and correctly. That is the textbook rule -- smooth
+predecessors favour Rader, rough ones favour Bluestein -- arrived at by
+construction rather than by a threshold.
 
-Reproduce: `sh prime_vs_mkl.sh <out-dir>` from `build_tuned/` (a scratch
-copy of the shipped store; `recal_1d_probe.exe <store> <N> 0 0 1 0` races
-and banks each cell, then the bench as above with `VFFT_WISDOM_DIR=<store>`);
-`benches/ilprime_chain_probe.exe <store> <N> 15 ztt:8.8.8.8.8.8:2048 ...`
-for the same-run check. Rebuild both binaries on the current tree first: a
-stale bench benches the old code without a word.
+Every cell is above parity. The four largest Rader wins are new on 2026-09-19:
+Rader carried a hard 4096 ceiling left over from an older inner rule, so
+4001, 12289, 40961 and 65537 had all been banking Bluestein without a contest.
+65537 went from 1.04x to 4.82x on that one line, our own time from 1.71 ms to
+0.38 ms.
+
+Primes on `bench_1d_vs_mkl`'s own split-library prime list (127, 251, 257,
+263, 401, 641, 1009, ...) used to be intercepted there and benched on its
+`[override]` path even under `--k1noop`, so the "Rader primes" and "Bluestein
+primes" categories of section 1 are that SPLIT path, in place, and are not
+comparable to this table. The interception was removed on 2026-09-19; 257
+reads 0.30x on the old path and 3.15x through the front door.
+
+Reproduce: `sh prime_vs_mkl.sh <out-dir>` from `build_tuned/` (a scratch copy
+of the shipped store; `recal_1d_probe.exe <store> <N> 0 0 1 0` races and banks
+each cell, then the bench as above with `VFFT_WISDOM_DIR=<store>`);
+`VFFT_ILPR_LOG=1` on the create prints each method's pool and how much of it
+built. Rebuild both binaries on the current tree first: a stale bench benches
+the old code without a word, and a stale one here REFUSED 65537 outright
+because it replayed a Rader verdict it could not build.
 
 ## 2. vs MKL — 2D C2C
 
