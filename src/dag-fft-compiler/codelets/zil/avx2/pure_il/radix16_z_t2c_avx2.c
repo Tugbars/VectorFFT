@@ -11,7 +11,7 @@
  * radix-16 2D column-stage mid t2c (same-slot DIF stage; per-(d,leg) broadcast records hoisted out of the column loop — z-T1S/6c): 2 complex per 256-bit vector. Body scheduled by the
  * SHARED SR scheduler (Schedule.Make over the complex IR) and rendered
  * through the ISA layer, so the same source emits AVX2 / AVX-512.
- * tw_re = the stage table, d-major: per digit d in [0,OGs), per leg 1..R-1 one record [c x VW][sign-folded s x VW], DRIVER-built. fwd applies it POST-butterfly (DIF); bwd is the HERMITIAN-TRANSPOSE stage — conjugated table applied PRE-butterfly, stages run in REVERSE order by the driver (bwd consumes fwd's comb: matched roundtrip). Ls = D*N2, Gs = N2 row pitch, OGs = D; one call = one stage over one block. tw_im unused.
+ * tw_re = the stage table, d-major: per digit d in [0,OGs), per leg 1..R-1 one record [c x VW][sign-folded s x VW], DRIVER-built (bwd = conjugated table, same kernel shape). Ls = D*N2, Gs = N2 row pitch, OGs = D; one call = one stage over one block. tw_im unused.
  * count: ANY >= 1 — 2 columns per wide iteration, inline VEX-128
  * odd-count tail for the leftover (il_odd_count_tail.md §3). */
 #include <immintrin.h>
