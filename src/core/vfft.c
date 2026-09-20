@@ -1068,7 +1068,25 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
     static int warned;
     if (cfg && cfg->wisdom_write)
     {
-        vw2_save(&W->vw2);
+        /* A FAILED SAVE IS LOUD, AND RETRIED (2026-09-20). vw2_save's atomic
+         * replace returns VW2_EIO when the target cannot be swapped in -- on
+         * Windows that is a transient share violation whenever another
+         * process holds the file, an editor's watcher being the usual one.
+         * This helper used to drop that return: the verdict stayed in
+         * memory, the caller printed "banked", the process exited, and the
+         * row was gone. Found by the 2026-09-20 gauntlet, cell 515: raced,
+         * reported banked, absent from every shard. A watcher's lock lasts
+         * milliseconds, so retry briefly; then say so, with the reason. */
+        int rc = vw2_save(&W->vw2), tries = 0;
+        while (rc != VW2_OK && ++tries < 4)
+        {
+            vfft_race_sleep_ms(25 * tries);
+            rc = vw2_save(&W->vw2);
+        }
+        if (rc != VW2_OK)
+            _vfft_warn("wisdom2: verdict NOT persisted (save rc=%d after %d tries) -- "
+                       "the row is lost when this process exits; is the store file open elsewhere?",
+                       rc, tries);
         return;
     }
     if (!warned)

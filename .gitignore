@@ -64,10 +64,6 @@ build_tuned/vfft_wisdom_tuned_bluestein.calib1.bak
 build_tuned/dev/bench_vtune/bench_output_hotspots.txt
 build_tuned/dev/bench_vtune/bench_output_uarch-exploration.txt
 build_tuned/dev/bench_vtune/bench_output_hotspots.txt
-/src/prototype/vfft_v2_pack
-/src/prototype/_build
-/src/prototype/_build
-/src/prototype/_build
 /src/prototype/_build/default
 /build_tuned/dev/bench_vtune/vt_cascade_uarch-exploration
 src/prototype/docs/59_avx512_strided_test_guide.md
@@ -110,10 +106,6 @@ docs/roadmap/cascade_natural_inplace_plan.md
 build_tuned/benches/smallre_mkl_probe.c
 build_tuned/benches/smallre_pairs_probe.c
 build_tuned/benches/smallre_split_probe.c
-
-# personal living dashboard (session-maintained, not a tracked doc)
-IL_SUPPORT_MATRIX.md
-CODELET_TAXONOMY.md
 
 # owner 2026-09-07: design comparison notes kept local
 docs/design/cascade_vs_mkl_method.md
