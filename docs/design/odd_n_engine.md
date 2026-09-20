@@ -45,9 +45,15 @@ inputs before its butterflies.
 
 Let N = R₀·R₁·…·R_{K−1}, K ≥ 2, every Rₛ from the pool
 
-    { 9, 7, 5, 3, 25, 27, 21, 15, 13, 11, 8, 4, 16 }
+    { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16 }
 
-(this is also the seed order the planner enumerates in; §9.1). Define
+(this is also the seed order the planner enumerates in; §9.1; 17 and 19
+joined 2026-09-19, 23 on 2026-09-21 -- generated at every IL kind like 19),
+plus ONE more leaf: R₀ = 2, admitted only when N/2 is odd. A lone factor
+of 2 has no other home -- 4/8/16 need two or more twos, the 2^a·odd
+grammar needs a 4, the pair needs R1 ≥ 3 -- and the registry has n1c at 2,
+which is all the leaf slot asks for; at any later slot a 2 would need
+t2cp/t2csg at radix 2, which do not exist. Define
 
     Dₛ  = N / (R₀·R₁·…·Rₛ)      the RUN at stage s (D_{K−1} = 1)
     Lₛ  = Rₛ · Dₛ               the BLOCK SPAN at stage s (= D_{s−1})
@@ -584,8 +590,9 @@ engagement. The method is the one declared in
 
 `_il_dp_enumerate_flat` (dp_planner_il.h) walks the ordered
 compositions of N over the pool in the pool's order (so the greedy seed
-chain — 9 first, then 7, 5, 3, 25, 27, … — is the first candidate),
-depth 2 to `VFFT_ILFD_MAX_K` (10), capped at 24 per cell. The cap is
+chain — 9 first, then 7, 5, 3, 25, 27, … — is the first candidate; at
+N ≡ 2 mod 4 the 2-led chains come first, the lone 2 being the leaf and
+nothing else), depth 2 to `VFFT_ILFD_MAX_K` (10), capped at 24 per cell. The cap is
 LOGGED when it bites (`flat chain pool capped at 24 (n more compositions
 not raced)`); it bites hard on smooth N. Each candidate is a chain only;
 its forms are raced when it is benched. Kernel availability, run
