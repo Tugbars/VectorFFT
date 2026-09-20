@@ -589,6 +589,81 @@ static double k1z_time_mkl(int N, const double *z0, size_t total)
 }
 #endif
 
+/* A CELL'S ROW IS REPLACED, NEVER DUPLICATED (2026-09-21). A gauntlet re-runs
+ * the cells a fix touched into the SAME csv, so an earlier row for the same
+ * (N, K, plan, path, flip) is dropped and the new one takes its place at the
+ * end; every other row is untouched. Returns 1 when a row was replaced, 0
+ * when the file holds no such row (the caller then appends as before). The
+ * file is rewritten through a fresh handle: the appending handle stays open
+ * and idle (flushed first), and a gauntlet csv is a few hundred KB. Lines are
+ * copied without their line ending and re-terminated, so the rewrite keeps
+ * the text-mode convention the appending handle writes with. */
+static const char *g_csv_path = NULL;
+
+static int _k1z_row_matches(const char *line, size_t n, const char *key, size_t klen,
+                            const char *fl, size_t fln)
+{
+    const char *lc;
+    while (n && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
+    if (n < klen || memcmp(line, key, klen) != 0) return 0;
+    for (lc = line + n; lc > line && lc[-1] != ','; lc--) ;
+    return (size_t)(line + n - lc) == fln && memcmp(lc, fl, fln) == 0;
+}
+
+static int k1z_csv_replace(const char *path, const char *row)
+{
+    FILE *f;
+    char *buf, *p, *nl;
+    const char *fl;
+    long len;
+    size_t klen, fln, ln;
+    int kf = 0, hits = 0;
+    if (!path) return 0;
+    for (p = (char *)row; *p; p++)
+        if (*p == ',' && ++kf == 4) break;
+    if (kf < 4) return 0;
+    klen = (size_t)(p - row) + 1;              /* "N,K,plan,path," */
+    fl = strrchr(row, ',');
+    if (!fl) return 0;
+    fl++;
+    for (fln = 0; fl[fln] && fl[fln] != '\n' && fl[fln] != '\r'; fln++) ;
+    f = fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (len <= 0) { fclose(f); return 0; }
+    buf = (char *)malloc((size_t)len + 1);
+    if (!buf) { fclose(f); return 0; }
+    len = (long)fread(buf, 1, (size_t)len, f);
+    fclose(f);
+    buf[len] = 0;
+    for (p = buf; *p; p = nl)
+    {
+        nl = strchr(p, '\n');
+        nl = nl ? nl + 1 : p + strlen(p);
+        if (_k1z_row_matches(p, (size_t)(nl - p), row, klen, fl, fln)) hits++;
+    }
+    if (!hits) { free(buf); return 0; }
+    f = fopen(path, "w");
+    if (!f) { free(buf); return 0; }
+    for (p = buf; *p; p = nl)
+    {
+        nl = strchr(p, '\n');
+        nl = nl ? nl + 1 : p + strlen(p);
+        if (_k1z_row_matches(p, (size_t)(nl - p), row, klen, fl, fln)) continue;
+        ln = (size_t)(nl - p);
+        while (ln && (p[ln - 1] == '\n' || p[ln - 1] == '\r')) ln--;
+        if (!ln) continue;
+        fwrite(p, 1, ln, f);
+        fputc('\n', f);
+    }
+    fputs(row, f);
+    fclose(f);
+    free(buf);
+    return 1;
+}
+
 static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
                          FILE *out, int cool_ms, int flip)
 {
@@ -763,9 +838,13 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
                getenv("VFFT_NO_ILBLK") ? "1" : "0");
     if (out)
     {
-        fprintf(out, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
-                N, 1, plan_s, path, vns, mns, vgf, ratio, rel,
-                vfft_plan_route(h), flip);
+        char row[320];
+        snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
+                 N, 1, plan_s, path, vns, mns, vgf, ratio, rel,
+                 vfft_plan_route(h), flip);
+        fflush(out);
+        if (!k1z_csv_replace(g_csv_path, row))   /* a re-run REPLACES the cell's row */
+            fputs(row, out);
         fflush(out);
     }
     free_d(z0);
@@ -5100,6 +5179,7 @@ int main(int argc, char **argv)
         return 1;
     }
     FILE *out = fopen(csv, target_N ? "a" : "w");
+    g_csv_path = csv;   /* the K=1 cell path replaces its own earlier row (2026-09-21) */
     /* THE HEADER GOES ON THE FILE, NOT ON THE MODE (2026-09-19): a gauntlet
      * runs one process per cell -- the isolation the protocol requires -- and
      * every one of them appends to the same CSV, so the header must be

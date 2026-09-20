@@ -27,8 +27,15 @@
 # in calibrate.log, then benches. A stopped run loses only the cell in flight
 # -- every finished cell's verdict is already banked in the store.
 #
+# RERUN (2026-09-21): `rerun` re-races every listed cell on the SAME store
+# (recal = 1: the race runs again and re-banks over the old verdict), replaces
+# the cell's calibrate.log line, then benches both flips; the bench REPLACES
+# the cell's csv rows in place (k1z_csv_replace), so gauntlet.csv keeps one
+# row per (cell, flip) and every untouched cell keeps its original rows. A
+# control pair is taken before and after, into control.csv, in run order.
+#
 # Run from build_tuned/, machine QUIET:
-#   sh gauntlet_1d.sh <out-dir> <cell-list> [calibrate|bench|both|resume]
+#   sh gauntlet_1d.sh <out-dir> <cell-list> [calibrate|bench|both|resume|rerun]
 set -u
 OUT="${1:?out-dir}"
 LIST="${2:?cell-list file}"
@@ -76,6 +83,25 @@ if [ "$PHASE" = calibrate ] || [ "$PHASE" = both ] || [ "$PHASE" = resume ]; the
   rm -f "$OUT/.cal.tmp"
   echo "calibrate: $n cells this pass ($skipped already done) in $(($(date +%s) - t0))s -> $CAL" >&2
   echo "  served: $(grep -c banked "$CAL")   refused: $(grep -c REFUSED "$CAL")" >&2
+fi
+
+if [ "$PHASE" = rerun ]; then
+  n=0; t0=$(date +%s)
+  bench_cell "$CONTROL_N" "$CTL"
+  for N in $(cells); do
+    s0=$(date +%s%3N)
+    "$HERE/benches/recal_1d_probe.exe" "$ST" "$N" 0 0 1 1 > "$OUT/.cal.tmp" 2>&1
+    s1=$(date +%s%3N)
+    st=$(grep -oE 'banked|REFUSED' "$OUT/.cal.tmp" | tail -1)
+    grep -vE "^$N " "$CAL" > "$OUT/.cal.new" 2>/dev/null; mv "$OUT/.cal.new" "$CAL"
+    printf "%-10s %-8s %s rerun\n" "$N" "${st:-ERROR}" "$((s1 - s0))ms" >> "$CAL"
+    [ "$st" = banked ] && bench_cell "$N" "$CSV"
+    n=$((n + 1))
+    [ $((n % 25)) -eq 0 ] && echo "  rerun $n cells, $(($(date +%s) - t0))s elapsed" >&2
+  done
+  rm -f "$OUT/.cal.tmp"
+  bench_cell "$CONTROL_N" "$CTL"
+  echo "rerun: $n cells in $(($(date +%s) - t0))s -> $CSV (rows replaced in place)" >&2
 fi
 
 if [ "$PHASE" = bench ] || [ "$PHASE" = both ] || [ "$PHASE" = resume ]; then

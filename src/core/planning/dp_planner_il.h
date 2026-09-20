@@ -1293,7 +1293,12 @@ static void _il_dp_flat_rec(int L, int depth, int *cur,
      * below, not an admission rule. The create resolves every stage and
      * refuses a radix it cannot build, so a pool entry can only ever add a
      * race arm, never a wrong plan. */
-    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 19, 17, 15, 13, 11, 8, 4, 16 };
+    /* 23 joined on 2026-09-21, generated at every IL kind the way 17 and
+     * 19 are (the corpus mirrors 19). The 2..2048 gauntlet found 64 cells
+     * with a factor 23 and NO route -- every one served by the prime cell
+     * at a median 0.49x of MKL -- because no kernel existed at 23 anywhere
+     * in the interleaved registry while the split library has had one. */
+    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16 };
     int p;
     if (L == 1)
     {
@@ -1305,6 +1310,23 @@ static void _il_dp_flat_rec(int L, int depth, int *cur,
         return;
     }
     if (depth >= VFFT_ILFD_MAX_K) return;
+    /* THE LONE FACTOR 2 (2026-09-21). The gauntlet's 27 cells of the shape
+     * 2 x {7, 11, 13, 17, 19} (14, 22, 26, 34, 38, 98, 154, ..., 2002) had no
+     * route and ran the prime cell at a median 0.35x of MKL: nothing in the
+     * library places a SINGLE factor of 2 -- this pool's 4/8/16 need two or
+     * more, the 2^a*odd grammar needs a 4, and the pair needs R1 >= 3 and an
+     * n1t leaf, which has no radix 2. The registry does have n1c at 2, and
+     * the create's leaf slot takes any n1c radix. So 2 is admitted as the
+     * LEAF, and only when L/2 is odd: at any other slot a 2 needs t2cp/t2csg
+     * at radix 2, which do not exist (the create would refuse, and each
+     * refusal spends one of the 24 candidate slots), and at a 4*odd cell a
+     * 2-led chain only re-spells chains 4/8/16 already reach. This states
+     * WHERE a kernel exists; which chain wins is the race's. */
+    if (depth == 0 && (L & 1) == 0 && ((L >> 1) & 1))
+    {
+        cur[0] = 2;
+        _il_dp_flat_rec(L >> 1, 1, cur, out, lens, n, dropped);
+    }
     for (p = 0; p < (int)(sizeof POOL / sizeof POOL[0]); p++)
         if (L % POOL[p] == 0)
         {
