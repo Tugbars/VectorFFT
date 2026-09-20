@@ -302,7 +302,7 @@ static inline int vfft_ilfd_mt_race(vfft_ilfd_plan_t *p, int T, int tw0,
     }
 #undef ILFD_ARM
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL };
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (mt_measurement_parking_trap) */
         vfft_race_run(&proto, arms, na, ns);
     }
     for (a = 1; a < na; a++)

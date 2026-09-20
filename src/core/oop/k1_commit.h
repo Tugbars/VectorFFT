@@ -377,7 +377,7 @@ static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, double *zi, 
     _ilprime_iarm_t ctx[VFFT_RACE_MAX_ARMS];
     vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
     double ns[VFFT_RACE_MAX_ARMS];
-    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 1, NULL, NULL };   /* min-of-3, alternated, one warm pass */
+    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 1, NULL, NULL, 1 };   /* min-of-3, alternated, one warm pass */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
     int a, w = 0;
     if (np <= 1) return 0;
     for (a = 0; a < np; a++)
@@ -876,7 +876,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                      * repeated in-place fwd amplifies magnitudes toward inf
                      * (the ZCASC-race hazard) */
                     const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MIN, 0, 0,
-                                                      _k1ord_reseed, &ca };
+                                                      _k1ord_reseed, &ca, 1 } /* single-thread arms: paced (VFFT_RACE_PACE_MS) */;
                     double ns[2];
                     vfft_race_run(&proto, arms, 2, ns);
                     ta = ns[0];
@@ -1263,7 +1263,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         }
         rs.dst = zo; rs.src = zi; rs.nb = nb;
         {
-            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, ip ? _k1fs_mt_reseed : NULL, ip ? &rs : NULL };
+            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, ip ? _k1fs_mt_reseed : NULL, ip ? &rs : NULL, 0 }; /* THREADED arms: never paused (mt_measurement_parking_trap) */
             vfft_race_run(&proto, arms, na, tns);
         }
         for (a = 1; a < na; a++) if (tns[a] < tns[best]) best = a;

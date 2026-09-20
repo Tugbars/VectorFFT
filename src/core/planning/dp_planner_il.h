@@ -147,7 +147,7 @@ static inline void _il_dp_sleep_ms(int ms)
 #define VFFT_IL_DP_TIME_MIN_NS   2.0e6    /* min wall-clock per trial (2 ms) */
 #define VFFT_IL_DP_TIME_LIMIT_NS 5.0e8    /* per-bench cap (~0.5 s)          */
 #define VFFT_IL_DP_PACE_EVERY    4        /* pace every Nth benchmark        */
-#define VFFT_IL_DP_PACE_MS       200
+#define VFFT_IL_DP_PACE_MS       VFFT_RACE_PACE_MS   /* ONE constant: support/race.h */
 #define VFFT_IL_DP_PACE_N_THRESHOLD 8192  /* arm pacing once a bench is big  */
 
 #define VFFT_IL_DP_CACHE_MAX     512
@@ -1285,7 +1285,15 @@ static void _il_dp_flat_rec(int L, int depth, int *cur,
                             int (*out)[VFFT_ILFD_MAX_K], int *lens,
                             int *n, int *dropped)
 {
-    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 15, 13, 11, 8, 4, 16 };
+    /* 17 and 19 joined on 2026-09-19: the flat DIT stopped at 13 while the
+     * IL registry has had both for as long as the 2D column chain has been
+     * using them. Every kind this engine needs exists at each -- n1c for the
+     * leaf, t2cp for a mid, t2cs/t2csg for a tail -- and only the optional
+     * split-body form (msz) stops at 15, which is a per-stage choice made
+     * below, not an admission rule. The create resolves every stage and
+     * refuses a radix it cannot build, so a pool entry can only ever add a
+     * race arm, never a wrong plan. */
+    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 19, 17, 15, 13, 11, 8, 4, 16 };
     int p;
     if (L == 1)
     {

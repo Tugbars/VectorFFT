@@ -273,7 +273,7 @@ static void _pq_mt_race(struct vfft_plan_s *h)
         _pq_mt_arm_t c = { h, dir, src, dst };
         const vfft_race_arm_t arms[2] = { { "loop", _pq_mt_arm_loop, &c },
                                           { "queue", _pq_mt_arm_queue, &c } };
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 0 }; /* min-of-3, A then B */ /* THREADED arms: never paused (mt_measurement_parking_trap) */
         double ns[2];
         (void)r;
         vfft_race_run(&proto, arms, 2, ns);
