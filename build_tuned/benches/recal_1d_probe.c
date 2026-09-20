@@ -24,9 +24,21 @@ int main(int argc, char **argv)
     const int ip = argc > 4 ? atoi(argv[4]) : 0;
     const int T = argc > 5 ? atoi(argv[5]) : 1;
     const int recal = argc > 6 ? atoi(argv[6]) : 1;
-    vfft_wisdom *W = vfft_wisdom_load(dir);
+    vfft_wisdom *W;
     vfft_config_t cfg; vfft_plan p;
     double t0, t1;
+    /* THE ONE-THREAD PROTOCOL, the same as the bench's (2026-09-20): core 2
+     * (mask 0x4) at HIGH priority. The create's races are measurements, and
+     * the library pins only when its thread pool is engaged, so an unpinned
+     * probe raced wherever the scheduler put it. The 2026-09-20 gauntlet's
+     * first 1100 cells ran that way; their recorded times matched pinned
+     * bench times within a few percent, so they stand -- but by luck. */
+    if (!getenv("VFFT_BENCH_PIN") || atoi(getenv("VFFT_BENCH_PIN")) != 0)
+    {
+        SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x4);
+        SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    }
+    W = vfft_wisdom_load(dir);
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
     cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
