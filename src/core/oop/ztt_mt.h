@@ -319,14 +319,14 @@ static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const double *zin,
         memcpy(seed, zout, (size_t)2 * p->N * sizeof(double));
         rs.src = seed; rs.nb = (size_t)2 * p->N * sizeof(double);
         {
-            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, _ztt_mt_reseed, &rs };
+            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, _ztt_mt_reseed, &rs, 0 }; /* THREADED arms: never paused (mt_measurement_parking_trap) */
             vfft_race_run(&proto, arms, na, ns);
         }
         VFFT_ZTT_FREE(seed);
     }
     else
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL };
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (mt_measurement_parking_trap) */
         vfft_race_run(&proto, arms, na, ns);
     }
     for (a = 1; a < na; a++)

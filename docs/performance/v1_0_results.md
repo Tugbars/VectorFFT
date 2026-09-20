@@ -912,6 +912,39 @@ built. Rebuild both binaries on the current tree first: a stale bench benches
 the old code without a word, and a stale one here REFUSED 65537 outright
 because it replayed a Rader verdict it could not build.
 
+### K=1 INTERLEAVED — the flat DIT's radix pool reaches 17 and 19 (2026-09-19)
+
+The flat DIT enumerated chains from a pool that stopped at 13, while the
+interleaved registry has had 17 and 19 for as long as the 2D column chain has
+been using them, and every kind this engine needs exists at both (`n1c` for
+the leaf, `t2cp` for a mid, `t2cs`/`t2csg` for a tail; only the optional
+split-body `msz` form stops at 15, and that is a per-stage choice, not an
+admission rule).
+
+The cells that suffered are those needing FOUR or more odd stages, one of
+them 17 or 19. No pair reaches them (both halves must be <= 64), the
+three-factor chain cannot group them into three pieces that all have kernels,
+and ZTURN-T's odd grammar admits only 3, 5, 7, 9 and 15. So they fell through
+every factoring route to the prime cell, which convolved them at the next
+power of two:
+
+```
+ N                      before                        after
+ 6545  = 5.7.11.17      0.27 / 0.42   prime cell      1.26 / 1.21   flat DIT 5.11.17.7
+ 12155 = 5.11.13.17     0.34 / 0.40   prime cell      1.02 / 1.20   flat DIT 13.17.11.5
+```
+
+At 6545 our own time went from 78.1 us to 17.1 us. Two pool entries, no new
+kernels, no new engine.
+
+**A measurement lesson worth more than the fix.** The first A/B used 969 and
+1615, which have exactly three prime factors and are therefore covered by the
+three-factor chain: the new arms competed, lost, and the run-to-run spread
+(1.12 against 1.92 at 1615, same route, same factors, different stage order)
+was read as the result. A pool change can only be measured at a cell the pool
+change makes REACHABLE. And a single-sample race cannot A/B a pool change at
+all, because adding arms perturbs the race that decides the winner.
+
 ## 2. vs MKL — 2D C2C
 
 dag tiled 2D (`fft2d.h`, B=8: gather→K=B row FFT→scatter via SIMD transpose, native

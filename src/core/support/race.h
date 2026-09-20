@@ -58,6 +58,37 @@
 #define VFFT_RACE_MAX_ARMS 32   /* _il2d_axis_race runs up to 28 */
 #define VFFT_RACE_MAX_ROUNDS 96 /* _calibrate_pad runs RR=81 at PATIENT */
 
+/* THE PAUSE BETWEEN RACES (2026-09-20). The house law: pace >= 200 ms
+ * BETWEEN races, never inside one -- thermal drift re-ranks plans, and this
+ * project measured +/-5% placement swings flipping verdicts and unpaced
+ * planner runs disagreeing with each other on the 1024 winner. The K=1 DP
+ * planner has paced its candidate benchmarks since then (every 4th, this
+ * constant); every other race in the tree ran back to back with the one
+ * before it. The pause lives HERE, once, before the warm-up, and a site says
+ * which class its arms are (vfft_race_proto_t.pace):
+ *   1 = single-thread arms: pause, then at least one untimed pass, because
+ *       a core is 1.5-5x slow for the first milliseconds after a sleep
+ *       (il_flatdit_race.h measured it) and a warm-less race would hand
+ *       that to arm 0 of round 0;
+ *   0 = THREADED arms, or a site not yet classified: NO pause. A >= 200 ms
+ *       pause parks the worker team (KMP_BLOCKTIME is 200 ms) and the timed
+ *       block then pays the wake -- the measured 0.2x-vs-4x artifact of
+ *       mt_measurement_parking_trap. Classify by READING the arm function,
+ *       never by the proto's shape.
+ * The DP planner's VFFT_IL_DP_PACE_MS aliases this: one constant. */
+#define VFFT_RACE_PACE_MS 200
+#if defined(_WIN32)
+extern __declspec(dllimport) void __stdcall Sleep(unsigned long ms);
+static inline void vfft_race_sleep_ms(int ms) { Sleep((unsigned long)ms); }
+#else
+#include <time.h>
+static inline void vfft_race_sleep_ms(int ms)
+{
+    struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000L };
+    nanosleep(&ts, NULL);
+}
+#endif
+
 typedef struct
 {
     const char *name;        /* for the site's log line; may be NULL */
@@ -83,6 +114,9 @@ typedef struct
                               * aliased in-place buffer (repeated in-place
                               * fwd walks into inf); NULL = no reset */
     void *reset_ctx;
+    int pace;                /* 1 = single-thread arms: VFFT_RACE_PACE_MS before the
+                              * race + at least one untimed pass; 0 = threaded arms or
+                              * unclassified: no pause (see VFFT_RACE_PACE_MS) */
 } vfft_race_proto_t;
 
 /* median of n in place; n odd returns the middle element, which is what
@@ -146,11 +180,21 @@ static int vfft_race_run(const vfft_race_proto_t *p, const vfft_race_arm_t *arms
         fprintf(stderr, "[race]");
         for (int a = 0; a < n; a++)
             fprintf(stderr, " %s", arms[a].name ? arms[a].name : "?");
-        fprintf(stderr, " (rounds=%d reps=%d)\n", p->rounds, reps);
+        fprintf(stderr, " (rounds=%d reps=%d%s)\n", p->rounds, reps,
+                p->pace ? " paced" : "");
     }
-    for (int w = 0; w < p->warm; w++)
-        for (int a = 0; a < n; a++)
-            arms[a].run(arms[a].ctx);
+    {   /* the pause BETWEEN races, and the untimed pass that absorbs the
+         * cold core it leaves behind (VFFT_RACE_PACE_MS) */
+        int warm = p->warm;
+        if (p->pace)
+        {
+            vfft_race_sleep_ms(VFFT_RACE_PACE_MS);
+            if (warm < 1) warm = 1;
+        }
+        for (int w = 0; w < warm; w++)
+            for (int a = 0; a < n; a++)
+                arms[a].run(arms[a].ctx);
+    }
     for (int r = 0; r < p->rounds; r++)
         for (int k = 0; k < n; k++)
         {

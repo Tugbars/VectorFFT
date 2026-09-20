@@ -143,7 +143,7 @@ static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin, 
     if (log) fprintf(stderr, "[k1fd-race] N=%d K=%d forms: reps=%d (sample >= %.0f us)\n",
                      p->N, p->K, reps, VFFT_ILFD_RACE_SAMPLE_NS / 1e3);
     for (s = 1; s < p->K; s++) {
-        const vfft_race_proto_t proto = { VFFT_ILFD_RACE_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, NULL, NULL };
+        const vfft_race_proto_t proto = { VFFT_ILFD_RACE_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, NULL, NULL, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
         int na, a, best;
 #define ILFD_FARM(GL, GORD, MSZ, NAME) do { \
             cx[na].p = p; cx[na].zin = zin; cx[na].zout = zout; cx[na].s = s; \
@@ -212,7 +212,7 @@ static inline int vfft_ilfd_race_tw(vfft_ilfd_plan_t *p, const double *zin, doub
         arms[i].name = cx[i].name; arms[i].run = _ilfd_race_arm_run; arms[i].ctx = &cx[i];
     }
     {
-        const vfft_race_proto_t proto = { VFFT_ILFD_RACE_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, NULL, NULL };
+        const vfft_race_proto_t proto = { VFFT_ILFD_RACE_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, NULL, NULL, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
         best = vfft_race_run(&proto, arms, n, ns);
         if (best < 0) best = 0;
         _ilfd_race_audit(arms, ns, n, reps, p->N);

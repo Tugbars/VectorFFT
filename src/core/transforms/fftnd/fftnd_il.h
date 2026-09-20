@@ -1216,7 +1216,7 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
     }
 #undef ILND_ARM
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL };
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (mt_measurement_parking_trap) */
         vfft_race_run(&proto, arms, na, ns);
     }
     for (a = 1; a < na; a++)
@@ -1503,7 +1503,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 }
         }
         {
-            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 0, NULL, NULL };
+            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 0, NULL, NULL, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
             vfft_race_run(&proto, arms, na, ns);
         }
         for (a = 1; a < na; a++)

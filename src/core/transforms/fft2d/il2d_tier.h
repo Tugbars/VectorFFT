@@ -1188,7 +1188,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
     _il2d_race_ctx_t rc = { h, a, bz, isr, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
     const vfft_race_arm_t rows_arm = { "rows", _il2d_arm_rows, &rc };
     const vfft_race_arm_t cols_arm = { "cols", _il2d_arm_cols, &rc };
-    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* min-of-3, A then B */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
     (void)p;
     h->il2d_rows = NULL;
     h->il2d_rw = 0;
@@ -1337,7 +1337,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
         _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
         const vfft_race_arm_t arms[2] = { { "serial", _il2d_arm_cols, &rc },
                                           { "threaded", _il2d_arm_cols_mt, &rc } };
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 0 }; /* min-of-3, A then B */ /* THREADED arms: never paused (mt_measurement_parking_trap) */
         double ns[2];
         (void)p;
         vfft_race_run(&proto, arms, 2, ns);
@@ -1517,7 +1517,7 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
         vfft_il2p_fn ffa[2][8];
         _il2d_race_ctx_t rc[2];
         vfft_race_arm_t arm[2];
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL };
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
         double ns[2] = { 1e300, 1e300 };
         int a, win;
         if (vfft_il2p_col_forms(Rs[s], nm) < 2)
@@ -1657,7 +1657,7 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
         }
         if (na > 0)
         {
-            const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 0, NULL, NULL }; /* min-of-3, alternated */
+            const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 0, NULL, NULL, 1 }; /* min-of-3, alternated */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
             const int best = vfft_race_run(&proto, arms, na, ns);
             if (best >= 0)
             {
@@ -2109,7 +2109,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                         const vfft_race_arm_t arms[2] = {
                             { "chain", _il2d_n1arm_chain, &rc },
                             { "bluestein", _il2d_n1arm_blu, &rc } };
-                        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+                        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* min-of-3, A then B */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
                         double ns[2];
                         (void)rr;
                         vfft_race_run(&proto, arms, 2, ns);
@@ -2561,7 +2561,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         char names[VFFT_RACE_MAX_ARMS][20];
         double ns[VFFT_RACE_MAX_ARMS];
         int lad[6], nl, a, na = 0, best = 1, k, nv;
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 0 }; /* min-of-3, A then B */ /* THREADED arms: never paused (mt_measurement_parking_trap) */
         (void)p;
         for (a = 0; a < VFFT_RACE_MAX_ARMS; a++) { rc[a] = rc0; rc[a].sw = 0; rc[a].lst = 1; ns[a] = 1e300; }
         arms[na].name = "serial"; arms[na].run = _il2d_arm_exec_st; arms[na].ctx = &rc[na]; na++;

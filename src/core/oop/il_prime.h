@@ -465,7 +465,7 @@ static inline vfft_ilprime_plan_t *vfft_ilprime_create_method(int N, int hint)
             _ilprime_arm_t c = { pr, pb, zi, zo };
             const vfft_race_arm_t arms[2] = { { "rader", _ilprime_arm_rader, &c },
                                               { "bluestein", _ilprime_arm_blue, &c } };
-            const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+            const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* min-of-3, A then B */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
             double ns[2];
             vfft_race_run(&proto, arms, 2, ns);
             tr = ns[0];
