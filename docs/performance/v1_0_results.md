@@ -966,22 +966,22 @@ two flips.
 
 ```
  route    cells   <0.8   <1.0    p10    med    p90   gmean
- prime     1478    193    402   0.71   1.15   2.08   1.18
- chain3     281     36     69   0.72   1.20   1.64   1.16
- 2p         156      2      8   1.17   1.47   2.22   1.54
- flat       115      7     30   0.86   1.29   1.69   1.23
- mono        14      1      2   0.95   1.40   1.74   1.33
+ prime     1478    193    401   0.71   1.15   2.08   1.18
+ chain3     281     34     65   0.74   1.20   1.64   1.17
+ 2p         156      2      6   1.17   1.47   2.22   1.54
+ flat       112      6     28   0.86   1.30   1.69   1.24
+ mono        17      1      3   0.88   1.21   1.74   1.27
  ztt          3      0      0   1.07   1.12   1.23   1.14
- ALL       2047    239    511   0.76   1.17   2.00   1.21
+ ALL       2047    236    503   0.77   1.17   2.00   1.21
 ```
 
 ```
  size band     cells   median   <1.0   <0.8
- 2..64            63     1.35     10      3
- 65..256         192     1.44     27     14
- 257..512        256     1.27     37     23
- 513..1024       512     1.15    148     65
- 1025..2048     1024     1.14    289    134
+ 2..64            63     1.35      8      2
+ 65..256         192     1.44     25     14
+ 257..512        256     1.28     37     23
+ 513..1024       512     1.15    145     63
+ 1025..2048     1024     1.14    288    134
 ```
 
 Most of the range is a composite with a prime factor of 29 or more (1157 of
@@ -1012,10 +1012,12 @@ median 1.77x slower than its nearest Rader neighbour (83: 467 ns beside 89:
 2 x odd, so the prime cell's inner pool lacking the flat DIT's 2-led chains
 and the missing prime stage are the same defect seen from two sides.
 
-22 primes whose N-1 IS buildable banked Bluestein anyway (421, 433, 757,
-1009, 1021, 1373, 1597, ...): single cold races, to be re-raced before the
-merge. Cell 515 raced, printed banked, and has no row (a persist failure, since
-fixed).
+22 primes whose N-1 IS buildable banked Bluestein in the first race; re-raced,
+four moved to Rader (421: 1.16 -> 1.28x, 433: 1.17 -> 1.54x, 757, 2029) and
+the rest re-banked Bluestein with a better inner (883: 0.88 -> 1.15x, 911:
+0.85 -> 1.10x). The verdicts of this section stand in the shipped store
+(`src/dag-fft-compiler/generator/generated/`, merged 2026-09-21): every K=1
+cell 2..2048 out of place, 2..512 in place, and the T=8 tokens.
 
 **A bench finding.** VectorFFT's two readings at a cell differ by more than
 25% at 163 cells; MKL's at 2. The chain3 route carries it: 47 cells slower
