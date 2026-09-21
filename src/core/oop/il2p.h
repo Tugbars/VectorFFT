@@ -1494,7 +1494,7 @@ static inline int vfft_il3p_default_chain(int N, int *R2, int *A, int *B)
      * (2026-09-04, chain3 odd-legal) — this is a SEED for an uncalibrated
      * cell only; the planner's race decides the served chain. */
     static const int LEAF[] = { 32, 16, 8, 4, 12, 10, 6,
-                                31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3 };
+                                47, 43, 41, 37, 31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3 };
     static const int ECB[]  = { 12, 10, 6 };
     for (int i = 0; i < (int)(sizeof LEAF / sizeof LEAF[0]); i++) {
         int r2 = LEAF[i];

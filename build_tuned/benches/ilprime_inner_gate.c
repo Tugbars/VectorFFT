@@ -141,7 +141,12 @@ int main(int argc, char **argv)
      * It runs the same four checks as a prime, the naive DFT included --
      * the path is new and Bluestein needs no primality, but the RADER arm
      * must stay out of it (a generator modulo a composite is meaningless). */
-    static const int primes[] = { 31, 127, 257, 3007, 4099, 65537 };
+    /* The cells must be COLD on the shipped store: since the 2026-09-21 merge every
+     * N <= 2048 is banked there (a create replays, and this gate counts races), so
+     * the small cells are the first primes above 2048 -- 2053, 2203, 2333: no kernel,
+     * Rader inners 2052 = 4.27.19, 2202 = 6.367 (Bluestein), 2332 = 4.11.53 -- and
+     * 31 (a SOLO cell now) left the list the same day. */
+    static const int primes[] = { 2053, 2203, 2333, 3007, 4099, 65537 };
     const char *dir = ".";
     int i, fails = 0;
     vfft_wisdom *W;
