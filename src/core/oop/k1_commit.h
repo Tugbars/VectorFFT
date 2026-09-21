@@ -191,7 +191,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              vfft_il3p_plan_t **il3p_out,
                              vfft_ilfd_plan_t **ilfd_out,
                              vfft_ztt_plan_t **ztt_out,
-                             vfft_k1fs_plan_t **fs_out);     /* defined below */
+                             vfft_k1fs_plan_t **fs_out,
+                             vfft_ilprime_plan_t **ilp_out); /* defined below */
 
 /* ── THE PRIME CELL'S INNER, RACED (2026-09-18; owner 2026-09-17: "prime
  * cells should have their own inner race"; ilprime_inner_race_design.md) ──
@@ -595,6 +596,18 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
             }
         }
     }
+    /* the PRIME arm (2026-09-21): the prime cell built ONCE here -- a cold
+     * cell races its inner pool and banks the prime shard's row -- and lent
+     * to the race through _k1pr_ctx (dp_planner_il.h); every non-pow2 cell
+     * where it builds (the band map admits it at every non-pow2 N). The
+     * verdict's plan is handed to the candidate after the race; a losing
+     * plan dies below. */
+    _k1pr_release();
+    if ((N & (N - 1)) != 0 && cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+    {
+        _k1pr_ctx.plan = _ilprime_create_banked(W, cfg, N);
+        _k1pr_ctx.N = _k1pr_ctx.plan ? N : 0;
+    }
     _k1fs_ctx.W = W;
     _k1fs_ctx.cfg = cfg;
     if (!_k1_il_dp_ctx_ready)
@@ -624,6 +637,15 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     _k1_il_dp_busy = 0;
     if (lines > 0)
         _vw2_persist(W, cfg);
+    if (_k1pr_ctx.plan)
+    {   /* the prime plan outlives the race only as the request's verdict */
+        vfft_oop_wisdom_entry_t pe;
+        const int ip_req = (cfg->placement == VFFT_INPLACE);
+        const int scr_req = (vfft_policy_ord_k1(cfg, N, ip_req) == VW2_ORD_SCR);
+        if (!(vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, &pe) &&
+              pe.k1_il_route == VFFT_K1_IL_PRIME))
+            _k1pr_release();
+    }
     if (getenv("VFFT_NAT_LOG") &&
         vfft_il_dp_rank(&_k1_il_dp_ctx, N,
                         cfg->order == VFFT_ORDER_SCRAMBLED ? VFFT_IL_ORD_SCRAMBLED
@@ -641,13 +663,15 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              vfft_il3p_plan_t **il3p_out,
                              vfft_ilfd_plan_t **ilfd_out,   /* NULL = caller cannot take a flat plan */
                              vfft_ztt_plan_t **ztt_out,     /* NULL = caller cannot take a ZTURN-T plan */
-                             vfft_k1fs_plan_t **fs_out)     /* NULL = caller cannot take a four-step plan */
+                             vfft_k1fs_plan_t **fs_out,     /* NULL = caller cannot take a four-step plan */
+                             vfft_ilprime_plan_t **ilp_out) /* NULL = caller cannot take the prime cell */
 {
     *il2p_out = NULL;
     *il3p_out = NULL;
     if (ilfd_out) *ilfd_out = NULL;
     if (ztt_out) *ztt_out = NULL;
     if (fs_out) *fs_out = NULL;
+    if (ilp_out) *ilp_out = NULL;
     if (getenv("VFFT_NO_IL2P"))
         return;
     int iR1 = 0, iR2 = 0;
@@ -702,6 +726,31 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * in-place create replayed a MONO row as the balanced pair. */
     if (ke && ke->k1_il_route == VFFT_K1_IL_MONO && vfft_k1_mono_il_fn(N, 0))
         return;
+    /* PRIME verdict (2026-09-21): the cell's plan is the prime cell, an arm
+     * of the race since today. The race's warm plan is handed over when the
+     * race just ran (never rebuilt: under recalibrate a rebuild would race
+     * the inner a second time and could bank a different one); a replay
+     * builds it from the prime shard's row. */
+    if (ke && ke->k1_il_route == VFFT_K1_IL_PRIME)
+    {
+        if (ilp_out)
+        {
+            if (_k1pr_ctx.plan && _k1pr_ctx.N == N)
+            {
+                *ilp_out = _k1pr_ctx.plan;
+                _k1pr_ctx.plan = NULL;
+                _k1pr_ctx.N = 0;
+            }
+            else
+                *ilp_out = _ilprime_create_banked(W, cfg, N);
+            if (getenv("VFFT_NAT_LOG") && *ilp_out)
+                fprintf(stderr, "[k1pr] N=%d: %s prime cell (%s, M=%d) src=wisdom\n", N,
+                        ip_req ? "in place" : "out of place",
+                        (*ilp_out)->method ? "RADER" : "BLUESTEIN", (*ilp_out)->M);
+        }
+        _k1pr_release();
+        return;
+    }
     /* CHAIN3 verdict (2026-09-02): the banked 3-stage chain replays as
      * written; a build refusal falls through to the pair/default path */
     if (ke && ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0])

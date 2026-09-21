@@ -744,7 +744,12 @@ the scatter at the end and then arranging that scatter to be cheap.
   msz and mszb. Add it to the pool in `vfft_ilfd_default_chain` and in
   `_il_dp_flat_rec`.
 - **Prime factors outside the pool** are not the engine's business; the
-  planner offers no flat chain and the cell falls to the prime engine.
+  planner offers no flat chain and the prime cell (Bluestein on the whole
+  length) is the only arm that builds. Since 2026-09-21 the prime cell is
+  an arm at EVERY non-pow2 N, so a flat chain of large radices is measured
+  against it rather than assumed to win: the chain's cost per point is the
+  sum of its radices' (0.6 R + 3 intrinsics each), the convolution's is
+  flat, and 43.47 or 43.43 lose.
 - **Stage count** is bounded by `VFFT_ILFD_MAX_K` (10).
 - **Batches and threads.** The plan is single-transform; K>1 rides the
   transform-contiguous tier by cloning. Intra-transform threading and
