@@ -1338,7 +1338,10 @@ static void _il_dp_flat_rec(int L, int depth, int *cur,
      * with a factor 23 and NO route -- every one served by the prime cell
      * at a median 0.49x of MKL -- because no kernel existed at 23 anywhere
      * in the interleaved registry while the split library has had one. */
-    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16 };
+    /* 29 and 31 joined on 2026-09-21 (the same recipe): 268 gauntlet cells whose
+     * largest prime is 29..47 ran the prime cell at 0.60-0.96x of MKL, 103 of
+     * them with a 29 or a 31; MKL runs a direct radix-p stage there. */
+    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16, 29, 31 };
     int p;
     if (L == 1)
     {
