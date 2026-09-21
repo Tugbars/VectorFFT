@@ -482,6 +482,25 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim)
 {
+    /* THE BOUND K=1 IL FAST PATH (2026-09-21). A plan that carries the bound
+     * K=1 interleaved dispatch (k1_exec, set at both c2c create exits) can be
+     * wrong in exactly four ways at this door -- a split plane offered
+     * (sim/dim), a NULL buffer, an in-place plan called with two buffers, a
+     * bad direction -- and each is one compare. The general signature walk
+     * below (a transform-name lookup, then the real, C2R and C2C branches)
+     * cost 4-5 ns per call: 5.6 ns at N = 2 through the door for ~1 ns of
+     * kernel, 25% of the cell at N = 32, 12% at 64 (measured 2026-09-21,
+     * benches/k1_fwd_ref_probe --time). Any failed compare falls through to
+     * the general path, which is unchanged and says why. */
+    int k1_tried = 0;
+    if (h && h->k1_exec && sre && dre && !sim && !dim &&
+        (dir == VFFT_FORWARD || dir == VFFT_BACKWARD) &&
+        (h->placement != VFFT_INPLACE || dre == sre))
+    {
+        if (h->k1_exec(h, dir, sre, dre) == 0)
+            return;
+        k1_tried = 1;   /* the trampoline declined (il2p's unresolvable bwd arm): the general path decides */
+    }
     if (!h)
     {
         _vfft_warn("vfft_execute: NULL plan (vfft_create failed, or the plan was "
@@ -497,7 +516,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (_vfft_sig_bad(h, dir, sre, sim, dre, dim))
         return;
-    if (h->k1_exec && h->k1_exec(h, dir, sre, dre ? dre : sre) == 0)
+    if (!k1_tried && h->k1_exec && h->k1_exec(h, dir, sre, dre ? dre : sre) == 0)
         return; /* THE BOUND K=1 IL DISPATCH: one indirect call, bound at create */
     if (h->pq_inner)
     { /* 2D PLANE QUEUE (howmany > 1): loop or atomic-counter queue per

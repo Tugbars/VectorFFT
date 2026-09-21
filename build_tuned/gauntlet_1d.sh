@@ -40,9 +40,19 @@
 # so one merge later carries both contracts. Use `resume` so the store with
 # the out-of-place verdicts is kept (calibrate/both wipe it).
 #
+# THREADS (2026-09-21): THREADS=8 runs the same cells at nthreads = 8 -- the
+# probe creates at T (the door's per-T race: the flat DIT's, ZTURN-T's and the
+# four-step's threaded arms against the serial verdict, banked as per-T tokens on
+# the cell's own row; pair / chain3 / prime / mono have no threaded arm and
+# replay serial at once), the bench runs --k1noop --mt with VFFT_MT=8 (our arm at
+# T on the snapshot pool, MKL at T -- which is serial below 8192 by its own
+# rule) -- into its OWN files (gauntlet_mt8.csv, control_mt8.csv,
+# calibrate_mt8.log) on the SAME store. `resume` keeps the store.
+#
 # Run from build_tuned/, machine QUIET:
 #   sh gauntlet_1d.sh <out-dir> <cell-list> [calibrate|bench|both|resume|rerun]
 #   PLACE=ip sh gauntlet_1d.sh <out-dir> <cell-list> resume
+#   THREADS=8 sh gauntlet_1d.sh <out-dir> <cell-list> resume
 set -u
 OUT="${1:?out-dir}"
 LIST="${2:?cell-list file}"
@@ -53,10 +63,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 G="$HERE/../src/dag-fft-compiler/generator/generated"
 ST="$OUT/store"
 PLACE="${PLACE:-oop}"
+THREADS="${THREADS:-1}"
 if [ "$PLACE" = ip ]; then
   SFX="_ip"; IP=1; K1FLAG=--k1nat
 else
   SFX=""; IP=0; K1FLAG=--k1noop
+fi
+if [ "$THREADS" -gt 1 ]; then
+  SFX="${SFX}_mt$THREADS"; K1FLAG="$K1FLAG --mt"; export VFFT_MT="$THREADS"
 fi
 CSV="$OUT/gauntlet$SFX.csv"
 CTL="$OUT/control$SFX.csv"
@@ -68,8 +82,8 @@ cells() { grep -vE '^\s*(#|$)' "$LIST" | awk '{print $1}'; }
 
 bench_cell() {   # $1 = N, $2 = csv path
   for F in 0 1; do
-    "$HERE/benches/bench_1d_vs_mkl.exe" "$K1FLAG" "$ST/spike_wisdom.txt" "$2" \
-        300 "$1" 1 300 "$F" 2 > /dev/null 2>&1
+    "$HERE/benches/bench_1d_vs_mkl.exe" $K1FLAG "$ST/spike_wisdom.txt" "$2" \
+        300 "$1" 1 300 "$F" 2 > /dev/null 2>&1   # K1FLAG may be two words (--k1noop --mt)
   done
 }
 # The control file is a TIME SERIES of one cell, so its rows must ACCUMULATE:
@@ -97,7 +111,7 @@ if [ "$PHASE" = calibrate ] || [ "$PHASE" = both ] || [ "$PHASE" = resume ]; the
       skipped=$((skipped + 1)); continue
     fi
     s0=$(date +%s%3N)
-    "$HERE/benches/recal_1d_probe.exe" "$ST" "$N" 0 "$IP" 1 0 > "$OUT/.cal.tmp" 2>&1
+    "$HERE/benches/recal_1d_probe.exe" "$ST" "$N" 0 "$IP" "$THREADS" 0 > "$OUT/.cal.tmp" 2>&1
     s1=$(date +%s%3N)
     st=$(grep -oE 'banked|REFUSED' "$OUT/.cal.tmp" | tail -1)
     printf "%-10s %-8s %s\n" "$N" "${st:-ERROR}" "$((s1 - s0))ms" >> "$CAL"
@@ -114,7 +128,7 @@ if [ "$PHASE" = rerun ]; then
   control_cell "$CONTROL_N" "$CTL"
   for N in $(cells); do
     s0=$(date +%s%3N)
-    "$HERE/benches/recal_1d_probe.exe" "$ST" "$N" 0 "$IP" 1 1 > "$OUT/.cal.tmp" 2>&1
+    "$HERE/benches/recal_1d_probe.exe" "$ST" "$N" 0 "$IP" "$THREADS" 1 > "$OUT/.cal.tmp" 2>&1
     s1=$(date +%s%3N)
     st=$(grep -oE 'banked|REFUSED' "$OUT/.cal.tmp" | tail -1)
     grep -vE "^$N " "$CAL" > "$OUT/.cal.new" 2>/dev/null; mv "$OUT/.cal.new" "$CAL"
@@ -130,7 +144,7 @@ fi
 
 if [ "$PHASE" = bench ] || [ "$PHASE" = both ] || [ "$PHASE" = resume ]; then
   rm -f "$CSV" "$CTL"
-  "$HERE/benches/recal_1d_probe.exe" "$ST" "$CONTROL_N" 0 "$IP" 1 0 > /dev/null 2>&1
+  "$HERE/benches/recal_1d_probe.exe" "$ST" "$CONTROL_N" 0 "$IP" "$THREADS" 0 > /dev/null 2>&1
   control_cell "$CONTROL_N" "$CTL"
   n=0
   t0=$(date +%s)

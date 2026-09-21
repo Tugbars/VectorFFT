@@ -16,8 +16,10 @@ import io, re, sys, os
 
 out = sys.argv[1]
 place = sys.argv[sys.argv.index("--place") + 1] if "--place" in sys.argv else "oop"
+threads = int(sys.argv[sys.argv.index("--threads") + 1]) if "--threads" in sys.argv else 1
 store = os.path.join(out, "store")
-cal = os.path.join(out, "calibrate%s.log" % ("_ip" if place == "ip" else ""))
+# the threaded run's verdicts are per-T tokens on the same cell row; its log is its own
+cal = os.path.join(out, "calibrate%s%s.log" % ("_ip" if place == "ip" else "", "_mt%d" % threads if threads > 1 else ""))
 
 
 def rd(p):

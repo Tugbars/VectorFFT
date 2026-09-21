@@ -841,9 +841,12 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     if (out)
     {
         char row[320];
-        snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
+        snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d",
                  N, 1, plan_s, path, vns, mns, vgf, ratio, rel,
                  vfft_plan_route(h), flip);
+        if (g_k1noop_mt)   /* the threaded run's own column: threaded executes ENGAGED in the timed arm (0 = serial verdict) */
+            snprintf(row + strlen(row), sizeof row - strlen(row), ",%ld", eng);
+        strncat(row, "\n", sizeof row - strlen(row) - 1);
         fflush(out);
         if (!k1z_csv_replace(g_csv_path, row))   /* a re-run REPLACES the cell's row */
             fputs(row, out);
@@ -5213,7 +5216,8 @@ int main(int argc, char **argv)
              * flip= which engine ran first in the pair -- the two columns a
              * band-map gauntlet reads. APPENDED, so every column a consumer
              * already parses by position keeps its index. */
-            fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
+            fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip%s\n",
+                    g_k1noop_mt ? ",engaged" : "");
     }
     if (g_ilmt)
     {
