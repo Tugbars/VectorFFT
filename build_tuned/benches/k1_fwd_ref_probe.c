@@ -80,22 +80,27 @@ static double time_door(vfft_plan h, const double *x, double *y, int N)
     return best;
 }
 
+static int g_k = 1;    /* --k K: a transform-contiguous BATCH of K transforms per call (the default
+                        * K>1 interleaved geometry); the reference gates transform 0 and the door
+                        * timing is reported PER TRANSFORM */
+
 static int probe(vfft_wisdom *W, int N)
 {
     vfft_config_t cfg; vfft_plan h; double ef = 1, er = 1; int ok;
-    double *x = calloc(2 * (size_t)N, 8), *X = calloc(2 * (size_t)N, 8);
-    double *y = calloc(2 * (size_t)N, 8), *r = calloc(2 * (size_t)N, 8);
+    const size_t K = (size_t)g_k, tot = 2 * (size_t)N * K;
+    double *x = calloc(tot, 8), *X = calloc(2 * (size_t)N, 8);
+    double *y = calloc(tot, 8), *r = calloc(tot, 8);
     srand(4242 + N);
-    for (int j = 0; j < 2 * N; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
+    for (size_t j = 0; j < tot; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
     naive_dft(x, X, N);
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C; cfg.placement = g_ip ? VFFT_INPLACE : VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1; cfg.order = VFFT_ORDER_NATURAL;
+    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = K; cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
     h = vfft_create(&cfg);
     if (h && g_ip)
     {   /* in place: the forward on a copy of x, then the backward on that */
-        memcpy(y, x, 2 * (size_t)N * sizeof(double));
+        memcpy(y, x, tot * sizeof(double));
         vfft_execute(h, VFFT_FORWARD, y, NULL, y, NULL);
         ef = relerr(y, X, N, 1.0);
         vfft_execute(h, VFFT_BACKWARD, y, NULL, y, NULL);
@@ -111,7 +116,7 @@ static int probe(vfft_wisdom *W, int N)
     printf("%-6d %-7s %s fwd %.2e  rt %.2e  %s", N, h ? vfft_plan_route(h) : "NOPLAN", g_ip ? "ip " : "oop",
            ef, er, ok ? "ok" : "*** FAIL ***");
     if (h && g_time && !g_ip)
-        printf("  door %.1f ns", time_door(h, x, y, N));
+        printf("  door %.1f ns%s", time_door(h, x, y, N) / (double)K, K > 1 ? " per transform" : "");
     printf("\n");
     if (h) vfft_destroy(h);
     free(x); free(X); free(y); free(r);
@@ -124,6 +129,7 @@ int main(int argc, char **argv)
     {
         if (!strcmp(argv[a0], "--ip")) g_ip = 1;
         else if (!strcmp(argv[a0], "--time")) g_time = 1;
+        else if (!strcmp(argv[a0], "--k") && a0 + 1 < argc) { g_k = atoi(argv[a0 + 1]); a0++; }
         else break;
         a0++;
     }
