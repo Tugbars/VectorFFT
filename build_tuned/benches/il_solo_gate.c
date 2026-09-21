@@ -28,13 +28,12 @@
 #include <string.h>
 #include "vfft.h"
 
-static const int NS[] = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-                          19, 21, 22, 23, 25, 26, 27, 29, 31, 32, 64 };   /* 23, 14/22/26, then 29/31 joined 2026-09-21 */
+static const int NS[] = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 21, 22, 23, 25, 26, 27, 29, 31, 32, 37, 41, 43, 47, 64 };   /* every N the n1 kind exists for; primes added by patch_primes.py */   /* every N the n1 kind exists for; primes added by patch_primes.py */   /* 23, 14/22/26, then 29/31 joined 2026-09-21 */
 /* N where NO pair/chain can serve: a MONO route is the only legal answer */
 static int mono_only(int N)
 {
     switch (N) { case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-                 case 10: case 11: case 13: case 17: case 19: case 23: case 29: case 31: return 1; }
+                 case 10: case 11: case 13: case 17: case 19: case 23: case 29: case 31: case 37: case 41: case 43: case 47: return 1; }
     return 0;
 }
 
