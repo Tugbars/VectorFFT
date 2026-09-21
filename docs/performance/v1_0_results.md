@@ -948,59 +948,73 @@ all, because adding arms perturbs the race that decides the winner.
 ### K=1 INTERLEAVED — every N from 2 to 2048 vs MKL, the gauntlet (2026-09-21)
 
 One contract, every length: 1D c2c, K=1, natural order, out of place, one
-thread. Each cell was first created through the front door on a scratch copy
-of the shipped store (the library's own race banked the verdict into
+thread. Each cell was created through the front door on a scratch copy of
+the shipped store (the library's own race banked the verdict into
 `wisdom2_oop.txt` / `wisdom2_prime.txt`), then timed by the canonical bench
 against MKL in its own process, core 2 + HIGH, cachebust + 300 ms cool
 between engines, BOTH engine orders (flip 0 and 1), best-of-5 after 10
 warmups. 2047 cells, 4094 rows in
 `build_tuned/results/gauntlet_2026-09-20/gauntlet.csv`; the control cell
-(4096, every 100 cells) read 1.01-1.09x across 44 readings with two
+(4096, every 100 cells) read 1.01-1.09x across 46 readings with two
 disturbed windows, so the run is internally comparable. Max roundtrip error
-2.5e-15. Every ratio below is MKL time / our time, the WORSE of the two flips.
+2.5e-15. The tree measured: radix 23 at every interleaved kind, the flat
+DIT admitting a radix-2 leaf when N/2 is odd, and the il2p kernel resolvers
+deriving their radix sets from the generated registry; the 194 cells those
+three reach were re-raced and re-timed on that tree and their rows replaced
+the originals. Every ratio below is MKL time / our time, the WORSE of the
+two flips.
 
 ```
  route    cells   <0.8   <1.0    p10    med    p90   gmean
- prime     1573    284    500   0.61   1.13   2.01   1.11
- chain3     261     36     66   0.71   1.19   1.59   1.14
- 2p         136      2      8   1.13   1.42   2.08   1.46
- flat        61      5     21   0.82   1.25   1.61   1.19
- mono        13      1      2   0.95   1.34   1.74   1.31
+ prime     1478    193    402   0.71   1.15   2.08   1.18
+ chain3     281     36     69   0.72   1.20   1.64   1.16
+ 2p         156      2      8   1.17   1.47   2.22   1.54
+ flat       115      7     30   0.86   1.29   1.69   1.23
+ mono        14      1      2   0.95   1.40   1.74   1.33
  ztt          3      0      0   1.07   1.12   1.23   1.14
- ALL       2047    328    597   0.65   1.15   1.96   1.14
+ ALL       2047    239    511   0.76   1.17   2.00   1.21
 ```
 
-Most of the range is a composite with a prime factor above 19 (1157 of 2047
-cells), and those are served by the prime cell -- Bluestein or Rader on the
-WHOLE length -- while MKL runs a mixed-radix plan with a prime stage. That is
-where the losses are, and they sort into five families:
+```
+ size band     cells   median   <1.0   <0.8
+ 2..64            63     1.35     10      3
+ 65..256         192     1.44     27     14
+ 257..512        256     1.27     37     23
+ 513..1024       512     1.15    148     65
+ 1025..2048     1024     1.14    289    134
+```
+
+Most of the range is a composite with a prime factor of 29 or more (1157 of
+2047 cells), and those are served by the prime cell -- Bluestein or Rader on
+the WHOLE length -- while MKL runs a mixed-radix plan with a prime stage.
+That is where the losses are; the standing families:
 
 ```
  family                                   cells   median   <1.0   what decides it
- composite 2 x {7,11,13,17,19}               27     0.35     27   a lone factor 2 is unplaceable
- composite with a factor 23                  64     0.49     64   no radix-23 kernel anywhere
- prime, Bluestein banked                    210     1.14     45   188 have an UNBUILDABLE Rader inner
- prime, Rader banked                         91     1.86      0
- composite with a prime >= 29             1157     1.13    355   no prime STAGE; the small ones lose
+ composite with a prime >= 29             1157     1.13    355   no prime STAGE; the small ones lose 2-4x
+ prime, Bluestein banked                   202     1.14     41   Rader's inner N-1 is not a buildable length
+ prime, Rader banked                        98     1.82      0
+ 2 x {7..23} composites (flat, 2-led)       27     1.06      8   a radix-2 leaf over an odd run is a thin first stage
  chain3, 11/13-heavy, 1000..2048           ~16   0.63-0.78  16   consistent in both flips
- pow2 32..512                                 5   0.82-0.99   5   the sub-2048 pow2 deficit
+ pow2 32..512                                5   0.82-0.99   5   the sub-2048 pow2 deficit
 ```
 
-**The Rader finding.** Rader never lost a race it entered. Of 210 primes
-that banked Bluestein, 181 have a prime above 19 in N-1 (47: 46 = 2.23; 83:
-82 = 2.41; 263: 262 = 2.131) and 7 have the lone-2 shape (23: 22 = 2.11); for
-those the inner pool offers Rader NO length-(N-1) plan, so the verdict is
-Bluestein by default. Where Rader could build (91 primes) it banks at a
-median 1.86x; a Bluestein prime runs a median 1.77x slower than its nearest
-Rader neighbour (47: 197 ns beside 53: 132; 139: 976 beside 151: 419; 263:
-2091 beside 271: 810). Every prime congruent to 3 mod 4 has N-1 = 2 x odd,
-so the lone-2 hole and the missing prime stage are the same defect seen from
-three sides: 2 x odd composites, Rader inners, and multiples of 23.
+**The Rader finding.** Rader never lost a race it entered. Of the 202 primes
+that bank Bluestein, nearly all have a prime above 23 in N-1 (47: 46 = 2.23
+needs a 2-led inner the prime pool does not offer; 83: 82 = 2.41; 263: 262 =
+2.131), so the inner pool offers Rader NO length-(N-1) plan and the verdict
+is Bluestein by default. Where Rader can build (98 primes, including the
+twelve whose inner runs through radix 23: 139 = 6.23, 277 = 12.23, 1013 =
+4.11.23, 1657 = 8.9.23) it banks at a median 1.82x; a Bluestein prime runs a
+median 1.77x slower than its nearest Rader neighbour (83: 467 ns beside 89:
+223; 263: 2091 beside 271: 810). Every prime congruent to 3 mod 4 has N-1 =
+2 x odd, so the prime cell's inner pool lacking the flat DIT's 2-led chains
+and the missing prime stage are the same defect seen from two sides.
 
 22 primes whose N-1 IS buildable banked Bluestein anyway (421, 433, 757,
 1009, 1021, 1373, 1597, ...): single cold races, to be re-raced before the
-merge. Cell 515 raced, printed banked, and has no row (the persist failure
-fixed the same night).
+merge. Cell 515 raced, printed banked, and has no row (a persist failure, since
+fixed).
 
 **A bench finding.** VectorFFT's two readings at a cell differ by more than
 25% at 163 cells; MKL's at 2. The chain3 route carries it: 47 cells slower
