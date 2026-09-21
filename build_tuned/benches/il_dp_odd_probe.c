@@ -5,7 +5,7 @@
  * Not a bench: nothing is banked, nothing is written.
  *
  * Usage: il_dp_odd_probe.exe <N> [nat|scr|both]
- * Build: python build.py --compile --vfft --src benches/il_dp_odd_probe.c */
+ * Build: python build.py --compile   (NO --vfft: the TU includes vfft.c) --src benches/il_dp_odd_probe.c */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +13,7 @@
 #include <windows.h>
 #endif
 #include "vfft.h"
-#include "dp_planner_il.h"
+#include "vfft.c"   /* the planner is not a self-contained header since the four-step (2026-09-15): this TU IS a library TU, built WITHOUT --vfft (2026-09-21) */
 
 int main(int argc, char **argv)
 {

@@ -500,6 +500,22 @@ static vfft_wisdom *k1z_bundle(void)
     return W;
 }
 
+/* the gap between the two timing windows: 40 ms idle, then >= 10 ms of the
+ * engine's own work untimed (the post-idle state, when it strikes, is sticky
+ * for at least that long; the second window then starts on a settled core).
+ * The same shape serves the MKL timer through kzb_window_gap. */
+#define K1Z_WINDOW_IDLE_MS 40
+#define K1Z_WINDOW_WARM_NS 1.0e7
+static void k1z_window_gap(vfft_plan h, int dir, double *z0, double *S)
+{
+    const double tw0 = vfft_proto_now_ns();
+    pace(K1Z_WINDOW_IDLE_MS);
+    do
+        g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
+                : vfft_execute(h, dir, z0, NULL, S, NULL);
+    while (vfft_proto_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+}
+
 static double k1z_time_vfft_d(vfft_plan h, double *z0, double *S, size_t total,
                               int dir)
 {
@@ -522,17 +538,29 @@ static double k1z_time_vfft_d(vfft_plan h, double *z0, double *S, size_t total,
                     : vfft_execute(h, dir, z0, NULL, S, NULL);
     int reps = reps_for(total);
     double best = 1e18;
-    for (int t = 0; t < 5; t++)
+    /* TWO WINDOWS (2026-09-21): best-of-5, then again after k1z_window_gap().
+     * The gauntlet read the same banked chain3 plan 1.1-1.5x slower than the
+     * race had, sticky for >= 10 ms after any idle (the 300 ms cool before
+     * this arm in flip 1) with the core clock, the memory and the buffer
+     * placement all verified unchanged (chain3_skew_probe.c): a state of the
+     * MACHINE, not of the plan, that a single 15 ms window sits inside
+     * whole. Two windows, separated, give the engine a second chance to be
+     * measured at its own speed; MKL's timer takes the same two windows. */
+    for (int win = 0; win < 2; win++)
     {
-        if (t)
-            pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
-                    : vfft_execute(h, dir, z0, NULL, S, NULL);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
-        if (ns < best)
-            best = ns;
+        if (win) k1z_window_gap(h, dir, z0, S);
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_proto_now_ns();
+            for (int i = 0; i < reps; i++)
+                g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
+                        : vfft_execute(h, dir, z0, NULL, S, NULL);
+            double ns = (vfft_proto_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
     }
     return best;
 }
@@ -571,16 +599,28 @@ static double k1z_time_mkl(int N, const double *z0, size_t total)
             g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo);
     int reps = reps_for(total);
     double best = 1e18;
-    for (int t = 0; t < 5; t++)
+    /* TWO WINDOWS, the same shape as k1z_time_vfft_d (2026-09-21) */
+    for (int win = 0; win < 2; win++)
     {
-        if (t)
-            pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
-        if (ns < best)
-            best = ns;
+        if (win)
+        {
+            const double tw0 = vfft_proto_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo);
+            while (vfft_proto_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_proto_now_ns();
+            for (int i = 0; i < reps; i++)
+                g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo);
+            double ns = (vfft_proto_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
     }
     free_d(zi);
     free_d(zo);
@@ -914,16 +954,29 @@ static double kzb_time_mkl(int N, int K, const double *z0, size_t total,
         DftiComputeForward(d, zi, zo);
     int reps = reps_for(total);
     double best = 1e18;
-    for (int t = 0; t < 5; t++)
+    /* TWO WINDOWS, the same shape as k1z_time_vfft_d (2026-09-21): fairness
+     * is the same protocol for both engines */
+    for (int win = 0; win < 2; win++)
     {
-        if (t)
-            pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            DftiComputeForward(d, zi, zo);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
-        if (ns < best)
-            best = ns;
+        if (win)
+        {
+            const double tw0 = vfft_proto_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                DftiComputeForward(d, zi, zo);
+            while (vfft_proto_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_proto_now_ns();
+            for (int i = 0; i < reps; i++)
+                DftiComputeForward(d, zi, zo);
+            double ns = (vfft_proto_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
     }
     free_d(zi);
     free_d(zo);
@@ -1226,6 +1279,60 @@ static int g_zr2c = 0;   /* --zr2c: D2 interleaved r2c/c2r vs MKL real-CCE in-pl
  * the same core. Every one-thread cell runner calls this once; the threaded
  * runners use ilmt_pin_pcores() instead. VFFT_BENCH_PIN=0 lifts it (the
  * control for "did the pin itself move a number?"). */
+#ifdef _WIN32
+/* THE SIBLING GUARD (2026-09-21). The gauntlet benched the same banked chain3
+ * plan 1.1-1.5x slower than the planner had raced it, sticky for tens of ms
+ * after any idle (the 300 ms cool before an arm), with the core clock, the
+ * memory and the buffer placement all verified unchanged: after the timed
+ * thread idles, the OS parks another process's thread on the SMT SIBLING of
+ * its core and leaves it there for a while, and a high-IPC kernel sharing the
+ * core runs at 60% (chain3_skew_probe.c: a busy loop pinned to the sibling
+ * reproduces 1.47x; a thread of our own holding the sibling removes the mode).
+ * A PAUSE spinner costs the timed thread 12%; TPAUSE into C0.2 (WAITPKG)
+ * costs nothing measurable and still counts as busy to the scheduler, so no
+ * foreign thread lands there. The guard lives for the process; every timed
+ * window in the bench runs with the sibling reserved. Hosts without WAITPKG
+ * (Zen 4) run unguarded; VFFT_BENCH_GUARD=0 lifts it. */
+static int bench_sibling_of(int cpu)
+{
+    DWORD len = 0;
+    char *buf;
+    int sib = -1;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, NULL, &len);
+    buf = (char *)malloc(len);
+    if (!buf || !GetLogicalProcessorInformationEx(RelationProcessorCore, (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)buf, &len)) { free(buf); return -1; }
+    for (DWORD off = 0; off < len;)
+    {
+        SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *x = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)(buf + off);
+        if (x->Relationship == RelationProcessorCore && x->Processor.GroupCount >= 1)
+        {
+            KAFFINITY m = x->Processor.GroupMask[0].Mask;
+            if (m & ((KAFFINITY)1 << cpu))
+                for (int c = 0; c < 64; c++) if ((m & ((KAFFINITY)1 << c)) && c != cpu) sib = c;
+        }
+        off += x->Size;
+    }
+    free(buf);
+    return sib;
+}
+static int bench_has_waitpkg(void)
+{   /* CPUID.(7,0):ECX[5] through the tree's own spelling (cpu_cache.h: the
+     * MinGW/MSVC CPUID collision of 2026-08-31 lives in the raw names) */
+    unsigned r[4] = { 0, 0, 0, 0 };
+#if VFFT_CPU_HAVE_CPUID
+    _vfft_cpuid(7, 0, r);
+#endif
+    return (r[2] >> 5) & 1u;
+}
+__attribute__((target("waitpkg")))
+static DWORD WINAPI bench_sibling_guard(LPVOID arg)
+{
+    SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << (int)(intptr_t)arg);
+    for (;;)
+        _tpause(0, __rdtsc() + 200000ull);   /* C0.2, ~35 us slices (the OS caps them); the loop is the guard */
+    return 0;
+}
+#endif
 static void bench_pin_one_thread(void)
 {
     static int done = 0;
@@ -1239,7 +1346,17 @@ static void bench_pin_one_thread(void)
 #ifdef _WIN32
     SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x4);
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-    printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority (VFFT_BENCH_PIN=0 lifts)\n");
+    {
+        const char *g = getenv("VFFT_BENCH_GUARD");
+        const int sib = bench_sibling_of(2);
+        const int lifted = (g && !strcmp(g, "0"));
+        if (!lifted && sib >= 0 && bench_has_waitpkg() &&
+            CreateThread(NULL, 0, bench_sibling_guard, (LPVOID)(intptr_t)sib, 0, NULL))
+            printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority; SMT sibling CPU %d held by a TPAUSE guard (VFFT_BENCH_PIN=0 / VFFT_BENCH_GUARD=0 lift)\n", sib);
+        else
+            printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority; sibling UNGUARDED (%s)\n",
+                   lifted ? "VFFT_BENCH_GUARD=0" : sib < 0 ? "no SMT sibling" : !bench_has_waitpkg() ? "no WAITPKG on this host" : "thread create failed");
+    }
 #else
     printf("# one-thread protocol: pin is Win32-only here; the caller floats\n");
 #endif

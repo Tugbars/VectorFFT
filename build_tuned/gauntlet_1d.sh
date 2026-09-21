@@ -50,7 +50,7 @@
 # calibrate_mt8.log) on the SAME store. `resume` keeps the store.
 #
 # Run from build_tuned/, machine QUIET:
-#   sh gauntlet_1d.sh <out-dir> <cell-list> [calibrate|bench|both|resume|rerun]
+#   sh gauntlet_1d.sh <out-dir> <cell-list> [calibrate|bench|both|resume|rerun|retime]
 #   PLACE=ip sh gauntlet_1d.sh <out-dir> <cell-list> resume
 #   THREADS=8 sh gauntlet_1d.sh <out-dir> <cell-list> resume
 set -u
@@ -140,6 +140,21 @@ if [ "$PHASE" = rerun ]; then
   rm -f "$OUT/.cal.tmp"
   control_cell "$CONTROL_N" "$CTL"
   echo "rerun: $n cells in $(($(date +%s) - t0))s -> $CSV (rows replaced in place)" >&2
+fi
+
+if [ "$PHASE" = retime ]; then
+  # RETIME (2026-09-21): bench only, the banked plans as they stand (no race),
+  # rows replaced in place -- for a bench-protocol change (the sibling guard,
+  # the two timing windows) that changes what is MEASURED, not what is planned.
+  n=0; t0=$(date +%s)
+  control_cell "$CONTROL_N" "$CTL"
+  for N in $(cells); do
+    bench_cell "$N" "$CSV"
+    n=$((n + 1))
+    [ $((n % 25)) -eq 0 ] && echo "  retime $n cells, $(($(date +%s) - t0))s elapsed" >&2
+  done
+  control_cell "$CONTROL_N" "$CTL"
+  echo "retime: $n cells in $(($(date +%s) - t0))s -> $CSV (rows replaced in place)" >&2
 fi
 
 if [ "$PHASE" = bench ] || [ "$PHASE" = both ] || [ "$PHASE" = resume ]; then

@@ -28,7 +28,7 @@
 #include <windows.h>
 #endif
 
-#include "dp_planner_il.h"
+#include "vfft.c"   /* the planner is not a self-contained header since the four-step (2026-09-15): this TU IS a library TU, built WITHOUT --vfft (2026-09-21) */
 
 int main(int argc, char **argv)
 {

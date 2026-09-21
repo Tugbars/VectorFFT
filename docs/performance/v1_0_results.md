@@ -951,9 +951,10 @@ One contract, every length: 1D c2c, K=1, natural order, out of place, one
 thread. Each cell was created through the front door on a scratch copy of
 the shipped store (the library's own race banked the verdict into
 `wisdom2_oop.txt` / `wisdom2_prime.txt`), then timed by the canonical bench
-against MKL in its own process, core 2 + HIGH, cachebust + 300 ms cool
-between engines, BOTH engine orders (flip 0 and 1), best-of-5 after 10
-warmups. 2047 cells, 4094 rows in
+against MKL in its own process, core 2 + HIGH with core 2's SMT sibling held
+by a TPAUSE guard thread (since 2026-09-21), cachebust + 300 ms cool between
+engines, BOTH engine orders (flip 0 and 1), best-of-5 after 10 warmups in two
+separated windows (since 2026-09-21; the chain3 cells were re-timed under it). 2047 cells, 4094 rows in
 `build_tuned/results/gauntlet_2026-09-20/gauntlet.csv`; the control cell
 (4096, every 100 cells) read 1.01-1.09x across 46 readings with two
 disturbed windows, so the run is internally comparable. Max roundtrip error
@@ -967,12 +968,12 @@ two flips.
 ```
  route    cells   <0.8   <1.0    p10    med    p90   gmean
  prime     1180     25    172   0.95   1.19   2.25    1.32
- chain3     346     34     83   0.80   1.18   1.59    1.16
+ chain3     346      1     24   1.02   1.23   1.60    1.26
  2p         256      2      7   1.19   1.50   2.19    1.55
  flat       240      7     44   0.93   1.25   1.66    1.24
  mono        22      1      3   0.95   1.42   1.88    1.38
  ztt          3      0      0   1.07   1.12   1.23    1.14
- ALL       2047     69    309   0.94   1.24   2.02    1.31
+ ALL       2047     36    250   0.97   1.24   2.02    1.33
 ```
 
 ```
@@ -980,8 +981,8 @@ two flips.
  2..64             63     1.35      7      2
  65..256          192     1.49      9      4
  257..512         256     1.39      7      1
- 513..1024        512     1.21     88     11
- 1025..2048      1024     1.17    198     51
+ 513..1024        512     1.22     70      3
+ 1025..2048      1024     1.18    157     26
 ```
 
 The interleaved kernels reach radix 47 at every kind (23 on 2026-09-21, then 29,
@@ -999,11 +1000,11 @@ direct radix-p stage costs more per point than the convolution from about p =
  family                                     cells   median   <1.0   what decides it
  composite with a prime >= 53 (prime cell)    878     1.18    131   no kernel above 47: whole-N Bluestein vs MKL's direct radix-p stage, whose cost climbs with p (parity from p ~ 53, 2x by 89)
  composite, prime cell BY RACE (primes <= 47)     7     1.21      2   the chain of large radices lost to whole-N Bluestein in its own cell's race (43.47, 43.43, 2.43): a chain's cost is the sum of its radices', the convolution's is flat
- composite whose largest prime is 29..47      293     1.29     35   kernels at every IL kind since 2026-09-21; the direct conjugate-pair form beats MKL's radix-p stage 1.45-1.63x where one large stage suffices
+ composite whose largest prime is 29..47      293     1.32     20   kernels at every IL kind since 2026-09-21; the direct conjugate-pair form beats MKL's radix-p stage 1.45-1.63x where one large stage suffices
  prime, Bluestein banked                      189     1.14     34   Rader's inner N-1 is not a buildable length
  prime, Rader banked                          107     1.71      5   37 and 41 among them: Rader over a smooth N-1 beat the direct radix-37/41 solo kernel in the race
  prime, solo kernel                            14     1.68      2   2..47, where the solo kernel won its race
- chain3                                       346     1.18     83   cost per point and pass tracks the LARGEST radix in the chain (0.36-0.42 ns at radices <= 12, 0.52 at 13, 0.84 at 23); 13 is the one radix where the direct form trails MKL (0.92x)
+ chain3                                       346     1.23     24   cost per point and pass tracks the LARGEST radix in the chain; 13 is the one radix where the direct form trails MKL (0.92x); the route's two-speed readings were the SMT sibling (see the bench finding)
  flat (incl. the 2-led chains)                240     1.25     44   a radix-2 leaf when N/2 is odd; the tiny 2 x prime cells are solos now
  pow2 32..512                                   5     0.98      3   engine at parity with MKL inside the race; the door's bound K=1 fast path (2026-09-21) returned 2-3 ns of the 4-5 ns fixed cost per call
 ```
@@ -1027,12 +1028,22 @@ the rest re-banked Bluestein with a better inner (883: 0.88 -> 1.15x, 911:
 (`src/dag-fft-compiler/generator/generated/`, merged 2026-09-21): every K=1
 cell 2..2048 out of place, 2..512 in place, and the T=8 tokens.
 
-**A bench finding.** VectorFFT's two readings at a cell differ by more than
-25% at 163 cells; MKL's at 2. The chain3 route carries it: 47 cells slower
-when timed AFTER MKL, 8 when timed first; every other route is symmetric.
-The plan and the buffers exist before either engine runs, so it is not
-allocation order. Unexplained; a targeted probe (one chain3 cell, both
-orders, repeated) is the next step.
+**The bench finding, explained.** Before 2026-09-21 VectorFFT's two readings
+at a cell differed by more than 25% at 163 cells while MKL's did at 2, and the
+chain3 route carried it: 47 cells slower when timed AFTER MKL (that is, after
+the 300 ms cool), 8 when timed first. The cause is the machine, not the plan:
+once the pinned thread idles, the OS parks another process's thread on the SMT
+sibling of core 2 and leaves it there for tens of milliseconds, and a high-IPC
+kernel sharing the core runs at about 60% for the whole 15 ms timing window
+(`benches/chain3_skew_probe.c`: buffer page offsets, the core clock, a plain
+AVX stream and an L2 pointer chase all unchanged in a slow round; a busy loop
+pinned to the sibling reproduces it; a thread of our own holding the sibling
+removes it). chain3 carries the most instruction-level parallelism of the
+engines below 2048 and is hit hardest; MKL's kernels least. The bench now
+holds the sibling with a TPAUSE-C0.2 guard thread (no measurable cost) and
+times every engine in two separated best-of-5 windows; the 95 chain3 cells
+that had lost or read more than 1.3x the planner's raced time were re-timed
+under that protocol and their rows replaced.
 
 ### K=1 INTERLEAVED — the cells 2..512 IN PLACE, raced in place (2026-09-21)
 
