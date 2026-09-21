@@ -177,15 +177,17 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
      *    the out-of-place cell's row is never served in its stead. */
 
     /* 2. the K=1 IL engine candidate: the planned row's route — MONO (the
-     *    alias-tolerant solo, 2026-09-04), pair, chain3, else prime */
+     *    alias-tolerant solo, 2026-09-04), pair, chain3, flat, ZTURN-T, the
+     *    four-step, or the prime cell (a raced arm since 2026-09-21); the
+     *    prime cell unraced only above the race ceiling */
     if (!getenv("VFFT_NO_NAT_ILP"))
     {
-        _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs);
+        _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs, &ilp);   /* ilp: a PRIME verdict (2026-09-21) */
         if (ztt) vfft_ztt_bind(ztt, 1);   /* in place: the plane drivers */
-        if (!il2 && !il3 && !ifd && !ztt && !fs)
+        if (!il2 && !il3 && !ifd && !ztt && !fs && !ilp)
             (void)_k1_il_mono_candidate(W, cfg, N, &mono_f, &mono_b);
-        if (!il2 && !il3 && !ifd && !ztt && !fs && !mono_f && (N & (N - 1)) != 0)
-            ilp = _ilprime_create_banked(W, cfg, N);   /* a route, never a fallback: no pow2 cell */
+        if (!il2 && !il3 && !ifd && !ztt && !fs && !mono_f && !ilp && (N & (N - 1)) != 0)
+            ilp = _ilprime_create_banked(W, cfg, N);   /* a route, never a fallback: the unraced cell above the ceiling */
         have_k1 = vfft_policy_k1_engine_present(
             /* mono   */ mono_f != 0,   /* in place the solo tier IS a resolved fn pair */
             /* pair   */ il2 != NULL, /* chain3 */ il3 != NULL,

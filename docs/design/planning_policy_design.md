@@ -355,8 +355,14 @@ Four laws moved, and the gate caught one of them being wrong on the way in:
 `vfft_policy_k1_direct_cell` (what the bench means by "this N is the K=1 IL
 tier's") is NOT `vfft_policy_races` (what the planner will race). They
 differ at odd N above the race ceiling — N = 262145 is the first — because
-such a cell is still SERVED, by the prime engine at the door, which is a
-route and not a raced arm. They are two named laws now; conflating them
+such a cell is still SERVED, by the prime engine at the door, unraced up
+there. (Below the ceiling the prime cell is an ARM of the pool since
+2026-09-21, `VFFT_FAM_PRIME` at every non-pow2 N in both order classes:
+the gauntlet showed a chain of large radices — 43.47, 43.43 — losing to
+Bluestein on the whole length, and the pool had answered those cells
+unopposed. The planner borrows ONE plan per race, built by the door
+before the race so a cold inner races once, and the verdict's plan is
+handed to the request.) They are two named laws now; conflating them
 would have silently narrowed the bench.
 
 The map is the thing the owner expected to find in this file: which engine
@@ -464,10 +470,13 @@ do NOT". A demotion macro was proposed and is safe, but it would live in
 `oop_plan.h`, not in the module, so it would not move a law into the shared
 file; it is not worth a new symbol in the route namespace. Two findings the
 survey offered as live defects were REFUTED by its own checker and are
-recorded here so they are not re-derived: the "missing PRIME demotion" is
-refuted by the law shipped in `policy.h` this week (PRIME is a door route,
-never a raced arm), and the "missing MONO demotion" is unreachable because
-the planner refuses to bank the form that would reach it.
+recorded here so they are not re-derived: the "missing PRIME demotion" was
+refuted by the law as it stood (PRIME a door route, never a raced arm);
+since 2026-09-21 PRIME is a raced arm and a banked `il_route=prime` row
+replays through the doors like any other verdict (a row naming a plan that
+cannot be built demotes to IL_NONE at the door, the ZTT/FS spelling). The
+"missing MONO demotion" is unreachable because the planner refuses to bank
+the form that would reach it.
 
 **L8 → `vfft_policy_fits_l2` + `vfft_policy_exceeds_l3`, six sites.** Two
 helpers because the two laws differ in BOTH polarity and unknown-size rule:

@@ -112,6 +112,7 @@
 #include "il_flatdit_race.h" /* its FORM and TILE races on the shared race body (2026-09-07) */
 #include "support/zalloc.h"   /* VFFT_ZS_ALLOC/FREE: the context arenas (rehomed 2026-09-15) */
 #include "ztt.h"        /* ZTURN-T: the run-contiguous DIT, one fused driver per cell (2026-09-09) */
+#include "il_prime.h"   /* the prime cell (Rader/Bluestein): a raced ARM since 2026-09-21; after ztt.h (its ZTURN-T inner branch) */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
 #include "wisdom2_oop.h" /* THE oop family entry struct + codecs (wisdom2 folder) */
 
@@ -422,7 +423,25 @@ typedef struct
     vfft_ilfd_plan_t   *ifd;   /* FLAT (the flat DIT, 2026-09-05) */
     vfft_ztt_plan_t    *ztt;   /* ZTT (ZTURN-T, 2026-09-09) */
     vfft_k1fs_plan_t   *fs;    /* FS (the four-step, 2026-09-15) */
+    vfft_ilprime_plan_t *ilp;  /* PRIME: BORROWED from _k1pr_ctx, never freed here (2026-09-21) */
 } _il_dp_built_t;
+/* the PRIME arm's plan (2026-09-21): the prime cell -- Rader/Bluestein on
+ * the whole length, its inner the prime shard's own banked verdict -- is
+ * built ONCE per race by _k1_il_plan_race (k1_commit.h, through
+ * _ilprime_create_banked: a cold cell races its inner pool there) and lent
+ * to every candidate build below. A race builds an arm three times (the
+ * gate, the forward bench, the backward bench); rebuilding the prime cell
+ * each time would race its inner three times under recalibrate and could
+ * bank three different inners. The _k1fs_ctx pattern. The offline
+ * calibrator enters the planner without the door's warm-up and has no
+ * prime arm: the enumerator finds none and says nothing. */
+static struct { vfft_ilprime_plan_t *plan; int N; } _k1pr_ctx;
+static void _k1pr_release(void)
+{
+    if (_k1pr_ctx.plan) vfft_ilprime_destroy(_k1pr_ctx.plan);
+    _k1pr_ctx.plan = NULL;
+    _k1pr_ctx.N = 0;
+}
 /* the four-step candidate under the permutation gate: its column map is the
  * 2D child's (the rank-2 cell's own, gated by the 2D tier), read here as a
  * COPY, because the race builds, runs and frees an arm before the gate
@@ -516,6 +535,13 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b, int i
         _il_dp_fs_map_n1 = b->fs->N1; _il_dp_fs_map_n2 = b->fs->N2;
         return 0;
     }
+    if (c->route == VFFT_K1_IL_PRIME)
+    {   /* the door's warm plan, or no candidate; the engine is alias-safe
+         * (zin == zout), so one plan serves both placements */
+        if (!_k1pr_ctx.plan || _k1pr_ctx.N != N) return -1;
+        b->ilp = _k1pr_ctx.plan;
+        return 0;
+    }
     if (c->route == VFFT_K1_IL_MONO)
     {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64) */
         b->mono = inplace ? (c->il_kv == 0 ? vfft_k1_mono_ilc_fn(N, 0) : 0)   /* in place: the alias-tolerant n1c solo; only form 0 has one */
@@ -532,6 +558,7 @@ static void _il_dp_free(_il_dp_built_t *b)
     if (b->ifd) vfft_ilfd_destroy(b->ifd);
     if (b->ztt) vfft_ztt_destroy(b->ztt);
     if (b->fs) vfft_k1fs_destroy(b->fs);
+    /* b->ilp is _k1pr_ctx's: borrowed, released by the door */
     memset(b, 0, sizeof(*b));
 }
 
@@ -570,6 +597,11 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
         b->mono(ctx->z_in, 0, _il_dp_dst(ctx), 0, 0, 0, 1, 0, 1, 0, 1); /* one leg */
         return 0;
     }
+    if (c->route == VFFT_K1_IL_PRIME)
+    {   /* the whole convolution: modulate, inner, demodulate */
+        vfft_ilprime_execute_fwd(b->ilp, ctx->z_in, _il_dp_dst(ctx));
+        return 0;
+    }
     return -1; /* unknown/retired route — _il_dp_build already refused it */
 }
 
@@ -595,6 +627,11 @@ static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     if (c->route == VFFT_K1_IL_ZTT)
     {   /* the conjugate pipeline: the bwd driver on the s-negated streams */
         vfft_ztt_execute_bwd(b->ztt, ctx->z_in, _il_dp_dst(ctx));
+        return 0;
+    }
+    if (c->route == VFFT_K1_IL_PRIME)
+    {   /* the conjugate chirp / kernels, unnormalized like every IL bwd */
+        vfft_ilprime_execute_bwd(b->ilp, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
     if (c->route == VFFT_K1_IL_FS)
@@ -859,6 +896,7 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
     case VFFT_K1_IL_3P:
     case VFFT_K1_IL_2P_PURE:
     case VFFT_K1_IL_CHAIN3:
+    case VFFT_K1_IL_PRIME:                           /* Rader/Bluestein write X[k] at k */
         return idx;                                  /* natural by contract */
     case VFFT_K1_IL_ZTT:
         if (!c->il_scr) return idx;                  /* natural by contract */
@@ -1592,6 +1630,19 @@ static void _il_dp_enumerate_mono(int N, vfft_il_cand_sink_t *s)
     }
 }
 
+static void _il_dp_enumerate_prime(int N, vfft_il_cand_sink_t *s)
+{
+    vfft_il_cand_t c;
+    /* the prime cell as ONE candidate (2026-09-21): its method and inner
+     * are the prime shard's own verdict, raced there (k1_commit.h); this
+     * race measures the whole convolution against the chains. The plan is
+     * the door's warm one (_k1pr_ctx): no plan, no candidate. */
+    if (!_k1pr_ctx.plan || _k1pr_ctx.N != N) return;
+    memset(&c, 0, sizeof c);
+    c.route = VFFT_K1_IL_PRIME;
+    _il_dp_push(s, &c);
+}
+
 static void _il_dp_enumerate_pairs(int N, vfft_il_cand_sink_t *s)
 {
     vfft_il_cand_t c;
@@ -1858,6 +1909,7 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
         case VFFT_FAM_FLAT:    _il_dp_enumerate_flat_ord(N, s, scr); break;
         case VFFT_FAM_ZTT:     _il_dp_enumerate_ztt_ord(N, s, scr);  break;
         case VFFT_FAM_FS:      _il_dp_enumerate_fs(N, s, scr);       break;
+        case VFFT_FAM_PRIME:   _il_dp_enumerate_prime(N, s);        break;
         default:                                                     break;
         }
 }
@@ -1995,7 +2047,8 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
             fprintf(stderr, "  [il-dp] N=%d ord=%d route=%d eng=%s %dx%d "
                     "chain=%s%s -> %.1f ns (gate %.1e)\n",
                     N, ord, cand[i].route,
-                    cand[i].route == VFFT_K1_IL_ZTT ? "ztt" : cand[i].route == VFFT_K1_IL_FS ? "fs" : "-",
+                    cand[i].route == VFFT_K1_IL_ZTT ? "ztt" : cand[i].route == VFFT_K1_IL_FS ? "fs"
+                    : cand[i].route == VFFT_K1_IL_PRIME ? (_k1pr_ctx.plan && _k1pr_ctx.plan->method ? "rader" : "bluestein") : "-",
                     cand[i].R1, cand[i].R2, ch,
                     wbuf, cand[i].cost_ns, gerr);
         }

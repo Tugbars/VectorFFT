@@ -114,6 +114,7 @@ static int _ref_pool_natural(int N, int with_flat, vfft_fam_t *out, int max)
     REF_PUSH(VFFT_FAM_CHAIN3);
     if (with_flat && !pow2 && (N < 2048 || (N & 3))) REF_PUSH(VFFT_FAM_FLAT);
     if (_ref_ztt_registry_has(N)) REF_PUSH(VFFT_FAM_ZTT);
+    if (with_flat && !pow2) REF_PUSH(VFFT_FAM_PRIME);   /* the prime cell, an arm at every non-pow2 N (2026-09-21) */
     return n;
 }
 static int _ref_pool(int N, int ord, vfft_fam_t *out, int max)
@@ -129,6 +130,7 @@ static int _ref_pool(int N, int ord, vfft_fam_t *out, int max)
     {
         n = _ref_pool_natural(N, 0, out, max);
         if (!pow2) { if (n < max) out[n] = VFFT_FAM_FLAT; n++; }
+        if (!pow2) { if (n < max) out[n] = VFFT_FAM_PRIME; n++; }
     }
     return n;
 }

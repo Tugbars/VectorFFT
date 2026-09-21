@@ -446,16 +446,32 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * (il_prime.h) — the OOP INTERLEAVED prime coverage the split
              * OOP path refuses. Same IL-only-handle rules as the chain. */
             vfft_ilprime_plan_t *ilpr = NULL;
-            /* the prime engine is a route, not a fallback: a power of two is
-             * never its cell (the pow2 tiers race on a miss, above) */
-            if (ilr == VFFT_K1_IL_NONE && !il2p && !il3p && !ilfd && !ztt && !fs &&
+            /* the prime cell is a route, not a fallback: a power of two is
+             * never its cell (the pow2 tiers race on a miss, above). Since
+             * 2026-09-21 it is also a RACED ARM: a banked il_route=prime row
+             * replays it (the race's own plan when the race just ran, else
+             * the prime shard's), and a cell with no verdict at all -- above
+             * the race ceiling -- builds it unraced, as before. */
+            if ((ilr == VFFT_K1_IL_NONE || ilr == VFFT_K1_IL_PRIME) &&
+                !il2p && !il3p && !ilfd && !ztt && !fs &&
                 (N & (N - 1)) != 0 &&
                 !getenv("VFFT_NO_IL2P") &&
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED)
             {
-                ilpr = _ilprime_create_banked(W, cfg, N);
-                if (ilpr)
-                    ilr = VFFT_K1_IL_PRIME;
+                if (ilr == VFFT_K1_IL_PRIME && _k1pr_ctx.plan && _k1pr_ctx.N == N)
+                {
+                    ilpr = _k1pr_ctx.plan;
+                    _k1pr_ctx.plan = NULL;
+                    _k1pr_ctx.N = 0;
+                }
+                else
+                    ilpr = _ilprime_create_banked(W, cfg, N);
+                _k1pr_release();
+                ilr = ilpr ? VFFT_K1_IL_PRIME : VFFT_K1_IL_NONE;   /* truthful: the route names a plan that exists */
+                if (ilpr && getenv("VFFT_NAT_LOG"))
+                    fprintf(stderr, "[k1pr] N=%d: out of place prime cell (%s, M=%d) src=%s\n", N,
+                            ilpr->method ? "RADER" : "BLUESTEIN", ilpr->M,
+                            (ki && ki->k1_il_route == VFFT_K1_IL_PRIME) ? "wisdom" : "door");
             }
             /* availability degrade (wisdom may name routes this build lacks).
              * Runs BEFORE spr0 is captured — P0c: spr0 keys the JIT (and the

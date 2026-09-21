@@ -183,9 +183,15 @@ static inline vfft_cell_t vfft_policy_cell(const vfft_config_t *cfg, int N, int 
  * that equivalence over the whole domain, which is why gating the family by
  * the band is identical to the unconditional call it replaces.)
  *
- * PRIME is deliberately absent: Rader/Bluestein is a DOOR route for a cell
- * no family answers, never a raced arm (c2c_oop_create.h builds it only
- * when the pool produced nothing and N is not a power of two). */
+ * PRIME is a raced arm since 2026-09-21 (owner: "make the prime cell an arm
+ * of the pool at every non-pow2 cell where it builds"): the prime cell --
+ * Rader or Bluestein on the WHOLE length, its inner the prime shard's own
+ * raced verdict -- enters both order classes at every non-pow2 N and is
+ * measured against the chains. The gauntlet found why: a chain's cost per
+ * point is the sum of its radices' (0.6 R + 3 intrinsics each) while the
+ * convolution's is flat (~40 units), so a chain of large radices (47.43,
+ * 43.43) LOSES to Bluestein, and the pool answered those cells unopposed.
+ * Above the race ceiling the door still builds it unraced (its only route). */
 typedef enum
 {
     VFFT_FAM_MONO = 0,    /* the solo kernels (one call, every registry form) */
@@ -195,12 +201,13 @@ typedef enum
     VFFT_FAM_ZTT,         /* ZTURN-T, the run-contiguous DIT at pow2          */
     VFFT_FAM_ZTT_ODD,     /* ZTURN-T's staged chains at 2^a * odd             */
     VFFT_FAM_FS,          /* the four-step on the 2D tier                     */
+    VFFT_FAM_PRIME,       /* the prime cell: Rader/Bluestein on the whole N   */
     VFFT_FAM_NFAM
 } vfft_fam_t;
 
 static inline const char *vfft_policy_fam_name(vfft_fam_t f)
 {
-    static const char *N[VFFT_FAM_NFAM] = { "mono", "pair", "chain3", "flat", "ztt", "ztt_odd", "fs" };
+    static const char *N[VFFT_FAM_NFAM] = { "mono", "pair", "chain3", "flat", "ztt", "ztt_odd", "fs", "prime" };
     return (f >= 0 && f < VFFT_FAM_NFAM) ? N[f] : "?";
 }
 
@@ -229,6 +236,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
             VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
             if (vfft_ztt_band(N)) VFFT__POOL_PUSH(VFFT_FAM_ZTT);
             if (!pow2)            VFFT__POOL_PUSH(VFFT_FAM_FLAT);
+            if (!pow2)            VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* natural output: a legal scrambled permutation */
         }
         return n;                      /* else: empty — the cell refuses */
     }
@@ -245,6 +253,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
     VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
     if (!pow2 && (N < 2048 || (N & 3))) VFFT__POOL_PUSH(VFFT_FAM_FLAT);
     if (vfft_ztt_band(N))               VFFT__POOL_PUSH(VFFT_FAM_ZTT);
+    if (!pow2)                          VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* every non-pow2 cell (2026-09-21) */
 #undef VFFT__POOL_PUSH
     return n;
 }
@@ -256,7 +265,8 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
  *
  * WIDER THAN `vfft_policy_races`, and the difference is not an oversight:
  * above the race ceiling an odd N is still SERVED — by the prime engine
- * (Rader/Bluestein) at the door, which is a route, not a raced arm. The
+ * (Rader/Bluestein) at the door, unraced up there (below the ceiling it is
+ * an arm of the pool, 2026-09-21). The
  * gate caught the two being conflated at N = 262145 (the planner refuses
  * to race it, the door serves it), which is why they are two named laws
  * and not one. */
@@ -459,9 +469,9 @@ static inline int vfft_policy_replays_at_T(int banked_T, int T)
  *   - What is NOT engine presence stays AT the call site: the SPLIT axis's
  *     route (spr >= 0) and each door's LAYOUT gate.
  *
- * PRIME is a parameter like the rest even though vfft_policy_pool omits it:
- * Rader/Bluestein is a door ROUTE, never a raced family, and the question
- * here is "did something build", not "who races". */
+ * PRIME is a parameter like the rest: a raced family below the ceiling
+ * (2026-09-21) and the door's unraced route above it; either way the
+ * question here is "did something build", not "who races". */
 static inline int vfft_policy_k1_engine_present(int mono, int pair, int chain3,
                                                 int flat, int ztt, int fs,
                                                 int prime)

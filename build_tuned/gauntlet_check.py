@@ -48,9 +48,12 @@ for m in re.finditer(r"@cell t=c2c n=(\d+) q=1 ord=nat place=%s role=comp lay=il
     n = int(m.group(1))
     if n in banked:
         routes[n] = m.group(2)
+raced_prime = set(n for n, r in routes.items() if r == "prime")   # the prime cell WON the race (il_route=prime on the K=1 row, 2026-09-21)
+door_prime = set()
 for n in banked:
     if n in pr and n not in routes:
         routes[n] = "prime"
+        door_prime.add(n)   # served by the prime cell with no K=1 row: unraced
 
 
 def fac(n):
@@ -64,7 +67,7 @@ def fac(n):
     return f
 
 
-susp = [n for n in banked if routes.get(n) == "prime" and len(fac(n)) > 1 and max(fac(n)) <= 19]
+susp = [n for n in door_prime if len(fac(n)) > 1 and max(fac(n)) <= 47]
 print("banked cells: %d   with a row: %d   MISSING: %d" % (len(banked), len(banked) - len(missing), len(missing)))
 if missing:
     print("  missing (re-race before merging):", " ".join(map(str, missing[:60])), "..." if len(missing) > 60 else "")
@@ -72,7 +75,8 @@ hist = {}
 for n in banked:
     hist[routes.get(n, "?")] = hist.get(routes.get(n, "?"), 0) + 1
 print("route split:", ", ".join("%s=%d" % kv for kv in sorted(hist.items(), key=lambda kv: -kv[1])))
-print("prime-cell composites whose every factor is a kernel radix (should have had a route): %d" % len(susp))
+print("prime cell by race (il_route=prime): %d cells, of them composites: %d" % (len(raced_prime), sum(1 for n in raced_prime if len(fac(n)) > 1)))
+print("prime cell UNRACED (no K=1 row) at a composite whose every factor is a kernel radix: %d" % len(susp))
 if susp:
     print("  ", " ".join("%d(%s)" % (n, ".".join(map(str, fac(n)))) for n in susp[:40]))
 if "--missing-list" in sys.argv:
