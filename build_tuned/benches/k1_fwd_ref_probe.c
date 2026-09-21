@@ -47,6 +47,8 @@ static double relerr(const double *a, const double *b, int N, double scale)
     }
     return m > 0 ? e / m : e;
 }
+static int g_ip = 0;   /* --ip: the IN-PLACE natural cell, (z, NULL, z, NULL) both legs (2026-09-21) */
+
 static int probe(vfft_wisdom *W, int N)
 {
     vfft_config_t cfg; vfft_plan h; double ef = 1, er = 1; int ok;
@@ -56,31 +58,40 @@ static int probe(vfft_wisdom *W, int N)
     for (int j = 0; j < 2 * N; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
     naive_dft(x, X, N);
     memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
+    cfg.transform = VFFT_C2C; cfg.placement = g_ip ? VFFT_INPLACE : VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
     cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1; cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
     h = vfft_create(&cfg);
-    if (h)
+    if (h && g_ip)
+    {   /* in place: the forward on a copy of x, then the backward on that */
+        memcpy(y, x, 2 * (size_t)N * sizeof(double));
+        vfft_execute(h, VFFT_FORWARD, y, NULL, y, NULL);
+        ef = relerr(y, X, N, 1.0);
+        vfft_execute(h, VFFT_BACKWARD, y, NULL, y, NULL);
+        er = relerr(y, x, N, 1.0 / N);
+    }
+    else if (h)
     {
         vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
         vfft_execute(h, VFFT_BACKWARD, y, NULL, r, NULL);
         ef = relerr(y, X, N, 1.0); er = relerr(r, x, N, 1.0 / N);
     }
     ok = h && ef < 1e-11 && er < 1e-11;
-    printf("%-6d %-7s fwd %.2e  rt %.2e  %s\n", N, h ? vfft_plan_route(h) : "NOPLAN", ef, er,
-           ok ? "ok" : "*** FAIL ***");
+    printf("%-6d %-7s %s fwd %.2e  rt %.2e  %s\n", N, h ? vfft_plan_route(h) : "NOPLAN", g_ip ? "ip " : "oop",
+           ef, er, ok ? "ok" : "*** FAIL ***");
     if (h) vfft_destroy(h);
     free(x); free(X); free(y); free(r);
     return ok;
 }
 int main(int argc, char **argv)
 {
-    int fails = 0, cells = 0;
-    if (argc < 3) { printf("usage: %s <wisdir> N [N ...] (N or a-b)\n", argv[0]); return 2; }
+    int fails = 0, cells = 0, a0 = 1;
+    if (argc > 1 && !strcmp(argv[1], "--ip")) { g_ip = 1; a0 = 2; }
+    if (argc < a0 + 2) { printf("usage: %s [--ip] <wisdir> N [N ...] (N or a-b)\n", argv[0]); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
-    vfft_wisdom *W = vfft_wisdom_load(argv[1]);
-    if (!W) { printf("wisdom load FAILED: %s\n", argv[1]); return 2; }
-    for (int a = 2; a < argc; a++)
+    vfft_wisdom *W = vfft_wisdom_load(argv[a0]);
+    if (!W) { printf("wisdom load FAILED: %s\n", argv[a0]); return 2; }
+    for (int a = a0 + 1; a < argc; a++)
     {
         int lo = 0, hi = 0;
         if (sscanf(argv[a], "%d-%d", &lo, &hi) == 2) { }

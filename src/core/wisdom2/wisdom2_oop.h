@@ -77,6 +77,9 @@ typedef struct {
                                               * as il_ztt=R0.R1...; il_zt_n stages
                                               * (0 = absent), 2026-09-09 */
     int    il_zt_n;
+    int    place_ip;                         /* kind 3 IL row keyed place=ip: the IN-PLACE
+                                              * cell's own verdict, raced executed in
+                                              * place (2026-09-21). 0 = place=oop */
     int    ord_scr;                          /* kind 3 IL row keyed ord=scr: the flat
                                               * DIT's SCRAMBLED class (its own chain +
                                               * forms, raced under the scrambled

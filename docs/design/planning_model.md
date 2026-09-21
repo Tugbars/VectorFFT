@@ -591,10 +591,12 @@ The create serves the cell with an IL engine and races only IL plans:
   3-stage chain x forms, the order swap and the backward forms (the planner
   `calibrate_k1` runs offline, now also at create on a kind-3 miss or recalibrate);
   the verdict is the kind-3 `lay=il` row.
-- **2048 and above** — the cell's K=1 IL engine against the cascade (the kind-4
-  recipe; natord under NATURAL), aliased in place, 5 rounds alternated, median-of-5.
-  Banks `mode=ilp | mode=zcasc` on the cell's own mode row; one arm serves and banks;
-  no arm refuses the create.
+- **in place** (2026-09-21) — the same IL plan race with every arm EXECUTED IN
+  PLACE (z -> z), banked on the in-place cell's own kind-3 row keyed `place=ip`
+  (with its `dir=bwd` sibling and `ord=scr` cell). The out-of-place verdict is
+  never served in place; the mode rows (`mode=ilp` with a reference to the
+  out-of-place row, `mode=zcasc` for the deleted cascade) are legacy and dead.
+  One arm serves and banks; no arm refuses the create.
 
 `mode=conv` and the tape modes are not IL verdicts; a row carrying one re-races.
 

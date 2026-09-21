@@ -134,8 +134,8 @@ static inline const char *vw2__oop_eng(const vw2_rec_t *r)
  * whole-row refusal let one layout's unknown token silently erase the
  * other layout's banked verdict. Exact-beats-wildcard is preserved inside
  * each tier. Returns 1 + fills e when ANY axis was found. */
-static inline const vw2_rec_t *vw2__oop_k1_scan_ord(const vw2_store_t *s, int N,
-                                                uint8_t lay, int want_scr)
+static inline const vw2_rec_t *vw2__oop_k1_scan_pl(const vw2_store_t *s, int N,
+                                               uint8_t lay, int want_scr, int pl)
 {
     int i, pass;
     for (pass = 0; pass < 2; pass++)
@@ -143,6 +143,10 @@ static inline const vw2_rec_t *vw2__oop_k1_scan_ord(const vw2_store_t *s, int N,
             const vw2_rec_t *c = &s->rec[i];
             if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
             if (c->key.lay != lay) continue;
+            /* the PLACEMENT axis (2026-09-21): the in-place cell has its own
+             * kind-3 row keyed place=ip, raced executed in place; neither
+             * placement ever reads the other's row */
+            if (c->key.pl != pl) continue;
             /* the ORDER axis (2026-09-05): the flat DIT's scrambled class
              * banks its own kind-3 IL row keyed ord=scr; the natural lookup
              * must never read it and the scrambled lookup reads only it */
@@ -163,6 +167,11 @@ static inline const vw2_rec_t *vw2__oop_k1_scan_ord(const vw2_store_t *s, int N,
         }
     return NULL;
 }
+static inline const vw2_rec_t *vw2__oop_k1_scan_ord(const vw2_store_t *s, int N,
+                                                uint8_t lay, int want_scr)
+{
+    return vw2__oop_k1_scan_pl(s, N, lay, want_scr, VW2_PL_OOP);
+}
 static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N, uint8_t lay)
 {
     return vw2__oop_k1_scan_ord(s, N, lay, 0);
@@ -174,8 +183,13 @@ static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N, uin
  * engines answering a scrambled request, or the flat DIT's scrambled
  * class). The two cells are separate verdicts: never compared, never
  * substituted for one another. */
+static inline int vw2_oop_lookup_k1_cell(const vw2_store_t *s, int N, int want_scr,
+                                         int inplace, vfft_oop_wisdom_entry_t *e);
 static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_scr,
-                                        vfft_oop_wisdom_entry_t *e);
+                                        vfft_oop_wisdom_entry_t *e)
+{
+    return vw2_oop_lookup_k1_cell(s, N, want_scr, 0, e);
+}
 static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
                                     vfft_oop_wisdom_entry_t *e)
 {
@@ -188,14 +202,19 @@ static inline int vw2_oop_lookup_k1_scr(const vw2_store_t *s, int N,
     e->ord_scr = 1;
     return got;
 }
-static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_scr,
-                                        vfft_oop_wisdom_entry_t *e)
+static inline int vw2_oop_lookup_k1_cell(const vw2_store_t *s, int N, int want_scr,
+                                         int inplace, vfft_oop_wisdom_entry_t *e)
 {
-    const vw2_rec_t *ril = vw2__oop_k1_scan_ord(s, N, VW2_LAY_IL, want_scr);
-    const vw2_rec_t *rsp = vw2__oop_k1_scan_ord(s, N, VW2_LAY_SPLIT, want_scr);
-    const vw2_rec_t *rlg = vw2__oop_k1_scan_ord(s, N, VW2_LAY_ANY, want_scr);
+    /* the (order, placement) cell (2026-09-21): inplace reads the place=ip
+     * row, the in-place cell's own verdict; 0 the place=oop row */
+    const int pl = inplace ? VW2_PL_IP : VW2_PL_OOP;
+    const vw2_rec_t *ril = vw2__oop_k1_scan_pl(s, N, VW2_LAY_IL, want_scr, pl);
+    const vw2_rec_t *rsp = vw2__oop_k1_scan_pl(s, N, VW2_LAY_SPLIT, want_scr, pl);
+    const vw2_rec_t *rlg = vw2__oop_k1_scan_pl(s, N, VW2_LAY_ANY, want_scr, pl);
     int pair[2], np, got = 0, si;
     memset(e, 0, sizeof *e);
+    e->place_ip = inplace;
+    e->ord_scr = want_scr;
     e->kind = VFFT_OOP_KIND_BAILEY2V;
     e->N = N;
     e->K = 1;
@@ -299,7 +318,7 @@ static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_sc
  * The caller must check that pair against the plan it actually built: a
  * variant code is only meaningful for the radix pair it was raced at, and
  * the forward winner can move without this record being re-raced. */
-static inline const vw2_rec_t *vw2__oop_find_k1_bwd(const vw2_store_t *s, int N)
+static inline const vw2_rec_t *vw2__oop_find_k1_bwd_pl(const vw2_store_t *s, int N, int pl)
 {
     int i, tier;
     const vw2_rec_t *r = NULL;
@@ -316,6 +335,7 @@ static inline const vw2_rec_t *vw2__oop_find_k1_bwd(const vw2_store_t *s, int N)
             const vw2_rec_t *c = &s->rec[i];
             if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
             if (c->key.dir != VW2_DIR_BWD) continue;
+            if (c->key.pl != pl) continue;   /* the placement's own backward row (2026-09-21) */
             if (c->key.role != VW2_ROLE_COMP) continue;
             if (c->key.lay != (tier == 0 ? VW2_LAY_IL : VW2_LAY_ANY)) continue;
             if (strcmp(vw2__oop_eng(c), "k1")) continue;
@@ -328,10 +348,14 @@ static inline const vw2_rec_t *vw2__oop_find_k1_bwd(const vw2_store_t *s, int N)
 /* the CHAIN3 backward verdict (2026-09-03): the same cell, read through the
  * chain it was raced at (il_chain=R2.A.B); -1 when the row is absent, has no
  * verdict, or is a pair row. The three-nibble code is A | B<<4 | leaf<<8. */
-static inline int vw2_oop_lookup_k1_bwd_chain(const vw2_store_t *s, int N,
-                                              int *c3 /* [3] */)
+static inline const vw2_rec_t *vw2__oop_find_k1_bwd(const vw2_store_t *s, int N)
 {
-    const vw2_rec_t *r = vw2__oop_find_k1_bwd(s, N);
+    return vw2__oop_find_k1_bwd_pl(s, N, VW2_PL_OOP);
+}
+static inline int vw2_oop_lookup_k1_bwd_chain_pl(const vw2_store_t *s, int N,
+                                                 int *c3 /* [3] */, int pl)
+{
+    const vw2_rec_t *r = vw2__oop_find_k1_bwd_pl(s, N, pl);
     int ch[3];
     if (!r) return -1;
     if (!vw2_rec_get(r, "il_kv")) return -1;
@@ -339,11 +363,16 @@ static inline int vw2_oop_lookup_k1_bwd_chain(const vw2_store_t *s, int N,
     if (c3) { c3[0] = ch[0]; c3[1] = ch[1]; c3[2] = ch[2]; }
     return vw2__oop_geti(r, "il_kv", 0);
 }
-static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
-                                        int *R1, int *R2)
+static inline int vw2_oop_lookup_k1_bwd_chain(const vw2_store_t *s, int N,
+                                              int *c3 /* [3] */)
+{
+    return vw2_oop_lookup_k1_bwd_chain_pl(s, N, c3, VW2_PL_OOP);
+}
+static inline int vw2_oop_lookup_k1_bwd_pl(const vw2_store_t *s, int N,
+                                           int *R1, int *R2, int pl)
 {
     int pair[2], np, kv;
-    const vw2_rec_t *r = vw2__oop_find_k1_bwd(s, N);
+    const vw2_rec_t *r = vw2__oop_find_k1_bwd_pl(s, N, pl);
     /* returns the banked backward form code (>= 0; 0 = "the defaults won",
      * a real verdict since 2026-09-02) or -1 when no usable row exists */
     if (!r) return -1;
@@ -354,6 +383,11 @@ static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
     if (R1) *R1 = pair[0];
     if (R2) *R2 = pair[1];
     return kv;
+}
+static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
+                                        int *R1, int *R2)
+{
+    return vw2_oop_lookup_k1_bwd_pl(s, N, R1, R2, VW2_PL_OOP);
 }
 
 /* --------------------------------------------------- kinds 0/1/2 (classic) */
@@ -903,7 +937,8 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
     memset(r, 0, sizeof *r);
     snprintf(nsbuf, sizeof nsbuf, "%.1f", e->ns);
     r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = e->N;
-    r->key.q = 1; r->key.pl = VW2_PL_OOP;
+    r->key.q = 1;
+    r->key.pl = e->place_ip ? VW2_PL_IP : VW2_PL_OOP;   /* the in-place cell's own row (2026-09-21) */
     r->key.ord = e->ord_scr ? VW2_ORD_SCR : VW2_ORD_NAT;   /* the scrambled class's own cell */
     r->key.role = VW2_ROLE_COMP;
     r->key.lay  = lay;

@@ -326,8 +326,9 @@ B0.1 mono form            RACED, BANKED (2026-09-04). A solo kernel is the whole
              alias-tolerant n1c twins (same math, no restrict, z -> z legal by
              construction; n1c at 2/6/10/12 was emitted for this door). Both
              forms map onto n1c in place.
-     BANK    the cell's kind-3 row: il_route=mono il_kv=<form>; in place the mode
-             row (@scrmode/@nat) says mode=ilp and the kind-3 row names mono.
+     BANK    the cell's kind-3 row: il_route=mono il_kv=<form>; in place the
+             cell's OWN kind-3 row keyed place=ip names mono (raced in place,
+             2026-09-21; only form 0 exists in place; no mode row).
      VERDICT on this box (cold, 2026-09-04): mono at 2..11, 13, 17, 19 and 9;
              the pair at 12, 15, 16, 21, 25, 27, 32, 64 (the solo body at 16
              measured 12.4 ns vs 4x4 8.4 ns). The primes 5/7 left Bluestein
@@ -488,14 +489,17 @@ RACE       src/core/oop/c2c_ip_create.h (_c2c_ip_create_il) and
            arrives here (the transform-contiguous wrapper over a K=1 inner).
 DIRECTION  forward executes; the verdict serves both directions (structural by
            measurement, see the 2026-09-03 flip probe: no cell flips).
-BANK       @scrmode (ord=scr place=ip lay=il, DEFAULT/SCRAMBLED) or @nat
-           (ord=nat place=ip lay=il, NATURAL) | mode=ilp | mode=zcasc — a
-           mode=zcasc row signposts the recipe that served (ref=cell(...,
-           place=oop[,role=comp])); mode=ilp rows are self-contained. mode=conv
-           and the tape modes are NOT IL verdicts any more: a row carrying one
-           re-races. The convert machinery (deinterleave/split/reinterleave,
-           il_me pad A/B, the OOP convert executor, the il2il executors) is
-           DELETED from the library.
+BANK       the in-place cell's OWN kind-3 row (2026-09-21): t=c2c n=N q=1
+           ord=nat|scr place=ip role=comp lay=il | eng=k1 il_route=... — the
+           K=1 planner races every arm EXECUTED IN PLACE (z -> z, ZTURN-T on
+           its plane drivers, MONO as the n1c solo) and banks the winner, its
+           dir=bwd sibling and the ord=scr cell, all keyed place=ip. The
+           out-of-place cell's row is never served in place, and no mode row
+           is read or written: the @nat/@scrmode mode rows (mode=ilp with a
+           reference to the place=oop row, mode=zcasc for the deleted cascade)
+           are legacy and dead. The convert machinery (deinterleave/split/
+           reinterleave, il_me pad A/B, the OOP convert executor, the il2il
+           executors) is DELETED from the library.
 CALLER     1D c2c IN-PLACE interleaved, any order.
 WITNESS    cold 256: "[k1plan] N=256: ilp=134ns -> ILP (route 5, 16.16)" then
            "replay ILP"; cold 2048: "race: ilp=2400ns zcasc=2072ns -> ZCASC"
