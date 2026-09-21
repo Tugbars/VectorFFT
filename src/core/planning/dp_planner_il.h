@@ -745,7 +745,13 @@ static void _il_dp_ref_mixed_rec(const long double *ir, const long double *ii,
                 long double sr = 0.0L, si = 0.0L;
                 for (r = 0; r < p; r++)
                 {
-                    const long j2 = (r * f) % n;
+                    /* long long: r * f reaches 4.3e9 at a prime stage p = n =
+                     * 65537 and `long` is 32-bit on this Windows toolchain
+                     * (the probe loop in _il_dp_ref_build had the same fix).
+                     * Reached the day the prime cell became a raced arm
+                     * (2026-09-21): a prime N above 2048 had no candidate
+                     * before, so no reference was ever built there. */
+                    const long j2 = (long)(((long long)r * f) % n);
                     const long double xr = scr_r[r * q + k], xi = scr_i[r * q + k];
                     sr += xr * wr[j2] - xi * wi[j2];
                     si += xr * wi[j2] + xi * wr[j2];

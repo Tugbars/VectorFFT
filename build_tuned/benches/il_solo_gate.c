@@ -28,8 +28,8 @@
 #include <string.h>
 #include "vfft.h"
 
-static const int NS[] = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 21, 22, 23, 25, 26, 27, 29, 31, 32, 37, 41, 43, 47, 64 };   /* every N the n1 kind exists for; primes added by patch_primes.py */   /* every N the n1 kind exists for; primes added by patch_primes.py */   /* 23, 14/22/26, then 29/31 joined 2026-09-21 */
-/* N where NO pair/chain can serve: a MONO route is the only legal answer */
+static const int NS[] = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 21, 22, 23, 25, 26, 27, 29, 31, 32, 37, 41, 43, 47, 64 };   /* every N the n1 kind exists for (23, 14/22/26, 29..47 joined 2026-09-21) */
+/* N where NO pair/chain can serve: the solo kernel or the prime cell (a raced arm since 2026-09-21) */
 static int mono_only(int N)
 {
     switch (N) { case 2: case 3: case 4: case 5: case 6: case 7: case 8:
@@ -134,8 +134,15 @@ int main(int argc, char **argv)
             vfft_execute(hi, VFFT_BACKWARD, z, NULL, z, NULL);
             eri = relerr(z, x, N, 1.0 / N);
         }
+        /* mono_only: no pair or chain can serve, so the verdict is the solo
+         * kernel -- or, since the prime cell became a raced arm (2026-09-21),
+         * Rader/Bluestein on the whole N when the race measured it faster
+         * (seen at 37 and 41: Rader over a smooth N-1 beats the direct
+         * radix-37/41 kernel, both placements). Either way the solo kernel
+         * was in the race, which is what the resolver trap this gate exists
+         * for looks like when it fails: a route that is neither. */
         ok = ho && hi && eo < 1e-12 && ero < 1e-12 && ei < 1e-12 && eri < 1e-12 &&
-             (!mono_only(N) || route == 3);
+             (!mono_only(N) || route == 3 || route == 7);
         if (!ok) fails++;
         printf("%-4d | %-5s %.2e  %.2e | %.2e  %.2e | %s%s\n", N,
                route == 3 ? "mono" : route == 5 ? "pair" : route == 6 ? "chain3"

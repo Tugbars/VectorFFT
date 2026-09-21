@@ -966,39 +966,45 @@ two flips.
 
 ```
  route    cells   <0.8   <1.0    p10    med    p90   gmean
- prime     1176     24    170   0.95   1.19   2.24    1.32
- chain3     347     34     84   0.80   1.18   1.59    1.16
- 2p         254      2      6   1.18   1.49   2.19    1.55
- flat       244      8     48   0.91   1.25   1.65    1.23
- mono        23      1      3   0.95   1.43   1.93    1.40
+ prime     1180     25    172   0.95   1.19   2.25    1.32
+ chain3     346     34     83   0.80   1.18   1.59    1.16
+ 2p         256      2      7   1.19   1.50   2.19    1.55
+ flat       240      7     44   0.93   1.25   1.66    1.24
+ mono        22      1      3   0.95   1.42   1.88    1.38
  ztt          3      0      0   1.07   1.12   1.23    1.14
- ALL       2047     69    311   0.94   1.23   2.02    1.31
+ ALL       2047     69    309   0.94   1.24   2.02    1.31
 ```
 
 ```
  size band     cells   median   <1.0   <0.8
- 2..64             63     1.37      7      2
- 65..256          192     1.48      9      4
+ 2..64             63     1.35      7      2
+ 65..256          192     1.49      9      4
  257..512         256     1.39      7      1
- 513..1024        512     1.21     89     11
- 1025..2048      1024     1.17    199     51
+ 513..1024        512     1.21     88     11
+ 1025..2048      1024     1.17    198     51
 ```
 
 The interleaved kernels reach radix 47 at every kind (23 on 2026-09-21, then 29,
-31, 37, 41, 43 and 47 the same day), so a composite is served by the prime cell
--- Bluestein on the WHOLE length -- only when a prime factor of 53 or more is
-present, and MKL's direct radix-p stage costs more per point than that from
-about p = 53 up. The standing families:
+31, 37, 41, 43 and 47 the same day), and since the same day the prime cell --
+Rader or Bluestein on the WHOLE length -- is a raced arm of the pool at every
+non-pow2 N, in both order classes: a chain's cost per point is the sum of its
+radices' (about 0.6 R + 3 intrinsics each) while the convolution's is flat
+(about 40), so a chain of two large radices (43.47, 43.43) loses to Bluestein
+and the pool no longer answers such a cell unopposed. A composite is served by
+the prime cell either because no kernel reaches its prime (53 and up; MKL's
+direct radix-p stage costs more per point than the convolution from about p =
+53) or because the race measured it faster. The standing families:
 
 ```
  family                                     cells   median   <1.0   what decides it
  composite with a prime >= 53 (prime cell)    878     1.18    131   no kernel above 47: whole-N Bluestein vs MKL's direct radix-p stage, whose cost climbs with p (parity from p ~ 53, 2x by 89)
- composite whose largest prime is 29..47      296     1.28     39   kernels at every IL kind since 2026-09-21; the direct conjugate-pair form beats MKL's radix-p stage 1.45-1.63x
+ composite, prime cell BY RACE (primes <= 47)     7     1.21      2   the chain of large radices lost to whole-N Bluestein in its own cell's race (43.47, 43.43, 2.43): a chain's cost is the sum of its radices', the convolution's is flat
+ composite whose largest prime is 29..47      293     1.29     35   kernels at every IL kind since 2026-09-21; the direct conjugate-pair form beats MKL's radix-p stage 1.45-1.63x where one large stage suffices
  prime, Bluestein banked                      189     1.14     34   Rader's inner N-1 is not a buildable length
- prime, Rader banked                          111     1.75      5   
- prime, solo kernel                            15     1.74      2   2..47
- chain3                                       347     1.18     84   cost per point and pass tracks the LARGEST radix in the chain (0.36-0.42 ns at radices <= 12, 0.52 at 13, 0.84 at 23); 13 is the one radix where the direct form trails MKL (0.92x)
- flat (incl. the 2-led chains)                244     1.25     48   a radix-2 leaf when N/2 is odd; the tiny 2 x prime cells are solos now
+ prime, Rader banked                          107     1.71      5   37 and 41 among them: Rader over a smooth N-1 beat the direct radix-37/41 solo kernel in the race
+ prime, solo kernel                            14     1.68      2   2..47, where the solo kernel won its race
+ chain3                                       346     1.18     83   cost per point and pass tracks the LARGEST radix in the chain (0.36-0.42 ns at radices <= 12, 0.52 at 13, 0.84 at 23); 13 is the one radix where the direct form trails MKL (0.92x)
+ flat (incl. the 2-led chains)                240     1.25     44   a radix-2 leaf when N/2 is odd; the tiny 2 x prime cells are solos now
  pow2 32..512                                   5     0.98      3   engine at parity with MKL inside the race; the door's bound K=1 fast path (2026-09-21) returned 2-3 ns of the 4-5 ns fixed cost per call
 ```
 
