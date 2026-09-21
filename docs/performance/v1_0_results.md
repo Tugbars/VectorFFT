@@ -997,7 +997,7 @@ That is where the losses are; the standing families:
  2 x {7..23} composites (flat, 2-led)       27     1.06      8   a radix-2 leaf over an odd run is a thin first stage; at 14/22/26 MKL's single codelet beats two kernel calls
  2 x odd through a 6/10/12 MID (chain3)    125     1.18     35   absorbing the 2 in an even-composite mid costs 0.31 ns/pt against MKL's 0.11 (a whole good stage is 0.44)
  chain3, 11/13-heavy, 1000..2048           ~16   0.63-0.78  16   consistent in both flips; radix 13 is the weak kernel (0.92x where 17/19/23 run 1.4x)
- pow2 32..512                                5   0.82-0.99   5   the sub-2048 pow2 deficit
+ pow2 32..512                                5   0.95-1.02      1   the engine matches MKL inside the race (32: 14.6 vs 16 ns); the public execute cost 4-5 ns a call and its bound K=1 fast path (2026-09-21) returned 2-3 ns of it: 32 at 0.82x -> 0.95x, 64 at 0.91x -> 0.98x
 ```
 
 **The Rader finding.** Rader never lost a race it entered. Of the 202 primes
