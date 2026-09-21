@@ -10,12 +10,14 @@ prime-cell classification (prime / no-kernel composite / SUSPICIOUS).
 
   python gauntlet_check.py <out-dir>        # e.g. results/gauntlet_2026-09-20
   python gauntlet_check.py <out-dir> --missing-list missing.txt   # cells to re-race
+  python gauntlet_check.py <out-dir> --place ip      # the in-place run (calibrate_ip.log, place=ip rows)
 """
 import io, re, sys, os
 
 out = sys.argv[1]
+place = sys.argv[sys.argv.index("--place") + 1] if "--place" in sys.argv else "oop"
 store = os.path.join(out, "store")
-cal = os.path.join(out, "calibrate.log")
+cal = os.path.join(out, "calibrate%s.log" % ("_ip" if place == "ip" else ""))
 
 
 def rd(p):
@@ -35,11 +37,13 @@ def cells(txt, pat):
     return set(int(m) for m in re.findall(r"@cell t=c2c n=(\d+) " + pat, txt))
 
 
-nat = cells(oop, r"q=1 ord=nat place=oop role=comp lay=il \|")
+# the in-place natural K=1 verdict is a REFERENCE row (mode=ilp ref=cell(...place=oop...)) keyed
+# without role=comp; the out-of-place one is the engine row itself
+nat = cells(oop, r"q=1 ord=nat place=ip lay=il \|" if place == "ip" else r"q=1 ord=nat place=oop role=comp lay=il \|")
 pr = cells(prime, r"q=1 ord=scr place=ip role=comp lay=il \|")
 missing = sorted(n for n in banked if n not in nat and n not in pr)
 routes = {}
-for m in re.finditer(r"@cell t=c2c n=(\d+) q=1 ord=nat place=oop role=comp lay=il \|.*?il_route=(\w+)", oop):
+for m in re.finditer(r"@cell t=c2c n=(\d+) q=1 ord=nat place=oop role=comp lay=il \|.*?il_route=(\w+)", oop):   # the engine row serves both placements
     n = int(m.group(1))
     if n in banked:
         routes[n] = m.group(2)
@@ -70,7 +74,8 @@ print("route split:", ", ".join("%s=%d" % kv for kv in sorted(hist.items(), key=
 print("prime-cell composites whose every factor is a kernel radix (should have had a route): %d" % len(susp))
 if susp:
     print("  ", " ".join("%d(%s)" % (n, ".".join(map(str, fac(n)))) for n in susp[:40]))
-if len(sys.argv) > 3 and sys.argv[2] == "--missing-list":
-    io.open(sys.argv[3], "w", encoding="utf-8", newline="\n").write("\n".join(map(str, missing)) + "\n")
-    print("wrote", sys.argv[3])
+if "--missing-list" in sys.argv:
+    mp = sys.argv[sys.argv.index("--missing-list") + 1]
+    io.open(mp, "w", encoding="utf-8", newline="\n").write("\n".join(map(str, missing)) + "\n")
+    print("wrote", mp)
 sys.exit(1 if missing else 0)
