@@ -3707,16 +3707,10 @@ N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
 6,1,z:ilp,nat-oop,9,12,8.743,1.404,1.865e-16,mono,1
 10,1,z:ilp,nat-oop,12,13,14.117,1.131,1.836e-16,mono,0
 10,1,z:ilp,nat-oop,12,14,14.221,1.171,1.836e-16,mono,1
-14,1,z:ilp,nat-oop,22,14,11.917,0.641,3.257e-16,flat,0
-14,1,z:ilp,nat-oop,23,14,11.666,0.607,3.257e-16,flat,1
 18,1,z:ilp,nat-oop,17,24,22.296,1.405,3.826e-16,2p,0
 18,1,z:ilp,nat-oop,17,23,21.910,1.350,3.826e-16,2p,1
-22,1,z:ilp,nat-oop,33,31,14.945,0.946,5.317e-16,flat,0
-22,1,z:ilp,nat-oop,33,32,15.009,0.981,5.317e-16,flat,1
 23,1,z:ilp,nat-oop,45,67,11.477,1.476,1.169e-15,mono,0
 23,1,z:ilp,nat-oop,44,66,11.769,1.489,1.169e-15,mono,1
-26,1,z:ilp,nat-oop,39,36,15.568,0.906,8.879e-16,flat,0
-26,1,z:ilp,nat-oop,40,36,15.203,0.888,8.879e-16,flat,1
 30,1,z:ilp,nat-oop,23,31,31.600,1.320,3.019e-16,2p,0
 30,1,z:ilp,nat-oop,23,31,32.170,1.342,3.019e-16,2p,1
 34,1,z:ilp,nat-oop,53,75,16.337,1.425,8.373e-16,flat,0
@@ -4093,3 +4087,9 @@ N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
 2024,1,z:ilp,nat-oop,4341,6800,25.606,1.567,1.514e-15,chain3,1
 515,1,z:ilp,nat-oop,4971,4552,4.666,0.916,6.586e-16,prime,0
 515,1,z:ilp,nat-oop,4861,4672,4.772,0.961,6.586e-16,prime,1
+14,1,z:ilp,nat-oop,16,14,16.835,0.880,2.036e-16,mono,0
+14,1,z:ilp,nat-oop,16,14,16.887,0.907,2.036e-16,mono,1
+22,1,z:ilp,nat-oop,27,31,18.267,1.142,4.757e-16,mono,0
+22,1,z:ilp,nat-oop,27,31,18.291,1.140,4.757e-16,mono,1
+26,1,z:ilp,nat-oop,32,36,18.919,1.100,7.348e-16,mono,0
+26,1,z:ilp,nat-oop,32,37,18.888,1.142,7.348e-16,mono,1

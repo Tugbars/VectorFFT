@@ -30,11 +30,15 @@ static int g_fail = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { g_fail++; printf("  *** FAIL: "); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
 /* ── L4 references, verbatim from their pre-migration sites ─────────── */
-/* oop/c2c_ip_create.h `_ip_order_is_nat` (rank 1, in place) */
+/* oop/c2c_ip_create.h `_ip_order_is_nat` (rank 1, in place). Until 2026-09-21
+ * the reference was NATURAL || (DEFAULT && pow2): the pre-law DEFAULT -> scr at
+ * the odd cells for the split library's @scrmode mode row. The in-place cell
+ * races its own arms now and reads no mode row, so the one K=1 law holds in
+ * place too: DEFAULT = NATURAL at every N (design_contracts.md 3). */
 static int _ref_ip_order_is_nat(const vfft_config_t *cfg, int N)
 {
-    return cfg->order == VFFT_ORDER_NATURAL ||
-           (cfg->order == VFFT_ORDER_DEFAULT && (N & (N - 1)) == 0);
+    (void)N;
+    return cfg->order != VFFT_ORDER_SCRAMBLED;
 }
 /* oop/k1_commit.h `scr_req` (rank 1, the K=1 engine row) */
 static int _ref_k1_scr_req(const vfft_config_t *cfg)
