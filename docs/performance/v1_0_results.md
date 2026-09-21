@@ -966,38 +966,40 @@ two flips.
 
 ```
  route    cells   <0.8   <1.0    p10    med    p90   gmean
- prime     1478    193    401   0.71   1.15   2.08   1.18
- chain3     281     34     65   0.74   1.20   1.64   1.17
- 2p         156      2      6   1.17   1.47   2.22   1.54
- flat       112      6     28   0.86   1.30   1.69   1.24
- mono        17      1      3   0.88   1.21   1.74   1.27
- ztt          3      0      0   1.07   1.12   1.23   1.14
- ALL       2047    236    503   0.77   1.17   2.00   1.21
+ prime     1176     24    170   0.95   1.19   2.24    1.32
+ chain3     347     34     84   0.80   1.18   1.59    1.16
+ 2p         254      2      6   1.18   1.49   2.19    1.55
+ flat       244      8     48   0.91   1.25   1.65    1.23
+ mono        23      1      3   0.95   1.43   1.93    1.40
+ ztt          3      0      0   1.07   1.12   1.23    1.14
+ ALL       2047     69    311   0.94   1.23   2.02    1.31
 ```
 
 ```
  size band     cells   median   <1.0   <0.8
- 2..64            63     1.35      8      2
- 65..256         192     1.44     25     14
- 257..512        256     1.28     37     23
- 513..1024       512     1.15    145     63
- 1025..2048     1024     1.14    288    134
+ 2..64             63     1.37      7      2
+ 65..256          192     1.48      9      4
+ 257..512         256     1.39      7      1
+ 513..1024        512     1.21     89     11
+ 1025..2048      1024     1.17    199     51
 ```
 
-Most of the range is a composite with a prime factor of 29 or more (1157 of
-2047 cells), and those are served by the prime cell -- Bluestein or Rader on
-the WHOLE length -- while MKL runs a mixed-radix plan with a prime stage.
-That is where the losses are; the standing families:
+The interleaved kernels reach radix 47 at every kind (23 on 2026-09-21, then 29,
+31, 37, 41, 43 and 47 the same day), so a composite is served by the prime cell
+-- Bluestein on the WHOLE length -- only when a prime factor of 53 or more is
+present, and MKL's direct radix-p stage costs more per point than that from
+about p = 53 up. The standing families:
 
 ```
- family                                   cells   median   <1.0   what decides it
- composite with a prime >= 29             1157     1.13    355   MKL runs a direct radix-p stage (cost ~p) to p~89; ours is whole-N Bluestein at a flat 6.7 ns/pt; crossover p = 47: p in 29..47 loses (0.60-0.96), p >= 53 wins 1.1-2x
- prime, Bluestein banked                   202     1.14     41   Rader's inner N-1 is not a buildable length
- prime, Rader banked                        98     1.82      0
- 2 x {7..23} composites (flat, 2-led)       27     1.06      8   a radix-2 leaf over an odd run is a thin first stage; at 14/22/26 MKL's single codelet beats two kernel calls
- 2 x odd through a 6/10/12 MID (chain3)    125     1.18     35   absorbing the 2 in an even-composite mid costs 0.31 ns/pt against MKL's 0.11 (a whole good stage is 0.44)
- chain3, 11/13-heavy, 1000..2048           ~16   0.63-0.78  16   consistent in both flips; radix 13 is the weak kernel (0.92x where 17/19/23 run 1.4x)
- pow2 32..512                                5   0.95-1.02      1   the engine matches MKL inside the race (32: 14.6 vs 16 ns); the public execute cost 4-5 ns a call and its bound K=1 fast path (2026-09-21) returned 2-3 ns of it: 32 at 0.82x -> 0.95x, 64 at 0.91x -> 0.98x
+ family                                     cells   median   <1.0   what decides it
+ composite with a prime >= 53 (prime cell)    878     1.18    131   no kernel above 47: whole-N Bluestein vs MKL's direct radix-p stage, whose cost climbs with p (parity from p ~ 53, 2x by 89)
+ composite whose largest prime is 29..47      296     1.28     39   kernels at every IL kind since 2026-09-21; the direct conjugate-pair form beats MKL's radix-p stage 1.45-1.63x
+ prime, Bluestein banked                      189     1.14     34   Rader's inner N-1 is not a buildable length
+ prime, Rader banked                          111     1.75      5   
+ prime, solo kernel                            15     1.74      2   2..47
+ chain3                                       347     1.18     84   cost per point and pass tracks the LARGEST radix in the chain (0.36-0.42 ns at radices <= 12, 0.52 at 13, 0.84 at 23); 13 is the one radix where the direct form trails MKL (0.92x)
+ flat (incl. the 2-led chains)                244     1.25     48   a radix-2 leaf when N/2 is odd; the tiny 2 x prime cells are solos now
+ pow2 32..512                                   5     0.98      3   engine at parity with MKL inside the race; the door's bound K=1 fast path (2026-09-21) returned 2-3 ns of the 4-5 ns fixed cost per call
 ```
 
 **The Rader finding.** Rader never lost a race it entered. Of the 202 primes
