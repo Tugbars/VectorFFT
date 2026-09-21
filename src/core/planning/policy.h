@@ -82,15 +82,18 @@ static inline long vfft_policy_race_max_n(int N)
  *                        a natural cell races its own chain under the
  *                        natural pass and never shares the scr row
  *                        (2026-09-04, and the 2026-09-07 order-cell law).
- *   rank 1, in place     NATURAL, or DEFAULT at a power of two -> nat.
- *                        DEFAULT = NATURAL at the pow2 cells
- *                        (design_contracts.md 3, owner 2026-09-09); the
- *                        odd cells keep their pre-law DEFAULT path (the
- *                        @scrmode row) until the odd machinery's turn.
- *   rank 1, out of place explicit SCRAMBLED -> scr; DEFAULT and NATURAL
+ *   rank 1, either place explicit SCRAMBLED -> scr; DEFAULT and NATURAL
  *                        -> nat (2026-09-05: an explicit SCRAMBLED request
  *                        reads the scrambled pool's own verdict and
- *                        nothing else).
+ *                        nothing else). DEFAULT = NATURAL (design_contracts
+ *                        .md 3, owner 2026-09-09). Until 2026-09-21 the
+ *                        in-place branch kept a pre-law DEFAULT -> scr at
+ *                        the non-pow2 cells for the split library's
+ *                        @scrmode mode row; the in-place cell races its own
+ *                        arms now and reads no mode row, so the one law
+ *                        holds in place too (a DEFAULT in-place request at
+ *                        an odd N was being served the SCRAMBLED cell and
+ *                        came back permuted -- il_solo_gate at 27).
  *
  * Returns VW2_ORD_NAT / VW2_ORD_SCR. `N` is read only by the rank-1
  * in-place branch; `inplace` only by rank 1. */
@@ -99,10 +102,7 @@ static inline int vfft_policy_ord(const vfft_config_t *cfg, int N,
 {
     if (rank >= 2)
         return (cfg->order == VFFT_ORDER_NATURAL) ? VW2_ORD_NAT : VW2_ORD_SCR;
-    if (inplace)
-        return (cfg->order == VFFT_ORDER_NATURAL ||
-                (cfg->order == VFFT_ORDER_DEFAULT && (N & (N - 1)) == 0))
-                   ? VW2_ORD_NAT : VW2_ORD_SCR;
+    (void)inplace; (void)N;   /* one law for both placements (2026-09-21) */
     return (cfg->order == VFFT_ORDER_SCRAMBLED) ? VW2_ORD_SCR : VW2_ORD_NAT;
 }
 

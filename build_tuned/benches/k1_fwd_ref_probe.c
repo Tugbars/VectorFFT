@@ -48,6 +48,37 @@ static double relerr(const double *a, const double *b, int N, double scale)
     return m > 0 ? e / m : e;
 }
 static int g_ip = 0;   /* --ip: the IN-PLACE natural cell, (z, NULL, z, NULL) both legs (2026-09-21) */
+static int g_time = 0; /* --time: after the check, time vfft_execute FORWARD through the door
+                        * (best of 5 trials, reps sized to >= 1 ms) -- beside the planner's own
+                        * in-process arm times (VFFT_IL_DP_VERBOSE=1) this prices the DOOR */
+#ifdef _WIN32
+#include <windows.h>
+static double now_ns(void) { LARGE_INTEGER f, c; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c); return 1e9 * (double)c.QuadPart / (double)f.QuadPart; }
+#else
+#include <time.h>
+static double now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return 1e9 * t.tv_sec + t.tv_nsec; }
+#endif
+static double time_door(vfft_plan h, const double *x, double *y, int N)
+{
+    long reps = 1; double best = 1e30;
+    for (;;)
+    {   /* size reps so one trial is >= 1 ms */
+        double t0 = now_ns();
+        for (long i = 0; i < reps; i++) vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
+        double t = now_ns() - t0;
+        if (t >= 1e6) break;
+        reps *= 2;
+    }
+    for (int trial = 0; trial < 5; trial++)
+    {
+        double t0 = now_ns();
+        for (long i = 0; i < reps; i++) vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
+        double t = (now_ns() - t0) / (double)reps;
+        if (t < best) best = t;
+    }
+    (void)N;
+    return best;
+}
 
 static int probe(vfft_wisdom *W, int N)
 {
@@ -77,8 +108,11 @@ static int probe(vfft_wisdom *W, int N)
         ef = relerr(y, X, N, 1.0); er = relerr(r, x, N, 1.0 / N);
     }
     ok = h && ef < 1e-11 && er < 1e-11;
-    printf("%-6d %-7s %s fwd %.2e  rt %.2e  %s\n", N, h ? vfft_plan_route(h) : "NOPLAN", g_ip ? "ip " : "oop",
+    printf("%-6d %-7s %s fwd %.2e  rt %.2e  %s", N, h ? vfft_plan_route(h) : "NOPLAN", g_ip ? "ip " : "oop",
            ef, er, ok ? "ok" : "*** FAIL ***");
+    if (h && g_time && !g_ip)
+        printf("  door %.1f ns", time_door(h, x, y, N));
+    printf("\n");
     if (h) vfft_destroy(h);
     free(x); free(X); free(y); free(r);
     return ok;
@@ -86,7 +120,13 @@ static int probe(vfft_wisdom *W, int N)
 int main(int argc, char **argv)
 {
     int fails = 0, cells = 0, a0 = 1;
-    if (argc > 1 && !strcmp(argv[1], "--ip")) { g_ip = 1; a0 = 2; }
+    while (argc > a0 && argv[a0][0] == '-')
+    {
+        if (!strcmp(argv[a0], "--ip")) g_ip = 1;
+        else if (!strcmp(argv[a0], "--time")) g_time = 1;
+        else break;
+        a0++;
+    }
     if (argc < a0 + 2) { printf("usage: %s [--ip] <wisdir> N [N ...] (N or a-b)\n", argv[0]); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     vfft_wisdom *W = vfft_wisdom_load(argv[a0]);
