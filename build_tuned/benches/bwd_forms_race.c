@@ -13,14 +13,14 @@
  *
  * No planning logic here: the race is the planner's, the row writer is the
  * store's. Usage: bwd_forms_race.exe <scratch wisdir> <repeats> [N...]
- * Build: python build.py --src benches/bwd_forms_race.c --vfft --compile */
+ * Build: python build.py --src benches/bwd_forms_race.c --compile   (NO --vfft: the TU includes vfft.c) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include "dp_planner_il.h"
+#include "vfft.c"   /* the planner is not a self-contained header since the four-step (2026-09-15): this TU IS a library TU, built WITHOUT --vfft (2026-09-21) */
 
 static void cooldown_ms(int ms)
 {

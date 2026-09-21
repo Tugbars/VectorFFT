@@ -12,10 +12,15 @@
  * dies instead of printing a verdict, the last stderr line names the slot.
  *
  * Usage: form_slot_gate.exe [--verbose]
- * Build: python build.py --src benches/form_slot_gate.c --vfft --compile */
+ * Build: python build.py --src benches/form_slot_gate.c --compile   (NO --vfft: the TU includes vfft.c) */
 #include <stdio.h>
 #include <string.h>
-#include "dp_planner_il.h"      /* the planner the probe drives, first */
+/* The planner is not a self-contained header: since the four-step (2026-09-15)
+ * it names vfft_k1fs_plan_t and _k1fs_ctx, which need vfft.c's include order
+ * (the wisdom stack, the IL kernel types, the four-step) before it. This gate
+ * drives the planner directly, so it IS a library TU: it includes vfft.c and
+ * is built WITHOUT --vfft (2026-09-21; the same shape as any in-TU tool). */
+#include "vfft.c"               /* the whole library, in its own order: the planner comes with it */
 #include "il_slot_probe.h"      /* the pair tier's slot list + probe    */
 
 #define MAX_SLOTS 4096
