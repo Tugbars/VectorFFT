@@ -1024,51 +1024,39 @@ The plan and the buffers exist before either engine runs, so it is not
 allocation order. Unexplained; a targeted probe (one chain3 cell, both
 orders, repeated) is the next step.
 
-### K=1 INTERLEAVED — the same 2047 cells IN PLACE (2026-09-21)
+### K=1 INTERLEAVED — the cells 2..512 IN PLACE, raced in place (2026-09-21)
 
-The same contract with placement flipped: natural order, IN PLACE, K=1, one
-thread, every N from 2 to 2048, against MKL with DFTI_INPLACE, the same
-bench discipline (core 2 + HIGH, cachebust + cool, both flips, best-of-5),
-rows in `build_tuned/results/gauntlet_2026-09-20/gauntlet_ip.csv`. NOT an
-in-place calibration: the in-place door of this tree does not race the cell
-in place -- it serves the OUT-OF-PLACE engine row through a reference row
-`mode=ilp ref=cell(... place=oop ...)` and executes it in place (owner,
-2026-09-21: that is wrong; the in-place cell is its own contract and must
-race its arms executed in place). So this table prices in-place EXECUTION
-of the out-of-place verdicts, and stands until the in-place race exists.
-Max roundtrip error 2.6e-15. Ratio = MKL / ours, worse of the two flips; the last two
-columns are each library's own in-place time over its out-of-place time.
+The in-place cell is its own contract: the K=1 planner races every arm
+executed z -> z and banks the winner on the cell's `place=ip` row
+(`docs/design/planning_model.md`). Natural order, IN PLACE, K=1, one thread,
+every N from 2 to 512, against MKL with DFTI_INPLACE, the same bench
+discipline as the out-of-place run (core 2 + HIGH, cachebust + cool, both
+flips, best-of-5); rows in `build_tuned/results/gauntlet_2026-09-20/gauntlet_ip.csv`,
+control 0.96-1.07x. 513..2048 in place is not calibrated (cut at 512). Max
+roundtrip error 2.2e-15; every in-place verdict also passes the forward
+reference against a long-double DFT (`benches/k1_fwd_ref_probe.exe --ip`).
+Ratio = MKL / ours, worse of the two flips; the last two columns are each
+library's in-place time over its out-of-place time at the same cells.
 
 ```
  route    cells   <0.8   <1.0    p10    med    p90   gmean   ours ip/oop   MKL ip/oop
- prime     1478    159    355   0.78   1.16   2.13   1.21        0.99         1.00
- chain3     281     25     50   0.82   1.25   1.63   1.22        0.99         1.00
- 2p         156      1      9   1.11   1.47   2.19   1.53        1.00         1.00
- flat       115      1     20   0.93   1.33   1.70   1.28        0.98         1.00
- mono        14      1      2   0.92   1.35   1.68   1.27        1.00         0.96
- ztt          3      0      1   0.90   1.05   1.09   1.01        1.08         0.92
- ALL       2047    187    437   0.82   1.19   2.02   1.24        0.99         1.00
+ prime      269     36     57   0.73   1.25   2.62   1.38       0.99          1.00
+ 2p         126      0      7   1.15   1.47   2.17   1.53       1.00          1.00
+ chain3      78      0      1   1.22   1.38   2.11   1.45       0.99          1.00
+ flat        22      2      7   0.89   1.11   1.48   1.14       1.00          1.00
+ mono        16      1      4   0.82   1.26   1.73   1.22       1.00          0.98
+ ALL        511     39     76   0.85   1.33   2.35   1.41       1.00          1.00
 ```
 
-In-place execution is free below 2048: our in-place time is the
-out-of-place time at every route (median 0.99x), MKL's likewise, and no cell
-is served by a different engine in place. The two exceptions are the
-ZTURN-T cells: 2048 runs 14% slower in place (1826 against 1602 ns; 1.09x
-against 1.23x vs MKL) and 16 loses its margin (0.90x).
-
-**The chain3 engine has two speeds.** In both placements about one chain3
-cell in five reads bimodal across the two flips (53 of 281 out of place, 51
-in place), the slow reading 1.3-1.6x the fast one, and out of place the slow
-reading is the one taken after MKL ran (44 of 53). No other route does this
-(pair 5 of 127, flat 8 of 108, and the prime cell's inner is a pair or
-chain). The engine runs three passes through two plan-owned staging buffers
-of the transform's own size, 64-byte aligned, beside the caller's input and
-output of the same size: four equal-sized streams whose page offsets are
-decided by the heap, so a process either lands them on distinct cache sets
-or on the same ones. The out-of-place run's 163 flip disagreements are this
-one route. The fix is allocator-side, one arena with a deliberate skew
-between the two staging buffers, to be proven by a same-process A/B before
-it ships.
+In place equals out of place, for us and for MKL: at these cells the
+out-of-place run reads the same 1.33x median with 74 below parity. The
+in-place race re-picks among near-ties (104 of 242 non-prime cells bank a
+different plan in place: 34 route changes, 62 re-factorizations, 8 forms)
+and those cells run at 0.995x of their out-of-place time, the same as the
+plan-identical ones. Below 2048 every engine consumes its input through a
+staging plane and writes afterwards in both placements, so in place saves
+the caller a buffer and the library nothing; an in-place advantage needs an
+engine form built for it (`docs/roadmap/inplace_engine_forms.md`).
 
 ## 2. vs MKL — 2D C2C
 
