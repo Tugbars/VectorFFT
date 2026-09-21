@@ -100,12 +100,16 @@ static void _c2c_race_reseed(void *v)
 /* ── IN-PLACE INTERLEAVED c2c: the IL tier's own create (2026-09-03) ──────
  * Owner: "we DO NOT see split as a fallback of IL". No split plan is built
  * for an interleaved caller. The cell is served by an IL engine — the K=1
- * engines (pair / chain3 / prime, with their banked forms) and, at
- * N >= 2048, the cascade (kind-4 recipe; natord under order=NATURAL) — and
- * the verdict between them is a raced IL-vs-IL verdict on the cell's own
- * mode row (@scrmode for DEFAULT/SCRAMBLED, @nat for NATURAL: mode=ilp |
- * mode=zcasc). A mode=conv or tape row is not an IL verdict and re-races.
- * With one legal arm it serves and banks; with none the create REFUSES —
+ * engines (mono / pair / chain3 / flat / ZTURN-T / four-step / prime, with
+ * their banked forms) — and the verdict between them is the IN-PLACE CELL'S
+ * OWN raced verdict (2026-09-21): the K=1 planner races every arm executed
+ * z -> z, exactly as this door runs it, and banks the winner on the cell's
+ * kind-3 row keyed place=ip (its dir=bwd sibling and ord=scr row alongside).
+ * The out-of-place cell's row is never served here, and no mode row of the
+ * split library is read: until 2026-09-21 this door read the @nat/@scrmode
+ * row and served the out-of-place verdict through a reference (owner: wrong;
+ * one contract per request, and in place is expected to be FASTER). With one
+ * legal arm the race serves and banks it; with none the create REFUSES —
  * there is nothing to fall back to, by design. Lane-major K>1 interleaved
  * (only an explicit VFFT_BATCH_LANE_MAJOR reaches here; DEFAULT geometry is
  * the transform-contiguous wrapper) is refused: measured 2026-09-03, it
@@ -123,34 +127,6 @@ static inline int _ip_order_is_nat(const vfft_config_t *cfg, int N)
     return vfft_policy_ord_k1(cfg, N, /*inplace=*/1) == VW2_ORD_NAT;
 }
 
-static void _bank_ipmode_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
-                            int N, int mode, double ns)
-{
-    vfft_proto_nat_entry_t nn;
-    if (!W || W->vw2_off_stride)
-        return;
-    memset(&nn, 0, sizeof nn);
-    nn.N = N;
-    nn.K = 1;
-    nn.mode = mode;
-    nn.nat_ns = ns;
-    nn.raced = 1;
-    nn.nf = 1;                 /* the dummy chain: mode=ilp emits no recipe,
-                                * mode=zcasc emits the ref= signpost */
-    nn.factors[0] = N;
-    nn.ref_comp = 0;   /* no cascade recipe rows since 2026-09-15 */
-    /* the row that SERVED. inplace=0 deliberately: the K=1 ENGINE row is the
-     * place=oop cell whatever this door's placement (k1_commit.h asks with 0
-     * from both doors), which is why this line and the _ip_order_is_nat below
-     * classify the SAME request by two different laws. */
-    nn.ref_ilp = _ilp_ref_of(W, N, mode,
-                             vfft_policy_ord_k1(cfg, N, /*inplace=*/0) == VW2_ORD_SCR);
-    if (_ip_order_is_nat(cfg, N))
-        vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0, _vw2_lay_of(cfg));
-    else
-        vw2_stride_bank_scrmode(&W->vw2, &nn, _vw2_lay_of(cfg));
-    _vw2_persist(W, cfg);
-}
 
 static vfft_plan _c2c_ip_finish(struct vfft_plan_s *h,
                                 struct vfft_wisdom_s *W,
@@ -170,7 +146,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     vfft_ztt_plan_t *ztt = NULL;            /* ZTURN-T (2026-09-09) */
     vfft_oop11_fn mono_f = 0, mono_b = 0;   /* the alias-tolerant solo (MONO verdict) */
     vfft_ilprime_plan_t *ilp = NULL;
-    int have_k1 = 0, mode = VFFT_NAT_UNSET, raced_row = 0;
+    int have_k1 = 0, mode = VFFT_NAT_UNSET;
     (void)reg;
     if (K > 1)
     {
@@ -194,32 +170,11 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         fprintf(stderr, "[ipil] N=%d order=%s: IL create (no split baseline)\n",
                 N, nat ? "natural" : (cfg->order == VFFT_ORDER_SCRAMBLED ? "scrambled" : "default"));
 
-    /* 1. the banked verdict for THIS cell (order-keyed rows) */
-    if (W && !W->vw2_off_stride && !cfg->recalibrate)
-    {
-        vfft_proto_nat_entry_t eb;
-        const int hit = nat
-            ? vw2_stride_lookup_nat(&W->vw2, _vw2_lay_of(cfg), N, 1, &eb)
-            : vw2_stride_lookup_scrmode(&W->vw2, _vw2_lay_of(cfg), N, 1, &eb);
-        if (hit && (eb.mode == VFFT_NAT_ILP || eb.mode == VFFT_NAT_ZCASC))
-        {
-            mode = eb.mode;
-            raced_row = 1;
-        }
-        /* mode=conv / tape / free rows: not IL verdicts — fall to the race */
-    }
-    /* ZTURN-T's band (owner's law, 2026-09-09; the cascade out of pow2
-     * 2026-09-14): a pow2 cell up to the ceiling has no cascade arm in
-     * place in ANY order class; a stale ZCASC row there is not a verdict —
-     * the K=1 engine builds and banks as ILP. A SCRAMBLED request takes the
-     * ord=scr K=1 row, whose writer is the PLAIN ZTURN-T schedule
-     * (ztt_scrambled_design.md: every stage in place, no plane — the class's
-     * measured strength is exactly this cell). */
-    if (mode == VFFT_NAT_ZCASC)   /* the cascade is deleted (2026-09-15): a stale row is not a verdict */
-    {
-        mode = VFFT_NAT_UNSET;
-        raced_row = 0;
-    }
+    /* 1. (2026-09-21) no mode row and no reference row: the in-place cell's
+     *    verdict is its OWN kind-3 row, place=ip, read or raced (executed in
+     *    place) and banked by the K=1 candidate below. The split library's
+     *    @nat/@scrmode rows are not read here any more (two libraries), and
+     *    the out-of-place cell's row is never served in its stead. */
 
     /* 2. the K=1 IL engine candidate: the planned row's route — MONO (the
      *    alias-tolerant solo, 2026-09-04), pair, chain3, else prime */
@@ -238,13 +193,10 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
             /* fs     */ fs != NULL,  /* prime  */ ilp != NULL);
     }
 
-    /* 4. replay a banked verdict when its engine built */
-    if (mode == VFFT_NAT_ILP && !have_k1) mode = VFFT_NAT_UNSET;
-    if (mode == VFFT_NAT_UNSET && have_k1)
-    {
+    /* 4. the verdict IS the cell's own row (2026-09-21): read above, or raced
+     *    in place and banked by _k1_il_candidate / the prime cell */
+    if (have_k1)
         mode = VFFT_NAT_ILP;
-        if (!raced_row) _bank_ipmode_1d(W, cfg, N, mode, 0.0);
-    }
 
     /* 5. attach the verdict; the loser dies here */
     if (mode == VFFT_NAT_ILP && have_k1)
@@ -261,7 +213,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         h->nat_mode = nat ? VFFT_NAT_ILP : 0;
         if (getenv("VFFT_NAT_LOG"))
             fprintf(stderr, "[ipil] N=%d: %s ILP (%s)\n", N,
-                    raced_row ? "replay" : "attach",
+                    "attach",
                     h->k1il2p ? "il2p" : h->k1il3p ? "il3p" : h->k1ilfd ? "flat"
                               : h->k1ztt ? "ztt" : h->k1fs ? "fs" : h->k1_mono_ilf ? "mono" : "ilprime");
     }

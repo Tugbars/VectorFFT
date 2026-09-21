@@ -328,7 +328,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                      * pair axis was skipped (it survived unbraced only because
                      * it null-checks — a latent trap, not a working shortcut) */
                     il2p = vfft_il2p_create(N, iR1, iR2);
-                    _k1_il2p_apply_kv(il2p, ki, &W->vw2, N);   /* banked variant verdict */
+                    _k1_il2p_apply_kv(il2p, ki, &W->vw2, N, 0);   /* banked variant verdict (the out-of-place cell) */
                 }
                 ilr = il2p ? VFFT_K1_IL_2P_PURE : VFFT_K1_IL_NONE;
             }
@@ -354,7 +354,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 {
                     il3p = vfft_il3p_create(N, ki->il_c3[0], ki->il_c3[1],
                                             ki->il_c3[2]);
-                    _k1_il3p_apply_kv(il3p, ki, &W->vw2, N);   /* banked forms > default */
+                    _k1_il3p_apply_kv(il3p, ki, &W->vw2, N, 0);   /* banked forms > default (the out-of-place cell) */
                     if (il3p && getenv("VFFT_NAT_LOG"))
                         fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d "
                                         "src=wisdom (oop)\n", N, ki->il_c3[0],

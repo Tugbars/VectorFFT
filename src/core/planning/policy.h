@@ -107,10 +107,13 @@ static inline int vfft_policy_ord(const vfft_config_t *cfg, int N,
 }
 
 /* the two call-site spellings: rank >= 2 reads no N and no placement;
- * rank 1 reads both. The K=1 ENGINE row is the place=oop row whatever the
- * request's placement (an in-place K=1 cell carries mode=ilp + ref= to it),
- * so the K=1 candidate builder asks with inplace = 0 — only the in-place
- * DOOR's own mode row asks with inplace = 1. */
+ * rank 1 reads both. Since 2026-09-21 the K=1 candidate builder asks with
+ * the REQUEST's placement: the in-place cell is its own kind-3 row
+ * (place=ip), raced with every arm executed in place and banked there;
+ * the out-of-place cell is the place=oop row. Neither placement reads the
+ * other's verdict (one contract per request). Until then both doors asked
+ * with inplace = 0 and the in-place door served the out-of-place verdict
+ * through a mode row with a reference to it. */
 static inline int vfft_policy_ord_rankn(const vfft_config_t *cfg)
 {
     return vfft_policy_ord(cfg, 0, 2, 0);

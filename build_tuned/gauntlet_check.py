@@ -37,13 +37,12 @@ def cells(txt, pat):
     return set(int(m) for m in re.findall(r"@cell t=c2c n=(\d+) " + pat, txt))
 
 
-# the in-place natural K=1 verdict is a REFERENCE row (mode=ilp ref=cell(...place=oop...)) keyed
-# without role=comp; the out-of-place one is the engine row itself
-nat = cells(oop, r"q=1 ord=nat place=ip lay=il \|" if place == "ip" else r"q=1 ord=nat place=oop role=comp lay=il \|")
+# the in-place cell's verdict is its OWN kind-3 row, place=ip (raced executed in place, 2026-09-21)
+nat = cells(oop, r"q=1 ord=nat place=%s role=comp lay=il \|" % place)
 pr = cells(prime, r"q=1 ord=scr place=ip role=comp lay=il \|")
 missing = sorted(n for n in banked if n not in nat and n not in pr)
 routes = {}
-for m in re.finditer(r"@cell t=c2c n=(\d+) q=1 ord=nat place=oop role=comp lay=il \|.*?il_route=(\w+)", oop):   # the engine row serves both placements
+for m in re.finditer(r"@cell t=c2c n=(\d+) q=1 ord=nat place=%s role=comp lay=il \|.*?il_route=(\w+)" % place, oop):
     n = int(m.group(1))
     if n in banked:
         routes[n] = m.group(2)

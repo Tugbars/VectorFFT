@@ -1029,11 +1029,14 @@ orders, repeated) is the next step.
 The same contract with placement flipped: natural order, IN PLACE, K=1, one
 thread, every N from 2 to 2048, against MKL with DFTI_INPLACE, the same
 bench discipline (core 2 + HIGH, cachebust + cool, both flips, best-of-5),
-rows in `build_tuned/results/gauntlet_2026-09-20/gauntlet_ip.csv`. The
-in-place door serves the cell's banked engine row -- a reference row
-`mode=ilp ref=cell(... place=oop ...)` -- and executes it in place, so this
-measures in-place EXECUTION of the out-of-place verdicts. Max roundtrip
-error 2.6e-15. Ratio = MKL / ours, worse of the two flips; the last two
+rows in `build_tuned/results/gauntlet_2026-09-20/gauntlet_ip.csv`. NOT an
+in-place calibration: the in-place door of this tree does not race the cell
+in place -- it serves the OUT-OF-PLACE engine row through a reference row
+`mode=ilp ref=cell(... place=oop ...)` and executes it in place (owner,
+2026-09-21: that is wrong; the in-place cell is its own contract and must
+race its arms executed in place). So this table prices in-place EXECUTION
+of the out-of-place verdicts, and stands until the in-place race exists.
+Max roundtrip error 2.6e-15. Ratio = MKL / ours, worse of the two flips; the last two
 columns are each library's own in-place time over its out-of-place time.
 
 ```

@@ -80,7 +80,7 @@
  * backward cell yet (the chain's backward leaf slot is a bwd-axis item). */
 static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
                               const vfft_oop_wisdom_entry_t *ke,
-                              const vw2_store_t *st, int N)
+                              const vw2_store_t *st, int N, int ip)
 {
     if (!p)
         return;
@@ -91,7 +91,7 @@ static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
     if (st)
     {
         int c3[3] = { 0, 0, 0 };
-        int bkv = vw2_oop_lookup_k1_bwd_chain(st, N, c3);
+        int bkv = vw2_oop_lookup_k1_bwd_chain_pl(st, N, c3, ip ? VW2_PL_IP : VW2_PL_OOP);
         if (bkv >= 0 && c3[0] == p->R2 && c3[1] == p->A && c3[2] == p->B)
             vfft_il3p_apply_kv_forms_bwd(p, bkv);
     }
@@ -109,7 +109,7 @@ static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
 
 static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
                               const vfft_oop_wisdom_entry_t *ke,
-                              const vw2_store_t *st, int N)
+                              const vw2_store_t *st, int N, int ip)
 {
     /* Wisdom variant verdict — runs AFTER create, so it OVERRIDES the
      * structural blocked default (il2p.h): a banked per-cell measurement
@@ -143,7 +143,7 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
          * Mismatch => ignore the record and keep the structural default,
          * which is always correct if slower. */
         int bR1 = 0, bR2 = 0;
-        int bkv = vw2_oop_lookup_k1_bwd(st, N, &bR1, &bR2);   /* -1 = no row */
+        int bkv = vw2_oop_lookup_k1_bwd_pl(st, N, &bR1, &bR2, ip ? VW2_PL_IP : VW2_PL_OOP);   /* -1 = no row */
         if (bkv >= 0 && bR1 == p->R1 && bR2 == p->R2)
             vfft_il2p_apply_kv_forms_bwd(p, bkv);
     }
@@ -619,6 +619,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
                         "takes seconds\n", N);
     _k1_il_dp_busy = 1;
     lines = vfft_il_dp_plan_and_bank(&_k1_il_dp_ctx, &W->vw2, N,
+                                     cfg->placement == VFFT_INPLACE,   /* the cell's placement (2026-09-21) */
                                      getenv("VFFT_IL_DP_VERBOSE") != NULL);
     _k1_il_dp_busy = 0;
     if (lines > 0)
@@ -654,11 +655,16 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     /* the request's ORDER CELL (2026-09-05): an explicit SCRAMBLED request
      * reads the ord=scr row — the scrambled pool's own verdict — and nothing
      * else; DEFAULT and NATURAL read the ord=nat row. */
-    const int scr_req = (vfft_policy_ord_k1(cfg, N, 0) == VW2_ORD_SCR);
+    /* the request's PLACEMENT CELL (2026-09-21): an in-place request reads
+     * and races the place=ip row -- its own verdict, every arm executed
+     * in place -- never the out-of-place cell's. Until now both doors asked
+     * with inplace=0 and the in-place door served the out-of-place verdict
+     * through a reference row (owner: wrong; one contract per request). */
+    const int ip_req = (cfg->placement == VFFT_INPLACE);
+    const int scr_req = (vfft_policy_ord_k1(cfg, N, ip_req) == VW2_ORD_SCR);
     const vfft_oop_wisdom_entry_t *ke =
         W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
-                       : ((scr_req ? vw2_oop_lookup_k1_scr(&W->vw2, N, &keb)
-                                   : vw2_oop_lookup_k1(&W->vw2, N, &keb)) ? &keb : NULL);
+                       : (vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, &keb) ? &keb : NULL);
     /* the IL plan race: a MISS (no IL verdict on the row) or recalibrate
      * below 2048 races the planner's pools and banks, then replays */
     /* ... and ABOVE 2048 for any N without a factor of 4 (2026-09-04):
@@ -678,8 +684,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)
-            ke = (scr_req ? vw2_oop_lookup_k1_scr(&W->vw2, N, &keb)
-                          : vw2_oop_lookup_k1(&W->vw2, N, &keb)) ? &keb : NULL;
+            ke = vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, &keb) ? &keb : NULL;
     }
     /* a SCRAMBLED request at a pow2 cell with no scrambled row after the race
      * builds NOTHING here — no default pair, no heuristic (NO FALLBACKS): the
@@ -704,7 +709,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         *il3p_out = vfft_il3p_create(N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
         if (*il3p_out)
         {
-            _k1_il3p_apply_kv(*il3p_out, ke, &W->vw2, N);   /* banked forms > default */
+            _k1_il3p_apply_kv(*il3p_out, ke, &W->vw2, N, ip_req);   /* banked forms > default */
             if (getenv("VFFT_NAT_LOG"))
                 fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d src=wisdom\n",
                         N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
@@ -820,7 +825,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     {   /* braces load-bearing (same latent trap fixed at the OOP site):
          * apply_kv must not run when the pair axis was skipped. */
         *il2p_out = vfft_il2p_create(N, iR1, iR2);
-        _k1_il2p_apply_kv(*il2p_out, ke, &W->vw2, N);   /* wisdom verdict > default */
+        _k1_il2p_apply_kv(*il2p_out, ke, &W->vw2, N, ip_req);   /* wisdom verdict > default */
     }
     /* Ordering is a measured axis: (R1,R2) and (R2,R1) install different mid
      * kernels. Heuristic pairs only — a wisdom pair is the calibrator's.
@@ -1305,17 +1310,15 @@ static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_config_t *c
 {
     vfft_oop_wisdom_entry_t keb;
     const vfft_oop_wisdom_entry_t *ke;
-    /* the REQUEST's order cell (2026-09-17), the same law _k1_il_candidate
-     * asks with (inplace=0: the K=1 ENGINE row is the place=oop cell at both
-     * doors). Until now this read the ord=nat row for EVERY in-place request,
-     * so an explicit SCRAMBLED cell whose own race had banked MONO looked at
-     * the wrong row, found no MONO there, built nothing, and was REFUSED
-     * ("no interleaved engine") with a perfectly good verdict on file. */
-    const int scr_req = (vfft_policy_ord_k1(cfg, N, 0) == VW2_ORD_SCR);
+    /* the REQUEST's order cell (2026-09-17) and, since 2026-09-21, its
+     * PLACEMENT cell: this is the in-place door's candidate, so it reads the
+     * place=ip row the in-place race banked (an explicit SCRAMBLED cell reads
+     * its ord=scr row -- the 2026-09-17 fix for a MONO verdict refused on the
+     * wrong row stands). */
+    const int scr_req = (vfft_policy_ord_k1(cfg, N, 1) == VW2_ORD_SCR);
     *ilf = *ilb = 0;
     if (!W || W->vw2_off_oop) return 0;
-    ke = (scr_req ? vw2_oop_lookup_k1_scr(&W->vw2, N, &keb)
-                  : vw2_oop_lookup_k1(&W->vw2, N, &keb)) ? &keb : NULL;
+    ke = vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, 1, &keb) ? &keb : NULL;
     if (!ke || ke->k1_il_route != VFFT_K1_IL_MONO) return 0;
     *ilf = vfft_k1_mono_ilc_fn(N, 0);
     *ilb = vfft_k1_mono_ilc_fn(N, 1);

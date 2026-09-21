@@ -281,6 +281,7 @@ typedef struct
 {
     int            N;
     int            ord;
+    int            inplace;   /* the cell's placement (2026-09-21): its own verdicts */
     int            n_top;
     vfft_il_cand_t top[VFFT_IL_DP_TOPK_MAX];
 } vfft_il_dp_entry_t;
@@ -312,6 +313,15 @@ typedef struct
      * dp_planner.h:158-199. */
     int believe_cached_cost;
     int beam;
+
+    /* THE PLACEMENT OF THE CELL BEING PLANNED (2026-09-21). 1 = every
+     * candidate executes IN PLACE, z_in -> z_in, the way the in-place door
+     * will run the winner (ZTURN-T on its plane drivers, the four-step
+     * created in place, MONO as the alias-tolerant n1c solo); the gate and
+     * the backward check read that destination; the timed loop restores the
+     * input every 32 executes. The verdict banks on the place=ip row. Set
+     * by vfft_il_dp_plan_and_bank from the request; part of the cache key. */
+    int inplace;
 
     int n_benchmarks;
     int n_cache_hits;
@@ -365,7 +375,8 @@ static inline void vfft_il_dp_set_measure(vfft_il_dp_context_t *ctx)
 static vfft_il_dp_entry_t *_il_dp_lookup(vfft_il_dp_context_t *ctx, int N, int ord)
 {
     for (int i = 0; i < ctx->count; i++)
-        if (ctx->entries[i].N == N && ctx->entries[i].ord == ord)
+        if (ctx->entries[i].N == N && ctx->entries[i].ord == ord &&
+            ctx->entries[i].inplace == ctx->inplace)
             return &ctx->entries[i];
     return NULL;
 }
@@ -377,6 +388,7 @@ static vfft_il_dp_entry_t *_il_dp_insert(vfft_il_dp_context_t *ctx, int N, int o
     memset(e, 0, sizeof(*e));
     e->N = N;
     e->ord = ord;
+    e->inplace = ctx->inplace;
     return e;
 }
 
@@ -419,7 +431,16 @@ static int *_il_dp_fs_map = NULL;
 static int  _il_dp_fs_map_n1 = 0, _il_dp_fs_map_n2 = 0, _il_dp_fs_map_cap = 0;
 /* (the hybrid 2P/3P op arm was deleted 2026-07-29 with the il_in/il_out routes) */
 
-static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
+/* the candidate's DESTINATION: out of place z_out; IN PLACE z_in itself
+ * (2026-09-21). Every engine here consumes its input through a staging
+ * plane or an alias-tolerant kernel before it writes, so z -> z is legal
+ * for all of them -- the same contract the in-place door relies on. */
+static inline double *_il_dp_dst(const vfft_il_dp_context_t *ctx)
+{
+    return ctx->inplace ? ctx->z_in : ctx->z_out;
+}
+
+static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b, int inplace)
 {
     memset(b, 0, sizeof(*b));
     if (c->route == VFFT_K1_IL_2P_PURE)
@@ -474,6 +495,7 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         if (!b->ztt) return -1;
         if (c->il_tw > 0 && !vfft_ztt_set_tile(b->ztt, (size_t)c->il_tw))
         { vfft_ztt_destroy(b->ztt); b->ztt = NULL; return -1; }
+        vfft_ztt_bind(b->ztt, inplace);   /* in place: the plane drivers (2026-09-21) */
         return 0;
     }
     if (c->route == VFFT_K1_IL_FS)
@@ -481,7 +503,7 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
          * own verdicts, raced and banked there), the twiddle records and
          * the natural class's plane live in vfft_k1fs_create; the planner
          * races out of place at one thread with the wisdom it was handed */
-        b->fs = vfft_k1fs_create(N, c->R1, c->R2, c->il_scr, _k1fs_ctx.W, _k1fs_ctx.cfg, 0, 1,
+        b->fs = vfft_k1fs_create(N, c->R1, c->R2, c->il_scr, _k1fs_ctx.W, _k1fs_ctx.cfg, inplace, 1,
                                  c->il_kv, c->il_zt, c->il_zt_n);
         if (!b->fs) return -1;
         if (_il_dp_fs_map_cap < b->fs->N1)
@@ -496,7 +518,8 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
     }
     if (c->route == VFFT_K1_IL_MONO)
     {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64) */
-        b->mono = vfft_k1_mono_il_form_fn(N, c->il_kv, 0);
+        b->mono = inplace ? (c->il_kv == 0 ? vfft_k1_mono_ilc_fn(N, 0) : 0)   /* in place: the alias-tolerant n1c solo; only form 0 has one */
+                          : vfft_k1_mono_il_form_fn(N, c->il_kv, 0);
         return b->mono ? 0 : -1;
     }
     return -1; /* unknown/retired route (e.g. legacy 2P/3P) -> not a candidate */
@@ -512,38 +535,39 @@ static void _il_dp_free(_il_dp_built_t *b)
     memset(b, 0, sizeof(*b));
 }
 
-/* Execute a built candidate FORWARD: z_in -> z_out. The gate reads z_out. */
+/* Execute a built candidate FORWARD: z_in -> the destination (z_out, or z_in
+ * itself for an in-place cell). The gate reads the destination. */
 static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                        const _il_dp_built_t *b)
 {
     if (c->route == VFFT_K1_IL_2P_PURE)
     {
-        vfft_il2p_execute_fwd(b->ip, ctx->z_in, ctx->z_out);
+        vfft_il2p_execute_fwd(b->ip, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
     if (c->route == VFFT_K1_IL_CHAIN3)
     {
-        vfft_il3p_execute_fwd(b->i3, ctx->z_in, ctx->z_out);
+        vfft_il3p_execute_fwd(b->i3, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
     if (c->route == VFFT_K1_IL_FLAT)
     {
-        vfft_ilfd_execute_fwd(b->ifd, ctx->z_in, ctx->z_out);
+        vfft_ilfd_execute_fwd(b->ifd, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
     if (c->route == VFFT_K1_IL_ZTT)
     {
-        vfft_ztt_execute_fwd(b->ztt, ctx->z_in, ctx->z_out);
+        vfft_ztt_execute_fwd(b->ztt, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
     if (c->route == VFFT_K1_IL_FS)
     {
-        vfft_k1fs_execute_fwd(b->fs, ctx->z_in, ctx->z_out);
+        vfft_k1fs_execute_fwd(b->fs, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
     {
-        b->mono(ctx->z_in, 0, ctx->z_out, 0, 0, 0, 1, 0, 1, 0, 1); /* one leg */
+        b->mono(ctx->z_in, 0, _il_dp_dst(ctx), 0, 0, 0, 1, 0, 1, 0, 1); /* one leg */
         return 0;
     }
     return -1; /* unknown/retired route — _il_dp_build already refused it */
@@ -560,22 +584,22 @@ static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     if (c->route == VFFT_K1_IL_CHAIN3)
     {   /* the chain's backward (t2 bwd, t2tg, n1 bwd) - its leaf slot is the
          * directional form axis (2026-09-03) */
-        vfft_il3p_execute_bwd(b->i3, ctx->z_in, ctx->z_out);
+        vfft_il3p_execute_bwd(b->i3, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
     if (c->route == VFFT_K1_IL_FLAT)
     {   /* the conjugate pipeline: same forms, backward kernels */
-        vfft_ilfd_execute_bwd(b->ifd, ctx->z_in, ctx->z_out);
+        vfft_ilfd_execute_bwd(b->ifd, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
     if (c->route == VFFT_K1_IL_ZTT)
     {   /* the conjugate pipeline: the bwd driver on the s-negated streams */
-        vfft_ztt_execute_bwd(b->ztt, ctx->z_in, ctx->z_out);
+        vfft_ztt_execute_bwd(b->ztt, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
     if (c->route == VFFT_K1_IL_FS)
     {
-        vfft_k1fs_execute_bwd(b->fs, ctx->z_in, ctx->z_out);
+        vfft_k1fs_execute_bwd(b->fs, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
     if (c->route != VFFT_K1_IL_2P_PURE) return -1;
@@ -584,7 +608,7 @@ static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
      * fallback is available. Swallowing that turns a refusal into a timed
      * empty call: the arm posts a near-zero time, wins the race, and banks
      * a verdict for kernels that never ran. */
-    return vfft_il2p_execute_bwd(b->ip, ctx->z_in, ctx->z_out);
+    return vfft_il2p_execute_bwd(b->ip, ctx->z_in, _il_dp_dst(ctx));
 }
 
 /* Build + run once (for the correctness gate). Not used for timing. */
@@ -597,7 +621,7 @@ static int _il_dp_run_once(vfft_il_dp_context_t *ctx, int N,
                            const vfft_il_cand_t *c)
 {
     _il_dp_built_t b;
-    if (_il_dp_build(N, c, &b) != 0) return -1;
+    if (_il_dp_build(N, c, &b, ctx->inplace) != 0) return -1;
     memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
     int rc = _il_dp_exec(ctx, c, &b);
     _il_dp_free(&b);
@@ -914,13 +938,14 @@ static double _il_dp_gate_err(vfft_il_dp_context_t *ctx, int N,
                               const vfft_il_cand_t *c)
 {
     if (ctx->ref_N != N) return -1.0;
+    const double *out = _il_dp_dst(ctx);
     double worst = 0.0;
     for (long idx = 0; idx < N; idx++)
     {
         long m = _il_dp_bin_of(c, N, idx);
         if (m < 0 || m >= (long)N) return -1.0;
-        double d = fabs(ctx->z_out[2 * idx]     - ctx->z_ref[2 * m]) +
-                   fabs(ctx->z_out[2 * idx + 1] - ctx->z_ref[2 * m + 1]);
+        double d = fabs(out[2 * idx]     - ctx->z_ref[2 * m]) +
+                   fabs(out[2 * idx + 1] - ctx->z_ref[2 * m + 1]);
         if (!(d < 1e300)) return -1.0;         /* NaN or Inf -> refuse */
         if (d > worst) worst = d;
     }
@@ -972,7 +997,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
 {
     _il_dp_built_t b;
     _ILDP_WHY(why, NULL);
-    if (_il_dp_build(N, c, &b) != 0)
+    if (_il_dp_build(N, c, &b, ctx->inplace) != 0)
     {   /* NO SUCH KERNEL: a requested nibble has no emitted twin, or the
          * route's own create refused the shape. Expected coverage, not a
          * defect — the pools offer more variants than every radix has. */
@@ -1008,6 +1033,11 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
     {
         double worst = 0.0;
         long i;
+        double *dst = _il_dp_dst(ctx);
+        /* the warmup above ran the BACKWARD on z_in; IN PLACE that consumed
+         * the input, so refill it before the forward the roundtrip starts
+         * from (out of place z_in is still pristine: a no-op) */
+        memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
         if (_il_dp_exec(ctx, c, &b) != 0)
         { _ILDP_WHY(why, "BUILT but the forward executor refused it"); _il_dp_free(&b); return 1e18; }
         /* zin == zout is safe for il2p: stage 1 reads zin into p->mid and
@@ -1015,12 +1045,12 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
          * chain (il3p) documents the same contract (2026-09-03: this gate
          * used to call the pair's backward on a chain3 candidate - NULL). */
         if (c->route == VFFT_K1_IL_CHAIN3)
-            vfft_il3p_execute_bwd(b.i3, ctx->z_out, ctx->z_out);
-        else if (vfft_il2p_execute_bwd(b.ip, ctx->z_out, ctx->z_out) != 0)
+            vfft_il3p_execute_bwd(b.i3, dst, dst);
+        else if (vfft_il2p_execute_bwd(b.ip, dst, dst) != 0)
         { _ILDP_WHY(why, "BUILT but the backward executor refused it"); _il_dp_free(&b); return 1e18; }
         for (i = 0; i < 2L * N; i++)
         {
-            double d = fabs(ctx->z_out[i] / (double)N - ctx->z_orig[i]);
+            double d = fabs(dst[i] / (double)N - ctx->z_orig[i]);
             if (!(d < 1e300)) { worst = 1e30; break; }   /* NaN/Inf -> refuse */
             if (d > worst) worst = d;
         }
@@ -1047,7 +1077,17 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
             memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
             double t0 = _il_dp_now_ns();
             for (int i = 0; i < reps; i++)
+            {
+                /* IN PLACE the arm transforms its own output: restore the
+                 * input every 32 executes (a forward grows the data by
+                 * ~sqrt(N) per pass, past double's range after ~90 at 2048).
+                 * The copy sits inside the timed window, one per 32 executes,
+                 * the same for every arm of the cell: the ranking is unbiased
+                 * and the banked ns carries at most a few percent of it. */
+                if (ctx->inplace && i && (i & 31) == 0)
+                    memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
                 (void)_il_dp_exec_dir(ctx, c, &b, bwd);
+            }
             double trial = _il_dp_now_ns() - t0;
             if (trial < tmin) tmin = trial;
             elapsed += trial;
@@ -2018,7 +2058,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
  *
  * Returns the number of verdicts banked (into the wisdom2 store — the
  * wave-1 flip; the caller owns opening/saving the store). */
-static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
+static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
                                   const vfft_il_cand_t *nat,
                                   const vfft_il_cand_t *scr)
 {
@@ -2045,6 +2085,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
             e.K = 1;                   /* one interleaved transform         */
             e.kind = VFFT_OOP_KIND_BAILEY2V;
             e.k1_sp_route = -1;        /* split lives in its own cell       */
+            e.place_ip = inplace;      /* the in-place cell's own row (2026-09-21) */
             e.k1_il_route = nat->route;
             e.il_R1 = nat->R1;
             e.il_R2 = nat->R2;
@@ -2074,7 +2115,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                 lines++;
             if (nat->route == VFFT_K1_IL_FS && nat->il_kv == 1 && nat->il_zt_n >= 2)
             {   /* the super-band's chain beside il_pair (il2d_large_plane_design.md §3) */
-                const vw2_rec_t *r = vw2__oop_k1_scan_ord(st, N, VW2_LAY_IL, 0);
+                const vw2_rec_t *r = vw2__oop_k1_scan_pl(st, N, VW2_LAY_IL, 0, inplace ? VW2_PL_IP : VW2_PL_OOP);
                 char cb[48];
                 int off = 0, k;
                 for (k = 0; k < nat->il_zt_n && off < (int)sizeof cb - 4; k++)
@@ -2108,6 +2149,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                                    nat->il_bkv, nat->il_bkv_ns, "race",
                                    &why) == VW2_OK)
             {
+                if (inplace) br.key.pl = VW2_PL_IP;   /* the in-place cell's own backward row */
                 if (nat->route == VFFT_K1_IL_CHAIN3)
                 {   /* the chain the backward verdict was raced at (2026-09-03):
                      * the replay validates against it, as the pair validates
@@ -2134,6 +2176,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
         e.K = 1;
         e.kind = VFFT_OOP_KIND_BAILEY2V;
         e.k1_sp_route = -1;
+        e.place_ip = inplace;
         e.k1_il_route = scr->route;
         e.il_R1 = scr->R1;
         e.il_R2 = scr->R2;
@@ -2172,14 +2215,15 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
  * (route diversity guarantees it is there whenever one survived) so a
  * ZTURN-winner line still carries the fallback route's terminator pick. */
 static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, vw2_store_t *st, int N,
-                                    int verbose)
+                                    int inplace, int verbose)
 {
     vfft_il_cand_t nat, scr;
+    ctx->inplace = inplace ? 1 : 0;   /* the cell's placement, for both order classes */
     double nns = vfft_il_dp_plan(ctx, N, VFFT_IL_ORD_NATURAL,   &nat, verbose);
     double sns = vfft_il_dp_plan(ctx, N, VFFT_IL_ORD_SCRAMBLED, &scr, verbose);
     if (nns >= 1e17) nat.cost_ns = 1e18;
     if (sns >= 1e17) scr.cost_ns = 1e18;
-    return vfft_il_dp_emit_wisdom(st, N, &nat, &scr);
+    return vfft_il_dp_emit_wisdom(st, N, inplace, &nat, &scr);
 }
 
 /* Ranked rows for a deploy pool / wisdom writer. Returns how many were filled. */
