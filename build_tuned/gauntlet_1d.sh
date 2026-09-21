@@ -151,7 +151,8 @@ if [ "$PHASE" = retime ]; then
   for N in $(cells); do
     bench_cell "$N" "$CSV"
     n=$((n + 1))
-    [ $((n % 25)) -eq 0 ] && echo "  retime $n cells, $(($(date +%s) - t0))s elapsed" >&2
+    [ $((n % CONTROL_EVERY)) -eq 0 ] && control_cell "$CONTROL_N" "$CTL"   # the time series, as the bench phase keeps it
+    [ $((n % 100)) -eq 0 ] && echo "  retime $n cells, $(($(date +%s) - t0))s elapsed" >&2
   done
   control_cell "$CONTROL_N" "$CTL"
   echo "retime: $n cells in $(($(date +%s) - t0))s -> $CSV (rows replaced in place)" >&2
