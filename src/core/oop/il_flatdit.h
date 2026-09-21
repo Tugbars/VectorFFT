@@ -388,7 +388,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
 /* SEED: small radices, 9 first (the raced winners' shape) — a seed. */
 static inline int vfft_ilfd_default_chain(int N, int *R, int *K)
 {
-    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16 };
+    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16, 29, 31 };
     int rem = N, k = 0, i;
     while (rem > 1 && k < VFFT_ILFD_MAX_K) {
         int hit = 0;
