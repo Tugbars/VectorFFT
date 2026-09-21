@@ -991,11 +991,12 @@ That is where the losses are; the standing families:
 
 ```
  family                                   cells   median   <1.0   what decides it
- composite with a prime >= 29             1157     1.13    355   no prime STAGE; the small ones lose 2-4x
+ composite with a prime >= 29             1157     1.13    355   MKL runs a direct radix-p stage (cost ~p) to p~89; ours is whole-N Bluestein at a flat 6.7 ns/pt; crossover p = 47: p in 29..47 loses (0.60-0.96), p >= 53 wins 1.1-2x
  prime, Bluestein banked                   202     1.14     41   Rader's inner N-1 is not a buildable length
  prime, Rader banked                        98     1.82      0
- 2 x {7..23} composites (flat, 2-led)       27     1.06      8   a radix-2 leaf over an odd run is a thin first stage
- chain3, 11/13-heavy, 1000..2048           ~16   0.63-0.78  16   consistent in both flips
+ 2 x {7..23} composites (flat, 2-led)       27     1.06      8   a radix-2 leaf over an odd run is a thin first stage; at 14/22/26 MKL's single codelet beats two kernel calls
+ 2 x odd through a 6/10/12 MID (chain3)    125     1.18     35   absorbing the 2 in an even-composite mid costs 0.31 ns/pt against MKL's 0.11 (a whole good stage is 0.44)
+ chain3, 11/13-heavy, 1000..2048           ~16   0.63-0.78  16   consistent in both flips; radix 13 is the weak kernel (0.92x where 17/19/23 run 1.4x)
  pow2 32..512                                5   0.82-0.99   5   the sub-2048 pow2 deficit
 ```
 

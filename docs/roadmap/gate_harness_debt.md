@@ -134,3 +134,19 @@ source; this is its replacement for that purpose.
 | `transforms/fft2d/transpose.h` | `blocked_tail_gate`, `zr2c_fd_gate`, `odd_ct_gate`, `api_matrix_gate` (the split 2D/3D/4D doors) |
 | `vfft.c`'s fingerprint | `k1_fourstep_gate`, and RE-CAPTURE `capture_baseline.py` |
 | `oop/c2c_oop_create.h`'s MONO validation | `il_solo_gate`, `k1_pow2_gate`, `vfft_k1scr_gate` |
+
+## 8. `form_slot_gate` does not build (found 2026-09-21)
+
+`benches/form_slot_gate.c` -- the resolver invariant, the gate that proves
+every kernel a form resolver returns for a slot is correct there -- has not
+compiled since the four-step landed (2026-09-15): its TU includes
+`planning/dp_planner_il.h` without `oop/k1_fourstep.h` first, so the
+planner's `vfft_k1fs_plan_t` and `_k1fs_ctx` are undeclared. `run_gates.py`
+has no entry for it either, so the sweep reports it "unbuildable" and moves
+on; the `.exe` in benches/ is from 2026-09-15 and passes against the OLD
+library, which proves nothing about today's resolvers. Both il2p resolvers
+(`n1c`, `t2c`) changed on 2026-09-21 (registry-derived radix sets); the
+change was gated by il_solo_gate, flatdit_gate, ilprime_inner_gate and the
+forward-reference probe (`benches/k1_fwd_ref_probe.c`) instead. Fix: give
+the gate TU the include order the planner needs (or make dp_planner_il.h
+self-sufficient), register it in run_gates.py (`none` style), and re-run.

@@ -867,8 +867,6 @@ N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
 513,1,z:ilp,nat-oop,649,1453,35.571,2.239,1.003e-15,2p,1
 514,1,z:ilp,nat-oop,4833,4724,4.788,0.977,1.079e-15,prime,0
 514,1,z:ilp,nat-oop,5113,4687,4.526,0.917,1.079e-15,prime,1
-515,1,z:ilp,nat-oop,4686,4537,4.950,0.968,7.158e-16,prime,0
-515,1,z:ilp,nat-oop,4903,4721,4.732,0.963,7.158e-16,prime,1
 516,1,z:ilp,nat-oop,4986,2757,4.663,0.553,5.312e-16,prime,0
 516,1,z:ilp,nat-oop,4863,2790,4.780,0.574,5.312e-16,prime,1
 517,1,z:ilp,nat-oop,4945,3674,4.713,0.743,6.422e-16,prime,0
@@ -4093,3 +4091,5 @@ N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
 2002,1,z:ilp,nat-oop,4784,4058,22.947,0.848,1.130e-15,flat,1
 2024,1,z:ilp,nat-oop,4366,6645,25.455,1.522,1.514e-15,chain3,0
 2024,1,z:ilp,nat-oop,4341,6800,25.606,1.567,1.514e-15,chain3,1
+515,1,z:ilp,nat-oop,4971,4552,4.666,0.916,6.586e-16,prime,0
+515,1,z:ilp,nat-oop,4861,4672,4.772,0.961,6.586e-16,prime,1
