@@ -675,11 +675,13 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     (void)ze;   /* the kind-4 (cascade) lines are gone (2026-09-15): every K=1 cell is the IL tier's */
     snprintf(plan_s, sizeof plan_s, "z:ilp");
     const char *path = "ilp";
-    if (g_k1nat && !g_k1zip)
-        path = "nat-oop"; /* --k1noop: order=NATURAL OOP never attaches the
-                           * cascade — the kind-4 label would lie; the real
-                           * engine is the K=1 IL route or the convert
-                           * fallback (exactly what D1 measures). */
+    if (g_k1nat)
+        path = g_k1zip ? "nat-ip" : "nat-oop";
+        /* --k1noop: order=NATURAL OOP never attaches the cascade — the
+         * kind-4 label would lie; the real engine is the K=1 IL route or the
+         * convert fallback (exactly what D1 measures). --k1nat (2026-09-21):
+         * natural IN-PLACE gets its own label so the in-place gauntlet's rows
+         * never key-collide with the out-of-place ones. */
 
     if (!g_k1noop_mt) bench_pin_one_thread();   /* the one-thread protocol (once per process) */
     vfft_wisdom *W = k1z_bundle();

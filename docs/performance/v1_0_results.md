@@ -1024,6 +1024,49 @@ The plan and the buffers exist before either engine runs, so it is not
 allocation order. Unexplained; a targeted probe (one chain3 cell, both
 orders, repeated) is the next step.
 
+### K=1 INTERLEAVED — the same 2047 cells IN PLACE (2026-09-21)
+
+The same contract with placement flipped: natural order, IN PLACE, K=1, one
+thread, every N from 2 to 2048, against MKL with DFTI_INPLACE, the same
+bench discipline (core 2 + HIGH, cachebust + cool, both flips, best-of-5),
+rows in `build_tuned/results/gauntlet_2026-09-20/gauntlet_ip.csv`. The
+in-place door serves the cell's banked engine row -- a reference row
+`mode=ilp ref=cell(... place=oop ...)` -- and executes it in place, so this
+measures in-place EXECUTION of the out-of-place verdicts. Max roundtrip
+error 2.6e-15. Ratio = MKL / ours, worse of the two flips; the last two
+columns are each library's own in-place time over its out-of-place time.
+
+```
+ route    cells   <0.8   <1.0    p10    med    p90   gmean   ours ip/oop   MKL ip/oop
+ prime     1478    159    355   0.78   1.16   2.13   1.21        0.99         1.00
+ chain3     281     25     50   0.82   1.25   1.63   1.22        0.99         1.00
+ 2p         156      1      9   1.11   1.47   2.19   1.53        1.00         1.00
+ flat       115      1     20   0.93   1.33   1.70   1.28        0.98         1.00
+ mono        14      1      2   0.92   1.35   1.68   1.27        1.00         0.96
+ ztt          3      0      1   0.90   1.05   1.09   1.01        1.08         0.92
+ ALL       2047    187    437   0.82   1.19   2.02   1.24        0.99         1.00
+```
+
+In-place execution is free below 2048: our in-place time is the
+out-of-place time at every route (median 0.99x), MKL's likewise, and no cell
+is served by a different engine in place. The two exceptions are the
+ZTURN-T cells: 2048 runs 14% slower in place (1826 against 1602 ns; 1.09x
+against 1.23x vs MKL) and 16 loses its margin (0.90x).
+
+**The chain3 engine has two speeds.** In both placements about one chain3
+cell in five reads bimodal across the two flips (53 of 281 out of place, 51
+in place), the slow reading 1.3-1.6x the fast one, and out of place the slow
+reading is the one taken after MKL ran (44 of 53). No other route does this
+(pair 5 of 127, flat 8 of 108, and the prime cell's inner is a pair or
+chain). The engine runs three passes through two plan-owned staging buffers
+of the transform's own size, 64-byte aligned, beside the caller's input and
+output of the same size: four equal-sized streams whose page offsets are
+decided by the heap, so a process either lands them on distinct cache sets
+or on the same ones. The out-of-place run's 163 flip disagreements are this
+one route. The fix is allocator-side, one arena with a deliberate skew
+between the two staging buffers, to be proven by a same-process A/B before
+it ships.
+
 ## 2. vs MKL — 2D C2C
 
 dag tiled 2D (`fft2d.h`, B=8: gather→K=B row FFT→scatter via SIMD transpose, native

@@ -2124,8 +2124,23 @@ const char *vfft_isa(void) { return STRIDE_ISA_NAME; }
 const char *vfft_plan_route(vfft_plan p)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
-    if (!h || !h->k1_on || h->layout != (int)VFFT_LAYOUT_INTERLEAVED)
+    if (!h || h->layout != (int)VFFT_LAYOUT_INTERLEAVED)
         return "-";
+    if (!h->k1_on)
+    {
+        /* the IN-PLACE door (c2c_ip_create.h) attaches the K=1 engine
+         * handles without the out-of-place door's route field, so the route
+         * is read off whichever handle is attached (2026-09-21, the in-place
+         * gauntlet's route column). One handle at most is non-NULL. */
+        if (h->k1il2p)      return "2p";
+        if (h->k1il3p)      return "chain3";
+        if (h->k1ilfd)      return "flat";
+        if (h->k1ztt)       return "ztt";
+        if (h->k1fs)        return "fs";
+        if (h->k1_mono_ilf) return "mono";
+        if (h->k1ilpr)      return "prime";
+        return "-";
+    }
     if (h->k1_il_route < 0 || h->k1_il_route > VW2_OOP_IL_ROUTE_MAX)
         return "-";
     return vw2_oop_il_name[h->k1_il_route];

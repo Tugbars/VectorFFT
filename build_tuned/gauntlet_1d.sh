@@ -34,8 +34,15 @@
 # row per (cell, flip) and every untouched cell keeps its original rows. A
 # control pair is taken before and after, into control.csv, in run order.
 #
+# PLACE (2026-09-21): PLACE=ip runs the same cells IN PLACE, natural order --
+# probe ip=1, bench --k1nat (DFTI_INPLACE on MKL's side too) -- into its OWN
+# files (gauntlet_ip.csv, control_ip.csv, calibrate_ip.log) on the SAME store,
+# so one merge later carries both contracts. Use `resume` so the store with
+# the out-of-place verdicts is kept (calibrate/both wipe it).
+#
 # Run from build_tuned/, machine QUIET:
 #   sh gauntlet_1d.sh <out-dir> <cell-list> [calibrate|bench|both|resume|rerun]
+#   PLACE=ip sh gauntlet_1d.sh <out-dir> <cell-list> resume
 set -u
 OUT="${1:?out-dir}"
 LIST="${2:?cell-list file}"
@@ -45,9 +52,15 @@ CONTROL_EVERY=${CONTROL_EVERY:-100}
 HERE="$(cd "$(dirname "$0")" && pwd)"
 G="$HERE/../src/dag-fft-compiler/generator/generated"
 ST="$OUT/store"
-CSV="$OUT/gauntlet.csv"
-CTL="$OUT/control.csv"
-CAL="$OUT/calibrate.log"
+PLACE="${PLACE:-oop}"
+if [ "$PLACE" = ip ]; then
+  SFX="_ip"; IP=1; K1FLAG=--k1nat
+else
+  SFX=""; IP=0; K1FLAG=--k1noop
+fi
+CSV="$OUT/gauntlet$SFX.csv"
+CTL="$OUT/control$SFX.csv"
+CAL="$OUT/calibrate$SFX.log"
 mkdir -p "$OUT"
 export VFFT_WISDOM_DIR="$ST"
 
@@ -55,9 +68,20 @@ cells() { grep -vE '^\s*(#|$)' "$LIST" | awk '{print $1}'; }
 
 bench_cell() {   # $1 = N, $2 = csv path
   for F in 0 1; do
-    "$HERE/benches/bench_1d_vs_mkl.exe" --k1noop "$ST/spike_wisdom.txt" "$2" \
+    "$HERE/benches/bench_1d_vs_mkl.exe" "$K1FLAG" "$ST/spike_wisdom.txt" "$2" \
         300 "$1" 1 300 "$F" 2 > /dev/null 2>&1
   done
+}
+# The control file is a TIME SERIES of one cell, so its rows must ACCUMULATE:
+# the bench replaces a (cell, flip) row in place (2026-09-21), which is right
+# for gauntlet.csv and wrong here -- the in-place run's control_ip.csv kept
+# only its last pair. Bench into a scratch csv, then append the rows.
+control_cell() {   # $1 = N, $2 = control csv path
+  rm -f "$OUT/.ctl.tmp"
+  bench_cell "$1" "$OUT/.ctl.tmp"
+  [ -f "$2" ] || head -1 "$OUT/.ctl.tmp" > "$2"
+  tail -n +2 "$OUT/.ctl.tmp" >> "$2"
+  rm -f "$OUT/.ctl.tmp"
 }
 
 if [ "$PHASE" = calibrate ] || [ "$PHASE" = both ] || [ "$PHASE" = resume ]; then
@@ -73,7 +97,7 @@ if [ "$PHASE" = calibrate ] || [ "$PHASE" = both ] || [ "$PHASE" = resume ]; the
       skipped=$((skipped + 1)); continue
     fi
     s0=$(date +%s%3N)
-    "$HERE/benches/recal_1d_probe.exe" "$ST" "$N" 0 0 1 0 > "$OUT/.cal.tmp" 2>&1
+    "$HERE/benches/recal_1d_probe.exe" "$ST" "$N" 0 "$IP" 1 0 > "$OUT/.cal.tmp" 2>&1
     s1=$(date +%s%3N)
     st=$(grep -oE 'banked|REFUSED' "$OUT/.cal.tmp" | tail -1)
     printf "%-10s %-8s %s\n" "$N" "${st:-ERROR}" "$((s1 - s0))ms" >> "$CAL"
@@ -87,10 +111,10 @@ fi
 
 if [ "$PHASE" = rerun ]; then
   n=0; t0=$(date +%s)
-  bench_cell "$CONTROL_N" "$CTL"
+  control_cell "$CONTROL_N" "$CTL"
   for N in $(cells); do
     s0=$(date +%s%3N)
-    "$HERE/benches/recal_1d_probe.exe" "$ST" "$N" 0 0 1 1 > "$OUT/.cal.tmp" 2>&1
+    "$HERE/benches/recal_1d_probe.exe" "$ST" "$N" 0 "$IP" 1 1 > "$OUT/.cal.tmp" 2>&1
     s1=$(date +%s%3N)
     st=$(grep -oE 'banked|REFUSED' "$OUT/.cal.tmp" | tail -1)
     grep -vE "^$N " "$CAL" > "$OUT/.cal.new" 2>/dev/null; mv "$OUT/.cal.new" "$CAL"
@@ -100,14 +124,14 @@ if [ "$PHASE" = rerun ]; then
     [ $((n % 25)) -eq 0 ] && echo "  rerun $n cells, $(($(date +%s) - t0))s elapsed" >&2
   done
   rm -f "$OUT/.cal.tmp"
-  bench_cell "$CONTROL_N" "$CTL"
+  control_cell "$CONTROL_N" "$CTL"
   echo "rerun: $n cells in $(($(date +%s) - t0))s -> $CSV (rows replaced in place)" >&2
 fi
 
 if [ "$PHASE" = bench ] || [ "$PHASE" = both ] || [ "$PHASE" = resume ]; then
   rm -f "$CSV" "$CTL"
-  "$HERE/benches/recal_1d_probe.exe" "$ST" "$CONTROL_N" 0 0 1 0 > /dev/null 2>&1
-  bench_cell "$CONTROL_N" "$CTL"
+  "$HERE/benches/recal_1d_probe.exe" "$ST" "$CONTROL_N" 0 "$IP" 1 0 > /dev/null 2>&1
+  control_cell "$CONTROL_N" "$CTL"
   n=0
   t0=$(date +%s)
   for N in $(cells); do
@@ -115,11 +139,11 @@ if [ "$PHASE" = bench ] || [ "$PHASE" = both ] || [ "$PHASE" = resume ]; then
     bench_cell "$N" "$CSV"
     n=$((n + 1))
     if [ $((n % CONTROL_EVERY)) -eq 0 ]; then
-      bench_cell "$CONTROL_N" "$CTL"
+      control_cell "$CONTROL_N" "$CTL"
       echo "  benched $n cells, $(($(date +%s) - t0))s elapsed (control taken)" >&2
     fi
   done
-  bench_cell "$CONTROL_N" "$CTL"
+  control_cell "$CONTROL_N" "$CTL"
   echo "bench: $n cells in $(($(date +%s) - t0))s -> $CSV" >&2
   echo "  control N=$CONTROL_N every $CONTROL_EVERY cells -> $CTL (rows are in run order)" >&2
 fi
