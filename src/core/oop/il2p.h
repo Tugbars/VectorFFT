@@ -414,11 +414,20 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
                         : radix32_z_n1cb48_fwd_avx2;
     case 64: return bwd ? radix64_z_n1cb88_bwd_avx2
                         : radix64_z_n1cb88_fwd_avx2;
+    default: break;
+    }
+    /* EVERY OTHER RADIX FROM THE REGISTRY (2026-09-21). This list was hand
+     * written -- {4, 8, 16} and the odd radices to 27 -- while the generated
+     * registry had n1c at 2, 6, 10 and 12 (the MONO tier's in-place solo
+     * twins) and, from today, 23. A kernel the registry declares and this
+     * switch omits ships and is never selectable: the flat DIT refused every
+     * chain with a radix-2 leaf ("no such kernel") and 23 could not lead a
+     * chain, which is the trap the registry emitter exists to close. The
+     * PAIR list (both directions exist) is the authority; the two blocked
+     * construction-table picks above stay in front of it. */
+    switch (R) {
 #define C(R) case R: return bwd ? radix##R##_z_n1c_bwd_avx2 : radix##R##_z_n1c_fwd_avx2;
-    C(4) C(8) C(16)
-    /* ODD radices (2026-08-27, emitted for odd-N1 2D chains — the same
-     * cil kind, one flag; raced against the Bluestein column arm) */
-    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
+    VFFT_IL_N1C_PAIR_RADICES(C)
 #undef C
     default: return 0;
     }
@@ -440,9 +449,12 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
                         : radix32_z_t2cb48_fwd_avx2;
     case 64: return bwd ? radix64_z_t2cb88_bwd_avx2
                         : radix64_z_t2cb88_fwd_avx2;
+    default: break;
+    }
+    /* every other radix from the registry (2026-09-21) -- see n1c above */
+    switch (R) {
 #define C(R) case R: return bwd ? radix##R##_z_t2c_bwd_avx2 : radix##R##_z_t2c_fwd_avx2;
-    C(4) C(8) C(16)
-    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
+    VFFT_IL_T2C_PAIR_RADICES(C)
 #undef C
     default: return 0;
     }
