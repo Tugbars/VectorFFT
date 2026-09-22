@@ -1,13 +1,13 @@
 # ============================================================================
 # VectorFFT — dag-fft-compiler build (CMake mirror of build_tuned/build.py)
 #
-# Builds the bench_1d_vs_mkl benchmark against the dag runtime:
+# Builds the library's codelet corpus and the gauntlet's tools (gauntlet/) against the dag runtime:
 #   - the dag SIMD codelets (codelets/{inplace,rfft,c2r,oop}/<isa>/*.c) -> a
 #     static lib (the only .c the header-only core needs linked in),
 #   - the header-only core in src/core/ (bare cross-includes -> recursive -I walk),
-#   - Intel MKL for the vs-MKL comparison.
+#   - Intel MKL for the vs-MKL comparison (OPTIONAL since 2026-09-22).
 #
-# Only bench_1d_vs_mkl is wired (all other benches/tests are intentionally out).
+# The gauntlet's binaries are the only executables wired (gauntlet/CMakeLists.txt).
 #
 # Toolchains: GCC/Clang and Intel ICX (IntelLLVM), on both Linux and Windows.
 #   GNU-style front end (gcc, clang, icx gcc-driver)  -> LP64, link mkl_rt.
@@ -124,32 +124,38 @@ set(_mkl_lib_hints
     "/opt/intel/oneapi/mkl/latest/lib" "/opt/intel/oneapi/mkl/latest/lib/intel64")
 
 find_path(MKL_INCLUDE_DIR mkl_dfti.h HINTS ${_mkl_inc_hints})
+# MKL is OPTIONAL since 2026-09-22 (the gauntlet is usable without a comparator:
+# absolute numbers + correctness). VFFT_MKL_FOUND gates every MKL use below.
+set(VFFT_MKL_FOUND FALSE)
+set(VFFT_MKL_LIBS)
+set(VFFT_MKL_DEFS)
 if(NOT MKL_INCLUDE_DIR)
-    message(FATAL_ERROR "MKL not found (mkl_dfti.h). Set MKLROOT or install Intel oneAPI MKL.")
-endif()
-
-if(VFFT_MSVC_STYLE)
-    # ILP64 three-lib (matches build.py MSVC path). Needs -DMKL_ILP64.
+    message(WARNING "MKL not found (mkl_dfti.h): building WITHOUT the MKL comparator. Set MKLROOT or install Intel oneAPI MKL for the vs-MKL columns.")
+elseif(VFFT_MSVC_STYLE)
     find_library(MKL_ILP64 NAMES mkl_intel_ilp64 HINTS ${_mkl_lib_hints})
     find_library(MKL_SEQ   NAMES mkl_sequential  HINTS ${_mkl_lib_hints})
     find_library(MKL_CORE  NAMES mkl_core        HINTS ${_mkl_lib_hints})
     if(NOT MKL_ILP64 OR NOT MKL_SEQ OR NOT MKL_CORE)
-        message(FATAL_ERROR "MKL ILP64 libs not found (mkl_intel_ilp64/mkl_sequential/mkl_core).")
+        message(WARNING "MKL ILP64 libs not found (mkl_intel_ilp64/mkl_sequential/mkl_core): building WITHOUT the MKL comparator.")
+    else()
+        set(VFFT_MKL_FOUND TRUE)
+        set(VFFT_MKL_LIBS ${MKL_ILP64} ${MKL_SEQ} ${MKL_CORE})
+        set(VFFT_MKL_DEFS VFFT_HAS_MKL MKL_ILP64)
     endif()
-    set(VFFT_MKL_LIBS ${MKL_ILP64} ${MKL_SEQ} ${MKL_CORE})
-    set(VFFT_MKL_DEFS VFFT_HAS_MKL MKL_ILP64)
 else()
-    # LP64 single dynamic lib (mkl_rt). ILP64's 8-byte MKL_LONG corrupts the
-    # DFTI strides array under the GNU front ends -> LP64 only here (build.py).
     find_library(MKL_RT NAMES mkl_rt mkl_rt.2 libmkl_rt HINTS ${_mkl_lib_hints})
     if(NOT MKL_RT)
-        message(FATAL_ERROR "MKL LP64 lib not found (mkl_rt).")
+        message(WARNING "MKL LP64 lib not found (mkl_rt): building WITHOUT the MKL comparator.")
+    else()
+        set(VFFT_MKL_FOUND TRUE)
+        set(VFFT_MKL_LIBS ${MKL_RT})
+        set(VFFT_MKL_DEFS VFFT_HAS_MKL)
     endif()
-    set(VFFT_MKL_LIBS ${MKL_RT})
-    set(VFFT_MKL_DEFS VFFT_HAS_MKL)
 endif()
-message(STATUS "MKL include: ${MKL_INCLUDE_DIR}")
-message(STATUS "MKL libs:    ${VFFT_MKL_LIBS}")
+if(VFFT_MKL_FOUND)
+    message(STATUS "MKL include: ${MKL_INCLUDE_DIR}")
+    message(STATUS "MKL libs:    ${VFFT_MKL_LIBS}")
+endif()
 
 # ── Per-front-end compile flags ─────────────────────────────────────────────
 if(VFFT_MSVC_STYLE)
@@ -292,65 +298,15 @@ target_compile_options(dagcodelets PRIVATE ${VFFT_CODE_FLAGS})
 # undefined vfft_* symbols. build.py does the same behind its --vfft flag
 # (the retired src/vfft.c this replaced is what the orphaned src/CMakeLists.txt
 # still names).
-add_executable(bench_1d_vs_mkl
-    "${CMAKE_SOURCE_DIR}/build_tuned/benches/bench_1d_vs_mkl.c"
-    "${DAG_CORE}/vfft.c")
-target_include_directories(bench_1d_vs_mkl PRIVATE ${VFFT_INCLUDE_DIRS} "${MKL_INCLUDE_DIR}")
-target_compile_definitions(bench_1d_vs_mkl PRIVATE ${VFFT_MKL_DEFS} _CRT_SECURE_NO_WARNINGS)
-target_compile_options(bench_1d_vs_mkl PRIVATE ${VFFT_C_FLAGS})
-target_link_libraries(bench_1d_vs_mkl PRIVATE dagcodelets ${VFFT_MKL_LIBS})
-
-# libm: GNU front ends need it (mingw libm on Windows, libm on Linux); MSVC CRT
-# and the ICX-on-Windows MSVC CRT supply it, so skip there (build.py parity).
-if(NOT VFFT_MSVC_STYLE AND NOT (WIN32 AND VFFT_IS_ICX))
-    target_link_libraries(bench_1d_vs_mkl PRIVATE m)
-endif()
-# Linux LP64 mkl_rt also pulls pthread + dl.
-if(UNIX AND NOT VFFT_MSVC_STYLE)
-    target_link_libraries(bench_1d_vs_mkl PRIVATE pthread dl)
-endif()
-# ICX on Windows links through lld (build.py: -fuse-ld=lld).
-if(WIN32 AND VFFT_IS_ICX)
-    target_link_options(bench_1d_vs_mkl PRIVATE -fuse-ld=lld)
-endif()
-
-# ── Convenience run targets (appear in the CMake Tools target picker) ───────
-# Each runs the bench FROM build_tuned/benches/ so the relative wisdom paths
-# resolve and the CSVs land there, with the MKL + compiler runtime dirs on PATH
-# (mkl_rt*.dll, and libwinpthread-1.dll for mingw) — the two things that
-# otherwise make a bare "run the exe" fail from the IDE.
-get_filename_component(_mkl_root "${MKL_INCLUDE_DIR}" DIRECTORY)   # .../include -> root
-get_filename_component(_cc_bin   "${CMAKE_C_COMPILER}" DIRECTORY)
-set(_mkl_bin "${_mkl_root}/bin")
-set(_bench_cwd "${CMAKE_SOURCE_DIR}/build_tuned/benches")
-if(WIN32)
-    set(_run_env "PATH=${_mkl_bin};${_cc_bin};$ENV{PATH}")
-else()
-    set(_run_env "LD_LIBRARY_PATH=${_mkl_bin}:$ENV{LD_LIBRARY_PATH}")
-endif()
-
-add_custom_target(run_bench
-    COMMAND ${CMAKE_COMMAND} -E env "${_run_env}" $<TARGET_FILE:bench_1d_vs_mkl>
-    WORKING_DIRECTORY "${_bench_cwd}" DEPENDS bench_1d_vs_mkl USES_TERMINAL
-    COMMENT "bench_1d_vs_mkl (in-place, calibrated cells)")
-add_custom_target(run_bench_mt
-    COMMAND ${CMAKE_COMMAND} -E env "${_run_env}" "VFFT_MT=8" $<TARGET_FILE:bench_1d_vs_mkl> --mt
-    WORKING_DIRECTORY "${_bench_cwd}" DEPENDS bench_1d_vs_mkl USES_TERMINAL
-    COMMENT "bench_1d_vs_mkl --mt (8 threads)")
-add_custom_target(run_bench_oop
-    COMMAND ${CMAKE_COMMAND} -E env "${_run_env}" $<TARGET_FILE:bench_1d_vs_mkl> --oop
-    WORKING_DIRECTORY "${_bench_cwd}" DEPENDS bench_1d_vs_mkl USES_TERMINAL
-    COMMENT "bench_1d_vs_mkl --oop (out-of-place)")
-add_custom_target(run_bench_oop_mt
-    COMMAND ${CMAKE_COMMAND} -E env "${_run_env}" "VFFT_MT=8" $<TARGET_FILE:bench_1d_vs_mkl> --oop --mt
-    WORKING_DIRECTORY "${_bench_cwd}" DEPENDS bench_1d_vs_mkl USES_TERMINAL
-    COMMENT "bench_1d_vs_mkl --oop --mt (8 threads)")
+# The bench and the tools that drive it live in gauntlet/ (2026-09-22): the
+# user-facing measurement path (calibrate / bench / report / merge), see
+# gauntlet/README.md. build_tuned/ is the development scratch space, retiring.
+add_subdirectory(gauntlet)
 
 message(STATUS "")
-message(STATUS "  VectorFFT (dag) — bench_1d_vs_mkl")
+message(STATUS "  VectorFFT (dag) — library + gauntlet")
 message(STATUS "  Build:    ${CMAKE_BUILD_TYPE}   Compiler: ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
 message(STATUS "  Front-end: ${CMAKE_C_COMPILER} (MSVC-style=${VFFT_MSVC_STYLE}, ICX=${VFFT_IS_ICX})")
 message(STATUS "  ISA:      ${VFFT_ISA}   codelets: ${_ncodelets}")
-message(STATUS "  Run:      build target run_bench | run_bench_mt | run_bench_oop | run_bench_oop_mt")
-message(STATUS "            (these set PATH + cwd automatically; or run ./bench_1d_vs_mkl yourself)")
+message(STATUS "  Run:      cmake --build <build> --target vfft-gauntlet, then python gauntlet/gauntlet.py run --group pow2 --bin-dir <build>/gauntlet")
 message(STATUS "")
