@@ -762,11 +762,11 @@ let exceeds_register_budget (n : int) (vec_regs : int) : bool = n + 6 > vec_regs
  * the assumption that smaller sizes "already beat hand because the whole
  * DFT fits in registers". Verified for R≤16 (R=16 ties the reference
  * codelet generator at 144 ops with 0 muls; whole codelet fits in 32 ZMM
- * registers). But R=25 has
- * 384 ops and a natural 5×5 CT split — its inter-pass live set (25
- * complex values) does NOT fit, so the monolithic emit thrashes
- * registers and produces 1128 vector instructions (450 reg-to-reg
- * moves, 434 stack spills) for an 8.50 ns/transform AVX-512 result.
+ * registers). But R=25 has 384 ops and a natural 5×5 CT split — its
+ * inter-pass live set (25 complex values) does NOT fit, so the monolithic
+ * emit thrashes registers and produces 1128 vector instructions (450
+ * reg-to-reg moves, 434 stack spills) for an 8.50 ns/transform AVX-512
+ * result.
  * The blocked emit gives 67.98 ns/call (4.7 ns/transform) at AVX-512
  * — a 47% speedup at AVX-512, 39% at AVX2, beating Tugbars's hand-
  * generated 5×5 codelet by 12%.

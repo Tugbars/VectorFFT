@@ -188,8 +188,7 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
      * plan-determining methodology. The SCR code is KEPT (scatter terminator + execute path + the
      * create stored-verdict rebuild): a wisdom entry that ALREADY carries nat_mode=3 still executes
      * SCR correctly (that path is independent of this race). -DVFFT_NATORDER_RACE_SCR re-enters SCR
-     * as a race candidate.
-     * natural_order_inplace_design.md. */
+     * as a race candidate. natural_order_inplace_design.md. */
     natorder_scr_t scr;
     memset(&scr, 0, sizeof scr);
     stride_plan_t *scr_plan = NULL;

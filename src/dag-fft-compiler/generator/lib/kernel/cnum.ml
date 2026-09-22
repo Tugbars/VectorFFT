@@ -1,8 +1,9 @@
 (* cnum.ml — Symbolic complex number combinator layer.
  *
- * This module provides a typed `cnum` = (real, imag) representation that
- * flows through the algebra of DFT codelets and pushes simplification
- * opportunities down to the Expr smart constructors.
+ * Following the complex-combinator design of Frigo 2003, this module provides
+ * a typed `cnum` = (real, imag) representation that flows through the algebra
+ * of DFT codelets and pushes simplification opportunities down to the Expr
+ * smart constructors.
  *
  * --- Why a separate layer? ---
  *
@@ -12,8 +13,8 @@
  * a complex value that itself came from a cmul, the constants flow through
  * `re` and `im` independently — and Expr.mk_mul's rotation rule fires
  * naturally when an outer Const meets an inner Const that was placed there
- * by the previous cmul. That's how we close the algebraic gap that left
- * R=25 at 383 ops pre-Cnum.
+ * by the previous cmul. That's how we close the algebraic gap between our
+ * 383 ops pre-Cnum and the 236-op reference on R=25.
  *
  * --- Sign convention ---
  *
