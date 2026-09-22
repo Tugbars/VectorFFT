@@ -41,6 +41,11 @@ src/dag-fft-compiler/experiments/** linguist-vendored
 # Cost-model code (and its generated tables) — excluded from the language bar.
 src/dag-fft-compiler/generator/cost_model/** linguist-vendored
 
+# The gauntlet (2026-09-22): the measurement tool -- the bench, the probes, the
+# Python driver and its results. Tooling, not library code; excluded from the
+# language bar.
+gauntlet/** linguist-vendored
+
 # JIT runtime-codegen OUTPUT (machine-generated .c/.dll codelets emitted at
 # runtime). Visible/browsable in the repo, but excluded from the language bar —
 # same rationale as the static codelets.
