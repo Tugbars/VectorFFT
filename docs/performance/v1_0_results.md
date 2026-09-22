@@ -621,219 +621,70 @@ the candidate cap; the planner refused the cell and Bluestein served it at
 4.7 ms (0.24×). Kernels that do not exist are no longer candidates, and
 ZTURN-T enumerates first in the natural pool.
 
-### K=1 scrambled cascade — intra-transform MT (2026-08-27)
+### K=1 INTERLEAVED — every power of two 2..2^22 vs MKL, T=1 and T=8 (2026-09-22)
 
-The single-transform zturn cascade (ord=scr, OOP) threads its own walk:
-ingest and terminator count-split, mid stages group-split (the digit
-axis), tiled cells run their tiles as self-contained units (fused tiles
-carry their own terminator cut). No clones — one read-only plan, the
-sectioned plane partitioned disjointly. **The engage decision is RACED
-per cell at create** and a losing cell serves serial; kill/force
-`VFFT_ZT_NO_MT`, engagement counter `vfft_zt_mt_passes()`.
-
-**Speedup over the SAME plan at one thread** (not a vs-MKL arm — MKL
-auto-threads 1D C2C at N≥8192, and that comparison is a future
-same-run measurement). T=8, same-run alternated, min-of-20, MT == ST
-bitwise gated at every N including forced-on:
-
-```
- N        fwd      bwd      raced verdict
-──────────────────────────────────────────
- 2048       —        —      serial (0.84× forced)
- 4096       —        —      serial (0.72× forced)
- 8192       —        —      serial (marginal, ~1.1–1.2×)
- 16384    2.54×    2.16×    threaded
- 65536    3.89×    4.04×    threaded
- 262144   5.43×    5.27×    threaded
-──────────────────────────────────────────
-```
-
-The knee sits exactly where the barrier+exchange cost meets the
-transform's work; the race finds it per cell rather than by a constant.
-
-### K=1 INTERLEAVED natural order — ZTURN-T beside the pairs and the cascade (2026-09-09)
-
-ZTURN-T (route 9, `src/core/oop/ztt.h`; `docs/design/zturn_t_ship_plan.md`,
-`zturn_t_2048plus_plan.md`) is the run-contiguous DIT: a packed-through
-ingest into a plane of runs, in-place mid stages with one twiddle stream per
-stage, a REINT terminator that writes natural order, ONE fused driver per
-cell (zero calls), every stream expanded from a baked quarter-wave. It is
-raced per cell by the dp planner beside the pairs (below 2048) and, at 2048
-and above, as the K=1 plan the natural door races against the natord
-ZTURN-S cascade; above 2048 its TILE WIDTH is a raced axis (`il_tw=`, the
-cascade's 1 KB..64 KB ladder; untiled is a candidate too). The best is
-served; below 2048 the pairs keep several cells by measurement.
-
-**16..2048** (`probes/ZT/phaseD_verdict.sh`): the canonical bench in
-`--k1noop` mode (K=1 natural OOP through the front door, MKL DFTI in the
-same process), one fresh process per (cell, run), 7 runs, 12 s cooldowns,
-alternated order, core 2 + HIGH, best-of-5 trials per process:
+One contract, every power of two: 1D c2c, K=1, natural order, out of place.
+Every cell was RE-RACED with recalibrate on a fresh copy of the shipped store
+(the door's own race: solos, pairs x forms, ZTURN-T chains x tiles, the
+four-step's splits; at T=8 the door's per-thread-count race of each engine's
+threaded arm against the serial verdict), then timed by the canonical bench
+against MKL in its own process, both engine orders, best-of-5 in two windows.
+T=1: core 2 + HIGH with the SMT sibling held, MKL single-threaded. T=8: the
+process confined to the 8 P-cores, our arm on the library's pool, MKL at 8
+threads (its own rule keeps it serial below 8192). 2^23 is REFUSED: the
+four-step's ceiling is 2^22 (`k1_fourstep_band.h`, a declaration), and no
+engine serves a power of two above it. Rows in
+`build_tuned/results/gauntlet_pow2/gauntlet.csv` and `gauntlet_mt8.csv`; the
+control cell read 1.07-1.08x at T=1 and 1.02-1.02x at T=8. Every ratio is
+MKL time / our time, the WORSE of the two flips.
 
 ```
- N      served                     vfft ns   MKL ns   MKL/vfft   wins
-──────────────────────────────────────────────────────────────────────
- 16     ZTURN-T 4.4                    11       13     1.18       7/7
- 32     pair 4.8                       19       17     0.90       0/7
- 64     pair 4.16                      34       31     0.91       0/7
- 128    pair 4.32                      69       70     1.01       4/7
- 256    pair 16.16                    141      140     0.99       2/7
- 512    pair 16.32                    301      294     0.98       0/7
- 1024   ZTURN-T 4.8.8.4 (fused)       730      862     1.18       7/7
- 2048   ZTURN-T 8.8.8.4 (fused, nat) 1657     2149     1.30       7/7
-──────────────────────────────────────────────────────────────────────
+         N  serial verdict on the row       ours ns     MKL ns      x |   ours T=8    MKL T=8      x  T=8 verdict
+         2  mono                                  4         11   2.89 |          4         11   2.84  serial
+         4  mono                                  5         11   2.35 |          4         11   2.53  serial
+         8  mono                                  7         12   1.61 |          7         12   1.71  serial
+        16  ZTURN-T 4.4                          10         12   1.20 |         10         13   1.27  serial (the threaded arm lost)
+        32  pair 4.8                             17         16   0.97 |         17         17   1.00  serial
+        64  pair 4.16                            31         31   0.98 |         31         31   0.98  serial
+       128  pair 4.32                            66         69   1.03 |         66         68   1.04  serial
+       256  pair 16.16                          135        138   1.01 |        135        137   1.01  serial
+       512  pair 16.32                          314        293   0.94 |        297        291   0.98  serial
+      1024  ZTURN-T 4.8.8.4                     720        841   1.11 |        713        848   1.19  serial (the threaded arm lost)
+      2048  ZTURN-T 8.8.8.4 tile 1024          1620       2032   1.25 |       1652       2162   1.31  serial (the threaded arm lost)
+      4096  ZTURN-T 8.8.8.8 tile 2048          3593       3846   1.06 |       3679       3825   1.04  serial (the threaded arm lost)
+      8192  ZTURN-T 8.4.8.4.8 tile 1024        8048       8477   1.05 |       4783       8352   1.70  threaded, 3949 MT passes counted
+     16384  ZTURN-T 8.4.4.4.4.8 tile 2048      17189      19177   1.10 |      10804      14645   1.15  threaded, 1661 MT passes counted
+     32768  ZTURN-T 8.4.4.8.8.4 tile 2048      38546      36893   0.95 |      20289      21434   0.98  threaded, 1229 MT passes counted
+     65536  ZTURN-T 8.4.8.4.8.8 tile 1024      89247     109473   1.21 |      25213      42267   1.54  threaded, 487 MT passes counted
+    131072  ZTURN-T 8.4.4.4.4.8.8 tile 2048     222413     259253   1.17 |      51707      80993   1.49  threaded, 255 MT passes counted
+    262144  ZTURN-T 4.8.8.4.4.8.8 tile 2048     541912     710563   1.31 |     103363     185388   1.52  threaded, 220 MT passes counted
+    524288  four-step 512.1024              1374012    1484350   1.04 |     271150     363462   1.34  threaded, four-step split 2048
+   1048576  four-step 2048.512              3167088    4175437   1.28 |     578787     893788   1.54  threaded, four-step split 2048
+   2097152  four-step 512.4096              8241637   10632675   1.27 |    1726562    2589850   1.50  threaded, four-step split 2048
+   4194304  four-step 2048.2048            18851825   24110238   1.28 |    6328113    6966025   1.10  threaded, four-step split 4096
 ```
 
-**4096..16384** (`probes/ZT/phaseE2_2048plus.sh`, same protocol, three
-arms per cell through pinned scratch stores in one session: the served
-plan = ZTURN-T with its raced tile, the SAME chain untiled, and the natord
-cascade by a `mode=zcasc` door row; MKL in every process):
+T=1: median 1.14x, geometric mean 1.22x, 4 of 22 under 1.0, 0 under 0.8.
+T=8: median 1.29x, geometric mean 1.34x, 4 of 22 under 1.0, 0 under 0.8.
 
-```
- N      served (chain @ tile)      ZTURN-T   untiled   cascade   MKL     MKL/vfft  wins
-──────────────────────────────────────────────────────────────────────────────────────
- 4096   8.8.8.8   @ 16 KB            3728      3811      4041    3799     1.02      6/7
- 8192   8.8.4.4.8 @ 32 KB            8115      9052      8731    8557     1.05      6/7
- 16384  8.8.4.8.8 @ 32 KB           18463     19816     18693   18748     1.02      6/7
-──────────────────────────────────────────────────────────────────────────────────────
-```
+The T=8 pass re-raced every cell, so the serial verdict on each row is the
+second race's; at 512, 2048, 4096, 8192, 16384, 32768, 65536, 262144, 2^20 and
+2^21 it named a different chain, tile or split than the first race, within 5%
+of the first race's time at every cell but 262144 (11%): the single-cold-race
+band. The T=1 columns were timed on the first race's plans. Both sets of
+verdicts are equivalent plans, not one better than the other, and the
+multi-sample race remains the open ruling.
 
-The untiled arrangement alone (`phaseE_2048plus.sh`, its own best chains
-8.8.8.8 / 8.8.8.4.4 / 8.8.8.8.4) measured 3768 / 8783 / 18358 ns against the
-cascade's 4100 / 8919 / 19003 and MKL's 3854 / 8546 / 18702 — ahead of the
-cascade everywhere and at MKL parity except 8192 (0.97). The tile closes
-8192 (1.05) and is noise-level at 4096 and 16384 on this clock; the
-planner's own clock prefers it at all three, and the race decides per cell.
-
-**In place, 2048..16384** (`probes/ZT/phaseE3_inplace.sh`: `--k1nat`,
-in-place natural K=1 through the front door vs MKL DFTI_INPLACE in the same
-process, 7 paced runs per arm; ZTURN-T in place = the `plane` drivers ending
-in `tlfi`, the in-place terminator with its output streams prefetched, and
-the plane placed 2 KB off the caller's buffer — `zturn_t_ship_plan.md` §9):
-
-```
- N      ZTURN-T in place   natord cascade in place   MKL in place   MKL/vfft   wins
-──────────────────────────────────────────────────────────────────────────────────
- 2048        1836                 1999                  2119          1.15     7/7
- 4096        3931                 4069                  4016          1.02     6/7
- 8192        8527                 8602                  8818          1.03     7/7
- 16384      19562                18548                 18986          0.97     1/7
-──────────────────────────────────────────────────────────────────────────────────
-```
-
-In place costs ZTURN-T 5..11% over its out-of-place time (an out-of-place
-engine through a scratch plane, MKL's own in-place shape; MKL's tax is
-1..6%). The in-place door banks the engine at all four cells; 16384 is a tie
-cell on the door's clock (ILP 2 of 3 cool-box races) and the bench's cascade
-win there sits inside ZTURN-T's spread.
-
-**Scrambled order, 2048..16384** (`probes/ZT/phaseE4_scr.sh`: the bench's
-default mode = an explicit SCRAMBLED K=1 OOP request through the front door
-vs MKL natural OOP in the same process; 7 paced runs per arm). SCRAMBLED
-means order-agnostic: every engine that answers with a self-consistent
-permutation competes in the cell's race, natural output included, and the
-scrambled door banks the winner. ZTURN-T, writing natural order, beats the
-cascade's digit-reversed comb at every cell:
-
-```
- N      ZTURN-T (natural out)   cascade comb   MKL natural   ZTURN-T ahead   MKL/vfft
-──────────────────────────────────────────────────────────────────────────────────────
- 2048        1657                  1991           2148          20%          1.30
- 4096        3661                  3971           3817          8.5%         1.04
- 8192        8109                  8335           8395          2.8%         1.05
- 16384      17243                 17848          18516          3.5%         1.07
-──────────────────────────────────────────────────────────────────────────────────────
-```
-
-That table is the 2026-09-09 world. Since 2026-09-14 **order is a contract**
-(`design_contracts.md` 8b): a scrambled request is served by a scrambled
-writer only, and at every pow2 cell 16..262144 that writer is the
-**scrambled ZTURN-T class** — the plain schedule (`ztt_scrambled_design.md`:
-in-place Sande-Tukey on the chain, post-twiddle, no scatter, no plane, one
-sweep fewer than natural), banked on the `ord=scr` row with the same
-tokens. Measured against the natural class on the same chain and tile
-(`probes/ZT/zt_scr_spike_results.md`, paced core-2 races): **in place it is
-faster at every cell from 2048 up, both directions** (−3..−6% at 2048..8192,
-−5..−10% at 16384, −11/−15% at 32768, −17/−26% at 65536, −20..−30% at
-131072..262144); out of place the backward is at parity from 16384 and
-wins above L2, the forward loses 5..30% at 2048..65536 and wins above L2
-(the class's one open item); below 2048 it costs ~11% and is served
-regardless, the contract being the contract. It is not benched against
-MKL: MKL's DFTI serves natural order, a different contract.
-
-ZTURN-T serves every pow2 cell to 262144 since 2026-09-09 (the two-level
-create above the quarter-wave's octave) and the 2^a·odd band since
-2026-09-15 (the section above). The cascade itself was deleted from the
-library on 2026-09-15, and ZTURN-T's own **threaded arm** took over T > 1
-the same day (`docs/design/ztt_mt_design.md`: the stage walk sectioned
-across the pool, bitwise the serial result, raced and banked per thread
-count on the cell's row). Its measurements — T = 8 speedups of 1.4-2x at
-12288..16384, 3.3-5.4x at 65536, 6.2-7.9x at 245760..262144, and 1.51-1.87x
-over MKL at 8 threads through the canonical bench at 12288..262144 — are in
-`probes/ZT/zt_mt_spike_results.md`. The natural door's race
-buffers were made 64-B aligned on 2026-09-09; before that its 16-B `malloc`
-buffers split ZTURN-T's stores across lines and banked the cascade at 4096
-against this verdict.
-
-### K=1 INTERLEAVED — the upper band 2^19..2^22, the four-step vs MKL (2026-09-15)
-
-Above ZTURN-T's ceiling the K=1 interleaved cell is the FOUR-STEP (route
-10, `src/core/oop/k1_fourstep.h`, `docs/design/k1_fourstep_design.md`):
-N = N1 x N2 on the 2D interleaved tier — the column chain and the fused row
-pass of a rank-2 cell (its own raced verdicts: chain, band width, ZTURN-T
-rows at 2048 and 4096), the inter-pass twiddle multiplied into the row pass
-as two-level records — and, for the natural class, one blocked AVX2
-transpose with the column permutation folded in (streaming stores, cut
-across the pool). The scrambled class is the plane as it stands. The split
-is a raced verdict per cell at one thread and, separately, per thread count
-(`il_pair` / `il_mt`): the children's threaded verdicts reorder the ladder.
-At 262144 the four-step's splits race beside ZTURN-T's chains in the same
-cell and ZTURN-T keeps it.
-
-Canonical bench, `--k1noop` (natural, out of place, both engines in one
-process, MKL `DFTI_NOT_INPLACE`), one process per (cell, order flip), core 2
-+ HIGH at one thread, both engines on the 8 P-cores at T=8, best-of trials,
-the two flips shown as a range; quiet machine 2026-09-15:
-
-```
- N          split (T=1 / T=8)      ours T=1 (ns)   MKL T=1 (ns)   vs MKL    ours T=8 (ns)   MKL T=8 (ns)   vs MKL
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────
- 262144     ZTURN-T 4.8.4.4.8.8.8      650k-791k      730k-743k   0.94-1.12x     105k-112k      174k-176k   1.57-1.66x
- 524288     2048x256 / 2048x256       1.41M-1.52M    1.52M-1.53M  1.00-1.08x     274k-289k      331k-350k   1.15-1.27x
- 1048576    512x2048 / 2048x512       3.12M-3.29M    4.13M-4.19M  1.26-1.34x     611k-612k      830k-887k   1.36-1.45x
- 2097152    512x4096 / 512x4096       7.86M-8.04M   11.02M-11.45M 1.40-1.43x    1.82M-1.92M    2.76M-2.81M  1.46-1.51x
- 4194304    1024x4096 / 2048x2048    18.77M-19.07M 26.83M-27.50M  1.43-1.44x    7.09M-8.03M    7.41M-8.13M  1.01-1.04x
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-```
-
-(the 2M and 4M rows re-measured 2026-09-16 on a quiet machine after the
-per-thread split verdicts were re-raced; the other rows stand from
-2026-09-15.) Elementwise vs MKL 5.7e-16..2.7e-15 at every cell. What the
-numbers say:
-the natural class's whole cost over the scrambled class is the transpose
-(the store's race times at one thread: scrambled 1.15 / 2.81 / 6.34 /
-14.95 ms at 2^19..2^22 against natural 1.41 / 3.12 / 7.30 / 17.58 ms), and
-that transpose is bandwidth: the scalar 16 x 16 walk it shipped with ran
-10.3 ms at 1024 x 4096 against 2.9 ms for the lane-permute + streaming
-kernel (`benches/tp_probe.c`: block size, loop order and store kind raced,
-one and eight threads) — the scalar kernel lost every cell at one thread
-(0.67-0.94x) and this one wins them. At T=8 the 4194304 cell is at parity:
-a 64 MB plane is at the DRAM roof in every phase (73-75 GB/s), so its time
-is its sweep count, and every form raced to cut a sweep — column strips,
-a fused stage pair, a natural-child fold, the super-band fold of the
-transpose — either lost or landed inside the race's own spread
-(`docs/design/il2d_large_plane_design.md`). The 2^a·odd cells above
-262144 are not served.
-
-Reproduce: `k1_fourstep_gate.exe <store> 4194304 8 262144` (races and
-banks the band on a store; ALL PASS = the gate), then
-`bench_1d_vs_mkl --k1noop [--mt] <store>/spike_wisdom.txt <csv> 300 <N> 1 300 <flip> 2`
-with `VFFT_WISDOM_DIR=<store>`; `benches/fs_split_probe.exe <store> <N>..`
-times both classes at T=1 and T=8 (`VFFT_K1_FS=N1xN2` pins a split).
-
-Reproduce: `calibrate_k1.exe <scratch> 1 4096 8192 16384` (scratch copy of
-`generated/`), `probes/ZT/natoop_restamp.exe <scratch> 4096 8192 16384`,
-then `sh probes/ZT/phaseE2_2048plus.sh` (`SKIP_CAL=1` re-runs the bench
-only; the script refuses a second concurrent instance).
+The re-race replaced the shipped verdicts at the top of the range with better
+splits -- 524288 from 2048x256 (2.47 ms) to 512x1024 (1.50 ms), 2^21 from
+512x4096 (11.2 ms) to 2048x1024 (7.2 ms), 2^22 from 1024x4096 (26.0 ms) to
+2048x2048 (17.7 ms) -- the single-cold-race lottery of 2026-09-18, resolved
+by racing again. The four cells under 1.0 at T=1 are the known ones: the
+32..512 pair band at parity with MKL (the leaf program) and 32768 (0.95,
+between neighbours at 1.10 and 1.21). Below 2048 the per-thread race keeps
+the serial verdict at T=8 (a threaded arm never wins there); the threaded
+arms engage from the ZTURN-T band up, where the T=8 column is the product's
+number.
 
 ### K=1 INTERLEAVED — PRIME N, the prime cell's own raced method and inner (2026-09-19)
 

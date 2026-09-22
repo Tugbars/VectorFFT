@@ -527,5 +527,3 @@
 @cell t=c2c n=510 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=chain3 il_pair=51.10 il_chain=10.3.17 il_kv=0 | ran=1 ns=572.6 metric=fwd1 units=ns src=race date=2026-09-21
 @cell t=c2c n=512 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=ztt il_ztt=4.4.4.8 il_kv=0 | ran=1 ns=374.8 metric=fwd1 units=ns src=race date=2026-09-21
 @cell t=c2c n=4096 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=ztt il_ztt=8.8.8.8 il_tw=1024 il_kv=0 | ran=1 ns=3720.9 metric=fwd1 units=ns src=race date=2026-09-21
-@cell t=c2c n=1024 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=ztt il_ztt=4.8.4.8 il_kv=0 | ran=1 ns=797.6 metric=fwd1 units=ns src=race date=2026-09-22
-@cell t=c2c n=2048 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=ztt il_ztt=4.8.8.8 il_kv=0 | ran=1 ns=1729.3 metric=fwd1 units=ns src=race date=2026-09-22
