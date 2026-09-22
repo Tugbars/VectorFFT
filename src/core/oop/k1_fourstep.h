@@ -1,7 +1,7 @@
 /* k1_fourstep.h — the K=1 INTERLEAVED four-step above ZTURN-T's ceiling
  * (docs/design/k1_fourstep_design.md, 2026-09-15; owner: "our Bailey engine
- * is the best solution for this and MKL's code also shows that they are
- * using Bailey for 256k and above").
+ * is the best solution for this" — the four-step is the standard method
+ * at 256k and above).
  *
  * N = N1 x N2 on the 2D INTERLEAVED tier: the signal as N1 rows of N2,
  * step 1 = the column-axis chain (N2 transforms of length N1, stride N2),

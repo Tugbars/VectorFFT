@@ -1,5 +1,5 @@
 /* il_flatdit.h — the FLAT mixed-radix DIT chain, un-turned, v0 STRUCTURE
- * CHECK (2026-09-04): MKL's generic-N shape on shipped pure-IL kinds,
+ * CHECK (2026-09-04): the standard generic-N shape on shipped pure-IL kinds,
  * built to validate the algebra BEFORE the emitter kind it motivates.
  *
  *   N = R[0]*...*R[K-1]. Natural input, same-slot stages, natural output.

@@ -994,7 +994,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
              * Hermitian-transpose pair — conjugated tables pre-butterfly,
              * consuming the r2c pair's scrambled-N1 comb) moves the
              * caller's z into the il2d_rscr plane on its FIRST executed
-             * stage (§2.6 input-preserving contract; FFTW destroys its
+             * stage (§2.6 input-preserving contract; c2r usually destroys its
              * input here — we don't), then the batched TC K=N1 c2r row
              * door folds rows scratch -> the caller's real plane. dir is
              * ignored (c2r = inverse math, unnormalized: caller divides

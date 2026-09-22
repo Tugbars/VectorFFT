@@ -8,10 +8,6 @@
  *   - Compiled with -mavx512f  → 8×8 ZMM kernel (one dest row = one 64B line)
  *   - Compiled with -mavx2     → 8×4 YMM kernel with paired line-filling stores
  *
- * Both variants beat their respective MKL ISA mode (mkl_domatcopy) on
- * power-of-2 sizes ≥128. Measured with MKL forced to the same ISA and
- * running single-threaded.
- *
  * ───────────────────────────────────────────────────────────────────
  *  Design
  * ───────────────────────────────────────────────────────────────────

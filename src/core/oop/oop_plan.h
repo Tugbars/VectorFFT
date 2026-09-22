@@ -35,7 +35,7 @@
  * unnormalized inverse, same ordering semantics as forward.
  *
  * Layout: column/split, element e of transform t at [e*K + t], matching
- * the stride executor and MKL split convention.
+ * the stride executor and the standard split convention.
  */
 #ifndef VFFT_OOP_PLAN_H
 #define VFFT_OOP_PLAN_H
@@ -881,7 +881,7 @@ static inline int vfft_oop_execute_fwd(const vfft_oop_plan_t *p,
     return -1;
 }
 
-/* ---- BAILEY2V TWO-PASS entry points (§12.4 item 1 — MKL's mid-N shape:
+/* ---- BAILEY2V TWO-PASS entry points (§12.4 item 1 — the mid-N shape:
  * no transpose sweep, 2 passes, 1 scratch pair; dst==src is safe for both
  * routes since the t1 pass reads only the scratch). Natural order.
  * Route (a): leaf UG x->scr (untransposed), then t1-UL scr->dst — the 4x4

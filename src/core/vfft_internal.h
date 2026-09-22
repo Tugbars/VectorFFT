@@ -237,8 +237,8 @@ struct vfft_plan_s
      * INTERLEAVED-CCE real transforms as reinterpret + CHILD c2c(N/2) +
      * the zr2c.h fold. zr2c_child != NULL selects this route over
      * rplan/c2rdisp at execute. route 0 = OOP-IL child (natural OOP c2c);
-     * route 1 = NAT-IP cascade child (natural in-place c2c — MKL's own
-     * regime routing, validated 2026-08-13). Verdicts belong to the
+     * route 1 = NAT-IP cascade child (natural in-place c2c — the usual
+     * regime routing by size, validated 2026-08-13). Verdicts belong to the
      * zr2c-owned wisdom kind (owner directive); until the calibrator
      * lands, create uses the placement-matched STRUCTURAL default and
      * the VFFT_ZR2C_ROUTE env override (env beats wisdom, house rule). */

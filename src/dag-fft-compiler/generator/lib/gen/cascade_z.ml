@@ -126,7 +126,7 @@ type zs_kind =
        (PRE-twiddle conj then IDFT: tmgb/tlfb/tlfib/mszb) also set it — at
        Bwd, (DIF, Bwd) lands on PRE. *)
   ; lanes_u : bool
-    (* UNORDERED PLANE LANES (2026-09-05, MKL's Fact-form detail): the z
+    (* UNORDERED PLANE LANES (2026-09-05, split-body form detail): the z
        edges leave the lanes as unpacklo/hi produce them ([0,2,1,3]) and
        skip the two 0xD8 permutes per leg per 4 columns (zu_noperm); the
        per-block record-sets are broadcast, so lane order is moot. msz is
@@ -170,7 +170,7 @@ let kind_of_string (s : string) : zs_kind =
   in
   match s with
   | "msz" ->
-    (* MKL's Fact form on our contract (2026-09-05, owner: "kernel-level
+    (* the split-body mid on our contract (2026-09-05, owner: "kernel-level
        boundary IL, split body is fine"): the group-looped split mid with
        INTERLEAVED z on BOTH edges — deinterleave on load, the shuffle-free
        split body, reinterleave on store — no split planes in memory, no

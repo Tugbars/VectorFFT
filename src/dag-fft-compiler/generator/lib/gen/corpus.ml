@@ -2776,10 +2776,10 @@ let matrix_files (quadrant : string) : (string * string list) list =
              , [ string_of_int r; "--hc2hc"; "--dif"; "--t1s"; "--isa"; isa; "--su" ] )
            ; ( Printf.sprintf "radix%d_hc2c_dit_fwd_%s.c" r isa
              , [ string_of_int r; "--hc2c"; "--t1s"; "--isa"; isa; "--su" ] )
-           ; (* log3 variants (section 62: hc2cf2 = hc2c + log3). FFTW's hc2cf2
-              * family is literally hc2c generated with -twiddle-log3; here the
+           ; (* log3 variants (section 62: hc2cf2 = hc2c + log3). The hc2cf2
+              * family is literally hc2c generated with log3 twiddles; here the
               * --log3 flag composes with --t1s the same way (verified: 7->3
-              * twiddle slots, op counts match FFTW hc2cf2_8 at 74 add/30 fma).
+              * twiddle slots, op counts 74 add/30 fma at radix 8).
               * The log3 twiddle stage (hc2hc) and the log3 NATURAL terminator
               * (hc2c-nat, the 6-ptr mirror-pair ABI the rfft executor's stage-0
               * actually calls — NOT the packed 4-ptr hc2c). *)
@@ -2833,13 +2833,13 @@ let matrix_files (quadrant : string) : (string * string list) list =
       kind_sizes
   | "c2r-avx2" | "c2r-avx512" ->
     (* Native real-cascade BACKWARD family (section 62, the inverse of the
-     * rfft forward quadrant). FFTW runs hc2r as apply_DIF + sign-flipped
+     * rfft forward quadrant). hc2r runs as apply_DIF + sign-flipped
      * twiddles: r2cb leaf (halfcomplex -> real) + hc2hc DIF backward stages.
      * The c2r executor (core/c2r.h) calls exactly these; the matrix gate
      * (benchmarks/gate_c2r_matrix.c) proved them across nf=1..4 incl. (8,32).
      * --t1s is REQUIRED (scalar-broadcast twiddles, doc 60 gotcha) or the
      * codelet reads the wrong twiddle memory. radices mirror the forward
-     * quadrant; radix-32 is the big leaf for the (8,32) MKL-beating plan. *)
+     * quadrant; radix-32 is the big leaf for the (8,32) plan. *)
     let isa = if quadrant = "c2r-avx2" then "avx2" else "avx512" in
     let radices = [ 2; 3; 4; 5; 7; 8; 16 ] in
     let leaf_only = [ 32 ] in
