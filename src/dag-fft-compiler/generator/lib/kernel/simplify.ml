@@ -195,11 +195,10 @@ let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) l
 
 (* === COLLECT-M PASS ===
  *
- * Inspired by FFTW's collectM (genfft/algsimp.ml). Walks each Add/Sub
- * subtree in the DAG, flattens it into a list of signed terms, then groups
- * terms by their non-constant factor (the "atom") and sums their
- * coefficients. Tag identity from hash-consing tells us when two atoms are
- * the SAME node — that's the case we want to merge.
+ * Walks each Add/Sub subtree in the DAG, flattens it into a list of signed
+ * terms, then groups terms by their non-constant factor (the "atom") and
+ * sums their coefficients. Tag identity from hash-consing tells us when two
+ * atoms are the SAME node — that's the case we want to merge.
  *
  * Example transformations:
  *   ax + bx + cx     -> (a+b+c)·x            [3 muls + 2 adds -> 1 mul]
@@ -218,7 +217,7 @@ let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) l
  * the inner Mul is opaque (its operand `Add(x, y)` is a different atom
  * than `z`).
  *
- * The DEEP variant (FFTW's deepCollectM, planned for a follow-up) would
+ * The DEEP variant (deepCollectM, planned for a follow-up) would
  * recursively distribute Muls through Plus children to expose more
  * sharing. We start with shallow because it's the simpler case to
  * verify and bench, and the savings (if any) tell us whether the deep
@@ -362,9 +361,8 @@ let collect_m (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
  *
  * The deep variant of collectM. Where shallow collectM merges terms within
  * ONE Add/Sub subtree, deepCollectM also distributes Const*Sum patterns
- * through nested sums to EXPOSE inner atoms to the outer collection. This
- * is FFTW's `deepCollectM` (genfft/algsimp.ml) with their default
- * `deep_collect_depth = 5`.
+ * through nested sums to EXPOSE inner atoms to the outer collection. The
+ * distribution depth is bounded by `depth_limit` (default 5).
  *
  * Example transformation:
  *   k * (a*x - b*y) + k * (c*x - d*y)
@@ -384,7 +382,7 @@ let collect_m (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
  *      (one extra Mul). We need collectM to find shared atoms (or CSE
  *      via hash-cons across other outputs) to recoup.
  *   2. Unbounded recursion would explode the DAG. Bounded by depth limit
- *      (default 5, matching FFTW).
+ *      (default 5).
  *   3. Distribution destroys the original tree shape, which may have been
  *      FMA-friendly. We compare the IR node count of the distributed-
  *      collected result vs the original; keep whichever is smaller.
@@ -949,8 +947,8 @@ let factor_common_muls ?(aggressive = false) (assigns : (Expr.elem_ref * t) list
  * of distinct constants. Each ci is a Const, so (c1 + c2 + ... + cN) folds
  * to ONE constant at DAG construction time. N muls collapse to 1 mul.
  *
- * This is FFTW's `collectM` with the second-operand-as-coeff path. The
- * pattern arises in DFT computations where multiple twiddle factors
+ * This is the collect-M transform with the second-operand-as-coeff path.
+ * The pattern arises in DFT computations where multiple twiddle factors
  * multiply the same input element across outputs.
  *
  * IR-level extraction:

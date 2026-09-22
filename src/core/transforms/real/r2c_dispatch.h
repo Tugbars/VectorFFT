@@ -89,10 +89,11 @@ static inline void vfft_r2c_dispatch_set_c2c_wisdom(const vfft_proto_wisdom_t *w
 /* High-K hybrid threshold: when K >= this AND layout==SPLIT AND a c2c registry is
  * available, the decoupled stride path (pack+c2c(N/2)+Hermitian fold) is PREFERRED
  * over rfft — it wins big at high K, while rfft wins at low K. Default 32 is the
- * measured N=256 crossover (bench_r2c_dispatch_vs_mkl.c, mkl/x ratios):
+ * measured N=256 crossover (r2c dispatch bench, baseline/x ratios, higher is
+ * faster):
  *   K :    8      16     32     64     128    256
  *   rfft : 1.07x  1.03x  0.67x  0.61x  0.58x  0.50x
- *   strd : 0.73x  0.88x  0.99x  0.68x  0.66x  1.01x   (K>=32 strd>rfft; K=256 beats MKL)
+ *   strd : 0.73x  0.88x  0.99x  0.68x  0.66x  1.01x   (K>=32 strd>rfft)
  * SIZE_MAX disables (always rfft). Calibrate per host/N; set via the setter. */
 static size_t _vfft_r2c_decouple_min_k = 32;
 static inline void vfft_r2c_dispatch_set_decouple_min_k(size_t k) { _vfft_r2c_decouple_min_k = k; }
@@ -234,8 +235,8 @@ static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
      * correct (stride_r2c_plan picks the DIF-aware recombine perm), but pack-fusion
      * is a DIT-leaf technique (no-twiddle leaf at stage 0): a DIF inner can't fuse
      * the pack and must take the explicit-pack path, which loses more than DIF's
-     * standalone-c2c edge gains. Measured N=256 K=32: DIT+fused 0.99× MKL vs
-     * DIF+explicit-pack 0.87×. So when c2c wisdom picks DIF for the inner cell,
+     * standalone-c2c edge gains. Measured N=256 K=32: DIT+fused runs ~14%
+     * faster than DIF+explicit-pack. So when c2c wisdom picks DIF for the inner cell,
      * rebuild the same factorization as DIT (default T1S). */
     if (inner->use_dif_forward)
     {
@@ -271,7 +272,7 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
     p->layout = layout;
 
     /* ---- HYBRID: prefer the decoupled stride path at high K (SPLIT only) ----
-     * rfft loses badly at high K (~0.47x MKL) while decoupled-r2c hits ~0.91x;
+     * rfft loses badly at high K, where decoupled-r2c runs ~2x faster;
      * the reverse holds at low K. When K crosses the calibrated threshold and a
      * c2c registry is present, take stride first; otherwise fall through to rfft. */
     if (layout == VFFT_R2C_SPLIT && (N % 2) == 0 &&

@@ -60,8 +60,8 @@ type twiddle_policy =
  *   DIF (Decimation-In-Frequency): y = W ⋅ DFT(x) — twiddle on OUTPUT, post-butterfly
  *
  * In a CT recursion, you typically pair DIT codelets at one level with
- * DIF codelets at the next so that the twiddle layer flips. FFTW emits
- * both styles for this reason. *)
+ * DIF codelets at the next so that the twiddle layer flips. That is why
+ * this generator emits both styles. *)
 type direction =
   | DIT
   | DIF
@@ -285,7 +285,7 @@ let dft_expand_twiddled
     sorted)
 ;;
 
-(* === OUT-OF-PLACE TWIDSQ EXPANSION (FFTW-style intermediate codelet) ===
+(* === OUT-OF-PLACE TWIDSQ EXPANSION (intermediate-stage codelet) ===
  *
  * Builds the assignment DAG for an n×n "twiddle square" codelet:
  *   - Input:  row-major n×n block of complex values (n² elements)
@@ -760,7 +760,7 @@ let exceeds_register_budget (n : int) (vec_regs : int) : bool = n + 6 > vec_regs
  *
  * Empirical threshold: n ≥ 25. The original threshold was n ≥ 32, on
  * the assumption that smaller sizes "already beat hand because the whole
- * DFT fits in registers". Verified for R≤16 (R=16 ties FFTW at 144 ops
+ * DFT fits in registers". Verified for R≤16 (R=16 hits the optimal 144 ops
  * with 0 muls; whole codelet fits in 32 ZMM registers). But R=25 has
  * 384 ops and a natural 5×5 CT split — its inter-pass live set (25
  * complex values) does NOT fit, so the monolithic emit thrashes
@@ -771,8 +771,8 @@ let exceeds_register_budget (n : int) (vec_regs : int) : bool = n + 6 > vec_regs
  * generated 5×5 codelet by 12%.
  *
  * Verified: R=25 AVX-512 default (monolithic) vs blocked numerically
- * identical to 8.88e-16 (machine epsilon); both match FFTW within
- * 1e-13. See /tmp/bench_r25/bench_4way.c.
+ * identical to 8.88e-16 (machine epsilon); both match a reference DFT
+ * within 1e-13. See /tmp/bench_r25/bench_4way.c.
  *
  * Threshold remains a lower bound. Sizes < 25 (which means R≤16 for
  * CT-decomposed radices given our pick_algorithm) keep monolithic. *)

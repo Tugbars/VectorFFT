@@ -303,7 +303,7 @@ let dft_split_radix
 
 (* ============================================================================
  * NEWSPLIT — Johnson-Frigo / Van Buskirk scaled (tangent) conjugate-pair
- * split-radix, ported from FFTW genfft fft.ml (newsplit0/S/S2/S4).
+ * split-radix (newsplit0/S/S2/S4).
  *
  * Sub-transforms are RESCALED by real factors so that twiddle multiplies
  * collapse toward real scalings; newsplit0 (top entry) produces UNSCALED
@@ -354,7 +354,7 @@ let newsplit_core (sign : [ `Fwd | `Bwd ]) =
   in
   (* complex ops on (re,im) expr pairs *)
   let ccmul (xr, xi) (cr, ci) =
-    (* tan-factored (FFTW -fma form); trivial components fold via mk_const/
+    (* tan-factored (FMA form); trivial components fold via mk_const/
        mk_mul at lift. For the tangent-FFT (1,t)/(t,1) twiddles the outer
        Mul is by 1.0 and disappears, leaving 2 FMA-able ops. *)
     if ci = 0.0

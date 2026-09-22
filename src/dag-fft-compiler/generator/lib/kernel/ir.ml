@@ -18,10 +18,9 @@
  * become physically the same value. Equality reduces to pointer/tag
  * comparison; CSE is automatic.
  *
- * Frigo's genfft does this. We do the same with one extension: stronger
- * canonicalization of floating-point constants, so the generator is
- * robust to numerical noise from cos/sin computations at radices that
- * aren't pure power-of-two.
+ * We extend this with stronger canonicalization of floating-point
+ * constants, so the generator is robust to numerical noise from cos/sin
+ * computations at radices that aren't pure power-of-two.
  *
  * The rewrite passes that run OVER this IR live in simplify.ml (the
  * algebraic family), fma_passes.ml (the FMA family) and algsimp.ml
@@ -65,10 +64,10 @@ type node_kind =
    * NK_Plus represents a sum of signed terms: [(s_1, t_1); ...; (s_n, t_n)]
    * means s_1*t_1 + ... + s_n*t_n where each s_i ∈ {+1, -1}.
    *
-   * Inspired by FFTW's genfft, where `Plus` is a list. The n-ary form enables
-   * `collectM`-style simplification ("ax + bx + cx → (a+b+c)x") in one pass,
-   * which the binary NK_Add/NK_Sub form cannot express without recursive
-   * tree-walking that misses cross-subtree sharing.
+   * The n-ary form enables term-collecting simplification
+   * ("ax + bx + cx → (a+b+c)x") in one pass, which the binary
+   * NK_Add/NK_Sub form cannot express without recursive tree-walking that
+   * misses cross-subtree sharing.
    *
    * Invariants (enforced by mk_plus):
    *   1. Length >= 2. Single-term sums collapse to t (or Neg t) at construction.
@@ -247,8 +246,8 @@ let of_expr_memo : t ExprMemo.t = ExprMemo.create 1024
  * behavior stored the quantized value itself, injecting up to ~4e-14
  * relative error (~22-30 ulp) into every emitted twiddle constant — the
  * accuracy harness measured exactly that against a long-double reference
- * (radix-16/8 chains at 28-76 eps L2 vs MKL's 1-3; radix-4 chains, whose
- * constants are exact, matched MKL). Keyed on the magnitude; sign is
+ * (radix-16/8 chains at 28-76 eps L2; radix-4 chains, whose constants
+ * are exact, were unaffected). Keyed on the magnitude; sign is
  * canonicalized to a Neg wrapper as before. Cleared by reset(). *)
 let const_ident : (string, t) Hashtbl.t = Hashtbl.create 256
 

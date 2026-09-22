@@ -1379,12 +1379,14 @@ static void _il_dp_flat_rec(int L, int depth, int *cur,
      * race arm, never a wrong plan. */
     /* 23 joined on 2026-09-21, generated at every IL kind the way 17 and
      * 19 are (the corpus mirrors 19). The 2..2048 gauntlet found 64 cells
-     * with a factor 23 and NO route -- every one served by the prime cell
-     * at a median 0.49x of MKL -- because no kernel existed at 23 anywhere
-     * in the interleaved registry while the split library has had one. */
+     * with a factor 23 and NO route -- every one served by the generic
+     * prime cell at about half the speed a direct radix-23 stage reaches
+     * -- because no kernel existed at 23 anywhere in the interleaved
+     * registry while the split library has had one. */
     /* 29 and 31 joined on 2026-09-21 (the same recipe): 268 gauntlet cells whose
-     * largest prime is 29..47 ran the prime cell at 0.60-0.96x of MKL, 103 of
-     * them with a 29 or a 31; MKL runs a direct radix-p stage there. */
+     * largest prime is 29..47 fell back to the prime cell and left 4-40% on
+     * the table, 103 of them with a 29 or a 31; a direct radix-p stage is
+     * what those cells want. */
     static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16, 29, 31, 37, 41, 43, 47 };
     int p;
     if (L == 1)
@@ -1399,7 +1401,7 @@ static void _il_dp_flat_rec(int L, int depth, int *cur,
     if (depth >= VFFT_ILFD_MAX_K) return;
     /* THE LONE FACTOR 2 (2026-09-21). The gauntlet's 27 cells of the shape
      * 2 x {7, 11, 13, 17, 19} (14, 22, 26, 34, 38, 98, 154, ..., 2002) had no
-     * route and ran the prime cell at a median 0.35x of MKL: nothing in the
+     * route and ran the prime cell at a third of full speed: nothing in the
      * library places a SINGLE factor of 2 -- this pool's 4/8/16 need two or
      * more, the 2^a*odd grammar needs a 4, and the pair needs R1 >= 3 and an
      * n1t leaf, which has no radix 2. The registry does have n1c at 2, and

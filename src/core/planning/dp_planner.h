@@ -1,7 +1,7 @@
 /**
  * vfft_proto_dp_planner.h -- Recursive dynamic programming planner
  *
- * FFTW-style recursive decomposition with memoization.
+ * Recursive decomposition with memoization.
  * Instead of trying all factorizations x orderings (exponential),
  * we decompose recursively and cache sub-problem solutions.
  *
@@ -155,7 +155,7 @@ static inline void vfft_proto_gen_permutations(
  *   for the v1.1 "lock-in" failure mode where M's cache returned a
  *   factorization that was best as-isolated but suboptimal as-substage.
  *
- * Upgrade C: believe_subplan_cost toggle (FFTW BELIEVE_PCOST analog).
+ * Upgrade C: believe_subplan_cost toggle (trust a cached sub-plan cost).
  *   When 1 (default, MEASURE-style): cache hit returns cached cost,
  *   no re-measurement.
  *   When 0 (PATIENT-style): cache hit returns the cached factorization
@@ -187,8 +187,8 @@ static inline void vfft_proto_gen_permutations(
 /* Runtime beam (ctx->beam) selects how many of the TOPK_MAX slots are actually
  * kept + propagated per node — the search BREADTH. Paired with
  * believe_subplan_cost: MEASURE = narrow beam + trust cached pcost (fast, K=4);
- * PATIENT = wide beam + re-measure-all-top-K on every cache hit (FFTW-PATIENT,
- * the K>=8 path). vfft_proto_dp_set_patient() flips both. */
+ * PATIENT = wide beam + re-measure-all-top-K on every cache hit (the
+ * K>=8 path). vfft_proto_dp_set_patient() flips both. */
 #ifndef VFFT_PROTO_DP_BEAM_MEASURE
 #define VFFT_PROTO_DP_BEAM_MEASURE 3   /* original behavior */
 #endif
@@ -270,7 +270,7 @@ static void vfft_proto_dp_destroy(vfft_proto_dp_context_t *ctx)
     memset(ctx, 0, sizeof(*ctx));
 }
 
-/* Flip to FFTW-PATIENT width: wide beam + re-measure-all-top-K on cache hit.
+/* Flip to PATIENT width: wide beam + re-measure-all-top-K on cache hit.
  * MEASURE (the default) stays narrow/fast for K=4; call this for the K>=8 path. */
 static inline void vfft_proto_dp_set_patient(vfft_proto_dp_context_t *ctx)
 {
