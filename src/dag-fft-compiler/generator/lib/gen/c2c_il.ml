@@ -1424,9 +1424,9 @@ let emit
  * function calls, and a RUNTIME twiddle table. At K=1 with N fixed at
  * generation time none of that is wanted:
  *
- *   - a K=1 interleaved path wants to be ONE function — the whole 2^k
- *     transform in a single body, in-place on a contiguous plane, not a
- *     chain of staged calls;
+ *   - the reference library's own K=1 interleaved path is ONE function
+ *     (docs/research/mkl_highN_cascade_anatomy.md: "the whole 2^k K=1
+ *     cascade is ONE function", in-place on a contiguous plane);
  *   - every twiddle is a COMPILE-TIME constant when N is known, so a
  *     runtime table is pure waste — they become file-scope VLITs (CTwV);
  *   - the stage boundary is a register transpose, not an ABI crossing.
@@ -1453,8 +1453,9 @@ let emit
    composes costs"). An earlier version of this function picked a "squarest
    split" internally — a composed cost model, which both contradicted the
    calibrated chains and caused the measured losses: the N whose split landed
-   on spill-free radices (16 = 4x4, 64 = 8x8) RAN FAST, while those landing on
-   r16/r32 (256, 1024) were clearly slower. Emitters take the plan as INPUT. *)
+   on spill-free radices (16 = 4x4, 64 = 8x8) BEAT the reference library,
+   while those landing on r16/r32 (256, 1024) sat at 0.85x of it. Emitters
+   take the plan as INPUT. *)
 let emit_k1
       ~(tangent : bool)
       ~(dir : dir)

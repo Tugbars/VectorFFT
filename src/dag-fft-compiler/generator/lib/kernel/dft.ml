@@ -760,8 +760,9 @@ let exceeds_register_budget (n : int) (vec_regs : int) : bool = n + 6 > vec_regs
  *
  * Empirical threshold: n ≥ 25. The original threshold was n ≥ 32, on
  * the assumption that smaller sizes "already beat hand because the whole
- * DFT fits in registers". Verified for R≤16 (R=16 hits the optimal 144 ops
- * with 0 muls; whole codelet fits in 32 ZMM registers). But R=25 has
+ * DFT fits in registers". Verified for R≤16 (R=16 ties the reference
+ * codelet generator at 144 ops with 0 muls; whole codelet fits in 32 ZMM
+ * registers). But R=25 has
  * 384 ops and a natural 5×5 CT split — its inter-pass live set (25
  * complex values) does NOT fit, so the monolithic emit thrashes
  * registers and produces 1128 vector instructions (450 reg-to-reg

@@ -1,7 +1,7 @@
 /* zr2c.h — INTERLEAVED (z) real-transform folds: the D2 "CCE-mirror IL" route's
  * two hand-written passes (docs/research/mkl_r2c_campaign/DESIGN_interleaved_r2c.md,
- * Phase 0 verdict box 2026-08-13: arm e's shape, validated at parity ±15%
- * with a conventional recombine pass, −30…−59% vs the shipped K-axis fold).
+ * Phase 0 verdict box 2026-08-13: arm e's shape, validated at the reference
+ * library's recombine parity ±15%, −30…−59% vs the shipped K-axis fold).
  *
  * THE ROUTE (even N only; rfft keeps odd N — coverage is additive):
  *   r2c fwd: x[N] ==reinterpret(0 work)==> z[N/2] interleaved
