@@ -134,6 +134,7 @@ ARGSTYLE = {
     # COLD: a 2D IL cell with ONE legal column chain must RACE (one arm) and bank,
     # never fall to a derived chain (the greedy builder was deleted 2026-09-17)
     "il2d_onechain_gate":      ("flag", False),
+    "il2d_colpool_gate":       ("flag", False),   # the column pool reaches the 2026-09-21 radices (2026-09-22): cold races, naive-DFT check
     # COLD: the 3D IL tier had no gate until 2026-09-17 (gate_harness_debt.md 5)
     "ilnd_gate":               ("flag", False),
     # COLD: the prime cell races its OWN inner (2026-09-18) and banks in= on its row

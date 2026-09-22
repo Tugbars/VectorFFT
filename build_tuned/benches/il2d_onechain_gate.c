@@ -4,7 +4,7 @@
  *
  * Until 2026-09-17 the column axis raced only when the enumerator produced
  * two or more chains. A cell whose N1 has a single composition over the radix
- * pool (N1 = 3, 4, 5, 7, 8, 11, 13, 17, 19) skipped the race and fell to a
+ * pool (N1 = 3, 4, 5, 7, 8, 11, 13, 17, 19 then) skipped the race and fell to a
  * greedy builder: unmeasured, UNBANKED, re-derived on every create, with no
  * row for its forms and widths to hang off. The greedy is deleted; this gate
  * holds the door shut.
@@ -87,7 +87,7 @@ static void dft2(const double *x, double *X, int N1, int N2)
 
 int main(int argc, char **argv)
 {
-    static const int N1S[] = { 3, 4, 5, 7, 8, 11, 13, 17, 19, 23 };   /* one composition each; 23 = Bluestein (no chain) */
+    static const int N1S[] = { 2, 3, 4, 5, 7, 11, 13, 17, 19, 23, 29 };   /* one composition each (2026-09-22: 8 left -- [8] and [4,2] since the closing-only 2 joined the pool; 2, 23 and 29 joined as one-chain cells) */
     const int N2 = 64;
     const char *dir = NULL;
     int i, a, scr;
@@ -125,8 +125,7 @@ int main(int argc, char **argv)
             raced = tap_count(needle);
             CHECK(p != NULL, "%dx%d %s: create refused", N1, N2, cls);
             if (!p) { vfft_wisdom_free(W); free(x); free(y); free(y2); free(ref); continue; }
-            if (N1 != 23)   /* 23 has no chain over the pool: Bluestein, no axis chain race */
-                CHECK(raced == 1, "%dx%d %s: cold create raced %d time(s), expected 1 (one arm is still a race)", N1, N2, cls, raced);
+            CHECK(raced == 1, "%dx%d %s: cold create raced %d time(s), expected 1 (one arm is still a race)", N1, N2, cls, raced);
             vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
             vfft_destroy(p);
             if (!scr)
