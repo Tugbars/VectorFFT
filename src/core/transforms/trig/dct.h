@@ -8,7 +8,7 @@
  *
  * Algorithm: **Makhoul's reduction** — DCT-II via N-point R2C plus a clever
  * pre-permutation. ~2× faster than the textbook 2N-point R2C approach,
- * matching FFTW's own implementation in reodft010e-r2hc.c.
+ * which is the standard way this transform is implemented.
  *
  * Reference: J. Makhoul, "A fast cosine transform in one and two dimensions,"
  * IEEE Trans. ASSP-28 (1), 27-34 (1980).
@@ -255,7 +255,8 @@ static void _dct2_worker_post_bwd(void *arg) {
 /* ═══════════════════════════════════════════════════════════════
  * EXECUTE -- FORWARD DCT-II (in-place over re; im unused)
  *
- * Implements FFTW's apply_re10 verbatim, vectorized across the K batch axis.
+ * The Makhoul DCT-II post-pass (see the header), vectorized across the K
+ * batch axis.
  * ═══════════════════════════════════════════════════════════════ */
 
 static void _dct2_execute_fwd(void *data, double *re, double *im) {

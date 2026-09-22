@@ -294,7 +294,7 @@ let dft_expand_twiddled
  *                producing row-result Y[i, j] for i, j ∈ [0, n).
  *   - Output: transposed layout — physical slot j*n + i gets Y[i, j].
  *
- * This corresponds to FFTW's gen_twidsq.ml codelet. Used at intermediate
+ * This is the twidsq codelet kind. Used at intermediate
  * stages of a multi-stage cascade where the layout transformation between
  * stages would otherwise require a separate transpose pass.
  *

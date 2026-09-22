@@ -322,9 +322,8 @@ static int _vfft_proto_dp_subplan_cmp(const void *a, const void *b)
  *
  * Benchmarks a full plan at (N, K_eff) using the context's shared buffers.
  *
- * Upgrade B (2026-04-26): timing harness now mirrors FFTW's
- * measure_execution_time (kernel/timer.c). Adaptive iteration count:
- * doubles `reps` until tmin*reps >= TIME_MIN, then takes best-of-N
+ * Upgrade B (2026-04-26): timing harness uses an adaptive iteration
+ * count: doubles `reps` until tmin*reps >= TIME_MIN, then takes best-of-N
  * across VFFT_PROTO_DP_TIME_REPEAT trials. Hard wall-clock cap per call.
  * Per-trial buffer reset (zero-init via copy from orig) keeps the
  * data path consistent across repeats and absorbs denormals.
@@ -432,8 +431,7 @@ static double _vfft_proto_dp_bench(vfft_proto_dp_context_t *ctx, int N,
     vfft_proto_execute_fwd(plan, ctx->re, ctx->im, K_eff);
 
     /* Adaptive iter: double `reps` until one trial >= VFFT_PROTO_DP_TIME_MIN_NS,
-     * then collect VFFT_PROTO_DP_TIME_REPEAT best-of trials at that rep count.
-     * Mirrors FFTW kernel/timer.c::measure_execution_time. */
+     * then collect VFFT_PROTO_DP_TIME_REPEAT best-of trials at that rep count. */
     double best = 1e30;
     double total_elapsed = 0.0;
     int reps = 1;
