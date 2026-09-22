@@ -1,4 +1,5 @@
 #!/bin/sh
+# RETIRING (2026-09-22): the gauntlet moved to gauntlet/ -- python gauntlet/gauntlet.py run ... (see gauntlet/README.md). This driver still expects the benches under build_tuned/benches/, which have moved.
 # gauntlet_1d.sh — the 1D C2C vs MKL gauntlet (2026-09-19; resume 2026-09-20).
 #
 # Two phases, because a cold race is a PLANNING cost that must not sit inside
