@@ -28,6 +28,15 @@ def isprime(n):
     return n > 1 and len(fac(n)) == 1
 
 
+def facstr(n):
+    """2^12, 2^2.5^2.13"""
+    out, f = [], fac(n)
+    for p in sorted(set(f)):
+        k = f.count(p)
+        out.append("%d^%d" % (p, k) if k > 1 else str(p))
+    return ".".join(out)
+
+
 def q(xs, p):
     xs = sorted(xs)
     return xs[min(len(xs) - 1, int(p * len(xs)))]
@@ -111,10 +120,10 @@ def build(run_dir, sfx=""):
             note = (note + " " if note else "") + eng[n]
         if c:
             W(" %9d  %-16s %-8s %-9s %10d %10s %7s %8.1e  %s" % (
-                n, ".".join(map(str, fac(n)))[:16], route, served, c["best"],
+                n, facstr(n)[:16], route, served, c["best"],
                 ("%d" % c["mkl"]) if has_cmp else "-", ("%.2f" % c["lo"]) if has_cmp else "-", c["rt"], note))
         else:
-            W(" %9d  %-16s %-8s %-9s %10s %10s %7s %8s  %s" % (n, ".".join(map(str, fac(n)))[:16], route, served, "-", "-", "-", "-", "not benched"))
+            W(" %9d  %-16s %-8s %-9s %10s %10s %7s %8s  %s" % (n, facstr(n)[:16], route, served, "-", "-", "-", "-", "not benched"))
     W("```\n")
     if not has_cmp or not cells:
         W("\n(no comparator: the ratio tables need MKL; see the ns and GFLOPS columns)\n")

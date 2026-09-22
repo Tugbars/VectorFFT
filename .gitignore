@@ -116,3 +116,7 @@ docs/design/zturn_t_ship_plan.md
 # owner design contracts (local, never committed)
 docs/design/design_contracts.md
 docs/design/pow2_race_pools.md
+
+# The gauntlet's runs (2026-09-22): a user's measurements, not repository content.
+# A run worth keeping is committed on purpose (git add -f) or its numbers go into docs/.
+gauntlet/results/
