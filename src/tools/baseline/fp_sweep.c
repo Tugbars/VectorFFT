@@ -17,7 +17,7 @@
  * the clock inside its own baseline and will false-diff on the first thermal
  * wobble. This driver reports the counter so the sweep can fail on it.
  *
- * Build: VFFT_FINGERPRINT=1 python build.py --src benches/fp_sweep.c --vfft --compile
+ * Build: VFFT_FINGERPRINT=1 python gauntlet/build.py --src src/tools/baseline/fp_sweep.c --vfft --compile
  *        (build.py reads the flag from the ENVIRONMENT; it has no --define)
  * Run  : fp_sweep.exe --cell <i>        (one cell, the diffable mode)
  *        fp_sweep.exe --all             (triage only)

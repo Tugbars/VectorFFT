@@ -20,7 +20,7 @@
  * WHAT IS DELIBERATELY NOT SHARED — the protocol CONSTANTS
  * --------------------------------------------------------
  * Round count, reps, aggregate, alternation, warm-up and the per-sample
- * reset are PARAMETERS. build_tuned/race_census.py records 14 distinct
+ * reset are PARAMETERS. src/tools/baseline/race_census.py records 14 distinct
  * protocols across the racers, and no check in the harness can tell
  * whether a unified protocol still picks the same winner; finding out means
  * re-racing, which is forbidden during development (memory: racing budget).
