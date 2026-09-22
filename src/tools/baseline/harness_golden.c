@@ -28,7 +28,7 @@
  *
  * Public API only. No library internals, no timings, no clock.
  *
- * Build: python build.py --src benches/harness_golden.c --vfft --compile
+ * Build: python gauntlet/build.py --src src/tools/baseline/harness_golden.c --vfft --compile
  * Run  : harness_golden.exe [--out FILE]
  */
 #include <stdio.h>
@@ -54,7 +54,7 @@ static long races_now(void)
  * This used to be `return -1`, with the purity assert skipped whenever the
  * count was unavailable. The result was a harness that looked identical, ran
  * green, and checked NOTHING: build without the flag - which is what plain
- * `build.py --src benches/harness_golden.c --vfft` does - and every cell was
+ * `gauntlet/build.py --src src/tools/baseline/harness_golden.c --vfft` does - and every cell was
  * treated as pure. c2c.split.ip.natural races in natorder_calibrate.h and picks
  * between radix chains whose outputs differ in the last bits, so it emitted two
  * different digests across processes, and the assert built to catch exactly
@@ -67,7 +67,7 @@ static long races_now(void)
  * now fails instead. */
 #error "harness_golden requires -DVFFT_FINGERPRINT: without it the purity \
 assert cannot read the race counter and would pass every cell unchecked. \
-Build with: VFFT_FINGERPRINT=1 python build.py --src benches/harness_golden.c --vfft --compile"
+Build with: VFFT_FINGERPRINT=1 python gauntlet/build.py --src src/tools/baseline/harness_golden.c --vfft --compile"
 #endif
 
 /* FNV-1a over raw bytes: the CELL is the triage unit, so a digest is the right
@@ -228,7 +228,7 @@ static int golden_c2c(const cell_t *c, FILE *out, long races_at_entry)
 /* BINARY output, both spellings, on purpose.
  *
  * In text mode msvcrt rewrites every \n as \r\n. .gitattributes pins everything
- * under build_tuned/baseline to eol=lf, so a committed artifact comes back LF
+ * under src/tools/baseline/reference to eol=lf, so a committed artifact comes back LF
  * while a fresh capture lands CRLF, and the diff then reports EVERY row as
  * changed on a byte-identical result. An artifact compared byte-for-byte has to
  * be written byte-for-byte.

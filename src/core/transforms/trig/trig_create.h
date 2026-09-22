@@ -38,7 +38,7 @@
  *     clock and a single digest of one is a coin flip, not a baseline;
  *   - the migration plan calls step 27 its least-protected step, correctly.
  *
- * The protection actually in place for the move is build_tuned/trig_capture.py
+ * The protection actually in place for the move is src/tools/baseline/trig_capture.py
  * — output digests over one process per observation, with raced cells recorded
  * AS raced rather than sampled. That proves the tier still produces what it
  * produced; it does NOT prove the tier correct. The naive O(N^2) reference

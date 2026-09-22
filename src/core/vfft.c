@@ -2228,7 +2228,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */
     FP__ADD(" il2dhave=%d%d%d%d%d%d",
             FP__P(il2d_row), FP__P(il2d_rowo), FP__P(il2d_roww),
-            FP__P(il2d_rows), FP__P(il2d_natperm), FP__P(pq_inner));
+            FP__P(il2d_rows), ((h->il2d_col.natperm) ? 1 : 0), FP__P(pq_inner)); /* natperm moved into il2d_col */
     /* the K=1 FOUR-STEP (route 10, k1_fourstep.h): the raced split, the order
      * class, the natural form and its band width. Until 2026-09-18 the plan
      * had neither a presence bit nor a detail line, so two four-step plans

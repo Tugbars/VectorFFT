@@ -35,7 +35,7 @@
  *
  * Public API only. No library internals, no timings, no clock.
  *
- * Build: python build.py --src benches/trig_digest_probe.c --vfft --compile
+ * Build: python gauntlet/build.py --src src/tools/baseline/trig_digest_probe.c --vfft --compile
  * Run  : trig_digest_probe.exe [--out FILE]
  */
 #include <stdio.h>
