@@ -226,11 +226,14 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
         if (vfft_ztt_band(N))          { VFFT__POOL_PUSH(VFFT_FAM_ZTT);     return n; }
         if (pow2 && vfft_k1fs_band(N)) { VFFT__POOL_PUSH(VFFT_FAM_FS);      return n; }
         if (vfft_ztt_odd_band(N))      { VFFT__POOL_PUSH(VFFT_FAM_ZTT_ODD); return n; }
-        if (N < 2048 || (N & 3))
-        {   /* below the bands every engine that legally answers a scrambled
+        if (!pow2 || N < 2048)         /* a pow2 above the four-step's band has no scrambled writer: empty */
+        {   /* outside the bands every engine that legally answers a scrambled
              * request competes: the natural writers (identity is a legal
              * scrambled permutation) and, at a non-pow2, the flat's own
-             * scrambled class */
+             * scrambled class. Until 2026-09-22 this block was fenced to
+             * N < 2048 or no factor of 4: the composite N >= 2048 with a
+             * factor of 4 outside the odd band was "the odd machinery's" --
+             * the cascade's, deleted 2026-09-15 -- and refused here. */
             VFFT__POOL_PUSH(VFFT_FAM_MONO);
             VFFT__POOL_PUSH(VFFT_FAM_PAIR);
             VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
@@ -251,7 +254,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
     VFFT__POOL_PUSH(VFFT_FAM_MONO);
     VFFT__POOL_PUSH(VFFT_FAM_PAIR);
     VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
-    if (!pow2 && (N < 2048 || (N & 3))) VFFT__POOL_PUSH(VFFT_FAM_FLAT);
+    if (!pow2 && !vfft_ztt_odd_band(N)) VFFT__POOL_PUSH(VFFT_FAM_FLAT);   /* every non-pow2 cell but the odd band's (2026-09-22; was N < 2048 or no factor of 4) */
     if (vfft_ztt_band(N))               VFFT__POOL_PUSH(VFFT_FAM_ZTT);
     if (!pow2)                          VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* every non-pow2 cell (2026-09-21) */
 #undef VFFT__POOL_PUSH
@@ -259,9 +262,10 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
 }
 
 /* The cells the K=1 INTERLEAVED path SERVES directly — what a bench or a
- * calibrator means by "this N is the K=1 IL tier's". Below 2048; any N not
- * divisible by 4 (the odd machinery's); ZTURN-T's odd band; ZTURN-T's pow2
- * band; the four-step's band.
+ * calibrator means by "this N is the K=1 IL tier's". Below 2048; every
+ * non-pow2 N (since 2026-09-22; until then a composite N >= 2048 with a
+ * factor of 4 outside ZTURN-T's odd band was left to the deleted cascade);
+ * ZTURN-T's pow2 band; the four-step's band.
  *
  * WIDER THAN `vfft_policy_races`, and the difference is not an oversight:
  * above the race ceiling an odd N is still SERVED — by the prime engine
@@ -273,7 +277,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
 static inline int vfft_policy_k1_direct_cell(const vfft_cell_t *c)
 {
     const int N = c->N;
-    return N > 0 && (N < 2048 || (N & 3) || vfft_ztt_odd_band(N) ||
+    return N > 0 && (N < 2048 || (N & (N - 1)) != 0 ||
                      vfft_ztt_band(N) || vfft_k1fs_band(N));
 }
 
@@ -296,26 +300,23 @@ static inline int vfft_policy_scr_writer_band(const vfft_cell_t *c)
 }
 
 /* MAY THIS CELL RACE AT ALL? The K=1 interleaved planner's own gate, which
- * was two lines spelled inline in `_k1_il_plan_race` (2026-09-16). Two
- * refusals, and they are different laws:
+ * was two lines spelled inline in `_k1_il_plan_race` (2026-09-16). ONE
+ * refusal since 2026-09-22:
  *
- *   OWNERSHIP  a composite N >= 2048 WITH a factor of 4, outside ZTURN-T's
- *              odd band, is the odd machinery's cell and does not race here
- *              — even though mono/pair/chain3 would enumerate for it. The
- *              pool is not empty; the cell is simply not this planner's.
  *   BUDGET     N above the band's race ceiling (vfft_policy_race_max_n):
  *              the scratch planes the race needs are not worth it.
  *
- * Asking them together is also what keeps `vfft_ztt_odd_band` — a shift
- * loop and five integer divisions — computed ONCE per gate instead of
- * twice (the duplicate step 1 measured and step 2 was to remove). */
+ * The OWNERSHIP refusal that stood beside it -- a composite N >= 2048 WITH
+ * a factor of 4, outside ZTURN-T's odd band, "is the odd machinery's cell"
+ * -- named the cascade, deleted 2026-09-15. With it gone nothing served
+ * those cells but the door's unraced heuristic pair or the prime cell:
+ * 488 of the 2048 cells in 2049..4096. They race the natural pool now
+ * (mono/pair/chain3/flat/prime) at the plan ceiling's budget. */
 static inline int vfft_policy_races(const vfft_cell_t *c)
 {
     const int N = c->N;
     const int pow2 = (N & (N - 1)) == 0;
     const int oddband = vfft_ztt_odd_band(N);
-    if (!pow2 && !oddband && N >= 2048 && !(N & 3))
-        return 0;                                  /* the odd machinery's cell */
     if (pow2)    return (long)N <= (long)VFFT_K1FS_MAX_N;
     if (oddband) return (long)N <= (long)VFFT_ZTT_MAX_N;
     return (long)N <= (long)((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N);

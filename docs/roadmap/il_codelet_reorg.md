@@ -100,7 +100,28 @@ all of them**, and the reasons matter more than the count:
 invisible to the corpus, to `gen_set` and to `emit_il_registry`, yet CMake globs it into the
 library and 14 of the 20 are named by live resolver arms in `il2p.h` with 15 shipped wisdom
 rows banking them. **Live, load-bearing, and unreproducible.** A `gen_set` regen would not
-recreate them. That is the most serious structural finding in this study.
+recreate them.
+
+> 🔴 **CORRECTED 2026-09-22.** An earlier draft called this "the most serious structural
+> finding in this study" and implied an oversight. It is neither. The exclusion is
+> **deliberate and already documented** at `corpus.ml:80-93`: the cell tables are
+> *"restricted to cells that reproduce IDENTICAL with no env/sed: the 6 stale pure_il cells,
+> the 6 tangent sunset copies and the 9 sed-renamed replay rows stay OUT — regenerating
+> those would overwrite shipped bytes."* The exclusion is protecting these files, not
+> forgetting them. (That comment's accounting predates the 09-11 backward twins, so it says
+> 6 tangent where the subtree now holds 20.)
+>
+> **The mechanism, measured 09-22: 18 of the 20 tangent files cannot be expressed as a
+> corpus cell at all.** Their recorded provenance needs environment variables —
+> `VFFT_CX_WING`, `VFFT_CX_LAZYLOAD`, `VFFT_CX_LAZYSTORE`, `VFFT_CX_SCHED=asis`,
+> `VFFT_CX_ROTFMA`, up to five on one file — and a cell is a `(filename, argv)` pair with
+> no env slot. Only `radix8_z_n1tan_bwd_avx2.c` and `radix8_z_t2ttan_bwd_avx2.c` need none.
+>
+> So the finding restated, and it is still serious: **the family that wins 52% of all banked
+> pair slots (§10.2) is defined by settings the generator can only express as environment
+> variables, recorded nowhere but a C comment.** The fix is not a corpus arm — it is
+> promoting those five env reads to `--cil-*` flags, after which the cells become ordinary
+> argv rows. See §12.
 
 ### Unbanked tiers (cold-store state, not dead code)
 
@@ -391,6 +412,26 @@ across ~130 lines. It is the largest stale artifact in the tree and it reads as 
 `boundary_split/` now holds the ZTURN-T stage kernels, not cascade kernels. Flagged, not
 touched, under the report ruling.
 
+**`CODELET_TAXONOMY.md` — two rows that must not be read as current.** The file was deleted
+on 2026-09-21 and restored on 09-22; its citations in §9.4(b) resolve again and its per-kind
+DEAD verdicts corroborate §3 on `t2_log3`, `t2b_log3`, `n1b` and `t2b`. But it is **generated
+2026-08-05**, and two rows have been overtaken:
+
+- **`n1` fwd — "DEAD (fwd — all 20) … files DELETED 2026-08-23"** is **stale**. Its stated
+  evidence is that *"no `il_kv` nibble is `0xf`/MONO"* — and `VFFT_IL_KV_MONO = 0xf` is
+  precisely the route the **MONO solo tier shipped on 2026-09-04**, resolving `n1` forward
+  through `vfft_k1_mono_il_fn`. §9.2 makes `n1` the answer to the whole decomposition-cost
+  problem. Read as current, this row says the library's solo kernels are dead.
+- **`t2c` — "DEAD (PROBE)"** is a **different kind wearing the same tag**: that row describes
+  zil `c` = group-constant twiddles at radices 4,8,16,32,64, forward only. The live `t2c` is
+  the 2D column stage (`Ls = D*N2`, `Gs = N2`, `OGs = D`, driver-built d-major table, §9.4(d)),
+  and it spans **24 radices on disk** — 3,4,5,7,8,9,11,13,15,16,17,19,21,23,25,27,29,31,32,
+  37,41,43,47,64 — including the 23..47 primes added in the 09-20/21 gauntlet.
+
+The second one is a **tag collision across eras**, and it lands directly on this reorg: `t2c`
+is about to be given a folder. Whichever README owns `col/` should state that the probe kind
+of that name is gone and that the tag now means the 2D column stage.
+
 ---
 
 ## 10. Cross-check: which codelets are in the winning cells
@@ -594,6 +635,73 @@ Six source files change: `corpus.ml` (one literal replaces two, plus a classifie
 `gen_set.ml` (one line), `build.py` (a list), `CMakeLists.txt` (a list and a declaration),
 plus the three TSVs rewritten mechanically by hash. **`emit_il_registry.ml` does not change**,
 which is the main thing 11.3 buys. Everything else is `git mv` and prose.
+
+---
+
+## 12. Recommendation — what to do, and in what order
+
+The reorganisation is the *least* valuable item in this document. It buys navigability. The
+study turned up one thing that is worth more than navigability, and it should go first.
+
+### 12.1 The recommendation in one line
+
+**Promote the five `VFFT_CX_*` environment reads to `--cil-*` flags before anything is
+moved.** That makes the tangent family reproducible, which is the only item here that
+protects something load-bearing.
+
+### 12.2 Why this outranks the move
+
+| | the folder move | the env→flag promotion |
+|---|---|---|
+| buys | grep-navigability; a README per family | reproducibility of the kernels that win **52% of all banked pair slots** (§10.2) |
+| risk if skipped | files stay hard to find | 18 of 20 tangent files remain expressible only as a C comment |
+| blocked by | ruling 3 (§11.4) | nothing |
+| reversible | yes, it is a rename | yes, the env reads can stay as aliases |
+
+The 09-21 regen trap is the live version of this: `gen_set zil-pure` rewrote 7 non-reproducing
+shipped kernels and the other session committed inside a minute. The tangent subtree is
+protected today only by its *absence* from the corpus — a protection that holds exactly as
+long as nobody tries to be helpful and add it. Promoting the flags converts that fragile
+absence into an ordinary, checkable corpus row.
+
+### 12.3 The work
+
+Five reads, four modules, all `Sys.getenv_opt`:
+
+| env var | read at | becomes |
+|---|---|---|
+| `VFFT_CX_WING` | `cx_ir.ml`, `c2c_il.ml:342` | `--cil-wing` |
+| `VFFT_CX_ROTFMA` | `cx_ir.ml`, `cx_render.ml:85` | `--cil-rotfma` |
+| `VFFT_CX_LAZYLOAD` / `VFFT_CX_LAZYSTORE` | `c2c_il.ml:404` | `--cil-lazyload` / `--cil-lazystore` |
+| `VFFT_CX_SCHED=asis\|cpl\|cpl2` | `cx_cpl.ml`, `c2c_il.ml:107` | `--cil-sched <mode>` |
+
+Thread five values from `gen_main.ml`'s parser through to the existing read sites; keep the
+`getenv` path as a fallback so nothing that exists today stops working. Then replay all 20
+tangent provenance lines into a temp root and diff. Files that come back byte-identical
+become ordinary `zil_pure_cells` rows; any that do not are recorded, by name, with the reason
+— which is the honest version of the exclusion `corpus.ml:80-93` states today.
+
+**Verification is the same ladder as §11.7**, and it is cheap here because nothing in `src/`
+changes: the emitted bytes either match the shipped files or they do not.
+
+### 12.4 Then, in order
+
+1. **Env→flag promotion** (above). Unblocks ruling 3 and defuses the regen trap.
+2. **Ruling 3 answers itself** once the replay runs — the split between reproducible and
+   genuinely-frozen files becomes a measurement, not a judgment call.
+3. **The move** (§11 phases 0–5), now with a classifier that can be total.
+4. **The cheap independents**, any time, in any order: the 38 `log3` files (delete candidate —
+   zero consumers, confirmed twice independently, and the 08-05 taxonomy agrees), `b416`
+   (re-race then retire under the pool sunset policy), `il_codelet_design.md` §3 and the two
+   `CODELET_TAXONOMY.md` rows (mark historical, §9.5).
+
+### 12.5 What I would not do
+
+- **Do not run `gen_set` on `zil-pure` before step 1.** That is the 09-21 trap verbatim.
+- **Do not move files first.** Moving 20 unreproducible files into a structure the generator
+  cannot describe deepens exactly the problem this document found.
+- **Do not delete anything yet.** The report ruling stands, and nothing in §12.4 item 4
+  blocks anything else.
 
 ---
 

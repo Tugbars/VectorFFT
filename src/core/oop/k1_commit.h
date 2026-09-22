@@ -559,8 +559,9 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
      * cells of ZTURN-T's band up to its ceiling. Until then a pow2 N >= 2048
      * returned 0 here and a cold band cell fell through to the prime engine
      * (Bluestein at 32768, seen in the natural front gate's tap). The
-     * 2^a * odd cells with a factor of 4 above 2048 stay out: they are the
-     * odd machinery's (the cascade's) until its turn. */
+     * composite cells with a factor of 4 above 2048 outside ZTURN-T's odd
+     * band stayed out as "the cascade's" until 2026-09-22; the cascade is
+     * gone and they race here like every other cell (policy.h). */
     if (!W || W->vw2_off_oop || N < 2 || getenv("VFFT_NO_K1PLAN"))
         return 0;
     {   /* ownership + budget, one question (planning/policy.h, L1/L9) */
@@ -694,8 +695,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     /* ... and ABOVE 2048 for any N without a factor of 4 (2026-09-04):
      * the cascade's ingest is radix 4, so such an N has no cascade route
      * and would otherwise fall to Bluestein unraced — the Bailey tier's
-     * race is the only measurement it can get. N with a factor of 4 stay
-     * the cascade's, exactly as before. */
+     * race is the only measurement it can get. (N with a factor of 4 stayed
+     * the cascade's until 2026-09-22; they race too now.) */
     /* WISDOM OR RACE (owner's law, 2026-09-09): every interleaved miss races,
      * the pow2 band included — _k1_il_plan_race carries the N gate. Until
      * 2026-09-09 this call was fenced to N < 2048 or odd N and a cold in-place

@@ -128,14 +128,29 @@ static int _il2d_apply_forms(const int *Rs, int m, const char *forms,
  * law ITSELF (2026-09-17): until then each of the five callers had to
  * remember to warn, and two -- the real tier's chain race and the
  * four-step's super-band -- never did, so their pools truncated silently. */
+/* the column radices with an n1c kind and NO t2c kind (the registry's two
+ * lists differ by exactly these): legal only as the closing stage */
+static int _il2d_pool_closing_only(int R)
+{
+    return R == 2 || R == 6 || R == 10 || R == 12 || R == 14 || R == 22 || R == 26;
+}
 static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
                                 int *lens, int *n, int *dropped)
 {
     static const int POOL[] = { 64, 32, 16, 8, 4,
                                 /* odd radices (2026-08-27): odd-N1
-                                 * chains — emitted t2c/n1c kinds */
-                                27, 25, 21, 19, 17, 15, 13, 11, 9, 7,
-                                5, 3 };
+                                 * chains — emitted t2c/n1c kinds;
+                                 * 23 and 29..47 joined 2026-09-22 with
+                                 * the kernels of 2026-09-21 (t2c + n1c
+                                 * at every one) */
+                                47, 43, 41, 37, 31, 29, 27, 25, 23, 21,
+                                19, 17, 15, 13, 11, 9, 7, 5, 3,
+                                /* n1c-ONLY radices (no t2c kind): legal
+                                 * as the CLOSING stage alone -- the flat
+                                 * DIT's lone-2 leaf rule for columns
+                                 * (2026-09-22); a 2 x prime column length
+                                 * had no chain and fell to Bluestein */
+                                26, 22, 14, 12, 10, 6, 2 };
     int p;
     if (L == 1)
     {
@@ -156,6 +171,12 @@ static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
     for (p = 0; p < (int)(sizeof POOL / sizeof POOL[0]); p++)
         if (L % POOL[p] == 0)
         {
+            /* an n1c-only radix closes the chain or stays out: with no t2c
+             * kind it cannot be a mid stage, and the resolver would refuse
+             * the chain later anyway -- enumerating it would only fill the
+             * candidate cap with arrangements that never build */
+            if (_il2d_pool_closing_only(POOL[p]) && L != POOL[p])
+                continue;
             cur[depth] = POOL[p];
             _il2d_enum_rec_body(L / POOL[p], depth + 1, cur, out, lens, n,
                                 dropped);

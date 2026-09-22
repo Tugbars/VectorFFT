@@ -70,7 +70,7 @@ static int _ref_scr_writer_band(int N)
 /* ── the BENCH's own copy of the admission (bench_1d_vs_mkl.c:5643) ───── */
 static int _ref_bench_direct_cell(int N)
 {
-    return (N < 2048 || (N & 3) || vfft_ztt_odd_band(N) ||
+    return (N < 2048 || (N & (N - 1)) != 0 ||   /* 2026-09-22: every non-pow2 N is served */
             vfft_ztt_band(N) || vfft_k1fs_band(N));
 }
 /* ── L1/L2 reference: the two pools as dp_planner_il.h spelled them on
@@ -93,7 +93,7 @@ static int _ref_races(int N)
 {
     const int pow2 = (N & (N - 1)) == 0;
     const int oddband = vfft_ztt_odd_band(N);
-    if (!pow2 && !oddband && N >= 2048 && !(N & 3)) return 0;
+    (void)pow2; (void)oddband;   /* the ownership refusal was lifted 2026-09-22 (the cascade it named is gone) */
     if ((long)N > _ref_race_max_n(N)) return 0;
     return 1;
 }
@@ -112,7 +112,7 @@ static int _ref_pool_natural(int N, int with_flat, vfft_fam_t *out, int max)
     REF_PUSH(VFFT_FAM_MONO);
     REF_PUSH(VFFT_FAM_PAIR);
     REF_PUSH(VFFT_FAM_CHAIN3);
-    if (with_flat && !pow2 && (N < 2048 || (N & 3))) REF_PUSH(VFFT_FAM_FLAT);
+    if (with_flat && !pow2 && !vfft_ztt_odd_band(N)) REF_PUSH(VFFT_FAM_FLAT);   /* 2026-09-22: every non-pow2 cell but the odd band's */
     if (_ref_ztt_registry_has(N)) REF_PUSH(VFFT_FAM_ZTT);
     if (with_flat && !pow2) REF_PUSH(VFFT_FAM_PRIME);   /* the prime cell, an arm at every non-pow2 N (2026-09-21) */
     return n;
@@ -126,8 +126,7 @@ static int _ref_pool(int N, int ord, vfft_fam_t *out, int max)
     if (vfft_ztt_band(N))          { REF_PUSH(VFFT_FAM_ZTT);     return n; }
     if (pow2 && vfft_k1fs_band(N)) { REF_PUSH(VFFT_FAM_FS);      return n; }
     if (vfft_ztt_odd_band(N))      { REF_PUSH(VFFT_FAM_ZTT_ODD); return n; }
-    if (N < 2048 || (N & 3))
-    {
+    {   /* 2026-09-22: no longer fenced to N < 2048 or no factor of 4 */
         n = _ref_pool_natural(N, 0, out, max);
         if (!pow2) { if (n < max) out[n] = VFFT_FAM_FLAT; n++; }
         if (!pow2) { if (n < max) out[n] = VFFT_FAM_PRIME; n++; }
@@ -225,7 +224,8 @@ static int _ref_3d_band(int N, int nst, const int *L, int w) { return !(w < 8 ||
  * the enumerator's shape, re-spelled here so the gate needs no engine header */
 static int _ref_chains(int L, int depth, int *cur, int (*out)[8], int *lens, int *n)
 {
-    static const int POOL[] = { 64, 32, 16, 8, 4, 27, 25, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3 };
+    static const int POOL[] = { 64, 32, 16, 8, 4, 47, 43, 41, 37, 31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3,
+                                26, 22, 14, 12, 10, 6, 2 };   /* 2026-09-22: the tier's pool; the last seven close a chain only */
     int p;
     if (L == 1)
     {
@@ -239,6 +239,9 @@ static int _ref_chains(int L, int depth, int *cur, int (*out)[8], int *lens, int
     for (p = 0; p < (int)(sizeof POOL / sizeof POOL[0]); p++)
         if (L % POOL[p] == 0)
         {
+            const int r = POOL[p];
+            if ((r == 2 || r == 6 || r == 10 || r == 12 || r == 14 || r == 22 || r == 26) && L != r)
+                continue;   /* n1c-only: closing stage alone */
             cur[depth] = POOL[p];
             _ref_chains(L / POOL[p], depth + 1, cur, out, lens, n);
         }

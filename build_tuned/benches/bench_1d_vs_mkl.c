@@ -1332,6 +1332,24 @@ static DWORD WINAPI bench_sibling_guard(LPVOID arg)
         _tpause(0, __rdtsc() + 200000ull);   /* C0.2, ~35 us slices (the OS caps them); the loop is the guard */
     return 0;
 }
+/* hold the SMT sibling of the pinned cpu for the process's life (once); every
+ * single-thread mode's pin passes through here (2026-09-22), not only the
+ * K=1 / 3D one-thread protocol */
+static void bench_guard_sibling(int cpu)
+{
+    static int done = 0;
+    const char *g = getenv("VFFT_BENCH_GUARD");
+    const int lifted = (g && !strcmp(g, "0"));
+    const int sib = bench_sibling_of(cpu);
+    if (done) return;
+    done = 1;
+    if (!lifted && sib >= 0 && bench_has_waitpkg() &&
+        CreateThread(NULL, 0, bench_sibling_guard, (LPVOID)(intptr_t)sib, 0, NULL))
+        printf("# sibling guard: cpu %d's SMT sibling cpu %d held by a TPAUSE-C0.2 thread for this process (VFFT_BENCH_GUARD=0 lifts)\n", cpu, sib);
+    else
+        printf("# sibling guard: cpu %d's sibling UNGUARDED (%s)\n", cpu,
+               lifted ? "VFFT_BENCH_GUARD=0" : sib < 0 ? "no SMT sibling" : !bench_has_waitpkg() ? "no WAITPKG on this host" : "thread create failed");
+}
 #endif
 static void bench_pin_one_thread(void)
 {
@@ -1346,17 +1364,8 @@ static void bench_pin_one_thread(void)
 #ifdef _WIN32
     SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x4);
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-    {
-        const char *g = getenv("VFFT_BENCH_GUARD");
-        const int sib = bench_sibling_of(2);
-        const int lifted = (g && !strcmp(g, "0"));
-        if (!lifted && sib >= 0 && bench_has_waitpkg() &&
-            CreateThread(NULL, 0, bench_sibling_guard, (LPVOID)(intptr_t)sib, 0, NULL))
-            printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority; SMT sibling CPU %d held by a TPAUSE guard (VFFT_BENCH_PIN=0 / VFFT_BENCH_GUARD=0 lift)\n", sib);
-        else
-            printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority; sibling UNGUARDED (%s)\n",
-                   lifted ? "VFFT_BENCH_GUARD=0" : sib < 0 ? "no SMT sibling" : !bench_has_waitpkg() ? "no WAITPKG on this host" : "thread create failed");
-    }
+    printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority (VFFT_BENCH_PIN=0 lifts)\n");
+    bench_guard_sibling(2);
 #else
     printf("# one-thread protocol: pin is Win32-only here; the caller floats\n");
 #endif
@@ -4786,6 +4795,10 @@ int main(int argc, char **argv)
     }
     if (core >= 0 && stride_pin_thread(core) != 0)
         fprintf(stderr, "warn: pin cpu%d failed\n", core);
+#ifdef _WIN32
+    else if (core >= 0 && !mt)
+        bench_guard_sibling(core);   /* every single-thread mode (the 2D/R2C/zr2c ones included) holds its sibling (2026-09-22) */
+#endif
     if (mt)
         if (!g_k1noop_mt)             /* trap (d): the front-door MT mode must not own a
                                        * second pool in this TU (idle spinners on the
