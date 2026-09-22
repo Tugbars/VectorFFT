@@ -87,7 +87,7 @@ static void dft2(const double *x, double *X, int N1, int N2)
 
 int main(int argc, char **argv)
 {
-    static const int N1S[] = { 2, 3, 4, 5, 7, 11, 13, 17, 19, 23, 29 };   /* one composition each (2026-09-22: 8 left -- [8] and [4,2] since the closing-only 2 joined the pool; 2, 23 and 29 joined as one-chain cells) */
+    static const int N1S[] = { 2, 3, 4, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47 };   /* one composition each (2026-09-22: 8 left -- [8] and [4,2] since the closing-only 2 joined the pool; 2 and every pool prime 23..47 joined as one-chain cells) */
     const int N2 = 64;
     const char *dir = NULL;
     int i, a, scr;

@@ -39,3 +39,6 @@ calibrate: 2048 cells this pass (0 already done) in 38359s -> results/gauntlet_2
   benched 1700 cells, 3010s elapsed (control taken)
   benched 1800 cells, 3177s elapsed (control taken)
   benched 1900 cells, 3344s elapsed (control taken)
+  benched 2000 cells, 3509s elapsed (control taken)
+bench: 2048 cells in 3590s -> results/gauntlet_2048_4096/gauntlet.csv
+  control N=4096 every 100 cells -> results/gauntlet_2048_4096/control.csv (rows are in run order)

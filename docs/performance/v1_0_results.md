@@ -1128,6 +1128,67 @@ Headline:
 > clear MKL on every cell. In-place scrambled-order 2D (the convolution contract);
 > rectangular / non-pow2 cells are follow-ups.
 
+### K=1 INTERLEAVED — every N from 2049 to 4096 vs MKL (2026-09-22)
+
+The same contract and protocol as the 2..2048 entry above (1D c2c, K=1,
+natural order, out of place, one thread; a cold race per cell on a scratch
+copy of the shipped store, then the canonical bench against MKL in its own
+process: core 2 + HIGH with the SMT sibling held, cachebust + 300 ms cool,
+both engine orders, best-of-5 in two windows). 2048 cells, 4096 rows in
+`build_tuned/results/gauntlet_2048_4096/gauntlet.csv`; the control cell
+(4096, every 100 cells) read 0.65-1.13 x over 44 readings; no cell refused.
+Before the run the band map's OWNERSHIP fence was lifted: a composite N >= 2048
+with a factor of 4 outside ZTURN-T's odd band had been reserved for the
+cascade (deleted 2026-09-15) and neither raced nor benched -- 490 cells of this
+range. They race the natural pool now (prime 297, chain3 114, flat 75, 2p 4) and their
+median is 1.18x (67 under 1.0). Every ratio is MKL time / our time, the WORSE
+of the two flips.
+
+```
+ route    cells   <0.8   <1.0    p10    med    p90   gmean
+ prime     1538     34    259   0.96   1.15   1.79    1.24
+ chain3     286      1     22   1.01   1.27   1.74    1.30
+ flat       198     10     38   0.86   1.17   1.58    1.18
+ ztt         22      0      0   1.45   1.59   1.83    1.62
+ 2p           4      0      0   1.05   1.28   1.67    1.30
+ ALL       2048     45    319   0.96   1.16   1.76    1.24
+```
+
+```
+ size band     cells   median   <1.0   <0.8
+ 2049..2560       512     1.07    182     22
+ 2561..3072       512     1.31     39      6
+ 3073..3584       512     1.15     51      8
+ 3585..4096       512     1.14     47      9
+```
+
+Three quarters of the range is the prime cell: a composite with a prime factor
+of 53 or more, or a prime whose N-1 does not build, served by Bluestein on the
+whole length with the convolution at M = 8192 for every N here. The families:
+
+```
+ family                                          cells   median   <1.0   what decides it
+ composite with a prime >= 53 (whole-N Bluestein)  1279     1.15    221   no kernel above 47; M = the next pow2 >= 2N-1 is 8192 for the whole range, 3.2-4.0x N below 2560 -- the weak band
+ chain3                                           286     1.27     22   the raced chains keep their margin above 2048
+ prime N, Bluestein banked                        214     1.12     38   Rader's inner N-1 not buildable
+ flat                                             198     1.17     38   up to 10 stages; the 7^3 cells (2744, 3430) trail MKL
+ prime N, Rader banked                             41     1.66      0   
+ 2^a.odd in ZTURN-T's odd band (ZTT_ODD)           21     1.60      0   the staged odd-radix ZTURN-T, 1.45-1.83x
+ pair                                               4     1.28      0   
+ composite, prime cell by race (primes <= 47)       4     1.45      0   
+ pow2 (ZTURN-T)                                     1     1.08      0   the control cell
+```
+
+**What the range says.** The raced chains (chain3, flat, the odd band) hold
+the margin they have below 2048. The prime cell sits near parity and carries
+the losers, and its cost has one obvious lever: M is fixed at the next power
+of two, which is 3.2-4.0x N in the weakest band (2049..2560, median 1.07)
+and 2.0-2.7x N in the strongest (2561..3072, median 1.31); the inner pool
+already builds 2^a.odd lengths, so racing M over them (5120, 6144, 7680)
+against 8192 would cut that band's convolution by up to 1.8x. Our two flips
+still disagree by more than 25% at 233 cells (MKL's at 8), the per-process
+effect recorded above.
+
 ### 2D C2C — vs MKL at T=8
 
 Same cells, dag 2D threaded vs MKL `mkl_set_num_threads(8)`, identical split layout,
