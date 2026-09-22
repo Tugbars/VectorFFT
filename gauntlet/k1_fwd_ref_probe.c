@@ -12,38 +12,88 @@
  * the output's max magnitude), BACKWARD(FORWARD(x)) == N x, and the route the
  * front door committed (vfft_plan_route). Exit 1 on any failure.
  *
- * Run:   k1_fwd_ref_probe.exe <wisdir> N [N ...]      (or N as a-b for a range)
- * Build: python build.py --src benches/k1_fwd_ref_probe.c --vfft --compile
+ * --csv FILE (2026-09-22): the precision record. One row per library and
+ * cell, `library,N,l2_error,max_error,rt_error`: the forward's RELATIVE L2
+ * error ||y - X|| / ||X|| and its elementwise max error against the
+ * long-double reference X, and the roundtrip's elementwise max error. Built
+ * with MKL (VFFT_HAS_MKL: gauntlet/build.py --mkl, or CMake when MKL is found)
+ * MKL's forward and backward run on the SAME input against the SAME reference
+ * and write their own rows, so src/tools/plots/gen_precision.py draws both
+ * libraries from this file. The reference is accumulated in long double from
+ * a long-double twiddle table (index k*n mod N walked incrementally), so a
+ * 4,095-cell sweep to N = 4096 runs in minutes.
+ *
+ * Run:   k1_fwd_ref_probe.exe [--ip] [--csv FILE] <wisdir> N [N ...]   (N or a-b)
+ * Build: python gauntlet/build.py --src gauntlet/k1_fwd_ref_probe.c --vfft --mkl --compile
  */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "vfft.h"
+#ifdef VFFT_HAS_MKL
+#include <mkl_dfti.h>
+#include <mkl_service.h>
+#endif
 
-static void naive_dft(const double *x, double *X, int N)
+static void naive_dft(const double *x, long double *X, int N)
 {
-    /* long double accumulation: the reference must be better than the DUT */
+    /* long double accumulation: the reference must be better than the DUT.
+     * The twiddle table is long double too; k*n mod N is walked, not divided. */
+    long double *c = malloc((size_t)N * sizeof(long double));
+    long double *s = malloc((size_t)N * sizeof(long double));
+    for (int j = 0; j < N; j++)
+    {
+        long double a = -2.0L * 3.141592653589793238462643383279L * (long double)j / (long double)N;
+        c[j] = cosl(a); s[j] = sinl(a);
+    }
     for (int k = 0; k < N; k++)
     {
         long double re = 0, im = 0;
+        int idx = 0;
         for (int n = 0; n < N; n++)
         {
-            long double a = -2.0L * 3.141592653589793238462643383279L * (long double)((long long)k * n % N) / N;
-            long double c = cosl(a), s = sinl(a);
-            re += x[2 * n] * c - x[2 * n + 1] * s;
-            im += x[2 * n] * s + x[2 * n + 1] * c;
+            const long double xr = x[2 * n], xi = x[2 * n + 1];
+            re += xr * c[idx] - xi * s[idx];
+            im += xr * s[idx] + xi * c[idx];
+            idx += k; if (idx >= N) idx -= N;
         }
-        X[2 * k] = (double)re; X[2 * k + 1] = (double)im;
+        X[2 * k] = re; X[2 * k + 1] = im;
     }
+    free(c); free(s);
 }
-static double relerr(const double *a, const double *b, int N, double scale)
+/* elementwise max error of a*scale against the long-double reference b,
+ * relative to the reference's max magnitude (the gate's metric) */
+static double relerr(const double *a, const long double *b, int N, double scale)
+{
+    long double m = 0, e = 0;
+    for (int j = 0; j < 2 * N; j++)
+    {
+        long double d = fabsl((long double)a[j] * scale - b[j]);
+        if (fabsl(b[j]) > m) m = fabsl(b[j]);
+        if (d > e) e = d;
+    }
+    return (double)(m > 0 ? e / m : e);
+}
+/* relative L2 error ||a*scale - b|| / ||b|| against the long-double reference */
+static double l2err(const double *a, const long double *b, int N, double scale)
+{
+    long double num = 0, den = 0;
+    for (int j = 0; j < 2 * N; j++)
+    {
+        long double d = (long double)a[j] * scale - b[j];
+        num += d * d; den += b[j] * b[j];
+    }
+    return (double)(den > 0 ? sqrtl(num / den) : sqrtl(num));
+}
+/* the roundtrip: r*scale against the double input x, elementwise max over max|x| */
+static double rterr(const double *r, const double *x, int N, double scale)
 {
     double m = 0, e = 0;
     for (int j = 0; j < 2 * N; j++)
     {
-        if (fabs(b[j]) > m) m = fabs(b[j]);
-        if (fabs(a[j] * scale - b[j]) > e) e = fabs(a[j] * scale - b[j]);
+        if (fabs(x[j]) > m) m = fabs(x[j]);
+        if (fabs(r[j] * scale - x[j]) > e) e = fabs(r[j] * scale - x[j]);
     }
     return m > 0 ? e / m : e;
 }
@@ -51,6 +101,7 @@ static int g_ip = 0;   /* --ip: the IN-PLACE natural cell, (z, NULL, z, NULL) bo
 static int g_time = 0; /* --time: after the check, time vfft_execute FORWARD through the door
                         * (best of 5 trials, reps sized to >= 1 ms) -- beside the planner's own
                         * in-process arm times (VFFT_IL_DP_VERBOSE=1) this prices the DOOR */
+static FILE *g_csv = NULL; /* --csv FILE: the precision record (header above) */
 #ifdef _WIN32
 #include <windows.h>
 static double now_ns(void) { LARGE_INTEGER f, c; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c); return 1e9 * (double)c.QuadPart / (double)f.QuadPart; }
@@ -84,11 +135,28 @@ static int g_k = 1;    /* --k K: a transform-contiguous BATCH of K transforms pe
                         * K>1 interleaved geometry); the reference gates transform 0 and the door
                         * timing is reported PER TRANSFORM */
 
+#ifdef VFFT_HAS_MKL
+/* MKL's forward and backward of the same cell, out of place, natural order:
+ * y = fwd(x), r = bwd(y). 0 when the descriptor cannot be made. */
+static int mkl_cell(int N, const double *x, double *y, double *r)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N) != DFTI_NO_ERROR) return 0;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR) { DftiFreeDescriptor(&d); return 0; }
+    DftiComputeForward(d, (void *)x, y);
+    DftiComputeBackward(d, y, r);
+    DftiFreeDescriptor(&d);
+    return 1;
+}
+#endif
+
 static int probe(vfft_wisdom *W, int N)
 {
-    vfft_config_t cfg; vfft_plan h; double ef = 1, er = 1; int ok;
+    vfft_config_t cfg; vfft_plan h; double ef = 1, er = 1, el = 1; int ok;
     const size_t K = (size_t)g_k, tot = 2 * (size_t)N * K;
-    double *x = calloc(tot, 8), *X = calloc(2 * (size_t)N, 8);
+    double *x = calloc(tot, 8);
+    long double *X = calloc(2 * (size_t)N, sizeof(long double));
     double *y = calloc(tot, 8), *r = calloc(tot, 8);
     srand(4242 + N);
     for (size_t j = 0; j < tot; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
@@ -102,19 +170,33 @@ static int probe(vfft_wisdom *W, int N)
     {   /* in place: the forward on a copy of x, then the backward on that */
         memcpy(y, x, tot * sizeof(double));
         vfft_execute(h, VFFT_FORWARD, y, NULL, y, NULL);
-        ef = relerr(y, X, N, 1.0);
+        ef = relerr(y, X, N, 1.0); el = l2err(y, X, N, 1.0);
         vfft_execute(h, VFFT_BACKWARD, y, NULL, y, NULL);
-        er = relerr(y, x, N, 1.0 / N);
+        er = rterr(y, x, N, 1.0 / N);
     }
     else if (h)
     {
         vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
         vfft_execute(h, VFFT_BACKWARD, y, NULL, r, NULL);
-        ef = relerr(y, X, N, 1.0); er = relerr(r, x, N, 1.0 / N);
+        ef = relerr(y, X, N, 1.0); el = l2err(y, X, N, 1.0); er = rterr(r, x, N, 1.0 / N);
     }
     ok = h && ef < 1e-11 && er < 1e-11;
     printf("%-6d %-7s %s fwd %.2e  rt %.2e  %s", N, h ? vfft_plan_route(h) : "NOPLAN", g_ip ? "ip " : "oop",
            ef, er, ok ? "ok" : "*** FAIL ***");
+    if (h && g_csv) fprintf(g_csv, "VectorFFT,%d,%.3e,%.3e,%.3e\n", N, el, ef, er);
+#ifdef VFFT_HAS_MKL
+    if (g_csv && K == 1)
+    {
+        double *my = calloc(tot, 8), *mr = calloc(tot, 8);
+        if (mkl_cell(N, x, my, mr))
+        {
+            double mf = relerr(my, X, N, 1.0), ml = l2err(my, X, N, 1.0), mrt = rterr(mr, x, N, 1.0 / N);
+            printf("  mkl fwd %.2e", mf);
+            fprintf(g_csv, "MKL,%d,%.3e,%.3e,%.3e\n", N, ml, mf, mrt);
+        }
+        free(my); free(mr);
+    }
+#endif
     if (h && g_time && !g_ip)
         printf("  door %.1f ns%s", time_door(h, x, y, N) / (double)K, K > 1 ? " per transform" : "");
     printf("\n");
@@ -125,16 +207,30 @@ static int probe(vfft_wisdom *W, int N)
 int main(int argc, char **argv)
 {
     int fails = 0, cells = 0, a0 = 1;
+    const char *csv = NULL;
     while (argc > a0 && argv[a0][0] == '-')
     {
         if (!strcmp(argv[a0], "--ip")) g_ip = 1;
         else if (!strcmp(argv[a0], "--time")) g_time = 1;
         else if (!strcmp(argv[a0], "--k") && a0 + 1 < argc) { g_k = atoi(argv[a0 + 1]); a0++; }
+        else if (!strcmp(argv[a0], "--csv") && a0 + 1 < argc) { csv = argv[a0 + 1]; a0++; }
         else break;
         a0++;
     }
-    if (argc < a0 + 2) { printf("usage: %s [--ip] <wisdir> N [N ...] (N or a-b)\n", argv[0]); return 2; }
+    if (argc < a0 + 2) { printf("usage: %s [--ip] [--csv FILE] <wisdir> N [N ...] (N or a-b)\n", argv[0]); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
+    if (csv)
+    {
+        FILE *probe_f = fopen(csv, "r");
+        int fresh = 1;
+        if (probe_f) { fseek(probe_f, 0, SEEK_END); fresh = ftell(probe_f) == 0; fclose(probe_f); }
+        g_csv = fopen(csv, "a");
+        if (!g_csv) { printf("cannot open %s\n", csv); return 2; }
+        if (fresh) fprintf(g_csv, "library,N,l2_error,max_error,rt_error\n");
+    }
+#ifdef VFFT_HAS_MKL
+    mkl_set_num_threads(1);
+#endif
     vfft_wisdom *W = vfft_wisdom_load(argv[a0]);
     if (!W) { printf("wisdom load FAILED: %s\n", argv[a0]); return 2; }
     for (int a = a0 + 1; a < argc; a++)
@@ -149,6 +245,7 @@ int main(int argc, char **argv)
             if (!probe(W, N)) fails++;
         }
     }
+    if (g_csv) fclose(g_csv);
     printf("=== %d cells, %d failed: %s ===\n", cells, fails, fails ? "*** FAIL ***" : "ALL PASS");
     return fails ? 1 : 0;
 }
