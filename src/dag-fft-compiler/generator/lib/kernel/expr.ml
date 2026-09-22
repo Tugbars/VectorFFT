@@ -62,15 +62,14 @@ type expr =
 
 (* === SMART CONSTRUCTORS ===
  *
- * These mirror FFTW's genfft/littlesimp.ml `makeTimes`/`makePlus`/`makeUminus`.
- * They run a small amount of algebraic simplification at construction time:
+ * These run a small amount of algebraic simplification at construction time:
  *   - Const folding: Const(a) ⊕ Const(b) -> Const(a⊕b)
  *   - Identity elimination: x + 0, x * 1, x * 0
  *   - Sign canonicalization: -(-x) -> x, -Const(c) -> Const(-c)
  *   - **Constant rotation through Mul**: Mul(Const a, Mul(Const b, x)) -> Mul(Const(a*b), x)
  *
- * The rotation rule is the key one. It's what enables our Cnum-based
- * Winograd-N codelets to match FFTW's op count: when a W5 constant (k_quarter,
+ * The rotation rule is the key one. It's what holds the op count of our
+ * Cnum-based Winograd-N codelets down: when a W5 constant (k_quarter,
  * k_root5_4, ...) meets a twiddle constant inside a cmul, the two constants
  * fold to one before the IR is built, so we never emit the redundant
  * multiplication.

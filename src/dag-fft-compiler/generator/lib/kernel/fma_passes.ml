@@ -80,14 +80,14 @@
  *      the same cell WINS +5.2%, +26.8% combined with M-project.
  *   2. factor_const_muls — Add(Mul(K,X), Mul(K,Y)) -> Mul(K, Add(X,Y))
  *      and the Sub twin, K a hash-consed Const (tag identity, not
- *      value). This is FFTW parity: genfft BUILDS its ASTs factored
- *      (sum first, one K-multiply after); const_cmul builds ours the
- *      other way for the |cr|=|ci| twiddle family, and fma_lift alone
- *      cannot touch the resulting multi-use K-muls. Fires only when
- *      EVERY use of BOTH Muls is a same-K factor pattern, so the
- *      originals die (DCE at emit). Fixed-point rounds (cap 20) with
- *      use-counts recomputed per round, because each round can mint
- *      higher-level factor patterns.
+ *      value). This rebuilds the AST in factored form — sum first,
+ *      one K-multiply after; const_cmul builds ours the other way for
+ *      the |cr|=|ci| twiddle family, and fma_lift alone cannot touch
+ *      the resulting multi-use K-muls. Fires only when EVERY use of
+ *      BOTH Muls is a same-K factor pattern, so the originals die
+ *      (DCE at emit). Fixed-point rounds (cap 20) with use-counts
+ *      recomputed per round, because each round can mint higher-level
+ *      factor patterns.
  *   3. multi_use_fma_lift — a Mul with N > 1 uses, ALL of them direct
  *      Add/Sub operands, is absorbed into each consumer as its own
  *      Fma. Accounting: Mul dead, N adds become N fmas, delta = -1 op;
@@ -101,8 +101,8 @@
  *      the four sign identities. These are exactly the Muls step 3
  *      rejected for living in an Fma addend. The output is a fresh
  *      multi-use Mul — which is why the driver interleaves this pass
- *      with step 3 three times over. Closes R=8/R=16 to exact FFTW op
- *      parity.
+ *      with step 3 three times over. Closes the last op-count gap at
+ *      R=8/R=16.
  *   5. flatten_fma_mul_addend — the Cat-B finisher (docs 59/63):
  *      Add/Sub(P, Fma(a, b, Mul(c, d))) where the constants DON'T
  *      match -> the 2-FMA chain Fma(c, d, Fma(a, b, P)); kills the
@@ -142,7 +142,7 @@
  *
  * ------------------------------------------------------------------
  * MODULE CARD (fma_passes.ml — grep "MODULE CARD" for the full set)
- * ROLE: The FMA rewrite family; closes the FMA-count gap vs FFTW.
+ * ROLE: The FMA rewrite family; fuses mul+add pairs into FMA atoms.
  * PIPELINE: simplify passes -> this cascade -> schedule -> emit
  * PUBLIC SURFACE (measured): zero direct Fma_passes.X references —
  * callers use the Algsimp facade: fma_lift, factor_const_muls,
@@ -221,11 +221,11 @@ open Ir
  *
  * Recognize the pattern Add(Mul(K, X), Mul(K, Y)) → Mul(K, Add(X, Y))
  * and similarly Sub(Mul(K, X), Mul(K, Y)) → Mul(K, Sub(X, Y)) where K
- * is a Const node. This is the FFTW-style factoring that enables
- * downstream FMA absorption: the resulting Mul(K, sum) can be lifted
- * into its consumer Add/Sub via multi_use_fma_lift.
+ * is a Const node. This is the factoring that enables downstream FMA
+ * absorption: the resulting Mul(K, sum) can be lifted into its
+ * consumer Add/Sub via multi_use_fma_lift.
  *
- * Why this is needed (FMA-at-expansion-time gap vs FFTW):
+ * Why this is needed (the FMA-at-expansion-time gap):
  *
  *   For radix-{2^k} composites, half the twiddles have |cr| = |ci| =
  *   1/√2 (the W^1, W^3, W^5, W^7 family). const_cmul emits these as
@@ -234,7 +234,7 @@ open Ir
  *   fuse them (multi-use), and the downstream Adds/Subs that consume
  *   the K-multiplied values stay as plain Add/Sub instead of FMAs.
  *
- *   FFTW's genfft builds the AST already factored: it computes
+ *   The factored form builds the AST the other way: it computes
  *   xr+xi and xr-xi first, then K*sum and K*diff. Each K-multiply is
  *   a single Mul whose consumer Add/Sub fuses into an FMA.
  *
@@ -788,7 +788,7 @@ let fma_lift
  *   Δ = -1 (the Mul disappears)
  *
  * Plus the consumers change from plain Add/Sub to FMA, which is what
- * lets us close the FMA-count gap vs FFTW.
+ * drives the FMA count up and the total op count down.
  *
  * Why no throughput cost: an FMA instruction fuses one mul + one add
  * into a single µ-op on every modern CPU. Encoding the same (a, b)
@@ -1637,15 +1637,16 @@ let flatten_fma_mul_addend
    * exhaust the OoO window's ability to overlap them, so the per-chain
    * critical-path win dominates.
    *
-   * --- Why FFTW's genfft doesn't do this rewrite ---
+   * --- Why a standalone-Mul generator doesn't need this rewrite ---
    *
-   * FFTW emits explicit standalone Muls and relies on the C compiler
-   * (gcc/clang) to fuse `K * X` into FMA when it judges fusion is
-   * beneficial. The standalone-Mul form preserves scheduling freedom;
-   * compilers are conservative about over-chaining FMAs precisely
-   * because of the issue analyzed above. VFFT emits FMA intrinsics
-   * directly, which is why we have to make this tradeoff explicit at
-   * the algsimp level rather than delegating to the C compiler.
+   * A generator that emits explicit standalone Muls leaves the fusion
+   * of `K * X` into FMA to the C compiler (gcc/clang), which does it
+   * only when it judges fusion beneficial. The standalone-Mul form
+   * preserves scheduling freedom; compilers are conservative about
+   * over-chaining FMAs precisely because of the issue analyzed above.
+   * VFFT emits FMA intrinsics directly, which is why we have to make
+   * this tradeoff explicit at the algsimp level rather than delegating
+   * to the C compiler.
    *
    * --- Operational summary ---
    *

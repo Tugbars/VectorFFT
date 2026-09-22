@@ -1,9 +1,8 @@
 (* cnum.ml — Symbolic complex number combinator layer.
  *
- * Inspired by FFTW's genfft/complex.ml (Frigo 2003), this module provides
- * a typed `cnum` = (real, imag) representation that flows through the
- * algebra of DFT codelets and pushes simplification opportunities down to
- * the Expr smart constructors.
+ * This module provides a typed `cnum` = (real, imag) representation that
+ * flows through the algebra of DFT codelets and pushes simplification
+ * opportunities down to the Expr smart constructors.
  *
  * --- Why a separate layer? ---
  *
@@ -13,8 +12,8 @@
  * a complex value that itself came from a cmul, the constants flow through
  * `re` and `im` independently — and Expr.mk_mul's rotation rule fires
  * naturally when an outer Const meets an inner Const that was placed there
- * by the previous cmul. That's how we close the algebraic gap with FFTW
- * (which gets 236 ops on R=25 vs our 383 pre-Cnum).
+ * by the previous cmul. That's how we close the algebraic gap that left
+ * R=25 at 383 ops pre-Cnum.
  *
  * --- Sign convention ---
  *
@@ -24,8 +23,8 @@
  *
  * --- Structure choice for cmul ---
  *
- * FFTW's cmul builds the result as `Plus[Times(a,c); Uminus(Times(b,d))]`
- * (n-ary Plus of two Times nodes). We use binary `Sub(Mul, Mul)` which is
+ * The result can be built as `Plus[Times(a,c); Uminus(Times(b,d))]` (n-ary
+ * Plus of two Times nodes). We use binary `Sub(Mul, Mul)` which is
  * equivalent — algsimp.ml flattens both into the same canonical form.
  *
  * The crucial design choice: keep the two Mul nodes at the leaves of the
@@ -87,9 +86,9 @@ let cscale (k : expr) (c : cnum) : cnum = { re = mk_mul k c.re; im = mk_mul k c.
 
 (* Complex multiplication: (a + bi)(c + di) = (ac - bd) + (ad + bc)i
  *
- * Built as Plus-of-Times form (the FFTW choice). The Mul nodes are at the
- * leaves of the Sub/Add, which is what enables the rotation rule to fire
- * when a downstream consumer multiplies by another Const. *)
+ * Built as Plus-of-Times form. The Mul nodes are at the leaves of the
+ * Sub/Add, which is what enables the rotation rule to fire when a
+ * downstream consumer multiplies by another Const. *)
 let cmul (a : cnum) (b : cnum) : cnum =
   { re = mk_sub (mk_mul a.re b.re) (mk_mul a.im b.im)
   ; im = mk_add (mk_mul a.re b.im) (mk_mul a.im b.re)

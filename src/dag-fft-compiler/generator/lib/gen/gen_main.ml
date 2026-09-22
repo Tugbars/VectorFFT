@@ -707,7 +707,7 @@ let run (argv : string array) : unit =
   (* Drive math layer with or without spill marker capture.
    * Spill is meaningful only for twiddled CT-decomposed codelets.
    *
-   * --twidsq selects the n×n twidsq DAG (FFTW-style OOP codelet,
+   * --twidsq selects the n×n twidsq DAG (OOP codelet,
    * doc 43): apply inter-stage twiddle, run n parallel DFT-n's,
    * store transposed. Bypasses the regular twiddled / spill paths
    * (those are for in-place codelets). *)
@@ -1039,7 +1039,7 @@ let run (argv : string array) : unit =
         Printf.sprintf "radix%d_r2c_first_%s_%s" n sgn_suffix isa.name
       else if !rdft
       then
-        (* FFTW-style real-input DFT: radix{N}_rdft_{sgn}_{isa} *)
+        (* Real-input DFT: radix{N}_rdft_{sgn}_{isa} *)
         Printf.sprintf "radix%d_rdft_%s_%s" n sgn_suffix isa.name
       else if !hc2hc && !ranged
       then
@@ -1097,7 +1097,7 @@ let run (argv : string array) : unit =
         Printf.sprintf "radix%d_dct2_%s" n isa.name
       else if !dct2_trigII
       then
-        (* DCT-II via FFTW trigII embedding: radix{N}_dct2_trigII_{isa} *)
+        (* DCT-II via trigII embedding: radix{N}_dct2_trigII_{isa} *)
         Printf.sprintf "radix%d_dct2_trigII_%s" n isa.name
       else if !dct3
       then
