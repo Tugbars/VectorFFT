@@ -1,13 +1,13 @@
 /**
  * dst.h -- Discrete Sine Transforms II and III (real-to-real)
  *
- * Conventions match FFTW's RODFT10 / RODFT01:
- *   DST-II  (RODFT10): Y[k] = 2 * sum_{n=0..N-1} x[n] * sin(pi*(k+1)*(2n+1)/(2N))
- *   DST-III (RODFT01): Y[k] = (-1)^k * X[N-1]
- *                            + 2 * sum_{n=0..N-2} X[n] * sin(pi*(n+1)*(2k+1)/(2N))
+ * Conventions (the standard unnormalized DST-II / DST-III definitions):
+ *   DST-II:  Y[k] = 2 * sum_{n=0..N-1} x[n] * sin(pi*(k+1)*(2n+1)/(2N))
+ *   DST-III: Y[k] = (-1)^k * X[N-1]
+ *                        + 2 * sum_{n=0..N-2} X[n] * sin(pi*(n+1)*(2k+1)/(2N))
  *
- * DST-III is the inverse of DST-II up to scale 2N (matches FFTW unnormalized
- * convention). For y = DST-II(x), x_recovered = DST-III(y) / (2N).
+ * DST-III is the inverse of DST-II up to scale 2N (both directions are
+ * unnormalized). For y = DST-II(x), x_recovered = DST-III(y) / (2N).
  *
  * Algorithm: wrap DCT-II/III with simple sign-flip + reversal.
  *   DST-II[k]  = DCT-II[(-1)^n * x[n]][N - 1 - k]
@@ -127,7 +127,7 @@ static void _dst3_worker_post_fwd(void *arg) {
 
 
 /* ═══════════════════════════════════════════════════════════════
- * EXECUTE -- DST-II forward (FFTW RODFT10)
+ * EXECUTE -- DST-II forward
  *
  * 1. prebuf[n] = (-1)^n * re[n]
  * 2. DCT-II forward on prebuf (in-place).
@@ -179,7 +179,7 @@ static void _dst2_execute_fwd(void *data, double *re, double *im) {
 
 
 /* ═══════════════════════════════════════════════════════════════
- * EXECUTE -- DST-III forward (FFTW RODFT01) — the inverse of DST-II
+ * EXECUTE -- DST-III forward — the inverse of DST-II
  *
  * 1. prebuf[n] = re[N-1-n]
  * 2. DCT-III on prebuf  (= dct_plan->override_bwd, which is _dct3_execute_fwd).

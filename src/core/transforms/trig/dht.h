@@ -1,11 +1,11 @@
 /**
  * dht.h -- Discrete Hartley Transform (real-to-real)
  *
- * Convention matches FFTW's FFTW_DHT:
+ * Convention (the standard Hartley kernel, cas = cos + sin):
  *   H[k] = sum_{n=0..N-1} x[n] * (cos(2*pi*k*n/N) + sin(2*pi*k*n/N))
  *
  * Self-inverse up to 1/N: DHT(DHT(x)) = N * x. Apply forward twice and
- * divide by N to recover the original (FFTW unnormalized convention).
+ * divide by N to recover the original (the unnormalized convention).
  *
  * Algorithm: built directly on N-point R2C — no twiddles, no pre-permute.
  * Given X = R2C(x) with X[N-k] = conj(X[k]):

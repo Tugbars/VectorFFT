@@ -87,8 +87,8 @@ typedef enum { VW2_DIR_NONE = 0, VW2_DIR_FWD = 1, VW2_DIR_BWD = 2 } vw2_dir_t;
  * (the default, every pre-1.1 row); matches by EQUALITY everywhere, like
  * dir. Signpost ref= targets are problem-space unless they carry role=. */
 typedef enum { VW2_ROLE_NONE = 0, VW2_ROLE_COMP = 1 } vw2_role_t;
-/* lay= (v1.2): the CALLER'S complex-data layout — config.layout, the MKL
- * DFTI_COMPLEX_STORAGE analog — keyed like its sibling placement. Layout
+/* lay= (v1.2): the CALLER'S complex-data layout — config.layout, the
+ * interleaved-vs-split axis — keyed like its sibling placement. Layout
  * is a caller integration property (AoS/SoA), NEVER a strategy output:
  * the 2026-08-24 audit traced every split/IL verdict collision (mutual
  * banking vetoes, cell ownership fights, @nat ping-pong) to its absence

@@ -15,7 +15,7 @@
  *
  * Rejected with -1 (never UB):
  *   - DIF-oriented plans: stage 0 carries twiddles there; writing it OOP is
- *     a different dataflow (FFTW's NO_DESTROY_INPUT physics).
+ *     a different dataflow (the physics of preserving the input).
  *   - plans whose stage 0 has any twiddled group (belt and braces).
  *   - K not a multiple of 8 is the caller's existing constraint, unchanged.
  *

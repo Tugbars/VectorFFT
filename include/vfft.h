@@ -64,7 +64,7 @@
  *   INTERLV C2C             z_in        NULL        z_out       NULL
  *           (z = interleaved pairs. By DEFAULT the batch is
  *            transform-contiguous: transform t is the block
- *            [2*t*N .. 2*(t+1)*N), the MKL/FFTW idiom. Set
+ *            [2*t*N .. 2*(t+1)*N), the conventional idiom. Set
  *            config.batch_geom = VFFT_BATCH_LANE_MAJOR for the split
  *            engines' geometry instead, element e of lane t at
  *            [2*(e*K+t)]. Both are identical at K==1. In-place: pass
@@ -144,7 +144,7 @@ extern "C"
     VFFT_OUTOFPLACE
   } vfft_placement_t;
 
-  /* Complex-data layout axis (config.layout; MKL DFTI_COMPLEX_STORAGE analog).
+  /* Complex-data layout axis (config.layout; split planes vs interleaved z).
    * Chosen at CREATE; execute's pointer signature must match (see the buffer
    * table at vfft_execute). Zero-init == SPLIT == the historical default, so
    * memset-initialized configs are back-compatible.
@@ -153,7 +153,7 @@ extern "C"
    *                 (native folded z engines where they exist, internal
    *                 convert-around elsewhere — always correct, never silent).
    *                 R2C/C2R: the spectrum side is the packed CCE
-   *                 (conjugate-even, MKL DFTI_COMPLEX_COMPLEX) z buffer.
+   *                 (conjugate-even, adjacent re/im pairs) z buffer.
    *                 Real->real transforms (DCT/DST/DHT) have no complex
    *                 layout: INTERLEAVED is rejected at create.
    *                 Not combinable with config.batch (padded planes are
@@ -164,13 +164,13 @@ extern "C"
     VFFT_LAYOUT_INTERLEAVED /* interleaved z (c2c) / CCE spectrum (r2c/c2r) */
   } vfft_layout_t;
 
-  /* Calibration rigor — all MEASURED (FFTW flag analog in comments). A wisdom
+  /* Calibration rigor — all MEASURED (sweep width per tier below). A wisdom
    * HIT ignores this; it only governs the sweep run on a MISS (or recalibrate). */
   typedef enum
   {
-    VFFT_MEASURE,   /* ≈ FFTW_MEASURE   — DP-default / variant-aware coarse  */
-    VFFT_PATIENT,   /* ≈ FFTW_PATIENT   — DP patient / patient-exhaustive    */
-    VFFT_EXHAUSTIVE /* ≈ FFTW_EXHAUSTIVE— full multiset × permutation        */
+    VFFT_MEASURE,   /* coarse sweep    — DP-default / variant-aware coarse  */
+    VFFT_PATIENT,   /* wide sweep      — DP patient / patient-exhaustive    */
+    VFFT_EXHAUSTIVE /* full sweep      — full multiset × permutation        */
                     /* VFFT_ESTIMATE — planned 4th tier (V4 cost model, no measurement)         */
   } vfft_rigor_t;
 
@@ -233,20 +233,20 @@ extern "C"
 
     int nthreads; /* 0 = use the current pool / single-thread  */
 
-    int order; /* Output-order axis for 1D C2C (the MKL DFTI_ORDERING knob).
+    int order; /* Output-order axis for 1D C2C (natural vs scrambled bins).
                   ORDER IS A CONTRACT: a request names an order class and the
                   library serves, races and banks engines of that class only.
                   VFFT_ORDER_DEFAULT (0) = NATURAL. The spectrum comes back in
                     natural bin order; nothing about DEFAULT is engine-native
                     or order-agnostic.
                   VFFT_ORDER_NATURAL = the same, said explicitly: natural bin
-                    order, bin-for-bin MKL/FFTW-comparable, served by whichever
+                    order, bin-for-bin DFT-comparable, served by whichever
                     natural-writing engine wins the cell's race (the solo
                     kernels, the Bailey pairs, ZTURN-T with its natural
                     terminator, the flat DIT and the chains at odd N) — a
                     per-cell verdict in wisdom, never a reorder pass by default.
                   VFFT_ORDER_SCRAMBLED = "I do not need the bins in order"
-                    (MKL's DFTI_BACKWARD_SCRAMBLED intent): served by a
+                    (the classic scrambled-output request): served by a
                     SCRAMBLED-WRITING engine only — the output is the engine's
                     own self-consistent permutation of the bins, and the only
                     supported decode is the matched roundtrip through the same
@@ -282,9 +282,9 @@ extern "C"
                              Committed at create; execute enforces the matching
                              pointer signature. Default (0) = SPLIT.            */
 
-    int batch_geom; /* WHERE the K transforms of a batch live. The axis MKL
-                       spells DFTI_INPUT_DISTANCE/STRIDES and FFTW spells
-                       idist/istride. Meaningful for 1D C2C layout=INTERLEAVED
+    int batch_geom; /* WHERE the K transforms of a batch live. The axis other
+                       libraries spell as a per-transform distance plus an
+                       element stride. Meaningful for 1D C2C layout=INTERLEAVED
                        with howmany>1; ignored at K==1 (the two geometries
                        are identical there).
                        VFFT_BATCH_DEFAULT (0) = this layout's canonical
@@ -295,7 +295,7 @@ extern "C"
                        VFFT_BATCH_TRANSFORM_CONTIGUOUS (1; the INTERLEAVED
                          default) =
                          transform t occupies z[2*t*N .. 2*(t+1)*N),
-                         elements adjacent inside it — the MKL/FFTW default
+                         elements adjacent inside it — the conventional default
                          idiom and the canonical geometry here. Served
                          NATIVELY as K independent K=1 transforms: no
                          layout conversion anywhere, no batch tail of any
@@ -351,7 +351,7 @@ extern "C"
    *
    * DEFAULT (0) means "this layout's canonical geometry", which is NOT the
    * same geometry for both layouts and deliberately so:
-   *   INTERLEAVED -> transform-contiguous (the MKL/FFTW idiom, and the one
+   *   INTERLEAVED -> transform-contiguous (the conventional idiom, and the one
    *                  we serve natively as K independent K=1 transforms)
    *   SPLIT       -> lane-major (the batched split engines' own contract;
    *                  transform-contiguous split planes are NOT supported)
@@ -491,7 +491,7 @@ extern "C"
    *       single-plane overwrite exists.
    *
    *       THE IN-PLACE REAL CONTRACT (the only place it is stated):
-   *         - ONE padded plane of 2*(N/2 + 1) doubles, the MKL CCE
+   *         - ONE padded plane of 2*(N/2 + 1) doubles, the CCE
    *           convention (N+1 doubles at odd N). The caller allocates that,
    *           not N.
    *         - R2C reads N reals from the front of the plane and writes the

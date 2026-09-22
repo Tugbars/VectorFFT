@@ -1,7 +1,7 @@
 /* c2r.h — backward real transform (halfcomplex -> real), the inverse of
  * rfft.h's forward cascade. Unnormalized: r2c followed by c2r gives N*x.
  *
- * Execution structure (mirror of rfft, FFTW's hc2r/apply_dif duality):
+ * Execution structure (mirror of rfft, the halfcomplex-to-real / DIF duality):
  *   forward:  leaf (r2cf) FIRST -> stages d = nf-2 .. 0 (DIT)     -> packed out
  *   backward: stages d = 0 .. nf-2 (DIF backward) -> leaf (r2cb) LAST -> real out
  */

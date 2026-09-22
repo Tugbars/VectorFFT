@@ -1,6 +1,6 @@
 /* oop_dp.h — DP-planner-backed OOP c2c plan creation.
  *
- * Wires the recursive DP planner (dp_planner.h — FFTW-PATIENT-style measured
+ * Wires the recursive DP planner (dp_planner.h — an exhaustive measured
  * factorization search with sub-problem memoization) into the OOP c2c path as
  * the MODEB factorization source, replacing the wisdom-file lookup with an
  * on-the-fly measured plan.

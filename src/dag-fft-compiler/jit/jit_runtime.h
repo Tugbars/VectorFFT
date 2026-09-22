@@ -20,7 +20,7 @@
  * Why a returned pointer and not plan->exec_fwd: stride_plan_t lives in
  * AUTO-GENERATED plan_executors.h, which the calibrator re-emits whenever
  * spike_wisdom changes — a hand-added field would be wiped. Returning the fn
- * (FFTW-style plan handle) is the robust, regen-proof equivalent.
+ * (an opaque plan handle) is the robust, regen-proof equivalent.
  */
 #ifndef VFFT_PROTO_JIT_RUNTIME_H
 #define VFFT_PROTO_JIT_RUNTIME_H

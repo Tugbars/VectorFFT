@@ -79,14 +79,14 @@
  *     processes vec_width butterfly legs at a time.
  *   • Twiddles, when present, are stored per-group: tw_re[(j-1)*me + b]
  *     for leg j ∈ [1, R), group b ∈ [0, me). The j=0 leg has no twiddle.
- *     This matches FFTW's t1*v convention.
+ *     This is the conventional per-group t1 twiddle layout.
  *
  * NON-GOALS FOR M2
  * ────────────────
  *   • Real-to-complex (R2C) — separate codelet family, deferred to M3.
  *   • StridedFallback edge — neither stride is 1. Deferred.
- *   • Mixed-radix-aware twiddle layouts (FFTW's t2*v family) — defer.
- *   • Specialization for known-constant strides (FFTW's plan-time codelets)
+ *   • Mixed-radix-aware twiddle layouts (the t2 table family) — defer.
+ *   • Specialization for known-constant strides (baked in at plan time)
  *     — defer; would 2x the codelet count for marginal gain.
  *
  * BUTTERFLY BODY INTEGRATION
@@ -283,7 +283,7 @@ let current_oop_il_in_sw : bool ref = ref false
 let current_oop_il_out_sw : bool ref = ref false
 
 (* LINEAR twiddle layout (§12.4 4a): pack the t1 table in consumption order
-   (per group-quad, all legs contiguous) — one streaming cursor like MKL's,
+   (per group-quad, all legs contiguous) — a single streaming cursor,
    instead of (R-1) parallel strided rows. UL-load configs only (no rem tail
    exists there; the tail passes would index the flat layout). Set from
    gen_main --oop-tw-linear; forwarded to Emit_state via Emit_c at emit. *)
@@ -451,7 +451,7 @@ let emit_load_unitleg (buf : Buffer.t) (c : config) : unit =
      the four-step's transpose into the t1's load edge: the t1 reads the
      column pass's UNtransposed output directly (Ls=1, Gs=R1), eliminating
      the separate transpose sweep + one scratch buffer + one L1 round-trip
-     (MKL's two-pass shape, §12.1). Replaces the former Emit_c stub
+     (the classic two-pass shape, §12.1). Replaces the former Emit_c stub
      delegation (M2 phase-2) with a self-contained lattice, same approach as
      the IL edges. *)
   let base_re =
@@ -2275,8 +2275,8 @@ let canonical_name ~radix ~isa ~direction ~load_pat ~store_pat ~buffer ~twiddles
  * [UG load (leg stride R1) -> radix-R2 body -> four-step twiddle cmul
  * against EMIT-TIME rodata tables -> park in function-scope U vars] ->
  * per row-chunk mh [4x4 register transpose of U -> radix-R1 body -> UG
- * store, natural order]. Generalizes the hand mono-64 (30ns = MKL-IL
- * parity, k1_fourstep_spike.c) with FMA cmuls + scheduler-ordered
+ * store, natural order]. Generalizes the hand mono-64 (30ns measured,
+ * k1_fourstep_spike.c) with FMA cmuls + scheduler-ordered
  * bodies. M1 scope: N=64 (8x8), split, fwd, avx2. The stage bodies are
  * the SAME prepared radix DAG the OOP family uses; each instantiation
  * is block-scoped so t%d/lane names cannot collide.

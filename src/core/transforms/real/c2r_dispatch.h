@@ -154,7 +154,7 @@ static inline vfft_c2r_disp_t *vfft_c2r_disp_create(int N, size_t K, vfft_c2r_la
  * on a disjoint lane slab via c2r_execute_natural_range (planeA/planeB/nat_k0 are
  * lane-indexed -> disjoint -> race-free). Small batches (K<16 or T<=1) fall back to the
  * folded ST executor. This is where SPLIT layout pays off: clean K-parallel re/im
- * planes vs MKL's CCE-bound real backward. Caller pins to core 0 (pool owns 1..T-1). */
+ * planes vs a CCE-bound real backward. Caller pins to core 0 (pool owns 1..T-1). */
 typedef struct { const c2r_plan_t *p; const double *re, *im; double *out; size_t k0, kw; const double *zi; } _c2r_nat_mt_arg;
 static void _c2r_nat_mt_tramp(void *a)
 {

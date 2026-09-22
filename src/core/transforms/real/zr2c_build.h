@@ -10,7 +10,7 @@
  * complex child on it, and fold the result into the Hermitian half-spectrum.
  * c2r mirrors it exactly, with the fold leading instead of trailing.
  *
- * This is the like-for-like arm against MKL's own home layout: both engines
+ * This is the like-for-like arm against a CCE-native engine: both engines
  * consume and produce the packed CCE plane, so neither is charged for a
  * conversion the other avoids.
  *

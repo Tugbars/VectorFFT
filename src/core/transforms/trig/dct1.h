@@ -1,5 +1,5 @@
 /**
- * dct1.h -- DCT-I (FFTW REDFT00) and DST-I (FFTW RODFT00) shells.
+ * dct1.h -- DCT-I and DST-I shells (the even/odd whole-sample forms).
  *
  * Phase 1 (lab notebook section 58): runtime pad-embedding through the
  * EVEN-N r2c machinery. Both logical extensions are always even
@@ -8,7 +8,7 @@
  * M/2 are the caller's inner plan's business (Rader/Bluestein),
  * exactly as in core/r2c.h's odd path.
  *
- * Conventions (FFTW-matching, unnormalized):
+ * Conventions (unnormalized; the definitions below are exact):
  *   DCT-I: Y[k] = x[0] + (-1)^k x[N-1]
  *                 + 2 * sum_{n=1..N-2} x[n] cos(pi n k / (N-1))
  *   DST-I: Y[k] = 2 * sum_{n=0..N-1} x[n] sin(pi (n+1)(k+1) / (N+1))

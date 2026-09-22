@@ -145,7 +145,7 @@ static inline vfft_oop11_fn vfft_oop_t1_fn(int R)
  * t1 UL_UG: transpose fused into the t1's LOAD lattice (reads the column
  * pass's untransposed output at Ls=1/Gs=R1); n1 UG_UL: transpose fused into
  * the leaf's STORE lattice (writes the transposed intermediate at OLs=1/
- * OGs=R2). Either gives the MKL two-pass shape (no transpose sweep). avx2
+ * OGs=R2). Either gives the fused two-pass shape (no transpose sweep). avx2
  * only; me must be a multiple of 4 (UL configs carry no rem tail). */
 #if VFFT_OOP_GROUPW == 4u
 #define VFFT_OOP_DECL_UL(R) \

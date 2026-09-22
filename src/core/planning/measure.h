@@ -96,7 +96,7 @@ static int _vfft_proto_decision_cmp(const void *a, const void *b) {
  * Step 3: bench one fully-explicit (factors, variants, DIT/DIF) plan.
  *
  * Ported from production _dp_bench_explicit_one: builds via plan_create_ex
- * (= production's _stride_build_plan_explicit) and runs the same FFTW-style
+ * (= production's _stride_build_plan_explicit) and runs the same rep-scaled
  * adaptive timer as _vfft_proto_dp_bench. Returns ns/iter, 1e18 on failure.
  * Per-stage variant availability is enforced implicitly — plan_create_ex
  * returns NULL when a requested (variant, orientation) codelet is absent.
