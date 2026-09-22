@@ -3,8 +3,8 @@
 The reference state the `vfft.c` migration diffs against. Captured at the SHA in
 `baseline_sha.txt`, **before any step of the migration**.
 
-Procedure and stop rules: [docs/design/refactor_safety_harness.md](../../docs/design/refactor_safety_harness.md).
-Step list: [docs/design/refactor_migration_plan.md](../../docs/design/refactor_migration_plan.md).
+Procedure and stop rules: [docs/design/refactor_safety_harness.md](../../../../docs/design/refactor_safety_harness.md).
+Step list: [docs/design/refactor_migration_plan.md](../../../../docs/design/refactor_migration_plan.md).
 
 ## Rules
 
@@ -16,7 +16,7 @@ Step list: [docs/design/refactor_migration_plan.md](../../docs/design/refactor_m
   re-run in the same session, not against a number stored here.
 - **Truncate, never append.** A re-captured artifact replaces its predecessor; an
   appended one silently stops being a baseline.
-- These files are committed on purpose. `.gitignore:85` ignores `*.txt`, so they ride an
+- These files are committed on purpose. `.gitignore` ignores `*.txt`, so they ride an
   explicit negation, and `.gitattributes` pins `eol=lf` — a CRLF conversion would make
   every line differ.
 
@@ -46,8 +46,8 @@ running this from `baseline/` fails on `#include "vfft.h"` before it reaches the
 comparison.
 
 ```
-gcc -c -O2 -mavx2 -mfma $(cat build_tuned/baseline/include_flags.txt) src/core/vfft.c -o <scratch>/vfft_new.o
-python build_tuned/obj_equiv.py build_tuned/baseline/vfft_baseline.o <scratch>/vfft_new.o
+gcc -c -O2 -mavx2 -mfma $(cat src/tools/baseline/reference/include_flags.txt) src/core/vfft.c -o <scratch>/vfft_new.o
+python src/tools/baseline/obj_equiv.py src/tools/baseline/reference/vfft_baseline.o <scratch>/vfft_new.o
 ```
 
 Use these flags, not `build.py`'s. The identity object is `-O2 -mavx2 -mfma`; `build.py`

@@ -32,6 +32,15 @@ python gauntlet/gauntlet.py run --group pow2 --inplace       # in place
 3. **report** -- `report.md` in the run directory: every cell with how it was
    served, then the tables by route, size and family.
 
+`gflops` turns a run into a GFLOPS list, VectorFFT beside MKL, one line per
+cell (`gflops.csv` in the run directory; 5 N log2 N per transform, the best of
+the two engine orders for each engine):
+
+```
+python gauntlet/gauntlet.py gflops --name gauntlet_pow2
+python gauntlet/gauntlet.py gflops --name gauntlet_pow2 --threads 8
+```
+
 `--merge` (or the `merge` verb) copies the run's verdicts back into the
 library's shipped wisdom (`src/dag-fft-compiler/generator/generated/`), with
 backups, so a calibration done on your host is kept.

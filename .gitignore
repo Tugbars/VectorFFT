@@ -90,8 +90,8 @@ build_tuned/benches/mb_256.txt
 # Refactor-safety baseline artifacts are COMMITTED — they are the reference the
 # migration diffs against, so an ignored baseline means the harness reports green
 # on nothing. See docs/design/refactor_safety_harness.md.
-!build_tuned/baseline/
-!build_tuned/baseline/**
+!src/tools/baseline/reference/
+!src/tools/baseline/reference/**
 
 # Schedule-search experiment sandbox — local-only, NEVER committed to the repo.
 # Throwaway codelets, benches, and search drivers live here so experiments
@@ -117,6 +117,5 @@ docs/design/zturn_t_ship_plan.md
 docs/design/design_contracts.md
 docs/design/pow2_race_pools.md
 
-# The gauntlet's runs (2026-09-22): a user's measurements, not repository content.
-# A run worth keeping is committed on purpose (git add -f) or its numbers go into docs/.
-gauntlet/results/
+# The gauntlet's runs live in gauntlet/results/ (the standing runs are tracked: the
+# csv rows are the record; store/*.txt and *.log stay ignored by the rules above).

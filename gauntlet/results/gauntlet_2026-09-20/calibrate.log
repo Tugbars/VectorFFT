@@ -1,0 +1,2047 @@
+2          banked   117ms
+3          banked   113ms
+4          banked   119ms
+5          banked   96ms
+7          banked   115ms
+8          banked   111ms
+9          banked   975ms
+11         banked   109ms
+12         banked   1960ms
+13         banked   142ms
+15         banked   2079ms
+16         banked   39ms
+17         banked   116ms
+19         banked   143ms
+20         banked   1889ms
+21         banked   1991ms
+24         banked   2543ms
+25         banked   1223ms
+27         banked   3567ms
+28         banked   1729ms
+33         banked   1743ms
+35         banked   1743ms
+36         banked   7035ms
+39         banked   1704ms
+40         banked   2404ms
+44         banked   1789ms
+45         banked   8820ms
+48         banked   7944ms
+49         banked   881ms
+51         banked   1708ms
+52         banked   1715ms
+53         banked   262ms
+55         banked   1708ms
+56         banked   2251ms
+57         banked   1653ms
+59         banked   244ms
+60         banked   12241ms
+61         banked   249ms
+63         banked   8783ms
+65         banked   1745ms
+67         banked   247ms
+68         banked   1774ms
+71         banked   251ms
+72         banked   8772ms
+73         banked   258ms
+75         banked   9245ms
+76         banked   1707ms
+77         banked   1747ms
+79         banked   245ms
+80         banked   7643ms
+81         banked   10450ms
+83         banked   238ms
+84         banked   11927ms
+85         banked   1706ms
+88         banked   2436ms
+89         banked   243ms
+91         banked   1707ms
+95         banked   1726ms
+96         banked   12800ms
+97         banked   235ms
+99         banked   6331ms
+100        banked   6991ms
+101        banked   252ms
+103        banked   238ms
+104        banked   2299ms
+105        banked   14519ms
+106        banked   241ms
+107        banked   241ms
+108        banked   21751ms
+109        banked   244ms
+112        banked   7006ms
+113        banked   253ms
+117        banked   6371ms
+118        banked   251ms
+119        banked   1770ms
+120        banked   16048ms
+121        banked   952ms
+122        banked   260ms
+125        banked   4066ms
+127        banked   244ms
+131        banked   273ms
+132        banked   8807ms
+133        banked   1697ms
+134        banked   257ms
+135        banked   29288ms
+136        banked   2417ms
+137        banked   251ms
+140        banked   9546ms
+142        banked   250ms
+143        banked   1728ms
+144        banked   28499ms
+146        banked   266ms
+147        banked   7210ms
+151        banked   248ms
+152        banked   2381ms
+153        banked   6417ms
+156        banked   8789ms
+157        banked   239ms
+158        banked   246ms
+159        banked   247ms
+160        banked   12047ms
+163        banked   258ms
+165        banked   11462ms
+166        banked   246ms
+167        banked   250ms
+168        banked   14431ms
+169        banked   922ms
+171        banked   6371ms
+175        banked   7115ms
+176        banked   6461ms
+177        banked   255ms
+178        banked   255ms
+179        banked   243ms
+180        banked   48642ms
+181        banked   245ms
+183        banked   248ms
+187        banked   1627ms
+189        banked   28552ms
+191        banked   275ms
+192        banked   27462ms
+193        banked   258ms
+194        banked   305ms
+195        banked   11415ms
+196        banked   4745ms
+197        banked   258ms
+199        banked   246ms
+200        banked   9134ms
+201        banked   247ms
+202        banked   261ms
+204        banked   8867ms
+206        banked   260ms
+208        banked   6430ms
+209        banked   1767ms
+211        banked   257ms
+212        banked   253ms
+213        banked   265ms
+214        banked   253ms
+216        banked   24375ms
+218        banked   244ms
+219        banked   243ms
+220        banked   8523ms
+221        banked   1716ms
+224        banked   10822ms
+225        banked   38340ms
+226        banked   253ms
+227        banked   243ms
+228        banked   8840ms
+229        banked   253ms
+231        banked   11346ms
+236        banked   259ms
+237        banked   251ms
+239        banked   242ms
+240        banked   49208ms
+241        banked   239ms
+243        banked   24352ms
+244        banked   247ms
+245        banked   5298ms
+247        banked   1715ms
+249        banked   254ms
+251        banked   245ms
+252        banked   46460ms
+254        banked   251ms
+255        banked   11663ms
+257        banked   670ms
+260        banked   8555ms
+262        banked   250ms
+263        banked   249ms
+264        banked   10699ms
+265        banked   252ms
+267        banked   248ms
+268        banked   258ms
+269        banked   250ms
+271        banked   240ms
+272        banked   6500ms
+273        banked   11326ms
+274        banked   249ms
+275        banked   6618ms
+278        banked   254ms
+280        banked   11812ms
+281        banked   260ms
+284        banked   245ms
+285        banked   11317ms
+288        banked   44262ms
+289        banked   965ms
+291        banked   263ms
+292        banked   272ms
+293        banked   250ms
+295        banked   248ms
+297        banked   19745ms
+298        banked   287ms
+300        banked   46560ms
+302        banked   255ms
+303        banked   253ms
+304        banked   6553ms
+305        banked   253ms
+307        banked   248ms
+308        banked   8550ms
+309        banked   254ms
+312        banked   10609ms
+313        banked   257ms
+314        banked   250ms
+315        banked   51350ms
+316        banked   258ms
+317        banked   248ms
+318        banked   255ms
+320        banked   25753ms
+321        banked   241ms
+323        banked   1746ms
+324        banked   52024ms
+325        banked   6860ms
+326        banked   249ms
+327        banked   253ms
+331        banked   242ms
+332        banked   251ms
+334        banked   253ms
+335        banked   241ms
+336        banked   46025ms
+337        banked   254ms
+339        banked   272ms
+340        banked   8493ms
+343        banked   1756ms
+346        banked   238ms
+347        banked   248ms
+351        banked   19648ms
+352        banked   10155ms
+353        banked   274ms
+354        banked   254ms
+355        banked   246ms
+356        banked   241ms
+357        banked   11496ms
+358        banked   239ms
+359        banked   248ms
+360        banked   52391ms
+361        banked   882ms
+362        banked   257ms
+363        banked   4348ms
+364        banked   8506ms
+365        banked   246ms
+366        banked   252ms
+367        banked   257ms
+371        banked   272ms
+375        banked   27533ms
+379        banked   264ms
+380        banked   8563ms
+381        banked   291ms
+382        banked   249ms
+383        banked   247ms
+384        banked   42954ms
+385        banked   9584ms
+386        banked   243ms
+388        banked   255ms
+389        banked   239ms
+392        banked   5483ms
+393        banked   250ms
+394        banked   248ms
+395        banked   264ms
+396        banked   32849ms
+397        banked   253ms
+398        banked   253ms
+399        banked   11479ms
+400        banked   27454ms
+401        banked   248ms
+402        banked   277ms
+404        banked   266ms
+405        banked   54857ms
+408        banked   10783ms
+409        banked   249ms
+411        banked   257ms
+412        banked   248ms
+413        banked   253ms
+415        banked   241ms
+416        banked   9807ms
+417        banked   249ms
+419        banked   245ms
+420        banked   49187ms
+422        banked   261ms
+424        banked   251ms
+425        banked   6722ms
+426        banked   256ms
+427        banked   258ms
+428        banked   259ms
+429        banked   8754ms
+432        banked   55611ms
+436        banked   245ms
+438        banked   257ms
+439        banked   247ms
+440        banked   10983ms
+441        banked   30096ms
+443        banked   246ms
+445        banked   257ms
+446        banked   248ms
+447        banked   247ms
+448        banked   22707ms
+449        banked   251ms
+452        banked   259ms
+453        banked   283ms
+454        banked   249ms
+455        banked   9501ms
+456        banked   10788ms
+457        banked   253ms
+458        banked   254ms
+459        banked   19704ms
+463        banked   271ms
+466        banked   254ms
+467        banked   261ms
+468        banked   32454ms
+469        banked   249ms
+471        banked   247ms
+472        banked   245ms
+474        banked   271ms
+475        banked   7097ms
+476        banked   8551ms
+477        banked   259ms
+478        banked   253ms
+479        banked   244ms
+480        banked   64636ms
+482        banked   251ms
+484        banked   3813ms
+485        banked   271ms
+488        banked   249ms
+489        banked   266ms
+491        banked   259ms
+495        banked   43407ms
+497        banked   257ms
+498        banked   242ms
+499        banked   259ms
+500        banked   17728ms
+501        banked   247ms
+502        banked   255ms
+503        banked   259ms
+504        banked   49264ms
+505        banked   255ms
+507        banked   4356ms
+508        banked   256ms
+509        banked   250ms
+511        banked   246ms
+513        banked   19675ms
+514        banked   650ms
+519        banked   657ms
+520        banked   10793ms
+521        banked   646ms
+524        banked   689ms
+525        banked   49388ms
+526        banked   683ms
+528        banked   34693ms
+530        banked   649ms
+531        banked   653ms
+532        banked   8647ms
+534        banked   677ms
+535        banked   658ms
+536        banked   656ms
+537        banked   657ms
+538        banked   665ms
+539        banked   4726ms
+540        banked   57667ms
+541        banked   650ms
+542        banked   674ms
+543        banked   670ms
+544        banked   9927ms
+545        banked   666ms
+547        banked   652ms
+548        banked   656ms
+549        banked   660ms
+553        banked   748ms
+554        banked   658ms
+556        banked   683ms
+557        banked   685ms
+560        banked   35913ms
+561        banked   8442ms
+562        banked   655ms
+563        banked   728ms
+565        banked   693ms
+566        banked   672ms
+567        banked   54311ms
+568        banked   670ms
+569        banked   657ms
+571        banked   681ms
+572        banked   7540ms
+573        banked   680ms
+576        banked   59440ms
+577        banked   656ms
+579        banked   664ms
+581        banked   663ms
+582        banked   694ms
+583        banked   667ms
+584        banked   666ms
+585        banked   43569ms
+586        banked   659ms
+587        banked   701ms
+588        banked   33637ms
+590        banked   657ms
+591        banked   670ms
+595        banked   9430ms
+596        banked   658ms
+597        banked   673ms
+599        banked   679ms
+600        banked   52882ms
+601        banked   659ms
+603        banked   673ms
+604        banked   658ms
+605        banked   4437ms
+606        banked   658ms
+607        banked   659ms
+608        banked   9835ms
+610        banked   654ms
+612        banked   32257ms
+613        banked   671ms
+614        banked   680ms
+616        banked   9721ms
+617        banked   683ms
+618        banked   684ms
+619        banked   693ms
+622        banked   671ms
+623        banked   681ms
+624        banked   34285ms
+625        banked   8910ms
+626        banked   672ms
+627        banked   8481ms
+628        banked   670ms
+631        banked   665ms
+632        banked   668ms
+633        banked   667ms
+634        banked   656ms
+635        banked   655ms
+636        banked   676ms
+637        banked   4709ms
+639        banked   662ms
+640        banked   39961ms
+641        banked   666ms
+642        banked   657ms
+643        banked   651ms
+647        banked   692ms
+648        banked   4434343ms
+649        banked   667ms
+652        banked   684ms
+653        banked   662ms
+654        banked   675ms
+655        banked   655ms
+657        banked   670ms
+659        banked   666ms
+660        banked   44751ms
+661        banked   688ms
+662        banked   694ms
+663        banked   8393ms
+664        banked   657ms
+665        banked   9127ms
+668        banked   648ms
+669        banked   668ms
+670        banked   663ms
+671        banked   648ms
+672        banked   56797ms
+673        banked   656ms
+674        banked   652ms
+675        banked   57304ms
+676        banked   3827ms
+677        banked   667ms
+678        banked   659ms
+679        banked   664ms
+680        banked   10772ms
+681        banked   662ms
+683        banked   652ms
+684        banked   32468ms
+685        banked   671ms
+687        banked   661ms
+689        banked   676ms
+692        banked   650ms
+693        banked   42317ms
+694        banked   662ms
+695        banked   662ms
+698        banked   662ms
+699        banked   673ms
+700        banked   32412ms
+701        banked   665ms
+704        banked   20643ms
+706        banked   659ms
+707        banked   660ms
+708        banked   657ms
+709        banked   661ms
+710        banked   676ms
+711        banked   674ms
+712        banked   677ms
+715        banked   8476ms
+716        banked   659ms
+717        banked   673ms
+718        banked   662ms
+719        banked   678ms
+720        banked   66419ms
+721        banked   669ms
+723        banked   672ms
+724        banked   676ms
+727        banked   660ms
+728        banked   9843ms
+729        banked   52079ms
+730        banked   666ms
+732        banked   660ms
+733        banked   677ms
+734        banked   650ms
+735        banked   41053ms
+737        banked   713ms
+741        banked   8532ms
+742        banked   664ms
+743        banked   674ms
+745        banked   660ms
+746        banked   657ms
+747        banked   659ms
+748        banked   7403ms
+749        banked   664ms
+753        banked   648ms
+755        banked   668ms
+756        banked   56457ms
+758        banked   678ms
+760        banked   10766ms
+761        banked   690ms
+762        banked   670ms
+763        banked   650ms
+764        banked   649ms
+765        banked   43207ms
+766        banked   689ms
+767        banked   683ms
+768        banked   60582ms
+769        banked   655ms
+771        banked   661ms
+772        banked   656ms
+773        banked   662ms
+776        banked   653ms
+778        banked   680ms
+780        banked   43946ms
+781        banked   678ms
+784        banked   16827ms
+785        banked   655ms
+786        banked   665ms
+787        banked   671ms
+788        banked   677ms
+789        banked   687ms
+790        banked   672ms
+791        banked   686ms
+792        banked   31679ms
+793        banked   679ms
+794        banked   664ms
+795        banked   668ms
+796        banked   697ms
+797        banked   650ms
+800        banked   39375ms
+801        banked   653ms
+802        banked   671ms
+803        banked   656ms
+804        banked   693ms
+807        banked   668ms
+808        banked   694ms
+809        banked   685ms
+813        banked   673ms
+815        banked   671ms
+816        banked   33893ms
+818        banked   689ms
+819        banked   42233ms
+822        banked   673ms
+823        banked   664ms
+824        banked   669ms
+825        banked   42135ms
+826        banked   662ms
+827        banked   666ms
+830        banked   669ms
+831        banked   663ms
+832        banked   20067ms
+833        banked   4671ms
+834        banked   665ms
+835        banked   649ms
+836        banked   7684ms
+838        banked   663ms
+839        banked   675ms
+840        banked   51202ms
+842        banked   666ms
+843        banked   677ms
+844        banked   670ms
+845        banked   4249ms
+847        banked   4347ms
+848        banked   694ms
+849        banked   659ms
+852        banked   672ms
+853        banked   654ms
+854        banked   682ms
+855        banked   42954ms
+856        banked   676ms
+857        banked   672ms
+859        banked   686ms
+862        banked   654ms
+863        banked   695ms
+864        banked   62018ms
+865        banked   671ms
+866        banked   672ms
+867        banked   4288ms
+869        banked   665ms
+871        banked   670ms
+872        banked   676ms
+873        banked   664ms
+875        banked   18369ms
+876        banked   673ms
+877        banked   672ms
+878        banked   671ms
+879        banked   685ms
+880        banked   31842ms
+881        banked   666ms
+884        banked   7697ms
+885        banked   651ms
+886        banked   666ms
+887        banked   649ms
+889        banked   645ms
+890        banked   662ms
+891        banked   47328ms
+892        banked   667ms
+894        banked   675ms
+895        banked   671ms
+896        banked   33219ms
+898        banked   688ms
+900        banked   61658ms
+901        banked   693ms
+904        banked   676ms
+905        banked   658ms
+906        banked   682ms
+907        banked   681ms
+908        banked   675ms
+909        banked   702ms
+912        banked   34269ms
+913        banked   675ms
+914        banked   663ms
+915        banked   667ms
+916        banked   671ms
+917        banked   672ms
+921        banked   681ms
+922        banked   659ms
+923        banked   672ms
+924        banked   42222ms
+926        banked   679ms
+927        banked   684ms
+931        banked   4693ms
+932        banked   656ms
+933        banked   657ms
+934        banked   677ms
+935        banked   8416ms
+936        banked   31391ms
+937        banked   657ms
+938        banked   662ms
+939        banked   663ms
+942        banked   684ms
+944        banked   682ms
+945        banked   59567ms
+947        banked   668ms
+948        banked   688ms
+949        banked   660ms
+951        banked   685ms
+952        banked   9704ms
+953        banked   662ms
+954        banked   660ms
+955        banked   689ms
+956        banked   682ms
+958        banked   659ms
+959        banked   696ms
+960        banked   69978ms
+963        banked   654ms
+964        banked   668ms
+965        banked   672ms
+968        banked   4572ms
+969        banked   8250ms
+970        banked   675ms
+971        banked   665ms
+972        banked   60102ms
+973        banked   655ms
+974        banked   659ms
+975        banked   42133ms
+976        banked   679ms
+977        banked   673ms
+978        banked   671ms
+979        banked   662ms
+980        banked   22083ms
+981        banked   669ms
+982        banked   683ms
+983        banked   682ms
+985        banked   676ms
+988        banked   7632ms
+993        banked   651ms
+994        banked   673ms
+995        banked   659ms
+996        banked   679ms
+997        banked   674ms
+998        banked   658ms
+1000       banked   21034ms
+1001       banked   8579ms
+1002       banked   656ms
+1003       banked   662ms
+1004       banked   675ms
+1005       banked   678ms
+1006       banked   659ms
+1007       banked   677ms
+1008       banked   64320ms
+1010       banked   704ms
+1011       banked   648ms
+1016       banked   678ms
+1017       banked   659ms
+1018       banked   693ms
+1019       banked   680ms
+1020       banked   43911ms
+1022       banked   690ms
+1024       banked   35ms
+1027       banked   874ms
+1028       banked   874ms
+1029       banked   13512ms
+1030       banked   904ms
+1031       banked   897ms
+1037       banked   883ms
+1038       banked   894ms
+1039       banked   879ms
+1040       banked   32304ms
+1041       banked   891ms
+1042       banked   895ms
+1043       banked   897ms
+1045       banked   8427ms
+1046       banked   887ms
+1047       banked   949ms
+1048       banked   901ms
+1049       banked   894ms
+1051       banked   903ms
+1052       banked   884ms
+1053       banked   47933ms
+1055       banked   896ms
+1056       banked   47845ms
+1057       banked   912ms
+1059       banked   893ms
+1060       banked   889ms
+1061       banked   879ms
+1062       banked   891ms
+1063       banked   878ms
+1064       banked   9648ms
+1065       banked   893ms
+1067       banked   896ms
+1068       banked   890ms
+1069       banked   904ms
+1070       banked   891ms
+1071       banked   42654ms
+1072       banked   914ms
+1074       banked   881ms
+1076       banked   908ms
+1077       banked   894ms
+1079       banked   877ms
+1080       banked   58066ms
+1082       banked   888ms
+1083       banked   4269ms
+1084       banked   878ms
+1086       banked   899ms
+1087       banked   880ms
+1088       banked   20916ms
+1089       banked   14701ms
+1090       banked   884ms
+1091       banked   884ms
+1092       banked   42354ms
+1093       banked   885ms
+1094       banked   888ms
+1095       banked   890ms
+1096       banked   892ms
+1097       banked   878ms
+1098       banked   895ms
+1099       banked   911ms
+1100       banked   29150ms
+1101       banked   894ms
+1103       banked   905ms
+1105       banked   8451ms
+1106       banked   876ms
+1108       banked   894ms
+1109       banked   911ms
+1111       banked   882ms
+1112       banked   887ms
+1113       banked   898ms
+1114       banked   911ms
+1115       banked   899ms
+1119       banked   900ms
+1120       banked   47871ms
+1121       banked   875ms
+1123       banked   894ms
+1124       banked   898ms
+1125       banked   57215ms
+1126       banked   874ms
+1130       banked   888ms
+1132       banked   891ms
+1133       banked   885ms
+1135       banked   896ms
+1136       banked   895ms
+1137       banked   886ms
+1138       banked   903ms
+1139       banked   896ms
+1140       banked   44292ms
+1141       banked   2124ms
+1142       banked   1856ms
+1143       banked   1749ms
+1144       banked   8774ms
+1145       banked   885ms
+1146       banked   888ms
+1149       banked   909ms
+1152       banked   60940ms
+1153       banked   909ms
+1154       banked   890ms
+1155       banked   43833ms
+1156       banked   3906ms
+1157       banked   929ms
+1158       banked   902ms
+1159       banked   900ms
+1162       banked   901ms
+1163       banked   912ms
+1164       banked   898ms
+1165       banked   886ms
+1166       banked   881ms
+1167       banked   894ms
+1168       banked   897ms
+1169       banked   903ms
+1171       banked   903ms
+1172       banked   894ms
+1174       banked   912ms
+1176       banked   34200ms
+1177       banked   900ms
+1179       banked   910ms
+1180       banked   900ms
+1181       banked   914ms
+1182       banked   891ms
+1183       banked   4349ms
+1185       banked   902ms
+1186       banked   881ms
+1187       banked   914ms
+1188       banked   47611ms
+1191       banked   909ms
+1192       banked   895ms
+1193       banked   900ms
+1194       banked   893ms
+1195       banked   928ms
+1197       banked   42723ms
+1198       banked   881ms
+1199       banked   907ms
+1200       banked   72474ms
+1201       banked   898ms
+1202       banked   893ms
+1203       banked   911ms
+1205       banked   889ms
+1206       banked   886ms
+1207       banked   893ms
+1208       banked   903ms
+1211       banked   887ms
+1212       banked   883ms
+1213       banked   897ms
+1214       banked   878ms
+1215       banked   60265ms
+1216       banked   20602ms
+1217       banked   908ms
+1219       banked   884ms
+1220       banked   903ms
+1223       banked   888ms
+1224       banked   31948ms
+1225       banked   17477ms
+1226       banked   888ms
+1227       banked   915ms
+1228       banked   905ms
+1229       banked   910ms
+1232       banked   29754ms
+1233       banked   912ms
+1234       banked   914ms
+1235       banked   8745ms
+1236       banked   891ms
+1237       banked   909ms
+1238       banked   909ms
+1239       banked   903ms
+1241       banked   872ms
+1243       banked   885ms
+1244       banked   901ms
+1245       banked   900ms
+1246       banked   900ms
+1248       banked   47051ms
+1249       banked   888ms
+1251       banked   877ms
+1252       banked   902ms
+1253       banked   913ms
+1255       banked   888ms
+1256       banked   904ms
+1257       banked   899ms
+1259       banked   903ms
+1260       banked   61848ms
+1261       banked   902ms
+1262       banked   890ms
+1263       banked   884ms
+1264       banked   891ms
+1266       banked   922ms
+1267       banked   891ms
+1268       banked   904ms
+1270       banked   915ms
+1272       banked   891ms
+1273       banked   903ms
+1275       banked   42581ms
+1278       banked   887ms
+1279       banked   912ms
+1280       banked   55807ms
+1281       banked   906ms
+1282       banked   899ms
+1283       banked   881ms
+1284       banked   898ms
+1285       banked   877ms
+1286       banked   885ms
+1287       banked   29303ms
+1292       banked   7712ms
+1293       banked   909ms
+1294       banked   902ms
+1296       banked   66356ms
+1297       banked   908ms
+1298       banked   889ms
+1299       banked   901ms
+1300       banked   28460ms
+1301       banked   904ms
+1304       banked   886ms
+1306       banked   900ms
+1307       banked   898ms
+1308       banked   914ms
+1309       banked   8546ms
+1310       banked   894ms
+1313       banked   905ms
+1314       banked   902ms
+1315       banked   914ms
+1317       banked   917ms
+1318       banked   926ms
+1319       banked   905ms
+1320       banked   42121ms
+1321       banked   904ms
+1322       banked   885ms
+1323       banked   52702ms
+1324       banked   904ms
+1325       banked   916ms
+1327       banked   929ms
+1328       banked   910ms
+1329       banked   916ms
+1331       banked   1377ms
+1335       banked   882ms
+1336       banked   888ms
+1337       banked   912ms
+1338       banked   908ms
+1339       banked   934ms
+1340       banked   905ms
+1341       banked   901ms
+1342       banked   892ms
+1343       banked   896ms
+1344       banked   59092ms
+1345       banked   908ms
+1346       banked   899ms
+1347       banked   895ms
+1348       banked   913ms
+1349       banked   890ms
+1351       banked   921ms
+1352       banked   4520ms
+1354       banked   911ms
+1355       banked   905ms
+1356       banked   901ms
+1357       banked   950ms
+1358       banked   887ms
+1359       banked   892ms
+1360       banked   31561ms
+1361       banked   906ms
+1362       banked   916ms
+1365       banked   43312ms
+1366       banked   886ms
+1367       banked   909ms
+1368       banked   31605ms
+1370       banked   903ms
+1371       banked   907ms
+1372       banked   7461ms
+1374       banked   906ms
+1375       banked   16463ms
+1377       banked   47353ms
+1378       banked   920ms
+1379       banked   894ms
+1382       banked   919ms
+1383       banked   892ms
+1384       banked   896ms
+1385       banked   918ms
+1387       banked   905ms
+1388       banked   887ms
+1389       banked   902ms
+1390       banked   914ms
+1391       banked   882ms
+1393       banked   917ms
+1396       banked   894ms
+1397       banked   910ms
+1398       banked   896ms
+1399       banked   886ms
+1400       banked   32588ms
+1401       banked   920ms
+1402       banked   920ms
+1403       banked   935ms
+1404       banked   46976ms
+1405       banked   922ms
+1407       banked   894ms
+1408       banked   30431ms
+1409       banked   883ms
+1411       banked   921ms
+1412       banked   918ms
+1413       banked   929ms
+1414       banked   908ms
+1415       banked   907ms
+1416       banked   931ms
+1417       banked   900ms
+1418       banked   886ms
+1420       banked   916ms
+1422       banked   916ms
+1423       banked   892ms
+1424       banked   903ms
+1425       banked   42075ms
+1427       banked   935ms
+1428       banked   42366ms
+1429       banked   898ms
+1431       banked   890ms
+1432       banked   903ms
+1433       banked   902ms
+1434       banked   952ms
+1436       banked   909ms
+1437       banked   903ms
+1438       banked   909ms
+1439       banked   878ms
+1440       banked   71907ms
+1441       banked   904ms
+1442       banked   908ms
+1444       banked   3905ms
+1445       banked   4324ms
+1446       banked   901ms
+1447       banked   903ms
+1448       banked   891ms
+1452       banked   18954ms
+1453       banked   907ms
+1454       banked   902ms
+1455       banked   899ms
+1456       banked   29635ms
+1459       banked   885ms
+1460       banked   905ms
+1461       banked   917ms
+1463       banked   8587ms
+1464       banked   910ms
+1465       banked   895ms
+1466       banked   906ms
+1467       banked   900ms
+1468       banked   881ms
+1469       banked   908ms
+1471       banked   897ms
+1473       banked   878ms
+1474       banked   892ms
+1475       banked   884ms
+1477       banked   884ms
+1478       banked   900ms
+1483       banked   900ms
+1484       banked   899ms
+1485       banked   48137ms
+1486       banked   899ms
+1487       banked   888ms
+1490       banked   895ms
+1491       banked   894ms
+1492       banked   911ms
+1493       banked   898ms
+1494       banked   900ms
+1496       banked   9006ms
+1497       banked   899ms
+1498       banked   889ms
+1499       banked   910ms
+1500       banked   57541ms
+1501       banked   913ms
+1502       banked   917ms
+1503       banked   899ms
+1506       banked   888ms
+1507       banked   922ms
+1509       banked   900ms
+1510       banked   887ms
+1511       banked   882ms
+1512       banked   53790ms
+1513       banked   886ms
+1514       banked   916ms
+1515       banked   911ms
+1516       banked   906ms
+1520       banked   31955ms
+1521       banked   14732ms
+1522       banked   903ms
+1523       banked   954ms
+1524       banked   917ms
+1525       banked   898ms
+1526       banked   900ms
+1527       banked   899ms
+1528       banked   928ms
+1529       banked   892ms
+1531       banked   891ms
+1532       banked   893ms
+1533       banked   894ms
+1534       banked   909ms
+1535       banked   886ms
+1536       banked   36ms
+1537       banked   901ms
+1538       banked   893ms
+1539       banked   46991ms
+1540       banked   38965ms
+1541       banked   890ms
+1542       banked   905ms
+1543       banked   894ms
+1544       banked   910ms
+1545       banked   906ms
+1546       banked   896ms
+1547       banked   8501ms
+1552       banked   901ms
+1553       banked   896ms
+1555       banked   893ms
+1556       banked   905ms
+1557       banked   882ms
+1559       banked   888ms
+1560       banked   42111ms
+1561       banked   896ms
+1562       banked   891ms
+1563       banked   898ms
+1565       banked   911ms
+1568       banked   22439ms
+1569       banked   892ms
+1570       banked   893ms
+1571       banked   891ms
+1572       banked   898ms
+1573       banked   3913ms
+1574       banked   900ms
+1575       banked   61792ms
+1576       banked   900ms
+1577       banked   912ms
+1578       banked   912ms
+1579       banked   910ms
+1580       banked   899ms
+1582       banked   898ms
+1583       banked   918ms
+1584       banked   43007ms
+1585       banked   885ms
+1586       banked   894ms
+1588       banked   901ms
+1589       banked   893ms
+1590       banked   886ms
+1592       banked   898ms
+1593       banked   890ms
+1594       banked   885ms
+1596       banked   42202ms
+1600       banked   52677ms
+1601       banked   881ms
+1602       banked   878ms
+1603       banked   895ms
+1604       banked   901ms
+1605       banked   883ms
+1606       banked   890ms
+1607       banked   887ms
+1608       banked   900ms
+1609       banked   880ms
+1611       banked   880ms
+1614       banked   921ms
+1615       banked   8397ms
+1616       banked   891ms
+1617       banked   31807ms
+1618       banked   926ms
+1619       banked   917ms
+1620       banked   61948ms
+1622       banked   893ms
+1623       banked   918ms
+1625       banked   16392ms
+1626       banked   890ms
+1627       banked   900ms
+1629       banked   923ms
+1630       banked   889ms
+1631       banked   908ms
+1632       banked   46601ms
+1633       banked   899ms
+1635       banked   900ms
+1636       banked   897ms
+1637       banked   895ms
+1639       banked   907ms
+1641       banked   904ms
+1642       banked   902ms
+1643       banked   888ms
+1644       banked   882ms
+1646       banked   881ms
+1647       banked   881ms
+1648       banked   894ms
+1649       banked   894ms
+1651       banked   903ms
+1652       banked   889ms
+1654       banked   888ms
+1655       banked   900ms
+1658       banked   896ms
+1659       banked   901ms
+1660       banked   895ms
+1661       banked   905ms
+1662       banked   882ms
+1663       banked   898ms
+1664       banked   29637ms
+1667       banked   902ms
+1668       banked   898ms
+1669       banked   899ms
+1670       banked   887ms
+1671       banked   894ms
+1672       banked   8907ms
+1673       banked   905ms
+1675       banked   871ms
+1676       banked   891ms
+1678       banked   886ms
+1679       banked   887ms
+1680       banked   65867ms
+1683       banked   29508ms
+1684       banked   903ms
+1685       banked   904ms
+1686       banked   899ms
+1687       banked   909ms
+1688       banked   883ms
+1689       banked   918ms
+1691       banked   874ms
+1695       banked   894ms
+1696       banked   879ms
+1697       banked   882ms
+1698       banked   896ms
+1699       banked   912ms
+1700       banked   28986ms
+1701       banked   58444ms
+1703       banked   891ms
+1704       banked   912ms
+1706       banked   890ms
+1707       banked   910ms
+1708       banked   918ms
+1709       banked   889ms
+1711       banked   906ms
+1712       banked   896ms
+1713       banked   895ms
+1714       banked   914ms
+1715       banked   7934ms
+1716       banked   37586ms
+1717       banked   939ms
+1718       banked   914ms
+1719       banked   940ms
+1724       banked   909ms
+1726       banked   903ms
+1727       banked   911ms
+1728       banked   63813ms
+1729       banked   8500ms
+1730       banked   927ms
+1731       banked   931ms
+1732       banked   901ms
+1733       banked   955ms
+1735       banked   952ms
+1737       banked   945ms
+1738       banked   906ms
+1742       banked   912ms
+1743       banked   949ms
+1744       banked   901ms
+1745       banked   939ms
+1746       banked   900ms
+1747       banked   936ms
+1749       banked   907ms
+1751       banked   941ms
+1752       banked   911ms
+1753       banked   909ms
+1754       banked   918ms
+1755       banked   48435ms
+1756       banked   912ms
+1757       banked   885ms
+1758       banked   905ms
+1759       banked   912ms
+1760       banked   42273ms
+1761       banked   893ms
+1762       banked   902ms
+1764       banked   54379ms
+1765       banked   889ms
+1766       banked   888ms
+1768       banked   8748ms
+1769       banked   888ms
+1770       banked   917ms
+1772       banked   917ms
+1773       banked   909ms
+1774       banked   921ms
+1775       banked   905ms
+1778       banked   896ms
+1779       banked   887ms
+1780       banked   907ms
+1781       banked   885ms
+1784       banked   904ms
+1785       banked   43624ms
+1787       banked   906ms
+1788       banked   901ms
+1789       banked   898ms
+1790       banked   917ms
+1791       banked   921ms
+1792       banked   46722ms
+1793       banked   893ms
+1795       banked   889ms
+1796       banked   894ms
+1797       banked   880ms
+1799       banked   903ms
+1800       banked   57450ms
+1802       banked   893ms
+1803       banked   893ms
+1805       banked   4230ms
+1807       banked   887ms
+1808       banked   911ms
+1809       banked   936ms
+1810       banked   905ms
+1811       banked   885ms
+1812       banked   895ms
+1814       banked   906ms
+1815       banked   24340ms
+1816       banked   896ms
+1817       banked   901ms
+1818       banked   901ms
+1819       banked   918ms
+1820       banked   38930ms
+1821       banked   899ms
+1822       banked   907ms
+1823       banked   898ms
+1824       banked   46487ms
+1825       banked   884ms
+1826       banked   932ms
+1828       banked   896ms
+1829       banked   942ms
+1830       banked   912ms
+1831       banked   910ms
+1832       banked   913ms
+1834       banked   889ms
+1835       banked   912ms
+1836       banked   47030ms
+1837       banked   923ms
+1838       banked   900ms
+1839       banked   924ms
+1841       banked   907ms
+1842       banked   899ms
+1843       banked   903ms
+1844       banked   907ms
+1846       banked   903ms
+1847       banked   897ms
+1848       banked   40400ms
+1851       banked   910ms
+1852       banked   904ms
+1853       banked   905ms
+1854       banked   886ms
+1855       banked   889ms
+1857       banked   902ms
+1858       banked   906ms
+1859       banked   3880ms
+1864       banked   896ms
+1865       banked   920ms
+1866       banked   934ms
+1867       banked   906ms
+1868       banked   899ms
+1869       banked   885ms
+1872       banked   42663ms
+1873       banked   897ms
+1874       banked   901ms
+1875       banked   51879ms
+1876       banked   912ms
+1877       banked   897ms
+1878       banked   908ms
+1879       banked   910ms
+1881       banked   29160ms
+1882       banked   931ms
+1883       banked   910ms
+1884       banked   926ms
+1888       banked   880ms
+1889       banked   910ms
+1891       banked   904ms
+1893       banked   897ms
+1894       banked   883ms
+1895       banked   885ms
+1896       banked   915ms
+1897       banked   908ms
+1898       banked   900ms
+1899       banked   903ms
+1900       banked   28488ms
+1902       banked   900ms
+1903       banked   916ms
+1904       banked   29736ms
+1905       banked   893ms
+1906       banked   889ms
+1907       banked   904ms
+1908       banked   905ms
+1909       banked   906ms
+1910       banked   901ms
+1911       banked   31648ms
+1912       banked   914ms
+1913       banked   906ms
+1915       banked   880ms
+1916       banked   906ms
+1917       banked   896ms
+1918       banked   901ms
+1919       banked   909ms
+1920       banked   71898ms
+1921       banked   910ms
+1923       banked   910ms
+1925       banked   30342ms
+1926       banked   899ms
+1928       banked   909ms
+1929       banked   885ms
+1930       banked   898ms
+1931       banked   914ms
+1934       banked   917ms
+1936       banked   13263ms
+1937       banked   906ms
+1939       banked   889ms
+1940       banked   893ms
+1941       banked   901ms
+1942       banked   912ms
+1943       banked   901ms
+1944       banked   57424ms
+1945       banked   910ms
+1946       banked   898ms
+1947       banked   895ms
+1948       banked   894ms
+1949       banked   900ms
+1952       banked   883ms
+1954       banked   894ms
+1956       banked   918ms
+1957       banked   905ms
+1958       banked   897ms
+1959       banked   908ms
+1960       banked   21059ms
+1961       banked   891ms
+1962       banked   915ms
+1963       banked   899ms
+1964       banked   904ms
+1965       banked   897ms
+1966       banked   907ms
+1967       banked   887ms
+1969       banked   915ms
+1970       banked   921ms
+1971       banked   909ms
+1975       banked   895ms
+1976       banked   8896ms
+1977       banked   902ms
+1979       banked   926ms
+1980       banked   45020ms
+1981       banked   907ms
+1982       banked   896ms
+1983       banked   924ms
+1985       banked   915ms
+1986       banked   893ms
+1987       banked   908ms
+1988       banked   890ms
+1989       banked   29003ms
+1990       banked   921ms
+1991       banked   898ms
+1992       banked   890ms
+1993       banked   907ms
+1994       banked   909ms
+1995       banked   42842ms
+1996       banked   900ms
+1997       banked   909ms
+2000       banked   53526ms
+2003       banked   894ms
+2004       banked   898ms
+2005       banked   912ms
+2006       banked   930ms
+2007       banked   900ms
+2008       banked   908ms
+2010       banked   910ms
+2011       banked   907ms
+2012       banked   906ms
+2013       banked   907ms
+2014       banked   889ms
+2016       banked   68582ms
+2018       banked   917ms
+2019       banked   906ms
+2020       banked   897ms
+2022       banked   904ms
+2023       banked   4208ms
+2025       banked   62374ms
+2026       banked   887ms
+2027       banked   910ms
+2028       banked   18761ms
+2031       banked   898ms
+2032       banked   910ms
+2033       banked   914ms
+2034       banked   879ms
+2036       banked   873ms
+2037       banked   907ms
+2038       banked   889ms
+2039       banked   908ms
+2040       banked   41779ms
+2041       banked   911ms
+2042       banked   909ms
+2043       banked   912ms
+2044       banked   908ms
+2045       banked   920ms
+2047       banked   931ms
+2048       banked   42ms
+6          banked   878ms rerun
+10         banked   869ms rerun
+18         banked   2712ms rerun
+23         banked   152ms rerun
+30         banked   4508ms rerun
+34         banked   590ms rerun
+38         banked   596ms rerun
+42         banked   4281ms rerun
+46         banked   577ms rerun
+50         banked   2564ms rerun
+54         banked   7030ms rerun
+66         banked   3064ms rerun
+69         banked   1749ms rerun
+70         banked   3443ms rerun
+78         banked   3058ms rerun
+90         banked   15416ms rerun
+92         banked   1781ms rerun
+98         banked   1422ms rerun
+102        banked   3090ms rerun
+110        banked   3006ms rerun
+115        banked   1771ms rerun
+126        banked   14314ms rerun
+130        banked   3047ms rerun
+138        banked   2984ms rerun
+139        banked   257ms rerun
+150        banked   15308ms rerun
+154        banked   2628ms rerun
+161        banked   1717ms rerun
+162        banked   15550ms rerun
+170        banked   2982ms rerun
+182        banked   2611ms rerun
+184        banked   2389ms rerun
+190        banked   3051ms rerun
+198        banked   9627ms rerun
+207        banked   6330ms rerun
+210        banked   20902ms rerun
+230        banked   3022ms rerun
+234        banked   9648ms rerun
+238        banked   2629ms rerun
+242        banked   1034ms rerun
+250        banked   5911ms rerun
+253        banked   1728ms rerun
+266        banked   2644ms rerun
+270        banked   40899ms rerun
+276        banked   8815ms rerun
+277        banked   278ms rerun
+286        banked   2194ms rerun
+294        banked   9503ms rerun
+299        banked   1739ms rerun
+306        banked   9560ms rerun
+322        banked   2601ms rerun
+330        banked   15577ms rerun
+338        banked   1022ms rerun
+342        banked   9736ms rerun
+345        banked   11510ms rerun
+350        banked   9728ms rerun
+368        banked   6520ms rerun
+374        banked   2195ms rerun
+378        banked   37656ms rerun
+390        banked   15762ms rerun
+391        banked   1777ms rerun
+414        banked   9730ms rerun
+418        banked   2226ms rerun
+437        banked   1755ms rerun
+442        banked   2236ms rerun
+450        banked   51702ms rerun
+460        banked   8441ms rerun
+461        banked   265ms rerun
+462        banked   14182ms rerun
+483        banked   11670ms rerun
+486        banked   31561ms rerun
+490        banked   6539ms rerun
+494        banked   2203ms rerun
+506        banked   2190ms rerun
+510        banked   15722ms rerun
+529        banked   905ms rerun
+546        banked   14105ms rerun
+552        banked   10309ms rerun
+570        banked   15332ms rerun
+575        banked   7031ms rerun
+578        banked   1013ms rerun
+594        banked   23721ms rerun
+598        banked   2201ms rerun
+621        banked   19760ms rerun
+630        banked   62488ms rerun
+644        banked   8361ms rerun
+646        banked   2174ms rerun
+650        banked   8107ms rerun
+686        banked   1910ms rerun
+690        banked   15896ms rerun
+691        banked   678ms rerun
+714        banked   14080ms rerun
+722        banked   1038ms rerun
+726        banked   5116ms rerun
+736        banked   10074ms rerun
+759        banked   8438ms rerun
+770        banked   11043ms rerun
+782        banked   2226ms rerun
+798        banked   14120ms rerun
+805        banked   9290ms rerun
+828        banked   32014ms rerun
+829        banked   693ms rerun
+874        banked   2227ms rerun
+882        banked   35495ms rerun
+897        banked   8201ms rerun
+910        banked   11127ms rerun
+918        banked   23653ms rerun
+920        banked   10813ms rerun
+950        banked   8245ms rerun
+966        banked   14078ms rerun
+967        banked   665ms rerun
+990        banked   51572ms rerun
+1012       banked   7530ms rerun
+1013       banked   683ms rerun
+1014       banked   5201ms rerun
+1026       banked   23668ms rerun
+1035       banked   43008ms rerun
+1050       banked   58929ms rerun
+1058       banked   1035ms rerun
+1078       banked   4958ms rerun
+1104       banked   33922ms rerun
+1127       banked   4723ms rerun
+1134       banked   63400ms rerun
+1150       banked   8190ms rerun
+1151       banked   906ms rerun
+1170       banked   51388ms rerun
+1173       banked   8392ms rerun
+1196       banked   7557ms rerun
+1210       banked   4798ms rerun
+1242       banked   23785ms rerun
+1250       banked   10808ms rerun
+1254       banked   10358ms rerun
+1265       banked   8479ms rerun
+1274       banked   4932ms rerun
+1288       banked   9838ms rerun
+1289       banked   908ms rerun
+1311       banked   8257ms rerun
+1326       banked   10289ms rerun
+1350       banked   67413ms rerun
+1380       banked   43425ms rerun
+1381       banked   907ms rerun
+1386       banked   48819ms rerun
+1430       banked   9349ms rerun
+1449       banked   41767ms rerun
+1470       banked   48425ms rerun
+1472       banked   20644ms rerun
+1482       banked   10352ms rerun
+1495       banked   8339ms rerun
+1518       banked   10198ms rerun
+1530       banked   51420ms rerun
+1564       banked   7376ms rerun
+1587       banked   4199ms rerun
+1610       banked   10989ms rerun
+1638       banked   48605ms rerun
+1650       banked   49412ms rerun
+1656       banked   31162ms rerun
+1657       banked   928ms rerun
+1666       banked   4916ms rerun
+1690       banked   4746ms rerun
+1694       banked   4043ms rerun
+1710       banked   51261ms rerun
+1725       banked   41714ms rerun
+1734       banked   5186ms rerun
+1748       banked   7521ms rerun
+1750       banked   21859ms rerun
+1771       banked   8306ms rerun
+1782       banked   54679ms rerun
+1794       banked   10091ms rerun
+1840       banked   31692ms rerun
+1862       banked   4932ms rerun
+1863       banked   47053ms rerun
+1870       banked   9364ms rerun
+1890       banked   68123ms rerun
+1932       banked   41803ms rerun
+1933       banked   887ms rerun
+1938       banked   10255ms rerun
+1955       banked   8522ms rerun
+2002       banked   8183ms rerun
+2024       banked   8541ms rerun
+515        banked   682ms rerun
+14         banked   879ms rerun
+22         banked   887ms rerun
+26         banked   868ms rerun
+32         banked   791ms rerun
+64         banked   817ms rerun
+128        banked   1439ms rerun
+256        banked   1772ms rerun
+512        banked   2165ms rerun
+421        banked   263ms rerun
+433        banked   267ms rerun
+487        banked   272ms rerun
+751        banked   694ms rerun
+757        banked   683ms rerun
+811        banked   689ms rerun
+883        banked   691ms rerun
+911        banked   714ms rerun
+919        banked   701ms rerun
+991        banked   685ms rerun
+1009       banked   687ms rerun
+1021       banked   689ms rerun
+1373       banked   893ms rerun
+1597       banked   898ms rerun
+1621       banked   891ms rerun
+1783       banked   925ms rerun
+1801       banked   890ms rerun
+1871       banked   901ms rerun
+1901       banked   913ms rerun
+1951       banked   923ms rerun
+2017       banked   906ms rerun
+2029       banked   895ms rerun
+1190       banked   11162ms rerun
+1122       banked   10272ms rerun
+858        banked   10321ms rerun
+1458       banked   60701ms rerun
+750        banked   35570ms rerun
+850        banked   8496ms rerun
+702        banked   23501ms rerun
+810        banked   65988ms rerun
+1330       banked   11241ms rerun
+114        banked   3080ms rerun
+1950       banked   49532ms rerun
+550        banked   8425ms rerun
+29         banked   179ms rerun
+31         banked   112ms rerun
+58         banked   599ms rerun
+87         banked   1677ms rerun
+116        banked   1722ms rerun
+124        banked   1655ms rerun
+145        banked   1696ms rerun
+155        banked   1734ms rerun
+174        banked   2980ms rerun
+186        banked   3061ms rerun
+203        banked   1707ms rerun
+217        banked   1716ms rerun
+232        banked   2015ms rerun
+233        banked   291ms rerun
+248        banked   1986ms rerun
+261        banked   6401ms rerun
+279        banked   6339ms rerun
+290        banked   3144ms rerun
+310        banked   3064ms rerun
+311        banked   295ms rerun
+319        banked   1724ms rerun
+341        banked   1716ms rerun
+348        banked   8654ms rerun
+349        banked   274ms rerun
+372        banked   8717ms rerun
+373        banked   269ms rerun
+377        banked   1777ms rerun
+403        banked   1707ms rerun
+406        banked   2594ms rerun
+434        banked   2639ms rerun
+435        banked   11614ms rerun
+464        banked   6466ms rerun
+465        banked   11580ms rerun
+493        banked   1773ms rerun
+496        banked   6127ms rerun
+522        banked   9744ms rerun
+523        banked   678ms rerun
+527        banked   1712ms rerun
+551        banked   1750ms rerun
+558        banked   9709ms rerun
+580        banked   8563ms rerun
+589        banked   1691ms rerun
+609        banked   11219ms rerun
+620        banked   8353ms rerun
+638        banked   2158ms rerun
+651        banked   11607ms rerun
+667        banked   1763ms rerun
+682        banked   2240ms rerun
+696        banked   10225ms rerun
+713        banked   1756ms rerun
+725        banked   6644ms rerun
+744        banked   10609ms rerun
+754        banked   2237ms rerun
+775        banked   7020ms rerun
+783        banked   19514ms rerun
+806        banked   2188ms rerun
+812        banked   8399ms rerun
+837        banked   19517ms rerun
+841        banked   905ms rerun
+868        banked   8423ms rerun
+870        banked   15628ms rerun
+899        banked   1695ms rerun
+928        banked   10062ms rerun
+929        banked   689ms rerun
+930        banked   15759ms rerun
+957        banked   8585ms rerun
+961        banked   859ms rerun
+986        banked   2202ms rerun
+992        banked   9362ms rerun
+1015       banked   9280ms rerun
+1023       banked   8438ms rerun
+1044       banked   32445ms rerun
+1054       banked   2257ms rerun
+1085       banked   9488ms rerun
+1102       banked   2186ms rerun
+1116       banked   31773ms rerun
+1117       banked   907ms rerun
+1131       banked   8424ms rerun
+1160       banked   10601ms rerun
+1178       banked   2233ms rerun
+1209       banked   8270ms rerun
+1218       banked   13964ms rerun
+1240       banked   10548ms rerun
+1276       banked   7591ms rerun
+1277       banked   927ms rerun
+1302       banked   14142ms rerun
+1303       banked   906ms rerun
+1305       banked   42389ms rerun
+1334       banked   2270ms rerun
+1364       banked   7463ms rerun
+1392       banked   33298ms rerun
+1395       banked   42780ms rerun
+1421       banked   4696ms rerun
+1426       banked   2236ms rerun
+1450       banked   8362ms rerun
+1451       banked   905ms rerun
+1479       banked   8442ms rerun
+1488       banked   33996ms rerun
+1489       banked   906ms rerun
+1508       banked   7485ms rerun
+1519       banked   4657ms rerun
+1550       banked   8408ms rerun
+1566       banked   23672ms rerun
+1567       banked   895ms rerun
+1581       banked   8539ms rerun
+1595       banked   8469ms rerun
+1612       banked   7570ms rerun
+1613       banked   904ms rerun
+1624       banked   9414ms rerun
+1653       banked   8577ms rerun
+1674       banked   23800ms rerun
+1705       banked   8536ms rerun
+1736       banked   9607ms rerun
+1740       banked   43267ms rerun
+1741       banked   916ms rerun
+1767       banked   8380ms rerun
+1798       banked   2220ms rerun
+1827       banked   42227ms rerun
+1856       banked   20121ms rerun
+1860       banked   43166ms rerun
+1861       banked   918ms rerun
+1885       banked   8576ms rerun
+1914       banked   11281020ms rerun
+1953       banked   42090ms rerun
+1972       banked   7676ms rerun
+1973       banked   901ms rerun
+1984       banked   20115ms rerun
+2001       banked   8330ms rerun
+2015       banked   8418ms rerun
+2030       banked   11217ms rerun
+2046       banked   10338ms rerun
+37         banked   190ms rerun
+41         banked   182ms rerun
+148        banked   1772ms rerun
+149        banked   264ms rerun
+164        banked   1755ms rerun
+185        banked   1738ms rerun
+205        banked   1780ms rerun
+222        banked   3084ms rerun
+223        banked   280ms rerun
+246        banked   3081ms rerun
+259        banked   1762ms rerun
+287        banked   1742ms rerun
+296        banked   2292ms rerun
+328        banked   2404ms rerun
+333        banked   6380ms rerun
+369        banked   6258ms rerun
+370        banked   3051ms rerun
+407        banked   1745ms rerun
+410        banked   3126ms rerun
+444        banked   8749ms rerun
+451        banked   1708ms rerun
+481        banked   1712ms rerun
+492        banked   8783ms rerun
+518        banked   2668ms rerun
+533        banked   1718ms rerun
+555        banked   11492ms rerun
+574        banked   2674ms rerun
+592        banked   6316ms rerun
+593        banked   683ms rerun
+615        banked   11600ms rerun
+629        banked   1757ms rerun
+656        banked   6410ms rerun
+666        banked   9685ms rerun
+697        banked   1755ms rerun
+703        banked   1772ms rerun
+738        banked   9346ms rerun
+739        banked   730ms rerun
+740        banked   8538ms rerun
+777        banked   11552ms rerun
+779        banked   1698ms rerun
+814        banked   2181ms rerun
+820        banked   8384ms rerun
+821        banked   702ms rerun
+851        banked   1770ms rerun
+861        banked   11410ms rerun
+888        banked   10469ms rerun
+902        banked   2269ms rerun
+925        banked   6896ms rerun
+943        banked   1749ms rerun
+962        banked   2237ms rerun
+984        banked   10725ms rerun
+999        banked   19894ms rerun
+1025       banked   6954ms rerun
+1036       banked   8401ms rerun
+1066       banked   2191ms rerun
+1073       banked   1784ms rerun
+1107       banked   19702ms rerun
+1110       banked   15619ms rerun
+1147       banked   1705ms rerun
+1148       banked   8486ms rerun
+1184       banked   9651ms rerun
+1189       banked   1722ms rerun
+1221       banked   8525ms rerun
+1230       banked   15771ms rerun
+1231       banked   912ms rerun
+1258       banked   2225ms rerun
+1271       banked   1749ms rerun
+1295       banked   9377ms rerun
+1312       banked   9975ms rerun
+1332       banked   32165ms rerun
+1353       banked   8543ms rerun
+1369       banked   942ms rerun
+1394       banked   2191ms rerun
+1406       banked   2183ms rerun
+1435       banked   9395ms rerun
+1443       banked   8372ms rerun
+1476       banked   32128ms rerun
+1480       banked   10459ms rerun
+1481       banked   901ms rerun
+1517       banked   1713ms rerun
+1554       banked   14059ms rerun
+1558       banked   2197ms rerun
+1599       banked   8384ms rerun
+1628       banked   7546ms rerun
+1640       banked   10364ms rerun
+1665       banked   42851ms rerun
+1681       banked   946ms rerun
+1702       banked   2222ms rerun
+1722       banked   14200ms rerun
+1723       banked   922ms rerun
+1776       banked   33542ms rerun
+1777       banked   906ms rerun
+1804       banked   7596ms rerun
+1813       banked   4754ms rerun
+1845       banked   43337ms rerun
+1850       banked   8350ms rerun
+1886       banked   2244ms rerun
+1887       banked   8448ms rerun
+1924       banked   7532ms rerun
+1968       banked   34133ms rerun
+1998       banked   23699ms rerun
+1999       banked   907ms rerun
+2009       banked   4735ms rerun
+2035       banked   8511ms rerun
+173        banked   277ms rerun
+258        banked   3120ms rerun
+282        banked   3124ms rerun
+283        banked   281ms rerun
+301        banked   1658ms rerun
+329        banked   1739ms rerun
+344        banked   2490ms rerun
+376        banked   2340ms rerun
+387        banked   6294ms rerun
+423        banked   6349ms rerun
+430        banked   3103ms rerun
+431        banked   281ms rerun
+470        banked   3097ms rerun
+473        banked   1728ms rerun
+516        banked   8858ms rerun
+517        banked   1668ms rerun
+559        banked   1797ms rerun
+564        banked   8771ms rerun
+602        banked   2647ms rerun
+611        banked   1743ms rerun
+645        banked   11457ms rerun
+658        banked   2669ms rerun
+688        banked   6199ms rerun
+705        banked   11446ms rerun
+731        banked   1708ms rerun
+752        banked   6062ms rerun
+774        banked   9705ms rerun
+799        banked   1770ms rerun
+817        banked   1711ms rerun
+846        banked   9505ms rerun
+860        banked   8350ms rerun
+893        banked   1695ms rerun
+903        banked   11258ms rerun
+941        banked   689ms rerun
+946        banked   2213ms rerun
+987        banked   11579ms rerun
+989        banked   1678ms rerun
+1032       banked   10909ms rerun
+1034       banked   2219ms rerun
+1075       banked   7088ms rerun
+1118       banked   2238ms rerun
+1128       banked   10734ms rerun
+1129       banked   948ms rerun
+1161       banked   19922ms rerun
+1175       banked   6746ms rerun
+1204       banked   8519ms rerun
+1222       banked   2233ms rerun
+1247       banked   1715ms rerun
+1269       banked   19586ms rerun
+1290       banked   15636ms rerun
+1291       banked   940ms rerun
+1316       banked   8562ms rerun
+1363       banked   1757ms rerun
+1376       banked   9914ms rerun
+1410       banked   15542ms rerun
+1419       banked   8603ms rerun
+1457       banked   1768ms rerun
+1462       banked   2257ms rerun
+1504       banked   9985ms rerun
+1505       banked   9269ms rerun
+1548       banked   32181ms rerun
+1549       banked   936ms rerun
+1551       banked   8499ms rerun
+1634       banked   2236ms rerun
+1645       banked   9362ms rerun
+1677       banked   8448ms rerun
+1692       banked   32133ms rerun
+1693       banked   924ms rerun
+1720       banked   10924ms rerun
+1721       banked   904ms rerun
+1806       banked   14230ms rerun
+1833       banked   8433ms rerun
+1880       banked   10660ms rerun
+1892       banked   7550ms rerun
+1935       banked   43203ms rerun
+1974       banked   14169ms rerun
+1978       banked   2213ms rerun
+43         banked   680ms rerun
+47         banked   672ms rerun
+62         banked   1124ms rerun
+74         banked   1116ms rerun
+82         banked   1086ms rerun
+86         banked   1070ms rerun
+93         banked   2060ms rerun
+94         banked   1110ms rerun
+111        banked   1951ms rerun
+123        banked   1974ms rerun
+129        banked   1991ms rerun
+141        banked   2040ms rerun
+172        banked   2293ms rerun
+188        banked   2263ms rerun
+215        banked   1922ms rerun
+235        banked   2194ms rerun
+940        banked   9166ms rerun
+1033       banked   1034ms rerun
+1081       banked   2848ms rerun
+1333       banked   2919ms rerun
+1591       banked   2936ms rerun
+1598       banked   3149ms rerun
+1682       banked   2203ms rerun
+1739       banked   2662ms rerun
+1763       banked   2851ms rerun
+1786       banked   3148ms rerun
+1849       banked   1842ms rerun
+1922       banked   2188ms rerun
+1927       banked   2633ms rerun
+2021       banked   2648ms rerun

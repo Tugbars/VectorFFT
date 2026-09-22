@@ -32,7 +32,7 @@ THE RUNGS, and what each one is the only witness for
 Exit 0 only when every gated rung passes.
 
 USAGE
-  python build_tuned/slice_ladder.py --parent _vfft_create_inner \\
+  python src/tools/baseline/slice_ladder.py --parent _vfft_create_inner \\
       --helper _vfft_create_rank34 --scratch <dir> [--repeat 3]
 """
 import os
@@ -40,8 +40,9 @@ import re
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE = os.path.join(ROOT, "build_tuned", "baseline")
+HERE = os.path.dirname(os.path.abspath(__file__))          # src/tools/baseline (since 2026-09-22)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+BASE = os.path.join(HERE, "reference")
 CC = r"C:\mingw152\mingw64\bin\gcc.exe"
 
 
@@ -102,7 +103,7 @@ def main():
         print("   warn: " + w.strip())
 
     # ---- 2. slice shape, or full equivalence for a move -------------------
-    cmd = [sys.executable, "build_tuned/obj_equiv.py",
+    cmd = [sys.executable, os.path.join(HERE, "obj_equiv.py"),
            os.path.join(BASE, "vfft_baseline.o"), obj]
     if not is_move:
         cmd += ["--slice", "%s:%s" % (parent, helper)]
@@ -122,7 +123,7 @@ def main():
                       ("mutable", "mutable_objects.txt"),
                       ("defined", "nm_defined.txt")):
         out = os.path.join(scratch, "nm_%s.txt" % mode)
-        r = run([sys.executable, "build_tuned/sym_census.py", obj, "--" + mode])
+        r = run([sys.executable, os.path.join(HERE, "sym_census.py"), obj, "--" + mode])
         with open(out, "wb") as f:
             f.write(r.stdout.replace("\r\n", "\n").encode())
         ok = same(os.path.join(BASE, ref), out)
@@ -133,7 +134,7 @@ def main():
 
     # ---- 4. race protocol census -----------------------------------------
     out = os.path.join(scratch, "race_census.txt")
-    r = run([sys.executable, "build_tuned/race_census.py"])
+    r = run([sys.executable, os.path.join(HERE, "race_census.py")])
     with open(out, "wb") as f:
         f.write(r.stdout.replace("\r\n", "\n").encode())
     # The census's own contract: "fn is an ATTRIBUTE, so a MOVE shows as an fn
@@ -171,7 +172,7 @@ def main():
     if os.path.isdir(cap):
         for f in os.listdir(cap):
             os.remove(os.path.join(cap, f))
-    r = run([sys.executable, "build_tuned/capture_baseline.py",
+    r = run([sys.executable, os.path.join(HERE, "capture_baseline.py"),
              "--out", cap, "--repeat", repeat])
     if r.returncode != 0:
         print("CAPTURE FAILED\n" + (r.stderr or r.stdout)[-3000:])

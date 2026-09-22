@@ -7,7 +7,7 @@
     python gauntlet/gauntlet.py run       --group primes --max 16384
     python gauntlet/gauntlet.py run       --group mixed --max 4000000 --primes 2,3,5
     python gauntlet/gauntlet.py cells     --group mixed --max 4000000          (list + duration estimate, nothing runs)
-    python gauntlet/gauntlet.py calibrate / bench / report / merge / verify ... (the run's stages, one at a time)
+    python gauntlet/gauntlet.py calibrate / bench / report / merge / verify / gflops ... (the run's stages, one at a time)
 
 A run = calibrate (one front-door create per cell on a scratch copy of the
 shipped wisdom; a miss races and banks, --calibrate re-races every cell) ->
@@ -17,7 +17,7 @@ order, out of place, one thread; --threads T and --inplace are the others,
 each with its own csv/log/report suffix. A stopped run resumes on the same
 --name. Windows: the machine is kept awake for the run's duration.
 """
-import argparse, csv, ctypes, datetime, io, math, os, re, shutil, subprocess, sys, time
+import argparse, csv, ctypes, datetime, io, math, os, re, shutil, statistics, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -380,11 +380,51 @@ def stage_merge(run):
     run.note("merged into %s" % SHIPPED)
 
 
+def stage_gflops(run):
+    """the run as a GFLOPS list, ours vs the comparator, one line per cell: the
+    bench's convention (5 N log2 N K per transform; the best of the two engine
+    orders for each engine), written to gflops<sfx>.csv beside the run's csv."""
+    if not os.path.isfile(run.csv):
+        raise SystemExit("no %s yet -- bench first" % run.csv)
+    rows = {}
+    for r in csv.DictReader(open(run.csv, encoding="utf-8", errors="ignore")):
+        try:
+            rows.setdefault(int(r["N"]), []).append(r)
+        except (KeyError, ValueError):
+            pass
+    out = os.path.join(run.dir, "gflops%s.csv" % run.sfx)
+    has_cmp = any(float(r.get("mkl_ns", 0) or 0) > 0 for rs in rows.values() for r in rs)
+    lines = ["N,K,route,vfft_ns,vfft_gflops,mkl_ns,mkl_gflops,mkl_over_vfft"]
+    table = []
+    for n in sorted(rows):
+        rs = rows[n]
+        k = int(rs[0].get("K", 1) or 1)
+        flops = 5.0 * n * math.log2(n) * k
+        v_ns = min(int(r["vfft_ns"]) for r in rs)
+        v_gf = flops / v_ns if v_ns > 0 else 0.0
+        m_ns = min(int(r["mkl_ns"]) for r in rs) if has_cmp else 0
+        m_gf = flops / m_ns if m_ns > 0 else 0.0
+        lines.append("%d,%d,%s,%d,%.3f,%d,%.3f,%.3f" % (n, k, rs[0]["route"], v_ns, v_gf, m_ns, m_gf, (m_ns / v_ns) if (m_ns and v_ns) else 0.0))
+        table.append((n, rs[0]["route"], v_gf, m_gf))
+    io.open(out, "w", encoding="utf-8", newline="\n").write("\n".join(lines) + "\n")
+    print("GFLOPS, %s (5 N log2 N per transform, best of the two engine orders)" % ("VectorFFT vs MKL" if has_cmp else "VectorFFT"))
+    print(" %9s  %-7s %10s %10s %7s" % ("N", "route", "VectorFFT", "MKL" if has_cmp else "", "x" if has_cmp else ""))
+    for n, rt, v, m in table:
+        print(" %9d  %-7s %10.2f %10s %7s" % (n, rt, v, ("%.2f" % m) if has_cmp else "", ("%.2f" % (m and v / m)) if has_cmp and m else ""))
+    if table:
+        vs = [t[2] for t in table]
+        print(" VectorFFT: median %.2f, peak %.2f GFLOPS at N=%d" % (statistics.median(vs), max(vs), max(table, key=lambda t: t[2])[0]))
+        if has_cmp:
+            ms = [t[3] for t in table]
+            print(" MKL:       median %.2f, peak %.2f GFLOPS at N=%d" % (statistics.median(ms), max(ms), max(table, key=lambda t: t[3])[0]))
+    run.note("gflops: %s" % out)
+
+
 # ── main ───────────────────────────────────────────────────────────────────
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("verb", choices=["run", "calibrate", "bench", "report", "merge", "cells", "verify"])
+    ap.add_argument("verb", choices=["run", "calibrate", "bench", "report", "merge", "cells", "verify", "gflops"])
     ap.add_argument("--cells", help="4096 | 2..4096 | 1000,1024,4096 | @file")
     ap.add_argument("--group", choices=["pow2", "primes", "mixed", "all"])
     ap.add_argument("--max", type=int, help="ceiling for a group (pow2 2^23, primes 16384, mixed 4000000)")
@@ -433,6 +473,8 @@ def main():
             stage_verify(run, cells)
         if args.verb in ("run", "bench", "report"):
             stage_report(run)
+        if args.verb == "gflops":
+            stage_gflops(run)
         if args.verb == "merge" or (args.verb == "run" and args.merge):
             stage_merge(run)
     finally:

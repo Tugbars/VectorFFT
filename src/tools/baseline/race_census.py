@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS
 ---------------
-build_tuned/obj_equiv.py proves a code move changed no emitted instruction. It is
+src/tools/baseline/obj_equiv.py proves a code move changed no emitted instruction. It is
 MEASURED BLIND to data: floating-point constants live in .rdata, and an injected
 0.97 -> 0.96 hysteresis change passed it as EQUIVALENT. A race's hysteresis, round
 count, reps ladder and tie-holder are exactly what select the winner that gets
@@ -54,7 +54,7 @@ protocol still picks the same arm - nothing can, on this machine, without re-rac
 That is why protocol unification is out of scope for the migration.
 
 USAGE
-  python build_tuned/race_census.py [src/core/vfft.c ...]
+  python src/tools/baseline/race_census.py [src/core/vfft.c ...]
 Writes a sorted, diffable census to stdout.
 """
 import hashlib

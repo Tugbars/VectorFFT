@@ -63,7 +63,7 @@ is the linker catching a split-state hazard for free.
 
 ### 2.3 `obj_equiv.py` — code identity (MOVE steps only)
 
-`python build_tuned/obj_equiv.py before.o after.o`
+`python src/tools/baseline/obj_equiv.py before.o after.o`
 
 Proves every emitted symbol body is unchanged, modulo three normalizations, each derived
 from an observed false positive:
@@ -241,12 +241,12 @@ to replay and is covered by §2.10 instead.
 
 ### 2.11 Capturing the artifacts
 
-`build_tuned/capture_baseline.py` produces both diffable artifacts. Use it rather
+`src/tools/baseline/capture_baseline.py` produces both diffable artifacts. Use it rather
 than a shell loop.
 
 ```
-python build_tuned/capture_baseline.py --out <scratch>            # per-step compare
-python build_tuned/capture_baseline.py --out build_tuned/baseline --repeat 5
+python src/tools/baseline/capture_baseline.py --out <scratch>            # per-step compare
+python src/tools/baseline/capture_baseline.py --out src/tools/baseline/reference --repeat 5
 ```
 
 It builds both binaries with `VFFT_FINGERPRINT=1`, runs one process per cell

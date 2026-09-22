@@ -1,0 +1,217 @@
+  calibrated 100 cells, 193s elapsed
+  calibrated 200 cells, 593s elapsed
+  calibrated 300 cells, 1063s elapsed
+  calibrated 400 cells, 1589s elapsed
+  calibrated 500 cells, 2103s elapsed
+  calibrated 600 cells, 2717s elapsed
+=== RESUME 20:54
+  calibrated 100 cells this pass, 589s elapsed
+  calibrated 200 cells this pass, 1157s elapsed
+  calibrated 300 cells this pass, 1691s elapsed
+=== PAUSED 21:31 at 1090 cells (owner: game)
+=== RESUME 22:47 from 1090 cells
+  calibrated 100 cells this pass, 541s elapsed
+  calibrated 200 cells this pass, 1148s elapsed
+=== STOPPED 23:07 at 1294 cells: pinning the probe (owner)
+=== RESUME 23:10 from 1294 cells, probe PINNED (core 2, HIGH) + persist retry
+  calibrated 100 cells this pass, 557s elapsed
+  calibrated 200 cells this pass, 1027s elapsed
+  calibrated 300 cells this pass, 1548s elapsed
+  calibrated 400 cells this pass, 2033s elapsed
+  calibrated 500 cells this pass, 2574s elapsed
+  calibrated 600 cells this pass, 3055s elapsed
+  calibrated 700 cells this pass, 3554s elapsed
+=== CALIBRATION CUT 00:14 at 2048 by owner ('no towers, no large N'); BENCH on 2047 cells
+  benched 100 cells, 86s elapsed (control taken)
+  benched 200 cells, 177s elapsed (control taken)
+  benched 300 cells, 274s elapsed (control taken)
+  benched 400 cells, 370s elapsed (control taken)
+  benched 500 cells, 466s elapsed (control taken)
+  benched 600 cells, 571s elapsed (control taken)
+  benched 700 cells, 674s elapsed (control taken)
+  benched 800 cells, 776s elapsed (control taken)
+  benched 900 cells, 877s elapsed (control taken)
+  benched 1000 cells, 976s elapsed (control taken)
+  benched 1100 cells, 1084s elapsed (control taken)
+  benched 1200 cells, 1192s elapsed (control taken)
+  benched 1300 cells, 1299s elapsed (control taken)
+  benched 1400 cells, 1406s elapsed (control taken)
+  benched 1500 cells, 1513s elapsed (control taken)
+  benched 1600 cells, 1618s elapsed (control taken)
+  benched 1700 cells, 1721s elapsed (control taken)
+  benched 1800 cells, 1823s elapsed (control taken)
+  benched 1900 cells, 1924s elapsed (control taken)
+  benched 2000 cells, 2024s elapsed (control taken)
+bench: 2047 cells in 2071s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet.csv
+  control N=4096 every 100 cells -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/control.csv (rows are in run order)
+=== RERUN 01:44 2026-09-21: radix 23 at every IL kind + the lone-2 flat leaf + registry-derived n1c/t2c resolvers; 194 cells (cells_rerun_full.txt); rows REPLACED in gauntlet.csv
+  rerun 25 cells, 90s elapsed
+  rerun 50 cells, 292s elapsed
+  rerun 75 cells, 586s elapsed
+  rerun 100 cells, 882s elapsed
+  rerun 125 cells, 1293s elapsed
+  rerun 150 cells, 1740s elapsed
+  rerun 175 cells, 2414s elapsed
+rerun: 194 cells in 2872s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== RERUN 02:42 cell 515 (the persist-loss row)
+rerun: 1 cells in 4s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== IN-PLACE RUN 09:00 2026-09-21: PLACE=ip resume on cells_small.txt (2047 cells), natural in-place vs MKL DFTI_INPLACE -> gauntlet_ip.csv / control_ip.csv / calibrate_ip.log, same store
+grep: /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/calibrate_ip.log: No such file or directory
+  calibrated 100 cells this pass, 10s elapsed
+  calibrated 200 cells this pass, 21s elapsed
+  calibrated 300 cells this pass, 32s elapsed
+  calibrated 400 cells this pass, 44s elapsed
+  calibrated 500 cells this pass, 55s elapsed
+  calibrated 600 cells this pass, 66s elapsed
+  calibrated 700 cells this pass, 78s elapsed
+  calibrated 800 cells this pass, 89s elapsed
+  calibrated 900 cells this pass, 101s elapsed
+  calibrated 1000 cells this pass, 113s elapsed
+  calibrated 1100 cells this pass, 128s elapsed
+  calibrated 1200 cells this pass, 142s elapsed
+  calibrated 1300 cells this pass, 159s elapsed
+  calibrated 1400 cells this pass, 173s elapsed
+  calibrated 1500 cells this pass, 186s elapsed
+  calibrated 1600 cells this pass, 198s elapsed
+  calibrated 1700 cells this pass, 210s elapsed
+  calibrated 1800 cells this pass, 223s elapsed
+  calibrated 1900 cells this pass, 236s elapsed
+  calibrated 2000 cells this pass, 249s elapsed
+calibrate: 2047 cells this pass (0 already done) in 255s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/calibrate_ip.log
+  served: 2047   refused: 0
+  benched 100 cells, 87s elapsed (control taken)
+  benched 200 cells, 180s elapsed (control taken)
+  benched 300 cells, 277s elapsed (control taken)
+  benched 400 cells, 375s elapsed (control taken)
+  benched 500 cells, 472s elapsed (control taken)
+  benched 600 cells, 576s elapsed (control taken)
+  benched 700 cells, 680s elapsed (control taken)
+  benched 800 cells, 783s elapsed (control taken)
+  benched 900 cells, 885s elapsed (control taken)
+  benched 1000 cells, 985s elapsed (control taken)
+  benched 1100 cells, 1093s elapsed (control taken)
+  benched 1200 cells, 1202s elapsed (control taken)
+  benched 1300 cells, 1311s elapsed (control taken)
+  benched 1400 cells, 1421s elapsed (control taken)
+  benched 1500 cells, 1528s elapsed (control taken)
+  benched 1600 cells, 1636s elapsed (control taken)
+  benched 1700 cells, 1741s elapsed (control taken)
+  benched 1800 cells, 1845s elapsed (control taken)
+  benched 1900 cells, 1949s elapsed (control taken)
+  benched 2000 cells, 2096s elapsed (control taken)
+bench: 2047 cells in 2144s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet_ip.csv
+  control N=4096 every 100 cells -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/control_ip.csv (rows are in run order)
+=== 11:24 in-place artifacts of the 09:00 reference-row run set aside; the store's 2042 reference rows removed (backup .bak_refrows_0900); the next PLACE=ip run races every cell IN PLACE
+=== IN-PLACE RUN (REAL RACE) 11:30 2026-09-21: every cell raced EXECUTED IN PLACE, banked on its own place=ip row; PLACE=ip resume on cells_small.txt -> gauntlet_ip.csv / control_ip.csv / calibrate_ip.log
+grep: /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/calibrate_ip.log: No such file or directory
+  calibrated 100 cells this pass, 236s elapsed
+  calibrated 200 cells this pass, 701s elapsed
+  calibrated 300 cells this pass, 1262s elapsed
+  calibrated 400 cells this pass, 1877s elapsed
+  calibrated 500 cells this pass, 2495s elapsed
+=== IN-PLACE CALIBRATION CUT 12:13 at 512 by owner ('stop after 512, race what we have vs MKL'); BENCH in place on 511 cells
+  benched 100 cells, 85s elapsed (control taken)
+  benched 200 cells, 175s elapsed (control taken)
+  benched 300 cells, 270s elapsed (control taken)
+  benched 400 cells, 366s elapsed (control taken)
+  benched 500 cells, 461s elapsed (control taken)
+bench: 511 cells in 472s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet_ip.csv
+  control N=4096 every 100 cells -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/control_ip.csv (rows are in run order)
+=== RERUN 12:41 2026-09-21: solo n1/n1c kernels at 14 22 26 (2 x prime solos); rerun of those cells, rows replaced
+rerun: 3 cells in 7s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== RERUN 13:27 2026-09-21: K=1 IL door fast path in vfft_execute; rerun of 32 64 128 256 512, rows replaced
+rerun: 5 cells in 13s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== MT8 RUN 13:29 2026-09-21: K=1 natural OOP at nthreads=8 on cells_small.txt (2047 cells): probe T=8 (per-T race of the threaded arms vs the serial verdict), bench --k1noop --mt VFFT_MT=8 -> gauntlet_mt8.csv (engaged column) / control_mt8.csv / calibrate_mt8.log; same store; door fast path in
+grep: /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/calibrate_mt8.log: No such file or directory
+  calibrated 100 cells this pass, 11s elapsed
+  calibrated 200 cells this pass, 22s elapsed
+  calibrated 300 cells this pass, 33s elapsed
+  calibrated 400 cells this pass, 43s elapsed
+  calibrated 500 cells this pass, 54s elapsed
+  calibrated 600 cells this pass, 67s elapsed
+  calibrated 700 cells this pass, 79s elapsed
+  calibrated 800 cells this pass, 91s elapsed
+  calibrated 900 cells this pass, 103s elapsed
+  calibrated 1000 cells this pass, 115s elapsed
+  calibrated 1100 cells this pass, 126s elapsed
+  calibrated 1200 cells this pass, 136s elapsed
+  calibrated 1300 cells this pass, 148s elapsed
+  calibrated 1400 cells this pass, 158s elapsed
+  calibrated 1500 cells this pass, 168s elapsed
+  calibrated 1600 cells this pass, 178s elapsed
+  calibrated 1700 cells this pass, 188s elapsed
+  calibrated 1800 cells this pass, 198s elapsed
+  calibrated 1900 cells this pass, 209s elapsed
+  calibrated 2000 cells this pass, 220s elapsed
+calibrate: 2047 cells this pass (0 already done) in 225s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/calibrate_mt8.log
+  served: 2047   refused: 0
+  benched 100 cells, 87s elapsed (control taken)
+  benched 200 cells, 179s elapsed (control taken)
+  benched 300 cells, 278s elapsed (control taken)
+  benched 400 cells, 376s elapsed (control taken)
+  benched 500 cells, 475s elapsed (control taken)
+  benched 600 cells, 582s elapsed (control taken)
+  benched 700 cells, 689s elapsed (control taken)
+  benched 800 cells, 795s elapsed (control taken)
+  benched 900 cells, 899s elapsed (control taken)
+  benched 1000 cells, 1003s elapsed (control taken)
+  benched 1100 cells, 1114s elapsed (control taken)
+  benched 1200 cells, 1225s elapsed (control taken)
+  benched 1300 cells, 1335s elapsed (control taken)
+  benched 1400 cells, 1445s elapsed (control taken)
+  benched 1500 cells, 1556s elapsed (control taken)
+=== MT8 RUN STOPPED 14:00 by owner (the T=8 verdict is serial at every cell below 2048 by structure; rows kept as-is: 1532 of 4094)
+=== RERUN 14:19 2026-09-21: 22 primes with a buildable N-1 that banked Bluestein + 12 chain3/2p/flat lottery cells; re-raced, rows replaced
+  rerun 25 cells, 76s elapsed
+rerun: 34 cells in 352s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== RERUN 15:06 2026-09-21: prime radices 29 and 31 at every IL kind (the 23 recipe); rerun of the cells they reach, rows replaced
+  rerun 25 cells, 81s elapsed
+  rerun 50 cells, 233s elapsed
+  rerun 75 cells, 473s elapsed
+  rerun 100 cells, 807s elapsed
+  rerun 125 cells, 1136s elapsed
+rerun: 135 cells in 12538s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== 29/31 RERUN STOPPED 18:36 at cell 1972 (128 of 135 done): cell 1914 = 2.3.11.29 took 11281 s in its cold race; investigating before 2046 = 2.3.11.31
+=== RERUN 18:39 2026-09-21: the last 7 cells of the 29/31 list (the 3 h at 1914 was the machine asleep: the race reproduces in 12.6 s)
+rerun: 7 cells in 76s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== RERUN 19:00 2026-09-21: prime radices 37 41 at every IL kind; rerun of the cells they reach, rows replaced
+  rerun 25 cells, 84s elapsed
+  rerun 50 cells, 246s elapsed
+  rerun 75 cells, 482s elapsed
+  rerun 100 cells, 779s elapsed
+rerun: 108 cells in 878s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== RERUN 21:15 2026-09-21: prime radices 43 47 at every IL kind; rerun of the cells they reach, rows replaced
+  rerun 25 cells, 84s elapsed
+  rerun 50 cells, 248s elapsed
+  rerun 75 cells, 478s elapsed
+rerun: 95 cells in 684s -> /c/Users/Tugbars/Desktop/highSpeedFFT/build_tuned/results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== RERUN 22:06 2026-09-21: the prime cell as a RACED ARM at every non-pow2 cell (policy VFFT_FAM_PRIME); rerun of the 30 cells whose chain costs >= 0.9x the local Bluestein floor + the 4 unraced-prime composites + 1033, rows replaced
+  rerun 25 cells, 85s elapsed
+rerun: 30 cells in 104s -> results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== RETIME 23:24 2026-09-21: bench protocol = TPAUSE sibling guard + two timing windows (the chain3 two-speed was the OS parking a foreign thread on core 2's SMT sibling after the cool); retime of the 95 chain3 cells that lost or read > 1.3x the planner, rows replaced
+  retime 25 cells, 29s elapsed
+  retime 50 cells, 59s elapsed
+  retime 75 cells, 87s elapsed
+retime: 95 cells in 113s -> results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+=== FULL RETIME 00:00 2026-09-22: every cell 2..2048 re-timed under the guarded two-window bench (TPAUSE sibling guard), rows replaced in place; machine quiet (top process 0.11 cores)
+  retime 100 cells, 117s elapsed
+  retime 200 cells, 246s elapsed
+  retime 300 cells, 385s elapsed
+  retime 400 cells, 525s elapsed
+  retime 500 cells, 664s elapsed
+  retime 600 cells, 816s elapsed
+  retime 700 cells, 969s elapsed
+  retime 800 cells, 1122s elapsed
+  retime 900 cells, 1272s elapsed
+  retime 1000 cells, 1421s elapsed
+  retime 1100 cells, 1585s elapsed
+  retime 1200 cells, 1751s elapsed
+  retime 1300 cells, 1916s elapsed
+  retime 1400 cells, 2084s elapsed
+  retime 1500 cells, 2247s elapsed
+  retime 1600 cells, 2411s elapsed
+  retime 1700 cells, 2572s elapsed
+  retime 1800 cells, 2730s elapsed
+  retime 1900 cells, 2889s elapsed
+  retime 2000 cells, 3046s elapsed
+retime: 2047 cells in 3119s -> results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)

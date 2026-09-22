@@ -54,17 +54,17 @@ include/vfft.h to encode without guessing, and a wrong expectation baked into
 a baseline is worse than a missing one, because every later step then passes.
 
 USAGE
-  python build_tuned/trig_capture.py --out FILE [--repeat 3]
+  python src/tools/baseline/trig_capture.py --out FILE [--repeat 3]
 """
 import os
 import shutil
 import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-PROBE = os.path.join(HERE, "benches", "trig_digest_probe.exe")
-STORE = os.path.normpath(os.path.join(
-    HERE, "..", "src", "dag-fft-compiler", "generator", "generated"))
+HERE = os.path.dirname(os.path.abspath(__file__))          # src/tools/baseline (since 2026-09-22)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+PROBE = os.path.join(HERE, "trig_digest_probe.exe")
+STORE = os.path.join(ROOT, "src", "dag-fft-compiler", "generator", "generated")
 SCRATCH = os.path.join(os.environ.get("TEMP", "/tmp"), "vfft_trig_capture")
 
 
@@ -102,8 +102,8 @@ def main():
         print(__doc__)
         return 2
     if not os.path.exists(PROBE):
-        print("probe not built: python build.py --src benches/"
-              "trig_digest_probe.c --vfft --compile")
+        print("probe not built: python gauntlet/build.py --src "
+              "src/tools/baseline/trig_digest_probe.c --vfft --compile")
         return 2
 
     # THE WARMED STORE IS A FIXTURE, and it has to be the SAME fixture on both
