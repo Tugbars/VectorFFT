@@ -215,3 +215,4 @@ retime: 95 cells in 113s -> results/gauntlet_2026-09-20/gauntlet.csv (rows repla
   retime 1900 cells, 2889s elapsed
   retime 2000 cells, 3046s elapsed
 retime: 2047 cells in 3119s -> results/gauntlet_2026-09-20/gauntlet.csv (rows replaced in place)
+2026-09-22 23:57:50 verify: 2047 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet

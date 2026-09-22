@@ -41,6 +41,17 @@ python gauntlet/gauntlet.py gflops --name gauntlet_pow2
 python gauntlet/gauntlet.py gflops --name gauntlet_pow2 --threads 8
 ```
 
+`verify` runs every cell's forward transform against a long-double scalar DFT
+of the same input and writes the precision record `verify.csv` in the run
+directory (`library,N,l2_error,max_error,rt_error`; with MKL built in, MKL's
+rows on the same input). The plots in `src/tools/plots/` read the run
+directories: `gen_gflops.py` the bench csvs, `gen_precision.py` the verify csvs.
+
+```
+python gauntlet/gauntlet.py verify --name gauntlet_2026-09-20 --cells 2..2048
+python src/tools/plots/gen_precision.py gauntlet/results/gauntlet_2026-09-20/verify.csv --out src/tools/plots/vectorfft-precision.svg
+```
+
 `--merge` (or the `merge` verb) copies the run's verdicts back into the
 library's shipped wisdom (`src/dag-fft-compiler/generator/generated/`), with
 backups, so a calibration done on your host is kept.
@@ -78,6 +89,6 @@ numbers and correctness. With both, the report says which library answered.
 - `bench_1d_vs_mkl.c` -- the canonical bench, every mode (K=1 interleaved, split layout, 2D, 3D, real, batches)
 - `bench_1d_vs_fftw.c` -- the FFTW comparator
 - `recal_1d_probe.c` -- the calibrator (one front-door create; recalibrate re-races)
-- `k1_fwd_ref_probe.c` -- the forward reference check
+- `k1_fwd_ref_probe.c` -- the forward reference check and the precision record (`verify`)
 - `build.py` -- the gcc build harness (the gauntlet's copy)
-- `results/<run>/` -- cells.txt, store/, calibrate.log, gauntlet.csv, control.csv, run.log, report.md
+- `results/<run>/` -- cells.txt, store/, calibrate.log, gauntlet.csv, control.csv, verify.csv, gflops.csv, run.log, report.md

@@ -334,12 +334,19 @@ def stage_report(run):
 
 
 def stage_verify(run, cells):
+    """the forward transform of every cell against a long-double reference, and
+    the precision record verify<sfx>.csv in the run directory (library,N,
+    l2_error,max_error,rt_error; MKL's rows too when the probe was built with
+    it) -- the input of src/tools/plots/gen_precision.py. Rewritten each run."""
     probe = run.exe("k1_fwd_ref_probe")
-    args = [probe] + (["--ip"] if run.ip else []) + [run.store] + [str(n) for n in cells]
+    vcsv = os.path.join(run.dir, "verify%s.csv" % run.sfx)
+    if os.path.isfile(vcsv):
+        os.remove(vcsv)
+    args = [probe] + (["--ip"] if run.ip else []) + ["--csv", vcsv, run.store] + [str(n) for n in cells]
     r = subprocess.run(args, capture_output=True, text=True, errors="replace", env=run.env())
     out = [l for l in (r.stdout + r.stderr).splitlines() if not l.startswith("[")]
     print("\n".join(out[-min(len(out), len(cells) + 3):]))
-    run.note("verify: %s" % (out[-1] if out else "no output"))
+    run.note("verify: %s -> %s" % (out[-1] if out else "no output", os.path.basename(vcsv)))
 
 
 def stage_merge(run):
