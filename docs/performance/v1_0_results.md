@@ -634,7 +634,7 @@ process confined to the 8 P-cores, our arm on the library's pool, MKL at 8
 threads (its own rule keeps it serial below 8192). 2^23 is REFUSED: the
 four-step's ceiling is 2^22 (`k1_fourstep_band.h`, a declaration), and no
 engine serves a power of two above it. Rows in
-`build_tuned/results/gauntlet_pow2/gauntlet.csv` and `gauntlet_mt8.csv`; the
+`gauntlet/results/gauntlet_pow2/gauntlet.csv` and `gauntlet_mt8.csv`; the
 control cell read 1.07-1.08x at T=1 and 1.02-1.02x at T=8. Every ratio is
 MKL time / our time, the WORSE of the two flips.
 
@@ -806,7 +806,7 @@ against MKL in its own process, core 2 + HIGH with core 2's SMT sibling held
 by a TPAUSE guard thread (since 2026-09-21), cachebust + 300 ms cool between
 engines, BOTH engine orders (flip 0 and 1), best-of-5 after 10 warmups in two
 separated windows (since 2026-09-21; every cell re-timed under it 2026-09-22). 2047 cells, 4094 rows in
-`build_tuned/results/gauntlet_2026-09-20/gauntlet.csv`; the control cell
+`gauntlet/results/gauntlet_2026-09-20/gauntlet.csv`; the control cell
 (4096, every 100 cells) read 1.01-1.09x across 46 readings with two
 disturbed windows, so the run is internally comparable. Max roundtrip error
 2.5e-15. The tree measured: radix 23 at every interleaved kind, the flat
@@ -911,7 +911,7 @@ executed z -> z and banks the winner on the cell's `place=ip` row
 (`docs/design/planning_model.md`). Natural order, IN PLACE, K=1, one thread,
 every N from 2 to 512, against MKL with DFTI_INPLACE, the same bench
 discipline as the out-of-place run (core 2 + HIGH, cachebust + cool, both
-flips, best-of-5); rows in `build_tuned/results/gauntlet_2026-09-20/gauntlet_ip.csv`,
+flips, best-of-5); rows in `gauntlet/results/gauntlet_2026-09-20/gauntlet_ip.csv`,
 control 0.96-1.07x. 513..2048 in place is not calibrated (cut at 512). Max
 roundtrip error 2.2e-15; every in-place verdict also passes the forward
 reference against a long-double DFT (`benches/k1_fwd_ref_probe.exe --ip`).
@@ -986,7 +986,7 @@ natural order, out of place, one thread; a cold race per cell on a scratch
 copy of the shipped store, then the canonical bench against MKL in its own
 process: core 2 + HIGH with the SMT sibling held, cachebust + 300 ms cool,
 both engine orders, best-of-5 in two windows). 2048 cells, 4096 rows in
-`build_tuned/results/gauntlet_2048_4096/gauntlet.csv`; the control cell
+`gauntlet/results/gauntlet_2048_4096/gauntlet.csv`; the control cell
 (4096, every 100 cells) read 0.65-1.13 x over 44 readings; no cell refused.
 Before the run the band map's OWNERSHIP fence was lifted: a composite N >= 2048
 with a factor of 4 outside ZTURN-T's odd band had been reserved for the

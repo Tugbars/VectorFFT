@@ -40,8 +40,8 @@ with the four properties the artifacts depend on spelled out below.
    being, changes this line and the diff catches it.
 
 USAGE
-  python build_tuned/capture_baseline.py --out <dir> [--repeat N]
-    --out build_tuned/baseline   re-stamp the reference (use a high --repeat)
+  python src/tools/baseline/capture_baseline.py --out <dir> [--repeat N]
+    --out src/tools/baseline/reference   re-stamp the reference (use a high --repeat)
     --out <scratch>              capture for comparison against the reference
 """
 import os
@@ -49,11 +49,11 @@ import shutil
 import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BENCH = os.path.join(HERE, "benches")
-STORE = os.path.normpath(os.path.join(
-    HERE, "..", "src", "dag-fft-compiler", "generator", "generated"))
+HERE = os.path.dirname(os.path.abspath(__file__))          # src/tools/baseline (since 2026-09-22)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+BENCH = HERE                     # the harness sources live here; gauntlet/build.py puts the binaries beside them
+BUILD_PY = os.path.join(ROOT, "gauntlet", "build.py")
+STORE = os.path.join(ROOT, "src", "dag-fft-compiler", "generator", "generated")
 SCRATCH = os.path.join(os.environ.get("TEMP", "/tmp"), "vfft_capture")
 
 
@@ -99,9 +99,9 @@ def build(exe_name):
     capture cannot be run against a stale binary built the old way."""
     env = dict(os.environ, VFFT_FINGERPRINT="1")
     r = subprocess.run(
-        [sys.executable, "build.py", "--src", "benches/%s.c" % exe_name,
+        [sys.executable, BUILD_PY, "--src", os.path.join(HERE, "%s.c" % exe_name),
          "--vfft", "--compile"],
-        cwd=HERE, env=env, capture_output=True, text=True, timeout=1800)
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=1800)
     if r.returncode != 0:
         raise SystemExit("build of %s FAILED:\n%s"
                          % (exe_name, r.stdout[-2000:] + r.stderr[-2000:]))
@@ -145,7 +145,7 @@ FP_HDR = (
 
 
 def main():
-    out = "build_tuned/baseline"
+    out = os.path.join(HERE, "reference")
     repeat = 3
     if "--out" in sys.argv:
         out = sys.argv[sys.argv.index("--out") + 1]

@@ -95,8 +95,8 @@ inherits the .rdata and immediate-value blindness documented above. The golden
 decision trace is the semantic gate for a slice and carries the weight.
 
 USAGE
-  python build_tuned/obj_equiv.py before.o after.o [--objdump PATH]
-  python build_tuned/obj_equiv.py before.o after.o --slice PARENT:HELPER
+  python src/tools/baseline/obj_equiv.py before.o after.o [--objdump PATH]
+  python src/tools/baseline/obj_equiv.py before.o after.o --slice PARENT:HELPER
 Exit 0 when equivalent (or when the slice shape holds), 1 when not.
 """
 import re

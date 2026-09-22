@@ -35,9 +35,9 @@ is exactly the property the migration relies on to turn a duplicated counter
 into a link error rather than a silent second copy.
 
 USAGE
-  python build_tuned/sym_census.py <obj> --defined     defined symbols
-  python build_tuned/sym_census.py <obj> --undefined   undefined symbols
-  python build_tuned/sym_census.py <obj> --mutable     file-scope mutable objects
+  python src/tools/baseline/sym_census.py <obj> --defined     defined symbols
+  python src/tools/baseline/sym_census.py <obj> --undefined   undefined symbols
+  python src/tools/baseline/sym_census.py <obj> --mutable     file-scope mutable objects
 """
 import re
 import os

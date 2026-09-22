@@ -1,0 +1,6 @@
+=== START 20:54 2026-09-22: every pow2 cell 2..2^23 RE-RACED (rerun phase, recalibrate) on a fresh store copy of generated/, then benched vs MKL both flips (owner: 'calibrate all the pow2 cells up to 2^23 and then race vs MKL')
+=== START 21:31 2026-09-22: the same pow2 cells at T=8 on the P-cores (THREADS=8 rerun: the per-T race banks each cell's threaded verdict on this store, the bench runs --k1noop --mt with VFFT_MT=8, MKL at 8 threads) -> gauntlet_mt8.csv
+2026-09-22 23:01:31 gflops: 0 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-22 23:01:31 gflops: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\gauntlet_pow2\gflops.csv
+2026-09-22 23:01:31 gflops: 0 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-22 23:01:31 gflops: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\gauntlet_pow2\gflops_mt8.csv
