@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """FFT precision comparison, paper style (Computer Modern, black on white).
 
-    python3 gen_precision.py                 # demo data, four libraries
-    python3 gen_precision.py errors.csv      # your data
+    python3 gen_precision.py                              # demo data, four libraries
+    python3 gen_precision.py verify.csv [more.csv ...] [--out name.svg]
 
-CSV columns: library,N,l2_error   (one row per measured transform).
-Series are told apart by marker shape, not color, so the figure survives
-grayscale printing. Points are thinned to at most MAX_PTS per series and a
-running median per series is drawn on top; the error axis is in units of
-1e-16 with a dashed line at machine epsilon for reference."""
+CSV columns: library,N,l2_error (one row per measured transform; the gauntlet's
+verify record, `gauntlet/results/<run>/verify.csv`, carries max_error and
+rt_error too, which this graph ignores). Several CSVs concatenate into one
+sweep: the 2..2048 and the 2049..4096 verify records make the full 2..4096
+graph. Series are told apart by marker shape, not color, so the figure
+survives grayscale printing. Points are thinned to at most MAX_PTS per series
+and a running median per series is drawn on top; the error axis is in units
+of 1e-16 with a dashed line at machine epsilon for reference. The N axis is a
+log scale over the sweep's own range."""
 import sys, csv, math, random
 from collections import defaultdict
 import matplotlib
@@ -20,8 +24,12 @@ W, H = 1400, 760
 INK, PAPER = "#000000", "#FFFFFF"
 FD = matplotlib.get_data_path() + "/fonts/ttf/"
 CMR, CMB = FD + "cmr10.ttf", FD + "cmb10.ttf"
-MAX_PTS = 2500
+MAX_PTS = 5000
 EPS = 2.220446049250313e-16
+
+args = sys.argv[1:]
+out = args[args.index("--out") + 1] if "--out" in args else "vectorfft-precision.svg"
+files = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] != "--out")]
 
 # ---------------- data ----------------
 def demo():
@@ -36,21 +44,23 @@ def demo():
             out[name].append((n, base + ripple + random.gauss(0, 0.05 * EPS)))
     return out
 
-def load(path):
+def load(paths):
     out = defaultdict(list)
-    with open(path) as f:
-        for row in csv.DictReader(f):
-            out[row["library"]].append((int(row["N"]), float(row["l2_error"])))
+    for path in paths:
+        with open(path) as f:
+            for row in csv.DictReader(f):
+                out[row["library"]].append((int(row["N"]), float(row["l2_error"])))
     return out
 
-data = load(sys.argv[1]) if len(sys.argv) > 1 else demo()
+data = load(files) if files else demo()
 names = list(data.keys())
-XMIN, XMAX = 10, 1e5
+XMIN = min(n for s in data.values() for n, _ in s)
+XMAX = max(n for s in data.values() for n, _ in s)
 YMAX = math.ceil(max(e for s in data.values() for _, e in s) / 1e-16 / 2) * 2  # units of 1e-16
 
 # ---------------- geometry ----------------
 X0, X1, Y0, Y1 = 150, 1330, 90, 600
-def xr(n):  return X0 + (math.log10(n) - 1) / (math.log10(XMAX) - 1) * (X1 - X0)
+def xr(n):  return X0 + (math.log10(n) - math.log10(XMIN)) / (math.log10(XMAX) - math.log10(XMIN)) * (X1 - X0)
 def yr(e):  return Y1 - (e / 1e-16) / YMAX * (Y1 - Y0)
 
 def mpath(s, size, fname=None):
@@ -95,13 +105,19 @@ def marker(kind, filled, x, y, r, col=INK):
 
 # ---------------- axes ----------------
 line(X0, Y0 - 10, X0, Y1, 1.8); line(X0, Y1, X1, Y1, 1.8)
-for d in range(1, 6):
-    n = 10 ** d
-    if n <= XMAX:
-        line(xr(n), Y1, xr(n), Y1 + 9, 1.6)
-        put(rf"$10^{{{d}}}$", 15, cx=xr(n), baseline=Y1 + 34)
-    for m in range(2, 10):
-        if n * m <= XMAX: line(xr(n * m), Y1, xr(n * m), Y1 + 5, 1.0)
+d0, d1 = int(math.floor(math.log10(XMIN))), int(math.ceil(math.log10(XMAX)))
+labeled = []
+for d in range(d0, d1 + 1):
+    for m in range(1, 10):
+        n = m * 10 ** d
+        if not XMIN <= n <= XMAX: continue
+        major = m == 1 or (m in (2, 5) and d1 - d0 <= 4)
+        line(xr(n), Y1, xr(n), Y1 + (9 if major else 5), 1.6 if major else 1.0)
+        if major:
+            put(f"{n:,}".replace(",", " "), 15, cx=xr(n), baseline=Y1 + 34, fname=CMR); labeled.append(n)
+for n in (XMIN, XMAX):   # the ends of the sweep, when no decade label sits near them
+    if n not in labeled and all(abs(xr(n) - xr(q)) > 48 for q in labeled):
+        put(f"{n:,}".replace(",", " "), 15, cx=xr(n), baseline=Y1 + 34, fname=CMR)
 step = 2 if YMAX <= 12 else 4
 for t in range(0, YMAX + 1, step):
     line(X0 - 9, yr(t * 1e-16), X0, yr(t * 1e-16), 1.6)
@@ -109,7 +125,7 @@ for t in range(0, YMAX + 1, step):
     if t: line(X0, yr(t * 1e-16), X1, yr(t * 1e-16), 0.7, dash="1 6")
 put(r"$N\ \ \mathrm{(log\ scale)}$", 16, cx=(X0 + X1) / 2, baseline=Y1 + 70)
 L.append(f'<g transform="translate({X0 - 100} {(Y0 + Y1) / 2}) rotate(-90)">')
-put(r"$L_2\ \mathrm{error}\ \ (\times 10^{-16})$", 16, cx=0, baseline=0)
+put(r"$\mathrm{relative}\ L_2\ \mathrm{error}\ \ (\times 10^{-16})$", 16, cx=0, baseline=0)
 L.append('</g>')
 line(X0, yr(EPS), X1, yr(EPS), 1.2, dash="8 5")
 put(r"$\varepsilon = 2.2\times10^{-16}$", 12.5, x=X1 - 4, baseline=yr(EPS) - 6, anchor="r")
@@ -150,19 +166,25 @@ for i, name in enumerate(names):
     line(lx - 4, ly + i * 26 + 4, lx + 30, ly + i * 26 + 4, 2.6, col=color_of(i, name))
     marker(kind, filled, lx + 13, ly + i * 26 + 4, 4.2, color_of(i, name))
     put(name, 15, x=lx + 42, baseline=ly + i * 26 + 9, fname=CMR)
-tw = put("FP64, forward transform", 16, cx=(X0 + X1) / 2 + 120, baseline=Y0 + 26, fname=CMB)
+tw = put("FP64 1D c2c, forward transform, natural order, out-of-place, K = 1", 16, cx=(X0 + X1) / 2 + 120, baseline=Y0 + 26, fname=CMB)
 E.append(f'<rect x="{(X0+X1)/2+120-tw/2-12}" y="{Y0+4}" width="{tw+24}" height="32" fill="none" stroke="{INK}" stroke-width="1.2"/>')
 
-cap = ("Relative L2 error of the forward complex transform against a long-double reference, every length in the sweep; "
-       "markers are individual lengths (thinned), heavy lines the running median per library.")
-put(cap, 13.5, cx=W / 2, baseline=Y1 + 106, fname=CMR)
-if len(sys.argv) < 2:
-    put("Demo data - replace with errors.csv (library,N,l2_error).", 12.5, cx=W/2, baseline=Y1 + 128, fname=CMR)
+npts = max(len(s) for s in data.values())
+meds = ", ".join(f"{name} {sorted(e for _, e in data[name])[len(data[name]) // 2] / 1e-16:.2f}" for name in names)
+cap = (f"Relative L2 error of the forward complex transform against a long-double scalar DFT of the same input, "
+       f"every length N = {XMIN:,}..{XMAX:,} ({npts:,} cells); "
+       "markers are individual lengths, heavy lines the running median per library.")
+cs = 13.5
+while cs > 9 and mpath(cap, cs, CMR)[2] - mpath(cap, cs, CMR)[1] > W - 60: cs -= 0.5
+put(cap, cs, cx=W / 2, baseline=Y1 + 106, fname=CMR)
+put(f"Median over the sweep, in units of 1e-16: {meds}.", 13.5, cx=W / 2, baseline=Y1 + 128, fname=CMR)
+if not files:
+    put("Demo data - replace with verify.csv (library,N,l2_error).", 12.5, cx=W/2, baseline=Y1 + 150, fname=CMR)
 
-svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" role="img" aria-label="FFT precision comparison: L2 error versus transform length, one marker shape per library, running medians">
+svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" role="img" aria-label="FFT precision comparison: relative L2 error versus transform length, one marker shape per library, running medians">
 <rect width="{W}" height="{H}" fill="{PAPER}"/>
 {"".join(E)}
 {"".join(L)}
 </svg>'''
-open("vectorfft-precision.svg", "w").write(svg)
-print("ok", len(svg))
+open(out, "w").write(svg)
+print("ok", out, {name: len(s) for name, s in data.items()}, "median x1e-16:", meds)
