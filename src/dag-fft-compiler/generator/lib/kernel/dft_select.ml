@@ -281,11 +281,11 @@ let pick_algorithm (n : int) : algorithm =
       | 15 ->
         Cooley_Tukey (3, 5)
         (* R=15 = CT(N1=3, N2=5). PASS 1: 5 sub-DFT-3s. PASS 2: 3 sub-DFT-5s.
-         * Without this entry R=15 falls to Direct DFT-15 (308 ops vs FFTW's
-         * 156). With CT(3,5) the costly O(N²) direct path is avoided and
-         * Winograd-5 further trims the three DFT-5 instances (181 ops
-         * vs FFTW's 156, +16% — bounded by the same n-ary-IR limit that
-         * leaves the R=25 gap open). *)
+         * Without this entry R=15 falls to Direct DFT-15 (308 ops vs the
+         * best known 156). With CT(3,5) the costly O(N²) direct path is
+         * avoided and Winograd-5 further trims the three DFT-5 instances
+         * (181 ops vs that 156, +16% — bounded by the same n-ary-IR limit
+         * that leaves the R=25 gap open). *)
       | 21 ->
         Cooley_Tukey (3, 7)
         (* R=21 = CT(N1=3, N2=7). PASS 1: 7 sub-DFT-3s. PASS 2: 3 sub-DFT-7s.

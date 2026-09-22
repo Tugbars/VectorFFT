@@ -22,14 +22,12 @@
  * degrades past it. N=1024 is in+mid+out = 3*16 KB = 48 KB = exactly this
  * machine's L1d, and that cell measures a dead wash — the crossover sits
  * precisely where the mechanism predicts. Above it the block-split cascade
- * (zsplit.h) owns the range, which is also what MKL does and for the reason
- * its RE doc gives: "2 passes can't amortize a conversion; the high-N cascade
- * converts because log-many [passes can]".
+ * (zsplit.h) owns the range, and for a structural reason: 2 passes can't
+ * amortize a conversion, while the high-N cascade converts because
+ * log-many passes can.
  *
  * So the hybrid conversion was never justified at this tier: two passes cannot
- * pay a layout conversion back. It also was NOT derived from the MKL research
- * (docs/research/mkl_il_512_anatomy.md calls our split-plane staging "the exact
- * opposite" of MKL's mid-N path, which is interleaved throughout).
+ * pay a layout conversion back.
  *
  * ── STAGING (validated against a scalar DFT, not asserted) ───────────────
  *   n1t(R2): count=R1, Ls=R1, OLs=R2 — corner-turn fused into the stores, so
@@ -239,11 +237,11 @@ static inline vfft_il2p_fn vfft_il2p_t2cs_fn(int R)
     }
 }
 
-/* msz — MKL's Fact form on our contract (2026-09-05, owner: "kernel-level
+/* msz — a factored mid form on our contract (2026-09-05, owner: "kernel-level
  * boundary IL, split body is fine"): the zsplit odd mid (msg body: split
  * planes in REGISTERS, shuffle-free, splat-pair records) with INTERLEAVED
  * z on both edges and UNORDERED lanes (unpack only, no permute4x64: 1.0
- * shuffle/point at the boundary, MKL's figure). One call per stage: Gs =
+ * shuffle/point at the boundary, the target figure). One call per stage: Gs =
  * blocks (in-kernel group loop), Ls = count = D (count % 4 == 0), tw_re =
  * per block (R-1) [c x4][s x4] records, plain sin. fwd only, IN PLACE on
  * zout (zin ignored). Files: codelets/zil/avx2/boundary_split/; the

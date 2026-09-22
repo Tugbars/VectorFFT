@@ -7,7 +7,7 @@
  *
  * Geometry (DIT, factors f[0..nf-1], f[0] = outermost combine,
  * f[nf-1] = leaf radix):
- *   - The plane is N rows x K lanes, FFTW halfcomplex packing at every
+ *   - The plane is N rows x K lanes, halfcomplex packing at every
  *     recursion level: subproblem at offset q (stride Q) of size np
  *     holds re X[p] at position p <= np/2 and im X[np-p] above.
  *   - LEAF: one batched r2cf call, vl = S*K (S = N/leaf), im stream
@@ -147,7 +147,7 @@ typedef void (*rfft_r2cb_fn)(const double *in_re, const double *in_im,
                              ptrdiff_t is_re, ptrdiff_t is_im,
                              ptrdiff_t os_re, size_t vl);
 
-/* D2 natural terminator codelet (section 69), FFTW khc2c-shaped:
+/* D2 natural terminator codelet (section 69), mirror-pair shaped:
  * low slots s <= s* go to Rp/Ip + s*osp; upper slots (conjugated by
  * the codelet) go to Rm/Im + (r-1-s)*osm. */
 typedef void (*rfft_hc2c_nat_fn)(
@@ -207,8 +207,8 @@ typedef struct {
     rfft_hc_fn hc2hc_dif[VFFT_RFFT_MAX_RADIX + 1];
     rfft_hc_fn hc2hc_dif_log3[VFFT_RFFT_MAX_RADIX + 1];
     /* c2r (backward real) slots (section 62): the r2cb leaf
-     * (halfcomplex -> real) and the DIF BACKWARD twiddle stages. FFTW runs
-     * hc2r as apply_dif with sign-flipped twiddles; these slots hold the
+     * (halfcomplex -> real) and the DIF BACKWARD twiddle stages. hc2r runs
+     * as apply_dif with sign-flipped twiddles; these slots hold the
      * --hc2hc --dif --bwd --t1s codelets. The r2cb leaf has the same ABI as
      * r2cf at the call site (in_re/in_im -> out_re via the executor's strides;
      * the codelet's own signature is in_re,in_im,out_re,is,os_re,vl). */

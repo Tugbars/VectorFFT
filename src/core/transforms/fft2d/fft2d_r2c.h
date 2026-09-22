@@ -372,8 +372,8 @@ typedef struct {
      * _c2r). The in-place override needs a re buffer sized real_sz (= N1*N2);
      * c2r additionally needs a temp im buffer (cplx_sz). Allocated ONCE at
      * plan-create (not per call) so the public OOP API does no malloc/free in
-     * the hot path — MKL's descriptor likewise pre-allocates its scratch. Not
-     * re-entrant per plan (one transform at a time, like an MKL descriptor); the
+     * the hot path — a plan descriptor owns its scratch for its lifetime. Not
+     * re-entrant per plan (one transform at a time per descriptor); the
      * tile-parallel threads use the per-slot scratch_re/im, not these. */
     double *oop_re_tmp;   /* real_sz = N1*N2 doubles      (r2c forward scratch) */
     double *oop_im_tmp;   /* cplx_sz = N1*(N2/2+1) doubles (c2r backward temp im) */

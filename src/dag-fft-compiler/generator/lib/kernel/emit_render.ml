@@ -211,7 +211,7 @@ let topo_sort_reachable (roots : t list) : t list =
  *
  * Inputs and twiddles use K-strided layout: the j-th element's vector
  * is at &arr[j*K + k]. We use _mm512_loadu_pd because we don't enforce
- * alignment in the emitted code (matches FFTW's safer default).
+ * alignment in the emitted code (unaligned is the safer default).
  *
  * The `in_place` flag changes the input buffer name from `in_re/in_im`
  * to `rio_re/rio_im` (matches user's t1_dit signature) and the stride
@@ -926,7 +926,7 @@ type scheduler =
  *
  * Compute the set of node tags that should be inlined at their consumer
  * rather than emitted as separate `const __m512d t<tag> = ...;`
- * declarations. Inlining matches FFTW hand-coded codelet style:
+ * declarations. Inlining matches the hand-coded codelet style:
  *
  *   const __m512d t1 = _mm512_sub_pd(a, b);
  *   const __m512d t2 = _mm512_mul_pd(K, t1);

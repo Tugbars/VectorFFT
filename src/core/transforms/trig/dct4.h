@@ -1,5 +1,5 @@
 /**
- * dct4.h -- DCT-IV (real-to-real, FFTW REDFT11 convention)
+ * dct4.h -- DCT-IV (real-to-real, unnormalized convention)
  *
  *   Y[k] = 2 * sum_{n=0..N-1} x[n] * cos(pi*(2k+1)*(2n+1)/(4N))   for k=0..N-1
  *

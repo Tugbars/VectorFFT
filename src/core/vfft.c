@@ -1733,8 +1733,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         return NULL;
     }
     /* In-place real FFT: SUPPORTED for the 1D INTERLEAVED-CCE zr2c route
-     * (even N, K==1) — one padded plane of 2*(N/2+1) doubles, the MKL
-     * convention, closing the law-(f) hole (2026-08-13, §D2). Every OTHER
+     * (even N, K==1) — one padded plane of 2*(N/2+1) doubles, the standard
+     * CCE convention, closing the law-(f) hole (2026-08-13, §D2). Every OTHER
      * real shape still refuses: split spectrum and real data are separate
      * planes there and an in-place contract would be a lie.
      *
