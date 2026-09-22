@@ -2261,26 +2261,31 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         putenv("VFFT_IL2D_NATIVE=0");
 #endif
     }
-    if (!hs || !hi) {
+    if (!hi) {
         printf("  %5dx%-5d  create FAIL (hs=%p hi=%p)\n", N1, N2,
                (void *)hs, (void *)hi);
         if (hs) vfft_destroy(hs);
-        if (hi) vfft_destroy(hi);
         return;
     }
+    /* the SPLIT arm cannot build every shape the interleaved tier serves
+     * (column lengths such as 46, 92, 94, 138); the cell runs without it
+     * rather than being skipped (2026-09-22) -- SPLIT IS NOT OUR CONCERN */
+    if (!hs) have[0] = 0;
     fprintf(stderr, "[2dil] %dx%d created; gating + timing %d rounds...\n", N1, N2, rounds);
     /* correctness pre-gate, fresh data: roundtrip/T (shipped paths;
      * forward elementwise gates live in the 2D gate battery) */
     memcpy(sre, xr, T * 8);
     memcpy(simg, xi, T * 8);
-    vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg);
-    vfft_execute(hs, VFFT_BACKWARD, sre, simg, sre, simg);
-    rts = 0;
-    for (i = 0; i < T; i++) {
-        double a1 = fabs(sre[i] / (double)T - xr[i]);
-        double b1 = fabs(simg[i] / (double)T - xi[i]);
-        if (a1 > rts) rts = a1;
-        if (b1 > rts) rts = b1;
+    if (hs) {
+        vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg);
+        vfft_execute(hs, VFFT_BACKWARD, sre, simg, sre, simg);
+        rts = 0;
+        for (i = 0; i < T; i++) {
+            double a1 = fabs(sre[i] / (double)T - xr[i]);
+            double b1 = fabs(simg[i] / (double)T - xi[i]);
+            if (a1 > rts) rts = a1;
+            if (b1 > rts) rts = b1;
+        }
     }
     for (i = 0; i < T; i++) { z[2 * i] = xr[i]; z[2 * i + 1] = xi[i]; }
     vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
@@ -2393,9 +2398,9 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                med[3], spr[3], med[4], spr[4]);
         if (med[1] > 0 && med[3] > 0) {
             double q1 = med[3] / med[1]; /* O-inter xMKLcce: >1 = we win */
-            double q2 = med[1] / med[0]; /* the convert-around tax        */
+            double q2 = med[0] > 0 ? med[1] / med[0] : 0; /* the convert-around tax (0 = no split arm) */
             double q3 = med[4] / med[3]; /* banked-config vs MKL's best   */
-            double q4 = med[3] / med[0]; /* O-split xMKLcce               */
+            double q4 = med[0] > 0 ? med[3] / med[0] : 0; /* O-split xMKLcce               */
             printf("        O-inter xMKLcce %.2f%s | wrap tax O-inter/O-split "
                    "%.2f%s | O-split xMKLcce %.2f | M-split/M-inter %.2f",
                    q1, fabs(1 - q1) * 100 < cspr ? "~" : "",
@@ -2418,7 +2423,7 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         }
 #endif
     }
-    vfft_destroy(hs);
+    if (hs) vfft_destroy(hs);
     vfft_destroy(hi);
     if (hn) vfft_destroy(hn);
     free_d(sre); free_d(simg); free_d(z); free_d(mz); free_d(zn);
