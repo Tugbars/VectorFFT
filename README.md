@@ -86,7 +86,6 @@ MKL median 12.4, max 24.7 (all in units of 1e-16).
 
 ---
 
-<<<<<<< HEAD
 ## Features
 
 ![Transform coverage](src/tools/plots/vectorfft-coverage.svg)
@@ -110,9 +109,3 @@ buffer signatures) and [`docs/design/design_contracts.md`](docs/design/design_co
 
 ---
 
-## Acknowledgments
-
-- [FFTW](http://www.fftw.org/) by Matteo Frigo and Steven G. Johnson -- the gold standard for decades. VectorFFT's prime-radix butterflies (R=11, 13, 17, 19) are derived from FFTW's genfft algebraic output, then re-scheduled using Sethi-Ullman register allocation with explicit spill management to minimize register pressure on AVX2 (16 YMM) and AVX-512 (32 ZMM).
-- [VkFFT](https://github.com/DTolm/VkFFT) by Dmitrii Tolmachev -- inspiration for the benchmarking methodology and presentation style.
-=======
->>>>>>> 8d92407bac628a36d15125bc42148cea63c657d5
