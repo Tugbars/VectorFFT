@@ -46,28 +46,41 @@ equal vertical gaps).
 
 ## Accuracy
 
-![Precision](docs/performance/vfft_precision.png)
+![Precision, VectorFFT vs MKL, every N from 2 to 4096](src/tools/plots/vectorfft-precision.svg)
 
-Strict **roundtrip** error — `max |fwd→bwd / N − x| / max|x|`, the worst single element across all
-N·K outputs after a full forward + backward — across all tested 1D cells. Errors track the theoretical
-`O(log₂N · ε)` bound (FP64 ε = 2.2e-16); every cell holds ~14 correct digits.
+The forward transform of every length N from 2 to 4,096, VectorFFT and MKL on the
+same random input, against a scalar DFT accumulated in 80-bit long double
+(the gauntlet's `verify` verb, [`gauntlet/k1_fwd_ref_probe.c`](gauntlet/k1_fwd_ref_probe.c);
+the records are in [`gauntlet/results/`](gauntlet/results/)). The error is the
+relative L2 norm ||y - X|| / ||X||, in units of 1e-16 (FP64 epsilon = 2.2).
 
-| Category | Min Error | Max Error |
-|----------|-----------|-----------|
-| pow2 small (8-128) | 2.5e-16 | 1.3e-14 |
-| pow2 (256-131K) | 7.9e-16 | 2.6e-14 |
-| composite | 1.1e-14 | 5.7e-14 |
-| prime powers (3,5,7) | 9.8e-15 | 7.1e-14 |
-| genfft (R=11,13) | 1.5e-14 | 4.0e-14 |
-| odd composites | 1.0e-14 | 3.5e-14 |
-| mixed deep | 1.0e-14 | 3.7e-14 |
+Both libraries deliver 14 to 15 correct digits at every length, and MKL is the
+tighter of the two: its error stays within 3 epsilon everywhere, VectorFFT's median
+is 1.5x MKL's and its worst lengths reach 13 epsilon. On the powers of two, which
+run on the ZTURN-T kernels, the two are level; the gap is on the mixed-radix and prime
+lengths, which run on the stage kernels, so that is where the twiddle path will be
+looked at. It is measured here so it can be worked on, not hidden.
 
-Overall: min 2.5e-16, **median 2.45e-14**, max 7.07e-14 — none exceed 1e-13. This is the *strictest*
-honest statistic (per-element max, relative, full roundtrip); RMS or forward-only error runs ~10–40×
-smaller. The errors grow ~log N exactly as a correct Cooley-Tukey decomposition should.
+| Lengths | Cells | VectorFFT median | MKL median | VectorFFT max | MKL max |
+|---|---|---|---|---|---|
+| 2..16 | 15 | 1.67 | 1.15 | 6.74 | 1.52 |
+| 17..64 | 48 | 5.32 | 1.97 | 18.00 | 2.79 |
+| 65..256 | 192 | 6.67 | 2.50 | 25.07 | 5.24 |
+| 257..1,024 | 768 | 6.95 | 3.14 | 25.66 | 5.22 |
+| 1,025..2,048 | 1,024 | 6.01 | 3.99 | 28.94 | 5.45 |
+| 2,049..4,096 | 2,048 | 6.09 | 4.62 | 27.46 | 6.07 |
+| **all, 2..4,096** | **4,095** | **6.11** | **4.04** | **28.94** | **6.07** |
 
-Rader and Bluestein prime cells use a convolution-based path; their roundtrip error (median ~3e-14,
-max ~7e-14) sits in the same band, dominated by the inner FFT's accumulated rounding — well within FP64.
+| Family | Cells | VectorFFT median | MKL median | VectorFFT max | MKL max |
+|---|---|---|---|---|---|
+| Powers of two | 12 | 1.80 | 1.45 | 2.73 | 2.36 |
+| Primes | 564 | 6.15 | 4.64 | 28.94 | 5.58 |
+| Other composites | 3,520 | 6.11 | 3.56 | 27.46 | 6.07 |
+
+Elementwise maximum error, relative to the largest output, same reference: VectorFFT
+median 8.3, max 41.4; MKL median 4.2, max 8.5. Roundtrip, backward of the forward
+divided by N against the input, elementwise maximum: VectorFFT median 15.6, max 103;
+MKL median 12.4, max 24.7 (all in units of 1e-16).
 
 ---
 
