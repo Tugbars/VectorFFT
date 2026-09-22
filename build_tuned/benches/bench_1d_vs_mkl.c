@@ -4886,13 +4886,28 @@ int main(int argc, char **argv)
                                { 32768, 64 } };
             int nc = (int)(sizeof cells / sizeof cells[0]), ci;
             const char *cf = getenv("VFFT_2DIL_CELLS"); /* "64x64,256x256" filter */
-            for (ci = 0; ci < nc; ci++) {
-                if (cf) {
+            /* VFFT_2DIL_SHAPES="46x64,47x64,138x128": ANY shapes, replacing the
+             * list above (2026-09-22; the column pool's new radices have no
+             * cell in it) */
+            int xcells[32][2], nx = 0;
+            const char *sh = getenv("VFFT_2DIL_SHAPES");
+            if (sh) {
+                const char *q = sh;
+                while (*q && nx < 32) {
+                    int a = 0, b = 0;
+                    if (sscanf(q, "%dx%d", &a, &b) == 2 && a > 0 && b > 0) { xcells[nx][0] = a; xcells[nx][1] = b; nx++; }
+                    while (*q && *q != ',') q++;
+                    if (*q == ',') q++;
+                }
+            }
+            for (ci = 0; ci < (sh ? nx : nc); ci++) {
+                const int N1c = sh ? xcells[ci][0] : cells[ci][0], N2c = sh ? xcells[ci][1] : cells[ci][1];
+                if (cf && !sh) {
                     char tag[32];
-                    snprintf(tag, sizeof tag, "%dx%d", cells[ci][0], cells[ci][1]);
+                    snprintf(tag, sizeof tag, "%dx%d", N1c, N2c);
                     if (!strstr(cf, tag)) continue;
                 }
-                run_2dil_cell(cells[ci][0], cells[ci][1], rounds, W);
+                run_2dil_cell(N1c, N2c, rounds, W);
                 pace(pace_ms);
             }
         }

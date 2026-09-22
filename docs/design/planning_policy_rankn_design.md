@@ -13,7 +13,12 @@ There is no rank >= 2 band map to build. The ROW axis calls `vfft_create`
 recursively (`fft2d_create.h`, and `fftnd_il.h`'s flat child), so it inherits
 the whole 1D map. The COLUMN axis has two regimes only -- a chain raced over
 one radix pool, or the column-axis Bluestein when no chain exists -- and
-since 2026-09-17 no heuristic between them.
+since 2026-09-17 no heuristic between them. The pool (`il2d_cols.h`) is the
+registry's t2c radices -- 3..27 and, since 2026-09-22, 23 and 29..47 with the
+kernels of 2026-09-21 -- plus the n1c-only radices 2, 6, 10, 12, 14, 22, 26 as
+CLOSING stages alone (no t2c kind exists for them; the 1D flat DIT's lone-2
+leaf rule applied to columns), so a column length such as 2 x prime or
+23 x 64 has a chain to race instead of falling to Bluestein.
 
 What IS scattered sits one level down, and it is the class that produced
 this week's defects (`nat_req` vs `key->ord`; the greedy's private pool):
