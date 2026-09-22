@@ -63,6 +63,13 @@ src/dag-fft-compiler/jit/**               linguist-vendored
 # Tooling, not shipped library code — same rationale as generator/scripts/.
 src/dag-fft-compiler/generator/*.sh        linguist-vendored
 
+# HTML anywhere in this repo is a project page or a rendered report, never
+# library code — without this the site markup shows up in the language bar as
+# if the project were part HTML. Extension-scoped rather than path-scoped so a
+# future page lands excluded wherever it is written.
+*.html                                     linguist-vendored
+*.htm                                      linguist-vendored
+
 # Research notes, roadmaps, wisdom records and performance ledgers. These are
 # the project's written record, not its product — counted as documentation so
 # the language bar reflects CODE (README.md and in-tree .md stay counted).
