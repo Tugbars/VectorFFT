@@ -2305,7 +2305,8 @@ let emit_codelet
      * experiment.md): the bulk loop stopped at the last full vector; cover the
      * 1..VW-1 leftover lanes with
      *   rem == 1 -> ONE scalar single lane (SSE-1-wide, the measured-cheapest +1 case)
-     *   rem >= 2 -> ONE masked vector pass (flat cost, holds the speed margin).
+     *   rem >= 2 -> ONE masked vector pass (flat cost, holds the margin over the
+     *               reference library).
      * This holds for EVERY codelet, monolithic AND composite: the scalar pass
      * renders the DAG monolithically at width 1 (force_mono) — a single lane has no
      * register pressure, so the CT spill scratch is simply not referenced (no

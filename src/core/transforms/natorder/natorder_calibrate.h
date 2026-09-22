@@ -182,12 +182,13 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
     }
 
     /* SCR candidate — DEACTIVATED from the wisdom-creation race by default. Paced/locked bench
-     * (2026-07-05, natorder forced-mode @4096/4): SCR = 79.5us vs PURE 28.8us — 2.76x SLOWER,
-     * because it must inject an uncalibrated forced-DIT uniform-T1S plan +
-     * double-footprint scratch-fill + 0.40x scattered stores. So SCR is not a plan-determining
-     * methodology. The SCR code is KEPT (scatter terminator + execute path + the create stored-verdict
-     * rebuild): a wisdom entry that ALREADY carries nat_mode=3 still executes SCR correctly (that path
-     * is independent of this race). -DVFFT_NATORDER_RACE_SCR re-enters SCR as a race candidate.
+     * (2026-07-05, natorder_vs_mkl.c forced-mode @4096/4): SCR = 79.5us vs PURE 28.8us — 2.76x SLOWER,
+     * and 0.45x of the reference library, because it must inject an uncalibrated forced-DIT
+     * uniform-T1S plan + double-footprint scratch-fill + 0.40x scattered stores. So SCR is not a
+     * plan-determining methodology. The SCR code is KEPT (scatter terminator + execute path + the
+     * create stored-verdict rebuild): a wisdom entry that ALREADY carries nat_mode=3 still executes
+     * SCR correctly (that path is independent of this race). -DVFFT_NATORDER_RACE_SCR re-enters SCR
+     * as a race candidate.
      * natural_order_inplace_design.md. */
     natorder_scr_t scr;
     memset(&scr, 0, sizeof scr);

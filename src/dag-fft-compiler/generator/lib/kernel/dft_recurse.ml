@@ -7,7 +7,7 @@
  * / 7 constructions, dft_ct (Cooley-Tukey n1 x n2), or the
  * split_radix.ml callback. The group is one `and` chain — it moves as
  * a unit or not at all. const_cmul (the constant-twiddle complex
- * multiply with the FFTW-style factored |cr| = |ci| path) lives here
+ * multiply with the factored |cr| = |ci| path) lives here
  * because every construction in the chain leans on it.
  *
  * Output convention: functions take input accessors (int -> expr) and
@@ -54,7 +54,7 @@ open Expr
 (* Helper: compute the symbolic complex multiply by a constant twiddle.
  * (a + ib) * (c + id) = (ac - bd) + i(ad + bc).
  *
- * Path B optimization (FFTW-style): when |cr| = |ci| = K (the W^k twiddles
+ * Path B optimization: when |cr| = |ci| = K (the W^k twiddles
  * with k ∈ {1,3,5,7,...} for radix-{2^n}), every output reduces to one
  * of ±K*(xr+xi), ±K*(xr-xi). We emit the FACTORED form so the K-multiply
  * happens AFTER the sum/diff, not before. Two effects:
@@ -66,7 +66,7 @@ open Expr
  *      consumers (one + and one -) that look like K*S ± value. These are
  *      perfect FMA absorption targets — multi_use_fma_lift folds each
  *      Mul into its consumers. Net effect from absorbing the Mul: -1 op
- *      AND +1 FMA per absorption, closing the FMA-count gap vs FFTW.
+ *      AND +1 FMA per absorption.
  *
  * For the general |cr| ≠ |ci| case, the original 4-mul form is optimal
  * (no shared factor to extract; algsimp's existing fma_lift handles it).
@@ -104,9 +104,9 @@ let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
     | -1, -1 -> with_sign (-1) kd, with_sign (-1) ks (* out_re=-K*D, out_im=-K*S *)
     | _ -> assert false)
   else (
-    (* General case |cr| ≠ |ci|: emit in TAN-FACTORED form (FFTW genfft
-     * with -fma flag). Pick the larger of |cr|, |ci| as the OUTER factor
-     * (the "cos"), and the ratio as the INNER factor (the "tan"):
+    (* General case |cr| ≠ |ci|: emit in TAN-FACTORED form. Pick the
+     * larger of |cr|, |ci| as the OUTER factor (the "cos"), and the
+     * ratio as the INNER factor (the "tan"):
      *
      *   if |cr| ≥ |ci|:
      *     y_re = cr · (xr − (ci/cr)·xi)
@@ -207,9 +207,9 @@ let rec dft ?(sign = `Fwd) (n : int) (input_re : int -> expr) (input_im : int ->
        * reach Direct anyway (CT-decomposed).
        *
        * Special case for N=5: Winograd-5 (dft_winograd5) exploits algebraic
-       * identities of 5th roots of unity to reduce 36 ops to 32 and matches
-       * FFTW's gen_notw -fma R=5 codelet exactly. Propagates through any
-       * radix that decomposes to DFT-5 (R=15, R=20, R=25, R=50, R=100, ...).
+       * identities of 5th roots of unity to reduce 36 ops to 32.
+       * Propagates through any radix that decomposes to DFT-5
+       * (R=15, R=20, R=25, R=50, R=100, ...).
        *
        * Empirical trade-off measured for the R=25 cascade
        * (sandbox Xeon 2.80 GHz, 31 trials × 5000 reps × 10 runs):
@@ -217,11 +217,11 @@ let rec dft ?(sign = `Fwd) (n : int) (input_re : int -> expr) (input_im : int ->
        *   AVX-512: Winograd ~4% SLOWER (port parallelism > chain depth)
        *
        * The AVX-512 regression is real and reproducible, but the underlying
-       * gap to FFTW (+31 ops at R=25, all butterfly-pair-shared Muls in
-       * inter-pass twiddles) is structurally tied to our binary IR. The
-       * n-ary `Plus` rewrite that FFTW's genfft uses would unblock both
-       * the AVX-512 regression and the R=25/R=64 gap to FFTW — see doc 59
-       * addendum for sizing. Until that lands, the choice is between:
+       * cost (+31 ops at R=25, all butterfly-pair-shared Muls in
+       * inter-pass twiddles) is structurally tied to our binary IR. An
+       * n-ary `Plus` rewrite would unblock both the AVX-512 regression
+       * and the R=25/R=64 op counts — see doc 59 addendum for sizing.
+       * Until that lands, the choice is between:
        *   (a) Pure default win on AVX2, small loss on AVX-512 R=25
        *   (b) Flag-based dispatch (one more flag, more cognitive load)
        * We pick (a). Code simplicity > marginal AVX-512 R=25 perf. *)
@@ -368,8 +368,8 @@ and dft_direct_conjugate_pair
    *     - Add(acc, Mul) lifts to fmadd  →  a*b + acc
    *     - Sub(acc, Mul) lifts to fnmadd →  -a*b + acc
    *   This produces a single FMA chain with mixed +/- coefficients encoded
-   *   in the FMA opcode (matching FFTW codelet style). The deepest addend
-   *   is `initial`, free at the asm level (it's the FMA's `c` operand).
+   *   in the FMA opcode. The deepest addend is `initial`, free at the
+   *   asm level (it's the FMA's `c` operand).
    *
    * `make_sum coeffs terms`:
    *   Same but no initial accumulator — first term starts as a Mul.
@@ -458,8 +458,7 @@ and dft_direct_conjugate_pair
     let q_im_m = make_sum sin_arr d_im in
     (* Output combinations. p_re_m / p_im_m already include x[0]; we just
      * add or subtract the q chain. Each output requires exactly 1 op
-     * (1 add or 1 sub) at this combining level — matching hand-coded
-     * FFTW-style codelet structure. *)
+     * (1 add or 1 sub) at this combining level. *)
     out_re.(m) <- Add (p_re_m, q_im_m);
     out_re.(n - m) <- Sub (p_re_m, q_im_m);
     out_im.(m) <- Sub (p_im_m, q_re_m);
@@ -508,19 +507,18 @@ and dft_winograd5 ?(sign = `Fwd) (input_re : int -> expr) (input_im : int -> exp
    *   k_sin_2pi5 = sin(2π/5)        ≈ 0.951
    *   k_inv_phi  = 1/φ              ≈ 0.618
    *
-   * Op count: 14 add/sub + 18 fma = 32 total (matches FFTW gen_notw -fma).
+   * Op count: 14 add/sub + 18 fma = 32 total.
    *
    * Compared with dft_direct_conjugate_pair's 36 ops at R=5: saves 4 ops
    * via the cos(2π/5) ± cos(4π/5) identity (Winograd cos channel uses 2
    * muls instead of 4) and the sin(4π/5) = sin(2π/5)/φ identity (Winograd
    * sin channel shares one s1 factor across both sin terms).
    *
-   * Scheduling for register pressure: emit in the same order as FFTW's
-   * gen_notw output — real pre-adds, then output 0, then real outputs
-   * (which only need real pre-adds and the imag pair-diffs), then imag
-   * outputs. The two channels share no live intermediates after their
-   * own outputs are emitted, so peak live ≈ 14 IR nodes (well under the
-   * 16-ymm AVX2 budget; trivially fits AVX-512).
+   * Scheduling for register pressure: emit real pre-adds, then output 0,
+   * then real outputs (which only need real pre-adds and the imag
+   * pair-diffs), then imag outputs. The two channels share no live
+   * intermediates after their own outputs are emitted, so peak live ≈ 14
+   * IR nodes (well under the 16-ymm AVX2 budget; trivially fits AVX-512).
    *
    * Sign convention: forward (`Fwd) uses ω = exp(-2πi/5), backward (`Bwd)
    * uses ω = exp(+2πi/5). The cos channel is sign-agnostic; only the
@@ -786,20 +784,18 @@ and dft_winograd7 ?(sign = `Fwd) (input_re : int -> expr) (input_im : int -> exp
   (* Winograd 7-point DFT — Rader-style decomposition exploiting the
    * multiplicative-group structure of (Z/7Z)*. The cyclic-convolution
    * subproblem factors via Winograd's small-convolution algorithms,
-   * yielding 18 add/sub + 42 fma = 60 ops total. Matches FFTW's
-   * gen_notw -fma -n 7 codelet exactly (vs 66 ops from our generic
-   * conjugate-pair Direct path).
+   * yielding 18 add/sub + 42 fma = 60 ops total (vs 66 ops from our
+   * generic conjugate-pair Direct path).
    *
    * Six derived constants come out of the Winograd derivation. Of these,
    * KP_974927912 = sin(4π/7) is the only one carrying cross-channel sin
    * coupling — it flips sign for Bwd. The other five are sign-invariant
    * (rational combinations of the cos values).
    *
-   * Algorithm mirrors FFTW's emitted ordering (the algebra is otherwise
-   * the same): real and imag pre-additions, output 0, then three output
-   * pairs (1,6), (2,5), (3,4). Within each pair, lower-indexed output is
-   * FMA, higher-indexed is FNMS — the sign convention encoded structurally
-   * for Fwd, flipped by KP_974927912's sign for Bwd.
+   * Emission ordering: real and imag pre-additions, output 0, then three
+   * output pairs (1,6), (2,5), (3,4). Within each pair, lower-indexed
+   * output is FMA, higher-indexed is FNMS — the sign convention encoded
+   * structurally for Fwd, flipped by KP_974927912's sign for Bwd.
    *
    * Note the imag-channel pair-diffs use LOW-HIGH (Tj = x_1.im - x_6.im,
    * etc.) while real-channel uses HIGH-LOW (TI = x_6.re - x_1.re). This

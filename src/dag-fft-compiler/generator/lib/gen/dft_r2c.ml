@@ -2,8 +2,7 @@
  *
  * Separate from dft.ml (complex-to-complex) because r2c/c2r are
  * fundamentally different transform types with their own decomposition
- * strategies. Mirrors FFTW's separation between gen_dft.ml (c2c) and
- * gen_r2cf.ml / gen_r2cb.ml / gen_hc2c.ml / gen_hc2hc.ml.
+ * strategies.
  *
  * One transform family per banner section, homogeneous throughout:
  *   - r2c forward (direct, first-stage cascade, fused terminators
@@ -650,10 +649,7 @@ let dft_expand_r2c_first ?(sign = `Fwd) (r : int) : Expr.assignment list =
   List.rev !acc
 ;;
 
-(* === RDFT: real-input DFT (FFTW-style, Hermitian-compact output) ===
- *
- * Port of FFTW's Trig.rdft (genfft/trig.ml:26–27):
- *     let rdft sign n input = Fft.dft sign n (Complex.real @@ input)
+(* === RDFT: real-input DFT (Hermitian-compact output) ===
  *
  * Idea: a real-input DFT is just c2c with im(input) = 0. algsimp folds
  * out the zero-multiplications, leaving the streamlined real DFT for
@@ -729,7 +725,7 @@ let dft_expand_r2cf ?(sign = `Fwd) (n : int) : Expr.assignment list =
 ;;
 
 (* === r2cb leaf (section 62): the BACKWARD real leaf, exact inverse of
- * dft_expand_r2cf — halfcomplex INPUT -> real OUTPUT (FFTW's hc2r / r2cb).
+ * dft_expand_r2cf — halfcomplex INPUT -> real OUTPUT (hc2r / r2cb).
  *
  * This is the one genuinely-new c2r codelet: --r2cf --bwd is NOT it (a sign
  * flip keeps the real-INPUT contract; the backward leaf inverts the I/O type).
@@ -781,7 +777,7 @@ let dft_expand_r2cb ?(sign = `Bwd) (n : int) : Expr.assignment list =
 (* === DCT-II via Makhoul's reduction ===
  *
  * Port of the production algorithm from src/core/dct.h. Convention is
- * FFTW's REDFT10:
+ * REDFT10:
  *   Y[k] = 2 · Σ_{n=0..N-1} x[n] · cos(π·k·(2n+1)/(2N))
  *
  * Makhoul's pipeline (fused into one DAG so algsimp can collapse it):
@@ -862,11 +858,9 @@ let dft_expand_dct2 (n : int) : Expr.assignment list =
   List.rev !acc
 ;;
 
-(* === DCT-II via FFTW's trigII embedding ===
+(* === DCT-II via the trigII embedding ===
  *
- * Alternative to Makhoul. Port of FFTW's approach from genfft/trig.ml:
- *     trigII n input = Fft.dft 1 (4n) (Complex.hermitian (4n) (interleave_zero input))
- *     dctII = make_dct Complex.one 0 trigII
+ * Alternative to Makhoul.
  *
  * Construct a 4N-point real signal g such that
  *   g[2k+1] = x[k]   for k = 0..N-1     (odd positions in [0..2N))
@@ -882,8 +876,6 @@ let dft_expand_dct2 (n : int) : Expr.assignment list =
  * conjugate-symmetric mirrors). algsimp should fold the zeros and
  * exploit the symmetry, producing fewer ops than Makhoul's explicit
  * permute-then-rdft-then-butterfly DAG.
- *
- * Reference: FFTW genfft/trig.ml lines 60-64.
  *)
 let dft_dct2_trigII (n : int) (input_re : int -> expr) : expr array =
   assert (n >= 1);
@@ -918,7 +910,7 @@ let dft_expand_dct2_trigII (n : int) : Expr.assignment list =
   List.rev !acc
 ;;
 
-(* === DCT-III via inverse-Makhoul (FFTW REDFT01 convention) ===
+(* === DCT-III via inverse-Makhoul (REDFT01 convention) ===
  *
  * Fills the production gap: production has only a specialized N=8
  * codelet (`dct3_n8_avx2.h`); the general-N dispatcher is deferred per
@@ -995,7 +987,7 @@ let dft_expand_dct3 (n : int) : Expr.assignment list =
   List.rev !acc
 ;;
 
-(* === DHT — Discrete Hartley Transform (FFTW convention) ===
+(* === DHT — Discrete Hartley Transform ===
  *
  * Port of production's `src/core/dht.h` algorithm — no specialized
  * codelet exists at any N in production, so we fuse the whole pipeline
@@ -1042,7 +1034,7 @@ let dft_expand_dht (n : int) : Expr.assignment list =
   List.rev !acc
 ;;
 
-(* === DST-II (FFTW RODFT10) via DCT-II wrapper ===
+(* === DST-II (RODFT10) via DCT-II wrapper ===
  *
  *   Y[k] = 2 · sum_{n=0..N-1} x[n] · sin(π · (k+1) · (2n+1) / (2N))
  *
@@ -1073,7 +1065,7 @@ let dft_expand_dst2 (n : int) : Expr.assignment list =
   List.rev !acc
 ;;
 
-(* === DST-III (FFTW RODFT01) via DCT-III wrapper ===
+(* === DST-III (RODFT01) via DCT-III wrapper ===
  *
  *   Y[k] = (-1)^k · X[N-1] + 2 · sum_{n=0..N-2} X[n] · sin(π · (n+1) · (2k+1) / (2N))
  *
@@ -1102,7 +1094,7 @@ let dft_expand_dst3 (n : int) : Expr.assignment list =
   List.rev !acc
 ;;
 
-(* === DCT-IV via Lee 1984 (FFTW REDFT11 convention) ===
+(* === DCT-IV via Lee 1984 (REDFT11 convention) ===
  *
  *   Y[k] = 2 · sum_{n=0..N-1} x[n] · cos(π · (2k+1) · (2n+1) / (4N))
  *
@@ -1170,7 +1162,7 @@ let dft_expand_dct4 (n : int) : Expr.assignment list =
   List.rev !acc
 ;;
 
-(* === DST-IV (FFTW RODFT11) ===
+(* === DST-IV (RODFT11) ===
  *
  *   Y[k] = 2 * sum_{n=0..N-1} x[n] * sin(pi*(2k+1)*(2n+1)/(4N))
  *
@@ -1196,7 +1188,7 @@ let dft_expand_dst4 (n : int) : Expr.assignment list =
   List.rev !acc
 ;;
 
-(* === DCT-I (FFTW REDFT00) ===
+(* === DCT-I (REDFT00) ===
  *
  *   Y[k] = x[0] + (-1)^k x[N-1] + 2*sum_{n=1..N-2} x[n] cos(pi*n*k/(N-1))
  *
@@ -1225,7 +1217,7 @@ let dft_expand_dct1 (n : int) : Expr.assignment list =
   List.rev !acc
 ;;
 
-(* === DST-I (FFTW RODFT00) ===
+(* === DST-I (RODFT00) ===
  *
  *   Y[k] = 2*sum_{n=0..N-1} x[n] sin(pi*(n+1)*(k+1)/(N+1))
  *
@@ -1257,16 +1249,15 @@ let dft_expand_dst1 (n : int) : Expr.assignment list =
 
 (* === HC2HC: middle-stage Hermitian-packed cascade codelet ===
  *
- * Port of FFTW's gen_hc2hc.ml (lines 67-104). Operates in-place on
- * Hermitian-packed data — the inter-stage data format that exploits
- * X[N-k] = conj(X[k]) to halve the work per stage.
+ * Operates in-place on Hermitian-packed data — the inter-stage data
+ * format that exploits X[N-k] = conj(X[k]) to halve the work per stage.
  *
- * Algorithm (DIT, per gen_hc2hc.ml line 97):
- *   output = (sym1 n) @@ (sym2 n) (Fft.dft sign n (byw input))
+ * Algorithm (DIT):
+ *   output = sym1 n (sym2 n (dft sign n (byw input)))
  *
  * - byw input: pre-twiddle each input position by W_M^{m*k} (inter-stage
  *   twiddle from external table)
- * - Fft.dft: standard c2c DFT-n on the twiddled inputs
+ * - dft: standard c2c DFT-n on the twiddled inputs
  * - sym2: post-rotate the upper half (i ≥ n/2) of the DFT output by +i
  * - sym1: combine Re(f(i)) with Im(f(n-1-i)) into the Hermitian-packed slot
  *
@@ -1278,8 +1269,6 @@ let dft_expand_dst1 (n : int) : Expr.assignment list =
  *   Position i (0 ≤ i < n) stores a complex value from the packed
  *   half-spectrum. Lower half (i < n/2) and upper half (i ≥ n/2)
  *   together encode the n/2+1 unique values.
- *
- * Reference: FFTW's gen_hc2hc.ml; sym1, sym2 are defined at lines 67-74.
  *)
 
 (* sym2: post-rotate upper half by +i. (re, im) → (-im, re) for i ≥ n/2. *)
@@ -1366,7 +1355,7 @@ let dft_hc2hc_dit
 ;;
 
 (* DIF dispatch:
- *   output = byw (Fft.dft sign n (((sym2i n) @@ (sym1 n)) input))
+ *   output = byw (dft sign n (((sym2i n) @@ (sym1 n)) input))
  * Pre-sym chain, DFT, post-twiddle. *)
 let dft_hc2hc_dif
       ?(sign = `Fwd)
@@ -1425,14 +1414,13 @@ let dft_expand_hc2hc ?(sign = `Fwd) ?(direction = `Dit) (n : int) : Expr.assignm
 
 (* === HC2C: last-stage cascade codelet (Hermitian-packed in, natural out) ===
  *
- * Port of FFTW's gen_hc2c.ml (lines 50-115). This is the cascade
- * terminator — it reads Hermitian-packed input from the previous
- * hc2hc stage and produces natural-order complex output, fusing what
- * would otherwise be a standalone "unpack butterfly" pass into the
- * final radix-n DFT.
+ * This is the cascade terminator — it reads Hermitian-packed input from
+ * the previous hc2hc stage and produces natural-order complex output,
+ * fusing what would otherwise be a standalone "unpack butterfly" pass
+ * into the final radix-n DFT.
  *
- * Algorithm (DIT, per gen_hc2c.ml line 107-109):
- *   output = Fft.dft sign n (byw (load_array_c n locri))
+ * Algorithm (DIT):
+ *   output = dft sign n (byw (load_array_c n locri))
  *   stored via locpm
  *   sym applied to output
  *
@@ -1445,7 +1433,7 @@ let dft_expand_hc2hc ?(sign = `Fwd) ?(direction = `Dit) (n : int) : Expr.assignm
  *
  * - byw: pre-twiddle (same as hc2hc).
  *
- * - Fft.dft: standard c2c DFT-n.
+ * - dft: standard c2c DFT-n.
  *
  * - sym n f i = if (i < n-i) then f i else conj(f i):
  *   conjugates the upper half of the DFT output. After this, the data
@@ -1457,9 +1445,6 @@ let dft_expand_hc2hc ?(sign = `Fwd) ?(direction = `Dit) (n : int) : Expr.assignm
  *   (n-1-i). This is a physical-layout convention; in our math layer
  *   we just emit Output(k, true/false) for k = 0..n-1 and let the
  *   emitter/executor handle the split.
- *
- * Reference: FFTW's gen_hc2c.ml; sym defined at line 50, locri at line 100,
- * locpm at line 101, DIT/DIF wiring at lines 106-114.
  *)
 
 (* sym: conjugate upper half. (re, im) → (re, -im) for i ≥ n/2. *)
@@ -1481,7 +1466,7 @@ let sym_arr (n : int) (re_arr : expr array) (im_arr : expr array)
 ;;
 
 (* hc2c primitive (DIT case):
- *   output = sym n (Fft.dft sign n (byw input)) *)
+ *   output = sym n (dft sign n (byw input)) *)
 let dft_hc2c_dit
       ?(sign = `Fwd)
       (n : int)
@@ -1508,7 +1493,7 @@ let dft_hc2c_dit
 ;;
 
 (* hc2c DIF case:
- *   output = byw (Fft.dft sign n (sym n input)) *)
+ *   output = byw (dft sign n (sym n input)) *)
 let dft_hc2c_dif
       ?(sign = `Fwd)
       (n : int)
