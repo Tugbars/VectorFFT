@@ -92,41 +92,21 @@ MKL median 12.4, max 24.7 (all in units of 1e-16).
 ![Transform coverage](src/tools/plots/vectorfft-coverage.svg)
 
 A request names a contract: transform, layout, placement, order, length, batch,
-threads. The library serves that contract with an engine built for it, chosen per
-cell by measurement, and nothing is converted behind the call: a cell either has a
-native engine or refuses loudly at create. The tree is the coverage, one glyph per
-leaf: a dot is a native engine, a dash a refusal by contract.
+threads. A cell either has a native engine for it or refuses at create; a dot in
+the tree is a native engine, a dash a refusal by contract.
 
-- **Two layouts, two libraries.** Interleaved (`z` = re, im pairs, the MKL and FFTW
-  idiom) and split (separate `re[]` and `im[]` planes) are different contracts with
-  their own engines, kernels, races and wisdom rows. An interleaved plan never
-  touches a split plan, and there is no conversion tier between them.
-- **Both placements in each layout.** Complex transforms run in place and out of
-  place with native engines under both layouts: in-place interleaved is the same
-  call with the output pointer equal to the input, in-place split the same with
-  both planes aliased. The real transforms are out of place; in place they are
-  served for 1D interleaved only, where the CCE spectrum fits the real buffer. Every
-  other in-place real cell is a contract refusal, not missing work.
-- **Order is a contract of the complex transform.** Natural order is the default:
-  the bins come back in order, bin-for-bin comparable with MKL and FFTW, served by
-  a natural-writing engine that won the cell's race, never by a reorder pass.
-  Scrambled order is the "I do not need the bins in order" request (MKL's
-  backward-scrambled intent): served only by an engine that writes its own
-  self-consistent permutation, decoded only by the matched backward through the
-  same plan. Each order class races and banks its own writers, and a cell with no
-  scrambled writer refuses. Real and trigonometric transforms are natural by
-  construction, so the axis collapses there.
-- **Transforms and ranks.** Complex c2c, real r2c and c2r (the CCE half spectrum
-  under interleaved, two planes under split), and the real-to-real family DCT-I to
-  IV, DST-I to III and DHT as wrappers over r2c. 1D, 2D and 3D, batches of
-  transforms, and a thread count that is raced and banked per cell like everything
-  else.
-- **Any length.** Powers of two, mixed radix, odd composites and primes (Rader and
-  Bluestein) are native lengths of the interleaved contract in both placements;
-  split serves prime lengths in place.
-- **Wisdom, never heuristics.** The first create of a new cell races the engines
-  that satisfy its contract on your machine and banks the winner; later creates
-  replay it. No cost estimate ever picks a plan.
+- **Interleaved and split are two libraries**, each with its own engines and
+  wisdom; nothing is converted between them.
+- **Both placements in each layout**, in place and out of place, for the complex
+  transforms; real transforms run in place only under 1D interleaved.
+- **Order is a contract of c2c**: natural by default, scrambled on request, each
+  served by its own writers. Real and trigonometric transforms are natural by
+  construction.
+- **Any length, 1D to 3D, batches, threads.** Every plan is a measured verdict
+  kept in wisdom, never an estimate.
+
+The contracts in full: [`include/vfft.h`](include/vfft.h) (support matrix and
+buffer signatures) and [`docs/design/design_contracts.md`](docs/design/design_contracts.md).
 
 ---
 
