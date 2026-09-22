@@ -1,6 +1,6 @@
 /**
  * fftnd_r2c.h -- rank-general (2..4D) real-to-complex / complex-to-real,
- * reducing along the LAST axis (FFTW convention). Functional-completeness
+ * reducing along the LAST axis (the usual convention). Functional-completeness
  * port of the fft2d_r2c architecture into the fftnd taxonomy; it inherits
  * the split-layout real-FFT tax knowingly (the fused real codelets are a
  * separate, deprioritized workstream).

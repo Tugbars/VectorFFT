@@ -10,7 +10,7 @@
  * while vfft_create keeps reading the library's. The write appears to succeed
  * and changes nothing.
  *
- * MEASURED CONSEQUENCE: bench_1d_vs_mkl's VFFT_C2R_PACK_ALL and
+ * MEASURED CONSEQUENCE: the 1D comparison bench's VFFT_C2R_PACK_ALL and
  * VFFT_C2R_STRIDE_ALL probe arms were INERT - both "forced-route" arms
  * measured the same route, and the comparison looked like a result.
  *
@@ -47,7 +47,7 @@ extern "C"
    * vfft_create actually reads. Any TU outside the library that wants to
    * configure the real-transform dispatch must go through them.
    *
-   * (Measured consequence of not having them: bench_1d_vs_mkl's
+   * (Measured consequence of not having them: the 1D comparison bench's
    * VFFT_C2R_PACK_ALL / VFFT_C2R_STRIDE_ALL probe arms were INERT - both
    * forced-route arms measured the same route.) */
 

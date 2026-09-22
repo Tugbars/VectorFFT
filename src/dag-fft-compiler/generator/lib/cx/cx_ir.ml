@@ -129,7 +129,7 @@ type ctx =
        of a vector comes from block k+j, so every leg load/store is two
        128-bit halves at stride Gs (in) / OGs (out); per-pair twiddle
        records (adjacent blocks carry different twiddles). The two-group
-       "arrange halves" kernel MKL's generic-N engine runs its tail on. *)
+       "arrange halves" kernel a generic-N engine runs its tail on. *)
   ; st_turn : bool
   ; st_turn_gs : bool
   ; mutable mono_spill_slots : int

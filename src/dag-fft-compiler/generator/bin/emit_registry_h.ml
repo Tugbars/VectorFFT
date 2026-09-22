@@ -36,7 +36,7 @@
  * pow2 (128/256/512) and xl (1024) families are dropped — they are
  * experimental assembly-analysis sizes the planner should never select,
  * and a single radix-128 codelet loses to multi-stage composition anyway
- * (measured ~1.57x slower than MKL's composed 128). R=128 can be re-added
+ * (measured ~1.57x slower than a composed 128). R=128 can be re-added
  * here explicitly if ever needed; it is off by default. *)
 (* Section 39: coverage now comes from THE single source of truth.
  * The literal list this replaced is Coverage.ip_radices. *)

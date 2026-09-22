@@ -378,8 +378,8 @@ static void _fftnd_tiled_mt(stride_fftnd_data_t *d,
 /* ═══════════════════════════════════════════════════════════════
  * FUSED TRAILING GROUP -- axes [split .. rank-1] per leading block.
  * Block b = elements [b*K[split-1], (b+1)*K[split-1]); everything
- * below runs while that block is cache-resident (the FFTW
- * rank-split's trailing child, executed per vector-loop index).
+ * below runs while that block is cache-resident (the rank-split's
+ * trailing child, executed per vector-loop index).
  * ═══════════════════════════════════════════════════════════════ */
 
 static void _fftnd_fused_block_range(stride_fftnd_data_t *d,

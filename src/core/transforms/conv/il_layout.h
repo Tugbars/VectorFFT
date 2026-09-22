@@ -26,8 +26,8 @@
  * COMPONENT layout only. It serves multi-dim transforms (no batch
  * dimension), 1D K=1, and lane-major-interleaved batches (element-major
  * pairs -- the cheap-for-us geometry). Transform-major batched-1D
- * (z[k*2N + 2i], FFTW/MKL idist convention) is the corner-turn problem --
- * explicitly P3, not silently mishandled here.
+ * (z[k*2N + 2i], the usual batch-distance convention) is the corner-turn
+ * problem -- explicitly P3, not silently mishandled here.
  *
  * Order contract unchanged: whatever the wrapped plan emits (scrambled, or
  * natural-per-axis under strided rows), the wrapper reproduces in

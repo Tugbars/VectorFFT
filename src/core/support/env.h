@@ -104,7 +104,7 @@
  * Denormal arithmetic is 50-100x slower on x86 (microcode trap). In FFT they
  * appear from near-zero inputs, twiddle-product underflow, and inverse scaling.
  * FTZ flushes denormal RESULTS to zero, DAZ treats denormal INPUTS as zero.
- * Both are safe for FFT (below any real signal's noise floor) — MKL/IPP/HPC
+ * Both are safe for FFT (below any real signal's noise floor) — HPC math
  * libs enable them. MXCSR is per-thread; call from each thread.
  * ===================================================================== */
 static inline unsigned int stride_env_init(void)
@@ -330,7 +330,7 @@ static inline void stride_print_info(void)
  * CPU AFFINITY / CORE PINNING
  *
  * Pinning prevents OS migration (L1/L2 invalidation, cross-CCX on Zen,
- * P/E-core migration on Intel hybrid, NUMA). For benchmarking, pin to a P-core
+ * P/E-core migration on hybrid parts, NUMA). For benchmarking, pin to a P-core
  * to kill the biggest run-to-run variance source on hybrid CPUs.
  * ===================================================================== */
 

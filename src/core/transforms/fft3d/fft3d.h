@@ -10,7 +10,7 @@
  *     pass with a bigger K). Two execution modes:
  *       FLAT    -- whole-K lane ranges (the classic K-split shape).
  *       BLOCKED -- each thread's lane range is subdivided into a_block-lane
- *         chunks and ALL stages run per chunk before the next (FFTW's vector
+ *         chunks and ALL stages run per chunk before the next (the vector
  *         recursion / SPIRAL eq. 19 realized via the K-split slice primitive:
  *         a lane block is an independent sub-problem because axis-0
  *         butterflies never mix lanes). Collapses stages(N1) DRAM sweeps

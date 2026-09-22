@@ -1788,7 +1788,7 @@ static stride_plan_t *stride_r2c_plan(
  *
  * The 3-pointer convenience wrapper used to memcpy real_in -> out_re
  * and then run the in-place override; the decomposition showed that
- * copy costs ~38 us at N=256 K=256 (half the MKL gap). It is avoidable:
+ * copy costs ~38 us at N=256 K=256 — pure overhead. It is avoidable:
  * the worker already reads its input (fused first stage / fallback
  * pack) and writes its output (postprocess) through SEPARATE pointers,
  * aliased only because the in-place entry passes re for both. This
@@ -2112,7 +2112,7 @@ static inline void stride_execute_r2c(const stride_plan_t *plan,
     }
 }
 
-/* IN-PLACE forward r2c (MKL DFTI_INPLACE-style): the real input plane `re`
+/* IN-PLACE forward r2c (the in-place placement): the real input plane `re`
  * (N*K doubles) is OVERWRITTEN with the real output bins out_re[0..N/2], and
  * `im` ((N/2+1)*K doubles) receives out_im. No separate input buffer — the
  * caller loads the reals into `re`, then calls this. Both placements share the
