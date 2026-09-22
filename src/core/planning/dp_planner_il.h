@@ -3,8 +3,8 @@
  * The IL sibling of dp_planner.h. Same contract, same discipline, same scars:
  * every reported cost is a WHOLE-PLAN MEASUREMENT (build it, run it, time it),
  * never a composed estimate. Caller-owned amortized context, MEASURE/PATIENT
- * modes, best-of-N adaptive timing lifted from FFTW's measure_execution_time,
- * and pacing so thermal drift cannot re-rank candidates.
+ * modes, best-of-N adaptive timing, and pacing so thermal drift cannot
+ * re-rank candidates.
  *
  * ── WHY THIS IS A SEPARATE FILE AND NOT A FLAG ON dp_planner.h ──────────────
  *
@@ -996,9 +996,9 @@ static double _il_dp_gate_err(vfft_il_dp_context_t *ctx, int N,
     return worst / ctx->ref_scale;
 }
 
-/* Adaptive best-of timing, mirroring dp_planner.h:408 (itself FFTW's
- * kernel/timer.c): double `reps` until a trial clears TIME_MIN_NS, then keep
- * the best of TIME_REPEAT trials at that rep count.
+/* Adaptive best-of timing, mirroring dp_planner.h:408: double `reps` until a
+ * trial clears TIME_MIN_NS, then keep the best of TIME_REPEAT trials at that
+ * rep count.
  *
  * CASCADE candidates are timed JOINT (fwd+bwd per iteration) — the route
  * verdict's own metric (file header). The joint warmup doubles as a bwd
@@ -1380,13 +1380,13 @@ static void _il_dp_flat_rec(int L, int depth, int *cur,
     /* 23 joined on 2026-09-21, generated at every IL kind the way 17 and
      * 19 are (the corpus mirrors 19). The 2..2048 gauntlet found 64 cells
      * with a factor 23 and NO route -- every one served by the prime cell
-     * at a median 0.49x of the reference library -- because no kernel
+     * at a median 0.49x of the comparison baseline -- because no kernel
      * existed at 23 anywhere in the interleaved registry while the split
      * library has had one. */
     /* 29 and 31 joined on 2026-09-21 (the same recipe): 268 gauntlet cells whose
-     * largest prime is 29..47 ran the prime cell at 0.60-0.96x of the reference
-     * library, 103 of them with a 29 or a 31; the reference library runs a
-     * direct radix-p stage there. */
+     * largest prime is 29..47 ran the prime cell at 0.60-0.96x of the
+     * comparison baseline, 103 of them with a 29 or a 31; that baseline runs
+     * a direct radix-p stage there. */
     static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16, 29, 31, 37, 41, 43, 47 };
     int p;
     if (L == 1)
