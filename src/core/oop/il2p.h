@@ -22,7 +22,7 @@
  * degrades past it. N=1024 is in+mid+out = 3*16 KB = 48 KB = exactly this
  * machine's L1d, and that cell measures a dead wash — the crossover sits
  * precisely where the mechanism predicts. Above it the block-split cascade
- * (zsplit.h) owns the range, which is also what the reference library does
+ * (zsplit.h) owns the range, which is also what the comparison baseline does
  * and for the reason its RE doc gives: "2 passes can't amortize a
  * conversion; the high-N cascade converts because log-many [passes can]".
  *
@@ -244,7 +244,7 @@ static inline vfft_il2p_fn vfft_il2p_t2cs_fn(int R)
  * boundary IL, split body is fine"): the zsplit odd mid (msg body: split
  * planes in REGISTERS, shuffle-free, splat-pair records) with INTERLEAVED
  * z on both edges and UNORDERED lanes (unpack only, no permute4x64: 1.0
- * shuffle/point at the boundary, the reference library's measured figure).
+ * shuffle/point at the boundary, the comparison baseline's measured figure).
  * One call per stage: Gs = blocks (in-kernel group loop), Ls = count = D
  * (count % 4 == 0), tw_re = per block (R-1) [c x4][s x4] records, plain
  * sin. fwd only, IN PLACE on zout (zin ignored). Files:

@@ -27,11 +27,11 @@
  *   Demodulate (chirp): 4-7%
  *
  * As of April 2026 (PRE-MT / pre-variant-mix engine; LIKELY STALE — re-bench
- * before citing): 0.68x vs the reference library at N=509 K=256, 0.81x at
+ * before citing): 0.68x vs the comparison baseline at N=509 K=256, 0.81x at
  * K=32. The bottleneck is inner FFT speed, not chirp overhead — so this
  * number tracks the inner CT engine, which has improved substantially since
  * (MT, variant mixing, faster codelets). Recent Rader cells beat the
- * reference library on all 8 benched.
+ * comparison baseline on all 8 benched.
  *
  * Attempted optimizations (no improvement):
  *   - Pre-expanded chirp (M*B format, flat SIMD multiply instead of
@@ -41,7 +41,7 @@
  *
  * Leads for future optimization:
  *   1. Composite M selection: for N=509, M=1020 (4x5x3x17) instead
- *      of M=1024. Our composite codelets beat the reference library
+ *      of M=1024. Our composite codelets beat the comparison baseline
  *      2-3x on non-pow2, so even with one extra stage the relative
  *      FFT speed may improve. Trade: absolute FFT time may be higher,
  *      but the ratio vs that baseline better.

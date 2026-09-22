@@ -15,8 +15,8 @@
  *     3. Transpose N2×N1 → N1×N2 back
  *
  * Default: tiled with B=8. On AVX2 hardware, tiled B=8 beats both Bailey
- * and the reference library at all tested sizes (32² to 1024², 1.08-1.63x
- * over the reference library). Small tiles keep the working set in L1/L2
+ * and the comparison baseline at all tested sizes (32² to 1024², 1.08-1.63x
+ * over the comparison baseline). Small tiles keep the working set in L1/L2
  * and the SIMD 4×4/8×4 transpose kernels make gather/scatter nearly free.
  *
  * Threading:
@@ -406,7 +406,7 @@ static int _fft2d_alloc_scratch(stride_fft2d_data_t *d, size_t tile_sz) {
 }
 
 /** Default 2D plan — tiled with exhaustive sub-plan search.
- *  Beats the reference library 1.08-1.63x on AVX2, single-threaded.
+ *  Beats the comparison baseline 1.08-1.63x on AVX2, single-threaded.
  *  Tile-parallel threading for row FFTs when num_threads > 1. */
 static stride_plan_t *stride_plan_2d(
         int N1, int N2,
