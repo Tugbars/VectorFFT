@@ -1,5 +1,17 @@
 <img width="1568" height="649" alt="preview (1)" src="https://github.com/user-attachments/assets/511964c1-6402-43db-927b-98f0be4f81c9" />
 
+**VectorFFT** is a double-precision FFT library in C for x86 with AVX2 and
+AVX-512, built for workloads that run many transforms of modest length. It serves
+complex (c2c), real (r2c, c2r) and real-to-real (DCT, DST, DHT) transforms in 1D,
+2D and 3D, in place or out of place, in both complex layouts, interleaved and
+split, batched and threaded. Its kernels are emitted by its own DAG FFT compiler
+for each instruction set; the split layout has its AVX-512 kernels today, the
+interleaved layout's follow from the same compiler. You never pick an algorithm:
+a call names a contract, the planner races the engines that serve it on your
+machine, and the winner is kept as wisdom, so the first create measures and
+every later one replays. Its speed is measured against Intel MKL below, at every
+length from 2 to 4,096.
+
 ---
 
 ## Benchmark Results
