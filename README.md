@@ -56,10 +56,12 @@ relative L2 norm ||y - X|| / ||X||, in units of 1e-16 (FP64 epsilon = 2.2).
 
 Both libraries deliver 14 to 15 correct digits at every length, and MKL is the
 tighter of the two: its error stays within 3 epsilon everywhere, VectorFFT's median
-is 1.5x MKL's and its worst lengths reach 13 epsilon. On the powers of two, which
-run on the ZTURN-T kernels, the two are level; the gap is on the mixed-radix and prime
-lengths, which run on the stage kernels, so that is where the twiddle path will be
-looked at. It is measured here so it can be worked on, not hidden.
+is 1.5x MKL's and its worst lengths reach 13 epsilon. The radix-2, 4 and 8 kernels
+and ZTURN-T are level with MKL at every power of two; the gap comes from the
+odd-radix kernels, whose error grows with the radix (a solo radix-37 transform reads
+8x MKL), and every mixed-radix or prime length uses one, alone, as a stage or as
+the prime cell's inner transform. Those kernels are where it will be worked on; it
+is measured here so it can be, not hidden.
 
 | Lengths | Cells | VectorFFT median | MKL median | VectorFFT max | MKL max |
 |---|---|---|---|---|---|
@@ -81,6 +83,49 @@ Elementwise maximum error, relative to the largest output, same reference: Vecto
 median 8.3, max 41.4; MKL median 4.2, max 8.5. Roundtrip, backward of the forward
 divided by N against the input, elementwise maximum: VectorFFT median 15.6, max 103;
 MKL median 12.4, max 24.7 (all in units of 1e-16).
+
+---
+
+## Features
+
+![Transform coverage](src/tools/plots/vectorfft-coverage.svg)
+
+A request names a contract: transform, layout, placement, order, length, batch,
+threads. The library serves that contract with an engine built for it, chosen per
+cell by measurement, and nothing is converted behind the call: a cell either has a
+native engine or refuses loudly at create. The tree is the coverage, one glyph per
+leaf: a dot is a native engine, a dash a refusal by contract.
+
+- **Two layouts, two libraries.** Interleaved (`z` = re, im pairs, the MKL and FFTW
+  idiom) and split (separate `re[]` and `im[]` planes) are different contracts with
+  their own engines, kernels, races and wisdom rows. An interleaved plan never
+  touches a split plan, and there is no conversion tier between them.
+- **Both placements in each layout.** Complex transforms run in place and out of
+  place with native engines under both layouts: in-place interleaved is the same
+  call with the output pointer equal to the input, in-place split the same with
+  both planes aliased. The real transforms are out of place; in place they are
+  served for 1D interleaved only, where the CCE spectrum fits the real buffer. Every
+  other in-place real cell is a contract refusal, not missing work.
+- **Order is a contract of the complex transform.** Natural order is the default:
+  the bins come back in order, bin-for-bin comparable with MKL and FFTW, served by
+  a natural-writing engine that won the cell's race, never by a reorder pass.
+  Scrambled order is the "I do not need the bins in order" request (MKL's
+  backward-scrambled intent): served only by an engine that writes its own
+  self-consistent permutation, decoded only by the matched backward through the
+  same plan. Each order class races and banks its own writers, and a cell with no
+  scrambled writer refuses. Real and trigonometric transforms are natural by
+  construction, so the axis collapses there.
+- **Transforms and ranks.** Complex c2c, real r2c and c2r (the CCE half spectrum
+  under interleaved, two planes under split), and the real-to-real family DCT-I to
+  IV, DST-I to III and DHT as wrappers over r2c. 1D, 2D and 3D, batches of
+  transforms, and a thread count that is raced and banked per cell like everything
+  else.
+- **Any length.** Powers of two, mixed radix, odd composites and primes (Rader and
+  Bluestein) are native lengths of the interleaved contract in both placements;
+  split serves prime lengths in place.
+- **Wisdom, never heuristics.** The first create of a new cell races the engines
+  that satisfy its contract on your machine and banks the winner; later creates
+  replay it. No cost estimate ever picks a plan.
 
 ---
 
