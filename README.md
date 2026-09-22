@@ -116,6 +116,16 @@ the tree is a native engine, a dash a refusal by contract.
 - **Any length, 1D to 3D, batches, threads.** Every plan is a measured verdict
   kept in wisdom, never an estimate.
 
+![Wisdom planner](src/tools/plots/vectorfft-planner.svg)
+
+How a plan is chosen: lookup, enumerate, race, argmin, bank. A hit replays the
+banked verdict; a miss races once and banks it.
+
+![Codelet compiler](src/tools/plots/vectorfft-pipeline.svg)
+
+Where the kernels come from: the DAG FFT compiler takes a DFT as an expression
+DAG and emits straight-line, register-allocated C per instruction set.
+
 The contracts in full: [`include/vfft.h`](include/vfft.h) (support matrix and
 buffer signatures) and [`docs/design/design_contracts.md`](docs/design/design_contracts.md).
 
