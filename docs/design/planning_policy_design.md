@@ -628,7 +628,13 @@ the better one.
 - [x] 3. Step 2: L1/L2, the BAND MAP (2026-09-16). The map
       (`vfft_fam_t`, `vfft_policy_pool`, `vfft_policy_admits`),
       `vfft_policy_races` (ownership + budget as one question, which removed
-      step 1's measured duplicate), `vfft_policy_scr_writer_band` (the
+      step 1's measured duplicate; the OWNERSHIP half was lifted 2026-09-22:
+      it reserved every composite N >= 2048 with a factor of 4 outside
+      ZTURN-T's odd band for the cascade, deleted 2026-09-15, so 488 of the
+      2048 cells in 2049..4096 had no race and no bench admission -- they race
+      the natural pool now, the flat DIT admitted at every non-pow2 cell but
+      the odd band's, and `vfft_policy_k1_direct_cell` admits every non-pow2
+      N), `vfft_policy_scr_writer_band` (the
       scrambled no-fallback law) and `vfft_policy_k1_direct_cell` (the
       bench's copy, L11, now asked not kept). Every one proven equal to the
       site it replaced over N = 2..2^23. The two pools CONSUMING the map is
