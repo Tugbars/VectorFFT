@@ -57,6 +57,7 @@
 #ifndef VFFT_ZTT_H
 #define VFFT_ZTT_H
 
+#include "tw_exact.h"   /* once-rounded cos/sin(2*pi*p/n) for the create-time tables */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -264,11 +265,9 @@ static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd
                 {
                     const long b = k + lane;
                     long pw = ((long)r * b) % RL;
-                    double a, c, sn;
+                    double c, sn;   /* a = 2*pi*pw/RL */
                     if (2 * pw > RL) pw -= RL;
-                    a = 2.0 * M_PI * (double)pw / (double)RL;
-                    c = cos(a);
-                    sn = sin(a);
+                    vfft_cs2pi_exact((long long)pw, (long long)RL, &c, &sn);
                     rec[lane] = c;
                     rec[4 + lane] = bwd ? sn : -sn;
                 }
@@ -287,9 +286,7 @@ static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd
     if (up)
         for (bf = 0; bf < (1L << up); bf++)
         {
-            const double a = 2.0 * M_PI * (double)bf / (double)RL;
-            fc[bf] = cos(a);
-            fs[bf] = sin(a);
+            vfft_cs2pi_exact((long long)bf, (long long)RL, &fc[bf], &fs[bf]);
         }
     for (k = 0; k < L; k += 4)
         for (r = 1; r < R; r++)

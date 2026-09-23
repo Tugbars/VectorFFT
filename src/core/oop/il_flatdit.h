@@ -26,6 +26,7 @@
 #ifndef VFFT_IL_FLATDIT_H
 #define VFFT_IL_FLATDIT_H
 
+#include "tw_exact.h"   /* once-rounded cos/sin(2*pi*p/n) for the create-time tables */
 #include "il2p.h"
 
 #define VFFT_ILFD_MAX_K 10
@@ -220,8 +221,9 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 for (bi = 0; bi < nb; bi++) {
                     const size_t Q = _ilfd_block_Q(p, s, bi);
                     for (l = 1; l < R[s]; l++) {
-                        const double a = -2.0 * VFFT_IL2P_PI * (double)((size_t)l * Q % L) / (double)L;
-                        const double c = cos(a), sn = sin(a);
+                        double c, sn;   /* a = -2*pi*p/L: sin(a) = -sn */
+                        vfft_cs2pi_exact((long long)((size_t)l * Q % L), (long long)L, &c, &sn);
+                        sn = -sn;
                         double *rf = tz + (bi * recs_blk + (size_t)(l - 1)) * 8;
                         double *rb = tzb + (bi * recs_blk + (size_t)(l - 1)) * 8;
                         for (lane = 0; lane < 4; lane++) {
@@ -280,8 +282,9 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                     double *rf = tf + pp * 8, *rb = p->tfb[s] + pp * 8;
                     for (j = 0; j < 2; j++) {
                         const size_t jj = 2 * pp + (size_t)j;
-                        const double a = -2.0 * VFFT_IL2P_PI * (double)((W * jj) % L) / (double)L;
-                        const double c = cos(a), sn = sin(a);
+                        double c, sn;   /* a = -2*pi*p/L: sin(a) = -sn */
+                        vfft_cs2pi_exact((long long)((W * jj) % L), (long long)L, &c, &sn);
+                        sn = -sn;
                         rf[2 * j] = c; rf[2 * j + 1] = c;
                         rf[4 + 2 * j] = -sn; rf[4 + 2 * j + 1] = sn;
                         rb[2 * j] = c; rb[2 * j + 1] = c;
@@ -290,8 +293,9 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 }
                 for (g = 0; g < ngrp; g++) {
                     const size_t Q = _ilfd_block_Q(p, s, g * G);
-                    const double a = -2.0 * VFFT_IL2P_PI * (double)(Q % L) / (double)L;
-                    const double c = cos(a), sn = sin(a);
+                    double c, sn;   /* a = -2*pi*p/L: sin(a) = -sn */
+                    vfft_cs2pi_exact((long long)(Q % L), (long long)L, &c, &sn);
+                    sn = -sn;
                     double *rg = p->t2g[s] + g * 8, *rgb = p->t2gb[s] + g * 8;
                     for (lane = 0; lane < 4; lane++) {
                         rg[lane] = c; rg[4 + lane] = (lane & 1) ? sn : -sn;
@@ -313,8 +317,9 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 for (bi = 0; bi < nb; bi++) {
                     const size_t Q = _ilfd_block_Q(p, s, bi);
                     for (l = 1; l < R[s]; l++) {
-                        const double a = -2.0 * VFFT_IL2P_PI * (double)((size_t)l * Q % L) / (double)L;
-                        const double c = cos(a), sn = sin(a);
+                        double c, sn;   /* a = -2*pi*p/L: sin(a) = -sn */
+                        vfft_cs2pi_exact((long long)((size_t)l * Q % L), (long long)L, &c, &sn);
+                        sn = -sn;
                         double *rf = tf + (bi * recs_blk + (size_t)(l - 1)) * 8;
                         double *rb = p->tfb[s] + (bi * recs_blk + (size_t)(l - 1)) * 8;
                         for (lane = 0; lane < 4; lane++) {
@@ -348,8 +353,9 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                             for (j = 0; j < 2; j++) {
                                 const size_t b2 = g * G + 2 * pp + (size_t)j;
                                 const size_t Q = (b2 < nb) ? _ilfd_block_Q(p, s, b2) : 0;
-                                const double a = -2.0 * VFFT_IL2P_PI * (double)((size_t)l * Q % L) / (double)L;
-                                const double c = cos(a), sn = sin(a);
+                                double c, sn;   /* a = -2*pi*p/L: sin(a) = -sn */
+                                vfft_cs2pi_exact((long long)((size_t)l * Q % L), (long long)L, &c, &sn);
+                                sn = -sn;
                                 rf[2 * j] = c; rf[2 * j + 1] = c;
                                 rf[4 + 2 * j] = -sn; rf[4 + 2 * j + 1] = sn;
                             }

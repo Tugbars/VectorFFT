@@ -48,6 +48,7 @@
 #ifndef VFFT_IL2P_H
 #define VFFT_IL2P_H
 
+#include "tw_exact.h"   /* once-rounded cos/sin(2*pi*p/n) for the create-time tables */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1173,9 +1174,9 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
             size_t off = (pp * (size_t)(R1 - 1) + (size_t)(l - 1)) * 8u;
             double *rf = p->tw + off, *rb = p->twb + off;
             for (int j = 0; j < 2; j++) {
-                double k = (double)(2u * pp + (size_t)j);
-                double a = -2.0 * VFFT_IL2P_PI * (double)l * k / (double)N;
-                double c = cos(a), s = sin(a);
+                double c, s;   /* a = -2*pi*l*k/N, k = 2pp+j: sin(a) = -s */
+                vfft_cs2pi_exact((long long)l * (long long)(2u * pp + (size_t)j), (long long)N, &c, &s);
+                s = -s;
                 rf[2 * j] = c;      rf[2 * j + 1] = c;
                 rf[4 + 2 * j] = -s; rf[4 + 2 * j + 1] = s;
                 /* bwd: conjugate the table, kernel arithmetic unchanged */
@@ -1471,11 +1472,12 @@ static inline double *_vfft_il3p_vtw2(int legs, int blocks, int cols,
                 double *rf = tw + (((size_t)blk * npair + pp) * (legs - 1)
                                    + (size_t)(l - 1)) * 8u;
                 for (int j = 0; j < 2; j++) {
-                    double k = (double)blk * cols + (double)(2 * pp + j);
-                    double a = -2.0 * VFFT_IL2P_PI * (double)l * k / (double)modulus;
-                    double s = conj ? sin(a) : -sin(a);
-                    rf[2 * j] = cos(a);
-                    rf[2 * j + 1] = cos(a);
+                    double cc, ss, s;   /* a = -2*pi*l*k/modulus: sin(a) = -ss */
+                    vfft_cs2pi_exact((long long)l * ((long long)blk * cols + (2 * pp + j)),
+                                     (long long)modulus, &cc, &ss);
+                    s = conj ? -ss : ss;
+                    rf[2 * j] = cc;
+                    rf[2 * j + 1] = cc;
                     rf[4 + 2 * j] = s;
                     rf[4 + 2 * j + 1] = -s;
                 }
