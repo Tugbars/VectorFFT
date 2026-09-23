@@ -79,7 +79,113 @@ def read_prime_engines(store):
     return {int(m.group(1)): m.group(2) for m in re.finditer(r"@cell t=c2c n=(\d+) q=1 [^|\n]*\|[^\n]*?eng=(\w+)", t)}
 
 
+def read_calibrate_2d(path):
+    """N1xN2 -> (status, ms, served, route)"""
+    out = {}
+    if not os.path.isfile(path):
+        return out
+    for line in io.open(path, encoding="utf-8", errors="ignore"):
+        f = line.split()
+        if len(f) >= 3 and re.match(r"^\d+x\d+$", f[0]):
+            ms = int(f[2].rstrip("ms")) if f[2].endswith("ms") else 0
+            out[tuple(int(x) for x in f[0].split("x"))] = (f[1], ms, f[3] if len(f) > 3 else "?", f[4] if len(f) > 4 else "-")
+    return out
+
+
+def colclass(n1):
+    """the column length's class: what the column pass runs on"""
+    if n1 & (n1 - 1) == 0:
+        return "pow2 column"
+    if isprime(n1):
+        return "prime column"
+    return "odd column" if n1 % 2 else "even column"
+
+
+def build_2d(run_dir, sfx="_2d"):
+    """the 2D contract's report: per-shape table, by route, by column class, by plane size"""
+    rows = collections.defaultdict(list)
+    p = os.path.join(run_dir, "gauntlet%s.csv" % sfx)
+    if os.path.isfile(p):
+        for r in csv.DictReader(open(p, encoding="utf-8", errors="ignore")):
+            try:
+                rows[(int(r["N1"]), int(r["N2"]))].append(r)
+            except (KeyError, ValueError):
+                pass
+    cal = read_calibrate_2d(os.path.join(run_dir, "calibrate%s.log" % sfx))
+    cp = os.path.join(run_dir, "control%s.csv" % sfx)
+    ctl = [float(r["ratio_vs_mkl"]) for r in csv.DictReader(open(cp, encoding="utf-8", errors="ignore"))] if os.path.isfile(cp) else []
+    has_cmp = any(float(r.get("mkl_ns", 0) or 0) > 0 for rs in rows.values() for r in rs)
+    cells = {}
+    for k, rs in rows.items():
+        v = [int(r["vfft_ns"]) for r in rs]
+        rat = [float(r["ratio_vs_mkl"]) for r in rs] if has_cmp else []
+        cells[k] = dict(route=rs[0]["route"], best=min(v), worst=max(v), nflips=len(rs),
+                        lo=min(rat) if rat else 0.0, hi=max(rat) if rat else 0.0,
+                        mkl=statistics.median(int(r["mkl_ns"]) for r in rs) if has_cmp else 0,
+                        rt=max(float(r.get("rt_err", 0) or 0) for r in rs),
+                        gflops=max(float(r.get("vfft_gflops", 0) or 0) for r in rs))
+    out = []
+    W = out.append
+    keys = sorted(set(cells) | set(cal))
+    W("# gauntlet report (2D)\n")
+    W("run: `%s`  contract: 2D c2c interleaved, natural, out of place, K=1%s  cells: %d listed, %d benched, comparator: %s\n" % (
+        os.path.basename(os.path.abspath(run_dir)), sfx.replace("_2d", ""), len(keys), len(cells), "MKL DFTI 2D (out of place)" if has_cmp else "none (absolute numbers)"))
+    if ctl:
+        W("control cell 64x64: %d readings, %.3f..%.3f\n" % (len(ctl), min(ctl), max(ctl)))
+    W("\n## every shape\n")
+    W("```")
+    W(" %11s  %-12s %-6s %-9s %10s %10s %7s %8s %8s" % ("N1xN2", "N1 factors", "route", "served", "ours ns", "cmp ns", "x", "GFLOPS", "rt err"))
+    for k in keys:
+        c = cells.get(k)
+        st = cal.get(k, ("-", 0, "-", "-"))
+        served = st[2] if st[0] == "banked" else st[0].lower()
+        route = c["route"] if c else st[3]
+        name = "%dx%d" % k
+        if c:
+            W(" %11s  %-12s %-6s %-9s %10d %10s %7s %8.1f %8.1e" % (
+                name, facstr(k[0])[:12], route, served, c["best"], ("%d" % c["mkl"]) if has_cmp else "-",
+                ("%.2f" % c["lo"]) if has_cmp else "-", c["gflops"], c["rt"]))
+        else:
+            W(" %11s  %-12s %-6s %-9s %10s %10s %7s %8s %8s" % (name, facstr(k[0])[:12], route, served, "-", "-", "-", "-", "not benched"))
+    W("```\n")
+    if not has_cmp or not cells:
+        W("\n(no comparator: the ratio tables need MKL; see the ns and GFLOPS columns)\n")
+        return "\n".join(out)
+
+    def table(title, key):
+        g = collections.defaultdict(list)
+        for k, c in cells.items():
+            g[key(k, c)].append(c["lo"])
+        W("\n## %s (worse of the two flips)\n```" % title)
+        W(" %-28s %5s %6s %6s %6s %6s %6s %7s" % ("", "cells", "<0.8", "<1.0", "p10", "med", "p90", "gmean"))
+        for name, xs in sorted(g.items(), key=lambda kv: -len(kv[1])):
+            W(" %-28s %5d %6d %6d %6.2f %6.2f %6.2f %7.2f" % (name, len(xs), sum(1 for x in xs if x < 0.8), sum(1 for x in xs if x < 1),
+                                                          q(xs, .1), statistics.median(xs), q(xs, .9), gm(xs)))
+        xs = [c["lo"] for c in cells.values()]
+        W(" %-28s %5d %6d %6d %6.2f %6.2f %6.2f %7.2f" % ("ALL", len(xs), sum(1 for x in xs if x < 0.8), sum(1 for x in xs if x < 1),
+                                                      q(xs, .1), statistics.median(xs), q(xs, .9), gm(xs)))
+        W("```\n")
+
+    table("by route", lambda k, c: c["route"])
+    table("by column class (N1)", lambda k, c: colclass(k[0]))
+
+    def band(k, c):
+        t = k[0] * k[1]
+        for hi, name in ((256, "<= 256 points"), (1024, "257..1024"), (4096, "1025..4096"), (65536, "4097..65536")):
+            if t <= hi:
+                return name
+        return "> 65536 points"
+    table("by plane size", band)
+    worst = sorted(cells, key=lambda k: cells[k]["lo"])[:10]
+    W("\nworst 10: " + ", ".join("%dx%d (%s %.2f)" % (k[0], k[1], cells[k]["route"], cells[k]["lo"]) for k in worst))
+    best = sorted(cells, key=lambda k: -cells[k]["lo"])[:5]
+    W("best 5: " + ", ".join("%dx%d (%s %.2f)" % (k[0], k[1], cells[k]["route"], cells[k]["lo"]) for k in best) + "\n")
+    return "\n".join(out)
+
+
 def build(run_dir, sfx=""):
+    if sfx.startswith("_2d"):
+        return build_2d(run_dir, sfx)
     rows = read_csv(os.path.join(run_dir, "gauntlet%s.csv" % sfx))
     cal = read_calibrate(os.path.join(run_dir, "calibrate%s.log" % sfx))
     ctl = [float(r["ratio_vs_mkl"]) for r in csv.DictReader(open(os.path.join(run_dir, "control%s.csv" % sfx), encoding="utf-8", errors="ignore"))] \

@@ -491,20 +491,40 @@ let cx_eps = 1e-14
    FMA chain. The SIGN rides in the OPCODE (cfma vs cfnma) and only the
    magnitude becomes a constant - the same convention dft_recurse.ml uses, and
    the reason no fma-lift pass is needed afterwards. *)
+let cscale_step (acc : t) (c : float) (x : t) : t =
+  if abs_float c < cx_eps
+  then acc
+  else if abs_float (c -. 1.0) < cx_eps
+  then cadd acc x
+  else if abs_float (c +. 1.0) < cx_eps
+  then csub acc x
+  else if c > 0.0
+  then cfma c x acc
+  else cfnma (-.c) x acc
+;;
+
 let cscale_chain ~(seed : t) (terms : (float * t) list) : t =
-  List.fold_left
-    (fun acc (c, x) ->
-       if abs_float c < cx_eps
-       then acc
-       else if abs_float (c -. 1.0) < cx_eps
-       then cadd acc x
-       else if abs_float (c +. 1.0) < cx_eps
-       then csub acc x
-       else if c > 0.0
-       then cfma c x acc
-       else cfnma (-.c) x acc)
-    seed
-    terms
+  List.fold_left (fun acc (c, x) -> cscale_step acc c x) seed terms
+;;
+
+(* The bare real scale c*x that SEEDS a weighted sum with no natural seed
+   (the odd DFT's sine chain, 2026-09-23): 0 / +-1 collapse as in the
+   ladder, everything else is a zero-sine CTwC, rendered as one multiply. *)
+let cscale_seed (c : float) (x : t) : t option =
+  if abs_float c < cx_eps
+  then None
+  else if abs_float (c -. 1.0) < cx_eps
+  then Some x
+  else if abs_float (c +. 1.0) < cx_eps
+  then Some (cneg x)
+  else Some (ctw c 0.0 x)
+;;
+
+(* seed-or-step: the running sum of a weighted chain that may still be empty *)
+let cscale_acc (acc : t option) (c : float) (x : t) : t option =
+  match acc with
+  | None -> cscale_seed c x
+  | Some a -> Some (cscale_step a c x)
 ;;
 
 (* Winograd-5 on packed complex — port of dft_recurse.ml's
@@ -542,54 +562,81 @@ let dft_cx_winograd5 ?(sign = `Fwd) (xs : t array) : t array =
   |]
 ;;
 
+(* The angle constant of term j at output m, REDUCED: 2*pi*((j*m) mod n)/n.
+   Until 2026-09-23 the argument was 2*pi*(j*m)/n UNREDUCED -- j*m reaches
+   h^2 (529 at n = 47) -- and the double rounding of an argument of ~70 rad
+   (~70 eps) put a ~1e-14 error into every cosine and sine: the shipped odd
+   kernels read 1.4e-15..2.3e-15 max elementwise against a long double DFT
+   where the reduced form reads 2-3e-16 at every radix (scratch
+   odd_acc_probe, 200 inputs per radix; the max-|sin| seeding below costs
+   nothing). Constants only: the DAG shape and node order are unchanged. *)
+let odd_angle (n : int) (j : int) (m : int) : float =
+  let pi = 4.0 *. atan 1.0 in
+  2.0 *. pi *. float_of_int (j * m mod n) /. float_of_int n
+;;
+
+(* The conjugate PAIRS of an odd-n input, shared by every output:
+   x0, s_j = x_j + x_{n-j}, r_j = rot(x_j - x_{n-j}) (sigma*i pre-rotated,
+   move 1 above), j = 1..h. Node order: every s, then every r. *)
+let dft_cx_odd_pairs ?(sign = `Fwd) (n : int) (xs : t array) : t * t array * t array =
+  let rot x = if sign = `Fwd then crot x else crotp x in
+  let h = (n - 1) / 2 in
+  let s = Array.init h (fun i -> cadd xs.(i + 1) xs.(n - i - 1)) in
+  let r = Array.init h (fun i -> rot (csub xs.(i + 1) xs.(n - i - 1))) in
+  xs.(0), s, r
+;;
+
+(* X[0] = x0 + sum_j s_j, accumulated in j order *)
+let dft_cx_odd_dc (x0 : t) (s : t array) : t = Array.fold_left cadd x0 s
+
+(* The weights of output m: cf_j = cos, sf_j = sin of the reduced angle. *)
+let odd_weights (n : int) (m : int) : float array * float array =
+  let h = (n - 1) / 2 in
+  ( Array.init h (fun i -> cos (odd_angle n (i + 1) m))
+  , Array.init h (fun i -> sin (odd_angle n (i + 1) m)) )
+;;
+
+(* The output pair (X[m], X[n-m]), 1 <= m <= h, from the pairs, PLAIN form
+   (2026-09-23): P = x0 + sum_j cf_j s_j (one chain seeded on x0),
+   Q = sum_j sf_j r_j (one chain seeded on its first non-degenerate term),
+   X[m] = P + Q, X[n-m] = P - Q. The max-|sin| normalization this replaced
+   ("move 2") was measured to cost NO accuracy either way, and its ratio
+   constants sf_j / sf_jstar were distinct per (m, j) -- 529 vectors at
+   n = 47 -- where the plain weights are the n-1 values cos/sin(2 pi k / n)
+   that the constant table dedups to 2h entries. Both the monolithic form
+   and the blocked passes' printed term loops (c2c_il.ml emit_odd_blocked)
+   compute this dataflow, so a
+   blocked kernel and its narrow tail compute bit-identical values. *)
+let dft_cx_odd_pair ~(n : int) ~(x0 : t) ~(s : t array) ~(r : t array) (m : int) : t * t =
+  let h = (n - 1) / 2 in
+  let cf, sf = odd_weights n m in
+  let p = ref x0
+  and q = ref None in
+  for i = 0 to h - 1 do
+    p := cscale_step !p cf.(i) s.(i);
+    q := cscale_acc !q sf.(i) r.(i)
+  done;
+  match !q with
+  | None -> failwith (Printf.sprintf "dft_cx_odd: empty sine row at n=%d m=%d" n m)
+  | Some q -> cadd !p q, csub !p q
+;;
+
 let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
   if n < 3 || n mod 2 = 0
   then failwith (Printf.sprintf "dft_cx_odd: needs an ODD n >= 3, got %d" n);
   if n = 5 && !winograd_enabled
   then dft_cx_winograd5 ~sign xs
   else begin
-  let pi = 4.0 *. atan 1.0 in
-  let rot x = if sign = `Fwd then crot x else crotp x in
-  let h = (n - 1) / 2 in
-  (* conjugate pairs, shared by every output leg *)
-  let s = Array.init h (fun i -> cadd xs.(i + 1) xs.(n - i - 1)) in
-  let r = Array.init h (fun i -> rot (csub xs.(i + 1) xs.(n - i - 1))) in
-  let out = Array.make n None in
-  let acc = ref xs.(0) in
-  for i = 0 to h - 1 do
-    acc := cadd !acc s.(i)
-  done;
-  out.(0) <- Some !acc;
-  for m = 1 to h do
-    let cf j = cos (2.0 *. pi *. float_of_int (j * m) /. float_of_int n) in
-    let sf j = sin (2.0 *. pi *. float_of_int (j * m) /. float_of_int n) in
-    let p = cscale_chain ~seed:xs.(0) (List.init h (fun i -> cf (i + 1), s.(i))) in
-    (* seed the Q chain on the largest |sin| (move 2) *)
-    let jstar = ref 0 in
-    for i = 1 to h - 1 do
-      if abs_float (sf (i + 1)) > abs_float (sf (!jstar + 1)) then jstar := i
+    let h = (n - 1) / 2 in
+    let x0, s, r = dft_cx_odd_pairs ~sign n xs in
+    let out = Array.make n None in
+    out.(0) <- Some (dft_cx_odd_dc x0 s);
+    for m = 1 to h do
+      let a, b = dft_cx_odd_pair ~n ~x0 ~s ~r m in
+      out.(m) <- Some a;
+      out.(n - m) <- Some b
     done;
-    let cstar = sf (!jstar + 1) in
-    (* |sin(2pi*m/n)| > 0 for 1 <= m <= h, and cstar is the max, so this cannot
-       fire; keep it as a loud guard rather than dividing by zero silently. *)
-    if abs_float cstar < cx_eps
-    then failwith (Printf.sprintf "dft_cx_odd: degenerate sine row at n=%d m=%d" n m);
-    let qh =
-      cscale_chain
-        ~seed:r.(!jstar)
-        (List.filteri
-           (fun i _ -> i <> !jstar)
-           (List.init h (fun i -> sf (i + 1) /. cstar, r.(i))))
-    in
-    let a, b =
-      if cstar > 0.0
-      then cfma cstar qh p, cfnma cstar qh p
-      else cfnma (-.cstar) qh p, cfma (-.cstar) qh p
-    in
-    out.(m) <- Some a;
-    out.(n - m) <- Some b
-  done;
-  unwrap_legs "dft_cx_odd" out
+    unwrap_legs "dft_cx_odd" out
   end
 ;;
 

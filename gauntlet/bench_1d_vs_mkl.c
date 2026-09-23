@@ -24,6 +24,9 @@
  *   ("Inconsistent configuration parameters" at DftiCommit).
  *
  * Usage: bench_1d_vs_mkl [wisdom] [csv] [pace_ms] [N] [K] [cool_ms] [flip] [core]
+ *   --2dilnat : the 2D INTERLEAVED gauntlet cell (2026-09-23): one shape per process,
+ *            N1 = the N argument, N2 = the K argument; OOP natural K=1 vs MKL DFTI 2D
+ *            out of place, the K=1 natural cell's protocol, one csv row (N1,N2,...).
  *   --3dil : the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D (VFFT_3DIL_CELLS, VFFT_3DIL_ROUNDS);
  *            --3dil --mt = both sides at T (VFFT_MT, default 8), engagement printed per cell
  *   N=0      : legacy full in-process loop over K=BENCH_K wisdom cells (quick-look).
@@ -440,6 +443,10 @@ static int g_k1_direct_cell = 0;  /* the policy's admission for the direct K=1 c
 static int g_k1noop_mt = 0;          /* --k1noop --mt: the odd-N flat DIT's threaded verdict
                                        * (il_flatdit_mt.h) vs MKL at the same T — the
                                        * two-team protocol of --3dil --mt (traps a-d) */
+static int g_k2nat = 0;              /* --2dilnat (2026-09-23): the 2D interleaved gauntlet
+                                      * cell -- the K=1 natural cell's protocol on a
+                                      * dims=2 plan, N1 x N2, OOP, natural, one thread;
+                                      * MKL DFTI 2D out of place; one csv row per flip */
 static int g_k1nat = 0;              /* --k1nat (B6): --k1zip discipline +
                                       * order=NATURAL on our side. MKL is
                                       * ALWAYS natural — this mode finally
@@ -889,6 +896,187 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
         strncat(row, "\n", sizeof row - strlen(row) - 1);
         fflush(out);
         if (!k1z_csv_replace(g_csv_path, row))   /* a re-run REPLACES the cell's row */
+            fputs(row, out);
+        fflush(out);
+    }
+    free_d(z0);
+    free_d(S);
+    free_d(rt);
+    vfft_destroy(h);
+}
+
+/* ═════════════════════════════════════════════════
+ * --2dilnat : the 2D INTERLEAVED gauntlet cell (2026-09-23). The K=1 natural
+ * cell's protocol (run_k1z_cell) on a dims=2 plan: pin + sibling guard, the
+ * front door on the store (OOP, natural, interleaved, K=1, one thread),
+ * roundtrip gate bwd(fwd(x)) == N1*N2*x, then the CROSS-ENGINE elementwise
+ * check against MKL DFTI 2D (out of place, natural on both sides), then the
+ * two timers with cachebust + cool between engines, best-of-5 in two windows,
+ * the engine order per the driver's flip. GFLOPS = 5 T log2 T, T = N1*N2.
+ * Row: N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
+ * -- the 1D gauntlet's columns with (N1, N2) in place of (N, K), so the
+ * row-replace key (first four fields + flip) and the driver's readers hold.
+ * ═════════════════════════════════════════════════ */
+#ifdef VFFT_HAS_MKL
+static double k2z_time_mkl(int N1, int N2, const double *z0, size_t total)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    MKL_LONG dims[2];
+    dims[0] = N1;
+    dims[1] = N2;
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims) != DFTI_NO_ERROR)
+        return 0;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
+    {
+        DftiFreeDescriptor(&d);
+        return 0;
+    }
+    double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
+    memcpy(zi, z0, 2 * total * sizeof(double));
+    for (int w = 0; w < 10; w++)
+        DftiComputeForward(d, zi, zo);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int win = 0; win < 2; win++)
+    {
+        if (win)
+        {
+            const double tw0 = vfft_proto_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                DftiComputeForward(d, zi, zo);
+            while (vfft_proto_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_proto_now_ns();
+            for (int i = 0; i < reps; i++)
+                DftiComputeForward(d, zi, zo);
+            double ns = (vfft_proto_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
+    }
+    free_d(zi);
+    free_d(zo);
+    DftiFreeDescriptor(&d);
+    return best;
+}
+#endif
+
+static void run_k2z_cell(int N1, int N2, FILE *out, int cool_ms, int flip)
+{
+    const char *plan_s = "z:il2d", *path = "nat-oop";
+    if (N1 < 2 || N2 < 2)
+    {
+        printf("%dx%d: a 2D cell needs N1 >= 2 and N2 >= 2 (N2 rides the K argument)\n", N1, N2);
+        return;
+    }
+    bench_pin_one_thread();   /* the one-thread protocol + the sibling guard */
+    vfft_wisdom *W = k1z_bundle();
+    if (!W)
+    {
+        printf("%dx%d %-8s   SKIP (front-door bundle unavailable)\n", N1, N2, plan_s);
+        return;
+    }
+    vfft_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = VFFT_OUTOFPLACE;
+    cfg.rigor = VFFT_MEASURE;
+    cfg.dims = 2;
+    cfg.n[0] = N1;
+    cfg.n[1] = N2;
+    cfg.howmany = 1;
+    cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.nthreads = 1;
+    cfg.wisdom = W;
+    vfft_plan h = vfft_create(&cfg);
+    if (!h)
+    {
+        printf("%dx%d %-8s   vfft_create FAILED\n", N1, N2, plan_s);
+        return;
+    }
+    size_t total = (size_t)N1 * (size_t)N2;
+    double *z0 = alloc_d(2 * total), *S = alloc_d(2 * total), *rt = alloc_d(2 * total);
+    srand(42 + 131 * N1 + N2);
+    for (size_t i = 0; i < 2 * total; i++)
+        z0[i] = (double)rand() / RAND_MAX - 0.5;
+    /* roundtrip gate through the API */
+    vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+    vfft_execute(h, VFFT_BACKWARD, S, NULL, rt, NULL);
+    double maxerr = 0.0, maxmag = 0.0, inv = 1.0 / (double)total;
+    for (size_t i = 0; i < 2 * total; i++)
+    {
+        double e = fabs(rt[i] * inv - z0[i]), m = fabs(z0[i]);
+        if (e > maxerr) maxerr = e;
+        if (m > maxmag) maxmag = m;
+    }
+    double rel = maxmag > 0 ? maxerr / maxmag : maxerr;
+#ifdef VFFT_HAS_MKL
+    {   /* the correctness column is the CROSS-ENGINE elementwise compare:
+         * both engines natural, same input, same spectrum (as --k1nat) */
+        DFTI_DESCRIPTOR_HANDLE d = NULL;
+        MKL_LONG dims[2];
+        dims[0] = N1;
+        dims[1] = N2;
+        if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims) == DFTI_NO_ERROR)
+        {
+            DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+            if (DftiCommitDescriptor(d) == DFTI_NO_ERROR)
+            {
+                double *zm = alloc_d(2 * total);
+                DftiComputeForward(d, z0, zm);
+                double xe = 0.0, xm = 0.0;
+                for (size_t i = 0; i < 2 * total; i++)
+                {
+                    double e = fabs(S[i] - zm[i]), m = fabs(zm[i]);
+                    if (e > xe) xe = e;
+                    if (m > xm) xm = m;
+                }
+                rel = xm > 0 ? xe / xm : xe;
+                free_d(zm);
+            }
+            DftiFreeDescriptor(&d);
+        }
+    }
+#endif
+    double vns = 0, mns = 0;
+#ifdef VFFT_HAS_MKL
+    if (flip)
+    {
+        mns = k2z_time_mkl(N1, N2, z0, total);
+        cachebust();
+        pace(cool_ms);
+        vns = k1z_time_vfft(h, z0, S, total);
+    }
+    else
+    {
+        vns = k1z_time_vfft(h, z0, S, total);
+        cachebust();
+        pace(cool_ms);
+        mns = k2z_time_mkl(N1, N2, z0, total);
+    }
+#else
+    (void)cool_ms;
+    (void)flip;
+    vns = k1z_time_vfft(h, z0, S, total);
+#endif
+    double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
+    double vgf = (vns > 0) ? 5.0 * (double)total * log2((double)total) / vns : 0;
+    printf("%5dx%-5d %-8s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e  %s\n",
+           N1, N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h));
+    if (out)
+    {
+        char row[320];
+        snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
+                 N1, N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
+        fflush(out);
+        if (!k1z_csv_replace(g_csv_path, row))
             fputs(row, out);
         fflush(out);
     }
@@ -4625,6 +4813,11 @@ int main(int argc, char **argv)
         {
             il2d = 1; /* three-arm interleaved-2D scoping cell (M0a) */
         }
+        else if (strcmp(argv[1], "--2dilnat") == 0)
+        {
+            g_k2nat = 1; /* the 2D interleaved GAUNTLET cell (2026-09-23): N1 = the N
+                          * argument, N2 = the K argument; one shape per process */
+        }
         else if (strcmp(argv[1], "--3dil") == 0)
         {
             il3d = 1; /* the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D */
@@ -5348,7 +5541,9 @@ int main(int argc, char **argv)
     }
     if (out && csv_pos == 0)
     {
-        if (g_ilmt)
+        if (g_k2nat)
+            fprintf(out, "N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
+        else if (g_ilmt)
             fprintf(out, "N,K,path,threads,ours_mt_ns,ours_st_ns,mkl_mt_ns,mkl_st_ns,"
                          "ratio_vs_mkl_best,ratio_vs_mkl_mt,scale_ours,scale_mkl,"
                          "ctl_spread,xerr,mt_ne_st\n");
@@ -5368,6 +5563,15 @@ int main(int argc, char **argv)
              * already parses by position keeps its index. */
             fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip%s\n",
                     g_k1noop_mt ? ",engaged" : "");
+    }
+    if (g_k2nat)
+    {   /* --2dilnat: the 2D interleaved gauntlet cell (N1 = the N argument,
+         * N2 = the K argument); nothing else runs in this process */
+        run_k2z_cell(target_N, (int)target_K, out, cool_ms, flip);
+        if (out)
+            fclose(out);
+        printf("\nbenched 1 cell.  CSV -> %s\n", csv);
+        return 0;
     }
     if (g_ilmt)
     {

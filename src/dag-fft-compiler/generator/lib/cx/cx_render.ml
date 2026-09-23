@@ -252,6 +252,12 @@ let render
        c=1 CTwC, so flag-off output is untouched. *)
     let w = const_name tbl (isa.Isa.vec_width / 2) c s in
     Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)) (v x)
+  | CTwC (c, s, x) when s = 0.0 ->
+    (* A REAL scale c*x (2026-09-23): the seed term of the odd DFT's plain
+       sine chain (cx_math dft_cx_odd_pair). One multiply; the entry's _s
+       half is a zero vector nothing references. *)
+    let w = const_name tbl (isa.Isa.vec_width / 2) c s in
+    Isa.mul_pd isa (w ^ "_c") (v x)
   | CTwC (c, s, x) ->
     let w = const_name tbl (isa.Isa.vec_width / 2) c s in
     Isa.fmadd_pd isa (w ^ "_c") (v x) (Isa.mul_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)))

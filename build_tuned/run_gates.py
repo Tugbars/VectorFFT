@@ -192,6 +192,7 @@ BUDGET_OVERRIDE = {
     "k1_pow2_gate":            900,    # cold races at 6 pow2 cells x 2 order classes x (T=1 + T=8)
     "vfft_natural_front_gate": 1800,   # cold races at 5 N x 4 passes + reload: 12-18 min on the i9
     "odd_partner_cells_gate":  900,    # 20 cells x (correctness + A/B build pair) and wisdom_write=0: it cannot seed itself, so it recalibrates every run (464 s measured uncapped, 2026-09-02)
+    "flatdit_gate":            1800,   # cold flat-chain races at 8 odd N x 2 classes x 2 placements + T=8: 636-1000 s measured 2026-09-23; 900 killed it mid-cell
 }
 
 

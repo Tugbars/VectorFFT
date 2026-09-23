@@ -116,9 +116,9 @@ static double naive2d_rel(int N1, int N2, const double *x, const double *y)
 
 int main(int argc, char **argv)
 {
-    /* N1 = 23: no chain exists (23 is outside the column radix pool), so the
-     * column axis is Bluestein at M = 64 -> the foreign row would be 64 x 64 */
-    const int N1 = 23, N2 = 64, M = 64;
+    /* N1 = 53: no chain exists (the column radix pool ends at 47 since 2026-09-22; 23 joined it that day), so the
+     * column axis is Bluestein at M = 128 -> the foreign row would be 128 x 64 */
+    const int N1 = 53, N2 = 64, M = 128;
     const char *dir = ".";
     char owner_before[4096], owner_after[4096], cell_row[4096];
     int i, scr;
@@ -156,7 +156,7 @@ int main(int argc, char **argv)
         /* COLD: the inner races */
         (void)tap_count("blu inner");
         p = mk(W, N1, N2, scr, 0);
-        raced = tap_count("blu inner M=64 x 64: chain race");
+        raced = tap_count("blu inner M=128 x 64: chain race");
         CHECK(p != NULL, "%dx%d %s: create refused", N1, N2, cls);
         if (!p) continue;
         CHECK(raced == 1, "%dx%d %s: the inner raced %d time(s), expected 1", N1, N2, cls, raced);
@@ -174,8 +174,8 @@ int main(int argc, char **argv)
         /* 4. the cell's own verdict */
         CHECK(row_of(dir, N1, N2, scr, cell_row, sizeof cell_row),
               "%dx%d %s: the cell banked no row", N1, N2, cls);
-        CHECK(strstr(cell_row, "blu=64") != NULL,
-              "%dx%d %s: the cell's row carries no blu=64: %s", N1, N2, cls, cell_row);
+        CHECK(strstr(cell_row, "blu=128") != NULL,
+              "%dx%d %s: the cell's row carries no blu=128: %s", N1, N2, cls, cell_row);
         CHECK(strstr(cell_row, "chain=") != NULL,
               "%dx%d %s: the cell's row carries no chain=: %s", N1, N2, cls, cell_row);
 
@@ -188,7 +188,7 @@ int main(int argc, char **argv)
 
         /* 6. WARM: replay, no race, bitwise */
         p = mk(W, N1, N2, scr, 0);
-        raced = tap_count2("blu inner M=64 x 64: chain race", "blu inner M=64 x 64: replay", &replayed);
+        raced = tap_count2("blu inner M=128 x 64: chain race", "blu inner M=128 x 64: replay", &replayed);
         CHECK(p != NULL, "%dx%d %s: warm create refused", N1, N2, cls);
         if (!p) continue;
         CHECK(raced == 0 && replayed == 1,
@@ -200,7 +200,7 @@ int main(int argc, char **argv)
 
         /* 7. recalibrate re-races the inner */
         p = mk(W, N1, N2, scr, 1);
-        raced = tap_count("blu inner M=64 x 64: chain race");
+        raced = tap_count("blu inner M=128 x 64: chain race");
         CHECK(p != NULL, "%dx%d %s: recalibrate create refused", N1, N2, cls);
         if (p) vfft_destroy(p);
         CHECK(raced == 1, "%dx%d %s: recalibrate raced the inner %d time(s), expected 1",
