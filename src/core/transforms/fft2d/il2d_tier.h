@@ -743,7 +743,12 @@ static void _il2d_rows_exec(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
  * of dst rows stays in L1 while every column pair lands in it (N2 is small
  * where this route wins: dst rows are 32..128 B and would otherwise be
  * re-fetched once per column pair). Odd N1 / odd N2 finish scalar. */
-static void _il2d_turn_back(const double *T, double *dst, size_t N1, size_t N2)
+/* the scratch's row PITCH in complex: N1 + 8, so the N2 column streams never sit
+ * a multiple of 4 KB apart (they did at every N1 >= 256: one L1 set, 12-way, for
+ * 8 or 16 streams -- the route's margin shrank from 2.3x at N2 = 2 to nothing at
+ * 16 before the skew) */
+#define VFFT_IL2D_TURN_PITCH(N1) ((size_t)(N1) + 8)
+static void _il2d_turn_back(const double *T, size_t P, double *dst, size_t N1, size_t N2)
 {
     const size_t RB = 256;
     size_t r0, c, r;
@@ -752,7 +757,7 @@ static void _il2d_turn_back(const double *T, double *dst, size_t N1, size_t N2)
         const size_t r1 = (r0 + RB < N1) ? r0 + RB : N1;
         for (c = 0; c + 2 <= N2; c += 2)
         {
-            const double *ta = T + 2 * (c * N1), *tb = T + 2 * ((c + 1) * N1);
+            const double *ta = T + 2 * (c * P), *tb = T + 2 * ((c + 1) * P);
             for (r = r0; r + 2 <= r1; r += 2)
             {
                 const __m256d a = _mm256_loadu_pd(ta + 2 * r), b = _mm256_loadu_pd(tb + 2 * r);
@@ -767,7 +772,7 @@ static void _il2d_turn_back(const double *T, double *dst, size_t N1, size_t N2)
         }
         if (c < N2)
         {
-            const double *ta = T + 2 * (c * N1);
+            const double *ta = T + 2 * (c * P);
             for (r = r0; r < r1; r++)
                 _mm_storeu_pd(dst + 2 * (r * N2 + c), _mm_loadu_pd(ta + 2 * r));
         }
@@ -775,19 +780,19 @@ static void _il2d_turn_back(const double *T, double *dst, size_t N1, size_t N2)
 }
 
 /* the TURN route's execute: rows through the batched mono kernel with turned
- * stores (leg l of row k -> T[l][k]: Ls = 1, Gs = N2, OLs = N1, OGs = 1), the
+ * stores (leg l of row k -> T[l][k]: Ls = 1, Gs = N2, OLs = the skewed pitch P, OGs = 1), the
  * N2 columns as rows of T through the in-place K=1 plan at N1, the back-turn.
  * Both directions (the 2D passes commute), both placements (T is private:
  * the plane is read whole before dst is written). */
 static void _il2d_turn_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *sre, double *dre)
 {
-    const size_t N1 = (size_t)h->N, rn = (size_t)h->N2;
+    const size_t N1 = (size_t)h->N, rn = (size_t)h->N2, P = VFFT_IL2D_TURN_PITCH(N1);
     double *T = h->il2d_turn_scr;
     size_t c;
-    (dir == VFFT_FORWARD ? h->il2d_rowb_f : h->il2d_rowb_b)(sre, NULL, T, NULL, NULL, NULL, 1, rn, N1, 1, N1);
+    (dir == VFFT_FORWARD ? h->il2d_rowb_f : h->il2d_rowb_b)(sre, NULL, T, NULL, NULL, NULL, 1, rn, P, 1, N1);
     for (c = 0; c < rn; c++)
-        vfft_execute((vfft_plan)h->il2d_turn_plan, dir, T + 2 * c * N1, NULL, T + 2 * c * N1, NULL);
-    _il2d_turn_back(T, dre, N1, rn);
+        vfft_execute((vfft_plan)h->il2d_turn_plan, dir, T + 2 * c * P, NULL, T + 2 * c * P, NULL);
+    _il2d_turn_back(T, P, dre, N1, rn);
 }
 
 /* the natural leaf over [blo, bhi) blocks through worker tid's staging,

@@ -333,7 +333,7 @@ struct vfft_plan_s
      * (a turn plan runs no MT race). */
     int il2d_turn;
     struct vfft_plan_s *il2d_turn_plan; /* the in-place K=1 natural plan at N1 */
-    double *il2d_turn_scr;              /* the N2 x N1 plane, 2*N1*N2 doubles */
+    double *il2d_turn_scr;              /* the N2 x P plane, P = N1 + 8 complex (the skewed pitch) */
     /* ── c2c MT (INC-C, docs/design/il2d_real_mt.md ported): per-worker
      * row state. The serving row path is ONE shared child -- two
      * concurrent bands would interleave plan state
