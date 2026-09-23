@@ -142,6 +142,10 @@ type kind =
       ; gen2 : bool (* --cil-t2csg: t2cs with the generated twiddle stream *)
       ; grouploop : bool (* --cil-t2csgn: t2csg with the in-kernel group loop *)
       ; transposed : bool (* --cil-t2csgt / --cil-t2csgnt: the transposed backward tails *)
+      ; rowloop : bool
+        (* --cil-rowloop (2026-09-23): the in-kernel ROW LOOP -- one call runs the
+           stage over count/Ls rows (in pitch Gs, out pitch OGs); the 2D tier's
+           batched two-pass rows *)
       ; form_tag : bool
         (* --cil-form-tag: name the FORM in the emitted symbol, so a split /
            tangent / wing variant is distinguishable without a post-emit sed *)
@@ -341,7 +345,8 @@ let of_argv ?(strict = true) (argv : string list) : t =
   and colstride = ref false
   and gen2 = ref false
   and grouploop = ref false
-  and transposed = ref false in
+  and transposed = ref false
+  and rowloop = ref false in
   let k1_r1 = ref None
   and k1_il = ref false
   and k1_sw = ref false in
@@ -505,6 +510,9 @@ let of_argv ?(strict = true) (argv : string list) : t =
       push "cil-t2";
       colstride := true;
       go tl
+    | "--cil-rowloop" :: tl ->
+      rowloop := true;
+      go tl
     | "--cil-n1ccs" :: tl ->
       (* n1c with column-stride addressing (2026-09-23): lane k = ONE WHOLE
          R-point transform at pitch Gs (a row of a plane, a transform of a
@@ -667,6 +675,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
         ; gen2 = !gen2
         ; grouploop = !grouploop
         ; transposed = !transposed
+        ; rowloop = !rowloop
         ; form_tag = !cil_form_tag
         }
     | [ "k1-mono" ] -> K1_mono { r1 = !k1_r1; il = !k1_il; sw = !k1_sw }
@@ -812,7 +821,7 @@ let to_argv (c : t) : string list =
     @ emitc
   | Strided_r2c -> n @ [ "--strided-r2c" ] @ g (m.dir = Bwd) "--bwd" @ isa @ emitc
   | N1_oop_strided -> n @ [ "--oop-strided" ] @ isa @ emitc
-  | Cil { form; tangent; blocked; oddct; split; turn; pre_tw; colstride; gen2; grouploop; transposed; form_tag } ->
+  | Cil { form; tangent; blocked; oddct; split; turn; pre_tw; colstride; gen2; grouploop; transposed; rowloop; form_tag } ->
     n
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
@@ -829,6 +838,7 @@ let to_argv (c : t) : string list =
            else "--cil-t2")
       ]
     @ g tangent "--cil-tangent"
+    @ g rowloop "--cil-rowloop"
     @ g blocked "--cil-blocked"
     @ g oddct "--cil-oddct"
     @ (match split with

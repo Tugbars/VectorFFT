@@ -296,10 +296,11 @@ struct vfft_plan_s
      * L_s | wl; wide prefix stages run first); il2d_col.tfuse folds the ROW
      * PASS per band (the terminator analog). F0 law: banding changes only
      * loop order + base pointers — output memcmp-identical to unbanded. */
-    /* row route (the small-N2 lever): 0 = in-place NATURAL child (the
-     * default; pays the 1D in-place service floor ~180ns/row at tiny N);
-     * 1 = OOP NATURAL child + L1-hot row scratch + memcpy back (the mono
-     * route); 2 = the BATCHED rows (2026-09-23): ONE call of the n1ccs
+    /* row route: 0 = the in-place NATURAL child; 1 = the OOP NATURAL child +
+     * L1-hot row scratch + memcpy back -- since 2026-09-23 ONLY the FORCED
+     * path where N2 has no in-place K=1 plan (il2d_rof), never raced (as a
+     * raced route it never won beside the batched ones and was deleted);
+     * 2 = the BATCHED rows (2026-09-23): ONE call of the n1ccs
      * kernel at radix N2 over a run of rows -- lane k = row k at pitch Gs,
      * two rows per vector, no per-row door, no per-row prologue. The
      * kernels are bound at create whenever the radix has the pair
@@ -311,6 +312,19 @@ struct vfft_plan_s
     struct vfft_plan_s *il2d_rowo; /* the OOP child (route 1) */
     int il2d_rowb;                 /* route 2 serving */
     vfft_il2p_fn il2d_rowb_f, il2d_rowb_b; /* the n1ccs pair at radix N2, or NULL */
+    /* 3 = the BATCHED TWO-PASS rows (2026-09-23): the row child's own two-pass
+     * factorization (R1 x R2, its bound kernel forms) through the ROW-LOOP twins
+     * of its four stage kernels (n1t leaf, t2 mid; t2t + n1 backward) -- per
+     * chunk of VFFT_IL2D_RB2_CHUNK rows one call per stage, staged through a
+     * per-worker contiguous scratch (rows at pitch N2). The twins' ABI: count =
+     * rows x Ls lanes, Gs = the input row pitch, OGs = the output row pitch.
+     * Bound at create when the child is a two-pass plan whose kernels all have
+     * twins (_il2d_rowloop_twin); the race / the banked ro=3 / the env pin
+     * decide whether it serves. */
+    int il2d_rowb2;
+    vfft_il2p_fn il2d_rowb2_leaf_f, il2d_rowb2_mid_f, il2d_rowb2_t2t_b, il2d_rowb2_n1_b;
+    double *il2d_rowb2_scr;        /* T slots x CHUNK rows x 2*N2 doubles */
+    int il2d_rowb2_ch;             /* the TILE: rows per stage call, from the raced rbk= (KB of scratch) */
     /* ── c2c MT (INC-C, docs/design/il2d_real_mt.md ported): per-worker
      * row state. The serving row path is ONE shared child through ONE
      * shared rowscr — two concurrent bands would interleave plan state

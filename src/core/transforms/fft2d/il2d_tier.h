@@ -622,7 +622,48 @@ static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid,
  * child + scratch, 2 = the batched rows (the ro= token, 2026-09-23) */
 static int _il2d_ro_of(const struct vfft_plan_s *h)
 {
-    return h->il2d_rowb ? 2 : (h->il2d_rowoop ? 1 : 0);
+    return h->il2d_rowb2 ? 3 : h->il2d_rowb ? 2 : (h->il2d_rowoop ? 1 : 0);
+}
+
+/* the ROW-LOOP twin of a two-pass stage kernel (2026-09-23): the same body
+ * with the in-kernel row loop (count = rows x Ls lanes, in pitch Gs, out pitch
+ * OGs); NULL where the corpus has none -- then the two-pass rows have no arm */
+#define VFFT_IL2D_RB2_CHUNK 64   /* the tile's ceiling in rows: the per-worker scratch is CHUNK x N2 */
+/* the two-pass rows' TILE (2026-09-23): a RACED axis like ZTURN-T's tile --
+ * the ladder is the chunk scratch in KB, rows = KB*1024 / (16*N2), 2..CHUNK;
+ * banked as rbk= beside ro=3, replayed, VFFT_IL2D_RB2_KB pins it for probes */
+static const int VFFT_IL2D_RB2_KB_LADDER[4] = { 4, 8, 16, 32 };
+static size_t _il2d_rb2_rows(int kb, size_t rn)
+{
+    size_t r = (size_t)kb * 1024 / (16 * rn);
+    return r < 2 ? 2 : (r > VFFT_IL2D_RB2_CHUNK ? VFFT_IL2D_RB2_CHUNK : r);
+}
+static vfft_il2p_fn _il2d_rowloop_twin(vfft_il2p_fn f)
+{
+    if (!f) return 0;
+#define T_(a, b) if (f == (vfft_il2p_fn)a) return b;
+    T_(radix4_z_n1t_fwd_avx2, radix4_z_n1tr_fwd_avx2)
+    T_(radix8_z_n1t_fwd_avx2, radix8_z_n1tr_fwd_avx2)
+    T_(radix16_z_n1t_fwd_avx2, radix16_z_n1tr_fwd_avx2)
+    T_(radix4_z_t2_fwd_avx2, radix4_z_t2r_fwd_avx2)
+    T_(radix8_z_t2_fwd_avx2, radix8_z_t2r_fwd_avx2)
+    T_(radix16_z_t2_fwd_avx2, radix16_z_t2r_fwd_avx2)
+    T_(radix4_z_t2t_bwd_avx2, radix4_z_t2tr_bwd_avx2)
+    T_(radix8_z_t2t_bwd_avx2, radix8_z_t2tr_bwd_avx2)
+    T_(radix16_z_t2t_bwd_avx2, radix16_z_t2tr_bwd_avx2)
+    T_(radix4_z_n1_bwd_avx2, radix4_z_n1r_bwd_avx2)
+    T_(radix8_z_n1_bwd_avx2, radix8_z_n1r_bwd_avx2)
+    T_(radix16_z_n1_bwd_avx2, radix16_z_n1r_bwd_avx2)
+    T_(radix8_z_n1ttan_fwd_avx2, radix8_z_n1trtan_fwd_avx2)
+    T_(radix16_z_n1ttan_fwd_avx2, radix16_z_n1trtan_fwd_avx2)
+    T_(radix8_z_t2tan_fwd_avx2, radix8_z_t2rtan_fwd_avx2)
+    T_(radix16_z_t2tan_fwd_avx2, radix16_z_t2rtan_fwd_avx2)
+    T_(radix8_z_t2ttan_bwd_avx2, radix8_z_t2trtan_bwd_avx2)
+    T_(radix16_z_t2ttan_bwd_avx2, radix16_z_t2trtan_bwd_avx2)
+    T_(radix8_z_n1tan_bwd_avx2, radix8_z_n1rtan_bwd_avx2)
+    T_(radix16_z_n1tan_bwd_avx2, radix16_z_n1rtan_bwd_avx2)
+#undef T_
+    return 0;
 }
 
 /* the row pass over a RUN of rows (2026-09-23): nrows rows, row i at
@@ -641,6 +682,50 @@ static void _il2d_rows_exec(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
                             size_t p0, size_t pstep, size_t nrows)
 {
     size_t i;
+    if (h->il2d_rowb2)
+    {   /* route 3: the batched TWO-PASS rows -- per chunk, stage 1 rows ->
+         * the worker's scratch (rows at pitch rn), stage 2 scratch -> rows;
+         * backward t2t then n1 the same way; the four-step's hook per row
+         * around the run as route 2 */
+        const vfft_il2p_plan_t *p = h->il2d_row->k1il2p;
+        const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+        double *scr = h->il2d_rowb2_scr + (size_t)(tid > 0 ? tid : 0) * 2 * (size_t)VFFT_IL2D_RB2_CHUNK * rn;
+        const int fwd = (dir == VFFT_FORWARD);
+        /* the tile: the raced rbk= (a 64-row chunk at N2 = 32/64 spilled L1 and
+         * lost to the per-row child; 16 rows at 32 won 1.5x, 2026-09-23) */
+        const size_t ch = h->il2d_rowb2_ch > 0 ? (size_t)h->il2d_rowb2_ch : 2;
+        size_t i0;
+        if (h->il2d_fs_tw && fwd)
+            for (i = 0; i < nrows; i++)
+            {
+                const double *tw = _il2d_fs_rec(h, rn, p0 + i * pstep);
+                if (tw)
+                    _il2d_fs_twiddle(base + 2 * i * pitch, tw, h->il2d_fs_B, rn, 0);
+            }
+        for (i0 = 0; i0 < nrows; i0 += ch)
+        {
+            const size_t n = (nrows - i0 < ch) ? nrows - i0 : ch;
+            double *b = base + 2 * i0 * pitch;
+            if (fwd)
+            {
+                h->il2d_rowb2_leaf_f(b, NULL, scr, NULL, NULL, NULL, R1, pitch, R2, rn, n * R1);
+                h->il2d_rowb2_mid_f(scr, NULL, b, NULL, p->tw, NULL, R2, rn, R2, pitch, n * R2);
+            }
+            else
+            {
+                h->il2d_rowb2_t2t_b(b, NULL, scr, NULL, p->twb, NULL, R2, pitch, R1, rn, n * R2);
+                h->il2d_rowb2_n1_b(scr, NULL, b, NULL, NULL, NULL, R1, rn, R1, pitch, n * R1);
+            }
+        }
+        if (h->il2d_fs_tw && !fwd)
+            for (i = 0; i < nrows; i++)
+            {
+                const double *tw = _il2d_fs_rec(h, rn, p0 + i * pstep);
+                if (tw)
+                    _il2d_fs_twiddle(base + 2 * i * pitch, tw, h->il2d_fs_B, rn, 1);
+            }
+        return;
+    }
     if (h->il2d_rowb)
     {
         const int fwd = (dir == VFFT_FORWARD);
@@ -2250,21 +2335,25 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
 }
 
 /* the §10a axis race: time the FULL execute (column chain + rows) over
- * the wl candidates x the row routes, set the winner on the plan, bank
- * chain+wl+tf+ro as one lay=il verdict. Falsifier-grounded: wl wins
- * +15-21% at some cells and LOSES at others; rowoop wins 1.6-2x at
- * N2<=64 and loses at large N2 — per-cell only, never defaults. */
-/* one (wl, rowoop) configuration of the axis race, as a race ARM: sets the
- * plan's band axes, then one full forward execute through the serving path
- * (the natural banded walk under NATURAL, the scrambled one otherwise). */
+ * the wl candidates x the row routes (x the two-pass rows' tile), set the
+ * winner on the plan, bank chain+wl+tf+ro(+rbk) as one lay=il verdict.
+ * Falsifier-grounded: wl wins +15-21% at some cells and LOSES at others;
+ * the batched rows win at N2 <= 16 (mono) and 32/64 (two-pass) and the
+ * per-row child elsewhere -- per-cell only, never defaults. The raced
+ * out-of-place child route (ro=1, the copy-back) was DELETED 2026-09-23:
+ * beside the batched routes it never won; the out-of-place child survives
+ * only as the FORCED row path where N2 has no in-place K=1 plan. */
+/* one (row route, wl, tile) configuration of the axis race, as a race ARM:
+ * sets the plan's band axes, then one full forward execute through the
+ * serving path (the natural banded walk under NATURAL, the scrambled one
+ * otherwise). */
 typedef struct
 {
     struct vfft_plan_s *h;
     double *z;
-    struct vfft_plan_s *rowo;
-    double *rowscr;
     int wl, cut, ro;
     int wc;                   /* the unbanded walk's column tile (0 = the whole plane) */
+    int kb;                   /* ro=3: the two-pass rows' tile, KB of chunk scratch */
     char name[24];
 } _il2d_axis_arm_t;
 static void _il2d_arm_axis(void *v)
@@ -2275,10 +2364,10 @@ static void _il2d_arm_axis(void *v)
     h->il2d_col.cut = c->cut;
     h->il2d_col.tfuse = (c->wl > 0);
     h->il2d_col.wc = c->wc;
-    h->il2d_rowoop = (c->ro == 1);
     h->il2d_rowb = (c->ro == 2);   /* the batched rows (ro=2, 2026-09-23) */
-    h->il2d_rowo = c->ro == 1 ? c->rowo : NULL;
-    h->il2d_rowscr = c->ro == 1 ? c->rowscr : NULL;
+    h->il2d_rowb2 = (c->ro == 3);  /* the batched two-pass rows (ro=3) */
+    if (c->ro == 3)
+        h->il2d_rowb2_ch = (int)_il2d_rb2_rows(c->kb, (size_t)h->N2);
     vfft_execute((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
 }
 
@@ -2295,9 +2384,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
 {
     const size_t T = (size_t)N1 * N2;
     double *z = (double *)malloc(2 * T * sizeof(double));
-    struct vfft_plan_s *rowo = NULL;
-    double *rowscr = NULL;
-    int wlc[14], nwl = 1, wi, ro, bwl = 0, bro = 0, bwc = 0;
+    int wlc[14], nwl = 1, wi, ro, bwl = 0, bro = 0, bwc = 0, bkb = 8;
     int swl[6], nsw = 0;
     double best = 1e300;
     size_t i;
@@ -2360,33 +2447,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     /* the unbanded walk's tile (il2d_large_plane_design.md, 2026-09-15):
      * every ladder width an arm beside wl = 0 */
     nsw = _il2d_sw_ladder(N1, N2, 1, swl, 6);
-    /* the OOP row child for the rowoop arms (kept only if it wins) */
-    {
-        vfft_config_t rc;
-        memset(&rc, 0, sizeof rc);
-        rc.transform = VFFT_C2C;
-        rc.placement = VFFT_OUTOFPLACE;
-        rc.rigor = cfg->rigor;
-        rc.dims = 1;
-        rc.n[0] = N2;
-        rc.howmany = 1;
-        rc.order = VFFT_ORDER_NATURAL;
-        rc.layout = VFFT_LAYOUT_INTERLEAVED;
-        rc.nthreads = 1;
-        rc.wisdom = cfg->wisdom;
-        rc.wisdom_write = cfg->wisdom_write;
-        rowo = (struct vfft_plan_s *)vfft_create(&rc);
-        if (rowo)
-        {
-            rowscr = (double *)malloc(2 * (size_t)N2 * sizeof(double));
-            if (!rowscr)
-            {
-                vfft_destroy(rowo);
-                rowo = NULL;
-            }
-        }
-    }
-    /* every (rowoop, wl) configuration is an ARM of ONE race, rounds
+    /* every (row route, wl, tile) configuration is an ARM of ONE race, rounds
      * alternating direction — the house protocol (2026-09-05). The
      * sequential per-configuration loop it replaces timed each arm in
      * its own block, so drift favoured whichever ran in the cooler
@@ -2398,16 +2459,17 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
         double ns[VFFT_RACE_MAX_ARMS];
         int na = 0, a;
-        for (ro = 0; ro <= 2; ro++)
+        for (ro = 0; ro <= 3; ro++)
             for (wi = 0; wi < nwl && na < VFFT_RACE_MAX_ARMS; wi++)
             {
                 int s2, cut = 0;
                 const int w = wlc[wi];
                 (void)s2;
-                /* the row routes: 0 = the in-place child; 1 = the OOP child
-                 * + scratch, when it built; 2 = the BATCHED rows, when the
-                 * radix has the n1ccs pair (2026-09-23) */
-                if ((ro == 1 && !rowo) || (ro == 2 && !h->il2d_rowb_f))
+                /* the row routes: 0 = the in-place child; 2 = the BATCHED rows,
+                 * when the radix has the n1ccs pair; 3 = the batched TWO-PASS
+                 * rows, when the child's stage kernels have row-loop twins
+                 * (2026-09-23). 1, the raced OOP child, is deleted. */
+                if (ro == 1 || (ro == 2 && !h->il2d_rowb_f) || (ro == 3 && !h->il2d_rowb2_leaf_f))
                     continue;
                 if (w > 0)
                 {   /* an admitted width's cut; 0 kept where none (R3) */
@@ -2415,28 +2477,37 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                     if (r >= 0) cut = r;
                 }
                 {
-                    int sub;
+                    int sub, ki;
                     for (sub = 0; sub <= (w == 0 ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
-                    {
-                        ac[na].h = h;
-                        ac[na].z = z;
-                        ac[na].rowo = rowo;
-                        ac[na].rowscr = rowscr;
-                        ac[na].wl = w;
-                        ac[na].cut = cut;
-                        ac[na].ro = ro;
-                        ac[na].wc = sub ? swl[sub - 1] : 0;
-                        if (sub)
-                            snprintf(ac[na].name, sizeof ac[na].name, "sw%d%s", ac[na].wc,
-                                     ro == 1 ? "+rowoop" : ro == 2 ? "+rowb" : "");
-                        else
-                            snprintf(ac[na].name, sizeof ac[na].name, "wl%d%s", w,
-                                     ro == 1 ? "+rowoop" : ro == 2 ? "+rowb" : "");
-                        arms[na].name = ac[na].name;
-                        arms[na].run = _il2d_arm_axis;
-                        arms[na].ctx = &ac[na];
-                        na++;
-                    }
+                        for (ki = 0; ki < (ro == 3 ? 4 : 1) && na < VFFT_RACE_MAX_ARMS; ki++)
+                        {
+                            const int kb = ro == 3 ? VFFT_IL2D_RB2_KB_LADDER[ki] : 0;
+                            if (ro == 3 && ki > 0 &&
+                                _il2d_rb2_rows(kb, (size_t)N2) == _il2d_rb2_rows(VFFT_IL2D_RB2_KB_LADDER[ki - 1], (size_t)N2))
+                                continue;   /* the same tile in rows: one arm */
+                            ac[na].h = h;
+                            ac[na].z = z;
+                            ac[na].wl = w;
+                            ac[na].cut = cut;
+                            ac[na].ro = ro;
+                            ac[na].kb = kb;
+                            ac[na].wc = sub ? swl[sub - 1] : 0;
+                            if (sub)
+                                snprintf(ac[na].name, sizeof ac[na].name, "sw%d%s", ac[na].wc,
+                                         ro == 2 ? "+rowb" : "");
+                            else
+                                snprintf(ac[na].name, sizeof ac[na].name, "wl%d%s", w,
+                                         ro == 2 ? "+rowb" : "");
+                            if (ro == 3)
+                            {
+                                const size_t used = strlen(ac[na].name);
+                                snprintf(ac[na].name + used, sizeof ac[na].name - used, "+rb2k%d", kb);
+                            }
+                            arms[na].name = ac[na].name;
+                            arms[na].run = _il2d_arm_axis;
+                            arms[na].ctx = &ac[na];
+                            na++;
+                        }
                 }
             }
         {
@@ -2450,6 +2521,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 bwl = ac[a].wl;
                 bro = ac[a].ro;
                 bwc = ac[a].wc;
+                bkb = ac[a].ro == 3 ? ac[a].kb : 8;
             }
         if (getenv("VFFT_IL2D_LOG"))
         {
@@ -2460,7 +2532,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             fprintf(stderr, " -> wl=%d sw=%d ro=%d\n", bwl, bwc, bro);
         }
     }
-    /* set the winner, keep or drop the OOP child */
+    /* set the winner */
     {
         int s2, cut = 0;
         (void)s2;
@@ -2473,26 +2545,16 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         h->il2d_col.cut = cut;
         h->il2d_col.tfuse = (bwl > 0);
         h->il2d_col.wc = bwc;
-        h->il2d_rowoop = (bro == 1);
         h->il2d_rowb = (bro == 2);
-        if (bro == 1 && rowo)
-        {
-            h->il2d_rowo = rowo;
-            h->il2d_rowscr = rowscr;
-        }
-        else
-        {
-            h->il2d_rowo = NULL;
-            h->il2d_rowscr = NULL;
-            if (rowo)
-                vfft_destroy(rowo);
-            free(rowscr);
-        }
+        h->il2d_rowb2 = (bro == 3);
+        if (bro == 3)
+            h->il2d_rowb2_ch = (int)_il2d_rb2_rows(bkb, (size_t)N2);
     }
     vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
                          h->il2d_col.wl, h->il2d_col.tfuse, _il2d_ro_of(h),
                          -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, vfft_policy_ord_rankn(cfg));
     vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "sw", bwc);
+    vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "rbk", bkb);   /* the two-pass rows' tile */
     _vw2_persist(W, cfg);
     free(z);
 }

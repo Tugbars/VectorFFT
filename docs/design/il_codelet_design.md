@@ -129,6 +129,16 @@ flowchart TD
   count-1 solo ran its VEX-128 tail. It is the 2D interleaved tier's third row route (ro=2,
   raced against the per-row child and the OOP child; 2026-09-23) and the K-batch form of the
   mono. `--cil-n1ccs`; the emitter refuses column-stride on every other kind but t2.
+* **row loop (`n1tr`, `t2r`, `t2tr`, `n1r`, and their `tan` twins) — *the per-row door and
+  prologue of a two-pass row*.** The plain n1 / n1t / t2 (+turnst) body with its lane loop
+  wrapped in a loop over rows: `count` = rows x `Ls` lanes (the two-pass identity: a stage's
+  legs are strided by the other factor, which is its lane count), `Gs` the input row pitch,
+  `OGs` the output row pitch, the t2 cursor derived from k so it restarts per row. One call
+  runs a stage over a chunk of rows; the 2D tier's batched two-pass row route (ro=3) runs
+  the row child's own factorization through the four twins, staged through a per-worker
+  scratch whose size is a raced tile (rbk=). Radices 4/8/16 plain, 8/16 tangent, 2026-09-23;
+  the blocked radix-32 forms have no twin. `--cil-rowloop`; refused with t2c, column-stride,
+  group loop, blocked, log3, turnst-gs.
 
 ### The threshold: when does restructuring pay?
 

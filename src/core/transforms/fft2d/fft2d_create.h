@@ -231,6 +231,10 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         int il2d_rof = 0;          /* row route FORCED oop (odd N2 c2c) */
         int il2d_rowb = 0;         /* row route 2: the BATCHED rows (2026-09-23) */
         vfft_il2p_fn il2d_rowb_f = NULL, il2d_rowb_b = NULL; /* its n1ccs pair at N2, when the radix has one */
+        int il2d_rowb2 = 0;        /* row route 3: the batched TWO-PASS rows (2026-09-23) */
+        vfft_il2p_fn il2d_rowb2_leaf_f = NULL, il2d_rowb2_mid_f = NULL, il2d_rowb2_t2t_b = NULL, il2d_rowb2_n1_b = NULL;
+        double *il2d_rowb2_scr = NULL;
+        int il2d_rowb2_ch = 0;     /* its tile in rows, from the banked rbk= / the env pin */
         int il2d_nat = 0;          /* NATURAL n1 via the leaf redirection */
         int *il2d_natperm = NULL;
         double *il2d_natscr = NULL;
@@ -364,6 +368,47 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 if (il2d_row && !il2d_rof && il2d_rowb_f && getenv("VFFT_IL2D_ROWOOP") &&
                     atoi(getenv("VFFT_IL2D_ROWOOP")) == 2)
                     il2d_rowb = 1;
+                /* the BATCHED TWO-PASS rows (ro=3, 2026-09-23): the row child's
+                 * own two-pass factorization through the row-loop twins of its
+                 * four stage kernels -- per chunk of rows one call per stage,
+                 * staged through a per-worker contiguous scratch. Bound when the
+                 * child is a two-pass plan whose kernels all have twins; the
+                 * axis race (or the banked ro=3, or VFFT_IL2D_ROWOOP=3) decides. */
+                if (il2d_row && !il2d_rof && il2d_row->k1il2p)
+                {
+                    const vfft_il2p_plan_t *pp = il2d_row->k1il2p;
+                    il2d_rowb2_leaf_f = _il2d_rowloop_twin(pp->leaf_f);
+                    il2d_rowb2_mid_f = _il2d_rowloop_twin(pp->mid_f);
+                    il2d_rowb2_t2t_b = _il2d_rowloop_twin(pp->t2t_b);
+                    il2d_rowb2_n1_b = _il2d_rowloop_twin(pp->n1_b_r2);
+                    if (il2d_rowb2_leaf_f && il2d_rowb2_mid_f && il2d_rowb2_t2t_b && il2d_rowb2_n1_b)
+                    {
+                        const int Tn = _vfft_plan_threads(cfg) > 0 ? _vfft_plan_threads(cfg) : 1;
+                        il2d_rowb2_scr = (double *)VFFT_ZS_ALLOC((size_t)Tn * 2 * (size_t)VFFT_IL2D_RB2_CHUNK
+                                                                * (size_t)N2 * sizeof(double));
+                    }
+                    if (!il2d_rowb2_scr)
+                        il2d_rowb2_leaf_f = il2d_rowb2_mid_f = il2d_rowb2_t2t_b = il2d_rowb2_n1_b = NULL;
+                }
+                if (il2d_row && !il2d_rof && il2d_bro == 3)
+                {
+                    if (il2d_rowb2_leaf_f && !getenv("VFFT_IL2D_ROWOOP"))
+                        il2d_rowb2 = 1;
+                    else if (!il2d_rowb2_leaf_f)
+                        il2d_bro = -1;
+                }
+                if (il2d_row && !il2d_rof && il2d_rowb2_leaf_f && getenv("VFFT_IL2D_ROWOOP") &&
+                    atoi(getenv("VFFT_IL2D_ROWOOP")) == 3)
+                    il2d_rowb2 = 1;
+                /* the tile: the banked rbk= (KB of chunk scratch; 8 where a row
+                 * predates the token), VFFT_IL2D_RB2_KB pinning it for probes */
+                if (il2d_rowb2_leaf_f)
+                {
+                    int kb = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "rbk", 8);
+                    if (getenv("VFFT_IL2D_RB2_KB") && atoi(getenv("VFFT_IL2D_RB2_KB")) > 0)
+                        kb = atoi(getenv("VFFT_IL2D_RB2_KB"));
+                    il2d_rowb2_ch = (int)_il2d_rb2_rows(kb, (size_t)N2);
+                }
                 /* column-tile width: env override (raced axis; wisdom
                  * banking follows the falsifier run — tcut precedent:
                  * env BEATS wisdom). 0/absent/invalid = untiled. */
@@ -373,72 +418,15 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                   ? atoi(wce)
                                   : 0;
                 }
-                /* row route: VFFT_IL2D_ROWOOP=1 swaps the per-row
-                 * child for an OOP NATURAL one + scratch (the mono
-                 * route). Falls back to the in-place child if the OOP
-                 * create or the scratch fails. */
-                if (il2d_row && !getenv("VFFT_IL2D_ROWOOP") &&
-                    il2d_bro == 1)
-                {
-                    /* banked row-route verdict (env silent): build the
-                     * OOP child; on failure fall back to in-place. */
-                    vfft_config_t ro;
-                    memset(&ro, 0, sizeof ro);
-                    ro.transform = VFFT_C2C;
-                    ro.placement = VFFT_OUTOFPLACE;
-                    ro.rigor = cfg->rigor;
-                    ro.dims = 1;
-                    ro.n[0] = N2;
-                    ro.howmany = 1;
-                    ro.order = VFFT_ORDER_NATURAL;
-                    ro.layout = VFFT_LAYOUT_INTERLEAVED;
-                    ro.nthreads = 1;
-                    ro.wisdom = cfg->wisdom;
-                    ro.wisdom_write = cfg->wisdom_write;
-                    il2d_rowo = (struct vfft_plan_s *)vfft_create(&ro);
-                    if (il2d_rowo)
-                    {
-                        il2d_rowscr = (double *)malloc(
-                            2 * (size_t)N2 * sizeof(double));
-                        if (il2d_rowscr)
-                            il2d_rowoop = 1;
-                        else
-                        {
-                            vfft_destroy(il2d_rowo);
-                            il2d_rowo = NULL;
-                        }
-                    }
-                }
-                if (il2d_row && getenv("VFFT_IL2D_ROWOOP") &&
-                    atoi(getenv("VFFT_IL2D_ROWOOP")) == 1)
-                {
-                    vfft_config_t ro;
-                    memset(&ro, 0, sizeof ro);
-                    ro.transform = VFFT_C2C;
-                    ro.placement = VFFT_OUTOFPLACE;
-                    ro.rigor = cfg->rigor;
-                    ro.dims = 1;
-                    ro.n[0] = N2;
-                    ro.howmany = 1;
-                    ro.order = VFFT_ORDER_NATURAL;
-                    ro.layout = VFFT_LAYOUT_INTERLEAVED;
-                    ro.nthreads = 1;
-                    ro.wisdom = cfg->wisdom;
-                    ro.wisdom_write = cfg->wisdom_write;
-                    il2d_rowo = (struct vfft_plan_s *)vfft_create(&ro);
-                    if (il2d_rowo)
-                    {
-                        il2d_rowscr = (double *)malloc(
-                            2 * (size_t)N2 * sizeof(double));
-                        if (il2d_rowscr)
-                            il2d_rowoop = 1;
-                        else
-                        {
-                            vfft_destroy(il2d_rowo);
-                            il2d_rowo = NULL;
-                        }
-                    }
-                }
+                /* the row routes (2026-09-23): 0 = the in-place child, 2 = the
+                 * batched rows, 3 = the batched two-pass rows, raced below and
+                 * banked as ro=; VFFT_IL2D_ROWOOP=2|3 pins one for a probe. The
+                 * raced out-of-place child (ro=1, the copy-back) is DELETED: a
+                 * row banked on it re-races. The out-of-place child + scratch
+                 * exists only as the FORCED row path above (il2d_rof), where N2
+                 * has no in-place K=1 plan. */
+                if (il2d_row && !il2d_rof && il2d_bro == 1)
+                    il2d_bro = -1;
                 /* staged band route: VFFT_IL2D_STAGED=1 (needs a
                  * band; checked after the wl parse below). */
                 /* banded walk: VFFT_IL2D_WL = band width in ROWS (the
@@ -878,6 +866,13 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         h->il2d_rowb = il2d_rowb;
         h->il2d_rowb_f = il2d_rowb_f;
         h->il2d_rowb_b = il2d_rowb_b;
+        h->il2d_rowb2 = il2d_rowb2;
+        h->il2d_rowb2_leaf_f = il2d_rowb2_leaf_f;
+        h->il2d_rowb2_mid_f = il2d_rowb2_mid_f;
+        h->il2d_rowb2_t2t_b = il2d_rowb2_t2t_b;
+        h->il2d_rowb2_n1_b = il2d_rowb2_n1_b;
+        h->il2d_rowb2_scr = il2d_rowb2_scr;
+        h->il2d_rowb2_ch = il2d_rowb2_ch;
         h->il2d_col.staged = il2d_staged;
         h->il2d_col.pitch = il2d_pitch;
         h->il2d_col.bandscr = il2d_bandscr;

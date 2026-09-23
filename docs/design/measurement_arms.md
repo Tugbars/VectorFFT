@@ -775,12 +775,29 @@ E1.2 wl - banded column walk width    RACED. {0 unbanded} + WPOOL
 E1.3 cut                              DERIVED from wl (the tcut law: width is the
                                       INPUT, cut is the OUTPUT).
 E1.4 tf (tfuse)                       DERIVED; slaved to wl (tfuse = w > 0).
-E1.5 roop - row route                 RACED. in-place per-row K=1 child (0) vs an OOP
-                                      child + 2*N2 scratch + copy-back (1) vs the
+E1.5 roop - row route                 RACED. in-place per-row K=1 child (0) vs the
                                       BATCHED rows (2, 2026-09-23): ONE n1ccs call
                                       per run of rows -- lane k = row k, two rows
                                       per vector, no per-row door -- an arm wherever
-                                      radix N2 has the n1ccs pair.
+                                      radix N2 has the n1ccs pair; vs the BATCHED
+                                      TWO-PASS rows (3, 2026-09-23): the child's own
+                                      two-pass factorization through the row-loop
+                                      twins of its four stage kernels, one call per
+                                      stage per chunk of rows staged through a
+                                      per-worker scratch -- an arm wherever the
+                                      child is two-pass and its kernels have twins.
+                                      The OOP child + 2*N2 scratch + copy-back (1)
+                                      is NOT an arm since 2026-09-23 (it never won
+                                      beside the batched routes): it is the FORCED
+                                      row path only, where N2 has no in-place K=1
+                                      plan (129 = 3*43); a row banked ro=1 re-races.
+E1.5b rbk - the two-pass rows' TILE   RACED with E1.5 (ZTURN-T's tile precedent): the
+                                      chunk scratch in KB {4, 8, 16, 32} -> rows =
+                                      KB*1024 / (16*N2); every ro=3 arm runs once per
+                                      ladder step; banked beside ro=3, replayed;
+                                      VFFT_IL2D_RB2_KB pins it for probes. Measured
+                                      2026-09-23: a 64-row chunk at N2 = 32/64 spilled
+                                      L1 and lost to the per-row child; 4-8 KB win.
 E1.6 cmt - column/band MT             RACED, banked WITH cmtt (the per-T class).
                                       Bluestein column axes included since
                                       2026-09-02 (the column-window pipeline,

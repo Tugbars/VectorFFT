@@ -227,6 +227,7 @@ let emit
       ~(gen2 : bool)
       ~(grouploop : bool)
       ~(transposed : bool)
+      ~(rowloop : bool)
       ~(tangent : bool)
       ~(form_tag : bool)
       ~(turnst : bool)
@@ -279,6 +280,24 @@ let emit
      forcing is skipped. Backward only; the symbol carries a "t". *)
   if transposed && (not colstride || dir <> Bwd)
   then failwith "codelet_cil: --cil-t2csgt / --cil-t2csgnt are backward column-stride tails";
+  (* the in-kernel ROW LOOP (2026-09-23): the lane loop (wide + tail) wrapped in
+     a loop over rows. The row-loop ABI on the frozen 11-arg signature: count =
+     TOTAL lanes = rows x Ls; Ls = the leg stride = the lanes per row (the
+     two-pass identity: a stage's legs are strided by the other factor, which is
+     its lane count); Gs = the INPUT row pitch; OGs = the OUTPUT row pitch; OLs
+     the output leg / turn stride as before. One call = the stage over count/Ls
+     rows, lanes contiguous within a row, the T2 cursor derived from k so it
+     restarts per row. The batched two-pass row route of the 2D tier (its leaf
+     n1t, mid t2, backward t2t + n1), staged through a contiguous scratch.
+     Plain and tangent bodies only: t2c has its own digit loop on Gs/OGs, the
+     column-stride and group-loop tails their own addressing, blocked its own
+     pass loop, log3 rides t2c, the leg-strided turn owns OGs. *)
+  if rowloop && (kind = T2C || colstride || grouploop || blocked || log3 || turnst_gs)
+  then
+    failwith
+      "codelet_cil: --cil-rowloop wraps the plain n1 / n1t / t2 (+turnst) lane loop in a row \
+       loop (count = rows x Ls lanes, in pitch Gs, out pitch OGs); not with t2c, \
+       column-stride, group loop, blocked, log3, turnst-gs";
   let pretw = pretw || (colstride && kind = T2 && dir = Bwd && not transposed) in
   Cx_render.colstride := colstride;
   if kind = T2C && (turnst || turnst_gs)
@@ -1376,6 +1395,7 @@ let emit
              ^ (if transposed then "t" else "")
              ^ (if ctx.st_turn then "t" else "")
              ^ (if ctx.st_turn_gs then "g" else "")
+             ^ (if rowloop then "r" else "")
              (* "ct" = dft_small FACTORED this odd composite instead of taking
                 dft_cx_odd's direct O(n^2/2) form. Tagged only where the two
                 constructions actually differ: a pow2/even/odd-PRIME radix
@@ -1421,13 +1441,19 @@ let emit
     (* per-(d,leg) records, hoisted: loop-invariant across the whole column
        tile — the broadcast sourcing the kind exists for. *)
     emit_group_prologue buf isa radix);
+  if rowloop
+  then
+    Buffer.add_string
+      buf
+      "    const size_t rows_ = count / Ls, cnt_ = Ls;   /* the ROW LOOP: rows x Ls lanes, in \
+       pitch Gs, out pitch OGs */\n    for (size_t r_ = 0; r_ < rows_; r_++) {\n";
   Buffer.add_string
     buf
     (* k is hoisted for EVERY form so the tail loop below can resume it.
        Blocked used to keep a self-contained `for (size_t k = 0; ...)` because
        it had no tail to resume. *)
     (Printf.sprintf
-       "%s    size_t k = 0;\n    for (; k + %d <= count; k += %d) {\n"
+       "%s    size_t k = 0;\n    for (; k + %d <= %s; k += %d) {\n"
        (if kind = T2 && ctx.tw_gen2
         then
           Printf.sprintf
@@ -1436,6 +1462,7 @@ let emit
             (Isa.const_decl isa "_wgs" (Isa.loadu_pd isa (Printf.sprintf "tw_im[%d]" vw)))
         else "")
        per
+       (if rowloop then "cnt_" else "count")
        per);
   (* T2's streamed cursor: one record-set per column-group. *)
   if kind = T2
@@ -1589,8 +1616,15 @@ let emit
          "    %s\n    %s\n"
          (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
          (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
-  Buffer.add_string buf "    for (; k < count; ++k) {\n";
+  Buffer.add_string
+      buf
+      (Printf.sprintf "    for (; k < %s; ++k) {\n" (if rowloop then "cnt_" else "count"));
     Buffer.add_buffer buf body_n;
+    Buffer.add_string buf "    }\n");
+  if rowloop
+  then (
+    Buffer.add_string buf "    zin += 2 * Gs;\n";
+    Buffer.add_string buf "    zout += 2 * OGs;\n";
     Buffer.add_string buf "    }\n");
   if kind = T2C
   then (

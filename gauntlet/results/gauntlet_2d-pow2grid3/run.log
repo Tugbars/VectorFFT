@@ -1,0 +1,19 @@
+2026-09-23 16:49:30 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\dag-fft-compiler\generator\generated)
+2026-09-23 16:49:30 run: 159 cells, contract 2D out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-23 16:49:30 calibrate: 159 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-09-23 16:49:46   calibrated 25/159 (4x4096), 15 s elapsed
+2026-09-23 16:49:54   calibrated 50/159 (16x2048), 23 s elapsed
+2026-09-23 16:50:05   calibrated 75/159 (64x1024), 35 s elapsed
+2026-09-23 16:50:17   calibrated 100/159 (256x512), 46 s elapsed
+2026-09-23 16:50:34   calibrated 125/159 (1024x256), 64 s elapsed
+2026-09-23 16:51:04   calibrated 150/159 (4096x1024), 94 s elapsed
+2026-09-23 16:51:18   calibrated 159/159 (8192x512), 107 s elapsed
+2026-09-23 16:51:18 bench: 159 cells (0 already benched, 0 not banked -> not benched)
+2026-09-23 16:51:51   benched 25/159 (4x4096), 32 s elapsed
+2026-09-23 16:52:22   benched 50/159 (16x2048), 62 s elapsed
+2026-09-23 16:53:00   benched 75/159 (64x1024), 101 s elapsed
+2026-09-23 16:53:37   benched 100/159 (256x512), 138 s elapsed
+2026-09-23 16:54:28   benched 125/159 (1024x256), 189 s elapsed
+2026-09-23 16:55:53   benched 150/159 (4096x1024), 274 s elapsed
+2026-09-23 16:56:28   benched 159/159 (8192x512), 309 s elapsed
+2026-09-23 16:56:30 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\gauntlet_2d-pow2grid3\report_2d.md
