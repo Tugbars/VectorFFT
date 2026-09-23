@@ -20,8 +20,9 @@ length from 2 to 4,096.
 > 2D/3D tiers, accuracy and hardware caveats — is
 > [`docs/performance/v1_0_results.md`](docs/performance/v1_0_results.md).
 > The runs themselves (csv, calibration logs, banked wisdom) are in
-> [`gauntlet/results/`](gauntlet/results/), and [`gauntlet/`](gauntlet/) is the
-> tool that reproduces them on your own machine.
+> [`gauntlet/results/`](gauntlet/results/); this section's record is
+> [`gauntlet_2_4096_2026-09-23`](gauntlet/results/gauntlet_2_4096_2026-09-23/), and
+> [`gauntlet/`](gauntlet/) is the tool that reproduces it on your own machine.
 
 > **Platform:** Intel Core i9-14900KF (P-core, AVX2), DDR5, GCC 15.2, single thread  
 > **Competitor:** Intel oneMKL 2025.3 (sequential, `mkl_set_num_threads(1)`)  
@@ -42,19 +43,19 @@ equal vertical gaps).
 
 | Lengths | Cells | Median speedup | At or above parity | Best |
 |---|---|---|---|---|
-| 2..16 | 15 | 1.39x | 87% | 2.83x (N=2) |
-| 17..64 | 48 | 1.53x | 94% | 4.18x (N=61) |
-| 65..256 | 192 | 1.53x | 97% | 6.88x (N=89) |
-| 257..1,024 | 768 | 1.28x | 90% | 4.02x (N=508) |
-| 1,025..2,048 | 1,024 | 1.20x | 88% | 3.74x (N=1946) |
-| 2,049..4,096 | 2,048 | 1.16x | 84% | 3.73x (N=3827) |
-| **all, 2..4,096** | **4,095** | **1.23x** | **87%** | 6.88x (N=89) |
+| 2..16 | 15 | 1.39x | 80% | 2.83x (N=2) |
+| 17..64 | 48 | 1.56x | 96% | 4.17x (N=61) |
+| 65..256 | 192 | 1.64x | 98% | 7.04x (N=89) |
+| 257..1,024 | 768 | 1.40x | 93% | 4.15x (N=508) |
+| 1,025..2,048 | 1,024 | 1.27x | 91% | 3.74x (N=1946) |
+| 2,049..4,096 | 2,048 | 1.23x | 86% | 4.00x (N=2209) |
+| **all, 2..4,096** | **4,095** | **1.29x** | **89%** | 7.04x (N=89) |
 
 | Family | Cells | Median speedup | At or above parity |
 |---|---|---|---|
 | Powers of two | 12 | 1.13x | 75% |
-| Primes | 563 | 1.17x | 87% |
-| Other composites | 3,520 | 1.24x | 87% |
+| Primes | 564 | 1.18x | 89% |
+| Other composites | 3,520 | 1.30x | 89% |
 
 ## Accuracy
 
@@ -66,34 +67,34 @@ same random input, against a scalar DFT accumulated in 80-bit long double
 the records are in [`gauntlet/results/`](gauntlet/results/)). The error is the
 relative L2 norm ||y - X|| / ||X||, in units of 1e-16 (FP64 epsilon = 2.2).
 
-Both libraries deliver 14 to 15 correct digits at every length, and MKL is the
-tighter of the two: its error stays within 3 epsilon everywhere, VectorFFT's median
-is 1.5x MKL's and its worst lengths reach 13 epsilon. The radix-2, 4 and 8 kernels
-and ZTURN-T are level with MKL at every power of two; the gap comes from the
-odd-radix kernels, whose error grows with the radix (a solo radix-37 transform reads
-8x MKL), and every mixed-radix or prime length uses one, alone, as a stage or as
-the prime cell's inner transform. Those kernels are where it will be worked on; it
-is measured here so it can be, not hidden.
+Both libraries deliver 14 to 15 correct digits at every length. MKL is the tighter
+of the two: its error stays within 3 epsilon everywhere, VectorFFT's median is
+1.4x MKL's and its worst lengths reach 9 epsilon. The radix-2, 4 and 8 kernels
+and ZTURN-T are level with MKL at every power of two, and the odd-radix kernels read
+2 to 4e-16 on their own since their constants were corrected (2026-09-23); what
+remains on the mixed-radix and prime lengths is the rounding of the twiddle
+arguments themselves, the next lever. It is measured here so it can be worked on,
+not hidden.
 
 | Lengths | Cells | VectorFFT median | MKL median | VectorFFT max | MKL max |
 |---|---|---|---|---|---|
-| 2..16 | 15 | 1.67 | 1.15 | 6.74 | 1.52 |
-| 17..64 | 48 | 5.32 | 1.97 | 18.00 | 2.79 |
-| 65..256 | 192 | 6.67 | 2.50 | 25.07 | 5.24 |
-| 257..1,024 | 768 | 6.95 | 3.14 | 25.66 | 5.22 |
-| 1,025..2,048 | 1,024 | 6.01 | 3.99 | 28.94 | 5.45 |
-| 2,049..4,096 | 2,048 | 6.09 | 4.62 | 27.46 | 6.07 |
-| **all, 2..4,096** | **4,095** | **6.11** | **4.04** | **28.94** | **6.07** |
+| 2..16 | 15 | 1.67 | 1.15 | 3.17 | 1.52 |
+| 17..64 | 48 | 3.06 | 1.97 | 7.34 | 2.79 |
+| 65..256 | 192 | 4.24 | 2.50 | 8.83 | 5.24 |
+| 257..1,024 | 768 | 5.67 | 3.14 | 14.52 | 5.22 |
+| 1,025..2,048 | 1,024 | 5.75 | 3.99 | 12.37 | 5.45 |
+| 2,049..4,096 | 2,048 | 5.91 | 4.62 | 19.20 | 6.07 |
+| **all, 2..4,096** | **4,095** | **5.80** | **4.04** | **19.20** | **6.07** |
 
 | Family | Cells | VectorFFT median | MKL median | VectorFFT max | MKL max |
 |---|---|---|---|---|---|
 | Powers of two | 12 | 1.80 | 1.45 | 2.73 | 2.36 |
-| Primes | 564 | 6.15 | 4.64 | 28.94 | 5.58 |
-| Other composites | 3,520 | 6.11 | 3.56 | 27.46 | 6.07 |
+| Primes | 564 | 6.12 | 4.64 | 11.36 | 5.58 |
+| Other composites | 3,520 | 5.74 | 3.56 | 19.20 | 6.07 |
 
 Elementwise maximum error, relative to the largest output, same reference: VectorFFT
-median 8.3, max 41.4; MKL median 4.2, max 8.5. Roundtrip, backward of the forward
-divided by N against the input, elementwise maximum: VectorFFT median 15.6, max 103;
+median 7.3, max 38.7; MKL median 4.2, max 8.5. Roundtrip, backward of the forward
+divided by N against the input, elementwise maximum: VectorFFT median 14.5, max 85;
 MKL median 12.4, max 24.7 (all in units of 1e-16).
 
 ---

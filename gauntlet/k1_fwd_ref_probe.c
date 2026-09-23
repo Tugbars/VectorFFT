@@ -24,6 +24,9 @@
  * 4,095-cell sweep to N = 4096 runs in minutes.
  *
  * Run:   k1_fwd_ref_probe.exe [--ip] [--csv FILE] <wisdir> N [N ...]   (N or a-b)
+ *        k1_fwd_ref_probe.exe [--csv FILE] --2d <wisdir> N1xN2 [N1xN2 ...]
+ *        (2026-09-23: the 2D interleaved cell, OOP natural K=1, against a
+ *        long-double 2D DFT -- row DFTs then column DFTs; csv N = "N1xN2")
  * Build: python gauntlet/build.py --src gauntlet/k1_fwd_ref_probe.c --vfft --mkl --compile
  */
 #include <math.h>
@@ -204,9 +207,106 @@ static int probe(vfft_wisdom *W, int N)
     free(x); free(X); free(y); free(r);
     return ok;
 }
+/* the 2D reference: separable, row DFTs of length N2 then column DFTs of
+ * length N1, every sum in long double over a reduced-angle table */
+static void naive_dft2(const double *x, long double *X, int N1, int N2)
+{
+    long double *tmp = malloc(2 * (size_t)N1 * N2 * sizeof(long double));
+    long double *c2 = malloc((size_t)N2 * sizeof(long double)), *s2 = malloc((size_t)N2 * sizeof(long double));
+    long double *c1 = malloc((size_t)N1 * sizeof(long double)), *s1 = malloc((size_t)N1 * sizeof(long double));
+    const long double PI = 3.141592653589793238462643383279L;
+    for (int j = 0; j < N2; j++) { long double a = -2.0L * PI * (long double)j / (long double)N2; c2[j] = cosl(a); s2[j] = sinl(a); }
+    for (int j = 0; j < N1; j++) { long double a = -2.0L * PI * (long double)j / (long double)N1; c1[j] = cosl(a); s1[j] = sinl(a); }
+    for (int r = 0; r < N1; r++)              /* rows */
+        for (int k = 0; k < N2; k++)
+        {
+            long double re = 0, im = 0; int idx = 0;
+            for (int n = 0; n < N2; n++)
+            {
+                const long double xr = x[2 * (r * N2 + n)], xi = x[2 * (r * N2 + n) + 1];
+                re += xr * c2[idx] - xi * s2[idx];
+                im += xr * s2[idx] + xi * c2[idx];
+                idx += k; if (idx >= N2) idx -= N2;
+            }
+            tmp[2 * (r * N2 + k)] = re; tmp[2 * (r * N2 + k) + 1] = im;
+        }
+    for (int k = 0; k < N2; k++)              /* columns */
+        for (int m = 0; m < N1; m++)
+        {
+            long double re = 0, im = 0; int idx = 0;
+            for (int r = 0; r < N1; r++)
+            {
+                const long double xr = tmp[2 * (r * N2 + k)], xi = tmp[2 * (r * N2 + k) + 1];
+                re += xr * c1[idx] - xi * s1[idx];
+                im += xr * s1[idx] + xi * c1[idx];
+                idx += m; if (idx >= N1) idx -= N1;
+            }
+            X[2 * (m * N2 + k)] = re; X[2 * (m * N2 + k) + 1] = im;
+        }
+    free(tmp); free(c1); free(s1); free(c2); free(s2);
+}
+
+#ifdef VFFT_HAS_MKL
+static int mkl_cell2(int N1, int N2, const double *x, double *y, double *r)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    MKL_LONG dims[2];
+    dims[0] = N1; dims[1] = N2;
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims) != DFTI_NO_ERROR) return 0;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR) { DftiFreeDescriptor(&d); return 0; }
+    DftiComputeForward(d, (void *)x, y);
+    DftiComputeBackward(d, y, r);
+    DftiFreeDescriptor(&d);
+    return 1;
+}
+#endif
+
+static int probe2(vfft_wisdom *W, int N1, int N2)
+{
+    vfft_config_t cfg; vfft_plan h; double ef = 1, er = 1, el = 1; int ok;
+    const int N = N1 * N2;
+    const size_t tot = 2 * (size_t)N;
+    double *x = calloc(tot, 8), *y = calloc(tot, 8), *r = calloc(tot, 8);
+    long double *X = calloc(tot, sizeof(long double));
+    srand(4242 + 131 * N1 + N2);
+    for (size_t j = 0; j < tot; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
+    naive_dft2(x, X, N1, N2);
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C; cfg.placement = VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
+    cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1; cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
+    h = vfft_create(&cfg);
+    if (h)
+    {
+        vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
+        vfft_execute(h, VFFT_BACKWARD, y, NULL, r, NULL);
+        ef = relerr(y, X, N, 1.0); el = l2err(y, X, N, 1.0); er = rterr(r, x, N, 1.0 / N);
+    }
+    ok = h && ef < 1e-11 && er < 1e-11;
+    printf("%dx%-5d %-7s oop fwd %.2e  rt %.2e  %s", N1, N2, h ? vfft_plan_route(h) : "NOPLAN", ef, er, ok ? "ok" : "*** FAIL ***");
+    if (h && g_csv) fprintf(g_csv, "VectorFFT,%dx%d,%.3e,%.3e,%.3e\n", N1, N2, el, ef, er);
+#ifdef VFFT_HAS_MKL
+    if (g_csv)
+    {
+        double *my = calloc(tot, 8), *mr = calloc(tot, 8);
+        if (mkl_cell2(N1, N2, x, my, mr))
+        {
+            double mf = relerr(my, X, N, 1.0), ml = l2err(my, X, N, 1.0), mrt = rterr(mr, x, N, 1.0 / N);
+            printf("  mkl fwd %.2e", mf);
+            fprintf(g_csv, "MKL,%dx%d,%.3e,%.3e,%.3e\n", N1, N2, ml, mf, mrt);
+        }
+        free(my); free(mr);
+    }
+#endif
+    printf("\n");
+    if (h) vfft_destroy(h);
+    free(x); free(X); free(y); free(r);
+    return ok;
+}
 int main(int argc, char **argv)
 {
-    int fails = 0, cells = 0, a0 = 1;
+    int fails = 0, cells = 0, a0 = 1, twod = 0;
     const char *csv = NULL;
     while (argc > a0 && argv[a0][0] == '-')
     {
@@ -214,10 +314,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a0], "--time")) g_time = 1;
         else if (!strcmp(argv[a0], "--k") && a0 + 1 < argc) { g_k = atoi(argv[a0 + 1]); a0++; }
         else if (!strcmp(argv[a0], "--csv") && a0 + 1 < argc) { csv = argv[a0 + 1]; a0++; }
+        else if (!strcmp(argv[a0], "--2d")) twod = 1;
         else break;
         a0++;
     }
-    if (argc < a0 + 2) { printf("usage: %s [--ip] [--csv FILE] <wisdir> N [N ...] (N or a-b)\n", argv[0]); return 2; }
+    if (argc < a0 + 2) { printf("usage: %s [--ip] [--csv FILE] [--2d] <wisdir> N [N ...] (N or a-b; with --2d: N1xN2)\n", argv[0]); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     if (csv)
     {
@@ -236,6 +337,14 @@ int main(int argc, char **argv)
     for (int a = a0 + 1; a < argc; a++)
     {
         int lo = 0, hi = 0;
+        if (twod)
+        {
+            int n1 = 0, n2 = 0;
+            if (sscanf(argv[a], "%dx%d", &n1, &n2) != 2 || n1 < 2 || n2 < 2) { printf("bad shape %s\n", argv[a]); fails++; continue; }
+            cells++;
+            if (!probe2(W, n1, n2)) fails++;
+            continue;
+        }
         if (sscanf(argv[a], "%d-%d", &lo, &hi) == 2) { }
         else { lo = hi = atoi(argv[a]); }
         for (int N = lo; N <= hi; N++)

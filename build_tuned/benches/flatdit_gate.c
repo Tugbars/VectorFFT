@@ -20,7 +20,12 @@
  *      which one served is printed; above 27^3 the scrambled class MUST have
  *      served (its ord=scr row exists and is the faster verdict);
  *   7. OOP backward consumes the comb: roundtrip N * x;
- *   8. IN-PLACE scrambled forward + backward roundtrip;
+ *   8. IN-PLACE scrambled forward is the digit reversal of the natural
+ *      spectrum under the IN-PLACE cell's OWN banked chain (or the natural
+ *      spectrum where a natural engine served) + backward roundtrip. The
+ *      ip cell is its own raced verdict and may bank a different chain
+ *      than the oop cell (2026-09-23); two scrambles are never compared
+ *      bin-by-bin across plans;
  *   9. a second SCRAMBLED create replays bit-identically.
  * MT pass, per cell and class (2026-09-07, il_flatdit_mt.h): the same cell
  * created at T=8 — its threading verdict raced and banked (il_mt= il_mt_t=
@@ -128,21 +133,29 @@ static vfft_plan mk_t(vfft_wisdom *W, int N, int ip, int order, int T)
 /* the cell's banked ROUTE (+ the flat chain and forms tokens) read back from
  * the scratch store's kind-3 IL row of the given order cell (ord=nat / scr):
  * -1 = no row; 3 mono, 5 pair, 6 chain3, 7 prime, 8 flat. */
-static int route_of_store(const char *wisdir, int N, const char *ord, char *chain, size_t nc, char *forms, size_t nf)
+static int route_of_store_p(const char *wisdir, int N, const char *ord, const char *place,
+                            char *chain, size_t nc, char *forms, size_t nf)
 {
-    char path[1024], line[4096], key[64], okey[32];
+    /* the cell is (N, ord, PLACE): the in-place cell is its own raced verdict
+     * and may bank a different chain than the out-of-place one (2026-09-23);
+     * the scr rows live in wisdom2_scr.txt, the nat rows in wisdom2_oop.txt */
+    static const char *files[2] = { "wisdom2_oop.txt", "wisdom2_scr.txt" };
+    char path[1024], line[4096], key[64], okey[32], pkey[32];
     FILE *f;
-    int route = -1;
+    int route = -1, fi;
     chain[0] = 0; forms[0] = 0;
-    snprintf(path, sizeof path, "%s/wisdom2_oop.txt", wisdir);
     snprintf(key, sizeof key, "n=%d ", N);
     snprintf(okey, sizeof okey, "ord=%s ", ord);
+    snprintf(pkey, sizeof pkey, "place=%s ", place);
+    for (fi = 0; fi < 2; fi++)
+    {
+    snprintf(path, sizeof path, "%s/%s", wisdir, files[fi]);
     f = fopen(path, "r");
-    if (!f) return -1;
+    if (!f) continue;
     while (fgets(line, sizeof line, f))
     {
         const char *r;
-        if (!strstr(line, "t=c2c") || !strstr(line, key) || !strstr(line, "q=1 ") || !strstr(line, okey)) continue;
+        if (!strstr(line, "t=c2c") || !strstr(line, key) || !strstr(line, "q=1 ") || !strstr(line, okey) || !strstr(line, pkey)) continue;
         r = strstr(line, "il_route=");
         if (!r) continue;
         r += 9;
@@ -154,7 +167,12 @@ static int route_of_store(const char *wisdir, int N, const char *ord, char *chai
         if ((r = strstr(line, "il_tw=")) != NULL) { const size_t l = strlen(forms); snprintf(forms + l, nf - l, "/w%d", atoi(r + 6)); }   /* the tile width rides the forms column */
     }
     fclose(f);
+    }
     return route;
+}
+static int route_of_store(const char *wisdir, int N, const char *ord, char *chain, size_t nc, char *forms, size_t nf)
+{
+    return route_of_store_p(wisdir, N, ord, "oop", chain, nc, forms, nf);
 }
 static int parse_chain(const char *s, int *R, int max)
 {
@@ -280,9 +298,23 @@ int main(int argc, char **argv)
                 hsi = mk(W, N, 1, VFFT_ORDER_SCRAMBLED);
                 if (hsi)
                 {
+                    /* the IN-PLACE scrambled cell is its own raced verdict: its
+                     * forward is the digit reversal of the natural spectrum under
+                     * ITS OWN banked chain (or the natural spectrum where a natural
+                     * engine served) -- never compared bin-by-bin with the oop
+                     * cell's scramble, which may come from another chain (the
+                     * order contract: two scrambled spectra combine only from the
+                     * same plan). 2026-09-23. */
+                    int Ri[16], Kci;
+                    double e_nat, e_dr;
+                    char ichain[64] = "", iforms[32] = "";
+                    (void)route_of_store_p(wisdir, N, "scr", "ip", ichain, sizeof ichain, iforms, sizeof iforms);
+                    Kci = ichain[0] ? parse_chain(ichain, Ri, 16) : 0;
                     memcpy(z, x, 2 * (size_t)N * 8);
                     vfft_execute(hsi, VFFT_FORWARD, z, NULL, z, NULL);
-                    eis = relerr(z, ys, N, 1.0);                          /* same answer as OOP */
+                    e_nat = permerr(z, y, N, Ri, Kci, 0);
+                    e_dr = Kci >= 2 ? permerr(z, y, N, Ri, Kci, 1) : 1.0;
+                    eis = e_dr < e_nat ? e_dr : e_nat;
                     vfft_execute(hsi, VFFT_BACKWARD, z, NULL, z, NULL);
                     eris = relerr(z, x, N, 1.0 / N);
                     vfft_destroy(hsi);

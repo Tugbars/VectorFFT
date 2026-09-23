@@ -335,6 +335,30 @@ let emit
   let post_tw =
     (kind = T2 && dir = Bwd && not ctx.tw_pre) || (kind = T2C && (dir = Fwd) <> ctx.tw_pre)
   in
+  (* ODD BLOCKED (2026-09-23): the odd direct DFT emitted as PASSES (see
+     emit_odd_blocked below). Block width VFFT_CX_ODDBLK (default 6, 0 =
+     off), from radix VFFT_CX_ODDBLK_MIN (default 9). Leg-major store kinds
+     only; the --cil-oddct factored form and the tangent bodies keep theirs. *)
+  let oddblk_bw =
+    match Sys.getenv_opt "VFFT_CX_ODDBLK" with
+    | Some v -> (try int_of_string v with _ -> 6)
+    | None -> 6
+  in
+  let oddblk_min =
+    match Sys.getenv_opt "VFFT_CX_ODDBLK_MIN" with
+    | Some v -> (try int_of_string v with _ -> 9)
+    | None -> 9
+  in
+  let odd_blocked =
+    (not blocked)
+    && radix mod 2 = 1
+    && radix >= oddblk_min
+    && oddblk_bw > 0
+    && (not (kind = N1T || ctx.st_turn || ctx.st_turn_gs))
+    && (not ctx.tangent)
+    && (not (!Cx_math.odd_ct_enabled && Cx_math.odd_spf radix <> radix))
+    && not (radix = 5 && !Cx_math.winograd_enabled)
+  in
   (* COMPLETE-IR (2026-08-09): monolithic inputs are CLoad nodes carrying
      their symbolic address — the load edge prints FROM the DAG instead of
      inventing the string. Created in the same order cin was, so every tag
@@ -441,7 +465,14 @@ let emit
                 (Isa.const_decl
                    isa
                    (Printf.sprintf "z%d" e.tag)
-                   (Isa.loadu_pd isa (addr_str (laddr_of i))))))
+                   (* render_load, not a bare loadu: the COLUMN-STRIDE kinds
+                      (the t2cs kinds) load each leg as the (k, k+1) column pair at
+                      stride Gs, and a full-width load there reads column k's
+                      neighbour instead of column k+1 (found by flatdit_gate
+                      the day the odd blocked passes reached them, 2026-09-23;
+                      the pow2 blocked form refuses those kinds). Byte-identical
+                      elsewhere: render_load falls back to the same string. *)
+                   (render_load isa (laddr_of i)))))
         ins;
     let load_emitted : (int, unit) Hashtbl.t = Hashtbl.create 64 in
     let emit_load_p (l : t) =
@@ -455,7 +486,7 @@ let emit
              (Isa.const_decl
                 isa
                 (Printf.sprintf "z%d" l.tag)
-                (Isa.loadu_pd isa (addr_str a))))
+                (render_load isa a)))
       | _ -> ()
     in
     let stored : (int, unit) Hashtbl.t = Hashtbl.create 32 in
@@ -771,6 +802,193 @@ let emit
      permute2f128 store edge (2026-08-05, il_coverage_plan.md E9). The
      leg-strided t2tg turn and odd-p splits still refuse loudly inside
      emit_blocked itself. *)
+  (* ─── ODD BLOCKED construction (2026-09-23) ──────────────────────
+     The odd direct DFT is 2h accumulator chains over the SAME 2h pair
+     values (s_j, r_j). Emitted monolithically the scheduler opens every
+     chain at once and the 2h + 2h live values spill -- measured on the
+     radix-47 n1c 2-column loop: 4416 ymm instructions per iteration for
+     1081 FMAs, 975 spill loads, 1389 spill stores; per point 25 loads + 15
+     stores against an FMA floor of 5.8 cycles. A register-blocked twin of
+     the same sums ran 2-3.4x faster at radix 23..47 (scratch
+     odd_col_blocked_probe, 64 columns; 47: 1.26 vs 4.29 ns/pt).
+     PASS 1 (pairs): the legs (pre-twiddled for T2 kinds) -> X[0] stored,
+     x0 and every s_j, r_j parked to S[] (slot 0 = x0, 1..h = s, h+1..2h =
+     r; vw doubles per slot). PASSES 2..: blocks of `bw` output pairs
+     (X[m], X[n-m]), each one scheduled sub-DAG that reloads x0, s, r from
+     S[] -- 2*bw accumulators live, the pair values streamed. The chains are
+     dft_cx_odd's own (Cx_math.dft_cx_odd_pair), so the blocked body and the
+     monolithic tail compute bit-identical values. Everything goes through
+     S[] and no leg is re-read after a store, so the in-place kinds are
+     safe. *)
+  let emit_odd_blocked ~(bw : int) () =
+    let h = (radix - 1) / 2 in
+    let store_to (ad : caddr) (e : t) =
+      let (_ : t) = cstore ad e in
+      Buffer.add_string
+        body
+        (Printf.sprintf "        %s;\n" (render_store isa ad (Printf.sprintf "z%d" e.tag)))
+    in
+    emit_pass
+      ~lazy_store:true
+      ~label:(Printf.sprintf "ODD PASS 1: legs -> X[0], pairs -> S[0..%d]" (2 * h))
+      ~nin:radix
+      ~laddr_of:(fun l -> AZinLeg l)
+      ~build:(fun ins ->
+        let ins =
+          if pre_tw then Array.mapi (fun l x -> if l > 0 then ctwl l x else x) ins else ins
+        in
+        let x0, s, r = Cx_math.dft_cx_odd_pairs ~sign radix ins in
+        let dc = Cx_math.dft_cx_odd_dc x0 s in
+        Array.concat [ [| dc; x0 |]; s; r ])
+      ~store:(fun idx e ->
+        if idx = 0 then store_to (AZoutLeg 0) e else store_to (AS (vw * (idx - 1))) e);
+    (* PASSES 2..: each block of `bw` output pairs is PRINTED as a term
+       loop -- p_j += cf[m][i] * s_i, q_j += sf[m][i] * r_i for i = 0..h-1,
+       the weights broadcast from the file-scope tables _ODDC_R / _ODDS_R --
+       then X[m] = p + q, X[n-m] = p - q (post-twiddled for the T2 kinds
+       through the DAG renderer). A scheduled straight-line form of the
+       same block was measured to re-spill under gcc whatever its order
+       (420 loads / 367 stores per iteration); the rolled loop keeps the
+       2*bw accumulators in registers (the twin: 1 spill). Bit-identical to
+       the DAG form: fma(|c|, x, acc) and fma(-|c|, x, acc) are the ladder's
+       cfma / cfnma, fma(+-1, x, acc) its add / sub, fma(0, x, acc) its skip,
+       and fma(c, r, 0) the seed's single-rounded product. *)
+    let vt = isa.Isa.vec_type in
+    (* BALANCED blocks: nb = ceil(h / bw) blocks of h/nb pairs, the first
+       h mod nb one larger (h = 13, bw = 6 -> 5,4,4; not 6,6,1 -- a 1-pair
+       block runs its loads and loop for one FMA pair). *)
+    let nb = (h + bw - 1) / bw in
+    let sizes = List.init nb (fun b -> (h / nb) + if b < h mod nb then 1 else 0) in
+    let m0 = ref 1 in
+    List.iter (fun mb ->
+      let mlo = !m0 in
+      let pn j = Printf.sprintf "p%d" j
+      and qn j = Printf.sprintf "q%d" j in
+      Buffer.add_string
+        body
+        (Printf.sprintf
+           "        { /* ODD PASS 2: output pairs m = %d..%d, term loop over S[] */\n"
+           mlo
+           (mlo + mb - 1));
+      Buffer.add_string
+        body
+        (Printf.sprintf "        %s\n" (Isa.const_decl isa "x0" (Isa.loadu_pd isa "S[0]")));
+      for j = 0 to mb - 1 do
+        Buffer.add_string
+          body
+          (Printf.sprintf
+             "        %s %s = x0;\n        %s %s = %s;\n"
+             vt
+             (pn j)
+             vt
+             (qn j)
+             (Isa.set1_pd_str isa "0.0"))
+      done;
+      Buffer.add_string body (Printf.sprintf "        for (int i = 0; i < %d; i++) {\n" h);
+      Buffer.add_string
+        body
+        (Printf.sprintf
+           "            %s\n            %s\n"
+           (Isa.const_decl isa "sv" (Isa.loadu_pd isa (Printf.sprintf "S[%d * (1 + i)]" vw)))
+           (Isa.const_decl
+              isa
+              "rv"
+              (Isa.loadu_pd isa (Printf.sprintf "S[%d * (%d + i)]" vw (1 + h)))));
+      for j = 0 to mb - 1 do
+        let m = mlo + j in
+        Buffer.add_string
+          body
+          (Printf.sprintf
+             "            %s = %s;\n            %s = %s;\n"
+             (pn j)
+             (Isa.fmadd_pd
+                isa
+                (Isa.set1_pd_str isa (Printf.sprintf "_ODDC_%d[%d][i]" radix (m - 1)))
+                "sv"
+                (pn j))
+             (qn j)
+             (Isa.fmadd_pd
+                isa
+                (Isa.set1_pd_str isa (Printf.sprintf "_ODDS_%d[%d][i]" radix (m - 1)))
+                "rv"
+                (qn j)))
+      done;
+      Buffer.add_string body "        }\n";
+      for j = 0 to mb - 1 do
+        let m = mlo + j in
+        let an = Printf.sprintf "a%d" j
+        and bn = Printf.sprintf "b%d" j in
+        Buffer.add_string
+          body
+          (Printf.sprintf
+             "        %s\n        %s\n"
+             (Isa.const_decl isa an (Isa.add_pd isa (pn j) (qn j)))
+             (Isa.const_decl isa bn (Isa.sub_pd isa (pn j) (qn j))));
+        (* the T2 kinds' post-twiddle: one CTwL node over a NAMED operand,
+           rendered by the shared renderer so the cursor / prologue names
+           are the kind's own *)
+        let out_expr (leg : int) (src : string) : string =
+          if post_tw
+          then (
+            reset ();
+            let x = cin 0 in
+            let tw = ctwl leg x in
+            render
+              ~ctx
+              ~name:(fun t -> if t = x.tag then src else Printf.sprintf "z%d" t)
+              isa
+              tbl
+              tw)
+          else src
+        in
+        let emit_out (leg : int) (src : string) (vn : string) =
+          Buffer.add_string
+            body
+            (Printf.sprintf "        %s\n" (Isa.const_decl isa vn (out_expr leg src)));
+          Buffer.add_string
+            body
+            (Printf.sprintf "        %s;\n" (render_store isa (AZoutLeg leg) vn))
+        in
+        emit_out m an (Printf.sprintf "oa%d" j);
+        emit_out (radix - m) bn (Printf.sprintf "ob%d" j)
+      done;
+      Buffer.add_string body "        }\n";
+      m0 := !m0 + mb)
+      sizes
+  in
+  (* the weight tables of the ODD block passes: file scope, one row per
+     output m, one column per term; emitted beside the constant table *)
+  let odd_tables =
+    if not odd_blocked
+    then ""
+    else (
+      let h = (radix - 1) / 2 in
+      let row (w : float array) =
+        "{ " ^ String.concat ", " (Array.to_list (Array.map (fun c -> Printf.sprintf "%.17g" c) w)) ^ " }"
+      in
+      let rows sel =
+        String.concat
+          ",\n  "
+          (List.init h (fun j ->
+             let cf, sf = Cx_math.odd_weights radix (j + 1) in
+             row (sel (cf, sf))))
+      in
+      Printf.sprintf
+        "/* odd blocked: the weights of output m (row m-1) at term i (column i), \
+         cos / sin of 2*pi*((i+1)*m mod %d)/%d */\n\
+         static const double _ODDC_%d[%d][%d] = {\n  %s\n};\n\
+         static const double _ODDS_%d[%d][%d] = {\n  %s\n};\n"
+        radix
+        radix
+        radix
+        h
+        h
+        (rows fst)
+        radix
+        h
+        h
+        (rows snd))
+  in
   ctx.mono_spill_slots <- 0;
   (* lazy-store bookkeeping is shared between the mono emit loop (which stores
      outputs inline) and the store edge (which skips those). Hoisted here so
@@ -784,6 +1002,8 @@ let emit
   let stored_inline : (int, unit) Hashtbl.t = Hashtbl.create 32 in
   if blocked
   then emit_blocked ()
+  else if odd_blocked
+  then emit_odd_blocked ~bw:oddblk_bw ()
   else (
     (* cx_spill plan (VFFT_CX_SPILL=<budget>, default OFF => None => the plain
      byte-identical loop below). When present, an S[] round-trip caps peak
@@ -1021,7 +1241,7 @@ let emit
        ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
        ; Printf.sprintf
            "Form: blocked=%b split=%s turnst=%b turnst_gs=%b pretw=%b \
-            log3=%b             tangent=%b"
+            log3=%b             tangent=%b%s"
            blocked
            (match split with
             | Some (a, b) -> Printf.sprintf "%d.%d" a b
@@ -1031,6 +1251,7 @@ let emit
            pretw
            log3
            ctx.tangent
+           (if odd_blocked then Printf.sprintf " oddblk=%d" oddblk_bw else "")
        ]);
   Buffer.add_string
     buf
@@ -1110,6 +1331,7 @@ let emit
     Buffer.add_string buf (Isa.re_mask_decl Isa.sse2 "_M_RE_n");
     Buffer.add_string buf "  /* tail twin */\n");
   Buffer.add_string buf (emit_const_decls isa tbl);
+  Buffer.add_string buf odd_tables;
   (* M4 phase 3: the FROZEN 11-arg z ABI comes from Abi.z11_signature — the
      one source (this block was one of THREE byte-identical hand prints; the
      kind-conditional silencers stay here, they are body contract). *)
@@ -1165,7 +1387,7 @@ let emit
        (if kind = T2C then "" else " (void)Gs;")
        (if ctx.st_turn_gs || kind = T2C then "" else " (void)OGs;")
        (if kind = T2 || kind = T2C then "" else " (void)tw_re;"));
-  if blocked
+  if blocked || odd_blocked
   then
     Buffer.add_string
       buf
@@ -1223,7 +1445,7 @@ let emit
      (VFFT_CX_LAZYLOAD=1), in which case each load is emitted just before its
      first consumer in the scheduled body (peak-pressure cap; see the mono
      emit loop). Default OFF => this loop runs => byte-identical. *)
-  if (not blocked) && not (Sys.getenv_opt "VFFT_CX_LAZYLOAD" = Some "1")
+  if (not (blocked || odd_blocked)) && not (Sys.getenv_opt "VFFT_CX_LAZYLOAD" = Some "1")
   then
     for l = 0 to radix - 1 do
       Buffer.add_string
@@ -1238,7 +1460,7 @@ let emit
   Buffer.add_buffer buf body;
   (* Store edge (blocked emits its own inside PASS 2). Dispatch on the store
      FORM, not the kind: `--cil-turnst` gives a T2 the corner-turned store. *)
-  if not blocked
+  if not (blocked || odd_blocked)
   then (
     match if ctx.st_turn then N1T else kind with
     | N1 | N1C | T2 | T2C ->

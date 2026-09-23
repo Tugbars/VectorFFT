@@ -67,6 +67,24 @@ are the other contracts; each writes its own csv and report (`gauntlet_ip.csv`,
 `gauntlet_mt8.csv`, ...), never mixed into one table. Every ratio in a report
 is comparator time / our time, the worse of the two engine orders.
 
+**2D** (since 2026-09-23): a cell is a shape `N1xN2` (N1 = the column length),
+the contract 2D complex-to-complex, interleaved, natural order, out of place,
+K = 1, one thread, against MKL DFTI 2D out of place; files carry `_2d`
+(`gauntlet_2d.csv`, `report_2d.md`, `calibrate_2d.log`, `verify_2d.csv`), the
+control cell is 64x64, GFLOPS = 5 N1 N2 log2(N1 N2). Shapes never mix with 1D
+lengths in one run. The groups:
+
+```
+python gauntlet/gauntlet.py run --group 2d-small [--max 64]   # every shape up to 64 per axis (3,969 cells)
+python gauntlet/gauntlet.py run --group 2d-odd                # the odd/prime column pool and its closers x {64,128,256,512}
+python gauntlet/gauntlet.py run --group 2d-pow2               # squares 8..1024 and the rectangle ladder to 32768x64
+python gauntlet/gauntlet.py run --group 2d-mixed [--max 512]  # 2^a 3^b 5^c lengths as squares and against 64
+python gauntlet/gauntlet.py run --cells 47x64,23x256          # any shapes
+```
+
+The report's tables are by route (`chain` / `blu`), by column class of N1
+(pow2, even, odd, prime) and by plane size.
+
 ## Building the tools
 
 Either path builds the same binaries from the same sources.
@@ -86,9 +104,9 @@ numbers and correctness. With both, the report says which library answered.
 
 - `gauntlet.py` -- the driver (verbs: run, calibrate, bench, report, merge, cells, verify)
 - `gauntlet_report.py` -- the report
-- `bench_1d_vs_mkl.c` -- the canonical bench, every mode (K=1 interleaved, split layout, 2D, 3D, real, batches)
+- `bench_1d_vs_mkl.c` -- the canonical bench, every mode (K=1 interleaved, split layout, 2D, 3D, real, batches); `--2dilnat` is the 2D gauntlet cell
 - `bench_1d_vs_fftw.c` -- the FFTW comparator
-- `recal_1d_probe.c` -- the calibrator (one front-door create; recalibrate re-races)
+- `recal_1d_probe.c` -- the calibrator (one front-door create; recalibrate re-races; `--2d N1 N2` for a shape)
 - `k1_fwd_ref_probe.c` -- the forward reference check and the precision record (`verify`)
 - `build.py` -- the gcc build harness (the gauntlet's copy)
 - `results/<run>/` -- cells.txt, store/, calibrate.log, gauntlet.csv, control.csv, verify.csv, gflops.csv, run.log, report.md

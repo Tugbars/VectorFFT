@@ -2126,6 +2126,8 @@ const char *vfft_plan_route(vfft_plan p)
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
     if (!h || h->layout != (int)VFFT_LAYOUT_INTERLEAVED)
         return "-";
+    if (h->N2 > 0 && h->N3 == 0 && h->il2d_col.nst > 0)
+        return h->il2d_col.blu ? "blu" : "chain";   /* the 2D interleaved tier (2026-09-23): the column engine */
     if (!h->k1_on)
     {
         /* the IN-PLACE door (c2c_ip_create.h) attaches the K=1 engine

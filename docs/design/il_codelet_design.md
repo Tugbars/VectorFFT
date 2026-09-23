@@ -109,6 +109,18 @@ flowchart TD
   cell, and the verdict genuinely flips between N=512 and N=1024.
 * **`_ct` — *algorithm structure*.** Factor odd composites (9→3x3, 25→5x5, 27→3x9) instead of
   a direct conjugate-pair DFT. Added 2026-08-23.
+* **odd blocked — *register pressure of the direct odd DFT*.** Every odd radix >= 9 on the
+  leg-major store kinds (n1, n1c, t2, t2c and the t2c* column-stride kinds) is emitted as
+  passes since 2026-09-23: pass 1 forms the conjugate pairs `s_j = x_j + x_{n-j}`,
+  `r_j = rot(x_j - x_{n-j})` and parks them in `S[]`; then blocks of up to 6 output pairs
+  `(X[m], X[n-m])` run as a PRINTED term loop over `S[]` (`p_j += cf[m][i]*s_i`,
+  `q_j += sf[m][i]*r_i`, weights from the file-scope tables `_ODDC_R` / `_ODDS_R`), so 12
+  accumulators stay in registers while the pair values stream. Not a raced variant: it
+  replaces the monolithic form (`VFFT_CX_ODDBLK=0` emits the old shape, `VFFT_CX_ODDBLK_MIN`
+  moves the threshold). The narrow tail is the monolithic DAG, bit-identical in value.
+  Turned kinds (n1t, t2t, t2tg), the `_ct` factored kinds and the bailey `b` kinds keep their
+  forms. Same change fixed the odd DFT's CONSTANTS: the angle is `2*pi*((j*m) mod n)/n`; the
+  unreduced `j*m` (up to 529 at n=47) had put ~1e-14 into every cosine and sine.
 
 ### The threshold: when does restructuring pay?
 
@@ -141,6 +153,14 @@ The policy that follows, measured rather than assumed:
   real (blocked ahead in 6 of 6 cells, ~1-in-64 by chance) but smaller than
   this host resolves per cell, so it must never become a structural rule.
 * **R >= 32** — blocked structurally.
+* **odd R >= 9** — the odd blocked form (above). Measured 2026-09-23, n1c at 64
+  columns, ns per point monolithic -> blocked: 9 0.23 -> 0.22, 13 0.37 -> 0.33,
+  17 0.62 -> 0.45, 23 1.02 -> 0.69, 29 2.45 -> 1.43, 37 2.08 -> 1.24, 47 4.19 ->
+  1.34; the monolithic radix-47 loop issued 25 loads and 15 stores per point for
+  11.5 FMAs (the scheduler opens all 2h chains over the 2h shared pair values),
+  the blocked form ~1 of each. Radix 7 is below the threshold: no spill to recover.
+  Max elementwise error against a long double DFT: 6e-16..2.3e-15 -> 2-4.5e-16 at
+  every odd radix, from the angle reduction alone.
 
 🔴 **The cascade emitter reached the same boundary independently.**
 `cascade_z.ml`'s tier gate: *"the split family is radix 4/8 ONLY and
