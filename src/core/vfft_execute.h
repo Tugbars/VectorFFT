@@ -1356,6 +1356,7 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_col.blukb);
             free(h->il2d_col.bluscr);
             free(h->il2d_rowscr);
+            VFFT_ZS_FREE(h->il2d_rowb2_scr);   /* the two-pass rows' chunk scratch (route 3) */
             free(h->il2d_col.bandscr);
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
             if (h->il2d_rows)

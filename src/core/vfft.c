@@ -2127,7 +2127,7 @@ const char *vfft_plan_route(vfft_plan p)
     if (!h || h->layout != (int)VFFT_LAYOUT_INTERLEAVED)
         return "-";
     if (h->N2 > 0 && h->N3 == 0 && h->il2d_col.nst > 0)
-        return h->il2d_col.blu ? "blu" : (h->il2d_rowb ? "chain+rb" : "chain");   /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the batched rows */
+        return h->il2d_col.blu ? "blu" : h->il2d_rowb2 ? "chain+rb2" : h->il2d_rowb ? "chain+rb" : "chain";   /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the batched rows, +rb2 = the batched two-pass rows */
     if (!h->k1_on)
     {
         /* the IN-PLACE door (c2c_ip_create.h) attaches the K=1 engine

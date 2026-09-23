@@ -13,6 +13,7 @@
 #include <string.h>
 #include <windows.h>
 #include "vfft.h"
+#include "sibling_guard.h"   /* the bench's SMT-sibling guard: the door's races run in this process (2026-09-23) */
 static double now_ms(void)
 {
     LARGE_INTEGER f, c;
@@ -43,6 +44,12 @@ int main(int argc, char **argv)
     {
         SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x4);
         SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+        /* and the SIBLING GUARD (2026-09-23): the create's races are the
+         * measurements the verdicts come from, and unguarded they ran in the
+         * same two-speed lottery the bench fixed on 2026-09-21 -- the second
+         * pow2 grid re-raced 256x64 and 128x128 onto column chains 25-30%
+         * slower than the first run's, with every arm of that race slow */
+        bench_guard_sibling(2);
     }
     W = vfft_wisdom_load(dir);
     memset(&cfg, 0, sizeof cfg);

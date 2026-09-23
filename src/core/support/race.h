@@ -55,7 +55,7 @@
 #include <string.h>
 #include "support/race_timing.h" /* _il_ab_now: the shared monotonic clock */
 
-#define VFFT_RACE_MAX_ARMS 64   /* _il2d_axis_race runs up to 60: three row routes x (14 band widths + 6 tiles), 2026-09-23 */
+#define VFFT_RACE_MAX_ARMS 160  /* _il2d_axis_race runs up to 140: (3 row routes + the two-pass route x 4 tile steps) x (14 band widths + 6 column tiles), 2026-09-23 */
 #define VFFT_RACE_MAX_ROUNDS 96 /* _calibrate_pad runs RR=81 at PATIENT */
 
 /* THE PAUSE BETWEEN RACES (2026-09-20). The house law: pace >= 200 ms

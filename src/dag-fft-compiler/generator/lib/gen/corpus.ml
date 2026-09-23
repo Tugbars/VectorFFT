@@ -2679,6 +2679,49 @@ let zil_pure_cells : (string * string list) list =
     , [ "27"; "--cil-n1ccs"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix27_z_n1ccs_bwd_avx2.c"
     , [ "27"; "--cil-n1ccs"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  (* the ROW-LOOP twins (2026-09-23): the two-pass row child's stage kinds
+     with the in-kernel row loop -- the 2D tier's batched two-pass rows;
+     radices 4/8/16 plain, 8/16 tangent (il_kv variant 3) *)
+  ; ( "radix4_z_n1tr_avx2.c"
+    , [ "4"; "--cil-n1t"; "--cil-rowloop"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_t2r_avx2.c"
+    , [ "4"; "--cil-t2"; "--cil-rowloop"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_t2tr_bwd_avx2.c"
+    , [ "4"; "--cil-t2"; "--cil-rowloop"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_n1r_bwd_avx2.c"
+    , [ "4"; "--cil-n1"; "--cil-rowloop"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_n1tr_avx2.c"
+    , [ "8"; "--cil-n1t"; "--cil-rowloop"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t2r_avx2.c"
+    , [ "8"; "--cil-t2"; "--cil-rowloop"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t2tr_bwd_avx2.c"
+    , [ "8"; "--cil-t2"; "--cil-rowloop"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_n1r_bwd_avx2.c"
+    , [ "8"; "--cil-n1"; "--cil-rowloop"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_n1tr_avx2.c"
+    , [ "16"; "--cil-n1t"; "--cil-rowloop"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_t2r_avx2.c"
+    , [ "16"; "--cil-t2"; "--cil-rowloop"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_t2tr_bwd_avx2.c"
+    , [ "16"; "--cil-t2"; "--cil-rowloop"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_n1r_bwd_avx2.c"
+    , [ "16"; "--cil-n1"; "--cil-rowloop"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_n1trtan_avx2.c"
+    , [ "8"; "--cil-n1t"; "--cil-tangent"; "--cil-rowloop"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t2rtan_avx2.c"
+    , [ "8"; "--cil-t2"; "--cil-tangent"; "--cil-rowloop"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t2trtan_bwd_avx2.c"
+    , [ "8"; "--cil-t2"; "--cil-tangent"; "--cil-rowloop"; "--cil-turnst"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_n1rtan_bwd_avx2.c"
+    , [ "8"; "--cil-n1"; "--cil-tangent"; "--cil-rowloop"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_n1trtan_avx2.c"
+    , [ "16"; "--cil-n1t"; "--cil-tangent"; "--cil-rowloop"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_t2rtan_avx2.c"
+    , [ "16"; "--cil-t2"; "--cil-tangent"; "--cil-rowloop"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_t2trtan_bwd_avx2.c"
+    , [ "16"; "--cil-t2"; "--cil-tangent"; "--cil-rowloop"; "--cil-turnst"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_n1rtan_bwd_avx2.c"
+    , [ "16"; "--cil-n1"; "--cil-tangent"; "--cil-rowloop"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ]
 ;;
 
