@@ -657,6 +657,7 @@ flowchart TD
     N1A --> BLU["sets blu,<br/>REWRITES nst / R[] / L[]"]
     ROOP["<b>roop</b> — row route<br/>in-place row child (0) vs<br/>batched rows: one n1ccs call per run (2) vs<br/>batched two-pass rows: the child's stages<br/>with the in-kernel row loop (3)"]
     ROOP --> RBK["<b>rbk</b> — the two-pass rows' tile<br/>chunk scratch KB, raced with roop"]
+    ROOP --> TURN["<b>turn</b> — the TURN route<br/>rows stored transposed, the N2 columns<br/>as rows through the 1D plan at N1, one back-turn<br/>(no column chain; natural cells)"]
 
     style NOMT fill:#5f1f1f,color:#fff
     style CUT fill:#3a3a3a,color:#fff

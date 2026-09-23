@@ -664,6 +664,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                           : rn;
                     if (!dre)
                         dre = sre; /* in-place convenience */
+                    if (h->il2d_turn)
+                    {   /* the TURN route (2026-09-23): the whole plane through
+                         * the 1D engine -- rows turned into the N2 x N1
+                         * scratch, the columns as its rows, one back-turn */
+                        _il2d_turn_exec(h, dir, sre, dre);
+                        return;
+                    }
                     /* INC-C: the raced MT walk (bands are self-contained
                      * [suffix + fused rows] units because rows commute —
                      * the same fact that legalizes tfuse). Declines back
@@ -1351,6 +1358,9 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_col.blukb);
             free(h->il2d_col.bluscr);
             VFFT_ZS_FREE(h->il2d_rowb2_scr);   /* the two-pass rows' chunk scratch (route 3) */
+            if (h->il2d_turn_plan)
+                vfft_destroy(h->il2d_turn_plan); /* the turn route's N1 plan */
+            VFFT_ZS_FREE(h->il2d_turn_scr);
             free(h->il2d_col.bandscr);
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
             if (h->il2d_rows)

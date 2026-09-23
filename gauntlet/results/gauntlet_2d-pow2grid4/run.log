@@ -1,0 +1,11 @@
+2026-09-23 20:17:25 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\dag-fft-compiler\generator\generated)
+2026-09-23 20:17:25 run: 159 cells, contract 2D out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-23 20:17:25 calibrate: 159 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-09-23 20:17:41   calibrated 25/159 (4x4096), 16 s elapsed
+2026-09-23 20:17:49   calibrated 50/159 (16x2048), 23 s elapsed
+2026-09-23 20:18:01   calibrated 75/159 (64x1024), 36 s elapsed
+2026-09-23 20:18:13   calibrated 100/159 (256x512), 48 s elapsed
+2026-09-23 20:18:31   calibrated 125/159 (1024x256), 66 s elapsed
+2026-09-23 20:19:02   calibrated 150/159 (4096x1024), 97 s elapsed
+2026-09-23 20:19:17   calibrated 159/159 (8192x512), 111 s elapsed
+2026-09-23 20:19:17 bench: 159 cells (0 already benched, 0 not banked -> not benched)

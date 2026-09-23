@@ -2127,7 +2127,7 @@ const char *vfft_plan_route(vfft_plan p)
     if (!h || h->layout != (int)VFFT_LAYOUT_INTERLEAVED)
         return "-";
     if (h->N2 > 0 && h->N3 == 0 && h->il2d_col.nst > 0)
-        return h->il2d_col.blu ? "blu" : h->il2d_rowb2 ? "chain+rb2" : h->il2d_rowb ? "chain+rb" : "chain";   /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the batched rows, +rb2 = the batched two-pass rows */
+        return h->il2d_turn ? "turn" : h->il2d_col.blu ? "blu" : h->il2d_rowb2 ? "chain+rb2" : h->il2d_rowb ? "chain+rb" : "chain";   /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the batched rows, +rb2 = the batched two-pass rows; turn = the whole plane through the 1D engine */
     if (!h->k1_on)
     {
         /* the IN-PLACE door (c2c_ip_create.h) attaches the K=1 engine
@@ -2215,10 +2215,10 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->tcbw_n, h->tc_mt, (long)h->tcb_sn, (long)h->tcb_dn,
             h->pq_wn, h->pq_mt, (long)h->pq_n);
     FP__ADD(" il2d=[nst=%d wc=%d wl=%d cut=%d tf=%d roop=%d rw=%d cmt=%d"
-            " oddn2=%d nat=%d blu=%d norowz=%d]",
+            " oddn2=%d nat=%d blu=%d norowz=%d turn=%d]",
             h->il2d_col.nst, h->il2d_col.wc, h->il2d_col.wl, h->il2d_col.cut, h->il2d_col.tfuse,
-            _il2d_ro_of(h), h->il2d_rw, h->il2d_col.colmt, h->il2d_oddn2, /* roop = the row-route value 0|1|2 */
-            h->il2d_col.nat, h->il2d_col.blu, h->il2d_norowz);
+            _il2d_ro_of(h), h->il2d_rw, h->il2d_col.colmt, h->il2d_oddn2, /* roop = the row-route value 0|2|3 */
+            h->il2d_col.nat, h->il2d_col.blu, h->il2d_norowz, h->il2d_turn);
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
     FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",

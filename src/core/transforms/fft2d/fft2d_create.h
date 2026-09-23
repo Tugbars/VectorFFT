@@ -231,6 +231,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         vfft_il2p_fn il2d_rowb2_leaf_f = NULL, il2d_rowb2_mid_f = NULL, il2d_rowb2_t2t_b = NULL, il2d_rowb2_n1_b = NULL;
         double *il2d_rowb2_scr = NULL;
         int il2d_rowb2_ch = 0;     /* its tile in rows, from the banked rbk= / the env pin */
+        int il2d_turn = 0;         /* the TURN route (2026-09-23): the whole plane through the 1D engine */
+        struct vfft_plan_s *il2d_turn_plan = NULL;
+        double *il2d_turn_scr = NULL;
         int il2d_nat = 0;          /* NATURAL n1 via the leaf redirection */
         int *il2d_natperm = NULL;
         double *il2d_natscr = NULL;
@@ -365,6 +368,45 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 if (il2d_row && il2d_rowb2_leaf_f && getenv("VFFT_IL2D_ROWOOP") &&
                     atoi(getenv("VFFT_IL2D_ROWOOP")) == 3)
                     il2d_rowb2 = 1;
+                /* the TURN route (2026-09-23): the whole plane through the 1D
+                 * engine -- the batched mono row kernel with TURNED stores into
+                 * an N2 x N1 scratch, the N2 columns as its rows through the
+                 * in-place K=1 natural plan at N1, one back-turn. NATURAL cells
+                 * whose N2 has the n1ccs pair and whose N1 has an in-place K=1
+                 * plan (the door creates that cell here: replayed or raced and
+                 * banked like any 1D cell). The axis race decides (one arm);
+                 * banked turn=1; VFFT_IL2D_ROWOOP=4 pins it. */
+                if (il2d_row && !il2d_blu && il2d_rowb_f && vfft_policy_rankn_axis_nat(2, 0, il2d_ord))
+                {
+                    vfft_config_t tc;
+                    memset(&tc, 0, sizeof tc);
+                    tc.transform = VFFT_C2C;
+                    tc.placement = VFFT_INPLACE;
+                    tc.rigor = cfg->rigor;
+                    tc.dims = 1;
+                    tc.n[0] = N1;
+                    tc.howmany = 1;
+                    tc.order = VFFT_ORDER_NATURAL;
+                    tc.layout = VFFT_LAYOUT_INTERLEAVED;
+                    tc.nthreads = 1;
+                    tc.wisdom = cfg->wisdom;
+                    tc.wisdom_write = cfg->wisdom_write;
+                    il2d_turn_plan = (struct vfft_plan_s *)vfft_create(&tc);
+                    if (il2d_turn_plan)
+                    {
+                        il2d_turn_scr = (double *)VFFT_ZS_ALLOC(2 * (size_t)N1 * (size_t)N2 * sizeof(double));
+                        if (!il2d_turn_scr)
+                        {
+                            vfft_destroy(il2d_turn_plan);
+                            il2d_turn_plan = NULL;
+                        }
+                    }
+                    if (il2d_turn_plan && !getenv("VFFT_IL2D_ROWOOP") &&
+                        vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "turn", 0) == 1)
+                        il2d_turn = 1;
+                    if (il2d_turn_plan && getenv("VFFT_IL2D_ROWOOP") && atoi(getenv("VFFT_IL2D_ROWOOP")) == 4)
+                        il2d_turn = 1;
+                }
                 /* the tile: the banked rbk= (KB of chunk scratch; 8 where a row
                  * predates the token), VFFT_IL2D_RB2_KB pinning it for probes */
                 if (il2d_rowb2_leaf_f)
@@ -834,6 +876,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         h->il2d_rowb2_n1_b = il2d_rowb2_n1_b;
         h->il2d_rowb2_scr = il2d_rowb2_scr;
         h->il2d_rowb2_ch = il2d_rowb2_ch;
+        h->il2d_turn = il2d_turn;
+        h->il2d_turn_plan = il2d_turn_plan;
+        h->il2d_turn_scr = il2d_turn_scr;
         h->il2d_col.staged = il2d_staged;
         h->il2d_col.pitch = il2d_pitch;
         h->il2d_col.bandscr = il2d_bandscr;
@@ -889,9 +934,10 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * cmt verdict ONLY at the T it was raced at, else race and
          * bank. Runs AFTER the axis race — the row route (rowoop) the
          * clones must match is final only then. */
-        if (h->transform == VFFT_C2C && h->il2d_row &&
+        if (h->transform == VFFT_C2C && h->il2d_row && !h->il2d_turn &&
             h->nthreads > 1)
-        {   /* (Bluestein cells race too since 2026-09-02: the window pipeline) */
+        {   /* (Bluestein cells race too since 2026-09-02: the window pipeline;
+             * a TURN plan is serial for now: no clones, no MT race) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             _il2d_c2c_build_clones(h, cfg, h->nthreads);
             if (ce)

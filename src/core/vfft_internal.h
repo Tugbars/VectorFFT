@@ -322,6 +322,18 @@ struct vfft_plan_s
     vfft_il2p_fn il2d_rowb2_leaf_f, il2d_rowb2_mid_f, il2d_rowb2_t2t_b, il2d_rowb2_n1_b;
     double *il2d_rowb2_scr;        /* T slots x CHUNK rows x 2*N2 doubles */
     int il2d_rowb2_ch;             /* the TILE: rows per stage call, from the raced rbk= (KB of scratch) */
+    /* the TURN route (2026-09-23): the whole plane through the 1D engine, no
+     * column chain. The batched mono row kernel stores its row DFTs
+     * TRANSPOSED (OLs = N1, OGs = 1) into the N2 x N1 scratch; the N2 long
+     * columns run as rows of that scratch through the in-place K=1 natural
+     * plan at N1 (the door's own banked 1D verdict); one back-turn writes the
+     * plane. The narrow tall planes spent 95% of their time in a chain over
+     * one lane pair. NATURAL cells whose N2 has the n1ccs pair; an arm of the
+     * axis race (no band, no tile), banked turn=1, replayed; serial for now
+     * (a turn plan runs no MT race). */
+    int il2d_turn;
+    struct vfft_plan_s *il2d_turn_plan; /* the in-place K=1 natural plan at N1 */
+    double *il2d_turn_scr;              /* the N2 x N1 plane, 2*N1*N2 doubles */
     /* ── c2c MT (INC-C, docs/design/il2d_real_mt.md ported): per-worker
      * row state. The serving row path is ONE shared child -- two
      * concurrent bands would interleave plan state
