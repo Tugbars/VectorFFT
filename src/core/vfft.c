@@ -2127,7 +2127,7 @@ const char *vfft_plan_route(vfft_plan p)
     if (!h || h->layout != (int)VFFT_LAYOUT_INTERLEAVED)
         return "-";
     if (h->N2 > 0 && h->N3 == 0 && h->il2d_col.nst > 0)
-        return h->il2d_col.blu ? "blu" : "chain";   /* the 2D interleaved tier (2026-09-23): the column engine */
+        return h->il2d_col.blu ? "blu" : (h->il2d_rowb ? "chain+rb" : "chain");   /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the batched rows */
     if (!h->k1_on)
     {
         /* the IN-PLACE door (c2c_ip_create.h) attaches the K=1 engine
@@ -2217,7 +2217,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     FP__ADD(" il2d=[nst=%d wc=%d wl=%d cut=%d tf=%d roop=%d rw=%d cmt=%d"
             " oddn2=%d nat=%d blu=%d norowz=%d]",
             h->il2d_col.nst, h->il2d_col.wc, h->il2d_col.wl, h->il2d_col.cut, h->il2d_col.tfuse,
-            h->il2d_rowoop, h->il2d_rw, h->il2d_col.colmt, h->il2d_oddn2,
+            _il2d_ro_of(h), h->il2d_rw, h->il2d_col.colmt, h->il2d_oddn2, /* roop = the row-route value 0|1|2 */
             h->il2d_col.nat, h->il2d_col.blu, h->il2d_norowz);
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */

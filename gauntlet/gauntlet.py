@@ -8,7 +8,7 @@
     python gauntlet/gauntlet.py run       --group mixed --max 4000000 --primes 2,3,5
     python gauntlet/gauntlet.py cells     --group mixed --max 4000000          (list + duration estimate, nothing runs)
     python gauntlet/gauntlet.py run       --group 2d-small [--max 64]           (2D: every shape N1xN2 up to 64 per axis)
-    python gauntlet/gauntlet.py run       --group 2d-odd | 2d-pow2 | 2d-mixed  (2D: odd/prime columns, pow2 planes, smooth planes)
+    python gauntlet/gauntlet.py run       --group 2d-odd | 2d-pow2 | 2d-mixed  (2D: odd/prime columns, the pow2 grid, smooth planes)
     python gauntlet/gauntlet.py run       --cells 47x64,23x256 | @shapes.txt    (2D shapes; never mixed with 1D lengths)
     python gauntlet/gauntlet.py calibrate / bench / report / merge / verify / gflops ... (the run's stages, one at a time)
 
@@ -138,11 +138,10 @@ def group_cells(group, maxn, primes):
     if group == "2d-odd":                   # the odd / prime column pool and its closers over pow2 rows
         n1s = list(range(3, 48, 2)) + [2, 6, 10, 12, 14, 22, 26, 44, 46, 58, 62, 94]
         return sorted((a, b) for a in n1s for b in (64, 128, 256, 512))
-    if group == "2d-pow2":                  # squares 8..1024 and the rectangle ladder
-        sq = [(1 << k, 1 << k) for k in range(3, 11)]
-        rect = [(16, 4096), (4096, 16), (32, 1024), (1024, 32), (64, 256), (256, 64),
-                (4096, 64), (8192, 64), (16384, 64), (32768, 64)]
-        return sq + rect
+    if group == "2d-pow2":                  # the pow2 GRID: every 2^a x 2^b, 2..--max per axis (default 8192), planes up to 2^22 points
+        m = maxn or 8192
+        return [(1 << a, 1 << b) for a in range(1, 14) for b in range(1, 14)
+                if (1 << a) <= m and (1 << b) <= m and a + b <= 22]
     if group == "2d-mixed":                 # 2^a 3^b 5^c lengths that are not powers of two, as squares and against 64
         m = maxn or 512
         sm = [n for n in smooth(m, primes or (2, 3, 5)) if n >= 4 and n & (n - 1)]
@@ -514,7 +513,7 @@ def main():
     ap.add_argument("verb", choices=["run", "calibrate", "bench", "report", "merge", "cells", "verify", "gflops"])
     ap.add_argument("--cells", help="4096 | 2..4096 | 1000,1024,4096 | @file")
     ap.add_argument("--group", choices=["pow2", "primes", "mixed", "all", "2d-small", "2d-odd", "2d-pow2", "2d-mixed"])
-    ap.add_argument("--max", type=int, help="ceiling for a group (pow2 2^23, primes 16384, mixed 4000000, 2d-small 64 per axis, 2d-mixed 512)")
+    ap.add_argument("--max", type=int, help="ceiling for a group (pow2 2^23, primes 16384, mixed 4000000, 2d-small 64 per axis, 2d-pow2 8192 per axis, 2d-mixed 512)")
     ap.add_argument("--primes", help="the prime set of the mixed group, e.g. 2,3,5,7 (default 2,3,5)")
     ap.add_argument("--threads", default="1")
     ap.add_argument("--inplace", action="store_true")

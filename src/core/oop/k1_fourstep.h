@@ -54,6 +54,8 @@ static void _il2d_col_stages(const double *src, double *dst, int nrows, size_t r
 static int _il2d_stage_digits_mt(const double *src, double *dst, int nrows, size_t pitch, size_t cnt,
                                  int R, int L, vfft_il2p_fn fn, const double *tab, int T);
 static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid, vfft_dir_t dir, double *row, size_t rn, size_t p);
+static void _il2d_rows_exec(struct vfft_plan_s *h, int tid, vfft_dir_t dir, double *base, size_t rn,
+                            size_t pitch, size_t p0, size_t pstep, size_t nrows); /* a run of rows, il2d_tier.h */
 static int _il2d_resolve(const int *Rs, int m, vfft_il2p_fn *ff, vfft_il2p_fn *fb);
 static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls, double **tf, double **tb);
 static long _il2d_chain_prod(const int *Rs, int m);
@@ -453,8 +455,7 @@ static void _k1fs_sb_fwd(const vfft_k1fs_plan_t *p, int tid, int j, double *out)
         double *blk = scr + 2 * (size_t)m * (size_t)wl * rn;
         memcpy(blk, p->plane + 2 * r0 * rn, 2 * (size_t)wl * rn * sizeof(double));
         _il2d_col_stages(blk, blk, wl, rn, p->sbnst - 1, p->sbnst, p->sbR, p->sbL, p->sbf, p->sbtf, 0);
-        for (i = 0; i < wl; i++)
-            _il2d_row_exec_t(p->c2d, tid, VFFT_FORWARD, blk + 2 * (size_t)i * rn, rn, r0 + (size_t)i);
+        _il2d_rows_exec(p->c2d, tid, VFFT_FORWARD, blk, rn, rn, r0, 1, (size_t)wl);
     }
     for (i = 0; i < wl; i++)
     {
@@ -478,8 +479,7 @@ static void _k1fs_sb_bwd(const vfft_k1fs_plan_t *p, int tid, int j, const double
     {
         const size_t r0 = (size_t)m * bstride + (size_t)j * (size_t)wl;
         double *blk = scr + 2 * (size_t)m * (size_t)wl * rn;
-        for (i = 0; i < wl; i++)
-            _il2d_row_exec_t(p->c2d, tid, VFFT_BACKWARD, blk + 2 * (size_t)i * rn, rn, r0 + (size_t)i);
+        _il2d_rows_exec(p->c2d, tid, VFFT_BACKWARD, blk, rn, rn, r0, 1, (size_t)wl);
         _il2d_col_stages(blk, blk, wl, rn, p->sbnst - 1, p->sbnst, p->sbR, p->sbL, p->sbb, p->sbtb, 1);
         memcpy(p->plane + 2 * r0 * rn, blk, 2 * (size_t)wl * rn * sizeof(double));
     }

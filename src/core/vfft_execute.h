@@ -684,9 +684,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                        fwd ? h->il2d_col.blukf
                                            : h->il2d_col.blukb,
                                        h->il2d_col.bluscr);
-                        for (i = 0; i < (size_t)h->N; i++)
-                            _il2d_row_exec(h, dir, dre + 2 * i * rn,
-                                           rn, i);
+                        _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                         return;
                     }
                     /* strip loop-interchange: all stages depth-first per
@@ -757,9 +755,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                                       h->il2d_col.tfuse);
                             }
                             if (!h->il2d_col.tfuse)
-                                for (i = 0; i < (size_t)h->N; i++)
-                                    _il2d_row_exec(h, dir, dre + 2 * i * rn,
-                                                   rn, i);
+                                _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                             return;
                         }
                         for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
@@ -778,8 +774,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                             _il2d_col_stages(scr, dre, h->N, rn, 0, cut,
                                              h->il2d_col.R, h->il2d_col.L, fns, tabs,
                                              1);
-                        for (i = 0; i < (size_t)h->N; i++)
-                            _il2d_row_exec(h, dir, dre + 2 * i * rn, rn, i);
+                        _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                         return;
                     }
                     if (h->il2d_col.wl > 0)
@@ -817,8 +812,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         {
                             if (dre != sre)
                                 memcpy(dre, sre, 2 * (size_t)h->N * rn * sizeof(double));
-                            for (i = 0; i < (size_t)h->N; i++)
-                                _il2d_row_exec(h, dir, dre + 2 * i * rn, rn, i);
+                            _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                             sre = dre;
                         }
                         if (fwd && cut > 0)
@@ -846,17 +840,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                            bs + 2 * i * rn,
                                            2 * rn * sizeof(double));
                                 if (hookb && h->il2d_col.tfuse)
-                                    for (i = 0; i < wl; i++)
-                                        _il2d_row_exec(h, dir, sc + 2 * i * pit, rn, b0 + i);
+                                    _il2d_rows_exec(h, 0, dir, sc, rn, pit, b0, 1, wl);
                                 _il2d_col_stages2(sc, sc, (int)wl,
                                                   pit, rn, cut, nst,
                                                   h->il2d_col.R, h->il2d_col.L,
                                                   fns, tabs, !fwd);
                                 if (h->il2d_col.tfuse && !hookb)
-                                    for (i = 0; i < wl; i++)
-                                        _il2d_row_exec(h, dir,
-                                                       sc + 2 * i * pit,
-                                                       rn, b0 + i);
+                                    _il2d_rows_exec(h, 0, dir, sc, rn, pit, b0, 1, wl);
                                 for (i = 0; i < wl; i++)
                                     memcpy(bd + 2 * i * rn,
                                            sc + 2 * i * pit,
@@ -867,26 +857,21 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                             {
                                 if (bd != bs)
                                     memcpy(bd, bs, 2 * wl * rn * sizeof(double));
-                                for (i = 0; i < wl; i++)
-                                    _il2d_row_exec(h, dir, bd + 2 * i * rn, rn, b0 + i);
+                                _il2d_rows_exec(h, 0, dir, bd, rn, rn, b0, 1, wl);
                                 bs = bd;
                             }
                             _il2d_col_stages(bs, bd, (int)wl, rn, cut,
                                              nst, h->il2d_col.R, h->il2d_col.L,
                                              fns, tabs, !fwd);
                             if (h->il2d_col.tfuse && !hookb)
-                                for (i = 0; i < wl; i++)
-                                    _il2d_row_exec(h, dir,
-                                                   bd + 2 * i * rn, rn, b0 + i);
+                                _il2d_rows_exec(h, 0, dir, bd, rn, rn, b0, 1, wl);
                         }
                         if (!fwd && cut > 0)
                             _il2d_col_stages(dre, dre, h->N, rn, 0, cut,
                                              h->il2d_col.R, h->il2d_col.L, fns,
                                              tabs, 1);
                         if (!h->il2d_col.tfuse && !hookb)
-                            for (i = 0; i < (size_t)h->N; i++)
-                                _il2d_row_exec(h, dir, dre + 2 * i * rn,
-                                               rn, i);
+                            _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                         return;
                     }
                     if (h->il2d_fs_tw && !fwd)
@@ -894,8 +879,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                          * then the column pass reversed in place on dst */
                         if (dre != sre)
                             memcpy(dre, sre, 2 * (size_t)h->N * rn * sizeof(double));
-                        for (i = 0; i < (size_t)h->N; i++)
-                            _il2d_row_exec(h, dir, dre + 2 * i * rn, rn, i);
+                        _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                         _il2d_col_pass(dre, dre, h->N, rn, wc, h->il2d_col.nst,
                                        h->il2d_col.R, h->il2d_col.L, h->il2d_col.b,
                                        h->il2d_col.tb, 1);
@@ -918,8 +902,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                        fwd ? h->il2d_col.f : h->il2d_col.b,
                                        fwd ? h->il2d_col.tf : h->il2d_col.tb,
                                        /*reverse=*/!fwd);
-                    for (i = 0; i < (size_t)h->N; i++)
-                        _il2d_row_exec(h, dir, dre + 2 * i * rn, rn, i);
+                    _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                     return;
                 }
                 /* OWNER LAW (2026-08-25): the convert wrapper is

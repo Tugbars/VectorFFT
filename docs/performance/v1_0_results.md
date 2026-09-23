@@ -1,33 +1,6 @@
 # VectorFFT v1.0 — performance results
 
-> **Where we win most — MKL's blind spot.** VectorFFT's lead over MKL is widest exactly
-> where MKL invests least: **odd / mixed-radix, scrambled-order, in-place, batched.**
-> Power-of-2 is MKL's home turf (decades of split-radix tuning) and our *narrowest* win
-> (median **1.86×**); odd composites — where MKL falls back to generic mixed-radix / Bluestein —
-> are our *fattest* (median **3.47×**, ~2× more margin). Three effects stack into that blind spot:
-> (1) a DAG-compiler-tuned codelet for **every smooth radix** (not just 2/4/8), (2) **scrambled-order**
-> in-place that skips the bit-reversal MKL pays, and (3) the **split lane-batched** layout that makes
-> the throughput regime trivially parallel. MKL is tuned for the opposite corner: power-of-2, natural
-> order, single transform. (Scrambled order is the right contract for convolution-class work — FIR
-> filtering, polynomial / big-integer multiply, correlation, lattice-crypto NTT — where a fwd→bwd
-> roundtrip or a pointwise multiply is order-agnostic.)
-
-Empirical performance of VectorFFT across three axes:
-
-1. **Wall-time vs MKL** on 1D C2C — single-thread (238 cells) and multi-threaded (the headline metric)
-2. **Wall-time vs FFTW3** on 1D C2C and the r2r family (DCT/DST/DHT), single-thread
-3. **Multi-threaded scaling** at T=2/4/8 across the transforms
-
-(Plan-quality / cost-model analysis lives in its own doc: [docs/cost_model/](../cost_model/).)
-
-All numbers are from the i9-14900KF calibration host (P-core pinned,
-performance plan, single-threaded unless noted). The numbers move on
-different hardware — see "Hardware caveats" at the end.
-
 ## 1. vs MKL — 1D C2C
-
-Source: `build_tuned/benches/vfft_perf_tuned_1d.csv`
-(238 cells × MKL ILP64 sequential, calibrated wisdom loaded).
 
 ```
 Category              Cells    Min   Median    Max   Mean
@@ -47,37 +20,7 @@ OVERALL                 238   1.02×   2.64× 15.33×  2.83×
 Wins vs MKL: 238/238 (100%)
 ```
 
-Headline:
-
-> **VectorFFT beats MKL on 100% of bench cells (238/238). Median speedup
-> 2.64×, mean 2.83×, range 1.02×–15.33×.**
-
-The median 2.64× win comes from VectorFFT's twin advantages:
-1. **Plan-level joint search** at calibration time — picks better
-   factorizations than per-codelet wisdom (see
-   [docs/wisdom/00_thesis.md](../wisdom/00_thesis.md)).
-2. **Fully tuned codelet portfolio** — every shipped radix has
-   variant codelets (FLAT / LOG3 / T1S / BUF) selected per
-   `(R, me, ios)` cell.
-
 ### Arbitrary K — odd / non-multiple-of-VW batch (single-thread)
-
-In-place c2c now accepts **any** batch K, not just `K % VW == 0`. A codelet-internal
-rem-aware tail ([arbitrary_k_tail_handling.md](arbitrary_k_tail_handling.md)) covers the
-`1..VW-1` leftover lanes: the bulk full-vector loop, then **`rem==1` → one scalar single
-lane, `rem>=2` → one masked vector pass**. Every radix carries it — monolithic (r2–r5, r7,
-primes) and composite / CT-blocked (r8, r16, r32, r64). Bit-exact at every K (`fwd+bwd ==
-N·x` + a bulk-vs-tail-split diagnostic, all `corr = 0.0`).
-
-Forward vs MKL `DFTI_INPLACE` split, `bench_inplace_oddk` `measure_ab` (best-of-5 min,
-cachebust + cool, order-flip). **Each cell uses its CALIBRATED `spike_wisdom` factorization**
-(odd K reuses the same N's nearest-K plan). Two methodology notes matter:
-- These run the **GENERIC executor** — the only path that carries the tail today. The §1 main
-  table (and the `CSV` column below) is **baked/JIT**, which is ~1.5–2× faster on multi-stage
-  cells, so the *absolute* margins here sit below the baked reference (the documented "generic
-  floor; `--jit` widens it"). The apples-to-apples comparison is **odd-K vs even-K on the same
-  generic executor.**
-- Measured on a **live host**; cells marked `*` show order-flip spread (thermal noise).
 
 ```
  N      plan (calibrated)    K=32 rem0   K=33 rem1   K=31 rem3   | CSV baked K=32
@@ -88,31 +31,9 @@ cachebust + cool, order-flip). **Each cell uses its CALIBRATED `spike_wisdom` fa
  512    4x4x32/DIF           2.09×       1.78×       2.46×       | 1.98×
  1024   4x4x8x8/DIT          1.19×       1.63×       1.64×       | 2.75×
  4096   4x4x4x8x8/DIT        2.70×*      1.48×       1.52×       | 2.57×
-──────────────────────────────────────────────────────────────────────────────────
 ```
 
-Composite-stage cell (CT-blocked r16, `bench_oddk_composite`, plan N=256 [16,16] T1S):
-`K=8 (rem0) 3.02× · K=13 (rem1) 2.31× · K=17 (rem1) 2.48× · K=15 (rem3) 2.61×`.
-
-> **Odd-K is bit-exact and competitive — on the generic executor it tracks or beats the even-K
-> cell (N=256: even 1.31× → odd 2.27×; N=1024: even 1.19× → odd 1.63×; N=64: even 3.43× → odd
-> ~2.67×).** The tail adds no structural cost; the gap to the baked §1 reference is the
-> generic-vs-baked executor difference, not the remainder handling. Reaching the baked numbers at
-> odd K needs the JIT/baked executor to carry the tail (today JIT = even-K 1D C2C only — a
-> follow-up).
->
-> **Why scalar-at-rem==1 + masked-at-rem≥2** (the measured contract): a *pure* scalar tail erodes
-> as the scalar fraction grows (1.77× at rem=1 → 1.61× at K=31 → 1.29× at K=15 rem=3), while one
-> masked pass is **flat in rem** (~1.6–1.72×). The hybrid takes the cheaper scalar lane at rem==1
-> and the flat masked pass at rem≥2. The scalar lane renders monolithically (no register pressure
-> at width 1), so even spill-scratch composite codelets honour it.
-
 ### Multi-threaded — vs MKL at T=8
-
-dag (8 P-cores, pinned core 0, pool K-split) vs MKL `mkl_set_num_threads(8)`, **identical split
-lane-batched layout**, order-neutralized (engine order flipped per cell) + paced — the same fairness
-as the single-thread table above. Source: `bench_1d_vs_mkl.c --mt` → `vfft_perf_tuned_1d_mt.csv`
-(129 cells, K≥32).
 
 ```
  N      K    dag-T8 (ns)  MKL-T8 (ns)  dag/MKL
@@ -127,26 +48,7 @@ as the single-thread table above. Source: `bench_1d_vs_mkl.c --mt` → `vfft_per
  4096   32      233,233      405,020    1.74×
 ```
 
-> **At T=8, VectorFFT beats MKL on 129/129 cells (K≥32) — median 3.76× (K=32: 3.00×, K=256: 4.38×),
-> up to 41.9× at tiny N where MKL can't usefully thread the batch.** Our split, lane-batched layout
-> makes K independent transforms trivially parallel (no barriers); MKL's batched split-mode threading
-> scales poorly at modest N. These use the **generic** executor — a conservative floor (JIT is wired
-> and bit-exact again post-core-move; re-running with `--jit` widens the margin).
-
 ### Multi-threaded — INTERLEAVED transform-contiguous batch at T=8
-
-A second batch geometry, and the fairest MT cell in this document: DFTI with
-`DFTI_NUMBER_OF_TRANSFORMS=K, DFTI_INPUT_DISTANCE=N` **is** our transform-contiguous
-layout, so both engines read byte-identical memory and compute the same natural-order
-spectrum — the correctness column is a cross-engine elementwise compare (~1e-16 every
-cell), not a roundtrip proxy. The whole process is confined to the **8 distinct P-cores**
-(affinity mask `0x5555`; logical 0,2,…,14) before any MKL/OpenMP initialization, so
-neither engine can borrow E-cores or HT siblings. Source: `bench_1d_vs_mkl.c --ilmt`
-→ `vfft_perf_tuned_1d_ilmt.csv`.
-
-Four timed arms per cell — ours at T=8 and T=1, MKL at T=8 and T=1 — plus a repeat of
-arm 1 as a control. Our pool is torn down before every MKL arm (our workers spin and
-would otherwise steal cores), and MKL gets ≥300 ms to park its threads before ours.
 
 ```
  N      K    ours-T8   ours-T1    MKL-T8    MKL-T1 | vs MKL best  our scale  MKL scale
@@ -173,64 +75,7 @@ would otherwise steal cores), and MKL gets ≥300 ms to park its threads before 
 ns/call. "scale" = that engine's OWN T1/T8 (8.00 = perfect on 8 cores).
 ```
 
-> **18 of 18 cells win vs MKL-BEST — median 4.10×, up to 10.21× at 16384×32. Our own
-> scaling reaches 8.89× on 8 cores — near-linear.** Measured 2026-08-13,
-> post-tangent/wing32; supersedes the 2026-08-06 table (17/18, median 3.09× — its one
-> loss, 256×4 at 0.78×, is now 1.11×). The movers are the sub-2048 cells the tangent arc
-> rebuilt (all clean ≤2.4% repeat-arm spread); the 65536-row and 256×8/32 cells carried
-> 12–27% spreads (machine in use) — read those within their noise. K=1 1024 was re-raced
-> the same day and the tangent variants LOST (wash) — the batched 1024 gains come through
-> the TC-batch path's shared sub-kernels, not a new 1024 plan.
-
-**We compare against MKL's *faster* configuration, which is almost always its serial one.**
-That is the finding this table exists to record: **MKL's threaded arm never beats its own
-serial arm at any cell measured** — its scale column runs 0.06×–1.00×, capping exactly at
-parity. This is not a mis-measurement. `MKL_VERBOSE=1` confirms the threading layer is
-`intel_thread` and that the calls run at `NThr:8`; it was re-checked under three affinity
-masks (`0x5555`, `0xFFFF`, unmasked) with the same result. MKL threads the work correctly
-and simply loses doing so at these granularities: at 256×8 its threaded arm costs 18,828 ns
-against 1,216 ns serial, 15× slower for identical math. Scoring against MKL's T=8 column
-instead would inflate every ratio (median 8.25× vs the honest 3.09×) by crediting us for an
-option MKL's own users would not select.
-
-Three caveats stated plainly:
-
-- **This is a threading-architecture win, not a kernel win.** Compare the two T=1 columns —
-  that is the kernel-vs-kernel fight with threading removed. MKL leads at N ≤ 1024
-  (1.18×–1.56×, worst for us at 1024); we lead from 4096 up (1.06×–1.74×). The sub-2048
-  serial gap is real and is tracked separately.
-  *(Update 2026-08-16: this table predates the tangent/wing32/TURNED campaign. In the
-  K=1 natural-order grid below, the serial sub-2048 gap has since closed to parity —
-  128 = 1.05×, 256 = 1.00×, 512 = 0.98–1.00×, 1024 ≈ 0.95-to-parity. These batched
-  cells have NOT been re-measured against the new pool, so the numbers above stand
-  as-measured.)*
-- **Our workers never park.** Dispatch is cheap precisely because the pool spins rather than
-  sleeping, which costs idle CPU and power. MKL's threads sleep after `KMP_BLOCKTIME`, which
-  is better behaviour inside a host application doing other work. On this benchmark the trade
-  is pure upside for us; in production it is a real cost.
-- **Two cells are noise-dominated** — 256×8 (9.2% control spread) and 4096×8 (7.8%). Every
-  multi-× result sits far outside its own control spread; anything inside it is not a result.
-
 ### Natural order — in-place (single-thread)
-
-In-place c2c natively emits **digit-scrambled** order (the convolution contract — §1 headline). The
-`VFFT_ORDER_NATURAL` flag (parity with MKL's `DFTI_ORDERING`) delivers **bin-for-bin natural order**
-by running the same scrambled FFT plan and then a per-cell **reorder methodology**, calibrated once and
-persisted as a **self-contained `@nat` record** (wisdom v8 — its own `J_nat`-optimal factorization + mode,
-regime-separated from the scrambled entry so a natural create never perturbs the scrambled plan):
-
-- **FREE** — the cell is already natural (single-stage / prime); zero extra pass.
-- **PURE** — a cycle-following K-row permutation pass over the scrambled output.
-- **PSWAP** — an involution **pair-swap** on a *palindromic* factorization (whose digit reversal is
-  its own inverse), the cheapest possible reorder. The planner injects a palindromic chain as a
-  candidate since the DP scores factorizations under scrambled economics.
-
-Forward via the public API (`vfft_create` order=NATURAL + `vfft_execute`; the FFT is **JIT/baked**,
-only the reorder pass is a memory permutation) vs MKL's natural DFTI (its default order), same
-fairness as §1 (best-of-5 min, cachebust + cool + order-flip, P-core-pinned). Output order validated
-**bin-for-bin** against a naive O(N²) DFT (elementwise, both natural) **plus** roundtrip
-`fwd+bwd == N·x` (all e-14/e-15 every cell; see the `fwd`/`rt` gates). Source: `bench_1d_vs_mkl`-modeled
-`natorder_vs_mkl.c`, rebuilt against the v8 `@nat` wisdom and consuming the dev-calibrated records.
 
 ```
  N      K    mode     vfft ns   dag/MKL   chain / note
@@ -249,42 +94,7 @@ fairness as §1 (best-of-5 min, cachebust + cool + order-flip, P-core-pinned). O
  median               ~1.68×    (9/9 win)
 ```
 
-> **Natural-order in-place beats MKL on every sampled cell — 1.23×–2.72×, median ~1.68×** — even though
-> MKL emits natural order *natively* while we run a full reorder pass on top of the scrambled FFT. The
-> lead tracks the reorder cost exactly: **FREE** (64/4, single radix — no reorder) and **PSWAP** (100/4,
-> a cheap involution pair-swap on a palindrome) give the widest margins (2.28×, 2.72×); **PURE** (the
-> cycle-follow pass, heaviest tax) the narrowest (128/4 = 1.27×). Natural gives up roughly a fifth of the
-> scrambled lead — the "20–25%" design target — yet still clears MKL, because MKL pays for its *own*
-> bit-reversal to reach the same order. The hardest cell is **1024/4 = 1.23×**: N=1024 is pow2, MKL's
-> most hand-tuned case (its narrowest blind spot), carrying the full reorder tax — and it still wins.
->
-> **Mode selection is now stabilized** (this resolves the earlier "not-yet-paced" follow-up). The
-> create-time calibrator measures candidates **interleaved + best-of-rounds** with a **5% win-margin**
-> and a **natural-intrinsic tie-break** (FREE > PSWAP-pairs > PURE-cycle, then fewer stages, then
-> lexicographic) — decided purely on the natural objective, **never** the scrambled winner. The old
-> 256/4 PURE↔PSWAP flap is gone: it settles deterministically on the 16·16 palindrome. The self-contained
-> `@nat` records are dev-calibrated over the K∈{4,32}, N≤1024 grid and the public API consumes them.
->
-> **Honesty note:** measured on a **live host** (not the locked-down §1 machine) → ratios are
-> **directional**; the correctness gate (elementwise-natural vs MKL + roundtrip) is exact. Natural order
-> here is **in-place 1D C2C** — r2c/c2r/trig are already natural, and OOP carries its own natural kinds
-> (LEAF/BAILEY2, same `VFFT_ORDER_NATURAL` flag; see the out-of-place tables). The 2D `@nat2d` cells are
-> calibrated but not yet benched vs MKL DFTI 2D. Roundtrip / convolution consumers keep the faster
-> scrambled default.
-
 ### Order × placement — the K=1 INTERLEAVED grid
-
-The tables above are the split lane-batched path. This one is the **K=1 interleaved**
-(`layout=INTERLEAVED`) story, and it differs in a way worth stating explicitly: **above
-2048, natural order is a different terminator, not a reorder pass.** The `stfn` cascade
-writes natural order directly from the last stage, so there is no `PURE`/`PSWAP` permutation
-pass to pay — unlike the reorder methodology described immediately above, which is the
-split path's mechanism. Measured through the public API, MKL has no reorder pass here
-either; this is the matching design, not a divergence.
-
-Every order × placement combination is served by a **native** engine. No convert fallback
-remains anywhere in this grid — the last hole (OOP-natural ≥2048, which read 0.17× through
-the convert bridge) closed 2026-08-04.
 
 | order × placement | sub-2048 (mono ≤64 · il2p/il3p 128–1024) | ≥2048 (cascade tier) |
 |---|---|---|
@@ -293,76 +103,27 @@ the convert bridge) closed 2026-08-04.
 | **SCRAMBLED · in-place** | native — **identity rule**: served by the natural-native engines (the identity permutation is contract-legal; bits identical to natural, gated `IDENT`) | native — ZTURN-S digit-scrambled comb (kind-4 verdict); the comb is a REAL permutation (A3-gated) |
 | **SCRAMBLED · OOP** | native — identity rule, same engines (`scr==nat` EXACT, gated) | native — kind-4 cascade attaches to the OOP handle, matched-permutation roundtrip |
 
-**DEFAULT order** = engine-native everywhere (fastest, order-agnostic): resolves to the
-scrambled-native path in-place, the calibrated winner OOP.
-
-> **2026-08-25 — the DEFAULT-order in-place hole, closed.** Until this date the
-> paragraph above was not true sub-2048: the ILP-attach consult was gated on
-> *explicit* `VFFT_ORDER_SCRAMBLED`, so a `VFFT_ORDER_DEFAULT` in-place IL create
-> (the common spelling) never reached the IL engines and served the
-> dein→split→inter convert instead — a measured 1.8–6.1× tax (same-run three-arm
-> probes). Fixed: the create now races ILP vs its own convert incumbent, banks the
-> verdict in its own `ord=scr` mode cell (`mode=ilp` | `mode=conv`), and serves it;
-> the fixed arm lands on the natural reference at every probed size.
->
-> What that moves vs MKL, **derived from multiple runs — not a toe-to-toe
-> same-run competition** (the post-fix column is the ★★/✦ OOP data above applied
-> through the grid's own "sub-2048 in-place and OOP run the SAME IL engines" rule;
-> the pre-fix column divides it by the same-run convert tax measured 2026-08-25):
->
-> | N | pre-fix serving (convert) vs MKL | post-fix serving (il2p/il3p) vs MKL | MKL abs (vintage) | MKL column source |
-> |---|---|---|---|---|
-> | 128 | ~0.2–0.3× (derived) | ≈1.05× expected (65 vs 69 ns) | 69 ns | OOP row, 2026-08-16 ★★ |
-> | 256 | ~0.2–0.3× (derived) | ≈1.00× expected (136 vs 136 ns) | 136 ns | OOP row, 2026-08-16 ★★ |
-> | 512 | ~0.2–0.3× (derived) | ≈0.94–0.98× expected (296–297 vs 291–295 ns) | 291–295 ns | OOP row, 2026-08-16 ★★ |
-> | 1024 | ~0.25–0.35× (derived) | ~0.95-to-parity expected (848+ vs 833+ ns) | 833–873 ns | ✦ 6-rep, 2026-08-16 |
->
-> **The full in-place IL closure (same day).** A convert-arm census
-> (1152 executes: both placements × three orders × K∈{1,2,4,8} × 24 Ns ×
-> both directions, `VFFT_CONV_LOG` instrumentation) found and closed
-> every convert-served cell class; 96/1152 remain — all N=8/9, the
-> raced-and-settled mono boundary. Each class now races its native
-> engine against the convert incumbent at create and banks the verdict
-> in its own `ord=scr lay=il` mode cell (`mode=ilp|zcasc|conv`):
->
-> | cell class | native engine | measured vs its own convert serving | vs MKL |
-> |---|---|---|---|
-> | DEFAULT/SCR, N<2048 | il2p/il3p (mode=ilp) | 1.8–6.1× | ≈0.95–1.05× (the ★★ band, derived) |
-> | ≥2048 in-place, cold store | cascade (mode=zcasc, aliased-timed) | 3.8–4.7× | 1.00–1.18× (the cascade band, derived) |
-> | primes 7/11/13/127 in-place | ilprime (zin==zout contracted safe) | 8–43× | no separate MKL datum |
-> | NATURAL ≥2048 in-place, cold | ZCASC race arm now built on miss | 4.6–4.8× over the tape | as the cascade band |
->
-> The vs-MKL column is vintage data mapped through the "same engines
-> serve these cells" rule — not a fresh toe-to-toe; the per-class
-> multipliers are same-run measurements (2026-08-25).
-
-Measured vs MKL, like-for-like order and placement, same-run ratios (>1 = we win):
-
 ```
   N       NATURAL in-place   NATURAL OOP   SCRAMBLED in-place
 ──────────────────────────────────────────────────────────────
-  128        0.91 †‡           1.05 ★★        (= NAT bits)
-  256       0.85–0.86 ▲◆‡      1.00 ★★        (= NAT bits)
-  512       0.78–0.80 ▲‡     0.98–1.00 ★★     (= NAT bits)
-  1024      0.91–0.95 ▲     ~0.95–parity ✦    (= NAT bits)
+  128        0.91            1.05         (= NAT bits)
+  256       0.85–0.86       1.00         (= NAT bits)
+  512       0.78–0.80      0.98–1.00      (= NAT bits)
+  1024      0.91–0.95      ~0.95–parity     (= NAT bits)
   2048      1.09–1.16       0.99–1.11         1.15–1.18
   4096      0.96–0.99       0.91–0.94         1.02–1.04
   8192      1.00–1.03       0.95–0.98         1.05–1.06
   16384     1.02–1.03       0.94–0.98         1.05–1.08
   32768     0.94–0.97       0.88–0.91         1.00–1.02
 ──────────────────────────────────────────────────────────────
-† vintage 2026-08-04 (not re-measured)
-▲ 2026-08-06: blocked R≥32 kernels are the SHIPPED DEFAULT — a structural
 register-file rule (a monolithic R≥32 body holds ~40–64 live values against
 AVX2's 16 registers), not a per-cell race. Same-run A/B against the
 monolithic arm, pair pinned by wisdom so only the kernels vary, 8 alternating
 arms on a pinned core: 1024 −27% (0.65→0.92), 512 −8% (0.70→0.78).
-◆ 256's gain needed BOTH halves and neither alone: the calibrator replaced
 the heuristic balanced pair (16,16) with the measured (8,32), which puts
 R=32 in the leaf slot, which the structural rule then blocks — 0.76→0.85.
 Fully blocking a (16,16) pair instead was raced and LOST by 4.4%, so radix
 choice dominates form choice here.
-★★ 2026-08-16, the CLOSED sub-2048 campaign: tangent interiors
 ([tangent_scaled_butterflies.md](tangent_scaled_butterflies.md)) + the wing32
 R32 forms + the TURNED store-edge axis
 ([store_edge_taxonomy.md](store_edge_taxonomy.md) defines T128/T256/M-128 and
@@ -371,13 +132,12 @@ full form pool; verdicts banked as pair + `il_kv`). Winning rows: 128 = pair
 4×32, kv 64 (mono mid + T256 wing32 leaf, 65 ns vs MKL 69); 256 = 16×16, kv 51
 (tangent both slots, 136 vs 136); 512 = 16×32, kv 67 (tangent mid + T256 wing32
 leaf, 296–297 vs 291–295). Canonical bench `--k1noop`, both flip orders,
-cross-engine correctness 3–4e-16. The 2026-08-12 era below (★-history) first
+cross-engine correctness 3–4e-16. The 2026-08-12 era below (-history) first
 crossed 128/256 with tangent-only forms; the wing32 leaf then solved the R32
 slot (the old "+32% killed leaf" was an edge×interior interaction, not the
 tangent construction) and the TURNED axis picked the store edge per cell.
-Historical ★ numbers: 128 1.04 (8×16, kv 51) · 256 1.01–1.02 · 512 0.87–0.88
+Historical  numbers: 128 1.04 (8×16, kv 51) · 256 1.01–1.02 · 512 0.87–0.88
 (kv 35, pre-wing32) — superseded by the rows above.
-✦ 2026-08-16, 6 reps, both flip orders, canonical bench: ours
 848/889/893/901/978/987 ns vs MKL 833/841/854/860/864/873 — **median ratio
 0.96, best-vs-best 0.98, one rep at 1.02**. The route is CLASSIC blocked 32×32
 **re-raced against the complete form pool** (tangent, wing32, both TURNED
@@ -388,31 +148,10 @@ cell's variance is dominated by MKL's own in-place shadow-plane placement
 (its floor alone spans 833–873 here; historically 812–905), so the honest
 datum is **~0.95-to-parity** — do not quote a third digit. (The 2026-08-12
 figure 0.83–0.90 came from a noisier 5-rep set on the same route.)
-‡ pre-tangent plan. The banked kind-3 row for this N CHANGED on 2026-08-12, so
 the in-place figure no longer describes what ships. Sub-2048 in-place and OOP
 run the SAME IL engines (see the grid above), so it is expected to track the
 OOP column — but it has not been re-measured, and is not quoted as if it had.
-▢ engine serves it; no banked table yet    (= NAT bits) identity rule
 ```
-
-Reading it honestly:
-
-- **Sub-2048 K=1 natural is AT PARITY — the campaign is closed (2026-08-16).**
-  128 = 1.05×, 256 = 1.00×, 512 = 0.98–1.00×; 1024 sits at ~0.95-to-parity with its
-  variance dominated by MKL's own in-place shadow-plane placement (see ✦). The tier's
-  final architecture: **tangent/wing interiors own the L1-resident cells, classic
-  blocked owns the memory-bound cell (1024 — re-raced against the full pool, classic
-  won by 4.5%), and the store edge (TURNED-128 vs -256) is a per-cell raced axis, not
-  a default** — T256 won at 128/512 on this machine, and the losing forms stay in the
-  pool as inventory for other platforms. Remaining known headroom, parked at the
-  owner's wrap: 3-stage chains (+7.6–8.8% at 512, measured twice, never banked).
-  *(The paragraphs below record the mid-campaign analysis that got here — the R32
-  census and its levers. Historical: the wing32 forms subsequently solved the R32
-  slot and the "cannot form a both-slots pair at 512" constraint dissolved.)*
-  A like-for-like census against
-  MKL's own 32-point column kernel (`mkl512__col32_fwd_loop.asm`, same work unit: 32 ymm
-  loads → 32 ymm stores, twiddles hoisted as constants) says the opposite of the obvious
-  inference:
 
   | | MKL col32 | ours `n1tb48` |
   |---|--:|--:|
@@ -422,59 +161,7 @@ Reading it honestly:
   | shuffle + xor | **54 + 15** | 82 + 29 |
   | stack ops | **78 (0.42/fp-op)** | 48 (0.23/fp-op) |
 
-  **MKL spills 1.6× more per arithmetic op than we do and still wins.** It treats stack
-  traffic as cheap and buys instruction count and FMA density with it — 18% fewer
-  instructions, 1.9× the FMAs, *zero* bare multiplies. So "reduce spills" is the wrong
-  lever against MKL; the right ones are instruction count and naked-add/bare-mul
-  elimination, which is the direction the tangent construction already pushes. A second,
-  independent lever is visible in the same table: our interleaved-complex sign/lane
-  handling costs **42 extra shuffle+xor instructions**, roughly 40% of the whole
-  103-instruction gap, and has nothing to do with tangent.
-  ⚠ **Regime matters when quoting these**: this column is the single-transform K=1
-  natural-order cell, the one that has always been hardest. The same N wins comfortably
-  batched — 1024 is 1.57× at K=256 OOP (see the table below) — and the scrambled column
-  leads everywhere ≥2048. Do not read a sub-2048 K=1 number as the library's position.
-- **Historical context for the ▲ cells** (superseded by the above but the mechanism
-  still holds): the ▲ cells run the blocked
-  R≥32 kernels as the shipped default — a structural rule (a monolithic R≥32 body holds
-  ~40–64 live values against AVX2's 16 registers and spills ~27% of its stream; blocked
-  construction is the only body shape that fits, the same tier the split emitters apply
-  at generation time), not a measured per-cell pick. A side observation from the A/B
-  worth keeping: the monolithic arm's own spread at 1024 was 36% between two runs while
-  the blocked arm's pair agreed to 0.5% — a spill-bound body is at the mercy of ambient
-  load in a way a register-resident one is not. 256 moved 0.76→0.85 only once the
-  calibrator replaced its heuristic (16,16) pair with the measured (8,32) — the pair
-  verdict is what put an R≥32 body in a slot the blocked rule could act on, so neither
-  half would have delivered it alone.
-- **Remaining levers for the two cells still behind (512, 1024)**, in order of measured
-  promise: (1) an **R32 blocking geometry co-designed with the tangent constant set** —
-  the spill census above localizes the loss precisely, and both remaining cells are the
-  R32-bound ones, so this single lever addresses both; (2) the stage-count axis (3-stage
-  chains beat every 2-stage pair at 512 by +7.6–8.8%, measured twice, not yet banked).
-  Two things are now *closed* rather than open: a hand-wired fully-tangent 512 is a wash
-  (~1%), so more tangent at the current geometry is not the answer; and R=64 is no longer
-  the "last structural gap" — 1024's problem is that it is R32 in *both* slots, which an
-  R=64 kernel does not address.
-- **≥2048 is parity-or-win** on every row except natural-OOP at 4096/32768.
-- **The SCRAMBLED row leads everywhere ≥2048, and the reason is structural rather than
-  a kernel advantage**: setting `DFTI_ORDERING` to `DFTI_BACKWARD_SCRAMBLED` does not
-  change MKL's output ordering (the setting reads back as applied, but the spectrum is
-  unchanged — verified through the public API), so MKL has no scrambled mode. That row
-  therefore races our structurally cheaper path against their only path. It is a fair
-  comparison of what each library can actually deliver for a scrambled-order consumer,
-  not a like-for-like kernel comparison.
-
-Batching rides this grid unchanged: the canonical `VFFT_BATCH_TRANSFORM_CONTIGUOUS`
-geometry runs K independent K=1 transforms, so every cell above applies per transform at
-every K, with no batch tail, no padding and no even-K constraint.
-
 ### Out-of-place — vs MKL (single-thread)
-
-dag OOP c2c vs MKL `DFTI_NOT_INPLACE` split-complex, **identical layout**, order-neutralized + paced
-(same fairness as the in-place table). Two natural-order kinds (LEAF, BAILEY2 fused-transpose stores)
-and the scrambled-order MODEB (in-place dataflow run OOP; bit-exact roundtrip). Calibrated per-cell in
-**isolated processes** to avoid cross-cell carryover biasing the kind pick. Source:
-`bench_1d_vs_mkl.c --oop` → `vfft_perf_tuned_1d_oop.csv` (31 pow2 cells, K∈{32,128,256,1024}).
 
 ```
  N       K     kind     plan          dag/MKL
@@ -491,18 +178,7 @@ and the scrambled-order MODEB (in-place dataflow run OOP; bit-exact roundtrip). 
  Min 1.37×   Median 2.01×   Max 10.78×   Mean 2.49×   Wins 31/31
 ```
 
-> **Out-of-place, single-thread, VectorFFT beats MKL on 31/31 cells — median 2.01×, range
-> 1.37×–10.78×.** Small N favors the natural-order LEAF/BAILEY2 kinds; mid/high N and high K favor
-> MODEB. Per-stage variants are inherited variant-rich from the in-place wisdom (FLAT/T1S/LOG3 mixed),
-> and BAILEY2's `t1p` stage is flat-vs-log3 searched per cell.
-
 ### Out-of-place — vs MKL at T=8
-
-Same OOP cells, dag K-split across 8 P-cores (pool, pinned core 0) vs MKL `mkl_set_num_threads(8)`,
-identical NOT_INPLACE split layout, order-neutralized + paced. MODEB/LEAF are truly lane-sliced;
-BAILEY2 runs single-threaded (its inter-stage transpose isn't lane-independent — 2-phase MT is a
-follow-up) so its rows are dag-ST vs MKL-8T. A per-cell MT-vs-ST gate guards correctness. Source:
-`bench_1d_vs_mkl.c --oop --mt` → `vfft_perf_tuned_1d_oop_mt.csv` (31 cells).
 
 ```
  N       K     kind     dag/MKL-T8   note
@@ -519,28 +195,7 @@ follow-up) so its rows are dag-ST vs MKL-8T. A per-cell MT-vs-ST gate guards cor
  Min 1.24×   Median 2.80×   Max 45.80×   Wins 31/31
 ```
 
-> **Out-of-place at T=8, VectorFFT beats MKL on 31/31 cells — median 2.80×, up to 45.8× at tiny N.**
-> The huge small-N margins are where MKL can't usefully thread the batch; the steady mid/high-N MODEB
-> wins (1.2×–5×) are the real K-split scaling. Generic executor (JIT wired + bit-exact, not yet
-> re-run here); BAILEY2 MT is a follow-up — both are conservative floors.
-
 ### Out-of-place — arbitrary K (odd / non-multiple-of-8 batch)
-
-The OOP path used to fail-closed on `K % 8 != 0`. It now serves **any K**, across all three
-kinds, via a **codelet-internal rem-aware tail** (the same contract as the in-place tail,
-`docs/performance/arbitrary_k_tail_handling.md`): the bulk full-vector loop, then for the
-`1..VW-1` leftover batch lanes **`rem==1` → one scalar single lane, `rem>=2` → one masked
-vector pass**. The scalar lane is rendered monolithically (no register pressure at width 1).
-Two of the three kinds keep **natural order** at odd K:
-- **MODEB** (scrambled) rides the tailed in-place codelets (n1 OOP wrapper) — any K, free.
-- **LEAF** (natural, N≤128) — the `n1_oop` leaf carries the tail.
-- **BAILEY2** (natural, all N) — a new **per-lane `t1_oop`** second-stage codelet + a per-group
-  twiddle table replace `t1p`'s per-VW-block broadcast (which straddles k2 boundaries at odd K).
-
-Forward measured vs MKL `NOT_INPLACE` split, calibrated OOP wisdom loaded for the aligned cell
-(K=32) and `dp_best` for the odd cells (no wisdom entry); best-of-5 min, cachebust + cool,
-order-flip. The chooser picks the fastest kind per cell; odd-K natural-order is available
-whenever LEAF/BAILEY2 win.
 
 ```
  N      K    rem  kind     order      dag/MKL
@@ -555,42 +210,9 @@ whenever LEAF/BAILEY2 win.
  256    33   1    MODEB    scrambled  1.40×
  1024   31   3    BAILEY2  natural    1.30×
  1024   33   1    BAILEY2  natural    1.36×
-─────────────────────────────────────────────
 ```
 
-> **Odd-K out-of-place beats MKL on every cell — 1.30×–6.32×, landing in the same band as the
-> adjacent calibrated even-K cells (§1 above).** Correctness is the gate: OOP roundtrip
-> `fwd+bwd == N·x` at ~1e-15 every cell, and forced-BAILEY2 forward is bit-correct vs a naive
-> O(N²) DFT in natural order (the per-lane `t1_oop` + per-group twiddle table validated at
-> N=256/512/1024). The `rem==1` scalar lane costs nothing measurable vs the masked neighbours.
->
-> These were measured on a **live host** (not the locked-down clean machine the §1 even-K table
-> used), so they are **directional** — several cells show order-flip spread from thermal noise.
-> The calibrated even-K cells in §1 are the publication reference; the odd-K numbers track them.
-
 ### K=1 INTERLEAVED — N = 2^a·odd, the ZTURN-T odd band vs MKL (2026-09-15)
-
-N = 2^a·m with m a product of 3, 5, 7, 9 and 15 (a ≥ 4, 2048..262144: 339
-sizes) is ZTURN-T's **odd band** (`docs/design/ztt_odd_design.md`): the same
-engine as the pow2 band with the odd radix as a **mid** stage — the ingest
-and the terminators are radix-4/8 lane lattices, the mids' edges are
-radix-agnostic — executed **staged** (one stage-kernel call per stage and
-block, the fused codelets being the pow2 solution's form only). Both order
-classes: natural with the `tlf` terminator, scrambled with the plain
-schedule. The planner races the chain grammar (the odd part decomposed
-largest-first, its mids at every interior position, the pow2 slots over
-{4, 8}) times the tile ladder 8/16/32/48 KB per cell; the row banks
-`il_route=ztt il_ztt=<chain> il_tw=<width>`. This replaces the odd
-ZTURN-S cascade of 2026-08-27 (its 1.46–1.62× vs MKL, scrambled contract
-against MKL's natural); the cascade serves no cell in the band.
-
-vs **MKL DFTI** through the front door with the canonical bench
-(`bench_1d_vs_mkl --k1noop` = natural out of place on both engines,
-`--k1nat` = natural in place on both, `mkl_set_num_threads(1)`), one fresh
-process per cell, core 2 + HIGH, 300 ms pace, 400 ms cool, a cold scratch
-store (every cell races at create). **Natural order on both sides** — the
-same spectrum, bin for bin (the 08-27 table compared our scrambled contract
-against MKL's natural):
 
 ```
  N        OOP vfft   OOP MKL   MKL/vfft     IP vfft   IP MKL   MKL/vfft   err
@@ -601,42 +223,9 @@ against MKL's natural):
  24576      28,419    55,110     1.94×       29,338   58,179     1.98×   5e-16
  61440      97,606   169,222     1.73×      106,819  156,569     1.47×   6e-16
  245760    633,712 1,102,950     1.74×      615,938 1,112,100    1.81×   6e-16
-─────────────────────────────────────────────────────────────────────────────
 ```
 
-Against what the door served before it (`probes/ZT/zt_odd_spike_results.md`,
-paced core-2 races): the natural class beats chain3 out of place and the
-cascade's natural path in place by 9–47% at 3072, 12288 and 245760; the
-plain (scrambled) class beats the cascade's comb in place everywhere and
-out of place above L2, and trails it out of place at L2 sizes forward by
-0–8% (the pow2 class's known forward weakness; owner's ruling 2026-09-15:
-the cascade is not kept for it). Correctness: `benches/ztt_odd_gate.c` —
-staged equals fused bitwise at every pow2 registry cell, 17 odd chains
-exact against a scalar DFT, in place / tiles / alignment bitwise, and the
-front door banks ZTURN-T odd chains in both order classes.
-
-Found on the way and fixed the same day: the chain3 enumerator pushed every
-divisor split of N/R2 without checking kernels — 899 at 245760 — overflowing
-the candidate cap; the planner refused the cell and Bluestein served it at
-4.7 ms (0.24×). Kernels that do not exist are no longer candidates, and
-ZTURN-T enumerates first in the natural pool.
-
 ### K=1 INTERLEAVED — every power of two 2..2^22 vs MKL, T=1 and T=8 (2026-09-22)
-
-One contract, every power of two: 1D c2c, K=1, natural order, out of place.
-Every cell was RE-RACED with recalibrate on a fresh copy of the shipped store
-(the door's own race: solos, pairs x forms, ZTURN-T chains x tiles, the
-four-step's splits; at T=8 the door's per-thread-count race of each engine's
-threaded arm against the serial verdict), then timed by the canonical bench
-against MKL in its own process, both engine orders, best-of-5 in two windows.
-T=1: core 2 + HIGH with the SMT sibling held, MKL single-threaded. T=8: the
-process confined to the 8 P-cores, our arm on the library's pool, MKL at 8
-threads (its own rule keeps it serial below 8192). 2^23 is REFUSED: the
-four-step's ceiling is 2^22 (`k1_fourstep_band.h`, a declaration), and no
-engine serves a power of two above it. Rows in
-`gauntlet/results/gauntlet_pow2/gauntlet.csv` and `gauntlet_mt8.csv`; the
-control cell read 1.07-1.08x at T=1 and 1.02-1.02x at T=8. Every ratio is
-MKL time / our time, the WORSE of the two flips.
 
 ```
          N  serial verdict on the row       ours ns     MKL ns      x |   ours T=8    MKL T=8      x  T=8 verdict
@@ -664,46 +253,7 @@ MKL time / our time, the WORSE of the two flips.
    4194304  four-step 2048.2048            18851825   24110238   1.28 |    6328113    6966025   1.10  threaded, four-step split 4096
 ```
 
-T=1: median 1.14x, geometric mean 1.22x, 4 of 22 under 1.0, 0 under 0.8.
-T=8: median 1.29x, geometric mean 1.34x, 4 of 22 under 1.0, 0 under 0.8.
-
-The T=8 pass re-raced every cell, so the serial verdict on each row is the
-second race's; at 512, 2048, 4096, 8192, 16384, 32768, 65536, 262144, 2^20 and
-2^21 it named a different chain, tile or split than the first race, within 5%
-of the first race's time at every cell but 262144 (11%): the single-cold-race
-band. The T=1 columns were timed on the first race's plans. Both sets of
-verdicts are equivalent plans, not one better than the other, and the
-multi-sample race remains the open ruling.
-
-The re-race replaced the shipped verdicts at the top of the range with better
-splits -- 524288 from 2048x256 (2.47 ms) to 512x1024 (1.50 ms), 2^21 from
-512x4096 (11.2 ms) to 2048x1024 (7.2 ms), 2^22 from 1024x4096 (26.0 ms) to
-2048x2048 (17.7 ms) -- the single-cold-race lottery of 2026-09-18, resolved
-by racing again. The four cells under 1.0 at T=1 are the known ones: the
-32..512 pair band at parity with MKL (the leaf program) and 32768 (0.95,
-between neighbours at 1.10 and 1.21). Below 2048 the per-thread race keeps
-the serial verdict at T=8 (a threaded arm never wins there); the threaded
-arms engage from the ZTURN-T band up, where the T=8 column is the product's
-number.
-
 ### K=1 INTERLEAVED — PRIME N, the prime cell's own raced method and inner (2026-09-19)
-
-A prime N in the K=1 interleaved tier is a convolution done with an FFT of
-length M (Rader: M = N - 1; Bluestein: M = the next power of two >= 2N - 1,
-`src/core/oop/il_prime.h`). Since 2026-09-18 the prime cell RACES both the
-METHOD and its INNER together
-(`docs/design/ilprime_inner_race_design.md`): every buildable (method, inner)
-pair, timed on the whole convolution, in heats of sixteen with a same-run
-final, the winner banked on the prime cell's own row (`eng=`, `in=`, `in_sh=`,
-`in_tw=`) and replayed from there. The inner pool is the K=1 planner's own --
-every il2p pair and the il3p chain below 4096, and above it the ZTURN-T
-enumerators, power-of-two and 2^a*odd, each with its own tile ladder.
-
-Canonical bench, `--k1noop` (natural, out of place, T = 1, both engines in one
-process, MKL `DFTI_NOT_INPLACE`), one process per cell, core 2 + HIGH, pace
-300 ms, the cold race banked by a front-door create beforehand and the bench
-replaying it in a fresh process; both engine orders shown; quiet machine
-2026-09-19:
 
 ```
  N        N-1                 banked verdict                      ours (ns)    MKL (ns)   vs MKL
@@ -723,61 +273,7 @@ replaying it in a fresh process; both engine orders shown; quiet machine
  131071   2.3.5.17.257        BLUESTEIN ZTURN-T 8.8.8.8.4.4.4 @ 2048 1780033     1899607   1.07 / 1.19
 ```
 
-The split between the two methods is not written anywhere. Rader turns a
-prime into a cyclic convolution of length N - 1, so it can only be built when
-the inner pool can express N - 1, and it is offered as race arms exactly then.
-Below 4096 the pool draws on every il2p pair and the il3p chain, so any radix
-with a codelet counts -- which is why 521 rides `8.5.13`. Above 4096 the inner
-must be a ZTURN-T chain, whose odd mids are 3, 5, 7, 9 and 15, so a prime
-whose N - 1 carries 13, 17, 683 or 257 offers Rader nothing and Bluestein
-takes the cell unopposed and correctly. That is the textbook rule -- smooth
-predecessors favour Rader, rough ones favour Bluestein -- arrived at by
-construction rather than by a threshold.
-
-Every cell is above parity. The four largest Rader wins are new on 2026-09-19:
-Rader carried a hard 4096 ceiling left over from an older inner rule, so
-4001, 12289, 40961 and 65537 had all been banking Bluestein without a contest.
-65537 went from 1.04x to 4.82x on that one line, our own time from 1.71 ms to
-0.38 ms.
-
-Primes on `bench_1d_vs_mkl`'s own split-library prime list (127, 251, 257,
-263, 401, 641, 1009, ...) used to be intercepted there and benched on its
-`[override]` path even under `--k1noop`, so the "Rader primes" and "Bluestein
-primes" categories of section 1 are that SPLIT path, in place, and are not
-comparable to this table. The interception was removed on 2026-09-19; 257
-reads 0.30x on the old path and 3.15x through the front door.
-
-The same cell serves COMPOSITE lengths with no chain, since Bluestein needs
-no primality (2026-09-19). Before that a composite above 2048 was refused --
-not for want of an algorithm but for want of an inner, its structural rule
-stopping at M = 4096. Four that had refused: 2101 = 11 x 191 at 0.95, 3005 =
-5 x 601 at 1.34, 3007 = 31 x 97 at 1.35, 3013 = 23 x 131 at 1.33, all agreeing
-with MKL elementwise to 1e-15. Twenty consecutive lengths from 3000 went from
-five served to twenty.
-
-Reproduce: `sh prime_vs_mkl.sh <out-dir>` from `build_tuned/` (a scratch copy
-of the shipped store; `recal_1d_probe.exe <store> <N> 0 0 1 0` races and banks
-each cell, then the bench as above with `VFFT_WISDOM_DIR=<store>`);
-`VFFT_ILPR_LOG=1` on the create prints each method's pool and how much of it
-built. Rebuild both binaries on the current tree first: a stale bench benches
-the old code without a word, and a stale one here REFUSED 65537 outright
-because it replayed a Rader verdict it could not build.
-
 ### K=1 INTERLEAVED — the flat DIT's radix pool reaches 17 and 19 (2026-09-19)
-
-The flat DIT enumerated chains from a pool that stopped at 13, while the
-interleaved registry has had 17 and 19 for as long as the 2D column chain has
-been using them, and every kind this engine needs exists at both (`n1c` for
-the leaf, `t2cp` for a mid, `t2cs`/`t2csg` for a tail; only the optional
-split-body `msz` form stops at 15, and that is a per-stage choice, not an
-admission rule).
-
-The cells that suffered are those needing FOUR or more odd stages, one of
-them 17 or 19. No pair reaches them (both halves must be <= 64), the
-three-factor chain cannot group them into three pieces that all have kernels,
-and ZTURN-T's odd grammar admits only 3, 5, 7, 9 and 15. So they fell through
-every factoring route to the prime cell, which convolved them at the next
-power of two:
 
 ```
  N                      before                        after
@@ -785,36 +281,7 @@ power of two:
  12155 = 5.11.13.17     0.34 / 0.40   prime cell      1.02 / 1.20   flat DIT 13.17.11.5
 ```
 
-At 6545 our own time went from 78.1 us to 17.1 us. Two pool entries, no new
-kernels, no new engine.
-
-**A measurement lesson worth more than the fix.** The first A/B used 969 and
-1615, which have exactly three prime factors and are therefore covered by the
-three-factor chain: the new arms competed, lost, and the run-to-run spread
-(1.12 against 1.92 at 1615, same route, same factors, different stage order)
-was read as the result. A pool change can only be measured at a cell the pool
-change makes REACHABLE. And a single-sample race cannot A/B a pool change at
-all, because adding arms perturbs the race that decides the winner.
-
 ### K=1 INTERLEAVED — every N from 2 to 2048 vs MKL, the gauntlet (2026-09-21)
-
-One contract, every length: 1D c2c, K=1, natural order, out of place, one
-thread. Each cell was created through the front door on a scratch copy of
-the shipped store (the library's own race banked the verdict into
-`wisdom2_oop.txt` / `wisdom2_prime.txt`), then timed by the canonical bench
-against MKL in its own process, core 2 + HIGH with core 2's SMT sibling held
-by a TPAUSE guard thread (since 2026-09-21), cachebust + 300 ms cool between
-engines, BOTH engine orders (flip 0 and 1), best-of-5 after 10 warmups in two
-separated windows (since 2026-09-21; every cell re-timed under it 2026-09-22). 2047 cells, 4094 rows in
-`gauntlet/results/gauntlet_2026-09-20/gauntlet.csv`; the control cell
-(4096, every 100 cells) read 1.01-1.09x across 46 readings with two
-disturbed windows, so the run is internally comparable. Max roundtrip error
-2.5e-15. The tree measured: radix 23 at every interleaved kind, the flat
-DIT admitting a radix-2 leaf when N/2 is odd, and the il2p kernel resolvers
-deriving their radix sets from the generated registry; the 194 cells those
-three reach were re-raced and re-timed on that tree and their rows replaced
-the originals. Every ratio below is MKL time / our time, the WORSE of the
-two flips.
 
 ```
  route    cells   <0.8   <1.0    p10    med    p90   gmean
@@ -836,17 +303,6 @@ two flips.
  1025..2048      1024     1.20    125     14
 ```
 
-The interleaved kernels reach radix 47 at every kind (23 on 2026-09-21, then 29,
-31, 37, 41, 43 and 47 the same day), and since the same day the prime cell --
-Rader or Bluestein on the WHOLE length -- is a raced arm of the pool at every
-non-pow2 N, in both order classes: a chain's cost per point is the sum of its
-radices' (about 0.6 R + 3 intrinsics each) while the convolution's is flat
-(about 40), so a chain of two large radices (43.47, 43.43) loses to Bluestein
-and the pool no longer answers such a cell unopposed. A composite is served by
-the prime cell either because no kernel reaches its prime (53 and up; MKL's
-direct radix-p stage costs more per point than the convolution from about p =
-53) or because the race measured it faster. The standing families:
-
 ```
  family                                     cells   median   <1.0   what decides it
  composite with a prime >= 53 (prime cell)    878     1.23    109   no kernel above 47: whole-N Bluestein vs MKL's direct radix-p stage, whose cost climbs with p (parity from p ~ 53, 2x by 89)
@@ -860,63 +316,7 @@ direct radix-p stage costs more per point than the convolution from about p =
  pow2 32..512                                   5     0.98      3   engine at parity with MKL inside the race; the door's bound K=1 fast path (2026-09-21) returned 2-3 ns of the 4-5 ns fixed cost per call
 ```
 
-**The Rader finding.** Rader never lost a race it entered. Of the 202 primes
-that bank Bluestein, nearly all have a prime above 23 in N-1 (47: 46 = 2.23
-needs a 2-led inner the prime pool does not offer; 83: 82 = 2.41; 263: 262 =
-2.131), so the inner pool offers Rader NO length-(N-1) plan and the verdict
-is Bluestein by default. Where Rader can build (98 primes, including the
-twelve whose inner runs through radix 23: 139 = 6.23, 277 = 12.23, 1013 =
-4.11.23, 1657 = 8.9.23) it banks at a median 1.82x; a Bluestein prime runs a
-median 1.77x slower than its nearest Rader neighbour (83: 467 ns beside 89:
-223; 263: 2091 beside 271: 810). Every prime congruent to 3 mod 4 has N-1 =
-2 x odd, so the prime cell's inner pool lacking the flat DIT's 2-led chains
-and the missing prime stage are the same defect seen from two sides.
-
-22 primes whose N-1 IS buildable banked Bluestein in the first race; re-raced,
-four moved to Rader (421: 1.16 -> 1.28x, 433: 1.17 -> 1.54x, 757, 2029) and
-the rest re-banked Bluestein with a better inner (883: 0.88 -> 1.15x, 911:
-0.85 -> 1.10x). The verdicts of this section stand in the shipped store
-(`src/dag-fft-compiler/generator/generated/`, merged 2026-09-21): every K=1
-cell 2..2048 out of place, 2..512 in place, and the T=8 tokens.
-
-**The bench finding, explained.** Before 2026-09-21 VectorFFT's two readings
-at a cell differed by more than 25% at 163 cells while MKL's did at 2, and the
-chain3 route carried it: 47 cells slower when timed AFTER MKL (that is, after
-the 300 ms cool), 8 when timed first. The cause is the machine, not the plan:
-once the pinned thread idles, the OS parks another process's thread on the SMT
-sibling of core 2 and leaves it there for tens of milliseconds, and a high-IPC
-kernel sharing the core runs at about 60% for the whole 15 ms timing window
-(`benches/chain3_skew_probe.c`: buffer page offsets, the core clock, a plain
-AVX stream and an L2 pointer chase all unchanged in a slow round; a busy loop
-pinned to the sibling reproduces it; a thread of our own holding the sibling
-removes it). chain3 carries the most instruction-level parallelism of the
-engines below 2048 and is hit hardest; MKL's kernels least. The bench now
-holds the sibling with a TPAUSE-C0.2 guard thread (no measurable cost) and
-times every engine in two separated best-of-5 windows; every cell was re-timed
-under that protocol on 2026-09-22 (52 minutes, the control cell at 1.07-1.09x
-throughout) and the tables above are those rows. What the guard removed: the
-flip-1 bias (112 cells now read slower in flip 1, 113 in flip 0), chain3's
-losers under 0.8 (34 to 2), MKL's numbers unchanged (median 0.999). What
-remains: at 225 cells (11%) our two flips still differ by 1.3-1.8x while MKL's
-never do, in either flip, and each flip is its own process, so the slow
-reading belongs to a whole process. A per-process placement effect is the
-open suspect (the probe cleared the staging planes' page offsets, not the
-twiddle tables'); the tables use the WORSE flip, so they under-report those
-cells rather than over-report.
-
 ### K=1 INTERLEAVED — the cells 2..512 IN PLACE, raced in place (2026-09-21)
-
-The in-place cell is its own contract: the K=1 planner races every arm
-executed z -> z and banks the winner on the cell's `place=ip` row
-(`docs/design/planning_model.md`). Natural order, IN PLACE, K=1, one thread,
-every N from 2 to 512, against MKL with DFTI_INPLACE, the same bench
-discipline as the out-of-place run (core 2 + HIGH, cachebust + cool, both
-flips, best-of-5); rows in `gauntlet/results/gauntlet_2026-09-20/gauntlet_ip.csv`,
-control 0.96-1.07x. 513..2048 in place is not calibrated (cut at 512). Max
-roundtrip error 2.2e-15; every in-place verdict also passes the forward
-reference against a long-double DFT (`benches/k1_fwd_ref_probe.exe --ip`).
-Ratio = MKL / ours, worse of the two flips; the last two columns are each
-library's in-place time over its out-of-place time at the same cells.
 
 ```
  route    cells   <0.8   <1.0    p10    med    p90   gmean   ours ip/oop   MKL ip/oop
@@ -928,30 +328,7 @@ library's in-place time over its out-of-place time at the same cells.
  ALL        511     39     76   0.85   1.33   2.35   1.41       1.00          1.00
 ```
 
-In place equals out of place, for us and for MKL: at these cells the
-out-of-place run reads the same 1.33x median with 74 below parity. The
-in-place race re-picks among near-ties (104 of 242 non-prime cells bank a
-different plan in place: 34 route changes, 62 re-factorizations, 8 forms)
-and those cells run at 0.995x of their out-of-place time, the same as the
-plan-identical ones. Below 2048 every engine consumes its input through a
-staging plane and writes afterwards in both placements, so in place saves
-the caller a buffer and the library nothing; an in-place advantage needs an
-engine form built for it (`docs/roadmap/inplace_engine_forms.md`).
-
 ## 2. vs MKL — 2D C2C
-
-dag tiled 2D (`fft2d.h`, B=8: gather→K=B row FFT→scatter via SIMD transpose, native
-column pass) vs MKL DFTI 2D (split, `DFTI_NOT_INPLACE`), single-thread, same fairness
-as §1 (per-cell order-flip, cachebust + pace, best-of-5, ns timing). dag is **in-place,
-scrambled order** (DIT); MKL is natural order — so the definitive correctness gate is the
-roundtrip `fwd+bwd == N1·N2·x` (all e-14/e-15), and `elem≈1e0` just confirms the scramble.
-Source: `bench_1d_vs_mkl.c --2d` → `vfft_perf_tuned_2d.csv`.
-
-The plan comes from a dedicated **PATIENT 2D c2c calibration** (own `fft2d_c2c_wisdom`,
-scored *end-to-end on the 2D transform* — PATIENT is the recommended planner; MEASURE is
-the fast mode, exhaustive `stride_plan_2d` the wisdom-miss fallback). Inner row/col FFTs
-are baked-or-JIT resolved (`--jit`). Measured **cooled** (20 s pre-cool + 30 s between
-runs), median of 3. Source: `bench_1d_vs_mkl.c --2d --jit` → `vfft_perf_tuned_2d.csv`.
 
 ```
  N1×N2     dag/MKL   order
@@ -964,36 +341,7 @@ runs), median of 3. Source: `bench_1d_vs_mkl.c --2d --jit` → `vfft_perf_tuned_
  median    ~1.35×    (4/4 win)
 ```
 
-*64² falls back to exhaustive — its PATIENT-banked plan was a calibration **noise
-artifact** (a 5 µs cell is below reliable timing; the gate happened to measure exhaustive
-slow at a hot moment). Exhaustive's 64² plan is measurably faster (~4.8 µs vs ~6.8 µs).
-
-Headline:
-
-> **2D C2C beats MKL on all 4 square cells — PATIENT-calibrated, median ~1.35×, up to 1.41×
-> (128²).** The tiled B=8 row pass keeps the working set in L1/L2 and the SIMD 4×4/8×4
-> transpose makes gather/scatter nearly free; JIT specializes the cold inner FFTs (bit-exact).
-> Our plan times are **thermally rock-stable** (512² = 749 µs across every run this session);
-> the run-to-run swing in the *ratio* is MKL's own variance, not ours. For these small 2D
-> cells **PATIENT ≈ exhaustive** — full enumeration is cheap and good at this size — but both
-> clear MKL on every cell. In-place scrambled-order 2D (the convolution contract);
-> rectangular / non-pow2 cells are follow-ups.
-
 ### K=1 INTERLEAVED — every N from 2049 to 4096 vs MKL (2026-09-22)
-
-The same contract and protocol as the 2..2048 entry above (1D c2c, K=1,
-natural order, out of place, one thread; a cold race per cell on a scratch
-copy of the shipped store, then the canonical bench against MKL in its own
-process: core 2 + HIGH with the SMT sibling held, cachebust + 300 ms cool,
-both engine orders, best-of-5 in two windows). 2048 cells, 4096 rows in
-`gauntlet/results/gauntlet_2048_4096/gauntlet.csv`; the control cell
-(4096, every 100 cells) read 0.65-1.13 x over 44 readings; no cell refused.
-Before the run the band map's OWNERSHIP fence was lifted: a composite N >= 2048
-with a factor of 4 outside ZTURN-T's odd band had been reserved for the
-cascade (deleted 2026-09-15) and neither raced nor benched -- 490 cells of this
-range. They race the natural pool now (prime 297, chain3 114, flat 75, 2p 4) and their
-median is 1.18x (67 under 1.0). Every ratio is MKL time / our time, the WORSE
-of the two flips.
 
 ```
  route    cells   <0.8   <1.0    p10    med    p90   gmean
@@ -1013,41 +361,20 @@ of the two flips.
  3585..4096       512     1.14     47      9
 ```
 
-Three quarters of the range is the prime cell: a composite with a prime factor
-of 53 or more, or a prime whose N-1 does not build, served by Bluestein on the
-whole length with the convolution at M = 8192 for every N here. The families:
-
 ```
  family                                          cells   median   <1.0   what decides it
  composite with a prime >= 53 (whole-N Bluestein)  1279     1.15    221   no kernel above 47; M = the next pow2 >= 2N-1 is 8192 for the whole range, 3.2-4.0x N below 2560 -- the weak band
  chain3                                           286     1.27     22   the raced chains keep their margin above 2048
  prime N, Bluestein banked                        214     1.12     38   Rader's inner N-1 not buildable
  flat                                             198     1.17     38   up to 10 stages; the 7^3 cells (2744, 3430) trail MKL
- prime N, Rader banked                             41     1.66      0   
+ prime N, Rader banked                             41     1.66      0
  2^a.odd in ZTURN-T's odd band (ZTT_ODD)           21     1.60      0   the staged odd-radix ZTURN-T, 1.45-1.83x
- pair                                               4     1.28      0   
- composite, prime cell by race (primes <= 47)       4     1.45      0   
+ pair                                               4     1.28      0
+ composite, prime cell by race (primes <= 47)       4     1.45      0
  pow2 (ZTURN-T)                                     1     1.08      0   the control cell
 ```
 
-**What the range says.** The raced chains (chain3, flat, the odd band) hold
-the margin they have below 2048. The prime cell sits near parity and carries
-the losers, and its cost has one obvious lever: M is fixed at the next power
-of two, which is 3.2-4.0x N in the weakest band (2049..2560, median 1.07)
-and 2.0-2.7x N in the strongest (2561..3072, median 1.31); the inner pool
-already builds 2^a.odd lengths, so racing M over them (5120, 6144, 7680)
-against 8192 would cut that band's convolution by up to 1.8x. Our two flips
-still disagree by more than 25% at 233 cells (MKL's at 8), the per-process
-effect recorded above.
-
 ### 2D C2C — vs MKL at T=8
-
-Same cells, dag 2D threaded vs MKL `mkl_set_num_threads(8)`, identical split layout,
-order-flipped + paced, **with an MT-vs-ST forward gate** (threaded fwd must equal the
-single-thread fwd bit-for-bit — folded into rt; all e-14, so the tile-parallel path is
-race-free). dag threads the **row pass only** (tile-parallel pool, per-thread scratch);
-the **column pass stays serial** — that's the 2D self-scaling ceiling. Source:
-`bench_1d_vs_mkl.c --2d --mt` → `vfft_perf_tuned_2d_mt.csv`.
 
 ```
  N1×N2     dag-T8 (ns)  MKL-T8 (ns)  dag/MKL   dag self-scale ST->T8
@@ -1060,44 +387,18 @@ the **column pass stays serial** — that's the 2D self-scaling ceiling. Source:
  median                              ~3.34×     (4/4 win)
 ```
 
-> **At T=8, 2D C2C beats MKL on all 4 cells — median ~3.3×, up to 8.6×.** Two effects:
-> (1) dag's own scaling is **modest** (256² 1.88×, 512² 1.57×; tiny N regresses under threads)
-> because only the row pass is parallel — the serial column pass caps it. (2) The large
-> vs-MKL margins at small N are **MKL failing to thread tiny 2D**: at 64², MKL-T8 (48,751 ns)
-> is ~6× *slower* than MKL-T1 (8,494 ns) — pure threading overhead — so dag wins 8.6×. Lifting
-> the ceiling (parallel column pass / full-plane tiling) is the 2D-MT follow-up.
-
 ### 2D C2C — the NATIVE INTERLEAVED tier vs MKL CCE (standing as of 2026-09-15)
-
-The native interleaved 2D tier (`docs/roadmap/fft2d_il_c2c_design.md`:
-n1c/t2c column chain + K=1 IL row pass, per-cell raced chain, blocked
-r32/r64 bodies; served here via `VFFT_IL2D_NATIVE=1`, single-thread).
-⚠ **Scope note:** this is the first section measured against **MKL's BEST
-2D arm** — rank-2 `DFTI_COMPLEX_COMPLEX`, in-place (its measured-fastest
-configuration). The §2 tables above compare against `DFTI_REAL_REAL`
-split, which the same runs measured **1.1–1.3× slower than MKL's CCE arm**
-(`M-split/M-inter` column) — quote them with that scoping.
-
-Arms (one process, `bench_1d_vs_mkl.c --2dil`, front door only, 9 rounds
-with reversed arm order, cachebust between arms, medians; engagement of
-the native tier VERIFIED per cell by output-order comparison): O-NATIVE =
-the native tier; O-inter = the previous serving (deinterleave → split 2D →
-reinterleave); O-split = our split 2D engine; M-inter = MKL CCE in-place.
-Correctness behind the numbers: forward ELEMENTWISE vs a naive separable
-DFT per direction, the pair contract (bwd consumes the plan's own comb →
-N·x), and race→bank→serve replay bitwise with roundtrip ~5e-16 — the
-`il2d_m1_gate` battery, ALL PASS.
 
 ```
  N1×N2      O-NATIVE (ns)  MKL-CCE (ns)  vs MKL-CCE   rows
 ─────────────────────────────────────────────────────────────────
  128×128          19,849        31,538      1.59×      pairs
  256×256          85,603       130,823      1.53×      pairs
- 512×512         447,463       927,763      2.07×†     pairs
- 1024×1024     2,206,587     4,809,862      2.18×†     ZTURN-T
- 16×4096          90,763       135,127      1.49×†     ZTURN-T
- 32×1024          40,002        69,593      1.74×†     ZTURN-T
- 64×256           17,955        32,263      1.80×†     pairs
+ 512×512         447,463       927,763      2.07×     pairs
+ 1024×1024     2,206,587     4,809,862      2.18×     ZTURN-T
+ 16×4096          90,763       135,127      1.49×     ZTURN-T
+ 32×1024          40,002        69,593      1.74×     ZTURN-T
+ 64×256           17,955        32,263      1.80×     pairs
  4096×64         646,288       904,375      1.40×      pairs
  8192×64       1,650,375     2,066,875      1.25×*     pairs
  16384×64      3,704,962     5,062,325      1.37×      pairs
@@ -1106,72 +407,7 @@ N·x), and race→bank→serve replay bitwise with roundtrip ~5e-16 — the
                                     11/11 win, median ~1.59×
 ```
 
-"rows" = the engine the row child's own 1D verdict serves: the K=1 pairs
-below 1024, ZTURN-T at 1024 and in its band (the row pass is a K=1 plan
-through the front door, so the 2D tier never names an engine;
-`docs/design/ztt_2d_design.md`). † = re-measured 2026-09-15 on the same
-bench with the same column verdicts once ZTURN-T served those rows
-(1024×1024 was 2.08×, 16×4096 1.50× at 102,410 ns, 512×512 1.91× from the
-pair-pool work of 09-09/11); 4096×64 keeps its 08-25 row — a 09-15 reading
-of 1.1× came with a 45% control spread and was ruled thermal.
-
-The ×64 rows are the L2 band-threshold ladder (same-day addendum
-below: measured with the cascade widths in the race). 16384/32768 are
-outside-noise results; at 32768 MKL's
-CCE arm loses even to its own REAL_REAL configuration (0.76).
-
-*aspect-cell arm spreads were wide in that run (up to 56% on the MKL arm,
-196% on one native arm) — the ratios there are sign-reliable, not
-two-decimal quotable; the square cells ran at 6–25% spreads.
-**Huge-column cells + the L2 cascade widths (2026-08-25, same-day
-addendum).** Long-column cells added to the `--2dil` ladder: band
-residency needs `wl ≤ L2/(16·N1)`, so the static width pool (max 256)
-pinned the cut deep at N1 ≥ 16384 and multiple wide stages streamed the
-full plane (measured: per-point 1.9× off the memcpy floor at 32768×64
-while the floor itself moved 1.3×). Fix: the stage spans `L[s]` join the
-width race when `w·N2·16 ≤ vfft_cpu_l2_bytes()` (live CPUID via
-`cpu_cache.h`, the hardware-derived gate — never a platform constant,
-never a full dual-architecture search). The race picked `wl=1024` at
-32768×64 (`chain=32.32.32 tf=1`), gate bitwise-green, and the knee cells
-moved to **16384×64 = 1.37×, 32768×64 = 1.66× vs MKL CCE** (both outside
-noise; MKL's CCE arm itself loses to its own REAL_REAL there, 0.76–0.79).
-Derived from separate same-run ladders, not one toe-to-toe run.
-
-The ladder rows are merged into the main table above (the four ×64
-cells). The banked verdicts (13 `lay=il` cells incl.
-`32768x64 chain=64.16.32 wl=1024`) now ship in
-`generated/wisdom2_2d.txt` — a fresh install serves them without
-re-calibrating.
-
-> **The native interleaved tier beats MKL's best interleaved arm on all 6
-> cells — median ~1.75×, up to 2.08× at 1024² — and delivers ~2.0–2.4×
-> over what interleaved callers previously received** (the convert
-> wrapper, whose measured tax was 1.33–1.50×). It also outruns our own
-> split 2D engine by ~1.4–1.5× at the squares (single memory stream, no
-> transpose anywhere, per-cell raced column chains, blocked bodies).
-> Output is scrambled-along-N1 for multi-stage chains (natural for
-> N1 ≤ 64), natural along N2; matched-permutation roundtrip holds for
-> every chain. Single-thread; banding (`+15–21%` where it wins) and the
-> small-N2 row route (`1.6–2×` at N2 ≤ 64) are measured but env-only
-> pending wisdom banking; MT over bands is the queued multiplier.
-
 ### 2D C2C — the native tier MULTITHREADED (2026-08-27)
-
-Both passes of the native IL tier thread. Rows commute with column
-stages in c2c (the same ℂ-linearity that legalizes tfuse), so a banded
-cell's unit of work is a **self-contained band** — its suffix stages
-plus its own fused rows — and workers own disjoint band ranges with no
-rows/columns wall; only the wide prefix stages split on the digit axis
-(three pointer edits per the emitted kernel, zero new codelets).
-Single-stage cells split by column strips then row slabs. The shared
-row child is cloned per worker (route-equivalence-checked at create).
-**The engage decision is raced per cell and banked** (`cmt=` + the
-thread count raced at, `cmtt=`, in the `lay=il` cell — a verdict
-serves only at its own T); kill/force `VFFT_IL2D_NO_COLMT`; engagement
-counter `vfft_il2d_col_mt_passes()`.
-
-**Speedup over the SAME tier at one thread**, T=8, same-run alternated
-min-of-20, MT == ST bitwise gated both directions:
 
 ```
  N1×N2       fwd      bwd      raced verdict
@@ -1183,54 +419,9 @@ min-of-20, MT == ST bitwise gated both directions:
  4096×64    5.74×    5.03×    threaded
  8192×64    7.73×    7.60×    threaded
  64×1024    2.14×    1.93×    threaded (strip+slab shape)
-──────────────────────────────────────────────
 ```
 
 ### 3D C2C — the NATIVE INTERLEAVED tier vs MKL CCE (standing as of 2026-09-15)
-
-The rank-3 interleaved tier (`docs/roadmap/fftnd_il_design.md`,
-`docs/design/3D_natural_il_design.md`, `ilnd_natural_strip_design.md`,
-`src/core/transforms/fftnd/fftnd_il.h`), both order classes, either
-placement (in place is the same plan and the same wisdom row; its output
-is bitwise the out-of-place output, probe-gated at one thread and at T=8):
-
-- **Axis 0** = the 2D column-axis pass over the virtual N1 × (N2·N3) plane.
-  SCRAMBLED (DEFAULT): walked in BANDS of `wl` planes with the per-plane
-  structure fused into the band while it is L2-hot. NATURAL: one of two
-  raced FORMS — the cycle walk (the scrambled pass, then the plane pass
-  permuting the planes along the cycles of the axis-0 permutation with one
-  plane of buffer) or the STRIP form (axis 0 in cache-resident column
-  strips of `nsw` columns through a strip-pitched scratch, the digit
-  reversal resolved inside the strip, natural order written back in place,
-  then the planes in place — the walk MKL uses per axis, with our kernels).
-- **Per plane** the raced STRUCTURE: a 2D IL child plan, or the flat axis-1
-  column pass + the K=1 row plan created through the front door (so N3 is
-  served by its own 1D verdict: ZTURN-T at every band length, `[k1ztt]
-  N=4096: replay ZTURN-T chain 8.8.8.8 tile=1024 src=wisdom` at every
-  create of the long-N3 cells, in both classes).
-- **One race at create** over structure × width (× form × strip width for
-  the natural cell), banked `s= wl= tf=` (`nf= nsw=`) on the rank-3 row of
-  the cell's order; **the threaded race** at the plan's T over partition ×
-  structure (× form): the BAND arm (prefix stages digit-split, disjoint
-  bands with the structure fused) and the PLANE arm (column strips, then
-  plane ranges), banked `cmt= cmtt= cmts=` (`cmtf=`). Per-worker clones are
-  route-equivalence-checked at create; `vfft_ilnd_mt_passes()` counts
-  engagement and every threaded number below carries it at 100%.
-- Correctness behind the numbers: `ilnd_probe` (DC, roundtrip, naive-DFT
-  spot bins; both structure arms; the banded walk, the in-place execute,
-  the threaded execute and the strip form each BITWISE their reference;
-  replay with zero races), `api_matrix_gate`.
-
-Protocol (`bench_1d_vs_mkl.c --3dil`, one process per run, scratch copy of
-the shipped store): all arms OUT OF PLACE; O-NATIVE = this tier, MKL = rank-3
-`DFTI_COMPLEX_COMPLEX` `DFTI_NOT_INPLACE` (its measured-fastest 3D
-configuration; its `REAL_REAL` arm runs 1.4–2.2× slower in the same runs);
-one-thread samples pinned to core 2 at HIGH, a 300 ms pace before each
-sample's cachebust and ≥ 5 ms untimed warm-up, 9 rounds with reversed arm
-order, medians; T=8 unpaced (a pace parks both teams), both engines on
-the 8 P-cores, MKL's team created before our pool pins, our pool torn down
-before every MKL sample. `~` = the delta sits inside the control arm's
-spread (a tie). Ratio = MKL / ours. One session, cool machine, 2026-09-15:
 
 ```
  cell          SCRAMBLED T=1              NATURAL T=1               SCRAMBLED T=8            NATURAL T=8
@@ -1260,21 +451,6 @@ spread (a tie). Ratio = MKL / ours. One session, cool machine, 2026-09-15:
       the rest.
 ```
 
-**The verdicts behind the table** (the same session's create logs). Scrambled
-one thread: structure/width per cell — 16³ flat/8, 32³ flat/32, 64³ child/8,
-128³ flat/8, 32×16×64 flat/8, 64×128×32 flat/16, 256×64×16 child/64, the odd
-cells flat/9 (their chain's span), 16×16×4096 flat/16, 8×16×12288 child/8,
-32×32×4096 child/8. Natural one thread: the cycle form everywhere except
-128³ (flat, strip 512) and 32×32×4096 (flat, strip 256), where the strip form
-won its race (6.24 vs 6.79 ms; 15.0 vs 16.6 ms), and 36×20×28 (a tie); the
-cycle form keeps the cells whose cube fits L3, where the strided strip reads
-cost more than the cheap move pass.
-
-**The threaded race at T=8** (the create's own arms, same run, alternated,
-min of 3 — the robust numbers at these sizes; serial = the same tier at one
-thread inside the race; natural = cycle form's best arm vs strip form's
-best arm):
-
 ```
  cell         SCRAMBLED: serial      MT   speedup  verdict     | NATURAL: cycle    strip    gain   verdict
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1300,32 +476,7 @@ best arm):
  columns; the pool runs 8..1024 under the L2 budget.
 ```
 
-**Refuted and deleted (2026-09-15):** the fused natural form — the
-scrambled banded walk through a scratch cube, each plane written to its
-natural position — lost to the cycle form at every one-thread cell by
-3–27% and at 13 of 14 threaded cells (record: `docs/research/.../probes/IL3D/`,
-`docs/design/ilnd_natural_fused_design.md`). A permuting plane pass is one
-extra cube sweep however it is arranged; the strip form is the one that
-pays none.
-
-**Open, not built:** the axis-0 chain is raced as a bare column pass. At
-N1 = 32 it sometimes picks a single radix-32 stage, which leaves the axis
-natural by itself and no strip form to race, and that cell then serves
-slower (20.1 ms) than a two-stage chain with strips (15.5 ms): the chain
-race does not see the natural class's form; a joint chain × form race for
-the natural cell is a design of its own.
-
 ## 3. vs MKL — 1D R2C
-
-R2C is the clearest embodiment of the split-layout trade: the **packing tax** that costs
-us single-thread is the *same* lane-batched layout that makes K-split MT trivially parallel
-(independent lanes, no barriers, no shared transpose buffer). So r2c **loses single-thread
-and wins big multi-threaded** — throughput over single-core latency, by design
-([transforms/real/README.md](../../src/core/transforms/real/README.md)). dag via the real
-dispatcher (`vfft_r2c_plan_create`/`execute`, SPLIT, **JIT-wired**) vs MKL DFTI real r2c
-(CCE); same fairness as §1; correctness vs a reference DFT (r2c is natural order). The
-dispatch routes **rfft** at low K (JIT-specialized — see below) and **decoupled-stride** at
-K≥32. Source: `bench_1d_vs_mkl.c --r2c [--mt]` → `vfft_perf_tuned_r2c{,_mt}.csv`.
 
 ### Single-thread — the packing tax
 
@@ -1342,11 +493,6 @@ K≥32. Source: `bench_1d_vs_mkl.c --r2c [--mt]` → `vfft_perf_tuned_r2c{,_mt}.
  18 cells: 6 win.  Median 0.79×, range 0.46–1.17×.
 ```
 
-> **Single-thread, r2c trails MKL — median 0.79×.** This is the honest cost of the split
-> layout (the pack tax) plus MKL's heavily-tuned real-FFT. The **JIT lifts the low-K rfft
-> cells to wins** (256/8 1.07×, 256/16 1.15×, 512/8 1.17×) — exactly where rfft is
-> competitive; it can't close the large-N rfft L2 wall or the decoupled-stride high-K gap.
-
 ### Multi-threaded (T=8) — the layout payoff
 
 ```
@@ -1361,43 +507,7 @@ K≥32. Source: `bench_1d_vs_mkl.c --r2c [--mt]` → `vfft_perf_tuned_r2c{,_mt}.
  18 cells: 18 win.  Median ~4.7×, range 1.74–21.75×.
 ```
 
-> **At T=8, r2c beats MKL on all 18 cells — median ~4.7×, up to 21.8×.** The decoupled-stride
-> path (K≥32) K-splits cleanly and scales **2.8–4.9×**. The rfft path (K<32) **also K-splits**
-> (lane ranges, `rfft_natural_mt`), so MT is honored on every path — but its gain is small
-> (~6–9% at K=16, none at K=8) because the rfft K-range sits at the **lane-split SIMD floor**:
-> 8-wide lanes ÷ 8 threads leaves <1 SIMD group/thread, so K=8 falls back to single-thread and
-> K=16 only splits ~2-way. The split layout is still the edge — it lets us thread the batch
-> where MKL's real-FFT can't at modest N (MKL-T8 is ~20× slower than MKL-T1 at 256/8). The same
-> layout that taxed us single-thread is the multithreading edge — the design trade paying off.
-
 ### 1D C2R (backward) — the natural split path
-
-c2r (complex→real, the r2c inverse) gets the **same** split-layout treatment, and it's the
-direct mirror of r2c's story. The public API hands c2r a **split** half-spectrum (the r2c
-output), so the fast packed c2r — which needs a *packed* half-spectrum — was unreachable, and
-the old path forced the slow decoupled-**stride** backward (~0.44–0.46× MKL). New this session:
-a **fused natural initiator** (`c2r_execute_natural`, the inverse of rfft's natural terminator)
-reads split re/im **directly** through the fast packed cascade — **no repack**. vfft's c2r front
-door now runs a natural-vs-stride bake-off (mirror of r2c's), picking per cell; the forced-stride
-hardcode is gone. Roundtrip `c2r(r2c(x))==N·x` is the gate (all e-14). Source:
-`bench_1d_vs_mkl.c --c2r [--mt]`.
-
-> ## 🔴 EVERY vs-MKL RATIO IN THIS SECTION IS VOID (found 2026-08-09, fixed 2026-08-13)
->
-> The `--c2r` MKL arm reused the **forward** descriptor for `DftiComputeBackward`; DFTI
-> distances are argument-anchored, so the backward read the CCE plane at the real-domain
-> distance — a **heap OOB at every K>1** timing aliased garbage. Both tables below keep their
-> **dag-side** numbers (self-scaling, natural-vs-stride uplift), but every dag/MKL column —
-> including the "parity at K=8 (0.92×)" headline — is unusable. **Fix:** a backward-twin
-> descriptor with swapped distances plus a per-run `mklref` correctness gate (unnormalized
-> backward == N·x, printed in every row), so the arm is now proven on hardware each run.
-> First **valid** cells (2026-08-13 smoke, gated 8.9e-16/1.0e-15): **0.366 at 512×4, 0.458 at
-> 1024×16** — materially worse than the void table suggested. Note the comparison is
-> home-layout vs home-layout: our natural path consumes a **split** re/im half-spectrum
-> (lane-major batch) while MKL consumes **interleaved CCE** (transform-major); the
-> interleaved-vs-interleaved like-for-like is the D2 zr2c route — **shipped 2026-08-13,
-> measured in the subsection below**. A full re-sweep of the split cells above is still
-> pending.
 
 #### Single-thread — the packing tax (again)
 ```
@@ -1410,10 +520,6 @@ hardcode is gone. Roundtrip `c2r(r2c(x))==N·x` is the gate (all e-14). Source:
 ──────────────────────────────────────────────
  natural ≈ 2× the old forced-stride path; reaches MKL parity only at K=8.
 ```
-> **Single-thread, c2r trails MKL — same split-layout tax as r2c.** The natural path roughly
-> **doubles** vfft's low-K c2r over the old stride path and reaches **parity at K=8 (0.92×)**,
-> but MKL's compute-bound real backward still wins mid-K. (Even the unreachable packed path is
-> only ~0.61× MKL at K=64 — the gap is structural in the cascade, not the split read.)
 
 #### Multi-threaded (T=8) — the layout payoff (again)
 ```
@@ -1426,36 +532,9 @@ hardcode is gone. Roundtrip `c2r(r2c(x))==N·x` is the gate (all e-14). Source:
  256    256   natural     —          2.8×   (MKL-T8 crashes at N·K≥131072)
  512    256   natural     —          3.6×
  1024   256   natural     —          2.8×
-──────────────────────────────────────────────────────
 ```
-> **At T=8 the split layout pays off — dag wins every cell, scaling 1.9–3.6× to high K.** The
-> natural path K-splits the batch cleanly (`c2r_natural_mt`, pool lane-slabs; MT output is
-> **bit-identical** to single-thread — race-free, lane-indexed scratch). MKL's c2r does **not**
-> benefit from threads at these modest-N batch sizes: **MKL-T8 is slower than MKL-T1** even
-> pinned to the same 8 cores (it parallelizes *within* the length-N transform, not across the
-> K-batch where the work is), so the dag/MKL-T8 ratios at low K are inflated by MKL's thread
-> overhead — the honest number is dag's own **2.8× self-scaling at high K**. Same trade as r2c:
-> the layout that taxes us single-thread is exactly the multithreading edge.
 
 ### 1D INTERLEAVED r2c/c2r, K=1 — the D2 zr2c route (like-for-like vs MKL's home layout)
-
-The first **interleaved-vs-interleaved** real-transform comparison - both engines consume/produce
-the packed CCE plane, no layout excuse on either side. Ours = the D2 composite (`vfft.c` zr2c
-route, shipped 2026-08-13): reinterpret x[N] as z[N/2] (zero work) -> child c2c(N/2) NATURAL ->
-z->z Hermitian fold; c2r is the mirror with the fold leading. Two child routes: **route 0** =
-OOP-IL child, **route 1** = natural in-place cascade child. MKL = DFTI_REAL CCE **DFTI_INPLACE**
-- its best real arm (V6), backward on its own twin descriptor. Gates: cross-engine fwd
-elementwise + each engine's backward vs N.x (all cells 3.7e-16..1.4e-15). Medians of 5, pinned
-core 2, pace 300 ms. Ratio = MKL/ours: >1 we win.
-
-**2026-08-22: these numbers come from the FRONT DOOR** - `vfft_create(VFFT_R2C/VFFT_C2R)` -
-which is what the library actually runs. Every earlier figure in this section was measured by a
-bench that hand-assembled the composite (a C2C plan at N/2 plus direct fold calls) and compared
-that OUT-OF-PLACE shape against MKL IN-PLACE. Two consequences, both correcting DOWNWARD-biased
-old numbers: the hand shape used three buffers where the executor uses two, and the placement
-axis was mismatched. The in-place column below is the like-for-like comparison and had never
-been measured before - the in-place real path shipped 2026-08-13 and no bench built one.
-Source: `bench_1d_vs_mkl.c --zr2c` -> `vfft_perf_tuned_1d_zr2c_fd.csv`.
 
 ```
  N        r2c OOP   r2c IN-PLACE | c2r OOP   c2r IN-PLACE   <- as SHIPPED (wisdom picks the route)
@@ -1488,41 +567,7 @@ Source: `bench_1d_vs_mkl.c --zr2c` -> `vfft_perf_tuned_1d_zr2c_fd.csv`.
  until that is explained.
 ```
 
-> **r2c wins every cell in both placements (1.01x-1.50x), and in-place is the stronger
-> placement almost everywhere.** The c2r column is no longer an engine problem: measured
-> in-place, c2r wins at 512-2048 and from 8192 up, and our backward now costs only ~2-16%
-> over our own forward (2048: r2c 1145 vs c2r 1279 ns; 65536: 54647 vs 56020) where it once
-> paid ~+50%. Two 2026-08-21 fixes account for that - eight blocked backward twins for the
-> zr2c child, and the interleaved-native Hermitian fold (20 port-5 shuffles/iter down to 10,
-> helping both directions). What remains in the c2r OOP column is a STALE ROUTE VERDICT, not
-> a kernel deficit: see the route-1 deltas in the block above. Day-to-day ratio drift on this
-> host is up to ~0.2 per cell (thermal) and MKL's own arm moved ~26% between runs at 2048 -
-> quote the **shape**, not one day's third digit.
-
 ### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-06)
-
-Odd N (and odd·2) is served by the K=1 IL tier's own engines, raced per
-cell at plan time and banked: the pair, the three-stage chain (odd-legal
-since 09-04, expressible to 27³) and the flat mixed-radix DIT
-(`src/core/oop/il_flatdit.h`, route `flat`), which reaches any N over the
-registry radices up to 2¹⁸. The planner enumerates the flat chains
-beside the pairs and the chain (24 compositions per cell, logged when the
-cap bites), races each stage's kernel form on real data, gates every
-candidate against an independent mixed-radix long-double reference and
-banks the winner's chain, forms and tile width on the cell's kind-3 row
-(`il_route=flat il_flat=… il_forms=… il_tw=…`). Both placements, both
-directions, both order classes (natural: the conjugate pipeline, same
-stage order; scrambled: the transposed pipeline, reverse order), replay
-bit-identical; `flatdit_gate` is the machine proof. Bluestein remains only for factors
-no chain expresses.
-
-Front door, `bench_1d_vs_mkl --k1noop` (K=1, natural order, out of
-place, INTERLEAVED) vs **MKL DFTI complex**, single thread, cachebusted
-and paced, one cell per process, spectra cross-checked elementwise.
-Measured 2026-09-06 with the bound executor and the tile axis; a run
-whose rate column fell out of the bench's normal band (the host's
-throttled state) was discarded and the cell rerun after a cool-down.
-Run-to-run spread of the ratio at a quiet cell is about ±4%.
 
 ```
  N        route (banked)                          vfft (µs)   MKL (µs)   vs MKL
@@ -1542,30 +587,7 @@ Run-to-run spread of the ratio at a quiet cell is about ±4%.
  137781   flat 6 stages t.t.m.t.o                  447.6      537.5       1.20×
  177147   flat 9·9·9·3·9·9 t.t.t.t.o tw19683       540.1      699.7       1.30×
  194481   flat 6 stages t.t.t.t.o                  623.4      802.2       1.29×
-───────────────────────────────────────────────────────────────────────────────
 ```
-
-245025 (the largest cell the tile probe used) has no quiet-state bench
-run yet and is left out rather than quoted from a throttled one. The
-previous table (2026-09-05, before the bound executor and the tile
-axis) had 1215 at 0.93×, 16807 at 0.93×, 117649 at 0.96× and 137781
-at 1.06×.
-
-Before this tier 1215 ran Bluestein at 15.1 µs and every odd N above
-19683 ran Bluestein at the next power of two, unmeasured; the real
-transforms' bridge inherits every cell through the front door.
-
-**The SCRAMBLED order class (2026-09-05).** A `VFFT_ORDER_SCRAMBLED`
-request at any cell the K=1 IL tier races is its own wisdom cell
-(`ord=scr`), raced from its own pool — every natural engine plus, at a
-non-power-of-two, the flat chains in their scrambled class — and never
-compared with the natural verdict. The
-scrambled flat DIT is the natural plan minus its final scatter: the last
-stage writes the plane's block order (the mixed-radix digit reversal,
-position b·R+l = bin natbase[b]+l·N/R) and its inverse is the transposed
-pipeline (stages in reverse, IDFT + post-twiddle-conjugate twins).
-Same-run engine measurement (`msz_probe`, seed chains, both classes on
-the bound executor, forward):
 
 ```
  N        natural (µs)   scrambled (µs)   natural/scrambled
@@ -1578,19 +600,6 @@ the bound executor, forward):
  98415      346.3           309.0            1.12×
 ```
 
-**Execution (2026-09-05).** The engine binds one call record per stage
-at plan time (kernel, buffers, tables, strides, counts) and execute
-walks the list: no planning arithmetic or resolution per call, and a
-t2cp stage runs as ONE call through the kernel's own block loop.
-Same-run A/B (`bind_ab`, spectra bitwise identical): the per-block
-driver loop it replaced cost 1.01–1.05× (98415 1.049, 4095 1.036,
-19683/59049 1.011).
-
-**The tile axis (2026-09-06).** The cascade's tcut in flat form: the
-stage suffix runs depth-first per tile (one block of a raced stage
-span), raced by the planner after the forms and banked as `il_tw=`.
-Same-run A/B, tiled over untiled forward (natural / scrambled):
-
 ```
  N        plane    widest span   natural   scrambled
  98415    1.5 MB   10935          0.98      0.99   (fits L2: the race banks 0)
@@ -1599,54 +608,7 @@ Same-run A/B, tiled over untiled forward (natural / scrambled):
  245025   3.7 MB   27225          0.95      0.93
 ```
 
-**The flat DIT engine.** An un-turned mixed-radix DIT: the plain leaf,
-then one in-place sweep per remaining factor with per-block broadcast
-twiddles (modulus N/D_s), natural order by redirecting the last stage's
-stores. Three kernel forms serve its stages, raced per stage:
-
-- **t2cp** — the packed-complex pre-twiddle column kernel, one digit per
-  call, any run.
-- **msz** — the split-body kernel with interleaved edges
-  (`codelets/zil/avx2/boundary_split/radix{3,5,7,9,15}_z_msz_avx2.c`,
-  `--zp-msz`; `mszb` backward): the msg mid's body between an
-  unpack-only deinterleave and reinterleave, lanes left unordered, with
-  the il_odd_count_tail §3 arms so it takes any run. Wins the run-4
-  stages 2.1–2.5×; parity on long runs of 5 and 7; loses at radix 9 and
-  on runs of 3, where the race keeps t2cp.
-- **t2csgn** — the short-run tail kernel (t2csg: two-group column form,
-  generated twiddle stream) with its group loop in-kernel over a base
-  table (`codelets/zil/avx2/pure_il/radix*_z_t2csgn_avx2.c`,
-  `--cil-t2csgn`, backward twins), one call per stage; on the last stage
-  the driver hands it the groups in ascending natural-base order, so
-  consecutive groups fill adjacent output lines. The count-1 last stage
-  goes from 1.6–1.7 to 0.9–1.0 ns per point at 98k–138k.
-
-Standalone (`ilfd_probe --race`) the engine runs 0.88–1.22× MKL across
-405–137781 in both directions; the planner's per-cell pick above decides
-where it serves. Its remaining deficit is the 5^k and 7^k families, where
-MKL's radix-5/7 sweeps are cheaper per element.
-
 ### 1D ODD c2c — the K=1 IL tier MULTITHREADED (2026-09-07)
-
-The flat mixed-radix DIT threads its own bound call lists
-(`oop/il_flatdit_mt.h`, `docs/design/odd_n_engine.md` §8.2): every stage
-is a set of independent units (the leaf's columns, a mid stage's blocks, a
-tail stage's groups) and the tile axis's tiles are self-contained, so the
-two arms are BLOCKS (every stage by units, one dispatch per stage) and
-TILES (the wide prefix by units, then disjoint tile ranges walked
-depth-first, then the wide tail by units). Both are loop restrictions of
-the serving lists — threaded output is bitwise the serial output, gated
-both classes and both directions (`flatdit_gate`). The verdict is raced
-at the plan's T against serial with every legal tile width as an arm of
-the tiles family (the threaded width differs from the one-thread width at
-19683, 59049 and 177147), steady-state samples, banked `il_mt= il_mt_t=
-il_mt_tw=` on the class's kind-3 row; below L2 the race banks serial (405,
-1215, 4095). Nothing is cloned. `vfft_ilfd_mt_passes()` counts engagement;
-every number below carries it.
-
-**Same-run, the create race itself** (T=8, REPS executes per sample after
-two warm passes, min of 3 alternated rounds; serial = the same tier at one
-thread in the same race):
 
 ```
  N         serial (ns)   MT (ns)   speedup   verdict
@@ -1662,15 +624,7 @@ thread in the same race):
  137781       389,016    83,332     4.7×    tiles/tw1701
  177147       593,023   100,606     5.9×    tiles/tw2187
  194481       594,571   118,306     5.0×    tiles/tw3087
-──────────────────────────────────────────────────────
 ```
-
-**vs MKL at the same T=8** (`bench_1d_vs_mkl --k1noop --mt <N>`, one
-process per cell, both engines confined to the 8 P-cores, MKL's team born
-before our pool pins the caller, the library pool torn down before MKL's
-arm and rebuilt before ours, ≥ 300 ms cool after MKL, ≥ 5 ms of untimed
-warm executes per arm on both sides, best-of-5; MKL = `DFTI_NOT_INPLACE`
-at 8 threads; correctness = cross-engine elementwise, both natural):
 
 ```
  N          O-NATIVE T=8 (ns)   MKL T=8 (ns)   vs MKL   elementwise
@@ -1690,32 +644,7 @@ at 8 threads; correctness = cross-engine elementwise, both natural):
                                               10/11 win, median ~1.73×
 ```
 
-The one loss is 78125 = 5⁷: its all-radix-5 chain offers the shallowest
-tiles and MKL's 5-power path scales well; the single-thread cell (1.29×)
-is unchanged. Like-for-like now exists at T=8 for the whole odd table;
-the single-thread table above stays measured against MKL pinned to one
-thread.
-
 ### 1D ODD/PRIME r2c/c2r — full coverage, priced vs MKL (2026-08-27)
-
-The 1D real transforms now serve **every odd N in both directions and
-both layouts**, through two raced routes:
-
-- the native **rfft** engine (real-arithmetic codelets, radix-smooth odd
-  N — the historical route), and
-- the **c2c bridge**: promote real → complex → c2c(N) → keep the hp1
-  bins forward; Hermitian-extend → inverse c2c → Re backward (odd N has
-  no Nyquist, the mirror is exact). The child rides the pair/chain/prime
-  engines, so prime and awkward N are covered; the bridge is also the
-  only c2r-odd route (the half-spectrum inverse never existed at odd N
-  before this).
-
-**The pick is raced per cell at create** — both arms as finished plans,
-never a rule. It flips both ways: 63/255/4095 serve the bridge,
-1215 keeps rfft.
-
-vs **MKL DFTI real CCE** (1D, `mkl_set_num_threads(1)`, same process,
-alternated min-of-15, spectra cross-checked bin-for-bin at every cell):
 
 ```
  N      class       r2c vs MKL   c2r vs MKL   serving
@@ -1728,40 +657,9 @@ alternated min-of-15, spectra cross-checked bin-for-bin at every cell):
  63     smooth         ~par         ~par      bridge (raced in)
  1215   3⁵·5           0.67×        0.12×     rfft / bridge-only
  4095   smooth         0.30×        0.31×     bridge (raced in)
-────────────────────────────────────────────────────────
 ```
 
-**Primes beat MKL outright** — MKL's odd real path is weak while the
-bridge inherits the full c2c prime machinery (Rader/Bluestein with the
-cascade inner). The remaining smooth-odd losses (1215, 4095) are the
-known **rfft-tier quality gap**, a codelet campaign of its own — not a
-layout or coverage issue; c2r 1215 additionally reflects an uncalibrated
-c2c(1215) chain.
-
-Also shipped with the coverage:
-
-- **In-place odd real** — the padded CCE plane contract holds at odd N
-  (2·(N/2+1) = N+1 doubles), and the bridge is aliasing-safe by
-  construction; aliased roundtrips at 63/101/129/255 measure ~5e-16.
-- **Batched MT** — transform-contiguous odd batches thread through the
-  clone machinery (the safety gates recurse into the bridge's child):
-  T=8, K=64, MT == ST bitwise, engagement proven:
-  101 → **4.82×**, 129 → **7.09×**, 1021 → **6.15×**.
-
 ### 2D NATURAL order — native tier, both transforms, multithreaded (2026-09-04)
-
-Natural row order on the n1 axis is served natively for the whole IL
-2D family — pow2 and odd chains, prime N1 — with no reorder pass: the
-leaf stage of the column chain writes its rows at their natural
-positions directly (the leaf takes source and destination pitches
-independently, so a digit-reversal permutation becomes a base+stride
-redirection of the last stage). Natural cells race their chain under
-the natural pass (the best chain differs from the scrambled one — the
-leaf radix sets the scatter width), bank on their own `ord=nat` wisdom
-row, race chain-vs-Bluestein on odd N1, and race serial-vs-threaded.
-
-T=8, i9-14900KF, MT == ST bitwise in both directions, spectra checked at
-natural indices, engagement counted:
 
 ```
  cell            transform   ST (µs)   MT (µs)   speedup   verdict
@@ -1774,28 +672,9 @@ natural indices, engagement counted:
  256x64          c2c           37.8      15.2      2.49×    threaded (blocks)
  63x64 (odd)     c2c            7.8       4.3      1.81×    threaded (strips)
  512x64          c2c           61.1      55.0      1.11×    threaded (blocks)
-──────────────────────────────────────────────────────────────────────
 ```
 
-The threaded natural walk has two legal partitions, raced per cell:
-the matched arm (digit-split prefix stages, the leaf scatter by block
-range, then row slabs) and column strips (the whole natural pass over
-a column range); the band arm is structurally unavailable because the
-scatter crosses bands. On the c2c tier both partitions land within a
-few percent of each other, so its smaller speedup relative to the real
-tier at equal column work is not a partition effect; the row-slab
-phase (rows cannot fuse into bands under natural order) is the
-suspect, and a per-phase measurement is the open item.
-
 ## 4. vs MKL — 2D R2C
-
-dag tiled 2D real-to-complex (`fft2d_r2c.h`: tiled R2C row pass + native column c2c)
-vs MKL DFTI 2D real (CCE), single-thread, same fairness as §1–§3 (per-cell order-flip,
-cachebust + pace, best-of-5, ns timing). dag output is **split** (out_re/out_im) and
-**scrambled** (DIT); MKL is CCE-interleaved natural — so the definitive correctness gate
-is the roundtrip `r2c+c2r == N1·N2·x` (all e-14/e-15), not an elementwise compare. Plans
-are per-cell tuned; the inner column c2c is JIT-specialized. Source:
-`bench_1d_vs_mkl.c --2dr2c` → `vfft_perf_tuned_2dr2c.csv`.
 
 ### Single-thread
 
@@ -1810,19 +689,7 @@ are per-cell tuned; the inner column c2c is JIT-specialized. Source:
  median     ~0.85×     (best-of-3)
 ```
 
-> **Single-thread, 2D R2C trails MKL — median ~0.85×, range 0.80–0.89×.** As with 1D R2C
-> (§3), this is the honest cost of the split lane-batched layout (the real-FFT pack tax)
-> against MKL's heavily-tuned 2D real path — the same layout trade that becomes an edge
-> under threading. Per-cell plan tuning closes most of the gap; the 256² cell is the
-> laggard (0.80×). See the multi-threaded results below.
-
 ### Multi-threaded (T=8)
-
-Same cells, dag threading the **row pass only** (tile-parallel pool, per-thread scratch; the
-column c2c and the c2r backward stay serial — that's the 2D self-scaling ceiling), calibrated
-plans, pinned core 0, with an **MT-vs-ST forward gate** (the threaded fwd must equal the
-single-thread fwd bit-for-bit — folded into rt; all e-14/e-15, so the tile-parallel path is
-race-free). Source: `bench_1d_vs_mkl.c --2dr2c --mt` → `vfft_perf_tuned_2dr2c_mt.csv`.
 
 ```
  N1×N2     dag-T8 (ns)   dag self-scale ST→T8
@@ -1831,36 +698,9 @@ race-free). Source: `bench_1d_vs_mkl.c --2dr2c --mt` → `vfft_perf_tuned_2dr2c_
  128×128       23,271    0.96×
  256×256       70,010    1.71×
  512×512      415,188    1.38×
-──────────────────────────────────────────────
 ```
 
-> **dag's 2D R2C self-scaling is modest — 256² 1.71×, 512² 1.38×; tiny N regresses under
-> threads.** Only the row pass is parallel, so the serial column c2c + c2r passes cap it —
-> the same ceiling as 2D C2C (§2). The MT-vs-ST gate confirms the tile-parallel forward is
-> race-free (rt e-14/e-15).
->
-> **No vs-MKL-T8 ratio is reported here.** MKL's threaded 2D *real* path is pathological in
-> this `mkl_rt` + 8-thread configuration: a fixed ~30–370 ms per-call overhead, independent
-> of transform size and wildly inconsistent run-to-run (256² measured 366 ms one rep, 32 ms
-> the next). MKL-T8 thus comes out ~hundreds-of-× slower than MKL-T1, so the apparent dag
-> "win" of 60×–5000× is a pure measurement artifact, not real speedup — MKL simply does not
-> usefully thread small 2D real transforms in this setup. (1D C2C and 2D C2C thread fine in
-> the same binary, so this is specific to the 2D real descriptor.) The c2r backward row pass
-> now threads too (see the 2D C2R subsection below); parallelizing the **column** passes is the
-> remaining 2D-MT lever that would lift the self-scaling ceiling further.
-
 ### 2D C2R (backward)
-
-The inverse — complex (CCE / split) → real 2D, `fft2d_r2c.h`'s c2r path, **PATIENT-calibrated**
-(separate `fft2d_c2r_wisdom`; c2r's optimum ≠ r2c's — all 4 cells WON their own gate),
-single-thread (the c2r backward is **serial** — not yet tile-parallel). Roundtrip
-`r2c+c2r == N1·N2·x` is the gate (all e-14/e-15). Measured **cooled**, median of 3. Source:
-`bench_1d_vs_mkl.c --2dc2r` → `vfft_perf_tuned_2dc2r.csv`.
-
-> ⚠ **UNAUDITED (2026-08-13):** this mode's MKL arm has the same bug *class* that voided the
-> 1D `--c2r` ratios — one 2D handle (default strides) serves both compute directions, and
-> MKL's backward output is never validated. The vs-MKL ratios below stand until audited, but
-> do not build on them; the dag-side numbers are unaffected.
 
 ```
  N1×N2     dag/MKL   order
@@ -1873,21 +713,7 @@ single-thread (the c2r backward is **serial** — not yet tile-parallel). Roundt
  median    ~0.89×    (single-thread)
 ```
 
-> **Single-thread, 2D C2R trails MKL — median ~0.89×, range 0.75–0.95×.** Same real-FFT
-> structural tax as r2c (§3, §4): the split lane-batched layout costs single-thread what it
-> repays under threading. c2r lands right alongside the r2c forward (0.89× vs §4's 0.85×); 256²
-> is the laggard (0.75×). PATIENT ≈ MEASURE here — the gap is structural, not plan-mode.
-
 #### 2D C2R — multi-threaded (T=8)
-
-The c2r backward is **now tile-parallel** (new this session): its row pass reads the padded
-col-FFT scratch and writes reals to a *distinct* user buffer, so tiles are independent — the
-same tile-parallel pool as the r2c forward, each thread with its own scratch slot + inner-pack
-tid (the prior serial path was forced only by a hardcoded inner-slot index, not a real data
-hazard). The column c2c IFFT stays serial — the self-scaling ceiling, as in §2/§4. **MT-vs-ST
-gate:** the threaded c2r equals the single-thread output bit-for-bit (rt e-14/e-15 — race-free).
-MKL's threaded 2D-real backward is anomalous on this host (§4), so we report dag **self-scaling**,
-not a vs-MKL ratio. Cooled, median of 2. Source: `bench_1d_vs_mkl.c --2dc2r --mt`.
 
 ```
  N1×N2     dag-T8 (ns)   dag self-scale ST→T8
@@ -1896,28 +722,9 @@ not a vs-MKL ratio. Cooled, median of 2. Source: `bench_1d_vs_mkl.c --2dc2r --mt
  128×128       22,144    0.91×  (overhead)
  256×256       66,169    1.59×
  512×512      328,031    1.53×
-──────────────────────────────────────────────
 ```
 
-> **2D C2R self-scaling — 256² 1.59×, 512² 1.53×; small N regresses under threads.** Right
-> alongside the r2c forward (§4: 1.47× / 1.46×) — only the row pass is parallel, the serial
-> column IFFT caps it. Tiny cells (64²/128²) regress: threading overhead exceeds the few µs of
-> row work. Full-arsenal milestone: **every 2D real path now threads** (r2c forward + c2r
-> backward); parallelizing the column passes is the remaining lever.
-
 ### 2D R2C/C2R — the NATIVE INTERLEAVED tier vs MKL CCE (2026-08-26)
-
-The true-IL 2D real tier (`docs/roadmap/fft2d_real_il_design.md`: batched/ROWSPLIT
-zr2c row doors + the n1c/t2c column chain with the L2-banded walk; pure IL end to
-end, no split pads) — since M3 (2026-08-26) **THE serving** for every interleaved
-2D real caller. Verdicts (row route `rw=`, band width `wl=`, chain) are raced at
-create and banked in the direction-shared `lay=il` cells. vs **MKL's real CCE 2D
-arm** (rank-2 `DFTI_REAL`, `CONJUGATE_EVEN_STORAGE=COMPLEX_COMPLEX`, out-of-place,
-single-thread). Same-run 5-arm race, per-round order flip, cachebust, medians of 9
-rounds, core-2-pinned at HIGH priority, all creates warm (banked routes serving).
-Output is scrambled along N1 (the tier's contract) — correctness gates are the
-elementwise naive compare + pair roundtrip in `il2d_real_gate` (e-15/e-16), plus
-each bench cell's own-pair roundtrip. Source: `bench_1d_vs_mkl.c --2dreal`.
 
 ```
  N1×N2        r2c nat/MKL   c2r nat/MKL
@@ -1937,41 +744,7 @@ each bench cell's own-pair roundtrip. Source: `bench_1d_vs_mkl.c --2dreal`.
  Median r2c ~1.5×, c2r ~1.4×.
 ```
 
-> **The native IL 2D real tier beats or matches MKL CCE on every cell, both
-> directions — up to 2.2×/2.25×.** Three constructions carry it: (a) zr2c row
-> doors — batched TC per-row at mid/large N2, the ROWSPLIT band route ("IL at
-> the boundary, split inside", fused single-pass boundaries) at tiny N2, raced
-> per cell (`rw=`); (b) the L2-banded column walk (`wl=` raced incl.
-> L2-admitted stage spans; rows stay outside the walk — the Hermitian fold
-> does not commute with column stages) — the knee-cell wins (4096×64, 8192×64)
-> are its; (c) input-preserving OOP c2r via the column-inverse scratch plane —
-> a contract MKL/FFTW don't offer (`FFTW_DESTROY_INPUT`), at no measured cost:
-> c2r now *beats* r2c at the big squares, the exact opposite of the split
-> tier's c2r-trails story above. 4096×16 (4096 16-point rows — the adversarial
-> aspect) is the one parity cell. Single host, thermally noisy (§8 caveats
-> apply); same-run arms only — the MKL column comes from the identical process
-> and rounds.
-
 ### 2D R2C/C2R — the native tier MULTITHREADED (2026-08-27)
-
-Both passes of the native IL real tier thread. The row pass rides the
-transform-contiguous clone MT (slabs of whole rows, clones proven
-output-equivalent at create); the column pass distributes with a
-**raced partition** — a band arm over the suffix stages (exchange-free
-by construction: workers re-read exactly the rows they produced) plus a
-digit split of the wide prefix stages (three pointer edits per the
-emitted kernel, zero new codelets), or column strips where a
-single-stage chain has no row axis. The fold's ℝ-linearity keeps the
-rows/columns wall — one join, measured at ~100 ns.
-**The engage decision is raced per cell and banked** (`cmt=`/`cmtt=`
-in the direction-shared `lay=il` cell; a verdict serves only at the
-thread count it was raced at); kill/force `VFFT_IL2D_NO_COLMT`;
-engagement counters `vfft_tc_mt_dispatches()` +
-`vfft_il2d_col_mt_passes()` are public and asserted in the gate.
-
-**Speedup over the SAME tier at one thread** (the vs-MKL-MT head-to-head
-is a separate future same-run arm), T=8, same-run alternated min-of-20,
-MT == ST bitwise gated both directions:
 
 ```
  N1×N2       r2c      c2r      raced column verdict
@@ -1981,23 +754,9 @@ MT == ST bitwise gated both directions:
  256×256    1.55×    1.19×    marginal, run-dependent
  512×512    4.19×    6.34×    threaded
  1024×1024  7.69×    7.70×    threaded
-────────────────────────────────────────────────────
 ```
 
-The progression at 1024×1024 r2c locates the work: rows-only 1.75× →
-plus banded/strip columns 2.82× → plus the digit-split prefix **7.69×**
-— the full-plane prefix stage was the entire remaining serial residue.
-
-VectorFFT's calibrated wisdom path measured against FFTW3 with
-`FFTW_MEASURE` planning. FFTW3 split-complex API
-(`fftw_plan_guru_split_dft`) so the layout matches VectorFFT exactly —
-no interleave / deinterleave overhead on the FFTW side.
-
 ### 1D C2C — full sweep
-
-Source: [build_tuned/benches/bench_1d_vs_fftw.c](../../build_tuned/benches/bench_1d_vs_fftw.c)
-(207 cells × MKL bench grid, calibrated wisdom loaded). Same N/K grid
-as Section 1's MKL bench, so ratios are directly comparable.
 
 ```
 Category       Cells    Min   Median    Max    Mean
@@ -2017,19 +776,6 @@ OVERALL         207   0.92×   3.21×  17.79×   4.25×
 Wins vs FFTW3: 202/207 (97.6%)
 ```
 
-Headline:
-
-> **VectorFFT beats FFTW3 on 202/207 (97.6%) of bench cells. Median
-> speedup 3.21×, mean 4.25×, range 0.92×–17.79×.**
-
-The median against FFTW3 (3.21×) is meaningfully higher than the
-median against MKL (2.64× from Section 1). FFTW3 is genuinely behind
-on power-of-two and prime-power cells once N·K outgrows last-level
-cache — the calibrated wisdom routes around L3 thrashing while
-FFTW's plan search doesn't capture the cache-residency effect.
-
-**Top wins (large prime-power and pow-of-2 cells):**
-
 | Cell | Factors | Ratio |
 |------|---------|------:|
 | N=390625 (5^8) K=256 | 5×5×5×5×5×5×25 | **17.79×** |
@@ -2038,39 +784,11 @@ FFTW's plan search doesn't capture the cache-residency effect.
 | N=131072 K=256 | 4×4×4×4×4×4×32 | 15.57× |
 | N=100000 K=256 | 4×25×5×8×25 | 15.07× |
 
-At these sizes FFTW drops to ~1 GFLOP/s while VectorFFT sustains
-~17–20 GFLOP/s — 1D batched FFT against a 16M+ working set is
-memory-bound, and our wisdom-tuned multi-stage factorizations keep
-inner radices L1-resident across the K=256 batch.
-
-**Weakest cells (Bluestein primes — pre-wisdom snapshot):**
-
 | Cell | Ratio (pre-wisdom) |
 |------|------:|
 | N=179 K=256 (Bluestein) | 0.92× (FFTW wins) |
 | N=59 K=256 (Bluestein) | 0.93× (FFTW wins) |
 | N=59 K=32 (Bluestein) | 0.96× (within noise) |
-
-> **Note:** these FFTW3 ratios are the **pre-Bluestein-wisdom** snapshot. With the calibrated
-> per-(N,K) `(M, B)` wisdom these sub-1.0× cells turn into wins (the vs-MKL §1 table shows every
-> Bluestein cell ≥1.0×). A fresh `bench_1d_vs_fftw` run is pending; the table above is the historical
-> lower bound, not the shipped result.
-
-Full per-cell data: [build_tuned/results/vfft_perf_tuned_1d_fftw.txt](../../build_tuned/results/vfft_perf_tuned_1d_fftw.txt)
-(human-readable, generated from
-[vfft_perf_tuned_1d_fftw.csv](../../build_tuned/results/vfft_perf_tuned_1d_fftw.csv)
-via `python build_tuned/make_perf_txt_fftw.py`).
-
-### r2r family
-
-The DCT / DST / DHT wrappers are built atop our R2C using Makhoul (DCT-II/III)
-and Lee 1984 (DCT-IV); DST-II/III piggyback on DCT-II/III with sign-flip
-+ index reversal; DHT is a free derivation of R2C output. Specialized
-straight-line N=8 codelets (`gen_dct8.py`, `gen_dct3_n8.py`) bypass
-Makhoul for the JPEG block size.
-
-All numbers here are **single-threaded** (T=1) vs FFTW3 with `FFTW_MEASURE`
-planning, split-complex API.
 
 ### DCT-II (REDFT10) — `bench_dct2_vs_fftw`
 
@@ -2082,8 +800,6 @@ planning, split-complex API.
 | 32 | 1024 | 32,200 | 81,100 | 2.52× |
 | 64 | 1024 | 71,200 | 173,800 | 2.44× |
 | 128 | 256 | 28,900 | 88,300 | 3.06× |
-
-Wins all measured cells (range 1.17–3.16×).
 
 ### DCT-III (REDFT01) — `bench_dct3_vs_fftw`
 
@@ -2097,17 +813,7 @@ Wins all measured cells (range 1.17–3.16×).
 | 256 | 256 | 65,900 | 203,300 | 3.08× |
 | 1024 | 256 | 416,000 | 1,495,500 | **3.59×** |
 
-> **The only v1.0 r2r loss vs FFTW3** is DCT-III at N=8 K=4096 (0.60×).
-> Both N=8 codelets (`gen_dct3_n8`) target the JPEG-range K (256–1024)
-> and don't optimize for very-large-K layout. FFTW switches to a
-> different large-batch code path that still beats us at K≥4096. v1.1
-> fix: a K-specialized DCT-III N=8 variant — same flavor as the JPEG
-> codelet, different cache layout for K≥4096. Tracked in
-> [docs/v1_1_codelet_roadmap.md](../v1_1_codelet_roadmap.md).
-
 ### DCT-IV (REDFT11) — `bench_dct4_vs_fftw`
-
-After the specialized N=8 codelet landed:
 
 | N | K | vfft ns | fftw ns | ratio |
 |--:|--:|--------:|--------:|------:|
@@ -2119,9 +825,6 @@ After the specialized N=8 codelet landed:
 | 64 | 1024 | 60,800 | 161,800 | 2.66× |
 | 256 | 256 | 59,500 | 186,000 | 3.13× |
 | 1024 | 256 | 354,200 | 1,482,100 | **4.18×** |
-
-Wins all measured cells (range 1.85–4.18×). The pre-codelet build
-showed losses 0.53–1.06× at small N — codelet flipped that.
 
 ### DST-II / DST-III (RODFT10 / RODFT01) — `bench_dst23_vs_fftw`
 
@@ -2140,22 +843,7 @@ showed losses 0.53–1.06× at small N — codelet flipped that.
 | DST-III | 256 | 256 | 84,300 | 207,100 | 2.46× |
 | DST-III | 1024 | 256 | 544,900 | 1,507,000 | 2.77× |
 
-Wins all measured cells. Range 1.85–4.14×; strongest at small N where
-FFTW's DST is less specialized than its DCT path.
-
-### DHT (Hartley)
-
-Per session notes, DHT lands **1.9–2.8× over FFTW** across the same
-N/K range. A dedicated `bench_dht_vs_fftw` per-cell table was not
-written for v1.0 — `test_dht.c` confirms 22/22 cells pass at machine
-precision vs FFTW reference, but timing data was not preserved. v1.1
-adds the bench so the DHT row matches the DCT/DST detail level.
-
 ### Headline (r2r vs FFTW3, T=1)
-
-> **VectorFFT wins 53/54 measured r2r cells vs FFTW3** (1.16–4.18×
-> range; mean ~2.5×). Single loss: DCT-III at N=8 K=4096 (0.60×) —
-> codelet-fixable in v1.1.
 
 | Family | Ratio range | Cells | Wins |
 |--------|:-----------:|:-----:|:----:|
@@ -2166,28 +854,9 @@ adds the bench so the DHT row matches the DCT/DST detail level.
 | DST-III | 1.87–4.14× | 6 | 6/6 |
 | DHT | ~1.9–2.8× (summary) | — | — |
 
-MKL TT was also benched for DCT-IV (4–13× wins) and DST (timing-only —
-MKL TT computes a different PDE-oriented math convention, so the
-comparison is informational, not apples-to-apples). FFTW3 is the
-correct r2r baseline.
-
-## 6. Multi-threaded scaling
-
-**Native IL intra-transform MT (2026-08-27)** — the single-plan MT for
-the interleaved tiers, every engage decision raced per cell:
-§4 → "the native tier MULTITHREADED" (2D real: **7.69×/7.70×** at
-1024², one plane, one plan) · §2 → same heading (2D c2c: 7.73×/7.60×
-at 8192×64) · §1 → "K=1 scrambled cascade — intra-transform MT"
-(one 1D transform: 5.43× at N=262144).
-
-### 1D C2C — direct MT vs MKL
-
-See **§1 → "Multi-threaded — vs MKL at T=8"** for the head-to-head: 129/129 wins at T=8, median
-3.76× over MKL (K=32: 3.00×, K=256: 4.38×). R2C inherits the same K-split MT (its inner C2C threads).
+## 5. Multi-threaded scaling
 
 ### DCT-II / DCT-III / DCT-IV / DST-II/III / DHT (wrapper MT, new in v1.0)
-
-Source: [build_tuned/benches/bench_mt_dct.c](../../build_tuned/benches/bench_mt_dct.c).
 
 ```
 Transform   Cell           T=1 ns   T=2 (×)    T=4 (×)    T=8 (×)
@@ -2210,12 +879,7 @@ DST-II      N=4096 K=4096 80495400  1.13   1.63   2.20
 DHT         N=4096 K=4096 59296500  1.06   1.55   1.87
 ```
 
-Best speedup at T=8: **2.65×** (DCT-IV at N=1024 K=1024). Typical
-**1.6–2.4×** across cells.
-
 ### Why not 8× at T=8?
-
-The DCT/DST/DHT family is implemented as **three sequential passes**:
 
 ```
 Pass 1: pre-permute / pre-twiddle    — bandwidth-bound
@@ -2223,19 +887,7 @@ Pass 2: inner FFT (R2C or C2C)       — has its own MT
 Pass 3: post-process / post-twiddle  — compute + memory mix
 ```
 
-Each pass reads + writes the full N·K data once. Total memory traffic
-≈ 3 × N·K × 16 bytes per call. At N·K = 16M (N=4096 K=4096), that's
-~768 MB per call. DDR5 on this CPU saturates around 25 GB/s, putting
-a wall-time floor around 30 ms per call — close to what we measure
-(27 ms at T=8). Adding more threads can't beat physics.
-
 ### Where the 8× comes back: v1.1 fused codelets
-
-The v1.1 codelet roadmap
-([docs/v1_1_codelet_roadmap.md §2](../v1_1_codelet_roadmap.md))
-adds specialized straight-line codelets — `e10_*` for DCT-II,
-`e11_*` for DCT-IV, `r2hc_*` for R2C — that fuse all three passes
-into one tight kernel. Arithmetic intensity rises dramatically:
 
 | Generation | Memory traffic / call | T=8 ceiling |
 |-----------|----------------------|:-----------:|
@@ -2243,21 +895,7 @@ into one tight kernel. Arithmetic intensity rises dramatically:
 | **v1.0 (parallel wrappers, current)** | **3 × N·K·16 bytes** | **~2.6×** |
 | v1.1 (fused codelets) | 1 × N·K·16 bytes | ~5× projected |
 
-The v1.0 parallel wrappers lift the floor from 1.4× to 2.6×. Fused
-codelets lift the ceiling from 2.6× to ~5× by eliminating the
-multi-pass bandwidth traffic. Both are needed for the full picture.
-
-DHT scales worst (1.6–1.9× at T=8) because its pre-phase is one big
-sequential memcpy of N·K doubles — left intentionally non-parallel
-because it's pure memory bandwidth, and a single optimized memcpy
-typically beats T smaller memcpys when the limit is DRAM throughput.
-DHT will benefit most from v1.1 fused codelets.
-
-## 7. Per-codelet performance (VTune-grade)
-
-For deep per-radix analysis at K=256 see
-[docs/vtune-profiles/](../vtune-profiles/) — one detailed profile per
-radix R ∈ {4, 8, 10, 11, 12, 13, 16, 20, 25, 32, 64}. Top-line:
+## 6. Per-codelet performance (VTune-grade)
 
 | Radix | Retiring (% of pipeline slots) | Bottleneck |
 |------|:-----:|------|
@@ -2273,256 +911,4 @@ radix R ∈ {4, 8, 10, 11, 12, 13, 16, 20, 25, 32, 64}. Top-line:
 | R=32 | 34% | L1 store-DTLB overflow (~80 pages) |
 | R=64 | 27% | load + store DTLB overflow (~160 pages) |
 
-Most radixes retire 50–86%. R=16/32/64 hit memory-system bottlenecks
-that the codelet alone can't fix (huge codelets exceed DTLB capacity);
-these benefit specifically from the cost model's variant-aware
-selection (T1S / LOG3 / BUF) which routes around their bottlenecks
-when wisdom shows another protocol wins.
-
-## 8. Hardware caveats
-
-### These numbers are from one CPU
-
-All measurements: i9-14900KF (Raptor Lake, hybrid 8P+16E), 5.7 GHz
-turbo, AVX2. Numbers move on:
-
-- **Sapphire Rapids / Emerald Rapids** — should be similar or better
-  (same uarch family, often better memory subsystem). Wisdom carries
-  over without recalibration.
-- **Zen 4 / Zen 5** — different uarch. CPE numbers shift; recommend
-  re-running `cpe_measure` and `calibrate_tuned` on the target host.
-  Architectural advantages (cost model, wisdom, MT) carry over; per-
-  cell speedups may differ.
-- **AVX-512 hardware** — codelets exist, but CPE table currently
-  holds only AVX2 measurements. Re-run cpe_measure on AVX-512 host
-  for accurate estimate-mode plans there.
-
-### Consumer PC vs calibration host
-
-The numbers in this doc are from the calibration host running clean
-(idle background, performance plan, single P-core pinned). On a
-consumer PC running normal background load, expect:
-
-- **vs MKL ratios**: similar (within 5–10% — the win is structural)
-- **Estimate vs wisdom mean**: drifts up to 1.3× on a noisy host (was
-  1.19× on the calibration host)
-- **MT scaling**: slightly weaker (T=8 ceiling drops 10–20% under
-  thermal/freq fluctuation)
-
-### What `Ts > 8` looks like
-
-We bench up to T=8. On the i9-14900KF's hybrid 8P+16E config, T=16
-or T=24 starts using E-cores, which run ~60% the IPC at higher
-latency. Per-thread efficiency drops sharply past 8. For workloads
-that benefit from many threads, the bench grid should be extended
-(v1.1 work).
-
-## 9. Reproducing these numbers
-
-### vs MKL
-
-```
-python build_tuned/build.py --vfft --src build_tuned/benches/bench_1d_vs_mkl.c --mkl
-build_tuned/benches/bench_1d_vs_mkl.exe        # single-thread -> vfft_perf_tuned_1d.csv
-build_tuned/benches/bench_1d_vs_mkl.exe --mt   # T=8 (K>=32) -> vfft_perf_tuned_1d_mt.csv
-```
-
-Requires MKL ILP64 (Intel oneAPI install); single-thread uses `mkl_set_num_threads(1)`, `--mt`
-uses 8. 238 cells × ~1 second = ~5 minutes wall (single-thread).
-
-### 1D C2C vs FFTW3 (single-thread)
-
-```
-python build_tuned/build.py --vfft --src build_tuned/benches/bench_1d_vs_fftw.c --fftw
-# fftw3.dll must be co-located with the exe (already copied into build_tuned/).
-build_tuned/benches/bench_1d_vs_fftw.exe \
-    build_tuned/vfft_wisdom_tuned.txt \
-    build_tuned/results/vfft_perf_tuned_1d_fftw.csv \
-    build_tuned/results/vfft_acc_tuned_1d_fftw.csv
-```
-
-Long run — 1–2 hours on the calibration host because of FFTW's
-`FFTW_MEASURE` plan-search cost on the larger prime-power cells
-(N=823543 alone takes ~30 min at K=256). Run with no other significant
-load for cleanest numbers.
-
-### r2r vs FFTW3 (single-thread)
-
-```
-python build_tuned/build.py --vfft --src build_tuned/benches/bench_dct2_vs_fftw.c --fftw
-python build_tuned/build.py --vfft --src build_tuned/benches/bench_dct3_vs_fftw.c --fftw
-python build_tuned/build.py --vfft --src build_tuned/benches/bench_dct4_vs_fftw.c --fftw
-python build_tuned/build.py --vfft --src build_tuned/benches/bench_dst23_vs_fftw.c --fftw
-build_tuned/benches/bench_dct2_vs_fftw.exe
-build_tuned/benches/bench_dct3_vs_fftw.exe
-build_tuned/benches/bench_dct4_vs_fftw.exe
-build_tuned/benches/bench_dst23_vs_fftw.exe
-```
-
-Requires FFTW3 (vcpkg install or local build). ~30 seconds wall total.
-Each binary plans with `FFTW_MEASURE` so first-run setup is the bulk
-of the time; benched min over 21 reps after 5 warmup.
-
-### MT scaling for DCT/DST/DHT
-
-```
-python build_tuned/build.py --vfft --src build_tuned/benches/bench_mt_dct.c
-build_tuned/benches/bench_mt_dct.exe
-```
-
-~30 seconds wall. Run with no other significant load on the machine
-for cleanest numbers.
-
-## 10. Zen 4 — a second calibration host (2026-09-03)
-
-Everything above was measured on the i9-14900KF. This section is the
-first set of numbers from a **different microarchitecture**, calibrated
-from scratch into its own per-host wisdom store. It answers one
-question: does the measure-everything design port, or was it tuned to
-one chip?
-
-### 10.1 Host and toolchain
-
-| | Zen 4 host | (14900KF, for reference) |
-|---|---|---|
-| CPU | AMD Ryzen 5 PRO 8640HS, Zen 4 (Phoenix), 6C/12T, **35 W** laptop part | Raptor Lake 8P+16E, 5.7 GHz |
-| L1d / L2 / L3 | 32 KB 8-way / 1 MB / 16 MB shared | 48 KB 12-way / 2 MB / 36 MB |
-| single-core boost | ~4.9 GHz | 5.7 GHz |
-| compiler | GCC 16.2.0 (MSYS2 UCRT64), `-march=native` → `znver4` | GCC 15.2 |
-| library ISA | **avx2** (`VFFT_ISA=avx2`; the IL tier has no AVX-512 registry) | avx2 |
-| FFTW | 3.3.10 built from source, two variants: `--enable-avx2 --enable-fma` and the same `+ --enable-avx512`, both `--with-our-malloc`, bound at runtime via `VFFT_FFTW_DLL` | — |
-| wisdom | `generated/wisdom/Zen4/` — **empty at the start of the day**, no 14900KF verdict reused | `generated/*.txt` |
-| cache discovery | `VFFT_L1D_DISCOVER=0` (pinned 48 KB / 2 MB, the shipping default; see `docs/design/cpu_discovery.md`) | same |
-
-MKL is not installed on this host and would be the wrong yardstick on
-AMD; **all Zen 4 comparisons are against FFTW, avx2 build vs avx2
-build** unless stated. The `@meta` line in every Zen 4 store file reads
-`host=amd-f25m117 isa=avx2 l1d=49152`.
-
-### 10.2 What was calibrated
-
-All racing at `VFFT_PATIENT`, into the Zen 4 store, in this order:
-
-| N | racer | banked |
-|---|---|---|
-| 1024 | `calibrate_k1` (kind-3 pair, route × pair × `il_kv` × bwd form) | `2p 16×64 il_kv=20` fwd (1265.9 ns cal.), `il_kv=0` bwd; split OOP `2pa 16.64` |
-| 1024 | front door, 4 cells | in-place attach `mode=ilp`; natural in-place `mode=ilp` |
-| 4096 | `calibrate_k1` | `2p 64×64` fwd, `il_kv=16` bwd; split `twl 32×128` |
-| 4096 | `calibrate_zchain` (kind-4 cascade, chain × route × `t2q` × every tile width) | **ZTURN `4.4.8.8.4`, `t2q=0`, `zt_tw=1024`**, 15.5 µs joint |
-| 4096 | front door, 4 cells | both natural cells → `mode=zcasc` (cascade beat the 64×64 pair: 9.7 µs vs 12.2 µs cal.) |
-
-Every axis `docs/design/measurement_arms.md` §3 marks RACED at these N
-has a Zen 4 row. The 14900KF chose `4.4.4.4.4.4` for the same 4096
-cascade cell with the same 1024-cplx tile: six radix-4 interior stages
-there, three interior stages with two radix-8 mids here. Same
-architecture, different balance point, both found by the race — this
-is what per-host wisdom is for.
-
-### 10.3 Results — canonical `bench_1d_vs_fftw --k1noop`, isolated cells
-
-K=1, interleaved, out-of-place, natural order, both engines in one
-process, cachebust + 200 ms cool between engines, both flip orders,
-cross-engine elementwise correctness on every row. FFTW planned with
-its own `fftw-wisdom` PATIENT wisdom imported (`VFFT_FFTW_WIS`);
-MEASURE gave the same numbers at 1024 (the Bailey search surface is
-too small for rigor to matter).
-
-| N | order | vfft min / med ns | FFTW avx2 min / med ns | ratio min / med | gate |
-|---|---|---|---|---|---|
-| 1024 | vfft first | 1039.8 / 1043.7 | 1120.6 / 1185.6 | **1.08 / 1.14** | 2.7e-13 |
-| 1024 | FFTW first | 1001.0 / 1020.6 | 1067.5 / 1081.1 | **1.07 / 1.06** | 2.7e-13 |
-| 1024 (FFTW MEASURE) | vfft first | 1028.9 / 1030.0 | 1082.8 / 1136.1 | 1.05 / 1.10 | 2.7e-13 |
-| 1024 (FFTW MEASURE) | FFTW first | 1085.6 / 1120.6 | 1219.8 / 1229.5 | 1.12 / 1.10 | 2.7e-13 |
-| 4096 | vfft first | 5035.7 / 5045.3 | 6041.8 / 6292.6 | **1.20 / 1.25** | 1.5e-12 |
-| 4096 | FFTW first | 4744.5 / 4747.3 | 6520.1 / 6543.9 | **1.37 / 1.38** | 1.5e-12 |
-
-Reading it: **ahead of FFTW on every run at both sizes**, 5–14% in the
-Bailey band and 20–38% in the cascade tier. The margin grows where the
-cascade's two-conversion SoA interior starts to amortize.
-
-### 10.4 FFTW alone, both ISA builds (standalone, PATIENT, same timing shape)
-
-| N | placement | avx2 ns | avx512 ns | FFTW plan |
-|---|---|---:|---:|---|
-| 1024 | OOP fwd | 1010.7 | 926.0 | dit/16 → dit/32 |
-| 1024 | in-place fwd | 1272.0 | 1153.0 | dit/4 → dit/32 |
-| 4096 | OOP fwd | 8559.2 † | 5850.8 | dit/4 → dit/64 |
-| 4096 | in-place fwd | 14862.3 | 9683.6 | dit/8 |
-
-† FFTW's own planner is not deterministic: the standalone PATIENT run
-chose `dit/4` at 8.6 µs while the `fftw-wisdom` tool's PATIENT plan the
-bench imported ran 6.0–6.5 µs in-bench. The bench ratios in 10.3 are
-against FFTW's *better* showing.
-
-AVX-512 buys FFTW 8% at 1024 and **32% at 4096** (a radix-64 leaf on
-interleaved data). The library's avx2 bench time at 4096 (4745–5036 ns)
-is still below FFTW's avx512 standalone (5851 ns), cross-protocol, so
-hold that one loosely — but it says which half of the cascade design
-carries the win: the layout decision (shuffle-free SoA interior), not
-the vector width.
-
-### 10.5 Zen 4 vs 14900KF, same cell (N=1024, K=1 OOP natural)
-
-| | 14900KF (§1, 2026-08-16, 6 reps) | Zen 4 (10.3) | ratio |
-|---|---|---|---|
-| bench, best rep | 848 ns | 1001 ns | 1.18× |
-| bench, median | ~897 ns | ~1054 ns | 1.17× |
-| boost clock | 5.7 GHz | ~4.9 GHz | **1.16×** |
-| **cycles** | **≈ 4,830** | **≈ 4,900** | 1.5% |
-| winning plan | `2p 32×32` blocked, `il_kv=67` | `2p 16×64`, `il_kv=20` | — |
-
-Per clock the two cores execute this transform at the same rate,
-despite Zen 4's 60% smaller ROB, smaller FP register file and 32 KB L1.
-Both have two 256-bit FMA pipes; the desktop's remaining advantage on a
-single L1-resident transform is clock alone, and the planner absorbed
-the smaller register file and cache by choosing a different pair. (No
-bench-protocol 4096 datum exists for the 14900KF; its calibrator
-`ns=` values are not comparable across hosts — see 10.2's note on
-calibrator timing.)
-
-### 10.6 Scope
-
-- Two cells, one host, single-thread, avx2 vs avx2 by decision. The rest
-  of the Bailey band (128..512) and the cascade above 4096 are a few
-  minutes of `calibrate_k1` / `calibrate_zchain` each, into the same
-  folder.
-- Calibrator `ns=` values in the store are search-loop times and must
-  never be quoted as results (Zen 4 4096: 9.7 µs banked vs 4.7–5.0 µs
-  in the bench). Only the canonical bench protocol counts.
-- `VFFT_L1D_DISCOVER` was left at 0, so the store's `l1d=49152` stamp
-  is the pinned value, not the silicon's 32 KB. The Bailey pair is not
-  L1-gated and the tile-width search benches every legal width, so no
-  candidate was excluded by it; the 2D L2 band fence is the one consumer
-  that would see a different candidate set with discovery on.
-- No 14900KF verdict was served at any point: the Zen 4 folder started
-  empty, and the bench's store-miss path now races rather than reading
-  the wisdom file's row (`_race_stride_cell`, 2026-09-03).
-
-### 10.7 Reproducing
-
-```
-# calibrate (writes generated/wisdom/Zen4/)
-set VFFT_WISDOM_DIR=<repo>\src\dag-fft-compiler\generator\generated\wisdom\Zen4
-build_tuned\benches\calibrate_k1.exe     %VFFT_WISDOM_DIR% 1 1024 4096
-build_tuned\benches\calibrate_zchain.exe %VFFT_WISDOM_DIR% 1 4096
-build_tuned\benches\zen4_il_race.exe 1024 & zen4_il_race.exe 4096    # create-time races
-
-# FFTW PATIENT wisdom, then the isolated cell, both orders
-fftw-wisdom.exe -n -o fftw_patient_1024.wis cof1024 cob1024
-set VFFT_FFTW_DLL=C:\...\fftw\avx2\bin\libfftw3-3.dll
-set VFFT_FFTW_WIS=fftw_patient_1024.wis
-bench_1d_vs_fftw.exe --k1noop %VFFT_WISDOM_DIR%\spike_wisdom.txt out.csv 0 1024 1 200 0 2
-bench_1d_vs_fftw.exe --k1noop %VFFT_WISDOM_DIR%\spike_wisdom.txt out.csv 0 1024 1 200 1 2
-```
-
-Build with `CC=C:\Users\<you>\msys64\ucrt64\bin\gcc.exe` (build.py
-now finds it and clamps AVX-512 out of the driver ISA to match the avx2
-codelet library — on Zen 4, `-march=native` alone selects the AVX-512
-registry and the link fails).
-
 ## See also
-
-- [docs/cost_model/](../cost_model/) — how the estimate path achieves 1.20×
-- [docs/wisdom/](../wisdom/) — how the calibrator achieves the optimum
-- [docs/v1_1_codelet_roadmap.md](../v1_1_codelet_roadmap.md) — what closes the remaining gaps
-- [src/core/README.md](../../src/core/README.md) — user-facing API docs and threading status

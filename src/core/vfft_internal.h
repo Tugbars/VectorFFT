@@ -299,9 +299,18 @@ struct vfft_plan_s
     /* row route (the small-N2 lever): 0 = in-place NATURAL child (the
      * default; pays the 1D in-place service floor ~180ns/row at tiny N);
      * 1 = OOP NATURAL child + L1-hot row scratch + memcpy back (the mono
-     * route). Env-raced (VFFT_IL2D_ROWOOP=1); banked with §10. */
+     * route); 2 = the BATCHED rows (2026-09-23): ONE call of the n1ccs
+     * kernel at radix N2 over a run of rows -- lane k = row k at pitch Gs,
+     * two rows per vector, no per-row door, no per-row prologue. The
+     * kernels are bound at create whenever the radix has the pair
+     * (vfft_il_n1ccs_fn); the axis race decides which route serves, the
+     * verdict banks as ro=0|1|2 on the cell's row (_il2d_ro_of). Env pin
+     * VFFT_IL2D_ROWOOP=1|2 (never banks). Stateless, so every MT worker
+     * shares the batched kernels. */
     int il2d_rowoop;
     struct vfft_plan_s *il2d_rowo; /* the OOP child (route 1) */
+    int il2d_rowb;                 /* route 2 serving */
+    vfft_il2p_fn il2d_rowb_f, il2d_rowb_b; /* the n1ccs pair at radix N2, or NULL */
     /* ── c2c MT (INC-C, docs/design/il2d_real_mt.md ported): per-worker
      * row state. The serving row path is ONE shared child through ONE
      * shared rowscr — two concurrent bands would interleave plan state

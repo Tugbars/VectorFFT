@@ -121,6 +121,14 @@ flowchart TD
   Turned kinds (n1t, t2t, t2tg), the `_ct` factored kinds and the bailey `b` kinds keep their
   forms. Same change fixed the odd DFT's CONSTANTS: the angle is `2*pi*((j*m) mod n)/n`; the
   unreduced `j*m` (up to 529 at n=47) had put ~1e-14 into every cosine and sine.
+* **batched (`n1ccs`) — *the per-transform door*.** The `n1c` leaf with the column-stride
+  addressing the `t2cs` tails use: lane k is ONE WHOLE R-point transform at pitch `Gs`
+  (`zin[2*(l*Ls + k*Gs)]`, `Ls = 1` for contiguous rows), two transforms per vector through
+  `loadu2`/`storeu2` pairs, in place, both directions, every n1c radix (2..47, 64). One call
+  runs a whole run of rows: no per-row door, no per-row prologue, full width where the
+  count-1 solo ran its VEX-128 tail. It is the 2D interleaved tier's third row route (ro=2,
+  raced against the per-row child and the OOP child; 2026-09-23) and the K-batch form of the
+  mono. `--cil-n1ccs`; the emitter refuses column-stride on every other kind but t2.
 
 ### The threshold: when does restructuring pay?
 

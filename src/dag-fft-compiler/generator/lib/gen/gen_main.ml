@@ -433,6 +433,13 @@ let run (argv : string array) : unit =
     then cil_kind := "n1"
     else if arg = "--cil-n1c"
     then cil_kind := "n1c"
+    else if arg = "--cil-n1ccs"
+    then (
+      (* the BATCHED n1c (2026-09-23): n1c + column-stride addressing, lane k =
+         ONE WHOLE transform at pitch Gs, two per vector -- the mirror of
+         codelet.ml's flag (the corpus round-trips through both) *)
+      cil_kind := "n1c";
+      cil_colstride := true)
     else if arg = "--cil-t2c"
     then cil_kind := "t2c"
     else if arg = "--cil-t2csg"
