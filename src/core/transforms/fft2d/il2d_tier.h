@@ -110,24 +110,17 @@ static const double *_il2d_fs_rec(const struct vfft_plan_s *h, size_t rn, size_t
     return h->il2d_fs_tw ? h->il2d_fs_tw + p * 2 * (rn / (size_t)h->il2d_fs_B + (size_t)h->il2d_fs_B) : NULL;
 }
 
-/* one row of the row pass, by the plan's row route: in-place child
- * (default) or OOP child into the L1-hot scratch + copy back (the
- * small-N2 lever — the in-place K=1 IL service floor is ~6x the mono
- * math at tiny N). p = the row's plane position (the four-step's twiddle
- * hook keys on it; every other plan ignores it). */
+/* one row of the row pass through the in-place row child (route 0, one
+ * door walk per row; the batched routes run rows through _il2d_rows_exec
+ * and never come here). p = the row's plane position (the four-step's
+ * twiddle hook keys on it; every other plan ignores it). */
 static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
                            double *row, size_t rn, size_t p)
 {
     const double *tw = _il2d_fs_rec(h, rn, p);
     if (tw && dir == VFFT_FORWARD)
         _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 0);
-    if (h->il2d_rowoop)
-    {
-        vfft_execute(h->il2d_rowo, dir, row, NULL, h->il2d_rowscr, NULL);
-        memcpy(row, h->il2d_rowscr, 2 * rn * sizeof(double));
-    }
-    else
-        vfft_execute(h->il2d_row, dir, row, NULL, row, NULL);
+    vfft_execute(h->il2d_row, dir, row, NULL, row, NULL);
     if (tw && dir != VFFT_FORWARD)
         _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 1);
 }
@@ -588,9 +581,9 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
  * band [suffix stages + its own fused rows]: partition bands across
  * workers and there is no rows/columns wall and no cross-core exchange
  * for the fused part. Only the wide prefix needs the digit split.
- * Row execution mutates shared plan state (one child, one rowscr), so a
- * worker t > 0 runs its CLONE (il2d_roww[t-1], route-equivalence-checked
- * at build) and, on the rowoop route, its own rowscr slot. Every arm is
+ * Row execution mutates shared plan state (one child), so a worker t > 0
+ * runs its CLONE (il2d_roww[t-1], route-equivalence-checked at build).
+ * Every arm is
  * a loop restriction of the serving walk => MT == ST bitwise. */
 static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid,
                              vfft_dir_t dir, double *row, size_t rn, size_t p)
@@ -605,24 +598,17 @@ static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid,
         const double *tw = _il2d_fs_rec(h, rn, p);
         if (tw && dir == VFFT_FORWARD)
             _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 0);
-        if (h->il2d_rowoop)
-        {
-            double *scr = h->il2d_rowscr_w + 2 * rn * (size_t)(tid - 1);
-            vfft_execute((vfft_plan)c, dir, row, NULL, scr, NULL);
-            memcpy(row, scr, 2 * rn * sizeof(double));
-        }
-        else
-            vfft_execute((vfft_plan)c, dir, row, NULL, row, NULL);
+        vfft_execute((vfft_plan)c, dir, row, NULL, row, NULL);
         if (tw && dir != VFFT_FORWARD)
             _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 1);
     }
 }
 
-/* the banked ROW-ROUTE value of a plan: 0 = the in-place child, 1 = the OOP
- * child + scratch, 2 = the batched rows (the ro= token, 2026-09-23) */
+/* the banked ROW-ROUTE value of a plan: 0 = the in-place child, 2 = the
+ * batched rows, 3 = the batched two-pass rows (the ro= token, 2026-09-23) */
 static int _il2d_ro_of(const struct vfft_plan_s *h)
 {
-    return h->il2d_rowb2 ? 3 : h->il2d_rowb ? 2 : (h->il2d_rowoop ? 1 : 0);
+    return h->il2d_rowb2 ? 3 : h->il2d_rowb ? 2 : 0;
 }
 
 /* the ROW-LOOP twin of a two-pass stage kernel (2026-09-23): the same body
@@ -2341,8 +2327,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
  * the batched rows win at N2 <= 16 (mono) and 32/64 (two-pass) and the
  * per-row child elsewhere -- per-cell only, never defaults. The raced
  * out-of-place child route (ro=1, the copy-back) was DELETED 2026-09-23:
- * beside the batched routes it never won; the out-of-place child survives
- * only as the FORCED row path where N2 has no in-place K=1 plan. */
+ * beside the batched routes it never won, and the in-place K=1 tier serves
+ * every N2 (its last candidate is the prime engine): no forced path either. */
 /* one (row route, wl, tile) configuration of the axis race, as a race ARM:
  * sets the plan's band axes, then one full forward execute through the
  * serving path (the natural banded walk under NATURAL, the scrambled one
@@ -2574,15 +2560,14 @@ static void _il2d_c2c_build_clones(struct vfft_plan_s *h,
                                    const vfft_config_t *cfg, int T)
 {
     const int n = (T > 64 ? 64 : T) - 1;
-    const struct vfft_plan_s *prim =
-        h->il2d_rowoop ? h->il2d_rowo : h->il2d_row;
+    const struct vfft_plan_s *prim = h->il2d_row;
     vfft_config_t rc;
     int t;
     if (n <= 0 || h->il2d_roww || !prim)
         return;
     memset(&rc, 0, sizeof rc);
     rc.transform = VFFT_C2C;
-    rc.placement = h->il2d_rowoop ? VFFT_OUTOFPLACE : VFFT_INPLACE;
+    rc.placement = VFFT_INPLACE;
     rc.rigor = cfg->rigor;
     rc.dims = 1;
     rc.n[0] = h->N2;
@@ -2596,17 +2581,6 @@ static void _il2d_c2c_build_clones(struct vfft_plan_s *h,
                                                  sizeof *h->il2d_roww);
     if (!h->il2d_roww)
         return;
-    if (h->il2d_rowoop)
-    {
-        h->il2d_rowscr_w = (double *)malloc(
-            2 * (size_t)h->N2 * (size_t)n * sizeof(double));
-        if (!h->il2d_rowscr_w)
-        {
-            free(h->il2d_roww);
-            h->il2d_roww = NULL;
-            return;
-        }
-    }
     for (t = 0; t < n; t++)
     {
         struct vfft_plan_s *c =
@@ -2624,8 +2598,6 @@ static void _il2d_c2c_build_clones(struct vfft_plan_s *h,
                     vfft_destroy(h->il2d_roww[u]);
             free(h->il2d_roww);
             h->il2d_roww = NULL;
-            free(h->il2d_rowscr_w);
-            h->il2d_rowscr_w = NULL;
             return;
         }
     }

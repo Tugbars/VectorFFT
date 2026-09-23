@@ -655,7 +655,7 @@ flowchart TD
     NB -->|"&lt; 2"| NOMT["no MT axis exists"]
     CH --> N1A["<b>N1-arm</b><br/>native odd chain vs<br/>column-axis Bluestein"]
     N1A --> BLU["sets blu,<br/>REWRITES nst / R[] / L[]"]
-    ROOP["<b>roop</b> — row route<br/>in-place row child (0) vs<br/>batched rows: one n1ccs call per run (2) vs<br/>batched two-pass rows: the child's stages<br/>with the in-kernel row loop (3)<br/>(the OOP child + copy-back = the FORCED path only)"]
+    ROOP["<b>roop</b> — row route<br/>in-place row child (0) vs<br/>batched rows: one n1ccs call per run (2) vs<br/>batched two-pass rows: the child's stages<br/>with the in-kernel row loop (3)"]
     ROOP --> RBK["<b>rbk</b> — the two-pass rows' tile<br/>chunk scratch KB, raced with roop"]
 
     style NOMT fill:#5f1f1f,color:#fff

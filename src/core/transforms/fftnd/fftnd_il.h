@@ -132,7 +132,7 @@ static int _ilnd_child_equiv(const struct vfft_plan_s *a, const struct vfft_plan
     int s;
     if (!a->il2d_row || !b->il2d_row)
         return 0;
-    if (a->N != b->N || a->N2 != b->N2 || a->il2d_rowoop != b->il2d_rowoop)
+    if (a->N != b->N || a->N2 != b->N2)
         return 0;
     if (x->nst != y->nst || x->wl != y->wl || x->cut != y->cut || x->tfuse != y->tfuse ||
         x->staged != y->staged || x->nat != y->nat || x->natarm != y->natarm ||
@@ -142,9 +142,6 @@ static int _ilnd_child_equiv(const struct vfft_plan_s *a, const struct vfft_plan
         if (x->R[s] != y->R[s] || x->L[s] != y->L[s] || x->f[s] != y->f[s] || x->b[s] != y->b[s])
             return 0;
     if (!_tc_clone_equiv(a->il2d_row, b->il2d_row))
-        return 0;
-    if (a->il2d_rowoop && (!a->il2d_rowo || !b->il2d_rowo ||
-                           !_tc_clone_equiv(a->il2d_rowo, b->il2d_rowo)))
         return 0;
     return 1;
 }

@@ -1337,15 +1337,10 @@ void vfft_destroy(vfft_plan h)
         if (h->il2d_row)
         {
             int s2;
-            if (h->il2d_row != h->il2d_rowo)
-                vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
-            if (h->il2d_rowo)
-                vfft_destroy(h->il2d_rowo); /* (the forced-oop route aliases
-                                             * il2d_row to rowo — freed once) */
+            vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
             for (s2 = 0; s2 < h->il2d_roww_n; s2++)
                 vfft_destroy(h->il2d_roww[s2]); /* the MT row clones */
             free(h->il2d_roww);
-            free(h->il2d_rowscr_w);
             free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
             free(h->il2d_col.natperm);
             free(h->il2d_col.natscr);
@@ -1355,7 +1350,6 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_col.blukf);
             free(h->il2d_col.blukb);
             free(h->il2d_col.bluscr);
-            free(h->il2d_rowscr);
             VFFT_ZS_FREE(h->il2d_rowb2_scr);   /* the two-pass rows' chunk scratch (route 3) */
             free(h->il2d_col.bandscr);
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
