@@ -44,6 +44,7 @@
 #ifndef VFFT_IL_PRIME_H
 #define VFFT_IL_PRIME_H
 
+#include "tw_exact.h"   /* once-rounded cos/sin(2*pi*p/n) for the create-time tables */
 #include "il2p.h"
 #include <time.h> /* clock_gettime — the create-time method race */
 
@@ -285,9 +286,10 @@ static inline vfft_ilprime_plan_t *_ilprime_create_bluestein(int N)
     }
     for (int n = 0; n < N; n++) {
         long long m2 = ((long long)n * n) % (2LL * N); /* accuracy: mod first */
-        double a = -VFFT_IL2P_PI * (double)m2 / (double)N;
-        p->chf[2 * n] = cos(a);  p->chf[2 * n + 1] = sin(a);
-        p->chb[2 * n] = cos(a);  p->chb[2 * n + 1] = -sin(a);
+        double c, s;   /* a = -pi*m2/N = -2*pi*m2/(2N): sin(a) = -s */
+        vfft_cs2pi_exact(m2, 2LL * N, &c, &s);
+        p->chf[2 * n] = c;  p->chf[2 * n + 1] = -s;
+        p->chb[2 * n] = c;  p->chb[2 * n + 1] = s;
     }
     /* kernels: b_f = conj(c_f) wrapped symmetric; kern = FFT_M(b)/M */
     for (int d = 0; d < 2; d++) {
@@ -370,9 +372,10 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
         double sign = d ? 1.0 : -1.0;
         double *om = d ? p->omb : p->omf;
         for (int m = 0; m < nm1; m++) {
-            double a = sign * 2.0 * VFFT_IL2P_PI * (double)perm[m] / (double)N;
-            p->za[2 * m] = cos(a);
-            p->za[2 * m + 1] = sin(a);
+            double c, s;   /* a = sign*2*pi*perm/N: sin(a) = sign*s */
+            vfft_cs2pi_exact((long long)perm[m], (long long)N, &c, &s);
+            p->za[2 * m] = c;
+            p->za[2 * m + 1] = sign * s;
         }
         _ilprime_inner_fwd(&p->inner, p->za, p->zb);
         double inv = 1.0 / (double)nm1;

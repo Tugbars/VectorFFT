@@ -93,19 +93,22 @@ run-to-run swing of parity.
 Forward transform of every length 2..4,096, both libraries on the same input,
 against a long-double scalar DFT (the gauntlet's `verify` verb); relative L2
 error in units of 1e-16, FP64 epsilon = 2.2. Both hold 14 to 15 digits at every
-length. MKL is tighter: VectorFFT's median is 1.4x MKL's, its worst length
-9 epsilon. Level with MKL at the powers of two; the gap on the other
-lengths is the rounding of the twiddle arguments, the next lever.
+length. The medians are level, VectorFFT 3.9 against MKL 4.0, and VectorFFT is
+at or below MKL at 49% of the lengths. Every twiddle, chirp and stage record
+the library builds is the correctly rounded value of its exact angle
+(`src/core/oop/tw_exact.h`). What remains is the worst-length spread, 8.5
+epsilon against MKL's 2.7, set by the flat route's execute-time twiddle
+derivation.
 
 | Lengths | Cells | VectorFFT median | MKL median | VectorFFT max | MKL max |
 |---|---|---|---|---|---|
 | 2..16 | 15 | 1.67 | 1.15 | 3.17 | 1.52 |
-| 17..64 | 48 | 3.06 | 1.97 | 7.34 | 2.79 |
-| 65..256 | 192 | 4.24 | 2.50 | 8.83 | 5.24 |
-| 257..1,024 | 768 | 5.67 | 3.14 | 14.52 | 5.22 |
-| 1,025..2,048 | 1,024 | 5.75 | 3.99 | 12.37 | 5.45 |
-| 2,049..4,096 | 2,048 | 5.91 | 4.62 | 19.20 | 6.07 |
-| **all, 2..4,096** | **4,095** | **5.80** | **4.04** | **19.20** | **6.07** |
+| 17..64 | 48 | 2.80 | 1.97 | 5.75 | 2.79 |
+| 65..256 | 192 | 3.65 | 2.50 | 8.16 | 5.24 |
+| 257..1,024 | 768 | 3.90 | 3.14 | 13.91 | 5.22 |
+| 1,025..2,048 | 1,024 | 3.86 | 3.99 | 12.21 | 5.45 |
+| 2,049..4,096 | 2,048 | 3.97 | 4.62 | 18.86 | 6.07 |
+| **all, 2..4,096** | **4,095** | **3.90** | **4.04** | **18.86** | **6.07** |
 
 ---
 

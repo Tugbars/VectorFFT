@@ -42,6 +42,7 @@
 #include <immintrin.h>
 #include <stdint.h>
 #include "support/zalloc.h"
+#include "tw_exact.h"        /* once-rounded cos/sin(2*pi*p/n) for the twiddle records */
 
 /* the 2D tier's column map (il2d_cols.h, included after this header in the
  * one-TU build): scr row j -> natural row */
@@ -252,18 +253,23 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     {
         const long k1 = p->k1_of_p[q];
         double *C = p->tw + (size_t)q * rec, *F = C + 2 * ((size_t)N2 / (size_t)B);
-        const long double th = -2.0L * 3.141592653589793238462643383279L / (long double)N;
         for (a = 0; a < N2 / B; a++)
-        {   /* W_N^(k1 * a * B) */
+        {   /* W_N^(k1 * a * B) = cos/sin(-2*pi*e/N): tw_exact.h folds e/N in
+             * integers and rounds once, so the record is the correctly
+             * rounded twiddle and mirror indices share one double */
             const long e = (long)(((long long)k1 * (long long)a * (long long)B) % N);
-            C[2 * a] = (double)cosl(th * (long double)e);
-            C[2 * a + 1] = (double)sinl(th * (long double)e);
+            double c, sn;
+            vfft_cs2pi_exact((long long)e, (long long)N, &c, &sn);
+            C[2 * a] = c;
+            C[2 * a + 1] = -sn;
         }
         for (b = 0; b < B; b++)
         {   /* W_N^(k1 * b) */
             const long e = (long)(((long long)k1 * (long long)b) % N);
-            F[2 * b] = (double)cosl(th * (long double)e);
-            F[2 * b + 1] = (double)sinl(th * (long double)e);
+            double c, sn;
+            vfft_cs2pi_exact((long long)e, (long long)N, &c, &sn);
+            F[2 * b] = c;
+            F[2 * b + 1] = -sn;
         }
     }
     p->c2d->il2d_fs_tw = p->tw;

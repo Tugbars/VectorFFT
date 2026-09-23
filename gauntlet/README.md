@@ -48,8 +48,8 @@ rows on the same input). The plots in `src/tools/plots/` read the run
 directories: `gen_gflops.py` the bench csvs, `gen_precision.py` the verify csvs.
 
 ```
-python gauntlet/gauntlet.py verify --name gauntlet_2026-09-20 --cells 2..2048
-python src/tools/plots/gen_precision.py gauntlet/results/gauntlet_2026-09-20/verify.csv --out src/tools/plots/vectorfft-precision.svg
+python gauntlet/gauntlet.py verify --name tw_exact_verify_2026-09-24 --cells 2..4096
+python src/tools/plots/gen_precision.py gauntlet/results/tw_exact_verify_2026-09-24/verify.csv --out src/tools/plots/vectorfft-precision.svg
 ```
 
 `--merge` (or the `merge` verb) copies the run's verdicts back into the

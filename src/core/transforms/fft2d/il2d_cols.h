@@ -41,6 +41,7 @@
 #include <string.h>
 
 #include "il2p.h"             /* vfft_il2p_fn, the t2c/n1c kernel resolvers */
+#include "tw_exact.h"         /* once-rounded cos/sin(2*pi*p/n) for the column tables */
 #include "fft2d_real_il.h"    /* _il2d_row_cmul, used by the Bluestein pass */
 #include "support/diag.h"     /* _vfft_warn - the chain builder refuses loudly */
 
@@ -772,11 +773,12 @@ static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
         for (r = 0; r < N1; r++)
         {
             const long long m2 = ((long long)r * r) % (2LL * N1);
-            const double a = -VFFT_IL2P_PI * (double)m2 / (double)N1;
-            (*chf)[2 * r] = cos(a);
-            (*chf)[2 * r + 1] = sin(a);
-            (*chb)[2 * r] = cos(a);
-            (*chb)[2 * r + 1] = -sin(a);
+            double c, s;   /* a = -pi*m2/N1 = -2*pi*m2/(2*N1): sin(a) = -s (tw_exact.h) */
+            vfft_cs2pi_exact(m2, 2LL * N1, &c, &s);
+            (*chf)[2 * r] = c;
+            (*chf)[2 * r + 1] = -s;
+            (*chb)[2 * r] = c;
+            (*chb)[2 * r + 1] = s;
         }
         for (d2 = 0; d2 < 2; d2++)
         {
@@ -868,7 +870,6 @@ static void _il2d_blu_cols(const double *src, double *dst, int N1,
 static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
                               double **tf, double **tb)
 {
-    const double pi = 3.14159265358979323846;
     int s, L = N1;
     for (s = 0; s < nst; s++)
     {
@@ -891,10 +892,9 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
             for (d = 0; d < D; d++)
                 for (r = 1; r < R; r++)
                 {
-                    const double a =
-                        -2.0 * pi * (double)((size_t)d * r % (size_t)L)
-                        / (double)L;
-                    const double c = cos(a), si = sin(a);
+                    double c, si;   /* a = -2*pi*(d*r mod L)/L: sin(a) = -si (tw_exact.h) */
+                    vfft_cs2pi_exact((long long)((size_t)d * r % (size_t)L), (long long)L, &c, &si);
+                    si = -si;
                     double *rf = f + ((size_t)d * (R - 1) + (r - 1)) * 8;
                     double *rb = bt + ((size_t)d * (R - 1) + (r - 1)) * 8;
                     for (lane = 0; lane < 4; lane++)
