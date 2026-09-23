@@ -232,6 +232,10 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         double *il2d_rowb2_scr = NULL;
         int il2d_rowb2_ch = 0;     /* its tile in rows, from the banked rbk= / the env pin */
         int il2d_turn = 0;         /* the TURN route (2026-09-23): the whole plane through the 1D engine */
+        int il2d_csk = 0;          /* the SKEWED column pass (2026-09-23) */
+        double *il2d_csk_scr = NULL;
+        struct vfft_plan_s *il2d_csk_row = NULL;
+        vfft_il2p_fn il2d_csk_f = NULL, il2d_csk_b = NULL;
         struct vfft_plan_s *il2d_turn_plan = NULL;
         double *il2d_turn_scr = NULL;
         int il2d_nat = 0;          /* NATURAL n1 via the leaf redirection */
@@ -406,6 +410,45 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         il2d_turn = 1;
                     if (il2d_turn_plan && getenv("VFFT_IL2D_ROWOOP") && atoi(getenv("VFFT_IL2D_ROWOOP")) == 4)
                         il2d_turn = 1;
+                }
+                /* the SKEWED column pass (csk, 2026-09-23): a single-stage column
+                 * chain writes the scratch at pitch N2 + 8, the rows move it into
+                 * the plane. The scratch and the out-of-place K=1 plan at N2 (the
+                 * per-row route from the scratch; the batched routes need none)
+                 * are built whenever the chain is single-stage; the axis race
+                 * decides (crossed with the row routes); banked csk=1;
+                 * VFFT_IL2D_CSK=1 pins it. */
+                il2d_csk_f = vfft_k1_mono_ilc_fn(N1, 0);
+                il2d_csk_b = vfft_k1_mono_ilc_fn(N1, 1);
+                if (!il2d_csk_f || !il2d_csk_b)
+                    il2d_csk_f = il2d_csk_b = NULL;
+                if (il2d_row && !il2d_blu && il2d_csk_f)
+                {   /* its own single column stage (the n1c pair at radix N1, natural
+                     * by construction): the route stands beside the banked chain
+                     * whatever the chain race picked */
+                    il2d_csk_scr = (double *)VFFT_ZS_ALLOC(2 * (size_t)N1 * ((size_t)N2 + 8) * sizeof(double));
+                    if (il2d_csk_scr)
+                    {
+                        vfft_config_t oc;
+                        memset(&oc, 0, sizeof oc);
+                        oc.transform = VFFT_C2C;
+                        oc.placement = VFFT_OUTOFPLACE;
+                        oc.rigor = cfg->rigor;
+                        oc.dims = 1;
+                        oc.n[0] = N2;
+                        oc.howmany = 1;
+                        oc.order = VFFT_ORDER_NATURAL;
+                        oc.layout = VFFT_LAYOUT_INTERLEAVED;
+                        oc.nthreads = 1;
+                        oc.wisdom = cfg->wisdom;
+                        oc.wisdom_write = cfg->wisdom_write;
+                        il2d_csk_row = (struct vfft_plan_s *)vfft_create(&oc);
+                    }
+                    if (il2d_csk_scr && !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_CSK") &&
+                        vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "csk", 0) == 1)
+                        il2d_csk = 1;
+                    if (il2d_csk_scr && getenv("VFFT_IL2D_CSK") && atoi(getenv("VFFT_IL2D_CSK")) == 1)
+                        il2d_csk = 1;
                 }
                 /* the tile: the banked rbk= (KB of chunk scratch; 8 where a row
                  * predates the token), VFFT_IL2D_RB2_KB pinning it for probes */
@@ -879,6 +922,11 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         h->il2d_turn = il2d_turn;
         h->il2d_turn_plan = il2d_turn_plan;
         h->il2d_turn_scr = il2d_turn_scr;
+        h->il2d_csk = il2d_csk;
+        h->il2d_csk_scr = il2d_csk_scr;
+        h->il2d_csk_row = il2d_csk_row;
+        h->il2d_csk_f = il2d_csk_f;
+        h->il2d_csk_b = il2d_csk_b;
         h->il2d_col.staged = il2d_staged;
         h->il2d_col.pitch = il2d_pitch;
         h->il2d_col.bandscr = il2d_bandscr;
@@ -925,7 +973,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * c2c ONLY: the real tier has no banded walk / row route to race
          * (§2.5 — banding+tfuse on a real plan is the illegal fusion). */
         if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
-            !getenv("VFFT_IL2D_WL") &&
+            !getenv("VFFT_IL2D_WL") && !getenv("VFFT_IL2D_CSK") &&
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
             (il2d_bwl < 0 || il2d_bro < 0))
             _il2d_axis_race(h, W, cfg, N1, N2);
@@ -934,7 +982,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * cmt verdict ONLY at the T it was raced at, else race and
          * bank. Runs AFTER the axis race — the row route (rowoop) the
          * clones must match is final only then. */
-        if (h->transform == VFFT_C2C && h->il2d_row && !h->il2d_turn &&
+        if (h->transform == VFFT_C2C && h->il2d_row && !h->il2d_turn && !h->il2d_csk &&
             h->nthreads > 1)
         {   /* (Bluestein cells race too since 2026-09-02: the window pipeline;
              * a TURN plan is serial for now: no clones, no MT race) */

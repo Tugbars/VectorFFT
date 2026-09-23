@@ -132,7 +132,46 @@ The door picks it at every N1 >= 256 with N2 <= 16 and drops it where the plane 
 At N2 = 8 the turned stores and the back-turn are still a third of its time; the 1D
 plans are the rest.
 
-## Why three arms and not one method
+## Arm 4: the skewed column pass (`csk=1`)
+
+**Solves:** the column stage's stores on wide planes. A single column stage of radix R
+writes R output streams N2 x 16 bytes apart; at N2 = 1024 and up that is a multiple of
+4 KB, so 16 or 32 streams land in one 12-way L1 set and thrash. Measured on the kernel
+alone at 4096 lanes:
+
+| radix | user's pitch in and out | output skewed only | input skewed only | both skewed |
+|---|---|---|---|---|
+| 8 | 0.428 ns/pt | 0.369 | 0.417 | 0.341 |
+| 16 | 1.115 | 0.453 | 1.103 | 0.419 |
+| 32 | 1.305 | 0.935 | 1.223 | 0.740 |
+
+It is the stores, not the loads, so the fix needs no copy: the route's own single column
+stage (the n1c pair at radix N1, natural order by construction) writes a private scratch
+at pitch N2 + 8, and the row pass reads the scratch and writes the plane. The batched row
+kernels take separate input and output pitches; the per-row route runs the out-of-place
+K=1 plan at N2 as the row engine that reads the scratch. Offered wherever N1 is a mono
+radix, as its own route beside the banked chain, crossed with the row routes.
+
+| cell | best chain route | skewed pass | MKL |
+|---|---|---|---|
+| 16x4096 | 133.6 us | 107.3 us | 133 us |
+| 16x1024 | 27.7 us | 20.6 us | 31 us |
+| 16x256 | 8.0 us | 5.0 us | 7.0 us |
+| 32x64 | 2.85 us | 2.50 us | 1.88 us |
+| 32x4096 | 266 us | 293 us in the race, 255 in a tight loop | 322 us |
+
+The last row is the open caveat of the race protocol: the race rotates many arms, so at
+large planes each arm starts on a cold L2, and a route whose scratch pushes the working
+set past L2 pays for that where the bench's tight loop would not.
+
+**The race now runs the cell's own placement, on aligned planes.** It executed every arm
+in place while the out-of-place cell is served out of place, and its planes came from
+`malloc` (16-byte aligned) while every plane the door serves is 64-byte aligned; under
+both, every arm read about 1.3x slower than the same plan in the probe and a 64x32
+verdict was a lottery. With a second buffer for out-of-place cells and aligned planes,
+the race agrees with the probe and the bench.
+
+## Why four arms and not one method
 
 The winner flips with the shape, and the door has logged every arm on the same cells:
 
@@ -143,6 +182,7 @@ The winner flips with the shape, and the door has logged every arm on the same c
 | 16 | batched mono and two-pass tie | |
 | 32, 64 | two-pass batched | 1.03 to 1.30x over the plain route |
 | lengths with no mono kernel and no twin | plain route | the only arm |
+| 16 rows and long rows | skewed column pass | 1.25 to 1.6x over the chain |
 
 A dominant variant becomes the kernel; none of these dominates, so they stay arms and
 the race stays. What was deleted is the arm that never won: the out-of-place row child
@@ -164,26 +204,25 @@ cells, every cell re-raced by the door with the calibrate probe holding the SMT 
 | + two-pass batched, tile, guard | 1.21 | 23 | 7 |
 | + the turn route | 1.27 | 20 | 2 |
 | + the turn route's skewed pitch | 1.34 | 10 | 3 |
+| + the skewed column pass, the race out of place on aligned planes | 1.41 | 11 | 2 |
 
-Cell by cell, plain route to the last grid: 8x8 0.39 to 0.94, 32x32 0.79 to 0.93, 1024x32
-0.86 to 1.37, 4096x16 0.72 to 1.06, 8192x64 0.91 to 1.11, 8192x2 0.84 to 1.97, 4096x4 0.75
-to 1.50, 2048x8 0.65 to 1.28, 2048x16 1.04 to 1.34. The turn route serves 30 cells at a
-median of 1.43x. Ten cells remain below parity: the tiny diagonal (2x2, 8x8, 16x16 at 0.92
-to 0.94), 128x16 (0.77, the turn route at its worst), 16x128 (0.84), and five cells at 16 to
-64 rows or columns (32x16, 32x64, 64x16, 64x32, 4096x128) whose readings move by up to 20%
-between runs on unchanged routes. The last two grids' control cell read 1.08..1.34 and
-1.23..1.41: the median's last step is partly the machine's state, the per-cell wins on the
-turn route are not (they were measured on the same plans, above).
+Cell by cell, plain route to the last grid: 8x8 0.39 to 1.06, 32x32 0.79 to 0.98, 64x64
+1.21 to 1.44, 1024x32 0.86 to 1.46, 16x4096 1.01 to 1.31, 4096x16 0.72 to 1.04, 8192x64
+0.91 to 1.14, 8192x2 0.84 to 1.97, 2048x8 0.65 to 1.28. Every plane-size band sits at or
+above a 1.22 median with 82 to 98 percent of its cells at or above parity. The skewed
+column pass serves 52 cells, the turn route 27, the batched rows 39. Eleven cells remain
+below parity, nine of them between 0.90 and 0.99; the two below 0.8 are 128x16 (0.76, the
+turn route at its worst) and 32x64 (0.79). Run-to-run: the guarded grids' control cell
+reads 1.08..1.34, 1.23..1.41, 1.25..1.44, and the last two medians (1.45 with malloc'd race
+planes, 1.41 aligned) are within that swing; the per-cell wins of each arm were measured on
+the same plans, above, and do not depend on it.
 
 ## What remains
 
 - 128x16 at 0.78: the turn route is its best arm and still loses; its 2 KB stride never
   aliased, so the cost is elsewhere. Its own probe.
-- The few-long-rows planes (16x4096, 32x4096 at parity): the rows run at the 1D engine's
-  speed and the column pass costs as much again, 1.1 ns per point for a 16-point column
-  DFT. The staged walk's skewed pitch does not cure it (141 to 135 us at 16x4096), so
-  the cause is not the 4 KB set aliasing; the natural leaf's scatter is the next suspect,
-  per-stage probe first.
+- The race's cold-rotation bias at large planes (above), which hides the skewed pass at
+  32x4096 and 8x4096.
 - The last nanoseconds of door at 8x8 and 16x16: a bound 2D execute like the K=1 door.
 - Row-loop twins for the blocked radix-32 forms (N2 = 128, 512).
 - The turn route threaded: N2 independent long transforms are trivially parallel.
