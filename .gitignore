@@ -116,6 +116,7 @@ docs/design/zturn_t_ship_plan.md
 # owner design contracts (local, never committed)
 docs/design/design_contracts.md
 docs/design/pow2_race_pools.md
+docs/design/exact_trig_constants.md
 
 # The gauntlet's runs live in gauntlet/results/ (the standing runs are tracked: the
 # csv rows are the record; store/*.txt and *.log stay ignored by the rules above).

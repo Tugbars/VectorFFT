@@ -799,6 +799,21 @@ E1.5b rbk - the two-pass rows' TILE   RACED with E1.5 (ZTURN-T's tile precedent)
                                       VFFT_IL2D_RB2_KB pins it for probes. Measured
                                       2026-09-23: a 64-row chunk at N2 = 32/64 spilled
                                       L1 and lost to the per-row child; 4-8 KB win.
+E1.5c turn - the TURN route           RACED with E1.5 (one arm: no band, no tile),
+                                      banked turn=1 (2026-09-23): the whole plane
+                                      through the 1D engine, NO column chain. The
+                                      batched mono row kernel stores its row DFTs
+                                      TRANSPOSED (OLs = N1, OGs = 1) into an N2 x N1
+                                      scratch, the N2 columns run as its rows through
+                                      the in-place K=1 natural plan at N1 (the door's
+                                      own banked 1D verdict), one back-turn writes the
+                                      plane. NATURAL cells whose N2 has the n1ccs pair.
+                                      Measured: the narrow tall planes spent 95% of
+                                      their time in a chain over one lane pair; the
+                                      door picks turn at every N1 >= 256 with N2 <= 8
+                                      (8192x2 58.7 -> 26.5 us, MKL 53; 4096x2 35.6 ->
+                                      12.7, MKL 26) and loses it at 64x8 / 8x8.
+                                      Serial for now (a turn plan runs no MT race).
 E1.6 cmt - column/band MT             RACED, banked WITH cmtt (the per-T class).
                                       Bluestein column axes included since
                                       2026-09-02 (the column-window pipeline,

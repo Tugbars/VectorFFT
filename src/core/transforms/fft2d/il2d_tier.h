@@ -737,6 +737,59 @@ static void _il2d_rows_exec(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
         _il2d_row_exec_t(h, tid, dir, base + 2 * i * pitch, rn, p0 + i * pstep);
 }
 
+/* the TURN route's back-turn (2026-09-23): the N2 x N1 scratch T (row c =
+ * column c of the plane, N1 long) into the N1 x N2 plane dst, 2 x 2 complex
+ * blocks through one 128-bit lane permute, the row range blocked so a block
+ * of dst rows stays in L1 while every column pair lands in it (N2 is small
+ * where this route wins: dst rows are 32..128 B and would otherwise be
+ * re-fetched once per column pair). Odd N1 / odd N2 finish scalar. */
+static void _il2d_turn_back(const double *T, double *dst, size_t N1, size_t N2)
+{
+    const size_t RB = 256;
+    size_t r0, c, r;
+    for (r0 = 0; r0 < N1; r0 += RB)
+    {
+        const size_t r1 = (r0 + RB < N1) ? r0 + RB : N1;
+        for (c = 0; c + 2 <= N2; c += 2)
+        {
+            const double *ta = T + 2 * (c * N1), *tb = T + 2 * ((c + 1) * N1);
+            for (r = r0; r + 2 <= r1; r += 2)
+            {
+                const __m256d a = _mm256_loadu_pd(ta + 2 * r), b = _mm256_loadu_pd(tb + 2 * r);
+                _mm256_storeu_pd(dst + 2 * (r * N2 + c), _mm256_permute2f128_pd(a, b, 0x20));
+                _mm256_storeu_pd(dst + 2 * ((r + 1) * N2 + c), _mm256_permute2f128_pd(a, b, 0x31));
+            }
+            if (r < r1)
+            {
+                _mm_storeu_pd(dst + 2 * (r * N2 + c), _mm_loadu_pd(ta + 2 * r));
+                _mm_storeu_pd(dst + 2 * (r * N2 + c + 1), _mm_loadu_pd(tb + 2 * r));
+            }
+        }
+        if (c < N2)
+        {
+            const double *ta = T + 2 * (c * N1);
+            for (r = r0; r < r1; r++)
+                _mm_storeu_pd(dst + 2 * (r * N2 + c), _mm_loadu_pd(ta + 2 * r));
+        }
+    }
+}
+
+/* the TURN route's execute: rows through the batched mono kernel with turned
+ * stores (leg l of row k -> T[l][k]: Ls = 1, Gs = N2, OLs = N1, OGs = 1), the
+ * N2 columns as rows of T through the in-place K=1 plan at N1, the back-turn.
+ * Both directions (the 2D passes commute), both placements (T is private:
+ * the plane is read whole before dst is written). */
+static void _il2d_turn_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *sre, double *dre)
+{
+    const size_t N1 = (size_t)h->N, rn = (size_t)h->N2;
+    double *T = h->il2d_turn_scr;
+    size_t c;
+    (dir == VFFT_FORWARD ? h->il2d_rowb_f : h->il2d_rowb_b)(sre, NULL, T, NULL, NULL, NULL, 1, rn, N1, 1, N1);
+    for (c = 0; c < rn; c++)
+        vfft_execute((vfft_plan)h->il2d_turn_plan, dir, T + 2 * c * N1, NULL, T + 2 * c * N1, NULL);
+    _il2d_turn_back(T, dre, N1, rn);
+}
+
 /* the natural leaf over [blo, bhi) blocks through worker tid's staging,
  * the block's rows FUSED there forward when the walk fuses rows (each
  * natural row leaves finished, one sequential stream); backward the leaf
@@ -2352,6 +2405,7 @@ static void _il2d_arm_axis(void *v)
     h->il2d_col.wc = c->wc;
     h->il2d_rowb = (c->ro == 2);   /* the batched rows (ro=2, 2026-09-23) */
     h->il2d_rowb2 = (c->ro == 3);  /* the batched two-pass rows (ro=3) */
+    h->il2d_turn = (c->ro == 4);   /* the TURN route: the whole plane through the 1D engine */
     if (c->ro == 3)
         h->il2d_rowb2_ch = (int)_il2d_rb2_rows(c->kb, (size_t)h->N2);
     vfft_execute((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
@@ -2445,7 +2499,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
         double ns[VFFT_RACE_MAX_ARMS];
         int na = 0, a;
-        for (ro = 0; ro <= 3; ro++)
+        for (ro = 0; ro <= 4; ro++)
             for (wi = 0; wi < nwl && na < VFFT_RACE_MAX_ARMS; wi++)
             {
                 int s2, cut = 0;
@@ -2454,8 +2508,11 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 /* the row routes: 0 = the in-place child; 2 = the BATCHED rows,
                  * when the radix has the n1ccs pair; 3 = the batched TWO-PASS
                  * rows, when the child's stage kernels have row-loop twins
-                 * (2026-09-23). 1, the raced OOP child, is deleted. */
-                if (ro == 1 || (ro == 2 && !h->il2d_rowb_f) || (ro == 3 && !h->il2d_rowb2_leaf_f))
+                 * (2026-09-23). 1, the raced OOP child, is deleted. 4 = the
+                 * TURN route (the whole plane through the 1D engine): one arm,
+                 * no band, no tile, when its N1 plan built. */
+                if (ro == 1 || (ro == 2 && !h->il2d_rowb_f) || (ro == 3 && !h->il2d_rowb2_leaf_f) ||
+                    (ro == 4 && (!h->il2d_turn_plan || w != 0)))
                     continue;
                 if (w > 0)
                 {   /* an admitted width's cut; 0 kept where none (R3) */
@@ -2464,7 +2521,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 }
                 {
                     int sub, ki;
-                    for (sub = 0; sub <= (w == 0 ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
+                    for (sub = 0; sub <= (w == 0 && ro != 4 ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
                         for (ki = 0; ki < (ro == 3 ? 4 : 1) && na < VFFT_RACE_MAX_ARMS; ki++)
                         {
                             const int kb = ro == 3 ? VFFT_IL2D_RB2_KB_LADDER[ki] : 0;
@@ -2480,10 +2537,10 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             ac[na].wc = sub ? swl[sub - 1] : 0;
                             if (sub)
                                 snprintf(ac[na].name, sizeof ac[na].name, "sw%d%s", ac[na].wc,
-                                         ro == 2 ? "+rowb" : "");
+                                         ro == 2 ? "+rowb" : ro == 4 ? "+turn" : "");
                             else
                                 snprintf(ac[na].name, sizeof ac[na].name, "wl%d%s", w,
-                                         ro == 2 ? "+rowb" : "");
+                                         ro == 2 ? "+rowb" : ro == 4 ? "+turn" : "");
                             if (ro == 3)
                             {
                                 const size_t used = strlen(ac[na].name);
@@ -2533,6 +2590,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         h->il2d_col.wc = bwc;
         h->il2d_rowb = (bro == 2);
         h->il2d_rowb2 = (bro == 3);
+        h->il2d_turn = (bro == 4);
         if (bro == 3)
             h->il2d_rowb2_ch = (int)_il2d_rb2_rows(bkb, (size_t)N2);
     }
@@ -2541,6 +2599,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                          -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, vfft_policy_ord_rankn(cfg));
     vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "sw", bwc);
     vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "rbk", bkb);   /* the two-pass rows' tile */
+    vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "turn", h->il2d_turn);   /* the turn route */
     _vw2_persist(W, cfg);
     free(z);
 }
