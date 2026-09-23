@@ -61,20 +61,12 @@ equal vertical gaps).
 
 ![Precision, VectorFFT vs MKL, every N from 2 to 4096](src/tools/plots/vectorfft-precision.svg)
 
-The forward transform of every length N from 2 to 4,096, VectorFFT and MKL on the
-same random input, against a scalar DFT accumulated in 80-bit long double
-(the gauntlet's `verify` verb, [`gauntlet/k1_fwd_ref_probe.c`](gauntlet/k1_fwd_ref_probe.c);
-the records are in [`gauntlet/results/`](gauntlet/results/)). The error is the
-relative L2 norm ||y - X|| / ||X||, in units of 1e-16 (FP64 epsilon = 2.2).
-
-Both libraries deliver 14 to 15 correct digits at every length. MKL is the tighter
-of the two: its error stays within 3 epsilon everywhere, VectorFFT's median is
-1.4x MKL's and its worst lengths reach 9 epsilon. The radix-2, 4 and 8 kernels
-and ZTURN-T are level with MKL at every power of two, and the odd-radix kernels read
-2 to 4e-16 on their own since their constants were corrected (2026-09-23); what
-remains on the mixed-radix and prime lengths is the rounding of the twiddle
-arguments themselves, the next lever. It is measured here so it can be worked on,
-not hidden.
+Forward transform of every length 2..4,096, both libraries on the same input,
+against a long-double scalar DFT (the gauntlet's `verify` verb); relative L2
+error in units of 1e-16, FP64 epsilon = 2.2. Both hold 14 to 15 digits at every
+length. MKL is tighter: VectorFFT's median is 1.4x MKL's, its worst length
+9 epsilon. Level with MKL at the powers of two; the gap on the other
+lengths is the rounding of the twiddle arguments, the next lever.
 
 | Lengths | Cells | VectorFFT median | MKL median | VectorFFT max | MKL max |
 |---|---|---|---|---|---|
@@ -85,17 +77,6 @@ not hidden.
 | 1,025..2,048 | 1,024 | 5.75 | 3.99 | 12.37 | 5.45 |
 | 2,049..4,096 | 2,048 | 5.91 | 4.62 | 19.20 | 6.07 |
 | **all, 2..4,096** | **4,095** | **5.80** | **4.04** | **19.20** | **6.07** |
-
-| Family | Cells | VectorFFT median | MKL median | VectorFFT max | MKL max |
-|---|---|---|---|---|---|
-| Powers of two | 12 | 1.80 | 1.45 | 2.73 | 2.36 |
-| Primes | 564 | 6.12 | 4.64 | 11.36 | 5.58 |
-| Other composites | 3,520 | 5.74 | 3.56 | 19.20 | 6.07 |
-
-Elementwise maximum error, relative to the largest output, same reference: VectorFFT
-median 7.3, max 38.7; MKL median 4.2, max 8.5. Roundtrip, backward of the forward
-divided by N against the input, elementwise maximum: VectorFFT median 14.5, max 85;
-MKL median 12.4, max 24.7 (all in units of 1e-16).
 
 ---
 
