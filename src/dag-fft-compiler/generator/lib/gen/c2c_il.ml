@@ -131,7 +131,12 @@ type kind =
   | N1
   | N1C (* 2D column-stage leaf: n1 math, count axis = adjacent columns of
            the plane, in-place same-slot BOTH directions
-           (docs/roadmap/fft2d_il_c2c_design.md §3) *)
+           (docs/roadmap/fft2d_il_c2c_design.md §3). Under --cil-n1ccs
+           (colstride, 2026-09-23) the count axis is WHOLE TRANSFORMS at
+           pitch Gs -- lane k reads zin[2*(l*Ls + k*Gs)], two transforms per
+           vector through the loadu2/storeu2 pairs: the batched row pass of
+           the 2D interleaved tier (no per-row door, no per-row prologue,
+           full width) and the K-batch form of the mono. *)
   | N1T
   | T2
   | T2C (* 2D column-stage MID: same-slot in-place DIF stage along the
@@ -246,11 +251,12 @@ let emit
        the streamed VTW2 table; n1/n1t carry no runtime twiddles)";
   (* t2cs = the column-stride tail form of the T2 mid, fwd only for now
      (2026-09-04, il_flatdit.h: the flat chain's D < vw stages). *)
-  if colstride && (kind <> T2 || log3 || blocked || turnst || turnst_gs)
+  if colstride && ((kind <> T2 && kind <> N1C) || log3 || blocked || turnst || turnst_gs)
   then
     failwith
-      "codelet_cil: --cil-t2cs is the plain T2 fwd mid with column-stride addressing; \
-       no log3/blocked/turn on it (they would be new forms, not this kind)";
+      "codelet_cil: --cil-t2cs is the plain T2 fwd mid with column-stride addressing and \
+       --cil-n1ccs the n1c leaf with it (lanes = whole transforms at pitch Gs); \
+       no log3/blocked/turn on either (they would be new forms, not these kinds)";
   (* gen2 rides the column-stride tail kind only (t2csg): its two-table
      stream replaces the per-pair records that kind would otherwise read. *)
   if gen2 && not colstride
@@ -273,7 +279,7 @@ let emit
      forcing is skipped. Backward only; the symbol carries a "t". *)
   if transposed && (not colstride || dir <> Bwd)
   then failwith "codelet_cil: --cil-t2csgt / --cil-t2csgnt are backward column-stride tails";
-  let pretw = pretw || (colstride && dir = Bwd && not transposed) in
+  let pretw = pretw || (colstride && kind = T2 && dir = Bwd && not transposed) in
   Cx_render.colstride := colstride;
   if kind = T2C && (turnst || turnst_gs)
   then
@@ -1267,8 +1273,14 @@ let emit
        (match kind with
         | N1 -> "solo n1 (natural order in/out, twiddle-free)"
         | N1C ->
-          "2D column-stage leaf n1c (n1 math; count = adjacent plane columns, \
-           in-place same-slot)"
+          if ctx.colstride
+          then
+            "BATCHED leaf n1ccs (n1 math; lane k = ONE WHOLE transform at pitch Gs: \
+             zin[2*(l*Ls + k*Gs)], Ls = 1 for contiguous rows; two transforms per \
+             vector via loadu2/storeu2 pairs; in-place same-slot)"
+          else
+            "2D column-stage leaf n1c (n1 math; count = adjacent plane columns, \
+             in-place same-slot)"
         | N1T -> "bailey2 stage-1 leaf n1t (four-step TRANSPOSE fused into the stores)"
         | T2 -> "bailey2 stage-2 mid t2 (streamed VTW2 twiddles, BYTW2 apply)"
         | T2C ->

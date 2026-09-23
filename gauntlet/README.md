@@ -77,7 +77,7 @@ lengths in one run. The groups:
 ```
 python gauntlet/gauntlet.py run --group 2d-small [--max 64]   # every shape up to 64 per axis (3,969 cells)
 python gauntlet/gauntlet.py run --group 2d-odd                # the odd/prime column pool and its closers x {64,128,256,512}
-python gauntlet/gauntlet.py run --group 2d-pow2               # squares 8..1024 and the rectangle ladder to 32768x64
+python gauntlet/gauntlet.py run --group 2d-pow2 [--max 8192] # the pow2 grid: every 2^a x 2^b up to 8192 per axis, planes to 4M points (159 cells)
 python gauntlet/gauntlet.py run --group 2d-mixed [--max 512]  # 2^a 3^b 5^c lengths as squares and against 64
 python gauntlet/gauntlet.py run --cells 47x64,23x256          # any shapes
 ```

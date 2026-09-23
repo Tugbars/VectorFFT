@@ -229,6 +229,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         int il2d_blu = 0;          /* odd/prime N1: column Bluestein M */
         int il2d_bblu = -1;        /* banked N1-arm verdict; -1 = unraced */
         int il2d_rof = 0;          /* row route FORCED oop (odd N2 c2c) */
+        int il2d_rowb = 0;         /* row route 2: the BATCHED rows (2026-09-23) */
+        vfft_il2p_fn il2d_rowb_f = NULL, il2d_rowb_b = NULL; /* its n1ccs pair at N2, when the radix has one */
         int il2d_nat = 0;          /* NATURAL n1 via the leaf redirection */
         int *il2d_natperm = NULL;
         double *il2d_natscr = NULL;
@@ -340,6 +342,28 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                N1, N2);
                     return NULL;
                 }
+                /* the BATCHED row route (ro=2, 2026-09-23): the n1ccs pair
+                 * at radix N2 -- one kernel call per run of rows, lane k =
+                 * row k, two rows per vector, no per-row door. Bound
+                 * whenever the radix has the pair; the axis race (or the
+                 * banked verdict, or the env pin VFFT_IL2D_ROWOOP=2) decides
+                 * whether it serves. A banked ro=2 this build has no kernel
+                 * for is re-raced, never served by another route. Not on a
+                 * forced row route (il2d_rof): that cell never races. */
+                il2d_rowb_f = vfft_il_n1ccs_fn(N2, 0);
+                il2d_rowb_b = vfft_il_n1ccs_fn(N2, 1);
+                if (!il2d_rowb_f || !il2d_rowb_b)
+                    il2d_rowb_f = il2d_rowb_b = NULL;
+                if (il2d_row && !il2d_rof && il2d_bro == 2)
+                {
+                    if (il2d_rowb_f && !getenv("VFFT_IL2D_ROWOOP"))
+                        il2d_rowb = 1;
+                    else if (!il2d_rowb_f)
+                        il2d_bro = -1;
+                }
+                if (il2d_row && !il2d_rof && il2d_rowb_f && getenv("VFFT_IL2D_ROWOOP") &&
+                    atoi(getenv("VFFT_IL2D_ROWOOP")) == 2)
+                    il2d_rowb = 1;
                 /* column-tile width: env override (raced axis; wisdom
                  * banking follows the falsifier run — tcut precedent:
                  * env BEATS wisdom). 0/absent/invalid = untiled. */
@@ -851,6 +875,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         h->il2d_rowoop = il2d_rowoop;
         h->il2d_rowo = il2d_rowo;
         h->il2d_rowscr = il2d_rowscr;
+        h->il2d_rowb = il2d_rowb;
+        h->il2d_rowb_f = il2d_rowb_f;
+        h->il2d_rowb_b = il2d_rowb_b;
         h->il2d_col.staged = il2d_staged;
         h->il2d_col.pitch = il2d_pitch;
         h->il2d_col.bandscr = il2d_bandscr;

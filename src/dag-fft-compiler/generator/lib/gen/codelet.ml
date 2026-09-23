@@ -135,7 +135,10 @@ type kind =
       ; split : (int * int) option (* --cil-split A.B *)
       ; turn : cil_turn option
       ; pre_tw : bool (* --cil-pretw (bwd pre-twiddle) *)
-      ; colstride : bool (* --cil-t2cs: the column-stride tail form of t2 *)
+      ; colstride : bool
+        (* --cil-t2cs: the column-stride tail form of t2; --cil-n1ccs: the
+           BATCHED n1c (2026-09-23) -- lane k = one whole transform at pitch
+           Gs, two per vector (the 2D tier's batched row pass) *)
       ; gen2 : bool (* --cil-t2csg: t2cs with the generated twiddle stream *)
       ; grouploop : bool (* --cil-t2csgn: t2csg with the in-kernel group loop *)
       ; transposed : bool (* --cil-t2csgt / --cil-t2csgnt: the transposed backward tails *)
@@ -502,6 +505,15 @@ let of_argv ?(strict = true) (argv : string list) : t =
       push "cil-t2";
       colstride := true;
       go tl
+    | "--cil-n1ccs" :: tl ->
+      (* n1c with column-stride addressing (2026-09-23): lane k = ONE WHOLE
+         R-point transform at pitch Gs (a row of a plane, a transform of a
+         batch), two per vector through the loadu2/storeu2 pairs the t2cs
+         tails render. Call: fn(z, NULL, z, NULL, NULL, NULL, 1, pitch, 1,
+         pitch, count). The batched row pass of the 2D interleaved tier. *)
+      push "cil-n1c";
+      colstride := true;
+      go tl
     | "--cil-t2csg" :: tl ->
       push "cil-t2";
       colstride := true;
@@ -804,7 +816,7 @@ let to_argv (c : t) : string list =
     n
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
-         | Cil_n1c -> "--cil-n1c"
+         | Cil_n1c -> if colstride then "--cil-n1ccs" else "--cil-n1c"
          | Cil_t2c -> if pre_tw then "--cil-t2cp" else "--cil-t2c"
          | Cil_n1t -> "--cil-n1t"
          | Cil_t2 ->

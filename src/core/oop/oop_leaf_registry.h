@@ -427,4 +427,27 @@ static inline vfft_oop11_fn vfft_k1_mono_ilc_fn(int N, int bwd)
 #endif
 }
 
+/* the BATCHED solo (2026-09-23): n1ccs = the n1c leaf with column-stride
+ * addressing -- lane k is ONE WHOLE R-point transform at pitch Gs (a row of
+ * a plane, a transform of a batch), two per vector through loadu2/storeu2
+ * pairs, in place, natural order, both directions. Call:
+ *   fn(z, NULL, z, NULL, NULL, NULL, 1, pitch, 1, pitch, count)
+ * (Ls = OLs = 1: the legs of one transform are contiguous). NULL where the
+ * corpus has no pair at R -- the registry's PAIR list is the resolver. */
+static inline vfft_oop11_fn vfft_il_n1ccs_fn(int R, int bwd)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(r) case r: return bwd ? radix##r##_z_n1ccs_bwd_avx2 : radix##r##_z_n1ccs_fwd_avx2;
+    VFFT_IL_N1CCS_PAIR_RADICES(C)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R; (void)bwd;
+    return 0;
+#endif
+}
+
 #endif /* VFFT_OOP_LEAF_REGISTRY_H */

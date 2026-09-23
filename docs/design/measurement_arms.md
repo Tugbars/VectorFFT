@@ -775,8 +775,12 @@ E1.2 wl - banded column walk width    RACED. {0 unbanded} + WPOOL
 E1.3 cut                              DERIVED from wl (the tcut law: width is the
                                       INPUT, cut is the OUTPUT).
 E1.4 tf (tfuse)                       DERIVED; slaved to wl (tfuse = w > 0).
-E1.5 roop - row route                 RACED. in-place per-row K=1 child vs an OOP
-                                      child + 2*N2 scratch + copy-back.
+E1.5 roop - row route                 RACED. in-place per-row K=1 child (0) vs an OOP
+                                      child + 2*N2 scratch + copy-back (1) vs the
+                                      BATCHED rows (2, 2026-09-23): ONE n1ccs call
+                                      per run of rows -- lane k = row k, two rows
+                                      per vector, no per-row door -- an arm wherever
+                                      radix N2 has the n1ccs pair.
 E1.6 cmt - column/band MT             RACED, banked WITH cmtt (the per-T class).
                                       Bluestein column axes included since
                                       2026-09-02 (the column-window pipeline,
