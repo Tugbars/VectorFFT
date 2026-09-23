@@ -214,9 +214,6 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         int il2d_nst = 0;
         int il2d_wc = 0;
         int il2d_wl = 0, il2d_cut = 0, il2d_tfuse = 0;
-        int il2d_rowoop = 0;
-        struct vfft_plan_s *il2d_rowo = NULL;
-        double *il2d_rowscr = NULL;
         int il2d_bwl = -1, il2d_btf = -1, il2d_bro = -1; /* banked axes */
         int il2d_staged = 0, il2d_pitch = 0;
         double *il2d_bandscr = NULL;
@@ -228,7 +225,6 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         double *il2d_orbuf = NULL; /* its 2 x 2*N2 row pair buffer  */
         int il2d_blu = 0;          /* odd/prime N1: column Bluestein M */
         int il2d_bblu = -1;        /* banked N1-arm verdict; -1 = unraced */
-        int il2d_rof = 0;          /* row route FORCED oop (odd N2 c2c) */
         int il2d_rowb = 0;         /* row route 2: the BATCHED rows (2026-09-23) */
         vfft_il2p_fn il2d_rowb_f = NULL, il2d_rowb_b = NULL; /* its n1ccs pair at N2, when the radix has one */
         int il2d_rowb2 = 0;        /* row route 3: the batched TWO-PASS rows (2026-09-23) */
@@ -301,36 +297,6 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 rc.wisdom = cfg->wisdom;
                 rc.wisdom_write = cfg->wisdom_write;
                 il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
-                if (!il2d_row)
-                {
-                    /* no IN-PLACE K=1 route at this N2 (odd/awkward N2
-                     * — 129 = 3*43 serves OOP-only via the prime
-                     * engine): fall back to the tier's OWN rowoop
-                     * mechanism — the OOP child + row scratch + copy-
-                     * back that _il2d_row_exec already serves. il2d_row
-                     * aliases the OOP child as the dispatch sentinel
-                     * (never executed directly when rowoop is set);
-                     * destroy skips the alias. The row route is FORCED
-                     * here, so the axis race must not flip it. */
-                    rc.placement = VFFT_OUTOFPLACE;
-                    il2d_rowo = (struct vfft_plan_s *)vfft_create(&rc);
-                    if (il2d_rowo)
-                    {
-                        il2d_rowscr = (double *)malloc(
-                            2 * (size_t)N2 * sizeof(double));
-                        if (il2d_rowscr)
-                        {
-                            il2d_rowoop = 1;
-                            il2d_rof = 1;
-                            il2d_row = il2d_rowo;
-                        }
-                        else
-                        {
-                            vfft_destroy(il2d_rowo);
-                            il2d_rowo = NULL;
-                        }
-                    }
-                }
                 if (il2d_row && !il2d_blu && !il2d_tbl_done &&
                     _il2d_build_tables(N1, il2d_nst, il2d_R,
                                        il2d_L, il2d_tf, il2d_tb))
@@ -352,20 +318,19 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * whenever the radix has the pair; the axis race (or the
                  * banked verdict, or the env pin VFFT_IL2D_ROWOOP=2) decides
                  * whether it serves. A banked ro=2 this build has no kernel
-                 * for is re-raced, never served by another route. Not on a
-                 * forced row route (il2d_rof): that cell never races. */
+                 * for is re-raced, never served by another route. */
                 il2d_rowb_f = vfft_il_n1ccs_fn(N2, 0);
                 il2d_rowb_b = vfft_il_n1ccs_fn(N2, 1);
                 if (!il2d_rowb_f || !il2d_rowb_b)
                     il2d_rowb_f = il2d_rowb_b = NULL;
-                if (il2d_row && !il2d_rof && il2d_bro == 2)
+                if (il2d_row && il2d_bro == 2)
                 {
                     if (il2d_rowb_f && !getenv("VFFT_IL2D_ROWOOP"))
                         il2d_rowb = 1;
                     else if (!il2d_rowb_f)
                         il2d_bro = -1;
                 }
-                if (il2d_row && !il2d_rof && il2d_rowb_f && getenv("VFFT_IL2D_ROWOOP") &&
+                if (il2d_row && il2d_rowb_f && getenv("VFFT_IL2D_ROWOOP") &&
                     atoi(getenv("VFFT_IL2D_ROWOOP")) == 2)
                     il2d_rowb = 1;
                 /* the BATCHED TWO-PASS rows (ro=3, 2026-09-23): the row child's
@@ -374,7 +339,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * staged through a per-worker contiguous scratch. Bound when the
                  * child is a two-pass plan whose kernels all have twins; the
                  * axis race (or the banked ro=3, or VFFT_IL2D_ROWOOP=3) decides. */
-                if (il2d_row && !il2d_rof && il2d_row->k1il2p)
+                if (il2d_row && il2d_row->k1il2p)
                 {
                     const vfft_il2p_plan_t *pp = il2d_row->k1il2p;
                     il2d_rowb2_leaf_f = _il2d_rowloop_twin(pp->leaf_f);
@@ -390,14 +355,14 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     if (!il2d_rowb2_scr)
                         il2d_rowb2_leaf_f = il2d_rowb2_mid_f = il2d_rowb2_t2t_b = il2d_rowb2_n1_b = NULL;
                 }
-                if (il2d_row && !il2d_rof && il2d_bro == 3)
+                if (il2d_row && il2d_bro == 3)
                 {
                     if (il2d_rowb2_leaf_f && !getenv("VFFT_IL2D_ROWOOP"))
                         il2d_rowb2 = 1;
                     else if (!il2d_rowb2_leaf_f)
                         il2d_bro = -1;
                 }
-                if (il2d_row && !il2d_rof && il2d_rowb2_leaf_f && getenv("VFFT_IL2D_ROWOOP") &&
+                if (il2d_row && il2d_rowb2_leaf_f && getenv("VFFT_IL2D_ROWOOP") &&
                     atoi(getenv("VFFT_IL2D_ROWOOP")) == 3)
                     il2d_rowb2 = 1;
                 /* the tile: the banked rbk= (KB of chunk scratch; 8 where a row
@@ -421,11 +386,10 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 /* the row routes (2026-09-23): 0 = the in-place child, 2 = the
                  * batched rows, 3 = the batched two-pass rows, raced below and
                  * banked as ro=; VFFT_IL2D_ROWOOP=2|3 pins one for a probe. The
-                 * raced out-of-place child (ro=1, the copy-back) is DELETED: a
-                 * row banked on it re-races. The out-of-place child + scratch
-                 * exists only as the FORCED row path above (il2d_rof), where N2
-                 * has no in-place K=1 plan. */
-                if (il2d_row && !il2d_rof && il2d_bro == 1)
+                 * out-of-place child (ro=1, the copy-back) is DELETED entirely:
+                 * the in-place K=1 tier serves every N2 (its last candidate is
+                 * the prime engine); a row banked on it re-races. */
+                if (il2d_row && il2d_bro == 1)
                     il2d_bro = -1;
                 /* staged band route: VFFT_IL2D_STAGED=1 (needs a
                  * band; checked after the wl parse below). */
@@ -860,9 +824,6 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         h->il2d_col.wl = il2d_wl;
         h->il2d_col.cut = il2d_cut;
         h->il2d_col.tfuse = il2d_tfuse;
-        h->il2d_rowoop = il2d_rowoop;
-        h->il2d_rowo = il2d_rowo;
-        h->il2d_rowscr = il2d_rowscr;
         h->il2d_rowb = il2d_rowb;
         h->il2d_rowb_f = il2d_rowb_f;
         h->il2d_rowb_b = il2d_rowb_b;
@@ -919,7 +880,6 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * c2c ONLY: the real tier has no banded walk / row route to race
          * (§2.5 — banding+tfuse on a real plan is the illegal fusion). */
         if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
-            !il2d_rof &&   /* natural cells race the axes too (2026-09-05) */
             !getenv("VFFT_IL2D_WL") &&
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
             (il2d_bwl < 0 || il2d_bro < 0))

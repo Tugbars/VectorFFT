@@ -787,10 +787,11 @@ E1.5 roop - row route                 RACED. in-place per-row K=1 child (0) vs t
                                       per-worker scratch -- an arm wherever the
                                       child is two-pass and its kernels have twins.
                                       The OOP child + 2*N2 scratch + copy-back (1)
-                                      is NOT an arm since 2026-09-23 (it never won
-                                      beside the batched routes): it is the FORCED
-                                      row path only, where N2 has no in-place K=1
-                                      plan (129 = 3*43); a row banked ro=1 re-races.
+                                      is DELETED (2026-09-23): it never won beside
+                                      the batched routes, and the in-place K=1 tier
+                                      serves every N2 (its last candidate is the
+                                      prime engine), so no forced path remains; a
+                                      row banked ro=1 re-races.
 E1.5b rbk - the two-pass rows' TILE   RACED with E1.5 (ZTURN-T's tile precedent): the
                                       chunk scratch in KB {4, 8, 16, 32} -> rows =
                                       KB*1024 / (16*N2); every ro=3 arm runs once per

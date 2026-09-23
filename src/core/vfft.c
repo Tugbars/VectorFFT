@@ -2228,8 +2228,8 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
             FP__P(zr2c_child), FP__P(oddr_child), FP__P(tplan),
             FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */
-    FP__ADD(" il2dhave=%d%d%d%d%d%d",
-            FP__P(il2d_row), FP__P(il2d_rowo), FP__P(il2d_roww),
+    FP__ADD(" il2dhave=%d%d%d%d%d",   /* the OOP row child's slot deleted 2026-09-23 */
+            FP__P(il2d_row), FP__P(il2d_roww),
             FP__P(il2d_rows), ((h->il2d_col.natperm) ? 1 : 0), FP__P(pq_inner)); /* natperm moved into il2d_col */
     /* the K=1 FOUR-STEP (route 10, k1_fourstep.h): the raced split, the order
      * class, the natural form and its band width. Until 2026-09-18 the plan
@@ -2263,7 +2263,6 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     used = vfft__fp_child(h->tcb, "tcb", depth + 1, out, cap, used);
     used = vfft__fp_child(h->pq_inner, "pq", depth + 1, out, cap, used);
     used = vfft__fp_child(h->il2d_row, "il2drow", depth + 1, out, cap, used);
-    used = vfft__fp_child(h->il2d_rowo, "il2drowo", depth + 1, out, cap, used);
     used = vfft__fp_child(h->il2d_rows, "il2drows", depth + 1, out, cap, used);
     if (h->ilnd)
     {

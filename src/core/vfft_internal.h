@@ -296,20 +296,17 @@ struct vfft_plan_s
      * L_s | wl; wide prefix stages run first); il2d_col.tfuse folds the ROW
      * PASS per band (the terminator analog). F0 law: banding changes only
      * loop order + base pointers — output memcmp-identical to unbanded. */
-    /* row route: 0 = the in-place NATURAL child; 1 = the OOP NATURAL child +
-     * L1-hot row scratch + memcpy back -- since 2026-09-23 ONLY the FORCED
-     * path where N2 has no in-place K=1 plan (il2d_rof), never raced (as a
-     * raced route it never won beside the batched ones and was deleted);
-     * 2 = the BATCHED rows (2026-09-23): ONE call of the n1ccs
-     * kernel at radix N2 over a run of rows -- lane k = row k at pitch Gs,
-     * two rows per vector, no per-row door, no per-row prologue. The
-     * kernels are bound at create whenever the radix has the pair
-     * (vfft_il_n1ccs_fn); the axis race decides which route serves, the
-     * verdict banks as ro=0|1|2 on the cell's row (_il2d_ro_of). Env pin
-     * VFFT_IL2D_ROWOOP=1|2 (never banks). Stateless, so every MT worker
-     * shares the batched kernels. */
-    int il2d_rowoop;
-    struct vfft_plan_s *il2d_rowo; /* the OOP child (route 1) */
+    /* row route (2026-09-23): 0 = the in-place NATURAL child, one door walk per
+     * row; 2 = the BATCHED rows: ONE call of the n1ccs kernel at radix N2 over a
+     * run of rows -- lane k = row k at pitch Gs, two rows per vector, no
+     * per-row door, no per-row prologue -- bound whenever the radix has the
+     * pair (vfft_il_n1ccs_fn); 3 = the batched TWO-PASS rows (below). The axis
+     * race decides which route serves, the verdict banks as ro=0|2|3 on the
+     * cell's row (_il2d_ro_of); VFFT_IL2D_ROWOOP=2|3 pins one for a probe. The
+     * out-of-place row child + row scratch + copy-back (the old route 1) is
+     * DELETED: it never won beside the batched routes, and the in-place K=1
+     * tier serves every N2 (its last candidate is the prime engine), so no
+     * forced path remains. Stateless kernels: every MT worker shares them. */
     int il2d_rowb;                 /* route 2 serving */
     vfft_il2p_fn il2d_rowb_f, il2d_rowb_b; /* the n1ccs pair at radix N2, or NULL */
     /* 3 = the BATCHED TWO-PASS rows (2026-09-23): the row child's own two-pass
@@ -326,16 +323,14 @@ struct vfft_plan_s
     double *il2d_rowb2_scr;        /* T slots x CHUNK rows x 2*N2 doubles */
     int il2d_rowb2_ch;             /* the TILE: rows per stage call, from the raced rbk= (KB of scratch) */
     /* ── c2c MT (INC-C, docs/design/il2d_real_mt.md ported): per-worker
-     * row state. The serving row path is ONE shared child through ONE
-     * shared rowscr — two concurrent bands would interleave plan state
+     * row state. The serving row path is ONE shared child -- two
+     * concurrent bands would interleave plan state
      * and produce garbage, so worker t>0 gets clone slot t-1, verified
      * route-equivalent at build (_tc_clone_equiv). Worker 0 (the
      * caller) keeps the primary child/scratch. roww_n == 0 => MT
      * declines (the engagement counter shows it). */
     struct vfft_plan_s **il2d_roww; /* clone row children, T-1 slots */
     int il2d_roww_n;
-    double *il2d_rowscr_w;          /* rowoop: T-1 slots x 2*N2 */
-    double *il2d_rowscr;           /* 2*N2 doubles */
     /* the K=1 FOUR-STEP's inter-pass twiddle (oop/k1_fourstep.h, 2026-09-15):
      * per row POSITION p a two-level record [coarse C[a] (N2/B)][fine F[b] (B)],
      * w(k1(p), n2) = C[a]*F[b] for n2 = a*B + b. Non-NULL only on a 2D child
