@@ -814,6 +814,43 @@ E1.5c turn - the TURN route           RACED with E1.5 (one arm: no band, no tile
                                       (8192x2 58.7 -> 26.5 us, MKL 53; 4096x2 35.6 ->
                                       12.7, MKL 26) and loses it at 64x8 / 8x8.
                                       Serial for now (a turn plan runs no MT race).
+E1.5d csk - the SKEWED column pass   RACED with E1.5 (crossed with the row routes 0/2/3,
+                                      unbanded, untiled), banked csk=1 (2026-09-23):
+                                      the route's own single column stage (the n1c pair
+                                      at radix N1) writes a private scratch at pitch
+                                      N2 + 8 instead of the plane, and the rows move it
+                                      into the plane -- the batched kernels natively,
+                                      the per-row route through the out-of-place K=1
+                                      plan at N2. Measured on the kernel alone (radix 16
+                                      over 4096 lanes): 1.115 ns/pt on the user's pitch,
+                                      0.453 with only the OUTPUT skewed, 1.103 with only
+                                      the input skewed -- R store streams a multiple of
+                                      4 KB apart thrash one L1 set, the loads survive
+                                      it. Wherever N1 is a mono radix (2..47, 64); the
+                                      door picks it at 16x4096 (133.6 -> 107.3 us),
+                                      16x1024, 16x256, 32x64 and keeps the chain at
+                                      32x4096, 8x4096, 64x64.
+E1.0b the RACE'S PLACEMENT            FIXED 2026-09-23: the axis race executed every arm
+                                      in place (one buffer, z -> z) while an out-of-place
+                                      cell is served x -> y; a placement-sensitive route
+                                      (csk) ranked the other way round. An out-of-place
+                                      cell now races into a second buffer.
+E1.0c the RACES' PLANES ALIGNED       FIXED 2026-09-23: the forms race, the chain race
+                                      and the axis race took their planes from malloc
+                                      (16-byte aligned here) while every plane the door
+                                      serves, the bench and the probes are 64-byte
+                                      aligned (the aligned-allocation law). Under malloc
+                                      every arm read ~1.3x slower than the same plan in
+                                      the probe and the verdict at 64x32 was a lottery
+                                      (csk three times, then turn, then rb2); aligned,
+                                      the race agrees with the probe and the bench
+                                      (64x32 rb2 three times, 8x4096 csk 40 vs 48 us).
+                                      OPEN: the race's rotation of many arms runs each
+                                      arm on a cold L2 at large planes, the bench's tight
+                                      loop does not; a route whose scratch pushes the
+                                      working set past L2 (csk at 32x4096: probe 255 vs
+                                      326 us, race 293 vs 266) loses in the race and
+                                      would win in the bench.
 E1.6 cmt - column/band MT             RACED, banked WITH cmtt (the per-T class).
                                       Bluestein column axes included since
                                       2026-09-02 (the column-window pipeline,

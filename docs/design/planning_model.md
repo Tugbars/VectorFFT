@@ -658,6 +658,7 @@ flowchart TD
     ROOP["<b>roop</b> — row route<br/>in-place row child (0) vs<br/>batched rows: one n1ccs call per run (2) vs<br/>batched two-pass rows: the child's stages<br/>with the in-kernel row loop (3)"]
     ROOP --> RBK["<b>rbk</b> — the two-pass rows' tile<br/>chunk scratch KB, raced with roop"]
     ROOP --> TURN["<b>turn</b> — the TURN route<br/>rows stored transposed, the N2 columns<br/>as rows through the 1D plan at N1, one back-turn<br/>(no column chain; natural cells)"]
+    ROOP --> CSK["<b>csk</b> — the SKEWED column pass<br/>one column stage into a scratch at pitch N2 + 8,<br/>the rows move it into the plane<br/>(N1 a mono radix; crossed with the row routes)"]
 
     style NOMT fill:#5f1f1f,color:#fff
     style CUT fill:#3a3a3a,color:#fff

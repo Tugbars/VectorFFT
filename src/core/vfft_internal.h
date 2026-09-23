@@ -334,6 +334,19 @@ struct vfft_plan_s
     int il2d_turn;
     struct vfft_plan_s *il2d_turn_plan; /* the in-place K=1 natural plan at N1 */
     double *il2d_turn_scr;              /* the N2 x P plane, P = N1 + 8 complex (the skewed pitch) */
+    /* the SKEWED column pass (csk, 2026-09-23): a single-stage column chain
+     * writes its output into a private scratch at pitch N2 + 8 instead of the
+     * destination plane, and the row pass reads the scratch and writes the
+     * plane -- the rows are the move, no copy. R store streams a multiple of
+     * 4 KB apart thrashed one L1 set (radix 16 at 4096 lanes: 1.115 -> 0.453
+     * ns/pt with only the output skewed; the loads survive it). Rows out of
+     * place: the batched kernels natively, the per-row route through the
+     * out-of-place K=1 plan at N2. nst == 1 chains; an arm of the axis race
+     * crossed with the row routes, banked csk=1, replayed; serial for now. */
+    int il2d_csk;
+    double *il2d_csk_scr;               /* the N1 x (N2 + 8) plane */
+    struct vfft_plan_s *il2d_csk_row;   /* the OOP K=1 natural plan at N2: the per-row route from the scratch */
+    vfft_il2p_fn il2d_csk_f, il2d_csk_b; /* the route's own single column stage: the n1c pair at radix N1 */
     /* ── c2c MT (INC-C, docs/design/il2d_real_mt.md ported): per-worker
      * row state. The serving row path is ONE shared child -- two
      * concurrent bands would interleave plan state

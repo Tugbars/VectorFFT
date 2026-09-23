@@ -663,11 +663,28 @@ static vfft_il2p_fn _il2d_rowloop_twin(vfft_il2p_fn f)
  * serial walks, the natural leaf, the MT trampoline, the four-step's
  * super-band -- runs its rows through here, so the batched route serves
  * every arm the same way (MT == ST bitwise: the kernel is stateless). */
+static void _il2d_rows_exec2(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
+                             const double *in, size_t pin, double *out, size_t pout,
+                             size_t rn, size_t p0, size_t pstep, size_t nrows);
 static void _il2d_rows_exec(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
                             double *base, size_t rn, size_t pitch,
                             size_t p0, size_t pstep, size_t nrows)
 {
+    _il2d_rows_exec2(h, tid, dir, base, pitch, base, pitch, rn, p0, pstep, nrows);
+}
+/* the same run of rows from `in` (pitch pin) to `out` (pitch pout) -- the
+ * skewed column pass's row move (in != out). Route 2 and 3 read and write at
+ * their own pitches; route 0 runs the out-of-place K=1 plan (il2d_csk_row) when
+ * in != out and the in-place child otherwise. The four-step's hook rides only
+ * on in-place runs (its child never takes the skewed column pass). */
+static void _il2d_rows_exec2(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
+                             const double *in, size_t pin, double *out, size_t pout,
+                             size_t rn, size_t p0, size_t pstep, size_t nrows)
+{
     size_t i;
+    const int inplace = (in == out);
+    double *base = out;
+    const size_t pitch = pout;
     if (h->il2d_rowb2)
     {   /* route 3: the batched TWO-PASS rows -- per chunk, stage 1 rows ->
          * the worker's scratch (rows at pitch rn), stage 2 scratch -> rows;
@@ -691,15 +708,16 @@ static void _il2d_rows_exec(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
         for (i0 = 0; i0 < nrows; i0 += ch)
         {
             const size_t n = (nrows - i0 < ch) ? nrows - i0 : ch;
+            const double *bi = in + 2 * i0 * pin;
             double *b = base + 2 * i0 * pitch;
             if (fwd)
             {
-                h->il2d_rowb2_leaf_f(b, NULL, scr, NULL, NULL, NULL, R1, pitch, R2, rn, n * R1);
+                h->il2d_rowb2_leaf_f(bi, NULL, scr, NULL, NULL, NULL, R1, pin, R2, rn, n * R1);
                 h->il2d_rowb2_mid_f(scr, NULL, b, NULL, p->tw, NULL, R2, rn, R2, pitch, n * R2);
             }
             else
             {
-                h->il2d_rowb2_t2t_b(b, NULL, scr, NULL, p->twb, NULL, R2, pitch, R1, rn, n * R2);
+                h->il2d_rowb2_t2t_b(bi, NULL, scr, NULL, p->twb, NULL, R2, pin, R1, rn, n * R2);
                 h->il2d_rowb2_n1_b(scr, NULL, b, NULL, NULL, NULL, R1, rn, R1, pitch, n * R1);
             }
         }
@@ -722,8 +740,8 @@ static void _il2d_rows_exec(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
                 if (tw)
                     _il2d_fs_twiddle(base + 2 * i * pitch, tw, h->il2d_fs_B, rn, 0);
             }
-        (fwd ? h->il2d_rowb_f : h->il2d_rowb_b)(base, NULL, base, NULL, NULL, NULL,
-                                                 1, pitch, 1, pitch, nrows);
+        (fwd ? h->il2d_rowb_f : h->il2d_rowb_b)(in, NULL, base, NULL, NULL, NULL,
+                                                 1, pin, 1, pitch, nrows);
         if (h->il2d_fs_tw && !fwd)
             for (i = 0; i < nrows; i++)
             {
@@ -733,8 +751,31 @@ static void _il2d_rows_exec(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
             }
         return;
     }
+    if (!inplace)
+    {   /* the per-row route from the scratch: the out-of-place K=1 plan at N2 */
+        for (i = 0; i < nrows; i++)
+            vfft_execute((vfft_plan)h->il2d_csk_row, dir, in + 2 * i * pin, NULL, base + 2 * i * pitch, NULL);
+        return;
+    }
     for (i = 0; i < nrows; i++)
         _il2d_row_exec_t(h, tid, dir, base + 2 * i * pitch, rn, p0 + i * pstep);
+}
+
+/* the skewed column pass's pitch in complex: N2 + 8 -- the R output streams of
+ * the column stage never sit a multiple of 4 KB apart */
+#define VFFT_IL2D_CSK_PITCH(N2) ((size_t)(N2) + 8)
+/* the SKEWED column pass's execute (2026-09-23): the single column stage from
+ * the plane (leg stride N2) into the scratch (leg stride N2 + 8), then the rows
+ * from the scratch into the destination -- the rows are the move. Both
+ * directions (the passes commute), both placements (the plane is read whole
+ * before the rows write it). */
+static void _il2d_csk_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *sre, double *dre)
+{
+    const size_t N1 = (size_t)h->N, rn = (size_t)h->N2, P = VFFT_IL2D_CSK_PITCH(rn);
+    const int fwd = (dir == VFFT_FORWARD);
+    double *T = h->il2d_csk_scr;
+    (fwd ? h->il2d_csk_f : h->il2d_csk_b)(sre, NULL, T, NULL, NULL, NULL, rn, 0, P, 0, rn);
+    _il2d_rows_exec2(h, 0, dir, T, P, dre, rn, rn, 0, 1, N1);
 }
 
 /* the TURN route's back-turn (2026-09-23): the N2 x N1 scratch T (row c =
@@ -1670,14 +1711,14 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
     }
     if (!any)
         return 0;
-    z = (double *)malloc(2 * T * sizeof(double));
+    z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves (2026-09-23) */
     if (!z)
         return 0;
     for (i = 0; i < 2 * T; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 1023);
     if (_il2d_build_tables(N1, nst, Rs, Ls, tf, tb))
     {
-        free(z);
+        VFFT_ZS_FREE(z);
         return 0;
     }
     for (s = 0; s < nst; s++)
@@ -1730,7 +1771,7 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
         free(tf[s]);
         free(tb[s]);
     }
-    free(z);
+    VFFT_ZS_FREE(z);
     for (s = 0; s < nst && off < (int)fsz - 8; s++)
         off += snprintf(forms + off, fsz - off, "%s%s", s ? "." : "", pick[s]);
     return 1;
@@ -1758,16 +1799,16 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns, int nat)
 {
     const size_t T = (size_t)N1 * N2;
-    double *z = (double *)malloc(2 * T * sizeof(double));
-    double *nscr = nat ? (double *)malloc(2 * T * sizeof(double)) : NULL;
+    double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves (2026-09-23) */
+    double *nscr = nat ? (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double)) : NULL;   /* aligned like every plane the door serves (2026-09-23) */
     double *nstage = nat ? (double *)VFFT_ZS_ALLOC(2 * 64 * (size_t)N2 * sizeof(double)) : NULL;   /* R_last <= 64 */
     int ci, win = -1;
     double wns = 1e300;
     size_t i;
     if (!z || (nat && !nscr))
     {
-        free(z);
-        free(nscr);
+        VFFT_ZS_FREE(z);
+        VFFT_ZS_FREE(nscr);
         VFFT_ZS_FREE(nstage);
         return -1;
     }
@@ -1859,8 +1900,8 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
             free(cb[a].perm);
         }
     }
-    free(z);
-    free(nscr);
+    VFFT_ZS_FREE(z);
+    VFFT_ZS_FREE(nscr);
     VFFT_ZS_FREE(nstage);
     *best_ns = wns;
     return win;
@@ -2395,9 +2436,11 @@ typedef struct
 {
     struct vfft_plan_s *h;
     double *z;
+    double *zo;               /* the cell's own placement: z for in place, a second plane out of place (2026-09-23) */
     int wl, cut, ro;
     int wc;                   /* the unbanded walk's column tile (0 = the whole plane) */
     int kb;                   /* ro=3: the two-pass rows' tile, KB of chunk scratch */
+    int csk;                  /* the SKEWED column pass (2026-09-23) */
     char name[24];
 } _il2d_axis_arm_t;
 static void _il2d_arm_axis(void *v)
@@ -2411,9 +2454,10 @@ static void _il2d_arm_axis(void *v)
     h->il2d_rowb = (c->ro == 2);   /* the batched rows (ro=2, 2026-09-23) */
     h->il2d_rowb2 = (c->ro == 3);  /* the batched two-pass rows (ro=3) */
     h->il2d_turn = (c->ro == 4);   /* the TURN route: the whole plane through the 1D engine */
+    h->il2d_csk = c->csk;          /* the SKEWED column pass */
     if (c->ro == 3)
         h->il2d_rowb2_ch = (int)_il2d_rb2_rows(c->kb, (size_t)h->N2);
-    vfft_execute((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
+    vfft_execute((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->zo, NULL);
 }
 
 /* ORDER CELLS (2026-09-07): every bank below keys the order by the CELL's
@@ -2428,15 +2472,23 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             const vfft_config_t *cfg, int N1, int N2)
 {
     const size_t T = (size_t)N1 * N2;
-    double *z = (double *)malloc(2 * T * sizeof(double));
-    int wlc[14], nwl = 1, wi, ro, bwl = 0, bro = 0, bwc = 0, bkb = 8;
+    double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves (2026-09-23) */
+    /* THE RACE RUNS THE CELL'S OWN PLACEMENT (2026-09-23): an out-of-place cell
+     * races x -> y like the door serves it; racing z -> z ranked a
+     * placement-sensitive route (the skewed column pass) the other way round */
+    double *zo = (h->placement == VFFT_OUTOFPLACE) ? (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double)) : z;   /* aligned like every plane the door serves (2026-09-23) */
+    int wlc[14], nwl = 1, wi, ro, bwl = 0, bro = 0, bwc = 0, bkb = 8, bcsk = 0, csk;
     int swl[6], nsw = 0;
     double best = 1e300;
     size_t i;
     int reps = (int)(1e6 / (double)(T + 1));
     if (reps < 2) reps = 2;
-    if (!z)
+    if (!z || !zo)
+    {
+        VFFT_ZS_FREE(z);
+        if (zo != z) VFFT_ZS_FREE(zo);
         return;
+    }
     for (i = 0; i < 2 * T; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 1023);
     /* wl candidates: 0 (unbanded) + legal widths */
@@ -2504,12 +2556,18 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
         double ns[VFFT_RACE_MAX_ARMS];
         int na = 0, a;
+        for (csk = 0; csk <= (h->il2d_csk_scr ? 1 : 0); csk++)
         for (ro = 0; ro <= 4; ro++)
             for (wi = 0; wi < nwl && na < VFFT_RACE_MAX_ARMS; wi++)
             {
                 int s2, cut = 0;
                 const int w = wlc[wi];
                 (void)s2;
+                /* the SKEWED column pass (2026-09-23): unbanded, untiled, crossed
+                 * with the row routes 0/2/3 (the per-row one through the OOP
+                 * K=1 plan at N2, when it built); never with the turn route */
+                if (csk && (w != 0 || ro == 4 || (ro == 0 && !h->il2d_csk_row)))
+                    continue;
                 /* the row routes: 0 = the in-place child; 2 = the BATCHED rows,
                  * when the radix has the n1ccs pair; 3 = the batched TWO-PASS
                  * rows, when the child's stage kernels have row-loop twins
@@ -2526,7 +2584,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 }
                 {
                     int sub, ki;
-                    for (sub = 0; sub <= (w == 0 && ro != 4 ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
+                    for (sub = 0; sub <= (w == 0 && ro != 4 && !csk ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
                         for (ki = 0; ki < (ro == 3 ? 4 : 1) && na < VFFT_RACE_MAX_ARMS; ki++)
                         {
                             const int kb = ro == 3 ? VFFT_IL2D_RB2_KB_LADDER[ki] : 0;
@@ -2535,10 +2593,12 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                                 continue;   /* the same tile in rows: one arm */
                             ac[na].h = h;
                             ac[na].z = z;
+                            ac[na].zo = zo;
                             ac[na].wl = w;
                             ac[na].cut = cut;
                             ac[na].ro = ro;
                             ac[na].kb = kb;
+                            ac[na].csk = csk;
                             ac[na].wc = sub ? swl[sub - 1] : 0;
                             if (sub)
                                 snprintf(ac[na].name, sizeof ac[na].name, "sw%d%s", ac[na].wc,
@@ -2550,6 +2610,11 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             {
                                 const size_t used = strlen(ac[na].name);
                                 snprintf(ac[na].name + used, sizeof ac[na].name - used, "+rb2k%d", kb);
+                            }
+                            if (csk)
+                            {
+                                const size_t used = strlen(ac[na].name);
+                                snprintf(ac[na].name + used, sizeof ac[na].name - used, "+csk");
                             }
                             arms[na].name = ac[na].name;
                             arms[na].run = _il2d_arm_axis;
@@ -2570,6 +2635,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 bro = ac[a].ro;
                 bwc = ac[a].wc;
                 bkb = ac[a].ro == 3 ? ac[a].kb : 8;
+                bcsk = ac[a].csk;
             }
         if (getenv("VFFT_IL2D_LOG"))
         {
@@ -2596,6 +2662,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         h->il2d_rowb = (bro == 2);
         h->il2d_rowb2 = (bro == 3);
         h->il2d_turn = (bro == 4);
+        h->il2d_csk = bcsk;
         if (bro == 3)
             h->il2d_rowb2_ch = (int)_il2d_rb2_rows(bkb, (size_t)N2);
     }
@@ -2605,8 +2672,10 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "sw", bwc);
     vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "rbk", bkb);   /* the two-pass rows' tile */
     vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "turn", h->il2d_turn);   /* the turn route */
+    vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "csk", h->il2d_csk);     /* the skewed column pass */
     _vw2_persist(W, cfg);
-    free(z);
+    if (zo != z) VFFT_ZS_FREE(zo);
+    VFFT_ZS_FREE(z);
 }
 
 /* ── c2c MT clones (INC-C). Worker t > 0 needs its own row child: the

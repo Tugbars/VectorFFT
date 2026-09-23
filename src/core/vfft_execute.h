@@ -671,6 +671,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         _il2d_turn_exec(h, dir, sre, dre);
                         return;
                     }
+                    if (h->il2d_csk)
+                    {   /* the SKEWED column pass (2026-09-23): the single column
+                         * stage into the skewed scratch, the rows from it into
+                         * the plane */
+                        _il2d_csk_exec(h, dir, sre, dre);
+                        return;
+                    }
                     /* INC-C: the raced MT walk (bands are self-contained
                      * [suffix + fused rows] units because rows commute —
                      * the same fact that legalizes tfuse). Declines back
@@ -1361,6 +1368,9 @@ void vfft_destroy(vfft_plan h)
             if (h->il2d_turn_plan)
                 vfft_destroy(h->il2d_turn_plan); /* the turn route's N1 plan */
             VFFT_ZS_FREE(h->il2d_turn_scr);
+            if (h->il2d_csk_row)
+                vfft_destroy(h->il2d_csk_row); /* the skewed column pass's OOP row plan */
+            VFFT_ZS_FREE(h->il2d_csk_scr);
             free(h->il2d_col.bandscr);
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
             if (h->il2d_rows)
