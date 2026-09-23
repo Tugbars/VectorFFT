@@ -115,9 +115,22 @@ One arm in the race, no band, no tile. Serial for now; a turn plan runs no MT ra
 | 64x8 | 336 ns | 409 ns | |
 | 8x8 | 36 ns | 88 ns | |
 
-The door picks it at every N1 >= 256 with N2 <= 8 and at some 16-column cells, and drops
-it where the plane is small. At N2 = 8 the turned stores and the back-turn are half of
-its time; the 1D plans are the rest.
+The scratch's row pitch is N1 + 8 complex, not N1: at every N1 >= 256 the N2 column
+streams would otherwise sit a multiple of 4 KB apart and land in one L1 set (12-way), and
+with 8 or 16 streams the turned stores and the back-turn thrashed it. Before the skew the
+route's margin shrank from 2.3x at N2 = 2 to nothing at 16; with it, on the same plans:
+
+| cell | best chain route | turn, pitch N1 | turn, pitch N1 + 8 | MKL |
+|---|---|---|---|---|
+| 2048x16 | 84 us | 87 us | 60 us | 79 us |
+| 4096x16 | 178 us | 172 us | 152 us | 163 us |
+| 8192x16 | 364 us | 403 us | 334 us | 396 us |
+| 256x16 | 7.7 us | 8.6 us | 6.2 us | 7.5 us |
+| 8192x8 | 194 us | 148 us | 136 us | 159 us |
+
+The door picks it at every N1 >= 256 with N2 <= 16 and drops it where the plane is small.
+At N2 = 8 the turned stores and the back-turn are still a third of its time; the 1D
+plans are the rest.
 
 ## Why three arms and not one method
 
@@ -149,14 +162,28 @@ cells, every cell re-raced by the door with the calibrate probe holding the SMT 
 | the plain route (18-cell group) | 1.09 | 7 of 18 | 4 |
 | + batched mono | 1.17 | 31 | 12 |
 | + two-pass batched, tile, guard | 1.21 | 23 | 7 |
+| + the turn route | 1.27 | 20 | 2 |
+| + the turn route's skewed pitch | 1.34 | 10 | 3 |
 
-Cell by cell, plain route to the guarded grid: 8x8 0.39 to 0.95, 32x32 0.79 to 1.01,
-1024x32 0.86 to 1.52, 4096x16 0.72 to 0.93, 8192x64 0.91 to 1.12. The turn route's grid
-follows below once measured.
+Cell by cell, plain route to the last grid: 8x8 0.39 to 0.94, 32x32 0.79 to 0.93, 1024x32
+0.86 to 1.37, 4096x16 0.72 to 1.06, 8192x64 0.91 to 1.11, 8192x2 0.84 to 1.97, 4096x4 0.75
+to 1.50, 2048x8 0.65 to 1.28, 2048x16 1.04 to 1.34. The turn route serves 30 cells at a
+median of 1.43x. Ten cells remain below parity: the tiny diagonal (2x2, 8x8, 16x16 at 0.92
+to 0.94), 128x16 (0.77, the turn route at its worst), 16x128 (0.84), and five cells at 16 to
+64 rows or columns (32x16, 32x64, 64x16, 64x32, 4096x128) whose readings move by up to 20%
+between runs on unchanged routes. The last two grids' control cell read 1.08..1.34 and
+1.23..1.41: the median's last step is partly the machine's state, the per-cell wins on the
+turn route are not (they were measured on the same plans, above).
 
 ## What remains
 
-- 128x16 at 0.52: a three-stage natural column chain on a small plane, its own probe.
+- 128x16 at 0.78: the turn route is its best arm and still loses; its 2 KB stride never
+  aliased, so the cost is elsewhere. Its own probe.
+- The few-long-rows planes (16x4096, 32x4096 at parity): the rows run at the 1D engine's
+  speed and the column pass costs as much again, 1.1 ns per point for a 16-point column
+  DFT. The staged walk's skewed pitch does not cure it (141 to 135 us at 16x4096), so
+  the cause is not the 4 KB set aliasing; the natural leaf's scatter is the next suspect,
+  per-stage probe first.
 - The last nanoseconds of door at 8x8 and 16x16: a bound 2D execute like the K=1 door.
 - Row-loop twins for the blocked radix-32 forms (N2 = 128, 512).
 - The turn route threaded: N2 independent long transforms are trivially parallel.

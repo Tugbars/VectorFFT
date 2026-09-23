@@ -394,7 +394,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     il2d_turn_plan = (struct vfft_plan_s *)vfft_create(&tc);
                     if (il2d_turn_plan)
                     {
-                        il2d_turn_scr = (double *)VFFT_ZS_ALLOC(2 * (size_t)N1 * (size_t)N2 * sizeof(double));
+                        il2d_turn_scr = (double *)VFFT_ZS_ALLOC(2 * VFFT_IL2D_TURN_PITCH(N1) * (size_t)N2 * sizeof(double));
                         if (!il2d_turn_scr)
                         {
                             vfft_destroy(il2d_turn_plan);
