@@ -421,6 +421,32 @@ OOP column — but it has not been re-measured, and is not quoted as if it had.
  64×1024    2.14×    1.93×    threaded (strip+slab shape)
 ```
 
+### 2D C2C — every power-of-two plane up to 4M points, the pow2 grid vs MKL DFTI 2D (2026-09-23)
+
+Every plane N1 × N2 with both sides a power of two from 2 to 8,192 and at most 2^22
+points: 159 planes, complex-to-complex, interleaved, natural order, out of place, K=1,
+single thread, through the front door on a scratch store (every plane raced and banked,
+then benched: the gauntlet's 2D contract). Speedup = MKL time / ours, the worse of the
+two engine orders. The record is `gauntlet/results/gauntlet_2d-pow2grid7/`.
+
+```
+ plane size          planes   median   at/above parity   best
+──────────────────────────────────────────────────────────────────────
+ up to 256 points        28    4.80×        96%          12.84× (4×2)
+ 257..4,096              38    1.63×        82%           4.78× (2×256)
+ 4,097..65,536           48    1.38×        98%           2.56× (2×4096)
+ 65,537..4M              45    1.22×        96%           1.90× (8192×512)
+──────────────────────────────────────────────────────────────────────
+ all                    159    1.41×        93%          12.84× (4×2)
+```
+
+Routes the planner served: the column chain with the per-row child (53), with the rows
+batched through one kernel call (8) or through the row child's two stages batched (19);
+the skewed column pass (29, plus 12 and 11 with the batched rows); the turn route for the
+tall narrow planes (27). Below parity: 128×16 (0.76), 32×64 (0.79), 16×128 (0.90), 64×32
+(0.92), and seven planes at 0.93–0.99 within a run-to-run swing (16×16, 32×16, 32×32,
+16×64, 128×256, 512×2048, 4096×128). The design is `docs/design/il2d_c2c_strategy.md`.
+
 ### 3D C2C — the NATIVE INTERLEAVED tier vs MKL CCE (standing as of 2026-09-15)
 
 ```
@@ -475,6 +501,37 @@ OOP column — but it has not been re-measured, and is not quoted as if it had.
  (one page visit per plane per strip): the arm times fall to 256–512
  columns; the pool runs 8..1024 under the L2 budget.
 ```
+
+### 3D C2C — every power-of-two volume up to 4M points, the pow2 grid vs MKL DFTI 3D (2026-09-24)
+
+Every volume N1 × N2 × N3 with each side a power of two from 2 to 8,192 and at most 2^22
+points: 1,288 volumes, complex-to-complex, interleaved, natural order, out of place, K=1,
+single thread, through the front door on a scratch store (every volume raced and banked,
+then benched: the gauntlet's 3D contract, built this day). Speedup = MKL time / ours, the
+worse of the two engine orders. The run took two hours; nothing was refused. The record is
+`gauntlet/results/3d-pow2_2026-09-24/`.
+
+```
+ volume              volumes   median   at/above parity
+───────────────────────────────────────────────────────
+ up to 4,096 points      220    4.54×        99%
+ 4,097..65,536           337    1.94×        99%
+ 65,537..1M              478    1.38×        98%
+ 1M..4M                  253    1.26×        99%
+───────────────────────────────────────────────────────
+ all                   1,288    1.55×        98%      (gmean 1.87×, p10 1.12×, p90 4.53×)
+```
+
+The tall volumes, N1 from 256 to 8,192 over 2 to 16 lanes, are among the best cells:
+36 of them, median 5.57×, none below 3.6×. The 20 volumes below parity are 2×2×2
+(0.66), the tiny cubes within a swing of parity, and one class: a short first axis
+(N1 = 4 or 8) over a tall plane (N2 ≥ 1,024, N3 ≤ 64), 8×2048×32 at 0.78 and 4×2048×32
+at 0.83, the rest at 0.92–0.99. Decomposed against the 2D record, the per-plane
+transforms cost the same as MKL's; the deficit is the first-axis sweep of the volume,
+which streams at 56 GB/s where the machine copies at 81 and MKL's sweep runs at the
+non-temporal store rate of about 90. A fused slab form (first and second axis per
+cache-resident strip of lanes) was prototyped and refuted: at 4 to 8 lanes the narrow
+column passes cost more than the residency saves.
 
 ## 3. vs MKL — 1D R2C
 

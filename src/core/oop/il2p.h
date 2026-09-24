@@ -473,7 +473,7 @@ static inline int vfft_il2p_col_forms(int R, const char **names /* [2] */)
 {
     switch (R) {
     case 32: names[0] = "b48"; names[1] = "b84";  return 2;
-    case 64: names[0] = "b88"; names[1] = "b416"; return 2;
+    case 64: names[0] = "b88"; names[1] = 0;      return 1;   /* b416 retired 2026-09-24: never won a banked cell */
     default: names[0] = "-";   names[1] = 0;      return 1;
     }
 }
@@ -487,8 +487,6 @@ static inline vfft_il2p_fn vfft_il2p_n1c_form_fn(int R, const char *form,
         return bwd ? radix32_z_n1cb84_bwd_avx2 : radix32_z_n1cb84_fwd_avx2;
     if (R == 64 && !strcmp(form, "b88"))
         return bwd ? radix64_z_n1cb88_bwd_avx2 : radix64_z_n1cb88_fwd_avx2;
-    if (R == 64 && !strcmp(form, "b416"))
-        return bwd ? radix64_z_n1cb416_bwd_avx2 : radix64_z_n1cb416_fwd_avx2;
     return 0;
 }
 static inline vfft_il2p_fn vfft_il2p_t2c_form_fn(int R, const char *form,
@@ -501,8 +499,6 @@ static inline vfft_il2p_fn vfft_il2p_t2c_form_fn(int R, const char *form,
         return bwd ? radix32_z_t2cb84_bwd_avx2 : radix32_z_t2cb84_fwd_avx2;
     if (R == 64 && !strcmp(form, "b88"))
         return bwd ? radix64_z_t2cb88_bwd_avx2 : radix64_z_t2cb88_fwd_avx2;
-    if (R == 64 && !strcmp(form, "b416"))
-        return bwd ? radix64_z_t2cb416_bwd_avx2 : radix64_z_t2cb416_fwd_avx2;
     return 0;
 }
 
