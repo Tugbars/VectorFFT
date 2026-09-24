@@ -357,11 +357,11 @@ def bench_cell(run, n, csv_path):
     bench = run.exe("bench_1d_vs_mkl")
     if is2d(n) and len(n) == 3:
         # the 3D interleaved cell: the shape N1xN2xN3 in the N slot (bench --3dilnat, 2026-09-24)
-        flag = ["--3dilnat"]
+        flag = ["--3dilnat"] + (["--mt"] if run.threads > 1 else [])   # --mt: the threaded cell at $VFFT_MT (2026-09-24)
         nstr, kstr = ckey(n), "1"
     elif is2d(n):
         # the 2D interleaved cell: N1 in the N slot, N2 in the K slot (bench --2dilnat)
-        flag = ["--2dilnat"]
+        flag = ["--2dilnat"] + (["--mt"] if run.threads > 1 else [])
         nstr, kstr = str(n[0]), str(n[1])
     else:
         flag = ["--k1nat" if run.ip else "--k1noop"] + (["--mt"] if run.threads > 1 else [])

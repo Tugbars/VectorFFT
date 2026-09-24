@@ -53,6 +53,8 @@
 #include "threads.h" /* pool K-split for --mt (set/get threads, dispatch) */
 #include "env.h"     /* stride_env_init + stride_pin_thread */
 long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h: the odd-N flat DIT MT engagement counter */
+long vfft_il2d_col_mt_passes(void); /* the 2D tier's MT engagement counter (column walk + the c2c MT walk) */
+long vfft_ilnd_mt_passes(void);     /* the rank-3 tier's MT engagement counter */
 #include "planner.h"
 #include "dp_planner.h" /* vfft_proto_now_ns + dp_set_patient */
 #include "measure.h"    /* --pad: vfft_proto_dp_plan_measure (the strongest planner, measured refine) */
@@ -439,6 +441,7 @@ static int g_k1zip = 0;              /* --k1zip: K=1 kind-4 cells IN-PLACE
                                       * (both engines) — the apples-to-
                                       * apples in-place interleaved cell */
 static void bench_pin_one_thread(void); /* the one-thread protocol helper (defined beside ilmt_pin_pcores) */
+static long g_cell_engaged = -1;        /* the threaded 2D/3D cell: the tier's MT counter over the timed executes; -1 = one thread */
 static int g_k1_direct_cell = 0;  /* the policy's admission for the direct K=1 cell */
 static int g_k1noop_mt = 0;          /* --k1noop --mt: the odd-N flat DIT's threaded verdict
                                        * (il_flatdit_mt.h) vs MKL at the same T — the
@@ -936,8 +939,16 @@ static double k2z_time_mkl(int N1, int N2, int N3, const double *z0, size_t tota
     }
     double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
     memcpy(zi, z0, 2 * total * sizeof(double));
-    for (int w = 0; w < 10; w++)
-        DftiComputeForward(d, zi, zo);
+    if (g_k1noop_mt)
+    {   /* >= 5 ms untimed: MKL's parked team wakes and settles (the threaded cell, 2026-09-24) */
+        const double tw = vfft_proto_now_ns();
+        do
+            DftiComputeForward(d, zi, zo);
+        while (vfft_proto_now_ns() - tw < 5e6);
+    }
+    else
+        for (int w = 0; w < 10; w++)
+            DftiComputeForward(d, zi, zo);
     int reps = reps_for(total);
     double best = 1e18;
     for (int win = 0; win < 2; win++)
@@ -984,7 +995,12 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
         printf("%s: a %dD cell needs every axis >= 2\n", shape, nd);
         return;
     }
-    bench_pin_one_thread();   /* the one-thread protocol + the sibling guard */
+    const int T = g_k1noop_mt ? g_mt : 1;   /* --mt: the threaded cell (2026-09-24); main's
+                                              * threaded-cell setup already confined the process
+                                              * to the eight P-cores, warmed MKL's team before the
+                                              * caller's pin and left this TU's pool unsized */
+    if (T == 1)
+        bench_pin_one_thread();   /* the one-thread protocol + the sibling guard */
     vfft_wisdom *W = k1z_bundle();
     if (!W)
     {
@@ -1003,7 +1019,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     cfg.howmany = 1;
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.nthreads = 1;
+    cfg.nthreads = T;
     cfg.wisdom = W;
     vfft_plan h = vfft_create(&cfg);
     if (!h)
@@ -1012,6 +1028,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
         return;
     }
     size_t total = (size_t)N1 * (size_t)N2 * (size_t)(nd == 3 ? N3 : 1);
+    g_cell_engaged = -1;
     double *z0 = alloc_d(2 * total), *S = alloc_d(2 * total), *rt = alloc_d(2 * total);
     srand(42 + 131 * N1 + N2 + 7919 * N3);
     for (size_t i = 0; i < 2 * total; i++)
@@ -1057,39 +1074,66 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     }
 #endif
     double vns = 0, mns = 0;
+    /* the engagement proof (mt_results_need_engagement_proof): the tier's MT
+     * counter over the timed executes; a threaded plan whose counter did not
+     * move ran SERIAL, and its row must say so */
+#define K2Z_ENG() ((nd == 3) ? vfft_ilnd_mt_passes() : vfft_il2d_col_mt_passes())
 #ifdef VFFT_HAS_MKL
     if (flip)
     {
+        if (T > 1) vfft_set_num_threads(1);
         mns = k2z_time_mkl(N1, N2, N3, z0, total);
         cachebust();
         pace(cool_ms);
-        vns = k1z_time_vfft(h, z0, S, total);
+        if (T > 1) vfft_set_num_threads(T);
+        {
+            const long e0 = K2Z_ENG();
+            vns = k1z_time_vfft(h, z0, S, total);
+            if (T > 1) g_cell_engaged = K2Z_ENG() - e0;
+        }
     }
     else
     {
-        vns = k1z_time_vfft(h, z0, S, total);
+        if (T > 1) vfft_set_num_threads(T);
+        {
+            const long e0 = K2Z_ENG();
+            vns = k1z_time_vfft(h, z0, S, total);
+            if (T > 1) g_cell_engaged = K2Z_ENG() - e0;
+        }
         cachebust();
         pace(cool_ms);
+        if (T > 1) vfft_set_num_threads(1);
         mns = k2z_time_mkl(N1, N2, N3, z0, total);
     }
 #else
     (void)cool_ms;
     (void)flip;
-    vns = k1z_time_vfft(h, z0, S, total);
+    if (T > 1) vfft_set_num_threads(T);
+    {
+        const long e0 = K2Z_ENG();
+        vns = k1z_time_vfft(h, z0, S, total);
+        if (T > 1) g_cell_engaged = K2Z_ENG() - e0;
+    }
 #endif
+#undef K2Z_ENG
     double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
     double vgf = (vns > 0) ? 5.0 * (double)total * log2((double)total) / vns : 0;
-    printf("%11s %-8s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e  %s\n",
+    printf("%11s %-8s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e  %s",
            shape, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h));
+    if (T > 1)
+        printf("  T=%d engaged %ld%s", T, g_cell_engaged, g_cell_engaged == 0 ? " (SERIAL)" : "");
+    printf("\n");
     if (out)
     {
-        char row[320];
+        char row[320], eng[24] = "";
+        if (T > 1)
+            snprintf(eng, sizeof eng, "%ld,", g_cell_engaged);   /* the column sits BEFORE flip: flip stays the row key's last field */
         if (nd == 3)
-            snprintf(row, sizeof row, "%d,%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
-                     N1, N2, N3, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
+            snprintf(row, sizeof row, "%d,%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%s%d\n",
+                     N1, N2, N3, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), eng, flip);
         else
-            snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
-                     N1, N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
+            snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%s%d\n",
+                     N1, N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), eng, flip);
         fflush(out);
         if (!k1z_csv_replace(g_csv_path, row))
             fputs(row, out);
@@ -4855,7 +4899,8 @@ int main(int argc, char **argv)
         argc--;
     }
     g_oop_mt = (oop && mt);
-    g_k1noop_mt = (g_k1nat && !g_k1zip && mt);
+    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat) && mt;   /* the 2D/3D cells share the
+                                                                          * threaded-cell discipline (2026-09-24) */
     if (g_k1noop_mt)
     {
         /* the two-team protocol's setup (3D_mt_il_strategy.md §5): the 8
@@ -5504,9 +5549,9 @@ int main(int argc, char **argv)
     if (out && csv_pos == 0)
     {
         if (g_k3nat)
-            fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
+            fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,%sflip\n", g_k1noop_mt ? "engaged," : "");
         else if (g_k2nat)
-            fprintf(out, "N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
+            fprintf(out, "N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,%sflip\n", g_k1noop_mt ? "engaged," : "");
         else if (g_ilmt)
             fprintf(out, "N,K,path,threads,ours_mt_ns,ours_st_ns,mkl_mt_ns,mkl_st_ns,"
                          "ratio_vs_mkl_best,ratio_vs_mkl_mt,scale_ours,scale_mkl,"
