@@ -65,9 +65,20 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'oop'  / DAG_ISA,   # OOP c2c: n1 + t1p (LEAF/BAILEY2 kinds)
         DAG / 'codelets' / 'strided' / DAG_ISA,  # strided rows (6a35-6a45): c2c mono + r2c/c2r two-for-one
         DAG / 'codelets' / 'il'   / DAG_ISA,   # RETIRED (derived population deleted 2026-07-24); dir kept as the once-home
-        DAG / 'codelets' / 'zil'  / DAG_ISA / 'pure_il',         # PURE IL, packed complex throughout (codelet_cil.ml + codelet_zil.ml)
-        DAG / 'codelets' / 'zil'  / DAG_ISA / 'pure_il' / 'tangent',  # tangent-interior variants (il_kv variant 3); see that dir's README
-        DAG / 'codelets' / 'zil'  / DAG_ISA / 'boundary_split',  # ZTURN-T stage kernels + the msz/mszt odd mids: IL at the edges, SPLIT interior (cascade_z.ml)
+        # THE INTERLEAVED TREE (2026-09-24, docs/roadmap/il_codelet_reorg.md): one folder per
+        # engine, listed explicitly (globs are non-recursive; a dropped folder must be loud)
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'shared',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'shared' / 'col',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'shared' / 'col' / 'blocked',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'mono',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'pair2p',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'pair2p' / 'blocked',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'pair2p' / 'tangent',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'rows',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'chain3',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'flat',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'flat' / 'odd_mid',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'ztt',
         DAG / 'codelets' / 'trig' / DAG_ISA,   # trig (DCT/DST) specializations
         DAG / 'generator' / 'generated' / 'fused_codelets',  # ZTURN-T FUSED CODELETS: one whole-transform function per pow2 cell with the boundary_split stage kernels inlined — the pow2 solution's executable form ONLY (owner's ruling 2026-09-14, README.md there); one file per (family, N), DERIVED from the corpus cells by a promote rule (ztt_drivers.ml)
     ]

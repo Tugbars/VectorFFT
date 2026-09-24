@@ -2387,6 +2387,55 @@ type cell =
   ; c : Codelet.t
   }
 
+
+(* THE INTERLEAVED TREE'S FOLDERS (2026-09-24, docs/roadmap/il_codelet_reorg.md):
+   a zil file's folder follows its KIND, not its quadrant -- shared/ (n1),
+   shared/col[/blocked] (the 2D column stage), mono/, pair2p[/blocked|/tangent],
+   rows/ (the 2D row kinds), chain3/, flat[/odd_mid], ztt/. gen_set places every
+   file through dir_of_file; the registry emitters read the tables, not the
+   disk. None = not a zil file: the quadrant's own folder applies. *)
+let zil_folder (name : string) : string option =
+  let starts_with s pre =
+    let ls = String.length s and lp = String.length pre in
+    ls >= lp && String.sub s 0 lp = pre
+  in
+  let ends_with s suf =
+    let ls = String.length s and lf = String.length suf in
+    ls >= lf && String.sub s (ls - lf) lf = suf
+  in
+  if starts_with name "vfft_k1_mono64_il_" then Some "zil/avx2/mono"
+  else if not (starts_with name "radix" && ends_with name "_avx2.c") then None
+  else
+    match String.index_opt name '_' with
+    | None -> None
+    | Some i ->
+      let kind = String.sub name (i + 3) (String.length name - i - 3 - 7) in
+      let base =
+        if ends_with kind "_bwd" then String.sub kind 0 (String.length kind - 4) else kind
+      in
+      let is_digits t = t <> "" && String.to_seq t |> Seq.for_all (fun c -> c >= '0' && c <= '9') in
+      let blocked pre =
+        starts_with base pre
+        && (let t = String.sub base (String.length pre) (String.length base - String.length pre) in
+            t = "" || is_digits t)
+      in
+      Some
+        (if base = "n1" then "zil/avx2/shared"
+         else if base = "n1c" || base = "t2c" then "zil/avx2/shared/col"
+         else if blocked "n1cb" || blocked "t2cb" then "zil/avx2/shared/col/blocked"
+         else if List.mem base [ "n1ccs"; "n1r"; "n1tr"; "t2r"; "t2tr"; "n1rtan"; "n1trtan"; "t2rtan"; "t2trtan" ]
+         then "zil/avx2/rows"
+         else if List.mem base [ "n1t"; "t2"; "t2t"; "n1_ct"; "n1t_ct"; "t2_ct"; "t2t_ct" ] then "zil/avx2/pair2p"
+         else if blocked "n1tb" || blocked "n1b" || blocked "t2bt" || blocked "t2b" then "zil/avx2/pair2p/blocked"
+         else if base = "t2tg" then "zil/avx2/chain3"
+         else if List.mem base [ "t2cp"; "t2cs"; "t2csg"; "t2csgn"; "t2csgt"; "t2csgnt" ] then "zil/avx2/flat"
+         else if base = "msz" || base = "mszt" then "zil/avx2/flat/odd_mid"
+         else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "zil/avx2/ztt"
+         else "zil/avx2/pair2p/tangent")
+
+let dir_of_file (q : string) (name : string) : string =
+  match zil_folder name with Some d -> d | None -> dir_of_quadrant q
+
 let strip_emit_c (argv : string list) : string list =
   match List.rev argv with
   | "--emit-c" :: rest -> List.rev rest

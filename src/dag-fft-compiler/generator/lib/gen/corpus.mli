@@ -11,6 +11,8 @@ type cell =
 
 val quadrants : string list
 val dir_of_quadrant : string -> string
+val zil_folder : string -> string option   (* a zil file's folder by its kind (2026-09-24) *)
+val dir_of_file : string -> string -> string   (* quadrant -> file name -> the folder to write it in *)
 val ip_radices : int list
 
 (** Typed corpus of one quadrant; forces the laws on first use. *)

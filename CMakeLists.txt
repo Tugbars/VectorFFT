@@ -211,7 +211,7 @@ set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2
 # protecting them, with no other edit needed.
 set(VFFT_ABSENT_avx2)                      # avx2 carries the full corpus
 set(VFFT_ABSENT_avx512
-    zil/pure_il zil/pure_il/tangent zil/boundary_split)
+    zil/shared zil/shared/col zil/shared/col/blocked zil/mono zil/pair2p zil/pair2p/blocked zil/pair2p/tangent zil/rows zil/chain3 zil/flat zil/flat/odd_mid zil/ztt)
 
 set(VFFT_CODELET_SRCS)
 
@@ -275,12 +275,12 @@ message(STATUS "codelet families (${VFFT_ISA}):")
 foreach(_fam inplace rfft c2r oop strided il trig)
     vfft_add_codelet_dir("${_fam}" "${DAG_CODELETS}/${_fam}/${VFFT_ISA}")
 endforeach()
-# The zil family sits one level DEEPER (zil/<isa>/{pure_il, pure_il/tangent,
-# boundary_split}), so it never matched the <fam>/<isa> pattern above and was
+# The zil family sits one level DEEPER (zil/<isa>/<folder>, one folder per engine
+# since 2026-09-24: docs/roadmap/il_codelet_reorg.md), so it never matched the <fam>/<isa> pattern above and was
 # simply ABSENT -- THE 598-vs-863 gap, exactly 265 files. Globs are
 # non-recursive, so pure_il and pure_il/tangent are listed separately
 # (build.py does the same).
-foreach(_zdir pure_il pure_il/tangent boundary_split)
+foreach(_zdir shared shared/col shared/col/blocked mono pair2p pair2p/blocked pair2p/tangent rows chain3 flat flat/odd_mid ztt)
     vfft_add_codelet_dir("zil/${_zdir}" "${DAG_CODELETS}/zil/${VFFT_ISA}/${_zdir}")
 endforeach()
 # ZTURN-T's FUSED CODELETS (2026-09-09): one whole-transform driver per pow2 cell,

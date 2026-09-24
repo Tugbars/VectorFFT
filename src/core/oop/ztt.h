@@ -72,7 +72,7 @@
  * mode), generated into generator/generated/fused_codelets/ with the stage
  * kernels INLINED and literal trip counts — the pow2 ZTURN-T solution's
  * executable form, and only that. The composable STAGE KERNELS (t0tp/tmg/tlf/
- * tlfi and the plain t0d/tmgd/tld/tldb in codelets/zil/avx2/boundary_split)
+ * tlfi and the plain t0d/tmgd/tld/tldb in codelets/zil/avx2/ztt)
  * are the product every other solution is built from; a fused codelet cannot
  * be recombined. README.md beside the fused files. */
 #include "ztt_registry_avx2.h"   /* the cells and their fused codelets (generated) */
