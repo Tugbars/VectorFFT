@@ -892,8 +892,11 @@ static inline void vw2__dedup_loaded(vw2_store_t *s)
         }
 }
 
-/* Open the store. dir==NULL resolves $VFFT_WISDOM_DIR else "." — and an
- * unset env FORCES read-only (the wrong-cwd colony killer, README §2.2).
+/* Open the store. dir==NULL resolves $VFFT_WISDOM_DIR, else the compiled
+ * default VFFT_WISDOM_DIR_DEFAULT (the tree's src/wisdom/, set by the build;
+ * 2026-09-24), else "." — and both fallbacks FORCE read-only: only an
+ * explicit directory or the env can bank (the wrong-cwd colony killer,
+ * README §2.2; the shipped store is never written by a stray process).
  * `writable` is the measurement-mode guard (README: exact config/env shape
  * of the guard is an OPEN owner decision; this explicit flag is the only
  * switch until then). */
@@ -905,10 +908,14 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
         const char *e = getenv("VFFT_WISDOM_DIR");
         if (e && e[0]) dir = e;
         else {
+#ifdef VFFT_WISDOM_DIR_DEFAULT
+            dir = VFFT_WISDOM_DIR_DEFAULT;
+#else
             dir = ".";
+#endif
             if (writable) {
-                fprintf(stderr, "[wisdom2] VFFT_WISDOM_DIR unset — store at '.' opened READ-ONLY "
-                                "(explicit dir required to bank)\n");
+                fprintf(stderr, "[wisdom2] VFFT_WISDOM_DIR unset — store at '%s' opened READ-ONLY "
+                                "(explicit dir required to bank)\n", dir);
                 writable = 0;
             }
         }

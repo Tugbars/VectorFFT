@@ -223,7 +223,7 @@ Two operational rules, both bought with real incidents (2026-08-02):
 
 ```sh
 # 🔴 always a SCRATCH wisdir; never let a calibration probe write banked wisdom
-cp src/dag-fft-compiler/generator/generated/*.txt $SCRATCH/wisdir/
+cp src/wisdom/*.txt src/dag-fft-compiler/generator/generated/spike_wisdom.txt $SCRATCH/wisdir/
 
 python build_tuned/build.py --src build_tuned/benches/calibrate_zchain.c --vfft --compile
 VFFT_IL_DP_VERBOSE=1 calibrate_zchain.exe $SCRATCH/wisdir 1 16384

@@ -53,8 +53,8 @@ python src/tools/plots/gen_precision.py gauntlet/results/tw_exact_verify_2026-09
 ```
 
 `--merge` (or the `merge` verb) copies the run's verdicts back into the
-library's shipped wisdom (`src/dag-fft-compiler/generator/generated/`), with
-backups, so a calibration done on your host is kept.
+library's shipped wisdom (`src/wisdom/`), with backups, so a calibration done
+on your host is kept.
 
 A stopped run resumes where it left off (`run` again with the same `--name`).
 The driver keeps the machine awake for the duration on Windows.
@@ -78,6 +78,7 @@ lengths in one run. The groups:
 python gauntlet/gauntlet.py run --group 2d-small [--max 64]   # every shape up to 64 per axis (3,969 cells)
 python gauntlet/gauntlet.py run --group 2d-odd                # the odd/prime column pool and its closers x {64,128,256,512}
 python gauntlet/gauntlet.py run --group 2d-pow2 [--max 8192] # the pow2 grid: every 2^a x 2^b up to 8192 per axis, planes to 4M points (159 cells)
+python gauntlet/gauntlet.py run --group 3d-pow2 [--max 8192] # the 3D pow2 grid: every 2^a x 2^b x 2^c up to 8192 per axis, volumes to 4M points (1288 cells); the 3D contract (2026-09-24) mirrors the 2D one: --3d on the probes, --3dilnat on the bench, gauntlet_3d.csv / report_3d.md, the wisdom2_3d.txt shard
 python gauntlet/gauntlet.py run --group 2d-mixed [--max 512]  # 2^a 3^b 5^c lengths as squares and against 64
 python gauntlet/gauntlet.py run --cells 47x64,23x256          # any shapes
 ```

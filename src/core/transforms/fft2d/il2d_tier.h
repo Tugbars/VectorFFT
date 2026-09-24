@@ -250,6 +250,100 @@ static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,
  * natural (leaf-redirected), Bluestein, banded (no row fusion: the owning
  * plan runs the rows) or unbanded, both directions, by the descriptor alone.
  * The c2c 2D serial walk with the fused row pass lives in vfft_execute.h. */
+/* ── THE TURNED PRIME COLUMN PASS (tpc, 2026-09-24) ──────────────────────
+ * At a prime N (no chain) the column Bluestein was the only engine and read
+ * 0.5-0.9x the vendor library at N >= 131 over pow2 lanes (131x4096 0.51,
+ * 257x256 0.69; the rank-3 cells 131x64x64 0.54, 257x16x16 0.70 are this
+ * pass over N2*N3 lanes), while the 1D prime route at the same N wins
+ * 1.1-3.1x. The turned pass runs the axis through that route: the lanes
+ * [c0, c1) of the plane transposed into the scratch (row c = lane c, pitch
+ * N + 8), the 1D natural in-place K=1 plan at N on every row of it, the rows
+ * transposed back into the plane's lanes. Measured before it was built:
+ * 131x4096 turn 426 + rows 1585 + back 527 us against the Bluestein pass's
+ * ~8400. Both directions (the 1D plan's own backward). */
+#define VFFT_IL2D_TPC_PITCH(N) ((size_t)(N) + 8)
+/* S[c][r] = src[r][c] for lanes c in [c0, c1), rows r < N (src pitch rn, S
+ * pitch P): 2 x 2 complex blocks through one 128-bit lane permute, the rows
+ * blocked so a block's source lines stay in L1 across the lane pairs */
+static void _il2d_tpc_turn_in(const double *src, size_t rn, size_t N, size_t c0, size_t c1,
+                              double *S, size_t P)
+{
+    const size_t RB = 256;
+    size_t r0, c, r;
+    for (r0 = 0; r0 < N; r0 += RB)
+    {
+        const size_t r1 = (r0 + RB < N) ? r0 + RB : N;
+        for (c = c0; c + 2 <= c1; c += 2)
+        {
+            double *sa = S + 2 * (c * P), *sb = S + 2 * ((c + 1) * P);
+            for (r = r0; r + 2 <= r1; r += 2)
+            {
+                const __m256d a = _mm256_loadu_pd(src + 2 * (r * rn + c));
+                const __m256d b = _mm256_loadu_pd(src + 2 * ((r + 1) * rn + c));
+                _mm256_storeu_pd(sa + 2 * r, _mm256_permute2f128_pd(a, b, 0x20));
+                _mm256_storeu_pd(sb + 2 * r, _mm256_permute2f128_pd(a, b, 0x31));
+            }
+            if (r < r1)
+            {
+                _mm_storeu_pd(sa + 2 * r, _mm_loadu_pd(src + 2 * (r * rn + c)));
+                _mm_storeu_pd(sb + 2 * r, _mm_loadu_pd(src + 2 * (r * rn + c + 1)));
+            }
+        }
+        if (c < c1)
+        {
+            double *sa = S + 2 * (c * P);
+            for (r = r0; r < r1; r++)
+                _mm_storeu_pd(sa + 2 * r, _mm_loadu_pd(src + 2 * (r * rn + c)));
+        }
+    }
+}
+/* dst[r][c] = S[c][r] for lanes c in [c0, c1): the turn route's back-turn
+ * over a lane range (dst pitch rn, S pitch P) */
+static void _il2d_tpc_turn_out(const double *S, size_t P, double *dst, size_t rn, size_t N,
+                               size_t c0, size_t c1)
+{
+    const size_t RB = 256;
+    size_t r0, c, r;
+    for (r0 = 0; r0 < N; r0 += RB)
+    {
+        const size_t r1 = (r0 + RB < N) ? r0 + RB : N;
+        for (c = c0; c + 2 <= c1; c += 2)
+        {
+            const double *ta = S + 2 * (c * P), *tb = S + 2 * ((c + 1) * P);
+            for (r = r0; r + 2 <= r1; r += 2)
+            {
+                const __m256d a = _mm256_loadu_pd(ta + 2 * r), b = _mm256_loadu_pd(tb + 2 * r);
+                _mm256_storeu_pd(dst + 2 * (r * rn + c), _mm256_permute2f128_pd(a, b, 0x20));
+                _mm256_storeu_pd(dst + 2 * ((r + 1) * rn + c), _mm256_permute2f128_pd(a, b, 0x31));
+            }
+            if (r < r1)
+            {
+                _mm_storeu_pd(dst + 2 * (r * rn + c), _mm_loadu_pd(ta + 2 * r));
+                _mm_storeu_pd(dst + 2 * (r * rn + c + 1), _mm_loadu_pd(tb + 2 * r));
+            }
+        }
+        if (c < c1)
+        {
+            const double *ta = S + 2 * (c * P);
+            for (r = r0; r < r1; r++)
+                _mm_storeu_pd(dst + 2 * (r * rn + c), _mm_loadu_pd(ta + 2 * r));
+        }
+    }
+}
+/* the pass over lanes [c0, c1): turn in, the 1D plan per row, turn out */
+static void _il2d_tpc_cols_range(const vfft_ilcol_t *c, const double *src, double *dst,
+                                 size_t rn, size_t c0, size_t c1, int rev)
+{
+    const size_t N = (size_t)c->N, P = VFFT_IL2D_TPC_PITCH(N);
+    double *S = c->tpcscr;
+    size_t l;
+    _il2d_tpc_turn_in(src, rn, N, c0, c1, S, P);
+    for (l = c0; l < c1; l++)
+        vfft_execute((vfft_plan)c->tpcplan, rev ? VFFT_BACKWARD : VFFT_FORWARD,
+                     S + 2 * l * P, NULL, S + 2 * l * P, NULL);
+    _il2d_tpc_turn_out(S, P, dst, rn, N, c0, c1);
+}
+
 static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
                            double *dst, int reverse)
 {
@@ -262,6 +356,11 @@ static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
                            reverse ? c->b : c->f,
                            reverse ? c->tb : c->tf, reverse,
                            c->natperm, c->natscr, NULL);
+        return;
+    }
+    if (c->blu && c->tpc)
+    {   /* prime N1: the TURNED pass (2026-09-24) */
+        _il2d_tpc_cols_range(c, src, dst, hp1, 0, hp1, reverse);
         return;
     }
     if (c->blu)
@@ -1003,6 +1102,8 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
     const size_t rn = (size_t)h->N2;
     const int fwd = (dir == VFFT_FORWARD);
     int s;
+    if (h->il2d_col.tpc)
+        return 0; /* the turned prime pass: one 1D plan, serial (2026-09-24) */
     if (h->il2d_col.staged)
         return 0; /* env-experimental route: one shared band scratch —
                    * per-worker slots are not built for it */
@@ -1950,6 +2051,7 @@ static void _il2d_n1arm_blu(void *v)
 
 /* free everything a column-axis pass owns (tables, natural, Bluestein,
  * the staged scratch); the descriptor is zero afterwards */
+static void _il2d_tpc_drop(vfft_ilcol_t *c);
 static void _il2d_col_free(vfft_ilcol_t *c)
 {
     int s;
@@ -1966,6 +2068,7 @@ static void _il2d_col_free(vfft_ilcol_t *c)
     free(c->blukb);
     free(c->bluscr);
     free(c->bandscr);
+    _il2d_tpc_drop(c);
     memset(c, 0, sizeof *c);
 }
 
@@ -2038,6 +2141,146 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
  * verdicts (band width, fusion, row route, column MT + its T, the N1-arm
  * verdict) come back through the out-parameters, -1 = unraced. Returns 1;
  * 0 = REFUSED (loud), the descriptor freed. */
+/* ── the tpc arm's build, race and replay (2026-09-24; struct comment at
+ * c->tpc). c2c axis 0 only: the real tier's CCE columns and a rank-3 axis 1
+ * run per-worker clones the one plan cannot serve. VFFT_IL2D_TPC=1|0 pins
+ * (never banks). A row raced before the arm existed carries no tpc= token
+ * and races it on its next create. */
+static int _il2d_tpc_admits(const vw2_ilcol_key_t *key, const vfft_ilcol_t *c)
+{
+    return c->blu > 0 && !key->real && key->axis == 0;
+}
+static int _il2d_tpc_build(const vfft_config_t *cfg, vfft_ilcol_t *c, int N, size_t rn)
+{
+    vfft_config_t tc;
+    c->N = N;   /* the builder's caller stamps it later; the pass reads it */
+    memset(&tc, 0, sizeof tc);
+    tc.transform = VFFT_C2C;
+    tc.placement = VFFT_INPLACE;
+    tc.rigor = cfg->rigor;
+    tc.dims = 1;
+    tc.n[0] = c->N;
+    tc.howmany = 1;
+    tc.order = VFFT_ORDER_NATURAL;
+    tc.layout = VFFT_LAYOUT_INTERLEAVED;
+    tc.nthreads = 1;
+    tc.wisdom = cfg->wisdom;
+    tc.wisdom_write = cfg->wisdom_write;
+    c->tpcplan = (struct vfft_plan_s *)vfft_create(&tc);
+    if (!c->tpcplan)
+        return 0;
+    c->tpcscr = (double *)VFFT_ZS_ALLOC(2 * VFFT_IL2D_TPC_PITCH(c->N) * rn * sizeof(double));
+    if (!c->tpcscr)
+    {
+        vfft_destroy(c->tpcplan);
+        c->tpcplan = NULL;
+        return 0;
+    }
+    return 1;
+}
+static void _il2d_tpc_drop(vfft_ilcol_t *c)
+{
+    if (c->tpcplan)
+        vfft_destroy(c->tpcplan);
+    c->tpcplan = NULL;
+    if (c->tpcscr)
+        VFFT_ZS_FREE(c->tpcscr);
+    c->tpcscr = NULL;
+    c->tpc = 0;
+}
+static void _il2d_blu_drop_tables(vfft_ilcol_t *c)
+{   /* the Bluestein's tables when the turned pass serves; blu = M stays */
+    free(c->bluchf);
+    free(c->bluchb);
+    free(c->blukf);
+    free(c->blukb);
+    free(c->bluscr);
+    c->bluchf = c->bluchb = c->blukf = c->blukb = c->bluscr = NULL;
+}
+static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                           const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int N, size_t rn)
+{
+    const char *pin = getenv("VFFT_IL2D_TPC");
+    const size_t T = (size_t)N * rn;
+    double *z, *zo, tb = 1e300, tt = 1e300;
+    size_t i;
+    int r;
+    if (!_il2d_tpc_admits(key, c))
+        return;
+    if (pin && atoi(pin) == 0)
+        return;
+    if (!_il2d_tpc_build(cfg, c, N, rn))
+    {
+        if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[il2d] tpc: the 1D in-place plan at N=%d could not be built\n", N);
+        return;
+    }
+    if (pin)
+    {
+        c->tpc = 1;
+        _il2d_blu_drop_tables(c);
+        return;
+    }
+    z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
+    zo = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
+    if (!z || !zo)
+    {
+        if (z) VFFT_ZS_FREE(z);
+        if (zo) VFFT_ZS_FREE(zo);
+        _il2d_tpc_drop(c);
+        return;
+    }
+    for (i = 0; i < 2 * T; i++)
+        z[i] = (double)(i % 977) / 977.0 - 0.5;
+    /* min of 3, alternated, both arms through their serving functions */
+    _il2d_blu_cols(z, zo, N, rn, c->blu, c->nst, c->R, c->L, c->f, c->b, c->tf, c->tb,
+                   c->bluchf, c->blukf, c->bluscr);
+    _il2d_tpc_cols_range(c, z, zo, rn, 0, rn, 0);
+    for (r = 0; r < 3; r++)
+    {
+        const double t0 = _il_ab_now();
+        _il2d_blu_cols(z, zo, N, rn, c->blu, c->nst, c->R, c->L, c->f, c->b, c->tf, c->tb,
+                       c->bluchf, c->blukf, c->bluscr);
+        const double t1 = _il_ab_now();
+        _il2d_tpc_cols_range(c, z, zo, rn, 0, rn, 0);
+        const double t2 = _il_ab_now();
+        if (t1 - t0 < tb) tb = t1 - t0;
+        if (t2 - t1 < tt) tt = t2 - t1;
+    }
+    VFFT_ZS_FREE(z);
+    VFFT_ZS_FREE(zo);
+    c->tpc = (tt < tb);
+    if (getenv("VFFT_IL2D_LOG"))
+        fprintf(stderr, "[il2d] tpc race at N=%d x %lu lanes: blu %.0f us, turned %.0f us -> %s\n",
+                N, (unsigned long)rn, tb / 1e3, tt / 1e3, c->tpc ? "TURNED" : "blu");
+    vw2_ilcol_tok_seti(&W->vw2, key, "tpc", c->tpc);
+    _vw2_persist(W, cfg);
+    if (c->tpc)
+        _il2d_blu_drop_tables(c);
+    else
+        _il2d_tpc_drop(c);
+}
+static void _il2d_tpc_replay(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                             const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int N, size_t rn)
+{
+    const char *pin = getenv("VFFT_IL2D_TPC");
+    int want;
+    if (!_il2d_tpc_admits(key, c))
+        return;
+    want = pin ? atoi(pin) : vw2_ilcol_tok_geti(&W->vw2, key, "tpc", -1);
+    if (want < 0)
+    {   /* a row from before the arm existed: race it now */
+        _il2d_tpc_race(W, cfg, key, c, N, rn);
+        return;
+    }
+    if (want != 1)
+        return;
+    if (!_il2d_tpc_build(cfg, c, N, rn))
+        return;
+    c->tpc = 1;
+    _il2d_blu_drop_tables(c);
+}
+
 static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                            const vw2_ilcol_key_t *key, int N, size_t rn, int nat_req,
                            vfft_ilcol_t *c, char *forms, size_t fsz,
@@ -2147,7 +2390,10 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                    &c->bluscr);
         _il2d_blu_ctx.commit = 0;
         if (c->blu)
+        {
             chain_ok = 1;
+            _il2d_tpc_race(W, cfg, key, c, N, rn);   /* the turned pass vs this Bluestein (2026-09-24) */
+        }
         /* (the cell's own row is banked by the provider, at every rank and
          * before it serves the inner's forms -- vw2_ilcol_forms_bank_base is
          * a field update and needs the row to exist. The rank >= 3 bank that
@@ -2255,6 +2501,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 c->blukb = bkb;
                 c->bluscr = bscr;
                 il2d_tbl_done = 1;
+                _il2d_tpc_replay(W, cfg, key, c, N, rn);   /* tpc= on the row, or race it (2026-09-24) */
                 if (c->nat)
                 {
                     free(c->natperm);

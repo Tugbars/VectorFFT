@@ -249,6 +249,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         double *il2d_bluchf = NULL, *il2d_bluchb = NULL;
         double *il2d_blukf = NULL, *il2d_blukb = NULL;
         double *il2d_bluscr = NULL;
+        int il2d_tpc = 0;                     /* the turned prime pass (2026-09-24) */
+        struct vfft_plan_s *il2d_tpcplan = NULL;
+        double *il2d_tpcscr = NULL;
         int il2d_bcmt = -1, il2d_bcmtt = -1; /* banked column-MT verdict
                                               * and the T it was raced at */
         double *il2d_lx = NULL, *il2d_lre = NULL, *il2d_lim = NULL;
@@ -284,6 +287,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 il2d_bluchf = col.bluchf; il2d_bluchb = col.bluchb;
                 il2d_blukf = col.blukf; il2d_blukb = col.blukb;
                 il2d_bluscr = col.bluscr;
+                il2d_tpc = col.tpc;
+                il2d_tpcplan = col.tpcplan;
+                il2d_tpcscr = col.tpcscr;
                 il2d_nat = col.nat;
                 il2d_natperm = col.natperm;
                 il2d_natscr = col.natscr;
@@ -952,6 +958,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         h->il2d_col.blukf = il2d_blukf;
         h->il2d_col.blukb = il2d_blukb;
         h->il2d_col.bluscr = il2d_bluscr;
+        h->il2d_col.tpc = il2d_tpc;
+        h->il2d_col.tpcplan = il2d_tpcplan;
+        h->il2d_col.tpcscr = il2d_tpcscr;
         /* A/B race knob (struct comment): create-time env read only. */
         h->il2d_norowz = getenv("VFFT_IL2D_NO_ROWZ") != NULL;
         h->il2d_lx = il2d_lx;

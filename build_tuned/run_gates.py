@@ -120,8 +120,7 @@ BENCH = os.path.join(HERE, "benches")
 # (verified: VERDICT FAIL from benches/, VERDICT PASS from the root). A harness
 # that manufactures reds is worse than none - it teaches you to ignore it.
 ROOT = os.path.dirname(HERE)
-STORE = os.path.normpath(os.path.join(
-    HERE, "..", "src", "dag-fft-compiler", "generator", "generated"))
+STORE = os.path.normpath(os.path.join(HERE, "..", "src", "wisdom"))   # the wisdom2 store (2026-09-24); the frozen bundle stays in generated/ and the library reads it from there
 
 # How each gate wants its wisdom directory.
 #   "none"        - takes no argument

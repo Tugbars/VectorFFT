@@ -546,6 +546,34 @@ static inline void vw2__ilcol_key(const vw2_ilcol_key_t *ck, vw2_key_t *k)
                 ck->n2, ck->ord, VW2_LAY_IL);
 }
 
+/* one integer verdict on a column row, by base name (axis-suffixed like the
+ * chain tokens): ABSENT = dflt. tpc= (the turned prime pass, 2026-09-24) is
+ * the first; a later axis verdict that is not part of the chain bank rides
+ * the same pair. The set refuses (-1) when the row does not exist. */
+static inline int vw2_ilcol_tok_geti(const vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                     const char *base, int dflt)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *v;
+    char tb[16];
+    vw2__ilcol_key(ck, &k);
+    r = vw2_lookup(s, &k);
+    if (!r) return dflt;
+    v = vw2_rec_get(r, vw2__ilcol_tok(ck, base, tb, sizeof tb));
+    return v ? atoi(v) : dflt;
+}
+static inline int vw2_ilcol_tok_seti(vw2_store_t *st, const vw2_ilcol_key_t *ck,
+                                     const char *base, int val)
+{
+    vw2_key_t k;
+    char tb[16], vb[24];
+    vw2__ilcol_key(ck, &k);
+    if (!vw2_lookup(st, &k)) return -1;
+    snprintf(vb, sizeof vb, "%d", val);
+    return vw2_update_field(st, &k, vw2__ilcol_tok(ck, base, tb, sizeof tb), vb) == VW2_OK ? VW2_OK : -1;
+}
+
 static inline int vw2_ilcol_chain_lookup(const vw2_store_t *s, const vw2_ilcol_key_t *ck,
                                          int *Rs, int *nst,
                                          int *wl, int *tf, int *ro,

@@ -53,7 +53,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))          # src/tools/baseline 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 BENCH = HERE                     # the harness sources live here; gauntlet/build.py puts the binaries beside them
 BUILD_PY = os.path.join(ROOT, "gauntlet", "build.py")
-STORE = os.path.join(ROOT, "src", "dag-fft-compiler", "generator", "generated")
+STORE = os.path.join(ROOT, "src", "wisdom")   # the wisdom2 store (2026-09-24)
 SCRATCH = os.path.join(os.environ.get("TEMP", "/tmp"), "vfft_capture")
 
 

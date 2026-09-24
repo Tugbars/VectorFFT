@@ -16,6 +16,8 @@
 #include <stddef.h>
 #include "il2p.h"   /* vfft_il2p_fn */
 
+struct vfft_plan_s;   /* the turned prime pass's 1D plan */
+
 typedef struct {
     int N;                    /* rows: the axis length */
     size_t rn;                /* row length in complex: N2 (c2c), hp1 = N2/2+1 (real) */
@@ -63,6 +65,17 @@ typedef struct {
     double *bluchf, *bluchb;  /* chirp, 2*N each, fwd/bwd */
     double *blukf, *blukb;    /* comb-order kernels, 2*M */
     double *bluscr;           /* the M x rn plane, 2*M*rn */
+    /* THE TURNED PRIME COLUMN PASS (tpc, 2026-09-24): at a prime N the axis
+     * runs through the 1D prime route instead of the column Bluestein -- the
+     * lanes transposed into tpcscr (pitch N + 8), the in-place natural K=1
+     * plan at N on every row of it, transposed back. blu stays = M as the
+     * prime-column marker (natural out, no chain); the Bluestein tables are
+     * not kept when tpc serves. Raced at create, banked tpc= on the column
+     * row. Serial: one plan, so the column-MT walks and the rank-3 plane arm
+     * decline to split a tpc axis. */
+    int tpc;
+    struct vfft_plan_s *tpcplan;
+    double *tpcscr;           /* rn x VFFT_IL2D_TPC_PITCH(N) complex */
 } vfft_ilcol_t;
 
 #endif /* VFFT_TRANSFORMS_FFT2D_IL2D_COL_H */

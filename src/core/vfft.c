@@ -284,9 +284,21 @@ static const rfft_codelets_t *_rfft_registry(void)
 static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
 {
     const char *d = (dir && dir[0]) ? dir : ".";
-    snprintf(W->path_c2c, sizeof W->path_c2c, "%s/spike_wisdom.txt", d);
-    snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", d);
-    snprintf(W->path_c2r_path, sizeof W->path_c2r_path, "%s/c2r_path.txt", d);
+    /* THE FROZEN BUNDLE HAS ITS OWN HOME (2026-09-24): the wisdom2 store
+     * lives in src/wisdom/, the frozen files (spike_wisdom.txt, the dune
+     * build input of plan_executors.h; bluestein_wisdom.txt; c2r_path.txt)
+     * stay in generator/generated/. A build that knows that directory
+     * defines VFFT_FROZEN_WISDOM_DIR and the bundle is read from there
+     * whatever store directory the caller gives; a build without it reads
+     * the bundle beside the store, as before. */
+#ifdef VFFT_FROZEN_WISDOM_DIR
+    const char *f = VFFT_FROZEN_WISDOM_DIR;
+#else
+    const char *f = d;
+#endif
+    snprintf(W->path_c2c, sizeof W->path_c2c, "%s/spike_wisdom.txt", f);
+    snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", f);
+    snprintf(W->path_c2r_path, sizeof W->path_c2r_path, "%s/c2r_path.txt", f);
     snprintf(W->dir, sizeof W->dir, "%s", d);
 }
 static void _bundle_load(struct vfft_wisdom_s *W)
@@ -2131,7 +2143,7 @@ const char *vfft_plan_route(vfft_plan p)
          * batched rows, +rb2 = the batched two-pass rows; turn = the whole
          * plane through the 1D engine; csk = the skewed column pass */
         if (h->il2d_turn) return "turn";
-        if (h->il2d_col.blu) return "blu";
+        if (h->il2d_col.blu) return h->il2d_col.tpc ? "tpc" : "blu";   /* tpc = the turned prime pass (2026-09-24) */
         if (h->il2d_csk) return h->il2d_rowb2 ? "csk+rb2" : h->il2d_rowb ? "csk+rb" : "csk";
         return h->il2d_rowb2 ? "chain+rb2" : h->il2d_rowb ? "chain+rb" : "chain";
     }
@@ -2222,10 +2234,11 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->tcbw_n, h->tc_mt, (long)h->tcb_sn, (long)h->tcb_dn,
             h->pq_wn, h->pq_mt, (long)h->pq_n);
     FP__ADD(" il2d=[nst=%d wc=%d wl=%d cut=%d tf=%d roop=%d rw=%d cmt=%d"
-            " oddn2=%d nat=%d blu=%d norowz=%d turn=%d csk=%d]",
+            " oddn2=%d nat=%d blu=%d norowz=%d turn=%d csk=%d tpc=%d]",
             h->il2d_col.nst, h->il2d_col.wc, h->il2d_col.wl, h->il2d_col.cut, h->il2d_col.tfuse,
             _il2d_ro_of(h), h->il2d_rw, h->il2d_col.colmt, h->il2d_oddn2, /* roop = the row-route value 0|2|3 */
-            h->il2d_col.nat, h->il2d_col.blu, h->il2d_norowz, h->il2d_turn, h->il2d_csk);
+            h->il2d_col.nat, h->il2d_col.blu, h->il2d_norowz, h->il2d_turn, h->il2d_csk,
+            h->il2d_col.tpc); /* tpc = the turned prime column pass (2026-09-24) */
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
     FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",

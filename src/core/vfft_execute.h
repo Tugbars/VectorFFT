@@ -685,6 +685,12 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                     if (h->il2d_col.colmt && h->nthreads > 1 &&
                         _il2d_c2c_mt(h, sre, dre, dir, h->nthreads))
                         return;
+                    if (h->il2d_col.blu && h->il2d_col.tpc)
+                    {   /* PRIME N1: the TURNED pass (2026-09-24), then the rows */
+                        _il2d_tpc_cols_range(&h->il2d_col, sre, dre, rn, 0, rn, !fwd);
+                        _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
+                        return;
+                    }
                     if (h->il2d_col.blu)
                     { /* ODD/PRIME N1: the column-axis Bluestein — the
                        * shared pipeline (_il2d_blu_cols), then the rows
@@ -1364,6 +1370,10 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_col.blukf);
             free(h->il2d_col.blukb);
             free(h->il2d_col.bluscr);
+            if (h->il2d_col.tpcplan)
+                vfft_destroy(h->il2d_col.tpcplan); /* the turned prime pass's 1D plan */
+            if (h->il2d_col.tpcscr)
+                VFFT_ZS_FREE(h->il2d_col.tpcscr);
             VFFT_ZS_FREE(h->il2d_rowb2_scr);   /* the two-pass rows' chunk scratch (route 3) */
             if (h->il2d_turn_plan)
                 vfft_destroy(h->il2d_turn_plan); /* the turn route's N1 plan */

@@ -5,6 +5,8 @@
  *
  * Run:   recal_1d_probe.exe <wisdir> <N> [scr=0] [ip=0] [T=1] [recal=1]
  *        recal_1d_probe.exe <wisdir> --2d <N1> <N2> [scr=0] [ip=0] [T=1] [recal=1]
+ *        recal_1d_probe.exe <wisdir> --3d <N1> <N2> <N3> [scr=0] [ip=0] [T=1] [recal=1]
+ *        (2026-09-24: the 3D interleaved cell, dims=3; its verdicts bank into wisdom2_3d.txt)
  *        (2026-09-23: the 2D interleaved cell, dims=2, the same door and store;
  *        its verdicts bank into wisdom2_2d.txt)
  * Build: python build.py --compile --vfft --src benches/recal_1d_probe.c */
@@ -24,9 +26,12 @@ int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : ".";
     const int twod = argc > 2 && !strcmp(argv[2], "--2d");
-    const int a0 = twod ? 4 : 2;               /* the index of the last shape argument */
-    const int N = argc > (twod ? 3 : 2) ? atoi(argv[twod ? 3 : 2]) : 1024;
-    const int N2 = twod && argc > 4 ? atoi(argv[4]) : 0;
+    const int threed = argc > 2 && !strcmp(argv[2], "--3d");   /* the 3D cell (2026-09-24) */
+    const int nd = threed ? 3 : twod ? 2 : 1;
+    const int a0 = nd > 1 ? 2 + nd : 2;        /* the index of the last shape argument */
+    const int N = argc > (nd > 1 ? 3 : 2) ? atoi(argv[nd > 1 ? 3 : 2]) : 1024;
+    const int N2 = nd > 1 && argc > 4 ? atoi(argv[4]) : 0;
+    const int N3 = nd > 2 && argc > 5 ? atoi(argv[5]) : 0;
     const int scr = argc > a0 + 1 ? atoi(argv[a0 + 1]) : 0;
     const int ip = argc > a0 + 2 ? atoi(argv[a0 + 2]) : 0;
     const int T = argc > a0 + 3 ? atoi(argv[a0 + 3]) : 1;
@@ -56,7 +61,7 @@ int main(int argc, char **argv)
     cfg.transform = VFFT_C2C;
     cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
     cfg.rigor = VFFT_PATIENT;
-    cfg.dims = twod ? 2 : 1; cfg.n[0] = N; cfg.n[1] = twod ? N2 : 0; cfg.howmany = 1;
+    cfg.dims = nd; cfg.n[0] = N; cfg.n[1] = nd > 1 ? N2 : 0; cfg.n[2] = nd > 2 ? N3 : 0; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
     cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
@@ -64,7 +69,10 @@ int main(int argc, char **argv)
     t0 = now_ms();
     p = vfft_create(&cfg);
     t1 = now_ms();
-    if (twod)
+    if (threed)
+        printf("N=%dx%dx%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", N, N2, N3, scr ? "scr" : "nat",
+               ip ? "ip" : "oop", T, recal, p ? "banked" : "REFUSED", t1 - t0);
+    else if (twod)
         printf("N=%dx%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", N, N2, scr ? "scr" : "nat",
                ip ? "ip" : "oop", T, recal, p ? "banked" : "REFUSED", t1 - t0);
     else

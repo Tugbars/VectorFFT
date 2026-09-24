@@ -64,7 +64,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))          # src/tools/baseline (since 2026-09-22)
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 PROBE = os.path.join(HERE, "trig_digest_probe.exe")
-STORE = os.path.join(ROOT, "src", "dag-fft-compiler", "generator", "generated")
+STORE = os.path.join(ROOT, "src", "wisdom")   # the wisdom2 store (2026-09-24)
 SCRATCH = os.path.join(os.environ.get("TEMP", "/tmp"), "vfft_trig_capture")
 
 

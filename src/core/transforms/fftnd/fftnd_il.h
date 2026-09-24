@@ -414,7 +414,9 @@ static void _ilnd_mt_tramp(void *v)
         break;
     case 1: /* a column strip of the virtual plane: the whole axis-0 chain
              * (Bluestein: the window pipeline, windows share scr disjointly) */
-        if (c->blu)
+        if (c->blu && c->tpc)
+            _il2d_tpc_cols_range(c, a->src, a->dst, rn, a->lo, a->hi, rev);
+        else if (c->blu)
             _il2d_blu_cols_range(a->src, a->dst, c->N, rn, a->lo, a->hi, c->blu,
                                  c->nst, c->R, c->L, c->f, c->b, c->tf, c->tb,
                                  rev ? c->bluchb : c->bluchf,
@@ -515,8 +517,8 @@ static int _ilnd_mt_axis0(const vfft_ilnd_t *d, vfft_dir_t dir, const double *sr
         return 1;
     }
     {
-        const int Ts = rn < (size_t)T ? (int)rn : T;
-        if (Ts >= 2)
+        const int Ts = (rn < (size_t)T ? (int)rn : T);
+        if (Ts >= 2 && !c->tpc)   /* a tpc axis 0 runs serial: one 1D plan (2026-09-24) */
             _ilnd_mt_phase(d, src, dst, dir, 1, rn, Ts);
         else
             _il2d_col_exec(c, src, dst, rev);
