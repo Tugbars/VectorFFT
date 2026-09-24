@@ -1456,7 +1456,7 @@ static void _il_dp_enumerate_flat_ord(int N, vfft_il_cand_sink_t *s, int scr)
  * generator/generated/fused_codelets/README.md) — exist exactly for these
  * chains (ztt_registry_avx2.h, derived from the corpus), so the enumeration
  * IS the registry walk and the create refuses anything else. The composable
- * stage kernels in codelets/zil/avx2/boundary_split are what every other
+ * stage kernels in codelets/zil/avx2/ztt are what every other
  * solution is built from. Natural output, both directions: it enters the natural pool and the
  * scrambled pool's natural-engine set, and races the pairs on the same
  * clock — the owner's "ZTURN-T ships, racing Bailey below 2048". */

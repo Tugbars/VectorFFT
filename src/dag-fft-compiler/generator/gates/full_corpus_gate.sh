@@ -162,7 +162,7 @@ EXE="$GEN/_build/default/bin/gen_radix.exe"
 
 # -------------------------------- 3. arms B-E: one fork per non-gen_set file
 # replay = the file's own recorded argv (argv[0] reproduced via exec -a)
-# derive = zil/avx2/pure_il filename grammar + the odd-radix --cil-split table
+# derive = the zil/avx2 filename grammar (folders by kind since 2026-09-24) + the odd-radix --cil-split table
 # ship   = generator/emit_ship.sh tangent recipes (env + post-emit sed rename)
 # k1     = Codelet_oop.emit_k1_mono (--k1-mono family)
 emit_one() {  # emit_one <rel> <argv0> <env> <args> <sed_from> <sed_to>

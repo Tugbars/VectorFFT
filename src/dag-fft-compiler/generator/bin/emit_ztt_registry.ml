@@ -17,7 +17,7 @@ let () =
   p " * (generator/generated/fused_codelets/, README.md there): whole-transform\n";
   p " * functions with the stage kernels inlined, bound whole by ztt.h — the pow2\n";
   p " * solution's executable form and only that; the composable stage kernels in\n";
-  p " * codelets/zil/avx2/boundary_split are the product (owner's ruling 2026-09-14). */\n";
+  p " * codelets/zil/avx2/ztt are the product (owner's ruling 2026-09-14). */\n";
   p "#ifndef VFFT_ZTT_REGISTRY_AVX2_H\n#define VFFT_ZTT_REGISTRY_AVX2_H\n#include <stddef.h>\n\n";
   p "/* the fused driver ABI: zin (natural packed z), zout (natural packed z), plane\n";
   p " * (2N doubles, 64-B; unused by the dest drivers), tw (ONE contiguous stream in\n";

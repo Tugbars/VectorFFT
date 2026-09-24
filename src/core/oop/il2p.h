@@ -249,7 +249,7 @@ static inline vfft_il2p_fn vfft_il2p_t2cs_fn(int R)
  * One call per stage: Gs = blocks (in-kernel group loop), Ls = count = D
  * (count % 4 == 0), tw_re = per block (R-1) [c x4][s x4] records, plain
  * sin. fwd only, IN PLACE on zout (zin ignored). Files:
- * codelets/zil/avx2/boundary_split/; the registry derives
+ * codelets/zil/avx2/ztt/ (flat/odd_mid/ holds msz); the registry derives
  * VFFT_IL_MSZ_FWD_RADICES like every other kind. */
 static inline vfft_il2p_fn vfft_il2p_msz_fn(int R)
 {
@@ -577,7 +577,7 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
  * shear left un-normalized and cos folded into the consuming butterfly's FMA
  * pair, so butterfly adds move off the FP-add ports onto the FMA ports.
  * Source + measured deltas:
- *   src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/README.md
+ *   src/dag-fft-compiler/codelets/zil/avx2/pair2p/tangent/README.md
  *
  * FORWARD ONLY (no backward twins emitted yet) — same scope the blocked
  * forms already have, so apply_kv_forms/blocked_default, which only touch

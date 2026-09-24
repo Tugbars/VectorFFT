@@ -60,10 +60,11 @@ let () =
   List.iter
     (fun q ->
        let files = Corpus.files q in
-       let dir = Filename.concat !root (Corpus.dir_of_quadrant q) in
-       mkdir_p dir;
        List.iter
          (fun (name, tail) ->
+            (* the folder follows the file's kind (2026-09-24): Corpus.dir_of_file *)
+            let dir = Filename.concat !root (Corpus.dir_of_file q name) in
+            mkdir_p dir;
             let path = Filename.concat dir name in
             (try emit_one path tail with
              | e ->
