@@ -63,7 +63,13 @@ in 2D form (`ilnd_natural_strip_design.md`): the ladder {16, 32, 64, 128,
   natural block partition; 1 = strips) and `msw=` beside `cmt=`/`cmtt=`,
   read back only at the T they were raced at, like `cmt`. The threaded
   strips form then runs the rows as its own phase (row slabs across the
-  pool) — the second sweep.
+  pool) — the second sweep. Each sub-strip runs through the worker's
+  dense per-worker strip scratch (pitch = the strip width, one N1 x sw
+  block in L2: `_il2d_col_pass_nat_strip`, the 3D tier's strip form) when
+  it fits; the shared full-pitch scratch put every strip piece in the
+  input rows' L2 sets and the column phase ran slower than serial
+  (512x128 T=8: 73 us for eight 16-column strips against a ~40 us serial
+  column pass; dense 27 us).
 
 Raced 2026-09-15 (the four-step gate's children on a cold store, T=8,
 `[il2d-c2c] threaded arms`): the sized strips LOSE to the bands at every

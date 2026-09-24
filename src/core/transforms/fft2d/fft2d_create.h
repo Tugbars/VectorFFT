@@ -1008,7 +1008,13 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 _il2d_c2c_build_clone_sets_all(h, cfg, h->nthreads);
             _il2d_axis_race(h, W, cfg, N1, N2);
             if (h->nthreads > 1)
+            {
                 _il2d_c2c_drop_unneeded_clones(h);
+                /* the threading verdict was raced for the OLD route: a new
+                 * route at this T re-races it (a stale strips verdict replayed
+                 * onto the tiled rows made 128x256 slower at T=8 than at 1) */
+                il2d_bcmt = il2d_bcmtt = -1;
+            }
         }
         /* INC-C: c2c MT. Build the per-worker row clones (the serving
          * row path mutates shared plan state), then serve the banked
@@ -1021,6 +1027,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
              * walks, one threaded arm each) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             _il2d_c2c_build_clones(h, cfg, h->nthreads);
+            _il2d_nat_sscr_build(&h->il2d_col, N1, N2, h->nthreads);   /* the strips' dense scratch (2026-09-24) */
             if (ce)
                 h->il2d_col.colmt = (atoi(ce) == 0);
             else if (il2d_bcmt >= 0 &&

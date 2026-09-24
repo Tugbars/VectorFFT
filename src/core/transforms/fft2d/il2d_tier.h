@@ -1050,17 +1050,33 @@ static void _il2d_c2c_mt_tramp(void *v)
         }
         break;
     case 5: /* natural x MT, the STRIP arm: the whole natural pass over
-             * [lo,hi) columns (shared scratch, disjoint columns), in
-             * sub-strips of msw when sized */
+             * [lo,hi) columns in sub-strips of msw when sized, each through
+             * the worker's DENSE strip scratch (pitch = the strip width: one
+             * contiguous N1 x w block in L2, the 3D tier's strip form) when
+             * the width fits it (2026-09-24: 512x128 T=8 75 -> 37 us, 1024x128
+             * 139 -> 64, the shared full-pitch scratch put every strip piece
+             * in the input rows' L2 sets); VFFT_IL2D_DENSE=0 (the probe pin)
+             * keeps the shared scratch */
         {
             const size_t sw = h->il2d_col.msw > 0 ? (size_t)h->il2d_col.msw : a->hi - a->lo;
+            const char *dpin = getenv("VFFT_IL2D_DENSE");
+            const int dense = h->il2d_col.natsscr && a->tid < h->il2d_col.nnatsscr &&
+                              !(dpin && atoi(dpin) == 0);
             size_t k;
             for (k = a->lo; k < a->hi; k += sw)
-                _il2d_col_pass_nat_range(a->src, a->dst, h->N, rn, k,
-                                         (k + sw < a->hi) ? k + sw : a->hi,
-                                         h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
-                                         tabs, !a->fwd, h->il2d_col.natperm,
-                                         h->il2d_col.natscr, _il2d_nat_stage_of(h, a->tid));
+            {
+                const size_t w = (k + sw < a->hi) ? sw : a->hi - k;
+                if (dense && w <= (size_t)h->il2d_col.natswcap)
+                    _il2d_col_pass_nat_strip(a->src, a->dst, h->N, rn, k, w,
+                                             h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
+                                             tabs, !a->fwd, h->il2d_col.natperm,
+                                             h->il2d_col.natsscr[a->tid > 0 ? a->tid : 0]);
+                else
+                    _il2d_col_pass_nat_range(a->src, a->dst, h->N, rn, k, k + w,
+                                             h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
+                                             tabs, !a->fwd, h->il2d_col.natperm,
+                                             h->il2d_col.natscr, _il2d_nat_stage_of(h, a->tid));
+            }
         }
         break;
     case 4: /* natural x MT: the leaf scatter (fwd: src = scratch, dst =
@@ -2171,6 +2187,52 @@ static void _il2d_n1arm_blu(void *v)
 /* free everything a column-axis pass owns (tables, natural, Bluestein,
  * the staged scratch); the descriptor is zero afterwards */
 static void _il2d_tpc_drop(vfft_ilcol_t *c);
+/* the strips' DENSE per-worker scratch (2026-09-24): T blocks of N x swcap
+ * complexes, swcap = the widest strip a worker runs (the ladder's widest
+ * admissible width, and the unsized whole range when it fits L2) */
+static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max);
+static void _il2d_nat_sscr_free(vfft_ilcol_t *c)
+{
+    int t;
+    if (c->natsscr)
+    {
+        for (t = 0; t < c->nnatsscr; t++)
+            VFFT_ZS_FREE(c->natsscr[t]);
+        free(c->natsscr);
+    }
+    c->natsscr = NULL;
+    c->nnatsscr = 0;
+    c->natswcap = 0;
+}
+static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, int N2, int T)
+{
+    int lad[6], nl, k, swcap = 0, t;
+    if (!c->nat || T < 2 || c->natsscr)
+        return c->natsscr != NULL;
+    nl = _il2d_sw_ladder(N1, N2, T, lad, 6);
+    for (k = 0; k < nl; k++)
+        if (lad[k] > swcap) swcap = lad[k];
+    if (N2 / T >= 2 && vfft_policy_fits_l2((long)N1 * (N2 / T) * 16) && N2 / T > swcap)
+        swcap = N2 / T;
+    if (swcap < 2)
+        return 0;
+    c->natsscr = (double **)calloc((size_t)T, sizeof *c->natsscr);
+    if (!c->natsscr)
+        return 0;
+    for (t = 0; t < T; t++)
+    {
+        c->natsscr[t] = (double *)VFFT_ZS_ALLOC(2 * (size_t)N1 * (size_t)swcap * sizeof(double));
+        if (!c->natsscr[t])
+        {
+            c->nnatsscr = t;
+            _il2d_nat_sscr_free(c);
+            return 0;
+        }
+    }
+    c->nnatsscr = T;
+    c->natswcap = swcap;
+    return 1;
+}
 static void _il2d_col_free(vfft_ilcol_t *c)
 {
     int s;
@@ -2180,7 +2242,8 @@ static void _il2d_col_free(vfft_ilcol_t *c)
         free(c->tb[s]);
     }
     free(c->natperm);
-    free(c->natscr);
+    VFFT_ZS_FREE(c->natscr);
+    _il2d_nat_sscr_free(c);
     free(c->bluchf);
     free(c->bluchb);
     free(c->blukf);
@@ -2532,7 +2595,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
          * perm builder refuses on any convention mismatch. */
         c->natperm = _il2d_nat_perm(c->R, c->nst, N);
         if (c->natperm)
-            c->natscr = (double *)malloc(
+            c->natscr = (double *)VFFT_ZS_ALLOC(   /* 64-B aligned: the strip workers' pieces of a row must not share a line (2026-09-24) */
+            
                 2 * (size_t)N * (int)rn * sizeof(double));
         if (!c->natperm || !c->natscr)
         {
@@ -2624,7 +2688,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 if (c->nat)
                 {
                     free(c->natperm);
-                    free(c->natscr);
+                    VFFT_ZS_FREE(c->natscr);
                     c->natperm = NULL;
                     c->natscr = NULL;
                     c->nat = 0;
@@ -2736,7 +2800,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                     if (c->nat)
                     { /* blu is natural by construction */
                         free(c->natperm);
-                        free(c->natscr);
+                        VFFT_ZS_FREE(c->natscr);
                         c->natperm = NULL;
                         c->natscr = NULL;
                         c->nat = 0;
@@ -2826,12 +2890,15 @@ static void _il2d_arm_axis(void *v)
         h->il2d_rowb2_ch = (int)_il2d_rb2_rows(c->kb, (size_t)h->N2);
     if (c->mt)
     {   /* the T-aware race (2026-09-24): every arm through its route's threaded
-         * walk -- the chain's default shape (block); the threading race refines
-         * the winner's (strips ladder, serial) afterwards */
+         * walk -- the chain under the DENSE STRIPS (the form that dominated the
+         * block arm at every cell measured: an arm raced under the block shape
+         * picked tiled rows the strips then ran worse with, 128x256 0.58,
+         * 4096x256 0.77); the threading race refines the winner's shape
+         * (serial, block, the strips ladder) afterwards */
         h->il2d_col.colmt = 1;
-        h->il2d_col.natarm = 0;
+        h->il2d_col.natarm = 1;
         h->il2d_col.msw = 0;
-        h->il2d_col.natst = 1;
+        h->il2d_col.natst = 0;
     }
     vfft_execute((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->zo, NULL);
 }

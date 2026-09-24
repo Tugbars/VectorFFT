@@ -1371,8 +1371,9 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_turnw);
             free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
             free(h->il2d_col.natperm);
-            free(h->il2d_col.natscr);
+            VFFT_ZS_FREE(h->il2d_col.natscr);   /* aligned since 2026-09-24 */
             VFFT_ZS_FREE(h->il2d_col.natstage);
+            _il2d_nat_sscr_free(&h->il2d_col);   /* the strips' dense scratch (2026-09-24) */
             free(h->il2d_col.bluchf);
             free(h->il2d_col.bluchb);
             free(h->il2d_col.blukf);

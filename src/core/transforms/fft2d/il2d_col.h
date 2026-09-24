@@ -58,6 +58,10 @@ typedef struct {
     double *natstage;         /* the leaf's STAGING, T x R_last x rn complexes, 64-B
                                * aligned (il2d_natural_leaf_design.md, 2026-09-16);
                                * NULL = the leaf stores at its natural stride */
+    double **natsscr;         /* the threaded strips' DENSE per-worker scratch (2026-09-24):
+                               * nnatsscr blocks of N x natswcap complexes, pitch = the strip
+                               * width (the 3D tier's strip form, _il2d_col_pass_nat_strip) */
+    int nnatsscr, natswcap;
     /* column-axis BLUESTEIN: chirp convolution at M = next pow2 >= 2N-1 over
      * an M x rn scratch plane; blu = M (0 = off); R/L/f/b/tf/tb hold the
      * M-chain */
