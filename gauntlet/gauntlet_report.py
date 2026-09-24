@@ -86,7 +86,7 @@ def read_calibrate_2d(path):
         return out
     for line in io.open(path, encoding="utf-8", errors="ignore"):
         f = line.split()
-        if len(f) >= 3 and re.match(r"^\d+x\d+$", f[0]):
+        if len(f) >= 3 and re.match(r"^\d+(x\d+){1,2}$", f[0]):
             ms = int(f[2].rstrip("ms")) if f[2].endswith("ms") else 0
             out[tuple(int(x) for x in f[0].split("x"))] = (f[1], ms, f[3] if len(f) > 3 else "?", f[4] if len(f) > 4 else "-")
     return out
@@ -102,13 +102,14 @@ def colclass(n1):
 
 
 def build_2d(run_dir, sfx="_2d"):
-    """the 2D contract's report: per-shape table, by route, by column class, by plane size"""
+    """the 2D (and, since 2026-09-24, the 3D) contract's report: per-shape table, by route, by column class, by size"""
+    nd = 3 if sfx.startswith("_3d") else 2
     rows = collections.defaultdict(list)
     p = os.path.join(run_dir, "gauntlet%s.csv" % sfx)
     if os.path.isfile(p):
         for r in csv.DictReader(open(p, encoding="utf-8", errors="ignore")):
             try:
-                rows[(int(r["N1"]), int(r["N2"]))].append(r)
+                rows[tuple(int(r[c]) for c in ("N1", "N2", "N3") if c in r)].append(r)
             except (KeyError, ValueError):
                 pass
     cal = read_calibrate_2d(os.path.join(run_dir, "calibrate%s.log" % sfx))
@@ -124,23 +125,26 @@ def build_2d(run_dir, sfx="_2d"):
                         mkl=statistics.median(int(r["mkl_ns"]) for r in rs) if has_cmp else 0,
                         rt=max(float(r.get("rt_err", 0) or 0) for r in rs),
                         gflops=max(float(r.get("vfft_gflops", 0) or 0) for r in rs))
+    for k, c in cells.items():           # a plan that names no route (the 3D tier) takes the calibrate log's
+        if c["route"] in ("-", "") and k in cal:
+            c["route"] = cal[k][3]
     out = []
     W = out.append
     keys = sorted(set(cells) | set(cal))
-    W("# gauntlet report (2D)\n")
-    W("run: `%s`  contract: 2D c2c interleaved, natural, out of place, K=1%s  cells: %d listed, %d benched, comparator: %s\n" % (
-        os.path.basename(os.path.abspath(run_dir)), sfx.replace("_2d", ""), len(keys), len(cells), "MKL DFTI 2D (out of place)" if has_cmp else "none (absolute numbers)"))
+    W("# gauntlet report (%dD)\n" % nd)
+    W("run: `%s`  contract: %dD c2c interleaved, natural, out of place, K=1%s  cells: %d listed, %d benched, comparator: %s\n" % (
+        os.path.basename(os.path.abspath(run_dir)), nd, sfx.replace("_%dd" % nd, ""), len(keys), len(cells), ("MKL DFTI %dD (out of place)" % nd) if has_cmp else "none (absolute numbers)"))
     if ctl:
-        W("control cell 64x64: %d readings, %.3f..%.3f\n" % (len(ctl), min(ctl), max(ctl)))
+        W("control cell %s: %d readings, %.3f..%.3f\n" % ("64x64x64" if nd == 3 else "64x64", len(ctl), min(ctl), max(ctl)))
     W("\n## every shape\n")
     W("```")
-    W(" %11s  %-12s %-6s %-9s %10s %10s %7s %8s %8s" % ("N1xN2", "N1 factors", "route", "served", "ours ns", "cmp ns", "x", "GFLOPS", "rt err"))
+    W(" %11s  %-12s %-6s %-9s %10s %10s %7s %8s %8s" % ("shape", "N1 factors", "route", "served", "ours ns", "cmp ns", "x", "GFLOPS", "rt err"))
     for k in keys:
         c = cells.get(k)
         st = cal.get(k, ("-", 0, "-", "-"))
         served = st[2] if st[0] == "banked" else st[0].lower()
-        route = c["route"] if c else st[3]
-        name = "%dx%d" % k
+        route = c["route"] if c and c["route"] not in ("-", "") else st[3]   # the bench's route, else the calibrate log's (the 3D plan names no route)
+        name = "x".join(str(v) for v in k)
         if c:
             W(" %11s  %-12s %-6s %-9s %10d %10s %7s %8.1f %8.1e" % (
                 name, facstr(k[0])[:12], route, served, c["best"], ("%d" % c["mkl"]) if has_cmp else "-",
@@ -170,21 +174,23 @@ def build_2d(run_dir, sfx="_2d"):
     table("by column class (N1)", lambda k, c: colclass(k[0]))
 
     def band(k, c):
-        t = k[0] * k[1]
+        t = 1
+        for v in k:
+            t *= v
         for hi, name in ((256, "<= 256 points"), (1024, "257..1024"), (4096, "1025..4096"), (65536, "4097..65536")):
             if t <= hi:
                 return name
         return "> 65536 points"
-    table("by plane size", band)
+    table("by size (points)", band)
     worst = sorted(cells, key=lambda k: cells[k]["lo"])[:10]
-    W("\nworst 10: " + ", ".join("%dx%d (%s %.2f)" % (k[0], k[1], cells[k]["route"], cells[k]["lo"]) for k in worst))
+    W("\nworst 10: " + ", ".join("%s (%s %.2f)" % ("x".join(str(v) for v in k), cells[k]["route"], cells[k]["lo"]) for k in worst))
     best = sorted(cells, key=lambda k: -cells[k]["lo"])[:5]
-    W("best 5: " + ", ".join("%dx%d (%s %.2f)" % (k[0], k[1], cells[k]["route"], cells[k]["lo"]) for k in best) + "\n")
+    W("best 5: " + ", ".join("%s (%s %.2f)" % ("x".join(str(v) for v in k), cells[k]["route"], cells[k]["lo"]) for k in best) + "\n")
     return "\n".join(out)
 
 
 def build(run_dir, sfx=""):
-    if sfx.startswith("_2d"):
+    if sfx.startswith("_2d") or sfx.startswith("_3d"):
         return build_2d(run_dir, sfx)
     rows = read_csv(os.path.join(run_dir, "gauntlet%s.csv" % sfx))
     cal = read_calibrate(os.path.join(run_dir, "calibrate%s.log" % sfx))

@@ -11,12 +11,14 @@ codelet coverage), so a coverage change re-emits the matching registry
 automatically. The one exception is `registry.h`, which is hand-written
 (see below). Deleting one is harmless: rebuild and it returns identical.
 
-**`*.txt` — wisdom. NOT generated.** These are measured verdicts, produced
-by races on a specific machine and not reproducible on demand. Deleting one
-costs hours of measurement and cannot be undone by a build.
+**`*.txt` — the FROZEN wisdom bundle. NOT generated.** These are measured
+verdicts, produced by races on a specific machine and not reproducible on
+demand. Deleting one costs hours of measurement and cannot be undone by a build.
 
-- `wisdom2_*.txt` — the LIVE store, the only files the library serves from.
-  See `src/core/wisdom2/README.md` for the format and its laws.
+- The LIVE store, the `wisdom2_*.txt` shards the library serves from, lives in
+  `src/wisdom/` since 2026-09-24 (`src/core/wisdom2/README.md`). Only the frozen
+  bundle below remains here, and the library reads it from here whatever store
+  it is given (`VFFT_FROZEN_WISDOM_DIR`).
 - `spike_wisdom.txt`, `rfft_wisdom.txt`, `oop_wisdom.txt`,
   `fft2d_{c2c,r2c,c2r}_wisdom.txt`, `spike_wisdom_padded.txt` — **FROZEN**,
   each carrying a `# FROZEN` stamp as its last-ever write. Kept because

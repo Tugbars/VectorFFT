@@ -279,7 +279,7 @@ the thing that makes another axis reachable.
 
 ## 6. How verdicts are stored
 
-Four shard files under `generator/generated/`:
+Four shard files under `src/wisdom/`:
 
 | shard | holds |
 |---|---|
@@ -659,6 +659,7 @@ flowchart TD
     ROOP --> RBK["<b>rbk</b> — the two-pass rows' tile<br/>chunk scratch KB, raced with roop"]
     ROOP --> TURN["<b>turn</b> — the TURN route<br/>rows stored transposed, the N2 columns<br/>as rows through the 1D plan at N1, one back-turn<br/>(no column chain; natural cells)"]
     ROOP --> CSK["<b>csk</b> — the SKEWED column pass<br/>one column stage into a scratch at pitch N2 + 8,<br/>the rows move it into the plane<br/>(N1 a mono radix; crossed with the row routes)"]
+    ROOP --> TPC["<b>tpc</b> — the TURNED PRIME column pass<br/>lanes transposed, the 1D prime route per row,<br/>transposed back (prime N1, raced vs the Bluestein;<br/>the rank-3 axis 0 takes it too)"]
 
     style NOMT fill:#5f1f1f,color:#fff
     style CUT fill:#3a3a3a,color:#fff

@@ -9,6 +9,7 @@
     python gauntlet/gauntlet.py cells     --group mixed --max 4000000          (list + duration estimate, nothing runs)
     python gauntlet/gauntlet.py run       --group 2d-small [--max 64]           (2D: every shape N1xN2 up to 64 per axis)
     python gauntlet/gauntlet.py run       --group 2d-odd | 2d-pow2 | 2d-mixed  (2D: odd/prime columns, the pow2 grid, smooth planes)
+    python gauntlet/gauntlet.py run       --group 3d-pow2                      (3D: the pow2 grid, every 2^a x 2^b x 2^c up to 2^22 points)
     python gauntlet/gauntlet.py run       --cells 47x64,23x256 | @shapes.txt    (2D shapes; never mixed with 1D lengths)
     python gauntlet/gauntlet.py calibrate / bench / report / merge / verify / gflops ... (the run's stages, one at a time)
 
@@ -29,26 +30,38 @@ import argparse, csv, ctypes, datetime, io, math, os, re, shutil, statistics, su
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-SHIPPED = os.path.join(ROOT, "src", "dag-fft-compiler", "generator", "generated")
+SHIPPED = os.path.join(ROOT, "src", "wisdom")                                    # the wisdom2 store (2026-09-24)
+FROZEN = os.path.join(ROOT, "src", "dag-fft-compiler", "generator", "generated")  # spike_wisdom.txt: the frozen bundle, the bench's argv contract
 RESULTS = os.path.join(HERE, "results")
 WISDOM_FILES = ("wisdom2_oop.txt", "wisdom2_prime.txt", "wisdom2_scr.txt", "wisdom2_2d.txt",
                 "wisdom2_3d.txt", "wisdom2_real.txt", "spike_wisdom.txt")
 EXE = ".exe" if os.name == "nt" else ""
 CONTROL_N = 4096
+CONTROL_3D = (64, 64, 64)   # the 3D contract's control cell (2026-09-24)
 CONTROL_2D = (64, 64)
 
 
 def is2d(c):
+    """a SHAPE: a 2D (N1, N2) or a 3D (N1, N2, N3) cell (the name predates the 3D contract of 2026-09-24)"""
     return isinstance(c, tuple)
 
 
+def ndim(c):
+    return len(c) if is2d(c) else 1
+
+
 def ckey(c):
-    """the cell's name everywhere it is written: N, or N1xN2"""
-    return "%dx%d" % c if is2d(c) else str(c)
+    """the cell's name everywhere it is written: N, N1xN2, or N1xN2xN3"""
+    return "x".join(str(v) for v in c) if is2d(c) else str(c)
 
 
 def cpts(c):
-    return c[0] * c[1] if is2d(c) else c
+    if not is2d(c):
+        return c
+    t = 1
+    for v in c:
+        t *= v
+    return t
 CONTROL_EVERY = 100
 PACE_MS = 300
 
@@ -89,9 +102,8 @@ def parse_cells(spec):
         tok = tok.strip()
         if not tok:
             return
-        if "x" in tok:                      # a 2D shape N1xN2
-            a, b = tok.split("x")
-            cells.add((int(a), int(b)))
+        if "x" in tok:                      # a 2D shape N1xN2 or a 3D shape N1xN2xN3
+            cells.add(tuple(int(v) for v in tok.split("x")))
         elif ".." in tok:
             a, b = tok.split("..")
             cells.update(range(int(a), int(b) + 1))
@@ -109,8 +121,8 @@ def parse_cells(spec):
                     add(line.split()[0])
         else:
             add(part)
-    if any(is2d(c) for c in cells) and not all(is2d(c) for c in cells):
-        raise SystemExit("a run is one contract: 1D lengths and 2D shapes cannot mix")
+    if len(set(ndim(c) for c in cells)) > 1:
+        raise SystemExit("a run is one contract: 1D lengths, 2D shapes and 3D shapes cannot mix")
     return sorted(cells)
 
 
@@ -146,7 +158,12 @@ def group_cells(group, maxn, primes):
         m = maxn or 512
         sm = [n for n in smooth(m, primes or (2, 3, 5)) if n >= 4 and n & (n - 1)]
         return sorted(set([(a, a) for a in sm] + [(a, 64) for a in sm] + [(64, a) for a in sm]))
-    raise SystemExit("unknown group %r (pow2 | primes | mixed | all | 2d-small | 2d-odd | 2d-pow2 | 2d-mixed)" % group)
+    # ── 3D groups (2026-09-24): shapes (N1, N2, N3), N1 = the first axis (the 2D column pass over N2*N3 lanes) ──
+    if group == "3d-pow2":                  # the pow2 GRID in three dims: every 2^a x 2^b x 2^c, 2..--max per axis (default 8192), volumes up to 2^22 points
+        m = maxn or 8192
+        return [(1 << a, 1 << b, 1 << c) for a in range(1, 14) for b in range(1, 14) for c in range(1, 14)
+                if (1 << a) <= m and (1 << b) <= m and (1 << c) <= m and a + b + c <= 22]
+    raise SystemExit("unknown group %r (pow2 | primes | mixed | all | 2d-small | 2d-odd | 2d-pow2 | 2d-mixed | 3d-pow2)" % group)
 
 
 def estimate_seconds(cells, threads, calibrate):
@@ -179,7 +196,7 @@ class Run:
         self.dims = dims                      # 1, or 2 for the 2D contract (shapes)
         self.threads = int(args.threads)
         self.ip = 1 if args.inplace else 0
-        self.sfx = ("_2d" if dims == 2 else "") + ("_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "")
+        self.sfx = ("_%dd" % dims if dims >= 2 else "") + ("_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "")
         name = args.name or self.default_name()
         self.dir = os.path.join(RESULTS, name)
         self.store = args.store or os.path.join(self.dir, "store")
@@ -217,7 +234,7 @@ class Run:
         if not os.path.isdir(self.store) or not os.listdir(self.store):
             os.makedirs(self.store, exist_ok=True)
             for f in WISDOM_FILES:
-                src = os.path.join(SHIPPED, f)
+                src = os.path.join(FROZEN if f == "spike_wisdom.txt" else SHIPPED, f)
                 if os.path.isfile(src):
                     shutil.copyfile(src, os.path.join(self.store, f))
             self.note("store: fresh copy of the shipped wisdom (%s)" % SHIPPED)
@@ -265,7 +282,7 @@ def cell_rows(store, n, ip):
     out = {}
     pl = "ip" if ip else "oop"
     if is2d(n):
-        pats = (("wisdom2_2d.txt", r"@cell t=c2c n=%dx%d q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (n[0], n[1], pl)),)
+        pats = (("wisdom2_%dd.txt" % len(n), r"@cell t=c2c n=%s q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (ckey(n), pl)),)
     else:
         pats = (("wisdom2_oop.txt", r"@cell t=c2c n=%d q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (n, pl)),
                 ("wisdom2_prime.txt", r"@cell t=c2c n=%d q=1 [^|\n]*\| ([^\n]*)" % n))
@@ -286,7 +303,9 @@ def route_of(rows):
             return re.search(r"il_route=(\w+)", v).group(1)
     for k, v in rows.items():                 # the 2D tier's rows: the column engine
         if "ord=nat" in k and "chain=" in v:
-            return "blu" if re.search(r"\bblu=[1-9]", v) else "chain"
+            if re.search(r"\bblu=[1-9]", v):
+                return "tpc" if re.search(r"\btpc=1\b", v) else "blu"   # tpc = the turned prime column pass (2026-09-24)
+            return "chain"
     for k, v in rows.items():
         if "eng=rader" in v or "eng=bluestein" in v:
             return "prime"
@@ -300,7 +319,7 @@ def stage_calibrate(run, cells, recal):
     if os.path.isfile(run.cal_log):
         for line in io.open(run.cal_log, encoding="utf-8", errors="ignore"):
             f = line.split()
-            if len(f) >= 2 and re.match(r"^\d+(x\d+)?$", f[0]) and f[1] in ("banked", "REFUSED") and not recal:
+            if len(f) >= 2 and re.match(r"^\d+(x\d+){0,2}$", f[0]) and f[1] in ("banked", "REFUSED") and not recal:
                 done.add(f[0])
     todo = [n for n in cells if ckey(n) not in done]
     run.note("calibrate: %d cells (%d already done)%s" % (len(todo), len(done), ", RECALIBRATE (every cell re-raced)" if recal else ""))
@@ -309,7 +328,7 @@ def stage_calibrate(run, cells, recal):
     for i, n in enumerate(todo, 1):
         before = cell_rows(run.store, n, run.ip)
         s0 = time.time()
-        shape = ["--2d", str(n[0]), str(n[1])] if is2d(n) else [str(n)]
+        shape = (["--%dd" % len(n)] + [str(v) for v in n]) if is2d(n) else [str(n)]
         r = subprocess.run([probe, run.store] + shape + ["0", str(run.ip), str(run.threads), "1" if recal else "0"],
                            capture_output=True, text=True, errors="replace", env=run.env())
         ms = int((time.time() - s0) * 1000)
@@ -336,7 +355,11 @@ def stage_calibrate(run, cells, recal):
 
 def bench_cell(run, n, csv_path):
     bench = run.exe("bench_1d_vs_mkl")
-    if is2d(n):
+    if is2d(n) and len(n) == 3:
+        # the 3D interleaved cell: the shape N1xN2xN3 in the N slot (bench --3dilnat, 2026-09-24)
+        flag = ["--3dilnat"]
+        nstr, kstr = ckey(n), "1"
+    elif is2d(n):
         # the 2D interleaved cell: N1 in the N slot, N2 in the K slot (bench --2dilnat)
         flag = ["--2dilnat"]
         nstr, kstr = str(n[0]), str(n[1])
@@ -358,7 +381,7 @@ def control_cell(run):
     tmp = os.path.join(run.dir, ".ctl.tmp.csv")
     if os.path.isfile(tmp):
         os.remove(tmp)
-    bench_cell(run, CONTROL_2D if run.dims == 2 else CONTROL_N, tmp)
+    bench_cell(run, CONTROL_3D if run.dims == 3 else CONTROL_2D if run.dims == 2 else CONTROL_N, tmp)
     if os.path.isfile(tmp):
         lines = io.open(tmp, encoding="utf-8", errors="ignore").read().splitlines(True)
         if lines:
@@ -373,13 +396,13 @@ def stage_bench(run, cells):
     if os.path.isfile(run.cal_log):
         for line in io.open(run.cal_log, encoding="utf-8", errors="ignore"):
             f = line.split()
-            if len(f) >= 2 and re.match(r"^\d+(x\d+)?$", f[0]) and f[1] == "banked":
+            if len(f) >= 2 and re.match(r"^\d+(x\d+){0,2}$", f[0]) and f[1] == "banked":
                 banked.add(f[0])
     have = {}
     if os.path.isfile(run.csv):
         for r in csv.DictReader(open(run.csv, encoding="utf-8", errors="ignore")):
             try:
-                k = "%dx%d" % (int(r["N1"]), int(r["N2"])) if "N1" in r else str(int(r["N"]))
+                k = "x".join(str(int(r[c])) for c in ("N1", "N2", "N3") if c in r) if "N1" in r else str(int(r["N"]))
                 have[k] = have.get(k, 0) + 1
             except (KeyError, ValueError):
                 pass
@@ -418,7 +441,7 @@ def stage_verify(run, cells):
     vcsv = os.path.join(run.dir, "verify%s.csv" % run.sfx)
     if os.path.isfile(vcsv):
         os.remove(vcsv)
-    twod = ["--2d"] if cells and is2d(cells[0]) else []
+    twod = ["--%dd" % len(cells[0])] if cells and is2d(cells[0]) else []
     args = [probe] + (["--ip"] if run.ip else []) + ["--csv", vcsv] + twod + [run.store] + [ckey(n) for n in cells]
     r = subprocess.run(args, capture_output=True, text=True, errors="replace", env=run.env())
     out = [l for l in (r.stdout + r.stderr).splitlines() if not l.startswith("[")]
@@ -473,7 +496,7 @@ def stage_gflops(run):
     rows = {}
     for r in csv.DictReader(open(run.csv, encoding="utf-8", errors="ignore")):
         try:
-            key = (int(r["N1"]), int(r["N2"])) if "N1" in r else int(r["N"])
+            key = tuple(int(r[c]) for c in ("N1", "N2", "N3") if c in r) if "N1" in r else int(r["N"])
             rows.setdefault(key, []).append(r)
         except (KeyError, ValueError):
             pass
@@ -512,7 +535,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("verb", choices=["run", "calibrate", "bench", "report", "merge", "cells", "verify", "gflops"])
     ap.add_argument("--cells", help="4096 | 2..4096 | 1000,1024,4096 | @file")
-    ap.add_argument("--group", choices=["pow2", "primes", "mixed", "all", "2d-small", "2d-odd", "2d-pow2", "2d-mixed"])
+    ap.add_argument("--group", choices=["pow2", "primes", "mixed", "all", "2d-small", "2d-odd", "2d-pow2", "2d-mixed", "3d-pow2"])
     ap.add_argument("--max", type=int, help="ceiling for a group (pow2 2^23, primes 16384, mixed 4000000, 2d-small 64 per axis, 2d-pow2 8192 per axis, 2d-mixed 512)")
     ap.add_argument("--primes", help="the prime set of the mixed group, e.g. 2,3,5,7 (default 2,3,5)")
     ap.add_argument("--threads", default="1")
@@ -536,11 +559,13 @@ def main():
             cells = parse_cells("@" + cf)
         else:
             raise SystemExit("give --cells or --group")
-    dims = 2 if cells and is2d(cells[0]) else 1
+    dims = ndim(cells[0]) if cells else 1
     if dims == 1 and not cells and args.name:      # report / merge / gflops on an existing run: its contract from its files
         d = os.path.join(RESULTS, args.name)
-        if os.path.isfile(os.path.join(d, "cells.txt")) and "x" in io.open(os.path.join(d, "cells.txt"), encoding="utf-8").read(64):
-            dims = 2
+        if os.path.isfile(os.path.join(d, "cells.txt")):
+            first = io.open(os.path.join(d, "cells.txt"), encoding="utf-8").readline().strip()
+            if "x" in first:
+                dims = first.count("x") + 1
     run = Run(args, dims)
     cal_s, bench_s = estimate_seconds(cells, run.threads, args.calibrate)
     if args.verb == "cells":

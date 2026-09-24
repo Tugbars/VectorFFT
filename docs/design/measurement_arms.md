@@ -830,6 +830,19 @@ E1.5d csk - the SKEWED column pass   RACED with E1.5 (crossed with the row route
                                       door picks it at 16x4096 (133.6 -> 107.3 us),
                                       16x1024, 16x256, 32x64 and keeps the chain at
                                       32x4096, 8x4096, 64x64.
+E1.5e tpc - the TURNED PRIME column  RACED at create against the column Bluestein at a
+       pass                           prime N1 (no chain; c2c, axis 0), min of 3 alternated
+                                      on scratch planes, banked tpc=1 beside blu=M on the
+                                      column row (2026-09-24): the lanes transposed into a
+                                      scratch at pitch N1 + 8, the in-place natural K=1 plan
+                                      at N1 on every row, transposed back; the row pass as
+                                      usual. The rank-3 tier's axis 0 is the same pass over
+                                      N2*N3 lanes and takes it through the descriptor,
+                                      serial. Bench: 131x4096 0.51 -> 1.49x, 257x256 0.69 ->
+                                      1.83x, 131x64x64 0.54 -> 1.30x, 257x16x16 0.70 -> 1.81x;
+                                      509x1024 0.87 -> 0.96 (the 1D route's own margin).
+                                      VFFT_IL2D_TPC=1|0 pins (never banks); a row from
+                                      before the arm races it on its next create.
 E1.0b the RACE'S PLACEMENT            FIXED 2026-09-23: the axis race executed every arm
                                       in place (one buffer, z -> z) while an out-of-place
                                       cell is served x -> y; a placement-sensitive route

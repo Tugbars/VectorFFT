@@ -1,0 +1,5 @@
+2x2x4096   banked      7225ms raced     chain
+8x8x8      banked      1083ms raced     chain
+16x16x16   banked      1450ms raced     chain
+64x64x64   banked      2072ms raced     chain
+256x256x16 banked      2385ms raced     chain

@@ -34,10 +34,13 @@ in `include/vfft.h` (the capabilities table + the SIGNATURE TABLE /
 SUPPORT MATRIX blocks above `vfft_execute`); the machine proof is the gate
 battery (`api_matrix_gate` (the serve/refuse table, benches/api_matrix_gate.c)).
 
-Wisdom: per-feature files auto-loaded as a bundle; canonical home is
-`src/dag-fft-compiler/generator/generated/` (copies elsewhere are operational
-leftovers). `VFFT_WISDOM_DIR` points the bundle at another directory (gates and
-benches use a scratch dir); misses calibrate at `config.rigor` and persist.
+Wisdom: the store is `src/wisdom/` (the `wisdom2_*.txt` shards and the per-host
+subtrees); `VFFT_WISDOM_DIR` or an explicit `vfft_wisdom_load(dir)` points the
+library at another directory (gates and benches use a scratch copy), and with
+neither the build's compiled default (`src/wisdom/`) opens READ-ONLY. The frozen
+bundle (`spike_wisdom.txt`, `bluestein_wisdom.txt`, `c2r_path.txt`) stays in
+`src/dag-fft-compiler/generator/generated/` and is read from there. Misses race
+at `config.rigor` and bank.
 
 Runtime knobs (diagnostics/kill switches): `VFFT_NO_ZTURN` (fall back to the
 legacy zsplit cascade), `VFFT_FORCE_ZROUTE` (pin the K=1 cascade route),

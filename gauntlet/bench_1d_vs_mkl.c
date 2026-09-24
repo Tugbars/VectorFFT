@@ -443,6 +443,7 @@ static int g_k1_direct_cell = 0;  /* the policy's admission for the direct K=1 c
 static int g_k1noop_mt = 0;          /* --k1noop --mt: the odd-N flat DIT's threaded verdict
                                        * (il_flatdit_mt.h) vs MKL at the same T — the
                                        * two-team protocol of --3dil --mt (traps a-d) */
+static int g_k3nat = 0;              /* --3dilnat (2026-09-24): the 3D interleaved gauntlet cell, the shape N1xN2xN3 in the N slot */
 static int g_k2nat = 0;              /* --2dilnat (2026-09-23): the 2D interleaved gauntlet
                                       * cell -- the K=1 natural cell's protocol on a
                                       * dims=2 plan, N1 x N2, OOP, natural, one thread;
@@ -918,13 +919,14 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
  * row-replace key (first four fields + flip) and the driver's readers hold.
  * ═════════════════════════════════════════════════ */
 #ifdef VFFT_HAS_MKL
-static double k2z_time_mkl(int N1, int N2, const double *z0, size_t total)
-{
+static double k2z_time_mkl(int N1, int N2, int N3, const double *z0, size_t total)
+{   /* N3 = 0: the 2D cell; N3 > 0: the 3D cell (2026-09-24) */
     DFTI_DESCRIPTOR_HANDLE d = NULL;
-    MKL_LONG dims[2];
+    MKL_LONG dims[3];
     dims[0] = N1;
     dims[1] = N2;
-    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims) != DFTI_NO_ERROR)
+    dims[2] = N3;
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, N3 > 0 ? 3 : 2, dims) != DFTI_NO_ERROR)
         return 0;
     DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
     if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
@@ -967,19 +969,26 @@ static double k2z_time_mkl(int N1, int N2, const double *z0, size_t total)
 }
 #endif
 
-static void run_k2z_cell(int N1, int N2, FILE *out, int cool_ms, int flip)
-{
-    const char *plan_s = "z:il2d", *path = "nat-oop";
-    if (N1 < 2 || N2 < 2)
+static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int flip)
+{   /* N3 = 0: the 2D cell (N2 rides the K argument); N3 > 0: the 3D cell,
+     * the same protocol on a dims=3 plan against MKL DFTI 3D (2026-09-24) */
+    const int nd = N3 > 0 ? 3 : 2;
+    const char *plan_s = nd == 3 ? "z:il3d" : "z:il2d", *path = "nat-oop";
+    char shape[48];
+    if (nd == 3)
+        snprintf(shape, sizeof shape, "%dx%dx%d", N1, N2, N3);
+    else
+        snprintf(shape, sizeof shape, "%dx%d", N1, N2);
+    if (N1 < 2 || N2 < 2 || (nd == 3 && N3 < 2))
     {
-        printf("%dx%d: a 2D cell needs N1 >= 2 and N2 >= 2 (N2 rides the K argument)\n", N1, N2);
+        printf("%s: a %dD cell needs every axis >= 2\n", shape, nd);
         return;
     }
     bench_pin_one_thread();   /* the one-thread protocol + the sibling guard */
     vfft_wisdom *W = k1z_bundle();
     if (!W)
     {
-        printf("%dx%d %-8s   SKIP (front-door bundle unavailable)\n", N1, N2, plan_s);
+        printf("%s %-8s   SKIP (front-door bundle unavailable)\n", shape, plan_s);
         return;
     }
     vfft_config_t cfg;
@@ -987,9 +996,10 @@ static void run_k2z_cell(int N1, int N2, FILE *out, int cool_ms, int flip)
     cfg.transform = VFFT_C2C;
     cfg.placement = VFFT_OUTOFPLACE;
     cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 2;
+    cfg.dims = nd;
     cfg.n[0] = N1;
     cfg.n[1] = N2;
+    cfg.n[2] = nd == 3 ? N3 : 0;
     cfg.howmany = 1;
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
@@ -998,12 +1008,12 @@ static void run_k2z_cell(int N1, int N2, FILE *out, int cool_ms, int flip)
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
-        printf("%dx%d %-8s   vfft_create FAILED\n", N1, N2, plan_s);
+        printf("%s %-8s   vfft_create FAILED\n", shape, plan_s);
         return;
     }
-    size_t total = (size_t)N1 * (size_t)N2;
+    size_t total = (size_t)N1 * (size_t)N2 * (size_t)(nd == 3 ? N3 : 1);
     double *z0 = alloc_d(2 * total), *S = alloc_d(2 * total), *rt = alloc_d(2 * total);
-    srand(42 + 131 * N1 + N2);
+    srand(42 + 131 * N1 + N2 + 7919 * N3);
     for (size_t i = 0; i < 2 * total; i++)
         z0[i] = (double)rand() / RAND_MAX - 0.5;
     /* roundtrip gate through the API */
@@ -1021,10 +1031,11 @@ static void run_k2z_cell(int N1, int N2, FILE *out, int cool_ms, int flip)
     {   /* the correctness column is the CROSS-ENGINE elementwise compare:
          * both engines natural, same input, same spectrum (as --k1nat) */
         DFTI_DESCRIPTOR_HANDLE d = NULL;
-        MKL_LONG dims[2];
+        MKL_LONG dims[3];
         dims[0] = N1;
         dims[1] = N2;
-        if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims) == DFTI_NO_ERROR)
+        dims[2] = N3;
+        if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, nd, dims) == DFTI_NO_ERROR)
         {
             DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
             if (DftiCommitDescriptor(d) == DFTI_NO_ERROR)
@@ -1049,7 +1060,7 @@ static void run_k2z_cell(int N1, int N2, FILE *out, int cool_ms, int flip)
 #ifdef VFFT_HAS_MKL
     if (flip)
     {
-        mns = k2z_time_mkl(N1, N2, z0, total);
+        mns = k2z_time_mkl(N1, N2, N3, z0, total);
         cachebust();
         pace(cool_ms);
         vns = k1z_time_vfft(h, z0, S, total);
@@ -1059,7 +1070,7 @@ static void run_k2z_cell(int N1, int N2, FILE *out, int cool_ms, int flip)
         vns = k1z_time_vfft(h, z0, S, total);
         cachebust();
         pace(cool_ms);
-        mns = k2z_time_mkl(N1, N2, z0, total);
+        mns = k2z_time_mkl(N1, N2, N3, z0, total);
     }
 #else
     (void)cool_ms;
@@ -1068,13 +1079,17 @@ static void run_k2z_cell(int N1, int N2, FILE *out, int cool_ms, int flip)
 #endif
     double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
     double vgf = (vns > 0) ? 5.0 * (double)total * log2((double)total) / vns : 0;
-    printf("%5dx%-5d %-8s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e  %s\n",
-           N1, N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h));
+    printf("%11s %-8s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e  %s\n",
+           shape, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h));
     if (out)
     {
         char row[320];
-        snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
-                 N1, N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
+        if (nd == 3)
+            snprintf(row, sizeof row, "%d,%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
+                     N1, N2, N3, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
+        else
+            snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
+                     N1, N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
         fflush(out);
         if (!k1z_csv_replace(g_csv_path, row))
             fputs(row, out);
@@ -4744,6 +4759,10 @@ int main(int argc, char **argv)
         {
             il2d = 1; /* three-arm interleaved-2D scoping cell (M0a) */
         }
+        else if (strcmp(argv[1], "--3dilnat") == 0)
+        {
+            g_k3nat = 1; /* the 3D interleaved GAUNTLET cell (2026-09-24): N1xN2xN3 in the N argument */
+        }
         else if (strcmp(argv[1], "--2dilnat") == 0)
         {
             g_k2nat = 1; /* the 2D interleaved GAUNTLET cell (2026-09-23): N1 = the N
@@ -5095,16 +5114,28 @@ int main(int argc, char **argv)
                                 * in ZTURN-T's band (pow2 4096; 2^a*odd 12288) */
                                { 16, 16, 4096 },  { 8, 16, 12288 }, { 32, 32, 4096 } };
             int nc = (int)(sizeof cells / sizeof cells[0]), ci;
-            const char *cf = getenv("VFFT_3DIL_CELLS"); /* "16x16x16,64x64x64" filter */
-            for (ci = 0; ci < nc; ci++) {
-                if (cf) {
-                    char tag[40];
-                    snprintf(tag, sizeof tag, "%dx%dx%d", cells[ci][0], cells[ci][1], cells[ci][2]);
-                    if (!strstr(cf, tag)) continue;
+            const char *cf = getenv("VFFT_3DIL_CELLS"); /* "16x16x16,64x64x64": the cells to run,
+                                                         * any shapes, in this order (2026-09-24:
+                                                         * a list, no longer a filter of the
+                                                         * built-in cells above, which run when
+                                                         * the variable is unset) */
+            if (cf) {
+                const char *p = cf;
+                while (*p) {
+                    int a, b, c;
+                    if (sscanf(p, "%dx%dx%d", &a, &b, &c) == 3 && a > 0 && b > 0 && c > 0) {
+                        run_3dil_cell(a, b, c, rounds, W, mt ? g_mt : 1);
+                        pace(pace_ms);
+                    } else
+                        fprintf(stderr, "[3dil] VFFT_3DIL_CELLS: cannot read a shape at '%.20s'\n", p);
+                    while (*p && *p != ',') p++;
+                    while (*p == ',' || *p == ' ') p++;
                 }
-                run_3dil_cell(cells[ci][0], cells[ci][1], cells[ci][2], rounds, W, mt ? g_mt : 1);
-                pace(pace_ms);
-            }
+            } else
+                for (ci = 0; ci < nc; ci++) {
+                    run_3dil_cell(cells[ci][0], cells[ci][1], cells[ci][2], rounds, W, mt ? g_mt : 1);
+                    pace(pace_ms);
+                }
         }
         if (W) vfft_wisdom_free(W);
         return 0;
@@ -5472,7 +5503,9 @@ int main(int argc, char **argv)
     }
     if (out && csv_pos == 0)
     {
-        if (g_k2nat)
+        if (g_k3nat)
+            fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
+        else if (g_k2nat)
             fprintf(out, "N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
         else if (g_ilmt)
             fprintf(out, "N,K,path,threads,ours_mt_ns,ours_st_ns,mkl_mt_ns,mkl_st_ns,"
@@ -5495,10 +5528,25 @@ int main(int argc, char **argv)
             fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip%s\n",
                     g_k1noop_mt ? ",engaged" : "");
     }
+    if (g_k3nat)
+    {   /* --3dilnat: the 3D interleaved gauntlet cell, the shape N1xN2xN3 in
+         * the N argument; nothing else runs in this process (2026-09-24) */
+        int n1 = 0, n2 = 0, n3 = 0;
+        if (argc < 5 || sscanf(argv[4], "%dx%dx%d", &n1, &n2, &n3) != 3)
+        {
+            printf("--3dilnat needs the shape N1xN2xN3 in the N argument\n");
+            return 2;
+        }
+        run_k2z_cell(n1, n2, n3, out, cool_ms, flip);
+        if (out)
+            fclose(out);
+        printf("\nbenched 1 cell.  CSV -> %s\n", csv);
+        return 0;
+    }
     if (g_k2nat)
     {   /* --2dilnat: the 2D interleaved gauntlet cell (N1 = the N argument,
          * N2 = the K argument); nothing else runs in this process */
-        run_k2z_cell(target_N, (int)target_K, out, cool_ms, flip);
+        run_k2z_cell(target_N, (int)target_K, 0, out, cool_ms, flip);
         if (out)
             fclose(out);
         printf("\nbenched 1 cell.  CSV -> %s\n", csv);

@@ -171,7 +171,38 @@ both, every arm read about 1.3x slower than the same plan in the probe and a 64x
 verdict was a lottery. With a second buffer for out-of-place cells and aligned planes,
 the race agrees with the probe and the bench.
 
-## Why four arms and not one method
+## Arm 5: the turned prime column pass (`tpc=1`)
+
+**Solves:** a prime N1 above 47, where no direct column kernel exists and the column
+pass was the column Bluestein: a chirp multiply, two length-M column chains over every
+lane (M the next power of two at or above 2·N1 - 1) and the pointwise kernel. Against
+MKL it read 0.51x at 131x4096 and 0.69x at 257x256, and the rank-3 tier's first axis is
+this very pass over N2·N3 lanes, so 131x64x64 read 0.54x and 257x16x16 0.70x. The 1D prime
+route at the same lengths wins: 131 at 2.69x, 257 at 3.14x, 509 at 1.18x.
+
+The turned pass runs the axis through that route. The plane's lanes are transposed into
+a scratch of N2 rows at pitch N1 + 8 (2x2 complex blocks through one 128-bit lane
+permute, the rows blocked so a block's source lines stay in L1), the in-place natural
+K=1 plan at N1 runs on every row of the scratch, and the rows are transposed back into
+the plane. The row pass follows as on any route. The door races it against the
+Bluestein at create, min of three alternated on scratch planes, and banks `tpc=1` on the
+column row beside `blu=M`; the loser's pieces are freed. The rank-3 tier reaches it
+through the same column descriptor, serially (one plan). Timed through the bench on the
+sweep's cells:
+
+| cell | column Bluestein | turned pass |
+|---|---|---|
+| 131x4096 | 0.51x | 1.49x |
+| 257x256 | 0.69x | 1.83x |
+| 509x1024 | 0.87x | 0.96x |
+| 131x64x64 (3D) | 0.54x | 1.30x |
+| 257x16x16 (3D) | 0.70x | 1.81x |
+| 97x97x97 (3D) | 1.23x | 1.90x |
+
+At 509 and 1021 the 1D route's own margin is thin (1.18x, 1.14x) and the turned pass
+lands at parity; the lever there is the 1D prime route itself.
+
+## Why five arms and not one method
 
 The winner flips with the shape, and the door has logged every arm on the same cells:
 
@@ -183,6 +214,7 @@ The winner flips with the shape, and the door has logged every arm on the same c
 | 32, 64 | two-pass batched | 1.03 to 1.30x over the plain route |
 | lengths with no mono kernel and no twin | plain route | the only arm |
 | 16 rows and long rows | skewed column pass | 1.25 to 1.6x over the chain |
+| a prime N1 above 47 | turned prime column pass | 1.5 to 2.9x over the column Bluestein |
 
 A dominant variant becomes the kernel; none of these dominates, so they stay arms and
 the race stays. What was deleted is the arm that never won: the out-of-place row child

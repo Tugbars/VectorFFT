@@ -1,0 +1,7 @@
+2026-09-24 12:01:57 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-24 12:01:57 run: 5 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-24 12:01:57 calibrate: 5 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-09-24 12:02:11   calibrated 5/5 (256x256x16), 14 s elapsed
+2026-09-24 12:02:11 bench: 5 cells (0 already benched, 0 not banked -> not benched)
+2026-09-24 12:02:20   benched 5/5 (256x256x16), 8 s elapsed
+2026-09-24 12:02:22 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_smoke_2026-09-24\report_3d.md

@@ -304,9 +304,113 @@ static int probe2(vfft_wisdom *W, int N1, int N2)
     free(x); free(X); free(y); free(r);
     return ok;
 }
+/* the 3D reference (2026-09-24): three axis passes in long double, each a
+ * naive DFT along one axis with the k*n mod N walk; O(N1 N2 N3 (N1+N2+N3)) */
+static void naive_dft3(const double *x, long double *X, int N1, int N2, int N3)
+{
+    const size_t T = (size_t)N1 * N2 * N3;
+    long double *A = malloc(2 * T * sizeof(long double)), *B = malloc(2 * T * sizeof(long double));
+    const long double PI = 3.141592653589793238462643383279L;
+    int Ns[3] = { N1, N2, N3 };
+    size_t i;
+    for (i = 0; i < 2 * T; i++) A[i] = x[i];
+    for (int ax = 2; ax >= 0; ax--)
+    {
+        const int N = Ns[ax];
+        const size_t stride = (ax == 2) ? 1 : (ax == 1) ? (size_t)N3 : (size_t)N2 * N3;
+        const size_t nlines = T / (size_t)N;
+        long double *c = malloc((size_t)N * sizeof(long double)), *s = malloc((size_t)N * sizeof(long double));
+        for (int j = 0; j < N; j++) { long double a = -2.0L * PI * (long double)j / (long double)N; c[j] = cosl(a); s[j] = sinl(a); }
+        for (size_t line = 0; line < nlines; line++)
+        {
+            /* the line's base: enumerate the other two axes */
+            size_t base;
+            if (ax == 2) base = line * (size_t)N3;
+            else if (ax == 1) base = (line / (size_t)N3) * (size_t)N2 * N3 + (line % (size_t)N3);
+            else base = line;
+            for (int k = 0; k < N; k++)
+            {
+                long double re = 0, im = 0; int idx = 0;
+                for (int n = 0; n < N; n++)
+                {
+                    const size_t p = base + (size_t)n * stride;
+                    const long double xr = A[2 * p], xi = A[2 * p + 1];
+                    re += xr * c[idx] - xi * s[idx];
+                    im += xr * s[idx] + xi * c[idx];
+                    idx += k; if (idx >= N) idx -= N;
+                }
+                B[2 * (base + (size_t)k * stride)] = re; B[2 * (base + (size_t)k * stride) + 1] = im;
+            }
+        }
+        free(c); free(s);
+        { long double *t = A; A = B; B = t; }
+    }
+    for (i = 0; i < 2 * T; i++) X[i] = A[i];
+    free(A); free(B);
+}
+
+#ifdef VFFT_HAS_MKL
+static int mkl_cell3(int N1, int N2, int N3, const double *x, double *y, double *r)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    MKL_LONG dims[3];
+    dims[0] = N1; dims[1] = N2; dims[2] = N3;
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 3, dims) != DFTI_NO_ERROR) return 0;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR) { DftiFreeDescriptor(&d); return 0; }
+    DftiComputeForward(d, (void *)x, y);
+    DftiComputeBackward(d, y, r);
+    DftiFreeDescriptor(&d);
+    return 1;
+}
+#endif
+
+static int probe3(vfft_wisdom *W, int N1, int N2, int N3)
+{
+    vfft_config_t cfg; vfft_plan h; double ef = 1, er = 1, el = 1; int ok;
+    const int N = N1 * N2 * N3;
+    const size_t tot = 2 * (size_t)N;
+    double *x = calloc(tot, 8), *y = calloc(tot, 8), *r = calloc(tot, 8);
+    long double *X = calloc(tot, sizeof(long double));
+    srand(4242 + 131 * N1 + 17 * N2 + N3);
+    for (size_t j = 0; j < tot; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
+    naive_dft3(x, X, N1, N2, N3);
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C; cfg.placement = VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
+    cfg.dims = 3; cfg.n[0] = N1; cfg.n[1] = N2; cfg.n[2] = N3; cfg.howmany = 1; cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
+    h = vfft_create(&cfg);
+    if (h)
+    {
+        vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
+        vfft_execute(h, VFFT_BACKWARD, y, NULL, r, NULL);
+        ef = relerr(y, X, N, 1.0); el = l2err(y, X, N, 1.0); er = rterr(r, x, N, 1.0 / N);
+    }
+    ok = h && ef < 1e-11 && er < 1e-11;
+    printf("%dx%dx%-5d %-7s oop fwd %.2e  rt %.2e  %s", N1, N2, N3, h ? "3d" : "NOPLAN", ef, er, ok ? "ok" : "*** FAIL ***");
+    if (h && g_csv) fprintf(g_csv, "VectorFFT,%dx%dx%d,%.3e,%.3e,%.3e\n", N1, N2, N3, el, ef, er);
+#ifdef VFFT_HAS_MKL
+    if (g_csv)
+    {
+        double *my = calloc(tot, 8), *mr = calloc(tot, 8);
+        if (mkl_cell3(N1, N2, N3, x, my, mr))
+        {
+            double mf = relerr(my, X, N, 1.0), ml = l2err(my, X, N, 1.0), mrt = rterr(mr, x, N, 1.0 / N);
+            printf("  mkl fwd %.2e", mf);
+            fprintf(g_csv, "MKL,%dx%dx%d,%.3e,%.3e,%.3e\n", N1, N2, N3, ml, mf, mrt);
+        }
+        free(my); free(mr);
+    }
+#endif
+    printf("\n");
+    if (h) vfft_destroy(h);
+    free(x); free(y); free(r); free(X);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
-    int fails = 0, cells = 0, a0 = 1, twod = 0;
+    int fails = 0, cells = 0, a0 = 1, twod = 0, threed = 0;
     const char *csv = NULL;
     while (argc > a0 && argv[a0][0] == '-')
     {
@@ -315,6 +419,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a0], "--k") && a0 + 1 < argc) { g_k = atoi(argv[a0 + 1]); a0++; }
         else if (!strcmp(argv[a0], "--csv") && a0 + 1 < argc) { csv = argv[a0 + 1]; a0++; }
         else if (!strcmp(argv[a0], "--2d")) twod = 1;
+        else if (!strcmp(argv[a0], "--3d")) threed = 1;   /* the 3D cell (2026-09-24): N1xN2xN3 */
         else break;
         a0++;
     }
@@ -337,6 +442,14 @@ int main(int argc, char **argv)
     for (int a = a0 + 1; a < argc; a++)
     {
         int lo = 0, hi = 0;
+        if (threed)
+        {
+            int n1 = 0, n2 = 0, n3 = 0;
+            if (sscanf(argv[a], "%dx%dx%d", &n1, &n2, &n3) != 3 || n1 < 2 || n2 < 2 || n3 < 2) { printf("bad shape %s\n", argv[a]); fails++; continue; }
+            cells++;
+            if (!probe3(W, n1, n2, n3)) fails++;
+            continue;
+        }
         if (twod)
         {
             int n1 = 0, n2 = 0;

@@ -30,7 +30,7 @@ The lifecycle law, with no exceptions:
 ### 2.1 Files
 
 ```text
-src/dag-fft-compiler/generator/generated/
+src/wisdom/                                   (since 2026-09-24; per-host subtrees beside, e.g. Zen4/)
   wisdom2_oop.txt         1D c2c out-of-place verdicts + ALL 1D c2c order
                           (ord=nat) verdicts, both placements (2026-09-02)
   wisdom2_scr.txt         1D c2c in-place SCRAMBLED chains + trig (dct/dst/dht) verdicts
@@ -66,8 +66,12 @@ droppings, not wisdom — never migration inputs.
 
 ### 2.2 Directory and the write guard
 
-- One directory holds the store: `$VFFT_WISDOM_DIR`, else the current
-  directory.
+- One directory holds the store: an explicit `vfft_wisdom_load(dir)`, else
+  `$VFFT_WISDOM_DIR`, else the build's compiled default (`src/wisdom/`,
+  `VFFT_WISDOM_DIR_DEFAULT`), else the current directory; the last two open
+  READ-ONLY. The frozen bundle (`spike_wisdom.txt` and its companions) is not
+  in the store: it stays in `generator/generated/` and the library reads it
+  from there (`VFFT_FROZEN_WISDOM_DIR`).
 - **The library default is read-only wisdom.** In serving mode (default),
   hits are served, and a miss races in memory for process coherence but
   writes nothing to disk (one loud line per process notes the unpersisted
@@ -84,9 +88,8 @@ droppings, not wisdom — never migration inputs.
 ### 2.3 Text contract
 
 Files are LF-only (pinned by `.gitattributes`; writers open `"wb"` and emit
-`\n`; readers tolerate `\r\n`). New wisdom filenames must end `.txt`
-directly in `generated/` — the `.gitignore` negation covers exactly that
-pattern, never a subfolder.
+`\n`; readers tolerate `\r\n`). New wisdom filenames must end `.txt` under
+`src/wisdom/` — the `.gitignore` negation covers that tree, subfolders included.
 
 ## 3 · Record grammar
 

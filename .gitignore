@@ -83,9 +83,6 @@ build_tuned/benches/mb_256.txt
 # Generated wisdom files are committed — single source of truth, one folder,
 # visible to everyone (spike/rfft/c2r/bluestein/oop). Keep all wisdoms here.
 !src/dag-fft-compiler/generator/generated/*.txt
-# wisdom2 store rides the same negation — belt-and-suspenders line so a future
-# pattern reshuffle cannot silently untrack it. See src/core/wisdom2/README.md.
-!src/dag-fft-compiler/generator/generated/wisdom2_*.txt
 
 # Refactor-safety baseline artifacts are COMMITTED — they are the reference the
 # migration diffs against, so an ignored baseline means the harness reports green
@@ -120,3 +117,9 @@ docs/design/exact_trig_constants.md
 
 # The gauntlet's runs live in gauntlet/results/ (the standing runs are tracked: the
 # csv rows are the record; store/*.txt and *.log stay ignored by the rules above).
+
+# The wisdom store lives in src/wisdom/ (2026-09-24): the shards and the per-host
+# subtrees are tracked there; the global *.txt ignore above must not swallow them.
+!src/wisdom/**/*.txt
+# The merge writes a backup beside each shard (gauntlet merge); backups are local, never tracked.
+src/wisdom/**/*.bak_pre_merge_*

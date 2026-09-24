@@ -39,7 +39,7 @@ pure loss. So radix ≤ 8 is never blocked, 16 is raced, 32 and 64 are always bl
 
 ## 2. What the banked wisdom uses
 
-The shipped store (`generated/wisdom2_*.txt`) has 11,686 rows. IL routes: prime 3097,
+The shipped store (`src/wisdom/wisdom2_*.txt`) has 11,686 rows. IL routes: prime 3097,
 chain3 2070, pair 1130, flat 1002, ZTURN-T 85, mono 76, four-step 8.
 
 Kernel choices across the 2,250 banked pair slots:

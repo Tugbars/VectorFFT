@@ -47,7 +47,8 @@ ROOT = HERE.parent  # repo root: highSpeedFFT/
 # — the generated registry_{isa}.h holds externs + the init that wires them.
 DAG          = ROOT / 'src' / 'dag-fft-compiler'   # the compiler (generator + generated + jit)
 DAG_CORE     = ROOT / 'src' / 'core'               # the runtime library (moved out of the compiler)
-DAG_GEN      = DAG / 'generator' / 'generated'   # generated registry + spike_wisdom
+DAG_GEN      = DAG / 'generator' / 'generated'   # generated registry + the FROZEN wisdom bundle (spike_wisdom.txt)
+WISDOM       = ROOT / 'src' / 'wisdom'           # the wisdom2 store (2026-09-24): the shards the library serves from
 DAG_ISA      = os.environ.get('VFFT_ISA', 'avx2')  # avx2 | avx512
 DAG_CODELETS = DAG / 'codelets' / 'inplace' / DAG_ISA
 
@@ -448,6 +449,11 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
     # warnings — they spam thousands of lines and bury real errors.
     flags = ['-O3', '-mavx2', '-mfma', '-march=native', '-fpermissive',
              '-D_CRT_SECURE_NO_WARNINGS',
+             # the store's home and the frozen bundle's (2026-09-24): a NULL
+             # wisdom dir with no VFFT_WISDOM_DIR opens src/wisdom READ-ONLY;
+             # spike_wisdom.txt & co. are read from generated/ whatever the dir
+             '-DVFFT_WISDOM_DIR_DEFAULT="%s"' % WISDOM.as_posix(),
+             '-DVFFT_FROZEN_WISDOM_DIR="%s"' % DAG_GEN.as_posix(),
              # ── ISA CLAMP. registry.h and a dozen dispatch sites (executor.h,
              # oop_leaf_registry.h, il_prime.h, …) key on __AVX512F__, while the
              # codelet LIBRARY is built per VFFT_ISA. On a CPU whose
