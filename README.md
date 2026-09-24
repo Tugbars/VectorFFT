@@ -110,6 +110,16 @@ derivation.
 | 2,049..4,096 | 2,048 | 3.97 | 4.62 | 18.86 | 6.07 |
 | **all, 2..4,096** | **4,095** | **3.90** | **4.04** | **18.86** | **6.07** |
 
+Every length above 10e-16 is on the flat DIT route, a chain of two large odd
+radices (2x29x47, 3x29x43, 2x41x43). A tail stage of that route derives most
+of its twiddle legs from one loaded record instead of loading up to
+forty-six, and the derived legs carry the loaded value's rounding times their
+distance from it. That is what makes these lengths fast: the 33 above 10e-16
+run at 2.2x MKL's speed at the median and none below 1.2x, the flat route as
+a whole at 1.7x. The library makes that trade once, for speed, and offers no
+accuracy modes. A build configuration that takes the loaded form instead may
+be added later.
+
 ---
 
 ## Features

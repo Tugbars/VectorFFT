@@ -162,14 +162,3 @@ Three states, one flag (`_il2d_blu_ctx.commit`, `.rep_R`):
 | replay (`blu > 0` on the row) | handed in by the builder | nothing |
 | a speculative N-arm arm | raced | nothing -- `chain=` still names the N chain until the race picks a winner |
 
-## Checklist
-
-- [x] 0. This design (inventory verified by reading, 2026-09-17).
-- [x] R1. The ladder, once (2026-09-17).
-- [x] R3. The tcut law, as TWO helpers, each byte-exact (2026-09-17).
-- [x] R4. The form-axis rule asks its authority (2026-09-17).
-- [x] R7. The axis-pass law, once (2026-09-17).
-- [x] R2. Ruled 2026-09-17 (the real tier follows c2c/3D): `vfft_policy_il2d_band_ok` (floor 8 + the tcut law) at all three cascade loops; the real tier's static ladder admits `w == N1`.
-- [x] R5. One forms-serve body (2026-09-17): the 2D-key twin is a 2-line wrapper, because `vw2_2d_forms_lookup/bank` were already wrappers building the same ilcol key.
-- [x] R6. The real tier's chain through the shared builder (2026-09-17, `il2d_real_on_shared_builder_design.md`): 298 lines -> 55.
-- [x] Records (2026-09-17).
