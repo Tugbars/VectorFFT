@@ -69,7 +69,14 @@ in 2D form (`ilnd_natural_strip_design.md`): the ladder {16, 32, 64, 128,
   it fits; the shared full-pitch scratch put every strip piece in the
   input rows' L2 sets and the column phase ran slower than serial
   (512x128 T=8: 73 us for eight 16-column strips against a ~40 us serial
-  column pass; dense 27 us).
+  column pass; dense 27 us). A third partition races beside block and
+  strips since 2026-09-25, the TILE (`mtarm=2`): stage 0 digit-split
+  across the plane, then every first-stage sub-problem (N1/R0 rows) a
+  tile one worker owns -- the middle stages in place in L2, the leaf
+  blocks with the rows fused. It ties the strips at planes up to 4 MB and
+  loses at the tall short-N2 planes, which are a traffic count: the
+  column-first walk moves the plane about 80 MB at 8192x128 against the
+  64 MB of a rows-first walk with streaming stores on both output passes.
 
 Raced 2026-09-15 (the four-step gate's children on a cold store, T=8,
 `[il2d-c2c] threaded arms`): the sized strips LOSE to the bands at every

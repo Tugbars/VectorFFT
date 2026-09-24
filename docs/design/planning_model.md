@@ -335,8 +335,8 @@ banked verdict; none threads on a rule.
 |---|---|---|---|---|
 | K>1 transform-contiguous batch | one transform per core | serial loop vs slabs of `ceil(K/T)` transforms over per-worker clones | T-free | the batch's own `q=K` interleaved row: `eng=tcb tcmt=<0 or 1> tcmtt=<T raced at>` |
 | 2D plane queue (`howmany > 1`) | one plane per core | loop the plan vs hand planes to clones | T-free | `pq` tokens on the primary plane's row |
-| 2D route (axis) race | cores share the plane | every route through its threaded walk: the chain, the turn, the skewed column pass | per-T | `axt rot wlt swt rbkt turnt cskt` beside the one-thread `ro wl sw rbk turn csk` |
-| 2D column pass | cores share the plane | the banked route's threaded walk vs serial (the chain: block and the strips ladder; the turn and the skewed pass: their row-slab walks) | per-T | `cmt cmtt` (r2c and c2r each their own set) |
+| 2D route (axis) race | cores share the plane | every route in its threaded AND serial form: the chain, the turn, the skewed column pass (`il2d_c2c_mt.md`) | per-T | `axt rot wlt swt rbkt turnt cskt axns` beside the one-thread `ro wl sw rbk turn csk` |
+| 2D column pass | cores share the plane | the banked route's threaded walk vs serial (the chain: block, the strips ladder and the tile partition; the turn and the skewed pass: their row-slab walks) | per-T | `cmt cmtt mtarm msw nls` (r2c and c2r each their own set) |
 | K=1 cascade walk | cores share the transform | threaded walk vs serial | per-T | `zt_mt_t zt_mt` (in-place: `zt_mt_ip_*`) on the kind-4 recipe row |
 
 **The batch verdict in detail.** A K>1 interleaved request is a wrapper over the

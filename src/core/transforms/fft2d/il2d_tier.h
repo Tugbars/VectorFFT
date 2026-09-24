@@ -1119,6 +1119,42 @@ static void _il2d_c2c_mt_tramp(void *v)
                              h->il2d_turn_scr + 2 * c * P, NULL);
         }
         break;
+    case 11: /* the TILE arm (2026-09-25), forward: tiles [lo,hi) = the first
+              * stage's sub-problems (N/R0 rows each, the scratch): the middle
+              * stages in place on the tile, then its leaf blocks with the
+              * rows fused (and streamed when staged) */
+        {
+            const int R0 = h->il2d_col.R[0], Rl = h->il2d_col.R[h->il2d_col.nst - 1];
+            const size_t D0 = (size_t)h->N / (size_t)R0;
+            size_t t;
+            for (t = a->lo; t < a->hi; t++)
+            {
+                double *tile = (double *)a->src + 2 * t * D0 * rn;   /* the scratch: writable */
+                if (h->il2d_col.nst > 2)
+                    _il2d_col_stages2(tile, tile, (int)D0, rn, rn, 1, h->il2d_col.nst - 1,
+                                      h->il2d_col.R, h->il2d_col.L, fns, tabs, 0);
+                _il2d_nat_leaf_blocks(h, a->tid, a->dir, a->src, a->dst,
+                                      t * D0 / (size_t)Rl, (t + 1) * D0 / (size_t)Rl, 1);
+            }
+        }
+        break;
+    case 12: /* the tile arm, backward: the leaf gathers the tile's natural rows
+              * into the scratch, then the middle stages reversed in place */
+        {
+            const int R0 = h->il2d_col.R[0], Rl = h->il2d_col.R[h->il2d_col.nst - 1];
+            const size_t D0 = (size_t)h->N / (size_t)R0;
+            size_t t;
+            for (t = a->lo; t < a->hi; t++)
+            {
+                double *tile = a->dst + 2 * t * D0 * rn;
+                _il2d_nat_leaf_blocks(h, a->tid, a->dir, a->src, a->dst,
+                                      t * D0 / (size_t)Rl, (t + 1) * D0 / (size_t)Rl, 0);
+                if (h->il2d_col.nst > 2)
+                    _il2d_col_stages2(tile, tile, (int)D0, rn, rn, 1, h->il2d_col.nst - 1,
+                                      h->il2d_col.R, h->il2d_col.L, fns, tabs, 1);
+            }
+        }
+        break;
     case 10: /* turn, phase 3: the back-turn of destination rows [lo, hi) */
         _il2d_turn_back_range(h->il2d_turn_scr, VFFT_IL2D_TURN_PITCH((size_t)h->N), a->dst,
                               rn, a->lo, a->hi);
@@ -1281,6 +1317,37 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         int rows_done = 0;
         if (h->il2d_col.nst < 2 || (Tb < 2 && Tr < 2))
             return 0;
+        if (h->il2d_col.natarm == 2)
+        {   /* the TILE arm (2026-09-25): stage 0 across the plane (its digit is
+             * the row within a first-stage sub-problem), then every sub-problem
+             * a tile one worker owns -- the middle stages in L2, the leaf's
+             * natural rows with the row transform fused; the plane crosses
+             * cores once each way */
+            const int R0 = h->il2d_col.R[0];
+            const size_t D0 = (size_t)h->N / (size_t)R0;
+            const int Tt = (R0 < T) ? R0 : T;
+            if (R0 < 2 || Tt < 2 || D0 % (size_t)Rl)
+                return 0;
+            if (fwd)
+            {
+                if (!_il2d_stage_digits_mt(sre, scr, h->N, rn, rn, R0, h->il2d_col.L[0],
+                                           h->il2d_col.f[0], h->il2d_col.tf[0], T))
+                    _il2d_col_stages(sre, scr, h->N, rn, 0, 1, h->il2d_col.R, h->il2d_col.L,
+                                     h->il2d_col.f, h->il2d_col.tf, 0);
+                _il2d_c2c_mt_phase(h, scr, dre, dir, fwd, 11, (size_t)R0, Tt);
+            }
+            else
+            {
+                _il2d_c2c_mt_phase(h, sre, scr, dir, fwd, 12, (size_t)R0, Tt);
+                if (!_il2d_stage_digits_mt(scr, dre, h->N, rn, rn, R0, h->il2d_col.L[0],
+                                           h->il2d_col.b[0], h->il2d_col.tb[0], T))
+                    _il2d_col_stages(scr, dre, h->N, rn, 0, 1, h->il2d_col.R, h->il2d_col.L,
+                                     h->il2d_col.b, h->il2d_col.tb, 0);
+                _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);   /* the backward's rows after its columns */
+            }
+            _vfft_il2d_col_mt_count++;
+            return 1;
+        }
         if (h->il2d_col.natarm == 1)
         {   /* the STRIP arm (raced against the block arm at create) */
             const int Ts = rn < (size_t)T ? (int)rn : T;
@@ -1566,6 +1633,15 @@ static void _il2d_arm_exec_mt_strip(void *v)
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
     c->h->il2d_col.colmt = 1;
     c->h->il2d_col.natarm = 1;
+    c->h->il2d_col.msw = 0;
+    c->h->il2d_col.natst = c->lst;
+    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
+}
+static void _il2d_arm_exec_mt_tile(void *v)
+{   /* natural cells: the TILE partition (2026-09-25) */
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    c->h->il2d_col.colmt = 1;
+    c->h->il2d_col.natarm = 2;
     c->h->il2d_col.msw = 0;
     c->h->il2d_col.natst = c->lst;
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
@@ -3381,6 +3457,11 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
                 snprintf(names[na], sizeof names[na], "strips%s", tag);
                 rc[na].lst = nst; arms[na].name = names[na]; arms[na].run = _il2d_arm_exec_mt_strip; arms[na].ctx = &rc[na]; na++;
             }
+            if (h->il2d_col.nat && h->il2d_col.R[0] >= 2 && na < VFFT_RACE_MAX_ARMS)
+            {   /* the TILE partition (2026-09-25) */
+                snprintf(names[na], sizeof names[na], "tile%s", tag);
+                rc[na].lst = nst; arms[na].name = names[na]; arms[na].run = _il2d_arm_exec_mt_tile; arms[na].ctx = &rc[na]; na++;
+            }
             for (k = 0; k < nl && na < VFFT_RACE_MAX_ARMS; k++)
             {
                 rc[na].sw = lad[k]; rc[na].lst = nst;
@@ -3392,7 +3473,8 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         st = ns[0];
         for (a = 2; a < na; a++) if (ns[a] < ns[best]) best = a;
         mt = ns[best];
-        h->il2d_col.natarm = (arms[best].run == _il2d_arm_exec_mt) ? 0 : 1;
+        h->il2d_col.natarm = (arms[best].run == _il2d_arm_exec_mt) ? 0
+                           : (arms[best].run == _il2d_arm_exec_mt_tile) ? 2 : 1;
         h->il2d_col.msw = rc[best].sw;
         h->il2d_col.natst = rc[best].lst;
         if (getenv("VFFT_IL2D_LOG"))

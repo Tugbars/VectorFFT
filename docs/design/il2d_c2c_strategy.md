@@ -267,7 +267,7 @@ the same plans, above, and do not depend on it.
 |---|---|
 | the routes' fields and serving | `src/core/vfft_internal.h`, `src/core/transforms/fft2d/il2d_tier.h` (`_il2d_rows_exec`, `_il2d_turn_exec`), `src/core/vfft_execute.h` |
 | the race, the bank | `_il2d_axis_race` in `il2d_tier.h`; tokens `ro= rbk= turn= csk=`, at T > 1 `axt= rot= rbkt= turnt= cskt=` (`wisdom2_2d_reader.h`) |
-| the threaded walks | `_il2d_c2c_mt` in `il2d_tier.h`: the chain's bands, block and strips (each strip through the worker's dense per-worker scratch, `natsscr`); `_il2d_turn_exec_mt` and `_il2d_csk_exec_mt` (row slabs, clones of the route's 1D plan); the threading race `_il2d_c2c_mt_race` banks `cmt= cmtt=` for every route |
+| the threaded walks | [`il2d_c2c_mt.md`](il2d_c2c_mt.md): the chain's block, strips (dense per-worker scratch) and tile partitions, the turn's and the skewed pass's row-slab walks, the axis race at T, the threading race, the verdict rows and the measurement protocol |
 | the kernels | `codelets/zil/avx2/pure_il/radix*_z_n1ccs*`, `radix*_z_{n1tr,t2r,t2tr,n1r}*`; the generator's `--cil-n1ccs` and `--cil-rowloop` |
 | the pins | `VFFT_IL2D_ROWOOP=2|3|4`, `VFFT_IL2D_RB2_KB`, `VFFT_IL2D_LOG=1` prints every arm |
 | the measurements | `gauntlet/results/gauntlet_2d-pow2grid*/report_2d.md`; the phase probe in the session scratchpad |

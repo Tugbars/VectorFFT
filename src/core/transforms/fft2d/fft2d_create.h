@@ -1029,9 +1029,17 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
              * the turn and the skewed pass since 2026-09-24: their row-slab
              * walks, one threaded arm each) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
+            const char *ae = getenv("VFFT_IL2D_MTARM");   /* the probe pin for the threaded arm: 0 block, 1 strips, 2 tile (2026-09-25) */
             _il2d_c2c_build_clones(h, cfg, h->nthreads);
             _il2d_nat_sscr_build(&h->il2d_col, N1, N2, h->nthreads);   /* the strips' dense scratch (2026-09-24) */
-            if (ce)
+            if (ae)
+            {
+                h->il2d_col.colmt = 1;
+                h->il2d_col.natarm = atoi(ae);
+                h->il2d_col.msw = 0;
+                h->il2d_col.natst = 1;
+            }
+            else if (ce)
                 h->il2d_col.colmt = (atoi(ce) == 0);
             else if (il2d_bcmt >= 0 &&
                      vfft_policy_replays_at_T(il2d_bcmtt, h->nthreads))
