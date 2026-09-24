@@ -1059,9 +1059,7 @@ static void _il2d_c2c_mt_tramp(void *v)
              * keeps the shared scratch */
         {
             const size_t sw = h->il2d_col.msw > 0 ? (size_t)h->il2d_col.msw : a->hi - a->lo;
-            const char *dpin = getenv("VFFT_IL2D_DENSE");
-            const int dense = h->il2d_col.natsscr && a->tid < h->il2d_col.nnatsscr &&
-                              !(dpin && atoi(dpin) == 0);
+            const int dense = h->il2d_col.natdense && h->il2d_col.natsscr && a->tid < h->il2d_col.nnatsscr;
             size_t k;
             for (k = a->lo; k < a->hi; k += sw)
             {
@@ -1218,6 +1216,15 @@ static int _il2d_turn_exec_mt(struct vfft_plan_s *h, const double *sre, double *
     return 1;
 }
 
+/* VFFT_IL2D_PHASES read once: no getenv on the execute path (the CRT's
+ * environment lock serialised the workers' phase starts, 2026-09-25) */
+static int _il2d_phlog_flag = -1;
+static inline int _il2d_phlog_on(void)
+{
+    if (_il2d_phlog_flag < 0)
+        _il2d_phlog_flag = getenv("VFFT_IL2D_PHASES") != NULL;
+    return _il2d_phlog_flag;
+}
 /* Returns 1 when it ran threaded, 0 when the caller must run serial. */
 static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                         double *dre, vfft_dir_t dir, int T)
@@ -1277,7 +1284,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         if (h->il2d_col.natarm == 1)
         {   /* the STRIP arm (raced against the block arm at create) */
             const int Ts = rn < (size_t)T ? (int)rn : T;
-            const int phlog = getenv("VFFT_IL2D_PHASES") != NULL;   /* per-phase ns, as the block arm prints */
+            const int phlog = _il2d_phlog_on();   /* per-phase ns, as the block arm prints */
             double p0 = 0, p1 = 0;
             if (Ts < 2 && Tr < 2)
                 return 0;
@@ -1348,7 +1355,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         const int Tb = nb < (size_t)T ? (int)nb : T;
         /* VFFT_IL2D_PHASES: per-phase ns of this walk on stderr (a probe
          * instrument for the large-plane question, 2026-09-15) */
-        const int phlog = getenv("VFFT_IL2D_PHASES") != NULL;
+        const int phlog = _il2d_phlog_on();
         double ph0 = 0, ph1 = 0, ph2 = 0, ph3 = 0;
         if (Tb < 2)
             return 0;
@@ -1573,12 +1580,15 @@ static void _il2d_arm_exec_mt_sw(void *v)
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
 /* the strip-width ladder: N1 x sw x 16 B under L2 (the hardware fence),
- * sw a divisor of N2, and at T > 1 at least T sub-strips */
+ * sw a divisor of N2, and at T > 1 at least T sub-strips. 8 joined on
+ * 2026-09-25: at N1 = 8192 the 16-column dense strip is the whole L2 and
+ * streamed every stage through L3 (8192x128 0.76 at T=8); the column
+ * kernels take any count >= 1. */
 static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max)
 {
-    static const int SW[] = { 16, 32, 64, 128, 256 };
+    static const int SW[] = { 8, 16, 32, 64, 128, 256 };
     int i, n = 0;
-    for (i = 0; i < 5 && n < max; i++)
+    for (i = 0; i < 6 && n < max; i++)
     {
         const int w = SW[i];
         if (w > N2 || N2 % w) continue;
@@ -1784,7 +1794,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
         _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
         const vfft_race_arm_t arms[2] = { { "serial", _il2d_arm_cols, &rc },
                                           { "threaded", _il2d_arm_cols_mt, &rc } };
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 0 }; /* min-of-3, A then B */ /* THREADED arms: never paused (mt_measurement_parking_trap) */
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }; /* min-of-3, A then B, two untimed passes per arm first (2026-09-25: a cold threaded arm read 58 us for a 37-us plan) */ /* THREADED arms: never paused (mt_measurement_parking_trap) */
         double ns[2];
         (void)p;
         vfft_race_run(&proto, arms, 2, ns);
@@ -2231,6 +2241,11 @@ static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, int N2, int T)
     }
     c->nnatsscr = T;
     c->natswcap = swcap;
+    {   /* the probe pin, read ONCE here: eight workers calling getenv at every
+         * phase start serialised on the CRT's environment lock (2026-09-25) */
+        const char *dpin = getenv("VFFT_IL2D_DENSE");
+        c->natdense = !(dpin && atoi(dpin) == 0);
+    }
     return 1;
 }
 static void _il2d_col_free(vfft_ilcol_t *c)
@@ -2900,6 +2915,8 @@ static void _il2d_arm_axis(void *v)
         h->il2d_col.msw = 0;
         h->il2d_col.natst = 0;
     }
+    else
+        h->il2d_col.colmt = 0;   /* the serial form (every arm at T = 1; the "+s" twins at T > 1) */
     vfft_execute((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->zo, NULL);
 }
 
@@ -3037,10 +3054,13 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                     if (r >= 0) cut = r;
                 }
                 {
-                    int sub, ki;
+                    int sub, ki, fm;
                     for (sub = 0; sub <= (w == 0 && ro != 4 && !csk && !prune ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
                         for (ki = 0; ki < (ro == 3 ? 4 : 1) && na < VFFT_RACE_MAX_ARMS; ki++)
-                        {
+                        for (fm = 0; fm <= (mt ? 1 : 0) && na < VFFT_RACE_MAX_ARMS; fm++)
+                        {   /* fm = 1: the arm's SERIAL form beside its threaded one at T > 1
+                             * (2026-09-25): a plane the threading race will keep serial
+                             * must pick its route by the serial walks */
                             const int kb = ro == 3 ? VFFT_IL2D_RB2_KB_LADDER[ki] : 0;
                             if (ro == 3 && ki > 0 &&
                                 _il2d_rb2_rows(kb, (size_t)N2) == _il2d_rb2_rows(VFFT_IL2D_RB2_KB_LADDER[ki - 1], (size_t)N2))
@@ -3053,14 +3073,14 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             ac[na].ro = ro;
                             ac[na].kb = kb;
                             ac[na].csk = csk;
-                            ac[na].mt = mt;
+                            ac[na].mt = mt && !fm;
                             ac[na].wc = sub ? swl[sub - 1] : 0;
                             if (sub)
-                                snprintf(ac[na].name, sizeof ac[na].name, "sw%d%s", ac[na].wc,
-                                         ro == 2 ? "+rowb" : ro == 4 ? "+turn" : "");
+                                snprintf(ac[na].name, sizeof ac[na].name, "sw%d%s%s", ac[na].wc,
+                                         ro == 2 ? "+rowb" : ro == 4 ? "+turn" : "", fm ? "+s" : "");
                             else
-                                snprintf(ac[na].name, sizeof ac[na].name, "wl%d%s", w,
-                                         ro == 2 ? "+rowb" : ro == 4 ? "+turn" : "");
+                                snprintf(ac[na].name, sizeof ac[na].name, "wl%d%s%s", w,
+                                         ro == 2 ? "+rowb" : ro == 4 ? "+turn" : "", fm ? "+s" : "");
                             if (ro == 3)
                             {
                                 const size_t used = strlen(ac[na].name);
@@ -3079,7 +3099,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 }
             }
         {
-            const vfft_race_proto_t proto = { 2, reps, VFFT_RACE_MIN, 1, 0, NULL, NULL };
+            const vfft_race_proto_t proto = { 2, reps, VFFT_RACE_MIN, 1, mt ? 2 : 0, NULL, NULL, 0 };   /* threaded arms: two untimed passes first (2026-09-25) */
             vfft_race_run(&proto, arms, na, ns);
         }
         for (a = 0; a < na; a++)
@@ -3133,7 +3153,14 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
          * T raced at; the serial tokens are another race's (2026-09-24) */
         const int ord = vfft_policy_ord_rankn(cfg);
         if (vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "axt", h->nthreads) != 0)
-            _vfft_warn("il2d axis race at T=%d: no row to bank the T verdict at %dx%d", h->nthreads, N1, N2);
+        {   /* no row yet (a recalibrating create races the axis before the chain
+             * row is written): a chain-only row (negative axes omitted), then
+             * the tokens (2026-09-25) */
+            vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
+                                 -1, -1, -1, -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, ord);
+            if (vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "axt", h->nthreads) != 0)
+                _vfft_warn("il2d axis race at T=%d: no row to bank the T verdict at %dx%d", h->nthreads, N1, N2);
+        }
         vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "rot", _il2d_ro_of(h));
         vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "wlt", h->il2d_col.wl);
         vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "swt", bwc);
@@ -3328,7 +3355,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         char names[VFFT_RACE_MAX_ARMS][20];
         double ns[VFFT_RACE_MAX_ARMS];
         int lad[6], nl, a, na = 0, best = 1, k, nv;
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 0 }; /* min-of-3, A then B */ /* THREADED arms: never paused (mt_measurement_parking_trap) */
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }; /* min-of-3, A then B, two untimed passes per arm first (2026-09-25: a cold threaded arm read 58 us for a 37-us plan) */ /* THREADED arms: never paused (mt_measurement_parking_trap) */
         (void)p;
         for (a = 0; a < VFFT_RACE_MAX_ARMS; a++) { rc[a] = rc0; rc[a].sw = 0; rc[a].lst = 1; rc[a].zo = zo; ns[a] = 1e300; }
         arms[na].name = "serial"; arms[na].run = _il2d_arm_exec_st; arms[na].ctx = &rc[na]; na++;
@@ -3390,7 +3417,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
          * race's tokens (sw, rbk, turn, csk) -- every T=8 replay of a tiled row
          * ran the default tile until 2026-09-24. The measured time is mtns=. */
         const int ord = vfft_policy_ord_rankn(cfg);
-        const int have_row = vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "ro", -1) >= 0;
+        const int have_row = vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "chain", -1) >= 0;   /* chain= is on every row */
         vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
                              h->il2d_col.wl, h->il2d_col.tfuse, _il2d_ro_of(h),
                              h->il2d_col.colmt, h->nthreads,

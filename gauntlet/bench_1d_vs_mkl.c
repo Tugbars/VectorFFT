@@ -1552,29 +1552,7 @@ static void bench_pin_one_thread(void)
 /* the 8 distinct P-cores; VFFT_PCORE_MASK overrides for a different CPU. */
 static void ilmt_pin_pcores(void)
 {
-#ifdef _WIN32
-    const char *e = getenv("VFFT_PCORE_MASK");
-    DWORD_PTR mask = e ? (DWORD_PTR)strtoull(e, NULL, 0) : (DWORD_PTR)0x5555;
-    if (mask == 0)
-    { /* 0 = DO NOT mask: the control for "did the mask itself distort a
-       * threaded engine?" — a sparse mask can defeat OpenMP topology
-       * detection, which would silently handicap MKL. */
-        printf("# process affinity UNSET (VFFT_PCORE_MASK=0) — threads float "
-               "over all 32 logical CPUs incl. E-cores\n");
-        return;
-    }
-    if (!SetProcessAffinityMask(GetCurrentProcess(), mask))
-        fprintf(stderr, "ilmt: SetProcessAffinityMask(0x%llx) FAILED — "
-                        "MKL may land on E-cores; ratios NOT comparable\n",
-                (unsigned long long)mask);
-    else
-        printf("# process affinity = 0x%llx (8 distinct P-cores: logical "
-               "0,2,..,14); both engines confined to the same cores\n",
-               (unsigned long long)mask);
-#else
-    fprintf(stderr, "ilmt: P-core pinning is Win32-only here; "
-                    "set taskset/OMP_PLACES externally\n");
-#endif
+    bench_pin_pcores();   /* shared with the calibrate probe since 2026-09-25 (sibling_guard.h) */
 }
 
 /* ours: transform-contiguous batch through the FRONT DOOR (one handle, one

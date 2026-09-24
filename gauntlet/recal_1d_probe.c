@@ -45,7 +45,18 @@ int main(int argc, char **argv)
      * probe raced wherever the scheduler put it. The 2026-09-20 gauntlet's
      * first 1100 cells ran that way; their recorded times matched pinned
      * bench times within a few percent, so they stand -- but by luck. */
-    if (!getenv("VFFT_BENCH_PIN") || atoi(getenv("VFFT_BENCH_PIN")) != 0)
+    if (T > 1 && (!getenv("VFFT_BENCH_PIN") || atoi(getenv("VFFT_BENCH_PIN")) != 0))
+    {   /* THE THREADED PROTOCOL (2026-09-25), the bench's: the process on the
+         * P-cores, the caller on logical 0 (the core the pool reserves for
+         * it; pinned to core 2 it shared a physical core with worker 1 and
+         * every threaded arm of the create's races carried that handicap),
+         * HIGH priority, no sibling guard, the pool sized before the create */
+        bench_pin_pcores();
+        SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x1);
+        SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+        vfft_set_num_threads(T);
+    }
+    else if (!getenv("VFFT_BENCH_PIN") || atoi(getenv("VFFT_BENCH_PIN")) != 0)
     {
         SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x4);
         SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
