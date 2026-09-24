@@ -1,0 +1,3 @@
+composite of 2d-pow2_mt8_2026-09-24, mt8_losers_2026-09-24, mt8_still_2026-09-24, mt8_still2_2026-09-25, mt8_still3_2026-09-25, mt8_still4_2026-09-25, mt8_still5_2026-09-25: each cell's latest measurement (the grid, then the losing cells re-measured after the threaded design of 2026-09-24/25)
+2026-09-25 01:32:00 report: 159 cells, contract 2D out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-25 01:32:00 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d-pow2_mt8_composite_2026-09-25\report_2d_mt8.md
