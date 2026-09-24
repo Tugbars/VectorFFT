@@ -104,33 +104,9 @@ worse of the two engine orders, and a cell slower than MKL is outlined. The reco
 | 1M..4M | 253 | 1.26x | 99% |
 | **all, 1,288 volumes** | **1,288** | **1.55x** | **98%** |
 
-The 20 volumes below parity are 2x2x2 (0.66), the tiny cubes within a swing of parity,
-and a short first axis over a tall plane, 4 or 8 planes of 2048x32 and the like at
-0.78-0.99, where the first-axis sweep streams at 56 GB/s against MKL's 90.
-
 ## Accuracy
 
 ![Precision, VectorFFT vs MKL, every N from 2 to 4096](src/tools/plots/vectorfft-precision.svg)
-
-Forward transform of every length 2..4,096, both libraries on the same input,
-against a long-double scalar DFT (the gauntlet's `verify` verb); relative L2
-error in units of 1e-16, FP64 epsilon = 2.2. Both hold 14 to 15 digits at every
-length. The medians are level, VectorFFT 3.9 against MKL 4.0, and VectorFFT is
-at or below MKL at 49% of the lengths. Every twiddle, chirp and stage record
-the library builds is the correctly rounded value of its exact angle
-(`src/core/oop/tw_exact.h`). What remains is the worst-length spread, 8.5
-epsilon against MKL's 2.7, set by the flat route's execute-time twiddle
-derivation.
-
-| Lengths | Cells | VectorFFT median | MKL median | VectorFFT max | MKL max |
-|---|---|---|---|---|---|
-| 2..16 | 15 | 1.67 | 1.15 | 3.17 | 1.52 |
-| 17..64 | 48 | 2.80 | 1.97 | 5.75 | 2.79 |
-| 65..256 | 192 | 3.65 | 2.50 | 8.16 | 5.24 |
-| 257..1,024 | 768 | 3.90 | 3.14 | 13.91 | 5.22 |
-| 1,025..2,048 | 1,024 | 3.86 | 3.99 | 12.21 | 5.45 |
-| 2,049..4,096 | 2,048 | 3.97 | 4.62 | 18.86 | 6.07 |
-| **all, 2..4,096** | **4,095** | **3.90** | **4.04** | **18.86** | **6.07** |
 
 Every length above 10e-16 is on the flat DIT route, a chain of two large odd
 radices (2x29x47, 3x29x43, 2x41x43). A tail stage of that route derives most
