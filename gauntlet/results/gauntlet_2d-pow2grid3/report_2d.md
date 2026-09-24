@@ -20,7 +20,7 @@ control cell 64x64: 6 readings, 1.145..1.267
        2x512  2            chain  raced           1014       2971    2.70     50.5  4.5e-16
       2x1024  2            chain  raced           2292       6051    2.61     49.1  4.0e-16
       2x2048  2            chain  raced           5144      12274    2.36     47.8  2.7e-16
-      2x4096  2            chain  raced          10871      25108    2.31     49.0  3.2e-16
+      2x4096  2            chain  raced         sha 10871      25108    2.31     49.0  3.2e-16
       2x8192  2            chain  raced          23203      51542    2.20     49.4  3.4e-16
          4x2  2^2          chain+rb raced             15        155   10.18      7.9  8.9e-17
          4x4  2^2          chain+rb raced             18         18    1.00     17.8  2.0e-16
