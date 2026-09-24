@@ -1,5 +1,14 @@
 # Tangent-scaled butterfly codelets (pure-IL, AVX2)
 
+This folder is `pair2p/tangent/` since 2026-09-24 (it was `pure_il/tangent/`):
+14 files, the pair's kinds with the tangent interior, selected through the
+pair's `il_kv` variant 3 (interior) and 4 (the M-128 / T256 edge). 106 shipped
+1D rows bank them (2026-09-24). The six even-composite forms at radix 6, 10
+and 12 were deleted that day: no resolver arm reached them. The files are
+emitted by their recorded `gen_radix` recipes with the environment knobs in
+`generator/gates/recipes.tsv`, not by `gen_set`; turning those knobs into
+`--cil-*` flags is the open task of `docs/roadmap/il_codelet_reorg.md` §4.
+
 The `tan` family: same transforms as the sibling classic pure-IL codelets,
 different **interior arithmetic**. Rotations are factored
 
@@ -112,9 +121,6 @@ standalone and still be wrong when driven by il2p's table layout.
 
 ## Present but unraced
 
-`radix{6,10,12}_z_t2tan` / `_n1ttan` — even-composite tangent forms, gated
-correct, no il_kv variant selects them. Generation command, census and status
-are in each file header.
 
 ## Killed by measurement — do not regenerate
 

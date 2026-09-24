@@ -1,8 +1,16 @@
-# BOUNDARY-IL / SPLIT-INTERIOR — the ZTURN-T stage kernels
+# ztt/ — the ZTURN-T stage kernels (boundary-IL / split-interior)
+
+39 files: `t0tp`, `tmg`, `tlf`, `tlfi` (natural order) and `t0d`, `tmgd`, `tld`
+(the plain, scrambled set), + `_bwd`. This folder is `ztt/` since 2026-09-24
+(it was `boundary_split/`); the `msz`/`mszt` odd mids that shared the layout
+moved to [`../flat/odd_mid/`](../flat/odd_mid/), the engine that runs them.
+Run by `src/core/oop/ztt.h` under `il_route=ztt`, N = 2048 to 262144, with the
+tile `il_tw=`; the pow2 cells run as the fused drivers in
+`generator/generated/fused_codelets/`, which inline these stage kernels.
 
 **These files are NOT pure IL, and that is deliberate. Do not "fix" them.**
 
-Everything in the parent directory (`../`) is **pure IL** — packed complex,
+Every other folder under `zil/avx2/` is **pure IL** — packed complex,
 re/im adjacent in the register, through all the arithmetic. Everything *here*
 is the opposite in the middle: **interleaved at the buffer boundary, separate
 re/im planes in the interior** (64-byte `[re x4][im x4]` blocks, `z`

@@ -2407,8 +2407,9 @@ let zil_folder (name : string) : string option =
   else if not (starts_with name "radix" && ends_with name "_avx2.c") then None
   else
     match String.index_opt name '_' with
-    | None -> None
-    | Some i ->
+    | Some i when i + 3 < String.length name - 7 && String.sub name i 3 = "_z_" ->
+      (* radixN_z_<kind>_avx2.c: the zil grammar; a radixN_<kind>_oop_avx2.c of
+         the split library carries no _z_ and keeps its quadrant's folder *)
       let kind = String.sub name (i + 3) (String.length name - i - 3 - 7) in
       let base =
         if ends_with kind "_bwd" then String.sub kind 0 (String.length kind - 4) else kind
@@ -2432,6 +2433,7 @@ let zil_folder (name : string) : string option =
          else if base = "msz" || base = "mszt" then "zil/avx2/flat/odd_mid"
          else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "zil/avx2/ztt"
          else "zil/avx2/pair2p/tangent")
+    | _ -> None
 
 let dir_of_file (q : string) (name : string) : string =
   match zil_folder name with Some d -> d | None -> dir_of_quadrant q
