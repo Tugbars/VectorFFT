@@ -1051,6 +1051,24 @@ static inline int vw2_oop_bank_k1_lay(vw2_store_t *s,
                 lay == VW2_LAY_SPLIT ? "lay=split" : "lay=il", why ? why : "?");
         return -1;
     }
+    if (e->k1_il_route == VFFT_K1_IL_PRIME) {
+        /* THE PRIME CELL'S ROW IS ITS METHOD VERDICT (2026-09-24): the prime
+         * engine banks eng=rader|bluestein + the raced inner at this very key
+         * (vw2__prime_method_key: ord=scr place=ip role=comp lay=il), and
+         * vw2_bank replaces on an equal key. A route row (eng=k1
+         * il_route=prime) banked over it left the next create without a
+         * method (the lookup reads eng), which re-raced the inner and
+         * re-banked the method row over the route row: every other create
+         * raced, and under load picked a different inner (the 53x64 cold-vs-
+         * warm bitwise flap of il2d_blu_row_gate). The method row stays --
+         * kind 4 serves it -- and the route row is not written. */
+        const vw2_rec_t *old = vw2_lookup(s, &r.key);
+        const char *eng = old ? vw2_rec_get(old, "eng") : NULL;
+        if (eng && (!strcmp(eng, "rader") || !strcmp(eng, "bluestein"))) {
+            vw2_rec_free(&r);
+            return VW2_OK;
+        }
+    }
     vw2__oop_stamp_date(&r);
     rc = vw2_bank(s, &r);
     if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }

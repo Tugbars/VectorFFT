@@ -664,6 +664,15 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                           : rn;
                     if (!dre)
                         dre = sre; /* in-place convenience */
+                    /* INC-C: the raced MT walk of the banked route -- the
+                     * chain's bands/strips/block (self-contained units because
+                     * rows commute: the same fact that legalizes tfuse), the
+                     * turn's and the skewed pass's row slabs (2026-09-24).
+                     * Declines back to the serial walk below when it cannot
+                     * engage. */
+                    if (h->il2d_col.colmt && h->nthreads > 1 &&
+                        _il2d_c2c_mt(h, sre, dre, dir, h->nthreads))
+                        return;
                     if (h->il2d_turn)
                     {   /* the TURN route (2026-09-23): the whole plane through
                          * the 1D engine -- rows turned into the N2 x N1
@@ -678,13 +687,6 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         _il2d_csk_exec(h, dir, sre, dre);
                         return;
                     }
-                    /* INC-C: the raced MT walk (bands are self-contained
-                     * [suffix + fused rows] units because rows commute —
-                     * the same fact that legalizes tfuse). Declines back
-                     * to the serial walk below when it cannot engage. */
-                    if (h->il2d_col.colmt && h->nthreads > 1 &&
-                        _il2d_c2c_mt(h, sre, dre, dir, h->nthreads))
-                        return;
                     if (h->il2d_col.blu && h->il2d_col.tpc)
                     {   /* PRIME N1: the TURNED pass (2026-09-24), then the rows */
                         _il2d_tpc_cols_range(&h->il2d_col, sre, dre, rn, 0, rn, !fwd);
@@ -1361,6 +1363,12 @@ void vfft_destroy(vfft_plan h)
             for (s2 = 0; s2 < h->il2d_roww_n; s2++)
                 vfft_destroy(h->il2d_roww[s2]); /* the MT row clones */
             free(h->il2d_roww);
+            for (s2 = 0; s2 < h->il2d_cskw_n; s2++)
+                vfft_destroy(h->il2d_cskw[s2]); /* the threaded skewed pass's row clones (2026-09-24) */
+            free(h->il2d_cskw);
+            for (s2 = 0; s2 < h->il2d_turnw_n; s2++)
+                vfft_destroy(h->il2d_turnw[s2]); /* the threaded turn's N1 plan clones */
+            free(h->il2d_turnw);
             free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
             free(h->il2d_col.natperm);
             free(h->il2d_col.natscr);

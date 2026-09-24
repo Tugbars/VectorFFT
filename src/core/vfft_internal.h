@@ -329,11 +329,14 @@ struct vfft_plan_s
      * plan at N1 (the door's own banked 1D verdict); one back-turn writes the
      * plane. The narrow tall planes spent 95% of their time in a chain over
      * one lane pair. NATURAL cells whose N2 has the n1ccs pair; an arm of the
-     * axis race (no band, no tile), banked turn=1, replayed; serial for now
-     * (a turn plan runs no MT race). */
+     * axis race (no band, no tile), banked turn=1, replayed. Threaded since
+     * 2026-09-24: the turned rows over row slabs, the scratch rows through
+     * worker t's clone of the N1 plan, the back-turn over row slabs (cmt). */
     int il2d_turn;
     struct vfft_plan_s *il2d_turn_plan; /* the in-place K=1 natural plan at N1 */
     double *il2d_turn_scr;              /* the N2 x P plane, P = N1 + 8 complex (the skewed pitch) */
+    struct vfft_plan_s **il2d_turnw;    /* the threaded turn: clones of il2d_turn_plan, T-1 slots */
+    int il2d_turnw_n;
     /* the SKEWED column pass (csk, 2026-09-23): a single-stage column chain
      * writes its output into a private scratch at pitch N2 + 8 instead of the
      * destination plane, and the row pass reads the scratch and writes the
@@ -342,10 +345,14 @@ struct vfft_plan_s
      * ns/pt with only the output skewed; the loads survive it). Rows out of
      * place: the batched kernels natively, the per-row route through the
      * out-of-place K=1 plan at N2. nst == 1 chains; an arm of the axis race
-     * crossed with the row routes, banked csk=1, replayed; serial for now. */
+     * crossed with the row routes, banked csk=1, replayed. Threaded since
+     * 2026-09-24: the column stage over 16-lane column blocks, the rows over
+     * row slabs (route 0 through worker t's clone of the OOP row plan). */
     int il2d_csk;
     double *il2d_csk_scr;               /* the N1 x (N2 + 8) plane */
     struct vfft_plan_s *il2d_csk_row;   /* the OOP K=1 natural plan at N2: the per-row route from the scratch */
+    struct vfft_plan_s **il2d_cskw;     /* the threaded csk rows on route 0: clones of il2d_csk_row, T-1 slots */
+    int il2d_cskw_n;
     vfft_il2p_fn il2d_csk_f, il2d_csk_b; /* the route's own single column stage: the n1c pair at radix N1 */
     /* ── c2c MT (INC-C, docs/design/il2d_real_mt.md ported): per-worker
      * row state. The serving row path is ONE shared child -- two

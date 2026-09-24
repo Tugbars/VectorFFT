@@ -80,3 +80,17 @@
 2026-09-24 22:19:19   benched 600/1288 (32x4x2048), 1173 s elapsed
 2026-09-24 22:20:00   benched 625/1288 (32x16x1024), 1214 s elapsed
 2026-09-24 22:20:48   benched 650/1288 (32x64x1024), 1262 s elapsed
+2026-09-24 22:21:35   benched 675/1288 (32x512x32), 1309 s elapsed
+2026-09-24 22:22:30   benched 700/1288 (32x8192x16), 1364 s elapsed
+2026-09-24 22:23:12   benched 725/1288 (64x4x4096), 1406 s elapsed
+2026-09-24 22:23:57   benched 750/1288 (64x16x2048), 1451 s elapsed
+2026-09-24 22:24:44   benched 775/1288 (64x128x8), 1498 s elapsed
+2026-09-24 22:25:34   benched 800/1288 (64x1024x16), 1548 s elapsed
+2026-09-24 22:26:24   benched 825/1288 (128x2x2048), 1598 s elapsed
+2026-09-24 22:27:09   benched 850/1288 (128x8x1024), 1643 s elapsed
+2026-09-24 22:27:58   benched 875/1288 (128x64x4), 1692 s elapsed
+2026-09-24 22:28:54   benched 900/1288 (128x512x8), 1748 s elapsed
+2026-09-24 22:29:55   benched 925/1288 (256x2x256), 1809 s elapsed
+2026-09-24 22:30:51   benched 950/1288 (256x8x256), 1865 s elapsed
+2026-09-24 22:31:15 report: 1288 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-24 22:31:15 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d-pow2_mt8_2026-09-24\report_3d_mt8.md
