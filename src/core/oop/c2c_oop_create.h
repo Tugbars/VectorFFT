@@ -309,7 +309,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 psp = vfft_oop_plan_create_k1(N, sR1, sR2);
             /* WHITELIST, not a blacklist: only the pair-based IL routes build
              * a plan from iR1/iR2. MONO is whole-N, NONE has no route, and
-             * CASCADE is record-only (see VFFT_K1_IL_CASCADE in oop_plan.h) --
+             * the cascade's route value 4 is retired (oop_plan.h) --
              * a growing "!= this && != that" chain would silently start
              * building plans for any IL route added later.
              *

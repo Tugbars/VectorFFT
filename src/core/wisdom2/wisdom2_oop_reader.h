@@ -50,7 +50,7 @@ static const char *vw2_oop_sp_name[8] = {
  * precisely the bug it is meant to catch (verified by negative test). */
 #define VW2_OOP_IL_ROUTE_MAX VFFT_K1_IL_FS
 static const char *vw2_oop_il_name[] = {   /* length from the NAMES, checked below */
-    "none", "legacy3p", "legacy2p", "mono", "cascade", "2p", "chain3", "prime", "flat", "ztt", "fs"
+    "none", "legacy3p", "legacy2p", "mono", "-", "2p", "chain3", "prime", "flat", "ztt", "fs"   /* 4 = the deleted cascade's slot */
 };
 typedef char vw2__il_name_table_is_complete[
     (sizeof vw2_oop_il_name / sizeof vw2_oop_il_name[0]) == VW2_OOP_IL_ROUTE_MAX + 1 ? 1 : -1];

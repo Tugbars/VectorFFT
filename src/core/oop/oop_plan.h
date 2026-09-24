@@ -104,7 +104,8 @@ enum
      * in wisdom is future work. Until that lands this value is a NOTE ONLY --
      * plan-create must not build an IL plan from it, and the executor must not
      * treat it as a runnable IL route. */
-    VFFT_K1_IL_CASCADE = 4,
+    /* 4 was the cascade (deleted 2026-09-15; the value retired 2026-09-24,
+     * the name table keeps a placeholder so the numbering below stands) */
     /* 5 = PURE-IL two-pass (il2p.h): n1t -> z scratch -> t2, no split planes
      * anywhere. THE canonical 2-pass IL route, BOTH DIRECTIONS (bwd solved
      * 2026-07-29: t2t then n1_bwd(R2), gated at 12 cells incl. 8 non-square).

@@ -2115,7 +2115,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
  * wrote the lay=split row beside the interleaved ones.
  *
  * NOTE ON IL_CASCADE: when the cascade wins a cell, it is recorded by its
- * kind-4 line; setting il_route = VFFT_K1_IL_CASCADE on the kind-3 line is a
+ * kind-4 line; setting il_route to the retired cascade value 4 on the kind-3 line is a
  * CROSS-REFERENCE ("the IL winner here is the cascade"), not a second copy of
  * the chain. The kind-3 grammar only carries cc_chain when sp_route == CCOL,
  * so there is deliberately no attempt to smuggle an IL chain into it.
