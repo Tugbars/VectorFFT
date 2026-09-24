@@ -136,6 +136,12 @@ def build_2d(run_dir, sfx="_2d"):
         os.path.basename(os.path.abspath(run_dir)), nd, sfx.replace("_%dd" % nd, ""), len(keys), len(cells), ("MKL DFTI %dD (out of place)" % nd) if has_cmp else "none (absolute numbers)"))
     if ctl:
         W("control cell %s: %d readings, %.3f..%.3f\n" % ("64x64x64" if nd == 3 else "64x64", len(ctl), min(ctl), max(ctl)))
+    if any("engaged" in r for rs in rows.values() for r in rs):
+        # the threaded contract (2026-09-24): a plan whose MT counter never moved ran serial
+        serial = sorted("x".join(str(v) for v in k) for k, rs in rows.items()
+                        if all(int(r.get("engaged", -1) or -1) == 0 for r in rs))
+        W("threaded plans that ran serial (engaged = 0 at both flips): %d%s\n" % (
+            len(serial), (": " + ", ".join(serial[:40]) + (" ..." if len(serial) > 40 else "")) if serial else ""))
     W("\n## every shape\n")
     W("```")
     W(" %11s  %-12s %-6s %-9s %10s %10s %7s %8s %8s" % ("shape", "N1 factors", "route", "served", "ours ns", "cmp ns", "x", "GFLOPS", "rt err"))
