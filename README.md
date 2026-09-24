@@ -60,15 +60,7 @@ equal vertical gaps).
 
 ![2D speedup matrix, VectorFFT vs MKL, every 2^a x 2^b plane](src/tools/plots/vectorfft-2d-pow2.svg)
 
-Every plane N1 x N2 with both sides a power of two from 2 to 8,192 and at most 2^22
-points: 159 transforms, 2D complex-to-complex, interleaved, natural order, out of
-place, single thread, against MKL DFTI 2D. Each cell is the speedup, worse of the two
-engine orders; blue is faster, red slower, and the heavy rules mark where the planner
-served a different route. Four routes appear: the column chain with a per-row child
-(*chain*), the same chain with the rows batched through one kernel call (*+ rb*) or
-through the row child's own two stages batched (*+ rb2*), and for the tall narrow
-planes the *turn* route, which runs the whole plane through the 1D engine with the
-rows stored transposed. Every route is raced per plane by the planner and banked in
+Every route is raced per plane by the planner and banked in
 wisdom; the design is in
 [`docs/design/il2d_c2c_strategy.md`](docs/design/il2d_c2c_strategy.md). The record is
 [`gauntlet_2d-pow2grid5`](gauntlet/results/gauntlet_2d-pow2grid5/).
@@ -80,10 +72,6 @@ wisdom; the design is in
 | 4,097..65,536 | 48 | 1.23x | 100% | 2.33x (2x4096) |
 | 65,537..4M | 45 | 1.29x | 98% | 1.96x (1024x256) |
 | **all, 159 planes** | **159** | **1.34x** | **94%** | 10.28x (4x2) |
-
-The ten planes below parity are the tiny squares (2x2, 8x8, 16x16 at 0.92-0.94, where
-the call itself is the cost), 128x16 (0.77) and a few 16-to-64-row cells within a
-run-to-run swing of parity.
 
 The same 159 planes at eight threads, MKL at eight threads too. The threaded design is in
 [`docs/design/il2d_c2c_mt.md`](docs/design/il2d_c2c_mt.md).
