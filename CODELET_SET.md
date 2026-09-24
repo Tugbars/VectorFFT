@@ -1,5 +1,15 @@
 # The Codelet Set — what actually runs
 
+> **A snapshot of August 2026, kept for its kind-by-kind notes. It is not the
+> map.** The tree is one folder per engine since 2026-09-24 and its map is
+> `src/dag-fft-compiler/codelets/zil/README.md` (one README per folder).
+> Corrections to this file's claims: forward `n1` is the MONO route's kernel
+> since 2026-09-04, not dead; `t2c` is the 2D column stage (the dead probe of
+> that name was a different kind); the cascade and `boundary_split/` are gone
+> (2026-09-15, ZTURN-T in `ztt/`); the `log3`, odd blocked `n1b`/`t2b`, radix
+> 6/10/12 tangent and `b416` column kernels were deleted 2026-09-24.
+
+
 *Working reference, gitignored. State as of 2026-08-06, after the zil/hybrid
 deletions. Everything below is verified against the dispatch in `src/core`,
 not inferred from filenames.*

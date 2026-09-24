@@ -1,5 +1,15 @@
 # Codelet Taxonomy — every kernel type, what it means, who uses it
 
+> **A snapshot of August 2026, kept for its kind-by-kind notes. It is not the
+> map.** The tree is one folder per engine since 2026-09-24 and its map is
+> `src/dag-fft-compiler/codelets/zil/README.md` (one README per folder).
+> Corrections to this file's claims: forward `n1` is the MONO route's kernel
+> since 2026-09-04, not dead; `t2c` is the 2D column stage (the dead probe of
+> that name was a different kind); the cascade and `boundary_split/` are gone
+> (2026-09-15, ZTURN-T in `ztt/`); the `log3`, odd blocked `n1b`/`t2b`, radix
+> 6/10/12 tangent and `b416` column kernels were deleted 2026-09-24.
+
+
 *Generated 2026-08-05 by a 6-agent census (5 parallel surveys + adjudication).
 Gitignored working reference. Status is decided by REACHABILITY FROM
 `src/core` DISPATCH — not by presence on disk, and not by a registry slot

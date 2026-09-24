@@ -1,7 +1,15 @@
 # Interleaved codelet tree — inventory and reorganisation proposal
 
-**Status: proposal.** Nothing has been moved, renamed or deleted. Owner rulings: propose
-first; report unused files, do not delete them.
+**Status: executed 2026-09-24** (steps 1-3 of §6; §4, the tangent env-to-flag work, is the
+open task). The owner's rulings that day: the nine folders of §1 plus a top-level `rows/` for
+the two kinds built on 2026-09-23 (`n1ccs`, the row-loop twins); keep the tangent arm (106
+shipped rows bank it) and move it as it is; delete all four unused groups of §3 (the 52
+`log3`, the 28 odd `n1b`/`t2b`, the 6 radix 6/10/12 tangent, the 4 `b416` column forms; 90
+files); keep every file name; move `mono64_il` into the tree; drop the cascade's route-4
+enum value (the name table keeps a placeholder). 740 files remain. The library's codelet
+symbol list after the move is the list before it minus exactly the 90 deleted kernels;
+`gen_set` places a file by its kind (`Corpus.dir_of_file`); the three gate TSVs are
+re-pathed and their rows for deleted files dropped; the builds list the twelve folders.
 
 Scope: the 746 kernels in `codelets/zil/avx2/` (672 `pure_il`, 20 `pure_il/tangent`,
 54 `boundary_split`) plus the 30 fused drivers in `generator/generated/fused_codelets/`.
