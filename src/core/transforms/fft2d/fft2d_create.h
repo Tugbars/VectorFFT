@@ -215,6 +215,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         int il2d_wc = 0;
         int il2d_wl = 0, il2d_cut = 0, il2d_tfuse = 0;
         int il2d_bwl = -1, il2d_btf = -1, il2d_bro = -1; /* banked axes */
+        int il2d_axmt = 0;  /* the T-AWARE axis verdict serves this create (axt= == the plan's T, 2026-09-24) */
         int il2d_staged = 0, il2d_pitch = 0;
         double *il2d_bandscr = NULL;
         double *il2d_rscr = NULL;
@@ -276,6 +277,22 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                      il2d_fm, sizeof il2d_fm, &il2d_bwl, &il2d_btf,
                                      &il2d_bro, &il2d_bcmt, &il2d_bcmtt, &il2d_bblu))
                     return NULL;
+                /* the T-AWARE axis verdict (2026-09-24): at T > 1 the axis race ran
+                 * every arm threaded and banked beside the serial verdict as
+                 * axt= rot= wlt= swt= rbkt= turnt= cskt= (the T raced at, like
+                 * cmtt). Served at that T only; another T re-races. The serial
+                 * tokens stay the one-thread verdict. */
+                {
+                    const int thr = _vfft_plan_threads(cfg) > 0 ? _vfft_plan_threads(cfg) : 1;   /* the plan's T (h is committed later) */
+                    il2d_axmt = (thr > 1 && !cfg->recalibrate && W &&
+                                 vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "axt", 0) == thr);
+                }
+                if (il2d_axmt)
+                {
+                    il2d_bro = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "rot", -1);
+                    il2d_bwl = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "wlt", -1);
+                    il2d_btf = il2d_bwl > 0;
+                }
                 il2d_nst = col.nst;
                 memcpy(il2d_R, col.R, sizeof il2d_R);
                 memcpy(il2d_L, col.L, sizeof il2d_L);
@@ -412,7 +429,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         }
                     }
                     if (il2d_turn_plan && !getenv("VFFT_IL2D_ROWOOP") &&
-                        vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "turn", 0) == 1)
+                        vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_axmt ? "turnt" : "turn", 0) == 1)
                         il2d_turn = 1;
                     if (il2d_turn_plan && getenv("VFFT_IL2D_ROWOOP") && atoi(getenv("VFFT_IL2D_ROWOOP")) == 4)
                         il2d_turn = 1;
@@ -451,7 +468,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         il2d_csk_row = (struct vfft_plan_s *)vfft_create(&oc);
                     }
                     if (il2d_csk_scr && !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_CSK") &&
-                        vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "csk", 0) == 1)
+                        vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_axmt ? "cskt" : "csk", 0) == 1)
                         il2d_csk = 1;
                     if (il2d_csk_scr && getenv("VFFT_IL2D_CSK") && atoi(getenv("VFFT_IL2D_CSK")) == 1)
                         il2d_csk = 1;
@@ -460,7 +477,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * predates the token), VFFT_IL2D_RB2_KB pinning it for probes */
                 if (il2d_rowb2_leaf_f)
                 {
-                    int kb = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "rbk", 8);
+                    int kb = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_axmt ? "rbkt" : "rbk", 8);
                     if (getenv("VFFT_IL2D_RB2_KB") && atoi(getenv("VFFT_IL2D_RB2_KB")) > 0)
                         kb = atoi(getenv("VFFT_IL2D_RB2_KB"));
                     il2d_rowb2_ch = (int)_il2d_rb2_rows(kb, (size_t)N2);
@@ -526,7 +543,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     if (il2d_wl == 0 && il2d_bwl == 0 && !getenv("VFFT_IL2D_WC") && !getenv("VFFT_IL2D_WL") &&
                         !cfg->recalibrate && W)
                         il2d_wc = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord,
-                                                     "sw", 0);
+                                                     il2d_axmt ? "swt" : "sw", 0);
                     if (il2d_wl > 0 && !il2d_nat && getenv("VFFT_IL2D_STAGED") &&
                         atoi(getenv("VFFT_IL2D_STAGED")) == 1)
                     {
@@ -984,17 +1001,24 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
             !getenv("VFFT_IL2D_WL") && !getenv("VFFT_IL2D_CSK") &&
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
-            (il2d_bwl < 0 || il2d_bro < 0))
+            (h->nthreads > 1 ? !il2d_axmt : (il2d_bwl < 0 || il2d_bro < 0)))
+        {   /* at T > 1 the T-aware race (2026-09-24): every route's clone set
+             * first, every arm threaded, the unneeded sets dropped after */
+            if (h->nthreads > 1)
+                _il2d_c2c_build_clone_sets_all(h, cfg, h->nthreads);
             _il2d_axis_race(h, W, cfg, N1, N2);
+            if (h->nthreads > 1)
+                _il2d_c2c_drop_unneeded_clones(h);
+        }
         /* INC-C: c2c MT. Build the per-worker row clones (the serving
          * row path mutates shared plan state), then serve the banked
          * cmt verdict ONLY at the T it was raced at, else race and
          * bank. Runs AFTER the axis race — the row route (rowoop) the
          * clones must match is final only then. */
-        if (h->transform == VFFT_C2C && h->il2d_row && !h->il2d_turn && !h->il2d_csk &&
-            h->nthreads > 1)
+        if (h->transform == VFFT_C2C && h->il2d_row && h->nthreads > 1)
         {   /* (Bluestein cells race too since 2026-09-02: the window pipeline;
-             * a TURN plan is serial for now: no clones, no MT race) */
+             * the turn and the skewed pass since 2026-09-24: their row-slab
+             * walks, one threaded arm each) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             _il2d_c2c_build_clones(h, cfg, h->nthreads);
             if (ce)

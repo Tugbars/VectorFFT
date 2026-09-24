@@ -200,6 +200,11 @@ arm since 2026-09-03). A dummy-chain row of any other mode
 from N alone — and carries neither `chain=` nor `ref=`; the reader accepts
 it bare. A signpost at a self-contained cell points at a record that never
 exists and makes the cell a permanent MISS (re-raced on every create).
+The prime cell's `ord=scr place=ip role=comp lay=il` row IS its method
+verdict (`eng=rader|bluestein` + the raced inner `in= in_sh= in_tw=`); the
+IL planner's K=1 route bank (`eng=k1 il_route=prime`, the same key) yields
+to it (2026-09-24) -- a route row written over it left the next create
+without a method, so the inner was re-raced on every other create.
 
 ### 3.4 MEASURE + PROVENANCE (after the second pipe)
 

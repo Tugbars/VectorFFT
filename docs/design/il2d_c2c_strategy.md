@@ -17,7 +17,7 @@ beside the plain route, and what they did to the numbers.
 | contract | c2c, interleaved, natural order, either placement, K=1; the gauntlet measures out of place, one thread, against MKL DFTI 2D out of place |
 | column pass | the column chain: stages of radix R over the plane, every kernel call covering `rn` adjacent columns two per vector (`il2d_col`); a natural-order leaf; the Bluestein column axis for prime N1 |
 | row pass | every row a length-N2 transform on the destination plane, after the column pass (stage 0 of the chain does the source-to-destination move) |
-| verdict | `chain= wl= tf= sw= ro= rbk= turn=` on the cell's `lay=il` row, one race |
+| verdict | `chain= wl= tf= sw= ro= rbk= turn= csk=` on the cell's `lay=il` row, one race at one thread; at T > 1 the same race runs every arm through its route's threaded walk and banks beside it as `axt= rot= wlt= swt= rbkt= turnt= cskt=` (the T raced at), served at that T only |
 
 The plain route runs the row pass as N1 calls of the in-place K=1 plan at N2 (`ro=0`): one
 door walk per row. It is the coverage route: it exists for every N2 the 1D in-place tier
@@ -266,7 +266,8 @@ the same plans, above, and do not depend on it.
 | what | where |
 |---|---|
 | the routes' fields and serving | `src/core/vfft_internal.h`, `src/core/transforms/fft2d/il2d_tier.h` (`_il2d_rows_exec`, `_il2d_turn_exec`), `src/core/vfft_execute.h` |
-| the race, the bank | `_il2d_axis_race` in `il2d_tier.h`; tokens `ro= rbk= turn=` (`wisdom2_2d_reader.h`) |
+| the race, the bank | `_il2d_axis_race` in `il2d_tier.h`; tokens `ro= rbk= turn= csk=`, at T > 1 `axt= rot= rbkt= turnt= cskt=` (`wisdom2_2d_reader.h`) |
+| the threaded walks | `_il2d_c2c_mt` in `il2d_tier.h`: the chain's bands, block and strips; `_il2d_turn_exec_mt` and `_il2d_csk_exec_mt` (row slabs, clones of the route's 1D plan); the threading race `_il2d_c2c_mt_race` banks `cmt= cmtt=` for every route |
 | the kernels | `codelets/zil/avx2/pure_il/radix*_z_n1ccs*`, `radix*_z_{n1tr,t2r,t2tr,n1r}*`; the generator's `--cil-n1ccs` and `--cil-rowloop` |
 | the pins | `VFFT_IL2D_ROWOOP=2|3|4`, `VFFT_IL2D_RB2_KB`, `VFFT_IL2D_LOG=1` prints every arm |
 | the measurements | `gauntlet/results/gauntlet_2d-pow2grid*/report_2d.md`; the phase probe in the session scratchpad |
