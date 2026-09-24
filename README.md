@@ -86,6 +86,28 @@ The ten planes below parity are the tiny squares (2x2, 8x8, 16x16 at 0.92-0.94, 
 the call itself is the cost), 128x16 (0.77) and a few 16-to-64-row cells within a
 run-to-run swing of parity.
 
+### 3D throughput, every power-of-two volume up to 4M points — VectorFFT vs Intel MKL
+
+![3D speedup matrices, VectorFFT vs MKL, one N2 x N3 matrix per N1](src/tools/plots/vectorfft-3d-pow2.svg)
+
+Every volume N1 x N2 x N3 with each side a power of two from 2 to 8,192 and at most 2^22
+points: 1,288 transforms, 3D complex-to-complex, interleaved, natural order, out of
+place, single thread, against MKL DFTI 3D. One matrix per N1; each cell is the speedup,
+worse of the two engine orders, and a cell slower than MKL is outlined. The record is
+[`3d-pow2_2026-09-24`](gauntlet/results/3d-pow2_2026-09-24/).
+
+| Volume | Cells | Median speedup | At or above parity |
+|---|---|---|---|
+| up to 4,096 points | 220 | 4.54x | 99% |
+| 4,097..65,536 | 337 | 1.94x | 99% |
+| 65,537..1M | 478 | 1.38x | 98% |
+| 1M..4M | 253 | 1.26x | 99% |
+| **all, 1,288 volumes** | **1,288** | **1.55x** | **98%** |
+
+The 20 volumes below parity are 2x2x2 (0.66), the tiny cubes within a swing of parity,
+and a short first axis over a tall plane, 4 or 8 planes of 2048x32 and the like at
+0.78-0.99, where the first-axis sweep streams at 56 GB/s against MKL's 90.
+
 ## Accuracy
 
 ![Precision, VectorFFT vs MKL, every N from 2 to 4096](src/tools/plots/vectorfft-precision.svg)
