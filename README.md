@@ -85,6 +85,11 @@ The ten planes below parity are the tiny squares (2x2, 8x8, 16x16 at 0.92-0.94, 
 the call itself is the cost), 128x16 (0.77) and a few 16-to-64-row cells within a
 run-to-run swing of parity.
 
+The same 159 planes at eight threads, MKL at eight threads too. The threaded design is in
+[`docs/design/il2d_c2c_mt.md`](docs/design/il2d_c2c_mt.md).
+
+![2D speedup, one thread against eight, by plane size](src/tools/plots/vectorfft-2d-mt-forest.svg)
+
 ### 3D throughput, every power-of-two volume up to 4M points — VectorFFT vs Intel MKL
 
 ![3D speedup matrices, VectorFFT vs MKL, one N2 x N3 matrix per N1](src/tools/plots/vectorfft-3d-pow2.svg)
