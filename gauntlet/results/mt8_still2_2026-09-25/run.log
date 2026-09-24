@@ -1,0 +1,7 @@
+2026-09-25 00:04:32 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-25 00:04:32 run: 22 cells, contract 2D out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-25 00:04:32 calibrate: 22 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-09-25 00:05:01   calibrated 22/22 (8192x512), 29 s elapsed
+2026-09-25 00:05:01 bench: 22 cells (0 already benched, 0 not banked -> not benched)
+2026-09-25 00:05:44   benched 22/22 (8192x512), 41 s elapsed
+2026-09-25 00:05:47 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\mt8_still2_2026-09-25\report_2d_mt8.md

@@ -62,6 +62,7 @@ typedef struct {
                                * nnatsscr blocks of N x natswcap complexes, pitch = the strip
                                * width (the 3D tier's strip form, _il2d_col_pass_nat_strip) */
     int nnatsscr, natswcap;
+    int natdense;             /* the dense strip form is on (bound at build: VFFT_IL2D_DENSE=0 keeps the shared scratch; no getenv on the execute path) */
     /* column-axis BLUESTEIN: chirp convolution at M = next pow2 >= 2N-1 over
      * an M x rn scratch plane; blu = M (0 = off); R/L/f/b/tf/tb hold the
      * M-chain */

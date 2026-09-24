@@ -70,6 +70,32 @@ static DWORD WINAPI bench_sibling_guard(LPVOID arg)
 /* hold the SMT sibling of the pinned cpu for the process's life (once); every
  * single-thread mode's pin passes through here (2026-09-22), not only the
  * K=1 / 3D one-thread protocol */
+/* THE THREADED PROTOCOL'S CONFINEMENT (2026-09-25, from the bench): the process
+ * on the 8 distinct P-cores (logical 0,2,..,14), VFFT_PCORE_MASK overriding
+ * (0 = do not mask: the control for a mask-distorted threaded engine). The
+ * caller then pins itself to logical 0, the core the library's pool reserves
+ * for it; workers 1..7 take logical 2..14. */
+static void bench_pin_pcores(void)
+{
+#ifdef _WIN32
+    const char *e = getenv("VFFT_PCORE_MASK");
+    DWORD_PTR mask = e ? (DWORD_PTR)strtoull(e, NULL, 0) : (DWORD_PTR)0x5555;
+    if (mask == 0)
+    {
+        printf("# process affinity UNSET (VFFT_PCORE_MASK=0) -- threads float over every logical CPU incl. E-cores\n");
+        return;
+    }
+    if (!SetProcessAffinityMask(GetCurrentProcess(), mask))
+        fprintf(stderr, "pin: SetProcessAffinityMask(0x%llx) FAILED -- threads may land on E-cores\n",
+                (unsigned long long)mask);
+    else
+        printf("# process affinity = 0x%llx (8 distinct P-cores: logical 0,2,..,14)\n",
+               (unsigned long long)mask);
+#else
+    fprintf(stderr, "pin: P-core confinement is Win32-only here; set taskset externally\n");
+#endif
+}
+
 static void bench_guard_sibling(int cpu)
 {
     static int done = 0;

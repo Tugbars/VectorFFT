@@ -1005,7 +1005,10 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         {   /* at T > 1 the T-aware race (2026-09-24): every route's clone set
              * first, every arm threaded, the unneeded sets dropped after */
             if (h->nthreads > 1)
+            {
                 _il2d_c2c_build_clone_sets_all(h, cfg, h->nthreads);
+                _il2d_nat_sscr_build(&h->il2d_col, N1, N2, h->nthreads);   /* the strips' dense scratch before the race: its arms run the form that serves */
+            }
             _il2d_axis_race(h, W, cfg, N1, N2);
             if (h->nthreads > 1)
             {
