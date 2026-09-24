@@ -9,8 +9,7 @@ for each instruction set; the split layout has its AVX-512 kernels today, the
 interleaved layout's follow from the same compiler. You never pick an algorithm:
 a call names a contract, the planner races the engines that serve it on your
 machine, and the winner is kept as wisdom, so the first create measures and
-every later one replays. Its speed is measured against Intel MKL below, at every
-length from 2 to 4,096.
+every later one replays. 
 
 ---
 
