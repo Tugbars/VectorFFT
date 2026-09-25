@@ -1,10 +1,6 @@
-/* c2c_oop_create.h — the c2c OUT-OF-PLACE create tier (migration step 25).
+/* c2c_oop_create.h — the c2c OUT-OF-PLACE create tier.
  *
- * WHAT THIS IS
- * ------------
- * The c2c out-of-place arm of _vfft_create_inner. It returns on every path, so
- * it lifts out behind its own guard, leaving the real and trig tiers that
- * follow untouched.
+ * The c2c out-of-place arm of _vfft_create_inner; it returns on every path.
  *
  * OOP IS NOT IN-PLACE WITH A COPY BOLTED ON
  * -----------------------------------------
@@ -13,51 +9,45 @@
  * c2c_ip_create.h rather than a branch inside it: the two consult different
  * banked verdicts and build different plans.
  *
- * THE K=1 SPECIAL CASE
- * --------------------
- * `K == 1 && !ob` is where the K=1 machinery lives — the zsplit/zturn cascade
- * replay (_k1z_wisdom_replay) and, on a miss, the race that banks it
- * (_k1z_race_and_bank). Those two are the front door to the three-tier K=1
- * strategy (mono <=64, Bailey 128-1024, cascade >=2048); the tier itself does
- * not choose a tier, it replays or races for one.
+ * THE K=1 CASE
+ * ------------
+ * `K == 1 && !ob` is the K=1 tier: the interleaved routes (mono, pair,
+ * chain3, flat, ZTURN-T, four-step, prime) replay the banked kind-3 row or
+ * race and bank it (_k1_il_plan_race); the split routes replay their own
+ * lay=split row. The tier does not choose an engine by rule.
  *
  * `ob` splits the same way it does in-place: a caller-supplied batch handle is
  * checked and served exactly, otherwise the plan owns its buffers.
  *
  * WISDOM, NOT HEURISTIC
  * ---------------------
- * Every open choice here is either replayed from a banked verdict or raced and
- * then banked. A banked line reads back as a verdict; nothing in this file may
- * grow a hand-written cutoff.
+ * Every interleaved choice here is replayed from a banked verdict or raced
+ * and then banked. The split side's uncalibrated default is structural until
+ * calibrate_k1_split.c banks the cell.
  *
  * POSITION IN vfft.c IS LOAD-BEARING
  * ----------------------------------
  * Not a standalone header. It calls file-scope statics that live in vfft.c, so
  * it must be included after those are defined and before _vfft_create_inner.
- *
- * The six parameters are the block's complete free-variable set, derived
- * rather than guessed: cfg, ob, W, reg, N, K.
  */
 #ifndef VFFT_OOP_C2C_OOP_CREATE_H
 #define VFFT_OOP_C2C_OOP_CREATE_H
 
 /* ── the tier's ONE exit. Every handle this create returns passes through
  * here; a shared post-step cannot be skipped by a new early exit without
- * the skip being spelled at the call. zt_mt says whether this exit races
- * the cascade MT verdict (INC-Z: K=1 zturn, live pool; serial default
- * everywhere the race does not run) — the K=1/odd-mid exit passes 0, its
- * historical behaviour. */
+ * the skip being spelled at the call: the threaded verdicts of the K=1
+ * engines that have one. zt_mt is unused (callers pass 0). */
 static vfft_plan _c2c_oop_finish(struct vfft_plan_s *h, int zt_mt,
                                  struct vfft_wisdom_s *W,
                                  const vfft_config_t *cfg, int N)
 {
-    (void)zt_mt;   /* the cascade's MT verdict left with the cascade (2026-09-15) */
+    (void)zt_mt;
     if (h->k1ilfd && h->K == 1 && h->nthreads > 1)
-        _ilfd_mt_replay_or_race(h, W, cfg, N); /* the flat DIT's, per-T banked (2026-09-07) */
+        _ilfd_mt_replay_or_race(h, W, cfg, N); /* the flat DIT's, per-T banked */
     if (h->k1ztt && h->K == 1 && h->nthreads > 1)
-        _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's, per-T banked (2026-09-15) */
+        _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's, per-T banked */
     if (h->k1fs && h->K == 1 && h->nthreads > 1)
-        _k1fs_mt_replay_or_race(h, W, cfg, N); /* the four-step's split at T, per-T banked (2026-09-15) */
+        _k1fs_mt_replay_or_race(h, W, cfg, N); /* the four-step's split at T, per-T banked */
     return h;
 }
 
@@ -70,34 +60,16 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
 {
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_OUTOFPLACE)
     {
-        /* ── K=1 engine (row_major_engine.md §13): natural-order routes from
-         * kind-3 wisdom or the default heuristic; execute dispatches on the
-         * COMMITTED layout axis (config.layout, stamped on the handle).
-         * This IS the K=1 path (no kill-switch — user decision 2026-07-22:
-         * K=1 is the headline feature; the classic champions path below was
-         * never K=1-safe). Classic path still serves SCRAMBLED-order
-         * requests and is the fallback if engine create fails. Construction
-         * is layout-independent (both axes' routes are built as before). */
-        /* K=1 engine admission (il_coverage_plan.md Phase A, 2026-08-03):
-         * DEFAULT and NATURAL as always — and now explicit SCRAMBLED too,
-         * WHEN no cascade plan attached above. The scrambled contract is
-         * "any self-consistent permutation; a route's own bwd consumes its
-         * own fwd comb" — the IDENTITY permutation qualifies, so the
-         * natural-native K=1 engines serve an explicit-SCRAMBLED request
-         * legally. Before this, asking for the CHEAPER contract below 2048
-         * got the SLOWER route (convert fallback) while order=DEFAULT got
-         * the native engine — a routing anomaly, nothing more. The
-         * no-cascade guard keeps ≥2048 scrambled on the cascade dispatch
-         * without building a dead-weight k1 engine beside it. */
+        /* ── the K=1 engine: routes from the kind-3 row (replayed) or the
+         * race; execute dispatches on the COMMITTED layout axis
+         * (config.layout, stamped on the handle). An interleaved request that
+         * finds no K=1 engine is refused below; a split request falls through
+         * to the classic OOP path when its K=1 plan cannot be built.
+         *
+         * ORDER IS A CONTRACT: an explicit SCRAMBLED request reads the ord=scr
+         * row — the scrambled pool's own verdict (planning/policy.h), raced on
+         * a miss; DEFAULT and NATURAL read the ord=nat row. */
         {
-        /* ORDER IS A CONTRACT (design_contracts.md 8b): a scrambled request is
-         * served by scrambled writers only. At pow2 in ZTURN-T's band no
-         * cascade is pending (above), so an explicit SCRAMBLED request enters
-         * the K=1 tier here and reads the ord=scr row — the PLAIN ZTURN-T
-         * schedule's verdict, raced on a miss; the natural K=1 engines are
-         * never admitted to a scrambled request ("scrambled belongs to only
-         * scrambled", 2026-09-09; "contracts not optimization angles",
-         * 2026-09-13). */
         if (K == 1 && !ob)
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
@@ -106,7 +78,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             const vfft_oop_wisdom_entry_t *ke =
                 W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
                                : (vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL);
-            /* the IL axis reads the request's ORDER CELL (2026-09-05): an
+            /* the IL axis reads the request's ORDER CELL: an
              * explicit SCRAMBLED request takes the ord=scr row — the
              * scrambled pool's own verdict (a natural-output engine, or the
              * flat DIT's scrambled class) — DEFAULT and NATURAL the ord=nat
@@ -115,32 +87,18 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                  cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop);
             const vfft_oop_wisdom_entry_t *ki =
                 scr_req ? (vw2_oop_lookup_k1_scr(&W->vw2, N, &kib) ? &kib : NULL) : ke;
-            /* Per-layout wisdom (v1.2, 2026-08-24): each axis is taken
-             * from the store INDEPENDENTLY. A cell with only an IL verdict
-             * (k1_sp_route < 0 — e.g. non-pow2 N, where split cannot
-             * factor) keeps the banked IL route while the split side runs
-             * the same heuristic an unbanked cell always ran; neither
+            /* Per-layout wisdom: each axis is taken from the store
+             * INDEPENDENTLY. A cell with only an IL verdict (k1_sp_route < 0 —
+             * e.g. non-pow2 N, where split cannot factor) keeps the banked IL
+             * route while the split side runs the unbanked default; neither
              * layout's absence degrades the other. */
-            /* the IL PLAN RACE at create (2026-09-03): an interleaved caller's
-             * kind-3 MISS (or recalibrate) below 2048 runs the planner and
-             * banks before this block reads the row — the pair heuristic
-             * below is never the source of a served IL plan any more (it
-             * kept building a form-less pair on the cold create while the
-             * replay took the planner's pair WITH forms: different bits). */
-            /* WISDOM OR RACE (owner's law, 2026-09-09): every interleaved miss
-             * races here, the pow2 band included — _k1_il_plan_race carries
-             * the N gate (the 2^a * odd cells above 2048 stay the odd
-             * machinery's). Until 2026-09-09 this call was fenced to
-             * N < 2048 or odd N and a cold band cell fell through. */
+            /* WISDOM OR RACE: an interleaved kind-3 miss (or recalibrate)
+             * races here and banks before this block reads the row, so the
+             * pair default below is never the source of a served IL plan
+             * (its form-less pair would differ from the planner's in bits).
+             * _k1_il_plan_race carries the N gate (vfft_policy_races). */
             if (cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                 !W->vw2_off_oop &&
-                /* an explicit SCRAMBLED request with a cascade plan pending
-                 * (a 2^a * odd cell: the cascade's own replay / race above,
-                 * kind-4 rows) is not the K=1 tier's. At pow2 nothing is
-                 * pending since 2026-09-14 and the scrambled K=1 writer is the
-                 * PLAIN ZTURN-T schedule, raced here like every other cell.
-                 * (Racing a cascade cell here banked a fresh cascade chain on
-                 * EVERY create, 12-24 s each; k1_pow2_gate 2026-09-09.) */
                 (cfg->recalibrate || !ki || !ki->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
             {
                 if (_k1_il_plan_race(W, cfg, N) > 0)
@@ -149,23 +107,19 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     ki = scr_req ? (vw2_oop_lookup_k1_scr(&W->vw2, N, &kib) ? &kib : NULL) : ke;
                 }
             }
-            /* TWO LIBRARIES (design_contracts.md section 2, owner 2026-09-09):
-             * a request names ONE layout and this door resolves, builds and
-             * commits that layout's axis only. An interleaved request never
-             * builds a split K=1 plan (psp) and a split request never builds
-             * an interleaved one; the other axis reads as absent from here on
-             * (no route, no pair, no plan). Until 2026-09-09 an interleaved
-             * request built and committed a split plan (hk->k1sp) beside its
-             * engine whenever a split route resolved. */
+            /* TWO LIBRARIES: a request names ONE layout and this door
+             * resolves, builds and commits that layout's axis only. An
+             * interleaved request never builds a split K=1 plan (psp) and a
+             * split request never builds an interleaved one; the other axis
+             * reads as absent from here on (no route, no pair, no plan). */
             const int want_il = (cfg->layout == VFFT_LAYOUT_INTERLEAVED);
             if (want_il) { spr = -1; sR1 = sR2 = 0; }
             else         { ilr = VFFT_K1_IL_NONE; iR1 = iR2 = 0; }
             const int sp_banked = (!want_il && ke && ke->k1_sp_route >= 0);
-            /* il_banked mirrors sp_banked (review fix): k1_il_route = -1
-             * means the IL axis was never raced at this cell — run the IL
-             * heuristic, exactly as an unbanked cell would. IL_NONE (0) is
-             * a VERDICT ("raced: no IL route available", the B2.1 meaning)
-             * and is consumed as one. */
+            /* il_banked mirrors sp_banked: k1_il_route = -1 means the IL axis
+             * was never raced at this cell — run the IL default, exactly as
+             * an unbanked cell would. IL_NONE (0) is a VERDICT ("raced: no IL
+             * route available") and is consumed as one. */
             const int il_banked = (want_il && ki && ki->k1_il_route >= 0);
             if (sp_banked)
             {
@@ -181,10 +135,10 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             }
             if (!want_il && !sp_banked)
             {
-                /* heuristic default (uncalibrated cell): mono when emitted,
+                /* structural default (uncalibrated cell): mono when emitted,
                  * else 2pb on the most balanced valid pair. The offline
-                 * calibrator (benches/calibrate_k1.c, multi-run median)
-                 * refines this into a kind-3 wisdom line per cell. */
+                 * calibrator (benches/calibrate_k1_split.c) banks the
+                 * measured lay=split row per cell. */
                 if (vfft_k1_mono_fn(N) && N <= 64)
                     spr = VFFT_K1_SP_MONO;
                 for (int R2c = (N < 128 ? N : 128); R2c >= 4; R2c--)
@@ -217,34 +171,19 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             }
             if (want_il && !il_banked)
             {
-                /* IL runs its OWN pair search — it must NOT inherit sR1/sR2.
-                 *
-                 * Two independent reasons, both measured:
-                 *  (a) COVERAGE. The loop above filters on SPLIT availability
+                /* IL runs its OWN pair search — it must NOT inherit sR1/sR2:
+                 *  (a) COVERAGE. The split loop filters on SPLIT availability
                  *      (vfft_oop_leaf_fn / vfft_oop_t1_fn, which reach R=128),
                  *      but the il2p registries (vfft_il2p_leaf_fn /
-                 *      vfft_il2p_mid_fn) stop at R=64. So the balanced split
-                 *      pick can name radices IL has no kernel for — at
-                 *      N=16384 it picks 128x128 and BOTH IL halves come back
-                 *      NULL, while the route once claimed IL anyway (recorded
-                 *      bug). Since a 2-pass IL route needs R1*R2 = N with both
-                 *      <= 64, IL 2-pass genuinely tops out at N=4096; above
-                 *      that the honest answer is IL_NONE, not a route that
-                 *      cannot execute.
+                 *      vfft_il2p_mid_fn) stop at R=64: at N=16384 the split
+                 *      pick is 128x128 and BOTH IL halves are NULL. A 2-pass IL
+                 *      route needs R1*R2 = N with both <= 64, so it tops out at
+                 *      N=4096; above that the answer is IL_NONE.
                  *  (b) INDEPENDENCE. Even where a split pair is legal for IL,
-                 *      nothing guarantees it is the IL optimum -- the two arms
-                 *      run different codelets over different layouts. The IL
-                 *      planner (planning/dp_planner_il.h) searches this axis by
-                 *      measurement; this loop only has to produce a LEGAL,
-                 *      reasonable default for an uncalibrated cell.
-                 *      (Note: a 2026-07-25 race showing 32x8 beating 4x64 at
-                 *      N=256 was measured on the FUSED emit_k1 family, NOT this
-                 *      staged 2P route -- do not cite it here. Measured on the
-                 *      staged route, 4x64 wins at N=256, agreeing with split.)
-                 *
-                 * Calibrated cells are unaffected: calibrate_k1.c already picks
-                 * an independent IL winner (win[2]) and writes its own iR1/iR2.
-                 * This is only the uncalibrated default. */
+                 *      nothing makes it the IL optimum -- the two arms run
+                 *      different codelets over different layouts.
+                 * This is only the default for a cell with no banked verdict;
+                 * the IL planner (planning/dp_planner_il.h) measures the axis. */
                 if (vfft_k1_mono_il_fn(N, 0))
                 {
                     ilr = VFFT_K1_IL_MONO; /* mono is whole-N; pair unused */
@@ -258,14 +197,12 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                         if (N % R2c)
                             continue;
                         int R1c = N / R2c;
-                        /* NO parity constraint (2026-07-29): every monolithic
-                         * cil kernel carries the inline VEX-128 odd-count
-                         * tail, so odd factors are legal — all-odd pairs
-                         * (45 = 9x5) and 2·odd pairs (50 = 5x10) route
-                         * natively. The registry probes below are the only
-                         * availability filter. (History: %4 was split's
-                         * transpose contract; %2 was the pre-tail evenness
-                         * contract.) */
+                        /* No parity constraint: every monolithic cil kernel
+                         * carries the inline VEX-128 odd-count tail, so odd
+                         * factors are legal — all-odd pairs (45 = 9x5) and
+                         * 2·odd pairs (50 = 5x10) route natively. The
+                         * registry probes below are the only availability
+                         * filter. */
                         if (R1c < 3 || R1c > 64)
                             continue;
                         if (!vfft_il2p_leaf_fn(R2c, 0) || !vfft_il2p_mid_fn(R1c, 0))
@@ -283,15 +220,15 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             vfft_il2p_plan_t *il2p = NULL;
             if (spr == VFFT_K1_SP_CCOL && sR1)
             {
-                /* composed column (§12.4 item 5): chain from the wisdom line,
-                 * else the per-R2 default. Create is self-validating (perm
+                /* composed column: chain from the wisdom line, else the
+                 * per-R2 default. Create is self-validating (perm
                  * discovery); failure falls through to the classic path. */
                 int ccf[VFFT_K1_CC_MAX_NF];
                 int ccn = (ke && ke->cc_chain)
                               ? vfft_k1_cc_chain_decode(ke->cc_chain, ccf)
                               : vfft_k1_cc_default_chain(N / sR1, ccf);
-                /* B4/B2.2 (2026-08-18): column-plan VARIANTS from the
-                 * kind-3 line's own cc_vars token — the CCOL verdict is
+                /* column-plan VARIANTS from the kind-3 line's own cc_vars
+                 * token — the CCOL verdict is
                  * SELF-CONTAINED in OOP wisdom (an OOP operation never
                  * reads the in-place spike file at create). Decode must
                  * match the chain's nf; absent/mismatch => NULL = the T1S
@@ -313,8 +250,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * a growing "!= this && != that" chain would silently start
              * building plans for any IL route added later.
              *
-             * il2p is the ONLY pair-based IL machinery (the il_in/il_out
-             * hybrids were deleted 2026-07-29), so the legacy wisdom aliases
+             * il2p is the ONLY pair-based IL machinery, so the legacy wisdom aliases
              * (3P=1, 2P=2) and the canonical 2P_PURE all normalize to ONE
              * il2p attempt on the same (iR1,iR2) pair. Route stays TRUTHFUL:
              * it names 2P_PURE iff the plan exists, else NONE — execute never
@@ -332,13 +268,10 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 }
                 ilr = il2p ? VFFT_K1_IL_2P_PURE : VFFT_K1_IL_NONE;
             }
-            /* 3-STAGE CHAIN (route 6): the odd·2^k cells the pair search can
-             * never serve (a 2-stage plan needs BOTH factors even — count
-             * parity, il2p.h). Only attempted when the pair axis came up
-             * empty and only for INTERLEAVED-committed plans (an IL-only
+            /* 3-STAGE CHAIN (route 6): attempted when the pair axis came up
+             * empty, and only for INTERLEAVED-committed plans (an IL-only
              * handle may carry spr == -1; the split dispatch must never see
-             * one). Chain = LEGAL DEFAULT for the uncalibrated cell; the
-             * measured per-cell pick is the wisdom campaign's job. */
+             * one). */
             vfft_il3p_plan_t *il3p = NULL;
             /* a banked chain3 row names the route up front (ilr == CHAIN3
              * from ke): it must reach this block, not the degrade below */
@@ -348,8 +281,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             {
                 int cR2, cA, cB;
                 /* the BANKED chain first (the planner races every legal
-                 * 3-stage chain since 2026-09-02 and banks il_chain=R2.A.B);
-                 * the legal default only for an uncalibrated cell */
+                 * 3-stage chain and banks il_chain=R2.A.B); the legal default
+                 * only for an uncalibrated cell */
                 if (ki && ki->k1_il_route == VFFT_K1_IL_CHAIN3 && ki->il_c3[0])
                 {
                     il3p = vfft_il3p_create(N, ki->il_c3[0], ki->il_c3[1],
@@ -364,7 +297,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     il3p = vfft_il3p_create(N, cR2, cA, cB);
                 ilr = il3p ? VFFT_K1_IL_CHAIN3 : VFFT_K1_IL_NONE;
             }
-            /* FLAT DIT (route 8, 2026-09-05): the odd-N flat mixed-radix DIT
+            /* FLAT DIT (route 8): the odd-N flat mixed-radix DIT
              * (oop/il_flatdit.h). A banked verdict replays its chain and
              * per-stage forms; there is NO default build here — the K=1 plan
              * race above is the only source of a flat plan (never a rule). */
@@ -399,10 +332,10 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             }
             if (ilr == VFFT_K1_IL_FLAT && !ilfd)
                 ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
-            /* ZTURN-T (route 9, 2026-09-09): a banked verdict replays its chain
+            /* ZTURN-T (route 9): a banked verdict replays its chain
              * (il_ztt=) through the create — the registry cell's fused codelets;
              * NO default build (the planner is the only source). The ORDER
-             * CLASS is the row's (2026-09-14): ord=nat replays the natural
+             * CLASS is the row's: ord=nat replays the natural
              * drivers, ord=scr the PLAIN schedule (ztt_scrambled_design.md) —
              * one plan, one order, never mixed. */
             vfft_ztt_plan_t *ztt = NULL;
@@ -424,7 +357,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             }
             if (ilr == VFFT_K1_IL_ZTT && !ztt)
                 ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
-            /* the FOUR-STEP (route 10, 2026-09-15): a banked split (il_pair =
+            /* the FOUR-STEP (route 10): a banked split (il_pair =
              * N1.N2) replays through the create — the 2D child out of place at
              * the plan's thread count, the order class the row's */
             vfft_k1fs_plan_t *fs = NULL;
@@ -447,11 +380,11 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * OOP path refuses. Same IL-only-handle rules as the chain. */
             vfft_ilprime_plan_t *ilpr = NULL;
             /* the prime cell is a route, not a fallback: a power of two is
-             * never its cell (the pow2 tiers race on a miss, above). Since
-             * 2026-09-21 it is also a RACED ARM: a banked il_route=prime row
-             * replays it (the race's own plan when the race just ran, else
-             * the prime shard's), and a cell with no verdict at all -- above
-             * the race ceiling -- builds it unraced, as before. */
+             * never its cell (the pow2 tiers race on a miss, above). It is a
+             * RACED ARM: a banked il_route=prime row replays it (the race's own
+             * plan when the race just ran, else the prime shard's), and a cell
+             * with no verdict at all -- above the race ceiling -- builds it
+             * unraced. */
             if ((ilr == VFFT_K1_IL_NONE || ilr == VFFT_K1_IL_PRIME) &&
                 !il2p && !il3p && !ilfd && !ztt && !fs &&
                 (N & (N - 1)) != 0 &&
@@ -474,16 +407,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                             (ki && ki->k1_il_route == VFFT_K1_IL_PRIME) ? "wisdom" : "door");
             }
             /* availability degrade (wisdom may name routes this build lacks).
-             * Runs BEFORE spr0 is captured — P0c: spr0 keys the JIT (and the
-             * TWL table pick), and keying it on the PRE-degrade route made
-             * every create at N=8192 shell gcc for a 2PB bake whose
-             * radix-128 UG_UL source does not exist (wisdom names 2PB 64x128;
-             * leaf_ugul stops at 64 so execute degrades to 2PA, but the JIT
-             * kept baking the route that could never compile — and with no
-             * negative cache it retried per create). The L3-missing cases
-             * degrade to their flat base here so spr0 never names an l3 twin
-             * this build lacks; the fold below then only ever swaps pointers
-             * that exist. */
+             * Runs BEFORE spr0 is captured: spr0 keys the JIT (and the TWL
+             * table pick), and the JIT must never bake a route this build
+             * cannot execute (e.g. 2PB 64x128: leaf_ugul stops at 64, so
+             * execute degrades to 2PA and a 2PB bake could never compile).
+             * The L3-missing cases degrade to their flat base here so spr0
+             * never names an l3 twin this build lacks; the fold below then
+             * only ever swaps pointers that exist. */
             if (spr == VFFT_K1_SP_MONO && !vfft_k1_mono_pair_fn(N, sR1))
                 spr = VFFT_K1_SP_2PB;
             if (spr != VFFT_K1_SP_MONO)
@@ -521,8 +451,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             }
             /* (2P/3P/2P_PURE availability is settled by the normalize block
              * above — the route already names 2P_PURE iff il2p exists.) */
-            /* validate the form the handle will RESOLVE, not form 0 (survey
-             * section D, 2026-09-18). The resolution below takes the row's
+            /* validate the form the handle will RESOLVE, not form 0. The
+             * resolution below takes the row's
              * banked il_kv, and form 1 exists only at N = 64 -- so a row
              * carrying il_route=MONO il_kv=1 at any other N passed a form-0
              * check here and then resolved to NULL pointers that
@@ -539,21 +469,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     ilr = VFFT_K1_IL_NONE;
             }
             /* Handle exists when the SPLIT axis has a route, OR when ANY
-             * IL-only route does — pair, chain, or prime. 🔴 il2p MUST be in
-             * this guard: with the odd-count tail, cells like 50 = 5x10 have
-             * an IL pair but NO split K=1 route (spr == -1); omitting il2p
-             * here silently dropped them to the classic path, whose DEFAULT-
-             * order kind at such N is SCRAMBLED — natural-order callers got
-             * a scrambled spectrum (caught by the public gate, 2026-07-29).
+             * IL-only route does. 🔴 Every IL engine MUST be in this guard: a
+             * cell with an IL plan but NO split K=1 route (spr == -1 — 50 =
+             * 5x10, or any N past the split routes' reach) would otherwise
+             * drop to the classic path or the "no interleaved engine" refusal.
              * IL-only handles are INTERLEAVED-committed by construction
              * (every IL attempt above is layout-gated for the spr < 0 case),
              * so the split dispatch never sees k1_sp_route == -1. */
-            /* ztt joined this list 2026-09-09 (S4): without it a ZTURN-T plan was
-             * committed only when the SPLIT axis also had a route (spr >= 0) —
-             * true at every cell up to 65536, so it went unseen until 131072,
-             * where no split route exists and a replayed ZTURN-T plan fell
-             * through to the "no interleaved engine" refusal. fs (the four-step,
-             * 2026-09-15) joined for the same reason at 524288+. */
             if (spr >= 0 ||   /* the SPLIT axis's route: not engine presence, so it stays here */
                 vfft_policy_k1_engine_present(
                     /* mono   */ ilr == VFFT_K1_IL_MONO && cfg->layout == VFFT_LAYOUT_INTERLEAVED,
@@ -600,7 +522,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                         hk->k1_mono_ilb = vfft_k1_mono_il_form_fn(N, mf, 1);
                     }
 #ifdef VFFT_USE_JIT
-                    /* stride-baking JIT for the split route (§13.3): compile
+                    /* stride-baking JIT for the split route: compile
                      * cost locked to create, cached on disk forever; NULL ->
                      * the normal route fns below. TWL bakes against the
                      * linear tables. */
@@ -620,14 +542,12 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             vfft_ilprime_destroy(ilpr);
             vfft_ilfd_destroy(ilfd);
             vfft_ztt_destroy(ztt);
-            vfft_k1fs_destroy(fs);   /* a FOURTH per-engine list that never learned the
-                                      * four-step (2026-09-15): it leaked the plan on
-                                      * this path. Found by the L6 survey, 2026-09-16. */
+            vfft_k1fs_destroy(fs);   /* every engine this tier can build is released here */
             if (psp)
                 vfft_oop_plan_destroy(psp);
             /* fall through to the classic OOP path */
         }
-        } /* ztodd scope (the odd-cascade admission wrapper) */
+        } /* the K=1 tier's scope */
         /* PADDED (opt-in): build at Kp so the OOP plan strides the caller's Kp-wide 4 planes
          * exactly. Pad-only (OOP bakes K, no runtime me). Kp = the handle's roundup(K,8), which
          * keeps all 3 kinds AND lets the (N,Kp) OOP wisdom cell cache (BAILEY2 + the wisdom
@@ -650,13 +570,11 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             padded = 1;
         }
         if (cfg->layout == VFFT_LAYOUT_INTERLEAVED)
-        {   /* (a pending cascade = the explicit-SCRAMBLED pow2 path: it attaches
-             * at this function's exit, an IL engine, so it passes here)
-             * OWNER LAW (2026-09-03): no split champion behind a convert for
-             * an interleaved caller. K=1 arrives here only when the IL route
-             * selection above found no engine; K>1 is the explicit lane-major
-             * batch (DEFAULT geometry is the transform-contiguous wrapper),
-             * which lost to transform-contiguous at every measured cell. */
+        {   /* No split champion behind a convert for an interleaved caller.
+             * K=1 arrives here only when the IL route selection above found
+             * no engine; K>1 is the explicit lane-major batch (DEFAULT
+             * geometry is the transform-contiguous wrapper), which lost to
+             * transform-contiguous at every measured cell. */
             _vfft_warn("vfft_create: out-of-place C2C N=%d howmany=%zu with "
                        "layout=INTERLEAVED has no interleaved engine (%s); nothing to "
                        "fall back to by design",
@@ -691,11 +609,9 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             vfft_oop_plan_create_champions(N, bK, &ctx, reg, &nat, &nns, &mb, &mns);
             vfft_proto_dp_destroy(&ctx);
             /* Bank only servable cells: vfft_oop_plan_from_entry hard-gates
-             * K%8, so a K%8!=0 champion row could never replay — legacy
-             * banked those anyway (the write-only "wart" lines, quarantined
-             * as garbage at migration) and this guard is their sunset. It
-             * also skips the K=1 MODEB champion, whose plan carries
-             * unraced variant slots the wisdom2 codec would refuse. */
+             * K%8, so a K%8!=0 champion row could never replay. It also
+             * skips the K=1 MODEB champion, whose plan carries unraced
+             * variant slots the wisdom2 codec would refuse. */
             if (bK > 0 && (bK % 8u) == 0)
             {
                 if (nat)
