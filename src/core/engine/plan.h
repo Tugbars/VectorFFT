@@ -1,21 +1,15 @@
-/* plan.h — stride_plan_t / stride_stage_t for prototype-core 1D C2C.
- *
+/* plan.h — the entry point for stride_plan_t / stride_stage_t (1D C2C).
  */
 #ifndef VFFT_PROTO_CORE_PLAN_H
 #define VFFT_PROTO_CORE_PLAN_H
 
-/* Pull in the minimal type definitions + SIMD helper stubs the
- * (B)+(A) plan-shaped executors compile against. This is a
- * re-export — plan.h's job is to be the prototype-core entry point
- * for the plan types, even though we don't reference any symbols
- * from plan_executors.h ourselves yet. The IWYU pragma below tells
- * include-what-you-use tooling that the consumers of plan.h are
- * intended to inherit these symbols. */
+/* Re-export: the generated plan_executors.h defines the plan types, the SIMD
+ * helpers and the (B)+(A) plan-shaped executors. Consumers of plan.h inherit
+ * these symbols (hence the IWYU export pragma). */
 #include "plan_executors.h"  // IWYU pragma: export
 
 /* Portable aligned-alloc wrapper. POSIX has posix_memalign; MSVC's
- * libc (used by ICX/clang-cl on Windows) has _aligned_malloc. Match
- * the production codebase's convention from src/core/. */
+ * libc (used by ICX/clang-cl on Windows) has _aligned_malloc. */
 #include <stdlib.h>
 #if defined(_WIN32) || defined(_MSC_VER)
   #include <malloc.h>
