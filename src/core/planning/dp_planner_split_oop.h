@@ -27,7 +27,7 @@
  * candidate enumeration (route × pair × CCOL R1 × column chain × column
  * variants), the correctness gate, the order-rotated timing discipline,
  * winner selection, and banking through the SHIPPED writers. Bench
- * harnesses (build_tuned/benches/calibrate_k1.c) are THIN DRIVERS over
+ * harnesses (build_tuned/benches/calibrate_k1_split.c) are THIN DRIVERS over
  * this header — they parse arguments and call in; they hold no planning
  * logic.
  *

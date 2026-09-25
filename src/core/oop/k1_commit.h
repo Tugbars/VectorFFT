@@ -1,8 +1,7 @@
 /* k1_commit.h - the K=1 plan's replay, race, and commit.
  *
  * How a single-transform cell gets its plan: consult wisdom, and on a miss race
- * the candidates and bank the winner. Extracted from vfft.c as migration
- * step 19; see docs/design/refactor_migration_plan.md.
+ * the candidates and bank the winner.
  *
  * THE PRECEDENCE LADDER, WHICH IS THE WHOLE POINT
  * ----------------------------------------------
@@ -19,13 +18,13 @@
  *                        time them, keep the winner, write it down.
  *   4. a STRUCTURAL default - only when nothing above applies.
  *
- * REPLAY AND RACE ARE SEPARATE FUNCTIONS ON PURPOSE
- * -------------------------------------------------
- * _k1z_wisdom_replay reconstructs a plan from a banked record and MEASURES
- * NOTHING. _k1z_race_and_bank measures. Keeping them apart is what makes a
- * warmed store cheap - a create on a hit never touches a clock - and it is also
- * what makes the harness's replay-purity assertion meaningful: a cell that
- * races during what should be a replay has the clock inside its own baseline.
+ * A REPLAY MEASURES NOTHING
+ * -------------------------
+ * A hit reconstructs the plan from the banked record without touching a
+ * clock; only a miss (or recalibrate) races. That is what makes a warmed store
+ * cheap, and what makes the harness's replay-purity assertion meaningful: a
+ * cell that races during what should be a replay has the clock inside its own
+ * baseline.
  *
  * _k1_il2p_apply_kv IS NOT A RACE
  * -------------------------------
@@ -35,24 +34,19 @@
  * structural default (blocked at R>=32).
  *
  * Worth knowing: il_kv has NO fingerprint field, so two plans differing only in
- * kernel form fingerprint identically and the migration harness cannot see a
+ * kernel form fingerprint identically and the baseline harness cannot see a
  * change here. This is one of the few places in the tree where obj_equiv is the
  * only guard.
  *
  * THE STRIDE-ROW BANKER
  * ---------------------
- * One is left (2026-09-18): _bank_nat_1d, the in-place natural cell
- * (ord=nat), called from the in-place create. Its three siblings --
- * _bank_natoop_1d (out-of-place natural), _bank_scrmode_oop_1d (the
- * out-of-place ord=scr mode cell) and _bank_nat_raced (the banked-loss
- * marker) -- had ZERO callers anywhere in src/ or benches/ and were deleted
- * whole (clean library, not history; survey section D). Rows a shipped store
- * already carries are still SERVED; nothing writes new ones.
- * The order axis does not share a cell with the scrambled one, which is why
- * the surviving banker is per-cell: a natural-order create can never perturb
- * the scrambled plan, and vice versa - the regimes are calibrated
- * independently because they are genuinely different engines, not one engine
- * with a flag.
+ * _bank_nat_1d banks the in-place natural cell (ord=nat) of the split stride
+ * engine, called from the in-place create. The out-of-place natural and mode
+ * rows a shipped store carries are still SERVED; nothing writes new ones.
+ * The order axis does not share a cell with the scrambled one: a
+ * natural-order create can never perturb the scrambled plan, and vice versa -
+ * the regimes are calibrated independently because they are genuinely
+ * different engines, not one engine with a flag.
  *
  * INCLUSION CONTRACT
  * ------------------
@@ -73,11 +67,9 @@
 #include "wisdom2/wisdom2_stride_reader.h"  /* the @nat / @natoop / mode cells */
 #include "support/race.h"                   /* the shared race body */
 
-/* Applies a banked kind-3 il_kv verdict; measures nothing (dp_planner_il.h
- * owns that race). il_kv==0 keeps create's default — blocked at R>=32. */
-/* the CHAIN3 twin (2026-09-03): the banked three-slot il_kv on the chain3
- * row overrides the create's structural defaults; env VFFT_IL_KV pins. No
- * backward cell yet (the chain's backward leaf slot is a bwd-axis item). */
+/* the CHAIN3 twin of _k1_il2p_apply_kv: the banked three-slot il_kv on the
+ * chain3 row overrides the create's structural defaults; env VFFT_IL_KV /
+ * VFFT_IL_BKV pin. */
 static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
                               const vfft_oop_wisdom_entry_t *ke,
                               const vw2_store_t *st, int N, int ip)
@@ -86,8 +78,8 @@ static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
         return;
     if (ke)
         vfft_il3p_apply_kv_forms(p, ke->il_kv);
-    /* the BACKWARD cell (2026-09-03): its own dir=bwd row, validated against
-     * the chain it was raced at; outside the ke guard like the pair's */
+    /* the BACKWARD cell: its own dir=bwd row, validated against the chain it
+     * was raced at; outside the ke guard like the pair's */
     if (st)
     {
         int c3[3] = { 0, 0, 0 };
@@ -123,7 +115,7 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
         vfft_il2p_apply_kv_forms(p, ke->il_kv); /* shared nibble semantics —
                                                  * one definition (il2p.h),
                                                  * planner uses the same fn */
-    /* BACKWARD arm (2026-08-21). The backward kernel-variant verdict is its
+    /* BACKWARD arm. The backward kernel-variant verdict is its
      * OWN CELL, keyed `dir=bwd`, rather than more il_kv bits: wisdom2 keys
      * DIRECTION and does not key kernel forms. Deliberately outside the `ke`
      * guard - the backward pick does not depend on a forward wisdom hit. No
@@ -162,16 +154,6 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
     }
 }
 
-/* ── K=1 IL-engine candidate for the IN-PLACE tiers (il_coverage_plan.md
- * Phase B). Resolves N to exactly one of il2p/il3p (or neither): kind-3
- * pair when banked, else the balanced-pair heuristic, else the il3p chain
- * default. MONO is deliberately absent — its kernels are `__restrict__`
- * and refuse aliasing (A3 record). PRIME cells return neither (the
- * incumbent keeps serving them; il_prime aliasing is ungated).
- * ⚠ The pair heuristic MIRRORS the OOP K=1 block's IL search (the
- * "IL runs its OWN pair search" rules: il2p registries stop at R=64, no
- * parity constraint since the odd-count tail) — if you touch one, touch
- * both; they are cross-referenced. Planning side only. */
 /* the two arms of the (R1,R2) ordering race: two il2p plans on one
  * aliased buffer, re-seeded before every burst */
 typedef struct { vfft_il2p_plan_t *p; double *rz, *r0; size_t nb; } _k1ord_arm_t;
@@ -194,18 +176,13 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              vfft_k1fs_plan_t **fs_out,
                              vfft_ilprime_plan_t **ilp_out); /* defined below */
 
-/* ── THE PRIME CELL'S INNER, RACED (2026-09-18; owner 2026-09-17: "prime
- * cells should have their own inner race"; ilprime_inner_race_design.md) ──
+/* ── THE PRIME CELL'S INNER, RACED ──
  * A prime N is a convolution done with an FFT of length M (Rader: N - 1;
- * Bluestein: the next power of two >= 2N - 1). Until today the inner was
- * BORROWED, in three layers: the K=1 tier's banked scrambled row at M (read
- * with no recalibrate term), else the K=1 candidate at M below 4096, else
- * the engine's structural rule -- the most balanced pair, or a default
- * chain. Chosen by proxy (M standalone is not M inside a convolution),
- * unreachable by recalibrate without racing M's cell nested inside N's
- * create (which _k1_il_dp_busy forbids), and a heuristic at the end. Now
- * the prime cell RACES its inner: every buildable (method, inner) pair,
- * built directly from a descriptor (no planner call, so the lock is never
+ * Bluestein: the next power of two >= 2N - 1). The prime cell RACES its
+ * inner rather than borrowing M's own verdict (M standalone is not M inside
+ * a convolution, and racing M's cell nested inside N's create is what
+ * _k1_il_dp_busy forbids): every buildable (method, inner) pair, built
+ * directly from a descriptor (no planner call, so the lock is never
  * touched), timed on the WHOLE convolution, the winner banked on the prime
  * cell's OWN row and replayed from there. */
 typedef struct {
@@ -317,13 +294,12 @@ static int _ilprime_inner_cands(int M, _ilprime_inner_desc_t *out, int max)
         }
     }
 #ifdef VFFT_ZTT_H
-    /* ZTURN-T from the K=1 PLANNER'S OWN enumerators (2026-09-19) rather than
-     * a second copy of the registry walk and the tile ladder, which is what
-     * stood here for a day. Two grammars, each with its own ladder: the pow2
-     * registry, and the 2^a*odd chain grammar. The second one is the point --
-     * Rader's inner sits at M = N - 1, which is a power of two only at a
-     * Fermat-shaped prime, so without the odd grammar Rader offered NOTHING
-     * at 8191, 12289 and 40961 and the cell banked Bluestein unopposed.
+    /* ZTURN-T from the K=1 PLANNER'S OWN enumerators (never a second copy of
+     * the registry walk and the tile ladder). Two grammars, each with its own
+     * ladder: the pow2 registry, and the 2^a*odd chain grammar. The second one
+     * is the point -- Rader's inner sits at M = N - 1, which is a power of two
+     * only at a Fermat-shaped prime, so without the odd grammar Rader offers
+     * NOTHING at 8191, 12289 and 40961 and the cell banks Bluestein unopposed.
      * Scrambled class: a convolution is a matched roundtrip in any order. */
     {
         static vfft_il_cand_t buf[VFFT_IL_DP_MAX_CAND];
@@ -412,14 +388,10 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                                                    int N)
 {
     int hint = 0;
-    /* COMPOSITES COME IN TOO (2026-09-19). `!_ilprime_is_prime(N)` stood in
-     * this condition, so a composite left on the first line and fell to
-     * vfft_ilprime_create -- no store, no pool, and a structural inner that
-     * is a balanced pair and therefore stops at M = 4096. That is why every
-     * composite above 2048 with no chain was REFUSED: not a missing
-     * algorithm, since Bluestein needs no primality, but a missing inner.
-     * Through here it gets the same raced pool the primes get, which reaches
-     * as far as the ZTURN-T grammars do. The Rader ARM is excluded below. */
+    /* COMPOSITES COME IN TOO: Bluestein needs no primality, and the raced
+     * pool reaches as far as the ZTURN-T grammars do, where
+     * vfft_ilprime_create's structural inner (a balanced pair) stops at
+     * M = 4096. The Rader ARM is excluded below. */
     if (!W || W->vw2_off_oop || getenv("VFFT_ILPR_METHOD"))
         return vfft_ilprime_create(N);
     if (!cfg->recalibrate)
@@ -445,7 +417,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         }
     }
     {   /* THE RACE */
-        static _ilprime_cand_t cands[_ILPR_MAX_CANDS];   /* 256 descriptors: off the stack */
+        static _ilprime_cand_t cands[_ILPR_MAX_CANDS];   /* off the stack */
         vfft_ilprime_plan_t *fin[_ILPR_MAX_CANDS / _ILPR_HEAT + 1];
         int fin_ci[_ILPR_MAX_CANDS / _ILPR_HEAT + 1];
         int nc = 0, nfin = 0, mi, h, w, wci, nbuilt = 0;
@@ -460,12 +432,8 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
             if (rader && !_ilprime_is_prime(N)) continue;
             static _ilprime_inner_desc_t pool[_ILPR_MAX_CANDS];   /* off the stack */
             int M, n, q;
-            /* The banked method is NOT a filter here (2026-09-19). It used
-             * to narrow the race to its own inners, and then a binary that
-             * cannot build that method -- a store calibrated against a
-             * wider pool, or an engine whose reach changed -- was left with
-             * an empty race and the cell REFUSED. Reaching this point at
-             * all means the row could not be replayed, so its method is a
+            /* The banked method is NOT a filter here: reaching this point
+             * means the row could not be replayed, so its method is a
              * preference, not a measurement of what this build can do.
              * A verdict that cannot be built is a miss; a miss races. */
             if (rader) M = N - 1;
@@ -509,11 +477,9 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         {
             char kind[8], shape[64];
             _ilprime_desc_str(&cands[wci].d, kind, sizeof kind, shape, sizeof shape);
-            /* Rader's inner sits at M = N - 1, which is never a power of two,
-             * so it has no ZTURN-T chain -- and above M = 4096 the pair and
-             * the default chain3 run out too. When that happens Rader offers
-             * arms that do not build, they vanish, and the cell banks
-             * "bluestein" as though it had won a race it was alone in. Say so. */
+            /* Rader's inner sits at M = N - 1; where none of its inners
+             * builds, Rader's arms vanish and the cell banks "bluestein" as
+             * though it had won a race it was alone in. Say so. */
             if (ncm[0] > 0 && builtm[0] == 0)
                 _vfft_warn("ilprime N=%d: RADER offered %d inner(s) at M=%d and built NONE -- "
                            "the banked verdict is Bluestein BY DEFAULT, not by race",
@@ -534,34 +500,26 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
     }
 }
 
-/* ── THE IL PLAN RACE AT CREATE (2026-09-03, owner: "why don't we try
- * different factorizations for IL and see what wins") ─────────────────────
- * A kind-3 MISS (or recalibrate) below 2048 runs the IL dp planner — the
- * same search calibrate_k1 runs offline: every legal pair x its kernel
- * forms, every legal 3-stage chain x forms, the order swap, the backward
- * forms — and banks its verdicts (the kind-3 lay=il row, the dir=bwd row)
- * before the create replays them. There is no heuristic plan any more at
- * this tier: what serves was measured. A cold cell takes seconds; the
- * planner logs on entry. VFFT_NO_K1PLAN=1 skips it (probe hook). */
+/* ── THE IL PLAN RACE AT CREATE ─────────────────────────────────────────────
+ * A kind-3 MISS (or recalibrate) runs the IL dp planner — the same search
+ * calibrate_k1_il runs offline: the solos, every legal pair x its kernel
+ * forms, every legal 3-stage chain x forms, the flat / ZTURN-T / four-step /
+ * prime arms, the order swap, the backward forms — and banks its verdicts
+ * (the kind-3 lay=il row, the dir=bwd row) before the create replays them.
+ * What serves was measured. A cold cell takes seconds; the planner logs on
+ * entry. VFFT_NO_K1PLAN=1 skips it (probe hook). */
 static vfft_il_dp_context_t _k1_il_dp_ctx;      /* planning side, one create at a time */
 static int _k1_il_dp_ctx_ready = 0;
 static int _k1_il_dp_busy = 0;                  /* a race in progress: nested calls refuse */
-/* the race CEILINGS live in planning/policy.h (L9, 2026-09-16) */
+/* the race CEILINGS live in planning/policy.h (L9) */
 static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
 {
     vfft_il_cand_t top;
     int lines;
-    /* WISDOM OR RACE, never a fallback (owner's law, 2026-09-09): a request
-     * names (N, layout, order, placement); the door looks that cell up and
-     * on a miss RACES the interleaved planner's pool, banks the winner and
-     * serves it. Every N the planner covers races here: below 2048, the odd
-     * cells above it (no factor of 4), and — since 2026-09-09 — the pow2
-     * cells of ZTURN-T's band up to its ceiling. Until then a pow2 N >= 2048
-     * returned 0 here and a cold band cell fell through to the prime engine
-     * (Bluestein at 32768, seen in the natural front gate's tap). The
-     * composite cells with a factor of 4 above 2048 outside ZTURN-T's odd
-     * band stayed out as "the cascade's" until 2026-09-22; the cascade is
-     * gone and they race here like every other cell (policy.h). */
+    /* WISDOM OR RACE, never a fallback: a request names (N, layout, order,
+     * placement); the door looks that cell up and on a miss RACES the
+     * interleaved planner's pool, banks the winner and serves it. Which N
+     * race is policy.h's (ownership + budget, below). */
     if (!W || W->vw2_off_oop || N < 2 || getenv("VFFT_NO_K1PLAN"))
         return 0;
     {   /* ownership + budget, one question (planning/policy.h, L1/L9) */
@@ -573,7 +531,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
      * 2D children whose row plans come back through this door — a nested
      * race would corrupt the outer one, so (a) the row cells are warmed
      * BEFORE the race (created and destroyed once: a cold one races and
-     * banks its own row) and (b) a nested call refuses (2026-09-15) */
+     * banks its own row) and (b) a nested call refuses */
     if (_k1_il_dp_busy)
         return 0;
     if ((N & (N - 1)) == 0 && vfft_k1fs_band(N))
@@ -597,7 +555,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
             }
         }
     }
-    /* the PRIME arm (2026-09-21): the prime cell built ONCE here -- a cold
+    /* the PRIME arm: the prime cell built ONCE here -- a cold
      * cell races its inner pool and banks the prime shard's row -- and lent
      * to the race through _k1pr_ctx (dp_planner_il.h); every non-pow2 cell
      * where it builds (the band map admits it at every non-pow2 N). The
@@ -617,9 +575,8 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
         _k1_il_dp_ctx_ready = 1;
     }
     if (N > _k1_il_dp_ctx.max_N)
-    {   /* the flat DIT's cells (2026-09-05) and the four-step's (2026-09-15):
-         * grow the scratch planes on demand — the candidate cache restarts,
-         * wisdom is the memory */
+    {   /* the flat DIT's cells and the four-step's: grow the scratch planes
+         * on demand — the candidate cache restarts, wisdom is the memory */
         vfft_il_dp_destroy(&_k1_il_dp_ctx);
         vfft_il_dp_init(&_k1_il_dp_ctx, N > VFFT_K1_IL_PLAN_ODD_MAX_N ? N : VFFT_K1_IL_PLAN_ODD_MAX_N);
     }
@@ -633,7 +590,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
                         "takes seconds\n", N);
     _k1_il_dp_busy = 1;
     lines = vfft_il_dp_plan_and_bank(&_k1_il_dp_ctx, &W->vw2, N,
-                                     cfg->placement == VFFT_INPLACE,   /* the cell's placement (2026-09-21) */
+                                     cfg->placement == VFFT_INPLACE,   /* the cell's placement */
                                      getenv("VFFT_IL_DP_VERBOSE") != NULL);
     _k1_il_dp_busy = 0;
     if (lines > 0)

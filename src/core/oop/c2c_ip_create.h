@@ -1,15 +1,14 @@
-/* c2c_ip_create.h — the c2c IN-PLACE create tier (migration step 24).
+/* c2c_ip_create.h — the c2c IN-PLACE create tier.
  *
- * WHAT THIS IS
- * ------------
- * Both in-place c2c arms of _vfft_create_inner, in their original order:
+ * The in-place c2c arms of _vfft_create_inner:
  *
  *   1. the CALLER-SUPPLIED BATCH arm (`... && ob`) — an owned-batch descriptor
  *      was handed in, so the plan serves that exact handle;
- *   2. the general in-place arm, which allocates its own buffers.
+ *   2. the general in-place arms, which allocate their own buffers: the
+ *      interleaved tier (_c2c_ip_create_il) and the split stride engine.
  *
  * Arm 1 falls through to arm 2 only by not matching; each returns on every
- * path, so the pair lifts out behind one guard.
+ * path.
  *
  * WHY THE HANDLE IS CHECKED EXACTLY
  * ---------------------------------
@@ -26,27 +25,20 @@
  * `misaligned = (Kp != K)` selects between them; nothing here invents a cutoff.
  *
  * 🔴 te/ae are re-looked-up after every set: `wisdom_set` may realloc, so a
- * pointer held across a set is a dangling read. The original code does this
- * deliberately and the move preserves it.
+ * pointer held across a set is a dangling read.
  *
  * POSITION IN vfft.c IS LOAD-BEARING
  * ----------------------------------
  * Not a standalone header. It calls file-scope statics that live in vfft.c, so
  * it must be included after those are defined and before _vfft_create_inner.
- *
- * The six parameters are the block's complete free-variable set, derived
- * rather than guessed: this is the first tier that genuinely needs `ob` (the
- * owned batch it serves) and `N` alongside cfg/W/reg/K.
  */
 #ifndef VFFT_OOP_C2C_IP_CREATE_H
 #define VFFT_OOP_C2C_IP_CREATE_H
 
-/* ── the arms of the natural / scr-mode MEASURE races ────────────────
- * One context serves the five sites (four here, one in c2c_oop_create.h):
- * the incumbent is THIS handle's real execute (in-place door, or the OOP
- * door when oop=1); the challenger is whichever candidate the site built —
- * the natord cascade (zt/zs by zroute) or the IL engine (il2/il3/ilp). The
- * protocol constants stay at each site (support/race.h). */
+/* ── a two-arm race context: the incumbent is a handle's real execute
+ * (in-place, or the OOP door when oop=1), the challenger an IL engine plan
+ * (the first non-NULL of il2/il3/ifd/ztt/mono/ilp). No call site uses it at
+ * present. */
 typedef struct
 {
     struct vfft_plan_s *h;
@@ -54,8 +46,8 @@ typedef struct
     vfft_il2p_plan_t *il2;      /* IL challenger: first non-NULL serves */
     vfft_il3p_plan_t *il3;
     vfft_ilprime_plan_t *ilp;
-    vfft_ilfd_plan_t *ifd;      /* the flat DIT (2026-09-05) */
-    vfft_ztt_plan_t *ztt;       /* ZTURN-T (2026-09-09) */
+    vfft_ilfd_plan_t *ifd;      /* the flat DIT */
+    vfft_ztt_plan_t *ztt;       /* ZTURN-T */
     vfft_oop11_fn mono;         /* the alias-tolerant solo (MONO verdict) */
     double *rz, *r0;            /* the aliased race buffer and its seed */
     size_t nb;                  /* bytes to re-seed per burst */
@@ -91,39 +83,23 @@ static void _c2c_race_reseed(void *v)
     memcpy(c->rz, c->r0, c->nb);
 }
 
-/* ── the tier's ONE exit. Every handle this create returns passes through
- * here, so a new early exit cannot skip the shared post-step (the audit
- * found two that did: the padded-batch exit and the IL-prime exit both
- * shipped mt_unsafe=0 — calloc's default, which spells "proven safe" —
- * without running the proof). The gate is cheap for ST creates (skipped)
- * and engine handles (no cplan: nothing K-splits). */
-/* ── IN-PLACE INTERLEAVED c2c: the IL tier's own create (2026-09-03) ──────
- * Owner: "we DO NOT see split as a fallback of IL". No split plan is built
- * for an interleaved caller. The cell is served by an IL engine — the K=1
- * engines (mono / pair / chain3 / flat / ZTURN-T / four-step / prime, with
- * their banked forms) — and the verdict between them is the IN-PLACE CELL'S
- * OWN raced verdict (2026-09-21): the K=1 planner races every arm executed
- * z -> z, exactly as this door runs it, and banks the winner on the cell's
- * kind-3 row keyed place=ip (its dir=bwd sibling and ord=scr row alongside).
- * The out-of-place cell's row is never served here, and no mode row of the
- * split library is read: until 2026-09-21 this door read the @nat/@scrmode
- * row and served the out-of-place verdict through a reference (owner: wrong;
- * one contract per request, and in place is expected to be FASTER). With one
- * legal arm the race serves and banks it; with none the create REFUSES —
- * there is nothing to fall back to, by design. Lane-major K>1 interleaved
- * (only an explicit VFFT_BATCH_LANE_MAJOR reaches here; DEFAULT geometry is
- * the transform-contiguous wrapper) is refused: measured 2026-09-03, it
- * lost to transform-contiguous at every cell, and its only engine was the
- * split K-lane plan behind a convert. Census before this path: 177 of 255
- * sizes below 257 executed through the convert in place; 3 of 255 out of
- * place, with the same kernels. */
-/* DEFAULT = NATURAL (design_contracts.md section 3, owner 2026-09-09) at the
- * pow2 cells: a DEFAULT in-place request reads and banks the @nat row and is
- * served natural order, exactly as NATURAL. The odd cells keep their pre-law
- * DEFAULT path (the @scrmode row) until the odd machinery has its turn. The
- * lookup (step 1 below) and the bank use this one classification. */
+/* ── IN-PLACE INTERLEAVED c2c: the IL tier's own create ───────────────────
+ * Split is not a fallback of IL: no split plan is built for an interleaved
+ * caller. The cell is served by an IL engine — the K=1 engines (mono / pair /
+ * chain3 / flat / ZTURN-T / four-step / prime, with their banked forms) — and
+ * the verdict between them is the IN-PLACE CELL'S OWN raced verdict: the K=1
+ * planner races every arm executed z -> z, exactly as this door runs it, and
+ * banks the winner on the cell's kind-3 row keyed place=ip (its dir=bwd
+ * sibling and ord=scr row alongside). The out-of-place cell's row is never
+ * served here (one contract per request), and no mode row of the split
+ * library is read. With one legal arm the race serves and banks it; with none
+ * the create REFUSES — there is nothing to fall back to, by design.
+ * Lane-major K>1 interleaved (only an explicit VFFT_BATCH_LANE_MAJOR reaches
+ * here; DEFAULT geometry is the transform-contiguous wrapper) is refused: it
+ * lost to transform-contiguous at every measured cell. */
+/* DEFAULT = NATURAL: the classification is planning/policy.h's (L4). */
 static inline int _ip_order_is_nat(const vfft_config_t *cfg, int N)
-{   /* the law itself lives in planning/policy.h (L4, 2026-09-16) */
+{
     return vfft_policy_ord_k1(cfg, N, /*inplace=*/1) == VW2_ORD_NAT;
 }
 
@@ -137,13 +113,13 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
                                    const vfft_proto_registry_t *reg,
                                    int N, size_t K)
 {
-    const int nat = _ip_order_is_nat(cfg, N);   /* DEFAULT = NATURAL at pow2 */
+    const int nat = _ip_order_is_nat(cfg, N);   /* DEFAULT = NATURAL */
     struct vfft_plan_s *h;
     vfft_il2p_plan_t *il2 = NULL;
     vfft_il3p_plan_t *il3 = NULL;
-    vfft_ilfd_plan_t *ifd = NULL;           /* the flat DIT (2026-09-05) */
-    vfft_k1fs_plan_t *fs = NULL;            /* the four-step (2026-09-15) */
-    vfft_ztt_plan_t *ztt = NULL;            /* ZTURN-T (2026-09-09) */
+    vfft_ilfd_plan_t *ifd = NULL;           /* the flat DIT */
+    vfft_k1fs_plan_t *fs = NULL;            /* the four-step */
+    vfft_ztt_plan_t *ztt = NULL;            /* ZTURN-T */
     vfft_oop11_fn mono_f = 0, mono_b = 0;   /* the alias-tolerant solo (MONO verdict) */
     vfft_ilprime_plan_t *ilp = NULL;
     int have_k1 = 0, mode = VFFT_NAT_UNSET;
@@ -170,19 +146,16 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         fprintf(stderr, "[ipil] N=%d order=%s: IL create (no split baseline)\n",
                 N, nat ? "natural" : (cfg->order == VFFT_ORDER_SCRAMBLED ? "scrambled" : "default"));
 
-    /* 1. (2026-09-21) no mode row and no reference row: the in-place cell's
-     *    verdict is its OWN kind-3 row, place=ip, read or raced (executed in
-     *    place) and banked by the K=1 candidate below. The split library's
-     *    @nat/@scrmode rows are not read here any more (two libraries), and
-     *    the out-of-place cell's row is never served in its stead. */
+    /* 1. the in-place cell's verdict is its OWN kind-3 row, place=ip, read or
+     *    raced (executed in place) and banked by the K=1 candidate below; the
+     *    split library's rows and the out-of-place cell's row are not read. */
 
     /* 2. the K=1 IL engine candidate: the planned row's route — MONO (the
-     *    alias-tolerant solo, 2026-09-04), pair, chain3, flat, ZTURN-T, the
-     *    four-step, or the prime cell (a raced arm since 2026-09-21); the
-     *    prime cell unraced only above the race ceiling */
+     *    alias-tolerant solo), pair, chain3, flat, ZTURN-T, the four-step, or
+     *    the prime cell (a raced arm; unraced only above the race ceiling) */
     if (!getenv("VFFT_NO_NAT_ILP"))
     {
-        _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs, &ilp);   /* ilp: a PRIME verdict (2026-09-21) */
+        _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs, &ilp);   /* ilp: a PRIME verdict */
         if (ztt) vfft_ztt_bind(ztt, 1);   /* in place: the plane drivers */
         if (!il2 && !il3 && !ifd && !ztt && !fs && !ilp)
             (void)_k1_il_mono_candidate(W, cfg, N, &mono_f, &mono_b);
@@ -195,12 +168,12 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
             /* fs     */ fs != NULL,  /* prime  */ ilp != NULL);
     }
 
-    /* 4. the verdict IS the cell's own row (2026-09-21): read above, or raced
-     *    in place and banked by _k1_il_candidate / the prime cell */
+    /* 3. the verdict IS the cell's own row: read above, or raced in place
+     *    and banked by _k1_il_candidate / the prime cell */
     if (have_k1)
         mode = VFFT_NAT_ILP;
 
-    /* 5. attach the verdict; the loser dies here */
+    /* 4. attach the verdict; the loser dies here */
     if (mode == VFFT_NAT_ILP && have_k1)
     {
         h->k1il2p = il2;
@@ -242,21 +215,26 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     return _c2c_ip_finish(h, W, cfg, N);
 }
 
+/* ── the tier's ONE exit. Every handle this create returns passes through
+ * here, so a new early exit cannot skip the shared post-step (a skipped exit
+ * ships mt_unsafe=0 — calloc's default, which spells "proven safe" — without
+ * running the proof). The gate is cheap for ST creates (skipped) and engine
+ * handles (no cplan: nothing K-splits). */
 static vfft_plan _c2c_ip_finish(struct vfft_plan_s *h,
                                 struct vfft_wisdom_s *W,
                                 const vfft_config_t *cfg, int N)
 {
     /* MT-safety: flag plans whose codelet ignores the partial-lane count (so
      * _c2c_mt runs them whole-batch instead of K-splitting). Checked once on
-     * the FINAL cplan (after any natural rebuild). Safety net now that the
-     * DIF/LOG3 K-split twiddle bug is fixed at codegen; only MT plans
-     * K-split, so single-threaded creates skip the check and its cost. */
+     * the FINAL cplan (after any natural rebuild). A safety net (the DIF/LOG3
+     * K-split twiddle defect is fixed at codegen); only MT plans K-split, so
+     * single-threaded creates skip the check and its cost. */
     if (h->cplan)
         h->mt_unsafe = (h->nthreads > 1) ? !_c2c_mt_safe(h->cplan, h->exec_fwd) : 0;
     if (h->k1ztt && h->K == 1 && h->nthreads > 1)
-        _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's threaded arm, in place: its own per-T pair (2026-09-15) */
+        _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's threaded arm, in place: its own per-T pair */
     if (h->k1fs && h->K == 1 && h->nthreads > 1)
-        _k1fs_mt_replay_or_race(h, W, cfg, N); /* the four-step's split at T, in place: its own per-T pair (2026-09-15) */
+        _k1fs_mt_replay_or_race(h, W, cfg, N); /* the four-step's split at T, in place: its own per-T pair */
     return h;
 }
 
@@ -280,12 +258,12 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
         }
         size_t Kp = b->Kp;
 
-        /* UNIFIED wisdom (single spike_wisdom.txt): the padded verdict is the (N,K) entry's
-         * exec_me, and the pad plan IS the aligned (N,Kp) entry — both ordinary c2c cells. */
-        /* THE ladder is one body now (vfft.c:_pad_ladder — A1): this arm only runs
-         * with an owned batch, whose allocator ALREADY ran the ladder this same
-         * vfft_create, so already_measured=1 (recalibrate fired there; never twice
-         * per create) and ensure_pad_plan=1 (a PAD-verdict hit materialises the
+        /* UNIFIED wisdom: the padded verdict is the (N,K) entry's exec_me, and
+         * the pad plan IS the aligned (N,Kp) entry — both ordinary c2c cells. */
+        /* The ladder is vfft.c's _pad_ladder: this arm only runs with an owned
+         * batch, whose allocator ALREADY ran the ladder this same vfft_create,
+         * so already_measured=1 (recalibrate fired there; never twice per
+         * create) and ensure_pad_plan=1 (a PAD-verdict hit materialises the
          * aligned (N,Kp) plan cell that a verdict-only shipped row lacks). */
         const vfft_proto_wisdom_entry_t *te = NULL, *ae = NULL;
         int misaligned = (Kp != K);
@@ -349,7 +327,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
         h->padded = 1;
         h->exec_me = exec_me;
 #ifdef VFFT_USE_JIT
-        /* Wrinkle C: only the ALIGNED pad leg (me=Kp) is eligible for the baked/JIT fast
+        /* Only the ALIGNED pad leg (me=Kp) is eligible for the baked/JIT fast
          * path. The tail leg (exec_me==K, odd) MUST use the generic tail-capable executor,
          * so leave exec_*=NULL there (execute falls back to vfft_proto_execute_fwd/bwd). */
         if (exec_me == (int)Kp && p->num_stages > 0)
@@ -364,7 +342,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
     /* ── c2c IN-PLACE ── */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE &&
         cfg->layout == VFFT_LAYOUT_INTERLEAVED)
-        return _c2c_ip_create_il(cfg, W, reg, N, K);   /* the IL tier's own create (2026-09-03) */
+        return _c2c_ip_create_il(cfg, W, reg, N, K);   /* the IL tier's own create */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE)
     {
         vfft_proto_dispatch_set_bluestein_wisdom(&W->bluestein);
@@ -411,8 +389,8 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
              * floor rides the STABLE banked scrambled chain, not a noisy fresh re-measure. order=DEFAULT/
              * SCRAMBLED keeps the old recalibrate-overwrites semantics. */
             int scr_recalib = cfg->recalibrate && cfg->order != VFFT_ORDER_NATURAL;
-            /* wave-4: store-first; the in-memory table stays the process
-             * cache auto_plan_dispatch walks below. */
+            /* store first; the in-memory table stays the process cache
+             * auto_plan_dispatch walks below. */
             {
                 vfft_proto_wisdom_entry_t seb;
                 if (!scr_recalib && !W->vw2_off_stride &&
@@ -444,9 +422,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                        N, K);
             return NULL;
         }
-        /* (Self-contained natural design: the old C1 scrambled-entry bank-from-plan is GONE — the natural
-         * block below no longer reads the scrambled entry, so it can't hard-fail for want of one. Its base
-         * plan is `p` itself, which auto_plan_dispatch always built here.) */
+        /* (The natural block below never reads the scrambled entry; its base plan is `p` itself.) */
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
@@ -487,10 +463,9 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
             }
         }
 #endif
-        /* ── VFFT_ORDER_NATURAL (P1b: FREE + PURE_CYCLE + PSWAP w/ injected chains; the
-         * calibrator race stamps the verdict into wisdom v7. SCR/LEAF-IP still degrade to
-         * PURE until their executors land). order==DEFAULT leaves everything below
-         * untouched — byte-identical kill switch. */
+        /* ── VFFT_ORDER_NATURAL on the split stride engine: FREE, PURE_CYCLE, PSWAP (with
+         * injected chains) or SCR, raced on a miss and banked as the @nat verdict. Any
+         * other order skips this block. */
         if (cfg->order == VFFT_ORDER_NATURAL)
         {
             vfft_proto_nat_entry_t neb;
@@ -502,12 +477,8 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                                    !W->vw2_off_stride) ? ne->raced : 0;
             if (p->num_stages <= 1)
                 mode = VFFT_NAT_FREE; /* single-stage / prime override: already natural, no tape */
-            /* Natural-terminator cascade, built as a CANDIDATE for the race below from the kind-4
-             * chain with recalibrate cleared. Kill switch: VFFT_NO_NAT_ZCASC.
-             * See docs/design/vfft_front_door.md. */
-            /* CONSUME ZCASC: attach and skip the whole tape build. A banked
-             * ZCASC whose kind-4 line has since vanished (or been refused)
-             * degrades to UNSET — re-measure, never hard-fail. */
+            /* FREE needs no tape. ZCASC and ILP name interleaved engines,
+             * which this split path does not build: they skip the tape build. */
             if (mode != VFFT_NAT_FREE && mode != VFFT_NAT_ZCASC &&
                 mode != VFFT_NAT_ILP)
             {
@@ -551,7 +522,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                     return NULL;
                 }
 
-                /* CONSUME SCR (parked; rebuild the DIT scatter from the stored chain). */
+                /* CONSUME SCR: rebuild the DIT scatter from the stored chain. */
                 if (consume && mode == VFFT_NAT_SCR)
                 {
                     natorder_scr_t sc;
@@ -649,7 +620,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                             /* OPPORTUNISTIC PSWAP: p's perm is an involution => pairs beat cycles on the SAME
                              * plan (deterministic free win). GATE: if a single-stage [N] leaf exists, DON'T
                              * short-circuit — fall to the race so it also weighs the FREE-reorder single-radix
-                             * candidate (the 2D 64x16 lesson). The race re-injects the calibrated palindrome. */
+                             * candidate. The race re-injects the calibrated palindrome. */
                             int has_leaf = (N > 1 && N < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[N]);
                             int *opp = (!has_leaf) ? vfft_natorder_mk_pairs(N, M) : NULL;
                             if (opp)
@@ -664,17 +635,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                                 /* RACE (PURE vs injected-palindrome/single-leaf PSWAP vs DIT-SCR; 5% margin),
                                  * seeded from the deployed chain dfac (the PLAN object, never the scr entry). */
                                 vfft_natorder_verdict_t v;
-                                /* HARNESS: this racer is about to time. It lives in
-                                 * natorder_calibrate.h, NOT in this file, which is why the
-                                 * original census missed it - that census enumerated clock
-                                 * calls in vfft.c plus their local callers, and a racer
-                                 * DEFINED in another header is invisible to both passes.
-                                 * The cost was concrete: c2c.split.ip.nat has no banked nat
-                                 * entry, so it takes this branch every time and picked
-                                 * nat=5/natcyc=96 in 8 of 10 runs and nat=4/natcyc=34 in the
-                                 * other 2 - while reporting races=0 and therefore claiming to
-                                 * be safe to diff. A fingerprint that flaps 20% of the time
-                                 * under a purity flag is worse than no fingerprint. */
+                                /* the create-race counter: this racer (natorder_calibrate.h) is about to time */
                                 _vfft_create_race_count++;
                                 vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, dfac, dnf, &v);
                                 mode = v.mode;
@@ -757,8 +718,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
 #endif
             h->nat_mode = mode;
         }
-        /* the MT-safety gate moved to _c2c_ip_finish — the tier's one exit —
-         * so the early exits above cannot skip it. */
+        /* the MT-safety gate is in _c2c_ip_finish, the tier's one exit. */
 
         return _c2c_ip_finish(h, W, cfg, N);
     }
