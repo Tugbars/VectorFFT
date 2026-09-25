@@ -60,7 +60,8 @@ typedef struct {
     double *psi_im;
     /* Mixed-radix digit-reversal permutation (size N/2). Multi-stage DIT
      * plans output their result at digit-reversed positions; perm[k'] is
-     * where natural-order bin k' lands. We read psi at perm[k']. */
+     * where natural-order bin k' lands. The pre-twiddle writes psi[m] at
+     * perm[m], so the backward FFT emits natural order. */
     int *perm;
     stride_plan_t *fft_plan; /* owned: N/2-point complex FFT plan */
     /* optional JIT'd inner backward executor (the inner FFT is driven backward);
@@ -182,7 +183,7 @@ static void _dct4_execute(void *data, double *re, double *im) {
         return;
     }
 
-    /* Single-threaded path: original sequential implementation. */
+    /* Single-threaded path. */
     /* 1. Pre-twiddle. Compute psi[m] = z[m] * exp(+i*pi*m/N) for m=0..halfN-1.
      *    Our backward FFT executor expects input in *fwd-output* (digit-reversed)
      *    layout — so we write psi[m] at position perm[m]. After bwd, natural-order
@@ -304,8 +305,8 @@ static stride_plan_t *stride_dct4_plan(int N, size_t K, stride_plan_t *fft_plan_
     if (!d->psi_re || !d->psi_im) { _dct4_destroy(d); return NULL; }
 
     /* Compute mixed-radix digit-reversal permutation for the inner FFT.
-     * For DIT forward / backward: output[perm[n]] = DFT[n]. We use it in
-     * the post-twiddle to read W[k'] from psi[perm[k']]. */
+     * For DIT forward / backward: output[perm[n]] = DFT[n]. The pre-twiddle
+     * uses it to write psi[m] at perm[m]. */
     d->perm = (int *)malloc((size_t)halfN * sizeof(int));
     if (!d->perm) { _dct4_destroy(d); return NULL; }
     {

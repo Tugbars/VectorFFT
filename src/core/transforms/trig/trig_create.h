@@ -1,4 +1,4 @@
-/* trig_create.h — the trig CREATE tier and its builders (migration step 27).
+/* trig_create.h — the trig CREATE tier and its builders.
  *
  * WHAT THIS IS
  * ------------
@@ -30,37 +30,30 @@
  *
  * 🔴 THIS FAMILY HAS NO BANKED WISDOM
  * -----------------------------------
- * The store holds 539 cells and ZERO of them are trig. Every consequence
- * follows from that one fact:
+ * The shipped store holds no trig row. Consequences:
  *
  *   - the fingerprint replay has almost nothing to replay here;
  *   - several trig configs RACE at create, so their output is chosen by the
- *     clock and a single digest of one is a coin flip, not a baseline;
- *   - the migration plan calls step 27 its least-protected step, correctly.
+ *     clock and a single digest of one is a coin flip, not a baseline.
  *
- * The protection actually in place for the move is src/tools/baseline/trig_capture.py
- * — output digests over one process per observation, with raced cells recorded
- * AS raced rather than sampled. That proves the tier still produces what it
+ * The baseline protection is src/tools/baseline/trig_capture.py — output
+ * digests over one process per observation, with raced cells recorded AS
+ * raced rather than sampled. That proves the tier still produces what it
  * produced; it does NOT prove the tier correct. The naive O(N^2) reference
- * that would is still absent, deliberately: the plane-role contract is not
- * stated plainly enough in include/vfft.h to encode without guessing, and a
- * wrong expectation baked into a baseline is worse than a missing one.
+ * that would is absent, deliberately: the plane-role contract is not stated
+ * plainly enough in include/vfft.h to encode without guessing, and a wrong
+ * expectation baked into a baseline is worse than a missing one.
  *
  * POSITION IN vfft.c IS LOAD-BEARING
  * ----------------------------------
  * Not a standalone header. The builders call _calibrate_c2c, _inner_c2c and
  * _vw2_persist, all file-scope statics defined earlier in vfft.c, so this must
- * be included after those and before _vfft_create_inner. Moving the cluster
- * down from its original position is safe precisely because nothing it calls
- * is defined below it.
- *
- * The six parameters are the create block's complete free-variable set,
- * derived rather than guessed: cfg, ob, W, reg, N, K.
+ * be included after those and before _vfft_create_inner.
  */
 #ifndef VFFT_TRANSFORMS_TRIG_CREATE_H
 #define VFFT_TRANSFORMS_TRIG_CREATE_H
 
-/* ---- the builder cluster (whole-function move) ---- */
+/* ---- the builder cluster ---- */
 
 static int _vw2_t_of_trig(vfft_transform_t t)
 {
@@ -90,7 +83,7 @@ static stride_plan_t *_inner_c2c_trig(struct vfft_wisdom_s *W,
     vfft_proto_wisdom_entry_t ne;
     int have;
     if (wt == VW2_T_NONE || W->vw2_off_stride)
-        return _inner_c2c(W, innerN, K, rigor, reg, cw, recalib); /* old path */
+        return _inner_c2c(W, innerN, K, rigor, reg, cw, recalib); /* no trig key: the plain c2c cell */
     have = !recalib && vw2_stride_lookup_t(&W->vw2, wt, outerN, K, &ne);
     if (have)
         vfft_proto_wisdom_set(cw, &ne);      /* seed auto_plan's process cache */
@@ -175,9 +168,7 @@ static vfft_plan _vfft_create_trig(const vfft_config_t *cfg,
     {
         /* PADDED (opt-in): build at Kp (aligned) so the trig stride plan strides the caller's
          * Kp-wide real in/out buffers exactly. Pad-only (the trig stride_r2c_plan bakes K, like
-         * r2c). BONUS: the odd-K trig TAIL (stride_r2c_plan pre/post) is an unbuilt phase-2 gap,
-         * so padding is the ONLY correct full-SIMD trig for misaligned K — it sidesteps the tail
-         * by building aligned. Cascade regime (small Kp). */
+         * r2c). */
         size_t bK = K;
         int padded = 0;
         if (ob)
@@ -195,7 +186,7 @@ static vfft_plan _vfft_create_trig(const vfft_config_t *cfg,
             bK = b->Kp;
             padded = 1;
         }
-        /* Odd/misaligned tight K now works: the stride r2c inner routes a non-VW-aligned B
+        /* Odd/misaligned tight K works: the stride r2c inner routes a non-VW-aligned B
          * through its explicit-pack fallback (rem-aware codelet tail + scalar unpack) instead
          * of the crashing fused stage — see _r2c_worker_fwd/_bwd in r2c.h. (Padded builds at
          * VW-aligned Kp regardless.) */
@@ -203,10 +194,9 @@ static vfft_plan _vfft_create_trig(const vfft_config_t *cfg,
                                         &W->c2c, cfg->recalibrate);
         if (!tp)
             return NULL; /* a failed create persists nothing — the inner
-                          * cells it may have banked stay memory-only (the
-                          * persist below used to fire before this check) */
+                          * cells it may have banked stay memory-only */
         if (W->path_c2c[0])
-            _vw2_persist(W, cfg); /* persist inner cells (guarded, wave-4) */
+            _vw2_persist(W, cfg); /* persist inner cells (guarded) */
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {

@@ -29,8 +29,8 @@
  * (in-place) -- with no separate normalization sweep.
  *
  * Linear convolution: plan at N >= Lx+Lh-1 (stride_conv_next_fast_n) and
- * zero-pad; the first Lx+Lh-1 outputs are the linear convolution (usage in
- * test_conv.c). Overlap-save streaming is a follow-up.
+ * zero-pad; the first Lx+Lh-1 outputs are the linear convolution.
+ * Overlap-save streaming is not provided.
  */
 #ifndef STRIDE_CONV_H
 #define STRIDE_CONV_H

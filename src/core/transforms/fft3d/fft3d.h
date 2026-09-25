@@ -17,9 +17,8 @@
  *         into ~1 and confines the TLB working set to 16*N1*a_block bytes.
  *     GATE: the lane-split path (both modes at any offset/T) requires a plain
  *     DIT chain -- use_dif_forward or an override plan (Rader/Bluestein for
- *     prime N1) falls back to one whole-K stride_execute_* call, mirroring
- *     the production executor's "DIF runs single-threaded for v1.1" policy
- *     and the 2D v1.0 K-split safety posture.
+ *     prime N1) falls back to one whole-K stride_execute_* call (DIF and
+ *     override plans are never lane-split).
  *
  *   Pass B (axis 1): ONE plan at (N2, K = N3), executed once per i-plane at
  *     base re + i*N2*N3 through the ST proto executor -- the same call shape
@@ -36,7 +35,7 @@
  *
  * Pass order: the three factors act on disjoint axes and commute, so any of
  * the 3! orders is mathematically valid. Convention here (matching 2D):
- * fwd = A -> B -> C, bwd = C -> B -> A. Order is a future calibration axis.
+ * fwd = A -> B -> C, bwd = C -> B -> A.
  *
  * Threading: three barrier-free modes (lane-range A, plane-range B, tile
  * range C); the pool is only joined at pass boundaries. The compat
@@ -207,7 +206,7 @@ static void _fft3d_tiled_range(stride_fft3d_data_t *d,
     for (size_t i = row_start; i < row_end; i += B) {
         size_t this_B = B;
         if (i + B > row_end) this_B = row_end - i;
-        const size_t _f3d_runB = (B - this_B <= 1) ? B : this_B;  /* §6a60 */
+        const size_t _f3d_runB = (B - this_B <= 1) ? B : this_B;  /* full B at this_B == B-1: fftnd.h's measured guard */
 
         /* Gather: B x N3 -> N3 x B (ld_dst=B for plan's K=B layout) */
         stride_transpose_pair(
@@ -222,8 +221,8 @@ static void _fft3d_tiled_range(stride_fft3d_data_t *d,
 
         /* FFT on scratch (sub-batch this_B of the B-wide tile). Full proto
          * executor -- dispatches DIT *or* DIF plus the specialized per-cell
-         * executors (the 2D row-pass precedent; the old DIT-only slice helper
-         * silently mis-ran DIF plans). */
+         * executors (the 2D row-pass precedent; a DIT-only slice helper
+         * would silently mis-run DIF plans). */
         vfft_proto_exec_fn rf = is_bwd ? d->exec_row_bwd : d->exec_row_fwd;
         if (rf)
             rf(d->plan_row, sr, si, _f3d_runB, d->plan_row->K, 0);   /* baked/JIT */
@@ -358,7 +357,7 @@ static void _fft3d_axis1_mt(stride_fft3d_data_t *d,
     }
 
     /* proportional plane ranges, empty ones skipped (packed slots); slot 0 is
-     * the caller's [0, P/T) exactly as before */
+     * the caller's [0, P/T) */
     _fft3d_plane_arg_t args[STRIDE_POOL_MAX_DISPATCH];
     int n = 0;
     args[n].d = d; args[n].re = re; args[n].im = im;
@@ -395,11 +394,10 @@ static void _fft3d_axis1_mt(stride_fft3d_data_t *d,
  * block streams in.
  * ═══════════════════════════════════════════════════════════════ */
 
-/* Lane-split legality: plain DIT chain only. DIF fwd is gated ST by the
- * production executor pending K-split validation (stride_executor.h v1.1
- * note); we mirror that for both directions out of the same caution, and
- * override plans (Rader/Bluestein for prime N1) run their own full-K
- * machinery. Gated plans take one whole-K stride_execute_* call. */
+/* Lane-split legality: plain DIT chain only. DIF plans are not lane-split
+ * in either direction, and override plans (Rader/Bluestein for prime N1)
+ * run their own full-K machinery. Gated plans take one whole-K
+ * stride_execute_* call. */
 static inline int _fft3d_axis0_lane_split_ok(const stride_plan_t *p, int is_bwd) {
     if (p->use_dif_forward) return 0;
     if (is_bwd ? (p->override_bwd != NULL) : (p->override_fwd != NULL)) return 0;
@@ -462,8 +460,8 @@ static void _fft3d_axis0_mt(stride_fft3d_data_t *d,
     /* Contiguous lane ranges, rounded to multiples of 8 (SIMD width for
      * doubles; matches the production K-split rounding). */
     /* CEIL, not floor: K here is the axis-0 column count N2*N3, and a
-     * floor slab drops the top columns silently -- the same defect the
-     * real dispatchers had. Slot 0 is the caller's [0, min(S,K)). */
+     * floor slab drops the top columns silently. Slot 0 is the caller's
+     * [0, min(S,K)). */
     const size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     _fft3d_lane_arg_t args[STRIDE_POOL_MAX_DISPATCH];
     int n = 0;
