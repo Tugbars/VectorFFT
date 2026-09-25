@@ -84,6 +84,14 @@
  * cmt= (0 serial | 1 band | 2 plane) and cmts= (the structure the threaded
  * verdict runs with); the one-thread row keeps its own s=. A threaded
  * plan's row is its own, complete on its own.
+ * THE PLANE TEAM (cmtp=): the plane arm's plane phase runs on the full team
+ * or, where a worker of the full team would hold a single plane, on half
+ * the workers, each taking two planes or more. Every worker's structure
+ * owns a plane-sized scratch (the child's or the flat axis-1 pass's
+ * natural scratch); with one plane per worker per call it is cold on every
+ * call, with two it is warm from the second plane on (measured on the flat
+ * structure at 8x128x2048 T=8: the plane phase 2.6 -> 2.0 ms). Both teams
+ * are arms of the threaded race, banked beside cmt=2 on the same row.
  * Every threaded sample runs REPS executes after warm passes: a worker's
  * cache partition settles over the first milliseconds of executes
  * (measured: round-0 means 1.5-5x the steady state), and single-execute
@@ -97,7 +105,8 @@
  * that structure's set down; with no clones MT declines — never a
  * half-cloned dispatch. The pool is the one owner (support/threads.h);
  * the plan's T is the snapshot, stride_pool_workers_for the one clamp.
- * VFFT_ILND_MT=0|1|2 pins the partition for a probe (never banks).
+ * VFFT_ILND_MT=0|1|2 pins the partition for a probe (never banks); with 2,
+ * VFFT_ILND_PT=w pins the plane team.
  * Engagement counter: vfft_ilnd_mt_passes() (vfft.c) — a threaded result
  * without it is vacuous. VFFT_ILND_PROF=1 prints per-phase ns.
  *
@@ -181,6 +190,9 @@ typedef struct vfft_ilnd_s {
     int *walk_f, *walk_b;         /* the walks: cycle c = positions walk[coff[c]..coff[c+1]) in fill order */
     int *coff;                    /* ncyc + 1 offsets (the same for both walks) */
     int *cycw;                    /* MT: the worker each cycle belongs to (bound for mt_t workers), NULL = unbound */
+    int ptw;                      /* MT, the plane arm: the PLANE TEAM's width, 0 = the full team
+                                   * (min(N[0], T)); raced at T, banked cmtp= */
+    int *cycwp;                   /* the cycles bound over the plane team ptw (ptw > 0), NULL = none */
     double *buf;                  /* one plane: the serial walker's buffer */
     double **bufw;                /* mt_t - 1 planes: the workers' buffers */
     int nbufw;
@@ -393,6 +405,7 @@ typedef struct
     int mode, tid;   /* 0 bands, 1 column strips, 2 planes, 3 cycles (natural), 4 permuted planes
                       * (natural bwd, oop), 5 natural strips (the strip form), 6 planes src -> dst
                       * at the same position (the strip form's backward, oop) */
+    int nt;          /* the phase's team: workers dispatched */
     size_t lo, hi;
 } _ilnd_mt_arg;
 
@@ -436,13 +449,17 @@ static void _ilnd_mt_tramp(void *v)
             _il2d_col_pass_range(a->src, a->dst, c->N, rn, a->lo, a->hi, c->nst,
                                  c->R, c->L, fns, tabs, rev);
         break;
-    case 3: /* natural: this worker's cycles, its own plane buffer */
+    case 3: /* natural: this worker's cycles, its own plane buffer. The binding
+             * is for the plane team; a team the pool clamped below it folds
+             * the binding (worker b's cycles run on b mod nt), so no cycle is
+             * ever skipped */
     {
         double *buf = a->tid > 0 ? d->bufw[a->tid - 1] : d->buf;
         const int *walk = rev ? d->walk_b : d->walk_f;
+        const int *cw = d->ptw > 0 ? d->cycwp : d->cycw;
         int cyc;
         for (cyc = 0; cyc < d->ncyc; cyc++)
-            if (d->cycw[cyc] == a->tid)
+            if (cw[cyc] % a->nt == a->tid)
                 _ilnd_nat_cycles(d, a->tid, a->dir, a->dst, buf, walk, cyc, cyc + 1);
         break;
     }
@@ -481,6 +498,7 @@ static void _ilnd_mt_phase(const vfft_ilnd_t *d, const double *src, double *dst,
         a[t].dir = dir;
         a[t].mode = mode;
         a[t].tid = t;
+        a[t].nt = T;
         a[t].lo = units * (size_t)t / (size_t)T;
         a[t].hi = units * (size_t)(t + 1) / (size_t)T;
     }
@@ -488,6 +506,23 @@ static void _ilnd_mt_phase(const vfft_ilnd_t *d, const double *src, double *dst,
 }
 
 static int _ilnd_clones_of(const vfft_ilnd_t *d) { return d->arm == 1 ? d->wn1 : d->wn2; }
+
+/* the plane phase's team at the dispatch's T: the raced plane team (ptw,
+ * cmtp=; 0 = the full team), never above min(N[0], T) */
+static int _ilnd_plane_team(const vfft_ilnd_t *d, int T)
+{
+    const int Tp = d->N[0] < T ? d->N[0] : T;
+    return (d->ptw > 0 && d->ptw < Tp) ? d->ptw : Tp;
+}
+/* the plane team the threaded race adds beside the full one: half the
+ * workers, where some worker of the full team would hold a single plane
+ * (N[0] < 2 min(N[0], T)) and the half still threads (>= 2 workers).
+ * 0 = no such candidate at this cell and T. */
+static int _ilnd_half_team(const vfft_ilnd_t *d, int T)
+{
+    const int Tp = d->N[0] < T ? d->N[0] : T;
+    return (Tp >= 4 && d->N[0] < 2 * Tp) ? Tp / 2 : 0;
+}
 
 /* the axis-0 partition of one direction: the band arm (prefix digit-split,
  * bands) or the plane arm's strips, src -> dst. Returns 0 = cannot engage. */
@@ -554,7 +589,7 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
         prof = getenv("VFFT_ILND_PROF") != NULL;
     if (T < 2 || _ilnd_clones_of(d) < T - 1 || c->nat || d->mt <= 0 || d->mt > 2)
         return 0; /* every arm runs the structure => clones are mandatory */
-    if (d->nat && d->nf != 2 && (!d->cycw || d->nbufw < T - 1))
+    if (d->nat && d->nf != 2 && (!d->cycw || (d->ptw > 0 && !d->cycwp) || d->nbufw < T - 1))
         return 0;
     if (d->nat && d->nf == 2 && d->nsscr < T)
         return 0;
@@ -564,7 +599,7 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
     {   /* the strip form threads as the PLANE arm: disjoint column ranges
          * through per-worker strip scratches, then disjoint plane ranges */
         const int Ts = rn < (size_t)T ? (int)rn : T;
-        const int Tp = N0 < (size_t)T ? (int)N0 : T;
+        const int Tp = _ilnd_plane_team(d, T);
         if (Ts < 2 && Tp < 2)
             return 0;
         if (!rev)
@@ -590,21 +625,21 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
     }
     if (d->nat)
     {
-        const int Tp = N0 < (size_t)T ? (int)N0 : T;
+        const int Tp = _ilnd_plane_team(d, T);
         if (!rev)
         {
             if (!_ilnd_mt_axis0(d, dir, src, dst, T, &nsplit, &nserial))
                 return 0;
             if (prof)
                 t1 = _il_ab_now();
-            _ilnd_mt_phase(d, dst, dst, dir, 3, N0, T);
+            _ilnd_mt_phase(d, dst, dst, dir, 3, N0, Tp);
         }
         else
         {
             if (src != dst)
                 _ilnd_mt_phase(d, src, dst, dir, 4, N0, Tp);
             else
-                _ilnd_mt_phase(d, dst, dst, dir, 3, N0, T);
+                _ilnd_mt_phase(d, dst, dst, dir, 3, N0, Tp);
             if (prof)
                 t1 = _il_ab_now();
             if (!_ilnd_mt_axis0(d, dir, dst, dst, T, &nsplit, &nserial))
@@ -633,7 +668,7 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
     else
     {
         const int Ts = rn < (size_t)T ? (int)rn : T;
-        const int Tp = N0 < (size_t)T ? (int)N0 : T;
+        const int Tp = _ilnd_plane_team(d, T);
         if (Ts < 2 && Tp < 2)
             return 0;
         _ilnd_mt_axis0(d, dir, src, dst, T, &nsplit, &nserial);
@@ -715,6 +750,7 @@ static void _ilnd_free_nat(vfft_ilnd_t *d)
     int t;
     free(d->natp); free(d->natinv); free(d->walk_f); free(d->walk_b); free(d->coff); free(d->cycw);
     d->natp = d->natinv = d->walk_f = d->walk_b = d->coff = d->cycw = NULL;
+    free(d->cycwp); d->cycwp = NULL;
     free(d->buf); d->buf = NULL;
     if (d->bufw)
     {
@@ -767,6 +803,7 @@ static void _ilnd_free_cycles(vfft_ilnd_t *d)
 {
     int t;
     free(d->cycw); d->cycw = NULL;
+    free(d->cycwp); d->cycwp = NULL;
     free(d->buf); d->buf = NULL;
     if (d->bufw)
     {
@@ -980,22 +1017,16 @@ static int _ilnd_nat_build(vfft_ilnd_t *d)
     return 1;
 }
 
-/* MT: the cycles over T workers, longest first to the least-loaded worker
- * (fixed points count 1), and one plane buffer per helper worker */
-static int _ilnd_nat_bind(vfft_ilnd_t *d, int T)
+/* the cycles over W workers, longest first to the least-loaded worker
+ * (fixed points count 1): cw[c] = the worker of cycle c */
+static int _ilnd_cyc_bind(const vfft_ilnd_t *d, int W, int *cw)
 {
     int *order, *load, i, j, t;
-    if (T < 2 || !d->coff)
-        return 0;
-    if (d->cycw && d->nbufw >= T - 1)
-        return 1;
-    free(d->cycw);
-    d->cycw = (int *)malloc((size_t)d->ncyc * sizeof(int));
     order = (int *)malloc((size_t)d->ncyc * sizeof(int));
-    load = (int *)calloc((size_t)T, sizeof(int));
-    if (!d->cycw || !order || !load)
+    load = (int *)calloc((size_t)W, sizeof(int));
+    if (!order || !load)
     {
-        free(order); free(load); free(d->cycw); d->cycw = NULL;
+        free(order); free(load);
         return 0;
     }
     for (i = 0; i < d->ncyc; i++)
@@ -1011,13 +1042,46 @@ static int _ilnd_nat_bind(vfft_ilnd_t *d, int T)
     {
         const int k = order[i];
         int best = 0;
-        for (t = 1; t < T; t++)
+        for (t = 1; t < W; t++)
             if (load[t] < load[best])
                 best = t;
-        d->cycw[k] = best;
+        cw[k] = best;
         load[best] += d->coff[k + 1] - d->coff[k];
     }
     free(order); free(load);
+    return 1;
+}
+/* the cycles bound over the plane team W (cycwp); the buffers are the full
+ * team's (_ilnd_nat_bind), enough for any team up to T */
+static int _ilnd_nat_bind_team(vfft_ilnd_t *d, int W)
+{
+    if (W < 2 || !d->coff)
+        return 0;
+    if (!d->cycwp)
+        d->cycwp = (int *)malloc((size_t)d->ncyc * sizeof(int));
+    if (!d->cycwp || !_ilnd_cyc_bind(d, W, d->cycwp))
+    {
+        free(d->cycwp);
+        d->cycwp = NULL;
+        return 0;
+    }
+    return 1;
+}
+/* MT: the cycles over T workers, and one plane buffer per helper worker */
+static int _ilnd_nat_bind(vfft_ilnd_t *d, int T)
+{
+    int t;
+    if (T < 2 || !d->coff)
+        return 0;
+    if (d->cycw && d->nbufw >= T - 1)
+        return 1;
+    free(d->cycw);
+    d->cycw = (int *)malloc((size_t)d->ncyc * sizeof(int));
+    if (!d->cycw || !_ilnd_cyc_bind(d, T, d->cycw))
+    {
+        free(d->cycw); d->cycw = NULL;
+        return 0;
+    }
     if (d->nbufw < T - 1)
     {
         double **nb = (double **)realloc(d->bufw, (size_t)(T - 1) * sizeof *nb);
@@ -1162,12 +1226,13 @@ static void _ilnd_arm_run(void *v)
 /* the MT race at the plan's T: serial (the one-thread structure) vs each
  * (partition, structure) that can ENGAGE, the whole forward through the
  * very code execute serves with. Returns the winning (mt, structure). */
-typedef struct { vfft_ilnd_t *d; double *z; double *zo; int mt; int arm; int nf; int ok; char name[24]; } _ilnd_mt_ctx_t;
+typedef struct { vfft_ilnd_t *d; double *z; double *zo; int mt; int arm; int nf; int ptw; int ok; char name[28]; } _ilnd_mt_ctx_t;
 static void _ilnd_mt_arm_run(void *v)
 {
     _ilnd_mt_ctx_t *c = (_ilnd_mt_ctx_t *)v;
     c->d->arm = c->arm;
     c->d->nf = c->nf;
+    c->d->ptw = c->ptw;
     if (c->mt == 0)
     {
         _ilnd_execute_st(c->d, VFFT_FORWARD, c->z, c->zo);
@@ -1178,20 +1243,27 @@ static void _ilnd_mt_arm_run(void *v)
         c->ok = 0; /* the arm cannot engage on this cell */
 }
 static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int strip_ok,
-                          int *mt_out, int *arm_out, int *nf_out)
+                          const int hw, int *mt_out, int *arm_out, int *nf_out, int *ptw_out)
 {
     const size_t T = (size_t)d->N[0] * d->plane;
     /* the plan's own placement on aligned buffers (2026-09-25): zo == z in place */
     double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
     double *zo = d->ip ? z : (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
-    _ilnd_mt_ctx_t cx[7];
-    vfft_race_arm_t arms[7];
-    double ns[7] = { 1e300, 1e300, 1e300, 1e300, 1e300, 1e300, 1e300 };
+    /* serial + per structure {band, plane, plane at the half team, strips,
+     * strips at the half team} */
+    _ilnd_mt_ctx_t cx[11];
+    vfft_race_arm_t arms[11];
+    double ns[11];
     int na = 0, a, best = 0, st, reps;
+    /* the half team's cycle arms need its binding; its strip arms do not */
+    const int hcyc = hw > 0 && (!d->nat || _ilnd_nat_bind_team(d, hw));
     size_t i;
+    for (a = 0; a < 11; a++)
+        ns[a] = 1e300;
     *mt_out = 0;
     *arm_out = s0;
     *nf_out = nf0;
+    *ptw_out = 0;
     if (!z || !zo)
     {
         if (zo && zo != z) VFFT_ZS_FREE(zo);
@@ -1214,23 +1286,31 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
         if (reps < 2) reps = 2;
         if (reps > 256) reps = 256;
     }
-#define ILND_ARM(MT, ARM, NF, NAME) do { \
-        cx[na].d = d; cx[na].z = z; cx[na].zo = zo; cx[na].mt = (MT); cx[na].arm = (ARM); cx[na].nf = (NF); cx[na].ok = 1; \
+#define ILND_ARM(MT, ARM, NF, PTW, NAME) do { \
+        cx[na].d = d; cx[na].z = z; cx[na].zo = zo; cx[na].mt = (MT); cx[na].arm = (ARM); cx[na].nf = (NF); \
+        cx[na].ptw = (PTW); cx[na].ok = 1; \
         snprintf(cx[na].name, sizeof cx[na].name, "%s/%s%s", NAME, (ARM) == 1 ? "child" : "flat", \
                  (NF) == 2 ? "/strip" : ""); \
+        if (PTW) snprintf(cx[na].name + strlen(cx[na].name), sizeof cx[na].name - strlen(cx[na].name), "/pt%d", (PTW)); \
         arms[na].name = cx[na].name; arms[na].run = _ilnd_mt_arm_run; arms[na].ctx = &cx[na]; na++; \
     } while (0)
-    ILND_ARM(0, s0, nf0, "serial");
+    ILND_ARM(0, s0, nf0, 0, "serial");
     for (st = 1; st <= 2; st++)
     {
         const int have = (st == 1) ? (d->child != NULL && d->wn1 > 0) : (d->row != NULL && d->wn2 > 0);
         if (!have)
             continue;
         if (d->ax0.wl > 0 && !d->ax0.blu && (size_t)d->N[0] / (size_t)d->ax0.wl >= 2)
-            ILND_ARM(1, st, 1, "band");
-        ILND_ARM(2, st, 1, "plane");
+            ILND_ARM(1, st, 1, 0, "band");
+        ILND_ARM(2, st, 1, 0, "plane");
+        if (hcyc)
+            ILND_ARM(2, st, 1, hw, "plane");
         if (strip_ok)
-            ILND_ARM(2, st, 2, "plane");
+        {
+            ILND_ARM(2, st, 2, 0, "plane");
+            if (hw > 0)
+                ILND_ARM(2, st, 2, hw, "plane");
+        }
     }
 #undef ILND_ARM
     {
@@ -1243,6 +1323,7 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
     *mt_out = cx[best].mt;
     *arm_out = cx[best].arm;
     *nf_out = cx[best].nf;
+    *ptw_out = cx[best].mt == 2 ? cx[best].ptw : 0;
     if (zo != z) VFFT_ZS_FREE(zo);
     VFFT_ZS_FREE(z);
     if (getenv("VFFT_IL2D_LOG"))
@@ -1251,8 +1332,10 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
                 d->nat ? " nat" : "", d->mt_t, reps);
         for (a = 0; a < na; a++)
             fprintf(stderr, " %s=%.0f%s", cx[a].name, ns[a], cx[a].ok ? "" : "(no engage)");
-        fprintf(stderr, " -> %s/%s%s\n", *mt_out == 0 ? "serial" : *mt_out == 1 ? "band" : "plane",
+        fprintf(stderr, " -> %s/%s%s", *mt_out == 0 ? "serial" : *mt_out == 1 ? "band" : "plane",
                 *arm_out == 1 ? "child" : "flat", *nf_out == 2 ? "/strip" : "");
+        if (*ptw_out) fprintf(stderr, "/pt%d", *ptw_out);
+        fprintf(stderr, "\n");
     }
 }
 
@@ -1278,6 +1361,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     const char *pin = getenv("VFFT_ILND_ARM");
     const char *wpin = getenv("VFFT_ILND_WL");
     const char *mpin = getenv("VFFT_ILND_MT");
+    const char *ptpin = getenv("VFFT_ILND_PT");   /* with VFFT_ILND_MT=2: the plane team */
     (void)reg;
     /* IN PLACE: the same plan and the same wisdom row serve
      * both placements — every pass is the 2D tier's alias-tolerant kind
@@ -1622,6 +1706,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
             if (d->mt < 0 || d->mt > 2) d->mt = 0;
             if (d->mt > 0 && !_ilnd_build_clones(d, cfg, nthr, arm))
                 d->mt = 0;
+            if (d->mt == 2 && ptpin)   /* the plane team pin: a probe's, never banks */
+                d->ptw = atoi(ptpin);
             mt_src = 1;
         }
         else if (usable_w && !cfg->recalibrate && bcmt >= 0)   /* the row is the plan's own T (v1.3) */
@@ -1646,12 +1732,15 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                     mts = arm;
                 }
             }
+            if (d->mt == 2)   /* 0 = absent = the full team */
+                d->ptw = vw2_ilnd_ptw_lookup(&W->vw2, &key0);
             mt_src = 2;
         }
         else
         {
             /* both structures, each with its clones, race against serial */
-            int mt_v = 0, arm_v = arm, nf_v = nf;
+            int mt_v = 0, arm_v = arm, nf_v = nf, ptw_v = 0;
+            const int hw = _ilnd_half_team(d, nthr);
             /* the strip form threads iff its width is set and every worker has a scratch */
             const int strip_ok = nat && (nf == 2 || (nnf > 1)) && d->nsw > 0 &&
                                  _ilnd_strips_ensure(d, nthr, maxsw > d->nsw ? maxsw : d->nsw);
@@ -1660,8 +1749,9 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
             if (_ilnd_build_flat(d, W, cfg, &key0))
                 c2 = _ilnd_build_clones(d, cfg, nthr, 2);
             if (c1 || c2)
-                _ilnd_mt_race(d, arm, nf, strip_ok, &mt_v, &arm_v, &nf_v);
+                _ilnd_mt_race(d, arm, nf, strip_ok, hw, &mt_v, &arm_v, &nf_v, &ptw_v);
             d->mt = mt_v;
+            d->ptw = ptw_v;
             mts = (mt_v > 0) ? arm_v : arm;
             mtf = (mt_v > 0) ? nf_v : nf;
             mt_src = (c1 || c2) ? 3 : 4;
@@ -1678,6 +1768,11 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 /* the strips form's width beside cmtf=2: the replay needs both */
                 if (strip_ok && mtf == 2 && d->nsw > 0 && vw2_ilnd_int_bank(&W->vw2, &key0, "nsw", d->nsw))
                     banked = 1;
+                /* the plane team beside the plane arm whenever it was raced,
+                 * the full team's width included: the replay needs both */
+                if (hw > 0 && d->mt == 2 &&
+                    vw2_ilnd_ptw_bank(&W->vw2, &key0, d->ptw > 0 ? d->ptw : (N1 < nthr ? N1 : nthr)))
+                    banked = 1;
                 /* the axis-0 forms, raced before the row existed */
                 if (vw2_ilcol_forms_rebank(&W->vw2, &key0, d->forms0))
                     banked = 1;
@@ -1690,6 +1785,19 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
             _vfft_warn("ilnd: the band MT arm needs a banded axis 0 at %dx%dx%d — serial",
                        N1, N2, N3);
             d->mt = 0;
+            mts = arm;
+        }
+        /* the plane team: only the plane arm has one; the full team (or a
+         * width of it or above) is ptw = 0, and the cycle form binds its
+         * cycles over the team it serves */
+        if (d->mt != 2 || d->ptw < 2 || d->ptw >= (N1 < nthr ? N1 : nthr))
+            d->ptw = 0;
+        if (d->ptw > 0 && nat && mtf == 1 && !_ilnd_nat_bind_team(d, d->ptw))
+        {
+            _vfft_warn("ilnd: the plane team's cycle binding (%d workers) could not be built at "
+                       "%dx%dx%d T=%d — serial", d->ptw, N1, N2, N3, nthr);
+            d->mt = 0;
+            d->ptw = 0;
             mts = arm;
         }
     }
@@ -1720,15 +1828,20 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         _ilnd_free_cycles(d);
     else
         _ilnd_free_strips(d);
+    if (d->ptw == 0)
+    {   /* the race's half-team binding, not served */
+        free(d->cycwp);
+        d->cycwp = NULL;
+    }
     if (getenv("VFFT_IL2D_LOG"))
     {
         static const char *SRC[] = { "?", "env", "wisdom", "race", "only-buildable" };
         fprintf(stderr, "[ilnd] %dx%dx%d%s: structure %s src=%s | axis-0 wl=%d cut=%d src=%s"
-                        " | T=%d mt=%s/%s src=%s clones=%d%s\n",
+                        " | T=%d mt=%s/%s pt=%d src=%s clones=%d%s\n",
                 N1, N2, N3, nat ? " nat" : "", arm == 1 ? "child" : "flat", SRC[s_src],
                 d->ax0.wl, d->ax0.cut, SRC[wl_src], nthr,
                 d->mt == 0 ? "serial" : d->mt == 1 ? "band" : "plane",
-                d->arm == 1 ? "child" : "flat",
+                d->arm == 1 ? "child" : "flat", d->ptw,
                 nthr > 1 ? SRC[mt_src] : "-", _ilnd_clones_of(d),
                 nat ? (d->nf == 2 ? " (natural: STRIP form, width " : " (natural: cycle form, cycles ") : "");
         if (nat)
