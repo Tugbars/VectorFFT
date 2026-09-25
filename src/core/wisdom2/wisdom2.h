@@ -63,9 +63,9 @@
 
 #define VW2_MAGIC        "@vw2"
 #define VW2_MAJOR        1
-#define VW2_MINOR        3   /* 1.1: role= key axis (2026-08-20);
-                                1.2: lay= key axis (2026-08-24);
-                                1.3: nthreads= key axis (2026-09-25) */
+#define VW2_MINOR        3   /* 1.1: role= key axis;
+                                1.2: lay= key axis;
+                                1.3: nthreads= key axis */
 
 /* ------------------------------------------------------------ enumerations */
 
@@ -91,9 +91,9 @@ typedef enum { VW2_ROLE_NONE = 0, VW2_ROLE_COMP = 1 } vw2_role_t;
 /* lay= (v1.2): the CALLER'S complex-data layout — config.layout, the
  * interleaved-vs-split axis — keyed like its sibling placement. Layout
  * is a caller integration property (AoS/SoA), NEVER a strategy output:
- * the 2026-08-24 audit traced every split/IL verdict collision (mutual
- * banking vetoes, cell ownership fights, @nat ping-pong) to its absence
- * from this key. 0 = absent = every pre-1.2 record AND every un-migrated
+ * without it in the key, split and IL verdicts collide (mutual banking
+ * vetoes, cell ownership fights, @nat ping-pong). 0 = absent = every
+ * pre-1.2 record AND every un-migrated
  * request builder (memset-safe by construction). Matches by EQUALITY in
  * vw2_key_serves; the pre-1.2 fallback lives in vw2_lookup as a second
  * resolution phase, NOT as a serves wildcard — see vw2_lookup. */
@@ -189,12 +189,9 @@ static const char *vw2_shard_name[VW2_NSHARDS] = {
     "wisdom2_prime.txt", "wisdom2_2d.txt", "wisdom2_3d.txt"
 };
 
-/* one-generation rename compat (2026-09-02): this shard was born
- * "wisdom2_stride.txt" — a name collision with the stride ENGINE. It is
- * the ORIGINAL wisdom (the split-layout scrambled-output era, before the
- * oop shard existed), hence wisdom2_scr.txt: the 1D scrambled chains plus
- * the @nat/@natoop order verdicts, rfft chains and trig inners that grew
- * around them. An old-named file still
+/* rename compat: wisdom2_scr.txt's legacy name is "wisdom2_stride.txt" (a
+ * name collision with the stride ENGINE). The shard holds the 1D scrambled
+ * chains and the trig inners (vw2_shard_route). An old-named file still
  * LOADS (notice below); saves always write the new name, so a store
  * upgrades on its first write and the legacy file simply goes stale. */
 static const char *vw2_shard_name_legacy[VW2_NSHARDS] = {
@@ -249,17 +246,17 @@ static const vw2_field_t vw2_fields[] = {
     { "pad_me",  VW2_FC_STRUCTURAL },
     { "sp_route",VW2_FC_STRUCTURAL }, { "sp_pair", VW2_FC_STRUCTURAL },
     { "il_route",VW2_FC_STRUCTURAL }, { "il_pair", VW2_FC_STRUCTURAL },
-    /* the flat DIT (2026-09-05): the chain is structural, the per-stage
-       kernel forms are placement-luck like every kv (re-raced per host) */
+    /* the flat DIT: the chain is structural, the per-stage kernel forms
+       are placement-luck like every kv (re-raced per host) */
     { "il_flat", VW2_FC_STRUCTURAL }, { "il_forms", VW2_FC_LOCAL }, { "il_tw", VW2_FC_LOCAL },
-    /* ZTURN-T (2026-09-09): the chain IS the verdict */
+    /* ZTURN-T: the chain IS the verdict */
     { "il_ztt",  VW2_FC_STRUCTURAL },
     { "t1p",     VW2_FC_STRUCTURAL },
-    /* stride family (wave 4): chain orientation + the blocked-execution
-     * triple (emitted only when blocked). */
+    /* stride family: chain orientation + the blocked-execution triple
+     * (emitted only when blocked). */
     { "dif",     VW2_FC_STRUCTURAL }, { "blocked", VW2_FC_STRUCTURAL },
     { "bsplit",  VW2_FC_STRUCTURAL }, { "bgroups", VW2_FC_STRUCTURAL },
-    /* rank≥2 composite chains (wave 3): per-axis variant/orientation
+    /* rank≥2 composite chains: per-axis variant/orientation
      * fields ride beside rowplan/colplan; 3D adds the ax0/ax1 axes and
      * reuses row* for the innermost pass. */
     { "rowvars", VW2_FC_STRUCTURAL }, { "rowdif",  VW2_FC_STRUCTURAL },
@@ -272,7 +269,7 @@ static const vw2_field_t vw2_fields[] = {
      * variant selector like its siblings). */
     { "zr_kv",   VW2_FC_LOCAL },
     { "t2q",     VW2_FC_LOCAL }, { "kv",     VW2_FC_LOCAL },
-    { "il_kv",   VW2_FC_LOCAL }, { "sp_kv",  VW2_FC_LOCAL }, /* reserved (D9) */
+    { "il_kv",   VW2_FC_LOCAL }, { "sp_kv",  VW2_FC_LOCAL }, /* sp_kv: reserved */
     /* 3D pass-A lane block: cache-geometry pick, absent = heuristic. */
     { "ablock",  VW2_FC_LOCAL },
     /* pad-vs-tail winners in words (derived from pad_me vs q) */
@@ -298,8 +295,8 @@ static inline vw2_fclass_t vw2_field_class(const char *name)
 typedef struct { const char *env; int shape; const char *field; } vw2_envlaw_t;
 static const vw2_envlaw_t vw2_env_law[] = {
     { "VFFT_ZR2C_ROUTE",  1, "route" },
-    { "VFFT_R2C_ROUTE",   1, "route" },  /* §W2 r2c route racing hook       */
-    { "VFFT_C2R_ROUTE",   1, "route" },  /* §W2 c2r route racing hook       */
+    { "VFFT_R2C_ROUTE",   1, "route" },  /* r2c route racing hook           */
+    { "VFFT_C2R_ROUTE",   1, "route" },  /* c2r route racing hook           */
     { "VFFT_IL_BKV",      1, "il_bkv" }, /* dir=bwd kernel-form racing hook */
     { "VFFT_SP_ROUTE",    1, "route" },
     { "VFFT_NO_ILBLK",    4, "il_kv" },
@@ -525,7 +522,7 @@ static inline int vw2__merge_allows(const vw2_rec_t *inc, const vw2_rec_t *nw)
          * (README 3.3): a K=1 row that says il_route=prime restates what the
          * rader/bluestein row already is and never displaces it -- the law
          * the route bank applies at bank time, applied to every replacement
-         * (a merge, a load-time dedup) since 2026-09-25. Any other route row
+         * (a merge, a load-time dedup). Any other route row
          * (the pair, chain3, flat, mono) is a verdict the prime engine LOST
          * and competes on rank and date like every row. */
         const char *ie = vw2_rec_get(inc, "eng"), *ne = vw2_rec_get(nw, "eng");
@@ -670,10 +667,10 @@ static inline int vw2_shard_route(const vw2_key_t *k, const char *eng)
     if (eng && (!strcmp(eng, "bluestein") || !strcmp(eng, "rader"))) return VW2_SHARD_PRIME;
     if (k->t == VW2_T_R2C || k->t == VW2_T_C2R) return VW2_SHARD_REAL;
     if (k->t == VW2_T_C2C) {
-        /* ORDER verdicts live with the engine wisdom that serves order
-         * (owner, 2026-09-02): every 1D c2c ord=nat row — @nat AND
-         * @natoop — homes in the oop shard. The scr shard holds what its
-         * name says: the scrambled-era chains (plus the trig inners). */
+        /* ORDER verdicts live with the engine wisdom that serves order:
+         * every 1D c2c ord=nat row — @nat AND @natoop — homes in the oop
+         * shard. The scr shard holds what its name says: the scrambled
+         * chains (plus the trig inners). */
         if (k->ord == VW2_ORD_NAT) return VW2_SHARD_OOP;
         return (k->pl == VW2_PL_IP) ? VW2_SHARD_STRIDE : VW2_SHARD_OOP;
     }
@@ -1044,13 +1041,12 @@ static inline void vw2__dedup_loaded(vw2_store_t *s)
 }
 
 /* Open the store. dir==NULL resolves $VFFT_WISDOM_DIR, else the compiled
- * default VFFT_WISDOM_DIR_DEFAULT (the tree's src/wisdom/, set by the build;
- * 2026-09-24), else "." — and both fallbacks FORCE read-only: only an
- * explicit directory or the env can bank (the wrong-cwd colony killer,
- * README §2.2; the shipped store is never written by a stray process).
- * `writable` is the measurement-mode guard (README: exact config/env shape
- * of the guard is an OPEN owner decision; this explicit flag is the only
- * switch until then). */
+ * default VFFT_WISDOM_DIR_DEFAULT (the tree's src/wisdom/, set by the
+ * build), else "." — and both fallbacks FORCE read-only: only an explicit
+ * directory or the env can bank (the wrong-cwd colony killer, README §2.2;
+ * the shipped store is never written by a stray process). `writable` is
+ * the measurement-mode guard: tools pass it here, the create path applies
+ * config.wisdom_write through vw2_set_writable (README §2.2). */
 static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
 {
     int i, worst = VW2_OK;
