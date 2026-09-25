@@ -86,6 +86,10 @@ long vfft_ilnd_mt_passes(void);     /* the rank-3 tier's MT engagement counter *
 #include "planning/policy.h"    /* THE admission law: the bench asks, it does not
                                  * keep its own copy (planning_policy_design.md L11) */
 
+#ifdef VFFT_HAS_KFR
+#include "kfr_arm.h"   /* the KFR comparator arm (C++ behind a C interface; wired 2026-09-25, untested) */
+static int g_cmp_kfr = 0;   /* --cmp kfr: the K=1 cell's comparator is KFR instead of MKL */
+#endif
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
 #include <mkl_service.h>
@@ -638,6 +642,63 @@ static double k1z_time_mkl(int N, const double *z0, size_t total)
     DftiFreeDescriptor(&d);
     return best;
 }
+#ifdef VFFT_HAS_KFR
+/* the KFR twin of k1z_time_mkl (2026-09-25, UNTESTED): the same windows,
+ * trials, reps and pacing; in place under --k1zip; single thread only
+ * (KFR's DFT does not thread, so --cmp kfr refuses --mt in main). */
+static double k1z_time_kfr(int N, const double *z0, size_t total)
+{
+    void *p = kfr_c2c_create(N);
+    if (!p)
+        return 0;
+    size_t tsz = kfr_c2c_temp_size(p);
+    unsigned char *temp = tsz ? (unsigned char *)alloc_d((tsz + 7) / 8) : NULL;
+    double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
+    memcpy(zi, z0, 2 * total * sizeof(double));
+#define KFR_RUN() (g_k1zip ? kfr_c2c_forward_inplace(p, zi, temp) : kfr_c2c_forward(p, zi, zo, temp))
+    for (int w = 0; w < 10; w++)
+        KFR_RUN();
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int win = 0; win < 2; win++)
+    {
+        if (win)
+        {
+            const double tw0 = vfft_proto_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                KFR_RUN();
+            while (vfft_proto_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_proto_now_ns();
+            for (int i = 0; i < reps; i++)
+                KFR_RUN();
+            double ns = (vfft_proto_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
+    }
+#undef KFR_RUN
+    free_d(zi);
+    free_d(zo);
+    if (temp) free_d((double *)temp);
+    kfr_c2c_destroy(p);
+    return best;
+}
+#endif
+/* the K=1 cell's comparator: MKL, or KFR under --cmp kfr (2026-09-25) */
+static double k1z_time_cmp(int N, const double *z0, size_t total)
+{
+#ifdef VFFT_HAS_KFR
+    if (g_cmp_kfr)
+        return k1z_time_kfr(N, z0, total);
+#endif
+    return k1z_time_mkl(N, z0, total);
+}
 #endif
 
 /* A CELL'S ROW IS REPLACED, NEVER DUPLICATED (2026-09-21). A gauntlet re-runs
@@ -843,7 +904,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     if (flip)
     { /* MKL first */
         if (g_k1noop_mt) vfft_set_num_threads(1);
-        mns = k1z_time_mkl(N, z0, total);
+        mns = k1z_time_cmp(N, z0, total);
         cachebust();
         pace(cool_ms);
         if (g_k1noop_mt) vfft_set_num_threads(g_mt);
@@ -864,7 +925,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
         cachebust();
         pace(cool_ms);
         if (g_k1noop_mt) vfft_set_num_threads(1);
-        mns = k1z_time_mkl(N, z0, total);
+        mns = k1z_time_cmp(N, z0, total);
     }
 #else
     (void)cool_ms;
@@ -4862,6 +4923,21 @@ int main(int argc, char **argv)
              * gap map — measure-only, see the run_kzb_cell block. */
             g_kzb = 1;
         }
+        else if (strcmp(argv[1], "--cmp") == 0 && argc >= 3)
+        {   /* --cmp kfr: the K=1 cell's comparator (2026-09-25; the arm exists
+             * only in a --kfr build, else the flag is refused below) */
+#ifdef VFFT_HAS_KFR
+            g_cmp_kfr = (strcmp(argv[2], "kfr") == 0);
+#else
+            if (strcmp(argv[2], "kfr") == 0)
+            {
+                fprintf(stderr, "--cmp kfr: this bench was built without the KFR arm (build.py --kfr)\n");
+                return 2;
+            }
+#endif
+            argv++;
+            argc--;
+        }
         else if (strcmp(argv[1], "--ilmt") == 0)
         {
             /* TC-batch MT vs MKL batched MT (2026-08-06). Implies the MT
@@ -4877,6 +4953,13 @@ int main(int argc, char **argv)
         argc--;
     }
     g_oop_mt = (oop && mt);
+#ifdef VFFT_HAS_KFR
+    if (g_cmp_kfr && (mt || twod || il2d || il3d || real2d || r2c))
+    {
+        fprintf(stderr, "--cmp kfr: the KFR arm is the 1D c2c cell at one thread only\n");
+        return 2;
+    }
+#endif
     g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat) && mt;   /* the 2D/3D cells share the
                                                                           * threaded-cell discipline (2026-09-24) */
     if (g_k1noop_mt)

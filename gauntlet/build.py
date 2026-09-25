@@ -361,9 +361,19 @@ def detect_toolchain():
     is_windows = os.name == 'nt'
     is_icx = 'icx' in cc_basename
     is_msvc_style = cc_basename in ('cl', 'cl.exe', 'icx-cl', 'icx-cl.exe', 'icl', 'icl.exe')
+    # Clang (2026-09-25): CC=clang goes through the gcc-style path unchanged;
+    # the C++ twin (CXX, else derived beside CC) links the KFR arm's TU.
+    is_clang = 'clang' in cc_basename and not is_icx
+    cxx = os.environ.get('CXX')
+    if not cxx:
+        stem = Path(cc).name
+        twin = (stem.replace('clang', 'clang++', 1) if is_clang else
+                stem.replace('icx', 'icpx', 1) if is_icx else
+                stem.replace('gcc', 'g++', 1))
+        cxx = str(Path(cc).with_name(twin)) if Path(cc).parent != Path('') else twin
     return {
-        'cc': cc, 'is_windows': is_windows,
-        'is_icx': is_icx, 'is_msvc_style': is_msvc_style,
+        'cc': cc, 'cxx': cxx, 'is_windows': is_windows,
+        'is_icx': is_icx, 'is_clang': is_clang, 'is_msvc_style': is_msvc_style,
     }
 
 
@@ -419,10 +429,52 @@ def find_fftw():
     return None, None, None
 
 
+def find_kfr():
+    """Locate a KFR checkout or install (2026-09-25, for the --kfr arm).
+    KFR_ROOT first (a build tree: <root>/include/kfr/dft.hpp and the static
+    libs under <root>/lib or <root>/build/lib), then the usual places.
+    Returns (inc_dir, lib_dir) or (None, None). KFR is GPLv2 or commercial:
+    it is never shipped with this tree, the user supplies it."""
+    roots = []
+    if os.environ.get('KFR_ROOT'):
+        roots.append(Path(os.environ['KFR_ROOT']))
+    roots += [Path(r'C:\kfr'), Path.home() / 'kfr',
+              Path(r'C:\vcpkg\installed\x64-windows'), Path('/usr/local'), Path('/usr')]
+    for root in roots:
+        inc = root / 'include'
+        if not (inc / 'kfr' / 'dft.hpp').is_file():
+            continue
+        for lib in (root / 'lib', root / 'build' / 'lib', root / 'build'):
+            if any((lib / n).is_file() for n in ('libkfr_dft.a', 'kfr_dft.lib', 'libkfr_dft.so')):
+                return inc, lib
+    return None, None
+
+
 def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=None,
-              split=False):
+              split=False, kfr=False):
     mkl_inc, mkl_lib = (None, None)
     fftw_inc, fftw_lib, fftw_dll = (None, None, None)
+    kfr_inc, kfr_lib = (None, None)
+    if kfr:
+        # the KFR arm (2026-09-25): a C++ TU (gauntlet/kfr_arm.cpp) behind a C
+        # interface, compiled and linked with the Clang toolchain KFR is built
+        # for; a mixed gcc/clang C++ runtime is refused rather than guessed.
+        if not tc['is_clang']:
+            print('  [error] --kfr needs a Clang toolchain: set CC=clang (KFR is a C++ '
+                  'library built for Clang; its runtime must match the bench\'s)',
+                  file=sys.stderr)
+            sys.exit(2)
+        if not mkl:
+            print('  [error] --kfr rides the MKL bench cell: build with --mkl too',
+                  file=sys.stderr)
+            sys.exit(2)
+        kfr_inc, kfr_lib = find_kfr()
+        if not kfr_inc or not kfr_lib:
+            print('  [error] --kfr requested but KFR not found: set KFR_ROOT to a build '
+                  'tree with include/kfr/dft.hpp and lib/libkfr_dft.a', file=sys.stderr)
+            sys.exit(2)
+        print(f'  [kfr] include: {kfr_inc}')
+        print(f'  [kfr] libs:    {kfr_lib}')
     if mkl:
         mkl_inc, mkl_lib = find_mkl()
         if not mkl_inc or not mkl_lib:
@@ -442,6 +494,9 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
         print(f'  [fftw] libs:    {fftw_lib}')
 
     if tc['is_msvc_style']:
+        if kfr:
+            print('  [error] --kfr is wired for the gcc-style (clang) path only', file=sys.stderr)
+            sys.exit(2)
         # MSVC-style: /I instead of -I, /Fe for output
         flags = ['/O2', '/arch:AVX2', '/fp:fast', '/wd4244', '/wd4267']
         inc = [a.replace('-I', '/I') for a in build_includes()]
@@ -512,9 +567,14 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
         flags += ['-DVFFT_HAS_MKL', f'-I{mkl_inc}']
     if fftw:
         flags += ['-DVFFT_HAS_FFTW', f'-I{fftw_inc}']
+    if kfr:
+        flags += ['-DVFFT_HAS_KFR', f'-I{kfr_inc}']
     if jit:
         flags = flags + ['-DVFFT_USE_JIT']   # bench resolves via vfft_proto_plan_jit_fwd
     base_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])]
+    if kfr:
+        base_srcs.append(str(HERE / 'kfr_arm.cpp'))   # the C++ shim, compiled as C++ by extension
+        tc['link_cc'] = tc['cxx']                     # the C++ driver links the C++ runtime in
     cflags = flags + build_includes()
 
     # Everything from here down is LINK input. It is kept separate from cflags
@@ -540,6 +600,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
             link_args += [str(Path(fftw_lib) / 'fftw3.lib')]
         else:
             link_args += [f'-L{fftw_lib}', '-lfftw3', '-lm']
+    if kfr:
+        link_args += [f'-L{kfr_lib}', '-lkfr_dft']   # KFR's static DFT library
     # -lm for gcc (mingw on Windows has libm.a; Linux needs it). NOT for MSVC
     # or icx-on-Windows (MSVC CRT supplies libm).
     if not tc['is_msvc_style'] and not (tc['is_windows'] and tc['is_icx']):
@@ -591,7 +653,7 @@ def build_gcc(tc, out_bin, cflags, base_srcs, link_args) -> bool:
     # cflags go on the link line too: that is what the old single-command form
     # did, and it is what carries -fsanitize=address (VFFT_ASAN) through to the
     # link. The compile-only flags among them are inert here.
-    link = ([tc['cc']] + cflags + [str(o) for (_, o) in pairs]
+    link = ([tc.get('link_cc', tc['cc'])] + cflags + [str(o) for (_, o) in pairs]
             + ['-o', str(out_bin)] + link_args)
     r = subprocess.run(link, capture_output=True, text=True,
                        encoding='utf-8', errors='replace', env=build_env(tc))
@@ -682,6 +744,10 @@ def main():
     ap.add_argument('--fftw', action='store_true',
                     help='Link FFTW3 (vcpkg double-precision). Adds '
                          '-DVFFT_HAS_FFTW and fftw3.lib.')
+    ap.add_argument('--kfr', action='store_true',
+                    help='Add the KFR comparator arm (gauntlet/kfr_arm.cpp, C++). '
+                         'Needs CC=clang and KFR_ROOT (or a KFR checkout in the '
+                         'usual places); implies --mkl. Wired 2026-09-25, untested.')
     ap.add_argument('--jit', action='store_true',
                     help='JIT build config: defines VFFT_USE_JIT (bench resolves '
                          'plans via vfft_proto_plan_jit_fwd) + points the JIT '
@@ -717,7 +783,7 @@ def main():
     if tc['is_msvc_style']:
         # MSVC compiles the whole corpus in one cl invocation (no cached lib on
         # that path), so it stays a single command.
-        cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw,
+        cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, kfr=args.kfr,
                         jit=args.jit, extra_srcs=extra_srcs)
         result = subprocess.run(cmd, capture_output=True,
                                 text=True, encoding='utf-8', errors='replace',
@@ -734,7 +800,7 @@ def main():
                 print(f'[compile] warnings:\n{head}')
     else:
         cflags, base_srcs, link_args = build_cmd(
-            tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, jit=args.jit,
+            tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, kfr=args.kfr, jit=args.jit,
             extra_srcs=extra_srcs, split=True)
         if not build_gcc(tc, out_bin, cflags, base_srcs, link_args):
             print(f'[compile] FAILED ({time.time()-t0:.1f}s)')

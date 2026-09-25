@@ -36,9 +36,9 @@ At 8192x128 the column-first walk moves the plane about five half-sweeps of 16 M
 ```
 
 The comparator's 663 us at the machine's aggregate bandwidth (about 97 GB/s across the
-eight cores) is 64 MB: the count of a **rows-first** walk whose two output passes use
-**streaming stores**, so that no pass fetches the lines it is about to overwrite, and the
-column gather reads y from memory rather than from other cores' caches.
+eight cores) is 64 MB: the count of a **rows-first** walk whose column pass runs in place in
+the output while it is hot. (The count comes from the order of the passes alone: the streamed-store experiments of
+2026-09-25 were refuted, and the order is what remains.)
 
 Measured and refuted as fixes on their own (each through the pinned bench, interleaved
 twice): a write-prefetch of the leaf's destination pieces (within noise); a streamed strip

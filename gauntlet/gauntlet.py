@@ -196,7 +196,8 @@ class Run:
         self.dims = dims                      # 1, or 2 for the 2D contract (shapes)
         self.threads = int(args.threads)
         self.ip = 1 if args.inplace else 0
-        self.sfx = ("_%dd" % dims if dims >= 2 else "") + ("_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "")
+        self.cmp = getattr(args, "cmp", "mkl") or "mkl"   # the comparator: mkl (the default) or kfr (2026-09-25, its own csv)
+        self.sfx = ("_%dd" % dims if dims >= 2 else "") + ("_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "") + ("_" + self.cmp if self.cmp != "mkl" else "")
         name = args.name or self.default_name()
         self.dir = os.path.join(RESULTS, name)
         self.store = args.store or os.path.join(self.dir, "store")
@@ -371,6 +372,8 @@ def bench_cell(run, n, csv_path):
     else:
         flag = ["--k1nat" if run.ip else "--k1noop"] + (["--mt"] if run.threads > 1 else [])
         nstr, kstr = str(n), "1"
+    if run.cmp != "mkl":
+        flag = ["--cmp", run.cmp] + flag   # the comparator arm (a --kfr build of the bench)
     ok = True
     for flip in ("0", "1"):
         r = subprocess.run([bench] + flag + [os.path.join(run.store, "spike_wisdom.txt"), csv_path,
@@ -545,6 +548,7 @@ def main():
     ap.add_argument("--primes", help="the prime set of the mixed group, e.g. 2,3,5,7 (default 2,3,5)")
     ap.add_argument("--threads", default="1")
     ap.add_argument("--inplace", action="store_true")
+    ap.add_argument("--cmp", choices=["mkl", "kfr"], default="mkl", help="the comparator: mkl (default) or kfr (a bench built with build.py --kfr; 1D, one thread; its own csv suffix)")
     ap.add_argument("--name", help="run directory name under gauntlet/results/ (default: group_date)")
     ap.add_argument("--store", help="use this wisdom store instead of a fresh copy of the shipped one")
     ap.add_argument("--bin-dir", help="where the gauntlet binaries are (default: beside the sources, else <build>/gauntlet)")
@@ -572,6 +576,8 @@ def main():
             if "x" in first:
                 dims = first.count("x") + 1
     run = Run(args, dims)
+    if run.cmp == "kfr" and (dims != 1 or run.threads > 1):
+        raise SystemExit("--cmp kfr: the KFR arm is the 1D c2c cell at one thread only")
     cal_s, bench_s = estimate_seconds(cells, run.threads, args.calibrate)
     if args.verb == "cells":
         print("%d cells: %s%s" % (len(cells), " ".join(ckey(c) for c in cells[:12]), " ..." if len(cells) > 12 else ""))

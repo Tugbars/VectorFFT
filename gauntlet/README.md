@@ -97,6 +97,14 @@ Either path builds the same binaries from the same sources.
   gauntlet/bench_1d_vs_mkl.c` (and `recal_1d_probe.c`, `k1_fwd_ref_probe.c`
   with `--vfft`); binaries land beside the sources, which is the driver's
   default `--bin-dir`.
+- The KFR arm (wired 2026-09-25, not yet run): `CC=clang KFR_ROOT=<kfr build tree>
+  python gauntlet/build.py --compile --mkl --kfr --vfft --src gauntlet/bench_1d_vs_mkl.c`,
+  then `python gauntlet/gauntlet.py run --cells 2..4096 --cmp kfr`. The arm is
+  `gauntlet/kfr_arm.cpp`, a C++ shim behind a C interface, built with the same
+  Clang toolchain as the bench; it covers the 1D c2c cell at one thread, and its
+  results land in `gauntlet_kfr.csv` with the same columns (the comparator column
+  is KFR there). KFR is GPLv2 or commercial and is never shipped with this tree:
+  the user supplies their own checkout, exactly as with MKL and FFTW.
 
 MKL and FFTW are optional at build time. Without MKL the bench reports absolute
 numbers and correctness. With both, the report says which library answered.

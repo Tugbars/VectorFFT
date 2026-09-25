@@ -66,55 +66,93 @@ or above parity at one thread. The worst of the grid:
 0.75x to 0.91x, and 128x16x16 at 0.54x on the band arm. Our scaling there is 2.5x to 2.8x
 against the comparator's 3.3x to 4.4x.
 
-## 4. The cause
+## 4. The cause, measured
 
-**Large volumes: the plane phase's footprint, not the sweep count.** The phase log of
-8x128x2048 at eight threads (`VFFT_ILND_PROF=1`) reads 0.8 ms for the axis-0 pass, which
-moves 64 MB at 80 GB/s and is fine, then 2.8 ms for the plane phase: eight 4 MB planes, one
-per worker, each a 2D child that takes 1.3 ms when it runs alone. Eight children at once
-take 2.15 times longer than one, because eight planes with their staging scratch exceed
-the shared L3 and every child's column gather then comes from memory. The comparator's
-whole transform takes 1.17 ms, under one and a half memory sweeps of the volume: it does
-not run the short axis-0 pass and the planes as two full-volume phases.
+Both engines' page accesses, forks and phases were traced on the loser cells, and a thread
+ladder ran at 1, 2, 4, 6 and 8 threads, on 2026-09-25.
 
-**Small volumes: the fan-out.** At 128x16x16 the threaded axis-0 pass takes 30 us where the
-serial pass takes 12, and the plane phase 14.5 us, the comparator's whole transform. Two
-fork-joins plus one child execute per plane cost more than the work they distribute, and
-the band arm's axis-0 pass runs column ranges at full pitch, the shape the 2D tier
-replaced with dense per-worker strips.
+**The count to beat.** A walk that, for each plane, runs the rows from the input into the
+output and then that plane's columns in place in the output while the plane is hot, and after
+the last plane makes one pass along axis 0 over the whole output, reads the input once and
+touches the output five times: three read-and-write passes in all, with no transpose, no copy
+pass and no scratch plane. That count is what the comparator's times at these cells
+correspond to.
+
+**Large volumes with a short first axis: the extra passes, not the threads.** Both engines keep
+92 to 97% of their eight threads busy and the clock holds 5.7 GHz at every thread count. What
+differs is how much each unit of work slows under concurrency: our busy thread time grows
+2 to 4x from one thread to eight, the comparator's 1 to 2x. The reason is traffic. We make
+five read-and-write passes over the volume where three suffice. The two extra ones are the flat
+structure's natural axis-1 pass through a plane-sized scratch plane: plane to scratch, scratch
+in place, scratch back to the plane, three sweeps of a plane-sized buffer per plane. At one
+thread that is one plane plus its scratch, 8 MB, inside the 36 MB L3, so the passes are nearly
+free, which is a large part of the one-thread lead. At eight threads it is 64 MB in flight and
+the passes go to DRAM: the modelled traffic is 2.6 to 3.6 times the comparator's. The ladder shows it
+directly: our plane phase stops improving at four threads, where four times 8 MB fills L3, and
+on both 32 MB cells eight threads are slower than four while the comparator keeps scaling. The control is
+16x64x2048, which runs our strip form with no plane-sized scratch and 2 MB per worker: its
+plane phase scales 8.1x and the cell keeps its lead.
+
+**About half of the gap on those cells is the measurement.** The gauntlet feeds the same input
+on every call. Our 64 MB in-flight set evicts that input between calls; an engine with a
+smaller in-flight set keeps it in L3. On fresh input the comparator runs 1.7 to 2.0x slower
+and we 1.24 to 1.30x slower, and the lost lead roughly halves.
+
+**Small volumes: threading overhead.** At 128x16x16 we launch threads three times per call
+where one region would do; one stage is split unevenly across threads (1.41x) and another runs on
+four of eight threads for 30% of the call, so the call is fastest at four threads. At
+32x32x256 the cycle loads are uneven by 1.25x.
 
 ## 5. What is settled
 
-Two forms that fuse axis 0 into the plane walk are measured and refuted at one thread and
-stay refuted; the problem above is a footprint at eight threads, not the sweep count they
-were built against, but any new form must be argued on its own count:
-
-- the scratch-cube fused natural form (2026-09-15: a cube write plus cold destination
-  writes; lost 3% to 27% at every one-thread cell and 13 of 14 threaded cells);
-- the slab form of fused N3-lane strips (2026-09-24: half-empty vectors at 4 to 8 lanes lose
-  12% to 50%; 16 lanes break even).
-
-The verdict machinery is complete: the plane and band arms race at T with the serial form,
-the strips form banks its width beside the threaded verdict, the rank-3 row replays every
-verdict (commit 65ccf182), and the calibrate probe measures threaded arms under the pinned
-protocol. The losses above are measured forms, not measurement.
+- Two forms that fuse axis 0 into the plane walk are measured and refuted at one thread and stay
+  refuted (the scratch-cube fused natural form, 2026-09-15; the slab form of fused N3-lane strips
+  at 4 to 8 lanes, 2026-09-24: half-empty vectors lose 12 to 50%, 16 lanes break even). A gathered
+  panel narrower than 16 columns is that refuted form.
+- Streaming stores are not the lever, here or on the 2D tall planes: the pass order alone
+  reaches the count to beat.
+- "Eight full planes exceed L3" as this item first stated it was wrong: the loss is not the
+  plane count but the plane-sized scratch that doubles our per-plane footprint and the passes
+  through it.
+- The clock is not a factor, and neither is fork cost above 256 KB.
+- The verdict machinery is complete and replays (the strip width beside the threaded form, the
+  rank-3 row's forms and structure, the thread count in the row's key since wisdom2 v1.3). The
+  losses above are measured forms, not measurement, except for the hot-input bias.
 
 ## 6. Roadmap
 
-1. **Measure the plane phase's footprint first.** At 8x128x2048 and 8x8192x32: each clone's
-   staging scratch and the per-child L3 traffic (the phase log per worker), so that the form
-   decision below rests on a count, not on the 2.15x alone.
-2. **The plane child's route raced in situ.** The child is the 2D plan's own one-thread
-   verdict, raced alone in a quiet cache; at eight threads it shares L3 with seven neighbours.
-   Race the child's route and strip width inside the 3D race with the clones running, and
-   bank the verdict on the rank-3 row beside `cmts=`. Cheap: the clone sets exist.
-3. **The axis-0 pass with streaming stores at 32 MB and up.** The one-thread lever of
-   2026-09-24 (the NT-store column kind), now worth up to the 0.8 ms of the axis-0 phase.
-4. **The form for short N1 over large planes** — the owner's design decision, after item 1:
-   a walk that never has eight full planes hot at once, argued on its memory count against
-   the comparator's one and a half sweeps, raced like every arm, refused if it does not win.
-5. **Small volumes: one parallel region.** The axis-0 pass and the plane phase under one
-   fork-join with a barrier, and the dense strips as the band arm's axis-0 pass. Gate: bitwise
-   the serial plan, then the losing cells through the gauntlet's threaded cell protocol.
-6. **The full grid at eight threads** once every losing class has a form (the owner's rule),
-   including the 337 cells the stopped run never measured.
+1. **The plane phase without the plane-sized scratch.** The axis-1 pass as gathered panels of
+   16 or more columns: the worker gathers the columns into a dense N2 x w scratch, runs the whole
+   axis-1 chain there with the leaf writing natural order, and scatters back, one read and write
+   of the plane for all of axis 1 and a per-worker footprint of plane plus N2 x w x 16 B. This is
+   our own dense per-worker strip form applied to axis 1; the codelets exist. Raced in situ at T
+   with the clones running, against the flat natural pass and the 2D child. The count to beat at
+   8x128x2048: three pass pairs and about 32 MB in flight, which is what the comparator's 1.2 to
+   1.6 ms correspond to. Open: the panel
+   at N2 = 8192, where 16 columns are a 2 MB scratch, the whole L2.
+2. **The gauntlet's fresh-input arm.** A contract decision: rotate the input and output over at
+   least 80 MB of buffer pairs at the large cells, or report hot and fresh side by side. No
+   eight-thread grid is re-run before it is decided, since the reused input biases every large
+   cell against the engine with the larger in-flight set.
+3. **Small volumes.** First the verdict fix: the 57 serial verdicts at 32 to 128 KB were raced by
+   the probe that pinned its caller onto worker 1's core; re-race them under the fixed threaded
+   protocol (worth the class median 2.9x to 3.7x). Then one region: axis 0 as dense strips, a
+   barrier, the planes, with a balanced plane partition and no idle workers dispatched.
+4. **Planes first, axis 0 last, for a single-stage first axis (N1 ≤ 16).** The same pass count
+   as our order, argued on residency alone: a plane phase that runs first streams the input once
+   and leaves the output planes hot for the axis-0 pass, while our order re-reads the output
+   after the axis-0 pass has streamed the whole volume through L3. Raced after item 1, only if the plane
+   phase still spills.
+5. **Counted bytes and the open cells.** DRAM bytes per execute from the uncore counters (VTune
+   reaches them from an elevated process on this host) for both engines at one and eight threads
+   on the loser cells, replacing the modelled 2.6 to 3.6x; the eighteen-cell timing and bandwidth
+   ceilings; and 256x8x128, where our axis-0 pass scales only 3.1x and is 64% of the call.
+6. **Hygiene.** The clones' scratch buffers are plain `malloc` where the rule is `VFFT_ZS_ALLOC`;
+   the 3D race runs in place on a `malloc`'d buffer while the product runs out of place.
+7. **The full grid at eight threads** once items 1 to 3 have forms, including the 337 tall cells
+   the stopped run never measured. The tall class is not a demonstrated win: at N2 = 8 the
+   comparator scales 4.9x to our 3.2x.
+
+Dropped: streaming stores on the axis-0 pass. The pass order reaches the count without them,
+the axis-0 phase is a fifth of the call, and a streamed output would leave the volume cold for
+the plane phase that reads it next.
