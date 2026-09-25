@@ -1,11 +1,11 @@
-/* fft2d_create.h — the rank-2 CREATE tier (migration step 23).
+/* fft2d_create.h — the rank-2 CREATE tier.
  *
  * WHAT THIS IS
  * ------------
  * The dims==2 arm of _vfft_create_inner: the largest single tier in the
  * dispatcher, and the one that decides between the two rank-2 servings the
- * library actually has. It returns on every path, so it lifts out behind a
- * guard without disturbing the rank-1 tiers that follow it.
+ * library actually has. It returns on every path, so it sits behind a guard
+ * ahead of the rank-1 tiers.
  *
  * n[0]=N1 (rows), n[1]=N2 (columns).
  *
@@ -40,15 +40,12 @@
  * _vw2_lay_of, _vw2_persist, _build_2d), so it must be included after those
  * are defined and before _vfft_create_inner.
  *
- * The four parameters are the block's complete free-variable set, derived
- * rather than guessed: cfg, W, reg, K. N1/N2 are locals declared inside the
- * block; the enclosing N and ob are NOT used by it.
+ * The four parameters are the block's complete free-variable set: cfg, W,
+ * reg, K. N1/N2 are locals declared inside the block.
  */
 #ifndef VFFT_TRANSFORMS_FFT2D_CREATE_H
 #define VFFT_TRANSFORMS_FFT2D_CREATE_H
 
-/* the two arms of the N1-arm race: the pow2 chain column pass vs the
- * Bluestein column pass, both in place on one scratch plane */
 static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                  struct vfft_wisdom_s *W,
                                  const vfft_proto_registry_t *reg,
@@ -56,15 +53,15 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
 {
     if (cfg->dims == 2)
     {
-        /* the Bluestein inner chain provider for THIS create (2026-09-02):
-         * the (M, N2) chain row serves the length-M column chain */
+        /* the Bluestein inner chain provider for THIS create: the (M, N2)
+         * chain row serves the length-M column chain */
         _il2d_blu_ctx.W = W;
         _il2d_blu_ctx.cfg = cfg;
         _il2d_blu_ctx.N2 = cfg->n[1];
         _il2d_blu_chain_hook = _il2d_blu_m_chain;
-        /* §6a50/Q4: the 2D executors are K-blind — howmany > 1 is served
-         * by the PLANE QUEUE (2026-08-27, the designed sequential-plane
-         * batching): a wrapper over one primary howmany=1 plan (loop
+        /* the 2D executors are K-blind — howmany > 1 is served by the
+         * PLANE QUEUE (plane_queue.h, sequential-plane batching): a
+         * wrapper over one primary howmany=1 plan (loop
          * mode, keeps its intra-MT verdicts) + serial clones pulled by
          * an atomic plane counter (queue mode), loop-vs-queue RACED at
          * create. Contiguous planes only (the canonical dist for each
@@ -145,11 +142,11 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     T = (int)K;
                 ic.nthreads = 1;
                 ic.wisdom_write = 0;
-                ic.recalibrate = 0;   /* the PRIMARY above (:98) kept the caller's
-                                       * flag and has already re-raced and banked;
-                                       * a clone that also carries it re-races the
-                                       * same cell T more times and contradicts the
-                                       * law stated at :127-131 ("wisdom-served from
+                ic.recalibrate = 0;   /* the PRIMARY above kept the caller's flag
+                                       * and has already re-raced and banked; a
+                                       * clone that also carried it would re-race
+                                       * the same cell T more times, against the
+                                       * clones' law above ("wisdom-served from
                                        * the verdicts the primary just banked") */
                 ps = (double *)malloc(h->pq_sdist * sizeof(double));
                 p0 = (double *)malloc(h->pq_ddist * sizeof(double));
@@ -203,14 +200,13 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             return h;
         }
         int N1 = cfg->n[0], N2 = cfg->n[1];
-        /* ── native IL 2D c2c tier — THE serving for IL callers (OWNER
-         * LAW 2026-08-25: no convert wrapper, split is not a fallback of
-         * IL). Cold cells race the chain + axes and bank the lay=il
-         * verdict; inexpressible cells (no chain; natural at multi-stage
-         * until the rho tables; child failure) REFUSE loudly. The split
-         * tplan below is built ONLY for split-layout callers. */
+        /* ── native IL 2D c2c tier — THE serving for IL callers (no
+         * convert wrapper: split is not a fallback of IL). Cold cells
+         * race the chain + axes and bank the lay=il verdict;
+         * inexpressible cells (no chain; child failure) REFUSE loudly.
+         * The split tplan below is built ONLY for split-layout callers. */
         struct vfft_plan_s *il2d_row = NULL;
-        char il2d_fm[64] = "";   /* the raced per-stage forms (E1.11); re-banked once the chain row lands */
+        char il2d_fm[64] = "";   /* the raced per-stage forms; re-banked once the chain row lands */
         int il2d_nst = 0;
         int il2d_wc = 0;
         int il2d_wl = 0, il2d_cut = 0, il2d_tfuse = 0;
@@ -226,14 +222,14 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         double *il2d_orbuf = NULL; /* its 2 x 2*N2 row pair buffer  */
         int il2d_blu = 0;          /* odd/prime N1: column Bluestein M */
         int il2d_bblu = -1;        /* banked N1-arm verdict; -1 = unraced */
-        int il2d_rowb = 0;         /* row route 2: the BATCHED rows (2026-09-23) */
+        int il2d_rowb = 0;         /* row route 2: the BATCHED rows */
         vfft_il2p_fn il2d_rowb_f = NULL, il2d_rowb_b = NULL; /* its n1ccs pair at N2, when the radix has one */
-        int il2d_rowb2 = 0;        /* row route 3: the batched TWO-PASS rows (2026-09-23) */
+        int il2d_rowb2 = 0;        /* row route 3: the batched TWO-PASS rows */
         vfft_il2p_fn il2d_rowb2_leaf_f = NULL, il2d_rowb2_mid_f = NULL, il2d_rowb2_t2t_b = NULL, il2d_rowb2_n1_b = NULL;
         double *il2d_rowb2_scr = NULL;
         int il2d_rowb2_ch = 0;     /* its tile in rows, from the banked rbk= / the env pin */
-        int il2d_turn = 0;         /* the TURN route (2026-09-23): the whole plane through the 1D engine */
-        int il2d_csk = 0;          /* the SKEWED column pass (2026-09-23) */
+        int il2d_turn = 0;         /* the TURN route: the whole plane through the 1D engine */
+        int il2d_csk = 0;          /* the SKEWED column pass */
         double *il2d_csk_scr = NULL;
         struct vfft_plan_s *il2d_csk_row = NULL;
         vfft_il2p_fn il2d_csk_f = NULL, il2d_csk_b = NULL;
@@ -242,15 +238,15 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         int il2d_nat = 0;          /* NATURAL n1 via the leaf redirection */
         int *il2d_natperm = NULL;
         double *il2d_natscr = NULL;
-        /* the wisdom ORDER axis of this cell (2026-09-04): natural cells
-         * race their chain under the natural pass and bank on their own
-         * ord=nat row — never sharing the scr row's chain. */
+        /* the wisdom ORDER axis of this cell: natural cells race their
+         * chain under the natural pass and bank on their own ord=nat row
+         * — never sharing the scr row's chain. */
         const int il2d_ord = vfft_policy_ord_rankn(cfg);
         int il2d_tbl_done = 0;     /* N1 tables built early (the N1-arm race) */
         double *il2d_bluchf = NULL, *il2d_bluchb = NULL;
         double *il2d_blukf = NULL, *il2d_blukb = NULL;
         double *il2d_bluscr = NULL;
-        int il2d_tpc = 0;                     /* the turned prime pass (2026-09-24) */
+        int il2d_tpc = 0;                     /* the turned prime pass */
         struct vfft_plan_s *il2d_tpcplan = NULL;
         double *il2d_tpcscr = NULL;
         int il2d_bcmt = -1, il2d_bcmtt = -1; /* banked column-MT verdict
@@ -263,8 +259,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         if (cfg->transform == VFFT_C2C &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {
-            {   /* THE COLUMN-AXIS PASS BUILD (2026-09-06): chain (env > banked
-                 * > raced > greedy), forms, Bluestein, the natural leaf
+            {   /* THE COLUMN-AXIS PASS BUILD: chain (env > banked > raced),
+                 * forms, Bluestein, the natural leaf
                  * redirection, the N1-arm race, tables — _il2d_col_build in
                  * il2d_tier.h, the same function a rank-N IL plan runs per
                  * column axis. The tier's locals below take its result; the
@@ -329,7 +325,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                N1, N2);
                     return NULL;
                 }
-                /* the BATCHED row route (ro=2, 2026-09-23): the n1ccs pair
+                /* the BATCHED row route (ro=2): the n1ccs pair
                  * at radix N2 -- one kernel call per run of rows, lane k =
                  * row k, two rows per vector, no per-row door. Bound
                  * whenever the radix has the pair; the axis race (or the
@@ -350,7 +346,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 if (il2d_row && il2d_rowb_f && getenv("VFFT_IL2D_ROWOOP") &&
                     atoi(getenv("VFFT_IL2D_ROWOOP")) == 2)
                     il2d_rowb = 1;
-                /* the BATCHED TWO-PASS rows (ro=3, 2026-09-23): the row child's
+                /* the BATCHED TWO-PASS rows (ro=3): the row child's
                  * own two-pass factorization through the row-loop twins of its
                  * four stage kernels -- per chunk of rows one call per stage,
                  * staged through a per-worker contiguous scratch. Bound when the
@@ -382,7 +378,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 if (il2d_row && il2d_rowb2_leaf_f && getenv("VFFT_IL2D_ROWOOP") &&
                     atoi(getenv("VFFT_IL2D_ROWOOP")) == 3)
                     il2d_rowb2 = 1;
-                /* the TURN route (2026-09-23): the whole plane through the 1D
+                /* the TURN route: the whole plane through the 1D
                  * engine -- the batched mono row kernel with TURNED stores into
                  * an N2 x N1 scratch, the N2 columns as its rows through the
                  * in-place K=1 natural plan at N1, one back-turn. NATURAL cells
@@ -421,7 +417,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     if (il2d_turn_plan && getenv("VFFT_IL2D_ROWOOP") && atoi(getenv("VFFT_IL2D_ROWOOP")) == 4)
                         il2d_turn = 1;
                 }
-                /* the SKEWED column pass (csk, 2026-09-23): a single-stage column
+                /* the SKEWED column pass (csk): a single-stage column
                  * chain writes the scratch at pitch N2 + 8, the rows move it into
                  * the plane. The scratch and the out-of-place K=1 plan at N2 (the
                  * per-row route from the scratch; the batched routes need none)
@@ -461,7 +457,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         il2d_csk = 1;
                 }
                 /* the tile: the banked rbk= (KB of chunk scratch; 8 where a row
-                 * predates the token), VFFT_IL2D_RB2_KB pinning it for probes */
+                 * carries no token), VFFT_IL2D_RB2_KB pinning it for probes */
                 if (il2d_rowb2_leaf_f)
                 {
                     int kb = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "rbk", 8);
@@ -469,34 +465,34 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         kb = atoi(getenv("VFFT_IL2D_RB2_KB"));
                     il2d_rowb2_ch = (int)_il2d_rb2_rows(kb, (size_t)N2);
                 }
-                /* column-tile width: env override (raced axis; wisdom
-                 * banking follows the falsifier run — tcut precedent:
-                 * env BEATS wisdom). 0/absent/invalid = untiled. */
+                /* column-tile width: env override (env BEATS wisdom; the
+                 * banked sw= below serves an unbanded serial verdict).
+                 * 0/absent/invalid = untiled. */
                 {
                     const char *wce = getenv("VFFT_IL2D_WC");
                     il2d_wc = (wce && atoi(wce) > 0 && atoi(wce) < N2)
                                   ? atoi(wce)
                                   : 0;
                 }
-                /* the row routes (2026-09-23): 0 = the in-place child, 2 = the
-                 * batched rows, 3 = the batched two-pass rows, raced below and
-                 * banked as ro=; VFFT_IL2D_ROWOOP=2|3 pins one for a probe. The
-                 * out-of-place child (ro=1, the copy-back) is DELETED entirely:
-                 * the in-place K=1 tier serves every N2 (its last candidate is
-                 * the prime engine); a row banked on it re-races. */
+                /* the row routes: 0 = the in-place child, 2 = the batched
+                 * rows, 3 = the batched two-pass rows, raced below and banked
+                 * as ro=; VFFT_IL2D_ROWOOP=2|3 pins one for a probe. There is
+                 * no out-of-place child route (ro=1): the in-place K=1 tier
+                 * serves every N2 (its last candidate is the prime engine); a
+                 * row banked ro=1 re-races. */
                 if (il2d_row && il2d_bro == 1)
                     il2d_bro = -1;
                 /* staged band route: VFFT_IL2D_STAGED=1 (needs a
                  * band; checked after the wl parse below). */
                 /* banded walk: VFFT_IL2D_WL = band width in ROWS (the
-                 * width is the INPUT, the cut is DERIVED — the tcut law).
+                 * width is the INPUT, the cut is DERIVED).
                  * Legal iff wl | N1 and some suffix stage has L_s | wl;
                  * anything else warns and stays unbanded. VFFT_IL2D_TFUSE
                  * =0 opts out of the per-band row pass (default ON when
                  * banded — the fusion is the point). */
                 if (il2d_row && !il2d_blu)
-                {   /* natural cells too (2026-09-05): the natural banded
-                     * walk in vfft_execute.h honours wl / cut / tfuse */
+                {   /* natural cells too: the natural banded walk in
+                     * vfft_execute.h honours wl / cut / tfuse */
                     const char *we = getenv("VFFT_IL2D_WL");
                     const char *tfe = getenv("VFFT_IL2D_TFUSE");
                     int wl = we ? atoi(we) : (il2d_bwl > 0 ? il2d_bwl : 0);
@@ -526,7 +522,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         }
                     }
                     /* the banked strip width of an unbanded serial verdict
-                     * (il2d_large_plane_design.md, 2026-09-15); env beats it */
+                     * (il2d_large_plane_design.md); env beats it */
                     if (il2d_wl == 0 && il2d_bwl == 0 && !getenv("VFFT_IL2D_WC") && !getenv("VFFT_IL2D_WL") &&
                         !cfg->recalibrate && W)
                         il2d_wc = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T,
@@ -576,9 +572,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             }
         }
         /* ── native IL 2D REAL tier (docs/roadmap/fft2d_real_il_design.md)
-         * — M3: THE serving for IL real 2D callers (OWNER LAW: split is
-         * not a fallback of IL — native or LOUD refusal; the env gate is
-         * GONE, the c2c wrapper-deletion pattern). Pure IL end-to-end:
+         * — THE serving for IL real 2D callers (split is not a fallback of
+         * IL — native or LOUD refusal). Pure IL end-to-end:
          * rows = the raced row route (per-row TC door or ROWSPLIT),
          * columns = the n1c/t2c chain over hp1 = N2/2+1 columns with the
          * raced banded walk. Two-phase law (§2.5): the Hermitian fold is
@@ -588,17 +583,15 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * verdicts do not port. OOP only (2D real in-place is refused
          * above; the in-place door needs the padded-pitch caller
          * contract, §2.7). SPLIT-layout callers keep the split engine
-         * untouched. Inexpressible cells (odd N2 — the zr2c row door is
-         * even-only; NATURAL order — waits on the rho tapes; chain/row
-         * failures) REFUSE loudly. */
+         * untouched. Inexpressible cells (chain/row failures) REFUSE
+         * loudly. */
         if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
             cfg->placement == VFFT_OUTOFPLACE)
         {
             int rok = 1;
             const int oddn2 = (N2 % 2) != 0;
-            /* ODD N2 (2026-08-27, owner "we can support it and we
-             * should"): the zr2c reinterpret needs even N2, so odd rows
+            /* ODD N2: the zr2c reinterpret needs even N2, so odd rows
              * ride a K=1 c2c child instead — promote real -> complex ->
              * keep hp1 bins fwd; Hermitian-extend -> inverse -> Re bwd.
              * Any odd N2 (the child covers odd/prime/awkward via the
@@ -607,25 +600,22 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
              * the rscr sizing below are the even path untouched. */
             /* order=NATURAL: single-stage chains are natural-native;
              * blu is natural by construction; multi-stage chains take
-             * the M4-lite leaf redirection — resolved AFTER the chain
-             * builds (below), never refused up front any more. */
+             * the leaf redirection — resolved AFTER the chain builds
+             * (below), never refused up front. */
             if (rok)
             {
-                /* THE SHARED COLUMN BUILDER (R6, 2026-09-17,
-                 * il2d_real_on_shared_builder_design.md). Until today this
-                 * block was ~300 lines: the c2c builder's decision -- env pin
-                 * > banked row > the chain race > the column-axis Bluestein,
-                 * the forms, the natural leaf, the replay-rebuild, the N1-arm
-                 * race -- copied inline with the real tier's own lookup and
-                 * bank, so every divergence the builder fixed this week had
-                 * to be found twice. The real tier's row IS the ilcol key with
-                 * real = 1 ({t=r2c rank 2 N1xN2 ord lay=il}, exactly
-                 * vw2_2d_rl_*'s key); chain= and blu= are direction-shared on
-                 * it, so the builder's lookup and bank land where they always
-                 * did. What is NOT shared -- rw= wl= cmt= cmtt=, spelled per
-                 * direction by vw2__rl_tok -- the builder does not know: its
-                 * plain-name out-params are ignored below and the four are
-                 * re-read exactly as before. */
+                /* THE SHARED COLUMN BUILDER
+                 * (il2d_real_on_shared_builder_design.md): the c2c builder's
+                 * decision -- env pin > banked row > the chain race > the
+                 * column-axis Bluestein, the forms, the natural leaf, the
+                 * replay-rebuild, the N1-arm race -- serves the real tier
+                 * too. The real tier's row IS the ilcol key with real = 1
+                 * ({t=r2c rank 2 N1xN2 ord lay=il}, exactly vw2_2d_rl_*'s
+                 * key); chain= and blu= are direction-shared on it. What is
+                 * NOT shared -- rw= wl= cmt= cmtt=, spelled per direction by
+                 * vw2__rl_tok -- the builder does not know: its plain-name
+                 * out-params are ignored below and the four are re-read from
+                 * this direction's tokens. */
                 const vw2_ilcol_key_t ck = { 2, N1, N2, 0, il2d_ord, 0, /*real=*/1, il2d_T };
                 vfft_ilcol_t col;
                 int bwl_ = -1, btf_ = -1, bro_ = -1, bcmt_ = -1, bcmtt_ = -1;
@@ -636,7 +626,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                       &bcmt_, &bcmtt_, &il2d_bblu);
                 if (rok)
                 {
-                    /* the copy-out, verbatim from the c2c branch */
+                    /* the copy-out, as in the c2c branch */
                     il2d_nst = col.nst;
                     memcpy(il2d_R, col.R, sizeof il2d_R);
                     memcpy(il2d_L, col.L, sizeof il2d_L);
@@ -651,7 +641,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     il2d_nat = col.nat;
                     il2d_natperm = col.natperm;
                     il2d_natscr = col.natscr;
-                    /* the per-direction verdicts (rw wl cmt cmtt), as before:
+                    /* the per-direction verdicts (rw wl cmt cmtt):
                      * from the row, this direction's tokens, never under
                      * recalibrate; -1 = unraced, and the row-route race below
                      * fills them in */
@@ -669,8 +659,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             {
                 /* the odd row child: K=1 c2c at N2, NATURAL (the CCE
                  * bins must come out in order), OOP into the row pair
-                 * buffer. Serial — the row loop is plain; threading the
-                 * odd rows via clones is the noted follow-up. */
+                 * buffer. Serial — the row loop is plain (the odd rows
+                 * are not threaded). */
                 vfft_config_t rc;
                 memset(&rc, 0, sizeof rc);
                 rc.transform = VFFT_C2C;
@@ -730,12 +720,11 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 rc.howmany = (size_t)N1;
                 rc.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
                 rc.layout = VFFT_LAYOUT_INTERLEAVED;
-                /* MT INC-1: the row pass IS a transform-contiguous batch of
-                 * N1 whole rows — exactly the shape the TC clone MT already
-                 * threads (clones gated by _tc_inner_mt_safe: the zr2c route
-                 * is pool-free, and _tc_clone_equiv proves each clone
-                 * bit-equivalent). Passing the caller's budget through is the
-                 * whole change; the column pass stays serial until INC-3. */
+                /* the row pass IS a transform-contiguous batch of N1 whole
+                 * rows — exactly the shape the TC clone MT threads (clones
+                 * gated by _tc_inner_mt_safe: the zr2c route is pool-free,
+                 * and _tc_clone_equiv proves each clone bit-equivalent), so
+                 * the caller's thread budget passes straight through. */
                 rc.nthreads = cfg->nthreads;
                 rc.wisdom = cfg->wisdom;
                 rc.wisdom_write = cfg->wisdom_write;
@@ -744,8 +733,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * the 1D OOP real create quietly falls through to the
                  * split-interior CCE path when the zr2c child fails, and
                  * serving that here would rebuild the veneer under a
-                 * native flag (never_build_hybrid_il_split_codelets,
-                 * route level). */
+                 * native flag (a hybrid IL/split route). */
                 if (il2d_row &&
                     !(il2d_row->tcb && il2d_row->tcb->zr2c_child))
                 {
@@ -758,7 +746,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 }
                 if (il2d_row && cfg->transform == VFFT_C2R)
                 {
-                    /* §2.6 contract: input-preserving OOP c2r — the
+                    /* the §2.6 contract: input-preserving OOP c2r — the
                      * reversed column chain's first executed stage moves
                      * the caller's z into this plane; the rows read it
                      * and write the caller's real dst. */
@@ -860,7 +848,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             }
             if (!rok)
             {
-                /* OWNER LAW: split is NOT a fallback of IL — no veneer.
+                /* split is NOT a fallback of IL — no veneer.
                  * (row door / purity / chain / tables failed; the
                  * specific cause warned above.) */
                 _vfft_warn("vfft_create: IL 2D %s %dx%d — native tier "
@@ -880,17 +868,13 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         {
             tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate,
                            cfg->order, _vw2_lay_of(cfg));
-            /* wave-4: the inner-cell spike save is GONE — _inner_c2c banks into
-             * the wisdom2 store; the guarded _vw2_persist below covers disk. */
+            /* _inner_c2c banks into the wisdom2 store; the guarded
+             * _vw2_persist below covers disk. */
             if (!tp)
                 return NULL;
-            /* wave-3 flip: the legacy per-create unconditional rewrites of the
-             * three fft2d files are GONE (they ran even when the create FAILED,
-             * and clobber-rewrote on pure warm hits — those files are frozen
-             * now). _build_2d banked into the wisdom2 store's memory; disk
+            /* _build_2d banked into the wisdom2 store's memory; disk
              * persistence is the guarded save, and only after a SUCCESSFUL
-             * create. (The native path banks nothing 2D — its row child
-             * persisted its own 1D verdicts inside its create.) */
+             * create. */
             _vw2_persist(W, cfg);
         }
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -978,18 +962,19 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         memcpy(h->il2d_col.b, il2d_b, sizeof il2d_b);
         memcpy(h->il2d_col.tf, il2d_tf, sizeof il2d_tf);
         memcpy(h->il2d_col.tb, il2d_tb, sizeof il2d_tb);
-        /* ── the AXIS RACE (§10a): wl and rowoop timed on the FULL
+        /* ── the AXIS RACE: wl and rowoop timed on the FULL
          * execute (they involve the rows), the winner set on the plan
          * and banked WITH the chain as one verdict. Runs only when the
          * axes are unknown: no env override and no banked verdict.
          * MUST sit AFTER the stage-array commits above — it executes h.
          * c2c ONLY: the real tier has no banded walk / row route to race
-         * (§2.5 — banding+tfuse on a real plan is the illegal fusion). */
+         * (fft2d_real_il_design.md §2.5 — banding+tfuse on a real plan is
+         * the illegal fusion). */
         if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
             !getenv("VFFT_IL2D_WL") && !getenv("VFFT_IL2D_CSK") &&
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
             (il2d_bwl < 0 || il2d_bro < 0))
-        {   /* at T > 1 the T-aware race (2026-09-24): every route's clone set
+        {   /* at T > 1 the T-aware race: every route's clone set
              * first, every arm threaded, the unneeded sets dropped after */
             if (h->nthreads > 1)
             {
@@ -1006,19 +991,18 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 il2d_bcmt = il2d_bcmtt = -1;
             }
         }
-        /* INC-C: c2c MT. Build the per-worker row clones (the serving
+        /* c2c MT. Build the per-worker row clones (the serving
          * row path mutates shared plan state), then serve the banked
          * cmt verdict ONLY at the T it was raced at, else race and
          * bank. Runs AFTER the axis race — the row route (rowoop) the
          * clones must match is final only then. */
         if (h->transform == VFFT_C2C && h->il2d_row && h->nthreads > 1)
-        {   /* (Bluestein cells race too since 2026-09-02: the window pipeline;
-             * the turn and the skewed pass since 2026-09-24: their row-slab
-             * walks, one threaded arm each) */
+        {   /* (Bluestein cells race too: the window pipeline; the turn and
+             * the skewed pass: their row-slab walks, one threaded arm each) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
-            const char *ae = getenv("VFFT_IL2D_MTARM");   /* the probe pin for the threaded arm: 0 block, 1 strips, 2 tile (2026-09-25) */
+            const char *ae = getenv("VFFT_IL2D_MTARM");   /* the probe pin for the threaded arm: 0 block, 1 strips, 2 tile */
             _il2d_c2c_build_clones(h, cfg, h->nthreads);
-            _il2d_nat_sscr_build(&h->il2d_col, N1, N2, h->nthreads);   /* the strips' dense scratch (2026-09-24) */
+            _il2d_nat_sscr_build(&h->il2d_col, N1, N2, h->nthreads);   /* the strips' dense scratch */
             if (ae)
             {
                 h->il2d_col.colmt = 1;
@@ -1048,7 +1032,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         /* ── the REAL tier's row-route race (per-row door vs ROWSPLIT W
          * pool): runs only when env is FULLY silent (an env-pinned chain
          * skips the banked-row read AND must never bank — env beats
-         * wisdom, never writes it: the tcut law) and the rl cell carries
+         * wisdom, never writes it) and the rl cell carries
          * no rw= verdict; banks chain+rw direction-shared. Same
          * after-the-commits law as the c2c axis race — it executes h. */
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
@@ -1057,11 +1041,11 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_WL") &&
             (il2d_brw < 0 || il2d_bwl < 0))
             _il2d_real_rowrace(h, W, cfg, N1, N2);
-        /* the raced per-stage forms land on the real chain row HERE (2026-09-04):
-         * on a cold real cell that row is first written by the rowrace's
-         * rl bank above, after the forms step ran — without this re-bank
-         * the next create (a column-MT clone, the replay) re-raced the forms
-         * and could serve different kernels than this handle (MT != ST). */
+        /* the raced per-stage forms land on the real chain row HERE: on a
+         * cold real cell that row is first written by the rowrace's rl bank
+         * above, after the forms step ran — without this re-bank the next
+         * create (a column-MT clone, the replay) would re-race the forms and
+         * could serve different kernels than this handle (MT != ST). */
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
             il2d_fm[0] && W && !W->vw2_off_2d && !getenv("VFFT_IL2D_FORMS"))
         {
@@ -1083,12 +1067,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 fprintf(stderr, "[il2d] forms %dx%d: %s could not be banked on the real row\n",
                         N1, N2, il2d_fm, il2d_ord);
         }
-        /* INC-3: the column-MT verdict. Serve a banked one ONLY when it
-         * was raced at THIS thread count; otherwise race and bank. A
+        /* the column-MT verdict. Serve a banked one ONLY when it was
+         * raced at THIS thread count; otherwise race and bank. A
          * single-threaded plan never threads columns and never races. */
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
             h->il2d_row && h->nthreads > 1)
-        {   /* (Bluestein cells race too since 2026-09-02) */
+        {   /* (Bluestein cells race too) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             if (ce)
                 h->il2d_col.colmt = (atoi(ce) == 0);
@@ -1097,10 +1081,11 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             else
                 _il2d_real_colmt_race(h, W, cfg, N1, N2);
         }
-        /* §6a31: rfft-engine row inner for the R2C 2D row pass — the rfft
-         * path wins at the tile's low K (−27%/call measured). Force the rfft
+        /* rfft-engine row inner for the R2C 2D row pass — the rfft path
+         * wins at the tile's low K (−27%/call measured). Force the rfft
          * dispatch; adopt only if it landed (RFFT path, split, plan bound).
-         * tp guard: the native IL real tier leaves tp NULL — veneer only. */
+         * tp guard: the native IL real tier leaves tp NULL — split tier
+         * only. */
         if (cfg->transform == VFFT_R2C && tp)
         {
             stride_fft2d_r2c_data_t *d2 = (stride_fft2d_r2c_data_t *)tp->override_data;
@@ -1112,9 +1097,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             vfft_r2c_dispatch_set_decouple_min_k(saved2);
             if (h->rfft_row && h->rfft_row->path == VFFT_R2C_PATH_RFFT && h->rfft_row->layout == VFFT_R2C_SPLIT && h->rfft_row->rfft)
             {
-                /* §6a31: MEASURED adoption — "rfft wins at low K" does not
-                 * survive N-scaling ((512,8) regressed +66% before this
-                 * gate). A/B both inners on tile scratch at create
+                /* MEASURED adoption — "rfft wins at low K" does not survive
+                 * N-scaling (adopted unconditionally, (512,8) regresses
+                 * +66%). A/B both inners on tile scratch at create
                  * (same-process, 64 reps each, sub-ms) and keep the winner. */
                 double *sr0 = _fft2d_r2c_scratch_re(d2, 0);
                 double *si0 = _fft2d_r2c_scratch_im(d2, 0);
@@ -1148,7 +1133,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 clock_gettime(CLOCK_MONOTONIC, &t1_);
                 t_rff = (t1_.tv_sec - t0_.tv_sec) * 1e9 + (t1_.tv_nsec - t0_.tv_nsec);
                 free(bak2);
-                /* §6a34: hysteresis — engine deltas measured <=3%, inside
+                /* hysteresis — engine deltas measured <=3%, inside
                  * regime-to-regime noise; create-time gates flipped winners
                  * across weather regimes. The challenger must beat the
                  * stride incumbent by >5% or the incumbent stays. */
@@ -1166,9 +1151,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 h->rfft_row = NULL;
             }
         }
-        /* §6a32: bwd twin — c2r natural-engine row inner for the C2R 2D
-         * plan, measured-adopted exactly like the fwd gate. tp guard as
-         * §6a31: the native IL real tier leaves tp NULL. */
+        /* bwd twin — c2r natural-engine row inner for the C2R 2D plan,
+         * measured-adopted exactly like the fwd gate. Same tp guard: the
+         * native IL real tier leaves tp NULL. */
         if (cfg->transform == VFFT_C2R && tp)
         {
             stride_fft2d_r2c_data_t *d2 = (stride_fft2d_r2c_data_t *)tp->override_data;
@@ -1216,7 +1201,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 t_c2r = (t1_.tv_sec - t0_.tv_sec) * 1e9 + (t1_.tv_nsec - t0_.tv_nsec);
                 free(bkr);
                 free(bki);
-                if (t_c2r * 20 < t_str * 19) /* §6a34 hysteresis */
+                if (t_c2r * 20 < t_str * 19) /* the >5% hysteresis */
                     d2->c2r_row = cp2;
                 else
                 {
@@ -1240,7 +1225,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             int col_is_pairs = 0; /* dim2 runs cycle_pass in fft2d.h scratch -> never a pair tape */
             /* dim1 (whole-row): try PSWAP (involution) — the free latency win when the calibrated column
              * chain is palindromic (forcing a palindromic chain is a wash — its FFT slowdown offsets the
-             * reorder win, natural_order §). dim2 (within-row): cycle only (fft2d.h scratch pass). */
+             * reorder win). dim2 (within-row): cycle only (fft2d.h scratch pass). */
             if (!d || !d->plan_col || !d->plan_row ||
                 !vfft_natorder_2d_build_axis(N1, d->plan_col, &h->nat2d_row_list, &h->nat2d_row_is_pairs, 1) ||
                 !vfft_natorder_2d_build_axis(N2, d->plan_row, &h->nat2d_col_list, &col_is_pairs, 0))
@@ -1272,14 +1257,14 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
              * Sized by the PLAN'S SNAPSHOT, not the live pool -- the pool is grow-only, so
              * the live count here can be smaller than the one _natorder_2d sees at execute;
              * that side clamps by the same h->nthreads (natorder_mt.h), so the slot count
-             * and the slot index come from one number. natorder_scratch_gate asserts this. */
+             * and the slot index come from one number. */
             h->nat2d_tmp = (double *)malloc((size_t)(h->nthreads < 1 ? 1 : h->nthreads) * 2 * N2 * sizeof(double));
             if (!h->nat2d_tmp)
             {
                 vfft_destroy(h);
                 return NULL;
             }
-            /* dim2 (within-row) is applied in the row-FFT scratch (mechanism-2): borrow the col tape
+            /* dim2 (within-row) is applied in the row-FFT scratch: borrow the col tape
              * into the fft2d data. h owns the malloc (freed in vfft_destroy); _fft2d_destroy must NOT
              * free it. dim1 stays a whole-row pass in _natorder_2d. */
             d->nat_col_list = h->nat2d_col_list;

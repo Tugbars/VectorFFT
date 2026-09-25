@@ -137,7 +137,7 @@ The key states what the caller asked for, never how it was served
 | `ord=` | `nat` \| `scr` — explicit in EVERY record. Order is a key, never a ranking axis; lookups never cross order classes. |
 | `place=` | `ip` \| `oop`. |
 | `dir=` | `fwd` \| `bwd`. Absent = the verdict serves both directions from one plan, which is still the case for almost every cell. Present = this record is a per-direction verdict and is addressed separately. IN USE by the K=1 engine (`eng=k1`): the blocked kernel-variant verdict is directional, because the forward and backward slots are different kernels and measurably disagree, so the backward pick is a `dir=bwd` sibling of the forward cell rather than more `il_kv` bits. A reader that does not ask for a direction must skip records that carry one — a directional sibling shares every other key component, so an unguarded scan matches it by accident. |
-| `nthreads=` | the thread count the verdict was raced at and serves (v1.3). Absent = one thread. A threaded plan's row is its own, complete on its own: the plain tokens are its verdict at that T. Equality-matched; a lookup never crosses thread counts. |
+| `nthreads=` | the thread count the verdict was raced at and serves (v1.3). Absent = one thread. A threaded plan's row is its own, complete on its own: the plain tokens are its verdict at that T. Equality-matched; a lookup never crosses thread counts. The K=1 family's route is thread-independent (serial kernels; threading is a flag on the route), so the route race banks the one-thread row and a plan at T > 1 gets its row as a copy of that route with its own threaded verdict (`il_mt` ...) raced at T; the 2D and 3D families race their whole verdict at T. |
 
 **Wildcards:** `q=*`, `ord=*`, `place=*` mark an axis-agnostic record. They
 are legal ONLY on migrated records (`from=` required) — an explicit statement
@@ -281,6 +281,13 @@ exposes them as race PROPOSALS only.
   (never compare across metrics). A same-rank replacement that changes the
   engine logs one loud line (the migrator's dual-fold signal). Absent `src=`
   means a fresh bank (`race`).
+- The prime method row owns its key against a prime-route row: a K=1 row
+  that says `il_route=prime` restates what the `eng=rader|bluestein` row at
+  the same key already is and never displaces it. The route bank yields at
+  bank time (3.3); the merge law applies the same rule to every replacement,
+  a merge from a run store or a load-time dedup across shards included. Any
+  other route row (the pair, chain3, flat, mono) is a verdict the prime
+  engine lost and competes on rank and date like every row.
 - Saves are dirty-only and merge-on-save (the on-disk file is re-read and
   this process's delta upserted, so concurrent sessions banking different
   cells both survive), then atomic: write a pid-suffixed `.tmp`, flush and

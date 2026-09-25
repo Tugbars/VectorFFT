@@ -1,8 +1,5 @@
 /* plane_queue.h - the 2D plane queue (howmany > 1).
  *
- * Extracted from vfft.c as migration step 20; see
- * docs/design/refactor_migration_plan.md.
- *
  * TWO MODES, RACED AT CREATE
  * --------------------------
  *   SERIAL  loop the PRIMARY plan over the K planes. Note this is NOT "the
@@ -28,12 +25,12 @@
  * cores SHARE one transform, T decides how the work is cut, and the verdict
  * is keyed by the plan's thread count like every threaded verdict (v1.3).
  *
- * BANKED (2026-09-02, the 2D arm audit closed the gap)
- * ----------------------------------------------------
+ * BANKED
+ * ------
  * The loop-vs-queue verdict rides the PRIMARY plane's own wisdom row as
- * pq=<0|1> pqn=<P> pqt=<T> — the plane count and the worker count it was
- * raced at are its validity condition (a P or T mismatch re-races and
- * re-banks). The row is whichever one the inner howmany=1 create banked
+ * pq=<0|1> pqn=<P> — the row is keyed by the plan's thread count, and the
+ * plane count it was raced at is its validity condition (a P mismatch
+ * re-races and re-banks). The row is whichever one the inner howmany=1 create banked
  * (IL c2c, IL real, or the split-tier row), found by lookup and merged
  * into with vw2_update_field; a cold cell with no row banks nothing (loud
  * under VFFT_IL2D_LOG). Kill/force switch VFFT_PQ_NO_MT pins and never
@@ -51,8 +48,9 @@
 #include "vfft_internal.h"     /* struct vfft_plan_s */
 #include "support/threads.h"   /* the pool: dispatch, wait_all */
 
-/* DEFINED in vfft.c with external linkage; see the note in zturn_mt.h for why
- * a counter incremented from a header must not live in one. */
+/* DEFINED in vfft.c with external linkage: a counter incremented from a
+ * header must not be defined in one (each including TU would count into its
+ * own copy). */
 extern long _vfft_pq_mt_count;
 
 typedef struct
@@ -122,7 +120,7 @@ static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
     }
 }
 
-/* ── the loop-vs-queue race (create-time, min-of-3 alternated on
+/* ── the loop-vs-queue race (create-time, min-of-3, A then B, on
  * scratch). The queue also self-gates: no pool, no clones, or a clone
  * failing the BITWISE probe against the primary => pq_mt stays 0 and
  * the loop serves (the primary keeps its own intra-MT verdicts). */
@@ -155,14 +153,11 @@ static int _pq_row_key(const struct vfft_plan_s *h, const vfft_config_t *cfg,
         switch (i)
         {
         /* the IL rows. The plane-queue verdict (queue vs loop) is SHARED by
-         * both order classes (owner 2026-09-17: "they must share the same
-         * verdict"), so it rides whichever IL row the cell has, in this FIXED
-         * order -- scr first, then nat -- and both the replay and the bank
-         * walk the same order, so exactly one verdict is ever consulted or
-         * written. Before 2026-09-17 only the ord=scr row was tried: a store
-         * that had only ever seen NATURAL requests found no row, banked
-         * nothing, and re-raced on every create (proved: three creates,
-         * three races, "no primary row to bank the verdict on"). */
+         * both order classes, so it rides whichever IL row the cell has, in
+         * this FIXED order -- scr first, then nat -- and both the replay and
+         * the bank walk the same order, so exactly one verdict is ever
+         * consulted or written (a store that has only seen NATURAL requests
+         * still finds its row, rather than re-racing on every create). */
         case 0: if (!il) continue;
             vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, 2, h->N, h->N2, 0,
                         VW2_ORD_SCR, VW2_LAY_IL, h->nthreads);
@@ -269,7 +264,7 @@ static void _pq_mt_race(struct vfft_plan_s *h)
         _pq_mt_arm_t c = { h, dir, src, dst };
         const vfft_race_arm_t arms[2] = { { "loop", _pq_mt_arm_loop, &c },
                                           { "queue", _pq_mt_arm_queue, &c } };
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 0 }; /* min-of-3, A then B */ /* THREADED arms: never paused (mt_measurement_parking_trap) */
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 0 }; /* min-of-3, A then B */ /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
         double ns[2];
         (void)r;
         vfft_race_run(&proto, arms, 2, ns);

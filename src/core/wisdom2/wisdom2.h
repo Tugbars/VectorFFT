@@ -521,6 +521,18 @@ static inline int vw2__is_seed(const vw2_rec_t *r)
 static inline int vw2__merge_allows(const vw2_rec_t *inc, const vw2_rec_t *nw)
 {
     int ri = vw2__src_rank(inc), rn = vw2__src_rank(nw);
+    {   /* the prime method row owns its key against a PRIME-route row
+         * (README 3.3): a K=1 row that says il_route=prime restates what the
+         * rader/bluestein row already is and never displaces it -- the law
+         * the route bank applies at bank time, applied to every replacement
+         * (a merge, a load-time dedup) since 2026-09-25. Any other route row
+         * (the pair, chain3, flat, mono) is a verdict the prime engine LOST
+         * and competes on rank and date like every row. */
+        const char *ie = vw2_rec_get(inc, "eng"), *ne = vw2_rec_get(nw, "eng");
+        const char *nr = vw2_rec_get(nw, "il_route");
+        const int im = ie && (!strcmp(ie, "rader") || !strcmp(ie, "bluestein"));
+        if (im && ne && !strcmp(ne, "k1") && nr && !strcmp(nr, "prime")) return VW2_EOWNED;
+    }
     if (rn < ri) return VW2_ERANK;
     if (rn > ri) return VW2_OK;      /* higher rank replaces unconditionally */
     {

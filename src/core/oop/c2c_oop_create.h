@@ -87,6 +87,16 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                  cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop);
             const vfft_oop_wisdom_entry_t *ki =
                 scr_req ? (vw2_oop_lookup_k1_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : ke;
+            /* the threaded plan's row (v1.3): the K=1 route is thread-independent,
+             * so a miss at T > 1 takes the one-thread row's route as its own row */
+            if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop && !cfg->recalibrate &&
+                _vfft_plan_threads(cfg) > 1 && !ki &&
+                vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, 0, _vfft_plan_threads(cfg)))
+            {
+                _vw2_persist(W, cfg);
+                ke = vw2_oop_lookup_k1_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
+                ki = scr_req ? (vw2_oop_lookup_k1_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : ke;
+            }
             /* Per-layout wisdom: each axis is taken from the store
              * INDEPENDENTLY. A cell with only an IL verdict (k1_sp_route < 0 —
              * e.g. non-pow2 N, where split cannot factor) keeps the banked IL
@@ -103,6 +113,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             {
                 if (_k1_il_plan_race(W, cfg, N) > 0)
                 {
+                    if (_vfft_plan_threads(cfg) > 1 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, 0, _vfft_plan_threads(cfg)))
+                        _vw2_persist(W, cfg);   /* the race banked the one-thread row: its copy at T */
                     ke = vw2_oop_lookup_k1_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
                     ki = scr_req ? (vw2_oop_lookup_k1_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : ke;
                 }

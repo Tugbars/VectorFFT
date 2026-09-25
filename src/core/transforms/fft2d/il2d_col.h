@@ -1,5 +1,4 @@
-/* il2d_col.h — THE COLUMN-AXIS PASS DESCRIPTOR (2026-09-06, phase 1 of
- * the rank-N interleaved tier, docs: memory fftnd_il_campaign).
+/* il2d_col.h — THE COLUMN-AXIS PASS DESCRIPTOR.
  *
  * Everything the interleaved column pass over an N-row plane of rn complex
  * per row needs: the chain, its kernels and tables, the banded walk, the
@@ -29,25 +28,25 @@ typedef struct {
     vfft_il2p_fn f[8], b[8];
     double *tf[8], *tb[8];
     int wc;                   /* column-tile width (complex); 0 = full rn (untiled) */
-    /* the BANDED walk (the cascade's tcut in 2D form): wl = band width in
+    /* the BANDED walk: wl = band width in
      * ROWS (0 = unbanded); cut = DERIVED from wl (the first stage with
      * L_s | wl; wide prefix stages run first); tfuse folds the ROW pass per
      * band (c2c only — the owning plan runs the rows) */
     int wl, cut, tfuse;
-    /* the staged band route (§10b): copy each band into scratch at pitch
+    /* the staged band route: copy each band into scratch at pitch
      * (a skew that kills the 4KB set-group aliasing), suffix + rows there,
      * copy back. Requires wl > 0. c2c only. */
     int staged, pitch;
     double *bandscr;          /* 2 * wl * pitch doubles */
     int colmt;                /* the RACED column-MT verdict for this cell at the plan's T */
-    /* NATURAL n1 (M4-lite): the leaf call for block b writes its R rows at
+    /* NATURAL n1: the leaf call for block b writes its R rows at
      * out-base natperm[b*R] with OLs = (N/R)*rn — natural order as a driver
      * redirection, any chain; bwd gathers from the natural positions.
      * natperm is block-affine by construction (asserted at create). */
     int nat;
     int natarm;               /* the THREADED partition, RACED at create: 0 = bands (or the
-                               * natural block partition), 1 = strips — every class since
-                               * il2d_large_plane_design.md (2026-09-15) */
+                               * natural block partition), 1 = strips — every class
+                               * (il2d_large_plane_design.md) */
     int msw;                  /* the threaded strips' sub-strip width in columns (0 = the
                                * worker's whole range); banked msw= beside cmt on the plan's row (v1.3) */
     int *natperm;             /* N entries, scr row -> natural row */
@@ -56,9 +55,9 @@ typedef struct {
                                * walk's form is staged (dominant); the threaded arms race both,
                                * banked nls= beside cmt on the plan's row (il2d_natural_leaf_design.md) */
     double *natstage;         /* the leaf's STAGING, T x R_last x rn complexes, 64-B
-                               * aligned (il2d_natural_leaf_design.md, 2026-09-16);
+                               * aligned (il2d_natural_leaf_design.md);
                                * NULL = the leaf stores at its natural stride */
-    double **natsscr;         /* the threaded strips' DENSE per-worker scratch (2026-09-24):
+    double **natsscr;         /* the threaded strips' DENSE per-worker scratch:
                                * nnatsscr blocks of N x natswcap complexes, pitch = the strip
                                * width (the 3D tier's strip form, _il2d_col_pass_nat_strip) */
     int nnatsscr, natswcap;
@@ -70,7 +69,7 @@ typedef struct {
     double *bluchf, *bluchb;  /* chirp, 2*N each, fwd/bwd */
     double *blukf, *blukb;    /* comb-order kernels, 2*M */
     double *bluscr;           /* the M x rn plane, 2*M*rn */
-    /* THE TURNED PRIME COLUMN PASS (tpc, 2026-09-24): at a prime N the axis
+    /* THE TURNED PRIME COLUMN PASS (tpc): at a prime N the axis
      * runs through the 1D prime route instead of the column Bluestein -- the
      * lanes transposed into tpcscr (pitch N + 8), the in-place natural K=1
      * plan at N on every row of it, transposed back. blu stays = M as the

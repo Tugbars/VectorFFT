@@ -1,12 +1,14 @@
-@vw2 1.2
+@vw2 1.3
 @legend signpost: a verdict references its component recipe (ref=), never copies it
 @legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
 @legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
-@legend lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = pre-1.2 record, served to concrete-lay requests only as the fallback tier
+@legend lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = a pre-1.2 record OR a shared-interior recipe (one engine serves both layouts - stamping a layout from the other door's timing would manufacture fake cells), served to concrete-lay requests as the fallback tier
+@legend eng-on-nat: on ord=nat rows eng= names the WINNING family (zturn|k1|stride) since 2026-09-02; earlier rows carry eng=stride regardless (vintage, still served)
 @legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
 @legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
+@meta host=intel-f6m183 isa=avx2 l1d=49152
 @cell t=r2c n=16384 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=10980.0 metric=fwd1 units=ns date=2026-08-22
 @cell t=r2c n=16384 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=10566.7 metric=fwd1 units=ns date=2026-08-22
 @cell t=c2r n=16384 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=13633.3 metric=bwd1 units=ns date=2026-08-22
@@ -75,5 +77,4 @@
 @cell t=c2r n=128 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=78.3 metric=bwd1 units=ns date=2026-09-02
 @cell t=r2c n=255 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-02
 @cell t=r2c n=405 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=rfft | ran=1 src=race date=2026-09-02
-
 @cell t=r2c n=100 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=154.5 metric=fwd1 units=ns date=2026-09-02
