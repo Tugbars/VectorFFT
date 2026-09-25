@@ -1,36 +1,10 @@
-/* exhaustive_plan.h — exhaustive measurement-based planner for prototype-core.
+/* exhaustive_plan.h — exhaustive measurement-based planner (stride engine).
  *
- * Ported wholesale from src/core/exhaustive.h (production), with
- * mechanical renames + adaptation to prototype-core's API surface:
- *
- *   stride_registry_t        →   vfft_proto_registry_t
- *   stride_factorization_t   →   vfft_proto_factorization_t
- *   STRIDE_AVAILABLE_RADIXES →   VFFT_PROTO_DP_RADIXES (from dp_planner.h)
- *   stride_registry_has      →   reg->n1_fwd[R] != NULL check
- *   stride_enumerate_factor. →   vfft_proto_enumerate_factorizations
- *   stride_gen_permutations  →   vfft_proto_gen_permutations (in dp_planner.h)
- *   _stride_build_plan       →   vfft_proto_plan_create(...,NULL,...)  (variants=T1S defaults)
- *   stride_execute_fwd       →   vfft_proto_execute_fwd(plan, re, im, K)  (extra K arg)
- *   stride_plan_destroy      →   vfft_proto_plan_destroy
- *   STRIDE_ALIGNED_ALLOC/FREE→   vfft_proto_posix_memalign / vfft_proto_aligned_free
- *
- * Stripped:
- *   - Bluestein/Rader fallback (override paths). Prototype-core has no
- *     override hooks; non-factorizable N just returns NULL.
- *   - The "compare strategies" reporting wrapper. Not core to search.
- *
- * The bench harness (warmup → adaptive reps → best-of-3 trials with
- * fresh memcpy each trial) is copied verbatim from production. It's the
- * production-validated methodology — we'd been re-inventing this and
- * losing details. Now it's the same code path.
- *
- * VARIANT AXIS: this exhaustive uses variants=NULL → T1S defaults per
- * stage. Production's exhaustive ALSO defaults variants via wisdom_bridge
- * predicates at plan-build time. Variant-cartesian search is layered on
- * top in production's VFFT_MEASURE wrapper; we don't have that yet.
- *
- * DIF axis: production runs DIT pass + DIF pass separately, takes min.
- * Prototype-core is DIT-only — we cover half the production search space.
+ * Every factorization multiset of N (depth capped by env.h), every unique
+ * ordering of it, benched at the real (N, K) with the default T1S variants;
+ * an ordering within the pre-screen factor of the global best then runs the
+ * full variant cartesian (FLAT/LOG3/T1S)^(nf-1). DIT only. Non-factorizable
+ * N returns NULL (Rader/Bluestein are not searched here).
  */
 #ifndef VFFT_PROTO_CORE_EXHAUSTIVE_PLAN_H
 #define VFFT_PROTO_CORE_EXHAUSTIVE_PLAN_H
@@ -40,21 +14,15 @@
 #include "planner.h"
 #include "dp_planner.h"     /* re-use vfft_proto_now_ns + perm gen + factorization_t */
 #include "registry.h"
-#include "env.h"            /* depth/prune knobs + their "tested on 1024" provenance */
+#include "env.h"            /* depth/prune knobs */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* ─────────────────────────────────────────────────────────────────
- * AVAILABLE RADIXES for enumeration. Mirrors STRIDE_AVAILABLE_RADIXES
- * in production. Largest-first so quick-pre-screen (below) lands on
- * a tight current_best fast.
- *
- * Cap at R=512 — R=1024 codelets are stubbed (no-op) in prototype's
- * build (see scripts/build_demo_*.sh). Including R=1024 in the search
- * would pick the stub at "5 ns" and win meaninglessly. R≤512 covers
- * every real codelet we ship.
+ * AVAILABLE RADIXES for enumeration. Largest-first so the pre-screen
+ * (below) lands on a tight global best fast.
  * ───────────────────────────────────────────────────────────────── */
 static const int VFFT_PROTO_AVAILABLE_RADIXES_EXH[] = {
     64, 32, 25, 20, 19, 17, 16, 13, 12, 11, 10, 8, 7, 6, 5, 4, 3, 2, 0
@@ -76,9 +44,9 @@ typedef struct {
     int count;
 } vfft_proto_factorization_list_t;
 
-/* Stage-depth caps + variant pre-screen factor now live in env.h
+/* Stage-depth caps + variant pre-screen factor live in env.h
  * (VFFT_PROTO_EXH_MAX_DEPTH_POW2 / _NONPOW2 / _PRUNE_FACTOR), env-overridable,
- * with their "tested on N=1024" validation-scope note. */
+ * with their validation-scope note. */
 
 static inline void _vfft_proto_enumerate_factorizations(
     int remaining, const vfft_proto_registry_t *reg,
@@ -122,19 +90,7 @@ static inline void vfft_proto_enumerate_factorizations(
     _vfft_proto_enumerate_factorizations(N, reg, current, 0, max_depth, list);
 }
 
-/* Permutation generation lives in dp_planner.h as vfft_proto_gen_permutations.
- * Already a wholesale match of production's stride_gen_permutations. */
-
-/* ─────────────────────────────────────────────────────────────────
- * BENCHMARK A SINGLE FACTORIZATION
- *
- * Verbatim port of production's stride_bench_one. Same warmup count
- * (3), same adaptive reps (cap 10..50000), same best-of-3 trials with
- * memcpy refresh each trial.
- *
- * Caller provides aligned buffers (re/im are working buffers, orig_re/im
- * are source for memcpy refresh).
- * ───────────────────────────────────────────────────────────────── */
+/* Permutation generation lives in dp_planner.h (vfft_proto_gen_permutations). */
 
 /* ── Variant axis (joint search) ──────────────────────────────────────
  * The per-stage codelet variant is the THIRD search axis (after multiset and
@@ -161,8 +117,16 @@ static inline void vfft_proto_variant_decode(int idx, int nf, int *v) {
     }
 }
 
-/* Variant-aware single-candidate bench. variants==NULL → plan_create's T1S
- * default (so vfft_proto_bench_one below is just this with NULL). */
+/* ─────────────────────────────────────────────────────────────────
+ * BENCHMARK A SINGLE FACTORIZATION
+ *
+ * Warmup 3, adaptive reps (10..50000), best of 3 trials with memcpy
+ * refresh each trial. Caller provides aligned buffers (re/im are working
+ * buffers, orig_re/im are source for memcpy refresh).
+ *
+ * variants==NULL → plan_create's T1S default (so vfft_proto_bench_one
+ * below is just this with NULL).
+ * ───────────────────────────────────────────────────────────────── */
 static inline double vfft_proto_bench_one_v(
     int N, size_t K, const int *factors, const int *variants, int nf,
     const vfft_proto_registry_t *reg,
@@ -208,8 +172,8 @@ static inline double vfft_proto_bench_one_v(
     return best;
 }
 
-/* Default-variant (T1S) bench — unchanged interface for callers that don't
- * search the variant axis (e.g. exhaustive_screened, quick pre-screens). */
+/* Default-variant (T1S) bench, for callers that don't search the variant
+ * axis. */
 static inline double vfft_proto_bench_one(
     int N, size_t K, const int *factors, int nf,
     const vfft_proto_registry_t *reg,
@@ -222,10 +186,10 @@ static inline double vfft_proto_bench_one(
 /* ─────────────────────────────────────────────────────────────────
  * EXHAUSTIVE SEARCH
  *
- * Verbatim port of production's stride_exhaustive_search.
  *   1. Enumerate all valid multisets of N
  *   2. For each, generate all unique permutations
- *   3. Quick pre-screen, then full bench, track global best
+ *   3. T1S pre-screen, then the variant cartesian for survivors; track
+ *      the global best
  *
  * verbose: 0=silent, 1=summary
  * ───────────────────────────────────────────────────────────────── */
@@ -260,10 +224,10 @@ static inline double vfft_proto_exhaustive_search(
     best_fact->nfactors = 0;
 
     /* Variant pre-screen factor (default 2.0, env VFFT_PROTO_EXH_PRUNE; see
-     * env.h for the "tested on 1024" provenance). */
+     * env.h). */
     double prune_factor = vfft_proto_env_prune_factor();
 
-    /* Research: best ns seen per stage-count, to answer "does deeper help?". */
+    /* Best ns per stage count, reported under verbose ("does deeper help?"). */
     double best_by_nf[STRIDE_MAX_STAGES];
     for (int i = 0; i < STRIDE_MAX_STAGES; i++) best_by_nf[i] = 1e18;
 

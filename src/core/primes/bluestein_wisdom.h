@@ -11,19 +11,16 @@
  *   M  -- inner FFT length (must factor into available radixes)
  *   B  -- block size for the K-axis sweep (cache-friendly chunks)
  *
- * The current heuristic _bluestein_choose_m(N) picks M by minimizing
- * stage count, but that's blind to per-codelet quality. Empirical
- * sweep on N=179 K=256 found the heuristic picks M=361 = 19^2 (2
- * stages of radix-19) when M=384 = 64*6 is 4.65x faster (same 2
- * stages, but radix-64 vastly outperforms radix-19 due to register
- * pressure and retiring efficiency). For N=107 the gap is 1.14x.
+ * The heuristic _bluestein_choose_m(N) picks M by minimizing stage
+ * count, blind to per-codelet quality: at N=179 K=256 it picks
+ * M=361 = 19^2 (2 stages of radix-19) where M=384 = 64*6 is 4.65x
+ * faster (same 2 stages; radix-64 far outperforms radix-19). At N=107
+ * the gap is 1.14x.
  *
- * This header adds wisdom-driven (M, B) selection: at plan time, look
- * up the cell in a separately-loaded wisdom table and use the recorded
- * (M, B) instead of the heuristic. The inner M-point FFT itself is
- * still wisdom-tuned via the existing stride_wisdom_t entries for
- * (M, B) -- so a hit here only fixes the M, B choice and leaves the
- * inner factorization / variants to existing infrastructure.
+ * So at plan time the cell is looked up in a separately loaded table
+ * and the recorded (M, B) replaces the heuristic. The inner M-point FFT
+ * is still tuned by the stride_wisdom_t entries for (M, B): a hit here
+ * fixes only M and B, not the inner factorization / variants.
  *
  * Wisdom file format (separate from stride wisdom):
  *

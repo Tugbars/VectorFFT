@@ -1,18 +1,17 @@
-/* wisdom_reader.h — parse production's wisdom file.
+/* wisdom_reader.h — the stride engine's c2c wisdom table (text format).
  *
  * Format: header lines (starting with @ or #) followed by entries:
  *
  *   N K nf factor_1 ... factor_nf best_ns use_blocked split_stage \
- *     block_groups use_dif_forward variant_1 ... variant_nf
+ *     block_groups use_dif_forward variant_1 ... variant_nf exec_me
  *
+ * plus the @nat / @natoop natural-order records (below).
  * Variant codes: 0=FLAT, 1=LOG3, 2=T1S, 3=BUF (unused in current wisdom).
  *
  * In-memory table with linear (N, K) lookup. Provides BOTH read and write:
- * load() + lookup() consume wisdom; set() + save() produce it, so the
- * dag-fft-compiler core can close the loop itself (calibrator: search a
- * cell -> fill an entry -> set() -> ... -> save() -> regen plan_executors.h).
- * save() round-trips with load(). Ported from production src/core/planner.h
- * (stride_wisdom_load / stride_wisdom_save), standalone (no src/core/ include).
+ * load() + lookup() consume wisdom; set()/add() + save() produce it
+ * (calibrator: search a cell -> fill an entry -> set() -> ... -> save()).
+ * save() round-trips with load().
  */
 #ifndef VFFT_PROTO_CORE_WISDOM_READER_H
 #define VFFT_PROTO_CORE_WISDOM_READER_H
@@ -45,32 +44,26 @@ typedef struct {
     int     exec_me;
 } vfft_proto_wisdom_entry_t;
 
+/* Natural-order modes. A reader that meets an unknown mode re-measures:
+ * degraded, never wrong. 2 (LEAF_IP) is retired but NEVER reused — old
+ * files may still carry it with the old meaning. */
 enum { VFFT_NAT_UNSET = 0, VFFT_NAT_FREE = 1, VFFT_NAT_LEAF_IP = 2,
        VFFT_NAT_SCR = 3, VFFT_NAT_PURE_CYCLE = 4, VFFT_NAT_PSWAP = 5,
-       /* ZCASC (B5, 2026-08-03): the K=1 interleaved zturn cascade with the
-        * stfn NATURAL terminator — no reorder pass at all. Raced end-to-end
-        * against the tape incumbent at create (vfft.c natural block) and
-        * banked like every other mode. Replay pulls the CHAIN from the
-        * kind-4 oop line (the scrambled cascade verdict; order-agnostic
-        * plan data) — the @nat entry stores only the VERDICT. An old binary
-        * reading mode=6 falls into its MEASURE branch and re-races: degraded,
-        * never wrong. 2 (LEAF_IP) is retired but NEVER reused — old files
-        * may still carry it with the old meaning. */
+       /* ZCASC: the verdict of the K=1 interleaved zturn cascade with the
+        * natural terminator (no reorder pass). The cascade engine is retired;
+        * the value stays so stored records keep parsing. The @nat entry
+        * stored only the verdict; the chain came from the kind-4 oop line. */
        VFFT_NAT_ZCASC = 6,
-       /* ILP (il_coverage_plan.md Phase B, 2026-08-03): the sub-2048 K=1
-        * interleaved IN-PLACE cells served by the native IL engines
-        * (il2p/il3p, alias-gated; mono structurally refuses aliasing) —
-        * natural output, no tape, no layout conversion. Raced end-to-end
-        * vs the convert incumbent at a NATURAL create only; an explicit-
-        * SCRAMBLED in-place create attaches HIT-ONLY on this verdict
-        * (identity permutation — same contract note as Phase A; hit-only
-        * keeps @nat single-writer). Old binaries re-measure, never wrong. */
+       /* ILP: the K=1 interleaved IN-PLACE cells served by the native IL
+        * engines (mono structurally refuses aliasing) — natural output, no
+        * tape, no layout conversion. An explicit-SCRAMBLED in-place create
+        * attaches only on a hit (identity permutation), which keeps @nat
+        * single-writer. */
        VFFT_NAT_ILP = 7,
-       /* CONV (2026-08-25): the banked LOSS of the scrambled in-place IL
-        * race — "raced, the convert incumbent won" — in the ord=scr mode
-        * cell only (the @nat natural cells never carry it). Exists so a
-        * losing race is not re-run on every create (the kind-3 IL_NONE
-        * law). Old binaries: unknown mode -> re-measure, never wrong. */
+       /* CONV: the banked LOSS of the scrambled in-place IL race — "raced,
+        * the convert incumbent won" — in the ord=scr mode cell only (the @nat
+        * natural cells never carry it), so a lost race is not re-run on every
+        * create. */
        VFFT_NAT_CONV = 8 };
 
 /* ── SELF-CONTAINED natural-order record (order=VFFT_ORDER_NATURAL). Its own DEPLOYED FFT
@@ -78,9 +71,8 @@ enum { VFFT_NAT_UNSET = 0, VFFT_NAT_FREE = 1, VFFT_NAT_LEAF_IP = 2,
  * forward) + reorder mode + measured natural total. Keyed (N,K) in a SEPARATE table, loaded
  * from the SAME file via `@nat`-tagged lines (invisible to every external @/#-skipping
  * reader — OCaml codegen, python, bootstrap.sh). Natural create/consume reads ONLY this,
- * NEVER the scrambled entry. The old opportunistic-vs-injected PSWAP distinction is gone: a
- * record just stores the deployed chain + mode=PSWAP. Design pivot 2026-07-06 (scrambled and
- * natural are different objectives + different memory-pass counts). */
+ * NEVER the scrambled entry: scrambled and natural are different objectives with different
+ * memory-pass counts. */
 typedef struct {
     int     N;
     size_t  K;
@@ -100,9 +92,9 @@ typedef struct {
     int     ref_ilp;                         /* mode=ilp bank: which recipe row the signpost
                                               * names — 0 none (mono), 1 the kind-3 row
                                               * lay=il, 2 kind-3 lay=split, 3 kind-3 lay-less,
-                                              * 4 the PRIME shard row (2026-09-02),
+                                              * 4 the PRIME shard row,
                                               * 5 the ord=scr kind-3 IL row — an explicit
-                                              * SCRAMBLED request's own cell (2026-09-05). */
+                                              * SCRAMBLED request's own cell. */
     int     ref_comp;                        /* mode=zcasc bank: 1 = the signpost names
                                               * the role=comp kind-4 RECIPE (banked by an
                                               * in-place / odd race); 0 = the OOP problem
@@ -217,8 +209,8 @@ static inline int vfft_proto_wisdom_load(vfft_proto_wisdom_t *wis,
          * pad-measured. Old binaries stop tokenizing after the variants (forward compatible). */
         tok = strtok(NULL, " \t\r\n");
         e.exec_me = tok ? atoi(tok) : 0;
-        /* Scrambled line ends at exec_me. Any trailing tokens (e.g. a stray embedded v7 nat block
-         * from a disposable staging file) are IGNORED — natural verdicts live in @nat lines now. */
+        /* Scrambled line ends at exec_me. Any trailing tokens are IGNORED — natural verdicts
+         * live in @nat lines. */
 
         /* Append. */
         if (wis->count >= wis->capacity) {
@@ -269,7 +261,7 @@ static inline int vfft_proto_wisdom_set(vfft_proto_wisdom_t *wis,
     return 1;
 }
 
-/* Calibrator / planner write primitive. Enforces the production invariant of
+/* Calibrator / planner write primitive. Enforces the invariant of
  * EXACTLY ONE entry per (N,K): the cell's winner is the sole entry — multiple
  * entries for one cell are not allowed. The `overwrite` flag decides what
  * happens when (N,K) is already present:
@@ -308,11 +300,8 @@ static inline int vfft_proto_wisdom_add(vfft_proto_wisdom_t *wis,
     return matches > 0 ? 2 : 1;
 }
 
-/* Write the table to path in the same v5 format vfft_proto_wisdom_load reads
- * (round-trips). Returns 0 on success, -1 on open failure. Ported from
- * production src/core/planner.h:stride_wisdom_save, adapted to this tree's
- * vfft_proto_wisdom_entry_t (which always carries variant codes, so no -1
- * placeholders are needed). */
+/* Write the table to path in the format vfft_proto_wisdom_load reads
+ * (round-trips). Returns 0 on success, -1 on open failure. */
 static inline int vfft_proto_wisdom_save(const vfft_proto_wisdom_t *wis,
                                          const char *path)
 {
@@ -338,7 +327,7 @@ static inline int vfft_proto_wisdom_save(const vfft_proto_wisdom_t *wis,
             fprintf(f, " %d", e->variants[j]);
         /* v6 trailing field: exec_me (padded verdict; 0 = not pad-measured). Scrambled line ENDS
          * here — natural verdicts are emitted below as @nat lines (regime-exclusive records). */
-        fprintf(f, " %d\n", e->exec_me);   /* v6 trailing (il_me retired 2026-09-03) */
+        fprintf(f, " %d\n", e->exec_me);   /* v6 trailing field */
     }
     /* Natural table: one self-contained @nat line per entry. */
     for (size_t i = 0; i < wis->nat_count; i++) {

@@ -6,17 +6,10 @@
  * with min-of-N trials, picks the lowest-measured (M, B), records into a
  * bluestein_wisdom_t.
  *
- * Why a separate calibrator from stride_wisdom_calibrate_full:
- *   - stride_wisdom_calibrate_full searches stride factorizations
- *     (radix decomposition of N). Prime N has no smooth factorization,
- *     so that calibrator falls through to NULL on prime cells.
- *   - Bluestein/Rader (M, B) is a different search space: M is a free
- *     smooth composite >= 2N-1, B is an orthogonal cache-blocking knob.
- *   - Two focused calibrators are clearer than one mega-calibrator.
- *
- * Mirrors stride_wisdom_calibrate_full's role: this is the function the
- * dev tool AND the public-API _calibrate_one path both call to populate
- * wisdom on a prime-N MEASURE miss.
+ * A search of its own: prime N has no smooth factorization for the
+ * factorization search to find, and (M, B) is a different space — M is a
+ * free smooth composite >= 2N-1, B an orthogonal cache-blocking knob. The
+ * in-place create (oop/c2c_ip_create.h) calls it on a prime-N wisdom miss.
  *
  * Header-only. Include AFTER planner.h (depends on stride_wise_plan,
  * stride_bluestein_plan, stride_rader_plan, stride_execute_fwd).
@@ -36,8 +29,8 @@
 #  include <time.h>
 #endif
 
-/* Self-contained timer (dag uses vfft_proto_now_ns; keep this header's deps
- * minimal so it builds from any driver without pulling in dp_planner.h). */
+/* Self-contained timer, so this header builds without dp_planner.h
+ * (vfft_proto_now_ns). */
 static inline double _bcal_now_ns(void) {
 #if defined(_WIN32)
     LARGE_INTEGER f, c;
@@ -50,8 +43,7 @@ static inline double _bcal_now_ns(void) {
 }
 
 /* ── prime + smoothness helpers ──────────────────────────────── *
- * Prefixed _bcal_ to avoid colliding with similar helpers elsewhere
- * in the codebase (e.g. _stride_is_prime in planner.h is internal). */
+ * Prefixed _bcal_: prime_dispatch.h carries its own copies. */
 
 static int _bcal_is_prime(int n) {
     if (n < 2) return 0;
@@ -106,10 +98,9 @@ static double _bcal_bench_bluestein(int N, size_t K, int M, size_t B,
                                      double *re, double *im,
                                      double per_trial_budget, int n_trials)
 {
-    /* auto_plan (NOT strict wise_plan): match the RUNTIME inner planner — it uses
-     * the DIT wisdom entry if present, else the factorizer default. wise_plan
-     * returns NULL on DIF entries (DIF is planner-disabled), a plan the runtime
-     * never builds; using it here would fail cells the runtime handles fine. */
+    /* auto_plan (NOT strict wise_plan): match the RUNTIME inner planner
+     * (prime_dispatch.h), which falls back to the factorizer default on a
+     * wisdom miss where wise_plan would return NULL. */
     stride_plan_t *inner = vfft_proto_auto_plan(M, B, reg, stride_wis);
     if (!inner) return -1.0;
     stride_plan_t *plan = stride_bluestein_plan(N, K, B, inner, M);
@@ -145,8 +136,7 @@ static double _bcal_bench_rader(int N, size_t K, size_t B,
                                  double per_trial_budget, int n_trials)
 {
     int nm1 = N - 1;
-    /* auto_plan: match the runtime inner planner (DIT wisdom or factorizer
-     * default; DIF entries are planner-disabled and never used at runtime). */
+    /* auto_plan: match the runtime inner planner (see above). */
     stride_plan_t *inner = vfft_proto_auto_plan(nm1, B, reg, stride_wis);
     if (!inner) return -1.0;
     stride_plan_t *plan = stride_rader_plan(N, K, B, inner);

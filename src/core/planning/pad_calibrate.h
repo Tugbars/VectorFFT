@@ -1,8 +1,5 @@
 /* pad_calibrate.h - the pad-vs-tail calibrator.
  *
- * Extracted from vfft.c as migration step 13; see
- * docs/design/refactor_migration_plan.md.
- *
  * THE DECISION
  * ------------
  * A batch of K transforms is processed VW lanes at a time. When K is not a
@@ -25,29 +22,13 @@
  * should not push the plan into computing lanes it will discard, so the
  * challenger has to win by a margin rather than by noise.
  *
- * WHY THIS CALIBRATOR NEEDED A PRECONDITION BEFORE IT COULD BE MOVED
- * ------------------------------------------------------------------
- * _calibrate_pad contains NO clock call of its own - it times through the
- * _pad_burst helper. A race census that enumerates clock calls therefore misses
- * it entirely, and a 244-line racer would have moved unaudited. The migration
- * plan makes its presence in the census a hard precondition for this step for
- * exactly that reason; the census enumerator resolves helper callers as a
- * second pass so that it appears.
+ * _VFFT_PADVW, the lane width that defines the padding rule, lives here;
+ * vfft_batch.h reads it too.
  *
- * _VFFT_PADVW LIVES HERE, AND ONE CALLER OUTSIDE STILL USES IT
- * -----------------------------------------------------------
- * The lane-width macro moved with the group that defines the padding rule.
- * _pad_stride_c2c, which stays in vfft.c because it dereferences vfft_plan_s
- * and touches wisdom, still reads it - which is fine, since this header is
- * included far above that call site.
- *
- * FLOOR-LEGAL BY CONSTRUCTION
- * ---------------------------
- * No vfft_plan_s, no wisdom - the caller banks. It increments the shared
- * create-race counter, declared extern below and defined once in vfft.c (a
- * tentative definition with external linkage, deliberately not a static: a
- * static in a header is one copy per includer, and the accessor would then read
- * a different object than the increment writes).
+ * No vfft_plan_s, no wisdom - the caller banks. The create-race counter is
+ * declared extern below and defined once in vfft.c: a static in a header is
+ * one copy per includer, and the accessor would then read a different object
+ * than the increment writes.
  */
 #ifndef VFFT_PLANNING_PAD_CALIBRATE_H
 #define VFFT_PLANNING_PAD_CALIBRATE_H
@@ -62,8 +43,6 @@
 /* Defined in vfft.c (tentative definition, external linkage). */
 extern long _vfft_create_race_count;
 
-/* TIGHT-vs-PADDED A/B for misaligned K: race te at stride K (me=K) against ae at stride Kp
- * (me=Kp), alternating order + median; returns Kp/K (3% toward K), or 0 if the winner fails roundtrip. */
 #define _VFFT_PADVW 4
 static void _pad_fill(double *re, double *im, int N, size_t K, size_t Kp)
 {
@@ -97,10 +76,12 @@ static void _pad_arm_run(void *v)
     else
         vfft_proto_execute_fwd(c->p, c->re, c->im, c->me);
 }
+/* TIGHT-vs-PADDED A/B for misaligned K: race te at stride K (me=K) against ae at stride Kp
+ * (me=Kp), alternating order + median; returns Kp/K (3% toward K), or 0 if the winner fails roundtrip. */
 static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_registry_t *reg,
                           const vfft_proto_wisdom_entry_t *te, const vfft_proto_wisdom_entry_t *ae)
 {
-    _vfft_create_race_count++;   /* HARNESS: this racer is about to time */
+    _vfft_create_race_count++;   /* this racer is about to time */
     if (!te || te->nf <= 0 || !ae || ae->nf <= 0)
         return 0;
     size_t Kp = (K + (size_t)(_VFFT_PADVW - 1)) & ~(size_t)(_VFFT_PADVW - 1);

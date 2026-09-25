@@ -1,15 +1,15 @@
 /**
- * stride_bluestein.h -- Bluestein's algorithm for arbitrary-size FFT
+ * bluestein.h -- Bluestein's algorithm for arbitrary-size FFT
  *
  * Converts an N-point DFT (where N cannot be factored into available radixes)
  * into a circular convolution of size M >= 2N-1, computed via:
  *   1. Chirp modulation  (SIMD-optimized, O(NK))
- *   2. Forward FFT of size M  (existing stride executor)
+ *   2. Forward FFT of size M  (the stride executor)
  *   3. Pointwise multiply by precomputed kernel (SIMD-optimized)
  *   4. Inverse FFT of size M
  *   5. Chirp demodulation  (SIMD-optimized, O(NK))
  *
- * Optimizations over baseline:
+ * Design:
  *   - M selection prefers fewer-stage factorizations (e.g. 1024 > 1020)
  *   - AVX2 intrinsics for chirp/pointwise complex multiplies
  *   - Block-walk for large K: processes K in cache-friendly chunks,
@@ -18,38 +18,10 @@
  * Memory: 2N + 4M*B + 2*M*B doubles (chirp + kernels + scratch).
  * Scratch is pre-allocated at plan time, never per call.
  *
- * ── Performance analysis (April 2026) ──────────────────────────
- *
- * Profiled N=509 K=256 (M=1024, B=64, 4 blocks):
- *   FFT (2x inner):    77-85% of total time
- *   Modulate (chirp):   7-9%
- *   Pointwise multiply: 5-7%
- *   Demodulate (chirp): 4-7%
- *
- * As of April 2026 (PRE-MT / pre-variant-mix engine; LIKELY STALE — re-bench
- * before citing): 0.68x vs the comparison baseline at N=509 K=256, 0.81x at
- * K=32. The bottleneck is inner FFT speed, not chirp overhead — so this
- * number tracks the inner CT engine, which has improved substantially since
- * (MT, variant mixing, faster codelets). Recent Rader cells beat the
- * comparison baseline on all 8 benched.
- *
- * Attempted optimizations (no improvement):
- *   - Pre-expanded chirp (M*B format, flat SIMD multiply instead of
- *     N scalar-broadcast loops): zero gain because the broadcast is
- *     already cheap and the flat multiply touches the zero-padded
- *     region wastefully. Reverted.
- *
- * Leads for future optimization:
- *   1. Composite M selection: for N=509, M=1020 (4x5x3x17) instead
- *      of M=1024. Our composite codelets beat the comparison baseline
- *      2-3x on non-pow2, so even with one extra stage the relative
- *      FFT speed may improve. Trade: absolute FFT time may be higher,
- *      but the ratio vs that baseline better.
- *   2. Faster inner pow2 FFT: codelet fusion or split-radix for
- *      N=512/1024 would directly reduce the 80% FFT portion.
- *   3. Fused chirp-butterfly: fold chirp multiply into the first/last
- *      butterfly stage. Saves ~13% (mod+demod), but requires custom
- *      Bluestein-aware codelets — high complexity for moderate gain.
+ * The two inner FFTs dominate: 77-85% of the time at N=509 K=256 (M=1024,
+ * B=64), the chirp passes and the pointwise multiply sharing the rest. A
+ * pre-expanded (M*B) chirp measured no gain over the scalar broadcast: the
+ * flat multiply also touches the zero-padded region.
  */
 #ifndef STRIDE_BLUESTEIN_H
 #define STRIDE_BLUESTEIN_H
@@ -88,8 +60,8 @@ typedef struct {
     stride_plan_t *inner_plan;   /* M-point plan with K = B */
 
     /* Optional JIT-resolved inner executors (plan phase). NULL => fall back to
-     * stride_execute_*_serial (baked-or-generic). Mirrors the Rader hooks: the
-     * M-point inner CT FFT runs at specialized speed in BOTH directions when set.
+     * stride_execute_*_serial (baked-or-generic). As for Rader: the M-point
+     * inner CT FFT runs at specialized speed in BOTH directions when set.
      * Wire via stride_bluestein_set_inner_jit(). */
     vfft_proto_exec_fn inner_jit_fwd;
     vfft_proto_exec_fn inner_jit_bwd;
@@ -97,9 +69,9 @@ typedef struct {
 
 
 /* ═══════════════════════════════════════════════════════════════
- * M SELECTION (improved)
+ * M SELECTION
  *
- * Instead of just picking the smallest M >= 2N-1, we search a
+ * Instead of just picking the smallest M >= 2N-1, search a
  * range and prefer M with fewer factorization stages. Powers of 2
  * often lie within a few percent of 2N-1 and factorize into just
  * 2 stages (e.g. 32x32), which dramatically speeds up the inner FFT.
@@ -175,8 +147,8 @@ static size_t _bluestein_block_size_T(int M, size_t K, int T) {
     if (B_max > K) B_max = K;
 
     /* T-fit cap: ensure at least T blocks when T>1.
-     * (T==1: B_for_T = K so the cap is inert — single-thread path
-     *        keeps the original "biggest block that fits L2" choice.) */
+     * (T==1: B_for_T = K so the cap is inert — the biggest block that
+     *        fits L2.) */
     size_t B_for_T = (T > 1) ? (K / (size_t)T) : K;
     if (B_for_T < 4) B_for_T = 4;
     B_for_T = (B_for_T / 4) * 4;
@@ -191,8 +163,7 @@ static size_t _bluestein_block_size_T(int M, size_t K, int T) {
     return K;                            /* K coprime to small Bs: no blocking */
 }
 
-/* Back-compat shim: old callers without thread context default to T=1
- * (same behavior as before). New callers should pass stride_get_num_threads(). */
+/* The T=1 form (the largest block that fits L2), used by prime_dispatch.h. */
 static inline size_t _bluestein_block_size(int M, size_t K) {
     return _bluestein_block_size_T(M, K, 1);
 }
@@ -654,7 +625,7 @@ static stride_plan_t *stride_bluestein_plan(
     return plan;
 }
 
-/* ── Inner-FFT JIT wiring (plan phase) — mirror of the Rader hooks ───────────
+/* ── Inner-FFT JIT wiring (plan phase), as for Rader ─────────────────────────
  * The M-point inner CT FFT dominates Bluestein's cost. A caller with the JIT
  * runtime resolves both directions of the inner plan and hands the pointers
  * back here; the workers then call them directly instead of the baked-or-generic
