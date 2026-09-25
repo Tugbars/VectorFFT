@@ -1,32 +1,30 @@
-/* planner.h — 1D C2C plan construction for prototype-core.
+/* planner.h — 1D C2C plan construction (the in-place stride engine).
  *
  * Given (N, K), produce a fully-populated stride_plan_t ready to feed
- * into vfft_proto_execute_fwd. Three entry points:
+ * into vfft_proto_execute_fwd/bwd. Three entry points:
  *
- *   vfft_proto_auto_plan(N, K, reg)            — wisdom first, else estimate
+ *   vfft_proto_auto_plan(N, K, reg, wis)       — wisdom first, else greedy
  *   vfft_proto_wise_plan(N, K, reg, wis)       — strict wisdom, NULL if missing
- *   vfft_proto_estimate_plan(N, K, reg)        — cost-model only
+ *   vfft_proto_estimate_plan(N, K, reg)        — greedy, T1S everywhere
  *
  * All three:
  *   1. Decide factorization (wisdom's, or greedy largest-first into
  *      available radixes).
  *   2. Decide per-stage variant assignment (wisdom's variants[], or
- *      default T1S everywhere in estimate mode).
+ *      default T1S everywhere).
  *   3. Allocate stride_plan_t + per-stage layout via twiddle.h's
  *      vfft_proto_compute_groups.
  *   4. Wire codelet function pointers from the registry per variant:
  *        FLAT  → reg->t1_dit_fwd[R]      (t1_fwd slot)
  *        LOG3  → reg->t1_dit_log3_fwd[R] (t1_fwd slot, use_log3=1)
  *        T1S   → reg->t1s_dit_fwd[R]    (t1s_fwd slot)
- *   5. Compute twiddle tables via vfft_proto_compute_twiddles_dit.
+ *      (DIF analogues when the wisdom's orientation is DIF.)
+ *   5. Compute twiddle tables (vfft_proto_compute_twiddles_dit / _dif).
  *   6. Pre-walk the (B)+(A) tape for plan_executors.h lookups.
  *
- * Scope:
- *   - Factorizable N (radixes 2..512). Non-factorable / prime N
- *     returns NULL — caller can fall back to production for those.
- *   - Forward direction only (bwd lands in a later phase).
- *   - Variants FLAT (0), LOG3 (1), T1S (2). BUF (3) falls back to T1S.
- *   - DIT orientation (DIF deferred).
+ * N must factor over VFFT_PROTO_AVAILABLE_RADIXES; otherwise NULL (prime N
+ * goes through prime_dispatch.h). Variants FLAT (0), LOG3 (1), T1S (2);
+ * BUF (3) falls back to T1S.
  */
 #ifndef VFFT_PROTO_CORE_PLANNER_H
 #define VFFT_PROTO_CORE_PLANNER_H
@@ -51,8 +49,7 @@ static const int VFFT_PROTO_AVAILABLE_RADIXES[] = {
 #define VFFT_PROTO_N_RADIXES \
     (sizeof(VFFT_PROTO_AVAILABLE_RADIXES) / sizeof(int))
 
-/* SIMD-aware reorder: pow2 innermost (after factorization). Mirrors
- * production's SIMD reorder pass. */
+/* SIMD-aware reorder: pow2 innermost (after factorization). */
 static inline void vfft_proto_reorder_pow2_innermost(int *factors, int nf) {
     int tmp[STRIDE_MAX_STAGES];
     int oi = 0;
@@ -90,8 +87,7 @@ static inline int vfft_proto_factorize(int N, int *factors) {
  * Returns 0 if the variant's required codelet is missing in reg.
  *
  * use_dif_forward selects DIF (post-twiddle) vs DIT (pre-twiddle) codelet
- * family. Production parity: DIF only supports FLAT and LOG3 (no T1S);
- * T1S in DIF mode falls back to FLAT. */
+ * family. DIF has only FLAT and LOG3; T1S in DIF mode falls back to FLAT. */
 static inline int vfft_proto_wire_stage_codelets(
     stride_stage_t *st, int R, int variant, int use_dif_forward,
     const vfft_proto_registry_t *reg)
@@ -227,9 +223,8 @@ static inline stride_plan_t *vfft_proto_auto_plan(
         const vfft_proto_wisdom_entry_t *e =
             vfft_proto_wisdom_lookup(wis, N, K);
         if (e && e->nf > 0) {
-            /* Honor the wisdom's orientation: plan_create_ex carries use_dif.
-             * DIF execution is validated (baked/JIT/generic DIF all roundtrip);
-             * MEASURE records DIF winners, so the runtime must build them. */
+            /* Honor the wisdom's orientation: calibration can bank DIF
+             * winners, so the runtime must build them. */
             stride_plan_t *plan = vfft_proto_plan_create_ex(
                 N, K, e->factors, e->variants, e->nf, e->use_dif_forward, reg);
             if (plan) return plan;
@@ -269,8 +264,8 @@ static inline void vfft_proto_plan_destroy(stride_plan_t *plan) {
     if (!plan) return;
     /* Override plans (Rader/Bluestein/DCT) own their data via override_destroy;
      * they have no staged tables (num_stages=0). Honor it FIRST or we leak the
-     * override_data + its inner plan. Mirrors production's stride_plan_destroy
-     * (src/core/executor.h) and the bridge's stride_plan_destroy. */
+     * override_data + its inner plan (same order as proto_stride_compat.h's
+     * stride_plan_destroy). */
     if (plan->override_destroy) {
         plan->override_destroy(plan->override_data);
         free(plan);

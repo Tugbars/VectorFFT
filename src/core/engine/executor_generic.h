@@ -1,27 +1,17 @@
 /* executor_generic.h — cold-cell fallback executor for 1D C2C.
  *
- * Per-stage loop, function-pointer indirected codelet dispatch. Same
- * shape as the spike harnesses' `baseline_exec` (see
- * src/prototype/bench/spike_n131072_k4.c) — refactored into a reusable
- * library function so consumers don't reinvent it.
+ * Per-stage loop, function-pointer indirected codelet dispatch. About 5-6%
+ * slower than the (B)+(A) plan-shaped specialization in plan_executors.h,
+ * but it is the CORRECTNESS BASELINE: it handles every plan shape the
+ * planner produces, including cells that have no specialization emitted.
  *
- * Slower than the (B)+(A) plan-shaped specialization in plan_executors.h
- * (the 5-6% wrapper share documented in docs/61). The generic loop is
- * the CORRECTNESS BASELINE — it handles every plan shape the planner
- * produces, including cells that don't have a specialization emitted.
- *
- * Per-group dispatch tree mirrors production's _stride_execute_fwd_slice
- * (src/core/executor.h:385-516), reduced to the four paths Phase 3.5
- * needs:
+ * Per-group dispatch (DIT forward):
  *
  *   needs_tw[g] == 0     → n1 codelet (no twiddle)
  *   use_log3 == 1        → apply cf to ALL legs, then t1_fwd (LOG3)
  *   t1s_fwd != NULL      → cmul cf to leg 0, then t1s_fwd with scalars
  *   else (FLAT)          → cmul cf to leg 0, K-blocked broadcast staging,
  *                          then t1_fwd per K-block
- *
- * Out of scope for Phase 3.5: use_n1_fallback (R=64 large-K) — deferred
- * until profiling says we need it.
  */
 #ifndef VFFT_PROTO_CORE_EXECUTOR_GENERIC_H
 #define VFFT_PROTO_CORE_EXECUTOR_GENERIC_H
@@ -34,7 +24,6 @@
 
 /* Vector cmul: leg *= conj(W).
  *   (x_r + i*x_i)(W_r - i*W_i) = (x_r*W_r + x_i*W_i) + i*(x_i*W_r - x_r*W_i)
- * Mirrors production's inner loop in _stride_execute_bwd_slice_until.
  * No SIMD intrinsics here — gcc/icx vectorize the scalar form well, and
  * keeping it scalar avoids a separate AVX2 + AVX-512 implementation. */
 static inline void _vfft_proto_cmul_conj_vec(
@@ -48,10 +37,9 @@ static inline void _vfft_proto_cmul_conj_vec(
 }
 
 /* Run stages [from_stage, num_stages) of a DIT forward plan, in-place. Lets a
- * caller resume mid-plan without materializing a shifted sub-plan — the OOP
- * adapter (oop_execute.h) uses from_stage=1 to run stages 1.. on dst after its
- * fused stage-0. group_base[g] offsets are absolute, so resuming is identical to
- * the old "copy plan, memmove stages down one" view, minus the ~2.5KB copy. */
+ * caller resume mid-plan without materializing a shifted sub-plan (group_base[g]
+ * offsets are absolute) — the OOP adapter (oop_execute.h) uses from_stage=1 to
+ * run stages 1.. on dst after its fused stage-0. */
 static inline void vfft_proto_execute_fwd_generic_from(const stride_plan_t *plan,
                                                        double *re, double *im,
                                                        size_t slice_K, int from_stage)
@@ -177,10 +165,8 @@ static inline void vfft_proto_execute_fwd_generic(const stride_plan_t *plan,
  * The forward variant choice only affected how the codelet's input
  * lookup table was structured, not the underlying complex exponentials. */
 /* Run stages [num_stages-1, until_stage] of a DIT backward plan, in-place —
- * the reverse-order companion of vfft_proto_execute_fwd_generic_from. The IL
- * adapter (il_execute.h) uses until_stage=1 so it can run stage 0's n1_bwd
- * itself with an interleaved-output codelet. until_stage=0 is the full
- * backward transform (see the wrapper below). */
+ * the reverse-order companion of vfft_proto_execute_fwd_generic_from.
+ * until_stage=0 is the full backward transform (see the wrapper below). */
 static inline void vfft_proto_execute_bwd_generic_until(const stride_plan_t *plan,
                                                         double *re, double *im,
                                                         size_t slice_K,
@@ -216,16 +202,6 @@ static inline void vfft_proto_execute_bwd_generic_until(const stride_plan_t *pla
     }
 }
 
-/* ────────────────────────────────────────────────────────────────────
- * DIF forward executor — generic (function-pointer dispatch) path.
- *
- * Per production's _stride_execute_fwd_dif_slice:
- *   - Walks stages 0..nf-1 (same as DIT forward).
- *   - For needs_tw[g]=0: call n1_fwd (no inter-stage twiddle).
- *   - For needs_tw[g]=1: call t1_fwd (DIF variant) with grp_tw —
- *     the codelet does butterfly first, then post-multiplies legs
- *     1..R-1 by per-leg twiddle. cf0 = 1 in DIF, so no leg-0 work.
- * ──────────────────────────────────────────────────────────────────── */
 /* Standard full backward (all stages down to 0). */
 static inline void vfft_proto_execute_bwd_generic(const stride_plan_t *plan,
                                                   double *re, double *im,
@@ -234,6 +210,15 @@ static inline void vfft_proto_execute_bwd_generic(const stride_plan_t *plan,
     vfft_proto_execute_bwd_generic_until(plan, re, im, slice_K, 0);
 }
 
+/* ────────────────────────────────────────────────────────────────────
+ * DIF forward executor — generic (function-pointer dispatch) path.
+ *
+ *   - Walks stages 0..nf-1 (same as DIT forward).
+ *   - For needs_tw[g]=0: call n1_fwd (no inter-stage twiddle).
+ *   - For needs_tw[g]=1: call t1_fwd (DIF variant) with grp_tw —
+ *     the codelet does butterfly first, then post-multiplies legs
+ *     1..R-1 by per-leg twiddle. cf0 = 1 in DIF, so no leg-0 work.
+ * ──────────────────────────────────────────────────────────────────── */
 static inline void vfft_proto_execute_fwd_generic_dif(const stride_plan_t *plan,
                                                        double *re, double *im,
                                                        size_t slice_K)
@@ -256,7 +241,7 @@ static inline void vfft_proto_execute_fwd_generic_dif(const stride_plan_t *plan,
              * cf0 = 1 universally so no leg-0 cmul needed.
              * K-split safe: block-broadcast the constant-per-leg grp_tw at this_K stride
              * so the codelet's W[(j-1)*me+m] row stride matches (full_K-strided grp_tw with
-             * me=slice_K reads the wrong leg for me<full_K -- the DIF K-split bug). */
+             * me=slice_K reads the wrong leg for me<full_K). */
             {
                 const int Rm1 = st->radix - 1;
                 double tw_buf_re[63 * VFFT_PROTO_TW_BLOCK_K];
@@ -280,10 +265,8 @@ static inline void vfft_proto_execute_fwd_generic_dif(const stride_plan_t *plan,
 /* ────────────────────────────────────────────────────────────────────
  * DIF backward executor — uses the FUSED t1_dif_bwd codelet.
  *
- * Production's _stride_execute_bwd_dif_slice does manual pre-mul-conj
- * + n1_bwd because the old t1_dif_bwd codelet was NOT the inverse of
- * t1_dif_fwd. With our dft.ml fix (sign=Bwd flips DIF to PRE-twiddle
- * structure), the codelet now correctly inverts forward DIF:
+ * The generator emits backward DIF with the PRE-twiddle structure
+ * (dft.ml, sign=Bwd), so the codelet inverts forward DIF directly:
  *   t1_dif_bwd(input) = B⁻¹(T_conj(input))
  *
  * So this executor just calls the codelet directly when needs_tw[g],
