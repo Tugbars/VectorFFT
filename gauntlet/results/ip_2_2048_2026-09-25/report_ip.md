@@ -1,47 +1,3 @@
-2026-09-25 13:31:09 run: 1023 cells, contract in place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
-2026-09-25 13:31:09 calibrate: 0 cells (1031 already done)
-2026-09-25 13:31:09 bench: 1023 cells (0 already benched, 0 not banked -> not benched)
-2026-09-25 13:31:41   benched 25/1023 (26), 30 s elapsed
-2026-09-25 13:32:13   benched 50/1023 (51), 62 s elapsed
-2026-09-25 13:32:47   benched 75/1023 (76), 96 s elapsed
-2026-09-25 13:33:22   benched 100/1023 (101), 131 s elapsed
-2026-09-25 13:33:55   benched 125/1023 (126), 165 s elapsed
-2026-09-25 13:34:31   benched 150/1023 (151), 200 s elapsed
-2026-09-25 13:35:05   benched 175/1023 (176), 235 s elapsed
-2026-09-25 13:35:43   benched 200/1023 (201), 272 s elapsed
-2026-09-25 13:36:20   benched 225/1023 (226), 309 s elapsed
-2026-09-25 13:36:55   benched 250/1023 (251), 344 s elapsed
-2026-09-25 13:37:33   benched 275/1023 (276), 382 s elapsed
-2026-09-25 13:38:12   benched 300/1023 (301), 422 s elapsed
-2026-09-25 13:38:50   benched 325/1023 (326), 459 s elapsed
-2026-09-25 13:39:26   benched 350/1023 (351), 496 s elapsed
-2026-09-25 13:40:04   benched 375/1023 (376), 533 s elapsed
-2026-09-25 13:40:42   benched 400/1023 (401), 572 s elapsed
-2026-09-25 13:41:20   benched 425/1023 (426), 610 s elapsed
-2026-09-25 13:41:58   benched 450/1023 (451), 647 s elapsed
-2026-09-25 13:42:35   benched 475/1023 (476), 684 s elapsed
-2026-09-25 13:43:12   benched 500/1023 (501), 722 s elapsed
-2026-09-25 13:43:51   benched 525/1023 (526), 761 s elapsed
-2026-09-25 13:44:32   benched 550/1023 (551), 801 s elapsed
-2026-09-25 13:45:12   benched 575/1023 (576), 841 s elapsed
-2026-09-25 13:45:54   benched 600/1023 (601), 883 s elapsed
-2026-09-25 13:46:34   benched 625/1023 (626), 923 s elapsed
-2026-09-25 13:47:13   benched 650/1023 (651), 963 s elapsed
-2026-09-25 13:47:54   benched 675/1023 (676), 1003 s elapsed
-2026-09-25 13:48:35   benched 700/1023 (701), 1045 s elapsed
-2026-09-25 13:49:16   benched 725/1023 (726), 1085 s elapsed
-2026-09-25 13:49:55   benched 750/1023 (751), 1124 s elapsed
-2026-09-25 13:50:35   benched 775/1023 (776), 1164 s elapsed
-2026-09-25 13:51:16   benched 800/1023 (801), 1206 s elapsed
-2026-09-25 13:51:57   benched 825/1023 (826), 1246 s elapsed
-2026-09-25 13:52:35   benched 850/1023 (851), 1285 s elapsed
-2026-09-25 13:53:15   benched 875/1023 (876), 1324 s elapsed
-2026-09-25 13:53:55   benched 900/1023 (901), 1365 s elapsed
-2026-09-25 13:54:35   benched 925/1023 (926), 1405 s elapsed
-2026-09-25 13:55:14   benched 950/1023 (951), 1443 s elapsed
-2026-09-25 13:55:52   benched 975/1023 (976), 1481 s elapsed
-2026-09-25 13:56:31   benched 1000/1023 (1001), 1521 s elapsed
-2026-09-25 13:57:08   benched 1023/1023 (1024), 1557 s elapsed
 # gauntlet report
 
 run: `ip_2_2048_2026-09-25`  contract file suffix: `_ip`  cells: 1031 listed, 1023 benched, comparator: MKL
@@ -1129,5 +1085,3 @@ flip agreement: our two readings more than 25% apart at 26 of 1023 cells.
 
 worst 10: 14 (flat 0.66), 549 (prime 0.73), 15 (mono 0.76), 530 (prime 0.82), 634 (prime 0.83), 168 (chain3 0.83), 975 (flat 0.85), 591 (prime 0.90), 636 (prime 0.90), 536 (prime 0.92)
 best 5: 89 (prime 6.99), 79 (prime 5.28), 73 (prime 5.22), 71 (prime 4.88), 254 (prime 4.46)
-
-2026-09-25 13:57:09 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\ip_2_2048_2026-09-25\report_ip.md

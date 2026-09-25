@@ -1,6 +1,5 @@
-/* il_flatdit.h — the FLAT mixed-radix DIT chain, un-turned, v0 STRUCTURE
- * CHECK (2026-09-04): the standard generic-N shape on shipped pure-IL kinds,
- * built to validate the algebra BEFORE the emitter kind it motivates.
+/* il_flatdit.h — the FLAT mixed-radix DIT chain, un-turned: the generic-N
+ * engine on the pure-IL kinds.
  *
  *   N = R[0]*...*R[K-1]. Natural input, same-slot stages, natural output.
  *   stage 0: the plain leaf (n1c) — R[0] legs at stride D0 = N/R[0],
@@ -10,19 +9,17 @@
  *            count = D_s — the run SHRINKS (long early, short late). The
  *            PRE-twiddle w_{L_s}^(l*Q_s) depends only on the SLOW digits
  *            already produced, Q_s = p + R0*(q1 + R1*(...)): constant
- *            across the run. v0 drives it with the t2 kind (pre-twiddle,
- *            per column-pair records) and REPEATS the block's record set
- *            for every pair — ~4N doubles per stage, a probe-only cost.
- *            The real stage kind is t2c with the pre-twiddle placement
- *            (per-block broadcast records: (R-1) per block), an emitter
- *            gate away; the late stages then take the gen2 policy.
- *   last stage (D = 1): legs adjacent, count 1 (the VEX-128 tail; the
- *            two-group kind retires it). Its stores are REDIRECTED to
- *            natural order: OLs = N/R[K-1], out base = the block's natural
- *            index (block-affine) — from the staging plane into zout, so
- *            the output is natural with no ordering pass.
+ *            across the run. Forms: t2cp (per-block broadcast records),
+ *            msz (split body), and for runs D <= VFFT_ILFD_TAIL_D the tail
+ *            kinds (t2cs, t2csg with its generated stream, t2csgn's
+ *            in-kernel group loop).
+ *   last stage (D = 1): its stores are REDIRECTED to natural order:
+ *            OLs = N/R[K-1], out base = the block's natural index
+ *            (block-affine) — from the staging plane into zout, so the
+ *            output is natural with no ordering pass.
  *   Both directions, both order classes (natural / scrambled), in place
- *   legal, single thread; execution = the bound call lists (see below). */
+ *   legal, single thread (il_flatdit_mt.h threads it); execution = the bound
+ *   call lists (see below). */
 #ifndef VFFT_IL_FLATDIT_H
 #define VFFT_IL_FLATDIT_H
 
@@ -36,7 +33,7 @@
 #define VFFT_ILFD_TAIL_D 4
 #endif
 
-/* ONE BOUND CALL of a stage — the executor's whole vocabulary (2026-09-05):
+/* ONE BOUND CALL of a stage — the executor's whole vocabulary:
  * the kernel, the buffers, the tables, the strides and the counts, resolved
  * from the plan's form fields at bind time (vfft_ilfd_bind). The served
  * path walks a list of these and calls: no division, no digit-weight loop,
@@ -57,7 +54,7 @@ typedef struct {
     size_t D, L, G, ngrp, nb, tw_step, t2_step;   /* _ILFD_COL / _ILFD_BLK loops */
     const size_t *obase;          /* COL: the group's first block's natural base; BLK: per
                                    * block; NULL = in place (block order) */
-    /* THE TILE AXIS (2026-09-05, the cascade's tcut in flat form): a record
+    /* THE TILE AXIS (tcut in flat form): a record
      * inside the tiled suffix holds PER-TILE counts above and advances its
      * bases by these per tile t (doubles; a1 is a size_t table cast to
      * double*, both 8 bytes, so its step is in entries). COL: g_tstep = the
@@ -100,13 +97,13 @@ typedef struct {
     int scr_ok;
     vfft_il2p_fn fz[VFFT_ILFD_MAX_K]; /* msz fwd (split body, IL edges, unordered lanes) */
     double *tz[VFFT_ILFD_MAX_K];      /* msz: per block (R-1) [c x4][s x4] records (plain sin);
-                                       * non-null = the stage is msz-ELIGIBLE (s < K-1; any run
-                                       * since the §3 odd-count arms, 2026-09-05) */
+                                       * non-null = the stage is msz-ELIGIBLE (s < K-1; any run:
+                                       * the kernel has odd-count arms) */
     int msz[VFFT_ILFD_MAX_K];         /* 1 = run the stage on msz (default where eligible;
                                        * VFFT_ILFD_NO_MSZ=1 at create turns it off; A/B flips it) */
     double *tf[VFFT_ILFD_MAX_K];      /* t2cp: per block (R-1) broadcast records;
                                        * t2cs: per GROUP, per block-pair, (R-1) VTW2 records */
-    /* BACKWARD (2026-09-05): the CONJUGATE pipeline — same stage order and
+    /* BACKWARD: the CONJUGATE pipeline — same stage order and
      * forms (msz / gl / gord are shared), backward kernels (n1c, t2c, msz,
      * t2csg, t2csgn _bwd: IDFT blocks, PRE-twiddle) and conjugated tables.
      * bwd_ok = 0 when a stage has no backward form (a t2cs tail): such a
@@ -117,7 +114,7 @@ typedef struct {
     int bwd_ok;
     size_t *natbase;                  /* last stage: block -> natural index */
     double *stg;                      /* 2N staging plane */
-    /* THE BOUND CALL LISTS (2026-09-05): what execute walks. cf = the
+    /* THE BOUND CALL LISTS: what execute walks. cf = the
      * forward, cb = the conjugate backward (natural class), ct = the
      * transposed backward (scrambled class), each in execution order, one
      * record per stage. The form fields above (msz / gl / gord / scr / tail)
@@ -125,9 +122,9 @@ typedef struct {
      * writer of those fields rebinds (create_chain, apply_forms, the races,
      * create_scr_of, the planner's scr flip, the probes). */
     vfft_ilfd_call_t cf[VFFT_ILFD_MAX_K], cb[VFFT_ILFD_MAX_K], ct[VFFT_ILFD_MAX_K];
-    /* THE TILE AXIS (2026-09-05): tw = the tile width in complex = one block
+    /* THE TILE AXIS: tw = the tile width in complex = one block
      * of stage tcut (a non-tail stage in [1, K-2]; the width is the INPUT,
-     * the cut is DERIVED — the cascade's tcut law), 0 = untiled. The stages
+     * the cut is DERIVED — the tcut law), 0 = untiled. The stages
      * tcut.. run depth-first per tile: the natural class to K-2 (its last
      * stage stays global — the scatter's natural-base order fills output
      * lines contiguously only across the whole plane), the scrambled class
@@ -136,7 +133,7 @@ typedef struct {
      * validated by vfft_ilfd_apply_tw. tlo/thi = the tiled range of cf/cb;
      * ct tiles its first K-tcut records; ntile = N / tw. */
     int tw, tcut, ntile, tlo, thi;
-    /* THE THREADING VERDICT (2026-09-07, il_flatdit_mt.h): mt = 0 serial |
+    /* THE THREADING VERDICT (il_flatdit_mt.h): mt = 0 serial |
      * 1 blocks | 2 tiles, raced at the plan's T (mt_t) and banked as il_mt=
      * il_mt_t= il_mt_tw= on the kind-3 row; mtb = the per-worker unit
      * records bound for mt_t workers (one allocation), NULL = unbound. */
@@ -208,8 +205,8 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
             double *tf;
             size_t bi;
             int l, lane;
-            /* msz (2026-09-05): every non-last stage can run on the split-body
-             * kernel (its il_odd_count_tail §3 arms take any run); the records
+            /* msz: every non-last stage can run on the split-body
+             * kernel (its odd-count arms take any run); the records
              * are built alongside the t2cp/tail ones so a probe can A/B the
              * two forms on ONE plan by flipping p->msz[s]. */
             p->msz[s] = 0;

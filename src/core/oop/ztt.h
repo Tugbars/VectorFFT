@@ -1,10 +1,8 @@
 /* ztt.h — ZTURN-T: the RUN-CONTIGUOUS DIT engine for K=1 interleaved c2c,
- * 16 <= N <= 262144, route VFFT_K1_IL_ZTT (docs/design/zturn_t_ship_plan.md;
- * the probe's contract: docs/research/sub2048_mkl_method/campaign_state/
- * probes/ZT/CONTRACT.md).
+ * 16 <= N <= 262144, route VFFT_K1_IL_ZTT.
  *
  *   N = R[0] * ... * R[nf-1], R[0] and R[nf-1] in {4, 8}, a mid in {4, 8} or
- *   3/5/7/9/15 (the 2^a*odd band, docs/design/ztt_odd_design.md, 2026-09-14),
+ *   3/5/7/9/15 (the 2^a*odd band, docs/design/ztt_odd_design.md),
  *   (N / R[0]) % 4 == 0. A pow2 cell binds its FUSED codelet; a 2^a*odd cell
  *   is STAGED (one kernel call per stage and block, vfft_ztt_odd_band).
  *   ingest  t0tp : natural packed z legs at stride N/R0 -> the PLANE, one
@@ -18,7 +16,7 @@
  *   inverse      : the same pipeline with conjugate roots (the bwd kinds +
  *                  the s-negated streams); unnormalised, roundtrip = N * x.
  *
- * IN PLACE (2026-09-09, zturn_t_ship_plan.md 9): the `plane` drivers end in
+ * IN PLACE: the `plane` drivers end in
  * tlfi, the in-place terminator — tlf with its output streams prefetched. The
  * caller's buffer goes cold under the plane, and a store into it waited on
  * its line fill (+17..25% over out of place); the prefetch issues those
@@ -27,8 +25,8 @@
  * EXECUTION is one indirect call: the plan binds ONE FUSED DRIVER per
  * direction (generated/ztt_drivers_avx2.c — the three kind bodies inlined
  * with literal trip counts and the twiddle cursor carried in a register, zero
- * calls inside; the form that measured 9-12% over per-stage calls at N=128,
- * cascade_stage_fusion.md). Two buffer modes: `dest` runs the whole pipeline
+ * calls inside; the form that measured 9-12% over per-stage calls at
+ * N=128). Two buffer modes: `dest` runs the whole pipeline
  * in the destination (out of place), `plane` in the plan's scratch (in place,
  * or zin == zout at the call). Bound at create by placement; the execute
  * keeps one predictable compare so an aliased call on an out-of-place plan
@@ -45,12 +43,12 @@
  *
  * CREATE builds (almost) no trig: up to the table's octave (RL <= 16384)
  * every stream is expanded from the baked quarter-wave (ztt_qw16384.h) by
- * index shift + reflection + sign flip. Above it (S4, zcascade_sunset_plan.md,
- * 2026-09-09) a stage's record is the TWO-LEVEL product: the angle
- * 2*pi*pw/RL splits as pw = a*2^u + b (u = log2 RL - 14, b < 2^u <= 16 at
- * 262144), w = table(a) * fine(b) with fine(b) = exp(-2*pi*i*b/RL) — one
- * 2^u-entry cos/sin table per stage at create, one complex product per
- * record, ~1 ulp. The ceiling is the cascade's, 262144. The validator is the law: an illegal
+ * index shift + reflection + sign flip. Above it a stage's record is the
+ * TWO-LEVEL product: the angle 2*pi*pw/RL splits as pw = a*2^u + b
+ * (u = log2 RL - 14, b < 2^u <= 16 at 262144), w = table(a) * fine(b) with
+ * fine(b) = exp(-2*pi*i*b/RL) — one 2^u-entry cos/sin table per stage at
+ * create, one complex product per record, ~1 ulp. The ceiling is 262144.
+ * The validator is the law: an illegal
  * chain, a size out of range, or a cell without a registry driver returns
  * NULL loudly — no fallback, no default chain (the planner is the only
  * source of a chain). */
@@ -62,12 +60,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>              /* the fine table above the octave (S4, 2026-09-09)  */
+#include <math.h>              /* the fine table above the octave                   */
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-/* FUSED CODELETS (owner's ruling 2026-09-14): the drivers this plan binds are
+/* FUSED CODELETS: the drivers this plan binds are
  * whole-transform functions, one per pow2 cell (N, chain, direction, buffer
  * mode), generated into generator/generated/fused_codelets/ with the stage
  * kernels INLINED and literal trip counts — the pow2 ZTURN-T solution's
@@ -77,8 +75,8 @@
  * be recombined. README.md beside the fused files. */
 #include "ztt_registry_avx2.h"   /* the cells and their fused codelets (generated) */
 #include "ztt_qw16384.h"         /* the baked quarter-wave (generated)            */
-/* THE STAGE KERNELS, for the STAGED executor (docs/design/ztt_odd_design.md,
- * 2026-09-14): a cell with no fused codelet — every 2^a*odd cell in the odd
+/* THE STAGE KERNELS, for the STAGED executor (docs/design/ztt_odd_design.md):
+ * a cell with no fused codelet — every 2^a*odd cell in the odd
  * band, or a pow2 cell under the gate's force — runs its stage table, one
  * kernel call per (stage, block), each kind's exported function in the frozen
  * 11-arg z ABI with the group loop inside it. The radix lists come from the
@@ -114,9 +112,9 @@ _ZTT_KFN2(_ztt_kfn_tld,  tld,  VFFT_IL_TLD_FWD_RADICES,  VFFT_IL_TLD_BWD_RADICES
 _ZTT_KFN2(_ztt_kfn_t0d,  t0d,  VFFT_IL_T0D_FWD_RADICES,  _ZTT_NONE)
 _ZTT_KFN2(_ztt_kfn_tmgd, tmgd, VFFT_IL_TMGD_FWD_RADICES, _ZTT_NONE)
 
-#define VFFT_ZTT_MAX_NF 7        /* == the registry's chain[7]; VFFT_ZSPLIT_MAX_NF */
-#define VFFT_ZTT_MAX_N 262144    /* the cascade's ceiling; above the octave the
-                                  * streams are the TWO-LEVEL product (below)     */
+#define VFFT_ZTT_MAX_NF 7        /* == the registry's chain[7]                    */
+#define VFFT_ZTT_MAX_N 262144    /* the ceiling; above the octave the streams are
+                                  * the TWO-LEVEL product (below)                 */
 #define VFFT_ZTT_QW_M 16384
 #define VFFT_ZTT_QW_LGM 14       /* log2 M */
 #define VFFT_ZTT_QW_Q 4096       /* M / 4 */
@@ -150,8 +148,8 @@ typedef struct
     int inplace;
     size_t tile;                      /* TILE WIDTH in complexes, 0 = untiled (raced,
                                        * il_tw=; vfft_ztt_set_tile)                  */
-    /* THE PLAIN SCHEDULE = the scrambled order class (2026-09-14,
-     * docs/design/ztt_scrambled_design.md). scr = 1 executes the cell's
+    /* THE PLAIN SCHEDULE = the scrambled order class
+     * (docs/design/ztt_scrambled_design.md). scr = 1 executes the cell's
      * fwd_scr / bwd_scr fused codelets (ABI zin, zout, tw, tile: no plane,
      * no run-base table, zin == zout is the same function). Then tw / twb
      * hold the PLAIN layout — stage s < nf-1 carries 2*(R_s-1)*Len_{s+1}
@@ -159,11 +157,11 @@ typedef struct
      * NULL, len[] is the block ladder, and perm[k] is the output position of
      * frequency k: built once for the gates and introspection, never read at
      * run time. A plan is ONE order class for its whole life: the two never
-     * mix (design_contracts.md 8b). */
+     * mix. */
     int scr;
     long len[VFFT_ZTT_MAX_NF + 1];    /* plain: Len_s = prod_{u >= s} R_u, Len_nf = 1 */
     size_t *perm;                     /* plain: N entries, frequency -> position      */
-    /* THE STAGED EXECUTOR (ztt_odd_design.md, 2026-09-14): staged = 1 when the
+    /* THE STAGED EXECUTOR (ztt_odd_design.md): staged = 1 when the
      * cell has no fused codelet (cell == NULL) — the stage table below runs
      * the fused driver's exact loop nest with run-time bounds, one call per
      * (stage, block). st_fwd/st_bwd[s] = stage s's kernel (natural: t0tp,
@@ -208,7 +206,7 @@ static inline void vfft_ztt_destroy(vfft_ztt_plan_t *p)
 }
 
 /* mixed-radix digit reversal over R[0..nR-1]: n = d0 + R0*(d1 + ...), d0
- * fastest; digit d_s carries weight prod_{u>s} R[u] (CONTRACT.md 5) */
+ * fastest; digit d_s carries weight prod_{u>s} R[u] */
 static inline long _ztt_digitrev(long n, const int *R, int nR)
 {
     long out = 0;
@@ -244,7 +242,7 @@ static inline int _ztt_log2(long v)
     return k;
 }
 
-/* one stage's stream (CONTRACT.md 4): record for (column quad k, leg r>=1)
+/* one stage's stream: record for (column quad k, leg r>=1)
  * at tw + ((k/4)*(R-1) + (r-1))*8 doubles = [c(k..k+3)][s(k..k+3)] of
  * w_{RL}^{r*b}, b = k + lane; fwd s = -sin (times c + i s = exp(-i th)),
  * bwd s = +sin. Returns the doubles written = 2*(R-1)*L. */
@@ -252,9 +250,9 @@ static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd
 {
     if (RL & (RL - 1))
     {   /* a 2^a*odd modulus (an odd mid, and every stage after it in the
-         * chain): no octave, no quarter wave — the angle 2*pi*pw/RL from libm,
-         * reduced to [-pi, pi] (the cascade's odd stages did the same). The
-         * fwd s = -sin(0) = -0.0 at r*b == 0, as the record contract wants. */
+         * chain): no octave, no quarter wave — the angle 2*pi*pw/RL, reduced
+         * to [-pi, pi], through vfft_cs2pi_exact. The fwd s = -sin(0) = -0.0
+         * at r*b == 0, as the record contract wants. */
         long k;
         int r, lane;
         for (k = 0; k < L; k += 4)
@@ -523,29 +521,19 @@ static inline void vfft_ztt_bind(vfft_ztt_plan_t *p, int inplace)
     p->bwd = inplace ? p->cell->bwd_plane : p->cell->bwd_dest;
 }
 
-/* THE PURE-POW2 BAND (owner's law, design_contracts.md section 4,
- * 2026-09-09): at a power of two in 16..VFFT_ZTT_MAX_N the interleaved K=1
- * cell belongs to the solo kernels and the pairs (<= 64), the pairs and
- * ZTURN-T (128..1024) and ZTURN-T alone (2048 and up) — and NO cascade race
- * arm exists at any NATURAL or DEFAULT door, out of place or in place: "no
- * cascade race arm please, eliminate". The explicit SCRAMBLED cell (out of
- * place and in place) keeps the cascade, its only scrambled writer, until
- * the scrambled ZTURN-T class exists. Before this the natural door raced the natord cascade
- * from 128 up and had banked it at 512 (400 ns over a 300 ns pair — a door
- * clock's verdict, not the tier's). The doors consult this before building a
- * cascade candidate; outside the band (above the ceiling, any odd factor)
- * they behave as before. */
+/* THE PURE-POW2 BAND: every power of two in 16..VFFT_ZTT_MAX_N. Which
+ * families race inside it is planning/policy.h's band map. */
 static inline int vfft_ztt_band(int N)
 {
     return N >= 16 && N <= VFFT_ZTT_MAX_N && (N & (N - 1)) == 0;
 }
 
-/* THE ODD BAND (ztt_odd_design.md, 2026-09-14): N = 2^a * m, a >= 4, m > 1 a
- * product over {3, 5, 7, 9, 15} with at most five odd mids (nf <= 7 with the
- * two pow2 ends), 2048 <= N <= the ceiling — the cascade's exact odd cell
- * set. The chain grammar is the planner's (_il_dp_enumerate_odd_mids): the
- * odd part decomposed greedily largest-first, its mids at every interior
- * position, the pow2 slots over ordered {4, 8}. */
+/* THE ODD BAND (ztt_odd_design.md): N = 2^a * m, a >= 4, m > 1 a product
+ * over {3, 5, 7, 9, 15} with at most five odd mids (nf <= 7 with the two pow2
+ * ends), 2048 <= N <= the ceiling. The chain grammar is the planner's
+ * (_il_dp_enumerate_ztt_odd): the odd part decomposed greedily
+ * largest-first, its mids at every interior position, the pow2 slots over
+ * ordered {4, 8}. */
 static inline int vfft_ztt_odd_band(int N)
 {
     static const int OP[5] = { 15, 9, 7, 5, 3 };
@@ -597,8 +585,8 @@ static inline int vfft_ztt_set_tile(vfft_ztt_plan_t *p, size_t tile)
     return 1;
 }
 
-/* the plane's PAGE OFFSET against the caller's buffer (measured 2026-09-09,
- * probes/ZT/zt_plane_skew.c, and again with tlfi in the tree): with the plane
+/* the plane's PAGE OFFSET against the caller's buffer (measured, with and
+ * without tlfi): with the plane
  * just below zout in its 4 KB slot, the terminator's stores to zout sit in the
  * same 4K slot as its loads from the plane a few column quads ahead — a
  * 4K-alias stall worth +20..30% in place at 4096..16384, SEPARATE from the

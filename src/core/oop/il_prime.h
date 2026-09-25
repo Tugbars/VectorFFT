@@ -361,26 +361,6 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
     return p;
 }
 
-/* Front door: Rader preferred (shorter convolution; the split engine
- * measured it ~2x over Bluestein), Bluestein otherwise. ⚠ availability
- * preference — the measured per-cell pick belongs in wisdom. */
-/* The front door. Coverage (2026-08-27, gaps 1+2 filled):
- *   - PRIME N >= 5: Rader when the (N-1) inner is IL-expressible, else
- *     Bluestein. When BOTH construct, the pick is RACED (min-of-3
- *     alternated forward walks on scratch, winner kept) — availability
- *     preference retired per the never-heuristic law. Env override
- *     VFFT_ILPR_METHOD=rader|blue pins it (env never banks).
- *   - COMPOSITE N the pair/chain routes cannot express (a prime factor
- *     past the leaf set — 115 = 5*23, 202 = 2*101): Bluestein, which is
- *     valid for any N. These sizes were REFUSED EVERYWHERE before this
- *     (the split engine's dispatch also requires primality — verified
- *     2026-08-27), so this is the library's first serving of them.
- *   - N past 2048: the Bluestein inner rides the K=1 cascade (comb-
- *     order convolution, see _ilprime_inner_make) — band limited only
- *     by what the inner constructs.
- * The caller (route 7) still tries il2p/il3p FIRST; this door is only
- * reached when N has no pair/chain plan. Verdict is plan-local; banking
- * the method (and Bluestein's free M) is the wisdom campaign's. */
 static inline void _ilprime_exec_bluestein(const vfft_ilprime_plan_t *p,
                                            const double *zin, double *zout,
                                            int bwd);
@@ -399,9 +379,14 @@ static void _ilprime_arm_blue(void *v)
     _ilprime_arm_t *c = (_ilprime_arm_t *)v;
     _ilprime_exec_bluestein(c->pb, c->zi, c->zo, 0);
 }
-/* hint (2026-09-02, the banked method verdict): 0 = race as always,
- * 1 = Rader replayed from wisdom, 2 = Bluestein replayed from wisdom. The
- * env pin VFFT_ILPR_METHOD still wins over a hint (env beats wisdom). */
+/* The prime cell's create.
+ *   - PRIME N >= 5: Rader when its (N-1) inner builds, else Bluestein. When
+ *     BOTH construct, the pick is RACED (min-of-3 forward walks on scratch,
+ *     winner kept).
+ *   - COMPOSITE N (e.g. a prime factor past the leaf set: 115 = 5*23,
+ *     202 = 2*101): Bluestein, which is valid for any N.
+ * hint = the banked method verdict: 0 = race, 1 = Rader, 2 = Bluestein.
+ * VFFT_ILPR_METHOD=rader|blue pins it (env beats wisdom, never banks). */
 static inline vfft_ilprime_plan_t *vfft_ilprime_create_method(int N, int hint)
 {
     vfft_ilprime_plan_t *pr, *pb;

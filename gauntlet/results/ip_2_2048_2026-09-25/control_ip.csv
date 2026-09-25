@@ -21,3 +21,5 @@ N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
 4096,1,z:ilp,nat-ip,3825,4091,64.248,1.069,3.902e-16,ztt,1
 4096,1,z:ilp,nat-ip,3826,4103,64.237,1.072,3.902e-16,ztt,0
 4096,1,z:ilp,nat-ip,3829,4095,64.182,1.069,3.902e-16,ztt,1
+4096,1,z:ilp,nat-ip,3821,4093,64.320,1.071,3.902e-16,ztt,0
+4096,1,z:ilp,nat-ip,3834,4107,64.093,1.071,3.902e-16,ztt,1
