@@ -1,5 +1,5 @@
 /**
- * vfft_proto_dp_planner.h -- Recursive dynamic programming planner
+ * dp_planner.h -- Recursive dynamic programming planner
  *
  * Recursive decomposition with memoization.
  * Instead of trying all factorizations x orderings (exponential),
@@ -27,28 +27,6 @@
 #ifndef VFFT_PROTO_DP_PLANNER_H
 #define VFFT_PROTO_DP_PLANNER_H
 
-/* Wholesale port of src/core/dp_planner.h (lines 1-598; MEASURE wrapper
- * skipped — separate variant-cartesian workstream). Mechanical
- * stride_* → vfft_proto_* renames. Dependency wiring to prototype-core:
- *
- *   _stride_build_plan(N, K, factors, nf, reg)  →
- *     vfft_proto_plan_create(N, K, factors, NULL, nf, reg)
- *   stride_execute_fwd(plan, re, im)             →
- *     vfft_proto_execute_fwd(plan, re, im, K_eff)
- *   vfft_proto_plan_destroy(plan)                    →
- *     vfft_proto_plan_destroy(plan)
- *   (R > 0 && R < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[R])                  →
- *     (R > 0 && R < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[R] != NULL)
- *   STRIDE_ALIGNED_ALLOC(64, sz)                 →
- *     _vfft_proto_dp_aligned_alloc(64, sz)  (vfft_proto_posix_memalign wrapper)
- *   STRIDE_ALIGNED_FREE                          →
- *     vfft_proto_aligned_free
- *   FACT_MAX_STAGES                              →  STRIDE_MAX_STAGES
- *   permutation_list_t                           →  vfft_proto_perm_list_t
- *   stride_gen_permutations                      →  vfft_proto_gen_permutations
- *   now_ns                                       →  vfft_proto_now_ns
- */
-
 #include "plan.h"          /* stride_plan_t, vfft_proto_posix_memalign */
 #include "planner.h"       /* vfft_proto_plan_create, vfft_proto_plan_destroy */
 #include "executor.h"      /* vfft_proto_execute_fwd */
@@ -58,8 +36,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* now_ns + aligned-alloc helpers + permutation_list_t types — pulled
- * in from prototype-core's bits. */
+/* the timer, the aligned-alloc wrapper and the permutation types */
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -78,17 +55,15 @@ static inline double vfft_proto_now_ns(void) {
 }
 #endif
 
-/* Aligned-alloc wrapper. Production uses STRIDE_ALIGNED_ALLOC (returns
- * pointer); prototype-core's vfft_proto_posix_memalign uses POSIX shape
- * (returns int, writes pointer via out-arg). Adapt with a thin wrapper. */
+/* Pointer-returning wrapper over vfft_proto_posix_memalign (which returns
+ * int and writes the pointer through an out-arg). */
 static inline void *_vfft_proto_dp_aligned_alloc(size_t align, size_t size) {
     void *p = NULL;
     if (vfft_proto_posix_memalign(&p, align, size) != 0) return NULL;
     return p;
 }
 
-/* Factorization + permutation types — ported from exhaustive_plan.h via
- * forward references. The same types are used by exhaustive_plan.h. */
+/* Factorization + permutation types, shared with exhaustive_plan.h. */
 #define VFFT_PROTO_DP_MAX_STAGES STRIDE_MAX_STAGES
 #define VFFT_PROTO_DP_MAX_PERMS  720  /* 6! = max useful */
 
@@ -146,16 +121,15 @@ static inline void vfft_proto_gen_permutations(
 /* =====================================================================
  * DP CACHE
  *
- * Upgrade A (2026-04-26): cache key is now (N, K_eff), not just N.
+ * The cache key is (N, K_eff), not just N.
  *   K_eff is the *effective* batch size at this call site:
  *     K_eff = K_outer * product(prefix radixes consumed before reaching N).
  *   Two calls for the same N at different K_eff produce different cache
  *   slots, so a sub-plan winner found in one composition context cannot
- *   pollute lookups from a different context. This is the principled fix
- *   for the v1.1 "lock-in" failure mode where M's cache returned a
- *   factorization that was best as-isolated but suboptimal as-substage.
+ *   pollute lookups from a different context: a factorization best in
+ *   isolation can be suboptimal as a sub-stage.
  *
- * Upgrade C: believe_subplan_cost toggle (trust a cached sub-plan cost).
+ * believe_subplan_cost toggle (trust a cached sub-plan cost).
  *   When 1 (default, MEASURE-style): cache hit returns cached cost,
  *   no re-measurement.
  *   When 0 (PATIENT-style): cache hit returns the cached factorization
@@ -166,23 +140,21 @@ static inline void vfft_proto_gen_permutations(
 
 #define VFFT_PROTO_DP_CACHE_MAX 512
 
-/* Top-K-at-every-level (Upgrade D, 2026-04-27).
+/* Top-K-at-every-level.
  *
  * Each cache row stores up to VFFT_PROTO_DP_TOPK_MAX best plans for (N, K_eff).
  * The recursion exposes runners-up to outer levels so that a
  * factorization that lost the top-1 race in isolation can still be
- * composed under a different outer radix and win there.
+ * composed under a different outer radix and win there. Example: at
+ * N=32768 K=4, [4,32,64] is only a runner-up of sub-DP(8192, K_eff=16), yet
+ * under outer R=4 it gives [4,4,32,64], which beats the [64,8,64] a top-1
+ * recursion picks.
  *
- * Concretely fixes the N=32768 K=4 regression where outer R=4 got
- * sub-DP(8192, K_eff=16)'s top-1 plan but missed [4,32,64] (a runner-up
- * that, wrapped under R=4, would have produced [4,4,32,64] beating the
- * eventual [64,8,64] winner).
- *
- * Cost: |R| * VFFT_PROTO_DP_TOPK_MAX benches per cache-miss call (vs |R|), ~3x DP
- * overhead at K=3. Cache memory: VFFT_PROTO_DP_CACHE_MAX * VFFT_PROTO_DP_TOPK_MAX * sizeof(plan)
- * = ~120KB at K=3, bounded. */
+ * Cost: |R| * beam benches per cache-miss call (vs |R|), ~3x DP overhead at
+ * beam 3. Cache memory: VFFT_PROTO_DP_CACHE_MAX * VFFT_PROTO_DP_TOPK_MAX *
+ * sizeof(plan), bounded. */
 #ifndef VFFT_PROTO_DP_TOPK_MAX
-#define VFFT_PROTO_DP_TOPK_MAX 8   /* storage cap per (N,K_eff) row (was 3) */
+#define VFFT_PROTO_DP_TOPK_MAX 8   /* storage cap per (N,K_eff) row */
 #endif
 /* Runtime beam (ctx->beam) selects how many of the TOPK_MAX slots are actually
  * kept + propagated per node — the search BREADTH. Paired with
@@ -190,7 +162,7 @@ static inline void vfft_proto_gen_permutations(
  * PATIENT = wide beam + re-measure-all-top-K on every cache hit (the
  * K>=8 path). vfft_proto_dp_set_patient() flips both. */
 #ifndef VFFT_PROTO_DP_BEAM_MEASURE
-#define VFFT_PROTO_DP_BEAM_MEASURE 3   /* original behavior */
+#define VFFT_PROTO_DP_BEAM_MEASURE 3
 #endif
 #ifndef VFFT_PROTO_DP_BEAM_PATIENT
 #define VFFT_PROTO_DP_BEAM_PATIENT 8   /* <= VFFT_PROTO_DP_TOPK_MAX */
@@ -322,7 +294,7 @@ static int _vfft_proto_dp_subplan_cmp(const void *a, const void *b)
  *
  * Benchmarks a full plan at (N, K_eff) using the context's shared buffers.
  *
- * Upgrade B (2026-04-26): timing harness uses an adaptive iteration
+ * The timing harness uses an adaptive iteration
  * count: doubles `reps` until tmin*reps >= TIME_MIN, then takes best-of-N
  * across VFFT_PROTO_DP_TIME_REPEAT trials. Hard wall-clock cap per call.
  * Per-trial buffer reset (zero-init via copy from orig) keeps the
@@ -348,12 +320,11 @@ static int _vfft_proto_dp_subplan_cmp(const void *a, const void *b)
  * Sustained 100% core load during a single cell's search heats the core enough
  * that bench numbers drift up over the run; the package thermal envelope is
  * shared, so even core-pinned runs are affected. Either trigger arms pacing:
- *   - K   >  VFFT_PROTO_DP_PACE_K_THRESHOLD     : deep batches (the original
- *     K=256 minutes-long-search case).
+ *   - K   >  VFFT_PROTO_DP_PACE_K_THRESHOLD     : deep batches (a K=256
+ *     search runs for minutes).
  *   - N*K >= VFFT_PROTO_DP_PACE_TOTAL_THRESHOLD : large per-bench working set, so
  *     LOW-K big-N cells pace too (K=4, N>=8192). A ~700-candidate 16384 K=4
- *     coarse sweep heat-soaks the core enough to drift the coarse ranking;
- *     before this gate K=4 never paced (verified 2026-06-16).
+ *     coarse sweep heat-soaks the core enough to drift the coarse ranking.
  *
  * Sleep VFFT_PROTO_DP_PACE_MS ms every VFFT_PROTO_DP_PACE_EVERY benches to let the
  * core recover (PACE_EVERY auto-skips searches with < PACE_EVERY benches). ~5%
@@ -417,10 +388,8 @@ static double _vfft_proto_dp_bench(vfft_proto_dp_context_t *ctx, int N,
             return 1e18;
     }
 
-    /* Route through _stride_build_plan so that codelet-side plan_wisdom
-     * drives protocol selection (flat / t1s / DIT-log3) at plan time.
-     * The plan shape we measure here matches what stride_auto_plan and
-     * stride_wise_plan will produce at deploy time. */
+    /* Built with the default (T1S/DIT) variants: the DP searches the
+     * factorization axis only (measure.h adds variants and orientation). */
     stride_plan_t *plan = vfft_proto_plan_create(N, K_eff, factors, /*variants=*/NULL, nf, reg);
     if (!plan)
         return 1e18;
@@ -506,11 +475,8 @@ static const int VFFT_PROTO_DP_RADIXES[] = {
  * cache row stores up to VFFT_PROTO_DP_TOPK_MAX plans; subsequent calls return
  * min(cached_count, max_out) of them.
  *
- * BELIEVE_PCOST behavior: when 0, the top-ranked cached plan's cost is
- * re-measured fresh and the cache row is updated; runners-up are kept
- * with their original (stale) costs. This matches the production
- * intent — the BELIEVE flag affects winner selection variance, not the
- * shape of the runner-up list. */
+ * believe_subplan_cost == 0 (PATIENT): on a cache hit every cached plan is
+ * re-measured (best of PATIENT_REMEASURE_RUNS) and the row re-sorted. */
 static int _vfft_proto_dp_solve_topk(vfft_proto_dp_context_t *ctx, int N, size_t K_eff,
                           const vfft_proto_registry_t *reg,
                           vfft_proto_dp_subplan_t *out, int max_out)
@@ -649,10 +615,10 @@ static int _vfft_proto_dp_solve_topk(vfft_proto_dp_context_t *ctx, int N, size_t
 
     /* Keep the top `beam`. PATIENT dedups by MULTISET — keep the cheapest
      * ordering of each distinct factor-set so the beam carries DIVERSE
-     * multisets, not re-orderings of one (the 4096 K=32 lesson: beam=8
-     * collapsed to 2 multisets and missed 4x4x4x64). accum is cost-sorted, so
-     * the first time a multiset appears it's at its cheapest ordering. MEASURE
-     * keeps top-K plans verbatim (K=4 path unchanged). */
+     * multisets, not re-orderings of one (at 4096 K=32 an undeduped beam of 8
+     * held 2 multisets and missed 4x4x4x64). accum is cost-sorted, so the
+     * first time a multiset appears it's at its cheapest ordering. MEASURE
+     * keeps top-K plans verbatim. */
     vfft_proto_dp_subplan_t kept[VFFT_PROTO_DP_TOPK_MAX];
     int n_keep = 0;
     if (!ctx->believe_subplan_cost)
@@ -699,9 +665,7 @@ static int _vfft_proto_dp_solve_topk(vfft_proto_dp_context_t *ctx, int N, size_t
     return n_out;
 }
 
-/* Backward-compat wrapper: returns top-1 in the legacy (factors, nf, cost)
- * shape. All existing callers (vfft_proto_dp_plan, stride_dp_plan_joint_blocked,
- * etc.) keep working unchanged. */
+/* Top-1 of _vfft_proto_dp_solve_topk in the (factors, nf, cost) shape. */
 static double _vfft_proto_dp_solve(vfft_proto_dp_context_t *ctx, int N, size_t K_eff,
                         const vfft_proto_registry_t *reg,
                         int *out_factors, int *out_nf)
@@ -759,8 +723,8 @@ static double vfft_proto_dp_plan(vfft_proto_dp_context_t *ctx, int N,
 
     /* Phase 2: permute every UNIQUE retained multiset and bench all orderings.
      * The recursion only emits radix-first orderings; this recovers the rest.
-     * The D lever: MEASURE permutes its few survivors, PATIENT permutes all
-     * `beam` of them so a runner-up multiset can still win when reordered.
+     * MEASURE permutes its few survivors, PATIENT permutes all `beam` of
+     * them so a runner-up multiset can still win when reordered.
      * Dedup by sorted multiset so the same set isn't permuted twice. */
     double global_best = 1e18;
     best_fact->nfactors = tops[0].nfactors;
@@ -817,4 +781,4 @@ static double vfft_proto_dp_plan(vfft_proto_dp_context_t *ctx, int N,
     return global_best;
 }
 
-#endif /* STRIDE_DP_PLANNER_H */
+#endif /* VFFT_PROTO_DP_PLANNER_H */

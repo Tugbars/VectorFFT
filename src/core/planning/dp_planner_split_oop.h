@@ -1,6 +1,6 @@
 /* dp_planner_split_oop.h — the SPLIT-OOP-engine planner (kind-3 sp fields).
  *
- * NAMING (owner terminology, 2026-08-18). "K4" is the MATH view of this
+ * NAMING. "K4" is the MATH view of this
  * engine: split-layout SIMD has no intra-complex parallelism to exploit
  * without shuffles, so its 4 AVX2 lanes must hold 4 independent same-shaped
  * problems. This engine serves ONE caller transform per call by
@@ -18,8 +18,7 @@
  *                           (lanes = the caller's own transforms, K ≡ 0
  *                           mod 8; recursive memoized DP; also the INNER
  *                           tuner the CCOL axis below delegates to);
- *   dp_planner_il.h       — the single-transform INTERLEAVED engines
- *                           (il2p + zturn cascade);
+ *   dp_planner_il.h       — the single-transform INTERLEAVED engines;
  *   dp_planner_split_oop.h — this file: the single-transform SPLIT engine
  *                           (lane-batch of its own sub-problems;
  *                           natural-order; mono/3P/2PA/2PB/TWL/L3/CCOL).
@@ -30,35 +29,22 @@
  * winner selection, and banking through the SHIPPED writers. Bench
  * harnesses (build_tuned/benches/calibrate_k1.c) are THIN DRIVERS over
  * this header — they parse arguments and call in; they hold no planning
- * logic (owner directive 2026-08-18).
+ * logic.
  *
- * The split race here was MIGRATED verbatim from calibrate_k1.c v2
- * (candidate table, gate-before-time, reseed-per-burst, order-rotated
- * best-of-trials, split-IP-axis banking contract). What is NEW vs v2:
+ *   - Gate before timing, reseed per burst, order-rotated best-of-trials.
  *   - CCOL is a raced AXIS, not a single default arm: R1 ∈ {8,16,32,64}
  *     (the column engine needs K=R1 ≡ 0 mod 8), with the column plan's
- *     chain + per-stage variants tuned by the EXISTING proto DP
- *     (measure.h) pinned to DIT — the OOP boundary (oop_execute.h) is
- *     DIT-only, so DIF winners are structurally unusable here.
- *   - The inner (R2, K=R1) tunings are banked as ordinary spike-wisdom v8
- *     lines under the B1 write policy: NEVER overwrite a DIF-tuned line
- *     (that is the batched product's verdict; objectives differ); write
- *     only when the cell is absent or an existing DIT line is beaten.
- *   - A CCOL split winner's chain rides the kind-3 line (cc_chain token;
- *     vfft_il_dp_emit_wisdom carries it since the B2 signature change).
+ *     chain + per-stage variants proposed by the proto DP (measure.h)
+ *     pinned to DIT — the OOP boundary (oop_execute.h) is DIT-only, so DIF
+ *     winners are structurally unusable here.
+ *   - A CCOL split winner's chain and variants ride the kind-3 line
+ *     (cc_chain + cc_vars).
  *   - The correctness reference is O(N log N) (scalar radix-2, self-checked
  *     at 8 bins by direct summation) so cells ≥ 8192 gate in milliseconds;
  *     non-pow2 N falls back to the O(N^2) direct reference.
  *
- * Duplicate spike keys: the shipped spike file carries some duplicate
- * (N,K) rows from the 2026-07-23 era. Policy here (and for any reader):
- * FIRST match wins; a duplicate is logged, never silently rewritten.
- *
- * 🔮 FUTURE (owner-chartered 2026-08-18): this planner extends to ODD and
- * PRIME N — native split RADER and BLUESTEIN routes enter THIS enumeration
- * and race on the same kind-3 sp axis, banked through the same writers.
- * The %4-only pair filter and pow2 CCOL chains below are the CURRENT
- * scope, not the design boundary. Add those routes here, never in a bench.
+ * Scope: pairs with R1, R2 ≡ 0 mod 4 and CCOL chains. Odd/prime split
+ * routes (Rader, Bluestein) would join THIS enumeration, never a bench.
  */
 #ifndef VFFT_DP_PLANNER_SPLIT_OOP_H
 #define VFFT_DP_PLANNER_SPLIT_OOP_H
@@ -86,8 +72,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-/* QPC directly (same reason as the v2 harness: vfft_proto_now_ns is a C99
- * inline whose external definition is not guaranteed in every TU). */
+/* monotonic ns clock (QPC on Windows) */
 static double _sp_now_ns(void)
 {
 #ifdef _WIN32
@@ -102,7 +87,7 @@ static double _sp_now_ns(void)
 #endif
 }
 
-/* ── split-side routes (v2's table, unchanged) ────────────────────── */
+/* ── split-side routes ────────────────────────────────────────────── */
 enum { VFFT_SP_R_3P = 0, VFFT_SP_R_3P_IP, VFFT_SP_R_2PA_IP, VFFT_SP_R_2PB_IP,
        VFFT_SP_R_TWL_IP, VFFT_SP_R_3PL3_IP, VFFT_SP_R_2PAL3_IP,
        VFFT_SP_R_MONO, VFFT_SP_R_MONO_ALT, VFFT_SP_R_CCOL, VFFT_SP_R_NROUTES };
@@ -181,8 +166,7 @@ static void _sp_run_cand(_sp_bench_t *b, const vfft_sp_cand_t *c)
  * pow2: scalar radix-2 DIT (natural order out), SELF-CHECKED at 8 bins by
  * direct O(N) summation to 1e-9 — the dp_planner_il discipline. Any
  * self-check failure poisons the cell (returns -1) rather than gating
- * against a wrong reference. non-pow2: O(N^2) direct (future odd/prime
- * cells are small; log if used above 8192). */
+ * against a wrong reference. non-pow2: O(N^2) direct (logged above 8192). */
 static void _sp_ref_direct(const double *ar, const double *ai,
                            double *Rr, double *Ri, int N)
 {
@@ -276,38 +260,31 @@ static int _sp_gate(_sp_bench_t *b, vfft_sp_cand_t *c)
 }
 
 /* ── CCOL inner tuning: DIT-pinned proto DP at (R2, K=R1) ──────────
- * Fills chain_out/var_out (cc-encodable factors only), returns nf (0 = no
- * usable DIT plan). Applies the B1 spike write policy when wisdir != NULL. */
+ * Proposes DIT cc-encodable (chain, variants) recipes (0 = no usable DIT
+ * plan). */
 static int _sp_cc_encodable(const int *f, int nf)
 {
-    /* ASK THE CODEC, do not restate its rule. This used to hardcode
-       "pow2 in [4,64]", which was the codec's alphabet at the time -- so when
-       the alphabet gained 3/5/7/11 (2026-08-23) the planner would have gone on
-       refusing chains the wisdom line can now carry perfectly well. One source
-       of truth: if vfft_k1_cc_chain_encode can represent it, the racer may
-       propose it. */
+    /* ASK THE CODEC, do not restate its rule: if vfft_k1_cc_chain_encode can
+       represent a chain, the racer may propose it. */
     for (int s = 0; s < nf; s++)
         if (vfft_k1_cc_digit_of(f[s]) < 0)
             return 0;
     return nf >= 1 && nf <= VFFT_K1_CC_MAX_NF;
 }
 
-/* B2.2 (2026-08-18): the CCOL verdict is SELF-CONTAINED in the kind-3
- * line (cc_chain + cc_vars) — this planner neither reads nor writes the
- * in-place engine's spike file. One engine, one wisdom file (the MODEB
- * kind-2 precedent). Raced == served is structural: the banked line
- * carries exactly the chain+variants the raced candidate was built with,
- * and create rebuilds from that line alone. */
+/* The CCOL verdict is SELF-CONTAINED in the kind-3 line (cc_chain +
+ * cc_vars) — this planner neither reads nor writes the in-place engine's
+ * spike file. Raced == served is structural: the banked line carries
+ * exactly the chain+variants the raced candidate was built with, and
+ * create rebuilds from that line alone. */
 
-/* B2.3 (2026-08-19, owner's OoO-context principle): isolated sub-plan
- * timings make PROPOSALS, never decisions — prepending a stage changes the
- * program (L1/L3 residency, seam distances), so the inner DP's job is only
- * to nominate plausible recipes. It returns up to VFFT_SP_CC_PROPOSALS
- * distinct DIT cc-encodable (chain, variants) recipes per (R2, R1); every
- * one is built as a COMPLETE CCOL candidate and the end-to-end race
- * decides everything, including the chain. This is exactly how the split
- * machinery already works for scrambled in-place (measure.h's top-K →
- * refine → whole-plan bench). */
+/* Isolated sub-plan timings make PROPOSALS, never decisions — prepending a
+ * stage changes the program (L1/L3 residency, seam distances), so the inner
+ * DP only nominates plausible recipes: up to VFFT_SP_CC_PROPOSALS distinct
+ * DIT cc-encodable (chain, variants) recipes per (R2, R1). Every one is
+ * built as a COMPLETE CCOL candidate and the end-to-end race decides
+ * everything, including the chain (as measure.h's top-K → refine →
+ * whole-plan bench does). */
 #define VFFT_SP_CC_PROPOSALS 3
 
 typedef struct {
@@ -400,7 +377,7 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
                            int *win_ip, int *win_oop, int verbose)
 {
     int trials = rigor ? 5 : 3;
-    (void)wisdir; /* B2.2: spike decoupled — kept for signature stability */
+    (void)wisdir; /* unused: the CCOL verdict needs no spike file */
     _sp_bench_t b;
     memset(&b, 0, sizeof b);
     b.N = N;
@@ -418,7 +395,7 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
 
     int nc = 0, np = 0;
 
-    /* classic pairs + route twins (MIGRATED from v2, unchanged) */
+    /* classic pairs + route twins */
     for (int R2 = (N < 128 ? N : 128); R2 >= 4; R2--) {
         if (N % R2) continue;
         int R1 = N / R2;
@@ -455,7 +432,7 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
         }
     }
 
-    /* CCOL axis (NEW in B2): R1 ∈ {8,16,32,64}, inner-tuned chain+variants */
+    /* CCOL axis: R1 ∈ {8,16,32,64}, inner-proposed chain+variants */
     static const int CC_R1[] = { 8, 16, 32, 64 };
     for (int i = 0; i < 4; i++) {
         int R1 = CC_R1[i];
@@ -498,7 +475,7 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
         printf("# N=%d split candidates=%d gated=%d trials=%d reps=%d\n",
                N, nc, ngated, trials, reps);
 
-    /* order-rotated timing, reseed per burst (MIGRATED, unchanged) */
+    /* order-rotated timing, reseed per burst */
     for (int t = 0; t < trials; t++) {
         if (t) _sp_cachebust();
         for (int k = 0; k < nc; k++) {
@@ -537,7 +514,7 @@ static void vfft_sp_dp_release(vfft_oop_plan_t **plans, int np)
     for (int i = 0; i < np; i++) vfft_oop_plan_destroy(plans[i]);
 }
 
-/* ── B5 decode-gate comparator (production logic; gates are thin drivers).
+/* ── decode-gate comparator (the gates are thin drivers over it).
  * Does the BUILT plan serve exactly what the kind-3 CCOL line banked?
  * Chain: compared stage-for-stage against the decoded cc_chain. Variants:
  * cc_vars must decode against the same nf — create passes the decoded
@@ -562,23 +539,15 @@ static int vfft_sp_ccol_line_served(const vfft_oop_wisdom_entry_t *ke,
     return 1;
 }
 
-/* _sp_merge_bank + the k1_bank_tmp.txt intermediate: DELETED at the wisdom2
- * wave-1 flip (2026-08-20). oop_wisdom.txt is FROZEN — nothing may rewrite
- * it again. Verdicts bank straight into the wisdom2 store through the ONE
- * family constructor (dp_planner_il's emit → vw2_oop_bank_entry); its
- * dedup/replace policy lives on as the wisdom2 full-key upsert, and the
- * sub-2048 kind-4 wrong-slot filter is enforced by the family codec
- * (vw2_oop_rec_from_entry refuses those). See src/core/wisdom2/README.md. */
+/* Verdicts bank straight into the wisdom2 store through the family
+ * constructor (vw2_oop_bank_*): the full-key upsert is the dedup/replace
+ * policy, and the family codec refuses sub-2048 kind-4 wrong-slot rows
+ * (vw2_oop_rec_from_entry). The legacy oop_wisdom.txt is frozen: nothing
+ * writes it. See src/core/wisdom2/README.md. */
 
-/* ── the whole calibrate-and-record step for one cell ──────────────
- * Split race (this header) + IL race (delegated WHOLE to dp_planner_il)
- * + kind-3/kind-4 banking into the wisdom2 store at <wisdir>. Returns
- * verdicts banked, or -1 on a poisoned cell. */
-/* The SPLIT library's own wisdom row (TWO LIBRARIES — owner's law,
- * design_contracts.md section 2, 2026-09-09): the lay=split kind-3 row for
- * the K=1 split verdict, written here and nowhere else. Until 2026-09-09 this
- * block lived inside dp_planner_il.h's emitter, which took the split verdict
- * as arguments — the two libraries met in one call and one calibrator. */
+/* The SPLIT library's own wisdom row: the lay=split kind-3 row for the K=1
+ * split verdict, written here and nowhere else (SPLIT and IL are two
+ * libraries). */
 static int vfft_sp_dp_emit_wisdom(vw2_store_t *st, int N, int sp_route,
                                   int sp_R1, int sp_R2, int sp_cc_chain,
                                   int sp_cc_vars, double sp_ns)
