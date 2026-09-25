@@ -1,9 +1,8 @@
 /**
  * fftnd_r2c.h -- rank-general (2..4D) real-to-complex / complex-to-real,
- * reducing along the LAST axis (the usual convention). Functional-completeness
- * port of the fft2d_r2c architecture into the fftnd taxonomy; it inherits
- * the split-layout real-FFT tax knowingly (the fused real codelets are a
- * separate, deprioritized workstream).
+ * reducing along the LAST axis (the usual convention). A port of the
+ * fft2d_r2c architecture into the fftnd taxonomy; it inherits the
+ * split-layout real-FFT tax.
  *
  *   Forward:  N0 x .. x N_{d-1} reals -> N0 x .. x N_{d-2} x (N_{d-1}/2+1)
  *     Phase 1: tiled R2C row pass over R = prod(N_0..N_{d-2}) rows --
@@ -14,23 +13,19 @@
  *     Phase 2: c2c along axes 0..d-2 on the padded cube -- axis m is a
  *              loop of O_m native calls at K'_m = (prod_{m<i<d-1} N_i) *
  *              K_pad, i.e. every c2c axis here is "middle-shaped" in the
- *              fftnd taxonomy (K' >= K_pad >= 4, always lane-batched;
+ *              fftnd taxonomy (K' >= K_pad >= 8, always lane-batched;
  *              no tiled pass needed). Outer-parallel.
  *     Phase 3: unpack padded -> user packed (row stride Nd/2+1).
  *
- *   Backward: pack user -> padded; c2c inverse axes d-2..0; tiled C2R row
- *     pass padded -> user real. The 2D in-place reverse-tile-order hazard
- *     does not arise: the c2r gather reads internal padded scratch while
- *     the scatter writes the user buffer (disjoint), same argument as the
- *     2D MT path's note.
+ *   Backward: pack user -> padded; c2c inverse axes 0..d-2 (the order of
+ *     the walk below); tiled C2R row pass padded -> user real. The 2D
+ *     in-place reverse-tile-order hazard does not arise: the c2r gather
+ *     reads internal padded scratch while the scatter writes the user buffer
+ *     (disjoint), same argument as the 2D MT path's note.
  *
- * ORDER CONTRACT (differs from fft2d_r2c, matches fftnd): the c2c axes are
- * emitted SCRAMBLED -- no per-axis unscramble, no perm bookkeeping.
- * Roundtrip is definitive (c2r(r2c(x)) = Ntotal * x), the half axis f is
- * natural, and per-bin addressing on the outer axes goes through the
- * chain-free phase-probe maps (fftnd_natorder.h's technique; see
- * fftnd_r2c_natorder_maps below, which probes THIS plan with real
- * impulses).
+ * ORDER CONTRACT: natural on every axis. The half axis f is natural; a c2c
+ * axis whose plan scrambles is naturalized by a cycle pass (nat_ax, detected
+ * at build by an impulse probe). Roundtrip c2r(r2c(x)) = Ntotal * x.
  *
  * Constraints: rank 2..FFTND_MAX_RANK, N[last] EVEN (the 1D stride-r2c odd
  * path exists but is not plumbed here), N[m] >= 2. User buffers: re holds
@@ -42,11 +37,10 @@
 #include <time.h> /* clock_gettime for the adoption A/B timing (win: mingw provides it) */
 #include "fftnd.h"                /* taxonomy helpers + include set */
 #include "r2c.h"                  /* stride_r2c_plan + worker shims */
-#include "il_layout.h"
-#include "../fft2d/fft2d_r2c.h"
+#include "il_layout.h"            /* vfft_il2sp/sp2il (interleaved complex out) */
+#include "../fft2d/fft2d_r2c.h"   /* strided r2c row engines, resolvers, MT run wrappers */
 #include "../natorder/natorder_perm.h" /* mk_cycles for axis naturalization */
-#include "../../planning/adopt_wisdom.h"  /* §6a49/Q3 */   /* §6a47/Q1: strided r2c row engines,
-                                     resolvers, MT run wrappers */            /* vfft_il2sp/sp2il (interleaved complex out) */
+#include "../../planning/adopt_wisdom.h"  /* the strided-row adoption record */
 #ifdef VFFT_USE_JIT
 #include "jit_runtime.h"          /* baked/JIT resolve: c2c axes + row inner */
 #endif
@@ -60,7 +54,7 @@ typedef struct {
     int N[FFTND_MAX_RANK];
     size_t R;                     /* rows = prod(N[0..rank-2])            */
     size_t hp1;                   /* N[last]/2 + 1                        */
-    size_t K_pad;                 /* roundup4(hp1): padded row stride     */
+    size_t K_pad;                 /* roundup8(hp1): padded row stride     */
     size_t B;                     /* row tile height                      */
     size_t total_real;            /* prod(N[])                            */
 
@@ -78,13 +72,13 @@ typedef struct {
     size_t tile_cplx_sz;          /* hp1 * B                              */
     double *scratch_re, *scratch_im;
     double *pad_re, *pad_im;      /* R * K_pad each                       */
-    /* §6a47/Q1: strided mono row engines for the last-dim pass (family
-     * 2/4 via the fft2d resolvers; MT via the _run wrappers, BIT-inv). */
+    /* strided mono row engines for the last-dim pass (family 2/4 via the
+     * fft2d resolvers; MT via the _run wrappers, BIT-inv). */
     _f2d_sr2c_fwd_fn snd_fwd;
     _f2d_sr2c_bwd_fn snd_bwd;
     int snd_blk;
     double *snd_tail_scr;
-    /* §6a47b: per-axis naturalization (scramble-prone odd/log3 axes). NULL
+    /* per-axis naturalization (scramble-prone odd/log3 axes). NULL
      * = axis already natural. Detected EMPIRICALLY at build (impulse probe,
      * angle-identified bins, bijection-verified — fail-safe: any anomaly
      * fails the build rather than ship a scrambled spectrum). */
@@ -94,7 +88,7 @@ typedef struct {
                                      pairs z[2f],z[2f+1] at packed row
                                      stride hp1 -- the pack/unpack sweeps
                                      already copy every row, so the layout
-                                     costs nothing extra (v1.1 P1a). */
+                                     costs nothing extra. */
 } stride_fftnd_r2c_data_t;
 
 static inline double *_fndr_sre(stride_fftnd_r2c_data_t *d, int t) {
@@ -342,13 +336,10 @@ static void _fndr_unpack(stride_fftnd_r2c_data_t *d,
  * EXECUTE / DESTROY / BUILD
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── THE ND real walk, owned here and nowhere else (2026-09-02: the
- * driver used to hand-inline this sequence and the two copies diverged in
- * backward axis order — the driver walked axes FORWARD, this file walked
- * them in reverse. Separable per-axis inverses commute mathematically but
- * NOT bitwise (axis order changes rounding), so the DRIVER's live order is
- * canonical: it is what has always shipped. ndreal_bits_probe verified the
- * unification byte-identical on 3D and 4D r2c+c2r cells.) */
+/* ── THE ND real walk, owned here and nowhere else. The backward walks the
+ * c2c axes FORWARD (0..d-2): separable per-axis inverses commute
+ * mathematically but NOT bitwise (axis order changes rounding), and this is
+ * the order that has always shipped. */
 
 /* fwd, OOP: `in` holds Ntotal reals -> (out_re, out_im) packed bins. */
 static void _fndr_execute_fwd_oop(stride_fftnd_r2c_data_t *d,
@@ -422,7 +413,7 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
     if (d->total_real > (size_t)0x7fffffff) { free(d); return NULL; }
     d->R = d->total_real / (size_t)N[rank - 1];
     d->hp1 = (size_t)(N[rank - 1] / 2 + 1);
-    d->K_pad = ((d->hp1 + 7) / 8) * 8;  /* §6a54: pad-to-8 — every axis Kc becomes a multiple of 8 (products include K_pad), all axis passes full-width */
+    d->K_pad = ((d->hp1 + 7) / 8) * 8;  /* pad-to-8 — every axis Kc becomes a multiple of 8 (products include K_pad), all axis passes full-width */
     d->B = 8;
     if (d->B > d->R) d->B = d->R;
     if (d->B < 2) d->B = 2;
@@ -468,7 +459,7 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
         }
     }
 #endif
-    /* §6a47b: empirical axis-order detection. Impulse at row 1, run the
+    /* empirical axis-order detection. Impulse at row 1, run the
      * axis fwd once, identify each output row's natural bin from its unit-
      * circle angle, verify bijection. Identity => natural (no list). */
     {
@@ -517,11 +508,12 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
         if (det_fail) { _fndr_destroy(d); return NULL; }
     }
 
-    /* §6a47/Q1: measured adoption of the strided row engines (last dim).
-     * Arms toggle snd_fwd/snd_bwd and call the SAME _fndr_rows_mt entry —
-     * strided arm MT-faithful via the wrappers, tiled arm the production
-     * path. Hysteresis >5%. Eligibility: R %% 8 == 0 and last-dim coverage
-     * (pairs-aware resolve — avx512 editions need pairs %% 8). */
+    /* measured adoption of the strided row engines (last dim). Arms toggle
+     * snd_fwd/snd_bwd and call the SAME _fndr_rows_mt entry — strided arm
+     * MT-faithful via the wrappers, tiled arm the production path.
+     * Hysteresis >5%. Eligibility: R >= 8 (a tail scratch covers R not a
+     * multiple of 2*blk) and last-dim coverage (pairs-aware resolve —
+     * avx512 editions need pairs % 8). */
     if (d->R >= 8) {
         const int NL_ = d->N[d->rank - 1];
         _f2d_sr2c_fwd_fn sf_ = _f2d_sr2c_fwd_resolve(NL_, &d->snd_blk);

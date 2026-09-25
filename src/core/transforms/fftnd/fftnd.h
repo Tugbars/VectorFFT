@@ -198,8 +198,8 @@ static void _fftnd_axis_trampoline(void *arg) {
 }
 
 /* Windowed variant: MT over outer indices [o_lo, o_hi) of axis m only.
- * The global pass is the full-window case; the starved fused path (§ fused
- * MT below) uses per-block windows. Item decomposition is hierarchical
+ * The global pass is the full-window case; the starved fused path (the
+ * fused MT below) uses per-block windows. Item decomposition is hierarchical
  * (outer x lane-range) so small windows still fill T. */
 static void _fftnd_axis_mt_win(stride_fftnd_data_t *d, int m,
                                double *re, double *im,
@@ -218,7 +218,7 @@ static void _fftnd_axis_mt_win(stride_fftnd_data_t *d, int m,
     /* CEIL, not floor: _fftnd_axis_item_range covers lanes
      * [li*Ls, min(li*Ls+Ls, Km)) for li < ls, i.e. min(ls*Ls, Km) in
      * total, so ls*Ls < Km silently drops the top lanes (Km=17, ls=2
-     * gave Ls=8 and covered 16). Same defect as the real dispatchers. */
+     * would give Ls=8 and cover 16). */
     size_t Ls = ls > 1 ? ((((Km + ls - 1) / ls) + 7) & ~(size_t)7) : Km;
     if (Ls == 0) { ls = 1; Ls = Km; }
     size_t total = O * ls;
@@ -297,13 +297,12 @@ static void _fftnd_tiled_range(stride_fftnd_data_t *d,
         if (is_bwd && d->nat_col_list)
             vfft_natorder_cycle_pass_inv(sr, si, B, d->nat_col_list, rtmp);
 
-        /* §6a60 measured guard: full-B ONLY at this_B == B-1 (the hybrid's
+        /* Measured guard: full-B ONLY at this_B == B-1 (the hybrid's
          * SSE2+scalar straggler on B-1 lanes costs more than one wasted
          * full-width lane: fullB -11..-32% there). Everywhere else the
          * hybrid at this_B wins outright (fullB +61..+819% at small
-         * remainders) — fftnd's original choice was right; the guard just
-         * captures the one measured edge. Slack lanes are stale scratch
-         * (lane-independent, discarded at scatter). */
+         * remainders). Slack lanes are stale scratch (lane-independent,
+         * discarded at scatter). */
         size_t run_B = (B - this_B <= 1) ? B : this_B;
         if (rf)
             rf((stride_plan_t *)pr, sr, si, run_B, pr->K, 0);

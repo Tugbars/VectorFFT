@@ -1,7 +1,7 @@
 /**
- * fftnd_il.h — the rank-N INTERLEAVED c2c tier (2026-09-06; design of
- * record: docs/roadmap/fftnd_il_design.md). Rank 3 today; rank 4 by the
- * same composition.
+ * fftnd_il.h — the rank-N INTERLEAVED c2c tier (design of record:
+ * docs/roadmap/fftnd_il_design.md). Rank 3; rank 4 would compose the same
+ * way.
  *
  * NOT the split fftnd.h: different layout, different axis model, shares
  * nothing with it but the directory. Interleaved has no lane axis, so the
@@ -16,8 +16,7 @@
  *   axis 1 : a column pass over each of the N1 planes of N2 rows x N3.
  *   axis 2 : the row pass over N1*N2 rows.
  *
- * THE STRUCTURE IS A RACED ARM (owner 2026-09-06, "only racing both to each
- * other can tell"), never an architectural default:
+ * THE STRUCTURE IS A RACED ARM, never an architectural default:
  *   arm 1, the RECURSION : axis 0 wide, then a plain 2D IL c2c CHILD plan
  *            (its own (N2,N3) wisdom cell) executed per plane — axis 1
  *            and the rows with every 2D verdict (chain, forms, band, row
@@ -26,7 +25,7 @@
  *            axis-1 column pass (its chain raced in the 3D context, the
  *            same build function) and the row pass over the plane's rows.
  *
- * THE AXIS-0 BANDED WALK (the 2D tier's wl, E1.2, at rank 3): a "row" of
+ * THE AXIS-0 BANDED WALK (the 2D tier's wl, at rank 3): a "row" of
  * the virtual plane IS a plane of the cube, so a band of wl rows is a
  * band of wl planes. fwd = the wide prefix stages 0..cut-1 over the cube,
  * then per band the stage SUFFIX depth-first followed at once by the
@@ -43,7 +42,7 @@
  * verdicts live on the child's cell. VFFT_ILND_ARM=1|2 and VFFT_ILND_WL=w
  * pin for a probe and never bank.
  *
- * THE NATURAL CLASS (2026-09-07; docs/design/3D_natural_il_design.md): its
+ * THE NATURAL CLASS (docs/design/3D_natural_il_design.md): its
  * own ord=nat cell. Axis 0 stays the SCRAMBLED pass (in place, banded,
  * threaded as above), so after it position q holds the plane whose
  * natural index is natp[q] (the chain's digit reversal — the very table
@@ -60,11 +59,11 @@
  * axis-0 backward in place. No scratch cube, no extra sweep; the cost is
  * cold destination writes and one plane copy per cycle. Both placements.
  *
- * MULTITHREADING (the 2D tier's INC-C ported, 2026-09-07): two partition
- * arms, both pure loop restrictions of the serving walk (no arithmetic
- * change => MT == ST bitwise, gated by the probe):
- *   BAND arm  (wl > 0): the wide prefix stages digit-split (INC-3b: whole
- *             planes per digit, one dispatch per stage), then workers take
+ * MULTITHREADING (the 2D tier's, at rank 3): two partition arms, both pure
+ * loop restrictions of the serving walk (no arithmetic change => MT == ST
+ * bitwise, gated by the probe):
+ *   BAND arm  (wl > 0): the wide prefix stages digit-split (whole planes
+ *             per digit, one dispatch per stage), then workers take
  *             disjoint BANDS — each band = suffix stages + the fused
  *             per-plane structure, exchange-free (the planes a worker
  *             finishes are the planes it just produced);
@@ -107,8 +106,7 @@
  *
  * Contracts: C2C, rank 3, howmany == 1, either placement (one plan, one
  * wisdom row per order cell: every pass is alias-tolerant), every order.
- * Real and rank 4 follow in later phases — refused loudly until then,
- * never bridged.
+ * Real and rank 4 are refused loudly, never bridged.
  *
  * POSITION IN vfft.c IS LOAD-BEARING: after il2d_tier.h (the column build
  * and execute, _tc_clone_equiv's declaration), k1_commit.h (support/race.h)
@@ -173,8 +171,8 @@ typedef struct vfft_ilnd_s {
     double *buf;                  /* one plane: the serial walker's buffer */
     double **bufw;                /* mt_t - 1 planes: the workers' buffers */
     int nbufw;
-    /* THE STRIP FORM (nf = 2, ilnd_natural_strip_design.md): axis 0 in
-     * cache-resident column strips, natural order out, no move pass */
+    /* THE STRIP FORM (nf = 2, docs/design/3D_natural_il_design.md): axis 0
+     * in cache-resident column strips, natural order out, no move pass */
     int nf;                       /* the natural FORM: 1 cycle (the walks above), 2 strip */
     int nsw;                      /* strip width in columns (the raced parameter) */
     double **sscr;                /* nsscr strip scratches of N[0] * nsw complexes, one per worker (tid = slot) */
@@ -204,7 +202,7 @@ static void _ilnd_plane_t(const vfft_ilnd_t *d, int tid, vfft_dir_t dir,
              * cycle position, consumed), backward the destination (being
              * produced) -- so the natural axis-1 pass runs its pre-leaf stages
              * THERE and natscr serves only the fixed points: one plane sweep
-             * fewer per plane, the same arithmetic (2026-09-15) */
+             * fewer per plane, the same arithmetic */
             _il2d_col_pass_nat(src, dst, ax1->N, rn, ax1->nst, ax1->R, ax1->L,
                                rev ? ax1->b : ax1->f, rev ? ax1->tb : ax1->tf, rev,
                                ax1->natperm, rev ? dst : (double *)src, NULL);
@@ -246,7 +244,7 @@ static void _ilnd_nat_cycles(const vfft_ilnd_t *d, int tid, vfft_dir_t dir, doub
     }
 }
 
-/* ── the natural class's STRIP form (ilnd_natural_strip_design.md): axis 0
+/* ── the natural class's STRIP form (3D_natural_il_design.md): axis 0
  * over columns [k_lo, k_hi) of the virtual plane in strips of nsw columns,
  * each strip through its worker's strip scratch: natural order out, in
  * place by construction, no move pass. ────────────────────────────────── */
@@ -518,7 +516,7 @@ static int _ilnd_mt_axis0(const vfft_ilnd_t *d, vfft_dir_t dir, const double *sr
     }
     {
         const int Ts = (rn < (size_t)T ? (int)rn : T);
-        if (Ts >= 2 && !c->tpc)   /* a tpc axis 0 runs serial: one 1D plan (2026-09-24) */
+        if (Ts >= 2 && !c->tpc)   /* a tpc axis 0 runs serial: one 1D plan */
             _ilnd_mt_phase(d, src, dst, dir, 1, rn, Ts);
         else
             _il2d_col_exec(c, src, dst, rev);
@@ -1031,7 +1029,7 @@ static int _ilnd_nat_bind(vfft_ilnd_t *d, int T)
  * divides wl (the tcut law: the width is the INPUT, the cut is DERIVED);
  * -1 = illegal (stay unbanded) ─────────────────────────────────────── */
 static int _ilnd_wl_cut(const vfft_ilcol_t *c, int wl)
-{   /* the tcut law lives in planning/policy.h (R3, 2026-09-17) */
+{   /* the tcut law lives in planning/policy.h (R3) */
     return vfft_policy_il2d_wl_cut(c->N, c->nst, c->L, wl);
 }
 static void _ilnd_apply_wl(vfft_ilcol_t *c, int wl)
@@ -1041,7 +1039,7 @@ static void _ilnd_apply_wl(vfft_ilcol_t *c, int wl)
     c->cut = cut >= 0 ? cut : 0;
     c->tfuse = (cut >= 0 && wl > 0);
 }
-/* the width pool (the 2D axis race's, E1.2): 0 + WPOOL filtered by
+/* the width pool (the 2D axis race's): 0 + WPOOL filtered by
  * legality + the chain's own stage spans gated by live L2 residency of
  * a band (w * plane * 16 <= L2) — candidates, never defaults */
 static int _ilnd_wl_pool(const vfft_ilcol_t *c, int *out, int max)
@@ -1119,11 +1117,10 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
     rc.nthreads = 1;
     rc.wisdom = cfg->wisdom;
     rc.wisdom_write = cfg->wisdom_write;
-    rc.recalibrate = cfg->recalibrate;   /* the twin _ilnd_build_child has always
-                                          * carried it; this one did not, so a
-                                          * recalibrate 3D IL create re-raced the
-                                          * parent and replayed the flat child's
-                                          * row (2026-09-16) */
+    rc.recalibrate = cfg->recalibrate;   /* as _ilnd_build_child: without it a
+                                          * recalibrate 3D IL create re-races the
+                                          * parent but replays the flat child's
+                                          * row */
     d->row = (struct vfft_plan_s *)vfft_create(&rc);
     if (!d->row)
     {
@@ -1215,7 +1212,7 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
     }
 #undef ILND_ARM
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (mt_measurement_parking_trap) */
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
         vfft_race_run(&proto, arms, na, ns);
     }
     for (a = 1; a < na; a++)
@@ -1259,7 +1256,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     const char *wpin = getenv("VFFT_ILND_WL");
     const char *mpin = getenv("VFFT_ILND_MT");
     (void)reg;
-    /* IN PLACE (2026-09-07): the same plan and the same wisdom row serve
+    /* IN PLACE: the same plan and the same wisdom row serve
      * both placements — every pass is the 2D tier's alias-tolerant kind
      * (axis 0 src -> dst with src == dst, the bands and the structure in
      * place by construction, the strips per column; the natural plane pass
@@ -1289,10 +1286,9 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     d->mt_t = nthr;
     d->nat = nat;
     /* the column build's Bluestein inner-chain provider reads this create.
-     * The HOOK too (2026-09-17): only the 2D create installed it, so a 3D
-     * cell whose axis is prime got its M chain from the greedy builder --
-     * or from the raced provider, depending on whether a 2D create had run
-     * earlier in the process. Now it is raced here as well. */
+     * The HOOK too: without it a 3D cell whose axis is prime would get its
+     * M chain from the greedy builder or from the raced provider, depending
+     * on whether a 2D create ran earlier in the process. */
     _il2d_blu_ctx.W = W;
     _il2d_blu_ctx.cfg = cfg;
     _il2d_blu_chain_hook = _il2d_blu_m_chain;
@@ -1375,7 +1371,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         if (want1 + want2 == 2 && nsarm == 1)
             s_src = 4;
     }
-    /* the FORM candidates of the natural class (ilnd_natural_strip_design.md):
+    /* the FORM candidates of the natural class (3D_natural_il_design.md):
      * env pin > banked nf= > both; the strip form needs a permuting chain and
      * the strip scratches, and carries its own width axis (env pin > banked
      * nsw= > the pool) */
