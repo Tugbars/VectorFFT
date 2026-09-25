@@ -1,7 +1,7 @@
-/* wisdom2_selftest.h — the wave-0 unit gates for the wisdom2 module
- * (README §7, campaign item 0.8), OWNED BY THE MODULE per the thin-driver
- * law: bench files only make calls; every scenario, assertion, and helper
- * lives here beside the code it gates. Zero timing anywhere.
+/* wisdom2_selftest.h — the unit gates for the wisdom2 module, OWNED BY THE
+ * MODULE (the thin-driver law): bench files only make calls; every
+ * scenario, assertion, and helper lives here beside the code it gates.
+ * Zero timing anywhere.
  *
  * Entry point: vw2_g0_selftest(scratch_dir) -> number of failures (0 = ALL
  * PASS). The scratch dir is created if missing and wiped of wisdom2_*.txt.
@@ -114,8 +114,8 @@ static inline int vw2_g0_selftest(const char *dir)
               "arms", 2, "2", "src", 2, "race", "date", 2, "2026-08-19", NULL);
     VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "bank oop-homed nat record");
     /* an ord=scr/ip row so the STRIDE shard file also exists in T1 (the
-     * nat/ip record above homes in the OOP shard since the 2026-09-02
-     * re-route: order verdicts live with the engine wisdom) */
+     * nat/ip record above homes in the OOP shard: order verdicts live with
+     * the engine wisdom) */
     r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 4096, 8, VW2_ORD_SCR, VW2_PL_IP),
               "eng", 1, "stride", "chain", 1, "8.8.8.8",
               "ran", 2, "8", "ns", 2, "9000.0", "metric", 2, "fwd1", "units", 2, "ns",
@@ -161,7 +161,7 @@ static inline int vw2_g0_selftest(const char *dir)
 
     /* ---- T2: idempotent re-save (equal record replaces, bytes stable) -- */
     printf("T2 idempotency:\n");
-    /* the nat/ip record homes in the OOP shard (2026-09-02 re-route) */
+    /* the nat/ip record homes in the OOP shard */
     snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_OOP]);
     vw2__st_slurp(path, buf, sizeof buf);
     r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 4096, 1, VW2_ORD_NAT, VW2_PL_IP),
@@ -187,7 +187,7 @@ static inline int vw2_g0_selftest(const char *dir)
     /* ---- T4: carry-unknown-forward (tokens, records, directives) ------- */
     printf("T4 carry-unknown:\n");
     /* T4's records are ord=scr/ip -> the STRIDE shard is their home (path
-     * still points at the OOP file from T2 after the 2026-09-02 re-route) */
+     * still points at the OOP file from T2) */
     snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_STRIDE]);
     {
         FILE *f = fopen(path, "ab");
@@ -328,7 +328,7 @@ static inline int vw2_g0_selftest(const char *dir)
     /* ---- T9: cross-metric refusal ---------------------------------------- */
     printf("T9 cross-metric:\n");
     /* re-establish the fwd1 incumbent at this key: it homes in the OOP
-     * shard since the 2026-09-02 re-route, and T5 deleted that file */
+     * shard, and T5 deleted that file */
     r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 4096, 1, VW2_ORD_NAT, VW2_PL_IP),
               "mode", 1, "zcasc",
               "ran", 2, "1", "ns", 2, "8891.0", "metric", 2, "fwd1", "units", 2, "ns",
@@ -486,6 +486,9 @@ static inline int vw2_g0_selftest(const char *dir)
     VW2_ST_CHECK(strstr(buf, "t=dct1 n=257") != NULL, "trig routed to the stride shard");
 
     /* ---- T17: unknown KEY token => invisible + opaque carry ------------------- */
+    /* (nthreads= is a KNOWN key axis since v1.3: the row below parses as an
+     * nthreads=8 row — invisible to the one-thread lookup, re-emitted by the
+     * key formatter — so the opaque-carry path is not exercised here) */
     printf("T17 unknown-key-token:\n");
     {
         FILE *f = fopen(path, "ab");

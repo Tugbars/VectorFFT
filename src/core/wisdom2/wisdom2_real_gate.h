@@ -1,4 +1,4 @@
-/* wisdom2_real_gate.h — the wave-2 flip gate for the r2c/c2r ROUTE family.
+/* wisdom2_real_gate.h — the store gate for the r2c/c2r ROUTE family.
  *
  * Acceptance is plan-equivalence, ZERO timing: every check below is a store
  * operation, so the gate is deterministic and safe on a noisy machine.
@@ -16,7 +16,7 @@
  *   5 REFUSALS         junk cells and cross-transform routes are refused at
  *                      the codec, not silently accepted.
  *
- * 🔴 Point at a SCRATCH dir. The gate BANKS and SAVES.
+ * Point at a SCRATCH dir. The gate BANKS and SAVES.
  */
 #ifndef VFFT_WISDOM2_REAL_GATE_H
 #define VFFT_WISDOM2_REAL_GATE_H
@@ -139,7 +139,7 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
                     "a zr2c cell must NOT read as a route verdict");
         VW2RG_CHECK(vw2_real_cell_taken(&st, VW2_T_R2C, 1024, 1, VW2_PL_OOP) == 1,
                     "a zr2c cell must report as taken");
-        /* THE q=1 LAW (2026-08-25): the route race is a lane-batch race
+        /* THE q=1 LAW: the route race is a lane-batch race
          * and the split engine's executed batch is never 1, so a q=1 route
          * bank is REFUSED loudly (-1) BEFORE any ownership check -- q=1
          * real cells belong to the zr2c verdicts alone. */
@@ -161,7 +161,7 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
     }
 
     /* ---- 3b. the SYMMETRIC direction: a route cell must survive zr2c ----
-     * Since the q=1 law (2026-08-25) no SHIPPED writer can produce an
+     * Under the q=1 law no SHIPPED writer can produce an
      * eng=route row at q=1 -- the byte-identical-key collision is
      * unreachable from the writers, and the EOWNED fence is a BACKSTOP
      * against hand-written or foreign-vintage rows. The gate therefore
@@ -257,13 +257,11 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
         fails++;
     }
     /* ---- 7. KIND-5 CODEC: the four-slot fan-in ------------------------
-     * 🔴 The route bit is the ONLY thing kind-5 wisdom stores, and it had
-     * no coverage in either direction: the bank/lookup pair was referenced
-     * only from vfft.c and the migrator's verify leg. The codec reassembles
-     * one packed kv from FOUR independent per-slot records, so a mis-keyed
-     * slot (c2r/ip answering an r2c/oop query) serves the wrong route with no
-     * symptom -- and because both routes are correctness-gated, the only
-     * observable consequence is speed, which nothing measures either.
+     * The route bit is the ONLY thing kind-5 wisdom stores. The codec
+     * reassembles one packed kv from FOUR independent per-slot records, so
+     * a mis-keyed slot (c2r/ip answering an r2c/oop query) serves the wrong
+     * route with no symptom -- both routes are correctness-gated, so the
+     * only observable consequence is speed.
      *
      * Distinct routes per slot on purpose: an all-same pattern would pass
      * even if every slot collapsed onto one record. */
@@ -288,10 +286,9 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
         }
         VW2RG_CHECK(vw2_oop_lookup_zr2c(&st, 8192, &kv) == 1,
                     "kind-5 verdict lost across save/reopen");
-        /* 🔴 kv_get returns the ENCODED field, not the route: kv_set stores
+        /* kv_get returns the ENCODED field, not the route: kv_set stores
          * (route ? 2 : 1) so that 0 can mean UNMEASURED. Asserting against
-         * the raw route is an off-by-one that reads as a mis-keyed slot --
-         * pinned here precisely so the next reader does not repeat it. */
+         * the raw route is an off-by-one that reads as a mis-keyed slot. */
         for (slot = 0; slot < 4; slot++) {
             got = vfft_zr2c_kv_get(kv, slot);
             VW2RG_CHECK(got == (want[slot] ? 2 : 1),

@@ -1,12 +1,9 @@
 /* wisdom2_oop_reader.h — the READ side of the oop family: resolves wisdom2
  * records back into the EXACT legacy entry struct (vfft_oop_wisdom_entry_t)
- * the existing plan constructors consume. The constructors never change —
- * only the storage seam swaps (the decode-into-existing-structs move).
- * This is what vfft.c's create path calls at the wave-1 flip, mirroring the
- * legacy lookups one for one:
+ * the plan constructors consume (decode into the existing structs). The
+ * create path calls these, mirroring the legacy lookups one for one:
  *
  *   legacy vfft_oop_wisdom_lookup_k1(N)      -> vw2_oop_lookup_k1
- *   legacy vfft_oop_wisdom_lookup_zsplit(N)  -> vw2_oop_lookup_zsplit
  *   legacy vfft_oop_wisdom_lookup_ord(N,K,o) -> vw2_oop_lookup_ord
  *   legacy vfft_oop_wisdom_lookup_zr2c(N)    -> vw2_oop_lookup_zr2c
  *
@@ -34,14 +31,11 @@
 static const char *vw2_oop_sp_name[8] = {
     "3p", "2pa", "2pb", "twl", "mono", "2pa_l3", "3p_l3", "ccol"
 };
-/* THE IL ROUTE SET, declared once (2026-09-16). Route ids come from
- * VFFT_K1_IL_* in oop/oop_plan.h; the largest is the only number this file
- * may know, and the table's length is checked against it at COMPILE time.
- *
- * Why: on 2026-09-15 route 10 (the four-step) was added to the enum and to
- * this table, but the table's declared length stayed [10] and the lookup
- * bound stayed 10 — so every four-step verdict banked as `il_route=?` and
- * the store refused the token. The build said nothing. It does now.
+/* THE IL ROUTE SET, declared once. Route ids come from VFFT_K1_IL_* in
+ * oop/oop_plan.h; the largest is the only number this file may know, and
+ * the table's length is checked against it at COMPILE time: a table shorter
+ * than the enum banks every new route's verdict as `il_route=?`, which the
+ * store refuses — silently.
  *
  * The table is declared UNSIZED on purpose: its length comes from the
  * NAMES, so the assertion below compares the names against the enum. Give
@@ -122,7 +116,7 @@ static inline const char *vw2__oop_eng(const vw2_rec_t *r)
 
 /* --------------------------------------------------------- kind-3 (k1) */
 
-/* kind-3 K=1 lookup — PER-LAYOUT since v1.2 (2026-08-24). The verdict may
+/* kind-3 K=1 lookup — PER-LAYOUT (v1.2). The verdict may
  * live in three record shapes:
  *   lay=il     the interleaved caller's own cell (il_route/il_pair/il_kv)
  *   lay=split  the split caller's own cell       (sp_route/sp_pair/chain)
@@ -130,9 +124,9 @@ static inline const char *vw2__oop_eng(const vw2_rec_t *r)
  * Each axis composes INDEPENDENTLY: per-layout cell first, legacy row
  * second, absent third. sp-absent is k1_sp_route = -1 — an EXPLICIT
  * sentinel, because 0 is a VALID route (VFFT_K1_SP_3P); il-absent is
- * IL_NONE. A decode failure on one axis refuses ONLY that axis — the old
- * whole-row refusal let one layout's unknown token silently erase the
- * other layout's banked verdict. Exact-beats-wildcard is preserved inside
+ * IL_NONE. A decode failure on one axis refuses ONLY that axis (a whole-row
+ * refusal would let one layout's unknown token silently erase the other
+ * layout's banked verdict). Exact-beats-wildcard is preserved inside
  * each tier. Returns 1 + fills e when ANY axis was found. */
 static inline const vw2_rec_t *vw2__oop_k1_scan_pl(const vw2_store_t *s, int N,
                                                uint8_t lay, int want_scr, int pl, int T)
@@ -145,11 +139,11 @@ static inline const vw2_rec_t *vw2__oop_k1_scan_pl(const vw2_store_t *s, int N,
             if (c->key.lay != lay) continue;
             /* the THREAD-COUNT axis (v1.3): a threaded plan's row is its own */
             if (VW2__NT(&c->key) != (T > 1 ? T : 1)) continue;
-            /* the PLACEMENT axis (2026-09-21): the in-place cell has its own
+            /* the PLACEMENT axis: the in-place cell has its own
              * kind-3 row keyed place=ip, raced executed in place; neither
              * placement ever reads the other's row */
             if (c->key.pl != pl) continue;
-            /* the ORDER axis (2026-09-05): the flat DIT's scrambled class
+            /* the ORDER axis: the flat DIT's scrambled class
              * banks its own kind-3 IL row keyed ord=scr; the natural lookup
              * must never read it and the scrambled lookup reads only it */
             if (want_scr ? (c->key.ord != VW2_ORD_SCR) : (c->key.ord == VW2_ORD_SCR)) continue;
@@ -158,7 +152,7 @@ static inline const vw2_rec_t *vw2__oop_k1_scan_pl(const vw2_store_t *s, int N,
              * every kind-3 writer stamps role=comp, fresh and migrated */
             if (c->key.role != VW2_ROLE_COMP) continue;
             if (strcmp(vw2__oop_eng(c), "k1")) continue;
-            /* 🔴 The kind-3 family has a dir=bwd SIBLING (the backward
+            /* The kind-3 family has a dir=bwd SIBLING (the backward
              * kernel-variant verdict). It shares eng=k1 and the cell key;
              * anything directional belongs to its own reader
              * (vw2_oop_lookup_k1_bwd). */
@@ -207,7 +201,7 @@ static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N, uin
     return vw2__oop_k1_scan_ord(s, N, lay, 0);
 }
 
-/* The kind-3 lookup by ORDER CELL (2026-09-05): want_scr = 0 reads the
+/* The kind-3 lookup by ORDER CELL: want_scr = 0 reads the
  * ord=nat cell (and the legacy ord=any rows), want_scr = 1 reads the
  * ord=scr cell — the scrambled pool's own verdict (the natural-output
  * engines answering a scrambled request, or the flat DIT's scrambled
@@ -253,11 +247,11 @@ static inline int vw2_oop_lookup_k1_cell(const vw2_store_t *s, int N, int want_s
     e->k1_sp_route = -1;                       /* UNRACED — 0 is VALID (3P) */
     e->k1_il_route = -1;                       /* UNRACED — distinct from
                                                 * IL_NONE = "raced: none
-                                                * available" (B2.1)         */
+                                                * available"                */
     /* SP axis: per-layout cell first, legacy row second — and the tier is
-     * decided by DECODE SUCCESS, not record presence (review finding: a
-     * present-but-undecodable cell — a future route token, a vars/chain
-     * mismatch — must not shadow a still-decodable legacy verdict).
+     * decided by DECODE SUCCESS, not record presence (a present-but-
+     * undecodable cell — a future route token, a vars/chain mismatch —
+     * must not shadow a still-decodable legacy verdict).
      * Decode into locals; commit only on full success. */
     for (si = 0; si < 2 && e->k1_sp_route < 0; si++) {
         const vw2_rec_t *rs = (si == 0) ? rsp : rlg;
@@ -283,7 +277,7 @@ static inline int vw2_oop_lookup_k1_cell(const vw2_store_t *s, int N, int want_s
         got = 1;
     }
     /* IL axis, same tiering. THREE outcomes per source: a decoded route
-     * (> NONE) commits; a legacy row WITHOUT an il_route token is the B2.1
+     * (> NONE) commits; a legacy row WITHOUT an il_route token is the
      * raced-none verdict (IL_NONE — that is what its writer meant); an
      * undecodable token falls to the next tier. Absent from every source
      * leaves -1 = unraced, so the consumer can run its IL heuristic
@@ -306,13 +300,13 @@ static inline int vw2_oop_lookup_k1_cell(const vw2_store_t *s, int N, int want_s
             if (np == 2) { e->il_R1 = pair[0]; e->il_R2 = pair[1]; }
             e->il_kv = vw2__oop_geti(ri, "il_kv", 0);
             e->il_kv_raced = vw2_rec_get(ri, "il_kv") != NULL;   /* explicit 0 counts */
-            {                                  /* chain3 payload (2026-09-02) */
+            {                                  /* chain3 payload */
                 int c3[3];
                 if (vw2__oop_split_ints(vw2_rec_get(ri, "il_chain"), c3, 3) == 3) {
                     e->il_c3[0] = c3[0]; e->il_c3[1] = c3[1]; e->il_c3[2] = c3[2];
                 }
             }
-            {                                  /* flat DIT payload (2026-09-05) */
+            {                                  /* flat DIT payload */
                 int fl[10];
                 const int nfl = vw2__oop_split_ints(vw2_rec_get(ri, "il_flat"), fl, 10);
                 const char *ff = vw2_rec_get(ri, "il_forms");
@@ -320,7 +314,7 @@ static inline int vw2_oop_lookup_k1_cell(const vw2_store_t *s, int N, int want_s
                 if (ff) { strncpy(e->il_flf, ff, sizeof e->il_flf - 1); e->il_flf[sizeof e->il_flf - 1] = 0; }
                 e->il_tw = vw2__oop_geti(ri, "il_tw", 0);
             }
-            {                                  /* ZTURN-T payload (2026-09-09) */
+            {                                  /* ZTURN-T payload */
                 int zt[7];
                 const int nzt = vw2__oop_split_ints(vw2_rec_get(ri, "il_ztt"), zt, 7);
                 if (nzt >= 2) { memcpy(e->il_zt, zt, sizeof(int) * (size_t)nzt); e->il_zt_n = nzt;
@@ -337,7 +331,7 @@ static inline int vw2_oop_lookup_k1_cell(const vw2_store_t *s, int N, int want_s
     return got;
 }
 
-/* kind-3 BACKWARD sibling (dir=bwd, 2026-08-21).
+/* kind-3 BACKWARD sibling (dir=bwd).
  *
  * The backward kernel-variant verdict is its OWN CELL rather than more il_kv
  * bits, because wisdom2 keys direction (`dir=`) and does not key kernel
@@ -356,18 +350,17 @@ static inline const vw2_rec_t *vw2__oop_find_k1_bwd_pl(const vw2_store_t *s, int
     const vw2_rec_t *r = NULL;
     /* v1.2: this reader owns the IL backward verdict. TWO TIERS, lay=il
      * before lay-less vintage — the same cell-before-legacy precedence the
-     * forward reader implements. A single mixed first-match scan was the
-     * review's confirmed bug: eq now compares lay, so a re-raced verdict
-     * banks as a NEW lay=il record that a pre-1.2 row (loaded earlier)
-     * would shadow forever — banked, persisted, never served. A future
-     * lay=split backward cell belongs to a split-side reader, not here.
-     * (the finder, shared with the chain3 reader since 2026-09-03) */
+     * forward reader implements: eq compares lay, so a re-raced verdict
+     * banks as a NEW lay=il record, which a single first-match scan would
+     * let a pre-1.2 row (loaded earlier) shadow forever — banked, persisted,
+     * never served. A lay=split backward cell belongs to a split-side
+     * reader, not here. (The finder is shared with the chain3 reader.) */
     for (tier = 0; tier < 2 && !r; tier++)
         for (i = 0; i < s->nrec; i++) {
             const vw2_rec_t *c = &s->rec[i];
             if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
             if (c->key.dir != VW2_DIR_BWD) continue;
-            if (c->key.pl != pl) continue;   /* the placement's own backward row (2026-09-21) */
+            if (c->key.pl != pl) continue;   /* the placement's own backward row */
             if (c->key.role != VW2_ROLE_COMP) continue;
             if (c->key.lay != (tier == 0 ? VW2_LAY_IL : VW2_LAY_ANY)) continue;
             if (strcmp(vw2__oop_eng(c), "k1")) continue;
@@ -377,13 +370,13 @@ static inline const vw2_rec_t *vw2__oop_find_k1_bwd_pl(const vw2_store_t *s, int
         }
     return r;
 }
-/* the CHAIN3 backward verdict (2026-09-03): the same cell, read through the
- * chain it was raced at (il_chain=R2.A.B); -1 when the row is absent, has no
- * verdict, or is a pair row. The three-nibble code is A | B<<4 | leaf<<8. */
 static inline const vw2_rec_t *vw2__oop_find_k1_bwd(const vw2_store_t *s, int N)
 {
     return vw2__oop_find_k1_bwd_pl(s, N, VW2_PL_OOP);
 }
+/* the CHAIN3 backward verdict: the same cell, read through the chain it was
+ * raced at (il_chain=R2.A.B); -1 when the row is absent, has no verdict, or
+ * is a pair row. The three-nibble code is A | B<<4 | leaf<<8. */
 static inline int vw2_oop_lookup_k1_bwd_chain_pl(const vw2_store_t *s, int N,
                                                  int *c3 /* [3] */, int pl)
 {
@@ -406,7 +399,7 @@ static inline int vw2_oop_lookup_k1_bwd_pl(const vw2_store_t *s, int N,
     int pair[2], np, kv;
     const vw2_rec_t *r = vw2__oop_find_k1_bwd_pl(s, N, pl);
     /* returns the banked backward form code (>= 0; 0 = "the defaults won",
-     * a real verdict since 2026-09-02) or -1 when no usable row exists */
+     * a real verdict) or -1 when no usable row exists */
     if (!r) return -1;
     if (!vw2_rec_get(r, "il_kv")) return -1;   /* vintage row without a verdict */
     kv = vw2__oop_geti(r, "il_kv", 0);
@@ -491,11 +484,10 @@ static inline int vw2_oop_lookup_ord(const vw2_store_t *s, int N, size_t K,
 
 /* ================================================================ WRITE
  * The other half of the family codec: legacy entry -> wisdom2 record.
- * ONE definition — the migrator, the runtime bank sites in vfft.c, and the
- * offline planners all construct records HERE (the four-constructor drift
- * of the old system is unrepresentable). */
+ * ONE definition — the migrator, the runtime bank sites and the offline
+ * planners all construct records HERE (no second constructor to drift). */
 
-/* Build the record for kinds 0-4. src = "race" (fresh bank) | "migrated" |
+/* Build the record for kinds 0-3. src = "race" (fresh bank) | "migrated" |
  * "seed"; from = lineage (required for migrated/seed wildcards, NULL for
  * fresh banks). Migrated kind-3 records carry the axis-agnostic wildcards;
  * FRESH kind-3 banks stamp the concrete canonical axes (q=1 ord=nat
@@ -570,8 +562,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
         else      { r->key.q = 1;  r->key.ord = VW2_ORD_NAT; r->key.pl = VW2_PL_OOP; }
         /* v1.1: kind-3 is the K=1 ENGINE'S COMPONENT RECIPE (deliberately
          * order-agnostic) — role=comp keeps it off the problem-verdict key
-         * the stride family's @natoop pick owns (owner decision A,
-         * 2026-08-20). */
+         * the stride family's @natoop pick owns. */
         r->key.role = VW2_ROLE_COMP;
         VW2__OB_SET(1, "eng", "k1");
         if (e->k1_sp_route < 0 || e->k1_sp_route > 7) { vw2_rec_free(r); *why = "sp-route-out-of-range"; return -1; }
@@ -631,7 +622,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }
             }
             if (e->k1_il_route == VFFT_K1_IL_ZTT && e->il_zt_n >= 2) {
-                char ztb[48];              /* ZTURN-T: the chain IS the verdict (2026-09-09) */
+                char ztb[48];              /* ZTURN-T: the chain IS the verdict */
                 size_t off = 0;
                 for (i = 0; i < e->il_zt_n; i++) {
                     int rr = snprintf(ztb + off, sizeof ztb - off, "%s%d", i ? "." : "", e->il_zt[i]);
@@ -642,7 +633,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }
             }
         }
-        if (e->il_kv || e->il_kv_raced) {   /* a raced verdict emits il_kv even when 0 (2026-09-04) */
+        if (e->il_kv || e->il_kv_raced) {   /* a raced verdict emits il_kv even when 0 */
             char kvb[16];
             snprintf(kvb, sizeof kvb, "%d", e->il_kv);
             VW2__OB_SET(1, "il_kv", kvb);
@@ -672,7 +663,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
 /* Build the kind-3 BACKWARD record (dir=bwd). Wisdom2-NATIVE, like the
  * kind-5 builder below and unlike vw2_oop_rec_from_entry: there is no legacy
  * text line that can carry a backward variant verdict, so routing it through
- * the legacy entry struct would only widen a format that is being retired.
+ * the legacy entry struct would only widen a frozen format.
  *
  * Payload is deliberately minimal - the plan identity (il_route, il_pair)
  * plus the verdict (il_kv). Everything else about the cell is stated by the
@@ -686,7 +677,7 @@ static inline int vw2_oop_rec_k1_bwd(vw2_rec_t *r, int N, int il_route,
     memset(r, 0, sizeof *r);
     if (kv < 0)                       { *why = "no-bwd-verdict";        return -1; }
     /* kv == 0 is a VERDICT ("the default forms won") and banks as an
-     * explicit il_kv=0 (2026-09-02); only a negative kv means unraced */
+     * explicit il_kv=0; only a negative kv means unraced */
     /* NOT VW2_OOP_IL_ROUTE_MAX, and not stale: the dir=bwd sibling row
      * exists only for the routes that HAVE a backward form axis (the pair,
      * the chain, prime). The flat DIT, ZTURN-T and the four-step never bank
@@ -763,8 +754,8 @@ static inline int vw2_oop_recs_from_kind5(const vfft_oop_wisdom_entry_t *e,
 }
 
 /* --------------------------------------------------- runtime bank helpers
- * What the vfft.c create-time bank sites call at the wave-1 flip. Fresh
- * banks: src=race, dated (merge tie-breaks need it). These helpers bank IN
+ * What the create-time bank sites call. Fresh banks: src=race, dated
+ * (merge tie-breaks need it). These helpers bank IN
  * MEMORY only (process coherence — README §2.2); DISK persistence is the
  * caller's guarded step (vw2_save under config.wisdom_write; tools save
  * explicitly). All refusals are loud but non-fatal — a failed bank never
@@ -808,7 +799,7 @@ static inline int vw2_oop_bank_entry(vw2_store_t *s, const vfft_oop_wisdom_entry
     return VW2_OK;
 }
 
-/* ── the IL prime METHOD verdict (B4, banked 2026-09-02) ──────────────────
+/* ── the IL prime METHOD verdict ─────────────────────────────────────────
  * Rader vs Bluestein for a prime N, raced once per cell instead of on every
  * create. A COMPONENT row (the ilprime plan is a component of both the
  * in-place ilp mode and the OOP k1 PRIME route), homed in the PRIME shard
@@ -835,15 +826,12 @@ static inline int vw2_prime_method_lookup(const vw2_store_t *s, int N)
     if (!strcmp(eng, "bluestein")) return 2;
     return 0;
 }
-/* ref_M > 0: the inner transform's OWN row (the kind-3 pair verdict at
- * length M — stages, radices, kernel forms) is signposted, never copied;
- * a vanished inner row makes this verdict a loud MISS (README §3.3). */
 /* which kind-3 row exists at length M, AS KEYED (lay=il, lay=split, or
  * lay-less): returns VW2_LAY_IL / VW2_LAY_SPLIT / VW2_LAY_ANY, or -1 when
  * none. EXACT key equality on purpose: the serving lookup answers a lay=il
  * request from a lay-less row (the layout fallback tier), and a signpost
  * spelled after the REQUEST rather than the ROW dangles under ref_ok's
- * exact match (caught 2026-09-02 on the Bluestein inner at M=256). */
+ * exact match (the Bluestein inner at M=256 is the known case). */
 static inline int vw2_oop_k1_row_lay_ord(const vw2_store_t *s, int M, int want_scr)
 {
     static const int lays[3] = { VW2_LAY_IL, VW2_LAY_SPLIT, VW2_LAY_ANY };
@@ -864,11 +852,10 @@ static inline int vw2_oop_k1_row_lay(const vw2_store_t *s, int M)
     return vw2_oop_k1_row_lay_ord(s, M, 0);
 }
 
-/* THE PRIME CELL'S OWN VERDICT (2026-09-18, ilprime_inner_race_design.md):
- * the METHOD and the INNER, raced together on the whole convolution and
- * banked on this row. in= names the inner's kind (2p | 3p | ztt), in_sh= its
- * shape (R1.R2 | R2.A.B | the chain), in_tw= ZTURN-T's tile (0 = none). The
- * `ref=` signpost to the K=1 row at M went with the borrowing it served. */
+/* THE PRIME CELL'S OWN VERDICT: the METHOD and the INNER, raced together
+ * on the whole convolution and banked on this row. in= names the inner's
+ * kind (2p | 3p | ztt), in_sh= its shape (R1.R2 | R2.A.B | the chain),
+ * in_tw= ZTURN-T's tile (0 = none). */
 static inline int vw2_prime_method_bank(vw2_store_t *s, int N, int method,
                                         const char *in_kind, const char *in_shape,
                                         int in_tw)
@@ -899,7 +886,7 @@ static inline int vw2_prime_method_bank(vw2_store_t *s, int N, int method,
     return rc;
 }
 /* the inner's verdict on the prime row: 1 with the tokens filled, 0 when
- * the row has none (a row from before 2026-09-18, or a miss) */
+ * the row has none (a row without the tokens, or a miss) */
 static inline int vw2_prime_inner_lookup(const vw2_store_t *s, int N,
                                          char *kind, size_t ksz,
                                          char *shape, size_t ssz, int *tw)
@@ -921,10 +908,9 @@ static inline int vw2_prime_inner_lookup(const vw2_store_t *s, int N,
     return 1;
 }
 
-/* kind-4 bank under a role: role=comp = the cascade RECIPE as a component
- * row (in-place / odd races, 2026-09-02). The OOP problem verdict at the
- * same key is untouched, so a comp bank can never attach a route by fiat;
- * the in-place replay reads comp first, then the verdict. */
+/* bank under a role: the role is IGNORED — the comp-role recipe rows were
+ * the cascade's (the engine is deleted), so this forwards to
+ * vw2_oop_bank_entry; the code after that return is unreachable. */
 static inline int vw2_oop_bank_entry_role(vw2_store_t *s,
                                           const vfft_oop_wisdom_entry_t *e,
                                           int role)
@@ -933,7 +919,7 @@ static inline int vw2_oop_bank_entry_role(vw2_store_t *s,
     const char *why = NULL;
     int rc;
     vfft_oop_wisdom_entry_t ec;
-    (void)role;   /* the comp-role recipe rows were the cascade's (deleted 2026-09-15) */
+    (void)role;   /* the comp-role recipe rows were the cascade's */
     return vw2_oop_bank_entry(s, e);
     ec = *e;
     ec.role = role;
@@ -953,12 +939,11 @@ static inline int vw2_oop_bank_entry_role(vw2_store_t *s,
 
 /* Build ONE per-layout kind-3 record. Wisdom2-NATIVE, like the bwd builder:
  * fresh banks only — no legacy text line has per-layout shape. lay names
- * the CALLER LAYOUT this verdict serves (the owner's rule: layout is an
- * integration property, AoS/SoA, never a strategy output). Each record
- * carries ONLY its own layout's fields, so neither layout's re-race can
- * erase the other's verdict, and neither layout's planning failure can veto
- * the other's bank — the two collision classes the 2026-08-24 audit
- * confirmed on the pre-1.2 dual line. */
+ * the CALLER LAYOUT this verdict serves (layout is an integration
+ * property, AoS/SoA, never a strategy output). Each record carries ONLY
+ * its own layout's fields, so neither layout's re-race can erase the
+ * other's verdict, and neither layout's planning failure can veto the
+ * other's bank — the two collision classes of the pre-1.2 dual line. */
 static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
                                      const vfft_oop_wisdom_entry_t *e,
                                      uint8_t lay, const char **why)
@@ -970,7 +955,7 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
     snprintf(nsbuf, sizeof nsbuf, "%.1f", e->ns);
     r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = e->N;
     r->key.q = 1;
-    r->key.pl = e->place_ip ? VW2_PL_IP : VW2_PL_OOP;   /* the in-place cell's own row (2026-09-21) */
+    r->key.pl = e->place_ip ? VW2_PL_IP : VW2_PL_OOP;   /* the in-place cell's own row */
     r->key.ord = e->ord_scr ? VW2_ORD_SCR : VW2_ORD_NAT;   /* the scrambled class's own cell */
     r->key.role = VW2_ROLE_COMP;
     r->key.lay  = lay;
@@ -1022,12 +1007,12 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             VW2__OB_SET(1, "il_pair", pair);
         }
         if (e->k1_il_route == VFFT_K1_IL_CHAIN3 && e->il_c3[0]) {
-            char c3b[48];              /* the chain IS the verdict (2026-09-02) */
+            char c3b[48];              /* the chain IS the verdict */
             snprintf(c3b, sizeof c3b, "%d.%d.%d", e->il_c3[0], e->il_c3[1], e->il_c3[2]);
             VW2__OB_SET(1, "il_chain", c3b);
         }
         if (e->k1_il_route == VFFT_K1_IL_FLAT && e->il_fl_n >= 2) {
-            char flb[64];              /* the flat chain + its per-stage forms ARE the verdict (2026-09-05) */
+            char flb[64];              /* the flat chain + its per-stage forms ARE the verdict */
             size_t off = 0;
             for (i = 0; i < e->il_fl_n; i++) {
                 int rr = snprintf(flb + off, sizeof flb - off, "%s%d", i ? "." : "", e->il_fl[i]);
@@ -1039,7 +1024,7 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }
         }
         if (e->k1_il_route == VFFT_K1_IL_ZTT && e->il_zt_n >= 2) {
-            char ztb[48];              /* ZTURN-T: the chain IS the verdict (2026-09-09) */
+            char ztb[48];              /* ZTURN-T: the chain IS the verdict */
             size_t off = 0;
             for (i = 0; i < e->il_zt_n; i++) {
                 int rr = snprintf(ztb + off, sizeof ztb - off, "%s%d", i ? "." : "", e->il_zt[i]);
@@ -1047,9 +1032,9 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
                 off += (size_t)rr;
             }
             VW2__OB_SET(1, "il_ztt", ztb);
-            if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }   /* the raced tile (2026-09-09) */
+            if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }   /* the raced tile */
         }
-        if (e->il_kv || e->il_kv_raced) {   /* a raced verdict emits il_kv even when 0 (2026-09-04) */
+        if (e->il_kv || e->il_kv_raced) {   /* a raced verdict emits il_kv even when 0 */
             char kvb[16];
             snprintf(kvb, sizeof kvb, "%d", e->il_kv);
             VW2__OB_SET(1, "il_kv", kvb);
@@ -1085,16 +1070,16 @@ static inline int vw2_oop_bank_k1_lay(vw2_store_t *s,
         return -1;
     }
     if (e->k1_il_route == VFFT_K1_IL_PRIME) {
-        /* THE PRIME CELL'S ROW IS ITS METHOD VERDICT (2026-09-24): the prime
-         * engine banks eng=rader|bluestein + the raced inner at this very key
+        /* THE PRIME CELL'S ROW IS ITS METHOD VERDICT: the prime engine
+         * banks eng=rader|bluestein + the raced inner at this very key
          * (vw2__prime_method_key: ord=scr place=ip role=comp lay=il), and
          * vw2_bank replaces on an equal key. A route row (eng=k1
-         * il_route=prime) banked over it left the next create without a
-         * method (the lookup reads eng), which re-raced the inner and
-         * re-banked the method row over the route row: every other create
-         * raced, and under load picked a different inner (the 53x64 cold-vs-
-         * warm bitwise flap of il2d_blu_row_gate). The method row stays --
-         * kind 4 serves it -- and the route row is not written. */
+         * il_route=prime) banked over it would leave the next create without
+         * a method (the lookup reads eng): the inner re-races and the method
+         * row is re-banked over the route row, so every other create races
+         * -- and under load picks a different inner (il2d_blu_row_gate's
+         * 53x64 cold-vs-warm bitwise flap). The method row stays and the
+         * route row is not written. */
         const vw2_rec_t *old = vw2_lookup(s, &r.key);
         const char *eng = old ? vw2_rec_get(old, "eng") : NULL;
         if (eng && (!strcmp(eng, "rader") || !strcmp(eng, "bluestein"))) {
@@ -1108,25 +1093,15 @@ static inline int vw2_oop_bank_k1_lay(vw2_store_t *s,
     return VW2_OK;
 }
 
-/* zr2c slot bank (replaces the legacy packed read-modify-write): banks ONE
- * (transform, placement) slot verdict directly — per-slot records need no
- * RMW, the other slots' records are untouched by construction. ns = the
- * slot's own race median (attributable here, unlike the legacy packed
- * line); <= 0 omits the measurement. */
-/* 1 when this problem cell is already owned by a DIFFERENT engine (today:
- * the split family's eng=route). The reciprocal of vw2_real_cell_taken.
+/* 1 when this problem cell is already owned by a DIFFERENT engine (the
+ * split family's eng=route). The reciprocal of vw2_real_cell_taken.
  *
- * 🔴 CORRECTED 2026-08-25. An earlier version of this note claimed the
- * split route banker reaches q=1 on the default config ("banks eng=route
- * at q=1") — it does not, and the claim cost a wrong fix plan. The owner
- * law: the route race is a LANE-BATCH race and the split engine's executed
+ * The route race is a LANE-BATCH race and the split engine's executed
  * batch is never 1, so q=1 real cells belong to the interleaved zr2c
- * verdicts ALONE. The race window (vfft.c) excludes K=1 and
- * vw2_real_route_bank refuses K <= 1 loudly, so the byte-identical-key
- * collision this guard was built for is now unreachable from the shipped
- * writers. The guard stays as a belt-and-braces fence against a
+ * verdicts ALONE: vw2_real_route_bank refuses K <= 1 loudly, so the shipped
+ * writers never collide at this key. The guard is a backstop against a
  * hand-written or foreign-vintage row — refusing loudly is still right —
- * but it is a backstop, not the ownership mechanism. */
+ * not the ownership mechanism. */
 static inline int vw2_oop_zr2c_cell_taken(const vw2_store_t *s, int realN,
                                           int is_c2r, int is_inplace)
 {
@@ -1145,6 +1120,10 @@ static inline int vw2_oop_zr2c_cell_taken(const vw2_store_t *s, int realN,
     return 0;
 }
 
+/* zr2c slot bank: banks ONE (transform, placement) slot verdict directly —
+ * per-slot records need no read-modify-write of a packed verdict, the other
+ * slots' records are untouched by construction. ns = the slot's own race
+ * median (attributable per slot); <= 0 omits the measurement. */
 static inline int vw2_oop_bank_zr2c_slot(vw2_store_t *s, int realN,
                                          int is_c2r, int is_inplace, int route,
                                          double ns)
@@ -1156,7 +1135,7 @@ static inline int vw2_oop_bank_zr2c_slot(vw2_store_t *s, int realN,
         fprintf(stderr, "[wisdom2] zr2c bank refused: t=%s n=%d place=%s is owned "
                         "by another engine\n",
                 is_c2r ? "c2r" : "r2c", realN, is_inplace ? "ip" : "oop");
-        /* 🔴 NOT 0: VW2_OK == 0, so returning 0 here would make "declined"
+        /* NOT 0: VW2_OK == 0, so returning 0 here would make "declined"
          * indistinguishable from "banked" to every caller and to the gate. */
         return VW2_EOWNED;
     }
@@ -1172,15 +1151,14 @@ static inline int vw2_oop_bank_zr2c_slot(vw2_store_t *s, int realN,
     if (ns > 0.0) {
         snprintf(b, sizeof b, "%.1f", ns);
         if (vw2_rec_set(&r, 2, "ns", b) != VW2_OK ||
-            /* 🔴 The c2r race times a BACKWARD composite (fold_bwd then the
-             * child run backward), so a c2r slot must not claim fwd1. Two
-             * harms from the unconditional label: the row asserted
-             * comparability with forward numbers against the store's metric
-             * law, and against a correctly-stamped bwd1 incumbent the merge
-             * refused with VW2_EMETRIC -- invisibly, because the caller
-             * discards the return -- so the cell re-raced on every create,
-             * forever. No migration needed: no shipped zr2c row carries a
-             * metric= token at all. */
+            /* The c2r race times a BACKWARD composite (fold_bwd then the
+             * child run backward), so a c2r slot must not claim fwd1: that
+             * would assert comparability with forward numbers against the
+             * store's metric law, and against a correctly-stamped bwd1
+             * incumbent the merge refuses with VW2_EMETRIC -- invisibly,
+             * the caller discards the return -- so the cell would re-race
+             * on every create. (No shipped zr2c row carries a metric=
+             * token.) */
             vw2_rec_set(&r, 2, "metric", is_c2r ? "bwd1" : "fwd1") != VW2_OK ||
             vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) { vw2_rec_free(&r); return -1; }
     }
@@ -1218,8 +1196,8 @@ static inline int vw2_oop_lookup_zr2c(const vw2_store_t *s, int realN, int *zr_k
                     (slot & 1) ? "ip" : "oop", vw2__oop_eng(r));
             continue;
         }
-        /* SEED SKIP (2026-08-21) — the law vw2_oop_lookup_k1 already applies,
-         * missing here. It matters more for zr2c than for k1: _zr2c_build
+        /* SEED SKIP — the law vw2_oop_lookup_k1 applies too. It matters
+         * more for zr2c than for k1: _zr2c_build
          * RETURNS on any banked verdict, so a bank-only row makes the racer
          * at step 3 permanently unreachable at that cell. A seed is a row
          * nothing measured; it must not preempt the measurement. */

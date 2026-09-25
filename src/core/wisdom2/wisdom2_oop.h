@@ -1,5 +1,6 @@
-/* oop_wisdom.h — OOP c2c wisdom: the 2-axis decision {kind, factorization}
- * per (N, K), persisted and looked up.
+/* wisdom2_oop.h — OOP c2c wisdom: the 2-axis decision {kind, factorization}
+ * per (N, K) — the entry struct, the codecs, and the legacy oop_wisdom.txt
+ * loader.
  *
  * Why a SEPARATE file (not the c2c spike_wisdom): an OOP entry must encode BOTH
  * axes — the execution KIND (LEAF/BAILEY2/MODEB, axis 1) and its FACTORIZATION
@@ -19,12 +20,12 @@
  * v2 (this format) PERSISTS per-stage variants: MODEB is built from the in-place
  * c2c wisdom's variant-rich (factors, variants) — FLAT/T1S/LOG3 mixed per stage,
  * matching the in-place path — and BAILEY2 stores the tuner's flat-vs-log3 pick.
- * (v1 dropped variants and rebuilt all-T1S; that left per-stage tuning on the
- * table relative to the in-place engine.) MODEB is DIT-only (OOP stage 0 must be
- * untwiddled), so DIF-preferring in-place cells fall back to native LEAF/BAILEY2.
+ * MODEB is DIT-only (OOP stage 0 must be untwiddled), so DIF-preferring
+ * in-place cells fall back to native LEAF/BAILEY2.
  *
- * Lifecycle: offline calibrator (vfft_oop_plan_create_dp_best) writes this file;
- * runtime vfft_oop_plan_create_wisdom() does a pure lookup + build, no measure.
+ * Lifecycle: oop_wisdom.txt is FROZEN — banks go to the wisdom2 store
+ * (wisdom2_oop_reader.h); the loader serves the migrator;
+ * vfft_oop_plan_create_wisdom() does a pure lookup + build, no measure.
  */
 #ifndef VFFT_OOP_WISDOM_H
 #define VFFT_OOP_WISDOM_H
@@ -52,8 +53,8 @@ typedef struct {
      * routes = VFFT_K1_SP_* / VFFT_K1_IL_* (oop_plan.h). One entry carries
      * BOTH axes because the buffer layout is an EXECUTE-time contract
      * (sim==dim==NULL => interleaved), unknown at plan create.
-     * K = the batch count of the run that produced the banked ns (owner
-     * rule 2026-08-19), never a caller-transform count: a dual line banks
+     * K = the batch count of the run that produced the banked ns, never a
+     * caller-transform count: a dual line banks
      * the IL champion's single-transform time (K=1); a split-only line
      * banks the lane-batch verdict (K=VFFT_OOP_GROUPW: 4 AVX2 / 8
      * AVX-512). Only IL can run a single transform — the split engine
@@ -62,55 +63,53 @@ typedef struct {
     int    k1_sp_route, k1_il_route, il_R1, il_R2;
     int    il_c3[3];                         /* kind 3, il_route=chain3: the 3-stage
                                               * chain (leaf R2, mid A, mid B) as
-                                              * il_chain=R2.A.B (2026-09-02); zeros =
-                                              * absent (pre-2026-09-02 rows: default) */
+                                              * il_chain=R2.A.B; zeros = absent (a row
+                                              * without the token: default) */
     int    il_fl[10];                        /* kind 3, il_route=flat: the flat DIT's
                                               * chain as il_flat=R0.R1...; il_fl_n
                                               * stages (0 = absent); il_forms= the
-                                              * per-stage form letters (2026-09-05) */
+                                              * per-stage form letters */
     int    il_fl_n;
     char   il_flf[24];
     int    il_tw;                            /* il_tw= the raced tile width in complex
-                                              * (0 = untiled): the flat DIT's (2026-09-05)
-                                              * and ZTURN-T's (2026-09-09) */
+                                              * (0 = untiled): the flat DIT's and
+                                              * ZTURN-T's */
     int    il_zt[7];                         /* kind 3, il_route=ztt: ZTURN-T's chain
                                               * as il_ztt=R0.R1...; il_zt_n stages
-                                              * (0 = absent), 2026-09-09 */
+                                              * (0 = absent) */
     int    il_zt_n;
     int    place_ip;                         /* kind 3 IL row keyed place=ip: the IN-PLACE
                                               * cell's own verdict, raced executed in
-                                              * place (2026-09-21). 0 = place=oop */
+                                              * place. 0 = place=oop */
     int    nthreads;                         /* kind 3 IL row keyed nthreads=T (v1.3): the
                                               * plan's thread count; a threaded plan's
                                               * row is its own. 0/1 = one thread */
     int    ord_scr;                          /* kind 3 IL row keyed ord=scr: the flat
                                               * DIT's SCRAMBLED class (its own chain +
                                               * forms, raced under the scrambled
-                                              * objective; 2026-09-05). 0 = ord=nat */
-    /* kind 3, OPTIONAL TRAILING token after ns (2026-08-05): the IL BLOCKED
-     * KERNEL VARIANT verdict for this cell, packed mid | leaf<<4.
+                                              * objective). 0 = ord=nat */
+    /* kind 3, OPTIONAL TRAILING token after ns: the IL BLOCKED KERNEL
+     * VARIANT verdict for this cell, packed mid | leaf<<4.
      *   mid : 0 = registry t2 (monolithic), 1 = t2b [2·16], 2 = t2b48 [4·8]
      *   leaf: 0 = registry n1t (monolithic), 1 = n1tb [2·16], 2 = n1tb48
-     * Same back-compat story as kind-4's zt_tw: **0 means the monolithic
-     * registry kernel**, so every line banked before this axis existed
-     * replays as exactly today's behavior — no sentinel to forget.
+     * **0 means the monolithic registry kernel**, so a line without the
+     * token replays the monolithic kernels — no sentinel to forget.
      * The verdict is MEASURED at the front door (blocked kernels are
      * placement-luck sensitive, so it is re-measured per binary like t2q)
-     * and consumed by vfft.c, which installs the kernels after create.
+     * and consumed by the K=1 create, which installs the kernels.
      * il2p.h publishes the variant REGISTRY (vfft_il2p_mid_v_fn /
      * vfft_il2p_leaf_v_fn) plus the STRUCTURAL R>=32 blocked default
-     * (2026-08-06, applied inside create — register-file arithmetic, not a
-     * measured pick); this banked verdict OVERRIDES that default, and the
+     * (applied inside create — register-file arithmetic, not a measured
+     * pick); this banked verdict OVERRIDES that default, and the
      * nibble value 0xF (VFFT_IL_KV_MONO) forces the monolithic kernel so a
      * platform where blocked loses stays expressible as a verdict. */
     int    il_kv;
     int    il_kv_raced;   /* 1 = the forward forms were RACED (the row carries il_kv,
-                           * explicit 0 included); 0 = a pair-only row (2026-09-04) */
+                           * explicit 0 included); 0 = a pair-only row */
     /* kind 3, sp_route == VFFT_K1_SP_CCOL only: encoded column chain
-     * (vfft_k1_cc_chain_encode; one extra token before ns on the line).
-     * kind 4 (ZSPLIT) reuses cc_chain for the cascade chain. */
+     * (vfft_k1_cc_chain_encode; one extra token before ns on the line). */
     int    cc_chain;
-    /* kind 3, sp_route == CCOL only (B2.2, 2026-08-18): encoded column-plan
+    /* kind 3, sp_route == CCOL only: encoded column-plan
      * per-stage VARIANTS (vfft_k1_cc_vars_encode — one digit per chain
      * stage, digit = variant+1). Second CCOL token, right after cc_chain,
      * still before ns. This makes the CCOL verdict SELF-CONTAINED in the
@@ -136,7 +135,8 @@ typedef struct {
  * verdict uses these, never raw shifts).
  *   slot: 0 = r2c OOP · 1 = r2c IN-PLACE · 2 = c2r OOP · 3 = c2r IN-PLACE
  *   field: 0 = unmeasured · 1 = child route 0 (OOP-IL) · 2 = route 1
- *          (NAT-IP cascade). vfft_zr2c_kv_set takes the ROUTE (0/1). */
+ *          (the NAT-IP in-place child, zr2c_build.h). vfft_zr2c_kv_set
+ *          takes the ROUTE (0/1). */
 static inline int vfft_zr2c_kv_slot(int is_c2r, int is_inplace)
 { return ((is_c2r ? 1 : 0) << 1) | (is_inplace ? 1 : 0); }
 static inline int vfft_zr2c_kv_get(int kv, int slot)
@@ -193,7 +193,7 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
             tok = strtok(NULL, " \t\n\r"); if (tok) e->il_R1 = atoi(tok); else ok = 0;
             tok = strtok(NULL, " \t\n\r"); if (tok) e->il_R2 = atoi(tok); else ok = 0;
             /* CCOL lines carry the encoded column chain (+ column-variant
-             * code, B2.2) before ns. Tolerance: an integer after cc_chain
+             * code) before ns. Tolerance: an integer after cc_chain
              * is cc_vars; a token with a '.' is already ns (pre-cc_vars
              * form) and is carried into the shared ns read below. */
             if (ok && e->k1_sp_route == VFFT_K1_SP_CCOL) {
@@ -205,13 +205,13 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
                     else carry = t2;
                 }
             }
-            /* K semantics (owner rule, 2026-08-19): the banker banks the
+            /* K semantics: the banker banks the
              * BATCH COUNT the split verdict runs — the lane width
              * (VFFT_OOP_GROUPW: 4 on AVX2, 8 on AVX-512) — never "how many
              * caller transforms". Legacy lines carry 1 and stay readable. */
             if (ok && e->K != 1 && e->K != 4 && e->K != 8) ok = 0;
         } else if (e->kind == VFFT_OOP_KIND_ZSPLIT) {
-            ok = 0;   /* kind 4 = the deleted cascade's cell (2026-09-15): a legacy line is skipped */
+            ok = 0;   /* kind 4 = the cascade's cell (the engine is deleted): a legacy line is skipped */
         } else if (e->kind == VFFT_OOP_KIND_ZR2C) {
             /* kind 5 = K=1 zr2c composite: one packed token. atoi accepts a
              * "1234.0" survivor of a stale-writer strip cycle (it stops at
@@ -247,8 +247,8 @@ vfft_oop_wisdom_lookup(const vfft_oop_wisdom_t *w, int N, size_t K)
 }
 
 /* Single-transform engine lookup: the kind-3 entry for N. The K column is
- * the split verdict's BATCH COUNT (owner rule 2026-08-19: lane width, 4/8;
- * legacy lines carry 1) — kind-3 has one cell per N regardless. */
+ * the split verdict's BATCH COUNT (the lane width, 4/8; legacy lines carry
+ * 1) — kind-3 has one cell per N regardless. */
 static inline const vfft_oop_wisdom_entry_t *
 vfft_oop_wisdom_lookup_k1(const vfft_oop_wisdom_t *w, int N)
 {
@@ -260,7 +260,8 @@ vfft_oop_wisdom_lookup_k1(const vfft_oop_wisdom_t *w, int N)
     return NULL;
 }
 
-/* K=1 SCRAMBLED cascade lookup: the kind-4 entry for N (K==1 by definition). */
+/* K=1 SCRAMBLED cascade lookup: the kind-4 entry for N (K==1 by definition).
+ * The loader skips kind-4 lines (the cascade is deleted), so it finds none. */
 static inline const vfft_oop_wisdom_entry_t *
 vfft_oop_wisdom_lookup_zsplit(const vfft_oop_wisdom_t *w, int N)
 {
@@ -385,10 +386,8 @@ static inline void vfft_oop_wisdom_entry_from_plan(vfft_oop_wisdom_entry_t *e,
     }
 }
 
-/* vfft_oop_wisdom_write_entry (the ONE legacy line encoder): DELETED at
- * the wisdom2 wave-1 close (2026-08-20). oop_wisdom.txt is FROZEN — all
- * banks go through vw2_oop_rec_from_entry (wisdom2_oop_reader.h). The
- * loader above survives for the kill-switch bake window, then
- * migrator-only until v1.0; entry structs and codecs never die. */
+/* No line encoder: oop_wisdom.txt is FROZEN — all banks go through
+ * vw2_oop_rec_from_entry (wisdom2_oop_reader.h). The loader above serves
+ * the migrator; the entry struct and codecs are permanent. */
 
 #endif /* VFFT_OOP_WISDOM_H */
