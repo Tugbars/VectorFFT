@@ -129,20 +129,30 @@ static int _ilnd_child_equiv(const struct vfft_plan_s *a, const struct vfft_plan
 {
     const vfft_ilcol_t *x = &a->il2d_col, *y = &b->il2d_col;
     int s;
+    const char *why = NULL;
     if (!a->il2d_row || !b->il2d_row)
-        return 0;
-    if (a->N != b->N || a->N2 != b->N2)
-        return 0;
-    if (x->nst != y->nst || x->wl != y->wl || x->cut != y->cut || x->tfuse != y->tfuse ||
-        x->staged != y->staged || x->nat != y->nat || x->natarm != y->natarm ||
-        x->blu != y->blu || x->colmt != y->colmt)
-        return 0;
-    for (s = 0; s < x->nst; s++)
-        if (x->R[s] != y->R[s] || x->L[s] != y->L[s] || x->f[s] != y->f[s] || x->b[s] != y->b[s])
-            return 0;
-    if (!_tc_clone_equiv(a->il2d_row, b->il2d_row))
-        return 0;
-    return 1;
+        why = "no row plan";
+    else if (a->N != b->N || a->N2 != b->N2)
+        why = "shape";
+    else if (x->nst != y->nst) why = "chain length";
+    else if (x->wl != y->wl || x->cut != y->cut || x->tfuse != y->tfuse) why = "banded walk";
+    else if (x->staged != y->staged) why = "staged leaf";
+    else if (x->nat != y->nat) why = "natural class";
+    else if (x->natarm != y->natarm) why = "natural arm";
+    else if (x->blu != y->blu) why = "N-arm";
+    else if (x->colmt != y->colmt) why = "column MT";
+    else
+    {
+        for (s = 0; s < x->nst && !why; s++)
+            if (x->R[s] != y->R[s] || x->L[s] != y->L[s]) why = "chain";
+            else if (x->f[s] != y->f[s] || x->b[s] != y->b[s]) why = "kernel forms";
+        if (!why && !_tc_clone_equiv(a->il2d_row, b->il2d_row))
+            why = "row plan";
+    }
+    if (why && getenv("VFFT_IL2D_LOG"))
+        fprintf(stderr, "[ilnd] child clone %dx%d not equivalent: %s (primary chain %d.. wl=%d staged=%d natarm=%d; clone chain %d.. wl=%d staged=%d natarm=%d)\n",
+                a->N, a->N2, why, x->nst ? x->R[0] : 0, x->wl, x->staged, x->natarm, y->nst ? y->R[0] : 0, y->wl, y->staged, y->natarm);
+    return why == NULL;
 }
 
 typedef struct vfft_ilnd_s {
@@ -162,6 +172,8 @@ typedef struct vfft_ilnd_s {
     struct vfft_plan_s **childw;  /* arm 1 clones */
     struct vfft_plan_s **roww;    /* arm 2 row clones */
     vfft_ilcol_t *ax1w;           /* arm 2 axis-1 descriptors: shared tables, own scratch */
+    int ip;                       /* the plan's placement (1 = in place): the races run the
+                                   * product's contract, never the other placement (2026-09-25) */
     /* THE NATURAL CLASS (nat = 1): the axis-0 permutation and its cycle walks */
     int nat;
     int *natp, *natinv;           /* position q after the scrambled axis 0 holds plane natp[q]; natinv = its inverse */
@@ -1131,9 +1143,12 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
     return 1;
 }
 
-/* the (structure, width) race: the whole forward, in place on scratch,
- * every configuration an arm of ONE alternated race */
-typedef struct { vfft_ilnd_t *d; double *z; int arm; int wl; int nf; int sw; char name[24]; } _ilnd_arm_ctx_t;
+/* the (structure, width) race: the whole forward in the plan's own placement
+ * on aligned scratch (zo == z in place), every configuration an arm of ONE
+ * alternated race. A race in the other placement banks the other placement's
+ * winner: at eight threads the in-place race chose the flat structure where
+ * the product, out of place, runs the 2D child faster (measured 2026-09-25). */
+typedef struct { vfft_ilnd_t *d; double *z; double *zo; int arm; int wl; int nf; int sw; char name[24]; } _ilnd_arm_ctx_t;
 static void _ilnd_arm_run(void *v)
 {
     _ilnd_arm_ctx_t *c = (_ilnd_arm_ctx_t *)v;
@@ -1141,13 +1156,13 @@ static void _ilnd_arm_run(void *v)
     c->d->nf = c->nf;
     c->d->nsw = c->sw;
     _ilnd_apply_wl(&c->d->ax0, c->wl);
-    _ilnd_execute_st(c->d, VFFT_FORWARD, c->z, c->z);
+    _ilnd_execute_st(c->d, VFFT_FORWARD, c->z, c->zo);
 }
 
 /* the MT race at the plan's T: serial (the one-thread structure) vs each
  * (partition, structure) that can ENGAGE, the whole forward through the
  * very code execute serves with. Returns the winning (mt, structure). */
-typedef struct { vfft_ilnd_t *d; double *z; int mt; int arm; int nf; int ok; char name[24]; } _ilnd_mt_ctx_t;
+typedef struct { vfft_ilnd_t *d; double *z; double *zo; int mt; int arm; int nf; int ok; char name[24]; } _ilnd_mt_ctx_t;
 static void _ilnd_mt_arm_run(void *v)
 {
     _ilnd_mt_ctx_t *c = (_ilnd_mt_ctx_t *)v;
@@ -1155,18 +1170,20 @@ static void _ilnd_mt_arm_run(void *v)
     c->d->nf = c->nf;
     if (c->mt == 0)
     {
-        _ilnd_execute_st(c->d, VFFT_FORWARD, c->z, c->z);
+        _ilnd_execute_st(c->d, VFFT_FORWARD, c->z, c->zo);
         return;
     }
     c->d->mt = c->mt;
-    if (c->ok && !_ilnd_execute_mt(c->d, VFFT_FORWARD, c->z, c->z))
+    if (c->ok && !_ilnd_execute_mt(c->d, VFFT_FORWARD, c->z, c->zo))
         c->ok = 0; /* the arm cannot engage on this cell */
 }
 static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int strip_ok,
                           int *mt_out, int *arm_out, int *nf_out)
 {
     const size_t T = (size_t)d->N[0] * d->plane;
-    double *z = (double *)malloc(2 * T * sizeof(double));
+    /* the plan's own placement on aligned buffers (2026-09-25): zo == z in place */
+    double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
+    double *zo = d->ip ? z : (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
     _ilnd_mt_ctx_t cx[7];
     vfft_race_arm_t arms[7];
     double ns[7] = { 1e300, 1e300, 1e300, 1e300, 1e300, 1e300, 1e300 };
@@ -1175,8 +1192,12 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
     *mt_out = 0;
     *arm_out = s0;
     *nf_out = nf0;
-    if (!z)
+    if (!z || !zo)
+    {
+        if (zo && zo != z) VFFT_ZS_FREE(zo);
+        if (z) VFFT_ZS_FREE(z);
         return;
+    }
     d->nf = nf0;
     for (i = 0; i < 2 * T; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 1023);
@@ -1185,16 +1206,16 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
     {
         double t0;
         d->arm = s0;
-        _ilnd_execute_st(d, VFFT_FORWARD, z, z);
+        _ilnd_execute_st(d, VFFT_FORWARD, z, zo);
         t0 = _il_ab_now();
-        _ilnd_execute_st(d, VFFT_FORWARD, z, z);
+        _ilnd_execute_st(d, VFFT_FORWARD, z, zo);
         t0 = _il_ab_now() - t0;
         reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
         if (reps < 2) reps = 2;
         if (reps > 256) reps = 256;
     }
 #define ILND_ARM(MT, ARM, NF, NAME) do { \
-        cx[na].d = d; cx[na].z = z; cx[na].mt = (MT); cx[na].arm = (ARM); cx[na].nf = (NF); cx[na].ok = 1; \
+        cx[na].d = d; cx[na].z = z; cx[na].zo = zo; cx[na].mt = (MT); cx[na].arm = (ARM); cx[na].nf = (NF); cx[na].ok = 1; \
         snprintf(cx[na].name, sizeof cx[na].name, "%s/%s%s", NAME, (ARM) == 1 ? "child" : "flat", \
                  (NF) == 2 ? "/strip" : ""); \
         arms[na].name = cx[na].name; arms[na].run = _ilnd_mt_arm_run; arms[na].ctx = &cx[na]; na++; \
@@ -1222,7 +1243,8 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
     *mt_out = cx[best].mt;
     *arm_out = cx[best].arm;
     *nf_out = cx[best].nf;
-    free(z);
+    if (zo != z) VFFT_ZS_FREE(zo);
+    VFFT_ZS_FREE(z);
     if (getenv("VFFT_IL2D_LOG"))
     {
         fprintf(stderr, "[ilnd] %dx%dx%d%s: MT race T=%d reps=%d", d->N[0], d->N[1], d->N[2],
@@ -1286,6 +1308,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     d->plane = (size_t)N2 * (size_t)N3;
     d->mt_t = nthr;
     d->nat = nat;
+    d->ip = (cfg->placement == VFFT_INPLACE);
     /* the column build's Bluestein inner-chain provider reads this create.
      * The HOOK too: without it a 3D cell whose axis is prime would get its
      * M chain from the greedy builder or from the raced provider, depending
@@ -1356,8 +1379,16 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
             if (sarm[i] == 1) want1 = 1;
             if (sarm[i] == 2) want2 = 1;
         }
-        if (want1) ok1 = _ilnd_build_child(d, cfg);
+        /* the flat structure FIRST (2026-09-25): both structures hold a row plan
+         * of the same K=1 cell (length N3, in place, natural), and under
+         * recalibrate the flat's row plan re-races and re-banks that cell while
+         * the 2D child's row plan is served. Built the other way round, the
+         * child kept the old chain, its clones read the new one, the clone
+         * check refused them, and every recalibrating create raced its
+         * threading without the child arm: the calibrated T=8 grid banked the
+         * flat structure on every large short-N1 cell where the child wins. */
         if (want2) ok2 = _ilnd_build_flat(d, W, cfg, &key0);
+        if (want1) ok1 = _ilnd_build_child(d, cfg);
         if (!ok1 && !ok2)
         {
             _vfft_warn("vfft_create: 3D INTERLEAVED c2c %dx%dx%d%s — no structure arm could "
@@ -1444,7 +1475,9 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     else
     {
         const size_t T = (size_t)N1 * d->plane;
-        double *z = (double *)malloc(2 * T * sizeof(double));
+        /* the plan's own placement on aligned buffers (2026-09-25): zo == z in place */
+        double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
+        double *zo = d->ip ? z : (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
         _ilnd_arm_ctx_t ac[VFFT_RACE_MAX_ARMS];
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
         double ns[VFFT_RACE_MAX_ARMS];
@@ -1452,8 +1485,10 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         int reps = (int)(1e6 / (double)(T + 1));
         if (reps < 1) reps = 1;
         if (reps > 64) reps = 64;
-        if (!z)
+        if (!z || !zo)
         {
+            if (zo && zo != z) VFFT_ZS_FREE(zo);
+            if (z) VFFT_ZS_FREE(z);
             vfft_ilnd_destroy(d);
             return NULL;
         }
@@ -1471,6 +1506,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 {
                     ac[na].d = d;
                     ac[na].z = z;
+                    ac[na].zo = zo;
                     ac[na].arm = sarm[si];
                     ac[na].wl = wls[wi];
                     ac[na].nf = 1;
@@ -1487,6 +1523,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 {
                     ac[na].d = d;
                     ac[na].z = z;
+                    ac[na].zo = zo;
                     ac[na].arm = sarm[si];
                     ac[na].wl = 0;
                     ac[na].nf = 2;
@@ -1520,7 +1557,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                     sw_best = ac[a].sw;
                 }
         }
-        free(z);
+        if (zo != z) VFFT_ZS_FREE(zo);
+        VFFT_ZS_FREE(z);
         if (getenv("VFFT_IL2D_LOG"))
         {
             fprintf(stderr, "[ilnd] %dx%dx%d%s: race", N1, N2, N3, nat ? " nat" : "");
