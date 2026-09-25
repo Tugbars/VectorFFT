@@ -615,6 +615,15 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     return lines;
 }
 
+/* ── the K=1 IL-engine candidate: the request's cell (order x placement),
+ * raced and banked on a miss, resolved to exactly one plan — the banked
+ * route's (prime / chain3 / flat / ZTURN-T / four-step / pair), else the
+ * balanced pair, else the il3p default chain. A MONO verdict builds nothing
+ * here: the caller serves the mono door.
+ * ⚠ The pair heuristic MIRRORS the OOP K=1 block's IL search (the
+ * "IL runs its OWN pair search" rules in c2c_oop_create.h: il2p registries
+ * stop at R=64, no parity constraint) — if you touch one, touch both.
+ * Planning side only. */
 static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              int N,
                              vfft_il2p_plan_t **il2p_out,
@@ -634,34 +643,22 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         return;
     int iR1 = 0, iR2 = 0;
     vfft_oop_wisdom_entry_t keb;
-    /* the request's ORDER CELL (2026-09-05): an explicit SCRAMBLED request
-     * reads the ord=scr row — the scrambled pool's own verdict — and nothing
-     * else; DEFAULT and NATURAL read the ord=nat row. */
-    /* the request's PLACEMENT CELL (2026-09-21): an in-place request reads
-     * and races the place=ip row -- its own verdict, every arm executed
-     * in place -- never the out-of-place cell's. Until now both doors asked
-     * with inplace=0 and the in-place door served the out-of-place verdict
-     * through a reference row (owner: wrong; one contract per request). */
+    /* the request's ORDER CELL: an explicit SCRAMBLED request reads the
+     * ord=scr row — the scrambled pool's own verdict — and nothing else;
+     * DEFAULT and NATURAL read the ord=nat row. */
+    /* the request's PLACEMENT CELL: an in-place request reads and races the
+     * place=ip row -- its own verdict, every arm executed in place -- never
+     * the out-of-place cell's (one contract per request). */
     const int ip_req = (cfg->placement == VFFT_INPLACE);
     const int scr_req = (vfft_policy_ord_k1(cfg, N, ip_req) == VW2_ORD_SCR);
     const vfft_oop_wisdom_entry_t *ke =
         W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
                        : (vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, &keb) ? &keb : NULL);
-    /* the IL plan race: a MISS (no IL verdict on the row) or recalibrate
-     * below 2048 races the planner's pools and banks, then replays */
-    /* ... and ABOVE 2048 for any N without a factor of 4 (2026-09-04):
-     * the cascade's ingest is radix 4, so such an N has no cascade route
-     * and would otherwise fall to Bluestein unraced — the Bailey tier's
-     * race is the only measurement it can get. (N with a factor of 4 stayed
-     * the cascade's until 2026-09-22; they race too now.) */
-    /* WISDOM OR RACE (owner's law, 2026-09-09): every interleaved miss races,
-     * the pow2 band included — _k1_il_plan_race carries the N gate. Until
-     * 2026-09-09 this call was fenced to N < 2048 or odd N and a cold in-place
-     * band cell refused with "no interleaved engine". */
-    /* the scrambled pow2 band is the K=1 tier's since 2026-09-14: its writer is
-     * the PLAIN ZTURN-T schedule (ztt_scrambled_design.md), raced and banked
-     * on the ord=scr row like every other cell; the cascade's fence that stood
-     * here is gone with the cascade's last pow2 role */
+    /* the IL plan race: a MISS (no IL verdict on the row), a pair-only row
+     * whose forms were never raced, or recalibrate races the planner's pools
+     * and banks, then replays; _k1_il_plan_race carries the N gate. The
+     * scrambled pow2 band races here too: its writer is the PLAIN ZTURN-T
+     * schedule, banked on the ord=scr row like every other cell. */
     if (!W->vw2_off_oop &&
         (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
     {
@@ -671,24 +668,22 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     /* a SCRAMBLED request at a pow2 cell with no scrambled row after the race
      * builds NOTHING here — no default pair, no heuristic (NO FALLBACKS): the
      * race is the only source of a scrambled plan, and a natural-writing pair
-     * is not one. Seen 2026-09-09: the in-place scrambled create at 2048
-     * attached a natural-writing pair 64.32. */
+     * is not one. */
     {   /* the writer-band law (planning/policy.h): no fallback here */
         const vfft_cell_t sc = vfft_policy_cell(cfg, N, 1, 1, 0, 1);
         if (scr_req && vfft_policy_scr_writer_band(&sc) && !ke)
             return;
     }
-    /* MONO verdict (2026-09-04): the cell's plan is ONE solo kernel; no pair
-     * is built here — the caller serves the mono door (the OOP block reads
-     * the form itself; in place, _k1_il_mono_candidate). Without this an
-     * in-place create replayed a MONO row as the balanced pair. */
+    /* MONO verdict: the cell's plan is ONE solo kernel; no pair is built
+     * here — the caller serves the mono door (the OOP block reads the form
+     * itself; in place, _k1_il_mono_candidate). Without this return an
+     * in-place create would replay a MONO row as the balanced pair. */
     if (ke && ke->k1_il_route == VFFT_K1_IL_MONO && vfft_k1_mono_il_fn(N, 0))
         return;
-    /* PRIME verdict (2026-09-21): the cell's plan is the prime cell, an arm
-     * of the race since today. The race's warm plan is handed over when the
-     * race just ran (never rebuilt: under recalibrate a rebuild would race
-     * the inner a second time and could bank a different one); a replay
-     * builds it from the prime shard's row. */
+    /* PRIME verdict: the cell's plan is the prime cell. The race's warm plan
+     * is handed over when the race just ran (never rebuilt: under
+     * recalibrate a rebuild would race the inner a second time and could
+     * bank a different one); a replay builds it from the prime shard's row. */
     if (ke && ke->k1_il_route == VFFT_K1_IL_PRIME)
     {
         if (ilp_out)
@@ -709,7 +704,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         _k1pr_release();
         return;
     }
-    /* CHAIN3 verdict (2026-09-02): the banked 3-stage chain replays as
+    /* CHAIN3 verdict: the banked 3-stage chain replays as
      * written; a build refusal falls through to the pair/default path */
     if (ke && ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0])
     {
@@ -723,7 +718,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             return;
         }
     }
-    /* FLAT DIT verdict (2026-09-05): the banked chain + per-stage forms
+    /* FLAT DIT verdict: the banked chain + per-stage forms
      * replay as written (validated by the engine's create/apply). Under a
      * SCRAMBLED request ke is the ord=scr row and the plan is the flat DIT's
      * scrambled class. A refusal falls through to the pair/default path. */
@@ -758,12 +753,11 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             return;
         }
     }
-    /* ZTURN-T verdict (2026-09-09): the banked chain replays as written
-     * (validated by the create: legality, the quarter-wave's octave, the
-     * registry cell). The ORDER CLASS is the row's: an ord=nat row replays
-     * the natural drivers, an ord=scr row the PLAIN schedule's (2026-09-14,
-     * ztt_scrambled_design.md) — one plan, one order, never mixed. A refusal
-     * falls through to the pair/default path. */
+    /* ZTURN-T verdict: the banked chain replays as written (validated by the
+     * create: legality, the quarter-wave's octave, the registry cell). The
+     * ORDER CLASS is the row's: an ord=nat row replays the natural drivers,
+     * an ord=scr row the PLAIN schedule's — one plan, one order, never mixed.
+     * A refusal falls through to the pair/default path. */
     if (ke && ke->k1_il_route == VFFT_K1_IL_ZTT && ke->il_zt_n >= 2 && ztt_out)
     {
         vfft_ztt_plan_t *zp = vfft_ztt_create_chain_ord(N, ke->il_zt, ke->il_zt_n, scr_req);
@@ -784,7 +778,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             return;
         }
     }
-    /* the FOUR-STEP (route 10, 2026-09-15): a banked verdict replays its split
+    /* the FOUR-STEP (route 10): a banked verdict replays its split
      * (il_pair = N1.N2) through the create — the 2D child at the request's
      * placement and thread count, the order class the row's */
     if (ke && ke->k1_il_route == VFFT_K1_IL_FS && fs_out && ke->il_R1 > 0 && ke->il_R2 > 0 &&
@@ -829,8 +823,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         }
     }
     if (iR1)
-    {   /* braces load-bearing (same latent trap fixed at the OOP site):
-         * apply_kv must not run when the pair axis was skipped. */
+    {   /* braces load-bearing: apply_kv must not run when the pair axis
+         * was skipped. */
         *il2p_out = vfft_il2p_create(N, iR1, iR2);
         _k1_il2p_apply_kv(*il2p_out, ke, &W->vw2, N, ip_req);   /* wisdom verdict > default */
     }
@@ -841,10 +835,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * run at most ONCE per process per cell — without this, the natural
      * and scrambled handles (and measure vs consume) each re-race, and a
      * margin near the hysteresis flips on noise, breaking the
-     * bitwise-identity contracts between them (caught by
-     * vfft_ilp_front_gate's scrambled arm at 512, margin 4.5% vs 3%
-     * hysteresis). Planning-side, no locks: worst case a benign double
-     * race on concurrent first creates. */
+     * bitwise-identity contracts between them. Planning-side, no locks:
+     * worst case a benign double race on concurrent first creates. */
     static int _ord_n[8];
     static signed char _ord_pick[8]; /* 0 = heuristic order, 1 = swapped */
     int ord_slot = -1, ord_known = -1;
@@ -885,8 +877,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                         { "heuristic", _k1ord_arm_run, &ca },
                         { "swapped", _k1ord_arm_run, &cb } };
                     /* 5 rounds, A then B, min; reseed before every burst:
-                     * repeated in-place fwd amplifies magnitudes toward inf
-                     * (the ZCASC-race hazard) */
+                     * repeated in-place fwd amplifies magnitudes toward inf */
                     const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MIN, 0, 0,
                                                       _k1ord_reseed, &ca, 1 } /* single-thread arms: paced (VFFT_RACE_PACE_MS) */;
                     double ns[2];
@@ -894,8 +885,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                     ta = ns[0];
                     tb = ns[1];
                 }
-                /* 3% hysteresis, incumbent (heuristic) keeps ties —
-                 * the t2q/t2b precedent exactly. */
+                /* 3% hysteresis, incumbent (heuristic) keeps ties. */
                 if (vfft_race_beats(tb, ta, 0.97))
                 {
                     vfft_il2p_destroy(*il2p_out);
@@ -908,8 +898,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                     "swapped %d.%d=%.0f -> %s\n",
                             N, iR1, iR2, ta, iR2, iR1, tb,
                             picked_swap ? "SWAPPED" : "heuristic");
-                /* BANK the winner as the cell's kind-3 pair verdict (B1.4,
-                 * 2026-09-02): the pair ORDER is exactly what il_pair= says,
+                /* BANK the winner as the cell's kind-3 pair verdict: the pair
+                 * ORDER is exactly what il_pair= says,
                  * so the existing replay (ke->il_R1 above) serves it and this
                  * race never runs again for the cell. Measure-less (ns=0):
                  * the offline planner's measured row replaces it. */
@@ -922,7 +912,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                     ne.k1_il_route = VFFT_K1_IL_2P_PURE;
                     ne.il_R1 = picked_swap ? iR2 : iR1;
                     ne.il_R2 = picked_swap ? iR1 : iR2;
-                    ne.ord_scr = scr_req;   /* the request's own order cell (2026-09-05) */
+                    ne.ord_scr = scr_req;   /* the request's own order cell */
                     if (vw2_oop_bank_k1_lay(&W->vw2, &ne, VW2_LAY_IL) == VW2_OK)
                         _vw2_persist(W, cfg);
                 }
@@ -949,19 +939,17 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     }
 }
 
-/* the mode-row RECIPE rule (owner, 2026-09-02): fac/var are the classic
- * plan of the CALLER (the convert incumbent) — the served recipe only for
- * mode=conv and the tape modes. A mode=zcasc row must not carry them: the
- * writer emits a signpost to the kind-4 recipe instead (comp when the
- * in-place race banked one, else the OOP verdict); mode=ilp emits neither. */
+/* the mode-row RECIPE rule: fac/var are the split plan's chain — the served
+ * recipe only for the tape modes. A mode=ilp row carries no chain; its
+ * signpost names the IL recipe row instead. */
 /* the ILP recipe row, AS KEYED: the kind-3 row at N (lay=il / split /
  * lay-less, exact keys) else the PRIME shard row; 0 = none (mono) */
 static int _ilp_ref_of(struct vfft_wisdom_s *W, int N, int mode, int scr_req)
 {
     int lay;
     if (mode != VFFT_NAT_ILP || W->vw2_off_oop) return 0;
-    /* an explicit SCRAMBLED request is served from its own order cell
-     * (2026-09-05): the signpost names the ord=scr kind-3 IL row */
+    /* an explicit SCRAMBLED request is served from its own order cell:
+     * the signpost names the ord=scr kind-3 IL row */
     if (scr_req && vw2_oop_k1_row_lay_ord(&W->vw2, N, 1) == VW2_LAY_IL) return 5;
     lay = vw2_oop_k1_row_lay(&W->vw2, N);
     if (lay == VW2_LAY_IL) return 1;
@@ -971,8 +959,8 @@ static int _ilp_ref_of(struct vfft_wisdom_s *W, int N, int mode, int scr_req)
     return 0;
 }
 
-/* ── the FLAT DIT's threading verdict (2026-09-07, il_flatdit_mt.h; the
- * same law as the cascade's above): env pin > the banked il_mt at THIS T
+/* ── the FLAT DIT's threading verdict (il_flatdit_mt.h): env pin > the
+ * banked il_mt at THIS T
  * on the cell's kind-3 IL row (ord=nat or ord=scr — the plan's own class)
  * > the race at T (serial vs blocks vs tiles at every legal width, steady-
  * state samples), banked il_mt= il_mt_t= il_mt_tw=. The one-thread width
@@ -1054,8 +1042,8 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
     }
 }
 
-/* ── ZTURN-T's threading verdict (2026-09-15, ztt_mt.h, ztt_mt_design.md;
- * the flat DIT's law above): env pin VFFT_ZTT_MT=0|1|2 (never banked) > the
+/* ── ZTURN-T's threading verdict (ztt_mt.h; the flat DIT's law above):
+ * env pin VFFT_ZTT_MT=0|1|2 (never banked) > the
  * banked arm at THIS T on the cell's il_route=ztt row of the plan's own
  * order class > the race at T (serial vs blocks vs tiles, steady-state
  * samples, hot). Out of place banks il_mt= il_mt_t=; a plan bound IN PLACE
@@ -1119,8 +1107,8 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
     }
 }
 
-/* ── the FOUR-STEP's threaded arm (2026-09-15): the SPLIT (and the natural
- * class's FORM, 2026-09-16) is the per-T verdict ──
+/* ── the FOUR-STEP's threaded arm: the SPLIT (and the natural class's FORM)
+ * is the per-T verdict ──
  * The 1D race picks the split at one thread; at T > 1 the children's own
  * threaded verdicts reorder the ladder (4194304 at T=8: the serial winner
  * 1024x4096 runs 7.1 ms, 2048x2048 4.9 ms), so a plan at T races the
@@ -1306,7 +1294,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
     }
 }
 
-/* ── the IN-PLACE mono candidate (2026-09-04) ──
+/* ── the IN-PLACE mono candidate ──
  * Served when the cell's kind-3 row (already planned by _k1_il_candidate's
  * race on a miss) says MONO: the alias-tolerant n1c solo, both directions.
  * The row's form axis names the OOP kernel family (solo n1 vs mono64); in
@@ -1317,11 +1305,9 @@ static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_config_t *c
 {
     vfft_oop_wisdom_entry_t keb;
     const vfft_oop_wisdom_entry_t *ke;
-    /* the REQUEST's order cell (2026-09-17) and, since 2026-09-21, its
-     * PLACEMENT cell: this is the in-place door's candidate, so it reads the
-     * place=ip row the in-place race banked (an explicit SCRAMBLED cell reads
-     * its ord=scr row -- the 2026-09-17 fix for a MONO verdict refused on the
-     * wrong row stands). */
+    /* the REQUEST's order and placement cell: this is the in-place door's
+     * candidate, so it reads the place=ip row the in-place race banked (an
+     * explicit SCRAMBLED request reads its ord=scr row). */
     const int scr_req = (vfft_policy_ord_k1(cfg, N, 1) == VW2_ORD_SCR);
     *ilf = *ilb = 0;
     if (!W || W->vw2_off_oop) return 0;
@@ -1345,32 +1331,17 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     nn.nat_ns = ns;
     nn.nf = nf;
     nn.use_dif = use_dif;
-    nn.ref_comp = 0 /* no cascade recipe rows since 2026-09-15 */;
+    nn.ref_comp = 0 /* no kind-4 recipe rows are written */;
     nn.ref_ilp = _ilp_ref_of(W, N, mode, 0);   /* the @nat cell: the ord=nat recipe */
     for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
     {
         nn.factors[s] = fac[s];
         nn.variants[s] = var[s];
     }
-    /* wave-4 flip: @nat verdicts bank into the wisdom2 store (memory;
-     * persistence behind config.wisdom_write). spike_wisdom.txt freezes. */
+    /* @nat verdicts bank into the wisdom2 store (memory; persistence behind
+     * config.wisdom_write). */
     vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0, _vw2_lay_of(cfg));
     _vw2_persist(W, cfg);
 }
 
-/* ════════════════════════════════════════════════════════════════════════
- * PUBLIC API
- * ════════════════════════════════════════════════════════════════════════ */
-
-/* ── K=1 SCRAMBLED cascade: WISDOM-HIT replay — THE one definition ──────────
- *
- * Resolves the banked kind-4 verdict (route + chain + t2q + tcut width with
- * its L1 fence and the env-beats-wisdom rule) into exactly one live cascade
- * plan. Shared by the OOP create branch AND the in-place front door — the
- * calibrate_zchain incident (two writers, one taught about a new field, a
- * tiled winner banked as untiled with nothing complaining) is why replay
- * semantics live in ONE place. Returns 1 with outputs set on a full hit;
- * 0 (outputs untouched) on miss/recalibrate/create-failure — the caller
- * decides what a miss means (OOP: race + bank; in-place: classic path).
- * PLANNING side only; the exec purity audit watches this. */
 #endif /* VFFT_OOP_K1_COMMIT_H */
