@@ -1,22 +1,14 @@
 /**
- * stride_threads.h -- Lightweight thread pool for K-split parallelism
+ * threads.h -- the thread pool.
  *
- * VectorFFT parallelizes across the K (batch) dimension: each thread
- * processes a contiguous slice of K lanes using the same plan and shared
- * twiddle tables. No barriers, no copies, no per-thread plans.
- *
- * Architecture:
- *   - Persistent worker threads, created by stride_set_num_threads(n)
- *   - Workers sleep on OS primitives (Event on Win32, condvar on Linux)
- *   - Dispatch: post work + signal wake, spin-wait on completion
- *   - Thread 0 = caller thread (no dispatch overhead)
- *   - Pool destroyed by stride_set_num_threads(1) or at exit
+ *   - Persistent workers, created by stride_set_num_threads(n) (n-1 workers)
+ *     and destroyed by stride_set_num_threads(1)
+ *   - Each worker is pinned (see _stride_pin_stride) and SPINS on its `done`
+ *     flag: posting work is clearing `done`, completion is setting it
+ *   - Thread 0 is the caller, which runs its own slot inline
+ *   - Engines fork-join through stride_pool_workers_for + stride_pool_run
  *
  * No OpenMP, no TBB, no external dependencies.
- *
- * Usage:
- *   stride_set_num_threads(8);  // create pool of 7 workers
- *   stride_execute_fwd(plan, re, im);  // automatically K-split
  */
 #ifndef STRIDE_THREADS_H
 #define STRIDE_THREADS_H
@@ -49,10 +41,9 @@ static inline int stride_get_num_threads(void) {
  * WORKER STRUCTURE
  * ===================================================================== */
 
-/* 🔴 PADDED TO A CACHE LINE. The struct is ~40 B, so two workers shared a
- * 64 B line: posting work to worker i invalidated worker i-1's `done`
- * spin line, adding a coherence miss to every dispatch and to every spin
- * iteration of an idle neighbour. Each worker owns its line now. */
+/* Padded so neighbouring workers' `done` flags never share a cache line:
+ * a shared line adds a coherence miss to every dispatch and to every spin
+ * iteration of an idle neighbour. */
 typedef struct {
     void (*func)(void *);
     void *arg;
@@ -94,10 +85,9 @@ static inline void _stride_pin_to_core(int core_id) {
 static DWORD WINAPI _stride_worker_func(LPVOID param) {
     _stride_worker_t *w = (_stride_worker_t *)param;
     _stride_pin_to_core(w->core_id);
-    /* FTZ+DAZ per-worker: MXCSR is thread-local, so each worker must flush
-     * denormals like stride_env_init() does on the main thread, else MT compute
-     * can hit the denormal microcode trap (support/README.md). 0x8040 = FTZ
-     * (bit 15) | DAZ (bit 6); inlined to keep threads.h free of an env.h dep. */
+    /* MXCSR is per-thread: set FTZ (bit 15) | DAZ (bit 6) here, as
+     * stride_env_init() does for the caller. Inlined to keep threads.h
+     * independent of env.h. */
     _mm_setcsr(_mm_getcsr() | 0x8040);
     while (!w->shutdown) {
         /* Spin-wait for work (done==0 means work posted) */
@@ -113,11 +103,7 @@ static DWORD WINAPI _stride_worker_func(LPVOID param) {
 static void *_stride_worker_func(void *param) {
     _stride_worker_t *w = (_stride_worker_t *)param;
     _stride_pin_to_core(w->core_id);
-    /* FTZ+DAZ per-worker: MXCSR is thread-local, so each worker must flush
-     * denormals like stride_env_init() does on the main thread, else MT compute
-     * can hit the denormal microcode trap (support/README.md). 0x8040 = FTZ
-     * (bit 15) | DAZ (bit 6); inlined to keep threads.h free of an env.h dep. */
-    _mm_setcsr(_mm_getcsr() | 0x8040);
+    _mm_setcsr(_mm_getcsr() | 0x8040);   /* FTZ | DAZ, as in the Win32 worker */
     while (!w->shutdown) {
         while (w->done && !w->shutdown)
             __builtin_ia32_pause();
@@ -160,15 +146,12 @@ static int _stride_ncpu(void) {
     return 1;
 #endif
 }
-/* Pin stride: worker i -> logical core (i+1)*stride, caller stays on core 0. On an SMT part (14900KF:
- * logical 0-15 = 8 P-cores x 2 HT, even logical = distinct P-cores) stride 2 puts caller+7 workers on the
- * 8 DISTINCT P-cores (0,2,..,14) instead of HT-contending 4 P-cores (the old i+1 packed 0..7 = 4 P-cores x
- * HT, which made MT ~2x slower).
- * 🔴 DERIVED, NOT HARD-CODED (2026-08-26): the stride is the DETECTED SMT width (CPUID leaf 0xB level 0).
- * A fixed 2 on a non-SMT or SMT-disabled part addresses only even cores — workers past the halfway point
- * fall off the end and silently run UNPINNED (core_id = -1 below), which voids every cache-privacy
- * argument the threading design rests on, with no error. Unknown SMT (0) keeps the historical 2.
- * VFFT_PIN_STRIDE still overrides for experiments. */
+/* Pin stride: worker i -> logical core (i+1)*stride, caller stays on core 0.
+ * The stride is the detected SMT width (CPUID leaf 0xB level 0), so on an SMT
+ * part (14900KF: logical 0-15 = 8 P-cores x 2 HT) the caller and workers land
+ * on distinct physical cores (0,2,..,14); packing HT siblings runs MT ~2x
+ * slower. A worker whose target is past the last logical core runs unpinned
+ * (core_id = -1). Unknown SMT width (0) assumes 2; VFFT_PIN_STRIDE overrides. */
 static int _stride_pin_stride(void) {
     const char *e = getenv("VFFT_PIN_STRIDE");
     int s;
@@ -288,26 +271,12 @@ static inline void stride_set_num_threads(int n) {
 }
 
 /* =====================================================================
- * THE POOL'S OWNER API — the ONE clamp and the ONE fork-join (2026-09-01)
+ * THE POOL'S OWNER API — the one clamp and the one fork-join
  *
- * Before this section existed, every engine re-implemented the dispatch
- * idiom by hand: derive T (some from the live pool, some from the plan
- * snapshot), clamp it against `_stride_pool_size + 1` (that line copied 43
- * times), clamp it against 64 (done at 9 dispatchers, omitted at 9 others
- * that still declared a 64-slot array), fill `a[64]`, post to
- * `_stride_workers[nd++]` or `[t - 1]` (two conventions), run the caller's
- * own slot, spin on `_stride_pool_wait_all()`. Every property of the pool
- * — how many workers, how they are indexed, how big the arg array is,
- * whether the plan's own thread count is honoured — was a per-site
- * decision, and that is how three live bugs were written (a pool-shrinking
- * setter in one create race; natorder sizing scratch from the live pool at
- * create and indexing it from the live pool at execute; T>64 stack overruns
- * on any host granted 65+ workers).
- *
- * So the pool now OWNS its idiom. Engines keep what is genuinely theirs —
- * the slicing policy (K-split rounded to 8, proportional, count-balanced,
- * plane-queue pull) and the per-worker argument struct — and stop
- * re-deciding what is not theirs.
+ * The pool owns the dispatch idiom (worker count, indexing, arg-array
+ * bound, honouring the plan's thread count). Engines own the slicing policy
+ * (K-split rounded to 8, proportional, count-balanced, plane-queue pull) and
+ * the per-worker argument struct.
  *
  *   STRIDE_POOL_MAX_DISPATCH   the arg-array bound. Size every per-worker
  *                              arg array with it, never with a literal 64.
@@ -324,11 +293,8 @@ static inline void stride_set_num_threads(int n) {
  *                              an engine that wants the caller to take the
  *                              remainder puts the remainder in a[0].
  *
- * Both are `static inline` in the single translation unit like everything
- * else here, so they cost exactly what the hand-written copies cost.
- *
- * PRIMITIVES STAY. `_stride_pool_dispatch` / `_stride_pool_wait_all` remain
- * for the two probes outside src/core that use them; no engine should.
+ * `_stride_pool_dispatch` / `_stride_pool_wait_all` are primitives for the
+ * benches outside src/core; engines go through stride_pool_run.
  * ===================================================================== */
 
 #define STRIDE_POOL_MAX_DISPATCH 64
