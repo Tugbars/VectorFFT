@@ -25,9 +25,9 @@
  * plan's T with steady-state samples (REPS executes after warm passes;
  * every tile width the chain offers is an arm of the tiles family, because
  * the width raced at one thread need not be the threaded one) and banked
- * on the cell's kind-3 IL row as il_mt= (0|1|2), il_mt_t= (the T raced
- * at), il_mt_tw= (the tiles arm's width); il_tw= stays the one-thread
- * verdict. A verdict serves only at its own T. Engagement counter:
+ * on the cell's kind-3 IL row at the plan's thread count (nthreads= in the
+ * key, v1.3) as il_mt= (0|1|2), il_mt_tw= (the tiles arm's width); il_tw=
+ * stays the one-thread verdict. A verdict serves only at its own T. Engagement counter:
  * vfft_ilfd_mt_passes() (vfft.c). VFFT_ILFD_MT=0|1|2 pins, never banks.
  *
  * Position: after il_flatdit.h and support/threads.h + support/race.h in

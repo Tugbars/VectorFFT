@@ -591,6 +591,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     _k1_il_dp_busy = 1;
     lines = vfft_il_dp_plan_and_bank(&_k1_il_dp_ctx, &W->vw2, N,
                                      cfg->placement == VFFT_INPLACE,   /* the cell's placement */
+                                     _vfft_plan_threads(cfg),   /* the plan's thread count: its row's key (v1.3) */
                                      getenv("VFFT_IL_DP_VERBOSE") != NULL);
     _k1_il_dp_busy = 0;
     if (lines > 0)
@@ -600,7 +601,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
         vfft_oop_wisdom_entry_t pe;
         const int ip_req = (cfg->placement == VFFT_INPLACE);
         const int scr_req = (vfft_policy_ord_k1(cfg, N, ip_req) == VW2_ORD_SCR);
-        if (!(vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, &pe) &&
+        if (!(vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, _vfft_plan_threads(cfg), &pe) &&
               pe.k1_il_route == VFFT_K1_IL_PRIME))
             _k1pr_release();
     }
@@ -653,7 +654,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     const int scr_req = (vfft_policy_ord_k1(cfg, N, ip_req) == VW2_ORD_SCR);
     const vfft_oop_wisdom_entry_t *ke =
         W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
-                       : (vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, &keb) ? &keb : NULL);
+                       : (vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, _vfft_plan_threads(cfg), &keb) ? &keb : NULL);
     /* the IL plan race: a MISS (no IL verdict on the row), a pair-only row
      * whose forms were never raced, or recalibrate races the planner's pools
      * and banks, then replays; _k1_il_plan_race carries the N gate. The
@@ -663,7 +664,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)
-            ke = vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, &keb) ? &keb : NULL;
+            ke = vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
     }
     /* a SCRAMBLED request at a pow2 cell with no scrambled row after the race
      * builds NOTHING here — no default pair, no heuristic (NO FALLBACKS): the
@@ -913,6 +914,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                     ne.il_R1 = picked_swap ? iR2 : iR1;
                     ne.il_R2 = picked_swap ? iR1 : iR2;
                     ne.ord_scr = scr_req;   /* the request's own order cell */
+                    ne.nthreads = _vfft_plan_threads(cfg);   /* the plan's own row (v1.3) */
                     if (vw2_oop_bank_k1_lay(&W->vw2, &ne, VW2_LAY_IL) == VW2_OK)
                         _vw2_persist(W, cfg);
                 }
@@ -963,7 +965,8 @@ static int _ilp_ref_of(struct vfft_wisdom_s *W, int N, int mode, int scr_req)
  * banked il_mt at THIS T
  * on the cell's kind-3 IL row (ord=nat or ord=scr — the plan's own class)
  * > the race at T (serial vs blocks vs tiles at every legal width, steady-
- * state samples), banked il_mt= il_mt_t= il_mt_tw=. The one-thread width
+ * state samples), banked il_mt= il_mt_tw= on the plan's own row (its thread
+ * count is the key, v1.3). The one-thread width
  * il_tw= stays what a T=1 plan replays. */
 static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
                                     struct vfft_wisdom_s *W,
@@ -978,7 +981,8 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
     if (!p || T < 2)
         return;
     if (W && !W->vw2_off_oop)
-        r = vw2__oop_k1_scan_ord(&W->vw2, N, VW2_LAY_IL, p->scr);
+        r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, p->scr,
+                                h->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP, T);   /* the plan's own row (v1.3) */
     if (pin)
     {
         const int v = atoi(pin);
@@ -991,8 +995,7 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
             fprintf(stderr, "[k1fd-mt] N=%d T=%d %s: mt=%d src=env\n", N, T, p->scr ? "scr" : "nat", p->mt);
         return;
     }
-    if (r && !cfg->recalibrate &&
-        vfft_policy_replays_at_T(vw2__oop_geti(r, "il_mt_t", 0), T))
+    if (r && !cfg->recalibrate && vw2_rec_get(r, "il_mt"))
     {
         const int v = vw2__oop_geti(r, "il_mt", 0);
         const int w = vw2__oop_geti(r, "il_mt_tw", 0);
@@ -1033,8 +1036,6 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
         int ok = 1;
         snprintf(b, sizeof b, "%d", p->mt);
         ok = ok && vw2_update_field(&W->vw2, &r->key, "il_mt", b) == VW2_OK;
-        snprintf(b, sizeof b, "%d", T);
-        ok = ok && vw2_update_field(&W->vw2, &r->key, "il_mt_t", b) == VW2_OK;
         snprintf(b, sizeof b, "%d", mt_tw);
         ok = ok && vw2_update_field(&W->vw2, &r->key, "il_mt_tw", b) == VW2_OK;
         if (ok)
@@ -1046,9 +1047,10 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
  * env pin VFFT_ZTT_MT=0|1|2 (never banked) > the
  * banked arm at THIS T on the cell's il_route=ztt row of the plan's own
  * order class > the race at T (serial vs blocks vs tiles, steady-state
- * samples, hot). Out of place banks il_mt= il_mt_t=; a plan bound IN PLACE
- * races aliased arms through the plane — a different measurement — and
- * banks its own pair il_mt_ip= il_mt_ip_t=. The one-thread tile il_tw= is
+ * samples, hot), banked il_mt= on the plan's own row: placement and thread
+ * count are its key (v1.3), so a plan bound IN PLACE, which races aliased
+ * arms through the plane — a different measurement — banks on the place=ip
+ * row at its T. The one-thread tile il_tw= is
  * untouched: the arm sections the walk the row already names. */
 static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
                                    struct vfft_wisdom_s *W,
@@ -1057,13 +1059,14 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
     vfft_ztt_plan_t *p = h->k1ztt;
     const int T = h->nthreads;
     const int ip = (h->placement == VFFT_INPLACE);
-    const char *tok_v = ip ? "il_mt_ip" : "il_mt", *tok_t = ip ? "il_mt_ip_t" : "il_mt_t";
+    const char *tok_v = "il_mt";   /* the plan's own row: placement and thread count are its key (v1.3) */
     const vw2_rec_t *r = NULL;
     const char *pin = getenv("VFFT_ZTT_MT");
     if (!p || T < 2)
         return;
     if (W && !W->vw2_off_oop)
-        r = vw2__oop_k1_scan_ord(&W->vw2, N, VW2_LAY_IL, p->scr);
+        r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, p->scr,
+                                h->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP, T);   /* the plan's own row (v1.3) */
     if (pin)
     {
         const int v = atoi(pin);
@@ -1072,8 +1075,7 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
             fprintf(stderr, "[ztt-mt] N=%d T=%d %s%s: mt=%d src=env\n", N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", p->mt);
         return;
     }
-    if (r && !cfg->recalibrate &&
-        vfft_policy_replays_at_T(vw2__oop_geti(r, tok_t, 0), T))
+    if (r && !cfg->recalibrate && vw2_rec_get(r, tok_v))
     {
         const int v = vw2__oop_geti(r, tok_v, 0);
         if (!vfft_ztt_mt_bind(p, T, (v >= 0 && v <= 2) ? v : 0)) p->mt = 0;
@@ -1100,8 +1102,6 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
         int ok = 1;
         snprintf(b, sizeof b, "%d", p->mt);
         ok = ok && vw2_update_field(&W->vw2, &r->key, tok_v, b) == VW2_OK;
-        snprintf(b, sizeof b, "%d", T);
-        ok = ok && vw2_update_field(&W->vw2, &r->key, tok_t, b) == VW2_OK;
         if (ok)
             _vw2_persist(W, cfg);
     }
@@ -1115,9 +1115,9 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
  * ladder's splits AT T — every child a 2D cell created at T, its threaded
  * verdict raced and banked on its own row — forward, in the plan's own
  * placement; the natural class races each split's form 0 and form 1 with
- * the residency sub-ladder of super-band chains. Banks il_mt=N1 il_mt_t=T
- * il_mtsb=<chain|0> (il_mt_ip / il_mt_ip_t / il_mtsb_ip in place) on the
- * cell's row: ZTURN-T's tokens, each route reading them as its own arm.
+ * the residency sub-ladder of super-band chains. Banks il_mt=N1
+ * il_mtsb=<chain|0> on the plan's own row (placement and thread count are
+ * its key, v1.3): ZTURN-T's tokens, each route reading them as its own arm.
  * Replay rebuilds the banked plan when it differs from the row's serial
  * one. VFFT_K1_FS / VFFT_K1_FSSB (the probe pins) skip both. */
 typedef struct { vfft_k1fs_plan_t *p; const double *zi; double *zo; int ip; } _k1fs_mt_ctx_t;
@@ -1171,17 +1171,17 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
     vfft_k1fs_plan_t *p = h->k1fs;
     const int T = h->nthreads;
     const int ip = (h->placement == VFFT_INPLACE);
-    const char *tok_v = ip ? "il_mt_ip" : "il_mt", *tok_t = ip ? "il_mt_ip_t" : "il_mt_t";
-    const char *tok_s = ip ? "il_mtsb_ip" : "il_mtsb";
+    const char *tok_v = "il_mt";   /* the plan's own row: placement and thread count are its key (v1.3) */
+    const char *tok_s = "il_mtsb";
     const vw2_rec_t *r = NULL;
     int n1[8], n2[8], ns, i;
     if (!p || T < 2 || getenv("VFFT_K1_FS") || getenv("VFFT_K1_FSSB"))
         return;
     if (W && !W->vw2_off_oop)
-        r = vw2__oop_k1_scan_ord(&W->vw2, N, VW2_LAY_IL, p->scr);
+        r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, p->scr,
+                                h->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP, T);   /* the plan's own row (v1.3) */
     ns = vfft_k1fs_splits(N, n1, n2, 8);
-    if (r && !cfg->recalibrate &&
-        vfft_policy_replays_at_T(vw2__oop_geti(r, tok_t, 0), T))
+    if (r && !cfg->recalibrate && vw2_rec_get(r, tok_v))
     {
         const int v = vw2__oop_geti(r, tok_v, 0);
         const char *sv = vw2_rec_get(r, tok_s);
@@ -1285,8 +1285,6 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         int ok = 1;
         snprintf(b, sizeof b, "%d", p->N1);
         ok = ok && vw2_update_field(&W->vw2, &r->key, tok_v, b) == VW2_OK;
-        snprintf(b, sizeof b, "%d", T);
-        ok = ok && vw2_update_field(&W->vw2, &r->key, tok_t, b) == VW2_OK;
         _k1fs_chain_str(p, b, sizeof b);
         ok = ok && vw2_update_field(&W->vw2, &r->key, tok_s, b) == VW2_OK;
         if (ok)
@@ -1311,7 +1309,7 @@ static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_config_t *c
     const int scr_req = (vfft_policy_ord_k1(cfg, N, 1) == VW2_ORD_SCR);
     *ilf = *ilb = 0;
     if (!W || W->vw2_off_oop) return 0;
-    ke = vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, 1, &keb) ? &keb : NULL;
+    ke = vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, 1, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
     if (!ke || ke->k1_il_route != VFFT_K1_IL_MONO) return 0;
     *ilf = vfft_k1_mono_ilc_fn(N, 0);
     *ilb = vfft_k1_mono_ilc_fn(N, 1);

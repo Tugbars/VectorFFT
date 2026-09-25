@@ -80,9 +80,10 @@
  * buildable structure): the structure that wins at one thread is not the
  * one that wins threaded (measured 64^3: child+band 70 us, flat+plane
  * 103 us, while at one thread the two structures tie). Banked on the
- * rank-3 row as cmt= (0 serial | 1 band | 2 plane), cmtt= (the T raced
- * at) and cmts= (the structure the threaded verdict runs with); s= stays
- * the one-thread verdict. A verdict serves only at its own T.
+ * rank-3 row keyed at the plan's thread count (nthreads=, wisdom2 v1.3) as
+ * cmt= (0 serial | 1 band | 2 plane) and cmts= (the structure the threaded
+ * verdict runs with); the one-thread row keeps its own s=. A threaded
+ * plan's row is its own, complete on its own.
  * Every threaded sample runs REPS executes after warm passes: a worker's
  * cache partition settles over the first milliseconds of executes
  * (measured: round-0 means 1.5-5x the steady state), and single-execute
@@ -1298,6 +1299,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
      * class orders planes in its plane pass, never in the column pass. */
     key0.rank = 3; key0.n0 = N1; key0.n1 = N2; key0.n2 = N3;
     key0.ord = nat ? VW2_ORD_NAT : VW2_ORD_SCR; key0.axis = 0; key0.real = 0;
+    key0.nthreads = nthr;   /* the plan's own row (v1.3) */
     if (!_il2d_col_build(W, cfg, &key0, N1, d->plane,
                          vfft_policy_rankn_axis_nat(3, 0, key0.ord), &d->ax0,
                          d->forms0, sizeof d->forms0, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
@@ -1584,8 +1586,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 d->mt = 0;
             mt_src = 1;
         }
-        else if (usable_w && !cfg->recalibrate && bcmt >= 0 &&
-                 vfft_policy_replays_at_T(bcmtt, nthr))
+        else if (usable_w && !cfg->recalibrate && bcmt >= 0)   /* the row is the plan's own T (v1.3) */
         {
             const int bs = vw2_ilnd_mts_lookup(&W->vw2, &key0);
             const int bf = nat ? vw2_ilnd_int_lookup(&W->vw2, &key0, "cmtf") : 0;

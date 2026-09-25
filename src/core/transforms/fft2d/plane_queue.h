@@ -26,7 +26,7 @@
  * single plane's plan depends on the thread count. That is the T-FREE class -
  * a verdict here is valid at any T. Contrast the 2D column pass, where the
  * cores SHARE one transform, T decides how the work is cut, and the verdict
- * must carry the T it was raced at (cmt/cmtt).
+ * is keyed by the plan's thread count like every threaded verdict (v1.3).
  *
  * BANKED (2026-09-02, the 2D arm audit closed the gap)
  * ----------------------------------------------------
@@ -165,21 +165,21 @@ static int _pq_row_key(const struct vfft_plan_s *h, const vfft_config_t *cfg,
          * three races, "no primary row to bank the verdict on"). */
         case 0: if (!il) continue;
             vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, 2, h->N, h->N2, 0,
-                        VW2_ORD_SCR, VW2_LAY_IL);
+                        VW2_ORD_SCR, VW2_LAY_IL, h->nthreads);
             break;
         case 1: if (!il) continue;
             vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, 2, h->N, h->N2, 0,
-                        VW2_ORD_NAT, VW2_LAY_IL);
+                        VW2_ORD_NAT, VW2_LAY_IL, h->nthreads);
             break;
         case 2:                               /* split c2c, this order */
             if (real) continue;
             vw2__2d_key(k, VW2_T_C2C, 2, h->N, h->N2, 0,
-                        nat ? VW2_ORD_NAT : VW2_ORD_SCR, VW2_LAY_ANY);
+                        nat ? VW2_ORD_NAT : VW2_ORD_SCR, VW2_LAY_ANY, h->nthreads);
             break;
         case 3:                               /* split real (ord=nat rows) */
             if (!real) continue;
             vw2__2d_key(k, h->transform == VFFT_C2R ? VW2_T_C2R : VW2_T_R2C,
-                        2, h->N, h->N2, 0, VW2_ORD_NAT, VW2_LAY_ANY);
+                        2, h->N, h->N2, 0, VW2_ORD_NAT, VW2_LAY_ANY, h->nthreads);
             break;
         default:
             continue;
@@ -204,9 +204,7 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
     {
         const char *v = vw2_rec_get(r, "pq");
         const char *vn = vw2_rec_get(r, "pqn");
-        const char *vt = vw2_rec_get(r, "pqt");
-        if (v && vn && vt && (size_t)atol(vn) == h->pq_n &&
-            vfft_policy_replays_at_T(atoi(vt), h->pq_wn))
+        if (v && vn && (size_t)atol(vn) == h->pq_n)   /* the row is the plan's own T (v1.3) */
         {
             h->pq_mt = atoi(v) ? 1 : 0;
             if (getenv("VFFT_IL2D_LOG"))
@@ -223,8 +221,6 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
         int rc;
         snprintf(b, sizeof b, "%zu", h->pq_n);
         rc = vw2_update_field(&W->vw2, &k, "pqn", b);
-        snprintf(b, sizeof b, "%d", h->pq_wn);
-        rc |= vw2_update_field(&W->vw2, &k, "pqt", b);
         rc |= vw2_update_field(&W->vw2, &k, "pq", h->pq_mt ? "1" : "0");
         if (rc == VW2_OK)
             _vw2_persist(W, cfg);

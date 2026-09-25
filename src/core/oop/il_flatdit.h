@@ -135,7 +135,7 @@ typedef struct {
     int tw, tcut, ntile, tlo, thi;
     /* THE THREADING VERDICT (il_flatdit_mt.h): mt = 0 serial |
      * 1 blocks | 2 tiles, raced at the plan's T (mt_t) and banked as il_mt=
-     * il_mt_t= il_mt_tw= on the kind-3 row; mtb = the per-worker unit
+     * il_mt_tw= on the kind-3 row at that T (v1.3); mtb = the per-worker unit
      * records bound for mt_t workers (one allocation), NULL = unbound. */
     int mt, mt_t, mt_tw;
     void *mtb;

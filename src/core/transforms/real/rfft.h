@@ -1,9 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
- * rfft.h — native real mixed-radix FFT (r2hc), forward, packed output
- *
- * Sections 60-63 of the lab notebook; design: docs/native_rfft_design.md.
- * This is the transcription of the PROVEN reference loop in
- * benchmarks/gate_rfft_compose_L.c (12 cells, zero fix iterations).
+ * rfft.h — native real mixed-radix FFT (r2hc), forward
  *
  * Geometry (DIT, factors f[0..nf-1], f[0] = outermost combine,
  * f[nf-1] = leaf radix):
@@ -19,12 +15,13 @@
  *       k = m/2      -> small direct loop (self-mirror column)
  *   - Ping-pong planes; the d = 0 stage writes the caller's output.
  *
- * Output format v1: PACKED halfcomplex plane (N x K). The hc2c
- * natural-split terminator (design D2) replaces the d = 0 stage in a
- * later phase; everything else is unchanged by that swap.
+ * Outputs: the PACKED halfcomplex plane (N x K), or the natural split /
+ * interleaved half-spectrum via the hc2c natural terminator, which replaces
+ * the d = 0 stage; everything else is unchanged by that swap.
  *
- * Constraints v1: K % 8 == 0 (vl must be a vector-width multiple);
- * single-threaded; radices limited to the rfft codelet quadrant.
+ * Constraints: any K >= 1 (the codelets' rem-aware tail covers vl % VW);
+ * the executors here are single-threaded (lane-range MT: rfft_natural_mt in
+ * r2c_dispatch.h); radices limited to the rfft codelet quadrant.
  * ═══════════════════════════════════════════════════════════════ */
 #ifndef VFFT_RFFT_H
 #define VFFT_RFFT_H
@@ -99,13 +96,12 @@ static inline void rfft_buf_free(void *p, int huge) {
     RFFT_ALIGNED_FREE(p);
 }
 #endif
-/* E1 (section 67): software prefetch of the NEXT column's rows.
- * MEASURED NEGATIVE on the dev container (1-vCPU KVM Cascade Lake):
- * 3-5% slower across plans — the prefetches contend for the same
- * fill-buffer/miss resources the demand stream needs, and the L2
- * streamer was already covering most of the warm-up. Default OFF;
- * -DVFFT_RFFT_PREFETCH=1 enables (worth re-measuring on real
- * hardware, where the verdict may invert). */
+/* Software prefetch of the NEXT column's rows. MEASURED NEGATIVE on a
+ * 1-vCPU KVM Cascade Lake: 3-5% slower across plans — the prefetches
+ * contend for the same fill-buffer/miss resources the demand stream
+ * needs, and the L2 streamer was already covering most of the warm-up.
+ * Default OFF; -DVFFT_RFFT_PREFETCH=1 enables (worth re-measuring on
+ * other hardware, where the verdict may invert). */
 #if defined(VFFT_RFFT_PREFETCH) && (defined(__AVX512F__) || defined(__AVX2__))
 #define VFFT_RFFT_PF(addr) do {     _mm_prefetch((const char *)(addr), _MM_HINT_T0);     _mm_prefetch((const char *)(addr) + 512, _MM_HINT_T0); } while (0)
 #else
@@ -136,18 +132,18 @@ typedef void (*rfft_hc_fn)(const double *in_re, const double *in_im,
                            const double *tw_re, const double *tw_im,
                            ptrdiff_t is, ptrdiff_t os, size_t vl);
 
-/* r2cb backward leaf (section 62): halfcomplex in (in_re,in_im) -> real out.
- * Distinct ABI from r2cf (which is real in -> split complex out). */
-/* Split input strides (c2r cascade): the backward leaf reads the layout
+/* r2cb backward leaf: halfcomplex in (in_re,in_im) -> real out.
+ * Distinct ABI from r2cf (which is real in -> split complex out).
+ * Split input strides (c2r cascade): the backward leaf reads the layout
  * r2cf WRITES — re ascending from its base, im DESCENDING from a
  * one-past (+NK) base. A single shared `is` cannot express the sign
- * split, which is exactly what broke the first two cascade attempts. */
+ * split. */
 typedef void (*rfft_r2cb_fn)(const double *in_re, const double *in_im,
                              double *out_re,
                              ptrdiff_t is_re, ptrdiff_t is_im,
                              ptrdiff_t os_re, size_t vl);
 
-/* D2 natural terminator codelet (section 69), mirror-pair shaped:
+/* natural terminator codelet, mirror-pair shaped:
  * low slots s <= s* go to Rp/Ip + s*osp; upper slots (conjugated by
  * the codelet) go to Rm/Im + (r-1-s)*osm. */
 typedef void (*rfft_hc2c_nat_fn)(
@@ -156,7 +152,7 @@ typedef void (*rfft_hc2c_nat_fn)(
     const double *tw_re, const double *tw_im,
     ptrdiff_t is, ptrdiff_t osp, ptrdiff_t osm, size_t vl);
 
-/* T1 ranged variants (section 70): one call walks kcount columns,
+/* T1 ranged variants: one call walks kcount columns,
  * pointers and twiddles advancing inside the codelet. */
 typedef void (*rfft_hc_rng_fn)(
     const double *in_re, const double *in_im,
@@ -171,7 +167,7 @@ typedef void (*rfft_hc2c_nat_rng_fn)(
     ptrdiff_t is, ptrdiff_t osp, ptrdiff_t osm,
     ptrdiff_t cs_in, ptrdiff_t cs_out, int kcount, size_t vl);
 
-/* c2r natural INITIATOR (section 69 inverse): the time-reverse of
+/* c2r natural INITIATOR (the terminator's inverse): the time-reverse of
  * rfft_hc2c_nat_fn. Reads the SPLIT half-spectrum (Rp/Ip direct rows + Rm/Im
  * conjugate-mirror rows) and writes 2 PACKED cascade columns (out_re/out_im).
  * Lets a split-input c2r run the fast packed cascade with no repack — the
@@ -192,21 +188,20 @@ typedef void (*rfft_hc2c_nat_bwd_rng_fn)(
 typedef struct {
     rfft_r2cf_fn r2cf[VFFT_RFFT_MAX_RADIX + 1];
     rfft_hc_fn hc2hc[VFFT_RFFT_MAX_RADIX + 1];
-    rfft_hc2c_nat_fn hc2c[VFFT_RFFT_MAX_RADIX + 1]; /* D2; optional */
+    rfft_hc2c_nat_fn hc2c[VFFT_RFFT_MAX_RADIX + 1]; /* natural terminator; optional */
     rfft_hc_rng_fn hc2hc_rng[VFFT_RFFT_MAX_RADIX + 1];      /* T1 */
     rfft_hc2c_nat_rng_fn hc2c_rng[VFFT_RFFT_MAX_RADIX + 1]; /* T1 */
-    /* log3 twiddle-policy variants (section 62: hc2cf2 = hc2c + log3).
+    /* log3 twiddle-policy variants (hc2cf2 = hc2c + log3).
      * Same ABI as their flat counterparts; the planner prefers these when
      * present (fewer twiddle loads: 7->3 slots at r8). 0 = fall back to flat. */
     rfft_hc_fn hc2hc_log3[VFFT_RFFT_MAX_RADIX + 1];
     rfft_hc2c_nat_fn hc2c_log3[VFFT_RFFT_MAX_RADIX + 1];
-    /* DIF orientation slots (section 63): distinct identity from DIT, so the
-     * auto-emitted registrar does not clobber DIT with DIF. Same ABI as the
-     * DIT twiddle stage. No executor calls these yet (populated-but-unused
-     * until a DIF-using executor/planner path lands). */
+    /* DIF orientation slots: distinct identity from DIT, so the auto-emitted
+     * registrar does not clobber DIT with DIF. Same ABI as the DIT twiddle
+     * stage. No executor calls these (populated but unused). */
     rfft_hc_fn hc2hc_dif[VFFT_RFFT_MAX_RADIX + 1];
     rfft_hc_fn hc2hc_dif_log3[VFFT_RFFT_MAX_RADIX + 1];
-    /* c2r (backward real) slots (section 62): the r2cb leaf
+    /* c2r (backward real) slots: the r2cb leaf
      * (halfcomplex -> real) and the DIF BACKWARD twiddle stages. hc2r runs
      * as apply_dif with sign-flipped twiddles; these slots hold the
      * --hc2hc --dif --bwd --t1s codelets. The r2cb leaf has the same ABI as
@@ -215,7 +210,7 @@ typedef struct {
     rfft_r2cb_fn r2cb[VFFT_RFFT_MAX_RADIX + 1];
     rfft_hc_fn hc2hc_dif_bwd[VFFT_RFFT_MAX_RADIX + 1];
     rfft_hc_fn hc2hc_dif_bwd_log3[VFFT_RFFT_MAX_RADIX + 1];
-    /* ranged DIF backward (section 70 mirror): one call walks kcount interior
+    /* ranged DIF backward (the T1 mirror): one call walks kcount interior
      * columns, advancing re-streams up / im-streams down by cs per column.
      * Collapses the c2r interior per-k loop to a single call. */
     rfft_hc_rng_fn hc2hc_dif_rng_bwd[VFFT_RFFT_MAX_RADIX + 1];
@@ -252,11 +247,11 @@ typedef struct {
     int leaf_r;
     size_t S;
     rfft_stage_t st[VFFT_RFFT_MAX_STAGES];
-    rfft_hc2c_nat_fn hcn; /* stage-0 natural terminator (D2), or NULL */
+    rfft_hc2c_nat_fn hcn; /* stage-0 natural terminator, or NULL */
     rfft_hc2c_nat_rng_fn hcnr; /* T1 ranged terminator, or NULL */
     double *nat_k0;       /* k0 scratch column, MAX_RADIX*K doubles */
-    double *zscr;         /* §6a26: 4 * r * zch * K stage-0 z redirect scratch */
-    int zch;              /* §6a26: columns per chunked-hcnr call (L1 budget) */
+    double *zscr;         /* 4 * r * zch * K stage-0 z redirect scratch */
+    int zch;              /* columns per chunked-hcnr call (L1 budget) */
 #ifdef VFFT_RFFT_PROFILE
     /* per-phase accumulators (ns), reset by caller: [0]=leaf;
      * per stage d: k0 / interior columns / mid */
@@ -265,7 +260,7 @@ typedef struct {
     double prof_cols[VFFT_RFFT_MAX_STAGES];
     double prof_mid[VFFT_RFFT_MAX_STAGES];
 #endif
-    size_t Kb; /* lane-block width (section 65): the cascade runs per
+    size_t Kb; /* lane-block width: the cascade runs per
                 * Kb-lane slab so both planes stay cache-resident
                 * across ALL stages. Multiple of 8. */
     double *planeA, *planeB; /* scratch, N*K each, 64B aligned */
@@ -288,15 +283,15 @@ static inline void rfft_plan_destroy(rfft_plan_t *p)
 /* factors: f[0] = outermost combine, f[nf-1] = leaf.
  * Explicit per-stage variant: variant[d] for combine stage d (0..nf-2) is
  * 0=FLAT, 1=LOG3, 2=T1S(ranged); the leaf (factors[nf-1]) has no variant.
- * variant=NULL means the default policy (LOG3-preferred + ranged-wired), so the
- * plain rfft_plan_create wrapper below is byte-identical to the original. */
+ * variant=NULL means the default policy (LOG3-preferred + ranged-wired), which
+ * the plain rfft_plan_create wrapper below serves. */
 static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
                                                const int *factors, int nf,
                                                const int *variant,
                                                const rfft_codelets_t *reg)
 {
     if (nf < 1 || nf > VFFT_RFFT_MAX_STAGES) return NULL;
-    if (K == 0) return NULL; /* arbitrary-K: rem-aware tail handles vl % VW != 0 (was K%8-gated) */
+    if (K == 0) return NULL; /* arbitrary-K: rem-aware tail handles vl % VW != 0 */
     {
         long acc = 1;
         for (int i = 0; i < nf; i++) acc *= factors[i];
@@ -360,7 +355,7 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
             st->tw_re = (double *)malloc(sz * 8);
             st->tw_im = (double *)malloc(sz * 8);
             if (!st->tw_re || !st->tw_im) goto fail;
-            /* unified slot convention (section 66): leg j loads
+            /* unified slot convention: leg j loads
              * Twiddle slot j-1; slot r-1 in each column block is dead. */
             for (int k = 1; k <= st->kmax; k++) {
                 for (int j = 1; j < r; j++) {
@@ -389,10 +384,8 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
     }
 
     /* 2*N*K, not N*K: the packed leaf writes the IM stream at planeA + NK (descending),
-     * so the top im address reaches NK + (S-1)*K < 2*NK. N*K under-allocates and the
-     * packed forward overflows at high K (N>=512) — latent because the packed/split rfft
-     * forward is only driven at K<=16 in the r2c dispatcher; the packed c2r input gen
-     * exercises it at K>=32 (planeB likewise for the nf>=3 ping-pong). */
+     * so the top im address reaches NK + (S-1)*K < 2*NK. N*K would under-allocate and
+     * the packed forward overflow at high K (planeB likewise for the nf>=3 ping-pong). */
     p->planeA = (double *)rfft_buf_alloc((size_t)2 * N * K * 8, &p->planeA_huge);
     p->planeB_huge = 0;
     p->planeB = (nf >= 3)
@@ -406,7 +399,7 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
     p->nat_k0 = (double *)RFFT_ALIGNED_ALLOC(64,
         (size_t)VFFT_RFFT_MAX_RADIX * K * 8);
     if (!p->nat_k0) goto fail;
-    /* §6a26: z-terminator scratch, sized at plan time. Chunk width zch keeps
+    /* z-terminator scratch, sized at plan time. Chunk width zch keeps
      * the 4 planes within ~24KB of L1 (768 = 24576B / (4 planes * 8B)) and is
      * capped at kmax so the single-chunk case matches split's one hcnr sweep. */
     p->zscr = NULL;
@@ -422,8 +415,8 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
             (size_t)4 * (size_t)_zr * (size_t)_zc * K * sizeof(double));
         if (!p->zscr) goto fail;
     }
-    /* Lane-blocking default: OFF (Kb = K). Section 65 measured the
-     * L2-slab heuristic as NEGATIVE (-22% at (4,4,16)): Kb=96 cuts
+    /* Lane-blocking default: OFF (Kb = K). The L2-slab heuristic
+     * measured NEGATIVE (-22% at (4,4,16)): Kb=96 cuts
      * each stream burst to ~768B, defeating the prefetchers, and the
      * cascade was never capacity-bound to begin with. The mechanism
      * stays (callers may tune p->Kb, multiple of 8) because slab
@@ -435,7 +428,7 @@ fail:
     return NULL;
 }
 
-/* Default-policy plan create (variant=NULL): byte-identical to the original. */
+/* Default-policy plan create (variant=NULL). */
 static inline rfft_plan_t *rfft_plan_create(int N, size_t K,
                                             const int *factors, int nf,
                                             const rfft_codelets_t *reg)
@@ -443,11 +436,7 @@ static inline rfft_plan_t *rfft_plan_create(int N, size_t K,
     return rfft_plan_create_ex(N, K, factors, nf, /*variant=*/NULL, reg);
 }
 
-/* Shared mid-column (k = m/2) kernel, s-blocked (SB = 4) per
- * section 66. mode 0: packed store (row Q*pp of dst). mode 1:
- * natural store (rows pp <= nh of dst_re/dst_im; im 0 at nh;
- * uppers skipped — self-paired column). slot stride = Q*K. */
-/* §6a26: interleaved-z stores for the natural terminator (z[2*idx],
+/* interleaved-z stores for the natural terminator (z[2*idx],
  * z[2*idx+1]). Local minimal twins of r2c.h's helpers (include-order keeps
  * rfft.h standalone). */
 static inline void _rfft_zst1(double *z, size_t idx, double re, double im) {
@@ -488,7 +477,7 @@ static inline void _rfft_zrow_zero_im(double *z, size_t row, size_t K,
 }
 #endif
 
-/* §6a28: deinterleave loads — exact inverses of the _rfft_zst* stores. */
+/* deinterleave loads — exact inverses of the _rfft_zst* stores. */
 #if defined(__AVX2__) || defined(__AVX512F__)
 static inline void _rfft_zld4d(const double *z, size_t idx, __m256d *re, __m256d *im) {
     __m256d a = _mm256_loadu_pd(z + 2*idx), b = _mm256_loadu_pd(z + 2*idx + 4);
@@ -527,6 +516,10 @@ static inline void _rfft_zldrow_re(const double *z, size_t row, size_t K, size_t
 }
 #endif
 
+/* Shared mid-column (k = m/2) kernel, s-blocked (SB = 4).
+ * mode 0: packed store (row Q*pp of dst). mode 1: natural store (rows
+ * pp <= nh of dst_re/dst_im, or of zo interleaved; im 0 at nh; uppers
+ * skipped — self-paired column). slot stride = Q*K. */
 static inline void rfft_mid_column(int r, int m, int np, size_t Q,
                                    size_t K, size_t vl,
                                    const double *mid_in,
@@ -649,7 +642,7 @@ static inline void rfft_mid_column(int r, int m, int np, size_t Q,
 
 /* forward, packed halfcomplex output into out (N*K doubles).
  * x is read-only; x != out required.
- * Section 65: lane-blocked schedule. The outer loop walks Kb-lane
+ * Lane-blocked schedule: the outer loop walks Kb-lane
  * slabs; the entire cascade runs per slab, so the two ping-pong slabs
  * (2*N*Kb*8B) stay cache-resident across all stages. Blocking breaks
  * the (q,lane) fold, so stage calls loop q explicitly (vl = bw). */
@@ -690,11 +683,10 @@ static inline void rfft_execute_fwd_packed(const rfft_plan_t *p,
             const ptrdiff_t QmK = (ptrdiff_t)(Q * (size_t)m * K);
             nxt = (d == 0) ? out : ((cur == p->planeA) ? p->planeB
                                                        : p->planeA);
-            /* E2 (section 67): when the lane dim is unblocked
-             * (single full-width slab), the (q,lane) Q-FOLD is legal
-             * and turns Q separate 2KB rows into one contiguous
-             * Q*2KB stream per slot — section 62's geometry,
-             * restored. Per-q is the general path for Kb < K. */
+            /* When the lane dim is unblocked (single full-width
+             * slab), the (q,lane) Q-FOLD is legal and turns Q
+             * separate 2KB rows into one contiguous Q*2KB stream per
+             * slot. Per-q is the general path for Kb < K. */
             const int folded = (bw == K && b == 0 && Q > 1);
             const size_t Qfold = folded ? 1 : Q;
             const size_t vlf = folded ? (Q * K) : bw;
@@ -774,16 +766,7 @@ static inline void rfft_execute_fwd_packed(const rfft_plan_t *p,
     }
 }
 
-/* ===== D2 (section 69): forward, NATURAL split-complex output =====
- * out_re/out_im are (N/2+1) x K planes, row f = frequency f.
- * Stages nf-2..1 run the packed cascade unchanged (full-width,
- * folded); stage 0 is the natural terminator: k = 0 via r2cf into a
- * scratch column + row scatter; interior columns via hc2c_nat (one
- * call covers residues k and m-k; constant-boundary lemma in
- * docs/native_rfft_design.md); the m/2 mid stores (Re, Im) at its
- * low rows directly. v1 runs full-width (plan Kb ignored).
- * Requires reg->hc2c[stage-0 radix] (p->hcn != NULL) for nf >= 2. */
-/* §6a26: stage-0 natural terminator, INTERLEAVED output. Same codelets and
+/* stage-0 natural terminator, INTERLEAVED output. Same codelets and
  * call order as the split stage-0 (values bit-identical); the k0 specials
  * interleave from nat_k0, the hcn calls land in the plan's zscr rows
  * (Rp/Ip/Rm/Im planes, row stride K) and are interleaved to z while L1-hot,
@@ -818,7 +801,7 @@ static inline void _rfft_stage0_z(const rfft_plan_t *p, const double *cur,
         /* Chunked ranged terminator: C columns per call, slot stride cw*K,
          * column stride K. The codelet advances the mirror-side pointers by
          * -cs_out per column, so Rm/Im bases sit at +(cw-1)*K and columns
-         * fill downward. Per-column slot partition is the D2 contract. */
+         * fill downward. Per-column slot partition is the terminator contract. */
         const int C = p->zch;
         for (int k1 = 1; k1 <= kmax; k1 += C) {
             const int cw = (k1 + C - 1 <= kmax) ? C : (kmax - k1 + 1);
@@ -859,7 +842,7 @@ static inline void _rfft_stage0_z(const rfft_plan_t *p, const double *cur,
                st->tw_re + (size_t)(k - 1) * r,
                st->tw_im + (size_t)(k - 1) * r,
                (ptrdiff_t)K, (ptrdiff_t)K, (ptrdiff_t)K, kw);
-        /* D2 contract: each slot is written exactly ONCE — low slots
+        /* Terminator contract: each slot is written exactly ONCE — low slots
          * (f = k + s*m <= nh) via Rp/Ip + s*osp; upper slots CONJUGATED by
          * the codelet via Rm/Im + (r-1-s)*osm, belonging at the mirror row
          * r*m - f (= N - f for the stage-0 terminator). */
@@ -882,6 +865,14 @@ static inline void _rfft_stage0_z(const rfft_plan_t *p, const double *cur,
                         z + 2 * k0);
 }
 
+/* ===== forward, NATURAL split-complex (or interleaved, zo) output =====
+ * out_re/out_im are (N/2+1) x K planes, row f = frequency f.
+ * Stages nf-2..1 run the packed cascade unchanged (full-width,
+ * folded); stage 0 is the natural terminator: k = 0 via r2cf into a
+ * scratch column + row scatter; interior columns via hc2c_nat (one
+ * call covers residues k and m-k); the m/2 mid stores (Re, Im) at its
+ * low rows directly. Runs full-width (plan Kb ignored).
+ * Requires reg->hc2c[stage-0 radix] (p->hcn != NULL) for nf >= 2. */
 static inline void rfft_execute_fwd_natural(const rfft_plan_t *p,
                                             const double *x,
                                             double *out_re,
@@ -919,10 +910,9 @@ static inline void rfft_execute_fwd_natural(const rfft_plan_t *p,
     }
 
     {
-        /* LEAF FOLD (restored per header design): in the unblocked case the
-         * per-g calls cover exactly contiguous vl windows [g*K,(g+1)*K), so
-         * ONE call at vl = S*K is address-identical — same fold the stage
-         * loop's E2 logic applies. Was 16 calls at vl=K for N=256,(16,16). */
+        /* LEAF FOLD: in the unblocked case the per-g calls cover exactly
+         * contiguous vl windows [g*K,(g+1)*K), so ONE call at vl = S*K is
+         * address-identical — the same fold the packed stage loop applies. */
         const ptrdiff_t SK = (ptrdiff_t)(p->S * K);
         p->leaf(x, p->planeA, p->planeA + NK, SK, SK, -SK, p->S * K);
     }

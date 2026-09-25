@@ -1,15 +1,8 @@
 /* il2d_tier.h - the native interleaved 2D tier.
  *
- * The row and column passes, their multithreaded forms, and the four racers
- * that decide a 2D IL cell's plan. Extracted from vfft.c as migration step 17;
- * see docs/design/refactor_migration_plan.md.
- *
- * THIS IS THE FIRST MOVE THE GATE MADE POSSIBLE
- * ---------------------------------------------
- * Almost every function here dereferences vfft_plan_s. Before step 15 lifted
- * that struct into vfft_internal.h, none of this could leave vfft.c at any
- * price - which is exactly why step 15 was the gate and why the ten moves
- * before it were confined to struct-free code.
+ * The row and column passes, their multithreaded forms, and the racers that
+ * decide a 2D IL cell's plan. Almost every function here dereferences
+ * vfft_plan_s (vfft_internal.h).
  *
  * WHAT DECIDES WHAT, AND IN WHICH ORDER
  * -------------------------------------
@@ -32,34 +25,35 @@
  *              library - see docs/design/planning_model.md Part IV.
  *   cmt        column MT. It EXISTS only when nb = N1/wl >= 2: with a single
  *              band there is nothing to distribute, so the race cannot run and
- *              cmt=0 is banked with the thread count it was decided at. Since
- *              2026-09-24 every c2c route races it: the turn and the skewed
- *              column pass have row-slab walks of their own (one threaded arm).
+ *              cmt=0 is banked with the thread count it was decided at. Every
+ *              c2c route races it: the turn and the skewed column pass have
+ *              row-slab walks of their own (one threaded arm).
  *
  * That last one is why a 256x256 cell has no MT axis while 64x64 and
  * 1024x1024 do - wl lands on N1 there, giving one band.
  *
- * WHY cmt BANKS ITS THREAD COUNT (cmtt)
- * -------------------------------------
+ * WHY THE THREAD COUNT IS THE ROW'S KEY (nthreads=, wisdom2 v1.3)
+ * ----------------------------------------------------------------
  * Column threading is the CORES-SHARE-ONE-TRANSFORM class: T decides how the
  * work is cut - band counts, worker clamps, legal row widths - so a cut that
- * wins at T=2 can lose at T=8. The verdict therefore carries the T it was
- * raced at, and a mismatch RE-RACES rather than serving a stale answer. (The
- * other MT class, one transform per core, banks T-free; nothing about those
- * plans depends on T.)
+ * wins at T=2 can lose at T=8, and the route itself changes with T (64x1024:
+ * the chain at one thread, the skewed pass at eight). A threaded plan's row
+ * is therefore its own, keyed by the plan's thread count and complete on its
+ * own: the plain tokens are its verdict, raced at that T. Nothing serves
+ * across thread counts. (The other MT class, one transform per core, banks
+ * T-free; nothing about those plans depends on T.)
  *
  * ONE ASYMMETRY THAT LOOKS LIKE A BUG AND IS NOT
  * ----------------------------------------------
- * The row-route race is guarded with !il2d_oddn2; the column-MT guard eight
- * lines below is not. That is deliberate: an odd N2 has no ROWSPLIT arm to
- * race, but column threading stays valid. Measured consistent - 128x127 at T=8
- * engages cmt and is BIT-IDENTICAL to the single-threaded result.
+ * The row-route race is guarded with !il2d_oddn2; the column-MT guard is not.
+ * That is deliberate: an odd N2 has no ROWSPLIT arm to race, but column
+ * threading stays valid. Measured consistent - 128x127 at T=8 engages cmt and
+ * is BIT-IDENTICAL to the single-threaded result.
  *
  * THE ENGAGEMENT COUNTER STAYS IN vfft.c
  * --------------------------------------
  * _vfft_il2d_col_mt_count is incremented from here but DEFINED there, with
- * external linkage (step 17 changed it from static for exactly this reason).
- * It cannot live in this header: a static in a header is one copy per
+ * external linkage. It cannot live in this header: a static in a header is one copy per
  * includer, and the public accessor would then read a different object than
  * the increment writes - reporting a confident zero while threading ran.
  *
@@ -127,7 +121,7 @@ static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
         _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 1);
 }
 
-/* ── native IL 2D REAL row passes (fft2d_real_il_design.md §2.4): ONE
+/* ── native IL 2D REAL row passes (docs/roadmap/fft2d_real_il_design.md §2.4): ONE
  * function per direction, used by BOTH the execute and the create-time
  * row-route race (race == serving path). il2d_rows set = the ROWSPLIT
  * band route (transpose rows->lanes, split engine at (N2,K=rw),
@@ -237,32 +231,16 @@ static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,
 }
 
 
-/* ── native IL 2D REAL column pass (banded-aware; execute AND the wl
- * race serve through it — race == serving path). The banded walk is the
- * c2c cascade's column form MINUS the row fusion: §2.5 keeps rows
- * entirely OUTSIDE (fwd rows complete before any stage; bwd rows follow
- * the last stage), so a band is pure column loop interchange —
- * F0-bitwise vs unbanded. fwd = wide prefix 0..cut-1 full-plane, then
- * per band of wl rows the suffix depth-first; bwd (the Hermitian
- * transpose chain) = per band the REVERSED suffix (its first executed
- * stage does the OOP move for c2r's z->rscr), then the reversed prefix
- * in place on dst. */
-/* THE COLUMN-ONLY SERIAL EXECUTE (2026-09-06): the pass a rank-N IL plan
- * runs on each column axis and the real tier runs on its hp1-wide plane —
- * natural (leaf-redirected), Bluestein, banded (no row fusion: the owning
- * plan runs the rows) or unbanded, both directions, by the descriptor alone.
- * The c2c 2D serial walk with the fused row pass lives in vfft_execute.h. */
-/* ── THE TURNED PRIME COLUMN PASS (tpc, 2026-09-24) ──────────────────────
- * At a prime N (no chain) the column Bluestein was the only engine and read
- * 0.5-0.9x the vendor library at N >= 131 over pow2 lanes (131x4096 0.51,
- * 257x256 0.69; the rank-3 cells 131x64x64 0.54, 257x16x16 0.70 are this
- * pass over N2*N3 lanes), while the 1D prime route at the same N wins
- * 1.1-3.1x. The turned pass runs the axis through that route: the lanes
+/* ── THE TURNED PRIME COLUMN PASS (tpc) ──────────────────────────────────
+ * At a prime N (no chain) the column Bluestein pass measured 0.51-0.70 over
+ * pow2 lanes (131x4096, 257x256; the rank-3 cells 131x64x64 and 257x16x16
+ * are this pass over N2*N3 lanes), while the 1D prime route at the same N
+ * wins 1.1-3.1x. The turned pass runs the axis through that route: the lanes
  * [c0, c1) of the plane transposed into the scratch (row c = lane c, pitch
  * N + 8), the 1D natural in-place K=1 plan at N on every row of it, the rows
- * transposed back into the plane's lanes. Measured before it was built:
- * 131x4096 turn 426 + rows 1585 + back 527 us against the Bluestein pass's
- * ~8400. Both directions (the 1D plan's own backward). */
+ * transposed back into the plane's lanes. At 131x4096: turn 426 + rows 1585
+ * + back 527 us against the Bluestein pass's ~8400. Both directions (the 1D
+ * plan's own backward). */
 #define VFFT_IL2D_TPC_PITCH(N) ((size_t)(N) + 8)
 /* S[c][r] = src[r][c] for lanes c in [c0, c1), rows r < N (src pitch rn, S
  * pitch P): 2 x 2 complex blocks through one 128-bit lane permute, the rows
@@ -346,12 +324,17 @@ static void _il2d_tpc_cols_range(const vfft_ilcol_t *c, const double *src, doubl
     _il2d_tpc_turn_out(S, P, dst, rn, N, c0, c1);
 }
 
+/* THE COLUMN-ONLY SERIAL EXECUTE: the pass a rank-N IL plan runs on each
+ * column axis and the real tier runs on its hp1-wide plane — natural
+ * (leaf-redirected), Bluestein, turned, banded (no row fusion: the owning plan
+ * runs the rows) or unbanded, both directions, by the descriptor alone. The
+ * c2c 2D serial walk with the fused row pass lives in vfft_execute.h. */
 static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
                            double *dst, int reverse)
 {
     const size_t hp1 = c->rn;
     if (c->nat)
-    { /* NATURAL n1 (M4-lite): the leaf-redirected pass, unbanded by
+    { /* NATURAL n1: the leaf-redirected pass, unbanded by
        * construction (wl pinned 0 at create). */
         _il2d_col_pass_nat(src, dst, c->N, hp1, c->nst, c->R,
                            c->L,
@@ -361,7 +344,7 @@ static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
         return;
     }
     if (c->blu && c->tpc)
-    {   /* prime N1: the TURNED pass (2026-09-24) */
+    {   /* prime N1: the TURNED pass */
         _il2d_tpc_cols_range(c, src, dst, hp1, 0, hp1, reverse);
         return;
     }
@@ -415,26 +398,34 @@ static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
                    reverse ? c->tb : c->tf, reverse);
 }
 
-/* the real tier's column pass: the descriptor's, over hp1 columns */
+/* ── native IL 2D REAL column pass (banded-aware; execute AND the wl
+ * race serve through it — race == serving path): the descriptor's, over hp1
+ * columns. The banded walk is the c2c tier's banded column form MINUS the row
+ * fusion: fft2d_real_il_design.md §2.5 keeps rows entirely OUTSIDE (fwd rows
+ * complete before any stage; bwd rows follow the last stage), so a band is
+ * pure column loop interchange — F0-bitwise vs unbanded. fwd = wide prefix
+ * 0..cut-1 full-plane, then per band of wl rows the suffix depth-first; bwd
+ * (the Hermitian transpose chain) = per band the REVERSED suffix (its first
+ * executed stage does the OOP move for c2r's z->rscr), then the reversed
+ * prefix in place on dst. */
 static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
                             double *dst, int reverse)
 {
     _il2d_col_exec(&h->il2d_col, src, dst, reverse);
 }
 
-/* ══ MT column pass (INC-3, docs/design/il2d_real_mt.md) ═════════════
+/* ══ MT column pass (docs/design/il2d_real_mt.md) ════════════════════
  * TWO partition arms, both pure loop restrictions of the SERVING loops
  * above (no arithmetic changes => MT == ST bitwise, gated):
  *   BAND arm  (wl > 0): workers take disjoint sets of wl-row BANDS of
- *     the suffix stages. Measured EXCHANGE-FREE (INC-2: reading rows
- *     you wrote scales 7.8-7.9x) because these are the same rows the
- *     row pass just produced. The wide prefix stages [0,cut) stay
- *     serial here — stage 0 spans the whole plane, and splitting it by
- *     DIGIT is INC-3b.
+ *     the suffix stages. Measured EXCHANGE-FREE (reading rows you wrote
+ *     scales 7.8-7.9x) because these are the same rows the row pass just
+ *     produced. The wide prefix stages [0,cut) — stage 0 spans the whole
+ *     plane — run before the bands, each split by DIGIT (below).
  *   STRIP arm (wl == 0): workers take disjoint COLUMN ranges and run
  *     the whole chain. This is the ONLY axis for single-stage chains
  *     (L[0] == N1 => one block, no row axis), and it pays the full
- *     cross-core exchange (INC-2: ~2.9-3.4x, not 8x). Boundaries are
+ *     cross-core exchange (~2.9-3.4x, not 8x). Boundaries are
  *     NOT rounded to cache lines: hp1 is always odd, so a row's start
  *     rotates and rounding neither removes the split lines nor pays
  *     for itself (it would collapse hp1=33 from 8 workers to 5). */
@@ -449,7 +440,7 @@ typedef struct
     int natleaf; /* natural x MT: this dispatch is the leaf block range */
 } _il2d_cmt_arg;
 
-/* ── INC-3b: the DIGIT axis of a wide (prefix) stage ─────────────────
+/* ── the DIGIT axis of a wide (prefix) stage ─────────────────────────
  * A stage's kernel walks digits itself — per digit it advances
  * `twp += (R-1)*8` and `zin/zout += 2*Gs` (verified in the emitted
  * body) — so running only digits [d0, d0+nd) is THREE pointer edits:
@@ -526,7 +517,7 @@ static void _il2d_cmt_tramp(void *v)
     if (a->strip)
     {
         if (h->il2d_col.blu)
-        {   /* Bluestein column axis: the window pipeline (2026-09-02) */
+        {   /* Bluestein column axis: the window pipeline */
             _il2d_blu_cols_range(a->src, a->dst, h->N, hp1, a->lo, a->hi,
                                  h->il2d_col.blu, h->il2d_col.nst, h->il2d_col.R,
                                  h->il2d_col.L, h->il2d_col.f, h->il2d_col.b,
@@ -569,7 +560,7 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
     T = stride_pool_workers_for(T);
     if (T >= 2 && h->il2d_col.nat)
     {
-        /* NATURAL x MT (2026-09-04): the matched partition of the
+        /* NATURAL x MT: the matched partition of the
          * natural pass — prefix stages digit-split (src -> scratch, then
          * in place), the leaf scatter by BLOCK RANGE (scratch -> dst),
          * mirrored for bwd (gather first, reversed prefix after, stage 0
@@ -628,9 +619,9 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
      * span the whole plane). bwd: the reversed prefix runs after. */
     if (!strip && !reverse && h->il2d_col.cut > 0)
     {
-        /* INC-3b: each prefix stage's DIGITS split over the workers
+        /* each prefix stage's DIGITS split over the workers
          * (whole rows, count untouched); stages stay ordered, one
-         * dispatch each — a dispatch+wait is ~100 ns (INC-2), so the
+         * dispatch each — a dispatch+wait is ~100 ns, so the
          * per-stage join is free at these sizes. A stage that cannot
          * split (D < T, or the table-free D==1 leaf) runs serial. */
         int s;
@@ -675,10 +666,10 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
     return 1;
 }
 
-/* ══ c2c MT (INC-C, the real tier's design ported) ═══════════════════
+/* ══ c2c MT (the real tier's design, ported) ═════════════════════════
  * The structural difference from real: rows COMMUTE with column stages
  * (both C-linear — the same fact that makes tfuse legal here and banned
- * for real by §2.5). So a banded cell's unit of work is a SELF-CONTAINED
+ * for real by fft2d_real_il_design.md §2.5). So a banded cell's unit of work is a SELF-CONTAINED
  * band [suffix stages + its own fused rows]: partition bands across
  * workers and there is no rows/columns wall and no cross-core exchange
  * for the fused part. Only the wide prefix needs the digit split.
@@ -706,17 +697,17 @@ static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid,
 }
 
 /* the banked ROW-ROUTE value of a plan: 0 = the in-place child, 2 = the
- * batched rows, 3 = the batched two-pass rows (the ro= token, 2026-09-23) */
+ * batched rows, 3 = the batched two-pass rows (the ro= token) */
 static int _il2d_ro_of(const struct vfft_plan_s *h)
 {
     return h->il2d_rowb2 ? 3 : h->il2d_rowb ? 2 : 0;
 }
 
-/* the ROW-LOOP twin of a two-pass stage kernel (2026-09-23): the same body
+/* the ROW-LOOP twin of a two-pass stage kernel: the same body
  * with the in-kernel row loop (count = rows x Ls lanes, in pitch Gs, out pitch
  * OGs); NULL where the corpus has none -- then the two-pass rows have no arm */
 #define VFFT_IL2D_RB2_CHUNK 64   /* the tile's ceiling in rows: the per-worker scratch is CHUNK x N2 */
-/* the two-pass rows' TILE (2026-09-23): a RACED axis like ZTURN-T's tile --
+/* the two-pass rows' TILE: a RACED axis like ZTURN-T's tile --
  * the ladder is the chunk scratch in KB, rows = KB*1024 / (16*N2), 2..CHUNK;
  * banked as rbk= beside ro=3, replayed, VFFT_IL2D_RB2_KB pins it for probes */
 static const int VFFT_IL2D_RB2_KB_LADDER[4] = { 4, 8, 16, 32 };
@@ -753,7 +744,7 @@ static vfft_il2p_fn _il2d_rowloop_twin(vfft_il2p_fn f)
     return 0;
 }
 
-/* the row pass over a RUN of rows (2026-09-23): nrows rows, row i at
+/* the row pass over a RUN of rows: nrows rows, row i at
  * base + 2*i*pitch (pitch in complex), plane position p0 + i*pstep (the
  * four-step's twiddle hook keys on it). Route 2 (il2d_rowb) runs ONE
  * kernel call over the run -- lane k = row k, two rows per vector, no
@@ -796,7 +787,7 @@ static void _il2d_rows_exec2(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
         double *scr = h->il2d_rowb2_scr + (size_t)(tid > 0 ? tid : 0) * 2 * (size_t)VFFT_IL2D_RB2_CHUNK * rn;
         const int fwd = (dir == VFFT_FORWARD);
         /* the tile: the raced rbk= (a 64-row chunk at N2 = 32/64 spilled L1 and
-         * lost to the per-row child; 16 rows at 32 won 1.5x, 2026-09-23) */
+         * lost to the per-row child; 16 rows at 32 won 1.5x) */
         const size_t ch = h->il2d_rowb2_ch > 0 ? (size_t)h->il2d_rowb2_ch : 2;
         size_t i0;
         if (h->il2d_fs_tw && fwd)
@@ -854,7 +845,7 @@ static void _il2d_rows_exec2(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
     }
     if (!inplace)
     {   /* the per-row route from the scratch: the out-of-place K=1 plan at N2
-         * (worker t > 0 runs its clone: the threaded skewed pass, 2026-09-24) */
+         * (worker t > 0 runs its clone: the threaded skewed pass) */
         struct vfft_plan_s *rp = (tid > 0) ? h->il2d_cskw[tid - 1] : h->il2d_csk_row;
         for (i = 0; i < nrows; i++)
             vfft_execute((vfft_plan)rp, dir, in + 2 * i * pin, NULL, base + 2 * i * pitch, NULL);
@@ -867,7 +858,7 @@ static void _il2d_rows_exec2(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
 /* the skewed column pass's pitch in complex: N2 + 8 -- the R output streams of
  * the column stage never sit a multiple of 4 KB apart */
 #define VFFT_IL2D_CSK_PITCH(N2) ((size_t)(N2) + 8)
-/* the SKEWED column pass's execute (2026-09-23): the single column stage from
+/* the SKEWED column pass's execute: the single column stage from
  * the plane (leg stride N2) into the scratch (leg stride N2 + 8), then the rows
  * from the scratch into the destination -- the rows are the move. Both
  * directions (the passes commute), both placements (the plane is read whole
@@ -881,17 +872,17 @@ static void _il2d_csk_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *
     _il2d_rows_exec2(h, 0, dir, T, P, dre, rn, rn, 0, 1, N1);
 }
 
-/* the TURN route's back-turn (2026-09-23): the N2 x N1 scratch T (row c =
- * column c of the plane, N1 long) into the N1 x N2 plane dst, 2 x 2 complex
- * blocks through one 128-bit lane permute, the row range blocked so a block
- * of dst rows stays in L1 while every column pair lands in it (N2 is small
- * where this route wins: dst rows are 32..128 B and would otherwise be
- * re-fetched once per column pair). Odd N1 / odd N2 finish scalar. */
 /* the scratch's row PITCH in complex: N1 + 8, so the N2 column streams never sit
- * a multiple of 4 KB apart (they did at every N1 >= 256: one L1 set, 12-way, for
- * 8 or 16 streams -- the route's margin shrank from 2.3x at N2 = 2 to nothing at
- * 16 before the skew) */
+ * a multiple of 4 KB apart (unskewed, at every N1 >= 256 they share one L1 set,
+ * 12-way, for 8 or 16 streams -- the route's margin shrank from 2.3x at N2 = 2
+ * to nothing at 16) */
 #define VFFT_IL2D_TURN_PITCH(N1) ((size_t)(N1) + 8)
+/* the TURN route's back-turn: the N2 x N1 scratch T (row c = column c of the
+ * plane, N1 long) into the N1 x N2 plane dst, 2 x 2 complex blocks through one
+ * 128-bit lane permute, the row range blocked so a block of dst rows stays in
+ * L1 while every column pair lands in it (N2 is small where this route wins:
+ * dst rows are 32..128 B and would otherwise be re-fetched once per column
+ * pair). Odd N1 / odd N2 finish scalar. */
 static void _il2d_turn_back_range(const double *T, size_t P, double *dst, size_t N2, size_t ra, size_t rb)
 {
     const size_t RB = 256;
@@ -1038,7 +1029,7 @@ static void _il2d_c2c_mt_tramp(void *v)
     case 1: /* column strip: the whole chain over [lo,hi) columns, in
              * sub-strips of msw columns when the verdict sized them (an
              * L2-resident strip is the column pass in ONE sweep:
-             * il2d_large_plane_design.md, 2026-09-15) */
+             * il2d_large_plane_design.md) */
         {
             const size_t sw = h->il2d_col.msw > 0 ? (size_t)h->il2d_col.msw : a->hi - a->lo;
             size_t k;
@@ -1053,8 +1044,8 @@ static void _il2d_c2c_mt_tramp(void *v)
              * [lo,hi) columns in sub-strips of msw when sized, each through
              * the worker's DENSE strip scratch (pitch = the strip width: one
              * contiguous N1 x w block in L2, the 3D tier's strip form) when
-             * the width fits it (2026-09-24: 512x128 T=8 75 -> 37 us, 1024x128
-             * 139 -> 64, the shared full-pitch scratch put every strip piece
+             * the width fits it (measured 512x128 T=8 75 -> 37 us, 1024x128
+             * 139 -> 64: the shared full-pitch scratch puts every strip piece
              * in the input rows' L2 sets); VFFT_IL2D_DENSE=0 (the probe pin)
              * keeps the shared scratch */
         {
@@ -1082,7 +1073,7 @@ static void _il2d_c2c_mt_tramp(void *v)
              * over [lo,hi) blocks */
         _il2d_nat_leaf_blocks(h, a->tid, a->dir, a->src, a->dst, a->lo, a->hi, /*fuse=*/a->fwd);
         break;
-    case 3: /* Bluestein column axis: the window pipeline (2026-09-02) */
+    case 3: /* Bluestein column axis: the window pipeline */
         _il2d_blu_cols_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
                              h->il2d_col.blu, h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L,
                              h->il2d_col.f, h->il2d_col.b, h->il2d_col.tf, h->il2d_col.tb,
@@ -1090,7 +1081,7 @@ static void _il2d_c2c_mt_tramp(void *v)
                              a->fwd ? h->il2d_col.blukf : h->il2d_col.blukb,
                              h->il2d_col.bluscr);
         break;
-    case 6: /* the threaded SKEWED column pass (2026-09-24): the single column
+    case 6: /* the threaded SKEWED column pass: the single column
              * stage over columns [16 lo, 16 hi) of the plane into the skewed
              * scratch (16-lane blocks: the column kernels' lane grain) */
         (a->fwd ? h->il2d_csk_f : h->il2d_csk_b)(a->src + 2 * 16 * a->lo, NULL,
@@ -1102,7 +1093,7 @@ static void _il2d_c2c_mt_tramp(void *v)
         _il2d_rows_exec2(h, a->tid, a->dir, h->il2d_csk_scr + 2 * a->lo * VFFT_IL2D_CSK_PITCH(rn),
                          VFFT_IL2D_CSK_PITCH(rn), a->dst + 2 * a->lo * rn, rn, rn, a->lo, 1, a->hi - a->lo);
         break;
-    case 8: /* the threaded TURN (2026-09-24), phase 1: rows [4 lo, 4 hi) through
+    case 8: /* the threaded TURN, phase 1: rows [4 lo, 4 hi) through
              * the batched mono kernel with turned stores into the N2 x P scratch */
         (a->fwd ? h->il2d_rowb_f : h->il2d_rowb_b)(a->src + 2 * 4 * a->lo * rn, NULL,
                                                     h->il2d_turn_scr + 2 * 4 * a->lo, NULL, NULL, NULL,
@@ -1119,7 +1110,7 @@ static void _il2d_c2c_mt_tramp(void *v)
                              h->il2d_turn_scr + 2 * c * P, NULL);
         }
         break;
-    case 11: /* the TILE arm (2026-09-25), forward: tiles [lo,hi) = the first
+    case 11: /* the TILE arm, forward: tiles [lo,hi) = the first
               * stage's sub-problems (N/R0 rows each, the scratch): the middle
               * stages in place on the tile, then its leaf blocks with the
               * rows fused (and streamed when staged) */
@@ -1186,7 +1177,7 @@ static void _il2d_c2c_mt_phase(struct vfft_plan_s *h, const double *src,
     stride_pool_run(T, _il2d_c2c_mt_tramp, a, sizeof a[0]); /* caller = a[0] (tid 0) */
 }
 
-/* ── the THREADED skewed column pass and turn (2026-09-24). Both are loop
+/* ── the THREADED skewed column pass and turn. Both are loop
  * restrictions of their serial executes (the same kernels on disjoint
  * ranges: MT == ST bitwise). csk: the column stage over 16-lane column
  * blocks, then the rows over row slabs -- route 0 through worker t's clone
@@ -1253,7 +1244,7 @@ static int _il2d_turn_exec_mt(struct vfft_plan_s *h, const double *sre, double *
 }
 
 /* VFFT_IL2D_PHASES read once: no getenv on the execute path (the CRT's
- * environment lock serialised the workers' phase starts, 2026-09-25) */
+ * environment lock serialises the workers' phase starts) */
 static int _il2d_phlog_flag = -1;
 static inline int _il2d_phlog_on(void)
 {
@@ -1269,11 +1260,11 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
     const int fwd = (dir == VFFT_FORWARD);
     int s;
     if (h->il2d_turn)
-        return _il2d_turn_exec_mt(h, sre, dre, dir, T); /* the turn's own walk (2026-09-24) */
+        return _il2d_turn_exec_mt(h, sre, dre, dir, T); /* the turn's own walk */
     if (h->il2d_csk)
-        return _il2d_csk_exec_mt(h, sre, dre, dir, T);  /* the skewed pass's own walk (2026-09-24) */
+        return _il2d_csk_exec_mt(h, sre, dre, dir, T);  /* the skewed pass's own walk */
     if (h->il2d_col.tpc)
-        return 0; /* the turned prime pass: one 1D plan, serial (2026-09-24) */
+        return 0; /* the turned prime pass: one 1D plan, serial */
     if (h->il2d_col.staged)
         return 0; /* env-experimental route: one shared band scratch —
                    * per-worker slots are not built for it */
@@ -1283,7 +1274,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
     if (T < 2 || h->il2d_roww_n < T - 1)
         return 0; /* every arm here runs rows => clones are mandatory */
     if (h->il2d_col.blu)
-    {   /* Bluestein column axis (2026-09-02): column windows, then rows —
+    {   /* Bluestein column axis: column windows, then rows —
          * the same order the unbanded chain walk uses */
         const int Ts = rn < (size_t)T ? (int)rn : T;
         const int Tr = (size_t)h->N < (size_t)T ? h->N : T;
@@ -1304,7 +1295,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
     }
     if (h->il2d_col.nat)
     {
-        /* NATURAL x MT (2026-09-04): digit-split prefix (sre -> scratch,
+        /* NATURAL x MT: digit-split prefix (sre -> scratch,
          * then in place), the leaf scatter by BLOCK RANGE (mode 4,
          * scratch -> dre), then row slabs on dre; bwd mirrors (gather
          * first, reversed prefix, stage 0 scratch -> dre). The band arm
@@ -1318,7 +1309,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         if (h->il2d_col.nst < 2 || (Tb < 2 && Tr < 2))
             return 0;
         if (h->il2d_col.natarm == 2)
-        {   /* the TILE arm (2026-09-25): stage 0 across the plane (its digit is
+        {   /* the TILE arm: stage 0 across the plane (its digit is
              * the row within a first-stage sub-problem), then every sub-problem
              * a tile one worker owns -- the middle stages in L2, the leaf's
              * natural rows with the row transform fused; the plane crosses
@@ -1413,15 +1404,15 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         return 1;
     }
     if (h->il2d_col.wl > 0 && h->il2d_col.natarm != 1)
-    {   /* (a strips verdict — natarm == 1, every class since 2026-09-15 —
-         * takes the unbanded strip walk below whatever the serial band) */
+    {   /* (a strips verdict — natarm == 1, any class — takes the
+         * unbanded strip walk below whatever the serial band) */
         /* fewer bands than workers is a CLAMP, not a decline: 4 bands
          * across 4 workers still beats serial, and the prefix digit
          * split keeps the full T regardless (its axis is D, not nb). */
         const size_t nb = (size_t)h->N / (size_t)h->il2d_col.wl;
         const int Tb = nb < (size_t)T ? (int)nb : T;
         /* VFFT_IL2D_PHASES: per-phase ns of this walk on stderr (a probe
-         * instrument for the large-plane question, 2026-09-15) */
+         * instrument) */
         const int phlog = _il2d_phlog_on();
         double ph0 = 0, ph1 = 0, ph2 = 0, ph3 = 0;
         if (Tb < 2)
@@ -1510,7 +1501,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
 /* derive the banded walk's cut for a wl candidate: the first suffix
  * stage whose span divides wl. -1 = illegal (stay unbanded). */
 static int _il2d_real_wl_cut(const struct vfft_plan_s *h, int wl)
-{   /* the tcut law lives in planning/policy.h (R3, 2026-09-17) */
+{   /* the tcut law lives in planning/policy.h (R3) */
     return vfft_policy_il2d_wl_cut(h->N, h->il2d_col.nst, h->il2d_col.L, wl);
 }
 
@@ -1542,8 +1533,8 @@ static int _il2d_rowsplit_build(const vfft_config_t *cfg, int Wb, int N2,
     *lx = (double *)malloc((size_t)N2 * Wb * sizeof(double));
     *lre = (double *)malloc((size_t)hp1p * Wb * sizeof(double));
     *lim = (double *)malloc((size_t)hp1p * Wb * sizeof(double));
-    *tre = NULL; /* fused boundaries (transpose_zip/unzip_transpose) —  */
-    *tim = NULL; /* the row-major staging halves are GONE               */
+    *tre = NULL; /* fused boundaries (transpose_zip/unzip_transpose):   */
+    *tim = NULL; /* no row-major staging halves                         */
     if (*lx && *lre && *lim)
     {
         memset(*lre, 0, (size_t)hp1p * Wb * sizeof(double));
@@ -1557,12 +1548,6 @@ static int _il2d_rowsplit_build(const vfft_config_t *cfg, int Wb, int N2,
     return 0;
 }
 
-/* ── the ROW-ROUTE race (owner 2026-08-26): per-row TC door vs ROWSPLIT
- * over the legal W pool, timed on the SAME row-pass helpers execute
- * serves with, min-of-3 each on scratch planes (r2c/c2r read-only
- * inputs — no compounding, no refills). Winner installed on h + banked
- * (chain + rw) in the direction-shared lay=il real cell. MUST run after
- * the h-> field commits (it executes h — the axis-race law). */
 /* ── the arms of the il2d races (support/race.h): one context, the same
  * functions execute serves with. For the column-MT race the threaded arm
  * reports whether it could engage; the race runs to completion either way
@@ -1581,8 +1566,8 @@ typedef struct
     int *Ls;
     vfft_il2p_fn *ff;
     double **tf;
-    /* the chain race under NATURAL order (2026-09-04): the candidate is
-     * timed through the M4-lite leaf-redirected pass with ITS OWN perm —
+    /* the chain race under NATURAL order: the candidate is
+     * timed through the leaf-redirected natural pass with ITS OWN perm —
      * the best chain for scrambled and for natural can differ (the
      * leaf radix sets the scatter width), so natural cells race under
      * the pass they serve and bank under their own ord=nat row. */
@@ -1592,7 +1577,7 @@ typedef struct
     int sw;                   /* the strips arm's sub-strip width (0 = unsized) */
     double *nstage;           /* the natural leaf's staging for the chain arm */
     int lst;                  /* the natural leaf: staged (1) or strided (0) for this arm */
-    double *zo;               /* the threading race's destination plane: the cell's own placement (2026-09-24) */
+    double *zo;               /* the threading race's destination plane: the cell's own placement */
 } _il2d_race_ctx_t;
 static void _il2d_arm_cols(void *v)
 {
@@ -1638,7 +1623,7 @@ static void _il2d_arm_exec_mt_strip(void *v)
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
 static void _il2d_arm_exec_mt_tile(void *v)
-{   /* natural cells: the TILE partition (2026-09-25) */
+{   /* natural cells: the TILE partition */
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
     c->h->il2d_col.colmt = 1;
     c->h->il2d_col.natarm = 2;
@@ -1656,10 +1641,10 @@ static void _il2d_arm_exec_mt_sw(void *v)
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
 /* the strip-width ladder: N1 x sw x 16 B under L2 (the hardware fence),
- * sw a divisor of N2, and at T > 1 at least T sub-strips. 8 joined on
- * 2026-09-25: at N1 = 8192 the 16-column dense strip is the whole L2 and
- * streamed every stage through L3 (8192x128 0.76 at T=8); the column
- * kernels take any count >= 1. */
+ * sw a divisor of N2, and at T > 1 at least T sub-strips. 8 is on it
+ * because at N1 = 8192 the 16-column dense strip is the whole L2 and
+ * streams every stage through L3 (8192x128 measured 0.76 at T=8); the
+ * column kernels take any count >= 1. */
 static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max)
 {
     static const int SW[] = { 8, 16, 32, 64, 128, 256 };
@@ -1689,6 +1674,12 @@ static void _il2d_arm_chain(void *v)
         _il2d_col_pass(c->z, c->z, c->N1, c->N2, 0, c->nst, c->R, c->Ls,
                        c->ff, c->tf, /*reverse=*/0);
 }
+/* ── the ROW-ROUTE race: per-row TC door vs ROWSPLIT over the legal W
+ * pool, timed on the SAME row-pass helpers execute serves with, min-of-3
+ * each on scratch planes (r2c/c2r read-only inputs — no compounding, no
+ * refills). Winner installed on h + banked (chain + rw) in the
+ * direction-shared lay=il real cell. MUST run after the h-> field commits
+ * (it executes h — the axis-race law). */
 static void _il2d_real_rowrace(struct vfft_plan_s *h,
                                struct vfft_wisdom_s *W,
                                const vfft_config_t *cfg, int N1, int N2)
@@ -1775,7 +1766,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
     h->il2d_tre = btre;
     h->il2d_tim = btim;
     /* ── the wl axis (the banded column walk; rows stay OUTSIDE per
-     * §2.5): unbanded arm + the static pool + L2-admitted stage spans
+     * fft2d_real_il_design.md §2.5): unbanded arm + the static pool + L2-admitted stage spans
      * (the c2c lever — row width here is hp1 complex), timed on the
      * column pass alone (the only thing wl changes), min-of-3 in place
      * on the z scratch (compounding is benign — the c2c chain-race
@@ -1807,7 +1798,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
         }
         if (getenv("VFFT_IL2D_LOG"))
         {   /* the LADDER, not just the winner: the census a pool change is
-             * gated by (design R2, 2026-09-17) */
+             * gated by (policy R2) */
             fprintf(stderr, "[il2d-real] wl ladder %dx%d:", h->N, h->N2);
             for (wi = 0; wi < nwl; wi++) fprintf(stderr, " %d", wlc[wi]);
             fputc(10, stderr);
@@ -1837,12 +1828,12 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
                     cbest);
         vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_col.R, h->il2d_col.nst, bw,
                        bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                       bestns + cbest, vfft_policy_ord_rankn(cfg));
+                       bestns + cbest, vfft_policy_ord_rankn(cfg), h->nthreads);
         _vw2_persist(W, cfg);
     }
 }
 
-/* ── INC-3: the COLUMN-MT verdict race. Times the column pass SERIAL vs
+/* ── the COLUMN-MT verdict race. Times the column pass SERIAL vs
  * THREADED through the very functions the execute serves with (race ==
  * serving path), min-of-3 on a scratch plane, and banks {cmt, cmtt} in
  * the cell's lay=il real row. There is NO structural default and no
@@ -1870,7 +1861,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
         _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
         const vfft_race_arm_t arms[2] = { { "serial", _il2d_arm_cols, &rc },
                                           { "threaded", _il2d_arm_cols_mt, &rc } };
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }; /* min-of-3, A then B, two untimed passes per arm first (2026-09-25: a cold threaded arm read 58 us for a 37-us plan) */ /* THREADED arms: never paused (mt_measurement_parking_trap) */
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }; /* min-of-3, A then B, two untimed passes per arm first (a cold threaded arm reads 58 us for a 37-us plan) */ /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
         double ns[2];
         (void)p;
         vfft_race_run(&proto, arms, 2, ns);
@@ -1884,7 +1875,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                            h->il2d_col.R, h->il2d_col.nst,
                            h->il2d_rw, h->il2d_col.wl, 0, h->nthreads,
-                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, vfft_policy_ord_rankn(cfg));
+                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, vfft_policy_ord_rankn(cfg), h->nthreads);
             _vw2_persist(W, cfg);
             return;
         }
@@ -1900,21 +1891,19 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
                    h->il2d_col.R, h->il2d_col.nst, h->il2d_rw,
                    h->il2d_col.wl, h->il2d_col.colmt, h->nthreads,
                    (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                   h->il2d_col.colmt ? mt : st, vfft_policy_ord_rankn(cfg));
+                   h->il2d_col.colmt ? mt : st, vfft_policy_ord_rankn(cfg), h->nthreads);
     _vw2_persist(W, cfg);
 }
 
 
-/* the chain RACE: time every candidate's column pass on scratch (min of
- * 3 passes), return the winner's index. -1 = race impossible. */
-/* the Bluestein inner's chain at M: the (M, N2) 2D chain row — replayed
- * when banked (prod == M), else the E1.1 chain race at (M, N2), banked
- * there. Context = the create in progress (set at _vfft_create_2d's entry). */
+/* the Bluestein inner's chain at M: replayed from the cell's own row when
+ * banked (prod == M), else the chain race at (M, N2), banked on the cell's
+ * row. Context = the create in progress (set at the 2D/3D create's entry). */
 static struct {
     struct vfft_wisdom_s *W;
     const vfft_config_t *cfg;
     int N2;
-    /* D1 (2026-09-18): the column-axis Bluestein's INNER chain at M is the
+    /* the column-axis Bluestein's INNER chain at M is the
      * cell's verdict and banks on THE CELL'S OWN row -- never on the
      * (M, N2) row, which is the row a user's own scrambled M x N2 cell owns.
      * key   = that row;
@@ -1954,12 +1943,11 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
     forms[0] = 0;
     if (!W || W->vw2_off_2d || N2 <= 0 || !key) return 0;
     /* REPLAY -- the M chain THE CELL'S OWN row carries, read by the builder
-     * (which checked prod == blu) and handed over here. Until 2026-09-18
-     * this was a lookup, and the race below a bank, on the (M, N2, scr) row:
-     * the row a user's own scrambled M x N2 cell owns. The bank passed a
-     * positive time with every axis verdict at -1, which is the REPLACE path
-     * of vw2_2d_il_chain_bank, so a user cell's width, form and column-MT
-     * verdicts were wiped and re-raced on its next create (D1). */
+     * (which checked prod == blu) and handed over here. Never the (M, N2,
+     * scr) row: that is a user's own scrambled M x N2 cell, and a bank there
+     * (a positive time with every axis verdict at -1 is the REPLACE path of
+     * vw2_2d_il_chain_bank) would wipe its width, form and column-MT
+     * verdicts. */
     if (_il2d_blu_ctx.rep_R && _il2d_blu_ctx.rep_nst > 0 &&
         _il2d_chain_prod(_il2d_blu_ctx.rep_R, _il2d_blu_ctx.rep_nst) == M)
     {
@@ -2005,7 +1993,7 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
     }
 }
 
-/* PER-STAGE FORM RACE (E1.11, 2026-09-02): coordinate descent over the
+/* PER-STAGE FORM RACE: coordinate descent over the
  * stages whose radix has rival forms (vfft_il2p_col_forms), each stage's
  * two arms timed on the WHOLE column pass with the other stages held at
  * their current pick (the pass is the only thing the form changes; same
@@ -2033,7 +2021,7 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
     }
     if (!any)
         return 0;
-    z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves (2026-09-23) */
+    z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves */
     if (!z)
         return 0;
     for (i = 0; i < 2 * T; i++)
@@ -2107,22 +2095,22 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
                               int N2, const int *Rs, int nst,
                               vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                               char *forms, size_t fsz, int ord)
-{   /* ONE body (R5, 2026-09-17): vw2_2d_forms_lookup/bank are themselves
+{   /* ONE body (policy R5): vw2_2d_forms_lookup/bank are themselves
      * wrappers that build this key and call the ilcol pair, so the 2D-key
      * spelling of the precedence law (env pin > banked forms= > the
-     * per-stage race) is the ilcol-key spelling with this key. The 45-line
-     * twin that used to live here was byte-identical to _il2d_forms_serve_key
-     * apart from the key. */
+     * per-stage race) is the ilcol-key spelling with this key. */
     const vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
     _il2d_forms_serve_key(W, cfg, &ck, "forms", N1, (size_t)N2, Rs, nst, ff, fb, forms, fsz);
 }
 
+/* the chain RACE: time every candidate's column pass on scratch (min of
+ * 3 passes), return the winner's index. -1 = race impossible. */
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns, int nat)
 {
     const size_t T = (size_t)N1 * N2;
-    double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves (2026-09-23) */
-    double *nscr = nat ? (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double)) : NULL;   /* aligned like every plane the door serves (2026-09-23) */
+    double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves */
+    double *nscr = nat ? (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double)) : NULL;   /* aligned like every plane the door serves */
     double *nstage = nat ? (double *)VFFT_ZS_ALLOC(2 * 64 * (size_t)N2 * sizeof(double)) : NULL;   /* R_last <= 64 */
     int ci, win = -1;
     double wns = 1e300;
@@ -2136,16 +2124,15 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
     }
     for (i = 0; i < 2 * T; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 1023);
-    /* Every buildable candidate is an ARM of ONE race (2026-09-06): the
-     * tables and (natural) the permutation of all candidates are built up
-     * front, then vfft_race_run samples every arm once per round with the
-     * rounds alternating direction — the house protocol — so a drift of
-     * the host (its throttled state lasts minutes) hits all chains alike.
-     * The per-candidate loop it replaces timed each chain in its own burst
-     * of three, one after another, and two cold runs at 1215x243 natural
-     * banked different chains. Same samples per arm as before (min of 3
-     * single executes); the arm count is VFFT_IL2D_MAXCAND <= the
-     * template's VFFT_RACE_MAX_ARMS. */
+    /* Every buildable candidate is an ARM of ONE race: the tables and
+     * (natural) the permutation of all candidates are built up front, then
+     * vfft_race_run samples every arm once per round with the rounds
+     * alternating direction — the house protocol — so a drift of the host
+     * (its throttled state lasts minutes) hits all chains alike (timing each
+     * chain in its own burst, one after another, let two cold runs at
+     * 1215x243 natural bank different chains). Min of 3 single executes per
+     * arm; the arm count is VFFT_IL2D_MAXCAND <= the template's
+     * VFFT_RACE_MAX_ARMS. */
     {
         struct
         {
@@ -2247,7 +2234,7 @@ typedef struct
     double **btf, **btb;
     double *bchf, *bkf, *bscr;
     /* NATURAL cells: the chain arm must be timed under the serving it
-     * will run - the M4-lite leaf-redirected pass (scratch round trip +
+     * will run - the leaf-redirected natural pass (scratch round trip +
      * strided scatter), never the scrambled pass (a strawman arm). */
     int nat;
     const int *perm;
@@ -2273,7 +2260,7 @@ static void _il2d_n1arm_blu(void *v)
 /* free everything a column-axis pass owns (tables, natural, Bluestein,
  * the staged scratch); the descriptor is zero afterwards */
 static void _il2d_tpc_drop(vfft_ilcol_t *c);
-/* the strips' DENSE per-worker scratch (2026-09-24): T blocks of N x swcap
+/* the strips' DENSE per-worker scratch: T blocks of N x swcap
  * complexes, swcap = the widest strip a worker runs (the ladder's widest
  * admissible width, and the unsized whole range when it fits L2) */
 static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max);
@@ -2318,7 +2305,7 @@ static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, int N2, int T)
     c->nnatsscr = T;
     c->natswcap = swcap;
     {   /* the probe pin, read ONCE here: eight workers calling getenv at every
-         * phase start serialised on the CRT's environment lock (2026-09-25) */
+         * phase start would serialise on the CRT's environment lock */
         const char *dpin = getenv("VFFT_IL2D_DENSE");
         c->natdense = !(dpin && atoi(dpin) == 0);
     }
@@ -2401,24 +2388,11 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
     }
 }
 
-/* ═══ THE COLUMN-AXIS PASS BUILD (2026-09-06, phase 2 of the rank-N IL
- * tier). One column axis of an interleaved c2c plan — N rows over rn
- * complex per row — under the cell's wisdom key: the chain (env > banked
- * > raced over the composition pool > greedy), its per-stage forms, the
- * column-axis Bluestein where no chain exists, the natural leaf
- * redirection when the caller asks for NATURAL, the N1-arm race (chain vs
- * Bluestein where a chain carries an odd radix), and the stage tables.
- * Lifted verbatim from the 2D create's c2c branch (2026-09-06), which now
- * calls it with a rank-2 key; a rank-N IL plan calls it per column axis
- * with a rank-3 key and the axis as the token suffix. The banked axis
- * verdicts (band width, fusion, row route, column MT + its T, the N1-arm
- * verdict) come back through the out-parameters, -1 = unraced. Returns 1;
- * 0 = REFUSED (loud), the descriptor freed. */
-/* ── the tpc arm's build, race and replay (2026-09-24; struct comment at
- * c->tpc). c2c axis 0 only: the real tier's CCE columns and a rank-3 axis 1
- * run per-worker clones the one plan cannot serve. VFFT_IL2D_TPC=1|0 pins
- * (never banks). A row raced before the arm existed carries no tpc= token
- * and races it on its next create. */
+/* ── the tpc arm's build, race and replay (struct comment at c->tpc). c2c
+ * axis 0 only: the real tier's CCE columns and a rank-3 axis 1 run
+ * per-worker clones the one plan cannot serve. VFFT_IL2D_TPC=1|0 pins
+ * (never banks). A row without a tpc= token races the arm on its next
+ * create. */
 static int _il2d_tpc_admits(const vw2_ilcol_key_t *key, const vfft_ilcol_t *c)
 {
     return c->blu > 0 && !key->real && key->axis == 0;
@@ -2542,7 +2516,7 @@ static void _il2d_tpc_replay(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         return;
     want = pin ? atoi(pin) : vw2_ilcol_tok_geti(&W->vw2, key, "tpc", -1);
     if (want < 0)
-    {   /* a row from before the arm existed: race it now */
+    {   /* a row without the token: race it now */
         _il2d_tpc_race(W, cfg, key, c, N, rn);
         return;
     }
@@ -2554,6 +2528,17 @@ static void _il2d_tpc_replay(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     _il2d_blu_drop_tables(c);
 }
 
+/* ═══ THE COLUMN-AXIS PASS BUILD. One column axis of an interleaved c2c
+ * plan — N rows over rn complex per row — under the cell's wisdom key: the
+ * chain (env > banked > raced over the composition pool), its per-stage
+ * forms, the column-axis Bluestein where no chain exists, the natural leaf
+ * redirection when the caller asks for NATURAL, the N1-arm race (chain vs
+ * Bluestein where a chain carries an odd radix), and the stage tables. The
+ * 2D create's c2c branch calls it with a rank-2 key; a rank-N IL plan calls
+ * it per column axis with a rank-3 key and the axis as the token suffix.
+ * The banked axis verdicts (band width, fusion, row route, column MT + its
+ * T, the N1-arm verdict) come back through the out-parameters, -1 = unraced.
+ * Returns 1; 0 = REFUSED (loud), the descriptor freed. */
 static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                            const vw2_ilcol_key_t *key, int N, size_t rn, int nat_req,
                            vfft_ilcol_t *c, char *forms, size_t fsz,
@@ -2563,26 +2548,21 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     int il2d_bcmt = -1, il2d_bcmtt = -1, il2d_bblu = -1;
     int il2d_tbl_done = 0;
     _il2d_blu_ctx.N2 = (int)rn;   /* the Bluestein inner's chain provider: this axis's row length */
-    _il2d_blu_ctx.key = key;      /* ... and the row its verdict belongs on (D1, 2026-09-18) */
+    _il2d_blu_ctx.key = key;      /* ... and the row its verdict belongs on */
     _il2d_blu_ctx.rep_R = NULL;
     _il2d_blu_ctx.rep_nst = 0;
     _il2d_blu_ctx.commit = 0;
     int chain_ok = 0;
     {
         /* chain precedence: env > banked lay=il verdict > RACE
-         * the full composition pool (multi-stage cells only;
-         * component-pinned: the race times the column pass, the
-         * only thing the axis changes) > greedy. */
+         * the full composition pool (component-pinned: the race times
+         * the column pass, the only thing the axis changes). */
         chain_ok = _il2d_env_chain(N, c->R, c->f, c->b, &c->nst);   /* the pin */
         if (!chain_ok && !cfg->recalibrate &&
-                 /* the caller's explicit override reaches THIS tier too
-                  * (2026-09-16): include/vfft.h promises recalibrate=1
-                  * "re-measures and overwrites the cell even on" a hit, and
-                  * this lookup used to ignore it — so a 2D c2c (and 3D, via
-                  * fftnd_il.h) cell replayed its banked chain/wl/ro/cmt no
-                  * matter what the caller asked. The real tier's twin
-                  * (fft2d_create.h) and five sibling lookups in this file
-                  * were already guarded; this one was the omission. */
+                 /* the caller's explicit override reaches this tier too:
+                  * include/vfft.h promises recalibrate=1 re-measures and
+                  * overwrites the cell even on a hit (2D c2c, and 3D via
+                  * fftnd_il.h). */
                  vw2_ilcol_chain_lookup(&W->vw2, key, c->R,
                                         &c->nst, &il2d_bwl,
                                         &il2d_btf, &il2d_bro,
@@ -2593,33 +2573,29 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                  _il2d_resolve(c->R, c->nst, c->f, c->b))
             chain_ok = 1;
         /* a replayed Bluestein row (il2d_bblu > 0) rebuilds its inner in the
-         * N-arm block below (E1.7, 2026-09-02) -- at every rank. A rank >= 3
-         * copy of that rebuild lived here for one day (2026-09-17) on the
-         * belief the builder had none; it was redundant and is gone. */
+         * N-arm block below -- at every rank. */
         if (!chain_ok)
         {
             int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
             int cur[8], ncand = 0, dropped = 0;
             _il2d_enum_rec(N, 0, cur, cand, lens, &ncand,
                            &dropped);
-            /* (a capped pool warns from inside the enumerator, 2026-09-17) */
-            /* ncand >= 1, not > 1 (2026-09-17): a cell with exactly ONE
-             * legal chain used to skip the race and drop to the greedy --
-             * unmeasured, UNBANKED, re-derived on every create, with no row
-             * for its forms and widths to hang off. One arm is still a
-             * race: it is timed, and it banks. */
+            /* (a capped pool warns from inside the enumerator) */
+            /* ncand >= 1, not > 1: one arm is still a race -- it is timed
+             * and it banks, so the cell gets a row for its forms and widths
+             * to hang off. */
             if (ncand >= 1)
             {
                 double bns = 0;
                 int win = _il2d_race_chains(N, (int)rn, ncand, cand,
                                             lens, &bns, nat_req);
-                /* nat_req, NOT key->ord (2026-09-17): key->ord is the ROW
-                 * LABEL, nat_req is which PASS this build will run. They are
-                 * equal at the 2D tier and at the 3D tier's axis 1; they are
-                 * NOT equal at the 3D tier's axis 0, which is the scrambled
-                 * class for both order classes by design (fftnd_il.h). Racing
-                 * on the label there timed a pass the tier never runs and
-                 * excluded every chain with no natural leaf from the pool. */
+                /* nat_req, NOT key->ord: key->ord is the ROW LABEL, nat_req
+                 * is which PASS this build will run. They are equal at the 2D
+                 * tier and at the 3D tier's axis 1; they are NOT equal at the
+                 * 3D tier's axis 0, which is the scrambled class for both
+                 * order classes by design (fftnd_il.h). Racing on the label
+                 * there would time a pass the tier never runs and exclude
+                 * every chain with no natural leaf from the pool. */
                 if (win >= 0 &&
                     _il2d_resolve(cand[win], lens[win], c->f,
                                   c->b))
@@ -2635,13 +2611,13 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                     _vw2_persist(W, cfg);
                 }
             }
-            /* no greedy fallback (2026-09-17): a race with no buildable arm
-             * has no chain, and !chain_ok below is Bluestein or a refusal */
+            /* no greedy fallback: a race with no buildable arm has no
+             * chain, and !chain_ok below is Bluestein or a refusal */
         }
     }
     if (chain_ok && il2d_bblu <= 0)
-    {   /* E1.11 per-stage kernel forms (2026-09-02); a banked
-         * Bluestein cell's forms live on its (M, (int)rn) row */
+    {   /* per-stage kernel forms; a banked Bluestein cell's inner forms
+         * serve through the chain provider (bluforms=) */
         _il2d_forms_serve_key(W, cfg, key, "forms", N, rn, c->R, c->nst,
                           c->f, c->b, forms, fsz);
     }
@@ -2650,10 +2626,9 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         /* ODD/PRIME N: the COLUMN-AXIS BLUESTEIN (struct
          * comment at c->blu; _il2d_blu_build). Reached only
          * when no chain exists — with the odd t2c/n1c kinds
-         * emitted, that now means prime / unexpressible N.
+         * emitted, that means prime / unexpressible N.
          * n1 comes out NATURAL by construction, so ALL order
-         * spellings are served (M4-lite closed the old
-         * DEFAULT-only gate 2026-08-27). */
+         * spellings are served. */
         _il2d_blu_ctx.commit = 1;   /* no chain exists: this build IS the cell's plan */
         c->blu = _il2d_blu_build(N, rn, c->R,
                                    c->L, c->f, c->b,
@@ -2665,28 +2640,26 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         if (c->blu)
         {
             chain_ok = 1;
-            _il2d_tpc_race(W, cfg, key, c, N, rn);   /* the turned pass vs this Bluestein (2026-09-24) */
+            _il2d_tpc_race(W, cfg, key, c, N, rn);   /* the turned pass vs this Bluestein */
         }
         /* (the cell's own row is banked by the provider, at every rank and
          * before it serves the inner's forms -- vw2_ilcol_forms_bank_base is
-         * a field update and needs the row to exist. The rank >= 3 bank that
-         * stood here, added 2026-09-17 for the un-bankable 3D Bluestein axis,
-         * moved there whole on 2026-09-18 with D1.) */
+         * a field update and needs the row to exist.) */
     }
     if (chain_ok && !c->blu && il2d_bblu <= 0 && c->nst > 1 &&
         nat_req)
     {
         /* (il2d_bblu > 0 = a banked Bluestein cell: c->R is the
          * length-M chain, n1 natural by construction, the perm
-         * would divide by zero - pre-existing, fixed 2026-09-02) */
-        /* M4-lite (struct comment at c->nat): natural n1 via
+         * would divide by zero) */
+        /* the natural n1 (struct comment at c->nat) via
          * the LEAF REDIRECTION - driver-only, any chain. Built
          * BEFORE the N-arm race below so the chain arm is
          * timed under the serving it will actually run. The
          * perm builder refuses on any convention mismatch. */
         c->natperm = _il2d_nat_perm(c->R, c->nst, N);
         if (c->natperm)
-            c->natscr = (double *)VFFT_ZS_ALLOC(   /* 64-B aligned: the strip workers' pieces of a row must not share a line (2026-09-24) */
+            c->natscr = (double *)VFFT_ZS_ALLOC(   /* 64-B aligned: the strip workers' pieces of a row must not share a line */
             
                 2 * (size_t)N * (int)rn * sizeof(double));
         if (!c->natperm || !c->natscr)
@@ -2704,21 +2677,19 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     }
     if (chain_ok && !c->blu && !getenv("VFFT_IL2D_CHAIN"))
     {
-        /* THE RACED CHAIN ARM (owner directive): for a chain
-         * that carries an ODD radix (the newly emitted kinds),
-         * race it against the Bluestein column route. DEFAULT
-         * order: the two serve different n1 orders (chain =
-         * scrambled comb, blu = natural), both self-consistent.
-         * NATURAL order (2026-08-28): BOTH arms are natural -
-         * the chain via the leaf redirection, blu by
+        /* THE RACED CHAIN ARM: for a chain that carries an ODD
+         * radix, race it against the Bluestein column route.
+         * DEFAULT order: the two serve different n1 orders
+         * (chain = scrambled comb, blu = natural), both
+         * self-consistent. NATURAL order: BOTH arms are
+         * natural - the chain via the leaf redirection, blu by
          * construction - so the race is the only lawful pick;
          * the chain arm runs the natural pass. Pick is pure
          * speed either way. Env VFFT_IL2D_BLU=1 pins blu,
          * =0 pins the chain (env never banks); unset = race
-         * min-of-3 alternated on scratch through the SERVING
-         * functions. pow2 chains never race (blu is pointless
-         * there). Verdict plan-local (the wisdom banking of a
-         * blu marker rides the layout-audit wave). */
+         * min-of-3 on scratch through the SERVING functions,
+         * banked (blu= on the chain row) and replayed. pow2
+         * chains never race (blu is pointless there). */
         int hasodd = 0, s3;
         const char *be = getenv("VFFT_IL2D_BLU");
         for (s3 = 0; s3 < c->nst; s3++)
@@ -2726,21 +2697,20 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 hasodd = 1;
         /* the chain arm times the SERVING column pass, so the
          * N tables must exist BEFORE the race (they are
-         * otherwise built at the row-child block below — timing
-         * with empty tabs was a NULL-load crash, caught by the
-         * cell sweep 2026-08-27). il2d_tbl_done stops the later
-         * shared build from double-building the winner's. */
-        /* REPLAY the banked N-arm verdict (E1.7, 2026-09-02):
+         * otherwise built at the shared build below — timing
+         * with empty tables would NULL-load). il2d_tbl_done
+         * stops the later shared build from double-building
+         * the winner's. */
+        /* REPLAY the banked N-arm verdict:
          * blu > 0 = Bluestein won (the row's chain IS the M
          * chain, already resolved above — build the Bluestein
          * tables and adopt, no timing); blu == 0 = the chain won
          * (nothing to do). Only an unraced cell (-1) or an env
          * pin runs the race below. */
-        /* blu > 0 REGARDLESS of hasodd (2026-09-02): a banked Bluestein
-         * row carries the pow2 M chain, which has no odd factor — the
-         * old guard skipped the adoption for a PRIME N and the create
-         * ran the M chain as the N chain (wrong output, caught by the
-         * naive-DFT probe at 127x100 the day prime rows first banked) */
+        /* blu > 0 REGARDLESS of hasodd: a banked Bluestein row carries
+         * the pow2 M chain, which has no odd factor — gating the
+         * adoption on hasodd would run the M chain as the N chain at a
+         * PRIME N (wrong output) */
         if (il2d_bblu > 0 && !be && !cfg->recalibrate)
         {
             int bR[8], bL[8], bnst = 0, M2;
@@ -2751,7 +2721,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             memset(btb, 0, sizeof btb);
             /* the replayed row's chain IS the M chain (the lookup above
              * checked prod == blu): hand it to the provider rather than have
-             * it re-read a row of its own (D1, 2026-09-18) */
+             * it re-read a row of its own */
             _il2d_blu_ctx.rep_R = c->R;
             _il2d_blu_ctx.rep_nst = c->nst;
             M2 = _il2d_blu_build(N, rn, bR, bL, bf, bb,
@@ -2775,7 +2745,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 c->blukb = bkb;
                 c->bluscr = bscr;
                 il2d_tbl_done = 1;
-                _il2d_tpc_replay(W, cfg, key, c, N, rn);   /* tpc= on the row, or race it (2026-09-24) */
+                _il2d_tpc_replay(W, cfg, key, c, N, rn);   /* tpc= on the row, or race it */
                 if (c->nat)
                 {
                     free(c->natperm);
@@ -2914,8 +2884,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     }
     if (!chain_ok)
     {
-        /* OWNER LAW: split is NOT a fallback of IL — no convert
-         * wrapper. An inexpressible N refuses loudly. */
+        /* Split is NOT a fallback of IL — no convert wrapper.
+         * An inexpressible N refuses loudly. */
         _vfft_warn("vfft_create: IL 2D c2c %dx%d — N has no "
                    "native column chain (radices 4..64, no "
                    "leftover factor)%s",
@@ -2940,15 +2910,6 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     return 1;
 }
 
-/* the §10a axis race: time the FULL execute (column chain + rows) over
- * the wl candidates x the row routes (x the two-pass rows' tile), set the
- * winner on the plan, bank chain+wl+tf+ro(+rbk) as one lay=il verdict.
- * Falsifier-grounded: wl wins +15-21% at some cells and LOSES at others;
- * the batched rows win at N2 <= 16 (mono) and 32/64 (two-pass) and the
- * per-row child elsewhere -- per-cell only, never defaults. The raced
- * out-of-place child route (ro=1, the copy-back) was DELETED 2026-09-23:
- * beside the batched routes it never won, and the in-place K=1 tier serves
- * every N2 (its last candidate is the prime engine): no forced path either. */
 /* one (row route, wl, tile) configuration of the axis race, as a race ARM:
  * sets the plan's band axes, then one full forward execute through the
  * serving path (the natural banded walk under NATURAL, the scrambled one
@@ -2957,12 +2918,12 @@ typedef struct
 {
     struct vfft_plan_s *h;
     double *z;
-    double *zo;               /* the cell's own placement: z for in place, a second plane out of place (2026-09-23) */
+    double *zo;               /* the cell's own placement: z for in place, a second plane out of place */
     int wl, cut, ro;
     int wc;                   /* the unbanded walk's column tile (0 = the whole plane) */
     int kb;                   /* ro=3: the two-pass rows' tile, KB of chunk scratch */
-    int csk;                  /* the SKEWED column pass (2026-09-23) */
-    int mt;                   /* T > 1: the arm runs its route's threaded walk (2026-09-24) */
+    int csk;                  /* the SKEWED column pass */
+    int mt;                   /* T > 1: the arm runs its route's threaded walk */
     char name[24];
 } _il2d_axis_arm_t;
 static void _il2d_arm_axis(void *v)
@@ -2973,19 +2934,19 @@ static void _il2d_arm_axis(void *v)
     h->il2d_col.cut = c->cut;
     h->il2d_col.tfuse = (c->wl > 0);
     h->il2d_col.wc = c->wc;
-    h->il2d_rowb = (c->ro == 2);   /* the batched rows (ro=2, 2026-09-23) */
+    h->il2d_rowb = (c->ro == 2);   /* the batched rows (ro=2) */
     h->il2d_rowb2 = (c->ro == 3);  /* the batched two-pass rows (ro=3) */
     h->il2d_turn = (c->ro == 4);   /* the TURN route: the whole plane through the 1D engine */
     h->il2d_csk = c->csk;          /* the SKEWED column pass */
     if (c->ro == 3)
         h->il2d_rowb2_ch = (int)_il2d_rb2_rows(c->kb, (size_t)h->N2);
     if (c->mt)
-    {   /* the T-aware race (2026-09-24): every arm through its route's threaded
-         * walk -- the chain under the DENSE STRIPS (the form that dominated the
-         * block arm at every cell measured: an arm raced under the block shape
-         * picked tiled rows the strips then ran worse with, 128x256 0.58,
-         * 4096x256 0.77); the threading race refines the winner's shape
-         * (serial, block, the strips ladder) afterwards */
+    {   /* the T-aware race: every arm through its route's threaded walk --
+         * the chain under the DENSE STRIPS (the form that dominated the block
+         * arm at every cell measured: an arm raced under the block shape picks
+         * tiled rows the strips then run worse with, 128x256 0.58, 4096x256
+         * 0.77); the threading race refines the winner's shape (serial,
+         * block, the strips ladder) afterwards */
         h->il2d_col.colmt = 1;
         h->il2d_col.natarm = 1;
         h->il2d_col.msw = 0;
@@ -2996,32 +2957,40 @@ static void _il2d_arm_axis(void *v)
     vfft_execute((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->zo, NULL);
 }
 
-/* ORDER CELLS (2026-09-07): every bank below keys the order by the CELL's
- * order (cfg->order), never by the pass's natural flag — a natural cell
- * whose chain is natural by construction (a single stage, a Bluestein
- * axis) has il2d_col.nat == 0, and keying by that flag banked its axis and
- * MT verdicts on the SCRAMBLED row: the natural cell re-raced on every
- * create and the scrambled cell served a natural measurement (found by the
- * 3D natural class's child cells; the owner's law: order cells are never
- * compared, never mixed). */
+/* the axis race: time the FULL execute (column chain + rows) over the wl
+ * candidates x the row routes (x the two-pass rows' tile), set the winner on
+ * the plan, bank chain+wl+tf+ro(+rbk) as one lay=il verdict. wl wins +15-21%
+ * at some cells and LOSES at others; the batched rows win at N2 <= 16 (mono)
+ * and 32/64 (two-pass) and the per-row child elsewhere -- per-cell only,
+ * never defaults. There is no out-of-place child route (ro=1): beside the
+ * batched routes it never won, and the in-place K=1 tier serves every N2
+ * (its last candidate is the prime engine).
+ *
+ * ORDER CELLS: every bank below keys the order by the CELL's order
+ * (cfg->order), never by the pass's natural flag — a natural cell whose
+ * chain is natural by construction (a single stage, a Bluestein axis) has
+ * il2d_col.nat == 0, and keying by that flag would bank its axis and MT
+ * verdicts on the SCRAMBLED row (the natural cell re-racing on every create,
+ * the scrambled cell serving a natural measurement). Order cells are never
+ * compared, never mixed. */
 static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             const vfft_config_t *cfg, int N1, int N2)
 {
     const size_t T = (size_t)N1 * N2;
-    double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves (2026-09-23) */
-    /* THE RACE RUNS THE CELL'S OWN PLACEMENT (2026-09-23): an out-of-place cell
-     * races x -> y like the door serves it; racing z -> z ranked a
+    double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves */
+    /* THE RACE RUNS THE CELL'S OWN PLACEMENT: an out-of-place cell races
+     * x -> y like the door serves it; racing z -> z would rank a
      * placement-sensitive route (the skewed column pass) the other way round */
-    double *zo = (h->placement == VFFT_OUTOFPLACE) ? (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double)) : z;   /* aligned like every plane the door serves (2026-09-23) */
+    double *zo = (h->placement == VFFT_OUTOFPLACE) ? (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double)) : z;   /* aligned like every plane the door serves */
     int wlc[14], nwl = 1, wi, ro, bwl = 0, bro = 0, bwc = 0, bkb = 8, bcsk = 0, csk;
     int swl[6], nsw = 0;
     double best = 1e300;
     size_t i;
     int reps = (int)(1e6 / (double)(T + 1));
-    /* THE T-AWARE RACE (2026-09-24): at T > 1 with a live pool every arm runs
-     * its route's threaded walk, so a threaded chain competes with the
-     * threaded turn and skewed pass (at T=8 the serial race sent 81 of 159
-     * pow2 cells down a route with no threaded walk). The verdict banks
+    /* THE T-AWARE RACE: at T > 1 with a live pool every arm runs its route's
+     * threaded walk, so a threaded chain competes with the threaded turn and
+     * skewed pass (racing serially at T=8 sent 81 of 159 pow2 cells down a
+     * route with no threaded walk). The verdict banks
      * beside the serial one (axt= and the t-suffixed tokens), served at
      * that T only. On natural cells the threaded chain walk ignores the band
      * width and the sub-strip tile, so those arms are pruned to wl = 0. */
@@ -3048,8 +3017,8 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             if (cut >= 0)
                 wlc[nwl++] = w;
         }
-        /* the CASCADE widths (2026-08-25, owner-funded 2D cascade arc):
-         * at huge N1 the static pool tops out at 256, pinning cut deep —
+        /* the STAGE-SPAN widths: at huge N1 the static pool tops out at
+         * 256, pinning cut deep —
          * MULTIPLE wide stages stream the full plane per execute (the
          * measured L2 knee: per-point 1.9x off the memory floor at
          * 32768x64 while the memcpy floor moved 1.3x). The stage spans
@@ -3086,16 +3055,14 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             if (hit) { wlc[0] = w; nwl = 1; }
         }
     }
-    /* the unbanded walk's tile (il2d_large_plane_design.md, 2026-09-15):
-     * every ladder width an arm beside wl = 0 */
+    /* the unbanded walk's tile (il2d_large_plane_design.md): every ladder
+     * width an arm beside wl = 0 */
     nsw = _il2d_sw_ladder(N1, N2, 1, swl, 6);
     /* every (row route, wl, tile) configuration is an ARM of ONE race, rounds
-     * alternating direction — the house protocol (2026-09-05). The
-     * sequential per-configuration loop it replaces timed each arm in
-     * its own block, so drift favoured whichever ran in the cooler
-     * moment: at 405x405 natural it banked wl=9 while a same-run
-     * alternated A/B put wl=81 6.5% ahead. Same samples per arm as
-     * before (min of 2 x reps), same candidates. */
+     * alternating direction — the house protocol: timing each arm in its own
+     * block lets drift favour whichever ran in the cooler moment (at 405x405
+     * natural such a loop banked wl=9 where an alternated A/B put wl=81 6.5%
+     * ahead). Min of 2 x reps per arm. */
     {
         _il2d_axis_arm_t ac[VFFT_RACE_MAX_ARMS];
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
@@ -3108,7 +3075,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 int s2, cut = 0;
                 const int w = wlc[wi];
                 (void)s2;
-                /* the SKEWED column pass (2026-09-23): unbanded, untiled, crossed
+                /* the SKEWED column pass: unbanded, untiled, crossed
                  * with the row routes 0/2/3 (the per-row one through the OOP
                  * K=1 plan at N2, when it built); never with the turn route */
                 if (csk && (w != 0 || ro == 4 || (ro == 0 && !h->il2d_csk_row)))
@@ -3116,7 +3083,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 /* the row routes: 0 = the in-place child; 2 = the BATCHED rows,
                  * when the radix has the n1ccs pair; 3 = the batched TWO-PASS
                  * rows, when the child's stage kernels have row-loop twins
-                 * (2026-09-23). 1, the raced OOP child, is deleted. 4 = the
+                 * (there is no route 1). 4 = the
                  * TURN route (the whole plane through the 1D engine): one arm,
                  * no band, no tile, when its N1 plan built. */
                 if (ro == 1 || (ro == 2 && !h->il2d_rowb_f) || (ro == 3 && !h->il2d_rowb2_leaf_f) ||
@@ -3134,9 +3101,9 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                     for (sub = 0; sub <= (w == 0 && ro != 4 && !csk && !prune ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
                         for (ki = 0; ki < (ro == 3 ? 4 : 1) && na < VFFT_RACE_MAX_ARMS; ki++)
                         for (fm = 0; fm <= (mt ? 1 : 0) && na < VFFT_RACE_MAX_ARMS; fm++)
-                        {   /* fm = 1: the arm's SERIAL form beside its threaded one at T > 1
-                             * (2026-09-25): a plane the threading race will keep serial
-                             * must pick its route by the serial walks */
+                        {   /* fm = 1: the arm's SERIAL form beside its threaded one at T > 1:
+                             * a plane the threading race will keep serial must pick its
+                             * route by the serial walks */
                             const int kb = ro == 3 ? VFFT_IL2D_RB2_KB_LADDER[ki] : 0;
                             if (ro == 3 && ki > 0 &&
                                 _il2d_rb2_rows(kb, (size_t)N2) == _il2d_rb2_rows(VFFT_IL2D_RB2_KB_LADDER[ki - 1], (size_t)N2))
@@ -3175,7 +3142,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 }
             }
         {
-            const vfft_race_proto_t proto = { 2, reps, VFFT_RACE_MIN, 1, mt ? 2 : 0, NULL, NULL, 0 };   /* threaded arms: two untimed passes first (2026-09-25) */
+            const vfft_race_proto_t proto = { 2, reps, VFFT_RACE_MIN, 1, mt ? 2 : 0, NULL, NULL, 0 };   /* threaded arms: two untimed passes first */
             vfft_race_run(&proto, arms, na, ns);
         }
         for (a = 0; a < na; a++)
@@ -3224,43 +3191,23 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             h->il2d_col.natst = 1;
         }
     }
-    if (mt)
-    {   /* the T verdict, beside the serial one: the t-suffixed tokens and the
-         * T raced at; the serial tokens are another race's (2026-09-24) */
+    {   /* the verdict on the cell's row at the plan's thread count (v1.3): a
+         * threaded plan's row is its own, the plain tokens its verdict */
         const int ord = vfft_policy_ord_rankn(cfg);
-        if (vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "axt", h->nthreads) != 0)
-        {   /* no row yet (a recalibrating create races the axis before the chain
-             * row is written): a chain-only row (negative axes omitted), then
-             * the tokens (2026-09-25) */
-            vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
-                                 -1, -1, -1, -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, ord);
-            if (vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "axt", h->nthreads) != 0)
-                _vfft_warn("il2d axis race at T=%d: no row to bank the T verdict at %dx%d", h->nthreads, N1, N2);
-        }
-        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "rot", _il2d_ro_of(h));
-        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "wlt", h->il2d_col.wl);
-        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "swt", bwc);
-        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "rbkt", bkb);
-        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "turnt", h->il2d_turn);
-        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "cskt", h->il2d_csk);
-        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "axns", (int)best);
-    }
-    else
-    {
-    vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
-                         h->il2d_col.wl, h->il2d_col.tfuse, _il2d_ro_of(h),
-                         -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, vfft_policy_ord_rankn(cfg));
-    vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "sw", bwc);
-    vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "rbk", bkb);   /* the two-pass rows' tile */
-    vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "turn", h->il2d_turn);   /* the turn route */
-    vw2_2d_il_tok_seti(&W->vw2, N1, N2, vfft_policy_ord_rankn(cfg), "csk", h->il2d_csk);     /* the skewed column pass */
+        vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
+                             h->il2d_col.wl, h->il2d_col.tfuse, _il2d_ro_of(h),
+                             -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, ord, h->nthreads);
+        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, h->nthreads, "sw", bwc);
+        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, h->nthreads, "rbk", bkb);   /* the two-pass rows' tile */
+        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, h->nthreads, "turn", h->il2d_turn);   /* the turn route */
+        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, h->nthreads, "csk", h->il2d_csk);     /* the skewed column pass */
     }
     _vw2_persist(W, cfg);
     if (zo != z) VFFT_ZS_FREE(zo);
     VFFT_ZS_FREE(z);
 }
 
-/* ── c2c MT clones (INC-C). Worker t > 0 needs its own row child: the
+/* ── c2c MT clones. Worker t > 0 needs its own row child: the
  * serving path runs ONE plan through ONE rowscr, and two concurrent
  * bands interleaving that state produce garbage, not slowness. Clones
  * are built for the BANKED route only, verified route-equivalent
@@ -3317,7 +3264,7 @@ static int _il2d_clone_set(const struct vfft_plan_s *prim, const vfft_config_t *
     *out_n = n;
     return 1;
 }
-/* the set the banked route needs (2026-09-24): the turn's N1 plan, the skewed
+/* the set the banked route needs: the turn's N1 plan, the skewed
  * pass's OOP row plan on route 0 (its batched routes run stateless kernels on
  * their own slots), else the chain walk's in-place row child */
 static void _il2d_c2c_build_clones(struct vfft_plan_s *h,
@@ -3339,7 +3286,7 @@ static void _il2d_c2c_build_clones(struct vfft_plan_s *h,
     _il2d_clone_set(h->il2d_row, cfg, h->N2, VFFT_INPLACE, T,
                     &h->il2d_roww, &h->il2d_roww_n, "row");
 }
-/* the T-aware axis race needs every route's set BEFORE it runs (2026-09-24):
+/* the T-aware axis race needs every route's set BEFORE it runs:
  * an arm whose set is missing runs serial -- what execute would do, but not
  * the comparison the race is for. After the race the sets the banked route
  * does not run are dropped. */
@@ -3397,8 +3344,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
 {
     const size_t PN = (size_t)N1 * N2;
     /* aligned like every plane the door serves, and the cell's own placement
-     * (an out-of-place cell races x -> y): the axis race's law since
-     * 2026-09-23, here since 2026-09-24 */
+     * (an out-of-place cell races x -> y), as in the axis race */
     double *z = (double *)VFFT_ZS_ALLOC(2 * PN * sizeof(double));
     double *zo = (h->placement == VFFT_OUTOFPLACE) ? (double *)VFFT_ZS_ALLOC(2 * PN * sizeof(double)) : z;
     double st = 1e300, mt = 1e300;
@@ -3420,7 +3366,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
                              h->il2d_col.wl, h->il2d_col.tfuse, _il2d_ro_of(h),
                              0, h->nthreads,
-                             (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, vfft_policy_ord_rankn(cfg));
+                             (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, vfft_policy_ord_rankn(cfg), h->nthreads);
         _vw2_persist(W, cfg);
         return;
     }
@@ -3431,12 +3377,12 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         char names[VFFT_RACE_MAX_ARMS][20];
         double ns[VFFT_RACE_MAX_ARMS];
         int lad[6], nl, a, na = 0, best = 1, k, nv;
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }; /* min-of-3, A then B, two untimed passes per arm first (2026-09-25: a cold threaded arm read 58 us for a 37-us plan) */ /* THREADED arms: never paused (mt_measurement_parking_trap) */
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }; /* min-of-3, A then B, two untimed passes per arm first (a cold threaded arm reads 58 us for a 37-us plan) */ /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
         (void)p;
         for (a = 0; a < VFFT_RACE_MAX_ARMS; a++) { rc[a] = rc0; rc[a].sw = 0; rc[a].lst = 1; rc[a].zo = zo; ns[a] = 1e300; }
         arms[na].name = "serial"; arms[na].run = _il2d_arm_exec_st; arms[na].ctx = &rc[na]; na++;
         if (h->il2d_turn || h->il2d_csk)
-        {   /* the turn and the skewed pass have ONE threaded walk each (2026-09-24) */
+        {   /* the turn and the skewed pass have ONE threaded walk each */
             arms[na].name = "threaded"; arms[na].run = _il2d_arm_exec_mt; arms[na].ctx = &rc[na]; na++;
             nl = 0;
         }
@@ -3444,7 +3390,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
             nl = _il2d_sw_ladder(N1, N2, h->nthreads, lad, 6);
         /* a natural cell races every threaded arm STAGED (nst = 1) and
          * STRIDED (nst = 0): the leaf's form is a raced plan parameter at
-         * T > 1 (il2d_natural_leaf_design.md, 2026-09-16); a scrambled
+         * T > 1 (il2d_natural_leaf_design.md); a scrambled
          * cell has no leaf form */
         for (nv = 0; nv < ((h->il2d_turn || h->il2d_csk) ? 0 : (h->il2d_col.nat && h->il2d_col.natstage) ? 2 : 1); nv++)
         {
@@ -3458,7 +3404,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
                 rc[na].lst = nst; arms[na].name = names[na]; arms[na].run = _il2d_arm_exec_mt_strip; arms[na].ctx = &rc[na]; na++;
             }
             if (h->il2d_col.nat && h->il2d_col.R[0] >= 2 && na < VFFT_RACE_MAX_ARMS)
-            {   /* the TILE partition (2026-09-25) */
+            {   /* the TILE partition */
                 snprintf(names[na], sizeof names[na], "tile%s", tag);
                 rc[na].lst = nst; arms[na].name = names[na]; arms[na].run = _il2d_arm_exec_mt_tile; arms[na].ctx = &rc[na]; na++;
             }
@@ -3495,21 +3441,20 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
                 h->il2d_col.colmt ? "THREADED" : "serial",
                 (h->il2d_col.colmt && h->il2d_col.natarm) ? " (strips)" : "");
     {   /* the verdict lands on the cell's EXISTING row through the field-update
-         * path (ns = 0): a measured bank rebuilt the row and dropped the axis
-         * race's tokens (sw, rbk, turn, csk) -- every T=8 replay of a tiled row
-         * ran the default tile until 2026-09-24. The measured time is mtns=. */
+         * path (ns = 0): a measured bank rebuilds the row and would drop the
+         * axis race's tokens (sw, rbk, turn, csk). The measured time is mtns=. */
         const int ord = vfft_policy_ord_rankn(cfg);
-        const int have_row = vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "chain", -1) >= 0;   /* chain= is on every row */
+        const int have_row = vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, h->nthreads, "chain", -1) >= 0;   /* chain= is on every row */
         vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
                              h->il2d_col.wl, h->il2d_col.tfuse, _il2d_ro_of(h),
                              h->il2d_col.colmt, h->nthreads,
                              (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                             have_row ? 0.0 : (h->il2d_col.colmt ? mt : st), ord);
+                             have_row ? 0.0 : (h->il2d_col.colmt ? mt : st), ord, h->nthreads);
         /* the threaded arm's shape beside cmt/cmtt, read back at that T only */
-        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "mtarm", h->il2d_col.natarm);
-        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "msw", h->il2d_col.msw);
-        if (h->il2d_col.nat) vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "nls", h->il2d_col.natst);
-        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, "mtns", (int)(h->il2d_col.colmt ? mt : st));
+        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, h->nthreads, "mtarm", h->il2d_col.natarm);
+        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, h->nthreads, "msw", h->il2d_col.msw);
+        if (h->il2d_col.nat) vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, h->nthreads, "nls", h->il2d_col.natst);
+        vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, h->nthreads, "mtns", (int)(h->il2d_col.colmt ? mt : st));
     }
     _vw2_persist(W, cfg);
 }

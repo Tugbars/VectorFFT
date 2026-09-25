@@ -476,15 +476,13 @@ static inline void vfft_r2c_execute_fwd_z(
     if (p->path == VFFT_R2C_PATH_STRIDE)
     {
         stride_r2c_data_t *d = (stride_r2c_data_t *)p->stride->override_data;
-        /* DISPATCH ON THE OVERRIDE, exactly as the SPLIT sibling does at
-         * r2c.h:1833. These two functions are two doors into the SAME plan --
-         * same split machinery, same codelets, differing only in the final
-         * write -- so they must agree about which executor a plan wants.
-         * They did not: this entry called the EVEN executor unconditionally,
-         * so an odd plan's _r2c_odd_execute_fwd (installed at r2c.h:1416) was
-         * never reached and the even path ran over tw_re/tw_im that
-         * _r2c_plan_odd allocates but never fills. That read uninitialised
-         * memory, which is why the error varied run to run. */
+        /* DISPATCH ON THE OVERRIDE, exactly as the SPLIT door
+         * (stride_execute_r2c) does. These two functions are two doors into
+         * the SAME plan -- same split machinery, same codelets, differing only
+         * in the final write -- so they must agree about which executor a
+         * plan wants. An odd plan installs _r2c_odd_execute_fwd; running the
+         * even executor over it would read the tw_re/tw_im that _r2c_plan_odd
+         * allocates but never fills (uninitialised memory). */
         d->zo = z;
         if (p->stride->override_fwd == _r2c_execute_fwd)
             _r2c_execute_fwd_oop(d, real_in, NULL, NULL);
@@ -495,9 +493,8 @@ static inline void vfft_r2c_execute_fwd_z(
     }
     if (p->layout == VFFT_R2C_SPLIT)
     {
-        /* §6a27: z route is NATIVE always — jit_z measured slower than the
-         * native terminator at every rfft cell (e.g. 24.1 vs 15.7 at (2000,4));
-         * the branch that called it is removed with the binding. */
+        /* z route is NATIVE always — jit_z measured slower than the native
+         * terminator at every rfft cell (e.g. 24.1 vs 15.7 at (2000,4)). */
         if (stride_get_num_threads() > 1)
             rfft_natural_mt(p->rfft, real_in, NULL, NULL, z);
         else
@@ -518,7 +515,7 @@ static inline void vfft_r2c_execute_fwd_z(
 }
 
 /* ── ROW-MODE forward door (the 2D real IL tier's rowsplit fusion,
- * fft2d_real_il_design.md): transform t's REAL row at xrows + t*xp
+ * docs/roadmap/fft2d_real_il_design.md): transform t's REAL row at xrows + t*xp
  * (contiguous reals) -> its interleaved CCE row at zrows + t*zp. The
  * worker packs rows straight into scratch and zips the postprocess
  * output to rows while L1-hot — one fused pass per boundary instead of

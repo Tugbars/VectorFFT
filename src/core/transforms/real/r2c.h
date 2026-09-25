@@ -1,5 +1,5 @@
 /**
- * stride_r2c.h -- Real-to-Complex (R2C) and Complex-to-Real (C2R) FFT
+ * r2c.h -- Real-to-Complex (R2C) and Complex-to-Real (C2R) FFT
  *
  * Converts an N-point real FFT into one N/2-point complex FFT plus a
  * post-process butterfly, exploiting Hermitian symmetry for 2x speedup.
@@ -22,9 +22,9 @@
  *   Complex output: re[f * K + k], im[f * K + k]  for f=0..N/2, k=0..K-1
  *
  * Even N: half-N complex embedding (the classic trick below).
- * Odd N (section 57, Phase 1): full-N complex FFT on (x, 0) for the
- * forward, conjugate-forward identity for the backward. ~2x optimal
- * cost, full API parity; optimal odd real algorithms are Phase 2.
+ * Odd N: full-N complex FFT on (x, 0) for the forward, conjugate-forward
+ * identity for the backward. ~2x optimal cost, full API parity; no
+ * optimal odd real algorithm is implemented.
  */
 #ifndef STRIDE_R2C_H
 #define STRIDE_R2C_H
@@ -54,7 +54,7 @@ static inline double _r2c_prof_now(void){
 
 typedef struct
 {
-    int N;      /* original real-FFT size (must be even) */
+    int N;      /* original real-FFT size (odd: _r2c_plan_odd) */
     int half_N; /* N/2 (inner FFT size) */
     size_t K;   /* batch count */
     size_t B;   /* block size for cache-friendly execution */
@@ -74,23 +74,18 @@ typedef struct
 
     stride_plan_t *inner; /* N/2-point complex FFT plan with K = B */
 
-    /* Step-2 fusion (opt-in): the fused forward terminator codelet + the
-     * last-radix metadata needed to iterate scratch in column blocks. When
-     * term_fwd is non-NULL and VFFT_R2C_FUSE is enabled, the forward worker
-     * uses _r2c_postprocess_fused instead of _r2c_postprocess (kills the
-     * separate pass + the block-local mirror access). Default NULL = off. */
-    /* §6a24: interleaved-z boundary mode (set around a z execute; NULL = split) */
+    /* interleaved-z boundary mode (set around a z execute; NULL = split) */
     double *zo;        /* fwd: write spectrum interleaved here */
     const double *zi;  /* bwd: read spectrum interleaved from here */
     /* ROW-MAJOR boundary mode (the 2D real IL tier's rowsplit fusion,
-     * fft2d_real_il_design.md — set around one execute, NULL/0 = off;
+     * docs/roadmap/fft2d_real_il_design.md — set around one execute, NULL/0 = off;
      * same idiom as zo/zi). fwd: rowx = transform t's REAL row at
      * rowx + t*rowxp (contiguous reals), rowz = its CCE half-spectrum
      * row at rowz + t*rowzp (interleaved pairs). The worker packs rows
      * straight into scratch (kills the caller-side transpose AND the
      * lane-gather pass) and zips the postprocess output to rows while
-     * L1-hot (the §6a26 pattern: same kernels, layout conversion in a
-     * hot store helper). bwd: rowxo = the real OUTPUT row base (the
+     * L1-hot (same kernels, layout conversion in a hot store helper).
+     * bwd: rowxo = the real OUTPUT row base (the
      * worker transposes each lane block to rows after the unpack); the
      * bwd INPUT unzip is driver-level in the rowz door. rowscr_re/im =
      * lazy (halfN+1)*K planes the row-mode postprocess writes into. */
@@ -99,16 +94,22 @@ typedef struct
     double *rowxo;       size_t rowxop;
     double *rowscr_re, *rowscr_im; /* lazy (halfN+1)*K fwd CCE planes */
     double *rowwork;               /* lazy N*K bwd working re plane   */
+    /* TERMINATOR FUSION (opt-in): the fused forward terminator codelet + the
+     * last-radix metadata needed to iterate scratch in column blocks. When
+     * term_fwd is non-NULL the out-of-place forward worker uses
+     * _r2c_postprocess_fused instead of _r2c_postprocess (kills the separate
+     * pass + the block-local mirror access). No builder sets it (NULL = off),
+     * and likewise ls_fwd below. */
     void (*term_fwd)(const double*, const double*, double*, double*,
                      double*, double*, const double*, const double*,
                      ptrdiff_t, size_t);
     int term_r;   /* last radix r (column count per block) */
     int term_m;   /* m = halfN / r (number of columns) */
 
-    /* Model (b) (opt-in): the fused last-stage terminator codelet. When
-     * ls_fwd is non-NULL, the forward worker runs stages 0..nf-2 then this
-     * codelet AS the last stage (deletes the last-stage scratch write + the
-     * postprocess scratch read). Default NULL = off. */
+    /* LAST-STAGE FUSION (opt-in): the fused last-stage terminator codelet.
+     * When ls_fwd is non-NULL, the out-of-place forward worker runs stages
+     * 0..nf-2 then this codelet AS the last stage (deletes the last-stage
+     * scratch write + the postprocess scratch read). Default NULL = off. */
     void (*ls_fwd)(const double*, const double*, const double*, const double*,
                    double*, double*, double*, double*,
                    const double*, const double*,
@@ -155,8 +156,8 @@ static void _r2c_compute_perm(const int *factors, int nf, int N,
 
 /* DIF variant. A DIF-forward inner emits its output in a DIFFERENT order than
  * DIT: it is the mixed-radix digit reversal with the FACTOR ORDER REVERSED.
- * (Verified vs dif_order_probe.c — for (4,4,8), DIF slot->freq is exactly the
- * (8,4,4) digit reversal: slot 1->16, 8->4, 9->20, ...) So iperm[s] (the freq
+ * (For (4,4,8), DIF slot->freq is exactly the (8,4,4) digit reversal:
+ * slot 1->16, 8->4, 9->20, ...) So iperm[s] (the freq
  * living at slot s) walks the factors high-index-first, and perm is its inverse.
  * Produces the same contract the recombine expects: perm[freq]=slot,
  * iperm[slot]=freq. Lets the r2c path use a DIF inner when wisdom picks one
@@ -208,7 +209,7 @@ static void _r2c_init_twiddles(int N, double *tw_re, double *tw_im)
  *   X[k] = E + W_N^k * (-i * O)
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── §6a24: interleaved-z (CCE) boundary store/load helpers ──────────
+/* ── interleaved-z (CCE) boundary store/load helpers ─────────────────
  * zo/zi == NULL -> split planes; non-NULL -> interleaved at zo[2*idx],
  * zo[2*idx+1]. The branch is loop-invariant per call site (perfectly
  * predicted); the interleave/deinterleave is register-only shuffle work.
@@ -457,7 +458,7 @@ static void _r2c_postprocess(
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * POST-PROCESS (FUSED, step-2): column-block iteration + r2c_term codelet.
+ * POST-PROCESS (FUSED, term_fwd): column-block iteration + r2c_term codelet.
  *
  * The standard _r2c_postprocess iterates by frequency f, reading the mirror
  * Z[half-f] from scratch row perm[half-f] — block-local but jumping. This
@@ -489,11 +490,10 @@ static void _r2c_postprocess_fused(
                      double*, double*, const double*, const double*,
                      ptrdiff_t, size_t))
 {
-    /* ITEM 3 (the load-bearing perf piece): iterate by PHYSICAL scratch row p
+    /* The load-bearing perf piece: iterate by PHYSICAL scratch row p
      * (sequential primary read), recover the frequency f = iperm[p], and read
      * the mirror at perm[half_N - f] which is BLOCK-LOCAL (slot-reversed within
-     * the partner column's contiguous r-row block). This is the access pattern
-     * that beats the original's one-scattered-stream — sequential primary +
+     * the partner column's contiguous r-row block): sequential primary +
      * in-cache mirror, no global scatter. The runtime-twiddle codelet takes
      * W^f via (tw_re+f, tw_im+f); the mirror twiddle is derived in-codelet by
      * the verified identity W^{half-f} = (-W^f_re, +W^f_im). */
@@ -518,7 +518,7 @@ static void _r2c_postprocess_fused(
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * MODEL (b): _r2c_laststage_fused — the codelet IS the last stage.
+ * LAST-STAGE FUSION (ls_fwd): _r2c_laststage_fused — the codelet IS the last stage.
  *
  * Precondition: stages 0..nf-2 have run (via _stride_execute_fwd_slice_until),
  * so scratch holds the pre-last-stage data. This function does the last stage
@@ -1049,7 +1049,7 @@ static inline void _r2c_fused_first_stage(
     }
 }
 
-/* ── §6a53 / Gap-A: fused DIF first stage ─────────────────────────────
+/* ── fused DIF first stage ─────────────────────────────────────────────
  * out = tw (.) DFT(in) via the post-twiddle OOP family
  * (radix{R}_t1_dif_oop_fwd, R in {5,10,20,25}); untwiddled groups via the
  * n1_oop siblings. Direct 11-arg calls (the engine's 7-arg n1 slot is the
@@ -1123,18 +1123,12 @@ static inline int _r2c_fused_first_stage_dif(
         const stride_plan_t *inner, double *re,
         double *sr, double *si, size_t K, size_t B, size_t b0)
 {
-    /* §6a53: OPT-IN (VFFT_DIF_FUSED=1). Measured mixed at ship: fused wins
-     * ~-10% at K=256 and {5,16} inners, loses ~+6..7% at {25,5}/small-K —
-     * per-plan measured adoption is the named follow-up; until then the
-     * default must not regress anyone. */
-    /* 🔴 Read ONCE per process, not per transform. This is called from the r2c
-     * forward execute path (below, twice), so the original
-     * `if (!getenv(...)) return -1;` charged an environment lookup to every
-     * single transform purely to answer "not enabled" — inside a benchmarked
-     * path. Behaviour is unchanged for any process that does not mutate its own
-     * environment mid-run, which is already the convention here (the zturn/
-     * zroute gates all read env once at CREATE). Found by
-     * build_tuned/exec_purity_audit.py. */
+    /* OPT-IN (VFFT_DIF_FUSED=1). Measured mixed: fused wins ~-10% at K=256
+     * and {5,16} inners, loses ~+6..7% at {25,5}/small-K, and there is no
+     * per-plan measured adoption, so the default must not regress anyone. */
+    /* 🔴 Read ONCE per process, not per transform: this runs on the r2c
+     * forward execute path, where a getenv per call would be charged to every
+     * benchmarked transform just to answer "not enabled". */
     static int _fused_opt = -1;
     if (_fused_opt < 0) _fused_opt = getenv("VFFT_DIF_FUSED") ? 1 : 0;
     if (!_fused_opt) return -1;
@@ -1202,16 +1196,13 @@ static void _r2c_worker_fwd(void *arg) {
         double _tp0 = _r2c_prof_now();
 #endif
         /* Pack-fusion is DIT-only (no-twiddle leaf = stage 0). DIF inners (leaf
-         * last) take the explicit-pack + full-inner path below.
+         * last) take the fused-DIF entry or the explicit-pack + full-inner path
+         * below.
          * ARBITRARY-K: the fused first stage calls the stage-0 n1_fwd OUT-OF-PLACE
-         * (re -> sr/si) at width B, and that OOP butterfly does an unmasked VW load of
-         * the final lane group -> over-reads past B and CRASHES for B % VW != 0. Route
-         * a non-VW-aligned B through the explicit-pack fallback instead.
-         * 6a23 UPDATE: the OOP n1 family is rem-aware by construction (generator
-         * arbitrary-K tail: masked group loads/stores, see codelet_oop.ml
-         * emit_codelet preamble + arbitrary_k_tail_handling.md), and the engine
-         * gates run it at me=65/67 BIT. The (B & 3)==0 guard was stale and is
-         * REMOVED; odd-B fused is gated in benches/gate_r2c_tail.c. */
+         * (re -> sr/si) at width B; the OOP n1 family is rem-aware by construction
+         * (the generator's arbitrary-K tail: masked group loads/stores, see
+         * codelet_oop.ml's emit_codelet preamble and
+         * docs/performance/arbitrary_k_tail_handling.md), so any B takes it. */
         if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd
             && !d->inner->use_dif_forward) {
             _r2c_fused_first_stage(d->inner, re, sr, si, K, B, b0);
@@ -1225,7 +1216,7 @@ static void _r2c_worker_fwd(void *arg) {
         } else if (d->inner->num_stages > 0 && d->inner->use_dif_forward
                    && _r2c_fused_first_stage_dif(d->inner, re, sr, si,
                                                  K, B, b0) == 0) {
-            /* §6a53: fused DIF entry fired; run stages 1.. */
+            /* fused DIF entry fired; run stages 1.. */
             if (d->inner_jit_fwd)
                 d->inner_jit_fwd(d->inner, sr, si, B, d->inner->K, 1);
             else
@@ -1364,10 +1355,9 @@ static void _r2c_worker_bwd(void *arg) {
 
         /* ARBITRARY-K: the fused LAST stage's n1_scaled_bwd writes OUT-OF-PLACE (scratch
          * -> re) with an unmasked VW store -> over-writes past B and CRASHES for B % VW != 0.
-         * Route a non-VW-aligned B through the non-fused fallback (whole inner bwd in-place
-         * with the rem-aware codelet tail, then an explicit unpack with a scalar tail). Also
-         * skip the inner JIT there — the inner-c2c JIT assumes K % VW == 0 (odd K must use the
-         * generic executor). (VW=4 AVX2 host.) */
+         * Route a non-VW-aligned B (VW=4 on AVX2) through the non-fused fallback (whole
+         * inner bwd in-place with the rem-aware codelet tail, then an explicit unpack with
+         * a scalar tail). */
         if (d->inner->num_stages > 0 && d->inner->stages[0].n1_scaled_bwd && (B & 3u) == 0) {
             if (d->inner_jit_bwd)
                 /* JIT stages 1..nf-1 (start_stage=1 == slice_until 1); per-thread
@@ -1485,16 +1475,18 @@ static void _r2c_destroy(void *data)
  * PLAN CREATION
  *
  * Parameters:
- *   N         - real FFT size (even: half-N embedding; odd: Phase-1\n *               full-N embedding — inner_plan must then be N-point)
+ *   N         - real FFT size (even: half-N embedding; odd: full-N
+ *               embedding — inner_plan must then be N-point)
  *   K         - batch count
  *   block_K   - block size for cache-friendly execution
- *   inner_plan - N/2-point complex FFT plan with K = block_K
+ *   inner_plan - N/2-point complex FFT plan with K = block_K (odd N:
+ *               N-point at K)
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ═══════════════════════════════════════════════════════════════
- * ODD-N PATH (Phase 1, section 57)
+ * ODD-N PATH
  *
- * No half-N embedding exists for odd N. Phase 1 buys API parity at
+ * No half-N embedding exists for odd N. This path buys API parity at
  * ~2x optimal cost:
  *   fwd: full N-point complex FFT on (x, 0), natural-order half out.
  *   bwd: conjugate-forward identity IDFT(X) = conj(DFT(conj(X))) —
@@ -1503,8 +1495,7 @@ static void _r2c_destroy(void *data)
  *        X the result is purely real by construction.
  * Output rows 0..N/2 (H = N/2+1 bins; odd N has no Nyquist bin),
  * scaling matches the even path: c2r(r2c(x)) = N*x.
- * Serial Phase 1: no B-blocking, no thread fan-out. Optimal odd
- * real-split algorithms are Phase 2 (transform_coverage_roadmap).
+ * Serial: no B-blocking, no thread fan-out.
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ODD-N FORWARD, OUT-OF-PLACE. Writes exactly (N/2+1)*K per plane -- the
@@ -1513,12 +1504,10 @@ static void _r2c_destroy(void *data)
  *
  * WHY THIS EXISTS SEPARATELY FROM _r2c_odd_execute_fwd. That one runs the
  * full-N complex FFT IN the buffers it is handed, so it needs N*K writable at
- * both re and im. Its out-of-place caller (stride_execute_r2c) passed the
- * CALLER'S output planes, which the contract sizes at (N/2+1)*K -- so it wrote
- * (N/2)*K doubles past the end of both, silently for small N and fatally by
- * N=511. The plan already owns two N*K scratch buffers for exactly this kind
- * of work; use them, and touch the caller's memory only for the H rows it
- * actually owns. */
+ * both re and im -- but the caller's output planes are sized (N/2+1)*K by the
+ * contract, and using them as the work area would write (N/2)*K doubles past
+ * the end of both. The plan owns two N*K scratch buffers for this; the
+ * caller's memory is touched only for the H rows it owns. */
 static void _r2c_odd_execute_fwd_oop(stride_r2c_data_t *d, const double *real_in,
                                      double *out_re, double *out_im, double *zo)
 {
@@ -1612,7 +1601,7 @@ static void _r2c_odd_execute_bwd(void *data, double *re, double *im)
 static stride_plan_t *_r2c_plan_odd(
     int N, size_t K, size_t block_K, stride_plan_t *inner_plan)
 {
-    (void)block_K; /* Phase 1 is serial whole-batch */
+    (void)block_K; /* the odd path is serial whole-batch */
 
     stride_r2c_data_t *d =
         (stride_r2c_data_t *)calloc(1, sizeof(*d));
@@ -1694,17 +1683,14 @@ static stride_plan_t *stride_r2c_plan(
      * Both are verified general; no inner shape is rejected. (Override/0-stage
      * inners are natural-order = identity perm.) */
 
-    /* GENERAL-SHAPE RECOMBINE (guard lifted 2026-06-18). The old guard (doc 59
-     * §7) whitelisted only (8,16)/(16,8)/single-stage because an earlier
-     * _r2c_postprocess was shape-limited. The terminator was since rewritten to
-     * read every frequency from its TRUE scratch slot — primary at z_f = p*B
-     * (iperm[p]=f) and mirror at z_m = perm[mirror]*B — which is correct for ANY
-     * inner-c2c factorization. Verified empirically across {128, (8,16), (16,8),
-     * (4,32), (32,4), (2,64), (64,2), (4,4,8), (8,4,4), (2,8,8), (2,4,4,4)} × K∈
-     * {8,32,256}: all PASS vs reference DFT (<1e-9) — see
-     * benches/r2c_guard_general_test.c. So the stride r2c fallback may now build
-     * any factorization the inner planner produces. (Override/0-stage inner =
-     * natural order = identity perm, handled below.) */
+    /* GENERAL-SHAPE RECOMBINE. The terminator reads every frequency from its
+     * TRUE scratch slot — primary at z_f = p*B (iperm[p]=f) and mirror at
+     * z_m = perm[mirror]*B — which is correct for ANY inner-c2c factorization
+     * (verified across {128, (8,16), (16,8), (4,32), (32,4), (2,64), (64,2),
+     * (4,4,8), (8,4,4), (2,8,8), (2,4,4,4)} × K∈{8,32,256} vs a reference DFT,
+     * <1e-9). So the stride r2c path may build any factorization the inner
+     * planner produces. (Override/0-stage inner = natural order = identity
+     * perm, handled below.) */
 
     stride_r2c_data_t *d =
         (stride_r2c_data_t *)calloc(1, sizeof(*d));
@@ -1784,12 +1770,11 @@ static stride_plan_t *stride_r2c_plan(
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * OUT-OF-PLACE FORWARD (section 59c / A12)
+ * OUT-OF-PLACE FORWARD
  *
- * The 3-pointer convenience wrapper used to memcpy real_in -> out_re
- * and then run the in-place override; the decomposition showed that
- * copy costs ~38 us at N=256 K=256 — pure overhead. It is avoidable:
- * the worker already reads its input (fused first stage / fallback
+ * A memcpy of real_in -> out_re before the in-place override would cost
+ * ~38 us at N=256 K=256 — pure overhead. It is avoidable: the worker
+ * already reads its input (fused first stage / fallback
  * pack) and writes its output (postprocess) through SEPARATE pointers,
  * aliased only because the in-place entry passes re for both. This
  * out-of-place worker reads `in` directly and writes (out_re, out_im),
@@ -1822,10 +1807,9 @@ static void _r2c_worker_fwd_oop(void *arg) {
         /* Pack-fusion is a DIT-leaf technique: the no-twiddle leaf is stage 0, so
          * the fused codelet reads the real input there. DIF puts the no-twiddle
          * stage LAST (stage 0 is a twiddle stage), so fusing into stage 0 is wrong
-         * — DIF inners take the explicit-pack + full-inner path below. */
-        /* 6a23: the OOP n1 family is rem-aware (generator anyk-tail); the old
-         * odd-B guard here was stale and is removed — same as the in-place worker.
-         * Odd B takes the fused path; gated in benches/gate_r2c_tail.c. */
+         * — DIF inners take the explicit-pack + full-inner path below.
+         * The OOP n1 family is rem-aware (the generator's arbitrary-K tail), so
+         * odd B takes the fused path too, as in the in-place worker. */
         if (d->rowx) {
             /* ROW-MODE ingest (rowsplit fusion): pack the caller's real
              * rows straight into scratch — one fused pass replaces the
@@ -1844,8 +1828,8 @@ static void _r2c_worker_fwd_oop(void *arg) {
             { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
             if (d->ls_fwd && !d->zo) {
-                /* Model (b): stages 1..nf-2 via _until, then the fused codelet
-                 * AS the last stage (no scratch round-trip). */
+                /* last-stage fusion: stages 1..nf-2 via _until, then the fused
+                 * codelet AS the last stage (no scratch round-trip). */
                 _stride_execute_fwd_slice_until(d->inner, sr, si, B, B, 1,
                                                 d->inner->num_stages - 1);
             } else {
@@ -1854,8 +1838,8 @@ static void _r2c_worker_fwd_oop(void *arg) {
         } else if (d->inner->num_stages > 0 && d->inner->use_dif_forward
                    && _r2c_fused_first_stage_dif(d->inner, in, sr, si,
                                                  K, B, b0) == 0) {
-            /* §6a53: fused DIF entry fired; run stages 1.. (Model-(b)
-             * fork mirrored from the DIT branch above). */
+            /* fused DIF entry fired; run stages 1.. (the last-stage-fusion
+             * fork mirrors the DIT branch above). */
             if (d->ls_fwd && !d->zo)
                 _stride_execute_fwd_slice_until(d->inner, sr, si, B, B, 1,
                                                 d->inner->num_stages - 1);
@@ -1897,25 +1881,14 @@ static void _r2c_worker_fwd_oop(void *arg) {
         { double _t2=_r2c_prof_now(); _r2c_prof_inner += _t2-_tp0; _tp0=_t2; }
 #endif
         if (d->ls_fwd && !d->zo) {
-            /* Model (b): the fused codelet does the last stage + fold for interior
-             * group pairs. The self-paired groups (DC/Nyquist column and center)
-             * still need their last-stage butterfly run, then scalar fold. We run
-             * the WHOLE last stage for those groups via a targeted slice, then the
-             * scalar specials read the now-complete Z[0] and Z[halfN/2]. Simplest
-             * correct approach: run the full last stage for groups 0 and the
-             * center-column group only, into scratch, then specials. */
-            /* Run the last stage for ALL groups EXCEPT it would double-write the
-             * interior ones the codelet handles. Cleaner: run last stage just for
-             * the self-paired groups by calling the stage's n1/t1 on those bases.
-             * Group 0 holds DC+Nyquist (column k=0); find the center-column group. */
+            /* last-stage fusion: the fused codelet does the last stage + fold for
+             * the interior group pairs. The self-paired groups still need their
+             * last-stage butterfly: DC (freq 0), Nyquist (X[halfN] from Z[0]) and
+             * the center column (freq halfN/2) live in the group(s) holding those
+             * frequencies, so run the stage's n1/t1 for the DC group and the
+             * center group (once if they coincide), then the scalar specials
+             * read the now-complete Z[0] and Z[halfN/2]. */
             const stride_stage_t *_ls = &d->inner->stages[d->inner->num_stages - 1];
-            /* DC (freq 0), Nyquist (X[halfN] from Z[0]), and the center column
-             * (freq halfN/2) ALL live in the group(s) holding those frequencies.
-             * For radix-r with these factorizations they're typically in group 0
-             * (freq 0 = slot 0, freq halfN/2 = slot r/2). Run the LAST STAGE for
-             * every group that holds a special frequency exactly ONCE, then read.
-             * General approach: run last stage for the DC group and the center
-             * group, dedup if they coincide. */
             int dc_g  = (int)((size_t)d->perm[0] / (size_t)_ls->radix);
             int ctr_g = (halfN & 1) == 0
                         ? (int)((size_t)d->perm[halfN / 2] / (size_t)_ls->radix)
@@ -1998,7 +1971,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
                                  d->tw_re, d->tw_im, d->iperm, d->perm,
                                  halfN, K, B, b0, d->ls_fwd);
         } else if (!d->zo && d->term_fwd && (B & 3u) == 0) {
-            /* Step-2 fused path (opt-in): interior pairs via the r2c_term
+            /* terminator fusion (term_fwd, opt-in): interior pairs via the r2c_term
              * codelet, DC/Nyquist + self-paired (f=halfN/2) as scalar
              * specials (the codelet covers only true interior pairs).
              * Odd B -> the r2c_term codelet isn't rem-aware; fall to the
@@ -2044,7 +2017,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
         if (d->rowz)
             /* ROW-MODE terminator (rowsplit fusion): a->out_re/im are
              * the plan's rowscr planes here — zip this lane block to the
-             * caller's interleaved rows while L1-hot (§6a26 pattern). */
+             * caller's interleaved rows while L1-hot. */
             _r2c_row_zip(a->out_re, a->out_im, K, b0, B, halfN + 1,
                          d->rowz, d->rowzp);
 #ifdef VFFT_R2C_PROFILE
@@ -2087,12 +2060,11 @@ static void _r2c_execute_fwd_oop(void *data, const double *in,
 /* ═══════════════════════════════════════════════════════════════
  * CONVENIENCE API
  *
- * stride_execute_r2c: explicit 3-pointer (real_in -> complex_out)
- * stride_execute_c2r: explicit 3-pointer (complex_in -> real_out)
- *
- * These copy real_in -> out_re (which must be N*K), then call
- * the in-place override. For zero-copy, use stride_execute_fwd
- * directly with the in-place convention.
+ * stride_execute_r2c: explicit 3-pointer (real_in -> complex_out),
+ *                     out of place, no pre-copy.
+ * stride_execute_c2r: explicit 3-pointer (complex_in -> real_out); copies
+ *                     the spectrum into real_out (N*K) and the plan's im
+ *                     buffer, then calls the in-place override.
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline void stride_execute_r2c(const stride_plan_t *plan,
@@ -2103,10 +2075,8 @@ static inline void stride_execute_r2c(const stride_plan_t *plan,
         /* even-N half-complex path: true out-of-place, no pre-copy. */
         _r2c_execute_fwd_oop(plan->override_data, real_in, out_re, out_im);
     } else {
-        /* odd-N (section 57): out-of-place through plan-owned N*K scratch.
-         * The old form memcpy'd N*K doubles into out_re, whose contract size
-         * is (N/2+1)*K -- an overrun of (N/2)*K doubles into the caller's
-         * buffer on EVERY odd-N call. */
+        /* odd N: out-of-place through plan-owned N*K scratch (out_re is
+         * only (N/2+1)*K by contract). */
         _r2c_odd_execute_fwd_oop((stride_r2c_data_t *)plan->override_data,
                                  real_in, out_re, out_im, NULL);
     }
@@ -2118,8 +2088,7 @@ static inline void stride_execute_r2c(const stride_plan_t *plan,
  * caller loads the reals into `re`, then calls this. Both placements share the
  * same plan + worker; the in-place worker (_r2c_execute_fwd) reads `re` as input
  * and writes `re`/`im` as output (strictly more aliasing than the OOP path,
- * which is why OOP is the default — but both are now exposed per the platform
- * in-place/OOP directive). re must be sized N*K >= (N/2+1)*K. */
+ * which is why OOP is the default). re must be sized N*K >= (N/2+1)*K. */
 static inline void stride_execute_r2c_inplace(const stride_plan_t *plan,
                                               double *re, double *im)
 {

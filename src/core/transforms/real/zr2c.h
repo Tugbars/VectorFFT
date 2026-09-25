@@ -302,7 +302,7 @@ static void _zr2c_perm_dif(const int *factors, int nf, int N, int *perm, int *ip
  * mirror (exactly `_r2c_postprocess`'s access pattern) — killing BOTH the
  * deinterleave and the ordering conversion. Contract: iperm[slot] = freq,
  * perm[freq] = slot, mutually inverse; ANY such pair works (gated with a
- * random permutation). v1 is SCALAR on purpose: scrambled orders break the
+ * random permutation). They are SCALAR on purpose: scrambled orders break the
  * natural folds' contiguous 4-bin blocks, and whether a gathered SIMD form
  * pays is a RACE question, not an assumption — the natural-stfn + plain-fold
  * arm is the vectorized competitor in the same pool.

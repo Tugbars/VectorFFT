@@ -118,7 +118,8 @@ static inline int vw2__2d_leg(const vw2_rec_t *r, const char *plan_f,
  * serve via lookup phase 1 with zero schema work; the ANY rows remain
  * serving vintage for both callers. */
 static inline void vw2__2d_key(vw2_key_t *k, int t, int rank,
-                               int n0, int n1, int n2, int ord, uint8_t lay)
+                               int n0, int n1, int n2, int ord, uint8_t lay,
+                               int nthreads)
 {
     memset(k, 0, sizeof *k);
     k->t = (uint8_t)t;
@@ -128,6 +129,7 @@ static inline void vw2__2d_key(vw2_key_t *k, int t, int rank,
     k->ord = (int8_t)ord;
     k->pl = VW2_PL_OOP;                       /* canonical: placement-blind */
     k->lay = lay;
+    k->nthreads = (uint8_t)(nthreads > 1 ? nthreads : 0);   /* the plan's thread count (v1.3) */
 }
 
 /* ================================================================ READ */
@@ -138,7 +140,7 @@ static inline int vw2_2d_c2c_lookup_scr(const vw2_store_t *s, int N1, int N2,
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_SCR, lay);
+    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_SCR, lay, 1);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     memset(e, 0, sizeof *e);
@@ -164,7 +166,7 @@ static inline int vw2_2d_c2c_lookup_nat(const vw2_store_t *s, int N1, int N2,
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_NAT, lay);
+    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_NAT, lay, 1);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     memset(e, 0, sizeof *e);
@@ -191,7 +193,7 @@ static inline int vw2_2d_r2c_lookup(const vw2_store_t *s, int is_c2r,
     vw2_key_t k;
     const vw2_rec_t *r;
     vw2__2d_key(&k, is_c2r ? VW2_T_C2R : VW2_T_R2C, 2, N1, N2, 0, VW2_ORD_NAT,
-                lay);
+                lay, 1);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     memset(e, 0, sizeof *e);
@@ -220,7 +222,7 @@ static inline int vw2_3d_lookup(const vw2_store_t *s, int N1, int N2, int N3,
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    vw2__2d_key(&k, VW2_T_C2C, 3, N1, N2, N3, VW2_ORD_SCR, lay);
+    vw2__2d_key(&k, VW2_T_C2C, 3, N1, N2, N3, VW2_ORD_SCR, lay, 1);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     memset(e, 0, sizeof *e);
@@ -311,9 +313,11 @@ static inline int vw2__2d_tail(vw2_rec_t *r, double ns, const char *src,
  * keyed (place always; ord too for the order-blind real families). */
 static inline void vw2__2d_rec_key(vw2_rec_t *r, int t, int rank,
                                    int n0, int n1, int n2, int ord,
-                                   int migrated, int ord_blind, uint8_t lay)
+                                   int migrated, int ord_blind, uint8_t lay,
+                                   int nthreads)
 {
     memset(&r->key, 0, sizeof r->key);
+    r->key.nthreads = (uint8_t)(nthreads > 1 ? nthreads : 0);   /* the plan's thread count (v1.3) */
     r->key.t = (uint8_t)t;
     r->key.rank = (uint8_t)rank;
     r->key.n[0] = n0; r->key.n[1] = n1; r->key.n[2] = n2;
@@ -340,7 +344,7 @@ static inline int vw2_2d_c2c_rec_from_entry(vw2_rec_t *r,
     *why = NULL;
     memset(r, 0, sizeof *r);
     vw2__2d_rec_key(r, VW2_T_C2C, 2, e->N1, e->N2, 0, VW2_ORD_SCR, migrated, 0,
-                    lay);
+                    lay, 1);
     if (vw2__2d_emit_leg(r, "rowplan", "rowvars", "rowdif",
                          e->row_nf, e->row_factors, e->row_variants,
                          e->row_use_dif, why)) return -1;
@@ -363,7 +367,7 @@ static inline int vw2_2d_c2c_rec_from_nat(vw2_rec_t *r,
     *why = NULL;
     memset(r, 0, sizeof *r);
     vw2__2d_rec_key(r, VW2_T_C2C, 2, e->N1, e->N2, 0, VW2_ORD_NAT, migrated, 0,
-                    lay);
+                    lay, 1);
     if (vw2__2d_emit_leg(r, "rowplan", "rowvars", "rowdif",
                          e->row_nf, e->row_factors, e->row_variants,
                          e->row_use_dif, why)) return -1;
@@ -386,7 +390,7 @@ static inline int vw2_2d_r2c_rec_from_entry(vw2_rec_t *r,
     *why = NULL;
     memset(r, 0, sizeof *r);
     vw2__2d_rec_key(r, is_c2r ? VW2_T_C2R : VW2_T_R2C, 2, e->N1, e->N2, 0,
-                    VW2_ORD_NAT, migrated, /*ord_blind=*/1, lay);
+                    VW2_ORD_NAT, migrated, /*ord_blind=*/1, lay, 1);
     if (vw2__2d_emit_leg(r, "rowplan", "rowvars", "rowdif",
                          e->row_nf, e->row_factors, e->row_variants,
                          e->row_use_dif, why)) return -1;
@@ -411,7 +415,7 @@ static inline int vw2_3d_rec_from_entry(vw2_rec_t *r,
     *why = NULL;
     memset(r, 0, sizeof *r);
     vw2__2d_rec_key(r, VW2_T_C2C, 3, e->N1, e->N2, e->N3, VW2_ORD_SCR, migrated,
-                    0, lay);
+                    0, lay, 1);
     if (vw2__2d_emit_leg(r, "ax0plan", "ax0vars", "ax0dif",
                          e->ax0_nf, e->ax0_factors, e->ax0_variants,
                          e->ax0_dif, why)) return -1;
@@ -531,6 +535,8 @@ typedef struct {
     int ord;           /* VW2_ORD_SCR / VW2_ORD_NAT */
     int axis;          /* 0 = the historical tokens; a >= 1 = suffixed */
     int real;          /* 1 = the real tier's row (t=r2c) */
+    int nthreads;      /* the plan's thread count (v1.3): a threaded plan's
+                        * row is its own, complete on its own; 0/1 = one */
 } vw2_ilcol_key_t;
 
 static inline const char *vw2__ilcol_tok(const vw2_ilcol_key_t *k, const char *base,
@@ -543,7 +549,7 @@ static inline const char *vw2__ilcol_tok(const vw2_ilcol_key_t *k, const char *b
 static inline void vw2__ilcol_key(const vw2_ilcol_key_t *ck, vw2_key_t *k)
 {
     vw2__2d_key(k, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, ck->n1,
-                ck->n2, ck->ord, VW2_LAY_IL);
+                ck->n2, ck->ord, VW2_LAY_IL, ck->nthreads);
 }
 
 /* one integer verdict on a column row, by base name (axis-suffixed like the
@@ -596,8 +602,8 @@ static inline int vw2_ilcol_chain_lookup(const vw2_store_t *s, const vw2_ilcol_k
     if (wl) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "wl", tb, sizeof tb)); *wl = v ? atoi(v) : -1; }
     if (tf) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "tf", tb, sizeof tb)); *tf = v ? atoi(v) : -1; }
     if (ro) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "ro", tb, sizeof tb)); *ro = v ? atoi(v) : -1; }
-    /* the MT verdict + the thread count it was RACED AT (validity: a
-     * cmtt != the requesting pool re-races — same law as the rl cell) */
+    /* the MT verdict; the thread count it was raced at is the row's key
+     * (v1.3) -- cmtt is read only from a pre-1.3 row that load did not split */
     if (cmt) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "cmt", tb, sizeof tb)); *cmt = v ? atoi(v) : -1; }
     if (cmtt) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "cmtt", tb, sizeof tb)); *cmtt = v ? atoi(v) : -1; }
     if (blu) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "blu", tb, sizeof tb)); *blu = v ? atoi(v) : -1; }
@@ -618,9 +624,9 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
                                          int N2, int *Rs, int *nst,
                                          int *wl, int *tf, int *ro,
                                          int *cmt, int *cmtt, int *blu,
-                                         int ord)
+                                         int ord, int T)
 {
-    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0 };
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0, T };
     return vw2_ilcol_chain_lookup(s, &ck, Rs, nst, wl, tf, ro, cmt, cmtt, blu);
 }
 
@@ -665,7 +671,7 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
         if (wl >= 0) VW2__ILCOL_UPD("wl", wl);
         if (tf >= 0) VW2__ILCOL_UPD("tf", tf);
         if (ro >= 0) VW2__ILCOL_UPD("ro", ro);
-        if (cmt >= 0 && cmtt > 0) { VW2__ILCOL_UPD("cmt", cmt); VW2__ILCOL_UPD("cmtt", cmtt); }
+        if (cmt >= 0 && cmtt > 0) VW2__ILCOL_UPD("cmt", cmt);   /* the T is the row's key (v1.3) */
         if (blu >= 0) VW2__ILCOL_UPD("blu", blu);
 #undef VW2__ILCOL_UPD
         return VW2_OK;
@@ -673,7 +679,7 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
     }
     memset(r, 0, sizeof *r);
     vw2__2d_rec_key(r, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, ck->n1, ck->n2, ck->ord,
-                    /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL);
+                    /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL, ck->nthreads);
     if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
         vw2_rec_free(r);
         fprintf(stderr, "[wisdom2] il2d chain bank refused (token)\n");
@@ -692,11 +698,9 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
         snprintf(b, sizeof b, "%d", ro);
         if (vw2_rec_set(r, 1, "ro", b) != VW2_OK) goto tokfail;
     }
-    if (cmt >= 0 && cmtt > 0) {   /* the MT verdict + its raced-at T */
+    if (cmt >= 0 && cmtt > 0) {   /* the MT verdict; its T is the row's key (v1.3) */
         snprintf(b, sizeof b, "%d", cmt);
         if (vw2_rec_set(r, 1, "cmt", b) != VW2_OK) goto tokfail;
-        snprintf(b, sizeof b, "%d", cmtt);
-        if (vw2_rec_set(r, 1, "cmtt", b) != VW2_OK) goto tokfail;
     }
     if (blu >= 0) {               /* the N1-arm verdict (E1.7) */
         snprintf(b, sizeof b, "%d", blu);
@@ -719,9 +723,9 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
                                        const int *Rs, int nst,
                                        int wl, int tf, int ro,
                                        int cmt, int cmtt, int blu, double ns,
-                                       int ord)
+                                       int ord, int T)
 {
-    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0 };
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0, T };
     return vw2_ilcol_chain_bank(st, &ck, Rs, nst, wl, tf, ro, cmt, cmtt, blu, ns);
 }
 
@@ -729,25 +733,25 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
  * serial unbanded walk's tile) and the threaded arm's shape (mtarm=, msw=,
  * valid at cmtt's T): il2d_large_plane_design.md, 2026-09-15. Absent =
  * dflt; a set on a missing row is refused (the chain bank makes the row). */
-static inline int vw2_2d_il_tok_geti(const vw2_store_t *s, int N1, int N2, int ord,
+static inline int vw2_2d_il_tok_geti(const vw2_store_t *s, int N1, int N2, int ord, int T,
                                      const char *name, int dflt)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *v;
-    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0 };
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0, T };
     vw2__ilcol_key(&ck, &k);
     r = vw2_lookup(s, &k);
     if (!r) return dflt;
     v = vw2_rec_get(r, name);
     return v ? atoi(v) : dflt;
 }
-static inline int vw2_2d_il_tok_seti(vw2_store_t *st, int N1, int N2, int ord,
+static inline int vw2_2d_il_tok_seti(vw2_store_t *st, int N1, int N2, int ord, int T,
                                      const char *name, int val)
 {
     vw2_key_t k;
     char vb[24];
-    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0 };
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0, T };
     vw2__ilcol_key(&ck, &k);
     if (!vw2_lookup(st, &k)) return -1;
     snprintf(vb, sizeof vb, "%d", val);
@@ -783,13 +787,13 @@ static inline const char *vw2__rl_tok(int is_c2r, int which)
 static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
                                    int is_c2r,
                                    int *Rs, int *nst, int *rw, int *wl,
-                                   int *cmt, int *cmtt, int *blu, int ord)
+                                   int *cmt, int *cmtt, int *blu, int ord, int T)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *cv;
     int m = 0;
-    vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL);
+    vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     cv = vw2_rec_get(r, "chain");
@@ -823,7 +827,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
                                  int is_c2r,
                                  const int *Rs, int nst, int rw, int wl,
                                  int cmt, int cmtt, int blu, double ns,
-                                 int ord)
+                                 int ord, int T)
 {
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
@@ -839,7 +843,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     {
         vw2_key_t k;
         const vw2_rec_t *have;
-        vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL);
+        vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
         have = vw2_lookup(st, &k);
         if (have && vw2_rec_get(have, "chain") &&
             !strcmp(vw2_rec_get(have, "chain"), b)) {
@@ -847,9 +851,8 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
             int rc = VW2_OK;
             if (rw >= 0) { snprintf(v, sizeof v, "%d", rw); rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 0), v); }
             if (wl >= 0) { snprintf(v, sizeof v, "%d", wl); rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 1), v); }
-            if (cmt >= 0 && cmtt > 0) {
+            if (cmt >= 0 && cmtt > 0) {   /* the T is the row's key (v1.3) */
                 snprintf(v, sizeof v, "%d", cmt);  rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 2), v);
-                snprintf(v, sizeof v, "%d", cmtt); rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 3), v);
             }
             if (blu >= 0) { snprintf(v, sizeof v, "%d", blu); rc |= vw2_update_field(st, &k, "blu", v); }
             if (rc != VW2_OK)
@@ -860,7 +863,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     }
     memset(r, 0, sizeof *r);
     vw2__2d_rec_key(r, VW2_T_R2C, 2, N1, N2, 0, ord,
-                    /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL);
+                    /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL, T);
     if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
         vw2_rec_free(r);
         fprintf(stderr, "[wisdom2] il2d real bank refused (token)\n");
@@ -887,12 +890,6 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
         if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 2), b) != VW2_OK) {
             vw2_rec_free(r);
             fprintf(stderr, "[wisdom2] il2d real cmt bank refused (token)\n");
-            return -1;
-        }
-        snprintf(b, sizeof b, "%d", cmtt);
-        if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 3), b) != VW2_OK) {
-            vw2_rec_free(r);
-            fprintf(stderr, "[wisdom2] il2d real cmtt bank refused (token)\n");
             return -1;
         }
     }
@@ -1037,21 +1034,21 @@ static inline int vw2_ilnd_mts_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck, i
 
 static inline int vw2_2d_forms_lookup(vw2_store_t *s, int is_real, int N1,
                                       int N2, char *out, size_t osz,
-                                      int ord)
+                                      int ord, int T)
 {
-    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real, T };
     return vw2_ilcol_forms_lookup(s, &ck, out, osz);
 }
 static inline int vw2_2d_forms_bank(vw2_store_t *s, int is_real, int N1,
-                                    int N2, const char *forms, int ord)
+                                    int N2, const char *forms, int ord, int T)
 {
-    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real, T };
     return vw2_ilcol_forms_bank(s, &ck, forms);
 }
 static inline int vw2_2d_forms_rebank(vw2_store_t *s, int is_real, int N1,
-                                      int N2, const char *forms, int ord)
+                                      int N2, const char *forms, int ord, int T)
 {
-    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real, T };
     return vw2_ilcol_forms_rebank(s, &ck, forms);
 }
 

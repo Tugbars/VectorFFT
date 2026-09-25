@@ -275,12 +275,14 @@ def keep_awake(on):
 
 # ── the store's rows for one cell (raced / replayed / refused) ─────────────
 
-def cell_rows(store, n, ip):
+def cell_rows(store, n, ip, threads=1):
     """the wisdom rows that decide this cell: the K=1 rows at its placement (both
     order classes) and the prime row; for a 2D shape the wisdom2_2d rows at its
-    placement. Returns a dict key -> payload."""
+    placement; at threads > 1 the rows keyed nthreads=T (a threaded plan's row is
+    its own), at one thread the rows without the token. Returns key -> payload."""
     out = {}
     pl = "ip" if ip else "oop"
+    want_t = int(threads) if int(threads) > 1 else 0
     if is2d(n):
         pats = (("wisdom2_%dd.txt" % len(n), r"@cell t=c2c n=%s q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (ckey(n), pl)),)
     else:
@@ -293,6 +295,9 @@ def cell_rows(store, n, ip):
         t = io.open(p, encoding="utf-8", errors="ignore").read()
         for m in re.finditer(pat, t):
             key = m.group(0).split(" | ")[0]
+            mt = re.search(r" nthreads=(\d+)", key)
+            if (int(mt.group(1)) if mt else 0) != want_t:
+                continue
             out[key] = re.sub(r" date=\S+", "", m.group(1))
     return out
 
@@ -326,7 +331,7 @@ def stage_calibrate(run, cells, recal):
     probe = run.exe("recal_1d_probe")
     t0 = time.time()
     for i, n in enumerate(todo, 1):
-        before = cell_rows(run.store, n, run.ip)
+        before = cell_rows(run.store, n, run.ip, run.threads)
         s0 = time.time()
         shape = (["--%dd" % len(n)] + [str(v) for v in n]) if is2d(n) else [str(n)]
         r = subprocess.run([probe, run.store] + shape + ["0", str(run.ip), str(run.threads), "1" if recal else "0"],
@@ -334,7 +339,7 @@ def stage_calibrate(run, cells, recal):
         ms = int((time.time() - s0) * 1000)
         text = r.stdout + r.stderr
         status = "REFUSED" if "REFUSED" in text else ("banked" if "banked" in text else "ERROR")
-        after = cell_rows(run.store, n, run.ip)
+        after = cell_rows(run.store, n, run.ip, run.threads)
         if status != "banked":
             served = "refused"
         elif after != before:
