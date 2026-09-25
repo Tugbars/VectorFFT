@@ -22,7 +22,7 @@ the comparator scales better than we do everywhere, not in one class.
 | 2 to 8 MB | 163 | 1.40x | 1.22x | 8 | 5.42x | 6.12x |
 | 8 to 32 MB | 159 | 1.28x | 1.15x | 23 | 6.20x | 6.74x |
 | 32 to 64 MB | 137 | 1.22x | 0.92x | 89 | 3.37x | 4.74x |
-| **all 951** | | **1.56x** | **1.27x** | **150** | | |
+| **all 951** | | **1.56x** | **1.27x**, 1.33x after the re-race of 2026-09-25 | **150**, then 121 | | |
 
 | N1 | cells | T=1 | T=8 | T=8 below parity | our scaling | comparator's |
 |---|---|---|---|---|---|---|
@@ -66,42 +66,64 @@ or above parity at one thread. The worst of the grid:
 0.75x to 0.91x, and 128x16x16 at 0.54x on the band arm. Our scaling there is 2.5x to 2.8x
 against the comparator's 3.3x to 4.4x.
 
-## 4. The cause, measured
+## 4. The cause, measured twice
 
-Both engines' page accesses, forks and phases were traced on the loser cells, and a thread
-ladder ran at 1, 2, 4, 6 and 8 threads, on 2026-09-25.
+Both engines' page accesses, forks and phases were traced on the loser cells, a thread ladder
+ran at 1, 2, 4, 6 and 8 threads, and a second round tested each mechanism in isolation, all on
+2026-09-25.
+
+**Two defects in our own verdict path come first.** They are not forms; they are wrong rows.
+
+- **The strip width was not banked beside the threaded strips form.** 181 cells of the
+  eight-thread grid carry a threaded strips verdict with no width, so the replay served the
+  slower cycle form. Forced to the strips form, 26 of 27 sampled cells run faster, up to 3x,
+  and the width hardly matters from 32 columns up. That is 28 to 32% of the grid's lost lead,
+  most of the 2 to 8 MB class's loss and about half of the small threaded cells'. Two earlier
+  findings were this defect: the uneven cycle loads at 32x32x256 and the axis-0 remainder at
+  256x8x128. The store code has banked the width since the morning of 2026-09-25; the rows
+  need re-racing.
+- **The threading race could not see the child structure, and raced the wrong contract.**
+  Under recalibrate the flat structure's row plan re-raced the length-N3 cell after the 2D
+  child was built, the child's clones then read the new chain and the clone check refused
+  them, so every calibrated eight-thread race ran without the child arm and banked flat. The
+  race also ran in place on a hot, unaligned buffer whatever the plan's placement. Both fixed
+  2026-09-25: the flat structure is built first, and both rank-3 races run the plan's own
+  placement on aligned buffers. On the three worst cells the child arm now engages and wins
+  two of them in the race's own short protocol; in the fifteen-round measurement the child
+  beats the served flat plan on every loser cell, by 13 to 20% on reused input and up to 36%
+  on fresh input, two thirds of the fresh-input loss. A 120-cell re-race under the fixed races
+  serves the child on 54 of the 60 worst losers, 12% faster at the median, and lifts the 60
+  worst width-defect cells onto the strips form; the 120 cells go from a median of 0.79x to
+  0.95x.
 
 **The count to beat.** A walk that, for each plane, runs the rows from the input into the
 output and then that plane's columns in place in the output while the plane is hot, and after
 the last plane makes one pass along axis 0 over the whole output, reads the input once and
 touches the output five times: three read-and-write passes in all, with no transpose, no copy
-pass and no scratch plane. That count is what the comparator's times at these cells
-correspond to.
+pass and no scratch plane. That count is what the comparator's times at these cells correspond
+to.
 
-**Large volumes with a short first axis: the extra passes, not the threads.** Both engines keep
-92 to 97% of their eight threads busy and the clock holds 5.7 GHz at every thread count. What
-differs is how much each unit of work slows under concurrency: our busy thread time grows
-2 to 4x from one thread to eight, the comparator's 1 to 2x. The reason is traffic. We make
-five read-and-write passes over the volume where three suffice. The two extra ones are the flat
-structure's natural axis-1 pass through a plane-sized scratch plane: plane to scratch, scratch
-in place, scratch back to the plane, three sweeps of a plane-sized buffer per plane. At one
-thread that is one plane plus its scratch, 8 MB, inside the 36 MB L3, so the passes are nearly
-free, which is a large part of the one-thread lead. At eight threads it is 64 MB in flight and
-the passes go to DRAM: the modelled traffic is 2.6 to 3.6 times the comparator's. The ladder shows it
-directly: our plane phase stops improving at four threads, where four times 8 MB fills L3, and
-on both 32 MB cells eight threads are slower than four while the comparator keeps scaling. The control is
-16x64x2048, which runs our strip form with no plane-sized scratch and 2 MB per worker: its
-plane phase scales 8.1x and the cell keeps its lead.
+**Large volumes with a short first axis: bytes per plane, not the threads.** Both engines keep
+92 to 97% of their eight threads busy and the clock holds 5.7 GHz at every thread count. Our
+DRAM demand per call is 2.1 to 2.6 times the comparator's on these cells and equal on the
+control. The in-flight set is not the lever: staging four planes at a time on disjoint workers
+gains nothing. What costs is the plane-sized scratch each plane worker sweeps three times for
+the natural axis-1 pass: re-using a warm scratch recovers 15 to 30% of the lost lead, and the
+per-plane cost at eight workers is about seven plane volumes moved against three. The rest is
+structural: our axis-0 pass is a separate full sweep of the volume, followed by a plane phase
+that fetches the output again. Our eight-thread walk run on one thread is as fast as our
+one-thread plan, so the lost lead is that walk's scaling, not a switch of plan.
 
-**About half of the gap on those cells is the measurement.** The gauntlet feeds the same input
-on every call. Our 64 MB in-flight set evicts that input between calls; an engine with a
-smaller in-flight set keeps it in L3. On fresh input the comparator runs 1.7 to 2.0x slower
-and we 1.24 to 1.30x slower, and the lost lead roughly halves.
+**The measurement is part of the number.** The gauntlet feeds the same input on every call.
+On fresh input the lost lead falls 30 to 54% at the three large ladder cells and rises at the
+three 4 MB cells; 16 to 28% over the seven.
 
-**Small volumes: threading overhead.** At 128x16x16 we launch threads three times per call
-where one region would do; one stage is split unevenly across threads (1.41x) and another runs on
-four of eight threads for 30% of the call, so the call is fastest at four threads. At
-32x32x256 the cycle loads are uneven by 1.25x.
+**Small volumes: mostly the width defect, then threading overhead.** Re-raced under the fixed
+races, 128x16x16 goes from 0.54x to 1.04x (26 to 14 us), 32x32x16 from 0.54x to 1.27x and
+64x64x8 from 0.74x to 1.23x, all on the strips form. What is left of the class is the fan-out:
+three thread launches per call where one region would do, a stage split unevenly across threads
+and a phase on four of eight threads. Of the 57 serial verdicts at 32 to 128 KB, 42 survive the
+fixed probe and 15 flip to threaded.
 
 ## 5. What is settled
 
@@ -111,48 +133,45 @@ four of eight threads for 30% of the call, so the call is fastest at four thread
   panel narrower than 16 columns is that refuted form.
 - Streaming stores are not the lever, here or on the 2D tall planes: the pass order alone
   reaches the count to beat.
-- "Eight full planes exceed L3" as this item first stated it was wrong: the loss is not the
-  plane count but the plane-sized scratch that doubles our per-plane footprint and the passes
-  through it.
+- "Eight full planes exceed L3" was wrong twice over: the loss is neither the plane count nor the
+  in-flight set, but the scratch each plane sweeps and the separate axis-0 sweep.
 - The clock is not a factor, and neither is fork cost above 256 KB.
-- The verdict machinery is complete and replays (the strip width beside the threaded form, the
-  rank-3 row's forms and structure, the thread count in the row's key since wisdom2 v1.3). The
-  losses above are measured forms, not measurement, except for the hot-input bias.
+- The verdict machinery replays (the strip width beside the threaded form, the rank-3 row's
+  forms and structure, the thread count in the row's key since wisdom2 v1.3) and the rank-3
+  races run the plan's contract with every arm present. The shipped eight-thread rows predate
+  both fixes.
 
 ## 6. Roadmap
 
-1. **The plane phase without the plane-sized scratch.** The axis-1 pass as gathered panels of
-   16 or more columns: the worker gathers the columns into a dense N2 x w scratch, runs the whole
-   axis-1 chain there with the leaf writing natural order, and scatters back, one read and write
-   of the plane for all of axis 1 and a per-worker footprint of plane plus N2 x w x 16 B. This is
-   our own dense per-worker strip form applied to axis 1; the codelets exist. Raced in situ at T
-   with the clones running, against the flat natural pass and the 2D child. The count to beat at
-   8x128x2048: three pass pairs and about 32 MB in flight, which is what the comparator's 1.2 to
-   1.6 ms correspond to. Open: the panel
-   at N2 = 8192, where 16 columns are a 2 MB scratch, the whole L2.
-2. **The gauntlet's fresh-input arm.** A contract decision: rotate the input and output over at
-   least 80 MB of buffer pairs at the large cells, or report hot and fresh side by side. No
-   eight-thread grid is re-run before it is decided, since the reused input biases every large
-   cell against the engine with the larger in-flight set.
-3. **Small volumes.** First the verdict fix: the 57 serial verdicts at 32 to 128 KB were raced by
-   the probe that pinned its caller onto worker 1's core; re-race them under the fixed threaded
-   protocol (worth the class median 2.9x to 3.7x). Then one region: axis 0 as dense strips, a
-   barrier, the planes, with a balanced plane partition and no idle workers dispatched.
-4. **Planes first, axis 0 last, for a single-stage first axis (N1 ≤ 16).** The same pass count
-   as our order, argued on residency alone: a plane phase that runs first streams the input once
-   and leaves the output planes hot for the axis-0 pass, while our order re-reads the output
-   after the axis-0 pass has streamed the whole volume through L3. Raced after item 1, only if the plane
-   phase still spills.
-5. **Counted bytes and the open cells.** DRAM bytes per execute from the uncore counters (VTune
-   reaches them from an elevated process on this host) for both engines at one and eight threads
-   on the loser cells, replacing the modelled 2.6 to 3.6x; the eighteen-cell timing and bandwidth
-   ceilings; and 256x8x128, where our axis-0 pass scales only 3.1x and is 64% of the call.
-6. **Hygiene.** The clones' scratch buffers are plain `malloc` where the rule is `VFFT_ZS_ALLOC`;
-   the 3D race runs in place on a `malloc`'d buffer while the product runs out of place.
-7. **The full grid at eight threads** once items 1 to 3 have forms, including the 337 tall cells
-   the stopped run never measured. The tall class is not a demonstrated win: at N2 = 8 the
-   comparator scales 4.9x to our 3.2x.
+1. **Re-race the eight-thread verdicts: done 2026-09-25.** 534 cells (the 271 losers and
+   every grid row with the width defect) re-raced under the fixed races and the fixed probe:
+   the 452 with an earlier record go from a median of 1.10x to 1.23x, below parity 150 to 121,
+   below 0.8x 63 to 40; the 82 tall cells measured for the first time stand at 1.53x with three
+   below parity. The composite over the 951-cell grid moves from 1.27x to 1.33x. The
+   large short-N1 class moves from 0.67x to 0.78x and stays the loser, 59 of 61 below parity:
+   the structural remainder. Twenty-three cells lost more than 10% to the eight-thread race's
+   short protocol (two repetitions, three rounds at the large cells); a longer race budget
+   there is a small follow-up.
+2. **The plane phase's scratch.** First re-use: a warm scratch per worker across its planes, 15
+   to 30% at the large losers. Then the axis-1 pass as gathered panels of 16 or more columns,
+   our dense strip form applied to axis 1, one read and write of the plane for all of axis 1,
+   raced in situ at T against the flat pass and the 2D child. Open: the panel at N2 = 8192,
+   where 16 columns are a 2 MB scratch, the whole L2.
+3. **Planes first, axis 0 last, for a single-stage first axis (N1 ≤ 16).** The structural
+   remainder: a plane phase that runs first streams the input once and leaves the output planes
+   hot for the axis-0 pass, while our order sweeps the volume for axis 0 and then fetches the
+   output again for the planes. Raced after item 2.
+4. **The gauntlet's fresh-input arm.** A contract decision: rotate the input and output over at
+   least 80 MB of buffer pairs at the large cells, or report hot and fresh side by side. It
+   moves the large cells one way and the 4 MB cells the other.
+5. **Small volumes: one region.** Axis 0 as dense strips, a barrier, the planes, with a balanced
+   plane partition and no idle workers dispatched.
+6. **Counted bytes and the full grid.** DRAM bytes per execute from the uncore counters, which
+   need an elevated process on this host, for both engines at one and eight threads on the
+   loser cells; then the full eight-thread grid including the 337 tall cells the stopped run
+   never measured. The tall class is not a demonstrated win: at N2 = 8 the comparator scales
+   4.9x to our 3.2x.
 
-Dropped: streaming stores on the axis-0 pass. The pass order reaches the count without them,
-the axis-0 phase is a fifth of the call, and a streamed output would leave the volume cold for
-the plane phase that reads it next.
+Hygiene: the clones' scratch buffers are plain `malloc` where the rule is `VFFT_ZS_ALLOC`.
+Dropped: streaming stores on the axis-0 pass, and "256x8x128's axis-0 pass scales only 3.1x",
+which was the width defect.

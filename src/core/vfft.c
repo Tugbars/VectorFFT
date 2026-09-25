@@ -1404,14 +1404,18 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
 static int _tc_clone_equiv(const struct vfft_plan_s *a,
                            const struct vfft_plan_s *b)
 {
+    /* a refused clone names the field group when VFFT_IL2D_LOG is set (2026-09-25) */
+#define TC_NEQ(what) do { if (getenv("VFFT_IL2D_LOG")) \
+        fprintf(stderr, "[clone] N=%d not equivalent: %s (route %d vs %d)\n", a->N, what, a->k1_il_route, b->k1_il_route); \
+    return 0; } while (0)
     if (!a->oddr_child != !b->oddr_child)
-        return 0;
+        TC_NEQ("odd-real bridge");
     if (a->oddr_child)
         /* odd-real bridge: equivalent iff the c2c children are (the
          * bridge itself carries only buffers). */
         return _tc_clone_equiv(a->oddr_child, b->oddr_child);
     if (!a->zr2c_child != !b->zr2c_child)
-        return 0;
+        TC_NEQ("real composite");
     if (a->zr2c_child)
     {
         /* §D2 real composite. Everything that decides output bits lives in
@@ -1421,13 +1425,13 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
          * different placements, and a batch must not mix routes -- the same
          * rule as the cascade chain above. */
         if (a->zr2c_route != b->zr2c_route)
-            return 0;
+            TC_NEQ("real composite route");
         return _tc_clone_equiv(a->zr2c_child, b->zr2c_child);
     }
     if (!a->k1il2p != !b->k1il2p || !a->k1il3p != !b->k1il3p ||
         !a->k1ilpr != !b->k1ilpr ||
         a->k1_on != b->k1_on || a->k1_il_route != b->k1_il_route)
-        return 0;
+        TC_NEQ("route or engine");
     if (a->k1il2p)
     {
         const vfft_il2p_plan_t *x = a->k1il2p, *y = b->k1il2p;
@@ -1436,7 +1440,7 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
             x->leaf_b != y->leaf_b || x->mid_b != y->mid_b ||
             x->t2t_b != y->t2t_b || x->n1_b_r2 != y->n1_b_r2 ||
             x->n1_b != y->n1_b)
-            return 0;
+            TC_NEQ("pair plan");
     }
     if (a->k1il3p)
     {
@@ -1445,24 +1449,24 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
             x->leaf_f != y->leaf_f || x->tA_f != y->tA_f ||
             x->tB_f != y->tB_f || x->tA_b != y->tA_b ||
             x->tBg_b != y->tBg_b || x->n1_b != y->n1_b)
-            return 0;
+            TC_NEQ("chain3 plan");
     }
     if (a->k1ilfd)
     {   /* the flat DIT: same chain and the same per-stage forms */
         const vfft_ilfd_plan_t *x = a->k1ilfd, *y = b->k1ilfd;
         int s;
         if (!y || x->K != y->K || x->gord != y->gord || x->scr != y->scr || x->tw != y->tw)
-            return 0;
+            TC_NEQ("flat DIT plan");
         for (s = 0; s < x->K; s++)
             if (x->R[s] != y->R[s] || x->msz[s] != y->msz[s] || x->gl[s] != y->gl[s])
-                return 0;
+                TC_NEQ("flat DIT stages");
     }
     if (a->k1fs)
     {   /* the four-step: the same split and order class (the child's own
          * verdicts are the rank-2 cell's, banked, so equal here) */
         const vfft_k1fs_plan_t *x = a->k1fs, *y = b->k1fs;
         if (!y || x->N != y->N || x->N1 != y->N1 || x->N2 != y->N2 || x->scr != y->scr)
-            return 0;
+            TC_NEQ("four-step plan");
     }
     if (a->k1ztt)
     {   /* ZTURN-T: the same chain, ORDER CLASS (natural or the plain schedule,
@@ -1472,19 +1476,20 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         int s;
         if (!y || x->N != y->N || x->nf != y->nf || x->scr != y->scr ||
             x->tile != y->tile || x->inplace != y->inplace)
-            return 0;
+            TC_NEQ("ZTURN-T plan");
         for (s = 0; s < x->nf; s++)
             if (x->chain[s] != y->chain[s])
-                return 0;
+                TC_NEQ("ZTURN-T chain");
     }
     if (a->k1ilpr &&
         (a->k1ilpr->method != b->k1ilpr->method ||
          a->k1ilpr->M != b->k1ilpr->M))
-        return 0;
+        TC_NEQ("prime method");
     if (a->k1_on && a->k1_il_route == VFFT_K1_IL_MONO &&
         (a->k1_mono_ilf != b->k1_mono_ilf || a->k1_mono_ilb != b->k1_mono_ilb))
-        return 0;
+        TC_NEQ("mono kernels");
     return 1;
+#undef TC_NEQ
 }
 
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp); /* vfft_execute.h: the bound K=1 IL dispatch */
@@ -1934,9 +1939,6 @@ static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir,
  * report a confident zero. Same rule that kept _il_ab_runs behind in step 5.
  * _zt_execute_mt, which increments it and also dereferences vfft_plan_s,
  * stays for both reasons; the racer stays with the wisdom write path. */
-
-
-
 
 /* ══ 2D PLANE QUEUE execute (howmany > 1) ════════════════════════════
  * Serial mode: loop the PRIMARY over the planes (it intra-MTs per its
