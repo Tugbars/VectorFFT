@@ -1,53 +1,38 @@
-/* env.h — dag-fft-compiler core environment header. Two parts:
+/* env.h — the runtime environment. Two parts:
  *
- *   PART 1 — CPU / runtime environment setup, carried over verbatim from the
- *            production src/core/env.h: denormal handling (FTZ/DAZ), SIMD-aligned
+ *   PART 1 — CPU / runtime setup: denormal handling (FTZ/DAZ), SIMD-aligned
  *            + huge-page allocation, verbosity/version/ISA query, and thread
- *            affinity / core pinning. (stride_* names kept as-is.)
+ *            affinity / core pinning.
  *
- *   PART 2 — Exhaustive/joint SEARCH tuning knobs (stage-depth caps, variant
- *            pre-screen factor) with their VALIDATION-SCOPE note: these defaults
- *            were tuned on N=1024 only — see the banner in Part 2.
+ *   PART 2 — the exhaustive search's tuning knobs (stage-depth caps, variant
+ *            pre-screen factor), tuned on N=1024 only: see the note there.
  */
 #ifndef VFFT_PROTO_CORE_ENV_H
 #define VFFT_PROTO_CORE_ENV_H
 
 /* ===========================================================================
- * PART 1 — CPU / RUNTIME ENVIRONMENT  (carried over from src/core/env.h)
+ * PART 1 — CPU / RUNTIME ENVIRONMENT
  *
- *   stride_env_init();  // call once at program start (FTZ/DAZ)
+ *   stride_env_init();  // once per thread (FTZ/DAZ)
  *   double *re = stride_alloc(N * K * sizeof(double));
- *   ... stride_execute_fwd/bwd ...
+ *   ...
  *   stride_free(re);
  * ===========================================================================
  */
 
-/* On Windows, stride_print_info() reads the CPU brand string via CPUID. The two
- * toolchains spell that differently, and the spellings COLLIDE:
+/* CPUID (stride_print_info's brand string) is spelled differently per
+ * toolchain, and the spellings collide:
  *
  *   MSVC/ICX  <intrin.h> declares __cpuid / __cpuidex as FUNCTIONS taking an
  *             int[4] output array.
  *   MinGW GCC <cpuid.h> defines __cpuid / __cpuid_count as 5-ARGUMENT MACROS
  *             writing four separate lvalues.
  *
- * This header used to include <intrin.h> unconditionally on _WIN32, on the
- * stated assumption that MinGW reaches the same declaration through it. That
- * assumption stopped holding at GCC 15.2, where <immintrin.h> transitively
- * includes <cpuid.h>: __cpuid is then already a macro, and <intrin.h>'s
- * `void __cpuid(int[4], int)` is expanded through it —
- *
- *     error: macro '__cpuid' requires 5 arguments, but only 2 given
- *
- * Whether that fires depends only on whether something upstream pulled
- * <immintrin.h> first. threads.h does, via cpu_cache.h, so `#include
- * "threads.h"` before this header was enough to break any translation unit —
- * an include-order landmine rather than a property of either header. Undefining
- * __cpuid around the include does NOT fix it; the two headers disagree about
- * more than one name.
- *
- * So: give each toolchain its own spelling and never make them meet. GCC-family
- * builds use <cpuid.h> and never pull <intrin.h>; MSVC/ICX keep <intrin.h>,
- * having no <cpuid.h> to use. _VFFT_CPUIDEX hides the shape difference. */
+ * From GCC 15.2 <immintrin.h> pulls in <cpuid.h>, so <intrin.h> included after
+ * it fails ("macro '__cpuid' requires 5 arguments") depending only on include
+ * order; undefining __cpuid does not help. So each toolchain gets its own
+ * header and never both: GCC-family builds use <cpuid.h>, MSVC/ICX <intrin.h>.
+ * _VFFT_CPUIDEX hides the shape difference. */
 #if defined(_WIN32)
   #if defined(__GNUC__) && !defined(__INTEL_LLVM_COMPILER) && !defined(_MSC_VER)
     #include <cpuid.h>
@@ -318,13 +303,7 @@ static inline void stride_print_info(void)
             (_mm_getcsr() & 0x8040) == 0x8040 ? "enabled" : "disabled");
 }
 
-/* =====================================================================
- * THREAD CONTROL
- * Thread count / pool management live in threads.h (stride_set_num_threads /
- * stride_get_num_threads). Planned model: K-split parallelism (each thread a
- * contiguous K-chunk, full N-FFT, no inter-thread sync — stages independent
- * across K).
- * ===================================================================== */
+/* Thread count and the pool live in threads.h. */
 
 /* =====================================================================
  * CPU AFFINITY / CORE PINNING
@@ -386,32 +365,23 @@ static inline int stride_get_num_cores(void)
 }
 
 /* ===========================================================================
- * PART 2 — EXHAUSTIVE / JOINT SEARCH TUNING KNOBS
+ * PART 2 — EXHAUSTIVE SEARCH TUNING KNOBS
  *
- *  ⚠ VALIDATION SCOPE — READ BEFORE TRUSTING THE DEFAULTS
- *  The default values below were tested/tuned on exactly **N=1024 K=4 (pow2)**
- *  on the i9-14900KF (2026-06-14). The absolutely-exhaustive validation run
- *  (262,428 candidates: all 35 decompositions x all orderings x all variants,
- *  NO pruning) established, for 1024:
- *    - latency is MONOTONICALLY worse with stage-count (2-stage 64x16 = 3.2us
- *      optimal; 10-stage = 13.6us, 4.2x); deeper brings ZERO benefit.
- *    - the depth-5 pow2 cap + the 2x variant pre-screen reach the IDENTICAL
- *      winner as no-pruning, at 32x fewer candidates / 56x faster.
- *  That is a **1024 result**, NOT validated at other sizes:
- *    - Larger pow2 (e.g. N=2^17): optimum may sit at 4-5 stages; depth-5 could
- *      clip a deeper win, and a different prune may matter.
- *    - Non-pow2 N (many small primes): needs deeper plans (hence nonpow2=9);
- *      the 2x prune may be too aggressive there.
- *  Before relying on these for a new size class, re-run the env-gated
- *  absolutely-exhaustive sweep and check the best-per-stage-count curve:
+ *  VALIDATION SCOPE: the defaults were tuned on N=1024 K=4 only (i9-14900KF).
+ *  There an unpruned run (262,428 candidates: all 35 decompositions x all
+ *  orderings x all variants) found latency monotonically worse with stage
+ *  count (2-stage 64x16 = 3.2us; 10-stage = 13.6us), and the depth-5 cap +
+ *  2x pre-screen reached the same winner with 32x fewer candidates.
+ *  Unvalidated elsewhere: larger pow2 may want 4-5 stages (depth-5 could
+ *  clip), and many-small-prime N may find the 2x prune too aggressive.
+ *  To re-check a size class, run the unpruned sweep and compare the
+ *  best-per-stage-count curve (env overrides, no recompile):
  *      VFFT_PROTO_EXH_MAX_DEPTH=16  VFFT_PROTO_EXH_PRUNE=1e9
- *  Every knob is env-overridable, so this needs no recompile.
  * ===========================================================================
  */
 
-/* Stage-depth cap (exhaustive enumeration). Pow2 optima are shallow (2-stage
- * won at 1024); each extra stage = one more full memory pass => slower.
- * Non-pow2 needs deeper plans. TESTED-ON: 1024 (pow2 leg).
+/* Stage-depth cap (exhaustive enumeration). Pow2 optima are shallow: each
+ * extra stage is one more full memory pass. Non-pow2 needs deeper plans.
  * Override: VFFT_PROTO_EXH_MAX_DEPTH. */
 #ifndef VFFT_PROTO_EXH_MAX_DEPTH_POW2
 #define VFFT_PROTO_EXH_MAX_DEPTH_POW2    5
@@ -421,18 +391,15 @@ static inline int stride_get_num_cores(void)
 #endif
 
 /* Variant pre-screen factor: skip a factorization's variant cartesian when its
- * default-variant bench > FACTOR x the running global best. At 1024, 2x
- * recorded every depth's default while skipping hopeless deep cartesians,
- * giving the identical conclusion to no-prune. TESTED-ON: 1024.
+ * default-variant bench > FACTOR x the running global best.
  * Override: VFFT_PROTO_EXH_PRUNE (set huge, e.g. 1e9, to disable). */
 #ifndef VFFT_PROTO_EXH_PRUNE_FACTOR
 #define VFFT_PROTO_EXH_PRUNE_FACTOR 2.0
 #endif
 
-/* NOTE: a third cap, the per-decomposition permutation limit
- * VFFT_PROTO_DP_MAX_PERMS (720), lives in dp_planner.h. Not hit for 1024 pow2,
- * but it CAN clip orderings for non-pow2 with many distinct small primes —
- * also untested outside 1024. */
+/* A third cap, the per-decomposition permutation limit VFFT_PROTO_DP_MAX_PERMS
+ * (720), lives in dp_planner.h; it can clip orderings for non-pow2 N with many
+ * distinct small primes. */
 
 /* Accessors: default unless the matching env var overrides. hard_cap clamps to
  * the stage-array bound (pass STRIDE_MAX_STAGES); 0 = no clamp. */

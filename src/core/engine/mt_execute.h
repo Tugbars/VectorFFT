@@ -1,12 +1,9 @@
 /* mt_execute.h - the generic K-split multithreaded executor.
  *
- * A batch of K transforms is K independent problems, so the pool can simply cut
- * [0,K) into slabs and run the same plan on each. That is the whole idea; this
- * header is that idea plus the safety proof it requires. Extracted from vfft.c
- * as migration step 7; see docs/design/refactor_migration_plan.md.
+ * A batch of K transforms is K independent problems, so the pool cuts [0,K)
+ * into slabs and runs the same plan on each, after a create-time check that
+ * the plan survives the split.
  *
- * WHY THE SPLIT NEEDS A PROOF, NOT AN ASSUMPTION
- * ----------------------------------------------
  * "Each lane is an independent transform" is true of the MATH and not
  * automatically true of the KERNELS. Two codelet families bake assumptions
  * about the whole batch into their code:
@@ -15,25 +12,15 @@
  *       partial batch is wrong for ANY input, including symmetric ones;
  *   (b) DIF chains - wrong for a partial batch on ASYMMETRIC input only.
  *
- * (b) is the dangerous one, because a poorly-mixed probe MASKS it: an early
- * low-bit index hash passed while random input failed at 1.2. So the self-check
- * probe must be well-mixed, and it replays EVERY slab size the executor can
- * pick rather than sampling one.
+ * A poorly mixed probe MASKS (b), so the self-check probe is well-mixed, and it
+ * replays EVERY slab size the executor can pick rather than sampling one.
  *
- * THIS IS A CORRECTNESS GATE, NOT A RACE
- * --------------------------------------
- * _c2c_mt_safe answers "does this plan reproduce the whole-batch result when
- * run on partial batches?" - a deterministic, sequential replay. No clock is
- * involved and nothing is banked. It belongs in no catalogue of measurement
- * arms; a plan that fails it runs whole-batch under MT (the reorder pass still
- * threads), it does not run slower-but-correct.
+ * _c2c_mt_safe is a correctness gate, not a race: a deterministic, sequential
+ * replay, no clock, nothing banked. A plan that fails it runs whole-batch
+ * under MT (the reorder pass still threads).
  *
- * FLOOR-LEGAL BY CONSTRUCTION
- * ---------------------------
- * Takes the proto plan by pointer and never a vfft_plan_s, so it carries no
- * dependency on the front door's opaque types. No mutable file-scope state, no
- * wisdom. In particular it does NOT pull engine/stride_executor.h - that header
- * redefines executor symbols and is excluded from the build by design.
+ * Takes the proto plan by pointer, never a vfft_plan_s, so it does not depend
+ * on the front door's opaque types. No mutable file-scope state, no wisdom.
  */
 #ifndef VFFT_ENGINE_MT_EXECUTE_H
 #define VFFT_ENGINE_MT_EXECUTE_H
@@ -66,25 +53,14 @@ static void _ip_tramp(void *a)
     else
         vfft_proto_execute_bwd(x->p, x->re + x->k0, x->im + x->k0, x->S);
 }
-/* In-place c2c, pool K-split. `fn` is the transparent JIT/baked-resolved executor
- * for `dir` (NULL = fall back to the generic executor) — set once at create. */
-/* `me` = number of batch lanes to process (tight: p->K ; padded: exec_me = Kp pad / K tail).
- * The pool splits [0,me) into VW-aligned blocks run at the plan's baked stride p->K. For a
- * padded (Kp-wide) buffer with me=Kp, blocks are 4-aligned so the (Kp-K) zero pad lanes ride
- * in the last block full-SIMD (no per-block tail); with me=K the last block carries the tail. */
-/* SLAB-SPLIT self-check: does the plan reproduce the WHOLE-batch result when run as _c2c_mt's per-slab
- * partial batches? Each lane is an INDEPENDENT transform, so splitting [0,K) into slabs [k0,k0+me) and
- * running fn(me) on each MUST equal fn(K) on the whole. Two codelet families break this, both structural
- * (NOT concurrency — a SEQUENTIAL replay reproduces them; deterministic given the input):
- *   (a) radix-8 LOG3 last-stage — its twiddle blocking bakes the full K, so any me<K is wrong (visible on
- *       ANY input, incl. symmetric);
- *   (b) DIF chains (use_dif=1) — wrong for a partial batch on ASYMMETRIC input (a symmetric/periodic probe
- *       like a low-bit index hash MASKS it — that is exactly why an earlier det-input check passed 4·32 DIF
- *       while rand failed 1.2). So the probe MUST be well-mixed (xorshift, non-periodic).
- * We replay EVERY slab size _c2c_mt can pick (S = 8,16,..,K — S = ceil(K/T) rounded to 8 for some T, its
- * slab boundaries k0 = t*S exactly) and compare to the whole. Unsafe if ANY differs -> _c2c_mt runs the
- * plan WHOLE-batch under MT (the reorder pass still threads). Lock-free, one-time at create. Returns
- * 1 = safe (K-split OK), 0 = unsafe (whole-batch). */
+/* SLAB-SPLIT self-check: does the plan reproduce the WHOLE-batch result when
+ * run as _c2c_mt's per-slab partial batches (see the header for the two
+ * codelet families that break this)? The failures are structural, not
+ * concurrency, so a sequential replay reproduces them. Replays EVERY slab
+ * size _c2c_mt can pick (S = 8,16,..,K: S = ceil(K/T) rounded to 8 for some
+ * T, boundaries k0 = t*S exactly) on a well-mixed xorshift input and compares
+ * to the whole. One-time at create. Returns 1 = safe (K-split OK),
+ * 0 = unsafe (whole-batch). */
 static int _c2c_mt_safe(const stride_plan_t *p, vfft_proto_exec_fn fn)
 {
     size_t K = p->K;
@@ -150,6 +126,12 @@ static int _c2c_mt_safe(const stride_plan_t *p, vfft_proto_exec_fn fn)
     free(bi);
     return !unsafe;
 }
+/* In-place c2c, pool K-split. `fn` is the transparent JIT/baked-resolved executor
+ * for `dir` (NULL = fall back to the generic executor) — set once at create. */
+/* `me` = number of batch lanes to process (tight: p->K ; padded: exec_me = Kp pad / K tail).
+ * The pool splits [0,me) into VW-aligned blocks run at the plan's baked stride p->K. For a
+ * padded (Kp-wide) buffer with me=Kp, blocks are 4-aligned so the (Kp-K) zero pad lanes ride
+ * in the last block full-SIMD (no per-block tail); with me=K the last block carries the tail. */
 static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
                     vfft_proto_exec_fn fn, size_t me)
 {
@@ -168,9 +150,9 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
             vfft_proto_execute_bwd(p, re, im, K);
         return;
     }
-    /* THE ENGINE'S OWN PART: the slicing. CEIL(K/T) then round to 8: floor
-     * dropped the last K%T lanes when floor(K/T)%8==0 (e.g. T=8,K=65). Slot 0
-     * is the caller's slice by the pool's convention. */
+    /* The engine's own part: the slicing. CEIL(K/T) rounded up to 8, so no
+     * tail lanes are dropped (floor would lose K%T lanes, e.g. T=8, K=65).
+     * Slot 0 is the caller's slice by the pool's convention. */
     size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     _ip_arg a[STRIDE_POOL_MAX_DISPATCH];
     int n = 0;

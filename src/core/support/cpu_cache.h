@@ -1,26 +1,20 @@
-/* cpu_cache.h — L1 data-cache capacity, discovered once at PLAN time.
+/* cpu_cache.h — cache capacities and SMT width, discovered once at PLAN time.
  *
- * 🔴 PLANNING ONLY. Nothing here may be called from an execute path.
+ * PLANNING ONLY. Nothing here may be called from an execute path.
  *
- * WHY IT IS DISCOVERED AND NOT HARD-CODED (Tugbars, 2026-08-02): the tcut tile
- * width is the first CACHE-OCCUPANCY quantity the library will bank. A chain or
- * a radix is a property of the transform and ports to any CPU; a tile width is
- * a property of *this machine's L1*, and on the wrong machine it fails as a
- * mild slowdown rather than an error — the worst thing to inherit silently. So
- * the value is discovered, stamped into the wisdom record next to the width,
- * and re-checked on replay; a mismatch means re-measure, never "use anyway".
+ * A chain or a radix is a property of the transform; a tile width is a
+ * property of this machine's L1, and on the wrong machine it fails as a
+ * silent slowdown rather than an error. So the capacity a width was sized
+ * with is stamped into its wisdom record and re-checked on replay; a mismatch
+ * means re-measure, never "use anyway".
  *
- * SCOPE — P-CORES ONLY (Tugbars). This CPU is hybrid and MEASURED
- * (benches/cpu_l1_probe.c) as:
+ * P-cores only. CPUID reports the cache of the core the query runs on, so the
+ * answer is per core type. On the hybrid i9-14900KF:
  *     P (Raptor Cove) cpu 0-15 : L1d 48 KB, 12-way, L2 2 MB private
  *     E (Gracemont)   cpu 16-31: L1d 32 KB,  8-way, L2 4 MB shared
- * CPUID reports the cache of whichever core the query RUNS on, so the answer is
- * per-core-type, not per-machine. The library targets P-cores; E-core support
- * is left to a user extension. A width sized for a P-core is 150% of an E-core's
- * L1, and overshoot is the failure mode that costs everything at once rather
- * than degrading, so being on the wrong core type is not a rounding error.
- *
-
+ * A width sized for a P-core is 150% of an E-core's L1, and overshoot costs
+ * everything at once rather than degrading, so an E-core read never sizes
+ * anything.
  */
 #ifndef VFFT_CPU_CACHE_H
 #define VFFT_CPU_CACHE_H
@@ -57,24 +51,17 @@ static inline void _vfft_cpuid(unsigned leaf, unsigned sub, unsigned r[4])
 { (void)leaf; (void)sub; r[0] = r[1] = r[2] = r[3] = 0; }
 #endif
 
-/* Intel SDM Vol.2, CPUID leaf 1AH, EAX[31:24].
- * 🔴 These were INVERTED on first use and every P-core printed as E. The
- * geometry is the cross-check: 48 KB / 12-way is Raptor Cove, 32 KB / 8-way is
- * Gracemont. A label alone cannot be falsified; a label beside its geometry can. */
+/* Intel SDM Vol.2, CPUID leaf 1AH, EAX[31:24]. geometry_ok cross-checks the
+ * label against the cache geometry (48 KB / 12-way is Raptor Cove, 32 KB /
+ * 8-way is Gracemont): a label alone cannot be falsified. */
 #define VFFT_CPU_TYPE_ATOM 0x20u   /* E-core */
 #define VFFT_CPU_TYPE_CORE 0x40u   /* P-core */
 
-/* ── VENDOR (2026-09-03) ─────────────────────────────────────────────────────
- * 🔴 MEASURED on a Ryzen 5 PRO 8640HS (Zen 4), benches/cpu_l1_probe.c:
- *     vendor=AuthenticAMD  max_cpuid_leaf=0xD
- *     every one of 12 logical CPUs: L1d 0K, ways 0, sets 0, L2 0K, L3 0K
- * Leaf 4 is an INTEL leaf. AMD answers it with zeros and publishes the same
- * information through the EXTENDED leaves instead, so the discovery below
- * found nothing at all on that host and silently handed back the pinned
- * Raptor-Cove numbers (48 KB / 2 MB) for a part that has 32 KB / 1 MB. That is
- * the overshoot this file's own header calls the failure mode that "costs
- * everything at once rather than degrading" — reached by a read that returned
- * NO DATA, which is worse than a wrong number because nothing looked amiss.
+/* ── VENDOR ───────────────────────────────────────────────────────────────────
+ * Leaf 4 is an INTEL leaf. AMD answers it with zeros (measured on a Zen 4
+ * Ryzen 5 PRO 8640HS: L1d, L2 and L3 all 0) and publishes the same information
+ * through the EXTENDED leaves. A leaf-4-only read on AMD finds nothing, and
+ * nothing looks amiss.
  *
  * The AMD twins, both same-format as their Intel counterparts:
  *   0x8000001D  deterministic cache parameters — bit-for-bit the leaf-4
@@ -94,10 +81,10 @@ static inline void _vfft_cpuid(unsigned leaf, unsigned sub, unsigned r[4])
  * gracefully, overshooting does not. */
 #define VFFT_L1D_FALLBACK_BYTES (32 * 1024)
 
-/* Our own measurement runs pin this so a stray query — or a thread that drifted
- * onto an E-core — can never resize a benchmark mid-campaign (Tugbars). Build
- * with -DVFFT_L1D_DISCOVER=1 to size from the live CPUID answer instead. The
- * discovered value is recorded either way, so the two can be compared. */
+/* Pinned by default, so a stray query or a thread that drifted onto an E-core
+ * can never resize a measurement. Build with -DVFFT_L1D_DISCOVER=1 to size from
+ * the live CPUID answer instead. The discovered value is recorded either way,
+ * so the two can be compared. */
 #ifndef VFFT_L1D_PCORE_BYTES
 #define VFFT_L1D_PCORE_BYTES (48 * 1024)
 #endif
@@ -105,14 +92,11 @@ static inline void _vfft_cpuid(unsigned leaf, unsigned sub, unsigned r[4])
 #define VFFT_L1D_DISCOVER 0
 #endif
 
-/* L2 (2026-08-25, the 2D band-threshold fence and any future L2-sized
- * decision). Same discipline as L1d: PINNED for our own measurement runs,
- * discovery under the SAME opt-in knob (one switch governs cache
- * discovery, not one per level). The E-core caveat is sharper here: a
+/* L2: the same discipline as L1d, pinned by default and discovered under the
+ * same VFFT_L1D_DISCOVER switch. The E-core caveat is sharper here: a
  * Gracemont module's 4 MB L2 is SHARED by 4 cores, so sizing a private-L2
- * decision off an E-core read overshoots by up to 4x — the refuse rule
- * below treats it exactly like the L1 case. Fallback = the P-core private
- * size, the smaller effective figure on this hybrid. */
+ * decision off an E-core read overshoots by up to 4x; the refuse rule below
+ * treats it exactly like the L1 case. */
 #ifndef VFFT_L2_PCORE_BYTES
 #define VFFT_L2_PCORE_BYTES (2 * 1024 * 1024)
 #endif
@@ -272,7 +256,7 @@ static inline void _vfft_cpu_os_fill(vfft_cpu_cache_t *o)
     if (o->smt == 0) {
         /* threads sharing core 0: entries of thread_siblings_list ("0,6" or
          * "0-1"). Absent sysfs leaves smt unknown, which the pool treats as
-         * the historical stride. */
+         * stride 2. */
         FILE *f = fopen("/sys/devices/system/cpu/cpu0/topology/thread_siblings_list", "r");
         if (f) {
             char line[256];
@@ -358,7 +342,7 @@ static inline void _vfft_cpu_cache_fill(vfft_cpu_cache_t *o)
 
     if (maxleaf >= 4) _vfft_cpu_walk_cache_leaf(o, 4);
 
-    /* AMD: leaf 4 answered with zeros (measured, see the vendor note above).
+    /* AMD: leaf 4 answered with zeros (see the vendor note above).
      * Re-read through the extended twins. Gated on the extended max-leaf AND
      * TOPOEXT so a pre-Zen part falls back instead of decoding garbage.
      * Guarded by l1d_seen==0 so a future AMD part that DOES populate leaf 4
@@ -373,24 +357,17 @@ static inline void _vfft_cpu_cache_fill(vfft_cpu_cache_t *o)
         }
         if (topoext && maxext >= 0x8000001Du)
             _vfft_cpu_walk_cache_leaf(o, 0x8000001Du);
-        /* SMT width: 0x8000001E EBX[15:8] = threads per core MINUS ONE.
-         * This is the AMD spelling of the leaf-0xB read below; without it
-         * smt stays 0 ("unknown") on every AMD part and the pool's pin
-         * stride loses the input this file insists it must be derived from. */
+        /* SMT width: 0x8000001E EBX[15:8] = threads per core MINUS ONE,
+         * the AMD spelling of the leaf-0xB read below. */
         if (topoext && maxext >= 0x8000001Eu) {
             _vfft_cpuid(0x8000001Eu, 0, r);
             o->smt = (int)(((r[1] >> 8) & 0xFFu) + 1u);
         }
     }
     /* SMT width: leaf 0xB level type 1 (SMT), EBX[15:0] = logical procs at
-     * that level. Decides the pool's pin STRIDE — a hard-coded stride of 2
-     * silently skips half the cores (or leaves workers unpinned) on a
-     * non-SMT or SMT-disabled part, voiding every cache-privacy argument
-     * the threading design rests on. */
-    /* o->smt == 0 guard: AMD already answered via 0x8000001E above. AMD does
-     * implement leaf 0xB too, so both reads agree where both work — but the
-     * extended read is the authoritative one on that vendor and must not be
-     * silently replaced by a leaf this vendor is not required to populate. */
+     * that level. It sets the pool's pin stride (threads.h). Skipped when AMD
+     * already answered through 0x8000001E, the authoritative read on that
+     * vendor. */
     if (maxleaf >= 0xB && o->smt == 0) {
         for (unsigned sub = 0; sub < 4u; sub++) {
             _vfft_cpuid(0xB, sub, r);
@@ -445,14 +422,13 @@ static inline const vfft_cpu_cache_t *vfft_cpu_cache(void)
     return &c;
 }
 
-/* ── HOST TAG (2026-09-03) ───────────────────────────────────────────────────
+/* ── HOST TAG ─────────────────────────────────────────────────────────────────
  * A stable, WHITESPACE-FREE identifier for "which machine raced this", for the
- * wisdom `@meta host=` stamp. The wisdom grammar forbids whitespace in values
- * (README §3 "values are bare ... the writer refuses violations at the API"),
- * so the CPUID brand string ("AMD Ryzen 5 PRO 8640HS w/ Radeon 760M Graphics")
- * is NOT usable directly and is deliberately not sanitised into one either —
- * marketing names are not stable identifiers and two parts with the same brand
- * can differ in the geometry that actually moves a verdict.
+ * wisdom `@meta host=` stamp. The wisdom grammar forbids whitespace in values,
+ * so the CPUID brand string is not usable, and it is deliberately not
+ * sanitised into one either: marketing names are not stable identifiers, and
+ * two parts with the same brand can differ in the geometry that moves a
+ * verdict.
  *
  * vendor + display-family + display-model is what the uarch is: Raptor Lake is
  * intel-f6m183, Zen 4 Phoenix is amd-f25m117. Steppings are excluded on
@@ -501,9 +477,8 @@ static inline const char *vfft_cpu_host_tag(void)
  * stamped into a wisdom record beside the width it produced. */
 static inline long vfft_cpu_l1d_bytes(void) { return vfft_cpu_cache()->l1d_used; }
 
-/* The L2 twin (2026-08-25): the capacity every L2-sized decision must use
- * (first consumer: the 2D band-threshold fence N1_max = L2/(16*wl_min)),
- * and the value stamped beside any banked verdict that depended on it. */
+/* The L2 twin: the capacity every L2-sized decision must use, and the value
+ * stamped beside any banked verdict that depended on it. */
 static inline long vfft_cpu_l2_bytes(void) { return vfft_cpu_cache()->l2_used; }
 
 /* SHARED-L3 budget. 0 = unknown (caller must then refuse to use it as a

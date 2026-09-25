@@ -1,31 +1,13 @@
-/* ref.h — dag-fft-compiler core reference-backend interface.
+/* ref.h — the benchmark reference-backend interface.
  *
- * DECLARATIONS ONLY, like strided_codelets.h beside it: this header declares the
- * vtable slot type and the reference-independent helpers. The backends that fill
- * it (ref_mkl.h, ref_fftw.h) live with their consumer in build_tuned/benches/,
- * because they pull in mkl_dfti.h / bind fftw3.dll and core/ must not.
+ * Declarations only: the vtable slot type and the reference-independent
+ * helpers, all static inline. The backends that fill ref_vtable_t (e.g.
+ * gauntlet/ref_fftw.h) live with the benches, because they bind external
+ * libraries and core/ must not. Design: docs/roadmap/fftw_bench_design.md.
  *
- * Architecture of record: docs/roadmap/fftw_bench_design.md.
- * This header is that document's §5.0 deliverable: the enums, the caps
- * bitfield, and the exact plan/execute/ref_race signatures. It is the FIRST
- * commit of phase P1a and nothing downstream can be written without it.
- *
- * HEADER-ONLY BY CONSTRUCTION. build_tuned/build.py has no --extra-src, so the
- * whole backend ships as headers (ref.h, ref_time.h, ref_mkl.h, ref_fftw.h)
- * and no build-script change is required. Everything here is static inline.
- * Bare include per the core/ convention: #include "ref.h" (recursive -I).
- *
- * WHAT THIS BUYS (design doc P1a): one timing core instead of 21 copies; an
- * N-arm order-neutralising scheduler; a control arm available to every mode;
- * and `dir` as a plan parameter, which renders --2dc2r's direction-reuse bug
- * unwritable in converted modes. It is worth shipping even if FFTW never lands.
- *
- * SCOPE: this header defines the INTERFACE and the reference-independent
- * helpers. ref_mkl.h and ref_fftw.h implement ref_vtable_t. ref_fftw.h binds
- * FFTW at RUNTIME (LoadLibraryA/GetProcAddress, no fftw3.lib on the link line)
- * because MKL exports 92 fftw_* wrapper symbols and an mkl_rt-first link
- * silently yields fftw_version = "FFTW 3.3.4 wrappers to Intel oneMKL" — i.e.
- * MKL benchmarked against MKL and labelled FFTW.
+ * A backend for FFTW must bind it at runtime (LoadLibraryA/GetProcAddress):
+ * MKL exports fftw_* wrapper symbols, so a link that sees mkl_rt first
+ * silently benchmarks MKL's wrappers under the FFTW label.
  */
 #ifndef VFFT_PROTO_CORE_REF_H
 #define VFFT_PROTO_CORE_REF_H
@@ -65,20 +47,19 @@
 
 /* ------------------------------------------------------------------- direction
  * `dir` is a PLAN parameter, never a per-execute argument. DFTI distances are
- * argument-anchored, not direction-anchored: reusing one descriptor across
- * directions without swapping them is what made --c2r read out of bounds and
- * voided every banked c2r ratio. One plan object per direction, always. */
+ * argument-anchored, not direction-anchored, so one descriptor reused across
+ * directions without swapping them reads out of bounds. One plan object per
+ * direction, always. */
 typedef enum { REF_FWD = +1, REF_BWD = -1 } ref_dir_t;
 
 /* ------------------------------------------------------------------- roles
- * §4.1/§4.2. The doctrine is PER-MODE and it FOLLOWS THE MKL ARM:
+ * The verdict role is PER-MODE, and matches what the MKL arm of that mode is:
  *   - mirror-regime modes (default 1a, --oop, --pad, --kzb, --k1*, --2d):
  *       verdict = MIRROR (our layout), HOME is the mandatory diagnostic.
  *   - home-regime modes (--r2c, --c2r, --padr2c, --2dr2c, --2dc2r, --zr2c):
- *       the MKL arm is ALREADY a home arm with an untimed adapter and already
- *       IS the verdict, so FFTW gets the same deal; MIRROR is the diagnostic.
- * Publishing a mirror ratio beside a home ratio in one row is the
- * v1_0_results.md liability re-created with the sign flipped. */
+ *       the MKL arm is a home arm with an untimed adapter and is the verdict,
+ *       so FFTW gets the same; MIRROR is the diagnostic.
+ * Never publish a mirror ratio beside a home ratio in one row. */
 typedef enum {
     REF_ROLE_MIRROR = 0,  /* reference forced into OUR layout */
     REF_ROLE_HOME,        /* reference in ITS best layout, adapter untimed */
@@ -99,18 +80,16 @@ static inline const char *ref_role_name(ref_role_t r)
     return "?";
 }
 
-/* Which regime a MODE is in. Set once per run_*_cell; see §4.2. */
+/* Which regime a MODE is in. Set once per run_*_cell. */
 typedef enum { REF_REGIME_MIRROR = 0, REF_REGIME_HOME } ref_regime_t;
 
 /* ------------------------------------------------------------------- flags
- * FFTW_MEASURE IS LAW (owner). ESTIMATE is DELIBERATELY UNREPRESENTABLE in
- * this enum — there is no REF_PLAN_ESTIMATE member and there must never be
- * one. ESTIMATE plans a structurally different library (at N=512 it picks the
- * 128-bit codelet family where MEASURE picks 256-bit) and produced the
- * N=1000 guru split_dft "errors of 60+, sometimes 1e+299" that manufactured a
- * false-positive twiddle bug. Under MEASURE the same shape gates at 1.96e-11.
- * PATIENT/EXHAUSTIVE are DIAGNOSTIC ONLY (three different plans, 2.2x spread
- * at one cell) and are always used with a time limit. */
+ * MEASURE is the only verdict rigour. ESTIMATE is deliberately unrepresentable:
+ * it plans a structurally different library (at N=512 it picks the 128-bit
+ * codelet family where MEASURE picks 256-bit), and its N=1000 guru split_dft
+ * plan returned errors of 60+ where MEASURE gates at 1.96e-11. PATIENT and
+ * EXHAUSTIVE are diagnostic only (2.2x spread between their plans at one
+ * cell) and always run with a time limit. */
 typedef enum {
     REF_PLAN_MEASURE = 0,   /* the only verdict-legal rigour */
     REF_PLAN_PATIENT,       /* diagnostic only */
@@ -126,11 +105,9 @@ typedef struct {
 } ref_flags_t;
 
 /* ------------------------------------------------------------------- shape
- * §8: ref_shape_t deliberately CANNOT express r2r. fftw_plan_r2r_1d is
- * exported and the trig modes are tempting, but our trig transforms were never
- * measured against it and adding an r2r arm here would smuggle an unmeasured
- * comparison into a verdict column. If r2r is ever wanted it needs its own
- * design pass, not a widened enum. */
+ * ref_shape_t deliberately cannot express r2r: the trig transforms have never
+ * been measured against fftw_plan_r2r_1d, and an r2r arm would put an
+ * unmeasured comparison into a verdict column. */
 typedef enum {
     REF_C2C = 0,   /* complex -> complex */
     REF_R2C,       /* real -> N/2+1 interleaved complex (== MKL CCE shape) */
@@ -174,23 +151,16 @@ static inline int ref_shape_check(const ref_shape_t *s)
 }
 
 /* ------------------------------------------------------------------- planes
- * §3.1 — THE campaign's sharpest finding. FFTW hashes the split-plane deltas
- * (ii - ri) and (io - ro) into its WISDOM KEY (dft/problem.c:37-38). With
- * independently malloc'd planes the key misses 6/6 across launches and the
- * resulting plan drift moves the number 9.4% (5 distinct plans in 8 launches)
- * — so the numbers are not comparable BETWEEN LAUNCHES, which is worse than
- * being slow.
- *
- * Cure: one block, two planes, at a size-derived offset. The delta becomes a
- * pure function of (N,K) ⇒ 6/6 WISDOM_ONLY HIT with one identical plan_id
- * across isolated processes. Costs one CSV column, ref_planes=contiguous.
- *
- * OWNER RULING 2026-08-15: the cold planning cost is accepted as-is. That makes
- * this function load-bearing rather than merely desirable — it is what turns an
- * accepted ONE-TIME cost into an actual one-time cost. */
+ * FFTW hashes the split-plane deltas (ii - ri) and (io - ro) into its wisdom
+ * key (dft/problem.c). Independently allocated planes miss wisdom across
+ * launches, and the plan then drifts between runs (5 distinct plans in 8
+ * launches, 9.4% spread): numbers stop being comparable between launches.
+ * One block holding both planes at a size-derived offset makes the delta a
+ * function of (N,K) alone, so wisdom hits with one plan_id across processes
+ * (CSV column ref_planes=contiguous). */
 static inline size_t ref_plane_stride(size_t bytes)
 {
-    return ((bytes + 4095u) & ~(size_t)4095u) + 64u; /* 4KB pitch + house 64B skew */
+    return ((bytes + 4095u) & ~(size_t)4095u) + 64u; /* 4KB pitch + 64B skew */
 }
 
 typedef struct { double *re, *im; void *blk; size_t stride; } ref_planes_t;
@@ -222,9 +192,8 @@ typedef struct {
     void        (*destroy)(ref_plan_t *plan);
 
     /* Free-form, printed into the CSV: FFTW's sprint_plan, MKL's descriptor
-     * summary. NOTE for implementers: the FFTW string comes from the C heap —
-     * free() it, NEVER fftw_free(). Mixing them corrupts the heap at loop
-     * scale, and it took a debugging session to find. */
+     * summary. The FFTW string comes from the C heap: free() it, NEVER
+     * fftw_free(); mixing them corrupts the heap at loop scale. */
     char       *(*describe)(const ref_plan_t *plan);
 
     ref_caps_t  (*caps)(const ref_plan_t *plan);
@@ -244,19 +213,16 @@ typedef struct {
     double             ns_min, ns_med;   /* REF_STAT_MIN5 emits BOTH */
 } ref_arm_t;
 
-/* Five samples contain both statistics, so emit both from the same data and
- * let the estimator switchover (P7) be a reporting change, not a re-race.
- * The house law is MEDIANS; min is carried for continuity with banked tables. */
+/* Five samples yield both statistics from the same data. The median is the
+ * verdict; the min is carried for continuity with banked tables. */
 #define REF_STAT_MIN5 5
 
 /* ------------------------------------------------------------------- race
- * Order-neutralisation over N arms. The doc's original S3 rule was a special
- * case: --kzb already times 4 arms, --ilmt 5, the --zr2c pilot 8 (6, 6 and 10
- * with FFTW). So:
+ * Order-neutralisation over N arms:
  *   n <= 4  : exhaustive rotation through all n! permutations (rot % n!)
  *   n >= 5  : seeded random permutation, sched=rand:<seed>, seed printed
- * A 3-cycle is NOT sufficient — it preserves every adjacency pair, which is
- * exactly the residual order bias the flip was introduced to remove. */
+ * A 3-cycle is NOT sufficient: it preserves every adjacency pair, which is
+ * exactly the residual order bias to remove. */
 typedef struct { unsigned n_arms; unsigned round; uint64_t seed; } ref_sched_t;
 
 static inline unsigned ref_factorial(unsigned n)
@@ -283,12 +249,8 @@ static inline void ref_sched_perm(const ref_sched_t *sc, unsigned *perm)
     }
 }
 
-/* ref_race REFUSES to time a destructive arm that has no refill/restore.
- * A destroyed timing loop has been created by omission TWICE in this repo:
- * bench_fft2d_r2c_vs_fftw.c:54,65-71 timed 11 DESTROY_INPUT rounds with no
- * refill; bench_dct2_vs_fftw.c:145-147 refilled src FROM out_fftw, so FFTW
- * transformed DCT-of-DCT-of-DCT from round 2 AND paid an extra NK write our
- * arm never paid. Omission must not be able to recreate that. */
+/* Refuses to time a destructive arm that has no refill(): such a loop
+ * transforms its own previous output from round 2 on. */
 static inline int ref_race_check(const ref_arm_t *arms, unsigned n, int allow_unsound)
 {
     unsigned i;
@@ -308,10 +270,8 @@ static inline int ref_race_check(const ref_arm_t *arms, unsigned n, int allow_un
 }
 
 /* ------------------------------------------------------------------- ratio
- * Aborts when asked to make a HOME arm the verdict in a MIRROR-regime mode.
- * That turns --kzb:757's comment into a type error. SCOPED to mirror regime:
- * unscoped it would refuse --kzb's own existing rhom/rloop columns (:1046-1049)
- * — the very row nominated as the template. */
+ * Aborts when asked to make a HOME arm the verdict in a MIRROR-regime mode,
+ * where HOME is only the diagnostic. */
 static inline double ref_ratio(ref_regime_t regime, const ref_arm_t *ours,
                         const ref_arm_t *ref)
 {
@@ -323,9 +283,8 @@ static inline double ref_ratio(ref_regime_t regime, const ref_arm_t *ours,
 }
 
 /* ------------------------------------------------------------------- csv
- * Four modes hardcode their CSV path (e.g. --pad at :3629) and ignore argv[2].
- * Every mode must route through csv_for(ref) or --ref=fftw silently overwrites
- * the banked MKL table. NEVER run the bench with no args. */
+ * Every mode routes its CSV path through csv_for(ref), so a run against one
+ * reference never overwrites another reference's banked table. */
 static inline const char *csv_for(const char *base, const char *refname,
                            char *buf, size_t cap)
 {
