@@ -38,13 +38,12 @@
  * chirp, Rader table), k1_fourstep.h (the coarse and fine four-step records),
  * transforms/fft2d/il2d_cols.h (the 2D column chirp and stage twiddles).
  * NOT the pow2 ZTURN-T: its streams expand from the baked quarter-wave
- * ztt_qw16384.h, which stays as shipped. A re-bake of that table from this
- * fold was measured 2026-09-24 and rejected: the table's entries get closer
- * to the exact sine (1,016 of 4,097 by 1 ulp) and a textbook radix-2 or
- * radix-4 FFT on it reads 4-8% more accurate, but the pow2 ZTURN-T engine
- * reads 2-3% LESS accurate at 2048 and 4096 (8 of 8 draws) and the Bluestein
+ * ztt_qw16384.h, which stays as shipped. Do not re-bake it from this fold:
+ * the entries get closer to the exact sine (1,016 of 4,097 by 1 ulp) and a
+ * textbook radix-2/4 FFT on it reads 4-8% more accurate, but the pow2
+ * ZTURN-T engine reads 2-3% LESS accurate at 2048 and 4096 and the Bluestein
  * route, whose convolution runs that engine, 10-20% less (2,232 of 2,718
- * prime-route lengths worse). The mechanism is not identified. */
+ * prime-route lengths). The mechanism is not identified. */
 #ifndef VFFT_TW_EXACT_H
 #define VFFT_TW_EXACT_H
 

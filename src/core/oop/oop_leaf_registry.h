@@ -1,6 +1,5 @@
 /* oop_leaf_registry.h — hand-written registry for the OOP codelet families
- * (11-arg generic ABI), per docs section 16 item 4. Generator-emitted
- * version can replace this later.
+ * (11-arg generic ABI) and the K=1 mono/solo kernels on the same ABI.
  *
  * ABI: fn(src_re, src_im, dst_re, dst_im, W_re, W_im, L, G, OL, OG, count)
  *   - positions advance in vector groups of 8; group base = b*G; element j
@@ -136,12 +135,7 @@ static inline vfft_oop11_fn vfft_oop_t1_fn(int R)
     }
 }
 
-/* (The IL-boundary twin registry — vfft_oop_leaf_il_fn / vfft_oop_t1_il_fn
- * over the radix{4..64} _il_in/_il_out[_sw] codelets — was DELETED 2026-07-29
- * along with the hybrid IL routes it served. The IL axis is il2p.h, whose
- * registries cover the same {4,8,16,32,64} domain in BOTH directions.) */
-
-/* ---- UnitLeg twins (two-pass restructure, row_major_engine.md §12.4) ----
+/* ---- UnitLeg twins (the two-pass form) ----
  * t1 UL_UG: transpose fused into the t1's LOAD lattice (reads the column
  * pass's untransposed output at Ls=1/Gs=R1); n1 UG_UL: transpose fused into
  * the leaf's STORE lattice (writes the transposed intermediate at OLs=1/
@@ -191,7 +185,7 @@ static inline vfft_oop11_fn vfft_oop_leaf_ugul_fn(int R)
 #endif
 }
 
-/* t1 UL twin with LINEAR twiddle layout (§12.4 4a): table packed in
+/* t1 UL twin with LINEAR twiddle layout: table packed in
  * consumption order (per group-quad, all legs' 4-vectors contiguous) —
  * one streaming cursor. Needs the linear-filled table (Qlr/Qli), NOT the
  * flat Qr/Qi. */
@@ -220,9 +214,9 @@ static inline vfft_oop11_fn vfft_oop_t1_ul_twl_fn(int R)
 #endif
 }
 
-/* K1 MONO (§12.4 item 3): the whole K=1 four-step in one emitted function,
- * emit-time rodata twiddles, natural order, split, fwd. Uniform 11-arg ABI
- * (tw/strides/me ignored — call with 0s). M1 coverage: N=64. */
+/* K1 MONO: the whole K=1 four-step in one emitted function, emit-time
+ * rodata twiddles, natural order, split, fwd. Uniform 11-arg ABI
+ * (tw/strides/me ignored — call with 0s). Coverage: N = 64, 128, 256. */
 #if VFFT_OOP_GROUPW == 4u
 extern void vfft_k1_mono64_fwd_avx2(
     const double *, const double *, double *, double *,
@@ -258,7 +252,7 @@ static inline vfft_oop11_fn vfft_k1_mono_fn(int N)
  * R1 == 0 -> the default for N. */
 static inline vfft_oop11_fn vfft_k1_mono_pair_fn(int N, int R1);
 
-/* alternate pair (the calibrator's other candidate; today only 128 has one) */
+/* alternate pair (the calibrator's other candidate; only 128 has one) */
 static inline vfft_oop11_fn vfft_k1_mono_alt_fn(int N)
 {
 #if VFFT_OOP_GROUPW == 4u
@@ -323,7 +317,7 @@ static inline vfft_oop11_fn vfft_oop_t1_ul_l3_fn(int R)
 #endif
 }
 
-/* mono-64 IL twins (M2/M4): z->z; bwd = fwd DAG with (im,re)-swapped
+/* mono-64 IL twins: z->z; bwd = fwd DAG with (im,re)-swapped
  * boundary lattices (swap identity), unnormalized inverse, output (re,im).
  * ABI: (in_z, unused, out_z, unused, ...). Split bwd needs NO codelet —
  * call the split fwd with re/im pointer pairs swapped. */
@@ -345,11 +339,7 @@ static inline vfft_oop11_fn vfft_k1_mono_pair_fn(int N, int R1)
     return vfft_k1_mono_fn(N);
 }
 
-/* (The t1 UL-load + il_out store twin registry — vfft_oop_t1_ul_il_fn over
- * the radix{4..64} _ul_ilout[_sw] codelets — was DELETED 2026-07-29 with the
- * rest of the hybrid IL route. il2p.h's t2/t2t kernels are the IL exit now.) */
-
-/* ── MONO tier (sub-128, K=1 interleaved): the SOLO kernels (2026-09-04) ──
+/* ── MONO tier (sub-128, K=1 interleaved): the SOLO kernels ──
  * A solo kernel is the whole N-point transform in one call: natural order
  * in and out, twiddle-free, the pure-IL n1 kind on the 11-arg leg ABI
  * (one leg: Ls = OLs = 1, count = 1 -> the VEX-128 tail IS the transform).
@@ -361,8 +351,7 @@ static inline vfft_oop11_fn vfft_k1_mono_pair_fn(int N, int R1)
  *   form 1 = mono64_8x8_il    the fused 8x8 four-step (N = 64 only)
  * Out-of-place serves the __restrict__ n1 kernels; IN-PLACE serves the
  * alias-tolerant n1c twins (vfft_k1_mono_ilc_fn), same math, no restrict,
- * so z -> z is legal by construction (n1c exists at every N in the set:
- * 2/6/10/12 were emitted for exactly this door). */
+ * so z -> z is legal by construction (n1c exists at every N in the set). */
 #ifndef VFFT_IL_N1_PAIR_RADICES
 #include "il_registry_avx2.h"   /* the generated radix lists (also pulled by il2p.h) */
 #endif
@@ -427,7 +416,7 @@ static inline vfft_oop11_fn vfft_k1_mono_ilc_fn(int N, int bwd)
 #endif
 }
 
-/* the BATCHED solo (2026-09-23): n1ccs = the n1c leaf with column-stride
+/* the BATCHED solo: n1ccs = the n1c leaf with column-stride
  * addressing -- lane k is ONE WHOLE R-point transform at pitch Gs (a row of
  * a plane, a transform of a batch), two per vector through loadu2/storeu2
  * pairs, in place, natural order, both directions. Call:

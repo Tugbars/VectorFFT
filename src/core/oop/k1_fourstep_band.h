@@ -1,5 +1,5 @@
 /* k1_fourstep_band.h — the K=1 interleaved four-step's BAND (docs/design/
- * k1_fourstep_design.md, 2026-09-15): the sizes the engine serves and the
+ * k1_fourstep_design.md): the sizes the engine serves and the
  * side ladder its splits draw from. Self-contained so the benches admit the
  * band without the engine (k1_fourstep.h needs the plan internals). */
 #ifndef VFFT_K1_FOURSTEP_BAND_H

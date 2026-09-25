@@ -60,28 +60,6 @@
    rfft_registry_avx512.h
    (run %{exe:../bin/emit_rfft_registry.exe} --isa avx512))))
 
-; OOP codelet registry (section 64): auto-emitted from Coverage.files
-; "oop-<isa>". Two ABIs (11-arg regular, 7-arg spec) get distinct typed
-; slots; flat and log3 t1p are BOTH reachable (selection is a planner job).
-
-(rule
- (targets oop_registry_avx2.h)
- (deps %{exe:../bin/emit_oop_registry.exe})
- (mode promote)
- (action
-  (with-stdout-to
-   oop_registry_avx2.h
-   (run %{exe:../bin/emit_oop_registry.exe} --isa avx2))))
-
-(rule
- (targets oop_registry_avx512.h)
- (deps %{exe:../bin/emit_oop_registry.exe})
- (mode promote)
- (action
-  (with-stdout-to
-   oop_registry_avx512.h
-   (run %{exe:../bin/emit_oop_registry.exe} --isa avx512))))
-
 ; trig (real-to-real) registry (section 66): auto-emitted from Coverage.files
 ; "trig-<isa>". Uniform 3-arg ABI; kind selects slot, N indexes.
 

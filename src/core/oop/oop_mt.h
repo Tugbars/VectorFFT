@@ -1,7 +1,6 @@
 /* oop_mt.h - out-of-place c2c, multithreaded by lane slice.
  *
- * A [k0, k0+S) slice of the batch, run independently by each worker. Extracted
- * from vfft.c as migration step 9; see docs/design/refactor_migration_plan.md.
+ * A [k0, k0+S) slice of the batch, run independently by each worker.
  *
  * WHY ONLY TWO OF THE THREE KINDS THREAD
  * --------------------------------------
@@ -14,23 +13,17 @@
  *
  * BAILEY2 therefore runs single-threaded here, and that is a correctness
  * requirement rather than a tuning choice - a lane-split BAILEY2 would read
- * data another worker has not written yet. Threading it properly needs a
- * barrier on a different split axis, which is a separate piece of work, not a
- * flag on this one.
+ * data another worker has not written yet. Threading it needs a barrier on a
+ * different split axis.
  *
- * T <= 1 also runs whole-batch, and an odd K rides the last slab's tail (the
- * codelet-internal rem-aware path), so no lane is ever dropped.
+ * K < 8 and T <= 1 also run whole-batch, and an odd K rides the last slab's
+ * tail (the codelet-internal rem-aware path), so no lane is ever dropped.
  *
- * THE CALLER MUST PIN TO CORE 0
- * -----------------------------
- * Same contract as the generic K-split executor: the pool's workers spin
- * rather than sleep, so an unpinned caller competes with its own pool for the
- * core it is dispatching from.
+ * THE CALLER MUST PIN TO CORE 0: the pool's workers pin to cores 1..T-1 and
+ * spin rather than sleep, so an unpinned caller competes with its own pool.
  *
- * FLOOR-LEGAL BY CONSTRUCTION
- * ---------------------------
- * Takes the OOP plan by pointer and never a vfft_plan_s. No mutable file-scope
- * state, no wisdom. Does NOT pull engine/stride_executor.h.
+ * Takes the OOP plan by pointer and never a vfft_plan_s. No mutable
+ * file-scope state, no wisdom.
  */
 #ifndef VFFT_OOP_OOP_MT_H
 #define VFFT_OOP_OOP_MT_H
@@ -40,13 +33,7 @@
 #include "oop_auto.h"          /* vfft_oop_plan_t and the kind enum */
 #include "support/threads.h"   /* the pool: dispatch, wait_all, size, get_num_threads */
 
-/* ── OOP c2c multithreading (pool K-split). A lane-slice [k0,k0+S) is executed
- * independently by each worker. LEAF (one codelet) and MODEB (in-place dataflow on
- * the dst) are lane-independent END-TO-END, so K-split is exact. BAILEY2 is NOT: its
- * s1->s2 transpose reads across the R1 n1-blocks, so a lane-slice isn't independent —
- * it stays single-thread (proper MT needs a barrier on a different split dim). K<8 and
- * T<=1 also run whole-batch. Odd K rides the last slab's tail (the codelet is rem-aware).
- * GOTCHA (as with _c2c_mt): the CALLER must pin to core 0 — workers pin 1..T-1. ── */
+/* one lane slice [k0, k0+S), forward (LEAF or MODEB; see the header) */
 static void _oop_slice_fwd(const vfft_oop_plan_t *p, const double *sr, const double *si,
                            double *dr, double *di, size_t k0, size_t S)
 {
@@ -107,9 +94,9 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
             vfft_oop_execute_bwd(p, sr, si, dr, di);
         return;
     }
-    /* THE ENGINE'S OWN PART: the slicing. CEIL(K/T) then round to 8: floor
-     * dropped the last K%T lanes when floor(K/T)%8==0 (e.g. T=8,K=65). Slot 0
-     * is the caller's slice by the pool's convention. */
+    /* The engine's own part: the slicing. CEIL(K/T) rounded up to 8, so no
+     * tail lanes are dropped (floor would lose K%T lanes, e.g. T=8, K=65).
+     * Slot 0 is the caller's slice by the pool's convention. */
     size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     _oop_mt_arg_t a[STRIDE_POOL_MAX_DISPATCH];
     int n = 0;

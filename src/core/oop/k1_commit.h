@@ -1318,7 +1318,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         }
         rs.dst = zo; rs.src = zi; rs.nb = nb;
         {
-            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, ip ? _k1fs_mt_reseed : NULL, ip ? &rs : NULL, 0 }; /* THREADED arms: never paused (mt_measurement_parking_trap) */
+            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, ip ? _k1fs_mt_reseed : NULL, ip ? &rs : NULL, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
             vfft_race_run(&proto, arms, na, tns);
         }
         for (a = 1; a < na; a++) if (tns[a] < tns[best]) best = a;

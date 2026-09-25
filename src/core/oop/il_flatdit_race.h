@@ -1,5 +1,5 @@
 /* il_flatdit_race.h — the flat DIT's create-time races on the shared race
- * body (2026-09-07). Two axes the planner banks on the kind-3 row:
+ * body. Two axes the planner banks on the kind-3 row:
  *
  *   FORMS  il_forms= : per stage s >= 1, the tail letters t | n | o and the
  *                      msz letter m, decided in pipeline order (stage s is
@@ -9,11 +9,9 @@
  * Both arms are the WHOLE FORWARD with one stage's form (or the width)
  * flipped, so the table footprint, the walk and the last stage's scatter
  * are inside every sample. The sample is a batch of reps executions sized
- * to VFFT_ILFD_RACE_SAMPLE_NS: the single-call race this replaces timed ONE
- * stage per sample against the 100 ns QPC tick, so at N <= 512 every
- * sample read 0 / 100 / 200 ns, arms tied, and the strict "<" kept the
- * default — it banked a 1.50x slower tail form at 512 64.8 (t = 701 ns over
- * o = 467) and a 1.35x slower one at 2048 64.8.4. The property this header
+ * to VFFT_ILFD_RACE_SAMPLE_NS: a single-execution sample against the 100 ns
+ * QPC tick quantizes small N into ties (0 / 100 / 200 ns), and a tie keeps
+ * the default — that banks forms up to 1.5x slower. The property this header
  * guarantees is the counter: vfft_ilfd_race_short_samples() reads 0 when
  * no arm's batch was under VFFT_ILFD_RACE_SHORT_NS (2000 ticks).
  *
@@ -70,7 +68,7 @@ static void _ilfd_race_arm_run(void *ctx)
  * bound AT STEADY STATE: the planner paces with a 200 ms sleep, and a pilot
  * taken right after it sees a cold core (1.5-5x slow for the first
  * milliseconds), sizes reps short, and every warm arm then lands under the
- * target — the property counter caught exactly that. So: an untimed warm
+ * target. So: an untimed warm
  * of >= 2 ms first, then the per-execution cost as the MIN over three
  * batches of >= 200 us each, so the pilot never reads the tick either. */
 static inline int _ilfd_race_reps(vfft_ilfd_plan_t *p, const double *zin, double *zout)

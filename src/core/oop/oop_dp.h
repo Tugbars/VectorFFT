@@ -79,27 +79,15 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_modeb(
                                 best.nfactors, reg);
 }
 
-/* The full 2-axis joint chooser (CALIBRATION-TIME):
- *   Axis 2 (factorization within a kind):
- *     - native champion = the TUNER's best of {LEAF, all unmasked BAILEY2 pairs}
- *       (vfft_oop_tune_pairs measures them same-binary).
- *     - MODEB champion  = the DP planner's best multi-factor decomposition.
- *   Axis 1 (kind): measure the two champions round-robin, return the faster.
- * LEAF short-circuits (direct single codelet — always best at its N).
- *
- * This resolves the K-dependent kind choice by measurement (N=1024: BAILEY2
- * 32x32 wins at K=120; MODEB 4^5 wins at K=256, where every unmasked BAILEY2
- * pair aliases). Cache its verdict — (N,K) -> {kind, factorization} — in OOP
- * wisdom so the runtime path is a pure lookup with no measurement. */
 /* Build BOTH OOP champions for (N,K) and time each (rdtsc min-of-9) — the raw material for the
  * order axis AND the DEFAULT joint pick. *out_nat = the native champion (LEAF or best BAILEY2 pair =
  * NATURAL order); *out_mb = the DP-MODEB champion (SCRAMBLED order). Either may be NULL (e.g. no
  * native candidate at odd K). *out_*_ns = measured cycles (comparable on one clock; 1e30 if a
  * champion is absent or timing OOMs). The caller persists each present champion as its own
  * (N,K,kind-class) wisdom cell, so every config.order is served from wisdom without re-tuning.
- * NOTE: unlike the old create_dp_best, no LEAF short-circuit — LEAF is MEASURED against MODEB so the
- * create-time pick (min-ns) matches the wisdom-lookup pick (lookup_ord min-ns). LEAF still wins its
- * small-N cells on time; the extra MODEB build there is cheap and one-off. */
+ * No LEAF short-circuit: LEAF is MEASURED against MODEB so the create-time pick (min-ns) matches
+ * the wisdom-lookup pick (lookup_ord min-ns). LEAF still wins its small-N cells on time; the extra
+ * MODEB build there is cheap and one-off. */
 static inline void vfft_oop_plan_create_champions(
     int N, size_t K, vfft_proto_dp_context_t *dp, const vfft_proto_registry_t *reg,
     vfft_oop_plan_t **out_nat, double *out_nat_ns,
@@ -152,7 +140,12 @@ static inline void vfft_oop_plan_create_champions(
     VFFT_OOP_AFREE(sr); VFFT_OOP_AFREE(si); VFFT_OOP_AFREE(dr); VFFT_OOP_AFREE(di);
 }
 
-/* DEFAULT (order-agnostic) joint chooser: both champions, keep the faster. Thin over champions(). */
+/* The DEFAULT (order-agnostic) 2-axis joint chooser (CALIBRATION-TIME), thin over champions():
+ *   Axis 2 (factorization within a kind): the native champion is the TUNER's best of {LEAF, all
+ *   unmasked BAILEY2 pairs}; the MODEB champion is the DP planner's best decomposition.
+ *   Axis 1 (kind): keep the faster.
+ * This resolves the K-dependent kind choice by measurement (N=1024: BAILEY2 32x32 wins at K=120;
+ * MODEB 4^5 wins at K=256, where every unmasked BAILEY2 pair aliases). */
 static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_best(
     int N, size_t K, vfft_proto_dp_context_t *dp,
     const vfft_proto_registry_t *reg)

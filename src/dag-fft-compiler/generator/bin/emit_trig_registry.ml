@@ -1,6 +1,6 @@
 (* emit_trig_registry.ml — auto-generate the trig (real-to-real) registry.
  *
- * Sibling to emit_rfft_registry.ml / emit_oop_registry.ml. Walks
+ * Sibling to emit_rfft_registry.ml. Walks
  * Coverage.files "trig-<isa>" and emits a registrar filling
  * trig_codelets_t. One uniform 3-arg ABI for the whole family, so every
  * slot is the same fn type; the kind selects WHICH slot, the size is the

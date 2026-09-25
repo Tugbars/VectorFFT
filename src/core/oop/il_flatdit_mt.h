@@ -1,5 +1,5 @@
 /* il_flatdit_mt.h — the FLAT mixed-radix DIT's intra-transform threading
- * (2026-09-07; docs/design/3D_mt_il_strategy.md declares the method).
+ * (docs/design/3D_mt_il_strategy.md declares the method).
  *
  * Every stage of the bound executor (il_flatdit.h) is a set of independent
  * UNITS — the leaf's columns, a mid stage's blocks, a tail stage's groups —
@@ -284,8 +284,7 @@ static inline int vfft_ilfd_mt_race(vfft_ilfd_plan_t *p, int T, int tw0,
         t0 = _il_ab_now(); vfft_ilfd_execute_fwd(p, zin, zout); t0 = _il_ab_now() - t0;
         reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
         if (reps < 2) reps = 2;
-        if (reps > (1 << 19)) reps = 1 << 19;   /* 20 ms at 128 is 285k executes; the old
-                                                 * cap of 256 left an 18 us sample there */
+        if (reps > (1 << 19)) reps = 1 << 19;   /* 20 ms at N=128 is 285k executes */
     }
 #define ILFD_ARM(MT, TW, NAME) do { \
         cx[na].p = p; cx[na].zin = zin; cx[na].zout = zout; cx[na].mt = (MT); cx[na].tw = (TW); cx[na].ok = 1; \
@@ -302,7 +301,7 @@ static inline int vfft_ilfd_mt_race(vfft_ilfd_plan_t *p, int T, int tw0,
     }
 #undef ILFD_ARM
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (mt_measurement_parking_trap) */
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
         vfft_race_run(&proto, arms, na, ns);
     }
     for (a = 1; a < na; a++)

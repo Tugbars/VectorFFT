@@ -139,14 +139,14 @@ if [ -z "${SKIP_BUILD:-}" ]; then
   ( cd "$GEN" && dune build \
       bin/gen_radix.exe bin/gen_set.exe bin/dump_ir.exe \
       bin/emit_registry_h.exe bin/emit_executor_h.exe bin/emit_rfft_registry.exe \
-      bin/emit_oop_registry.exe bin/emit_trig_registry.exe \
+      bin/emit_trig_registry.exe \
       bin/emit_strided_registry.exe bin/emit_c2r_registry.exe \
       bin/emit_il_registry.exe \
       bin/dbg_eval.exe \
       bin_test/cx_pipeline_test.exe bin_test/z11probe.exe \
       bin_test/argv_roundtrip.exe \
       ) \
-    || { echo "FATAL: scoped 15-target dune build failed"; exit 2; }
+    || { echo "FATAL: scoped 14-target dune build failed"; exit 2; }
   # the cx stack's only unit gate — build AND run it (it was silently
   # never built for weeks; the on-disk "ALL PASS" exe was stale).
   "$GEN/_build/default/bin_test/cx_pipeline_test.exe" > "$WORK/cx_test.log" 2>&1 \
