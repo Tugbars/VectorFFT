@@ -1,8 +1,5 @@
 /* zr2c_build.h - the interleaved-CCE real route ("kind 5").
  *
- * Extracted from vfft.c as migration step 18; see
- * docs/design/refactor_migration_plan.md.
- *
  * THE IDEA
  * --------
  * A real transform of even N, K=1, on interleaved data does not need real
@@ -20,13 +17,8 @@
  *                            separate plane.
  *   route 1  child_nat_ip  - an in-place child.
  *
- * The pick is per (transform, placement) and banked in the real shard. It is
- * worth knowing that this axis was NOT always raced: the shipped kind-5 rows
- * were migrated with a structural rule (place=oop -> route 0) and no
- * measurement behind them, and where the race disagrees it is worth up to
- * 27-35% on c2r out-of-place. The mechanism here is sound; some of the banked
- * verdicts it reads are stale, which is a wisdom-campaign item and not a
- * property of this code.
+ * The pick is per (transform, placement), raced and banked in the real shard;
+ * where the two routes disagree the gap reaches 27-35% (c2r out-of-place).
  *
  * A CHILD PLAN CARRIES ITS OWN VERDICTS
  * -------------------------------------
@@ -35,16 +27,12 @@
  * verdict sets: this route, and everything the child decided underneath it.
  * That is why a 1D IL r2c fingerprint shows a zr2c CHILD node.
  *
- * INCLUSION CONTRACT - AND ONE BACK-EDGE WORTH NAMING
- * ---------------------------------------------------
+ * INCLUSION CONTRACT
+ * ------------------
  * Include after the engine prelude, after vfft_internal.h, and specifically
  * AFTER _vw2_persist: the kind-5 banker calls it, and it is a general wisdom
- * helper that stays in vfft.c. That is a back-edge of the same shape
- * _vfft_warn had before step 6a moved it to support/, and it is the reason
- * this header is not yet freely placeable. Moving _vw2_persist into a support
- * header would remove the constraint; it was left alone here because it is
- * used from four call sites far above this point and belongs to a different
- * step's scope.
+ * helper that stays in vfft.c. Moving _vw2_persist into a support header would
+ * make this header freely placeable.
  */
 #ifndef VFFT_TRANSFORMS_REAL_ZR2C_BUILD_H
 #define VFFT_TRANSFORMS_REAL_ZR2C_BUILD_H
@@ -80,18 +68,16 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
     c2.nthreads = cfg->nthreads;
     c2.wisdom = cfg->wisdom;
     /* 🔴 PASS THE WISDOM-LIFECYCLE FIELDS THROUGH. The child does almost
-     * all of the work in this composite -- the pair, il_kv, the dir=bwd
-     * verdict and the @natoop mode all live in ITS cell, not in the route
-     * bit. Dropping these narrowed two documented public contracts to the
-     * route bit alone:
-     *   recalibrate  ("1 = re-measure + overwrite", vfft.h:277) re-raced only
-     *                the route, while every child verdict silently replayed.
-     *   wisdom_write (the write guard, vfft.h:278) never reached the child,
-     *                so a caller who asked for persistence got the route bit
+     * all of the work in this composite -- its verdicts live in ITS cell,
+     * not in the route bit. Without them two documented public contracts
+     * would narrow to the route bit alone:
+     *   recalibrate  ("re-measure + overwrite", vfft.h) would re-race only
+     *                the route while every child verdict silently replays;
+     *   wisdom_write (the write guard) would never reach the child, so a
+     *                caller who asked for persistence gets the route bit
      *                banked and nothing else.
-     * Narrowing a user-visible capability is a contract violation, not a
-     * tuning choice. Note the cost is real and intended: a recalibrate now
-     * re-plans the child on BOTH arms of the route race. */
+     * The cost is real and intended: a recalibrate re-plans the child on
+     * BOTH arms of the route race. */
     c2.recalibrate = cfg->recalibrate;
     c2.wisdom_write = cfg->wisdom_write;
     struct vfft_plan_s *child = (struct vfft_plan_s *)vfft_create(&c2);
@@ -105,8 +91,8 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
      * AVX2 kernels: the fold reads aff and writes scr, then the child reads
      * scr end to end. malloc gives 16 bytes on this toolchain, so every
      * 32-byte access that straddles a 64-byte line costs an extra line touch.
-     * The kernels use loadu/storeu so this was never a CORRECTNESS issue,
-     * which is why it survived -- it is pure throughput.
+     * The kernels use loadu/storeu, so this is pure throughput, not
+     * correctness.
      *
      * Measured, N=2048, front-door arms: every route-0 arm that TOUCHES the
      * scratch ran slow (r2c IP 1469-1528 ns, c2r OOP 1374-1688, c2r IP
@@ -148,7 +134,7 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
 }
 
 /* execute the composite. 2 transforms x 2 placements x 2 routes; the folds
- * are in-place-safe by construction (zr2c_gate.c), scratch only where a
+ * are in-place-safe by construction (zr2c.h), scratch only where a
  * route-0 shape needs a second plane. */
 static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
 {
@@ -184,13 +170,13 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
         else
         {
             /* 🔴 `dre != sre`, NOT `placement == OUTOFPLACE`. Route 1 runs
-             * the child on dre, so gating the copy on PLACEMENT meant an
-             * in-place plan called with a distinct dre transformed whatever
-             * was already in dre and never read sre at all -- measured
-             * relerr 1.000, silently. Route 0 reads sre and is correct under
-             * the identical call. Keying on the POINTERS makes the two
-             * routes behave the same way, so which one a cell banked can no
-             * longer change the answer. */
+             * the child on dre, so gating the copy on PLACEMENT would make
+             * an in-place plan called with a distinct dre transform whatever
+             * was already in dre and never read sre at all (relerr 1.000,
+             * silently). Route 0 reads sre and is correct under the
+             * identical call. Keying on the POINTERS makes the two routes
+             * behave the same way, so which one a cell banked cannot change
+             * the answer. */
             if (dre != sre)
                 memcpy(dre, sre, (size_t)N * sizeof(double));
             vfft_execute(ch, VFFT_FORWARD, dre, NULL, dre, NULL);
@@ -221,9 +207,9 @@ static void _bank_zr2c(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
 {
     /* 🔴 CHECK THE RETURN. The banker can decline (VW2_EOWNED: the cell
      * belongs to another engine) or fail the codec, and it says so. Firing
-     * the persistence seam anyway wrote a file for a bank that never
-     * happened, and hid the decline -- which is exactly how two engines end
-     * up quietly fighting over one key. */
+     * the persistence seam anyway would write a file for a bank that never
+     * happened and hide the decline -- which is how two engines end up
+     * quietly fighting over one key. */
     int rc = vw2_oop_bank_zr2c_slot(&W->vw2, N, (slot >> 1) & 1, slot & 1,
                                     route, ns);
     if (rc != VW2_OK)
@@ -236,13 +222,9 @@ static void _bank_zr2c(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     _vw2_persist(W, cfg);
 }
 
-/* forward decls: the race borrows the §6a59 timer/median helpers, defined
- * with the IL A/B machinery further down. */
+/* forward decl: the race's timer (support/race_timing.h). */
 static double _il_ab_now(void);
 
-/* Race the FULL composite through _exec_zr2c; 3% hysteresis toward the
- * structural default. Both arms are gated correct (zr2c_fd_gate.c).
- * See docs/design/vfft_front_door.md. */
 /* the two arms of the zr2c route race: two finished handles */
 typedef struct { struct vfft_plan_s *h; const double *s0; double *b; } _zr2c_arm_t;
 static void _zr2c_arm_run(void *v)
@@ -250,6 +232,9 @@ static void _zr2c_arm_run(void *v)
     _zr2c_arm_t *c = (_zr2c_arm_t *)v;
     _exec_zr2c(c->h, c->s0, c->b);
 }
+/* Race the FULL composite through _exec_zr2c; 3% hysteresis toward the
+ * structural default. Both arms are gated correct
+ * (build_tuned/benches/zr2c_fd_gate.c). See docs/design/vfft_front_door.md. */
 static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
                                        struct vfft_wisdom_s *W)
 {

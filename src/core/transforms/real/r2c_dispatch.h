@@ -1,14 +1,14 @@
 /* r2c_dispatch.h — top-level real-to-complex (r2c) entry point.
  *
  * ONE call to plan a forward real FFT of length N over a K-wide batch.
- * Chooses the faster executor automatically:
+ * Chooses the executor:
  *
- *   PRIMARY:  the rfft path (rfft.h). 
+ *   the rfft path (rfft.h) at low K;
  *
- *   FALLBACK: the stride r2c path (r2c.h: stride_r2c_plan / stride_execute_r2c)
- *             — pack(real->complex N/2) + c2c-128 + Hermitian fold. Used only
- *             when rfft cannot cover the request (see "When the fallback
- *             fires" below).
+ *   the stride r2c path (r2c.h: stride_r2c_plan / stride_execute_r2c)
+ *             — pack(real->complex N/2) + c2c(N/2) + Hermitian fold — at
+ *             high K (SPLIT only), and wherever rfft cannot cover the
+ *             request (see "Routing" below).
  *
  * WHY A DISPATCHER. The two paths are separate APIs with different plan
  * types, registries, and — critically — different OUTPUT LAYOUTS:
@@ -18,9 +18,9 @@
  * The caller states the layout it wants (VFFT_R2C_PACKED or VFFT_R2C_SPLIT);
  * the dispatcher routes to a path that can produce it.
  *
- * SCOPE (v1): forward only; even N; K % 8 == 0 (AVX-512 lane multiple);
- * factorizable N over the rfft codelet radix set. Bwd, odd N, and prime N
- * land on the stride fallback or return NULL per the rules below.
+ * SCOPE: forward only (c2r_dispatch.h is the backward); any K >= 1. N the rfft
+ * radix set cannot factor lands on the stride path or returns NULL per the
+ * rules below.
  */
 #ifndef VFFT_R2C_DISPATCH_H
 #define VFFT_R2C_DISPATCH_H
@@ -62,35 +62,34 @@ typedef struct
     size_t K;
     rfft_plan_t *rfft;     /* set iff path == RFFT */
     stride_plan_t *stride; /* set iff path == STRIDE */
-    double *ztmp;          /* §6a24: lazy 2*H*K temp for rfft-path z convert-around */
+    double *ztmp;          /* lazy temp for the packed-path z convert-around */
 #ifdef VFFT_USE_JIT
     /* JIT-resolved rfft executor for the winning plan (NULL -> use the generic
      * rfft executor). Resolved at create-time = compiled+cached on first build
      * (the "compile the winner after deciding" step). One per layout. */
     rfft_jit_fn jit_packed;
     rfft_jit_nat_fn jit_natural;
-    rfft_jit_natz_fn jit_natural_z;   /* §6a27: z-out jit (fwd_z route) */
+    rfft_jit_natz_fn jit_natural_z;   /* z-out jit (fwd_z route) */
 #endif
 } vfft_r2c_plan_t;
 
-/* Optional rfft wisdom (calibrated per-cell factorization + per-stage variant). A
- * caller that loaded rfft_wisdom.txt sets this; vfft_r2c_plan_create then builds the
- * calibrated plan on a hit, else the fewest-stage heuristic. NULL-safe. */
+/* Optional rfft wisdom (calibrated per-cell factorization + per-stage variant).
+ * real_create.h sets it to the store's rfft cells; vfft_r2c_plan_create then builds
+ * the calibrated plan on a hit, else the fewest-stage heuristic. NULL-safe. */
 static const vfft_proto_wisdom_t *_vfft_r2c_wis = NULL;
 static inline void vfft_r2c_dispatch_set_wisdom(const vfft_proto_wisdom_t *w) { _vfft_r2c_wis = w; }
 
-/* Optional C2C wisdom for the stride-fallback INNER (N/2) plan. Distinct from the
+/* Optional C2C wisdom for the stride path's INNER (N/2) plan. Distinct from the
  * rfft wisdom above: the decoupled path's inner is a complex FFT of size N/2, so it
- * wants c2c wisdom (spike_wisdom.txt), not rfft wisdom. NULL-safe: without it the
- * inner falls back to the factorizer default (often degenerate, e.g. (64,2)). */
+ * wants the c2c cells, not rfft wisdom. NULL-safe: without it the inner falls back
+ * to the factorizer default (often degenerate, e.g. (64,2)). */
 static const vfft_proto_wisdom_t *_vfft_r2c_c2c_wis = NULL;
 static inline void vfft_r2c_dispatch_set_c2c_wisdom(const vfft_proto_wisdom_t *w) { _vfft_r2c_c2c_wis = w; }
 
 /* High-K hybrid threshold: when K >= this AND layout==SPLIT AND a c2c registry is
  * available, the decoupled stride path (pack+c2c(N/2)+Hermitian fold) is PREFERRED
  * over rfft — it wins big at high K, while rfft wins at low K. Default 32 is the
- * measured N=256 crossover (r2c dispatch bench, baseline/x ratios, higher is
- * faster):
+ * measured N=256 crossover (speed ratios, higher is faster):
  *   K :    8      16     32     64     128    256
  *   rfft : 1.07x  1.03x  0.67x  0.61x  0.58x  0.50x
  *   strd : 0.73x  0.88x  0.99x  0.68x  0.66x  1.01x   (K>=32 strd>rfft)
@@ -102,7 +101,7 @@ static inline size_t vfft_r2c_dispatch_get_decouple_min_k(void) { return _vfft_r
 /* ---- rfft factorization chooser -------------------------------------------
  * Pick the FEWEST-stage factorization of N over the radixes the rfft codelet
  * set covers, preferring larger radixes. Fewer stages wins (the empirical
- * U-shaped stage-count rule: doc 60 §4 — (8,32) beats (4,4,16) beats deeper).
+ * U-shaped stage-count rule — (8,32) beats (4,4,16) beats deeper).
  * Returns nf (>=1) and fills factors[], or 0 if N is not coverable.
  *
  * `have[r]` must be non-zero for each radix r the caller has registered
@@ -116,7 +115,7 @@ static inline int vfft_r2c_choose_rfft_factors(
     /* STAGE-coverable radixes (need BOTH r2cf AND hc2hc). 32 is LEAF-ONLY
      * (no hc2hc[32]) so it is NOT a general stage radix — including it makes the
      * greedy chooser pick 32 as factors[0] (a stage) and fail. Leaf-32 plans
-     * (e.g. the (8,32) doc-60 winner) come from the calibrator/wisdom, not here. */
+     * (e.g. the (8,32) winner) come from the calibrator/wisdom, not here. */
     static const unsigned char default_have[VFFT_RFFT_MAX_RADIX + 1] = {
         [2] = 1, [3] = 1, [4] = 1, [5] = 1, [7] = 1, [8] = 1, [16] = 1};
     if (!have)
@@ -155,27 +154,6 @@ static inline int vfft_r2c_choose_rfft_factors(
     return nf;
 }
 
-/* ---- top-level plan creation ----------------------------------------------
- * N, K            : real transform length and batch width (K % 8 == 0).
- * layout          : desired output layout.
- * rfft_reg        : rfft codelet registry (r2cf + hc2hc families). May be NULL
- *                   to force the stride fallback.
- * have            : per-radix availability for the chooser (see above). May be
- *                   NULL; then the chooser assumes the standard set {2,3,4,5,7,
- *                   8,16,32} are all present.
- * c2c_reg         : c2c registry for the stride fallback's inner plan. May be
- *                   NULL only if you are certain rfft will cover the request.
- *
- * Routing:
- *   1. If rfft_reg != NULL and the chooser covers N -> RFFT path. (rfft serves
- *      both PACKED and SPLIT, the latter via its natural terminator.)
- *   2. Else -> STRIDE path (SPLIT only). If layout == PACKED here, returns NULL
- *      (stride cannot pack; caller must either accept SPLIT or provide rfft_reg).
- *   3. If neither can build -> NULL.
- */
-/* Build the decoupled stride r2c plan over N (even): wisdom-best inner c2c(N/2)
- * + pack-fused first stage + general Hermitian recombine. Returns NULL if N is
- * odd-without-support or the inner/plan can't build. SPLIT layout only. */
 /* Pick the r2c block width (B). The stride r2c MT path (_r2c_execute_fwd) splits
  * the K-batch into n_blocks = K/block_K blocks across the pool. block_K = K is a
  * SINGLE block => serial; for MT we need block_K < K (~T blocks). Constraints:
@@ -198,17 +176,18 @@ static inline size_t _vfft_r2c_block_k(size_t K)
     return K;         /* no clean sub-block: stay serial */
 }
 
+/* Build the decoupled stride r2c plan over N: wisdom-best inner c2c(N/2) (N-point
+ * for odd N) + pack-fused first stage + general Hermitian recombine. Returns NULL
+ * if the inner/plan can't build. SPLIT layout only. */
 static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
                                                     vfft_proto_registry_t *c2c_reg)
 {
     if (!c2c_reg)
         return NULL;
-    /* Arbitrary-K: the decoupled-stride path now handles a non-VW-aligned K. _vfft_r2c_block_k
-     * already returns block_K=K (single serial block) for such K, and the stride r2c workers
-     * route an odd B through the explicit-pack fallback (unaligned scratch + full inner with the
-     * rem-aware codelet tail) — see _r2c_worker_fwd/_bwd/_fwd_oop in r2c.h. (The old K%8 gate here
-     * forced odd K onto the rfft/natural cascade; that route still works and is chosen for K below
-     * the decouple threshold, but the STRIDE variant is no longer gated out.) */
+    /* Arbitrary-K: _vfft_r2c_block_k returns block_K=K (single serial block) for a
+     * non-VW-aligned K, and the stride r2c workers carry odd B (the rem-aware codelet
+     * tail; the bwd routes it through the explicit-pack fallback) — see
+     * _r2c_worker_fwd/_bwd/_fwd_oop in r2c.h. */
     /* MT: build the inner c2c at block_K (the per-block batch width), not full K.
      * block_K often lands on a calibrated cell too (e.g. K=256 -> 32 @T8), so the
      * c2c wisdom usually still hits; otherwise it's the factorizer default at block_K. */
@@ -216,13 +195,11 @@ static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
     /* THE INNER SIZE IS A FUNCTION OF PARITY, and getting it wrong is silent.
      * EVEN N uses the half-N embedding, so the inner is an N/2-point complex
      * FFT. ODD N has no such embedding: stride_r2c_plan routes it to
-     * _r2c_plan_odd, whose contract states "odd: Phase-1 full-N embedding --
-     * inner_plan must then be N-point" (r2c.h:1281). Building N/2 for both
-     * handed the odd path a half-size inner: every component succeeded, the
-     * composition computed the wrong transform, and nothing warned.
-     * Reachable for any odd N the rfft radix set cannot factor -- i.e. the
-     * primes >= 11, since rfft_registry_avx2.h has no radix 11/13/17/19 while
-     * registry_avx2.h does, which is exactly why those N fall through to here.
+     * _r2c_plan_odd, whose inner_plan must be N-point. A half-size inner
+     * there builds, runs and computes the wrong transform without a warning.
+     * Reachable for any odd N the rfft radix set cannot factor -- the primes
+     * >= 11 (the rfft registry has no radix 11/13/17/19; the c2c registry
+     * does).
      *
      * Odd is also whole-batch serial ("(void)block_K" in _r2c_plan_odd), so
      * its inner must carry the FULL K, not a sub-block width. */
@@ -254,14 +231,32 @@ static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
     return sp;
 }
 
+/* ---- top-level plan creation ----------------------------------------------
+ * N, K            : real transform length and batch width (any K >= 1).
+ * layout          : desired output layout.
+ * rfft_reg        : rfft codelet registry (r2cf + hc2hc families). May be NULL
+ *                   to force the stride path.
+ * have            : per-radix availability for the chooser (see above). May be
+ *                   NULL; then the chooser assumes the standard stage set
+ *                   {2,3,4,5,7,8,16} (32 is leaf-only).
+ * c2c_reg         : c2c registry for the stride path's inner plan. May be
+ *                   NULL only if you are certain rfft will cover the request.
+ *
+ * Routing:
+ *   1. SPLIT, even N, K >= the decouple threshold and c2c_reg present ->
+ *      STRIDE first (the high-K winner).
+ *   2. If rfft_reg != NULL and the chooser covers N -> RFFT path. (rfft serves
+ *      both PACKED and SPLIT, the latter via its natural terminator.)
+ *   3. Else -> STRIDE path (SPLIT only). If layout == PACKED here, returns NULL
+ *      (stride cannot pack; caller must either accept SPLIT or provide rfft_reg).
+ *   4. If neither can build -> NULL.
+ */
 static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
     int N, size_t K, vfft_r2c_layout_t layout,
     const rfft_codelets_t *rfft_reg, const unsigned char *have,
     vfft_proto_registry_t *c2c_reg)
 {
-    if (N < 2 || K == 0) /* arbitrary-K: rfft cascade carries the rem-aware tail; the
-                          * stride branch below stays K%8-gated (via _vfft_r2c_build_stride),
-                          * so odd K falls through to rfft. */
+    if (N < 2 || K == 0) /* arbitrary K: both paths carry a rem-aware tail */
         return NULL;
 
     vfft_r2c_plan_t *p = (vfft_r2c_plan_t *)calloc(1, sizeof(*p));
@@ -294,7 +289,7 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
         int nf = 0;
         const int *variant = NULL; /* NULL => default policy in rfft_plan_create_ex */
         /* WISDOM-FIRST: a calibrated entry pins factorization + per-stage variant;
-         * else the fewest-stage heuristic (today's behavior, variant=NULL). */
+         * else the fewest-stage heuristic (variant=NULL). */
         const vfft_proto_wisdom_entry_t *we =
             _vfft_r2c_wis ? vfft_proto_wisdom_lookup(_vfft_r2c_wis, N, (size_t)K) : NULL;
         if (we && we->nf >= 1 && we->nf <= VFFT_RFFT_MAX_STAGES)
@@ -334,15 +329,13 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
                  * without hc2c_log3, or no toolchain). */
                 if (p->layout == VFFT_R2C_SPLIT)
                 {
-                    /* §6a27: the natural jit is NOT bound — measured net
-                     * negative across the rfft path's whole K domain
-                     * (K=4: +9.8% over generic, K=16: +1.0%; K>=64 routes
-                     * to STRIDE). Per-k terminator tax at small vl exceeds
-                     * the cascade gain. The natural-z jit inherits the same
-                     * per-k sin plus a ~5x-slower interleave in the jit TU
-                     * (unexplained codegen, not pursued — mode closed).
-                     * Resolvers, emitter modes, and the PIC codelet rsp all
-                     * remain in place for revisit; see §6a27 evidence. */
+                    /* The natural jit is NOT bound — measured net negative
+                     * across the rfft path's whole K domain (K=4: +9.8% over
+                     * generic, K=16: +1.0%; K>=64 routes to STRIDE): the
+                     * per-k terminator tax at small vl exceeds the cascade
+                     * gain. The natural-z jit carries the same per-k cost
+                     * plus a ~5x-slower interleave in the jit TU. The
+                     * resolvers and emitter modes remain. */
                     p->jit_natural = NULL;
                     p->jit_natural_z = NULL;
                 }
@@ -381,8 +374,7 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
  * disjoint lane slab via rfft_execute_fwd_natural_range (the shared planes/nat_k0
  * are lane-indexed -> disjoint -> race-free). Small batches (K<16 or T<=1, i.e.
  * below the lane-split SIMD floor) fall back to the folded single-thread executor.
- * The MT path uses the generic ranged executor (not JIT — JIT covers the folded ST
- * path; a range-aware JIT is a follow-up). */
+ * The MT path uses the generic ranged executor. */
 typedef struct
 {
     const rfft_plan_t *p;
@@ -407,9 +399,8 @@ static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, doubl
     }
     /* CEIL, not floor: total coverage is T*S, so a floor slab whose
      * floor(K/T) is already a multiple of 8 leaves the top K - T*S lanes
-     * assigned to NO worker and silently unwritten (K=17,T=2 dropped lane
-     * 16; benches/mt_lane_drop_probe.c). Same fix, same reason, as the
-     * three sizers in vfft.c (:1869, :2012, :2153). */
+     * assigned to NO worker and silently unwritten (K=17,T=2 would drop
+     * lane 16). The same rule as every K-split sizer in the tree. */
     size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     if (S == 0)
         S = 8;
@@ -474,13 +465,11 @@ static inline void vfft_r2c_execute_fwd(
     }
 }
 
-/* §6a26: forward with INTERLEAVED (CCE) spectrum output — z holds
- * (N/2+1)*K complex pairs at z[2*(f*K+t)]. STRIDE: native zo-mode postprocess
- * (§6a24). RFFT/SPLIT: native interleaved stage-0 terminator (§6a26 — the
- * split k0/hcn/mid machinery redirected through zscr rows, no convert pass).
- * PACKED (unreachable from the public path): packed halfcomplex -> CCE unpack
- * via a lazy ztmp; this also fixes the pre-§6a26 convert-around here, which
- * wrongly assumed split planes for packed plans. */
+/* forward with INTERLEAVED (CCE) spectrum output — z holds (N/2+1)*K complex
+ * pairs at z[2*(f*K+t)]. STRIDE: native zo-mode postprocess. RFFT/SPLIT: native
+ * interleaved stage-0 terminator (the split k0/hcn/mid machinery redirected
+ * through zscr rows, no convert pass). PACKED (unreachable from the public
+ * path): packed halfcomplex -> CCE unpack via a lazy ztmp. */
 static inline void vfft_r2c_execute_fwd_z(
     vfft_r2c_plan_t *p, const double *real_in, double *z)
 {

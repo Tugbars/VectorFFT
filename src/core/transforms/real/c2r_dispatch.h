@@ -1,15 +1,13 @@
 /* c2r_dispatch.h — wisdom-first entry point for the backward real FFT (c2r).
  *
- * Mirror of r2c_dispatch.h's wisdom path, minus the rfft-vs-stride routing
- * (c2r has a single executor, c2r.h). A caller that loaded c2r_wisdom.txt sets
- * the wisdom pointer; vfft_c2r_plan_create then builds the calibrated
- * factorization + per-stage variant on a hit, else the fewest-stage heuristic
- * (variant=NULL, the legacy default policy). NULL-safe — with no wisdom set this
- * is exactly today's c2r_plan_create behavior.
+ * vfft_c2r_plan_create builds the calibrated factorization + per-stage variant
+ * from the wisdom pointer on a hit, else the fewest-stage heuristic
+ * (variant=NULL, the default policy). No caller in the library sets that
+ * pointer (vfft_c2r_dispatch_set_wisdom), so the packed c2r plan is always
+ * the heuristic's; the ROUTE (natural vs stride) is the raced, banked axis.
  *
- * c2r and r2c are calibrated SEPARATELY (different codelets: c2r uses the
- * DIF-backward hc2hc family, so its best per-stage variant can differ) — hence a
- * distinct c2r_wisdom.txt, written by calibrate_c2r.c.
+ * c2r and r2c factorizations are separate cells (different codelets: c2r uses
+ * the DIF-backward hc2hc family, so its best per-stage variant can differ).
  */
 #ifndef VFFT_C2R_DISPATCH_H
 #define VFFT_C2R_DISPATCH_H
@@ -51,7 +49,7 @@ static inline int vfft_c2r_choose_factors(int N, int *factors, int max_nf)
  * hc2hc families). Returns NULL if N is not coverable. */
 static inline c2r_plan_t *vfft_c2r_plan_create(int N, size_t K, const rfft_codelets_t *reg)
 {
-    if (N < 2 || K == 0 || !reg) return NULL; /* arbitrary-K: rem-aware tail handles K % VW != 0 (was K%8-gated) */
+    if (N < 2 || K == 0 || !reg) return NULL; /* arbitrary-K: rem-aware tail handles K % VW != 0 */
     int factors[VFFT_RFFT_MAX_STAGES];
     int nf = 0;
     const int *variant = NULL;   /* NULL => default policy in c2r_plan_create_ex */
@@ -111,7 +109,7 @@ typedef struct {
     size_t            K;
     c2r_plan_t       *packed;   /* set iff layout == PACKED or NATURAL (same plan type) */
     stride_plan_t    *stride;   /* set iff layout == SPLIT  */
-    double *ztmp; /* §6a24: lazy 2*H*K temp for natural-path z convert-around */
+    double *ztmp; /* lazy temp for the packed/split z convert-around */
 } vfft_c2r_disp_t;
 
 /* Best SPLIT-input layout for (N,K): NATURAL (fast packed cascade on split input)
@@ -166,8 +164,8 @@ static inline void c2r_natural_mt(const c2r_plan_t *p, const double *re, const d
     size_t K = p->base->K;
     int T = stride_pool_workers_for(0); /* the pool's one clamp */
     if (T <= 1 || K < 16) { c2r_execute_natural(p, re, im, out, zi); return; }
-    /* CEIL, not floor -- see the r2c twin in r2c_dispatch.h. Proven to
-     * drop lanes: c2r N=512 K=25 T=3 left lane 24 unwritten. */
+    /* CEIL, not floor -- see the r2c twin in r2c_dispatch.h (a floor split
+     * drops lanes: c2r N=512 K=25 T=3 would leave lane 24 unwritten). */
     size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     if (S == 0) S = 8;
     /* slot 0 is the caller's [0, min(S,K)); worker t takes [t*S, ..) */
@@ -200,11 +198,6 @@ static inline void vfft_c2r_disp_execute(const vfft_c2r_disp_t *p,
         stride_execute_c2r(p->stride, in_a, in_b, out);
 }
 
-/* §6a24: inverse with INTERLEAVED spectrum input (z[2*(f*K+t)]). STRIDE:
- * native zi-mode preprocess, real_out via the in-place bwd (im arg unused in
- * zi mode — audited: worker_bwd touches im only through _r2c_preprocess).
- * NATURAL: deinterleave into a lazy temp, then the normal path. PACKED is
- * unreachable from the public path. */
 /* ── ROW-MODE backward door (the rowsplit fusion mirror): transform t's
  * interleaved CCE row at zrows + t*zp -> its REAL row at xrows + t*xp.
  * The rows are unzipped ONCE into the plan's lane-major working planes
@@ -236,6 +229,11 @@ static inline int vfft_c2r_disp_execute_rowz(
     return 0;
 }
 
+/* inverse with INTERLEAVED spectrum input (z[2*(f*K+t)]). STRIDE: native
+ * zi-mode preprocess, real_out via the in-place bwd (im arg unused in zi mode:
+ * worker_bwd touches im only through _r2c_preprocess). NATURAL: the natural
+ * initiator's zi mode. PACKED (unreachable from the public path): a CCE ->
+ * packed halfcomplex pack into a lazy temp. */
 static inline void vfft_c2r_disp_execute_z(
     vfft_c2r_disp_t *p, const double *z, double *out)
 {
@@ -251,16 +249,16 @@ static inline void vfft_c2r_disp_execute_z(
     size_t H = N / 2 + 1, HK = H * K;
     if (p->layout == VFFT_C2R_NATURAL)
     {
-        /* §6a28: native interleaved input — the natural initiator's zi mode
+        /* native interleaved input — the natural initiator's zi mode
          * (chunked deinterleave through the base plan's zscr; no ztmp pass). */
         c2r_natural_mt(p->packed, NULL, NULL, out, z);
         return;
     }
     if (p->layout == VFFT_C2R_PACKED)
     {
-        /* §6a28: CCE -> packed halfcomplex pack (fixes the pre-§6a28 latent
-         * bug where the convert-around fed split planes to the packed-input
-         * entry). Packed layout: re rows 0..nh, then im rows nh-1..1. */
+        /* CCE -> packed halfcomplex pack (the packed-input entry takes one
+         * packed plane, never split planes). Packed layout: re rows 0..nh,
+         * then im rows nh-1..1. */
         if (!p->ztmp)
             p->ztmp = (double *)malloc((size_t)N * K * sizeof(double));
         size_t nh2 = N / 2;
@@ -334,7 +332,7 @@ static inline int vfft_c2r_path_lookup(int N, size_t K)   /* -1 = miss */
 static inline vfft_c2r_layout_t vfft_c2r_layout_wisdom(int N, size_t K)
 {
     int p = vfft_c2r_path_lookup(N, K);
-    if (p == 0) return VFFT_C2R_NATURAL;   /* split-input fast path (was PACKED) */
+    if (p == 0) return VFFT_C2R_NATURAL;   /* the split-input fast path */
     if (p == 1) return VFFT_C2R_SPLIT;
     return vfft_c2r_best_layout(K);   /* miss -> threshold fallback */
 }
@@ -343,7 +341,7 @@ static inline vfft_c2r_layout_t vfft_c2r_layout_wisdom(int N, size_t K)
 static inline vfft_c2r_disp_t *vfft_c2r_disp_create_auto(int N, size_t K,
         const rfft_codelets_t *rfft_reg, vfft_proto_registry_t *c2c_reg)
 {
-    /* Arbitrary-K: the SPLIT (decoupled-stride) layout now handles a non-VW-aligned K (its
+    /* Arbitrary-K: the SPLIT (decoupled-stride) layout handles a non-VW-aligned K (its
      * backward worker _r2c_worker_bwd routes an odd B through the explicit-pack fallback with
      * the rem-aware inner tail — see r2c.h). So odd K keeps the normal wisdom/threshold choice;
      * NATURAL still wins below the decouple threshold. (Bakeoff stays NULL-graceful.) */

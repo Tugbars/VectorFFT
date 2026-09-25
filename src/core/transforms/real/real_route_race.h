@@ -1,7 +1,6 @@
 /* real_route_race.h - the r2c/c2r route racers.
  *
- * The ARMS and the CLOCK. Extracted from vfft.c as migration step 11; see
- * docs/design/refactor_migration_plan.md.
+ * The ARMS and the CLOCK.
  *
  * RACERS, NOT DECIDERS - AND THE LINE IS SHARP
  * --------------------------------------------
@@ -32,14 +31,13 @@
  * for the door it was measured through, which is why this is an argument rather
  * than an assumption.
  *
- * The c2r racer carries a deliberate ASYMMETRY: it leans toward stride on a
- * near-tie, because stride threads and owns high K, and a calibration wobble
- * should not flip a tie into the arm that cannot scale.
+ * The c2r DECIDER (vfft.c) carries a deliberate ASYMMETRY: natural must beat
+ * stride by 3%, because stride threads and owns high K, and a calibration
+ * wobble should not flip a tie into the arm that cannot scale.
  *
  * FLOOR-LEGAL BY CONSTRUCTION
  * ---------------------------
- * No vfft_plan_s, no wisdom, no counter, no mutable file-scope state. Does NOT
- * pull engine/stride_executor.h.
+ * No vfft_plan_s, no wisdom, no counter, no mutable file-scope state.
  */
 #ifndef VFFT_TRANSFORMS_REAL_REAL_ROUTE_RACE_H
 #define VFFT_TRANSFORMS_REAL_REAL_ROUTE_RACE_H
@@ -62,8 +60,6 @@ static vfft_r2c_plan_t *_r2c_build_arm(int N, size_t K, int stride_arm,
     return p;
 }
 
-/* Alternating-order median-of-9 A/B on ONE buffer set (both arms share the
- * same split re/im I/O contract). 0 on success. */
 /* the arms of the route races: one plan each, timed through the door the
  * caller's execute uses (as_z = the interleaved door) */
 typedef struct { vfft_r2c_plan_t *p; int as_z; double *x, *z, *orr, *oii; } _r2c_arm_t;
@@ -84,6 +80,8 @@ static void _c2r_arm_run(void *v)
     else
         vfft_c2r_disp_execute(c->p, c->re, c->im, c->y);
 }
+/* Alternating-order median-of-9 A/B on ONE buffer set (both arms share the
+ * same split re/im I/O contract). 0 on success. */
 static int _r2c_race_arms(vfft_r2c_plan_t *pr, vfft_r2c_plan_t *ps,
                           int N, size_t K, int as_z,
                           double *n_rfft, double *n_stride)
@@ -91,9 +89,9 @@ static int _r2c_race_arms(vfft_r2c_plan_t *pr, vfft_r2c_plan_t *ps,
     /* as_z: time the arms through the INTERLEAVED z door
      * (vfft_r2c_execute_fwd_z) — the exact entry an interleaved caller's
      * execute uses — instead of the split planes. The banked label then
-     * names what was measured (owner directive 2026-08-25: IL races too,
-     * never inherits a split-timed verdict). Both doors wrap the SAME
-     * plan; only the timed I/O contract differs. */
+     * names what was measured: an interleaved caller's verdict is raced
+     * through its own door, never inherited from a split-timed one. Both
+     * doors wrap the SAME plan; only the timed I/O contract differs. */
     size_t insz = (size_t)N * K, outsz = (size_t)(N / 2 + 1) * K;
     double *x = NULL, *orr = NULL, *oii = NULL, *z = NULL;
     double a[9], b[9];
@@ -138,15 +136,12 @@ static int _r2c_race_arms(vfft_r2c_plan_t *pr, vfft_r2c_plan_t *ps,
     return 0;
 }
 
-/* Build NATURAL + STRIDE c2r for (N,K), time ST, return the faster. The c2r analog
- * of _r2c_bakeoff: BOTH consume split re/im (same caller I/O contract), so the pick
- * is transparent. NATURAL = the fast packed cascade on split input (no repack, the
- * low/mid-K winner); STRIDE = the decoupled high-K path that also threads. Hysteresis
- * toward stride on a near-tie (it threads and owns high K; calibration noise can't
- * flip a tie to natural). */
-/* Alternating-order median-of-9 A/B, c2r twin of _r2c_race_arms.
- * as_z: time through the interleaved-spectrum door (vfft_c2r_disp_execute_z)
- * — what an interleaved caller's execute runs — instead of split planes. */
+/* Alternating-order median-of-9 A/B of the two c2r arms, the twin of
+ * _r2c_race_arms: NATURAL (the fast packed cascade on split input, no repack,
+ * the low/mid-K winner) and STRIDE (the decoupled high-K path that also
+ * threads). BOTH consume split re/im, so the pick is transparent. as_z: time
+ * through the interleaved-spectrum door (vfft_c2r_disp_execute_z) — what an
+ * interleaved caller's execute runs — instead of split planes. 0 on success. */
 static int _c2r_race_arms(vfft_c2r_disp_t *pn, vfft_c2r_disp_t *ps,
                           int N, size_t K, int as_z,
                           double *n_nat, double *n_split)
