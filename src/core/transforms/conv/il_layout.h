@@ -1,5 +1,5 @@
 /**
- * il_layout.h -- interleaved-complex boundary support (v1.1 P1a).
+ * il_layout.h -- interleaved-complex boundary support.
  *
  * TWO PIECES:
  *
@@ -13,23 +13,19 @@
  *    lane-batched plan (flat split arrays), or the fft2d/fft3d/fftnd
  *    override wraps -- and exposes fwd/bwd on a single interleaved buffer.
  *    The wrapper owns a split working cube; fwd = il2sp sweep -> plan fwd
- *    -> sp2il sweep, bwd mirrored. That is TWO explicit conversion sweeps
- *    per direction: the honest P1a cost ceiling, measured below in
- *    v1_0_results (§2b addendum). The roadmap removes them in two steps
- *    (interleaved_design.md): P1b fuses the output/input boundary into the
- *    tiled pass's own gather/scatter (which the strided/natural work made
- *    cheaper still), and P2's emitter flags fuse the remaining native-pass
- *    boundary. The wrapper's API is the stable contract; the sweeps are an
- *    implementation stage.
+ *    -> sp2il sweep, bwd mirrored: TWO explicit conversion sweeps per
+ *    direction (docs/roadmap/interleaved_design.md covers fusing them into
+ *    the passes' own gather/scatter). The wrapper's API is the stable
+ *    contract; the sweeps are an implementation detail.
  *
- * BATCH GEOMETRY NOTE (design doc pitfall #1): this wrapper converts the
- * COMPONENT layout only. It serves multi-dim transforms (no batch
- * dimension), 1D K=1, and lane-major-interleaved batches (element-major
- * pairs -- the cheap-for-us geometry). Transform-major batched-1D
- * (z[k*2N + 2i], the usual batch-distance convention) is the corner-turn
- * problem -- explicitly P3, not silently mishandled here.
+ * BATCH GEOMETRY NOTE (interleaved_design.md pitfall #1): this wrapper
+ * converts the COMPONENT layout only. It serves multi-dim transforms (no
+ * batch dimension), 1D K=1, and lane-major-interleaved batches
+ * (element-major pairs -- the cheap-for-us geometry). Transform-major
+ * batched-1D (z[k*2N + 2i], the usual batch-distance convention) is the
+ * corner-turn problem -- out of scope here, never silently mishandled.
  *
- * Order contract unchanged: whatever the wrapped plan emits (scrambled, or
+ * Order contract: whatever the wrapped plan emits (scrambled, or
  * natural-per-axis under strided rows), the wrapper reproduces in
  * interleaved pairs. Conversions are exact, so all bit-level gates carry.
  */
@@ -126,7 +122,7 @@ static void stride_il_destroy(stride_il_t *w) {
 }
 
 
-/* ── THE PADDED-ROW FORM (migration step 14) ─────────────────────────────
+/* ── THE PADDED-ROW FORM ─────────────────────────────────────────────────
  * The converters above take a whole array. These take a PLANE: the same
  * interleaved<->split move applied per row, with the destination row pitch Kp
  * differing from the source count K. That is what the pad-vs-tail path needs -

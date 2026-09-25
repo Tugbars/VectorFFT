@@ -5,15 +5,15 @@
  * The strided mono n1 codelets (codelets/strided/, "Design C, 2D rows")
  * load VW CONSECUTIVE rows in their natural contiguous layout, transpose
  * IN REGISTERS, FFT, and store back -- eliminating the through-scratch
- * gather/scatter entirely. Measured on the 2026-07-14 container host at
- * 64^3 rows: 1.72x over transpose+native at AVX-512, 1.37-1.40x at AVX2
- * (the transposes were 19.7% of the whole transform). Gates: strided
- * fwd/bwd roundtrip 1e-13; per-row sorted-|X| multiset vs the native path
- * exact. NOTE the strided pair emits a DIFFERENT (equally valid) scramble
- * than the native row plan -- fwd and bwd swap together, roundtrip
- * contract preserved, natorder probing adapts automatically; the natural-
- * order tape path (nat_col_list) keeps the native rows. Opt-in pending the
- * 14900KF verdict; intended end state is a calibrator/wisdom axis. */
+ * gather/scatter entirely. Measured at 64^3 rows: 1.72x over
+ * transpose+native at AVX-512, 1.37-1.40x at AVX2 (the transposes were
+ * 19.7% of the whole transform). Gates: strided fwd/bwd roundtrip 1e-13;
+ * per-row sorted-|X| multiset vs the native path exact. NOTE the strided
+ * pair emits a DIFFERENT (equally valid) scramble than the native row plan
+ * -- fwd and bwd swap together, roundtrip contract preserved, natorder
+ * probing adapts automatically; the natural-order tape path (nat_col_list)
+ * keeps the native rows. Opt-in; the intended end state is a
+ * calibrator/wisdom axis. */
 #ifdef VFFT_STRIDED_ROWS
 typedef void (*_vfft_strided_fn)(double*, double*, const double*,
                                   const double*, size_t, size_t);
@@ -74,16 +74,16 @@ static inline void _vfft_strided_lookup(int N, _vfft_strided_fn *f,
 
 /* TAIL HANDLING (coverage-map: strided is the HARD family -- the
  * in-register transpose assumes VW full rows, and the emitted loop
- * `for b<me b+=VW` has no remainder block). Strategy option (a) realized
- * at the orchestrator: copy the rem (<VW) rows into a VW-row staging area
+ * `for b<me b+=VW` has no remainder block). Realized at the orchestrator:
+ * copy the rem (<VW) rows into a VW-row staging area
  * inside the caller's tile scratch (>= N*B >= N*VW doubles per plane),
  * zero the pad rows, run the strided fn once at me=VW, copy the rem rows
  * back. Pad lanes compute garbage harmlessly (zeros in -> finite out).
  * CRITICAL PROPERTY: the tail rows thereby carry the SAME verified-natural
  * order as the bulk -- per-row order stays UNIFORM for any R, which is
  * what keeps the natorder identity fast-path and the natural-mode
- * tape-free contract valid at R %% VW != 0. (The previous fall-through to
- * the native chain produced mixed per-row scrambles -- a silent hole.) */
+ * tape-free contract valid at R % VW != 0. (Falling through to the native
+ * chain instead would mix per-row scrambles -- a silent hole.) */
 static inline void _vfft_strided_tail_padded(_vfft_strided_fn fn,
                                              double *re, double *im,
                                              size_t row0, size_t rem, int NL,

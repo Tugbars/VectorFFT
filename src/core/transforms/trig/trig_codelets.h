@@ -1,10 +1,10 @@
 /* trig_codelets.h — ABI-typed registry struct for the trig (real-to-real)
  * codelet family: DCT-I/II/III/IV, DST-I/II/III/IV, DHT.
  *
- * The norm (sections 62-65): every codelet kind gets a typed slot; the
- * registrar is auto-emitted from coverage (trig_registry_<isa>.h). Coexists
- * with the hand-written core/dct.h / dst.h / dht.h plan shells during the
- * transition; the auto registry is the coverage-complete one.
+ * Every codelet kind gets a typed slot; the registrar is auto-emitted from
+ * coverage (generator/generated/trig_registry_<isa>.h). The plan shells in
+ * this folder (dct.h / dct1.h / dct4.h / dst.h / dht.h) do not dispatch
+ * through this registry.
  *
  * ONE uniform ABI for the whole family (3-arg, lean real-to-real):
  *   fn(const double *in, double *out, size_t K)

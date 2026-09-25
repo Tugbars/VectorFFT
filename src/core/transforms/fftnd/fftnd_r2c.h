@@ -529,11 +529,10 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
             : NULL;
         if (xin_) {
             int awf_ = 0, awb_ = 0;
-            /* recalib (2026-09-16): this verdict is a MEASURED A/B -- eight
-             * timed reps per arm with 5% hysteresis, below -- so replaying it
-             * under the flag threw away the measurement the caller asked for.
-             * The race that follows ends in vfft_adopt_record, which
-             * overwrites on key match, so the flag re-measures AND overwrites. */
+            /* recalib: this verdict is a MEASURED A/B -- eight timed reps per
+             * arm with 5% hysteresis, below -- so the flag must re-measure,
+             * never replay. The race that follows ends in vfft_adopt_record,
+             * which overwrites on key match. */
             if (!recalib &&
                 vfft_adopt_lookup("nd", (int)d->R, NL_, d->snd_blk,
                                   &awf_, &awb_)) {

@@ -1,12 +1,11 @@
 /**
  * dct1.h -- DCT-I and DST-I shells (the even/odd whole-sample forms).
  *
- * Phase 1 (lab notebook section 58): runtime pad-embedding through the
- * EVEN-N r2c machinery. Both logical extensions are always even
- * (M = 2(N-1) for DCT-I, M = 2(N+1) for DST-I), so the inner r2c rides
- * the fast half-M complex path for every user-visible N; primes in
- * M/2 are the caller's inner plan's business (Rader/Bluestein),
- * exactly as in core/r2c.h's odd path.
+ * Runtime pad-embedding through the EVEN-N r2c machinery. Both logical
+ * extensions are always even (M = 2(N-1) for DCT-I, M = 2(N+1) for DST-I),
+ * so the inner r2c rides the fast half-M complex path for every
+ * user-visible N; primes in M/2 are the caller's inner plan's business
+ * (Rader/Bluestein), exactly as in r2c.h's odd path.
  *
  * Conventions (unnormalized; the definitions below are exact):
  *   DCT-I: Y[k] = x[0] + (-1)^k x[N-1]
@@ -33,15 +32,13 @@
  *   The plan is rejected (and the inner destroyed) if r2c_plan_M->N
  *   does not equal the required M.
  *
- * Cost: one r2c of length ~2N plus O(N*K) extension/extract passes —
- * the deliberate Phase-1 trade. The generated boundary codelets
- * (radix{5,9,17,33}_dct1_*, radix{3,7,15,31}_dst1_*, lean 3-arg ABI)
- * remain the fast path at their sizes; planner-level dispatch to them
- * is the integration follow-up.
+ * Cost: one r2c of length ~2N plus O(N*K) extension/extract passes. The
+ * generated boundary codelets (radix{5,9,17,33}_dct1_*,
+ * radix{3,7,15,31}_dst1_*, lean 3-arg ABI; trig_codelets.h) are faster at
+ * their sizes but are not dispatched from here.
  *
- * Phase 1 executes serially (no B-blocking, no thread fan-out),
- * mirroring the odd-N r2c shell. MT K-split as in dct.h is the same
- * follow-up.
+ * MT: the extension/extract passes K-split across the pool (as dct.h);
+ * no B-blocking.
  */
 #ifndef STRIDE_DCT1_H
 #define STRIDE_DCT1_H
