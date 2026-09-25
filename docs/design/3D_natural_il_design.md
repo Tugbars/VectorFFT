@@ -195,7 +195,7 @@ flowchart LR
 Axis 0 keeps its own arms (strips or bands) exactly as the scrambled class
 has them. The raced arms and the banked verdict follow
 `3D_mt_il_strategy.md` unchanged: the natural cell races serial against
-its partitions at the plan's T and banks `cmt= cmtt= cmts=` on its own row.
+its partitions at the plan's T and banks `cmt= cmts=` on its own row at that T (`nthreads=`).
 
 ## 6. What it costs, and what the race decides
 
@@ -244,8 +244,8 @@ keeps the cells whose cube fits L3.
 
 The rank-3 row keyed `ord=nat`, in `wisdom2_3d.txt`, beside the `ord=scr`
 row: its own chain, width, structure and threading verdicts, raced on
-natural data and banked as the scrambled row's are (`chain= wl= s= cmt=
-cmtt= cmts=`, the flat arm's `chain1=`), plus whatever the natural form
+natural data and banked as the scrambled row's are (`chain= wl= s=` and, on the
+`nthreads=` row, `cmt= cmts=`; the flat arm's `chain1=`), plus whatever the natural form
 race adds. DEFAULT keeps meaning scrambled; NATURAL is requested
 explicitly, the 2D contract. A natural verdict serves only natural
 requests, and the two order cells are never compared.

@@ -304,8 +304,8 @@ records how it was obtained and is not comparable across runs.
 
 **2 — Banked with validity conditions.** The verdict carries the conditions it was measured
 under, and a mismatch **re-races** rather than serving a stale answer. Worked example:
-`cmt=1 cmtt=8` means "threading won, raced at 8 threads". A request at 4 threads does not
-match, so it re-races. This is the design.
+a threaded verdict lives on the row keyed `nthreads=8`; a request at 4 threads reads its
+own row and races when that row is empty. This is the design (the condition is a key axis).
 
 **3 — Plan-local (raced every time).** Never written down; re-measured on every create, in
 every process. A **gap** pending the wisdom2 1D key convention — see §16.
@@ -336,7 +336,7 @@ banked verdict; none threads on a rule.
 | K>1 transform-contiguous batch | one transform per core | serial loop vs slabs of `ceil(K/T)` transforms over per-worker clones | T-free | the batch's own `q=K` interleaved row: `eng=tcb tcmt=<0 or 1> tcmtt=<T raced at>` |
 | 2D plane queue (`howmany > 1`) | one plane per core | loop the plan vs hand planes to clones | T-free | `pq` tokens on the primary plane's row |
 | 2D route (axis) race | cores share the plane | every route in its threaded AND serial form: the chain, the turn, the skewed column pass (`il2d_c2c_mt.md`) | per-T | `axt rot wlt swt rbkt turnt cskt axns` beside the one-thread `ro wl sw rbk turn csk` |
-| 2D column pass | cores share the plane | the banked route's threaded walk vs serial (the chain: block, the strips ladder and the tile partition; the turn and the skewed pass: their row-slab walks) | per-T | `cmt cmtt mtarm msw nls` (r2c and c2r each their own set) |
+| 2D column pass | cores share the plane | the banked route's threaded walk vs serial (the chain: block, the strips ladder and the tile partition; the turn and the skewed pass: their row-slab walks) | per-T | `cmt mtarm msw nls` on the row keyed `nthreads=T` (r2c and c2r each their own set) |
 | K=1 cascade walk | cores share the transform | threaded walk vs serial | per-T | `zt_mt_t zt_mt` (in-place: `zt_mt_ip_*`) on the kind-4 recipe row |
 
 **The batch verdict in detail.** A K>1 interleaved request is a wrapper over the
@@ -652,7 +652,7 @@ flowchart TD
     WL --> CUT["<b>cut</b> — DERIVED<br/>first stage where wl divides L[s]"]
     WL --> TF["<b>tf</b> — SLAVED<br/>tfuse = (wl &gt; 0)"]
     WL --> NB{"nb = N1 / wl"}
-    NB -->|"&ge; 2"| CMT["<b>cmt</b> — column MT<br/>banked WITH cmtt"]
+    NB -->|"&ge; 2"| CMT["<b>cmt</b> — column MT<br/>on the row keyed nthreads=T"]
     NB -->|"&lt; 2"| NOMT["no MT axis exists"]
     CH --> N1A["<b>N1-arm</b><br/>native odd chain vs<br/>column-axis Bluestein"]
     N1A --> BLU["sets blu,<br/>REWRITES nst / R[] / L[]"]
@@ -1036,7 +1036,7 @@ whether the slabs run is a raced verdict (serial loop vs slabs at create, banked
 **Plane queue (`pq`)** — for 2D with `howmany > 1`: either loop the single plan over the
 planes sequentially (each keeping its own intra-transform MT verdicts), or hand planes to
 worker clones from a queue. Raced at create and banked (2026-09-02) on the primary plane's
-own row as `pq=`/`pqn=`/`pqt=`, valid for the plane count and worker count it was raced at.
+own row at the plan's thread count as `pq=`/`pqn=`, valid for the plane count it was raced at.
 
 **`mtunsafe`** — not a timing race at all. A *correctness* self-check: the whole-batch
 reference output versus a sequential replay of every slab size threading might pick. It
@@ -1065,7 +1065,7 @@ every later run.
 thread-related field. `zt_mt`, `pq_mt`, the odd-real bridge pick and the prime method
 re-race on **every create, in every process**. This is a TODO owned by the wisdom wave —
 pending the wisdom2 1D cell convention — and explicitly *not* a policy. The design is
-settled and already demonstrated by `cmt`/`cmtt`: bank with validity keys, re-race on a
+settled and already demonstrated by `cmt` on the `nthreads=` row: the condition is a key axis, re-race on a
 mismatch. Two costs of leaving it: roughly 6 executes per threaded create, and
 non-determinism — an unbanked race can pick different winners across creates *within one
 process*, which makes clone-equivalence refuse the batch and MT decline.

@@ -71,11 +71,9 @@ dominated the block arm at every plane measured) and in its serial form (`+s`), 
 the threading race will keep serial still picks its route by the serial walks. A natural
 cell prunes the band widths and sub-strip tiles the threaded walk ignores. Two rounds of
 `1e6 / (N1 N2)` executes per arm, alternated, two untimed passes first. The winner is banked
-**beside** the one-thread verdict as the T verdict: `axt=` (the T raced at), `rot= wlt=
-swt= rbkt= turnt= cskt=` (route, band width, strip width, row tile, turn, skewed pass) and
-`axns=`; the one-thread tokens `ro wl sw rbk turn csk` stay the one-thread race's. A create
-at that T serves it; any other T re-races; the row is created chain-only first when the
-cell's chain row does not exist yet (a recalibrating create).
+on the cell's row at the plan's thread count (`nthreads=T` in the key, wisdom2 v1.3): the
+same tokens `ro wl sw rbk turn csk` as the one-thread race, on a row of their own, complete
+on its own. A create at that T serves it; any other T has its own row or races.
 
 **The threading race** (`_il2d_c2c_mt_race`) for the route the axis race picked: the serial
 walk against the route's threaded forms: for the chain the block, the unsized strips, one
@@ -83,14 +81,13 @@ strips arm per ladder width, and the tile, each with the staged and the strided 
 (`nls`); for the turn and csk their one walk. Min of three, two untimed passes first, never
 paused (a threaded arm parks its workers when paused). The verdict lands on the existing
 row through the field-update path, so the axis tokens survive: `cmt=` (threaded or not),
-`cmtt=` (the T raced at), `mtarm=` (0 block, 1 strips, 2 tile), `msw=`, `nls=`, `mtns=`
-(the winning time). A create serves `cmt` only at `cmtt`; an axis race at T > 1 invalidates
-the banked `cmt`, which was raced for the old route.
+`mtarm=` (0 block, 1 strips, 2 tile), `msw=`, `nls=`, `mtns=` (the winning time), on the
+plan's row at its T. An axis race at T > 1 invalidates the banked `cmt`, which was raced for
+the old route.
 
 **Serving order at create.** The chain and its forms (the one-thread races or their
-replay) -> the T verdict's route when `axt` matches the plan's T, else the one-thread
-route and, at T > 1, the axis race -> the clone sets and the dense scratch -> `cmt` at
-`cmtt`, else the threading race. Pins for probes, read at create only: `VFFT_IL2D_NO_COLMT`
+replay) -> the route on the plan's row at its T, else the axis race -> the clone sets and
+the dense scratch -> `cmt` from that row, else the threading race. Pins for probes, read at create only: `VFFT_IL2D_NO_COLMT`
 (0 forces threaded, else serial, no race), `VFFT_IL2D_MTARM` (the arm), `VFFT_IL2D_DENSE=0`
 (the shared scratch), `VFFT_IL2D_PHASES` (per-phase times on stderr), `VFFT_IL2D_LOG`
 (every arm of every race).
@@ -98,19 +95,18 @@ route and, at T > 1, the axis race -> the clone sets and the dense scratch -> `c
 A row after both races at T = 8 (512x128, natural, out of place):
 
 ```
-chain=8.4.4.4 wl=0 tf=0 ro=0 sw=0 rbk=8 turn=0 csk=0
-axt=8 rot=0 wlt=0 swt=0 rbkt=8 turnt=0 cskt=0 axns=76293
-cmt=1 cmtt=8 mtarm=1 msw=16 nls=1 mtns=58000
+n=512x128 q=1 ord=nat place=oop lay=il            | chain=8.4.4.4 wl=0 tf=0 ro=0 sw=0 rbk=8 turn=0 csk=0
+n=512x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.4.4.4 wl=0 tf=0 ro=0 sw=0 rbk=8 turn=0 csk=0 cmt=1 mtarm=1 msw=16 nls=1 mtns=58000
 ```
 
-The first line is the one-thread verdict, the second the route at eight threads, the third
-its threaded form: the strips at 16 columns with the staged leaf.
+The first row is the one-thread verdict; the second is the plan at eight threads, its route
+and its threaded form on one row: the strips at 16 columns with the staged leaf.
 
 ## 4. The laws the design rests on
 
 - **Every threaded decision is measured at its T and served only there.** Column threading
-  is the cores-share-one-transform class: how the work is cut depends on T, so a verdict
-  carries the T it was raced at (`axt`, `cmtt`) and another T re-races.
+  is the cores-share-one-transform class: how the work is cut depends on T, so a threaded
+  plan's row is keyed by its thread count (`nthreads=`) and another T has its own row.
 - **A threaded walk is a loop restriction of the serial one.** The same kernels on disjoint
   ranges, the same values in the same order: MT == ST bitwise, which is the gate.
 - **No environment read on an execute path.** A pin is bound at create into a plan field

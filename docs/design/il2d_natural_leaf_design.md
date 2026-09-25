@@ -57,7 +57,7 @@ The leaf's form is a RACED plan parameter at T > 1 (built 2026-09-16, the
 raced-twin law): the serial walk is staged outright — staged wins every
 serial cell — and every threaded arm of a natural cell runs staged and
 strided ("block/str", "strips64/str"), the winner banked `nls=` beside
-`cmt`/`cmtt`/`mtarm`/`msw` and replayed at that T. At the 16 MB planes the
+`cmt`/`mtarm`/`msw` on the row keyed by that T and replayed there. At the 16 MB planes the
 strided block arm wins (the copy buys nothing where the stride's conflict
 is partial); at the 64 MB planes the staged arms win by 27-40%.
 

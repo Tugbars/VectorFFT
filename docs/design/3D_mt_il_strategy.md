@@ -96,9 +96,9 @@ alive, with their clones, until the threaded verdict, and races
     serial(s0)  +  {band, plane} × {child, flat}
 
 as arms of one race. The winner banks three fields on the cell's rank-3
-row: `cmt=` (0 serial, 1 band, 2 plane), `cmtt=` (the T raced at) and
-`cmts=` (the structure the threaded verdict runs with). `s=` stays the
-one-thread verdict. A verdict serves only at its own T; another T races
+row at the plan's thread count (`nthreads=` in the key, wisdom2 v1.3):
+`cmt=` (0 serial, 1 band, 2 plane) and `cmts=` (the structure the threaded
+verdict runs with). The one-thread row keeps its own `s=`. A verdict serves only at its own T; another T races
 again. The losing structure and its clones are freed after the verdict.
 
 ## 5. Measuring a threaded arm
@@ -176,7 +176,7 @@ wide prefix by units, then tile ranges depth-first, then the wide tail).
 The per-worker unit records are bound at plan time; nothing is cloned
 because the staging plane is written in disjoint units. The verdict is
 raced at T with steady-state samples, with every legal tile width as an
-arm of the tiles family, and banked `il_mt= il_mt_t= il_mt_tw=` on the
+arm of the tiles family, and banked `il_mt= il_mt_tw=` on the plan's row at its T, the
 class's kind-3 row; serial is banked below L2 and that is the verdict.
 Measured at T=8, same-run: 6561 1.7×, 19683 2.7×, 59049 5.0×, 98415 5.1×,
 177147 6.1× over the same tier at one thread, bitwise (flatdit_gate).
@@ -187,7 +187,7 @@ Measured at T=8, same-run: 6561 1.7×, 19683 2.7×, 59049 5.0×, 98415 5.1×,
 |---|---|
 | `transforms/fftnd/fftnd_il.h` | the arms (`_ilnd_mt_tramp`, `_ilnd_mt_phase`, `_ilnd_execute_mt`), the clones, the joint race (`_ilnd_mt_race`), the create |
 | `transforms/fft2d/il2d_tier.h` | `_il2d_stage_digits_mt` (the digit split), `_il2d_col_pass_range`, `_il2d_blu_cols_range` (lent, no rank-3 code) |
-| `wisdom2/wisdom2_2d_reader.h` | `cmt= cmtt=` through the axis bank; `cmts=` through `vw2_ilnd_mts_lookup/bank` |
+| `wisdom2/wisdom2_2d_reader.h` | `cmt=` through the axis bank, on the row keyed `nthreads=T`; `cmts=` through `vw2_ilnd_mts_lookup/bank` |
 | `support/threads.h` | the pool owner |
 | `vfft.c`, `include/vfft_diagnostics.h` | `vfft_ilnd_mt_passes()` |
 | `build_tuned/benches/bench_1d_vs_mkl.c` | `--3dil --mt`, the two-team protocol |

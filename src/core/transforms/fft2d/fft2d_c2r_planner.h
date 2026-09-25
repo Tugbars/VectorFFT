@@ -5,9 +5,9 @@
  * fwd=r2c and bwd=c2r). But the c2r DIRECTION has a different access pattern
  * (column IFFT first, then the c2r row pass in reverse tile order — and it is
  * single-threaded), so its optimal inner plans differ from r2c's. This planner
- * finds the best plan SCORED BY THE BACKWARD (c2r) wall-time, stored in a
- * SEPARATE c2r wisdom file (the entry struct + create are shared with r2c via
- * fft2d_r2c_wisdom.h — only the file and the scoring direction differ).
+ * finds the best plan SCORED BY THE BACKWARD (c2r) wall-time, banked on its
+ * own per-direction row (the entry struct + create are shared with r2c via
+ * wisdom2_fftnd.h — only the direction and the scoring differ).
  *
  * Reuses the r2c planner's axis-seed helper + reps + mode enum (include below).
  * Calibration-only header.
@@ -25,8 +25,8 @@
 /* Deploy-quality end-to-end 2D c2r timing: best-of-TRIALS over reps after warmup.
  * in_re/in_im = a valid half-spectrum (produced once by r2c from x); real_out is
  * scratch. Times the real public path (stride_execute_2d_c2r) — SPLIT door only
- * (the z-veneer door was DELETED 2026-08-26; interleaved callers are served by
- * the native IL tier and never reach this planner). */
+ * (interleaved callers are served by the native IL tier and never reach this
+ * planner). */
 static double vfft_fft2d_c2r_bench_min(const stride_plan_t *p, int N1, int N2,
                                        const double *in_re, const double *in_im,
                                        double *real_out) {
@@ -56,7 +56,7 @@ static double vfft_fft2d_c2r_plan_measure(int N1, int N2,
 
     const size_t hp1   = (size_t)(N2 / 2 + 1);
     size_t       B     = 8; if (B > (size_t)N1) B = (size_t)N1;
-    size_t       K_pad = ((hp1 + 7) / 8) * 8;  /* §6a54: pad-to-8 — avx512 col pass full-width, no anyk tail (tail_handling doctrine) */
+    size_t       K_pad = ((hp1 + 7) / 8) * 8;  /* pad to 8: the avx512 col pass runs full-width, no any-K tail */
     int          innerN = N2 / 2;
 
     vfft_proto_plan_decision_t row_cand[VFFT_PROTO_MEASURE_DEPLOY_MAX];

@@ -121,8 +121,8 @@ by blocks with the same pool. The SPLIT is a per-T verdict: the children's
 own threaded verdicts reorder the ladder (4194304 at T=8: the serial
 winner 1024x4096 runs 7.1 ms, 2048x2048 4.9 ms), so a plan at T > 1 races
 the splits AT T (each child a 2D cell created at T) in its own placement
-and banks `il_mt=N1 il_mt_t=T` (`il_mt_ip` / `il_mt_ip_t` in place) on the
-cell's row — ZTURN-T's tokens, each route reading them as its own arm;
+and banks `il_mt=N1` on the plan's own row, keyed by its placement and its
+thread count (`nthreads=T`) — ZTURN-T's tokens, each route reading them as its own arm;
 replay rebuilds the banked split when it differs from the serial row's.
 `VFFT_K1_FS=N1xN2` pins a split for a probe (never banks, skips the per-T
 race). No fallback: a cell whose splits all refuse (a missing row

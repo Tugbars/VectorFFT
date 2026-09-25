@@ -13,7 +13,8 @@
  *      roundtrip-gate (fwd+bwd == N1*N2*x), and TIME the real in-place
  *      stride_execute_fwd end-to-end. Lowest 2D wall-time wins.
  *
- * Calibration-only header (pulls measure.h). Winner -> fft2d_c2c_wisdom.h.
+ * Calibration-only header (pulls measure.h). The winner is a
+ * vfft_fft2d_c2c_wisdom_entry_t (wisdom2_fftnd.h).
  */
 #ifndef VFFT_FFT2D_C2C_PLANNER_H
 #define VFFT_FFT2D_C2C_PLANNER_H
@@ -53,8 +54,7 @@ static inline int _vfft_fft2d_c2c_reps(size_t total) {
 }
 
 /* End-to-end 2D c2c timing: best-of-TRIALS over reps after warmup. In-place,
- * so re/im are clobbered (values drift) — timing is data-independent, like the
- * --2d bench's time_2d. */
+ * so re/im are clobbered (values drift) — timing is data-independent. */
 static double vfft_fft2d_c2c_bench_min(stride_plan_t *p, int N1, int N2,
                                        double *re, double *im) {
     size_t total = (size_t)N1 * (size_t)N2;
@@ -152,8 +152,8 @@ static int _vfft_fft2d_c2c_axis_candidates(int N, size_t K, int patient,
  * candidates, and write the natural-optimal chain into the SELF-CONTAINED nat_out record (its own regime;
  * NOT a field of the scrambled `out`). nat_out->row_nf is set to 0 when no natural result was obtained (or
  * do_natural=0 / nat_out==NULL); >0 means a valid natural record. *nat_ns_out (if non-NULL) receives the
- * natural total (1e18 = none). This is DEV-time work (per-candidate JIT compiles when built --jit).
- * do_natural=0 => scrambled-only, byte-identical to the pre-natural planner. The return value is always
+ * natural total (1e18 = none). Calibration-time work (per-candidate JIT compiles when built --jit).
+ * do_natural=0 => scrambled-only. The return value is always
  * the SCRAMBLED best (the natural decision is made independently by the caller on nat_ns). */
 static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
         const vfft_proto_registry_t *reg, vfft_fft2d_c2c_mode_t mode,

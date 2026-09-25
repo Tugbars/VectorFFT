@@ -17,8 +17,9 @@
  *      The pair with the lowest 2D wall-time wins — scored on the 2D metric, not
  *      the sum of 1D inner times (which would pick the wrong pair).
  *
- * Calibration-only header (pulls measure.h). The winner is written to 2D wisdom
- * (fft2d_r2c_wisdom.h) by the calibrator driver.
+ * Calibration-only header (pulls measure.h). The winner (a
+ * vfft_fft2d_r2c_wisdom_entry_t, wisdom2_fftnd.h) is banked by the create's
+ * calibrate-on-miss in vfft.c.
  */
 #ifndef VFFT_FFT2D_R2C_PLANNER_H
 #define VFFT_FFT2D_R2C_PLANNER_H
@@ -50,9 +51,9 @@ static inline int _vfft_fft2d_r2c_reps(size_t total) {
 }
 
 /* Deploy-quality end-to-end 2D r2c timing: best-of-TRIALS min over reps after a
- * short warmup. Times the REAL public path — the SPLIT door (the z-veneer door
- * was DELETED 2026-08-26: interleaved 2D real callers are served by the native
- * IL tier, fft2d_real_il_design.md M3, and this planner never sees them). */
+ * short warmup. Times the REAL public path — the SPLIT door (interleaved 2D
+ * real callers are served by the native IL tier and this planner never sees
+ * them). */
 static double vfft_fft2d_r2c_bench_min(const stride_plan_t *p, int N1, int N2,
                                        const double *x, double *o_re, double *o_im) {
     size_t total = (size_t)N1 * (size_t)N2;
@@ -105,7 +106,7 @@ static double vfft_fft2d_r2c_plan_measure(int N1, int N2,
 
     const size_t hp1   = (size_t)(N2 / 2 + 1);
     size_t       B     = 8; if (B > (size_t)N1) B = (size_t)N1;
-    size_t       K_pad = ((hp1 + 7) / 8) * 8;  /* §6a54: pad-to-8 — avx512 col pass full-width, no anyk tail (tail_handling doctrine) */
+    size_t       K_pad = ((hp1 + 7) / 8) * 8;  /* pad to 8: the avx512 col pass runs full-width, no any-K tail */
     int          innerN = N2 / 2;
 
     vfft_proto_plan_decision_t row_cand[VFFT_PROTO_MEASURE_DEPLOY_MAX];

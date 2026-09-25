@@ -62,7 +62,7 @@ FP         fingerprint field, or "none" (= invisible to the safety harness)
 
 1. **Banked, key-matched** - replays deterministically.
 2. **Banked with validity conditions** - carries the conditions it was raced under; a
-   mismatch **re-races** rather than serving. `cmt` + `cmtt` is the worked example.
+   mismatch **re-races** rather than serving. `cmt` on the row keyed `nthreads=T` is the worked example: the condition is a key axis.
 3. **Plan-local** - raced every create, every process.
 
 Owner ruling on MT specifically:
@@ -573,7 +573,7 @@ DIRECTION  forward executes only; one plan serves both directions. STRUCTURAL
 ### B4a. IL flat DIT (odd N, route 8) - the THREADING verdict (2026-09-07)
 
 ```
-B4a.1 il_mt - the partition arm      RACED, BANKED with il_mt_t + il_mt_tw on the
+B4a.1 il_mt - the partition arm      RACED, BANKED with il_mt_tw on the nthreads=T row of the
                                      class's kind-3 IL row (ord=nat and ord=scr
                                      each their own): serial vs BLOCKS (every
                                      stage by units, one dispatch per stage) vs
@@ -586,7 +586,7 @@ B4a.1 il_mt - the partition arm      RACED, BANKED with il_mt_t + il_mt_tw on th
                                      is shared by disjoint units. il_tw= stays
                                      the one-thread width. VFFT_ILFD_MT pins,
                                      never banks. MT == ST bitwise (flatdit_gate,
-                                     both classes). Serves only at il_mt_t.
+                                     both classes). Serves only on its T's row.
 ```
 
 ### B5. K>1 transform-contiguous batch - the THREADING verdict
@@ -864,7 +864,7 @@ E1.0c the RACES' PLANES ALIGNED       FIXED 2026-09-23: the forms race, the chai
                                       working set past L2 (csk at 32x4096: probe 255 vs
                                       326 us, race 293 vs 266) loses in the race and
                                       would win in the bench.
-E1.6 cmt - column/band MT             RACED, banked WITH cmtt (the per-T class).
+E1.6 cmt - column/band MT             RACED, banked on the row keyed nthreads=T (the per-T class).
                                       Bluestein column axes included since
                                       2026-09-02 (the column-window pipeline,
                                       mode 3 of the c2c walk / the real strip);
@@ -919,7 +919,7 @@ no column-MT race can run. Verified three independent ways:
 
 | cell | wl | nb | outcome | measured |
 |---|---|---|---|---|
-| 256x256 | 256 (=N1) | 1 | no race; cmt=0 banked with cmtt | `wl=256`, no cmt |
+| 256x256 | 256 (=N1) | 1 | no race; cmt=0 banked on the T row | `wl=256`, no cmt |
 | 64x64 | 8 | 8 | race runs | `wl=8 cmt=1` |
 | 1024x1024 | 16 | 64 | race runs | `wl=16 cut=3 cmt=1` |
 
@@ -934,8 +934,8 @@ E2.1 rw - the ROW ROUTE       RACED, PER DIRECTION. The per-row TC door (one
                               vfft_execute on the transform-contiguous batch
                               handle at (N2, K=N1)) vs ROWSPLIT at width W.
                               r2c and c2r race their own rw/wl/cmt and bank them
-                              as separate token sets (c2r: rw_c2r wl_c2r cmt_c2r
-                              cmtt_c2r) on the ONE direction-shared real IL row
+                              as separate token sets (c2r: rw_c2r wl_c2r
+                              cmt_c2r) on the ONE direction-shared real IL row
                               (the chain is shared by the pair law). Until
                               2026-09-02 both directions wrote the same tokens and
                               c2r replayed r2c's verdicts.

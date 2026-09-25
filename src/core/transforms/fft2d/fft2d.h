@@ -1,5 +1,5 @@
 /**
- * stride_fft2d.h -- 2D FFT with two methods: tiled and Bailey
+ * fft2d.h -- split-complex 2D FFT with two methods: tiled and Bailey
  *
  * Both methods use the same column FFT (native, K=N2). They differ
  * only in how row FFTs are performed:
@@ -94,7 +94,7 @@ typedef struct {
     /* VFFT_ORDER_NATURAL: the dim2 (within-row / N2-axis) digit-reversal cycle tape, applied to the
      * row-FFT SCRATCH at K=B (full-SIMD, L1-hot). NULL = scrambled (DEFAULT/SCRAMBLED). BORROWED — the
      * vfft handle owns the malloc; _fft2d_destroy must NOT free it. dim1 (whole-row) is done separately
-     * by the vfft-level reorder. natural_order_inplace_design.md (2D natural, mechanism-2). */
+     * by the vfft-level reorder (docs/roadmap/natural_order_inplace_design.md, 2D natural). */
     const int *nat_col_list;
 } stride_fft2d_data_t;
 
@@ -173,10 +173,10 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
         if (is_bwd && d->nat_col_list)
             vfft_natorder_cycle_pass_inv(sr, si, B, d->nat_col_list, rtmp);
 
-        /* FFT on scratch (sub-batch this_B of the B-wide tile). Use the full c2c
-         * executor — it dispatches DIT *or* DIF (and the specialized per-cell
-         * executors), so a DIF row inner round-trips correctly. The old DIT-only
-         * slice helper (_stride_execute_fwd_slice_from) silently mis-ran DIF plans. */
+        /* FFT on scratch (sub-batch this_B of the B-wide tile). The full c2c
+         * executor dispatches DIT *or* DIF (and the specialized per-cell
+         * executors), so a DIF row inner round-trips correctly; a DIT-only
+         * slice executor silently mis-runs DIF plans. */
         vfft_proto_exec_fn rf = is_bwd ? d->exec_row_bwd : d->exec_row_fwd;
         if (rf)
             rf(d->plan_row, sr, si, this_B, d->plan_row->K, 0);   /* baked/JIT */
@@ -186,7 +186,7 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
             vfft_proto_execute_fwd(d->plan_row, sr, si, this_B);
 
         /* ORDER_NATURAL forward: unscramble the N2 axis in scratch (K=B, full-SIMD, L1-hot) right after
-         * the row FFT and before the scatter — the fused dim2 reorder (mechanism-2). */
+         * the row FFT and before the scatter — the fused dim2 reorder. */
         if (!is_bwd && d->nat_col_list)
             vfft_natorder_cycle_pass(sr, si, B, d->nat_col_list, rtmp);
 
@@ -360,7 +360,7 @@ static stride_plan_t *_fft2d_wrap(stride_fft2d_data_t *d) {
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     if (!plan) { _fft2d_destroy(d); return NULL; }
     d->nat_col_list = NULL;  /* scrambled by default; vfft sets it (borrowed) only for order=NATURAL */
-    _fft2d_jit_resolve(d);
+    _fft2d_jit_resolve(d);   /* baked/JIT-resolve the inner row/col FFTs (all builders) */
 #ifdef VFFT_STRIDED_ROWS
     /* natural-order mode INCLUDED: the strided mono is verified NATURAL, so
      * the bulk needs no cycle tape; sub-VW tails run native+tape (natural).
@@ -371,7 +371,7 @@ static stride_plan_t *_fft2d_wrap(stride_fft2d_data_t *d) {
         if (d->srow_fwd && !_vfft_strided_verify_natural(d->srow_fwd, d->N2))
             { d->srow_fwd = 0; d->srow_bwd = 0; }
     }
-#endif   /* baked/JIT-resolve the inner row/col FFTs (all builders) */
+#endif
     plan->N = d->N1 * d->N2;
     plan->K = 1;
     plan->num_stages = 0;
@@ -507,18 +507,18 @@ static stride_plan_t *stride_plan_2d_bailey(
     return _fft2d_wrap(d);
 }
 
-/** Wisdom-aware 2D plan — uses pre-calibrated wisdom for the row FFT only.
+/** Wisdom-aware 2D plan — the wisdom is currently UNUSED: both inners take
+ *  the non-wisdom path.
  *
- *  v1.0 SAFETY: Column FFT (plan_col, K=N2) is FORCED to non-wisdom
- *  (`stride_auto_plan`) because wisdom-driven plan_col + K-split path
- *  silently corrupts at intermediate T (e.g., 1024²: err ~1e6 at T=2/T=4
- *  while T=1 and T=8 work fine). Investigation deferred to v1.1 — likely
- *  variant-code interaction with K-split slice helpers at large K, or a
- *  DIF/blocked path triggered by wisdom that the K-split executor doesn't
- *  handle. Cost: ~3-5% per-stage codelet tuning loss on plan_col.
+ *  Column FFT (plan_col, K=N2): a wisdom-driven plan_col under the K-split
+ *  silently corrupts at intermediate T (1024²: err ~1e6 at T=2/T=4 while
+ *  T=1 and T=8 are correct). Undiagnosed — likely a variant-code interaction
+ *  with the K-split slice helpers at large K, or a DIF/blocked path the
+ *  K-split executor does not handle. Cost: ~3-5% per-stage codelet tuning
+ *  on plan_col.
  *
- *  Row FFT (plan_row, K=B=8) is wisdom-tuned — K-split never fires for
- *  K=8 < threshold(256), so this is safe. */
+ *  Row FFT (plan_row, K=B=8): the K-split never fires at K=8 < 256, so
+ *  wisdom would be safe here; it stays non-wisdom defensively. */
 static stride_plan_t *stride_plan_2d_wise(
         int N1, int N2,
         const vfft_proto_registry_t *reg,
@@ -535,20 +535,19 @@ static stride_plan_t *stride_plan_2d_wise(
     d->use_bailey = 0;
     d->B = _fft2d_choose_tile(N2, N1);
 
-    /* Column FFTs: NON-wisdom (see safety note above). Match stride_plan_2d's
-     * exact path — exhaustive first, then auto fallback. Empirically safe at
-     * all T from 1..8 for sizes 64²..1024². */
+    /* Column FFTs: NON-wisdom (see the note above): exhaustive first, then
+     * auto (stride_plan_2d's path without its prime dispatch). Measured
+     * correct at every T in 1..8 for sizes 64²..1024². */
     d->plan_col = vfft_proto_exhaustive_plan(N1, (size_t)N2, reg, 0);
     if (!d->plan_col) d->plan_col = vfft_proto_auto_plan(N1, (size_t)N2, reg, NULL);
     if (!d->plan_col) { free(d); return NULL; }
 
-    /* Row FFTs: NON-wisdom too for now (paranoid v1.0 safety until the
-     * 1024² K-split + variant-coded plan_col bug is properly diagnosed).
-     * K-split doesn't fire for K=B=8, so this is purely a defensive choice. */
+    /* Row FFTs: NON-wisdom too, defensively, while the plan_col corruption
+     * is undiagnosed (the K-split does not fire at K=B=8). */
     d->plan_row = vfft_proto_exhaustive_plan(N2, d->B, reg, 0);
     if (!d->plan_row) d->plan_row = vfft_proto_auto_plan(N2, d->B, reg, NULL);
     if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
-    (void)wis;  /* unused in v1.0; will be re-enabled once K-split bug is fixed */
+    (void)wis;  /* unused while the K-split corruption is undiagnosed */
 
     if (!_fft2d_alloc_scratch(d, (size_t)N2 * d->B)) {
         _fft2d_destroy(d);

@@ -92,9 +92,9 @@ protocol (warm passes ≥ 5 ms, reps to ~20 ms of serial-equivalent work,
 min-of-3, unpaced inside the race: the threaded arm is measured hot, the
 parking law), excludes arms that did not engage, and leaves the plan at the
 winner. The verdict banks on the cell's `il_route=ztt` row of the plan's
-own order class as `il_mt_t=<T> il_mt=<0|1|2>` — the tokens the flat DIT
+own order class, on the row keyed `nthreads=T`, as `il_mt=<0|1|2>` — the token the flat DIT
 already banks, so one reader serves both engines — and, for a plan bound
-in place, the aliased pair `il_mt_ip_t=<T> il_mt_ip=` (an aliased z→z
+in place, its `place=ip` row's `il_mt=` (an aliased z→z
 walk through the plane is a different measurement from the out-of-place
 one; the cascade banked them apart for that reason). A T mismatch
 re-races and re-banks; the row's chain and tile are untouched.
@@ -165,7 +165,7 @@ MKL at T = 8 through the canonical bench 1.51-1.87x at 12288..262144.
 
 ## Assumptions stated for the owner's ruling
 
-- The tokens are the flat DIT's (`il_mt_t`, `il_mt`, plus the `_ip` pair);
+- The token is the flat DIT's (`il_mt`, on the plan's own row: placement and thread count are its key);
   no new token family.
 - Both arms of the flat DIT are built and raced; a third shape (a
   2D-style column split inside a tile) is not, until measured wanting.

@@ -23,7 +23,7 @@ Read from the code, not assumed:
   `vw2_2d_rl_lookup/bank`'s key. `chain` and `blu` are direction-shared on
   it. So the builder's lookup and bank land on the real tier's row as they
   are.
-- **The per-direction tokens.** `rw`, `wl`, `cmt`, `cmtt` are spelled by
+- **The per-direction tokens.** `rw`, `wl`, `cmt` are spelled by
   `vw2__rl_tok(is_c2r, i)`: plain for r2c, `_c2r`-suffixed for c2r, on the
   one row. The builder reads the PLAIN names, so its `bwl/bcmt/bcmtt`
   out-params are r2c's for a c2r create. THE REAL TIER IGNORES THEM and
