@@ -1,12 +1,11 @@
 /* il2d_proto.h — SCALAR SIMULATOR for the native IL 2D c2c tier's stage
- * maps (M0 of docs/roadmap/fft2d_il_c2c_design.md).
+ * maps (docs/roadmap/fft2d_il_c2c_design.md).
  *
- * LAW (the il2p scar, eight guessed stride maps falsified in one session):
- * maps are derived with the algebra shown, then proven by a running
- * simulator, BEFORE any SIMD code uses them. This header is that simulator;
- * build_tuned/benches/il2d_proto_gate.c is its gate vs a naive separable
- * DFT, elementwise, per direction (roundtrip never gates a permuted
- * transform).
+ * LAW: stride maps are derived with the algebra shown, then proven by a
+ * running simulator, BEFORE any SIMD code uses them — guessed maps do not
+ * survive. This header is that simulator; build_tuned/benches/
+ * il2d_proto_gate.c is its gate vs a naive separable DFT, elementwise, per
+ * direction (roundtrip never gates a permuted transform).
  *
  * ── THE ALGEBRA (column pass: same-slot in-place DIF along axis i) ──
  *
@@ -39,17 +38,16 @@
  *    hoisted out of the column loop.
  * 2. The last stage has D = 1 ⇒ W_L^{d r} = 1: it is the twiddle-free
  *    n1 shape. A single-stage chain (N1 <= codelet radix) is served by the
- *    SHIPPED n1 kernels with Ls = N2 and no new emission (M1).
+ *    n1 kernels with Ls = N2 and no new emission.
  *
  * Row pass in this simulator: a naive N2-point DFT per row, NATURAL output
- * — it isolates the column-pass algebra, which is the new machinery. The
- * production row pass is the K=1 IL engine and carries its own per-plan
- * contract; the M1 driver gate runs end-to-end through the front door.
+ * — it isolates the column-pass algebra. The production row pass is the K=1
+ * IL engine and carries its own per-plan contract.
  *
  * Direction: bwd = conjugated twiddles (sign +1), unscaled, own map, gated
  * against the naive inverse independently (per-direction law).
  *
- * Scope v1: chain radices are the cil codelet set {4,8,16,32,64}; N1 =
+ * Scope: chain radices are the cil codelet set {4,8,16,32,64}; N1 =
  * product of the chain; N2 any >= 1 (the kernels' count contract is
  * ANY >= 1 via the VEX-128 odd tail).
  */

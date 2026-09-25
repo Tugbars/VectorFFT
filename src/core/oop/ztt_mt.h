@@ -1,6 +1,5 @@
 /* ztt_mt.h — ZTURN-T's THREADED arm: the staged walk, sectioned
- * (docs/design/ztt_mt_design.md, 2026-09-15; the method is the deleted
- * cascade's, docs/design/cascade_mt_method.md).
+ * (docs/design/ztt_mt_design.md).
  *
  * Every stage of the staged walk (ztt.h _ztt_staged_run) is a loop over
  * units — columns (the ingest, the terminator, the plain stage 0), groups
@@ -319,14 +318,14 @@ static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const double *zin,
         memcpy(seed, zout, (size_t)2 * p->N * sizeof(double));
         rs.src = seed; rs.nb = (size_t)2 * p->N * sizeof(double);
         {
-            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, _ztt_mt_reseed, &rs, 0 }; /* THREADED arms: never paused (mt_measurement_parking_trap) */
+            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, _ztt_mt_reseed, &rs, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
             vfft_race_run(&proto, arms, na, ns);
         }
         VFFT_ZTT_FREE(seed);
     }
     else
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (mt_measurement_parking_trap) */
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
         vfft_race_run(&proto, arms, na, ns);
     }
     for (a = 1; a < na; a++)

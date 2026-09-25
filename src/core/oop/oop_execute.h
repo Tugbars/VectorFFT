@@ -1,32 +1,25 @@
-/* oop_execute.h — Mode B out-of-place execution for the prototype-core
- * stride executor (plan.h / executor_generic.h path).
+/* oop_execute.h — Mode B out-of-place execution on the stride executor
+ * (plan.h / executor_generic.h path).
  *
  * Mechanism: the n1 codelets are contractually out-of-place (7-arg
  * signature, "pass in==out, is==os for in-place" — executor_generic.h).
  * Stage 0 of a DIT plan is untwiddled in every group, so OOP execution is:
  * run stage 0 with src in and dst out (same strides, same group geometry),
- * then run stages 1.. unchanged in-place on dst. The resume uses a shallow
- * plan view with the stage table shifted by one — stage bodies reference
- * only their own stride_stage_t, so the view is sound; the ~2.5KB struct
- * copy per call is noise against any transform.
+ * then run stages 1.. unchanged in-place on dst — through the JIT/baked
+ * executor when one is resolved, else the generic loop.
  *
  * Output is BIT-IDENTICAL to vfft_proto_execute_fwd_generic on a copy
  * (same codelets, same arithmetic, different memory), and src is preserved.
  *
  * Rejected with -1 (never UB):
  *   - DIF-oriented plans: stage 0 carries twiddles there; writing it OOP is
- *     a different dataflow (the physics of preserving the input).
+ *     a different dataflow.
  *   - plans whose stage 0 has any twiddled group (belt and braces).
- *   - K not a multiple of 8 is the caller's existing constraint, unchanged.
+ *   - K not a multiple of 8 is the caller's constraint.
  *
  * Backward: pointer-swap identity IDFT(re,im) = swap(DFT(im,re)) on the
- * same forward plan (validated leaf- and engine-level, docs section 8).
- * Unnormalized inverse, same ordering semantics as forward.
- *
- * v1 scope mirrors the proto executor's Phase 1: single-threaded, DIT,
- * generic loop for stages 1.. (the tier-1 plan-shaped fast path is
- * in-place-only; wiring OOP-aware tier-1 is a later optimization worth
- * the documented 5-6 percent).
+ * same forward plan. Unnormalized inverse, same ordering semantics as
+ * forward. Single-threaded (oop_mt.h slices lanes).
  */
 #ifndef VFFT_OOP_EXECUTE_H
 #define VFFT_OOP_EXECUTE_H
@@ -95,8 +88,7 @@ static inline int vfft_proto_execute_fwd_oop(const stride_plan_t *plan,
  * executor (fused t1s + leg0-conj) applied to swapped data is a different
  * transform. Same rejections, ordering semantics, and src preservation as
  * fwd_oop_jit. No range-fn plumbing on purpose: stage 0 is the fused OOP
- * boundary and the remainder is exactly classic start_stage=1 — the 6a17
- * stop gate has no consumer here. */
+ * boundary and the remainder is exactly start_stage=1. */
 static inline int vfft_proto_execute_bwd_oop_jit(const stride_plan_t *plan,
                                                  const double *src_re,
                                                  const double *src_im,

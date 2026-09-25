@@ -922,7 +922,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
          * the candidate so the cell's winner banks it (il_forms=) */
         vfft_ilfd_race_forms(b.ifd, ctx->z_in, ctx->z_out);
         (void)vfft_ilfd_forms_str(b.ifd, c->il_flf, sizeof c->il_flf);
-        /* then the TILE race (the cascade's tcut in flat form): the stage
+        /* then the TILE race (tcut in flat form): the stage
          * spans that fit the budget, on the whole forward, banked as il_tw=.
          * The budget is L1d below 2048 (the plane is 2-32 KB there and a
          * tile that fits L2 gates nothing), L2 above. */
@@ -930,7 +930,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
                                      N < 2048 ? vfft_cpu_l1d_bytes() : vfft_cpu_l2_bytes());
     }
 
-    /* warmup (+ joint roundtrip refusal for cascades) */
+    /* warmup */
     memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
     if (_il_dp_exec_dir(ctx, c, &b, bwd) != 0)
     { _ILDP_WHY(why, "BUILT but the executor refused it"); _il_dp_free(&b); return 1e18; }
@@ -954,8 +954,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
         { _ILDP_WHY(why, "BUILT but the forward executor refused it"); _il_dp_free(&b); return 1e18; }
         /* zin == zout is safe for il2p: stage 1 reads zin into p->mid and
          * stage 2 reads mid into zout, so the input is fully consumed. The
-         * chain (il3p) documents the same contract (2026-09-03: this gate
-         * used to call the pair's backward on a chain3 candidate - NULL). */
+         * chain (il3p) documents the same contract. */
         if (c->route == VFFT_K1_IL_CHAIN3)
             vfft_il3p_execute_bwd(b.i3, dst, dst);
         else if (vfft_il2p_execute_bwd(b.ip, dst, dst) != 0)
@@ -985,7 +984,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
         double tmin = 1e30;
         for (int t = 0; t < VFFT_IL_DP_TIME_REPEAT; t++)
         {
-            /* refill per TRIAL, not per rep — mirrors dp_planner.h:447 */
+            /* refill per TRIAL, not per rep — as dp_planner.h does */
             memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
             double t0 = _il_dp_now_ns();
             for (int i = 0; i < reps; i++)
@@ -1026,8 +1025,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
     return best;
 }
 
-/* The shipped entry point: unchanged forward/joint metric. Every existing
- * caller keeps measuring exactly what it measured before the axis landed. */
+/* The forward metric. */
 static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
                            vfft_il_cand_t *c)
 {
@@ -1052,7 +1050,7 @@ static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
  *      jointly would only spend the budget re-measuring the forward winner
  *      once per backward form.
  *
- * The nibble space is walked WHOLE (0, variants 1-4, MONO) rather than
+ * The nibble space is walked WHOLE (0 and variants 1-5) rather than
  * mirroring the forward pool: backward kernels are sparser, and _il_dp_build
  * refuses an unresolved nibble, so a combination that has no emitted twin
  * costs one create/destroy and never reaches the timer. That also means new
@@ -1088,20 +1086,18 @@ static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
 {
     if (!w || (w->route != VFFT_K1_IL_2P_PURE && w->route != VFFT_K1_IL_CHAIN3))
         return 1e18;
-    /* CHAIN3 (2026-09-03): only the leaf slot has backward twins, so the
-     * mid pool is {0} and the code packs as VFFT_IL_C3KV_PACK(0, 0, leaf). */
+    /* CHAIN3: only the leaf slot has backward twins, so the mid pool is {0}
+     * and the code packs as VFFT_IL_C3KV_PACK(0, 0, leaf). */
     const int c3 = (w->route == VFFT_K1_IL_CHAIN3);
 
     /* The variant pool, per slot. Mirrors the FORWARD enumerator's two
-     * disciplines, both of which the first cut of this pass dropped:
+     * disciplines:
      *
      * 1. 🔴 ELIMINATE THE DEFAULT'S TWIN. At R >= 32 with an even partner
      *    count, create installs variant 2 (or 1 if 2 is absent) as the
      *    STRUCTURAL default, so bkv=0 and bkv=PACK(2,2) build the SAME plan.
-     *    The blind grid timed that kernel twice under two labels and let the
-     *    two "compete": measured at 32x32, 0x00 -> 914.2 ns and 0x22 -> 876.4
-     *    ns, a 4% win by one kernel over itself. 7 of the 16 arms were
-     *    duplicates of another arm. The forward has always skipped this
+     *    Timing one kernel twice under two labels lets it "beat" itself
+     *    (4% at 32x32, pure noise). The forward skips the same twin
      *    (msv[mi] == dm && lsv[li] == dl).
      *
      * 2. 🔴 MONO IS NOT A PERFORMANCE ARM. It is the odd-count coverage
@@ -1115,7 +1111,7 @@ static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
      *    It stays expressible as a banked verdict for a platform where
      *    blocked loses - that is what the code is for - just not as an arm.
      *
-     * Variants 1-4 are still walked BLIND rather than per-radix, so a newly
+     * Variants 1-5 are walked BLIND rather than per-radix, so a newly
      * emitted backward codelet becomes raceable with no edit here; a variant
      * with no twin is refused at build and never reaches the timer. */
     /* Canonical pools: 0 = "whatever create installed", plus every variant
@@ -1129,11 +1125,8 @@ static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
     const int leaf_def = _il_bwd_default_variant(w->R2, (w->R1 & 1) == 0, 0);
     msv[nm++] = 0;
     lsv[nl++] = 0;
-    /* 1..5. Variant 5 = _ct (odd-composite Cooley-Tukey), wired on the LIVE
-     * backward pair 2026-08-23 -- it won all 24 raced cells at radices
-     * 15/21/25/27 (+21.6% to +222.2%). The sweep used to stop at 4, so a
-     * kernel at 5 could be fully wired and still never timed; the header's
-     * "raceable the day they land" only ever held inside the swept range.
+    /* 1..5. Variant 5 = _ct (odd-composite Cooley-Tukey). Widen the sweep
+     * together with any new variant, or a wired kernel is never timed.
      * Offering a variant with no emitted twin is free: _il_dp_build refuses
      * the nibble and the combo is skipped before it counts as an arm. */
     for (v = 1; v <= 5; v++)
@@ -1156,9 +1149,8 @@ static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
             const char *why = NULL;
             double ns = _il_dp_bench_dir(ctx, N, &t, 1, &why);
             if (ns > 1e17)
-            {   /* not an arm — and SAY WHY (2026-09-11): "no such kernel" is
-                 * expected coverage, "BUILT but WRONG" is a resolver defect
-                 * that used to vanish into a silently shorter arm list. */
+            {   /* not an arm — and SAY WHY: "no such kernel" is expected
+                 * coverage, "BUILT but WRONG" is a resolver defect. */
                 if (verbose)
                     fprintf(stderr,
                             "  [il-dp] N=%d bwd %dx%d bkv=0x%02x -> not an arm: %s\n",
@@ -1193,12 +1185,9 @@ static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
 /* Candidate sink. `n` counts what was ACCEPTED, `dropped` counts everything the
  * cap refused.
  *
- * 🔴 The old form returned `n` unchanged on overflow, so a truncated
- * enumeration was indistinguishable from a complete one and the planner would
- * happily bank "the best candidate" that was really the best of a PREFIX. The
- * prefix is not even a random sample: the enumerator walks nf ascending, so the
- * dropped entries are systematically the highest-nf chains. Any new axis
- * multiplies the count, so this must stay loud. */
+ * 🔴 Overflow must stay LOUD: a silently truncated enumeration would bank
+ * the best of a PREFIX, and a biased one (the dropped entries are
+ * systematically the last enumerated). Any new axis multiplies the count. */
 typedef struct
 {
     vfft_il_cand_t *out;
@@ -1212,21 +1201,12 @@ static void _il_dp_push(vfft_il_cand_sink_t *s, const vfft_il_cand_t *c)
     s->out[s->n++] = *c;
 }
 
-/* Enumerate every legal candidate for (N, ord). Availability is asked of the
- * il2p registry (vfft_il2p_leaf_fn / vfft_il2p_mid_fn), NEVER the split
- * registry — inheriting split's reach is a recorded measured bug: at N=16384
- * the balanced split pick is 128x128 and both IL halves come back NULL,
- * because IL kernels stop at R=64 while split reaches 128. (The hybrid 2P/3P
- * candidates and their vfft_oop_*_il_fn registry were deleted 2026-07-29;
- * the pair-based IL axis is 2P_PURE only.)
- *
- * Cascade legality is DELEGATED to vfft_zsplit_create (NULL == illegal) rather
- * than re-implemented here. A second copy of that validator would drift. */
-/* ONE cascade chain -> candidates: both engines' creates validate it (the
- * validator is the law), ZTURN's legal tile widths are enumerated from the
- * live plan, and t2q is a searched axis. Shared by the {4,8} generator and
- * the odd-mid generator (2026-09-02) so a new axis cannot be half-adopted. */
-/* FLAT DIT candidates (2026-09-05): ordered compositions of N over the
+/* Availability is asked of the IL registries (vfft_il2p_leaf_fn /
+ * vfft_il2p_mid_fn, ...), NEVER the split registry: IL kernels stop at R=64
+ * while split reaches 128 (at N=16384 the balanced split pick 128x128 has no
+ * IL halves). Each engine's create is the validator (NULL == illegal); a
+ * second copy of a validator here would drift. */
+/* FLAT DIT candidates: ordered compositions of N over the
  * engine's radix pool in its seed order (so the greedy seed chain comes
  * first), depth 2..VFFT_ILFD_MAX_K, capped and LOGGED like the 2D tier's
  * enumerator (no silent caps). Kernel availability, counts and the inverse
@@ -1237,24 +1217,12 @@ static void _il_dp_flat_rec(int L, int depth, int *cur,
                             int (*out)[VFFT_ILFD_MAX_K], int *lens,
                             int *n, int *dropped)
 {
-    /* 17 and 19 joined on 2026-09-19: the flat DIT stopped at 13 while the
-     * IL registry has had both for as long as the 2D column chain has been
-     * using them. Every kind this engine needs exists at each -- n1c for the
-     * leaf, t2cp for a mid, t2cs/t2csg for a tail -- and only the optional
-     * split-body form (msz) stops at 15, which is a per-stage choice made
-     * below, not an admission rule. The create resolves every stage and
-     * refuses a radix it cannot build, so a pool entry can only ever add a
-     * race arm, never a wrong plan. */
-    /* 23 joined on 2026-09-21, generated at every IL kind the way 17 and
-     * 19 are (the corpus mirrors 19). The 2..2048 gauntlet found 64 cells
-     * with a factor 23 and NO route -- every one served by the prime cell
-     * at a median 0.49x of the comparison baseline -- because no kernel
-     * existed at 23 anywhere in the interleaved registry while the split
-     * library has had one. */
-    /* 29 and 31 joined on 2026-09-21 (the same recipe): 268 gauntlet cells whose
-     * largest prime is 29..47 ran the prime cell at 0.60-0.96x of the
-     * comparison baseline, 103 of them with a 29 or a 31; that baseline runs
-     * a direct radix-p stage there. */
+    /* The pool: every radix at which this engine's kinds exist -- n1c for
+     * the leaf, t2cp for a mid, t2cs/t2csg for a tail (the optional
+     * split-body form msz stops at 15: a per-stage choice, not an admission
+     * rule). The create resolves every stage and refuses a radix it cannot
+     * build, so a pool entry can only ever add a race arm, never a wrong
+     * plan. */
     static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16, 29, 31, 37, 41, 43, 47 };
     int p;
     if (L == 1)
@@ -1267,18 +1235,16 @@ static void _il_dp_flat_rec(int L, int depth, int *cur,
         return;
     }
     if (depth >= VFFT_ILFD_MAX_K) return;
-    /* THE LONE FACTOR 2 (2026-09-21). The gauntlet's 27 cells of the shape
-     * 2 x {7, 11, 13, 17, 19} (14, 22, 26, 34, 38, 98, 154, ..., 2002) had no
-     * route and ran the prime cell at a median 0.35x of the reference
-     * library: nothing in the library places a SINGLE factor of 2 -- this
-     * pool's 4/8/16 need two or more, the 2^a*odd grammar needs a 4, and the
-     * pair needs R1 >= 3 and an n1t leaf, which has no radix 2. The registry
-     * does have n1c at 2, and the create's leaf slot takes any n1c radix. So
-     * 2 is admitted as the LEAF, and only when L/2 is odd: at any other slot
-     * a 2 needs t2cp/t2csg at radix 2, which do not exist (the create would
-     * refuse, and each refusal spends one of the 24 candidate slots), and at
-     * a 4*odd cell a 2-led chain only re-spells chains 4/8/16 already reach.
-     * This states WHERE a kernel exists; which chain wins is the race's. */
+    /* THE LONE FACTOR 2 (cells 2 x odd: 14, 22, 26, ..., 2002). Nothing
+     * else places a SINGLE factor of 2 -- this pool's 4/8/16 need two or
+     * more, the 2^a*odd grammar needs a 4, and the pair needs R1 >= 3 and an
+     * n1t leaf, which has no radix 2. The registry does have n1c at 2, and
+     * the create's leaf slot takes any n1c radix. So 2 is admitted as the
+     * LEAF, and only when L/2 is odd: at any other slot a 2 needs t2cp/t2csg
+     * at radix 2, which do not exist (each refusal spends one of the 24
+     * candidate slots), and at a 4*odd cell a 2-led chain only re-spells
+     * chains 4/8/16 already reach. This states WHERE a kernel exists; which
+     * chain wins is the race's. */
     if (depth == 0 && (L & 1) == 0 && ((L >> 1) & 1))
     {
         cur[0] = 2;
@@ -1318,18 +1284,8 @@ static void _il_dp_enumerate_flat_ord(int N, vfft_il_cand_sink_t *s, int scr)
     }
 }
 
-/* ZTURN-T (2026-09-09): every registry cell at N. The FUSED CODELETS — one
- * whole-transform function per pow2 cell with the stage kernels inlined, the
- * pow2 solution's executable form and only that (owner's ruling 2026-09-14;
- * generator/generated/fused_codelets/README.md) — exist exactly for these
- * chains (ztt_registry_avx2.h, derived from the corpus), so the enumeration
- * IS the registry walk and the create refuses anything else. The composable
- * stage kernels in codelets/zil/avx2/ztt are what every other
- * solution is built from. Natural output, both directions: it enters the natural pool and the
- * scrambled pool's natural-engine set, and races the pairs on the same
- * clock — the owner's "ZTURN-T ships, racing Bailey below 2048". */
-/* the FOUR-STEP's candidates (2026-09-15): every split of the ladder, each
- * a 2D child on its own rank-2 cell; both order classes */
+/* the FOUR-STEP's candidates: every split of the ladder, each a 2D child on
+ * its own rank-2 cell; both order classes */
 static void _il_dp_enumerate_fs(int N, vfft_il_cand_sink_t *s, int scr)
 {
     int n1[8], n2[8], i;
@@ -1361,6 +1317,12 @@ static void _il_dp_enumerate_fs(int N, vfft_il_cand_sink_t *s, int scr)
     }
 }
 
+/* ZTURN-T: every registry cell at N. The FUSED CODELETS — one
+ * whole-transform function per pow2 cell with the stage kernels inlined —
+ * exist exactly for these chains (ztt_registry_avx2.h, derived from the
+ * corpus), so the enumeration IS the registry walk and the create refuses
+ * anything else. Natural output, both directions; the scrambled class is
+ * the PLAIN schedule. */
 static void _il_dp_enumerate_ztt_ord(int N, vfft_il_cand_sink_t *s, int scr)
 {
     vfft_il_cand_t c;
@@ -1371,25 +1333,24 @@ static void _il_dp_enumerate_ztt_ord(int N, vfft_il_cand_sink_t *s, int scr)
         if (cell->n != N) continue;
         memset(&c, 0, sizeof c);
         c.route = VFFT_K1_IL_ZTT;
-        /* scr = the PLAIN schedule (ztt_scrambled_design.md, 2026-09-14): the
+        /* scr = the PLAIN schedule (docs/design/ztt_scrambled_design.md): the
          * same registry chain, the cell's fwd_scr / bwd_scr fused codelets,
          * its own tile law (the last mid's block), scrambled output. It is the
-         * scrambled pool's ONLY writer at pow2 (design_contracts.md 8b). */
+         * scrambled pool's ONLY writer at pow2. */
         c.il_scr = scr;
         for (q = 0; q < cell->nf; q++) c.il_zt[q] = cell->chain[q];
         c.il_zt_n = cell->nf;
         _il_dp_push(s, &c);                       /* untiled */
-        /* TILING is an AXIS (owner's law, 2026-09-09): each legal tile width
-         * is its own candidate beside untiled; the race decides per cell, the
-         * row banks il_tw=. vfft_ztt_tile_legal is the law. The ladder is
-         * 16 KB and 32 KB of plane (1024 / 2048 complexes), ruled by the
-         * owner 2026-09-09 from the measured race at 2048..32768 (every chain
-         * x the old 1 KB..64 KB ladder): a width matters only through the
-         * stages it admits into L1, 32 KB is the largest width that still
-         * leaves L1 room for the twiddle streams, and no width below 16 KB
-         * ever admits a stage 16 KB leaves out — the 1..8 KB widths only tied
-         * on chains that lose the cell; 64 KB never won a chain. Untiled
-         * stays the datum (the 2048 winner: its 32 KB plane is L1-resident). */
+        /* TILING is an AXIS: each legal tile width is its own candidate
+         * beside untiled; the race decides per cell, the row banks il_tw=.
+         * vfft_ztt_tile_legal is the law. The ladder is 16 KB and 32 KB of
+         * plane (1024 / 2048 complexes), from the measured race at
+         * 2048..32768 over every chain x a 1 KB..64 KB ladder: a width matters
+         * only through the stages it admits into L1, 32 KB is the largest
+         * width that still leaves L1 room for the twiddle streams, and no
+         * width below 16 KB admits a stage 16 KB leaves out (1..8 KB only
+         * tied on losing chains; 64 KB never won). Untiled stays the datum
+         * (the 2048 winner: its 32 KB plane is L1-resident). */
         {
             static const int ladder[] = { 1024, 2048 };
             for (q = 0; q < (int)(sizeof ladder / sizeof ladder[0]); q++)
@@ -1407,17 +1368,14 @@ static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
     _il_dp_enumerate_ztt_ord(N, s, 0);   /* natural order */
 }
 
-/* ZTURN-T at 2^a*odd (docs/design/ztt_odd_design.md, 2026-09-14): the
- * STAGED cells — no registry row; the chain GRAMMAR instead. The ends are 4
- * or 8 (the ingest's turn lattice and the terminators' lane transposes), the
- * odd part of N is decomposed greedily largest-first over {15, 9, 7, 5, 3}
- * and its mids are placed at every interior position, the pow2 slots walk
- * ordered {4, 8}, nf <= 7 — the cascade's _il_dp_enumerate_odd_mids grammar,
- * relaxed to need no pow2 mid beside the odd ones. Each chain x {untiled,
- * the owner's odd-cell ladder 8 / 16 / 32 / 48 KB (2026-09-14: "8-16-32kb
- * gives the best results, we can try 48kb here too since we have odds")
- * where the tile law admits it (a width divides N and holds the first mid's
- * group)}. Both order classes: scr = 1 is the plain schedule, the scrambled
+/* ZTURN-T at 2^a*odd (docs/design/ztt_odd_design.md): the STAGED cells —
+ * no registry row; the chain GRAMMAR instead. The ends are 4 or 8 (the
+ * ingest's turn lattice and the terminators' lane transposes), the odd part
+ * of N is decomposed greedily largest-first over {15, 9, 7, 5, 3} and its
+ * mids are placed at every interior position, the pow2 slots walk ordered
+ * {4, 8}, nf <= 7. Each chain x {untiled, the odd-cell ladder 8 / 16 / 32 /
+ * 48 KB where the tile law admits it (a width divides N and holds the first
+ * mid's group)}. Both order classes: scr = 1 is the plain schedule, the scrambled
  * pool's only writer here as at pow2. The create resolves each chain's stage
  * table and refuses a radix without a kernel; the planner pushes nothing the
  * create would refuse (the same grammar, checked twice, as at pow2). */
@@ -1476,21 +1434,15 @@ static void _il_dp_enumerate_ztt_odd(int N, vfft_il_cand_sink_t *s, int scr)
     }
 }
 
-/* The natural-output engines' candidates: mono forms, pairs x forms,
- * chain3 x forms and (with_flat) the natural flat DIT. The NATURAL pool is
- * exactly this; the SCRAMBLED pool takes the same engines — natural output
- * is a legal answer to a scrambled request — beside the flat DIT's
- * scrambled class (which stands in for the natural flat there). */
 /* ── the family enumerators ─────────────────────────────────────────────
  * One function per family, called only when planning/policy.h's BAND MAP
  * admits it. These hold NO admission of their own: each answers only "what
  * do I have for this N" (a kernel, a radix pair, a chain), never "is this
- * my cell". Moved out of the old two-pool enumerator 2026-09-16, body for
- * body (planning_policy_design.md step 3). */
+ * my cell". */
 static void _il_dp_enumerate_mono(int N, vfft_il_cand_sink_t *s)
 {
     vfft_il_cand_t c;
-    /* MONO forms (2026-09-04): every solo kernel the registry has enters
+    /* MONO forms: every solo kernel the registry has enters
      * the pool as its own candidate — form 0 = the solo n1 kind at each
      * N in VFFT_IL_N1_PAIR_RADICES, form 1 = mono64's fused 8x8 (N=64).
      * The measurement decides between them and against the pairs. */
@@ -1509,7 +1461,7 @@ static void _il_dp_enumerate_mono(int N, vfft_il_cand_sink_t *s)
 static void _il_dp_enumerate_prime(int N, vfft_il_cand_sink_t *s)
 {
     vfft_il_cand_t c;
-    /* the prime cell as ONE candidate (2026-09-21): its method and inner
+    /* the prime cell as ONE candidate: its method and inner
      * are the prime shard's own verdict, raced there (k1_commit.h); this
      * race measures the whole convolution against the chains. The plan is
      * the door's warm one (_k1pr_ctx): no plan, no candidate. */
@@ -1529,8 +1481,7 @@ static void _il_dp_enumerate_pairs(int N, vfft_il_cand_sink_t *s)
     /* DERIVED from the generated registry, not duplicated: the leaf
      * resolver serves exactly VFFT_IL_N1T_PAIR_RADICES, so offering any
      * other R2 could only produce candidates the existence check below
-     * would reject anyway. Widened 2026-08-23 from a hardcoded
-     * {4,8,16,32,64} -- see the block comment on this change. */
+     * would reject anyway. */
     static const int RAD[] = {
 #define C(R) R,
         VFFT_IL_N1T_PAIR_RADICES(C)
@@ -1541,26 +1492,20 @@ static void _il_dp_enumerate_pairs(int N, vfft_il_cand_sink_t *s)
         int R2 = RAD[i];
         if (N % R2) continue;
         int R1 = N / R2;
-        /* NO pow2 test on R1. It was redundant on top of the
-         * leaf_fn/mid_fn existence check below, which is strictly
-         * tighter, and it was what made every non-pow2 cell enumerate
-         * ZERO candidates and therefore never bank a verdict. */
+        /* No pow2 test on R1: the leaf_fn/mid_fn existence check below
+         * is strictly tighter. */
         if (R1 < 3 || R1 > 64) continue;
-        /* POW2 SUNSET (owner's ruling 2026-09-09 evening, the pool-sunset
-         * policy of 2026-08-11 finally applied to the pow2 pair pools):
-         *   - no radix-64 slot at a power of two ("drop R64 mid, leaf.
-         *     it's not needed") — the 64xR / Rx64 arrangements never won
-         *     a live cell on any host;
+        /* POW2 SUNSET (pow2 cells only):
+         *   - no radix-64 slot — the 64xR / Rx64 arrangements never won a
+         *     live cell on any host;
          *   - the radix-8 and radix-16 slots race the TANGENT kernel
-         *     alone ("tangent should stay, the rest will be gone"): the
-         *     classic interiors, the blocked 4.4 and the M-128 edge lost
-         *     to it bit-identically or by 20-25% and are superseded;
-         *   - the radix-32 slots keep all four forms (owner: "all can
-         *     stay"); radix 4 has one form.
-         * Pow2 cells only — the odd-N machinery (chain3, the flat DIT,
-         * the pair at 2^a * odd) is untouched until its turn, and the
-         * superseded kernels stay in the resolvers for the backward side
-         * (no tangent twins yet) and for those cells' banked rows. */
+         *     alone: the classic interiors, the blocked 4.4 and the M-128
+         *     edge lost to it bit-identically or by 20-25%;
+         *   - the radix-32 slots keep all four forms; radix 4 has one.
+         * The odd-N machinery (chain3, the flat DIT, the pair at 2^a * odd)
+         * keeps every form, and the superseded kernels stay in the resolvers
+         * for the backward side (no tangent twins yet) and for those cells'
+         * banked rows. */
         const int pow2_cell = (N & (N - 1)) == 0;
         if (pow2_cell && (R1 == 64 || R2 == 64)) continue;
         memset(&c, 0, sizeof c);
@@ -1568,7 +1513,7 @@ static void _il_dp_enumerate_pairs(int N, vfft_il_cand_sink_t *s)
         if (vfft_il2p_leaf_fn(R2, 0) && vfft_il2p_mid_fn(R1, 0))
         {
             c.route = VFFT_K1_IL_2P_PURE;
-            /* BLOCKED-FORM axis (il_kv, 2026-08-06): the base candidate
+            /* BLOCKED-FORM axis (il_kv): the base candidate
              * above measures the structural default create resolves
              * (R>=32 slots get the 4·8 forms). The within-blocked form
              * pick (2·16 vs 4·8) and the cell-local r16 mid are
@@ -1585,30 +1530,23 @@ static void _il_dp_enumerate_pairs(int N, vfft_il_cand_sink_t *s)
                  * an explicit nibble, which serves identically to 0;
                  * only the (default,default) combo IS the base
                  * candidate and is skipped. */
-                /* variant 3 = TANGENT interior (2026-08-11). Enters the
-                 * pool wherever a form exists, exactly like the blocked
-                 * forms: it measured faster than the classic sibling in
-                 * isolation, but "faster kernel" is not "faster plan", so
-                 * the cell decides. R8/R16 tangent forms are monolithic
-                 * (odd counts legal); BOTH R32 tangent forms are blocked
-                 * (wing32, 2026-08-13) and admitted only for even
-                 * partner counts. The R32 tangent LEAF is BACK: the old
-                 * +32.4% kill was the paired permute2f128 store edge —
-                 * n1tbw32's TURNED-128 edge fixed it and the (32,16)
-                 * route ties the hand champion (A-1,
-                 * docs/roadmap/r32_tangent_parity_plan.md). */
-                /* Variant 4 = the TURNED-axis edge forms (owner directive
-                 * 2026-08-15): tangent interior with the OTHER store edge.
-                 * Leaf T256 was PROMOTED 2026-08-16 at both raceable
-                 * cells (128 kv 64, 512 kv 67); the mid M-128 loses every
-                 * cell on THIS machine but stays enumerated per owner
-                 * policy — a distinct construction may win on other
-                 * platforms, and the race (not a rule) decides per cell. */
+                /* variant 3 = TANGENT interior. Enters the pool wherever
+                 * a form exists, exactly like the blocked forms: faster
+                 * than the classic sibling in isolation, but "faster
+                 * kernel" is not "faster plan", so the cell decides.
+                 * R8/R16 tangent forms are monolithic (odd counts legal);
+                 * BOTH R32 tangent forms are blocked and admitted only for
+                 * even partner counts. */
+                /* Variant 4 = the TURNED-axis edge forms: tangent interior
+                 * with the OTHER store edge. The mid M-128 loses every cell
+                 * on this machine but stays enumerated: a distinct
+                 * construction may win on another platform, and the race
+                 * (not a rule) decides per cell. */
                 int msv[5], lsv[5], nm, nl, dm, dl;
-                /* the per-radix ARM POOLS live in il2p.h since
-                 * 2026-09-03 (vfft_il2p_mid_arm_pool / leaf_arm_pool,
-                 * with the per-radix rationale) -- one source for the
-                 * pair and the 3-stage chain. Same codes, same order. */
+                /* the per-radix ARM POOLS live in il2p.h
+                 * (vfft_il2p_mid_arm_pool / leaf_arm_pool, with the
+                 * per-radix rationale) -- one source for the pair and the
+                 * 3-stage chain. Same codes, same order. */
                 nm = vfft_il2p_mid_arm_pool(R1, msv, &dm);
                 nl = vfft_il2p_leaf_arm_pool(R2, lsv, &dl);
                 if (pow2_cell && (R1 == 8 || R1 == 16)) { nm = 1; msv[0] = 3; dm = 3; }
@@ -1636,21 +1574,16 @@ static void _il_dp_enumerate_pairs(int N, vfft_il_cand_sink_t *s)
 static void _il_dp_enumerate_chain3(int N, vfft_il_cand_sink_t *s)
 {
     vfft_il_cand_t c;
-    /* CHAIN3 (2026-09-02): every legal 3-stage IL chain — leaf R2 from
-     * the il3p leaf set, R1 = N/R2 split as (A, B) over every divisor
-     * pair — enters the NATURAL pool beside the pairs and mono, so the
-     * cell decides. Until now the create picked the FIRST legal chain
-     * (vfft_il3p_default_chain) and nothing measured it; the K=1 cells
-     * that only a chain can express (and the prime engine's inner at
-     * such lengths) ran an unmeasured plan. vfft_il3p_create validates
-     * (kernels, parity, counts); an illegal split is refused at build. */
+    /* CHAIN3: every legal 3-stage IL chain — leaf R2 from the il3p leaf
+     * set, R1 = N/R2 split as (A, B) over every divisor pair — enters the
+     * pool beside the pairs and mono, so the cell decides.
+     * vfft_il3p_create validates (kernels, parity, counts); an illegal
+     * split is refused at build. */
     {
-        /* the chain3 LEAF pool = the pair's whole radix pool (odd
-         * leaves included, 2026-09-04): vfft_il3p_create is odd-legal
-         * now (per-block ceiling tables + the kernels' odd-count
-         * tails), so an all-odd N (1215 = 15x9x9, 4095 = 13x15x21)
-         * enumerates chains instead of falling to Bluestein. The
-         * create still validates every split (kernels, counts). */
+        /* the chain3 LEAF pool = the pair's whole radix pool, odd leaves
+         * included: vfft_il3p_create is odd-legal (per-block ceiling
+         * tables + the kernels' odd-count tails), so an all-odd N
+         * (1215 = 15x9x9, 4095 = 13x15x21) enumerates chains. */
         static const int LEAF3[] = {
 #define C(R) R,
             VFFT_IL_N1T_PAIR_RADICES(C)
@@ -1663,27 +1596,20 @@ static void _il_dp_enumerate_chain3(int N, vfft_il_cand_sink_t *s)
             const int R1 = N / R2;
             if (R1 < 9) continue;   /* A, B >= 3 each */
             {
-                /* PURE POW2: the pair route's — a MEASURED verdict, not a
-                 * rule (2026-09-07, the sub-2048 campaign's Phase 2). With
-                 * this skip lifted, every legal three-pass chain raced the
-                 * pairs in this planner at 128/256/512/1024 (natural, cold
-                 * store, the batched protocol) and LOST at every cell:
-                 * best chain3 vs best pair 75.1/60.7, 155.4/133.6,
-                 * 349.0/295.8, 1079.3/792.6 ns (+24/+16/+18/+36%), at the
-                 * price of 6/23/64/138 extra candidates (cold create x3-5).
-                 * The unresolved "+7.6-8.8% at 512" (U6 L10) is refuted.
-                 * Re-lift only with a new chain3 kind, never on taste. */
+                /* PURE POW2 is the pair route's — a MEASURED verdict, not
+                 * a rule: every legal chain3 lost to the best pair at
+                 * 128/256/512/1024 (75.1/60.7, 155.4/133.6, 349.0/295.8,
+                 * 1079.3/792.6 ns) while adding 6/23/64/138 candidates.
+                 * Re-lift only with a new chain3 kind. */
                 int o = R1;
                 while ((o & 1) == 0) o >>= 1;
                 if (o == 1) continue;
             }
             /* the leaf and BOTH mids must have kernels (the create's own
-             * checks, vfft_il3p_create): before 2026-09-15 every divisor
-             * split of R1 was pushed and refused at build, and at a large
-             * 2^a*odd N (245760: 899 such splits) they overflowed the
-             * candidate cap — a refused CELL, served by Bluestein at 4.7 ms
-             * where ZTURN-T measures 1.0. Kernels that do not exist are
-             * not candidates. */
+             * checks, vfft_il3p_create). Kernels that do not exist are not
+             * candidates: pushing every divisor split for the build to
+             * refuse overflows the cap at large 2^a*odd N (899 splits at
+             * 245760) and refuses the whole cell. */
             if (!vfft_il2p_leaf_fn(R2, 0) || !vfft_il2p_n1_bwd_fn(R2)) continue;
             for (int A = 3; A <= R1 / 2; A++)
             {
@@ -1696,8 +1622,8 @@ static void _il_dp_enumerate_chain3(int N, vfft_il_cand_sink_t *s)
                 c.R1 = R1; c.R2 = R2;
                 c.c3_A = A; c.c3_B = R1 / A;
                 _il_dp_push(s, &c);
-                /* CHAIN3 FORMS (2026-09-03, parity with the pair's
-                 * il_kv): the same pools, three slots (A | B<<4 |
+                /* CHAIN3 FORMS (as the pair's il_kv): the same pools,
+                 * three slots (A | B<<4 |
                  * leaf<<8). The base candidate is the (default x3)
                  * combo and is skipped. Full cross product up to 16
                  * combos; past that one slot varies at a time with the
@@ -1752,15 +1678,12 @@ static void _il_dp_enumerate_chain3(int N, vfft_il_cand_sink_t *s)
 
 /* ── THE POOL ────────────────────────────────────────────────────────────
  * planning/policy.h's band map says WHICH families race in this cell; this
- * switch says HOW each one enumerates. Not one admission rule lives here
- * any more — that was the point of the migration (the owner's 2026-09-09
- * diagnosis: one law, 4-6 edits, and every place missed was a defect).
+ * switch says HOW each one enumerates. No admission rule lives here.
  *
- * ORDER IS PART OF THE CONTRACT: the map returns families in the order the
- * two pools pushed them (ZTURN-T's odd chains FIRST where they apply, so a
- * candidate-cap truncation can only ever eat the arms below them), and the
- * switch preserves it. The cell's order class reaches each family as `scr`
- * — the same enumerator serves both classes where a family has both. */
+ * ORDER IS PART OF THE CONTRACT: the map returns families in a fixed order
+ * (ZTURN-T's odd chains FIRST where they apply) and the switch preserves
+ * it. The cell's order class reaches each family as `scr` — the same
+ * enumerator serves both classes where a family has both. */
 static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
 {
     const int scr = (ord != VFFT_IL_ORD_NATURAL);
@@ -1821,7 +1744,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     if (e)
     {
         /* PATIENT cache hit: re-measure the stored top-K so a candidate that
-         * noise mis-ranked last time can climb back (dp_planner.h:199). */
+         * noise mis-ranked last time can climb back. */
         ncand = e->n_top;
         for (int i = 0; i < ncand; i++) cand[i] = e->top[i];
         ctx->n_cache_hits++;
@@ -1834,9 +1757,9 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
 
         /* 🔴 REFUSE a truncated cell rather than banking the best of a prefix.
          * Silently returning the winner of a subset is worse than returning
-         * nothing: it looks like a searched answer. The prefix is biased too —
-         * the enumerator walks nf ascending, so overflow eats the highest-nf
-         * chains first. Raise VFFT_IL_DP_MAX_CAND; do not paper over this. */
+         * nothing: it looks like a searched answer, and the prefix is biased
+         * (overflow eats the last-enumerated arms). Raise VFFT_IL_DP_MAX_CAND;
+         * do not paper over this. */
         if (sink.dropped)
         {
             fprintf(stderr,
@@ -1912,8 +1835,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
             /* WIDTH is part of a candidate's IDENTITY. Without it two
              * candidates differing only in tile width print identically, and a
              * search log that cannot tell its own candidates apart cannot be
-             * audited — the same defect the A/B harness had when it labelled
-             * arms instead of reporting what they engaged. */
+             * audited. */
             char wbuf[24];
             const int twc = cand[i].il_tw;
             if (twc > 0)
@@ -1934,8 +1856,8 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     qsort(cand, (size_t)ncand, sizeof(cand[0]), _il_dp_cand_cmp);
 
     /* The backward axis rides on the FORWARD winner, chosen above. It cannot
-     * reorder cand[] — the sort key is cost_ns, which stays the forward/joint
-     * metric — so this only fills in the second half of the winning plan. */
+     * reorder cand[] — the sort key is cost_ns, the forward metric — so this
+     * only fills in the second half of the winning plan. */
     if (cand[0].route == VFFT_K1_IL_2P_PURE || cand[0].route == VFFT_K1_IL_CHAIN3)
         (void)_il_dp_race_bwd(ctx, N, &cand[0], verbose);
 
@@ -1955,41 +1877,21 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
 
 /* ── banking: turn a verdict into a line the shipped reader accepts ────── */
 
-/* Write the planner's verdicts as wisdom lines in the EXISTING grammar, so
- * vfft_oop_wisdom_load() picks them up with no reader change:
- *
- *   SCRAMBLED winner -> kind 4:  "N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q]"
- *      Self-contained. This is the cascade's own entry and already the shape
- *      vfft_oop_wisdom_lookup_zsplit() expects. The trailing route pair is
- *      the tranche-2 format (oop_wisdom.h:62-76), emitted ONLY when the
- *      winner is the ZTURN engine — a legacy winner's line stays
- *      byte-identical to the old format. cc_chain is ALWAYS the WINNING
- *      route's chain (the vfft.c reader replays a route-1 line's chain
- *      through vfft_zturn2_create_chain); on a route-1 line zs_t2q is the
- *      best LEGACY candidate's terminator pick — the pick the fallback
- *      route (VFFT_NO_ZTURN / zturn-create failure) will run with. ns is
- *      this planner's JOINT fwd+bwd ns/iter for either engine (route-
- *      comparable by construction; informational in the file).
+/* Write the planner's verdicts as rows in the wisdom2 store:
  *
  *   NATURAL winner   -> the lay=il kind-3 row (il_route, pair/chain/tile,
- *      forms, ns), plus the dir=bwd sibling and the ord=scr row.
+ *      forms, ns; il_sb for the four-step's super-band chain), plus the
+ *      dir=bwd sibling when the backward race ran.
+ *   SCRAMBLED winner -> its own lay=il kind-3 row keyed ord=scr.
  *
- * TWO LIBRARIES (owner's law, design_contracts.md section 2, 2026-09-09):
- * this emitter writes INTERLEAVED rows only. The split verdict is banked by
- * the split planner itself (dp_planner_split_oop.h, vfft_sp_dp_emit_wisdom)
- * on its own lay=split row; the two libraries never meet in one call, one
- * row or one calibrator (benches/calibrate_k1_il.c, calibrate_k1_split.c).
- * Until 2026-09-09 this function took the split verdict as arguments and
- * wrote the lay=split row beside the interleaved ones.
+ * TWO LIBRARIES: this emitter writes INTERLEAVED rows only. The split
+ * verdict is banked by the split planner itself (dp_planner_split_oop.h,
+ * vfft_sp_dp_emit_wisdom) on its own lay=split row; the two libraries never
+ * meet in one call, one row or one calibrator (benches/calibrate_k1_il.c,
+ * calibrate_k1_split.c).
  *
- * NOTE ON IL_CASCADE: when the cascade wins a cell, it is recorded by its
- * kind-4 line; setting il_route to the retired cascade value 4 on the kind-3 line is a
- * CROSS-REFERENCE ("the IL winner here is the cascade"), not a second copy of
- * the chain. The kind-3 grammar only carries cc_chain when sp_route == CCOL,
- * so there is deliberately no attempt to smuggle an IL chain into it.
- *
- * Returns the number of verdicts banked (into the wisdom2 store — the
- * wave-1 flip; the caller owns opening/saving the store). */
+ * Returns the number of verdicts banked; the caller owns opening/saving the
+ * store. */
 static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
                                   const vfft_il_cand_t *nat,
                                   const vfft_il_cand_t *scr)
@@ -1997,16 +1899,11 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
     int lines = 0;
     if (!st) return 0;
 
-    /* PER-LAYOUT CELLS (v1.2, 2026-08-24) and, since 2026-09-09, PER-LIBRARY
-     * EMITTERS: this function banks the lay=il records only — the natural
-     * champion, its backward forms, the ord=scr cell. The lay=split record
-     * is the split planner's own (dp_planner_split_oop.h,
-     * vfft_sp_dp_emit_wisdom). The owner's rule: split and IL are CALLER
-     * LAYOUTS (AoS/SoA), never optimization directions — one layout's
-     * absence must not veto the other's verdict, one layout's re-race must
-     * not erase the other's cell, and the two libraries never meet in one
-     * call or one row. ns/ran are per-record and honest: the il record
-     * carries the IL natural champion (ran = 1). */
+    /* PER-LAYOUT CELLS: split and IL are CALLER LAYOUTS (AoS/SoA), never
+     * optimization directions — one layout's absence must not veto the
+     * other's verdict, and one layout's re-race must not erase the other's
+     * cell. ns/ran are per-record: the il record carries the IL natural
+     * champion (ran = 1). */
     {
         int il_ok = (nat && nat->cost_ns < 1e17);
         if (il_ok)
@@ -2017,27 +1914,27 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
             e.K = 1;                   /* one interleaved transform         */
             e.kind = VFFT_OOP_KIND_BAILEY2V;
             e.k1_sp_route = -1;        /* split lives in its own cell       */
-            e.place_ip = inplace;      /* the in-place cell's own row (2026-09-21) */
+            e.place_ip = inplace;      /* the in-place cell's own row */
             e.k1_il_route = nat->route;
             e.il_R1 = nat->R1;
             e.il_R2 = nat->R2;
             e.il_kv = nat->il_kv;      /* the raced forms verdict (explicit 0 when the defaults won) */
             e.il_kv_raced = 1;
             if (nat->route == VFFT_K1_IL_CHAIN3)
-            {                          /* the chain IS the verdict (2026-09-02) */
+            {                          /* the chain IS the verdict */
                 e.il_c3[0] = nat->R2;
                 e.il_c3[1] = nat->c3_A;
                 e.il_c3[2] = nat->c3_B;
             }
             if (nat->route == VFFT_K1_IL_FLAT)
-            {                          /* the chain + its raced forms ARE the verdict (2026-09-05) */
+            {                          /* the chain + its raced forms ARE the verdict */
                 memcpy(e.il_fl, nat->il_fl, sizeof e.il_fl);
                 e.il_fl_n = nat->il_fl_n;
                 memcpy(e.il_flf, nat->il_flf, sizeof e.il_flf);
                 e.il_tw = nat->il_tw;
             }
             if (nat->route == VFFT_K1_IL_ZTT)
-            {                          /* ZTURN-T: the chain + its raced tile ARE the verdict (2026-09-09) */
+            {                          /* ZTURN-T: the chain + its raced tile ARE the verdict */
                 memcpy(e.il_zt, nat->il_zt, sizeof e.il_zt);
                 e.il_zt_n = nat->il_zt_n;
                 e.il_tw = nat->il_tw;
@@ -2055,23 +1952,15 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
                 if (r) vw2_update_field(st, &r->key, "il_sb", cb);
             }
         }
-        /* The dir=bwd SIBLING (2026-08-21) — moved OUTSIDE the sp_route
-         * guard 2026-08-24. It is its OWN cell (keyed dir=bwd) carrying
-         * ONLY interleaved payload; nesting it inside `if (sp_route >= 0)`
-         * made a SPLIT enumeration failure discard a measured IL backward
-         * verdict — the layout-collision class the 2026-08-24 audit
-         * confirmed (N=400: bwd winner bkv=0x50, 344.5 ns, banked 0). The
-         * record builder (vw2_oop_rec_k1_bwd) is IL-only and needs nothing
-         * from the split arm, so split absence is irrelevant here.
-         * Banked only when the race actually produced a verdict — 🔴 an
-         * unraced axis must leave NO record at all, because a zero-filled
-         * one would assert a measurement that never happened.
-         *
-         * (2026-09-02) `il_bkv_raced` says the race RAN; `il_bkv` is its
+        /* The dir=bwd SIBLING: its OWN cell (keyed dir=bwd) carrying ONLY
+         * interleaved payload (vw2_oop_rec_k1_bwd is IL-only), so nothing
+         * split can discard it. Banked only when the race actually produced
+         * a verdict — 🔴 an unraced axis must leave NO record at all,
+         * because a zero-filled one would assert a measurement that never
+         * happened. `il_bkv_raced` says the race RAN; `il_bkv` is its
          * verdict, and 0 = "the default forms won" is banked as an explicit
-         * il_kv=0 line, so a sweep can tell a raced cell from an unraced one
-         * (the 2026-08-23 ambiguity: the guard, the record builder's kv==0
-         * refusal and the reader's found/not-found signal all shared 0). */
+         * il_kv=0 line, so a sweep can tell a raced cell from an unraced
+         * one. */
         if (il_ok && nat->il_bkv_raced &&
             (nat->route == VFFT_K1_IL_2P_PURE || nat->route == VFFT_K1_IL_CHAIN3))
         {
@@ -2083,8 +1972,8 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
             {
                 if (inplace) br.key.pl = VW2_PL_IP;   /* the in-place cell's own backward row */
                 if (nat->route == VFFT_K1_IL_CHAIN3)
-                {   /* the chain the backward verdict was raced at (2026-09-03):
-                     * the replay validates against it, as the pair validates
+                {   /* the chain the backward verdict was raced at: the
+                     * replay validates against it, as the pair validates
                      * against il_pair */
                     char cb[48];
                     snprintf(cb, sizeof cb, "%d.%d.%d", nat->R2, nat->c3_A, nat->c3_B);
@@ -2141,11 +2030,8 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
     return lines;
 }
 
-/* Plan both order classes for N and bank whatever was found. Convenience
- * wrapper: this is the whole calibrate-and-record step for one cell. The
- * best LEGACY-engine cascade candidate is pulled from the stored top-K
- * (route diversity guarantees it is there whenever one survived) so a
- * ZTURN-winner line still carries the fallback route's terminator pick. */
+/* Plan both order classes for N at the given placement and bank whatever
+ * was found: the whole calibrate-and-record step for one cell. */
 static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, vw2_store_t *st, int N,
                                     int inplace, int verbose)
 {

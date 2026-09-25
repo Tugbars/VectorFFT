@@ -1,10 +1,9 @@
-/* oop_auto.h — phase 4 of docs section 16: wisdom-backed auto plan
- * creation and the divisor-pair tuner.
+/* oop_auto.h — wisdom-backed auto plan creation and the divisor-pair tuner.
  *
  * vfft_oop_plan_create_auto(N, K, wis, hints, nhints, reg):
  *   1. tuned-pair hint for (N, K) -> pair-explicit BAILEY2 (the tuner's
- *      output overrides the static preference; section 14 measured the
- *      pair-order residue at 6-8 percent).
+ *      output overrides the static preference; the pair-order residue
+ *      measured 6-8 percent).
  *   2. rule spine (oop_plan.h): LEAF, then preferred unmasked BAILEY2.
  *   3. wisdom lookup for (N, K) -> MODEB built from the entry's factors
  *      and variant codes. Plans are built DIT regardless of the entry's
@@ -72,8 +71,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_auto(
             vfft_proto_wisdom_lookup(wis, N, K);
         if (e)
             /* MODEB from the c2c (spike) wisdom entry — carries its per-stage
-             * variants through (distinct from the OOP wisdom path, which has no
-             * variants column; see oop_wisdom.h). Helper owns construction. */
+             * variants through. Helper owns construction. */
             return _vfft_oop_make_modeb(N, K, e->factors,
                                         (const int *)e->variants, e->nf, reg);
     }
@@ -186,7 +184,7 @@ static inline int vfft_oop_tune_pairs_v(int N, size_t K,
     return nc;
 }
 
-/* Back-compat wrapper: discards the t1p variant (callers that don't persist it). */
+/* Discards the t1p variant (for callers that don't persist it). */
 static inline int vfft_oop_tune_pairs(int N, size_t K,
                                       int *bestR1, int *bestR2, int verbose)
 {

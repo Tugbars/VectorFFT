@@ -1,31 +1,24 @@
 /* il_prime.h — PRIME-N K=1 route on the PURE-IL machinery (OOP, NATURAL,
  * interleaved z->z, both directions).
  *
- * The in-place SPLIT engine has served prime N for a while
- * (src/core/primes/: prime_dispatch -> Rader when N-1 is radix-smooth,
- * else Bluestein; both recurse their inner FFT through the engine's own
- * planner). This header is the IL translation of that design, NOT a
- * memcpy wrapper around it (the wrapper shortcut was built and deleted on
- * Tugbars' call — serve it natively):
+ * The IL counterpart of the split engine's src/core/primes/ (Rader when
+ * N-1 is radix-smooth, else Bluestein), built natively on the IL machinery,
+ * not as a wrapper around the split one:
  *
- *   - the inner M-point / (N-1)-point FFTs are PURE-IL plans (il2p pair
- *     for pow2, il3p chain for odd·2^k) — packed complex end to end;
+ *   - the inner M-point / (N-1)-point FFTs are PURE-IL plans (see
+ *     _ilprime_inner_t) — packed complex end to end;
  *   - chirp / pointwise multiplies are complex multiplies on packed z,
  *     the layout's native operation;
  *   - both directions ride the same tables (conjugated twins), because
- *     il2p/il3p serve both directions.
+ *     every inner serves both directions.
  *
- * METHOD PREFERENCE mirrors prime_dispatch: RADER when the (N-1) inner is
- * IL-expressible (convolution length N-1 vs Bluestein's ~2N; measured ~2x
- * on the split engine), else BLUESTEIN (M = next pow2 >= 2N-1, always
- * expressible in-band). ⚠ This is an availability preference, not a
- * measured per-cell pick — that belongs to the wisdom campaign.
+ * METHOD: when both construct, Rader (convolution length N-1) and
+ * Bluestein (M = next pow2 >= 2N-1) are RACED at create and the verdict
+ * banks (vfft_ilprime_create_method). The band is whatever the inner can
+ * build.
  *
- * BAND: inner size <= 4096 (il2p's ceiling) => prime N <= 2048, exactly
- * the Bailey band; the cascade owns larger N.
- *
- * MATH (cribbed from the gated split implementations — rader.h /
- * bluestein.h — with layout translated, not re-derived):
+ * MATH (from the gated split implementations — rader.h / bluestein.h —
+ * with layout translated, not re-derived):
  *
  * Bluestein: W^{nk} = c[n]·c[k]·b[k-n], c[n] = e^{-i·pi·n^2/N},
  *   b[j] = conj(c[j]) => X[k] = c[k] · (x·c ⊛ b)[k]. Convolution at
@@ -92,26 +85,24 @@ static inline int _ilprime_find_generator(int N)
     return 0; /* unreachable for prime N */
 }
 
-/* ── inner IL plan: il2p pair (pow2) or il3p chain (odd·2^k), and — for
- * pow2 M past their 4096 ceiling — the K=1 CASCADE (zturn). The cascade
- * serves a SCRAMBLED comb, which is exactly enough for a convolution:
- * the kernel is FFT'd once at create through the SAME forward, so the
- * pointwise multiply happens in comb order, and the cascade's own bwd
- * consumes that comb back to natural (the matched-roundtrip law). This
- * is what lifts the prime band past 2048 (gap 2). Guarded: a TU that
- * has not included zturn.h simply keeps the old 4096 ceiling. ─────── */
+/* ── inner IL plan: an il2p pair, an il3p chain, or ZTURN-T. Any matched
+ * fwd/bwd pair serves a convolution: the kernel is FFT'd once at create
+ * through the SAME forward, so the pointwise multiply happens in that
+ * forward's output order and the bwd consumes it back (the
+ * matched-roundtrip law). ZTURN-T is guarded on VFFT_ZTT_H: a TU without
+ * ztt.h keeps the il2p/il3p rule and its 4096 ceiling. ─────────────────── */
 typedef struct {
     vfft_il2p_plan_t *p2;
     vfft_il3p_plan_t *p3;
 #ifdef VFFT_ZTT_H
-    vfft_ztt_plan_t *pt;    /* ZTURN-T (2026-09-09, zcascade_sunset_plan.md S2b): the
-                             * banked ord=scr K=1 verdict at M when it names ZTURN-T —
-                             * natural fwd/bwd is a matched roundtrip too, so the
-                             * convolution's pointwise multiply runs in natural order */
+    vfft_ztt_plan_t *pt;    /* ZTURN-T: the banked ord=scr K=1 verdict at M when it
+                             * names ZTURN-T — natural fwd/bwd is a matched roundtrip
+                             * too, so the convolution's pointwise multiply runs in
+                             * natural order */
 #endif
 } _ilprime_inner_t;
 
-/* INNER PROVIDER (2026-09-02): the banked wrapper installs a function that
+/* INNER PROVIDER: the banked wrapper installs a function that
  * fills the inner from wisdom (the K=1 IL pair verdict at length M, kernel
  * forms applied, raced and banked on a miss) for the duration of ONE
  * create; NULL = the structural rule below. Planning side, single-threaded
@@ -199,10 +190,10 @@ static inline void _ilprime_cmul_vec(double *a, const double *b, size_t cnt)
 #if defined(__AVX2__)
     /* (a·b: real = ar·br − ai·bi, imag = ai·br + ar·bi. The mask negates
      * the EVEN lanes of [ai, ar] so t = [−ai·bi, +ar·bi]; negating the odd
-     * lanes instead computes a·conj(b) — the exact bug the transform-
-     * identity probe caught: both prime methods O(1) wrong with EXACT
-     * roundtrips, because chirp autocorrelation forgives a consistent
-     * conjugation. Roundtrip alone cannot gate Bluestein/Rader.) */
+     * lanes instead computes a·conj(b), which leaves both prime methods
+     * O(1) wrong with EXACT roundtrips (chirp autocorrelation forgives a
+     * consistent conjugation). Roundtrip alone cannot gate Bluestein/Rader:
+     * gate the forward.) */
     static const __m256d RMSK = { -0.0, 0.0, -0.0, 0.0 };
     for (size_t i = 0; i + 2 <= cnt; i += 2) {
         __m256d x = _mm256_loadu_pd(a + 2 * i);
@@ -260,11 +251,9 @@ static inline double *_ilprime_alloc(size_t doubles)
 /* Bluestein plan: M = next pow2 >= max(16, 2N-1) (16 = il2p's floor pair
  * 4x4). VALID FOR ANY N (the chirp uses n^2 mod 2N in integer arithmetic
  * — nothing here assumes primality); the band is whatever the inner can
- * construct (il2p/il3p to 4096, the cascade above — self-validating, no
- * cap of our own). ⚠ M is a FREE parameter and the split engine's
- * bluestein_wisdom/calibrator prove it is a WISDOM AXIS (smooth non-pow2
- * M can win); next-pow2 here is availability, and racing M belongs to
- * that campaign together with the inner-route pick. */
+ * construct (no cap of our own). M is a FREE parameter: next pow2 here,
+ * though the split engine's bluestein_wisdom shows a smooth non-pow2 M can
+ * win. */
 static inline vfft_ilprime_plan_t *_ilprime_create_bluestein(int N)
 {
     int M = 16;
@@ -309,36 +298,24 @@ static inline vfft_ilprime_plan_t *_ilprime_create_bluestein(int N)
     return p;
 }
 
-/* Rader plan: inner size N-1 (pow2 -> il2p pair; odd·2^k -> il3p chain).
- * NULL when the inner is not IL-expressible — the caller falls to
- * Bluestein, which always is (in-band). */
+/* Rader plan: inner size N-1. NULL when the inner cannot be built — the
+ * caller falls to Bluestein. */
 static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
 {
     const int nm1 = N - 1;
-    /* RADER IS PRIME-ONLY, and this is the guard that makes it so (2026-09-19).
-     * The reduction to a cyclic convolution needs the multiplicative group mod
-     * N to be cyclic of order N - 1, i.e. a primitive root, which exists only
-     * for a prime modulus here. _ilprime_find_generator tests candidates with
-     * `powmod(g, (N-1)/f, N) != 1` for each prime factor f of N - 1 -- a test
-     * that characterises a primitive root ONLY modulo a prime. Handed a
-     * composite it can return a value that passes every check and generates
-     * nothing, and the plan would then build cleanly and compute the WRONG
-     * transform: a silent wrong answer, the worst failure this library has.
-     * Unreachable until today, when composites began reaching the banked
-     * race; the guard lives here so every caller is covered by construction. */
+    /* RADER IS PRIME-ONLY, and this is the guard that makes it so. The
+     * reduction to a cyclic convolution needs a primitive root mod N, which
+     * exists only for a prime modulus here. _ilprime_find_generator tests
+     * candidates with `powmod(g, (N-1)/f, N) != 1` for each prime factor f of
+     * N - 1 -- a test that characterises a primitive root ONLY modulo a
+     * prime. Handed a composite it can return a value that passes every
+     * check and generates nothing, and the plan would then build cleanly and
+     * compute the WRONG transform: a silent wrong answer. The guard lives
+     * here so every caller is covered by construction. */
     if (!_ilprime_is_prime(N)) return 0;
-    /* NO CEILING (2026-09-19). `if (nm1 > 4096) return 0;` stood here, a
-     * vestige of the STRUCTURAL inner: that rule could only build a balanced
-     * il2p pair, and a pair of radices <= 64 tops out at 4096, so any larger
-     * Rader was refused before it was tried. The inner is a RACED POOL since
-     * 2026-09-18 and reaches every length the pool can express -- at a prime
-     * whose N - 1 is a power of two that is the whole ZTURN-T registry, up to
-     * 262144. The cap made the cell bank "bluestein" by default at every such
-     * prime: at 65537 Rader offered 108 inners and built NONE, and Bluestein
-     * convolved at 262144 where Rader would have convolved at 65536.
-     * The limit is now what it should be: the inner either builds or the arm
-     * drops out of the race, which is exactly the rule that Rader pays when
-     * N - 1 is smooth and loses when it is not. */
+    /* No size ceiling: the inner either builds (from the raced pool: at a
+     * prime whose N - 1 is a power of two, the whole ZTURN-T registry up to
+     * 262144) or the arm drops out of the race. */
 
     vfft_ilprime_plan_t *p = (vfft_ilprime_plan_t *)calloc(1, sizeof(*p));
     if (!p) return 0;
