@@ -1,7 +1,6 @@
 /* k1_fourstep.h — the K=1 INTERLEAVED four-step above ZTURN-T's ceiling
- * (docs/design/k1_fourstep_design.md, 2026-09-15; owner: "our Bailey engine
- * is the best solution for this" — the four-step is the standard method
- * at 256k and above).
+ * (docs/design/k1_fourstep_design.md): the standard method at 256k and
+ * above.
  *
  * N = N1 x N2 on the 2D INTERLEAVED tier: the signal as N1 rows of N2,
  * step 1 = the column-axis chain (N2 transforms of length N1, stride N2),
@@ -110,7 +109,7 @@ typedef struct vfft_k1fs_s
     int *k1_of_p;                 /* plane position p -> column output index k1 */
     int *p_of_k1;                 /* its inverse */
     double *plane;                /* NATURAL: the transpose scratch, 2*N doubles (64-B aligned) */
-    /* the SUPER-BAND form (il2d_large_plane_design.md §3, 2026-09-16): form 1
+    /* the SUPER-BAND form (il2d_large_plane_design.md §3): form 1
      * of the natural class walks the child's plane itself with its own chain
      * and stores the k2-major output from the row pass — no transpose sweep */
     int form;                     /* natural class: 0 = the streaming transpose, 1 = the super-band */
@@ -549,18 +548,17 @@ static void _k1fs_sb_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const do
             _il2d_col_stages(p->plane, dst, N1, rn, s, s + 1, p->sbR, p->sbL, p->sbb, p->sbtb, 0);
     }
 }
-/* the super-band chains of N1 for a race: the tier's enumeration with R_0
- * and the last radix admitted by the run law and the block law; `tight`
- * = the per-T race's residency sub-ladder (R_0 = 8, last in {8, 16},
- * depth <= 3), else the full form axis */
 /* the super-band form is an arm only where the plane outgrows the
- * last-level cache (owner 2026-09-16: "only race above where L3 can't
- * cover the transforms anymore") — the hardware's L3, read from the CPU,
- * never a baked constant; an L3-less part admits it everywhere */
+ * last-level cache — the hardware's L3, read from the CPU, never a baked
+ * constant; an L3-less part admits it everywhere */
 static int _k1fs_sb_admit(int N)
 {
     return vfft_policy_exceeds_l3((long)N * 16L);
 }
+/* the super-band chains of N1 for a race: the tier's enumeration with R_0
+ * and the last radix admitted by the run law and the block law; `tight`
+ * = the per-T race's residency sub-ladder (R_0 = 8, last in {8, 16},
+ * depth <= 3), else the full form axis */
 static int _k1fs_sb_chains(int N1, int (*out)[8], int *lens, int max, int tight)
 {
     int cand[VFFT_IL2D_MAXCAND][8], cl[VFFT_IL2D_MAXCAND], cur[8], nc = 0, dropped = 0, k, n = 0;

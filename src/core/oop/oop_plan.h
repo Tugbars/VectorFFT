@@ -1,4 +1,4 @@
-/* oop_plan.h — the OOP plan kind for prototype-core (docs section 16).
+/* oop_plan.h — the split-layout OOP plan kinds.
  *
  * One plan object, three kinds, chosen by rule at create time:
  *
@@ -7,29 +7,27 @@
  *              transposed-intermediate tax; direct is the rule.)
  *   BAILEY2 : fused four-step two-stage, column layout, natural order
  *             X[k2 + R2*k1]. s1 = R1 long-count n1_oop(R2) calls with the
- *             transpose fused into stores; s2 = one t1p_log3(R1) call
- *             in-place on dst with a K-replicated twiddle table
- *             (production grp_tw memory model). Gated in
- *             benchmarks/bench_bailey_col.c.
+ *             transpose fused into stores; s2 = one t1p(R1) call in-place on
+ *             dst with a K-replicated twiddle table.
  *   MODEB   : general-N via the stride executor: stage 0 OOP, stages 1..
- *             in-place on dst (core/oop_execute.h). Scrambled order,
+ *             in-place on dst (oop_execute.h). Scrambled order,
  *             bit-identical to the in-place dataflow. Takes the wisdom
  *             factor lists. Requires DIT plans.
  *
- * Rule predicates at create (docs sections 9, 12, 14):
- *   - K % 8 != 0 is rejected (vector-lane contract; prevents the
- *     heap-corruption failure mode outright).
+ * Rule predicates at create:
+ *   - K == 0 is rejected; every kind serves any other K (LEAF through the
+ *     rem-aware tail, BAILEY2 through the per-lane t1 at unaligned K).
  *   - Aliasing mask: a Bailey stage whose j-stride (in doubles) is a
  *     multiple of 4096 (a 32KB stride) with more than 8 streams is masked
  *     (see _vfft_oop_stage_aliases below — the catastrophe needs L1 AND L2
  *     sets to both alias; a stride hitting only the 4KB/512-double L1 set
  *     period is absorbed by L2 and measures fine). Checked for BOTH stages:
- *     s2 stride R2*K with R1 streams, s1 out... s1 in-stride R1*K with
- *     R2 streams. Masked cells fall through to MODEB (whose wisdom
- *     factorizations use small radixes that fit associativity).
- *   - Divisor pair preference among unmasked candidates: maximal R2
- *     (fattest leaf), then minimal |R1 - R2|. Section 14 measured the
- *     residual order swing at 6-8 percent; the tuner ranks pairs later.
+ *     s2 stride R2*K with R1 streams, s1 in-stride R1*K with R2 streams.
+ *     Masked cells fall through to MODEB (whose wisdom factorizations use
+ *     small radixes that fit associativity).
+ *   - Divisor pair preference among unmasked candidates: minimal |R1 - R2|,
+ *     then the fatter leaf (maximal R2). The pair order swing measured 6-8
+ *     percent; the tuner (oop_auto.h) overrides per cell.
  *
  * Backward for every kind: pointer-swap identity on the forward plan,
  * unnormalized inverse, same ordering semantics as forward.
@@ -49,18 +47,16 @@
 
 /* Longest factor chain the cc_chain codec (vfft_k1_cc_chain_encode/decode)
  * will carry — one decimal digit per factor, so this is also the digit cap.
- * Must be >= the cascade's VFFT_ZSPLIT_MAX_NF (zsplit.h): decode() writes
- * into caller arrays sized by EITHER macro, so a mismatch is a silent
- * out-of-bounds write. vfft.c, which sees both headers, static-asserts it. */
+ * decode() writes into caller arrays sized by this macro. */
 #define VFFT_K1_CC_MAX_NF 7
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-/* K=1 route ids (persisted in kind-3 wisdom lines; row_major_engine.md §13).
+/* K=1 route ids (persisted in kind-3 wisdom lines).
  * Split axis routes run natural-order OOP split; bwd = pointer-swap identity.
- * IL axis routes run z->z; bwd = the _sw lattice twins. */
+ * IL axis routes run z->z, both directions. */
 enum
 {
     VFFT_K1_SP_3P = 0,   /* leaf -> transpose -> t1            */
@@ -70,7 +66,7 @@ enum
     VFFT_K1_SP_MONO = 4, /* emitted whole-four-step mono (pair from R1: mono_pair_fn) */
     VFFT_K1_SP_2PA_L3 = 5, /* 2pa with the log3 t1 (create swaps t1_ul -> t1_ul_l3) */
     VFFT_K1_SP_3P_L3 = 6,  /* 3p with the log3 t1 (create swaps t1p -> t1_l3)       */
-    VFFT_K1_SP_CCOL = 7    /* composed column pass (§12.4 item 5): batch-engine
+    VFFT_K1_SP_CCOL = 7    /* composed column pass: batch-engine
                             * column plan (contiguous stages, no leaf ceiling) ->
                             * permuted tiled transpose (absorbs the column plan's
                             * digit reversal) -> flat t1. Wisdom carries the
@@ -80,57 +76,30 @@ enum
 enum
 {
     VFFT_K1_IL_NONE = 0, /* no IL route available for this N    */
-    /* 1, 2 = the RETIRED hybrid routes (il_in leaf -> split scratch -> il_out
-     * store; deleted 2026-07-29 once il2p served both directions and covered
-     * every reachable pair). The VALUES stay reserved because kind-3 wisdom
-     * lines may still carry them: plan-create normalizes either one to an
-     * il2p attempt on the same (iR1,iR2) pair — success -> IL_2P_PURE,
+    /* 1, 2 = RETIRED hybrid routes. The VALUES stay reserved because kind-3
+     * wisdom lines may still carry them: plan-create normalizes either one to
+     * an il2p attempt on the same (iR1,iR2) pair — success -> IL_2P_PURE,
      * failure -> IL_NONE. Never dispatched; the executor has no arm for them. */
     VFFT_K1_IL_3P = 1,   /* legacy alias (wisdom-compat only)   */
     VFFT_K1_IL_2P = 2,   /* legacy alias (wisdom-compat only)   */
     VFFT_K1_IL_MONO = 3, /* emitted mono, il edges              */
-    /* 4 = the Cooley-Tukey zsplit cascade. RECORD-ONLY for now.
-     *
-     * WHY IT EXISTS: the K=1 engine has three strategy families -- mono (<=64),
-     * Bailey two-pass (2P/3P), and the CT cascade (>=2048) -- but the cascade
-     * verdict lives in a kind-4 wisdom entry while mono/Bailey live in kind 3,
-     * so nothing could answer "which METHOD won this cell?" without reading two
-     * kinds and comparing them by hand. Naming it here lets a kind-3 il_route
-     * carry that answer. The cascade chain rides in cc_chain, which the wisdom
-     * entry already carries and already shares with kind 4.
-     *
-     * NOT DISPATCHABLE from the K=1 IL switch yet: the cascade is SCRAMBLED
-     * order while 2P/3P/MONO are natural, and the natural-vs-scrambled division
-     * in wisdom is future work. Until that lands this value is a NOTE ONLY --
-     * plan-create must not build an IL plan from it, and the executor must not
-     * treat it as a runnable IL route. */
-    /* 4 was the cascade (deleted 2026-09-15; the value retired 2026-09-24,
-     * the name table keeps a placeholder so the numbering below stands) */
+    /* 4 = retired (the deleted K=1 cascade); the name table keeps a
+     * placeholder so the numbering below stands */
     /* 5 = PURE-IL two-pass (il2p.h): n1t -> z scratch -> t2, no split planes
-     * anywhere. THE canonical 2-pass IL route, BOTH DIRECTIONS (bwd solved
-     * 2026-07-29: t2t then n1_bwd(R2), gated at 12 cells incl. 8 non-square).
-     * Measured vs the hybrid it displaced at the front door: 0.659x @N=128,
-     * 0.722x @256, control cell N=64 reads 1.007 as it must — which is why
-     * the hybrid (routes 1/2 above) was deleted rather than kept as an arm. */
+     * anywhere. THE canonical 2-pass IL route, BOTH DIRECTIONS (bwd = t2t
+     * then n1_bwd(R2)). */
     VFFT_K1_IL_2P_PURE = 5,
     /* 6 = PURE-IL 3-STAGE CHAIN (il2p.h il3p): N = R2·A·B with odd factors
-     * as kernel RADICES — the route that covers odd·2^k N (48..1792) in the
-     * Bailey band, both directions (fwd 12/12, bwd 13/13 gated 2026-07-29;
-     * docs/roadmap/il_odd_chain.md). Natural order, no odd-count tail
-     * (every stage count is even by construction). The chain is a PLAN
-     * INPUT; until the wisdom campaign banks per-cell picks, create uses
-     * vfft_il3p_default_chain (a LEGAL default, not a measured plan). */
+     * as kernel RADICES, both directions (docs/roadmap/il_odd_chain.md).
+     * Natural order. The chain (R2, A, B) is PLAN INPUT from the kind-3 row;
+     * the planner races it. */
     VFFT_K1_IL_CHAIN3 = 6,
-    /* 7 = PRIME N on the pure-IL machinery (il_prime.h): Rader when the
-     * (N-1) inner FFT is IL-expressible (shorter convolution; the split
-     * engine measured it ~2x over Bluestein), else Bluestein at
-     * M = pow2 >= 2N-1. Inner FFTs are il2p/il3p plans — packed complex
-     * end to end, both directions, natural order, N <= 2048 (band).
-     * Mirrors primes/prime_dispatch.h, translated to IL, NOT wrapped
-     * around the in-place engine. Method pick = availability preference;
-     * the measured per-cell pick belongs in wisdom. */
+    /* 7 = PRIME N on the pure-IL machinery (il_prime.h): Rader or Bluestein
+     * (raced when both build), the inner an IL plan — packed complex end to
+     * end, both directions, natural order. The IL counterpart of
+     * primes/prime_dispatch.h, not a wrapper around the in-place engine. */
     VFFT_K1_IL_PRIME = 7,
-    /* 8 = the FLAT mixed-radix DIT (oop/il_flatdit.h, 2026-09-05): the
+    /* 8 = the FLAT mixed-radix DIT (oop/il_flatdit.h): the
      * odd-N engine above the chain's reach and its challenger below it —
      * un-turned DIT over the registry radices, per-stage kernel FORMS raced
      * at plan time (t2cp | msz | t2csgn | t2csgn in natural-base order),
@@ -139,18 +108,17 @@ enum
      * Chain + forms are PLAN INPUT from the kind-3 row (il_flat=, il_forms=);
      * there is no default build — the planner is the only source. */
     VFFT_K1_IL_FLAT = 8,
-    /* 9 = ZTURN-T (oop/ztt.h, 2026-09-09; docs/design/zturn_t_ship_plan.md):
-     * the RUN-CONTIGUOUS DIT arrangement on the split-plane kinds t0tp /
-     * tmg / tlf, {4,8} chains, 16 <= N <= 2048, natural order both
-     * directions (the inverse = conjugate roots, same stage order), in
-     * place legal. Served as ONE fused driver per direction (the generated
-     * ztt_drivers_<isa>.c: stage bodies inlined, literal trip counts,
-     * carried twiddle cursor, zero calls). The chain is PLAN INPUT from the
-     * kind-3 row (il_ztt=R0.R1...); no default build — the planner races
-     * every registry cell against the pairs and is the only source. */
+    /* 9 = ZTURN-T (oop/ztt.h): the RUN-CONTIGUOUS DIT arrangement on the
+     * kinds t0tp / tmg / tlf, 16 <= N <= 262144 (pow2, and the 2^a*odd band
+     * with odd mids), natural order both directions (the inverse = conjugate
+     * roots, same stage order), in place legal; the scrambled class is the
+     * plain schedule. A pow2 cell is served as ONE fused driver per
+     * direction; a 2^a*odd cell is staged. The chain is PLAN INPUT from the
+     * kind-3 row (il_ztt=R0.R1...); no default build — the planner is the
+     * only source. */
     VFFT_K1_IL_ZTT = 9,
-    /* 10 = the FOUR-STEP above ZTURN-T's ceiling (oop/k1_fourstep.h,
-     * 2026-09-15; docs/design/k1_fourstep_design.md): N = N1 x N2 on the 2D
+    /* 10 = the FOUR-STEP above ZTURN-T's ceiling (oop/k1_fourstep.h;
+     * docs/design/k1_fourstep_design.md): N = N1 x N2 on the 2D
      * interleaved tier with the inter-pass twiddle fused into its row pass,
      * both directions, both order classes (scrambled = the plane as is,
      * natural = the permuting transpose), both placements, 262144 (raced
@@ -164,34 +132,29 @@ typedef enum
     VFFT_OOP_KIND_LEAF = 0,
     VFFT_OOP_KIND_BAILEY2 = 1,
     VFFT_OOP_KIND_MODEB = 2,
-    /* K=1 vectorized four-step (docs/roadmap/row_major_engine.md §11):
-     * stage 1 = ONE leaf call at count=R1 (the batch identity: column c IS
-     * lane c — fully vectorized, vs BAILEY2's R1 scalar leaf calls), then an
-     * explicit SIMD 4x4 transpose, then the SAME per-lane t1 stage as
-     * BAILEY2 (Qr/Qi identical). Natural order, OOP, K=1 only. Optional IL
-     * entry points drive the emitted il_in/il_out twins (z->z, zero
-     * conversion passes). Halves BAILEY2 at every N (§11b). */
+    /* K=1 vectorized four-step: stage 1 = ONE leaf call at count=R1 (the
+     * batch identity: column c IS lane c — fully vectorized, vs BAILEY2's
+     * R1 scalar leaf calls), then an explicit SIMD 4x4 transpose, then the
+     * SAME per-lane t1 stage as BAILEY2 (Qr/Qi identical). Natural order,
+     * OOP, K=1 only, split layout. Halves BAILEY2's time at every N. */
     VFFT_OOP_KIND_BAILEY2V = 3,
-    /* K=1 SCRAMBLED block-split cascade cell (zsplit.h, z_cascade_plan
-     * §4.9993): wisdom-only kind — never a vfft_oop_plan_t; carries the
-     * cascade chain (cc_chain codec) + the measured sterm-vs-sterm2
-     * terminator pick (zs_t2q). Line: N 1 4 t2q cc_chain ns. */
+    /* the retired K=1 cascade's cell: wisdom-only kind — never a
+     * vfft_oop_plan_t; rows may remain in old stores (wisdom2_oop.h skips
+     * them). Line: N 1 4 t2q cc_chain ns. */
     VFFT_OOP_KIND_ZSPLIT = 4,
-    /* K=1 INTERLEAVED-CCE real-transform composite (§D2, vfft.c
-     * _zr2c_build): wisdom-only kind — never a vfft_oop_plan_t. N is the
-     * REAL length (the child c2c runs at N/2), so a kind-5 row NEVER
-     * collides with the plain c2c kinds at the same numeric N — it is a
-     * different transform's cell, its own kind-class, consulted only by
-     * the zr2c create path (owner directive 2026-08-13: real-IL verdicts
-     * get their own marked cells). Carries zr_kv, the packed child-route
-     * verdicts: 2 bits per (transform, placement) combo — 0 = UNMEASURED
-     * (structural default applies), 1 = child route 0 (OOP-IL), 2 = child
-     * route 1 (NAT-IP cascade). Line: N 1 5 zr_kv [ns].
-     * zr_kv sits FIRST after the kind ON PURPOSE: a STALE wisdom-writing
-     * binary that predates kind 5 parses the first trailing token as ns
-     * and re-emits "N 1 5 <zr_kv>.0" — the verdict SURVIVES the strip
-     * cycle (only the informational ns is lost), and the kind-5 reader
-     * accepts the ".0" form (atoi stops at the dot). */
+    /* K=1 INTERLEAVED-CCE real-transform composite (vfft.c _zr2c_build):
+     * wisdom-only kind — never a vfft_oop_plan_t. N is the REAL length (the
+     * child c2c runs at N/2), so a kind-5 row NEVER collides with the plain
+     * c2c kinds at the same numeric N — it is a different transform's cell,
+     * consulted only by the zr2c create path. Carries zr_kv, the packed
+     * child-route verdicts: 2 bits per (transform, placement) combo —
+     * 0 = UNMEASURED (structural default applies), 1 = child_oop_il,
+     * 2 = child_nat_ip. Line: N 1 5 zr_kv [ns].
+     * zr_kv sits FIRST after the kind ON PURPOSE: a wisdom-writing binary
+     * that predates kind 5 parses the first trailing token as ns and
+     * re-emits "N 1 5 <zr_kv>.0" — the verdict survives (only the
+     * informational ns is lost), and the kind-5 reader accepts the ".0"
+     * form (atoi stops at the dot). */
     VFFT_OOP_KIND_ZR2C = 5
 } vfft_oop_kind_t;
 
@@ -207,20 +170,17 @@ typedef struct
     int R1, R2;
     double *Qr, *Qi; /* K-replicated table, (R1-1) x (R2*K/8) */
     /* BAILEY2V: column-pass scratch (N doubles each). Names chosen to avoid
-     * windows.h macro collisions (scr2 is a macro in the mingw header chain).
-     * (The tp_re/tp_im transpose scratch and the il_leaf/t1_il/t1_ul_il twin
-     * pointers that lived here served the hybrid IL routes — deleted
-     * 2026-07-29; the IL axis is il2p.h now.) */
+     * windows.h macro collisions (scr2 is a macro in the mingw header chain). */
     double *col_re, *col_im;
-    /* two-pass twins (§12.4): t1 with UL load / leaf with UL store */
+    /* two-pass twins: t1 with UL load / leaf with UL store */
     vfft_oop11_fn t1_ul, leaf_ul;
-    /* linear-twiddle t1_ul twin (§12.4 4a) + its consumption-order table */
+    /* linear-twiddle t1_ul twin + its consumption-order table */
     vfft_oop11_fn t1_ul_twl;
     double *Qlr, *Qli;
     /* LOG3 (leg-axis derivation) twins — same Qr/Qi, drop-in fn swaps */
     vfft_oop11_fn t1_l3, t1_ul_l3;
     /* CCOL (K=1 composed column pass): the column pass as a K=R1 batch plan
-     * (the §11 batch identity run through the production stride engine) +
+     * (the batch identity run through the stride engine) +
      * the row permutation mapping spectral row m to the plan's physical
      * output row (absorbs the digit reversal into the transpose for free).
      * colp/cc_perm non-NULL only on plans made by create_k1_cc; such plans
@@ -263,8 +223,8 @@ static inline void _vfft_k1_transpose(const double *s, double *d, int R2, int R1
 /* CCOL transpose: d[t*R2 + m] = s[perm[m]*R1 + t] — the row lookup absorbs
  * the column plan's digit reversal at zero cost (the transpose touches every
  * element anyway). TILED over t (TB=32 → ≤32 store lines live per m-sweep):
- * plain-vs-tiled raced in the spike — tie at 2048, tiled −10% at 8192, so
- * tiled ships as the single variant. perm = identity reproduces
+ * against plain it measured a tie at 2048 and −10% at 8192, so tiled is the
+ * single variant. perm = identity reproduces
  * _vfft_k1_transpose exactly. */
 static inline void _vfft_k1_transpose_perm(const double *s, double *d,
                                            int R2, int R1, const int *perm)
@@ -299,7 +259,7 @@ static inline void _vfft_k1_transpose_perm(const double *s, double *d,
 
 static inline int _vfft_oop_stage_aliases(size_t stride_doubles, int streams)
 {
-    /* Measured boundary (sections 9 and 17 races): the catastrophe needs
+    /* Measured boundary: the catastrophe needs
      * the 32KB period (4096 doubles), where L1 AND L2 sets both alias and
      * nothing absorbs the streams. Strides that alias only the 4KB L1
      * period (e.g. 13*512 doubles = 52KB) are caught by L2 under the DFT
@@ -310,7 +270,7 @@ static inline int _vfft_oop_stage_aliases(size_t stride_doubles, int streams)
 /* t1p_variant: 0 = flat, 1 = log3. flat is FMA-leaner; log3 is a port rebalance
  * that wins only when the s2 stage is load-bound with FMA slack. The BAILEY2
  * tuner (oop_auto.h) measures both per cell and the winner is persisted in OOP
- * wisdom; callers with no preference pass 1 (log3, the historical default). */
+ * wisdom; callers with no preference pass 1 (log3). */
 static inline int _vfft_oop_fill_bailey(vfft_oop_plan_t *p,
                                          int N, size_t K, int R1, int R2,
                                          int t1p_variant)
@@ -366,7 +326,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_pair_v(int N, size_t K,
                                                            int R1, int R2,
                                                            int t1p_variant)
 {
-    /* Any nonzero K: aligned uses per-block t1p, odd uses per-lane t1 (Phase B). */
+    /* Any nonzero K: aligned uses per-block t1p, odd uses per-lane t1. */
     if (K == 0 || R1 * R2 != N)
         return NULL;
     {
@@ -392,8 +352,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_pair_v(int N, size_t K,
     return p;
 }
 
-/* Back-compat wrapper: default t1p variant = log3 (the historical hardcode).
- * Callers that want the tuned choice use vfft_oop_plan_create_pair_v. */
+/* Default t1p variant = log3. Callers that want the tuned choice use
+ * vfft_oop_plan_create_pair_v. */
 static inline vfft_oop_plan_t *vfft_oop_plan_create_pair(int N, size_t K,
                                                          int R1, int R2)
 {
@@ -401,14 +361,11 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_pair(int N, size_t K,
 }
 
 /* K=1 vectorized four-step (BAILEY2V). Explicit-pair constructor: the pair
- * search / wisdom layer sits above (the optimal pair drifts with N AND with
- * layout — §11f: the IL premium scales with t1 store sites, so fat-R2 pairs
- * win IL cells that balanced pairs win in split). Requires R1,R2 % 4 == 0
- * (the SIMD transpose block contract). Stage tables reuse the BAILEY2 fill
- * verbatim (at K=1 the per-lane t1 path fires and Qr[(l2-1)*R2+k2] IS the
- * four-step diagonal). This plan is SPLIT-only: the IL axis lives in il2p.h
- * (the hybrid IL twins that used to hang off this plan were deleted
- * 2026-07-29). */
+ * search / wisdom layer sits above (the optimal pair drifts with N).
+ * Requires R1,R2 % 4 == 0 (the SIMD transpose block contract). Stage tables
+ * reuse the BAILEY2 fill verbatim (at K=1 the per-lane t1 path fires and
+ * Qr[(l2-1)*R2+k2] IS the four-step diagonal). This plan is SPLIT-only: the
+ * IL axis is il2p.h. */
 static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
 {
     if (R1 * R2 != N || (R1 % 4) || (R2 % 4))
@@ -442,7 +399,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
     p->t1_ul_twl  = vfft_oop_t1_ul_twl_fn(R1);
     if (p->t1_ul_twl && (R2 % 4) == 0)
     {
-        /* consumption-order table (§12.4 4a): per group-quad b0, all legs'
+        /* consumption-order table: per group-quad b0, all legs'
          * 4-vectors contiguous — idx = b0*(R1-1) + (l-1)*4 + k, value
          * W_N^{l*(b0+k)} (same values as Qr/Qi, different order → the twl
          * codelet is bit-identical to t1_ul). */
@@ -475,8 +432,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
     return p;
 }
 
-/* Default CCOL column chain per R2 — reproduces every spike winner (2026-07-23:
- * [8,4]@32, [8,8]@64, [8,16]@128, [8,8,4]@256). Returns nf, 0 = unsupported. */
+/* Default CCOL column chain per R2 — the measured winners ([8,4]@32,
+ * [8,8]@64, [8,16]@128, [8,8,4]@256). Returns nf, 0 = unsupported. */
 static inline int vfft_k1_cc_default_chain(int R2, int *chain)
 {
     switch (R2) {
@@ -491,17 +448,14 @@ static inline int vfft_k1_cc_default_chain(int R2, int *chain)
     }
 }
 
-/* CCOL chain <-> wisdom int code: decimal digits are log2 of the factors,
- * first factor = leading digit ([8,4] -> 32, [8,16] -> 34, [8,8,4] -> 332).
- * Factors are 4..64 (digits 2..6, never 0) so the round-trip is unambiguous. */
-/* cc_chain DIGIT ALPHABET (extended 2026-08-23).
+/* CCOL chain <-> wisdom int code: one decimal digit per factor, first
+ * factor = leading digit ([8,4] -> 32, [8,16] -> 34, [8,8,4] -> 332).
  *
  *   digit  2  3   4   5   6  |  7  8  9   1
  *   factor 4  8  16  32  64  |  3  5  7  11
  *
- * Digits 2..6 are the original log2 encoding and are untouched, so every
- * previously banked chain decodes bit-identically. Digits 1,7,8,9 were HARD
- * REJECTS before this, so no old code can be reinterpreted by the new table.
+ * Digits 2..6 are log2 of the pow2 factors; 1,7,8,9 were added later and no
+ * earlier code could carry them, so every banked chain decodes unchanged.
  *
  * 🔴 DIGIT 0 IS RESERVED AND MUST STAY UNUSED IN THE LEADING POSITION.
  * cc_chain is a decimal integer: a leading zero is not stored, so a chain
@@ -539,7 +493,7 @@ static inline int vfft_k1_cc_chain_encode(const int *chain, int nf)
     }
     return code;
 }
-/* CCOL column-VARIANT codec (B2.2): one decimal digit per chain stage,
+/* CCOL column-VARIANT codec: one decimal digit per chain stage,
  * digit = variant+1 (1=FLAT 2=LOG3 3=T1S) so a leading FLAT survives the
  * round-trip. code 0 = no verdict = NULL/T1S defaults. The digit count
  * MUST equal the chain's nf — mismatch refuses (returns 0) rather than
@@ -585,8 +539,8 @@ static inline int vfft_k1_cc_chain_decode(int code, int *chain)
     return nd;
 }
 
-/* K=1 COMPOSED-COLUMN plan (§12.4 item 5): the column pass as a K=R1 batch
- * plan through the production stride engine — contiguous per-stage streams
+/* K=1 COMPOSED-COLUMN plan: the column pass as a K=R1 batch
+ * plan through the stride engine — contiguous per-stage streams
  * where the monolithic leaf sweeps strided, and NO leaf-radix ceiling (R2 up
  * to the chain's reach; 16384 = 64x256 runs through this create only).
  *
@@ -600,8 +554,7 @@ static inline int vfft_k1_cc_chain_decode(int code, int *chain)
  * The plan carries NO leaf and serves ONLY vfft_oop_execute_fwd_ccol (split
  * axis; bwd = the caller's pointer-swap identity, same as every split route). */
 /* _v: per-stage column-plan variants (FLAT/LOG3/T1S codes, wisdom-sourced;
- * NULL = T1S default — the pre-B2 behavior). The plain create below is the
- * NULL wrapper so every existing caller is byte-identical. */
+ * NULL = T1S defaults). The plain create below passes NULL. */
 static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc_v(
     int N, int R1, const int *chain, int nf, const int *variants,
     const vfft_proto_registry_t *reg)
@@ -732,8 +685,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc(
  * MODEB requires a DIT inner (OOP stage 0 must be untwiddled). `variants` is the
  * caller's per-stage variant source (DP's best.variants, a c2c-wisdom entry's
  * variants, or NULL = T1S default); it is passed straight through so each caller
- * declares its intent at the call site. Centralizes what used to be ~8 lines of
- * build+check+ownership copy-pasted across the rule spine / auto / dp / wisdom. */
+ * declares its intent at the call site. */
 static inline vfft_oop_plan_t *_vfft_oop_make_modeb(
     int N, size_t K, const int *factors, const int *variants, int nf,
     const vfft_proto_registry_t *reg)
@@ -766,12 +718,10 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create(
     int N, size_t K, const int *factors, int nf,
     const vfft_proto_registry_t *reg)
 {
-    /* K==0 is always invalid. K%8==0 is the lane contract of the BAILEY2 and
-     * MODEB-via-factors kinds below (their t1p kernels are per-block-broadcast /
-     * lane-granular). The LEAF path (a single n1_oop codelet, me=K) now carries
-     * the rem-aware tail (docs/performance/arbitrary_k_tail_handling.md) and
-     * serves ANY K, so odd K is allowed through to Rule 1; the K%8 gate moves
-     * down to Rule 2 (BAILEY2). */
+    /* K==0 is always invalid; every kind below serves any other K. The LEAF
+     * path (a single n1_oop codelet, me=K) carries the rem-aware tail
+     * (docs/performance/arbitrary_k_tail_handling.md); BAILEY2 picks the
+     * per-block t1p or the per-lane t1 by K alignment. */
     if (K == 0)
         return NULL;
 
@@ -868,7 +818,7 @@ static inline int vfft_oop_execute_fwd(const vfft_oop_plan_t *p,
     case VFFT_OOP_KIND_BAILEY2V:
     {
         /* K=1: [vectorized leaf, count=R1] -> [SIMD transpose] -> [t1].
-         * Bit-identical to BAILEY2 (same codelet DAG, §11a). */
+         * Bit-identical to BAILEY2 (same codelet DAG). */
         const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
         p->leaf(sr, si, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
         _vfft_k1_transpose(p->col_re, dr, (int)R2, (int)R1);
@@ -882,7 +832,7 @@ static inline int vfft_oop_execute_fwd(const vfft_oop_plan_t *p,
     return -1;
 }
 
-/* ---- BAILEY2V TWO-PASS entry points (§12.4 item 1 — the mid-N shape:
+/* ---- BAILEY2V TWO-PASS entry points (the mid-N shape:
  * no transpose sweep, 2 passes, 1 scratch pair; dst==src is safe for both
  * routes since the t1 pass reads only the scratch). Natural order.
  * Route (a): leaf UG x->scr (untransposed), then t1-UL scr->dst — the 4x4
@@ -904,7 +854,7 @@ static inline int vfft_oop_execute_fwd_2pa(const vfft_oop_plan_t *p,
     return 0;
 }
 
-/* Route (a) with the LINEAR-layout twiddle stream (§12.4 4a): same passes,
+/* Route (a) with the LINEAR-layout twiddle stream: same passes,
  * the t1 reads Qlr/Qli with one advancing cursor. Bit-identical values. */
 static inline int vfft_oop_execute_fwd_2pa_twl(const vfft_oop_plan_t *p,
                                                const double *sr, const double *si,
@@ -951,12 +901,6 @@ static inline int vfft_oop_execute_fwd_ccol(const vfft_oop_plan_t *p,
     return 0;
 }
 
-/* (The BAILEY2V interleaved entry points — vfft_oop_execute_{fwd,bwd}_il and
- * _{fwd,bwd}_2p_il, the il_in/il_out hybrid routes — were DELETED 2026-07-29.
- * The IL axis is served by il2p.h in both directions; this plan is split-only.
- * Rationale: two passes cannot amortize a layout conversion, measured
- * 0.558x @64 / 0.765x @256 / 0.956x @1024 for pure IL vs the hybrid.) */
-
 /* Unnormalized inverse (output = N * x). KIND-DEPENDENT, because the kind sets
  * the forward's output ORDER:
  *   LEAF / BAILEY2 (NATURAL order) — the swap identity IDFT(X)=swap(DFT(swap(X)))
@@ -995,8 +939,7 @@ static inline void vfft_oop_plan_destroy(vfft_oop_plan_t *p)
         vfft_proto_plan_destroy(p->colp);
     free(p->cc_perm);
     /* MODEB owns a full stride plan (stage tables + tape + twiddle pools) — tear
-     * it down through the proto destroy, not bare free. (The old "Phase 1 has no
-     * destroy, so we leak it" comment was stale: planner.h now has the destroy.) */
+     * it down through the proto destroy, not bare free. */
     if (p->mb)
         vfft_proto_plan_destroy(p->mb);
     free(p);

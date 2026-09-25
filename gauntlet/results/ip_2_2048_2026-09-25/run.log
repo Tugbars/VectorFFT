@@ -85,3 +85,5 @@
 2026-09-25 13:55:14   benched 950/1023 (951), 1443 s elapsed
 2026-09-25 13:55:52   benched 975/1023 (976), 1481 s elapsed
 2026-09-25 13:56:31   benched 1000/1023 (1001), 1521 s elapsed
+2026-09-25 13:57:08   benched 1023/1023 (1024), 1557 s elapsed
+2026-09-25 13:57:09 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\ip_2_2048_2026-09-25\report_ip.md
