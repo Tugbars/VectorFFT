@@ -1,8 +1,8 @@
 /**
- * stride_transpose.h — Multi-regime cache-oblivious SIMD matrix transpose
+ * transpose.h — Multi-regime cache-oblivious SIMD matrix transpose
  *
  * Out-of-place transpose of N1×N2 → N2×N1 for split-complex (double).
- * Used by Bailey's 4-step FFT and 2D FFT.
+ * Used by the split-complex 2D / 3D / N-D transforms.
  *
  * Automatically selects the best kernel for the target ISA:
  *   - Compiled with -mavx512f  → 8×8 ZMM kernel (one dest row = one 64B line)
@@ -28,9 +28,11 @@
  *    permutex2var + 8 shuffle_f64x2 + 8 stores = 40 insns for 64
  *    elements ≈ 0.63 insn/element. Peak ~16 ZMMs live (of 32).
  *
- *  Dispatch by working-set bytes:
- *    WS ≤ L1  (32 KB):  kernel A (small regime, base 16)
- *    WS > L1           :  kernel B/C (medium+large, base 32)
+ *  Dispatch by working-set bytes (L1/L2 from cpu_cache.h):
+ *    WS ≤ L1 :  kernel A   (small regime, base 16)
+ *    WS ≤ L2 :  kernel B/C (medium regime, base 32)
+ *    WS > L2 :  kernel B/C (large regime, base 32 AVX2 / 64 AVX-512)
+ *  plus a skinny-shape fast path (see _tp_skinny_8x4).
  *
  *  The L1 split exists because at tiny problem sizes the 8×N kernel's
  *  fixed setup cost beats its line-filling benefit; kernel A wins.
@@ -63,14 +65,12 @@
 #include <immintrin.h>
 #endif
 
-/* Cache thresholds (bytes). THE AUTHORITY IS cpu_cache.h (2026-09-18, survey
- * section D): these were baked client defaults -- 32 KB / 1 MB -- while the
- * module reports what the host actually has (48 KB / 2 MB on the calibration
- * host), so the recursion body was picked from numbers 1.5-2x off. Two
- * disagreeing cache authorities, and in the `#ifndef default` spelling this
- * tree has already been bitten by once (a second definer silently wins in a
- * one-TU build). A build-time -DTP_L1_BYTES / -DTP_L2_BYTES still overrides,
- * for cross-compiling to a named target. */
+/* Cache thresholds (bytes). THE AUTHORITY IS cpu_cache.h: it reports what the
+ * host actually has (48 KB / 2 MB on the calibration host, where baked client
+ * defaults of 32 KB / 1 MB would be 1.5-2x off). No `#ifndef` default here: a
+ * second definer silently wins in a one-TU build. A build-time
+ * -DTP_L1_BYTES / -DTP_L2_BYTES still overrides, for cross-compiling to a
+ * named target. */
 #include "../../support/cpu_cache.h"
 #ifdef TP_L1_BYTES
 #define _TP_L1B ((size_t)(TP_L1_BYTES))
@@ -203,8 +203,8 @@ __attribute__((target("avx512f"))) static inline void _t8x8(const double *__rest
     __m512d t6 = _mm512_unpacklo_pd(r6, r7);
     __m512d t7 = _mm512_unpackhi_pd(r6, r7);
 
-    /* Stage 2 — see /home/claude/test_t8x8_v2.c for index derivation.
-     * idx_lo pulls even-column cross-lanes; idx_hi pulls odd-column. */
+    /* Stage 2 — idx_lo pulls even-column cross-lanes; idx_hi pulls
+     * odd-column. */
     const __m512i idx_lo = _mm512_set_epi64(13, 12, 5, 4, 9, 8, 1, 0);
     const __m512i idx_hi = _mm512_set_epi64(15, 14, 7, 6, 11, 10, 3, 2);
 
@@ -361,7 +361,7 @@ _TP_DEFINE_REC(large, TP_BASE_LARGE, _base_B)
 
 /** Out-of-place transpose: src[N1×N2] → dst[N2×N1] */
 #if defined(__AVX2__) || defined(__AVX512F__)
-/* §6a34: skinny-shape fast path. The regime-tiered kernels' blocking is
+/* Skinny-shape fast path. The regime-tiered kernels' blocking is
  * built for square-ish panels; at the 2D r2c tile shapes (one dim <= 8) a
  * plain 8x4 register-block sweep measured 35% faster at (256x8), L1
  * regime. Applies when the 8x4 grid divides exactly; everything else falls
@@ -437,11 +437,11 @@ static void stride_transpose_pair(
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * FUSED TWIDDLE + TRANSPOSE (unchanged AVX2 path)
+ * FUSED TWIDDLE + TRANSPOSE (AVX2 4×4)
  *
- * Compute-bound (4 FMAs per element) so inner transpose kernel
- * quality matters less. Kept at AVX2 4×4 level; an AVX-512 8×8
- * twiddle version is possible but not yet implemented.
+ * Compute-bound (4 FMAs per element) so the inner transpose kernel's
+ * quality matters less: the AVX2 4×4 kernel on every ISA (there is
+ * no AVX-512 8×8 twiddle kernel).
  * ═══════════════════════════════════════════════════════════════ */
 
 static void _twiddle_transpose_base(

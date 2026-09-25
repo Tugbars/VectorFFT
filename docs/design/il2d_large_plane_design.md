@@ -60,8 +60,8 @@ in 2D form (`ilnd_natural_strip_design.md`): the ladder {16, 32, 64, 128,
   (today the natural class alone races a strip partition, and unsized);
   the strips tramp walks its column range in sub-strips of `sw`. The
   verdict banks `mtarm=` (0 = the serial form threaded: bands, or the
-  natural block partition; 1 = strips) and `msw=` beside `cmt=`/`cmtt=`,
-  read back only at the T they were raced at, like `cmt`. The threaded
+  natural block partition; 1 = strips) and `msw=` beside `cmt=` on the row
+  keyed by the plan's thread count, read back only there, like `cmt`. The threaded
   strips form then runs the rows as its own phase (row slabs across the
   pool) — the second sweep. Each sub-strip runs through the worker's
   dense per-worker strip scratch (pitch = the strip width, one N1 x sw
@@ -301,10 +301,10 @@ the phase instrument; then the canonical bench `--k1noop` and `--k1noop
 - [ ] 2c. The prefix pair: the kernel walk, the serial and threaded prefix
       of the banded walk in both directions and both classes, the serial
       axis race and the threaded race each gaining the pair as an arm
-      (`pp=` on the row with wl; `mpp=` with cmt/cmtt), replayed at the
+      (`pp=` on the row with wl; `mpp=` with cmt), replayed at the
       raced T. Gate: bitwise the two-stage walk at every cell.
 - [ ] 3. Re-race the shipped store's 2D rows above 16 MB at T=8 (their
-      `cmt`/`cmtt` tokens dropped so the cold race runs) and the four-step's
+      `nthreads=8` rows dropped so the cold race runs) and the four-step's
       per-T splits; gates ALL PASS; measure.
 - [ ] 2d. The prefix pair as a raced arm (or deleted): the owner's ruling.
 - [x] 2d. The prefix pair: DELETED (owner 2026-09-15: a 4-10% arm that loses a cell is not worth its race cost and its code); the strip-width arms stay.

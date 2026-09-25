@@ -71,15 +71,16 @@ five of them add "and it was raced at THIS T":
 | written in | verdict token |
 | --- | --- |
 | `oop/k1_commit.h:252,433` | the kind-3 row's `il_kv_raced` |
-| `oop/k1_commit.h:744` | the flat DIT's `il_mt_t` |
-| `oop/k1_commit.h:824` | ZTURN-T's `il_mt_t` / `il_mt_ip_t` |
-| `oop/k1_commit.h:931` | the four-step's `il_mt_t` (+ `il_mtsb`) |
+| `oop/k1_commit.h:744` | the flat DIT's `il_mt` (on the `nthreads=` row since v1.3) |
+| `oop/k1_commit.h:824` | ZTURN-T's `il_mt` (the row's placement and T are its key) |
+| `oop/k1_commit.h:931` | the four-step's `il_mt` (+ `il_mtsb`) |
 | `oop/c2c_ip_create.h:194` | the in-place mode row |
 | `oop/c2c_oop_create.h:146,635` | the K=1 row, the natural row |
 | `transforms/fft2d/fft2d_create.h:546,677,733` | the 2D chain/axis/Bluestein rows |
-| `transforms/fft2d/il2d_tier.h:1401,1559,1785,1975,2026` | the real tier's and c2c tier's rows, `cmtt` |
+| `transforms/fft2d/il2d_tier.h:1401,1559,1785,1975,2026` | the real tier's and c2c tier's rows, `cmt` |
 
-The per-T rule ("a T=4 verdict never serves a T=8 request") is written
+The per-T rule ("a T=4 verdict never serves a T=8 request") is the key axis `nthreads=`
+since wisdom2 v1.3 (the fence `vfft_policy_replays_at_T` retired 2026-09-25). Before that it was written
 five times in five spellings.
 
 ### L4. Order classification (which class a request is, and its row)

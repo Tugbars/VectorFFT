@@ -1,30 +1,30 @@
-/* strided_tw.h — the strided TWIDDLE-STAGE row engine (§6a41).
+/* strided_tw.h — the strided TWIDDLE-STAGE row engine.
  *
- * Extends the strided r2c/c2r row engines (§6a37-39, mono ceiling N2=64) to
- * N2 ∈ {128, 256} via the §6a40-measured composition law: ROW-BLOCKED
- * FUSION — per 8-row block, [DIF front stage → existing r64 strided c2c
- * monos on sub-bands → mapped conjugate split] — one DRAM pass over the
- * plane, everything between L1-resident.
+ * Extends the strided r2c/c2r row engines (mono ceiling N2=64) to
+ * N2 ∈ {128, 256} by the measured composition law, ROW-BLOCKED FUSION —
+ * per 8-row block, [DIF front stage → existing r64 strided c2c monos on
+ * sub-bands → mapped conjugate split] — one DRAM pass over the plane,
+ * everything between L1-resident.
  *
- * Taxonomy note (see docs/design/strided_codelet_families.md): the FRONTS
- * here are ENGINE KERNELS (transpose.h-class hand infrastructure — simple
- * strided butterflies vectorized ALONG the row, no lattice, no DAG), not
- * codelets. The sub-band FFTs are the emitted r64 c2c strided monos. The
- * split/merge are the §6a36/38 formulas applied through the DIF ordering
- * map. A single fused emitted codelet per (N, direction) is the recorded
- * future refinement (§6a40: kills per-block call overhead + the L1
- * front→mono reload; the composition here is its measured floor).
+ * The FRONTS here are ENGINE KERNELS (transpose.h-class hand
+ * infrastructure — simple strided butterflies vectorized ALONG the row, no
+ * lattice, no DAG), not codelets. The sub-band FFTs are the emitted r64 c2c
+ * strided monos. The split/merge are the two-for-one real-FFT formulas
+ * applied through the DIF ordering map. A single fused emitted codelet per
+ * (N, direction) would remove the per-block call overhead and the L1
+ * front→mono reload (not built; this composition is the measured floor it
+ * would have to beat).
  *
  * Two-for-one at ROW level: even real rows enter as re lanes, odd as im
- * (pair addressing, §6a36's trick lifted to the composition) — so the c2c
- * machinery serves the r2c contract with a split at the door.
+ * (pair addressing) — so the c2c machinery serves the r2c contract with a
+ * split at the door.
  *
  * DIF ordering map (front radix r, monos N/r = 64, one front stage):
  *   Z[r*k + j] lives at column j*64 + k,   j = 0..r-1, k = 0..63.
  * The split/merge address Z through this map; nothing is ever reordered in
  * memory.
  *
- * Direction conventions match the §6a37/38 family: fwd emits half-spectra
+ * Direction conventions match the strided r2c/c2r row engines: fwd emits half-spectra
  * rows (out_stride-pitched); bwd consumes them and emits UNNORMALIZED real
  * rows (= N * x): mono-bwd contributes ×64, front-bwd ×r, total ×N. me is
  * PAIRS throughout; callers guarantee rows % 8 == 0 (4 pairs per block).
@@ -51,7 +51,7 @@
 #include <stddef.h>
 #include <math.h>
 
-/* the emitted c2c strided monos (Design C quadrant) used as sub-band leaves */
+/* the emitted c2c strided monos used as sub-band leaves */
 void radix64_n1_fwd_avx2_strided(double *, double *, const double *,
                                  const double *, size_t, size_t);
 void radix64_n1_bwd_avx2_strided(double *, double *, const double *,
@@ -298,7 +298,7 @@ static inline void _stw_merge_row(const double *x1r, const double *x1i,
     }
 }
 
-/* ── row-blocked compositions (the §6a40 law: one DRAM pass) ────────── */
+/* ── row-blocked compositions (one DRAM pass) ───────────────────────── */
 
 /* fwd: real rows (row-major, pitch rs_in) → half-spectra rows (pitch
  * out_stride ≥ N/2+1). rows must be a multiple of 8. work: caller scratch,

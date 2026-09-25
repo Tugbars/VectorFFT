@@ -1,15 +1,14 @@
 /* fft2d_real_il.h — the native IL 2D REAL tier's execution kernels
- * (docs/roadmap/fft2d_real_il_design.md; driver orchestration lives in
- * vfft.c — this header holds the kernel-grade data movement, the
+ * (docs/roadmap/fft2d_real_il_design.md; the row-pass drivers live in
+ * il2d_tier.h — this header holds the kernel-grade data movement, the
  * thin-driver rule).
  *
- * ROWSPLIT fused boundaries (owner 2026-08-26: "il at the boundary,
- * split inside" — the cascade's terminator pattern, driver-hosted): the
- * row pass runs the raced SPLIT r2c/c2r engine at (N2, K=W) on
- * lane-major scratch; these two kernels are the single-pass boundaries
- * between the caller's interleaved plane and that engine's lane planes.
- * Each replaces what were three passes (transpose re, transpose im,
- * scalar zip).
+ * ROWSPLIT fused boundaries (IL at the boundary, split inside,
+ * driver-hosted): the row pass runs the raced SPLIT r2c/c2r engine at
+ * (N2, K=W) on lane-major scratch; these two kernels are the single-pass
+ * boundaries between the caller's interleaved plane and that engine's
+ * lane planes. Each is one pass where the unfused form takes three
+ * (transpose re, transpose im, scalar zip).
  *
  *   _il2d_transpose_zip : two lane-major split planes (rows e = CCE
  *     bins, lanes t = transforms, element [e*W + t]) -> W interleaved
@@ -158,7 +157,7 @@ static inline void _il2d_unzip_transpose(const double *s, double *dre,
         }
 }
 
-/* ── ODD-N2 row primitives (2026-08-27): the odd row rides a K=1 c2c
+/* ── ODD-N2 row primitives: the odd row rides a K=1 c2c
  * child — promote real -> complex, transform, keep hp1 bins forward;
  * Hermitian-extend hp1 -> N2, inverse transform, take the real part
  * backward. Valid for ANY odd N2 (the child covers odd/prime via the

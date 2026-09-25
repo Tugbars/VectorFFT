@@ -1,0 +1,3 @@
+PASS vfft       none   api_matrix_gate              === ALL PASS === (61 cells)
+PASS standalone none   blocked_tail_gate            BLOCKED TAIL: correct at every count 1..9, r32 and r64, leaf and mid
+BUILD_FAIL fftw_bind_gate              

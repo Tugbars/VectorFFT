@@ -92,8 +92,8 @@ Clones read warm wisdom and never bank; any clone failure tears the set
 down and MT declines, loudly — never a half-cloned dispatch. The pool is
 the one owner (`support/threads.h`): the plan's T is the snapshot,
 `stride_pool_workers_for` the one clamp, `stride_pool_run` the one
-fork-join. `cmtt=` is the T the verdict was raced at; a banked verdict
-serves only at its own T. `VFFT_ILND_MT=0|1|2` pins (never banks);
+fork-join. The verdict's row is keyed by the T it was raced at (`nthreads=`); a banked
+verdict serves only at its own T. `VFFT_ILND_MT=0|1|2` pins (never banks);
 `vfft_ilnd_mt_passes()` is the engagement counter, and a threaded number
 without it is vacuous; `VFFT_ILND_PROF=1` prints per-phase ns.
 
@@ -107,7 +107,7 @@ One row per cell in `wisdom2_3d.txt`: `t=c2c n=N1xN2xN3 q=1 ord=scr place=oop la
 | `wl= tf=` | axis 0, the joint race | the banded walk's width (0 = unbanded) and its fusion flag |
 | `chain1= blu1= forms1=` | axis 1 (flat arm) | the same verdicts with the axis as suffix |
 | `s=` | the joint race | 1 = child, 2 = flat |
-| `cmt= cmtt= cmts=` | the MT race | 0 serial, 1 band, 2 plane; the T raced at; the structure the threaded verdict runs with |
+| `cmt= cmts=` (on the row keyed `nthreads=T`) | the MT race | 0 serial, 1 band, 2 plane; the structure the threaded verdict runs with |
 
 Axis 0's chain bank creates the row; every later verdict is a field update
 on it. The child's verdicts live on the child's own rank-2 cell, never

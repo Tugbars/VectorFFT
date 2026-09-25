@@ -137,6 +137,7 @@ The key states what the caller asked for, never how it was served
 | `ord=` | `nat` \| `scr` — explicit in EVERY record. Order is a key, never a ranking axis; lookups never cross order classes. |
 | `place=` | `ip` \| `oop`. |
 | `dir=` | `fwd` \| `bwd`. Absent = the verdict serves both directions from one plan, which is still the case for almost every cell. Present = this record is a per-direction verdict and is addressed separately. IN USE by the K=1 engine (`eng=k1`): the blocked kernel-variant verdict is directional, because the forward and backward slots are different kernels and measurably disagree, so the backward pick is a `dir=bwd` sibling of the forward cell rather than more `il_kv` bits. A reader that does not ask for a direction must skip records that carry one — a directional sibling shares every other key component, so an unguarded scan matches it by accident. |
+| `nthreads=` | the thread count the verdict was raced at and serves (v1.3). Absent = one thread. A threaded plan's row is its own, complete on its own: the plain tokens are its verdict at that T. Equality-matched; a lookup never crosses thread counts. |
 
 **Wildcards:** `q=*`, `ord=*`, `place=*` mark an axis-agnostic record. They
 are legal ONLY on migrated records (`from=` required) — an explicit statement
@@ -148,7 +149,7 @@ as cells re-race.
 **Layout (split vs interleaved) is never a key token.** It is a strategy
 property — an *output* of planning — and appears only in the payload.
 An unknown token in the KEY section makes the record invisible to lookup and
-is carried opaquely on resave: future key axes (`isa=`, `nthreads=`) land as
+is carried opaquely on resave: future key axes (`isa=`; `nthreads=` landed as v1.3) land as
 additive minor versions that older binaries can neither serve, strip, nor
 collapse.
 
@@ -238,6 +239,12 @@ own rule tables, so it cannot drift from the code. It contains:
   reused (blacklist in the module).
 - Minor version = additive tokens only. Major version = reader refusal.
 - New fields and new axes are added HERE, never to a frozen legacy file.
+- v1.3 (2026-09-25): `nthreads=` is a key axis. A pre-1.3 row carried its
+  threaded verdict in the payload, tagged with the T it was raced at
+  (`cmtt=`, `il_mt_t=`, `pqt=`, the 2D T-suffixed twins `rot= wlt= ...`);
+  such a row splits at load into the one-thread row and a row keyed
+  `nthreads=T` that carries the verdict in the plain tokens, and the files
+  carry the split form after the next writable save.
 
 ## 4 · The module — one definition point
 

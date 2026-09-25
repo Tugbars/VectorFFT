@@ -577,7 +577,7 @@ The verdict is raced at the plan's T against serial, with every tile width
 the chain offers as an arm of the tiles family (the width raced at one
 thread need not be the threaded one: 19683 banks `il_tw=2187` and
 `il_mt_tw=729`), steady-state samples (REPS executes after warm passes), and
-banks `il_mt= il_mt_t= il_mt_tw=` on the class's own kind-3 row beside
+banks `il_mt= il_mt_tw=` on the class's own kind-3 row at the plan's T (`nthreads=`) beside
 `il_tw=`; a verdict serves only at its own T. Below L2 the race banks serial
 and that is the verdict (1215: serial 1.8 µs, blocks 2.9, tiles 2.1).
 `VFFT_ILFD_MT=0|1|2` pins, never banks; `vfft_ilfd_mt_passes()` counts
