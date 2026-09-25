@@ -3,34 +3,21 @@
  * z -> n1t(R2) -> z scratch -> t2(R1) -> z.  No split planes anywhere: every
  * intermediate is interleaved [re,im,re,im], 2 complex per ymm.
  *
- * ── WHY THIS REPLACES THE HYBRID 2P ROUTE ───────────────────────────────
+ * ── WHY NO SPLIT PLANES ─────────────────────────────────────────────────
  *
- * The incumbent VFFT_K1_IL_2P (oop_plan.h) is interleaved only at the API
- * boundary: il_leaf writes TWO SPLIT PLANES (p->col_re, p->col_im) and
- * t1_ul_il reads them back. Measured 2026-07-26, both arms gated against a
- * scalar DFT, this route beats it end to end:
+ * Two passes cannot pay a layout conversion back. Against the retired hybrid
+ * route (split planes between the passes), both gated against a scalar DFT:
  *
  *     N=64  (8x8)    hybrid 60.4 ns   pure IL 33.7 ns   0.558x
  *     N=256 (16x16)  hybrid 248.5     pure IL 190.2     0.765x
  *     N=1024(32x32)  hybrid 1796.4    pure IL 1717.3    0.956x  (wash)
  *
- * At the codelet level, with the WORKING SET HELD CONSTANT (the earlier sweep
- * confounded radix with working set), pure IL wins at every radix:
+ * At the codelet level, with the WORKING SET HELD CONSTANT, pure IL wins at
+ * every radix:
  *     R=4 0.510 | R=8 0.599 | R=16 0.657 | R=32 0.658 | R=64 0.894
  *
- * THE BOUNDARY: pure IL wins while the working chunk is L1-RESIDENT and
- * degrades past it. N=1024 is in+mid+out = 3*16 KB = 48 KB = exactly this
- * machine's L1d, and that cell measures a dead wash — the crossover sits
- * precisely where the mechanism predicts. Above it the block-split cascade
- * (zsplit.h) owns the range, which is also what the comparison baseline does
- * and for the reason its RE doc gives: "2 passes can't amortize a
- * conversion; the high-N cascade converts because log-many [passes can]".
- *
- * So the hybrid conversion was never justified at this tier: two passes cannot
- * pay a layout conversion back. It also was NOT derived from the reference
- * library's RE (docs/research/mkl_il_512_anatomy.md calls our split-plane
- * staging "the exact opposite" of that library's mid-N path, which is
- * interleaved throughout).
+ * Pure IL wins while the working chunk is L1-RESIDENT: N=1024 in place is
+ * in+mid+out = 3*16 KB = 48 KB = this machine's L1d, and that cell is a wash.
  *
  * ── STAGING (validated against a scalar DFT, not asserted) ───────────────
  *   n1t(R2): count=R1, Ls=R1, OLs=R2 — corner-turn fused into the stores, so
@@ -72,39 +59,29 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
                              size_t, size_t, size_t, size_t, size_t);
 
 /* GENERATED REGISTRY (bin/emit_il_registry.ml -> generated/il_registry_avx2.h):
- * extern declarations for all 253 corpus-covered IL cells, plus the radix
+ * extern declarations for the corpus-covered IL cells, plus the radix
  * X-macro lists the resolvers below expand.  Derived from Corpus, so "the
  * codelet exists" and "a resolver can reach it" cannot drift apart.
- * NOT covered, still declared by hand below: the 6 tangent kernels and the
- * blocked / sed-renamed variants (t2b, n1tb, n1tb44, t2b48, n1tb48) -- they
- * sit outside the corpus pending pool sunset / an emitter suffix knob. */
+ * NOT covered, declared by hand below: the tangent kernels and the blocked
+ * forward pair variants (t2b*, n1tb*), which sit outside the corpus. */
 #include "il_registry_avx2.h"
 
 /* t2 declarations: GENERATED (VFFT_IL_T2_{FWD,BWD}_RADICES). */
 
 /* ── BLOCKED t2 mids (`--cil-blocked`, symbol tag `b`) — RACED CANDIDATES ─
- * Promoted 2026-08-03 from the twmem r32exp campaign (docs/research/
- * twmem_campaign/results/r32exp_blocked.md census + gate, r32exp_timing.md
- * v1-v3 timing). The blocked form splits the R1 DFT into two passes (m·p),
- * dropping peak live R1 -> max(m,p): the monolithic r32 t2's RA churn (26
- * multi-stored frame slots, 21.6% of body insns on ymm stack traffic)
- * collapses to 0-4 slots. Quiet-machine race: t2b48 [4·8] −18..−20% kernel
- * and −5..−14% through execute_fwd (WIN 3/3 both levels); t2b [2·16]
- * −25..−27% kernel, pipeline unresolved; t2b16 [2·8] confirmed over two
- * sessions. Side-finding: blocked kernels are immune to the per-process
- * stack-ASLR/4KB-alias tail-risk that inflates the spilling monolith.
+ * The blocked form splits the R1 DFT into two passes (m·p), dropping peak
+ * live R1 -> max(m,p): the monolithic r32 t2's RA churn (26 multi-stored
+ * frame slots, 21.6% of body insns on ymm stack traffic) collapses to 0-4
+ * slots. Measured: t2b48 [4·8] −18..−20% kernel and −5..−14% through
+ * execute_fwd; t2b [2·16] −25..−27% kernel. Blocked kernels are also immune
+ * to the per-process stack-ASLR/4KB-alias tail-risk that inflates the
+ * spilling monolith.
  *
- * The winner is NEVER hand-set (sterm/sterm2 placement-luck lesson) — it
- * is MEASURED AT THE FRONT DOOR (bench_1d_vs_mkl.c builds handles per
- * variant and times them) and selected here via VFFT_IL2P_MID; create
- * itself does no timing. FWD-ONLY by design: execute_fwd is mid_f's
- * only consumer; the bwd path standardizes on t2t/F-DIAG and never reads a
- * mid twin (--cil-blocked could emit a bwd, but it would be an un-raced
- * orphan). 🔴 The old "CONTRACT: count % 2 == 0 — blocked kernels carry NO
- * odd-count tail" is RETIRED (2026-08-23): blocked forms now emit the inline
- * VEX-128 narrow tail, so an odd partner count is legal and the even-R2 race
- * precondition is gone (benches/blocked_tail_gate.c).
- * Kill switch: VFFT_NO_T2B (VFFT_NO_IL2P precedent). */
+ * The winner is NEVER hand-set — it is a raced per-cell il_kv verdict
+ * (the variant registry below); create itself does no timing. The mid
+ * twins are forward; the backward's blocked forms are the t2t twins
+ * (t2t_bwd_v_fn). Blocked forms carry the inline VEX-128 narrow tail, so
+ * an odd partner count is legal (build_tuned/benches/blocked_tail_gate.c). */
 #define VFFT_IL2P_DECL_T2B(SYM) \
   extern void SYM( \
       const double *, const double *, double *, double *, \
@@ -112,8 +89,8 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
 VFFT_IL2P_DECL_T2B(radix16_z_t2b_fwd_avx2)
 VFFT_IL2P_DECL_T2B(radix32_z_t2b_fwd_avx2)
 VFFT_IL2P_DECL_T2B(radix32_z_t2b48_fwd_avx2)
-/* R64 (2026-08-23): the forward twins of the long-shipped backward
- * t2bt88/t2bt416. Radix 64 is the tree's worst spiller — the monolithic mid
+/* R64: the forward twins of the backward t2bt88/t2bt416. Radix 64 is the
+ * tree's worst spiller — the monolithic mid
  * burns 41.6% of its bulk loop on stack traffic — and blocking at 8.8 takes
  * that to 18.1% while dropping ~25% of the instructions. */
 VFFT_IL2P_DECL_T2B(radix64_z_t2b88_fwd_avx2)
@@ -121,25 +98,22 @@ VFFT_IL2P_DECL_T2B(radix64_z_t2b416_fwd_avx2)
 #undef VFFT_IL2P_DECL_T2B
 
 /* n1t declarations: GENERATED (VFFT_IL_N1T_{FWD,BWD,PAIR}_RADICES).
- * The groups below are kept as PROSE -- why each radix class exists -- but
- * the list itself is no longer written here.
+ * Why each radix class exists:
  *   pow2: 4 8 16 32 64 */
-/* even-composite leaves (2026-07-29, emitted via dft_small's mixed
- * recursion): unlock 2-stage pairs at 4·odd² N — 36=6x6, 100=10x10,
- * 144=12x12 — and even-composite chain leaves (300 = 6·(5·10)).
+/* even-composite leaves (emitted via dft_small's mixed recursion): 2-stage
+ * pairs at 4·odd² N — 36=6x6, 100=10x10, 144=12x12 — and even-composite
+ * chain leaves (300 = 6·(5·10)).
  *   even composites: 6 10 12 */
-/* odd leaves (2026-07-29, with the odd-count tail): all-odd pairs —
- * 45 = 9x5, 225 = 15x15, 675 = 27x25. Both stage counts go odd; the
- * inline VEX-128 tail carries them.
+/* odd leaves: all-odd pairs — 45 = 9x5, 225 = 15x15, 675 = 27x25. Both
+ * stage counts go odd; the inline VEX-128 tail carries them.
  *   odd: 3 5 7 9 11 13 15 17 19 21 25 27 */
-/* BLOCKED leaves (E9, 2026-08-05): the n1t corner-turn carried through
- * emit_blocked's pass-pairs. FWD-ONLY (leaf_b's only consumer is the F-DIAG
- * fallback) — raced per cell at create like the blocked mids; n1tb (2·16)
- * is BITWISE-identical to n1t, n1tb48 (4·8) is the tolerance class.
- * R64 added 2026-08-23 (splits 8.8 and 4.16, mirroring the backward
- * n1b88/n1b416): monolithic n1t spills 44.9% of its bulk loop at radix 64,
- * the worst in the tree; 8.8 cuts it to 20.3%. Both are tolerance class
- * (rel ~1e-16), not bitwise. */
+/* BLOCKED leaves: the n1t corner-turn carried through emit_blocked's
+ * pass-pairs. FWD-ONLY (leaf_b's only consumer is the F-DIAG fallback) —
+ * raced per cell like the blocked mids; n1tb (2·16) is BITWISE-identical to
+ * n1t, n1tb48 (4·8) is the tolerance class. R64 (splits 8.8 and 4.16,
+ * mirroring the backward n1b88/n1b416): monolithic n1t spills 44.9% of its
+ * bulk loop at radix 64, the worst in the tree; 8.8 cuts it to 20.3%. Both
+ * are tolerance class (rel ~1e-16), not bitwise. */
 extern void radix32_z_n1tb_fwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t, size_t, size_t, size_t, size_t);
@@ -153,18 +127,10 @@ extern void radix64_z_n1tb416_fwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t, size_t, size_t, size_t, size_t);
 
-/* n1t and t2 both cover 4..64 — the FULL set the K=1 IL pair search can select,
- * which is what keeps the il_in/il_out hybrid fallback unreachable.
- *
- * Radix 4 was added 2026-07-29. The old comment here read "a 4-leg corner-turn
- * leaf was never emitted", which was true but read as a limitation: the emitter
- * could always produce it (codelet_cil.ml's n1t refusal is on VECTOR WIDTH,
- * per<>2, NOT on radix) — the kernel had simply never been asked for. Its
- * absence left every pair with R2=4 (N=16 4x4, 32 8x4, 64 16x4, 128 32x4) with
- * no pure-IL plan, so execute silently used the hybrid.
- *
- * 🔴 Keep this list equal to the pair search's registry (vfft.c:3110-3124).
- * benches/il2p_bwd_gate.c asserts that equality by building all 25 pairs. */
+/* n1t (leaf) and t2 (mid), the pair's two kernel kinds, resolve from the
+ * registry's PAIR lists (both directions exist). The K=1 pair searches
+ * (_k1_il_candidate in k1_commit.h, the OOP K=1 block in c2c_oop_create.h)
+ * probe these resolvers, so every pair they select has both kernels. */
 static inline vfft_il2p_fn vfft_il2p_leaf_fn(int R, int bwd)
 {
     switch (R) {
@@ -174,12 +140,9 @@ static inline vfft_il2p_fn vfft_il2p_leaf_fn(int R, int bwd)
     default: return 0;
     }
 }
-/* Odd/prime t2 twins (conjugate-pair construction, codelet_cil.ml,
- * generated 2026-07-28): the 3-STAGE CHAIN's mid stages put odd factors
- * here as kernel RADICES (never as counts — that is the whole point of the
- * chain, docs/roadmap/il_odd_chain.md). The classic 2-stage pair search
- * never selects them (it requires both factors % 4 == 0), so extending
- * this registry does not change any pow2 route. */
+/* Odd/prime t2 twins (conjugate-pair construction, codelet_cil.ml): the
+ * mids of odd pairs and of the 3-STAGE CHAIN's odd factors
+ * (docs/roadmap/il_odd_chain.md). No pow2 route selects them. */
 /* odd / even-composite t2 declarations: GENERATED. */
 
 static inline vfft_il2p_fn vfft_il2p_mid_fn(int R, int bwd)
@@ -207,7 +170,7 @@ static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
     }
 }
 
-/* t2cp — t2c with the PRE-twiddle placement at fwd (2026-09-04): the flat
+/* t2cp — t2c with the PRE-twiddle placement at fwd: the flat
  * mixed-radix DIT chain's stage kind (il_flatdit.h). Per-DIGIT broadcast
  * records applied before the forward butterfly; one digit per call (the
  * block's slow-digit twiddle). fwd only: the bwd t2c is that stage's
@@ -224,8 +187,8 @@ static inline vfft_il2p_fn vfft_il2p_t2cp_fn(int R)
     }
 }
 
-/* t2cs — the COLUMN-STRIDE tail form of the t2 mid (2026-09-04,
- * il_flatdit.h): a column is one BLOCK; lane j of a vector comes from
+/* t2cs — the COLUMN-STRIDE tail form of the t2 mid (il_flatdit.h): a
+ * column is one BLOCK; lane j of a vector comes from
  * block k+j (two 128-bit halves at stride Gs in / OGs out); per-pair
  * twiddle records (adjacent blocks carry different twiddles). Serves the
  * flat chain's short-run stages (D < vw) at full lanes. fwd only. */
@@ -241,16 +204,14 @@ static inline vfft_il2p_fn vfft_il2p_t2cs_fn(int R)
     }
 }
 
-/* msz — a factored mid form on our contract (2026-09-05, owner: "kernel-level
- * boundary IL, split body is fine"): the zsplit odd mid (msg body: split
- * planes in REGISTERS, shuffle-free, splat-pair records) with INTERLEAVED
- * z on both edges and UNORDERED lanes (unpack only, no permute4x64: 1.0
- * shuffle/point at the boundary, the comparison baseline's measured figure).
- * One call per stage: Gs = blocks (in-kernel group loop), Ls = count = D
- * (count % 4 == 0), tw_re = per block (R-1) [c x4][s x4] records, plain
- * sin. fwd only, IN PLACE on zout (zin ignored). Files:
- * codelets/zil/avx2/ztt/ (flat/odd_mid/ holds msz); the registry derives
- * VFFT_IL_MSZ_FWD_RADICES like every other kind. */
+/* msz — a factored odd mid form: IL at the kernel boundary, split body
+ * inside (split planes in REGISTERS, shuffle-free, splat-pair records) with
+ * INTERLEAVED z on both edges and UNORDERED lanes (unpack only, no
+ * permute4x64: 1.0 shuffle/point at the boundary). One call per stage:
+ * Gs = blocks (in-kernel group loop), Ls = count = D (count % 4 == 0),
+ * tw_re = per block (R-1) [c x4][s x4] records, plain sin. IN PLACE on zout
+ * (zin ignored). Files: codelets/zil/avx2/flat/odd_mid/; the registry
+ * derives VFFT_IL_MSZ_FWD_RADICES like every other kind. */
 static inline vfft_il2p_fn vfft_il2p_msz_fn(int R)
 {
     switch (R) {
@@ -263,7 +224,7 @@ static inline vfft_il2p_fn vfft_il2p_msz_fn(int R)
     }
 }
 
-/* BACKWARD twins of the flat DIT's kinds (2026-09-05): the inverse is the
+/* BACKWARD twins of the flat DIT's kinds: the inverse is the
  * CONJUGATE pipeline — same stage order and forms, IDFT blocks, PRE-twiddle
  * with the driver's conjugated tables. Registry-derived like the forward. */
 static inline vfft_il2p_fn vfft_il2p_msz_bwd_fn(int R)
@@ -300,7 +261,7 @@ static inline vfft_il2p_fn vfft_il2p_t2csgn_bwd_fn(int R)
     }
 }
 
-/* TRANSPOSED backward twins (2026-09-05): the flat DIT's SCRAMBLED class
+/* TRANSPOSED backward twins: the flat DIT's SCRAMBLED class
  * consumes the comb by running the stages in reverse, each transposed —
  * IDFT block, then the conjugated twiddle POST on the output legs. Same
  * argument contracts and tables as the forward kinds they transpose. */
@@ -349,8 +310,8 @@ static inline vfft_il2p_fn vfft_il2p_t2csgnt_bwd_fn(int R)
     }
 }
 
-/* t2csgn — t2csg with the in-kernel GROUP LOOP over the natural-base table
- * (2026-09-05): one call per stage; zin_unused = (const size_t *) obase
+/* t2csgn — t2csg with the in-kernel GROUP LOOP over the natural-base
+ * table: one call per stage; zin_unused = (const size_t *) obase
  * (one entry per block, the driver's natbase), Gs = the group count, the
  * rest as t2csg. The flat DIT's count-1 last stage. fwd only. */
 static inline vfft_il2p_fn vfft_il2p_t2csgn_fn(int R)
@@ -365,7 +326,7 @@ static inline vfft_il2p_fn vfft_il2p_t2csgn_fn(int R)
     }
 }
 
-/* t2csg — t2cs with the GENERATED twiddle stream (gen2, 2026-09-04): the
+/* t2csg — t2cs with the GENERATED twiddle stream (gen2): the
  * kernel forms W^1 per column pair as T1[pair] (tw_re, the cursor: one
  * VTW2 pair record per pair) times T2 (tw_im: ONE broadcast record per
  * call, hoisted) and derives every higher leg in-kernel. The driver hands
@@ -398,20 +359,19 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
     }
 }
 
-/* n1c — the 2D column-stage leaf pair (fft2d_il_c2c_design.md §3): n1
- * math with the 2D family's contract in the name and the ABI — count axis
+/* n1c — the 2D column-stage leaf pair (docs/roadmap/fft2d_il_c2c_design.md):
+ * n1 math with the 2D family's contract in the name and the ABI — count axis
  * = adjacent plane columns, alias-tolerant (no __restrict__) in BOTH
  * directions because the 2D column pass runs zin == zout. Distinct from
- * plain n1 (whose bwd is the 1D F-DIAG chain role; its fwd twin was emitted
- * 2026-09-04 for the MONO tier's SOLO kernels — oop_leaf_registry.h
- * vfft_k1_mono_il_form_fn — and n1c doubles as that tier's IN-PLACE solo,
- * vfft_k1_mono_ilc_fn, which is why n1c now exists at 2/6/10/12 too). */
+ * plain n1 (whose bwd is the 1D F-DIAG chain role and whose fwd serves the
+ * MONO tier's SOLO kernels — oop_leaf_registry.h vfft_k1_mono_il_form_fn);
+ * n1c doubles as that tier's IN-PLACE solo, vfft_k1_mono_ilc_fn, which is
+ * why n1c exists at 2/6/10/12 too. */
 static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
 {
-    /* CONSTRUCTION TABLE (raced 2026-08-25, il2d_kv_race, both regimes;
-     * radix-determined per the 1D law — owner: r32/r64 NEVER monolithic):
-     * r4/r8/r16 monolithic (r16 raced, mono holds) · r32 b48 (+13-24%)
-     * · r64 b88 (+48-51%). */
+    /* CONSTRUCTION TABLE (raced, both regimes; radix-determined per the 1D
+     * law — r32/r64 NEVER monolithic): r4/r8/r16 monolithic (r16 raced,
+     * mono holds) · r32 b48 (+13-24%) · r64 b88 (+48-51%). */
     switch (R) {
     case 32: return bwd ? radix32_z_n1cb48_bwd_avx2
                         : radix32_z_n1cb48_fwd_avx2;
@@ -419,15 +379,10 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
                         : radix64_z_n1cb88_fwd_avx2;
     default: break;
     }
-    /* EVERY OTHER RADIX FROM THE REGISTRY (2026-09-21). This list was hand
-     * written -- {4, 8, 16} and the odd radices to 27 -- while the generated
-     * registry had n1c at 2, 6, 10 and 12 (the MONO tier's in-place solo
-     * twins) and, from today, 23. A kernel the registry declares and this
-     * switch omits ships and is never selectable: the flat DIT refused every
-     * chain with a radix-2 leaf ("no such kernel") and 23 could not lead a
-     * chain, which is the trap the registry emitter exists to close. The
-     * PAIR list (both directions exist) is the authority; the two blocked
-     * construction-table picks above stay in front of it. */
+    /* EVERY OTHER RADIX FROM THE REGISTRY, never a hand-written list: a
+     * kernel the registry declares and this switch omits ships and is never
+     * selectable. The PAIR list (both directions exist) is the authority;
+     * the two blocked construction-table picks above stay in front of it. */
     switch (R) {
 #define C(R) case R: return bwd ? radix##R##_z_n1c_bwd_avx2 : radix##R##_z_n1c_fwd_avx2;
     VFFT_IL_N1C_PAIR_RADICES(C)
@@ -436,7 +391,7 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
     }
 }
 
-/* t2c — the 2D column-stage MID pair (fft2d_il_c2c_design.md §3): same-slot
+/* t2c — the 2D column-stage MID pair (fft2d_il_c2c_design.md): same-slot
  * in-place DIF stage, per-(d,leg) broadcast records hoisted in-kernel (the
  * z-T1S/6c sourcing). Ls = D*N2, Gs = N2 row pitch, OGs = D; the table is
  * DRIVER-built, d-major, bwd = conjugated table (same kernel shape). */
@@ -454,7 +409,7 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
                         : radix64_z_t2cb88_fwd_avx2;
     default: break;
     }
-    /* every other radix from the registry (2026-09-21) -- see n1c above */
+    /* every other radix from the registry -- see n1c above */
     switch (R) {
 #define C(R) case R: return bwd ? radix##R##_z_t2c_bwd_avx2 : radix##R##_z_t2c_fwd_avx2;
     VFFT_IL_T2C_PAIR_RADICES(C)
@@ -463,7 +418,7 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
     }
 }
 
-/* PER-STAGE KERNEL FORM (2026-09-02, parity with the 1D il_kv axis): at
+/* PER-STAGE KERNEL FORM (parity with the 1D il_kv axis): at
  * r32/r64 the column kinds exist in rival BLOCKED forms and the pick is per
  * cell per stage - raced at create, banked BY NAME on the 2D chain row
  * (forms=), replayed through these resolvers. Monolithic is never served at
@@ -473,7 +428,7 @@ static inline int vfft_il2p_col_forms(int R, const char **names /* [2] */)
 {
     switch (R) {
     case 32: names[0] = "b48"; names[1] = "b84";  return 2;
-    case 64: names[0] = "b88"; names[1] = 0;      return 1;   /* b416 retired 2026-09-24: never won a banked cell */
+    case 64: names[0] = "b88"; names[1] = 0;      return 1;   /* no b416: it never won a banked cell */
     default: names[0] = "-";   names[1] = 0;      return 1;
     }
 }
@@ -502,16 +457,11 @@ static inline vfft_il2p_fn vfft_il2p_t2c_form_fn(int R, const char *form,
     return 0;
 }
 
-/* 🔴 t2p IS RETIRED — Tugbars, 2026-07-29: "disable t2p ... the whole tree
- * standardizes on t2t semantics." The t2p kind (PRE-twiddle + backward
- * butterfly + straight store, route A / conj-of-forward) lost the bwd race
- * at every R1 <= 32 and was kept only as a rival; to prevent the recurring
- * "which bwd arm?" confusion its registry, plan field, execute route, race
- * arm, and all 17 kernel files (pow2 + odd) were DELETED. F-DIAG below
- * remains the unfused reference of that same math. If a pre-twiddle kind is
- * ever needed again (the 3-stage odd chain's conj-of-forward composition
- * wanted one), that is a DELIBERATE decision — the sanctioned path is the
- * t2t-with-leg-stride store variant instead. */
+/* 🔴 The whole tree standardizes on t2t semantics for the backward. There is
+ * no pre-twiddle backward kind (PRE-twiddle + backward butterfly + straight
+ * store): it lost the bwd race at every R1 <= 32. F-DIAG below is the
+ * unfused reference of that math. Where a composition needs a leg-strided
+ * backward store, the path is a t2t store variant (t2tg), not a new kind. */
 
 /* t2t — POST-twiddle + backward butterfly + TURNED store: THE canonical bwd
  * flat codelet. Stage 1 of the decomposition that runs the R1 butterfly
@@ -554,46 +504,18 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
     free(p);
 }
 
-/* NULL when the pair has no pure-IL kernels, so a caller can fall back rather
- * than build a plan that cannot execute. Since 2026-07-29 there is NO parity
- * constraint: every monolithic cil kernel carries the inline VEX-128
- * odd-count tail, and the VTW2 table below ceils its pair count so an odd
- * R2's last (even-indexed) column has its record.
- *
- * 🔴 COVERAGE IS THE CONTRACT, NOT AN ACCIDENT.
- * This must succeed for EVERY (R1,R2) the caller's pair search can select —
- * otherwise execute silently falls back to the il_in/il_out hybrid route.
- * Do NOT reason about whether a given gap "can be reached in practice": that
- * answer depends on the ISA (`per`), the codelet registries and the search
- * bounds, so it is platform-specific and goes stale. Enforce coverage instead;
- * benches/il2p_bwd_gate.c asserts it exhaustively over the whole domain.
- *
- * The old `R2 < 8` bound was exactly such an accident: it had no structural
- * reason (R2=4 is even, and ntw = (R2/2)*(R1-1)*8 is well-formed), it simply
- * predated the radix-4 n1t kernel. It left N=16 (pair 4x4) on the hybrid. */
 /* ── TANGENT-INTERIOR KERNELS (variant 3) ────────────────────────────────
- * 2026-08-11. Same transforms as the classic forms, different interior
- * arithmetic: rotations factored e^(-i.th) = cos(th)*(1 - i*tan(th)), the
- * shear left un-normalized and cos folded into the consuming butterfly's FMA
- * pair, so butterfly adds move off the FP-add ports onto the FMA ports.
+ * Same transforms as the classic forms, different interior arithmetic:
+ * rotations factored e^(-i.th) = cos(th)*(1 - i*tan(th)), the shear left
+ * un-normalized and cos folded into the consuming butterfly's FMA pair, so
+ * butterfly adds move off the FP-add ports onto the FMA ports.
  * Source + measured deltas:
  *   src/dag-fft-compiler/codelets/zil/avx2/pair2p/tangent/README.md
  *
- * FORWARD ONLY (no backward twins emitted yet) — same scope the blocked
- * forms already have, so apply_kv_forms/blocked_default, which only touch
- * mid_f/leaf_f, need no new guard.
- *
- * R8/R16 forms are MONOLITHIC emissions and carry the inline VEX-128
- * odd-count tail, so they are legal at any count; BOTH R32 forms are
- * blocked (split 2.16) and need the even-count gate.
- *
- * 2026-08-13 wing32 (A-1, docs/roadmap/r32_tangent_parity_plan.md): the
- * R32 mid is now radix32_z_t2bw32 (canonical-angle combine + ROTFMA;
- * supersedes t2btan216, -3.3..-5.5% both shapes) and the R32 LEAF EXISTS
- * again — radix32_z_n1tbw32 with the TURNED-128 store edge. The old
- * leaf's +32.4% kill was the paired permute2f128 store edge, not the
- * tangent interior; route (32,16) with this leaf ties the hand champion
- * (~302-305 ns at N=512, fft512_a0, 3 runs). */
+ * R32 (wing32, docs/roadmap/r32_tangent_parity_plan.md): the mid is
+ * radix32_z_t2bw32 (canonical-angle combine + ROTFMA) and the leaf
+ * radix32_z_n1tbw32 with the TURNED-128 store edge — the paired
+ * permute2f128 store edge cost the leaf +32.4%, not the tangent interior. */
 extern void radix8_z_t2tan_fwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
@@ -606,14 +528,12 @@ extern void radix16_z_t2tan_fwd_avx2(const double *, const double *,
 extern void radix16_z_n1ttan_fwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
-/* the tangent BACKWARD twins (2026-09-11): the coverage gap of 2026-09-09 —
- * every backward row from 32 to 1024 had banked the classic form by default
- * because no tangent backward kernel existed. Emitted with the same recipe
- * as the forward twins plus --cil-bwd (the mid with --cil-turnst, the
- * pair's backward stage-1 store contract); radix 8 is BIT-IDENTICAL to the
- * classic backward at every count, radix 16 within 5e-17
- * (benches/tangent_bwd_gate.c). Backward variant 3 in the resolvers below;
- * the backward forms race (il_bkv) offers them and the cell decides. */
+/* the tangent BACKWARD twins: the same recipe as the forward twins plus
+ * --cil-bwd (the mid with --cil-turnst, the pair's backward stage-1 store
+ * contract); radix 8 is BIT-IDENTICAL to the classic backward at every
+ * count, radix 16 within 5e-17 (build_tuned/benches/tangent_bwd_gate.c).
+ * Backward variant 3 in the resolvers below; the backward forms race
+ * (il_bkv) offers them and the cell decides. */
 extern void radix8_z_t2ttan_bwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
@@ -626,13 +546,11 @@ extern void radix16_z_t2ttan_bwd_avx2(const double *, const double *,
 extern void radix16_z_n1tan_bwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
-/* the radix-32 backward LEAF twin (2026-09-11): n1btan216_bwd = the tangent
- * interior on the blocked 2.16 split, 5e-17 vs the classic blocked 2.16
- * backward leaf. Its WING-combine sibling (the emitter runs VFFT_CX_W32TG
- * in both directions since 2026-09-11) was raced the same day and LOST to
- * this one at both cells that carry a radix-32 leaf (128: 71.4 vs 70.7 ns,
- * 512: 347 vs 344, 5/5 repeats) — the forward wing's 3-5% does not transfer
- * to the backward leaf — and was retired (pool-sunset policy). */
+/* the radix-32 backward LEAF twin: n1btan216_bwd = the tangent interior on
+ * the blocked 2.16 split, 5e-17 vs the classic blocked 2.16 backward leaf.
+ * Not the WING combine: that sibling LOST to this one at both cells that
+ * carry a radix-32 leaf (128: 71.4 vs 70.7 ns, 512: 347 vs 344) — the
+ * forward wing's 3-5% does not transfer to the backward leaf. */
 extern void radix32_z_n1btan216_bwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
@@ -644,33 +562,29 @@ extern void radix32_z_n1tbw32_fwd_avx2(const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
 
 /* ── BLOCKED-KERNEL VARIANT REGISTRY ─────────────────────────────────────
- * 2026-08-05. Same role as vfft_il2p_leaf_fn / vfft_il2p_mid_fn above:
- * a pure (radix, variant) -> symbol lookup. NO selection policy, NO env,
- * NO timing. The VERDICT lives in wisdom (kind-3 `il_kv`, packed
+ * Same role as vfft_il2p_leaf_fn / vfft_il2p_mid_fn above: a pure
+ * (radix, variant) -> symbol lookup. NO selection policy, NO env, NO
+ * timing. The VERDICT lives in wisdom (kind-3 `il_kv`, packed
  * mid | leaf<<4) and is applied by the front door after create; the
- * measurement that produced it is the bench's job.
+ * measurement that produced it is the planner's race.
  *
  * variant: 0 = monolithic registry kernel (return 0 -> caller keeps it)
- *          1 = blocked 2·16   2 = blocked 4·8   3 = TANGENT interior
+ *          1 = blocked 2·16 (R64: 4·16)   2 = blocked 4·8 (R64: 8·8)
+ *          3 = TANGENT interior   4 = tangent, alternate store edge
+ *          5 = odd-composite Cooley-Tukey (_ct)
  * Returns 0 for any (radix, variant) with no emitted kernel, so an
  * unsupported verdict degrades to the monolithic kernel — always correct.
- *
- * CONTRACT: blocked kernels carry NO odd-count tail. The mid runs at
- * count = R2 and the leaf at count = R1, so the caller must refuse a
- * blocked mid for odd R2 and a blocked leaf for odd R1 — the `count_ok`
- * argument makes that explicit at the call site rather than implicit. */
+ * The `count_ok` argument is vestigial: blocked kernels carry the odd-count
+ * narrow tail (build_tuned/benches/blocked_tail_gate.c); it stays so a
+ * future tail-less form has somewhere to be refused. */
 
-/* TURNED-axis edge variants (owner directive 2026-08-15): same tangent
- * interior, different STORE EDGE, raced per cell like every other form —
- * the 512/1024 flip proved edge choice is regime-dependent.
- *   leaf variant 4 = wing32 + T256 (paired-permute wide stores). WON the
- *   2026-08-16 dp race at BOTH raceable cells (128: pair 4x32 kv 64,
- *   63.6 ns; 512: 16x32 kv 67, 301.1 ns) — the T128-vs-T256 verdict is
- *   per-cell, which is the axis's whole point.
- *   (mid variant 4 = tangent + M-128 half stores was raced the same night
- *   and LOST every cell it can serve — codelets SUNSET per pool policy;
- *   regenerate with VFFT_CX_STORE128=1 if a future cell wants the arm.
- *   The resolver returns 0 for mid v4, degrading to the created default.) */
+/* TURNED-axis edge variants (variant 4): same tangent interior, different
+ * STORE EDGE, raced per cell like every other form — the edge choice is
+ * regime-dependent.
+ *   leaf = wing32 + T256 (paired-permute wide stores): won at both raceable
+ *   cells (128: pair 4x32, 63.6 ns; 512: 16x32, 301.1 ns).
+ *   mid = tangent + M-128 half stores: lost every raceable cell on this
+ *   machine, kept in the pool (see mid_v_fn). */
 extern void radix32_z_n1tbw32t256_fwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
@@ -683,11 +597,7 @@ extern void radix32_z_t2bw32m128_fwd_avx2(const double *, const double *,
 
 static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
 {
-    /* count_ok: the even-partner-count contract, RETIRED 2026-08-23 --
-     * blocked kernels now carry the odd-count narrow tail
-     * (benches/blocked_tail_gate.c). Kept as a parameter so a future
-     * tail-less form has somewhere to be refused. */
-    (void)count_ok;
+    (void)count_ok;   /* vestigial: see the registry note above */
     if (!variant) return 0;
     if (variant == 3) {                 /* tangent interior */
         if (R1 == 8)  return radix8_z_t2tan_fwd_avx2;   /* monolithic: has  */
@@ -696,9 +606,9 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
         return 0;
     }
     if (variant == 4) {                 /* tangent interior, M-128 edge.
-        * Loses every raceable cell on the i9 (2026-08-16 dp race) but
-        * stays in the pool per owner policy — a distinct construction
-        * may win on other platforms; shared wisdom re-races locally. */
+        * Loses every raceable cell on the i9 but stays in the pool — a
+        * distinct construction may win on other platforms; shared wisdom
+        * re-races locally. */
         if (R1 == 16) return radix16_z_t2tanm128_fwd_avx2; /* mono, odd tail */
         if (R1 == 32) return radix32_z_t2bw32m128_fwd_avx2;
         return 0;
@@ -710,8 +620,8 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
          * dft_cx_odd's direct O(n^2/2) conjugate-pair form. Only odd
          * COMPOSITES have a _ct twin -- pow2, even and odd-PRIME radices
          * emit an identical body either way, so the registry list is
-         * exactly {9,15,21,25,27}. See the header note: R=9 LOSES this
-         * race, which is why it is a variant and not a default. */
+         * exactly {9,15,21,25,27}. R=9 LOSES this race, which is why it
+         * is a variant and not a default. */
         switch (R1)
         {
 #define C(R) case R: return radix##R##_z_t2_ct_fwd_avx2;
@@ -724,40 +634,31 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
     if (R1 == 32 && variant == 1) return radix32_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 2) return radix32_z_t2b48_fwd_avx2;
     /* R64: variant 1 = 4.16, variant 2 = 8.8 — the SAME mapping the
-     * backward side uses at il2p.h t2t_bwd_v_fn, so an il_kv nibble
-     * means one thing in both directions. 8.8 won the mid in 3/3 runs. */
+     * backward side uses at t2t_bwd_v_fn, so an il_kv nibble means one
+     * thing in both directions. 8.8 won the mid in 3/3 runs. */
     if (R1 == 64 && variant == 1) return radix64_z_t2b416_fwd_avx2;
     if (R1 == 64 && variant == 2) return radix64_z_t2b88_fwd_avx2;
     return 0;
 }
 
-/* R=16 blocked leaf, 4·4 — the RACED winner (2026-08-06). All three splits
- * were emitted and benched against each other and against monolithic at
- * N=512 (pair 32x16, mid held at 4·8, 24 arms, alternating, core 2):
- *   4·4 = 362 ns  <  2·8 = 367  <  mono = 373  <  8·2 = 376  (medians)
- * 4·4's WORST arm (366) beats monolithic's BEST (371) — non-overlapping.
- * The two losers were deleted rather than kept as dead registry entries;
- * this header is the record. 🔴 8·2 is SLOWER THAN MONOLITHIC: the same
- * factorization transposed differs by 2.4%, which is why the split shape
- * is raced per ISA and never reasoned from the factorization alone.
+/* R=16 blocked leaf, 4·4 — the RACED winner of the three splits at N=512
+ * (pair 32x16, mid held at 4·8, medians):
+ *   4·4 = 362 ns  <  2·8 = 367  <  mono = 373  <  8·2 = 376
+ * 🔴 8·2 is SLOWER THAN MONOLITHIC: the same factorization transposed
+ * differs by 2.4%, which is why the split shape is raced per ISA and never
+ * reasoned from the factorization alone.
  *
- * NOT a structural default: R=16 FITS the register file (8.6% ymm spill,
- * the census CONTROL class), so unlike R>=32 this is a wisdom-selected
- * pool candidate and MONOLITHIC n1t(16) remains the fallback. Its purpose
- * is to remove a real confound — blocked forms covered R=32 in both slots
- * but R=16 in the MID only, so the (16,32)-vs-(32,16) ordering race was
- * comparing orderings with different form coverage on each side. */
+ * NOT a structural default: R=16 FITS the register file (8.6% ymm spill),
+ * so unlike R>=32 this is a wisdom-selected pool candidate and MONOLITHIC
+ * n1t(16) remains the default. It also gives R=16 a blocked form in BOTH
+ * slots, so the (16,32)-vs-(32,16) ordering race compares like with like. */
 extern void radix16_z_n1tb44_fwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
 
 static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok)
 {
-    /* count_ok: the even-partner-count contract, RETIRED 2026-08-23 --
-     * blocked kernels now carry the odd-count narrow tail
-     * (benches/blocked_tail_gate.c). Kept as a parameter so a future
-     * tail-less form has somewhere to be refused. */
-    (void)count_ok;
+    (void)count_ok;   /* vestigial: see the registry note above */
     if (!variant) return 0;
     if (variant == 3) {                 /* tangent interior */
         if (R2 == 8)  return radix8_z_n1ttan_fwd_avx2;   /* monolithic   */
@@ -777,8 +678,8 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
          * dft_cx_odd's direct O(n^2/2) conjugate-pair form. Only odd
          * COMPOSITES have a _ct twin -- pow2, even and odd-PRIME radices
          * emit an identical body either way, so the registry list is
-         * exactly {9,15,21,25,27}. See the header note: R=9 LOSES this
-         * race, which is why it is a variant and not a default. */
+         * exactly {9,15,21,25,27}. R=9 LOSES this race, which is why it
+         * is a variant and not a default. */
         switch (R2)
         {
 #define C(R) case R: return radix##R##_z_n1t_ct_fwd_avx2;
@@ -808,53 +709,28 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
 #define VFFT_IL_KV_PACK(m,l) (((m) & 0xf) | (((l) & 0xf) << 4))
 #define VFFT_IL_KV_MONO      0xf
 
-/* ── STRUCTURAL DEFAULT: blocked kernels ARE the R>=32 forward kernels ───
- *
- * Scope: FORWARD only (no blocked bwd twins exist yet) and even counts only
- * (blocked kernels carry NO odd-count tail — the monolithic kernel, which
- * does, remains the odd-count fallback). 4·8 forms preferred over 2·16:
- * measured dominant on the mid (pipeline -11..-21%, the only arm that
- * reproduced in every valid section of every run) and the register
- * arithmetic agrees (peak-live max(p,m): 4·8 < 2·16); 2·16 is the fallback
- * when no 4·8 form exists. R=16 is deliberately NOT in the rule — it fits
- * the register file (8.6% spill, the census control class); any r16 win is
- * cell-local and belongs to wisdom.
- *
- * VFFT_NO_ILBLK: create-time kill switch (VFFT_NO_ZTURN idiom) + the
- * bench's A/B hook through the front door. A boolean availability gate, not
- * a picker: no measurement, no timer, no verdict — the banned class stays
- * banned here. Wisdom il_kv OVERRIDES this default (vfft.c apply_kv runs
- * after create; 0xF forces monolithic). */
-/* ── BACKWARD form variants (2026-08-21) ──────────────────────────────────
- * The backward twins of mid_v_fn / leaf_v_fn.  Until now the backward had NO
- * variant axis at all -- n1_bwd_fn/t2t_bwd_fn took only R -- which is exactly
- * why the forward ran BLOCKED codelets while the backward ran MONOLITHIC ones
- * at the same cell.
- *
- * MEASURED cost of that asymmetry (2026-08-21, --k1dir, N=1024 K=1 IL
- * in-place): forcing the forward monolithic with VFFT_NO_ILBLK costs +45%
- * (858 -> 1251 ns, ranges DISJOINT, ~4% spread each), and fwd(monolithic)
- * then lands on bwd -- the kernel class was the whole gap, not the direction.
+/* ── BACKWARD form variants ───────────────────────────────────────────────
+ * The backward twins of mid_v_fn / leaf_v_fn, so the backward runs the same
+ * kernel class as the forward at a cell. At N=1024 K=1 IL in place, forcing
+ * the forward monolithic (VFFT_NO_ILBLK) costs +45% (858 -> 1251 ns) and
+ * lands it on the monolithic backward: the kernel class, not the
+ * direction, was the whole fwd/bwd gap.
  *
  * Variant numbering MIRRORS the forward exactly: 1 = 2.16 (R64: 4.16),
- * 2 = 4.8 (R64: 8.8).  count_ok is the same even-partner-count contract
- * (blocked forms carry no odd-count tail).  Externs come from the generated
- * il_registry_avx2.h.  Gated correctness: every form was A/B'd against its
- * shipped monolithic twin, 12/12, rel ~1e-16 (the 2.16 splits BITWISE). */
+ * 2 = 4.8 (R64: 8.8).  count_ok is vestigial, as on the forward.  Externs
+ * come from the generated il_registry_avx2.h.  Gated correctness: every
+ * form was A/B'd against its shipped monolithic twin, 12/12, rel ~1e-16
+ * (the 2.16 splits BITWISE). */
 static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_ok)
 {
-    /* count_ok: the even-partner-count contract, RETIRED 2026-08-23 --
-     * blocked kernels now carry the odd-count narrow tail
-     * (benches/blocked_tail_gate.c). Kept as a parameter so a future
-     * tail-less form has somewhere to be refused. */
-    (void)count_ok;
+    (void)count_ok;   /* vestigial: see the registry note above */
     if (!variant) return 0;
-    /* variant 3 = the TANGENT interior (2026-09-11): backward twins of the
-     * forward tangent mids at radix 8 and 16, emitted as the TURNED-STORE
-     * kind (t2t, --cil-turnst) because that is the pair's backward stage-1
+    /* variant 3 = the TANGENT interior: backward twins of the forward
+     * tangent mids at radix 8 and 16, emitted as the TURNED-STORE kind
+     * (t2t, --cil-turnst) because that is the pair's backward stage-1
      * contract — a plain-store t2 tangent twin builds, fails the planner's
-     * correctness gate and is silently not an arm (found 2026-09-11). No
-     * radix-32 twin yet: the wing32 construction is forward-only. */
+     * correctness gate and is silently not an arm. No radix-32 twin: the
+     * wing32 construction is forward-only. */
     if (R == 8  && variant == 3) return radix8_z_t2ttan_bwd_avx2;
     if (R == 16 && variant == 3) return radix16_z_t2ttan_bwd_avx2;
     if (R == 32 && variant == 1) return radix32_z_t2bt216_bwd_avx2;
@@ -884,15 +760,10 @@ static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_
 
 static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_ok)
 {
-    /* count_ok: the even-partner-count contract, RETIRED 2026-08-23 --
-     * blocked kernels now carry the odd-count narrow tail
-     * (benches/blocked_tail_gate.c). Kept as a parameter so a future
-     * tail-less form has somewhere to be refused. */
-    (void)count_ok;
+    (void)count_ok;   /* vestigial: see the registry note above */
     if (!variant) return 0;
-    /* variant 3 = the TANGENT interior (2026-09-11), see t2t_bwd_v_fn;
-     * at radix 32 the tangent 2.16 leaf (its wing-combine sibling lost the
-     * race and retired the same day) */
+    /* variant 3 = the TANGENT interior, see t2t_bwd_v_fn; at radix 32 the
+     * tangent 2.16 leaf (its wing-combine sibling lost the race) */
     if (R == 8  && variant == 3) return radix8_z_n1tan_bwd_avx2;
     if (R == 16 && variant == 3) return radix16_z_n1tan_bwd_avx2;
     if (R == 32 && variant == 3) return radix32_z_n1btan216_bwd_avx2;
@@ -926,13 +797,11 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_o
  * frame moves vs the blocked pair's 46), so blocked is a STRUCTURAL default,
  * not a per-cell taste.  R=16 is deliberately excluded on both sides -- it
  * fits the register file.  Shares VFFT_NO_ILBLK so the A/B hook moves both
- * directions together, and honours the same even-partner-count gates as the
- * forward.  A banked backward variant (the dir= key axis wisdom2 reserves)
- * will override this the moment the planner races one. */
+ * directions together.  A banked backward variant (the dir=bwd row)
+ * overrides it. */
 static inline void vfft_il2p_apply_blocked_default_bwd(vfft_il2p_plan_t *p)
 {
     if (!p || getenv("VFFT_NO_ILBLK")) return;
-    /* the (partner & 1) == 0 tests are GONE with the tail (2026-08-23) */
     if (p->R1 >= 32) {
         vfft_il2p_fn t = vfft_il2p_t2t_bwd_v_fn(p->R1, 2, 1);   /* 4.8  */
         if (!t) t = vfft_il2p_t2t_bwd_v_fn(p->R1, 1, 1);        /* 2.16 */
@@ -945,10 +814,22 @@ static inline void vfft_il2p_apply_blocked_default_bwd(vfft_il2p_plan_t *p)
     }
 }
 
+/* ── STRUCTURAL DEFAULT: blocked kernels ARE the R>=32 forward kernels ───
+ *
+ * 4·8 forms preferred over 2·16: measured dominant on the mid (pipeline
+ * -11..-21%, the only arm that reproduced in every run) and the register
+ * arithmetic agrees (peak-live max(p,m): 4·8 < 2·16); 2·16 is the fallback
+ * when no 4·8 form exists. R=16 is deliberately NOT in the rule — it fits
+ * the register file (8.6% spill); any r16 win is cell-local and belongs to
+ * wisdom.
+ *
+ * VFFT_NO_ILBLK: create-time kill switch + the bench's A/B hook through the
+ * front door. A boolean availability gate, not a picker: no measurement, no
+ * timer, no verdict. Wisdom il_kv OVERRIDES this default (k1_commit.h's
+ * _k1_il2p_apply_kv runs after create; 0xF forces monolithic). */
 static inline void vfft_il2p_apply_blocked_default(vfft_il2p_plan_t *p)
 {
     if (!p || getenv("VFFT_NO_ILBLK")) return;
-    /* the (partner & 1) == 0 tests are GONE with the tail (2026-08-23) */
     if (p->R1 >= 32) {
         vfft_il2p_fn m = vfft_il2p_mid_v_fn(p->R1, 2, 1);   /* 4·8  */
         if (!m) m = vfft_il2p_mid_v_fn(p->R1, 1, 1);        /* 2·16 */
@@ -962,31 +843,26 @@ static inline void vfft_il2p_apply_blocked_default(vfft_il2p_plan_t *p)
 }
 
 /* Apply an explicit il_kv FORM verdict onto a built plan — the ONE
- * definition of the nibble semantics, shared by vfft.c's wisdom apply and
- * the DP planner's variant-axis candidates (two copies of this logic is
- * the drift bug again). Deterministic, env-free. Nibble 0 = leave the
- * slot as create resolved it (structural default); VFFT_IL_KV_MONO (0xF)
- * = force the monolithic kernel back; else = the registry variant, parity
- * gated exactly like the default. */
+ * definition of the nibble semantics, shared by k1_commit.h's wisdom apply
+ * and the DP planner's variant-axis candidates (two copies of this logic is
+ * the drift bug). Deterministic, env-free. Nibble 0 = leave the slot as
+ * create resolved it (structural default); VFFT_IL_KV_MONO (0xF) = force
+ * the monolithic kernel back; else = the registry variant. */
 /* Returns 0 when EVERY requested nibble resolved to a real kernel, -1 when
  * one did not (the plan is still runnable - the unresolved slot keeps
  * whatever create installed).
  *
  * 🔴 The return value is what keeps a banked verdict HONEST. Silently
- * keeping the default made a candidate labelled "variant 3" MEASURE the
- * default, so a race could bank il_kv=3 for a kernel that never executed.
- * The output stayed correct and the record did not: a reader believes
- * variant 3 won, and on a build where variant 3 DOES exist that same line
- * installs a kernel nobody timed there. Latent while the enumerator's pools
- * and this registry agree, but they are two hand-maintained lists.
- * The backward twin (apply_kv_forms_bwd) has worked this way since
- * 2026-08-21; this is the same contract.
+ * keeping the default would make a candidate labelled "variant 3" MEASURE
+ * the default, so a race could bank il_kv=3 for a kernel that never
+ * executed — and on a build where variant 3 DOES exist that same line
+ * installs a kernel nobody timed there. The enumerator's pools and this
+ * registry are two hand-maintained lists. The backward twin
+ * (apply_kv_forms_bwd) has the same contract.
  *
- * The MONO branches are guarded for the same reason and one worse one: they
- * used to assign UNCONDITIONALLY, so a miss NULLed the slot outright. The
- * planner never enumerates MONO, but a banked verdict reaches this path
- * straight off a wisdom line - a null function pointer at execute, not a
- * mislabelled measurement. */
+ * The MONO branches are guarded too: the planner never enumerates MONO, but
+ * a banked verdict reaches this path straight off a wisdom line, and an
+ * unguarded miss would NULL the slot - a null function pointer at execute. */
 static inline int vfft_il2p_apply_kv_forms(vfft_il2p_plan_t *p, int kv)
 {
     if (!p) return -1;
@@ -1015,25 +891,18 @@ static inline int vfft_il2p_apply_kv_forms(vfft_il2p_plan_t *p, int kv)
     }
     return ok;
 }
-/* ── THE BACKWARD ARM (2026-08-21) ────────────────────────────────────────
- * apply_kv_forms above is the ONLY translator from a banked verdict to a
- * running codelet, and until now it assigned mid_f/leaf_f and nothing else.
- * That is why a backward verdict had nowhere to land: the backward pair was
- * reachable ONLY through the structural default, un-overridable by wisdom.
- *
- * Same two-nibble codec, because the backward runs the SAME (R1,R2) split:
+/* ── THE BACKWARD ARM ─────────────────────────────────────────────────────
+ * apply_kv_forms_bwd translates a banked backward verdict into the running
+ * backward codelets. Same two-nibble codec, because the backward runs the
+ * SAME (R1,R2) split:
  *   LOW  nibble -> stage 1, t2t at R1   (executed with count = R2)
  *   HIGH nibble -> stage 2, n1  at R2   (executed with count = R1)
- * so the even-count gates are the partner's parity, exactly as the forward's
- * are.  0xF forces monolithic, mirroring VFFT_IL_KV_MONO.
+ * 0xF forces monolithic, mirroring VFFT_IL_KV_MONO.
  *
- * SOURCE OF THE VERDICT: there is no banked backward kv yet.  wisdom2
- * reserves `dir=` as a KEY token (wisdom2/README.md section 3.1), so a
- * backward verdict is a separate CELL rather than more bits in il_kv --
- * which is the right shape, since the forward and backward pick
- * independently.  Until the planner races one, callers pass the
- * VFFT_IL_BKV test hook or 0; at 0 this is a no-op and
- * apply_blocked_default_bwd's structural pick stands. */
+ * SOURCE OF THE VERDICT: the cell's own dir=bwd row (wisdom2 keys direction),
+ * not more bits in il_kv — the forward and backward pick independently.
+ * VFFT_IL_BKV pins it. At 0 this is a no-op and apply_blocked_default_bwd's
+ * structural pick stands. */
 /* Returns 0 when EVERY requested nibble resolved to a real kernel, -1 when
  * one did not (the plan is still left runnable — the unresolved slot keeps
  * whatever create() installed).
@@ -1074,8 +943,8 @@ static inline int vfft_il2p_apply_kv_forms_bwd(vfft_il2p_plan_t *p, int bkv)
 }
 
 
-/* PER-RADIX FORM ARM POOLS (moved out of dp_planner_il.h 2026-09-03 so the
- * Bailey pair and the 3-stage chain enumerate the SAME pools): the variant
+/* PER-RADIX FORM ARM POOLS (here so the Bailey pair and the 3-stage chain
+ * enumerate the SAME pools): the variant
  * codes a slot of radix R can serve, in the planner's order, with the
  * structural default (what create resolves) in *def. Pools are <= 4 long.
  *
@@ -1088,9 +957,7 @@ static inline int vfft_il2p_apply_kv_forms_bwd(vfft_il2p_plan_t *p, int bkv)
  * LEAF: R32 {2, 1, 3, 4 (n1tbw32 T256)}; R64 {2, 1} -- MUST be raced: the
  *      split verdict flips with the partner count (4.16 at counts 8/16, 8.8
  *      at 32); R16 {0 (default), 1 (4.4), 3 (tangent)} -- R16 fits the file,
- *      so a non-monolithic form must WIN per cell; R8 {0, 3}; other {0, +5}.
- * The (partner & 1) gates are gone since 2026-08-23 (blocked kernels carry
- * the odd-count narrow tail). */
+ *      so a non-monolithic form must WIN per cell; R8 {0, 3}; other {0, +5}. */
 static inline int vfft_il2p_mid_arm_pool(int R1, int *msv, int *dm)
 {
     int nm = 0;
@@ -1128,14 +995,23 @@ static inline int vfft_il2p_leaf_arm_pool(int R2, int *lsv, int *dl)
     return nl;
 }
 
+/* NULL when the pair has no pure-IL kernels, so a caller never builds a plan
+ * that cannot execute. There is NO parity constraint: every monolithic cil
+ * kernel carries the inline VEX-128 odd-count tail
+ * (docs/roadmap/tail_handling/il_odd_count_tail.md), so all-odd pairs
+ * (45 = 9x5) are plans, and the VTW2 table below ceils its pair count so an
+ * odd R2's last (even-indexed) column has its record. The registry probes
+ * are the availability filter.
+ *
+ * 🔴 COVERAGE IS THE CONTRACT, NOT AN ACCIDENT.
+ * This must succeed for EVERY (R1,R2) the caller's pair search can select —
+ * otherwise that cell has no pair plan. Do NOT reason about whether a given
+ * gap "can be reached in practice": that answer depends on the ISA (`per`),
+ * the codelet registries and the search bounds, so it is platform-specific
+ * and goes stale. Enforce coverage instead. */
 static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
 {
     if (N <= 0 || R1 < 3 || R2 < 3 || (long)R1 * (long)R2 != (long)N) return 0;
-    /* (The old (R1&1)||(R2&1) refusal is GONE — 2026-07-29, with the
-     * odd-COUNT tail: every monolithic cil kernel now carries an inline
-     * VEX-128 tail (il_odd_count_tail.md §3), so odd counts are legal and
-     * all-odd pairs (45 = 9x5) become plans. Registry probes below remain
-     * the availability filter. */
     vfft_il2p_fn lf = vfft_il2p_leaf_fn(R2, 0), lb = vfft_il2p_leaf_fn(R2, 1);
     vfft_il2p_fn mf = vfft_il2p_mid_fn(R1, 0),  mb = vfft_il2p_mid_fn(R1, 1);
     if (!lf || !lb || !mf || !mb) return 0;
@@ -1204,7 +1080,7 @@ static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
                                          const double *zin, double *zout)
 {
     const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
-    /* OUT-OF-PLACE SKIPS THE SCRATCH (2026-08-22).
+    /* OUT-OF-PLACE SKIPS THE SCRATCH.
      *
      * Only ONE of the two passes scatters. Stage 1 is a corner turn -- it
      * loads zin[2*(j*Ls+k)] and stores zout[2*(k*OLs+j)], indices transposed
@@ -1216,19 +1092,15 @@ static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
      * So when zin != zout the caller has already handed us a second plane
      * and p->mid is pure overhead: one extra 2N-double buffer written and
      * read for nothing. Removing it from the OUT-OF-PLACE path drops the
-     * resident set from in+mid+out to in+out -- about 16 KB at N=2048,
-     * against this machine's 48 KB L1d, which is the fence that caps this
-     * tier at N=1024.
+     * resident set from in+mid+out to in+out, against this machine's
+     * 48 KB L1d.
      *
      * 🔴 zin == zout still needs the scratch: stage 1 cannot scatter into
      * its own source. That is what p->mid is actually for -- it is required
      * by the IN-PLACE contract, not by the four-step shape.
      *
-     * Verified two ways before landing: an index-shape audit of every mid
-     * codelet family, and build_tuned/benches/il2p_alias_gate.c, which
-     * compares both stagings BITWISE over every (R1,R2) pair x form variant
-     * x direction (237 arms) and carries a negative control proving the
-     * comparison detects an injected fault. */
+     * Both stagings were compared BITWISE over every (R1,R2) pair x form
+     * variant x direction. */
     if (vfft_il2p_planes_disjoint(zin, zout, R1 * R2))
     {
         p->leaf_f(zin,  0, zout, 0, 0,     0, R1, 0, R2, 0, R1);
@@ -1241,28 +1113,20 @@ static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
 
 /* ── F-DIAG: the unfused backward composition (reference + fallback) ─────
  *
- * Validated 2026-07-29 against the gated forward at 7 cells (1.89e-14
- * @N=128 16x8 .. 6.47e-13 @N=4096 64x64). Controls: deleting the diagonal,
- * or applying it POST instead of PRE, both give O(1) error.
+ * Validated against the gated forward at 7 cells (1.89e-14 @N=128 16x8 ..
+ * 6.47e-13 @N=4096 64x64). Controls: deleting the diagonal, or applying it
+ * POST instead of PRE, both give O(1) error.
  *
- * 🔴 IF THIS EVER NEEDS RE-DERIVING, DO NOT SCAN STRIDES. Eight compositions
- * were falsified that way first, all at O(1); the closest failing arm
- * differed from the correct one by ONE SEMANTIC BIT — stage-2 twiddle POST
- * vs PRE — with identical stages, radices, strides, table and order, so no
- * stride scan could ever have reached it. The old "the inverse needs an
- * un-turn and no emitted kernel un-turns" diagnosis was WRONG: it holds only
- * for the operator-inverse route, while this composition keeps the turn
- * exactly where the forward put it. Full record: memory
- * [[il2p-backward-solved]].
+ * 🔴 IF THIS EVER NEEDS RE-DERIVING, DO NOT SCAN STRIDES. The closest
+ * failing composition differs from this one by ONE SEMANTIC BIT — stage-2
+ * twiddle POST vs PRE — with identical stages, radices, strides, table and
+ * order, so no stride scan reaches it. No un-turn is needed: this
+ * composition keeps the turn exactly where the forward put it.
  *
  *   stage 1  leaf_b = n1t_bwd(R2), args IDENTICAL to forward stage 1
  *              mid[k*R2 + p] = IDFT_R2(column k)[p]
  *   diagonal PRE-multiply by e^{+2pi i * l * col / N}, legs 1..R1-1
  *   stage 2  n1_b = plain n1_bwd(R1), Ls = OLs = count = R2
- *
- * (Historical: fusing the diagonal into stage 2 was the t2p kind — bitwise
- * identical to this form at all 7 gated cells. t2p is RETIRED 2026-07-29;
- * F-DIAG stays as the unfused reference/fallback of that math.)
  *
  * ⚠️ GATE AT NON-SQUARE PAIRS. The two mirror decompositions coincide when
  * R1 == R2, so 256 (16x16) / 1024 (32x32) / 4096 (64x64) cannot adjudicate.
@@ -1300,22 +1164,13 @@ static inline int vfft_il2p_execute_bwd_fdiag(const vfft_il2p_plan_t *p,
     return 0;
 }
 
-/* (ROUTE A — the fused conj-of-forward composition via the t2p kernel — was
- * RETIRED AND DELETED 2026-07-29 with the t2p kind itself; see the
- * retirement note above the t2t registry. Its math survives as F-DIAG.) */
-
 /* t2t — THE decomposition: run the R1 butterfly FIRST, then R2.
- * (The retired route A ran R2 first, mirroring the forward's stage order.)
  *
- * Derived 2026-07-29 by two blind derivations that produced the SAME triples —
- * nothing to adjudicate — and validated in a scalar simulator at 10 cells
- * including non-square in BOTH orders. Route A's own numbers were the control.
+ * Two independent derivations produced the SAME triples; validated in a
+ * scalar simulator at 10 cells including non-square in BOTH orders.
  *
  *   x[a*R1+b] = SUM_k e^{+2pi i ak/R2} e^{+2pi i bk/N} [ SUM_j X[j*R2+k] e^{+2pi i bj/R1} ]
  *               \____ stage 2, IDFT_R2 ___/ \_twiddle_/  \_____ stage 1, IDFT_R1 ______/
- *
- * A views the spectrum as K = a*R1 + b (R1 the fast stride); B takes the
- * OPPOSITE view on both index lines, K = alpha*R2 + beta and n = gamma*R1 + delta.
  *
  * 🔴 THREE THINGS ARE FORCED BY THE DERIVATION, NOT CHOSEN. A control sweep
  * perturbing one argument at a time gave O(1) error for EVERY perturbation
@@ -1329,13 +1184,9 @@ static inline int vfft_il2p_execute_bwd_fdiag(const vfft_il2p_plan_t *p,
  * ⚠️ STAGE 2 IS n1_bwd AT RADIX R2, NOT R1. Using p->n1_b (the R1 twin) here
  * measures 1.1e+00 — the control sweep flagged it explicitly as a trap.
  *
- * The table is p->twb UNCHANGED — same pointer route A's stage 2 takes, same
- * cursor convention. Consumption is exactly ntw = (R2/2)*(R1-1)*8, verified an
+ * The table is p->twb UNCHANGED — the same cursor convention as F-DIAG's
+ * diagonal. Consumption is exactly the ntw create allocates, verified an
  * EXACT fit (no overread) under ASan at 10 cells. No new table, no new alloc.
- *
- * COVERAGE: B works where A cannot. A's stage 1 needs an n1t leaf at radix R2,
- * which does not exist at R2=4; B was validated at 128=32x4 and 64=16x4 where
- * route A is unavailable.
  *
  * Returns 0 on success, -1 if this build lacks the twins. */
 static inline int vfft_il2p_execute_bwd_t2t(const vfft_il2p_plan_t *p,
@@ -1358,23 +1209,13 @@ static inline int vfft_il2p_execute_bwd_t2t(const vfft_il2p_plan_t *p,
 }
 
 /* ── THE BACKWARD PATH ───────────────────────────────────────────────────
- * t2t, THE canonical bwd composition (Tugbars 2026-07-29: t2p retired
- * everywhere, "the whole tree standardizes on t2t semantics").
+ * t2t, THE canonical bwd composition. Against the pre-twiddle arm the winner
+ * tracked R1: t2t won 2-14% at R1 <= 32, the pre-twiddle arm 1-10% at
+ * R1 == 64 only (t2t's stage 1 IS the R1 butterfly, so a fat R1 makes it
+ * pay early). IL plans favour many small stages, so R1=64 is rare ⇒ t2t.
  *
- * The original race record (three independent runs of il2p_bwd_gate.c,
- * kept for history): the winner tracked R1 — t2t won 2-14% at R1 <= 32,
- * the retired t2p arm won 1-10% at R1 == 64 only, 32x32 unresolvable.
- * t2t's stage 1 IS the R1 butterfly (turned store), so a fat R1 makes it
- * pay early. Tugbars' call: IL plans favour many small stages, so R1=64 is
- * rare ⇒ t2t. It also covers strictly more pairs than t2p did (t2p's
- * stage 1 needed an n1t leaf that never existed at R2=4).
- *
- * ⚠️ A SINGLE RUN WOULD HAVE MISLED — the first race read 9/10 one way and
- * did not reproduce. Always repeat races before re-deciding.
- *
- * F-DIAG is the availability fallback ONLY (unfused reference of the
- * retired route-A math — correctness net for a build lacking the t2t
- * twins, never a speed arm). */
+ * F-DIAG is the availability fallback ONLY (correctness net for a build
+ * lacking the t2t twins, never a speed arm). */
 static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
                                         const double *zin, double *zout)
 {
@@ -1383,16 +1224,14 @@ static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * il3p — the 3-STAGE pure-IL chain: N = R2 · A · B (R1 = A·B), the route
- * that gives odd/prime factors a K=1 IL plan (docs/roadmap/il_odd_chain.md).
+ * il3p — the 3-STAGE pure-IL chain: N = R2 · A · B (R1 = A·B)
+ * (docs/roadmap/il_odd_chain.md).
  *
- * WHY 3 STAGES: every cil kernel vectorizes 2 complex/ymm and requires
- * count % 2 == 0. In the 2-stage pair the leaf runs at count=R1 and the
- * mid at count=R2 — BOTH factors must be even, so a 2-stage plan can NEVER
- * host an odd factor. The chain pins the SIMD axis to the leaf's q columns
- * (count = R2 at both mid stages, R1 at the leaf — all even) and odd
- * factors appear only as kernel RADICES. No odd-count tail exists or is
- * needed on this route.
+ * WHY 3 STAGES: a pair needs N = R1·R2 with both radices in the registry;
+ * the chain splits R1 = A·B across two mid stages, so N whose factors do
+ * not fit two kernels still gets a K=1 IL plan. The SIMD axis is the leaf's
+ * columns (count = R2 at both mid stages, R1 at the leaf); odd counts are
+ * legal (the VEX-128 tail).
  *
  * FORWARD (gated 12/12 vs naive DFT, real kernels):
  *   S1  n1t(R2), 1 call:  in zin (Ls=R1), out mid1 (OLs=R2), count=R1
@@ -1403,9 +1242,9 @@ static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
  *                         tw = VTW2(A, B·R2, N) + region b·R2
  *   ⚠ S2b's twiddle argument is the COMBINED index q + b·R2 — ONE big
  *   table over all B·R2 columns; dropping the ω_{R1}^{cb} factor fails
- *   O(1) at every cell including the pow2 control (recorded in the doc).
+ *   O(1) at every cell including the pow2 control.
  *
- * BACKWARD (gated 13/13 vs naive IDFT; t2t semantics — t2p is retired):
+ * BACKWARD (gated 13/13 vs naive IDFT; t2t semantics):
  *   B1  t2_bwd(A), B calls b:  in zin+2bR2 (Ls=B·R2), out mid2+2bAR2
  *                              (OLs=R2), count=R2, tw = conj big + region b
  *   B2  t2tg_bwd(B), A calls c: in mid2+2cR2 (Ls=A·R2), out mid1+2c
@@ -1419,7 +1258,7 @@ static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
  *
  * 🔴 The chain (R2, A, B) is a PLAN INPUT. vfft_il3p_default_chain below is
  * a LEGAL default for uncalibrated cells only — the measured per-cell pick
- * belongs to the wisdom campaign (plans come from measured search). */
+ * is the planner's race (plans come from measured search). */
 typedef struct {
     int N, R2, A, B;               /* R1 = A*B */
     double *mid1, *mid2;           /* interleaved scratch, 2N doubles each */
@@ -1445,12 +1284,12 @@ static inline void vfft_il3p_destroy(vfft_il3p_plan_t *p)
 /* VTW2 fill, (legs, blocks x cols-per-block, modulus)-parametric — the
  * 2-stage record convention: (pair pp, leg l) at (pp*(legs-1)+(l-1))*8,
  * [c,c,c,c][-s,+s,-s,+s], angle -2*pi*l*k/modulus, conj flips the sins.
- * ODD-LEGAL (2026-09-04): records are laid PER BLOCK — a kernel call
- * pairs columns from ITS OWN base, so with an odd column count a block
- * boundary falls mid-pair in any global layout; and each block carries a
- * CEILING pair count so the lone last column of an odd block has its
- * record (the VEX-128 tail reads its half — the pair engine's exact
- * rule since 2026-07-29). k = the GLOBAL column index blk*cols + local. */
+ * ODD-LEGAL: records are laid PER BLOCK — a kernel call pairs columns from
+ * ITS OWN base, so with an odd column count a block boundary falls mid-pair
+ * in any global layout; and each block carries a CEILING pair count so the
+ * lone last column of an odd block has its record (the VEX-128 tail reads
+ * its half — the pair engine's rule). k = the GLOBAL column index
+ * blk*cols + local. */
 static inline size_t _vfft_il3p_vtw2_recs(int cols)
 {
     return ((size_t)cols + 1u) / 2u;
@@ -1482,17 +1321,16 @@ static inline double *_vfft_il3p_vtw2(int legs, int blocks, int cols,
 }
 
 /* LEGAL default chain for an uncalibrated cell (⚠ default, NOT a measured
- * plan): a covered leaf R2 (pow2 preferred, then even-composite) whose
- * cofactor R1 = N/R2 is even and splits as A·B with both mid kernels
- * present — first as odd·pow2, else with an even-composite B (6/10/12),
- * which serves the single-4 cells like 200 = 4·(5·10), 300 = 6·(5·10).
- * Returns 0 when no chain exists (pure pow2 N — the pair owns it; all-odd
- * N — every count odd). */
+ * plan): a covered leaf R2 (pow2 preferred, then even-composite, then odd)
+ * whose cofactor R1 = N/R2 splits as A·B with both mid kernels present — an
+ * all-odd cofactor smallest-A first, else odd·pow2, else with an
+ * even-composite B (6/10/12) carrying a lone factor of 2, which serves
+ * cells like 200 = 4·(5·10), 300 = 6·(5·10). Returns 0 when no chain exists
+ * (a pure pow2 cofactor: the pair owns it). */
 static inline int vfft_il3p_default_chain(int N, int *R2, int *A, int *B)
 {
-    /* even leaves first (the historical seed order), then the odd leaves
-     * (2026-09-04, chain3 odd-legal) — this is a SEED for an uncalibrated
-     * cell only; the planner's race decides the served chain. */
+    /* even leaves first, then the odd leaves — this is a SEED for an
+     * uncalibrated cell only; the planner's race decides the served chain. */
     static const int LEAF[] = { 32, 16, 8, 4, 12, 10, 6,
                                 47, 43, 41, 37, 31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3 };
     static const int ECB[]  = { 12, 10, 6 };
@@ -1546,10 +1384,9 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
 {
     const int R1 = A * B;
     if (N <= 0 || (long)R1 * (long)R2 != (long)N) return 0;
-    /* (The (R1&1)||(R2&1) refusal is GONE — 2026-09-04, the pair's
-     * 2026-07-29 step applied to the chain: every kernel here carries the
-     * VEX-128 odd-count tail, and the tables are per-block/ceiling below,
-     * so all-odd chains (1215 = 15x9x9) become plans.) */
+    /* No parity constraint: every kernel here carries the VEX-128 odd-count
+     * tail, and the tables are per-block/ceiling below, so all-odd chains
+     * (1215 = 15x9x9) are plans. */
     vfft_il2p_fn lf  = vfft_il2p_leaf_fn(R2, 0);
     vfft_il2p_fn nb  = vfft_il2p_n1_bwd_fn(R2);
     vfft_il2p_fn af  = vfft_il2p_mid_fn(A, 0), ab = vfft_il2p_mid_fn(A, 1);
@@ -1577,11 +1414,10 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
         return 0;
     }
     /* Structural blocked default at R >= 32 in EVERY slot (same rule +
-     * kill switch as vfft_il2p_apply_blocked_default; R1 = A*B is even by
-     * the count-contract guard above). Mids joined 2026-09-03: A or B can
-     * be 32/64 at some cells, and the pair's law (blocked is structural at
-     * R >= 32) applies to a slot, not to a route. Wisdom il_kv OVERRIDES
-     * this (vfft_il3p_apply_kv_forms). */
+     * kill switch as vfft_il2p_apply_blocked_default): A or B can be 32/64
+     * at some cells, and the pair's law (blocked is structural at R >= 32)
+     * applies to a slot, not to a route. Wisdom il_kv OVERRIDES this
+     * (vfft_il3p_apply_kv_forms). */
     if (!getenv("VFFT_NO_ILBLK")) {
         if (R2 >= 32) {
             vfft_il2p_fn bl = vfft_il2p_leaf_v_fn(R2, 2, 1);    /* 4·8  */
@@ -1589,7 +1425,7 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
             if (!bl) bl = vfft_il2p_leaf_v_fn(R2, 1, 1);        /* 2·16 */
             if (!nb2) nb2 = vfft_il2p_n1_bwd_v_fn(R2, 1, 1);
             if (bl) p->leaf_f = bl;
-            if (nb2) p->n1_b = nb2;   /* same rule as apply_blocked_default_bwd (2026-09-03) */
+            if (nb2) p->n1_b = nb2;   /* same rule as apply_blocked_default_bwd */
         }
         if (A >= 32) {
             vfft_il2p_fn m = vfft_il2p_mid_v_fn(A, 2, 1);
@@ -1605,7 +1441,7 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
     return p;
 }
 
-/* CHAIN3 per-slot kernel FORMS (2026-09-03, parity with the pair's il_kv):
+/* CHAIN3 per-slot kernel FORMS (parity with the pair's il_kv):
  * the same nibble codec, three slots -- mid A | mid B << 4 | leaf << 8 --
  * carried in the chain3 row's il_kv (the row's il_route says which layout
  * the token has). 0 = leave the default, 0xF = force the monolithic kernel,
@@ -1615,7 +1451,7 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
 #define VFFT_IL_C3KV_B(kv)        (((kv) >> 4) & 0xf)
 #define VFFT_IL_C3KV_LEAF(kv)     (((kv) >> 8) & 0xf)
 #define VFFT_IL_C3KV_PACK(a, b, l) (((a) & 0xf) | (((b) & 0xf) << 4) | (((l) & 0xf) << 8))
-/* the BACKWARD twin (2026-09-03): only the leaf slot (n1_b at R2) has form
+/* the BACKWARD twin: only the leaf slot (n1_b at R2) has form
  * twins; a nonzero mid nibble names a kernel that does not exist and refuses. */
 static inline int vfft_il3p_apply_kv_forms_bwd(vfft_il3p_plan_t *p, int bkv)
 {
