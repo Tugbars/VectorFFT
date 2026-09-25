@@ -353,45 +353,12 @@ static inline int vfft_policy_rankn_axis_nat(int rank, int axis, int ord)
     return ord == VW2_ORD_NAT;
 }
 
-/* -- L3 (narrowed). the PER-THREAD-COUNT FENCE --------------------------
- * A threading verdict is a MEASUREMENT AT A THREAD COUNT: the row banks the
- * verdict and the T it was raced at, and a T=4 verdict must never serve a
- * T=8 request (il2d_tier.h, "WHY cmt BANKS ITS THREAD COUNT"). Its users:
- * the flat DIT's, ZTURN-T's and the four-step's MT commits (il_mt_t /
- * il_mt_ip_t), the 2D c2c and 2D real column-MT verdicts (cmtt), the 3D
- * tier's (cmtt), the plane queue's (pqt).
- *
- * THIS IS THE ONLY PART OF RACE-OR-REPLAY THAT IS ONE LAW, and the rest of
- * each site stays spelled AT the site, because the terms differ:
- *   - recalibrate is written at the site in k1_commit.h and fftnd_il.h, but
- *     UPSTREAM (in the lookup that produced cmt/cmtt) for the 2D tiers, and
- *     order-scoped (scr_recalib) elsewhere;
- *   - "the row carries a verdict" is r != NULL, or cmt >= 0, or a non-NULL
- *     token -- three different tests;
- *   - further fences sit beside it (the plane queue is valid for the PLANE
- *     COUNT it was raced at as well as the worker count).
- * One policy_replays() swallowing those would impose one site's
- * recalibrate semantics on all of them.
- *
- * DELIBERATELY NOT a "banked_T > 0" term. Each caller spells UNRACED its
- * own way (-1, a geti default of 0, an absent token) and every site
- * guarantees T >= 2 before asking, so the sentinel never matches; folding a
- * fourth spelling in here would be a new law.
- *
- * NOT FOR tcmt/tcmtt (the K>1 transform-contiguous batch): that verdict is
- * deliberately T-FREE -- one transform per core means nothing in the plan
- * depends on T, so tcmtt RECORDS the count and is never compared. Putting
- * it through this fence would refuse every replay at a different T.
- * NOT FOR the execute-side clamps (ztt_mt.h, il_flatdit_mt.h): those
- * compare the LIVE pool against the plan's own bound T, not a banked row
- * against a request.
- * NOT FOR fftnd_wisdom.h's lookup filter, the only site that NORMALIZES the
- * requested T (`e.T != (T > 0 ? T : 1)`): the normalization is the law
- * there, and it is not this one. */
-static inline int vfft_policy_replays_at_T(int banked_T, int T)
-{
-    return banked_T == T;
-}
+/* -- L3 (retired 2026-09-25). The per-thread-count fence lived here while a
+ * threaded verdict was a payload token tagged with the T it was raced at.
+ * Since wisdom2 v1.3 the thread count is a KEY axis (nthreads=): a threaded
+ * plan's row is its own and a lookup at the plan's T can only find a
+ * verdict raced at that T. The K>1 batch verdict (tcmt) stays T-free by
+ * design and never keyed on it. */
 
 /* -- L6. ENGINE PRESENCE: "a K=1 interleaved handle exists for this cell" -
  * THREE doors ask this; one list, so a new engine cannot be built and

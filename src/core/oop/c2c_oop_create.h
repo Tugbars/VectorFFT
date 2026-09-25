@@ -77,7 +77,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             vfft_oop_wisdom_entry_t keb, kib;
             const vfft_oop_wisdom_entry_t *ke =
                 W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
-                               : (vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL);
+                               : (vw2_oop_lookup_k1_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &keb) ? &keb : NULL);
             /* the IL axis reads the request's ORDER CELL: an
              * explicit SCRAMBLED request takes the ord=scr row — the
              * scrambled pool's own verdict (a natural-output engine, or the
@@ -86,7 +86,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             const int scr_req = (vfft_policy_ord_k1(cfg, N, /*inplace=*/0) == VW2_ORD_SCR &&
                                  cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop);
             const vfft_oop_wisdom_entry_t *ki =
-                scr_req ? (vw2_oop_lookup_k1_scr(&W->vw2, N, &kib) ? &kib : NULL) : ke;
+                scr_req ? (vw2_oop_lookup_k1_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : ke;
             /* Per-layout wisdom: each axis is taken from the store
              * INDEPENDENTLY. A cell with only an IL verdict (k1_sp_route < 0 —
              * e.g. non-pow2 N, where split cannot factor) keeps the banked IL
@@ -103,8 +103,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             {
                 if (_k1_il_plan_race(W, cfg, N) > 0)
                 {
-                    ke = vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL;
-                    ki = scr_req ? (vw2_oop_lookup_k1_scr(&W->vw2, N, &kib) ? &kib : NULL) : ke;
+                    ke = vw2_oop_lookup_k1_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
+                    ki = scr_req ? (vw2_oop_lookup_k1_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : ke;
                 }
             }
             /* TWO LIBRARIES: a request names ONE layout and this door

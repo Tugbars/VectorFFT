@@ -49,12 +49,12 @@ typedef struct {
                                * natural block partition), 1 = strips — every class since
                                * il2d_large_plane_design.md (2026-09-15) */
     int msw;                  /* the threaded strips' sub-strip width in columns (0 = the
-                               * worker's whole range); banked msw= beside cmt/cmtt */
+                               * worker's whole range); banked msw= beside cmt on the plan's row (v1.3) */
     int *natperm;             /* N entries, scr row -> natural row */
     double *natscr;           /* 2*N*rn: the pre-leaf plane */
     int natst;                /* the leaf STAGED (1) or at its natural stride (0): the serial
                                * walk's form is staged (dominant); the threaded arms race both,
-                               * banked nls= beside cmt/cmtt (il2d_natural_leaf_design.md) */
+                               * banked nls= beside cmt on the plan's row (il2d_natural_leaf_design.md) */
     double *natstage;         /* the leaf's STAGING, T x R_last x rn complexes, 64-B
                                * aligned (il2d_natural_leaf_design.md, 2026-09-16);
                                * NULL = the leaf stores at its natural stride */

@@ -63,8 +63,9 @@
 
 #define VW2_MAGIC        "@vw2"
 #define VW2_MAJOR        1
-#define VW2_MINOR        2   /* 1.1: role= key axis (2026-08-20);
-                                1.2: lay= key axis (2026-08-24) */
+#define VW2_MINOR        3   /* 1.1: role= key axis (2026-08-20);
+                                1.2: lay= key axis (2026-08-24);
+                                1.3: nthreads= key axis (2026-09-25) */
 
 /* ------------------------------------------------------------ enumerations */
 
@@ -145,7 +146,20 @@ typedef struct {
                                      or un-migrated caller). Equality-matched
                                      in serves; vw2_lookup adds the lay=ANY
                                      fallback phase for legacy records.     */
+    uint8_t nthreads;             /* nthreads= (v1.3): the thread count the
+                                     verdict was raced at and serves. 0 =
+                                     absent = one thread (every pre-1.3 row
+                                     and every one-thread request). A
+                                     threaded verdict is a row of its own,
+                                     complete on its own; lookups never
+                                     cross thread counts. Equality-matched
+                                     (VW2__NT) in both matchers; a 1.2
+                                     reader sees a threaded row as an
+                                     unknown key token and carries it.   */
 } vw2_key_t;
+
+/* the thread count a key states: absent = one */
+#define VW2__NT(k) ((k)->nthreads > 1 ? (int)(k)->nthreads : 1)
 
 /* --------------------------------------------------------------- record */
 
@@ -370,7 +384,8 @@ static inline int vw2_key_eq(const vw2_key_t *a, const vw2_key_t *b)
     if (a->t != b->t || a->rank != b->rank) return 0;
     for (i = 0; i < a->rank; i++) if (a->n[i] != b->n[i]) return 0;
     return a->q == b->q && a->ord == b->ord && a->pl == b->pl &&
-           a->dir == b->dir && a->role == b->role && a->lay == b->lay;
+           a->dir == b->dir && a->role == b->role && a->lay == b->lay &&
+           VW2__NT(a) == VW2__NT(b);
 }
 
 /* Does record key R serve request key REQ, allowing R's wildcards?
@@ -392,6 +407,7 @@ static inline int vw2_key_serves(const vw2_key_t *r, const vw2_key_t *req)
      * serves a concrete request only through vw2_lookup's fallback phase —
      * never here, so phase-1 precedence stays byte-for-byte pre-1.2. */
     if (r->lay != req->lay) return 0;
+    if (VW2__NT(r) != VW2__NT(req)) return 0;   /* a thread count is a cell axis (v1.3) */
     return 1;
 }
 
@@ -461,6 +477,19 @@ static inline int vw2_rec_set(vw2_rec_t *r, int sect, const char *name, const ch
     r->tok[r->ntok].sect = (uint8_t)sect;
     r->ntok++;
     return VW2_OK;
+}
+
+/* drop one token from a record (no-op when absent) */
+static inline void vw2__rec_del(vw2_rec_t *r, const char *name)
+{
+    int i;
+    for (i = 0; i < r->ntok; i++)
+        if (!strcmp(r->tok[i].name, name)) {
+            free(r->tok[i].name); free(r->tok[i].val);
+            memmove(&r->tok[i], &r->tok[i + 1], (size_t)(r->ntok - i - 1) * sizeof r->tok[0]);
+            r->ntok--;
+            return;
+        }
 }
 
 static inline void vw2_rec_free(vw2_rec_t *r)
@@ -567,6 +596,11 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
                 if      (!strcmp(v, "split")) k->lay = VW2_LAY_SPLIT;
                 else if (!strcmp(v, "il"))    k->lay = VW2_LAY_IL;
                 else return 0;  /* future lay values: opaque carry           */
+            } else if (!strcmp(tok, "nthreads")) {
+                char *end;
+                long t = strtol(v, &end, 10);
+                if (end == v || *end != '\0' || t < 1 || t > 255) return -1;
+                k->nthreads = (uint8_t)(t > 1 ? t : 0);
             } else {
                 return 0;   /* unknown KEY token => invisible + opaque carry */
             }
@@ -593,6 +627,8 @@ static inline void vw2__key_format(const vw2_key_t *k, char *out, size_t cap)
         VW2__CAT(" role=comp");
     if (k->lay != VW2_LAY_ANY)
         VW2__CAT(" lay=%s", k->lay == VW2_LAY_SPLIT ? "split" : "il");
+    if (k->nthreads > 1)
+        VW2__CAT(" nthreads=%d", (int)k->nthreads);
 #undef VW2__CAT
 }
 
@@ -837,6 +873,109 @@ static inline int vw2__load_shard(vw2_store_t *s, int shard)
     return rc;
 }
 
+/* ------------------------------------------- nthreads= on load (v1.3) */
+
+/* the payload tokens that meant "raced at T" before v1.3, per family, and
+ * what moves with them: on the T row the twins take their plain names,
+ * the tags are dropped; the one-thread row loses every threaded token. */
+static inline int vw2__nt_tag_of(const vw2_rec_t *r, const char **tag2)
+{
+    const char *v;
+    *tag2 = NULL;
+    if ((v = vw2_rec_get(r, "cmtt")) != NULL)      { *tag2 = vw2_rec_get(r, "cmtt_c2r"); return atoi(v); }
+    if ((v = vw2_rec_get(r, "cmtt_c2r")) != NULL)  return atoi(v);
+    if ((v = vw2_rec_get(r, "axt")) != NULL)       return atoi(v);
+    if ((v = vw2_rec_get(r, "il_mt_t")) != NULL)   return atoi(v);
+    if ((v = vw2_rec_get(r, "il_mt_ip_t")) != NULL) return atoi(v);
+    if ((v = vw2_rec_get(r, "pqt")) != NULL)       return atoi(v);
+    return 0;
+}
+
+static inline int vw2__migrate_nthreads(vw2_store_t *s)
+{
+    /* threaded tokens: dropped from the one-thread row, carried by the T row */
+    static const char *const MT[] = {
+        "cmt", "cmts", "cmtf", "mtarm", "msw", "nls", "mtns",
+        "cmt_c2r", "il_mt", "il_mt_tw", "il_mtsb", "il_mt_ip", "il_mtsb_ip",
+        "pq", "pqn", NULL };
+    /* the T tags: dropped everywhere */
+    static const char *const TAG[] = { "cmtt", "cmtt_c2r", "axt", "axns", "il_mt_t", "il_mt_ip_t", "pqt", NULL };
+    /* the 2D twins: renamed on the T row, dropped from the one-thread row */
+    static const char *const TWIN[][2] = {
+        { "rot", "ro" }, { "wlt", "wl" }, { "swt", "sw" }, { "rbkt", "rbk" },
+        { "turnt", "turn" }, { "cskt", "csk" }, { NULL, NULL } };
+    int i, j, split = 0;
+    const int n0 = s->nrec;
+    for (i = 0; i < n0; i++) {
+        vw2_rec_t *r = &s->rec[i];
+        vw2_rec_t nr;
+        const char *tag2;
+        int T = vw2__nt_tag_of(r, &tag2);
+        if (T < 2 || r->key.nthreads) continue;
+        if (s->poisoned[r->shard]) continue;
+        memset(&nr, 0, sizeof nr);
+        nr.key = r->key;
+        nr.key.nthreads = (uint8_t)T;
+        {   /* the T row already exists (a store split once but saved with the
+             * one-thread row's tags intact): strip the tags, add nothing */
+            int k, have = 0;
+            for (k = 0; k < s->nrec; k++)
+                if (vw2_key_eq(&s->rec[k].key, &nr.key)) { have = 1; break; }
+            if (have) {
+                for (j = 0; TAG[j]; j++) vw2__rec_del(r, TAG[j]);
+                for (j = 0; MT[j]; j++) vw2__rec_del(r, MT[j]);
+                for (j = 0; TWIN[j][0]; j++) vw2__rec_del(r, TWIN[j][0]);
+                s->dirty[r->shard] = 1;
+                continue;
+            }
+        }
+        for (j = 0; j < r->ntok; j++) {
+            const char *nm = r->tok[j].name;
+            int k, skip = 0;
+            for (k = 0; TAG[k]; k++) if (!strcmp(nm, TAG[k])) skip = 1;
+            for (k = 0; TWIN[k][0]; k++) if (!strcmp(nm, TWIN[k][0])) { nm = TWIN[k][1]; break; }
+            if (skip) continue;
+            if (vw2_rec_set(&nr, r->tok[j].sect, nm, r->tok[j].val) != VW2_OK) { vw2_rec_free(&nr); return split; }
+        }
+        {   /* the twins replace the plain tokens they shadowed: set the
+             * renamed ones last so they win (vw2_rec_set keeps the FIRST) */
+            int k;
+            for (k = 0; TWIN[k][0]; k++) {
+                const char *v = vw2_rec_get(r, TWIN[k][0]);
+                if (!v) continue;
+                vw2__rec_del(&nr, TWIN[k][1]);
+                if (vw2_rec_set(&nr, 1, TWIN[k][1], v) != VW2_OK) { vw2_rec_free(&nr); return split; }
+                if (!strcmp(TWIN[k][0], "wlt")) { vw2__rec_del(&nr, "tf"); vw2_rec_set(&nr, 1, "tf", atoi(v) > 0 ? "1" : "0"); }
+            }
+            {   /* the T verdict's own measure, where the race kept one */
+                const char *v = vw2_rec_get(r, "axns");
+                if (!v) v = vw2_rec_get(r, "mtns");
+                if (v) { vw2__rec_del(&nr, "ns"); vw2_rec_set(&nr, 2, "ns", v); }
+            }
+            /* a real row whose two directions were raced at different T:
+             * this row keeps the direction raced at T, the other direction's
+             * verdict stays unraced on it */
+            if (tag2 && atoi(tag2) != T) vw2__rec_del(&nr, "cmt_c2r");
+        }
+        /* the one-thread row loses the threaded verdict */
+        for (j = 0; TAG[j]; j++) vw2__rec_del(r, TAG[j]);
+        for (j = 0; MT[j]; j++) vw2__rec_del(r, MT[j]);
+        for (j = 0; TWIN[j][0]; j++) vw2__rec_del(r, TWIN[j][0]);
+        if (s->nrec == s->caprec) {
+            int nc = s->caprec ? s->caprec * 2 : 64;
+            vw2_rec_t *grown = (vw2_rec_t *)realloc(s->rec, (size_t)nc * sizeof *grown);
+            if (!grown) { vw2__oom(); vw2_rec_free(&nr); return split; }
+            s->rec = grown; s->caprec = nc;
+            r = &s->rec[i];
+        }
+        nr.shard = r->shard;
+        s->rec[s->nrec++] = nr;
+        s->dirty[r->shard] = 1;
+        split++;
+    }
+    return split;
+}
+
 /* stale-tmp sweep at OPEN only (never during a save's merge re-read):
  * removes every "<shard>.tmp*" left by crashed writers. */
 static inline void vw2__sweep_tmps(const char *dir)
@@ -953,6 +1092,17 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
             fprintf(stderr, "[wisdom2] %s: %d record(s) rehomed to their "
                             "routed shard (saved on next writable save)\n",
                     s->dir, moved);
+    }
+    {   /* nthreads on load (v1.3): a pre-1.3 row carried its threaded verdict
+         * in the payload, tagged with the T it was raced at (cmtt= il_mt_t=
+         * pqt=, the 2D T-suffixed twins). It splits into the one-thread row
+         * and a row keyed nthreads=T that carries the threaded verdict in the
+         * plain tokens — in memory now, on disk at the next writable save. */
+        int split = vw2__migrate_nthreads(s);
+        if (split)
+            fprintf(stderr, "[wisdom2] %s: %d threaded verdict(s) split into their "
+                            "own nthreads= rows (saved on next writable save)\n",
+                    s->dir, split);
     }
     fprintf(stderr, "[wisdom2] %s: %d record(s) loaded%s%s\n", s->dir, s->nrec,
             s->writable ? ", writable" : ", read-only",

@@ -135,7 +135,7 @@ static inline const char *vw2__oop_eng(const vw2_rec_t *r)
  * other layout's banked verdict. Exact-beats-wildcard is preserved inside
  * each tier. Returns 1 + fills e when ANY axis was found. */
 static inline const vw2_rec_t *vw2__oop_k1_scan_pl(const vw2_store_t *s, int N,
-                                               uint8_t lay, int want_scr, int pl)
+                                               uint8_t lay, int want_scr, int pl, int T)
 {
     int i, pass;
     for (pass = 0; pass < 2; pass++)
@@ -143,6 +143,8 @@ static inline const vw2_rec_t *vw2__oop_k1_scan_pl(const vw2_store_t *s, int N,
             const vw2_rec_t *c = &s->rec[i];
             if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
             if (c->key.lay != lay) continue;
+            /* the THREAD-COUNT axis (v1.3): a threaded plan's row is its own */
+            if (VW2__NT(&c->key) != (T > 1 ? T : 1)) continue;
             /* the PLACEMENT axis (2026-09-21): the in-place cell has its own
              * kind-3 row keyed place=ip, raced executed in place; neither
              * placement ever reads the other's row */
@@ -170,7 +172,7 @@ static inline const vw2_rec_t *vw2__oop_k1_scan_pl(const vw2_store_t *s, int N,
 static inline const vw2_rec_t *vw2__oop_k1_scan_ord(const vw2_store_t *s, int N,
                                                 uint8_t lay, int want_scr)
 {
-    return vw2__oop_k1_scan_pl(s, N, lay, want_scr, VW2_PL_OOP);
+    return vw2__oop_k1_scan_pl(s, N, lay, want_scr, VW2_PL_OOP, 1);
 }
 static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N, uint8_t lay)
 {
@@ -184,11 +186,11 @@ static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N, uin
  * class). The two cells are separate verdicts: never compared, never
  * substituted for one another. */
 static inline int vw2_oop_lookup_k1_cell(const vw2_store_t *s, int N, int want_scr,
-                                         int inplace, vfft_oop_wisdom_entry_t *e);
+                                         int inplace, int T, vfft_oop_wisdom_entry_t *e);
 static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_scr,
                                         vfft_oop_wisdom_entry_t *e)
 {
-    return vw2_oop_lookup_k1_cell(s, N, want_scr, 0, e);
+    return vw2_oop_lookup_k1_cell(s, N, want_scr, 0, 1, e);
 }
 static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
                                     vfft_oop_wisdom_entry_t *e)
@@ -203,17 +205,19 @@ static inline int vw2_oop_lookup_k1_scr(const vw2_store_t *s, int N,
     return got;
 }
 static inline int vw2_oop_lookup_k1_cell(const vw2_store_t *s, int N, int want_scr,
-                                         int inplace, vfft_oop_wisdom_entry_t *e)
+                                         int inplace, int T, vfft_oop_wisdom_entry_t *e)
 {
-    /* the (order, placement) cell (2026-09-21): inplace reads the place=ip
-     * row, the in-place cell's own verdict; 0 the place=oop row */
+    /* the (order, placement, thread count) cell: inplace reads the place=ip
+     * row, the in-place cell's own verdict; 0 the place=oop row; T > 1 the
+     * nthreads=T row, a threaded plan's own (v1.3) */
     const int pl = inplace ? VW2_PL_IP : VW2_PL_OOP;
-    const vw2_rec_t *ril = vw2__oop_k1_scan_pl(s, N, VW2_LAY_IL, want_scr, pl);
-    const vw2_rec_t *rsp = vw2__oop_k1_scan_pl(s, N, VW2_LAY_SPLIT, want_scr, pl);
-    const vw2_rec_t *rlg = vw2__oop_k1_scan_pl(s, N, VW2_LAY_ANY, want_scr, pl);
+    const vw2_rec_t *ril = vw2__oop_k1_scan_pl(s, N, VW2_LAY_IL, want_scr, pl, T);
+    const vw2_rec_t *rsp = vw2__oop_k1_scan_pl(s, N, VW2_LAY_SPLIT, want_scr, pl, T);
+    const vw2_rec_t *rlg = vw2__oop_k1_scan_pl(s, N, VW2_LAY_ANY, want_scr, pl, T);
     int pair[2], np, got = 0, si;
     memset(e, 0, sizeof *e);
     e->place_ip = inplace;
+    e->nthreads = T > 1 ? T : 0;
     e->ord_scr = want_scr;
     e->kind = VFFT_OOP_KIND_BAILEY2V;
     e->N = N;
@@ -942,6 +946,7 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
     r->key.ord = e->ord_scr ? VW2_ORD_SCR : VW2_ORD_NAT;   /* the scrambled class's own cell */
     r->key.role = VW2_ROLE_COMP;
     r->key.lay  = lay;
+    r->key.nthreads = (uint8_t)(e->nthreads > 1 ? e->nthreads : 0);   /* the threaded plan's own row (v1.3) */
 #define VW2__OB_SET(sect, n, v) do { \
     if (vw2_rec_set(r, sect, n, v) != VW2_OK) { vw2_rec_free(r); *why = "token-refused"; return -1; } \
 } while (0)

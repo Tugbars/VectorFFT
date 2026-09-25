@@ -215,7 +215,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         int il2d_wc = 0;
         int il2d_wl = 0, il2d_cut = 0, il2d_tfuse = 0;
         int il2d_bwl = -1, il2d_btf = -1, il2d_bro = -1; /* banked axes */
-        int il2d_axmt = 0;  /* the T-AWARE axis verdict serves this create (axt= == the plan's T, 2026-09-24) */
+        const int il2d_T = _vfft_plan_threads(cfg) > 0 ? _vfft_plan_threads(cfg) : 1;   /* the plan's thread count: its rows' key (v1.3) */
         int il2d_staged = 0, il2d_pitch = 0;
         double *il2d_bandscr = NULL;
         double *il2d_rscr = NULL;
@@ -269,7 +269,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * il2d_tier.h, the same function a rank-N IL plan runs per
                  * column axis. The tier's locals below take its result; the
                  * plan commit further down copies them into h->il2d_col. */
-                const vw2_ilcol_key_t ck = { 2, N1, N2, 0, il2d_ord, 0, 0 };
+                const vw2_ilcol_key_t ck = { 2, N1, N2, 0, il2d_ord, 0, 0, il2d_T };
                 vfft_ilcol_t col;
                 memset(&col, 0, sizeof col);
                 if (!_il2d_col_build(W, cfg, &ck, N1, (size_t)N2,
@@ -277,22 +277,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                      il2d_fm, sizeof il2d_fm, &il2d_bwl, &il2d_btf,
                                      &il2d_bro, &il2d_bcmt, &il2d_bcmtt, &il2d_bblu))
                     return NULL;
-                /* the T-AWARE axis verdict (2026-09-24): at T > 1 the axis race ran
-                 * every arm threaded and banked beside the serial verdict as
-                 * axt= rot= wlt= swt= rbkt= turnt= cskt= (the T raced at, like
-                 * cmtt). Served at that T only; another T re-races. The serial
-                 * tokens stay the one-thread verdict. */
-                {
-                    const int thr = _vfft_plan_threads(cfg) > 0 ? _vfft_plan_threads(cfg) : 1;   /* the plan's T (h is committed later) */
-                    il2d_axmt = (thr > 1 && !cfg->recalibrate && W &&
-                                 vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "axt", 0) == thr);
-                }
-                if (il2d_axmt)
-                {
-                    il2d_bro = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "rot", -1);
-                    il2d_bwl = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, "wlt", -1);
-                    il2d_btf = il2d_bwl > 0;
-                }
+                /* the plan's thread count is in the row's key (v1.3): a threaded
+                 * plan reads its own row, complete on its own, through the same
+                 * tokens as a one-thread plan */
                 il2d_nst = col.nst;
                 memcpy(il2d_R, col.R, sizeof il2d_R);
                 memcpy(il2d_L, col.L, sizeof il2d_L);
@@ -429,7 +416,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         }
                     }
                     if (il2d_turn_plan && !getenv("VFFT_IL2D_ROWOOP") &&
-                        vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_axmt ? "turnt" : "turn", 0) == 1)
+                        vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "turn", 0) == 1)
                         il2d_turn = 1;
                     if (il2d_turn_plan && getenv("VFFT_IL2D_ROWOOP") && atoi(getenv("VFFT_IL2D_ROWOOP")) == 4)
                         il2d_turn = 1;
@@ -468,7 +455,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         il2d_csk_row = (struct vfft_plan_s *)vfft_create(&oc);
                     }
                     if (il2d_csk_scr && !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_CSK") &&
-                        vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_axmt ? "cskt" : "csk", 0) == 1)
+                        vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "csk", 0) == 1)
                         il2d_csk = 1;
                     if (il2d_csk_scr && getenv("VFFT_IL2D_CSK") && atoi(getenv("VFFT_IL2D_CSK")) == 1)
                         il2d_csk = 1;
@@ -477,7 +464,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * predates the token), VFFT_IL2D_RB2_KB pinning it for probes */
                 if (il2d_rowb2_leaf_f)
                 {
-                    int kb = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_axmt ? "rbkt" : "rbk", 8);
+                    int kb = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "rbk", 8);
                     if (getenv("VFFT_IL2D_RB2_KB") && atoi(getenv("VFFT_IL2D_RB2_KB")) > 0)
                         kb = atoi(getenv("VFFT_IL2D_RB2_KB"));
                     il2d_rowb2_ch = (int)_il2d_rb2_rows(kb, (size_t)N2);
@@ -542,8 +529,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                      * (il2d_large_plane_design.md, 2026-09-15); env beats it */
                     if (il2d_wl == 0 && il2d_bwl == 0 && !getenv("VFFT_IL2D_WC") && !getenv("VFFT_IL2D_WL") &&
                         !cfg->recalibrate && W)
-                        il2d_wc = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord,
-                                                     il2d_axmt ? "swt" : "sw", 0);
+                        il2d_wc = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T,
+                                                     "sw", 0);
                     if (il2d_wl > 0 && !il2d_nat && getenv("VFFT_IL2D_STAGED") &&
                         atoi(getenv("VFFT_IL2D_STAGED")) == 1)
                     {
@@ -639,7 +626,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * direction by vw2__rl_tok -- the builder does not know: its
                  * plain-name out-params are ignored below and the four are
                  * re-read exactly as before. */
-                const vw2_ilcol_key_t ck = { 2, N1, N2, 0, il2d_ord, 0, /*real=*/1 };
+                const vw2_ilcol_key_t ck = { 2, N1, N2, 0, il2d_ord, 0, /*real=*/1, il2d_T };
                 vfft_ilcol_t col;
                 int bwl_ = -1, btf_ = -1, bro_ = -1, bcmt_ = -1, bcmtt_ = -1;
                 memset(&col, 0, sizeof col);
@@ -674,7 +661,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         (void)vw2_2d_rl_lookup(&W->vw2, N1, N2,
                                                cfg->transform == VFFT_C2R, tR, &tn,
                                                &il2d_brw, &il2d_bwl, &il2d_bcmt,
-                                               &il2d_bcmtt, &tblu, il2d_ord);
+                                               &il2d_bcmtt, &tblu, il2d_ord, il2d_T);
                     }
                 }
             }
@@ -1001,7 +988,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
             !getenv("VFFT_IL2D_WL") && !getenv("VFFT_IL2D_CSK") &&
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
-            (h->nthreads > 1 ? !il2d_axmt : (il2d_bwl < 0 || il2d_bro < 0)))
+            (il2d_bwl < 0 || il2d_bro < 0))
         {   /* at T > 1 the T-aware race (2026-09-24): every route's clone set
              * first, every arm threaded, the unneeded sets dropped after */
             if (h->nthreads > 1)
@@ -1041,14 +1028,13 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             }
             else if (ce)
                 h->il2d_col.colmt = (atoi(ce) == 0);
-            else if (il2d_bcmt >= 0 &&
-                     vfft_policy_replays_at_T(il2d_bcmtt, h->nthreads))
+            else if (il2d_bcmt >= 0)   /* the row is the plan's own T (v1.3) */
             {   /* the verdict and its shape (mtarm/msw), at the T raced */
                 const int ord = il2d_ord;   /* the cell's order class (policy.h, L4) */
                 h->il2d_col.colmt = il2d_bcmt;
-                h->il2d_col.natarm = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "mtarm", 0) : 0;
-                h->il2d_col.msw = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "msw", 0) : 0;
-                h->il2d_col.natst = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, "nls", 1) : 1;
+                h->il2d_col.natarm = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, h->nthreads, "mtarm", 0) : 0;
+                h->il2d_col.msw = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, h->nthreads, "msw", 0) : 0;
+                h->il2d_col.natst = il2d_bcmt ? vw2_2d_il_tok_geti(&W->vw2, N1, N2, ord, h->nthreads, "nls", 1) : 1;
             }
             else
                 _il2d_c2c_mt_race(h, W, cfg, N1, N2);
@@ -1057,7 +1043,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * of the real tier's re-bank below: the column build raced them
          * before the axis race wrote the row (vw2_2d_forms_rebank) */
         if (h->transform == VFFT_C2C && W && !W->vw2_off_2d && !getenv("VFFT_IL2D_FORMS") &&
-            vw2_2d_forms_rebank(&W->vw2, 0, N1, N2, il2d_fm, il2d_ord))
+            vw2_2d_forms_rebank(&W->vw2, 0, N1, N2, il2d_fm, il2d_ord, il2d_T))
             _vw2_persist(W, cfg);
         /* ── the REAL tier's row-route race (per-row door vs ROWSPLIT W
          * pool): runs only when env is FULLY silent (an env-pinned chain
@@ -1079,7 +1065,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
             il2d_fm[0] && W && !W->vw2_off_2d && !getenv("VFFT_IL2D_FORMS"))
         {
-            int ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord);
+            int ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord, il2d_T);
             if (!ok)
             {   /* no real row yet: the rowrace did not run (an env pin on the
                  * row axis, e.g. a gate's VFFT_IL2D_ROWSPLIT) or refused. The
@@ -1088,8 +1074,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * a later rowrace MERGES into this row). */
                 vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                                h->il2d_col.R, h->il2d_col.nst, -1, -1, -1, 0,
-                               (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, il2d_ord);
-                ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord);
+                               (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, il2d_ord, il2d_T);
+                ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord, il2d_T);
             }
             if (ok)
                 _vw2_persist(W, cfg);
@@ -1106,8 +1092,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             if (ce)
                 h->il2d_col.colmt = (atoi(ce) == 0);
-            else if (il2d_bcmt >= 0 &&
-                     vfft_policy_replays_at_T(il2d_bcmtt, h->nthreads))
+            else if (il2d_bcmt >= 0)   /* the row is the plan's own T (v1.3) */
                 h->il2d_col.colmt = il2d_bcmt;
             else
                 _il2d_real_colmt_race(h, W, cfg, N1, N2);

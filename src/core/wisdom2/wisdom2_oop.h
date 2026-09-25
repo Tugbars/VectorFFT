@@ -80,6 +80,9 @@ typedef struct {
     int    place_ip;                         /* kind 3 IL row keyed place=ip: the IN-PLACE
                                               * cell's own verdict, raced executed in
                                               * place (2026-09-21). 0 = place=oop */
+    int    nthreads;                         /* kind 3 IL row keyed nthreads=T (v1.3): the
+                                              * plan's thread count; a threaded plan's
+                                              * row is its own. 0/1 = one thread */
     int    ord_scr;                          /* kind 3 IL row keyed ord=scr: the flat
                                               * DIT's SCRAMBLED class (its own chain +
                                               * forms, raced under the scrambled

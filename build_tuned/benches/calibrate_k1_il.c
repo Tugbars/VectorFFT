@@ -72,7 +72,7 @@ int main(int argc, char **argv)
     for (int ci = 0; ci < ncell; ci++) {
         vw2_store_t st;
         vw2_open(&st, wisdir, 1);   /* explicit dir from the driver = writable */
-        int m = vfft_il_dp_plan_and_bank(&ctx, &st, cells[ci], 0 /* out of place */, verbose);
+        int m = vfft_il_dp_plan_and_bank(&ctx, &st, cells[ci], 0 /* out of place */, 1 /* one thread */, verbose);
         if (m > 0) {
             if (vw2_save(&st) != VW2_OK)
                 fprintf(stderr, "# N=%d: %d verdict(s) planned but the store did NOT save\n",
