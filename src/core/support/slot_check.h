@@ -5,34 +5,20 @@
  * variant, role); an entry is reachable the moment any plan puts that radix
  * in that role, whether or not today's banked plan happens to.
  *
- * WHY THIS IS A BODY AND NOT A BENCH (owner, 2026-09-11: "it's not a bench")
- * -------------------------------------------------------------------------
- * The same standing rule as the calibrators (owner directive 2026-08-18):
- * a driver "parses arguments, pins the core, and calls in. Nothing else."
- * The walk, the classification and the report are the product's own
- * verification surface, so they live in the source tree; only argument
- * parsing lives in build_tuned/benches/. This header is the executable form
- * of the invariant and nothing else — exactly the shape race.h beside it
- * takes for the race protocol: the caller owns the slots it enumerates and
- * the probe that builds and checks one, the body owns the walk.
+ * The body owns the walk, as race.h owns the race protocol; the caller owns
+ * the slots it enumerates and the probe that builds and checks one (see
+ * planning/il_slot_probe.h for the interleaved pair tier). Drivers only parse
+ * arguments and call in.
  *
- * WHAT IS SHARED
- * --------------
  *   for each slot:   announce it on stderr, unbuffered, BEFORE probing
  *                    probe it -> OK / ABSENT / WRONG (+ a reason)
  *                    tally, and report every WRONG with its reason
  *   return           the number of WRONG slots (0 = the invariant holds)
  *
- * THE ANNOUNCE IS LOAD-BEARING. A wrong-kind kernel is not merely wrong, it
- * is MEMORY-UNSAFE: a plain-store kernel indexes zout[o*OLs+k] while a
- * turned-store slot passes OLs = R, so it writes past the plan's buffer and
- * the process dies before any check can run (measured 2026-09-11, N=32 8x4,
- * exit 127). A walk that dies still fails; the dangling stderr marker is
- * what names the slot that killed it.
- *
- * NO FFT MATH HERE, per this directory's charter: which arrangements exist,
- * which forms a resolver offers, and how to build and check one are the
- * caller's (see planning/il_slot_probe.h for the interleaved pair tier).
+ * The announce comes first because a wrong-kind kernel is MEMORY-UNSAFE: a
+ * plain-store kernel indexes zout[o*OLs+k] while a turned-store slot passes
+ * OLs = R, so it writes past the plan's buffer and the process can die before
+ * any check runs. The last stderr marker then names the slot that killed it.
  */
 #ifndef VFFT_SLOT_CHECK_H
 #define VFFT_SLOT_CHECK_H

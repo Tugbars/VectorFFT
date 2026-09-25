@@ -17,35 +17,14 @@
  *   return                       the index of the smallest aggregate,
  *                                first arm keeping ties
  *
- * WHAT IS DELIBERATELY NOT SHARED — the protocol CONSTANTS
- * --------------------------------------------------------
- * Round count, reps, aggregate, alternation, warm-up and the per-sample
- * reset are PARAMETERS. src/tools/baseline/race_census.py records 14 distinct
- * protocols across the racers, and no check in the harness can tell
- * whether a unified protocol still picks the same winner; finding out means
- * re-racing, which is forbidden during development (memory: racing budget).
- * So a site migrated onto this body keeps its exact constants and its
- * verdict is unchanged by construction; collapsing the constants is the
- * pre-release sweep's decision, made with the clock, not here.
+ * The protocol constants (rounds, reps, aggregate, alternation, warm-up, the
+ * per-sample reset) are parameters: each site keeps its own. So is the verdict
+ * rule; vfft_race_beats() spells the hysteresis form for a site that has an
+ * incumbent.
  *
- * The verdict rule stays at the site for the same reason: eight sites use a
- * 3% hysteresis toward an incumbent, five a 5% margin, the rest a bare
- * "<". vfft_race_beats() spells the hysteresis form once so a site does not
- * retype the multiply, but which arm is the incumbent is the site's
- * knowledge.
- *
- * FLOOR-LEGAL BY CONSTRUCTION
- * ---------------------------
- * Depends on support/race_timing.h and <string.h> only: no plan type, no
- * wisdom type, no engine header. Arms are opaque (fn, ctx) pairs. No
- * mutable file-scope state — a static in a header is one copy per includer.
- *
- * ON THE CLOCK
- * ------------
- * _il_ab_now (clock_gettime(CLOCK_MONOTONIC)) — race_timing.h records that
- * on this toolchain it is the same 100 ns QPC tick as vfft_proto_now_ns, so
- * the two spellings are interchangeable for an interval; on a POSIX host it
- * is the monotonic clock the sites written with clock_gettime already use.
+ * Depends on support/race_timing.h and libc only; arms are opaque (fn, ctx)
+ * pairs. No mutable file-scope state: a static in a header is one copy per
+ * includer.
  */
 #ifndef VFFT_SUPPORT_RACE_H
 #define VFFT_SUPPORT_RACE_H
@@ -55,27 +34,20 @@
 #include <string.h>
 #include "support/race_timing.h" /* _il_ab_now: the shared monotonic clock */
 
-#define VFFT_RACE_MAX_ARMS 160  /* _il2d_axis_race runs up to 140: (3 row routes + the two-pass route x 4 tile steps) x (14 band widths + 6 column tiles), 2026-09-23 */
+#define VFFT_RACE_MAX_ARMS 160  /* _il2d_axis_race runs up to 140: (3 row routes + the two-pass route x 4 tile steps) x (14 band widths + 6 column tiles) */
 #define VFFT_RACE_MAX_ROUNDS 96 /* _calibrate_pad runs RR=81 at PATIENT */
 
-/* THE PAUSE BETWEEN RACES (2026-09-20). The house law: pace >= 200 ms
- * BETWEEN races, never inside one -- thermal drift re-ranks plans, and this
- * project measured +/-5% placement swings flipping verdicts and unpaced
- * planner runs disagreeing with each other on the 1024 winner. The K=1 DP
- * planner has paced its candidate benchmarks since then (every 4th, this
- * constant); every other race in the tree ran back to back with the one
- * before it. The pause lives HERE, once, before the warm-up, and a site says
- * which class its arms are (vfft_race_proto_t.pace):
+/* The pause BETWEEN races, never inside one: thermal drift re-ranks plans
+ * (+/-5% swings flip verdicts). It runs once, before the warm-up, by the
+ * class a site declares in vfft_race_proto_t.pace:
  *   1 = single-thread arms: pause, then at least one untimed pass, because
- *       a core is 1.5-5x slow for the first milliseconds after a sleep
- *       (il_flatdit_race.h measured it) and a warm-less race would hand
- *       that to arm 0 of round 0;
- *   0 = THREADED arms, or a site not yet classified: NO pause. A >= 200 ms
- *       pause parks the worker team (KMP_BLOCKTIME is 200 ms) and the timed
- *       block then pays the wake -- the measured 0.2x-vs-4x artifact of
- *       mt_measurement_parking_trap. Classify by READING the arm function,
- *       never by the proto's shape.
- * The DP planner's VFFT_IL_DP_PACE_MS aliases this: one constant. */
+ *       a core runs 1.5-5x slow for the first milliseconds after a sleep and
+ *       a race without warm-up would hand that to arm 0 of round 0;
+ *   0 = threaded arms, or a site not yet classified: no pause. A 200 ms pause
+ *       parks the worker team and the timed block then pays the wake (a
+ *       0.2x-vs-4x artifact). Classify by reading the arm function, not the
+ *       proto's shape.
+ * The DP planner's VFFT_IL_DP_PACE_MS aliases this constant. */
 #define VFFT_RACE_PACE_MS 200
 #if defined(_WIN32)
 extern __declspec(dllimport) void __stdcall Sleep(unsigned long ms);
@@ -119,8 +91,7 @@ typedef struct
                               * unclassified: no pause (see VFFT_RACE_PACE_MS) */
 } vfft_race_proto_t;
 
-/* median of n in place; n odd returns the middle element, which is what
- * _il_ab_med9 (v[4] of 9) and the inline median-of-5 (v[2]) return. */
+/* median of n, sorting v in place; the middle element for odd n */
 static inline double vfft_race_median(double *v, int n)
 {
     for (int i = 1; i < n; i++)
@@ -153,19 +124,15 @@ static inline double vfft_race_aggregate(vfft_race_agg_t agg, double *v, int n)
     return vfft_race_median(v, n);
 }
 
+/* The create-race counter (defined in vfft.c; the fingerprint's races=
+ * field). Every race that runs through this body counts. */
+extern long _vfft_create_race_count;
+
 /* Time n arms under p. ns[i] receives arm i's aggregate (ns per execution).
  * Returns the index of the smallest aggregate, the FIRST arm keeping ties —
  * the bare "<" verdict; a site with an incumbent applies vfft_race_beats()
  * to ns[] instead of using the return value. Returns -1 on a malformed
  * protocol (nothing timed, ns[] untouched). */
-/* THE create-race counter (vfft.c; fingerprint field races=). Every race
- * that runs through this body counts, by construction — until 2026-09-02
- * only three hand-placed bumps in vfft.c counted, so every extracted race
- * (cascade, IL attach, natural order, 2D chain/axis/column-MT, zt_mt, plane
- * queue, prime method, pair order, odd-real bridge) reported races=0: a
- * false zero that made the harness's replay-purity check blind. */
-extern long _vfft_create_race_count;
-
 static int vfft_race_run(const vfft_race_proto_t *p, const vfft_race_arm_t *arms,
                          int n, double *ns)
 {
@@ -217,7 +184,7 @@ static int vfft_race_run(const vfft_race_proto_t *p, const vfft_race_arm_t *arms
 }
 
 /* The hysteresis verdict: the challenger displaces the incumbent only when
- * it is faster by more than the margin (hyst = 0.97 is the house 3%). */
+ * it is faster by more than the margin (hyst = 0.97 for a 3% margin). */
 static inline int vfft_race_beats(double challenger_ns, double incumbent_ns,
                                   double hyst)
 {

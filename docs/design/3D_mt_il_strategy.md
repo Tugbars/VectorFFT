@@ -10,7 +10,9 @@ that it stays consistent with the single-thread standings. Companions:
 this paper ports), [`measurement_arms.md`](measurement_arms.md) (F1.5, the
 axis record), [`../roadmap/fftnd_il_design.md`](../roadmap/fftnd_il_design.md)
 (the tier), [`../performance/v1_0_results.md`](../performance/v1_0_results.md)
-(the numbers). Nothing here applies to the split rank-N tier (`fftnd.h`):
+(the numbers), [`../roadmap/fftnd_il_mt.md`](../roadmap/fftnd_il_mt.md)
+(the eight-thread standing against the comparator: where the tier wins,
+where it loses, the open form). Nothing here applies to the split rank-N tier (`fftnd.h`):
 a different layout with a lane axis of its own and its own threading;
 the two are never compared.
 

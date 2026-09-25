@@ -1,6 +1,7 @@
-/* zalloc.h — the house 64-byte data-buffer allocator (owner's law: aligned,
- * always). Rehomed from the deleted cascade's zsplit.h on 2026-09-15; the
- * planner, the doors and the benches that build race arenas all use it. */
+/* zalloc.h — 64-byte-aligned allocation for data buffers and race arenas.
+ * Release with VFFT_ZS_FREE, never free(): the Windows pair is
+ * _aligned_malloc/_aligned_free. aligned_alloc needs a size that is a
+ * multiple of the alignment, hence the round-up. */
 #ifndef VFFT_SUPPORT_ZALLOC_H
 #define VFFT_SUPPORT_ZALLOC_H
 #include <stdlib.h>

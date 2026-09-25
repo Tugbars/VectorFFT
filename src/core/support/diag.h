@@ -1,33 +1,15 @@
-/* diag.h — misuse diagnostics: the loud-refusal helpers.
+/* diag.h — the loud-refusal helpers.
  *
- * THE DIRECTIVE: a config-space mistake is refused LOUDLY — an actionable
- * one-line stderr message — never a bare NULL and never a silent
- * reinterpretation at execute. Internal build/OOM failures stay quiet NULLs;
- * only user-fixable contract violations speak.
+ * A user-fixable contract violation is refused with one actionable line on
+ * stderr, never a bare NULL and never a silent reinterpretation at execute.
+ * Internal build and OOM failures return NULL quietly.
  *
- * WHY THESE LIVE IN support/ RATHER THAN IN vfft.c
- * -----------------------------------------------
- * `_vfft_warn` has 92 call sites across 10 distinct functions, and those
- * functions belong to several different migration steps. Left in vfft.c it is
- * a back-edge: any function moved into a module header that refuses loudly
- * would have to call back into the file it just left, which makes the new
- * header non-self-contained and breaks the moment a second translation unit
- * includes it. Moving the pair first turns that back-edge into an ordinary
- * downward dependency for every later move.
+ * Depends only on <stdarg.h>, <stdio.h> and the public transform enum, so
+ * any module header can refuse without depending on vfft.c.
  *
- * FLOOR-LEGAL BY CONSTRUCTION
- * ---------------------------
- * Depends only on <stdarg.h>, <stdio.h> and the public transform enum. No
- * mutable file-scope state, no plan/wisdom struct, no engine header. In
- * particular it does NOT pull engine/stride_executor.h.
- *
- * ON THE VARARG SIGNATURE
- * -----------------------
- * `const char *fmt` comes first, deliberately. On mingw a by-value struct
- * parameter placed before `...` miscompiles va_start under -O3 -mavx2 (works
- * at -O0, crashes optimised) — so a pointer-or-scalar leading parameter is a
- * standing requirement for every vararg entry point in this tree, not a
- * stylistic choice.
+ * `const char *fmt` must stay the first parameter: on mingw a by-value struct
+ * parameter before `...` miscompiles va_start at -O3 -mavx2. The same holds
+ * for every vararg entry point in this tree.
  */
 #ifndef VFFT_SUPPORT_DIAG_H
 #define VFFT_SUPPORT_DIAG_H

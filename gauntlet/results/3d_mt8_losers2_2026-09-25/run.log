@@ -1,0 +1,27 @@
+2026-09-25 09:34:00 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-25 09:34:00 run: 271 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-25 09:34:00 calibrate: 271 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-09-25 09:36:08   calibrated 25/271 (4x4x4), 129 s elapsed
+2026-09-25 09:38:04   calibrated 50/271 (4x4096x256), 244 s elapsed
+2026-09-25 09:39:56   calibrated 75/271 (8x1024x512), 356 s elapsed
+2026-09-25 09:41:20   calibrated 100/271 (16x64x16), 441 s elapsed
+2026-09-25 09:42:44   calibrated 125/271 (16x4096x64), 525 s elapsed
+2026-09-25 09:44:05   calibrated 150/271 (32x64x128), 605 s elapsed
+2026-09-25 09:45:18   calibrated 175/271 (32x2048x32), 679 s elapsed
+2026-09-25 09:46:42   calibrated 200/271 (64x64x1024), 763 s elapsed
+2026-09-25 09:48:17   calibrated 225/271 (128x16x8), 857 s elapsed
+2026-09-25 09:49:27   calibrated 250/271 (128x256x2), 928 s elapsed
+2026-09-25 09:50:29   calibrated 271/271 (256x8x64), 990 s elapsed
+2026-09-25 09:50:29 bench: 271 cells (0 already benched, 0 not banked -> not benched)
+2026-09-25 09:51:43   benched 25/271 (4x4x4), 70 s elapsed
+2026-09-25 09:52:48   benched 50/271 (4x4096x256), 135 s elapsed
+2026-09-25 09:53:47   benched 75/271 (8x1024x512), 194 s elapsed
+2026-09-25 09:54:42   benched 100/271 (16x64x16), 249 s elapsed
+2026-09-25 09:55:42   benched 125/271 (16x4096x64), 310 s elapsed
+2026-09-25 09:56:24   benched 150/271 (32x64x128), 352 s elapsed
+2026-09-25 09:57:12   benched 175/271 (32x2048x32), 399 s elapsed
+2026-09-25 09:58:01   benched 200/271 (64x64x1024), 448 s elapsed
+2026-09-25 09:58:54   benched 225/271 (128x16x8), 502 s elapsed
+2026-09-25 09:59:38   benched 250/271 (128x256x2), 545 s elapsed
+2026-09-25 10:00:20   benched 271/271 (256x8x64), 588 s elapsed
+2026-09-25 10:00:23 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_mt8_losers2_2026-09-25\report_3d_mt8.md
