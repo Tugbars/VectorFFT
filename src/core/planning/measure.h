@@ -2,13 +2,8 @@
 #define VFFT_PROTO_MEASURE_H
 /* measure.h — VFFT_MEASURE: top-K + variant-aware (DIT/DIF) planner.
  *
- * TRANSFERRED from production src/core/dp_planner.h (`stride_dp_plan_measure`
- * + helpers — the "MEASURE wrapper" that dag's dp_planner.h port at lines
- * 1-598 explicitly SKIPPED: "MEASURE wrapper skipped — separate variant-
- * cartesian workstream"). That gap is why dag's old patient/exhaustive
- * calibrator searched only the FACTORIZATION axis (T1S/DIT), producing
- * all-T1S/DIT wisdom that lost to production's variant+DIF-tuned plans even
- * with identical codelets on a healthy box.
+ * The factorization search alone (all T1S/DIT) leaves the variant and
+ * orientation wins on the table; this adds both axes on top of it.
  *
  * Two-pass method:
  *   COARSE : enumerate (factorization x permutation); bench with default
@@ -18,9 +13,8 @@
  *            (FLAT/LOG3/T1S, 3^(nf-1)) x {DIT, DIF}; track the global best
  *            and a top-K-within-threshold pool for the caller to deploy-bench.
  *
- * Placement: production kept MEASURE in dp_planner.h, but dag's include graph
- * is exhaustive_plan.h -> dp_planner.h (one-way), so MEASURE (needing both)
- * lives here, one level up, including exhaustive_plan.h.
+ * Needs both exhaustive_plan.h and dp_planner.h, and the include graph is
+ * exhaustive_plan.h -> dp_planner.h (one-way), so it lives one level up.
  */
 #include "exhaustive_plan.h"   /* enumerate_factorizations, variant_count/decode,
                                 * factorization_list_t, + dp_planner.h transitively
@@ -30,7 +24,7 @@
 #include <math.h>
 
 /* ─────────────────────────────────────────────────────────────────
- * Step 1: tunables (production MEASURE_* values, VFFT_PROTO_ prefixed)
+ * tunables
  * ───────────────────────────────────────────────────────────────── */
 #ifndef VFFT_PROTO_MEASURE_TOPK
 #define VFFT_PROTO_MEASURE_TOPK 5        /* top-K coarse candidates to refine */
@@ -53,9 +47,8 @@
 #endif
 #ifndef VFFT_PROTO_MEASURE_EXH_THRESHOLD
 /* Above this pow2 N: DP top-K coarse (top-DP_TOPK_MAX multisets only); at/below:
- * EXHAUSTIVE coarse (full multiset coverage). Raised from production's 2048 to
- * 16384 (2026-06-16, Tugbars): parity reached, now widen coverage — the DP path
- * missed [4,4,8,8,8] for 8192 (faster than the [4,4,4,4,32] it+production pick).
+ * EXHAUSTIVE coarse (full multiset coverage). The DP path misses winners in
+ * range: at 8192 it missed [4,4,8,8,8], faster than its [4,4,4,4,32].
  * MEASURE-only knob: does NOT affect the runtime DP planner's cost. */
 #define VFFT_PROTO_MEASURE_EXH_THRESHOLD 16384
 #endif
@@ -64,7 +57,7 @@
 #endif
 
 /* ─────────────────────────────────────────────────────────────────
- * Step 2: structs + comparators
+ * structs + comparators
  * ───────────────────────────────────────────────────────────────── */
 typedef struct {
     int    factors[STRIDE_MAX_STAGES];
@@ -93,11 +86,10 @@ static int _vfft_proto_decision_cmp(const void *a, const void *b) {
 }
 
 /* ─────────────────────────────────────────────────────────────────
- * Step 3: bench one fully-explicit (factors, variants, DIT/DIF) plan.
+ * bench one fully-explicit (factors, variants, DIT/DIF) plan.
  *
- * Ported from production _dp_bench_explicit_one: builds via plan_create_ex
- * (= production's _stride_build_plan_explicit) and runs the same rep-scaled
- * adaptive timer as _vfft_proto_dp_bench. Returns ns/iter, 1e18 on failure.
+ * Builds via plan_create_ex and runs the same rep-scaled adaptive timer as
+ * _vfft_proto_dp_bench. Returns ns/iter, 1e18 on failure.
  * Per-stage variant availability is enforced implicitly — plan_create_ex
  * returns NULL when a requested (variant, orientation) codelet is absent.
  * ───────────────────────────────────────────────────────────────── */
@@ -153,21 +145,19 @@ static double _vfft_proto_dp_bench_explicit(vfft_proto_dp_context_t *ctx, int N,
 }
 
 /* ─────────────────────────────────────────────────────────────────
- * Step 4: variant layer — availability, cartesian iterator, refine search.
+ * variant layer — availability, cartesian iterator, refine search.
  *
- * Ported from production registry.h (vfft_stage_variants, vfft_variant_iter_*)
- * + dp_planner.h (_dp_variant_search). Decision A: registry-driven, reading
- * dag's GENERATED slots (never editing them). The slot selection MIRRORS dag's
- * wire_stage_codelets exactly, so availability agrees with what plan_create_ex
- * actually builds. DIF lists only {FLAT, LOG3} (T1S aliases FLAT in DIF → the
- * de-dup); BUF is obsolete (no dag codelet). Variant codes reused from planner.h.
+ * Registry-driven: reads the GENERATED slots (never edits them). The slot
+ * selection MIRRORS wire_stage_codelets exactly, so availability agrees with
+ * what plan_create_ex actually builds. DIF lists only {FLAT, LOG3} (T1S
+ * aliases FLAT in DIF → the de-dup); BUF has no codelet. Variant codes from
+ * planner.h.
  * ───────────────────────────────────────────────────────────────── */
 #ifndef VFFT_PROTO_VARIANT_COUNT
-#define VFFT_PROTO_VARIANT_COUNT 4   /* code space FLAT/LOG3/T1S/BUF; BUF unused in dag */
+#define VFFT_PROTO_VARIANT_COUNT 4   /* code space FLAT/LOG3/T1S/BUF; BUF unused */
 #endif
 
-/* Variants registered for radix R in this orientation, into out[]; count.
- * (== production vfft_stage_variants, dag slot names.) */
+/* Variants registered for radix R in this orientation, into out[]; count. */
 static inline int vfft_proto_stage_variants(const vfft_proto_registry_t *reg,
         int R, int use_dif_forward, int *out) {
     int n = 0;
@@ -185,7 +175,7 @@ static inline int vfft_proto_stage_variants(const vfft_proto_registry_t *reg,
 
 /* Is variant v buildable on radix R in this orientation? Mirrors
  * wire_stage_codelets' return condition (incl. DIT T1S→FLAT fallback).
- * Used by the LOG3-aware coarse probe (step 6, decision C). */
+ * Used by the LOG3-forced coarse probe. */
 static inline int vfft_proto_variant_available(const vfft_proto_registry_t *reg,
         int R, int use_dif_forward, int v) {
     if (R <= 0 || R >= VFFT_PROTO_REG_MAX_RADIX) return 0;
@@ -201,9 +191,9 @@ static inline int vfft_proto_variant_available(const vfft_proto_registry_t *reg,
     }
 }
 
-/* Cartesian iterator over per-stage variant choices (ported verbatim from
- * production). Stage 0 fixed to FLAT (no-twiddle); others enumerate
- * stage_variants. Lex order, last stage fastest. */
+/* Cartesian iterator over per-stage variant choices. The no-twiddle stage is
+ * fixed to FLAT; others enumerate stage_variants. Lex order, last stage
+ * fastest. */
 typedef struct {
     int nf;
     int counts [STRIDE_MAX_STAGES];
@@ -216,10 +206,9 @@ static inline int vfft_proto_variant_iter_init(vfft_proto_variant_iter_t *it,
         const int *factors, int nf, int use_dif_forward,
         const vfft_proto_registry_t *reg) {
     it->nf = nf; it->done = 0;
-    /* DAG ADAPTATION (not verbatim): production pins stage 0 for both
-     * orientations, but dag's no-twiddle stage is stage 0 for DIT and stage
-     * nf-1 for DIF (per wire_stage_codelets). Pin the orientation-correct
-     * no-twiddle stage to FLAT (moot there) and search the twiddled stages. */
+    /* The no-twiddle stage is stage 0 for DIT and stage nf-1 for DIF (per
+     * wire_stage_codelets). Pin it to FLAT (moot there) and search the
+     * twiddled stages. */
     int notw = use_dif_forward ? (nf - 1) : 0;
     for (int s = 0; s < nf; s++) {
         it->counter[s] = 0;
@@ -246,10 +235,10 @@ static inline int vfft_proto_variant_iter_next(vfft_proto_variant_iter_t *it) {
 typedef struct { int variants[STRIDE_MAX_STAGES]; double cost_ns; } _vfft_proto_refine_top_t;
 
 /* Variant cartesian search at one (factors, orientation, K_eff). Benches each
- * assignment best-of-REFINE_RUNS (fresh memcpy warmups decorrelate noise — the
- * production rationale for the low-K-near-floor cells). Returns best ns +
- * out_best variants; optionally fills a sorted-ascending top-K pool for the
- * caller's deploy rebench (decision D). 1e18 if no assignment is valid. */
+ * assignment best-of-REFINE_RUNS (fresh memcpy warmups decorrelate noise at
+ * the low-K cells near the floor). Returns best ns + out_best variants;
+ * optionally fills a sorted-ascending top-K pool for the caller's deploy
+ * rebench. 1e18 if no assignment is valid. */
 static double _vfft_proto_dp_variant_search(vfft_proto_dp_context_t *ctx, int N,
         const int *factors, int nf, int use_dif_forward, size_t K_eff,
         const vfft_proto_registry_t *reg, int *out_best,
@@ -296,11 +285,10 @@ static double _vfft_proto_dp_variant_search(vfft_proto_dp_context_t *ctx, int N,
 }
 
 /* ─────────────────────────────────────────────────────────────────
- * Step 5: DP-driven coarse collection (large pow2 path).
+ * DP-driven coarse collection (large pow2 path).
  *
- * Ported from production _measure_collect_via_dp: top-K multisets via dag's
- * _vfft_proto_dp_solve_topk (already present), expand each to permutations,
- * coarse-bench (default T1S/DIT) into the candidate array.
+ * Top-K multisets via _vfft_proto_dp_solve_topk, expand each to
+ * permutations, coarse-bench (default T1S/DIT) into the candidate array.
  * ───────────────────────────────────────────────────────────────── */
 static int _vfft_proto_measure_collect_via_dp(vfft_proto_dp_context_t *ctx, int N,
         const vfft_proto_registry_t *reg, int K_top_multisets,
@@ -346,16 +334,16 @@ static inline const char *vfft_proto_variant_name(int v) {
 }
 
 #ifndef VFFT_PROTO_MEASURE_WARMUP_NS
-#define VFFT_PROTO_MEASURE_WARMUP_NS 1.0e9  /* decision B: one-time sustained warmup (unlocked-turbo box) */
+#define VFFT_PROTO_MEASURE_WARMUP_NS 1.0e9  /* one-time sustained warmup (unlocked-turbo host) */
 #endif
 
 /* ─────────────────────────────────────────────────────────────────
- * Step 6: top-level VFFT_MEASURE entry — the 2-pass orchestrator.
+ * top-level VFFT_MEASURE entry — the 2-pass orchestrator.
  *
- * Ported from production stride_dp_plan_measure. `decision` receives the
- * global-best plan. If top_k_out/top_k_count are non-NULL, also emits the
- * pool of candidates within DEPLOY_PCT of the refine-best (capped DEPLOY_MAX)
- * for the calibrator to deploy-rebench (decision D). Returns best ns/iter.
+ * `decision` receives the global-best plan. If top_k_out/top_k_count are
+ * non-NULL, also emits the pool of candidates within DEPLOY_PCT of the
+ * refine-best (capped DEPLOY_MAX) for the calibrator to deploy-rebench.
+ * Returns best ns/iter.
  * ───────────────────────────────────────────────────────────────── */
 static double vfft_proto_dp_plan_measure(vfft_proto_dp_context_t *ctx, int N,
         const vfft_proto_registry_t *reg, vfft_proto_plan_decision_t *decision,
@@ -364,8 +352,8 @@ static double vfft_proto_dp_plan_measure(vfft_proto_dp_context_t *ctx, int N,
     int n_cands = 0;
     const char *coarse_path = NULL;
 
-    /* Decision B: ONE-TIME sustained warmup to reach steady turbo before any
-     * timing (dag runs unlocked; a cold cell would catch burst turbo). */
+    /* ONE-TIME sustained warmup to reach steady turbo before any timing (on
+     * an unlocked-turbo host a cold cell would catch burst turbo). */
     {
         vfft_proto_factorization_list_t *wl = (vfft_proto_factorization_list_t *)malloc(sizeof(*wl));
         vfft_proto_enumerate_factorizations(N, reg, wl);
@@ -420,8 +408,8 @@ static double vfft_proto_dp_plan_measure(vfft_proto_dp_context_t *ctx, int N,
                 double ns = _vfft_proto_dp_bench(ctx, N, perm, nf, ctx->K, reg);
                 if (ns >= 1e17) continue;
 
-                /* Decision C: LOG3-forced coarse probe (DIT). Keeps LOG3-friendly
-                 * multisets (prime radixes 5/7/11/13) alive into the refine pass. */
+                /* LOG3-forced coarse probe (DIT). Keeps LOG3-friendly multisets
+                 * (prime radixes 5/7/11/13) alive into the refine pass. */
                 {
                     int log3v[STRIDE_MAX_STAGES]; int has_log3 = 0;
                     for (int s = 0; s < nf; s++) {
@@ -499,7 +487,7 @@ static double vfft_proto_dp_plan_measure(vfft_proto_dp_context_t *ctx, int N,
         }
     }
 
-    /* threshold-filter pool -> top_k_out (decision D) */
+    /* threshold-filter pool -> top_k_out */
     if (top_k_out && top_k_count) {
         if (n_pool > 0) {
             qsort(pool, n_pool, sizeof(*pool), _vfft_proto_decision_cmp);

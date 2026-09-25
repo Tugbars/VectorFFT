@@ -1,97 +1,39 @@
 /* dp_planner_il.h — measured plan search for the INTERLEAVED (IL) K=1 axis.
  *
- * The IL sibling of dp_planner.h. Same contract, same discipline, same scars:
- * every reported cost is a WHOLE-PLAN MEASUREMENT (build it, run it, time it),
- * never a composed estimate. Caller-owned amortized context, MEASURE/PATIENT
- * modes, best-of-N adaptive timing, and pacing so thermal drift cannot
- * re-rank candidates.
+ * The IL sibling of dp_planner.h: every reported cost is a WHOLE-PLAN
+ * MEASUREMENT (build it, run it, time it), never a composed estimate.
+ * Caller-owned amortized context, MEASURE/PATIENT modes, best-of-N adaptive
+ * timing, and pacing so thermal drift cannot re-rank candidates.
  *
- * ── WHY THIS IS A SEPARATE FILE AND NOT A FLAG ON dp_planner.h ──────────────
+ * ── NO RECURSION ────────────────────────────────────────────────────────────
  *
- * dp_planner RECURSES: to plan N it picks a first radix R, asks for the best
- * plan of N/R, and MEMOIZES that answer. That is sound there because
- * [R] + plan(N/R) is itself a runnable plan, so the cached sub-cost is a real
- * measurement (dp_planner.h:631-637).
- *
- * It is NOT sound on the IL axis, for a structural reason that does not go
- * away with scale: cascade stages are ROLE-TYPED BY POSITION. Stage 0 must be
- * s0s (z -> block-split), interior stages must be msg, the last must be sterm
- * (split -> z) — see vfft_zsplit_execute_fwd, zsplit.h:190. So the suffix of a
- * chain begins with a msg and is NOT a runnable transform at any N. There is
- * no sub-problem whose whole-plan cost can be measured, hence nothing to
- * memoize; a "sub-cost" here could only be a COMPOSED cost, which is exactly
- * what this project's planner law forbids. z_chain_planner_notes.md:26-27
- * reached the same conclusion: "if the z planner ever goes recursive it must
- * key on (M, D-context), or stay whole-chain like today."
- *
- * The natural IL family has nothing to recurse over either: both 2P and 3P are
- * two codelet calls over ONE pair plan (oop_plan.h:815,833), so depth is fixed
- * at 2 and "3P vs 2P" is a pass-count choice, not a factor-count choice.
- *
- * So this planner keeps everything from dp_planner EXCEPT the recursion, and
- * enumerates whole candidates instead. Candidate generation is isolated in
- * _il_dp_enumerate() precisely so a cleverer generator (beam, recursive with a
- * D-context key) can replace it later without touching the harness.
+ * dp_planner memoizes plan(N/R) because [R] + plan(N/R) is itself a runnable
+ * plan, so the cached sub-cost is a real measurement. The IL engines' stages
+ * are ROLE-TYPED BY POSITION (a leaf, interior stages, a terminal stage), so
+ * the suffix of a chain is not a runnable transform at any N: there is no
+ * sub-problem whose whole-plan cost can be measured, and a composed sub-cost
+ * is what the planner law forbids. So this planner keeps everything from
+ * dp_planner EXCEPT the recursion and enumerates whole candidates
+ * (_il_dp_enumerate, one enumerator per family).
  *
  * ── ORDER IS A KEY, NOT A RANKING AXIS ──────────────────────────────────────
  *
- * Natural-order routes (MONO/2P/3P) and the SCRAMBLED cascade compute
- * DIFFERENT FUNCTIONS — ranking them against each other by ns is meaningless.
- * vfft.c already treats them as mutually exclusive at create (:2332 builds the
- * cascade only when cfg->order == VFFT_ORDER_SCRAMBLED; :2387 builds the K=1
- * engine only when it is not), and oop_wisdom.h:171-179 already caches one
- * champion PER ORDER CLASS per cell. This planner mirrors that: `ord` is an
- * input, it is part of the cache key, and candidates never cross classes.
- *
- * K is absent by construction — every IL route here is K=1 (oop_plan.h:345
- * sets p->K = 1; vfft_zsplit_plan_t has no K field at all).
+ * The NATURAL and SCRAMBLED classes compute DIFFERENT FUNCTIONS — ranking
+ * across them by ns is meaningless. `ord` is an input, it is part of the
+ * cache key (with the placement), and candidates never cross classes. K is 1
+ * on every IL route by construction.
  *
  * ── THE GATE COMPARES TO TRUTH, NEVER TO ANOTHER CANDIDATE ──────────────────
  *
  * Every candidate is checked against an INDEPENDENT reference spectrum built
- * here, read through THAT candidate's own output permutation. The original
- * gate made candidate 0 the reference (memcpy on first pass) and compared the
- * rest to it elementwise. That is legal only when every candidate emits the
- * same output ORDER — true for NATURAL, FALSE for SCRAMBLED, where each
- * cascade chain emits its own digit-reversed comb (zsplit.h:9-10). MEASURED
- * consequence before this fix: of 8/10/14/18 enumerated candidates at
- * N=2048/4096/8192/16384, exactly TWO were ever benched — one chain, its two
- * bit-identical t2q twins — and every other chain was rejected at relerr ~1.2.
- * The CHAIN axis was not searched at all, silently, while the planner still
- * returned a plausible-looking plan.
+ * here, read through THAT candidate's own output permutation (_il_dp_bin_of).
+ * Comparing candidates to each other is legal only when all emit the same
+ * output ORDER; the scrambled writers each emit their own comb. Never weaken
+ * or skip the gate for a class: that would let a numerically wrong plan be
+ * banked as a winner.
  *
- * The tempting non-fix is to weaken or skip the gate for SCRAMBLED. That turns
- * a broken gate into a rubber stamp and is strictly WORSE than the bug: it
- * would let a numerically wrong plan be banked as a winner. VFFT_IL_DP_GATE_TOL
- * is deliberately left where it was.
- *
- * ── THE ROUTE AXIS (Phase 5 planner tranche, cascade_load_path_restructure
- *    §4.2) ────────────────────────────────────────────────────────────────────
- *
- * SCRAMBLED candidates now carry an ENGINE dimension, `zroute`: every legal
- * chain is benched under the LEGACY zsplit builder AND — when it clears the
- * ZTURN-S fence (chain[0] in {4, 8} — 8 = the two-quartet ingest geometry,
- * 2026-09-07 — last in {4, 8} — last==4 = the radix-4 terminator, t2q
- * pinned 0 (also at chain[0] == 8) — D checks; vfft_zturn2_create_chain
- * validates, NULL == skipped, never force-fit) — under the ZTURN builder too.
- * The chain is re-searched PER ROUTE, not transplanted: ZTURN's sectioned
- * layout moves per-stage cost, so a chain that lost under legacy can win under
- * ZTURN (§4.2 "the chain must be re-searched, not transplanted").
- *
- * Cascade candidates are measured JOINT fwd+bwd (one iteration = execute_fwd;
- * execute_bwd): the shipped route verdict is joint by cutover atomicity
- * (vfft.c _calibrate_zroute), so the chain pick is measured on the same axis
- * — and because ALL cascade candidates share the metric, the route verdict
- * falls out of the one ranked pool: the global winner IS the better route at
- * its OWN best chain. NATURAL candidates keep the fwd-only metric (their bwd
- * is the caller's pointer-swap identity).
- *
- * The correctness gate needs nothing weakened for ZTURN: each candidate is
- * still read through its OWN output permutation, and ZTURN's differs from
- * legacy's by the per-row (N/32 x 4) Gamma transpose (zturn.h:32-36) —
- * _il_dp_bin_of applies it before the legacy digit-reversal map. A joint
- * roundtrip check (bwd(fwd(x)) == N*x, the create race's own sanity) rides
- * the bench warmup so a cascade with a broken bwd is refused, not ranked.
+ * Candidates are ranked on the forward; the backward form axis is a separate
+ * pass on the winner (_il_dp_race_bwd).
  */
 #ifndef VFFT_DP_PLANNER_IL_H
 #define VFFT_DP_PLANNER_IL_H
@@ -102,17 +44,15 @@
 #include <math.h>
 
 #include "oop_plan.h"   /* IL plans, VFFT_K1_IL_* routes, il availability fns */
-#include "../wisdom2/wisdom2_oop_reader.h" /* wisdom2 banking (wave-1 flip):
-                                              verdicts bank through the ONE
-                                              family constructor into the
-                                              store — the frozen legacy file
-                                              is never written again */
+#include "../wisdom2/wisdom2_oop_reader.h" /* wisdom2 banking: verdicts bank
+                                              through the family constructor
+                                              into the store */
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
-#include "il_flatdit.h" /* the FLAT mixed-radix DIT: the odd-N engine (2026-09-05) */
-#include "il_flatdit_race.h" /* its FORM and TILE races on the shared race body (2026-09-07) */
-#include "support/zalloc.h"   /* VFFT_ZS_ALLOC/FREE: the context arenas (rehomed 2026-09-15) */
-#include "ztt.h"        /* ZTURN-T: the run-contiguous DIT, one fused driver per cell (2026-09-09) */
-#include "il_prime.h"   /* the prime cell (Rader/Bluestein): a raced ARM since 2026-09-21; after ztt.h (its ZTURN-T inner branch) */
+#include "il_flatdit.h" /* the FLAT mixed-radix DIT: the odd-N engine         */
+#include "il_flatdit_race.h" /* its FORM and TILE races on the shared race body */
+#include "support/zalloc.h"   /* VFFT_ZS_ALLOC/FREE: the context arenas */
+#include "ztt.h"        /* ZTURN-T: the run-contiguous DIT, one fused driver per cell */
+#include "il_prime.h"   /* the prime cell (Rader/Bluestein); after ztt.h (its ZTURN-T inner branch) */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
 #include "wisdom2_oop.h" /* THE oop family entry struct + codecs (wisdom2 folder) */
 
@@ -141,49 +81,20 @@ static inline void _il_dp_sleep_ms(int ms)
 }
 #endif
 
-/* Timing/pacing constants mirror dp_planner.h:338-373 deliberately: the two
- * planners must produce comparable numbers, and these values are themselves
+/* The TIME_* constants mirror dp_planner.h's deliberately: the two planners
+ * must produce comparable numbers, and these values are themselves
  * calibration results. Do not "tune" them independently. */
 #define VFFT_IL_DP_TIME_REPEAT   6        /* best-of trials                  */
 #define VFFT_IL_DP_TIME_MIN_NS   2.0e6    /* min wall-clock per trial (2 ms) */
 #define VFFT_IL_DP_TIME_LIMIT_NS 5.0e8    /* per-bench cap (~0.5 s)          */
 #define VFFT_IL_DP_PACE_EVERY    4        /* pace every Nth benchmark        */
 #define VFFT_IL_DP_PACE_MS       VFFT_RACE_PACE_MS   /* ONE constant: support/race.h */
-#define VFFT_IL_DP_PACE_N_THRESHOLD 8192  /* arm pacing once a bench is big  */
+#define VFFT_IL_DP_PACE_N_THRESHOLD 8192  /* unused: pacing has no N gate (_il_dp_maybe_pace) */
 
 #define VFFT_IL_DP_CACHE_MAX     512
 #define VFFT_IL_DP_TOPK_MAX      8
 #define VFFT_IL_DP_BEAM_MEASURE  3
 #define VFFT_IL_DP_BEAM_PATIENT  8
-/* Candidates per (N, ord). Was 64.
- *
- * MEASURED on the installed enumerator (benches/il_dp_cand_census.c), scrambled
- * class: 12 @1024, 15 @2048, 20 @4096, 27 @8192, 35 @16384, 47 @32768,
- * 61 @65536. So 64 was NOT yet binding — a naive count of
- * (#chains) x 2 engines x 2 t2q overestimates by ~2.4x because most chains fail
- * validation on one or both engines. 4^7 at 16384 lands at index 34 and was
- * being kept.
- *
- * It was, however, three candidates from binding at 65536, growing ~1.3x per
- * doubling => it would have started truncating at 131072 — SILENTLY, since
- * _il_dp_push simply returned `n` unchanged.
- *
- * MEASURED AGAIN after the tcut width axis went UNFILTERED (every legal width
- * benched, 2026-08-02): 35 / 50 / 80 / 117 / 171 / 253 / 349 for the same N.
- * **256 was binding** — 65536 dropped 93 candidates and 32768 was 3 short.
- *
- * Sized at 1024. The chain count peaks near N=2^17 (about 41 chains, since
- * MAX_NF=7 forces very large N back down to a handful of all-radix-8 chains),
- * and widths grow slowly with N, so the true peak is ~450-500. 1024 leaves the
- * cap comfortably non-binding across the whole range rather than relying on the
- * refusal — a refused cell banks NOTHING, which is safe but is still a gap.
- * Cost is 1024 * sizeof(vfft_il_cand_t) on the stack in vfft_il_dp_plan, order
- * 70 KB, against a 1 MB (Win) / 8 MB (Linux) stack.
- *
- * Overflow is LOUD and REFUSES the cell — see _il_dp_push / vfft_il_dp_plan.
- * 🔴 Re-run benches/il_dp_cand_census.c after ANY new axis and update the
- * numbers above. They are DATA. Deriving them from the shape of the loops was
- * wrong by 2.4x the one time it was tried. */
 /* Array bound for tile widths per (chain, engine) — NOT a policy knob.
  *
  * It must be large enough to hold every LEGAL width, because VFFT_IL_DP_NO_BAND
@@ -194,17 +105,24 @@ static inline void _il_dp_sleep_ms(int ms)
  * SIZING BUG rather than quietly resolved. */
 #define VFFT_IL_DP_TILE_KEEP     16
 
+/* Candidates per (N, ord). Sized from the enumerator census
+ * (build_tuned/benches/il_dp_cand_census.c) with a wide margin, so the cap is
+ * non-binding rather than relied on: overflow is LOUD and REFUSES the cell
+ * (_il_dp_push / vfft_il_dp_plan), and a refused cell banks nothing. Cost is
+ * 1024 * sizeof(vfft_il_cand_t) on the stack in vfft_il_dp_plan, ~70 KB.
+ * Re-run the census after ANY new axis: the counts are data, and deriving them
+ * from the shape of the loops was once wrong by 2.4x. */
 #ifndef VFFT_IL_DP_MAX_CAND               /* overridable so the overflow path
                                            * can be exercised by a probe      */
 #define VFFT_IL_DP_MAX_CAND      1024     /* candidates per (N, ord)         */
 #endif
 
-/* Candidate acceptance band. UNCHANGED from the broken gate on purpose: the
- * fix must not be a weakening. MEASURED on this host over every legal
- * candidate at N=16..32768, both order classes, all five routes: correct
+/* Candidate acceptance band. Measured on this host over every legal
+ * candidate at N=16..32768, both order classes, every route: correct
  * plans land at <= 1.1e-15 against the reference, so 1e-12 keeps ~1000x
  * margin; the nearest wrong thing (one interior twiddle off by a relative
- * 1e-9) reads 1.1e-10 and a mismatched permutation reads ~1.2e+00. */
+ * 1e-9) reads 1.1e-10 and a mismatched permutation reads ~1.2e+00. Never
+ * weaken it. */
 #define VFFT_IL_DP_GATE_TOL      1e-12
 
 /* SEPARATE tolerance for the reference's own self-check, and it must stay
@@ -218,25 +136,25 @@ static inline void _il_dp_sleep_ms(int ms)
 
 typedef enum
 {
-    VFFT_IL_ORD_NATURAL   = 1,  /* MONO / 2P / 3P — matches VFFT_ORDER_*     */
-    VFFT_IL_ORD_SCRAMBLED = 2   /* the CT cascade                            */
+    VFFT_IL_ORD_NATURAL   = 1,  /* natural bin order — matches VFFT_ORDER_*  */
+    VFFT_IL_ORD_SCRAMBLED = 2   /* the scrambled writers' own orders         */
 } vfft_il_order_t;
 
 /* One benchable IL plan. `cost_ns` is always a measurement of THIS whole
  * plan; 1e18 marks illegal / failed-to-build / failed-the-gate. */
 typedef struct
 {
-    int    route;                            /* VFFT_K1_IL_{MONO,2P,3P,CASCADE} */
-    int    R1, R2;                           /* 2P/3P only, else 0              */
+    int    route;                            /* VFFT_K1_IL_*                    */
+    int    R1, R2;                           /* 2P / CHAIN3 / FS, else 0        */
     int    c3_A, c3_B;                       /* CHAIN3 only: R1 = A * B (the
                                               * odd-ish mid A, the pow2/even-
-                                              * composite mid B); 2026-09-02 */
+                                              * composite mid B)              */
     int    il_fl[VFFT_ILFD_MAX_K];           /* FLAT only: the chain (leaf first) */
     int    il_fl_n;                          /* FLAT only: stages, else 0        */
-    int    il_scr;                           /* FLAT and ZTT: 1 = the SCRAMBLED
+    int    il_scr;                           /* FLAT, ZTT, FS: 1 = the SCRAMBLED
                                               * class — the flat DIT's block-order
-                                              * output (2026-09-05) or ZTURN-T's
-                                              * PLAIN schedule (2026-09-14); the
+                                              * output, ZTURN-T's PLAIN schedule,
+                                              * the four-step's plane order; the
                                               * SCRAMBLED pool's own candidates  */
     char   il_flf[24];                       /* FLAT only: the per-stage forms
                                               * the bench raced (il_forms=);
@@ -246,26 +164,20 @@ typedef struct
     int    il_zt[7];                         /* ZTT only: the chain (a registry
                                               * cell; the chain IS the plan)    */
     int    il_zt_n;                          /* ZTT only: stages, else 0         */
-    /* Blocked-kernel VARIANT verdict for the 2P/IL routes, packed
-     * mid | leaf<<4 (VFFT_IL_KV_PACK, il2p.h). 0 = the monolithic registry
-     * kernels, i.e. exactly pre-axis behavior — so every existing candidate
-     * path keeps meaning what it meant. This is the axis that makes the
-     * emitted blocked kernels (t2b/t2b48/n1tb/n1tb48) REACHABLE: without a
-     * banked non-zero value every sub-2048 cell runs monolithic. */
+    /* The FORMS verdict. 2P: the blocked-kernel variant per slot, packed
+     * mid | leaf<<4 (VFFT_IL_KV_PACK, il2p.h); CHAIN3: three slots
+     * (VFFT_IL_C3KV_PACK); MONO: the mono form; FS: 1 = the super-band form.
+     * 0 = the forms create installs. This is the axis that makes the emitted
+     * blocked kernels (t2b/t2b48/n1tb/n1tb48) REACHABLE. */
     int    il_kv;
     /* BACKWARD twin of il_kv, same nibble codec, raced on its OWN pass rather
      * than cross-producted with il_kv (see _il_dp_race_bwd). 0 = the forms
-     * vfft_il2p_create installed, i.e. pre-axis behavior.
+     * vfft_il2p_create installed.
      *
-     * 🔴 This is DIRECTIONAL, not joint. The cascade races fwd+bwd together
-     * (_il_dp_exec_joint) because its route verdict cuts over atomically for
-     * both directions. The 2P variant axis does not: the zr2c child that
-     * motivated this runs exactly ONE direction per handle, so a summed
-     * metric would optimize a cost no caller pays. Measured at N=1024 K=1:
-     * the 2*16 mid costs +23% over 4*8 on the backward while the two are
-     * within noise on the forward — the directions genuinely disagree, which
-     * is precisely why a summed verdict would split the difference and serve
-     * neither. */
+     * 🔴 This is DIRECTIONAL, not joint: the zr2c child runs exactly ONE
+     * direction per handle, so a summed metric would optimize a cost no
+     * caller pays. Measured at N=1024 K=1: the 2*16 mid costs +23% over 4*8
+     * on the backward while the two are within noise on the forward. */
     int    il_bkv;
     /* ns/iter of the BACKWARD alone at il_bkv. Banked as metric=bwd1, never
      * mixed with cost_ns (which is the forward/joint metric) - the wisdom2
@@ -274,7 +186,7 @@ typedef struct
     int    il_bkv_raced;                     /* 1 = the backward race RAN: an
                                               * il_bkv of 0 is then a verdict
                                               * ("the defaults won"), not the
-                                              * unraced sentinel (2026-09-02) */
+                                              * unraced sentinel              */
     double cost_ns;                          /* fwd ns/iter                     */
 } vfft_il_cand_t;
 
@@ -282,7 +194,7 @@ typedef struct
 {
     int            N;
     int            ord;
-    int            inplace;   /* the cell's placement (2026-09-21): its own verdicts */
+    int            inplace;   /* the cell's placement: its own verdicts */
     int            n_top;
     vfft_il_cand_t top[VFFT_IL_DP_TOPK_MAX];
 } vfft_il_dp_entry_t;
@@ -311,11 +223,11 @@ typedef struct
     /* MEASURE (default): a cache hit returns the cached verdict.
      * PATIENT: a cache hit RE-MEASURES the stored top-K, so a candidate that
      * was mis-ranked by noise can climb back. Same semantics as
-     * dp_planner.h:158-199. */
+     * dp_planner.h. */
     int believe_cached_cost;
     int beam;
 
-    /* THE PLACEMENT OF THE CELL BEING PLANNED (2026-09-21). 1 = every
+    /* THE PLACEMENT OF THE CELL BEING PLANNED. 1 = every
      * candidate executes IN PLACE, z_in -> z_in, the way the in-place door
      * will run the winner (ZTURN-T on its plane drivers, the four-step
      * created in place, MONO as the alias-tolerant n1c solo); the gate and
@@ -344,7 +256,7 @@ static void vfft_il_dp_init(vfft_il_dp_context_t *ctx, int max_N)
     ctx->z_out  = (double *)VFFT_ZS_ALLOC(bytes);
     ctx->z_ref  = (double *)VFFT_ZS_ALLOC(bytes);
 
-    /* Deterministic seed so two runs bench identical data (dp_planner.h:256). */
+    /* Deterministic seed so two runs bench identical data (as dp_planner.h). */
     srand(42);
     for (size_t i = 0; i < ctx->buf_total; i++)
         ctx->z_orig[i] = (double)rand() / RAND_MAX - 0.5;
@@ -370,9 +282,9 @@ static inline void vfft_il_dp_set_measure(vfft_il_dp_context_t *ctx)
     ctx->beam = VFFT_IL_DP_BEAM_MEASURE;
 }
 
-/* Cache key is (N, ord) — the IL analogue of dp_planner's (N, K_eff). K is 1
- * on every IL route by construction, and ord selects which FUNCTION is being
- * computed, so two classes must never share a row. */
+/* Cache key is (N, ord, placement) — the IL analogue of dp_planner's
+ * (N, K_eff). K is 1 on every IL route by construction, and ord selects which
+ * FUNCTION is being computed, so two classes must never share a row. */
 static vfft_il_dp_entry_t *_il_dp_lookup(vfft_il_dp_context_t *ctx, int N, int ord)
 {
     for (int i = 0; i < ctx->count; i++)
@@ -395,14 +307,11 @@ static vfft_il_dp_entry_t *_il_dp_insert(vfft_il_dp_context_t *ctx, int N, int o
 
 static void _il_dp_maybe_pace(vfft_il_dp_context_t *ctx, int N)
 {
-    /* Thermal drift re-ranks plans, and this project has measured +/-5%
-     * placement swings flipping cascade verdicts. Pacing is not optional.
+    /* Thermal drift re-ranks plans (+/-5% placement swings flip verdicts).
+     * Pacing is not optional.
      *
-     * NO N GATE. The original copied dp_planner's (K, N*K) trigger, which at
-     * K=1 reduces to N and meant nothing below 8192 ever paced -- exactly
-     * backwards: SMALL cells bench fastest, so they run back-to-back and heat
-     * the part hardest. Measured consequence: unpaced planner runs disagreed
-     * with each other on the N=1024 winner across repeats. */
+     * NO N GATE: SMALL cells bench fastest, so they run back-to-back and heat
+     * the part hardest (unpaced runs disagreed on the N=1024 winner). */
     (void)N;
     if ((ctx->n_benchmarks % VFFT_IL_DP_PACE_EVERY) != 0) return;
     _il_dp_sleep_ms(VFFT_IL_DP_PACE_MS);
@@ -410,22 +319,21 @@ static void _il_dp_maybe_pace(vfft_il_dp_context_t *ctx, int N)
 
 /* ── running one candidate ─────────────────────────────────────────────── */
 
-/* A candidate BUILT once. Plan construction (twiddle tables, scratch, the
- * cascade's per-stage group tables) must live OUTSIDE the timing loop or the
- * planner measures create cost instead of execute cost — at N=256 that made
- * every natural candidate read ~3.6 us against a true ~0.15 us, i.e. it ranked
- * table-building, not transforms. */
+/* A candidate BUILT once. Plan construction (twiddle tables, scratch) must
+ * live OUTSIDE the timing loop or the planner measures create cost instead
+ * of execute cost (at N=256, ~3.6 us against a true ~0.15 us: it ranks
+ * table-building, not transforms). */
 typedef struct
 {
     vfft_il2p_plan_t   *ip;    /* 2P_PURE (full IL, no split planes) */
-    vfft_il3p_plan_t   *i3;    /* CHAIN3 (3-stage IL chain, 2026-09-02) */
+    vfft_il3p_plan_t   *i3;    /* CHAIN3 (3-stage IL chain) */
     vfft_oop11_fn       mono;  /* MONO    */
-    vfft_ilfd_plan_t   *ifd;   /* FLAT (the flat DIT, 2026-09-05) */
-    vfft_ztt_plan_t    *ztt;   /* ZTT (ZTURN-T, 2026-09-09) */
-    vfft_k1fs_plan_t   *fs;    /* FS (the four-step, 2026-09-15) */
-    vfft_ilprime_plan_t *ilp;  /* PRIME: BORROWED from _k1pr_ctx, never freed here (2026-09-21) */
+    vfft_ilfd_plan_t   *ifd;   /* FLAT (the flat DIT) */
+    vfft_ztt_plan_t    *ztt;   /* ZTT (ZTURN-T) */
+    vfft_k1fs_plan_t   *fs;    /* FS (the four-step) */
+    vfft_ilprime_plan_t *ilp;  /* PRIME: BORROWED from _k1pr_ctx, never freed here */
 } _il_dp_built_t;
-/* the PRIME arm's plan (2026-09-21): the prime cell -- Rader/Bluestein on
+/* the PRIME arm's plan: the prime cell -- Rader/Bluestein on
  * the whole length, its inner the prime shard's own banked verdict -- is
  * built ONCE per race by _k1_il_plan_race (k1_commit.h, through
  * _ilprime_create_banked: a cold cell races its inner pool there) and lent
@@ -445,13 +353,12 @@ static void _k1pr_release(void)
 /* the four-step candidate under the permutation gate: its column map is the
  * 2D child's (the rank-2 cell's own, gated by the 2D tier), read here as a
  * COPY, because the race builds, runs and frees an arm before the gate
- * reads its permutation (2026-09-15) */
+ * reads its permutation */
 static int *_il_dp_fs_map = NULL;
 static int  _il_dp_fs_map_n1 = 0, _il_dp_fs_map_n2 = 0, _il_dp_fs_map_cap = 0;
-/* (the hybrid 2P/3P op arm was deleted 2026-07-29 with the il_in/il_out routes) */
 
-/* the candidate's DESTINATION: out of place z_out; IN PLACE z_in itself
- * (2026-09-21). Every engine here consumes its input through a staging
+/* the candidate's DESTINATION: out of place z_out; IN PLACE z_in itself.
+ * Every engine here consumes its input through a staging
  * plane or an alias-tolerant kernel before it writes, so z -> z is legal
  * for all of them -- the same contract the in-place door relies on. */
 static inline double *_il_dp_dst(const vfft_il_dp_context_t *ctx)
@@ -514,7 +421,7 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b, int i
         if (!b->ztt) return -1;
         if (c->il_tw > 0 && !vfft_ztt_set_tile(b->ztt, (size_t)c->il_tw))
         { vfft_ztt_destroy(b->ztt); b->ztt = NULL; return -1; }
-        vfft_ztt_bind(b->ztt, inplace);   /* in place: the plane drivers (2026-09-21) */
+        vfft_ztt_bind(b->ztt, inplace);   /* in place: the plane drivers */
         return 0;
     }
     if (c->route == VFFT_K1_IL_FS)
@@ -605,17 +512,14 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     return -1; /* unknown/retired route — _il_dp_build already refused it */
 }
 
-/* Execute a built 2P candidate BACKWARD: z_in -> z_out.
- *
- * Only the 2P route has a directional variant axis, so this deliberately
- * refuses everything else rather than growing a second joint path. The
- * cascade's own both-directions metric stays _il_dp_exec_joint. */
+/* Execute a built candidate BACKWARD: z_in -> the destination. Every route
+ * but MONO; -1 = refused. */
 static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                            const _il_dp_built_t *b)
 {
     if (c->route == VFFT_K1_IL_CHAIN3)
     {   /* the chain's backward (t2 bwd, t2tg, n1 bwd) - its leaf slot is the
-         * directional form axis (2026-09-03) */
+         * directional form axis */
         vfft_il3p_execute_bwd(b->i3, ctx->z_in, _il_dp_dst(ctx));
         return 0;
     }
@@ -650,10 +554,8 @@ static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
 
 /* Build + run once (for the correctness gate). Not used for timing. */
 /* 0 = ran; -1 = NO SUCH KERNEL (build refused); -2 = BUILT but the executor
- * refused it. The two were one value until 2026-09-11 and the caller's
- * `continue` was silent either way — the same blindness the backward race
- * had (see _il_dp_bench_dir's `why`). Callers test != 0, so the split is
- * additive. */
+ * refused it (cf. _il_dp_bench_dir's `why`). Callers that only test != 0
+ * still work. */
 static int _il_dp_run_once(vfft_il_dp_context_t *ctx, int N,
                            const vfft_il_cand_t *c)
 {
@@ -707,8 +609,8 @@ static void _il_dp_ref_dft_direct(double *z, long N)
 }
 
 /* O(N * sum of prime factors) mixed-radix scalar DIT in long double, natural
- * bin order, unnormalized forward — the non-pow2 reference (2026-09-05: the
- * direct O(N^2) form took minutes at the flat engine's 10^5 cells). Shares
+ * bin order, unnormalized forward — the non-pow2 reference (the direct
+ * O(N^2) form takes minutes at 10^5-point cells). Shares
  * nothing with the candidates (no codelet, no plan, no table); the
  * REF_PROBES bins below still check it against direct O(N) sums. Results
  * land in out[0..n); scr[0..n) is clobbered. */
@@ -746,11 +648,7 @@ static void _il_dp_ref_mixed_rec(const long double *ir, const long double *ii,
                 for (r = 0; r < p; r++)
                 {
                     /* long long: r * f reaches 4.3e9 at a prime stage p = n =
-                     * 65537 and `long` is 32-bit on this Windows toolchain
-                     * (the probe loop in _il_dp_ref_build had the same fix).
-                     * Reached the day the prime cell became a raced arm
-                     * (2026-09-21): a prime N above 2048 had no candidate
-                     * before, so no reference was ever built there. */
+                     * 65537 and `long` is 32-bit on this Windows toolchain. */
                     const long j2 = (long)(((long long)r * f) % n);
                     const long double xr = scr_r[r * q + k], xi = scr_i[r * q + k];
                     sr += xr * wr[j2] - xi * wi[j2];
@@ -815,21 +713,14 @@ static void _il_dp_ref_dft(double *z, long N)
  * The reference is the one object here that nothing else validates, so it
  * validates itself: VFFT_IL_DP_REF_PROBES bins recomputed by DIRECT O(N)
  * summation, sharing not even the twiddle angles. Same discipline as the
- * cc_perm discovery at oop_plan.h:521-578, which fails the create rather than
- * trust an unverified map. */
+ * cc_perm discovery in oop_plan.h, which fails the create rather than trust
+ * an unverified map. */
 static int _il_dp_ref_build(vfft_il_dp_context_t *ctx, int N)
 {
     if (ctx->ref_N == N) return 0;
     ctx->ref_N = 0;
 
-    /* The radix-2 reference needs a power-of-two N. That USED to be a
-     * refusal, on the stated grounds that "every IL route is pow2 by
-     * construction ... enforced at the enumerator" -- true until the
-     * enumerator was widened to the registry radices (2026-08-23), which is
-     * precisely the "future route widens the space" the old comment
-     * anticipated. Refusing was right while there was no reference to offer;
-     * now there is one, so dispatch on parity instead. The split planner has
-     * carried the same O(N^2) fallback at non-pow2 N all along. */
+    /* pow2 N: the radix-2 reference; any other N: the mixed-radix one */
     if (N < 2) return -1;
 
     /* the SAME bytes _il_dp_run_once feeds every candidate. If that ever
@@ -855,9 +746,8 @@ static int _il_dp_ref_build(vfft_il_dp_context_t *ctx, int N)
         double sr = 0.0, si = 0.0;
         for (long j = 0; j < N; j++)
         {
-            /* long long: j*m reaches 6.9e10 at N=262144 (the true reach of
-             * nf<=6 over {4,8}) and `long` is 32-bit on the Windows
-             * toolchain this project builds with. */
+            /* long long: j*m reaches 6.9e10 at N=262144 and `long` is 32-bit
+             * on the Windows toolchain this project builds with. */
             double a = -2.0 * M_PI *
                        (double)(((long long)j * m) % N) / (double)N;
             double cr = cos(a), ci = sin(a);
@@ -877,20 +767,13 @@ static int _il_dp_ref_build(vfft_il_dp_context_t *ctx, int N)
 /* The natural-order BIN that output slot `idx` of this candidate holds, or -1
  * when this route's output permutation is not known here.
  *
- * NATURAL routes are the identity by contract (oop_plan.h:815; il2p.h:34-38).
- * The cascade emits the mixed-radix digit-reversed comb
- * out[l*(N/Rt) + g] = X[drev(g*Rt + l)] (zsplit.h:9-10), and drev is
- * _vfft_zs_brev over the FULL chain.
+ * NATURAL routes (and every engine's natural class) are the identity by
+ * contract. The scrambled classes' maps below are INDEPENDENT re-derivations
+ * of each engine's permutation, not shared expressions with the engine: that
+ * independence is what lets the gate catch an engine whose own map is wrong.
+ * Do not "unify" them.
  *
- * NOTE this is an INDEPENDENT re-derivation, not a shared expression: the two
- * _vfft_zs_brev call sites in zsplit.h use different arities on different
- * arguments (:156 on the group index at stage s, :175 on the column index at
- * nf-1). That independence is a FEATURE — it is why this gate can catch a
- * plan whose terminator twiddles are derived with the wrong brev depth. Do not
- * "unify" them.
- *
- * The default arm returns -1 ON PURPOSE. A new route — e.g. the planned ZTURN,
- * whose permutation differs from the legacy cascade's — is REFUSED until its
+ * The default arm returns -1 ON PURPOSE. A new route is REFUSED until its
  * map is added here. Refusing costs a candidate; guessing costs a wrong plan
  * in wisdom. */
 static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
@@ -906,8 +789,8 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
         return idx;                                  /* natural by contract */
     case VFFT_K1_IL_ZTT:
         if (!c->il_scr) return idx;                  /* natural by contract */
-        {   /* the PLAIN schedule (ztt_scrambled_design.md, 2026-09-14) — an
-             * INDEPENDENT re-derivation, as this gate demands (file header):
+        {   /* the PLAIN schedule (docs/design/ztt_scrambled_design.md) — an
+             * INDEPENDENT re-derivation, as this gate demands:
              * frequency k lands at the in-place Sande-Tukey position
              * ic = digitrev(k) over the chain, then inside the last stage's
              * 4-column span at tld's unpack-only lane order, so position
@@ -967,11 +850,9 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
  * while a numerically wrong plan is still rejected, because the reference does
  * not move with the candidate.
  *
- * Returns max(|dRe|+|dIm|) / max(|Re|+|Im|) over the whole output — the metric
- * the existing gate benches print (zil_chain_dp.c:589-593,
- * zsplit_api_gate.c:99-111), so numbers here are directly comparable to
- * theirs — or -1.0 when the candidate must be refused outright (no
- * permutation map, no trusted reference, or a non-finite deviation).
+ * Returns max(|dRe|+|dIm|) / max(|Re|+|Im|) over the whole output, or -1.0
+ * when the candidate must be refused outright (no permutation map, no
+ * trusted reference, or a non-finite deviation).
  *
  * The non-finite bail is not decoration. The old `if (d > worst)` idiom
  * silently PASSED an all-NaN output at relerr 0.0, because every NaN compare
@@ -996,23 +877,12 @@ static double _il_dp_gate_err(vfft_il_dp_context_t *ctx, int N,
     return worst / ctx->ref_scale;
 }
 
-/* Adaptive best-of timing, mirroring dp_planner.h:408: double `reps` until a
- * trial clears TIME_MIN_NS, then keep the best of TIME_REPEAT trials at that
- * rep count.
- *
- * CASCADE candidates are timed JOINT (fwd+bwd per iteration) — the route
- * verdict's own metric (file header). The joint warmup doubles as a bwd
- * correctness gate: bwd(fwd(x)) must equal N*x to the create race's 1e-11
- * band (vfft.c _calibrate_zroute joint sanity), else the candidate is
- * REFUSED — the fwd-only reference gate upstream cannot see a broken bwd,
- * and a plan that cannot invert must never be ranked, let alone banked. */
 /* One timed iteration of whatever metric `bwd` selects.
  *
- *   bwd == 0 : the shipped metric — joint fwd+bwd for the cascade (its route
- *              verdict cuts over atomically), forward alone otherwise.
- *   bwd == 1 : the backward alone, 2P only. Not a roundtrip: the backward
- *              variant axis is raced against the backward's OWN cost, because
- *              the caller that needs it (the zr2c child) pays only that. */
+ *   bwd == 0 : the forward.
+ *   bwd == 1 : the backward alone. Not a roundtrip: the backward variant
+ *              axis is raced against the backward's OWN cost, because the
+ *              caller that needs it (the zr2c child) pays only that. */
 static int _il_dp_exec_dir(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                            const _il_dp_built_t *b, int bwd)
 {
@@ -1020,16 +890,14 @@ static int _il_dp_exec_dir(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     return _il_dp_exec(ctx, c, b);
 }
 
-/* WHY a candidate was refused (2026-09-11). Every refusal below returned
- * 1e18 with no reason, so "no such kernel" and "a kernel EXISTS but is wrong
- * in this slot" were indistinguishable: a wrong-kind backward twin (a
- * plain-store t2 where the pair's backward stage 1 runs the turned-store
- * t2t) sat in a resolver, built, computed garbage, and the race simply
- * showed one arm fewer with nothing said. `why` (NULL = don't care) names
- * the reason; the backward race prints it under verbose and
- * benches/bwd_forms_gate.c turns the correctness reasons into a FAILURE.
- * The buffer is file-static: this planner is single-threaded by
- * construction (one static context per process, k1_commit.h). */
+/* WHY a candidate was refused: "no such kernel" (expected coverage) vs "a
+ * kernel EXISTS but is wrong in this slot" (a resolver defect, e.g. a
+ * wrong-kind backward twin: a plain-store t2 where the pair's backward
+ * stage 1 runs the turned-store t2t). Without the reason a wrong arm just
+ * vanishes from the race. `why` (NULL = don't care) names it; the backward
+ * race prints it under verbose. The buffer is file-static: this planner is
+ * single-threaded by construction (one static context per process,
+ * k1_commit.h). */
 #define _ILDP_WHY(w, s) do { if (w) *(w) = (s); } while (0)
 /* the ABSENT reason is a shared literal, not a substring to grep for: a
  * classifier (support/slot_check.h's callers) compares against THIS. */
