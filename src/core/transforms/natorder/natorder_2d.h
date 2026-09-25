@@ -7,8 +7,8 @@
  * prime override with natural output) => FREE (list left NULL). Returns 1 (ok) or 0 (detect failed =>
  * caller must refuse natural).
  *
- * Shared by the runtime 2D create (vfft.c) and the natural-aware 2D calibrator (fft2d_c2c_planner.h)
- * so both build tapes identically. See fft2d natural §.
+ * Shared by the runtime 2D create (fft2d_create.h) and the natural-aware 2D calibrator
+ * (fft2d_c2c_planner.h) so both build tapes identically.
  */
 #ifndef VFFT_NATORDER_2D_H
 #define VFFT_NATORDER_2D_H
@@ -56,8 +56,8 @@ static inline int vfft_natorder_2d_build_axis(int N, const stride_plan_t *inner,
  * (reg->n1_fwd). A palindromic chain's digit-reversal is an INVOLUTION => the natural-order reorder is
  * cheap independent pair-swaps, so these are the natorder-friendly factorizations the SCRAMBLED DP pool
  * prunes (they lose the FFT-only race). The natural-aware calibrator INJECTS them so the joint FFT+reorder
- * scoring can pick one. Distinct-name copy of natorder_calibrate.h's vfft_natorder_palindromes (that
- * header + this one are both included by vfft.c => can't share the symbol). Returns count (<= max). */
+ * scoring can pick one. The same enumeration as natorder_calibrate.h's vfft_natorder_palindromes.
+ * Returns count (<= max). */
 static inline int vfft_natorder_2d_palindromes(int N, const vfft_proto_registry_t *reg,
                                                int chains[][STRIDE_MAX_STAGES], int *nfs, int max)
 {

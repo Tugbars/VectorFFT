@@ -5,9 +5,10 @@
  * files. Cell key = (rank, N[0..rank-1]). A line stores everything needed
  * to rebuild the winning plan without re-measuring:
  *
- *   nd r=3 n=128,128,128 s=1 B=8 blk=0,512 ns=4.61e+06 \
+ *   nd r=3 T=1 n=128,128,128 s=1 B=8 blk=0,512 ns=4.61e+06 \
  *      ax0=T:8v0,4v2,4v0 ax1=T:4v0,4v1,8v0 ax2=F:16v0,8v0
  *
+ *   T    -- thread count the verdict was measured at (part of the key)
  *   s    -- split point (axes < s unfused, >= s fused per block)
  *   blk  -- lane_block per axis 0..rank-2 (0 = flat)
  *   B    -- last-axis tile height

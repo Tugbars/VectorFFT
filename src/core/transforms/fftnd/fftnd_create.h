@@ -1,26 +1,26 @@
-/* fftnd_create.h — the rank-3 and rank-4 CREATE tiers (migration step 22).
+/* fftnd_create.h — the rank-3 and rank-4 CREATE tiers.
  *
  * WHAT THIS IS
  * ------------
  * The dims==4 and dims==3 arms of _vfft_create_inner, as one helper. Both are
- * early-return blocks: every path inside them returns, so the tail of each is
- * unreachable and the pair lifts out without touching the rank-2 and rank-1
- * tiers that follow it in the dispatcher.
+ * early-return blocks: every path inside them returns.
  *
- * CONTRACTS (unchanged by the move, restated because they are the tier's law)
- * -------------------------------------------------------------------------
+ * CONTRACTS
+ * ---------
  * K == 1. A batched rank>=3 call arrives as a K=1 override plan, not as a
- * howmany the engines see. Order is DEFAULT or SCRAMBLED only; rank-3 NATURAL
- * is the fftnd_natorder.h nat_col_list follow-up and is refused loudly here.
- * Real transforms are out-of-place. Trig (DCT/DST/DHT) is 1D only and is
- * refused above this helper, in the shared dims>=2 guard.
+ * howmany the engines see. SPLIT order is DEFAULT or SCRAMBLED only; rank-3
+ * split NATURAL is refused loudly here (its planned follow-up is
+ * fftnd_natorder.h's nat_col_list). Real transforms are out-of-place.
+ * Trig (DCT/DST/DHT) is 1D only and is refused above this helper, in the
+ * shared dims>=2 guard. INTERLEAVED rank-3 c2c goes to fftnd_il.h.
  *
  * WISDOM
  * ------
- * A dedicated (N1,N2,N3) table. HIT -> vfft_fft3d_plan_from_entry, the
- * fft3d.h-requested path. MISS -> greedy per-axis exhaustive with the inners
- * visible, banked through vw2_3d_bank_entry when the result is expressible.
- * The rank-4 arm shares that machinery at FFTND_MAX_RANK=4.
+ * Rank-3 split c2c: a dedicated (N1,N2,N3) row in the wisdom2 store. HIT ->
+ * vfft_fft3d_plan_from_entry. MISS -> greedy per-axis exhaustive with the
+ * inners visible, banked through vw2_3d_bank_entry when the result is
+ * expressible. The rank-4 c2c arm has no wisdom: stride_plan_nd's per-axis
+ * search runs at every create.
  *
  * POSITION IN vfft.c IS LOAD-BEARING
  * ----------------------------------
@@ -31,11 +31,6 @@
  * (stride_plan_nd, stride_plan_nd_r2c, the vfft_fft3d_* and vw2_3d_* wisdom
  * entry points) come from fftnd.h, fftnd_r2c.h and the wisdom2 readers, all
  * included far earlier.
- *
- * The four parameters are the block's complete free-variable set, derived
- * rather than guessed: cfg and reg and K and W are what the body reads from
- * the enclosing scope. N1/N2/N3 are NOT parameters -- they appear only as
- * struct field writes (h4->N2) or as locals declared inside the rank-3 arm.
  */
 #ifndef VFFT_TRANSFORMS_FFTND_CREATE_H
 #define VFFT_TRANSFORMS_FFTND_CREATE_H
@@ -52,16 +47,11 @@ static vfft_plan _vfft_create_rank34(const vfft_config_t *cfg,
                     const vfft_proto_registry_t *reg,
                     size_t K)
 {
-    /* 3D/4D INTERLEAVED (owner 2026-09-03): the IL feature-set for rank 3+
-     * (c2c, r2c, c2r) does not exist yet and is a planned campaign. Until
-     * then the front door REFUSES it loudly. Before this, c2c ACCEPTED the
-     * layout and its execute computed nothing (a warning and zeros), and
-     * real ran the split ND engine behind an il_out repack — a silent
-     * convert. No fallback: refuse, never bridge. */
+    /* 3D/4D INTERLEAVED: rank-3 c2c is the native IL tier (fftnd_il.h);
+     * real rank >= 3 and rank 4 are refused loudly. No fallback: never the
+     * split ND engine behind a repack — refuse, never bridge. */
     if (cfg->layout == VFFT_LAYOUT_INTERLEAVED)
     {
-        /* the rank-N INTERLEAVED c2c tier (fftnd_il.h, 2026-09-06): rank 3
-         * c2c is native; real rank >= 3 and rank 4 stay refused loudly */
         if (cfg->transform == VFFT_C2C && cfg->dims == 3)
             return _vfft_create_fftnd_il(cfg, W, reg, K);
         _vfft_warn("vfft_create: %dD %s with layout=INTERLEAVED is not wired yet "
@@ -71,9 +61,8 @@ static vfft_plan _vfft_create_rank34(const vfft_config_t *cfg,
         return NULL;
     }
     if (cfg->dims == 4)
-    { /* §6a62: rank-4 exposure. The engines were rank-general all along
-       * (FFTND_MAX_RANK=4; fndr's builder takes rank; fftnd's generic
-       * wrap covers c2c) — the dispatch just stopped at 3. Same
+    { /* rank 4: the engines are rank-general (FFTND_MAX_RANK=4; fndr's
+       * builder takes rank; fftnd's generic wrap covers c2c). Same
        * contracts as 3D: K==1, order DEFAULT/SCRAMBLED, real = OOP with
        * even last dim. */
         if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
@@ -143,8 +132,8 @@ static vfft_plan _vfft_create_rank34(const vfft_config_t *cfg,
         if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
             K == 1 && cfg->placement == VFFT_OUTOFPLACE &&
             (cfg->n[2] % 2) == 0)
-        { /* §6a47/Q1: 3D real transforms via the ND r2c engine (strided
-           * row engines + measured adoption live inside the builder). */
+        { /* 3D real transforms via the ND r2c engine (strided row engines
+           * + measured adoption live inside the builder). */
             stride_plan_t *tp = stride_plan_nd_r2c(3, cfg->n, reg, cfg->recalibrate);
             if (!tp)
                 return NULL;
@@ -180,13 +169,12 @@ static vfft_plan _vfft_create_rank34(const vfft_config_t *cfg,
         int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
         int banked = 0;
         stride_plan_t *tp = NULL;
-        /* wave-3: 3D is BORN in wisdom2 (the legacy file never existed on
-         * any tree). Serve from the store; on miss the legacy creator runs
-         * its greedy+extract path against the in-process SCRATCH table and
-         * the extraction is harvested into the store (measure-less
-         * src=race — the extraction never measured; prime-axis cells bank
-         * nothing, unchanged). No kill switch: nothing to fall back to. */
-        if (!cfg->recalibrate)   /* the flag hides the banked row (2026-09-16) */
+        /* 3D wisdom lives only in the wisdom2 store. Serve from the store;
+         * on a miss the creator runs its greedy+extract path against the
+         * in-process SCRATCH table and the extraction is harvested into the
+         * store (measure-less src=race — the extraction never measured;
+         * prime-axis cells bank nothing). */
+        if (!cfg->recalibrate)   /* the flag hides the banked row */
         {
             vfft_fft3d_wisdom_entry_t e3;
             if (vw2_3d_lookup(&W->vw2, N1, N2, N3, _vw2_lay_of(cfg), &e3))

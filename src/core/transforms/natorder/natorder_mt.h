@@ -1,7 +1,6 @@
 /* natorder_mt.h - the natural-order reorder passes, multithreaded.
  *
- * Two groups, both extracted from vfft.c as migration step 8; see
- * docs/design/refactor_migration_plan.md.
+ * Two groups:
  *
  *   (1) the CYCLE/PAIR reorder pass - what turns a scrambled spectrum into a
  *       natural one after a forward, or unwinds it before a backward.
@@ -23,28 +22,25 @@
  *            what makes it race-free.
  * Same transform, opposite split axes, for reasons specific to each phase.
  *
- * WHAT STAYED BEHIND
- * ------------------
- * _natorder_mt, the five-line adapter that unpacks vfft_plan_s and calls
- * _natorder_reorder_mt, is still in vfft.c: it dereferences the plan struct, so
- * it waits for step 15. The division is the right one regardless - this header
- * owns the algorithm, the front door owns the plan-to-arguments adaptation.
+ * THE PLAN ADAPTER LIVES IN vfft.c
+ * --------------------------------
+ * _natorder_mt, the adapter that unpacks vfft_plan_s and calls
+ * _natorder_reorder_mt, is in vfft.c: this header owns the algorithm, the
+ * front door owns the plan-to-arguments adaptation.
  *
  * FLOOR-LEGAL BY CONSTRUCTION
  * ---------------------------
  * Every function here takes its inputs explicitly. No vfft_plan_s, no mutable
- * file-scope state, no wisdom. It does NOT pull engine/stride_executor.h.
+ * file-scope state, no wisdom.
  *
- * THE WORKER COUNT IS A PARAMETER, NOT A GLOBAL READ (2026-09-01)
- * ---------------------------------------------------------------
+ * THE WORKER COUNT IS A PARAMETER, NOT A GLOBAL READ
+ * --------------------------------------------------
  * _natorder_reorder_mt takes `nthreads` -- the plan's create-time snapshot
  * (h->nthreads), the number of per-worker scratch slots `tmp` was sized for --
- * and clamps its dispatched worker count by it. It used to read only the live
- * pool, which is grow-only and can therefore be larger at execute than the
- * scratch allocated at create: T workers sliced a smaller buffer. The result was
- * a wrong answer on one run and heap corruption at destroy on the next
- * (natorder_scratch_gate). Every engine in this tree clamps by its own
- * snapshot; this one now does too.
+ * and clamps its dispatched worker count by it. The live pool is grow-only and
+ * can be larger at execute than the scratch allocated at create; T workers
+ * would slice a smaller buffer (wrong output, then heap corruption at destroy;
+ * natorder_scratch_gate). Every engine in this tree clamps by its own snapshot.
  */
 #ifndef VFFT_TRANSFORMS_NATORDER_NATORDER_MT_H
 #define VFFT_TRANSFORMS_NATORDER_NATORDER_MT_H
@@ -60,7 +56,7 @@
 /* ── ORDER_NATURAL reorder pass, MT by CYCLE/PAIR ranges (full K-wide rows — NEVER K-split;
  * K-split makes 64B sub-rows, the measured catastrophic regime). Runs AFTER the forward FFT
  * (dir!=0) or BEFORE the backward (dir==0, inverse shift). Each worker owns a disjoint set of
- * cycles/pairs + its own 2K temp slot; disjoint row sets => race-free. natural_order §2e. */
+ * cycles/pairs + its own 2K temp slot; disjoint row sets => race-free. */
 typedef struct
 {
     double *re, *im, *tmp;
@@ -79,9 +75,9 @@ static void _nat_range_tramp(void *a)
 }
 /* MT split of a whole-row reorder (N rows x K lanes) by unit COUNT (cycles or pairs). Each worker owns a
  * disjoint unit range + its OWN 2K temp slot (tmp = (pool+1) slots) => disjoint row sets, race-free.
- * SHARED by the 1D natorder pass and the 2D dim1 (whole-row) pass — same shape — so the 2D dim1 reorder
- * is no longer single-threaded (it was the whole ~1.2-1.6x tax on one core at 256^2/512^2). inv: 1 =
- * inverse cycle (backward), 0 = forward; ignored for a self-inverse pair tape. */
+ * SHARED by the 1D natorder pass and the 2D dim1 (whole-row) pass — same shape (single-threaded, the
+ * 2D dim1 reorder was the whole ~1.2-1.6x natural-order tax at 256^2/512^2). inv: 1 = inverse cycle
+ * (backward), 0 = forward; ignored for a self-inverse pair tape. */
 static void _natorder_reorder_mt(double *re, double *im, size_t N, size_t K,
                                  const int *list, const int *cyc_off, int nunits,
                                  int is_pairs, double *tmp, int inv, int nthreads)
@@ -89,9 +85,7 @@ static void _natorder_reorder_mt(double *re, double *im, size_t N, size_t K,
     /* THE PLAN'S OWN SNAPSHOT IS THE CEILING. `tmp` was sized at create for
      * exactly `nthreads` per-worker slots (the plan's h->nthreads). The pool is
      * grow-only, so the live count can EXCEED that later, and every worker
-     * slices `tmp + slot*2*K` -- reading the live pool alone indexed past the
-     * buffer (natorder_scratch_gate: wrong output on one run, heap corruption
-     * at destroy on the next). The pool's one clamp takes the snapshot. */
+     * slices `tmp + slot*2*K`. The pool's one clamp takes the snapshot. */
     int T = stride_pool_workers_for(nthreads);
     if (T <= 1 || nunits < T || N * K < 8192)
     {
@@ -163,10 +157,10 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
         natorder_scr_fwd(s, ur, ui, K);
         return;
     }
-    /* phase 1: OOP scratch-fill, K-split (lanes). CEIL(K/T) then round to 8
-     * (floor dropped last K%T lanes when floor(K/T)%8==0). Slot 0 = the caller,
-     * on JIT like the workers (B6: a generic main slice straggled at the
-     * phase-1 barrier). stride_pool_run's wait IS the barrier. */
+    /* phase 1: OOP scratch-fill, K-split (lanes). CEIL(K/T) then round up to 8
+     * (a floor split drops the last K%T lanes when floor(K/T)%8==0). Slot 0 =
+     * the caller, on JIT like the workers (a generic main slice straggles at
+     * the phase-1 barrier). stride_pool_run's wait IS the barrier. */
     size_t Sv = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     _scr_modeb_arg a1[STRIDE_POOL_MAX_DISPATCH];
     int n1 = 0;

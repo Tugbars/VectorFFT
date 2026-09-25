@@ -1,9 +1,10 @@
 /* natorder_scatter.h — SCR (scatter terminator) mode for VFFT_ORDER_NATURAL (in-place 1D c2c).
  *
  * Fuses the digit-reversal into the FORWARD's last butterfly stage, so the permutation costs no
- * extra pass (nf passes total, vs PURE's nf+1). Design §2b/§4 + T6-T11 (wins the K=4 band, ~+16-27%
- * vs PURE's +45%). Footprint = OOP (a plan-owned N*K scratch plane pair) — pointer-in-place, not
- * memory-in-place (§1 ambiguity).
+ * extra pass (nf passes total, vs PURE's nf+1); docs/roadmap/natural_order_inplace_design.md §4.
+ * NOT raced by default (natorder_calibrate.h: it measured 2.76x slower than PURE at 4096/4); a
+ * banked SCR verdict still executes. Footprint = OOP (a plan-owned N*K scratch plane pair) —
+ * pointer-in-place, not memory-in-place.
  *
  * NAMING: "OOP scratch-fill" below = the stage-0-out-of-place-redirect execution technique in
  * oop_execute.h (`vfft_proto_execute_fwd_oop`: run stage 0 src->dst, stages 1.. in-place on dst).
@@ -13,11 +14,11 @@
  *
  * DATAFLOW (forward): OOP scratch-fill user->scratch (stage 0 redirect + stages 1..nf-2 in-place on
  * scratch, via execute_fwd_oop), then a TERMINATOR: for each group, pre-twiddle its R scratch legs by
- * the last stage's combined twiddle (leg0*=cf0, leg j*=tw_scalar[j-1] — twiddle.h:114-118) and run the
+ * the last stage's combined twiddle (leg0*=cf0, leg j*=tw_scalar[j-1] — twiddle.h) and run the
  * OOP-capable n1_fwd (plain radix-R DFT: n1(pretwiddled)==t1(raw)) with in_stride=last->stride,
  * OUT_STRIDE=P*K so leg j lands at natural row q+j*P. Groups iterated in q-ascending order (via the
  * reverse row-base map) => writes are R sequential streams (the j-outer pattern, 0.40x vs 0.10x
- * q-outer — natorder §2b). BACKWARD needs nothing here: a natural spectrum inverts identically for
+ * q-outer — design doc §2b). BACKWARD needs nothing here: a natural spectrum inverts identically for
  * every mode, so vfft.c uses the PURE cycle-inverse + DIF backward.
  *
  * Applicability (else build returns 0 -> caller keeps PURE, honorable): DIT only (the OOP scratch-fill
@@ -100,7 +101,7 @@ static inline void natorder_scr_free(natorder_scr_t *s); /* fwd decl (defined be
  * never LOG3), detects its orientation, and builds the scatter + its cycle tape (for the backward,
  * which runs cycle-inverse + this plan's DIF-backward). On success (1) the caller OWNS *out_plan
  * (the scatter's sub aliases it — keep alive), *out_scr, *out_cycles; on failure (0) all are freed
- * and the caller keeps PURE. Analogous to PSWAP's palindrome injection. natural_order §2e. */
+ * and the caller keeps PURE. Analogous to PSWAP's palindrome injection (design doc §2e). */
 static inline int natorder_scr_build_dit(int N, size_t K, const int *chain, int nf,
                                          const vfft_proto_registry_t *reg,
                                          natorder_scr_t *out_scr, stride_plan_t **out_plan,

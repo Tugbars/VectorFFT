@@ -1,8 +1,8 @@
 /**
  * fftnd_planner.h -- rank-general calibrator + wisdom-driven builder.
  *
- * Mirrors the fft2d_c2c_planner pattern, with the axis set the 4D design
- * doc specified:
+ * Mirrors the fft2d_c2c_planner pattern, with the axis set of
+ * docs/roadmap/fft4d_design.md:
  *
  *   1. INNER PLANS -- per axis m, the DP planner (dp_planner.h) solves
  *      (N[m], K[m]) at MEASURE effort; prime / non-smooth axes fall back

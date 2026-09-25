@@ -1,9 +1,9 @@
 /* natorder_perm.h — plan-time permutation machinery for VFFT_ORDER_NATURAL (in-place 1D c2c).
  *
  * The in-place forward emits bin n at row perm[n], where perm is the mixed-radix digit reversal
- * of the plan's factor chain. Probes proved the ORIENTATION (fwd- vs reversed-factor-order,
- * perm vs iperm) must be AUTO-DETECTED per plan, not assumed — the public path matched fwd-order
- * even on DIF-calibrated cells (natural_order_inplace_design.md §2b). Detection here is exact
+ * of the plan's factor chain. The ORIENTATION (fwd- vs reversed-factor-order, perm vs iperm) must
+ * be AUTO-DETECTED per plan, not assumed — the public path matched fwd-order even on
+ * DIF-calibrated cells (docs/roadmap/natural_order_inplace_design.md §2b). Detection here is exact
  * and cheap: FFT one impulse δ[n0] once at plan time; the true spectrum is the closed form
  * X[k] = e^{-2πi·k·n0/N}, so each candidate map M is checked as scrambled[M[k]] ≈ X[k] at a
  * handful of k — no naive DFT, no tolerance games (errs are ~1e-12 vs O(1) for wrong maps).

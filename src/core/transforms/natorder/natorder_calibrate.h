@@ -1,17 +1,17 @@
 /* natorder_calibrate.h — the ORDER_NATURAL per-cell verdict race: PURE (floor) vs injected-chain
- * PSWAP vs SCR scatter terminator. (LEAF-IP was prototyped and DITCHED — structurally dominated:
- * it can only win where nf==1 already routes to FREE; natural_order_inplace_design.md.)
+ * PSWAP vs SCR scatter terminator. (No LEAF-IP arm: it is structurally dominated — it can only
+ * win where nf==1 already routes to FREE.)
  *
  * Why injection: the DP/beam planner scores chains under scrambled/T1S economics, so palindromic
  * factorizations (whose digit reversal is an involution => cheapest possible reorder) are pruned
- * before natural-order costs exist. T6-T11 measured an injected 4·8·4 at 128/64 delivering natural
- * order BELOW the scrambled baseline. So the race builds its own candidates.
+ * before natural-order costs exist. An injected 4·8·4 at 128/64 measured natural order BELOW the
+ * scrambled baseline. So the race builds its own candidates.
  *
- * Methodology (T8-derived, create-time budget): warm-up, then ROUNDS interleaved across candidates
+ * Methodology (create-time budget): warm-up, then ROUNDS interleaved across candidates
  * (A,B,A,B,...) — the order-neutralization that matters most for thermal bias — averaged, 4 executes
  * per timed chunk (values grow ×N^4 max: no rescale needed for N ≤ 2^20). WIN-MARGIN: a challenger
- * must beat PURE by >5% (T8/T11: several cells are noise-tied; verdicts must not flap).
- * The caller stamps the verdict into wisdom v7. natural_order_inplace_design.md §2e. */
+ * must beat PURE by >5% (several cells are noise-tied; verdicts must not flap).
+ * The caller banks the verdict (the @nat row). docs/roadmap/natural_order_inplace_design.md §2e. */
 #ifndef VFFT_NATORDER_CALIBRATE_H
 #define VFFT_NATORDER_CALIBRATE_H
 
@@ -169,8 +169,9 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
     }
     /* inject the CALIBRATED chain (scr_chain=wfac) if it's a palindrome — its shape (e.g. a·b·b·a) may not
      * be one vfft_natorder_palindromes produces, so without this the opportunistic (calibrated-chain +
-     * pair) win is UNREACHABLE once vfft.c's has_leaf gate falls through to the race instead of short-
-     * circuiting. Its digit reversal is an involution => pair reorder. Dedup vs the generated set. */
+     * pair) win is UNREACHABLE once the in-place create's has_leaf gate (c2c_ip_create.h) falls through
+     * to the race instead of short-circuiting. Its digit reversal is an involution => pair reorder.
+     * Dedup vs the generated set. */
     if (nc < 5 && scr_nf >= 2 && scr_nf < STRIDE_MAX_STAGES) {
         int is_pal = 1;
         for (int s = 0; s < scr_nf; s++) if (scr_chain[s] != scr_chain[scr_nf - 1 - s]) { is_pal = 0; break; }
@@ -181,14 +182,11 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
         if (is_pal && !dup) { for (int s = 0; s < scr_nf; s++) chains[nc][s] = scr_chain[s]; nfs[nc] = scr_nf; nc++; }
     }
 
-    /* SCR candidate — DEACTIVATED from the wisdom-creation race by default. Paced/locked bench
-     * (2026-07-05, forced-mode @4096/4): SCR = 79.5us vs PURE 28.8us — 2.76x SLOWER,
-     * and 0.45x of the comparison baseline, because it must inject an uncalibrated forced-DIT
-     * uniform-T1S plan + double-footprint scratch-fill + 0.40x scattered stores. So SCR is not a
-     * plan-determining methodology. The SCR code is KEPT (scatter terminator + execute path + the
-     * create stored-verdict rebuild): a wisdom entry that ALREADY carries nat_mode=3 still executes
-     * SCR correctly (that path is independent of this race). -DVFFT_NATORDER_RACE_SCR re-enters SCR
-     * as a race candidate. natural_order_inplace_design.md. */
+    /* SCR candidate — NOT in the race by default. Paced/locked, forced-mode @4096/4: SCR = 79.5us vs
+     * PURE 28.8us — 2.76x SLOWER, because it must inject an uncalibrated forced-DIT uniform-T1S plan
+     * + double-footprint scratch-fill + 0.40x scattered stores. A wisdom entry that already carries
+     * nat_mode=3 still executes SCR correctly (the create's stored-verdict rebuild is independent of
+     * this race). -DVFFT_NATORDER_RACE_SCR re-enters SCR as a race candidate. */
     natorder_scr_t scr;
     memset(&scr, 0, sizeof scr);
     stride_plan_t *scr_plan = NULL;

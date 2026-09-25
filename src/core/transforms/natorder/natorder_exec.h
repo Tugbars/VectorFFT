@@ -1,15 +1,15 @@
 /* natorder_exec.h — execute-time reorder passes for VFFT_ORDER_NATURAL.
  *
- * Two mechanisms (the P1a set; SCRATCH terminator + LEAF-IP arrive in P1b):
+ * Two mechanisms (the SCR scatter terminator is natorder_scatter.h):
  *   cycle pass — walk the plan-time cycle list, moving K-double rows with AVX2 + software
- *                prefetch (the T7 "cycle-UB" kernel: measured ceiling for the PURE mechanism,
+ *                prefetch (the "cycle-UB" kernel: measured ceiling for the PURE mechanism,
  *                +16–28% at K≥32; interleaving/tiling/transpose-recursion all measured slower).
  *   pair pass  — involution swaps for PSWAP verdicts (injected palindromic chains).
  *
- * Rows are K doubles per split plane. Unlike the probes (K multiples of 4 only), these
- * carry a scalar tail so any K ≥ 1 is correct — including K=1..3 where rows are sub-vector.
- * ST only in P1a; MT splits by ROW RANGES (never K-split — thin sub-rows are the measured
- * catastrophic regime). natural_order_inplace_design.md §2e. */
+ * Rows are K doubles per split plane, with a scalar tail so any K ≥ 1 is correct — including
+ * K=1..3 where rows are sub-vector. MT (natorder_mt.h) splits by ROW RANGES (never K-split —
+ * thin sub-rows are the measured catastrophic regime).
+ * docs/roadmap/natural_order_inplace_design.md §2e. */
 #ifndef VFFT_NATORDER_EXEC_H
 #define VFFT_NATORDER_EXEC_H
 
@@ -99,17 +99,15 @@ static inline void vfft_natorder_cycle_pass_inv(double *re, double *im, size_t K
     }
 }
 
-/* NOTE on prefetch (dist=4, KEPT): measured net-favorable (T8-paced, natorder_pf_probe.c). At the
- * shipped distance the downside is noise-level (4096/32 +1.1%, 1024/32 −0.5%) while the upside is real
- * — 256/256 −3%, and 4096/4 −11.5% (thin 32B rows + working set spilling cache, where the OoO window
- * covers few rows so software prefetch of scattered lines genuinely hides latency). 4096/4 is a PURE↔
- * SCATTER tie cell PURE can win, and before SCATTER exists PURE serves every thin-row cell — so the
- * win ships. Small asymmetric bet, kept. (Addresses are list-known, so it's redundant where OoO
- * already covers it — hence neutral at fat rows — but never materially harmful.) */
+/* NOTE on prefetch (dist=4): measured net-favorable. At this distance the downside is noise-level
+ * (4096/32 +1.1%, 1024/32 −0.5%) while the upside is real — 256/256 −3%, and 4096/4 −11.5% (thin
+ * 32B rows + working set spilling cache, where the OoO window covers few rows so software prefetch
+ * of scattered lines genuinely hides latency). Addresses are list-known, so it is redundant where
+ * OoO already covers it — hence neutral at fat rows — but never materially harmful. */
 
 /* ── MT range kernels: process a disjoint CYCLE / PAIR range with full K-wide rows.
  * The reorder pass must split by ROW SETS, never by K (K-split makes 64B sub-rows — the
- * measured catastrophic regime, natural_order_inplace_design.md §2e integration note 2).
+ * measured catastrophic regime, design doc §2e).
  * off[c] = start index of cycle c in the flattened list; off has ncyc+1 entries. tmp is
  * this worker's OWN 2*K scratch. inv toggles the backward (opposite shift) direction. */
 static inline void vfft_natorder_cycle_range(double *re, double *im, size_t K,
