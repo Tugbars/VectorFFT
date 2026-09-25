@@ -1,0 +1,180 @@
+2026-09-25 21:18:48 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-25 21:18:48 run: 120 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-25 21:18:48 calibrate: 120 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-09-25 21:21:30   calibrated 25/120 (8x128x2048), 162 s elapsed
+2026-09-25 21:23:19   calibrated 50/120 (16x512x512), 271 s elapsed
+2026-09-25 21:24:31   calibrated 75/120 (32x4096x32), 343 s elapsed
+2026-09-25 21:25:57   calibrated 100/120 (128x32x16), 429 s elapsed
+2026-09-25 21:26:48   calibrated 120/120 (256x8x64), 480 s elapsed
+2026-09-25 21:26:48 bench: 120 cells (0 already benched, 0 not banked -> not benched)
+2026-09-25 21:28:17   benched 25/120 (8x128x2048), 86 s elapsed
+2026-09-25 21:29:31   benched 50/120 (16x512x512), 160 s elapsed
+2026-09-25 21:30:20   benched 75/120 (32x4096x32), 209 s elapsed
+2026-09-25 21:31:16   benched 100/120 (128x32x16), 265 s elapsed
+2026-09-25 21:31:52   benched 120/120 (256x8x64), 301 s elapsed
+# gauntlet report (3D)
+
+run: `3d_mt8_partial_2026-09-25`  contract: 3D c2c interleaved, natural, out of place, K=1_mt8  cells: 120 listed, 120 benched, comparator: MKL DFTI 3D (out of place)
+
+control cell 64x64x64: 6 readings, 1.094..1.377
+
+threaded plans that ran serial (engaged = 0 at both flips): 1: 2x2x2
+
+
+## every shape
+
+```
+       shape  N1 factors   route  served       ours ns     cmp ns       x   GFLOPS   rt err
+       2x2x2  2            chain  replayed          38         25    0.65      3.1  5.6e-17
+  2x128x8192  2            chain  raced        4795887    3863462    0.80     45.9  5.3e-15
+  2x256x4096  2            chain  raced        4624100    3900512    0.82     47.6  5.6e-15
+  2x512x4096  2            chain  raced       11022888    9932875    0.89     41.9  6.1e-15
+ 2x1024x2048  2            chain  raced       11403087   11160394    0.91     40.5  6.1e-15
+  2x8192x128  2            chain  raced        5296562    5530762    1.00     41.6  5.1e-15
+  2x8192x256  2            chain  raced       12145613   12428625    1.02     38.0  6.5e-15
+   4x64x8192  2^2          chain  raced        3141450    1886044    0.58     70.1  2.9e-15
+  4x128x4096  2^2          chain  raced        3499875    1950200    0.55     62.9  2.6e-15
+  4x128x8192  2^2          chain  raced        8959025    5739837    0.61     51.5  7.5e-15
+  4x256x2048  2^2          chain  raced        3223087    1977237    0.61     68.3  2.5e-15
+  4x256x4096  2^2          chain  raced        8929112    5567175    0.61     51.7  7.4e-15
+  4x512x1024  2^2          chain  raced        3256475    2161443    0.66     67.6  2.7e-15
+  4x512x2048  2^2          chain  raced        8268912    5903481    0.71     55.8  6.6e-15
+  4x1024x512  2^2          chain  raced        3148525    2391118    0.74     69.9  2.8e-15
+ 4x1024x1024  2^2          chain  raced        8377337    6650499    0.77     55.1  7.7e-15
+  4x2048x256  2^2          chain  raced        3256437    2472488    0.73     67.6  2.4e-15
+  4x4096x128  2^2          chain  raced        3601575    2696031    0.73     61.1  2.8e-15
+  4x4096x256  2^2          chain  raced        8375038    7210844    0.84     55.1  7.3e-15
+   4x8192x64  2^2          chain  raced        3819437    2773425    0.71     57.7  2.6e-15
+  4x8192x128  2^2          chain  raced        8874162    7749025    0.86     52.0  6.6e-15
+   8x32x8192  2^3          chain  raced        2558063    1171312    0.45     86.1  2.0e-15
+   8x64x4096  2^3          chain  raced        2546200    1124794    0.42     86.5  2.0e-15
+   8x64x8192  2^3          chain  raced        7194013    4215837    0.57     64.1  3.5e-15
+  8x128x2048  2^3          chain  raced        2783900    1239763    0.43     79.1  2.0e-15
+  8x128x4096  2^3          chain  raced        7945288    4663531    0.56     58.1  3.2e-15
+   8x256x512  2^3          chain  raced         562625     438525    0.76    186.4  1.3e-15
+  8x256x1024  2^3          chain  raced        2772125    1283643    0.44     79.4  2.1e-15
+  8x256x2048  2^3          chain  raced        7326613    4447719    0.59     63.0  3.5e-15
+   8x512x512  2^3          chain  raced        2751950    1415719    0.50     80.0  2.0e-15
+  8x512x1024  2^3          chain  raced        7230613    4951750    0.68     63.8  3.7e-15
+  8x1024x256  2^3          chain  raced        2702975    1470749    0.52     81.5  2.1e-15
+  8x1024x512  2^3          chain  raced        7227575    5028325    0.69     63.8  3.4e-15
+  8x2048x128  2^3          chain  raced        2805850    1603050    0.56     78.5  2.0e-15
+  8x2048x256  2^3          chain  raced        7591525    5152918    0.68     60.8  3.6e-15
+   8x4096x16  2^3          chain  raced         327012     242862    0.71    152.3  1.0e-15
+   8x4096x64  2^3          chain  raced        2843988    1604800    0.55     77.4  1.9e-15
+  8x4096x128  2^3          chain  raced        8305100    5410643    0.64     55.6  3.3e-15
+   8x8192x32  2^3          chain  raced        3310575    1747387    0.52     66.5  2.0e-15
+   8x8192x64  2^3          chain  raced        9302375    5761719    0.61     49.6  3.8e-15
+    16x16x32  2^4          chain  raced           4297       4169    0.81    123.9  3.9e-16
+   16x16x128  2^4          chain  raced          16185      14756    0.79    151.8  3.2e-16
+  16x32x8192  2^4          chain  raced        6897387    4184162    0.60     66.9  3.6e-15
+    16x64x32  2^4          chain  raced          15018      14681    0.79    163.6  3.9e-16
+  16x64x4096  2^4          chain  raced        6659788    4165100    0.62     69.3  3.4e-15
+ 16x128x1024  2^4          chain  raced        2094225    1414562    0.66    105.1  1.9e-15
+ 16x128x2048  2^4          chain  raced        6556887    4443806    0.67     70.4  3.5e-15
+  16x256x512  2^4          chain  raced        2078463    1550762    0.72    105.9  1.9e-15
+  16x512x256  2^4          chain  raced        2113750    1598806    0.75    104.2  1.7e-15
+  16x512x512  2^4          chain  raced        6316650    6015287    0.93     73.0  3.2e-15
+ 16x1024x128  2^4          chain  raced        2051325    1752456    0.83    107.3  1.7e-15
+   16x2048x2  2^4          chain  raced          27833      37810    1.34    188.4  4.2e-16
+   16x2048x4  2^4          chain  raced          53487      60806    1.09    208.3  3.9e-16
+  16x2048x64  2^4          chain  raced        2165312    1687956    0.75    101.7  1.5e-15
+  16x4096x32  2^4          chain  raced        2278912    1566325    0.68     96.6  1.7e-15
+   16x8192x2  2^4          chain  raced         107625     148181    1.25    219.2  4.7e-16
+  16x8192x16  2^4          chain  raced        2220600    1771913    0.79     99.2  1.7e-15
+  16x8192x32  2^4          chain  raced        7263513    6106581    0.84     63.5  3.4e-15
+    32x4x512  2^5          chain  raced          19233      39871    1.66    272.6  5.2e-16
+    32x16x16  2^5          chain  raced           3877       4931    1.23    137.4  2.9e-16
+    32x16x32  2^5          chain  raced           8403       7451    0.84    136.5  3.6e-16
+    32x16x64  2^5          chain  raced          14261      15237    0.92    172.3  3.6e-16
+    32x32x16  2^5          chain  raced           7446       9534    1.27    154.0  3.8e-16
+    32x32x32  2^5          chain  raced          15767      14148    0.86    155.9  3.5e-16
+    32x32x64  2^5          chain  raced          18600      21293    1.13    281.9  3.3e-16
+    32x64x16  2^5          chain  raced          14677      18119    1.08    167.4  3.8e-16
+    32x64x32  2^5          chain  raced          18963      20873    1.08    276.5  2.9e-16
+   32x128x16  2^5          chain  raced          23903      20915    0.87    219.3  4.3e-16
+ 32x128x1024  2^5          chain  raced        4501275    4706200    0.97    102.5  3.0e-15
+    32x512x4  2^5          chain  raced          23203      29070    1.22    226.0  3.9e-16
+    32x512x8  2^5          chain  raced          46280      55793    1.15    240.7  5.0e-16
+   32x2048x4  2^5          chain  raced          94637     125706    1.26    249.3  5.6e-16
+   32x4096x2  2^5          chain  raced          97075     153631    1.46    243.0  5.3e-16
+  32x4096x16  2^5          chain  raced        1763338    1382294    0.76    124.9  1.4e-15
+  32x4096x32  2^5          chain  raced        4831913    5301206    1.09     95.5  2.7e-15
+    64x16x32  2^6          chain  raced          13321      13137    0.92    184.5  3.3e-16
+     64x32x8  2^6          chain  raced           7852      11777    1.44    146.1  3.0e-16
+    64x32x16  2^6          chain  raced          13708      13753    0.98    179.3  3.5e-16
+    64x32x32  2^6          chain  raced          22147      21707    0.90    236.7  3.6e-16
+     64x64x8  2^6          chain  raced          13480      16626    1.21    182.3  3.5e-16
+    64x64x16  2^6          chain  raced          22417      22757    0.97    233.9  3.3e-16
+  64x128x512  2^6          chain  raced        4343462    4387056    0.99    106.2  2.8e-15
+  64x256x256  2^6          chain  raced        4316737    4468362    1.03    106.9  2.8e-15
+  64x512x128  2^6          chain  raced        4224762    4432144    1.04    109.2  2.9e-15
+  64x1024x64  2^6          chain  raced        4191250    4381319    1.03    110.1  2.8e-15
+  64x2048x32  2^6          chain  raced        4439025    4398825    0.98    103.9  3.0e-15
+   64x4096x4  2^6          chain  raced         374300     512250    1.35    280.1  1.3e-15
+  64x4096x16  2^6          chain  raced        4550200    4407775    0.96    101.4  2.9e-15
+    128x4x64  2^7          chain  raced          13134      29096    2.20    187.1  3.6e-16
+   128x4x128  2^7          chain  raced          24083      46960    1.83    217.7  3.8e-16
+    128x8x32  2^7          chain  raced          13066      18756    1.37    188.1  3.4e-16
+    128x8x64  2^7          chain  raced          21190      31428    1.44    247.4  3.9e-16
+   128x8x128  2^7          chain  raced          39693      54797    1.31    280.7  4.6e-16
+  128x8x4096  2^7          chain  raced        4249712    3657369    0.84    108.6  3.0e-15
+   128x16x16  2^7          chain  raced          13870      14607    1.03    177.2  3.7e-16
+   128x16x32  2^7          chain  raced          24143      23446    0.91    217.2  3.2e-16
+   128x16x64  2^7          chain  raced          42587      47333    1.07    261.6  3.5e-16
+ 128x16x2048  2^7          chain  raced        4250600    4040650    0.95    108.5  3.1e-15
+    128x32x8  2^7          chain  raced          13713      18580    1.31    179.2  3.9e-16
+   128x32x16  2^7          chain  raced          25533      25495    0.99    205.3  3.5e-16
+   128x32x32  2^7          chain  raced          42447      46850    1.07    262.5  3.3e-16
+   128x32x64  2^7          chain  raced          76425      96237    1.24    308.7  5.4e-16
+    128x64x4  2^7          chain  raced          13962      19031    1.33    176.0  3.8e-16
+    128x64x8  2^7          chain  raced          23630      29730    1.18    221.9  4.1e-16
+   128x64x16  2^7          chain  raced          43520      48466    1.09    256.0  3.8e-16
+   128x64x32  2^7          chain  raced          73663     100212    1.23    320.3  4.0e-16
+   128x128x2  2^7          chain  raced          13259      21466    1.60    185.4  4.6e-16
+   128x128x4  2^7          chain  raced          25567      32430    1.23    205.1  4.9e-16
+   128x128x8  2^7          chain  raced          52753      60196    1.09    211.2  4.2e-16
+  128x128x16  2^7          chain  raced          93538      97600    1.02    252.2  4.6e-16
+  128x128x64  2^7          chain  raced         374000     498993    1.33    280.4  1.0e-15
+   128x256x2  2^7          chain  raced          24560      37023    1.49    213.5  5.1e-16
+ 128x256x128  2^7          chain  raced        4573450    4331118    0.94    100.9  2.8e-15
+  128x2048x2  2^7          chain  raced         196412     321043    1.62    253.6  1.1e-15
+  128x2048x8  2^7          chain  raced        1287475    1416875    1.06    171.0  1.2e-15
+  128x4096x8  2^7          chain  raced        4748875    4254206    0.88     97.2  3.0e-15
+    256x4x32  2^8          chain  raced          14320      31716    1.96    171.6  3.5e-16
+    256x8x16  2^8          chain  raced          14884      23328    1.47    165.1  4.0e-16
+    256x8x32  2^8          chain  raced          24120      35848    1.48    217.4  4.2e-16
+    256x8x64  2^8          chain  raced          45413      63883    1.39    245.3  4.7e-16
+```
+
+
+## by route (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ chain                          120     44     72   0.58   0.91   1.44    0.91
+ ALL                            120     44     72   0.58   0.91   1.44    0.91
+```
+
+
+## by column class (N1) (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ pow2 column                    120     44     72   0.58   0.91   1.44    0.91
+ ALL                            120     44     72   0.58   0.91   1.44    0.91
+```
+
+
+## by size (points) (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ > 65536 points                  82     41     58   0.55   0.80   1.24    0.81
+ 4097..65536                     37      2     13   0.84   1.21   1.66    1.18
+ <= 256 points                    1      1      1   0.65   0.65   0.65    0.65
+ ALL                            120     44     72   0.58   0.91   1.44    0.91
+```
+
+
+worst 10: 8x64x4096 (chain 0.42), 8x128x2048 (chain 0.43), 8x256x1024 (chain 0.44), 8x32x8192 (chain 0.45), 8x512x512 (chain 0.50), 8x1024x256 (chain 0.52), 8x8192x32 (chain 0.52), 4x128x4096 (chain 0.55), 8x4096x64 (chain 0.55), 8x2048x128 (chain 0.56)
+best 5: 128x4x64 (chain 2.20), 256x4x32 (chain 1.96), 128x4x128 (chain 1.83), 32x4x512 (chain 1.66), 128x2048x2 (chain 1.62)
+
+2026-09-25 21:31:56 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_mt8_partial_2026-09-25\report_3d_mt8.md

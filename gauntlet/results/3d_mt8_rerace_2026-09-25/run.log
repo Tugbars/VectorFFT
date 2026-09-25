@@ -1,0 +1,49 @@
+2026-09-25 21:33:35 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-25 21:33:35 run: 534 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-25 21:33:35 calibrate: 534 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-09-25 21:35:44   calibrated 25/534 (4x4x4), 129 s elapsed
+2026-09-25 21:37:44   calibrated 50/534 (4x4096x256), 249 s elapsed
+2026-09-25 21:39:39   calibrated 75/534 (8x1024x512), 364 s elapsed
+2026-09-25 21:41:10   calibrated 100/534 (16x4x4096), 455 s elapsed
+2026-09-25 21:42:45   calibrated 125/534 (16x64x4), 550 s elapsed
+2026-09-25 21:43:58   calibrated 150/534 (16x512x2), 623 s elapsed
+2026-09-25 21:45:06   calibrated 175/534 (16x4096x32), 691 s elapsed
+2026-09-25 21:46:45   calibrated 200/534 (32x8x128), 790 s elapsed
+2026-09-25 21:48:18   calibrated 225/534 (32x64x2), 883 s elapsed
+2026-09-25 21:49:28   calibrated 250/534 (32x512x2), 953 s elapsed
+2026-09-25 21:50:37   calibrated 275/534 (32x8192x2), 1022 s elapsed
+2026-09-25 21:52:06   calibrated 300/534 (64x16x8), 1111 s elapsed
+2026-09-25 21:53:20   calibrated 325/534 (64x256x8), 1185 s elapsed
+2026-09-25 21:54:47   calibrated 350/534 (128x2x4096), 1272 s elapsed
+2026-09-25 21:56:26   calibrated 375/534 (128x16x32), 1370 s elapsed
+2026-09-25 21:57:40   calibrated 400/534 (128x128x32), 1445 s elapsed
+2026-09-25 21:58:56   calibrated 425/534 (128x2048x16), 1521 s elapsed
+2026-09-25 22:00:11   calibrated 450/534 (256x8x128), 1596 s elapsed
+2026-09-25 22:01:17   calibrated 475/534 (512x2x4096), 1662 s elapsed
+2026-09-25 22:02:32   calibrated 500/534 (512x128x64), 1737 s elapsed
+2026-09-25 22:03:41   calibrated 525/534 (4096x16x4), 1805 s elapsed
+2026-09-25 22:04:01   calibrated 534/534 (8192x32x4), 1826 s elapsed
+2026-09-25 22:04:01 bench: 534 cells (0 already benched, 0 not banked -> not benched)
+2026-09-25 22:05:15   benched 25/534 (4x4x4), 70 s elapsed
+2026-09-25 22:06:21   benched 50/534 (4x4096x256), 137 s elapsed
+2026-09-25 22:07:23   benched 75/534 (8x1024x512), 199 s elapsed
+2026-09-25 22:08:16   benched 100/534 (16x4x4096), 252 s elapsed
+2026-09-25 22:08:59   benched 125/534 (16x64x4), 295 s elapsed
+2026-09-25 22:09:48   benched 150/534 (16x512x2), 344 s elapsed
+2026-09-25 22:10:40   benched 175/534 (16x4096x32), 396 s elapsed
+2026-09-25 22:11:28   benched 200/534 (32x8x128), 444 s elapsed
+2026-09-25 22:12:09   benched 225/534 (32x64x2), 485 s elapsed
+2026-09-25 22:12:55   benched 250/534 (32x512x2), 531 s elapsed
+2026-09-25 22:13:44   benched 275/534 (32x8192x2), 580 s elapsed
+2026-09-25 22:14:30   benched 300/534 (64x16x8), 626 s elapsed
+2026-09-25 22:15:15   benched 325/534 (64x256x8), 671 s elapsed
+2026-09-25 22:16:10   benched 350/534 (128x2x4096), 726 s elapsed
+2026-09-25 22:16:56   benched 375/534 (128x16x32), 772 s elapsed
+2026-09-25 22:17:45   benched 400/534 (128x128x32), 821 s elapsed
+2026-09-25 22:18:37   benched 425/534 (128x2048x16), 873 s elapsed
+2026-09-25 22:19:22   benched 450/534 (256x8x128), 918 s elapsed
+2026-09-25 22:20:05   benched 475/534 (512x2x4096), 961 s elapsed
+2026-09-25 22:21:00   benched 500/534 (512x128x64), 1015 s elapsed
+2026-09-25 22:21:49   benched 525/534 (4096x16x4), 1065 s elapsed
+2026-09-25 22:22:05   benched 534/534 (8192x32x4), 1081 s elapsed
+2026-09-25 22:22:09 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_mt8_rerace_2026-09-25\report_3d_mt8.md
