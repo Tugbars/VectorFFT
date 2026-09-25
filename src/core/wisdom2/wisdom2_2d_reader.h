@@ -10,15 +10,13 @@
  *                                                  transform tag)
  *   legacy vfft_fft3d_wisdom_lookup(N1,N2,N3)   -> vw2_3d_lookup
  *
- * CANONICAL-KEY LAW (dissolves design Q1): the 2D/3D plans are
- * placement-blind (_build_2d takes no placement; one legacy row served ip
- * AND oop), and the real-2D branch ignores order. Wildcards are
- * migration-only, so FRESH banks stamp the canonical concrete axes —
- * place=oop always; ord=nat for the order-blind real families — and the
- * lookups request the same canonical key. One row per cell serves every
- * consumer (the wave-1 kind-3/kind-4 precedent); migrated place=* / ord=*
- * rows serve the canonical request through the wildcard tier and sunset
- * as cells re-race.
+ * CANONICAL-KEY LAW: the 2D/3D plans are placement-blind (_build_2d takes
+ * no placement; one legacy row served ip AND oop), and the real-2D branch
+ * ignores order. Wildcards are migration-only, so FRESH banks stamp the
+ * canonical concrete axes — place=oop always; ord=nat for the order-blind
+ * real families — and the lookups request the same canonical key. One row
+ * per cell serves every consumer; migrated place=* / ord=* rows serve the
+ * canonical request through the wildcard tier and sunset as cells re-race.
  *
  * ns law: metric=fwd1 units=ns = one call of the KEYED transform (a c2r
  * row's ns is a c2r call — the legacy same-column/different-meaning trap
@@ -108,15 +106,10 @@ static inline int vw2__2d_leg(const vw2_rec_t *r, const char *plan_f,
 
 /* canonical request key (see the header law)
  *
- * lay= (v1.2, 2026-08-25): 2D/3D have ONE engine — the split stride
- * machinery; the interleaved caller is a convert wrap (c2c) or a fused
- * output veneer (r2c/c2r z doors, 3D il_out) around the SAME plan, so
- * every verdict shipped today is the shared interior's recipe and the
- * WRITERS stamp VW2_LAY_ANY deliberately. REQUESTS carry the CALLER's
- * layout: when the native IL 2D engine lands (measurement-first
- * campaign), its racer banks lay=il cells through its own doors and they
- * serve via lookup phase 1 with zero schema work; the ANY rows remain
- * serving vintage for both callers. */
+ * lay= (v1.2): the CALLER's layout, on requests and fresh banks alike —
+ * the split rank>=2 plans bank lay=split, the native IL tier banks its own
+ * lay=il cells (below); pre-1.2 lay=ANY rows serve both layouts through
+ * vw2_lookup's fallback phase. */
 static inline void vw2__2d_key(vw2_key_t *k, int t, int rank,
                                int n0, int n1, int n2, int ord, uint8_t lay,
                                int nthreads)
@@ -440,9 +433,9 @@ static inline int vw2_3d_rec_from_entry(vw2_rec_t *r,
 
 /* ================================================================ BANK
  * Memory-only (process coherence); persistence is the caller's guarded
- * vw2_save (config.wisdom_write). fill_only mirrors the legacy nat
- * regime-separation overwrite=0: fill a cold cell, never clobber a warm
- * one (a natural create must not degrade calibrated scrambled wisdom). */
+ * vw2_save (config.wisdom_write). fill_only: fill a cold cell, never
+ * clobber a warm one (a natural create must not degrade calibrated
+ * scrambled wisdom). */
 
 static inline int vw2__2d_bank(vw2_store_t *st, vw2_rec_t *rec, int fill_only)
 {
@@ -509,22 +502,23 @@ static inline int vw2_3d_bank_entry(vw2_store_t *st,
     return vw2__2d_bank(st, &rec, 0);
 }
 
-/* ═══ native IL 2D c2c tier cells (lay=il — fft2d_il_c2c_design.md M3) ═══
+/* ═══ native IL 2D c2c tier cells (lay=il —
+ * docs/roadmap/fft2d_il_c2c_design.md) ═══
  * The tier's raced verdicts live in their OWN lay=il cells: key {t=c2c
- * rank=2 n=N1xN2 q=1 ord=scr pl=OOP lay=il}, payload chain= (dot-separated
- * radices, the COLUMN-pass factorization — measured ALIVE 2026-08-25:
- * 1.30x at 4096x64, 1.18x at 1024x1024 over the greedy default). ord=scr:
- * the multi-stage tier serves i digit-reversed, and the verdict is
- * order-independent (the chain feeds both directions). The lookup goes
- * through vw2_lookup, so a lay-less/split row can come back on the ANY
- * fallback phase — the chain-token check refuses it (split rows carry
+ * rank=2 n=N1xN2 q=1 ord pl=OOP lay=il}, payload chain= (dot-separated
+ * radices, the COLUMN-pass factorization — raced: 1.30x at 4096x64, 1.18x
+ * at 1024x1024 over a greedy largest-radix chain). ord = the cell's order
+ * class: scr and nat cells race and bank separately (a natural cell's
+ * chain is raced under the natural pass). The lookup goes through
+ * vw2_lookup, so a lay-less/split row can come back on the ANY fallback
+ * phase — the chain-token check refuses it (split rows carry
  * rowplan/colplan, never chain=). Old binaries: cells invisible + opaque
- * carry (v1.2 architecture, proven). */
-/* blu (E1.7, 2026-09-02): the N1-arm verdict — 0 = the odd chain won,
- * M > 0 = the column-axis Bluestein of length M won (chain= is then the
- * M chain that serves), absent = -1 = unraced. Same token on the real row. */
+ * carry (v1.2). */
+/* blu: the N1-arm verdict — 0 = the odd chain won, M > 0 = the
+ * column-axis Bluestein of length M won (chain= is then the M chain that
+ * serves), absent = -1 = unraced. Same token on the real row. */
 /* ═══ the COLUMN-AXIS ROW of an interleaved c2c plan, keyed by rank and
- * axis (2026-09-06, the rank-N IL tier). The 2D tier's row is rank 2, axis 0
+ * axis. The 2D tier's row is rank 2, axis 0
  * with the historical token names (chain= wl= tf= ro= cmt= cmtt= blu=
  * forms=); a rank-N plan keys rank 3 and names axis a >= 1's tokens with
  * the axis as a suffix (chain1= wl1= ...) on the SAME row, so one cell is
@@ -553,7 +547,7 @@ static inline void vw2__ilcol_key(const vw2_ilcol_key_t *ck, vw2_key_t *k)
 }
 
 /* one integer verdict on a column row, by base name (axis-suffixed like the
- * chain tokens): ABSENT = dflt. tpc= (the turned prime pass, 2026-09-24) is
+ * chain tokens): ABSENT = dflt. tpc= (the turned prime pass) is
  * the first; a later axis verdict that is not part of the chain bank rides
  * the same pair. The set refuses (-1) when the row does not exist. */
 static inline int vw2_ilcol_tok_geti(const vw2_store_t *s, const vw2_ilcol_key_t *ck,
@@ -585,9 +579,9 @@ static inline int vw2_ilcol_chain_lookup(const vw2_store_t *s, const vw2_ilcol_k
                                          int *wl, int *tf, int *ro,
                                          int *cmt, int *cmtt, int *blu)
 {
-    /* ord (2026-09-04): VW2_ORD_SCR = the scrambled-comb serving (the
-     * historical row); VW2_ORD_NAT = the M4-lite natural cell — its chain
-     * is raced under the natural pass and MUST NOT share the scr row. */
+    /* ord: VW2_ORD_SCR = the scrambled-comb serving; VW2_ORD_NAT = the
+     * natural cell — its chain is raced under the natural pass and MUST
+     * NOT share the scr row. */
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *cv;
@@ -650,10 +644,9 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
     /* the field-update path: a later axis always (its tokens live on the
      * row axis 0 wrote), and axis 0 itself when the row EXISTS and this
      * bank carries no measurement (ns <= 0: the N-arm verdict banked after
-     * the chain race, or after a replayed chain). Before 2026-09-06 that
-     * case built a fresh record and the measured row was kept, so the
-     * N-arm verdict never landed and re-raced on every create wherever no
-     * axis race re-banked it (the rank-3 tier's axis 0). */
+     * the chain race, or after a replayed chain) — a fresh measure-less
+     * record would be refused against the measured row (the metric law),
+     * and the N-arm verdict would never land. */
     {
         vw2_key_t k;
         char tb[16], vb[24];
@@ -702,7 +695,7 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
         snprintf(b, sizeof b, "%d", cmt);
         if (vw2_rec_set(r, 1, "cmt", b) != VW2_OK) goto tokfail;
     }
-    if (blu >= 0) {               /* the N1-arm verdict (E1.7) */
+    if (blu >= 0) {               /* the N1-arm verdict */
         snprintf(b, sizeof b, "%d", blu);
         if (vw2_rec_set(r, 1, "blu", b) != VW2_OK) goto tokfail;
     }
@@ -731,8 +724,8 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
 
 /* one integer token on the 2D il c2c chain row — the strip width (sw=, the
  * serial unbanded walk's tile) and the threaded arm's shape (mtarm=, msw=,
- * valid at cmtt's T): il2d_large_plane_design.md, 2026-09-15. Absent =
- * dflt; a set on a missing row is refused (the chain bank makes the row). */
+ * on the plan's own T row): il2d_large_plane_design.md. Absent = dflt; a
+ * set on a missing row is refused (the chain bank makes the row). */
 static inline int vw2_2d_il_tok_geti(const vw2_store_t *s, int N1, int N2, int ord, int T,
                                      const char *name, int dflt)
 {
@@ -758,24 +751,23 @@ static inline int vw2_2d_il_tok_seti(vw2_store_t *st, int N1, int N2, int ord, i
     return vw2_update_field(st, &k, name, vb) == VW2_OK ? 0 : -1;
 }
 
-/* ═══ native IL 2D REAL tier cells (lay=il ord=scr —
- * fft2d_real_il_design.md M3). Key {t=r2c rank=2 n=N1xN2 q=1 ord=scr
- * pl=OOP lay=il} — DIRECTION-SHARED: the c2r create reads the
- * r2c-keyed row (the pair law requires ONE chain for both directions;
- * the kind-5 zr_kv REAL-N-keyed precedent). The AXES are raced per
- * direction (r2c and c2r have different row kernels and a different
- * column pass), so the shared row carries ONE TOKEN SET PER DIRECTION
- * (2026-09-02, the 2D arm audit): r2c = rw wl cmt cmtt, c2r = rw_c2r
- * wl_c2r cmt_c2r cmtt_c2r. Before that the two directions overwrote
- * each other's tokens and c2r replayed r2c's verdicts. COLLISION-FREE with the
- * veneer's real cells: those key ord=nat (vw2_2d_r2c_lookup) and carry
- * rowplan/colplan, never chain= — the chain-token check also refuses
- * them on any fallback phase. Payload: chain= (the column-pass
- * factorization, deployed greedy until the M3 chain race) + rw= (the
- * ROW ROUTE verdict: 0 = the per-row TC door, W>0 = the ROWSPLIT band
- * width) + wl= (the banded column walk's band width in ROWS; 0 =
- * unbanded — rows sit OUTSIDE the walk per §2.5, tfuse structurally
- * absent for real). ABSENT axis -> -1 = unraced. */
+/* ═══ native IL 2D REAL tier cells (lay=il —
+ * docs/roadmap/fft2d_real_il_design.md). Key {t=r2c rank=2 n=N1xN2 q=1
+ * ord pl=OOP lay=il} — DIRECTION-SHARED: the c2r create reads the
+ * r2c-keyed row (the pair law requires ONE chain for both directions).
+ * The AXES are raced per direction (r2c and c2r have different row
+ * kernels and a different column pass), so the shared row carries ONE
+ * TOKEN SET PER DIRECTION — r2c = rw wl cmt cmtt, c2r = rw_c2r wl_c2r
+ * cmt_c2r cmtt_c2r — or the two directions would overwrite each other's
+ * tokens. COLLISION-FREE with the split tier's real cells
+ * (vw2_2d_r2c_lookup): the lay axis separates them, and their
+ * rowplan/colplan payload (never chain=) makes the chain-token check
+ * refuse a vintage lay=ANY row on the fallback phase. Payload: chain=
+ * (the raced column-pass factorization) + rw= (the ROW ROUTE verdict:
+ * 0 = the per-row TC door, W>0 = the ROWSPLIT band width) + wl= (the
+ * banded column walk's band width in ROWS; 0 = unbanded — rows sit
+ * OUTSIDE the walk per §2.5, tfuse structurally absent for real).
+ * ABSENT axis -> -1 = unraced. */
 /* the direction's token names on the shared real IL row */
 static inline const char *vw2__rl_tok(int is_c2r, int which)
 {
@@ -800,12 +792,9 @@ static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
     if (!cv) return 0;                       /* a veneer/ANY row: refuse */
     if (rw) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 0)); *rw = v ? atoi(v) : -1; }
     if (wl) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 1)); *wl = v ? atoi(v) : -1; }
-    /* cmt = the COLUMN-PASS MT verdict (1 = thread it, 0 = serial), and
-     * cmtt = the thread count it was RACED AT. A verdict raced at T=4
-     * must never serve a T=8 request, so the caller compares cmtt to its
-     * own pool and re-races on a mismatch (the nthreads key axis
-     * expressed as payload + validity, without disturbing the key
-     * format every reader/writer/gate shares). */
+    /* cmt = the COLUMN-PASS MT verdict (1 = thread it, 0 = serial) at the
+     * row's own thread count (the key's nthreads, v1.3); cmtt is read only
+     * from a pre-1.3 row that load did not split. */
     if (cmt) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 2)); *cmt = v ? atoi(v) : -1; }
     if (cmtt) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 3)); *cmtt = v ? atoi(v) : -1; }
     if (blu) { const char *v = vw2_rec_get(r, "blu"); *blu = v ? atoi(v) : -1; }  /* direction-shared */
@@ -885,7 +874,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
             return -1;
         }
     }
-    if (cmt >= 0 && cmtt > 0) {   /* the column-MT verdict + its T */
+    if (cmt >= 0 && cmtt > 0) {   /* the column-MT verdict; its T is the row's key (v1.3) */
         snprintf(b, sizeof b, "%d", cmt);
         if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 2), b) != VW2_OK) {
             vw2_rec_free(r);
@@ -893,7 +882,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
             return -1;
         }
     }
-    if (blu >= 0) {               /* the N1-arm verdict (E1.7), direction-shared */
+    if (blu >= 0) {               /* the N1-arm verdict, direction-shared */
         snprintf(b, sizeof b, "%d", blu);
         if (vw2_rec_set(r, 1, "blu", b) != VW2_OK) {
             vw2_rec_free(r);
@@ -909,17 +898,17 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     return vw2__2d_bank(st, r, 0);
 }
 
-/* E1.11 per-stage kernel FORMS (2026-09-02) on the IL chain rows - the c2c
- * chain row (t=c2c ord=scr lay=il) and the direction-shared real row
- * (t=r2c ord=scr lay=il): forms=<name>.<name>... one per chain stage
+/* per-stage kernel FORMS on the IL chain rows - the c2c chain row (t=c2c
+ * lay=il) and the direction-shared real row (t=r2c lay=il):
+ * forms=<name>.<name>... one per chain stage
  * ("-" = the stage's single form; r32 b48|b84, r64 b88|b416). Merged onto
  * the existing row (vw2_update_field) after the chain is banked; a row
  * without a chain carries no forms. */
-/* THE FORM TOKEN'S BASE NAME (2026-09-18): "forms" describes the row's own
- * chain=; "bluforms" describes the column-axis Bluestein's INNER chain at M,
- * which shares the row but not the chain. One row, two independent stage
- * lists, neither able to overwrite the other -- the alternative was a second
- * row keyed (M, N2), which is a row a user's own M x N2 cell owns (D1). */
+/* THE FORM TOKEN'S BASE NAME: "forms" describes the row's own chain=;
+ * "bluforms" describes the column-axis Bluestein's INNER chain at M, which
+ * shares the row but not the chain. One row, two independent stage lists,
+ * neither able to overwrite the other -- a second row keyed (M, N2) would
+ * be a row a user's own M x N2 cell owns. */
 static inline int vw2_ilcol_forms_lookup_base(vw2_store_t *s, const vw2_ilcol_key_t *ck,
                                               const char *base, char *out, size_t osz)
 {
@@ -953,7 +942,7 @@ static inline int vw2_ilcol_forms_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck
 {
     return vw2_ilcol_forms_bank_base(s, ck, "forms", forms);
 }
-/* THE ROW BEFORE ITS VERDICTS (2026-09-25). Every bank after the chain step
+/* THE ROW BEFORE ITS VERDICTS. Every bank after the chain step
  * is a field update on the axis-0 row (vw2_update_field), and only the chain
  * RACE writes that row: a pinned or a served chain never does. A tier that
  * banks a structure, width, form or forms verdict calls this first; it
@@ -967,7 +956,7 @@ static inline int vw2_ilcol_row_ensure(vw2_store_t *s, const vw2_ilcol_key_t *ck
     if (vw2_lookup(s, &k)) return 0;
     return vw2_ilcol_chain_bank(s, ck, Rs, nst, -1, -1, -1, -1, -1, -1, 0.0) == VW2_OK;
 }
-/* A FORMS VERDICT RACED BEFORE ITS ROW EXISTED (2026-09-25). The column
+/* A FORMS VERDICT RACED BEFORE ITS ROW EXISTED. The column
  * builder races the per-stage forms right after the chain step and banks
  * them there; with no row yet that bank fails and the verdict lives only in
  * the builder's out-buffer. The create re-banks it here once the row is
@@ -1020,9 +1009,9 @@ static inline int vw2_ilnd_arm_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck, i
 {
     return vw2_ilnd_int_bank(s, ck, "s", arm);
 }
-/* cmts= : the STRUCTURE the MT verdict (cmt= at cmtt=) runs with — raced
- * jointly with the partition arm at the plan's T (2026-09-07); it may
- * differ from s=, the one-thread verdict, and serves only with cmt/cmtt */
+/* cmts= : the STRUCTURE the MT verdict (cmt=) runs with — raced jointly
+ * with the partition arm at the plan's T; it may differ from s=, the
+ * one-thread verdict, and serves only with cmt */
 static inline int vw2_ilnd_mts_lookup(const vw2_store_t *s, const vw2_ilcol_key_t *ck)
 {
     return vw2_ilnd_int_lookup(s, ck, "cmts");

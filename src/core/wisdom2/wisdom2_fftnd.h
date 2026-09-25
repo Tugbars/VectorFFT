@@ -1,20 +1,18 @@
 /* wisdom2_fftnd.h — the rank>=2 (2D/3D) transform-recipe home: entry
  * structs, recipe->plan builders, the 3D scratch table, and the LEGACY
- * file machinery — consolidated here at the owner's folder-structure
- * directive (2026-08-20) from transforms/fft2d/fft2d_c2c_wisdom.h,
- * fft2d_r2c_wisdom.h, and transforms/fft3d/fft3d_wisdom.h (deleted).
- * (Named wisdom2_fftnd.h, not fftnd_wisdom.h: transforms/fftnd owns a
- * live same-named header — the ND module's own file, wave-2 scope.)
+ * file machinery. (Named wisdom2_fftnd.h, not fftnd_wisdom.h:
+ * transforms/fftnd owns a same-named header.)
  *
  * LIFETIME TIERS inside this file:
  *   PERMANENT — entry structs, plan_from_entry builders, the 3D scratch
  *     table + extract + create (the live wisdom2 serving path: the vw2
  *     twins in wisdom2_2d_reader.h fill the structs, these build plans).
- *   LEGACY (bake-window) — the fft2d file loaders, table lookups, frees,
- *     and plan_create_wisdom creators: alive only while the
- *     VFFT_WISDOM2_OFF=2d kill switch exists; they die in one commit at
- *     the 2D bake close, then the loaders survive migrator-only until
- *     v1.0. The three legacy files are FROZEN (stamped 2026-08-20).
+ *   LEGACY — the fft2d file loaders, table lookups, frees, and
+ *     plan_create_wisdom creators. The VFFT_WISDOM2_OFF kill switch that
+ *     routed reads to them is retired (vfft.c), so the loaders serve the
+ *     migrator (wisdom2_migrate.h) and the lookups and creators are
+ *     reached only from the retired switch's branches. The legacy files
+ *     are FROZEN.
  */
 #ifndef VFFT_WISDOM2_FFTND_H
 #define VFFT_WISDOM2_FFTND_H
@@ -29,11 +27,10 @@
  * LEGACY, see tier banner above)
  * ══════════════════════════════════════════════════════════════════════ */
 /**
- * fft2d_c2c_wisdom.h -- dedicated 2D C2C wisdom (separate namespace).
- *
- * Mirror of fft2d_r2c_wisdom.h for the complex 2D transform (fft2d.h). Same
- * rationale: 2D plans are found by a dedicated 2D planner that MEASURES the
- * end-to-end 2D transform, NOT derived from 1D c2c wisdom (different memory
+ * 2D C2C wisdom (its own namespace), for the complex 2D transform
+ * (fft2d.h). As for 2D R2C (section 2): 2D plans are found by a dedicated
+ * 2D planner that MEASURES the end-to-end 2D transform, NOT derived from
+ * 1D c2c wisdom (different memory
  * regime — tiled row pass + strided column pass). One entry per (N1,N2), each
  * storing BOTH inner sub-plans:
  *   - row c2c : N = N2, K = B
@@ -65,8 +62,8 @@ typedef struct {
  * factorization — the one minimizing the NATURAL total (FFT + dim1/dim2 reorder), which may differ from
  * the scrambled winner (e.g. a palindromic col chain with a cheaper pair reorder). Keyed (N1,N2) in a
  * SEPARATE table, loaded from the SAME file via @nat2d lines (invisible to @/#-skipping external readers).
- * The 2D natural create reads ONLY this — the scrambled cal_ns<fb gate no longer governs its banking.
- * Design pivot 2026-07-06: scrambled and natural are different objectives + memory regimes. */
+ * The 2D natural create reads ONLY this — the scrambled cal_ns<fb gate does not govern its banking:
+ * scrambled and natural are different objectives + memory regimes. */
 typedef struct {
     int    N1, N2, nat_B;
     int    row_nf;
@@ -179,11 +176,9 @@ vfft_fft2d_c2c_wisdom_lookup(const vfft_fft2d_c2c_wisdom_t *w, int N1, int N2)
     return NULL;
 }
 
-/* vfft_fft2d_c2c_wisdom_add / _wisdom_save: DELETED at the wisdom2 wave-3
- * close (2026-08-20). fft2d_c2c_wisdom.txt is FROZEN — banks go through
+/* No add/save: fft2d_c2c_wisdom.txt is FROZEN — banks go through
  * vw2_2d_c2c_bank_entry/_bank_nat into the wisdom2 store (the ONE family
- * codec, wisdom2_2d_reader.h); this loader survives for the kill-switch
- * bake window, then migrator-only until v1.0. */
+ * codec, wisdom2_2d_reader.h); the loader above serves the migrator. */
 
 /* ── Natural table (order=VFFT_ORDER_NATURAL) lookup/upsert — keyed (N1,N2) on the SEPARATE nat table. ── */
 static inline const vfft_fft2d_c2c_nat_entry_t *
@@ -195,8 +190,7 @@ vfft_fft2d_c2c_nat_lookup(const vfft_fft2d_c2c_wisdom_t *w, int N1, int N2)
     return NULL;
 }
 
-/* vfft_fft2d_c2c_nat_add: DELETED at the wisdom2 wave-3 close (2026-08-20)
- * — natural verdicts bank via vw2_2d_c2c_bank_nat. */
+/* (natural verdicts bank via vw2_2d_c2c_bank_nat) */
 
 static inline void vfft_fft2d_c2c_wisdom_free(vfft_fft2d_c2c_wisdom_t *w)
 {
@@ -205,9 +199,9 @@ static inline void vfft_fft2d_c2c_wisdom_free(vfft_fft2d_c2c_wisdom_t *w)
     memset(w, 0, sizeof(*w));
 }
 
-/* Build straight from ONE entry (the shared body of both creators; also
- * the wisdom2 flip's constructor — the vw2 twins fill entries, this turns
- * them into plans). NULL on any build failure; the caller owns fallback. */
+/* Build straight from ONE entry (the shared body of both creators and the
+ * wisdom2 path's constructor — the vw2 twins fill entries, this turns them
+ * into plans). NULL on any build failure; the caller owns fallback. */
 static inline stride_plan_t *vfft_fft2d_c2c_plan_from_fields(
     int N1, int N2, int B,
     const int *rf, const int *rv, int rnf, int rdif,
@@ -287,7 +281,7 @@ static inline stride_plan_t *vfft_fft2d_c2c_plan_create_wisdom_natural(
  * is the wisdom2 t= key)
  * ══════════════════════════════════════════════════════════════════════ */
 /**
- * fft2d_r2c_wisdom.h -- dedicated 2D R2C wisdom (separate namespace from 1D c2c).
+ * 2D R2C wisdom (its own namespace, separate from 1D c2c).
  *
  * WHY ITS OWN WISDOM: the inner FFTs in a 2D r2c run in a different memory
  * regime than a standalone 1D batch (row pass = tile-local L1-resident with a
@@ -301,8 +295,7 @@ static inline stride_plan_t *vfft_fft2d_c2c_plan_create_wisdom_natural(
  *   - col c2c         : N = N1,   K = K_pad
  * with each sub-plan's factors + per-stage variants + DIT/DIF orientation.
  *
- * Mirrors wisdom_reader.h (load/lookup/add(overwrite)/save/free) but with the
- * 2D key + two-subplan schema. v1 text format, one entry per line.
+ * The legacy file: v1 text format, one entry per line.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -398,11 +391,9 @@ vfft_fft2d_r2c_wisdom_lookup(const vfft_fft2d_r2c_wisdom_t *w, int N1, int N2)
     return NULL;
 }
 
-/* vfft_fft2d_r2c_wisdom_add / _wisdom_save: DELETED at the wisdom2 wave-3
- * close (2026-08-20). Both fft2d real files are FROZEN — banks go through
+/* No add/save: both fft2d real files are FROZEN — banks go through
  * vw2_2d_r2c_bank_entry (direction = the t= key, wisdom2_2d_reader.h);
- * this loader survives for the kill-switch bake window, then
- * migrator-only until v1.0. */
+ * the loader above serves the migrator. */
 
 static inline void vfft_fft2d_r2c_wisdom_free(vfft_fft2d_r2c_wisdom_t *w)
 {
@@ -410,15 +401,9 @@ static inline void vfft_fft2d_r2c_wisdom_free(vfft_fft2d_r2c_wisdom_t *w)
     memset(w, 0, sizeof(*w));
 }
 
-/* ── wisdom-aware create ────────────────────────────────────────────────────
- * Build a 2D r2c plan for (N1,N2). If 2D wisdom has the cell, build both inner
- * plans from the stored factors+variants+orientation (the calibrated choice);
- * otherwise fall back to the greedy auto_plan path (current default behavior —
- * estimate-mode is experimental/unwired, so the fallback is plain greedy).
- * Returns NULL only if even the fallback can't build. */
-/* Build straight from ONE entry (the creator's body; also the wisdom2
- * flip's constructor — the vw2 twin fills an entry, this turns it into a
- * plan). NULL on invalid knobs or any build failure; caller owns fallback. */
+/* Build straight from ONE entry (the creator's body and the wisdom2 path's
+ * constructor — the vw2 twin fills an entry, this turns it into a plan).
+ * NULL on invalid knobs or any build failure; caller owns fallback. */
 static inline stride_plan_t *vfft_fft2d_r2c_plan_from_entry(
     const vfft_fft2d_r2c_wisdom_entry_t *e, const vfft_proto_registry_t *reg)
 {
@@ -453,13 +438,18 @@ static inline stride_plan_t *vfft_fft2d_r2c_plan_from_entry(
     return NULL;
 }
 
+/* ── wisdom-aware create ────────────────────────────────────────────────────
+ * Build a 2D r2c plan for (N1,N2). If 2D wisdom has the cell, build both inner
+ * plans from the stored factors+variants+orientation (the calibrated choice);
+ * otherwise fall back to the greedy auto_plan path. Returns NULL only if even
+ * the fallback can't build. */
 static inline stride_plan_t *vfft_fft2d_r2c_plan_create_wisdom(
     int N1, int N2, const vfft_fft2d_r2c_wisdom_t *w,
     const vfft_proto_registry_t *reg)
 {
     size_t       B     = 8; if (B > (size_t)N1) B = (size_t)N1;
     const size_t hp1   = (size_t)(N2 / 2 + 1);
-    size_t       K_pad = ((hp1 + 7) / 8) * 8;  /* §6a54: pad-to-8 — avx512 col pass full-width, no anyk tail (tail_handling doctrine) */
+    size_t       K_pad = ((hp1 + 7) / 8) * 8;  /* pad to 8: the avx512 col pass runs full-width, no any-K tail */
 
     const vfft_fft2d_r2c_wisdom_entry_t *e = vfft_fft2d_r2c_wisdom_lookup(w, N1, N2);
     if (e) {
@@ -486,24 +476,23 @@ static inline stride_plan_t *vfft_fft2d_r2c_plan_create_wisdom(
  * ever existed; the table is the in-process extraction scratch)
  * ══════════════════════════════════════════════════════════════════════ */
 /**
- * fft3d_wisdom.h — dedicated 3D C2C wisdom (separate namespace).
- *
- * Mirror of fft2d_c2c_wisdom.h for the 3D transform (fft3d.h), fulfilling that
- * header's own request: "the vfft wisdom path should use stride_plan_3d_from
- * with calibrated inners". One entry per (N1,N2,N3) storing B + a_block + all
- * THREE inner sub-plans (factors, per-stage variants, DIT/DIF orientation):
+ * 3D C2C wisdom (its own namespace), for the 3D transform (fft3d.h): the
+ * wisdom path builds stride_plan_3d_from with calibrated inners. One entry
+ * per (N1,N2,N3) storing B + a_block + all THREE inner sub-plans (factors,
+ * per-stage variants, DIT/DIF orientation):
  *   - axis0 c2c : N = N1, K = N2*N3
  *   - axis1 c2c : N = N2, K = N3
  *   - row   c2c : N = N3, K = B
  *
- * v1 banking: entries are extracted from the plans the exhaustive-at-create
- * builder produced (vfft.c _build_3d), so a cell pays the slow per-axis search
- * once and re-creates via stride_plan_3d_from thereafter. Variant extraction
- * reads stage flags (use_log3 -> LOG3, t1s_fwd -> T1S, else FLAT); the BUF
+ * Banking: entries are extracted from the plans the exhaustive-at-create
+ * builder produced (vfft_fft3d_plan_create_wisdom below, the dims=3 create
+ * in fftnd_create.h), so a cell pays the slow per-axis search once and
+ * re-creates via stride_plan_3d_from thereafter. Variant extraction reads
+ * stage flags (use_log3 -> LOG3, t1s_fwd -> T1S, else FLAT); the BUF
  * variant is not round-tripped (banked as FLAT — correctness-identical,
- * calibration may differ). best_ns is 0 for extraction-banked entries; a
- * dedicated end-to-end 3D (B, a_block) sweep is the 2D-planner-style
- * follow-up. Override (prime-axis Rader/Bluestein) plans are never banked —
+ * calibration may differ). best_ns is 0 for extraction-banked entries (no
+ * end-to-end 3D (B, a_block) sweep exists). Override (prime-axis
+ * Rader/Bluestein) plans are never banked —
  * their chains aren't expressible as factor lists; creates still succeed via
  * the greedy path.
  */
@@ -560,11 +549,10 @@ static inline void vfft_fft3d_wisdom_free(vfft_fft3d_wisdom_t *w)
     memset(w, 0, sizeof(*w));
 }
 
-/* vfft_fft3d_wisdom_save / _wisdom_load: DELETED at the wisdom2 wave-3
- * close (2026-08-20). The legacy 3D grammar NEVER materialized on disk —
- * 3D is born in wisdom2 (wisdom2_3d.txt via vw2_3d_bank_entry). This
- * table survives only as the in-process scratch the greedy creator's
- * extraction lands in before the harvest (vfft.c dims=3). */
+/* No save/load: 3D wisdom lives only in wisdom2 (wisdom2_3d.txt via
+ * vw2_3d_bank_entry). This table is the in-process scratch the greedy
+ * creator's extraction lands in before the harvest (the dims=3 create,
+ * fftnd_create.h). */
 
 /* Extract a bankable record from a built (non-override) stride plan. Returns
  * 0 on success, -1 for override/oversized chains (caller skips banking). */
@@ -582,11 +570,8 @@ static inline int _vfft_fft3d_extract(const stride_plan_t *p,
     return 0;
 }
 
-/* Wisdom-aware create. HIT -> create_ex x3 + stride_plan_3d_from (fast, the
- * fft3d.h-requested path). MISS -> replicate the greedy per-axis exhaustive
- * search with the inners VISIBLE, bank what is expressible, then _from. */
-/* Build straight from ONE entry (the creator's body; also the wisdom2
- * flip's constructor). NULL on invalid/incompatible entry or build fail. */
+/* Build straight from ONE entry (the creator's body and the wisdom2 path's
+ * constructor). NULL on invalid/incompatible entry or build fail. */
 static inline stride_plan_t *vfft_fft3d_plan_from_entry(
     const vfft_fft3d_wisdom_entry_t *e, const vfft_proto_registry_t *reg)
 {
@@ -618,17 +603,21 @@ static inline stride_plan_t *vfft_fft3d_plan_from_entry(
     return NULL;
 }
 
+/* Wisdom-aware create. HIT -> create_ex x3 + stride_plan_3d_from (fast).
+ * MISS -> replicate the greedy per-axis exhaustive search with the inners
+ * VISIBLE, bank what is expressible, then _from. */
 static inline stride_plan_t *vfft_fft3d_plan_create_wisdom(
     int N1, int N2, int N3, vfft_fft3d_wisdom_t *w,
     const vfft_proto_registry_t *reg, int *banked, int recalib)
 {
     if (banked) *banked = 0;
-    /* recalib = the caller's cfg->recalibrate (2026-09-16). This table is the
-     * SECOND replay on the rank-3 path -- the store row is the first, at
-     * fftnd_create.h -- and honoring the flag at only one of them leaves the
-     * other serving the stale plan. The greedy path below re-derives and
-     * vfft_fft3d_wisdom_put REPLACES on (N1,N2,N3), so the flag re-derives
-     * AND overwrites, which is what include/vfft.h:325 promises. */
+    /* recalib = the caller's cfg->recalibrate. This table is the SECOND
+     * replay on the rank-3 path -- the store row is the first, at
+     * fftnd_create.h -- and honoring the flag at only one of them would
+     * leave the other serving the stale plan. The greedy path below
+     * re-derives and vfft_fft3d_wisdom_put REPLACES on (N1,N2,N3), so the
+     * flag re-derives AND overwrites, as include/vfft.h promises for
+     * recalibrate. */
     if (!recalib) {
         const vfft_fft3d_wisdom_entry_t *e = vfft_fft3d_wisdom_lookup(w, N1, N2, N3);
         if (e) {
