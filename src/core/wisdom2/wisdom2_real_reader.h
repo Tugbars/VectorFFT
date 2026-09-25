@@ -112,7 +112,7 @@ static inline void vw2__real_key(vw2_key_t *k, int t, int N, size_t K, int ord, 
 /* lay (v1.2): route verdicts are timed under the CALLER's execution door
  * (split planes vs the z door), so each layout owns its own cell. Two
  * TIERS — the caller's lay cell first, pre-1.2 lay-less vintage second —
- * never one mixed first-match scan (the bwd-reader shadowing lesson: a
+ * never one mixed first-match scan (as in the kind-3 backward reader: a
  * stale legacy row must not outrank a freshly re-raced per-layout cell). */
 static inline int vw2_real_route_lookup(const vw2_store_t *s, int t,
                                         int N, size_t K, int pl, uint8_t lay)
@@ -143,8 +143,8 @@ static inline int vw2_real_route_lookup(const vw2_store_t *s, int t,
     return route;
 }
 
-/* 1 when the problem cell is already owned by a different engine (today:
- * zr2c). Such a cell is decided above this race and must not be overwritten. */
+/* 1 when the problem cell is already owned by a different engine (zr2c).
+ * Such a cell is decided above this race and must not be overwritten. */
 static inline int vw2_real_cell_taken(const vw2_store_t *s, int t,
                                       int N, size_t K, int pl)
 {
@@ -212,12 +212,12 @@ static inline int vw2_real_route_bank(vw2_store_t *st, int t, int N, size_t K,
     vw2_rec_t rec;
     const char *why = NULL;
     int rc;
-    /* 🔴 STRUCTURAL: no q=1 route verdict can exist — the route race is a
-     * lane-batch race and the split engine's executed batch is never 1
-     * (owner law 2026-08-24). The race window upstream already excludes
-     * K=1; this guard is the write-side backstop, and it is LOUD on
-     * purpose — a silent decline is indistinguishable from a bank (the
-     * zr2c lesson), which is how verdicts vanish invisibly. */
+    /* STRUCTURAL: no q=1 route verdict can exist — the route race is a
+     * lane-batch race and the split engine's executed batch is never 1.
+     * The race window upstream excludes K=1; this guard is the write-side
+     * backstop, and it is LOUD on purpose — a silent decline is
+     * indistinguishable from a bank, which is how verdicts vanish
+     * invisibly. */
     if (K <= 1) {
         fprintf(stderr, "[wisdom2] route bank refused: q=1 real cells belong "
                         "to the interleaved zr2c verdicts (split has no K=1 "
@@ -235,10 +235,10 @@ static inline int vw2_real_route_bank(vw2_store_t *st, int t, int N, size_t K,
     return rc;
 }
 
-/* ── the ODD-REAL route verdict (R1.4/R1.5, banked 2026-09-02) ────────────
+/* ── the ODD-REAL route verdict ───────────────────────────────────────────
  * K=1 OOP IL r2c at odd N races its rfft handle against the c2c bridge and
- * used to forget the answer at destroy. The q=1 real key belongs to the
- * zr2c verdicts, so this is a COMPONENT row beside them:
+ * banks the answer here. The q=1 real key belongs to the zr2c verdicts, so
+ * this is a COMPONENT row beside them:
  * t=r2c n=N q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=rfft|bridge.
  * 0 = no verdict, 1 = rfft, 2 = bridge. */
 static inline void vw2__oddr_key(int N, vw2_key_t *k)

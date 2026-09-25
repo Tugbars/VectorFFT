@@ -14,13 +14,13 @@
  * rfft rows are t=r2c (the router puts them in the REAL shard — the key
  * decides the shard, never the file).
  *
- * SIGNPOST law (owner #7, scoped 2026-09-02): a mode=zcasc row (every
- * place=ip one, and the dummy-chain @natoop placeholder) carries
- * `ref=cell(t=c2c,n=N,q=1,ord=scr,place=oop[,role=comp])` — the kind-4
- * RECIPE: chain + terminator pick + tcut width + L1 fence — never a chain
- * of its own; the READ twin reconstructs the dummy deterministically when
- * filling the legacy struct. mode=ilp rows carry neither (self-contained).
- * Real chains (mode=conv and the tape modes) migrate/bank VERBATIM.
+ * SIGNPOST law: a row signposts its recipe (ref=), never copies it. A
+ * mode=zcasc row (vintage: the cascade engine is deleted) carries
+ * `ref=cell(t=c2c,n=N,q=1,ord=scr,place=oop[,role=comp])` — the cascade's
+ * kind-4 RECIPE — never a chain of its own; the READ twin reconstructs the
+ * dummy deterministically when filling the legacy struct. mode=ilp rows
+ * signpost the K=1 engine's row (ref_ilp) or are self-contained. Real
+ * chains (mode=conv and the tape modes) migrate/bank VERBATIM.
  *
  * pad_me (legacy exec_me): emitted only when nonzero — absent =
  * not measured, exactly the legacy trailing-field law.
@@ -119,7 +119,7 @@ static inline void vw2__stride_key(vw2_key_t *k, int t, int N, size_t K,
 
 /* ================================================================ READ */
 
-/* TRIG HELPER CELLS (owner override 2026-08-19): a trig transform's inner
+/* TRIG HELPER CELLS: a trig transform's inner
  * complex FFT is keyed under its OWNING transform, not as a plain c2c —
  * a DCT-I of N drives an inner c2c of N-1, which would otherwise collide
  * with a genuine c2c request at N-1. The record's n= is the OUTER size;
@@ -187,8 +187,8 @@ static inline int vw2_stride_lookup(const vw2_store_t *s, int is_rfft,
 /* natural row (@nat: place=ip; @natoop: place=oop). Shared body.
  * lay (v1.2): the CALLER's layout. The mode payload is layout-gated
  * (ZCASC/ILP are interleaved-only candidates), so each layout owns its own
- * cell — the pre-1.2 shared cell made alternating-layout callers re-race
- * and erase each other's verdict on every flip (the @nat ping-pong).
+ * cell — a shared cell makes alternating-layout callers re-race and erase
+ * each other's verdict on every flip (the @nat ping-pong).
  * vw2_lookup's two-phase resolution serves the caller's lay cell first and
  * falls back to the pre-1.2 lay-less row; VW2_LAY_ANY requests (the
  * migrate gate) match exactly the lay-less rows, byte-for-byte pre-1.2. */
@@ -203,9 +203,9 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
     k.lay = lay;
     r = vw2_lookup(s, &k);
     if (!r) return 0;
-    {   /* family gate: eng names the winner since 2026-09-02 (zturn = the
-         * cascade, k1 = the IL engines); eng=stride = a tape verdict OR a
-         * pre-change vintage row — both decode identically here. */
+    {   /* family gate: eng names the winner (zturn = the cascade, vintage;
+         * k1 = the IL engines); eng=stride = a tape verdict OR a vintage
+         * row — both decode identically here. */
         const char *eng = vw2_rec_get(r, "eng");
         if (!eng || (strcmp(eng, "stride") && strcmp(eng, "zturn") &&
                      strcmp(eng, "k1")))
@@ -232,7 +232,7 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
     } else if (ord == VW2_ORD_SCR || e->mode != VFFT_NAT_ZCASC) {
         /* BARE mode row: a self-contained verdict — the ord=scr prime/
          * no-chain cells, and every non-cascade @nat mode (ilp rebuilds
-         * from N alone; 2026-09-02). A @nat CASCADE row stays strict
+         * from N alone). A @nat CASCADE row stays strict
          * below: it needs its chain or its signpost. */
         e->nf = 1;
         e->factors[0] = N;
@@ -265,8 +265,8 @@ static inline int vw2_stride_lookup_natoop(const vw2_store_t *s, uint8_t lay,
                                    e);
 }
 
-/* the SCRAMBLED in-place mode cell — the ord=scr twin of @nat (2026-08-25,
- * the ILP-attach fix): a DEFAULT-order in-place IL create races ILP vs
+/* the SCRAMBLED in-place mode cell — the ord=scr twin of @nat: a
+ * DEFAULT-order in-place IL create races ILP vs
  * ITS OWN convert incumbent and banks here (mode=ilp | mode=conv, the
  * banked loss). Its OWN key (ord differs from @nat) because the race
  * incumbents differ by order — verdicts CAN diverge. */
@@ -278,11 +278,10 @@ static inline int vw2_stride_lookup_scrmode(const vw2_store_t *s,
                                    e);
 }
 
-/* the OOP twin of the scrambled mode cell (2026-09-03): a DEFAULT-order
- * out-of-place IL create races ITS OWN K=1 engine against the scrambled
- * cascade and banks here (mode=zcasc | mode=free, the banked loss). Its own
- * key (place differs from @scrmode, ord differs from @natoop) because the
- * incumbents differ: the pair beats the cascade at 2048 and loses at 4096. */
+/* the OOP twin of the scrambled mode cell (mode=zcasc | mode=free, its own
+ * key: place differs from @scrmode, ord differs from @natoop). Its race was
+ * the K=1 engine against the scrambled cascade, which is deleted: nothing
+ * calls this lookup or its bank. */
 static inline int vw2_stride_lookup_scrmode_oop(const vw2_store_t *s,
                                                 uint8_t lay, int N, size_t K,
                                                 vfft_proto_nat_entry_t *e)
@@ -363,7 +362,7 @@ static inline int vw2_stride_rec_from_entry_t(vw2_rec_t *r,
     char b[32];
     *why = NULL;
     memset(r, 0, sizeof *r);
-    /* the shipped files carry N=0/N=2,K=0 junk rows (wave-0 census) —
+    /* the shipped legacy files carry N=0/N=2,K=0 junk rows —
      * unservable garbage, refused here so migration quarantines them and
      * a fresh bank can never create the class */
     if (e->N < 2 || e->K < 1 || key_n < 2) { *why = "junk-cell"; return -1; }
@@ -423,24 +422,24 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
     if (e->mode <= 0 || e->mode >= 9) { *why = "unknown-nat-mode"; return -1; }
     vw2__stride_key(&r->key, VW2_T_C2C, e->N, e->K, ord, pl);
     r->key.lay = lay;
-    /* eng= names the WINNING family (owner, 2026-09-02) in the store's own
-     * vocabulary: the cascade's kind-4 token, the IL family's kind-3 token,
-     * and stride for the tape modes (which genuinely run the stride
-     * engine). Pre-change rows carry eng=stride regardless — vintage,
-     * accepted by the reader. */
+    /* eng= names the WINNING family in the store's own vocabulary: the IL
+     * family's kind-3 token (k1) for ILP, and stride for the tape modes
+     * (which genuinely run the stride engine). Vintage rows may carry
+     * eng=zturn (the deleted cascade) or eng=stride regardless — accepted
+     * by the reader. */
     VW2__SB_SET(1, "eng", e->mode == VFFT_NAT_ILP ? "k1" : "stride");
     VW2__SB_SET(1, "mode", vw2_stride_mode_name[e->mode]);
     if (e->mode == VFFT_NAT_ILP && e->ref_ilp > 0) {
         /* ILP mode row: the ROUTE verdict; the engine's RECIPE (pair /
          * chain3 with kernel forms, or Rader/Bluestein with its inner) is
-         * signposted, never copied (2026-09-02, owner: "no arms on the
-         * ilp rows"). ref_ilp names the row AS KEYED — a signpost spelled
+         * signposted, never copied (no arms on the ilp rows). ref_ilp
+         * names the row AS KEYED — a signpost spelled
          * after the request dangles under ref_ok's exact match. */
         char refbuf[112];
         if (e->ref_ilp == 4)
             snprintf(refbuf, sizeof refbuf,
                      "cell(t=c2c,n=%d,q=1,ord=scr,place=ip,role=comp,lay=il)", e->N);
-        else if (e->ref_ilp == 5)   /* the SCRAMBLED request's own order cell (2026-09-05) */
+        else if (e->ref_ilp == 5)   /* the SCRAMBLED request's own order cell */
             snprintf(refbuf, sizeof refbuf,
                      "cell(t=c2c,n=%d,q=1,ord=scr,place=oop,role=comp,lay=il)", e->N);
         else
@@ -453,10 +452,9 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
         /* SELF-CONTAINED mode cell: mode=ilp (the K=1 IL tier rebuilds
          * from N alone — its classic chain is the incumbent's, not its
          * own), ord=scr prime / Rader (nf=0), or any other dummy-chain
-         * mode — emit NEITHER chain nor ref. A dangling signpost here
-         * made the row invisible forever (ref_ok filtered it; the cell
-         * has no oop cascade row to point at) — caught 2026-08-25
-         * (prime) and 2026-09-02 (nat ilp). */
+         * mode — emit NEITHER chain nor ref. A signpost here would
+         * dangle and make the row invisible forever (ref_ok filters it;
+         * the cell has no row to point at). */
     } else {
         if (vw2__stride_emit_chain(r, e->nf, e->factors, e->variants, why)) return -1;
     }
@@ -552,7 +550,7 @@ static inline int vw2_stride_bank_scrmode_oop(vw2_store_t *st,
     return vw2__stride_bank(st, &rec);
 }
 
-/* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict (2026-09-04) ──
+/* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict ──────────────
  * The K>1 interleaved tier's one arm (lane-major is refused, so geometry
  * is not an axis): the serial loop vs slabs over the worker clones, raced
  * at create on the batch's OWN cell. Key = (t, n=N, q=K, ord, place,

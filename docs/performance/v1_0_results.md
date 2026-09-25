@@ -328,6 +328,41 @@ OOP column — but it has not been re-measured, and is not quoted as if it had.
  ALL        511     39     76   0.85   1.33   2.35   1.41       1.00          1.00
 ```
 
+### K=1 INTERLEAVED — the cells 2..1024 IN PLACE vs MKL in place, raced in place (2026-09-25)
+
+Every N from 2 to 1024, in place on both sides, one thread, the gauntlet's cell protocol
+(`gauntlet/results/ip_2_2048_2026-09-25/`, 1,023 cells; the calibrate was stopped at 1024).
+The in-place cell races its own row (`place=ip`), every arm executed in place. The
+out-of-place column is the 2026-09-23 record on the same cells; `ip/oop` is each engine's
+in-place time over its out-of-place time.
+
+```
+ route    cells   <0.8   <1.0    p10    med    p90   gmean   ours ip/oop   MKL ip/oop
+ prime      490      1     42   1.06   1.27   2.62    1.49        1.00         1.00
+ 2p         243      0      5   1.27   2.12   3.21    1.99        1.00         1.00
+ chain3     179      0      3   1.18   1.44   2.20    1.52        0.96         1.00
+ flat        91      1      6   1.06   1.82   2.42    1.72        0.97         1.00
+ mono        19      1      2   0.94   1.59   2.40    1.53        1.00         0.98
+ ztt          1      0      0   1.08   1.08   1.08    1.08        1.00         0.90
+ ALL       1023      3     58   1.12   1.48   2.76    1.63        1.00         1.00
+```
+
+```
+ size band     cells   in place   out of place   <1.0   <0.8   best
+ 2..16            15       1.37           1.39      3      2   2.89x (N=2)
+ 17..64           48       1.48           1.56      5      0   4.15x (N=61)
+ 65..256         192       1.79           1.64      3      0   6.99x (N=89)
+ 257..512        256       1.52           1.49      5      0   4.18x (N=508)
+ 513..1024       512       1.37           1.32     42      1   3.94x (N=894)
+ ALL 2..1024    1023       1.48           1.46     58      3   6.99x (N=89)
+```
+
+Placement is free for both engines at these sizes (every `ip/oop` at 1.00). The lead is
+the out-of-place lead: 1.48x against 1.46x on the same cells. The only in-place losses
+beyond noise are about 20 small cells (14, 18, 21, 22, 26, ...) where the mono route has
+an in-place form for its first kernel form only, so the race falls to flat or the pair
+route, tens of nanoseconds each. Roundtrip error at most 2.7e-15.
+
 ## 2. vs MKL — 2D C2C
 
 ```

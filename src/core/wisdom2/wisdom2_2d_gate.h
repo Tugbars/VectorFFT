@@ -1,5 +1,5 @@
-/* wisdom2_2d_gate.h — the wave-3 flip gate (module-owned; bench = thin
- * driver, per the bench-purity law).
+/* wisdom2_2d_gate.h — the 2D/3D store gate (module-owned; the bench is a
+ * thin driver).
  *
  * [2d-flip-gate]: for each populated 2D cell, create through the PUBLIC
  * front door TWICE, each from a FRESH wisdom load, and require:
@@ -8,10 +8,9 @@
  *   - the two creates' forward outputs BITWISE IDENTICAL (same served plan
  *     => same construction => same rounding; this is the plan-equivalence
  *     observable, the tangent-gate precedent).
- * The second arm was the kill switch (VFFT_WISDOM2_OFF=2d, legacy-table
- * reads) until 2026-08-20; the switch is RETIRED and ignored, so both arms
- * now read wisdom2. The gate therefore asserts CREATE-TWICE COHERENCE from
- * the store: a cell whose raced axes are not banked at the caller's layout
+ * The switch the second arm sets (VFFT_WISDOM2_OFF=2d) is RETIRED and
+ * ignored, so both arms read wisdom2: the gate asserts CREATE-TWICE
+ * COHERENCE from the store: a cell whose raced axes are not banked at the caller's layout
  * (lay=il) re-races on every create and diverges by plan luck — that is a
  * store-coverage failure, not noise. Seed the cell, never widen the check.
  *
@@ -20,8 +19,7 @@
  * create from a FRESH load must re-serve it with a bitwise-identical
  * forward output (create-twice coherence).
  *
- * 🔴 Point wisdir at a SCRATCH copy (dual: frozen legacy files + migrated
- *    wisdom2_2d.txt). The 3D leg banks into it.
+ * Point wisdir at a SCRATCH copy of the store. The 3D leg banks into it.
  */
 #ifndef VFFT_WISDOM2_2D_GATE_H
 #define VFFT_WISDOM2_2D_GATE_H
@@ -127,9 +125,9 @@ static int _g2d_run(const char *wisdir, int transform, int order,
     return 1;
 }
 
-/* run the same cell on both read arms; fills a (arm wisdom2) and b (arm
- * legacy), and the roundtrip products when rta/rtb are given. The kill
- * switch is env-scoped around the second run. */
+/* run the same cell twice, each from a fresh load; fills a and b, and the
+ * roundtrip products when rta/rtb are given. The second run sets the
+ * retired kill switch (env-scoped), which the library ignores. */
 static int _g2d_both_arms(const char *wisdir, int transform, int order,
                           int N1, int N2, const double *in,
                           double *a, double *b, size_t out_doubles,
@@ -175,8 +173,7 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
                                               * column-axis Bluestein, replayed
                                               * from a blu= row — the naive-DFT
                                               * anchor is what catches a replay
-                                              * that runs the M chain as N1's
-                                              * (2026-09-02) */
+                                              * that runs the M chain as N1's */
         };
         int i;
         for (i = 0; i < (int)(sizeof CC / sizeof CC[0]); i++) {
@@ -224,8 +221,8 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
             /* buffers >= any real/halfcomplex/padded layout, either
              * direction (c2r READS a padded halfcomplex plane).
              * Compare windows are the transform-DEFINED outputs, both
-             * PROVEN exactly defined by the delta-input pitch probe
-             * (2026-08-20): the r2c forward plane is CONTIGUOUS
+             * PROVEN exactly defined by a delta-input pitch probe: the
+             * r2c forward plane is CONTIGUOUS
              * N1 x (N2/2+1) complex — no padding lanes inside the window;
              * c2r's real plane is N1*N2 doubles. (An r2c handle does NOT
              * execute BACKWARD — c2r is its own transform — so a one-
@@ -283,7 +280,7 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
                 cfg.rigor = VFFT_MEASURE; cfg.dims = 3;
                 cfg.n[0] = N; cfg.n[1] = N; cfg.n[2] = N;
                 cfg.howmany = 1; cfg.order = VFFT_ORDER_DEFAULT;
-                cfg.layout = VFFT_LAYOUT_SPLIT; cfg.nthreads = 1;   /* 3D IL is refused until its tier exists (2026-09-03) */
+                cfg.layout = VFFT_LAYOUT_SPLIT; cfg.nthreads = 1;   /* the split 3D create banks the record this leg tests */
                 cfg.wisdom = W;
                 cfg.wisdom_write = 1;        /* measurement mode: must persist */
                 h = vfft_create(&cfg);
@@ -312,7 +309,7 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
             cfg.rigor = VFFT_MEASURE; cfg.dims = 3;
             cfg.n[0] = N; cfg.n[1] = N; cfg.n[2] = N;
             cfg.howmany = 1; cfg.order = VFFT_ORDER_DEFAULT;
-            cfg.layout = VFFT_LAYOUT_SPLIT; cfg.nthreads = 1;   /* 3D IL is refused until its tier exists (2026-09-03) */
+            cfg.layout = VFFT_LAYOUT_SPLIT; cfg.nthreads = 1;   /* the same split create, re-served */
             cfg.wisdom = W;
             h = W ? vfft_create(&cfg) : NULL;
             if (!h) ok = 0;
