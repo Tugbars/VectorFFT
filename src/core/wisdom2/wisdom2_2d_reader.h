@@ -1020,6 +1020,19 @@ static inline int vw2_ilnd_mts_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck, i
 {
     return vw2_ilnd_int_bank(s, ck, "cmts", arm);
 }
+/* cmtp= : the PLANE TEAM of the plane arm (cmt=2), the workers its plane
+ * phase runs on — raced at the plan's T beside the full team wherever a
+ * worker of the full team would hold a single plane, and banked with the
+ * verdict whenever it was raced (the full team's width included); 0 =
+ * absent = the full team */
+static inline int vw2_ilnd_ptw_lookup(const vw2_store_t *s, const vw2_ilcol_key_t *ck)
+{
+    return vw2_ilnd_int_lookup(s, ck, "cmtp");
+}
+static inline int vw2_ilnd_ptw_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck, int workers)
+{
+    return vw2_ilnd_int_bank(s, ck, "cmtp", workers);
+}
 
 static inline int vw2_2d_forms_lookup(vw2_store_t *s, int is_real, int N1,
                                       int N2, char *out, size_t osz,

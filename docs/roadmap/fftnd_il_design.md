@@ -75,6 +75,10 @@ plane} × {child, flat}. Banked:
 
 `cmts=` names the structure the threaded verdict runs with (it may differ
 from `s=`, the one-thread verdict, which stays what a T=1 plan replays).
+`cmtp=` names the plane team: the plane arm also races on half the
+workers wherever a worker of the full team would hold a single plane, so
+each worker's plane-sized scratch is warm from its second plane on
+(`3D_mt_il_strategy.md` §4).
 
 Every race sample runs REPS executes after two warm passes, REPS sized
 from one serial timing to ~20 ms of serial-equivalent work: a worker's
@@ -107,7 +111,7 @@ One row per cell in `wisdom2_3d.txt`: `t=c2c n=N1xN2xN3 q=1 ord=scr place=oop la
 | `wl= tf=` | axis 0, the joint race | the banded walk's width (0 = unbanded) and its fusion flag |
 | `chain1= blu1= forms1=` | axis 1 (flat arm) | the same verdicts with the axis as suffix |
 | `s=` | the joint race | 1 = child, 2 = flat |
-| `cmt= cmts=` (on the row keyed `nthreads=T`) | the MT race | 0 serial, 1 band, 2 plane; the structure the threaded verdict runs with |
+| `cmt= cmts= cmtp=` (on the row keyed `nthreads=T`) | the MT race | 0 serial, 1 band, 2 plane; the structure the threaded verdict runs with; the plane phase's workers, banked whenever the half team was raced (absent = the full team) |
 
 Axis 0's chain bank creates the row; every later verdict is a field update
 on it. The child's verdicts live on the child's own rank-2 cell, never

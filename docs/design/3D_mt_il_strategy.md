@@ -95,11 +95,28 @@ alive, with their clones, until the threaded verdict, and races
 
     serial(s0)  +  {band, plane} × {child, flat}
 
-as arms of one race. The winner banks three fields on the cell's rank-3
-row at the plan's thread count (`nthreads=` in the key, wisdom2 v1.3):
-`cmt=` (0 serial, 1 band, 2 plane) and `cmts=` (the structure the threaded
-verdict runs with). The one-thread row keeps its own `s=`. A verdict serves only at its own T; another T races
+as arms of one race, each plane arm with a twin on half the workers
+wherever the plane team below applies. The winner banks on the cell's
+rank-3 row at the plan's thread count (`nthreads=` in the key, wisdom2
+v1.3): `cmt=` (0 serial, 1 band, 2 plane), `cmts=` (the structure the
+threaded verdict runs with) and, whenever the plane team was raced,
+`cmtp=` (the workers the plane phase runs on, the full team's width
+included). The one-thread row keeps its own `s=`. A verdict serves only at its own T; another T races
 again. The losing structure and its clones are freed after the verdict.
+
+**The plane team.** Every worker's structure owns a plane-sized scratch:
+the 2D child's natural column scratch, or the flat structure's natural
+axis-1 scratch. When the plane phase gives each worker one plane per
+call, that scratch is cold on every call. Where N1 < 2·min(N1, T) and at
+least four workers take planes, the plane arm also runs on half the
+workers, each taking two planes or more, so the scratch is warm from the
+second plane on. Measured on the flat structure at 8×128×2048, T=8: the
+plane phase takes 2.6 ms on eight workers and 2.0 ms on four. The half
+team is an arm, never a default: at 8×64×64 it loses to the full team by
+half again (22 against 14 µs). A natural cycle-form plane phase binds its
+cycles over the team it serves; a pool clamped below that team after
+create folds the binding (worker b's cycles run on b mod the team), so no
+plane is ever skipped.
 
 ## 5. Measuring a threaded arm
 
@@ -187,7 +204,7 @@ Measured at T=8, same-run: 6561 1.7×, 19683 2.7×, 59049 5.0×, 98415 5.1×,
 |---|---|
 | `transforms/fftnd/fftnd_il.h` | the arms (`_ilnd_mt_tramp`, `_ilnd_mt_phase`, `_ilnd_execute_mt`), the clones, the joint race (`_ilnd_mt_race`), the create |
 | `transforms/fft2d/il2d_tier.h` | `_il2d_stage_digits_mt` (the digit split), `_il2d_col_pass_range`, `_il2d_blu_cols_range` (lent, no rank-3 code) |
-| `wisdom2/wisdom2_2d_reader.h` | `cmt=` through the axis bank, on the row keyed `nthreads=T`; `cmts=` through `vw2_ilnd_mts_lookup/bank` |
+| `wisdom2/wisdom2_2d_reader.h` | `cmt=` through the axis bank, on the row keyed `nthreads=T`; `cmts=` through `vw2_ilnd_mts_lookup/bank`; `cmtp=` through `vw2_ilnd_ptw_lookup/bank` |
 | `support/threads.h` | the pool owner |
 | `vfft.c`, `include/vfft_diagnostics.h` | `vfft_ilnd_mt_passes()` |
 | `build_tuned/benches/bench_1d_vs_mkl.c` | `--3dil --mt`, the two-team protocol |
