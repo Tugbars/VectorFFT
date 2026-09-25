@@ -174,6 +174,34 @@ static inline const vw2_rec_t *vw2__oop_k1_scan_ord(const vw2_store_t *s, int N,
 {
     return vw2__oop_k1_scan_pl(s, N, lay, want_scr, VW2_PL_OOP, 1);
 }
+/* THE K=1 ROW AT T > 1 (v1.3). The K=1 route is thread-independent (serial
+ * kernels; threading is a flag on the route), so the route race banks the
+ * one-thread row and a plan at T gets its own row as a COPY of that route,
+ * keyed nthreads=T, on which the MT commits then race and bank the threaded
+ * verdict (il_mt, il_mt_tw, il_mtsb). Complete on its own, never a re-race
+ * of the route set per T. Replaces an existing T row (recalibrate). 1 = the
+ * row exists now, 0 = no one-thread row to copy or the bank refused. */
+static inline int vw2_oop_k1_row_at_T(vw2_store_t *s, int N, int want_scr, int inplace, int T)
+{
+    static const char *const THREADED[] = { "il_mt", "il_mt_tw", "il_mtsb", NULL };
+    const vw2_rec_t *r;
+    vw2_rec_t nr;
+    int i, k;
+    if (T < 2) return 0;
+    r = vw2__oop_k1_scan_pl(s, N, VW2_LAY_IL, want_scr, inplace ? VW2_PL_IP : VW2_PL_OOP, 1);
+    if (!r) return 0;
+    memset(&nr, 0, sizeof nr);
+    nr.key = r->key;
+    nr.key.nthreads = (uint8_t)T;
+    for (i = 0; i < r->ntok; i++) {
+        int skip = 0;
+        for (k = 0; THREADED[k]; k++) if (!strcmp(r->tok[i].name, THREADED[k])) skip = 1;
+        if (skip) continue;
+        if (vw2_rec_set(&nr, r->tok[i].sect, r->tok[i].name, r->tok[i].val) != VW2_OK) { vw2_rec_free(&nr); return 0; }
+    }
+    if (vw2_bank(s, &nr) != VW2_OK) { vw2_rec_free(&nr); return 0; }
+    return 1;
+}
 static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N, uint8_t lay)
 {
     return vw2__oop_k1_scan_ord(s, N, lay, 0);

@@ -1,8 +1,7 @@
 /* il2d_cols.h - native IL 2D: the column-chain machinery.
  *
  * The chain enumerator, the twiddle-table builders, and the column-pass
- * kernels that execute and the create-time races both serve through. Extracted
- * from vfft.c as migration step 6b; see docs/design/refactor_migration_plan.md.
+ * kernels that execute and the create-time races both serve through.
  *
  * WHAT IS HERE, AND WHAT DELIBERATELY IS NOT
  * ------------------------------------------
@@ -10,22 +9,18 @@
  * enumeration and resolution, table construction, and the column walkers
  * (wide, ranged, banded, natural, Bluestein).
  *
- * NOT here, and not by oversight:
+ * NOT here, and not by oversight (both live in il2d_tier.h):
  *   - the RACERS (_il2d_race_chains, _il2d_axis_race, _il2d_real_rowrace,
  *     the MT races). They carry the create-time protocol and the banking, and
  *     they belong with the wisdom write path, not with the kernels.
- *   - anything that dereferences a plan. _il2d_real_wl_cut reads h->N,
- *     h->il2d_col.nst and h->il2d_col.L, so it stays in vfft.c until step 15 lifts
- *     vfft_plan_s into vfft_internal.h. Ten lines, deliberately left behind.
+ *   - anything that dereferences a plan (_il2d_real_wl_cut reads h->N,
+ *     h->il2d_col.nst and h->il2d_col.L).
  *
- * WHY THE FORWARD DECLARATIONS SURVIVED THE MOVE
- * ----------------------------------------------
+ * FORWARD DECLARATIONS
+ * --------------------
  * the chain builders call _il2d_build_tables, which is defined at the bottom of
- * this file, and the Bluestein builder calls back into the column pass. The
- * original file resolved that with forward declarations; they are carried over
- * verbatim rather than reordered, because reordering definitions changes what
- * the compiler sees and the migration's identity gate compares emitted symbol
- * bodies. Order preserved = the gate stays meaningful.
+ * this file, and the Bluestein builder calls back into the column pass;
+ * forward declarations resolve both.
  *
  * ON THE CAP
  * ----------
@@ -45,13 +40,13 @@
 #include "fft2d_real_il.h"    /* _il2d_row_cmul, used by the Bluestein pass */
 #include "support/diag.h"     /* _vfft_warn - the chain builder refuses loudly */
 
-/* ── native IL 2D c2c: column-chain builders (fft2d_il_c2c_design.md).
+/* ── native IL 2D c2c: column-chain builders
+ * (docs/roadmap/fft2d_il_c2c_design.md).
  * _il2d_enum_rec: every ordered composition of N1 over the t2c/n1c radix
  * set (depth <= 4, capped) -- THE candidate pool; the race picks, wisdom
- * banks. _il2d_env_chain: the VFFT_IL2D_CHAIN pin, and nothing else. (The
- * greedy-largest builder that used to sit beside them was deleted
- * 2026-09-17: a chain is raced, never derived.) A chain's stages 0..m-2
- * resolve t2c pairs, the last resolves the n1c pair.
+ * banks. _il2d_env_chain: the VFFT_IL2D_CHAIN pin, and nothing else (a
+ * chain is raced, never derived). A chain's stages 0..m-2 resolve t2c
+ * pairs, the last resolves the n1c pair.
  * _il2d_build_tables: per t2c stage, the d-major record table — per digit
  * d in [0,D), per leg r in 1..R-1, [c x4][-s,+s,-s,+s] for
  * w = e^{sgn*2*pi*i*(d*r)/L} (fwd sgn=-1; bwd table CONJUGATED — the
@@ -85,7 +80,7 @@ static int _il2d_resolve(const int *Rs, int m, vfft_il2p_fn *ff,
     return 1;
 }
 
-/* the per-stage FORM list (E1.11, 2026-09-02): "b48.-.b84" = one name per
+/* the per-stage FORM list: "b48.-.b84" = one name per
  * stage, "-" = the stage's single form; installs the named kernels over the
  * resolved defaults. A name that is not a form of that stage's radix, or a
  * list of the wrong length, refuses (the validator is the law). */
@@ -126,9 +121,7 @@ static int _il2d_apply_forms(const int *Rs, int m, const char *forms,
 /* ordered compositions of N1 over the codelet radices, depth <= 4, capped
  * at VFFT_IL2D_MAXCAND (planning/policy.h). The recursion is the body; the
  * entry below it is what callers reach, and it enforces the no-silent-caps
- * law ITSELF (2026-09-17): until then each of the five callers had to
- * remember to warn, and two -- the real tier's chain race and the
- * four-step's super-band -- never did, so their pools truncated silently. */
+ * law ITSELF, so no caller has to remember to warn. */
 /* the column radices with an n1c kind and NO t2c kind (the registry's two
  * lists differ by exactly these): legal only as the closing stage */
 static int _il2d_pool_closing_only(int R)
@@ -139,18 +132,16 @@ static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
                                 int *lens, int *n, int *dropped)
 {
     static const int POOL[] = { 64, 32, 16, 8, 4,
-                                /* odd radices (2026-08-27): odd-N1
-                                 * chains — emitted t2c/n1c kinds;
-                                 * 23 and 29..47 joined 2026-09-22 with
-                                 * the kernels of 2026-09-21 (t2c + n1c
-                                 * at every one) */
+                                /* odd radices: odd-N1 chains —
+                                 * emitted t2c/n1c kinds (t2c + n1c at
+                                 * every one) */
                                 47, 43, 41, 37, 31, 29, 27, 25, 23, 21,
                                 19, 17, 15, 13, 11, 9, 7, 5, 3,
                                 /* n1c-ONLY radices (no t2c kind): legal
                                  * as the CLOSING stage alone -- the flat
                                  * DIT's lone-2 leaf rule for columns
-                                 * (2026-09-22); a 2 x prime column length
-                                 * had no chain and fell to Bluestein */
+                                 * (without them a 2 x prime column
+                                 * length has no chain: Bluestein) */
                                 26, 22, 14, 12, 10, 6, 2 };
     int p;
     if (L == 1)
@@ -194,8 +185,7 @@ static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
 }
 
 /* the column pass, shared by execute and the create-time chain race
- * (component-pinned timing: the race times exactly this). */
-/* the column pass, shared by execute and the create-time chain race.
+ * (component-pinned timing: the race times exactly this).
  * fwd: stages 0..nst-1 (DIF, natural -> chain-digit-reversed comb).
  * bwd (reverse != 0): the HERMITIAN TRANSPOSE — stages nst-1..0, each a
  * PRE-twiddle conj stage (the t2c bwd kernels), CONSUMING the comb and
@@ -242,18 +232,7 @@ static void _il2d_col_stages(const double *src, double *dst, int nrows,
                       tabs, reverse);
 }
 
-/* Column sub-range variant: run the whole chain over columns [k_lo,k_hi)
- * only. Columns are independent across EVERY stage (the strip axis the
- * single-thread walk already uses), so this is a pure loop restriction —
- * bit-identical to the full pass, and the unit of the MT strip arm. */
-/* the NATURAL leaf over a BLOCK RANGE [blo, bhi) (natural x MT,
- * 2026-09-04): fwd SCATTERS block b's R rows from the pre-leaf scratch
- * to natural rows perm[b*R] + r*(N1/R); bwd GATHERS them back into the
- * scratch's comb. Blocks own disjoint natural row sets (perm is a
- * bijection), so any block partition is a pure map => MT == ST bitwise.
- * fwd: from = scratch, to = dst plane; bwd: from = natural src, to =
- * scratch. */
-/* ── the natural leaf's STAGING (il2d_natural_leaf_design.md, 2026-09-16) ──
+/* ── the natural leaf's STAGING (il2d_natural_leaf_design.md) ─────────────
  * The leaf's R output rows sit N1/R rows apart — 2 MB at 2048x2048 — and
  * map to the same L1/L2 sets, so stored at their stride the R streams
  * evict each other line by line (3.4x the scrambled pass at 64 MB).
@@ -314,6 +293,12 @@ static void _il2d_nat_leaf_block_st(const double *from, double *to, int N1, size
         fn(stage, NULL, to + coff, NULL, NULL, NULL, w, 0, rn, 0, w);
     }
 }
+/* the NATURAL leaf over a BLOCK RANGE [blo, bhi) (natural x MT): fwd
+ * SCATTERS block b's R rows from the pre-leaf scratch to natural rows
+ * perm[b*R] + r*(N1/R); bwd GATHERS them back into the scratch's comb.
+ * Blocks own disjoint natural row sets (perm is a bijection), so any block
+ * partition is a pure map => MT == ST bitwise. fwd: from = scratch, to =
+ * dst plane; bwd: from = natural src, to = scratch. */
 static void _il2d_nat_leaf_range(const double *from, double *to, int N1,
                                  size_t rn, int Rl, vfft_il2p_fn fn,
                                  const int *perm, size_t blo, size_t bhi,
@@ -340,6 +325,10 @@ static void _il2d_nat_leaf_range(const double *from, double *to, int N1,
     }
 }
 
+/* Column sub-range variant: run the whole chain over columns [k_lo,k_hi)
+ * only. Columns are independent across EVERY stage (the strip axis the
+ * single-thread walk already uses), so this is a pure loop restriction —
+ * bit-identical to the full pass, and the unit of the MT strip arm. */
 static void _il2d_col_pass_range(const double *src, double *dst, int N1,
                                  size_t rn, size_t k_lo, size_t k_hi,
                                  int nst, const int *Rst, const int *Lst,
@@ -402,25 +391,16 @@ static void _il2d_col_pass(const double *src, double *dst, int N1,
     }
 }
 
-/* THE ENV PIN, and nothing else (2026-09-17). VFFT_IL2D_CHAIN="64.16"
- * (dot-separated radices, product == N1) is the raced axis's escape hatch:
- * env BEATS wisdom and never banks. Returns 1 with Rs/nst/ff/fb filled, 0
- * when the variable is unset OR names an invalid chain (warned LOUDLY) --
- * and 0 means the caller RACES, exactly as it would with no pin.
+/* THE ENV PIN, and nothing else. VFFT_IL2D_CHAIN="64.16" (dot-separated
+ * radices, product == N1) is the raced axis's escape hatch: env BEATS
+ * wisdom and never banks. Returns 1 with Rs/nst/ff/fb filled, 0 when the
+ * variable is unset OR names an invalid chain (warned LOUDLY) -- and 0
+ * means the caller RACES, exactly as it would with no pin.
  *
- * This function used to carry a GREEDY builder after the env block: walk
- * the radix pool largest-first, take the first divisor, never measure.
- * Three sites used it as their fallback -- a cell with exactly ONE legal
- * chain (raced nowhere, banked nowhere, re-derived on every create), a race
- * whose every arm failed to build, and the Bluestein inner whenever its
- * wisdom provider was not installed (the 3D tier never installed it). The
- * owner's law is NEVER a heuristic, ALWAYS wisdom (2026-09-17: "greedy
- * fallback is not acceptable ... it should be raced"). Now: a one-candidate
- * cell goes through the same race as any other and BANKS; a race with no
- * buildable arm has no chain and falls to Bluestein or refuses; the 3D tier
- * installs the provider. The greedy's private copy of the radix pool --
- * depth 8 where the race allows 4, and a remainder rule the race does not
- * have, so it could build chains the race never raced -- went with it. */
+ * There is no greedy fallback: never a heuristic, always wisdom. A
+ * one-candidate cell goes through the same race as any other and BANKS; a
+ * race with no buildable arm has no chain and falls to Bluestein or
+ * refuses; every tier installs the Bluestein chain provider. */
 static int _il2d_env_chain(int N1, int *Rs, vfft_il2p_fn *ff,
                            vfft_il2p_fn *fb, int *nst)
 {
@@ -459,7 +439,7 @@ static int _il2d_env_chain(int N1, int *Rs, vfft_il2p_fn *ff,
     return 0;
 }
 
-/* ── NATURAL n1 (M4-lite, struct comment at il2d_nat) ─────────────────
+/* ── NATURAL n1 (struct comment at vfft_ilcol_t.nat, il2d_col.h) ──────
  * The perm builder: the chain's comb is the mixed-radix digit reversal;
  * the exact digit convention is settled EMPIRICALLY at create — both
  * peel orders are built and the one satisfying the block-affine
@@ -576,7 +556,7 @@ static void _il2d_col_pass_nat(const double *src, double *dst, int N1,
 }
 
 /* the natural pass over a COLUMN RANGE [k_lo, k_hi) — the STRIP arm of
- * natural x MT (2026-09-04). Every stage, the leaf included, is
+ * natural x MT. Every stage, the leaf included, is
  * column-independent, so a strip is a pure loop restriction of
  * _il2d_col_pass_nat: same bases + 2*k_lo, count = k_hi - k_lo; the
  * scratch plane is shared but the columns are disjoint. */
@@ -639,9 +619,8 @@ static void _il2d_col_pass_nat_range(const double *src, double *dst,
     }
 }
 
-/* the natural pass over ONE STRIP [k, k+w) with a STRIP-PITCHED scratch
- * (docs/design/ilnd_natural_strip_design.md, 2026-09-15): scr is a dense
- * N1 x w block (pitch w) that lives in L1/L2, so the digit reversal is
+/* the natural pass over ONE STRIP [k, k+w) with a STRIP-PITCHED scratch:
+ * scr is a dense N1 x w block (pitch w) that lives in L1/L2, so the digit reversal is
  * resolved in cache and the strip is written back in NATURAL order — in
  * place by construction (every row of the strip is read into scr before
  * any row of it is written). The stage kernels advance input and output by
@@ -716,31 +695,30 @@ static void _il2d_col_pass_nat_strip(const double *src, double *dst, int N1,
     }
 }
 
-/* ── the COLUMN-AXIS BLUESTEIN, extracted (2026-08-27) so THREE users
- * share one implementation: the c2c no-chain path, the chain-vs-blu
- * RACE (the odd chains are now emitted, so both arms exist for odd
- * N1), and the REAL tier (rn = hp1 there; the pipeline is C-linear
- * over any count). ─────────────────────────────────────────────── */
+/* ── the COLUMN-AXIS BLUESTEIN: ONE implementation for THREE users: the
+ * c2c no-chain path, the chain-vs-blu RACE (the odd chains are emitted,
+ * so both arms exist for odd N1), and the REAL tier (rn = hp1 there; the
+ * pipeline is C-linear over any count). ─────────────────────────────── */
 
-/* build the M-chain + tables + chirps + comb-order kernels + scratch
- * into the CALLER's arrays. Returns M (>0) or 0. rn = the plane's row
- * width in complex (N2 for c2c, hp1 for real). */
 static void _il2d_col_pass(const double *src, double *dst, int N1,
                            size_t rn, size_t wc, int nst, const int *Rst,
                            const int *Lst, vfft_il2p_fn const *fns,
                            double *const *tabs, int reverse);
 static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
                               double **tf, double **tb);
-/* BLUESTEIN INNER CHAIN HOOK (2026-09-02): the 2D create installs a
- * provider that fills the length-M column chain from wisdom (the (M, N2)
- * chain row, raced and banked there on a miss). NULL, or a provider that
- * declines, means NO M chain (2026-09-17): the greedy that used to build
- * one here is gone, and both the 2D create and the 3D tier install the
- * provider. Set at each create's entry — planning side, one at a time. */
+/* BLUESTEIN INNER CHAIN HOOK: the 2D create installs a provider that
+ * fills the length-M column chain from wisdom (the (M, N2) chain row,
+ * raced and banked there on a miss). NULL, or a provider that declines,
+ * means NO M chain (never a heuristic); both the 2D create and the 3D
+ * tier install the provider. Set at each create's entry — planning side,
+ * one at a time. */
 typedef int (*_il2d_blu_chain_fn)(int M, int *Rs, int *nst, char *forms,
                                   size_t fsz);
 static _il2d_blu_chain_fn _il2d_blu_chain_hook = 0;
 
+/* build the M-chain + tables + chirps + comb-order kernels + scratch
+ * into the CALLER's arrays. Returns M (>0) or 0. rn = the plane's row
+ * width in complex (N2 for c2c, hp1 for real). */
 static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
                            vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                            double **tf, double **tb, int *nst,
@@ -817,15 +795,11 @@ static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
     return M;
 }
 
-/* the blu column pipeline over an N1 x rn plane (explicit args — the
- * execute branches and the race both serve through THIS). reverse = the
- * inverse transform (conjugated chirp/kernel, the caller passes them).
- * src/dst may alias. */
 /* the Bluestein pipeline over a column WINDOW [c0, c1) of an rn-wide plane:
  * every step is column-local (row-wise chirp/kernel multiplies touch each
  * column independently; the M-chain column passes take a column range), so
  * a window is an independent unit and windows share `scr` disjointly —
- * this is what the threaded column walk partitions (2026-09-02). */
+ * this is what the threaded column walk partitions. */
 static void _il2d_blu_cols_range(const double *src, double *dst, int N1,
                                  size_t rn, size_t c0, size_t c1, int M,
                                  int nst, const int *Rs, const int *Ls,
@@ -856,6 +830,10 @@ static void _il2d_blu_cols_range(const double *src, double *dst, int N1,
                        ch[2 * r2 + 1], wc);
 }
 
+/* the blu column pipeline over an N1 x rn plane (explicit args — the
+ * execute branches and the race both serve through THIS). The inverse
+ * transform = the caller passes the conjugated chirp/kernel. src/dst may
+ * alias. */
 static void _il2d_blu_cols(const double *src, double *dst, int N1,
                            size_t rn, int M, int nst, const int *Rs,
                            const int *Ls, vfft_il2p_fn const *ff,

@@ -1892,7 +1892,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
  *
  * Returns the number of verdicts banked; the caller owns opening/saving the
  * store. */
-static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace, int nthreads,
+static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
                                   const vfft_il_cand_t *nat,
                                   const vfft_il_cand_t *scr)
 {
@@ -1914,7 +1914,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace, int nthre
             e.K = 1;                   /* one interleaved transform         */
             e.kind = VFFT_OOP_KIND_BAILEY2V;
             e.k1_sp_route = -1;        /* split lives in its own cell       */
-            e.place_ip = inplace; e.nthreads = nthreads;   /* the plan's own row (v1.3) */      /* the in-place cell's own row */
+            e.place_ip = inplace;      /* the one-thread row: the K=1 route is thread-independent (v1.3) */      /* the in-place cell's own row */
             e.k1_il_route = nat->route;
             e.il_R1 = nat->R1;
             e.il_R2 = nat->R2;
@@ -1944,7 +1944,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace, int nthre
                 lines++;
             if (nat->route == VFFT_K1_IL_FS && nat->il_kv == 1 && nat->il_zt_n >= 2)
             {   /* the super-band's chain beside il_pair (il2d_large_plane_design.md §3) */
-                const vw2_rec_t *r = vw2__oop_k1_scan_pl(st, N, VW2_LAY_IL, 0, inplace ? VW2_PL_IP : VW2_PL_OOP, nthreads);
+                const vw2_rec_t *r = vw2__oop_k1_scan_pl(st, N, VW2_LAY_IL, 0, inplace ? VW2_PL_IP : VW2_PL_OOP, 1);
                 char cb[48];
                 int off = 0, k;
                 for (k = 0; k < nat->il_zt_n && off < (int)sizeof cb - 4; k++)
@@ -1997,7 +1997,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace, int nthre
         e.K = 1;
         e.kind = VFFT_OOP_KIND_BAILEY2V;
         e.k1_sp_route = -1;
-        e.place_ip = inplace; e.nthreads = nthreads;   /* the plan's own row (v1.3) */
+        e.place_ip = inplace;      /* the one-thread row: the K=1 route is thread-independent (v1.3) */
         e.k1_il_route = scr->route;
         e.il_R1 = scr->R1;
         e.il_R2 = scr->R2;
@@ -2033,7 +2033,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace, int nthre
 /* Plan both order classes for N at the given placement and bank whatever
  * was found: the whole calibrate-and-record step for one cell. */
 static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, vw2_store_t *st, int N,
-                                    int inplace, int nthreads, int verbose)
+                                    int inplace, int verbose)
 {
     vfft_il_cand_t nat, scr;
     ctx->inplace = inplace ? 1 : 0;   /* the cell's placement, for both order classes */
@@ -2041,7 +2041,7 @@ static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, vw2_store_t *st, 
     double sns = vfft_il_dp_plan(ctx, N, VFFT_IL_ORD_SCRAMBLED, &scr, verbose);
     if (nns >= 1e17) nat.cost_ns = 1e18;
     if (sns >= 1e17) scr.cost_ns = 1e18;
-    return vfft_il_dp_emit_wisdom(st, N, inplace, nthreads, &nat, &scr);
+    return vfft_il_dp_emit_wisdom(st, N, inplace, &nat, &scr);
 }
 
 /* Ranked rows for a deploy pool / wisdom writer. Returns how many were filled. */

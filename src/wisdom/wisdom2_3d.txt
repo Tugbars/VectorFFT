@@ -1,12 +1,14 @@
-@vw2 1.2
+@vw2 1.3
 @legend signpost: a verdict references its component recipe (ref=), never copies it
 @legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
 @legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
-@legend lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = pre-1.2 record, served to concrete-lay requests only as the fallback tier
+@legend lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = a pre-1.2 record OR a shared-interior recipe (one engine serves both layouts - stamping a layout from the other door's timing would manufacture fake cells), served to concrete-lay requests as the fallback tier
+@legend eng-on-nat: on ord=nat rows eng= names the WINNING family (zturn|k1|stride) since 2026-09-02; earlier rows carry eng=stride regardless (vintage, still served)
 @legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
 @legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
+@meta host=intel-f6m183 isa=avx2 l1d=49152
 @cell t=c2c n=2x2x2 q=1 ord=nat place=oop lay=il | chain=2 chain1=2 s=1 | ran=1 src=race date=2026-09-24
 @cell t=c2c n=2x2x4 q=1 ord=nat place=oop lay=il | chain=2 chain1=2 s=1 | ran=1 src=race date=2026-09-24
 @cell t=c2c n=2x2x8 q=1 ord=nat place=oop lay=il | chain=2 chain1=2 s=1 | ran=1 src=race date=2026-09-24
@@ -1295,3 +1297,274 @@
 @cell t=c2c n=8192x128x2 q=1 ord=nat place=oop lay=il | chain=32.8.8.4 forms=b48.-.-.- chain1=8.16 s=1 wl=256 tf=1 nf=1 | ran=1 ns=5873300.0 metric=fwd1 units=ns src=race date=2026-09-24
 @cell t=c2c n=8192x128x4 q=1 ord=nat place=oop lay=il | chain=32.8.32 forms=b48.-.b48 chain1=8.16 s=1 wl=256 tf=1 nf=1 | ran=1 ns=15354900.0 metric=fwd1 units=ns src=race date=2026-09-24
 @cell t=c2c n=8192x256x2 q=1 ord=nat place=oop lay=il | chain=32.8.32 forms=b48.-.b48 chain1=4.64 forms1=-.b88 s=1 wl=0 tf=0 nf=1 | ran=1 ns=14842600.0 metric=fwd1 units=ns src=race date=2026-09-24
+@cell t=c2c n=2x2x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=2 s=1 cmt=0 cmts=1 | ran=1 src=race date=2026-09-25
+@cell t=c2c n=2x16x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=16 s=1 cmt=2 cmts=2 | ran=1 ns=14800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x32x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=4.4.2 s=1 cmt=2 cmts=1 | ran=1 ns=7200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x64x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=8.4.2 s=2 cmt=2 cmts=2 | ran=1 ns=14300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x128x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=4.8.4 s=1 cmt=2 cmts=2 | ran=1 ns=327200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x128x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=8.4.4 s=1 cmt=2 cmts=2 | ran=1 ns=902300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x256x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=8.8.4 s=1 cmt=2 cmts=1 | ran=1 ns=15100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x256x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=8.8.4 s=2 cmt=2 cmts=2 | ran=1 ns=317000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x256x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=4.8.8 s=1 cmt=2 cmts=2 | ran=1 ns=881300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x256x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=8.8.4 s=1 cmt=2 cmts=1 | ran=1 ns=2668500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x512x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=8.8.8 s=1 cmt=2 cmts=2 | ran=1 ns=883300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x512x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=8.8.8 s=1 cmt=2 cmts=2 | ran=1 ns=2587400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x1024x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=8.4.32 forms1=-.-.b48 s=1 cmt=2 cmts=2 | ran=1 ns=14500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x1024x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=8.8.4.4 s=1 cmt=2 cmts=2 | ran=1 ns=2521700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x2048x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=16.8.16 s=1 cmt=2 cmts=1 | ran=1 ns=154100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x2048x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=16.8.8.2 s=1 cmt=2 cmts=1 | ran=1 ns=875900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x2048x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=16.8.4.4 s=1 cmt=2 cmts=1 | ran=1 ns=2695600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x4096x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=32.4.32 forms1=b48.-.b48 s=1 cmt=2 cmts=1 | ran=1 ns=31800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x4096x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=16.32.8 forms1=-.b48.- s=1 cmt=2 cmts=2 | ran=1 ns=321500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x4096x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=16.32.8 forms1=-.b48.- s=1 cmt=2 cmts=1 | ran=1 ns=842900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x8192x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=32.4.64 forms1=b48.-.b88 s=1 cmt=2 cmts=2 | ran=1 ns=77100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x8192x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=32.8.4.8 forms1=b48.-.-.- s=1 cmt=2 cmts=1 | ran=1 ns=320100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x8192x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=32.8.4.8 forms1=b48.-.-.- s=1 cmt=2 cmts=2 | ran=1 ns=825700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=2x8192x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=2 chain1=32.8.8.4 forms1=b48.-.-.- s=1 cmt=2 cmts=2 | ran=1 ns=2550700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x4x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=4 s=1 cmt=0 cmts=1 | ran=1 src=race date=2026-09-25
+@cell t=c2c n=4x32x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.4 s=2 cmt=2 cmts=2 | ran=1 ns=318200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x64x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=4.4.4 s=1 cmt=2 cmts=2 | ran=1 ns=1001200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x128x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=4.4.8 s=2 cmt=2 cmts=2 | ran=1 ns=318800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x128x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=4.4.8 s=1 cmt=2 cmts=2 | ran=1 ns=868700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x128x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=4.8.4 s=1 cmt=2 cmts=2 | ran=1 ns=2524200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x256x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.4.8 s=1 cmt=2 cmts=2 | ran=1 ns=329800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x256x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.4.8 s=1 cmt=2 cmts=1 | ran=1 ns=936600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x256x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.4.8 s=1 cmt=2 cmts=2 | ran=1 ns=2520400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x512x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.8.8 s=1 cmt=2 cmts=1 | ran=1 ns=15000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x512x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.8.8 s=1 cmt=2 cmts=2 | ran=1 ns=335100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x512x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.8.8 s=1 cmt=2 cmts=1 | ran=1 ns=880200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x512x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.8.8 s=1 cmt=2 cmts=2 | ran=1 ns=2377500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x1024x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.8.16 s=1 cmt=2 cmts=1 | ran=1 ns=14600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x1024x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.8.4.4 s=1 cmt=2 cmts=2 | ran=1 ns=316300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x1024x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.8.8.2 s=1 cmt=2 cmts=1 | ran=1 ns=988900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x1024x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=8.8.4.4 s=1 cmt=2 cmts=1 | ran=1 ns=2398500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x2048x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=16.8.16 s=1 cmt=2 cmts=1 | ran=1 ns=310500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x2048x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=16.8.4.4 s=1 cmt=2 cmts=1 | ran=1 ns=870700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x2048x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=16.8.8.2 s=1 cmt=2 cmts=1 | ran=1 ns=2477500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x4096x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=32.8.16 forms1=b48.-.- s=1 cmt=2 cmts=1 | ran=1 ns=14900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x4096x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=32.8.16 forms1=b48.-.- s=1 cmt=2 cmts=1 | ran=1 ns=28100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x4096x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=64.4.16 s=1 cmt=2 cmts=1 | ran=1 ns=78700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x4096x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=16.32.8 forms1=-.b48.- s=1 cmt=2 cmts=1 | ran=1 ns=322600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x4096x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=32.8.16 forms1=b48.-.- s=1 cmt=2 cmts=2 | ran=1 ns=929000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x4096x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=16.32.8 forms1=-.b48.- s=1 cmt=2 cmts=1 | ran=1 ns=2348600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x8192x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=32.4.64 forms1=b48.-.b88 s=1 cmt=2 cmts=1 | ran=1 ns=156900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x8192x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=32.8.32 forms1=b48.-.b48 s=1 cmt=2 cmts=2 | ran=1 ns=312600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x8192x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=32.8.4.8 forms1=b48.-.-.- s=1 cmt=2 cmts=1 | ran=1 ns=915500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=4x8192x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4 chain1=32.8.4.8 forms1=b48.-.-.- s=1 cmt=2 cmts=2 | ran=1 ns=2450100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x8x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8 s=1 wl=0 tf=0 cmt=0 cmts=1 | ran=1 ns=100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x16x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=16 s=1 wl=8 tf=1 cmt=2 cmts=2 | ran=1 ns=370800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x32x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.4 s=1 wl=8 tf=1 cmt=2 cmts=2 | ran=1 ns=15500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x32x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.4 s=2 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=868300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x64x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=4.8.2 s=1 wl=8 tf=1 cmt=2 cmts=1 | ran=1 ns=83700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x64x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.8 s=2 wl=8 tf=1 cmt=2 cmts=2 | ran=1 ns=818500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x64x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.8 s=2 wl=0 tf=0 cmt=2 cmts=1 | ran=1 ns=2007200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x128x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=4.4.4.2 s=1 wl=8 tf=1 cmt=2 cmts=2 | ran=1 ns=163800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x128x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=4.4.8 s=2 wl=8 tf=1 cmt=2 cmts=2 | ran=1 ns=365200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x128x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=4.4.8 s=1 wl=8 tf=1 cmt=2 cmts=2 | ran=1 ns=876300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x128x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=4.8.4 s=1 wl=0 tf=0 cmt=2 cmts=1 | ran=1 ns=2090000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x256x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.4.4.2 s=1 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=360400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x256x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.8.4 s=2 wl=8 tf=1 cmt=2 cmts=1 | ran=1 ns=876000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x256x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.4.8 s=1 wl=8 tf=1 cmt=2 cmts=1 | ran=1 ns=2129200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x512x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=4.8.16 s=1 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=15400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x512x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.4.4.4 s=1 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=332200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x512x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.8.8 s=1 wl=8 tf=1 cmt=2 cmts=1 | ran=1 ns=868100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x512x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.8.8 s=1 wl=8 tf=1 cmt=2 cmts=1 | ran=1 ns=2153600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x1024x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.8.4.4 s=1 wl=8 tf=1 cmt=2 cmts=2 | ran=1 ns=358600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x1024x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.8.4.4 s=1 wl=8 tf=1 cmt=2 cmts=1 | ran=1 ns=847500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x1024x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=8.8.8.2 s=1 wl=0 tf=0 cmt=2 cmts=1 | ran=1 ns=2265500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x2048x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=32.8.8 forms1=b48.-.- s=1 wl=8 tf=1 cmt=2 cmts=1 | ran=1 ns=83400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x2048x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=32.8.8 forms1=b48.-.- s=1 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=353200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x2048x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=16.8.16 s=1 wl=0 tf=0 cmt=2 cmts=1 | ran=1 ns=881400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x2048x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=16.8.4.4 s=1 wl=0 tf=0 cmt=2 cmts=1 | ran=1 ns=2068500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x4096x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=64.8.8 s=1 wl=0 tf=0 cmt=2 cmts=1 | ran=1 ns=11300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x4096x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=32.4.32 forms1=b48.-.b48 s=1 wl=8 tf=1 cmt=2 cmts=1 | ran=1 ns=159400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x4096x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=32.4.32 forms1=b48.-.b48 s=1 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=359800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x4096x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=16.32.8 forms1=-.b48.- s=1 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=873800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x4096x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=32.8.16 forms1=b48.-.- s=1 wl=8 tf=1 cmt=2 cmts=1 | ran=1 ns=2299800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x8192x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=32.8.4.8 forms1=b48.-.-.- s=1 wl=0 tf=0 cmt=2 cmts=1 | ran=1 ns=358700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x8192x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=32.8.4.8 forms1=b48.-.-.- s=1 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=926300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=8x8192x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8 chain1=32.8.32 forms1=b48.-.b48 s=1 wl=8 tf=1 cmt=2 cmts=2 | ran=1 ns=2113800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x8x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=8 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=16 | ran=1 ns=5600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x16x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=16 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=1600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x16x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=16 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=3800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x16x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=16 s=2 wl=16 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=16 | ran=1 ns=7800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x16x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=16 s=2 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=11200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x16x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=16 s=2 nf=2 nsw=32 cmt=2 cmts=2 cmtf=2 | ran=1 ns=1795900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x32x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32 forms1=b48 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=3800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x32x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32 forms1=b48 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=5600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x32x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32 forms1=b48 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=32 | ran=1 ns=12300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x32x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32 forms1=b84 s=2 nf=2 nsw=32 cmt=2 cmts=2 cmtf=2 | ran=1 ns=1820000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x32x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16 chain1=8.4 s=1 wl=16 tf=1 cmt=2 cmts=2 | ran=1 ns=4596800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x64x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=64 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=1 | ran=1 ns=3800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x64x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=64 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=5600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x64x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=64 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=11200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x64x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=8.8 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=22400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x64x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16 chain1=8.8 s=1 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=4305600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x128x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=16.8 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=1 | ran=1 ns=11200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x128x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=8.16 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=22500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x128x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=8.8.2 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=645600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x128x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=8.4.4 s=2 nf=2 nsw=32 cmt=2 cmts=2 cmtf=2 | ran=1 ns=1904800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x128x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16 chain1=4.4.8 s=1 wl=16 tf=1 cmt=2 cmts=2 | ran=1 ns=4494300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x256x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=8.32 forms1=-.b48 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=22500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x256x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.2 chain1=8.4.4.2 s=1 nf=2 nsw=32 cmt=2 cmts=2 cmtf=2 | ran=1 ns=1840900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x256x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16 chain1=8.8.4 s=1 wl=0 tf=0 cmt=2 cmts=1 | ran=1 ns=4603400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x512x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=8.64 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=22300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x512x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.2 chain1=8.4.4.4 s=1 nf=2 nsw=32 cmt=2 cmts=2 cmtf=2 | ran=1 ns=1765000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x512x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16 chain1=8.8.8 s=1 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=4498200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x1024x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.2 chain1=8.8.4.4 s=1 nf=2 nsw=64 cmt=2 cmts=1 cmtf=2 | ran=1 ns=1896300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x1024x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16 chain1=8.8.4.4 s=1 wl=16 tf=1 cmt=2 cmts=1 | ran=1 ns=4478100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x2048x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32.64 forms1=b48.b88 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=22300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x2048x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=64.32 forms1=b88.b48 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=49400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x2048x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=16.4.4.8 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=32 | ran=1 ns=642800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x2048x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32.8.8 forms1=b48.-.- s=1 nf=2 nsw=64 cmt=2 cmts=2 cmtf=2 | ran=1 ns=2243700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x2048x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16 chain1=16.8.16 s=1 wl=16 tf=1 cmt=2 cmts=1 | ran=1 ns=4552300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x4096x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32.8.16 forms1=b48.-.- s=1 nf=2 nsw=128 cmt=2 cmts=1 cmtf=2 | ran=1 ns=315400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x4096x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32.4.32 forms1=b48.-.b48 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=648200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x4096x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32.4.32 forms1=b48.-.b48 s=1 nf=2 nsw=32 cmt=2 cmts=2 cmtf=2 | ran=1 ns=1879800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x4096x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16 chain1=32.8.16 forms1=b48.-.- s=1 wl=16 tf=1 cmt=2 cmts=1 | ran=1 ns=4344100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x8192x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32.8.32 forms1=b48.-.b48 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=1 | ran=1 ns=138500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x8192x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32.8.4.8 forms1=b48.-.-.- s=1 nf=2 nsw=32 cmt=2 cmts=1 cmtf=2 | ran=1 ns=634400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x8192x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4 chain1=32.4.64 forms1=b48.-.b88 s=1 nf=2 nsw=64 cmt=2 cmts=2 cmtf=2 | ran=1 ns=1755000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=16x8192x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16 chain1=32.8.32 forms1=b48.-.b48 s=1 wl=0 tf=0 cmt=2 cmts=2 | ran=1 ns=4375400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x4x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=4 s=2 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=22100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x8x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=3400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x8x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8 s=2 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=5600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x8x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=11400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x8x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=1024 | ran=1 ns=22500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x8x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=50000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x8x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=1024 | ran=1 ns=160300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x8x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=1024 | ran=1 ns=337100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x8x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8 s=1 nf=2 nsw=1024 cmt=2 cmts=2 cmtf=2 | ran=1 ns=1827800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x16x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=16 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=3100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x16x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=16 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=512 | ran=1 ns=5600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x16x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=16 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=11100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x16x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=16 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=32 | ran=1 ns=22100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x16x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=16 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=1024 | ran=1 ns=1760900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x32x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=32 forms1=b48 s=1 wl=8 tf=1 nf=1 cmt=1 cmts=2 cmtf=1 | ran=1 ns=5600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x32x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=32 forms1=b48 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=11100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x32x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=32 forms1=b48 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=22300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x64x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=64 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=11100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x64x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=64 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=22300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x64x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=4.4.4 s=2 wl=8 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=51200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x64x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=64 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=156800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x64x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=64 s=2 nf=2 nsw=1024 cmt=2 cmts=2 cmtf=2 | ran=1 ns=1869800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x128x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.16 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=8 | ran=1 ns=2900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x128x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.16 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=22100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x128x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.16 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=64 | ran=1 ns=48000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x128x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.4.4 s=2 wl=8 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=1024 | ran=1 ns=335200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x128x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.8.2 s=2 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=1939700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x128x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.4.4 s=2 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=4425400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x256x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.32 forms1=-.b48 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=22100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x256x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.32 forms1=-.b48 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=46400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x256x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.4.8 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=144700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x256x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.8.4 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=1853300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x256x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=4.8.4.2 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=4406200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x512x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.64 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=32 | ran=1 ns=11200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x512x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=32.16 forms1=b84.- s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=22100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x512x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.64 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=50800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x512x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.64 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=158900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x512x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.8.8 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=310200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x512x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.4.4.4 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=1024 | ran=1 ns=1875200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x512x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.4.4.4 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=4800900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x1024x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.8.16 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=64 | ran=1 ns=47900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x1024x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.8.16 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=160800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x1024x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.8.4.4 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=1863100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x1024x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=8.8.4.4 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=4818700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x2048x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=64.32 forms1=b88.b48 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=1024 | ran=1 ns=154600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x2048x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=32.8.8 forms1=b48.-.- s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=1880600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x4096x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=64.64 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=147100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x4096x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=64.4.16 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=1863700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x4096x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=32.4.32 forms1=b48.-.b48 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=1024 | ran=1 ns=4462600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x8192x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=32.8.32 forms1=b48.-.b48 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=1885700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=32x8192x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8 chain1=32.8.4.8 forms1=b48.-.-.- s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=1024 | ran=1 ns=4750700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x8x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=8 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=8 | ran=1 ns=7200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x8x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=8 s=2 wl=8 tf=1 nf=1 cmt=1 cmts=2 cmtf=1 | ran=1 ns=14500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x8x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=8 s=2 wl=64 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=28600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x8x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=8 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=1973600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x16x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=16 s=1 wl=8 tf=1 nf=1 cmt=1 cmts=1 cmtf=1 | ran=1 ns=7100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x16x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=16 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=32 | ran=1 ns=14400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x16x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=16 s=2 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=32 | ran=1 ns=28500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x16x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=16 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=32 | ran=1 ns=63500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x16x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=16 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=1725300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x16x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=16 s=1 nf=2 nsw=1024 cmt=2 cmts=2 cmtf=2 | ran=1 ns=4749500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x32x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32 forms1=b84 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=7100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x32x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32 forms1=b48 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=8 | ran=1 ns=14500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x32x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32 forms1=b48 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=128 | ran=1 ns=28600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x32x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32 forms1=b48 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=32 | ran=1 ns=67500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x32x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=8.4 s=2 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=2039400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x64x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=64 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=7200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x64x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=64 s=1 wl=16 tf=1 nf=1 cmt=1 cmts=1 cmtf=1 | ran=1 ns=14400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x64x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=64 s=1 wl=16 tf=1 nf=1 cmt=1 cmts=1 cmtf=1 | ran=1 ns=28600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x64x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=64 s=1 nf=2 nsw=32 cmt=2 cmts=2 cmtf=2 | ran=1 ns=61700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x64x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=64 s=2 nf=2 nsw=512 cmt=2 cmts=2 cmtf=2 | ran=1 ns=4968600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x128x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=4.32 forms1=-.b48 s=1 wl=16 tf=1 nf=1 cmt=1 cmts=1 cmtf=1 | ran=1 ns=14600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x128x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=4.32 forms1=-.b48 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=28500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x128x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32.4 forms1=b48.- s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=80300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x128x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=8.8.2 s=2 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=512 | ran=1 ns=4325200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x256x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=8.8.4 s=2 wl=16 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=4753600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x512x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=16.32 forms1=-.b48 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=83200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x512x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=8.4.4.4 s=2 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=4316100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x1024x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=8.4.32 forms1=-.-.b48 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=1 | ran=1 ns=179300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x1024x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=8.8.4.4 s=2 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=4327600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x2048x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=16.4.4.8 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=1 | ran=1 ns=1997900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x2048x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32.4.16 forms1=b48.-.- s=1 nf=2 nsw=512 cmt=2 cmts=2 cmtf=2 | ran=1 ns=4704500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x4096x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32.8.16 forms1=b84.-.- s=1 wl=64 tf=1 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=790300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x4096x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32.8.16 forms1=b48.-.- s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=1 | ran=1 ns=1761700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x4096x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32.4.32 forms1=b48.-.b48 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=4312300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x8192x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32.8.32 forms1=b48.-.b48 s=1 nf=2 nsw=512 cmt=2 cmts=1 cmtf=2 | ran=1 ns=1828800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=64x8192x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8 chain1=32.8.4.8 forms1=b48.-.-.- s=1 nf=2 nsw=1024 cmt=2 cmts=1 cmtf=2 | ran=1 ns=4356300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x4x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=4 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=8 | ran=1 ns=17000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x4x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=4 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=33400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x4x8192 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16.8 chain1=4 s=1 wl=16 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=512 | ran=1 ns=6737700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x8x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=2 cmtf=2 nsw=256 | ran=1 ns=17200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x8x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8 s=2 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=128 | ran=1 ns=33700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x8x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=16 | ran=1 ns=71800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x8x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8 s=2 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=256 | ran=1 ns=227700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x8x4096 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16.8 chain1=8 s=1 nf=2 nsw=512 cmt=2 cmts=2 cmtf=2 | ran=1 ns=6681600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x16x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=16 s=1 wl=32 tf=1 nf=1 cmt=1 cmts=1 cmtf=1 | ran=1 ns=8700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x16x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=4.4 s=1 wl=32 tf=1 nf=1 cmt=1 cmts=1 cmtf=1 | ran=1 ns=17000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x16x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=16 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=128 | ran=1 ns=33700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x16x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=16 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=72000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x16x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=16 s=2 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=256 | ran=1 ns=234300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x16x2048 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16.8 chain1=16 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=512 | ran=1 ns=6413600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x32x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=32 forms1=b84 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=16900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x32x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=32 forms1=b48 s=1 wl=128 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=128 | ran=1 ns=33700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x32x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=32 forms1=b48 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=16 | ran=1 ns=86400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x32x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=32 forms1=b48 s=2 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=235100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x32x1024 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.16 chain1=32 forms1=b48 s=1 wl=128 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=512 | ran=1 ns=6462300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x64x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=64 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=16900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x64x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=64 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=33400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x64x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=64 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=72900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x64x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=64 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=236000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x64x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=4.4.4 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=493700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x64x512 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.16 chain1=8.4.2 s=2 wl=128 tf=1 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=6458400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x128x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=4.32 forms1=-.b48 s=1 wl=8 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=128 | ran=1 ns=17200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x128x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.16 s=1 wl=128 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=256 | ran=1 ns=33700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x128x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.4.4 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=82200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x128x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=16.8 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=256 | ran=1 ns=234700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x128x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.16 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=256 | ran=1 ns=461100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x128x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=4.4.8 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=1018600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x128x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.4.4 s=2 wl=128 tf=1 nf=1 cmt=2 cmts=2 cmtf=1 | ran=1 ns=2647700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x128x256 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16.8 chain1=8.4.4 s=2 wl=128 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=512 | ran=1 ns=6700200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x256x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=4.64 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=33500.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x256x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=4.64 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=32 | ran=1 ns=99000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x256x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=16.16 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=231100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x256x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.32 forms1=-.b48 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=491100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x256x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.8.4 s=1 nf=2 nsw=512 cmt=2 cmts=2 cmtf=2 | ran=1 ns=6607000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x512x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.64 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=16 | ran=1 ns=90300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x512x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=16.32 forms1=-.b84 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=219400.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x512x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.64 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=256 | ran=1 ns=490800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x512x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.4.4 chain1=8.8.8 s=1 nf=2 nsw=512 cmt=2 cmts=2 cmtf=2 | ran=1 ns=6578600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x1024x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.4.32 forms1=-.-.b48 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=494000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x1024x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.8.16 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=2596600.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x1024x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=8.8.16 s=1 nf=2 nsw=512 cmt=2 cmts=1 cmtf=2 | ran=1 ns=6708800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x2048x2 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=32.64 forms1=b48.b88 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=492200.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x2048x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.4.8 chain1=16.8.16 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=2526900.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x2048x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.8.2 chain1=32.8.8 forms1=b48.-.- s=1 nf=2 nsw=512 cmt=2 cmts=1 cmtf=2 | ran=1 ns=6484700.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x4096x8 q=1 ord=nat place=oop lay=il nthreads=8 | chain=16.8 chain1=32.4.4.8 forms1=b48.-.-.- s=1 nf=2 nsw=512 cmt=2 cmts=1 cmtf=2 | ran=1 ns=6452300.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=128x8192x4 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.16 chain1=32.8.32 forms1=b48.-.b48 s=1 wl=32 tf=1 nf=1 cmt=2 cmts=1 cmtf=2 nsw=512 | ran=1 ns=6486100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=256x4x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8.8 chain1=4 s=1 wl=64 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=128 | ran=1 ns=20100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=256x4x128 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.4.8 chain1=4 s=2 wl=8 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=32 | ran=1 ns=83100.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=256x8x16 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8.8 chain1=8 s=1 wl=0 tf=0 nf=1 cmt=2 cmts=1 cmtf=2 nsw=128 | ran=1 ns=20000.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=256x8x32 q=1 ord=nat place=oop lay=il nthreads=8 | chain=4.8.8 chain1=8 s=1 wl=64 tf=1 nf=1 cmt=1 cmts=2 cmtf=1 | ran=1 ns=39800.0 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=256x8x64 q=1 ord=nat place=oop lay=il nthreads=8 | chain=8.4.8 chain1=8 s=2 wl=32 tf=1 nf=1 cmt=2 cmts=2 cmtf=2 nsw=8 | ran=1 ns=82600.0 metric=fwd1 units=ns src=race date=2026-09-25

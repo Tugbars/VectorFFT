@@ -42,8 +42,8 @@
 #include "proto_stride_compat.h"
 #include "transpose.h"
 #include "r2c.h"
-#include "rfft.h"                 /* §6a31: rfft-engine row inner (low-K winner) */
-#include "c2r.h"                  /* §6a32: c2r-engine bwd row inner */
+#include "rfft.h"                 /* rfft-engine row inner (low-K winner) */
+#include "c2r.h"                  /* c2r-engine bwd row inner */
 #ifdef VFFT_USE_JIT
 #include "jit_runtime.h"          /* JIT/baked resolve for the inner column c2c FFT */
 #endif
@@ -77,15 +77,15 @@ static double _f2d_now(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC,&
  * ═══════════════════════════════════════════════════════════════ */
 
 #include "strided_tw.h"
-#include "../../planning/adopt_wisdom.h"  /* §6a49/Q3 */
+#include "../../planning/adopt_wisdom.h"  /* persisted strided-adoption verdicts */
 
-/* §6a39: strided r2c/c2r row engines (the v2 family, --strided-r2c
- * emission, gated bit/roundtrip per size in §6a37/38). One sweep replaces
- * the ENTIRE tiled row pass: fwd reads the user real plane row-major and
- * writes re_pad/im_pad directly (out_stride = K_pad); bwd reads the pads
- * after the col IFFT and writes real rows. me = PAIRS; coverage N2 in
- * {8,12,16,20,32,64}, N1 % 8 == 0, ST only. Adoption is MEASURED at plan
- * create with the §6a34 >5% hysteresis. */
+/* strided r2c/c2r row engines (the generator's --strided-r2c emission,
+ * bit/roundtrip-gated per size). One sweep replaces the ENTIRE tiled row
+ * pass: fwd reads the user real plane row-major and writes re_pad/im_pad
+ * directly (out_stride = K_pad); bwd reads the pads after the col IFFT and
+ * writes real rows. me = PAIRS; coverage = the resolvers below, N1 >= 8,
+ * any row count (ragged rows staged), threaded by range split. Adoption is
+ * MEASURED at plan create with a >5% hysteresis. */
 typedef void (*_f2d_sr2c_fwd_fn)(const double *, double *, double *,
                                  const double *, const double *,
                                  size_t, size_t, size_t);
@@ -102,10 +102,10 @@ _F2D_SR2C_DECL(20) _F2D_SR2C_DECL(32) _F2D_SR2C_DECL(64)
 _F2D_SR2C_DECL(128) _F2D_SR2C_DECL(256) _F2D_SR2C_DECL(512)
 #undef _F2D_SR2C_DECL
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
-/* §6a45: avx512 editions (build-target selected, the strided_rows.h
- * convention). N=12/20 have no width-8 edition (radix %% 8) and fall back
- * to avx2. AVX512-vs-AVX2 measured BIT-identical values; r256 fwd −9.0%
- * on this host. */
+/* avx512 editions (build-target selected, the strided_rows.h convention).
+ * N=12/20 have no width-8 edition (radix % 8) and fall back to avx2. The
+ * avx512 and avx2 editions give BIT-identical values; the avx512 r256 fwd
+ * measured 9.0% faster. */
 #define _F2D_SR2C_D512(N) \
     void radix##N##_n1_fwd_avx512_strided_r2c(const double *, double *, \
         double *, const double *, const double *, size_t, size_t, size_t); \
@@ -116,9 +116,9 @@ _F2D_SR2C_D512(8) _F2D_SR2C_D512(16) _F2D_SR2C_D512(32) _F2D_SR2C_D512(64)
 _F2D_SR2C_D512(128) _F2D_SR2C_D512(256) _F2D_SR2C_D512(512)
 #undef _F2D_SR2C_D512
 #endif
-/* §6a48/Q2: resolvers return the edition AND its block quantum (pairs per
- * codelet block). Tail staging (below) absorbs rows %% (2*blk) != 0 and odd
- * row counts, so the Q0 pairs constraint is retired — avx512 is preferred
+/* Resolvers return the edition AND its block quantum (pairs per codelet
+ * block). Tail staging (below) absorbs rows % (2*blk) != 0 and odd row
+ * counts, so no row-count constraint remains — avx512 is preferred
  * whenever built. */
 static inline _f2d_sr2c_fwd_fn _f2d_sr2c_fwd_resolve(int N2, int *blk) {
     *blk = 4;
@@ -143,17 +143,18 @@ static inline _f2d_sr2c_fwd_fn _f2d_sr2c_fwd_resolve(int N2, int *blk) {
     case 20: return radix20_n1_fwd_avx2_strided_r2c;
     case 32: return radix32_n1_fwd_avx2_strided_r2c;
     case 64: return radix64_n1_fwd_avx2_strided_r2c;
-    case 128: return radix128_n1_fwd_avx2_strided_r2c;  /* §6a42 fused tw */
+    case 128: return radix128_n1_fwd_avx2_strided_r2c;  /* fused twiddle stage */
     case 256: return radix256_n1_fwd_avx2_strided_r2c;
     case 512: return radix512_n1_fwd_avx2_strided_r2c;
     default: return 0;
     }
 }
-/* §6a44: MT range-split for the strided mono tier. Chunks are masked to
- * 4-pair (8-row) multiples, so every thread executes exactly the blocks ST
- * would — MT output is BIT-IDENTICAL to ST by construction. The codelets
- * are scratch-free, so unlike the tiled path there are no per-thread slots
- * to ration. The stw tier stays ST (shared work buffer; dormant anyway). */
+/* MT range-split for the strided mono tier. Chunks are masked to 4-pair
+ * (8-row) multiples, so every thread executes exactly the blocks ST would —
+ * MT output is BIT-IDENTICAL to ST by construction. The codelets are
+ * scratch-free, so unlike the tiled path there are no per-thread slots to
+ * ration. The stw tier stays ST (shared work buffer; dormant, see its
+ * adoption in the create). */
 typedef struct {
     _f2d_sr2c_fwd_fn fn;
     const double *rio; double *ore, *oim;
@@ -180,7 +181,7 @@ static void _f2d_sr2c_fwd_run(_f2d_sr2c_fwd_fn fn, const double *rio,
     if (T <= 1 || me < 16) { fn(rio, ore, oim, 0, 0, rs_in, os, me); return; }
     /* 8-aligned proportional ranges, empty ones skipped: the slots are PACKED,
      * and the caller (slot 0) runs whichever non-empty range comes first --
-     * its own [0,p0_main_end) when that is non-empty, exactly as before. */
+     * its own [0,p0_main_end) when that is non-empty. */
     _f2d_sr2c_mtf_arg_t args[STRIDE_POOL_MAX_DISPATCH];
     int m = 0;
     size_t p0_main_end = ((me * 1) / (size_t)T) & ~(size_t)7;
@@ -233,12 +234,13 @@ static void _f2d_sr2c_bwd_run(_f2d_sr2c_bwd_fn fn, const double *ire,
     if (m > 0) stride_pool_run(m, _f2d_sr2c_mtb_tramp, args, sizeof args[0]);
 }
 
-/* §6a48/Q2: rows-based, tail-capable entries. Full blocks go through the
- * MT _run path; the remainder (rows %% (2*blk), incl. an odd lone row) is
- * staged through a zeroed block — the lone row's zero partner makes X2 a
- * zero spectrum (discarded fwd / ignored bwd) by the two-for-one algebra.
+/* Rows-based, tail-capable entries. Full blocks go through the MT _run
+ * path; the remainder (rows % (2*blk), incl. an odd lone row) is staged
+ * through a zeroed block — the lone row's zero partner makes X2 a zero
+ * spectrum (discarded fwd / ignored bwd) by the two-for-one algebra.
  * tscr layout: [2*blk*N in] [2*blk*hp1 re] [2*blk*hp1 im]. NULL tscr =>
- * full-block-only (legacy callers). */
+ * full blocks only (the callers allocate the staging only when a tail
+ * exists). */
 static inline void _f2d_sr2c_fwd_rows(_f2d_sr2c_fwd_fn fn, int blk, int N,
                                       const double *x, double *ore,
                                       double *oim, size_t rs_in, size_t os,
@@ -323,7 +325,7 @@ static inline _f2d_sr2c_bwd_fn _f2d_sr2c_bwd_resolve(int N2, int *blk) {
     case 20: return radix20_n1_bwd_avx2_strided_r2c;
     case 32: return radix32_n1_bwd_avx2_strided_r2c;
     case 64: return radix64_n1_bwd_avx2_strided_r2c;
-    case 128: return radix128_n1_bwd_avx2_strided_r2c;  /* §6a42 fused tw */
+    case 128: return radix128_n1_bwd_avx2_strided_r2c;  /* fused twiddle stage */
     case 256: return radix256_n1_bwd_avx2_strided_r2c;
     case 512: return radix512_n1_bwd_avx2_strided_r2c;
     default: return 0;
@@ -337,29 +339,30 @@ typedef struct {
     size_t K_pad;                 /* col FFT batch dim, padded to multiple of 4
                                    * (codelet n1_fwd has no scalar tail at vl<4) */
 
-    /* §6a31: optional rfft-engine row inner — measured 27% faster than the
-     * stride inner at the tile shape ((256,8): 2.885 vs 3.969 µs/call).
-     * Injected by the vfft layer (registry + lifetime owner); used only when
-     * the row pass runs single-threaded (the rfft plan's planes are shared
-     * state; the stride inner keeps per-tid scratch for MT). NULL = stride. */
+    /* optional rfft-engine row inner — measured 27% faster than the stride
+     * inner at the tile shape ((256,8): 2.885 vs 3.969 µs/call). Injected
+     * by the 2D create (fft2d_create.h; the handle owns its lifetime); used
+     * only when the row pass runs single-threaded (the rfft plan's planes
+     * are shared state; the stride inner keeps per-tid scratch for MT).
+     * NULL = stride. */
     rfft_plan_t *rfft_row;
-    /* §6a32: bwd twin — c2r natural-engine row inner (same rules: injected,
+    /* bwd twin — c2r natural-engine row inner (same rules: injected,
      * measured-adopted, ST only). NULL = stride inner. */
     c2r_plan_t *c2r_row;
-    /* §6a39: strided r2c/c2r whole-row-pass engines (measured-adopted). */
+    /* strided r2c/c2r whole-row-pass engines (measured-adopted). */
     _f2d_sr2c_fwd_fn strided_fwd;
     _f2d_sr2c_bwd_fn strided_bwd;
-    int str_blk;                  /* §6a48: edition block quantum (pairs) */
-    double *tail_scr;             /* §6a48: staging for ragged row counts */
-    /* §6a41: strided TWIDDLE-STAGE row engines (N2 in {128,256}; front +
-     * r64 monos + mapped split, row-blocked — see strided_tw.h). */
+    int str_blk;                  /* edition block quantum (pairs) */
+    double *tail_scr;             /* staging for ragged row counts */
+    /* strided TWIDDLE-STAGE row engines (N2 in {128,256}; front + r64
+     * monos + mapped split, row-blocked — see strided_tw.h). */
     _stw_tables_t stw_tab;
     int stw_on_fwd, stw_on_bwd;
     double *stw_work;
 
     int num_scratch;              /* per-thread scratch slots */
     size_t tile_real_sz;          /* N2 * B */
-    size_t tile_complex_sz;       /* K_pad * B (was (N2/2+1)*B; now padded) */
+    size_t tile_complex_sz;       /* (N2/2+1) * B */
     double *scratch_re;           /* num_scratch * tile_real_sz doubles */
     double *scratch_im;           /* num_scratch * tile_complex_sz doubles */
 
@@ -388,9 +391,9 @@ typedef struct {
 
     /* JIT/baked resolved column c2c executor (NULL -> generic). Filled by
      * _fft2d_r2c_jit_resolve under VFFT_USE_JIT; else NULL (zero behavior change).
-     * The ROW r2c/c2r pass stays generic — it's a per-tile worker-shim entry over
-     * the fused/sliced stride-r2c engine (tid-threaded scratch slots), NOT a
-     * whole-plan call, so it's deferred (same blocker as strided-r2c JIT). */
+     * The ROW pass is a per-tile worker-shim entry over the stride-r2c engine
+     * (tid-threaded scratch slots), NOT a whole-plan call: its inner c2c gets
+     * its JIT through plan_r2c instead (see _fft2d_r2c_jit_resolve). */
     vfft_proto_exec_fn exec_col_fwd, exec_col_bwd;
 } stride_fft2d_r2c_data_t;
 
@@ -489,8 +492,8 @@ static void _fft2d_r2c_tiled_fwd_range(stride_fft2d_r2c_data_t *d,
          * si[f*B + k_local] holds Im bins for f=0..N2/2. */
         _F2D_T0(_f2d_p1_r2c);
         if (d->rfft_row && stride_get_num_threads() <= 1)
-            /* §6a31: rfft engine, in-place-safe (leaf fully consumes x
-             * before the terminator writes out); ST only. */
+            /* rfft engine, in-place-safe (leaf fully consumes x before
+             * the terminator writes out); ST only. */
             rfft_execute_fwd_natural(d->rfft_row, sr, sr, si, NULL);
         else
             _fft2d_r2c_inner_fwd(d->plan_r2c, sr, si, tid);
@@ -565,11 +568,11 @@ static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
                               this_B, (size_t)halfN_plus1);
 
         /* Inner C2R in-place on scratch. tid selects the inner's per-worker
-         * pack-scratch slot — distinct per tile thread (was hardcoded 0, the
-         * blocker that forced serial backward). */
+         * pack-scratch slot — distinct per tile thread (a shared slot would
+         * force a serial backward). */
         if (d->c2r_row && stride_get_num_threads() <= 1)
-            /* §6a32: c2r natural engine — in-place-safe (the initiator
-             * consumes all input rows in stage 0; out written last). */
+            /* c2r natural engine — in-place-safe (the initiator consumes
+             * all input rows in stage 0; out written last). */
             c2r_execute_natural(d->c2r_row, sr, si, sr, NULL);
         else
             _fft2d_r2c_inner_bwd(d->plan_r2c, sr, si, tid);
@@ -874,9 +877,8 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
     d->plan_col = plan_col;
 
     d->tile_real_sz = (size_t)N2 * B;
-    /* Per-tile complex scratch: hp1 rows actually written by R2C, but we
-     * size it generously at N2*B (= tile_real_sz) since that's the buffer
-     * R2C reuses for input + Re bins. Im just needs hp1*B. */
+    /* Per-tile scratch: the re slot is N2*B (tile_real_sz — the R2C reuses
+     * it for the real input and the Re bins); the im slot needs only hp1*B. */
     d->tile_complex_sz = hp1 * B;
 
     int T = stride_pool_workers_for(0); /* create time: the pool as it is now = this plan's slot count */
@@ -921,15 +923,14 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
         }
     }
 
-    /* §6a51: EMPIRICAL col-path verification (the §6a47b pattern ported).
-     * The perm above is computed BLIND from plan_col->factors as standard
-     * digit-reversal; for plans whose true output ordering differs (prime
-     * N1 was the demonstrated case: cold-first creates half-succeeded with
-     * rt~1.0 WRONG results) that assumption silently breaks. Impulse at
-     * row 1, run the PRODUCTION col call, verify all N1 bins through the
-     * perm against the closed form. Any mismatch => fail the build — never
-     * a silently wrong spectrum. The row inner gets the same probe
-     * (lane-batched impulse) as cheap insurance for its class. */
+    /* EMPIRICAL col-path verification. The perm above is computed BLIND
+     * from plan_col->factors as standard digit-reversal; for a plan whose
+     * true output ordering differs (a prime N1 is the known case: the
+     * create succeeds and the spectrum is WRONG) that assumption silently
+     * breaks. Impulse at row 1, run the col call, verify all N1 bins
+     * through the perm against the closed form. Any mismatch => fail the
+     * build — never a silently wrong spectrum. The row inner gets the same
+     * probe (lane-batched impulse) as cheap insurance for its class. */
     {
         memset(d->re_pad, 0, (size_t)N1 * K_pad * sizeof(double));
         memset(d->im_pad, 0, (size_t)N1 * K_pad * sizeof(double));
@@ -972,13 +973,11 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
         }
     }
 
-    /* §6a39: measured adoption of the strided r2c/c2r whole-row-pass
-     * engines (coverage N2 in {8,12,16,20,32,64}, N1 % 8 == 0; execute
-     * re-guards T <= 1). fwd arms both read a preserved pattern input and
-     * write the pads; bwd arms both read the pads read-only — no refills.
-     * If create runs under MT the tiled arm may thread while strided is ST:
-     * conservative under-adoption, consistent with the hysteresis
-     * philosophy (§6a34: challenger must beat the incumbent by >5%). */
+    /* measured adoption of the strided r2c/c2r whole-row-pass engines
+     * (coverage: the resolvers; N1 >= 8, ragged rows staged). fwd arms both
+     * read a preserved pattern input and write the pads; bwd arms both read
+     * the pads read-only — no refills. The challenger must beat the
+     * incumbent by >5% (the hysteresis). */
     {
         _f2d_sr2c_fwd_fn sf = _f2d_sr2c_fwd_resolve(N2, &d->str_blk);
         if ((sf) && ((size_t)N1 % (2 * (size_t)d->str_blk) != 0)) {
@@ -991,15 +990,15 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
         _f2d_sr2c_bwd_fn sb = _f2d_sr2c_bwd_resolve(N2, &d->str_blk);
         if (sf && sb && N1 >= 8) {
             int aw_f = 0, aw_b = 0;
-            /* recalib (2026-09-17): the twin of the rank-3/4 "nd" verdict
-             * fixed a day earlier. This is a MEASURED A/B (timed arms, 5%
-             * hysteresis below) and replaying it under the flag threw away the
-             * measurement the caller asked for. The race that follows ends in
-             * vfft_adopt_record, which overwrites on key match. */
+            /* recalib: this is a MEASURED A/B (timed arms, 5% hysteresis
+             * below), so the caller's recalibrate re-measures it rather than
+             * replaying (as the rank-3/4 "nd" verdict does). The race that
+             * follows ends in vfft_adopt_record, which overwrites on key
+             * match. */
             if (!recalib &&
                 vfft_adopt_lookup("2d", N1, N2, d->str_blk, &aw_f, &aw_b)) {
-                /* §6a49: warm create — apply the persisted verdicts, skip
-                 * both A/B blocks entirely. */
+                /* warm create — apply the persisted verdicts, skip both A/B
+                 * blocks entirely. */
                 d->strided_fwd = aw_f ? sf : 0;
                 d->strided_bwd = aw_b ? sb : 0;
                 goto aw2d_done;
@@ -1063,16 +1062,15 @@ aw2d_done:;
         }
     }
 
-    /* §6a41: measured adoption of the twiddle-stage engines (N2 128/256).
-     * GATE-FIDELITY LESSON (measured the hard way at 256²): an isolated
-     * hot-looped row-pass A/B misadopted stw (+15% execute-context
-     * regression). The arms here therefore run the FULL fwd/bwd executors
-     * with the flag toggled — same phase interleaving, same cache
-     * behavior as production. Hysteresis unchanged (>5%). */
-    /* §6a45: stw is a FALLBACK tier only — family 4 (emitted monos)
-     * supersedes it at every covered N2, and its create A/B proved
-     * unreliable under the avx512 build (misadopted +20%). Eligible only
-     * where the mono resolver has no coverage. */
+    /* measured adoption of the twiddle-stage engines (N2 128/256).
+     * GATE FIDELITY: an isolated hot-looped row-pass A/B misadopts stw
+     * (+15% in the execute context at 256²), so the arms run the FULL
+     * fwd/bwd executors with the flag toggled — same phase interleaving,
+     * same cache behavior as production. Hysteresis >5%. */
+    /* stw is a FALLBACK tier only — the emitted strided monos supersede it
+     * at every covered N2 (and its create A/B misadopted by +20% under the
+     * avx512 build). Eligible only where the mono resolver has no coverage;
+     * with 128/256 covered, the tier is dormant. */
     if ((N2 == 128 || N2 == 256) && N1 >= 8
         && !_f2d_sr2c_fwd_resolve(N2, &(int){0})
         && _stw_tables_init(&d->stw_tab, N2)) {
@@ -1155,25 +1153,24 @@ stw_gate_done: ;
  *   in_re, in_im: each N1*(N2/2+1) doubles.
  *   real_out: N1*N2 reals.
  *
- * Both wrappers allocate temp scratch internally because the in-place
- * override requires the re buffer to be sized for the LARGER of input
- * (N1*N2 reals for forward) or output (N1*N2 reals for backward).
+ * Both run the copy-free OOP-native executors below (the in-place
+ * override needs its re buffer sized for the LARGER of input and output,
+ * N1*N2 reals either way).
  * ═══════════════════════════════════════════════════════════════ */
 
-/* §6a30: OOP-native executors — phase 1 reads the user input, phases 2-3 live
- * in the pad scratch, phase 3 writes the user output. The in-place ABI's
- * single re pointer forced the old wrappers to memcpy a full plane in and a
- * half plane out (measured 14.7% at 256²); these variants are copy-free and
- * bit-identical (same phases, same pad bytes). SPLIT callers only — the _z
- * veneer entries (fused interleave into the perm loops) were DELETED
- * 2026-08-26: interleaved 2D real callers are served by the native IL tier
- * (fft2d_real_il_design.md M3, no cross-layout serving by owner law). */
+/* OOP-native executors — phase 1 reads the user input, phases 2-3 live in
+ * the pad scratch, phase 3 writes the user output. Copy-free (wrapping the
+ * in-place ABI's single re pointer costs a full-plane memcpy in and a
+ * half-plane out: 14.7% at 256²) and bit-identical to the in-place
+ * executors (same phases, same pad bytes). SPLIT callers only:
+ * interleaved 2D real callers are served by the native IL tier (no
+ * cross-layout serving). */
 static void _fft2d_r2c_execute_fwd_oop(stride_fft2d_r2c_data_t *d,
                                        const double *real_in,
                                        double *out_re, double *out_im)
 {
     if (d->strided_fwd) {
-        /* §6a39/44/48: one strided sweep (MT full blocks + staged tail). */
+        /* one strided sweep (MT full blocks + staged tail). */
         _f2d_sr2c_fwd_rows(d->strided_fwd, d->str_blk, d->N2, real_in,
                            d->re_pad, d->im_pad, (size_t)d->N2, d->K_pad,
                            (size_t)d->N1, d->tail_scr);
@@ -1251,8 +1248,8 @@ static inline void stride_execute_2d_r2c(const stride_plan_t *plan,
                                           double *out_re, double *out_im)
 {
     stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)plan->override_data;
-    /* §6a30: copy-free OOP-native path (the old memcpy-around cost 14.7%;
-     * wrapin/wrapout counters now legitimately read zero on this route). */
+    /* copy-free OOP-native path (the VFFT_2D_PROFILE wrapin/wrapout
+     * counters read zero on this route). */
     _fft2d_r2c_execute_fwd_oop(d, real_in, out_re, out_im);
 }
 
@@ -1261,7 +1258,7 @@ static inline void stride_execute_2d_c2r(const stride_plan_t *plan,
                                           double *real_out)
 {
     stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)plan->override_data;
-    /* §6a30: copy-free OOP-native path. */
+    /* copy-free OOP-native path. */
     _fft2d_r2c_execute_bwd_oop(d, in_re, in_im, real_out);
 }
 
