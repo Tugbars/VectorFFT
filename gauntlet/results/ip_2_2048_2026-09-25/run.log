@@ -46,3 +46,16 @@
 2026-09-25 13:31:09 calibrate: 0 cells (1031 already done)
 2026-09-25 13:31:09 bench: 1023 cells (0 already benched, 0 not banked -> not benched)
 2026-09-25 13:31:41   benched 25/1023 (26), 30 s elapsed
+2026-09-25 13:32:13   benched 50/1023 (51), 62 s elapsed
+2026-09-25 13:32:47   benched 75/1023 (76), 96 s elapsed
+2026-09-25 13:33:22   benched 100/1023 (101), 131 s elapsed
+2026-09-25 13:33:55   benched 125/1023 (126), 165 s elapsed
+2026-09-25 13:34:31   benched 150/1023 (151), 200 s elapsed
+2026-09-25 13:35:05   benched 175/1023 (176), 235 s elapsed
+2026-09-25 13:35:43   benched 200/1023 (201), 272 s elapsed
+2026-09-25 13:36:20   benched 225/1023 (226), 309 s elapsed
+2026-09-25 13:36:55   benched 250/1023 (251), 344 s elapsed
+2026-09-25 13:37:33   benched 275/1023 (276), 382 s elapsed
+2026-09-25 13:38:12   benched 300/1023 (301), 422 s elapsed
+2026-09-25 13:38:50   benched 325/1023 (326), 459 s elapsed
+2026-09-25 13:39:26   benched 350/1023 (351), 496 s elapsed

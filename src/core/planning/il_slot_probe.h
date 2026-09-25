@@ -11,8 +11,8 @@
  *                        variant, role), and the shipped pairs at 32..512
  *                        put only radix 4 and 16 in the MID role, so a gate
  *                        over banked plans exercises no radix-8 mid entry at
- *                        all — it passed with a known-bad kernel injected
- *                        (2026-09-11). Enumerating every legal (R1, R2) at
+ *                        all (it passes a known-bad kernel). Enumerating
+ *                        every legal (R1, R2) at
  *                        each N puts every pair radix in BOTH roles, which
  *                        is also what the planner itself does on a cold cell.
  *   vfft_il_slot_probe — builds the candidate with that form installed and
@@ -108,7 +108,7 @@ static int vfft_il_slot_probe(void *vctx, const vfft_slot_t *s, const char **why
 
     if (s->bwd)
     {   /* _il_dp_bench_dir runs the backward AND gates its roundtrip, and
-         * since 2026-09-11 it names the refusal — that reason IS the verdict */
+         * names the refusal — that reason IS the verdict */
         const char *w = NULL;
         double ns;
         c.il_bkv = s->form;

@@ -1,53 +1,44 @@
-/* policy.h — THE planning policy: one place a law about a REQUEST is
- * written (docs/design/planning_policy_design.md, 2026-09-16).
+/* policy.h — THE planning policy: the one place a law about a REQUEST is
+ * written (docs/design/planning_policy_design.md).
  *
- * The owner's diagnosis (2026-09-09): "all our racing, banking and search
- * space heuristics are scattered around lots of files" — one law took 4-6
- * edits and every place missed was a defect. This module answers, for a
- * request (N, layout, order, placement, T), the questions that are POLICY:
- * which contract cell it is, which engine families may serve and race
- * there, which wisdom row serves it, race-or-replay, and what a refusal
- * is. Every door, planner, calibrator and bench asks; none keeps a copy.
+ * For a request (N, layout, order, placement, T) this module answers the
+ * questions that are POLICY: which contract cell it is, which engine
+ * families may serve and race there, which wisdom row serves it,
+ * race-or-replay, and what a refusal is. Every door, planner, calibrator
+ * and bench asks; none keeps a copy.
  *
  * Three things this module is NOT.
  *   - not a heuristic: it says which pool RACES, never which arm wins —
- *     wisdom decides that (owner's law: NEVER heuristic, ALWAYS wisdom);
+ *     wisdom decides that;
  *   - not a plan builder: no create, no execute, no allocation;
  *   - not a wisdom reader: it says which ROW KEY serves a cell;
- *     vw2_key_serves still matches.
+ *     vw2_key_serves matches.
  *
  * DECLARATIVE by construction: it returns names, small structs and
  * integers — never a function pointer, never an engine header's type — so
  * it sits ABOVE every engine in the one-TU include order (after the band
- * headers ztt.h and k1_fourstep_band.h reach vfft.c) and BELOW every
- * planner and door (dp_planner_il.h, k1_commit.h, the two c2c doors, the
- * 2D/3D tiers), which all call it.
+ * headers ztt.h and k1_fourstep_band.h) and BELOW every planner and door
+ * (dp_planner_il.h, k1_commit.h, the two c2c doors, the 2D/3D tiers),
+ * which all call it. build_tuned/benches/policy_gate.c asserts it against
+ * the predicates the sites used to spell inline.
  *
- * MIGRATION (the design's 7 steps): step 1 is this file with the ORDER
- * classification (L4) and the race CEILINGS (L9) only. The remaining laws
- * (band admission, pool membership, row keys, race-or-replay, engine
- * presence, refusal, the cache ladders) move in later steps, each one
- * behavior-preserving and gated by benches/policy_gate.c, which holds the
- * pre-migration predicates verbatim and asserts this module equals them.
- *
- * SPLIT is out of scope: SPLIT and IL are two libraries (owner's law).
- * The shape admits a split table later; nothing here assumes IL. */
+ * SPLIT is out of scope: SPLIT and IL are two libraries. The shape admits a
+ * split table later; nothing here assumes IL. */
 #ifndef VFFT_PLANNING_POLICY_H
 #define VFFT_PLANNING_POLICY_H
 
 /* The ONE dependency: L8 asks the hardware how big a cache level is. Spelled
  * bare because the include path carries src/core/support (dp_planner_il.h
  * does the same); the guard makes it a no-op in the one-TU build, where
- * cpu_cache.h is already in scope, and it is what lets benches/policy_gate.c
- * compile this module on its own. */
+ * cpu_cache.h is already in scope, and lets policy_gate.c compile this
+ * module on its own. */
 #include "cpu_cache.h"
 
 /* ── L9. the race CEILINGS ──────────────────────────────────────────────
  * How far up each band the K=1 IL planner may race. They live here, not
  * beside their engines, because the door combines them into ONE question
  * ("may this N race at all?") and that question is policy. The engines'
- * own bands (vfft_ztt_band, vfft_k1fs_band) stay with their engines until
- * step 2 moves the band table here. */
+ * own bands (vfft_ztt_band, vfft_k1fs_band) stay with their engines. */
 #ifndef VFFT_K1_IL_PLAN_MAX_N
 #define VFFT_K1_IL_PLAN_MAX_N 16384      /* odd N above 2048 race here; 4 scratch
                                           * planes of this size is the budget */
@@ -60,8 +51,7 @@
 /* The largest N the K=1 interleaved planner races for this N's band:
  * pow2 -> the four-step's ceiling; 2^a*odd in ZTURN-T's odd band -> that
  * band's; an odd-factored N with no factor of 4 -> the flat DIT's; else
- * the scratch-plane budget. (Verbatim the expression the race gate spelled
- * inline before 2026-09-16 — k1_commit.h's `_k1_il_plan_race`.) */
+ * the scratch-plane budget. */
 static inline long vfft_policy_race_max_n(int N)
 {
     const int pow2 = (N & (N - 1)) == 0;
@@ -72,48 +62,35 @@ static inline long vfft_policy_race_max_n(int N)
 }
 
 /* ── L4. the ORDER classification ───────────────────────────────────────
- * Which wisdom ORDER row a request reads and banks on. Three branches,
- * because the library genuinely has three laws here — each is stated, not
- * averaged:
+ * Which wisdom ORDER row a request reads and banks on. Two laws:
  *
  *   rank >= 2            explicit NATURAL -> nat; DEFAULT -> SCR.
  *                        The 2D/3D tier's DEFAULT is the scrambled comb
  *                        (its chains are raced under the scrambled pass);
  *                        a natural cell races its own chain under the
- *                        natural pass and never shares the scr row
- *                        (2026-09-04, and the 2026-09-07 order-cell law).
- *   rank 1, either place explicit SCRAMBLED -> scr; DEFAULT and NATURAL
- *                        -> nat (2026-09-05: an explicit SCRAMBLED request
- *                        reads the scrambled pool's own verdict and
- *                        nothing else). DEFAULT = NATURAL (design_contracts
- *                        .md 3, owner 2026-09-09). Until 2026-09-21 the
- *                        in-place branch kept a pre-law DEFAULT -> scr at
- *                        the non-pow2 cells for the split library's
- *                        @scrmode mode row; the in-place cell races its own
- *                        arms now and reads no mode row, so the one law
- *                        holds in place too (a DEFAULT in-place request at
- *                        an odd N was being served the SCRAMBLED cell and
- *                        came back permuted -- il_solo_gate at 27).
+ *                        natural pass and never shares the scr row.
+ *   rank 1, either place explicit SCRAMBLED -> scr (the scrambled pool's
+ *                        own verdict and nothing else); DEFAULT and
+ *                        NATURAL -> nat. DEFAULT = NATURAL, in place too:
+ *                        a DEFAULT request must never be served a
+ *                        scrambled cell and come back permuted.
  *
- * Returns VW2_ORD_NAT / VW2_ORD_SCR. `N` is read only by the rank-1
- * in-place branch; `inplace` only by rank 1. */
+ * Returns VW2_ORD_NAT / VW2_ORD_SCR. `N` and `inplace` are not read: one
+ * law for both placements. */
 static inline int vfft_policy_ord(const vfft_config_t *cfg, int N,
                                   int rank, int inplace)
 {
     if (rank >= 2)
         return (cfg->order == VFFT_ORDER_NATURAL) ? VW2_ORD_NAT : VW2_ORD_SCR;
-    (void)inplace; (void)N;   /* one law for both placements (2026-09-21) */
+    (void)inplace; (void)N;   /* one law for both placements */
     return (cfg->order == VFFT_ORDER_SCRAMBLED) ? VW2_ORD_SCR : VW2_ORD_NAT;
 }
 
-/* the two call-site spellings: rank >= 2 reads no N and no placement;
- * rank 1 reads both. Since 2026-09-21 the K=1 candidate builder asks with
- * the REQUEST's placement: the in-place cell is its own kind-3 row
- * (place=ip), raced with every arm executed in place and banked there;
- * the out-of-place cell is the place=oop row. Neither placement reads the
- * other's verdict (one contract per request). Until then both doors asked
- * with inplace = 0 and the in-place door served the out-of-place verdict
- * through a mode row with a reference to it. */
+/* the two call-site spellings. The K=1 candidate builder asks with the
+ * REQUEST's placement: the in-place cell is its own kind-3 row (place=ip),
+ * raced with every arm executed in place and banked there; the out-of-place
+ * cell is the place=oop row. Neither placement reads the other's verdict
+ * (one contract per request). */
 static inline int vfft_policy_ord_rankn(const vfft_config_t *cfg)
 {
     return vfft_policy_ord(cfg, 0, 2, 0);
@@ -125,8 +102,7 @@ static inline int vfft_policy_ord_k1(const vfft_config_t *cfg, int N, int inplac
 
 /* ── the CELL: a request, normalized once ───────────────────────────────
  * Filled at the top of a create and passed down, so the classification
- * happens once per request instead of once per site. Later steps answer
- * pool membership, the row key and race-or-replay from it. */
+ * happens once per request instead of once per site. */
 typedef struct
 {
     int N, K, rank, T;
@@ -168,30 +144,25 @@ static inline vfft_cell_t vfft_policy_cell(const vfft_config_t *cfg, int N, int 
  *   or (N & 3)
  *   other N        nothing — the cell REFUSES       nothing
  *
- * The three rulings behind it: the pairs lost every pow2 cell at 2048 and
- * above and the owner took them out of that search ("for 2048 and 4096,
- * bailey shouldn't be in the search pool", 2026-09-09); ZTURN-T is ALONE to
- * its ceiling in both classes (design_contracts.md 4 and 8b); above the
- * ceiling the four-step is alone, and AT the ceiling the natural cell races
- * the two while the scrambled cell stays ZTURN-T's (2026-09-15/16).
+ * Behind it: the pairs lost every pow2 cell at 2048 and above, so they are
+ * out of that search; ZTURN-T is ALONE to its ceiling in both classes;
+ * above the ceiling the four-step is alone, and AT the ceiling the natural
+ * cell races the two while the scrambled cell stays ZTURN-T's.
  *
  * ADMITTED, not "produces candidates": a family admitted here still answers
  * for itself whether a kernel exists for this N — the mono forms, the pair
  * radices, the ZTURN-T registry cell, the flat compositions. Policy says who
  * may race; the family says what it has. (ZTURN-T's band and its registry
  * agree exactly — cells at every pow2 16..262144 — and policy_gate proves
- * that equivalence over the whole domain, which is why gating the family by
- * the band is identical to the unconditional call it replaces.)
+ * it over the whole domain.)
  *
- * PRIME is a raced arm since 2026-09-21 (owner: "make the prime cell an arm
- * of the pool at every non-pow2 cell where it builds"): the prime cell --
- * Rader or Bluestein on the WHOLE length, its inner the prime shard's own
- * raced verdict -- enters both order classes at every non-pow2 N and is
- * measured against the chains. The gauntlet found why: a chain's cost per
- * point is the sum of its radices' (0.6 R + 3 intrinsics each) while the
- * convolution's is flat (~40 units), so a chain of large radices (47.43,
- * 43.43) LOSES to Bluestein, and the pool answered those cells unopposed.
- * Above the race ceiling the door still builds it unraced (its only route). */
+ * PRIME is a raced arm at every non-pow2 N where it builds: Rader or
+ * Bluestein on the WHOLE length, its inner the prime shard's own raced
+ * verdict, in both order classes, measured against the chains. A chain's
+ * cost per point is the sum of its radices' (~0.6 R + 3 intrinsics each)
+ * while the convolution's is flat (~40 units), so a chain of large radices
+ * (47.43, 43.43) loses to Bluestein. Above the race ceiling the door builds
+ * it unraced (its only route). */
 typedef enum
 {
     VFFT_FAM_MONO = 0,    /* the solo kernels (one call, every registry form) */
@@ -222,7 +193,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
 #define VFFT__POOL_PUSH(f) do { if (n < (max)) out[n] = (f); n++; } while (0)
     if (c->ord == VW2_ORD_SCR)
     {   /* ORDER IS A CONTRACT: the scrambled pool races SCRAMBLED WRITERS
-         * only — one family per band, never the natural engines (2026-09-14) */
+         * only — one family per band, never the natural engines */
         if (vfft_ztt_band(N))          { VFFT__POOL_PUSH(VFFT_FAM_ZTT);     return n; }
         if (pow2 && vfft_k1fs_band(N)) { VFFT__POOL_PUSH(VFFT_FAM_FS);      return n; }
         if (vfft_ztt_odd_band(N))      { VFFT__POOL_PUSH(VFFT_FAM_ZTT_ODD); return n; }
@@ -230,10 +201,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
         {   /* outside the bands every engine that legally answers a scrambled
              * request competes: the natural writers (identity is a legal
              * scrambled permutation) and, at a non-pow2, the flat's own
-             * scrambled class. Until 2026-09-22 this block was fenced to
-             * N < 2048 or no factor of 4: the composite N >= 2048 with a
-             * factor of 4 outside the odd band was "the odd machinery's" --
-             * the cascade's, deleted 2026-09-15 -- and refused here. */
+             * scrambled class. */
             VFFT__POOL_PUSH(VFFT_FAM_MONO);
             VFFT__POOL_PUSH(VFFT_FAM_PAIR);
             VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
@@ -254,26 +222,21 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
     VFFT__POOL_PUSH(VFFT_FAM_MONO);
     VFFT__POOL_PUSH(VFFT_FAM_PAIR);
     VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
-    if (!pow2 && !vfft_ztt_odd_band(N)) VFFT__POOL_PUSH(VFFT_FAM_FLAT);   /* every non-pow2 cell but the odd band's (2026-09-22; was N < 2048 or no factor of 4) */
+    if (!pow2 && !vfft_ztt_odd_band(N)) VFFT__POOL_PUSH(VFFT_FAM_FLAT);   /* every non-pow2 cell but the odd band's */
     if (vfft_ztt_band(N))               VFFT__POOL_PUSH(VFFT_FAM_ZTT);
-    if (!pow2)                          VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* every non-pow2 cell (2026-09-21) */
+    if (!pow2)                          VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* every non-pow2 cell */
 #undef VFFT__POOL_PUSH
     return n;
 }
 
 /* The cells the K=1 INTERLEAVED path SERVES directly — what a bench or a
  * calibrator means by "this N is the K=1 IL tier's". Below 2048; every
- * non-pow2 N (since 2026-09-22; until then a composite N >= 2048 with a
- * factor of 4 outside ZTURN-T's odd band was left to the deleted cascade);
- * ZTURN-T's pow2 band; the four-step's band.
+ * non-pow2 N; ZTURN-T's pow2 band; the four-step's band.
  *
- * WIDER THAN `vfft_policy_races`, and the difference is not an oversight:
- * above the race ceiling an odd N is still SERVED — by the prime engine
- * (Rader/Bluestein) at the door, unraced up there (below the ceiling it is
- * an arm of the pool, 2026-09-21). The
- * gate caught the two being conflated at N = 262145 (the planner refuses
- * to race it, the door serves it), which is why they are two named laws
- * and not one. */
+ * WIDER THAN `vfft_policy_races`, on purpose: above the race ceiling an odd
+ * N is still SERVED — by the prime engine (Rader/Bluestein) at the door,
+ * unraced. At N = 262145 the planner refuses to race it and the door serves
+ * it, which is why these are two named laws and not one. */
 static inline int vfft_policy_k1_direct_cell(const vfft_cell_t *c)
 {
     const int N = c->N;
@@ -286,32 +249,23 @@ static inline int vfft_policy_k1_direct_cell(const vfft_cell_t *c)
  * (ZTURN-T to its ceiling, the four-step above it) and in ZTURN-T's odd
  * band it does, so a scrambled request whose race produced no row builds
  * NOTHING here: a natural-writing pair is not a scrambled plan (NO
- * FALLBACKS — seen 2026-09-09, when the in-place scrambled create at 2048
- * attached a natural-writing pair 64.32). Elsewhere the scrambled pool is
- * the small engines' own race and a miss is simply no verdict.
+ * FALLBACKS). Elsewhere the scrambled pool is the small engines' own race
+ * and a miss is simply no verdict.
  *
  * It is (pow2 || odd band), NOT "the pool has one writer": at N = 4 or 8 —
  * a power of two BELOW ZTURN-T's band, where the pool is the small engines
- * — the law still holds and the cell still refuses. The predicate is kept
- * as the door spelled it; narrowing it would change those cells. */
+ * — the law still holds and the cell still refuses; narrowing the
+ * predicate would change those cells. */
 static inline int vfft_policy_scr_writer_band(const vfft_cell_t *c)
 {
     return ((c->N & (c->N - 1)) == 0) || vfft_ztt_odd_band(c->N);
 }
 
-/* MAY THIS CELL RACE AT ALL? The K=1 interleaved planner's own gate, which
- * was two lines spelled inline in `_k1_il_plan_race` (2026-09-16). ONE
- * refusal since 2026-09-22:
+/* MAY THIS CELL RACE AT ALL? The K=1 interleaved planner's own gate. ONE
+ * refusal:
  *
  *   BUDGET     N above the band's race ceiling (vfft_policy_race_max_n):
- *              the scratch planes the race needs are not worth it.
- *
- * The OWNERSHIP refusal that stood beside it -- a composite N >= 2048 WITH
- * a factor of 4, outside ZTURN-T's odd band, "is the odd machinery's cell"
- * -- named the cascade, deleted 2026-09-15. With it gone nothing served
- * those cells but the door's unraced heuristic pair or the prime cell:
- * 488 of the 2048 cells in 2049..4096. They race the natural pool now
- * (mono/pair/chain3/flat/prime) at the plan ceiling's budget. */
+ *              the scratch planes the race needs are not worth it. */
 static inline int vfft_policy_races(const vfft_cell_t *c)
 {
     const int N = c->N;
@@ -340,31 +294,25 @@ static inline int vfft_policy_admits(const vfft_cell_t *c, vfft_fam_t f)
  * this is how many it will hold. A pool cap is policy: it decides which
  * candidates EXIST. It lives here, ahead of every consumer, because the
  * four-step's super-band (oop/k1_fourstep.h) sizes its arrays by it and is
- * included long before the enumerator -- it used to carry the literal 24,
- * which fit exactly and would have been a stack overflow the day this
- * changed. The no-silent-caps law is enforced by the enumerator itself. */
+ * included long before the enumerator. The no-silent-caps law is enforced
+ * by the enumerator itself. */
 #define VFFT_IL2D_MAXCAND 24
 
-/* -- L2, rank >= 2: the BAND-WIDTH LADDER (R1, 2026-09-17) ----------------
+/* -- L2, rank >= 2: the BAND-WIDTH LADDER ---------------------------------
  * The widths the 2D c2c tier, the 2D real tier and the 3D tier may race for
- * their column band (wl). A ladder is a pool: the RACE decides. It was typed
- * three times as a literal; a fourth copy would have drifted the way the
- * bounds around it already have (design R2). The STRIP ladders are NOT here
- * on purpose: the 2D tier's {16..256} and the 3D tier's {8..1024} are
- * different lists by design. */
+ * their column band (wl). A ladder is a pool: the RACE decides. The STRIP
+ * ladders are NOT here on purpose: the 2D tier's {16..256} and the 3D
+ * tier's {8..1024} are different lists by design. */
 static const int VFFT_IL2D_WL_LADDER[] = { 8, 16, 32, 64, 128, 256 };
 #define VFFT_IL2D_WL_LADDER_N \
     ((int)(sizeof VFFT_IL2D_WL_LADDER / sizeof VFFT_IL2D_WL_LADDER[0]))
 
-/* -- rank >= 2: the TCUT law, as TWO laws (R3, 2026-09-17) ------------------
- * A band width wl is LEGAL for a column chain iff wl divides N and some
- * stage span L[s] divides wl; the cut is the FIRST such stage. Two helpers
- * (the real tier's, the 3D tier's) and one inline loop spelled that. Two
- * further inline loops in the c2c axis race spelled something ELSE: the cut
- * of a width ALREADY admitted, with 0 where the law above says -1. They are
- * not one predicate, so they are two functions; each site keeps its exact
- * meaning. (The default is unreachable in practice -- an admitted width
- * always has a cut -- and it is preserved anyway.) */
+/* -- rank >= 2: the TCUT law, as TWO laws -----------------------------------
+ * vfft_policy_il2d_wl_cut: a band width wl is LEGAL for a column chain iff wl
+ * divides N and some stage span L[s] divides wl; the cut is the FIRST such
+ * stage (-1 = illegal). vfft_policy_il2d_cut_of: the cut of a width ALREADY
+ * admitted (the c2c axis race), which always has one. Two predicates, so two
+ * functions; each site keeps its exact meaning. */
 static inline int vfft_policy_il2d_cut_of(int nst, const int *L, int wl)
 {
     int s;
@@ -380,28 +328,24 @@ static inline int vfft_policy_il2d_wl_cut(int N, int nst, const int *L, int wl)
     return vfft_policy_il2d_cut_of(nst, L, wl);
 }
 
-/* -- rank >= 2: a legal CASCADE band width (R2, owner 2026-09-17) ------------
+/* -- rank >= 2: a legal CASCADE band width ---------------------------------
  * A stage span may join the band-width race iff it is at least 8 rows and
- * the tcut law admits it. The 2D c2c tier and the 3D tier spelled exactly
- * this; the 2D real tier had no floor and, on its static ladder, refused a
- * full-width band (w == N1) the other two admit. The owner ruled the real
- * tier follows the other two, so this is one predicate now. The L2 gate
- * (vfft_policy_fits_l2) stays beside it at each site: hardware, not law. */
+ * the tcut law admits it — one predicate for the 2D c2c, 2D real and 3D
+ * tiers. The L2 gate (vfft_policy_fits_l2) stays beside it at each site:
+ * hardware, not law. */
 static inline int vfft_policy_il2d_band_ok(int N, int nst, const int *L, int w)
 {
     return w >= 8 && vfft_policy_il2d_wl_cut(N, nst, L, w) >= 0;
 }
 
-/* -- rank >= 2: which PASS an axis runs (R7, 2026-09-17) --------------------
+/* -- rank >= 2: which PASS an axis runs ------------------------------------
  * The shared column builder races and builds either the NATURAL-leaf pass
  * or the SCRAMBLED pass for one axis. Which one is a law of (rank, axis,
  * order class), not of the caller: 2D = the request's class; 3D axis 0 =
  * the scrambled class for BOTH (the natural class orders planes in its
  * plane pass, never in the column pass -- fftnd_il.h); 3D axis 1 = the
- * request's class. Three literals until today, and on 2026-09-17 the
- * builder was found racing on the row LABEL instead, which agrees with this
- * law everywhere except 3D axis 0 -- where it timed a pass the tier never
- * runs. One function, so the next axis cannot get it a fourth way. */
+ * request's class. Race on this, never on the row LABEL: the label
+ * disagrees at 3D axis 0, where it would time a pass the tier never runs. */
 static inline int vfft_policy_rankn_axis_nat(int rank, int axis, int ord)
 {
     if (rank >= 3 && axis == 0)
@@ -412,10 +356,10 @@ static inline int vfft_policy_rankn_axis_nat(int rank, int axis, int ord)
 /* -- L3 (narrowed). the PER-THREAD-COUNT FENCE --------------------------
  * A threading verdict is a MEASUREMENT AT A THREAD COUNT: the row banks the
  * verdict and the T it was raced at, and a T=4 verdict must never serve a
- * T=8 request (il2d_tier.h, "WHY cmt BANKS ITS THREAD COUNT"). Seven sites
- * spell it, in five token spellings: the flat DIT's, ZTURN-T's and the
- * four-step's MT commits (il_mt_t / il_mt_ip_t), the 2D c2c and 2D real
- * column-MT verdicts (cmtt), the 3D tier's (cmtt), the plane queue's (pqt).
+ * T=8 request (il2d_tier.h, "WHY cmt BANKS ITS THREAD COUNT"). Its users:
+ * the flat DIT's, ZTURN-T's and the four-step's MT commits (il_mt_t /
+ * il_mt_ip_t), the 2D c2c and 2D real column-MT verdicts (cmtt), the 3D
+ * tier's (cmtt), the plane queue's (pqt).
  *
  * THIS IS THE ONLY PART OF RACE-OR-REPLAY THAT IS ONE LAW, and the rest of
  * each site stays spelled AT the site, because the terms differ:
@@ -426,14 +370,13 @@ static inline int vfft_policy_rankn_axis_nat(int rank, int axis, int ord)
  *     token -- three different tests;
  *   - further fences sit beside it (the plane queue is valid for the PLANE
  *     COUNT it was raced at as well as the worker count).
- * One policy_replays() that swallowed those was REFUTED (the design's
- * "Steps 4-6"): it would have picked one site's recalibrate semantics for
- * all of them.
+ * One policy_replays() swallowing those would impose one site's
+ * recalibrate semantics on all of them.
  *
  * DELIBERATELY NOT a "banked_T > 0" term. Each caller spells UNRACED its
  * own way (-1, a geti default of 0, an absent token) and every site
  * guarantees T >= 2 before asking, so the sentinel never matches; folding a
- * fourth spelling in here would be a new law, not a move.
+ * fourth spelling in here would be a new law.
  *
  * NOT FOR tcmt/tcmtt (the K>1 transform-contiguous batch): that verdict is
  * deliberately T-FREE -- one transform per core means nothing in the plan
@@ -451,9 +394,9 @@ static inline int vfft_policy_replays_at_T(int banked_T, int T)
 }
 
 /* -- L6. ENGINE PRESENCE: "a K=1 interleaved handle exists for this cell" -
- * THREE doors ask this and each kept its own list; the four-step was built,
- * banked and then REFUSED at the door twice because two of the three never
- * learned it. This is the one list, and it is a PARAMETER LIST on purpose:
+ * THREE doors ask this; one list, so a new engine cannot be built and
+ * banked and then refused at a door that never learned it. It is a
+ * PARAMETER LIST on purpose:
  *
  *   - NOT a struct. A struct with designated initializers lets a new engine
  *     default to 0 at a site nobody updated -- which IS the defect. Adding
@@ -463,7 +406,7 @@ static inline int vfft_policy_replays_at_T(int banked_T, int T)
  *     doors: OUT OF PLACE, MONO has no plan object -- it is admitted by
  *     ROUTE and its function pointers are resolved ~30 lines BELOW the
  *     guard -- so a pointer-list helper drops every out-of-place MONO cell,
- *     and the fall-through then REFUSES the create (c2c_oop_create.h:617).
+ *     and the fall-through then REFUSES the create (c2c_oop_create.h).
  *     Each door passes its own term.
  *   - ORDER-FREE: every term is a boolean folded into one OR, so a
  *     mis-ordered call cannot change the answer.
@@ -471,8 +414,8 @@ static inline int vfft_policy_replays_at_T(int banked_T, int T)
  *     route (spr >= 0) and each door's LAYOUT gate.
  *
  * PRIME is a parameter like the rest: a raced family below the ceiling
- * (2026-09-21) and the door's unraced route above it; either way the
- * question here is "did something build", not "who races". */
+ * and the door's unraced route above it; either way the question here is
+ * "did something build", not "who races". */
 static inline int vfft_policy_k1_engine_present(int mono, int pair, int chain3,
                                                 int flat, int ztt, int fs,
                                                 int prime)
@@ -484,12 +427,12 @@ static inline int vfft_policy_k1_engine_present(int mono, int pair, int chain3,
  * TWO helpers, and NEITHER is the negation of the other. Both the POLARITY
  * and the UNKNOWN-SIZE policy are written into the name and the body,
  * because the two differ in both: one shared fits() flips the super-band
- * exactly backwards (the design's step 6).
+ * exactly backwards.
  *
  * Each takes the ALREADY-COMPUTED byte count as a long, and the multiply
  * stays at the call site on purpose: long is 32-bit on this MinGW build, so
  * taking the factors here -- or widening -- would change the wrap behaviour
- * of an expression like (long)N1 * w * 16 and stop this being a move.
+ * of an expression like (long)N1 * w * 16.
  *
  * CONTRACT, both helpers: the argument is a POSITIVE working-set size. The
  * cache term is inert for any positive argument, whatever the hardware
@@ -511,9 +454,8 @@ static inline int vfft_policy_fits_l2(long bytes)
 }
 
 /* The super-band's gate (one site: _k1fs_sb_admit). The OPPOSITE law -- the
- * form is an arm only where the plane OUTGROWS the last-level cache (owner
- * 2026-09-16: "only race above where L3 can't cover the transforms
- * anymore") -- so it admits what does NOT fit. UNKNOWN SIZE => ADMIT, and
+ * form is an arm only where the plane OUTGROWS the last-level cache -- so
+ * it admits what does NOT fit. UNKNOWN SIZE => ADMIT, and
  * this one is LIVE: vfft_cpu_l3_bytes returns l3_seen, which has no
  * fallback and is genuinely 0 on an L3-less part, where "bigger than L3" is
  * vacuously true and the form is admitted everywhere.

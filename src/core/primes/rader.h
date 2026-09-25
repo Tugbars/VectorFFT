@@ -1,5 +1,5 @@
 /**
- * stride_rader.h -- Rader's algorithm for prime-size FFT
+ * rader.h -- Rader's algorithm for prime-size FFT
  *
  * For prime N where N-1 is factorable by our radix set ("19-smooth"),
  * converts the N-point DFT into a cyclic convolution of length N-1.
@@ -8,7 +8,7 @@
  * Pipeline:
  *   1. DC sum                   O(NK)
  *   2. Gather by generator      O(NK), scattered read
- *   3. Forward FFT of size N-1  (existing stride executor)
+ *   3. Forward FFT of size N-1  (the stride executor)
  *   4. Pointwise multiply       O(NK), flat SIMD
  *   5. Inverse FFT of size N-1
  *   6. Scatter + DC add         O(NK), scattered write

@@ -1,23 +1,21 @@
-/* prime_dispatch.h — prime-N planning for prototype-core (Rader now; Bluestein later).
+/* prime_dispatch.h — prime-N planning for the stride engine (Rader, Bluestein).
  *
- * Lives ABOVE planner.h: pulls the lineage bridge (proto_stride_compat.h) and
- * rader.h / bluestein.h, which are written against the production stride API
- * (thread pool, STRIDE_ALIGNED_ALLOC, stride_* names). proto_stride_compat.h
- * supplies all of that and must come AFTER planner.h, BEFORE rader/bluestein
- * (per its own header) — which is exactly why this dispatch can't live inside
- * planner.h itself.
+ * Lives ABOVE planner.h: pulls proto_stride_compat.h and rader.h /
+ * bluestein.h, which use the stride_* API (thread pool, STRIDE_ALIGNED_ALLOC,
+ * stride_* names). proto_stride_compat.h must come AFTER planner.h and BEFORE
+ * rader/bluestein, which is why this dispatch can't live inside planner.h.
  *
  * vfft_proto_auto_plan returns NULL for prime N (un-factorable into the radix
  * set). This wraps it: for a prime with radix-smooth N-1, build a Rader plan
  * whose (N-1) convolution FFT recurses through vfft_proto_auto_plan — so it
  * rides CT wisdom. M = N-1 is fixed and B is a heuristic, so Rader needs NO
- * wisdom of its own. Bluestein (non-smooth N-1) is also handled: M is free, taken
- * from the bluestein wisdom (vfft_proto_dispatch_set_bluestein_wisdom) if set,
- * else the _bluestein_choose_m heuristic.
+ * wisdom of its own. Otherwise Bluestein: M is free, taken from the bluestein
+ * wisdom (vfft_proto_dispatch_set_bluestein_wisdom) if set, else the
+ * _bluestein_choose_m heuristic.
  *
- * Execution: the Rader plan sets plan->override_fwd/bwd; both the new-API
- * vfft_proto_execute_fwd (override-aware) and the bridge's stride_execute_fwd
- * honor it, and stride_plan_destroy frees it via override_destroy.
+ * Execution: the Rader/Bluestein plan sets plan->override_fwd/bwd, which
+ * vfft_proto_execute_fwd and stride_execute_fwd both honour;
+ * stride_plan_destroy frees it via override_destroy.
  */
 #ifndef VFFT_PROTO_PRIME_DISPATCH_H
 #define VFFT_PROTO_PRIME_DISPATCH_H

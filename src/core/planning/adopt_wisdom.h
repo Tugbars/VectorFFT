@@ -1,19 +1,20 @@
-/* adopt_wisdom.h — §6a49/Q3: persisted strided-adoption decisions.
+/* adopt_wisdom.h — persisted strided-adoption decisions.
  *
- * Every 2D/ND r2c create runs measured A/B gates (§6a39/41/47) costing
- * tens of ms. This sidecar persists the per-shape verdicts so warm creates
- * skip the arms entirely. Deliberately NOT part of the binary wisdom
- * bundles: a human-readable, versioned, line-oriented text file that is
- * trivially inspectable and safely ignorable.
+ * Every 2D/ND r2c create runs measured A/B gates costing tens of ms. This
+ * sidecar persists the per-shape verdicts so warm creates skip the arms
+ * entirely. Deliberately NOT part of the binary wisdom bundles: a
+ * human-readable, versioned, line-oriented text file that is trivially
+ * inspectable and safely ignorable.
  *
  * Keying: (kind, rows, NL, blk). blk is the edition block quantum (4 =
  * avx2, 8 = avx512 build) — decisions are edition-specific and builds get
  * separate records. Values: fwd/bwd adoption booleans.
  *
- * Path: $VFFT_ADOPT_WISDOM_DIR/ (its OWN env — deliberately NOT VFFT_WISDOM_DIR, which activates the heavy bundle-calibration machinery) strided_adopt.wis. Env unset => fully disabled
- * (lookup misses, record no-ops) — the default matches the engine's other
- * wisdom paths. Corrupt lines are skipped; writes go through tmp+rename.
- * Single-threaded create assumption (as the rest of plan creation).
+ * Path: $VFFT_ADOPT_WISDOM_DIR/strided_adopt.wis — its OWN env, not
+ * VFFT_WISDOM_DIR (which activates the bundle-calibration machinery). Env
+ * unset => fully disabled (lookup misses, record no-ops), like the engine's
+ * other wisdom paths. Corrupt lines are skipped; writes go through
+ * tmp+rename. Assumes single-threaded create, as the rest of plan creation.
  */
 #ifndef VFFT_ADOPT_WISDOM_H
 #define VFFT_ADOPT_WISDOM_H
@@ -114,19 +115,11 @@ write:;
                 _vaw_tab[i].b, _vaw_tab[i].blk, _vaw_tab[i].fwd,
                 _vaw_tab[i].bwd);
     fclose(f);
-    /* rename() does NOT replace an existing file on Windows (ISO C leaves it
-     * implementation-defined and the CRT fails with EEXIST), so every update
-     * after the FIRST write was silently lost: the measured verdict landed in
-     * strided_adopt.wis.tmp and the stale row kept serving. Found 2026-09-16
-     * while proving the recalibrate fix, which is inert without this. The
-     * store's own writer has always done it properly (vw2__replace_file,
-     * MOVEFILE_REPLACE_EXISTING); this is the one table that did not.
-     *
-     * 🔴 The FIRST version of this fix did remove(p) then rename(tp, p), and
-     * that is WORSE than the bug: with a second process holding the file the
-     * remove succeeds, the rename then fails, and THE WHOLE TABLE IS GONE.
-     * Observed 2026-09-17, two probes on one directory. Replace atomically or
-     * do nothing -- never unlink the table we are trying to update. */
+    /* rename() does NOT replace an existing file on Windows (the CRT fails
+     * with EEXIST), so the replace is MoveFileExA(MOVEFILE_REPLACE_EXISTING),
+     * as in the store's own writer (vw2__replace_file). Never remove(p) first:
+     * with a second process holding the file the remove succeeds, the rename
+     * fails, and the whole table is gone. Replace atomically or do nothing. */
 #if defined(_WIN32)
     if (!MoveFileExA(tp, p, MOVEFILE_REPLACE_EXISTING))
         remove(tp);   /* the table on disk is left exactly as it was */
