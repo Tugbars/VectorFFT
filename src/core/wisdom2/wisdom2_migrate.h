@@ -1,9 +1,8 @@
 /* wisdom2_migrate.h — the one-shot LOSSLESS migrator: legacy wisdom files
- * -> the wisdom2 store (campaign items 0.9 + wave migrations). OWNED BY THE
- * MODULE per the thin-driver law: the bench driver only parses arguments
- * and calls in.
+ * -> the wisdom2 store. OWNED BY THE MODULE (the thin-driver law): the
+ * bench driver only parses arguments and calls in.
  *
- * Laws implemented here (campaign RITUAL + README §6):
+ * Laws implemented here:
  *   - LOSSLESS, machine-checked: every source LINE is exactly one of
  *     {skipped (non-record: comments/blanks), migrated, quarantined};
  *     total == skipped + migrated + quarantined or the gate fails.
@@ -15,13 +14,15 @@
  *     exact and the legacy loader's silent drops become visible
  *     (quarantined as legacy-parse-drop instead of vanishing).
  *   - QUARANTINE, never delete, never guess: garbage rows, shadowed
- *     duplicates, sub-2048 kind-4 wrong-slot rows, and undecodable codec
- *     fields go to wisdom2_quarantine.txt verbatim with reasons.
+ *     duplicates, kind-4 rows (the deleted cascade's), and undecodable
+ *     codec fields go to wisdom2_quarantine.txt verbatim with reasons.
  *   - IDEMPOTENT: re-running over existing output is byte-identical
  *     (equal records re-bank as equals; quarantine entries dedup on raw).
  *
- * Wave-1 mapping implemented: oop_wisdom.txt kinds 0-5. Other legacy
- * families land at their waves as further vw2_migrate_* functions here.
+ * Families: oop_wisdom.txt (kinds 0-5), the 2D files (fft2d c2c incl.
+ * @nat2d, r2c, c2r), the stride files (spike + rfft; the padded fossil
+ * quarantined whole). Plus two one-shot store re-keys and the stride
+ * EXPORTER (store -> a frozen legacy-format snapshot).
  */
 #ifndef VFFT_WISDOM2_MIGRATE_H
 #define VFFT_WISDOM2_MIGRATE_H
@@ -209,10 +210,10 @@ static inline int vw2__mig_oop_entry(vw2_store_t *st, vw2__mig_seen_t *seen,
                                      const vfft_oop_wisdom_entry_t *e,
                                      const char *from, const char **why)
 {
-    /* kinds 0-2 at K%8!=0 are the legacy BANK-ONLY warts (unreplayable
-     * today, D5): they migrate as SEEDS -- race proposals, never verdicts --
-     * so a live kind-4 verdict at the same cell outranks them by the merge
-     * law instead of colliding by file order. */
+    /* kinds 0-2 at K%8!=0 are the legacy BANK-ONLY warts (unreplayable):
+     * they migrate as SEEDS -- race proposals, never verdicts -- so a live
+     * verdict at the same cell outranks them by the merge law instead of
+     * colliding by file order. */
     const int is_seed = (e->kind <= VFFT_OOP_KIND_MODEB) &&
                         (e->K == 0 || (e->K % 8u) != 0);
     const char *src = is_seed ? "seed" : "migrated";
@@ -365,7 +366,7 @@ static inline int vw2_migrate_oop(const char *legacy_path, const char *outdir,
     return rc;
 }
 
-/* ------------------------------------------------- verify (Gate A leg) */
+/* ------------------------------------------------------------- verify */
 
 /* Field-level equivalence: re-read the legacy file per line and the SAVED
  * wisdom2 store, and compare every migrated verdict field-by-field through
@@ -488,12 +489,12 @@ static inline int vw2_migrate_oop_verify(const char *legacy_path, const char *ou
 
 /* --------------------------------------------- reader-equivalence gate */
 
-/* THE equivalence proof for the read side (the data half of Gate B): for
- * every verdict the LEGACY lookups would serve from the legacy file, the
- * wisdom2 reader (wisdom2_oop_reader.h) must produce a field-identical
- * legacy entry from the MIGRATED store — and for every row the legacy
- * machinery could NOT serve (K%8 warts, sub-2048 kind-4, quarantined
- * garbage), the wisdom2 reader must MISS. Zero timing. Returns mismatches. */
+/* THE equivalence proof for the read side: for every verdict the LEGACY
+ * lookups would serve from the legacy file, the wisdom2 reader
+ * (wisdom2_oop_reader.h) must produce a field-identical legacy entry from
+ * the MIGRATED store — and for every row the legacy machinery could NOT
+ * serve (K%8 warts, kind-4 rows, quarantined garbage), the wisdom2 reader
+ * must MISS. Zero timing. Returns mismatches. */
 static inline int vw2_migrate_oop_reader_gate(const char *legacy_path, const char *outdir)
 {
     static vfft_oop_wisdom_t w;      /* 1024-entry table — off the stack   */
@@ -592,7 +593,7 @@ static inline int vw2_migrate_oop_reader_gate(const char *legacy_path, const cha
     return bad;
 }
 
-/* ------------------------------------------------------ the wave-0 gate */
+/* ----------------------------------------------- the oop migration gate */
 
 /* migrate -> accounting -> re-migrate -> byte-identity -> verify.
  * Returns 0 = ALL PASS. */
@@ -702,7 +703,7 @@ static inline int vw2_migrate_oop_gate(const char *legacy_path, const char *outd
 }
 
 /* ════════════════════════════════════════════════════════════════════════
- * WAVE 3 — the 2D families (fft2d c2c incl. @nat2d, r2c, c2r).
+ * THE 2D FAMILIES (fft2d c2c incl. @nat2d, r2c, c2r).
  * Same machinery: probe-parse every data line through the SHIPPED loaders
  * (exact line attribution; legacy silent drops become quarantine rows),
  * records built by the SHARED family codec (wisdom2_2d_reader.h), banked
@@ -995,7 +996,7 @@ static inline int vw2_migrate_2d_gate(const char *c2c_path, const char *r2c_path
 }
 
 /* ════════════════════════════════════════════════════════════════════════
- * WAVE 4 — the stride family (spike_wisdom.txt: THREE tables; rfft file;
+ * THE STRIDE FAMILY (spike_wisdom.txt: THREE tables; rfft file;
  * the @version-6 padded fossil quarantined whole). Probe-parse through the
  * SHIPPED v8 loader; records via the SHARED family codec
  * (wisdom2_stride_reader.h). Line classing: blank/'#' skipped; '@'-lines
@@ -1171,7 +1172,7 @@ static inline int vw2_migrate_stride_reader_gate(const char *spike_path,
             size_t i;
             if (!fp[is_rfft]) continue;
             if (vfft_proto_wisdom_load(&w, fp[is_rfft]) != 0) continue;
-            /* THE LAW (wave-1 precedent): the twin must equal what LEGACY
+            /* THE LAW (as in the oop reader gate): the twin must equal what LEGACY
              * WOULD SERVE — the first-match lookup, never the raw table
              * row (spike carries intra-file duplicates); codec-refused
              * rows (junk cells) must MISS. */
@@ -1301,17 +1302,11 @@ static inline int vw2_migrate_stride_gate(const char *spike_path, const char *rf
     return fail;
 }
 
-/* One-shot v1.0 -> v1.1 re-key: every kind-3 record (eng=k1) moves to
- * role=comp (owner decision A, 2026-08-20 — kind-3 is the K=1 engine's
- * component recipe; its old role-absent key collided with the stride
- * family's @natoop problem verdict). Idempotent: already-role=comp rows
- * are untouched. Returns the number re-keyed, or -1. */
-/* ── SEED THE UNRACED zr2c ROUTE ROWS (2026-08-21) ───────────────────────
+/* ── SEED THE UNRACED zr2c ROUTE ROWS ─────────────────────────────────────
  * _zr2c_build RETURNS on any banked verdict, so a bank-only row makes its
- * step-3 racer permanently unreachable at that cell. Every zr2c route row in
- * the shipped store is src=migrated with NO ns= — nothing was ever measured;
- * a structural rule was written down once and then outranked the measurement
- * that would have checked it.
+ * step-3 racer permanently unreachable at that cell. A zr2c route row with
+ * src=migrated and NO ns= was never measured: a structural rule written
+ * down once, outranking the measurement that would have checked it.
  *
  * Only rows that are MECHANICALLY REPRODUCIBLE are seeded — those matching
  * _zr2c_build's own fallback (place=oop -> child_oop_il, place=ip ->
@@ -1383,6 +1378,11 @@ static inline int vw2_migrate_seed_unraced_zr2c(const char *dir)
     return n;
 }
 
+/* One-shot v1.0 -> v1.1 re-key: every kind-3 record (eng=k1) moves to
+ * role=comp (kind-3 is the K=1 engine's component recipe; a role-absent
+ * key collides with the stride family's @natoop problem verdict).
+ * Idempotent: already-role=comp rows are untouched. Returns the number
+ * re-keyed, or -1. */
 static inline int vw2_migrate_rekey_k1role(const char *dir)
 {
     vw2_store_t st;
@@ -1429,16 +1429,14 @@ static inline int vw2_migrate_rekey_k1role(const char *dir)
 }
 
 /* ════════════════════════════════════════════════════════════════════════
- * WAVE 4.5 — THE EXPORTER. Reconstructs a legacy v8 spike/rfft file FROM
- * the wisdom2 store, through the SHIPPED writer verbatim
- * (vfft_proto_wisdom_save) and the SHIPPED read twins — one decode path,
- * no second decoder to drift.
+ * THE EXPORTER. Reconstructs a legacy v8 spike/rfft file FROM the wisdom2
+ * store, through the SHIPPED writer verbatim (vfft_proto_wisdom_save) and
+ * the SHIPPED read twins — one decode path, no second decoder to drift.
  *
  * WHY: spike_wisdom.txt is a dune BUILD INPUT (generated/dune's
  * plan_executors.h promote rule deps on it by bare filename, inside the
- * dune workspace). Freezing the live file — and later moving live wisdom
- * out of the generator tree — requires the build to depend on an EXPORTED
- * SNAPSHOT instead of on live wisdom. This produces that snapshot.
+ * dune workspace), so the build depends on an EXPORTED SNAPSHOT, never on
+ * the live store. This produces that snapshot.
  *
  * ORDER: rows are emitted in their ORIGINAL file order, recovered from the
  * `from=<file>:<line>` provenance every migrated record carries; records
@@ -1501,14 +1499,14 @@ static inline int vw2_export_stride(const char *store_dir,
         int ok = 0;
         if (!eng || strcmp(eng, "stride")) continue;
         if (r->key.rank != 1) continue;
-        /* DIRECTIONAL/COMPONENT SIBLINGS (2026-08-21). This scan matches on
-         * eng= and (ord,pl,t), then re-resolves through vw2_stride_lookup,
-         * which builds a dir-absent role-absent key. A directional or
-         * component stride sibling would therefore be SEEN here and then
-         * resolved to the forward/problem row's content — exporting a silent
-         * DUPLICATE rather than failing. Every family scanner that gains such
-         * a sibling needs this guard; the k1 family took the same fix in
-         * wisdom2_oop_reader.h when it became the first directional writer. */
+        /* DIRECTIONAL/COMPONENT SIBLINGS. This scan matches on eng= and
+         * (ord,pl,t), then re-resolves through vw2_stride_lookup, which
+         * builds a dir-absent role-absent key. A directional or component
+         * stride sibling would therefore be SEEN here and then resolved to
+         * the forward/problem row's content — exporting a silent DUPLICATE
+         * rather than failing. Every family scanner that gains such a
+         * sibling needs this guard; the k1 family's reader
+         * (wisdom2_oop_reader.h) carries the same one. */
         if (r->key.dir != VW2_DIR_NONE) continue;
         if (r->key.role != VW2_ROLE_NONE) continue;
         memset(&row, 0, sizeof row);
