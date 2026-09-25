@@ -3,17 +3,16 @@
  * Brute-forces every coverable factorization × per-stage variant (FLAT / LOG3 /
  * T1S), gates each candidate vs a reference (the seed factorization's output on
  * the roundtrip-validated engine), times best-of-5, and keeps the fastest. Fills
- * a `vfft_proto_wisdom_entry_t` (factors + variants + best_ns) destined for
- * rfft_wisdom.txt.
+ * a `vfft_proto_wisdom_entry_t` (factors + variants + best_ns) that the
+ * caller banks as the cell's rfft row.
  *
  * This is the rfft analogue of `_calibrate_c2c` (the DP planner) — it lets
  * vfft_create calibrate the *rfft's own axis* on a wisdom miss, instead of
- * falling back to the fewest-stage heuristic. Lifted from the standalone
- * calibrator build_tuned/benches/calibrator/calibrate_r2c.c.
+ * falling back to the fewest-stage heuristic.
  *
  * The rfft search space is small (a handful of factorizations × 3^stages
  * variants), so the sweep is exhaustive and fast regardless of the requested
- * rigor; the CALLER decides whether to invoke it (rigor-gated in vfft.c).
+ * rigor; the CALLER decides whether to invoke it (real_create.h).
  */
 #ifndef VFFT_RFFT_CALIBRATE_H
 #define VFFT_RFFT_CALIBRATE_H
@@ -28,7 +27,7 @@
 #ifndef VFFT_RFFT_CAL_MAX_FACZ
 #define VFFT_RFFT_CAL_MAX_FACZ 1024   /* cap on enumerated factorizations */
 #endif
-/* Cap the factor count. The optimum is always shallow (doc-60 U-curve: the (8,32)
+/* Cap the factor count. The optimum is always shallow (a U-curve: the (8,32)
  * and (4,4,16) winners are nf=2-3; "fewest stages wins"), and deeper factorizations
  * explode the per-stage variant axis (3^(nf-1) combos × timing) without ever winning.
  * Capping kills the blowup — e.g. N=256=2^8 has an 8-factor path with 3^7=2187 variants. */
@@ -39,7 +38,7 @@
 typedef struct { int nf; int factors[STRIDE_MAX_STAGES]; } _vfft_rfft_facz_t;
 
 /* ordered stage multisets of `rem` (product == rem) over stage-coverable
- * radixes, each terminated by `leaf`. Appends to fz[]/*nfz (capped at `cap`). */
+ * radixes, each terminated by `leaf`. Appends to fz[] and *nfz (capped at `cap`). */
 static void _vfft_rfft_enum(int rem, int *pre, int depth, int leaf, int maxnf,
                             const int *stage_ok, _vfft_rfft_facz_t *fz, int *nfz, int cap)
 {

@@ -8,11 +8,8 @@
  * IS the library and silently wrong for every other one: a bench that includes
  * the dispatch header while linking vfft.c separately writes ITS OWN copy,
  * while vfft_create keeps reading the library's. The write appears to succeed
- * and changes nothing.
- *
- * MEASURED CONSEQUENCE: gauntlet/bench_1d_vs_mkl.c's VFFT_C2R_PACK_ALL and
- * VFFT_C2R_STRIDE_ALL probe arms were INERT - both "forced-route" arms
- * measured the same route, and the comparison looked like a result.
+ * and changes nothing: a bench's "forced-route" probe arms would all measure
+ * the same route, and the comparison would look like a result.
  *
  * The functions declared here are DEFINED IN vfft.c with external linkage, so
  * they write the copy vfft_create reads. Do not reintroduce a `static inline`
@@ -35,21 +32,10 @@ extern "C"
 {
 #endif
 
-  /* ── CROSS-TU CONFIGURATION HOOKS ─────────────────────────────────────
-   * The r2c/c2r dispatch knobs live as file-scope state in
-   * transforms/real/{r2c,c2r}_dispatch.h, and their setters there are
-   * `static inline`. That is correct for a TU that IS the library, and
-   * silently wrong for anyone else: a bench that includes the header and
-   * links vfft.c separately writes ITS OWN copy, while vfft_create keeps
-   * reading the library's. The write appears to succeed and changes nothing.
-   *
-   * These entry points are compiled INTO vfft.c, so they write the copy
-   * vfft_create actually reads. Any TU outside the library that wants to
-   * configure the real-transform dispatch must go through them.
-   *
-   * (Measured consequence of not having them: gauntlet/bench_1d_vs_mkl.c's
-   * VFFT_C2R_PACK_ALL / VFFT_C2R_STRIDE_ALL probe arms were INERT - both
-   * forced-route arms measured the same route.) */
+  /* ── CROSS-TU CONFIGURATION HOOKS (see the header) ────────────────────
+   * Compiled INTO vfft.c, so they write the copy vfft_create actually
+   * reads. Any TU outside the library that wants to configure the
+   * real-transform dispatch must go through them. */
 
   /* Batch-size crossover between the packed rfft cascade (K below) and the
    * decoupled stride path (K at or above). SIZE_MAX forces packed for every

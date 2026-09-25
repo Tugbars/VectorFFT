@@ -1,14 +1,14 @@
-/* real_create.h — the r2c / c2r CREATE tier (migration step 26).
+/* real_create.h — the r2c / c2r CREATE tier.
  *
  * WHAT THIS IS
  * ------------
- * The three real-transform arms of _vfft_create_inner, in their original
- * order. Each returns on every path, so the group lifts out behind one guard:
+ * The three real-transform arms of _vfft_create_inner. Each returns on every
+ * path:
  *
  *   1. the ODD-N BRIDGE — odd N, K==1, out-of-place. Builds the transform on
  *      a c2c child (_oddr_build) rather than on a real codelet, and refuses
- *      LOUDLY when that child cannot be built. This arm is why odd and prime
- *      real sizes are served at all; before it they were a silent refusal.
+ *      LOUDLY when that child cannot be built. This arm is what serves odd
+ *      and prime real sizes.
  *      r2c takes the bridge only when N is NOT radix-smooth (a smooth odd N is
  *      better served by rfft), while c2r takes it unconditionally — the two
  *      directions do not have the same incumbent.
@@ -38,9 +38,6 @@
  * Not a standalone header. It calls file-scope statics that live in vfft.c
  * (_oddr_build among them), so it must be included after those are defined and
  * before _vfft_create_inner.
- *
- * The six parameters are the union of the three blocks' free variables,
- * derived rather than guessed: cfg, ob, W, reg, N, K.
  */
 #ifndef VFFT_TRANSFORMS_REAL_CREATE_H
 #define VFFT_TRANSFORMS_REAL_CREATE_H
@@ -52,10 +49,10 @@ static void _oddr_arm_exec(void *v)
     _oddr_arm_t *c = (_oddr_arm_t *)v;
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->xr, NULL, c->zr, NULL);
 }
-/* ── the tier's ONE exit. No shared post-step exists here TODAY (no mt
- * gate: the real engines thread internally; no pool arm: create-entry owns
- * it) — the finish exists so the next shared step lands in one place and
- * so each early serving's skips are spelled at its return, not implied. */
+/* ── the tier's ONE exit. No shared post-step exists here (no mt gate: the
+ * real engines thread internally; no pool arm: create-entry owns it) — the
+ * finish exists so a shared step would land in one place and so each early
+ * serving's skips are spelled at its return, not implied. */
 static vfft_plan _real_finish(struct vfft_plan_s *h)
 {
     return h;
@@ -109,16 +106,15 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
             bK = b->Kp;
             padded = 1;
         }
-        /* §D2 zr2c route: even N, K==1, INTERLEAVED — reinterpret + child
+        /* zr2c route: even N, K==1, INTERLEAVED — reinterpret + child
          * c2c(N/2) + fold. Also the ONLY in-place real path (the in-place
          * refusal above admits exactly this combo). K>1 keeps the
-         * split-interior CCE path below; the batched composite is the V9
-         * workstream. This branch runs BEFORE the split-path calibrate-on-
-         * miss blocks below on purpose: a zr2c-served cell must not pay for
-         * (or bank) c2c(N/2, K)/rfft rows it never reads — the child rides
-         * the K=1 engine tables through its own recursive create. Child-
-         * create failure falls through to the split path, which then
-         * calibrates exactly as before. */
+         * split-interior CCE path below. This branch runs BEFORE the
+         * split-path calibrate-on-miss blocks below on purpose: a
+         * zr2c-served cell must not pay for (or bank) c2c(N/2, K)/rfft rows
+         * it never reads — the child rides the K=1 engine tables through its
+         * own recursive create. Child-create failure falls through to the
+         * split path (out of place only; see below). */
         if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && (N % 2) == 0 && !ob)
         {
             struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);
@@ -190,14 +186,14 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
         vfft_r2c_dispatch_set_wisdom(&W->rfft);
-        /* Route axis (§W2). A BANKED verdict serves at every rigor tier; the
-         * race that produces one is confined to the rfft-competitive zone
+        /* Route axis. A BANKED verdict serves at every rigor tier; the race
+         * that produces one is confined to the rfft-competitive zone
          * (K<=64, N even, not MEASURE), and MEASURE / high-K fall through to
-         * the fixed-threshold dispatch exactly as before. */
+         * the fixed-threshold dispatch. */
         vfft_r2c_plan_t *rp =
             /* bK > 1: the route race is a LANE-BATCH question and the
-             * split engine has no K=1 batch (owner law 2026-08-24: K counts
-             * the FFTs running; split lanes hold independent FFTs). At K=1
+             * split engine has no K=1 batch (K counts the FFTs running;
+             * split lanes hold independent FFTs). At K=1
              * the structural default serves — racing there would re-race on
              * every create with nowhere legal to bank. q=1 real cells
              * belong to the interleaved zr2c verdicts alone. */
@@ -222,17 +218,17 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
         h->padded = padded;
         h->exec_me = (int)bK; /* informational: the width the plan was built at */
         /* SMOOTH-ODD r2c: race this (rfft-served) handle against the
-         * c2c bridge - both arms FINISHED handles (the strawman law),
-         * min-of-3 alternated, loser destroyed. Winner flips per cell
-         * (the pricing). K==1 OOP IL only; verdict plan-local. */
+         * c2c bridge - both arms FINISHED handles, min-of-3 alternated,
+         * loser destroyed. The winner flips per cell. K==1 OOP IL only;
+         * the verdict is banked (vw2_oddr_route) and replayed. */
         if (K == 1 && (N & 1) && N >= 3 &&
             cfg->placement == VFFT_OUTOFPLACE &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
             !getenv("VFFT_ODDR_NORACE"))
         {
-            /* REPLAY the banked route (R1.4/R1.5, 2026-09-02): 1 = the
-             * rfft handle serves as built, 2 = the bridge serves; only a
-             * miss (or recalibrate) races. */
+            /* REPLAY the banked route: 1 = the rfft handle serves as
+             * built, 2 = the bridge serves; only a miss (or recalibrate)
+             * races. */
             const int banked = (W && !W->vw2_off_oop && !cfg->recalibrate)
                                    ? vw2_oddr_route_lookup(&W->vw2, N) : 0;
             struct vfft_plan_s *hb = NULL;
@@ -312,7 +308,8 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
      * high-K + threads). BOTH consume split re/im, so the pick is transparent to the
      * caller. High rigor MEASURES both at create over the contested low/mid-K zone
      * (natural's win is non-monotonic in K — a fixed threshold can't capture it);
-     * else wisdom-first (c2r_path.txt) then threshold. No forced path / no hardcode. ── */
+     * else the banked route verdict first, then the threshold. No forced path / no
+     * hardcode. ── */
     if (cfg->transform == VFFT_C2R)
     {
         if ((N % 2) != 0)
@@ -342,7 +339,7 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
             bK = b->Kp;
             padded = 1;
         }
-        /* §D2 zr2c route (mirror of the r2c branch): even N, K==1,
+        /* zr2c route (mirror of the r2c branch): even N, K==1,
          * INTERLEAVED CCE input — fold + child c2c(N/2) backward. */
         if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && (N % 2) == 0 && !ob)
         {
@@ -386,8 +383,8 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
             }
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
-        /* Route axis (§W2) — see the r2c site. A banked verdict serves at
-         * every rigor tier; only the race is window-confined. */
+        /* Route axis — see the r2c site. A banked verdict serves at every
+         * rigor tier; only the race is window-confined. */
         vfft_c2r_disp_t *cd =
             _c2r_route_decide(W, cfg, N, bK, reg,   /* bK > 1: same law
                                * as the r2c window above */

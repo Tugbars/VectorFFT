@@ -1,7 +1,5 @@
-/* zr2c.h — INTERLEAVED (z) real-transform folds: the D2 "CCE-mirror IL" route's
- * two hand-written passes (docs/research/mkl_r2c_campaign/DESIGN_interleaved_r2c.md,
- * Phase 0 verdict box 2026-08-13: arm e's shape, validated at the reference
- * library's recombine parity ±15%, −30…−59% vs the shipped K-axis fold).
+/* zr2c.h — INTERLEAVED (z) real-transform folds: the "CCE-mirror IL" route's
+ * two hand-written passes (measured −30…−59% vs the K-axis fold).
  *
  * THE ROUTE (even N only; rfft keeps odd N — coverage is additive):
  *   r2c fwd: x[N] ==reinterpret(0 work)==> z[N/2] interleaved
@@ -15,18 +13,17 @@
  *
  * FREQUENCY-AXIS SIMD (AVX2): 4 ascending bins + the 4 REVERSED mirror bins per
  * iteration; table is the affine pre-biased HALVED pair-table, FULLY SPLIT
- * (plain loads, zero table shuffles).  INTERLEAVED-NATIVE since 2026-08-21:
- * the loop no longer de-interleaves to Ar/Ai/Br/Bi -- the math is one complex
- * multiply, so it runs on packed pairs and the un/re-interleave shuffles are
- * gone.  MEASURED: the old form was 20.1 cyc/iter at EVERY N (flat => pure
- * issue-port cost); ALL 20 of its shuffles are port-5 on Raptor Cove, in-lane
- * vunpck*pd ymm included.  The new form runs 10 shuffles/iter -> 10.6 (fwd) /
- * 12.4 (bwd) cyc/iter below the L1 cliff: -48%/-38% at N<=2048, tapering to
- * ~3-9% at N>=4096 where the z+X working set exceeds L1 and memory binds.
- * TRADE ACCEPTED: signs are now explicit vxorpd (the old "zero xor" boast is
- * retired) -- they issue on p0/p1/p5 instead of piling onto the saturated p5,
- * which is exactly why it is faster.  fwd stays BITWISE vs the old kernel;
- * bwd differs at rel ~1.3e-16 (the s=1-2S~ / c=2C~ derivation reassociates).
+ * (plain loads, zero table shuffles).  INTERLEAVED-NATIVE: the loop does not
+ * de-interleave to Ar/Ai/Br/Bi -- the math is one complex multiply, so it runs
+ * on packed pairs.  MEASURED: the de-interleaving form ran 20.1 cyc/iter at
+ * EVERY N (flat => pure issue-port cost; ALL 20 of its shuffles are port-5 on
+ * Raptor Cove, in-lane vunpck*pd ymm included).  This form runs 10
+ * shuffles/iter -> 10.6 (fwd) / 12.4 (bwd) cyc/iter below the L1 cliff:
+ * -48%/-38% at N<=2048, tapering to ~3-9% at N>=4096 where the z+X working set
+ * exceeds L1 and memory binds.  Signs are explicit vxorpd -- they issue on
+ * p0/p1/p5 instead of piling onto the saturated p5.  fwd is BITWISE vs the
+ * de-interleaving kernel; bwd differs at rel ~1.3e-16 (the s=1-2S~ / c=2C~
+ * derivation reassociates).
  *   S~[f] = 1/2 - 1/2 sin(2*pi*f/N),   C~[f] = 1/2 cos(2*pi*f/N),  f = 0..N/4
  * Per pair (f, m=N/2-f), A=Z[f], B=Z[m]:
  *   t1 = Ar-Br   t2 = Ai+Bi
@@ -47,12 +44,12 @@
  * IN-PLACE SAFE by construction: each pair is fully read before either bin is
  * written; DC/Nyquist writes only touch bin 0 and the N/2 pad slot. The same
  * function serves OOP and in-place (X == z requires the caller's plane to
- * carry the 2*(N/2+1)-double padding — the CONCLUSIONS §2.3 contract).
+ * carry the 2*(N/2+1)-double padding).
  *
  * BATCH: transform-contiguous. Per transform t the input plane is
  * z + t*zs (zs >= N doubles) and the output plane X + t*xs (xs >= N+2).
  * The frequency-axis SIMD is per-transform, so K=1 runs FULL vector width —
- * the G1 (K=1 scalar) disease of the K-axis codelets does not exist here.
+ * the K=1 scalar problem of the K-axis codelets does not exist here.
  */
 #ifndef VFFT_ZR2C_H
 #define VFFT_ZR2C_H
@@ -67,19 +64,16 @@
 #define VFFT_ZR2C_PI 3.14159265358979323846
 #endif
 
-/* Affine pair-table, N/4+1 entries each (f = 0..N/4 inclusive covers every
- * pair index for any even N; entry 0 is never read — kept for direct
- * indexing). ~4N bytes total, half of a plain (cos,sin)-over-N/2 table. */
-/* FOUR tables, not two.
+/* Pair tables, N/4+1 entries each (f = 0..N/4 inclusive covers every pair
+ * index for any even N; entry 0 is never read — kept for direct indexing).
  *
- * 🔴 The affine pair (0.5 - 0.5 sin, 0.5 cos) is a FORWARD convenience:
- * the forward fold consumes it almost directly (one negate for -C). The
- * BACKWARD's coefficients are the RAW twiddles -- work the algebra through
- * and 1 - 2*(0.5 - 0.5 sin) = sin, 2*(0.5 cos) = cos -- so the backward was
- * UNDOING the encoding on every iteration, four lanes at a time, forever:
- * an fnmadd and a mul plus two live constant registers in the vector body,
- * and the same two ops again in the scalar tail. Bank them instead. Cost:
- * N/4 doubles per plan, paid once at create. */
+ * FOUR tables, not two. 🔴 The affine pair (0.5 - 0.5 sin, 0.5 cos) is a
+ * FORWARD convenience: the forward fold consumes it almost directly (one
+ * negate for -C). The BACKWARD's coefficients are the RAW twiddles --
+ * 1 - 2*(0.5 - 0.5 sin) = sin, 2*(0.5 cos) = cos -- so deriving them from the
+ * affine pair would cost the backward an fnmadd, a mul and two live constant
+ * registers per vector iteration (and the same two ops in the scalar tail).
+ * Banking them costs N/4 doubles per table, paid once at create. */
 static void _zr2c_init_aff(int N, double *affS, double *affC,
                            double *bwdS, double *bwdC)
 {
@@ -94,8 +88,7 @@ static void _zr2c_init_aff(int N, double *affS, double *affC,
          * needs cy = conj(conj(t)*w), and conj(conj(t)*w) == t*conj(w), so
          * multiplying t by conj(w) = (sin, -cos) produces cy DIRECTLY -- no
          * conj(t) before the multiply and no conj(y) after it. Banking the
-         * sign makes that free; computing it would cost an op per iteration,
-         * which is the encoding mistake this table exists to stop repeating. */
+         * sign makes that free; computing it would cost an op per iteration. */
         bwdS[f] = sn;               /* backward: raw sin          */
         bwdC[f] = -cs;              /* backward: -cos == conj(w)  */
     }
@@ -104,8 +97,8 @@ static void _zr2c_init_aff(int N, double *affS, double *affC,
 /* forward fold: Z (N/2 complex, natural, interleaved) -> X (CCE, N/2+1
  * complex, interleaved). X may alias Z (in-place; needs the padded plane). */
 /* 🔴 NO __restrict__ ON THE DATA PLANES. Both of these folds are called
- * with the SAME pointer for input and output -- vfft.c:2291 and :2312 pass
- * (dre, dre), and :2324 passes (sre, dre) which alias whenever the plan is
+ * with the SAME pointer for input and output -- _exec_zr2c (zr2c_build.h)
+ * passes (dre, dre), and (sre, dre), which alias whenever the plan is
  * in-place. __restrict__ is a promise to the compiler that the two do not
  * alias; making that promise and then breaking it is undefined behaviour
  * even though this loop happens to be safe (each iteration loads bin f and
@@ -268,9 +261,10 @@ static void _zr2c_fold_bwd(const double *X_in,
 /* Mixed-radix digit-reversal perm builders (self-contained copies of the
  * r2c.h pair, so the zr2c route never touches split machinery). DIT: factor
  * order as listed. DIF: factor order REVERSED (a DIF-forward inner emits the
- * reversed-factor digit reversal — verified in r2c.h's dif_order_probe note).
+ * reversed-factor digit reversal — see r2c.h's _r2c_compute_perm_dif).
  * Contract produced: iperm[slot] = freq, perm[freq] = slot. Which convention
- * a served cascade plan uses is decided BY THE GATE, never assumed. */
+ * a served plan uses is decided BY THE GATE, never assumed. No caller in the
+ * library uses these or the perm-aware folds below. */
 static void _zr2c_perm_dit(const int *factors, int nf, int N, int *perm, int *iperm)
 {
     for (int n = 0; n < N; n++)
@@ -302,10 +296,9 @@ static void _zr2c_perm_dif(const int *factors, int nf, int N, int *perm, int *ip
     for (int s = 0; s < N; s++) perm[iperm[s]] = s;
 }
 
-/* ── PERM-AWARE variants (owner directive #2, 2026-08-13) ────────────────
- * For halves >= 2048 the interior belongs to the CASCADE; its strongest form
- * emits SCRAMBLED order. These folds consume/produce the scrambled slot
- * layout directly — sequential PRIMARY stream over scratch slots, scattered
+/* ── PERM-AWARE variants ────────────────────────────────────────────────
+ * For a child that emits SCRAMBLED order. These folds consume/produce the
+ * scrambled slot layout directly — sequential PRIMARY stream over scratch slots, scattered
  * mirror (exactly `_r2c_postprocess`'s access pattern) — killing BOTH the
  * deinterleave and the ordering conversion. Contract: iperm[slot] = freq,
  * perm[freq] = slot, mutually inverse; ANY such pair works (gated with a
@@ -316,8 +309,8 @@ static void _zr2c_perm_dif(const int *factors, int nf, int N, int *perm, int *ip
  *
  * fwd: Zs (scrambled slots, interleaved) -> X (natural CCE).  NOT in-place
  * (reads scattered mirrors after writes would collide across slot order).
- * bwd: X (natural CCE) -> Zs_hat (scrambled slots, x2) for the cascade bwd,
- * which consumes the same scrambled order its fwd emits.  NOT in-place. */
+ * bwd: X (natural CCE) -> Zs_hat (scrambled slots, x2) for a child bwd that
+ * consumes the same scrambled order its fwd emits.  NOT in-place. */
 static void _zr2c_fold_fwd_perm(const double *__restrict__ zs_in,
                                 double *__restrict__ X_out,
                                 const double *affS, const double *affC,
@@ -396,7 +389,7 @@ static void _zr2c_fold_bwd_perm(const double *__restrict__ X_in,
 
 
 /* ═══════════════════════════════════════════════════════════════════════
- * SUPERSEDED 2026-08-21 — the DE-INTERLEAVING folds, kept as a reminder.
+ * SUPERSEDED — the DE-INTERLEAVING folds, kept as a reminder.
  *
  * These are the kernels the interleaved-native versions above replaced.
  * They split each packed pair into Ar/Ai/Br/Bi, computed on separated

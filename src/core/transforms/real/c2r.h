@@ -83,8 +83,8 @@ static inline double *c2r_build_mid_inv(const rfft_stage_t *st)
 
 /* c2r_plan_create_ex — variant-explicit plan build (mirror of rfft_plan_create_ex).
  * `variant[d]` selects the DIF-backward combine codelet for combine stage d
- * (d = 0..nf-2): 0=FLAT, 1=LOG3, 2=T1S(ranged). variant==NULL => default policy
- * (LOG3-if-present + ranged), the legacy behavior. The leaf (factors[nf-1]) takes
+ * (d = 0..nf-2): 0=FLAT, 1=LOG3, 2=T1S(ranged). variant==NULL => the default
+ * policy (LOG3-if-present + ranged). The leaf (factors[nf-1]) takes
  * no variant. CRITICAL: stage_hcr MUST be cleared for FLAT/LOG3 or the executor's
  * `if (stage_hcr[d])` ranged branch fires regardless of stage_hc. */
 static inline c2r_plan_t *c2r_plan_create_ex(int N, size_t K,
@@ -93,7 +93,7 @@ static inline c2r_plan_t *c2r_plan_create_ex(int N, size_t K,
                                              const rfft_codelets_t *reg)
 {
     if (nf < 1 || nf > VFFT_RFFT_MAX_STAGES) return NULL;
-    if (K == 0) return NULL; /* arbitrary-K: rem-aware tail handles K % VW != 0 (was K%8-gated) */
+    if (K == 0) return NULL; /* arbitrary-K: rem-aware tail handles K % VW != 0 */
     c2r_plan_t *p = (c2r_plan_t *)calloc(1, sizeof(*p));
     if (!p) return NULL;
     int leaf_r = factors[nf - 1];
@@ -118,7 +118,7 @@ static inline c2r_plan_t *c2r_plan_create_ex(int N, size_t K,
 #else
             hcr = NULL;
 #endif
-        } else {                               /* default policy (legacy) */
+        } else {                               /* default policy */
             hc = reg->hc2hc_dif_bwd_log3[r] ? reg->hc2hc_dif_bwd_log3[r] : reg->hc2hc_dif_bwd[r];
             hcr = reg->hc2hc_dif_rng_bwd[r];
         }
@@ -146,7 +146,7 @@ static inline c2r_plan_t *c2r_plan_create_ex(int N, size_t K,
     return p;
 }
 
-/* Default-policy wrapper (legacy behavior, variant=NULL). */
+/* Default-policy wrapper (variant=NULL). */
 static inline c2r_plan_t *c2r_plan_create(int N, size_t K,
                                           const int *factors, int nf,
                                           const rfft_codelets_t *reg)
@@ -294,12 +294,12 @@ static inline void c2r_mid_inv_column_natural(int r, int m, size_t K, size_t vl,
     }
 }
 
-/* §6a28: stage-0 natural INITIATOR, INTERLEAVED (CCE) z input. Mirror of the
- * fwd §6a26 design: the chunk's z rows are deinterleaved into the base plan's
- * zscr planes (P/M families, slot stride cw*K, column stride K) filling
- * EXACTLY the cells the fwd terminator wrote — the same one-sided D2
- * predicate — then the SAME nat_init codelet runs per column with scratch
- * pointers (stride-agnostic, §6a26-proven) -> bit-identical to split-in.
+/* stage-0 natural INITIATOR, INTERLEAVED (CCE) z input. Mirror of the
+ * forward's interleaved terminator (rfft.h _rfft_stage0_z): the chunk's z rows
+ * are deinterleaved into the base plan's zscr planes (P/M families, slot
+ * stride cw*K, column stride K) filling EXACTLY the cells the fwd terminator
+ * wrote — the same one-sided predicate — then the SAME nat_init codelet runs
+ * per column with scratch pointers (stride-agnostic) -> bit-identical to split-in.
  * DC gathers become fused row deinterleaves; mid reads via its zi mode.
  * Writes the packed cascade input into planeA lanes [k0,k0+kw). */
 static inline void _c2r_stage0_zin(const c2r_plan_t *p, const double *zi,
