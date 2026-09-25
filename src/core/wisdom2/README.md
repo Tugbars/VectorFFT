@@ -286,6 +286,14 @@ exposes them as race PROPOSALS only.
   legacy of an old re-route) resolve by the merge law; the loser's shard is
   scrubbed on the next writable save. The quarantine file is append-only,
   honors the write guard, and carries the version header.
+- A verdict bank after the chain step is a FIELD UPDATE on the axis-0 row,
+  and only the chain race writes that row. A tier that banks structure,
+  width, form or forms verdicts calls `vw2_ilcol_row_ensure` first (the row
+  with its chain and no verdict tokens, when none exists). A forms verdict
+  the column builder raced before the row existed is re-banked by the create
+  through `vw2_ilcol_forms_rebank`, which writes nothing when the row already
+  carries it (a warm create writes nothing) or when there is no row (pins
+  never bank).
 - One constructor per verdict shape builds records from plans; hand-formatted
   lines do not exist. Field-scoped promotion is a supported API call —
   never line surgery on a wisdom file.

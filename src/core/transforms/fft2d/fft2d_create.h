@@ -1053,6 +1053,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             else
                 _il2d_c2c_mt_race(h, W, cfg, N1, N2);
         }
+        /* the raced per-stage forms land on the c2c chain row HERE, the twin
+         * of the real tier's re-bank below: the column build raced them
+         * before the axis race wrote the row (vw2_2d_forms_rebank) */
+        if (h->transform == VFFT_C2C && W && !W->vw2_off_2d && !getenv("VFFT_IL2D_FORMS") &&
+            vw2_2d_forms_rebank(&W->vw2, 0, N1, N2, il2d_fm, il2d_ord))
+            _vw2_persist(W, cfg);
         /* ── the REAL tier's row-route race (per-row door vs ROWSPLIT W
          * pool): runs only when env is FULLY silent (an env-pinned chain
          * skips the banked-row read AND must never bank — env beats

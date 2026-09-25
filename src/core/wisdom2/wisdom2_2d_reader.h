@@ -956,6 +956,41 @@ static inline int vw2_ilcol_forms_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck
 {
     return vw2_ilcol_forms_bank_base(s, ck, "forms", forms);
 }
+/* THE ROW BEFORE ITS VERDICTS (2026-09-25). Every bank after the chain step
+ * is a field update on the axis-0 row (vw2_update_field), and only the chain
+ * RACE writes that row: a pinned or a served chain never does. A tier that
+ * banks a structure, width, form or forms verdict calls this first; it
+ * writes the row with the chain and no verdict tokens when none exists.
+ * 1 = written (persist), 0 = the row was there. */
+static inline int vw2_ilcol_row_ensure(vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                       const int *Rs, int nst)
+{
+    vw2_key_t k;
+    vw2__ilcol_key(ck, &k);
+    if (vw2_lookup(s, &k)) return 0;
+    return vw2_ilcol_chain_bank(s, ck, Rs, nst, -1, -1, -1, -1, -1, -1, 0.0) == VW2_OK;
+}
+/* A FORMS VERDICT RACED BEFORE ITS ROW EXISTED (2026-09-25). The column
+ * builder races the per-stage forms right after the chain step and banks
+ * them there; with no row yet that bank fails and the verdict lives only in
+ * the builder's out-buffer. The create re-banks it here once the row is
+ * written. Nothing is written when the row already carries this verdict (a
+ * served one: a warm create writes nothing) or when there is no row (an
+ * env-pinned axis: pins never bank). 1 = written (persist). */
+static inline int vw2_ilcol_forms_rebank_base(vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                              const char *base, const char *forms)
+{
+    char have[64];
+    if (!forms || !forms[0]) return 0;
+    if (vw2_ilcol_forms_lookup_base(s, ck, base, have, sizeof have) && !strcmp(have, forms))
+        return 0;
+    return vw2_ilcol_forms_bank_base(s, ck, base, forms);
+}
+static inline int vw2_ilcol_forms_rebank(vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                         const char *forms)
+{
+    return vw2_ilcol_forms_rebank_base(s, ck, "forms", forms);
+}
 /* the rank-N IL tier's STRUCTURE verdict (fftnd_il.h): s= on the rank-3
  * lay=il row that axis 0's chain bank created — 1 = the child per plane,
  * 2 = the flat tier; 0 = absent */
@@ -1012,6 +1047,12 @@ static inline int vw2_2d_forms_bank(vw2_store_t *s, int is_real, int N1,
 {
     vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
     return vw2_ilcol_forms_bank(s, &ck, forms);
+}
+static inline int vw2_2d_forms_rebank(vw2_store_t *s, int is_real, int N1,
+                                      int N2, const char *forms, int ord)
+{
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
+    return vw2_ilcol_forms_rebank(s, &ck, forms);
 }
 
 #endif /* VFFT_WISDOM2_2D_READER_H */
