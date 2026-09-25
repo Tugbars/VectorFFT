@@ -1540,6 +1540,9 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         if (usable_w && cfg->wisdom_write)
         {
             int banked = 0;
+            /* the row first: every bank below is a field update on it */
+            if (vw2_ilcol_row_ensure(&W->vw2, &key0, d->ax0.R, d->ax0.nst))
+                banked = 1;
             if (nsarm > 1 && vw2_ilnd_arm_bank(&W->vw2, &key0, arm))
                 banked = 1;
             if (nwl > 1 && nf == 1 && vw2_ilcol_chain_bank(&W->vw2, &key0, d->ax0.R, d->ax0.nst,
@@ -1548,6 +1551,9 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
             if (nf_raced && vw2_ilnd_int_bank(&W->vw2, &key0, "nf", nf))
                 banked = 1;
             if (nf == 2 && nsw > 1 && !getenv("VFFT_ILND_SW") && vw2_ilnd_int_bank(&W->vw2, &key0, "nsw", sw))
+                banked = 1;
+            /* the axis-0 forms, raced before the row existed */
+            if (vw2_ilcol_forms_rebank(&W->vw2, &key0, d->forms0))
                 banked = 1;
             if (banked)
                 _vw2_persist(W, cfg);
@@ -1633,6 +1639,12 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 if (vw2_ilnd_mts_bank(&W->vw2, &key0, mts))
                     banked = 1;
                 if (strip_ok && vw2_ilnd_int_bank(&W->vw2, &key0, "cmtf", mtf))
+                    banked = 1;
+                /* the strips form's width beside cmtf=2: the replay needs both */
+                if (strip_ok && mtf == 2 && d->nsw > 0 && vw2_ilnd_int_bank(&W->vw2, &key0, "nsw", d->nsw))
+                    banked = 1;
+                /* the axis-0 forms, raced before the row existed */
+                if (vw2_ilcol_forms_rebank(&W->vw2, &key0, d->forms0))
                     banked = 1;
                 if (banked)
                     _vw2_persist(W, cfg);
