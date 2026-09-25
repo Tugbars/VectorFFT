@@ -41,3 +41,8 @@
 2026-09-25 13:20:47   calibrated 950/2047 (951), 3714 s elapsed
 2026-09-25 13:24:36   calibrated 975/2047 (976), 3944 s elapsed
 2026-09-25 13:27:32   calibrated 1000/2047 (1001), 4119 s elapsed
+2026-09-25 13:30:31   calibrated 1025/2047 (1026), 4298 s elapsed
+2026-09-25 13:31:09 run: 1023 cells, contract in place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-25 13:31:09 calibrate: 0 cells (1031 already done)
+2026-09-25 13:31:09 bench: 1023 cells (0 already benched, 0 not banked -> not benched)
+2026-09-25 13:31:41   benched 25/1023 (26), 30 s elapsed

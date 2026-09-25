@@ -1,12 +1,11 @@
-/* proto_stride_compat.h — lineage adapter (notebook section 49).
+/* proto_stride_compat.h — the stride_* API over the vfft_proto_* engine.
  *
- * bluestein.h / rader.h are written against the production stride API
- * (stride_execute_fwd/bwd[_serial], stride_plan_destroy, 3-arg, K in
- * plan, override hooks honored). The prototype core's lineage-A API is
- * vfft_proto_execute_fwd/bwd(plan, re, im, K). These adapters bridge,
- * and they are ALSO the override-dispatch site for lineage A, so
- * Bluestein/Rader plan shells execute correctly without touching the
- * emitted executors. Include AFTER executor.h/planner.h, BEFORE
+ * bluestein.h, rader.h and the other stride-engine consumers call the
+ * stride_* names (stride_execute_fwd/bwd[_serial], stride_plan_destroy:
+ * 3-arg, K taken from the plan, override hooks honoured). These wrappers map
+ * them onto vfft_proto_execute_fwd/bwd(plan, re, im, K), and they are also
+ * where a Bluestein/Rader plan shell's override dispatches, so the emitted
+ * executors never see it. Include AFTER executor.h/planner.h, BEFORE
  * bluestein.h/rader.h.
  */
 #ifndef VFFT_PROTO_STRIDE_COMPAT_H
@@ -15,9 +14,8 @@
 #include "executor.h"
 #include "threads.h"
 
-/* Production type/function names -> prototype lineage. Lets
- * bluestein_calibrator.h and callers written against production
- * compile unmodified. */
+/* stride_* spellings of the registry, wisdom and wise-plan names
+ * (bluestein_calibrator.h and others use them). */
 typedef vfft_proto_registry_t stride_registry_t;
 typedef vfft_proto_wisdom_t   stride_wisdom_t;
 #define stride_wise_plan(N, K, reg, wis) \
@@ -59,7 +57,7 @@ static inline void stride_execute_bwd(const stride_plan_t *p,
     vfft_proto_execute_bwd(p, re, im, p->K);
 }
 
-/* Serial = same path here: the lineage-A executor is single-threaded. */
+/* Serial = same path: this executor is single-threaded. */
 static inline void stride_execute_fwd_serial(const stride_plan_t *p,
                                              double *re, double *im)
 {
@@ -84,8 +82,7 @@ static inline void stride_plan_destroy(stride_plan_t *p)
 }
 
 /* ── Partial-pipeline slice executors (r2c.h fused paths) ──────────
- * Production exposes _stride_execute_fwd_slice_from / bwd_slice_until
- * for the r2c fused first/last stage: run the DIT stage loop on a
+ * For the r2c fused first/last stage: run the DIT stage loop on a
  * B-wide scratch slice, skipping the stage the fused pass already did.
  * These are parameterized copies of executor_generic.h's loops.
  * Signature matches r2c.h call sites: (plan, re, im, B, B, stage). */
@@ -158,7 +155,7 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
 }
 
 /* Forward _until: run stages from_stage..stop_stage-1 (stop BEFORE stop_stage).
- * Model (b): stop_stage = num_stages-1 leaves the last stage for the fused
+ * stop_stage = num_stages-1 leaves the last stage for the fused
  * r2c_term_laststage codelet. Body identical to _slice_from but bounded. */
 static inline void _stride_execute_fwd_slice_until(const stride_plan_t *plan,
                                                    double *re, double *im,

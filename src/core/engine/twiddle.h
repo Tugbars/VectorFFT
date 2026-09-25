@@ -1,5 +1,5 @@
-/* twiddle.h — per-stage layout + twiddle compute for 1D C2C plans.
- *
+/* twiddle.h — per-stage layout + twiddle compute for 1D C2C plans
+ * (the in-place stride engine).
  */
 #ifndef VFFT_PROTO_CORE_TWIDDLE_H
 #define VFFT_PROTO_CORE_TWIDDLE_H
@@ -16,9 +16,8 @@
 /* ────────────────────────────────────────────────────────────────────
  * Per-stage layout: radix, stride, num_groups, group_base[].
  *
- * Mirrors src/core/executor.h:plan_compute_groups. The layout depends
- * on K (batch size) and the full factorization — each "other" stage
- * contributes a stride to base offsets.
+ * The layout depends on K (batch size) and the full factorization —
+ * each "other" stage contributes a stride to base offsets.
  * ──────────────────────────────────────────────────────────────────── */
 static inline void vfft_proto_compute_groups(stride_plan_t *plan, int s)
 {
@@ -78,7 +77,7 @@ static inline void vfft_proto_compute_groups(stride_plan_t *plan, int s)
 }
 
 /* ────────────────────────────────────────────────────────────────────
- * Method C twiddle compute (T1S subset).
+ * Method C twiddle compute (DIT).
  *
  * For each group g in stage s, computes the cross-stage twiddle that
  * pre-multiplies the input data. Method C factors it as:
@@ -86,26 +85,17 @@ static inline void vfft_proto_compute_groups(stride_plan_t *plan, int s)
  *   cf0[g]        = W_N^{k_prev × ow_prev × lower_data_pos}    (j-independent)
  *   per_leg[j][g] = W_N^{k_prev × ow_prev × j × S_s}           (j-linear, j>0)
  *
- * The COMBINED twiddle is cf0 × per_leg[j]; the codelet applies cf0
- * to ALL R legs (via cf0_re/im[g] + the T1S scalar-broadcast path)
- * then multiplies legs 1..R-1 by tw_scalar_re/im[g][j-1].
+ * Leg 0 takes cf0; legs 1..R-1 take the COMBINED cf0 × per_leg[j]. Groups
+ * with k_prev == 0 need no twiddle. For each twiddled group:
  *
- * Mirrors src/core/executor.h:plan_compute_twiddles_c lines 1301-1530,
- * keeping only the scalar twiddle path (tw_scalar_re/im) — FLAT's
- * grp_tw_re/im and the n1_fallback's cf_all_re/im are NOT populated
- * (left NULL). Phase 2.5 adds those.
+ *   tw_scalar[g][j-1]  combined, legs 1..R-1 (T1S and the FLAT staging)
+ *   grp_tw[g]          K-replicated: combined for FLAT, RAW per_leg for
+ *                      LOG3 (the executor applies cf0 to all R legs first)
+ *
+ * cf_all holds every leg's full twiddle, K-replicated, for every group:
+ * the backward executor's conj post-multiply. The pools are sized by the
+ * number of twiddled groups, counted upfront, not by ng.
  * ──────────────────────────────────────────────────────────────────── */
-/* Ported verbatim from src/core/executor.h:plan_compute_twiddles_c with
- * mechanical renames. The production version handles every edge case
- * we've been re-discovering (k_prev=0 rows, pool sizing by n_tw_groups
- * counted upfront, per-stage single allocation, cf_all for backward).
- *
- * Differences from production:
- *   - vfft_proto_posix_memalign instead of STRIDE_ALIGNED_ALLOC (same
- *     semantics, different shim name for Windows _aligned_malloc).
- *   - Production stores combined twiddle in tw_pool (K-replicated) when
- *     not log3, and raw per_leg when log3. We keep that exact storage
- *     convention since the executor reads it via the same indexing. */
 static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
 {
     stride_stage_t *st = &plan->stages[s];
@@ -173,8 +163,7 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
     }
 
     /* Allocate twiddle pools sized for the actual number of twiddled
-     * groups (not ng) — production pattern. Avoids reserving slots for
-     * k_prev=0 rows that never use them. */
+     * groups (not ng): k_prev=0 rows never use a slot. */
     size_t per_grp = (size_t)(R - 1) * K;
     size_t scalar_per_grp = (size_t)(R - 1);
 
@@ -308,12 +297,8 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
     }
 }
 
-/* (The previous hand-built version's tail is removed — the production
- * port above is complete and self-contained.) */
-
 /* ────────────────────────────────────────────────────────────────────
- * DIF twiddle compute. Ported from production's
- * src/core/executor.h:plan_compute_twiddles_dif_c.
+ * DIF twiddle compute.
  *
  * Differences from DIT:
  *   - No-twiddle stage is the LAST (s == nf-1), not the first.
@@ -440,8 +425,7 @@ static inline void vfft_proto_compute_twiddles_dif(stride_plan_t *plan, int s)
         const long long g_factor =
             (long long)k_next * S_s + (long long)lower_data_pos;
 
-        /* cf_all path — filled for symmetry but no DIF executor reads it.
-         * Production preserves this convention. */
+        /* cf_all — filled for symmetry with DIT; no DIF executor reads it. */
         for (int j = 0; j < R; j++) {
             int tw_exp = (int)(((long long)j * ow_prev * g_factor) % N);
             if (tw_exp < 0) tw_exp += N;
