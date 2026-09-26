@@ -241,7 +241,14 @@ def dag_codelet_lib(tc) -> str | None:
     objdir.mkdir(parents=True, exist_ok=True)
     lib = objdir / 'libdagcodelets.a'
 
-    cflags = ['-O3', '-mavx2', '-mfma', '-march=native', '-fpermissive', '-w']
+    # the ISA CLAMP (see build_cmd) applies to the codelet LIBRARY too: without
+    # it an avx2 lib built on an AVX-512 host (-march=native) is compiled with
+    # EVEX encodings and ymm16-31 -- it SIGILLs on an AVX2-only CPU and hides
+    # the 16-register pressure the avx2 kernels were scheduled for (measured
+    # 2026-09-26: radix16_z_t2cs_avx2, 0 spills vs 35 at x86-64-v3).
+    cflags = ['-O3', '-mavx2', '-mfma', '-march=native',
+              *(['-mno-avx512f'] if DAG_ISA != 'avx512' else []),
+              '-fpermissive', '-w']
     if os.environ.get('VFFT_ASAN'):
         cflags += ['-fsanitize=address', '-g', '-fno-omit-frame-pointer']
     flags = cflags + build_includes()
@@ -592,7 +599,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
         if tc['is_windows']:
             link_args += [str(Path(mkl_lib) / 'mkl_rt.lib')]
         else:
-            link_args += [f'-L{mkl_lib}', '-lmkl_rt', '-lpthread', '-lm', '-ldl']
+            # rpath: the bench finds libmkl_rt without LD_LIBRARY_PATH (2026-09-26)
+            link_args += [f'-L{mkl_lib}', f'-Wl,-rpath,{mkl_lib}', '-lmkl_rt', '-lpthread', '-lm', '-ldl']
     if fftw:
         if tc['is_windows']:
             link_args += [str(Path(fftw_lib) / 'fftw3.lib')]

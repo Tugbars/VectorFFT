@@ -1587,9 +1587,7 @@ static int g_zr2c = 0;   /* --zr2c: D2 interleaved r2c/c2r vs MKL real-CCE in-pl
  * the same core. Every one-thread cell runner calls this once; the threaded
  * runners use ilmt_pin_pcores() instead. VFFT_BENCH_PIN=0 lifts it (the
  * control for "did the pin itself move a number?"). */
-#ifdef _WIN32
-#include "sibling_guard.h"   /* THE SIBLING GUARD (2026-09-21): shared with the calibrate probe since 2026-09-23 */
-#endif
+#include "sibling_guard.h"   /* THE SIBLING GUARD (2026-09-21): shared with the calibrate probe since 2026-09-23; Linux too since 2026-09-26 */
 static void bench_pin_one_thread(void)
 {
     static int done = 0;
@@ -1600,14 +1598,9 @@ static void bench_pin_one_thread(void)
         printf("# one-thread protocol: pin LIFTED (VFFT_BENCH_PIN=0) — the caller floats\n");
         return;
     }
-#ifdef _WIN32
-    SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x4);
-    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    bench_pin_caller(2);   /* SetThreadAffinityMask 0x4 + HIGH_PRIORITY_CLASS; Linux: affinity + setpriority */
     printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority (VFFT_BENCH_PIN=0 lifts)\n");
     bench_guard_sibling(2);
-#else
-    printf("# one-thread protocol: pin is Win32-only here; the caller floats\n");
-#endif
 }
 
 /* the 8 distinct P-cores; VFFT_PCORE_MASK overrides for a different CPU. */
@@ -5049,10 +5042,8 @@ int main(int argc, char **argv)
     }
     if (core >= 0 && stride_pin_thread(core) != 0)
         fprintf(stderr, "warn: pin cpu%d failed\n", core);
-#ifdef _WIN32
     else if (core >= 0 && !mt)
         bench_guard_sibling(core);   /* every single-thread mode (the 2D/R2C/zr2c ones included) holds its sibling (2026-09-22) */
-#endif
     if (mt)
         if (!g_k1noop_mt)             /* trap (d): the front-door MT mode must not own a
                                        * second pool in this TU (idle spinners on the

@@ -15,7 +15,16 @@
  * window runs with the sibling reserved. Hosts without WAITPKG (Zen 4) run
  * unguarded; VFFT_BENCH_GUARD=0 lifts it.
  *
- * Use: bench_guard_sibling(cpu) once, after pinning the calling thread to cpu. */
+ * Use: bench_pin_caller(cpu) to pin the calling thread at high priority, then
+ * bench_guard_sibling(cpu) once.
+ *
+ * LINUX (2026-09-26): the same three entry points. The pin is
+ * pthread_setaffinity_np + setpriority(-10) (the priority needs CAP_SYS_NICE;
+ * without it the pin still holds and the probe says so); the sibling comes from
+ * /sys/devices/system/cpu/cpuN/topology/thread_siblings_list; the guard thread
+ * is a pthread. VFFT_PCORE_MASK is the only way to confine the process to a
+ * core set here: the Windows default mask (0x5555, the i9's eight P-cores) is
+ * host-specific, so an unset mask leaves the affinity alone. */
 #ifndef VFFT_GAUNTLET_SIBLING_GUARD_H
 #define VFFT_GAUNTLET_SIBLING_GUARD_H
 #ifdef _WIN32
@@ -27,7 +36,23 @@
 #include <immintrin.h>
 #include <x86intrin.h>
 #include "cpu_cache.h"   /* _vfft_cpuid, VFFT_CPU_HAVE_CPUID (the tree's own spelling) */
+#else
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE      /* pthread_setaffinity_np, CPU_SET */
+#endif
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/resource.h>
+#include <immintrin.h>
+#include <x86intrin.h>
+#include "cpu_cache.h"
+#endif
 
+#ifdef _WIN32
 static int bench_sibling_of(int cpu)
 {
     DWORD len = 0;
@@ -50,6 +75,33 @@ static int bench_sibling_of(int cpu)
     free(buf);
     return sib;
 }
+#else
+static int bench_sibling_of(int cpu)
+{   /* thread_siblings_list is "2,10" or "2-3": the first listed cpu != cpu */
+    char path[96], line[256];
+    FILE *f;
+    int sib = -1;
+    snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/topology/thread_siblings_list", cpu);
+    f = fopen(path, "r");
+    if (!f) return -1;
+    if (fgets(line, sizeof line, f))
+    {
+        char *s = line;
+        while (*s && sib < 0)
+        {
+            char *e;
+            long a = strtol(s, &e, 10), b;
+            if (e == s) break;
+            b = a;
+            if (*e == '-') { s = e + 1; b = strtol(s, &e, 10); }
+            for (long c = a; c <= b; c++) if (c != cpu) { sib = (int)c; break; }
+            s = (*e == ',') ? e + 1 : e;
+        }
+    }
+    fclose(f);
+    return sib;
+}
+#endif
 static int bench_has_waitpkg(void)
 {   /* CPUID.(7,0):ECX[5] through the tree's own spelling (cpu_cache.h: the
      * MinGW/MSVC CPUID collision of 2026-08-31 lives in the raw names) */
@@ -59,6 +111,7 @@ static int bench_has_waitpkg(void)
 #endif
     return (r[2] >> 5) & 1u;
 }
+#ifdef _WIN32
 __attribute__((target("waitpkg")))
 static DWORD WINAPI bench_sibling_guard(LPVOID arg)
 {
@@ -67,6 +120,52 @@ static DWORD WINAPI bench_sibling_guard(LPVOID arg)
         _tpause(0, __rdtsc() + 200000ull);   /* C0.2, ~35 us slices (the OS caps them); the loop is the guard */
     return 0;
 }
+static int bench_spawn_guard(int sib)
+{
+    return CreateThread(NULL, 0, bench_sibling_guard, (LPVOID)(intptr_t)sib, 0, NULL) != NULL;
+}
+#else
+__attribute__((target("waitpkg")))
+static void *bench_sibling_guard(void *arg)
+{
+    cpu_set_t s;
+    CPU_ZERO(&s);
+    CPU_SET((int)(intptr_t)arg, &s);
+    pthread_setaffinity_np(pthread_self(), sizeof s, &s);
+    for (;;)
+        _tpause(0, __rdtsc() + 200000ull);   /* C0.2, as on Windows */
+    return NULL;
+}
+static int bench_spawn_guard(int sib)
+{
+    pthread_t t;
+    if (pthread_create(&t, NULL, bench_sibling_guard, (void *)(intptr_t)sib) != 0) return 0;
+    pthread_detach(t);
+    return 1;
+}
+#endif
+
+/* pin the calling thread to one logical cpu at the bench's HIGH priority;
+ * returns 0 when the pin held */
+static int bench_pin_caller(int cpu)
+{
+#ifdef _WIN32
+    const int ok = SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << cpu) != 0;
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    return ok ? 0 : -1;
+#else
+    cpu_set_t s;
+    int ok;
+    CPU_ZERO(&s);
+    CPU_SET(cpu, &s);
+    ok = pthread_setaffinity_np(pthread_self(), sizeof s, &s) == 0;
+    if (setpriority(PRIO_PROCESS, 0, -10) != 0)
+        printf("# pin: priority unchanged (setpriority needs CAP_SYS_NICE); the pin to cpu %d %s\n",
+               cpu, ok ? "holds" : "FAILED");
+    return ok ? 0 : -1;
+#endif
+}
+
 /* hold the SMT sibling of the pinned cpu for the process's life (once); every
  * single-thread mode's pin passes through here (2026-09-22), not only the
  * K=1 / 3D one-thread protocol */
@@ -92,7 +191,24 @@ static void bench_pin_pcores(void)
         printf("# process affinity = 0x%llx (8 distinct P-cores: logical 0,2,..,14)\n",
                (unsigned long long)mask);
 #else
-    fprintf(stderr, "pin: P-core confinement is Win32-only here; set taskset externally\n");
+    /* sched_setaffinity(0) sets the CALLING thread's mask; every thread created
+     * after it (the library's pool, MKL/OpenMP) inherits it, which is why this
+     * runs before any of them exist, as on Windows */
+    const char *e = getenv("VFFT_PCORE_MASK");
+    unsigned long long mask = e ? strtoull(e, NULL, 0) : 0ull;
+    cpu_set_t s;
+    if (!e || mask == 0)
+    {
+        printf("# process affinity UNSET (%s) -- threads float over every logical CPU\n",
+               e ? "VFFT_PCORE_MASK=0" : "Linux: set VFFT_PCORE_MASK to confine");
+        return;
+    }
+    CPU_ZERO(&s);
+    for (int c = 0; c < 64; c++) if (mask & (1ull << c)) CPU_SET(c, &s);
+    if (sched_setaffinity(0, sizeof s, &s) != 0)
+        fprintf(stderr, "pin: sched_setaffinity(0x%llx) FAILED\n", mask);
+    else
+        printf("# process affinity = 0x%llx (VFFT_PCORE_MASK)\n", mask);
 #endif
 }
 
@@ -104,12 +220,10 @@ static void bench_guard_sibling(int cpu)
     const int sib = bench_sibling_of(cpu);
     if (done) return;
     done = 1;
-    if (!lifted && sib >= 0 && bench_has_waitpkg() &&
-        CreateThread(NULL, 0, bench_sibling_guard, (LPVOID)(intptr_t)sib, 0, NULL))
+    if (!lifted && sib >= 0 && bench_has_waitpkg() && bench_spawn_guard(sib))
         printf("# sibling guard: cpu %d's SMT sibling cpu %d held by a TPAUSE-C0.2 thread for this process (VFFT_BENCH_GUARD=0 lifts)\n", cpu, sib);
     else
         printf("# sibling guard: cpu %d's sibling UNGUARDED (%s)\n", cpu,
                lifted ? "VFFT_BENCH_GUARD=0" : sib < 0 ? "no SMT sibling" : !bench_has_waitpkg() ? "no WAITPKG on this host" : "thread create failed");
 }
-#endif /* _WIN32 */
 #endif /* VFFT_GAUNTLET_SIBLING_GUARD_H */

@@ -179,10 +179,22 @@ else()
     else()
         set(_arch -mavx2 -mfma)
     endif()
-    set(VFFT_C_FLAGS -O3 ${_arch} -march=native -fpermissive
+    # ISA CLAMP (build.py's, mirrored 2026-09-26): on a CPU whose -march=native
+    # implies AVX-512 (Zen 4+, Sapphire Rapids+) an avx2 build would otherwise
+    # define __AVX512F__ -- the core then dispatches to avx512 registries the
+    # avx2 codelet library does not carry (undefined radix*_avx512 at link) --
+    # and the avx2 codelets themselves would be compiled with EVEX encodings
+    # and ymm16-31: not an AVX2 binary, and not the 16-register code the avx2
+    # kernels were scheduled for. The selected ISA is the source of truth; it
+    # must follow -march=native to override it. Native tuning is kept.
+    set(_isa_clamp)
+    if(NOT VFFT_ISA STREQUAL "avx512")
+        set(_isa_clamp -mno-avx512f)
+    endif()
+    set(VFFT_C_FLAGS -O3 ${_arch} -march=native ${_isa_clamp} -fpermissive
         -Wno-overflow -Wno-implicit-function-declaration -Wno-unused-function
         -Wno-unknown-argument -Wno-incompatible-pointer-types -Wno-deprecated-declarations)
-    set(VFFT_CODE_FLAGS -O3 ${_arch} -march=native -fpermissive -w)
+    set(VFFT_CODE_FLAGS -O3 ${_arch} -march=native ${_isa_clamp} -fpermissive -w)
 endif()
 
 # ── Codelet static lib (inplace=c2c, rfft/c2r=real-FFT, oop=LEAF/BAILEY2,
