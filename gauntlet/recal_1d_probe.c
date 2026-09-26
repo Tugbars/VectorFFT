@@ -9,18 +9,33 @@
  *        (2026-09-24: the 3D interleaved cell, dims=3; its verdicts bank into wisdom2_3d.txt)
  *        (2026-09-23: the 2D interleaved cell, dims=2, the same door and store;
  *        its verdicts bank into wisdom2_2d.txt)
- * Build: python build.py --compile --vfft --src benches/recal_1d_probe.c */
+ * Build: python build.py --compile --vfft --src benches/recal_1d_probe.c
+ *        (Linux, 2026-09-26: the Win32 clock and pin are behind _WIN32; the
+ *        pin and the guard go through sibling_guard.h on both hosts) */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1   /* pthread_setaffinity_np (sibling_guard.h) */
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <time.h>
+#endif
 #include "vfft.h"
 #include "sibling_guard.h"   /* the bench's SMT-sibling guard: the door's races run in this process (2026-09-23) */
 static double now_ms(void)
 {
+#ifdef _WIN32
     LARGE_INTEGER f, c;
     QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c);
     return 1e3 * (double)c.QuadPart / (double)f.QuadPart;
+#else
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return 1e3 * (double)t.tv_sec + 1e-6 * (double)t.tv_nsec;
+#endif
 }
 int main(int argc, char **argv)
 {
@@ -52,14 +67,12 @@ int main(int argc, char **argv)
          * every threaded arm of the create's races carried that handicap),
          * HIGH priority, no sibling guard, the pool sized before the create */
         bench_pin_pcores();
-        SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x1);
-        SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+        bench_pin_caller(0);   /* logical 0 at HIGH priority */
         vfft_set_num_threads(T);
     }
     else if (!getenv("VFFT_BENCH_PIN") || atoi(getenv("VFFT_BENCH_PIN")) != 0)
     {
-        SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x4);
-        SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+        bench_pin_caller(2);   /* core 2 (mask 0x4) at HIGH priority */
         /* and the SIBLING GUARD (2026-09-23): the create's races are the
          * measurements the verdicts come from, and unguarded they ran in the
          * same two-speed lottery the bench fixed on 2026-09-21 -- the second

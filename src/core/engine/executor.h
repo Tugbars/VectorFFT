@@ -4,10 +4,10 @@
  *
  *   1. A plan with an override backend (Rader/Bluestein/DCT/...) runs its
  *      own execute fn.
- *   2. Otherwise the Tier-1 lookup (plan_executors.h; AVX-512 first when
- *      compiled in, then AVX2) returns the specialized (B)+(A) plan-shaped
- *      executor if one was emitted for this plan's shape: 5-6% faster on
- *      T1S/FLAT cells.
+ *   2. Otherwise the Tier-1 lookup (plan_executors.h; the BUILD's ISA only:
+ *      AVX-512 in an avx512 build, AVX2 in an avx2 build) returns the
+ *      specialized (B)+(A) plan-shaped executor if one was emitted for this
+ *      plan's shape: 5-6% faster on T1S/FLAT cells.
  *   3. Otherwise (cold cell) the generic loop in executor_generic.h, DIT or
  *      DIF by the plan's orientation, which handles every plan shape.
  */
@@ -27,27 +27,31 @@
  *   slice_K  — K batches to process (may be ≤ plan->K for split
  *              execution)
  */
-/* Compile-time Tier 1 lookup selector: pick AVX-512 when available,
- * fall back to AVX-2 otherwise. Both lookups exist in plan_executors.h;
- * the AVX-512 set is guarded by #ifdef __AVX512F__. */
+/* Compile-time Tier 1 lookup selector: the build's ISA ONLY (2026-09-26).
+ * The user selects the ISA (VFFT_ISA) and the library is compiled for it:
+ * an avx512 build links avx512 codelets only, so it must not fall through to
+ * the AVX-2 executors — they call avx2 codelets that library does not carry.
+ * A shape with no avx512 specialization takes step 3, the generic loop.
+ * Both lookup sets are static in plan_executors.h, so the unused one is
+ * dropped with every codelet it names. */
 static inline vfft_proto_exec_fn
 _vfft_proto_lookup_fwd(const stride_plan_t *plan)
 {
 #if defined(__AVX512F__)
-    vfft_proto_exec_fn fn = vfft_proto_lookup_fwd_avx512(plan);
-    if (fn) return fn;
-#endif
+    return vfft_proto_lookup_fwd_avx512(plan);
+#else
     return vfft_proto_lookup_fwd_avx2(plan);
+#endif
 }
 
 static inline vfft_proto_exec_fn
 _vfft_proto_lookup_bwd(const stride_plan_t *plan)
 {
 #if defined(__AVX512F__)
-    vfft_proto_exec_fn fn = vfft_proto_lookup_bwd_avx512(plan);
-    if (fn) return fn;
-#endif
+    return vfft_proto_lookup_bwd_avx512(plan);
+#else
     return vfft_proto_lookup_bwd_avx2(plan);
+#endif
 }
 
 static inline void vfft_proto_execute_fwd(const stride_plan_t *plan,

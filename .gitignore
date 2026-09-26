@@ -79,6 +79,15 @@ src/dag-fft-compiler/MKLBench/_smoke.txt
 /build_tuned/benches/vt_rfft_ours
 build_tuned/benches/mb_256.txt
 *.txt
+# ...except the gauntlet's CMake file, which this rule hid from the repository
+# (the root CMakeLists.txt add_subdirectory()s it; found missing 2026-09-26)
+!/gauntlet/CMakeLists.txt
+# the gauntlet's tools as build.py leaves them beside their sources on Linux
+# (no .exe suffix there)
+/gauntlet/bench_1d_vs_mkl
+/gauntlet/bench_1d_vs_fftw
+/gauntlet/recal_1d_probe
+/gauntlet/k1_fwd_ref_probe
 
 # Generated wisdom files are committed — single source of truth, one folder,
 # visible to everyone (spike/rfft/c2r/bluestein/oop). Keep all wisdoms here.
