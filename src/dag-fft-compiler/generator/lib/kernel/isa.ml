@@ -146,6 +146,15 @@ let sse2 =
   }
 ;;
 
+(* SCRATCH: 256-bit ops under AVX-512VL k-masks (maskz_loadu / mask_storeu at ymm).
+   Emitted INLINE inside the avx512 codelet; never standalone. *)
+let avx512vl256 =
+  { avx2 with name = "avx512vl256"
+  ; maskload_pd = "_mm256_maskz_loadu_pd"
+  ; maskstore_pd = "_mm256_mask_storeu_pd"
+  }
+;;
+
 (* Look up by name, for CLI. *)
 let of_name (s : string) : t =
   match s with
@@ -307,7 +316,7 @@ let loadu_pd ?(mode = LS_vector) (isa : t) (addr : string) : string =
     match mode with
     | LS_vector -> Printf.sprintf "%s(&%s)" isa.loadu_pd addr
     | LS_masked m ->
-      if isa.vec_width = 8
+      if isa.vec_width = 8 || isa.name = "avx512vl256"
       then
         (* avx512: maskz_loadu(mask, addr) — zeroes inactive lanes *)
         Printf.sprintf "%s(%s, &%s)" isa.maskload_pd m addr
@@ -381,4 +390,194 @@ let forward_decl (isa : t) (names : string list) : string =
   match names with
   | [] -> ""
   | _ -> Printf.sprintf "%s %s;" isa.vec_type (String.concat ", " names)
+;;
+
+(* === LANE-SHUFFLE OPERATIONS (wf1 zsplit proposal) ===
+ * Semantic operations, rendered per width — NOT intrinsic names. The
+ * width-4 renderings are byte-for-byte what cascade_z.ml emitted before, so
+ * the avx2 corpus is unchanged; width 8 uses permutex2var against the
+ * function-scope index constants that [shuffle_consts] declares.
+ *   deint_ordered lo hi : two z vectors (VW/2 complex each) -> (re, im) planes,
+ *                         lane c = column c.
+ *   reint_ordered re im : the inverse, -> (lo, hi) z vectors.
+ *   transpose           : a VW x VW transpose of VW vectors. *)
+let deint_ordered (isa : t) (lo : string) (hi : string) : string * string =
+  match isa.vec_width with
+  | 8 ->
+    ( Printf.sprintf "_mm512_permutex2var_pd(%s, _zs_de, %s)" lo hi
+    , Printf.sprintf "_mm512_permutex2var_pd(%s, _zs_do, %s)" lo hi )
+  | 4 ->
+    ( Printf.sprintf "%s(%s(%s, %s), 0xD8)" (intr isa "permute4x64_pd") (intr isa "unpacklo_pd") lo hi
+    , Printf.sprintf "%s(%s(%s, %s), 0xD8)" (intr isa "permute4x64_pd") (intr isa "unpackhi_pd") lo hi )
+  | 2 ->
+    ( Printf.sprintf "%s(%s, %s)" (intr isa "unpacklo_pd") lo hi
+    , Printf.sprintf "%s(%s, %s)" (intr isa "unpackhi_pd") lo hi )
+  | 1 -> lo, hi
+  | w -> failwith (Printf.sprintf "Isa.deint_ordered: width %d" w)
+;;
+
+(* the plane-side operands of reint_ordered at width 4 are pre-permuted by the
+   caller (cascade_z keeps its _pr_/_qi_ temporaries), so this returns the
+   PRE-permute (width 4: permute4x64 0xD8) and the final pair separately *)
+let reint_pre (isa : t) (v : string) : string =
+  match isa.vec_width with
+  | 4 -> Printf.sprintf "%s(%s, 0xD8)" (intr isa "permute4x64_pd") v
+  | _ -> v
+;;
+
+let reint_ordered (isa : t) (re : string) (im : string) : string * string =
+  match isa.vec_width with
+  | 8 ->
+    ( Printf.sprintf "_mm512_permutex2var_pd(%s, _zs_pe, %s)" re im
+    , Printf.sprintf "_mm512_permutex2var_pd(%s, _zs_po, %s)" re im )
+  | 4 | 2 ->
+    ( Printf.sprintf "%s(%s, %s)" (intr isa "unpacklo_pd") re im
+    , Printf.sprintf "%s(%s, %s)" (intr isa "unpackhi_pd") re im )
+  | 1 -> re, im
+  | w -> failwith (Printf.sprintf "Isa.reint_ordered: width %d" w)
+;;
+
+(* function-scope constants the width-8 renderings above name *)
+let shuffle_consts (isa : t) ~(deint : bool) ~(reint : bool) ~(transpose : bool) : string =
+  if isa.vec_width <> 8
+  then ""
+  else
+    String.concat
+      ""
+      ((if deint
+        then
+          [ "    const __m512i _zs_de = _mm512_setr_epi64(0,2,4,6,8,10,12,14);\n"
+          ; "    const __m512i _zs_do = _mm512_setr_epi64(1,3,5,7,9,11,13,15);\n"
+          ]
+        else [])
+       @ (if reint
+          then
+            [ "    const __m512i _zs_pe = _mm512_setr_epi64(0,8,1,9,2,10,3,11);\n"
+            ; "    const __m512i _zs_po = _mm512_setr_epi64(4,12,5,13,6,14,7,15);\n"
+            ]
+          else [])
+       @
+       if transpose
+       then
+         [ "    const __m512i _zs_tlo = _mm512_set_epi64(13, 12, 5, 4, 9, 8, 1, 0);\n"
+         ; "    const __m512i _zs_thi = _mm512_set_epi64(15, 14, 7, 6, 11, 10, 3, 2);\n"
+         ]
+       else [])
+;;
+
+(* VW x VW transpose of srcs.(0..VW-1) into dsts (declared const). Width 4 =
+   the TR4 network cascade_z always emitted (4 unpack + 4 permute2f128, the
+   _u0_<qid>.. names); width 8 = Simd.load_transpose_8x8's 3-stage lattice
+   (8 unpack + 8 permutex2var + 8 shuffle_f64x2). *)
+let transpose (isa : t) ~(qid : string) (srcs : string array) (dsts : string array) : string =
+  let cd n e = Printf.sprintf "        %s\n" (const_decl isa n e) in
+  match isa.vec_width with
+  | 4 ->
+    let unlo = intr isa "unpacklo_pd"
+    and unhi = intr isa "unpackhi_pd"
+    and p2f = intr isa "permute2f128_pd" in
+    cd (Printf.sprintf "_u0_%s" qid) (Printf.sprintf "%s(%s, %s)" unlo srcs.(0) srcs.(1))
+    ^ cd (Printf.sprintf "_u1_%s" qid) (Printf.sprintf "%s(%s, %s)" unhi srcs.(0) srcs.(1))
+    ^ cd (Printf.sprintf "_u2_%s" qid) (Printf.sprintf "%s(%s, %s)" unlo srcs.(2) srcs.(3))
+    ^ cd (Printf.sprintf "_u3_%s" qid) (Printf.sprintf "%s(%s, %s)" unhi srcs.(2) srcs.(3))
+    ^ cd dsts.(0) (Printf.sprintf "%s(_u0_%s, _u2_%s, 0x20)" p2f qid qid)
+    ^ cd dsts.(1) (Printf.sprintf "%s(_u1_%s, _u3_%s, 0x20)" p2f qid qid)
+    ^ cd dsts.(2) (Printf.sprintf "%s(_u0_%s, _u2_%s, 0x31)" p2f qid qid)
+    ^ cd dsts.(3) (Printf.sprintf "%s(_u1_%s, _u3_%s, 0x31)" p2f qid qid)
+  | 8 ->
+    let b = Buffer.create 2048 in
+    for p = 0 to 3 do
+      Buffer.add_string b
+        (cd (Printf.sprintf "_t%d_%s" (2 * p) qid)
+           (Printf.sprintf "_mm512_unpacklo_pd(%s, %s)" srcs.(2 * p) srcs.((2 * p) + 1)));
+      Buffer.add_string b
+        (cd (Printf.sprintf "_t%d_%s" ((2 * p) + 1) qid)
+           (Printf.sprintf "_mm512_unpackhi_pd(%s, %s)" srcs.(2 * p) srcs.((2 * p) + 1)))
+    done;
+    List.iter
+      (fun (x, a, idx, c) ->
+         Buffer.add_string b
+           (cd (Printf.sprintf "_x%d_%s" x qid)
+              (Printf.sprintf "_mm512_permutex2var_pd(_t%d_%s, %s, _t%d_%s)" a qid idx c qid)))
+      [ 0, 0, "_zs_tlo", 2; 1, 1, "_zs_tlo", 3; 2, 0, "_zs_thi", 2; 3, 1, "_zs_thi", 3
+      ; 4, 4, "_zs_tlo", 6; 5, 5, "_zs_tlo", 7; 6, 4, "_zs_thi", 6; 7, 5, "_zs_thi", 7 ];
+    List.iteri
+      (fun j (a, c, imm) ->
+         Buffer.add_string b
+           (cd dsts.(j) (Printf.sprintf "_mm512_shuffle_f64x2(_x%d_%s, _x%d_%s, %s)" a qid c qid imm)))
+      [ 0, 4, "0x44"; 1, 5, "0x44"; 2, 6, "0x44"; 3, 7, "0x44"
+      ; 0, 4, "0xEE"; 1, 5, "0xEE"; 2, 6, "0xEE"; 3, 7, "0xEE" ];
+    Buffer.contents b
+  | w -> failwith (Printf.sprintf "Isa.transpose: width %d" w)
+;;
+
+(* a vector-width constant splat as a file-scope initializer ({v, v, ...}) *)
+let const_splat_decl (isa : t) (name : string) (lit : string) : string =
+  Printf.sprintf
+    "static const %s %s = { %s };"
+    isa.vec_type
+    name
+    (String.concat ", " (List.init isa.vec_width (fun _ -> lit)))
+;;
+
+(* === CORNER-TURN PRIMITIVES (packed complex, width-parametric) ===
+ *
+ * A "complex lane" is 128 bits ([re,im]). The corner-turn store transposes a
+ * per x per block of complex (per = vec_width/2 legs x per columns) with
+ * log2(per) rounds of ONE two-source op, the complex-lane DEINTERLEAVE:
+ *   even(a,b) = [a0,a2,...,b0,b2,...]     odd(a,b) = [a1,a3,...,b1,b3,...]
+ * Round r pairs the current list (L[2i], L[2i+1]) and emits
+ * [E_0..E_{n/2-1}, O_0..O_{n/2-1}]; after log2(per) rounds list index =
+ * column index (Cx_math.turn_transpose). The op per width:
+ *   2 (sse2, 1 complex) : even = a, odd = b           (no instruction)
+ *   4 (avx2, 2 complex) : vperm2f128 imm 0x20 / 0x31  (today's bytes)
+ *   8 (avx512, 4 cplx)  : vshuff64x2 imm 0x88 / 0xDD  (1 uop, p5, 3c)
+ * NOT unpacklo/hi or permute_pd: those act inside each 128-bit lane. *)
+let cx_deint_pd (isa : t) ~(odd : bool) (a : string) (b : string) : string =
+  match isa.vec_width with
+  | 2 -> if odd then b else a
+  | 4 -> Printf.sprintf "_mm256_permute2f128_pd(%s, %s, 0x%x)" a b (if odd then 0x31 else 0x20)
+  | 8 -> Printf.sprintf "_mm512_shuffle_f64x2(%s, %s, 0x%X)" a b (if odd then 0xDD else 0x88)
+  | w -> failwith (Printf.sprintf "cx_deint_pd: no complex-lane deinterleave at vec_width %d" w)
+;;
+
+(* Complex lane c of a vector as an __m128d (the scatter quarter). The
+ * register-to-memory form (_mm_storeu_pd(p, extract(v,c))) compiles to the
+ * store-form vextractf128 / vextractf64x2 m128 — store uops only, no
+ * shuffle port. castpd*_pd128 is free. extractf64x2 is AVX512DQ. *)
+let cx_part_pd (isa : t) (v : string) (c : int) : string =
+  match isa.vec_width, c with
+  | 2, 0 -> v
+  | 4, 0 -> Printf.sprintf "_mm256_castpd256_pd128(%s)" v
+  | 4, 1 -> Printf.sprintf "_mm256_extractf128_pd(%s, 1)" v
+  | 8, 0 -> Printf.sprintf "_mm512_castpd512_pd128(%s)" v
+  | 8, (1 | 2 | 3) -> Printf.sprintf "_mm512_extractf64x2_pd(%s, %d)" v c
+  | w, _ ->
+    failwith (Printf.sprintf "cx_part_pd: no complex lane %d at vec_width %d" c w)
+;;
+
+(* Store only the first r complex lanes of v at addr (1 <= r <= per).
+ * r = per is the plain store. The partial forms are ISA policy: a
+ * half-width prefix is a narrower cast store (no mask), anything else a
+ * k-masked store (AVX-512 fault-suppresses the masked-off lanes). *)
+let storeu_cx_prefix (isa : t) (addr : string) (v : string) (r : int) : string =
+  let per = isa.vec_width / 2 in
+  if r = per
+  then storeu_pd isa addr v
+  else (
+    match isa.vec_width, r with
+    | 4, 1 | 8, 1 -> Printf.sprintf "_mm_storeu_pd(&%s, %s)" addr (cx_part_pd isa v 0)
+    | 8, 2 -> Printf.sprintf "_mm256_storeu_pd(&%s, _mm512_castpd512_pd256(%s))" addr v
+    | 8, _ ->
+      Printf.sprintf "_mm512_mask_storeu_pd(&%s, (__mmask8)0x%X, %s)" addr ((1 lsl (2 * r)) - 1) v
+    | w, _ -> failwith (Printf.sprintf "storeu_cx_prefix: r=%d at vec_width %d" r w))
+;;
+
+(* The target attribute the packed-complex (cil) family needs. avx2 is the
+ * record's own string (byte-identity). avx512: the IL body uses
+ * _mm512_xor_pd (DQ), extractf64x2 (DQ), 128-bit masked stores (VL) and
+ * the VEX-128 odd-count tail's _mm_fmadd_pd (FMA — NOT implied by
+ * target("avx512f") in gcc 13: measured). *)
+let cx_target_attr (isa : t) : string =
+  if isa.vec_width = 8 then "avx512f,avx512dq,avx512vl,fma" else isa.target_attr
 ;;

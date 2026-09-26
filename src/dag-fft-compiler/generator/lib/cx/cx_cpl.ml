@@ -43,7 +43,7 @@ let port_class (e : t) =
   | CIn _ | CLoad _ -> `LD
   | CStore _ -> `ST
   | CFmaC _ | CFnmaC _ | CTwC _ | CTwV _ | CTwL _ -> `P01
-  | CAdd _ | CSub _ | CNeg _ | CRotAdd _ | CRotNI _ | CRotPI _ | CTurn _ | CLo _ | CHi _
+  | CAdd _ | CSub _ | CNeg _ | CRotAdd _ | CRotNI _ | CRotPI _ | CTurn _ | CPart _
     -> `P15
 ;;
 

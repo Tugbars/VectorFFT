@@ -771,3 +771,49 @@ let rec dft_chain
     done;
     out
 ;;
+
+
+(* ── CORNER-TURN TRANSPOSE (width-generic) ─────────────────────────────
+ * legs.(0..r-1) (r <= per), each holding columns k..k+per-1 of one leg ->
+ * per column vectors, column c holding legs 0..r-1 of column k+c in its
+ * first r complex lanes. log2(per) rounds of the complex-lane deinterleave
+ * (CTurn even/odd, Isa.cx_deint_pd): round pairs (L[2i], L[2i+1]) ->
+ * [E_0..E_{h-1}, O_0..O_{h-1}]. A missing partner (r < per) pairs a vector
+ * with ITSELF: the valid lanes are unaffected and pure-pad pairs are never
+ * built. per = 2, r = 2 is exactly today's permute2f128 0x20 / 0x31 pair.
+ * Returns (columns, intermediates-in-creation-order) — the intermediates
+ * are the non-final rounds, which the caller declares before the stores. *)
+let turn_transpose ~(per : int) (legs : t array) : t array * t list =
+  let r = Array.length legs in
+  if per < 1 || per land (per - 1) <> 0 then failwith "turn_transpose: per must be a power of 2";
+  if r < 1 || r > per then failwith "turn_transpose: need 1 <= legs <= per";
+  let rounds =
+    let rec lg n = if n <= 1 then 0 else 1 + lg (n / 2) in
+    lg per
+  in
+  let cur = ref (Array.init per (fun i -> if i < r then Some legs.(i) else None)) in
+  let inter = ref [] in
+  for rd = 1 to rounds do
+    let l = !cur in
+    let h = per / 2 in
+    let e = Array.make h None
+    and o = Array.make h None in
+    for i = 0 to h - 1 do
+      match l.(2 * i), l.(2 * i + 1) with
+      | None, None -> ()
+      | Some x, None ->
+        e.(i) <- Some (cturn x x false);
+        o.(i) <- Some (cturn x x true)
+      | Some x, Some y ->
+        e.(i) <- Some (cturn x y false);
+        o.(i) <- Some (cturn x y true)
+      | None, Some _ -> failwith "turn_transpose: hole before a real leg"
+    done;
+    let nxt = Array.append e o in
+    if rd < rounds
+    then Array.iter (function Some x -> inter := x :: !inter | None -> ()) nxt;
+    cur := nxt
+  done;
+  ( Array.map (function Some x -> x | None -> failwith "turn_transpose: empty column") !cur
+  , List.rev !inter )
+;;

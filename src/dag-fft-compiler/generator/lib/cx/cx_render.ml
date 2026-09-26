@@ -37,7 +37,7 @@ let const_name (tbl : consts) (lanes : int) (c : float) (s : float) : string =
   const_name_v tbl (Array.make lanes (c, s))
 ;;
 
-let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
+let emit_const_decls (_isa : Isa.t) (tbl : consts) : string =
   let b = Buffer.create 256 in
   let items =
     Hashtbl.fold (fun _ v acc -> v :: acc) tbl []
@@ -53,9 +53,11 @@ let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
           Isa.sse2, whose 1-lane constants land in this same table (distinct
           keys) and must declare as __m128d. Wide-only files are unchanged. *)
        let ty =
-         if Array.length w * 2 = isa.Isa.vec_width
-         then isa.Isa.vec_type
-         else Isa.sse2.Isa.vec_type
+         match Array.length w with
+         | 1 -> "__m128d"
+         | 2 -> "__m256d"
+         | 4 -> "__m512d"
+         | n -> failwith (Printf.sprintf "emit_const_decls: %d-lane constant" n)
        in
        let cos_lanes =
          String.concat
@@ -105,10 +107,12 @@ let addr_str (a : caddr) : string =
   | AZoutLeg l when !colstride -> Printf.sprintf "zout[2*((size_t)%d*OLs + (size_t)k*OGs)]" l
   | AZinLeg l -> Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l
   | AZoutLeg l -> Printf.sprintf "zout[2*((size_t)%d*OLs + k)]" l
+  (* col c = column k + c of the wide iteration (0 .. per-1): per = 2 prints
+     the historical k / k + 1 strings byte-for-byte. *)
   | AZoutTurn (l, 0) -> Printf.sprintf "zout[2*((size_t)k*OLs + %d)]" l
-  | AZoutTurn (l, _) -> Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + %d)]" l
+  | AZoutTurn (l, c) -> Printf.sprintf "zout[2*(((size_t)k + %d)*OLs + %d)]" c l
   | AZoutTurnG (l, 0) -> Printf.sprintf "zout[2*((size_t)k*OLs + (size_t)%d*OGs)]" l
-  | AZoutTurnG (l, _) -> Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + (size_t)%d*OGs)]" l
+  | AZoutTurnG (l, c) -> Printf.sprintf "zout[2*(((size_t)k + %d)*OLs + (size_t)%d*OGs)]" c l
   | AS i -> Printf.sprintf "S[%d]" i
   | AP i -> Printf.sprintf "P[%d]" i
   | AZinAbs i -> Printf.sprintf "zin[%d]" i
@@ -139,6 +143,13 @@ let render_load (isa : Isa.t) (a : caddr) : string =
        &zin[2*((size_t)%d*Ls + (size_t)k*Gs)])"
       l
       l
+  | AZinLeg l when !colstride && isa.Isa.vec_width = 8 ->
+    (* width 8: 4 columns at pitch Gs -> two loadu2 pairs joined *)
+    Printf.sprintf
+      "_mm512_insertf64x4(_mm512_castpd256_pd512(_mm256_loadu2_m128d(&zin[2*((size_t)%d*Ls + ((size_t)k + 1)*Gs)], \
+       &zin[2*((size_t)%d*Ls + (size_t)k*Gs)])), _mm256_loadu2_m128d(&zin[2*((size_t)%d*Ls + ((size_t)k + 3)*Gs)], \
+       &zin[2*((size_t)%d*Ls + ((size_t)k + 2)*Gs)]), 1)"
+      l l l l
   | _ -> Isa.loadu_pd isa (addr_str a)
 ;;
 
@@ -151,6 +162,13 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
       l
       l
       v
+  | AZoutLeg l when !colstride && isa.Isa.vec_width = 8 ->
+    Printf.sprintf
+      "{ const __m512d _cv = %s; _mm256_storeu2_m128d(&zout[2*((size_t)%d*OLs + ((size_t)k + 1)*OGs)], \
+       &zout[2*((size_t)%d*OLs + (size_t)k*OGs)], _mm512_castpd512_pd256(_cv)); \
+       _mm256_storeu2_m128d(&zout[2*((size_t)%d*OLs + ((size_t)k + 3)*OGs)], \
+       &zout[2*((size_t)%d*OLs + ((size_t)k + 2)*OGs)], _mm512_extractf64x4_pd(_cv, 1)); }"
+      v l l l l
   | AZoutLeg _ when !store128 && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm_storeu_pd(&%s, _mm256_castpd256_pd128(%s)); _mm_storeu_pd(&%s + 2, \
@@ -172,6 +190,7 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
    ?msuf — suffix for the quarter-turn mask / log3 prologue names, so the
    narrow arm references its own __m128d twins (_M_IM_n / _wc%d_n). *)
 let render
+      ?(mode = Isa.LS_vector)
       ?(tw_vw = 0)
       ?(msuf = "")
       ?(name = fun t -> Printf.sprintf "z%d" t)
@@ -189,12 +208,10 @@ let render
   let v (x : t) = name x.tag in
   match e.node with
   | CIn _ -> failwith "codelet_cil.render: CIn is emitted by the load edge"
-  | CLoad a -> Isa.loadu_pd isa (addr_str a)
+  | CLoad a -> Isa.loadu_pd ~mode isa (addr_str a)
   | CStore _ -> failwith "codelet_cil.render: CStore is a statement — use render_store"
-  | CTurn (a, b, imm) ->
-    Printf.sprintf "%s(%s, %s, 0x%x)" (Isa.intr isa "permute2f128_pd") (v a) (v b) imm
-  | CLo a -> Printf.sprintf "_mm256_castpd256_pd128(%s)" (v a)
-  | CHi a -> Printf.sprintf "_mm256_extractf128_pd(%s, 1)" (v a)
+  | CTurn (a, b, odd) -> Isa.cx_deint_pd isa ~odd (v a) (v b)
+  | CPart (a, c) -> Isa.cx_part_pd isa (v a) c
   | CAdd (a, { node = CRotNI y; _ }) when ctx.rotfma ->
     (* a + (-i)·y = a - [-1,+1]·cflip y : fnmadd on the (1,1) pair's _s. *)
     let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 in
@@ -274,8 +291,8 @@ let render
       then Printf.sprintf "_wc%d%s" leg msuf, Printf.sprintf "_ws%d%s" leg msuf
       else (
         let off = (leg - 1) * 2 * twv in
-        ( Isa.loadu_pd isa (addr_str (ATw off))
-        , Isa.loadu_pd isa (addr_str (ATw (off + twv))) ))
+        ( Isa.loadu_pd ~mode isa (addr_str (ATw off))
+        , Isa.loadu_pd ~mode isa (addr_str (ATw (off + twv))) ))
     in
     Isa.fmadd_pd isa c (v x) (Isa.mul_pd isa s (Isa.cflip_pd isa (v x)))
 ;;
@@ -319,6 +336,7 @@ let log3_plan (radix : int) : (int * (int * int) option) list =
 ;;
 
 let emit_log3_prologue
+      ?(mode = Isa.LS_vector)
       ?(tw_vw = 0)
       ?(msuf = "")
       (buf : Buffer.t)
@@ -342,8 +360,8 @@ let emit_log3_prologue
            buf
            (Printf.sprintf
               "        %s\n        %s\n"
-              (Isa.const_decl isa cj (Isa.loadu_pd isa (addr_str (ATw off))))
-              (Isa.const_decl isa sj (Isa.loadu_pd isa (addr_str (ATw (off + vw))))))
+              (Isa.const_decl isa cj (Isa.loadu_pd ~mode isa (addr_str (ATw off))))
+              (Isa.const_decl isa sj (Isa.loadu_pd ~mode isa (addr_str (ATw (off + vw))))))
        | Some (p, q) ->
          let cp = Printf.sprintf "_wc%d%s" p msuf
          and sp = Printf.sprintf "_ws%d%s" p msuf
@@ -391,6 +409,7 @@ let gen2_plan (radix : int) : (int * (int * int)) list =
 ;;
 
 let emit_gen2_prologue
+      ?(mode = Isa.LS_vector)
       ?(tw_vw = 0)
       ?(msuf = "")
       (buf : Buffer.t)
@@ -413,8 +432,8 @@ let emit_gen2_prologue
         %s
         %s
 "
-       (Isa.const_decl isa tc (Isa.loadu_pd isa (addr_str (ATw 0))))
-       (Isa.const_decl isa ts (Isa.loadu_pd isa (addr_str (ATw vw))))
+       (Isa.const_decl isa tc (Isa.loadu_pd ~mode isa (addr_str (ATw 0))))
+       (Isa.const_decl isa ts (Isa.loadu_pd ~mode isa (addr_str (ATw vw))))
        (Isa.const_decl isa c1 (Isa.fnmadd_pd isa ts gs (Isa.mul_pd isa tc gc)))
        (Isa.const_decl isa s1 (Isa.fmadd_pd isa tc gs (Isa.mul_pd isa ts gc))));
   List.iter

@@ -22,6 +22,7 @@ type ls_mode =
 
 val avx512 : t
 val avx2 : t
+val avx512vl256 : t
 val scalar : t
 val sse2 : t
 val of_name : string -> t
@@ -46,3 +47,14 @@ val const_decl : t -> string -> string -> string
 val pinned_reg_decl : t -> string -> string -> string -> string
 val fenced_decl : t -> string -> string -> string
 val forward_decl : t -> string list -> string
+val deint_ordered : t -> string -> string -> string * string
+val reint_pre : t -> string -> string
+val reint_ordered : t -> string -> string -> string * string
+val shuffle_consts : t -> deint:bool -> reint:bool -> transpose:bool -> string
+val transpose : t -> qid:string -> string array -> string array -> string
+val const_splat_decl : t -> string -> string -> string
+
+val cx_deint_pd : t -> odd:bool -> string -> string -> string
+val cx_part_pd : t -> string -> int -> string
+val storeu_cx_prefix : t -> string -> string -> int -> string
+val cx_target_attr : t -> string

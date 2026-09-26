@@ -629,6 +629,50 @@ winner timed again), pinned to one core. AVX2 = the shipped kernels built as rea
 - Within a run the control arm lands within ~1% of the winner; between runs the whole VM
   drifts 10–20%, so the ratios hold and the absolute numbers do not.
 
+### 11.8 Landed: the avx512 zil tree in the corpus (2026-09-26)
+
+The prototype generator changes (corner-turn, column stride + tail lane, tail
+policy, ZTURN-T at VW=8, k1 mono, corpus/registry ISA) are merged into
+`generator/`, and the avx512 tree is a first-class corpus citizen:
+
+- `codelets/zil/avx512/`: **716 files** from the derived quadrants
+  `zil-pure-avx512` (664), `zil-boundary-avx512` (50) and the two IL monos in
+  `oop-edges-avx512`. Absent, with the reason in `Corpus.zil_isa_gap`: t0tp/tld at
+  radix 4 (4 cells, the R % VW law). Not in the corpus, so not generated: the 20
+  env-knob/sed kernels (pair2p/tangent, pair2p/blocked t2b/t2b48/n1tb/n1tb48/n1tb44;
+  D3).
+- `generated/il_registry_avx512.h`, `ztt_registry_avx512.h` (159 cells),
+  `generated/fused_codelets/avx512/` (30 fused drivers, kept in a subfolder so
+  neither build globs them into an avx2 library). `il_registry_avx2.h` gains only
+  `VFFT_IL_ISA_NAME` / `VFFT_IL_VW` / `VFFT_IL_SYM` (every list unchanged);
+  `ztt_registry_avx2.h` loses its stale line 6.
+- **AVX2 is byte-identical**: `gen_set all` produces the same 1,867 files from
+  the base and the merged generator, every registry emitter except the IL one
+  (additive only) prints the same bytes, and the 30 avx2 fused drivers
+  regenerate unchanged.
+- **Verification of the avx512 kernels**: twin gate over the 535 non-turned kinds
+  516 bitwise equal to their AVX2 twins and 19 blocked forms within 2.3e-16, 0
+  FAIL; the 137 turned kinds byte-identical to the set that passed the bitwise
+  A/B (141/141, counts 1–13, 4 offsets, guard page); ZTT/msz byte-identical to
+  the set that passed 404 plans / 7,832 end-to-end checks; all 716 compile with
+  only their own target attribute and export 716 unique symbols.
+- **Corpus ceremony** (`full_corpus_gate.sh manifest`, `record`, `verify` →
+  GATE PASS): `recipes.tsv` gains a `genset` row for all 1,258 files that had
+  none (the 716 avx512 files and 542 avx2 zil files never recorded) and drops the
+  two mono rows that moved to `zil/avx2/mono`; 2,620 files, 2,511 IDENTICAL, every
+  avx512 folder 100%. The 35 files that went from IDENTICAL (old baseline) to
+  BODY_DIFFERS are all D0 drift — each was already diverging under the
+  *unchanged* generator — and are pinned as they are, not regenerated.
+- Defaults taken where decisions are still open (each is one line to change):
+  D1 tail = ladder (turned kinds: per-column xmm with the lane offset; override
+  `VFFT_TAIL512`, recorded in the provenance Env line); D2 uarch =
+  `sapphire_rapids_avx512`; D4 zil-only target attribute
+  `avx512f,avx512dq,avx512vl,fma`; D5 fused drivers in a per-ISA subfolder.
+- Still to do for a working `VFFT_ISA=avx512` library: the runtime (§10 stage 3:
+  per-ISA registry selection, 16-double twiddle tables, ZTT laws/permutation/MT
+  grain) and the build wiring for the avx512 fused drivers. The avx512 codelet
+  library itself compiles (1,269 codelets).
+
 ### 11.6 Hygiene found on the way
 
 - `generated/ztt_registry_avx2.h` is stale against its emitter (line 6).

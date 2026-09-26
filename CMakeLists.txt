@@ -217,13 +217,12 @@ set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2
 
 # Families that legitimately have NO tree for a given ISA, DECLARED per ISA.
 # This is deliberately a declaration and not a discovery: an absence nobody
-# wrote down is a hard error below. zil (interleaved-complex) is avx2-only
-# today and AVX-512 support is planned -- when those kernels land, delete the
-# zil entries from VFFT_ABSENT_avx512 and the guard immediately starts
-# protecting them, with no other edit needed.
+# wrote down is a hard error below. The zil avx512 tree landed 2026-09-26
+# (716 corpus cells); only pair2p/tangent has no avx512 folder -- its 14
+# kernels exist only as env-knob/sed recipes outside the corpus
+# (docs/roadmap/zil_avx512_design.md, decision D3).
 set(VFFT_ABSENT_avx2)                      # avx2 carries the full corpus
-set(VFFT_ABSENT_avx512
-    zil/shared zil/shared/col zil/shared/col/blocked zil/mono zil/pair2p zil/pair2p/blocked zil/pair2p/tangent zil/rows zil/chain3 zil/flat zil/flat/odd_mid zil/ztt)
+set(VFFT_ABSENT_avx512 zil/pair2p/tangent)
 
 set(VFFT_CODELET_SRCS)
 

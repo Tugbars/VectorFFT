@@ -36,7 +36,7 @@ open Cx_ir
 let children (e : t) : t list =
   match e.node with
   | CIn _ | CLoad _ -> []
-  | CNeg a | CRotNI a | CRotPI a | CLo a | CHi a -> [ a ]
+  | CNeg a | CRotNI a | CRotPI a | CPart (a, _) -> [ a ]
   | CStore (_, v) -> [ v ]
   | CAdd (a, b) | CSub (a, b) | CRotAdd (a, b) -> [ a; b ]
   | CTurn (a, b, _) -> [ a; b ]
@@ -102,10 +102,9 @@ let dedup_sub_pairs_cx (assigns : (Expr.elem_ref * t) list)
              | CNeg a -> cneg (rw a)
              | CRotNI a -> crot (rw a)
              | CRotPI a -> crotp (rw a)
-             | CLo a -> clo (rw a)
-             | CHi a -> chi (rw a)
+             | CPart (a, c) -> cpart (rw a) c
              | CStore (a, v) -> cstore a (rw v)
-             | CTurn (a, b, imm) -> cturn (rw a) (rw b) imm
+             | CTurn (a, b, odd) -> cturn (rw a) (rw b) odd
              | CAdd (a, b) -> cadd (rw a) (rw b)
              | CSub (a, b) -> csub (rw a) (rw b)
              | CRotAdd (a, b) -> crotadd (rw a) (rw b)
@@ -166,7 +165,7 @@ let print_stats
     | CAdd _ | CRotAdd _ -> incr n_add
     | CSub _ -> incr n_sub
     | CNeg _ -> incr n_neg
-    | CRotNI _ | CRotPI _ | CTurn _ | CLo _ | CHi _ -> incr n_rot
+    | CRotNI _ | CRotPI _ | CTurn _ | CPart _ -> incr n_rot
     | CFmaC _ | CFnmaC _ -> incr n_fma
     | CTwC _ | CTwV _ | CTwL _ -> incr n_tw);
   let cp_str =
