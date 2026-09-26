@@ -1012,23 +1012,29 @@ F1.4 the N-arm bank at axis 0        FIXED 2026-09-06: a verdict banked without 
                                      UPDATE (before, a fresh record lost to the
                                      measured row and the N-arm re-raced on
                                      every create; the 2D axis race masked it).
-F1.5 cmt - the MT partition          RACED, BANKED with cmtt + cmts (2026-09-07):
-                                     serial (the one-thread structure) vs BAND
-                                     (prefix digit-split + disjoint bands of wl
-                                     planes with the structure fused; needs >= 2
-                                     bands) vs PLANE (column strips of the virtual
-                                     plane, then plane ranges; the only arm of an
-                                     unbanded/Bluestein axis 0), EACH x {child,
-                                     flat} — the structure is re-raced at T because
-                                     the one-thread winner need not win threaded
-                                     (64^3: child+band 70 us vs flat+plane 103).
+F1.5 cmt - the MT partition          RACED, BANKED with cmts (+ cmtp) on the
+                                     nthreads=T row: PLANE (column strips of the
+                                     virtual plane, then plane ranges) x {child,
+                                     flat} x {full team, half team where it
+                                     exists}, plus serial (the one-thread
+                                     structure) on a cube <= 512 KB only
+                                     (vfft_policy_ilnd_mt_serial_arm); the natural
+                                     class threads the strip form wherever axis 0
+                                     permutes. BAND (prefix digit-split + bands of
+                                     wl planes) is not raced since 2026-09-26: the
+                                     plane arm won 528 of 534 eight-thread cells;
+                                     a banked cmt=1 and the pin still serve it.
+                                     The structure is re-raced at T because the
+                                     one-thread winner need not win threaded.
                                      Samples = REPS executes after 2 warm passes,
                                      REPS from one serial timing (~20 ms of serial
                                      work): a worker's cache partition settles over
                                      the first ms of executes and single-execute
                                      alternated samples time that transient (81x27x27
                                      plane: 131 us single-execute, 40 us steady).
-                                     min-of-3 alternated; an arm that cannot engage
+                                     REPS >= 4, rounds = ceil(48 / REPS) in 3..15
+                                     (at least 48 timed executes per arm), min
+                                     alternated; an arm that cannot engage
                                      is excluded. Worker clones of the structure are
                                      mandatory (2D child route-equivalent, or row
                                      clone + own axis-1 scratch); no clones = cmt=0

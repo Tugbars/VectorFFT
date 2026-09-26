@@ -353,6 +353,34 @@ static inline int vfft_policy_rankn_axis_nat(int rank, int axis, int ord)
     return ord == VW2_ORD_NAT;
 }
 
+/* -- rank 3, threaded: where the SERIAL arm is raced ----------------------
+ * The rank-3 tier's threaded race (fftnd_il.h) runs the plane partition
+ * over both structures; serial joins it only on a cube this small. Measured
+ * over the eight-thread verdicts of 2026-09-24/25 (about 1,500 cells): serial
+ * won up to 256 KB and never above (2x2x2 by 20x, 8x8x8 by 2.5x: a fork-join
+ * costs more than the transform). The bound is one doubling past the
+ * largest win. Above it the serial arm only spends the race's time: it is
+ * the slowest arm to sample (7.7 ms per execute at 8x128x2048 against 3 ms
+ * threaded). */
+#define VFFT_POLICY_ILND_SERIAL_MAX_BYTES (512L * 1024L)
+static inline int vfft_policy_ilnd_mt_serial_arm(long bytes)
+{
+    return bytes <= VFFT_POLICY_ILND_SERIAL_MAX_BYTES;
+}
+
+/* -- rank 3, threaded, natural order: the STRIPS form wherever axis 0
+ * permutes -------------------------------------------------------------
+ * A note, not a helper: the law is applied where the threaded race builds
+ * its arms (_ilnd_mt_race, fftnd_il.h, on `strip_ok`). At T > 1 the natural
+ * class threads the strips form whenever axis 0 permutes (a chain of two or
+ * more stages, no Bluestein) and its strip scratches exist; the cycle form
+ * threads only where the strips cannot run (a single-stage or Bluestein
+ * axis 0). The two forms are not raced against each other threaded.
+ * Measured over the eight-thread grid (2026-09-26, the longer race): strips
+ * won every such cell but one, 64x4096x4, where the cycle form was 2-9%
+ * faster. At ONE thread both forms stay raced (nf=): there the cycle form
+ * keeps the cubes that fit L3. */
+
 /* -- L3 (retired 2026-09-25). The per-thread-count fence lived here while a
  * threaded verdict was a payload token tagged with the T it was raced at.
  * Since wisdom2 v1.3 the thread count is a KEY axis (nthreads=): a threaded

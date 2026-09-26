@@ -63,9 +63,12 @@ whole axis-0 chain on them — barrier-free, because a column pass never
 mixes columns; Bluestein windows share their scratch disjointly by column
 range. Then workers take disjoint plane ranges for the structure.
 
-Neither arm is a default. An axis 0 that cannot split a prefix stage (a
-one-digit stage) runs that stage serial inside the band arm and lets the
-race decide whether the arm still pays.
+The PLANE arm is the threaded form: over the eight-thread grid it won 528
+of 534 cells, serial 3 cubes of 8 KB and less, band 3 cells. The band arm
+is not raced; it serves a banked `cmt=1` and the `VFFT_ILND_MT=1` pin. Band
+won by 10–17% at the tall cells with tiny planes (8192×8×2, 8192×32×4) and
+lost by 10% at 256×4×4 under the longer race; plane is the default there
+too.
 
 ## 3. State: clones per worker, one pool owner
 
@@ -93,10 +96,15 @@ child structure with the band arm runs 70 µs and the flat structure with
 the plane arm 103 µs. So a plan created for T > 1 keeps both structures
 alive, with their clones, until the threaded verdict, and races
 
-    serial(s0)  +  {band, plane} × {child, flat}
+    [serial(s0), cube <= 512 KB]  +  plane × {child, flat}
 
 as arms of one race, each plane arm with a twin on half the workers
-wherever the plane team below applies. The winner banks on the cell's
+wherever the plane team below applies. Serial won up to 256 KB and never
+above over about 1,500 eight-thread verdicts; the bound is one doubling
+past that. The natural class threads the strip form wherever axis 0
+permutes and the cycle form only where it cannot: under the longer race the
+cycle form beat the strips at one such cell of the grid, 64×4096×4, by 2–9%.
+The winner banks on the cell's
 rank-3 row at the plan's thread count (`nthreads=` in the key, wisdom2
 v1.3): `cmt=` (0 serial, 1 band, 2 plane), `cmts=` (the structure the
 threaded verdict runs with) and, whenever the plane team was raced,
@@ -133,8 +141,11 @@ settle, and the caller core wakes from whatever the harness did between
 arms. A sample that is one execute, or a handful, measures the transient.
 
 Rule: **a threaded sample is REPS executes after warm passes**, REPS sized
-from one serial timing to roughly 20 ms of serial-equivalent work, and the
-race keeps its alternated min-of-3. A bench sample runs at least 5 ms of
+from one serial timing to roughly 20 ms of serial-equivalent work and never
+below 4, and the race takes the alternated minimum over enough rounds for
+at least 48 timed executes per arm (3 rounds at a small cell, up to 15 at a
+32–64 MB cell, where a sample holds only 4 executes: three rounds of two
+could not separate arms 5–10% apart). A bench sample runs at least 5 ms of
 untimed warm executes on every side before its timed reps.
 
 **Two thread teams in one process.** Timing a threaded plan against a

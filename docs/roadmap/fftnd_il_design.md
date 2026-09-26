@@ -64,8 +64,10 @@ gates it), RACED against serial at create per (cell, T) TOGETHER WITH THE
 STRUCTURE — the structure that wins at one thread is not the one that
 wins threaded (64³: child + band 70 µs, flat + plane 103 µs, a tie at one
 thread), so at T > 1 both structures stay alive with their clones until
-the threaded verdict: arms = serial (one-thread structure) + {band,
-plane} × {child, flat}. Banked:
+the threaded verdict: arms = serial (one-thread structure, on a cube of
+512 KB or less) + plane × {child, flat}, the natural class on the strip
+form wherever axis 0 permutes. The band arm is not raced (the plane arm won
+528 of 534 eight-thread cells); a banked `cmt=1` still serves it. Banked:
 
 | arm | `cmt=` | partition |
 |---|---|---|
@@ -87,6 +89,9 @@ means 1.5–5× the steady state at every cell measured), and single-execute
 samples alternating between arms time that transient, never the steady
 state (measured 45³: single-execute race band 49 / plane 51 µs, steady
 state band 45 / plane 52; 81×27×27 single-execute plane 131 µs, steady 40).
+REPS is never below 4, and the race runs enough rounds for at least 48
+timed executes per arm (3 to 15), so a 32–64 MB cell, whose sample holds
+4 executes, gets 12 rounds.
 
 The per-plane structure mutates plan state, so worker t > 0 runs a CLONE:
 a 2D child clone that must be route-equivalent to the primary (chain,
