@@ -1,13 +1,13 @@
 # zil on AVX-512 — findings from the AVX-512 host, and the design directions
 
-**Status: FINDINGS + DESIGN DISCUSSION (2026-09-26).** No library or generator code changed.
-Written from a Claude Code cloud session that runs on AVX-512 hardware; the owner's
-workstation (i9-14900KF) has none, so until now `zil_pipeline_port.md` §5 could only call
-avx512 output "compile-gated". This document records what was measured on real AVX-512
-silicon, what blocks an AVX-512 zil tree today, and the design questions the owner and
-Claude settled in conversation. A multi-agent investigation (turn-store contract, cascade
-geometry, runtime width assumptions, registries/build, test harness, masked tail,
-alignment cost) was running when this was written; its results land as §11.
+**Status: FINDINGS + PLAN (2026-09-26).** No generator or codelet code changed; the Linux
+build fixes of §3 landed in `b8f91cc`. Written from a Claude Code cloud session that runs on
+AVX-512 hardware; the owner's workstation (i9-14900KF) has none, so until now
+`zil_pipeline_port.md` §5 could only call avx512 output "compile-gated". This document
+records what was measured on real AVX-512 silicon, what blocks an AVX-512 zil tree today,
+the design questions settled in conversation, the results of a seven-agent investigation
+(§11, prototypes in `zil_avx512_prototypes/`), the staged plan (§10), the owner's open
+decisions (§9) and the proposed performance-first design round (§12).
 
 ---
 
@@ -24,7 +24,8 @@ alignment cost) was running when this was written; its results land as §11.
   correctness reference (§6.3).
 - **The emitter becomes ISA-flexible** (FFTW-style: ISA-parameterised operations, not
   per-width copies).
-- **Tails at 4 complex per vector: masked zmm** (the owner's lean; §8.6).
+- **Tails at 4 complex per vector:** the owner leaned to masked zmm; measured on this host,
+  masked is not the fastest (§8.6) — decision D1.
 - **Alignment is a strategy question** (§7), not a benchmark footnote.
 - **Wisdom: nothing raced on the cloud host is ever merged into `src/wisdom`.**
 
@@ -128,50 +129,61 @@ until then the zil tree has no working byte gate.
 
 ## 3. Build findings
 
-### 3.1 An "avx2" build on an AVX-512 host is not an AVX2 binary
+### 3.1 An "avx2" build on an AVX-512 host is not an AVX2 binary — FIXED in `b8f91cc`
 
-The codelet library's flags — `gauntlet/build.py:244`, `build_tuned/build.py:243` — are
+The codelet library's flags — `gauntlet/build.py:244`, `build_tuned/build.py:243` — were
 `-O3 -mavx2 -mfma -march=native` **without** the `-mno-avx512f` clamp that the driver flags
-carry (`gauntlet/build.py:530`, `build_tuned/build.py:473`). CMake has no clamp at all.
-`__attribute__((target("avx2,fma")))` adds ISA, it does not remove the command line's.
+carry. CMake had no clamp at all. `__attribute__((target("avx2,fma")))` adds ISA, it does
+not remove the command line's.
 
-Measured here: **all 40 sampled avx2 zil codelets** compiled that way use ymm16–31
+Measured here: **all 40 sampled avx2 zil codelets** compiled that way used ymm16–31
 (AVX-512VL encodings). `radix16_z_t2cs_avx2`: **0 stack spills under `-march=native`, 35
-stack moves under `-march=x86-64-v3`.** Consequences: the binary SIGILLs on the i9, and
-AVX2 timings taken on an AVX-512 host hide exactly the 16-register pressure the AVX2
-kernels were designed around. Fix: clamp the codelet flags the same way as the driver
-flags (or build AVX2 with `-march=x86-64-v3 -mtune=native`).
+stack moves under `-march=x86-64-v3`.** The binary SIGILLs on the i9, and AVX2 timings
+taken on an AVX-512 host hide the 16-register pressure the AVX2 kernels were designed
+around. `b8f91cc` adds the clamp to CMake (runtime and codelets) and to both `build.py`
+codelet libraries.
 
-### 3.2 An avx512 build does not link today
+### 3.2 An avx512 build does not link — partly fixed in `b8f91cc`
 
-The codelet library is built from one ISA tree, but the core names avx2 symbols
-unconditionally:
+`b8f91cc` made `engine/executor.h` consult only the build ISA's plan-executor lookup. The
+remaining references, measured at HEAD by building `VFFT_ISA=avx512` with CMake here (all
+553 avx512 codelets, `vfft.c` and the four gauntlet tools compile; the link fails):
 
-- `engine/executor.h:34-51` — the Tier-1 lookup tries `vfft_proto_lookup_*_avx512` and then
-  **always** `vfft_proto_lookup_*_avx2`; `generated/plan_executors.h` carries both sets
-  (1158 each), so avx2 inplace codelets are referenced from an avx512 build.
-- `oop/il2p.h:67`, `oop/ztt.h:76,87`, `oop/oop_leaf_registry.h:356` include
-  `il_registry_avx2.h` / `ztt_registry_avx2.h`; `oop_leaf_registry.h:221-431` names
-  `vfft_k1_mono*_avx2`, `radix##R##_z_n1*_avx2`.
+| group | undefined `*_avx2` symbols | referenced from |
+|---|---|---|
+| zil kernels | 631 | `oop/il2p.h`, `oop/oop_leaf_registry.h`, `oop/ztt.h`, `fft2d/il2d_tier.h` |
+| ztt/zttp fused drivers | 1,338 | `oop/ztt.h`, `planning/dp_planner_il.h` |
+| real FFT (hc2hc, hc2c, r2cf/r2cb) and 2D/3D strided rows | 113 | `real/rfft.h`, `real/c2r.h`, `fft2d/fft2d_r2c.h`, `fft2d/strided_tw.h`, `fft3d/strided_rows.h` |
 
-Per §0 the fix is **not** to link avx2 codelets into an avx512 build: the avx512 build must
-select avx512 registries and symbols and compile the avx2 lookups out
-(`#if defined(__AVX512F__) … #else … #endif`), with unserved cells refused cleanly.
-`CMakeLists.txt:213` (`VFFT_ABSENT_avx512`) already declares every zil folder absent for
-avx512; each entry is deleted as its avx512 folder lands.
+109 of the 113 non-zil references already have an avx512 twin in the tree: the headers
+hardcode the avx2 name, or run the avx512 switch and then fall through to the avx2 one.
+The other 4 (`radix12/20_n1_*_strided_r2c`) have no avx512 twin; per §0 those cells go
+unserved at avx512. At `-O0` more references appear (the static avx2 plan executors in
+`plan_executors.h` and several avx2 fall-through branches survive without dead-code
+elimination), so the link closure must be gated at `-O0` too. The fix is §10 (stages 1, 3
+and 5): per-ISA registries and symbol pasting, never avx2 codelets in an avx512 build.
 
-### 3.3 Linux build blockers (independent of AVX-512)
+### 3.3 Linux build blockers — FIXED in `b8f91cc`
 
-- `CMakeLists.txt:318` `add_subdirectory(gauntlet)`, but `gauntlet/CMakeLists.txt` is not
-  in the repository — CMake configure fails.
-- `gauntlet/recal_1d_probe.c:16` includes `<windows.h>` — the calibrator does not compile
-  on Linux, so `gauntlet.py run` cannot calibrate here.
+- `gauntlet/CMakeLists.txt` was swallowed by the root `.gitignore`'s `*.txt` rule; it is now
+  committed with an exception.
+- `gauntlet/recal_1d_probe.c` included `<windows.h>` unguarded; and `sibling_guard.h` was
+  compiled out entirely off Windows while `bench_1d_vs_mkl.c` still called
+  `bench_pin_pcores()`, so the bench did not link on Linux. Both now have Linux sides.
+- Verified: CMake and `build.py` build all four tools; `gauntlet.py run` calibrates,
+  benches against MKL and reports; `verify` passes.
 
 ### 3.4 Target attributes
 
-`isa.ml:78` gives avx512 codelets `target("avx512f")`, but emitted code uses DQ intrinsics
-(`_mm512_xor_pd`). It compiles only because the command line adds `-mavx512dq`. The
-attribute should name what the code needs (`avx512f,avx512dq`, plus `vl`/`bw` if used).
+`isa.ml:78` gives avx512 codelets `target("avx512f")`, but the IL emitter uses
+`_mm512_xor_pd` (AVX512DQ) and, in the VEX-128 tail, `_mm_fmadd_pd` (FMA; `avx512f` does not
+imply FMA in gcc 13). The files compile only because `-march=native` on an AVX-512 host
+enables both: with no `-m` flags 151 of 153 pair2p/rows files fail, with `-mavx512f
+-mavx512dq` the tail's `_mm_fmadd_pd` still fails, and with the owner's AVX2 host flags 529
+of the 535 fail — so the i9 cannot even compile-check them. The static
+`always_inline` `_t2csgn*_body` helpers carry no attribute at all. Changing the global
+string would re-emit the 569 split-family avx512 files, so the plan scopes it to zil
+(`Isa.il_target_attr = "avx512f,avx512dq,avx512vl,fma"`, decision D4).
 
 ---
 
@@ -188,35 +200,43 @@ compiled with `gcc -mavx512f -mavx512dq -mfma`:
 | generator refuses: `--k1-mono: avx2 only` (`c2c_split.ml:2301`) | 2 | mono |
 | no recipe | 8 | §2.3 |
 
-No compiled output still contained 256-bit code. **Compiling proves nothing about
-correctness or speed** (§0); this table maps where the emitter's width assumptions are
-explicit. The implicit ones are §5.
+**Of the 535 that compile, 288 give silently wrong results** (§11.2). Four independent
+harnesses agree. Compiling was never a signal.
 
 ---
 
 ## 5. Width hazards in the emitter
 
+Corrected by the investigation (§11): the hazards that actually bite are not the ones this
+section first guessed.
+
 **Loud** (break the build or stop generation — safe):
 
-- `permute2f128` has no 512-bit form: 10 uses in `c2c_il.ml`, 5 in `cascade_z.ml`, 2 in
-  `emit_body.ml`.
-- `cascade_z.ml:570` hardcodes `static const __m256d _zs0t_rh` (radix-8 t0tp).
-- `emit_render.ml:317-332` and `emit_body.ml:1102-1119` hold literal `_mm256_` IL edge code.
+- `permute2f128` has no 512-bit form: `c2c_il.ml` (the corner-turn store, and `emit_k1`),
+  `cascade_z.ml` (the TR4 transpose, the t0tp lattice). The `emit_body.ml` /
+  `emit_render.ml` uses belong to the split family's IL edges, which already have width-8
+  (`permutex2var`) arms; zil does not reach them.
+- `cascade_z.ml:566-571` and `ztt_drivers.ml:459-460` hardcode `static const __m256d
+  _zs0t_rh`.
+- `permute4x64 0xD8` in the ordered DEINT/REINT (t0d, tlf, tlfi) has no 512-bit form.
 
-**Silent** (compile, give wrong answers):
+**Silent** (compile, give wrong answers) — both found by running the kernels:
 
-- `unpacklo/hi_pd` and `permute_pd` exist at both widths but act **inside each 128-bit
-  lane**. A width-agnostic rename turns a 4×4 transpose into a different permutation.
-  (`cflip` is already right: `0x5` → `0x55`, `isa.ml`.) `generator_lib_architecture.md:1431`
-  already proposes exposing **operations, not intrinsic names**; zil needs that first.
-- `cx/cx_render.ml:56` types a VLIT constant as the wide vector only when
-  `lanes * 2 = vec_width`, otherwise `__m128d`. At 512 bits a 2-complex (ymm) constant
-  would be declared `__m128d` with four initializers. Verified: gcc only **warns**
-  "excess elements in vector initializer", and the codelet flags include `-w`, so the
-  extra values are dropped silently — wrong twiddles, clean build.
-- Tails: AVX2 leaves at most 1 complex (the inline VEX-128 re-render at `Isa.sse2`); at 4
-  complex per vector the remainder is 1–3. Any path that still assumes "odd count ⇒ one
-  leftover" drops data.
+- **Column-stride gather/scatter** (`cx_render.ml:134-160`): the `loadu2`/`storeu2` pair
+  exists only at `vec_width = 4`. At 8 it falls through to one contiguous zmm access at
+  column k — 4 complex of one column instead of columns k..k+3 at pitch `Gs` — which also
+  writes into neighbouring legs. All 216 `t2cs`/`t2csg*`/`n1ccs` files are wrong at every
+  count ≥ 4.
+- **Narrow-tail twiddle lane** (`c2c_il.ml:1172-1191`, `cx_render.ml:270-280`): the tail
+  cursor reads lane 0 of the twiddle record for every leftover column. At 2 complex per
+  vector the leftover column is always lane 0; at 4 it is lanes 0–2, so columns 4g+1 and
+  4g+2 get column 4g's twiddle. About 72 stream-T2 files are wrong exactly when
+  `count % 4` is 2 or 3.
+- **Latent:** the nearest rename of `permute4x64` (`_mm512_permutex_pd`) permutes within
+  256-bit lanes and would be silently wrong; `cx_render.ml:56` constant typing is correct
+  for every current file (4696 constants checked) but breaks as soon as a third width is
+  rendered (a ymm tail rung). The `unpacklo/hi` / `permute_pd` concern does not apply to
+  the IL family: its only permute is `_mm512_permute_pd(x, 0x55)`, correct at 512.
 
 ---
 
@@ -234,17 +254,21 @@ build of the same codelet need not agree bitwise.
 ### 6.2 Bit-exact gating
 
 Lanes of a SIMD butterfly are independent and shuffles/spills are exact, so the same
-scheduled DAG rendered at 4 and at 8 doubles per vector should produce **bit-identical**
-output per complex point. That makes a far stronger gate than an error norm — provided both
-sides are built with `-ffp-contract=off` and every 512-bit composition is exact (e.g.
-`addsub`, which has no 512-bit form, composed with masked add/sub, **not** `fmaddsub`,
-which rounds differently).
+scheduled DAG rendered at 4 and at 8 doubles per vector produces **bit-identical** output
+per complex point — confirmed by the investigation on every non-blocked kind once the two
+silent bugs are fixed. Conditions: both sides built with `-ffp-contract=off`; every 512-bit
+composition exact (e.g. `addsub`, absent at 512, composed as `fmaddsub(1, a, b)` — verified
+bit-identical over 2·10⁶ vectors — or masked add/sub); and both twins emitted by the **same
+generator state** (the 72 stale radix-3/5 files of §2.2 differ at ULP level from a fresh
+widening). Blocked kinds legitimately differ at ~1e-16 at `count % 4 ∈ {2,3}`, because more
+columns take the monolithic tail than at AVX2: those need a tolerance class. A long-double
+DFT stays the arbiter.
 
 ### 6.3 Reference vs product
 
 A mechanical avx512 widening of each AVX2 kernel is the **reference** the new kernels are
 tested against (bit-exact where the math is the same DAG; error vs an O(N²) DFT where it is
-restructured). It is not the product (§0, §8).
+restructured). It is not the product (§0, §12).
 
 ---
 
@@ -252,9 +276,23 @@ restructured). It is not the product (§0, §8).
 
 A cache line is 64 bytes and a zmm access is 64 bytes. At any address that is not a
 multiple of 64, **every** zmm load and store spans two lines (and costs more still across a
-4 KB page). A ymm access at a 16-byte offset splits only every other time, which is why
-AVX2 never showed the problem. Interleaved complex arrays from plain `malloc` are only
-16-byte aligned. The strategy, layered:
+4 KB page). A ymm access at a 16-byte offset splits only every other time, and offset 32 is
+free for ymm, which is why AVX2 never showed the problem. Interleaved complex arrays from
+plain `malloc` are only 16-byte aligned.
+
+**Measured here** (generated IL codelets, pinned, noisy VM): at base offsets 16/32/48 B,
+AVX-512 kernels lose **37–61%** (radix-16/32 t2, count 64) and run **1.1–2.3× slower per
+point**, often slower than aligned AVX2 — the misalignment erases the width gain. Two
+further effects:
+
+- **Turned stores split even from an aligned base.** Column c of a 4-leg group lands at byte
+  `16*((k+c)*OLs + l0)`; with `OLs % 4 != 0` (odd-radix leaves, chain3, row strides) three
+  of every four zmm column stores split a line.
+- **Masked-off bytes are not free**: a masked access whose inactive bytes cross a line pays
+  the split; one whose inactive bytes reach an untouched or unmapped page pays a
+  fault-suppression assist of **~120 ns per load, ~75 ns per store**, on every call.
+
+The strategy, layered:
 
 1. **Everything the library allocates is already 64-byte aligned** (`include/vfft.h:241`:
    scratch and staging planes). Keep it that way for every new avx512 table and scratch.
@@ -266,21 +304,18 @@ AVX2 never showed the problem. Interleaved complex arrays from plain `malloc` ar
    complex (64 B), consecutive transforms alternate aligned/misaligned. Owned buffers pick
    a padded distance; the existing pad calibration (`planning/pad_calibrate.h`) gets a
    64-byte rule at avx512.
-4. **Internal leg pitch.** A codelet reads R legs Ls complex apart. If Ls is not a multiple
-   of 4 complex (odd-factor stages: stride 5 complex = 80 B), legs split lines even from an
-   aligned base. Plan-owned scratch can pad the leg pitch to 64 B. New at avx512 (the AVX2
-   rule was 32 B).
+4. **Internal leg pitch.** Plan-owned scratch pads leg pitches (and turned `OLs`) to 4
+   complex at avx512 (the AVX2 rule was 32 B).
 5. **Caller buffers the library does not own.** One test at execute, `(in | out) & 63`.
    Out-of-place transforms touch caller memory only in the first pass (loads) and the last
-   (stores); middle passes run on aligned scratch. In-place is the bad case — every pass
-   hits caller memory — so a misaligned in-place call may be worth routing through aligned
-   scratch. Race it, do not assume it.
+   (stores); middle passes run on aligned scratch. In-place is the bad case, so a misaligned
+   in-place call may be worth routing through aligned scratch; the ztt `dest` mode
+   (`ztt.h:696-705`) is the first candidate — it runs the whole interior in `zout` without
+   checking alignment. Race it, do not assume it.
 6. **Races and wisdom assume aligned data** (the planner races on its own aligned scratch).
-   FFTW ties a plan to the alignment it was created with; at minimum the plan should record
-   it.
-
-The investigation measures the split cost on this host at offsets 0/16/32/48 for zmm vs ymm
-streaming IL kernels (§11), which sizes steps 5 and 6.
+   Either race at the caller's alignment class and key wisdom by it (FFTW ties a plan to the
+   alignment it was created with), or record the class in the plan and document the
+   penalty — decision D10. Benchmarks must include offsets 16/32/48 and odd strides.
 
 ---
 
@@ -293,7 +328,8 @@ streaming IL kernels (§11), which sizes steps 5 and 6.
 - **Split in registers:** on load, separate two IL zmm into one re zmm and one im zmm with
   `vpermt2pd`; compute in split form, where a complex multiply needs no shuffle and ×i is
   free (swap the roles of re and im, fold the sign into the next add/sub); re-interleave on
-  store.
+  store. The split family already has avx512 codelets and width-8 IL edges
+  (`permutex2var` arms in `emit_render.ml`/`emit_body.ml`), so this arm can reuse them.
 
 On Intel server cores, 512-bit shuffles run only on **port 5**, which is also the second
 512-bit FMA unit's port. IL-native therefore spends FMA throughput on shuffles:
@@ -303,96 +339,267 @@ On Intel server cores, 512-bit shuffles run only on **port 5**, which is also th
 | split-in-registers | ≈ 0.5 (in + out, once per pass) |
 | IL-native | ≈ 0.25 per twiddle multiply, plus internal rotations |
 
-Large radices (many internal rotations) should favour split-in-registers; small radices
-may favour IL-native. **Emit both and let the planner race them per cell** — this is the
-library's existing philosophy, and the answer will differ on Zen 4 (§8.5).
+The widened turned kinds add 8 `vshuff64x2` per 4×4 block, and the ZTT 8×8 transposes 24,
+all on port 5 (inference, not profiled). Large radices should favour split-in-registers;
+small radices may favour IL-native. **Emit both and let the planner race them per cell** —
+§12 measures it.
 
 ### 8.2 Registers and unrolling
 
 - Keeping both FMA units busy needs ≈ 8 independent FMA chains in flight (4-cycle latency ×
   2 ports). One radix-4/8 column group at 4 complex per zmm does not provide that; unroll ×2
   (8 complex per iteration, two interleaved DAG copies) does.
-- 32 zmm make radix-16/32 spill-free where AVX2 spilled at 16 ymm.
+- 32 zmm make radix-16/32 spill-free where AVX2 spilled at 16 ymm — but not everything: the
+  widened blocked turned m=8 splits (`n1tb88`, `t2bt88`) keep 32 outputs live and show
+  780/820 stack references (D9).
 - The fence/pin heuristics (`isa.ml` `fenced_decl` / `pinned_reg_decl`) and the SU/GH
   scheduler were tuned at 16 registers; they need re-tuning at 32.
+- Measured throughput on this host for the butterfly instruction mix: **7.7 zmm ops/ns vs
+  11.0 narrow ops/ns** (512-bit ops issue on 2 ports, 128/256-bit on 3). Width alone does
+  not double throughput.
 
 ### 8.3 Plan shape
 
-- 32 zmm hold 128 complex: small transforms (N ≤ 32–64) can run **entirely in registers**
-  (avx512 mono kernels).
+- 32 zmm hold 128 complex: small transforms can run **entirely in registers**. Measured:
+  the width-8 N=64 8×8 IL mono prototype runs **45 ns vs 75 ns** for the AVX2 mono (bitwise
+  equal output), 2.5× faster than the solo radix-64 kernel.
 - Larger radices → fewer passes over memory; that matters because 512-bit stores retire at
   one per cycle.
-- The narrowest efficient stage is 4 columns, so the winning factorizations differ from
-  AVX2's; the ztt fused drivers bake literal trip counts per cell and must be re-derived.
+- The IL kinds accept any count ≥ 1 at both widths (the tail absorbs 1–3 leftover columns).
+  The ZTT geometry is what changes: natural chains need `R0 % 8 == 0 && (N/R0) % 8 == 0`,
+  plain chains `R_last % 8 == 0` too, so 159 fused rows exist at VW=8 against 223 at VW=4
+  and N=16/32 go unserved (D8). The literal trip counts in the fused drivers are VW-free.
+- `n1ccs` (2D batched rows) widened with the fixed gather is correct but runs at
+  0.75–1.0× of AVX2 for R ≤ 16: a register-transpose form is needed (D11).
 
 ### 8.4 Twiddles and the runtime contract
 
-- IL twiddle records grow from 8 to 16 doubles (`[c ×VW][sign-folded s ×VW]`); the
-  cascade's block geometry `[re×vw][im×vw]` is 64 B at vw=4 and 128 B at vw=8
-  (`zil_pipeline_port.md` §5). **A table built for one width feeding a kernel of the other
-  gives wrong numbers, not a crash** — each codelet should export its width and the plan
-  builder assert it.
+- IL twiddle records grow from 8 to 16 doubles (`[c ×VW][sign-folded s ×VW]`); ZTT stream
+  records, msz splats and the t2c/t2cp broadcast records likewise. **A table built for one
+  width feeding a kernel of the other gives wrong numbers, not a crash** — measured O(1)
+  error on t2, t2c, t2cp, and 1050/1050 msz cases. The builders are in `il2p.h`,
+  `il_flatdit.h`, `il_flatdit_mt.h`, `il2d_cols.h` and `ztt.h`; the plan (§10) moves every
+  record layout into one header (`il_tw.h`) parameterized by complex-per-vector, with the
+  registry exporting its VW and a `_Static_assert` against the runtime's.
+- The real plan builder is `_ztt_create` (`ztt.h:335-491`); the `zsplit.h` /
+  `vfft_zsplit_create` named in `zil_pipeline_port.md` §5 never existed in this history.
 - Twiddle traffic doubles: consider embedded broadcast (`{1to8}`) where a twiddle is shared
-  across columns, on-the-fly generation (the existing `log3` variants), or per-column-group
-  table layouts.
+  across columns, on-the-fly generation (the existing `log3` variants), or scalar (c, s)
+  msz records (VW-free, 8× smaller).
 
 ### 8.5 Instructions and targets
 
-- Use: `vpermt2pd` (two-source permute, one µop) for transposes and re/im separation; mask
-  registers for tails and for exact `addsub` replacement; `vfmaddsub`; `vpternlog` for sign
-  handling.
+- Use: `vpermt2pd` / `shuffle_f64x2` for transposes and re/im separation; mask registers for
+  exact `addsub` replacement; `vfmaddsub` (`CRotAdd` as `fmaddsub(1, a, cflip y)`: 2 ops,
+  bit-identical, direction-agnostic); `vpternlog` for sign handling.
 - Intel SPR/EMR: 2×512 FMA, shuffles on port 5 only. Zen 4: 512-bit ops as two 256-bit
-  halves. Zen 5: full 512-bit datapath. The best kernel differs per target — the uarch
-  profiles (`uarch.ml`: `sapphire_rapids_avx512`, `zen5_avx512`, `generic_avx512`) and the
-  race already allow for that. This host develops and A/B-times the Intel side only.
+  halves. Zen 5: full 512-bit datapath. The uarch profiles (`uarch.ml`:
+  `sapphire_rapids_avx512`, `zen5_avx512`, `generic_avx512`; there is no `zen4` profile) and
+  the race allow per-target answers. This host develops and A/B-times the Intel side only.
 
-### 8.6 Tails
+### 8.6 Tails — measured: masked is **not** faster on this host
 
-Masked zmm, per the owner. Reasons it should win on Intel: one masked pass replaces a
-branch plus a ymm pass plus an xmm pass; masked-off lanes never fault (no reads past the
-buffer end); a masked load costs about the same as a plain one. The tail runs once per call,
-so it matters most at small counts. `isa.ml`'s `LS_masked` mode (`_mm512_maskz_loadu_pd` /
-`_mm512_mask_storeu_pd`) already exists for the split family's arbitrary-K tail. Zen 4 needs
-its own measurement. A benchmark on this host is part of §11.
+The owner's presumption was masked zmm. Four investigators measured it independently on
+this Emerald Rapids VM and agree on the direction (`rem = count % 4`):
 
----
+| tail policy | rem = 1 | rem = 2 | rem = 3 | `.text` of the avx512 zil set |
+|---|---|---|---|---|
+| per-column xmm loop (today, with the lane fix) | 1 xmm pass | 2 xmm passes | 3 xmm passes — slowest | 7.0 MB |
+| masked zmm, one pass | 1.3–1.9× **slower** than xmm | ≈ equal to xmm; 1.5–1.8× slower than the ladder | 1.5–1.9× faster than xmm; 0–22% faster than the ladder | 6.5 MB |
+| ladder (ymm rung + xmm rung) | xmm | ymm | ymm + xmm | 10.5 MB |
 
-## 9. Open decisions for the owner
+The ladder had the lowest average tail cost in 7 of 7 kernels, 15–35% below masked. Why: a
+zmm pass costs about 1.5–1.8 narrow passes (§8.2), masked-off bytes still pay line splits,
+and they pay the ~75–120 ns page-edge assists (§7). At `count = 1` the tail *is* the whole
+transform (the K=1 solo kernels up to N=64): radix-64 took 197 ns masked, 114 ns with the
+ladder, 143 ns in today's AVX2 build. The ladder is also the simplest to get right: it
+reuses the shipped avx2/sse2 renderings, so it is correct for every addressing form by
+construction, while masked tails need gathers for the column-stride kinds and per-column
+store masks for the turned kinds. msz (split interior) shows the same shape: masked wins
+1.1–1.9× at count ≥ 16 and loses 2–5× below.
 
-1. The radix-3/5 FMA fold (§2.2): restore the fused form, or regenerate the 72?
-2. Re-record the corpus gate (§2.3) before generator work starts, so byte-identity of the
-   AVX2 tree is gated.
-3. What "doubling the re/im loops" means in practice: split-in-registers (§8.1), unroll ×2
-   (§8.2), or both.
-4. Access to real AVX-512 hardware for final tuning (the `src/wisdom/Zen4/` store was raced
-   on an avx2 build).
-5. The public aligned allocator and IL `owned_buffers` (§7.2) — API additions.
-
----
-
-## 10. Order of work (proposed)
-
-1. Test harness first: codelet-level reference gate (avx2 original vs mechanical avx512
-   widening, `-ffp-contract=off`, bit-exact; O(N²) DFT for restructured kernels), buffer-end
-   guard-page test for masked tails.
-2. Generator: operations-not-names layer for shuffles/transposes/turn stores, width-true
-   constant typing, masked tail — every step gated on the AVX2 tree staying byte-identical.
-3. Prototype competing avx512 kernel designs (IL-native wide, split-in-registers, unrolled
-   ×2, whole-in-register) on three representative kinds (radix-16 t2, radix-8 n1,
-   radix-5 t2); bit-exact against the reference, then A/B-time here.
-4. Pick the direction from the numbers; generate `codelets/zil/avx512/`, its registries,
-   and the runtime width parameter (`VFFT_IL_VW` and friends), then the build wiring.
-5. Front-door verification under `VFFT_ISA=avx512`.
+Recommendation: the tail policy becomes **data on the uarch profile** (`Narrow | Ladder |
+Masked`, overridable per recipe), Ladder by default for the Intel avx512 profile, Masked
+kept selectable so it can be raced; Zen 4/5 re-measured when hardware is available
+(decision D1, with the code-size budget D1b).
 
 ---
 
-## 11. Investigation results
+## 9. Decisions for the owner
 
-*(Pending — the multi-agent investigation was still running when this was written. Its
-per-area results — turn-store memory layout and its 512-bit shuffle, cascade/ztt geometry,
-runtime width assumptions and twiddle-table builders, registry/build wiring, semantic audit
-of the 535 compiling widenings, masked-tail and alignment measurements — will be added
-here.)*
+1. **D0 — the radix-3/5 FMA fold** (§2.2): restore the fused form in the generator, or
+   regenerate the stale avx2 files (the 72 radix-3/5 family files found by provenance
+   replay; `gen_set` over the corpus rewrites 78 tracked files in all).
+2. **D1 — tail policy** (§8.6): Ladder default with Masked raceable, or Masked as you
+   presumed. **D1b** — accept the ladder's code size (10.5 MB vs 7.0/6.5), or ladder only
+   for R ≤ 16?
+3. **D2 — uarch profile for the avx512 zil schedules**: `sapphire_rapids_avx512` (this host
+   is Emerald Rapids), `generic_avx512` or `zen5_avx512`. It changes the emitted bytes, so
+   decide before landing.
+4. **D3 — the 20 non-corpus avx2 kernels** (pair2p/blocked `t2b*`/`n1tb*`, the 14
+   pair2p/tangent files, which exist only as env-knob/sed recipes): leave them avx2-only (an
+   avx512 gap) or bring them into the corpus. Should M-128 store-edge variants exist at 512
+   at all (`VFFT_CX_STORE128` is silently ignored at width 8)?
+5. **D4 — target attribute** scoped to zil (`Isa.il_target_attr`), leaving the split
+   family's bytes alone.
+6. **D5 — fused driver layout**: keep `generated/fused_codelets/` and select by name, or
+   per-ISA subdirectories.
+7. **D6 — ISA selector**: `vfft_isa.h` honours `-DVFFT_ISA_AVX2|AVX512` and otherwise derives
+   from `__AVX512F__` (reliable since the clamp), `#error` on contradiction; or make the
+   explicit define mandatory.
+8. **D7 — gate re-record**: the pre-existing drift (717 G4 lines, 542 zil files without a
+   `recipes.tsv` row) is re-recorded in your commit or ours, before avx512 rows are added.
+9. **D8 — ZTT coverage at VW=8** (159 rows vs 223; N=16/32 unserved): accept, or fund
+   sub-block edge kernels.
+10. **D9 — blocked turned m=8 splits** (heavy spills at 512): keep, prefer 4.16, or use the
+    TURN128 quarter scatter.
+11. **D10 — alignment policy** (§7.5–7.6) and the public aligned allocator / IL
+    `owned_buffers` (§7.2).
+12. **D11 — `n1ccs`** at 512 (0.75–1.0× of AVX2 for R ≤ 16): ship now or build the
+    register-transpose form first; retune `VFFT_ILFD_TAIL_D` (sized for pairs).
+13. **D12 — where to generate**: here (OCaml 4.14); rerun `gen_set` on WSL (OCaml 5.2) and
+    `cmp` before the first gate record.
+14. **D13 — turned store edge at 512**: shuffle transpose (8 `vshuff64x2` + 4 zmm stores per
+    4×4 block, slightly favoured in noisy data) as default, the quarter scatter raced.
+15. **D14 — admission**: land only kinds that pass the numeric gate; quarantine the rest
+    with a reason in a corpus ledger.
+16. **D15 — wisdom across ISAs**: separate `VFFT_WISDOM_DIR` per ISA; keep the `@meta`
+    mismatch report-only (creates already refuse what they cannot build).
+17. What "doubling the re/im loops" means in practice — split-in-registers (§8.1), unroll ×2
+    (§8.2), or both: §12 measures them.
+18. Real AVX-512 hardware for final tuning (Zen 4/5, bare-metal Intel).
+
+---
+
+## 10. Order of work — the staged plan
+
+Merged from the seven investigations by the synthesis agent. Packages in the same stage own
+disjoint files and can run in parallel; every generator package must keep the AVX2 output
+byte-identical (compare the base generator against the candidate over `gen_set all`, every
+`recipes.tsv` row and every zil recipe) and pass the twin/DFT gate at avx512.
+
+| stage | packages | exit criterion |
+|---|---|---|
+| 0 gates | generator gates (AVX2 identity gate, unified zil recipe list, twin/DFT gate); runtime gates (link closure at `-O0` and `-O2`, route-selectable front-door DFT gate, guard-page allocator) | the gates reproduce the known failure set on the current tree and pass the prototypes |
+| 1 foundations | `Isa` operations layer + zil target attribute; corpus ISA parameterization + `emit_il_registry --isa` with a fixed schema; non-zil link closure (plan executors, strided r2c, r2c, JIT keys); runtime `vfft_isa.h` + `il_tw.h` | AVX2 identity 0 DIFF; corpus retarget equals the replays; non-zil `_avx2` references = 0 at `-O0` and `-O2` |
+| 2 width-generic emitters (correctness) | cil emitter (turn at any width, column-stride gather, tail lane fix); zsplit/ZTT at VW=8; k1 mono at VW=8 | AVX2 identity 0 DIFF; twin gate 0 FAIL on every generatable recipe |
+| 3 policy, build, runtime | tail policy as uarch data; build wiring (explicit ISA flags, fused drivers by ISA); runtime consumers: il2p/il3p, ZTT (fill, laws, sigma permutation, MT grain), flat DIT tables, 2D column/row routes, OOP leaf/MONO resolvers | 0 FAIL under every tail policy; each route correct at avx512 against a scratch tree; AVX2 gates unchanged |
+| 4 land the tree | generate `codelets/zil/avx512` (~716 files), 30 fused files (159 ZTT rows), avx512 registries; admission by the numeric gate | DFT gate 0 FAIL on the landed tree |
+| 5 front door | link closure, ISA-aware gate runner, ASan/guard runs, `gauntlet verify` at avx512 | `vfft.c` at avx512 has 0 `_avx2` references and links against avx512 trees only |
+| 6 optional | the 20 non-corpus kernels into the corpus (D3) | their avx512 twins pass |
+
+The performance-first design round (§12) runs alongside stages 2–3 and decides what stage 4
+generates: stage 4 waits for its answer and for D1/D2, so the tree is generated once.
+
+---
+
+## 11. Investigation results (2026-09-26)
+
+Seven investigators ran on this host, each read-only against the tree and writing only to
+scratch; a synthesis agent merged them into §10 and the decisions in §9. Their prototype
+patches are preserved in `zil_avx512_prototypes/` (see its README). Headline results:
+
+### 11.1 The generator can emit every zil kind at 512 bits
+
+| area | root cause | prototype result |
+|---|---|---|
+| corner-turn store (141 recipes) | one guard, `c2c_il.ml:336-341`, over four emission paths that assume 2 complex per vector; `cx_render.ml` hardcodes `permute2f128`, 256-bit halves and the `k+1` column address | the turn becomes a 4×4 complex transpose: two rounds of one ISA op (`permute2f128 0x20/0x31` at 256, `shuffle_f64x2 0x88/0xDD` at 512). AVX2 byte-identical over 732 recipes + 5 header-less files; **all 141 generate and are bitwise equal to their AVX2 twins** (counts 1–13, 3 strides, 4 base offsets, guard page). ~400 changed lines in 9 files |
+| boundary split / ZTT (54 recipes) | one deliberate gate, `cascade_z.ml:388-394`; VW=4 baked into the TR4 transpose, the ordered DEINT/REINT (`permute4x64`), the t0tp lattices and a `__m256d` constant | `Isa` gains deint/reint/transpose/splat ops (width 4 renders today's text verbatim; width 8 uses `permutex2var` and the 3-stage 8×8 lattice). **50 of 54 emit** — t0tp and tld at radix 4 cannot exist at VW=8 (a 4-complex run is half a 128-B block), now refused by a law. With a VW-parameterized `ztt.h`: **404 plans, 7832 checks, worst error 5e-16**; all 206 fused-driver plans bitwise equal to the staged walk |
+| k1 mono (2 recipes) | `c2c_split.ml:2301` and an avx2-only emitter | width-parameterized (+94/−41 lines): N=64 8×8 IL mono **bitwise equal to AVX2, 45 ns vs 75 ns** |
+| corpus / registries | the corpus knows only avx2 zil quadrants; `emit_il_registry` hardcodes `_avx2`; `emit_ztt_registry` ignores `--isa` | ISA as a parameter of the typed corpus cells: `gen_set` emits **527 avx512 files byte-equal to the per-file replays**, avx2 quadrants byte-neutral; an ISA-parameterized IL registry declares exactly the 527 symbols |
+
+### 11.2 The 535 that "compile": 288 are silently wrong
+
+Two generator bugs (§5): the column-stride gather (216 files, wrong at every count ≥ 4, with
+stray writes into neighbouring legs) and the narrow-tail twiddle lane (~72 stream-T2 files,
+wrong at `count % 4 ∈ {2,3}`). The remaining kinds (n1/n1c, t2c/t2cp, blocked n1cb/t2cb,
+the N1 families) are correct: bitwise equal to a fresh AVX2 regeneration, blocked forms
+within ~1e-16. With the minimal fix (`colstride_and_tail_lane_fix.patch`) all 153
+pair2p/rows twins and all 154 column-stride twins pass; a twin gate over the whole tree
+passes 535/535 with the ladder tail.
+
+Do **not** commit the provenance-derived widening set: the in-file PROVENANCE header drops
+`recipes.tsv`'s env knobs and sed renames, which yields duplicate symbols
+(`radix16_z_t2_fwd_avx512` twice, `radix32_z_t2b_fwd_avx512` three times) and one wrong
+name. The avx512 tree comes only from `gen_set` over the corpus.
+
+### 11.3 The runtime
+
+- Every IL, msz and ZTT table builder hardcodes 2 complex per record group (8-double
+  records, pair indexing, `lane < 4`, `k/4`); fed to avx512 kernels they give O(1) error
+  (§8.4).
+- ZTT at VW=8 has three more silent traps, each demonstrated: the MT column cut at
+  multiples of 4 (wrong at T=3 and T=5), the plain-order permutation (sigma_8 =
+  {0,4,1,5,2,6,3,7} is not its own inverse; the planner's inverse gets 3072/4096 positions
+  wrong), and the one-law validator (it admits chains whose tld loop runs zero times).
+- The OOP leaf / MONO resolvers are gated on the split family's group width
+  (`VFFT_OOP_GROUPW == 4u`), so at avx512 they silently unserve the MONO tier even when
+  n1/n1c kernels exist.
+- Runtime-owned inline SIMD (`il_prime`, `k1_fourstep`, `oop_plan`, `fft2d_real_il`,
+  `zr2c`, `dct`) is 256-bit only: correct at avx512, only full-width performance is lost.
+- The planner already learns availability from registry-derived resolvers that return 0;
+  that stays the single mechanism for leaving avx512 gaps unserved.
+
+### 11.4 The link inventory (avx512 build, at HEAD)
+
+See §3.2: 631 zil kernels + 1,338 fused drivers + 113 non-zil references at `-O2`; more at
+`-O0`. After stages 1–4 the target is zero `_avx2` references at both levels, with a CI grep
+forbidding `*_avx2`/`*_avx512` identifiers in `src/core` outside the ISA header and the
+generated registries.
+
+### 11.5 Hygiene found on the way
+
+- `generated/ztt_registry_avx2.h` is stale against its emitter (line 6).
+- Running `gen_set all` / `gen_set zil-pure` into the repo rewrites 78 tracked avx2 files
+  (the §2.2 drift) — never do it until D0 is settled.
+- The msz body keeps `__restrict__` on `zin`/`zout` but is called in place (formal UB,
+  hidden by `-w`).
+- `emit_ztt_drivers` opens its output before emitting, so a failure leaves a 0-byte `.c`
+  that `build.py` would compile.
+- Kernel-level gates in `build_tuned/benches` hardcode `_avx2` symbols (blocked_tail_gate,
+  cil_ab, tangent gates, odd_ct_gate, ztt gates).
+
+---
+
+## 12. The performance-first design round (proposed)
+
+§10 makes AVX-512 zil **correct**. This round decides what the AVX-512 kernels should
+**be**, before stage 4 generates the tree. It answers §9.17 ("doubling the re/im loops")
+with numbers.
+
+**Arms**, each emitted by a scratch copy of the generator on top of the stage-2 prototypes:
+
+| arm | what it is |
+|---|---|
+| A — widened (reference) | today's DAG at 4 complex per zmm, with the correctness fixes; the baseline every other arm must beat |
+| B — split-in-registers | `vpermt2pd` de-interleave on load, split-form DAG (no per-multiply shuffles, ×i free), re-interleave on store; reuses the split family's avx512 machinery and width-8 IL edges |
+| C — unrolled ×2 | two column groups per iteration (8 complex), two DAG copies interleaved by the scheduler, to keep ≥ 8 FMA chains in flight |
+| D — whole-in-register | N ≤ 64 (and the 128/256 IL monos) as single-kernel transforms in 32 zmm |
+| E — 32-register schedule | A and C with the fence/pin heuristics and SU/GH scheduler re-tuned for 32 registers |
+
+**Kinds:** radix-8 n1 (leaf), radix-16 t2 (the pair2p mid), radix-32 t2 (register-bound),
+radix-5 t2 (odd, rotation-heavy), and `n1ccs` radix-8/16 (the 2D row kind that loses to
+AVX2 today).
+
+**Gates:** every arm bitwise equal to arm A where the DAG is the same, within 4× of A's
+error against a long-double DFT where it is restructured; guard page after the output;
+counts 1–13 and bulk counts.
+
+**Measurement protocol** (this VM is noisy, ±10–30%):
+
+- timing runs **alone** — no other agents or builds on the 4 vCPUs while an arm is timed;
+- pinned core, arms interleaved round by round with the order alternated, ≥ 15 rounds, a
+  control arm (a byte copy of A under another symbol) — a difference smaller than the
+  control's spread is not a result;
+- L1- and L2-resident sizes, base offsets 0 and 16 B, odd `OLs` for the turned kinds;
+- an AVX2 reference built clamped (`-march=x86-64-v3`), so ratios are against real AVX2
+  code, not the EVEX build of §3.1.
+
+**Workflow shape:** one agent per arm builds its emitter variant and emits the kinds (in
+parallel, scratch only); one measurement agent then times all arms serially; two skeptics
+re-run a subset and try to refute each conclusion (measurement artifact, wrong baseline,
+offset effects). **Deliverable:** a table per kind × arm, the recommended default per kind,
+and which choices become race axes in the planner.
 
 ---
 
