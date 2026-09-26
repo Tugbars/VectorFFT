@@ -1,0 +1,87 @@
+struct row { const char *kern, *pol; int R; kfn f; };
+void avx2_radix16_z_n1_fwd_avx2(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void hyb2_radix16_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void ladder_radix16_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void masked_radix16_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void narrowfix_radix16_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void zunmasked_radix16_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void avx2_radix32_z_n1_fwd_avx2(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void hyb2_radix32_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void ladder_radix32_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void masked_radix32_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void narrowfix_radix32_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void zunmasked_radix32_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void avx2_radix5_z_n1_fwd_avx2(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void hyb2_radix5_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void ladder_radix5_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void masked_radix5_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void narrowfix_radix5_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void zunmasked_radix5_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void avx2_radix8_z_n1_fwd_avx2(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void hyb2_radix8_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void ladder_radix8_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void masked_radix8_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void narrowfix_radix8_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void zunmasked_radix8_z_n1_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void avx2_radix16_z_t2_fwd_avx2(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void hyb2_radix16_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void ladder_radix16_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void masked_radix16_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void narrowfix_radix16_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void zunmasked_radix16_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void avx2_radix32_z_t2_fwd_avx2(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void hyb2_radix32_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void ladder_radix32_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void masked_radix32_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void narrowfix_radix32_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void zunmasked_radix32_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void avx2_radix8_z_t2_fwd_avx2(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void hyb2_radix8_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void ladder_radix8_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void masked_radix8_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void narrowfix_radix8_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void zunmasked_radix8_z_t2_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+static struct row rows[] = {
+  { "n1_16", "avx2", 16, avx2_radix16_z_n1_fwd_avx2 },
+  { "n1_16", "hyb2", 16, hyb2_radix16_z_n1_fwd_avx512 },
+  { "n1_16", "ladder", 16, ladder_radix16_z_n1_fwd_avx512 },
+  { "n1_16", "masked", 16, masked_radix16_z_n1_fwd_avx512 },
+  { "n1_16", "narrowfix", 16, narrowfix_radix16_z_n1_fwd_avx512 },
+  { "n1_16", "zunmasked", 16, zunmasked_radix16_z_n1_fwd_avx512 },
+  { "n1_32", "avx2", 32, avx2_radix32_z_n1_fwd_avx2 },
+  { "n1_32", "hyb2", 32, hyb2_radix32_z_n1_fwd_avx512 },
+  { "n1_32", "ladder", 32, ladder_radix32_z_n1_fwd_avx512 },
+  { "n1_32", "masked", 32, masked_radix32_z_n1_fwd_avx512 },
+  { "n1_32", "narrowfix", 32, narrowfix_radix32_z_n1_fwd_avx512 },
+  { "n1_32", "zunmasked", 32, zunmasked_radix32_z_n1_fwd_avx512 },
+  { "n1_5", "avx2", 5, avx2_radix5_z_n1_fwd_avx2 },
+  { "n1_5", "hyb2", 5, hyb2_radix5_z_n1_fwd_avx512 },
+  { "n1_5", "ladder", 5, ladder_radix5_z_n1_fwd_avx512 },
+  { "n1_5", "masked", 5, masked_radix5_z_n1_fwd_avx512 },
+  { "n1_5", "narrowfix", 5, narrowfix_radix5_z_n1_fwd_avx512 },
+  { "n1_5", "zunmasked", 5, zunmasked_radix5_z_n1_fwd_avx512 },
+  { "n1_8", "avx2", 8, avx2_radix8_z_n1_fwd_avx2 },
+  { "n1_8", "hyb2", 8, hyb2_radix8_z_n1_fwd_avx512 },
+  { "n1_8", "ladder", 8, ladder_radix8_z_n1_fwd_avx512 },
+  { "n1_8", "masked", 8, masked_radix8_z_n1_fwd_avx512 },
+  { "n1_8", "narrowfix", 8, narrowfix_radix8_z_n1_fwd_avx512 },
+  { "n1_8", "zunmasked", 8, zunmasked_radix8_z_n1_fwd_avx512 },
+  { "t2_16", "avx2", 16, avx2_radix16_z_t2_fwd_avx2 },
+  { "t2_16", "hyb2", 16, hyb2_radix16_z_t2_fwd_avx512 },
+  { "t2_16", "ladder", 16, ladder_radix16_z_t2_fwd_avx512 },
+  { "t2_16", "masked", 16, masked_radix16_z_t2_fwd_avx512 },
+  { "t2_16", "narrowfix", 16, narrowfix_radix16_z_t2_fwd_avx512 },
+  { "t2_16", "zunmasked", 16, zunmasked_radix16_z_t2_fwd_avx512 },
+  { "t2_32", "avx2", 32, avx2_radix32_z_t2_fwd_avx2 },
+  { "t2_32", "hyb2", 32, hyb2_radix32_z_t2_fwd_avx512 },
+  { "t2_32", "ladder", 32, ladder_radix32_z_t2_fwd_avx512 },
+  { "t2_32", "masked", 32, masked_radix32_z_t2_fwd_avx512 },
+  { "t2_32", "narrowfix", 32, narrowfix_radix32_z_t2_fwd_avx512 },
+  { "t2_32", "zunmasked", 32, zunmasked_radix32_z_t2_fwd_avx512 },
+  { "t2_8", "avx2", 8, avx2_radix8_z_t2_fwd_avx2 },
+  { "t2_8", "hyb2", 8, hyb2_radix8_z_t2_fwd_avx512 },
+  { "t2_8", "ladder", 8, ladder_radix8_z_t2_fwd_avx512 },
+  { "t2_8", "masked", 8, masked_radix8_z_t2_fwd_avx512 },
+  { "t2_8", "narrowfix", 8, narrowfix_radix8_z_t2_fwd_avx512 },
+  { "t2_8", "zunmasked", 8, zunmasked_radix8_z_t2_fwd_avx512 },
+};

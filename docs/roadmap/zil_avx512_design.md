@@ -153,11 +153,14 @@ remaining references, measured at HEAD by building `VFFT_ISA=avx512` with CMake 
 |---|---|---|
 | zil kernels | 631 | `oop/il2p.h`, `oop/oop_leaf_registry.h`, `oop/ztt.h`, `fft2d/il2d_tier.h` |
 | ztt/zttp fused drivers | 1,338 | `oop/ztt.h`, `planning/dp_planner_il.h` |
-| real FFT (hc2hc, hc2c, r2cf/r2cb) and 2D/3D strided rows | 113 | `real/rfft.h`, `real/c2r.h`, `fft2d/fft2d_r2c.h`, `fft2d/strided_tw.h`, `fft3d/strided_rows.h` |
+| non-zil, in the library (`vfft.c`) | 6 | `fft2d/fft2d_r2c.h` (the avx512 switch falls through to the avx2 one for radix 12/20 `strided_r2c`), `fft2d/strided_tw.h` (hard-binds `radix64_n1_*_avx2_strided`) |
+| non-zil, in the bench TU only | 107 | `gauntlet/bench_1d_vs_mkl.c:78-79` includes `rfft_registry_avx2.h` / `c2r_registry_avx2.h` directly (hc2hc, hc2c, r2cf/r2cb) |
 
-109 of the 113 non-zil references already have an avx512 twin in the tree: the headers
-hardcode the avx2 name, or run the avx512 switch and then fall through to the avx2 one.
-The other 4 (`radix12/20_n1_*_strided_r2c`) have no avx512 twin; per §0 those cells go
+So the library itself needs only the 6 non-zil fixes; the other 107 are the bench's own
+includes, which must select the build ISA's registries (corrected 2026-09-26 by the
+completeness critic; an earlier version of this table blamed `rfft.h`/`c2r.h`/
+`strided_rows.h`, which are correctly guarded). 109 of the 113 have an avx512 twin in the
+tree; the other 4 (`radix12/20_n1_*_strided_r2c`) do not, and per §0 those cells go
 unserved at avx512. At `-O0` more references appear (the static avx2 plan executors in
 `plan_executors.h` and several avx2 fall-through branches survive without dead-code
 elimination), so the link closure must be gated at `-O0` too. The fix is §10 (stages 1, 3
@@ -556,7 +559,54 @@ See §3.2: 631 zil kernels + 1,338 fused drivers + 113 non-zil references at `-O
 forbidding `*_avx2`/`*_avx512` identifiers in `src/core` outside the ISA header and the
 generated registries.
 
-### 11.5 Hygiene found on the way
+### 11.5 Plan gaps found by the completeness critic
+
+The critic re-checked the plan's key claims against the code (all confirmed except the
+attribution corrected in §3.2) and found gaps that the plan in §10 must absorb before work
+starts:
+
+1. **Stage-3 route tests would pass without testing anything.** The corpus absence
+   predicate is hard-coded until stage 4, so stage-3 scratch trees lack the turned, ZTT and
+   mono kernels; il2p/il3p and the 2D row routes are then refused and the front-door gate
+   records them as gaps and passes — never exercising the 4-column VTW2 tables. Fix: the
+   predicate calls emitter-owned laws that stage 2 flips; the front-door gate takes an
+   `--expect-served <route>=<min>` manifest and fails when a registered kernel is refused.
+2. **Stage-3 packages are not independent.** `il_flatdit.h` and `il2d_cols.h` include
+   `il2p.h`, where the msz/t2cp/t2cs/t2csg/n1c/t2c resolvers live, and `ztt.h:87` includes
+   the avx2 IL registry directly. Fix: a first stage-3 package converts every registry
+   include and `*_avx2` name (il2p.h, ztt.h, oop_leaf_registry.h, il2d_tier.h) before the
+   per-route table packages.
+3. **Threaded paths go untested until stage 5** (`il2d_tier.h:465-474`,
+   `il_flatdit_mt.h:64/78` change stride). Fix: T ∈ {2, 3, 5} on every front-door route,
+   bitwise against the serial result.
+4. **Table identity must dump the real builders' bytes** (`vfft_il2p_create`,
+   `vfft_il3p_create`, `vfft_ilfd_create_chain`, `_il2d_build_tables`, `_ztt_create`) at
+   the base and the candidate, not re-derive tables through the new header.
+5. **`run_gates.py --only cil_ab` runs nothing** (discovery requires "gate" in the name) and
+   still exits 0. Fix: build it via `build_cil_ab.py`; make an empty `--only` selection fail.
+6. **Link closure must check every TU CMake builds** (vfft.c, the four gauntlet tools,
+   `jit_smoke.c`) at `-O0` and `-O2`, not only `vfft.o` — see the 107 bench references above.
+7. **Pin expected failure sets as checked-in name lists, not counts** (the reconstructed
+   no-provenance recipes make the turned family 146, not 141).
+8. **The k1 mono symbols need `VFFT_SYM(...)`, not `VFFT_ZSYM(R, kind)`.**
+9. **Wisdom:** the default wisdom directory is `"."`, so every acceptance run must export
+   `VFFT_WISDOM_DIR` into scratch and assert a clean `git status` across the whole repo.
+10. **The registry self-check cannot run inside dune** (its root is `generator/`); move it
+    into a gate script.
+11. `build_tuned/benches/k_blk.c` and `k_mono.c` hardcode avx2 zil names and have no owner.
+12. The new front-door gate needs a time budget in `run_gates.py` and a `--quick` default.
+13. **The ladder tail was never measured on the turned kinds** (they could not be generated
+    in the tail prototype); D1 should note that, and the tail benchmark should add turned
+    R8/R16.
+14. Remote generation: besides this cloud session, the owner can run the generation step
+    from a Claude Code session on their own machine (desktop app, or `claude remote-control`
+    in the repo).
+
+The harnesses behind the acceptance commands were in scratch; the load-bearing ones are now
+kept in `zil_avx512_prototypes/harness/` (paths inside them point at the old scratch tree
+and need adapting).
+
+### 11.6 Hygiene found on the way
 
 - `generated/ztt_registry_avx2.h` is stale against its emitter (line 6).
 - Running `gen_set all` / `gen_set zil-pure` into the repo rewrites 78 tracked avx2 files
