@@ -1,0 +1,42 @@
+# gauntlet report
+
+run: `kfr_2p23_2p24_2026-09-26`  contract file suffix: `_kfr`  cells: 2 listed, 2 benched, comparator: MKL
+
+control cell: 4 readings, 1.323..1.377 (a run is internally comparable when the first and the last agree)
+
+
+## every cell
+
+```
+         N  factors          route    served       ours ns     cmp ns       x   rt err  note
+   8388608  2^23             fs       replayed    45736488   58034150    1.17  1.2e-15  
+  16777216  2^24             fs       replayed    99930062  119921825    1.19  3.2e-15  
+```
+
+
+## by route (worse of the two flips)
+```
+ route    cells   <0.8   <1.0    p10    med    p90   gmean
+ fs           2      0      0   1.17   1.18   1.19    1.18
+ ALL          2      0      0   1.17   1.18   1.19    1.18
+```
+
+
+## by size
+```
+ band               cells median   <1.0   <0.8
+ 8388608..16777216      2   1.18      0      0
+```
+
+
+## by family
+```
+ family                                       cells median   <1.0  gmean
+ pow2                                             2   1.18      0   1.18
+```
+
+
+flip agreement: our two readings more than 25% apart at 0 of 2 cells.
+
+worst 10: 8388608 (fs 1.17), 16777216 (fs 1.19)
+best 5: 16777216 (fs 1.19), 8388608 (fs 1.17)

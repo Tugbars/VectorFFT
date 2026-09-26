@@ -8508,3 +8508,7 @@
 @cell t=c2c n=32768 q=1 ord=nat place=oop role=comp lay=il nthreads=8 | eng=k1 il_route=ztt il_ztt=8.4.4.8.8.4 il_tw=2048 il_kv=0 il_mt=2 | ran=1 ns=39059.4 metric=fwd1 units=ns src=race date=2026-09-22
 @cell t=c2c n=65536 q=1 ord=nat place=oop role=comp lay=il nthreads=8 | eng=k1 il_route=ztt il_ztt=8.4.8.4.8.8 il_tw=1024 il_kv=0 il_mt=2 | ran=1 ns=95603.1 metric=fwd1 units=ns src=race date=2026-09-22
 @cell t=c2c n=131072 q=1 ord=nat place=oop role=comp lay=il nthreads=8 | eng=k1 il_route=ztt il_ztt=8.4.4.4.4.8.8 il_tw=2048 il_kv=0 il_mt=2 | ran=1 ns=278575.0 metric=fwd1 units=ns src=race date=2026-09-22
+@cell t=c2c n=8388608 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=2048.4096 il_kv=0 | ran=1 ns=45777600.0 metric=fwd1 units=ns src=race date=2026-09-26
+@cell t=c2c n=8388608 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=2048.4096 il_kv=0 | ran=1 ns=37791200.0 metric=fwd1 units=ns src=race date=2026-09-26
+@cell t=c2c n=16777216 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=4096.4096 il_kv=0 | ran=1 ns=98674700.0 metric=fwd1 units=ns src=race date=2026-09-26
+@cell t=c2c n=16777216 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=fs il_pair=4096.4096 il_kv=0 | ran=1 ns=82858400.0 metric=fwd1 units=ns src=race date=2026-09-26

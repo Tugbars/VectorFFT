@@ -6,7 +6,8 @@
 #define VFFT_K1_FOURSTEP_BAND_H
 
 #define VFFT_K1FS_MIN_N 262144   /* raced beside ZTURN-T at its ceiling */
-#define VFFT_K1FS_MAX_N 4194304  /* 2^22: the largest cell the design measures */
+#define VFFT_K1FS_MAX_N 16777216 /* 2^24 = 4096 x 4096: the side ladder's reach (both
+                                  * sides <= 4096); a larger N needs a longer side */
 
 static inline int vfft_k1fs_band(int N)
 {

@@ -16,7 +16,10 @@ at one thread today, 1.7x on the day of record; 6.2x at T=8).
 ## Contract
 
 K=1 interleaved c2c, both placements, both order classes, every power of
-two from 524288 to 4194304 (2^19..2^22) is SERVED — today the door refuses.
+two from 524288 to 16777216 (2^19..2^24) is SERVED. The upper end is the side
+ladder's reach: both sides of a split come from {256, 512, 1024, 2048, 4096},
+so 4096 × 4096 = 2^24 is the largest N the engine can build; a larger N needs
+a longer side (a row length ZTURN-T serves, or a longer column chain).
 262144 stays ZTURN-T's cell unless the four-step beats it in the cell's own
 race. The 2^a·odd cells above 262144 are not in this design (the 2D child
 can hold odd axes, so they are a later admission, not a new engine).
