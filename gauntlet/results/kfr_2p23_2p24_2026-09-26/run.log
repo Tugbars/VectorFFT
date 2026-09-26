@@ -1,0 +1,6 @@
+2026-09-26 02:18:03 run: 2 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-26 02:18:03 calibrate: 2 cells (0 already done)
+2026-09-26 02:18:03   calibrated 2/2 (16777216), 0 s elapsed
+2026-09-26 02:18:03 bench: 2 cells (0 already benched, 0 not banked -> not benched)
+2026-09-26 02:19:11   benched 2/2 (16777216), 67 s elapsed
+2026-09-26 02:19:13 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\kfr_2p23_2p24_2026-09-26\report_kfr.md

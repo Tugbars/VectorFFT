@@ -1,0 +1,7 @@
+2026-09-26 02:08:39 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-26 02:08:39 run: 1 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-26 02:08:39 calibrate: 1 cells (0 already done)
+2026-09-26 02:08:39   calibrated 1/1 (8192), 0 s elapsed
+2026-09-26 02:08:39 bench: 1 cells (0 already benched, 0 not banked -> not benched)
+2026-09-26 02:08:42   benched 1/1 (8192), 1 s elapsed
+2026-09-26 02:08:43 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\kfr_8192_rerun_2026-09-26\report_kfr.md

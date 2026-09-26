@@ -122,7 +122,8 @@ enum
      * interleaved tier with the inter-pass twiddle fused into its row pass,
      * both directions, both order classes (scrambled = the plane as is,
      * natural = the permuting transpose), both placements, 262144 (raced
-     * beside ZTURN-T) to 4194304. The split (il_R1, il_R2) is PLAN INPUT from
+     * beside ZTURN-T) to 16777216 = 4096 x 4096, the side ladder's reach
+     * (k1_fourstep_band.h). The split (il_R1, il_R2) is PLAN INPUT from
      * the kind-3 row; the planner races the ladder and is the only source. */
     VFFT_K1_IL_FS = 10
 };
