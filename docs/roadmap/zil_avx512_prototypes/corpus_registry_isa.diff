@@ -1,0 +1,503 @@
+--- a/lib/gen/corpus.ml
++++ b/lib/gen/corpus.ml
+@@ -2077,8 +2077,92 @@
+     ]
+ ;;
+ 
++
++(* ── zil at a SECOND ISA (proto 2026-09-26): DERIVED from the avx2 cells ──
++   The literal avx2 lists above stay the one source of truth; an ISA is a
++   PARAMETER: retarget the typed cell (isa/uarch fields of Codelet.t, then
++   to_argv — so the round-trip law holds by construction) and rename the file
++   suffix.  A cell the generator cannot emit at that width is DECLARED absent
++   (zil_isa_gap, one predicate shared with the emitters' refusals), never
++   silently dropped. *)
++let zil_isa_uarch = [ "avx2", "raptor_lake_avx2"; "avx512", "sapphire_rapids_avx512" ]
++let zil_isas = List.map fst zil_isa_uarch
++
++let isa_vw (isa : string) : int =
++  match isa with
++  | "avx2" -> 4
++  | "avx512" -> 8
++  | i -> failwith ("Corpus: unknown zil isa " ^ i)
++;;
++
++let zil_isa_gap ~(isa : string) (c : Codelet.t) : string option =
++  let per = isa_vw isa / 2 in
++  match c.Codelet.kind with
++  | Codelet.Cil { form; turn; _ } when per <> 2 && (form = Codelet.Cil_n1t || turn <> None) ->
++    Some "codelet_cil: n1t corner-turn store is written for 2 complex/vector (avx2)"
++  | Codelet.Zsplit _ when isa_vw isa <> 4 ->
++    Some "codelet_zsplit: runtime block geometry is VW=4 until zsplit.h is parameterized"
++  | Codelet.K1_mono _ when isa_vw isa <> 4 -> Some "--k1-mono: avx2 only (vec_width 4)"
++  | _ -> None
++;;
++
++let chop_isa_suffix (name : string) : string =
++  let sfx = "_avx2.c" in
++  let ln = String.length name and ls = String.length sfx in
++  if ln >= ls && String.sub name (ln - ls) ls = sfx
++  then String.sub name 0 (ln - ls)
++  else failwith ("Corpus: zil cell not named *_avx2.c: " ^ name)
++;;
++
++(* (cells emitted, cells declared absent with the reason) *)
++let zil_retarget ~(isa : string) (cells : (string * string list) list)
++  : (string * string list) list * (string * string) list
++  =
++  let uarch = List.assoc isa zil_isa_uarch in
++  List.fold_right
++    (fun (file, tail) (ok, gap) ->
++       let c = Codelet.of_argv (tail @ [ "--emit-c" ]) in
++       let c = { c with Codelet.isa = Some isa; uarch = Some uarch } in
++       let file' = chop_isa_suffix file ^ "_" ^ isa ^ ".c" in
++       match zil_isa_gap ~isa c with
++       | Some why -> ok, (file', why) :: gap
++       | None ->
++         let argv = Codelet.to_argv c in
++         let tail' = List.filter (fun a -> a <> "--emit-c") argv in
++         (file', tail') :: ok, gap)
++    cells
++    ([], [])
++;;
++
++let zil_quadrant_isa (q : string) : (string * string) option =
++  (* "zil-pure-avx512" -> Some ("zil-pure", "avx512"); the bare names are avx2 *)
++  List.find_map
++    (fun isa ->
++       let sfx = "-" ^ isa in
++       let lq = String.length q and ls = String.length sfx in
++       if lq > ls && String.sub q (lq - ls) ls = sfx
++       && (String.sub q 0 (lq - ls) = "zil-pure" || String.sub q 0 (lq - ls) = "zil-boundary")
++       then Some (String.sub q 0 (lq - ls), isa)
++       else None)
++    (List.filter (fun i -> i <> "avx2") zil_isas)
++;;
++
++let zil_base_cells (base : string) =
++  if base = "zil-pure" then zil_pure_cells else zil_boundary_cells
++;;
++
++let zil_absent (q : string) : (string * string) list =
++  match zil_quadrant_isa q with
++  | Some (base, isa) -> snd (zil_retarget ~isa (zil_base_cells base))
++  | None -> []
++;;
++
+ let matrix_files (quadrant : string) : (string * string list) list =
+   match quadrant with
++  | q when zil_quadrant_isa q <> None ->
++    (match zil_quadrant_isa q with
++     | Some (base, isa) -> fst (zil_retarget ~isa (zil_base_cells base))
++     | None -> assert false)
+   | "oop-edges-avx2" -> oop_edges_avx2_cells
+   | "oop-edges-avx512" -> oop_edges_avx512_cells
+   | "strided-r2c-avx2" -> strided_r2c_avx2_cells
+@@ -2360,6 +2444,8 @@
+   ; "strided-r2c-avx512"
+   ; "zil-boundary"
+   ; "zil-pure"
++  ; "zil-boundary-avx512"
++  ; "zil-pure-avx512"
+   ]
+ ;;
+ 
+@@ -2372,6 +2458,8 @@
+   | "strided-r2c-avx512" -> "strided/avx512"
+   | "zil-boundary" -> "zil/avx2/boundary_split"
+   | "zil-pure" -> "zil/avx2/pure_il"
++  | "zil-boundary-avx512" -> "zil/avx512/boundary_split"
++  | "zil-pure-avx512" -> "zil/avx512/pure_il"
+   | _ ->
+     (match String.split_on_char '-' q with
+      | [ fam; isa ] -> fam ^ "/" ^ isa
+@@ -2403,14 +2491,17 @@
+     let ls = String.length s and lf = String.length suf in
+     ls >= lf && String.sub s (ls - lf) lf = suf
+   in
+-  if starts_with name "vfft_k1_mono64_il_" then Some "zil/avx2/mono"
+-  else if not (starts_with name "radix" && ends_with name "_avx2.c") then None
++  match List.find_opt (fun isa -> ends_with name ("_" ^ isa ^ ".c")) zil_isas with
++  | None -> None
++  | Some isa ->
++  let sfxlen = String.length isa + 3 in
++  let z f = Some ("zil/" ^ isa ^ "/" ^ f) in
++  if starts_with name "vfft_k1_mono64_il_" then z "mono"
++  else if not (starts_with name "radix") then None
+   else
+     match String.index_opt name '_' with
+-    | Some i when i + 3 < String.length name - 7 && String.sub name i 3 = "_z_" ->
+-      (* radixN_z_<kind>_avx2.c: the zil grammar; a radixN_<kind>_oop_avx2.c of
+-         the split library carries no _z_ and keeps its quadrant's folder *)
+-      let kind = String.sub name (i + 3) (String.length name - i - 3 - 7) in
++    | Some i when i + 3 < String.length name - sfxlen && String.sub name i 3 = "_z_" ->
++      let kind = String.sub name (i + 3) (String.length name - i - 3 - sfxlen) in
+       let base =
+         if ends_with kind "_bwd" then String.sub kind 0 (String.length kind - 4) else kind
+       in
+@@ -2420,19 +2511,19 @@
+         && (let t = String.sub base (String.length pre) (String.length base - String.length pre) in
+             t = "" || is_digits t)
+       in
+-      Some
+-        (if base = "n1" then "zil/avx2/shared"
+-         else if base = "n1c" || base = "t2c" then "zil/avx2/shared/col"
+-         else if blocked "n1cb" || blocked "t2cb" then "zil/avx2/shared/col/blocked"
++      z
++        (if base = "n1" then "shared"
++         else if base = "n1c" || base = "t2c" then "shared/col"
++         else if blocked "n1cb" || blocked "t2cb" then "shared/col/blocked"
+          else if List.mem base [ "n1ccs"; "n1r"; "n1tr"; "t2r"; "t2tr"; "n1rtan"; "n1trtan"; "t2rtan"; "t2trtan" ]
+-         then "zil/avx2/rows"
+-         else if List.mem base [ "n1t"; "t2"; "t2t"; "n1_ct"; "n1t_ct"; "t2_ct"; "t2t_ct" ] then "zil/avx2/pair2p"
+-         else if blocked "n1tb" || blocked "n1b" || blocked "t2bt" || blocked "t2b" then "zil/avx2/pair2p/blocked"
+-         else if base = "t2tg" then "zil/avx2/chain3"
+-         else if List.mem base [ "t2cp"; "t2cs"; "t2csg"; "t2csgn"; "t2csgt"; "t2csgnt" ] then "zil/avx2/flat"
+-         else if base = "msz" || base = "mszt" then "zil/avx2/flat/odd_mid"
+-         else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "zil/avx2/ztt"
+-         else "zil/avx2/pair2p/tangent")
++         then "rows"
++         else if List.mem base [ "n1t"; "t2"; "t2t"; "n1_ct"; "n1t_ct"; "t2_ct"; "t2t_ct" ] then "pair2p"
++         else if blocked "n1tb" || blocked "n1b" || blocked "t2bt" || blocked "t2b" then "pair2p/blocked"
++         else if base = "t2tg" then "chain3"
++         else if List.mem base [ "t2cp"; "t2cs"; "t2csg"; "t2csgn"; "t2csgt"; "t2csgnt" ] then "flat"
++         else if base = "msz" || base = "mszt" then "flat/odd_mid"
++         else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "ztt"
++         else "pair2p/tangent")
+     | _ -> None
+ 
+ let dir_of_file (q : string) (name : string) : string =
+--- a/lib/gen/corpus.mli
++++ b/lib/gen/corpus.mli
+@@ -21,3 +21,5 @@
+ (** (filename, argv_tail sans --emit-c) — DERIVED via Codelet.to_argv;
+     byte-equal to the historical Coverage.files by the round-trip law. *)
+ val files : string -> (string * string list) list
++val zil_absent : string -> (string * string) list   (* a derived zil quadrant: (file, why the generator cannot emit it at that ISA) *)
++val zil_isas : string list
+--- a/bin/emit_il_registry.ml
++++ b/bin/emit_il_registry.ml
+@@ -46,8 +46,8 @@
+ 
+ (* "radix8_z_tmg_bwd_avx2" -> (8, "tmg", `Bwd)
+    "radix8_z_tmg_avx2"     -> (8, "tmg", `Fwd)   (fwd implicit) *)
+-let parse_stem (stem : string) : (int * string * [ `Fwd | `Bwd ]) option =
+-  match chop_suffix_opt "_avx2" stem with
++let parse_stem ~(isa : string) (stem : string) : (int * string * [ `Fwd | `Bwd ]) option =
++  match chop_suffix_opt ("_" ^ isa) stem with
+   | None -> None
+   | Some s ->
+     let s, dir =
+@@ -74,97 +74,85 @@
+   String.uppercase_ascii (String.map (fun c -> if c = '.' then '_' else c) tag)
+ ;;
+ 
+-let () =
+-  let cells =
+-    List.concat_map
+-      (fun q -> Corpus.files q)
+-      [ "zil-boundary"; "zil-pure" ]
+-  in
++let quadrants_of_isa isa =
++  if isa = "avx2" then [ "zil-boundary"; "zil-pure" ]
++  else [ "zil-boundary-" ^ isa; "zil-pure-" ^ isa ]
++;;
++
++(* (tag, dir) -> radices, for one ISA's quadrants *)
++let table_of_isa isa =
+   let parsed =
+     List.filter_map
+       (fun (fname_c, _argv) ->
+-         let stem =
+-           if Filename.check_suffix fname_c ".c"
+-           then Filename.chop_suffix fname_c ".c"
+-           else fname_c
+-         in
+-         match parse_stem stem with
+-         | Some (r, tag, dir) ->
+-           let sym =
+-             Printf.sprintf
+-               "radix%d_z_%s_%s_avx2"
+-               r
+-               tag
+-               (match dir with
+-                | `Fwd -> "fwd"
+-                | `Bwd -> "bwd")
+-           in
+-           Some (tag, dir, r, sym)
+-         | None -> None)
+-      cells
++         let stem = if Filename.check_suffix fname_c ".c" then Filename.chop_suffix fname_c ".c" else fname_c in
++         parse_stem ~isa stem)
++      (List.concat_map Corpus.files (quadrants_of_isa isa))
+   in
+-  (* every (tag, dir) -> sorted radix list *)
+   let tbl : (string * [ `Fwd | `Bwd ], int list) Hashtbl.t = Hashtbl.create 64 in
+   List.iter
+-    (fun (tag, dir, r, _sym) ->
++    (fun (r, tag, dir) ->
+        let k = tag, dir in
+-       let cur =
+-         match Hashtbl.find_opt tbl k with
+-         | Some l -> l
+-         | None -> []
+-       in
+-       Hashtbl.replace tbl k (r :: cur))
++       Hashtbl.replace tbl k (r :: Option.value ~default:[] (Hashtbl.find_opt tbl k)))
+     parsed;
+-  let radices k =
+-    match Hashtbl.find_opt tbl k with
+-    | Some l -> List.sort_uniq compare l
+-    | None -> []
++  tbl
++;;
++
++let () =
++  let isa = ref "avx2" in
++  (match List.tl (Array.to_list Sys.argv) with
++   | [] -> ()
++   | [ "--isa"; v ] -> isa := v
++   | l -> failwith ("emit_il_registry: usage [--isa avx2|avx512], got " ^ String.concat " " l));
++  let isa = !isa in
++  let up = String.uppercase_ascii isa in
++  let tables = List.map (fun i -> i, table_of_isa i) Corpus.zil_isas in
++  let tbl = List.assoc isa tables in
++  let radices k = match Hashtbl.find_opt tbl k with Some l -> List.sort_uniq compare l | None -> [] in
++  (* THE KIND UNIVERSE: every (kind, list) non-empty at ANY isa is DEFINED at
++     every isa (empty where absent), so the consumers' X-macro surface is
++     identical whatever VFFT_ISA the user picked; an empty list = a resolver
++     that returns 0 = the cell is refused, never a compile error. *)
++  let univ name_of =
++    List.sort_uniq compare
++      (List.concat_map
++         (fun (_, t) -> Hashtbl.fold (fun k l acc -> if l <> [] then name_of k :: acc else acc) t [])
++         tables)
+   in
+-  let tags =
+-    List.sort_uniq compare (List.map (fun (tag, _, _, _) -> tag) parsed)
++  let tags = univ fst in
++  let defined_somewhere tag lst =
++    List.exists
++      (fun (_, t) ->
++         let g d = match Hashtbl.find_opt t (tag, d) with Some l -> List.sort_uniq compare l | None -> [] in
++         match lst with
++         | "FWD" -> g `Fwd <> []
++         | "BWD" -> g `Bwd <> []
++         | _ -> List.exists (fun r -> List.mem r (g `Bwd)) (g `Fwd))
++      tables
+   in
+-  Printf.printf "/* AUTO-GENERATED by bin/emit_il_registry.ml from\n";
+-  Printf.printf " * Corpus.files \"zil-boundary\" + \"zil-pure\". DO NOT EDIT BY HAND.\n";
+-  Printf.printf " * Regenerate: dune build (promote rule) or\n";
+-  Printf.printf " *   dune exec bin/emit_il_registry.exe\n";
+-  Printf.printf " *\n";
+-  Printf.printf " * The IL family's extern declarations and radix lists, derived from the\n";
+-  Printf.printf " * corpus so that \"the codelet exists\" and \"the resolver can reach it\"\n";
+-  Printf.printf " * cannot drift apart. Consumed by src/core/oop/il2p.h.\n";
+-  Printf.printf " *\n";
+-  Printf.printf " * Radix lists are X-macros: pass a one-argument macro.\n";
+-  Printf.printf " *   #define C(R) case R: return radix##R##_z_n1t_fwd_avx2;\n";
+-  Printf.printf " *   VFFT_IL_N1T_FWD_RADICES(C)\n";
+-  Printf.printf " *   #undef C\n";
+-  Printf.printf " * _PAIR_ lists carry only radices where BOTH directions exist — use them\n";
+-  Printf.printf " * for any `bwd ? x_bwd : x_fwd` resolver. */\n";
+-  Printf.printf "#ifndef VFFT_IL_REGISTRY_AVX2_H\n";
+-  Printf.printf "#define VFFT_IL_REGISTRY_AVX2_H\n\n";
+-  Printf.printf "#include <stddef.h>\n\n";
++  Printf.printf "/* AUTO-GENERATED by bin/emit_il_registry.ml --isa %s from\n" isa;
++  Printf.printf " * Corpus.files %s. DO NOT EDIT BY HAND.\n" (String.concat " + " (List.map (Printf.sprintf "\"%s\"") (quadrants_of_isa isa)));
++  Printf.printf " * (proto) ISA-neutral surface: VFFT_IL_SYM(stem) pastes this ISA's suffix;\n";
++  Printf.printf " * every kind of the union over ISAs is defined (empty = absent here). */\n";
++  Printf.printf "#ifndef VFFT_IL_REGISTRY_%s_H\n#define VFFT_IL_REGISTRY_%s_H\n\n#include <stddef.h>\n\n" up up;
++  Printf.printf "#define VFFT_IL_ISA_NAME \"%s\"\n" isa;
++  Printf.printf "#define VFFT_IL_VW %d          /* doubles per vector: the twiddle-record width */\n" (match isa with "avx2" -> 4 | _ -> 8);
++  Printf.printf "#define VFFT_IL_SYM(stem) stem##_%s\n\n" isa;
+   Printf.printf "/* the frozen 11-arg z ABI (vfft_il2p_fn's pointee) */\n";
+   Printf.printf "#define VFFT_IL_DECL(SYM) \\\n";
+   Printf.printf "  extern void SYM(const double *, const double *, double *, double *, \\\n";
+-  Printf.printf
+-    "                  const double *, const double *, \\\n\
+-    \                  size_t, size_t, size_t, size_t, size_t);\n\n";
++  Printf.printf "                  const double *, const double *, \\\n                  size_t, size_t, size_t, size_t, size_t);\n\n";
+   let total = ref 0 in
+   List.iter
+     (fun tag ->
+-       let fwd = radices (tag, `Fwd)
+-       and bwd = radices (tag, `Bwd) in
++       let fwd = radices (tag, `Fwd) and bwd = radices (tag, `Bwd) in
+        let pair = List.filter (fun r -> List.mem r bwd) fwd in
+-       Printf.printf "/* ── %s ── fwd %d · bwd %d · pair %d */\n"
+-         tag (List.length fwd) (List.length bwd) (List.length pair);
++       Printf.printf "/* ── %s ── fwd %d · bwd %d · pair %d */\n" tag (List.length fwd) (List.length bwd) (List.length pair);
+        List.iter
+          (fun (dirtag, l) ->
+-            List.iter
+-              (fun r ->
+-                 incr total;
+-                 Printf.printf "VFFT_IL_DECL(radix%d_z_%s_%s_avx2)\n" r tag dirtag)
+-              l)
++            List.iter (fun r -> incr total; Printf.printf "VFFT_IL_DECL(radix%d_z_%s_%s_%s)\n" r tag dirtag isa) l)
+          [ "fwd", fwd; "bwd", bwd ];
+        let emit_list name l =
+-         if l <> []
++         if l <> [] || defined_somewhere tag name
+          then (
+            Printf.printf "#define VFFT_IL_%s_%s_RADICES(X)" (macro_of_tag tag) name;
+            List.iter (fun r -> Printf.printf " X(%d)" r) l;
+@@ -175,6 +163,18 @@
+        emit_list "PAIR" pair;
+        Printf.printf "\n")
+     tags;
++  List.iter
++    (fun q ->
++       match Corpus.zil_absent q with
++       | [] -> ()
++       | l ->
++         let reasons = List.sort_uniq compare (List.map snd l) in
++         Printf.printf "/* %s: %d cells DECLARED ABSENT at %s:\n" q (List.length l) isa;
++         List.iter
++           (fun why -> Printf.printf " *   %d  %s\n" (List.length (List.filter (fun (_, w) -> w = why) l)) why)
++           reasons;
++         Printf.printf " */\n")
++    (quadrants_of_isa isa);
+   Printf.printf "/* %d declarations over %d kinds */\n" !total (List.length tags);
+   Printf.printf "\n#endif\n"
+ ;;
+--- a/bin/emit_ztt_registry.ml
++++ b/bin/emit_ztt_registry.ml
+@@ -1,67 +1,53 @@
+-(* emit_ztt_registry.ml — auto-generate the ZTURN-T driver registry.
+- *
+- * Derived from the SAME cell list the driver TU is emitted from
+- * (Ztt_drivers.cells), so a driver that exists is reachable and a cell the
+- * runtime asks for either has all four drivers or is refused at create.
+- *
+- * Usage:
+- *   dune exec bin/emit_ztt_registry.exe > generated/ztt_registry_avx2.h
+- *)
+-
++(* emit_ztt_registry.ml — PROTO (isa-parameterized). A cell is listed at an
++   ISA only when every stage kernel its drivers inline is in that ISA's
++   zil-boundary quadrant; an ISA with none gets NCELLS 0 and a NULL table, so
++   ztt.h's loop compiles and refuses every pow2 cell. *)
+ let () =
+-  let isa = "avx2" in
+-  let cells = Ztt_drivers.cells () in
++  let isa =
++    match List.tl (Array.to_list Sys.argv) with
++    | [] -> "avx2"
++    | [ "--isa"; v ] -> v
++    | l -> failwith ("emit_ztt_registry: usage [--isa I], got " ^ String.concat " " l)
++  in
++  let up = String.uppercase_ascii isa in
++  let q = if isa = "avx2" then "zil-boundary" else "zil-boundary-" ^ isa in
++  let have = List.map fst (Corpus.files q) in
++  let has kind r bwd = List.mem (Printf.sprintf "radix%d_z_%s%s_%s.c" r kind (if bwd then "_bwd" else "") isa) have in
++  let cell_ok (_n, ch) =
++    let r0 = List.hd ch and rl = List.nth ch (List.length ch - 1) in
++    List.for_all (fun b -> has "t0tp" r0 b && has "tlf" rl b && has "tlfi" rl b
++                           && List.for_all (fun r -> has "tmg" r b) ch) [ false; true ]
++  in
++  let cells = List.filter cell_ok (Ztt_drivers.cells ()) in
+   let p = print_string in
+-  p "/* auto-generated by emit_ztt_registry.exe (Ztt_drivers.cells) — do not edit.\n";
+-  p " * The functions listed here are the FUSED CODELETS of the pow2 ZTURN-T solution\n";
+-  p " * (generator/generated/fused_codelets/, README.md there): whole-transform\n";
+-  p " * functions with the stage kernels inlined, bound whole by ztt.h — the pow2\n";
+-  p " * solution's executable form and only that; the composable stage kernels in\n";
+-  p " * codelets/zil/avx2/ztt are the product (owner's ruling 2026-09-14). */\n";
+-  p "#ifndef VFFT_ZTT_REGISTRY_AVX2_H\n#define VFFT_ZTT_REGISTRY_AVX2_H\n#include <stddef.h>\n\n";
+-  p "/* the fused driver ABI: zin (natural packed z), zout (natural packed z), plane\n";
+-  p " * (2N doubles, 64-B; unused by the dest drivers), tw (ONE contiguous stream in\n";
+-  p " * stage order), rb (the run-base table, N/R0 entries), tile (the tile width in\n";
+-  p " * complexes, 0 = untiled: the mids with R*L <= tile run per tile) */\n";
+-  Printf.printf "typedef void (*vfft_ztt_fn)(%s);\n\n" Ztt_drivers.driver_params;
+-  p "/* the PLAIN (scrambled-class) driver ABI (docs/design/ztt_scrambled_design.md):\n";
+-  p " * zin (natural packed z), zout (the scrambled spectrum; zin == zout is the same\n";
+-  p " * driver), tw (ONE contiguous stream in stage order, the plain schedule's), tile\n";
+-  p " * (the stages with Len_s <= tile, the last one always, run per block). No plane,\n";
+-  p " * no run-base table. */\n";
+-  Printf.printf "typedef void (*vfft_zttp_fn)(%s);\n\n" Ztt_drivers.plain_params;
++  Printf.printf "/* auto-generated by emit_ztt_registry.exe --isa %s (Ztt_drivers.cells) — do not edit. */\n" isa;
++  Printf.printf "#ifndef VFFT_ZTT_REGISTRY_%s_H\n#define VFFT_ZTT_REGISTRY_%s_H\n#include <stddef.h>\n\n" up up;
++  p "#ifndef VFFT_ZTT_REGISTRY_TYPES_H   /* shared by every ISA's registry */\n#define VFFT_ZTT_REGISTRY_TYPES_H\n";
++  Printf.printf "typedef void (*vfft_ztt_fn)(%s);\n" Ztt_drivers.driver_params;
++  Printf.printf "typedef void (*vfft_zttp_fn)(%s);\n" Ztt_drivers.plain_params;
++  p "typedef struct {\n    int n, nf;\n    int chain[7];\n    vfft_ztt_fn fwd_dest, fwd_plane, bwd_dest, bwd_plane;\n    vfft_zttp_fn fwd_scr, bwd_scr;\n} vfft_ztt_cell_t;\n#endif\n\n";
+   List.iter
+     (fun (n, ch) ->
+-       List.iter
+-         (fun (bwd, dest) ->
+-            Printf.printf "extern void %s(%s);\n" (Ztt_drivers.driver_name ~isa n ch ~bwd ~dest) Ztt_drivers.driver_params)
++       List.iter (fun (bwd, dest) -> Printf.printf "extern void %s(%s);\n" (Ztt_drivers.driver_name ~isa n ch ~bwd ~dest) Ztt_drivers.driver_params)
+          [ false, true; false, false; true, true; true, false ];
+-       List.iter
+-         (fun bwd ->
+-            Printf.printf "extern void %s(%s);\n" (Ztt_drivers.plain_driver_name ~isa n ch ~bwd) Ztt_drivers.plain_params)
+-         [ false; true ])
++       List.iter (fun bwd -> Printf.printf "extern void %s(%s);\n" (Ztt_drivers.plain_driver_name ~isa n ch ~bwd) Ztt_drivers.plain_params) [ false; true ])
+     cells;
+-  p "\ntypedef struct {\n    int n, nf;\n    int chain[7];\n";
+-  p "    vfft_ztt_fn fwd_dest, fwd_plane, bwd_dest, bwd_plane;   /* natural order */\n";
+-  p "    vfft_zttp_fn fwd_scr, bwd_scr;                            /* the plain schedule: scrambled order */\n";
+-  p "} vfft_ztt_cell_t;\n\n";
+-  Printf.printf "#define VFFT_ZTT_NCELLS_AVX2 %d\n" (List.length cells);
+-  p "static const vfft_ztt_cell_t vfft_ztt_cells_avx2[VFFT_ZTT_NCELLS_AVX2] = {\n";
+-  List.iter
+-    (fun (n, ch) ->
+-       let nf = List.length ch in
+-       let chain = String.concat ", " (List.map string_of_int (ch @ List.init (7 - nf) (fun _ -> 0))) in
+-       Printf.printf
+-         "    { %d, %d, { %s }, %s, %s, %s, %s, %s, %s },\n"
+-         n
+-         nf
+-         chain
+-         (Ztt_drivers.driver_name ~isa n ch ~bwd:false ~dest:true)
+-         (Ztt_drivers.driver_name ~isa n ch ~bwd:false ~dest:false)
+-         (Ztt_drivers.driver_name ~isa n ch ~bwd:true ~dest:true)
+-         (Ztt_drivers.driver_name ~isa n ch ~bwd:true ~dest:false)
+-         (Ztt_drivers.plain_driver_name ~isa n ch ~bwd:false)
+-         (Ztt_drivers.plain_driver_name ~isa n ch ~bwd:true))
+-    cells;
+-  p "};\n\n#endif /* VFFT_ZTT_REGISTRY_AVX2_H */\n"
++  Printf.printf "\n#define VFFT_ZTT_NCELLS_%s %d\n" up (List.length cells);
++  if cells = []
++  then Printf.printf "static const vfft_ztt_cell_t *const vfft_ztt_cells_%s = 0;   /* no cell at %s */\n" isa isa
++  else (
++    Printf.printf "static const vfft_ztt_cell_t vfft_ztt_cells_%s[VFFT_ZTT_NCELLS_%s] = {\n" isa up;
++    List.iter
++      (fun (n, ch) ->
++         let nf = List.length ch in
++         let chain = String.concat ", " (List.map string_of_int (ch @ List.init (7 - nf) (fun _ -> 0))) in
++         Printf.printf "    { %d, %d, { %s }, %s, %s, %s, %s, %s, %s },\n" n nf chain
++           (Ztt_drivers.driver_name ~isa n ch ~bwd:false ~dest:true) (Ztt_drivers.driver_name ~isa n ch ~bwd:false ~dest:false)
++           (Ztt_drivers.driver_name ~isa n ch ~bwd:true ~dest:true) (Ztt_drivers.driver_name ~isa n ch ~bwd:true ~dest:false)
++           (Ztt_drivers.plain_driver_name ~isa n ch ~bwd:false) (Ztt_drivers.plain_driver_name ~isa n ch ~bwd:true))
++      cells;
++    p "};\n");
++  (* ISA-neutral aliases (VFFT_ZTT_NCELLS / VFFT_ZTT_CELLS) live in the hand-written
++     dispatcher generated/ztt_registry.h, so both ISA headers can share one TU *)
++  Printf.printf "\n#endif /* VFFT_ZTT_REGISTRY_%s_H */\n" up
+ ;;
+--- a/generated/dune
++++ b/generated/dune
+@@ -138,3 +138,19 @@
+   (with-stdout-to
+    ztt_registry_avx2.h
+    (run %{exe:../bin/emit_ztt_registry.exe} --isa avx2))))
++
++; PROTO: the avx512 IL + ztt registries
++(rule
++ (targets il_registry_avx512.h)
++ (deps %{exe:../bin/emit_il_registry.exe})
++ (mode promote)
++ (action
++  (with-stdout-to il_registry_avx512.h
++   (run %{exe:../bin/emit_il_registry.exe} --isa avx512))))
++(rule
++ (targets ztt_registry_avx512.h)
++ (deps %{exe:../bin/emit_ztt_registry.exe})
++ (mode promote)
++ (action
++  (with-stdout-to ztt_registry_avx512.h
++   (run %{exe:../bin/emit_ztt_registry.exe} --isa avx512))))

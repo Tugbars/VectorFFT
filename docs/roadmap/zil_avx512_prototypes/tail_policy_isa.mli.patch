@@ -1,0 +1,10 @@
+--- a/lib/kernel/isa.mli
++++ b/lib/kernel/isa.mli
+@@ -22,6 +22,7 @@
+ 
+ val avx512 : t
+ val avx2 : t
++val avx512vl256 : t
+ val scalar : t
+ val sse2 : t
+ val of_name : string -> t
