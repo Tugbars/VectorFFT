@@ -123,3 +123,6 @@ docs/design/exact_trig_constants.md
 !src/wisdom/**/*.txt
 # The merge writes a backup beside each shard (gauntlet merge); backups are local, never tracked.
 src/wisdom/**/*.bak_pre_merge_*
+
+# the KFR comparator DLL build.py --kfr copies beside the bench: the user's own KFR, GPLv2/commercial, never committed
+gauntlet/kfr_capi.dll

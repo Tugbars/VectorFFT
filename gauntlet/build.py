@@ -31,6 +31,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -430,22 +431,22 @@ def find_fftw():
 
 
 def find_kfr():
-    """Locate a KFR checkout or install (2026-09-25, for the --kfr arm).
-    KFR_ROOT first (a build tree: <root>/include/kfr/dft.hpp and the static
-    libs under <root>/lib or <root>/build/lib), then the usual places.
-    Returns (inc_dir, lib_dir) or (None, None). KFR is GPLv2 or commercial:
-    it is never shipped with this tree, the user supplies it."""
+    """Locate a KFR release package (for the --kfr arm): KFR_ROOT first, then
+    the usual places. A package holds include/kfr/capi.h and the C API's
+    shared library (bin/kfr_capi.dll on Windows, lib/libkfr_capi.so or .dylib
+    elsewhere). Returns (inc_dir, shared_lib) or (None, None). KFR is GPLv2 or
+    commercial: it is never shipped with this tree, the user supplies it."""
     roots = []
     if os.environ.get('KFR_ROOT'):
         roots.append(Path(os.environ['KFR_ROOT']))
-    roots += [Path(r'C:\kfr'), Path.home() / 'kfr',
-              Path(r'C:\vcpkg\installed\x64-windows'), Path('/usr/local'), Path('/usr')]
+    roots += [Path(r'C:\kfr'), Path.home() / 'kfr', Path('/usr/local'), Path('/usr')]
     for root in roots:
         inc = root / 'include'
-        if not (inc / 'kfr' / 'dft.hpp').is_file():
+        if not (inc / 'kfr' / 'capi.h').is_file():
             continue
-        for lib in (root / 'lib', root / 'build' / 'lib', root / 'build'):
-            if any((lib / n).is_file() for n in ('libkfr_dft.a', 'kfr_dft.lib', 'libkfr_dft.so')):
+        for lib in (root / 'bin' / 'kfr_capi.dll', root / 'lib' / 'libkfr_capi.so',
+                    root / 'lib' / 'libkfr_capi.dylib'):
+            if lib.is_file():
                 return inc, lib
     return None, None
 
@@ -456,25 +457,23 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
     fftw_inc, fftw_lib, fftw_dll = (None, None, None)
     kfr_inc, kfr_lib = (None, None)
     if kfr:
-        # the KFR arm (2026-09-25): a C++ TU (gauntlet/kfr_arm.cpp) behind a C
-        # interface, compiled and linked with the Clang toolchain KFR is built
-        # for; a mixed gcc/clang C++ runtime is refused rather than guessed.
-        if not tc['is_clang']:
-            print('  [error] --kfr needs a Clang toolchain: set CC=clang (KFR is a C++ '
-                  'library built for Clang; its runtime must match the bench\'s)',
-                  file=sys.stderr)
-            sys.exit(2)
+        # the KFR arm: gauntlet/kfr_arm.c over KFR's C API (kfr/capi.h and the
+        # kfr_capi shared library of KFR's release package, built by KFR's own
+        # Clang build). The bench stays one build with our compiler.
         if not mkl:
             print('  [error] --kfr rides the MKL bench cell: build with --mkl too',
                   file=sys.stderr)
             sys.exit(2)
         kfr_inc, kfr_lib = find_kfr()
         if not kfr_inc or not kfr_lib:
-            print('  [error] --kfr requested but KFR not found: set KFR_ROOT to a build '
-                  'tree with include/kfr/dft.hpp and lib/libkfr_dft.a', file=sys.stderr)
+            print('  [error] --kfr requested but KFR not found: set KFR_ROOT to a KFR '
+                  'release package (include/kfr/capi.h and bin/kfr_capi.dll)', file=sys.stderr)
             sys.exit(2)
         print(f'  [kfr] include: {kfr_inc}')
-        print(f'  [kfr] libs:    {kfr_lib}')
+        print(f'  [kfr] library: {kfr_lib}')
+        if tc['is_windows']:
+            # the DLL beside the bench, where the loader finds it
+            shutil.copy2(kfr_lib, Path(out_bin).parent / kfr_lib.name)
     if mkl:
         mkl_inc, mkl_lib = find_mkl()
         if not mkl_inc or not mkl_lib:
@@ -495,7 +494,7 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
 
     if tc['is_msvc_style']:
         if kfr:
-            print('  [error] --kfr is wired for the gcc-style (clang) path only', file=sys.stderr)
+            print('  [error] --kfr is wired for the gcc-style path only', file=sys.stderr)
             sys.exit(2)
         # MSVC-style: /I instead of -I, /Fe for output
         flags = ['/O2', '/arch:AVX2', '/fp:fast', '/wd4244', '/wd4267']
@@ -573,8 +572,7 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
         flags = flags + ['-DVFFT_USE_JIT']   # bench resolves via vfft_proto_plan_jit_fwd
     base_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])]
     if kfr:
-        base_srcs.append(str(HERE / 'kfr_arm.cpp'))   # the C++ shim, compiled as C++ by extension
-        tc['link_cc'] = tc['cxx']                     # the C++ driver links the C++ runtime in
+        base_srcs.append(str(HERE / 'kfr_arm.c'))     # the shim over KFR's C API
     cflags = flags + build_includes()
 
     # Everything from here down is LINK input. It is kept separate from cflags
@@ -601,7 +599,9 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
         else:
             link_args += [f'-L{fftw_lib}', '-lfftw3', '-lm']
     if kfr:
-        link_args += [f'-L{kfr_lib}', '-lkfr_dft']   # KFR's static DFT library
+        # the C API's shared library: GNU ld links a DLL directly
+        link_args += ([str(kfr_lib)] if tc['is_windows'] else
+                      [f'-L{kfr_lib.parent}', '-lkfr_capi'])
     # -lm for gcc (mingw on Windows has libm.a; Linux needs it). NOT for MSVC
     # or icx-on-Windows (MSVC CRT supplies libm).
     if not tc['is_msvc_style'] and not (tc['is_windows'] and tc['is_icx']):
@@ -745,9 +745,9 @@ def main():
                     help='Link FFTW3 (vcpkg double-precision). Adds '
                          '-DVFFT_HAS_FFTW and fftw3.lib.')
     ap.add_argument('--kfr', action='store_true',
-                    help='Add the KFR comparator arm (gauntlet/kfr_arm.cpp, C++). '
-                         'Needs CC=clang and KFR_ROOT (or a KFR checkout in the '
-                         'usual places); implies --mkl. Wired 2026-09-25, untested.')
+                    help='Add the KFR comparator arm (gauntlet/kfr_arm.c, over KFR\'s '
+                         'C API). Needs KFR_ROOT pointing at a KFR release package '
+                         '(or one in the usual places) and --mkl.')
     ap.add_argument('--jit', action='store_true',
                     help='JIT build config: defines VFFT_USE_JIT (bench resolves '
                          'plans via vfft_proto_plan_jit_fwd) + points the JIT '
