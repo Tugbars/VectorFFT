@@ -1306,21 +1306,25 @@ let emit
                 (render_store nisa a (Printf.sprintf "z%d" e.tag))))
         outs
   in
-  (* Remainder policy at per > 2 (docs/roadmap/zil_avx512_design.md §8.6):
-     measured on Emerald Rapids, the ymm+xmm LADDER has the lowest average
-     tail cost, so it is the default; the corner-turned kinds keep the
-     per-column xmm arm with the lane offset ("narrowfix") because a ymm
-     rung would store two columns through a one-column turn address.
-     VFFT_TAIL512 overrides (recorded in the provenance Env line). At
-     vw = 4 the shipped behaviour is untouched. *)
+  (* Remainder policy at per > 2 — the law is written once, as L10 in
+     src/core/planning/policy.h (vfft_policy_il_tail_arm); this is its
+     implementation, and docs/design/avx512_tail_handling.md is the record of
+     how it was chosen. Default "ladder_m3": 1 leftover column -> one xmm pass,
+     2 -> one ymm pass, 3 -> one k-masked zmm pass (the ladder loses to masked
+     at 3 on large radices, masked loses at 1-2 everywhere). The corner-turned
+     kinds keep the per-column xmm arm with the lane offset ("narrowfix"): a
+     ymm rung would store two columns through a one-column turn address.
+     VFFT_TAIL512 overrides (recorded in the provenance Env line). At vw = 4
+     the shipped behaviour is untouched. *)
   let tail_policy =
     if vw <= 4 then "narrow"
     else match Sys.getenv_opt "VFFT_TAIL512" with
       | Some s -> s
-      | None -> if kind = N1T || ctx.st_turn then "narrowfix" else "ladder"
+      | None -> if kind = N1T || ctx.st_turn then "narrowfix" else "ladder_m3"
   in
   let body_n = Buffer.create 2048 in
   let body_y = Buffer.create 2048 in
+  let body_m = Buffer.create 2048 in
   (match tail_policy with
    | "masked" -> tail_arm ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") ~lane_off:false body_n
    | "ladder" ->
@@ -1330,6 +1334,10 @@ let emit
      tail_arm ~nisa:Isa.avx512vl256 ~msuf:"_y" ~mode:(Isa.LS_masked "_tm") ~lane_off:false body_y;
      tail_arm ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") ~lane_off:false body_n
    | "zunmasked" -> tail_arm ~nisa:isa ~msuf:"" ~mode:Isa.LS_vector ~lane_off:false body_n
+   | "ladder_m3" ->
+     tail_arm ~nisa:Isa.avx2 ~msuf:"_y" ~mode:Isa.LS_vector ~lane_off:true body_y;
+     tail_arm ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:true body_n;
+     tail_arm ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") ~lane_off:false body_m
    | "narrowfix" -> tail_arm ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:true body_n
    | _ (* narrow: the shipped avx2 behaviour, byte-identical at vw=4 *) ->
      tail_arm ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:false body_n);
@@ -1443,7 +1451,7 @@ let emit
     if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"]) then (
     Buffer.add_string buf (Isa.im_mask_decl Isa.sse2 "_M_IM_n");
     Buffer.add_string buf "  /* tail twin */\n");
-    if tail_policy = "ladder" || tail_policy = "hyb2" then (
+    if List.mem tail_policy ["ladder"; "ladder_m3"; "hyb2"] then (
     Buffer.add_string buf (Isa.im_mask_decl Isa.avx2 "_M_IM_y");
     Buffer.add_string buf "  /* ymm tail twin */\n"))
   else (
@@ -1452,7 +1460,7 @@ let emit
     if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"]) then (
     Buffer.add_string buf (Isa.re_mask_decl Isa.sse2 "_M_RE_n");
     Buffer.add_string buf "  /* tail twin */\n");
-    if tail_policy = "ladder" || tail_policy = "hyb2" then (
+    if List.mem tail_policy ["ladder"; "ladder_m3"; "hyb2"] then (
     Buffer.add_string buf (Isa.re_mask_decl Isa.avx2 "_M_RE_y");
     Buffer.add_string buf "  /* ymm tail twin */\n"));
   Buffer.add_string buf (emit_const_decls isa tbl);
@@ -1696,7 +1704,7 @@ let emit
        Buffer.add_string buf (Printf.sprintf "    if (k < %s) {  /* MEASUREMENT ONLY: unmasked zmm tail (overruns) */\n" cnt);
        Buffer.add_buffer buf body_n;
        Buffer.add_string buf "    }\n"
-     | "ladder" ->
+     | "ladder" | "ladder_m3" ->
        if kind = T2 && ctx.tw_gen2 then
          Buffer.add_string buf
            (Printf.sprintf "    %s\n    %s\n    %s\n    %s\n"
@@ -1704,6 +1712,11 @@ let emit
               (Isa.const_decl Isa.avx2 "_wgs_y" (Isa.loadu_pd Isa.avx2 (Printf.sprintf "tw_im[%d]" vw)))
               (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
               (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
+       if tail_policy = "ladder_m3" then (
+         Buffer.add_string buf
+           (Printf.sprintf "    if (%s - k == %d) {  /* 3 leftover complex: ONE k-masked zmm pass (policy.h L10) */\n        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(%s - k))) - 1u);\n" cnt (per - 1) cnt);
+         Buffer.add_buffer buf body_m;
+         Buffer.add_string buf (Printf.sprintf "        k = %s;\n    }\n" cnt));
        Buffer.add_string buf (Printf.sprintf "    if (k + 2 <= %s) {  /* ladder: ymm pass, 2 complex */\n" cnt);
        Buffer.add_buffer buf body_y;
        Buffer.add_string buf "        k += 2;\n    }\n";

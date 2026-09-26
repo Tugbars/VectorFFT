@@ -650,6 +650,11 @@ policy, ZTURN-T at VW=8, k1 mono, corpus/registry ISA) are merged into
   the base and the merged generator, every registry emitter except the IL one
   (additive only) prints the same bytes, and the 30 avx2 fused drivers
   regenerate unchanged.
+- **Tail policy (D1) decided later the same day:** `ladder_m3`, now L10 in `policy.h`;
+  the study and numbers are `docs/design/avx512_tail_handling.md`. The avx512 tree was
+  regenerated under it and re-recorded (GATE PASS, every avx512 folder 100%).
+- **Correction:** 116 of the avx512 files compile only with the build's `-m` flags (their
+  static helper bodies carry no target attribute; the AVX2 tree has the same gap).
 - **Verification of the avx512 kernels**: twin gate over the 535 non-turned kinds
   516 bitwise equal to their AVX2 twins and 19 blocked forms within 2.3e-16, 0
   FAIL; the 137 turned kinds byte-identical to the set that passed the bitwise

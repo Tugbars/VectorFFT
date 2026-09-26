@@ -101,6 +101,56 @@ void radix5_z_t2csg_bwd_avx512(
     const __m256d _wgs_y = _mm256_loadu_pd(&tw_im[8]);
     const __m128d _wgc_n = _mm_loadu_pd(&tw_im[0]);
     const __m128d _wgs_n = _mm_loadu_pd(&tw_im[8]);
+    if (count - k == 3) {  /* 3 leftover complex: ONE k-masked zmm pass (policy.h L10) */
+        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(count - k))) - 1u);
+        const double *twp = tw_re + (k / 4) * (size_t)16;
+        const __m512d _t1c = _mm512_maskz_loadu_pd(_tm, &twp[0]);
+        const __m512d _t1s = _mm512_maskz_loadu_pd(_tm, &twp[8]);
+        const __m512d _wc1 = _mm512_fnmadd_pd(_t1s, _wgs, _mm512_mul_pd(_t1c, _wgc));
+        const __m512d _ws1 = _mm512_fmadd_pd(_t1c, _wgs, _mm512_mul_pd(_t1s, _wgc));
+        const __m512d _wc2 = _mm512_fnmadd_pd(_ws1, _ws1, _mm512_mul_pd(_wc1, _wc1));
+        const __m512d _ws2 = _mm512_fmadd_pd(_wc1, _ws1, _mm512_mul_pd(_ws1, _wc1));
+        const __m512d _wc3 = _mm512_fnmadd_pd(_ws2, _ws1, _mm512_mul_pd(_wc2, _wc1));
+        const __m512d _ws3 = _mm512_fmadd_pd(_wc2, _ws1, _mm512_mul_pd(_ws2, _wc1));
+        const __m512d _wc4 = _mm512_fnmadd_pd(_ws2, _ws2, _mm512_mul_pd(_wc2, _wc2));
+        const __m512d _ws4 = _mm512_fmadd_pd(_wc2, _ws2, _mm512_mul_pd(_ws2, _wc2));
+        /* gen2: W^1 = T1[pair] x T2, 3 legs derived */
+        const __m512d z0 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)0*Ls + (size_t)k*Gs)]);
+        const __m512d z1 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)1*Ls + (size_t)k*Gs)]);
+        const __m512d z3 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)2*Ls + (size_t)k*Gs)]);
+        const __m512d z5 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)3*Ls + (size_t)k*Gs)]);
+        const __m512d z7 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)4*Ls + (size_t)k*Gs)]);
+        const __m512d z2 = _mm512_fmadd_pd(_wc1, z1, _mm512_mul_pd(_ws1, _mm512_permute_pd(z1, 0x55)));
+        const __m512d z4 = _mm512_fmadd_pd(_wc2, z3, _mm512_mul_pd(_ws2, _mm512_permute_pd(z3, 0x55)));
+        const __m512d z6 = _mm512_fmadd_pd(_wc3, z5, _mm512_mul_pd(_ws3, _mm512_permute_pd(z5, 0x55)));
+        const __m512d z13 = _mm512_sub_pd(z4, z6);
+        const __m512d z10 = _mm512_add_pd(z4, z6);
+        const __m512d z14 = _mm512_xor_pd(_mm512_permute_pd(z13, 0x55), _M_RE);
+        const __m512d z8 = _mm512_fmadd_pd(_wc4, z7, _mm512_mul_pd(_ws4, _mm512_permute_pd(z7, 0x55)));
+        const __m512d z11 = _mm512_sub_pd(z2, z8);
+        const __m512d z9 = _mm512_add_pd(z2, z8);
+        const __m512d z12 = _mm512_xor_pd(_mm512_permute_pd(z11, 0x55), _M_RE);
+        const __m512d z17 = _mm512_fmadd_pd(_mm512_set1_pd(0.30901699437494745), z9, z0);
+        const __m512d z18 = _mm512_mul_pd(_ZW0_c, z12);
+        const __m512d z23 = _mm512_fnmadd_pd(_mm512_set1_pd(0.80901699437494734), z9, z0);
+        const __m512d z24 = _mm512_mul_pd(_ZW1_c, z12);
+        const __m512d z15 = _mm512_add_pd(z0, z9);
+        const __m512d z16 = _mm512_add_pd(z15, z10);
+        const __m512d z19 = _mm512_fnmadd_pd(_mm512_set1_pd(0.80901699437494734), z10, z17);
+        const __m512d z20 = _mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247325), z14, z18);
+        const __m512d z21 = _mm512_sub_pd(z19, z20);
+        const __m512d z22 = _mm512_add_pd(z19, z20);
+        const __m512d z25 = _mm512_fmadd_pd(_mm512_set1_pd(0.30901699437494723), z10, z23);
+        const __m512d z26 = _mm512_fnmadd_pd(_mm512_set1_pd(0.95105651629515364), z14, z24);
+        const __m512d z27 = _mm512_sub_pd(z25, z26);
+        const __m512d z28 = _mm512_add_pd(z25, z26);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)0*OLs + (size_t)k*OGs)], _tm, z16);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)1*OLs + (size_t)k*OGs)], _tm, z22);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)2*OLs + (size_t)k*OGs)], _tm, z28);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)3*OLs + (size_t)k*OGs)], _tm, z27);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)4*OLs + (size_t)k*OGs)], _tm, z21);
+        k = count;
+    }
     if (k + 2 <= count) {  /* ladder: ymm pass, 2 complex */
         const double *twp = tw_re + (k / 4) * (size_t)16 + 2 * (k % 4);
         const __m256d _t1c_y = _mm256_loadu_pd(&twp[0]);

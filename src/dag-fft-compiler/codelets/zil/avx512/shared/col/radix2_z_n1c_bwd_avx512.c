@@ -40,6 +40,16 @@ void radix2_z_n1c_bwd_avx512(
         _mm512_storeu_pd(&zout[2*((size_t)0*OLs + k)], z3);
         _mm512_storeu_pd(&zout[2*((size_t)1*OLs + k)], z2);
     }
+    if (count - k == 3) {  /* 3 leftover complex: ONE k-masked zmm pass (policy.h L10) */
+        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(count - k))) - 1u);
+        const __m512d z0 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)0*Ls + k)]);
+        const __m512d z1 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)1*Ls + k)]);
+        const __m512d z2 = _mm512_sub_pd(z0, z1);
+        const __m512d z3 = _mm512_add_pd(z0, z1);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)0*OLs + k)], _tm, z3);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)1*OLs + k)], _tm, z2);
+        k = count;
+    }
     if (k + 2 <= count) {  /* ladder: ymm pass, 2 complex */
         const __m256d z0 = _mm256_loadu_pd(&zin[2*((size_t)0*Ls + k)]);
         const __m256d z1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k)]);

@@ -462,4 +462,43 @@ static inline int vfft_policy_exceeds_l3(long bytes)
     return l3 <= 0 || bytes > l3;
 }
 
+/* ── L10. the IL REMAINDER (tail) law at 4 complex per vector ──────────
+ * An IL codelet's column loop runs whole vectors; the 1..3 columns left over
+ * when count % 4 != 0 at AVX-512 (per = 4 complex per zmm) run the TAIL.
+ * The tail is COMPILED INTO each codelet by the generator, so this law is
+ * enforced at emission, not at run time: gen/c2c_il.ml (tail_policy,
+ * "ladder_m3") is its one implementation and must follow this table.
+ * Chosen by measurement on Emerald Rapids (every arm bit-identical; the
+ * study: docs/design/avx512_tail_handling.md):
+ *
+ *   leftover  arm                      why
+ *   1         one xmm pass (128-bit)   masked zmm pays the full vector for one
+ *                                      column: 1.3-1.9x slower, 1.8x at K=1
+ *   2         one ymm pass (256-bit)   beats masked zmm and two xmm passes
+ *   3         one k-masked zmm pass    the ymm+xmm ladder loses 25% at large
+ *                                      radices (43/23); masked ties it at 32
+ *
+ * Corner-turned kinds (n1t, t2t, t2tg, the *r / *tan row twins) take the
+ * per-column xmm arm at every leftover: their store addresses one column per
+ * vector, so a two-column ymm rung cannot store through it.
+ * At AVX2 (per = 2) the leftover is at most one column: one xmm pass, the
+ * shipped behaviour. */
+typedef enum {
+    VFFT_TAIL_NONE = 0,   /* count % per == 0: no tail */
+    VFFT_TAIL_XMM,        /* one 128-bit pass per leftover column */
+    VFFT_TAIL_YMM,        /* one 256-bit pass: 2 columns */
+    VFFT_TAIL_ZMM_MASKED  /* one k-masked 512-bit pass */
+} vfft_tail_arm_t;
+
+/* The arm that serves the FIRST leftover pass of a codelet with `per`
+ * complex per vector and `rem` = count % per leftover columns (after it the
+ * next arm is the law applied to what remains: 3 -> masked, done; 2 -> ymm,
+ * done; 1 -> xmm). `turned` = a corner-turned kind. */
+static inline vfft_tail_arm_t vfft_policy_il_tail_arm(int per, int rem, int turned)
+{
+    if (rem <= 0) return VFFT_TAIL_NONE;
+    if (per <= 2 || turned || rem == 1) return VFFT_TAIL_XMM;
+    return rem == 2 ? VFFT_TAIL_YMM : VFFT_TAIL_ZMM_MASKED;
+}
+
 #endif /* VFFT_PLANNING_POLICY_H */
