@@ -75,8 +75,18 @@ long vfft_ilnd_mt_passes(void);     /* the rank-3 tier's MT engagement counter *
 #include "fft2d_r2c.h"          /* --2dr2c: 2D real plan + execute (stride_plan_2d_r2c_from) */
 #include "wisdom2_fftnd.h"      /* --2d/--2dr2c: rank>=2 wisdom structs + legacy loaders */
 #include "zr2c.h"               /* --zr2c: D2 interleaved real folds (zr2c.h, Phase 1) */
+#include "build_isa.h"          /* the build's ISA: the registries below follow it */
+#if defined(VFFT_BUILD_ISA_AVX512)
+#include "rfft_registry_avx512.h" /* --r2c: rfft_codelets_t + rfft_register_all_<isa> */
+#include "c2r_registry_avx512.h"  /* --c2r: c2r_register_all_<isa> (r2cb + hc2hc_dif_bwd) */
+#define _BENCH_RFFT_REGISTER rfft_register_all_avx512
+#define _BENCH_C2R_REGISTER  c2r_register_all_avx512
+#else
 #include "rfft_registry_avx2.h" /* --r2c: rfft_codelets_t + rfft_register_all_avx2 */
 #include "c2r_registry_avx2.h"  /* --c2r: c2r_register_all_avx2 (r2cb + hc2hc_dif_bwd) */
+#define _BENCH_RFFT_REGISTER rfft_register_all_avx2
+#define _BENCH_C2R_REGISTER  c2r_register_all_avx2
+#endif
 #include "r2c_dispatch.h"       /* --r2c: vfft_r2c_plan_create / execute (JIT-wired) */
 #include "c2r_dispatch.h"       /* --c2r: vfft_c2r_plan_create / execute (wisdom + JIT) */
 #include "vfft.h"               /* K=1 kind-4 cascade cells: public front door
@@ -5388,7 +5398,7 @@ int main(int argc, char **argv)
     {
         rfft_codelets_t rreg;
         memset(&rreg, 0, sizeof rreg);
-        rfft_register_all_avx2(&rreg);
+        _BENCH_RFFT_REGISTER(&rreg);
         static vfft_proto_wisdom_t rwis, cwis;
         const char *rfw = "../../src/dag-fft-compiler/generator/generated/rfft_wisdom.txt";
         if (vfft_proto_wisdom_load(&rwis, rfw) == 0)
@@ -5427,7 +5437,7 @@ int main(int argc, char **argv)
     {
         rfft_codelets_t rreg;
         memset(&rreg, 0, sizeof rreg);
-        rfft_register_all_avx2(&rreg);
+        _BENCH_RFFT_REGISTER(&rreg);
         static vfft_proto_wisdom_t rwis2, cwis2;
         const char *rfw = "../../src/dag-fft-compiler/generator/generated/rfft_wisdom.txt";
         if (vfft_proto_wisdom_load(&rwis2, rfw) == 0)
@@ -5478,8 +5488,8 @@ int main(int argc, char **argv)
          * codelets (the packed c2r). SPLIT path uses the c2c registry (&reg). */
         rfft_codelets_t rreg;
         memset(&rreg, 0, sizeof rreg);
-        rfft_register_all_avx2(&rreg);
-        c2r_register_all_avx2(&rreg);
+        _BENCH_RFFT_REGISTER(&rreg);
+        _BENCH_C2R_REGISTER(&rreg);
         static vfft_proto_wisdom_t c2rwis, c2cwis;
         const char *c2rw = "../../src/dag-fft-compiler/generator/generated/c2r_wisdom.txt";
         int hpk = (vfft_proto_wisdom_load(&c2rwis, c2rw) == 0);
@@ -6019,7 +6029,7 @@ int main(int argc, char **argv)
         vfft_proto_exec_fn fn = NULL;
         const char *path = "generic";
 #ifdef VFFT_USE_JIT
-        int baked = (vfft_proto_lookup_fwd_avx2(plan) != NULL);
+        int baked = (_vfft_proto_lookup_fwd(plan) != NULL);   /* the build ISA's set */
         fn = vfft_proto_plan_jit_fwd(plan);
         path = fn ? (baked ? "baked" : "JIT") : "generic";
 #endif

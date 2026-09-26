@@ -321,14 +321,9 @@ static inline vfft_oop11_fn vfft_oop_t1_ul_l3_fn(int R)
  * boundary lattices (swap identity), unnormalized inverse, output (re,im).
  * ABI: (in_z, unused, out_z, unused, ...). Split bwd needs NO codelet —
  * call the split fwd with re/im pointer pairs swapped. */
-#if VFFT_OOP_GROUPW == 4u
-extern void vfft_k1_mono64_8x8_il_fwd_avx2(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-extern void vfft_k1_mono64_8x8_il_bwd_avx2(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-#endif
+#include "il_isa.h"   /* the IL registry and kernel names at the build's ISA */
+VFFT_IL_DECL(VFFT_IL_SYM(vfft_k1_mono64_8x8_il_fwd))
+VFFT_IL_DECL(VFFT_IL_SYM(vfft_k1_mono64_8x8_il_bwd))
 
 static inline vfft_oop11_fn vfft_k1_mono_pair_fn(int N, int R1)
 {
@@ -352,12 +347,8 @@ static inline vfft_oop11_fn vfft_k1_mono_pair_fn(int N, int R1)
  * Out-of-place serves the __restrict__ n1 kernels; IN-PLACE serves the
  * alias-tolerant n1c twins (vfft_k1_mono_ilc_fn), same math, no restrict,
  * so z -> z is legal by construction (n1c exists at every N in the set). */
-#ifndef VFFT_IL_N1_PAIR_RADICES
-#include "il_registry_avx2.h"   /* the generated radix lists (also pulled by il2p.h) */
-#endif
 static inline int vfft_k1_mono_il_nforms(int N)
 {
-#if VFFT_OOP_GROUPW == 4u
     switch (N)
     {
 #define C(R) case R:
@@ -366,31 +357,22 @@ static inline int vfft_k1_mono_il_nforms(int N)
         return N == 64 ? 2 : 1;
     default: return 0;
     }
-#else
-    (void)N;
-    return 0;
-#endif
 }
 
 static inline vfft_oop11_fn vfft_k1_mono_il_form_fn(int N, int form, int bwd)
 {
-#if VFFT_OOP_GROUPW == 4u
     if (form == 1)
-        return N == 64 ? (bwd ? vfft_k1_mono64_8x8_il_bwd_avx2
-                              : vfft_k1_mono64_8x8_il_fwd_avx2)
+        return N == 64 ? (bwd ? VFFT_IL_SYM(vfft_k1_mono64_8x8_il_bwd)
+                              : VFFT_IL_SYM(vfft_k1_mono64_8x8_il_fwd))
                        : 0;
     if (form != 0) return 0;
     switch (N)
     {
-#define C(R) case R: return bwd ? radix##R##_z_n1_bwd_avx2 : radix##R##_z_n1_fwd_avx2;
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_n1_bwd) : VFFT_IL_SYM(radix##R##_z_n1_fwd);
     VFFT_IL_N1_PAIR_RADICES(C)
 #undef C
     default: return 0;
     }
-#else
-    (void)N; (void)form; (void)bwd;
-    return 0;
-#endif
 }
 
 /* form 0 — the existence probe every route table and the planner use */
@@ -402,18 +384,13 @@ static inline vfft_oop11_fn vfft_k1_mono_il_fn(int N, int bwd)
 /* the IN-PLACE solo: alias-tolerant n1c, both directions */
 static inline vfft_oop11_fn vfft_k1_mono_ilc_fn(int N, int bwd)
 {
-#if VFFT_OOP_GROUPW == 4u
     switch (N)
     {
-#define C(R) case R: return bwd ? radix##R##_z_n1c_bwd_avx2 : radix##R##_z_n1c_fwd_avx2;
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_n1c_bwd) : VFFT_IL_SYM(radix##R##_z_n1c_fwd);
     VFFT_IL_N1C_PAIR_RADICES(C)
 #undef C
     default: return 0;
     }
-#else
-    (void)N; (void)bwd;
-    return 0;
-#endif
 }
 
 /* the BATCHED solo: n1ccs = the n1c leaf with column-stride
@@ -425,18 +402,13 @@ static inline vfft_oop11_fn vfft_k1_mono_ilc_fn(int N, int bwd)
  * corpus has no pair at R -- the registry's PAIR list is the resolver. */
 static inline vfft_oop11_fn vfft_il_n1ccs_fn(int R, int bwd)
 {
-#if VFFT_OOP_GROUPW == 4u
     switch (R)
     {
-#define C(r) case r: return bwd ? radix##r##_z_n1ccs_bwd_avx2 : radix##r##_z_n1ccs_fwd_avx2;
+#define C(r) case r: return bwd ? VFFT_IL_SYM(radix##r##_z_n1ccs_bwd) : VFFT_IL_SYM(radix##r##_z_n1ccs_fwd);
     VFFT_IL_N1CCS_PAIR_RADICES(C)
 #undef C
     default: return 0;
     }
-#else
-    (void)R; (void)bwd;
-    return 0;
-#endif
 }
 
 #endif /* VFFT_OOP_LEAF_REGISTRY_H */

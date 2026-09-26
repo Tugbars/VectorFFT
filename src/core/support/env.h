@@ -242,13 +242,7 @@ static inline void stride_free_huge(void *p, size_t bytes)
 #define STRIDE_VERSION_PATCH 0
 #define STRIDE_VERSION_STRING "0.1.0"
 
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
-#define STRIDE_ISA_NAME "avx512"
-#elif defined(__AVX2__)
-#define STRIDE_ISA_NAME "avx2"
-#else
-#define STRIDE_ISA_NAME "scalar"
-#endif
+#include "build_isa.h"   /* STRIDE_ISA_NAME: the build's ISA, decided once */
 
 static int _stride_verbose = 0;
 

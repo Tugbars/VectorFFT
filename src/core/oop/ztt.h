@@ -73,35 +73,42 @@
  * tlfi and the plain t0d/tmgd/tld/tldb in codelets/zil/avx2/ztt)
  * are the product every other solution is built from; a fused codelet cannot
  * be recombined. README.md beside the fused files. */
-#include "ztt_registry_avx2.h"   /* the cells and their fused codelets (generated) */
+#include "il_isa.h"
+#include VFFT_ZTT_REGISTRY_H     /* the cells and their fused codelets (generated, per ISA) */
+#if defined(VFFT_BUILD_ISA_AVX512)
+#define VFFT_ZTT_NCELLS VFFT_ZTT_NCELLS_AVX512
+#define vfft_ztt_cells  vfft_ztt_cells_avx512
+#else
+#define VFFT_ZTT_NCELLS VFFT_ZTT_NCELLS_AVX2
+#define vfft_ztt_cells  vfft_ztt_cells_avx2
+#endif
 #include "ztt_qw16384.h"         /* the baked quarter-wave (generated)            */
 /* THE STAGE KERNELS, for the STAGED executor (docs/design/ztt_odd_design.md):
  * a cell with no fused codelet — every 2^a*odd cell in the odd
  * band, or a pow2 cell under the gate's force — runs its stage table, one
  * kernel call per (stage, block), each kind's exported function in the frozen
  * 11-arg z ABI with the group loop inside it. The radix lists come from the
- * corpus through il_registry_avx2.h, so a chain whose radix has no kernel is
+ * corpus through il_registry_<isa>.h, so a chain whose radix has no kernel is
  * refused at create, never at run time. The odd radices 3/5/7/9/15 exist for
  * the MIDS only (tmg, tmgb, tmgd): the ingest and the terminators are lane
  * lattices and stay 4/8 — the odd radix is always a mid. */
-#include "il_registry_avx2.h"
 typedef void (*vfft_ztt_kfn)(const double *, const double *, double *, double *,
                              const double *, const double *,
                              size_t, size_t, size_t, size_t, size_t);
 #define _ZTT_KFN2(NAME, KIND, MF, MB) static inline vfft_ztt_kfn NAME(int R, int bwd) {     if (bwd) { switch (R) { MB(_ZTT_KB_##KIND) default: return 0; } }     switch (R) { MF(_ZTT_KF_##KIND) default: return 0; } }
-#define _ZTT_KF_t0tp(R) case R: return radix##R##_z_t0tp_fwd_avx2;
-#define _ZTT_KB_t0tp(R) case R: return radix##R##_z_t0tp_bwd_avx2;
-#define _ZTT_KF_tmg(R)  case R: return radix##R##_z_tmg_fwd_avx2;
-#define _ZTT_KB_tmg(R)  case R: return radix##R##_z_tmg_bwd_avx2;
-#define _ZTT_KF_tlf(R)  case R: return radix##R##_z_tlf_fwd_avx2;
-#define _ZTT_KB_tlf(R)  case R: return radix##R##_z_tlf_bwd_avx2;
-#define _ZTT_KF_tlfi(R) case R: return radix##R##_z_tlfi_fwd_avx2;
-#define _ZTT_KB_tlfi(R) case R: return radix##R##_z_tlfi_bwd_avx2;
-#define _ZTT_KF_tld(R)  case R: return radix##R##_z_tld_fwd_avx2;
-#define _ZTT_KB_tld(R)  case R: return radix##R##_z_tld_bwd_avx2;
-#define _ZTT_KF_t0d(R)  case R: return radix##R##_z_t0d_fwd_avx2;
+#define _ZTT_KF_t0tp(R) case R: return VFFT_IL_SYM(radix##R##_z_t0tp_fwd);
+#define _ZTT_KB_t0tp(R) case R: return VFFT_IL_SYM(radix##R##_z_t0tp_bwd);
+#define _ZTT_KF_tmg(R)  case R: return VFFT_IL_SYM(radix##R##_z_tmg_fwd);
+#define _ZTT_KB_tmg(R)  case R: return VFFT_IL_SYM(radix##R##_z_tmg_bwd);
+#define _ZTT_KF_tlf(R)  case R: return VFFT_IL_SYM(radix##R##_z_tlf_fwd);
+#define _ZTT_KB_tlf(R)  case R: return VFFT_IL_SYM(radix##R##_z_tlf_bwd);
+#define _ZTT_KF_tlfi(R) case R: return VFFT_IL_SYM(radix##R##_z_tlfi_fwd);
+#define _ZTT_KB_tlfi(R) case R: return VFFT_IL_SYM(radix##R##_z_tlfi_bwd);
+#define _ZTT_KF_tld(R)  case R: return VFFT_IL_SYM(radix##R##_z_tld_fwd);
+#define _ZTT_KB_tld(R)  case R: return VFFT_IL_SYM(radix##R##_z_tld_bwd);
+#define _ZTT_KF_t0d(R)  case R: return VFFT_IL_SYM(radix##R##_z_t0d_fwd);
 #define _ZTT_KB_t0d(R)
-#define _ZTT_KF_tmgd(R) case R: return radix##R##_z_tmgd_fwd_avx2;
+#define _ZTT_KF_tmgd(R) case R: return VFFT_IL_SYM(radix##R##_z_tmgd_fwd);
 #define _ZTT_KB_tmgd(R)
 #define _ZTT_NONE(X)
 _ZTT_KFN2(_ztt_kfn_t0tp, t0tp, VFFT_IL_T0TP_FWD_RADICES, VFFT_IL_T0TP_BWD_RADICES)
@@ -183,9 +190,9 @@ typedef struct
 static inline const vfft_ztt_cell_t *vfft_ztt_lookup(int N, const int *chain, int nf)
 {
     int i, s;
-    for (i = 0; i < VFFT_ZTT_NCELLS_AVX2; i++)
+    for (i = 0; i < VFFT_ZTT_NCELLS; i++)
     {
-        const vfft_ztt_cell_t *c = &vfft_ztt_cells_avx2[i];
+        const vfft_ztt_cell_t *c = &vfft_ztt_cells[i];
         if (c->n != N || c->nf != nf) continue;
         for (s = 0; s < nf; s++)
             if (c->chain[s] != chain[s]) break;
@@ -353,7 +360,7 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
     cell = why ? NULL : vfft_ztt_lookup(N, chain, nf);
     if (!why) staged = force_staged || !cell;
     if (!why && staged && !force_staged && (N & (N - 1)) == 0)
-        why = "no fused driver for this pow2 cell (ztt_registry_avx2.h)";
+        why = "no fused driver for this pow2 cell (ztt_registry_" VFFT_IL_ISA_NAME ".h)";
     if (why)
     {
         if (getenv("VFFT_NAT_LOG"))

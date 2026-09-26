@@ -103,9 +103,11 @@ _F2D_SR2C_DECL(128) _F2D_SR2C_DECL(256) _F2D_SR2C_DECL(512)
 #undef _F2D_SR2C_DECL
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
 /* avx512 editions (build-target selected, the strided_rows.h convention).
- * N=12/20 have no width-8 edition (radix % 8) and fall back to avx2. The
- * avx512 and avx2 editions give BIT-identical values; the avx512 r256 fwd
- * measured 9.0% faster. */
+ * N=12/20 have no width-8 edition (radix % 8): at avx512 they are ABSENT
+ * (the resolver returns 0 and the create keeps its tiled row pass), never an
+ * avx2 fallback -- an avx512 build carries no avx2 kernels. The avx512 and
+ * avx2 editions give BIT-identical values; the avx512 r256 fwd measured 9.0%
+ * faster. */
 #define _F2D_SR2C_D512(N) \
     void radix##N##_n1_fwd_avx512_strided_r2c(const double *, double *, \
         double *, const double *, const double *, size_t, size_t, size_t); \
@@ -132,10 +134,9 @@ static inline _f2d_sr2c_fwd_fn _f2d_sr2c_fwd_resolve(int N2, int *blk) {
     case 128: return radix128_n1_fwd_avx512_strided_r2c;
     case 256: return radix256_n1_fwd_avx512_strided_r2c;
     case 512: return radix512_n1_fwd_avx512_strided_r2c;
-    default: break;
+    default: return 0;
     }
-    *blk = 4;
-#endif
+#else
     switch (N2) {
     case 8:  return radix8_n1_fwd_avx2_strided_r2c;
     case 12: return radix12_n1_fwd_avx2_strided_r2c;
@@ -148,6 +149,7 @@ static inline _f2d_sr2c_fwd_fn _f2d_sr2c_fwd_resolve(int N2, int *blk) {
     case 512: return radix512_n1_fwd_avx2_strided_r2c;
     default: return 0;
     }
+#endif
 }
 /* MT range-split for the strided mono tier. Chunks are masked to 4-pair
  * (8-row) multiples, so every thread executes exactly the blocks ST would —
@@ -314,10 +316,9 @@ static inline _f2d_sr2c_bwd_fn _f2d_sr2c_bwd_resolve(int N2, int *blk) {
     case 128: return radix128_n1_bwd_avx512_strided_r2c;
     case 256: return radix256_n1_bwd_avx512_strided_r2c;
     case 512: return radix512_n1_bwd_avx512_strided_r2c;
-    default: break;
+    default: return 0;
     }
-    *blk = 4;
-#endif
+#else
     switch (N2) {
     case 8:  return radix8_n1_bwd_avx2_strided_r2c;
     case 12: return radix12_n1_bwd_avx2_strided_r2c;
@@ -330,6 +331,7 @@ static inline _f2d_sr2c_bwd_fn _f2d_sr2c_bwd_resolve(int N2, int *blk) {
     case 512: return radix512_n1_bwd_avx2_strided_r2c;
     default: return 0;
     }
+#endif
 }
 
 typedef struct {

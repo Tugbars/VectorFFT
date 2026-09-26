@@ -1319,7 +1319,7 @@ static void _il_dp_enumerate_fs(int N, vfft_il_cand_sink_t *s, int scr)
 
 /* ZTURN-T: every registry cell at N. The FUSED CODELETS — one
  * whole-transform function per pow2 cell with the stage kernels inlined —
- * exist exactly for these chains (ztt_registry_avx2.h, derived from the
+ * exist exactly for these chains (ztt_registry_<isa>.h, derived from the
  * corpus), so the enumeration IS the registry walk and the create refuses
  * anything else. Natural output, both directions; the scrambled class is
  * the PLAIN schedule. */
@@ -1327,9 +1327,9 @@ static void _il_dp_enumerate_ztt_ord(int N, vfft_il_cand_sink_t *s, int scr)
 {
     vfft_il_cand_t c;
     int i, q;
-    for (i = 0; i < VFFT_ZTT_NCELLS_AVX2; i++)
+    for (i = 0; i < VFFT_ZTT_NCELLS; i++)
     {
-        const vfft_ztt_cell_t *cell = &vfft_ztt_cells_avx2[i];
+        const vfft_ztt_cell_t *cell = &vfft_ztt_cells[i];
         if (cell->n != N) continue;
         memset(&c, 0, sizeof c);
         c.route = VFFT_K1_IL_ZTT;

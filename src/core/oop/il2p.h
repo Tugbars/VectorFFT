@@ -58,13 +58,14 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
                              const double *, const double *,
                              size_t, size_t, size_t, size_t, size_t);
 
-/* GENERATED REGISTRY (bin/emit_il_registry.ml -> generated/il_registry_avx2.h):
+/* GENERATED REGISTRY (bin/emit_il_registry.ml -> generated/il_registry_<isa>.h,
+ * picked by il_isa.h at the build's ISA):
  * extern declarations for the corpus-covered IL cells, plus the radix
  * X-macro lists the resolvers below expand.  Derived from Corpus, so "the
  * codelet exists" and "a resolver can reach it" cannot drift apart.
  * NOT covered, declared by hand below: the tangent kernels and the blocked
  * forward pair variants (t2b*, n1tb*), which sit outside the corpus. */
-#include "il_registry_avx2.h"
+#include "il_isa.h"
 
 /* t2 declarations: GENERATED (VFFT_IL_T2_{FWD,BWD}_RADICES). */
 
@@ -134,7 +135,7 @@ extern void radix64_z_n1tb416_fwd_avx2(
 static inline vfft_il2p_fn vfft_il2p_leaf_fn(int R, int bwd)
 {
     switch (R) {
-#define C(R) case R: return bwd ? radix##R##_z_n1t_bwd_avx2 : radix##R##_z_n1t_fwd_avx2;
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_n1t_bwd) : VFFT_IL_SYM(radix##R##_z_n1t_fwd);
     VFFT_IL_N1T_PAIR_RADICES(C)
 #undef C
     default: return 0;
@@ -148,7 +149,7 @@ static inline vfft_il2p_fn vfft_il2p_leaf_fn(int R, int bwd)
 static inline vfft_il2p_fn vfft_il2p_mid_fn(int R, int bwd)
 {
     switch (R) {
-#define C(R) case R: return bwd ? radix##R##_z_t2_bwd_avx2 : radix##R##_z_t2_fwd_avx2;
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_t2_bwd) : VFFT_IL_SYM(radix##R##_z_t2_fwd);
     VFFT_IL_T2_PAIR_RADICES(C)
 #undef C
     default: return 0;
@@ -163,7 +164,7 @@ static inline vfft_il2p_fn vfft_il2p_mid_fn(int R, int bwd)
 static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
 {
     switch (R) {
-#define C(R) case R: return radix##R##_z_t2tg_bwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2tg_bwd);
     VFFT_IL_T2TG_BWD_RADICES(C)
 #undef C
     default: return 0;
@@ -179,7 +180,7 @@ static inline vfft_il2p_fn vfft_il2p_t2cp_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_T2CP_FWD_RADICES
-#define C(R) case R: return radix##R##_z_t2cp_fwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2cp_fwd);
     VFFT_IL_T2CP_FWD_RADICES(C)
 #undef C
 #endif
@@ -196,7 +197,7 @@ static inline vfft_il2p_fn vfft_il2p_t2cs_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_T2CS_FWD_RADICES
-#define C(R) case R: return radix##R##_z_t2cs_fwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2cs_fwd);
     VFFT_IL_T2CS_FWD_RADICES(C)
 #undef C
 #endif
@@ -216,7 +217,7 @@ static inline vfft_il2p_fn vfft_il2p_msz_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_MSZ_FWD_RADICES
-#define C(R) case R: return radix##R##_z_msz_fwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_msz_fwd);
     VFFT_IL_MSZ_FWD_RADICES(C)
 #undef C
 #endif
@@ -231,7 +232,7 @@ static inline vfft_il2p_fn vfft_il2p_msz_bwd_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_MSZ_BWD_RADICES
-#define C(R) case R: return radix##R##_z_msz_bwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_msz_bwd);
     VFFT_IL_MSZ_BWD_RADICES(C)
 #undef C
 #endif
@@ -242,7 +243,7 @@ static inline vfft_il2p_fn vfft_il2p_t2csg_bwd_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_T2CSG_BWD_RADICES
-#define C(R) case R: return radix##R##_z_t2csg_bwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2csg_bwd);
     VFFT_IL_T2CSG_BWD_RADICES(C)
 #undef C
 #endif
@@ -253,7 +254,7 @@ static inline vfft_il2p_fn vfft_il2p_t2csgn_bwd_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_T2CSGN_BWD_RADICES
-#define C(R) case R: return radix##R##_z_t2csgn_bwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2csgn_bwd);
     VFFT_IL_T2CSGN_BWD_RADICES(C)
 #undef C
 #endif
@@ -269,7 +270,7 @@ static inline vfft_il2p_fn vfft_il2p_t2cp_bwd_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_T2CP_BWD_RADICES
-#define C(R) case R: return radix##R##_z_t2cp_bwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2cp_bwd);
     VFFT_IL_T2CP_BWD_RADICES(C)
 #undef C
 #endif
@@ -280,7 +281,7 @@ static inline vfft_il2p_fn vfft_il2p_mszt_bwd_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_MSZT_BWD_RADICES
-#define C(R) case R: return radix##R##_z_mszt_bwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_mszt_bwd);
     VFFT_IL_MSZT_BWD_RADICES(C)
 #undef C
 #endif
@@ -291,7 +292,7 @@ static inline vfft_il2p_fn vfft_il2p_t2csgt_bwd_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_T2CSGT_BWD_RADICES
-#define C(R) case R: return radix##R##_z_t2csgt_bwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2csgt_bwd);
     VFFT_IL_T2CSGT_BWD_RADICES(C)
 #undef C
 #endif
@@ -302,7 +303,7 @@ static inline vfft_il2p_fn vfft_il2p_t2csgnt_bwd_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_T2CSGNT_BWD_RADICES
-#define C(R) case R: return radix##R##_z_t2csgnt_bwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2csgnt_bwd);
     VFFT_IL_T2CSGNT_BWD_RADICES(C)
 #undef C
 #endif
@@ -318,7 +319,7 @@ static inline vfft_il2p_fn vfft_il2p_t2csgn_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_T2CSGN_FWD_RADICES
-#define C(R) case R: return radix##R##_z_t2csgn_fwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2csgn_fwd);
     VFFT_IL_T2CSGN_FWD_RADICES(C)
 #undef C
 #endif
@@ -335,7 +336,7 @@ static inline vfft_il2p_fn vfft_il2p_t2csg_fn(int R)
 {
     switch (R) {
 #ifdef VFFT_IL_T2CSG_FWD_RADICES
-#define C(R) case R: return radix##R##_z_t2csg_fwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2csg_fwd);
     VFFT_IL_T2CSG_FWD_RADICES(C)
 #undef C
 #endif
@@ -352,7 +353,7 @@ static inline vfft_il2p_fn vfft_il2p_t2csg_fn(int R)
 static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
 {
     switch (R) {
-#define C(R) case R: return radix##R##_z_n1_bwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_n1_bwd);
     VFFT_IL_N1_BWD_RADICES(C)
 #undef C
     default: return 0;
@@ -373,10 +374,10 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
      * law — r32/r64 NEVER monolithic): r4/r8/r16 monolithic (r16 raced,
      * mono holds) · r32 b48 (+13-24%) · r64 b88 (+48-51%). */
     switch (R) {
-    case 32: return bwd ? radix32_z_n1cb48_bwd_avx2
-                        : radix32_z_n1cb48_fwd_avx2;
-    case 64: return bwd ? radix64_z_n1cb88_bwd_avx2
-                        : radix64_z_n1cb88_fwd_avx2;
+    case 32: return bwd ? VFFT_IL_SYM(radix32_z_n1cb48_bwd)
+                        : VFFT_IL_SYM(radix32_z_n1cb48_fwd);
+    case 64: return bwd ? VFFT_IL_SYM(radix64_z_n1cb88_bwd)
+                        : VFFT_IL_SYM(radix64_z_n1cb88_fwd);
     default: break;
     }
     /* EVERY OTHER RADIX FROM THE REGISTRY, never a hand-written list: a
@@ -384,7 +385,7 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
      * selectable. The PAIR list (both directions exist) is the authority;
      * the two blocked construction-table picks above stay in front of it. */
     switch (R) {
-#define C(R) case R: return bwd ? radix##R##_z_n1c_bwd_avx2 : radix##R##_z_n1c_fwd_avx2;
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_n1c_bwd) : VFFT_IL_SYM(radix##R##_z_n1c_fwd);
     VFFT_IL_N1C_PAIR_RADICES(C)
 #undef C
     default: return 0;
@@ -403,15 +404,15 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
      * (±1-4%); the wing-class forms (cpl scheduler, blocked-tangent,
      * [c,tan] records) are the open tangent levers. */
     switch (R) {
-    case 32: return bwd ? radix32_z_t2cb48_bwd_avx2
-                        : radix32_z_t2cb48_fwd_avx2;
-    case 64: return bwd ? radix64_z_t2cb88_bwd_avx2
-                        : radix64_z_t2cb88_fwd_avx2;
+    case 32: return bwd ? VFFT_IL_SYM(radix32_z_t2cb48_bwd)
+                        : VFFT_IL_SYM(radix32_z_t2cb48_fwd);
+    case 64: return bwd ? VFFT_IL_SYM(radix64_z_t2cb88_bwd)
+                        : VFFT_IL_SYM(radix64_z_t2cb88_fwd);
     default: break;
     }
     /* every other radix from the registry -- see n1c above */
     switch (R) {
-#define C(R) case R: return bwd ? radix##R##_z_t2c_bwd_avx2 : radix##R##_z_t2c_fwd_avx2;
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_t2c_bwd) : VFFT_IL_SYM(radix##R##_z_t2c_fwd);
     VFFT_IL_T2C_PAIR_RADICES(C)
 #undef C
     default: return 0;
@@ -437,11 +438,11 @@ static inline vfft_il2p_fn vfft_il2p_n1c_form_fn(int R, const char *form,
 {
     if (!form || !strcmp(form, "-")) return vfft_il2p_n1c_fn(R, bwd);
     if (R == 32 && !strcmp(form, "b48"))
-        return bwd ? radix32_z_n1cb48_bwd_avx2 : radix32_z_n1cb48_fwd_avx2;
+        return bwd ? VFFT_IL_SYM(radix32_z_n1cb48_bwd) : VFFT_IL_SYM(radix32_z_n1cb48_fwd);
     if (R == 32 && !strcmp(form, "b84"))
-        return bwd ? radix32_z_n1cb84_bwd_avx2 : radix32_z_n1cb84_fwd_avx2;
+        return bwd ? VFFT_IL_SYM(radix32_z_n1cb84_bwd) : VFFT_IL_SYM(radix32_z_n1cb84_fwd);
     if (R == 64 && !strcmp(form, "b88"))
-        return bwd ? radix64_z_n1cb88_bwd_avx2 : radix64_z_n1cb88_fwd_avx2;
+        return bwd ? VFFT_IL_SYM(radix64_z_n1cb88_bwd) : VFFT_IL_SYM(radix64_z_n1cb88_fwd);
     return 0;
 }
 static inline vfft_il2p_fn vfft_il2p_t2c_form_fn(int R, const char *form,
@@ -449,11 +450,11 @@ static inline vfft_il2p_fn vfft_il2p_t2c_form_fn(int R, const char *form,
 {
     if (!form || !strcmp(form, "-")) return vfft_il2p_t2c_fn(R, bwd);
     if (R == 32 && !strcmp(form, "b48"))
-        return bwd ? radix32_z_t2cb48_bwd_avx2 : radix32_z_t2cb48_fwd_avx2;
+        return bwd ? VFFT_IL_SYM(radix32_z_t2cb48_bwd) : VFFT_IL_SYM(radix32_z_t2cb48_fwd);
     if (R == 32 && !strcmp(form, "b84"))
-        return bwd ? radix32_z_t2cb84_bwd_avx2 : radix32_z_t2cb84_fwd_avx2;
+        return bwd ? VFFT_IL_SYM(radix32_z_t2cb84_bwd) : VFFT_IL_SYM(radix32_z_t2cb84_fwd);
     if (R == 64 && !strcmp(form, "b88"))
-        return bwd ? radix64_z_t2cb88_bwd_avx2 : radix64_z_t2cb88_fwd_avx2;
+        return bwd ? VFFT_IL_SYM(radix64_z_t2cb88_bwd) : VFFT_IL_SYM(radix64_z_t2cb88_fwd);
     return 0;
 }
 
@@ -475,7 +476,7 @@ static inline vfft_il2p_fn vfft_il2p_t2c_form_fn(int R, const char *form,
 static inline vfft_il2p_fn vfft_il2p_t2t_bwd_fn(int R)
 {
     switch (R) {
-#define C(R) case R: return radix##R##_z_t2t_bwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2t_bwd);
     VFFT_IL_T2T_BWD_RADICES(C)
 #undef C
     default: return 0;
@@ -600,17 +601,17 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
     (void)count_ok;   /* vestigial: see the registry note above */
     if (!variant) return 0;
     if (variant == 3) {                 /* tangent interior */
-        if (R1 == 8)  return radix8_z_t2tan_fwd_avx2;   /* monolithic: has  */
-        if (R1 == 16) return radix16_z_t2tan_fwd_avx2;  /* the odd tail     */
-        if (R1 == 32) return radix32_z_t2bw32_fwd_avx2; /* blocked wing32 */
+        if (R1 == 8)  return VFFT_IL_AVX2_ONLY(radix8_z_t2tan_fwd);   /* monolithic: has  */
+        if (R1 == 16) return VFFT_IL_AVX2_ONLY(radix16_z_t2tan_fwd);  /* the odd tail     */
+        if (R1 == 32) return VFFT_IL_AVX2_ONLY(radix32_z_t2bw32_fwd); /* blocked wing32 */
         return 0;
     }
     if (variant == 4) {                 /* tangent interior, M-128 edge.
         * Loses every raceable cell on the i9 but stays in the pool — a
         * distinct construction may win on other platforms; shared wisdom
         * re-races locally. */
-        if (R1 == 16) return radix16_z_t2tanm128_fwd_avx2; /* mono, odd tail */
-        if (R1 == 32) return radix32_z_t2bw32m128_fwd_avx2;
+        if (R1 == 16) return VFFT_IL_AVX2_ONLY(radix16_z_t2tanm128_fwd); /* mono, odd tail */
+        if (R1 == 32) return VFFT_IL_AVX2_ONLY(radix32_z_t2bw32m128_fwd);
         return 0;
     }
     if (variant == 5)
@@ -624,20 +625,20 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
          * is a variant and not a default. */
         switch (R1)
         {
-#define C(R) case R: return radix##R##_z_t2_ct_fwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_t2_ct_fwd);
             VFFT_IL_T2_CT_FWD_RADICES(C)
 #undef C
         default: return 0;
         }
     }
-    if (R1 == 16 && variant == 1) return radix16_z_t2b_fwd_avx2;
-    if (R1 == 32 && variant == 1) return radix32_z_t2b_fwd_avx2;
-    if (R1 == 32 && variant == 2) return radix32_z_t2b48_fwd_avx2;
+    if (R1 == 16 && variant == 1) return VFFT_IL_AVX2_ONLY(radix16_z_t2b_fwd);
+    if (R1 == 32 && variant == 1) return VFFT_IL_AVX2_ONLY(radix32_z_t2b_fwd);
+    if (R1 == 32 && variant == 2) return VFFT_IL_AVX2_ONLY(radix32_z_t2b48_fwd);
     /* R64: variant 1 = 4.16, variant 2 = 8.8 — the SAME mapping the
      * backward side uses at t2t_bwd_v_fn, so an il_kv nibble means one
      * thing in both directions. 8.8 won the mid in 3/3 runs. */
-    if (R1 == 64 && variant == 1) return radix64_z_t2b416_fwd_avx2;
-    if (R1 == 64 && variant == 2) return radix64_z_t2b88_fwd_avx2;
+    if (R1 == 64 && variant == 1) return VFFT_IL_SYM(radix64_z_t2b416_fwd);
+    if (R1 == 64 && variant == 2) return VFFT_IL_SYM(radix64_z_t2b88_fwd);
     return 0;
 }
 
@@ -661,14 +662,14 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
     (void)count_ok;   /* vestigial: see the registry note above */
     if (!variant) return 0;
     if (variant == 3) {                 /* tangent interior */
-        if (R2 == 8)  return radix8_z_n1ttan_fwd_avx2;   /* monolithic   */
-        if (R2 == 16) return radix16_z_n1ttan_fwd_avx2;  /* (odd legal)  */
-        if (R2 == 32) return radix32_z_n1tbw32_fwd_avx2; /* blocked
+        if (R2 == 8)  return VFFT_IL_AVX2_ONLY(radix8_z_n1ttan_fwd);   /* monolithic   */
+        if (R2 == 16) return VFFT_IL_AVX2_ONLY(radix16_z_n1ttan_fwd);  /* (odd legal)  */
+        if (R2 == 32) return VFFT_IL_AVX2_ONLY(radix32_z_n1tbw32_fwd); /* blocked
             wing32, TURNED-128 store — the old kill was the store edge */
         return 0;
     }
     if (variant == 4) {                 /* tangent interior, T256 edge */
-        if (R2 == 32) return radix32_z_n1tbw32t256_fwd_avx2;
+        if (R2 == 32) return VFFT_IL_AVX2_ONLY(radix32_z_n1tbw32t256_fwd);
         return 0;
     }
     if (variant == 5)
@@ -682,20 +683,20 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
          * is a variant and not a default. */
         switch (R2)
         {
-#define C(R) case R: return radix##R##_z_n1t_ct_fwd_avx2;
+#define C(R) case R: return VFFT_IL_SYM(radix##R##_z_n1t_ct_fwd);
             VFFT_IL_N1T_CT_FWD_RADICES(C)
 #undef C
         default: return 0;
         }
     }
-    if (R2 == 32 && variant == 1) return radix32_z_n1tb_fwd_avx2;
-    if (R2 == 32 && variant == 2) return radix32_z_n1tb48_fwd_avx2;
+    if (R2 == 32 && variant == 1) return VFFT_IL_AVX2_ONLY(radix32_z_n1tb_fwd);
+    if (R2 == 32 && variant == 2) return VFFT_IL_AVX2_ONLY(radix32_z_n1tb48_fwd);
     /* R64: same variant<->split mapping as the mid and as the bwd leaf.
      * The leaf verdict is genuinely per-cell — 4.16 won at count 8 and
      * 16, 8.8 won at count 32 — which is why both stay in the pool. */
-    if (R2 == 64 && variant == 1) return radix64_z_n1tb416_fwd_avx2;
-    if (R2 == 64 && variant == 2) return radix64_z_n1tb88_fwd_avx2;
-    if (R2 == 16 && variant == 1) return radix16_z_n1tb44_fwd_avx2; /* 4·4 */
+    if (R2 == 64 && variant == 1) return VFFT_IL_SYM(radix64_z_n1tb416_fwd);
+    if (R2 == 64 && variant == 2) return VFFT_IL_SYM(radix64_z_n1tb88_fwd);
+    if (R2 == 16 && variant == 1) return VFFT_IL_AVX2_ONLY(radix16_z_n1tb44_fwd); /* 4·4 */
     return 0;
 }
 
@@ -718,7 +719,7 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
  *
  * Variant numbering MIRRORS the forward exactly: 1 = 2.16 (R64: 4.16),
  * 2 = 4.8 (R64: 8.8).  count_ok is vestigial, as on the forward.  Externs
- * come from the generated il_registry_avx2.h.  Gated correctness: every
+ * come from the generated il_registry_<isa>.h.  Gated correctness: every
  * form was A/B'd against its shipped monolithic twin, 12/12, rel ~1e-16
  * (the 2.16 splits BITWISE). */
 static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_ok)
@@ -731,12 +732,12 @@ static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_
      * contract — a plain-store t2 tangent twin builds, fails the planner's
      * correctness gate and is silently not an arm. No radix-32 twin: the
      * wing32 construction is forward-only. */
-    if (R == 8  && variant == 3) return radix8_z_t2ttan_bwd_avx2;
-    if (R == 16 && variant == 3) return radix16_z_t2ttan_bwd_avx2;
-    if (R == 32 && variant == 1) return radix32_z_t2bt216_bwd_avx2;
-    if (R == 32 && variant == 2) return radix32_z_t2bt48_bwd_avx2;
-    if (R == 64 && variant == 1) return radix64_z_t2bt416_bwd_avx2;
-    if (R == 64 && variant == 2) return radix64_z_t2bt88_bwd_avx2;
+    if (R == 8  && variant == 3) return VFFT_IL_AVX2_ONLY(radix8_z_t2ttan_bwd);
+    if (R == 16 && variant == 3) return VFFT_IL_AVX2_ONLY(radix16_z_t2ttan_bwd);
+    if (R == 32 && variant == 1) return VFFT_IL_SYM(radix32_z_t2bt216_bwd);
+    if (R == 32 && variant == 2) return VFFT_IL_SYM(radix32_z_t2bt48_bwd);
+    if (R == 64 && variant == 1) return VFFT_IL_SYM(radix64_z_t2bt416_bwd);
+    if (R == 64 && variant == 2) return VFFT_IL_SYM(radix64_z_t2bt88_bwd);
     /* variant 5 = ODD-COMPOSITE COOLEY-TUKEY, the backward twin of the
      * forward _ct nibble. Factors the radix (15=3x5, 21=3x7, 25=5x5,
      * 27=3x9) instead of running one direct conjugate-pair DFT: extra
@@ -748,7 +749,7 @@ static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_
     if (variant == 5)
     {
         switch (R) {
-#define C(RR) case RR: return radix##RR##_z_t2t_ct_bwd_avx2;
+#define C(RR) case RR: return VFFT_IL_SYM(radix##RR##_z_t2t_ct_bwd);
             VFFT_IL_T2T_CT_BWD_RADICES(C)
 #undef C
         default: break;
@@ -764,13 +765,13 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_o
     if (!variant) return 0;
     /* variant 3 = the TANGENT interior, see t2t_bwd_v_fn; at radix 32 the
      * tangent 2.16 leaf (its wing-combine sibling lost the race) */
-    if (R == 8  && variant == 3) return radix8_z_n1tan_bwd_avx2;
-    if (R == 16 && variant == 3) return radix16_z_n1tan_bwd_avx2;
-    if (R == 32 && variant == 3) return radix32_z_n1btan216_bwd_avx2;
-    if (R == 32 && variant == 1) return radix32_z_n1b216_bwd_avx2;
-    if (R == 32 && variant == 2) return radix32_z_n1b48_bwd_avx2;
-    if (R == 64 && variant == 1) return radix64_z_n1b416_bwd_avx2;
-    if (R == 64 && variant == 2) return radix64_z_n1b88_bwd_avx2;
+    if (R == 8  && variant == 3) return VFFT_IL_AVX2_ONLY(radix8_z_n1tan_bwd);
+    if (R == 16 && variant == 3) return VFFT_IL_AVX2_ONLY(radix16_z_n1tan_bwd);
+    if (R == 32 && variant == 3) return VFFT_IL_AVX2_ONLY(radix32_z_n1btan216_bwd);
+    if (R == 32 && variant == 1) return VFFT_IL_SYM(radix32_z_n1b216_bwd);
+    if (R == 32 && variant == 2) return VFFT_IL_SYM(radix32_z_n1b48_bwd);
+    if (R == 64 && variant == 1) return VFFT_IL_SYM(radix64_z_n1b416_bwd);
+    if (R == 64 && variant == 2) return VFFT_IL_SYM(radix64_z_n1b88_bwd);
     /* variant 5 = ODD-COMPOSITE COOLEY-TUKEY, the backward twin of the
      * forward _ct nibble. Factors the radix (15=3x5, 21=3x7, 25=5x5,
      * 27=3x9) instead of running one direct conjugate-pair DFT: extra
@@ -782,7 +783,7 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_o
     if (variant == 5)
     {
         switch (R) {
-#define C(RR) case RR: return radix##RR##_z_n1_ct_bwd_avx2;
+#define C(RR) case RR: return VFFT_IL_SYM(radix##RR##_z_n1_ct_bwd);
             VFFT_IL_N1_CT_BWD_RADICES(C)
 #undef C
         default: break;
