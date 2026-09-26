@@ -203,6 +203,15 @@ compiled with `gcc -mavx512f -mavx512dq -mfma`:
 **Of the 535 that compile, 288 give silently wrong results** (§11.2). Four independent
 harnesses agree. Compiling was never a signal.
 
+**The 54 `cascade_z.ml` refusals are live kernels, not the retired cascade.** The old
+cascade engine (route 4, `VFFT_K1_IL_CASCADE`) was deleted 2026-09-15; only the generator
+file keeps the name (and its guard still says "codelet_zsplit"). What it emits today are the
+ZTURN-T stage kernels (`zil/avx2/ztt`: t0tp, tmg, tlf, tlfi, tld, t0d …) and the flat
+route's odd mids (`zil/avx2/flat/odd_mid`: msz, mszt). Both win cells in the shipped store:
+`il_route=ztt` is the winner in **95** records (pow2 N = 16..262144 in both orders, and the
+odd-band N = 2160..16000), and flat plans with an `m` (msz) stage in `il_forms` win **124**
+records.
+
 ---
 
 ## 5. Width hazards in the emitter
@@ -504,7 +513,7 @@ patches are preserved in `zil_avx512_prototypes/` (see its README). Headline res
 | area | root cause | prototype result |
 |---|---|---|
 | corner-turn store (141 recipes) | one guard, `c2c_il.ml:336-341`, over four emission paths that assume 2 complex per vector; `cx_render.ml` hardcodes `permute2f128`, 256-bit halves and the `k+1` column address | the turn becomes a 4×4 complex transpose: two rounds of one ISA op (`permute2f128 0x20/0x31` at 256, `shuffle_f64x2 0x88/0xDD` at 512). AVX2 byte-identical over 732 recipes + 5 header-less files; **all 141 generate and are bitwise equal to their AVX2 twins** (counts 1–13, 3 strides, 4 base offsets, guard page). ~400 changed lines in 9 files |
-| boundary split / ZTT (54 recipes) | one deliberate gate, `cascade_z.ml:388-394`; VW=4 baked into the TR4 transpose, the ordered DEINT/REINT (`permute4x64`), the t0tp lattices and a `__m256d` constant | `Isa` gains deint/reint/transpose/splat ops (width 4 renders today's text verbatim; width 8 uses `permutex2var` and the 3-stage 8×8 lattice). **50 of 54 emit** — t0tp and tld at radix 4 cannot exist at VW=8 (a 4-complex run is half a 128-B block), now refused by a law. With a VW-parameterized `ztt.h`: **404 plans, 7832 checks, worst error 5e-16**; all 206 fused-driver plans bitwise equal to the staged walk |
+| ZTURN-T stages + flat odd mids (54 recipes, emitted by `cascade_z.ml`) | one deliberate gate, `cascade_z.ml:388-394`; VW=4 baked into the TR4 transpose, the ordered DEINT/REINT (`permute4x64`), the t0tp lattices and a `__m256d` constant | `Isa` gains deint/reint/transpose/splat ops (width 4 renders today's text verbatim; width 8 uses `permutex2var` and the 3-stage 8×8 lattice). **50 of 54 emit** — t0tp and tld at radix 4 cannot exist at VW=8 (a 4-complex run is half a 128-B block), now refused by a law. With a VW-parameterized `ztt.h`: **404 plans, 7832 checks, worst error 5e-16**; all 206 fused-driver plans bitwise equal to the staged walk |
 | k1 mono (2 recipes) | `c2c_split.ml:2301` and an avx2-only emitter | width-parameterized (+94/−41 lines): N=64 8×8 IL mono **bitwise equal to AVX2, 45 ns vs 75 ns** |
 | corpus / registries | the corpus knows only avx2 zil quadrants; `emit_il_registry` hardcodes `_avx2`; `emit_ztt_registry` ignores `--isa` | ISA as a parameter of the typed corpus cells: `gen_set` emits **527 avx512 files byte-equal to the per-file replays**, avx2 quadrants byte-neutral; an ISA-parameterized IL registry declares exactly the 527 symbols |
 
