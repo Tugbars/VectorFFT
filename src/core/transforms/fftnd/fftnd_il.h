@@ -75,11 +75,14 @@
  * In the natural class the structure is not fused into the bands (it runs
  * in cycle order): both arms finish with a CYCLES phase in which workers
  * own disjoint cycles (assigned longest first) and one plane buffer each.
- * At the plan's T the partition arm and the STRUCTURE are raced together
- * (serial with the one-thread structure, then band and plane with each
- * buildable structure): the structure that wins at one thread is not the
- * one that wins threaded (measured 64^3: child+band 70 us, flat+plane
- * 103 us, while at one thread the two structures tie). Banked on the
+ * At the plan's T the STRUCTURE is raced with the partition: the plane arm
+ * over each buildable structure, and serial (the one-thread structure) on a
+ * small cube only (vfft_policy_ilnd_mt_serial_arm). The band arm is not
+ * raced: over the eight-thread grid the plane arm won 528 of 534 cells; it
+ * serves a banked cmt=1 and the VFFT_ILND_MT=1 pin. The natural class
+ * threads the strip form wherever axis 0 permutes, the cycle form only
+ * where it cannot. The structure that wins at one thread is not the one
+ * that wins threaded, so both are always raced. Banked on the
  * rank-3 row keyed at the plan's thread count (nthreads=, wisdom2 v1.3) as
  * cmt= (0 serial | 1 band | 2 plane) and cmts= (the structure the threaded
  * verdict runs with); the one-thread row keeps its own s=. A threaded
@@ -1249,16 +1252,17 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
     /* the plan's own placement on aligned buffers (2026-09-25): zo == z in place */
     double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
     double *zo = d->ip ? z : (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
-    /* serial + per structure {band, plane, plane at the half team, strips,
-     * strips at the half team} */
-    _ilnd_mt_ctx_t cx[11];
-    vfft_race_arm_t arms[11];
-    double ns[11];
-    int na = 0, a, best = 0, st, reps;
+    /* serial (small cubes) + per structure {full team, half team}: 5 at most */
+    _ilnd_mt_ctx_t cx[5];
+    vfft_race_arm_t arms[5];
+    double ns[5];
+    int na = 0, a, best = -1, st, reps, rounds;
     /* the half team's cycle arms need its binding; its strip arms do not */
     const int hcyc = hw > 0 && (!d->nat || _ilnd_nat_bind_team(d, hw));
+    const size_t cb = T * 16;
+    const int serial_ok = vfft_policy_ilnd_mt_serial_arm(cb > (size_t)0x7fffffff ? 0x7fffffffL : (long)cb);
     size_t i;
-    for (a = 0; a < 11; a++)
+    for (a = 0; a < 5; a++)
         ns[a] = 1e300;
     *mt_out = 0;
     *arm_out = s0;
@@ -1283,8 +1287,18 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
         _ilnd_execute_st(d, VFFT_FORWARD, z, zo);
         t0 = _il_ab_now() - t0;
         reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
-        if (reps < 2) reps = 2;
+        if (reps < 4) reps = 4;
         if (reps > 256) reps = 256;
+        /* THE BUDGET: at least 48 timed executes per arm, over 3 to 15 rounds.
+         * A small cell's sample already holds many executes (3 rounds); a
+         * 32-64 MB cell's holds 4, and there 3 rounds of 2 executes could not
+         * tell arms 5-10% apart: the half plane team, 9% faster in a
+         * 15-round same-process measurement at every N1 = 8 cell of 32-64 MB,
+         * was banked at 9 of 17, and 23 cells of the 2026-09-25 re-race lost
+         * more than 10% to a worse draw */
+        rounds = (48 + reps - 1) / reps;
+        if (rounds < 3) rounds = 3;
+        if (rounds > 15) rounds = 15;
     }
 #define ILND_ARM(MT, ARM, NF, PTW, NAME) do { \
         cx[na].d = d; cx[na].z = z; cx[na].zo = zo; cx[na].mt = (MT); cx[na].arm = (ARM); cx[na].nf = (NF); \
@@ -1294,42 +1308,58 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
         if (PTW) snprintf(cx[na].name + strlen(cx[na].name), sizeof cx[na].name - strlen(cx[na].name), "/pt%d", (PTW)); \
         arms[na].name = cx[na].name; arms[na].run = _ilnd_mt_arm_run; arms[na].ctx = &cx[na]; na++; \
     } while (0)
-    ILND_ARM(0, s0, nf0, 0, "serial");
+    /* THE ARM SET (owner's rules, 2026-09-26, from the verdicts of the
+     * eight-thread grid): the plane partition is the threaded form (it won
+     * 528 of 534 cells); serial is raced only on a small cube
+     * (vfft_policy_ilnd_mt_serial_arm); the natural class threads the STRIPS
+     * form wherever axis 0 permutes (strip_ok) and the cycle form only where
+     * it cannot (the note beside the serial law in planning/policy.h); BOTH
+     * structures are always raced (the contested axis: child
+     * 389, flat 139, even at N1 32-128 from 32 MB up); the half plane team
+     * beside the full one wherever it exists (_ilnd_half_team) */
+    if (serial_ok)
+        ILND_ARM(0, s0, nf0, 0, "serial");
     for (st = 1; st <= 2; st++)
     {
         const int have = (st == 1) ? (d->child != NULL && d->wn1 > 0) : (d->row != NULL && d->wn2 > 0);
         if (!have)
             continue;
-        if (d->ax0.wl > 0 && !d->ax0.blu && (size_t)d->N[0] / (size_t)d->ax0.wl >= 2)
-            ILND_ARM(1, st, 1, 0, "band");
-        ILND_ARM(2, st, 1, 0, "plane");
-        if (hcyc)
-            ILND_ARM(2, st, 1, hw, "plane");
         if (strip_ok)
         {
             ILND_ARM(2, st, 2, 0, "plane");
             if (hw > 0)
                 ILND_ARM(2, st, 2, hw, "plane");
         }
+        else
+        {
+            ILND_ARM(2, st, 1, 0, "plane");
+            if (hcyc)
+                ILND_ARM(2, st, 1, hw, "plane");
+        }
     }
 #undef ILND_ARM
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
+        const vfft_race_proto_t proto = { rounds, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
         vfft_race_run(&proto, arms, na, ns);
     }
-    for (a = 1; a < na; a++)
-        if (cx[a].ok && ns[a] < ns[best])
+    for (a = 0; a < na; a++)
+        if (cx[a].ok && (best < 0 || ns[a] < ns[best]))
             best = a;
-    *mt_out = cx[best].mt;
-    *arm_out = cx[best].arm;
-    *nf_out = cx[best].nf;
-    *ptw_out = cx[best].mt == 2 ? cx[best].ptw : 0;
+    /* best < 0: no raced arm engaged (serial not raced) and the verdict
+     * stays serial, the outputs' initial values */
+    if (best >= 0)
+    {
+        *mt_out = cx[best].mt;
+        *arm_out = cx[best].arm;
+        *nf_out = cx[best].nf;
+        *ptw_out = cx[best].mt == 2 ? cx[best].ptw : 0;
+    }
     if (zo != z) VFFT_ZS_FREE(zo);
     VFFT_ZS_FREE(z);
     if (getenv("VFFT_IL2D_LOG"))
     {
-        fprintf(stderr, "[ilnd] %dx%dx%d%s: MT race T=%d reps=%d", d->N[0], d->N[1], d->N[2],
-                d->nat ? " nat" : "", d->mt_t, reps);
+        fprintf(stderr, "[ilnd] %dx%dx%d%s: MT race T=%d reps=%d rounds=%d", d->N[0], d->N[1], d->N[2],
+                d->nat ? " nat" : "", d->mt_t, reps, rounds);
         for (a = 0; a < na; a++)
             fprintf(stderr, " %s=%.0f%s", cx[a].name, ns[a], cx[a].ok ? "" : "(no engage)");
         fprintf(stderr, " -> %s/%s%s", *mt_out == 0 ? "serial" : *mt_out == 1 ? "band" : "plane",

@@ -236,10 +236,12 @@ The form without the extra sweep exists since the same day: the STRIP
 form (`ilnd_natural_strip_design.md`) — axis 0 in cache-resident column
 strips through a strip-pitched scratch, the digit reversal resolved inside
 the strip, natural order written back in place, then the planes in place.
-Raced beside this cycle form as `nf=` × `nsw=`; it wins the threaded race
-at 10 of 14 cells (32×32×4096 3.1 vs 5.1 ms at T=8) and the one-thread race
-at the large pow2 cells (32×32×4096 15.0 vs 16.6 ms); this cycle form
-keeps the cells whose cube fits L3.
+At one thread it is raced beside this cycle form as `nf=` × `nsw=`; it wins
+the large pow2 cells (32×32×4096 15.0 vs 16.6 ms) and this cycle form keeps
+the cells whose cube fits L3. Threaded, the strip form is the form wherever
+axis 0 permutes and the cycle form serves only a single-stage or Bluestein
+axis 0: over the eight-thread grid the cycle form beat the strips at one
+cell under the longer race (64×4096×4, by 2–9%).
 
 ## 7. Wisdom
 

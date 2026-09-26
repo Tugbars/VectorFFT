@@ -150,17 +150,17 @@ fixed probe and 15 flip to threaded.
    below parity. The composite over the 951-cell grid moves from 1.27x to 1.33x. The
    large short-N1 class moves from 0.67x to 0.78x and stays the loser, 59 of 61 below parity:
    the structural remainder. Twenty-three cells lost more than 10% to the eight-thread race's
-   short protocol (two repetitions, three rounds at the large cells); a longer race budget
-   there is a small follow-up.
+   short protocol (two repetitions, three rounds at the large cells). Since 2026-09-26 the race
+   runs at least 48 timed executes per arm, 3 to 15 rounds (12 at a 32–64 MB cell).
 2. **The plane phase's scratch.** Re-use: done 2026-09-25 as the plane team (`cmtp=`, raced
    at T beside the full team wherever a worker of the full team would hold a single plane).
    Measured in one process on the child structure at eight threads, 15 alternated rounds: the
    half team is faster at every N1 = 8 cell of 32 to 64 MB, by 2 to 14% (median 9%, 13 cells);
    it is 6% slower at 16 MB (8x512x256), and at N1 = 4, where the half team is two workers, it is
-   8 to 20% slower. A recalibrating run of the 76 large short-N1 losers banked it at 9 of the
-   17 N1 = 8 cells from 32 MB up; the eight-thread race's short protocol misses the rest, so the
-   longer race budget (item 1's follow-up) comes before these rows ship. The class stays the
-   loser. Next, the axis-1 pass as gathered panels of 16 or more columns,
+   8 to 20% slower. Under the three-round race a recalibrating run of the 76 large short-N1
+   losers banked it at 9 of the 17 N1 = 8 cells from 32 MB up; under the longer race, at 16
+   of 17, and those 76 rows ship. The class stays the loser (N1 = 8 from 32 MB up: 0.59x).
+   Next, the axis-1 pass as gathered panels of 16 or more columns,
    our dense strip form applied to axis 1, one read and write of the plane for all of axis 1,
    raced in situ at T against the flat pass and the 2D child. Open: the panel at N2 = 8192,
    where 16 columns are a 2 MB scratch, the whole L2.
