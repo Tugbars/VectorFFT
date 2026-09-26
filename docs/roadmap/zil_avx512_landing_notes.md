@@ -68,7 +68,27 @@ Each is a one-line change.
 
 A working `VFFT_ISA=avx512` library. That needs the runtime work (§10 stage 3):
 per-ISA registry selection, 16-double twiddle tables, and the ZTT laws, permutation and
-threading grain. Until then only the codelet library itself builds at avx512.
+threading grain.
+
+### Stage 3, step 1: done (per-ISA kernel names and registries)
+
+- `src/core/support/build_isa.h` is the one ISA test in the core. `vfft_isa()` (via
+  `env.h`) and the IL family both read it.
+- `src/core/oop/il_isa.h` includes `il_registry_<isa>.h` and names the ZTT registry for
+  the build's ISA; the runtime names kernels through `VFFT_IL_SYM(stem)`. The 20 kernels
+  that exist only as avx2 recipes (D3) go through `VFFT_IL_AVX2_ONLY(stem)`, which is 0 at
+  avx512: absent, never an avx2 fallback.
+- The IL solo resolvers in `oop_leaf_registry.h` are no longer gated to avx2.
+- The avx512 fused ZTT drivers are built (CMake and both `build.py`).
+- The two 2D strided row paths that fell back to avx2 kernels (r2c N2 = 12/20, and the
+  `strided_tw.h` tier) are absent at avx512.
+- **The whole avx512 build links** (library and every gauntlet program), for the first time.
+- **AVX2 is unchanged:** all 1,370 objects, both libraries and the four gauntlet
+  executables are byte-identical to the pre-change build.
+- **Results at avx512 are still wrong** on every route that uses twiddle tables (pair,
+  chain3, flat, ZTT: relative error ~1). Twiddle-free routes are correct (the N = 8
+  solo). That is step 2: the runtime still builds AVX2-shaped tables. Smoke test:
+  `zil_avx512_prototypes/harness/runtime/api_smoke.c`.
 
 ## For the owner
 

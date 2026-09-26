@@ -297,9 +297,12 @@ endforeach()
 # ZTURN-T's FUSED CODELETS (2026-09-09): one whole-transform driver per pow2 cell,
 # emitted under generated/ (build.py's dag_codelet_srcs carries the same dir);
 # missing from this list until 2026-09-22, when every link of vfft.c failed on
-# ztt_*/zttp_* symbols. They are emitted for avx2 only.
+# ztt_*/zttp_* symbols. The avx512 drivers sit in their own subfolder (design
+# decision D5), which the non-recursive glob keeps out of the avx2 build.
 if(VFFT_ISA STREQUAL "avx2")
     vfft_add_codelet_dir("fused_codelets" "${DAG_GEN}/fused_codelets")
+elseif(VFFT_ISA STREQUAL "avx512")
+    vfft_add_codelet_dir("fused_codelets/avx512" "${DAG_GEN}/fused_codelets/avx512")
 endif()
 
 list(LENGTH VFFT_CODELET_SRCS _ncodelets)

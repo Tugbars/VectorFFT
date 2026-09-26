@@ -51,6 +51,17 @@
 #include <stddef.h>
 #include <math.h>
 
+/* This tier is written for avx2 (ymm fronts, 4-pair blocks around the avx2
+ * r64 strided mono). An avx512 build carries no avx2 kernels, so there the
+ * tier is ABSENT: _stw_tables_init refuses and the create keeps its other row
+ * engines. Never an avx2 fallback inside an avx512 build. */
+#include "build_isa.h"
+#if defined(VFFT_BUILD_ISA_AVX512)
+#define _STW_AVAILABLE 0
+#else
+#define _STW_AVAILABLE 1
+#endif
+
 /* the emitted c2c strided monos used as sub-band leaves */
 void radix64_n1_fwd_avx2_strided(double *, double *, const double *,
                                  const double *, size_t, size_t);
@@ -67,7 +78,7 @@ typedef struct {
 
 static inline int _stw_tables_init(_stw_tables_t *t, int N)
 {
-    if (N != 128 && N != 256) return 0;
+    if (!_STW_AVAILABLE || (N != 128 && N != 256)) return 0;
     t->N = N;
     t->r = N / 64;
     size_t per = (size_t)N / (size_t)t->r;
@@ -321,8 +332,10 @@ static inline void _stw_r2c_fwd(const _stw_tables_t *t,
             _stw_front4_fwd(blk, blk + rs_in, wre, wim,
                             2 * rs_in, (size_t)N, 4, N, t->twr, t->twi);
         for (size_t j = 0; j < (size_t)r; j++)
+#if _STW_AVAILABLE
             radix64_n1_fwd_avx2_strided(wre + j * 64, wim + j * 64,
                                         0, 0, (size_t)N, 4);
+#endif
         for (size_t p = 0; p < 4; p++)
             _stw_split_row(wre + p * (size_t)N, wim + p * (size_t)N,
                 out_re + (b + 2 * p) * out_stride,
@@ -350,8 +363,10 @@ static inline void _stw_c2r_bwd(const _stw_tables_t *t,
                 in_im + (b + 2 * p + 1) * in_stride,
                 wre + p * (size_t)N, wim + p * (size_t)N, N, r);
         for (size_t j = 0; j < (size_t)r; j++)
+#if _STW_AVAILABLE
             radix64_n1_bwd_avx2_strided(wre + j * 64, wim + j * 64,
                                         0, 0, (size_t)N, 4);
+#endif
         if (r == 2)
             _stw_front2_bwd(wre, wim, (size_t)N, 4, N, t->twr, t->twi);
         else
