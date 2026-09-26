@@ -58,6 +58,31 @@ void radix4_z_t2_bwd_avx512(
         _mm512_storeu_pd(&zout[2*((size_t)2*OLs + k)], z14);
         _mm512_storeu_pd(&zout[2*((size_t)3*OLs + k)], z15);
     }
+    if (count - k == 3) {  /* 3 leftover complex: ONE k-masked zmm pass (policy.h L10) */
+        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(count - k))) - 1u);
+        const double *twp = tw_re + (k / 4) * (size_t)48;
+        const __m512d z0 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)0*Ls + k)]);
+        const __m512d z1 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)1*Ls + k)]);
+        const __m512d z2 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)2*Ls + k)]);
+        const __m512d z3 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)3*Ls + k)]);
+        const __m512d z4 = _mm512_sub_pd(z0, z2);
+        const __m512d z5 = _mm512_add_pd(z0, z2);
+        const __m512d z6 = _mm512_sub_pd(z1, z3);
+        const __m512d z7 = _mm512_add_pd(z1, z3);
+        const __m512d z9 = _mm512_add_pd(z5, z7);
+        const __m512d z10 = _mm512_xor_pd(_mm512_permute_pd(z6, 0x55), _M_RE);
+        const __m512d z8 = _mm512_sub_pd(z5, z7);
+        const __m512d z14 = _mm512_fmadd_pd(_mm512_maskz_loadu_pd(_tm, &twp[16]), z8, _mm512_mul_pd(_mm512_maskz_loadu_pd(_tm, &twp[24]), _mm512_permute_pd(z8, 0x55)));
+        const __m512d z11 = _mm512_sub_pd(z4, z10);
+        const __m512d z15 = _mm512_fmadd_pd(_mm512_maskz_loadu_pd(_tm, &twp[32]), z11, _mm512_mul_pd(_mm512_maskz_loadu_pd(_tm, &twp[40]), _mm512_permute_pd(z11, 0x55)));
+        const __m512d z12 = _mm512_add_pd(z4, z10);
+        const __m512d z13 = _mm512_fmadd_pd(_mm512_maskz_loadu_pd(_tm, &twp[0]), z12, _mm512_mul_pd(_mm512_maskz_loadu_pd(_tm, &twp[8]), _mm512_permute_pd(z12, 0x55)));
+        _mm512_mask_storeu_pd(&zout[2*((size_t)0*OLs + k)], _tm, z9);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)1*OLs + k)], _tm, z13);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)2*OLs + k)], _tm, z14);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)3*OLs + k)], _tm, z15);
+        k = count;
+    }
     if (k + 2 <= count) {  /* ladder: ymm pass, 2 complex */
         const double *twp = tw_re + (k / 4) * (size_t)48 + 2 * (k % 4);
         const __m256d z0 = _mm256_loadu_pd(&zin[2*((size_t)0*Ls + k)]);

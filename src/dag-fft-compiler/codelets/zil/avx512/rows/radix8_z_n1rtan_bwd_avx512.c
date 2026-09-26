@@ -93,6 +93,55 @@ void radix8_z_n1rtan_bwd_avx512(
         _mm512_storeu_pd(&zout[2*((size_t)6*OLs + k)], z32);
         _mm512_storeu_pd(&zout[2*((size_t)7*OLs + k)], z35);
     }
+    if (cnt_ - k == 3) {  /* 3 leftover complex: ONE k-masked zmm pass (policy.h L10) */
+        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(cnt_ - k))) - 1u);
+        const __m512d z0 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)0*Ls + k)]);
+        const __m512d z1 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)1*Ls + k)]);
+        const __m512d z2 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)2*Ls + k)]);
+        const __m512d z3 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)3*Ls + k)]);
+        const __m512d z4 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)4*Ls + k)]);
+        const __m512d z5 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)5*Ls + k)]);
+        const __m512d z6 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)6*Ls + k)]);
+        const __m512d z7 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)7*Ls + k)]);
+        const __m512d z8 = _mm512_sub_pd(z0, z4);
+        const __m512d z9 = _mm512_add_pd(z0, z4);
+        const __m512d z17 = _mm512_sub_pd(z1, z5);
+        const __m512d z18 = _mm512_add_pd(z1, z5);
+        const __m512d z10 = _mm512_sub_pd(z2, z6);
+        const __m512d z11 = _mm512_add_pd(z2, z6);
+        const __m512d z14 = _mm512_xor_pd(_mm512_permute_pd(z10, 0x55), _M_RE);
+        const __m512d z12 = _mm512_sub_pd(z9, z11);
+        const __m512d z13 = _mm512_add_pd(z9, z11);
+        const __m512d z15 = _mm512_sub_pd(z8, z14);
+        const __m512d z16 = _mm512_add_pd(z8, z14);
+        const __m512d z19 = _mm512_sub_pd(z3, z7);
+        const __m512d z20 = _mm512_add_pd(z3, z7);
+        const __m512d z23 = _mm512_xor_pd(_mm512_permute_pd(z19, 0x55), _M_RE);
+        const __m512d z21 = _mm512_sub_pd(z18, z20);
+        const __m512d z24 = _mm512_sub_pd(z17, z23);
+        const __m512d z25 = _mm512_add_pd(z17, z23);
+        const __m512d z22 = _mm512_add_pd(z18, z20);
+        const __m512d z26 = _mm512_sub_pd(z13, z22);
+        const __m512d z27 = _mm512_add_pd(z13, z22);
+        const __m512d z28 = _mm512_fmadd_pd(_ZW0_s, _mm512_permute_pd(z25, 0x55), z25);
+        const __m512d z29 = _mm512_fnmadd_pd(_mm512_set1_pd(0.70710678118654757), z28, z16);
+        const __m512d z30 = _mm512_fmadd_pd(_mm512_set1_pd(0.70710678118654757), z28, z16);
+        const __m512d z31 = _mm512_xor_pd(_mm512_permute_pd(z21, 0x55), _M_RE);
+        const __m512d z32 = _mm512_sub_pd(z12, z31);
+        const __m512d z33 = _mm512_add_pd(z12, z31);
+        const __m512d z34 = _mm512_fmadd_pd(_ZW1_s, _mm512_permute_pd(z24, 0x55), z24);
+        const __m512d z35 = _mm512_fmadd_pd(_mm512_set1_pd(0.70710678118654757), z34, z15);
+        const __m512d z36 = _mm512_fnmadd_pd(_mm512_set1_pd(0.70710678118654757), z34, z15);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)0*OLs + k)], _tm, z27);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)1*OLs + k)], _tm, z30);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)2*OLs + k)], _tm, z33);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)3*OLs + k)], _tm, z36);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)4*OLs + k)], _tm, z26);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)5*OLs + k)], _tm, z29);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)6*OLs + k)], _tm, z32);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)7*OLs + k)], _tm, z35);
+        k = cnt_;
+    }
     if (k + 2 <= cnt_) {  /* ladder: ymm pass, 2 complex */
         const __m256d z0 = _mm256_loadu_pd(&zin[2*((size_t)0*Ls + k)]);
         const __m256d z1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k)]);

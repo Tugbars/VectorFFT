@@ -36,8 +36,11 @@ three added macros in `il_registry_avx2.h` (`VFFT_IL_ISA_NAME`, `VFFT_IL_VW`,
 - **137 turned kinds:** identical to the set that passed the bitwise comparison with
   AVX2 (counts 1–13, 4 buffer offsets, guard page).
 - **ZTT and msz:** identical to the set that passed 7,832 end-to-end checks.
-- **Compilation:** all 716 compile with only their own target attribute; the whole
-  avx512 codelet library (1,269 codelets) builds.
+- **Compilation:** all 716 compile with the build's flags (`-mavx512f -mavx512dq
+  -mfma`), and the whole avx512 codelet library (1,269 codelets) builds. *Correction:*
+  an earlier version said they compile with only their own target attribute; 116 do
+  not (their static helper bodies carry no attribute — the same gap exists in the AVX2
+  tree). See `docs/design/avx512_tail_handling.md` §6.
 
 ## Corpus ceremony
 
@@ -54,9 +57,9 @@ three added macros in `il_registry_avx2.h` (`VFFT_IL_ISA_NAME`, `VFFT_IL_VW`,
 
 Each is a one-line change.
 
-- **D1, tail:** the ymm+xmm ladder. The turned kinds use the per-column xmm tail with the
-  lane fix instead (a ymm rung would store two columns through a one-column turn
-  address). Override: `VFFT_TAIL512`, recorded in the provenance Env line.
+- **D1, tail:** *decided since:* `ladder_m3` (xmm for 1 leftover, ymm for 2, masked zmm
+  for 3), written as L10 in `policy.h`; the study is `docs/design/avx512_tail_handling.md`.
+  The turned kinds keep the per-column xmm tail with the lane fix.
 - **D2, uarch:** `sapphire_rapids_avx512`.
 - **D4, target attribute:** zil-only `avx512f,avx512dq,avx512vl,fma`.
 - **D5, fused driver layout:** a per-ISA subfolder.

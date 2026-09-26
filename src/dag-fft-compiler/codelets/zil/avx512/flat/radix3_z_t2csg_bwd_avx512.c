@@ -73,6 +73,34 @@ void radix3_z_t2csg_bwd_avx512(
     const __m256d _wgs_y = _mm256_loadu_pd(&tw_im[8]);
     const __m128d _wgc_n = _mm_loadu_pd(&tw_im[0]);
     const __m128d _wgs_n = _mm_loadu_pd(&tw_im[8]);
+    if (count - k == 3) {  /* 3 leftover complex: ONE k-masked zmm pass (policy.h L10) */
+        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(count - k))) - 1u);
+        const double *twp = tw_re + (k / 4) * (size_t)16;
+        const __m512d _t1c = _mm512_maskz_loadu_pd(_tm, &twp[0]);
+        const __m512d _t1s = _mm512_maskz_loadu_pd(_tm, &twp[8]);
+        const __m512d _wc1 = _mm512_fnmadd_pd(_t1s, _wgs, _mm512_mul_pd(_t1c, _wgc));
+        const __m512d _ws1 = _mm512_fmadd_pd(_t1c, _wgs, _mm512_mul_pd(_t1s, _wgc));
+        const __m512d _wc2 = _mm512_fnmadd_pd(_ws1, _ws1, _mm512_mul_pd(_wc1, _wc1));
+        const __m512d _ws2 = _mm512_fmadd_pd(_wc1, _ws1, _mm512_mul_pd(_ws1, _wc1));
+        /* gen2: W^1 = T1[pair] x T2, 1 legs derived */
+        const __m512d z0 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)0*Ls + (size_t)k*Gs)]);
+        const __m512d z1 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)1*Ls + (size_t)k*Gs)]);
+        const __m512d z3 = _mm512_maskz_loadu_pd(_tm, &zin[2*((size_t)2*Ls + (size_t)k*Gs)]);
+        const __m512d z2 = _mm512_fmadd_pd(_wc1, z1, _mm512_mul_pd(_ws1, _mm512_permute_pd(z1, 0x55)));
+        const __m512d z4 = _mm512_fmadd_pd(_wc2, z3, _mm512_mul_pd(_ws2, _mm512_permute_pd(z3, 0x55)));
+        const __m512d z6 = _mm512_sub_pd(z2, z4);
+        const __m512d z5 = _mm512_add_pd(z2, z4);
+        const __m512d z8 = _mm512_add_pd(z0, z5);
+        const __m512d z7 = _mm512_xor_pd(_mm512_permute_pd(z6, 0x55), _M_RE);
+        const __m512d z9 = _mm512_fnmadd_pd(_mm512_set1_pd(0.49999999999999978), z5, z0);
+        const __m512d z10 = _mm512_mul_pd(_ZW0_c, z7);
+        const __m512d z11 = _mm512_sub_pd(z9, z10);
+        const __m512d z12 = _mm512_add_pd(z9, z10);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)0*OLs + (size_t)k*OGs)], _tm, z8);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)1*OLs + (size_t)k*OGs)], _tm, z12);
+        _mm512_mask_storeu_pd(&zout[2*((size_t)2*OLs + (size_t)k*OGs)], _tm, z11);
+        k = count;
+    }
     if (k + 2 <= count) {  /* ladder: ymm pass, 2 complex */
         const double *twp = tw_re + (k / 4) * (size_t)16 + 2 * (k % 4);
         const __m256d _t1c_y = _mm256_loadu_pd(&twp[0]);

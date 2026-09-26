@@ -1,0 +1,29 @@
+=== run 1
+case                       remA   remB      narrowfix       ladder       masked         hyb2         avx2   bitwise(all avx512 = avx2)
+N=989  (43 x 23)           3      3         3919.7 ns    4780.4 ns    3568.6 ns    3696.8 ns    5060.9 ns   yes
+N=999  (37 x 27)           3      1         3545.8 ns    3513.2 ns    3485.6 ns    3654.5 ns    4747.2 ns   yes
+N=1025 (41 x 25)           1      1         3102.5 ns    3225.6 ns    3376.4 ns    3332.8 ns    4743.6 ns   yes
+N=1073 (37 x 29)           1      1         3108.5 ns    3170.5 ns    3301.1 ns    3281.4 ns    4734.4 ns   yes
+solo N=8   (n1, count 1)   1      -1           6.3 ns       7.1 ns      10.9 ns       9.4 ns       6.8 ns   yes
+solo N=16  (n1, count 1)   1      -1          13.9 ns      15.2 ns      24.9 ns      21.5 ns      14.1 ns   yes
+solo N=32  (n1, count 1)   1      -1          51.7 ns      38.9 ns      63.2 ns      51.7 ns      52.5 ns   yes
+solo N=64  (n1, count 1)   1      -1         114.6 ns      99.1 ns     168.4 ns     131.7 ns     127.1 ns   yes
+=== run 2
+case                       remA   remB      narrowfix       ladder       masked         hyb2         avx2   bitwise(all avx512 = avx2)
+N=989  (43 x 23)           3      3         3783.2 ns    4740.9 ns    3529.2 ns    3712.5 ns    5201.2 ns   yes
+N=999  (37 x 27)           3      1         3397.3 ns    3367.4 ns    3262.9 ns    3417.8 ns    4999.6 ns   yes
+N=1025 (41 x 25)           1      1         3164.0 ns    3449.7 ns    3742.2 ns    3698.2 ns    4871.5 ns   yes
+N=1073 (37 x 29)           1      1         3151.3 ns    3174.2 ns    3286.6 ns    3349.2 ns    5022.3 ns   yes
+solo N=8   (n1, count 1)   1      -1           7.1 ns       9.8 ns      17.1 ns      14.4 ns       9.8 ns   yes
+solo N=16  (n1, count 1)   1      -1          15.1 ns      17.4 ns      30.3 ns      24.5 ns      16.3 ns   yes
+solo N=32  (n1, count 1)   1      -1          57.9 ns      43.6 ns      74.7 ns      60.3 ns      58.7 ns   yes
+solo N=64  (n1, count 1)   1      -1         136.9 ns     111.1 ns     197.2 ns     155.8 ns     142.7 ns   yes
+case                       remA   remB      narrowfix       ladder       masked    ladder_m3         avx2   bitwise(all avx512 = avx2)
+N=989  (43 x 23)           3      3         3257.4 ns    4004.1 ns    2988.0 ns    3086.2 ns    4258.3 ns   yes
+N=999  (37 x 27)           3      1         3100.3 ns    3122.4 ns    3050.9 ns    2959.1 ns    4095.5 ns   yes
+N=1025 (41 x 25)           1      1         3341.4 ns    3610.5 ns    3656.2 ns    3660.5 ns    5336.6 ns   yes
+N=1073 (37 x 29)           1      1         3720.8 ns    3822.9 ns    3956.6 ns    3804.7 ns    5484.4 ns   yes
+solo N=8   (n1, count 1)   1      -1           6.7 ns       7.1 ns      13.0 ns       7.6 ns       7.6 ns   yes
+solo N=16  (n1, count 1)   1      -1          14.2 ns      15.7 ns      29.1 ns      15.8 ns      15.8 ns   yes
+solo N=32  (n1, count 1)   1      -1          56.3 ns      41.5 ns      64.5 ns      41.4 ns      53.2 ns   yes
+solo N=64  (n1, count 1)   1      -1         137.2 ns     111.5 ns     199.5 ns     112.4 ns     143.2 ns   yes
