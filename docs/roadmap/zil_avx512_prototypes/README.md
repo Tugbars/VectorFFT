@@ -18,5 +18,11 @@ Each applies cleanly, on its own, to commit `b8f91cc`; they overlap (several tou
 | `corpus_registry_isa.diff` | `generator/`, `patch -p1` | ISA as a parameter of the typed corpus cells (`zil-*-avx512` quadrants), `zil_isa_gap` absence predicate, `emit_il_registry --isa`. `gen_set` emits 527 avx512 files byte-equal to the per-file replays; the avx2 quadrants are byte-neutral. |
 | `twin_gate.py`, `twin_gate.c` | scratch | The table-driven twin gate: emits the avx2 and avx512 twin of each recipe with the same generator, builds per-width twiddle tables from the same logical twiddles, and compares outputs bitwise (`-ffp-contract=off`) and against a long-double DFT. |
 
+`harness/` keeps the load-bearing test and measurement sources from the investigation
+(turn A/B and 4x4 store proof, the column-stride/tail differential driver, the ZTT/msz
+runtime tests incl. the MT-cut and permutation-inverse traps, the table-contract probes,
+the tail and alignment benchmarks, the k1 mono test). Scripts inside still point at the
+old scratch paths; adapt them before use.
+
 Build any patched generator **outside the tree** (`dune build --root <copy>
 --build-dir <scratch>`); a bare `dune build` in the repo promotes tracked headers.
