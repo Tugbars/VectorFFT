@@ -606,6 +606,29 @@ The harnesses behind the acceptance commands were in scratch; the load-bearing o
 kept in `zil_avx512_prototypes/harness/` (paths inside them point at the old scratch tree
 and need adapting).
 
+### 11.7 First benchmark: ZTURN-T at AVX-512 vs AVX2 vs MKL (2026-09-26)
+
+Not the front-door planner (the avx512 library does not link yet): the ZTURN-T race alone,
+through the prototype runtime — every fused ZTT cell x every legal tile, natural order, out
+of place, K=1 — then the winner against MKL in 21 alternating rounds with a control arm (the
+winner timed again), pinned to one core. AVX2 = the shipped kernels built as real AVX2
+(clamped, no EVEX). MKL 2026.1, one thread. Source, build script and raw log:
+`zil_avx512_prototypes/harness/ztt_bench/`. Two runs (run 1 / run 2):
+
+| N | AVX-512 winner | AVX-512 ours (ns) | MKL AVX-512 (ns) | MKL / ours | AVX2 ZTT (ns) |
+|---|---|---|---|---|---|
+| 1024 | 8.4.8.4 tile 512 | 950 / 1091 | 1307 / 1488 | **1.37 / 1.36** | 1555 / 1540 |
+| 2048 | 8.8.8.4 / 8.4.8.8 | 2552 / 3139 | 3049 / 3523 | **1.19 / 1.12** | 3952 / 3317 |
+| 4096 | 8.8.8.8 / 8.4.4.4.8 | 6592 / 7008 | 7946 / 7823 | **1.21 / 1.12** | 7564 / 7851 |
+
+- Correct everywhere: relative error vs MKL 2.6–3.3e-16.
+- The AVX2 ZTT is at parity with MKL's AVX-512 path (0.85–1.06x) and 0.94–1.14x against
+  MKL pinned to AVX2.
+- AVX-512 has 9/16/25 fused candidates at these N against 21/36/60 at AVX2 (the VW=8 laws)
+  and still wins; at 2048/4096 the winning chain changes between runs (near-ties).
+- Within a run the control arm lands within ~1% of the winner; between runs the whole VM
+  drifts 10–20%, so the ratios hold and the absolute numbers do not.
+
 ### 11.6 Hygiene found on the way
 
 - `generated/ztt_registry_avx2.h` is stale against its emitter (line 6).
