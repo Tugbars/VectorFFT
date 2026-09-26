@@ -1,0 +1,7 @@
+2026-09-26 02:07:22 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-26 02:07:22 run: 23 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-26 02:07:22 calibrate: 23 cells (0 already done)
+2026-09-26 02:07:25   calibrated 23/23 (8388608), 2 s elapsed
+2026-09-26 02:07:25 bench: 22 cells (0 already benched, 1 not banked -> not benched)
+2026-09-26 02:08:10   benched 22/22 (4194304), 44 s elapsed
+2026-09-26 02:08:11 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\kfr_pow2_2026-09-26\report_kfr.md

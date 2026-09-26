@@ -1,10 +1,9 @@
-/* kfr_arm.h -- the KFR comparator arm of the gauntlet bench, behind a C
- * interface (KFR is a C++ library and wants Clang; the bench is C).
+/* kfr_arm.h -- the KFR comparator arm of the gauntlet bench.
  *
- * Wired 2026-09-25 for a future run, UNTESTED: no Clang and no KFR were
- * installed on the calibration host when it was written. The arm compiles
- * only with `build.py --kfr` (which requires a Clang toolchain, CC=clang) and
- * links the user's own KFR checkout; nothing of KFR ships with this tree.
+ * kfr_arm.c implements it over KFR's C API (kfr/capi.h, the kfr_capi shared
+ * library of KFR's release package). It compiles only with `build.py --kfr`,
+ * which links the user's own KFR package; nothing of KFR ships with this
+ * tree.
  *
  * Contract, the same as the MKL arm's 1D c2c cell: one double-precision
  * interleaved complex transform of length N, forward, out of place or in

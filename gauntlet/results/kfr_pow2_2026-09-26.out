@@ -1,0 +1,84 @@
+2026-09-26 02:07:22 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-26 02:07:22 run: 23 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-26 02:07:22 calibrate: 23 cells (0 already done)
+2026-09-26 02:07:25   calibrated 23/23 (8388608), 2 s elapsed
+2026-09-26 02:07:25 bench: 22 cells (0 already benched, 1 not banked -> not benched)
+2026-09-26 02:08:10   benched 22/22 (4194304), 44 s elapsed
+# gauntlet report
+
+run: `kfr_pow2_2026-09-26`  contract file suffix: `_kfr`  cells: 23 listed, 22 benched, comparator: MKL
+
+control cell: 4 readings, 1.320..1.336 (a run is internally comparable when the first and the last agree)
+
+
+## every cell
+
+```
+         N  factors          route    served       ours ns     cmp ns       x   rt err  note
+         2  2                mono     replayed           4          6    1.52  0.0e+00  
+         4  2^2              mono     replayed           5          6    1.27  0.0e+00  
+         8  2^3              mono     replayed           7          6    0.84  7.4e-17  
+        16  2^4              ztt      replayed          10          8    0.70  7.5e-17  
+        32  2^5              2p       replayed          17         16    0.98  1.7e-16  
+        64  2^6              2p       replayed          32         39    1.06  1.5e-16  
+       128  2^7              2p       replayed          66         73    1.11  3.2e-16  
+       256  2^8              2p       replayed         135        144    1.07  0.0e+00  
+       512  2^9              2p       replayed         298        333    1.12  2.3e-16  
+      1024  2^10             ztt      replayed         722        802    1.11  4.0e-16  
+      2048  2^11             ztt      replayed        1605       2002    1.24  3.1e-16  
+      4096  2^12             ztt      replayed        3559       4728    1.33  3.9e-16  
+      8192  2^13             ztt      replayed        7986      10623    0.95  4.1e-16  flips differ 1.39x
+     16384  2^14             ztt      replayed       17695      24401    1.37  4.5e-16  
+     32768  2^15             ztt      replayed       38926      48820    1.24  4.5e-16  
+     65536  2^16             ztt      replayed       88490     119470    1.30  4.8e-16  
+    131072  2^17             ztt      replayed      228667     288743    1.22  4.6e-16  
+    262144  2^18             ztt      replayed      611325     634793    1.03  4.0e-16  
+    524288  2^19             fs       replayed     1380375    1523087    1.08  4.8e-16  
+   1048576  2^20             fs       replayed     3443150    4206975    1.16  6.1e-16  
+   2097152  2^21             fs       replayed     8626912   10752037    1.18  7.6e-16  
+   4194304  2^22             fs       replayed    20587337   26495469    1.28  9.3e-16  
+   8388608  2^23             -        refused            -          -       -        -  not benched
+```
+
+
+## by route (worse of the two flips)
+```
+ route    cells   <0.8   <1.0    p10    med    p90   gmean
+ ztt         10      1      2   0.95   1.23   1.37    1.13
+ 2p           5      0      1   0.98   1.07   1.12    1.07
+ fs           4      0      0   1.08   1.17   1.28    1.17
+ mono         3      0      1   0.84   1.27   1.52    1.18
+ ALL         22      1      4   0.95   1.14   1.33    1.13
+```
+
+
+## by size
+```
+ band               cells median   <1.0   <0.8
+ 2..7                   2   1.40      0      0
+ 8..31                  2   0.77      2      1
+ 32..127                2   1.02      1      0
+ 128..511               2   1.09      0      0
+ 512..2047              2   1.11      0      0
+ 2048..8191             2   1.29      0      0
+ 8192..32767            2   1.16      1      0
+ 32768..131071          2   1.27      0      0
+ 131072..524287         2   1.12      0      0
+ 524288..2097151        2   1.12      0      0
+ 2097152..4194304       2   1.23      0      0
+```
+
+
+## by family
+```
+ family                                       cells median   <1.0  gmean
+ pow2                                            22   1.14      4   1.13
+```
+
+
+flip agreement: our two readings more than 25% apart at 1 of 22 cells.
+
+worst 10: 16 (ztt 0.70), 8 (mono 0.84), 8192 (ztt 0.95), 32 (2p 0.98), 262144 (ztt 1.03), 64 (2p 1.06), 256 (2p 1.07), 524288 (fs 1.08), 1024 (ztt 1.11), 128 (2p 1.11)
+best 5: 2 (mono 1.52), 16384 (ztt 1.37), 4096 (ztt 1.33), 65536 (ztt 1.30), 4194304 (fs 1.28)
+
+2026-09-26 02:08:11 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\kfr_pow2_2026-09-26\report_kfr.md
