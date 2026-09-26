@@ -138,3 +138,19 @@
   (with-stdout-to
    ztt_registry_avx2.h
    (run %{exe:../bin/emit_ztt_registry.exe} --isa avx2))))
+
+; the avx512 IL + ztt registries (2026-09-26)
+(rule
+ (targets il_registry_avx512.h)
+ (deps %{exe:../bin/emit_il_registry.exe})
+ (mode promote)
+ (action
+  (with-stdout-to il_registry_avx512.h
+   (run %{exe:../bin/emit_il_registry.exe} --isa avx512))))
+(rule
+ (targets ztt_registry_avx512.h)
+ (deps %{exe:../bin/emit_ztt_registry.exe})
+ (mode promote)
+ (action
+  (with-stdout-to ztt_registry_avx512.h
+   (run %{exe:../bin/emit_ztt_registry.exe} --isa avx512))))

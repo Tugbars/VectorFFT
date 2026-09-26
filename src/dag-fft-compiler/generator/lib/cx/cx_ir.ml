@@ -42,13 +42,17 @@ type cx_kind =
   (* a store node: address + the value it sinks. First-class so the
      scheduler CAN see stores (Node.is_store, the B2 hook) — whether it
      SCHEDULES them is the placement policy's choice, not the IR's. *)
-  | CTurn of t * t * int
-  (* permute2f128(a, b, imm) — the corner-turn lane regroup (0x20/0x31).
-     In the DAG so turned stores are data, not a hand-printed edge. *)
-  | CLo of t
-  | CHi of t
-  (* 128-bit halves (castpd256_pd128 / extractf128 1) — the odd-leg and
-     leg-strided scatter halves. *)
+  | CTurn of t * t * bool
+  (* COMPLEX-LANE DEINTERLEAVE of two vectors (the corner-turn round):
+       even (false): [a0,a2,..,b0,b2,..]   odd (true): [a1,a3,..,b1,b3,..]
+     (lane = one complex = 128 bits). log2(per) rounds of it transpose a
+     per x per complex block (Cx_math.turn_transpose). ISA-parametric via
+     Isa.cx_deint_pd: avx2 permute2f128 0x20/0x31, avx512 shuffle_f64x2
+     0x88/0xDD, sse2 identity. *)
+  | CPart of t * int
+  (* complex lane c as a 128-bit value (Isa.cx_part_pd): avx2
+     castpd256_pd128 / extractf128(.,1); avx512 castpd512_pd128 /
+     extractf64x2(.,c). The odd-leg and leg-strided scatter quarters. *)
   | CAdd of t * t
   | CSub of t * t
   | CNeg of t
@@ -176,9 +180,10 @@ let mk (nk : cx_kind) : t =
 let cin i = mk (CIn i)
 let cload a = mk (CLoad a)
 let cstore a v = mk (CStore (a, v))
-let cturn a b imm = mk (CTurn (a, b, imm))
-let clo a = mk (CLo a)
-let chi a = mk (CHi a)
+let cturn a b odd = mk (CTurn (a, b, odd))
+let cpart a c = mk (CPart (a, c))
+let clo a = cpart a 0
+let chi a = cpart a 1
 let cadd a b = mk (CAdd (a, b))
 let csub a b = mk (CSub (a, b))
 let cneg a = mk (CNeg a)

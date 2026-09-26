@@ -333,12 +333,12 @@ let emit
   if vw mod 2 <> 0 then failwith "codelet_cil: interleaved needs an even vec_width";
   let per = vw / 2 in
   (* complex per vector *)
-  if (kind = N1T || ctx.st_turn) && per <> 2
+  if (kind = N1T || ctx.st_turn) && (per < 2 || per land (per - 1) <> 0)
   then
-    (* The corner-turn store pairs two legs with one permute2f128 (a
-       2-complex-per-vector shape). A width-8 vector holds 4 complex and
-       needs a 4-way lane shuffle instead — not written yet. *)
-    failwith "codelet_cil: n1t corner-turn store is written for 2 complex/vector (avx2)";
+    (* The corner-turn store transposes per x per complex blocks with
+       log2(per) rounds of Isa.cx_deint_pd (Cx_math.turn_transpose): any
+       power-of-two per >= 2 (avx2 = 2, avx512 = 4). *)
+    failwith "codelet_cil: the corner-turn store needs a power-of-two complex count per vector";
   (* RADIX GATE: >= 2 only. Pow2 -> dft_cx, odd -> conjugate pair, and (as
      of 2026-07-29) EVEN COMPOSITES -> dft_small's mixed radix-2 recursion
      bottoming out in the odd builder — the old "would drop legs" refusal
@@ -441,6 +441,54 @@ let emit
   (* Render the body first: it populates the constant table that the file
      preamble must declare. *)
   let body = Buffer.create 4096 in
+  (* ─── THE TURNED STORE OF ONE LEG GROUP (width-generic) ────────────
+     legs = r <= per ADJACENT legs l0 .. l0+r-1, each vector holding the
+     iteration's per columns. Column c of the group lands contiguously at
+     zout[2*((k+c)*OLs + l0)] (AZoutTurn (l0, c)).
+       r = 1       : quarter scatter — complex lane c of the leg to column
+                     c (Isa.cx_part_pd; store-form extracts, no shuffle).
+                     At per = 2 this is the historical odd-leg CLo/CHi edge.
+       r >= 2      : Cx_math.turn_transpose (log2(per) CTurn rounds; the
+                     non-final rounds declared first), column c stored
+                     whole (r = per) or as its r-lane prefix
+                     (Isa.storeu_cx_prefix). At per = 2 this is exactly the
+                     paired permute2f128 0x20/0x31 edge, byte-for-byte. *)
+  let turned_group_store (dst : Buffer.t) ~(l0 : int) (legs : t array) : unit =
+    let r = Array.length legs in
+    if r = 1
+    then
+      for c = 0 to per - 1 do
+        let q = cpart legs.(0) c in
+        let (_ : t) = cstore (AZoutTurn (l0, c)) q in
+        Buffer.add_string
+          dst
+          (Printf.sprintf
+             "        %s;\n"
+             (render_store Isa.sse2 (AZoutTurn (l0, c)) (render ~ctx isa tbl q)))
+      done
+    else (
+      let cols, inter = Cx_math.turn_transpose ~per legs in
+      List.iter
+        (fun (x : t) ->
+           Buffer.add_string
+             dst
+             (Printf.sprintf
+                "        %s\n"
+                (Isa.const_decl isa (Printf.sprintf "z%d" x.tag) (render ~ctx isa tbl x))))
+        inter;
+      Array.iteri
+        (fun c (col : t) ->
+           let ad = AZoutTurn (l0, c) in
+           let (_ : t) = cstore ad col in
+           Buffer.add_string
+             dst
+             (Printf.sprintf
+                "        %s;\n"
+                (if r = per
+                 then render_store isa ad (render ~ctx isa tbl col)
+                 else Isa.storeu_cx_prefix isa (addr_str ad) (render ~ctx isa tbl col) r)))
+        cols)
+  in
   (* ─── ONE SCHEDULED PASS ──────────────────────────────────────────
      Build a sub-DAG, run it through the SHARED scheduler, and emit
      loads / defs / stores for it. Used by the BLOCKED construction,
@@ -705,12 +753,16 @@ let emit
       failwith
         "codelet_cil: --cil-blocked does not implement the leg-strided (t2tg) turn; only \
          the contiguous corner-turn is supported blocked.";
-    if turned && (not turn128) && p mod 2 <> 0
+    if turned && (not turn128) && p mod per <> 0
     then
       failwith
         (Printf.sprintf
-           "codelet_cil: blocked turned stores pair pass-2 groups (j, j+1), which needs \
-            an EVEN p; split %d.%d has p = %d. Pick an even-p split."
+           "codelet_cil: blocked turned stores group %d pass-2 groups (j .. j+%d), which \
+            needs p %% %d = 0; split %d.%d has p = %d. Pick such a split (or \
+            VFFT_CX_TURN128=1, the ungrouped quarter-scatter edge)."
+           per
+           (per - 1)
+           per
            m
            p
            p);
@@ -747,18 +799,16 @@ let emit
           ~build:(fun ins -> pass2_math ~jv:j ins)
           ~store:(fun k2 e ->
             let l = j + (p * k2) in
-            let lo = clo e
-            and hi = chi e in
-            let (_ : t) = cstore (AZoutTurn (l, 0)) lo
-            and (_ : t) = cstore (AZoutTurn (l, 1)) hi in
-            Buffer.add_string
-              body
-              (Printf.sprintf
-                 "        _mm_storeu_pd(&%s, %s);\n        _mm_storeu_pd(&%s, %s);\n"
-                 (addr_str (AZoutTurn (l, 0)))
-                 (render ~ctx isa tbl lo)
-                 (addr_str (AZoutTurn (l, 1)))
-                 (render ~ctx isa tbl hi)))
+            for c = 0 to per - 1 do
+              let q = cpart e c in
+              let (_ : t) = cstore (AZoutTurn (l, c)) q in
+              Buffer.add_string
+                body
+                (Printf.sprintf
+                   "        _mm_storeu_pd(&%s, %s);\n"
+                   (addr_str (AZoutTurn (l, c)))
+                   (render ~ctx isa tbl q))
+            done)
       done
     else
       (* ─── PASS 2, TURNED (N1T / t2t): the corner-turn pairs ADJACENT legs
@@ -774,52 +824,56 @@ let emit
          twin (0x31). j even and p even make every l = j + p*k2 even —
          exactly the monolithic lattice. Group-A names are stashed by the
          store callback until their group-B partner arrives. *)
-      for jj = 0 to (p / 2) - 1 do
-        let j = 2 * jj in
-        (* Group-A NODES stashed until the group-B partner arrives; the
-           regroup is then CTurn nodes + CStore at AZoutTurn — same DATA
-           form as the monolithic corner-turn edge. *)
-        let a_nodes : t option array = Array.make m None in
+      for jj = 0 to (p / per) - 1 do
+        let j = per * jj in
+        (* Groups 0 .. per-2 are stashed until group per-1 (the last one the
+           pass's store sweep reaches) delivers the partner; then the legs
+           l .. l+per-1 (l = j + p*k2, a multiple of per) leave through the
+           width-generic turned_group_store. per = 2 is the historical
+           pass-PAIR (j, j+1), byte-for-byte. *)
+        let stash : t option array array = Array.init (per - 1) (fun _ -> Array.make m None) in
+        let grp_list sep = String.concat sep (List.init per (fun g -> string_of_int (j + g))) in
         emit_pass
           ~lazy_store:false
           ~label:
             (Printf.sprintf
-               "PASS 2.%d+%d TURNED: S[i*%d+{%d,%d}] -> columns k,k+1"
-               j
-               (j + 1)
+               "PASS 2.%s TURNED: S[i*%d+{%s}] -> columns %s"
+               (grp_list "+")
                p
-               j
-               (j + 1))
-          ~nin:(2 * m)
+               (grp_list ",")
+               (if per = 2 then "k,k+1" else Printf.sprintf "k..k+%d" (per - 1)))
+          ~nin:(per * m)
           ~laddr_of:(fun idx ->
             let i = idx mod m
             and g = idx / m in
             AS (vw * ((i * p) + j + g)))
           ~build:(fun ins ->
-            let ga = Array.sub ins 0 m
-            and gb = Array.sub ins m m in
-            Array.append (pass2_math ~jv:j ga) (pass2_math ~jv:(j + 1) gb))
+            (* built LAST group first: the historical pair form was
+               `Array.append (pass2_math A) (pass2_math B)`, whose arguments
+               OCaml evaluates right-to-left — B's nodes (hence zN tags) were
+               minted first. Reproduced here for byte-identity at per = 2. *)
+            let parts = Array.make per [||] in
+            for g = per - 1 downto 0 do
+              parts.(g) <- pass2_math ~jv:(j + g) (Array.sub ins (g * m) m)
+            done;
+            Array.concat (Array.to_list parts))
           ~store:(fun idx e ->
-            if idx < m
-            then a_nodes.(idx) <- Some e
+            let g = idx / m
+            and k2 = idx mod m in
+            if g < per - 1
+            then stash.(g).(k2) <- Some e
             else (
-              let k2 = idx - m in
               let l = j + (p * k2) in
-              let a =
-                match a_nodes.(k2) with
-                | Some a -> a
-                | None -> failwith "codelet_cil: turned pass-pair stash miss"
+              let legs =
+                Array.init per (fun g' ->
+                  if g' = per - 1
+                  then e
+                  else (
+                    match stash.(g').(k2) with
+                    | Some a -> a
+                    | None -> failwith "codelet_cil: turned pass-tuple stash miss"))
               in
-              let ta = cturn a e 0x20
-              and tb = cturn a e 0x31 in
-              let (_ : t) = cstore (AZoutTurn (l, 0)) ta
-              and (_ : t) = cstore (AZoutTurn (l, 1)) tb in
-              Buffer.add_string
-                body
-                (Printf.sprintf
-                   "        %s;\n        %s;\n"
-                   (render_store isa (AZoutTurn (l, 0)) (render ~ctx isa tbl ta))
-                   (render_store isa (AZoutTurn (l, 1)) (render ~ctx isa tbl tb)))))
+              turned_group_store body ~l0:l legs))
       done
   in
   (* The old refusal ("emit_blocked never inspects kind") is RESOLVED for the
@@ -1178,22 +1232,27 @@ let emit
      [-s,+s] at off + tw_vw) — only the ADDRESSING must keep the wide
      geometry, hence ~tw_vw below. Own C block + own constants = the RA
      mitigation emit_c.ml §4052/4058 uses (hot loop must stay unchanged). *)
-  let body_n = Buffer.create 2048 in
-  (
-    let nisa = Isa.sse2 in
+  (* ── ISA-parameterized tail arms (2026-09-26, zil_avx512_design.md §8.6) ──
+     tail_arm ~nisa ~msuf ~mode buf renders ONE remainder pass of the SAME
+     scheduled DAG. nisa = the render ISA (sse2 narrow, avx2 ymm, or the wide
+     isa itself under LS_masked); msuf names that arm's own mask/prologue twins
+     ("" = reuse the wide names). ~lane_off: add 2*(k % per) to the stream
+     cursor (per-lane VTW2/gen2 records read at the column's own lane). *)
+  let tail_arm ~(nisa : Isa.t) ~(msuf : string) ~(mode : Isa.ls_mode) ~(lane_off : bool) body_n =
     if kind = T2
     then
       Buffer.add_string
         body_n
         (Printf.sprintf
-           "        const double *twp = tw_re + (k / %d) * (size_t)%d;\n"
+           "        const double *twp = tw_re + (k / %d) * (size_t)%d%s;\n"
            per
-           (if ctx.tw_gen2 then 2 * vw else (radix - 1) * 2 * vw));
+           (if ctx.tw_gen2 then 2 * vw else (radix - 1) * 2 * vw)
+           (if lane_off then Printf.sprintf " + 2 * (k %% %d)" per else ""));
     if kind = T2 && ctx.tw_log3
-    then emit_log3_prologue ~tw_vw:vw ~msuf:"_n" body_n nisa radix;
+    then emit_log3_prologue ~mode ~tw_vw:vw ~msuf body_n nisa radix;
     if kind = T2 && ctx.tw_gen2
-    then emit_gen2_prologue ~tw_vw:vw ~msuf:"_n" body_n nisa radix;
-    if kind = T2C then emit_group_prologue ~tw_vw:vw ~msuf:"_n" body_n nisa radix;
+    then emit_gen2_prologue ~mode ~tw_vw:vw ~msuf body_n nisa radix;
+    if kind = T2C && msuf <> "" then emit_group_prologue ~tw_vw:vw ~msuf body_n nisa radix;
     for l = 0 to radix - 1 do
       Buffer.add_string
         body_n
@@ -1202,7 +1261,9 @@ let emit
            (Isa.const_decl
               nisa
               (Printf.sprintf "z%d" leg_tags.(l))
-              (Isa.loadu_pd nisa (addr_str (AZinLeg l)))))
+              (match mode with
+               | Isa.LS_vector -> render_load nisa (AZinLeg l)
+               | _ -> Isa.loadu_pd ~mode nisa (addr_str (AZinLeg l)))))
     done;
     let seen_n : (int, unit) Hashtbl.t = Hashtbl.create 256 in
     List.iter
@@ -1220,24 +1281,21 @@ let emit
                   (Isa.const_decl
                      nisa
                      (Printf.sprintf "z%d" e.tag)
-                     (render ~ctx ~tw_vw:vw ~msuf:"_n" nisa tbl e)))))
+                     (render ~ctx ~mode ~tw_vw:vw ~msuf nisa tbl e)))))
       scheduled;
     match if ctx.st_turn then N1T else kind with
     | N1 | N1C | T2 | T2C ->
-      (* the wide edge below creates the CStore node; the tail prints the
-         same address form at narrow width *)
       Array.iteri
         (fun l (e : t) ->
            Buffer.add_string
              body_n
              (Printf.sprintf
                 "        %s;\n"
-                (render_store nisa (AZoutLeg l) (Printf.sprintf "z%d" e.tag))))
+                (match mode with
+                 | Isa.LS_vector -> render_store nisa (AZoutLeg l) (Printf.sprintf "z%d" e.tag)
+                 | _ -> Isa.storeu_pd ~mode nisa (addr_str (AZoutLeg l)) (Printf.sprintf "z%d" e.tag))))
         outs
     | N1T ->
-      (* one complex per leg: the corner-turn (and the t2tg leg stride) is
-         pure addressing at this width — no permutes, no pairing. The wide
-         edge below owns the CStore nodes; the tail prints the col-0 form. *)
       Array.iteri
         (fun l (e : t) ->
            let a = if ctx.st_turn_gs then AZoutTurnG (l, 0) else AZoutTurn (l, 0) in
@@ -1246,7 +1304,35 @@ let emit
              (Printf.sprintf
                 "        %s;\n"
                 (render_store nisa a (Printf.sprintf "z%d" e.tag))))
-        outs);
+        outs
+  in
+  (* Remainder policy at per > 2 (docs/roadmap/zil_avx512_design.md §8.6):
+     measured on Emerald Rapids, the ymm+xmm LADDER has the lowest average
+     tail cost, so it is the default; the corner-turned kinds keep the
+     per-column xmm arm with the lane offset ("narrowfix") because a ymm
+     rung would store two columns through a one-column turn address.
+     VFFT_TAIL512 overrides (recorded in the provenance Env line). At
+     vw = 4 the shipped behaviour is untouched. *)
+  let tail_policy =
+    if vw <= 4 then "narrow"
+    else match Sys.getenv_opt "VFFT_TAIL512" with
+      | Some s -> s
+      | None -> if kind = N1T || ctx.st_turn then "narrowfix" else "ladder"
+  in
+  let body_n = Buffer.create 2048 in
+  let body_y = Buffer.create 2048 in
+  (match tail_policy with
+   | "masked" -> tail_arm ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") ~lane_off:false body_n
+   | "ladder" ->
+     tail_arm ~nisa:Isa.avx2 ~msuf:"_y" ~mode:Isa.LS_vector ~lane_off:true body_y;
+     tail_arm ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:true body_n
+   | "hyb2" ->
+     tail_arm ~nisa:Isa.avx512vl256 ~msuf:"_y" ~mode:(Isa.LS_masked "_tm") ~lane_off:false body_y;
+     tail_arm ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") ~lane_off:false body_n
+   | "zunmasked" -> tail_arm ~nisa:isa ~msuf:"" ~mode:Isa.LS_vector ~lane_off:false body_n
+   | "narrowfix" -> tail_arm ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:true body_n
+   | _ (* narrow: the shipped avx2 behaviour, byte-identical at vw=4 *) ->
+     tail_arm ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:false body_n);
   let buf = Buffer.create 8192 in
   (* M12b: the machine-readable regen recipe, IN the artifact — the cil
      family shipped headerless for its whole life (233 files recovered by
@@ -1354,13 +1440,21 @@ let emit
   then (
     Buffer.add_string buf (Isa.im_mask_decl isa "_M_IM");
     Buffer.add_string buf "  /* negate im lanes: x*(-i) */\n";
+    if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"]) then (
     Buffer.add_string buf (Isa.im_mask_decl Isa.sse2 "_M_IM_n");
-    Buffer.add_string buf "  /* tail twin */\n")
+    Buffer.add_string buf "  /* tail twin */\n");
+    if tail_policy = "ladder" || tail_policy = "hyb2" then (
+    Buffer.add_string buf (Isa.im_mask_decl Isa.avx2 "_M_IM_y");
+    Buffer.add_string buf "  /* ymm tail twin */\n"))
   else (
     Buffer.add_string buf (Isa.re_mask_decl isa "_M_RE");
     Buffer.add_string buf "  /* negate re lanes: x*(+i) */\n";
+    if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"]) then (
     Buffer.add_string buf (Isa.re_mask_decl Isa.sse2 "_M_RE_n");
     Buffer.add_string buf "  /* tail twin */\n");
+    if tail_policy = "ladder" || tail_policy = "hyb2" then (
+    Buffer.add_string buf (Isa.re_mask_decl Isa.avx2 "_M_RE_y");
+    Buffer.add_string buf "  /* ymm tail twin */\n"));
   Buffer.add_string buf (emit_const_decls isa tbl);
   Buffer.add_string buf odd_tables;
   (* M4 phase 3: the FROZEN 11-arg z ABI comes from Abi.z11_signature — the
@@ -1410,7 +1504,7 @@ let emit
              ^ if ctx.tw_log3 then "_log3" else "")
             (if dir = Fwd then "fwd" else "bwd")
             isa.Isa.name)
-       ~target_attr:isa.Isa.target_attr
+       ~target_attr:(Isa.cx_target_attr isa)
        ());
   Buffer.add_string
     buf
@@ -1532,22 +1626,15 @@ let emit
           nodes at AZoutTurnG — rendered narrow, byte-identical strings. *)
         Array.iteri
           (fun l (e : t) ->
-             let lo = clo e
-             and hi = chi e in
-             let (_ : t) = cstore (AZoutTurnG (l, 0)) lo
-             and (_ : t) = cstore (AZoutTurnG (l, 1)) hi in
-             Buffer.add_string
-               buf
-               (Printf.sprintf
-                  "        %s;\n        %s;\n"
-                  (render_store
-                     Isa.sse2
-                     (AZoutTurnG (l, 0))
-                     (render ~ctx Isa.sse2 tbl lo))
-                  (render_store
-                     Isa.sse2
-                     (AZoutTurnG (l, 1))
-                     (render ~ctx Isa.sse2 tbl hi))))
+             for c = 0 to per - 1 do
+               let q = cpart e c in
+               let (_ : t) = cstore (AZoutTurnG (l, c)) q in
+               Buffer.add_string
+                 buf
+                 (Printf.sprintf
+                    "        %s;\n"
+                    (render_store Isa.sse2 (AZoutTurnG (l, c)) (render ~ctx isa tbl q)))
+             done)
           outs
       else (
         (* CORNER-TURN (the four-step transpose, fused into the stores).
@@ -1556,40 +1643,21 @@ let emit
         [leg p, leg p+1] of ONE column — so column k's legs land
         contiguously at zout[2*(k*OLs + p)]. Two stores per leg-pair, both
         full-width: no scalar tail, no separate transpose pass. *)
+        (* groups of per ADJACENT legs; a radix that is not a multiple of per
+           leaves r = radix mod per legs, which go through the same edge as a
+           partial group (r = 1: quarter scatter; r >= 2: self-padded
+           transpose + prefix store). *)
         let n = Array.length outs in
         let l = ref 0 in
-        (* pairs of legs: one permute2f128 per store, both full width.
-        COMPLETE-IR: the lane regroups are CTurn nodes, the paired writes
-        CStore nodes at AZoutTurn — the four-step transpose is DATA now. *)
-        while !l + 1 < n do
-          let ta = cturn outs.(!l) outs.(!l + 1) 0x20
-          and tb = cturn outs.(!l) outs.(!l + 1) 0x31 in
-          let (_ : t) = cstore (AZoutTurn (!l, 0)) ta
-          and (_ : t) = cstore (AZoutTurn (!l, 1)) tb in
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "        %s;\n        %s;\n"
-               (render_store isa (AZoutTurn (!l, 0)) (render ~ctx isa tbl ta))
-               (render_store isa (AZoutTurn (!l, 1)) (render ~ctx isa tbl tb)));
-          l := !l + 2
-        done;
-        (* ODD RADIX: the last leg has no partner to swap lanes with, so its two
-        columns are scattered as two 128-bit stores instead of one paired
-        permute2f128. N1T already refuses anything but 2 complex/vector
-        (checked above), so a 128-bit half IS exactly one column. *)
-        if !l < n
-        then (
-          let lo = clo outs.(!l)
-          and hi = chi outs.(!l) in
-          let (_ : t) = cstore (AZoutTurn (!l, 0)) lo
-          and (_ : t) = cstore (AZoutTurn (!l, 1)) hi in
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "        %s;\n        %s;\n"
-               (render_store Isa.sse2 (AZoutTurn (!l, 0)) (render ~ctx Isa.sse2 tbl lo))
-               (render_store Isa.sse2 (AZoutTurn (!l, 1)) (render ~ctx Isa.sse2 tbl hi))))));
+        (* VFFT_CX_TURNQ=1 (prototype knob, default OFF => byte-identical):
+           every leg leaves as per quarter stores (the TURN128 idiom on the
+           monolithic edge) — no shuffles, per x more stores. A raced axis. *)
+        let turnq = Sys.getenv_opt "VFFT_CX_TURNQ" = Some "1" in
+        while !l < n do
+          let r = if turnq then 1 else min per (n - !l) in
+          turned_group_store buf ~l0:!l (Array.sub outs !l r);
+          l := !l + r
+        done));
   Buffer.add_string buf "    }\n";
   (* ─── ODD-COUNT TAIL loop (monolithic only): resumes k after the wide
      bulk. `for (; k < count; ++k)` rather than `if` so it generalises when
@@ -1605,22 +1673,53 @@ let emit
      blocked passes at narrow width -- would need its own reset/tag
      management for no numerical gain. *)
   (
-    Buffer.add_string
-      buf
-      "    /* odd-count tail: same DAG at VEX-128, one complex per iteration */\n";
-    if kind = T2 && ctx.tw_gen2
-  then
-    Buffer.add_string
-      buf
-      (Printf.sprintf
-         "    %s\n    %s\n"
-         (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
-         (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
-  Buffer.add_string
-      buf
-      (Printf.sprintf "    for (; k < %s; ++k) {\n" (if rowloop then "cnt_" else "count"));
-    Buffer.add_buffer buf body_n;
-    Buffer.add_string buf "    }\n");
+    let cnt = if rowloop then "cnt_" else "count" in
+    (match tail_policy with
+     | "masked" ->
+       Buffer.add_string buf
+         (Printf.sprintf "    if (k < %s) {  /* masked tail: 1..%d leftover complex in ONE zmm pass */\n        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(%s - k))) - 1u);\n" cnt (per - 1) cnt);
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
+     | "hyb2" ->
+       if kind = T2 && ctx.tw_gen2 then
+         Buffer.add_string buf
+           (Printf.sprintf "    %s\n    %s\n"
+              (Isa.const_decl Isa.avx2 "_wgc_y" (Isa.loadu_pd Isa.avx2 "tw_im[0]"))
+              (Isa.const_decl Isa.avx2 "_wgs_y" (Isa.loadu_pd Isa.avx2 (Printf.sprintf "tw_im[%d]" vw))));
+       Buffer.add_string buf
+         (Printf.sprintf "    if (k < %s) {  /* hyb2: rem<=2 -> k-masked ymm pass; rem==3 -> k-masked zmm pass */\n        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(%s - k))) - 1u);\n        if (%s - k <= 2) {\n" cnt cnt cnt);
+       Buffer.add_buffer buf body_y;
+       Buffer.add_string buf "        } else {\n";
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "        }\n    }\n"
+     | "zunmasked" ->
+       Buffer.add_string buf (Printf.sprintf "    if (k < %s) {  /* MEASUREMENT ONLY: unmasked zmm tail (overruns) */\n" cnt);
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
+     | "ladder" ->
+       if kind = T2 && ctx.tw_gen2 then
+         Buffer.add_string buf
+           (Printf.sprintf "    %s\n    %s\n    %s\n    %s\n"
+              (Isa.const_decl Isa.avx2 "_wgc_y" (Isa.loadu_pd Isa.avx2 "tw_im[0]"))
+              (Isa.const_decl Isa.avx2 "_wgs_y" (Isa.loadu_pd Isa.avx2 (Printf.sprintf "tw_im[%d]" vw)))
+              (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
+              (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
+       Buffer.add_string buf (Printf.sprintf "    if (k + 2 <= %s) {  /* ladder: ymm pass, 2 complex */\n" cnt);
+       Buffer.add_buffer buf body_y;
+       Buffer.add_string buf "        k += 2;\n    }\n";
+       Buffer.add_string buf (Printf.sprintf "    if (k < %s) {  /* ladder: xmm pass, 1 complex */\n" cnt);
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
+     | _ ->
+       Buffer.add_string buf "    /* odd-count tail: same DAG at VEX-128, one complex per iteration */\n";
+       if kind = T2 && ctx.tw_gen2 then
+         Buffer.add_string buf
+           (Printf.sprintf "    %s\n    %s\n"
+              (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
+              (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
+       Buffer.add_string buf (Printf.sprintf "    for (; k < %s; ++k) {\n" cnt);
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"));
   if rowloop
   then (
     Buffer.add_string buf "    zin += 2 * Gs;\n";
@@ -1655,7 +1754,7 @@ let emit
               (if transposed then "t" else "")
               (if dir = Fwd then "fwd" else "bwd")
               isa.Isa.name)
-         ~target_attr:isa.Isa.target_attr
+         ~target_attr:(Isa.cx_target_attr isa)
          ());
     Buffer.add_string
       buf
@@ -1925,7 +2024,7 @@ let emit_k1
           let c = j2 / 2 in
           let a = cload (AP (vw * ((2 * d * (n2 / 2)) + c)))
           and b = cload (AP (vw * ((((2 * d) + 1) * (n2 / 2)) + c))) in
-          `Node (cturn a b (if j2 land 1 = 0 then 0x20 else 0x31)))
+          `Node (cturn a b (j2 land 1 <> 0)))
         else `Name (Printf.sprintf "_t%d" j2))
       ~build:(fun ins ->
         let tw =

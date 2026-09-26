@@ -2034,6 +2034,8 @@ let oop_edges_avx512_cells : (string * string list) list =
     ; "radix20_t1_dif_oop_avx512.c", [ "20"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx512" ]
     ; "radix25_t1_dif_oop_avx512.c", [ "25"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx512" ]
     ; "radix5_t1_dif_oop_avx512.c", [ "5"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx512" ]
+    ; "vfft_k1_mono64_il_bwd_avx512.c", [ "64"; "--k1-mono"; "--k1-il"; "--k1-sw"; "--isa"; "avx512" ]
+    ; "vfft_k1_mono64_il_fwd_avx512.c", [ "64"; "--k1-mono"; "--k1-il"; "--isa"; "avx512" ]
     ]
 ;;
 
@@ -2077,8 +2079,94 @@ let strided_r2c_avx512_cells : (string * string list) list =
     ]
 ;;
 
+
+(* ── zil at a SECOND ISA (2026-09-26): DERIVED from the avx2 cells ──
+   The literal avx2 lists above stay the one source of truth; an ISA is a
+   PARAMETER: retarget the typed cell (isa/uarch fields of Codelet.t, then
+   to_argv — so the round-trip law holds by construction) and rename the file
+   suffix.  A cell the generator cannot emit at that width is DECLARED absent
+   (zil_isa_gap, one predicate shared with the emitters' refusals), never
+   silently dropped. *)
+let zil_isa_uarch = [ "avx2", "raptor_lake_avx2"; "avx512", "sapphire_rapids_avx512" ]
+let zil_isas = List.map fst zil_isa_uarch
+
+let isa_vw (isa : string) : int =
+  match isa with
+  | "avx2" -> 4
+  | "avx512" -> 8
+  | i -> failwith ("Corpus: unknown zil isa " ^ i)
+;;
+
+let zil_isa_gap ~(isa : string) (c : Codelet.t) : string option =
+  (* the emitters' own width laws, stated once (cascade_z.ml repeats the
+     zsplit one as its refusal): the ZTURN-T lane lattices t0tp/tld write or
+     read R-runs as whole blocks, so R % VW == 0; everything else in the zil
+     family is width-generic since 2026-09-26 (corner-turn, column stride,
+     tail lane, k1 mono) *)
+  let vw = isa_vw isa in
+  match c.Codelet.kind with
+  | Codelet.Zsplit { k = Codelet.(T0tp | T0tpb | Tld | Tldb) } when c.Codelet.radix mod vw <> 0 ->
+    Some (Printf.sprintf "codelet_zsplit: t0tp/tld radix %d is not a whole number of %d-lane blocks (law: R %% VW == 0)" c.Codelet.radix vw)
+  | _ -> None
+;;
+
+let chop_isa_suffix (name : string) : string =
+  let sfx = "_avx2.c" in
+  let ln = String.length name and ls = String.length sfx in
+  if ln >= ls && String.sub name (ln - ls) ls = sfx
+  then String.sub name 0 (ln - ls)
+  else failwith ("Corpus: zil cell not named *_avx2.c: " ^ name)
+;;
+
+(* (cells emitted, cells declared absent with the reason) *)
+let zil_retarget ~(isa : string) (cells : (string * string list) list)
+  : (string * string list) list * (string * string) list
+  =
+  let uarch = List.assoc isa zil_isa_uarch in
+  List.fold_right
+    (fun (file, tail) (ok, gap) ->
+       let c = Codelet.of_argv (tail @ [ "--emit-c" ]) in
+       let c = { c with Codelet.isa = Some isa; uarch = Some uarch } in
+       let file' = chop_isa_suffix file ^ "_" ^ isa ^ ".c" in
+       match zil_isa_gap ~isa c with
+       | Some why -> ok, (file', why) :: gap
+       | None ->
+         let argv = Codelet.to_argv c in
+         let tail' = List.filter (fun a -> a <> "--emit-c") argv in
+         (file', tail') :: ok, gap)
+    cells
+    ([], [])
+;;
+
+let zil_quadrant_isa (q : string) : (string * string) option =
+  (* "zil-pure-avx512" -> Some ("zil-pure", "avx512"); the bare names are avx2 *)
+  List.find_map
+    (fun isa ->
+       let sfx = "-" ^ isa in
+       let lq = String.length q and ls = String.length sfx in
+       if lq > ls && String.sub q (lq - ls) ls = sfx
+       && (String.sub q 0 (lq - ls) = "zil-pure" || String.sub q 0 (lq - ls) = "zil-boundary")
+       then Some (String.sub q 0 (lq - ls), isa)
+       else None)
+    (List.filter (fun i -> i <> "avx2") zil_isas)
+;;
+
+let zil_base_cells (base : string) =
+  if base = "zil-pure" then zil_pure_cells else zil_boundary_cells
+;;
+
+let zil_absent (q : string) : (string * string) list =
+  match zil_quadrant_isa q with
+  | Some (base, isa) -> snd (zil_retarget ~isa (zil_base_cells base))
+  | None -> []
+;;
+
 let matrix_files (quadrant : string) : (string * string list) list =
   match quadrant with
+  | q when zil_quadrant_isa q <> None ->
+    (match zil_quadrant_isa q with
+     | Some (base, isa) -> fst (zil_retarget ~isa (zil_base_cells base))
+     | None -> assert false)
   | "oop-edges-avx2" -> oop_edges_avx2_cells
   | "oop-edges-avx512" -> oop_edges_avx512_cells
   | "strided-r2c-avx2" -> strided_r2c_avx2_cells
@@ -2360,6 +2448,8 @@ let quadrants =
   ; "strided-r2c-avx512"
   ; "zil-boundary"
   ; "zil-pure"
+  ; "zil-boundary-avx512"
+  ; "zil-pure-avx512"
   ]
 ;;
 
@@ -2372,6 +2462,8 @@ let dir_of_quadrant (q : string) : string =
   | "strided-r2c-avx512" -> "strided/avx512"
   | "zil-boundary" -> "zil/avx2/boundary_split"
   | "zil-pure" -> "zil/avx2/pure_il"
+  | "zil-boundary-avx512" -> "zil/avx512/boundary_split"
+  | "zil-pure-avx512" -> "zil/avx512/pure_il"
   | _ ->
     (match String.split_on_char '-' q with
      | [ fam; isa ] -> fam ^ "/" ^ isa
@@ -2403,14 +2495,17 @@ let zil_folder (name : string) : string option =
     let ls = String.length s and lf = String.length suf in
     ls >= lf && String.sub s (ls - lf) lf = suf
   in
-  if starts_with name "vfft_k1_mono64_il_" then Some "zil/avx2/mono"
-  else if not (starts_with name "radix" && ends_with name "_avx2.c") then None
+  match List.find_opt (fun isa -> ends_with name ("_" ^ isa ^ ".c")) zil_isas with
+  | None -> None
+  | Some isa ->
+  let sfxlen = String.length isa + 3 in
+  let z f = Some ("zil/" ^ isa ^ "/" ^ f) in
+  if starts_with name "vfft_k1_mono64_il_" then z "mono"
+  else if not (starts_with name "radix") then None
   else
     match String.index_opt name '_' with
-    | Some i when i + 3 < String.length name - 7 && String.sub name i 3 = "_z_" ->
-      (* radixN_z_<kind>_avx2.c: the zil grammar; a radixN_<kind>_oop_avx2.c of
-         the split library carries no _z_ and keeps its quadrant's folder *)
-      let kind = String.sub name (i + 3) (String.length name - i - 3 - 7) in
+    | Some i when i + 3 < String.length name - sfxlen && String.sub name i 3 = "_z_" ->
+      let kind = String.sub name (i + 3) (String.length name - i - 3 - sfxlen) in
       let base =
         if ends_with kind "_bwd" then String.sub kind 0 (String.length kind - 4) else kind
       in
@@ -2420,19 +2515,19 @@ let zil_folder (name : string) : string option =
         && (let t = String.sub base (String.length pre) (String.length base - String.length pre) in
             t = "" || is_digits t)
       in
-      Some
-        (if base = "n1" then "zil/avx2/shared"
-         else if base = "n1c" || base = "t2c" then "zil/avx2/shared/col"
-         else if blocked "n1cb" || blocked "t2cb" then "zil/avx2/shared/col/blocked"
+      z
+        (if base = "n1" then "shared"
+         else if base = "n1c" || base = "t2c" then "shared/col"
+         else if blocked "n1cb" || blocked "t2cb" then "shared/col/blocked"
          else if List.mem base [ "n1ccs"; "n1r"; "n1tr"; "t2r"; "t2tr"; "n1rtan"; "n1trtan"; "t2rtan"; "t2trtan" ]
-         then "zil/avx2/rows"
-         else if List.mem base [ "n1t"; "t2"; "t2t"; "n1_ct"; "n1t_ct"; "t2_ct"; "t2t_ct" ] then "zil/avx2/pair2p"
-         else if blocked "n1tb" || blocked "n1b" || blocked "t2bt" || blocked "t2b" then "zil/avx2/pair2p/blocked"
-         else if base = "t2tg" then "zil/avx2/chain3"
-         else if List.mem base [ "t2cp"; "t2cs"; "t2csg"; "t2csgn"; "t2csgt"; "t2csgnt" ] then "zil/avx2/flat"
-         else if base = "msz" || base = "mszt" then "zil/avx2/flat/odd_mid"
-         else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "zil/avx2/ztt"
-         else "zil/avx2/pair2p/tangent")
+         then "rows"
+         else if List.mem base [ "n1t"; "t2"; "t2t"; "n1_ct"; "n1t_ct"; "t2_ct"; "t2t_ct" ] then "pair2p"
+         else if blocked "n1tb" || blocked "n1b" || blocked "t2bt" || blocked "t2b" then "pair2p/blocked"
+         else if base = "t2tg" then "chain3"
+         else if List.mem base [ "t2cp"; "t2cs"; "t2csg"; "t2csgn"; "t2csgt"; "t2csgnt" ] then "flat"
+         else if base = "msz" || base = "mszt" then "flat/odd_mid"
+         else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "ztt"
+         else "pair2p/tangent")
     | _ -> None
 
 let dir_of_file (q : string) (name : string) : string =

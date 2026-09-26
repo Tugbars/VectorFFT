@@ -386,12 +386,18 @@ let emit_codelet
        t0tp/tlf/tld are lane lattices and stay 4/8), which carry no lane geometry \
        and emit odd radices 3/5/7/9/15";
   let vw = isa.Isa.vec_width in
-  if vw <> 4
+  if vw <> 4 && vw <> 8
+  then failwith (Printf.sprintf "codelet_zsplit: no block geometry at vec_width %d" vw);
+  (* the LANE-LATTICE kinds need whole blocks: t0tp writes one R0-run per
+     column as R0/VW blocks, tld/tldb read/write R-runs as R/VW blocks. At
+     VW=4 every radix in {4,8} qualifies; at VW=8 only 8. The mids and the
+     natural terminator have radix-agnostic edges. *)
+  if (k.base = "t0tp" || k.base = "tld") && radix mod vw <> 0
   then
-    (* The generator side is width-parameterized, but the RUNTIME block
-       geometry ([re×VW][im×VW]) is baked into the plan builders at VW=4. *)
     failwith
-      "codelet_zsplit: runtime block geometry is VW=4 until zsplit.h is parameterized";
+      (Printf.sprintf
+         "codelet_zsplit: %s radix %d is not a whole number of %d-lane blocks (law: R %% VW == 0)"
+         k.base radix vw);
   let dir_s = if k.bwd then "bwd" else "fwd" in
   let fname = Printf.sprintf "radix%d_z_%s_%s_%s" radix k.base dir_s isa.Isa.name in
   let sign : [ `Fwd | `Bwd ] = if k.bwd then `Bwd else `Fwd in
@@ -523,7 +529,7 @@ let emit_codelet
        (if k.narrow_arms
         then
           Printf.sprintf
-            "count: ANY >= 1 (%d-column wide loop, then 2-column VEX-128 and 1-column scalar arms — il_odd_count_tail.md §3)"
+            (if vw = 4 then "count: ANY >= 1 (%d-column wide loop, then 2-column VEX-128 and 1-column scalar arms — il_odd_count_tail.md §3)" else "count: ANY >= 1 (%d-column wide loop, then ONE masked zmm arm for the 1..7 remainder)")
             vw
         else Printf.sprintf "count %% %d == 0 (%d columns per iteration)" vw vw)
        (if not k.twiddled
@@ -532,7 +538,7 @@ let emit_codelet
           Printf.sprintf
             "tw_re = %s: legs 1..R-1, %d doubles/leg [c×%d][s×%d]. tw_im unused."
             (if k.tw_group_reset
-             then "(R-1) records of [c x4][s x4] PER COLUMN QUAD at %TWF*k, ONE stream for every group (cursor resets per group)"
+             then Printf.sprintf "(R-1) records of [c x%d][s x%d] PER COLUMN %s at %%TWF*k, ONE stream for every group (cursor resets per group)" vw vw (if vw = 4 then "QUAD" else "BLOCK")
              else "Gs per-group splat-pair sets, in-kernel cursor (twg bump/group)")
             (2 * vw)
             vw
@@ -567,52 +573,15 @@ let emit_codelet
   then
     Buffer.add_string
       buf
-      "static const __m256d _zs0t_rh = { 0.70710678118654752440, 0.70710678118654752440, \
-       0.70710678118654752440, 0.70710678118654752440 };  /* 1/sqrt2: |W8^1| */\n\n";
+      (Isa.const_splat_decl isa "_zs0t_rh" "0.70710678118654752440" ^ "  /* 1/sqrt2: |W8^1| */\n\n");
   let body_start = ref 0 in
   (* TR4 rendering helper (E_blocks): 4 unpacks + 4 permute2f128 turning
      four column vectors into four leg/index vectors (or back). srcs/dsts
      are C variable names; dsts are declared const. *)
+  (* the E_blocks lane lattice: a VW x VW transpose (Isa.transpose — TR4 at
+     VW=4, byte-identical to the old tr4_str; the 3-stage 8x8 at VW=8) *)
   let tr4_str ~(qid : string) (srcs : string array) (dsts : string array) : string =
-    let unlo = Isa.intr isa "unpacklo_pd"
-    and unhi = Isa.intr isa "unpackhi_pd"
-    and p2f = Isa.intr isa "permute2f128_pd" in
-    Printf.sprintf
-      "        %s\n        %s\n        %s\n        %s\n"
-      (Isa.const_decl
-         isa
-         (Printf.sprintf "_u0_%s" qid)
-         (Printf.sprintf "%s(%s, %s)" unlo srcs.(0) srcs.(1)))
-      (Isa.const_decl
-         isa
-         (Printf.sprintf "_u1_%s" qid)
-         (Printf.sprintf "%s(%s, %s)" unhi srcs.(0) srcs.(1)))
-      (Isa.const_decl
-         isa
-         (Printf.sprintf "_u2_%s" qid)
-         (Printf.sprintf "%s(%s, %s)" unlo srcs.(2) srcs.(3)))
-      (Isa.const_decl
-         isa
-         (Printf.sprintf "_u3_%s" qid)
-         (Printf.sprintf "%s(%s, %s)" unhi srcs.(2) srcs.(3)))
-    ^ Printf.sprintf
-        "        %s\n        %s\n        %s\n        %s\n"
-        (Isa.const_decl
-           isa
-           dsts.(0)
-           (Printf.sprintf "%s(_u0_%s, _u2_%s, 0x20)" p2f qid qid))
-        (Isa.const_decl
-           isa
-           dsts.(1)
-           (Printf.sprintf "%s(_u1_%s, _u3_%s, 0x20)" p2f qid qid))
-        (Isa.const_decl
-           isa
-           dsts.(2)
-           (Printf.sprintf "%s(_u0_%s, _u2_%s, 0x31)" p2f qid qid))
-        (Isa.const_decl
-           isa
-           dsts.(3)
-           (Printf.sprintf "%s(_u1_%s, _u3_%s, 0x31)" p2f qid qid))
+    Isa.transpose isa ~qid srcs dsts
   in
   (* column-c block address: base 2·R·(k+c), halves at h·2·VW, im +VW *)
   let blk_addr (buf_name : string) (c : int) (off : int) : string =
@@ -636,6 +605,8 @@ let emit_codelet
         the C for-statement (the narrow arms share one function-scope k). ── *)
   let emit_col_loop
         ?(nisa : Isa.t option)
+        ?(mode0 : Isa.ls_mode option)
+        ?(mode1 : Isa.ls_mode option)
         ~(open_line : string)
         ((assigns, scheduled, inline_set) :
           (Expr.elem_ref * Ir.t) list
@@ -664,13 +635,17 @@ let emit_codelet
         | E_blocks | E_runs | E_zcol -> "OLs"
       in
       for r = 0 to radix - 1 do
-        Buffer.add_string
-          buf
-          (Printf.sprintf
-             "        _mm_prefetch((const char *)&zout[2*((size_t)%d*%s + k + %d)], _MM_HINT_T0);\n"
-             r
-             ostride
-             (wide_vw * k.prefetch_out))
+        (* one prefetch per 64-B line of the leg's 16*VW-byte output span *)
+        for ln = 0 to max 1 (wide_vw / 4) - 1 do
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "        _mm_prefetch((const char *)&zout[2*((size_t)%d*%s + k + %d)%s], _MM_HINT_T0);\n"
+               r
+               ostride
+               (wide_vw * k.prefetch_out)
+               (if ln = 0 then "" else Printf.sprintf " + %d" (8 * ln)))
+        done
       done);
     (match k.in_edge with
      | E_planes s ->
@@ -697,8 +672,7 @@ let emit_codelet
              paid once at the API boundary. ── *)
        Buffer.add_string buf "        /* Z load edge (DEINT) */\n";
        let unlo = Isa.intr isa "unpacklo_pd"
-       and unhi = Isa.intr isa "unpackhi_pd"
-       and p44 = Isa.intr isa "permute4x64_pd" in
+       and unhi = Isa.intr isa "unpackhi_pd" in
        for leg = 0 to radix - 1 do
          Buffer.add_string
            buf
@@ -707,11 +681,11 @@ let emit_codelet
               (Isa.const_decl
                  isa
                  (Printf.sprintf "_zl_%d" leg)
-                 (Isa.loadu_pd isa (leg_addr "zin" leg s 0)))
+                 (Isa.loadu_pd ?mode:mode0 isa (leg_addr "zin" leg s 0)))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "_zh_%d" leg)
-                 (Isa.loadu_pd isa (leg_addr "zin" leg s vw)))
+                 (Isa.loadu_pd ?mode:mode1 isa (leg_addr "zin" leg s vw)))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_re_%d" leg)
@@ -719,7 +693,7 @@ let emit_codelet
                   then Printf.sprintf "_zl_%d" leg (* scalar arm: re loaded directly *)
                   else if !zu_noperm
                   then Printf.sprintf "%s(_zl_%d, _zh_%d)" unlo leg leg
-                  else Printf.sprintf "%s(%s(_zl_%d, _zh_%d), 0xD8)" p44 unlo leg leg))
+                  else fst (Isa.deint_ordered isa (Printf.sprintf "_zl_%d" leg) (Printf.sprintf "_zh_%d" leg))))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_im_%d" leg)
@@ -727,7 +701,7 @@ let emit_codelet
                   then Printf.sprintf "_zh_%d" leg (* scalar arm: im = the +1 double *)
                   else if !zu_noperm
                   then Printf.sprintf "%s(_zl_%d, _zh_%d)" unhi leg leg
-                  else Printf.sprintf "%s(%s(_zl_%d, _zh_%d), 0xD8)" p44 unhi leg leg)))
+                  else snd (Isa.deint_ordered isa (Printf.sprintf "_zl_%d" leg) (Printf.sprintf "_zh_%d" leg)))))
        done
      | E_blocks ->
        (* ── Block load edge (TR4): per column, load the R/VW block halves
@@ -755,14 +729,14 @@ let emit_codelet
            buf
            (tr4_str
               ~qid:(Printf.sprintf "lr%d_0" h)
-              (Array.init 4 (fun j -> Printf.sprintf "_br%d_%d" h j))
-              (Array.init 4 (fun j -> Printf.sprintf "lane_re_%d" ((h * vw) + j))));
+              (Array.init vw (fun j -> Printf.sprintf "_br%d_%d" h j))
+              (Array.init vw (fun j -> Printf.sprintf "lane_re_%d" ((h * vw) + j))));
          Buffer.add_string
            buf
            (tr4_str
               ~qid:(Printf.sprintf "li%d_0" h)
-              (Array.init 4 (fun j -> Printf.sprintf "_bi%d_%d" h j))
-              (Array.init 4 (fun j -> Printf.sprintf "lane_im_%d" ((h * vw) + j))))
+              (Array.init vw (fun j -> Printf.sprintf "_bi%d_%d" h j))
+              (Array.init vw (fun j -> Printf.sprintf "lane_im_%d" ((h * vw) + j))))
        done
      | E_zcol ->
        (* ── Column-run z load edge (tldb, the plain backward ingest): column
@@ -771,7 +745,6 @@ let emit_codelet
              [col k, col k+2] then [col k+1, col k+3]. Two loads + unpacklo/hi
              per leg give the ORDERED lanes k..k+3 back; no permute. ── *)
        Buffer.add_string buf "        /* Column-run z load edge (leg-pair unpack, no permute) */\n";
-       if vw <> 4 then failwith "codelet_zsplit: E_zcol assumes VW = 4";
        let unlo = Isa.intr isa "unpacklo_pd"
        and unhi = Isa.intr isa "unpackhi_pd" in
        for p = 0 to radix - 1 do
@@ -830,8 +803,12 @@ let emit_codelet
               terminator this addressing (leg-major on OLs = N/R) IS the
               natural output. ── *)
         let unlo = Isa.intr isa "unpacklo_pd"
-        and unhi = Isa.intr isa "unpackhi_pd"
-        and p44 = Isa.intr isa "permute4x64_pd" in
+        and unhi = Isa.intr isa "unpackhi_pd" in
+        let pair a b =
+          if !zu_noperm || vw = 1
+          then Printf.sprintf "%s(%s, %s)" unlo a b, Printf.sprintf "%s(%s, %s)" unhi a b
+          else Isa.reint_ordered isa a b
+        in
         ( "        /* Z store edge (REINT) */\n"
         , Array.init radix (fun leg ->
             Printf.sprintf
@@ -841,25 +818,27 @@ let emit_codelet
                  (Printf.sprintf "_pr_%d" leg)
                  (if !zu_noperm
                   then Printf.sprintf "t%d" re_tag.(leg)
-                  else Printf.sprintf "%s(t%d, 0xD8)" p44 re_tag.(leg)))
+                  else Isa.reint_pre isa (Printf.sprintf "t%d" re_tag.(leg))))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "_qi_%d" leg)
                  (if !zu_noperm
                   then Printf.sprintf "t%d" im_tag.(leg)
-                  else Printf.sprintf "%s(t%d, 0xD8)" p44 im_tag.(leg)))
+                  else Isa.reint_pre isa (Printf.sprintf "t%d" im_tag.(leg))))
               (Isa.storeu_pd
+                 ?mode:mode0
                  isa
                  (leg_addr "zout" leg s 0)
                  (if vw = 1
                   then Printf.sprintf "_pr_%d" leg
-                  else Printf.sprintf "%s(_pr_%d, _qi_%d)" unlo leg leg))
+                  else fst (pair (Printf.sprintf "_pr_%d" leg) (Printf.sprintf "_qi_%d" leg))))
               (Isa.storeu_pd
+                 ?mode:mode1
                  isa
                  (leg_addr "zout" leg s vw)
                  (if vw = 1
                   then Printf.sprintf "_qi_%d" leg
-                  else Printf.sprintf "%s(_pr_%d, _qi_%d)" unhi leg leg))) )
+                  else snd (pair (Printf.sprintf "_pr_%d" leg) (Printf.sprintf "_qi_%d" leg))))) )
       | E_blocks ->
         (* ── Block store edge (TR4 back): leg-major result vectors
               transpose to column vectors, stored as each column's R/VW
@@ -872,13 +851,13 @@ let emit_codelet
             let sr =
               tr4_str
                 ~qid:(Printf.sprintf "sr%d_0" h)
-                (Array.init 4 (fun j -> Printf.sprintf "t%d" re_tag.(slot j)))
-                (Array.init 4 (fun j -> Printf.sprintf "_cr%d_%d" h j))
+                (Array.init vw (fun j -> Printf.sprintf "t%d" re_tag.(slot j)))
+                (Array.init vw (fun j -> Printf.sprintf "_cr%d_%d" h j))
             and si =
               tr4_str
                 ~qid:(Printf.sprintf "si%d_0" h)
-                (Array.init 4 (fun j -> Printf.sprintf "t%d" im_tag.(slot j)))
-                (Array.init 4 (fun j -> Printf.sprintf "_ci%d_%d" h j))
+                (Array.init vw (fun j -> Printf.sprintf "t%d" im_tag.(slot j)))
+                (Array.init vw (fun j -> Printf.sprintf "_ci%d_%d" h j))
             in
             let stores =
               String.concat
@@ -906,7 +885,6 @@ let emit_codelet
               plan's permutation. Unit = one slot (leg), as E_z. ── *)
         let unlo = Isa.intr isa "unpacklo_pd"
         and unhi = Isa.intr isa "unpackhi_pd" in
-        if vw <> 4 then failwith "codelet_zsplit: E_zcol assumes VW = 4";
         ( "        /* Column-run z store edge (leg-pair unpack, in place, no permute) */\n"
         , Array.init radix (fun sl ->
             Printf.sprintf
@@ -1167,6 +1145,70 @@ let emit_codelet
       [ "a", 0, "k", "k+1"; "b", vw, "k+2", "k+3" ];
     Buffer.add_string buf "    }\n"
   in
+  (* t0tp at VW=8 (R0 = 8 by the law above): a zmm z-vector holds 4 columns
+     of one leg; the radix-8 DIF runs on those interleaved vectors exactly as
+     at VW=4 (width-agnostic Isa ops), and the TURN is one 8x8 transpose of
+     the 8 digit vectors per half: T_2i = re of column i over digits 0..7,
+     T_2i+1 = its im — column i's whole run is ONE 128-B block. Two halves
+     (plus 0 / plus VW) = VW columns per iteration: count % VW == 0. *)
+  let emit_t0tp8_vw8_body () =
+    let line s = Buffer.add_string buf ("        " ^ s ^ "\n") in
+    let sline s = Buffer.add_string buf ("        " ^ s ^ ";\n") in
+    Buffer.add_string buf (Isa.shuffle_consts isa ~deint:false ~reint:false ~transpose:true);
+    Buffer.add_string buf (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" vw vw);
+    List.iter
+      (fun (p, plus, c0) ->
+         let v n = p ^ n in
+         let r4 (i0, i1, i2, i3) (o0, o1, o2, o3) =
+           line (Isa.const_decl isa (v (o0 ^ "t0")) (Isa.add_pd isa (v i0) (v i2)));
+           line (Isa.const_decl isa (v (o0 ^ "t1")) (Isa.sub_pd isa (v i0) (v i2)));
+           line (Isa.const_decl isa (v (o0 ^ "t2")) (Isa.add_pd isa (v i1) (v i3)));
+           line (Isa.const_decl isa (v (o0 ^ "t3")) (Isa.sub_pd isa (v i1) (v i3)));
+           line
+             (Isa.const_decl
+                isa
+                (v (o0 ^ "r"))
+                (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v (o0 ^ "t3"))) s0t_mask));
+           line (Isa.const_decl isa (v o0) (Isa.add_pd isa (v (o0 ^ "t0")) (v (o0 ^ "t2"))));
+           line (Isa.const_decl isa (v o2) (Isa.sub_pd isa (v (o0 ^ "t0")) (v (o0 ^ "t2"))));
+           line (Isa.const_decl isa (v o1) (Isa.add_pd isa (v (o0 ^ "t1")) (v (o0 ^ "r"))));
+           line (Isa.const_decl isa (v o3) (Isa.sub_pd isa (v (o0 ^ "t1")) (v (o0 ^ "r"))))
+         in
+         Buffer.add_string
+           buf
+           (Printf.sprintf "        /* ---- half %s: columns k+%d..k+%d -> runs rb[k+%d..k+%d] (1 block each) ---- */\n"
+              (String.uppercase_ascii p) c0 (c0 + 3) c0 (c0 + 3));
+         for l = 0 to 7 do
+           line (Isa.const_decl isa (v (string_of_int l)) (Isa.loadu_pd isa (leg_addr "zin" l "Ls" plus)))
+         done;
+         for m = 0 to 3 do
+           line (Isa.const_decl isa (v ("b" ^ string_of_int m))
+                   (Isa.add_pd isa (v (string_of_int m)) (v (string_of_int (m + 4)))));
+           line (Isa.const_decl isa (v ("d" ^ string_of_int m))
+                   (Isa.sub_pd isa (v (string_of_int m)) (v (string_of_int (m + 4)))))
+         done;
+         line (Isa.const_decl isa (v "c0") (v "d0"));
+         line (Isa.const_decl isa (v "d1i") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d1")) s0t_mask));
+         line (Isa.const_decl isa (v "c1") (Isa.mul_pd isa (Isa.add_pd isa (v "d1") (v "d1i")) "_zs0t_rh"));
+         line (Isa.const_decl isa (v "c2") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d2")) s0t_mask));
+         line (Isa.const_decl isa (v "d3i") (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "d3")) s0t_mask));
+         line (Isa.const_decl isa (v "c3") (Isa.mul_pd isa (Isa.sub_pd isa (v "d3i") (v "d3")) "_zs0t_rh"));
+         r4 ("b0", "b1", "b2", "b3") ("E0", "E1", "E2", "E3");
+         r4 ("c0", "c1", "c2", "c3") ("O0", "O1", "O2", "O3");
+         (* digits Y0..Y7 = E0,O0,E1,O1,E2,O2,E3,O3 -> the 8x8 turn *)
+         Buffer.add_string
+           buf
+           (Isa.transpose isa ~qid:p
+              (Array.map v [| "E0"; "O0"; "E1"; "O1"; "E2"; "O2"; "E3"; "O3" |])
+              (Array.init 8 (fun j -> v (Printf.sprintf "T%d" j))));
+         for i = 0 to 3 do
+           line (Printf.sprintf "double * __restrict__ %s = zout + %d*rb[k+%d];" (v (Printf.sprintf "p%d" i)) (2 * radix) (c0 + i));
+           sline (Isa.storeu_pd isa (Printf.sprintf "%s[0]" (v (Printf.sprintf "p%d" i))) (v (Printf.sprintf "T%d" (2 * i))));
+           sline (Isa.storeu_pd isa (Printf.sprintf "%s[%d]" (v (Printf.sprintf "p%d" i)) vw) (v (Printf.sprintf "T%d" ((2 * i) + 1))))
+         done)
+      [ "a", 0, 0; "b", vw, vw / 2 ];
+    Buffer.add_string buf "    }\n"
+  in
   if k.base = "t0tp"
   then (
     (* -- t0tp: the turn lattice as an always_inline BODY (the fused driver
@@ -1182,7 +1224,8 @@ let emit_codelet
          \    const size_t * __restrict__ rb, size_t Ls, size_t count)\n\
           {\n"
          body_name);
-    if radix = 8 then emit_t0tp8_body () else emit_t0tp4_body ();
+    if vw = 8 then emit_t0tp8_vw8_body ()
+    else if radix = 8 then emit_t0tp8_body () else emit_t0tp4_body ();
     Buffer.add_string buf "}\n\n";
     if not body_only
     then (
@@ -1234,6 +1277,12 @@ let emit_codelet
     (* a twiddle-free group-looped body (tld/tldb) keeps the shared body
        signature; silence its unused stream pointer *)
     if not k.twiddled then Buffer.add_string buf "    (void)tw_re;\n";
+    (let ordered = function E_z _ -> not k.lanes_u | _ -> false in
+     let blocks = function E_blocks -> true | _ -> false in
+     Buffer.add_string
+       buf
+       (Isa.shuffle_consts isa ~deint:(ordered k.in_edge) ~reint:(ordered k.out_edge)
+          ~transpose:(blocks k.in_edge || blocks k.out_edge)));
     let dag = prepare () in
     if not k.narrow_arms
     then
@@ -1247,6 +1296,23 @@ let emit_codelet
          A count below VW skips the wide loop at its condition (the §3
          low-trip bypass; there is no wide prologue to skip). *)
       Buffer.add_string buf "    size_t k = 0;\n";
+      if vw = 8
+      then (
+        emit_col_loop
+          ~open_line:(Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" vw vw)
+          dag;
+        (* ONE masked zmm arm for the 1..VW-1 remainder: the z edge spans
+           2*(count-k) doubles = lo vector bits 0..7, hi vector bits 8..; the
+           records are per-group splats, loaded whole (never per column) *)
+        emit_col_loop
+          ~mode0:(Isa.LS_masked "_zm0")
+          ~mode1:(Isa.LS_masked "_zm1")
+          ~open_line:
+            "    if (k < count) {   /* masked remainder: 1..7 columns */\n\
+            \        const unsigned _zmb = (1u << (2u * (unsigned)(count - k))) - 1u;\n\
+            \        const __mmask8 _zm0 = (__mmask8)_zmb, _zm1 = (__mmask8)(_zmb >> 8);\n"
+          dag)
+      else begin
       emit_col_loop
         ~open_line:(Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" vw vw)
         dag;
@@ -1258,7 +1324,7 @@ let emit_codelet
         ~nisa:Isa.sse2
         ~open_line:"    for (; k + 2 <= count; k += 2) {\n"
         dag;
-      emit_col_loop ~nisa:Isa.scalar ~open_line:"    for (; k < count; ++k) {\n" dag);
+      emit_col_loop ~nisa:Isa.scalar ~open_line:"    for (; k < count; ++k) {\n" dag end);
     Buffer.add_string buf "}\n\n";
     if not body_only
     then begin

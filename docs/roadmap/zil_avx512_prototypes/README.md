@@ -3,7 +3,8 @@
 Reference patches from the multi-agent investigation recorded in
 `../zil_avx512_design.md` §11. They were built and measured in scratch copies of
 the generator on an AVX-512 host (Emerald Rapids VM) and are kept here so the
-work survives the ephemeral container. **None of them is applied to the tree.**
+work survives the ephemeral container. **Merged into `generator/` on 2026-09-26** (see
+the design doc §11.8); kept here as the record of what each investigator proved.
 Each applies cleanly, on its own, to commit `b8f91cc`; they overlap (several touch
 `c2c_il.ml` / `cx_render.ml` / `isa.ml`), so they are inputs to the staged plan in
 §10 of the design doc, not a patch series.
