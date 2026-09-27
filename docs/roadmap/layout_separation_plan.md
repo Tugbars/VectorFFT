@@ -20,6 +20,28 @@ read-only audits: `oop/`+`engine/`+`primes/`; `transforms/`; `planning/`+`suppor
 `claude/upbeat-carson-qmcclb` at the time of writing and will drift; the seams they point
 at will not.
 
+## Status (2026-09-27)
+
+**Phases 0-7 are done**, each step gated at avx2 and avx512 (R5 identical
+throughout); from phase 7.3 the gate runs with `--enforce-deps` and the dependency
+rules are green. The tree as built is described in `src/core/README.md`. Where it
+differs from section 4:
+
+- the two sides of the fork are `split/split_create.h` + `split/split_execute.h` and
+  `il/il_create.h` + `il/il_execute.h` (unique basenames, rule 6);
+- `bridge/` holds `real_bridge.h` + `real_bridge_exec.h` (B1/B3 and the smooth-odd
+  race; temporary per D1) and `nat_ilp.h` (B4; temporary per D2). B2 (the IL 2D
+  real ROWSPLIT reaching into a split child) is still inside `il2d_tier.h`: a call,
+  not an include, so the checker does not see it;
+- `vfft_internal.h` (the plan struct) is in `common/plan/`, shared by both layouts
+  while D3 is deferred (phase 8 skipped for now);
+- `wisdom2/` stays at the front: the legacy kind-3 reader and migration, the OOP
+  codec aggregator and two gates span both layouts.
+- Known call-level crossing: the split in-place tier calls `_bank_nat_1d` in
+  `bridge/nat_ilp.h` (removed by the D2 step).
+
+Sections 1-3 are the pre-separation survey and keep their original paths.
+
 ## 0. Summary
 
 - `src/core` is 123 files, about 64,000 lines. Most files already belong to one layout:
@@ -457,6 +479,9 @@ not govern linkage. The checker reads the `#include` lines.
   change). Or give the IL in-place door its own `lay=il` row and retire `VFFT_NAT_ILP`,
   `ZCASC` and `CONV` from the split enum. That changes the wisdom format, so it needs a
   migration and is out of scope for a pure restructure.
+  - **Owner (2026-09-27): must do.** The IL in-place door gets its own `lay=il` row;
+    `VFFT_NAT_ILP`, `ZCASC` and `CONV` leave the split enum; old files migrate; B4
+    (`bridge/nat_ilp.h`) goes away.
 - **D3. The plan struct.** Recommended: a common header plus `sp`/`il` sub-structs. This
   touches every `h->il2d_*` access (a mechanical rename) and changes field offsets.
   - A cheaper alternative keeps the field names by using C11 anonymous sub-structs, so no
@@ -464,7 +489,8 @@ not govern linkage. The checker reads the `#include` lines.
   - **Owner (2026-09-27): leave it for now.** Phase 8 is deferred; the flat struct stays,
     and the separation is enforced by the include graph (hygiene.py) alone. The split 2D
     handle keeps writing the four IL column fields until then.
-- **D4. Two ISA rules.** The split OOP registry picks the ISA from `__AVX512F__` and
+- **D4. Two ISA rules.** **Owner (2026-09-27): do it; the owner tests it on their
+  machines.** The split OOP registry picks the ISA from `__AVX512F__` and
   `VFFT_OOP_FORCE_AVX2`; the IL side uses `build_isa.h`. Unifying them on `build_isa.h`
   can change which split kernels an AVX-512 build binds.
   - Following the rule "the user selects the ISA, avx2 is never a fallback", `build_isa.h`
@@ -485,6 +511,8 @@ not govern linkage. The checker reads the `#include` lines.
 - **D7. Naming.** The `stride_pool_*`, `vfft_proto_posix_memalign` and `_il_ab_now`
   names outlive their layout. Rename them in common, or keep the names and only move the
   files. Renames are cheap to gate: R3 with a rename map.
+  - **Owner (2026-09-27): rename now**, to neutral names, one mechanical commit gated
+    with a rename map.
 
 ## 6. Migration
 
