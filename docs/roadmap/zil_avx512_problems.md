@@ -54,8 +54,25 @@ same generator flags and environment (apart from `--isa` / `--uarch`). It is a m
 variant. The pair race already shows what the factored form is worth there
 (il2p.h: R = 25 / 27 win it by about 2.5x).
 
-Next: emit `--cil-oddct` for the flat kinds (if the generator admits it), race it per
-stage like the pair's variant 5, and re-run these cells.
+The generator already admits it: `gen_radix 25 --cil-t2cp --cil-oddct` (and `--cil-n1c`,
+`--cil-t2cs`) emit a factored kernel, `radix25_z_<kind>_ct_fwd_avx512`. Kernel-level at
+AVX-512, one pinned core, median of 21 alternating rounds
+(`zil_avx512_prototypes/harness/oddct/oddct_flat_kernel_bench.c`); direct and factored
+agree to 3.7-5.0e-16:
+
+| kernel | count 8 | count 45 | count 64 | count 125 |
+|---|---|---|---|---|
+| t2cp radix 25, direct / factored ns | 847 / 573 | 6234 / 4398 | 6119 / 5190 | 13549 / 12656 |
+| speedup | 1.48x | 1.42x | 1.18x | 1.07x |
+| n1c radix 25, direct / factored ns | 172 / 93 | 975 / 556 | 2099 / 1079 | 3870 / 2770 |
+| speedup | 1.85x | 1.75x | 1.94x | 1.40x |
+
+Next (a decision for the owner, both ISAs): add the `_ct` twins of the flat kinds
+(t2cp, t2cs, t2csg, t2csgn and their backward / transposed twins, msz if it admits
+the flag) and of n1c / t2c to the corpus at 9, 15, 21, 25, 27; give the flat DIT and
+the 2D column pass a per-stage form axis that races them (as il2p's variant 5 does
+for the pair); then re-run these cells. Radix 7 (2401 = 7^4) is prime and has no
+factored form: that cell needs its own look.
 
 ## 2. 2D 256x256 (IL C2C) gains almost nothing from AVX-512
 
