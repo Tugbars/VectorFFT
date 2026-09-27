@@ -175,7 +175,7 @@ static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
     const size_t Kp = (K + (size_t)(_VFFT_PADVW - 1)) & ~(size_t)(_VFFT_PADVW - 1);
     if (Kp == K)
         return K; /* already lane-aligned: nothing to decide */
-    if (_vfft_is_prime(N))
+    if (vfft_is_prime(N))
         return K; /* no CT factorization to race (prime runs its own engine) */
 
     struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();

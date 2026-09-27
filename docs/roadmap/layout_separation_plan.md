@@ -517,6 +517,15 @@ not govern linkage. The checker reads the `#include` lines.
       (`common/support/race_timing.h`, QPC on Windows, `clock_gettime` elsewhere).
     - A1 proof: the two vfft.c objects at avx2 and avx512 are `obj_equiv
       --strict-data` EQUIVALENT to the previous commit's under the clock rename map.
+    - number theory (A2): `common/math/numtheory.h` (`vfft_is_prime`,
+      `vfft_is_radix_smooth`, `vfft_powmod`, `vfft_primitive_root`) replaces the copies
+      in `prime_dispatch.h`, `bluestein_calibrator.h`, `rader.h` and `il_prime.h`. The
+      split Rader root search (N-1 factored over {2..19} only) gives way to the full
+      factorization; `vfft_is_radix_smooth(0)` no longer loops. Proof: an exhaustive
+      value test, old copies vs new (primes and smoothness to 2^22 / 2^25, the
+      primitive root of all 295,946 primes to 2^22 and of the 2,841 split-Rader ones):
+      0 mismatches. The objects change only in the helpers' callers and in compiler
+      churn in functions whose source is untouched (register allocation, inlining).
 - **D6. Dead code.** Delete it (recommended) rather than move it:
   - `conv/conv.h`, `fftnd_natorder.h`, `fftnd_planner.h`, `fftnd_wisdom.h`;
   - `engine/compat.h`;

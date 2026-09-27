@@ -19,6 +19,7 @@
  */
 #ifndef VFFT_PROTO_PRIME_DISPATCH_H
 #define VFFT_PROTO_PRIME_DISPATCH_H
+#include "common/math/numtheory.h"  /* vfft_is_prime, vfft_is_radix_smooth */
 
 #include "planner.h"             /* vfft_proto_auto_plan, vfft_proto_plan_destroy */
 #include "proto_stride_compat.h" /* bridge: threads.h + STRIDE_ALIGNED_ALLOC + stride_* */
@@ -26,21 +27,6 @@
 #include "bluestein.h"           /* _bluestein_block_size, _bluestein_choose_m, stride_bluestein_plan */
 #include "bluestein_wisdom.h"    /* bluestein_wisdom_lookup (optional Bluestein M/B) */
 
-static inline int _vfft_is_prime(int n) {
-    if (n < 2) return 0;
-    if (n % 2 == 0) return n == 2;
-    for (int p = 3; (long long)p * p <= n; p += 2)
-        if (n % p == 0) return 0;
-    return 1;
-}
-/* radix-smooth = factors entirely into the PRIME radixes {2,3,5,7,11,13,17,19}
- * (composite radixes 25=5^2, 20, 12, ... build from these). */
-static inline int _vfft_is_radix_smooth(int n) {
-    static const int primes[] = {2, 3, 5, 7, 11, 13, 17, 19, 0};
-    for (const int *p = primes; *p; p++)
-        while (n % *p == 0) n /= *p;
-    return n == 1;
-}
 
 /* Optional Bluestein (M,B) wisdom. A caller that has loaded the bluestein wisdom
  * file sets this; the dispatch then picks M (a FREE Bluestein parameter) from it,
@@ -62,10 +48,10 @@ static inline stride_plan_t *vfft_proto_auto_plan_dispatch(
 {
     stride_plan_t *p = vfft_proto_auto_plan(N, K, reg, wis);
     if (p) return p;  /* factorable -> CT / wisdom */
-    if (!_vfft_is_prime(N)) return NULL;
+    if (!vfft_is_prime(N)) return NULL;
 
     /* Rader: M = N-1 fixed, B heuristic. Preferred (≈2x faster than Bluestein). */
-    if (_vfft_is_radix_smooth(N - 1)) {
+    if (vfft_is_radix_smooth(N - 1)) {
         int nm1 = N - 1;
         size_t B = _bluestein_block_size(nm1, K);
         stride_plan_t *inner = vfft_proto_auto_plan(nm1, B, reg, wis);  /* rides CT wisdom */

@@ -42,7 +42,7 @@ static void one(int N)
     memset(&in, 0, sizeof in);
     p = vfft_ilprime_create(N);
     printf("N=%-8d %-9s M=%-8d pair=%-3s chain3=%-3s", N,
-           _ilprime_is_prime(N) ? "prime" : "composite", M,
+           vfft_is_prime(N) ? "prime" : "composite", M,
            pair_ok ? "yes" : "NO", chain_ok ? "yes" : "NO");
     if (chain_ok) printf(" (%d.%d.%d)", cR2, cA, cB);
     printf("  -> plan %s\n", p ? "BUILT" : "*** NULL ***");

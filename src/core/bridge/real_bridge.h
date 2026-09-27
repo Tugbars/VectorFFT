@@ -174,7 +174,7 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
         K == 1 && (N & 1) && N >= 3 &&
         cfg->placement == VFFT_OUTOFPLACE &&
-        (cfg->transform == VFFT_C2R || !_vfft_is_radix_smooth(N) ||
+        (cfg->transform == VFFT_C2R || !vfft_is_radix_smooth(N) ||
          getenv("VFFT_ODDR_FORCE") != NULL))
     {
         struct vfft_plan_s *hh = _oddr_build(cfg, N);

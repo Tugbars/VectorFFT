@@ -22,6 +22,7 @@
  */
 #ifndef STRIDE_RADER_H
 #define STRIDE_RADER_H
+#include "common/math/numtheory.h"  /* vfft_powmod, vfft_primitive_root */
 #include "common/math/pi.h"
 
 #include "executor.h"
@@ -63,55 +64,8 @@ typedef struct {
 } stride_rader_data_t;
 
 
-/* ═══════════════════════════════════════════════════════════════
- * PRIMITIVE ROOT
- *
- * Find smallest primitive root g of Z/NZ for prime N.
- * g is a generator if g^{(N-1)/p} != 1 (mod N) for all prime
- * factors p of N-1.
- * ═══════════════════════════════════════════════════════════════ */
-
-static long long _rader_powmod(long long base, long long exp, long long mod) {
-    long long result = 1;
-    base %= mod;
-    while (exp > 0) {
-        if (exp & 1) result = result * base % mod;
-        base = base * base % mod;
-        exp >>= 1;
-    }
-    return result;
-}
-
-/* Prime factors of n (n is smooth, so factors are small) */
-static int _rader_prime_factors(int n, int *out) {
-    int count = 0;
-    static const int small_primes[] = {2, 3, 5, 7, 11, 13, 17, 19, 0};
-    for (const int *p = small_primes; *p; p++) {
-        if (n % *p == 0) {
-            out[count++] = *p;
-            while (n % *p == 0) n /= *p;
-        }
-    }
-    return count;
-}
-
-static int _rader_find_generator(int N) {
-    int nm1 = N - 1;
-    int factors[20];
-    int nf = _rader_prime_factors(nm1, factors);
-
-    for (int g = 2; g < N; g++) {
-        int ok = 1;
-        for (int i = 0; i < nf; i++) {
-            if (_rader_powmod(g, nm1 / factors[i], N) == 1) {
-                ok = 0;
-                break;
-            }
-        }
-        if (ok) return g;
-    }
-    return -1; /* should never happen for prime N */
-}
+/* PRIMITIVE ROOT: vfft_primitive_root (common/math/numtheory.h), the smallest
+ * primitive root g of prime N; g^((N-1)/p) != 1 (mod N) for every prime p | N-1. */
 
 
 /* ═══════════════════════════════════════════════════════════════
@@ -126,7 +80,7 @@ static int _rader_find_generator(int N) {
 
 static void _rader_build_perms(int N, int g, int *gpow, int *ginvpow) {
     int nm1 = N - 1;
-    int ginv = (int)_rader_powmod(g, nm1 - 1, N);
+    int ginv = (int)vfft_powmod(g, nm1 - 1, N);
 
     long long gp = 1;
     long long gip = 1;
@@ -467,7 +421,7 @@ static stride_plan_t *stride_rader_plan(
     d->n_threads = T_plan;
 
     /* Primitive root */
-    int g = _rader_find_generator(N);
+    int g = vfft_primitive_root(N);
 
     /* Permutation tables */
     d->gpow    = (int *)malloc((size_t)nm1 * sizeof(int));
