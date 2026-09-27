@@ -1,0 +1,130 @@
+# il2d_ztt_tail_test.c, avx512 library, 2026-09-27: cold races into a scratch VFFT_WISDOM_DIR (nothing persisted).
+# Build: gcc -O2 -mavx512f -mavx512dq -mfma -I<include + src/core dirs> il2d_ztt_tail_test.c <avx512 build>/libdagcodelets.a -lm -lpthread (vfft.c is included textually)
+######## cold T=1
+NAT    1x2048 route blu       row child ztt    turn child -      [ZTT] fwd 2.0e-16 rt 2.9e-16 ip 2.0e-16 ok
+NAT    3x2048 route csk       row child ztt    turn child -      [ZTT] fwd 3.0e-16 rt 4.4e-16 ip 3.0e-16 ok
+NAT    5x2048 route csk       row child ztt    turn child -      [ZTT] fwd 2.9e-16 rt 3.6e-16 ip 2.9e-16 ok
+NAT    6x2048 route csk       row child ztt    turn child -      [ZTT] fwd 3.4e-16 rt 4.5e-16 ip 3.4e-16 ok
+NAT    7x2048 route chain     row child ztt    turn child -      [ZTT] fwd 2.7e-16 rt 3.6e-16 ip 2.7e-16 ok
+NAT    9x2048 route csk       row child ztt    turn child -      [ZTT] fwd 3.3e-16 rt 4.4e-16 ip 3.3e-16 ok
+NAT   11x2048 route csk       row child ztt    turn child -      [ZTT] fwd 3.3e-16 rt 4.4e-16 ip 3.3e-16 ok
+NAT   13x2048 route csk       row child ztt    turn child -      [ZTT] fwd 4.3e-16 rt 5.2e-16 ip 4.3e-16 ok
+NAT   15x2048 route csk       row child ztt    turn child -      [ZTT] fwd 3.6e-16 rt 4.1e-16 ip 3.6e-16 ok
+NAT 2048x3    route turn      row child mono   turn child ztt    [ZTT] fwd 2.9e-16 rt 4.1e-16 ip 2.9e-16 ok
+NAT 2048x5    route turn      row child mono   turn child ztt    [ZTT] fwd 2.9e-16 rt 3.4e-16 ip 2.9e-16 ok
+NAT 2048x6    route turn      row child mono   turn child ztt    [ZTT] fwd 3.2e-16 rt 4.0e-16 ip 3.2e-16 ok
+NAT 2048x7    route turn      row child mono   turn child ztt    [ZTT] fwd 2.5e-16 rt 3.7e-16 ip 2.5e-16 ok
+NAT 2048x9    route turn      row child mono   turn child ztt    [ZTT] fwd 3.4e-16 rt 4.2e-16 ip 3.4e-16 ok
+NAT 2048x13   route turn      row child mono   turn child ztt    [ZTT] fwd 3.9e-16 rt 5.0e-16 ip 3.9e-16 ok
+NAT    3x4096 route chain     row child ztt    turn child -      [ZTT] fwd 3.1e-16 rt 4.0e-16 ip 3.1e-16 ok
+NAT    7x4096 route chain     row child ztt    turn child -      [ZTT] fwd 3.0e-16 rt 4.2e-16 ip 3.0e-16 ok
+NAT 4096x3    route turn      row child mono   turn child ztt    [ZTT] fwd 3.0e-16 rt 4.1e-16 ip 3.0e-16 ok
+NAT 4096x7    route turn      row child mono   turn child ztt    [ZTT] fwd 3.0e-16 rt 4.1e-16 ip 3.0e-16 ok
+NAT    5x1024 route chain     row child ztt    turn child -      [ZTT] fwd 2.9e-16 rt 4.1e-16 ip 2.9e-16 ok
+NAT 1024x5    route turn      row child mono   turn child ztt    [ZTT] fwd 2.9e-16 rt 3.7e-16 ip 2.9e-16 ok
+NAT    3x1920 route chain     row child chain3 turn child -            fwd 4.1e-16 rt 5.7e-16 ip 4.1e-16 ok
+NAT    7x960  route chain     row child chain3 turn child -            fwd 3.6e-16 rt 4.9e-16 ip 3.6e-16 ok
+NAT  960x7    route turn      row child mono   turn child chain3       fwd 3.3e-16 rt 4.1e-16 ip 3.3e-16 ok
+NAT 1920x3    route turn      row child mono   turn child chain3       fwd 4.0e-16 rt 5.8e-16 ip 4.0e-16 ok
+NAT    5x2880 route chain     row child chain3 turn child -            fwd 4.4e-16 rt 5.8e-16 ip 4.4e-16 ok
+NAT 2880x5    route turn      row child mono   turn child chain3       fwd 4.7e-16 rt 5.9e-16 ip 4.7e-16 ok
+NAT    9x192  route chain     row child 2p     turn child -            fwd 4.1e-16 rt 5.9e-16 ip 4.1e-16 ok
+NAT  192x9    route turn      row child mono   turn child 2p           fwd 3.8e-16 rt 5.0e-16 ip 3.8e-16 ok
+NAT    6x320  route chain     row child chain3 turn child -            fwd 3.3e-16 rt 4.9e-16 ip 3.3e-16 ok
+NAT  320x6    route turn      row child mono   turn child chain3       fwd 2.9e-16 rt 3.8e-16 ip 2.9e-16 ok
+SCR    1x2048 route blu       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 2.9e-16 ip 0.0e+00 ok
+SCR    3x2048 route csk       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.4e-16 ip 0.0e+00 ok
+SCR    5x2048 route csk       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 3.6e-16 ip 0.0e+00 ok
+SCR    6x2048 route csk       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.5e-16 ip 0.0e+00 ok
+SCR    7x2048 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 3.6e-16 ip 0.0e+00 ok
+SCR    9x2048 route csk       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.4e-16 ip 0.0e+00 ok
+SCR   11x2048 route csk       row child ztt    turn child -      [ZTTvfft: il2d chain pool capped at 24 (34 candidate(s) dropped) at N1=2048 -- the race saw a truncated pool
+SCR   13x2048 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 5.2e-16 ip 0.0e+00 ok
+SCR   15x2048 route csk       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.1e-16 ip 0.0e+00 ok
+SCR 2048x3    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.5e-16 ip 0.0e+00 ok
+SCR 2048x5    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 3.7e-16 ip 0.0e+00 ok
+SCR 2048x6    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.1e-16 ip 0.0e+00 ok
+SCR 2048x7    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 3.9e-16 ip 0.0e+00 ok
+SCR 2048x9    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.4e-16 ip 0.0e+00 ok
+SCR 2048x13   route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.7e-16 ip 0.0e+00 ok
+SCR    3x4096 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.0e-16 ip 0.0e+00 ok
+SCR    7x4096 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.2e-16 ip 0.0e+00 ok
+SCR 4096x3    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.9e-16 ip 0.0e+00 ok
+SCR 4096x7    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.6e-16 ip 0.0e+00 ok
+SCR    5x1024 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.1e-16 ip 0.0e+00 ok
+SCR 1024x5    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 3.7e-16 ip 0.0e+00 ok
+SCR    3x1920 route csk       row child chain3 turn child -            fwd 0.0e+00 rt 5.4e-16 ip 0.0e+00 ok
+SCR    7x960  route chain     row child chain3 turn child -            fwd 0.0e+00 rt 4.9e-16 ip 0.0e+00 ok
+SCR  960x7    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.4e-16 ip 0.0e+00 ok
+SCR 1920x3    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.5e-16 ip 0.0e+00 ok
+SCR    5x2880 route chain     row child chain3 turn child -            fwd 0.0e+00 rt 5.8e-16 ip 0.0e+00 ok
+SCR 2880x5    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.8e-16 ip 0.0e+00 ok
+SCR    9x192  route chain     row child 2p     turn child -            fwd 0.0e+00 rt 5.3e-16 ip 0.0e+00 ok
+SCR  192x9    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.7e-16 ip 0.0e+00 ok
+SCR    6x320  route chain     row child chain3 turn child -            fwd 0.0e+00 rt 4.9e-16 ip 0.0e+00 ok
+SCR  320x6    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.4e-16 ip 0.0e+00 ok
+ALL OK  (cells served through a ZTT child: 33)
+######## cold T=4
+NAT    1x2048 route blu       row child ztt    turn child -      [ZTT] fwd 2.0e-16 rt 2.9e-16 ip 2.0e-16 ok
+NAT    3x2048 route csk       row child ztt    turn child -      [ZTT] fwd 3.0e-16 rt 4.4e-16 ip 3.0e-16 ok
+NAT    5x2048 route chain     row child ztt    turn child -      [ZTT] fwd 2.9e-16 rt 3.6e-16 ip 2.9e-16 ok
+NAT    6x2048 route chain     row child ztt    turn child -      [ZTT] fwd 3.4e-16 rt 4.5e-16 ip 3.4e-16 ok
+NAT    7x2048 route chain     row child ztt    turn child -      [ZTT] fwd 2.7e-16 rt 3.6e-16 ip 2.7e-16 ok
+NAT    9x2048 route csk       row child ztt    turn child -      [ZTT] fwd 3.3e-16 rt 4.4e-16 ip 3.3e-16 ok
+NAT   11x2048 route csk       row child ztt    turn child -      [ZTT] fwd 3.3e-16 rt 4.4e-16 ip 3.3e-16 ok
+NAT   13x2048 route chain     row child ztt    turn child -      [ZTT] fwd 4.3e-16 rt 5.2e-16 ip 4.3e-16 ok
+NAT   15x2048 route chain     row child ztt    turn child -      [ZTT] fwd 3.6e-16 rt 4.1e-16 ip 3.6e-16 ok
+NAT 2048x3    route turn      row child mono   turn child ztt    [ZTT] fwd 2.9e-16 rt 4.1e-16 ip 2.9e-16 ok
+NAT 2048x5    route turn      row child mono   turn child ztt    [ZTT] fwd 2.9e-16 rt 3.4e-16 ip 2.9e-16 ok
+NAT 2048x6    route turn      row child mono   turn child ztt    [ZTT] fwd 3.2e-16 rt 4.0e-16 ip 3.2e-16 ok
+NAT 2048x7    route turn      row child mono   turn child ztt    [ZTT] fwd 2.5e-16 rt 3.7e-16 ip 2.5e-16 ok
+NAT 2048x9    route turn      row child mono   turn child ztt    [ZTT] fwd 3.4e-16 rt 4.2e-16 ip 3.4e-16 ok
+NAT 2048x13   route turn      row child mono   turn child ztt    [ZTT] fwd 3.9e-16 rt 5.0e-16 ip 3.9e-16 ok
+NAT    3x4096 route chain     row child ztt    turn child -      [ZTT] fwd 3.1e-16 rt 4.0e-16 ip 3.1e-16 ok
+NAT    7x4096 route chain     row child ztt    turn child -      [ZTT] fwd 3.0e-16 rt 4.2e-16 ip 3.0e-16 ok
+NAT 4096x3    route turn      row child mono   turn child ztt    [ZTT] fwd 3.0e-16 rt 4.1e-16 ip 3.0e-16 ok
+NAT 4096x7    route turn      row child mono   turn child ztt    [ZTT] fwd 3.0e-16 rt 4.1e-16 ip 3.0e-16 ok
+NAT    5x1024 route chain     row child ztt    turn child -      [ZTT] fwd 2.9e-16 rt 4.1e-16 ip 2.9e-16 ok
+NAT 1024x5    route turn      row child mono   turn child ztt    [ZTT] fwd 2.9e-16 rt 3.7e-16 ip 2.9e-16 ok
+NAT    3x1920 route chain     row child chain3 turn child -            fwd 3.9e-16 rt 5.7e-16 ip 3.9e-16 ok
+NAT    7x960  route chain     row child chain3 turn child -            fwd 3.4e-16 rt 4.8e-16 ip 3.4e-16 ok
+NAT  960x7    route turn      row child mono   turn child chain3       fwd 3.5e-16 rt 4.9e-16 ip 3.5e-16 ok
+NAT 1920x3    route turn      row child mono   turn child chain3       fwd 3.9e-16 rt 5.0e-16 ip 3.9e-16 ok
+NAT    5x2880 route csk       row child chain3 turn child -            fwd 4.8e-16 rt 5.6e-16 ip 4.8e-16 ok
+NAT 2880x5    route turn      row child mono   turn child chain3       fwd 3.7e-16 rt 5.4e-16 ip 3.7e-16 ok
+NAT    9x192  route chain     row child chain3 turn child -            fwd 4.1e-16 rt 5.0e-16 ip 4.1e-16 ok
+NAT  192x9    route chain+rb  row child mono   turn child chain3       fwd 3.7e-16 rt 5.0e-16 ip 3.7e-16 ok
+NAT    6x320  route chain     row child 2p     turn child -            fwd 3.8e-16 rt 4.5e-16 ip 3.8e-16 ok
+NAT  320x6    route turn      row child mono   turn child 2p           fwd 3.5e-16 rt 4.1e-16 ip 3.5e-16 ok
+SCR    1x2048 route blu       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 2.9e-16 ip 0.0e+00 ok
+SCR    3x2048 route csk       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.4e-16 ip 0.0e+00 ok
+SCR    5x2048 route csk       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 3.6e-16 ip 0.0e+00 ok
+SCR    6x2048 route csk       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.5e-16 ip 0.0e+00 ok
+SCR    7x2048 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 3.6e-16 ip 0.0e+00 ok
+SCR    9x2048 route csk       row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.4e-16 ip 0.0e+00 ok
+SCR   11x2048 route chain     row child ztt    turn child -      [ZTTvfft: il2d chain pool capped at 24 (34 candidate(s) dropped) at N1=2048 -- the race saw a truncated pool
+SCR   13x2048 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 5.2e-16 ip 0.0e+00 ok
+SCR   15x2048 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.3e-16 ip 0.0e+00 ok
+SCR 2048x3    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.5e-16 ip 0.0e+00 ok
+SCR 2048x5    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 3.7e-16 ip 0.0e+00 ok
+SCR 2048x6    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.6e-16 ip 0.0e+00 ok
+SCR 2048x7    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.2e-16 ip 0.0e+00 ok
+SCR 2048x9    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.4e-16 ip 0.0e+00 ok
+SCR 2048x13   route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.7e-16 ip 0.0e+00 ok
+SCR    3x4096 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.0e-16 ip 0.0e+00 ok
+SCR    7x4096 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.2e-16 ip 0.0e+00 ok
+SCR 4096x3    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.9e-16 ip 0.0e+00 ok
+SCR 4096x7    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.3e-16 ip 0.0e+00 ok
+SCR    5x1024 route chain     row child ztt    turn child -      [ZTT] fwd 0.0e+00 rt 4.1e-16 ip 0.0e+00 ok
+SCR 1024x5    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 3.8e-16 ip 0.0e+00 ok
+SCR    3x1920 route chain     row child chain3 turn child -            fwd 0.0e+00 rt 5.7e-16 ip 0.0e+00 ok
+SCR    7x960  route chain     row child chain3 turn child -            fwd 0.0e+00 rt 4.8e-16 ip 0.0e+00 ok
+SCR  960x7    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.4e-16 ip 0.0e+00 ok
+SCR 1920x3    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.5e-16 ip 0.0e+00 ok
+SCR    5x2880 route chain     row child chain3 turn child -            fwd 0.0e+00 rt 5.3e-16 ip 0.0e+00 ok
+SCR 2880x5    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 5.2e-16 ip 0.0e+00 ok
+SCR    9x192  route chain     row child chain3 turn child -            fwd 0.0e+00 rt 5.0e-16 ip 0.0e+00 ok
+SCR  192x9    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.7e-16 ip 0.0e+00 ok
+SCR    6x320  route chain     row child 2p     turn child -            fwd 0.0e+00 rt 4.5e-16 ip 0.0e+00 ok
+SCR  320x6    route chain+rb  row child mono   turn child -            fwd 0.0e+00 rt 4.4e-16 ip 0.0e+00 ok
+ALL OK  (cells served through a ZTT child: 33)
