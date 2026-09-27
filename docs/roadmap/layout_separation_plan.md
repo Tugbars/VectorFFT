@@ -644,3 +644,21 @@ has four parts:
 - **Phase 8 is a large mechanical rename, or none with D3's anonymous-struct option.**
 - **Nothing here changes a plan, a route, a wisdom row on disk or a bit of output,** except
   the explicitly separate D4/D5 items.
+
+## 9. Deferred findings (fix after the new layout is integrated)
+
+- **F1. Split out-of-place creates re-measure on every call and bank nothing.**
+  Found by the phase-0 self-check (2026-09-27). The split OOP tuner (`oop_dp.h`,
+  `oop_auto.h`) times its candidates with `__rdtsc` at every create, never
+  writes a verdict to the store, and never increments the create-race counter.
+  So the plan, and the output bits, can differ from one process to the next.
+  Examples:
+  - c2c split oop N=45 K=4 gave one fingerprint and three output patterns in
+    eight runs;
+  - a replay row (c2c N=32768 K=4 scrambled) gave six in six.
+
+  The cost is a create-time measurement on every plan and non-reproducible
+  plans. The owner's decision: fix it after the separation lands, in `split/`.
+  Until then the gate tolerates it through the variant-set protocol
+  (`src/tools/baseline/api_sweep.py`): only keys the reference saw flip get the
+  structure-only waiver, and every deterministic key stays bit-exact.
