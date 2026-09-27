@@ -74,6 +74,24 @@ the 2D column pass a per-stage form axis that races them (as il2p's variant 5 do
 for the pair); then re-run these cells. Radix 7 (2401 = 7^4) is prime and has no
 factored form: that cell needs its own look.
 
+### Measuring it end to end (to run on owned hardware)
+
+`zil_avx512_prototypes/harness/oddct/apply_oddct_experiment.sh [avx512|avx2]` rewrites
+the 90 odd-composite flat / 2D kernels of one ISA in place in the factored form, under
+their plain names (revert with `git checkout`). With it applied at AVX-512 the flat DIT
+sweep (72,207 checks), the 2D IL test and the API smoke test stay correct.
+
+Where to look: in the 1000..3000 band the race serves chain3 at 9 of 10 odd cells, and
+chain3 runs the pair kinds, which already race their factored twins, so that band barely
+touches these kernels. The flat kinds matter where the flat DIT wins (odd N above about
+27^3); n1c / t2c matter in 2D planes with an odd-composite column length. Suggested
+cells: 1D 30375, 50625, 59049, 84375, 91125; 2D 45x256, 75x256, 125x128, 225x64,
+27x512, 675x32; each with and without the script, `--calibrate`.
+
+Not yet decided: whether the factored form is a default (it would replace the direct
+form at these radices) or a raced per-stage form. The pair race found R = 9 LOSES the
+factored form there, which argues for racing.
+
 ## 2. 2D 256x256 (IL C2C) gains almost nothing from AVX-512
 
 2D interleaved C2C, natural, out of place, one thread (`runtime/il2d_vs_mkl.c`):
