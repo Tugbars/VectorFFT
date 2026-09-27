@@ -360,7 +360,27 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
     }
     if (!why && prod != (long)N) why = "chain product != N";
     if (!why && (N / chain[0]) % 4) why = "(N / R0) % 4 != 0";
+#if VFFT_IL_VW == 8
+    /* THE AVX-512 LAWS (8 columns per vector; zil_avx512_design.md §11): the
+     * natural class's ingest writes R0-runs as whole 8-column blocks; the
+     * plain (scrambled) class's last stage runs whole 8-column iterations of
+     * R_last-runs. Fused and staged plans alike. (At 4 lanes every chain the
+     * grammar admits meets them, so AVX2 has no such checks.) */
+    if (!why && (N / chain[0]) % VFFT_IL_VW) why = "(N / R0) % 8 != 0";
+    if (!why && !scr && chain[0] % VFFT_IL_VW)
+        why = "natural: R0 % 8 != 0 (the ingest's runs are not whole 8-column blocks)";
+    if (!why && scr && (chain[nf - 1] % VFFT_IL_VW || (N / chain[nf - 1]) % VFFT_IL_VW))
+        why = "scrambled: R_last % 8 != 0 or (N / R_last) % 8 != 0";
+#endif
     cell = why ? NULL : vfft_ztt_lookup(N, chain, nf);
+#if VFFT_IL_VW == 8
+    /* an avx512 registry row may carry ONE order class only (the generator
+     * refused the other under the same laws: its drivers are 0) -- a row
+     * without this request's drivers is no fused cell for it */
+    if (cell && !(scr ? (cell->fwd_scr && cell->bwd_scr)
+                      : (cell->fwd_dest && cell->fwd_plane && cell->bwd_dest && cell->bwd_plane)))
+        cell = NULL;
+#endif
     if (!why) staged = force_staged || !cell;
     if (!why && staged && !force_staged && (N & (N - 1)) == 0)
         why = "no fused driver for this pow2 cell (ztt_registry_" VFFT_IL_ISA_NAME ".h)";
@@ -585,6 +605,9 @@ static inline int vfft_ztt_tile_legal_ord(int N, const int *chain, int nf, size_
     if (nf < 3) return 0;
     if ((size_t)N % tile) return 0;
     if (tile % ((size_t)chain[nf - 2] * (size_t)chain[nf - 1])) return 0;
+#if VFFT_IL_VW == 8
+    if ((tile / (size_t)chain[nf - 1]) % VFFT_IL_VW) return 0;   /* whole 8-column last-stage iterations */
+#endif
     return tile < (size_t)N;
 }
 
