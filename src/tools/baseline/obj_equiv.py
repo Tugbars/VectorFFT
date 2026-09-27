@@ -319,6 +319,15 @@ _RIPDISP = re.compile(r"-?0x([0-9a-f]+)\(%rip\)")
 _BRANCH = re.compile(r"^(j[a-z]+|call|jmp|loop\w*)\s+([0-9a-f]+)\s*(<[^>]*>)?")
 
 
+def _base_adjust(r, base):
+    """A PC-relative relocation INSIDE DATA is a table entry relative to the
+    table's base (a jump table: entry = target - base), so its target offset
+    is addend - (entry position - base). Taking the addend alone drifted 4
+    bytes per slot, until a late entry named the NEXT function (measured:
+    _vfft_tname's switch table, layout separation phase 5)."""
+    return -(r.offset - base) if r.type in _PCREL else 0
+
+
 def norm_name(name, rename=None):
     """GCC clone and local counters collapse (foo.constprop.3 -> .N), as
     sym_census does; then the rename map."""
@@ -426,7 +435,8 @@ class _Resolver:
         for r in self.elf.relas.get(sec, []):
             if a <= r.offset < b:
                 h.update(("%d:%d:%s" % (r.offset - a, r.type,
-                          self.token(self.target(r.sym, r.addend, 0)))).encode())
+                          self.token(self.target(r.sym, r.addend,
+                                                 _base_adjust(r, a))))).encode())
         return h.hexdigest()[:12]
 
 
@@ -484,7 +494,7 @@ def strict_bodies(path, objdump, rename=None):
     for y in datasyms:
         for r in elf.relas.get(y.shndx, []):
             if y.value <= r.offset < y.value + y.size:
-                t = res.target(r.sym, r.addend, 0)
+                t = res.target(r.sym, r.addend, _base_adjust(r, y.value))
                 if t[0] == "sec":
                     res.add_ref(t[1], t[2])
     res.finish()
@@ -542,7 +552,8 @@ def strict_bodies(path, objdump, rename=None):
             for r in elf.relas.get(y.shndx, []):
                 if y.value <= r.offset < y.value + y.size:
                     h.update(("%d:%d:%s" % (r.offset - y.value, r.type,
-                              res.token(res.target(r.sym, r.addend, 0)))).encode())
+                              res.token(res.target(r.sym, r.addend,
+                                                   _base_adjust(r, y.value))))).encode())
             desc = "%s size=%d sha=%s" % (cls, y.size, h.hexdigest()[:16])
         key = norm_name(y.name, rename)
         while key in data:          # two statics with one normalized name
