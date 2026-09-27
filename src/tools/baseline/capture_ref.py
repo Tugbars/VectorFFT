@@ -12,7 +12,6 @@ WHAT IS CAPTURED (file -> rung)
   vfft_O2.o             R1  the portable identity object (toolchain.identity_flags)
   vfft_O3native.o       R1  the shipped object (gauntlet/build.py's driver flags)
   objects.sha           R1  sha256 of the two objects
-  codelets.sha          R1  sha256 of every codelet .o and libdagcodelets.a
   bins.sha              R1  sha256 of the harness executables (fingerprint build)
   cmake.sha             R1  (--cmake-dir) the CMake build's libraries and tools
   vfft.i                R2  vfft.c preprocessed (-E -P), identity flags
@@ -327,7 +326,6 @@ def capture(isa, out, semantic=True, sweep_store=None, repeat=3, jobs=4,
     log("objects, preprocessed TU, censuses, layout done (%.0fs)" % (time.time() - t0))
     if semantic:
         semantics(isa, out, sweep_store, repeat, jobs)
-    codelets(isa, out)
     if cmake_dir:
         cmake_leg(isa, out, cmake_dir)
     if run_gates:
