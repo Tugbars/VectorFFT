@@ -74,19 +74,35 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
             int sR1 = 0, sR2 = 0, iR1 = 0, iR2 = 0;
-            vfft_oop_wisdom_entry_t keb, kib;
-            const vfft_oop_wisdom_entry_t *ke =
-                W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
-                               : (vw2_oop_lookup_k1_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &keb) ? &keb : NULL);
+            /* the kind-3 cell PER LAYOUT (the kind-3 record split): ke is the
+             * SPLIT axis (split/wisdom/wisdom2_oop_split.h), kin the
+             * INTERLEAVED axis of the natural cell (il/wisdom/wisdom2_oop_il.h).
+             * The vw2_off_oop kill switch serves both from the one legacy
+             * line. */
+            vfft_oop_sp_entry_t keb;
+            vfft_oop_il_entry_t kib, kinb;
+            const vfft_oop_wisdom_entry_t *kle =
+                W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N) : NULL;
+            if (kle)
+            {
+                vfft_oop_sp_from_legacy(&keb, kle);
+                vfft_oop_il_from_legacy(&kinb, kle);
+            }
+            const vfft_oop_sp_entry_t *ke =
+                W->vw2_off_oop ? (kle ? &keb : NULL)
+                               : (vw2_oop_lookup_k1_sp_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &keb) ? &keb : NULL);
+            const vfft_oop_il_entry_t *kin =
+                W->vw2_off_oop ? (kle ? &kinb : NULL)
+                               : (vw2_oop_lookup_k1_il_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &kinb) ? &kinb : NULL);
             /* the IL axis reads the request's ORDER CELL: an
              * explicit SCRAMBLED request takes the ord=scr row — the
              * scrambled pool's own verdict (a natural-output engine, or the
              * flat DIT's scrambled class) — DEFAULT and NATURAL the ord=nat
-             * row (ke). Two cells, never compared. The split axis keeps ke. */
+             * row (kin). Two cells, never compared. The split axis keeps ke. */
             const int scr_req = (vfft_policy_ord_k1(cfg, N, /*inplace=*/0) == VW2_ORD_SCR &&
                                  cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop);
-            const vfft_oop_wisdom_entry_t *ki =
-                scr_req ? (vw2_oop_lookup_k1_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : ke;
+            const vfft_oop_il_entry_t *ki =
+                scr_req ? (vw2_oop_lookup_k1_il_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : kin;
             /* the threaded plan's row (v1.3): the K=1 route is thread-independent,
              * so a miss at T > 1 takes the one-thread row's route as its own row */
             if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop && !cfg->recalibrate &&
@@ -94,8 +110,9 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, 0, _vfft_plan_threads(cfg)))
             {
                 _vw2_persist(W, cfg);
-                ke = vw2_oop_lookup_k1_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
-                ki = scr_req ? (vw2_oop_lookup_k1_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : ke;
+                ke = vw2_oop_lookup_k1_sp_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
+                kin = vw2_oop_lookup_k1_il_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &kinb) ? &kinb : NULL;
+                ki = scr_req ? (vw2_oop_lookup_k1_il_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : kin;
             }
             /* Per-layout wisdom: each axis is taken from the store
              * INDEPENDENTLY. A cell with only an IL verdict (k1_sp_route < 0 —
@@ -115,8 +132,9 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 {
                     if (_vfft_plan_threads(cfg) > 1 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, 0, _vfft_plan_threads(cfg)))
                         _vw2_persist(W, cfg);   /* the race banked the one-thread row: its copy at T */
-                    ke = vw2_oop_lookup_k1_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
-                    ki = scr_req ? (vw2_oop_lookup_k1_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : ke;
+                    ke = vw2_oop_lookup_k1_sp_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
+                    kin = vw2_oop_lookup_k1_il_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &kinb) ? &kinb : NULL;
+                    ki = scr_req ? (vw2_oop_lookup_k1_il_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : kin;
                 }
             }
             /* TWO LIBRARIES: a request names ONE layout and this door
@@ -600,10 +618,19 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
         int ord = cfg->order; /* 0=DEFAULT 1=NATURAL(LEAF/BAILEY2) 2=SCRAMBLED(MODEB) */
         /* Order-aware lookup: the cell can hold BOTH a natural and a MODEB champion as separate
          * (N,K,kind-class) entries, so the requested order is served straight from wisdom. */
-        vfft_oop_wisdom_entry_t eb;
-        const vfft_oop_wisdom_entry_t *e =
-            W->vw2_off_oop ? vfft_oop_wisdom_lookup_ord(&W->oop, N, bK, ord)
-                           : (vw2_oop_lookup_ord(&W->vw2, N, bK, ord, &eb) ? &eb : NULL);
+        vfft_oop_sp_entry_t eb;
+        const vfft_oop_sp_entry_t *e = NULL;
+        if (W->vw2_off_oop)
+        {   /* the kill switch: the legacy line's split (classic) fields */
+            const vfft_oop_wisdom_entry_t *le = vfft_oop_wisdom_lookup_ord(&W->oop, N, bK, ord);
+            if (le)
+            {
+                vfft_oop_sp_from_legacy(&eb, le);
+                e = &eb;
+            }
+        }
+        else if (vw2_oop_lookup_ord(&W->vw2, N, bK, ord, &eb))
+            e = &eb;
         if (e && !cfg->recalibrate)
             op = vfft_oop_plan_from_entry(e, reg); /* the cached champion of the requested class */
         if (!op)
@@ -628,15 +655,15 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             {
                 if (nat)
                 {
-                    vfft_oop_wisdom_entry_t ne;
-                    vfft_oop_wisdom_entry_from_plan(&ne, nat, N, bK, nns);
-                    vw2_oop_bank_entry(&W->vw2, &ne);
+                    vfft_oop_sp_entry_t ne;
+                    vfft_oop_sp_entry_from_plan(&ne, nat, N, bK, nns);
+                    vw2_oop_bank_classic(&W->vw2, &ne);
                 }
                 if (mb)
                 {
-                    vfft_oop_wisdom_entry_t ne;
-                    vfft_oop_wisdom_entry_from_plan(&ne, mb, N, bK, mns);
-                    vw2_oop_bank_entry(&W->vw2, &ne);
+                    vfft_oop_sp_entry_t ne;
+                    vfft_oop_sp_entry_from_plan(&ne, mb, N, bK, mns);
+                    vw2_oop_bank_classic(&W->vw2, &ne);
                 }
                 if (nat || mb)
                     _vw2_persist(W, cfg);
