@@ -68,7 +68,7 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
          * (_vfft_plan_threads), so the pool's one clamp = the
          * plan snapshot bounded by the pool and the dispatch
          * array; _pq_execute takes the same clamp on pq_wn. */
-        int T = stride_pool_workers_for(h->nthreads);
+        int T = thread_pool_workers_for(h->nthreads);
         const vfft_dir_t pd = (cfg->transform == VFFT_C2R)
                                   ? VFFT_BACKWARD
                                   : VFFT_FORWARD;

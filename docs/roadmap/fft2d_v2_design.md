@@ -22,7 +22,7 @@ the IO shape: **lanes enter and leave through in-register block transposes.**
 
 ## 3. Spike evidence (§6a34, this container)
 
-| shape | engineered stride_transpose | 8×4 register-block | memcpy bound |
+| shape | engineered vfft_transpose | 8×4 register-block | memcpy bound |
 |---|---|---|---|
 | 256×8 (L1) | 16.99 µs/plane | **11.10 (−35%)** | 4.58 (overheads 3.71× / 2.42×) |
 | 512×8 | 71.21 | 79.95 (+12%) | 47.63 (1.50× / 1.68×) |

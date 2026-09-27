@@ -1256,7 +1256,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
             if (ip) memcpy(zo, zi, nb);
             vfft_k1fs_execute(p, VFFT_FORWARD, ip ? zo : zi, zo);
             if (ip) memcpy(zo, zi, nb);
-            t0 = _il_ab_now(); vfft_k1fs_execute(p, VFFT_FORWARD, ip ? zo : zi, zo); t0 = _il_ab_now() - t0;
+            t0 = vfft_now_ns(); vfft_k1fs_execute(p, VFFT_FORWARD, ip ? zo : zi, zo); t0 = vfft_now_ns() - t0;
             reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
             if (reps < 2) reps = 2;
             if (reps > 64) reps = 64;

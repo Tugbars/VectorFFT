@@ -86,7 +86,7 @@ static void _natorder_reorder_mt(double *re, double *im, size_t N, size_t K,
      * exactly `nthreads` per-worker slots (the plan's h->nthreads). The pool is
      * grow-only, so the live count can EXCEED that later, and every worker
      * slices `tmp + slot*2*K`. The pool's one clamp takes the snapshot. */
-    int T = stride_pool_workers_for(nthreads);
+    int T = thread_pool_workers_for(nthreads);
     if (T <= 1 || nunits < T || N * K < 8192)
     {
         if (is_pairs)
@@ -99,7 +99,7 @@ static void _natorder_reorder_mt(double *re, double *im, size_t N, size_t K,
      * approx). Slot 0 is the caller's [0,per) by the pool's convention; each
      * slot's scratch is tmp + slot*2*K, so distinct slot indices suffice. */
     int per = (nunits + T - 1) / T;
-    _nat_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _nat_arg a[THREAD_POOL_MAX_DISPATCH];
     int n = 0, c = 0;
     for (int t = 0; t < T; t++)
     {
@@ -112,7 +112,7 @@ static void _natorder_reorder_mt(double *re, double *im, size_t N, size_t K,
         n++;
         c = c1;
     }
-    stride_pool_run(n, _nat_range_tramp, a, sizeof a[0]);
+    thread_pool_run(n, _nat_range_tramp, a, sizeof a[0]);
 }
 
 /* ── SCR forward, MT. Two dependent phases with a barrier between:
@@ -151,7 +151,7 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
     /* The pool owns the clamp. The SCR pass has no plan handle here (the
      * scatter object is per-plan but carries no thread snapshot), so none is
      * passed. */
-    int T = stride_pool_workers_for(0);
+    int T = thread_pool_workers_for(0);
     if (T <= 1 || K < 8 || (size_t)s->N * K < 8192)
     {
         natorder_scr_fwd(s, ur, ui, K);
@@ -160,9 +160,9 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
     /* phase 1: OOP scratch-fill, K-split (lanes). CEIL(K/T) then round up to 8
      * (a floor split drops the last K%T lanes when floor(K/T)%8==0). Slot 0 =
      * the caller, on JIT like the workers (a generic main slice straggles at
-     * the phase-1 barrier). stride_pool_run's wait IS the barrier. */
+     * the phase-1 barrier). thread_pool_run's wait IS the barrier. */
     size_t Sv = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
-    _scr_modeb_arg a1[STRIDE_POOL_MAX_DISPATCH];
+    _scr_modeb_arg a1[THREAD_POOL_MAX_DISPATCH];
     int n1 = 0;
     for (int t = 0; t < T; t++)
     {
@@ -174,10 +174,10 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
             ke = K;
         a1[n1++] = (_scr_modeb_arg){s, ur, ui, k0, ke - k0};
     }
-    stride_pool_run(n1, _scr_modeb_tramp, a1, sizeof a1[0]); /* BARRIER: scratch complete */
+    thread_pool_run(n1, _scr_modeb_tramp, a1, sizeof a1[0]); /* BARRIER: scratch complete */
     /* phase 2: terminator, group(q)-split; slot 0 = the caller's [0,per) */
     int P = s->P, per = (P + T - 1) / T;
-    _scr_term_arg a2[STRIDE_POOL_MAX_DISPATCH];
+    _scr_term_arg a2[THREAD_POOL_MAX_DISPATCH];
     int n2 = 0;
     for (int t = 0; t < T; t++)
     {
@@ -189,7 +189,7 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
             q1 = P;
         a2[n2++] = (_scr_term_arg){s, ur, ui, q0, q1};
     }
-    stride_pool_run(n2, _scr_term_tramp, a2, sizeof a2[0]);
+    thread_pool_run(n2, _scr_term_tramp, a2, sizeof a2[0]);
 }
 
 #endif /* VFFT_TRANSFORMS_NATORDER_NATORDER_MT_H */

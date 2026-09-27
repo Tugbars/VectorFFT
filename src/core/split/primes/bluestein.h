@@ -44,7 +44,7 @@ typedef struct {
     size_t B;            /* block size for cache-friendly execution (B <= K, B divides K) */
 
     int n_threads;       /* T_plan snapshot: scratch is sized for this many parallel workers.
-                          * Effective T at execute time is min(stride_get_num_threads(), n_threads). */
+                          * Effective T at execute time is min(thread_pool_size(), n_threads). */
 
     double *chirp_re;    /* N entries: chirp[n] = e^{-pi*i*n^2/N} */
     double *chirp_im;
@@ -447,7 +447,7 @@ static void _blue_worker_bwd(void *arg) {
 
 /* ── Dispatcher: split block range across T workers ──
  *
- * T is min(runtime stride_get_num_threads(), plan-time d->n_threads,
+ * T is min(runtime thread_pool_size(), plan-time d->n_threads,
  * pool size, n_blocks). T==1 takes a fast path with no dispatch.
  * Block-aligned splits — each worker gets a contiguous range of full B-blocks.
  */
@@ -459,7 +459,7 @@ static void _bluestein_execute_fwd(void *data, double *re, double *im) {
     /* d->n_threads is this plan's snapshot (per-tid scratch was sized for
      * it); the pool's one clamp bounds it by the live pool and the arg-array
      * size, and the block count bounds it below that. */
-    int T = stride_pool_workers_for(d->n_threads);
+    int T = thread_pool_workers_for(d->n_threads);
     if (T > (int)n_blocks) T = (int)n_blocks;
 
     if (T == 1) {
@@ -469,7 +469,7 @@ static void _bluestein_execute_fwd(void *data, double *re, double *im) {
     }
 
     /* slot t owns tid t (its scratch slot); slot 0 is the caller */
-    _blue_worker_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _blue_worker_arg_t args[THREAD_POOL_MAX_DISPATCH];
     for (int t = 0; t < T; t++) {
         size_t bk_start = (n_blocks * (size_t)t)       / (size_t)T;
         size_t bk_end   = (n_blocks * (size_t)(t + 1)) / (size_t)T;
@@ -482,7 +482,7 @@ static void _bluestein_execute_fwd(void *data, double *re, double *im) {
         args[t].b0_end   = b0_end;
         args[t].tid = t;
     }
-    stride_pool_run(T, _blue_worker_fwd, args, sizeof args[0]);
+    thread_pool_run(T, _blue_worker_fwd, args, sizeof args[0]);
 }
 
 
@@ -500,7 +500,7 @@ static void _bluestein_execute_bwd(void *data, double *re, double *im) {
     /* d->n_threads is this plan's snapshot (per-tid scratch was sized for
      * it); the pool's one clamp bounds it by the live pool and the arg-array
      * size, and the block count bounds it below that. */
-    int T = stride_pool_workers_for(d->n_threads);
+    int T = thread_pool_workers_for(d->n_threads);
     if (T > (int)n_blocks) T = (int)n_blocks;
 
     if (T == 1) {
@@ -510,7 +510,7 @@ static void _bluestein_execute_bwd(void *data, double *re, double *im) {
     }
 
     /* slot t owns tid t (its scratch slot); slot 0 is the caller */
-    _blue_worker_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _blue_worker_arg_t args[THREAD_POOL_MAX_DISPATCH];
     for (int t = 0; t < T; t++) {
         size_t bk_start = (n_blocks * (size_t)t)       / (size_t)T;
         size_t bk_end   = (n_blocks * (size_t)(t + 1)) / (size_t)T;
@@ -523,7 +523,7 @@ static void _bluestein_execute_bwd(void *data, double *re, double *im) {
         args[t].b0_end   = b0_end;
         args[t].tid = t;
     }
-    stride_pool_run(T, _blue_worker_bwd, args, sizeof args[0]);
+    thread_pool_run(T, _blue_worker_bwd, args, sizeof args[0]);
 }
 
 
@@ -577,7 +577,7 @@ static stride_plan_t *stride_bluestein_plan(
     /* Snapshot thread count: scratch is sized for T_plan parallel workers.
      * Effective T at execute time is capped at this value, so post-plan
      * vfft_set_num_threads() can lower T but not raise above the bound. */
-    int T_plan = stride_get_num_threads();
+    int T_plan = thread_pool_size();
     if (T_plan < 1) T_plan = 1;
     d->n_threads = T_plan;
 

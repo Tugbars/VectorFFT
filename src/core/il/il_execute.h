@@ -182,7 +182,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
             /* T = 1 + clones built at create (the plan's own snapshot); the
              * pool's one clamp also bounds it by the live pool and the
              * arg-array size, and never above the clone count. */
-            T = stride_pool_workers_for(T);
+            T = thread_pool_workers_for(T);
         }
         else
             T = 1;
@@ -205,7 +205,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
              * is what makes the pool-free inner route safe to run
              * concurrently). The pool's fork-join dispatches exactly that. */
             const size_t S = (h->K + (size_t)T - 1) / (size_t)T;
-            _tc_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+            _tc_mt_arg a[THREAD_POOL_MAX_DISPATCH];
             int n = 0;
             for (int t = 0; t < T; t++)
             {
@@ -218,7 +218,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                 a[n++] = (_tc_mt_arg){t == 0 ? h->tcb : h->tcbw[t - 1], dir, sre, d,
                                       t0, te - t0, sn, dn};
             }
-            stride_pool_run(n, _tc_mt_tramp, a, sizeof a[0]);
+            thread_pool_run(n, _tc_mt_tramp, a, sizeof a[0]);
             _vfft_tc_mt_dispatch_count += n - 1; /* one per worker dispatched, see vfft.h */
             return;
         }

@@ -8,7 +8,7 @@
  * execute while having sized a buffer at create will eventually index past it.
  *
  * THE BUG THIS GATE WAS WRITTEN FOR. The natural-order reorder sized its
- * per-worker cycle scratch at create from the live pool (`_stride_pool_size+1`
+ * per-worker cycle scratch at create from the live pool (`_thread_pool_nworkers+1`
  * slots) and, at execute, read T from the live pool again and sliced
  * `tmp + slot*2*K` per worker. Create a natural-order plan while the pool is 1,
  * let anything grow the pool, execute the first plan: T workers slice a

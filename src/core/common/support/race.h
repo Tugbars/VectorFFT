@@ -32,7 +32,7 @@
 #include <stdlib.h>
 
 #include <string.h>
-#include "common/support/race_timing.h" /* _il_ab_now: the shared monotonic clock */
+#include "common/support/race_timing.h" /* vfft_now_ns: the shared monotonic clock */
 
 #define VFFT_RACE_MAX_ARMS 160  /* _il2d_axis_race runs up to 140: (3 row routes + the two-pass route x 4 tile steps) x (14 band widths + 6 column tiles) */
 #define VFFT_RACE_MAX_ROUNDS 96 /* _calibrate_pad runs RR=81 at PATIENT */
@@ -168,10 +168,10 @@ static int vfft_race_run(const vfft_race_proto_t *p, const vfft_race_arm_t *arms
             const int a = (p->alternate && (r & 1)) ? n - 1 - k : k;
             if (p->reset)
                 p->reset(p->reset_ctx);
-            const double t0 = _il_ab_now();
+            const double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
                 arms[a].run(arms[a].ctx);
-            s[a][r] = (_il_ab_now() - t0) / reps;
+            s[a][r] = (vfft_now_ns() - t0) / reps;
         }
     int best = 0;
     for (int a = 0; a < n; a++)

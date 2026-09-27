@@ -17,7 +17,7 @@ Companion: the 1D design + measurements live in memory (`natural_order_inplace_d
 
 - `plan_col` — N1-point FFT down the columns (axis-0 / rows, baked `K = N2`)
 - `plan_row` — N2-point FFT across the rows (axis-1 / within-row, baked `K = B` tiled), bracketed by a
-  SIMD transpose (`stride_transpose_pair`)
+  SIMD transpose (`vfft_transpose_pair`)
 
 Both inners are DIT/DIF, so each axis comes out **digit-scrambled**. The 2D output is scrambled in
 **both** dimensions:

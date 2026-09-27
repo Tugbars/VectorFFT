@@ -56,7 +56,7 @@
 
 /* Maximum threads for per-thread scratch allocation. */
 #ifndef FFT2D_MAX_THREADS
-#define FFT2D_MAX_THREADS STRIDE_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
+#define FFT2D_MAX_THREADS THREAD_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
 #endif
 
 
@@ -163,7 +163,7 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
         if (i + B > row_end) this_B = row_end - i;
 
         /* Gather: B×N2 → N2×B (ld_dst=B for plan's K=B layout) */
-        stride_transpose_pair(
+        vfft_transpose_pair(
             re + i * N2, im + i * N2, sr, si,
             (size_t)N2, B, this_B, (size_t)N2);
 
@@ -191,7 +191,7 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
             vfft_natorder_cycle_pass(sr, si, B, d->nat_col_list, rtmp);
 
         /* Scatter: N2×B → B×N2 (ld_src=B) */
-        stride_transpose_pair(
+        vfft_transpose_pair(
             sr, si, re + i * N2, im + i * N2,
             B, (size_t)N2, (size_t)N2, this_B);
     }
@@ -226,7 +226,7 @@ static void _fft2d_tiled_mt(stride_fft2d_data_t *d,
     /* The scratch slots allocated at create (d->num_scratch) are this plan's
      * snapshot: a worker without a slot cannot run. The pool's one clamp
      * bounds T by that, by the live pool and by the arg-array size. */
-    int T = stride_pool_workers_for(d->num_scratch);
+    int T = thread_pool_workers_for(d->num_scratch);
 
     /* Total tiles */
     size_t n_tiles = (N1 + B - 1) / B;
@@ -243,7 +243,7 @@ static void _fft2d_tiled_mt(stride_fft2d_data_t *d,
      * rounded to multiples of B for clean splits. Slot t owns scratch slot t;
      * slot 0 is the caller (its scratch is the pool base), by the pool's
      * convention. */
-    _fft2d_tile_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _fft2d_tile_arg_t args[THREAD_POOL_MAX_DISPATCH];
     int n = 0;
     for (int t = 0; t < T; t++) {
         size_t tiles_start = (n_tiles * t) / T;
@@ -263,7 +263,7 @@ static void _fft2d_tiled_mt(stride_fft2d_data_t *d,
         args[n].is_bwd = is_bwd;
         n++;
     }
-    stride_pool_run(n, _fft2d_tile_trampoline, args, sizeof args[0]);
+    thread_pool_run(n, _fft2d_tile_trampoline, args, sizeof args[0]);
 }
 
 
@@ -275,13 +275,13 @@ static void _fft2d_bailey_fwd(stride_fft2d_data_t *d,
                                double *re, double *im) {
     const size_t N1 = (size_t)d->N1, N2 = (size_t)d->N2;
 
-    stride_transpose_pair(re, im, d->scratch_re, d->scratch_im,
+    vfft_transpose_pair(re, im, d->scratch_re, d->scratch_im,
                           N2, N1, N1, N2);
     if (d->exec_row_fwd)
         d->exec_row_fwd(d->plan_row, d->scratch_re, d->scratch_im, d->plan_row->K, d->plan_row->K, 0);
     else
         stride_execute_fwd(d->plan_row, d->scratch_re, d->scratch_im);
-    stride_transpose_pair(d->scratch_re, d->scratch_im, re, im,
+    vfft_transpose_pair(d->scratch_re, d->scratch_im, re, im,
                           N1, N2, N2, N1);
 }
 
@@ -289,13 +289,13 @@ static void _fft2d_bailey_bwd(stride_fft2d_data_t *d,
                                double *re, double *im) {
     const size_t N1 = (size_t)d->N1, N2 = (size_t)d->N2;
 
-    stride_transpose_pair(re, im, d->scratch_re, d->scratch_im,
+    vfft_transpose_pair(re, im, d->scratch_re, d->scratch_im,
                           N2, N1, N1, N2);
     if (d->exec_row_bwd)
         d->exec_row_bwd(d->plan_row, d->scratch_re, d->scratch_im, d->plan_row->K, d->plan_row->K, 0);
     else
         stride_execute_bwd(d->plan_row, d->scratch_re, d->scratch_im);
-    stride_transpose_pair(d->scratch_re, d->scratch_im, re, im,
+    vfft_transpose_pair(d->scratch_re, d->scratch_im, re, im,
                           N1, N2, N2, N1);
 }
 
@@ -392,7 +392,7 @@ static size_t _fft2d_choose_tile(int N2, int N1) {
 /* Allocate per-thread scratch buffers.
  * Returns number of scratch slots allocated. */
 static int _fft2d_alloc_scratch(stride_fft2d_data_t *d, size_t tile_sz) {
-    int T = stride_get_num_threads();
+    int T = thread_pool_size();
     if (T > FFT2D_MAX_THREADS) T = FFT2D_MAX_THREADS;
     if (T < 1) T = 1;
 

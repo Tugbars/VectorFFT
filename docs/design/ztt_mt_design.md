@@ -32,7 +32,7 @@ iterations touch disjoint spans and share nothing but read-only tables
 loop's range per thread. Nothing is recomputed and no order inside a unit
 changes, so **the MT output is bitwise the ST output**, and the gate that
 holds it is a `memcmp`. Stages stay ordered with one fork-join each
-(`stride_pool_run`, ~100 ns on the spinning pool).
+(`thread_pool_run`, ~100 ns on the spinning pool).
 
 This holds at every cell, pow2 included: at T > 1 a ZTURN-T plan runs the
 sectioned staged walk, not its fused codelet. The fusion is worth 0-3%
@@ -74,7 +74,7 @@ it serves the pow2 registry cells and the odd band alike.
 An arm declines, and the serial walk serves, when a stage would hand a
 thread nothing: fewer tiles than threads for the tile arm, fewer groups or
 column quads than threads for a sweep, a live pool clamped below the bound
-T (`stride_pool_workers_for`), or T < 2. Below 2048 the transform is a few
+T (`thread_pool_workers_for`), or T < 2. Below 2048 the transform is a few
 microseconds and the joins are not free; the race is expected to keep
 those cells serial, and the arm is not built there by rule but by verdict.
 Nesting is forbidden: the threaded walk runs only on the caller thread of a
@@ -147,7 +147,7 @@ MKL at T = 8 through the canonical bench 1.51-1.87x at 12288..262144.
 
 1. **The sectioned walk.** `vfft_ztt_mt_bind(p, T)` derives the per-stage
    cuts from the stage table (both arms); `vfft_ztt_execute_mt(p, zin,
-   zout, bwd)` runs them through `stride_pool_run`, one dispatch per stage
+   zout, bwd)` runs them through `thread_pool_run`, one dispatch per stage
    (blocks) or per prefix (tiles), and returns 0 when it declines. Every
    plan resolves its stage table at create (the fused cells too); `staged`
    keeps selecting the serial form.

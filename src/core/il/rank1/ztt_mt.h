@@ -9,7 +9,7 @@
  * pointers and a shorter count. Nothing is recomputed and no order inside a
  * unit changes, so the threaded output is BITWISE the serial walk's, which
  * is what benches/ztt_mt_gate.c holds. One fork-join per stage
- * (stride_pool_run: the caller is slot 0, the workers spin).
+ * (thread_pool_run: the caller is slot 0, the workers spin).
  *
  * Two arms, the flat DIT's (il_flatdit_mt.h): mt=1 BLOCKS — every stage cut
  * by units, the tile ignored (tiling changes group order only); mt=2 TILES —
@@ -34,7 +34,7 @@
 
 #include "ztt.h"
 #include "common/support/threads.h"
-#include "common/support/race.h"      /* the race body and _il_ab_now, for vfft_ztt_mt_race */
+#include "common/support/race.h"      /* the race body and vfft_now_ns, for vfft_ztt_mt_race */
 
 extern long _vfft_ztt_mt_count;   /* vfft.c: the engagement counter */
 
@@ -123,7 +123,7 @@ static inline void _ztt_mt_columns(int T, vfft_ztt_kfn fn, const double *zin, do
                                    const double *tw, const double *tw_im, int twrec,
                                    size_t Ls, size_t OLs, size_t count, const size_t *rb)
 {
-    _ztt_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _ztt_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     const size_t nq = count / 4;
     int w;
     for (w = 0; w < T; w++)
@@ -136,14 +136,14 @@ static inline void _ztt_mt_columns(int T, vfft_ztt_kfn fn, const double *zin, do
         a[w].tw_im = rb ? (const double *)(rb + lo) : tw_im;
         a[w].Ls = Ls; a[w].Gs = 1; a[w].OLs = OLs; a[w].count = hi - lo;
     }
-    stride_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
+    thread_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
 }
 
 /* a GROUP stage: Gs groups at pitch doubles apart, one group-invariant stream */
 static inline void _ztt_mt_groups(int T, vfft_ztt_kfn fn, double *base, size_t pitch,
                                   const double *tw, size_t Ls, size_t Gs, size_t count)
 {
-    _ztt_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _ztt_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     int w;
     for (w = 0; w < T; w++)
     {
@@ -154,14 +154,14 @@ static inline void _ztt_mt_groups(int T, vfft_ztt_kfn fn, double *base, size_t p
         a[w].tw = tw; a[w].Ls = Ls; a[w].Gs = hi - lo; a[w].count = count;
         if (hi == lo) a[w].count = 0;
     }
-    stride_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
+    thread_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
 }
 
 /* the plain untiled last stage: N/R groups of R, 4 per kernel iteration */
 static inline void _ztt_mt_tld(int T, vfft_ztt_kfn fn, const double *zin, double *zout,
                                const double *tw, size_t R, size_t ngroups)
 {
-    _ztt_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _ztt_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     const size_t nq = ngroups / 4;
     int w;
     for (w = 0; w < T; w++)
@@ -172,14 +172,14 @@ static inline void _ztt_mt_tld(int T, vfft_ztt_kfn fn, const double *zin, double
         a[w].zin = zin + 2 * R * lo; a[w].zout = zout + 2 * R * lo;
         a[w].tw = tw; a[w].Ls = 0; a[w].Gs = 1; a[w].count = hi - lo;
     }
-    stride_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
+    thread_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
 }
 
 /* the TILE / BLOCK range dispatch */
 static inline void _ztt_mt_tiles(int T, const vfft_ztt_plan_t *p, int kind, const double *tws,
                                  double *W, const double *zin_b, double *zout, int bwd, size_t ntile)
 {
-    _ztt_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _ztt_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     int w;
     for (w = 0; w < T; w++)
     {
@@ -188,7 +188,7 @@ static inline void _ztt_mt_tiles(int T, const vfft_ztt_plan_t *p, int kind, cons
         a[w].zout = zout; a[w].bwd = bwd;
         a[w].t_lo = ntile * (size_t)w / (size_t)T; a[w].t_hi = ntile * (size_t)(w + 1) / (size_t)T;
     }
-    stride_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
+    thread_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
 }
 
 /* bind the arm for the plan's T; 0 = declined (T < 2 or an arm the plan
@@ -208,7 +208,7 @@ static inline int vfft_ztt_mt_bind(vfft_ztt_plan_t *p, int T, int arm)
  * the verdict was raced at that T). */
 static inline int vfft_ztt_execute_mt(const vfft_ztt_plan_t *p, const double *zin, double *zout, int bwd)
 {
-    const int T = stride_pool_workers_for(p->mt_t);
+    const int T = thread_pool_workers_for(p->mt_t);
     const int nf = p->nf;
     const vfft_ztt_kfn *st = bwd ? p->st_bwd : p->st_fwd;
     const double *tw = bwd ? p->twb : p->tw;
@@ -298,7 +298,7 @@ static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const double *zin,
         double t0;
         p->mt = 0;
         vfft_ztt_execute_fwd(p, zin, zout);
-        t0 = _il_ab_now(); vfft_ztt_execute_fwd(p, zin, zout); t0 = _il_ab_now() - t0;
+        t0 = vfft_now_ns(); vfft_ztt_execute_fwd(p, zin, zout); t0 = vfft_now_ns() - t0;
         reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
         if (reps < 2) reps = 2;
         if (reps > (1 << 19)) reps = 1 << 19;

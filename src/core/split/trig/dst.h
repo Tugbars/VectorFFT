@@ -48,7 +48,7 @@ typedef struct {
 } _dst_slice_arg_t;
 
 static inline int _dst_mt_threads(int n_threads_plan, int N, size_t K) {
-    int T = stride_pool_workers_for(n_threads_plan); /* the pool's one clamp: plan snapshot, live pool, array bound */
+    int T = thread_pool_workers_for(n_threads_plan); /* the pool's one clamp: plan snapshot, live pool, array bound */
     if (T > 1 && (size_t)N * K < (size_t)8192 * (size_t)T) T = 1;
     return T;
 }
@@ -142,18 +142,18 @@ static void _dst2_execute_fwd(void *data, double *re, double *im) {
 
     int T = _dst_mt_threads(d->n_threads, N, K);
     if (T > 1) {
-        _dst_slice_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+        _dst_slice_arg_t args[THREAD_POOL_MAX_DISPATCH];
         for (int t = 0; t < T; t++) {
             args[t].d  = d;
             args[t].re = re;
             args[t].k0 = (K * (size_t)t)       / (size_t)T;
             args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
         }
-        stride_pool_run(T, _dst2_worker_pre_fwd, args, sizeof args[0]); /* caller = args[0] */
+        thread_pool_run(T, _dst2_worker_pre_fwd, args, sizeof args[0]); /* caller = args[0] */
 
         d->dct_plan->override_fwd(d->dct_plan->override_data, d->prebuf, NULL);
 
-        stride_pool_run(T, _dst2_worker_post_fwd, args, sizeof args[0]); /* caller = args[0] */
+        thread_pool_run(T, _dst2_worker_post_fwd, args, sizeof args[0]); /* caller = args[0] */
         return;
     }
 
@@ -194,18 +194,18 @@ static void _dst3_execute_fwd(void *data, double *re, double *im) {
 
     int T = _dst_mt_threads(d->n_threads, N, K);
     if (T > 1) {
-        _dst_slice_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+        _dst_slice_arg_t args[THREAD_POOL_MAX_DISPATCH];
         for (int t = 0; t < T; t++) {
             args[t].d  = d;
             args[t].re = re;
             args[t].k0 = (K * (size_t)t)       / (size_t)T;
             args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
         }
-        stride_pool_run(T, _dst3_worker_pre_fwd, args, sizeof args[0]); /* caller = args[0] */
+        thread_pool_run(T, _dst3_worker_pre_fwd, args, sizeof args[0]); /* caller = args[0] */
 
         d->dct_plan->override_bwd(d->dct_plan->override_data, d->prebuf, NULL);
 
-        stride_pool_run(T, _dst3_worker_post_fwd, args, sizeof args[0]); /* caller = args[0] */
+        thread_pool_run(T, _dst3_worker_post_fwd, args, sizeof args[0]); /* caller = args[0] */
         return;
     }
 
@@ -265,7 +265,7 @@ static stride_plan_t *stride_dst2_plan(int N, size_t K, stride_plan_t *dct_plan)
     d->K = K;
     d->dct_plan = dct_plan;
 
-    int T_plan = stride_get_num_threads();
+    int T_plan = thread_pool_size();
     if (T_plan < 1) T_plan = 1;
     d->n_threads = T_plan;
 

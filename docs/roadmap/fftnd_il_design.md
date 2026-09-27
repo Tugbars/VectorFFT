@@ -100,7 +100,7 @@ row-plan clone (`_tc_clone_equiv`) plus its own axis-1 Bluestein scratch.
 Clones read warm wisdom and never bank; any clone failure tears the set
 down and MT declines, loudly — never a half-cloned dispatch. The pool is
 the one owner (`support/threads.h`): the plan's T is the snapshot,
-`stride_pool_workers_for` the one clamp, `stride_pool_run` the one
+`thread_pool_workers_for` the one clamp, `thread_pool_run` the one
 fork-join. The verdict's row is keyed by the T it was raced at (`nthreads=`); a banked
 verdict serves only at its own T. `VFFT_ILND_MT=0|1|2` pins (never banks);
 `vfft_ilnd_mt_passes()` is the engagement counter, and a threaded number

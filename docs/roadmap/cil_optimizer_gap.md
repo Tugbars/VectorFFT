@@ -36,7 +36,7 @@ passing its sanity gate on the three cells that matter.** Do not re-port it.
 MKL reads 2663 vs the canonical bench's ~2170). Prime suspect: the rep loop
 runs in-place forwards **without reseeding**, so magnitudes amplify toward
 inf over ~2 s of reps — the hazard `vfft.c`'s ordering race documents
-("reseed per burst"). We flush denormals via FTZ/DAZ in `stride_env_init`;
+("reseed per burst"). We flush denormals via FTZ/DAZ in `vfft_env_init`;
 if MKL's path does not, it takes the denormal assist. **Fix = reseed the
 buffer each burst.** 2048 is only the cross-emitter control — 256/512/1024
 are sufficient to answer the port question, so do not let it block.

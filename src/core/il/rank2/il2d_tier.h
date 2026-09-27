@@ -483,7 +483,7 @@ static int _il2d_stage_digits_mt(const double *src, double *dst,
                                  const double *tab, int T)
 {
     const size_t D = (size_t)(L / R);
-    _il2d_dmt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _il2d_dmt_arg a[THREAD_POOL_MAX_DISPATCH];
     int t;
     if (!tab || D < (size_t)T || T < 2)
         return 0; /* D == 1 stages carry no table and no digit axis */
@@ -496,7 +496,7 @@ static int _il2d_stage_digits_mt(const double *src, double *dst,
         a[t].d0 = D * (size_t)t / (size_t)T;
         a[t].nd = D * (size_t)(t + 1) / (size_t)T - a[t].d0;
     }
-    stride_pool_run(T, _il2d_dmt_tramp, a, sizeof a[0]); /* caller = a[0] */
+    thread_pool_run(T, _il2d_dmt_tramp, a, sizeof a[0]); /* caller = a[0] */
     return 1;
 }
 
@@ -553,11 +553,11 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
     const int strip = (h->il2d_col.wl <= 0);
     size_t units = strip ? hp1 : ((size_t)h->N / (size_t)h->il2d_col.wl);
-    _il2d_cmt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _il2d_cmt_arg a[THREAD_POOL_MAX_DISPATCH];
     int t;
     /* T arrives as the plan's snapshot (h->nthreads); the pool's one clamp
      * bounds it by the live pool and the arg-array size. */
-    T = stride_pool_workers_for(T);
+    T = thread_pool_workers_for(T);
     if (T >= 2 && h->il2d_col.nat)
     {
         /* NATURAL x MT: the matched partition of the
@@ -596,7 +596,7 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
             a[t].lo = nb * (size_t)t / (size_t)Tb;
             a[t].hi = nb * (size_t)(t + 1) / (size_t)Tb;
         }
-        stride_pool_run(Tb, _il2d_cmt_tramp, a, sizeof a[0]);
+        thread_pool_run(Tb, _il2d_cmt_tramp, a, sizeof a[0]);
         if (reverse)
         {
             for (s = h->il2d_col.nst - 2; s >= 0; s--)
@@ -648,7 +648,7 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
         a[t].lo = units * (size_t)t / (size_t)T;
         a[t].hi = units * (size_t)(t + 1) / (size_t)T;
     }
-    stride_pool_run(T, _il2d_cmt_tramp, a, sizeof a[0]); /* caller = a[0] */
+    thread_pool_run(T, _il2d_cmt_tramp, a, sizeof a[0]); /* caller = a[0] */
     _vfft_il2d_col_mt_count++; /* engagement, see vfft.h */
     if (!strip && reverse && h->il2d_col.cut > 0)
     {
@@ -1162,7 +1162,7 @@ static void _il2d_c2c_mt_phase(struct vfft_plan_s *h, const double *src,
                                double *dst, vfft_dir_t dir, int fwd,
                                int mode, size_t units, int T)
 {
-    _il2d_c2c_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _il2d_c2c_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     int t;
     for (t = 0; t < T; t++)
     {
@@ -1176,7 +1176,7 @@ static void _il2d_c2c_mt_phase(struct vfft_plan_s *h, const double *src,
         a[t].lo = units * (size_t)t / (size_t)T;
         a[t].hi = units * (size_t)(t + 1) / (size_t)T;
     }
-    stride_pool_run(T, _il2d_c2c_mt_tramp, a, sizeof a[0]); /* caller = a[0] (tid 0) */
+    thread_pool_run(T, _il2d_c2c_mt_tramp, a, sizeof a[0]); /* caller = a[0] (tid 0) */
 }
 
 /* ── the THREADED skewed column pass and turn. Both are loop
@@ -1193,7 +1193,7 @@ static int _il2d_csk_exec_mt(struct vfft_plan_s *h, const double *sre, double *d
     const size_t rn = (size_t)h->N2, N1 = (size_t)h->N;
     const int fwd = (dir == VFFT_FORWARD);
     int Tc, Tr;
-    T = stride_pool_workers_for(T);
+    T = thread_pool_workers_for(T);
     if (T < 2 || (rn % 16) != 0)
         return 0;
     if (!h->il2d_rowb && !h->il2d_rowb2 && h->il2d_cskw_n < T - 1)
@@ -1220,7 +1220,7 @@ static int _il2d_turn_exec_mt(struct vfft_plan_s *h, const double *sre, double *
     const int fwd = (dir == VFFT_FORWARD);
     int Tr, Tc;
     size_t c;
-    T = stride_pool_workers_for(T);
+    T = thread_pool_workers_for(T);
     if (T < 2 || (N1 % 4) != 0)
         return 0;
     Tc = (rn < (size_t)T) ? (int)rn : T;
@@ -1272,7 +1272,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                    * per-worker slots are not built for it */
     /* T arrives as the plan's snapshot (h->nthreads); the pool's one clamp
      * bounds it by the live pool and the arg-array size. */
-    T = stride_pool_workers_for(T);
+    T = thread_pool_workers_for(T);
     if (T < 2 || h->il2d_roww_n < T - 1)
         return 0; /* every arm here runs rows => clones are mandatory */
     if (h->il2d_col.blu)
@@ -1348,7 +1348,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
             double p0 = 0, p1 = 0;
             if (Ts < 2 && Tr < 2)
                 return 0;
-            if (phlog) p0 = _il_ab_now();
+            if (phlog) p0 = vfft_now_ns();
             if (Ts >= 2)
                 _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 5, rn, Ts);
             else
@@ -1357,11 +1357,11 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                                    fwd ? h->il2d_col.f : h->il2d_col.b,
                                    fwd ? h->il2d_col.tf : h->il2d_col.tb, !fwd,
                                    h->il2d_col.natperm, scr, _il2d_nat_stage_of(h, 0));
-            if (phlog) p1 = _il_ab_now();
+            if (phlog) p1 = vfft_now_ns();
             _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
             if (phlog)
                 fprintf(stderr, "[il2d-phases] %dx%zu T=%d strips msw=%d nls=%d: cols=%.0f rows=%.0f ns\n",
-                        h->N, rn, T, h->il2d_col.msw, h->il2d_col.natst, p1 - p0, _il_ab_now() - p1);
+                        h->N, rn, T, h->il2d_col.msw, h->il2d_col.natst, p1 - p0, vfft_now_ns() - p1);
             _vfft_il2d_col_mt_count++;
             return 1;
         }
@@ -1419,7 +1419,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         double ph0 = 0, ph1 = 0, ph2 = 0, ph3 = 0;
         if (Tb < 2)
             return 0;
-        if (phlog) ph0 = _il_ab_now();
+        if (phlog) ph0 = vfft_now_ns();
         if (fwd && h->il2d_col.cut > 0)
             for (s = 0; s < h->il2d_col.cut; s++)
             {
@@ -1440,15 +1440,15 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
             _il2d_c2c_mt_phase(h, dre, dre, dir, fwd, 2, (size_t)h->N, T);
             sre = dre;
         }
-        if (phlog) ph1 = _il_ab_now();
+        if (phlog) ph1 = vfft_now_ns();
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 0, nb, Tb);
-        if (phlog) ph2 = _il_ab_now();
+        if (phlog) ph2 = vfft_now_ns();
         if (!h->il2d_col.tfuse && !(h->il2d_fs_tw && !fwd))
             _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N,
                                T);
         if (phlog)
         {
-            ph3 = _il_ab_now();
+            ph3 = vfft_now_ns();
             fprintf(stderr, "[il2d-phases] %dx%d T=%d wl=%d cut=%d nst=%d tfuse=%d: prefix=%.0f bands=%.0f rows=%.0f ns\n",
                     h->N, (int)rn, T, h->il2d_col.wl, h->il2d_col.cut, h->il2d_col.nst, h->il2d_col.tfuse,
                     ph1 - ph0, ph2 - ph1, ph3 - ph2);
@@ -2487,12 +2487,12 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     _il2d_tpc_cols_range(c, z, zo, rn, 0, rn, 0);
     for (r = 0; r < 3; r++)
     {
-        const double t0 = _il_ab_now();
+        const double t0 = vfft_now_ns();
         _il2d_blu_cols(z, zo, N, rn, c->blu, c->nst, c->R, c->L, c->f, c->b, c->tf, c->tb,
                        c->bluchf, c->blukf, c->bluscr);
-        const double t1 = _il_ab_now();
+        const double t1 = vfft_now_ns();
         _il2d_tpc_cols_range(c, z, zo, rn, 0, rn, 0);
-        const double t2 = _il_ab_now();
+        const double t2 = vfft_now_ns();
         if (t1 - t0 < tb) tb = t1 - t0;
         if (t2 - t1 < tt) tt = t2 - t1;
     }
@@ -2996,7 +2996,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
      * beside the serial one (axt= and the t-suffixed tokens), served at
      * that T only. On natural cells the threaded chain walk ignores the band
      * width and the sub-strip tile, so those arms are pruned to wl = 0. */
-    const int mt = (h->nthreads > 1 && stride_pool_workers_for(h->nthreads) >= 2);
+    const int mt = (h->nthreads > 1 && thread_pool_workers_for(h->nthreads) >= 2);
     const int prune = mt && h->il2d_col.nat;
     if (reps < 2) reps = 2;
     if (!z || !zo)

@@ -5,7 +5,7 @@
 #include "vfft_diagnostics.h"   /* the MT engagement counters this file defines */
 #include "split/real/real_dispatch_config.h" /* cross-TU r2c/c2r knobs, defined here */
 
-#include "env.h"                /* stride_env_init, ISA/version, pinning           */
+#include "env.h"                /* vfft_env_init, ISA/version, pinning           */
 #include "threads.h"            /* pool: set/get threads, dispatch/wait            */
 #include "planner.h"            /* vfft_proto_auto_plan, plan_destroy              */
 #include "executor.h"           /* vfft_proto_execute_fwd/bwd (in-place per-slice) */
@@ -207,11 +207,11 @@ static struct vfft_plan_s *_oddr_build(const vfft_config_t *cfg, int N);
  * 🔴 MEASURED BUG (2026-08-26, benches/pool_teardown_probe.c): every
  * tier builds inner plans with `nthreads = 1` (the house spelling of
  * "this child is serial"), create asserts that count on the GLOBAL pool,
- * and stride_set_num_threads(n<=1) DESTROYS the pool (threads.h). So
+ * and thread_pool_resize(n<=1) DESTROYS the pool (threads.h). So
  * creating ONE 2D real IL plan tore the pool down for the WHOLE PROCESS
  * — verbatim: pool 8 -> 1 after the create, 8 -> 1 again after every
  * execute, leaving other tiers' plans holding clone workers that could
- * never be dispatched (their dispatch clamps to _stride_pool_size+1).
+ * never be dispatched (their dispatch clamps to _thread_pool_nworkers+1).
  *
  * The fix is these two helpers, applied at every plan create/execute
  * assert. Shrinking the pool stays available to the CALLER through the
@@ -220,10 +220,10 @@ static struct vfft_plan_s *_oddr_build(const vfft_config_t *cfg, int N);
  * its worker count by its OWN plan-time snapshot (below). */
 static void _vfft_pool_arm(int n)
 {
-    if (n > stride_get_num_threads())
+    if (n > thread_pool_size())
     {
-        stride_set_num_threads(n);
-        stride_pin_thread(0); /* pool pins workers 1..n-1; caller = 0 */
+        thread_pool_resize(n);
+        vfft_pin_thread(0); /* pool pins workers 1..n-1; caller = 0 */
     }
 }
 
@@ -233,7 +233,7 @@ static void _vfft_pool_arm(int n)
  * keeps the historical "inherit the pool" behaviour exactly. */
 static int _vfft_plan_threads(const vfft_config_t *cfg)
 {
-    const int pool = stride_get_num_threads();
+    const int pool = thread_pool_size();
     if (cfg && cfg->nthreads > 0 && cfg->nthreads < pool)
         return cfg->nthreads;
     return pool;
@@ -342,7 +342,7 @@ static void _bundle_load(struct vfft_wisdom_s *W)
         {
             char cur[128];
             snprintf(cur, sizeof cur, "host=%s isa=%s l1d=%ld",
-                     vfft_cpu_host_tag(), STRIDE_ISA_NAME, vfft_cpu_l1d_bytes());
+                     vfft_cpu_host_tag(), VFFT_ISA_NAME, vfft_cpu_l1d_bytes());
             if (!W->vw2.meta[0])
                 vw2_set_meta(&W->vw2, cur);
             else if (strcmp(W->vw2.meta, cur) != 0)
@@ -536,16 +536,16 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
         return pr;
     }
     {
-        int T = stride_get_num_threads();
-        stride_set_num_threads(1);
+        int T = thread_pool_size();
+        thread_pool_resize(1);
         if (_r2c_race_arms(pr, ps, N, K,
                            _vw2_lay_of(cfg) == VW2_LAY_IL, &nr, &ns) != 0)
         {
-            stride_set_num_threads(T);
+            thread_pool_resize(T);
             vfft_r2c_plan_destroy(pr);
             return ps;  /* OOM in the racer: serve, do not bank a guess */
         }
-        stride_set_num_threads(T);
+        thread_pool_resize(T);
     }
     /* Hysteresis toward stride: pick rfft only if clearly faster (>3%). Stride is the
      * structural high-K winner and the only path that threads, so on a near-tie (where
@@ -615,16 +615,16 @@ static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
     if (!ps)
         return pn;
     {
-        int T = stride_get_num_threads();
-        stride_set_num_threads(1);
+        int T = thread_pool_size();
+        thread_pool_resize(1);
         if (_c2r_race_arms(pn, ps, N, K,
                            _vw2_lay_of(cfg) == VW2_LAY_IL, &nn, &ns) != 0)
         {
-            stride_set_num_threads(T);
+            thread_pool_resize(T);
             vfft_c2r_disp_destroy(pn);
             return ps;  /* OOM in the racer: serve, do not bank a guess */
         }
-        stride_set_num_threads(T);
+        thread_pool_resize(T);
     }
     pick_nat = (nn < ns * 0.97);
     if (getenv("VFFT_BAKEOFF_DBG"))
@@ -1220,7 +1220,7 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
  * A TC worker calls vfft_execute on its clone from a POOL THREAD, so the
  * clone's whole execute path must be pool-free: it may never call
  * vfft_set_num_threads (pool create/destroy from a worker) nor dispatch to
- * _stride_workers (a worker dispatching to itself deadlocks the wait).
+ * _thread_pool_workers (a worker dispatching to itself deadlocks the wait).
  * The native K=1 IL engines qualify — mono is stateless, il2p/il3p/ilprime
  * and both cascade routes are pure plan-plus-scratch calls. What does NOT
  * qualify is anything that re-asserts the pool or slabs work across it (the
@@ -1500,7 +1500,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         _vfft_warn("vfft_create: NULL config");
         return NULL;
     }
-    stride_env_init();
+    vfft_env_init();
     const vfft_proto_registry_t *reg = _registry();
     int N = cfg->n[0];
     size_t K = cfg->howmany;
@@ -1684,8 +1684,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             int nw = h->nthreads - 1;
             if ((size_t)nw > K - 1)
                 nw = (int)(K - 1);
-            if (nw > STRIDE_POOL_MAX_DISPATCH - 1)
-                nw = STRIDE_POOL_MAX_DISPATCH - 1; /* one clone per dispatchable worker */
+            if (nw > THREAD_POOL_MAX_DISPATCH - 1)
+                nw = THREAD_POOL_MAX_DISPATCH - 1; /* one clone per dispatchable worker */
             if (nw > 0)
                 h->tcbw = (struct vfft_plan_s **)calloc((size_t)nw,
                                                         sizeof *h->tcbw);
@@ -2072,9 +2072,9 @@ void vfft_wisdom_free(vfft_wisdom *w)
 /* ── global control ── */
 void vfft_set_num_threads(int n)
 {
-    stride_set_num_threads(n);
+    thread_pool_resize(n);
     if (n > 1)
-        stride_pin_thread(0); /* pool pins workers to 1..n-1; caller=0 */
+        vfft_pin_thread(0); /* pool pins workers to 1..n-1; caller=0 */
 }
 int vfft_plan_tc_workers(vfft_plan p)
 {
@@ -2090,8 +2090,8 @@ int vfft_plan_tc_workers(vfft_plan p)
         return -1; /* not a transform-contiguous wrapper handle */
     return h->tcbw_n;
 }
-int vfft_get_num_threads(void) { return stride_get_num_threads(); }
-const char *vfft_isa(void) { return STRIDE_ISA_NAME; }
+int vfft_get_num_threads(void) { return thread_pool_size(); }
+const char *vfft_isa(void) { return VFFT_ISA_NAME; }
 /* the committed K=1 interleaved ROUTE, by name (2026-09-19). A bench asks
  * the library which engine served a length instead of grepping the store for
  * il_route=, which is what every band-map check did until today. The names
@@ -2131,7 +2131,7 @@ const char *vfft_plan_route(vfft_plan p)
     return vw2_oop_il_name[h->k1_il_route];
 }
 
-const char *vfft_version(void) { return STRIDE_VERSION_STRING; }
+const char *vfft_version(void) { return VFFT_VERSION_STRING; }
 
 /* ════════════════════════════════════════════════════════════════════════
  * PLAN FINGERPRINT — see src/core/vfft_fingerprint.h for the contract and

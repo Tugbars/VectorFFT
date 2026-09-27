@@ -107,7 +107,7 @@
  * (_tc_clone_equiv) plus its own axis-1 scratch. Any clone failure tears
  * that structure's set down; with no clones MT declines — never a
  * half-cloned dispatch. The pool is the one owner (support/threads.h);
- * the plan's T is the snapshot, stride_pool_workers_for the one clamp.
+ * the plan's T is the snapshot, thread_pool_workers_for the one clamp.
  * VFFT_ILND_MT=0|1|2 pins the partition for a probe (never banks); with 2,
  * VFFT_ILND_PT=w pins the plane team.
  * Engagement counter: vfft_ilnd_mt_passes() (vfft.c) — a threaded result
@@ -353,31 +353,31 @@ static void _ilnd_execute_st(const vfft_ilnd_t *d, vfft_dir_t dir,
         if (prof < 0)
             prof = getenv("VFFT_ILND_PROF") != NULL;
         if (prof)
-            t0 = _il_ab_now();
+            t0 = vfft_now_ns();
         if (!rev && cut > 0)
             _il2d_col_stages(src, dst, c->N, rn, 0, cut, c->R, c->L, fns, tabs, 0);
         if (prof)
-            tp = _il_ab_now() - t0;
+            tp = vfft_now_ns() - t0;
         for (b0 = 0; b0 < N0; b0 += wl)
         {
             const double *bs = (!rev && cut > 0) ? dst + 2 * b0 * rn : src + 2 * b0 * rn;
             double *bd = dst + 2 * b0 * rn;
-            double ta = prof ? _il_ab_now() : 0, tb;
+            double ta = prof ? vfft_now_ns() : 0, tb;
             _il2d_col_stages(bs, bd, (int)wl, rn, cut, nst, c->R, c->L, fns, tabs, rev);
-            tb = prof ? _il_ab_now() : 0;
+            tb = prof ? vfft_now_ns() : 0;
             for (p = 0; p < wl; p++)
                 _ilnd_plane(d, dir, bd + 2 * p * rn);
             if (prof)
             {
                 tsuf += tb - ta;
-                tpl += _il_ab_now() - tb;
+                tpl += vfft_now_ns() - tb;
             }
         }
         if (rev && cut > 0)
             _il2d_col_stages(dst, dst, c->N, rn, 0, cut, c->R, c->L, fns, tabs, 1);
         if (prof)
             fprintf(stderr, "[ilnd-prof] serial-banded s=%d wl=%d cut=%d prefix=%.0f suffix=%.0f planes=%.0f total=%.0f\n",
-                    d->arm, c->wl, cut, tp, tsuf, tpl, _il_ab_now() - t0);
+                    d->arm, c->wl, cut, tp, tsuf, tpl, vfft_now_ns() - t0);
         return;
     }
     {
@@ -386,15 +386,15 @@ static void _ilnd_execute_st(const vfft_ilnd_t *d, vfft_dir_t dir,
         if (prof < 0)
             prof = getenv("VFFT_ILND_PROF") != NULL;
         if (prof)
-            t0 = _il_ab_now();
+            t0 = vfft_now_ns();
         _il2d_col_exec(c, src, dst, rev);
         if (prof)
-            t1 = _il_ab_now();
+            t1 = vfft_now_ns();
         for (p = 0; p < N0; p++)
             _ilnd_plane(d, dir, dst + 2 * p * rn);
         if (prof)
             fprintf(stderr, "[ilnd-prof] serial-unbanded s=%d axis0=%.0f planes=%.0f total=%.0f\n",
-                    d->arm, t1 - t0, _il_ab_now() - t1, _il_ab_now() - t0);
+                    d->arm, t1 - t0, vfft_now_ns() - t1, vfft_now_ns() - t0);
     }
 }
 
@@ -491,7 +491,7 @@ static void _ilnd_mt_tramp(void *v)
 static void _ilnd_mt_phase(const vfft_ilnd_t *d, const double *src, double *dst,
                            vfft_dir_t dir, int mode, size_t units, int T)
 {
-    _ilnd_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _ilnd_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     int t;
     for (t = 0; t < T; t++)
     {
@@ -505,7 +505,7 @@ static void _ilnd_mt_phase(const vfft_ilnd_t *d, const double *src, double *dst,
         a[t].lo = units * (size_t)t / (size_t)T;
         a[t].hi = units * (size_t)(t + 1) / (size_t)T;
     }
-    stride_pool_run(T, _ilnd_mt_tramp, a, sizeof a[0]);
+    thread_pool_run(T, _ilnd_mt_tramp, a, sizeof a[0]);
 }
 
 static int _ilnd_clones_of(const vfft_ilnd_t *d) { return d->arm == 1 ? d->wn1 : d->wn2; }
@@ -584,7 +584,7 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
     const vfft_ilcol_t *c = &d->ax0;
     const int rev = (dir == VFFT_BACKWARD);
     const size_t N0 = (size_t)d->N[0], rn = d->plane;
-    const int T = stride_pool_workers_for(d->mt_t);
+    const int T = thread_pool_workers_for(d->mt_t);
     static int prof = -1;
     double t0 = 0, t1 = 0;
     int nsplit = 0, nserial = 0;
@@ -597,7 +597,7 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
     if (d->nat && d->nf == 2 && d->nsscr < T)
         return 0;
     if (prof)
-        t0 = _il_ab_now();
+        t0 = vfft_now_ns();
     if (d->nat && d->nf == 2)
     {   /* the strip form threads as the PLANE arm: disjoint column ranges
          * through per-worker strip scratches, then disjoint plane ranges */
@@ -609,20 +609,20 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
         {
             _ilnd_mt_phase(d, src, dst, dir, 5, rn, Ts);
             if (prof)
-                t1 = _il_ab_now();
+                t1 = vfft_now_ns();
             _ilnd_mt_phase(d, dst, dst, dir, 2, N0, Tp);
         }
         else
         {
             _ilnd_mt_phase(d, src, dst, dir, src != dst ? 6 : 2, N0, Tp);
             if (prof)
-                t1 = _il_ab_now();
+                t1 = vfft_now_ns();
             _ilnd_mt_phase(d, dst, dst, dir, 5, rn, Ts);
         }
         if (prof)
             fprintf(stderr, "[ilnd-prof] natural-strip s=%d T=%d sw=%d strips=%.0f planes=%.0f total=%.0f\n",
-                    d->arm, T, d->nsw, rev ? _il_ab_now() - t1 : t1 - t0,
-                    rev ? t1 - t0 : _il_ab_now() - t1, _il_ab_now() - t0);
+                    d->arm, T, d->nsw, rev ? vfft_now_ns() - t1 : t1 - t0,
+                    rev ? t1 - t0 : vfft_now_ns() - t1, vfft_now_ns() - t0);
         _vfft_ilnd_mt_count++;
         return 1;
     }
@@ -634,7 +634,7 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
             if (!_ilnd_mt_axis0(d, dir, src, dst, T, &nsplit, &nserial))
                 return 0;
             if (prof)
-                t1 = _il_ab_now();
+                t1 = vfft_now_ns();
             _ilnd_mt_phase(d, dst, dst, dir, 3, N0, Tp);
         }
         else
@@ -644,15 +644,15 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
             else
                 _ilnd_mt_phase(d, dst, dst, dir, 3, N0, Tp);
             if (prof)
-                t1 = _il_ab_now();
+                t1 = vfft_now_ns();
             if (!_ilnd_mt_axis0(d, dir, dst, dst, T, &nsplit, &nserial))
                 return 0; /* unreachable in practice: engagement was settled at create */
         }
         if (prof)
             fprintf(stderr, "[ilnd-prof] natural %s s=%d T=%d axis0=%.0f planes=%.0f total=%.0f\n",
                     d->mt == 1 ? "band" : "plane", d->arm, T,
-                    rev ? _il_ab_now() - t1 : t1 - t0, rev ? t1 - t0 : _il_ab_now() - t1,
-                    _il_ab_now() - t0);
+                    rev ? vfft_now_ns() - t1 : t1 - t0, rev ? t1 - t0 : vfft_now_ns() - t1,
+                    vfft_now_ns() - t0);
         _vfft_ilnd_mt_count++;
         return 1;
     }
@@ -666,7 +666,7 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
             return 0;
         if (prof)
             fprintf(stderr, "[ilnd-prof] band s=%d T=%d Tb=%d nb=%zu prefix(split %d, serial %d, D0=%d) total=%.0f\n",
-                    d->arm, T, Tb, nb, nsplit, nserial, c->L[0] / c->R[0], _il_ab_now() - t0);
+                    d->arm, T, Tb, nb, nsplit, nserial, c->L[0] / c->R[0], vfft_now_ns() - t0);
     }
     else
     {
@@ -676,11 +676,11 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
             return 0;
         _ilnd_mt_axis0(d, dir, src, dst, T, &nsplit, &nserial);
         if (prof)
-            t1 = _il_ab_now();
+            t1 = vfft_now_ns();
         _ilnd_mt_phase(d, src, dst, dir, 2, N0, Tp);
         if (prof)
             fprintf(stderr, "[ilnd-prof] plane s=%d T=%d Ts=%d Tp=%d strips=%.0f planes=%.0f total=%.0f\n",
-                    d->arm, T, Ts, Tp, t1 - t0, _il_ab_now() - t1, _il_ab_now() - t0);
+                    d->arm, T, Ts, Tp, t1 - t0, vfft_now_ns() - t1, vfft_now_ns() - t0);
     }
     _vfft_ilnd_mt_count++; /* engagement, see vfft_ilnd_mt_passes() */
     return 1;
@@ -849,7 +849,7 @@ static void vfft_ilnd_destroy(vfft_ilnd_t *d)
  * bank. Returns the count built (0 = that structure cannot thread, loud). */
 static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, int arm)
 {
-    const int n = (T > STRIDE_POOL_MAX_DISPATCH ? STRIDE_POOL_MAX_DISPATCH : T) - 1;
+    const int n = (T > THREAD_POOL_MAX_DISPATCH ? THREAD_POOL_MAX_DISPATCH : T) - 1;
     int t;
     if (n <= 0)
         return 0;
@@ -1283,9 +1283,9 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
         double t0;
         d->arm = s0;
         _ilnd_execute_st(d, VFFT_FORWARD, z, zo);
-        t0 = _il_ab_now();
+        t0 = vfft_now_ns();
         _ilnd_execute_st(d, VFFT_FORWARD, z, zo);
-        t0 = _il_ab_now() - t0;
+        t0 = vfft_now_ns() - t0;
         reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
         if (reps < 4) reps = 4;
         if (reps > 256) reps = 256;

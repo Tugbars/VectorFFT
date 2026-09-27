@@ -222,7 +222,7 @@ static void _bank_zr2c(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
 }
 
 /* forward decl: the race's timer (support/race_timing.h). */
-static double _il_ab_now(void);
+static double vfft_now_ns(void);
 
 /* the two arms of the zr2c route race: two finished handles */
 typedef struct { struct vfft_plan_s *h; const double *s0; double *b; } _zr2c_arm_t;
@@ -299,12 +299,12 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
     }
     const double *s0 = (cfg->placement == VFFT_OUTOFPLACE) ? a : b;
     /* est shots double as warmup; reps for ~300 us bursts */
-    double t0 = _il_ab_now();
+    double t0 = vfft_now_ns();
     _exec_zr2c(h0, s0, b);
-    double e0 = _il_ab_now() - t0;
-    t0 = _il_ab_now();
+    double e0 = vfft_now_ns() - t0;
+    t0 = vfft_now_ns();
     _exec_zr2c(h1, s0, b);
-    double e1 = _il_ab_now() - t0;
+    double e1 = vfft_now_ns() - t0;
     double est = e0 > e1 ? e0 : e1;
     int reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
     if (reps < 2)

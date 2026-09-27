@@ -198,27 +198,27 @@ static void _ilfd_mt_tramp(void *v)
 static inline void _ilfd_mt_stage(const vfft_ilfd_plan_t *p, const _ilfd_mt_rec_t *recs, int i,
                                   const double *zin, double *zout, int T)
 {
-    _ilfd_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _ilfd_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     int w;
     for (w = 0; w < T; w++) {
         a[w].p = p; a[w].zin = zin; a[w].zout = zout;
         a[w].rec = &recs[i * T + w]; a[w].tiled = 0; a[w].ntiled = 0; a[w].t_lo = a[w].t_hi = 0;
     }
-    stride_pool_run(T, _ilfd_mt_tramp, a, sizeof a[0]);
+    thread_pool_run(T, _ilfd_mt_tramp, a, sizeof a[0]);
 }
 
 /* the tiled records over T workers: worker w walks tiles [lo_w, hi_w) depth-first */
 static inline void _ilfd_mt_tiles(const vfft_ilfd_plan_t *p, const vfft_ilfd_call_t *tiled, int n,
                                   size_t ntile, const double *zin, double *zout, int T)
 {
-    _ilfd_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _ilfd_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     int w;
     for (w = 0; w < T; w++) {
         a[w].p = p; a[w].zin = zin; a[w].zout = zout; a[w].rec = 0;
         a[w].tiled = tiled; a[w].ntiled = n;
         a[w].t_lo = ntile * (size_t)w / (size_t)T; a[w].t_hi = ntile * (size_t)(w + 1) / (size_t)T;
     }
-    stride_pool_run(T, _ilfd_mt_tramp, a, sizeof a[0]);
+    thread_pool_run(T, _ilfd_mt_tramp, a, sizeof a[0]);
 }
 
 /* Returns 1 when it ran threaded, 0 when the caller must run serial. The
@@ -228,7 +228,7 @@ static inline int vfft_ilfd_execute_mt(const vfft_ilfd_plan_t *p, const double *
                                        int bwd)
 {
     const _ilfd_mt_bind_t *b = (const _ilfd_mt_bind_t *)p->mtb;
-    const int T = stride_pool_workers_for(p->mt_t);
+    const int T = thread_pool_workers_for(p->mt_t);
     const _ilfd_mt_rec_t *recs;
     const vfft_ilfd_call_t *list;
     int i;
@@ -281,7 +281,7 @@ static inline int vfft_ilfd_mt_race(vfft_ilfd_plan_t *p, int T, int tw0,
         double t0;
         vfft_ilfd_apply_tw(p, tw0);
         vfft_ilfd_execute_fwd(p, zin, zout);
-        t0 = _il_ab_now(); vfft_ilfd_execute_fwd(p, zin, zout); t0 = _il_ab_now() - t0;
+        t0 = vfft_now_ns(); vfft_ilfd_execute_fwd(p, zin, zout); t0 = vfft_now_ns() - t0;
         reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
         if (reps < 2) reps = 2;
         if (reps > (1 << 19)) reps = 1 << 19;   /* 20 ms at N=128 is 285k executes */

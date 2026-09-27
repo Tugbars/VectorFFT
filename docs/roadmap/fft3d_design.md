@@ -27,7 +27,7 @@ The 2D module is a complete template. What each piece contributes to 3D:
 |---|---|---|
 | `fft2d.h : stride_fft2d_data_t` | N1,N2, plan_col (K=N2), plan_row (K=B), B, per-thread scratch pool, JIT-resolved exec fns, `nat_col_list` | template for `stride_fft3d_data_t` (adds plan_axis1, N3) |
 | `fft2d.h : column pass` | axis-0 FFT run natively — lane-batched layout `re[i*K+lane]` makes axis 0 *be* the batch, K-split MT built in | **pass A verbatim**, K = N2·N3 |
-| `fft2d.h : _fft2d_tiled_range/_mt` | tiled row pass: gather B rows via `stride_transpose_pair` → FFT(N2, K=B) in L1 scratch → scatter; tile-parallel, per-thread scratch, no barriers | **pass C verbatim**, row count N1·N2, row length N3 |
+| `fft2d.h : _fft2d_tiled_range/_mt` | tiled row pass: gather B rows via `vfft_transpose_pair` → FFT(N2, K=B) in L1 scratch → scatter; tile-parallel, per-thread scratch, no barriers | **pass C verbatim**, row count N1·N2, row length N3 |
 | `transpose.h` | cache-oblivious line-filling SIMD transpose (4×4/8×4 AVX2, 8×8 AVX-512), beats `mkl_domatcopy` | unchanged — pass C's substrate |
 | `proto_stride_compat.h : vfft_proto_execute_fwd/bwd(plan,re,im,K)` | the ST slice execution path callable from worker threads (the row pass already does this) | **pass B's per-plane call** |
 | `stride_executor.h : _stride_execute_*_slice(plan,re,im,slice_K,full_K)` | run all stages of a K-baked plan on a contiguous lane sub-slice (the K-split primitive) | **pass A L2-blocking** (§6) |
@@ -173,7 +173,7 @@ FWD:  pass A: axis-0 — native plan_axis0 (N1-point, K = N2·N3)      [§6: blo
                  vfft_proto_execute_fwd(plan_axis1, re + i·N2·N3, im + i·N2·N3, N3)
               (plan_axis1: N2-point, K = N3; plane-parallel across threads)
       pass C: axis-2 — _fft3d_tiled_mt ≡ _fft2d_tiled_mt with rows = N1·N2, rowlen = N3
-                 (plan_row: N3-point, K = B; gather/scatter via stride_transpose_pair)
+                 (plan_row: N3-point, K = B; gather/scatter via vfft_transpose_pair)
 
 BWD:  pass C' → pass B' → pass A'   (reverse order by convention; §7 notes order is free)
 ```

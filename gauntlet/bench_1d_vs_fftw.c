@@ -64,7 +64,7 @@
 #include <time.h>
 
 #include "executor.h"
-#include "env.h"        /* stride_env_init + stride_pin_thread */
+#include "env.h"        /* vfft_env_init + vfft_pin_thread */
 #include "planner.h"
 #include "dp_planner.h" /* vfft_proto_now_ns */
 #include "measure.h"    /* vfft_proto_dp_plan_measure: a store MISS races here */
@@ -1538,8 +1538,8 @@ int main(int argc, char **argv)
     if (e) g_trial_pace_ms = atoi(e);
     g_verbose = (getenv("VFFT_FFTW_VERBOSE") != NULL);
 
-    stride_env_init();               /* FTZ+DAZ */
-    if (core >= 0) stride_pin_thread(core);
+    vfft_env_init();               /* FTZ+DAZ */
+    if (core >= 0) vfft_pin_thread(core);
 #ifdef _WIN32
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
 #endif

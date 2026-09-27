@@ -58,7 +58,7 @@
 #define FFTND_DEFAULT_TILE 8
 #endif
 #ifndef FFTND_MAX_THREADS
-#define FFTND_MAX_THREADS STRIDE_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
+#define FFTND_MAX_THREADS THREAD_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
 #endif
 
 /* Per-lane-block split-complex working-set target (~L2/2), as fft3d. */
@@ -205,7 +205,7 @@ static void _fftnd_axis_mt_win(stride_fftnd_data_t *d, int m,
                                double *re, double *im,
                                size_t o_lo, size_t o_hi, int is_bwd) {
     const size_t O = o_hi - o_lo, Km = d->K[m];
-    int T = stride_pool_workers_for(0); /* the pool's one clamp; no per-slot scratch here */
+    int T = thread_pool_workers_for(0); /* the pool's one clamp; no per-slot scratch here */
 
     /* Lane splitting only when legal, useful, and needed to fill T. */
     size_t ls = 1;
@@ -230,7 +230,7 @@ static void _fftnd_axis_mt_win(stride_fftnd_data_t *d, int m,
 
     /* slot 0 is the caller's [0, total/T); empty worker ranges are skipped
      * so the slots are packed */
-    _fftnd_axis_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _fftnd_axis_arg_t args[THREAD_POOL_MAX_DISPATCH];
     int n = 0;
     args[n++] = (_fftnd_axis_arg_t){ d, m, is_bwd, re, im,
                                      0, total / (size_t)T, ls, Ls, o_lo };
@@ -241,7 +241,7 @@ static void _fftnd_axis_mt_win(stride_fftnd_data_t *d, int m,
         args[n++] = (_fftnd_axis_arg_t){ d, m, is_bwd, re, im,
                                          it_lo, it_hi, ls, Ls, o_lo };
     }
-    stride_pool_run(n, _fftnd_axis_trampoline, args, sizeof args[0]);
+    thread_pool_run(n, _fftnd_axis_trampoline, args, sizeof args[0]);
 }
 
 static void _fftnd_axis_mt(stride_fftnd_data_t *d, int m,
@@ -291,7 +291,7 @@ static void _fftnd_tiled_range(stride_fftnd_data_t *d,
         size_t this_B = B;
         if (i + B > row_end) this_B = row_end - i;
 
-        stride_transpose_pair(re + i * NL, im + i * NL, sr, si,
+        vfft_transpose_pair(re + i * NL, im + i * NL, sr, si,
                               (size_t)NL, B, this_B, (size_t)NL);
 
         if (is_bwd && d->nat_col_list)
@@ -314,7 +314,7 @@ static void _fftnd_tiled_range(stride_fftnd_data_t *d,
         if (!is_bwd && d->nat_col_list)
             vfft_natorder_cycle_pass(sr, si, B, d->nat_col_list, rtmp);
 
-        stride_transpose_pair(sr, si, re + i * NL, im + i * NL,
+        vfft_transpose_pair(sr, si, re + i * NL, im + i * NL,
                               B, (size_t)NL, (size_t)NL, this_B);
     }
 }
@@ -345,7 +345,7 @@ static void _fftnd_tiled_mt_win(stride_fftnd_data_t *d,
     const size_t NR = row_hi - row_lo;
     const size_t B = d->B;
     /* scratch slots allocated at create = this plan's snapshot */
-    int T = stride_pool_workers_for(d->num_scratch);
+    int T = thread_pool_workers_for(d->num_scratch);
     size_t n_tiles = (NR + B - 1) / B;
 
     if (T <= 1 || n_tiles <= 1) {
@@ -354,7 +354,7 @@ static void _fftnd_tiled_mt_win(stride_fftnd_data_t *d,
         return;
     }
     /* slot t owns scratch slot t; slot 0 is the caller (scratch base) */
-    _fftnd_tile_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _fftnd_tile_arg_t args[THREAD_POOL_MAX_DISPATCH];
     int n = 0;
     for (int t = 0; t < T; t++) {
         size_t rs = row_lo + ((n_tiles * (size_t)t) / (size_t)T) * B;
@@ -365,7 +365,7 @@ static void _fftnd_tiled_mt_win(stride_fftnd_data_t *d,
             _fftnd_scratch(d->scratch_re, d->tile_sz, t),
             _fftnd_scratch(d->scratch_im, d->tile_sz, t), rs, re_, is_bwd };
     }
-    stride_pool_run(n, _fftnd_tile_trampoline, args, sizeof args[0]);
+    thread_pool_run(n, _fftnd_tile_trampoline, args, sizeof args[0]);
 }
 
 static void _fftnd_tiled_mt(stride_fftnd_data_t *d,
@@ -457,7 +457,7 @@ static void _fftnd_fused_mt(stride_fftnd_data_t *d,
                             double *re, double *im, int is_bwd) {
     const size_t NB = d->O[d->split];
     /* scratch slots allocated at create = this plan's snapshot */
-    int T = stride_pool_workers_for(d->num_scratch);
+    int T = thread_pool_workers_for(d->num_scratch);
 
     if (T <= 1 || NB <= 1) {
         if (T > 1 && NB == 1) {         /* single block, many threads */
@@ -474,7 +474,7 @@ static void _fftnd_fused_mt(stride_fftnd_data_t *d,
     }
     /* slot 0 is the caller on scratch slot 0 with blocks [0, NB/T); worker
      * slot t keeps scratch slot t; empty ranges are skipped (packed args) */
-    _fftnd_block_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _fftnd_block_arg_t args[THREAD_POOL_MAX_DISPATCH];
     int n = 0;
     args[n++] = (_fftnd_block_arg_t){ d, re, im, d->scratch_re, d->scratch_im,
                                       0, NB / (size_t)T, is_bwd };
@@ -486,7 +486,7 @@ static void _fftnd_fused_mt(stride_fftnd_data_t *d,
             _fftnd_scratch(d->scratch_re, d->tile_sz, t),
             _fftnd_scratch(d->scratch_im, d->tile_sz, t), lo, hi, is_bwd };
     }
-    stride_pool_run(n, _fftnd_block_trampoline, args, sizeof args[0]);
+    thread_pool_run(n, _fftnd_block_trampoline, args, sizeof args[0]);
 }
 
 
@@ -593,7 +593,7 @@ static int _fftnd_choose_split(const stride_fftnd_data_t *d) {
 }
 
 static int _fftnd_alloc_scratch(stride_fftnd_data_t *d, size_t tile_sz) {
-    int T = stride_pool_workers_for(0); /* create time: the pool as it is now = this plan's slot count */
+    int T = thread_pool_workers_for(0); /* create time: the pool as it is now = this plan's slot count */
     d->tile_sz = tile_sz;
     d->num_scratch = T;
     d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)T * tile_sz * sizeof(double));
