@@ -40,7 +40,7 @@
 
 #include "tw_exact.h"   /* once-rounded cos/sin(2*pi*p/n) for the create-time tables */
 #include "il2p.h"
-#include <time.h> /* clock_gettime — the create-time method race */
+#include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 
 #if defined(__AVX2__) || defined(__AVX512F__)
 #include <immintrin.h>

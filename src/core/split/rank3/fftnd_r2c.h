@@ -35,7 +35,7 @@
 #define STRIDE_FFTND_R2C_H
 #include "common/math/pi.h"
 
-#include <time.h> /* clock_gettime for the adoption A/B timing (win: mingw provides it) */
+#include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 #include "fftnd.h"                /* taxonomy helpers + include set */
 #include "r2c.h"                  /* stride_r2c_plan + worker shims */
 #include "../rank2/fft2d_r2c.h"   /* strided r2c row engines, resolvers, MT run wrappers */
@@ -518,40 +518,36 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
             }
             for (size_t ii = 0; ii < d->total_real; ii++)
                 xin_[ii] = 1.0 + 1e-3 * (double)(ii & 63);
-            struct timespec t0_, t1_;
+            double t0_, t1_;
             double t_a, t_b;
             if (sf_) {
                 d->snd_fwd = 0;
                 _fndr_rows_mt(d, xin_, NULL, 0);
-                clock_gettime(CLOCK_MONOTONIC, &t0_);
+                t0_ = vfft_now_ns();
                 for (int rr = 0; rr < 8; rr++) _fndr_rows_mt(d, xin_, NULL, 0);
-                clock_gettime(CLOCK_MONOTONIC, &t1_);
-                t_a = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                    + (double)(t1_.tv_nsec - t0_.tv_nsec);
+                t1_ = vfft_now_ns();
+                t_a = (t1_ - t0_);
                 d->snd_fwd = sf_;
                 _fndr_rows_mt(d, xin_, NULL, 0);
-                clock_gettime(CLOCK_MONOTONIC, &t0_);
+                t0_ = vfft_now_ns();
                 for (int rr = 0; rr < 8; rr++) _fndr_rows_mt(d, xin_, NULL, 0);
-                clock_gettime(CLOCK_MONOTONIC, &t1_);
-                t_b = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                    + (double)(t1_.tv_nsec - t0_.tv_nsec);
+                t1_ = vfft_now_ns();
+                t_b = (t1_ - t0_);
                 d->snd_fwd = (t_b * 20 < t_a * 19) ? sf_ : 0;
             }
             if (sb_) {
                 d->snd_bwd = 0;
                 _fndr_rows_mt(d, NULL, xin_, 1);
-                clock_gettime(CLOCK_MONOTONIC, &t0_);
+                t0_ = vfft_now_ns();
                 for (int rr = 0; rr < 8; rr++) _fndr_rows_mt(d, NULL, xin_, 1);
-                clock_gettime(CLOCK_MONOTONIC, &t1_);
-                t_a = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                    + (double)(t1_.tv_nsec - t0_.tv_nsec);
+                t1_ = vfft_now_ns();
+                t_a = (t1_ - t0_);
                 d->snd_bwd = sb_;
                 _fndr_rows_mt(d, NULL, xin_, 1);
-                clock_gettime(CLOCK_MONOTONIC, &t0_);
+                t0_ = vfft_now_ns();
                 for (int rr = 0; rr < 8; rr++) _fndr_rows_mt(d, NULL, xin_, 1);
-                clock_gettime(CLOCK_MONOTONIC, &t1_);
-                t_b = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                    + (double)(t1_.tv_nsec - t0_.tv_nsec);
+                t1_ = vfft_now_ns();
+                t_b = (t1_ - t0_);
                 d->snd_bwd = (t_b * 20 < t_a * 19) ? sb_ : 0;
             }
             vfft_adopt_record("nd", (int)d->R, NL_, d->snd_blk,

@@ -56,24 +56,12 @@
 #include "il_prime.h"   /* the prime cell (Rader/Bluestein); after ztt.h (its ZTURN-T inner branch) */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
 
+#include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 #if defined(_WIN32)
 #include <windows.h>
-static inline double _il_dp_now_ns(void)
-{
-    LARGE_INTEGER f, c;
-    QueryPerformanceFrequency(&f);
-    QueryPerformanceCounter(&c);
-    return 1e9 * (double)c.QuadPart / (double)f.QuadPart;
-}
 static inline void _il_dp_sleep_ms(int ms) { Sleep((DWORD)ms); }
 #else
 #include <time.h>
-static inline double _il_dp_now_ns(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
-}
 static inline void _il_dp_sleep_ms(int ms)
 {
     struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000L };
@@ -986,7 +974,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
         {
             /* refill per TRIAL, not per rep — as dp_planner.h does */
             memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
-            double t0 = _il_dp_now_ns();
+            double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
             {
                 /* IN PLACE the arm transforms its own output: restore the
@@ -999,7 +987,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
                     memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
                 (void)_il_dp_exec_dir(ctx, c, &b, bwd);
             }
-            double trial = _il_dp_now_ns() - t0;
+            double trial = vfft_now_ns() - t0;
             if (trial < tmin) tmin = trial;
             elapsed += trial;
             if (elapsed >= VFFT_IL_DP_TIME_LIMIT_NS) break;

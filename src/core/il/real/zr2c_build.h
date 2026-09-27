@@ -221,8 +221,6 @@ static void _bank_zr2c(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     _vw2_persist(W, cfg);
 }
 
-/* forward decl: the race's timer (support/race_timing.h). */
-static double vfft_now_ns(void);
 
 /* the two arms of the zr2c route race: two finished handles */
 typedef struct { struct vfft_plan_s *h; const double *s0; double *b; } _zr2c_arm_t;

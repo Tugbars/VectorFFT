@@ -72,20 +72,7 @@
 
 #include "common/math/pi.h"
 
-/* monotonic ns clock (QPC on Windows) */
-static double _sp_now_ns(void)
-{
-#ifdef _WIN32
-    LARGE_INTEGER f, c;
-    QueryPerformanceFrequency(&f);
-    QueryPerformanceCounter(&c);
-    return 1e9 * (double)c.QuadPart / (double)f.QuadPart;
-#else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return 1e9 * ts.tv_sec + ts.tv_nsec;
-#endif
-}
+#include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 
 /* ── split-side routes ────────────────────────────────────────────── */
 enum { VFFT_SP_R_3P = 0, VFFT_SP_R_3P_IP, VFFT_SP_R_2PA_IP, VFFT_SP_R_2PB_IP,
@@ -484,9 +471,9 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
             _sp_reseed(&b);
             for (int w = 0; w < 10; w++) _sp_run_cand(&b, c);
             _sp_reseed(&b);
-            double t0 = _sp_now_ns();
+            double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++) _sp_run_cand(&b, c);
-            double ns = (_sp_now_ns() - t0) / reps;
+            double ns = (vfft_now_ns() - t0) / reps;
             if (ns < c->best) c->best = ns;
         }
     }
