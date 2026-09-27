@@ -54,8 +54,8 @@
  * _vw2_persist - the bankers call it, and it stays in vfft.c. Same back-edge as
  * zr2c_build.h has; both would be freed by moving _vw2_persist to support/.
  */
-#ifndef VFFT_OOP_K1_COMMIT_H
-#define VFFT_OOP_K1_COMMIT_H
+#ifndef VFFT_IL_K1_COMMIT_H
+#define VFFT_IL_K1_COMMIT_H
 
 #include <stdlib.h>
 #include <string.h>
@@ -63,8 +63,8 @@
 #include "vfft_internal.h"                  /* struct vfft_plan_s / vfft_wisdom_s */
 #include "il2p.h"                           /* the Bailey pair plan + kernel resolvers */
 #include "il_prime.h"                       /* the prime IL engine */
-#include "wisdom2/wisdom2_oop_reader.h"     /* the kind-3/kind-4 codecs */
-#include "split/wisdom/wisdom2_stride_reader.h"  /* the @nat / @natoop / mode cells */
+#include "il/wisdom/wisdom2_oop_il.h"      /* the kind-3 IL codecs */
+#include "common/wisdom/wisdom2_oop_legacy.h" /* the kill switch's legacy line */
 #include "common/support/race.h"                   /* the shared race body */
 
 /* the CHAIN3 twin of _k1_il2p_apply_kv: the banked three-slot il_kv on the
@@ -960,25 +960,6 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     }
 }
 
-/* the mode-row RECIPE rule: fac/var are the split plan's chain — the served
- * recipe only for the tape modes. A mode=ilp row carries no chain; its
- * signpost names the IL recipe row instead. */
-/* the ILP recipe row, AS KEYED: the kind-3 row at N (lay=il / split /
- * lay-less, exact keys) else the PRIME shard row; 0 = none (mono) */
-static int _ilp_ref_of(struct vfft_wisdom_s *W, int N, int mode, int scr_req)
-{
-    int lay;
-    if (mode != VFFT_NAT_ILP || W->vw2_off_oop) return 0;
-    /* an explicit SCRAMBLED request is served from its own order cell:
-     * the signpost names the ord=scr kind-3 IL row */
-    if (scr_req && vw2_oop_k1_row_lay_ord(&W->vw2, N, 1) == VW2_LAY_IL) return 5;
-    lay = vw2_oop_k1_row_lay(&W->vw2, N);
-    if (lay == VW2_LAY_IL) return 1;
-    if (lay == VW2_LAY_SPLIT) return 2;
-    if (lay == VW2_LAY_ANY) return 3;
-    if (vw2_prime_method_lookup(&W->vw2, N)) return 4;
-    return 0;
-}
 
 /* ── the FLAT DIT's threading verdict (il_flatdit_mt.h): env pin > the
  * banked il_mt at THIS T
@@ -1336,29 +1317,5 @@ static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_config_t *c
     return 1;
 }
 
-static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
-                         int N, size_t K, int mode, double ns,
-                         const int *fac, const int *var, int nf, int use_dif)
-{
-    vfft_proto_nat_entry_t nn;
-    memset(&nn, 0, sizeof nn);
-    nn.N = N;
-    nn.K = K;
-    nn.mode = mode;
-    nn.nat_ns = ns;
-    nn.nf = nf;
-    nn.use_dif = use_dif;
-    nn.ref_comp = 0 /* no kind-4 recipe rows are written */;
-    nn.ref_ilp = _ilp_ref_of(W, N, mode, 0);   /* the @nat cell: the ord=nat recipe */
-    for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
-    {
-        nn.factors[s] = fac[s];
-        nn.variants[s] = var[s];
-    }
-    /* @nat verdicts bank into the wisdom2 store (memory; persistence behind
-     * config.wisdom_write). */
-    vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0, _vw2_lay_of(cfg));
-    _vw2_persist(W, cfg);
-}
 
-#endif /* VFFT_OOP_K1_COMMIT_H */
+#endif /* VFFT_IL_K1_COMMIT_H */
