@@ -676,3 +676,13 @@ has four parts:
   Until then the gate tolerates it through the variant-set protocol
   (`src/tools/baseline/api_sweep.py`): only keys the reference saw flip get the
   structure-only waiver, and every deterministic key stays bit-exact.
+
+- **F2. Split K=1 routes.** Split vectorizes across the K lanes (4 per vector
+  at AVX2), so a K=1 split transform leaves most of each vector idle. Yet split
+  K=1 is wired today:
+  - `VFFT_K1_SP_*` routes in `k1sp`, `vfft_oop_plan_create_k1`;
+  - 14 `lay=split` K=1 rows in `src/wisdom/wisdom2_oop.txt`;
+  - the API sweep's split out-of-place N=256/1024/4096 K=1 cells build it.
+
+  The owner noted the point on 2026-09-27. Retire or keep: decide after the
+  separation, measuring the classic split out-of-place path at those N first.
