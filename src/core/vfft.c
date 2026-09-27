@@ -242,7 +242,7 @@ static int _vfft_plan_threads(const vfft_config_t *cfg)
 #include "vfft_internal.h"   /* the three private structs (migration step 15) */
 #include "il/rank1/k1_fourstep_band.h" /* the four-step's BAND alone: standalone, and policy.h needs
                                   * it in scope. k1_fourstep.h includes it too (a no-op). */
-#include "planning/policy.h" /* THE planning policy: one place a law about a REQUEST is written
+#include "il/planning/policy_il.h" /* THE planning policy: one place a law about a REQUEST is written
                              * (planning_policy_design.md, 2026-09-16). Sits above every engine
                              * (the bands are in scope by here) and below every planner and door.
                              * AHEAD of k1_fourstep.h since 2026-09-16: the four-step's super-band

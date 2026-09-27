@@ -1,4 +1,4 @@
-/* policy.h — THE planning policy: the one place a law about a REQUEST is
+/* policy_il.h (was planning/policy.h) — THE planning policy: the one place a law about a REQUEST is
  * written (docs/design/planning_policy_design.md).
  *
  * For a request (N, layout, order, placement, T) this module answers the
@@ -22,8 +22,10 @@
  * which all call it. build_tuned/benches/policy_gate.c asserts it against
  * the predicates the sites used to spell inline.
  *
- * SPLIT is out of scope: SPLIT and IL are two libraries. The shape admits a
- * split table later; nothing here assumes IL. */
+ * SPLIT is out of scope: SPLIT and IL are two libraries. The layout-neutral
+ * laws (L4 order + the cell, L8 cache) live in common/policy/ and are included
+ * below where their text was; everything else here is the interleaved
+ * library's own policy (layout separation phase 5). */
 #ifndef VFFT_PLANNING_POLICY_H
 #define VFFT_PLANNING_POLICY_H
 
