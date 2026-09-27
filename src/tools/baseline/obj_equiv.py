@@ -396,6 +396,17 @@ class _Resolver:
                 d = off - y.value
                 return norm_name(y.name, self.rename) + ("%+d" % d if d else "")
         cls = re.sub(r"\.\d+$", "", s.name)
+        if s.flags & 0x4:
+            # CODE not covered by a symbol's size (a jump-table entry just
+            # past its function's end, measured on vfft_il2p_n1_bwd_fn): name
+            # it by the nearest function before it, never by the bytes around
+            # it, which move with every layout change
+            best = None
+            for y in self.cover.get(sec, []):
+                if y.value <= off and (best is None or y.value > best.value):
+                    best = y
+            if best is not None:
+                return "%s%+d" % (norm_name(best.name, self.rename), off - best.value)
         if s.name.startswith(".rodata.str"):
             end = s.data.find(b"\0", off)
             return "str:%r" % s.data[off:end if end >= 0 else len(s.data)]
