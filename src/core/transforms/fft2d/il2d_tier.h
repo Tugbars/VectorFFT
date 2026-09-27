@@ -469,7 +469,7 @@ static void _il2d_dmt_tramp(void *v)
         const size_t off =
             2 * ((size_t)b * a->L * a->pitch + a->d0 * a->pitch);
         a->fn(a->src + off, NULL, a->dst + off, NULL,
-              a->tab + a->d0 * (size_t)(a->R - 1) * 8, NULL,
+              a->tab + a->d0 * (size_t)(a->R - 1) * VFFT_IL_TWREC, NULL,
               (size_t)D * a->pitch, a->pitch, (size_t)D * a->pitch,
               a->nd, a->cnt);
     }

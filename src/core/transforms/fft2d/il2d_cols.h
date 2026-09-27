@@ -650,7 +650,7 @@ static void _il2d_col_pass_nat_strip(const double *src, double *dst, int N1,
             {
                 const size_t row = (size_t)b * Lst[0] + (size_t)d;
                 fns[0](src + 2 * (row * rn + k), NULL, scr + 2 * row * w, NULL,
-                       tabs[0] + (size_t)d * (R0 - 1) * 8, NULL,
+                       tabs[0] + (size_t)d * (R0 - 1) * VFFT_IL_TWREC, NULL,
                        (size_t)D0 * rn, rn, (size_t)D0 * w, 1, w);
             }
         for (s = 1; s < nst - 1; s++)
@@ -689,7 +689,7 @@ static void _il2d_col_pass_nat_strip(const double *src, double *dst, int N1,
             {
                 const size_t row = (size_t)b * Lst[0] + (size_t)d;
                 fns[0](scr + 2 * row * w, NULL, dst + 2 * (row * rn + k), NULL,
-                       tabs[0] + (size_t)d * (R0 - 1) * 8, NULL,
+                       tabs[0] + (size_t)d * (R0 - 1) * VFFT_IL_TWREC, NULL,
                        (size_t)D0 * w, w, (size_t)D0 * rn, 1, w);
             }
     }
@@ -857,6 +857,19 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
         tb[s] = NULL;
         if (D > 1) /* the n1c leaf carries no table */
         {
+#if VFFT_IL_VW == 8
+            /* one broadcast record per (digit d, leg r): Q = d, L = this stage's span */
+            double *f = (double *)malloc(vfft_vtw512_blocks_doubles((size_t)D, R) * sizeof(double));
+            double *bt = (double *)malloc(vfft_vtw512_blocks_doubles((size_t)D, R) * sizeof(double));
+            if (!f || !bt)
+            {
+                free(f);
+                free(bt);
+                return -1;
+            }
+            vfft_vtw512_blocks_bcast(f, (size_t)D, R, (size_t)L, NULL, NULL, 0);
+            vfft_vtw512_blocks_bcast(bt, (size_t)D, R, (size_t)L, NULL, NULL, 1);   /* conj */
+#else
             const size_t nrec = (size_t)D * (R - 1);
             double *f = (double *)malloc(nrec * 8 * sizeof(double));
             double *bt = (double *)malloc(nrec * 8 * sizeof(double));
@@ -883,6 +896,7 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
                         rb[4 + lane] = (lane & 1) ? -si : si; /* conj */
                     }
                 }
+#endif
             tf[s] = f;
             tb[s] = bt;
         }

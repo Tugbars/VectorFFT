@@ -1035,13 +1035,21 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
      * allocate by one record set. Lane 1 of that last record (column R2,
      * which does not exist) is filled with the k = R2 angle: valid values,
      * never read. */
+#if VFFT_IL_VW == 8
+    size_t ntw = vfft_vtw512_pair2p_doubles(R1, R2);
+#else
     size_t npair = ((size_t)R2 + 1u) / 2u;
     size_t ntw = npair * (size_t)(R1 - 1) * 8u;
+#endif
     p->mid = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
     p->tw  = (double *)VFFT_IL2P_ALLOC(ntw * sizeof(double));
     p->twb = (double *)VFFT_IL2P_ALLOC(ntw * sizeof(double));
     if (!p->mid || !p->tw || !p->twb) { vfft_il2p_destroy(p); return 0; }
 
+#if VFFT_IL_VW == 8
+    vfft_vtw512_pair2p_fill(p->tw, R1, R2, N, 0);
+    vfft_vtw512_pair2p_fill(p->twb, R1, R2, N, 1);   /* bwd: the conjugate table */
+#else
     for (size_t pp = 0; pp < npair; pp++)
         for (int l = 1; l < R1; l++) {
             size_t off = (pp * (size_t)(R1 - 1) + (size_t)(l - 1)) * 8u;
@@ -1057,6 +1065,7 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
                 rb[4 + 2 * j] = s;  rb[4 + 2 * j + 1] = -s;
             }
         }
+#endif
     vfft_il2p_apply_blocked_default(p);
     vfft_il2p_apply_blocked_default_bwd(p);
     return p;
@@ -1145,15 +1154,15 @@ static inline int vfft_il2p_execute_bwd_fdiag(const vfft_il2p_plan_t *p,
 
     /* diagonal: mid[l*R2 + col] *= conj-twiddle, read from the SAME VTW2
      * records stage 2 would consume. Record layout (see create): per column
-     * PAIR pp, per leg l in 1..R1-1, 8 doubles [c c c c][s -s s -s], lane
-     * j = col & 1. BYTW2 semantics make the applied factor (c - i*s), i.e.
+     * group (VFFT_IL_TWPER columns), per leg l in 1..R1-1, VFFT_IL_TWREC
+     * doubles [c c ..][s -s ..], slot j = col % VFFT_IL_TWPER. BYTW2 semantics make the applied factor (c - i*s), i.e.
      * e^{+2pi i * l * col / N} for the bwd table. Leg 0 is w^0 = 1. */
     for (size_t l = 1; l < R1; l++)
         for (size_t col = 0; col < R2; col++) {
             const double *rb =
-                p->twb + ((col >> 1) * (R1 - 1) + (l - 1)) * 8u;
-            const size_t j = col & 1u;
-            const double c = rb[2 * j], s = rb[4 + 2 * j];
+                p->twb + ((col / VFFT_IL_TWPER) * (R1 - 1) + (l - 1)) * VFFT_IL_TWREC;
+            const size_t j = col % VFFT_IL_TWPER;
+            const double c = rb[2 * j], s = rb[VFFT_IL_VW + 2 * j];
             double *z = p->mid + 2 * (l * R2 + col);
             const double xr = z[0], xi = z[1];
             z[0] = c * xr + s * xi;
@@ -1293,11 +1302,21 @@ static inline void vfft_il3p_destroy(vfft_il3p_plan_t *p)
  * blk*cols + local. */
 static inline size_t _vfft_il3p_vtw2_recs(int cols)
 {
+#if VFFT_IL_VW == 8
+    return vfft_vtw512_il3p_recs(cols);
+#else
     return ((size_t)cols + 1u) / 2u;
+#endif
 }
 static inline double *_vfft_il3p_vtw2(int legs, int blocks, int cols,
                                       int modulus, int conj)
 {
+#if VFFT_IL_VW == 8
+    double *tw512 = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_il3p_doubles(legs, blocks, cols)
+                                              * sizeof(double));
+    if (tw512) vfft_vtw512_il3p_fill(tw512, legs, blocks, cols, modulus, conj);
+    return tw512;
+#endif
     const size_t npair = _vfft_il3p_vtw2_recs(cols);
     size_t nrec = (size_t)blocks * npair * (size_t)(legs - 1);
     double *tw = (double *)VFFT_IL2P_ALLOC(nrec * 8u * sizeof(double));
@@ -1500,7 +1519,7 @@ static inline void vfft_il3p_execute_fwd(const vfft_il3p_plan_t *p,
                 p->twB, 0, A * R2, 0, A * R2, 0, R2);
     for (size_t b = 0; b < B; b++)
         p->tA_f(p->mid2 + 2 * b * A * R2, 0, zout + 2 * b * R2, 0,
-                p->twA + b * _vfft_il3p_vtw2_recs(p->R2) * (A - 1) * 8u, 0,
+                p->twA + b * _vfft_il3p_vtw2_recs(p->R2) * (A - 1) * VFFT_IL_TWREC, 0,
                 R2, 0, B * R2, 0, R2);
 }
 
@@ -1511,7 +1530,7 @@ static inline void vfft_il3p_execute_bwd(const vfft_il3p_plan_t *p,
     const size_t R1 = A * B;
     for (size_t b = 0; b < B; b++)
         p->tA_b(zin + 2 * b * R2, 0, p->mid2 + 2 * b * A * R2, 0,
-                p->twAc + b * _vfft_il3p_vtw2_recs(p->R2) * (A - 1) * 8u, 0,
+                p->twAc + b * _vfft_il3p_vtw2_recs(p->R2) * (A - 1) * VFFT_IL_TWREC, 0,
                 B * R2, 0, R2, 0, R2);
     for (size_t c = 0; c < A; c++)
         p->tBg_b(p->mid2 + 2 * c * R2, 0, p->mid1 + 2 * c, 0,

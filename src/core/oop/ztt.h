@@ -255,6 +255,9 @@ static inline int _ztt_log2(long v)
  * bwd s = +sin. Returns the doubles written = 2*(R-1)*L. */
 static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd)
 {
+#if VFFT_IL_VW == 8
+    return vfft_vtw512_ztt_stage(tw, L, R, RL, bwd);   /* 8-column lane records */
+#endif
     if (RL & (RL - 1))
     {   /* a 2^a*odd modulus (an odd mid, and every stage after it in the
          * chain): no octave, no quarter wave — the angle 2*pi*pw/RL, reduced

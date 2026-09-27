@@ -169,6 +169,16 @@ static inline size_t _ilfd_block_Q(const vfft_ilfd_plan_t *p, int s, size_t b)
     for (j = 0; j < s; j++) { Q += dig[j] * W; W *= (size_t)p->R[j]; }
     return Q;
 }
+#if VFFT_IL_VW == 8
+/* the AVX-512 builders' view of a stage: set b -> the natural index of
+ * block b*G (G = 1: per block; G = R[s-1]: per group base) */
+typedef struct { const vfft_ilfd_plan_t *p; int s; size_t G; } _ilfd_q512_t;
+static inline size_t _ilfd_q512(const void *ctx, size_t b)
+{
+    const _ilfd_q512_t *c = (const _ilfd_q512_t *)ctx;
+    return _ilfd_block_Q(c->p, c->s, b * c->G);
+}
+#endif
 
 static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int K)
 {
@@ -212,6 +222,14 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
             p->msz[s] = 0;
             if (s < K - 1 && vfft_il2p_msz_fn(R[s]) && vfft_il2p_msz_bwd_fn(R[s]) &&
                 vfft_il2p_mszt_bwd_fn(R[s])) {
+#if VFFT_IL_VW == 8
+                const _ilfd_q512_t q512 = { p, s, 1 };
+                double *tz = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_blocks_doubles(nb, R[s]) * sizeof(double));
+                double *tzb = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_blocks_doubles(nb, R[s]) * sizeof(double));
+                if (!tz || !tzb) { VFFT_IL2P_FREE(tz); VFFT_IL2P_FREE(tzb); vfft_ilfd_destroy(p); return 0; }
+                vfft_vtw512_blocks_splat(tz, nb, R[s], L, _ilfd_q512, &q512, 0);
+                vfft_vtw512_blocks_splat(tzb, nb, R[s], L, _ilfd_q512, &q512, 1);   /* bwd: conj */
+#else
                 double *tz = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
                 double *tzb = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
                 if (!tz || !tzb) { VFFT_IL2P_FREE(tz); VFFT_IL2P_FREE(tzb); vfft_ilfd_destroy(p); return 0; }
@@ -229,6 +247,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                         }
                     }
                 }
+#endif
                 p->tz[s] = tz; p->tzb[s] = tzb;
                 p->fz[s] = vfft_il2p_msz_fn(R[s]);
                 p->fzb[s] = vfft_il2p_msz_bwd_fn(R[s]);
@@ -270,6 +289,21 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                     /* block span = R*D here (create's L is the twiddle modulus N/D) */
                     for (gg = 0; gg < ngrp; gg++) p->ipb[s][gg * G] = gg * G * (size_t)R[s] * D;
                 }
+#if VFFT_IL_VW == 8
+                {
+                    const _ilfd_q512_t q512 = { p, s, G };
+                    (void)npair; (void)pp;
+                    tf = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_step_doubles(G) * sizeof(double));
+                    p->tfb[s] = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_step_doubles(G) * sizeof(double));
+                    p->t2g[s] = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_blocks_doubles(ngrp, 2) * sizeof(double));
+                    p->t2gb[s] = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_blocks_doubles(ngrp, 2) * sizeof(double));
+                    if (!tf || !p->tfb[s] || !p->t2g[s] || !p->t2gb[s]) { VFFT_IL2P_FREE(tf); vfft_ilfd_destroy(p); return 0; }
+                    vfft_vtw512_step_fill(tf, G, W, L, 0);
+                    vfft_vtw512_step_fill(p->tfb[s], G, W, L, 1);          /* bwd: conj */
+                    vfft_vtw512_blocks_bcast(p->t2g[s], ngrp, 2, L, _ilfd_q512, &q512, 0);
+                    vfft_vtw512_blocks_bcast(p->t2gb[s], ngrp, 2, L, _ilfd_q512, &q512, 1);
+                }
+#else
                 tf = (double *)VFFT_IL2P_ALLOC(npair * 8 * sizeof(double));
                 p->tfb[s] = (double *)VFFT_IL2P_ALLOC(npair * 8 * sizeof(double));
                 p->t2g[s] = (double *)VFFT_IL2P_ALLOC(ngrp * 8 * sizeof(double));
@@ -299,6 +333,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                         rgb[lane] = c; rgb[4 + lane] = (lane & 1) ? -sn : sn;   /* bwd: conj */
                     }
                 }
+#endif
                 p->tf[s] = tf;
             } else if (!p->tail[s]) {
                 /* t2cp: ONE digit per call => (R-1) broadcast records per
@@ -308,6 +343,16 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 p->fbt[s] = vfft_il2p_t2cp_bwd_fn(R[s]); /* t2cp's transpose: IDFT + POST conj */
                 if (!p->f[s] || !p->fb[s]) { vfft_ilfd_destroy(p); return 0; }
                 if (!p->fbt[s]) p->scr_ok = 0;
+#if VFFT_IL_VW == 8
+                {
+                    const _ilfd_q512_t q512 = { p, s, 1 };
+                    tf = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_blocks_doubles(nb, R[s]) * sizeof(double));
+                    p->tfb[s] = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_blocks_doubles(nb, R[s]) * sizeof(double));
+                    if (!tf || !p->tfb[s]) { VFFT_IL2P_FREE(tf); vfft_ilfd_destroy(p); return 0; }
+                    vfft_vtw512_blocks_bcast(tf, nb, R[s], L, _ilfd_q512, &q512, 0);
+                    vfft_vtw512_blocks_bcast(p->tfb[s], nb, R[s], L, _ilfd_q512, &q512, 1);   /* bwd: conj */
+                }
+#else
                 tf = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
                 p->tfb[s] = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
                 if (!tf || !p->tfb[s]) { VFFT_IL2P_FREE(tf); vfft_ilfd_destroy(p); return 0; }
@@ -327,6 +372,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                         }
                     }
                 }
+#endif
                 p->tf[s] = tf;
             } else {
                 p->bwd_ok = 0;   /* t2cs has no backward twin: forward-only plan */
@@ -341,6 +387,15 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 size_t g, pp;
                 int j;
                 p->fcs[s] = vfft_il2p_t2cs_fn(R[s]);
+#if VFFT_IL_VW == 8
+                {
+                    const _ilfd_q512_t q512 = { p, s, 1 };
+                    (void)recs_grp; (void)pp; (void)j; (void)g;
+                    tf = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_groups_doubles(ngrp, G, R[s]) * sizeof(double));
+                    if (!tf) { vfft_ilfd_destroy(p); return 0; }
+                    vfft_vtw512_groups_fill(tf, ngrp, G, nb, R[s], L, _ilfd_q512, &q512);
+                }
+#else
                 tf = (double *)VFFT_IL2P_ALLOC(ngrp * recs_grp * 8 * sizeof(double));
                 if (!tf) { vfft_ilfd_destroy(p); return 0; }
                 for (g = 0; g < ngrp; g++)
@@ -357,6 +412,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                                 rf[4 + 2 * j] = -sn; rf[4 + 2 * j + 1] = sn;
                             }
                         }
+#endif
                 p->tf[s] = tf;
             }
         }
@@ -453,7 +509,7 @@ static inline void _ilfd_bind_stage_dir(const vfft_ilfd_plan_t *p, int s, int bw
              * natural weight W of q_{s-1} on the natural last stage), legs at
              * Ls = D, count = G. */
             const size_t G = (size_t)p->R[s - 1], ngrp = nb / G;
-            const size_t recs_grp = ((G + 1) / 2) * recs_blk;
+            const size_t recs_grp = ((G + VFFT_IL_TWPER - 1) / VFFT_IL_TWPER) * recs_blk;
             const int gen2 = (p->tail[s] == 2);
             size_t W = 1;
             int j;
@@ -479,8 +535,8 @@ static inline void _ilfd_bind_stage_dir(const vfft_ilfd_plan_t *p, int s, int bw
             /* t2cs / t2csg per column (the tail form 't'): ngrp x D calls; the
              * gen1 table advances per group, the gen2 T2 record does */
             c->op = _ILFD_COL; c->fn = fcs; c->Gs = L;
-            c->tw = tf; c->tw_step = gen2 ? 0 : recs_grp * 8;
-            c->t2 = gen2 ? t2g : 0; c->t2_step = gen2 ? 8 : 0;
+            c->tw = tf; c->tw_step = gen2 ? 0 : recs_grp * VFFT_IL_TWREC;
+            c->t2 = gen2 ? t2g : 0; c->t2_step = gen2 ? VFFT_IL_TWREC : 0;
             if (last && !p->scr) { c->obase = p->natbase; c->OLs = nstride; c->OGs = W; }
             else { c->OLs = D; c->OGs = L; }      /* in place / the scrambled comb */
             return;
@@ -491,7 +547,7 @@ static inline void _ilfd_bind_stage_dir(const vfft_ilfd_plan_t *p, int s, int bw
          * block). The natural last stage: per block, redirected to natbase. */
         c->fn = f; c->tw = tf; c->Ls = D; c->count = D;
         if (!last || p->scr) { c->op = _ILFD_ONE; c->Gs = L; c->OLs = D; c->OGs = nb; return; }
-        c->op = _ILFD_BLK; c->tw_step = recs_blk * 8; c->obase = p->natbase;
+        c->op = _ILFD_BLK; c->tw_step = recs_blk * VFFT_IL_TWREC; c->obase = p->natbase;
         c->OLs = nstride; c->OGs = 1;
     }
 }
@@ -520,7 +576,7 @@ static inline void _ilfd_bind_stage_T(const vfft_ilfd_plan_t *p, int s, vfft_ilf
             c->op = _ILFD_ONE; c->fn = p->fglbt[s]; c->a1 = (const double *)p->ipb[s]; c->Gs = ngrp;
             return;
         }
-        c->op = _ILFD_COL; c->fn = p->fcsbt[s]; c->Gs = L; c->t2_step = 8;
+        c->op = _ILFD_COL; c->fn = p->fcsbt[s]; c->Gs = L; c->t2_step = VFFT_IL_TWREC;
         return;
     }
     c->op = _ILFD_ONE; c->fn = p->fbt[s]; c->tw = p->tfb[s];
@@ -584,7 +640,7 @@ static inline void _ilfd_tile_rec(const vfft_ilfd_plan_t *p, int s, vfft_ilfd_ca
 {
     const size_t Ls = (size_t)p->R[s] * p->D[s];
     const size_t bpt = (size_t)p->tw / Ls;
-    const size_t recs = (size_t)(p->R[s] - 1) * 8;
+    const size_t recs = (size_t)(p->R[s] - 1) * VFFT_IL_TWREC;
     c->in_tstep = c->out_tstep = c->tw_tstep = c->t2_tstep = c->a1_tstep = c->g_tstep = 0;
     if (c->op == _ILFD_ONE) {
         if (c->a1) {                  /* t2csgn: the wrapper reads zin by the RELATIVE group
@@ -593,7 +649,7 @@ static inline void _ilfd_tile_rec(const vfft_ilfd_plan_t *p, int s, vfft_ilfd_ca
                                        * tile, the table pointer and the T2 records shift */
             const size_t gpt = bpt / c->count;          /* count = G blocks per group */
             c->Gs = gpt; c->in_tstep = 2 * (size_t)p->tw;
-            c->a1_tstep = gpt * c->count; c->t2_tstep = gpt * 8;
+            c->a1_tstep = gpt * c->count; c->t2_tstep = gpt * VFFT_IL_TWREC;
         } else if (c->in_sel == _ILFD_NUL) {            /* msz: Gs = blocks, in place */
             c->Gs = bpt; c->out_tstep = 2 * (size_t)p->tw; c->tw_tstep = bpt * recs;
         } else {                                        /* t2cp: OGs = blocks, Gs = the pitch */
