@@ -1970,13 +1970,10 @@ int vfft_c2r_load_path(const char *path)
 
 /* THE execute entry point - every transform, BOTH layouts.
  *
- * The include still cannot move earlier. Four of the six helpers vfft_execute
- * calls moved INTO the header at step 28 (_exec_zcascade, _exec_k1_split,
- * _exec_c2c_oop_convert, _vfft_sig_bad), but two could not:
- * _exec_c2c_interleaved and _pq_execute are ALSO called from the create side --
- * c2c_ip_create.h measures with _exec_c2c_interleaved at plan time -- so they
- * remain in this file, above this point, and the declaration order that forces
- * the include to sit here is theirs. */
+ * The include still cannot move earlier. _exec_k1_split and _vfft_sig_bad moved
+ * INTO the header at step 28, but _pq_execute is ALSO called from the create
+ * side (fft2d_create.h), so it stays in plane_queue.h, included just above, and
+ * the declaration order that forces the include to sit here is its. */
 #define VFFT_EXECUTE_IMPL   /* this TU owns the definition - see the header */
 #include "vfft_execute.h"
 

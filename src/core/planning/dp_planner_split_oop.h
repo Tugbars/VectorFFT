@@ -66,7 +66,9 @@
 #include "dp_planner.h"
 #include "measure.h"
 #include "wisdom_reader.h"
-#include "dp_planner_il.h"
+#include "wisdom2_oop_reader.h" /* vw2_oop_bank_k1_lay / vw2_open / vw2_save (was pulled in
+                                     * through dp_planner_il.h, whose IL race this
+                                     * split planner never used) */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

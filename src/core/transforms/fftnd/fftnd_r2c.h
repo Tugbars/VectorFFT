@@ -37,7 +37,6 @@
 #include <time.h> /* clock_gettime for the adoption A/B timing (win: mingw provides it) */
 #include "fftnd.h"                /* taxonomy helpers + include set */
 #include "r2c.h"                  /* stride_r2c_plan + worker shims */
-#include "il_layout.h"            /* vfft_il2sp/sp2il (interleaved complex out) */
 #include "../fft2d/fft2d_r2c.h"   /* strided r2c row engines, resolvers, MT run wrappers */
 #include "../natorder/natorder_perm.h" /* mk_cycles for axis naturalization */
 #include "../../planning/adopt_wisdom.h"  /* the strided-row adoption record */
@@ -84,11 +83,6 @@ typedef struct {
      * fails the build rather than ship a scrambled spectrum). */
     int *nat_ax[FFTND_MAX_RANK];
     double *nat_rtmp;              /* 2 * max(Kc) doubles */
-    int il_out;                   /* 1: user complex side is INTERLEAVED
-                                     pairs z[2f],z[2f+1] at packed row
-                                     stride hp1 -- the pack/unpack sweeps
-                                     already copy every row, so the layout
-                                     costs nothing extra. */
 } stride_fftnd_r2c_data_t;
 
 static inline double *_fndr_sre(stride_fftnd_r2c_data_t *d, int t) {
@@ -303,14 +297,8 @@ static void _fndr_axis_mt(stride_fftnd_r2c_data_t *d, int m, int is_bwd) {
 static void _fndr_pack(stride_fftnd_r2c_data_t *d,
                        const double *ure, const double *uim) {
     for (size_t i = 0; i < d->R; i++) {
-        if (d->il_out)
-            vfft_il2sp(ure + i * 2 * d->hp1,
-                       d->pad_re + i * d->K_pad, d->pad_im + i * d->K_pad,
-                       d->hp1);
-        else {
-            memcpy(d->pad_re + i * d->K_pad, ure + i * d->hp1, d->hp1 * 8);
-            memcpy(d->pad_im + i * d->K_pad, uim + i * d->hp1, d->hp1 * 8);
-        }
+        memcpy(d->pad_re + i * d->K_pad, ure + i * d->hp1, d->hp1 * 8);
+        memcpy(d->pad_im + i * d->K_pad, uim + i * d->hp1, d->hp1 * 8);
         for (size_t f = d->hp1; f < d->K_pad; f++) {
             d->pad_re[i * d->K_pad + f] = 0.0;
             d->pad_im[i * d->K_pad + f] = 0.0;
@@ -319,12 +307,6 @@ static void _fndr_pack(stride_fftnd_r2c_data_t *d,
 }
 static void _fndr_unpack(stride_fftnd_r2c_data_t *d,
                          double *ure, double *uim) {
-    if (d->il_out) {              /* ure = interleaved z; uim unused */
-        for (size_t i = 0; i < d->R; i++)
-            vfft_sp2il(d->pad_re + i * d->K_pad, d->pad_im + i * d->K_pad,
-                       ure + i * 2 * d->hp1, d->hp1);
-        return;
-    }
     for (size_t i = 0; i < d->R; i++) {
         memcpy(ure + i * d->hp1, d->pad_re + i * d->K_pad, d->hp1 * 8);
         memcpy(uim + i * d->hp1, d->pad_im + i * d->K_pad, d->hp1 * 8);
@@ -387,14 +369,6 @@ static void _fndr_destroy(void *data) {
     STRIDE_ALIGNED_FREE(d->snd_tail_scr);
     free(d);
 }
-
-/** As stride_plan_nd_r2c but the COMPLEX side is interleaved pairs: fwd
- *  leaves z (= the re buffer, 2*R*hp1 doubles) with (re,im) pairs at packed
- *  row stride hp1; bwd consumes the same; im param unused on the complex
- *  side. Same cost as split (the boundary copies carry the layout). */
-static stride_plan_t *stride_plan_nd_r2c_il(int rank, const int *N,
-                                            const vfft_proto_registry_t *reg,
-                                            int recalib);
 
 /** Rank-general r2c/c2r plan, auto inners. N[rank-1] must be even. */
 static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
@@ -595,14 +569,6 @@ awnd_done:;
     plan->override_destroy = _fndr_destroy;
     plan->override_data    = d;
     return plan;
-}
-
-static stride_plan_t *stride_plan_nd_r2c_il(int rank, const int *N,
-                                            const vfft_proto_registry_t *reg,
-                                            int recalib) {
-    stride_plan_t *p = stride_plan_nd_r2c(rank, N, reg, recalib);
-    if (p) ((stride_fftnd_r2c_data_t *)p->override_data)->il_out = 1;
-    return p;
 }
 
 #endif /* STRIDE_FFTND_R2C_H */
