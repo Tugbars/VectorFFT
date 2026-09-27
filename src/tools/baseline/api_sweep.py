@@ -177,8 +177,13 @@ def cmd_replay():
     def one(spec, slot):
         copy_store(store, slot)
         rows = run_exe(exe, ["--spec", spec], slot)
-        return ["%s :: %s" % (spec, r.split(" ", 2)[-1] if r.startswith(("cell", "races", "fp", "bits")) else r)
-                for r in rows]
+        out = []
+        for r in rows:
+            p = r.split(None, 2)            # "races spec 0" -> kind, "spec", rest
+            if len(p) >= 2 and p[0] in ("cell", "races", "fp", "bits") and p[1] == "spec":
+                r = "%s %s" % (p[0], p[2] if len(p) > 2 else "")
+            out.append("%s :: %s" % (spec, r))
+        return out
 
     results = _pool_map(one, specs, jobs)
     return _write(out, "# wisdom_replay: %d store rows (<= %d per family), fresh store copy each\n"
