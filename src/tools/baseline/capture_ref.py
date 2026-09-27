@@ -37,6 +37,9 @@ WHAT IS CAPTURED (file -> rung)
 USAGE
   python capture_ref.py --isa avx2|avx512 --out DIR
         [--no-semantic] [--sweep-store DIR] [--repeat N] [--jobs J]
+  --repeat       reference: runs per API-sweep cell / replay row, every
+                 distinct output kept as a variant (default 6); step: the
+                 retries allowed to land on a reference variant
         [--cmake-dir DIR] [--gates]
   --sweep-store  replay the API sweep from this banked store (step captures
                  pass the reference's); without it the sweep is BANKED first
@@ -244,15 +247,24 @@ def semantics(isa, out, sweep_store, repeat, jobs):
     log("golden_bits / fp_replay captured")
     exe = bins["api_sweep"]
     sw = os.path.join(HERE, "api_sweep.py")
+    ref_dir = None
     if not sweep_store:
         sweep_store = os.path.join(out, "sweep_store")
         log("banking the sweep store (reference capture)")
         _ok(toolchain.run([py, sw, "bank", "--exe", exe, "--store-out", sweep_store]), "bank")
+    else:
+        ref_dir = os.path.dirname(os.path.abspath(sweep_store))
+
+    def refv(name):
+        # a STEP capture matches against the reference's variant sets
+        return (["--ref-variants", os.path.join(ref_dir, name + ".variants.json")]
+                if ref_dir else [])
     for args, what in (
             (["capture", "--store", sweep_store, "--out", os.path.join(out, "api_sweep.txt"),
-              "--repeat", str(repeat), "--jobs", str(jobs)], "api_sweep"),
+              "--repeat", str(repeat), "--jobs", str(jobs)] + refv("api_sweep.txt"), "api_sweep"),
             (["replay", "--store", os.path.join(ROOT, "src", "wisdom"),
-              "--out", os.path.join(out, "wisdom_replay.txt"), "--jobs", str(jobs)], "wisdom_replay"),
+              "--out", os.path.join(out, "wisdom_replay.txt"), "--jobs", str(jobs),
+              "--repeat", str(max(repeat, 4))] + refv("wisdom_replay.txt"), "wisdom_replay"),
             (["roundtrip", "--store", os.path.join(ROOT, "src", "wisdom"),
               "--out", os.path.join(out, "roundtrip.txt")], "roundtrip")):
         _ok(toolchain.run([py, sw, args[0], "--exe", exe] + args[1:]), what)
@@ -330,10 +342,11 @@ def main():
         print(__doc__)
         return 2
     capture(isa, os.path.abspath(out), semantic="--no-semantic" not in sys.argv,
-            sweep_store=opt("--sweep-store"), repeat=int(opt("--repeat", "3")),
+            sweep_store=opt("--sweep-store"), repeat=int(opt("--repeat", "6")),
             jobs=int(opt("--jobs", "4")), cmake_dir=opt("--cmake-dir"),
             run_gates="--gates" in sys.argv)
     return 0
+
 
 
 if __name__ == "__main__":
