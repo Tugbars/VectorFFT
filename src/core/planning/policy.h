@@ -62,28 +62,36 @@ static inline long vfft_policy_race_max_n(int N)
 }
 
 /* ── L4. the ORDER classification ───────────────────────────────────────
- * Which wisdom ORDER row a request reads and banks on. Two laws:
+ * Which wisdom ORDER row a request reads and banks on. The order is a
+ * CONTRACT (owner, 2026-09-27): SCRAMBLED asked -> scrambled delivered,
+ * NATURAL asked -> natural delivered. What DEFAULT means is the layout's:
  *
- *   rank >= 2            explicit NATURAL -> nat; DEFAULT -> SCR.
- *                        The 2D/3D tier's DEFAULT is the scrambled comb
- *                        (its chains are raced under the scrambled pass);
- *                        a natural cell races its own chain under the
- *                        natural pass and never shares the scr row.
- *   rank 1, either place explicit SCRAMBLED -> scr (the scrambled pool's
- *                        own verdict and nothing else); DEFAULT and
- *                        NATURAL -> nat. DEFAULT = NATURAL, in place too:
- *                        a DEFAULT request must never be served a
- *                        scrambled cell and come back permuted.
+ *   INTERLEAVED  DEFAULT = NATURAL, at every rank and both placements.
+ *   SPLIT        DEFAULT = SCRAMBLED at rank >= 2 (the split tiers' own
+ *                comb); rank 1 keeps its label below.
+ *
+ *   rank >= 2    explicit SCRAMBLED -> scr, explicit NATURAL -> nat,
+ *                DEFAULT -> nat interleaved, scr split. A natural cell races
+ *                its own chain under the natural pass and never shares the
+ *                scr row.
+ *   rank 1       explicit SCRAMBLED -> scr; DEFAULT and NATURAL -> nat (an
+ *                interleaved DEFAULT request must never be served a
+ *                scrambled cell and come back permuted; the split rank-1
+ *                engines read config.order themselves and use this only as
+ *                a wisdom label).
+ *
+ * (Until 2026-09-27 rank >= 2 mapped an INTERLEAVED DEFAULT to scr: a 2D/3D
+ * IL DEFAULT request got the scrambled comb. That was a mistake in this law.)
  *
  * Returns VW2_ORD_NAT / VW2_ORD_SCR. `N` and `inplace` are not read: one
  * law for both placements. */
 static inline int vfft_policy_ord(const vfft_config_t *cfg, int N,
                                   int rank, int inplace)
 {
-    if (rank >= 2)
-        return (cfg->order == VFFT_ORDER_NATURAL) ? VW2_ORD_NAT : VW2_ORD_SCR;
     (void)inplace; (void)N;   /* one law for both placements */
-    return (cfg->order == VFFT_ORDER_SCRAMBLED) ? VW2_ORD_SCR : VW2_ORD_NAT;
+    if (cfg->order == VFFT_ORDER_SCRAMBLED) return VW2_ORD_SCR;
+    if (cfg->order == VFFT_ORDER_NATURAL || rank < 2) return VW2_ORD_NAT;
+    return (cfg->layout == VFFT_LAYOUT_INTERLEAVED) ? VW2_ORD_NAT : VW2_ORD_SCR;   /* DEFAULT */
 }
 
 /* the two call-site spellings. The K=1 candidate builder asks with the

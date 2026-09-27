@@ -119,8 +119,10 @@ threading grain.
   masked-zmm tail arm, which cannot reach columns `Gs` apart; they now take the ymm + xmm
   ladder at 3 leftovers (L10, `docs/design/avx512_tail_handling.md`). Test:
   `harness/runtime/colstride_twin_test.c`.
-- Note: rank >= 2 DEFAULT order is the scrambled comb (policy L4), while `include/vfft.h`
-  describes DEFAULT as NATURAL for 1D and 2D C2C. The code and the gates follow L4.
+- Order contract (owner, 2026-09-27): policy L4 now makes DEFAULT the layout's own:
+  INTERLEAVED DEFAULT is NATURAL at every rank (it had been the scrambled comb at rank
+  >= 2, a mistake); SPLIT keeps DEFAULT = SCRAMBLED at rank >= 2 (the split tiers are
+  built around it). `include/vfft.h`, the policy gate and the 2D wisdom gate follow.
 
 ## For the owner
 

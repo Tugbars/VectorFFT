@@ -173,8 +173,12 @@ extern "C"
 
     int order; /**< the output-order contract of 1D and 2D C2C (and the row
                     order of 2D INTERLEAVED R2C/C2R; their bins are always
-                    natural). VFFT_ORDER_DEFAULT (0) is NATURAL: bins in
-                    natural order. VFFT_ORDER_SCRAMBLED: the engine's own
+                    natural). The order is a contract: NATURAL delivers
+                    natural bins, SCRAMBLED delivers the engine's order.
+                    VFFT_ORDER_DEFAULT (0) is the layout's own: NATURAL for
+                    INTERLEAVED at every rank; for SPLIT, NATURAL at 1D and
+                    SCRAMBLED at 2D and above (the split tiers are built
+                    around the scrambled comb). VFFT_ORDER_SCRAMBLED: the engine's own
                     permutation of the bins, decodable only by the matched
                     roundtrip through the same plan; no call reports it, and
                     a cell with no scrambled writer refuses at create. 1D real

@@ -1431,8 +1431,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     _il2d_blu_ctx.cfg = cfg;
     _il2d_blu_chain_hook = _il2d_blu_m_chain;
     /* axis 0: the rank-3 row's own tokens; the order cell is the plan's
-     * (DEFAULT and SCRAMBLED spell the scrambled serving; NATURAL is its
-     * own cell). The axis-0 PASS is the scrambled class in both: the natural
+     * (SCRAMBLED spells the scrambled serving; NATURAL and, interleaved,
+     * DEFAULT are the natural cell: policy.h L4). The axis-0 PASS is the scrambled class in both: the natural
      * class orders planes in its plane pass, never in the column pass. */
     key0.rank = 3; key0.n0 = N1; key0.n1 = N2; key0.n2 = N3;
     key0.ord = nat ? VW2_ORD_NAT : VW2_ORD_SCR; key0.axis = 0; key0.real = 0;

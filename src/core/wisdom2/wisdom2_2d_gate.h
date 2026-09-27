@@ -165,8 +165,8 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
     /* ── c2c cells, scrambled + natural, correctness vs naive ─────────── */
     {
         static const struct { int N1, N2, order; const char *tag; } CC[] = {
-            { 64, 64, VFFT_ORDER_DEFAULT, "c2c 64x64 scr" },
-            { 64, 16, VFFT_ORDER_DEFAULT, "c2c 64x16 scr" },
+            { 64, 64, VFFT_ORDER_SCRAMBLED, "c2c 64x64 scr" },
+            { 64, 16, VFFT_ORDER_SCRAMBLED, "c2c 64x16 scr" },
             { 64, 64, VFFT_ORDER_NATURAL, "c2c 64x64 nat" },
             { 128, 64, VFFT_ORDER_NATURAL, "c2c 128x64 nat" },
             { 127, 100, VFFT_ORDER_NATURAL, "c2c 127x100 nat" }, /* PRIME N1: the
