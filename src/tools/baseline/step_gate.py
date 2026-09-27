@@ -34,6 +34,9 @@ inferred:
   --allow-defined          R4: the defined-symbol census may change (a split
                            adds functions); undefined and mutable never may
   --allow-layout           R4: layout.txt may change (phase 8, the struct split)
+  --enforce-deps           R0: the common/split/il dependency rules are GATED
+                           (phase 7 on); before that they are reported, the
+                           list of violations being the remaining work
   --code-change            a step that changes code ON PURPOSE (deletion, a
                            function split): R2, R3 code and the defined census
                            are reported, not gated; data objects, undefined and
@@ -127,7 +130,8 @@ def compare(ref, cur, allow, strict_objdump):
           "; ".join(new_warn[:6]) or ("%d warnings gone" % len(gone_warn) if gone_warn else ""))
     dv = hygiene.dep_violations()
     g.add("R0", "layout dependency rules", None if dv is None else not dv,
-          "; ".join((dv or [])[:6]))
+          ("%d violations: " % len(dv) if dv else "") + "; ".join((dv or [])[:4]),
+          gated=allow["enforce_deps"])
 
     # ---- R1 bytes
     g.add("R1", "codelet objects + libdagcodelets.a identical", same(ref, cur, "codelets.sha"),
@@ -262,6 +266,7 @@ def main():
                  layout="--allow-layout" in sys.argv,
                  census_move="--allow-census-move" in sys.argv,
                  code_change="--code-change" in sys.argv,
+                 enforce_deps="--enforce-deps" in sys.argv,
                  census_removed=[x for x in (opt("--allow-census-removed") or "").split(",") if x])
     g = compare(ref, cur, allow, toolchain.objdump())
 
