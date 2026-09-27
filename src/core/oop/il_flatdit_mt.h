@@ -75,7 +75,7 @@ static inline void _ilfd_unit_rec(const vfft_ilfd_plan_t *p, int s, int leaf,
             if (!src->a3) {              /* block order: the bases step per group */
                 dst->in_tstep = 2 * src->count * L;
                 dst->a1_tstep = src->count;
-                dst->t2_tstep = 8;
+                dst->t2_tstep = VFFT_IL_TWREC;   /* one T2 record per group */
             }                            /* natural-base order: a3 is shifted per range (below) */
             return;
         }

@@ -1,0 +1,32 @@
+# flatdit_sweep.c, 2026-09-27: serial, MT blocks and MT tiles at T=4.
+## avx2
+TOTAL plans 12204 (with msz 7173, t2csgn 5172, natural-order group loop 4620; tiled runs 15933) checks 72207 (MT 44070) wrong 0
+## avx512 before the fix (t2csgn MT unit stepped T2 by 8)
+TOTAL plans 12204 (with msz 7173, t2csgn 5172, natural-order group loop 4620; tiled runs 15933) checks 72207 (MT 44070) wrong 16354
+## avx512 after
+VFFT_IL_VW=8
+N=45    chains  7 plans   78 checks   192 wrong 0
+N=63    chains  5 plans   66 checks   168 wrong 0
+N=75    chains  7 plans   69 checks   210 wrong 0
+N=105   chains  8 plans  102 checks   348 wrong 0
+N=125   chains  3 plans   24 checks    84 wrong 0
+N=135   chains 17 plans  318 checks  1338 wrong 0
+N=189   chains 12 plans  252 checks  1170 wrong 0
+N=225   chains 21 plans  390 checks  1878 wrong 0
+N=243   chains 12 plans  255 checks  1140 wrong 0
+N=315   chains 24 plans  558 checks  3096 wrong 0
+N=375   chains 15 plans  240 checks  1272 wrong 0
+N=441   chains  9 plans  234 checks  1386 wrong 0
+N=525   chains 24 plans  492 checks  3000 wrong 0
+N=675   chains 48 plans 1092 checks  6405 wrong 0
+N=729   chains 18 plans  411 checks  2217 wrong 0
+N=945   chains 48 plans 1212 checks  7788 wrong 0
+N=1125  chains 43 plans  918 checks  5778 wrong 0
+N=1215  chains 51 plans 1218 checks  7422 wrong 0
+N=2025  chains 60 plans 1383 checks  9507 wrong 0
+N=3375  chains 60 plans 1272 checks  9024 wrong 0
+N=180   chains 24 plans  534 checks  2454 wrong 0
+N=360   chains 24 plans  444 checks  2472 wrong 0
+N=600   chains 24 plans  387 checks  2349 wrong 0
+N=1100  chains 18 plans  255 checks  1509 wrong 0
+TOTAL plans 12204 (with msz 7173, t2csgn 5172, natural-order group loop 4620; tiled runs 15933) checks 72207 (MT 44070) wrong 0
