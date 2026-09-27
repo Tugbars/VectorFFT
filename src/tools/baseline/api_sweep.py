@@ -31,7 +31,11 @@ the same store then give the same plans; a race on replay is reported per cell.
 USAGE
   python api_sweep.py bank     --exe BIN --store-out DIR
   python api_sweep.py capture  --exe BIN --store DIR --out FILE [--repeat N] [--jobs J]
+                               [--ref-variants REF_OUT.variants.json]
   python api_sweep.py replay   --exe BIN --store DIR --out FILE [--per-group G] [--jobs J]
+                               [--ref-variants REF_OUT.variants.json]
+  Without --ref-variants a capture is a REFERENCE (every variant recorded);
+  with it, a STEP capture (see _variants).
   python api_sweep.py roundtrip --exe BIN --store DIR --out FILE
 """
 import concurrent.futures as cf
@@ -121,23 +125,89 @@ def cmd_bank():
     return 0
 
 
+def _variants(keys, run_once, out, header, repeat, jobs, ref_json):
+    """The VARIANT SET protocol.
+
+    Some creates pick between arms by a clock the race counter cannot see (the
+    split out-of-place tuner reads __rdtsc directly and banks nothing: measured
+    2026-09-27, c2c split oop N=45 K=4 gives one fingerprint and three
+    different output bit patterns across eight processes). Recording such a
+    cell as NONDETERMINISTIC after R repeats made the artifact itself flap:
+    with R=3 the cell was sometimes seen deterministic, and the unchanged tree
+    failed its own gate.
+
+    So a REFERENCE capture runs every key `repeat` times and keeps EVERY
+    distinct output (each one complete and bit-exact) in `out`.variants.json.
+    A STEP capture (ref_json given) runs a key once; if its output is not one
+    of the reference's variants it reruns, up to `repeat` more times, until it
+    lands on one. A key that matches writes the reference's canonical rows, so
+    the two text artifacts are byte-identical exactly when every key matched a
+    known variant. A regression changes the bits of every arm, so it never
+    matches: zero tolerance is kept, the coin flip is not a failure."""
+    import hashlib
+    import json
+
+    ref = None
+    if ref_json:
+        with open(ref_json) as f:
+            ref = json.load(f)
+
+    def h(rows):
+        return hashlib.sha1("\n".join(rows).encode()).hexdigest()[:16]
+
+    def one(k, slot):
+        if ref is None:
+            seen = {}
+            for _ in range(repeat):
+                rows = run_once(k, slot)
+                seen.setdefault(h(rows), rows)
+            return k, seen, None
+        known = ref.get(str(k))
+        tries = []
+        for _ in range(1 + repeat):
+            rows = run_once(k, slot)
+            if known and h(rows) in known["hashes"]:
+                return k, None, known
+            tries.append(rows)
+            if not known:
+                break
+        return k, {h(tries[0]): tries[0]}, None
+
+    results = _pool_map(lambda k, slot: one(k, slot), keys, jobs)
+    rows_out, var = [], {}
+    for k, seen, known in results:
+        if known is not None:
+            rows_out.extend(known["rows"])
+            if len(known["hashes"]) > 1:
+                rows_out.append("VARIANTS %s %d" % (k, len(known["hashes"])))
+            continue
+        first = next(iter(seen.values()))
+        rows_out.extend(first)
+        if ref is None:
+            var[str(k)] = dict(hashes=sorted(seen), rows=first)
+            if len(seen) > 1:
+                rows_out.append("VARIANTS %s %d" % (k, len(seen)))
+        else:
+            rows_out.append("UNMATCHED %s (no reference variant reproduced)" % k)
+    if ref is None:
+        with open(out + ".variants.json", "w") as f:
+            json.dump(var, f)
+    return _write(out, header, rows_out)
+
+
 def cmd_capture():
     exe, store, out = opt("--exe"), opt("--store"), opt("--out")
-    repeat, jobs = int(opt("--repeat", "3")), int(opt("--jobs", "4"))
+    repeat, jobs = int(opt("--repeat", "6")), int(opt("--jobs", "4"))
     names = cells(exe)
 
-    def one(i, slot):
-        seen = []
-        for _ in range(repeat):
-            copy_store(store, slot)
-            seen.append(run_exe(exe, ["--cell", str(i)], slot))
-        if all(s == seen[0] for s in seen[1:]):
-            return seen[0]
-        return ["NONDETERMINISTIC %s differed across %d repeats" % (names[i], repeat)]
+    def run_once(i, slot):
+        copy_store(store, slot)
+        return run_exe(exe, ["--cell", str(i)], slot)
 
-    results = _pool_map(one, range(len(names)), jobs)
-    return _write(out, "# api_sweep: one process per cell, replayed from the sweep store\n",
-                  [r for rows in results for r in rows])
+    return _variants(list(range(len(names))), run_once, out,
+                     "# api_sweep: one process per cell, replayed from the sweep store;\n"
+                     "# VARIANTS = the cell picks between arms by an uncounted clock (see api_sweep.py)\n",
+                     repeat, jobs, opt("--ref-variants"))
 
 
 _CELL = re.compile(r"^@cell (.*?)\s*\|")
@@ -172,9 +242,10 @@ def store_specs(store, per_group):
 def cmd_replay():
     exe, store, out = opt("--exe"), opt("--store"), opt("--out")
     per, jobs = int(opt("--per-group", "4")), int(opt("--jobs", "4"))
+    repeat = int(opt("--repeat", "4"))
     specs = store_specs(store, per)
 
-    def one(spec, slot):
+    def run_once(spec, slot):
         copy_store(store, slot)
         rows = run_exe(exe, ["--spec", spec], slot)
         out = []
@@ -185,9 +256,9 @@ def cmd_replay():
             out.append("%s :: %s" % (spec, r))
         return out
 
-    results = _pool_map(one, specs, jobs)
-    return _write(out, "# wisdom_replay: %d store rows (<= %d per family), fresh store copy each\n"
-                  % (len(specs), per), [r for rows in results for r in rows])
+    return _variants(specs, run_once, out,
+                     "# wisdom_replay: %d store rows (<= %d per family), fresh store copy each\n"
+                     % (len(specs), per), repeat, jobs, opt("--ref-variants"))
 
 
 def cmd_roundtrip():

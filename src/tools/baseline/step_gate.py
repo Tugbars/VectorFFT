@@ -235,7 +235,7 @@ def main():
         store = os.path.join(ref, "sweep_store")
         capture_ref.capture(isa, cur, semantic="--no-semantic" not in sys.argv,
                             sweep_store=store if os.path.isdir(store) else None,
-                            repeat=int(opt("--repeat", "3")), jobs=int(opt("--jobs", "4")),
+                            repeat=int(opt("--repeat", "6")), jobs=int(opt("--jobs", "4")),
                             cmake_dir=opt("--cmake-dir"), run_gates="--gates" in sys.argv)
     allow = dict(reorder="--allow-reorder" in sys.argv,
                  changed=[x for x in (opt("--allow-changed") or "").split(",") if x],
