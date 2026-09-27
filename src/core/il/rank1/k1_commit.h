@@ -429,7 +429,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
             /* Rader is prime-only (see _ilprime_create_rader): skip the arm
              * rather than let it offer inners that can never build, which
              * would also trip the built-none warning on every composite. */
-            if (rader && !_ilprime_is_prime(N)) continue;
+            if (rader && !vfft_is_prime(N)) continue;
             static _ilprime_inner_desc_t pool[_ILPR_MAX_CANDS];   /* off the stack */
             int M, n, q;
             /* The banked method is NOT a filter here: reaching this point

@@ -139,12 +139,12 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE)
     {
         vfft_proto_dispatch_set_bluestein_wisdom(&W->bluestein);
-        if (_vfft_is_prime(N))
+        if (vfft_is_prime(N))
         {
             /* Prime N routes through Rader (radix-smooth N-1: M=N-1 + heuristic B,
              * no wisdom) or Bluestein (else: (M,B) FROM the bluestein wisdom). Only
              * the Bluestein cell consults wisdom, so calibrate-on-miss only there. */
-            if (!_vfft_is_radix_smooth(N - 1) &&
+            if (!vfft_is_radix_smooth(N - 1) &&
                 (cfg->recalibrate || !bluestein_wisdom_lookup(&W->bluestein, N, K)))
             {
                 size_t tot = (size_t)N * K;

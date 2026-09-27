@@ -36,6 +36,7 @@
  */
 #ifndef VFFT_IL_PRIME_H
 #define VFFT_IL_PRIME_H
+#include "common/math/numtheory.h"  /* vfft_is_prime, vfft_powmod, vfft_primitive_root */
 
 #include "tw_exact.h"   /* once-rounded cos/sin(2*pi*p/n) for the create-time tables */
 #include "il2p.h"
@@ -45,45 +46,6 @@
 #include <immintrin.h>
 #endif
 
-/* ── tiny integer helpers (self-contained: vfft.c's TU does not include
- * primes/prime_dispatch.h, and coupling to proto_stride_compat.h is what
- * this header exists to avoid) ─────────────────────────────────────── */
-static inline int _ilprime_is_prime(int n)
-{
-    if (n < 2) return 0;
-    if ((n & 1) == 0) return n == 2;
-    for (int p = 3; (long long)p * p <= n; p += 2)
-        if (n % p == 0) return 0;
-    return 1;
-}
-static inline long long _ilprime_powmod(long long b, long long e, long long m)
-{
-    long long r = 1;
-    b %= m;
-    while (e > 0) {
-        if (e & 1) r = r * b % m;
-        b = b * b % m;
-        e >>= 1;
-    }
-    return r;
-}
-static inline int _ilprime_find_generator(int N)
-{
-    int f[16], nf = 0, r = N - 1;
-    for (int p = 2; (long long)p * p <= r; p += (p == 2 ? 1 : 2))
-        if (r % p == 0) {
-            f[nf++] = p;
-            while (r % p == 0) r /= p;
-        }
-    if (r > 1) f[nf++] = r;
-    for (int g = 2; g < N; g++) {
-        int ok = 1;
-        for (int i = 0; i < nf && ok; i++)
-            if (_ilprime_powmod(g, (N - 1) / f[i], N) == 1) ok = 0;
-        if (ok) return g;
-    }
-    return 0; /* unreachable for prime N */
-}
 
 /* ── inner IL plan: an il2p pair, an il3p chain, or ZTURN-T. Any matched
  * fwd/bwd pair serves a convolution: the kernel is FFT'd once at create
@@ -305,14 +267,14 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
     const int nm1 = N - 1;
     /* RADER IS PRIME-ONLY, and this is the guard that makes it so. The
      * reduction to a cyclic convolution needs a primitive root mod N, which
-     * exists only for a prime modulus here. _ilprime_find_generator tests
+     * exists only for a prime modulus here. vfft_primitive_root tests
      * candidates with `powmod(g, (N-1)/f, N) != 1` for each prime factor f of
      * N - 1 -- a test that characterises a primitive root ONLY modulo a
      * prime. Handed a composite it can return a value that passes every
      * check and generates nothing, and the plan would then build cleanly and
      * compute the WRONG transform: a silent wrong answer. The guard lives
      * here so every caller is covered by construction. */
-    if (!_ilprime_is_prime(N)) return 0;
+    if (!vfft_is_prime(N)) return 0;
     /* No size ceiling: the inner either builds (from the raced pool: at a
      * prime whose N - 1 is a power of two, the whole ZTURN-T registry up to
      * 262144) or the arm drops out of the race. */
@@ -332,8 +294,8 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
         return 0;
     }
     {
-        int g = _ilprime_find_generator(N);
-        int ginv = (int)_ilprime_powmod(g, nm1 - 1, N);
+        int g = vfft_primitive_root(N);
+        int ginv = (int)vfft_powmod(g, nm1 - 1, N);
         long long gp = 1, gip = 1;
         for (int i = 0; i < nm1; i++) {
             p->gpow[i] = (int)gp;
@@ -392,7 +354,7 @@ static inline vfft_ilprime_plan_t *vfft_ilprime_create_method(int N, int hint)
     vfft_ilprime_plan_t *pr, *pb;
     const char *me;
     if (N < 5) return 0;
-    if (!_ilprime_is_prime(N))
+    if (!vfft_is_prime(N))
         return _ilprime_create_bluestein(N);
     me = getenv("VFFT_ILPR_METHOD");
     if (me && me[0] == 'r')

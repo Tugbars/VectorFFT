@@ -16,6 +16,7 @@
  */
 #ifndef STRIDE_BLUESTEIN_CALIBRATOR_H
 #define STRIDE_BLUESTEIN_CALIBRATOR_H
+#include "common/math/numtheory.h"  /* vfft_is_prime, vfft_is_radix_smooth */
 
 #include "executor.h"
 #include "planner.h"
@@ -42,24 +43,6 @@ static inline double _bcal_now_ns(void) {
 #endif
 }
 
-/* ── prime + smoothness helpers ──────────────────────────────── *
- * Prefixed _bcal_: prime_dispatch.h carries its own copies. */
-
-static int _bcal_is_prime(int n) {
-    if (n < 2) return 0;
-    if (n == 2) return 1;
-    if ((n & 1) == 0) return 0;
-    for (int p = 3; (long long)p * p <= n; p += 2)
-        if (n % p == 0) return 0;
-    return 1;
-}
-
-static int _bcal_is_radix_smooth(int n) {
-    static const int primes[] = {2, 3, 5, 7, 11, 13, 17, 19, 0};
-    for (const int *p = primes; *p; p++)
-        while (n % *p == 0) n /= *p;
-    return n == 1;
-}
 
 /* ── factorization-string helper (for verbose / dev-tool output) ─ */
 static void bluestein_calibrate_factorization_str(int m, char *buf, size_t buflen) {
@@ -202,12 +185,12 @@ static int bluestein_calibrate_one(
     bluestein_calibrate_result_t r;
     r.M = 0; r.B = 0; r.ns = 1e30; r.is_rader = 0; r.n_candidates_tried = 0;
 
-    if (!_bcal_is_prime(N)) {
+    if (!vfft_is_prime(N)) {
         if (result_out) *result_out = r;
         return -1;
     }
 
-    r.is_rader = _bcal_is_radix_smooth(N - 1);
+    r.is_rader = vfft_is_radix_smooth(N - 1);
 
     if (r.is_rader) {
         int M = N - 1;
@@ -231,7 +214,7 @@ static int bluestein_calibrate_one(
         int m_min = 2 * N - 1;
         int m_max = 4 * N;
         for (int M = m_min; M <= m_max; M++) {
-            if (!_bcal_is_radix_smooth(M)) continue;
+            if (!vfft_is_radix_smooth(M)) continue;
             for (size_t bi = 0; bi < BCAL_N_B_CANDIDATES; bi++) {
                 size_t B = _BCAL_B_CANDIDATES[bi];
                 if (B > K) continue;

@@ -1142,7 +1142,7 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
                           const vfft_proto_wisdom_entry_t **te_out,
                           const vfft_proto_wisdom_entry_t **ae_out)
 {
-    const int prime = _vfft_is_prime(N);
+    const int prime = vfft_is_prime(N);
     const int recal = cfg->recalibrate && !already_measured;
     const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
     const vfft_proto_wisdom_entry_t *ae;
