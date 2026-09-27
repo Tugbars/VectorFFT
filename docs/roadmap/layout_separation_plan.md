@@ -448,6 +448,11 @@ not govern linkage. The checker reads the `#include` lines.
 - **D1. Bridges B1/B2 (the IL doors on split real engines).** Keep them as a declared
   interface (recommended; the fusion is the reason they exist). The alternative is an IL
   real engine for K>1, which is new work.
+  - **Owner (2026-09-27): an IL real engine will be built; IL and split must not cross.**
+    The existing wrappers that make IL requests run on split machinery (IL real K>1 and
+    the zr2c out-of-place fall-through onto the split CCE engines, the odd-real bridge,
+    the smooth-odd r2c race) move to `bridge/` in phase 7 as a TEMPORARY holding place,
+    to be removed once the IL real engine lands. No new crossing may be added.
 - **D2. B4, the `@nat` → IL recipe signpost.** Keep it in `bridge/` for now (no format
   change). Or give the IL in-place door its own `lay=il` row and retire `VFFT_NAT_ILP`,
   `ZCASC` and `CONV` from the split enum. That changes the wisdom format, so it needs a
@@ -456,6 +461,9 @@ not govern linkage. The checker reads the `#include` lines.
   touches every `h->il2d_*` access (a mechanical rename) and changes field offsets.
   - A cheaper alternative keeps the field names by using C11 anonymous sub-structs, so no
     access sites change. Offsets still change once the fields are regrouped.
+  - **Owner (2026-09-27): leave it for now.** Phase 8 is deferred; the flat struct stays,
+    and the separation is enforced by the include graph (hygiene.py) alone. The split 2D
+    handle keeps writing the four IL column fields until then.
 - **D4. Two ISA rules.** The split OOP registry picks the ISA from `__AVX512F__` and
   `VFFT_OOP_FORCE_AVX2`; the IL side uses `build_isa.h`. Unifying them on `build_isa.h`
   can change which split kernels an AVX-512 build binds.
