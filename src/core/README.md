@@ -7,26 +7,32 @@ layered by dependency — each layer depends only on the ones above it.
 
 ```
 core/
-  vfft.c, vfft_internal.h, vfft_execute.h, vfft_fingerprint.h, plane_queue.h
-                THE front door (see "Front door" below) - sees both layouts
+  vfft.c, vfft_execute.h, vfft_fingerprint.h
+                THE front door (see "Front door" below) - sees both layouts.
+                create and execute each fork on the layout ONCE.
   common/       shared by both layouts, depends on neither:
-                support/ (ISA, CPU caches, pool, race body, clock, allocator),
-                math/ (tw_exact), move/ (transposes), wisdom/ (the wisdom2 store)
+                abi/ (codelet ABI, route ids), support/ (ISA, CPU caches, pool,
+                race body, clock, allocator), math/ (tw_exact), move/
+                (transposes), policy/, wisdom/ (the wisdom2 store core),
+                plan/ (vfft_internal.h: the plan struct, shared until D3)
   split/        the SPLIT (re/im planes) library: engine/, primes/, planning/,
-                oop/, natorder/, rank1/, rank2/, rank3/, real/, trig/, wisdom/
+                oop/, natorder/, rank1/, rank2/, rank3/, real/, trig/, wisdom/;
+                split_create.h + split_execute.h are its side of the fork
   il/           the INTERLEAVED (z) library: isa/, planning/, rank1/, rank2/,
-                rank3/, real/
-  oop/ planning/ support/ transforms/ wisdom2/
-                the MIXED files still holding both layouts, waiting to be cut
-                (layout separation phases 4-6)
+                rank3/, real/, wisdom/; il_create.h + il_execute.h are its side
+  bridge/       the ONLY place besides the front door that sees both, and
+                TEMPORARY: 1D real (real_bridge.h, real_bridge_exec.h) until the
+                IL real engine lands (D1); the @nat -> IL recipe signpost
+                (nat_ilp.h) until D2
+  wisdom2/      front-side wisdom glue that spans both layouts: the legacy
+                kind-3 reader and migration, the OOP codec aggregator, gates
 ```
 
-**Layout separation in progress** (`docs/roadmap/layout_separation_plan.md`):
-phases 1-3 done (dead code deleted; neutral and single-layout files moved). The
-rule the tree converges to: `split/` and `il/` depend on `common/` only, never
-on each other; only the front door (and a small `bridge/`, to come) sees both.
-`python src/tools/baseline/hygiene.py` lists the includes that still break it -
-the remaining work. Every step is gated by `src/tools/baseline/step_gate.py`.
+**Layout separation** (`docs/roadmap/layout_separation_plan.md`): phases 1-7
+done. `split/` and `il/` include only `common/` and themselves; `bridge/`,
+`wisdom2/` and the front door may include both. `python
+src/tools/baseline/hygiene.py` checks the rule, and the step gate
+(`src/tools/baseline/step_gate.py --enforce-deps`) fails on any violation.
 
 ## Front door: `vfft.c` (public API = `include/vfft.h`)
 

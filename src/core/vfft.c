@@ -1223,10 +1223,10 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
  * _stride_workers (a worker dispatching to itself deadlocks the wait).
  * The native K=1 IL engines qualify — mono is stateless, il2p/il3p/ilprime
  * and both cascade routes are pure plan-plus-scratch calls. What does NOT
- * qualify is every convert/fallback arm: _exec_c2c_interleaved and
- * _exec_c2c_oop_convert both re-assert the pool and slab work across it.
+ * qualify is anything that re-asserts the pool or slabs work across it (the
+ * split OOP classic path's _oop_mt; the retired convert arms did too).
  * The predicate is therefore conservative PER DIRECTION: a route whose bwd
- * can break to the convert fallback (il2p with no resolvable bwd arm) is
+ * does not resolve inside its engine (il2p with no resolvable bwd arm) is
  * unsafe even though its fwd is fine — execute takes either dir. */
 static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
 {
@@ -1244,8 +1244,8 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
          * c2c(N/2) and never itself carries a zr2c_child. */
         return _tc_inner_mt_safe(g->zr2c_child);
     if (g->placement == VFFT_INPLACE)
-        /* in-place interleaved: k1il2p/k1il3p arms are engine-pure; the
-         * else-arm is _exec_c2c_interleaved (pool-touching). */
+        /* in-place interleaved: the K=1 engine arms are engine-pure; a
+         * handle with none of them is treated as unsafe. */
         return (g->k1il2p || g->k1il3p || g->k1ilfd || g->k1ztt || g->k1fs) ? 1 : 0;
     if (!g->k1_on)
         return 0; /* OOP classic path: _oop_mt re-asserts + slabs the pool */
@@ -1935,10 +1935,10 @@ int vfft_c2r_load_path(const char *path)
 
 /* THE execute entry point - every transform, BOTH layouts.
  *
- * The include still cannot move earlier. _exec_k1_split and _vfft_sig_bad moved
- * INTO the header at step 28, but _pq_execute is ALSO called from the create
- * side (fft2d_create.h), so it stays in plane_queue.h, included just above, and
- * the declaration order that forces the include to sit here is its. */
+ * The include still cannot move earlier: _pq_execute is also called from the
+ * create side (il/rank2/fft2d_create_il.h), so it stays in
+ * il/rank2/plane_queue.h, included just above, and the declaration order that
+ * forces the include to sit here is its. */
 #define VFFT_EXECUTE_IMPL   /* this TU owns the definition - see the header */
 #include "vfft_execute.h"
 

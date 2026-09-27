@@ -4,25 +4,19 @@
  * Extracted from vfft.c as migration step 16; see
  * docs/design/refactor_migration_plan.md. Step 28 extends this header.
  *
- * SCOPE: EVERYTHING. NOT c2c, NOT interleaved.
- * --------------------------------------------
- * The migration plan's table labels this step "execute-side c2c dispatch", and
- * that label is too narrow - recorded here because it misled once already. This
- * is the single universal dispatcher behind the public API. It branches on:
+ * SCOPE: EVERYTHING - every transform, both layouts
+ * ------------------------------------------------
+ * The single dispatcher behind the public API. It validates the call
+ * (_vfft_sig_bad), tries the bound K=1 interleaved dispatch (k1_exec), sends
+ * 1D real to bridge/real_bridge_exec.h (the D1 crossing, temporary), and then
+ * forks ONCE on the committed layout (layout separation, phase 7.2):
  *
- *   transform   C2C, R2C, C2R, the trig family (DCT/DST/DHT via _VFFT_IS_TRIG),
- *               and the rank-3 paths (N3 > 0).
- *   layout      at essentially every one of those branches. SPLIT IS SERVED
- *               HERE TOO - it is the fall-through arm of each
- *               `h->layout == VFFT_LAYOUT_INTERLEAVED` test, which is why the
- *               token VFFT_LAYOUT_SPLIT never literally appears in this file.
- *               Reading "no LAYOUT_SPLIT" as "interleaved only" is exactly
- *               backwards.
- *   placement   in-place and out-of-place take different arms throughout.
+ *   INTERLEAVED   il/il_execute.h       _vfft_il_execute
+ *   SPLIT         split/split_execute.h _vfft_split_execute
  *
  * The two families share no codelets, no planner and no executor (see
- * docs/design/planning_model.md, Parts II and III) - but they share this one
- * front door, and the layout test is where they part company.
+ * docs/design/planning_model.md, Parts II and III); this header is the one
+ * place they meet, and it tests the layout exactly once.
  *
  * ONE TRANSLATION UNIT MUST OWN THE DEFINITION
  * --------------------------------------------
@@ -40,21 +34,12 @@
  *
  * WHY THE INCLUDE SITS WHERE IT DOES IN vfft.c
  * -------------------------------------------
- * vfft_execute calls helpers that must be declared before it: _pq_execute
- * (plane_queue.h, which vfft.c includes just above this header) and the
- * create-side statics of vfft.c. The include therefore replaces the definition
- * in place rather than moving to the top of the file; its position is
- * load-bearing. (_exec_c2c_interleaved, _exec_c2c_oop_convert and
- * _exec_zcascade, named here before, were retired with the convert machinery
- * on 2026-09-03.)
- *
- * THE TRAMPOLINES CAME WITH IT, AND _zc_* DID NOT
- * -----------------------------------------------
- * _tc_mt_arg and _tc_mt_tramp are used ONLY by vfft_execute, so
- * they belong with it. The _zc_* trampoline pair looks similar but serves
- * _exec_c2c_interleaved, which stays in vfft.c - so it stayed too. Grouping by
- * "looks like a trampoline" would have coupled this header to a function that
- * is not moving.
+ * The execute sides call helpers that must be declared before them:
+ * _pq_execute (il/rank2/plane_queue.h, which vfft.c includes just above this
+ * header) and the execute-side statics of vfft.c. The include therefore
+ * replaces the definition in place rather than moving to the top of the file;
+ * its position is load-bearing. The transform-contiguous MT trampoline
+ * (_tc_mt_arg / _tc_mt_tramp) lives with its only caller, in il/il_execute.h.
  *
  * (The 2048-point scalar engage floor that once lived here is retired:
  * the wrapper now carries a raced, banked verdict, h->tc_mt - see
@@ -68,12 +53,11 @@
 #ifdef VFFT_EXECUTE_IMPL
 
 
-/* ---- execute-side helpers (migration step 28) ----
- * These sat in vfft.c immediately above the point this header is included,
- * for one reason: vfft_execute calls them. Moving them here puts them beside
- * their only caller. _pq_execute did NOT come with them -- the create side
- * (fft2d_create.h) calls it too -- so it stays above this header's include
- * point, in plane_queue.h. */
+/* ---- execute-side helpers ----
+ * The front door's own helper (_vfft_sig_bad) is below; each layout's
+ * helpers live with its execute side (il/il_execute.h, split/split_execute.h).
+ * _pq_execute stays above this header's include point, in
+ * il/rank2/plane_queue.h: the plane queue's create calls it too. */
 
 
 
