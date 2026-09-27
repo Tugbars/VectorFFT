@@ -1,0 +1,15 @@
+N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
+1125,1,z:ilp,nat-oop,3013,0,18.925,0.000,1.134e-15,chain3,0
+1125,1,z:ilp,nat-oop,2969,0,19.205,0.000,1.134e-15,chain3,1
+1215,1,z:ilp,nat-oop,2662,0,23.384,0.000,1.453e-15,chain3,0
+1215,1,z:ilp,nat-oop,3433,0,18.135,0.000,1.453e-15,chain3,1
+1575,1,z:ilp,nat-oop,3786,0,22.094,0.000,1.299e-15,chain3,0
+1575,1,z:ilp,nat-oop,3970,0,21.069,0.000,1.299e-15,chain3,1
+2025,1,z:ilp,nat-oop,6117,0,18.179,0.000,1.241e-15,chain3,0
+2025,1,z:ilp,nat-oop,5868,0,18.952,0.000,1.241e-15,chain3,1
+2187,1,z:ilp,nat-oop,6407,0,18.937,0.000,1.530e-15,chain3,0
+2187,1,z:ilp,nat-oop,6470,0,18.750,0.000,1.530e-15,chain3,1
+2401,1,z:ilp,nat-oop,8028,0,16.793,0.000,1.523e-15,flat,0
+2401,1,z:ilp,nat-oop,8065,0,16.716,0.000,1.523e-15,flat,1
+2835,1,z:ilp,nat-oop,8685,0,18.720,0.000,1.356e-15,chain3,0
+2835,1,z:ilp,nat-oop,6608,0,24.602,0.000,1.356e-15,chain3,1
