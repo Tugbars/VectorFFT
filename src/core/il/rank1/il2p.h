@@ -66,6 +66,7 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
  * NOT covered, declared by hand below: the tangent kernels and the blocked
  * forward pair variants (t2b*, n1tb*), which sit outside the corpus. */
 #include "il_isa.h"
+#include "il_solo_registry.h" /* the K=1 solo tier: mono / n1c / n1ccs resolvers */
 
 /* t2 declarations: GENERATED (VFFT_IL_T2_{FWD,BWD}_RADICES). */
 
@@ -365,7 +366,7 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
  * = adjacent plane columns, alias-tolerant (no __restrict__) in BOTH
  * directions because the 2D column pass runs zin == zout. Distinct from
  * plain n1 (whose bwd is the 1D F-DIAG chain role and whose fwd serves the
- * MONO tier's SOLO kernels — oop_leaf_registry.h vfft_k1_mono_il_form_fn);
+ * MONO tier's SOLO kernels — il/isa/il_solo_registry.h vfft_k1_mono_il_form_fn);
  * n1c doubles as that tier's IN-PLACE solo, vfft_k1_mono_ilc_fn, which is
  * why n1c exists at 2/6/10/12 too. */
 static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)

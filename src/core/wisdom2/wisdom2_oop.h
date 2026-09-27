@@ -33,7 +33,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../oop/oop_plan.h"   /* kinds, vfft_oop_plan_t, leaf/pair create, proto_plan_create */
+#include "../split/oop/oop_plan.h"   /* kinds, vfft_oop_plan_t, leaf/pair create, proto_plan_create */
 
 #ifndef VFFT_OOP_WISDOM_MAX
 #define VFFT_OOP_WISDOM_MAX 1024
