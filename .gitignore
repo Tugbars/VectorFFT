@@ -135,3 +135,6 @@ src/wisdom/**/*.bak_pre_merge_*
 
 # the KFR comparator DLL build.py --kfr copies beside the bench: the user's own KFR, GPLv2/commercial, never committed
 gauntlet/kfr_capi.dll
+
+# Prototype/harness scratch: local only, never tracked
+docs/roadmap/zil_avx512_prototypes/

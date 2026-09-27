@@ -37,8 +37,7 @@ import toolchain  # noqa: E402
 
 ROOT, CORE = toolchain.ROOT, toolchain.CORE
 SCAN = [CORE, os.path.join(ROOT, "gauntlet"), os.path.join(ROOT, "build_tuned"),
-        os.path.join(ROOT, "src", "tools"),
-        os.path.join(ROOT, "docs", "roadmap", "zil_avx512_prototypes")]
+        os.path.join(ROOT, "src", "tools")]
 _INC = re.compile(r'(#\s*include\s+")([^"]*/[^"]*)(")')
 
 
