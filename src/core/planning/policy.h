@@ -481,6 +481,10 @@ static inline int vfft_policy_exceeds_l3(long bytes)
  * Corner-turned kinds (n1t, t2t, t2tg, the *r / *tan row twins) take the
  * per-column xmm arm at every leftover: their store addresses one column per
  * vector, so a two-column ymm rung cannot store through it.
+ * Column-stride kinds (n1ccs, t2cs, t2csg, t2csgn and their backward and
+ * transposed twins) take the ymm + xmm ladder at 3: their columns sit Gs
+ * apart, not side by side, so one contiguous masked zmm access cannot reach
+ * them (the ymm and xmm rungs gather each column through loadu2/storeu2).
  * At AVX2 (per = 2) the leftover is at most one column: one xmm pass, the
  * shipped behaviour. */
 typedef enum {
@@ -493,12 +497,13 @@ typedef enum {
 /* The arm that serves the FIRST leftover pass of a codelet with `per`
  * complex per vector and `rem` = count % per leftover columns (after it the
  * next arm is the law applied to what remains: 3 -> masked, done; 2 -> ymm,
- * done; 1 -> xmm). `turned` = a corner-turned kind. */
-static inline vfft_tail_arm_t vfft_policy_il_tail_arm(int per, int rem, int turned)
+ * done; 1 -> xmm). `turned` = a corner-turned kind, `colstride` = a
+ * column-stride kind (3 -> ymm, then 1 -> xmm). */
+static inline vfft_tail_arm_t vfft_policy_il_tail_arm(int per, int rem, int turned, int colstride)
 {
     if (rem <= 0) return VFFT_TAIL_NONE;
     if (per <= 2 || turned || rem == 1) return VFFT_TAIL_XMM;
-    return rem == 2 ? VFFT_TAIL_YMM : VFFT_TAIL_ZMM_MASKED;
+    return (rem == 2 || colstride) ? VFFT_TAIL_YMM : VFFT_TAIL_ZMM_MASKED;
 }
 
 #endif /* VFFT_PLANNING_POLICY_H */

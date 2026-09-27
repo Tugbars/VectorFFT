@@ -1313,14 +1313,19 @@ let emit
      2 -> one ymm pass, 3 -> one k-masked zmm pass (the ladder loses to masked
      at 3 on large radices, masked loses at 1-2 everywhere). The corner-turned
      kinds keep the per-column xmm arm with the lane offset ("narrowfix"): a
-     ymm rung would store two columns through a one-column turn address.
+     ymm rung would store two columns through a one-column turn address. The
+     column-stride kinds take the plain "ladder" (3 -> ymm + xmm): their
+     columns sit Gs apart, so a contiguous masked zmm access cannot reach them.
      VFFT_TAIL512 overrides (recorded in the provenance Env line). At vw = 4
      the shipped behaviour is untouched. *)
   let tail_policy =
     if vw <= 4 then "narrow"
     else match Sys.getenv_opt "VFFT_TAIL512" with
       | Some s -> s
-      | None -> if kind = N1T || ctx.st_turn then "narrowfix" else "ladder_m3"
+      | None ->
+        if kind = N1T || ctx.st_turn then "narrowfix"
+        else if ctx.colstride then "ladder"
+        else "ladder_m3"
   in
   let body_n = Buffer.create 2048 in
   let body_y = Buffer.create 2048 in

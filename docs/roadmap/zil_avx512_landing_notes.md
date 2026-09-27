@@ -108,6 +108,20 @@ threading grain.
 - Not covered yet: the multithreaded ZTT split (`ztt_mt.h` still steps 4-column quads)
   and the ZTT laws/permutation of step 3.
 
+### 2D C2C, interleaved: working at avx512
+
+- The 2D IL tier needed no runtime change beyond steps 1-2 (kernel names, the column
+  stage tables). Tested through the public API (`harness/runtime/il2d_c2c_test.c`):
+  30 shapes (8x8 .. 1024x64, odd, prime, degenerate), both order classes, OOP and in
+  place, cold races at 1 and 4 threads: 60/60 correct at avx512, error at most 6.3e-16.
+  Routes raced and served: chain, csk, rb, rb2, turn, Bluestein.
+- One kernel bug found and fixed: the 216 column-stride kernels (n1ccs, t2cs*) had a
+  masked-zmm tail arm, which cannot reach columns `Gs` apart; they now take the ymm + xmm
+  ladder at 3 leftovers (L10, `docs/design/avx512_tail_handling.md`). Test:
+  `harness/runtime/colstride_twin_test.c`.
+- Note: rank >= 2 DEFAULT order is the scrambled comb (policy L4), while `include/vfft.h`
+  describes DEFAULT as NATURAL for 1D and 2D C2C. The code and the gates follow L4.
+
 ## For the owner
 
 - Generation here used OCaml 4.14, not your 5.2 (D12). Before relying on the recorded
