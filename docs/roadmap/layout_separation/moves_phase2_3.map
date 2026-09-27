@@ -1,0 +1,84 @@
+# Phases 2-3 of docs/roadmap/layout_separation_plan.md: pure moves, applied by
+# src/tools/baseline/relayout.py. Paths relative to src/core. Mixed files are
+# NOT moved here; they stay in their old directories until phases 4-6 cut them.
+
+# ---- phase 2: the neutral zone -------------------------------------------
+support/build_isa.h            common/support/build_isa.h
+support/cpu_cache.h            common/support/cpu_cache.h
+support/diag.h                 common/support/diag.h
+support/race.h                 common/support/race.h
+support/race_timing.h          common/support/race_timing.h
+support/ref.h                  common/support/ref.h
+support/slot_check.h           common/support/slot_check.h
+support/threads.h              common/support/threads.h
+support/zalloc.h               common/support/zalloc.h
+oop/tw_exact.h                 common/math/tw_exact.h
+transforms/fft2d/transpose.h   common/move/transpose.h
+wisdom2/wisdom2.h              common/wisdom/wisdom2.h
+wisdom2/wisdom2_selftest.h     common/wisdom/wisdom2_selftest.h
+wisdom2/wisdom2_migrate.h      common/wisdom/wisdom2_migrate.h
+# the plane queue runs over any plan handle: a front-door tier, not common
+transforms/fft2d/plane_queue.h plane_queue.h
+
+# ---- phase 3: files that already belong to one layout --------------------
+# split
+engine                         split/engine
+primes                         split/primes
+planning/dp_planner.h          split/planning/dp_planner.h
+planning/exhaustive_plan.h     split/planning/exhaustive_plan.h
+planning/measure.h             split/planning/measure.h
+planning/pad_calibrate.h       split/planning/pad_calibrate.h
+planning/adopt_wisdom.h        split/planning/adopt_wisdom.h
+planning/wisdom_reader.h       split/planning/wisdom_reader.h
+planning/dp_planner_split_oop.h split/planning/dp_planner_split_oop.h
+oop/oop_execute.h              split/oop/oop_execute.h
+oop/oop_auto.h                 split/oop/oop_auto.h
+oop/oop_dp.h                   split/oop/oop_dp.h
+oop/oop_mt.h                   split/oop/oop_mt.h
+support/strided_codelets.h     split/oop/strided_codelets.h
+vfft_batch.h                   split/rank1/vfft_batch.h
+transforms/natorder            split/natorder
+transforms/fft2d/fft2d.h       split/rank2/fft2d.h
+transforms/fft2d/fft2d_c2c_planner.h split/rank2/fft2d_c2c_planner.h
+transforms/fft2d/fft2d_c2r_planner.h split/rank2/fft2d_c2r_planner.h
+transforms/fft2d/fft2d_r2c.h   split/rank2/fft2d_r2c.h
+transforms/fft2d/fft2d_r2c_planner.h split/rank2/fft2d_r2c_planner.h
+transforms/fft2d/strided_tw.h  split/rank2/strided_tw.h
+transforms/fft3d               split/rank3
+transforms/fftnd/fftnd.h       split/rank3/fftnd.h
+transforms/fftnd/fftnd_r2c.h   split/rank3/fftnd_r2c.h
+transforms/real/r2c.h          split/real/r2c.h
+transforms/real/rfft.h         split/real/rfft.h
+transforms/real/c2r.h          split/real/c2r.h
+transforms/real/r2c_dispatch.h split/real/r2c_dispatch.h
+transforms/real/c2r_dispatch.h split/real/c2r_dispatch.h
+transforms/real/real_route_race.h split/real/real_route_race.h
+transforms/real/rfft_calibrate.h split/real/rfft_calibrate.h
+transforms/real/real_dispatch_config.h split/real/real_dispatch_config.h
+transforms/trig                split/trig
+wisdom2/wisdom2_fftnd.h        split/wisdom/wisdom2_fftnd.h
+wisdom2/wisdom2_stride_reader.h split/wisdom/wisdom2_stride_reader.h
+wisdom2/wisdom2_real_reader.h  split/wisdom/wisdom2_real_reader.h
+# interleaved
+oop/il_isa.h                   il/isa/il_isa.h
+oop/avx512                     il/isa/avx512
+oop/ztt_qw16384.h              il/isa/ztt_qw16384.h
+oop/il2p.h                     il/rank1/il2p.h
+oop/il_flatdit.h               il/rank1/il_flatdit.h
+oop/il_flatdit_mt.h            il/rank1/il_flatdit_mt.h
+oop/il_flatdit_race.h          il/rank1/il_flatdit_race.h
+oop/il_prime.h                 il/rank1/il_prime.h
+oop/ztt.h                      il/rank1/ztt.h
+oop/ztt_mt.h                   il/rank1/ztt_mt.h
+oop/k1_fourstep.h              il/rank1/k1_fourstep.h
+oop/k1_fourstep_band.h         il/rank1/k1_fourstep_band.h
+planning/dp_planner_il.h       il/planning/dp_planner_il.h
+planning/il_slot_probe.h       il/planning/il_slot_probe.h
+oop/il2d_proto.h               il/rank2/il2d_proto.h
+transforms/fft2d/il2d_col.h    il/rank2/il2d_col.h
+transforms/fft2d/il2d_cols.h   il/rank2/il2d_cols.h
+transforms/fft2d/il2d_tier.h   il/rank2/il2d_tier.h
+transforms/fft2d/fft2d_real_il.h il/rank2/fft2d_real_il.h
+transforms/fftnd/fftnd_il.h    il/rank3/fftnd_il.h
+transforms/real/zr2c.h         il/real/zr2c.h
+transforms/real/zr2c_build.h   il/real/zr2c_build.h

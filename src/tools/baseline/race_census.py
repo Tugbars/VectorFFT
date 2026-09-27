@@ -265,44 +265,60 @@ def verdicts(lines):
 
 # The census must FOLLOW THE CODE, not one file.
 #
-# It originally scanned vfft.c alone, which was correct while every racer lived
-# there. The migration moves racers into module headers, and a file-scoped
-# scanner would then report a shrinking census while every racer still existed -
-# drifting to zero and reading as "nothing races here" exactly when the opposite
-# is true. That is the same failure mode as an assert compiled out: it does not
-# fail, it stops testing.
+# History: it scanned vfft.c alone, then vfft.c plus a hand-kept _MIGRATED list
+# of 13 headers that each migration step had to extend. That list was filtered
+# by os.path.exists, so a header MOVED to a new directory silently dropped out:
+# its racers vanished from the census without an error, which reads as
+# "nothing races here" exactly when the opposite is true (the failure mode of an
+# assert compiled out). The layout separation moves nearly every header, so the
+# list is gone. The default input is now EVERY header under src/core plus
+# vfft.c, found by walking the tree: a racer is found wherever it lives, and
+# the rows carry no path, so a pure move leaves the census byte-identical.
 #
-# So the default set grows with the migration. Each entry is a header a
-# migration step moved timing INTO; adding one is part of that step, and the
-# census is expected to come back UNCHANGED afterwards - same racers, found in
-# their new home. A step that moves a racer and does NOT extend this list will
-# show up as a census shrink, which is the intended alarm.
-_MIGRATED = [
-    "src/core/support/race_timing.h",             # step 5  - the primitives
-    "src/core/transforms/real/real_route_race.h", # step 11 - r2c/c2r racers
-    "src/core/planning/pad_calibrate.h",          # step 13 - pad-vs-tail
-    "src/core/transforms/fft2d/il2d_tier.h",      # step 17 - the four il2d racers
-    "src/core/transforms/real/zr2c_build.h",      # step 18 - kind-5 route race
-    "src/core/oop/k1_commit.h",                   # step 19 - K=1 race-and-bank
-    "src/core/transforms/fft2d/plane_queue.h",    # step 20 - pq_mt_race
-    "src/core/transforms/fftnd/fftnd_create.h",   # step 22 - rank-3/4 create (no racer today)
-    "src/core/transforms/fft2d/fft2d_create.h",   # step 23 - 2D tier: 2 races + a verdict
-    "src/core/oop/c2c_ip_create.h",               # step 24 - c2c in-place tier
-    "src/core/oop/c2c_oop_create.h",              # step 25 - c2c out-of-place tier
-    "src/core/transforms/real/real_create.h",     # step 26 - r2c/c2r tier
-    "src/core/transforms/trig/trig_create.h",     # step 27 - trig tier + builders
-]
+# --files prints the per-FILE site count instead (keyed by BASENAME, since the
+# directory is what a move changes). A step gate compares it against the
+# reference as a multiset of counts: a file that loses sites must be matched by
+# the same count appearing elsewhere.
+#
+# An EXPLICIT path that does not exist is a hard error, never a skip.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
+
+
+def default_inputs():
+    core = os.path.join(_ROOT, "src", "core")
+    hdrs = sorted(os.path.join(dp, f) for dp, _, fs in os.walk(core)
+                  for f in fs if f.endswith(".h"))
+    return [os.path.join(core, "vfft.c")] + hdrs
 
 
 def main():
-    paths = sys.argv[1:] or (["src/core/vfft.c"] +
-                             [q for q in _MIGRATED if os.path.exists(q)])
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    per_file = "--files" in sys.argv
+    for q in args:
+        if not os.path.exists(q):
+            raise SystemExit("race_census: no such file %r (a missing input is "
+                             "an error, not a skip)" % q)
+    paths = args or default_inputs()
     rows, vrows = [], []
+    counts = {}
     for p in paths:
         lines = open(p, encoding="utf-8", errors="replace").read().split("\n")
+        n0, v0 = len(rows), len(vrows)
         for name, s, e in functions(lines):
             rows.extend(features(name, lines[s:e + 1]))
         vrows.extend(verdicts(lines))
+        if len(rows) > n0 or len(vrows) > v0:
+            b = os.path.basename(p)
+            c = counts.setdefault(b, [0, 0])
+            c[0] += len(rows) - n0
+            c[1] += len(vrows) - v0
+
+    if per_file:
+        print("# race census per file (basename): timing_regions verdicts")
+        for b in sorted(counts):
+            print("%-32s %3d %3d" % (b, counts[b][0], counts[b][1]))
+        return 0
 
     print("# race protocol census - the constants obj_equiv.py cannot see")
     print("# key = hash of the normalized protocol; fn is an ATTRIBUTE, so a MOVE")

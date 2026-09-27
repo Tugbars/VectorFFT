@@ -1,0 +1,6 @@
+# harness binaries gauntlet/build.py writes beside their sources (no suffix off Windows)
+/api_sweep
+/harness_golden
+/fp_sweep
+/trig_digest_probe
+__pycache__/
