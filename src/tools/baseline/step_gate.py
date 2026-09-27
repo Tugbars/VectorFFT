@@ -34,6 +34,12 @@ inferred:
   --allow-defined          R4: the defined-symbol census may change (a split
                            adds functions); undefined and mutable never may
   --allow-layout           R4: layout.txt may change (phase 8, the struct split)
+  --code-change            a step that changes code ON PURPOSE (deletion, a
+                           function split): R2, R3 code and the defined census
+                           are reported, not gated; data objects, undefined and
+                           mutable symbols, read-only strings and every R5
+                           artifact stay gated. The step's commit lists the
+                           changed functions
   --allow-census-move      R0: race sites may move between files (counts kept)
   --allow-census-removed F1.h,..  R0: these files were DELETED; their reference
                            sites are subtracted before the totals are compared
@@ -115,8 +121,10 @@ def compare(ref, cur, allow, strict_objdump):
     g.add("R0", "race sites: same files", not moved,
           "; ".join(diff_lines(ref, cur, "race_census_files.txt", 6)),
           gated=not allow["census_move"])
-    g.add("R0", "no new warnings", same(ref, cur, "warnings.txt"),
-          "; ".join(diff_lines(ref, cur, "warnings.txt", 6)))
+    new_warn = [l for l in diff_lines(ref, cur, "warnings.txt", 50) if l.startswith("+")]
+    gone_warn = [l for l in diff_lines(ref, cur, "warnings.txt", 50) if l.startswith("-")]
+    g.add("R0", "no new warnings", not new_warn,
+          "; ".join(new_warn[:6]) or ("%d warnings gone" % len(gone_warn) if gone_warn else ""))
     dv = hygiene.dep_violations()
     g.add("R0", "layout dependency rules", None if dv is None else not dv,
           "; ".join((dv or [])[:6]))
@@ -140,9 +148,11 @@ def compare(ref, cur, allow, strict_objdump):
         g.add("R2", "vfft.i identical" if i_same else "vfft.i (objects identical)", True)
     else:
         sorted_ok = same(ref, cur, "vfft.i.sorted") and same(ref, cur, "vfft.macros")
-        g.add("R2", "vfft.i identical", False, "text differs", gated=not allow["reorder"])
+        g.add("R2", "vfft.i identical", False, "text differs",
+              gated=not (allow["reorder"] or allow["code_change"]))
         g.add("R2", "same declarations and macros (reorder)", sorted_ok,
-              "; ".join(diff_lines(ref, cur, "vfft.i.sorted", 3) + diff_lines(ref, cur, "vfft.macros", 3))[:600])
+              "; ".join(diff_lines(ref, cur, "vfft.i.sorted", 3) + diff_lines(ref, cur, "vfft.macros", 3))[:600],
+              gated=not allow["code_change"])
     g.add("R2b", "read-only strings identical", same(ref, cur, "rodata_strings.txt"),
           "; ".join(diff_lines(ref, cur, "rodata_strings.txt", 4)))
 
@@ -151,8 +161,9 @@ def compare(ref, cur, allow, strict_objdump):
         if objs[o]:
             g.add("R3", "%s strict-equivalent" % o, True, "byte-identical")
             continue
-        ok, detail = _strict(os.path.join(ref, o), os.path.join(cur, o), allow, strict_objdump)
-        g.add("R3", "%s strict-equivalent" % o, ok, detail)
+        ok, detail, data_ok = _strict(os.path.join(ref, o), os.path.join(cur, o), allow, strict_objdump)
+        g.add("R3", "%s strict-equivalent" % o, ok, detail, gated=not allow["code_change"])
+        g.add("R3", "%s data objects unchanged" % o, data_ok, "")
 
     # ---- R4 censuses
     g.add("R4", "undefined symbols identical", same(ref, cur, "sym_undefined.txt"),
@@ -160,9 +171,11 @@ def compare(ref, cur, allow, strict_objdump):
     g.add("R4", "mutable objects identical", same(ref, cur, "sym_mutable.txt"),
           "; ".join(diff_lines(ref, cur, "sym_mutable.txt", 6)))
     g.add("R4", "defined symbols identical", _renamed_same(ref, cur, "sym_defined.txt", allow["rename"]),
-          "; ".join(diff_lines(ref, cur, "sym_defined.txt", 6)), gated=not allow["defined"])
+          "; ".join(diff_lines(ref, cur, "sym_defined.txt", 6)),
+          gated=not (allow["defined"] or allow["code_change"]))
     g.add("R4", "race protocols identical (fn masked)", _census_masked(ref) == _census_masked(cur),
-          "; ".join(diff_lines(ref, cur, "race_census.txt", 4)))
+          "; ".join(diff_lines(ref, cur, "race_census.txt", 4)),
+          gated=not allow["census_removed"])
     g.add("R4", "struct layout identical", same(ref, cur, "layout.txt"),
           "; ".join(diff_lines(ref, cur, "layout.txt", 6)), gated=not allow["layout"])
 
@@ -218,12 +231,14 @@ def _strict(a, b, allow, objdump):
     named = [l.split(":", 1)[1].strip() for l in lines
              if l.strip().startswith(("CHANGED", "DISAPPEARED", "APPEARED"))]
     summary = "; ".join(l for l in lines if l.startswith(("functions:", "data objects:")))
+    dl = [l for l in lines if l.startswith("data objects:")]
+    data_ok = bool(dl) and "(changed 0, gone 0, new 0)" in dl[0]
     if r.returncode == 0:
-        return True, summary
+        return True, summary, True
     extra = [n for n in named if n not in allow["changed"]]
     if allow["changed"] and not extra:
-        return True, summary + " (all changes allowed: %s)" % ",".join(named[:8])
-    return False, summary + " | " + ", ".join(extra[:10])
+        return True, summary + " (all changes allowed: %s)" % ",".join(named[:8]), data_ok
+    return False, summary + " | " + ", ".join(extra[:10]), data_ok
 
 
 def main():
@@ -246,6 +261,7 @@ def main():
                  rename=opt("--rename-map"), defined="--allow-defined" in sys.argv,
                  layout="--allow-layout" in sys.argv,
                  census_move="--allow-census-move" in sys.argv,
+                 code_change="--code-change" in sys.argv,
                  census_removed=[x for x in (opt("--allow-census-removed") or "").split(",") if x])
     g = compare(ref, cur, allow, toolchain.objdump())
 
