@@ -22,6 +22,7 @@
  */
 #ifndef STRIDE_RADER_H
 #define STRIDE_RADER_H
+#include "common/math/pi.h"
 
 #include "executor.h"
 #include "bluestein.h"   /* reuse _blue_cmul_vv, _bluestein_block_size */
@@ -176,7 +177,7 @@ static void _rader_precompute_kernel(
     memset(work_im, 0, NB * sizeof(double));
 
     for (int m = 0; m < nm1; m++) {
-        double angle = sign * 2.0 * M_PI * (double)perm[m] / (double)N;
+        double angle = sign * 2.0 * VFFT_PI * (double)perm[m] / (double)N;
         double wr = cos(angle), wi = sin(angle);
         size_t base = (size_t)m * B;
         for (size_t k = 0; k < B; k++) {

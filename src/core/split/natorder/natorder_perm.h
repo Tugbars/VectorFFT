@@ -17,9 +17,7 @@
 #include <string.h>
 #include <math.h>
 
-#ifndef VFFT_NATORDER_PI
-#define VFFT_NATORDER_PI 3.14159265358979323846
-#endif
+#include "common/math/pi.h"
 
 /* Mixed-radix digit reversal over chain f[0..nf-1]: little-endian digits of n become
  * big-endian slot digits in the SAME factor order. perm[n] = memory row of bin n. */
@@ -62,7 +60,7 @@ static inline int *vfft_natorder_detect(int N, const int *f, int nf, size_t K,
         int ok = 1;
         for (int t = 0; t < 12 && ok; t++) {
             int k = (int)(((long long)(t * 2654435761u)) % (unsigned)N);
-            double a  = -2.0 * VFFT_NATORDER_PI * (double)k * (double)n0 / (double)N;
+            double a  = -2.0 * VFFT_PI * (double)k * (double)n0 / (double)N;
             double er = re[(size_t)cand[c][k] * K] - cos(a);
             double ei = im[(size_t)cand[c][k] * K] - sin(a);
             if (er * er + ei * ei > 1e-12) ok = 0;

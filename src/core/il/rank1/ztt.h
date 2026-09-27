@@ -61,9 +61,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>              /* the fine table above the octave                   */
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+#include "common/math/pi.h"
 
 /* FUSED CODELETS: the drivers this plan binds are
  * whole-transform functions, one per pow2 cell (N, chain, direction, buffer

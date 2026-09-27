@@ -60,9 +60,7 @@
 #include <immintrin.h>
 #endif
 
-#ifndef VFFT_ZR2C_PI
-#define VFFT_ZR2C_PI 3.14159265358979323846
-#endif
+#include "common/math/pi.h"
 
 /* Pair tables, N/4+1 entries each (f = 0..N/4 inclusive covers every pair
  * index for any even N; entry 0 is never read — kept for direct indexing).
@@ -80,7 +78,7 @@ static void _zr2c_init_aff(int N, double *affS, double *affC,
     int top = N / 4;
     for (int f = 0; f <= top; f++)
     {
-        double th = 2.0 * VFFT_ZR2C_PI * (double)f / (double)N;
+        double th = 2.0 * VFFT_PI * (double)f / (double)N;
         double sn = sin(th), cs = cos(th);
         affS[f] = 0.5 - 0.5 * sn;   /* forward: the affine encoding */
         affC[f] = 0.5 * cs;

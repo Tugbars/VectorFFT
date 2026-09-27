@@ -25,6 +25,7 @@
  * ═══════════════════════════════════════════════════════════════ */
 #ifndef VFFT_RFFT_H
 #define VFFT_RFFT_H
+#include "common/math/pi.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -359,7 +360,7 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
              * Twiddle slot j-1; slot r-1 in each column block is dead. */
             for (int k = 1; k <= st->kmax; k++) {
                 for (int j = 1; j < r; j++) {
-                    double th = 2.0 * M_PI * (double)j * (double)k /
+                    double th = 2.0 * VFFT_PI * (double)j * (double)k /
                                 (double)st->np;
                     st->tw_re[(size_t)(k - 1) * r + (j - 1)] = cos(th);
                     st->tw_im[(size_t)(k - 1) * r + (j - 1)] = -sin(th);
@@ -374,7 +375,7 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
             if (!st->mid_c || !st->mid_s) goto fail;
             for (int s = 0; s < r; s++)
                 for (int j = 0; j < r; j++) {
-                    double th = -2.0 * M_PI * (double)j *
+                    double th = -2.0 * VFFT_PI * (double)j *
                         ((double)st->m / 2.0 + (double)s * st->m) /
                         (double)st->np;
                     st->mid_c[s * r + j] = cos(th);

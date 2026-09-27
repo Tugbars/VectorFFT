@@ -46,6 +46,7 @@
  * prime-route lengths). The mechanism is not identified. */
 #ifndef VFFT_TW_EXACT_H
 #define VFFT_TW_EXACT_H
+#include "common/math/pi.h"
 
 #include <math.h>
 
@@ -63,7 +64,7 @@ static inline void vfft_cs2pi_exact(long long p, long long n, double *c, double 
     if (t > 2 * n) { t = 4 * n - t; flip_c = 1; }     /* (1/4, 1/2]: cos(pi - x) = -cos x    */
     if (t > n)     { t = 2 * n - t; swap = 1; }       /* (1/8, 1/4]: cos(pi/2 - x) = sin x   */
 
-    th = 3.141592653589793238462643383279502884L * (long double)t / (4.0L * (long double)n);
+    th = VFFT_PI_L * (long double)t / (4.0L * (long double)n);
     cv = (double)cosl(th);
     sv = (double)sinl(th);
     if (swap) { const double tmp = cv; cv = sv; sv = tmp; }

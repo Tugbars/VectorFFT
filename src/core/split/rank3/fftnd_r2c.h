@@ -33,6 +33,7 @@
  */
 #ifndef STRIDE_FFTND_R2C_H
 #define STRIDE_FFTND_R2C_H
+#include "common/math/pi.h"
 
 #include <time.h> /* clock_gettime for the adoption A/B timing (win: mingw provides it) */
 #include "fftnd.h"                /* taxonomy helpers + include set */
@@ -463,7 +464,7 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
                     if (mag < 0.999 || mag > 1.001) { det_fail = 1; break; }
                     double ang = atan2(vi, vr);
                     long kk = llround(-ang * (double)Nm /
-                                      (2.0 * 3.14159265358979323846));
+                                      (2.0 * VFFT_PI));
                     int k = (int)(((kk % Nm) + Nm) % Nm);
                     if (seen_[k]) { det_fail = 1; break; }
                     seen_[k] = 1;

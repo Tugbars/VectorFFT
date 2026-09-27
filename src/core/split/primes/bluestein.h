@@ -25,6 +25,7 @@
  */
 #ifndef STRIDE_BLUESTEIN_H
 #define STRIDE_BLUESTEIN_H
+#include "common/math/pi.h"
 
 #include "executor.h"
 
@@ -180,7 +181,7 @@ static void _bluestein_chirp(int N, double *chirp_re, double *chirp_im) {
     long long n2 = 2 * (long long)N;
     long long ksq = 0;
     for (int k = 0; k < N; k++) {
-        double angle = -M_PI * (double)ksq / (double)N;
+        double angle = -VFFT_PI * (double)ksq / (double)N;
         chirp_re[k] = cos(angle);
         chirp_im[k] = sin(angle);
         ksq = (ksq + 2 * k + 1) % n2;

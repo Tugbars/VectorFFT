@@ -30,7 +30,7 @@
 #endif
 
 /* Self-contained timer, so this header builds without dp_planner.h
- * (vfft_proto_now_ns). */
+ * (vfft_now_ns). */
 static inline double _bcal_now_ns(void) {
 #if defined(_WIN32)
     LARGE_INTEGER f, c;

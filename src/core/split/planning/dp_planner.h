@@ -38,22 +38,7 @@
 
 /* the timer, the aligned-alloc wrapper and the permutation types */
 
-#ifdef _WIN32
-#  define WIN32_LEAN_AND_MEAN
-#  include <windows.h>
-static inline double vfft_proto_now_ns(void) {
-    static LARGE_INTEGER freq = {0};
-    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
-    LARGE_INTEGER t; QueryPerformanceCounter(&t);
-    return (double)t.QuadPart / (double)freq.QuadPart * 1e9;
-}
-#else
-#  include <time.h>
-static inline double vfft_proto_now_ns(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
-#endif
+#include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 
 /* Pointer-returning wrapper over vfft_proto_posix_memalign (which returns
  * int and writes the pointer through an out-arg). */
@@ -414,10 +399,10 @@ static double _vfft_proto_dp_bench(vfft_proto_dp_context_t *ctx, int N,
         {
             memcpy(ctx->re, ctx->orig_re, total * sizeof(double));
             memcpy(ctx->im, ctx->orig_im, total * sizeof(double));
-            double t0 = vfft_proto_now_ns();
+            double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
                 vfft_proto_execute_fwd(plan, ctx->re, ctx->im, K_eff);
-            double trial_ns = vfft_proto_now_ns() - t0;
+            double trial_ns = vfft_now_ns() - t0;
             if (trial_ns < tmin_trial)
                 tmin_trial = trial_ns;
             total_elapsed += trial_ns;

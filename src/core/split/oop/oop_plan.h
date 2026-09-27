@@ -50,9 +50,7 @@
  * decode() writes into caller arrays sized by this macro. */
 #define VFFT_K1_CC_MAX_NF 7
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+#include "common/math/pi.h"
 
 #include "common/abi/route_ids.h" /* VFFT_K1_SP_* / VFFT_K1_IL_* route ids, vfft_oop_kind_t */
 
@@ -147,7 +145,7 @@ static inline int _vfft_oop_fill_bailey(vfft_oop_plan_t *p,
     for (int l2 = 1; l2 < R1; l2++)
         for (int k2 = 0; k2 < R2; k2++)
         {
-            double a = -2.0 * M_PI * (double)((long)l2 * k2) / (double)N;
+            double a = -2.0 * VFFT_PI * (double)((long)l2 * k2) / (double)N;
             double cr = cos(a), ci = sin(a);
             const size_t base = (size_t)(l2 - 1) * rows + (size_t)k2 * reps;
             for (size_t g = 0; g < reps; g++)
@@ -252,7 +250,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
                 for (int l = 1; l < R1; l++)
                     for (int k = 0; k < 4; k++)
                     {
-                        double a = -2.0 * M_PI *
+                        double a = -2.0 * VFFT_PI *
                                    (double)((long)l * (b0 + k)) / (double)N;
                         size_t idx = (size_t)b0 * (R1 - 1) +
                                      (size_t)(l - 1) * 4 + (size_t)k;
@@ -438,7 +436,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc_v(
     /* odd-K (K=1) flat-t1 table layout, same as _vfft_oop_fill_bailey */
     for (int l2 = 1; l2 < R1; l2++)
         for (int k2 = 0; k2 < R2; k2++) {
-            double a = -2.0 * M_PI * (double)((long)l2 * k2) / (double)N;
+            double a = -2.0 * VFFT_PI * (double)((long)l2 * k2) / (double)N;
             p->Qr[(size_t)(l2 - 1) * R2 + k2] = cos(a);
             p->Qi[(size_t)(l2 - 1) * R2 + k2] = sin(a);
         }
@@ -474,7 +472,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc_v(
                 for (int m = 0; m < R2; m++) {
                     Sr[m] = 0; Si[m] = 0;
                     for (int j = 0; j < R2; j++) {
-                        double a = -2.0 * M_PI *
+                        double a = -2.0 * VFFT_PI *
                                    (double)(((long)m * j) % R2) / (double)R2;
                         double cr = cos(a), ci = sin(a);
                         Sr[m] += sr[j] * cr - si_[j] * ci;

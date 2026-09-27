@@ -56,7 +56,7 @@ long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h: the odd-N flat DIT MT eng
 long vfft_il2d_col_mt_passes(void); /* the 2D tier's MT engagement counter (column walk + the c2c MT walk) */
 long vfft_ilnd_mt_passes(void);     /* the rank-3 tier's MT engagement counter */
 #include "planner.h"
-#include "dp_planner.h" /* vfft_proto_now_ns + dp_set_patient */
+#include "dp_planner.h" /* vfft_now_ns + dp_set_patient */
 #include "measure.h"    /* --pad: vfft_proto_dp_plan_measure (the strongest planner, measured refine) */
 #ifdef VFFT_USE_JIT
 #include "jit/jit_runtime.h" /* vfft_proto_plan_jit_fwd (build.py --jit) */
@@ -235,10 +235,10 @@ static double bench_jit(vfft_proto_exec_fn fn, const stride_plan_t *plan,
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             dag_fwd_mt(fn, plan, re, im);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -256,10 +256,10 @@ static double bench_generic(stride_plan_t *plan, double *re, double *im,
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             dag_fwd_mt(NULL, plan, re, im);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -339,10 +339,10 @@ static double bench_mkl(DFTI_DESCRIPTOR_HANDLE d, double *re, double *im, size_t
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             DftiComputeForward(d, re, im);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -533,12 +533,12 @@ static vfft_wisdom *k1z_bundle(void)
 #define K1Z_WINDOW_WARM_NS 1.0e7
 static void k1z_window_gap(vfft_plan h, int dir, double *z0, double *S)
 {
-    const double tw0 = vfft_proto_now_ns();
+    const double tw0 = vfft_now_ns();
     pace(K1Z_WINDOW_IDLE_MS);
     do
         g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
                 : vfft_execute(h, dir, z0, NULL, S, NULL);
-    while (vfft_proto_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+    while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
 }
 
 static double k1z_time_vfft_d(vfft_plan h, double *z0, double *S, size_t total,
@@ -552,10 +552,10 @@ static double k1z_time_vfft_d(vfft_plan h, double *z0, double *S, size_t total,
     {   /* >= 5 ms untimed: the pool rebuilt before this arm starts up, the
          * workers' cache partition settles, the caller core is back at full
          * clock (3D_mt_il_strategy.md, the transient rule) */
-        const double tw = vfft_proto_now_ns();
+        const double tw = vfft_now_ns();
         do
             vfft_execute(h, dir, z0, NULL, S, NULL);
-        while (vfft_proto_now_ns() - tw < 5e6);
+        while (vfft_now_ns() - tw < 5e6);
     }
     else
         for (int w = 0; w < 10; w++)
@@ -578,11 +578,11 @@ static double k1z_time_vfft_d(vfft_plan h, double *z0, double *S, size_t total,
         {
             if (t)
                 pace(g_trial_pace_ms);
-            double t0 = vfft_proto_now_ns();
+            double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
                 g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
                         : vfft_execute(h, dir, z0, NULL, S, NULL);
-            double ns = (vfft_proto_now_ns() - t0) / reps;
+            double ns = (vfft_now_ns() - t0) / reps;
             if (ns < best)
                 best = ns;
         }
@@ -614,10 +614,10 @@ static double k1z_time_mkl(int N, const double *z0, size_t total)
     memcpy(zi, z0, 2 * total * sizeof(double));
     if (g_k1noop_mt)
     {   /* >= 5 ms untimed: MKL's parked team wakes and settles */
-        const double tw = vfft_proto_now_ns();
+        const double tw = vfft_now_ns();
         do
             DftiComputeForward(d, zi, zo);
-        while (vfft_proto_now_ns() - tw < 5e6);
+        while (vfft_now_ns() - tw < 5e6);
     }
     else
         for (int w = 0; w < 10; w++)
@@ -629,20 +629,20 @@ static double k1z_time_mkl(int N, const double *z0, size_t total)
     {
         if (win)
         {
-            const double tw0 = vfft_proto_now_ns();
+            const double tw0 = vfft_now_ns();
             pace(K1Z_WINDOW_IDLE_MS);
             do
                 g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo);
-            while (vfft_proto_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
         }
         for (int t = 0; t < 5; t++)
         {
             if (t)
                 pace(g_trial_pace_ms);
-            double t0 = vfft_proto_now_ns();
+            double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
                 g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo);
-            double ns = (vfft_proto_now_ns() - t0) / reps;
+            double ns = (vfft_now_ns() - t0) / reps;
             if (ns < best)
                 best = ns;
         }
@@ -674,20 +674,20 @@ static double k1z_time_kfr(int N, const double *z0, size_t total)
     {
         if (win)
         {
-            const double tw0 = vfft_proto_now_ns();
+            const double tw0 = vfft_now_ns();
             pace(K1Z_WINDOW_IDLE_MS);
             do
                 KFR_RUN();
-            while (vfft_proto_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
         }
         for (int t = 0; t < 5; t++)
         {
             if (t)
                 pace(g_trial_pace_ms);
-            double t0 = vfft_proto_now_ns();
+            double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
                 KFR_RUN();
-            double ns = (vfft_proto_now_ns() - t0) / reps;
+            double ns = (vfft_now_ns() - t0) / reps;
             if (ns < best)
                 best = ns;
         }
@@ -1012,10 +1012,10 @@ static double k2z_time_mkl(int N1, int N2, int N3, const double *z0, size_t tota
     memcpy(zi, z0, 2 * total * sizeof(double));
     if (g_k1noop_mt)
     {   /* >= 5 ms untimed: MKL's parked team wakes and settles (the threaded cell, 2026-09-24) */
-        const double tw = vfft_proto_now_ns();
+        const double tw = vfft_now_ns();
         do
             DftiComputeForward(d, zi, zo);
-        while (vfft_proto_now_ns() - tw < 5e6);
+        while (vfft_now_ns() - tw < 5e6);
     }
     else
         for (int w = 0; w < 10; w++)
@@ -1026,20 +1026,20 @@ static double k2z_time_mkl(int N1, int N2, int N3, const double *z0, size_t tota
     {
         if (win)
         {
-            const double tw0 = vfft_proto_now_ns();
+            const double tw0 = vfft_now_ns();
             pace(K1Z_WINDOW_IDLE_MS);
             do
                 DftiComputeForward(d, zi, zo);
-            while (vfft_proto_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
         }
         for (int t = 0; t < 5; t++)
         {
             if (t)
                 pace(g_trial_pace_ms);
-            double t0 = vfft_proto_now_ns();
+            double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
                 DftiComputeForward(d, zi, zo);
-            double ns = (vfft_proto_now_ns() - t0) / reps;
+            double ns = (vfft_now_ns() - t0) / reps;
             if (ns < best)
                 best = ns;
         }
@@ -1278,20 +1278,20 @@ static double kzb_time_mkl(int N, int K, const double *z0, size_t total,
     {
         if (win)
         {
-            const double tw0 = vfft_proto_now_ns();
+            const double tw0 = vfft_now_ns();
             pace(K1Z_WINDOW_IDLE_MS);
             do
                 DftiComputeForward(d, zi, zo);
-            while (vfft_proto_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
         }
         for (int t = 0; t < 5; t++)
         {
             if (t)
                 pace(g_trial_pace_ms);
-            double t0 = vfft_proto_now_ns();
+            double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
                 DftiComputeForward(d, zi, zo);
-            double ns = (vfft_proto_now_ns() - t0) / reps;
+            double ns = (vfft_now_ns() - t0) / reps;
             if (ns < best)
                 best = ns;
         }
@@ -1360,12 +1360,12 @@ static double kzb_time_loop(vfft_plan h1, int N, int K, double *z0h,
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             for (int k = 0; k < K; k++)
                 vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, NULL,
                              S + (size_t)k * tn, NULL);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -1631,10 +1631,10 @@ static double ilmt_time_ours(vfft_plan h, double *z0, double *S, size_t total)
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -1673,10 +1673,10 @@ static double ilmt_time_mkl(int N, int K, const double *z0, size_t total,
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             DftiComputeForward(d, zi, zo);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -1872,10 +1872,10 @@ static double bench_mkl_oop(int N, size_t K, const double *sr, const double *si,
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             DftiComputeForward(d, (void *)sr, (void *)si, mr, mi);
-        double e = (vfft_proto_now_ns() - t0) / reps;
+        double e = (vfft_now_ns() - t0) / reps;
         if (e < best)
             best = e;
     }
@@ -1971,10 +1971,10 @@ static double time_oop(const vfft_oop_plan_t *p, const double *sr, const double 
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             oop_run(p, sr, si, dr, di);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -2232,7 +2232,7 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                 double t0, dt;
                 size_t k;
                 cachebust();
-                t0 = vfft_proto_now_ns();
+                t0 = vfft_now_ns();
                 for (k = 0; k < reps; k++)
                 {
                     if (arm == 0)
@@ -2244,7 +2244,7 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                     else if (arm == 3 && pn)
                         vfft_execute(pn, VFFT_FORWARD, x, NULL, zn, NULL);
                 }
-                dt = (vfft_proto_now_ns() - t0) / (double)reps;
+                dt = (vfft_now_ns() - t0) / (double)reps;
                 if (arm == 0) ts[ns_++] = dt;
                 else if (arm == 1 && mok) tm[nm++] = dt;
                 else if (arm == 2) tc[nc++] = dt;
@@ -2378,7 +2378,7 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                     double t0, dt;
                     size_t k;
                     cachebust();
-                    t0 = vfft_proto_now_ns();
+                    t0 = vfft_now_ns();
                     for (k = 0; k < reps; k++)
                     {
                         if (arm == 0)
@@ -2390,7 +2390,7 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                             vfft_execute(pnc, VFFT_BACKWARD, zn, NULL, xr,
                                          NULL);
                     }
-                    dt = (vfft_proto_now_ns() - t0) / (double)reps;
+                    dt = (vfft_now_ns() - t0) / (double)reps;
                     if (arm == 0) bs[bns++] = dt;
                     else if (arm == 1 && mok2) bm[bnm++] = dt;
                     else if (arm == 2 && pnc) bn[bnn++] = dt;
@@ -2558,7 +2558,7 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                 a = (r & 1) ? 5 - a0 : a0;
                 if (!have[a]) continue;
                 cachebust();
-                t0 = vfft_proto_now_ns();
+                t0 = vfft_now_ns();
                 for (k = 0; k < reps; k++) {
                     switch (a) {
                     case 0: vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg); break;
@@ -2569,7 +2569,7 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                     case 5: memcpy(cd, cs, 2 * T * 8); break;
                     }
                 }
-                ns = (vfft_proto_now_ns() - t0) / reps;
+                ns = (vfft_now_ns() - t0) / reps;
                 smp[a][r] = ns;
             }
         }
@@ -2584,7 +2584,7 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
             a = (r & 1) ? 5 - a0 : a0;
             if (!have[a]) continue;
             cachebust();
-            t0 = vfft_proto_now_ns();
+            t0 = vfft_now_ns();
             for (k = 0; k < reps; k++) {
                 switch (a) {
                 case 0: vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg); break;
@@ -2593,7 +2593,7 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                 case 5: memcpy(cd, cs, 2 * T * 8); break;
                 }
             }
-            ns = (vfft_proto_now_ns() - t0) / reps;
+            ns = (vfft_now_ns() - t0) / reps;
             smp[a][r] = ns;
         }
     }
@@ -2793,7 +2793,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
             if (T <= 1 && g_trial_pace_ms > 0) {
                 /* paced one-thread samples: the same >= 5 ms untimed warm-up
                  * on every arm, so the pace never lands in the timed reps */
-                const double tw = vfft_proto_now_ns();
+                const double tw = vfft_now_ns();
                 do {
                     switch (a) {
                     case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); nexec++; break;
@@ -2803,7 +2803,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
 #endif
                     default: memcpy(cd, cs, 2 * TN * 8); break;
                     }
-                } while (vfft_proto_now_ns() - tw < 5e6);
+                } while (vfft_now_ns() - tw < 5e6);
             }
             if (T > 1) {
                 /* THREAD HYGIENE (the --ilmt traps): (a) the library's pool
@@ -2834,7 +2834,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
                  * round-0 mean 57-223 us, steady 40 us), so one warm
                  * execute left the timed reps inside that transient. */
                 {
-                    const double tw = vfft_proto_now_ns();
+                    const double tw = vfft_now_ns();
                     do {
                         switch (a) {
                         case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); nexec++; break;
@@ -2844,10 +2844,10 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
 #endif
                         default: break;
                         }
-                    } while (a != 3 && vfft_proto_now_ns() - tw < 5e6);
+                    } while (a != 3 && vfft_now_ns() - tw < 5e6);
                 }
             }
-            t0 = vfft_proto_now_ns();
+            t0 = vfft_now_ns();
             for (k = 0; k < reps; k++) {
                 switch (a) {
                 case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); nexec++; break;
@@ -2858,7 +2858,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
                 case 3: memcpy(cd, cs, 2 * TN * 8); break;
                 }
             }
-            ns = (vfft_proto_now_ns() - t0) / reps;
+            ns = (vfft_now_ns() - t0) / reps;
             smp[a][r] = ns;
             if (getenv("VFFT_IL2D_LOG"))
                 fprintf(stderr, "[3dil] r%d arm%d reps=%d %.0f ns\n", r, a, reps, ns);
@@ -2925,10 +2925,10 @@ static double bench_mkl_2d(DFTI_DESCRIPTOR_HANDLE h, const double *xr, const dou
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             DftiComputeForward(h, (void *)xr, (void *)xi, mr, mi);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -2962,10 +2962,10 @@ static double bench_mkl_2dr2c(DFTI_DESCRIPTOR_HANDLE h, const double *x, double 
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             DftiComputeForward(h, (void *)x, cce);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -2991,10 +2991,10 @@ static double bench_mkl_2dc2r(DFTI_DESCRIPTOR_HANDLE h, const double *cce, doubl
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             DftiComputeBackward(h, (void *)cce, real_out);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -3041,10 +3041,10 @@ static double time_r2c(const vfft_r2c_plan_t *p, const double *x, double *o_re, 
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             vfft_r2c_execute_fwd(p, x, o_re, o_im);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -3061,10 +3061,10 @@ static double bench_mkl_r2c(DFTI_DESCRIPTOR_HANDLE h, const double *xin, double 
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             DftiComputeForward(h, (void *)xin, cce);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -3166,10 +3166,10 @@ static double time_c2r(const vfft_c2r_disp_t *p, const double *in_a, const doubl
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             vfft_c2r_disp_execute(p, in_a, in_b, y);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -3186,10 +3186,10 @@ static double bench_mkl_c2r(DFTI_DESCRIPTOR_HANDLE h, const double *cce, double 
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             DftiComputeBackward(h, (void *)cce, real_out);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -3378,9 +3378,9 @@ static double _zr2c_med5(double t[5])
         for (int w_ = 0; w_ < 3; w_++) { BODY; }                    \
         for (int t_ = 0; t_ < 5; t_++) {                            \
             if (t_) pace(g_trial_pace_ms);                          \
-            double t0_ = vfft_proto_now_ns();                       \
+            double t0_ = vfft_now_ns();                       \
             for (int i_ = 0; i_ < reps; i_++) { BODY; }             \
-            (dst)[t_] = (vfft_proto_now_ns() - t0_) / reps;         \
+            (dst)[t_] = (vfft_now_ns() - t0_) / reps;         \
         }                                                           \
     } while (0)
 
@@ -4348,10 +4348,10 @@ static double time_2d_fd(vfft_plan p, double *re, double *im, size_t T)
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             vfft_execute(p, VFFT_FORWARD, re, im, re, im);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -4367,10 +4367,10 @@ static double time_2dr2c_fd(vfft_plan p, double *x, double *o_re, double *o_im, 
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             vfft_execute(p, VFFT_FORWARD, x, NULL, o_re, o_im);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
@@ -4386,10 +4386,10 @@ static double time_2dc2r_fd(vfft_plan p, double *in_re, double *in_im, double *r
     {
         if (t)
             pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             vfft_execute(p, VFFT_BACKWARD, in_re, in_im, real_out, NULL);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }

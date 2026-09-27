@@ -1,5 +1,6 @@
 #ifndef VFFT_STRIDED_ROWS_H
 #define VFFT_STRIDED_ROWS_H
+#include "common/math/pi.h"
 
 /* ── OPT-IN STRIDED ROW PASS (define VFFT_STRIDED_ROWS) ──────────────────
  * The strided mono n1 codelets (codelets/strided/, "Design C, 2D rows")
@@ -114,8 +115,8 @@ static inline int _vfft_strided_verify_natural(_vfft_strided_fn f, int N) {
     f(re, im, NULL, NULL, (size_t)N, me);
     double mx = 0.0;
     for (int k = 0; k < N; k++) {
-        double d = fabs(re[k] - cos(-2.0 * 3.14159265358979323846 * k / N))
-                 + fabs(im[k] - sin(-2.0 * 3.14159265358979323846 * k / N));
+        double d = fabs(re[k] - cos(-2.0 * VFFT_PI * k / N))
+                 + fabs(im[k] - sin(-2.0 * VFFT_PI * k / N));
         if (d > mx) mx = d;
     }
     free(re); free(im);

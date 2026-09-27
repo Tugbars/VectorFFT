@@ -40,9 +40,7 @@
 #include "executor.h"
 #include <math.h>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+#include "common/math/pi.h"
 
 typedef struct {
     int N;                  /* DCT-IV size (must be even) */
@@ -289,12 +287,12 @@ static stride_plan_t *stride_dct4_plan(int N, size_t K, stride_plan_t *fft_plan_
         _dct4_destroy(d); return NULL;
     }
     for (int m = 0; m < halfN; m++) {
-        const double a = M_PI * (double)m / (double)N;
+        const double a = VFFT_PI * (double)m / (double)N;
         d->pre_cos[m] = cos(a);
         d->pre_sin[m] = sin(a);
     }
     for (int kp = 0; kp < halfN; kp++) {
-        const double a = M_PI * (double)(4 * kp + 1) / (4.0 * (double)N);
+        const double a = VFFT_PI * (double)(4 * kp + 1) / (4.0 * (double)N);
         d->post_cos2[kp] = 2.0 * cos(a);
         d->post_sin2[kp] = 2.0 * sin(a);
     }

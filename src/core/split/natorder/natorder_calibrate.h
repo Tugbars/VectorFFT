@@ -83,14 +83,14 @@ static inline double _natorder_sample(stride_plan_t *p, double *re, double *im, 
         re[i] = (double)((i * 2654435761u) & 1023) / 1024.0 - 0.5;
         im[i] = (double)((i * 40503u) & 1023) / 1024.0 - 0.5;
     }
-    double t0 = vfft_proto_now_ns();
+    double t0 = vfft_now_ns();
     for (int c = 0; c < VFFT_NATORDER_CHUNK; c++) {
         if (fn) fn(p, re, im, K, p->K, 0);
         else    vfft_proto_execute_fwd(p, re, im, K);
         if (cycles) vfft_natorder_cycle_pass(re, im, K, cycles, tmp);
         else if (pairs) vfft_natorder_pair_pass(re, im, K, pairs);
     }
-    return (vfft_proto_now_ns() - t0) / VFFT_NATORDER_CHUNK;
+    return (vfft_now_ns() - t0) / VFFT_NATORDER_CHUNK;
 }
 
 /* One SCR sample: CHUNK fused forwards (OOP scratch-fill stages + scatter terminator). */
@@ -101,10 +101,10 @@ static inline double _natorder_scr_sample(natorder_scr_t *scr, double *re, doubl
         re[i] = (double)((i * 2654435761u) & 1023) / 1024.0 - 0.5;
         im[i] = (double)((i * 40503u) & 1023) / 1024.0 - 0.5;
     }
-    double t0 = vfft_proto_now_ns();
+    double t0 = vfft_now_ns();
     for (int c = 0; c < VFFT_NATORDER_CHUNK; c++)
         natorder_scr_fwd(scr, re, im, K);
-    return (vfft_proto_now_ns() - t0) / VFFT_NATORDER_CHUNK;
+    return (vfft_now_ns() - t0) / VFFT_NATORDER_CHUNK;
 }
 
 #include "common/support/race.h" /* the shared race body */

@@ -12,7 +12,7 @@
 #include "plan.h"
 #include "executor.h"
 #include "planner.h"
-#include "dp_planner.h"     /* re-use vfft_proto_now_ns + perm gen + factorization_t */
+#include "dp_planner.h"     /* re-use vfft_now_ns + perm gen + factorization_t */
 #include "registry.h"
 #include "exhaustive_knobs.h" /* depth/prune knobs (was env.h part 2) */
 
@@ -161,10 +161,10 @@ static inline double vfft_proto_bench_one_v(
     for (int t = 0; t < 3; t++) {
         memcpy(re, orig_re, total * sizeof(double));
         memcpy(im, orig_im, total * sizeof(double));
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             vfft_proto_execute_fwd(plan, re, im, K);
-        double ns = (vfft_proto_now_ns() - t0) / reps;
+        double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best) best = ns;
     }
 
