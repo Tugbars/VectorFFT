@@ -137,6 +137,16 @@ address, so a two-column ymm rung cannot store through it. They were verified th
 (bitwise equal to AVX2 over counts 1–13, four buffer offsets, a guard page after the
 output).
 
+**Exception — column-stride kinds** (n1ccs, t2cs, t2csg, t2csgn and their backward and
+transposed twins, 216 avx512 files) take the ymm + xmm ladder at 3 leftovers. Their
+columns sit `Gs` apart, not side by side; the ymm and xmm rungs gather each column
+through `loadu2`/`storeu2`, but a masked zmm access is one contiguous address range and
+reads the wrong data. Found on 2026-09-27 by the 2D interleaved C2C test (7x13 through
+the batched-rows route, whose n1ccs kernel runs at count 7) and confirmed kernel by kernel:
+wrong at counts 3, 7, 11, 15, bitwise equal to AVX2 at every count after the fix. The
+generator's `tail_policy` picks "ladder" for these kinds; L10 gained a `colstride`
+argument.
+
 **AVX2 is unchanged**: at 2 complex per vector the leftover is at most one column, and
 the shipped narrow tail stays byte-identical.
 
