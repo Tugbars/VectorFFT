@@ -35,6 +35,8 @@ inferred:
                            adds functions); undefined and mutable never may
   --allow-layout           R4: layout.txt may change (phase 8, the struct split)
   --allow-census-move      R0: race sites may move between files (counts kept)
+  --allow-census-removed F1.h,..  R0: these files were DELETED; their reference
+                           sites are subtracted before the totals are compared
 
 USAGE
   python step_gate.py --ref REFDIR --isa avx2|avx512 [--scratch DIR]
@@ -104,10 +106,12 @@ def compare(ref, cur, allow, strict_objdump):
           (dup or b"").decode()[:300])
     new_unres = [l[2:] for l in diff_lines(ref, cur, "includes_unresolved.txt", 50) if l.startswith("+")]
     g.add("R0", "no new unresolved #include", not new_unres, "; ".join(new_unres[:6]))
-    rc = _census_counts(ref), _census_counts(cur)
+    rc = _census_counts(ref, allow["census_removed"]), _census_counts(cur, [])
     moved = rc[0][1] != rc[1][1]
     g.add("R0", "race sites: same total", rc[0][0] == rc[1][0],
-          "timing/verdicts %s -> %s" % (rc[0][0], rc[1][0]))
+          "timing/verdicts %s -> %s%s" % (rc[0][0], rc[1][0],
+          (" (reference minus deleted %s)" % ",".join(allow["census_removed"]))
+          if allow["census_removed"] else ""))
     g.add("R0", "race sites: same files", not moved,
           "; ".join(diff_lines(ref, cur, "race_census_files.txt", 6)),
           gated=not allow["census_move"])
@@ -173,13 +177,13 @@ def compare(ref, cur, allow, strict_objdump):
     return g
 
 
-def _census_counts(d):
+def _census_counts(d, removed):
     t = (read(d, "race_census_files.txt") or b"").decode().splitlines()
     tot = [0, 0]
     files = []
     for l in t:
         p = l.split()
-        if len(p) == 3 and not l.startswith("#"):
+        if len(p) == 3 and not l.startswith("#") and p[0] not in removed:
             tot[0] += int(p[1])
             tot[1] += int(p[2])
             files.append(l)
@@ -241,7 +245,8 @@ def main():
                  changed=[x for x in (opt("--allow-changed") or "").split(",") if x],
                  rename=opt("--rename-map"), defined="--allow-defined" in sys.argv,
                  layout="--allow-layout" in sys.argv,
-                 census_move="--allow-census-move" in sys.argv)
+                 census_move="--allow-census-move" in sys.argv,
+                 census_removed=[x for x in (opt("--allow-census-removed") or "").split(",") if x])
     g = compare(ref, cur, allow, toolchain.objdump())
 
     print("\n%-4s %-6s %-48s %s" % ("rung", "state", "check", "detail"))
