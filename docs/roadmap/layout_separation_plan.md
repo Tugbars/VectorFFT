@@ -501,6 +501,14 @@ not govern linkage. The checker reads the `#include` lines.
   `tw_exact.h`, and unifying the two digit-reversal permutations. These are
   improvements, not restructuring. Do them after the tree is split, each with its own
   proof.
+  - **Owner (2026-09-27), twiddles: `tw_exact.h` is the canonical path for every
+    twiddle table; split must comply.** The split tables built as `cos/sin` of a
+    double angle (`r2c.h`, `strided_tw.h`, and the rest found by a sweep) move to
+    `vfft_cs2pi_exact`. Split output bits change by design: the proof is an accuracy
+    report against a high-precision reference (must improve or hold at every gauntlet
+    size) with plan choices unchanged, then the golden bits are re-baselined.
+  - **Owner (2026-09-27), digit-reversal permutations: do not touch.** Split and IL are
+    different libraries; the owner revisits the split side after IL is finished.
 - **D6. Dead code.** Delete it (recommended) rather than move it:
   - `conv/conv.h`, `fftnd_natorder.h`, `fftnd_planner.h`, `fftnd_wisdom.h`;
   - `engine/compat.h`;
