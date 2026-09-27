@@ -524,6 +524,31 @@ Notes:
 - **The ZTT MT split and the AVX-512 tail work continue on the new tree.** They touch
   only `il/`, which is the point.
 
+> **WARNING (owner, 2026-09-27): the kind-3 wisdom record split is the most
+> dangerous change of the whole separation.** Decision: option (a), split
+> `vfft_oop_wisdom_entry_t` and its reader into a split record/codec and an
+> interleaved record/codec. It is necessary, and it touches the code that
+> reads, races and banks every K=1 verdict of both layouts (about 400 field
+> accesses in 8 files: `wisdom2_oop.h`, `wisdom2_oop_reader.h`, `k1_commit.h`,
+> `c2c_oop_create.h`, `dp_planner_il.h`, `dp_planner_split_oop.h`,
+> `wisdom2_migrate.h`, `zr2c_build.h`).
+>
+> The cloud gate covers it on this VM only: output bits, fingerprints, the
+> 271-cell API sweep, the wisdom replay and the store round trip, at both
+> ISAs. **After this split, everything has to be tested thoroughly on the
+> owner's own machines** (the i9-14900KF AVX2 box and the Zen 4 AVX-512
+> laptop) before the branch is trusted:
+> - the gate battery (`build_tuned/run_gates.py`) at both ISAs;
+> - cold creates that RACE and BANK into a scratch store, then a replay of
+>   that store (the banking path is what the split rewrote, and the VM's
+>   replay mostly exercises lookups);
+> - the gauntlet `verify` groups (pow2, primes, 2d-small, 3d-pow2) and a
+>   calibrate-and-race of a few K=1 cells of each engine family (pair,
+>   chain3, flat DIT, ZTURN-T, four-step, prime, mono), in place and out of
+>   place, natural and scrambled;
+> - the wisdom migrator on an old-format store;
+> - the owner's usual performance runs, against the pre-separation build.
+
 ## 7. Regression gate: refurbishing `src/tools/baseline/`
 
 ### What exists
