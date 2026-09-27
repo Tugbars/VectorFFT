@@ -526,6 +526,13 @@ not govern linkage. The checker reads the `#include` lines.
       primitive root of all 295,946 primes to 2^22 and of the 2,841 split-Rader ones):
       0 mismatches. The objects change only in the helpers' callers and in compiler
       churn in functions whose source is untouched (register allocation, inlining).
+    - the remaining clocks (A3): `_sp_now_ns`, `_bcal_now_ns`, `_il_dp_now_ns` (the
+      same computation as `vfft_now_ns` on Linux), the profiling clocks `_r2c_prof_now`,
+      `_rfft_now` and `_f2d_now` (now a microsecond wrapper), and the twelve inline
+      `clock_gettime` pairs in the split 2D / rank-N real races all read `vfft_now_ns`;
+      `race_timing.h` is the only file in core that reads a clock. `__rdtsc` in the
+      split OOP tuner stays: it banks cycles (`units=cyc`), a different unit. The race
+      intervals are exact below 2^53 ns of uptime (~104 days), a couple of ns after.
 - **D6. Dead code.** Delete it (recommended) rather than move it:
   - `conv/conv.h`, `fftnd_natorder.h`, `fftnd_planner.h`, `fftnd_wisdom.h`;
   - `engine/compat.h`;

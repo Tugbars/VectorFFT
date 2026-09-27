@@ -43,10 +43,7 @@
  * multi-thread profile would race and produce garbage silently — add per-thread
  * accumulation before trusting any multi-thread phase numbers. */
 static double _r2c_prof_pack = 0, _r2c_prof_inner = 0, _r2c_prof_post = 0;
-static inline double _r2c_prof_now(void){
-    struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
-    return t.tv_sec*1e9 + t.tv_nsec;
-}
+#include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 #endif
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1194,7 +1191,7 @@ static void _r2c_worker_fwd(void *arg) {
 
     for (size_t b0 = a->b0_start; b0 < a->b0_end; b0 += B) {
 #ifdef VFFT_R2C_PROFILE
-        double _tp0 = _r2c_prof_now();
+        double _tp0 = vfft_now_ns();
 #endif
         /* Pack-fusion is DIT-only (no-twiddle leaf = stage 0). DIF inners (leaf
          * last) take the fused-DIF entry or the explicit-pack + full-inner path
@@ -1208,7 +1205,7 @@ static void _r2c_worker_fwd(void *arg) {
             && !d->inner->use_dif_forward) {
             _r2c_fused_first_stage(d->inner, re, sr, si, K, B, b0);
 #ifdef VFFT_R2C_PROFILE
-            { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
+            { double _t1=vfft_now_ns(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
             if (d->inner_jit_fwd)
                 d->inner_jit_fwd(d->inner, sr, si, B, d->inner->K, 1);
@@ -1247,7 +1244,7 @@ static void _r2c_worker_fwd(void *arg) {
                 for (; k < B; k++) { dst_r[k] = even[k]; dst_i[k] = odd[k]; }
             }
 #ifdef VFFT_R2C_PROFILE
-            { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
+            { double _t1=vfft_now_ns(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
             /* Run the WHOLE inner (start_stage=0). The inner c2c JIT is odd-K/odd-B safe (its
              * STAGE macros call the rem-aware codelets — verified), so use it for the odd-B
@@ -1258,13 +1255,13 @@ static void _r2c_worker_fwd(void *arg) {
                 stride_execute_fwd_serial(d->inner, sr, si);
         }
 #ifdef VFFT_R2C_PROFILE
-        { double _t2=_r2c_prof_now(); _r2c_prof_inner += _t2-_tp0; _tp0=_t2; }
+        { double _t2=vfft_now_ns(); _r2c_prof_inner += _t2-_tp0; _tp0=_t2; }
 #endif
 
         _r2c_postprocess(sr, si, re, im, d->tw_re, d->tw_im, d->iperm, d->perm,
                          halfN, K, B, b0, d->zo);
 #ifdef VFFT_R2C_PROFILE
-        { double _t3=_r2c_prof_now(); _r2c_prof_post += _t3-_tp0; }
+        { double _t3=vfft_now_ns(); _r2c_prof_post += _t3-_tp0; }
 #endif
     }
 }
@@ -1803,7 +1800,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
 
     for (size_t b0 = a->b0_start; b0 < a->b0_end; b0 += B) {
 #ifdef VFFT_R2C_PROFILE
-        double _tp0 = _r2c_prof_now();
+        double _tp0 = vfft_now_ns();
 #endif
         /* Pack-fusion is a DIT-leaf technique: the no-twiddle leaf is stage 0, so
          * the fused codelet reads the real input there. DIF puts the no-twiddle
@@ -1826,7 +1823,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
             && !d->inner->use_dif_forward) {
             _r2c_fused_first_stage(d->inner, in, sr, si, K, B, b0);
 #ifdef VFFT_R2C_PROFILE
-            { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
+            { double _t1=vfft_now_ns(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
             if (d->ls_fwd && !d->zo) {
                 /* last-stage fusion: stages 1..nf-2 via _until, then the fused
@@ -1868,7 +1865,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
                 for (; k < B; k++) { dst_r[k] = even[k]; dst_i[k] = odd[k]; }
             }
 #ifdef VFFT_R2C_PROFILE
-            { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
+            { double _t1=vfft_now_ns(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
             /* Run the WHOLE inner (start_stage=0). The inner c2c JIT is odd-K/odd-B safe (its
              * STAGE macros call the rem-aware codelets — verified), so use it for the odd-B
@@ -1879,7 +1876,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
                 stride_execute_fwd_serial(d->inner, sr, si);
         }
 #ifdef VFFT_R2C_PROFILE
-        { double _t2=_r2c_prof_now(); _r2c_prof_inner += _t2-_tp0; _tp0=_t2; }
+        { double _t2=vfft_now_ns(); _r2c_prof_inner += _t2-_tp0; _tp0=_t2; }
 #endif
         if (d->ls_fwd && !d->zo) {
             /* last-stage fusion: the fused codelet does the last stage + fold for
@@ -2022,7 +2019,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
             _r2c_row_zip(a->out_re, a->out_im, K, b0, B, halfN + 1,
                          d->rowz, d->rowzp);
 #ifdef VFFT_R2C_PROFILE
-        { double _t3=_r2c_prof_now(); _r2c_prof_post += _t3-_tp0; }
+        { double _t3=vfft_now_ns(); _r2c_prof_post += _t3-_tp0; }
 #endif
     }
 }

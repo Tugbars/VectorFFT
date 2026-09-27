@@ -34,9 +34,10 @@
  */
 #ifndef STRIDE_FFT2D_R2C_H
 #define STRIDE_FFT2D_R2C_H
+#include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 #include "common/math/pi.h"
 
-#include <time.h> /* clock_gettime for the adoption A/B timing (win: mingw provides it) */
+
 #include "executor.h"
 #include "planner.h"
 #include "threads.h"
@@ -51,8 +52,7 @@
 
 #ifdef VFFT_2D_PROFILE
 static double _f2d_wrapin, _f2d_p1_tin, _f2d_p1_r2c, _f2d_p1_tout, _f2d_p2, _f2d_p3, _f2d_wrapout;
-static double _f2d_now(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
-    return t.tv_sec*1e6+t.tv_nsec*1e-3; }
+static double _f2d_now(void){ return vfft_now_ns() * 1e-3; } /* microseconds */
 #define _F2D_T0(v) double _t_##v = _f2d_now()
 #define _F2D_T1(v) v += _f2d_now() - _t_##v
 #else
@@ -1010,19 +1010,18 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
             for (size_t ii = 0; ii < (size_t)N1 * (size_t)N2; ii++)
                 xin[ii] = 1.0 + 1e-3 * (double)(ii & 63);
             const size_t hp1s = (size_t)(N2 / 2 + 1);
-            struct timespec t0_, t1_;
+            double t0_, t1_;
             double t_tile, t_str;
             _fft2d_r2c_tiled_fwd_mt(d, xin, d->re_pad, d->im_pad);
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr = 0; rr < 16; rr++)
                 _fft2d_r2c_tiled_fwd_mt(d, xin, d->re_pad, d->im_pad);
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_tile = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                   + (double)(t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_tile = (t1_ - t0_);
             _f2d_sr2c_fwd_rows(sf, d->str_blk, N2, xin, d->re_pad,
                                d->im_pad, (size_t)N2, K_pad, (size_t)N1,
                                d->tail_scr);
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr = 0; rr < 16; rr++) {
                 _f2d_sr2c_fwd_rows(sf, d->str_blk, N2, xin, d->re_pad,
                                    d->im_pad, (size_t)N2, K_pad,
@@ -1033,29 +1032,26 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
                         d->im_pad[(size_t)i2 * K_pad + f2] = 0.0;
                     }
             }
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_str = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                  + (double)(t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_str = (t1_ - t0_);
             if (t_str * 20 < t_tile * 19)
                 d->strided_fwd = sf;
             _fft2d_r2c_tiled_bwd_mt(d, d->re_pad, d->im_pad, xin);
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr = 0; rr < 16; rr++)
                 _fft2d_r2c_tiled_bwd_mt(d, d->re_pad, d->im_pad, xin);
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_tile = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                   + (double)(t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_tile = (t1_ - t0_);
             _f2d_sr2c_bwd_rows(sb, d->str_blk, N2, d->re_pad, d->im_pad,
                                xin, K_pad, (size_t)N2, (size_t)N1,
                                d->tail_scr);
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr = 0; rr < 16; rr++)
                 _f2d_sr2c_bwd_rows(sb, d->str_blk, N2, d->re_pad,
                                    d->im_pad, xin, K_pad, (size_t)N2,
                                    (size_t)N1, d->tail_scr);
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_str = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                  + (double)(t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_str = (t1_ - t0_);
             if (t_str * 20 < t_tile * 19)
                 d->strided_bwd = sb;
             vfft_adopt_record("2d", N1, N2, d->str_blk,
@@ -1088,41 +1084,37 @@ aw2d_done:;
             if (!xim) goto stw_gate_done;
             for (size_t ii = 0; ii < (size_t)N1 * (size_t)N2; ii++)
                 xin[ii] = 1.0 + 1e-3 * (double)(ii & 63);
-            struct timespec t0_, t1_;
+            double t0_, t1_;
             double t_tile, t_str;
             d->stw_on_fwd = 0;
             _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim);
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr = 0; rr < 8; rr++)
                 _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim);
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_tile = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                   + (double)(t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_tile = (t1_ - t0_);
             d->stw_on_fwd = 1;
             _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim);
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr = 0; rr < 8; rr++)
                 _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim);
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_str = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                  + (double)(t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_str = (t1_ - t0_);
             d->stw_on_fwd = (t_str * 20 < t_tile * 19) ? 1 : 0;
             d->stw_on_bwd = 0;
             _fft2d_r2c_execute_bwd_oop(d, xre, xim, xin);
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr = 0; rr < 8; rr++)
                 _fft2d_r2c_execute_bwd_oop(d, xre, xim, xin);
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_tile = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                   + (double)(t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_tile = (t1_ - t0_);
             d->stw_on_bwd = 1;
             _fft2d_r2c_execute_bwd_oop(d, xre, xim, xin);
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr = 0; rr < 8; rr++)
                 _fft2d_r2c_execute_bwd_oop(d, xre, xim, xin);
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_str = (t1_.tv_sec - t0_.tv_sec) * 1e9
-                  + (double)(t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_str = (t1_ - t0_);
             d->stw_on_bwd = (t_str * 20 < t_tile * 19) ? 1 : 0;
             STRIDE_ALIGNED_FREE(xim);
         }

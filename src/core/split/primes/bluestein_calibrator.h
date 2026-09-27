@@ -30,18 +30,7 @@
 #  include <time.h>
 #endif
 
-/* Self-contained timer, so this header builds without dp_planner.h
- * (vfft_now_ns). */
-static inline double _bcal_now_ns(void) {
-#if defined(_WIN32)
-    LARGE_INTEGER f, c;
-    QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c);
-    return (double)c.QuadPart * 1e9 / (double)f.QuadPart;
-#else
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
-#endif
-}
+#include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 
 
 /* ── factorization-string helper (for verbose / dev-tool output) ─ */
@@ -93,16 +82,16 @@ static double _bcal_bench_bluestein(int N, size_t K, int M, size_t B,
 
     double best_ns = 1e30;
     for (int trial = 0; trial < n_trials; trial++) {
-        double t0 = _bcal_now_ns();
+        double t0 = vfft_now_ns();
         stride_execute_fwd(plan, re, im);
-        double sample = _bcal_now_ns() - t0;
+        double sample = vfft_now_ns() - t0;
         int reps = (sample > 0) ? (int)(per_trial_budget * 1e9 / sample) : 1000;
         if (reps < 20)        reps = 20;
         if (reps > 200000)    reps = 200000;
 
-        double ts = _bcal_now_ns();
+        double ts = vfft_now_ns();
         for (int r = 0; r < reps; r++) stride_execute_fwd(plan, re, im);
-        double te = _bcal_now_ns();
+        double te = vfft_now_ns();
 
         double trial_ns = (te - ts) / reps;
         if (trial_ns < best_ns) best_ns = trial_ns;
@@ -129,16 +118,16 @@ static double _bcal_bench_rader(int N, size_t K, size_t B,
 
     double best_ns = 1e30;
     for (int trial = 0; trial < n_trials; trial++) {
-        double t0 = _bcal_now_ns();
+        double t0 = vfft_now_ns();
         stride_execute_fwd(plan, re, im);
-        double sample = _bcal_now_ns() - t0;
+        double sample = vfft_now_ns() - t0;
         int reps = (sample > 0) ? (int)(per_trial_budget * 1e9 / sample) : 1000;
         if (reps < 20)        reps = 20;
         if (reps > 200000)    reps = 200000;
 
-        double ts = _bcal_now_ns();
+        double ts = vfft_now_ns();
         for (int r = 0; r < reps; r++) stride_execute_fwd(plan, re, im);
-        double te = _bcal_now_ns();
+        double te = vfft_now_ns();
 
         double trial_ns = (te - ts) / reps;
         if (trial_ns < best_ns) best_ns = trial_ns;

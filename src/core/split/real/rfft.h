@@ -110,11 +110,7 @@ static inline void rfft_buf_free(void *p, int huge) {
 #endif
 
 #ifdef VFFT_RFFT_PROFILE
-#include <time.h>
-static inline double _rfft_now(void){
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
-}
+#include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 #endif
 
 #ifndef VFFT_RFFT_MAX_STAGES
@@ -660,7 +656,7 @@ static inline void rfft_execute_fwd_packed(const rfft_plan_t *p,
         /* LEAF: per-group calls on this slab */
         {
 #ifdef VFFT_RFFT_PROFILE
-            double _t0 = _rfft_now();
+            double _t0 = vfft_now_ns();
 #endif
             double *dst = (p->nf == 1) ? out : p->planeA;
             const ptrdiff_t SK = (ptrdiff_t)(p->S * K);
@@ -670,7 +666,7 @@ static inline void rfft_execute_fwd_packed(const rfft_plan_t *p,
                         dst + g * K + b + NK,
                         SK, SK, -SK, bw);
 #ifdef VFFT_RFFT_PROFILE
-            ((rfft_plan_t *)p)->prof_leaf += _rfft_now() - _t0;
+            ((rfft_plan_t *)p)->prof_leaf += vfft_now_ns() - _t0;
 #endif
         }
         if (p->nf == 1) continue;
@@ -697,7 +693,7 @@ static inline void rfft_execute_fwd_packed(const rfft_plan_t *p,
 
                 /* k = 0 (prefetch column 1's rows first) */
 #ifdef VFFT_RFFT_PROFILE
-                double _t0 = _rfft_now();
+                double _t0 = vfft_now_ns();
 #endif
                 if (st->kmax >= 1)
                     for (int j = 0; j < r; j++) {
@@ -707,7 +703,7 @@ static inline void rfft_execute_fwd_packed(const rfft_plan_t *p,
                     }
                 st->k0(curq, nxtq, nxtq + NK, QK, QmK, -QmK, vlf);
 #ifdef VFFT_RFFT_PROFILE
-                double _t1 = _rfft_now();
+                double _t1 = vfft_now_ns();
                 ((rfft_plan_t *)p)->prof_k0[d] += _t1 - _t0;
 #endif
 
@@ -746,20 +742,20 @@ static inline void rfft_execute_fwd_packed(const rfft_plan_t *p,
                            QK, QmK, vlf);
                 }
 #ifdef VFFT_RFFT_PROFILE
-                double _t2 = _rfft_now();
+                double _t2 = vfft_now_ns();
                 ((rfft_plan_t *)p)->prof_cols[d] += _t2 - _t1;
 #endif
 
                 /* k = m/2 (m even): shared s-blocked mid kernel */
 #ifdef VFFT_RFFT_PROFILE
-                double _t3 = _rfft_now();
+                double _t3 = vfft_now_ns();
 #endif
                 if (st->has_mid)
                     rfft_mid_column(r, m, np, Q, K, vlf,
                         curq + (Q * (size_t)(r * (m / 2))) * K,
                         st->mid_c, st->mid_s, 0, 0, nxtq, NULL, NULL);
 #ifdef VFFT_RFFT_PROFILE
-                ((rfft_plan_t *)p)->prof_mid[d] += _rfft_now() - _t3;
+                ((rfft_plan_t *)p)->prof_mid[d] += vfft_now_ns() - _t3;
 #endif
             }
             cur = nxt;

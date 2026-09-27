@@ -82,30 +82,30 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
             for (size_t ii = 0; ii < tsz; ii++)
                 bak2[ii] = 1.0 + 1e-3 * (double)(ii & 63);
             rfft_plan_t *rp2 = h->rfft_row->rfft;
-            struct timespec t0_, t1_;
+            double t0_, t1_;
             double t_str, t_rff;
             /* per-rep refill BOTH arms (unnormalized reps compound to
              * inf otherwise; equal handicap keeps the ratio honest). */
             memcpy(sr0, bak2, tsz * sizeof(double));
             _fft2d_r2c_inner_fwd(d2->plan_r2c, sr0, si0, 0); /* warm */
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr2 = 0; rr2 < 64; rr2++)
             {
                 memcpy(sr0, bak2, tsz * sizeof(double));
                 _fft2d_r2c_inner_fwd(d2->plan_r2c, sr0, si0, 0);
             }
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_str = (t1_.tv_sec - t0_.tv_sec) * 1e9 + (t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_str = (t1_ - t0_);
             memcpy(sr0, bak2, tsz * sizeof(double));
             rfft_execute_fwd_natural(rp2, sr0, sr0, si0, NULL); /* warm */
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr2 = 0; rr2 < 64; rr2++)
             {
                 memcpy(sr0, bak2, tsz * sizeof(double));
                 rfft_execute_fwd_natural(rp2, sr0, sr0, si0, NULL);
             }
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_rff = (t1_.tv_sec - t0_.tv_sec) * 1e9 + (t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_rff = (t1_ - t0_);
             free(bak2);
             /* hysteresis — engine deltas measured <=3%, inside
              * regime-to-regime noise; create-time gates flipped winners
@@ -147,32 +147,32 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
                 bki[ii] = 0.5 - 1e-3 * (double)(ii & 31);
             }
             c2r_plan_t *cp2 = h->c2r_row->packed;
-            struct timespec t0_, t1_;
+            double t0_, t1_;
             double t_str, t_c2r;
             memcpy(sr0, bkr, tcz * sizeof(double));
             memcpy(si0, bki, tcz * sizeof(double));
             _fft2d_r2c_inner_bwd(d2->plan_r2c, sr0, si0, 0); /* warm */
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr2 = 0; rr2 < 64; rr2++)
             {
                 memcpy(sr0, bkr, tcz * sizeof(double));
                 memcpy(si0, bki, tcz * sizeof(double));
                 _fft2d_r2c_inner_bwd(d2->plan_r2c, sr0, si0, 0);
             }
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_str = (t1_.tv_sec - t0_.tv_sec) * 1e9 + (t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_str = (t1_ - t0_);
             memcpy(sr0, bkr, tcz * sizeof(double));
             memcpy(si0, bki, tcz * sizeof(double));
             c2r_execute_natural(cp2, sr0, si0, sr0, NULL); /* warm */
-            clock_gettime(CLOCK_MONOTONIC, &t0_);
+            t0_ = vfft_now_ns();
             for (int rr2 = 0; rr2 < 64; rr2++)
             {
                 memcpy(sr0, bkr, tcz * sizeof(double));
                 memcpy(si0, bki, tcz * sizeof(double));
                 c2r_execute_natural(cp2, sr0, si0, sr0, NULL);
             }
-            clock_gettime(CLOCK_MONOTONIC, &t1_);
-            t_c2r = (t1_.tv_sec - t0_.tv_sec) * 1e9 + (t1_.tv_nsec - t0_.tv_nsec);
+            t1_ = vfft_now_ns();
+            t_c2r = (t1_ - t0_);
             free(bkr);
             free(bki);
             if (t_c2r * 20 < t_str * 19) /* the >5% hysteresis */
