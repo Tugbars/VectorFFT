@@ -37,10 +37,7 @@
  * group var b (not a per-VW-block broadcast) -> arbitrary-K-correct + maskable. */
 #define VFFT_OOP_T1_NAME(R)       VFFT_OOP_CAT5(radix,R,_t1_oop_fwd_,VFFT_OOP_ISA,_UG_UG)
 
-typedef void (*vfft_oop11_fn)(const double *, const double *,
-                              double *, double *,
-                              const double *, const double *,
-                              size_t, size_t, size_t, size_t, size_t);
+#include "common/abi/codelet_abi.h" /* vfft_oop11_fn: the 11-arg codelet ABI (both layouts) */
 
 #define VFFT_OOP_DECL_N1(R) \
   extern void VFFT_OOP_N1_NAME(R)( \

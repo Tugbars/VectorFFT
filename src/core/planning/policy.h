@@ -61,79 +61,7 @@ static inline long vfft_policy_race_max_n(int N)
     return (N & 3) ? (long)VFFT_K1_IL_PLAN_ODD_MAX_N : (long)VFFT_K1_IL_PLAN_MAX_N;
 }
 
-/* ── L4. the ORDER classification ───────────────────────────────────────
- * Which wisdom ORDER row a request reads and banks on. The order is a
- * CONTRACT (owner, 2026-09-27): SCRAMBLED asked -> scrambled delivered,
- * NATURAL asked -> natural delivered. What DEFAULT means is the layout's:
- *
- *   INTERLEAVED  DEFAULT = NATURAL, at every rank and both placements.
- *   SPLIT        DEFAULT = SCRAMBLED at rank >= 2 (the split tiers' own
- *                comb); rank 1 keeps its label below.
- *
- *   rank >= 2    explicit SCRAMBLED -> scr, explicit NATURAL -> nat,
- *                DEFAULT -> nat interleaved, scr split. A natural cell races
- *                its own chain under the natural pass and never shares the
- *                scr row.
- *   rank 1       explicit SCRAMBLED -> scr; DEFAULT and NATURAL -> nat (an
- *                interleaved DEFAULT request must never be served a
- *                scrambled cell and come back permuted; the split rank-1
- *                engines read config.order themselves and use this only as
- *                a wisdom label).
- *
- * (Until 2026-09-27 rank >= 2 mapped an INTERLEAVED DEFAULT to scr: a 2D/3D
- * IL DEFAULT request got the scrambled comb. That was a mistake in this law.)
- *
- * Returns VW2_ORD_NAT / VW2_ORD_SCR. `N` and `inplace` are not read: one
- * law for both placements. */
-static inline int vfft_policy_ord(const vfft_config_t *cfg, int N,
-                                  int rank, int inplace)
-{
-    (void)inplace; (void)N;   /* one law for both placements */
-    if (cfg->order == VFFT_ORDER_SCRAMBLED) return VW2_ORD_SCR;
-    if (cfg->order == VFFT_ORDER_NATURAL || rank < 2) return VW2_ORD_NAT;
-    return (cfg->layout == VFFT_LAYOUT_INTERLEAVED) ? VW2_ORD_NAT : VW2_ORD_SCR;   /* DEFAULT */
-}
-
-/* the two call-site spellings. The K=1 candidate builder asks with the
- * REQUEST's placement: the in-place cell is its own kind-3 row (place=ip),
- * raced with every arm executed in place and banked there; the out-of-place
- * cell is the place=oop row. Neither placement reads the other's verdict
- * (one contract per request). */
-static inline int vfft_policy_ord_rankn(const vfft_config_t *cfg)
-{
-    return vfft_policy_ord(cfg, 0, 2, 0);
-}
-static inline int vfft_policy_ord_k1(const vfft_config_t *cfg, int N, int inplace)
-{
-    return vfft_policy_ord(cfg, N, 1, inplace);
-}
-
-/* ── the CELL: a request, normalized once ───────────────────────────────
- * Filled at the top of a create and passed down, so the classification
- * happens once per request instead of once per site. */
-typedef struct
-{
-    int N, K, rank, T;
-    int layout;       /* VW2_LAY_IL / VW2_LAY_SPLIT */
-    int ord;          /* VW2_ORD_NAT / VW2_ORD_SCR — L4, already resolved */
-    int inplace;
-    int recalibrate;
-} vfft_cell_t;
-
-static inline vfft_cell_t vfft_policy_cell(const vfft_config_t *cfg, int N, int K,
-                                           int rank, int inplace, int nthreads)
-{
-    vfft_cell_t c;
-    c.N = N;
-    c.K = K;
-    c.rank = rank;
-    c.T = nthreads > 0 ? nthreads : 1;
-    c.layout = (cfg->layout == VFFT_LAYOUT_INTERLEAVED) ? VW2_LAY_IL : VW2_LAY_SPLIT;
-    c.ord = vfft_policy_ord(cfg, N, rank, inplace);
-    c.inplace = inplace;
-    c.recalibrate = cfg->recalibrate;
-    return c;
-}
+#include "common/policy/policy_order.h" /* L4 order law + the cell (layout-neutral) */
 
 /* ── L1 + L2. the BAND MAP: which engine families race in a cell ────────
  *
@@ -426,49 +354,7 @@ static inline int vfft_policy_k1_engine_present(int mono, int pair, int chain3,
     return (mono || pair || chain3 || flat || ztt || fs || prime) ? 1 : 0;
 }
 
-/* -- L8. a candidate's working set against the hardware -----------------
- * TWO helpers, and NEITHER is the negation of the other. Both the POLARITY
- * and the UNKNOWN-SIZE policy are written into the name and the body,
- * because the two differ in both: one shared fits() flips the super-band
- * exactly backwards.
- *
- * Each takes the ALREADY-COMPUTED byte count as a long, and the multiply
- * stays at the call site on purpose: long is 32-bit on this MinGW build, so
- * taking the factors here -- or widening -- would change the wrap behaviour
- * of an expression like (long)N1 * w * 16.
- *
- * CONTRACT, both helpers: the argument is a POSITIVE working-set size. The
- * cache term is inert for any positive argument, whatever the hardware
- * reports; it decides the answer only when bytes <= 0. Never hand either
- * one a difference or a wrapped product. */
-
-/* The L2 ladder (five sites: the 2D tier's strip, real-wl and cascade
- * widths, the 3D tier's strip and wl widths). ADMIT what fits the L2 the
- * CPU reports; the ladder is a candidate list and the race still decides.
- * UNKNOWN SIZE => REFUSE -- a ladder that cannot measure the cache
- * contributes nothing and the caller keeps its ungated static pool. That
- * rule is defensive rather than live (vfft_cpu_l2_bytes installs a fallback
- * and is never 0, cpu_cache.h), and it is stated because the contrast with
- * the L3 rule below is the whole reason there are two functions. */
-static inline int vfft_policy_fits_l2(long bytes)
-{
-    const long l2 = vfft_cpu_l2_bytes();
-    return l2 > 0 && bytes <= l2;
-}
-
-/* The super-band's gate (one site: _k1fs_sb_admit). The OPPOSITE law -- the
- * form is an arm only where the plane OUTGROWS the last-level cache -- so
- * it admits what does NOT fit. UNKNOWN SIZE => ADMIT, and
- * this one is LIVE: vfft_cpu_l3_bytes returns l3_seen, which has no
- * fallback and is genuinely 0 on an L3-less part, where "bigger than L3" is
- * vacuously true and the form is admitted everywhere.
- * NEVER write this as a negation of the L2 helper: both terms would flip
- * and every L3-less host would lose the super-band. */
-static inline int vfft_policy_exceeds_l3(long bytes)
-{
-    const long l3 = vfft_cpu_l3_bytes();
-    return l3 <= 0 || bytes > l3;
-}
+#include "common/policy/policy_cache.h" /* L8 cache laws (layout-neutral) */
 
 /* ── L10. the IL REMAINDER (tail) law at 4 complex per vector ──────────
  * An IL codelet's column loop runs whole vectors; the 1..3 columns left over
