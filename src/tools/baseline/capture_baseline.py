@@ -40,7 +40,8 @@ with the four properties the artifacts depend on spelled out below.
    being, changes this line and the diff catches it.
 
 USAGE
-  python src/tools/baseline/capture_baseline.py --out <dir> [--repeat N]
+  python src/tools/baseline/capture_baseline.py --out <dir> [--repeat N] [--scratch DIR]
+  The ISA is the build's: set VFFT_ISA=avx2|avx512 (gauntlet/build.py reads it).
     --out src/tools/baseline/reference   re-stamp the reference (use a high --repeat)
     --out <scratch>              capture for comparison against the reference
 """
@@ -48,17 +49,25 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+
+import toolchain
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # src/tools/baseline (since 2026-09-22)
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 BENCH = HERE                     # the harness sources live here; gauntlet/build.py puts the binaries beside them
 BUILD_PY = os.path.join(ROOT, "gauntlet", "build.py")
 STORE = os.path.join(ROOT, "src", "wisdom")   # the wisdom2 store (2026-09-24)
-SCRATCH = os.path.join(os.environ.get("TEMP", "/tmp"), "vfft_capture")
+# per-run scratch from tempfile (was $TEMP, which does not exist off Windows);
+# --scratch overrides it
+SCRATCH = None
 
 
 def seeded_dir(tag):
     """A fresh scratch copy of the store. Never the shipped tree."""
+    global SCRATCH
+    if SCRATCH is None:
+        SCRATCH = tempfile.mkdtemp(prefix="vfft_capture_")
     d = os.path.join(SCRATCH, tag)
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d, exist_ok=True)
@@ -109,7 +118,7 @@ def build(exe_name):
 
 def capture(exe_name, header, out_path, repeat):
     build(exe_name)
-    exe = os.path.join(BENCH, exe_name + ".exe")
+    exe = os.path.join(BENCH, exe_name + toolchain.EXE)   # ".exe" on Windows only
     if not os.path.exists(exe):
         raise SystemExit("missing %s - build it first" % exe)
     names = cells(exe)
@@ -151,6 +160,9 @@ def main():
         out = sys.argv[sys.argv.index("--out") + 1]
     if "--repeat" in sys.argv:
         repeat = int(sys.argv[sys.argv.index("--repeat") + 1])
+    if "--scratch" in sys.argv:
+        global SCRATCH
+        SCRATCH = sys.argv[sys.argv.index("--scratch") + 1]
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
     print("repeat=%d" % repeat)

@@ -42,9 +42,11 @@ USAGE
 import re
 import os
 import subprocess
-# env NM overrides the historical mingw152 path (2026-09-03).
-DEFAULT_NM = os.environ.get("NM", "C:/mingw152/mingw64/bin/nm.exe")
 import sys
+
+import toolchain
+# env NM, then PATH, then the historical mingw152 path: toolchain.py
+DEFAULT_NM = toolchain.nm()
 
 TRAILING_NUM = re.compile(r"\.\d+$")
 

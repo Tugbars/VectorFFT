@@ -94,19 +94,45 @@ What this does NOT prove is unchanged: slice mode is code-shape only, and
 inherits the .rdata and immediate-value blindness documented above. The golden
 decision trace is the semantic gate for a slice and carries the weight.
 
+STRICT-DATA MODE (--strict-data, ELF only; added for the layout separation)
+------------------------------------------------------------------------------
+Closes the two blind spots above for the steps that DO change the object
+(docs/roadmap/layout_separation_plan.md, section 7, rung R3):
+
+  - IMMEDIATES are kept: `$0x1` and `$0x2` differ again.
+  - Non-RIP DISPLACEMENTS are kept: `0x18(%rdi)` is a struct field offset, and
+    a struct split that reorders fields must show up.
+  - Every RELOCATION is resolved through the object's own symbol table to a
+    stable token instead of HEX: a named object (`T+8`), a function (its name,
+    GCC clone counters collapsed), a merged constant BY CONTENT
+    (`cst:<bytes>`), a string literal BY CONTENT, or an anonymous .rodata
+    chunk (a jump table) by a digest of its bytes. Pool ORDER is therefore
+    invisible and pool CONTENT is not.
+  - Intra-function branch targets become label numbers (L0, L1, ...) in order
+    of address, so an alignment-NOP difference does not shift them.
+  - DATA OBJECTS are compared too: every STT_OBJECT symbol by its normalized
+    name, section class, size, bytes, and the resolved targets of any
+    relocation inside it (a function-pointer table).
+
+A rename map (--rename-map FILE, lines "old new") is applied to the BEFORE
+object's names, for a step that renames functions on purpose.
+
 USAGE
   python src/tools/baseline/obj_equiv.py before.o after.o [--objdump PATH]
   python src/tools/baseline/obj_equiv.py before.o after.o --slice PARENT:HELPER
+  python src/tools/baseline/obj_equiv.py before.o after.o --strict-data [--rename-map F]
 Exit 0 when equivalent (or when the slice shape holds), 1 when not.
 """
+import hashlib
 import re
 import os
 import subprocess
-# env OBJDUMP / NM override the historical mingw152 paths (2026-09-03): the
-# ceremony must run on any host whose binutils live somewhere else.
-DEFAULT_OBJDUMP = os.environ.get("OBJDUMP", "C:/mingw152/mingw64/bin/objdump.exe")
-DEFAULT_NM = os.environ.get("NM", "C:/mingw152/mingw64/bin/nm.exe")
 import sys
+
+import toolchain
+# env OBJDUMP / NM, then PATH, then the historical mingw152 paths: toolchain.py
+DEFAULT_OBJDUMP = toolchain.objdump()
+DEFAULT_NM = toolchain.nm()
 
 
 _ADDR_PREFIX = re.compile(r"^\s*[0-9a-f]+:")
@@ -283,11 +309,277 @@ def check_slice(only_a, only_b, changed, parent, helper, before_obj, after_obj):
     return (not bad), bad, churn
 
 
+# ------------------------------------------------------------ strict-data mode
+
+_CLONE_NUM = re.compile(r"\.\d+$")
+_PCREL = {2, 4, 9, 41, 42}      # PC32, PLT32, GOTPCREL, REX_GOTPCRELX, GOTPCRELX
+_INSN = re.compile(r"^\s*([0-9a-f]+):\t(.*)$")
+_RELOC_TAIL = re.compile(r"\t([0-9a-f]+): (R_X86_64_\w+)\t(\S+)")
+_RIPDISP = re.compile(r"-?0x([0-9a-f]+)\(%rip\)")
+_BRANCH = re.compile(r"^(j[a-z]+|call|jmp|loop\w*)\s+([0-9a-f]+)\s*(<[^>]*>)?")
+
+
+def norm_name(name, rename=None):
+    """GCC clone and local counters collapse (foo.constprop.3 -> .N), as
+    sym_census does; then the rename map."""
+    prev = None
+    while prev != name:
+        prev = name
+        name = _CLONE_NUM.sub(".N", name)
+        if name.endswith(".N.N"):
+            name = name[:-2]
+    if rename and name in rename:
+        name = rename[name]
+    return name
+
+
+class _Resolver:
+    """Turns a (section, offset) reference into a content-stable token."""
+
+    def __init__(self, elf, rename):
+        import elfmini
+        self.elf, self.rename, self.em = elf, rename, elfmini
+        # covering symbols per section: named objects/functions only
+        self.cover = {}
+        for y in elf.symbols:
+            if (y.type in (elfmini.STT_OBJECT, elfmini.STT_FUNC) and y.name
+                    and 0 < y.shndx < len(elf.sections)):
+                self.cover.setdefault(y.shndx, []).append(y)
+        self.bounds = {}      # section idx -> sorted chunk boundaries
+
+    def add_ref(self, sec, off):
+        self.bounds.setdefault(sec, set()).add(off)
+
+    def finish(self):
+        for sec, offs in self.bounds.items():
+            s = self.elf.sections[sec]
+            b = set(offs) | {s.size}
+            for y in self.cover.get(sec, []):
+                b.add(y.value)
+                b.add(y.value + y.size)
+            self.bounds[sec] = sorted(b)
+
+    def _chunk(self, sec, off):
+        import bisect
+        b = self.bounds.get(sec, [self.elf.sections[sec].size])
+        i = bisect.bisect_right(b, off)
+        end = b[i] if i < len(b) else self.elf.sections[sec].size
+        return end
+
+    def target(self, sym_idx, addend, pc_adjust):
+        """-> token for relocation (symbol, addend); pc_adjust is the distance
+        from the relocated field to the end of the instruction (PC-relative
+        relocations only), so section offsets are EXACT, not addend+4."""
+        em, elf = self.em, self.elf
+        y = elf.symbols[sym_idx]
+        off = addend + pc_adjust
+        if y.type == em.STT_SECTION or (y.name.startswith(".L") and y.shndx < len(elf.sections)):
+            sec = y.shndx
+            if y.type != em.STT_SECTION:
+                off += y.value
+            return ("sec", sec, off)
+        if not y.name:
+            return ("tok", "?anon")
+        name = norm_name(y.name, self.rename)
+        return ("tok", name + ("%+d" % off if off else ""))
+
+    def token(self, t):
+        if t[0] == "tok":
+            return t[1]
+        _, sec, off = t
+        elf = self.elf
+        if not (0 < sec < len(elf.sections)):
+            return "abs%+d" % off
+        s = elf.sections[sec]
+        for y in self.cover.get(sec, []):
+            if y.value <= off < y.value + max(y.size, 1):
+                d = off - y.value
+                return norm_name(y.name, self.rename) + ("%+d" % d if d else "")
+        cls = re.sub(r"\.\d+$", "", s.name)
+        if s.name.startswith(".rodata.str"):
+            end = s.data.find(b"\0", off)
+            return "str:%r" % s.data[off:end if end >= 0 else len(s.data)]
+        if s.name.startswith(".rodata.cst") and s.entsize:
+            base = off - off % s.entsize
+            return "cst%d:%s%s" % (s.entsize, s.data[base:base + s.entsize].hex(),
+                                   "+%d" % (off - base) if off != base else "")
+        if s.type == self.em.SHT_NOBITS:
+            end = self._chunk(sec, off)
+            return "nobits:%s:%d" % (cls, end - off)
+        end = self._chunk(sec, off)
+        return "anon:%s:%s" % (cls, self._digest(sec, off, end))
+
+    def _digest(self, sec, a, b):
+        s = self.elf.sections[sec]
+        h = hashlib.sha1(s.data[a:b])
+        for r in self.elf.relas.get(sec, []):
+            if a <= r.offset < b:
+                h.update(("%d:%d:%s" % (r.offset - a, r.type,
+                          self.token(self.target(r.sym, r.addend, 0)))).encode())
+        return h.hexdigest()[:12]
+
+
+def strict_bodies(path, objdump, rename=None):
+    """-> (bodies {name: text}, data {name: descr}) for --strict-data."""
+    import elfmini
+    elf = elfmini.Elf(path)
+    res = _Resolver(elf, rename)
+    out = subprocess.run([objdump, "-dr", "-w", "--no-show-raw-insn", path],
+                         capture_output=True, text=True, check=True).stdout
+
+    # pass 1: parse into functions of (addr, text, [(r_off, type)]) lines
+    funcs, cur, sec = [], None, None
+    for line in out.splitlines():
+        if line.startswith("Disassembly of section "):
+            sec = elf.section_by_name(line[len("Disassembly of section "):].rstrip(":"))
+            continue
+        head = _HEADER.match(line.strip())
+        if head:
+            cur = [norm_name(head.group(2), rename), int(head.group(1), 16), sec, []]
+            funcs.append(cur)
+            continue
+        m = _INSN.match(line)
+        if not m or cur is None:
+            continue
+        addr, rest = int(m.group(1), 16), m.group(2)
+        relocs = [(int(x.group(1), 16), x.group(2)) for x in _RELOC_TAIL.finditer(rest)]
+        rest = _RELOC_TAIL.sub("", rest)
+        cur[3].append([addr, rest, relocs])
+
+    # pass 2: resolve every relocation; record section references for chunking
+    rel_at = {}
+    for s_idx, lst in elf.relas.items():
+        for r in lst:
+            rel_at[(s_idx, r.offset)] = r
+    pending = []
+    for name, start, sec_obj, insns in funcs:
+        for k, ins in enumerate(insns):
+            nxt = insns[k + 1][0] if k + 1 < len(insns) else None
+            toks = []
+            for (roff, rtype) in ins[2]:
+                r = rel_at.get((sec_obj.idx if sec_obj else -1, roff))
+                if r is None:
+                    toks.append(("tok", rtype))
+                    continue
+                adj = (nxt - roff) if (r.type in _PCREL and nxt is not None) else 0
+                t = res.target(r.sym, r.addend, adj)
+                if t[0] == "sec":
+                    res.add_ref(t[1], t[2])
+                toks.append(t)
+            ins.append(toks)
+    # data-object relocations reference sections too
+    datasyms = [y for y in elf.symbols
+                if y.type == elfmini.STT_OBJECT and 0 < y.shndx < len(elf.sections)]
+    for y in datasyms:
+        for r in elf.relas.get(y.shndx, []):
+            if y.value <= r.offset < y.value + y.size:
+                t = res.target(r.sym, r.addend, 0)
+                if t[0] == "sec":
+                    res.add_ref(t[1], t[2])
+    res.finish()
+
+    nxt_of = {}
+    for name, start, sec_obj, insns in funcs:
+        for k, ins in enumerate(insns):
+            nxt_of[id(ins)] = insns[k + 1][0] if k + 1 < len(insns) else None
+
+    bodies = {}
+    for name, start, sec_obj, insns in funcs:
+        targets = sorted({int(m.group(2), 16) for ins in insns
+                          for m in [_BRANCH.match(ins[1].strip())] if m
+                          and (m.group(3) is None or m.group(3)[1:].startswith(
+                              name.split(".N")[0]) or "+" in (m.group(3) or ""))})
+        label = {a: "L%d" % i for i, a in enumerate(targets)}
+        buf = []
+        for ins in insns:
+            s = ins[1]
+            s = _COMMENT.sub("", s).strip()
+            if _NOP.match(s):
+                continue
+            bm = _BRANCH.match(s)
+            if bm:
+                tgt = int(bm.group(2), 16)
+                sym = bm.group(3)
+                if sym and "+" not in sym and not ins[3]:
+                    s = "%s %s" % (bm.group(1), norm_name(sym[1:-1], rename))
+                elif ins[3]:
+                    s = "%s %s" % (bm.group(1), res.token(ins[3][0]))
+                else:
+                    s = "%s %s" % (bm.group(1), label.get(tgt, "EXT"))
+            else:
+                rm = _RIPDISP.search(s)
+                if rm and not ins[3] and nxt_of.get(id(ins)) is not None:
+                    # an assembler-resolved RIP reference (no relocation): a
+                    # function or object in the SAME section. Name it by what
+                    # it points at, never by the distance.
+                    tgt = nxt_of[id(ins)] + int(rm.group(1), 16) * (-1 if rm.group(0).startswith("-") else 1)
+                    s = _RIPDISP.sub("RIP", s) + "  ; " + res.token(("sec", sec_obj.idx, tgt))
+                s = _SYMREF.sub("", s)
+                if ins[3]:
+                    s = s + "  ; " + ", ".join(res.token(t) for t in ins[3])
+            buf.append(s)
+        bodies[name] = "\n".join(buf)
+
+    data = {}
+    for y in datasyms:
+        s = elf.sections[y.shndx]
+        cls = re.sub(r"\.\d+$", "", s.name)
+        if s.type == elfmini.SHT_NOBITS:
+            desc = "%s size=%d" % (cls, y.size)
+        else:
+            h = hashlib.sha1(s.data[y.value:y.value + y.size])
+            for r in elf.relas.get(y.shndx, []):
+                if y.value <= r.offset < y.value + y.size:
+                    h.update(("%d:%d:%s" % (r.offset - y.value, r.type,
+                              res.token(res.target(r.sym, r.addend, 0)))).encode())
+            desc = "%s size=%d sha=%s" % (cls, y.size, h.hexdigest()[:16])
+        key = norm_name(y.name, rename)
+        while key in data:          # two statics with one normalized name
+            key += "'"
+        data[key] = desc
+    return bodies, data
+
+
+def _read_rename(path):
+    m = {}
+    if path:
+        for line in open(path):
+            p = line.split()
+            if len(p) == 2 and not line.startswith("#"):
+                m[p[0]] = p[1]
+    return m
+
+
+def strict_main(before, after, objdump, rename_path, quiet=False):
+    rename = _read_rename(rename_path)
+    a, ad = strict_bodies(before, objdump, rename)
+    b, bd = strict_bodies(after, objdump, None)
+    rc = 0
+    for kind, x, y in (("function", a, b), ("data object", ad, bd)):
+        only_a = sorted(set(x) - set(y))
+        only_b = sorted(set(y) - set(x))
+        changed = sorted(k for k in set(x) & set(y) if x[k] != y[k])
+        print("%ss: %d -> %d  (changed %d, gone %d, new %d)"
+              % (kind, len(x), len(y), len(changed), len(only_a), len(only_b)))
+        for k in only_a[:20]:
+            print("  DISAPPEARED: %s" % k)
+        for k in only_b[:20]:
+            print("  APPEARED   : %s" % k)
+        for k in changed[:20]:
+            print("  CHANGED    : %s" % k)
+            if not quiet and kind == "data object":
+                print("      %s\n   -> %s" % (x[k], y[k]))
+        if only_a or only_b or changed:
+            rc = 1
+    print("\nSTRICT EQUIVALENT" if rc == 0 else "\nSTRICT NOT EQUIVALENT")
+    return rc
+
+
 def main():
     # Both options take a VALUE, so the value must be consumed as well as the
     # flag. Filtering only on a leading "--" left the value in the positional
     # list and made every option-bearing invocation print the usage text.
-    _TAKES_VALUE = ("--objdump", "--slice")
+    _TAKES_VALUE = ("--objdump", "--slice", "--rename-map")
     argv, args, opts = sys.argv[1:], [], {}
     i = 0
     while i < len(argv):
@@ -311,6 +603,9 @@ def main():
     if len(args) != 2:
         print(__doc__)
         return 2
+
+    if "--strict-data" in argv:
+        return strict_main(args[0], args[1], objdump, opts.get("--rename-map"))
 
     a = symbol_bodies(args[0], objdump)
     b = symbol_bodies(args[1], objdump)

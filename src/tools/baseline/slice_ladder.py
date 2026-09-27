@@ -13,7 +13,7 @@ rather than merely unlikely.
 THE RUNGS, and what each one is the only witness for
 
   1. identity object   the DOCUMENTED flags -- `-O2 -mavx2 -mfma` plus
-                       baseline/include_flags.txt, from the REPO ROOT, and NO
+                       the generated include set (toolchain.py), and NO
                        `-w`. Not build.py's flag set: build.py compiles at a
                        different optimisation level and comparing across the
                        two reports ~780 changed bodies that mean nothing.
@@ -43,7 +43,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))          # src/tools/baseline (since 2026-09-22)
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 BASE = os.path.join(HERE, "reference")
-CC = r"C:\mingw152\mingw64\bin\gcc.exe"
+sys.path.insert(0, HERE)
+import toolchain  # noqa: E402  (CC from env/PATH/mingw152; generated -I set)
+CC = toolchain.cc()
 
 
 def run(cmd, **kw):
@@ -90,7 +92,7 @@ def main():
     obj = os.path.join(scratch, "vfft_new.o")
 
     # ---- 1. identity object, documented flags -----------------------------
-    incs = open(os.path.join(BASE, "include_flags.txt")).read().split()
+    incs = toolchain.include_flags()   # generated: the frozen include_flags.txt missed new dirs
     r = run([CC, "-c", "-O2", "-mavx2", "-mfma"] + incs +
             [os.path.join("src", "core", "vfft.c"), "-o", obj])
     if r.returncode != 0:

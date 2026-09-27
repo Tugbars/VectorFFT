@@ -485,6 +485,13 @@ libraries and every gauntlet/gate executable, at avx2 and avx512.
 
 Notes:
 
+- **Include ORDER matters to the object, not only to the reader** (measured while
+  building the gate): swapping two independent includes in `vfft.c` (`dct4.h`
+  after `dht.h`) changed GCC's inlining in `_fft2d_destroy` and `_fft3d_destroy`.
+  The code is still correct, but it is no longer the same code. So a step can
+  expect byte identity only if every moved or carved-out definition lands at the
+  same point in the translation unit. A step that changes the order is proven
+  at R3 (the listed functions only) plus R5, never at R1.
 - **Phases 2-3 are nearly free and give the reader the new map immediately.** They are
   pure `git mv` plus include-path edits, so byte identity is the expected outcome.
 - **Phase 6 is the real work.** The five create tiers hold about 3,400 lines and are
