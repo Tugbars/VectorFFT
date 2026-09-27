@@ -47,12 +47,12 @@ int main(int argc, char **argv)
         for (size_t j = 0; j < n; j++) x[j] = sin(0.37 * j) + 0.25 * cos(1.3 * j + 0.1 * (j % 7));
         dft2(x, r, N1, N2, -1);
         vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
-        double ef = ord ? rel(y, r, n) : 0;   /* DEFAULT = the scrambled comb (policy L4): roundtrip only */
+        double ef = rel(y, r, n);   /* interleaved DEFAULT is NATURAL (policy L4): both classes natural */
         vfft_execute(p, VFFT_BACKWARD, y, NULL, z, NULL);
         for (size_t j = 0; j < n; j++) z[j] /= (double)N1 * N2;
         double eb = rel(z, x, n);
         memcpy(w, x, 8 * n); vfft_execute(p, VFFT_FORWARD, w, NULL, w, NULL);
-        double ei = ord ? rel(w, r, n) : rel(w, y, n);   /* DEFAULT: in place must match OOP */
+        double ei = rel(w, r, n);
         int ok = ef < 1e-12 && eb < 1e-12 && ei < 1e-12; bad += !ok;
         printf("%s %4dx%-4d route %-10s fwd %.1e  roundtrip %.1e  inplace %.1e  %s\n", ord ? "NAT" : "DEF", N1, N2, vfft_plan_route(p), ef, eb, ei, ok ? "ok" : "WRONG");
         vfft_destroy(p); free(x); free(y); free(z); free(r); free(w);

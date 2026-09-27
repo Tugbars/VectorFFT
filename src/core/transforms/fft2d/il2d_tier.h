@@ -2681,7 +2681,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     {
         /* THE RACED CHAIN ARM: for a chain that carries an ODD
          * radix, race it against the Bluestein column route.
-         * DEFAULT order: the two serve different n1 orders
+         * SCRAMBLED order: the two serve different n1 orders
          * (chain = scrambled comb, blu = natural), both
          * self-consistent. NATURAL order: BOTH arms are
          * natural - the chain via the leaf redirection, blu by

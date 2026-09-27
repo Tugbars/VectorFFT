@@ -47,8 +47,10 @@ static int _ref_k1_scr_req(const vfft_config_t *cfg)
 }
 /* transforms/fft2d/fft2d_create.h `il2d_ord`, il2d_tier.h x8, plane_queue.h */
 static int _ref_rankn_ord(const vfft_config_t *cfg)
-{
-    return (cfg->order == VFFT_ORDER_NATURAL) ? VW2_ORD_NAT : VW2_ORD_SCR;
+{   /* L4 since 2026-09-27: DEFAULT is the layout's (IL natural, split scrambled) */
+    if (cfg->order == VFFT_ORDER_SCRAMBLED) return VW2_ORD_SCR;
+    if (cfg->order == VFFT_ORDER_NATURAL) return VW2_ORD_NAT;
+    return (cfg->layout == VFFT_LAYOUT_INTERLEAVED) ? VW2_ORD_NAT : VW2_ORD_SCR;
 }
 /* ── L9 reference, verbatim from oop/k1_commit.h's race gate ─────────── */
 #define REF_K1_IL_PLAN_MAX_N 16384
@@ -300,8 +302,7 @@ int main(void)
             CHECK(vfft_policy_ord_rankn(&cfg) == _ref_rankn_ord(&cfg),
                   "N=%d ord=%s rankN: policy %d != site %d", N, ONM[o],
                   vfft_policy_ord_rankn(&cfg), _ref_rankn_ord(&cfg));
-            /* the split layout takes the same order law (the cell's layout
-             * axis is separate); check it is not accidentally IL-gated */
+            /* the split layout: its DEFAULT is the scrambled comb (L4) */
             cfg.layout = VFFT_LAYOUT_SPLIT;
             CHECK(vfft_policy_ord_rankn(&cfg) == _ref_rankn_ord(&cfg),
                   "N=%d ord=%s rankN split: policy %d != site %d", N, ONM[o],
