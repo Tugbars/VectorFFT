@@ -66,7 +66,7 @@
 #include "executor.h"
 #include "env.h"        /* vfft_env_init + vfft_pin_thread */
 #include "planner.h"
-#include "dp_planner.h" /* vfft_proto_now_ns */
+#include "dp_planner.h" /* vfft_now_ns */
 #include "measure.h"    /* vfft_proto_dp_plan_measure: a store MISS races here */
 #ifdef VFFT_USE_JIT
 #include "jit/jit_runtime.h" /* vfft_proto_plan_jit_fwd (build.py --jit) */
@@ -283,11 +283,11 @@ static stat5_t time_vfft(vfft_plan h, double *z0, double *S, size_t total)
     for (int t = 0; t < 5; t++)
     {
         if (t) pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             g_k1zip ? vfft_execute(h, VFFT_FORWARD, S, NULL, S, NULL)
                     : vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
-        g_t5[t] = (vfft_proto_now_ns() - t0) / reps;
+        g_t5[t] = (vfft_now_ns() - t0) / reps;
     }
     return stat5(g_t5);
 }
@@ -311,10 +311,10 @@ static int fftw_arm_make(fftw_arm_t *a, int N)
     a->in = (double *)g_fx.fmalloc(sizeof(double) * 2 * (size_t)N);
     a->out = g_k1zip ? a->in : (double *)g_fx.fmalloc(sizeof(double) * 2 * (size_t)N);
     if (!a->in || !a->out) return 0;
-    double t0 = vfft_proto_now_ns();
+    double t0 = vfft_now_ns();
     a->plan = g_fx.plan_dft_1d(N, (fftwx_complex *)a->in, (fftwx_complex *)a->out,
                                FFTWX_FORWARD, FFTWX_MEASURE);
-    a->plan_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    a->plan_ms = (vfft_now_ns() - t0) / 1e6;
     if (!a->plan) return 0;
     a->plan_id = fftwx_plan_id(&g_fx, a->plan);
     if (g_verbose)
@@ -340,9 +340,9 @@ static stat5_t time_fftw(fftw_arm_t *a, const double *z0, size_t total)
     for (int t = 0; t < 5; t++)
     {
         if (t) pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++) g_fx.execute(a->plan);
-        g_t5[t] = (vfft_proto_now_ns() - t0) / reps;
+        g_t5[t] = (vfft_now_ns() - t0) / reps;
     }
     return stat5(g_t5);
 }
@@ -359,14 +359,14 @@ static stat5_t time_ctrl(double *dst, const double *src, size_t n_doubles)
     for (int t = 0; t < 5; t++)
     {
         if (t) pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
         {
             memcpy(dst, src, n_doubles * sizeof(double));
             /* defeat dead-store elimination across reps */
             ((volatile double *)dst)[0] = dst[0];
         }
-        g_t5[t] = (vfft_proto_now_ns() - t0) / reps;
+        g_t5[t] = (vfft_now_ns() - t0) / reps;
     }
     return stat5(g_t5);
 }
@@ -439,9 +439,9 @@ static stat5_t time_fftw_plan(fftwx_plan pl, double *dst_re, double *dst_im,
     for (int t = 0; t < 5; t++)
     {
         if (t) pace(g_trial_pace_ms);
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++) g_fx.execute(pl);
-        g_t5[t] = (vfft_proto_now_ns() - t0) / reps;
+        g_t5[t] = (vfft_now_ns() - t0) / reps;
     }
     return stat5(g_t5);
 }
@@ -471,19 +471,19 @@ static void run_split_cell(int N, size_t K, int *factors, int *variants, int nf,
     ref_planes_t mp = ref_planes_alloc(total);
     fftwx_iodim dims = { N, (int)K, (int)K };
     fftwx_iodim hm   = { (int)K, 1, 1 };
-    double t0 = vfft_proto_now_ns();
+    double t0 = vfft_now_ns();
     fftwx_plan fmir = g_fx.plan_guru_split_dft(1, &dims, 1, &hm,
                                                mp.re, mp.im, mp.re, mp.im, FFTWX_MEASURE);
-    double mir_plan_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    double mir_plan_ms = (vfft_now_ns() - t0) / 1e6;
     /* HOME (mandatory diagnostic): interleaved transform-contiguous, in-place */
     double *hz = (double *)g_fx.fmalloc(sizeof(double) * 2 * total);
     int n_arr[1] = { N };
-    t0 = vfft_proto_now_ns();
+    t0 = vfft_now_ns();
     fftwx_plan fhome = hz ? g_fx.plan_many_dft(1, n_arr, (int)K,
                                                (fftwx_complex *)hz, NULL, 1, N,
                                                (fftwx_complex *)hz, NULL, 1, N,
                                                FFTWX_FORWARD, FFTWX_MEASURE) : NULL;
-    double home_plan_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    double home_plan_ms = (vfft_now_ns() - t0) / 1e6;
     g_fx.export_wisdom_to_filename(fftw_wis_path());
     if (!fmir || !fhome)
     {
@@ -543,9 +543,9 @@ static void run_split_cell(int N, size_t K, int *factors, int *variants, int nf,
           int reps = reps_for(total);
           for (int t = 0; t < 5; t++)
           { if (t) pace(g_trial_pace_ms);
-            double tt = vfft_proto_now_ns();
+            double tt = vfft_now_ns();
             for (int i = 0; i < reps; i++) st_fwd(fn, plan, re, im, K);
-            g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+            g_t5[t] = (vfft_now_ns() - tt) / reps; }
           vs = stat5(g_t5); }
     }
     else
@@ -556,9 +556,9 @@ static void run_split_cell(int N, size_t K, int *factors, int *variants, int nf,
           int reps = reps_for(total);
           for (int t = 0; t < 5; t++)
           { if (t) pace(g_trial_pace_ms);
-            double tt = vfft_proto_now_ns();
+            double tt = vfft_now_ns();
             for (int i = 0; i < reps; i++) st_fwd(fn, plan, re, im, K);
-            g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+            g_t5[t] = (vfft_now_ns() - tt) / reps; }
           vs = stat5(g_t5); }
         cachebust(); pace(cool_ms);
         ms = time_fftw_plan(fmir, mp.re, mp.im, sre, sim, total);
@@ -576,9 +576,9 @@ static void run_split_cell(int N, size_t K, int *factors, int *variants, int nf,
       int reps = reps_for(total);
       for (int t = 0; t < 5; t++)
       { if (t) pace(g_trial_pace_ms);
-        double tt = vfft_proto_now_ns();
+        double tt = vfft_now_ns();
         for (int i = 0; i < reps; i++) g_fx.execute(fhome);
-        g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+        g_t5[t] = (vfft_now_ns() - tt) / reps; }
       hs = stat5(g_t5); }
     cachebust(); pace(cool_ms);
     /* control: BOTH planes per rep — same 2*total-doubles traffic as the
@@ -593,14 +593,14 @@ static void run_split_cell(int N, size_t K, int *factors, int *variants, int nf,
         for (int t = 0; t < 5; t++)
         {
             if (t) pace(g_trial_pace_ms);
-            double tt = vfft_proto_now_ns();
+            double tt = vfft_now_ns();
             for (int i = 0; i < reps; i++)
             {
                 memcpy(re, sre, total * sizeof(double));
                 memcpy(im, sim, total * sizeof(double));
                 ((volatile double *)re)[0] = re[0];
             }
-            g_t5[t] = (vfft_proto_now_ns() - tt) / reps;
+            g_t5[t] = (vfft_now_ns() - tt) / reps;
         }
         cs = stat5(g_t5);
     }
@@ -750,20 +750,20 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
     double *hin  = (double *)g_fx.fmalloc(sizeof(double) * total);
     double *hcce = (double *)g_fx.fmalloc(sizeof(double) * 2 * outsz);
     int n_arr[1] = { N };
-    double t0 = vfft_proto_now_ns();
+    double t0 = vfft_now_ns();
     fftwx_plan fil = (hin && hcce)
         ? g_fx.plan_many_dft_r2c(1, n_arr, (int)K, hin, NULL, 1, N,
                                  (fftwx_complex *)hcce, NULL, 1, halfN + 1,
                                  FFTWX_MEASURE) : NULL;
-    double il_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    double il_ms = (vfft_now_ns() - t0) / 1e6;
     double *sx = alloc_d(total);
     ref_planes_t sp = ref_planes_alloc(outsz);
     fftwx_iodim dims = { N, (int)K, (int)K };
     fftwx_iodim hm   = { (int)K, 1, 1 };
-    t0 = vfft_proto_now_ns();
+    t0 = vfft_now_ns();
     fftwx_plan fsp = g_fx.plan_guru_split_dft_r2c(1, &dims, 1, &hm,
                                                   sx, sp.re, sp.im, FFTWX_MEASURE);
-    double sp_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    double sp_ms = (vfft_now_ns() - t0) / 1e6;
     g_fx.export_wisdom_to_filename(fftw_wis_path());
     if (!fil || !fsp)
     {
@@ -827,18 +827,18 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
         int reps = reps_for(total);                                       \
         for (int t = 0; t < 5; t++)                                       \
         { if (t) pace(g_trial_pace_ms);                                   \
-          double tt = vfft_proto_now_ns();                                \
+          double tt = vfft_now_ns();                                \
           for (int i = 0; i < reps; i++) vfft_execute(H, VFFT_FORWARD, x, NULL, o_re, o_im); \
-          g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                  \
+          g_t5[t] = (vfft_now_ns() - tt) / reps; }                  \
         DST = stat5(g_t5); } } while (0)
 #define TIME_FFTW(PL, DST) do {                                           \
         for (int w = 0; w < 10; w++) g_fx.execute(PL);                    \
         int reps = reps_for(total);                                       \
         for (int t = 0; t < 5; t++)                                       \
         { if (t) pace(g_trial_pace_ms);                                   \
-          double tt = vfft_proto_now_ns();                                \
+          double tt = vfft_now_ns();                                \
           for (int i = 0; i < reps; i++) g_fx.execute(PL);                \
-          g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                  \
+          g_t5[t] = (vfft_now_ns() - tt) / reps; }                  \
         DST = stat5(g_t5); } while (0)
 
     /* verdict pair (vfft front door vs FFTW home) order-flipped; the rest are extra */
@@ -859,11 +859,11 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
       int reps = reps_for(total);
       for (int t = 0; t < 5; t++)
       { if (t) pace(g_trial_pace_ms);
-        double tt = vfft_proto_now_ns();
+        double tt = vfft_now_ns();
         for (int i = 0; i < reps; i++)
         { memcpy(o_re, x, outsz * sizeof(double));
           ((volatile double *)o_re)[0] = o_re[0]; }
-        g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+        g_t5[t] = (vfft_now_ns() - tt) / reps; }
       cs = stat5(g_t5); }
 
     double r_il    = vs.med > 0 ? is_.med / vs.med : 0;   /* THE VERDICT */
@@ -1005,22 +1005,22 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
     double *hcce = (double *)g_fx.fmalloc(sizeof(double) * 2 * insz);
     double *hout = (double *)g_fx.fmalloc(sizeof(double) * total);
     int n_arr[1] = { N };
-    double t0 = vfft_proto_now_ns();
+    double t0 = vfft_now_ns();
     fftwx_plan fil = (hcce && hout)
         ? g_fx.plan_many_dft_c2r(1, n_arr, (int)K,
                                  (fftwx_complex *)hcce, NULL, 1, halfN + 1,
                                  hout, NULL, 1, N,
                                  FFTWX_MEASURE | FFTWX_PRESERVE_INPUT) : NULL;
-    double il_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    double il_ms = (vfft_now_ns() - t0) / 1e6;
     ref_planes_t sp = ref_planes_alloc(insz);       /* deterministic split planes */
     double *sy = alloc_d(total);
     fftwx_iodim dims = { N, (int)K, (int)K };
     fftwx_iodim hm   = { (int)K, 1, 1 };
-    t0 = vfft_proto_now_ns();
+    t0 = vfft_now_ns();
     fftwx_plan fsp = g_fx.plan_guru_split_dft_c2r(1, &dims, 1, &hm,
                                                   sp.re, sp.im, sy,
                                                   FFTWX_MEASURE | FFTWX_PRESERVE_INPUT);
-    double sp_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    double sp_ms = (vfft_now_ns() - t0) / 1e6;
     g_fx.export_wisdom_to_filename(fftw_wis_path());
     if (!fil || !fsp)
     {
@@ -1110,18 +1110,18 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
         int reps = reps_for(total);                                       \
         for (int t = 0; t < 5; t++)                                       \
         { if (t) pace(g_trial_pace_ms);                                   \
-          double tt = vfft_proto_now_ns();                                \
+          double tt = vfft_now_ns();                                \
           for (int i = 0; i < reps; i++) vfft_execute(H, VFFT_BACKWARD, ire, iim, y, NULL); \
-          g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                  \
+          g_t5[t] = (vfft_now_ns() - tt) / reps; }                  \
         DST = stat5(g_t5); } } while (0)
 #define TIME_C2R_FFTW(PL, DST) do {                                       \
         for (int w = 0; w < 10; w++) g_fx.execute(PL);                    \
         int reps = reps_for(total);                                       \
         for (int t = 0; t < 5; t++)                                       \
         { if (t) pace(g_trial_pace_ms);                                   \
-          double tt = vfft_proto_now_ns();                                \
+          double tt = vfft_now_ns();                                \
           for (int i = 0; i < reps; i++) g_fx.execute(PL);                \
-          g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                  \
+          g_t5[t] = (vfft_now_ns() - tt) / reps; }                  \
         DST = stat5(g_t5); } while (0)
         if (flip) { TIME_C2R_FFTW(fil, is_); cachebust(); pace(cool_ms); TIME_C2R_FD(h_fd, vs); }
         else      { TIME_C2R_FD(h_fd, vs); cachebust(); pace(cool_ms); TIME_C2R_FFTW(fil, is_); }
@@ -1136,11 +1136,11 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
           int reps = reps_for(total);
           for (int t = 0; t < 5; t++)
           { if (t) pace(g_trial_pace_ms);
-            double tt = vfft_proto_now_ns();
+            double tt = vfft_now_ns();
             for (int i = 0; i < reps; i++)
             { memcpy(y, x0, total * sizeof(double));
               ((volatile double *)y)[0] = y[0]; }
-            g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+            g_t5[t] = (vfft_now_ns() - tt) / reps; }
           cs = stat5(g_t5); }
 
         double r_il    = vs.med > 0 ? is_.med / vs.med : 0;   /* THE VERDICT */
@@ -1227,21 +1227,21 @@ static void run_oop_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
     ref_planes_t pin = ref_planes_alloc(total), pout = ref_planes_alloc(total);
     fftwx_iodim dims = { N, (int)K, (int)K };
     fftwx_iodim hm   = { (int)K, 1, 1 };
-    double t0 = vfft_proto_now_ns();
+    double t0 = vfft_now_ns();
     fftwx_plan fsp = g_fx.plan_guru_split_dft(1, &dims, 1, &hm,
                                               pin.re, pin.im, pout.re, pout.im,
                                               FFTWX_MEASURE);
-    double sp_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    double sp_ms = (vfft_now_ns() - t0) / 1e6;
     double *hin = (double *)g_fx.fmalloc(sizeof(double) * 2 * total);
     double *hout = (double *)g_fx.fmalloc(sizeof(double) * 2 * total);
     int n_arr[1] = { N };
-    t0 = vfft_proto_now_ns();
+    t0 = vfft_now_ns();
     fftwx_plan fil = (hin && hout)
         ? g_fx.plan_many_dft(1, n_arr, (int)K,
                              (fftwx_complex *)hin, NULL, 1, N,
                              (fftwx_complex *)hout, NULL, 1, N,
                              FFTWX_FORWARD, FFTWX_MEASURE) : NULL;
-    double il_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    double il_ms = (vfft_now_ns() - t0) / 1e6;
     g_fx.export_wisdom_to_filename(fftw_wis_path());
     if (!fsp || !fil)
     {
@@ -1306,9 +1306,9 @@ static void run_oop_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
         int reps = reps_for(total);                                     \
         for (int t = 0; t < 5; t++)                                     \
         { if (t) pace(g_trial_pace_ms);                                 \
-          double tt = vfft_proto_now_ns();                              \
+          double tt = vfft_now_ns();                              \
           for (int i = 0; i < reps; i++) vfft_execute(h, VFFT_FORWARD, sr, si, dr, di); \
-          g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                \
+          g_t5[t] = (vfft_now_ns() - tt) / reps; }                \
         vs = stat5(g_t5); } while (0)
     if (flip)
     {
@@ -1335,9 +1335,9 @@ static void run_oop_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
       int reps = reps_for(total);
       for (int t = 0; t < 5; t++)
       { if (t) pace(g_trial_pace_ms);
-        double tt = vfft_proto_now_ns();
+        double tt = vfft_now_ns();
         for (int i = 0; i < reps; i++) g_fx.execute(fil);
-        g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+        g_t5[t] = (vfft_now_ns() - tt) / reps; }
       hs = stat5(g_t5); }
     cachebust(); pace(cool_ms);
     stat5_t cs;
@@ -1347,12 +1347,12 @@ static void run_oop_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
       int reps = reps_for(total);
       for (int t = 0; t < 5; t++)
       { if (t) pace(g_trial_pace_ms);
-        double tt = vfft_proto_now_ns();
+        double tt = vfft_now_ns();
         for (int i = 0; i < reps; i++)
         { memcpy(dr, sr, total * sizeof(double));
           memcpy(di, si, total * sizeof(double));
           ((volatile double *)dr)[0] = dr[0]; }
-        g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+        g_t5[t] = (vfft_now_ns() - tt) / reps; }
       cs = stat5(g_t5); }
 
     double r_split = vs.med > 0 ? ms.med / vs.med : 0;   /* THE VERDICT (our layout) */

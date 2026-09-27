@@ -56,14 +56,14 @@ static void _pad_fill(double *re, double *im, int N, size_t K, size_t Kp)
 }
 static double _pad_burst(stride_plan_t *p, vfft_proto_exec_fn jf, double *re, double *im, size_t me, int reps)
 {
-    double t0 = vfft_proto_now_ns();
+    double t0 = vfft_now_ns();
     if (jf)
         for (int i = 0; i < reps; i++)
             jf(p, re, im, me, p->K, 0);
     else
         for (int i = 0; i < reps; i++)
             vfft_proto_execute_fwd(p, re, im, me);
-    return vfft_proto_now_ns() - t0;
+    return vfft_now_ns() - t0;
 }
 /* the arms of the pad-vs-tight race: one plan each at its own stride, the
  * baked executor when one exists (given to BOTH arms) */

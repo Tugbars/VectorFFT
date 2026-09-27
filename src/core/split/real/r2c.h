@@ -28,6 +28,7 @@
  */
 #ifndef STRIDE_R2C_H
 #define STRIDE_R2C_H
+#include "common/math/pi.h"
 
 #include "executor.h"
 
@@ -187,7 +188,7 @@ static void _r2c_init_twiddles(int N, double *tw_re, double *tw_im)
     int half_N = N / 2;
     for (int k = 0; k < half_N; k++)
     {
-        double angle = -2.0 * M_PI * (double)k / (double)N;
+        double angle = -2.0 * VFFT_PI * (double)k / (double)N;
         tw_re[k] = cos(angle);
         tw_im[k] = sin(angle);
     }

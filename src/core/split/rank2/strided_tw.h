@@ -31,6 +31,7 @@
  */
 #ifndef VFFT_STRIDED_TW_H
 #define VFFT_STRIDED_TW_H
+#include "common/math/pi.h"
 /* win-compat: mingw lacks C11 aligned_alloc; Windows must pair _aligned_malloc/_aligned_free
  * (same shim as proto_stride_compat.h, guarded so whichever comes first wins). */
 #ifndef STRIDE_ALIGNED_ALLOC
@@ -88,13 +89,13 @@ static inline int _stw_tables_init(_stw_tables_t *t, int N)
     if (!t->twr || !t->twi) { STRIDE_ALIGNED_FREE(t->twr); STRIDE_ALIGNED_FREE(t->twi); return 0; }
     if (t->r == 2) {
         for (size_t m = 0; m < per; m++) {
-            double a = -2.0 * M_PI * (double)m / (double)N;
+            double a = -2.0 * VFFT_PI * (double)m / (double)N;
             t->twr[m] = cos(a); t->twi[m] = sin(a);
         }
     } else {
         for (int j = 1; j <= 3; j++)
             for (size_t m = 0; m < per; m++) {
-                double a = -2.0 * M_PI * (double)j * (double)m / (double)N;
+                double a = -2.0 * VFFT_PI * (double)j * (double)m / (double)N;
                 t->twr[(size_t)(j - 1) * per + m] = cos(a);
                 t->twi[(size_t)(j - 1) * per + m] = sin(a);
             }

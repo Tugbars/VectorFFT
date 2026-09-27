@@ -36,10 +36,10 @@ static double vfft_fft2d_c2r_bench_min(const stride_plan_t *p, int N1, int N2,
     int reps = _vfft_fft2d_r2c_reps(total);
     double best = 1e18;
     for (int t = 0; t < VFFT_FFT2D_C2R_BENCH_TRIALS; t++) {
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             stride_execute_2d_c2r(p, in_re, in_im, real_out);
-        double ns = (vfft_proto_now_ns() - t0) / (double)reps;
+        double ns = (vfft_now_ns() - t0) / (double)reps;
         if (ns < best) best = ns;
     }
     return best;

@@ -30,9 +30,7 @@
 #include <string.h>
 #include "vfft.h"
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+#include "common/math/pi.h"
 
 static double *_g2d_az(size_t doubles)
 {
@@ -63,7 +61,7 @@ static void _g2d_naive(const double *x, double *X, int N1, int N2)
         for (k = 0; k < N2; k++) {
             double sr = 0, si = 0;
             for (j = 0; j < N2; j++) {
-                double a = -2.0 * M_PI * (double)k * j / N2;
+                double a = -2.0 * VFFT_PI * (double)k * j / N2;
                 double wr = cos(a), wi = sin(a);
                 const double *z = x + 2 * ((size_t)r * N2 + j);
                 sr += z[0] * wr - z[1] * wi;
@@ -76,7 +74,7 @@ static void _g2d_naive(const double *x, double *X, int N1, int N2)
         for (k = 0; k < N1; k++) {
             double sr = 0, si = 0;
             for (j = 0; j < N1; j++) {
-                double a = -2.0 * M_PI * (double)k * j / N1;
+                double a = -2.0 * VFFT_PI * (double)k * j / N1;
                 double wr = cos(a), wi = sin(a);
                 const double *z = tmp + 2 * ((size_t)j * N2 + c);
                 sr += z[0] * wr - z[1] * wi;

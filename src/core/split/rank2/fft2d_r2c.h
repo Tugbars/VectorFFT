@@ -34,6 +34,7 @@
  */
 #ifndef STRIDE_FFT2D_R2C_H
 #define STRIDE_FFT2D_R2C_H
+#include "common/math/pi.h"
 
 #include <time.h> /* clock_gettime for the adoption A/B timing (win: mingw provides it) */
 #include "executor.h"
@@ -947,7 +948,7 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
             int pp = d->perm[k];
             double vr = d->re_pad[(size_t)pp * K_pad];
             double vi = d->im_pad[(size_t)pp * K_pad];
-            double a_ = -2.0 * 3.14159265358979323846 * (double)k / (double)N1;
+            double a_ = -2.0 * VFFT_PI * (double)k / (double)N1;
             double er = vr - cos(a_), ei = vi - sin(a_);
             if (er * er + ei * ei > 1e-12) cp_fail = 1;
         }
@@ -960,7 +961,7 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
             _fft2d_r2c_inner_fwd(d->plan_r2c, sr0, si0, 0);
             const int h_ = N2 / 2;
             for (int f = 0; f <= h_ && !cp_fail; f++) {
-                double a_ = -2.0 * 3.14159265358979323846
+                double a_ = -2.0 * VFFT_PI
                             * (double)f / (double)N2;
                 double er = sr0[(size_t)f * d->B] - cos(a_);
                 double ei = si0[(size_t)f * d->B] - sin(a_);

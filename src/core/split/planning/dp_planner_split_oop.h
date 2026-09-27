@@ -70,9 +70,7 @@
                                      * through dp_planner_il.h, whose IL race this
                                      * split planner never used) */
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+#include "common/math/pi.h"
 
 /* monotonic ns clock (QPC on Windows) */
 static double _sp_now_ns(void)
@@ -175,7 +173,7 @@ static void _sp_ref_direct(const double *ar, const double *ai,
     for (int k = 0; k < N; k++) {
         double sr = 0, si = 0;
         for (int n = 0; n < N; n++) {
-            double a = -2.0 * M_PI * (double)((long long)k * n % N) / N;
+            double a = -2.0 * VFFT_PI * (double)((long long)k * n % N) / N;
             double c = cos(a), s = sin(a);
             sr += ar[n] * c - ai[n] * s;
             si += ar[n] * s + ai[n] * c;
@@ -201,7 +199,7 @@ static int _sp_reference(const double *ar, const double *ai,
         Rr[r] = ar[i]; Ri[r] = ai[i];
     }
     for (int len = 2; len <= N; len <<= 1) {
-        double ang = -2.0 * M_PI / (double)len;
+        double ang = -2.0 * VFFT_PI / (double)len;
         for (int i = 0; i < N; i += len)
             for (int j = 0; j < len / 2; j++) {
                 double c = cos(ang * j), s = sin(ang * j);
@@ -224,7 +222,7 @@ static int _sp_reference(const double *ar, const double *ai,
         int k = (int)(lcg % (unsigned)N);
         double sr = 0, si = 0;
         for (int n = 0; n < N; n++) {
-            double a = -2.0 * M_PI * (double)((long long)k * n % N) / N;
+            double a = -2.0 * VFFT_PI * (double)((long long)k * n % N) / N;
             sr += ar[n] * cos(a) - ai[n] * sin(a);
             si += ar[n] * sin(a) + ai[n] * cos(a);
         }

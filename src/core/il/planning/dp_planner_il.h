@@ -37,6 +37,7 @@
  */
 #ifndef VFFT_DP_PLANNER_IL_H
 #define VFFT_DP_PLANNER_IL_H
+#include "common/math/pi.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -594,7 +595,7 @@ static void _il_dp_ref_dft_direct(double *z, long N)
         for (n = 0; n < N; n++)
         {
             long double a =
-                -2.0L * 3.14159265358979323846L * (long double)f * (long double)n
+                -2.0L * VFFT_PI_L * (long double)f * (long double)n
                 / (long double)N;
             long double c = cosl(a), sn = sinl(a);
             sr += (long double)z[2 * n] * c - (long double)z[2 * n + 1] * sn;
@@ -635,7 +636,7 @@ static void _il_dp_ref_mixed_rec(const long double *ir, const long double *ii,
         if (!wr) { for (j = 0; j < n; j++) { outr[j] = 0.0L / 0.0L; outi[j] = outr[j]; } return; }
         for (j = 0; j < n; j++)
         {
-            const long double a = -2.0L * 3.14159265358979323846264338327950288L
+            const long double a = -2.0L * VFFT_PI_L
                                   * (long double)j / (long double)n;
             wr[j] = cosl(a); wi[j] = sinl(a);
         }
@@ -690,7 +691,7 @@ static void _il_dp_ref_dft(double *z, long N)
         long half = len >> 1;
         for (long k = 0; k < half; k++)
         {
-            double a = -2.0 * M_PI * (double)k / (double)len;
+            double a = -2.0 * VFFT_PI * (double)k / (double)len;
             double wr = cos(a), wi = sin(a);
             for (long i = k; i < N; i += len)
             {
@@ -747,7 +748,7 @@ static int _il_dp_ref_build(vfft_il_dp_context_t *ctx, int N)
         {
             /* long long: j*m reaches 6.9e10 at N=262144 and `long` is 32-bit
              * on the Windows toolchain this project builds with. */
-            double a = -2.0 * M_PI *
+            double a = -2.0 * VFFT_PI *
                        (double)(((long long)j * m) % N) / (double)N;
             double cr = cos(a), ci = sin(a);
             sr += ctx->z_orig[2 * j] * cr - ctx->z_orig[2 * j + 1] * ci;

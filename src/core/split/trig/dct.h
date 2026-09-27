@@ -53,9 +53,7 @@
 #include "dct3_n8_avx2.h"
 #endif
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+#include "common/math/pi.h"
 
 
 /* ═══════════════════════════════════════════════════════════════
@@ -530,7 +528,7 @@ static stride_plan_t *stride_dct2_plan(int N, size_t K, stride_plan_t *r2c_plan_
     d->sin_tw = (double *)malloc((size_t)n_tw * sizeof(double));
     if (!d->cos_tw || !d->sin_tw) { _dct2_destroy(d); return NULL; }
     for (int i = 0; i < n_tw; i++) {
-        double angle = M_PI * (double)i / (2.0 * (double)N);
+        double angle = VFFT_PI * (double)i / (2.0 * (double)N);
         d->cos_tw[i] = cos(angle);
         d->sin_tw[i] = sin(angle);
     }

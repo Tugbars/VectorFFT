@@ -117,10 +117,10 @@ static double _vfft_proto_dp_bench_explicit(vfft_proto_dp_context_t *ctx, int N,
         for (int t = 0; t < VFFT_PROTO_DP_TIME_REPEAT; t++) {
             memcpy(ctx->re, ctx->orig_re, total * sizeof(double));
             memcpy(ctx->im, ctx->orig_im, total * sizeof(double));
-            double t0 = vfft_proto_now_ns();
+            double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
                 vfft_proto_execute_fwd(plan, ctx->re, ctx->im, K_eff);
-            double tn = vfft_proto_now_ns() - t0;
+            double tn = vfft_now_ns() - t0;
             if (tn < tmin) tmin = tn;
             total_elapsed += tn;
             if (total_elapsed >= VFFT_PROTO_DP_TIME_LIMIT_NS) break;
@@ -364,8 +364,8 @@ static double vfft_proto_dp_plan_measure(vfft_proto_dp_context_t *ctx, int N,
         free(wl);
         if (wp) {
             size_t total = (size_t)N * ctx->K;
-            double t0 = vfft_proto_now_ns();
-            while (vfft_proto_now_ns() - t0 < VFFT_PROTO_MEASURE_WARMUP_NS) {
+            double t0 = vfft_now_ns();
+            while (vfft_now_ns() - t0 < VFFT_PROTO_MEASURE_WARMUP_NS) {
                 memcpy(ctx->re, ctx->orig_re, total * sizeof(double));
                 memcpy(ctx->im, ctx->orig_im, total * sizeof(double));
                 vfft_proto_execute_fwd(wp, ctx->re, ctx->im, ctx->K);

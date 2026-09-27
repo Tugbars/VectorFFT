@@ -509,6 +509,14 @@ not govern linkage. The checker reads the `#include` lines.
     size) with plan choices unchanged, then the golden bits are re-baselined.
   - **Owner (2026-09-27), digit-reversal permutations: do not touch.** Split and IL are
     different libraries; the owner revisits the split side after IL is finished.
+  - **Owner (2026-09-27), duplicated utilities: unify them.** Done in steps:
+    - pi (A1): one `common/math/pi.h` (`VFFT_PI`, `VFFT_PI_L`) replaces eight `M_PI`
+      fallbacks, `VFFT_IL2P_PI` / `VFFT_ZR2C_PI` / `VFFT_NATORDER_PI` and the inline
+      literals; it keeps one `M_PI` fallback (the bare literal) for the benches.
+    - the clock (A1): `vfft_proto_now_ns` (split planner) folded into `vfft_now_ns`
+      (`common/support/race_timing.h`, QPC on Windows, `clock_gettime` elsewhere).
+    - A1 proof: the two vfft.c objects at avx2 and avx512 are `obj_equiv
+      --strict-data` EQUIVALENT to the previous commit's under the clock rename map.
 - **D6. Dead code.** Delete it (recommended) rather than move it:
   - `conv/conv.h`, `fftnd_natorder.h`, `fftnd_planner.h`, `fftnd_wisdom.h`;
   - `engine/compat.h`;

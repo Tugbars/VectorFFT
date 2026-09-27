@@ -53,6 +53,7 @@
  */
 #ifndef VFFT_IL2D_PROTO_H
 #define VFFT_IL2D_PROTO_H
+#include "common/math/pi.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -66,7 +67,7 @@ static void il2d_sim_col_stage(double *z, int N1, int N2,
                                int L, int R, double sgn)
 {
     const int D = L / R;
-    const double pi = 3.14159265358979323846;
+    const double pi = VFFT_PI;
     /* scratch for one butterfly's R legs (R <= 64) */
     double yr[64], yi[64];
     int b, d, j, t, r;
@@ -139,7 +140,7 @@ static int il2d_sim_row_pos(int k, int N1, const int *chain, int nf)
 /* naive N2-point DFT per row, natural output, out-of-place row buffer. */
 static void il2d_sim_row_pass(double *z, int N1, int N2, double sgn)
 {
-    const double pi = 3.14159265358979323846;
+    const double pi = VFFT_PI;
     double tmp[2 * 4096];
     int i, k, j;
     for (i = 0; i < N1; i++) {

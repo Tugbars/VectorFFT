@@ -62,9 +62,9 @@ static double vfft_fft2d_c2c_bench_min(stride_plan_t *p, int N1, int N2,
     int reps = _vfft_fft2d_c2c_reps(total);
     double best = 1e18;
     for (int t = 0; t < VFFT_FFT2D_C2C_BENCH_TRIALS; t++) {
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++) stride_execute_fwd(p, re, im);
-        double ns = (vfft_proto_now_ns() - t0) / (double)reps;
+        double ns = (vfft_now_ns() - t0) / (double)reps;
         if (ns < best) best = ns;
     }
     return best;
@@ -88,13 +88,13 @@ static double vfft_fft2d_c2c_bench_min_natural(stride_plan_t *p, int N1, int N2,
     int reps = _vfft_fft2d_c2c_reps(total);
     double best = 1e18;
     for (int t = 0; t < VFFT_FFT2D_C2C_BENCH_TRIALS; t++) {
-        double t0 = vfft_proto_now_ns();
+        double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++) {
             stride_execute_fwd(p, re, im);
             if (d1_list) { if (d1_is_pairs) vfft_natorder_pair_pass(re, im, (size_t)N2, d1_list);
                            else             vfft_natorder_cycle_pass(re, im, (size_t)N2, d1_list, d1_tmp); }
         }
-        double ns = (vfft_proto_now_ns() - t0) / (double)reps;
+        double ns = (vfft_now_ns() - t0) / (double)reps;
         if (ns < best) best = ns;
     }
     return best;
@@ -106,13 +106,13 @@ static double vfft_fft2d_c2c_bench_min_natural(stride_plan_t *p, int N1, int N2,
  * thermal noise drops below the 5% margin => the natural tie-break is deterministic even on a loaded host. */
 static double _fft2d_natural_sample(stride_plan_t *p, int N2, double *re, double *im,
                                     int reps, int *d1_list, int d1_is_pairs, double *d1_tmp) {
-    double t0 = vfft_proto_now_ns();
+    double t0 = vfft_now_ns();
     for (int i = 0; i < reps; i++) {
         stride_execute_fwd(p, re, im);
         if (d1_list) { if (d1_is_pairs) vfft_natorder_pair_pass(re, im, (size_t)N2, d1_list);
                        else             vfft_natorder_cycle_pass(re, im, (size_t)N2, d1_list, d1_tmp); }
     }
-    return (vfft_proto_now_ns() - t0) / (double)reps;
+    return (vfft_now_ns() - t0) / (double)reps;
 }
 
 /* One live natural candidate kept alive across the interleaved sweep: its 2D plan (JIT-resolved), dim1 tape

@@ -18,7 +18,7 @@
 #define VFFT_RFFT_CALIBRATE_H
 
 #include "rfft.h"            /* rfft_codelets_t, rfft_plan_create_ex, execute   */
-#include "dp_planner.h"      /* vfft_proto_now_ns                               */
+#include "dp_planner.h"      /* vfft_now_ns                               */
 #include "wisdom_reader.h"   /* vfft_proto_wisdom_entry_t + STRIDE_MAX_STAGES   */
 #include "proto_stride_compat.h" /* vfft_proto_posix_memalign / aligned_free    */
 #include <math.h>
@@ -127,9 +127,9 @@ static int vfft_rfft_calibrate(int N, size_t K, const rfft_codelets_t *reg,
             for (int w = 0; w < 10; w++) rfft_execute_fwd_packed(p, x, buf);
             double ns = 1e18;
             for (int tr = 0; tr < 5; tr++) {
-                double t0 = vfft_proto_now_ns();
+                double t0 = vfft_now_ns();
                 for (int i = 0; i < reps; i++) rfft_execute_fwd_packed(p, x, buf);
-                double e = (vfft_proto_now_ns() - t0) / reps; if (e < ns) ns = e;
+                double e = (vfft_now_ns() - t0) / reps; if (e < ns) ns = e;
             }
             rfft_plan_destroy(p);
             if (ns < best_ns) {

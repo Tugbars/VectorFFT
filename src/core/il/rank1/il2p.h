@@ -41,9 +41,7 @@
 #include <string.h>
 #include <math.h>
 
-#ifndef VFFT_IL2P_PI
-#define VFFT_IL2P_PI 3.14159265358979323846
-#endif
+#include "common/math/pi.h"
 
 #if defined(_WIN32)
 #include <malloc.h>
