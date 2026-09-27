@@ -6,7 +6,7 @@
  * LIFETIME TIERS inside this file:
  *   PERMANENT — entry structs, plan_from_entry builders, the 3D scratch
  *     table + extract + create (the live wisdom2 serving path: the vw2
- *     twins in wisdom2_2d_reader.h fill the structs, these build plans).
+ *     twins in wisdom2_2d_split_reader.h fill the structs, these build plans).
  *   LEGACY — the fft2d file loaders, table lookups, frees, and
  *     plan_create_wisdom creators. The VFFT_WISDOM2_OFF kill switch that
  *     routed reads to them is retired (vfft.c), so the loaders serve the
@@ -178,7 +178,7 @@ vfft_fft2d_c2c_wisdom_lookup(const vfft_fft2d_c2c_wisdom_t *w, int N1, int N2)
 
 /* No add/save: fft2d_c2c_wisdom.txt is FROZEN — banks go through
  * vw2_2d_c2c_bank_entry/_bank_nat into the wisdom2 store (the ONE family
- * codec, wisdom2_2d_reader.h); the loader above serves the migrator. */
+ * codec, wisdom2_2d_split_reader.h); the loader above serves the migrator. */
 
 /* ── Natural table (order=VFFT_ORDER_NATURAL) lookup/upsert — keyed (N1,N2) on the SEPARATE nat table. ── */
 static inline const vfft_fft2d_c2c_nat_entry_t *
@@ -392,7 +392,7 @@ vfft_fft2d_r2c_wisdom_lookup(const vfft_fft2d_r2c_wisdom_t *w, int N1, int N2)
 }
 
 /* No add/save: both fft2d real files are FROZEN — banks go through
- * vw2_2d_r2c_bank_entry (direction = the t= key, wisdom2_2d_reader.h);
+ * vw2_2d_r2c_bank_entry (direction = the t= key, wisdom2_2d_split_reader.h);
  * the loader above serves the migrator. */
 
 static inline void vfft_fft2d_r2c_wisdom_free(vfft_fft2d_r2c_wisdom_t *w)
