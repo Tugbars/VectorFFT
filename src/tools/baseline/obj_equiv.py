@@ -330,15 +330,19 @@ def _base_adjust(r, base):
 
 def norm_name(name, rename=None):
     """GCC clone and local counters collapse (foo.constprop.3 -> .N), as
-    sym_census does; then the rename map."""
+    sym_census does; then the rename map, applied to the identifier before any
+    GCC suffix (a C name has no '.', every clone suffix starts with one), so a
+    renamed function's clones (foo.part.0, foo.constprop.1) follow it."""
     prev = None
     while prev != name:
         prev = name
         name = _CLONE_NUM.sub(".N", name)
         if name.endswith(".N.N"):
             name = name[:-2]
-    if rename and name in rename:
-        name = rename[name]
+    if rename:
+        base, dot, rest = name.partition(".")
+        if base in rename:
+            name = rename[base] + dot + rest
     return name
 
 
