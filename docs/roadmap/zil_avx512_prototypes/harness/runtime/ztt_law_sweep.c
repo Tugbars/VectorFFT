@@ -1,6 +1,7 @@
 /* zlaw.c — every ZTURN-T chain the grammar admits (ends 4/8, mids 4/8/3/5/7/9/15),
  * N in a pow2 + odd-band set, both order classes: create or refuse; every created plan
- * checked single-threaded at every legal tile: natural fwd vs a reference DFT, both
+ * checked single-threaded at every legal tile: fwd vs a reference DFT (scrambled decoded
+ * through vfft_ztt_perm), both
  * classes by roundtrip (bwd(fwd(x)) == N x), OOP and in place (natural). */
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,11 @@ static void check(int N, const int *ch, int nf, int scr, const double *x, const 
             double ef = 0;
             if (ip) { memcpy(y, x, 16 * N); vfft_ztt_execute_fwd(p, y, y); } else vfft_ztt_execute_fwd(p, x, y);
             if (!scr) ef = rel(y, ref, 2 * N);
+            else {   /* scrambled: decode through the plan's permutation (bin k at y[perm(k)]) */
+                double *d = malloc(16 * N);
+                for (long k = 0; k < N; k++) { const size_t q = vfft_ztt_perm(p, k); d[2*k] = y[2*q]; d[2*k+1] = y[2*q+1]; }
+                ef = rel(d, ref, 2 * N); free(d);
+            }
             if (ip) { memcpy(z, y, 16 * N); vfft_ztt_execute_bwd(p, z, z); } else vfft_ztt_execute_bwd(p, y, z);
             for (long i = 0; i < 2 * N; i++) w[i] = z[i] / N;
             double eb = rel(w, x, 2 * N);

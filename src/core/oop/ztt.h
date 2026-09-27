@@ -458,6 +458,20 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
          * ic = digitrev(k) over the chain, then inside the last stage's
          * 4-column span at tld's unpack-only lane order [c, c+2 | c+1, c+3]:
          * R*(col & ~3) + 4*p + [0,2,1,3][col & 3], col = ic / R, p = ic % R */
+#if VFFT_IL_VW == 8
+        /* at 8 lanes: the span is 8 columns and tld's unpacklo/hi leave the
+         * evens first, then the odds: [0,4,1,5,2,6,3,7] ->
+         * position of column c = (c >> 1) + (c & 1) * 4 */
+        {
+            const long R = chain[nf - 1], VW = VFFT_IL_VW;
+            for (j = 0; j < (long)N; j++)
+            {
+                const long ic = _ztt_digitrev(j, chain, nf);
+                const long col = ic / R, pp = ic % R, c = col & (VW - 1);
+                p->perm[j] = (size_t)(R * (col & ~(VW - 1)) + VW * pp + ((c >> 1) + (c & 1) * (VW / 2)));
+            }
+        }
+#else
         {
             static const size_t sig[4] = { 0, 2, 1, 3 };
             const long R = chain[nf - 1];
@@ -468,6 +482,7 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
                 p->perm[j] = (size_t)(R * (col & ~3L) + 4 * pp) + sig[col & 3];
             }
         }
+#endif
         p->inplace = 0;
         p->tile = 0;
         p->fwd = NULL;   /* the plain fused codelets are reached through the cell */
