@@ -1372,7 +1372,6 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
 /* ── the create: rank-3 interleaved c2c, either placement, every order ── */
 static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                                        struct vfft_wisdom_s *W,
-                                       const vfft_proto_registry_t *reg,
                                        size_t K)
 {
     const int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
@@ -1392,7 +1391,6 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     const char *wpin = getenv("VFFT_ILND_WL");
     const char *mpin = getenv("VFFT_ILND_MT");
     const char *ptpin = getenv("VFFT_ILND_PT");   /* with VFFT_ILND_MT=2: the plane team */
-    (void)reg;
     /* IN PLACE: the same plan and the same wisdom row serve
      * both placements — every pass is the 2D tier's alias-tolerant kind
      * (axis 0 src -> dst with src == dst, the bands and the structure in
@@ -1893,6 +1891,28 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     h->nthreads = nthr;
     h->ilnd = d;
     return h;
+}
+
+
+/* ── the INTERLEAVED rank-3/4 create tier (the front door's layout fork,
+ * transforms/fftnd/fftnd_create.h, sends every interleaved rank-3/4 request
+ * here): rank-3 c2c is the native tier above; real rank >= 3 and rank 4 are
+ * refused loudly. Layout separation phase 6: the interleaved peel of the
+ * pre-separation _vfft_create_rank34, verbatim. */
+static vfft_plan _vfft_create_rank34_il(const vfft_config_t *cfg,
+                                        struct vfft_wisdom_s *W,
+                                        size_t K)
+{
+    /* 3D/4D INTERLEAVED: rank-3 c2c is the native IL tier (fftnd_il.h);
+     * real rank >= 3 and rank 4 are refused loudly. No fallback: never the
+     * split ND engine behind a repack — refuse, never bridge. */
+    if (cfg->transform == VFFT_C2C && cfg->dims == 3)
+        return _vfft_create_fftnd_il(cfg, W, K);
+    _vfft_warn("vfft_create: %dD %s with layout=INTERLEAVED is not wired yet "
+               "(the rank-3+ interleaved tier is a planned feature); use "
+               "VFFT_LAYOUT_SPLIT",
+               cfg->dims, _vfft_tname(cfg->transform));
+    return NULL;
 }
 
 #endif /* VFFT_TRANSFORMS_FFTND_FFTND_IL_H */
