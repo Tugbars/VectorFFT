@@ -15,9 +15,11 @@
 #include "oop_auto.h"           /* OOP plan + leaf/t1p slices                      */
 #include "oop_dp.h"             /* vfft_oop_plan_create_dp_best (calibration)      */
 #include "wisdom2_oop.h"        /* OOP wisdom structs/codecs + legacy loader (wisdom2 folder) */
-#include "wisdom2/wisdom2_2d_reader.h"  /* wisdom2: rank>=2 family codec (wave-3 flip) */
+#include "split/wisdom/wisdom2_2d_split_reader.h"  /* wisdom2: the split rank>=2 family codec (wave-3 flip) */
+#include "il/wisdom/wisdom2_2d_il_reader.h"  /* wisdom2: the lay=il rank>=2 cells */
 #include "split/wisdom/wisdom2_stride_reader.h" /* wisdom2: stride family codec (wave-4 flip) */
 #include "split/wisdom/wisdom2_real_reader.h" /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
+#include "il/wisdom/wisdom2_oddr.h" /* the odd-real route verdict row (lay=il) */
 #include "common/support/diag.h"              /* loud-refusal helpers: _vfft_warn, _vfft_tname (step 6a) */
 #include "common/support/race_timing.h"        /* the racers' shared clock + median (step 5) */
 #include "common/support/race.h"               /* the one race body: arms x protocol -> aggregates */
@@ -69,7 +71,7 @@
 #include "fft2d_r2c.h"                                                     /* 2D r2c / c2r                                    */
 #include "fft2d_real_il.h"                                                 /* native IL 2D real tier kernels                  */
 /* rank>=2 wisdom structs/builders/legacy: wisdom2/wisdom2_fftnd.h (via the
- * wisdom2_2d_reader.h include above — owner folder-structure directive) */
+ * split/wisdom/wisdom2_2d_split_reader.h include above — owner folder-structure directive) */
 #ifdef VFFT_USE_JIT
 #include "jit/jit_runtime.h"    /* vfft_proto_plan_jit_fwd/bwd — transparent JIT/baked resolve at create.
                                * (r2c/c2r/2D dispatchers self-resolve internally under the same flag.) */

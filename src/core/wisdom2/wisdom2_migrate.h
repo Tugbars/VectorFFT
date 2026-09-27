@@ -706,14 +706,14 @@ static inline int vw2_migrate_oop_gate(const char *legacy_path, const char *outd
  * THE 2D FAMILIES (fft2d c2c incl. @nat2d, r2c, c2r).
  * Same machinery: probe-parse every data line through the SHIPPED loaders
  * (exact line attribution; legacy silent drops become quarantine rows),
- * records built by the SHARED family codec (wisdom2_2d_reader.h), banked
+ * records built by the SHARED family codec (split/wisdom/wisdom2_2d_split_reader.h), banked
  * through the generic seen-set/merge law. No seed class in this family;
  * fft3d migrates NOTHING (born in wisdom2 — zero disk instances).
  * Line classing: blank/'#' = skipped; '@'-lines are HEADERS unless they
  * begin with "@nat2d" (the natural table's data rows).
  * ══════════════════════════════════════════════════════════════════════ */
 
-#include "wisdom2_2d_reader.h"
+#include "wisdom2_2d_split_reader.h"
 
 /* probe-parse one fft2d_c2c line. 1 = scrambled entry (*e), 2 = natural
  * entry (*ne), 0 = legacy loader dropped it, -1 = probe IO failure. */

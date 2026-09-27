@@ -42,7 +42,6 @@
 
 #include "vfft_internal.h"                 /* struct vfft_plan_s / vfft_wisdom_s */
 #include "zr2c.h"                          /* the Hermitian fold kernels */
-#include "split/wisdom/wisdom2_real_reader.h"   /* the kind-5 route codec */
 #include "common/support/race.h"                  /* the shared race body */
 
 /* Defined in vfft.c (tentative definition, external linkage). */

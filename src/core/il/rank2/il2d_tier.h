@@ -72,7 +72,7 @@
 #include "fft2d_real_il.h"                 /* the real-tier row kernels */
 #include "common/support/threads.h"               /* the pool */
 #include "common/support/race_timing.h"           /* the shared clock */
-#include "wisdom2/wisdom2_2d_reader.h"     /* the lay=il 2D cell codec */
+#include "il/wisdom/wisdom2_2d_il_reader.h"     /* the lay=il 2D cell codec */
 
 /* Defined in vfft.c with external linkage; see the note above. */
 extern long _vfft_il2d_col_mt_count;
