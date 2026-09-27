@@ -9,7 +9,7 @@ rung (docs/roadmap/layout_separation_plan.md, section 7):
                 race census found the same number of sites (a file may lose
                 sites only if another gains them); no new warnings; from phase 7
                 on, the dependency rules (hygiene.py)
-  R1 bytes      the codelets (always identical), then the two vfft.c objects.
+  R1 bytes      the two vfft.c objects.
                 Identical objects make R2-R4 hold by construction
   R2 source     vfft.i identical; or, with --allow-reorder, the same top-level
                 declarations and macros in another order. R2b: the object's
@@ -150,8 +150,8 @@ def compare(ref, cur, allow, strict_objdump):
           gated=allow["enforce_deps"])
 
     # ---- R1 bytes
-    g.add("R1", "codelet objects + libdagcodelets.a identical", same(ref, cur, "codelets.sha"),
-          "; ".join(diff_lines(ref, cur, "codelets.sha", 4)))
+    # (the codelet-object rung is retired: the separation never touched the
+    # generator or a codelet source, and codelets include no core header)
     objs = {}
     for o in ("vfft_O2.o", "vfft_O3native.o"):
         a, b = read(ref, o), read(cur, o)

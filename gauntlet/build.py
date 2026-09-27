@@ -253,11 +253,15 @@ def dag_codelet_lib(tc) -> str | None:
               '-fpermissive', '-w']
     if os.environ.get('VFFT_ASAN'):
         cflags += ['-fsanitize=address', '-g', '-fno-omit-frame-pointer']
-    flags = cflags + build_includes()
+    # NO -I: a codelet includes only <immintrin.h> and <stddef.h>. Passing the
+    # core -I set (build_includes) made the flag key below change whenever a
+    # src/core folder was added or removed, recompiling the whole corpus for
+    # nothing (2026-09-27, layout separation).
+    flags = cflags
 
     # This objdir has a FIXED path (the JIT rsp points at it), so the flag key
     # can't live in the path the way it does for the driver objects. Stamp it
-    # in a file instead and wipe on mismatch -- otherwise an ASAN or -I change
+    # in a file instead and wipe on mismatch -- otherwise an ASAN or ISA change
     # would quietly relink objects built under the old flags.
     key = _flags_key([tc['cc']] + flags)
     stamp = objdir / '_flags.key'
