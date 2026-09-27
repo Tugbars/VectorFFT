@@ -16,7 +16,7 @@
 #include "wisdom2.h"
 #include "il/rank1/ztt.h"
 #include "il/rank1/k1_fourstep_band.h"
-#include "planning/policy.h"
+#include "il/planning/policy_il.h"
 #include "common/support/race.h"   /* il_prime.h races its two methods */
 #include "il/rank1/il_prime.h"
 

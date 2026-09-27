@@ -24,7 +24,7 @@
 #include "il/rank1/ztt.h"
 #include "il/rank1/k1_fourstep_band.h"
 #include "ztt_registry_avx2.h"   /* ground truth for ZTURN-T's band */
-#include "planning/policy.h"
+#include "il/planning/policy_il.h"
 
 static int g_fail = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { g_fail++; printf("  *** FAIL: "); printf(__VA_ARGS__); printf("\n"); } } while (0)

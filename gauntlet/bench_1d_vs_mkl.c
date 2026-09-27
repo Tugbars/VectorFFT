@@ -93,7 +93,7 @@ long vfft_ilnd_mt_passes(void);     /* the rank-3 tier's MT engagement counter *
 #include "real_dispatch_config.h"
                                  * (vfft_create serves the banked route+chain
                                  * verdict). Requires build.py --vfft. */
-#include "planning/policy.h"    /* THE admission law: the bench asks, it does not
+#include "il/planning/policy_il.h"    /* THE admission law: the bench asks, it does not
                                  * keep its own copy (planning_policy_design.md L11) */
 
 #ifdef VFFT_HAS_KFR

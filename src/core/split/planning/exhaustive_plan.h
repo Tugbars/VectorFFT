@@ -14,7 +14,7 @@
 #include "planner.h"
 #include "dp_planner.h"     /* re-use vfft_proto_now_ns + perm gen + factorization_t */
 #include "registry.h"
-#include "env.h"            /* depth/prune knobs */
+#include "exhaustive_knobs.h" /* depth/prune knobs (was env.h part 2) */
 
 #include <stdio.h>
 #include <stdlib.h>
