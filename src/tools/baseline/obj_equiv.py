@@ -555,11 +555,12 @@ def strict_bodies(path, objdump, rename=None):
                               res.token(res.target(r.sym, r.addend,
                                                    _base_adjust(r, y.value))))).encode())
             desc = "%s size=%d sha=%s" % (cls, y.size, h.hexdigest()[:16])
-        key = norm_name(y.name, rename)
-        while key in data:          # two statics with one normalized name
-            key += "'"
-        data[key] = desc
-    return bodies, data
+        data.setdefault(norm_name(y.name, rename), []).append(desc)
+    # objects that share one normalized name (GCC's CSWTCH.N switch tables,
+    # two statics called `tab`) are compared as a MULTISET: their emission
+    # order is layout, not content (measured: two CSWTCH tables swapping places
+    # read as two changes when they were keyed by arrival order)
+    return bodies, {k: "\n".join(sorted(v)) for k, v in data.items()}
 
 
 def _read_rename(path):
