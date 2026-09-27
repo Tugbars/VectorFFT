@@ -1,0 +1,12 @@
+# zttcal_lib.c against the in-tree avx512 runtime (stage 3 step 2), 2026-09-27, pinned core 2, MKL 1 thread.
+# Build: gcc -O2 -mavx512f -mavx512dq -mfma -I<include + src/core dirs> -I/opt/mkl/include zttcal_lib.c <avx512 build>/libdagcodelets.a -lmkl_rt -lm -lpthread
+=== run 1
+# VW=8 (avx512)  MKL: default dispatch
+N=1024  cands=9   winner 8.4.8.4      tile=0    | ours     1092 ns ( 46.9 GF) [1091-1095] | MKL     1496 ns ( 34.2 GF) [1493-1498] | control     1083 [1081-1088] | MKL/ours 1.37x | rel err vs MKL 2.6e-16
+N=2048  cands=16  winner 8.8.4.8      tile=0    | ours     2484 ns ( 45.3 GF) [2478-2487] | MKL     3178 ns ( 35.4 GF) [3176-3189] | control     2505 [2499-2519] | MKL/ours 1.28x | rel err vs MKL 3.0e-16
+N=4096  cands=25  winner 8.8.8.8      tile=1024 | ours     6056 ns ( 40.6 GF) [5905-6111] | MKL     7645 ns ( 32.1 GF) [7427-7842] | control     6176 [6147-6620] | MKL/ours 1.26x | rel err vs MKL 3.0e-16
+=== run 2
+# VW=8 (avx512)  MKL: default dispatch
+N=1024  cands=9   winner 8.4.8.4      tile=0    | ours     1082 ns ( 47.3 GF) [1080-1087] | MKL     1500 ns ( 34.1 GF) [1496-1505] | control     1084 [1081-1086] | MKL/ours 1.39x | rel err vs MKL 2.6e-16
+N=2048  cands=16  winner 8.8.4.8      tile=1024 | ours     2513 ns ( 44.8 GF) [2499-2534] | MKL     3295 ns ( 34.2 GF) [3277-3311] | control     2528 [2505-2554] | MKL/ours 1.31x | rel err vs MKL 3.0e-16
+N=4096  cands=25  winner 8.8.8.8      tile=1024 | ours     6100 ns ( 40.3 GF) [6015-6320] | MKL     7724 ns ( 31.8 GF) [7599-7838] | control     6219 [6013-6983] | MKL/ours 1.27x | rel err vs MKL 3.0e-16

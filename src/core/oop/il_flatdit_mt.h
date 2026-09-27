@@ -61,7 +61,7 @@ static inline void _ilfd_unit_rec(const vfft_ilfd_plan_t *p, int s, int leaf,
                                   size_t *nunits, int *cnt)
 {
     const size_t L = src->L;
-    const size_t recs = s > 0 ? (size_t)(p->R[s] - 1) * 8 : 0;
+    const size_t recs = s > 0 ? (size_t)(p->R[s] - 1) * VFFT_IL_TWREC : 0;
     *dst = *src;
     dst->in_tstep = dst->out_tstep = dst->tw_tstep = dst->t2_tstep = dst->a1_tstep = dst->g_tstep = 0;
     if (leaf) {                          /* columns: in/out advance one complex */

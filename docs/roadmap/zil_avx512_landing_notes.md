@@ -90,6 +90,24 @@ threading grain.
   solo). That is step 2: the runtime still builds AVX2-shaped tables. Smoke test:
   `zil_avx512_prototypes/harness/runtime/api_smoke.c`.
 
+### Stage 3, step 2: done (AVX-512 twiddle tables)
+
+- `src/core/oop/avx512/vtw_avx512.h` holds every AVX-512 twiddle table: one builder per
+  AVX2 builder (pair engine, chain3, the flat DIT's msz / t2csg / t2cp / t2cs tables, the
+  2D column stages, the ZTURN-T stage streams), same integer angles as the AVX2 builders,
+  16-double records. Each call site keeps its AVX2 code unchanged under `#else`.
+- Code that reads or steps through a table uses `VFFT_IL_TWREC` (doubles per record)
+  and `VFFT_IL_TWPER` (columns per pair record) from `il_isa.h`.
+- **AVX2 is unchanged:** every object, library and gauntlet executable is still
+  byte-identical to the pre-stage-3 build.
+- **avx512 public-API smoke test:** all 24 cases correct (N = 8..4096, K = 1 and 3;
+  mono, 2p, chain3, ZTT and batched routes), error at most 4e-16.
+- **ZTURN-T vs MKL through the in-tree runtime** (`harness/runtime/zttcal_lib.c`,
+  results beside it): 1.37-1.39x at N = 1024, 1.28-1.31x at 2048, 1.26-1.27x at 4096,
+  no regression against the prototype numbers (§11.7).
+- Not covered yet: the multithreaded ZTT split (`ztt_mt.h` still steps 4-column quads)
+  and the ZTT laws/permutation of step 3.
+
 ## For the owner
 
 - Generation here used OCaml 4.14, not your 5.2 (D12). Before relying on the recorded
