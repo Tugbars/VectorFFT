@@ -43,7 +43,8 @@
 #include <string.h>
 #include <math.h>
 
-#include "oop_plan.h"   /* IL plans, VFFT_K1_IL_* routes, il availability fns */
+#include "common/abi/route_ids.h" /* VFFT_K1_IL_* routes, VFFT_OOP_KIND_* */
+#include "il_solo_registry.h" /* the K=1 solo resolvers (mono forms, n1c) */
 #include "../../wisdom2/wisdom2_oop_reader.h" /* wisdom2 banking: verdicts bank
                                               through the family constructor
                                               into the store */
