@@ -990,7 +990,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             _vw2_persist(W, cfg);
         else if (getenv("VFFT_IL2D_LOG"))
             fprintf(stderr, "[il2d] forms %dx%d: %s could not be banked on the real row\n",
-                    N1, N2, il2d_fm, il2d_ord);
+                    N1, N2, il2d_fm);
     }
     /* the column-MT verdict. Serve a banked one ONLY when it was
      * raced at THIS thread count; otherwise race and bank. A
