@@ -64,8 +64,8 @@
 #include "il2p.h"                           /* the Bailey pair plan + kernel resolvers */
 #include "il_prime.h"                       /* the prime IL engine */
 #include "wisdom2/wisdom2_oop_reader.h"     /* the kind-3/kind-4 codecs */
-#include "wisdom2/wisdom2_stride_reader.h"  /* the @nat / @natoop / mode cells */
-#include "support/race.h"                   /* the shared race body */
+#include "split/wisdom/wisdom2_stride_reader.h"  /* the @nat / @natoop / mode cells */
+#include "common/support/race.h"                   /* the shared race body */
 
 /* the CHAIN3 twin of _k1_il2p_apply_kv: the banked three-slot il_kv on the
  * chain3 row overrides the create's structural defaults; env VFFT_IL_KV /

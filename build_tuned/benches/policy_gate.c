@@ -21,8 +21,8 @@
 #include <string.h>
 #include "vfft.h"
 #include "wisdom2.h"
-#include "oop/ztt.h"
-#include "oop/k1_fourstep_band.h"
+#include "il/rank1/ztt.h"
+#include "il/rank1/k1_fourstep_band.h"
 #include "ztt_registry_avx2.h"   /* ground truth for ZTURN-T's band */
 #include "planning/policy.h"
 

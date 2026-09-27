@@ -35,7 +35,7 @@
 #ifndef VFFT_BENCH_REF_FFTW_H
 #define VFFT_BENCH_REF_FFTW_H
 
-#include "../../src/core/support/ref.h"   /* ref_planes_t, ref_plane_stride */
+#include "common/support/ref.h"   /* ref_planes_t, ref_plane_stride */
 
 #include <stddef.h>
 #include <stdint.h>

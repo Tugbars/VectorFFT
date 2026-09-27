@@ -1,6 +1,20 @@
 # Separating the interleaved (IL) machinery from the split machinery in `src/core`
 
-Status: plan only. No code has moved. The research was done by reading the code (four
+Status (2026-09-27): phases 0-3 DONE, each gated at avx2 and avx512 by
+`src/tools/baseline/step_gate.py`:
+- phase 0: the gate. Self-checked on the unchanged tree: every rung PASS at both ISAs.
+- phase 1: dead code deleted (commit "core: phase 1"). Semantics identical;
+  code changed only where the deletion reaches.
+- phases 2-3: 102 files moved into `common/`, `split/`, `il/` by
+  `docs/roadmap/layout_separation/moves_phase2_3.map`. **Byte-identical** at both
+  ISAs: the `vfft.c` objects at -O2 and at -O3 -march=native, every codelet
+  object and library, and the harness binaries.
+
+The remaining mixed files sit in the old folders; `python src/tools/baseline/hygiene.py`
+lists the 12 includes that still cross the layout line, which is the work of
+phases 4-6.
+
+Originally: plan only, no code moved. The research was done by reading the code (four
 read-only audits: `oop/`+`engine/`+`primes/`; `transforms/`; `planning/`+`support/`+
 `wisdom2/`+top level; and the regression tooling). Line numbers are as of branch
 `claude/upbeat-carson-qmcclb` at the time of writing and will drift; the seams they point

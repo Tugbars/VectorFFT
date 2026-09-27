@@ -8,7 +8,7 @@
 #include <string.h>
 #include <math.h>
 #include "vfft.h"
-#include "../../src/core/oop/il2p.h"
+#include "../../src/core/il/rank1/il2p.h"
 
 int main(void) {
     static const struct { int N, R2, A, B; const char *nm; } C[] = {

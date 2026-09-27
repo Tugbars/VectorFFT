@@ -3,7 +3,7 @@
  * See docs/design/vfft_front_door.md. */
 #include "vfft.h"
 #include "vfft_diagnostics.h"   /* the MT engagement counters this file defines */
-#include "transforms/real/real_dispatch_config.h" /* cross-TU r2c/c2r knobs, defined here */
+#include "split/real/real_dispatch_config.h" /* cross-TU r2c/c2r knobs, defined here */
 
 #include "env.h"                /* stride_env_init, ISA/version, pinning           */
 #include "threads.h"            /* pool: set/get threads, dispatch/wait            */
@@ -16,11 +16,11 @@
 #include "oop_dp.h"             /* vfft_oop_plan_create_dp_best (calibration)      */
 #include "wisdom2_oop.h"        /* OOP wisdom structs/codecs + legacy loader (wisdom2 folder) */
 #include "wisdom2/wisdom2_2d_reader.h"  /* wisdom2: rank>=2 family codec (wave-3 flip) */
-#include "wisdom2/wisdom2_stride_reader.h" /* wisdom2: stride family codec (wave-4 flip) */
-#include "wisdom2/wisdom2_real_reader.h" /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
-#include "support/diag.h"              /* loud-refusal helpers: _vfft_warn, _vfft_tname (step 6a) */
-#include "support/race_timing.h"        /* the racers' shared clock + median (step 5) */
-#include "support/race.h"               /* the one race body: arms x protocol -> aggregates */
+#include "split/wisdom/wisdom2_stride_reader.h" /* wisdom2: stride family codec (wave-4 flip) */
+#include "split/wisdom/wisdom2_real_reader.h" /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
+#include "common/support/diag.h"              /* loud-refusal helpers: _vfft_warn, _vfft_tname (step 6a) */
+#include "common/support/race_timing.h"        /* the racers' shared clock + median (step 5) */
+#include "common/support/race.h"               /* the one race body: arms x protocol -> aggregates */
 #include "wisdom2/wisdom2_oop_reader.h" /* wisdom2: THE store (wave-1 flip) — reads via
                                            the vw2_oop_* twins, banks via the shared
                                            family codec. See src/core/wisdom2/README.md */
@@ -28,12 +28,12 @@
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
 #include "cpu_cache.h"          /* L1d capacity for the tcut width stamp; PLANNING ONLY */
 #include "il2p.h"               /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
-#include "transforms/fft2d/il2d_col.h" /* the column-axis pass descriptor the plan embeds */
+#include "il/rank2/il2d_col.h" /* the column-axis pass descriptor the plan embeds */
 #include "ztt.h"                /* ZTURN-T: the run-contiguous DIT, 16..16384 (2026-09-09); before il_prime.h: the prime inner's ZTURN-T branch is #ifdef VFFT_ZTT_H */
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
-#include "oop/ztt_mt.h"         /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
+#include "il/rank1/ztt_mt.h"         /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
 #include "il_flatdit_race.h"    /* its FORM / TILE races on the shared race body      */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
@@ -65,7 +65,7 @@
 #include "dst.h"          /* DST-II/III (wrap DCT-II)                        */
 #include "dht.h"          /* DHT (inner r2c)                                 */
 #include "fft2d.h"
-#include "transforms/fftnd/fftnd_r2c.h" /* §6a47/Q1: 3D real transforms */ /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
+#include "split/rank3/fftnd_r2c.h" /* §6a47/Q1: 3D real transforms */ /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
 #include "fft2d_r2c.h"                                                     /* 2D r2c / c2r                                    */
 #include "fft2d_real_il.h"                                                 /* native IL 2D real tier kernels                  */
 /* rank>=2 wisdom structs/builders/legacy: wisdom2/wisdom2_fftnd.h (via the
@@ -238,14 +238,14 @@ static int _vfft_plan_threads(const vfft_config_t *cfg)
 }
 
 #include "vfft_internal.h"   /* the three private structs (migration step 15) */
-#include "oop/k1_fourstep_band.h" /* the four-step's BAND alone: standalone, and policy.h needs
+#include "il/rank1/k1_fourstep_band.h" /* the four-step's BAND alone: standalone, and policy.h needs
                                   * it in scope. k1_fourstep.h includes it too (a no-op). */
 #include "planning/policy.h" /* THE planning policy: one place a law about a REQUEST is written
                              * (planning_policy_design.md, 2026-09-16). Sits above every engine
                              * (the bands are in scope by here) and below every planner and door.
                              * AHEAD of k1_fourstep.h since 2026-09-16: the four-step's super-band
                              * gate is an L8 law and calls vfft_policy_exceeds_l3. */
-#include "oop/k1_fourstep.h"  /* the K=1 interleaved FOUR-STEP above ZTURN-T's ceiling (2026-09-15) */
+#include "il/rank1/k1_fourstep.h"  /* the K=1 interleaved FOUR-STEP above ZTURN-T's ceiling (2026-09-15) */
 
 static void _own_batch_free(vfft_batch b); /* defined below; used by vfft_destroy */
 
@@ -450,7 +450,7 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
     return 0;
 }
 
-#include "planning/pad_calibrate.h" /* pad-vs-tail calibrator + _VFFT_PADVW (step 13) */
+#include "split/planning/pad_calibrate.h" /* pad-vs-tail calibrator + _VFFT_PADVW (step 13) */
 
 
 /* [2026-07-27] The 4-arm ROUTE race (_calibrate_zroute: legacy{sterm,sterm2}
@@ -482,7 +482,7 @@ static inline uint8_t _vw2_lay_of(const vfft_config_t *cfg)
     return cfg->layout == VFFT_LAYOUT_INTERLEAVED ? VW2_LAY_IL : VW2_LAY_SPLIT;
 }
 
-#include "transforms/real/real_route_race.h" /* r2c/c2r route RACERS -
+#include "split/real/real_route_race.h" /* r2c/c2r route RACERS -
                                              * the deciders stay here (step 11) */
 
 
@@ -968,9 +968,9 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
     return NULL; /* 2D trig not wired */
 }
 
-#include "engine/mt_execute.h"  /* generic K-split MT executor + trampoline (step 7) */
+#include "split/engine/mt_execute.h"  /* generic K-split MT executor + trampoline (step 7) */
 
-#include "transforms/natorder/natorder_mt.h" /* natural-order + SCR MT reorder
+#include "split/natorder/natorder_mt.h" /* natural-order + SCR MT reorder
                                              * passes (migration step 8) */
 
 /* The plan-unpacking adapter STAYS here: it is the one piece of this group
@@ -1014,7 +1014,7 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
                          h->nthreads); /* the snapshot nat2d_tmp was sized for */
 }
 
-#include "oop/oop_mt.h"  /* OOP c2c lane-slice MT dispatch (migration step 9) */
+#include "split/oop/oop_mt.h"  /* OOP c2c lane-slice MT dispatch (migration step 9) */
 
 /* Bank a SELF-CONTAINED 1D natural record (order-tagged @nat table) + persist. The natural verdict
  * stores its OWN deployed chain (fac/var/nf/use_dif) + mode + measured total — never a copy of the
@@ -1022,7 +1022,7 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
 /* forward decl: the ZCASC MEASURE race (B5) times the finished incumbent
  * handle through its real execute path, which is defined further down. */
 
-#include "transforms/fft2d/il2d_cols.h" /* IL2D column kernels, chain enumerator,
+#include "il/rank2/il2d_cols.h" /* IL2D column kernels, chain enumerator,
                                           * table builders (migration step 6b) */
 
 /* the ODD-REAL BRIDGE handle builder (struct comment at oddr_child):
@@ -1067,7 +1067,7 @@ static struct vfft_plan_s *_oddr_build(const vfft_config_t *cfg, int N)
     return hh;
 }
 
-#include "transforms/fft2d/il2d_tier.h" /* IL 2D real/c2c tier: passes, MT,
+#include "il/rank2/il2d_tier.h" /* IL 2D real/c2c tier: passes, MT,
                                          * and the four racers (step 17) */
 
 
@@ -1111,11 +1111,11 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 
 /* Placed AFTER _vw2_persist above: the kind-5 banker calls it, and it is a
  * general wisdom helper that stays in this file. */
-#include "transforms/real/zr2c_build.h" /* interleaved-CCE real route (step 18) */
+#include "il/real/zr2c_build.h" /* interleaved-CCE real route (step 18) */
 
-#include "planning/dp_planner_il.h" /* the IL plan race at create (2026-09-03): pair x forms, chain3 x forms */
+#include "il/planning/dp_planner_il.h" /* the IL plan race at create (2026-09-03): pair x forms, chain3 x forms */
 #include "oop/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */
-#include "transforms/fftnd/fftnd_il.h"     /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
+#include "il/rank3/fftnd_il.h"     /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
 #include "transforms/fftnd/fftnd_create.h" /* rank-3/rank-4 create tier (step 22) */
 #include "transforms/fft2d/fft2d_create.h" /* 2D create tier (step 23) */
 /* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
@@ -1212,7 +1212,7 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
 #include "oop/c2c_ip_create.h" /* c2c in-place create tier (step 24) */
 #include "oop/c2c_oop_create.h" /* c2c out-of-place create tier (step 25) */
 #include "transforms/real/real_create.h" /* r2c/c2r create tier (step 26) */
-#include "transforms/trig/trig_create.h" /* trig create tier + builders (step 27) */
+#include "split/trig/trig_create.h" /* trig create tier + builders (step 27) */
 #include "vfft_batch.h" /* owned-batch allocator (step 28) */
 
 
@@ -1965,7 +1965,7 @@ int vfft_c2r_load_path(const char *path)
     return vfft_c2r_path_load(path);
 }
 
-#include "transforms/fft2d/plane_queue.h" /* 2D plane queue, howmany>1 (step 20) */
+#include "plane_queue.h" /* 2D plane queue, howmany>1 (step 20) */
 
 
 /* THE execute entry point - every transform, BOTH layouts.

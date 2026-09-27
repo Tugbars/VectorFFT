@@ -16,7 +16,7 @@ oop/tw_exact.h                 common/math/tw_exact.h
 transforms/fft2d/transpose.h   common/move/transpose.h
 wisdom2/wisdom2.h              common/wisdom/wisdom2.h
 wisdom2/wisdom2_selftest.h     common/wisdom/wisdom2_selftest.h
-wisdom2/wisdom2_migrate.h      common/wisdom/wisdom2_migrate.h
+# wisdom2_migrate.h stays: it includes the layout readers (the front door's one-shot legacy migrator)
 # the plane queue runs over any plan handle: a front-door tier, not common
 transforms/fft2d/plane_queue.h plane_queue.h
 
