@@ -126,8 +126,24 @@ def compare(ref, cur, allow, strict_objdump):
           gated=not allow["census_move"])
     new_warn = [l for l in diff_lines(ref, cur, "warnings.txt", 50) if l.startswith("+")]
     gone_warn = [l for l in diff_lines(ref, cur, "warnings.txt", 50) if l.startswith("-")]
-    g.add("R0", "no new warnings", not new_warn,
-          "; ".join(new_warn[:6]) or ("%d warnings gone" % len(gone_warn) if gone_warn else ""))
+    # A warning whose code moved to another file (a tier split) is the same
+    # warning: match new against gone by message, file name stripped. Only a
+    # message with no gone twin is new.
+    def _msg(l):
+        return l[1:].split(": ", 1)[-1].strip()
+    pool = [_msg(l) for l in gone_warn]
+    moved_warn, really_new = [], []
+    for l in new_warn:
+        if _msg(l) in pool:
+            pool.remove(_msg(l))
+            moved_warn.append(l[1:].split(":", 1)[0])
+        else:
+            really_new.append(l)
+    g.add("R0", "no new warnings", not really_new,
+          "; ".join(really_new[:6])
+          or "; ".join(x for x in (
+              ("moved to " + ",".join(moved_warn)) if moved_warn else "",
+              ("%d warnings gone" % len(pool)) if pool else "") if x))
     dv = hygiene.dep_violations()
     g.add("R0", "layout dependency rules", None if dv is None else not dv,
           ("%d violations: " % len(dv) if dv else "") + "; ".join((dv or [])[:4]),
