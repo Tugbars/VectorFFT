@@ -711,3 +711,21 @@ has four parts:
 
   The owner noted the point on 2026-09-27. Retire or keep: decide after the
   separation, measuring the classic split out-of-place path at those N first.
+
+- **F3. An interleaved K=1 request treats a cell that holds only a SPLIT kind-3
+  row as "present".** This was found while splitting the kind-3 record. The
+  pre-split reader filled one entry from the `lay=il`, `lay=split` and vintage
+  rows, and returned "found" when either axis decoded. The interleaved
+  consumers test that pointer:
+  - `k1_commit.h`'s scrambled writer-band early return;
+  - the per-T row copy;
+  - `c2c_oop_create.h`'s T-row copy.
+
+  So an IL request at a split-only cell sees a present entry whose IL axis is
+  unraced. To keep behaviour identical, `vw2_oop_lookup_k1_il_cell` preserves
+  this through `vw2_oop_k1_row_present` (common). It tests existence, not
+  decode: the one difference from the old reader is a cell whose rows are all
+  undecodable, which the old reader called absent.
+
+  Decide after the separation whether IL should ignore split rows entirely.
+  That is likely the right semantics: two libraries, two verdicts.
