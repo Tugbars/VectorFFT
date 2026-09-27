@@ -3,7 +3,7 @@
  * The zr2c route (il/real/zr2c_build.h): even N, K==1, INTERLEAVED, no
  * caller-supplied batch — the CCE plane reinterpreted as z[N/2], a c2c child,
  * and the Hermitian fold. The same route serves r2c and c2r (the c2r twin
- * folds first). The front dispatcher (transforms/real/real_create.h) holds
+ * folds first). The real bridge (bridge/real_bridge.h) holds
  * the gate and calls this only for a matching request.
  *
  * Returns the handle; or NULL with *refused=0 to let an out-of-place request

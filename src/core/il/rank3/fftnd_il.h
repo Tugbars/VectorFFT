@@ -1895,7 +1895,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
 
 
 /* ── the INTERLEAVED rank-3/4 create tier (the front door's layout fork,
- * transforms/fftnd/fftnd_create.h, sends every interleaved rank-3/4 request
+ * il/il_create.h, sends every interleaved rank-3/4 request
  * here): rank-3 c2c is the native tier above; real rank >= 3 and rank 4 are
  * refused loudly. Layout separation phase 6: the interleaved peel of the
  * pre-separation _vfft_create_rank34, verbatim. */

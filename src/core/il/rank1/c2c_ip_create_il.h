@@ -1,6 +1,6 @@
 /* c2c_ip_create_il.h — the c2c IN-PLACE create, interleaved tier.
  *
- * Reached from the front dispatcher (oop/c2c_ip_create.h) for an interleaved
+ * Reached from the IL create (il/il_create.h) for an interleaved
  * in-place c2c request with no caller-supplied batch (IL + batch is refused
  * upstream). Depends on common/ and il/ only; never on the split tier.
  *
