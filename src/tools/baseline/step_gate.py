@@ -151,7 +151,7 @@ def compare(ref, cur, allow, strict_objdump):
     if bytes_ok or i_same:
         g.add("R2", "vfft.i identical" if i_same else "vfft.i (objects identical)", True)
     else:
-        sorted_ok = same(ref, cur, "vfft.i.sorted") and same(ref, cur, "vfft.macros")
+        sorted_ok = same(ref, cur, "vfft.i.sorted") and _macros(ref) == _macros(cur)
         g.add("R2", "vfft.i identical", False, "text differs",
               gated=not (allow["reorder"] or allow["code_change"]))
         g.add("R2", "same declarations and macros (reorder)", sorted_ok,
@@ -192,6 +192,16 @@ def compare(ref, cur, allow, strict_objdump):
             continue
         g.add("R5", f, s, "; ".join(diff_lines(ref, cur, f, 6))[:800])
     return g
+
+
+_GUARD = re.compile(r"^#define [A-Z0-9_]+_H\s*$")
+
+
+def _macros(d):
+    """The -dM macro set without empty include guards: carving a header out
+    adds its guard and nothing else a reader could observe."""
+    t = (read(d, "vfft.macros") or b"").decode().splitlines()
+    return [l for l in t if not _GUARD.match(l)]
 
 
 def _census_counts(d, removed):
