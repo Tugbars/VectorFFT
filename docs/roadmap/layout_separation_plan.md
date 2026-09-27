@@ -729,3 +729,14 @@ has four parts:
 
   Decide after the separation whether IL should ignore split rows entirely.
   That is likely the right semantics: two libraries, two verdicts.
+
+- **F4. The migrator's kind-3 reader check cannot find what it migrated.**
+  `vw2_migrate_oop_gate` banks legacy kind-3 lines as wildcard rows
+  (`q=* ord=* place=*`). Its reader check then looks them up through the
+  kind-3 scan, which matches placement exactly (`key.pl == VW2_PL_OOP`), so
+  every kind-3 cell reports MISSED.
+  - Measured with `src/tools/baseline/mig_probe.c`: 4 of 4 kind-3 cells missed
+    on the pre-split code, and identically on the split code.
+  - The migrated rows are correct: both builds write byte-identical stores.
+  - Pre-existing and not caused by the separation. Fix the check (or the
+    scan's wildcard handling) after it.

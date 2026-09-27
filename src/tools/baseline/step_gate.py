@@ -157,8 +157,16 @@ def compare(ref, cur, allow, strict_objdump):
         g.add("R2", "same declarations and macros (reorder)", sorted_ok,
               "; ".join(diff_lines(ref, cur, "vfft.i.sorted", 3) + diff_lines(ref, cur, "vfft.macros", 3))[:600],
               gated=not allow["code_change"])
-    g.add("R2b", "read-only strings identical", same(ref, cur, "rodata_strings.txt"),
-          "; ".join(diff_lines(ref, cur, "rodata_strings.txt", 4)))
+    sd = diff_lines(ref, cur, "rodata_strings.txt", 50)
+    added = [l for l in sd if l.startswith("+")]
+    if allow["code_change"]:
+        # a step that changes code may drop the strings of code it retires; an
+        # ADDED string is still gated (it is how a leaked path would show)
+        g.add("R2b", "no new read-only strings", not added,
+              "; ".join(added[:6]) or ("%d strings gone: %s" % (len(sd), "; ".join(sd[:6])) if sd else ""))
+    else:
+        g.add("R2b", "read-only strings identical", same(ref, cur, "rodata_strings.txt"),
+              "; ".join(sd[:4]))
 
     # ---- R3 strict objects
     for o in ("vfft_O2.o", "vfft_O3native.o"):
