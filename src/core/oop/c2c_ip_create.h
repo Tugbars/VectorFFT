@@ -35,54 +35,6 @@
 #ifndef VFFT_OOP_C2C_IP_CREATE_H
 #define VFFT_OOP_C2C_IP_CREATE_H
 
-/* ── a two-arm race context: the incumbent is a handle's real execute
- * (in-place, or the OOP door when oop=1), the challenger an IL engine plan
- * (the first non-NULL of il2/il3/ifd/ztt/mono/ilp). No call site uses it at
- * present. */
-typedef struct
-{
-    struct vfft_plan_s *h;
-    int oop;                    /* 1: vfft_execute(h, FWD, r0 -> rz) */
-    vfft_il2p_plan_t *il2;      /* IL challenger: first non-NULL serves */
-    vfft_il3p_plan_t *il3;
-    vfft_ilprime_plan_t *ilp;
-    vfft_ilfd_plan_t *ifd;      /* the flat DIT */
-    vfft_ztt_plan_t *ztt;       /* ZTURN-T */
-    vfft_oop11_fn mono;         /* the alias-tolerant solo (MONO verdict) */
-    double *rz, *r0;            /* the aliased race buffer and its seed */
-    size_t nb;                  /* bytes to re-seed per burst */
-} _c2c_race_ctx_t;
-static void _c2c_race_inc(void *v)
-{
-    _c2c_race_ctx_t *c = (_c2c_race_ctx_t *)v;
-    if (c->oop)
-        vfft_execute(c->h, VFFT_FORWARD, c->r0, NULL, c->rz, NULL);
-    else
-        vfft_execute(c->h, VFFT_FORWARD, c->rz, NULL, c->rz, NULL); /* aliased z -> z */
-}
-static void _c2c_race_chal(void *v)
-{
-    _c2c_race_ctx_t *c = (_c2c_race_ctx_t *)v;
-    const double *in = c->oop ? c->r0 : c->rz;
-    if (c->il2)
-        vfft_il2p_execute_fwd(c->il2, in, c->rz);
-    else if (c->il3)
-        vfft_il3p_execute_fwd(c->il3, in, c->rz);
-    else if (c->ifd)
-        vfft_ilfd_execute_fwd(c->ifd, in, c->rz);
-    else if (c->ztt)
-        vfft_ztt_execute_fwd(c->ztt, in, c->rz);   /* z -> z legal (plane mode) */
-    else if (c->mono)
-        c->mono(in, 0, c->rz, 0, 0, 0, 1, 0, 1, 0, 1);   /* one leg, z -> z legal */
-    else
-        vfft_ilprime_execute_fwd(c->ilp, in, c->rz);
-}
-static void _c2c_race_reseed(void *v)
-{
-    _c2c_race_ctx_t *c = (_c2c_race_ctx_t *)v;
-    memcpy(c->rz, c->r0, c->nb);
-}
-
 /* ── IN-PLACE INTERLEAVED c2c: the IL tier's own create ───────────────────
  * Split is not a fallback of IL: no split plan is built for an interleaved
  * caller. The cell is served by an IL engine — the K=1 engines (mono / pair /

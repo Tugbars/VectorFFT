@@ -40,11 +40,13 @@
  *
  * WHY THE INCLUDE SITS WHERE IT DOES IN vfft.c
  * -------------------------------------------
- * vfft_execute calls six helpers defined ABOVE it in vfft.c
- * (_exec_c2c_interleaved, _exec_c2c_oop_convert, _exec_k1_split, _exec_zcascade,
- * _pq_execute, _vfft_sig_bad). The include therefore replaces the definition in
- * place rather than moving to the top of the file. Those six are later steps'
- * work; until they move, this header's position is load-bearing.
+ * vfft_execute calls helpers that must be declared before it: _pq_execute
+ * (plane_queue.h, which vfft.c includes just above this header) and the
+ * create-side statics of vfft.c. The include therefore replaces the definition
+ * in place rather than moving to the top of the file; its position is
+ * load-bearing. (_exec_c2c_interleaved, _exec_c2c_oop_convert and
+ * _exec_zcascade, named here before, were retired with the convert machinery
+ * on 2026-09-03.)
  *
  * THE TRAMPOLINES CAME WITH IT, AND _zc_* DID NOT
  * -----------------------------------------------
@@ -88,12 +90,11 @@ static void _tc_mt_tramp(void *v)
 }
 
 /* ---- execute-side helpers (migration step 28) ----
- * These four sat in vfft.c immediately above the point this header is
- * included, for one reason: vfft_execute calls them. Moving them here puts
- * them beside their only caller. _exec_c2c_interleaved and _pq_execute did
- * NOT come with them -- both are also called from the CREATE side
- * (c2c_ip_create.h measures with _exec_c2c_interleaved at plan time), so
- * they must stay above this header's include point. */
+ * These sat in vfft.c immediately above the point this header is included,
+ * for one reason: vfft_execute calls them. Moving them here puts them beside
+ * their only caller. _pq_execute did NOT come with them -- the create side
+ * (fft2d_create.h) calls it too -- so it stays above this header's include
+ * point, in plane_queue.h. */
 
 
 /* K=1 engine, SPLIT-plane side (natural order both directions; split bwd =
@@ -957,10 +958,10 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             }
         }
         else if (h->transform == VFFT_R2C && h->N3 > 0)
-        { /* §6a47/Q1: 3D real fwd — rows, axes, unpack; il per the layout axis. */
+        { /* §6a47/Q1: 3D real fwd — rows, axes, unpack (SPLIT only: an interleaved
+           * rank-3/4 real request is refused at create). */
             stride_fftnd_r2c_data_t *d3 =
                 (stride_fftnd_r2c_data_t *)h->tplan->override_data;
-            d3->il_out = (h->layout == (int)VFFT_LAYOUT_INTERLEAVED);
             _fndr_execute_fwd_oop(d3, sre, dre, dim); /* the module owns
                                                        * the walk (A2) */
         }
@@ -968,7 +969,6 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         {
             stride_fftnd_r2c_data_t *d3 =
                 (stride_fftnd_r2c_data_t *)h->tplan->override_data;
-            d3->il_out = (h->layout == (int)VFFT_LAYOUT_INTERLEAVED);
             _fndr_execute_bwd_oop(d3, sre, sim, dre); /* the module owns
                                                        * the walk (A2) */
         }
