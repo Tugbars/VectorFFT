@@ -4,7 +4,7 @@
  * columns for c2c; the real plane against an N1 x (N2/2+1) spectrum for
  * r2c/c2r), the rfft / c2r-natural row inners measured-adopted, and the
  * ORDER_NATURAL axis reorder tapes. The front dispatcher
- * (transforms/fft2d/fft2d_create.h) chooses the tier.
+ * (split/split_create.h) is its only caller.
  *
  * POSITION IN vfft.c IS LOAD-BEARING: calls file-scope statics of vfft.c
  * (_build_2d, _vw2_lay_of, _vw2_persist), so it is included (via the

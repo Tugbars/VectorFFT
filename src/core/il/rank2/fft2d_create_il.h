@@ -3,7 +3,7 @@
  * The native IL 2D serving (lay=il): the c2c tier (any placement) and the
  * real tier (out of place), plus the PLANE QUEUE that serves howmany > 1.
  * Split is not a fallback of IL: every cell here serves natively or refuses
- * loudly. The front dispatcher (transforms/fft2d/fft2d_create.h) chooses the
+ * loudly. The IL create (il/il_create.h) chooses the
  * tier; the passes, MT and racers live in il/rank2/il2d_tier.h.
  *
  * POSITION IN vfft.c IS LOAD-BEARING: calls file-scope statics of vfft.c, so

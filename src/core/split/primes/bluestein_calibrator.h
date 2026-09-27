@@ -9,7 +9,7 @@
  * A search of its own: prime N has no smooth factorization for the
  * factorization search to find, and (M, B) is a different space — M is a
  * free smooth composite >= 2N-1, B an orthogonal cache-blocking knob. The
- * in-place create (oop/c2c_ip_create.h) calls it on a prime-N wisdom miss.
+ * in-place create (split/rank1/c2c_ip_create_split.h) calls it on a prime-N wisdom miss.
  *
  * Header-only. Include AFTER planner.h (depends on stride_wise_plan,
  * stride_bluestein_plan, stride_rader_plan, stride_execute_fwd).

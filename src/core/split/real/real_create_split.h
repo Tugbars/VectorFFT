@@ -1,7 +1,7 @@
 /* real_create_split.h — the r2c / c2r CREATE, split tier.
  *
  * The split real engines: r2c (NATURAL cascade vs STRIDE decoupled, see
- * transforms/real/real_create.h for the 2-axis choice) and c2r, each with the
+ * bridge/real_bridge.h for the 2-axis choice) and c2r, each with the
  * owned-batch (padded) arm, calibrate-on-miss for the inner c2c(N/2) and rfft
  * cells, and the banked/raced route axis. Returns the handle bare; the front
  * dispatcher owns the finish, the odd-real bridge and the zr2c IL route.

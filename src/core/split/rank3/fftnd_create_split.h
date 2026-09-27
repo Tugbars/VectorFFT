@@ -13,7 +13,7 @@
  * fftnd_natorder.h's nat_col_list). Real transforms are out-of-place.
  * Trig (DCT/DST/DHT) is 1D only and is refused above this helper, in the
  * shared dims>=2 guard. The INTERLEAVED requests never reach this file: the
- * dispatcher (transforms/fftnd/fftnd_create.h) sends them to
+ * split create (split/split_create.h) sends them to
  * _vfft_create_rank34_il (il/rank3/fftnd_il.h). Layout separation phase 6:
  * this is the split half of the pre-separation _vfft_create_rank34, verbatim.
  *

@@ -4,7 +4,7 @@
  * descriptor was handed in, so the plan serves that exact handle), then the
  * general arms that allocate their own buffers (prime: Rader/Bluestein;
  * composite: the stride engine, natural rebuild). Depends on common/ and
- * split/ only; never on the IL tier. See oop/c2c_ip_create.h for the handle
+ * split/ only; never on the IL tier. See split/split_create.h for the handle
  * and padding contracts.
  *
  * POSITION IN vfft.c IS LOAD-BEARING: calls file-scope statics of vfft.c, so

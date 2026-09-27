@@ -1,4 +1,16 @@
-/* real_create.h — the r2c / c2r CREATE tier.
+/* real_bridge.h — the 1D r2c / c2r CREATE: where the two layouts still meet.
+ *
+ * BRIDGE, AND TEMPORARY (owner decision D1, 2026-09-27)
+ * -----------------------------------------------------
+ * An IL real engine for K>1 will be built; until then the crossings below live
+ * here, the one place allowed to include both split/ and il/:
+ *   - an interleaved request that zr2c cannot serve (K>1, or an out-of-place
+ *     zr2c child failure) runs on the SPLIT real engines (CCE contract);
+ *   - the odd-real bridge serves either layout through an IL c2c child;
+ *   - the smooth-odd r2c race sets the split rfft handle against that bridge.
+ * No new crossing may be added. The front door (vfft.c) routes every 1D real
+ * request here before its layout fork.
+ *
  *
  * WHAT THIS IS
  * ------------
@@ -40,8 +52,8 @@
  * (_oddr_build among them), so it must be included after those are defined and
  * before _vfft_create_inner.
  */
-#ifndef VFFT_TRANSFORMS_REAL_CREATE_H
-#define VFFT_TRANSFORMS_REAL_CREATE_H
+#ifndef VFFT_BRIDGE_REAL_BRIDGE_H
+#define VFFT_BRIDGE_REAL_BRIDGE_H
 
 /* the two arms of the smooth-odd bridge race: two finished handles */
 typedef struct { struct vfft_plan_s *h; double *xr, *zr; } _oddr_arm_t;
@@ -59,8 +71,8 @@ static vfft_plan _real_finish(struct vfft_plan_s *h)
     return h;
 }
 
-#include "real_create_il.h"
-#include "real_create_split.h"
+#include "il/real/real_create_il.h"
+#include "split/real/real_create_split.h"
 
 /* The smooth-odd r2c bridge race (D1, moves to bridge/ in phase 7): the
  * split-built rfft handle h against the IL c2c bridge. Returns the serving
@@ -197,4 +209,4 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
     return _real_finish(h);
 }
 
-#endif /* VFFT_TRANSFORMS_REAL_CREATE_H */
+#endif /* VFFT_BRIDGE_REAL_BRIDGE_H */

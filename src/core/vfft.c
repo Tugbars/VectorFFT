@@ -1118,8 +1118,6 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 #include "il/planning/dp_planner_il.h" /* the IL plan race at create (2026-09-03): pair x forms, chain3 x forms */
 #include "oop/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */
 #include "il/rank3/fftnd_il.h"     /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
-#include "transforms/fftnd/fftnd_create.h" /* rank-3/rank-4 create tier (step 22) */
-#include "transforms/fft2d/fft2d_create.h" /* 2D create tier (step 23) */
 /* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
  * allocator and the padded-batch create tier used to retype this sequence
  * (seed both legs from the store, calibrate-on-miss, re-lookup because
@@ -1211,10 +1209,9 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
     return stride;
 }
 
-#include "oop/c2c_ip_create.h" /* c2c in-place create tier (step 24) */
-#include "oop/c2c_oop_create.h" /* c2c out-of-place create tier (step 25) */
-#include "transforms/real/real_create.h" /* r2c/c2r create tier (step 26) */
-#include "split/trig/trig_create.h" /* trig create tier + builders (step 27) */
+#include "split/split_create.h" /* the SPLIT create: the split side of the one fork */
+#include "il/il_create.h"       /* the INTERLEAVED create: the IL side of the one fork */
+#include "bridge/real_bridge.h" /* 1D real: where the layouts still meet (D1, temporary) */
 #include "vfft_batch.h" /* owned-batch allocator (step 28) */
 
 
@@ -1841,50 +1838,15 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                    cfg->dims, _vfft_tname(cfg->transform));
         return NULL;
     }
-    /* rank-3 / rank-4 create: transforms/fftnd/fftnd_create.h (step 22).
-     * Both arms return on every path, so the guard is the whole dispatch. */
-    if (cfg->dims == 3 || cfg->dims == 4)
-        return _vfft_create_rank34(cfg, W, reg, K);
-    /* 2D create tier (step 23) */
-    if (cfg->dims == 2)
-        return _vfft_create_2d(cfg, W, reg, K);
-
-    /* ── c2c IN-PLACE, PADDED (opt-in: config.batch is a VW-padded Kp-wide buffer) ──
-     * Build the plan at the batch's Kp stride and run the padded wisdom's exec_me: Kp =
-     * pure full-SIMD (junk pad lanes discarded), K = SSE2/scalar tail on the padded buffer.
-     * A missing padded cell — or one where the tail won even padded (exec_me==K) — falls
-     * back to running me=K, which is always correct (the tail; STEP-E bit-exact gate). MT-
-     * padding is a later refinement: padded runs single-thread here, and padding wins at
-     * small K where _c2c_mt is single-thread anyway. Prime N with no direct codelet has no
-     * Kp CT plan -> plan_create_ex returns NULL -> NULL (padding unsupported there for now). */
-    /* c2c in-place create tier (step 24) */
-    if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE)
-        return _vfft_k1_bind_exec(_vfft_create_c2c_ip(cfg, ob, W, reg, N, K));
-
-    /* ── c2c OUT-OF-PLACE ── */
-    /* c2c out-of-place create tier (step 25) */
-    if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_OUTOFPLACE)
-        return _vfft_k1_bind_exec(_vfft_create_c2c_oop(cfg, ob, W, reg, N, K));
-
-    /* ── r2c (real -> complex, forward; split output) ── */
-    /* the odd-real bridge (struct comment at oddr_child): serves
-     * DIRECTLY where nothing else exists (c2r odd; r2c prime/awkward;
-     * VFFT_ODDR_FORCE pins it); for SMOOTH-odd r2c it is the RACE ARM
-     * at the rfft commit below instead (the pricing 2026-08-27 showed
-     * the winner flips per cell: 255 bridge ~3x, 4095 rfft). */
-    /* r2c/c2r create tier (step 26) */
-    if (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R)
+    /* 1D real: the one place the layouts still meet (bridge/real_bridge.h,
+     * owner decision D1 — temporary until the IL real engine lands). Every
+     * transform/rank below is served by ONE side, chosen here, once. */
+    if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R))
         return _vfft_create_real(cfg, ob, W, reg, N, K);
-
-    /* ── trig (DCT-I..IV / DST-I..III / DHT): real -> real, real-FFT inner. The
-     * inner c2c cell rides c2c wisdom (calibrate-on-miss at rigor). MT internal
-     * (the inner r2c / c2c threads over K). ── */
-    /* trig create tier: transforms/trig/trig_create.h (step 27) */
-    if (_VFFT_IS_TRIG(cfg->transform))
-        return _vfft_create_trig(cfg, ob, W, reg, N, K);
-
-    /* unreachable: every transform enum is dispatched above (range-checked up front). */
-    return NULL;
+    /* ── THE LAYOUT FORK ── */
+    if (cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+        return _vfft_k1_bind_exec(_vfft_il_create(cfg, W, N, K));
+    return _vfft_split_create(cfg, ob, W, reg, N, K);
 }
 
 /* The full 1D in-place c2c split execute (MT, padded exec_me, NATURAL tapes,
