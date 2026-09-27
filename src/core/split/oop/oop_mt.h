@@ -85,7 +85,7 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
     size_t K = p->K;
     /* The pool owns the clamp (support/threads.h); the OOP plan carries no
      * thread snapshot of its own, so none is passed. */
-    int T = stride_pool_workers_for(0);
+    int T = thread_pool_workers_for(0);
     if (T <= 1 || K < 8 || p->kind == VFFT_OOP_KIND_BAILEY2)
     {
         if (dir)
@@ -98,7 +98,7 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
      * tail lanes are dropped (floor would lose K%T lanes, e.g. T=8, K=65).
      * Slot 0 is the caller's slice by the pool's convention. */
     size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
-    _oop_mt_arg_t a[STRIDE_POOL_MAX_DISPATCH];
+    _oop_mt_arg_t a[THREAD_POOL_MAX_DISPATCH];
     int n = 0;
     for (int t = 0; t < T; t++)
     {
@@ -110,7 +110,7 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
             ke = K;
         a[n++] = (_oop_mt_arg_t){p, sr, si, dr, di, k0, ke - k0, dir};
     }
-    stride_pool_run(n, _oop_mt_tramp, a, sizeof a[0]);
+    thread_pool_run(n, _oop_mt_tramp, a, sizeof a[0]);
 }
 
 #endif /* VFFT_OOP_OOP_MT_H */

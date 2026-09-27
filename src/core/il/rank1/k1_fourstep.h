@@ -365,14 +365,14 @@ static void _k1fs_tp_tramp(void *v)
 }
 static void _k1fs_transpose(const vfft_k1fs_plan_t *p, const double *src, double *dst, int bwd)
 {
-    const int T = stride_pool_workers_for(p->nthreads);
+    const int T = thread_pool_workers_for(p->nthreads);
     if (T <= 1)
     {
         _k1fs_transpose_range(p, src, dst, bwd, 0, p->N1);
         return;
     }
     {   /* the k1 blocks cut evenly at block multiples across T slots */
-        _k1fs_tp_arg_t a[STRIDE_POOL_MAX_DISPATCH];
+        _k1fs_tp_arg_t a[THREAD_POOL_MAX_DISPATCH];
         const int nb = p->N1 / VFFT_K1FS_TB;
         int t;
         for (t = 0; t < T; t++)
@@ -381,7 +381,7 @@ static void _k1fs_transpose(const vfft_k1fs_plan_t *p, const double *src, double
             a[t].k1lo = (int)((long)nb * t / T) * VFFT_K1FS_TB;
             a[t].k1hi = (int)((long)nb * (t + 1) / T) * VFFT_K1FS_TB;
         }
-        stride_pool_run(T, _k1fs_tp_tramp, a, sizeof a[0]);
+        thread_pool_run(T, _k1fs_tp_tramp, a, sizeof a[0]);
     }
 }
 
@@ -500,7 +500,7 @@ static void _k1fs_sb_tramp(void *v)
 }
 static void _k1fs_sb_phase(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const double *in, double *out, int T)
 {
-    _k1fs_sb_arg_t a[STRIDE_POOL_MAX_DISPATCH];
+    _k1fs_sb_arg_t a[THREAD_POOL_MAX_DISPATCH];
     const int Ts = p->nsb < T ? p->nsb : T;
     int t;
     if (Ts < 2)
@@ -515,7 +515,7 @@ static void _k1fs_sb_phase(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const doub
         a[t].lo = (int)((long)p->nsb * t / Ts);
         a[t].hi = (int)((long)p->nsb * (t + 1) / Ts);
     }
-    stride_pool_run(Ts, _k1fs_sb_tramp, a, sizeof a[0]);
+    thread_pool_run(Ts, _k1fs_sb_tramp, a, sizeof a[0]);
 }
 /* the walk: the wide prefix (the tier's digit-split stages, across the
  * pool when it can), the super-bands; backward the super-bands first, then
@@ -526,7 +526,7 @@ static void _k1fs_sb_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const do
 {
     const int N1 = p->N1, nst = p->sbnst;
     const size_t rn = (size_t)p->N2;
-    int T = stride_pool_workers_for(p->nthreads);
+    int T = thread_pool_workers_for(p->nthreads);
     int s;
     if (T - 1 > p->c2d->il2d_roww_n) T = p->c2d->il2d_roww_n + 1;   /* a worker needs its row clone */
     if (dir == VFFT_FORWARD)

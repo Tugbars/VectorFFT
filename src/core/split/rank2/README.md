@@ -61,7 +61,7 @@ cache *without knowing the cache size* — the recursion bottoms out exactly whe
 to stay resident, so both source and destination tiles live in cache during the strided shuffle (no
 thrash). Halving the longer side keeps subproblems near-square.
 
-**(b) Cache-aware top-level dispatch.** `stride_transpose` picks the base-tile size **and** kernel by
+**(b) Cache-aware top-level dispatch.** `vfft_transpose` picks the base-tile size **and** kernel by
 working-set bytes, then runs the matching recursion:
 
 | working set | regime | base | kernel |
@@ -88,7 +88,7 @@ of a fused re+im kernel (which spills 16 YMMs on AVX2).
 
 **Measured dead-ends (don't re-try):** non-temporal stores on 4×4 (**10× slowdown** on hot-dest loops),
 software prefetch of source rows (neutral→negative), fused re+im on AVX2 (spills), base 48/64 on AVX2
-(regresses small sizes). A fused twiddle+transpose variant (`stride_twiddle_transpose`) also exists for
+(regresses small sizes). A fused twiddle+transpose variant (`vfft_twiddle_transpose`) also exists for
 Bailey's 4-step combine.
 
 This line-filling + cache-resident-tiling is exactly what makes the 2D tiled gather/scatter "nearly

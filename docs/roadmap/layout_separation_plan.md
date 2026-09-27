@@ -519,8 +519,23 @@ not govern linkage. The checker reads the `#include` lines.
 - **D7. Naming.** The `stride_pool_*`, `vfft_proto_posix_memalign` and `_il_ab_now`
   names outlive their layout. Rename them in common, or keep the names and only move the
   files. Renames are cheap to gate: R3 with a rename map.
-  - **Owner (2026-09-27): rename now**, to neutral names, one mechanical commit gated
-    with a rename map.
+  - **Owner (2026-09-27): rename every split-era name defined in `common/`**, docs
+    included; done as one mechanical commit. The pool module is `thread_pool`:
+    `stride_pool_run` -> `thread_pool_run`, `stride_pool_workers_for` ->
+    `thread_pool_workers_for`, `stride_get_num_threads` -> `thread_pool_size`,
+    `stride_set_num_threads` -> `thread_pool_resize`, `STRIDE_POOL_MAX_DISPATCH` ->
+    `THREAD_POOL_MAX_DISPATCH`, the internals `_stride_*` -> `_thread_pool_*`
+    (`_stride_num_threads` -> `_thread_pool_nthreads`, `_stride_pool_size` ->
+    `_thread_pool_nworkers`). `env.h`: `stride_env_init/restore`,
+    `stride_get_num_cores`, `stride_pin_thread/unpin_thread`, `stride_print_info`,
+    `stride_get/set_verbose` -> `vfft_*` (`vfft_num_cores`); `STRIDE_VERSION_*` ->
+    `VFFT_VERSION_*`, `STRIDE_ISA_NAME` -> `VFFT_ISA_NAME` (values unchanged).
+    `move/transpose.h`: `stride_transpose*` -> `vfft_transpose*`. The clock
+    `_il_ab_now` -> `vfft_now_ns`. Include guards -> `VFFT_COMMON_*_H`.
+  - Not renamed here: the allocators (`stride_alloc*`, `stride_free*`,
+    `STRIDE_ALIGNMENT`, `STRIDE_HUGEPAGE_THRESHOLD`, `vfft_proto_posix_memalign`) and
+    the second clock `vfft_proto_now_ns` get their final names in the utilities merge.
+    The recorded gate data under `src/tools/baseline/reference/` keeps the old names.
 
 ## 6. Migration
 

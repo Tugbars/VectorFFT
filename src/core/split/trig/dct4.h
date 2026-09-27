@@ -83,7 +83,7 @@ typedef struct {
 } _dct4_slice_arg_t;
 
 static inline int _dct4_mt_threads(int n_threads_plan, int N, size_t K) {
-    int T = stride_pool_workers_for(n_threads_plan); /* the pool's one clamp: plan snapshot, live pool, array bound */
+    int T = thread_pool_workers_for(n_threads_plan); /* the pool's one clamp: plan snapshot, live pool, array bound */
     if (T > 1 && (size_t)N * K < (size_t)8192 * (size_t)T) T = 1;
     return T;
 }
@@ -161,7 +161,7 @@ static void _dct4_execute(void *data, double *re, double *im) {
     /* MT path: K-split pre/post-twiddle passes, three-phase dispatch. */
     int T = _dct4_mt_threads(d->n_threads, N, K);
     if (T > 1) {
-        _dct4_slice_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+        _dct4_slice_arg_t args[THREAD_POOL_MAX_DISPATCH];
         for (int t = 0; t < T; t++) {
             args[t].d  = d;
             args[t].re = re;
@@ -170,7 +170,7 @@ static void _dct4_execute(void *data, double *re, double *im) {
         }
 
         /* Phase 1: pre-twiddle, T-parallel */
-        stride_pool_run(T, _dct4_worker_pre, args, sizeof args[0]); /* caller = args[0] */
+        thread_pool_run(T, _dct4_worker_pre, args, sizeof args[0]); /* caller = args[0] */
 
         /* Phase 2: inner backward N/2-point FFT (JIT'd inner if wired; own MT) */
         if (d->inner_jit_bwd)
@@ -179,7 +179,7 @@ static void _dct4_execute(void *data, double *re, double *im) {
             stride_execute_bwd(d->fft_plan, d->psi_re, d->psi_im);
 
         /* Phase 3: post-twiddle + unpack, T-parallel */
-        stride_pool_run(T, _dct4_worker_post, args, sizeof args[0]); /* caller = args[0] */
+        thread_pool_run(T, _dct4_worker_post, args, sizeof args[0]); /* caller = args[0] */
         return;
     }
 
@@ -275,7 +275,7 @@ static stride_plan_t *stride_dct4_plan(int N, size_t K, stride_plan_t *fft_plan_
     d->K = K;
     d->fft_plan = fft_plan_halfN;
 
-    int T_plan = stride_get_num_threads();
+    int T_plan = thread_pool_size();
     if (T_plan < 1) T_plan = 1;
     d->n_threads = T_plan;
 

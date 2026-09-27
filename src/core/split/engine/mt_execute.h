@@ -139,7 +139,7 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
     /* The pool owns the clamp (support/threads.h). This helper has no plan
      * handle, so no snapshot is passed: the caller's plan decided whether to
      * come here at all (see _c2c_mt_safe / the create-time engage decision). */
-    int T = stride_pool_workers_for(0);
+    int T = thread_pool_workers_for(0);
     if (T <= 1 || K < 8)
     {
         if (fn)
@@ -154,7 +154,7 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
      * tail lanes are dropped (floor would lose K%T lanes, e.g. T=8, K=65).
      * Slot 0 is the caller's slice by the pool's convention. */
     size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
-    _ip_arg a[STRIDE_POOL_MAX_DISPATCH];
+    _ip_arg a[THREAD_POOL_MAX_DISPATCH];
     int n = 0;
     for (int t = 0; t < T; t++)
     {
@@ -166,7 +166,7 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
             ke = K;
         a[n++] = (_ip_arg){p, fn, re, im, k0, ke - k0, dir};
     }
-    stride_pool_run(n, _ip_tramp, a, sizeof a[0]);
+    thread_pool_run(n, _ip_tramp, a, sizeof a[0]);
 }
 
 #endif /* VFFT_ENGINE_MT_EXECUTE_H */

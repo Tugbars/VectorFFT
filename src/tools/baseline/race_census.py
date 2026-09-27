@@ -25,7 +25,7 @@ execute, and needs no wisdom state, no thread count and no clock.
 ENUMERATION - TWO PASSES, BOTH REQUIRED
 ---------------------------------------
 Pass 1: functions containing a clock call. Three spellings are in use and all three
-        must be recognised - vfft_proto_now_ns (QPC on Windows), _il_ab_now
+        must be recognised - vfft_proto_now_ns (QPC on Windows), vfft_now_ns
         (clock_gettime) and clock_gettime directly.
 Pass 2: functions calling a timing HELPER but holding no clock of their own. Not
         optional: _calibrate_pad is a 125-line racer with ZERO clock calls - it
@@ -62,11 +62,11 @@ import re
 import os
 import sys
 
-CLOCKS = ("vfft_proto_now_ns(", "_il_ab_now(", "clock_gettime(")
+CLOCKS = ("vfft_proto_now_ns(", "vfft_now_ns(", "clock_gettime(")
 HELPERS = ("_pad_burst(", "_pad_med(", "_il_ab_med9(",
            "vfft_race_run(")          # support/race.h: the shared race body
 # timer and aggregation DEFINITIONS are not races; _bank_zr2c only records a number
-NOT_A_RACE = {"_il_ab_now", "vfft_proto_now_ns", "_pad_med", "_il_ab_med9",
+NOT_A_RACE = {"vfft_now_ns", "vfft_proto_now_ns", "_pad_med", "_il_ab_med9",
               "_bank_zr2c",
               # support/race.h: the body, its aggregators, the hysteresis helper
               "vfft_race_run", "vfft_race_median", "vfft_race_aggregate",

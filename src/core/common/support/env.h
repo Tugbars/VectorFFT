@@ -8,20 +8,20 @@
  *            split/planning/exhaustive_knobs.h (layout separation phase 5):
  *            only the split exhaustive planner reads them.
  */
-#ifndef VFFT_PROTO_CORE_ENV_H
-#define VFFT_PROTO_CORE_ENV_H
+#ifndef VFFT_COMMON_ENV_H
+#define VFFT_COMMON_ENV_H
 
 /* ===========================================================================
  * PART 1 — CPU / RUNTIME ENVIRONMENT
  *
- *   stride_env_init();  // once per thread (FTZ/DAZ)
+ *   vfft_env_init();  // once per thread (FTZ/DAZ)
  *   double *re = stride_alloc(N * K * sizeof(double));
  *   ...
  *   stride_free(re);
  * ===========================================================================
  */
 
-/* CPUID (stride_print_info's brand string) is spelled differently per
+/* CPUID (vfft_print_info's brand string) is spelled differently per
  * toolchain, and the spellings collide:
  *
  *   MSVC/ICX  <intrin.h> declares __cpuid / __cpuidex as FUNCTIONS taking an
@@ -93,7 +93,7 @@
  * Both are safe for FFT (below any real signal's noise floor) — HPC math
  * libs enable them. MXCSR is per-thread; call from each thread.
  * ===================================================================== */
-static inline unsigned int stride_env_init(void)
+static inline unsigned int vfft_env_init(void)
 {
     unsigned int old_mxcsr = _mm_getcsr();
     /* FTZ = bit 15 (0x8000), DAZ = bit 6 (0x0040) */
@@ -101,7 +101,7 @@ static inline unsigned int stride_env_init(void)
     return old_mxcsr;
 }
 
-static inline void stride_env_restore(unsigned int saved_mxcsr)
+static inline void vfft_env_restore(unsigned int saved_mxcsr)
 {
     _mm_setcsr(saved_mxcsr);
 }
@@ -238,32 +238,32 @@ static inline void stride_free_huge(void *p, size_t bytes)
  * VERBOSITY + VERSION / ISA QUERY
  * ===================================================================== */
 
-#define STRIDE_VERSION_MAJOR 0
-#define STRIDE_VERSION_MINOR 1
-#define STRIDE_VERSION_PATCH 0
-#define STRIDE_VERSION_STRING "0.1.0"
+#define VFFT_VERSION_MAJOR 0
+#define VFFT_VERSION_MINOR 1
+#define VFFT_VERSION_PATCH 0
+#define VFFT_VERSION_STRING "0.1.0"
 
-#include "build_isa.h"   /* STRIDE_ISA_NAME: the build's ISA, decided once */
+#include "build_isa.h"   /* VFFT_ISA_NAME: the build's ISA, decided once */
 
-static int _stride_verbose = 0;
+static int _vfft_verbose = 0;
 
-static inline void stride_set_verbose(int level)
+static inline void vfft_set_verbose(int level)
 {
-    _stride_verbose = level;
+    _vfft_verbose = level;
 }
 
-static inline int stride_get_verbose(void)
+static inline int vfft_get_verbose(void)
 {
-    return _stride_verbose;
+    return _vfft_verbose;
 }
 
 /* Prints version/ISA/CPU/FTZ info to stderr when verbose. Call after init. */
-static inline void stride_print_info(void)
+static inline void vfft_print_info(void)
 {
-    if (!_stride_verbose)
+    if (!_vfft_verbose)
         return;
     fprintf(stderr, "[VectorFFT] version %s  ISA: %s  sizeof(double)=%zu\n",
-            STRIDE_VERSION_STRING, STRIDE_ISA_NAME, sizeof(double));
+            VFFT_VERSION_STRING, VFFT_ISA_NAME, sizeof(double));
 #if defined(_WIN32)
     {
         int cpuinfo[4] = {0};
@@ -309,7 +309,7 @@ static inline void stride_print_info(void)
  * ===================================================================== */
 
 /* core_id: 0-based logical processor. Returns 0 / -1. */
-static inline int stride_pin_thread(int core_id)
+static inline int vfft_pin_thread(int core_id)
 {
     if (core_id < 0)
         return -1;
@@ -327,7 +327,7 @@ static inline int stride_pin_thread(int core_id)
 #endif
 }
 
-static inline int stride_unpin_thread(void)
+static inline int vfft_unpin_thread(void)
 {
 #if defined(_WIN32)
     DWORD_PTR all = ~(DWORD_PTR)0;
@@ -345,7 +345,7 @@ static inline int stride_unpin_thread(void)
 }
 
 /* Total logical processors (incl. hyperthreads + E-cores). */
-static inline int stride_get_num_cores(void)
+static inline int vfft_num_cores(void)
 {
 #if defined(_WIN32)
     SYSTEM_INFO si;
@@ -359,4 +359,4 @@ static inline int stride_get_num_cores(void)
 #endif
 }
 
-#endif /* VFFT_PROTO_CORE_ENV_H */
+#endif /* VFFT_COMMON_ENV_H */

@@ -55,8 +55,8 @@
  *    - Base 48 / 64: regressions at small sizes
  * ───────────────────────────────────────────────────────────────────
  */
-#ifndef STRIDE_TRANSPOSE_H
-#define STRIDE_TRANSPOSE_H
+#ifndef VFFT_COMMON_TRANSPOSE_H
+#define VFFT_COMMON_TRANSPOSE_H
 
 #include <stddef.h>
 #include <string.h>
@@ -395,7 +395,7 @@ static void _tp_skinny_8x4(const double *__restrict__ src, size_t ld_src,
 }
 #endif
 
-static void stride_transpose(
+static void vfft_transpose(
     const double *__restrict__ src, size_t ld_src,
     double *__restrict__ dst, size_t ld_dst,
     size_t N1, size_t N2)
@@ -417,7 +417,7 @@ static void stride_transpose(
 }
 
 /** Split-complex transpose: (src_re,src_im)[N1×N2] → (dst_re,dst_im)[N2×N1] */
-static void stride_transpose_pair(
+static void vfft_transpose_pair(
     const double *__restrict__ src_re, const double *__restrict__ src_im,
     double *__restrict__ dst_re, double *__restrict__ dst_im,
     size_t ld_src, size_t ld_dst,
@@ -567,7 +567,7 @@ static void _twiddle_transpose_rec(
 }
 
 /** Fused twiddle + transpose: dst[j,i] = W^{i*j} * src[i,j] */
-static void stride_twiddle_transpose(
+static void vfft_twiddle_transpose(
     const double *__restrict__ src_re, const double *__restrict__ src_im,
     double *__restrict__ dst_re, double *__restrict__ dst_im,
     const double *__restrict__ tw_re, const double *__restrict__ tw_im,
@@ -579,4 +579,4 @@ static void stride_twiddle_transpose(
                            0, 0, N1, N2);
 }
 
-#endif /* STRIDE_TRANSPOSE_H */
+#endif /* VFFT_COMMON_TRANSPOSE_H */

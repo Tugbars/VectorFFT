@@ -83,8 +83,8 @@ clones cannot thread, and with no clones at all the verdict is serial —
 banked exactly like a yes. Tables are read-only and shared.
 
 The pool has one owner (`support/threads.h`): the plan's thread count is
-the snapshot, `stride_pool_workers_for` the one clamp,
-`stride_pool_run` the one fork-join (measured: 68 ns at 2 workers, 272 ns
+the snapshot, `thread_pool_workers_for` the one clamp,
+`thread_pool_run` the one fork-join (measured: 68 ns at 2 workers, 272 ns
 at 8, empty body). A fork-join is not what makes a small cell slow.
 
 ## 4. The verdict is raced at T, structure included

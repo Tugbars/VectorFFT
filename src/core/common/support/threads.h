@@ -1,17 +1,17 @@
 /**
  * threads.h -- the thread pool.
  *
- *   - Persistent workers, created by stride_set_num_threads(n) (n-1 workers)
- *     and destroyed by stride_set_num_threads(1)
- *   - Each worker is pinned (see _stride_pin_stride) and SPINS on its `done`
+ *   - Persistent workers, created by thread_pool_resize(n) (n-1 workers)
+ *     and destroyed by thread_pool_resize(1)
+ *   - Each worker is pinned (see _thread_pool_pin_stride) and SPINS on its `done`
  *     flag: posting work is clearing `done`, completion is setting it
  *   - Thread 0 is the caller, which runs its own slot inline
- *   - Engines fork-join through stride_pool_workers_for + stride_pool_run
+ *   - Engines fork-join through thread_pool_workers_for + thread_pool_run
  *
  * No OpenMP, no TBB, no external dependencies.
  */
-#ifndef STRIDE_THREADS_H
-#define STRIDE_THREADS_H
+#ifndef VFFT_COMMON_THREADS_H
+#define VFFT_COMMON_THREADS_H
 
 #include <stdlib.h>
 #include <immintrin.h>  /* _mm_pause */
@@ -29,12 +29,12 @@
  * THREAD COUNT
  * ===================================================================== */
 
-static int _stride_num_threads = 1;
+static int _thread_pool_nthreads = 1;
 
-static inline void stride_get_num_threads_init(void) {} /* no-op, avoids empty TU */
+static inline void thread_pool_size_init(void) {} /* no-op, avoids empty TU */
 
-static inline int stride_get_num_threads(void) {
-    return _stride_num_threads;
+static inline int thread_pool_size(void) {
+    return _thread_pool_nthreads;
 }
 
 /* =====================================================================
@@ -56,16 +56,16 @@ typedef struct {
     pthread_t thread;
 #endif
     char _pad[64];          /* separation only — never read */
-} _stride_worker_t;
+} _thread_pool_worker_t;
 
-static _stride_worker_t *_stride_workers = NULL;
-static int _stride_pool_size = 0;
+static _thread_pool_worker_t *_thread_pool_workers = NULL;
+static int _thread_pool_nworkers = 0;
 
 /* =====================================================================
  * WORKER THREAD FUNCTION
  * ===================================================================== */
 
-static inline void _stride_pin_to_core(int core_id) {
+static inline void _thread_pool_pin_to_core(int core_id) {
     if (core_id < 0) return;
 #ifdef _WIN32
     SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << core_id);
@@ -82,11 +82,11 @@ static inline void _stride_pin_to_core(int core_id) {
  * Workers burn CPU while idle — acceptable for FFT workloads where
  * dispatch frequency is high (thousands of calls per second). */
 #ifdef _WIN32
-static DWORD WINAPI _stride_worker_func(LPVOID param) {
-    _stride_worker_t *w = (_stride_worker_t *)param;
-    _stride_pin_to_core(w->core_id);
+static DWORD WINAPI _thread_pool_worker_func(LPVOID param) {
+    _thread_pool_worker_t *w = (_thread_pool_worker_t *)param;
+    _thread_pool_pin_to_core(w->core_id);
     /* MXCSR is per-thread: set FTZ (bit 15) | DAZ (bit 6) here, as
-     * stride_env_init() does for the caller. Inlined to keep threads.h
+     * vfft_env_init() does for the caller. Inlined to keep threads.h
      * independent of env.h. */
     _mm_setcsr(_mm_getcsr() | 0x8040);
     while (!w->shutdown) {
@@ -100,9 +100,9 @@ static DWORD WINAPI _stride_worker_func(LPVOID param) {
     return 0;
 }
 #elif defined(__linux__)
-static void *_stride_worker_func(void *param) {
-    _stride_worker_t *w = (_stride_worker_t *)param;
-    _stride_pin_to_core(w->core_id);
+static void *_thread_pool_worker_func(void *param) {
+    _thread_pool_worker_t *w = (_thread_pool_worker_t *)param;
+    _thread_pool_pin_to_core(w->core_id);
     _mm_setcsr(_mm_getcsr() | 0x8040);   /* FTZ | DAZ, as in the Win32 worker */
     while (!w->shutdown) {
         while (w->done && !w->shutdown)
@@ -119,10 +119,10 @@ static void *_stride_worker_func(void *param) {
  * POOL LIFECYCLE
  * ===================================================================== */
 
-static void _stride_pool_destroy(void) {
-    if (!_stride_workers) return;
-    for (int i = 0; i < _stride_pool_size; i++) {
-        _stride_worker_t *w = &_stride_workers[i];
+static void _thread_pool_destroy(void) {
+    if (!_thread_pool_workers) return;
+    for (int i = 0; i < _thread_pool_nworkers; i++) {
+        _thread_pool_worker_t *w = &_thread_pool_workers[i];
         w->shutdown = 1;  /* spin-waiting worker sees this and exits */
 #ifdef _WIN32
         WaitForSingleObject(w->thread, INFINITE);
@@ -131,13 +131,13 @@ static void _stride_pool_destroy(void) {
         pthread_join(w->thread, NULL);
 #endif
     }
-    free(_stride_workers);
-    _stride_workers = NULL;
-    _stride_pool_size = 0;
+    free(_thread_pool_workers);
+    _thread_pool_workers = NULL;
+    _thread_pool_nworkers = 0;
 }
 
 /* Logical-core count (for clamping pin targets so we never pin past the last CPU). */
-static int _stride_ncpu(void) {
+static int _thread_pool_ncpu(void) {
 #ifdef _WIN32
     SYSTEM_INFO si; GetSystemInfo(&si); return (int)si.dwNumberOfProcessors;
 #elif defined(__linux__)
@@ -152,23 +152,23 @@ static int _stride_ncpu(void) {
  * on distinct physical cores (0,2,..,14); packing HT siblings runs MT ~2x
  * slower. A worker whose target is past the last logical core runs unpinned
  * (core_id = -1). Unknown SMT width (0) assumes 2; VFFT_PIN_STRIDE overrides. */
-static int _stride_pin_stride(void) {
+static int _thread_pool_pin_stride(void) {
     const char *e = getenv("VFFT_PIN_STRIDE");
     int s;
     if (e) { s = atoi(e); return s < 1 ? 1 : s; }
     s = vfft_cpu_smt();
     return s >= 1 ? s : 2;
 }
-static void _stride_pool_create(int n_workers) {
-    if (_stride_workers) _stride_pool_destroy();
+static void _thread_pool_create(int n_workers) {
+    if (_thread_pool_workers) _thread_pool_destroy();
     if (n_workers <= 0) return;
 
-    _stride_workers = (_stride_worker_t *)calloc(n_workers, sizeof(_stride_worker_t));
-    _stride_pool_size = n_workers;
+    _thread_pool_workers = (_thread_pool_worker_t *)calloc(n_workers, sizeof(_thread_pool_worker_t));
+    _thread_pool_nworkers = n_workers;
 
-    int stride = _stride_pin_stride(), ncpu = _stride_ncpu();
+    int stride = _thread_pool_pin_stride(), ncpu = _thread_pool_ncpu();
     for (int i = 0; i < n_workers; i++) {
-        _stride_worker_t *w = &_stride_workers[i];
+        _thread_pool_worker_t *w = &_thread_pool_workers[i];
         w->done = 1;        /* no work pending initially */
         w->shutdown = 0;
         w->func = NULL;
@@ -176,9 +176,9 @@ static void _stride_pool_create(int n_workers) {
         int cid = (i + 1) * stride;            /* P-core-aware: skip HT siblings on hybrid Intel */
         w->core_id = (cid < ncpu) ? cid : -1;  /* beyond the last logical core -> no pin (runs anywhere) */
 #ifdef _WIN32
-        w->thread = CreateThread(NULL, 0, _stride_worker_func, w, 0, NULL);
+        w->thread = CreateThread(NULL, 0, _thread_pool_worker_func, w, 0, NULL);
 #elif defined(__linux__)
-        pthread_create(&w->thread, NULL, _stride_worker_func, w);
+        pthread_create(&w->thread, NULL, _thread_pool_worker_func, w);
 #endif
     }
 }
@@ -189,7 +189,7 @@ static void _stride_pool_create(int n_workers) {
 
 /** Post work to a single worker (non-blocking).
  * Worker is spin-waiting on done==0, so clearing done is the wake signal. */
-static inline void _stride_pool_dispatch(_stride_worker_t *w,
+static inline void _thread_pool_dispatch(_thread_pool_worker_t *w,
                                           void (*func)(void *), void *arg) {
     w->func = func;
     w->arg = arg;
@@ -197,9 +197,9 @@ static inline void _stride_pool_dispatch(_stride_worker_t *w,
 }
 
 /** Spin-wait for all workers to complete (lowest latency). */
-static inline void _stride_pool_wait_all(void) {
-    for (int i = 0; i < _stride_pool_size; i++) {
-        while (!_stride_workers[i].done) {
+static inline void _thread_pool_wait_all(void) {
+    for (int i = 0; i < _thread_pool_nworkers; i++) {
+        while (!_thread_pool_workers[i].done) {
 #ifdef _WIN32
             _mm_pause();
 #elif defined(__linux__)
@@ -220,15 +220,15 @@ typedef struct {
     volatile int count;     /* threads arrived so far */
     volatile int sense;     /* flips 0→1→0 each generation */
     int n_threads;          /* total threads including caller */
-} _stride_barrier_t;
+} _thread_pool_barrier_t;
 
-static inline void _stride_barrier_init(_stride_barrier_t *b, int n) {
+static inline void _thread_pool_barrier_init(_thread_pool_barrier_t *b, int n) {
     b->count = 0;
     b->sense = 0;
     b->n_threads = n;
 }
 
-static inline void _stride_barrier_wait(_stride_barrier_t *b, int my_sense) {
+static inline void _thread_pool_barrier_wait(_thread_pool_barrier_t *b, int my_sense) {
     /* Atomically increment count. Last thread flips sense. */
 #ifdef _WIN32
     int arrived = InterlockedIncrement((volatile LONG *)&b->count);
@@ -252,22 +252,22 @@ static inline void _stride_barrier_wait(_stride_barrier_t *b, int my_sense) {
 }
 
 /* =====================================================================
- * PUBLIC API: stride_set_num_threads
+ * PUBLIC API: thread_pool_resize
  *
  * n=0 or n=1: single-threaded (default, destroys pool if active)
  * n>1:        create pool of n-1 workers (caller is thread 0)
  * ===================================================================== */
 
-static inline void stride_set_num_threads(int n) {
+static inline void thread_pool_resize(int n) {
     n = (n < 1) ? 1 : n;
-    if (n == _stride_num_threads) return;
+    if (n == _thread_pool_nthreads) return;
 
     if (n <= 1) {
-        _stride_pool_destroy();
+        _thread_pool_destroy();
     } else {
-        _stride_pool_create(n - 1);
+        _thread_pool_create(n - 1);
     }
-    _stride_num_threads = n;
+    _thread_pool_nthreads = n;
 }
 
 /* =====================================================================
@@ -278,14 +278,14 @@ static inline void stride_set_num_threads(int n) {
  * (K-split rounded to 8, proportional, count-balanced, plane-queue pull) and
  * the per-worker argument struct.
  *
- *   STRIDE_POOL_MAX_DISPATCH   the arg-array bound. Size every per-worker
+ *   THREAD_POOL_MAX_DISPATCH   the arg-array bound. Size every per-worker
  *                              arg array with it, never with a literal 64.
- *   stride_pool_workers_for(n) the ONE clamp: min(live pool count, workers
+ *   thread_pool_workers_for(n) the ONE clamp: min(live pool count, workers
  *                              that exist, the plan's snapshot n when n>=1,
  *                              MAX_DISPATCH), never below 1. Pass the plan's
  *                              h->nthreads; passing 0 means "no snapshot",
  *                              which is only correct at plan-CREATE time.
- *   stride_pool_run(T,fn,a,sz) the ONE fork-join: workers 1..T-1 each run
+ *   thread_pool_run(T,fn,a,sz) the ONE fork-join: workers 1..T-1 each run
  *                              fn(&a[t]) (a is an array of T elements of sz
  *                              bytes), the CALLER runs fn(&a[0]) itself,
  *                              then waits. T <= 1 runs fn(&a[0]) inline.
@@ -293,42 +293,42 @@ static inline void stride_set_num_threads(int n) {
  *                              an engine that wants the caller to take the
  *                              remainder puts the remainder in a[0].
  *
- * `_stride_pool_dispatch` / `_stride_pool_wait_all` are primitives for the
- * benches outside src/core; engines go through stride_pool_run.
+ * `_thread_pool_dispatch` / `_thread_pool_wait_all` are primitives for the
+ * benches outside src/core; engines go through thread_pool_run.
  * ===================================================================== */
 
-#define STRIDE_POOL_MAX_DISPATCH 64
+#define THREAD_POOL_MAX_DISPATCH 64
 
 /** The one clamp. `plan_nthreads` is the count the PLAN recorded at create
  * (h->nthreads); the result never exceeds it, the live pool, the workers
  * that actually exist, or the arg-array bound, and is never below 1. */
-static inline int stride_pool_workers_for(int plan_nthreads) {
-    int T = stride_get_num_threads();
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
+static inline int thread_pool_workers_for(int plan_nthreads) {
+    int T = thread_pool_size();
+    if (T > _thread_pool_nworkers + 1)
+        T = _thread_pool_nworkers + 1;
     if (plan_nthreads >= 1 && T > plan_nthreads)
         T = plan_nthreads;
-    if (T > STRIDE_POOL_MAX_DISPATCH)
-        T = STRIDE_POOL_MAX_DISPATCH;
+    if (T > THREAD_POOL_MAX_DISPATCH)
+        T = THREAD_POOL_MAX_DISPATCH;
     return T < 1 ? 1 : T;
 }
 
 /** The one fork-join. `args` is an array of at least T elements, each
  * `elem` bytes; slot t goes to worker t-1 for t in 1..T-1, slot 0 runs on
  * the caller. Waits for every dispatched worker before returning. T must
- * come from stride_pool_workers_for, which is what guarantees the workers
+ * come from thread_pool_workers_for, which is what guarantees the workers
  * exist and the array is large enough. */
-static inline void stride_pool_run(int T, void (*fn)(void *),
+static inline void thread_pool_run(int T, void (*fn)(void *),
                                    void *args, size_t elem) {
     char *base = (char *)args;
     int nd = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
-        _stride_pool_dispatch(&_stride_workers[nd], fn, base + (size_t)t * elem);
+    for (int t = 1; t < T && t <= _thread_pool_nworkers; t++) {
+        _thread_pool_dispatch(&_thread_pool_workers[nd], fn, base + (size_t)t * elem);
         nd++;
     }
     fn(base);
     if (nd)
-        _stride_pool_wait_all();
+        _thread_pool_wait_all();
 }
 
-#endif /* STRIDE_THREADS_H */
+#endif /* VFFT_COMMON_THREADS_H */

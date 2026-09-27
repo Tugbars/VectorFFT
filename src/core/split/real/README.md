@@ -127,7 +127,7 @@ follow-up (today the OOP win only fires where the inner stage-0 leaf is radix-4)
 Everything in §4 is single-thread. Under MT the picture flips. The dispatcher threads r2c by
 splitting the K-batch: `_vfft_r2c_block_k(K)` picks the largest multiple-of-8 divisor of K that is
 ≤ K/T (must divide K — a partial block over-reads; must be a mult of 8 for the lane group), giving
-~T full blocks. **You must `stride_set_num_threads()` BEFORE `vfft_r2c_plan_create`** — T is
+~T full blocks. **You must `thread_pool_resize()` BEFORE `vfft_r2c_plan_create`** — T is
 snapshotted for scratch sizing and block choice.
 
 dag (8 P-cores, caller pinned core 0) vs MKL at 8 threads, split r2c:
@@ -167,7 +167,7 @@ The two engines and their inners calibrate separately:
   inner it is rebuilt as the same factorization in DIT. DIF inners are *correct* (a safety net) but
   slower here: N=256 K=32 DIT+fused 0.99× vs DIF+explicit-pack 0.87×.
 - **MT needs sub-K blocks** — the default `block_K = K` is a single block = serial. The dispatcher
-  picks `block_K < K` only when `stride_get_num_threads() > 1` at plan-create.
+  picks `block_K < K` only when `thread_pool_size() > 1` at plan-create.
 - **packed buffer sizing** — the packed path allocates `2·N·K` (base plane + the N·K fold region).
 
 ---

@@ -68,7 +68,7 @@ static double _f2d_now(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC,&
 #endif
 
 #ifndef FFT2D_R2C_MAX_THREADS
-#define FFT2D_R2C_MAX_THREADS STRIDE_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
+#define FFT2D_R2C_MAX_THREADS THREAD_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
 #endif
 
 
@@ -179,12 +179,12 @@ static void _f2d_sr2c_fwd_run(_f2d_sr2c_fwd_fn fn, const double *rio,
                               double *ore, double *oim,
                               size_t rs_in, size_t os, size_t me)
 {
-    int T = stride_pool_workers_for(0); /* the pool's one clamp; no plan handle here */
+    int T = thread_pool_workers_for(0); /* the pool's one clamp; no plan handle here */
     if (T <= 1 || me < 16) { fn(rio, ore, oim, 0, 0, rs_in, os, me); return; }
     /* 8-aligned proportional ranges, empty ones skipped: the slots are PACKED,
      * and the caller (slot 0) runs whichever non-empty range comes first --
      * its own [0,p0_main_end) when that is non-empty. */
-    _f2d_sr2c_mtf_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _f2d_sr2c_mtf_arg_t args[THREAD_POOL_MAX_DISPATCH];
     int m = 0;
     size_t p0_main_end = ((me * 1) / (size_t)T) & ~(size_t)7;
     if (p0_main_end > 0) {
@@ -204,16 +204,16 @@ static void _f2d_sr2c_fwd_run(_f2d_sr2c_fwd_fn fn, const double *rio,
         args[m].rs_in = rs_in; args[m].os = os; args[m].me = pe - ps;
         m++;
     }
-    if (m > 0) stride_pool_run(m, _f2d_sr2c_mtf_tramp, args, sizeof args[0]);
+    if (m > 0) thread_pool_run(m, _f2d_sr2c_mtf_tramp, args, sizeof args[0]);
 }
 static void _f2d_sr2c_bwd_run(_f2d_sr2c_bwd_fn fn, const double *ire,
                               const double *iim, double *out,
                               size_t is, size_t rs_in, size_t me)
 {
-    int T = stride_pool_workers_for(0); /* the pool's one clamp; no plan handle here */
+    int T = thread_pool_workers_for(0); /* the pool's one clamp; no plan handle here */
     if (T <= 1 || me < 16) { fn(ire, iim, out, 0, 0, is, rs_in, me); return; }
     /* packed slots, caller = slot 0 (see the forward twin) */
-    _f2d_sr2c_mtb_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _f2d_sr2c_mtb_arg_t args[THREAD_POOL_MAX_DISPATCH];
     int m = 0;
     size_t p0_main_end = ((me * 1) / (size_t)T) & ~(size_t)7;
     if (p0_main_end > 0) {
@@ -233,7 +233,7 @@ static void _f2d_sr2c_bwd_run(_f2d_sr2c_bwd_fn fn, const double *ire,
         args[m].is = is; args[m].rs_in = rs_in; args[m].me = pe - ps;
         m++;
     }
-    if (m > 0) stride_pool_run(m, _f2d_sr2c_mtb_tramp, args, sizeof args[0]);
+    if (m > 0) thread_pool_run(m, _f2d_sr2c_mtb_tramp, args, sizeof args[0]);
 }
 
 /* Rows-based, tail-capable entries. Full blocks go through the MT _run
@@ -486,14 +486,14 @@ static void _fft2d_r2c_tiled_fwd_range(stride_fft2d_r2c_data_t *d,
 
         /* Gather: real B x N2 -> scratch_re N2 x B (single-plane transpose). */
         _F2D_T0(_f2d_p1_tin);
-        stride_transpose(re_in + i * (size_t)N2, (size_t)N2,
+        vfft_transpose(re_in + i * (size_t)N2, (size_t)N2,
                          sr, B, this_B, (size_t)N2);
         _F2D_T1(_f2d_p1_tin);
 
         /* Inner R2C in-place on scratch. After: sr[f*B + k_local] holds Re bins,
          * si[f*B + k_local] holds Im bins for f=0..N2/2. */
         _F2D_T0(_f2d_p1_r2c);
-        if (d->rfft_row && stride_get_num_threads() <= 1)
+        if (d->rfft_row && thread_pool_size() <= 1)
             /* rfft engine, in-place-safe (leaf fully consumes x before
              * the terminator writes out); ST only. */
             rfft_execute_fwd_natural(d->rfft_row, sr, sr, si, NULL);
@@ -504,7 +504,7 @@ static void _fft2d_r2c_tiled_fwd_range(stride_fft2d_r2c_data_t *d,
         /* Scatter split-complex: (halfN_plus1) x B -> B x K_pad (padded).
          * Padding columns [halfN_plus1..K_pad) are zeroed for col-FFT. */
         _F2D_T0(_f2d_p1_tout);
-        stride_transpose_pair(sr, si,
+        vfft_transpose_pair(sr, si,
                               out_pad_re + i * K_pad,
                               out_pad_im + i * K_pad,
                               B, K_pad,
@@ -563,7 +563,7 @@ static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
 
         /* Gather split-complex: B x K_pad (read only halfN_plus1 cols) ->
          * (halfN_plus1) x B for the inner C2R. */
-        stride_transpose_pair(in_pad_re + i * K_pad,
+        vfft_transpose_pair(in_pad_re + i * K_pad,
                               in_pad_im + i * K_pad,
                               sr, si,
                               K_pad, B,
@@ -572,7 +572,7 @@ static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
         /* Inner C2R in-place on scratch. tid selects the inner's per-worker
          * pack-scratch slot — distinct per tile thread (a shared slot would
          * force a serial backward). */
-        if (d->c2r_row && stride_get_num_threads() <= 1)
+        if (d->c2r_row && thread_pool_size() <= 1)
             /* c2r natural engine — in-place-safe (the initiator consumes
              * all input rows in stage 0; out written last). */
             c2r_execute_natural(d->c2r_row, sr, si, sr, NULL);
@@ -580,7 +580,7 @@ static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
             _fft2d_r2c_inner_bwd(d->plan_r2c, sr, si, tid);
 
         /* Scatter real: N2 x B -> B x N2. */
-        stride_transpose(sr, B, re_out + i * (size_t)N2, (size_t)N2,
+        vfft_transpose(sr, B, re_out + i * (size_t)N2, (size_t)N2,
                          (size_t)N2, this_B);
     }
 }
@@ -627,7 +627,7 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
         stride_r2c_data_t *rd = (stride_r2c_data_t *)d->plan_r2c->override_data;
         if (slots > rd->n_threads) slots = rd->n_threads;
     }
-    int T = stride_pool_workers_for(slots);
+    int T = thread_pool_workers_for(slots);
 
     size_t n_tiles = (N1 + B - 1) / B;
     if (T <= 1 || n_tiles <= 1) {
@@ -638,7 +638,7 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
     }
 
     /* slot t owns scratch slot t and tid t; slot 0 is the caller */
-    _fft2d_r2c_tile_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _fft2d_r2c_tile_arg_t args[THREAD_POOL_MAX_DISPATCH];
     int n = 0;
     for (int t = 0; t < T; t++) {
         size_t tiles_start = (n_tiles * t) / T;
@@ -659,7 +659,7 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
         args[n].tid = t;
         n++;
     }
-    stride_pool_run(n, _fft2d_r2c_tile_fwd_trampoline, args, sizeof args[0]);
+    thread_pool_run(n, _fft2d_r2c_tile_fwd_trampoline, args, sizeof args[0]);
 }
 
 /* Backward (C2R) tile-parallel — same partition as the forward. Reads padded
@@ -690,7 +690,7 @@ static void _fft2d_r2c_tiled_bwd_mt(stride_fft2d_r2c_data_t *d,
         stride_r2c_data_t *rd = (stride_r2c_data_t *)d->plan_r2c->override_data;
         if (slots > rd->n_threads) slots = rd->n_threads;
     }
-    int T = stride_pool_workers_for(slots);
+    int T = thread_pool_workers_for(slots);
 
     size_t n_tiles = (N1 + B - 1) / B;
     if (T <= 1 || n_tiles <= 1) {
@@ -700,7 +700,7 @@ static void _fft2d_r2c_tiled_bwd_mt(stride_fft2d_r2c_data_t *d,
         return;
     }
 
-    _fft2d_r2c_tile_bwd_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _fft2d_r2c_tile_bwd_arg_t args[THREAD_POOL_MAX_DISPATCH];
     int n = 0;
     for (int t = 0; t < T; t++) {
         size_t tiles_start = (n_tiles * t) / T;
@@ -721,7 +721,7 @@ static void _fft2d_r2c_tiled_bwd_mt(stride_fft2d_r2c_data_t *d,
         args[n].tid = t;
         n++;
     }
-    stride_pool_run(n, _fft2d_r2c_tile_bwd_trampoline, args, sizeof args[0]);
+    thread_pool_run(n, _fft2d_r2c_tile_bwd_trampoline, args, sizeof args[0]);
 }
 
 
@@ -797,7 +797,7 @@ static void _fft2d_r2c_execute_bwd(void *data, double *re, double *im) {
 
     /* Phase 3: tiled C2R row pass reads padded scratch (re_pad/im_pad), writes
      * reals to the user buffer `re`. Distinct buffers => tiles independent =>
-     * tile-parallel (honors stride_get_num_threads(); serial when T<=1). */
+     * tile-parallel (honors thread_pool_size(); serial when T<=1). */
     _fft2d_r2c_tiled_bwd_mt(d, d->re_pad, d->im_pad, re);
 }
 
@@ -883,7 +883,7 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
      * it for the real input and the Re bins); the im slot needs only hp1*B. */
     d->tile_complex_sz = hp1 * B;
 
-    int T = stride_pool_workers_for(0); /* create time: the pool as it is now = this plan's slot count */
+    int T = thread_pool_workers_for(0); /* create time: the pool as it is now = this plan's slot count */
     d->num_scratch = T;
 
     d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64,
@@ -1182,7 +1182,7 @@ static void _fft2d_r2c_execute_fwd_oop(stride_fft2d_r2c_data_t *d,
                 d->re_pad[(size_t)i * d->K_pad + f] = 0.0;
                 d->im_pad[(size_t)i * d->K_pad + f] = 0.0;
             }
-    } else if (d->stw_on_fwd && stride_get_num_threads() <= 1) {
+    } else if (d->stw_on_fwd && thread_pool_size() <= 1) {
         /* stw stays ST: shared d->stw_work buffer (and dormant tier). */
         _stw_r2c_fwd(&d->stw_tab, real_in, d->re_pad, d->im_pad,
                      (size_t)d->N2, d->K_pad, (size_t)d->N1, d->stw_work);
@@ -1238,7 +1238,7 @@ static void _fft2d_r2c_execute_bwd_oop(stride_fft2d_r2c_data_t *d,
         _f2d_sr2c_bwd_rows(d->strided_bwd, d->str_blk, d->N2, d->re_pad,
                            d->im_pad, real_out, d->K_pad, (size_t)d->N2,
                            (size_t)d->N1, d->tail_scr);
-    else if (d->stw_on_bwd && stride_get_num_threads() <= 1)
+    else if (d->stw_on_bwd && thread_pool_size() <= 1)
         _stw_c2r_bwd(&d->stw_tab, d->re_pad, d->im_pad, real_out,
                      d->K_pad, (size_t)d->N2, (size_t)d->N1, d->stw_work);
     else

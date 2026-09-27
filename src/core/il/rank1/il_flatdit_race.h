@@ -76,22 +76,22 @@ static inline int _ilfd_race_reps(vfft_ilfd_plan_t *p, const double *zin, double
     int n = 1, k;
     double per = 1e300;
     {   /* warm: >= 2 ms of executions, untimed */
-        const double t0 = _il_ab_now();
-        do { vfft_ilfd_execute_fwd(p, zin, zout); } while (_il_ab_now() - t0 < 2.0e6);
+        const double t0 = vfft_now_ns();
+        do { vfft_ilfd_execute_fwd(p, zin, zout); } while (vfft_now_ns() - t0 < 2.0e6);
     }
     for (;;) {   /* the batch size that spans >= 200 us */
-        const double t0 = _il_ab_now();
+        const double t0 = vfft_now_ns();
         int i;
         for (i = 0; i < n; i++) vfft_ilfd_execute_fwd(p, zin, zout);
-        if (_il_ab_now() - t0 >= 2.0e5 || n >= VFFT_ILFD_RACE_MAX_REPS) break;
+        if (vfft_now_ns() - t0 >= 2.0e5 || n >= VFFT_ILFD_RACE_MAX_REPS) break;
         n *= 4;
     }
     for (k = 0; k < 3; k++) {
-        const double t0 = _il_ab_now();
+        const double t0 = vfft_now_ns();
         double dt;
         int i;
         for (i = 0; i < n; i++) vfft_ilfd_execute_fwd(p, zin, zout);
-        dt = (_il_ab_now() - t0) / (double)n;
+        dt = (vfft_now_ns() - t0) / (double)n;
         if (dt < per) per = dt;
     }
     if (per < 1.0) per = 1.0;

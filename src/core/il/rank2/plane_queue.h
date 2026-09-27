@@ -89,12 +89,12 @@ static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
         dre = (double *)sre; /* in-place convenience (C2C) */
     if (h->pq_mt && h->pq_wn > 0)
     {
-        _pq_arg a[STRIDE_POOL_MAX_DISPATCH];
+        _pq_arg a[THREAD_POOL_MAX_DISPATCH];
         volatile long next = 0;
         /* pq_wn = the clones built at create (the plan's own snapshot); the
          * pool's one clamp bounds it by the LIVE pool too, so a pool that
          * shrank since create can no longer be over-dispatched. */
-        int T = stride_pool_workers_for(h->pq_wn);
+        int T = thread_pool_workers_for(h->pq_wn);
         int t;
         if ((size_t)T > h->pq_n)
             T = (int)h->pq_n;
@@ -107,7 +107,7 @@ static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
             a[t].dst = dre;
             a[t].next = &next;
         }
-        stride_pool_run(T, _pq_tramp, a, sizeof a[0]);
+        thread_pool_run(T, _pq_tramp, a, sizeof a[0]);
         _vfft_pq_mt_count++; /* engagement, see vfft.h */
         return;
     }

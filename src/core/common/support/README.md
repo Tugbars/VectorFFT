@@ -11,7 +11,7 @@ math here — this is the floor the engine stands on.
 | `strided_codelets.h` | ABI-typed registry struct for the 2D Design-C "strided" row-FFT codelets |
 | `ref.h` | **declarations-only** vtable type for the benchmark **reference backends** (MKL / FFTW) + the reference-independent helpers: role/regime enums, `ref_shape_t`, `ref_caps_t`, the N-arm order-neutralising scheduler, `ref_race_check`, `ref_ratio`, `csv_for`. Implementations (`ref_mkl.h`, `ref_fftw.h`) live in `build_tuned/benches/` — they pull in `mkl_dfti.h` / bind `fftw3.dll`, which core must not |
 | `diag.h` | loud-refusal helpers `_vfft_warn` / `_vfft_tname` — a config-space mistake is refused with an actionable line on stderr, never a bare NULL |
-| `race_timing.h` | the racers' shared clock and median (`_il_ab_now`, `_il_ab_med9`) — every A/B in the tree times through these, so the protocol is one place |
+| `race_timing.h` | the racers' shared clock and median (`vfft_now_ns`, `_il_ab_med9`) — every A/B in the tree times through these, so the protocol is one place |
 
 ---
 
@@ -22,14 +22,14 @@ env-overridable knobs the exhaustive/joint search reads.
 
 ### PART 1 — CPU / runtime
 
-**Denormal handling (FTZ/DAZ) — `stride_env_init()`.** Sets two MXCSR bits: **FTZ**
+**Denormal handling (FTZ/DAZ) — `vfft_env_init()`.** Sets two MXCSR bits: **FTZ**
 (*flush-to-zero*, bit 15 / `0x8000` — denormal *results* become zero) and **DAZ**
 (*denormals-are-zero*, bit 6 / `0x0040` — denormal *inputs* treated as zero). **Why it
 matters:** denormal arithmetic traps into microcode and runs **50–100× slower** on x86, and
 FFTs generate denormals readily — near-zero inputs, twiddle-product underflow, inverse-scale
 rounding. Both flags are safe (denormals sit below any real signal's noise floor; MKL/IPP/HPC
-libraries enable them). **MXCSR is per-thread**, so `stride_env_init()` must be called from
-*every* thread that does FFT work (it returns the old MXCSR; `stride_env_restore` puts it
+libraries enable them). **MXCSR is per-thread**, so `vfft_env_init()` must be called from
+*every* thread that does FFT work (it returns the old MXCSR; `vfft_env_restore` puts it
 back). Call it once at program start on the main thread, and inside each worker.
 
 **Aligned + huge-page allocation.**
@@ -43,13 +43,13 @@ back). Call it once at program start on the main thread, and inside each worker.
   `MAP_HUGETLB` (needs `nr_hugepages > 0`) → **THP fallback** (`madvise(MADV_HUGEPAGE)`) →
   plain aligned alloc. `stride_free_huge` tells huge from fallback by 2 MB-alignment.
 
-**Version / ISA / CPU query.** `STRIDE_ISA_NAME` resolves to `avx512`/`avx2`/`scalar` from
-compile macros (per-binary ISA, no runtime fat-dispatch). `stride_set_verbose` +
-`stride_print_info` dump version, ISA, the **CPU brand string** (`__cpuidex` on Windows,
+**Version / ISA / CPU query.** `VFFT_ISA_NAME` resolves to `avx512`/`avx2`/`scalar` from
+compile macros (per-binary ISA, no runtime fat-dispatch). `vfft_set_verbose` +
+`vfft_print_info` dump version, ISA, the **CPU brand string** (`__cpuidex` on Windows,
 `/proc/cpuinfo` on Linux), and whether FTZ+DAZ are actually live — a one-call sanity check.
 
-**CPU affinity / core pinning.** `stride_pin_thread(core)` / `stride_unpin_thread` /
-`stride_get_num_cores`. **Why:** unpinned threads migrate (L1/L2 invalidation, cross-CCX on
+**CPU affinity / core pinning.** `vfft_pin_thread(core)` / `vfft_unpin_thread` /
+`vfft_num_cores`. **Why:** unpinned threads migrate (L1/L2 invalidation, cross-CCX on
 Zen, P↔E-core bounce on Intel hybrid, NUMA hops) — the single biggest source of run-to-run
 variance on hybrid CPUs. For benchmarking, **pin to a P-core**. This is also the foundation
 of the thread-pool contract: the pool pins worker *i* to core *i+1* and **assumes the caller
@@ -93,14 +93,14 @@ inside a transform*), dispatched **thousands of times per second**. A general fr
 ~5 µs dispatch latency would dominate; this pool gets it to ~10 ns.
 
 **Design:**
-- **Persistent, pinned workers.** `stride_set_num_threads(n)` creates `n−1` workers (the
+- **Persistent, pinned workers.** `thread_pool_resize(n)` creates `n−1` workers (the
   caller is thread 0); worker *i* is pinned to **core `i+1`**. So the **caller must run on
   core 0** — that's the whole pinning contract (all P-cores 0–7 on the 14900KF).
 - **Spin-based dispatch, not sleep.** Workers spin on a `volatile done` flag with `_mm_pause`
   / `__builtin_ia32_pause`. Posting work = setting `func/arg` then clearing `done` (the wake
   signal); waiting = spinning on `done`. **~10 ns wake latency vs ~5 µs for OS events.**
   Idle workers burn a core — acceptable because dispatch frequency is high and the pool is
-  torn down (`stride_set_num_threads(1)`) when not in use. *(The file's top comment mentions
+  torn down (`thread_pool_resize(1)`) when not in use. *(The file's top comment mentions
   "sleep on OS primitives" — aspirational; the implementation spins.)*
 - **Thread 0 = caller, zero dispatch overhead.** The caller runs its own `1/T` slice inline,
   only the other `T−1` go through the pool.
@@ -109,7 +109,7 @@ inside a transform*), dispatched **thousands of times per second**. A general fr
   sense bit. **~100 ns vs ~1 µs for `pthread_barrier`.**
 
 > **The MT caller-pin gotcha (load-bearing).** Because workers pin to cores `1..T−1` assuming
-> the caller is on core 0, **the calling thread must be pinned to core 0** (`stride_pin_thread(0)`).
+> the caller is on core 0, **the calling thread must be pinned to core 0** (`vfft_pin_thread(0)`).
 > Pin it anywhere in `1..T−1` and it collides with a worker → two threads spin-contend one
 > core → *catastrophic* anti-scaling (T4/T8 collapse to 0.0–0.1×). Every MT bench in this repo
 > pins the caller to core 0 for this reason.
@@ -134,7 +134,7 @@ the registry just mirrors NULL for ungenerated radices). Consumed by the 2D row-
 
 ## Gotchas
 
-- **`stride_env_init()` is per-thread** (MXCSR is thread-local) — call it in every worker, not
+- **`vfft_env_init()` is per-thread** (MXCSR is thread-local) — call it in every worker, not
   just main, or that worker eats the denormal penalty.
 - **Caller must be on core 0** for the thread pool (see above) — the #1 MT footgun.
 - **Huge pages need a privilege/sysctl** ("Lock pages in memory" / `nr_hugepages`); the alloc

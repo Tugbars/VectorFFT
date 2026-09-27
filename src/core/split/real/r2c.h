@@ -60,7 +60,7 @@ typedef struct
     size_t B;   /* block size for cache-friendly execution */
 
     int n_threads;  /* T_plan snapshot: scratch sized for this many parallel workers.
-                     * Effective T at execute time is min(stride_get_num_threads(), n_threads). */
+                     * Effective T at execute time is min(thread_pool_size(), n_threads). */
 
     double *tw_re; /* N/2 twiddle factors: W_N^k = cos(-2*pi*k/N) */
     double *tw_im; /* N/2 twiddle factors: sin(-2*pi*k/N) */
@@ -1278,7 +1278,7 @@ static void _r2c_execute_fwd(void *data, double *re, double *im)
     /* d->n_threads is this plan's snapshot (per-tid scratch was sized for
      * it); the pool's one clamp bounds it by the live pool and the arg-array
      * size, and the block count bounds it below that. */
-    int T = stride_pool_workers_for(d->n_threads);
+    int T = thread_pool_workers_for(d->n_threads);
     if (T > (int)n_blocks) T = (int)n_blocks;
 
     if (T == 1) {
@@ -1288,7 +1288,7 @@ static void _r2c_execute_fwd(void *data, double *re, double *im)
     }
 
     /* slot t owns tid t (its scratch slot); slot 0 is the caller */
-    _r2c_worker_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _r2c_worker_arg_t args[THREAD_POOL_MAX_DISPATCH];
     for (int t = 0; t < T; t++) {
         size_t bk_start = (n_blocks * (size_t)t)       / (size_t)T;
         size_t bk_end   = (n_blocks * (size_t)(t + 1)) / (size_t)T;
@@ -1301,7 +1301,7 @@ static void _r2c_execute_fwd(void *data, double *re, double *im)
         args[t].b0_end   = b0_end;
         args[t].tid = t;
     }
-    stride_pool_run(T, _r2c_worker_fwd, args, sizeof args[0]);
+    thread_pool_run(T, _r2c_worker_fwd, args, sizeof args[0]);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1421,7 +1421,7 @@ static void _r2c_execute_bwd(void *data, double *re, double *im)
     /* d->n_threads is this plan's snapshot (per-tid scratch was sized for
      * it); the pool's one clamp bounds it by the live pool and the arg-array
      * size, and the block count bounds it below that. */
-    int T = stride_pool_workers_for(d->n_threads);
+    int T = thread_pool_workers_for(d->n_threads);
     if (T > (int)n_blocks) T = (int)n_blocks;
 
     if (T == 1) {
@@ -1431,7 +1431,7 @@ static void _r2c_execute_bwd(void *data, double *re, double *im)
     }
 
     /* slot t owns tid t (its scratch slot); slot 0 is the caller */
-    _r2c_worker_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _r2c_worker_arg_t args[THREAD_POOL_MAX_DISPATCH];
     for (int t = 0; t < T; t++) {
         size_t bk_start = (n_blocks * (size_t)t)       / (size_t)T;
         size_t bk_end   = (n_blocks * (size_t)(t + 1)) / (size_t)T;
@@ -1444,7 +1444,7 @@ static void _r2c_execute_bwd(void *data, double *re, double *im)
         args[t].b0_end   = b0_end;
         args[t].tid = t;
     }
-    stride_pool_run(T, _r2c_worker_bwd, args, sizeof args[0]);
+    thread_pool_run(T, _r2c_worker_bwd, args, sizeof args[0]);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1711,7 +1711,7 @@ static stride_plan_t *stride_r2c_plan(
      * Effective T at execute time is capped at this value. The pool's one
      * clamp so the snapshot can never exceed what execute can dispatch
      * (the natorder scratch-overrun class, natorder_scratch_gate). */
-    int T_plan = stride_pool_workers_for(0);
+    int T_plan = thread_pool_workers_for(0);
     d->n_threads = T_plan;
 
     /* Twiddle factors: W_N^k for k=0..N/2-1 */
@@ -2035,7 +2035,7 @@ static void _r2c_execute_fwd_oop(void *data, const double *in,
     /* d->n_threads is this plan's snapshot (per-tid scratch was sized for
      * it); the pool's one clamp bounds it by the live pool and the arg-array
      * size, and the block count bounds it below that. */
-    int T = stride_pool_workers_for(d->n_threads);
+    int T = thread_pool_workers_for(d->n_threads);
     if (T > (int)n_blocks) T = (int)n_blocks;
 
     if (T == 1) {
@@ -2044,7 +2044,7 @@ static void _r2c_execute_fwd_oop(void *data, const double *in,
         return;
     }
     /* slot t owns tid t (its scratch slot); slot 0 is the caller */
-    _r2c_oop_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    _r2c_oop_arg_t args[THREAD_POOL_MAX_DISPATCH];
     for (int t = 0; t < T; t++) {
         size_t bk_start = (n_blocks * (size_t)t)       / (size_t)T;
         size_t bk_end   = (n_blocks * (size_t)(t + 1)) / (size_t)T;
@@ -2054,7 +2054,7 @@ static void _r2c_execute_fwd_oop(void *data, const double *in,
         args[t].out_re = out_re; args[t].out_im = out_im;
         args[t].b0_start = bk_start * B; args[t].b0_end = b0_end; args[t].tid = t;
     }
-    stride_pool_run(T, _r2c_worker_fwd_oop, args, sizeof args[0]);
+    thread_pool_run(T, _r2c_worker_fwd_oop, args, sizeof args[0]);
 }
 
 /* ═══════════════════════════════════════════════════════════════

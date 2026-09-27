@@ -38,9 +38,9 @@ static int cmpd(const void *a, const void *b) {
 }
 
 int main(int argc, char **argv) {
-    stride_env_init();
+    vfft_env_init();
     int core = (argc > 2) ? atoi(argv[2]) : 14;
-    if (stride_pin_thread(core) != 0) fprintf(stderr, "warn: pin failed\n");
+    if (vfft_pin_thread(core) != 0) fprintf(stderr, "warn: pin failed\n");
 
     size_t K = (argc > 3) ? (size_t)atoll(argv[3]) : 4;   /* argv[3] = batch count */
     int use_dif = (argc > 5) ? atoi(argv[5]) : 0;         /* argv[5] = 1 -> DIF */

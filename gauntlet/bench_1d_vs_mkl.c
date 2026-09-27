@@ -51,7 +51,7 @@
 
 #include "executor.h"
 #include "threads.h" /* pool K-split for --mt (set/get threads, dispatch) */
-#include "env.h"     /* stride_env_init + stride_pin_thread */
+#include "env.h"     /* vfft_env_init + vfft_pin_thread */
 long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h: the odd-N flat DIT MT engagement counter */
 long vfft_il2d_col_mt_passes(void); /* the 2D tier's MT engagement counter (column walk + the c2c MT walk) */
 long vfft_ilnd_mt_passes(void);     /* the rank-3 tier's MT engagement counter */
@@ -188,8 +188,8 @@ static void dag_fwd_mt(vfft_proto_exec_fn fn, const stride_plan_t *p, double *re
 {
     size_t K = p->K;
     int T = g_mt;
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
+    if (T > _thread_pool_nworkers + 1)
+        T = _thread_pool_nworkers + 1;
     if (T <= 1 || K < 8)
     {
         if (fn)
@@ -201,7 +201,7 @@ static void dag_fwd_mt(vfft_proto_exec_fn fn, const stride_plan_t *p, double *re
     size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
     _mt_arg a[64];
     int nd = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    for (int t = 1; t < T && t <= _thread_pool_nworkers; t++)
     {
         size_t k0 = (size_t)t * S;
         if (k0 >= K)
@@ -210,7 +210,7 @@ static void dag_fwd_mt(vfft_proto_exec_fn fn, const stride_plan_t *p, double *re
         if (ke > K)
             ke = K;
         a[nd] = (_mt_arg){fn, p, re, im, k0, ke - k0};
-        _stride_pool_dispatch(&_stride_workers[nd], _mt_tramp, &a[nd]);
+        _thread_pool_dispatch(&_thread_pool_workers[nd], _mt_tramp, &a[nd]);
         nd++;
     }
     size_t s0 = S < K ? S : K;
@@ -219,7 +219,7 @@ static void dag_fwd_mt(vfft_proto_exec_fn fn, const stride_plan_t *p, double *re
     else
         vfft_proto_execute_fwd((stride_plan_t *)p, re, im, s0);
     if (nd)
-        _stride_pool_wait_all();
+        _thread_pool_wait_all();
 }
 
 /* time the dag forward (single- or multi-threaded per g_mt) — 10 warmup, best-of-5. */
@@ -1571,7 +1571,7 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
  *  (a) OUR pool workers spin on _mm_pause FOREVER (threads.h has no blocktime),
  *      so 7 live workers would steal 7 P-cores from any MKL arm timed while
  *      they exist. Every MKL arm is therefore preceded by
- *      stride_set_num_threads(1) — a real teardown, not a flag.
+ *      thread_pool_resize(1) — a real teardown, not a flag.
  *  (b) MKL's OpenMP threads spin for KMP_BLOCKTIME (default 200 ms) after a
  *      compute before parking, so our arms need >=300 ms of cool AFTER an MKL
  *      arm. cool_ms is floored at 300 in this mode for exactly that reason.
@@ -1766,7 +1766,7 @@ static void run_ilmt_cell(int N, int K, FILE *out, int cool_ms, int flip)
 #ifdef VFFT_HAS_MKL
     if (flip)
     {
-        stride_set_num_threads(1);
+        thread_pool_resize(1);
         mmt = ilmt_time_mkl(N, K, z0, total, g_mt);
         pace(g_trial_pace_ms);
         mst = ilmt_time_mkl(N, K, z0, total, 1);
@@ -1774,7 +1774,7 @@ static void run_ilmt_cell(int N, int K, FILE *out, int cool_ms, int flip)
         pace(cool_ms);
         omt = ilmt_time_ours(hmt, z0, S, total);
         pace(g_trial_pace_ms);
-        stride_set_num_threads(1); /* no spinners during the ST arm */
+        thread_pool_resize(1); /* no spinners during the ST arm */
         ost = ilmt_time_ours(hst, z0, S, total);
         pace(g_trial_pace_ms);
         octl = ilmt_time_ours(hmt, z0, S, total); /* control: repeat arm 1 */
@@ -1783,7 +1783,7 @@ static void run_ilmt_cell(int N, int K, FILE *out, int cool_ms, int flip)
     {
         omt = ilmt_time_ours(hmt, z0, S, total);
         pace(g_trial_pace_ms);
-        stride_set_num_threads(1);
+        thread_pool_resize(1);
         ost = ilmt_time_ours(hst, z0, S, total);
         cachebust();
         pace(cool_ms);
@@ -1797,7 +1797,7 @@ static void run_ilmt_cell(int N, int K, FILE *out, int cool_ms, int flip)
 #else
     (void)cool_ms; (void)flip;
     omt = ilmt_time_ours(hmt, z0, S, total);
-    stride_set_num_threads(1);
+    thread_pool_resize(1);
     ost = ilmt_time_ours(hst, z0, S, total);
     octl = ilmt_time_ours(hmt, z0, S, total);
 #endif
@@ -1918,8 +1918,8 @@ static void oop_fwd_mt(const vfft_oop_plan_t *p, const double *sr, const double 
 {
     size_t K = p->K;
     int T = g_mt;
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
+    if (T > _thread_pool_nworkers + 1)
+        T = _thread_pool_nworkers + 1;
     /* BAILEY2 is two-stage with a transpose between s1 and s2: s2 reads ACROSS the
      * n1 blocks s1 wrote, so a lane-slice is NOT independent end-to-end. Naive
      * K-split corrupts it (the MT-vs-ST gate catches rt~1e0). Proper MT would need
@@ -1934,7 +1934,7 @@ static void oop_fwd_mt(const vfft_oop_plan_t *p, const double *sr, const double 
     size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
     _oop_mt_arg a[64];
     int nd = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    for (int t = 1; t < T && t <= _thread_pool_nworkers; t++)
     {
         size_t k0 = (size_t)t * S;
         if (k0 >= K)
@@ -1943,13 +1943,13 @@ static void oop_fwd_mt(const vfft_oop_plan_t *p, const double *sr, const double 
         if (ke > K)
             ke = K;
         a[nd] = (_oop_mt_arg){p, sr, si, dr, di, k0, ke - k0};
-        _stride_pool_dispatch(&_stride_workers[nd], _oop_mt_tramp, &a[nd]);
+        _thread_pool_dispatch(&_thread_pool_workers[nd], _oop_mt_tramp, &a[nd]);
         nd++;
     }
     size_t s0 = S < K ? S : K;
     oop_slice(p, sr, si, dr, di, 0, s0);
     if (nd)
-        _stride_pool_wait_all();
+        _thread_pool_wait_all();
 }
 /* one OOP forward, single- or multi-threaded per g_oop_mt. */
 static void oop_run(const vfft_oop_plan_t *p, const double *sr, const double *si,
@@ -2813,7 +2813,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
                  * gets 300 ms of cool first. Pool rebuilt before ours,
                  * outside the timed region. THROUGH THE PUBLIC API: this
                  * TU includes threads.h and therefore owns a SECOND copy
-                 * of the pool state — stride_set_num_threads here would
+                 * of the pool state — thread_pool_resize here would
                  * act on the bench's copy, not on the pool the plan runs
                  * (trap (d), found 2026-09-07: the bench's own startup
                  * pool = 7 idle spinners on the plan's worker cores,
@@ -5040,7 +5040,7 @@ int main(int argc, char **argv)
         target_N = 0; /* MT = full in-process sweep; OOP honors isolation (target_N,target_K);
                        * --k1noop --mt keeps the one-process-per-cell form */
 
-    stride_env_init();
+    vfft_env_init();
     /* --ilmt: confine the PROCESS to the 8 distinct P-cores before any MKL /
      * OpenMP initialization (Intel OpenMP reads the mask at init), then pin
      * the caller to logical 0 — the core threads.h reserves for it. */
@@ -5050,7 +5050,7 @@ int main(int argc, char **argv)
         if (core < 0)
             core = 0;
     }
-    if (core >= 0 && stride_pin_thread(core) != 0)
+    if (core >= 0 && vfft_pin_thread(core) != 0)
         fprintf(stderr, "warn: pin cpu%d failed\n", core);
     else if (core >= 0 && !mt)
         bench_guard_sibling(core);   /* every single-thread mode (the 2D/R2C/zr2c ones included) holds its sibling (2026-09-22) */
@@ -5059,7 +5059,7 @@ int main(int argc, char **argv)
                                        * second pool in this TU (idle spinners on the
                                        * library workers' cores); the library's pool is
                                        * driven through vfft_set_num_threads */
-            stride_set_num_threads(g_mt); /* size the worker pool for K-split */
+            thread_pool_resize(g_mt); /* size the worker pool for K-split */
 
 #ifdef VFFT_HAS_MKL
     mkl_set_num_threads(mt ? g_mt : 1); /* --ilmt sets it per arm instead */
@@ -5187,7 +5187,7 @@ int main(int argc, char **argv)
          * state (threads.h is static inline) — 7 idle spinners pinned to
          * the very cores the library's workers use. Torn down here; the
          * library's pool is driven through vfft_set_num_threads below. */
-        stride_set_num_threads(1);
+        thread_pool_resize(1);
 #ifdef VFFT_HAS_MKL
         mkl_set_num_threads(mt ? g_mt : 1); /* like-for-like: MKL threads 3D at the same T */
         if (mt)

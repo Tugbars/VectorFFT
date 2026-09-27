@@ -11,7 +11,7 @@
 
 #include <time.h>
 
-static double _il_ab_now(void)
+static double vfft_now_ns(void)
 {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);

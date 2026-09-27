@@ -9,8 +9,8 @@
  * MKL exports fftw_* wrapper symbols, so a link that sees mkl_rt first
  * silently benchmarks MKL's wrappers under the FFTW label.
  */
-#ifndef VFFT_PROTO_CORE_REF_H
-#define VFFT_PROTO_CORE_REF_H
+#ifndef VFFT_COMMON_REF_H
+#define VFFT_COMMON_REF_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -294,4 +294,4 @@ static inline const char *csv_for(const char *base, const char *refname,
     return buf;
 }
 
-#endif /* VFFT_PROTO_CORE_REF_H */
+#endif /* VFFT_COMMON_REF_H */

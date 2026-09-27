@@ -494,7 +494,7 @@ spectrum; a destroyed timing loop can never contribute to a gate.
    our arm still carries an extra (N+2)-double read stream (512 KB at N=65536) that neither
    reference pays, so `--c2r-repsens` (time the same cell at `reps ∈ {8,64,512}`; ns/rep must
    be flat) **extends to `--zr2c` and `--2dc2r`**, not just `--c2r`.
-2. **FTZ/DAZ *is* enabled** — `:49` includes `env.h`, `:3603` calls `stride_env_init()` →
+2. **FTZ/DAZ *is* enabled** — `:49` includes `env.h`, `:3603` calls `vfft_env_init()` →
    `env.h:81 _mm_setcsr(old | 0x8040)` [M]. Two of the three proposals published the opposite
    as a 🔴 [M] finding. Consequence: a destructive loop must be justified by **±Inf being
    full-rate on x86**, which remains a *hypothesis until `--c2r-repsens` runs*; it can no
