@@ -1,0 +1,70 @@
+# il3d_c2c_test.c, 2026-09-27: cold races into scratch VFFT_WISDOM_DIRs (nothing persisted).
+######## avx512 cold T=1
+NAT   1x 16x9   create refused
+NAT  16x  1x16  create refused
+SCR   1x 16x9   create refused
+SCR  16x  1x16  create refused
+ALL OK
+######## avx512 cold T=4
+NAT   1x 16x9   create refused
+NAT  16x  1x16  create refused
+SCR   1x 16x9   create refused
+SCR  16x  1x16  create refused
+ALL OK
+######## avx2 cold T=1
+NAT   1x 16x9   create refused
+NAT  16x  1x16  create refused
+SCR   1x 16x9   create refused
+SCR  16x  1x16  create refused
+ALL OK
+## avx512 T=4, every cell
+vfft_isa() = avx512  threads=4
+NAT   2x  2x2   route -          fwd 1.4e-16 rt 1.3e-16 ip 1.4e-16 ok
+NAT   4x  4x4   route -          fwd 1.5e-16 rt 1.7e-16 ip 1.5e-16 ok
+NAT   8x  8x8   route -          fwd 2.0e-16 rt 2.8e-16 ip 2.0e-16 ok
+NAT  16x 16x16  route -          fwd 2.3e-16 rt 3.6e-16 ip 2.3e-16 ok
+NAT  32x 32x32  route -          fwd 2.6e-16 rt 3.6e-16 ip 2.6e-16 ok
+NAT  64x 64x64  route -          fwd 3.5e-16 rt 3.9e-16 ip 3.5e-16 ok
+NAT   8x 16x32  route -          fwd 2.0e-16 rt 3.0e-16 ip 2.0e-16 ok
+NAT  64x  8x16  route -          fwd 2.1e-16 rt 3.1e-16 ip 2.1e-16 ok
+NAT   4x 64x128 route -          fwd 2.9e-16 rt 4.0e-16 ip 2.9e-16 ok
+NAT   3x  5x7   route -          fwd 3.0e-16 rt 3.5e-16 ip 3.0e-16 ok
+NAT   9x 15x25  route -          fwd 4.1e-16 rt 5.4e-16 ip 4.1e-16 ok
+NAT   7x 13x11  route -          fwd 3.6e-16 rt 5.6e-16 ip 3.6e-16 ok
+NAT   5x 64x12  route -          fwd 3.8e-16 rt 4.6e-16 ip 3.8e-16 ok
+NAT  27x 25x9   route -          fwd 4.6e-16 rt 6.2e-16 ip 4.6e-16 ok
+NAT  13x 17x19  route -          fwd 5.1e-16 rt 6.5e-16 ip 5.1e-16 ok
+NAT  48x 40x36  route -          fwd 4.4e-16 rt 6.0e-16 ip 4.4e-16 ok
+NAT   6x 10x14  route -          fwd 3.6e-16 rt 5.0e-16 ip 3.6e-16 ok
+NAT   3x  3x3   route -          fwd 3.7e-16 rt 5.3e-16 ip 3.7e-16 ok
+NAT   5x  6x7   route -          fwd 2.5e-16 rt 3.9e-16 ip 2.5e-16 ok
+NAT   7x 64x3   route -          fwd 3.5e-16 rt 4.4e-16 ip 3.5e-16 ok
+NAT   1x 16x9   create refused
+NAT  16x  1x16  create refused
+NAT  45x 32x7   route -          fwd 3.8e-16 rt 5.3e-16 ip 3.8e-16 ok
+NAT 128x  6x5   route -          fwd 3.1e-16 rt 4.2e-16 ip 3.1e-16 ok
+SCR   2x  2x2   route -          fwd 0.0e+00 rt 1.3e-16 ip 0.0e+00 ok
+SCR   4x  4x4   route -          fwd 0.0e+00 rt 1.8e-16 ip 0.0e+00 ok
+SCR   8x  8x8   route -          fwd 0.0e+00 rt 2.7e-16 ip 0.0e+00 ok
+SCR  16x 16x16  route -          fwd 0.0e+00 rt 3.6e-16 ip 0.0e+00 ok
+SCR  32x 32x32  route -          fwd 0.0e+00 rt 3.6e-16 ip 0.0e+00 ok
+SCR  64x 64x64  route -          fwd 0.0e+00 rt 4.0e-16 ip 0.0e+00 ok
+SCR   8x 16x32  route -          fwd 0.0e+00 rt 2.9e-16 ip 0.0e+00 ok
+SCR  64x  8x16  route -          fwd 0.0e+00 rt 3.6e-16 ip 0.0e+00 ok
+SCR   4x 64x128 route -          fwd 0.0e+00 rt 4.2e-16 ip 0.0e+00 ok
+SCR   3x  5x7   route -          fwd 0.0e+00 rt 3.8e-16 ip 0.0e+00 ok
+SCR   9x 15x25  route -          fwd 0.0e+00 rt 5.9e-16 ip 0.0e+00 ok
+SCR   7x 13x11  route -          fwd 0.0e+00 rt 5.7e-16 ip 0.0e+00 ok
+SCR   5x 64x12  route -          fwd 0.0e+00 rt 4.6e-16 ip 0.0e+00 ok
+SCR  27x 25x9   route -          fwd 0.0e+00 rt 6.1e-16 ip 0.0e+00 ok
+SCR  13x 17x19  route -          fwd 0.0e+00 rt 6.5e-16 ip 0.0e+00 ok
+SCR  48x 40x36  route -          fwd 0.0e+00 rt 6.0e-16 ip 0.0e+00 ok
+SCR   6x 10x14  route -          fwd 0.0e+00 rt 5.0e-16 ip 0.0e+00 ok
+SCR   3x  3x3   route -          fwd 0.0e+00 rt 5.4e-16 ip 0.0e+00 ok
+SCR   5x  6x7   route -          fwd 0.0e+00 rt 3.8e-16 ip 0.0e+00 ok
+SCR   7x 64x3   route -          fwd 0.0e+00 rt 4.6e-16 ip 0.0e+00 ok
+SCR   1x 16x9   create refused
+SCR  16x  1x16  create refused
+SCR  45x 32x7   route -          fwd 0.0e+00 rt 5.2e-16 ip 0.0e+00 ok
+SCR 128x  6x5   route -          fwd 0.0e+00 rt 4.2e-16 ip 0.0e+00 ok
+ALL OK

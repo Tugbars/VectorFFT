@@ -130,3 +130,12 @@ threading grain.
   baseline, rerun `full_corpus_gate.sh verify` on WSL.
 - `gauntlet/CMakeLists.txt` was committed earlier on this branch; move your untracked
   local copy aside before pulling, or git will refuse to overwrite it.
+
+### 3D C2C, interleaved: working at avx512
+
+The rank-3 IL tier (`fftnd_il.h`, the only server of interleaved 3D C2C) needed no
+change: 24 shapes (2x2x2 .. 64x64x64, 4x64x128, odd, prime, mixed: 3x5x7, 9x15x25,
+13x17x19, 48x40x36, 45x32x7, 128x6x5 ...), both order classes, OOP and in place, cold
+races: 44/44 created plans correct at 1 and at 4 threads, worst error 6.5e-16
+(`harness/runtime/il3d_c2c_test.c`). The two shapes with a length-1 axis are refused
+at both ISAs alike (existing coverage, not an avx512 gap).
