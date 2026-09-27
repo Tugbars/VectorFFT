@@ -63,8 +63,8 @@ long vfft_ilnd_mt_passes(void);     /* the rank-3 tier's MT engagement counter *
 #endif
 #include "generator/generated/registry.h"
 #include "prime_dispatch.h"     /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
-#include "oop/k1_fourstep_band.h" /* vfft_k1fs_band: the upper band 2^19..2^22 (2026-09-15) */
-#include "oop/ztt.h"            /* vfft_ztt_odd_band: the --k1nat/--k1noop direct cell at 2^a*odd (2026-09-15) */
+#include "il/rank1/k1_fourstep_band.h" /* vfft_k1fs_band: the upper band 2^19..2^22 (2026-09-15) */
+#include "il/rank1/ztt.h"            /* vfft_ztt_odd_band: the --k1nat/--k1noop direct cell at 2^a*odd (2026-09-15) */
 #include "oop_dp.h"             /* --oop: vfft_oop_plan_create_dp_best (fallback) */
 #include "wisdom2_oop.h"        /* --oop: entry struct + plan_from_entry */
 #include "wisdom2_oop_reader.h"    /* the PRODUCTION read twins (the store is what

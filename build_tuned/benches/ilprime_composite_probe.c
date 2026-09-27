@@ -14,11 +14,11 @@
 #include <string.h>
 #include "vfft.h"
 #include "wisdom2.h"
-#include "oop/ztt.h"
-#include "oop/k1_fourstep_band.h"
+#include "il/rank1/ztt.h"
+#include "il/rank1/k1_fourstep_band.h"
 #include "planning/policy.h"
-#include "support/race.h"   /* il_prime.h races its two methods */
-#include "oop/il_prime.h"
+#include "common/support/race.h"   /* il_prime.h races its two methods */
+#include "il/rank1/il_prime.h"
 
 static void one(int N)
 {

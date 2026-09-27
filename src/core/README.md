@@ -7,14 +7,26 @@ layered by dependency — each layer depends only on the ones above it.
 
 ```
 core/
-  vfft.c        THE public API implementation (see "Front door" below)
-  support/      platform foundation
-  engine/       the in-place c2c kernel
-  planning/     plan SEARCH + wisdom (everything measured, nothing estimated)
-  transforms/   everything built ON the engine
-  primes/       Rader + Bluestein for prime N
-  oop/          out-of-place c2c engines (incl. the K=1 z-cascades)
+  vfft.c, vfft_internal.h, vfft_execute.h, vfft_fingerprint.h, plane_queue.h
+                THE front door (see "Front door" below) - sees both layouts
+  common/       shared by both layouts, depends on neither:
+                support/ (ISA, CPU caches, pool, race body, clock, allocator),
+                math/ (tw_exact), move/ (transposes), wisdom/ (the wisdom2 store)
+  split/        the SPLIT (re/im planes) library: engine/, primes/, planning/,
+                oop/, natorder/, rank1/, rank2/, rank3/, real/, trig/, wisdom/
+  il/           the INTERLEAVED (z) library: isa/, planning/, rank1/, rank2/,
+                rank3/, real/
+  oop/ planning/ support/ transforms/ wisdom2/
+                the MIXED files still holding both layouts, waiting to be cut
+                (layout separation phases 4-6)
 ```
+
+**Layout separation in progress** (`docs/roadmap/layout_separation_plan.md`):
+phases 1-3 done (dead code deleted; neutral and single-layout files moved). The
+rule the tree converges to: `split/` and `il/` depend on `common/` only, never
+on each other; only the front door (and a small `bridge/`, to come) sees both.
+`python src/tools/baseline/hygiene.py` lists the includes that still break it -
+the remaining work. Every step is gated by `src/tools/baseline/step_gate.py`.
 
 ## Front door: `vfft.c` (public API = `include/vfft.h`)
 
@@ -47,74 +59,42 @@ legacy zsplit cascade), `VFFT_FORCE_ZROUTE` (pin the K=1 cascade route),
 `VFFT_NO_IL2P` (disable the pure-IL 2-pass route), `VFFT_IL_PAD` (force the IL
 padded arm), `VFFT_ZRACE_VERBOSE` (create-time race logging).
 
-## Subfolders
+## Where things are
 
-### `support/` — platform foundation
-`env.h` (timing — QPC on Windows, CLOCK_MONOTONIC elsewhere — aligned alloc,
-env knobs) · `threads.h` (worker pool + pinning; caller owns core 0) ·
-`strided_codelets.h` (externs for the generated SIMD codelets).
+The per-folder READMEs (`oop/`, `planning/`, `support/`, `wisdom2/`,
+`transforms/*/`) predate the separation and still describe the old folders;
+their content is accurate, their paths are the old ones. Map:
 
-### `engine/` — the in-place c2c kernel
-`plan.h` (plan/stage types) · `planner.h` (`vfft_proto_auto_plan`: plan build
-from wisdom/search) · `executor.h` / `executor_generic.h` (the stage walkers) ·
-`twiddle.h` (the three measured
-twiddle methods: FLAT / T1S / LOG3, mixed per stage by wisdom) · `compat.h` /
-`proto_stride_compat.h` (bridges between the proto and stride plan worlds) ·
-`il_execute.h` (interleaved z↔z boundary folds over a `stride_plan_t` — lives
-here, not in `oop/`, because it is typed on the ENGINE plan; its derived-IL
-codelet population was deleted 2026-07-24, so every resolver returns 0 and every
-wrapper returns −1 by design, and the fold machinery is kept as the wiring point
-for a future IL-native family).
+| was | now |
+|---|---|
+| `engine/`, `primes/` | `split/engine/`, `split/primes/` |
+| `support/*` (not `env.h`) | `common/support/` |
+| `oop/tw_exact.h` | `common/math/` |
+| `transforms/fft2d/transpose.h` | `common/move/` |
+| `wisdom2/wisdom2.h`, `wisdom2_selftest.h` | `common/wisdom/` |
+| split planners (`dp_planner`, `exhaustive_plan`, `measure`, `pad_calibrate`, `adopt_wisdom`, `wisdom_reader`, `dp_planner_split_oop`) | `split/planning/` |
+| `oop/oop_{auto,dp,execute,mt}.h`, `support/strided_codelets.h` | `split/oop/` |
+| `transforms/natorder/` | `split/natorder/` |
+| `transforms/fft2d/` split 2D (`fft2d*`, `strided_tw.h`) | `split/rank2/` |
+| `transforms/fft3d/`, `fftnd.h`, `fftnd_r2c.h` | `split/rank3/` |
+| `transforms/real/` split engines | `split/real/` |
+| `transforms/trig/` | `split/trig/` |
+| `wisdom2_fftnd.h`, `wisdom2_stride_reader.h`, `wisdom2_real_reader.h` | `split/wisdom/` |
+| `vfft_batch.h` | `split/rank1/` |
+| `oop/il_isa.h`, `oop/avx512/`, `oop/ztt_qw16384.h` | `il/isa/` |
+| `oop/il2p.h`, `il_flatdit*.h`, `il_prime.h`, `ztt*.h`, `k1_fourstep*.h` | `il/rank1/` |
+| `dp_planner_il.h`, `il_slot_probe.h` | `il/planning/` |
+| `il2d_*`, `fft2d_real_il.h`, `oop/il2d_proto.h` | `il/rank2/` |
+| `fftnd_il.h` | `il/rank3/` |
+| `zr2c.h`, `zr2c_build.h` | `il/real/` |
+| `transforms/fft2d/plane_queue.h` | `plane_queue.h` (front door) |
 
-### `planning/` — plan search + wisdom (all MEASURED)
-`dp_planner.h` (split-plan DP;
-"DP prunes the search; it never composes costs") · `dp_planner_il.h` (IL
-whole-chain DP + the cascade engine/route axis) · `exhaustive_plan.h` (the EXHAUSTIVE tier) ·
-`measure.h` (paced measurement harness) · `wisdom_reader.h` (spike v6
-format) · `adopt_wisdom.h` (`VFFT_ADOPT_WISDOM_DIR` import).
+Deleted in phase 1 (dead): `transforms/conv/`, `fftnd_natorder.h`,
+`fftnd_planner.h`, `fftnd_wisdom.h`, `engine/compat.h`.
 
-### `transforms/` — built on the engine
-- `real/` — `r2c.h`/`r2c_dispatch.h`, `c2r.h`/`c2r_dispatch.h` (NATURAL vs
-  STRIDE per-cell), `rfft.h` + `rfft_calibrate.h`/`rfft_trace.h`.
-- `trig/` — `dct.h` (II/III), `dct1.h`, `dct4.h`, `dst.h`, `dht.h`,
-  `dct2/3_n8_avx2.h` codelets, `trig_codelets.h` externs. Three-phase MT.
-- `fft2d/` — 2D c2c/r2c/c2r: `fft2d.h`, `fft2d_r2c.h`, per-feature planners +
-  wisdom, `transpose.h`, `strided_tw.h`.
-- `fft3d/` — 3D c2c: `fft3d.h`, `fft3d_wisdom.h` ((N1,N2,N3) table),
-  `strided_rows.h`.
-- `fftnd/` — rank-general ND engine (`fndr`, rank ≤ 4; §6a47 3D real, §6a62
-  rank-4 exposure): `fftnd.h`, `fftnd_r2c.h`, `fftnd_planner.h`,
-  `fftnd_wisdom.h`, `fftnd_natorder.h`, `conv.h`.
-- `natorder/` — the VFFT_ORDER_NATURAL machinery (per-cell measured verdict):
-  `natorder_perm.h` (cycle/pair tapes), `natorder_exec.h`,
-  `natorder_scatter.h`, `natorder_calibrate.h` (expensive — probe few cells),
-  `natorder_2d.h` (per-axis reorder tapes).
-- `conv/` — convolution + `il_layout.h` interleave/deinterleave helpers.
-
-### `primes/` — prime-N machinery
-`prime_dispatch.h` (factorable → CT/wisdom; prime → override) · `rader.h` ·
-`bluestein.h` + `bluestein_calibrator.h` ((M,B) calibrate-on-miss) +
-`bluestein_wisdom.h`. **Wired into the IN-PLACE c2c path only** — out-of-place
-C2C refuses prime N loudly (OOP prime wiring is a planned feature).
-
-### `oop/` — out-of-place c2c engines
-`oop_plan.h` (kinds: MODEB scrambled / LEAF / BAILEY2 natural) · `oop_auto.h`
-(champion build) · `oop_dp.h` (KIND×FACT joint search) · `oop_execute.h` ·
-`oop_codelets.h` / `oop_leaf_registry.h` · `oop_wisdom.h` (kind-tagged cells;
-kind-4 = K=1 cascade route lines `N 1 4 t2q cc_chain ns [zs_route zt_t2q]`) ·
-**K=1 ≥2048 cascades**: `zturn.h` (ZTURN-S, the production engine — corner-turn
-fused into ingest stores, MKL's sectioned geometry; beats MKL at 2048/16384) ·
-`zsplit.h` (legacy block-split cascade, `VFFT_NO_ZTURN` fallback + offline
-reference) · `zturn_proto.h` (memcmp-exact derivation prototype, permanent
-reference) · **K=1 NATURAL pure IL**: `il2p.h` (il2p 2-pass pair route, BOTH
-directions since 2026-07-29, plus the il3p 3-stage chain that gives odd·2^k N a
-native route) · `il_prime.h` (prime N via Rader/Bluestein over il2p/il3p inners).
-(`il_execute.h` moved to `engine/` — it is typed on `stride_plan_t`, not on any
-OOP plan.)
-
-Several subfolders carry their own README.md with deeper notes
-(`engine/`, `oop/`, `planning/`, `primes/`, `support/`, `transforms/real/`,
-`transforms/fft2d/`).
+Still mixed (to be cut): `oop/{oop_plan,oop_leaf_registry,k1_commit,c2c_ip_create,c2c_oop_create}.h`,
+`planning/policy.h`, `support/env.h`, `transforms/{fft2d/fft2d_create,fftnd/fftnd_create,real/real_create}.h`,
+`wisdom2/{wisdom2_oop,wisdom2_oop_reader,wisdom2_2d_reader,wisdom2_migrate}.h` and the two wisdom2 gates.
 
 ## Include convention — BARE includes, the build provides `-I`
 
@@ -124,7 +104,9 @@ subfolder on the `-I` search path (`build_tuned/build.py:build_includes()`
 walks `core/` recursively), so a bare include resolves regardless of which
 subfolder the target lives in. Consequences:
 
-- **Moving a file between subfolders needs no `#include` edits.**
+- **Moving a file between subfolders needs no edit to a BARE include.** Some
+  includes are path-qualified (`"common/support/race.h"`, `"../rank2/fft2d.h"`);
+  `src/tools/baseline/relayout.py` moves files by a map and rewrites those.
 - **Header basenames must stay globally unique** across all of `core/` —
   otherwise a bare include is ambiguous (first `-I` wins).
 - Consumers (benches, the public build) also use bare includes:
@@ -139,14 +121,19 @@ as linked `.c` files; they include no core headers.
 - **Public API** (use this unless working on internals): `vfft_create` /
   `vfft_execute` / `vfft_destroy` in `vfft.c` — everything below is reached
   through it, chosen by wisdom.
-- **c2c in-place**: `engine/planner.h` (`vfft_proto_auto_plan`) →
-  `engine/executor.h`. MT via the `support/threads.h` pool (K-split).
-- **c2c out-of-place**: `oop/oop_auto.h` champions; K=1 ≥2048 → `oop/zturn.h`.
-- **r2c/c2r**: `transforms/real/r2c_dispatch.h` / `c2r_dispatch.h`.
-- **trig/DSP**: `transforms/trig/{dct,dct1,dct4,dst,dht}.h`.
-- **2D/3D/4D**: `transforms/fft2d/`, `transforms/fft3d/`, `transforms/fftnd/`.
-- **prime N**: `primes/prime_dispatch.h` → Rader / Bluestein (in-place only).
-- **natural order**: `transforms/natorder/` (1D), `natorder_2d.h` (2D).
+- **c2c in-place, split**: `split/engine/planner.h` (`vfft_proto_auto_plan`) →
+  `split/engine/executor.h`. MT via the `common/support/threads.h` pool (K-split).
+- **c2c out-of-place, split**: `split/oop/oop_auto.h` champions.
+- **c2c K=1, interleaved**: `il/rank1/` (il2p pair / il3p chain3, the flat DIT,
+  ZTURN-T, the four-step, IL primes), raced by `il/planning/dp_planner_il.h`.
+- **r2c/c2r**: `split/real/r2c_dispatch.h` / `c2r_dispatch.h`; interleaved
+  even-N K=1 `il/real/zr2c.h`.
+- **trig/DSP**: `split/trig/{dct,dct1,dct4,dst,dht}.h`.
+- **2D/3D/4D**: split `split/rank2/`, `split/rank3/`; interleaved `il/rank2/`
+  (il2d tier), `il/rank3/fftnd_il.h`.
+- **prime N**: split `split/primes/prime_dispatch.h` → Rader / Bluestein
+  (in-place); interleaved `il/rank1/il_prime.h`.
+- **natural order (split)**: `split/natorder/` (1D), `natorder_2d.h` (2D).
 
 ## Gates
 
@@ -159,11 +146,11 @@ header's compiled QUICK START). Feature gates live in `build_tuned/benches/`
 
 ## Migration headers at the top level
 
-Three files sit directly in `core/` rather than in a module, because each is
+These files sit directly in `core/` (the front door) rather than in a module, because each is
 about the library as a whole rather than about one transform family.
 
 | file | role |
 |---|---|
 | `vfft_internal.h` | the three private structs — `vfft_plan_s`, `vfft_wisdom_s`, `vfft_batch_s`. Lifting these out of `vfft.c` is what let every later module header exist |
 | `vfft_execute.h` | **THE execute entry point — every transform, BOTH layouts**, plus the execute-side helpers and `vfft_destroy`. 🔴 `vfft_execute` has EXTERNAL linkage, so the body is guarded by `VFFT_EXECUTE_IMPL` and exactly one TU defines it |
-| `vfft_batch.h` | the owned-batch allocator behind `config.owned_buffers` / `config.batch`. Three descriptor shapes (c2c in-place, real, OOP 4-plane); a mismatched handle is refused, never reinterpreted |
+| `split/rank1/vfft_batch.h` (moved) | the owned-batch allocator behind `config.owned_buffers` / `config.batch`. Three descriptor shapes (c2c in-place, real, OOP 4-plane); a mismatched handle is refused, never reinterpreted |

@@ -1,0 +1,561 @@
+/**
+ * fft2d.h -- split-complex 2D FFT with two methods: tiled and Bailey
+ *
+ * Both methods use the same column FFT (native, K=N2). They differ
+ * only in how row FFTs are performed:
+ *
+ *   Tiled (default): for each tile of B rows:
+ *     1. Gather B rows → scratch via SIMD transpose (B×N2 → N2×B)
+ *     2. N2-point FFT with K=B on scratch
+ *     3. Scatter scratch back via SIMD transpose (N2×B → B×N2)
+ *
+ *   Bailey: two full-matrix transposes bracket a single large-K row FFT.
+ *     1. Transpose N1×N2 → N2×N1 to scratch
+ *     2. N2-point FFT with K=N1 on scratch
+ *     3. Transpose N2×N1 → N1×N2 back
+ *
+ * Default: tiled with B=8. On AVX2 hardware, tiled B=8 beats both Bailey
+ * and the comparison baseline at all tested sizes (32² to 1024², 1.08-1.63x
+ * over the comparison baseline). Small tiles keep the working set in L1/L2
+ * and the SIMD 4×4/8×4 transpose kernels make gather/scatter nearly free.
+ *
+ * Threading:
+ *   Phase 1 (columns): uses executor's built-in K-split (K=N2).
+ *   Phase 2 (rows):    tile-parallel — tiles distributed across threads,
+ *                       each thread uses its own scratch buffer.
+ *   No barriers needed — both phases are embarrassingly parallel.
+ *
+ * Data layout (split-complex):
+ *   re[i * N2 + j]  for i=0..N1-1, j=0..N2-1
+ *
+ * Normalization: bwd(fwd(x)) = N1*N2 * x.
+ */
+#ifndef STRIDE_FFT2D_H
+#define STRIDE_FFT2D_H
+
+#include "executor.h"
+#include "planner.h"
+#include "prime_dispatch.h"       /* auto_plan_dispatch: CT else Rader/Bluestein for prime dims */
+#include "exhaustive_plan.h"
+#include "threads.h"
+#include "proto_stride_compat.h"
+#include "transpose.h"
+#include "../rank3/strided_rows.h"  /* opt-in strided rows (VFFT_STRIDED_ROWS) */
+#include "natorder_exec.h"       /* VFFT_ORDER_NATURAL: fused dim2 (within-row) reorder in scratch */
+#ifdef VFFT_USE_JIT
+#include "jit_runtime.h"          /* JIT/baked resolve for the inner row/col FFTs */
+#endif
+
+/* Minimum tile height for SIMD efficiency. */
+#define FFT2D_MIN_TILE 4
+
+/* Default tile height. B=8 keeps tile in L1 for N2≤256, L2 for N2≤2048. */
+#ifndef FFT2D_DEFAULT_TILE
+#define FFT2D_DEFAULT_TILE 8
+#endif
+
+/* Maximum threads for per-thread scratch allocation. */
+#ifndef FFT2D_MAX_THREADS
+#define FFT2D_MAX_THREADS STRIDE_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
+#endif
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * 2D PLAN DATA
+ * ═══════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    int N1;                    /* rows (axis-0 FFT length) */
+    int N2;                    /* cols (axis-1 FFT length) */
+    int use_bailey;            /* 1 = full transpose, 0 = tiled */
+
+    stride_plan_t *plan_col;   /* N1-point FFT, K = N2 (column FFTs, native) */
+    stride_plan_t *plan_row;   /* N2-point FFT, K = N1 (Bailey) or K = B (tiled) */
+#ifdef VFFT_STRIDED_ROWS
+    _vfft_strided_fn srow_fwd, srow_bwd;   /* tiled rows only; NULL -> native */
+#endif
+
+    /* JIT/baked resolved inner executors (NULL -> generic). Filled by
+     * _fft2d_jit_resolve under VFFT_USE_JIT; otherwise stay NULL and the passes
+     * use the generic executor (zero behavior change). */
+    vfft_proto_exec_fn exec_col_fwd, exec_col_bwd;
+    vfft_proto_exec_fn exec_row_fwd, exec_row_bwd;
+
+    size_t B;                  /* tile height */
+
+    /* Per-thread scratch buffers for tile-parallel execution.
+     * Thread t uses scratch_re + t * tile_sz, scratch_im + t * tile_sz.
+     * Allocated for num_scratch threads at plan time. */
+    int num_scratch;
+    size_t tile_sz;            /* N2 * B (tiled) or N1 * N2 (Bailey) */
+    double *scratch_re;
+    double *scratch_im;
+
+    /* VFFT_ORDER_NATURAL: the dim2 (within-row / N2-axis) digit-reversal cycle tape, applied to the
+     * row-FFT SCRATCH at K=B (full-SIMD, L1-hot). NULL = scrambled (DEFAULT/SCRAMBLED). BORROWED — the
+     * vfft handle owns the malloc; _fft2d_destroy must NOT free it. dim1 (whole-row) is done separately
+     * by the vfft-level reorder (docs/roadmap/natural_order_inplace_design.md, 2D natural). */
+    const int *nat_col_list;
+} stride_fft2d_data_t;
+
+/* Get scratch pointer for thread t */
+static inline double *_fft2d_scratch(double *pool, size_t tile_sz, int t) {
+    return pool + (size_t)t * tile_sz;
+}
+
+/* Resolve the inner row/col FFTs to their baked-or-JIT executors (NULL on miss
+ * -> the passes fall back to the generic executor). Called by every 2D plan
+ * builder. Under VFFT_USE_JIT this turns a cold inner factorization into a
+ * compiled specialized executor (cached); otherwise it is a no-op. The fns are
+ * called as fn(plan, re, im, K, plan->K, 0) — the orchestrator's convention,
+ * identical to stride_execute_fwd / vfft_proto_execute_fwd for these inners. */
+static inline void _fft2d_jit_resolve(stride_fft2d_data_t *d) {
+#ifdef VFFT_USE_JIT
+    if (d->plan_col) { d->exec_col_fwd = vfft_proto_plan_jit_fwd(d->plan_col);
+                       d->exec_col_bwd = vfft_proto_plan_jit_bwd(d->plan_col); }
+    if (d->plan_row) { d->exec_row_fwd = vfft_proto_plan_jit_fwd(d->plan_row);
+                       d->exec_row_bwd = vfft_proto_plan_jit_bwd(d->plan_row); }
+#else
+    (void)d;
+#endif
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * TILED EXECUTOR — single-threaded core
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void _fft2d_tiled_range(stride_fft2d_data_t *d,
+                                double *re, double *im,
+                                double *sr, double *si,
+                                size_t row_start, size_t row_end,
+                                int is_bwd) {
+    const int N2 = d->N2;
+    const size_t B = d->B;
+#ifdef VFFT_STRIDED_ROWS
+    if (d->srow_fwd) {              /* never set in Bailey or natural mode */
+        const int NL = d->N2;
+        _vfft_strided_fn fn = is_bwd ? d->srow_bwd : d->srow_fwd;
+        size_t span = row_end - row_start;
+        size_t bulk = span - (span % (size_t)_VFFT_STRIDED_VW);
+        if (bulk)
+            fn(re + row_start * (size_t)NL, im + row_start * (size_t)NL,
+               NULL, NULL, (size_t)NL, bulk);
+        row_start += bulk;
+        if (row_start < row_end)        /* rem < VW: padded strided tail --
+                                         * SAME natural order as the bulk
+                                         * (uniform per-row order for any R;
+                                         * see strided_rows.h). Uses the
+                                         * caller's tile scratch as staging. */
+            _vfft_strided_tail_padded(fn, re, im, row_start,
+                                      row_end - row_start, NL,
+                                      sr, si);
+        return;
+    }
+#endif
+    /* dim2 (N2-axis) natural-order reorder scratch: cycle_pass at K=B needs 2*B doubles, and B is
+     * clamped to FFT2D_DEFAULT_TILE in _fft2d_choose_tile, so this stack buffer always suffices.
+     * Unused (and optimized out) when nat_col_list==NULL (scrambled). Per-call => MT-safe. */
+    double rtmp[2 * FFT2D_DEFAULT_TILE];
+
+    for (size_t i = row_start; i < row_end; i += B) {
+        size_t this_B = B;
+        if (i + B > row_end) this_B = row_end - i;
+
+        /* Gather: B×N2 → N2×B (ld_dst=B for plan's K=B layout) */
+        stride_transpose_pair(
+            re + i * N2, im + i * N2, sr, si,
+            (size_t)N2, B, this_B, (size_t)N2);
+
+        /* ORDER_NATURAL backward: the natural spectrum arrives in the user buffer, so re-scramble the
+         * N2 axis in scratch (K=B, full-SIMD) BEFORE the inverse row FFT — the mirror of the forward
+         * unscramble. Junk lanes [this_B,B) permute harmlessly; the scatter discards them. */
+        if (is_bwd && d->nat_col_list)
+            vfft_natorder_cycle_pass_inv(sr, si, B, d->nat_col_list, rtmp);
+
+        /* FFT on scratch (sub-batch this_B of the B-wide tile). The full c2c
+         * executor dispatches DIT *or* DIF (and the specialized per-cell
+         * executors), so a DIF row inner round-trips correctly; a DIT-only
+         * slice executor silently mis-runs DIF plans. */
+        vfft_proto_exec_fn rf = is_bwd ? d->exec_row_bwd : d->exec_row_fwd;
+        if (rf)
+            rf(d->plan_row, sr, si, this_B, d->plan_row->K, 0);   /* baked/JIT */
+        else if (is_bwd)
+            vfft_proto_execute_bwd(d->plan_row, sr, si, this_B);
+        else
+            vfft_proto_execute_fwd(d->plan_row, sr, si, this_B);
+
+        /* ORDER_NATURAL forward: unscramble the N2 axis in scratch (K=B, full-SIMD, L1-hot) right after
+         * the row FFT and before the scatter — the fused dim2 reorder. */
+        if (!is_bwd && d->nat_col_list)
+            vfft_natorder_cycle_pass(sr, si, B, d->nat_col_list, rtmp);
+
+        /* Scatter: N2×B → B×N2 (ld_src=B) */
+        stride_transpose_pair(
+            sr, si, re + i * N2, im + i * N2,
+            B, (size_t)N2, (size_t)N2, this_B);
+    }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * TILE-PARALLEL THREADING
+ *
+ * Tiles are independent — distribute across threads, no barriers.
+ * Each thread gets its own scratch buffer.
+ * ═══════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    stride_fft2d_data_t *d;
+    double *re, *im;
+    double *sr, *si;           /* per-thread scratch */
+    size_t row_start, row_end;
+    int is_bwd;
+} _fft2d_tile_arg_t;
+
+static void _fft2d_tile_trampoline(void *arg) {
+    _fft2d_tile_arg_t *a = (_fft2d_tile_arg_t *)arg;
+    _fft2d_tiled_range(a->d, a->re, a->im, a->sr, a->si,
+                        a->row_start, a->row_end, a->is_bwd);
+}
+
+static void _fft2d_tiled_mt(stride_fft2d_data_t *d,
+                             double *re, double *im, int is_bwd) {
+    const size_t N1 = (size_t)d->N1;
+    const size_t B = d->B;
+    /* The scratch slots allocated at create (d->num_scratch) are this plan's
+     * snapshot: a worker without a slot cannot run. The pool's one clamp
+     * bounds T by that, by the live pool and by the arg-array size. */
+    int T = stride_pool_workers_for(d->num_scratch);
+
+    /* Total tiles */
+    size_t n_tiles = (N1 + B - 1) / B;
+
+    /* For small problems, single-threaded is faster (no dispatch overhead) */
+    if (T <= 1 || n_tiles <= 1) {
+        _fft2d_tiled_range(d, re, im,
+                           d->scratch_re, d->scratch_im,
+                           0, N1, is_bwd);
+        return;
+    }
+
+    /* THE ENGINE'S OWN PART: distribute tiles across threads, boundaries
+     * rounded to multiples of B for clean splits. Slot t owns scratch slot t;
+     * slot 0 is the caller (its scratch is the pool base), by the pool's
+     * convention. */
+    _fft2d_tile_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    for (int t = 0; t < T; t++) {
+        size_t tiles_start = (n_tiles * t) / T;
+        size_t tiles_end   = (n_tiles * (t + 1)) / T;
+        size_t row_start   = tiles_start * B;
+        size_t row_end     = tiles_end * B;
+        if (row_end > N1) row_end = N1;
+        if (t > 0 && row_start >= N1) break;
+
+        args[n].d = d;
+        args[n].re = re;
+        args[n].im = im;
+        args[n].sr = _fft2d_scratch(d->scratch_re, d->tile_sz, t);
+        args[n].si = _fft2d_scratch(d->scratch_im, d->tile_sz, t);
+        args[n].row_start = row_start;
+        args[n].row_end = row_end;
+        args[n].is_bwd = is_bwd;
+        n++;
+    }
+    stride_pool_run(n, _fft2d_tile_trampoline, args, sizeof args[0]);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * BAILEY EXECUTOR — full-matrix transpose
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void _fft2d_bailey_fwd(stride_fft2d_data_t *d,
+                               double *re, double *im) {
+    const size_t N1 = (size_t)d->N1, N2 = (size_t)d->N2;
+
+    stride_transpose_pair(re, im, d->scratch_re, d->scratch_im,
+                          N2, N1, N1, N2);
+    if (d->exec_row_fwd)
+        d->exec_row_fwd(d->plan_row, d->scratch_re, d->scratch_im, d->plan_row->K, d->plan_row->K, 0);
+    else
+        stride_execute_fwd(d->plan_row, d->scratch_re, d->scratch_im);
+    stride_transpose_pair(d->scratch_re, d->scratch_im, re, im,
+                          N1, N2, N2, N1);
+}
+
+static void _fft2d_bailey_bwd(stride_fft2d_data_t *d,
+                               double *re, double *im) {
+    const size_t N1 = (size_t)d->N1, N2 = (size_t)d->N2;
+
+    stride_transpose_pair(re, im, d->scratch_re, d->scratch_im,
+                          N2, N1, N1, N2);
+    if (d->exec_row_bwd)
+        d->exec_row_bwd(d->plan_row, d->scratch_re, d->scratch_im, d->plan_row->K, d->plan_row->K, 0);
+    else
+        stride_execute_bwd(d->plan_row, d->scratch_re, d->scratch_im);
+    stride_transpose_pair(d->scratch_re, d->scratch_im, re, im,
+                          N1, N2, N2, N1);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * DISPATCH
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void _fft2d_execute_fwd(void *data, double *re, double *im) {
+    stride_fft2d_data_t *d = (stride_fft2d_data_t *)data;
+
+    /* Phase 1: column FFTs — internally threaded via K-split */
+    if (d->exec_col_fwd)
+        d->exec_col_fwd(d->plan_col, re, im, d->plan_col->K, d->plan_col->K, 0);   /* baked/JIT */
+    else
+        stride_execute_fwd(d->plan_col, re, im);
+
+    /* Phase 2: row FFTs */
+    if (d->use_bailey)
+        _fft2d_bailey_fwd(d, re, im);
+    else
+        _fft2d_tiled_mt(d, re, im, 0);
+}
+
+static void _fft2d_execute_bwd(void *data, double *re, double *im) {
+    stride_fft2d_data_t *d = (stride_fft2d_data_t *)data;
+
+    /* Phase 1: row IFFTs */
+    if (d->use_bailey)
+        _fft2d_bailey_bwd(d, re, im);
+    else
+        _fft2d_tiled_mt(d, re, im, 1);
+
+    /* Phase 2: column IFFTs — internally threaded */
+    if (d->exec_col_bwd)
+        d->exec_col_bwd(d->plan_col, re, im, d->plan_col->K, d->plan_col->K, 0);   /* baked/JIT */
+    else
+        stride_execute_bwd(d->plan_col, re, im);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * DESTROY
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void _fft2d_destroy(void *data) {
+    stride_fft2d_data_t *d = (stride_fft2d_data_t *)data;
+    if (!d) return;
+    if (d->plan_col) stride_plan_destroy(d->plan_col);
+    if (d->plan_row) stride_plan_destroy(d->plan_row);
+    STRIDE_ALIGNED_FREE(d->scratch_re);
+    STRIDE_ALIGNED_FREE(d->scratch_im);
+    free(d);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * PLAN CREATION
+ * ═══════════════════════════════════════════════════════════════ */
+
+static stride_plan_t *_fft2d_wrap(stride_fft2d_data_t *d) {
+    stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
+    if (!plan) { _fft2d_destroy(d); return NULL; }
+    d->nat_col_list = NULL;  /* scrambled by default; vfft sets it (borrowed) only for order=NATURAL */
+    _fft2d_jit_resolve(d);   /* baked/JIT-resolve the inner row/col FFTs (all builders) */
+#ifdef VFFT_STRIDED_ROWS
+    /* natural-order mode INCLUDED: the strided mono is verified NATURAL, so
+     * the bulk needs no cycle tape; sub-VW tails run native+tape (natural).
+     * Bailey mode (plan_row at K=N1) stays excluded. */
+    if (d->plan_row && d->plan_row->K != (size_t)d->N1
+        && d->B >= (size_t)_VFFT_STRIDED_VW) {   /* padded-tail staging fits */
+        _vfft_strided_lookup(d->N2, &d->srow_fwd, &d->srow_bwd);
+        if (d->srow_fwd && !_vfft_strided_verify_natural(d->srow_fwd, d->N2))
+            { d->srow_fwd = 0; d->srow_bwd = 0; }
+    }
+#endif
+    plan->N = d->N1 * d->N2;
+    plan->K = 1;
+    plan->num_stages = 0;
+    plan->override_fwd     = _fft2d_execute_fwd;
+    plan->override_bwd     = _fft2d_execute_bwd;
+    plan->override_destroy = _fft2d_destroy;
+    plan->override_data    = d;
+    return plan;
+}
+
+static size_t _fft2d_choose_tile(int N2, int N1) {
+    size_t B = FFT2D_DEFAULT_TILE;
+    if (B > (size_t)N1) B = (size_t)N1;
+    if (B < FFT2D_MIN_TILE) B = FFT2D_MIN_TILE;
+    return B;
+}
+
+/* Allocate per-thread scratch buffers.
+ * Returns number of scratch slots allocated. */
+static int _fft2d_alloc_scratch(stride_fft2d_data_t *d, size_t tile_sz) {
+    int T = stride_get_num_threads();
+    if (T > FFT2D_MAX_THREADS) T = FFT2D_MAX_THREADS;
+    if (T < 1) T = 1;
+
+    d->tile_sz = tile_sz;
+    d->num_scratch = T;
+    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)T * tile_sz * sizeof(double));
+    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)T * tile_sz * sizeof(double));
+
+    if (!d->scratch_re || !d->scratch_im) return 0;
+    return T;
+}
+
+/** Default 2D plan — tiled with exhaustive sub-plan search.
+ *  Beats the comparison baseline 1.08-1.63x on AVX2, single-threaded.
+ *  Tile-parallel threading for row FFTs when num_threads > 1. */
+static stride_plan_t *stride_plan_2d(
+        int N1, int N2,
+        const vfft_proto_registry_t *reg)
+{
+    if (N1 < 1 || N2 < 1) return NULL;
+
+    stride_fft2d_data_t *d =
+        (stride_fft2d_data_t *)calloc(1, sizeof(*d));
+    if (!d) return NULL;
+
+    d->N1 = N1;
+    d->N2 = N2;
+    d->use_bailey = 0;
+    d->B = _fft2d_choose_tile(N2, N1);
+
+    /* Column FFTs: N1-point, K=N2. auto_plan_dispatch = CT if factorable, else Rader/Bluestein
+     * (override plan) for a PRIME dimension — both 2D executors already dispatch override_fwd,
+     * and the column FFT feeds a contiguous stride-K=N2 batch (native to Rader/Bluestein). */
+    d->plan_col = vfft_proto_exhaustive_plan(N1, (size_t)N2, reg, 0);
+    if (!d->plan_col) d->plan_col = vfft_proto_auto_plan_dispatch(N1, (size_t)N2, reg, NULL);
+    if (!d->plan_col) { free(d); return NULL; }
+
+    /* Row FFTs: N2-point, K=B (a prime N2 -> Rader/Bluestein at K=B; the transpose scratch is
+     * packed at stride B, which matches the plan's baked K=B). */
+    d->plan_row = vfft_proto_exhaustive_plan(N2, d->B, reg, 0);
+    if (!d->plan_row) d->plan_row = vfft_proto_auto_plan_dispatch(N2, d->B, reg, NULL);
+    if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
+
+    /* Per-thread scratch: T copies of N2*B */
+    if (!_fft2d_alloc_scratch(d, (size_t)N2 * d->B)) {
+        _fft2d_destroy(d);
+        return NULL;
+    }
+
+    return _fft2d_wrap(d);
+}
+
+/** 2D plan from caller-supplied inner plans (wisdom-driven). Avoids the slow
+ *  exhaustive sub-plan search in stride_plan_2d — the caller builds the inners
+ *  from wisdom (e.g. via the c2c calibrate-on-miss path), so large N (1024+) is
+ *  tractable. plan_col = N1-point c2c with K=N2; plan_row = N2-point c2c with
+ *  K=B. The 2D plan TAKES OWNERSHIP of both (frees them on failure / destroy). */
+static stride_plan_t *stride_plan_2d_from(
+        int N1, int N2, size_t B,
+        stride_plan_t *plan_col, stride_plan_t *plan_row)
+{
+    if (N1 < 1 || N2 < 1 || B < 1 || !plan_col || !plan_row) {
+        if (plan_col) stride_plan_destroy(plan_col);
+        if (plan_row) stride_plan_destroy(plan_row);
+        return NULL;
+    }
+    stride_fft2d_data_t *d = (stride_fft2d_data_t *)calloc(1, sizeof(*d));
+    if (!d) { stride_plan_destroy(plan_col); stride_plan_destroy(plan_row); return NULL; }
+    d->N1 = N1; d->N2 = N2; d->use_bailey = 0; d->B = B;
+    d->plan_col = plan_col; d->plan_row = plan_row;
+    if (!_fft2d_alloc_scratch(d, (size_t)N2 * B)) { _fft2d_destroy(d); return NULL; }
+    return _fft2d_wrap(d);
+}
+
+/** Bailey 2D plan — always uses full-matrix transpose.
+ *  Alternative for architectures where large-K FFT + cache-oblivious
+ *  transpose outperforms tiled. Uses exhaustive sub-plan search. */
+static stride_plan_t *stride_plan_2d_bailey(
+        int N1, int N2,
+        const vfft_proto_registry_t *reg)
+{
+    if (N1 < 1 || N2 < 1) return NULL;
+
+    stride_fft2d_data_t *d =
+        (stride_fft2d_data_t *)calloc(1, sizeof(*d));
+    if (!d) return NULL;
+
+    d->N1 = N1;
+    d->N2 = N2;
+    d->use_bailey = 1;
+
+    d->plan_col = vfft_proto_exhaustive_plan(N1, (size_t)N2, reg, 0);
+    if (!d->plan_col) d->plan_col = vfft_proto_auto_plan(N1, (size_t)N2, reg, NULL);
+    if (!d->plan_col) { free(d); return NULL; }
+
+    d->plan_row = vfft_proto_exhaustive_plan(N2, (size_t)N1, reg, 0);
+    if (!d->plan_row) d->plan_row = vfft_proto_auto_plan(N2, (size_t)N1, reg, NULL);
+    if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
+
+    d->B = (size_t)N1;
+    /* Bailey only needs 1 scratch (not tile-parallel) */
+    d->num_scratch = 1;
+    d->tile_sz = (size_t)N1 * N2;
+    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, d->tile_sz * sizeof(double));
+    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, d->tile_sz * sizeof(double));
+
+    if (!d->scratch_re || !d->scratch_im) {
+        _fft2d_destroy(d);
+        return NULL;
+    }
+
+    return _fft2d_wrap(d);
+}
+
+/** Wisdom-aware 2D plan — the wisdom is currently UNUSED: both inners take
+ *  the non-wisdom path.
+ *
+ *  Column FFT (plan_col, K=N2): a wisdom-driven plan_col under the K-split
+ *  silently corrupts at intermediate T (1024²: err ~1e6 at T=2/T=4 while
+ *  T=1 and T=8 are correct). Undiagnosed — likely a variant-code interaction
+ *  with the K-split slice helpers at large K, or a DIF/blocked path the
+ *  K-split executor does not handle. Cost: ~3-5% per-stage codelet tuning
+ *  on plan_col.
+ *
+ *  Row FFT (plan_row, K=B=8): the K-split never fires at K=8 < 256, so
+ *  wisdom would be safe here; it stays non-wisdom defensively. */
+static stride_plan_t *stride_plan_2d_wise(
+        int N1, int N2,
+        const vfft_proto_registry_t *reg,
+        const vfft_proto_wisdom_t *wis)
+{
+    if (N1 < 1 || N2 < 1) return NULL;
+
+    stride_fft2d_data_t *d =
+        (stride_fft2d_data_t *)calloc(1, sizeof(*d));
+    if (!d) return NULL;
+
+    d->N1 = N1;
+    d->N2 = N2;
+    d->use_bailey = 0;
+    d->B = _fft2d_choose_tile(N2, N1);
+
+    /* Column FFTs: NON-wisdom (see the note above): exhaustive first, then
+     * auto (stride_plan_2d's path without its prime dispatch). Measured
+     * correct at every T in 1..8 for sizes 64²..1024². */
+    d->plan_col = vfft_proto_exhaustive_plan(N1, (size_t)N2, reg, 0);
+    if (!d->plan_col) d->plan_col = vfft_proto_auto_plan(N1, (size_t)N2, reg, NULL);
+    if (!d->plan_col) { free(d); return NULL; }
+
+    /* Row FFTs: NON-wisdom too, defensively, while the plan_col corruption
+     * is undiagnosed (the K-split does not fire at K=B=8). */
+    d->plan_row = vfft_proto_exhaustive_plan(N2, d->B, reg, 0);
+    if (!d->plan_row) d->plan_row = vfft_proto_auto_plan(N2, d->B, reg, NULL);
+    if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
+    (void)wis;  /* unused while the K-split corruption is undiagnosed */
+
+    if (!_fft2d_alloc_scratch(d, (size_t)N2 * d->B)) {
+        _fft2d_destroy(d);
+        return NULL;
+    }
+
+    return _fft2d_wrap(d);
+}
+
+
+#endif /* STRIDE_FFT2D_H */
