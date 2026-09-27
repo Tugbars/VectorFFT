@@ -42,7 +42,7 @@
  *
  * WHAT THIS TIER DOES NOT DECIDE
  * ------------------------------
- * The route race itself lives in transforms/real/real_route_race.h — those are
+ * The route race itself lives in split/real/real_route_race.h — those are
  * racers, not deciders. This tier is what calls them and what banks the
  * verdict.
  *

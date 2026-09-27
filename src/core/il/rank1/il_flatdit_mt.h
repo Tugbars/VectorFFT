@@ -32,7 +32,7 @@
  *
  * Position: after il_flatdit.h and support/threads.h + support/race.h in
  * vfft.c; engine-only (no plan handle, no wisdom) — the front door's
- * replay-or-race lives in oop/k1_commit.h. */
+ * replay-or-race lives in il/rank1/k1_commit.h. */
 #ifndef VFFT_IL_FLATDIT_MT_H
 #define VFFT_IL_FLATDIT_MT_H
 

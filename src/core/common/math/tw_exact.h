@@ -36,7 +36,7 @@
  * chain3 twiddles), il_flatdit.h (the flat DIT's five tables), ztt.h (the
  * 2^a*odd moduli and the fine table above the octave), il_prime.h (Bluestein
  * chirp, Rader table), k1_fourstep.h (the coarse and fine four-step records),
- * transforms/fft2d/il2d_cols.h (the 2D column chirp and stage twiddles).
+ * il/rank2/il2d_cols.h (the 2D column chirp and stage twiddles).
  * NOT the pow2 ZTURN-T: its streams expand from the baked quarter-wave
  * ztt_qw16384.h, which stays as shipped. Do not re-bake it from this fold:
  * the entries get closer to the exact sine (1,016 of 4,097 by 1 ulp) and a
