@@ -1991,7 +1991,7 @@ static void run_oop_cell(int N, size_t K, vfft_proto_registry_t *reg,
     vfft_oop_plan_t *p = NULL;
     if (store)
     {
-        vfft_oop_wisdom_entry_t eb;
+        vfft_oop_sp_entry_t eb;   /* the split classic record (kind-3 record split) */
         if (vw2_oop_lookup_ord(store, N, K, 0 /* DEFAULT: best of the classes */, &eb))
             p = vfft_oop_plan_from_entry(&eb, reg);
     }

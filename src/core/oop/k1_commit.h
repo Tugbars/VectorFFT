@@ -71,7 +71,7 @@
  * chain3 row overrides the create's structural defaults; env VFFT_IL_KV /
  * VFFT_IL_BKV pin. */
 static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
-                              const vfft_oop_wisdom_entry_t *ke,
+                              const vfft_oop_il_entry_t *ke,
                               const vw2_store_t *st, int N, int ip)
 {
     if (!p)
@@ -100,7 +100,7 @@ static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
 }
 
 static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
-                              const vfft_oop_wisdom_entry_t *ke,
+                              const vfft_oop_il_entry_t *ke,
                               const vw2_store_t *st, int N, int ip)
 {
     /* Wisdom variant verdict — runs AFTER create, so it OVERRIDES the
@@ -597,10 +597,10 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
         _vw2_persist(W, cfg);
     if (_k1pr_ctx.plan)
     {   /* the prime plan outlives the race only as the request's verdict */
-        vfft_oop_wisdom_entry_t pe;
+        vfft_oop_il_entry_t pe;
         const int ip_req = (cfg->placement == VFFT_INPLACE);
         const int scr_req = (vfft_policy_ord_k1(cfg, N, ip_req) == VW2_ORD_SCR);
-        if (!(vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, 1, &pe) &&   /* the race banks the one-thread row */
+        if (!(vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, ip_req, 1, &pe) &&   /* the race banks the one-thread row */
               pe.k1_il_route == VFFT_K1_IL_PRIME))
             _k1pr_release();
     }
@@ -642,7 +642,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     if (getenv("VFFT_NO_IL2P"))
         return;
     int iR1 = 0, iR2 = 0;
-    vfft_oop_wisdom_entry_t keb;
+    vfft_oop_il_entry_t keb;
     /* the request's ORDER CELL: an explicit SCRAMBLED request reads the
      * ord=scr row — the scrambled pool's own verdict — and nothing else;
      * DEFAULT and NATURAL read the ord=nat row. */
@@ -652,9 +652,15 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     const int ip_req = (cfg->placement == VFFT_INPLACE);
     const int scr_req = (vfft_policy_ord_k1(cfg, N, ip_req) == VW2_ORD_SCR);
     const int T = _vfft_plan_threads(cfg);   /* the plan's thread count: its row's key (v1.3) */
-    const vfft_oop_wisdom_entry_t *ke =
-        W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
-                       : (vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, T, &keb) ? &keb : NULL);
+    /* the cell's INTERLEAVED axis (il/wisdom/wisdom2_oop_il.h); the
+     * vw2_off_oop kill switch reads the legacy line's IL fields */
+    const vfft_oop_wisdom_entry_t *kle =
+        W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N) : NULL;
+    if (kle)
+        vfft_oop_il_from_legacy(&keb, kle);
+    const vfft_oop_il_entry_t *ke =
+        W->vw2_off_oop ? (kle ? &keb : NULL)
+                       : (vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, ip_req, T, &keb) ? &keb : NULL);
     /* the threaded plan's row (v1.3): the K=1 route is thread-independent, so
      * a miss at T > 1 takes the one-thread row's route as its own row, keyed
      * nthreads=T, and the MT commits below race its threaded verdict there */
@@ -662,7 +668,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, ip_req, T))
     {
         _vw2_persist(W, cfg);
-        ke = vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, T, &keb) ? &keb : NULL;
+        ke = vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, ip_req, T, &keb) ? &keb : NULL;
     }
     /* the IL plan race: a MISS (no IL verdict on the row), a pair-only row
      * whose forms were never raced, or recalibrate races the planner's pools
@@ -676,7 +682,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         {
             if (T > 1 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, ip_req, T))
                 _vw2_persist(W, cfg);
-            ke = vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, ip_req, T, &keb) ? &keb : NULL;
+            ke = vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, ip_req, T, &keb) ? &keb : NULL;
         }
     }
     /* a SCRAMBLED request at a pow2 cell with no scrambled row after the race
@@ -919,7 +925,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                  * the offline planner's measured row replaces it. */
                 if (W && !W->vw2_off_oop && cfg)
                 {
-                    vfft_oop_wisdom_entry_t ne;
+                    vfft_oop_il_entry_t ne;
                     memset(&ne, 0, sizeof ne);
                     ne.N = N;
                     ne.K = 1;
@@ -928,7 +934,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                     ne.il_R2 = picked_swap ? iR1 : iR2;
                     ne.ord_scr = scr_req;   /* the request's own order cell */
                     ne.nthreads = _vfft_plan_threads(cfg);   /* the plan's own row (v1.3) */
-                    if (vw2_oop_bank_k1_lay(&W->vw2, &ne, VW2_LAY_IL) == VW2_OK)
+                    if (vw2_oop_bank_k1_il(&W->vw2, &ne) == VW2_OK)
                         _vw2_persist(W, cfg);
                 }
             }
@@ -1314,15 +1320,15 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
 static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                  int N, vfft_oop11_fn *ilf, vfft_oop11_fn *ilb)
 {
-    vfft_oop_wisdom_entry_t keb;
-    const vfft_oop_wisdom_entry_t *ke;
+    vfft_oop_il_entry_t keb;
+    const vfft_oop_il_entry_t *ke;
     /* the REQUEST's order and placement cell: this is the in-place door's
      * candidate, so it reads the place=ip row the in-place race banked (an
      * explicit SCRAMBLED request reads its ord=scr row). */
     const int scr_req = (vfft_policy_ord_k1(cfg, N, 1) == VW2_ORD_SCR);
     *ilf = *ilb = 0;
     if (!W || W->vw2_off_oop) return 0;
-    ke = vw2_oop_lookup_k1_cell(&W->vw2, N, scr_req, 1, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
+    ke = vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, 1, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
     if (!ke || ke->k1_il_route != VFFT_K1_IL_MONO) return 0;
     *ilf = vfft_k1_mono_ilc_fn(N, 0);
     *ilb = vfft_k1_mono_ilc_fn(N, 1);

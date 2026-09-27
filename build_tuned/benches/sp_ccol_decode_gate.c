@@ -3,7 +3,7 @@
  * Closes the loop "calibrator banked it -> the STORE holds it -> create
  * serves it": for every kind-3 CCOL record in <wisdir>'s wisdom2 store
  * (enumerated via vw2_scan, each cell resolved through the PRODUCTION
- * twin vw2_oop_lookup_k1 — so the expectation IS what create will serve,
+ * twin vw2_oop_lookup_k1_sp_cell — so the expectation IS what create will serve,
  * exact-beats-wildcard included), drive the REAL front door (vfft_create,
  * layout=SPLIT, placement=OOP, order=NATURAL), then (a) assert the served
  * route is CCOL, (b) assert the built plan matches the banked record via
@@ -26,7 +26,7 @@
 #include "vfft.c"
 #include "dp_planner_split_oop.h"
 
-static int gate_cell(const vfft_oop_wisdom_entry_t *ke)
+static int gate_cell(const vfft_oop_sp_entry_t *ke)
 {
     const int N = ke->N;
     printf("[%d] banked: route CCOL pair %dx%d chain %d vars %d ns %.1f\n",
@@ -117,7 +117,7 @@ int main(int argc, char **argv)
     const vw2_rec_t *r;
     while ((r = vw2_scan(&st, &cursor)) != NULL) {
         const char *spr = vw2_rec_get(r, "sp_route");
-        vfft_oop_wisdom_entry_t ke;
+        vfft_oop_sp_entry_t ke;   /* the split K=1 record (kind-3 record split) */
         int N, d, dup = 0;
         if (r->key.t != VW2_T_C2C || r->key.rank != 1) continue;
         if (!spr || strcmp(spr, "ccol")) continue;
@@ -130,7 +130,7 @@ int main(int argc, char **argv)
                 if (atoi(argv[a]) == N) want = 1;
             if (!want) continue;
         }
-        if (!vw2_oop_lookup_k1(&st, N, &ke)) continue; /* seed/unservable */
+        if (!vw2_oop_lookup_k1_sp_cell(&st, N, 0, 0, 1, &ke)) continue; /* seed/unservable */
         if (ke.k1_sp_route != VFFT_K1_SP_CCOL) continue; /* served row != ccol */
         if (ndone < 128) done[ndone++] = N;
         cells++;

@@ -62,11 +62,11 @@
 #include "executor.h"
 #include "planner.h"
 #include "oop_plan.h"
-#include "wisdom2_oop.h"
+#include "wisdom2_oop_split.h" /* the split OOP record + codec */
 #include "dp_planner.h"
 #include "measure.h"
 #include "wisdom_reader.h"
-#include "wisdom2_oop_reader.h" /* vw2_oop_bank_k1_lay / vw2_open / vw2_save (was pulled in
+/* (vw2_oop_bank_k1_split, vw2_open, vw2_save: the split codec above; they were pulled in
                                      * through dp_planner_il.h, whose IL race this
                                      * split planner never used) */
 
@@ -522,7 +522,7 @@ static void vfft_sp_dp_release(vfft_oop_plan_t **plans, int np)
  * cc_vars must decode against the same nf — create passes the decoded
  * array straight into the column-plan create (a single line of custody),
  * so a successful decode + chain/pair match IS the variants guarantee. */
-static int vfft_sp_ccol_line_served(const vfft_oop_wisdom_entry_t *ke,
+static int vfft_sp_ccol_line_served(const vfft_oop_sp_entry_t *ke,
                                     const vfft_oop_plan_t *p)
 {
     int ccf[VFFT_K1_CC_MAX_NF], ccv[VFFT_K1_CC_MAX_NF];
@@ -554,7 +554,7 @@ static int vfft_sp_dp_emit_wisdom(vw2_store_t *st, int N, int sp_route,
                                   int sp_R1, int sp_R2, int sp_cc_chain,
                                   int sp_cc_vars, double sp_ns)
 {
-    vfft_oop_wisdom_entry_t e;
+    vfft_oop_sp_entry_t e;
     if (!st || sp_route < 0) return 0;
     memset(&e, 0, sizeof e);
     e.N = N;
@@ -563,11 +563,10 @@ static int vfft_sp_dp_emit_wisdom(vw2_store_t *st, int N, int sp_route,
     e.k1_sp_route = sp_route;
     e.R1 = sp_R1;
     e.R2 = sp_R2;
-    e.k1_il_route = VFFT_K1_IL_NONE;   /* il lives in its own library  */
     e.cc_chain = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_chain : 0;
     e.cc_vars  = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_vars  : 0;
     e.ns = sp_ns;
-    return vw2_oop_bank_k1_lay(st, &e, VW2_LAY_SPLIT) == VW2_OK ? 1 : 0;
+    return vw2_oop_bank_k1_split(st, &e) == VW2_OK ? 1 : 0;
 }
 
 /* Plan the SPLIT K=1 cell at N and bank its lay=split row. Split only: the

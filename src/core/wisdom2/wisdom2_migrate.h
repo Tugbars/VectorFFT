@@ -221,7 +221,7 @@ static inline int vw2__mig_oop_entry(vw2_store_t *st, vw2__mig_seen_t *seen,
     *why = NULL;
     if (e->kind == VFFT_OOP_KIND_ZR2C) {
         vw2_rec_t slots[4];
-        int n = vw2_oop_recs_from_kind5(e, "migrated", from, slots, why), i, b;
+        int n = vw2_oop_recs_from_kind5(e->N, e->zr_kv, "migrated", from, slots, why), i, b;
         if (n <= 0) return -1;
         for (i = 0; i < n; i++) {
             b = vw2__mig_bank(st, seen, &slots[i], why);
@@ -532,36 +532,37 @@ static inline int vw2_migrate_oop_reader_gate(const char *legacy_path, const cha
             int ord = (e->kind == VFFT_OOP_KIND_MODEB) ? 2 : 1;
             int servable = (e->K != 0 && (e->K % 8u) == 0);
             int garbage = 0, t;
+            vfft_oop_sp_entry_t gcl;   /* the classic kinds: the split record */
             if (e->kind == VFFT_OOP_KIND_MODEB)
                 for (t = 0; t < e->nf; t++)
                     if (e->variants[t] < 0 || e->variants[t] > 2) garbage = 1;
             if (!servable || garbage) {
-                if (vw2_oop_lookup_ord(&st, e->N, e->K, ord, &got))
+                if (vw2_oop_lookup_ord(&st, e->N, e->K, ord, &gcl))
                     VW2__RG_BAD("kind-%d N=%d K=%lld: unservable legacy row RESOLVED (must miss)",
                                 (int)e->kind, e->N, (long long)e->K);
                 checked++;
                 continue;
             }
-            if (!vw2_oop_lookup_ord(&st, e->N, e->K, ord, &got)) {
+            if (!vw2_oop_lookup_ord(&st, e->N, e->K, ord, &gcl)) {
                 VW2__RG_BAD("kind-%d N=%d K=%lld: servable row MISSED", (int)e->kind, e->N, (long long)e->K);
                 continue;
             }
-            if (got.kind != e->kind) VW2__RG_BAD("N=%d K=%lld: kind %d != %d", e->N, (long long)e->K, (int)got.kind, (int)e->kind);
+            if (gcl.kind != e->kind) VW2__RG_BAD("N=%d K=%lld: kind %d != %d", e->N, (long long)e->K, (int)gcl.kind, (int)e->kind);
             if (e->kind == VFFT_OOP_KIND_BAILEY2 &&
-                (got.R1 != e->R1 || got.R2 != e->R2 || got.t1p_variant != e->t1p_variant))
+                (gcl.R1 != e->R1 || gcl.R2 != e->R2 || gcl.t1p_variant != e->t1p_variant))
                 VW2__RG_BAD("bailey2 N=%d K=%lld: pair/t1p mismatch", e->N, (long long)e->K);
             if (e->kind == VFFT_OOP_KIND_MODEB) {
-                if (got.nf != e->nf) VW2__RG_BAD("modeb N=%d K=%lld: nf %d != %d", e->N, (long long)e->K, got.nf, e->nf);
+                if (gcl.nf != e->nf) VW2__RG_BAD("modeb N=%d K=%lld: nf %d != %d", e->N, (long long)e->K, gcl.nf, e->nf);
                 else for (t = 0; t < e->nf; t++)
-                    if (got.factors[t] != e->factors[t] || got.variants[t] != e->variants[t])
+                    if (gcl.factors[t] != e->factors[t] || gcl.variants[t] != e->variants[t])
                         { VW2__RG_BAD("modeb N=%d K=%lld: stage %d mismatch", e->N, (long long)e->K, t); break; }
             }
-            if (e->ns > 0.0 && (got.ns - e->ns > 0.05 || e->ns - got.ns > 0.05))
-                VW2__RG_BAD("kind-%d N=%d K=%lld: ns %.1f != %.1f", (int)e->kind, e->N, (long long)e->K, got.ns, e->ns);
+            if (e->ns > 0.0 && (gcl.ns - e->ns > 0.05 || e->ns - gcl.ns > 0.05))
+                VW2__RG_BAD("kind-%d N=%d K=%lld: ns %.1f != %.1f", (int)e->kind, e->N, (long long)e->K, gcl.ns, e->ns);
             checked++;
         }
         else if (e->kind == VFFT_OOP_KIND_BAILEY2V) {
-            if (!vw2_oop_lookup_k1(&st, e->N, &got)) { VW2__RG_BAD("kind-3 N=%d: MISSED", e->N); continue; }
+            if (!vw2_oop_lookup_k1_dual(&st, e->N, &got)) { VW2__RG_BAD("kind-3 N=%d: MISSED", e->N); continue; }
             if (got.k1_sp_route != e->k1_sp_route || got.R1 != e->R1 || got.R2 != e->R2)
                 VW2__RG_BAD("kind-3 N=%d: sp mismatch (route %d/%d pair %d.%d/%d.%d)",
                             e->N, got.k1_sp_route, e->k1_sp_route, got.R1, got.R2, e->R1, e->R2);

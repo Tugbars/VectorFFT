@@ -45,9 +45,8 @@
 
 #include "common/abi/route_ids.h" /* VFFT_K1_IL_* routes, VFFT_OOP_KIND_* */
 #include "il_solo_registry.h" /* the K=1 solo resolvers (mono forms, n1c) */
-#include "../../wisdom2/wisdom2_oop_reader.h" /* wisdom2 banking: verdicts bank
-                                              through the family constructor
-                                              into the store */
+#include "il/wisdom/wisdom2_oop_il.h" /* wisdom2 banking: the IL K=1 record
+                                        and its constructor into the store */
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
 #include "il_flatdit.h" /* the FLAT mixed-radix DIT: the odd-N engine         */
 #include "il_flatdit_race.h" /* its FORM and TILE races on the shared race body */
@@ -55,7 +54,6 @@
 #include "ztt.h"        /* ZTURN-T: the run-contiguous DIT, one fused driver per cell */
 #include "il_prime.h"   /* the prime cell (Rader/Bluestein); after ztt.h (its ZTURN-T inner branch) */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
-#include "wisdom2_oop.h" /* THE oop family entry struct + codecs (wisdom2 folder) */
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -1909,12 +1907,11 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
         int il_ok = (nat && nat->cost_ns < 1e17);
         if (il_ok)
         {
-            vfft_oop_wisdom_entry_t e;
+            vfft_oop_il_entry_t e;
             memset(&e, 0, sizeof e);
             e.N = N;
             e.K = 1;                   /* one interleaved transform         */
             e.kind = VFFT_OOP_KIND_BAILEY2V;
-            e.k1_sp_route = -1;        /* split lives in its own cell       */
             e.place_ip = inplace;      /* the one-thread row: the K=1 route is thread-independent (v1.3) */      /* the in-place cell's own row */
             e.k1_il_route = nat->route;
             e.il_R1 = nat->R1;
@@ -1941,7 +1938,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
                 e.il_tw = nat->il_tw;
             }
             e.ns = nat->cost_ns;
-            if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
+            if (vw2_oop_bank_k1_il(st, &e) == VW2_OK)
                 lines++;
             if (nat->route == VFFT_K1_IL_FS && nat->il_kv == 1 && nat->il_zt_n >= 2)
             {   /* the super-band's chain beside il_pair (il2d_large_plane_design.md §3) */
@@ -1992,12 +1989,11 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
     {   /* the K=1 IL tier's SCRAMBLED cell: its own kind-3 IL row keyed
          * ord=scr, the winner's full recipe (a natural-output engine, or
          * the flat DIT's scrambled class) — never merged with ord=nat */
-        vfft_oop_wisdom_entry_t e;
+        vfft_oop_il_entry_t e;
         memset(&e, 0, sizeof e);
         e.N = N;
         e.K = 1;
         e.kind = VFFT_OOP_KIND_BAILEY2V;
-        e.k1_sp_route = -1;
         e.place_ip = inplace;      /* the one-thread row: the K=1 route is thread-independent (v1.3) */
         e.k1_il_route = scr->route;
         e.il_R1 = scr->R1;
@@ -2025,7 +2021,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
         }
         e.ord_scr = 1;
         e.ns = scr->cost_ns;
-        if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
+        if (vw2_oop_bank_k1_il(st, &e) == VW2_OK)
             lines++;
     }
     return lines;
