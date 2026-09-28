@@ -60,7 +60,15 @@ row, small against the row transform.
 
 ## The two order classes
 
-SCRAMBLED (and DEFAULT): the plane as it stands after step 3 — position
+Both classes run the same inner 2D plan, created SCRAMBLED whatever the
+request asked (`vfft_policy_k1fs_inner_order`, `il/planning/policy_il.h`): the
+order of that intermediate is the algorithm's, and the class decides only the
+last step. A natural inner plan would add its own reordering pass in front of
+the transpose the natural class makes anyway. An inner plan names its order
+and never passes DEFAULT, which is the caller's contract (1D DEFAULT is
+NATURAL).
+
+SCRAMBLED: the plane as it stands after step 3 — position
 p·N2 + k2 holds frequency k1(p) + N1·k2. That is a fixed permutation of
 the plan (the 2D child's own column order times the four-step's
 transpose), self-consistent, inverted by the matched backward: a legal

@@ -1,19 +1,3 @@
-2026-09-28 12:17:29 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
-2026-09-28 12:17:29 run: 135 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
-2026-09-28 12:17:29 calibrate: 135 cells (0 already done), RECALIBRATE (every cell re-raced)
-2026-09-28 12:18:02   calibrated 25/135 (37), 33 s elapsed
-2026-09-28 15:57:41   calibrated 50/135 (281), 13212 s elapsed
-2026-09-28 16:05:07   calibrated 75/135 (1193), 13658 s elapsed
-2026-09-28 16:11:35   calibrated 100/135 (3375), 14045 s elapsed
-2026-09-28 16:21:23   calibrated 125/135 (65537), 14633 s elapsed
-2026-09-28 16:27:55   calibrated 135/135 (16777216), 15026 s elapsed
-2026-09-28 16:27:55 bench: 129 cells (0 already benched, 6 not banked -> not benched)
-2026-09-28 16:28:29   benched 25/129 (37), 33 s elapsed
-2026-09-28 16:29:04   benched 50/129 (281), 67 s elapsed
-2026-09-28 16:29:41   benched 75/129 (1193), 104 s elapsed
-2026-09-28 16:30:25   benched 100/129 (3375), 148 s elapsed
-2026-09-28 16:31:04   benched 125/129 (65537), 188 s elapsed
-2026-09-28 16:31:10   benched 129/129 (262144), 194 s elapsed
 # gauntlet report
 
 run: `regr_1d_head_2026-09-28`  contract file suffix: `(oop, T=1)`  cells: 135 listed, 129 benched, comparator: MKL
@@ -210,5 +194,3 @@ flip agreement: our two readings more than 25% apart at 8 of 129 cells.
 
 worst 10: 128 (2p 0.82), 1193 (prime 0.92), 512 (2p 0.93), 20 (2p 0.93), 15 (2p 0.94), 32768 (ztt 0.95), 19683 (flat 0.97), 256 (2p 0.98), 15625 (flat 1.00), 443 (prime 1.01)
 best 5: 89 (prime 7.08), 65537 (prime 4.94), 2 (mono 3.23), 2689 (prime 3.03), 1147 (flat 3.02)
-
-2026-09-28 16:31:11 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regr_1d_head_2026-09-28\report.md
