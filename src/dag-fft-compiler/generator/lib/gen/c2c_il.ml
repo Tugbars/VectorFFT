@@ -374,6 +374,17 @@ let emit
     | Some v -> (try int_of_string v with _ -> 9)
     | None -> 9
   in
+  (* The odd blocked form's FRAME (2026-09-28). VFFT_CX_ODDROLL=1: the term
+     loops stay rolled (#pragma GCC unroll 1) and S[] is 64-B aligned.
+     Unrolled (gcc does it at h <= ~16), the loops index S[] by constants,
+     S[] dissolves into registers, and gcc spills them to its own slots --
+     only 16-B aligned under the Win64 ABI, so every 32-B spill splits a
+     line in one of the two stack states the caller can hand the kernel
+     (measured: radix-29 t2 797 vs 1153 ns on the caller's rsp alone).
+     VFFT_CX_ODDP1=1: PASS 1 in pair order (see emit_odd_blocked). Default
+     OFF => byte-identical. *)
+  let odd_roll = Sys.getenv_opt "VFFT_CX_ODDROLL" = Some "1" in
+  let odd_p1 = Sys.getenv_opt "VFFT_CX_ODDP1" = Some "1" in
   let odd_blocked =
     (not blocked)
     && radix mod 2 = 1
@@ -938,6 +949,56 @@ let emit
         body
         (Printf.sprintf "        %s;\n" (pass_store isa mode ad (Printf.sprintf "z%d" e.tag)))
     in
+    (* PASS 1 in PAIR order (VFFT_CX_ODDP1): legs j and n-j loaded
+       (pre-twiddled for the T2 kinds), s_j and r_j parked the moment they
+       exist, the DC summed in j order. The nodes are the scheduled pass's
+       own (dft_cx_odd_pairs, the dft_cx_odd_dc fold), so the values are
+       bit-identical; the scheduled order loads every leg first and keeps
+       all R live against 16 registers. *)
+    if odd_p1
+    then (
+      reset ();
+      let ins = Array.init radix (fun l -> cload (AZinLeg l)) in
+      let ins =
+        if pre_tw then Array.mapi (fun l x -> if l > 0 then ctwl l x else x) ins else ins
+      in
+      let x0, s, r = Cx_math.dft_cx_odd_pairs ~sign radix ins in
+      let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+      let rec decl (e : t) =
+        if not (Hashtbl.mem seen e.tag)
+        then (
+          List.iter decl (Cx_sched.Node.preds e);
+          Hashtbl.replace seen e.tag ();
+          Buffer.add_string
+            body
+            (Printf.sprintf
+               "        %s\n"
+               (Isa.const_decl
+                  isa
+                  (Printf.sprintf "z%d" e.tag)
+                  (match e.node with
+                   | CLoad a -> pass_load isa mode a
+                   | _ -> render ~ctx ~mode ~tw_vw ~msuf isa tbl e))))
+      in
+      Buffer.add_string
+        body
+        (Printf.sprintf
+           "        { /* ODD PASS 1 (pair order): legs -> X[0], pairs -> S[0..%d] */\n"
+           (2 * h));
+      decl x0;
+      store_to (AS 0) x0;
+      let dc = ref x0 in
+      for i = 0 to h - 1 do
+        decl s.(i);
+        store_to (AS (vw * (1 + i))) s.(i);
+        decl r.(i);
+        store_to (AS (vw * (1 + h + i))) r.(i);
+        dc := cadd !dc s.(i);
+        decl !dc
+      done;
+      store_to (AZoutLeg 0) !dc;
+      Buffer.add_string body "        }\n")
+    else
     emit_pass_to
       ~body
       ~isa
@@ -999,6 +1060,7 @@ let emit
              (qn j)
              (Isa.set1_pd_str isa "0.0"))
       done;
+      if odd_roll then Buffer.add_string body "        #pragma GCC unroll 1\n";
       Buffer.add_string body (Printf.sprintf "        for (int i = 0; i < %d; i++) {\n" h);
       Buffer.add_string
         body
@@ -1377,22 +1439,29 @@ let emit
      column-stride kinds take the plain "ladder" (3 -> ymm + xmm): their
      columns sit Gs apart, so a contiguous masked zmm access cannot reach them.
      VFFT_TAIL512 overrides (recorded in the provenance Env line).
-     At vw = 4 the leftover is at most ONE column. Default "narrow": the
-     monolithic DAG at VEX-128. VFFT_TAIL256 selects the arms under study:
+     At vw = 4 the leftover is at most ONE column, and it runs at VEX-128:
+     the odd blocked kernels from radix 11 re-run their blocked passes
+     ("blk_narrow"), every other kernel the monolithic DAG ("narrow"). A
+     256-bit arm cannot win a one-column remainder on this core: a ymm pass
+     costs what an xmm pass costs, and the mask adds 4-14% (measured, the
+     tail_policy harness). The blocked tail costs 1.9-2.3 ordinary columns
+     where the monolithic one spills to 2.2-3.3 from radix 11; at radix 9
+     the monolithic tail is the cheaper. VFFT_TAIL256 overrides:
      "masked" (the monolithic DAG in one ymm pass, lane 1 masked off),
      "blk_narrow" / "blk_masked" (the odd blocked passes at VEX-128 / masked
-     ymm), "blk_overrun" (the blocked passes unmasked: reads and WRITES one
-     column past the end -- a cost floor, never a kernel). *)
+     ymm), "overrun" / "blk_overrun" (the monolithic DAG / the blocked passes
+     in one unmasked ymm pass: reads and WRITES one column past the end -- a
+     cost floor, never a kernel). *)
   let tail_policy =
     if vw <= 4
     then (
       match Sys.getenv_opt "VFFT_TAIL256" with
-      | None -> "narrow"
-      | Some (("narrow" | "masked" | "blk_narrow" | "blk_masked" | "blk_overrun") as s) -> s
+      | None -> if odd_blocked && radix >= 11 then "blk_narrow" else "narrow"
+      | Some (("narrow" | "masked" | "overrun" | "blk_narrow" | "blk_masked" | "blk_overrun") as s) -> s
       | Some s ->
         failwith
           (Printf.sprintf
-             "codelet_cil: VFFT_TAIL256=%s is not an AVX2 arm (narrow masked blk_narrow \
+             "codelet_cil: VFFT_TAIL256=%s is not an AVX2 arm (narrow masked overrun blk_narrow \
               blk_masked blk_overrun)"
              s))
     else match Sys.getenv_opt "VFFT_TAIL512" with
@@ -1422,6 +1491,7 @@ let emit
    | "blk_narrow" -> tail_blocked ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector body_n
    | "blk_masked" -> tail_blocked ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") body_n
    | "blk_overrun" -> tail_blocked ~nisa:isa ~msuf:"" ~mode:Isa.LS_vector body_n
+   | "overrun" when vw <= 4 -> tail_arm ~nisa:isa ~msuf:"" ~mode:Isa.LS_vector ~lane_off:false body_n
    | _ (* narrow: the shipped avx2 behaviour, byte-identical at vw=4 *) ->
      tail_arm ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:false body_n);
   let buf = Buffer.create 8192 in
@@ -1453,7 +1523,13 @@ let emit
            pretw
            log3
            ctx.tangent
-           (if odd_blocked then Printf.sprintf " oddblk=%d" oddblk_bw else "")
+           (if odd_blocked
+            then
+              Printf.sprintf
+                " oddblk=%d%s"
+                oddblk_bw
+                (if tail_policy = "narrow" then "" else " tail=" ^ tail_policy)
+            else "")
        ]);
   Buffer.add_string
     buf
@@ -1531,7 +1607,7 @@ let emit
   then (
     Buffer.add_string buf (Isa.im_mask_decl isa "_M_IM");
     Buffer.add_string buf "  /* negate im lanes: x*(-i) */\n";
-    if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"; "blk_masked"; "blk_overrun"]) then (
+    if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"; "overrun"; "blk_masked"; "blk_overrun"]) then (
     Buffer.add_string buf (Isa.im_mask_decl Isa.sse2 "_M_IM_n");
     Buffer.add_string buf "  /* tail twin */\n");
     if List.mem tail_policy ["ladder"; "ladder_m3"; "hyb2"] then (
@@ -1540,7 +1616,7 @@ let emit
   else (
     Buffer.add_string buf (Isa.re_mask_decl isa "_M_RE");
     Buffer.add_string buf "  /* negate re lanes: x*(+i) */\n";
-    if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"; "blk_masked"; "blk_overrun"]) then (
+    if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"; "overrun"; "blk_masked"; "blk_overrun"]) then (
     Buffer.add_string buf (Isa.re_mask_decl Isa.sse2 "_M_RE_n");
     Buffer.add_string buf "  /* tail twin */\n");
     if List.mem tail_policy ["ladder"; "ladder_m3"; "hyb2"] then (
@@ -1609,9 +1685,10 @@ let emit
     Buffer.add_string
       buf
       (Printf.sprintf
-         "    double S[%d];  /* half-DFT spill: function-scope, L1-hot across iterations \
+         "    double S[%d]%s;  /* half-DFT spill: function-scope, L1-hot across iterations \
           */\n"
-         (vw * radix))
+         (vw * radix)
+         (if odd_blocked && odd_roll then " __attribute__((aligned(64)))" else ""))
   else if ctx.mono_spill_slots > 0
   then
     Buffer.add_string
@@ -1788,6 +1865,11 @@ let emit
        Buffer.add_string buf
          (Printf.sprintf "    if (k < %s) {  /* the odd blocked passes in ymm, lane 1 masked off */\n" cnt);
        Buffer.add_string buf ymm_mask;
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
+     | "overrun" when vw <= 4 ->
+       Buffer.add_string buf
+         (Printf.sprintf "    if (k < %s) {  /* MEASUREMENT ONLY: the DAG in one unmasked ymm pass (overruns) */\n" cnt);
        Buffer.add_buffer buf body_n;
        Buffer.add_string buf "    }\n"
      | "blk_overrun" ->

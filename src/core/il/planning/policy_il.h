@@ -404,8 +404,12 @@ static inline int vfft_policy_k1_engine_present(int mono, int pair, int chain3,
  * transposed twins) take the ymm + xmm ladder at 3: their columns sit Gs
  * apart, not side by side, so one contiguous masked zmm access cannot reach
  * them (the ymm and xmm rungs gather each column through loadu2/storeu2).
- * At AVX2 (per = 2) the leftover is at most one column: one xmm pass, the
- * shipped behaviour. */
+ * At AVX2 (per = 2) the leftover is at most one column: one xmm pass. The
+ * odd blocked kernels from radix 11 run it as their blocked passes, the rest
+ * as the monolithic DAG ("blk_narrow" / "narrow" in tail_policy). No 256-bit
+ * arm wins a one-column remainder on Raptor Lake: a ymm pass costs what an
+ * xmm pass costs and the mask adds 4-14%, so a masked pass pays only where
+ * it replaces two narrow passes -- never with one column left. */
 typedef enum {
     VFFT_TAIL_NONE = 0,   /* count % per == 0: no tail */
     VFFT_TAIL_XMM,        /* one 128-bit pass per leftover column */
