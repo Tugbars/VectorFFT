@@ -12,8 +12,11 @@
  * A PAUSE spinner costs the timed thread 12%; TPAUSE into C0.2 (WAITPKG)
  * costs nothing measurable and still counts as busy to the scheduler, so no
  * foreign thread lands there. The guard lives for the process; every timed
- * window runs with the sibling reserved. Hosts without WAITPKG (Zen 4) run
- * unguarded; VFFT_BENCH_GUARD=0 lifts it.
+ * window runs with the sibling reserved. Hosts without WAITPKG use AMD's
+ * user-mode MONITORX/MWAITX the same way (Zen 4, 2026-09-28); with neither,
+ * VFFT_BENCH_GUARD=pause holds the sibling with a PAUSE spinner (a ~12% level
+ * cost to both engines, ratios unaffected), else the sibling runs unguarded.
+ * VFFT_BENCH_GUARD=0 lifts the guard.
  *
  * Use: bench_pin_caller(cpu) to pin the calling thread at high priority, then
  * bench_guard_sibling(cpu) once.
@@ -111,6 +114,62 @@ static int bench_has_waitpkg(void)
 #endif
     return (r[2] >> 5) & 1u;
 }
+/* AMD's analogue, CPUID.0x80000001:ECX[29]. MONITORX/MWAITX is the user-mode
+ * pair (the X suffix is exactly what makes it ring-3; Intel's MONITOR/MWAIT is
+ * ring-0 and unusable here), and MWAITX takes a TSC timeout, so it holds the
+ * core for a slice and wakes -- the same shape as TPAUSE, and like TPAUSE it
+ * releases the core's shared resources to the SMT sibling instead of spending
+ * issue slots the way PAUSE does. MEASURED present on Zen 4 (Ryzen 5 PRO
+ * 8640HS, 2026-09-28) where WAITPKG reads 0. */
+static int bench_has_monitorx(void)
+{
+    unsigned r[4] = { 0, 0, 0, 0 };
+#if VFFT_CPU_HAVE_CPUID
+    _vfft_cpuid(0x80000000u, 0, r);
+    if (r[0] < 0x80000001u) return 0;
+    _vfft_cpuid(0x80000001u, 0, r);
+#endif
+    return (r[2] >> 29) & 1u;
+}
+/* THE AMD GUARD (2026-09-28): MONITORX/MWAITX, the user-mode timed wait, used
+ * exactly as the TPAUSE guard and for the same reason. Raw encodings rather
+ * than the <mwaitxintrin.h> intrinsics because those take their three
+ * operands in an order that has differed between compiler versions, while the
+ * instruction's register contract has not: MONITORX = 0f 01 fa (EAX = the
+ * address, ECX/EDX = extensions/hints), MWAITX = 0f 01 fb (EAX = the C-state
+ * hint, EBX = the TSC timeout, ECX = extensions, bit 1 enabling that timeout).
+ * This is the encoding and the contract Linux's own delay loop uses.
+ *
+ * The monitored line is this thread's own stack slot, never written, so the
+ * only wake is the timer -- the loop re-arms and the sibling stays held for
+ * the process's life. ~200k TSC ticks is ~40 us at this clock, matching the
+ * TPAUSE guard's slice. */
+static void bench_mwaitx_loop(void)
+{
+    volatile int watch = 0;
+    for (;;)
+    {
+        /* MONITORX: arm on &watch */
+        __asm__ __volatile__(".byte 0x0f, 0x01, 0xfa"
+                             :: "a"((void *)&watch), "c"(0), "d"(0));
+        /* MWAITX: C-state hint 0, timeout in EBX, ECX bit 1 = use the timer */
+        __asm__ __volatile__(".byte 0x0f, 0x01, 0xfb"
+                             :: "a"(0u), "b"(200000u), "c"(2u));
+    }
+}
+/* THE PAUSE FALLBACK (2026-09-28), for hosts with SMT but neither WAITPKG nor
+ * MONITORX. Without a guard those hosts run in the two-speed lottery this
+ * header exists to remove: measured on the Zen 4 laptop, engine order alone
+ * moved a cell by 28-60% and one 3D cell's ratio spanned 1.7-5.9x across
+ * repeats.
+ *
+ * The trade is why this is OPT-IN, never the default: a PAUSE spinner costs
+ * the timed thread ~12% where TPAUSE costs nothing measurable. That 12% is a
+ * LEVEL shift, not a variance -- it applies to both engines in the same
+ * process and the same window, so a RATIO is unaffected while the bimodality
+ * is removed. Absolute ns from a guarded run are therefore not comparable
+ * with an unguarded run's; the csv's ratio column is. VFFT_BENCH_GUARD=pause
+ * turns it on, =0 lifts the guard entirely. */
 #ifdef _WIN32
 __attribute__((target("waitpkg")))
 static DWORD WINAPI bench_sibling_guard(LPVOID arg)
@@ -123,6 +182,28 @@ static DWORD WINAPI bench_sibling_guard(LPVOID arg)
 static int bench_spawn_guard(int sib)
 {
     return CreateThread(NULL, 0, bench_sibling_guard, (LPVOID)(intptr_t)sib, 0, NULL) != NULL;
+}
+static DWORD WINAPI bench_sibling_guard_mwaitx(LPVOID arg)
+{
+    SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << (int)(intptr_t)arg);
+    bench_mwaitx_loop();
+    return 0;
+}
+static int bench_spawn_guard_mwaitx(int sib)
+{
+    return CreateThread(NULL, 0, bench_sibling_guard_mwaitx, (LPVOID)(intptr_t)sib, 0, NULL) != NULL;
+}
+static DWORD WINAPI bench_sibling_guard_pause(LPVOID arg)
+{
+    SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << (int)(intptr_t)arg);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+    for (;;)
+        _mm_pause();
+    return 0;
+}
+static int bench_spawn_guard_pause(int sib)
+{
+    return CreateThread(NULL, 0, bench_sibling_guard_pause, (LPVOID)(intptr_t)sib, 0, NULL) != NULL;
 }
 #else
 __attribute__((target("waitpkg")))
@@ -143,6 +224,37 @@ static int bench_spawn_guard(int sib)
     pthread_detach(t);
     return 1;
 }
+/* the Linux twins of the Windows MWAITX and PAUSE guards (the same loops,
+ * the affinity through pthread_setaffinity_np; the spinner keeps its default
+ * priority, which needs no capability) */
+static void *bench_sibling_guard_mwaitx(void *arg)
+{
+    cpu_set_t s;
+    CPU_ZERO(&s);
+    CPU_SET((int)(intptr_t)arg, &s);
+    pthread_setaffinity_np(pthread_self(), sizeof s, &s);
+    bench_mwaitx_loop();
+    return NULL;
+}
+static void *bench_sibling_guard_pause(void *arg)
+{
+    cpu_set_t s;
+    CPU_ZERO(&s);
+    CPU_SET((int)(intptr_t)arg, &s);
+    pthread_setaffinity_np(pthread_self(), sizeof s, &s);
+    for (;;)
+        _mm_pause();
+    return NULL;
+}
+static int bench_spawn_thread(void *(*fn)(void *), int sib)
+{
+    pthread_t t;
+    if (pthread_create(&t, NULL, fn, (void *)(intptr_t)sib) != 0) return 0;
+    pthread_detach(t);
+    return 1;
+}
+static int bench_spawn_guard_mwaitx(int sib) { return bench_spawn_thread(bench_sibling_guard_mwaitx, sib); }
+static int bench_spawn_guard_pause(int sib) { return bench_spawn_thread(bench_sibling_guard_pause, sib); }
 #endif
 
 /* pin the calling thread to one logical cpu at the bench's HIGH priority;
@@ -217,13 +329,29 @@ static void bench_guard_sibling(int cpu)
     static int done = 0;
     const char *g = getenv("VFFT_BENCH_GUARD");
     const int lifted = (g && !strcmp(g, "0"));
+    const int want_pause = (g && !strcmp(g, "pause"));
     const int sib = bench_sibling_of(cpu);
     if (done) return;
     done = 1;
+    /* Preference: the host's own free instruction first (TPAUSE on Intel,
+     * MWAITX on AMD -- neither costs the timed sibling anything measurable),
+     * then the PAUSE spinner only when asked for, since that one does cost
+     * ~12%. VFFT_BENCH_GUARD=pause forces the spinner, =0 lifts the guard. */
+    if (!lifted && want_pause && sib >= 0 && bench_spawn_guard_pause(sib))
+    {
+        printf("# sibling guard: cpu %d's SMT sibling cpu %d held by a PAUSE spinner "
+               "(VFFT_BENCH_GUARD=pause; ~12%% level cost to BOTH engines, ratios unaffected)\n",
+               cpu, sib);
+        return;
+    }
     if (!lifted && sib >= 0 && bench_has_waitpkg() && bench_spawn_guard(sib))
         printf("# sibling guard: cpu %d's SMT sibling cpu %d held by a TPAUSE-C0.2 thread for this process (VFFT_BENCH_GUARD=0 lifts)\n", cpu, sib);
+    else if (!lifted && sib >= 0 && bench_has_monitorx() && bench_spawn_guard_mwaitx(sib))
+        printf("# sibling guard: cpu %d's SMT sibling cpu %d held by a MONITORX/MWAITX thread for this process (AMD; VFFT_BENCH_GUARD=0 lifts, =pause forces the spinner)\n", cpu, sib);
     else
         printf("# sibling guard: cpu %d's sibling UNGUARDED (%s)\n", cpu,
-               lifted ? "VFFT_BENCH_GUARD=0" : sib < 0 ? "no SMT sibling" : !bench_has_waitpkg() ? "no WAITPKG on this host" : "thread create failed");
+               lifted ? "VFFT_BENCH_GUARD=0" : sib < 0 ? "no SMT sibling"
+               : (!bench_has_waitpkg() && !bench_has_monitorx()) ? "neither WAITPKG nor MONITORX on this host"
+               : "thread create failed");
 }
 #endif /* VFFT_GAUNTLET_SIBLING_GUARD_H */
