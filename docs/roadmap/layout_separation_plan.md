@@ -30,15 +30,13 @@ differs from section 4:
 - the two sides of the fork are `split/split_create.h` + `split/split_execute.h` and
   `il/il_create.h` + `il/il_execute.h` (unique basenames, rule 6);
 - `bridge/` holds `real_bridge.h` + `real_bridge_exec.h` (B1/B3 and the smooth-odd
-  race; temporary per D1) and `nat_ilp.h` (B4; temporary per D2). B2 (the IL 2D
+  race; temporary per D1). B4 (`nat_ilp.h`) is gone with D2. B2 (the IL 2D
   real ROWSPLIT reaching into a split child) is still inside `il2d_tier.h`: a call,
   not an include, so the checker does not see it;
 - `vfft_internal.h` (the plan struct) is in `common/plan/`, shared by both layouts
   while D3 is deferred (phase 8 skipped for now);
 - `wisdom2/` stays at the front: the legacy kind-3 reader and migration, the OOP
   codec aggregator and two gates span both layouts.
-- Known call-level crossing: the split in-place tier calls `_bank_nat_1d` in
-  `bridge/nat_ilp.h` (removed by the D2 step).
 
 Sections 1-3 are the pre-separation survey and keep their original paths.
 
@@ -482,6 +480,75 @@ not govern linkage. The checker reads the `#include` lines.
   - **Owner (2026-09-27): must do.** The IL in-place door gets its own `lay=il` row;
     `VFFT_NAT_ILP`, `ZCASC` and `CONV` leave the split enum; old files migrate; B4
     (`bridge/nat_ilp.h`) goes away.
+  - **Done (2026-09-28).**
+    - The bug it fixed: five lay-less `eng=stride mode=ilp` rows in the shipped
+      `wisdom2_oop.txt` made the split in-place NATURAL K=1 create skip its reorder
+      tape, so N = 128, 256, 255, 512 and 1024 came back in scrambled order (rel. err
+      1.3-1.5 against a long-double DFT).
+    - `common/abi/nat_modes.h`: the enum ends at `VFFT_NAT_PSWAP` (`VFFT_NAT_MAX`);
+      6-8 are retired and never reused. The IL in-place door already banks on its own
+      kind-3 `lay=il` row (since 2026-09-21); its handle marker is `VFFT_IL_NAT_K1`
+      (7, the old value, so plan fingerprints read the same).
+    - `split/wisdom/wisdom2_stride_reader.h`: a `@nat` row is a split verdict only
+      (`eng=stride`, mode 1-5). `ref=` signposts, `eng=zturn|k1` and unknown modes
+      read as absent. Deleted: the `zr` banked-loss marker (`raced`), the ILP
+      signpost encoder (`ref_ilp`, `ref_comp`) and the `@scrmode` lookups and banks,
+      which had no callers.
+    - `_bank_nat_1d` moved into `split/rank1/c2c_ip_create_split.h` and no longer
+      reads IL wisdom; `bridge/nat_ilp.h` is deleted. The natural arm also ignores a
+      mode above 5 from the frozen spike table (read only under the retired kill
+      switch).
+    - Spike (owner: its machinery is fixed later; do not break its wiring):
+      `spike_wisdom.txt` and its loader (`vfft_proto_wisdom_load`) are untouched.
+      The spike -> wisdom2 migrator's codec refuses modes 6-8, so its 15 retired rows
+      (5 ZCASC and 5 ILP `@nat`, 5 ZCASC `@natoop`) go to quarantine verbatim
+      (`unknown-nat-mode`). The migrator's reader gate and the export gate apply
+      their existing rule, "a codec-refused row must miss", to the natural tables.
+    - Migration: `vw2_migrate_drop_retired_nat(dir)` (`wisdom2/wisdom2_migrate.h`)
+      and `src/tools/wisdom2_drop_retired_nat.c` delete the retired rows from a store
+      directory (row order kept, idempotent; the save writes the current `@vw2`
+      header). The shipped files lost exactly 16 rows: `wisdom2_oop.txt` 6,
+      `wisdom2_scr.txt` 1, `Zen4/wisdom2_oop.txt` 6, `Zen4/wisdom2_scr.txt` 3. They
+      were deleted as text, which matches the tool's output below the header (the
+      Zen4 files keep `@vw2 1.2`).
+    - Proof, the order contract: a probe (split in-place NATURAL K=1 at N = 128, 256,
+      255, 512, 1024, 64 and 2048 against a long-double DFT) gives rel. err at most
+      6e-16 everywhere with the shipped store, an empty store, and a copy of the
+      pre-D2 store (its old rows read as absent). Before: five cells scrambled.
+    - Proof, spike: the stride migrator gate and the export gate on the shipped
+      spike file FAILED before D2 (10 mismatches each: the ILP `@nat` and the ZCASC
+      `@natoop` rows never round-tripped) and pass after. The migrated store and the
+      export differ from the pre-D2 ones only by the 15 retired rows; the scrambled
+      shard and the rfft export are byte-identical.
+    - Proof, build: both ISAs compile with the baseline warnings (20 at O2, 5 at
+      O3); the dependency rules are clean.
+    - The baseline harnesses' natural cell (`harness_golden.c`
+      `c2c.split.ip.natural`, `fp_sweep.c` `c2c.split.ip.nat`) moves from K=1 to
+      K=4, where the split natural verdict is banked (the shipped store banks it at
+      q=4 and q=32 only). At K=1 the cell was served by a `mode=ilp` row: the
+      recorded natural digests are the scrambled cell's, byte for byte (in
+      `src/tools/baseline/reference/golden_bits.txt` as well). With that row gone,
+      K=1 has no banked verdict and races, which the purity assert refuses. That
+      line of every recorded golden/fp reference changes by design; re-record it.
+    - R5 at avx2 and avx512 against the step reference: every difference is D2's.
+      - `roundtrip`: only the two edited shards' hashes; both still save identical
+        to what they loaded.
+      - `wisdom_replay`: exactly the sampled deleted rows are gone (247 -> 241
+        specs); nothing else moved, except one avx512 cell that flips on its own
+        (the open item below).
+      - `api_sweep`: its two split in-place NATURAL K=1 cells. N=256 was `nat=7`
+        with no tape; it now races (nothing is banked for it) and deploys a tape
+        (PSWAP at avx2, PURE_CYCLE at avx512). N=1024 takes the clock-free
+        opportunistic PSWAP.
+      - `golden_bits` / `fp_replay`: only the natural cell (now K=4: pure, the
+        same digests at both ISAs). In every reference, the recorded one and this
+        VM's, the old natural digests equal the scrambled and default cells': the
+        bug, recorded as the baseline.
+    - Open, not D2 (found by this check): the avx512 replay cell `t=c2c n=256 q=2
+      ord=nat place=oop` flips between two outputs from run to run with the same
+      binary and store, the pre-D2 binary and store included. Both are correct (rel.
+      err 3.2e-16 and 3.4e-16 against a long-double DFT), the fingerprint is the
+      same, and the race counter reads 0: something outside the counter picks.
 - **D3. The plan struct.** Recommended: a common header plus `sp`/`il` sub-structs. This
   touches every `h->il2d_*` access (a mechanical rename) and changes field offsets.
   - A cheaper alternative keeps the field names by using C11 anonymous sub-structs, so no

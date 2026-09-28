@@ -14,13 +14,11 @@
  * rfft rows are t=r2c (the router puts them in the REAL shard — the key
  * decides the shard, never the file).
  *
- * SIGNPOST law: a row signposts its recipe (ref=), never copies it. A
- * mode=zcasc row (vintage: the cascade engine is deleted) carries
- * `ref=cell(t=c2c,n=N,q=1,ord=scr,place=oop[,role=comp])` — the cascade's
- * kind-4 RECIPE — never a chain of its own; the READ twin reconstructs the
- * dummy deterministically when filling the legacy struct. mode=ilp rows
- * signpost the K=1 engine's row (ref_ilp) or are self-contained. Real
- * chains (mode=conv and the tape modes) migrate/bank VERBATIM.
+ * @nat rows are SPLIT verdicts only (owner decision D2): eng=stride and a
+ * mode from common/abi/nat_modes.h, the tape modes carrying their chain
+ * VERBATIM. Rows of the retired interleaved modes (mode=zcasc / ilp / conv,
+ * eng=zturn / k1, and their ref= signposts) read as ABSENT; the migrator's
+ * vw2_migrate_drop_retired_nat deletes them from a store.
  *
  * pad_me (legacy exec_me): emitted only when nonzero — absent =
  * not measured, exactly the legacy trailing-field law.
@@ -39,15 +37,15 @@ static const char *vw2_stride_var_name[4] = { "flat", "log3", "t1s", "buf" };
 /* @nat mode names, indexed by VFFT_NAT_* (0 = unset, never emitted).
  * leafip is RETIRED but old files may carry it — migrated verbatim,
  * never reused for a new meaning. */
-static const char *vw2_stride_mode_name[9] = {
-    "unset", "free", "leafip", "scr", "pcyc", "pswap", "zcasc", "ilp", "conv"
+static const char *vw2_stride_mode_name[VFFT_NAT_MAX + 1] = {
+    "unset", "free", "leafip", "scr", "pcyc", "pswap"
 };
 
 static inline int vw2__stride_mode_idx(const char *v)
 {
     int i;
     if (!v) return -1;
-    for (i = 1; i < 9; i++)
+    for (i = 1; i <= VFFT_NAT_MAX; i++)
         if (!strcmp(vw2_stride_mode_name[i], v)) return i;
     return -1;
 }
@@ -203,12 +201,10 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
     k.lay = lay;
     r = vw2_lookup(s, &k);
     if (!r) return 0;
-    {   /* family gate: eng names the winner (zturn = the cascade, vintage;
-         * k1 = the IL engines); eng=stride = a tape verdict OR a vintage
-         * row — both decode identically here. */
+    {   /* family gate: a split verdict is eng=stride. eng=zturn (the retired
+         * cascade) and eng=k1 (the IL engines) rows are not (D2). */
         const char *eng = vw2_rec_get(r, "eng");
-        if (!eng || (strcmp(eng, "stride") && strcmp(eng, "zturn") &&
-                     strcmp(eng, "k1")))
+        if (!eng || strcmp(eng, "stride"))
             return 0;
     }
     memset(e, 0, sizeof *e);
@@ -224,24 +220,14 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
                                     STRIDE_MAX_STAGES);
         if (nv != e->nf) return 0;
     } else if (vw2_rec_get(r, "ref")) {
-        /* signpost row: reconstruct the legacy dummy chain (nf=1,
-         * factors[0]=N, flat) — deterministic, reader-gate-checkable */
-        e->nf = 1;
-        e->factors[0] = N;
-        e->variants[0] = 0;
-    } else if (ord == VW2_ORD_SCR || e->mode != VFFT_NAT_ZCASC) {
-        /* BARE mode row: a self-contained verdict — the ord=scr prime/
-         * no-chain cells, and every non-cascade @nat mode (ilp rebuilds
-         * from N alone). A @nat CASCADE row stays strict
-         * below: it needs its chain or its signpost. */
-        e->nf = 1;
-        e->factors[0] = N;
-        e->variants[0] = 0;
+        return 0;   /* a signpost names an interleaved recipe: not a split verdict */
     } else {
-        return 0;                              /* a nat row needs one or the other */
+        /* BARE mode row: a self-contained verdict (the no-chain cells) */
+        e->nf = 1;
+        e->factors[0] = N;
+        e->variants[0] = 0;
     }
     e->use_dif = vw2__stride_geti(r, "dif", 0);
-    e->raced = vw2__stride_geti(r, "zr", 0); /* banked loss marker (absent = 0) */
     {
         const char *ns = vw2_rec_get(r, "ns");
         e->nat_ns = ns ? atof(ns) : 0.0;
@@ -262,31 +248,6 @@ static inline int vw2_stride_lookup_natoop(const vw2_store_t *s, uint8_t lay,
                                            vfft_proto_nat_entry_t *e)
 {
     return vw2__stride_lookup_natx(s, VW2_PL_OOP, lay, VW2_ORD_NAT, N, K,
-                                   e);
-}
-
-/* the SCRAMBLED in-place mode cell — the ord=scr twin of @nat: a
- * DEFAULT-order in-place IL create races ILP vs
- * ITS OWN convert incumbent and banks here (mode=ilp | mode=conv, the
- * banked loss). Its OWN key (ord differs from @nat) because the race
- * incumbents differ by order — verdicts CAN diverge. */
-static inline int vw2_stride_lookup_scrmode(const vw2_store_t *s,
-                                            uint8_t lay, int N, size_t K,
-                                            vfft_proto_nat_entry_t *e)
-{
-    return vw2__stride_lookup_natx(s, VW2_PL_IP, lay, VW2_ORD_SCR, N, K,
-                                   e);
-}
-
-/* the OOP twin of the scrambled mode cell (mode=zcasc | mode=free, its own
- * key: place differs from @scrmode, ord differs from @natoop). Its race was
- * the K=1 engine against the scrambled cascade, which is deleted: nothing
- * calls this lookup or its bank. */
-static inline int vw2_stride_lookup_scrmode_oop(const vw2_store_t *s,
-                                                uint8_t lay, int N, size_t K,
-                                                vfft_proto_nat_entry_t *e)
-{
-    return vw2__stride_lookup_natx(s, VW2_PL_OOP, lay, VW2_ORD_SCR, N, K,
                                    e);
 }
 
@@ -419,42 +380,13 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
     *why = NULL;
     memset(r, 0, sizeof *r);
     if (e->N < 2 || e->K < 1) { *why = "junk-cell"; return -1; }
-    if (e->mode <= 0 || e->mode >= 9) { *why = "unknown-nat-mode"; return -1; }
+    if (e->mode <= 0 || e->mode > VFFT_NAT_MAX) { *why = "unknown-nat-mode"; return -1; }
     vw2__stride_key(&r->key, VW2_T_C2C, e->N, e->K, ord, pl);
     r->key.lay = lay;
-    /* eng= names the WINNING family in the store's own vocabulary: the IL
-     * family's kind-3 token (k1) for ILP, and stride for the tape modes
-     * (which genuinely run the stride engine). Vintage rows may carry
-     * eng=zturn (the deleted cascade) or eng=stride regardless — accepted
-     * by the reader. */
-    VW2__SB_SET(1, "eng", e->mode == VFFT_NAT_ILP ? "k1" : "stride");
+    VW2__SB_SET(1, "eng", "stride");
     VW2__SB_SET(1, "mode", vw2_stride_mode_name[e->mode]);
-    if (e->mode == VFFT_NAT_ILP && e->ref_ilp > 0) {
-        /* ILP mode row: the ROUTE verdict; the engine's RECIPE (pair /
-         * chain3 with kernel forms, or Rader/Bluestein with its inner) is
-         * signposted, never copied (no arms on the ilp rows). ref_ilp
-         * names the row AS KEYED — a signpost spelled
-         * after the request dangles under ref_ok's exact match. */
-        char refbuf[112];
-        if (e->ref_ilp == 4)
-            snprintf(refbuf, sizeof refbuf,
-                     "cell(t=c2c,n=%d,q=1,ord=scr,place=ip,role=comp,lay=il)", e->N);
-        else if (e->ref_ilp == 5)   /* the SCRAMBLED request's own order cell */
-            snprintf(refbuf, sizeof refbuf,
-                     "cell(t=c2c,n=%d,q=1,ord=scr,place=oop,role=comp,lay=il)", e->N);
-        else
-            snprintf(refbuf, sizeof refbuf,
-                     "cell(t=c2c,n=%d,q=1,ord=nat,place=oop,role=comp%s)", e->N,
-                     e->ref_ilp == 1 ? ",lay=il" : e->ref_ilp == 2 ? ",lay=split" : "");
-        VW2__SB_SET(1, "ref", refbuf);
-    } else if (e->mode == VFFT_NAT_ILP || e->nf == 0
-               || (e->nf == 1 && e->factors[0] == e->N)) {
-        /* SELF-CONTAINED mode cell: mode=ilp (the K=1 IL tier rebuilds
-         * from N alone — its classic chain is the incumbent's, not its
-         * own), ord=scr prime / Rader (nf=0), or any other dummy-chain
-         * mode — emit NEITHER chain nor ref. A signpost here would
-         * dangle and make the row invisible forever (ref_ok filters it;
-         * the cell has no row to point at). */
+    if (e->nf == 0 || (e->nf == 1 && e->factors[0] == e->N)) {
+        /* SELF-CONTAINED mode cell (no chain of its own): emit no chain */
     } else {
         if (vw2__stride_emit_chain(r, e->nf, e->factors, e->variants, why)) return -1;
     }
@@ -518,36 +450,6 @@ static inline int vw2_stride_rec_from_nat_mig(vw2_rec_t *r,
 {
     return vw2_stride_rec_from_nat(r, e, pl, lay, VW2_ORD_NAT, src, from,
                                    why);
-}
-
-static inline int vw2_stride_bank_scrmode(vw2_store_t *st,
-                                          const vfft_proto_nat_entry_t *e,
-                                          uint8_t lay)
-{
-    vw2_rec_t rec;
-    const char *why = NULL;
-    if (vw2_stride_rec_from_nat(&rec, e, VW2_PL_IP, lay, VW2_ORD_SCR,
-                                "race", NULL, &why)) {
-        fprintf(stderr, "[wisdom2] stride scrmode bank refused (%s)\n",
-                why ? why : "?");
-        return -1;
-    }
-    return vw2__stride_bank(st, &rec);
-}
-
-static inline int vw2_stride_bank_scrmode_oop(vw2_store_t *st,
-                                              const vfft_proto_nat_entry_t *e,
-                                              uint8_t lay)
-{
-    vw2_rec_t rec;
-    const char *why = NULL;
-    if (vw2_stride_rec_from_nat(&rec, e, VW2_PL_OOP, lay, VW2_ORD_SCR,
-                                "race", NULL, &why)) {
-        fprintf(stderr, "[wisdom2] stride scrmode-oop bank refused (%s)\n",
-                why ? why : "?");
-        return -1;
-    }
-    return vw2__stride_bank(st, &rec);
 }
 
 /* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict ──────────────

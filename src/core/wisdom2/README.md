@@ -337,7 +337,7 @@ Every wisdom-touching file lives in this folder. Per family, three layers:
 | `wisdom2_fftnd.h` | rank≥2 (2D/3D) family: entry structs, recipe→plan builders (`*_plan_from_entry`), the 3D extraction scratch; plus the frozen-file loaders/lookups/creators | same split: builders permanent; loaders = kill-switch tier |
 | `wisdom2_2d_reader.h` | rank≥2 codec: `vw2_2d_*`/`vw2_3d_*` twins + bank constructors | permanent |
 | `wisdom2_selftest.h`, `wisdom2_2d_gate.h` | module-owned gates (benches are thin drivers) | permanent |
-| `wisdom2_migrate.h` | legacy-file migration + its gates | transitional (vendored, dies at v1.0) |
+| `wisdom2_migrate.h` | legacy-file migration + its gates; `vw2_migrate_drop_retired_nat` deletes the retired interleaved `@nat` rows (modes 6-8, D2) from a store directory (driver: `src/tools/wisdom2_drop_retired_nat.c`) | transitional (vendored, dies at v1.0) |
 
 **Serving flow** (every family, one shape): the create path asks the
 family's codec twin → the twin resolves a record (exact → wildcard tier)

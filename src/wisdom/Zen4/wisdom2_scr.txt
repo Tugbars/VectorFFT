@@ -10,9 +10,6 @@
 @legend see src/core/wisdom2/README.md
 @meta host=amd-f25m117 isa=avx2 l1d=49152
 @cell t=c2c n=1024 q=1 ord=scr place=ip | eng=stride chain=64.16 vars=flat.flat dif=0 | ran=1 ns=8382.42 metric=fwd1 units=ns src=race date=2026-09-03
-@cell t=c2c n=1024 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=1024,q=1,ord=nat,place=oop,role=comp,lay=il) dif=0 | ran=1 ns=1368.75 metric=fwd1 units=ns src=race date=2026-09-03
 @cell t=c2c n=4096 q=1 ord=scr place=ip | eng=stride chain=32.8.16 vars=flat.t1s.log3 dif=0 | ran=1 ns=37203.13 metric=fwd1 units=ns src=race date=2026-09-03
-@cell t=c2c n=4096 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=4096,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=13140.62 metric=fwd1 units=ns src=race date=2026-09-03
 @cell t=c2c n=2048 q=1 ord=scr place=ip | eng=stride chain=8.8.32 vars=flat.t1s.t1s dif=0 | ran=1 ns=15680.47 metric=fwd1 units=ns src=race date=2026-09-03
-@cell t=c2c n=2048 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=2048,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=5115.62 metric=fwd1 units=ns src=race date=2026-09-03
 @cell t=c2c n=512 q=1 ord=scr place=ip | eng=stride chain=32.16 vars=flat.t1s dif=0 | ran=1 ns=3553.32 metric=fwd1 units=ns src=race date=2026-09-03

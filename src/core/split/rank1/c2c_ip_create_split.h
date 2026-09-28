@@ -13,6 +13,32 @@
 #ifndef VFFT_SPLIT_C2C_IP_CREATE_SPLIT_H
 #define VFFT_SPLIT_C2C_IP_CREATE_SPLIT_H
 
+/* bank the in-place natural verdict (@nat, ord=nat) of the split stride
+ * store: the mode, the deployed chain, the measured total. Memory only;
+ * persistence behind config.wisdom_write. The order axis does not share a
+ * cell with the scrambled one: a natural-order create can never perturb the
+ * scrambled plan, and vice versa. */
+static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                         int N, size_t K, int mode, double ns,
+                         const int *fac, const int *var, int nf, int use_dif)
+{
+    vfft_proto_nat_entry_t nn;
+    memset(&nn, 0, sizeof nn);
+    nn.N = N;
+    nn.K = K;
+    nn.mode = mode;
+    nn.nat_ns = ns;
+    nn.nf = nf;
+    nn.use_dif = use_dif;
+    for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
+    {
+        nn.factors[s] = fac[s];
+        nn.variants[s] = var[s];
+    }
+    vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0, _vw2_lay_of(cfg));
+    _vw2_persist(W, cfg);
+}
+
 /* ── the split tier's ONE exit. Every handle this tier returns passes through
  * here, so a new early exit cannot skip the shared post-step (a skipped exit
  * ships mt_unsafe=0 — calloc's default, which spells "proven safe" — without
@@ -265,15 +291,17 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
             const vfft_proto_nat_entry_t *ne =
                 W->vw2_off_stride ? vfft_proto_nat_lookup(&W->c2c, N, K)
                                   : (vw2_stride_lookup_nat(&W->vw2, _vw2_lay_of(cfg), N, K, &neb) ? &neb : NULL);
+            /* modes 6-8 name interleaved engines (retired from this enum by D2,
+             * nat_modes.h): no split verdict, so the cell measures. The wisdom2
+             * reader already reads such rows as absent; the frozen spike table
+             * still carries them (read only under the kill switch, which
+             * nothing sets today). */
+            if (ne && ne->mode > VFFT_NAT_MAX)
+                ne = NULL;
             int mode = (ne && !cfg->recalibrate) ? ne->mode : VFFT_NAT_UNSET;
-            const int nat_raced = (ne && !cfg->recalibrate &&
-                                   !W->vw2_off_stride) ? ne->raced : 0;
             if (p->num_stages <= 1)
                 mode = VFFT_NAT_FREE; /* single-stage / prime override: already natural, no tape */
-            /* FREE needs no tape. ZCASC and ILP name interleaved engines,
-             * which this split path does not build: they skip the tape build. */
-            if (mode != VFFT_NAT_FREE && mode != VFFT_NAT_ZCASC &&
-                mode != VFFT_NAT_ILP)
+            if (mode != VFFT_NAT_FREE) /* FREE needs no tape */
             {
                 /* Self-contained natural — the DEPLOYED plan + its OWN chain drive everything; this path
                  * NEVER reads the scrambled entry. CONSUME (warm ne) rebuilds the deployed plan from ne's

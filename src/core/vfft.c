@@ -1117,7 +1117,6 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 
 #include "il/planning/dp_planner_il.h" /* the IL plan race at create (2026-09-03): pair x forms, chain3 x forms */
 #include "il/rank1/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */
-#include "bridge/nat_ilp.h" /* B4: the @nat -> IL recipe signpost (temporary, D2) */
 #include "il/rank3/fftnd_il.h"     /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
 /* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
  * allocator and the padded-batch create tier used to retype this sequence
