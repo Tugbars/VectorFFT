@@ -25,6 +25,14 @@ writes, under docs/architecture/generated/:
                     vfft_execute and each side of their layout fork
   graph.json        the same data, for any other tool
 
+SVG copies, for reading without a Mermaid viewer, go to docs/architecture/svg/
+with the same layout (a markdown file with several diagrams gives one SVG per
+section). They are rendered by mermaid-cli (https://github.com/mermaid-js/
+mermaid-cli): set MMDC to its mmdc, or put mmdc on PATH, or let the tool run
+`npx -y @mermaid-js/mermaid-cli`. A Chromium is needed; set CHROME to its
+binary if puppeteer cannot find one. svg/manifest.json records a hash of each
+diagram's source, so --check reports stale SVGs without needing mermaid-cli.
+
 The call graph is best effort, not a compiler: both sides of every #if are
 read, and calls through function pointers or macros are not followed.
 
@@ -39,12 +47,20 @@ USAGE (from anywhere in the repo)
                                               neighbours to stdout; X is a file
                                               (ztt.h), a folder (split/real) or a zone
                                               (il). --depth N widens it (default 1).
+  python src/tools/archgraph.py --svg         also render every diagram to
+                                              docs/architecture/svg/ (needs mermaid-cli:
+                                              $MMDC, mmdc on PATH, or npx; see below)
   python src/tools/archgraph.py --calls F     print the call graph of function F (as deep
                                               as fits ~70 nodes, or --depth N levels);
                                               --up: its callers instead
 """
 import argparse
+import concurrent.futures
+import hashlib
 import json
+import shutil
+import subprocess
+import tempfile
 import os
 import re
 import sys
@@ -57,6 +73,7 @@ import toolchain  # noqa: E402
 ROOT = toolchain.ROOT
 CORE = toolchain.CORE
 OUT = os.path.join(ROOT, "docs", "architecture", "generated")
+SVG = os.path.join(ROOT, "docs", "architecture", "svg")
 ZONES = ["common", "split", "il", "bridge", "wisdom2", "front"]
 ZONE_ROLE = {
     "common": "shared by both layouts: ABI types, math, support, the wisdom2 store core, the plan struct",
@@ -549,12 +566,110 @@ def focus(files, what, depth):
         print("- %s: %s" % (r, files[r]["role"]))
 
 
+# ---------------------------------------------------------------- SVG
+_BLOCK = re.compile(r"(?:^## (.+)\n(?:.*\n)*?)?```mermaid\n(.*?)```", re.M)
+
+
+def svg_jobs(want):
+    """{svg path relative to svg/: mermaid source} for every diagram in the output."""
+    jobs = {}
+    for name, text in sorted(want.items()):
+        if not name.endswith(".md"):
+            continue
+        blocks, section = [], None
+        for line_block in re.split(r"(?m)^(?=## |```mermaid)", text):
+            if line_block.startswith("## "):
+                section = line_block[3:].split("\n", 1)[0].strip()
+            m = re.match(r"```mermaid\n(.*?)```", line_block, re.S)
+            if m:
+                blocks.append((section, m.group(1)))
+        base = name[:-3]
+        for i, (sec, src) in enumerate(blocks):
+            if len(blocks) == 1:
+                out = base + ".svg"
+            else:
+                slug = re.sub(r"[^a-z0-9]+", "_", (sec or str(i + 1)).lower()).strip("_")
+                out = "%s-%s.svg" % (base, slug)
+            jobs[out] = src
+    return jobs
+
+
+def svg_manifest(jobs):
+    return json.dumps({k: hashlib.sha256(v.encode()).hexdigest()[:16] for k, v in sorted(jobs.items())},
+                      indent=1, sort_keys=True) + "\n"
+
+
+def _mmdc():
+    if os.environ.get("MMDC"):
+        return [os.environ["MMDC"]]
+    if shutil.which("mmdc"):
+        return [shutil.which("mmdc")]
+    if shutil.which("npx"):
+        return [shutil.which("npx"), "-y", "@mermaid-js/mermaid-cli"]
+    sys.exit("archgraph: --svg needs mermaid-cli (set MMDC, put mmdc on PATH, or install node for npx)")
+
+
+def render_svgs(jobs):
+    cmd = _mmdc()
+    tmp = tempfile.mkdtemp(prefix="archgraph_")
+    cfg = {"args": ["--no-sandbox"]}
+    if os.environ.get("CHROME"):
+        cfg["executablePath"] = os.environ["CHROME"]
+    pp = os.path.join(tmp, "puppeteer.json")
+    with open(pp, "w") as fh:
+        json.dump(cfg, fh)
+    # plain SVG <text> labels instead of HTML in <foreignObject>: image viewers
+    # and editors that are not browsers draw foreignObject as empty boxes
+    mc = os.path.join(tmp, "mermaid.json")
+    with open(mc, "w") as fh:
+        json.dump({"htmlLabels": False, "flowchart": {"htmlLabels": False, "wrappingWidth": 600}}, fh)
+
+    def one(item):
+        k, (name, src) = item
+        inp = os.path.join(tmp, "%d.mmd" % k)
+        with open(inp, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        out = os.path.join(SVG, name)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        r = subprocess.run(cmd + ["-q", "-p", pp, "-c", mc, "-b", "white", "-i", inp, "-o", out],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            # mermaid-cli embeds its web font as base64 (~250 KB per file); the
+            # SVG names arial / sans-serif after it, so drop the embedded copy
+            with open(out, encoding="utf-8") as fh:
+                svg = fh.read()
+            svg = re.sub(r"@font-face\s*\{[^}]*\}", "", svg)
+            with open(out, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(svg)
+        return name, r.returncode, (r.stderr or r.stdout)[-300:]
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(4) as ex:
+            res = list(ex.map(one, enumerate(sorted(jobs.items()))))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    bad = [r for r in res if r[1]]
+    for name, _, err in bad:
+        print("archgraph: render FAILED for %s: %s" % (name, err.strip()))
+    if bad:
+        sys.exit(1)
+    for dp, _, fs in os.walk(SVG):
+        for fn in fs:
+            rel = os.path.relpath(os.path.join(dp, fn), SVG).replace(os.sep, "/")
+            if rel not in jobs and rel != "manifest.json":
+                os.remove(os.path.join(dp, fn))
+    with open(os.path.join(SVG, "manifest.json"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(svg_manifest(jobs))
+    print("archgraph: rendered %d SVG(s) to %s" % (len(jobs), os.path.relpath(SVG, ROOT)))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--focus")
     ap.add_argument("--depth", type=int, default=1)
     ap.add_argument("--calls", help="print the call graph of one function")
+    ap.add_argument("--svg", action="store_true", help="also render docs/architecture/svg/")
     ap.add_argument("--up", action="store_true", help="with --calls: its callers instead")
     a = ap.parse_args()
     files, funcs = scan()
@@ -587,6 +702,10 @@ def main():
                     rel = os.path.relpath(os.path.join(dp, fn), OUT).replace(os.sep, "/")
                     if rel not in want:
                         stale.append(rel + " (no longer generated)")
+        mf = os.path.join(SVG, "manifest.json")
+        if os.path.isdir(SVG) and (not os.path.isfile(mf) or
+                                   open(mf, encoding="utf-8").read() != svg_manifest(svg_jobs(want))):
+            stale.append("../svg/ (run with --svg to re-render)")
         if stale:
             print("archgraph: %d stale file(s) in docs/architecture/generated/ "
                   "(run python src/tools/archgraph.py):" % len(stale))
@@ -606,6 +725,8 @@ def main():
             if rel not in want:
                 os.remove(os.path.join(dp, fn))
     print("archgraph: wrote %d file(s) to %s" % (len(want), os.path.relpath(OUT, ROOT)))
+    if a.svg:
+        render_svgs(svg_jobs(want))
     return 0
 
 

@@ -17,7 +17,10 @@ and never edited by hand, so it always matches the tree it was generated from.
 | [`generated/graph.json`](generated/graph.json) | The same data, for other tools. |
 
 The diagrams are [Mermaid](https://mermaid.js.org/); GitHub, GitLab and VS Code
-render them inline.
+render them inline. The same diagrams are also rendered as images in
+[`svg/`](svg/), same layout (`svg/zones.svg`, `svg/calls/create.svg`,
+`svg/folders/split__real.svg`; the per-zone sections of `folders.md` are
+`svg/folders-split.svg` and so on), for reading in any browser or image viewer.
 
 ## The zones in one paragraph
 
@@ -38,6 +41,19 @@ are enforced by `src/tools/baseline/hygiene.py`.
 python src/tools/archgraph.py            # rewrite docs/architecture/generated/
 python src/tools/archgraph.py --check    # exit 1 and list what is stale
 ```
+
+To refresh the SVG images too:
+
+```
+python src/tools/archgraph.py --svg
+```
+
+This needs [mermaid-cli](https://github.com/mermaid-js/mermaid-cli) and a Chromium:
+set `MMDC` to its `mmdc`, put `mmdc` on PATH, or let the tool run
+`npx -y @mermaid-js/mermaid-cli` (needs Node). Set `CHROME` to a Chromium binary
+if puppeteer cannot find one. `svg/manifest.json` holds a hash of each diagram's
+source, so `--check` also reports SVGs that need re-rendering, without needing
+mermaid-cli itself.
 
 `hygiene.py` runs the check as part of the dependency check, so a change that
 moves or re-wires files reports stale graphs until they are regenerated.
