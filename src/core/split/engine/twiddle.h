@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "common/math/pi.h"
+#include "common/math/tw_exact.h" /* vfft_cs2pi_exact: every twiddle, rounded once (D5) */
 
 /* ────────────────────────────────────────────────────────────────────
  * Per-stage layout: radix, stride, num_groups, group_base[].
@@ -206,8 +207,9 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
         for (int j = 0; j < R; j++) {
             int tw_exp = (int)(((long long)k_prev * ow_prev * (j * S_s + lower_data_pos)) % N);
             if (tw_exp < 0) tw_exp += N;
-            double angle = -2.0 * VFFT_PI * (double)tw_exp / (double)N;
-            double wr = cos(angle), wi = sin(angle);
+            double wr, wi;
+            vfft_cs2pi_exact(tw_exp, N, &wr, &wi);
+            wi = -wi; /* W_N^e = exp(-2 pi i e / N) */
             for (size_t kk = 0; kk < K; kk++) {
                 st->cf_all_re[(size_t)g * R * K + (size_t)j * K + kk] = wr;
                 st->cf_all_im[(size_t)g * R * K + (size_t)j * K + kk] = wi;
@@ -224,8 +226,9 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
             /* Common factor for leg 0. */
             int cf_exp = (int)(((long long)k_prev * ow_prev * lower_data_pos) % N);
             if (cf_exp < 0) cf_exp += N;
-            double cf_angle = -2.0 * VFFT_PI * (double)cf_exp / (double)N;
-            double cfr = cos(cf_angle), cfi = sin(cf_angle);
+            double cfr, cfi;
+            vfft_cs2pi_exact(cf_exp, N, &cfr, &cfi);
+            cfi = -cfi;
             st->cf0_re[g] = cfr;
             st->cf0_im[g] = cfi;
 
@@ -246,12 +249,14 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
              * this format. Forward LOG3 uses grp_tw (filled separately below)
              * with raw per_leg — that path doesn't read tw_scalar. */
             for (int j = 1; j < R; j++) {
-                int leg_exp = (int)(((long long)k_prev * ow_prev * j * S_s) % N);
-                if (leg_exp < 0) leg_exp += N;
-                double leg_angle = -2.0 * VFFT_PI * (double)leg_exp / (double)N;
-                double lr = cos(leg_angle), li = sin(leg_angle);
-                double wr = cfr * lr - cfi * li;
-                double wi = cfr * li + cfi * lr;
+                /* cf * leg is W_N^(cf_exp + leg_exp): evaluated from the summed
+                 * exponent, rounded once, not as a product of two rounded
+                 * twiddles (D5). */
+                int c_exp = (int)(((long long)k_prev * ow_prev * (j * S_s + lower_data_pos)) % N);
+                if (c_exp < 0) c_exp += N;
+                double wr, wi;
+                vfft_cs2pi_exact(c_exp, N, &wr, &wi);
+                wi = -wi;
                 stw_r[j - 1] = wr;
                 stw_i[j - 1] = wi;
             }
@@ -262,8 +267,9 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
                 for (int j = 1; j < R; j++) {
                     int leg_exp = (int)(((long long)k_prev * ow_prev * j * S_s) % N);
                     if (leg_exp < 0) leg_exp += N;
-                    double leg_angle = -2.0 * VFFT_PI * (double)leg_exp / (double)N;
-                    double lr = cos(leg_angle), li = sin(leg_angle);
+                    double lr, li;
+                    vfft_cs2pi_exact(leg_exp, N, &lr, &li);
+                    li = -li;
                     size_t base_idx = (size_t)(j - 1) * K;
                     for (size_t kk = 0; kk < K; kk++) {
                         tw_r[base_idx + kk] = lr;
@@ -419,8 +425,9 @@ static inline void vfft_proto_compute_twiddles_dif(stride_plan_t *plan, int s)
         for (int j = 0; j < R; j++) {
             int tw_exp = (int)(((long long)j * ow_prev * g_factor) % N);
             if (tw_exp < 0) tw_exp += N;
-            double angle = -2.0 * VFFT_PI * (double)tw_exp / (double)N;
-            double wr = cos(angle), wi = sin(angle);
+            double wr, wi;
+            vfft_cs2pi_exact(tw_exp, N, &wr, &wi);
+            wi = -wi; /* W_N^e = exp(-2 pi i e / N) */
             for (size_t kk = 0; kk < K; kk++) {
                 st->cf_all_re[(size_t)g * R * K + (size_t)j * K + kk] = wr;
                 st->cf_all_im[(size_t)g * R * K + (size_t)j * K + kk] = wi;
@@ -446,8 +453,9 @@ static inline void vfft_proto_compute_twiddles_dif(stride_plan_t *plan, int s)
             for (int j = 1; j < R; j++) {
                 int leg_exp = (int)(((long long)j * ow_prev * g_factor) % N);
                 if (leg_exp < 0) leg_exp += N;
-                double leg_angle = -2.0 * VFFT_PI * (double)leg_exp / (double)N;
-                double lr = cos(leg_angle), li = sin(leg_angle);
+                double lr, li;
+                vfft_cs2pi_exact(leg_exp, N, &lr, &li);
+                li = -li;
                 stw_r[j - 1] = lr;
                 stw_i[j - 1] = li;
                 size_t base_idx = (size_t)(j - 1) * K;

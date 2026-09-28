@@ -30,6 +30,7 @@
 #define STRIDE_R2C_H
 #include "build_isa.h" /* VFFT_BUILD_ISA_AVX512: the build's ISA (D4) */
 #include "common/math/pi.h"
+#include "common/math/tw_exact.h" /* vfft_cs2pi_exact: every twiddle, rounded once (D5) */
 
 #include "executor.h"
 
@@ -186,9 +187,10 @@ static void _r2c_init_twiddles(int N, double *tw_re, double *tw_im)
     int half_N = N / 2;
     for (int k = 0; k < half_N; k++)
     {
-        double angle = -2.0 * VFFT_PI * (double)k / (double)N;
-        tw_re[k] = cos(angle);
-        tw_im[k] = sin(angle);
+        double c, s;
+        vfft_cs2pi_exact(k, N, &c, &s);
+        tw_re[k] = c;
+        tw_im[k] = -s;
     }
 }
 

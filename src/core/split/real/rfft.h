@@ -27,6 +27,7 @@
 #define VFFT_RFFT_H
 #include "build_isa.h" /* VFFT_BUILD_ISA_AVX512: the build's ISA (D4) */
 #include "common/math/pi.h"
+#include "common/math/tw_exact.h" /* vfft_cs2pi_exact: every twiddle, rounded once (D5) */
 
 #include <stdlib.h>
 #include <string.h>
@@ -347,10 +348,10 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
              * Twiddle slot j-1; slot r-1 in each column block is dead. */
             for (int k = 1; k <= st->kmax; k++) {
                 for (int j = 1; j < r; j++) {
-                    double th = 2.0 * VFFT_PI * (double)j * (double)k /
-                                (double)st->np;
-                    st->tw_re[(size_t)(k - 1) * r + (j - 1)] = cos(th);
-                    st->tw_im[(size_t)(k - 1) * r + (j - 1)] = -sin(th);
+                    double c, s;
+                    vfft_cs2pi_exact((long long)j * k, st->np, &c, &s);
+                    st->tw_re[(size_t)(k - 1) * r + (j - 1)] = c;
+                    st->tw_im[(size_t)(k - 1) * r + (j - 1)] = -s;
                 }
                 st->tw_re[(size_t)(k - 1) * r + (r - 1)] = 0.0;
                 st->tw_im[(size_t)(k - 1) * r + (r - 1)] = 0.0;
@@ -362,11 +363,12 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
             if (!st->mid_c || !st->mid_s) goto fail;
             for (int s = 0; s < r; s++)
                 for (int j = 0; j < r; j++) {
-                    double th = -2.0 * VFFT_PI * (double)j *
-                        ((double)st->m / 2.0 + (double)s * st->m) /
-                        (double)st->np;
-                    st->mid_c[s * r + j] = cos(th);
-                    st->mid_s[s * r + j] = sin(th);
+                    /* 2 pi j (m/2 + s m) / np = 2 pi j (m + 2 s m) / (2 np) */
+                    double c, sn;
+                    vfft_cs2pi_exact((long long)j * ((long long)st->m + 2LL * s * st->m),
+                                     2LL * st->np, &c, &sn);
+                    st->mid_c[s * r + j] = c;
+                    st->mid_s[s * r + j] = -sn;
                 }
         }
     }

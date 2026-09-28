@@ -54,6 +54,7 @@
 #endif
 
 #include "common/math/pi.h"
+#include "common/math/tw_exact.h" /* vfft_cs2pi_exact: every twiddle, rounded once (D5) */
 
 
 /* ═══════════════════════════════════════════════════════════════
@@ -528,9 +529,8 @@ static stride_plan_t *stride_dct2_plan(int N, size_t K, stride_plan_t *r2c_plan_
     d->sin_tw = (double *)malloc((size_t)n_tw * sizeof(double));
     if (!d->cos_tw || !d->sin_tw) { _dct2_destroy(d); return NULL; }
     for (int i = 0; i < n_tw; i++) {
-        double angle = VFFT_PI * (double)i / (2.0 * (double)N);
-        d->cos_tw[i] = cos(angle);
-        d->sin_tw[i] = sin(angle);
+        /* pi i / (2N) = 2 pi i / (4N) */
+        vfft_cs2pi_exact(i, 4LL * N, &d->cos_tw[i], &d->sin_tw[i]);
     }
 
     /* Internal scratch: N*K (HALF the size of the textbook 2N-R2C approach) */
