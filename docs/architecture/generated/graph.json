@@ -597,7 +597,7 @@
     "common/policy/policy_order.h",
     "common/policy/policy_cache.h"
    ],
-   "lines": 405,
+   "lines": 428,
    "role": "THE planning policy: the one place a law about a REQUEST is written (docs/design/planning_policy_design.md).",
    "zone": "il"
   },
@@ -735,7 +735,7 @@
     "common/math/tw_exact.h",
     "il/rank1/k1_fourstep_band.h"
    ],
-   "lines": 624,
+   "lines": 625,
    "role": "the K=1 INTERLEAVED four-step above ZTURN-T's ceiling (docs/design/k1_fourstep_design.md): the standard method at 256k and above.",
    "zone": "il"
   },
@@ -835,7 +835,7 @@
     "il/rank2/fft2d_real_il.h",
     "common/support/diag.h"
    ],
-   "lines": 908,
+   "lines": 911,
    "role": "native IL 2D: the column-chain machinery.",
    "zone": "il"
   },
@@ -4995,7 +4995,7 @@
     "vfft_cs2pi_exact"
    ],
    "file": "il/rank2/il2d_cols.h",
-   "line": 727,
+   "line": 730,
    "refs": []
   },
   "_il2d_blu_cols": {
@@ -5010,7 +5010,7 @@
     "_il2d_blu_cols_range"
    ],
    "file": "il/rank2/il2d_cols.h",
-   "line": 843,
+   "line": 846,
    "refs": []
   },
   "_il2d_blu_cols_range": {
@@ -5025,7 +5025,7 @@
     "_il2d_row_cmul"
    ],
    "file": "il/rank2/il2d_cols.h",
-   "line": 811,
+   "line": 814,
    "refs": []
   },
   "_il2d_blu_drop_tables": {
@@ -5071,7 +5071,7 @@
     "vfft_vtw512_blocks_doubles"
    ],
    "file": "il/rank2/il2d_cols.h",
-   "line": 850,
+   "line": 853,
    "refs": []
   },
   "_il2d_c2c_build_clone_sets_all": {
@@ -5325,7 +5325,7 @@
    ],
    "calls": [],
    "file": "il/rank2/il2d_cols.h",
-   "line": 365,
+   "line": 368,
    "refs": []
   },
   "_il2d_col_pass_nat": {
@@ -5341,7 +5341,7 @@
     "_il2d_nat_leaf_range"
    ],
    "file": "il/rank2/il2d_cols.h",
-   "line": 512,
+   "line": 515,
    "refs": []
   },
   "_il2d_col_pass_nat_range": {
@@ -5352,7 +5352,7 @@
     "_il2d_nat_leaf_block_st"
    ],
    "file": "il/rank2/il2d_cols.h",
-   "line": 570,
+   "line": 573,
    "refs": []
   },
   "_il2d_col_pass_nat_strip": {
@@ -5362,7 +5362,7 @@
    ],
    "calls": [],
    "file": "il/rank2/il2d_cols.h",
-   "line": 639,
+   "line": 642,
    "refs": []
   },
   "_il2d_col_pass_range": {
@@ -5374,7 +5374,7 @@
    ],
    "calls": [],
    "file": "il/rank2/il2d_cols.h",
-   "line": 337,
+   "line": 340,
    "refs": []
   },
   "_il2d_col_stages": {
@@ -5477,7 +5477,7 @@
     "_vfft_warn"
    ],
    "file": "il/rank2/il2d_cols.h",
-   "line": 406,
+   "line": 409,
    "refs": []
   },
   "_il2d_forms_serve": {
@@ -5564,7 +5564,7 @@
     "_il2d_nat_stage_out"
    ],
    "file": "il/rank2/il2d_cols.h",
-   "line": 281,
+   "line": 284,
    "refs": []
   },
   "_il2d_nat_leaf_blocks": {
@@ -5593,7 +5593,7 @@
     "_il2d_nat_leaf_block_st"
    ],
    "file": "il/rank2/il2d_cols.h",
-   "line": 306,
+   "line": 309,
    "refs": []
   },
   "_il2d_nat_perm": {
@@ -5605,7 +5605,7 @@
    ],
    "calls": [],
    "file": "il/rank2/il2d_cols.h",
-   "line": 448,
+   "line": 451,
    "refs": []
   },
   "_il2d_nat_sscr_build": {
@@ -5641,7 +5641,7 @@
    ],
    "calls": [],
    "file": "il/rank2/il2d_cols.h",
-   "line": 269,
+   "line": 272,
    "refs": []
   },
   "_il2d_nat_stage_of": {
@@ -5665,7 +5665,7 @@
     "_il2d_row_stream"
    ],
    "file": "il/rank2/il2d_cols.h",
-   "line": 260,
+   "line": 263,
    "refs": []
   },
   "_il2d_phlog_on": {
@@ -7928,7 +7928,7 @@
    ],
    "calls": [],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 70,
+   "line": 71,
    "refs": []
   },
   "_k1fs_row_sb": {
@@ -7951,7 +7951,7 @@
    ],
    "calls": [],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 422,
+   "line": 423,
    "refs": []
   },
   "_k1fs_run_store": {
@@ -7960,7 +7960,7 @@
    ],
    "calls": [],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 394,
+   "line": 395,
    "refs": []
   },
   "_k1fs_sb_admit": {
@@ -7972,7 +7972,7 @@
     "vfft_policy_exceeds_l3"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 555,
+   "line": 556,
    "refs": []
   },
   "_k1fs_sb_bwd": {
@@ -7985,7 +7985,7 @@
     "_k1fs_run_load"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 472,
+   "line": 473,
    "refs": []
   },
   "_k1fs_sb_chains": {
@@ -7997,7 +7997,7 @@
     "_il2d_enum_rec"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 563,
+   "line": 564,
    "refs": []
   },
   "_k1fs_sb_execute": {
@@ -8011,7 +8011,7 @@
     "thread_pool_workers_for"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 526,
+   "line": 527,
    "refs": []
   },
   "_k1fs_sb_fwd": {
@@ -8024,7 +8024,7 @@
     "_k1fs_run_store"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 451,
+   "line": 452,
    "refs": []
   },
   "_k1fs_sb_phase": {
@@ -8036,7 +8036,7 @@
     "thread_pool_run"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 502,
+   "line": 503,
    "refs": []
   },
   "_k1fs_sb_tramp": {
@@ -8048,7 +8048,7 @@
     "_k1fs_sb_fwd"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 494,
+   "line": 495,
    "refs": []
   },
   "_k1fs_tp_tramp": {
@@ -8059,7 +8059,7 @@
     "_k1fs_transpose_range"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 361,
+   "line": 362,
    "refs": []
   },
   "_k1fs_transpose": {
@@ -8072,7 +8072,7 @@
     "thread_pool_workers_for"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 367,
+   "line": 368,
    "refs": [
     "_k1fs_tp_tramp"
    ]
@@ -8084,7 +8084,7 @@
    ],
    "calls": [],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 300,
+   "line": 301,
    "refs": []
   },
   "_k1ord_arm_run": {
@@ -15374,10 +15374,11 @@
     "vfft_create",
     "vfft_cs2pi_exact",
     "vfft_k1fs_band",
-    "vfft_k1fs_destroy"
+    "vfft_k1fs_destroy",
+    "vfft_policy_k1fs_inner_order"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 159,
+   "line": 160,
    "refs": []
   },
   "vfft_k1fs_destroy": {
@@ -15395,7 +15396,7 @@
     "vfft_destroy"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 129,
+   "line": 130,
    "refs": []
   },
   "vfft_k1fs_execute": {
@@ -15412,7 +15413,7 @@
     "vfft_execute"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 580,
+   "line": 581,
    "refs": []
   },
   "vfft_k1fs_execute_bwd": {
@@ -15423,7 +15424,7 @@
     "vfft_k1fs_execute"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 622,
+   "line": 623,
    "refs": []
   },
   "vfft_k1fs_execute_fwd": {
@@ -15434,14 +15435,14 @@
     "vfft_k1fs_execute"
    ],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 620,
+   "line": 621,
    "refs": []
   },
   "vfft_k1fs_pos_of_bin": {
    "callers": [],
    "calls": [],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 151,
+   "line": 152,
    "refs": []
   },
   "vfft_k1fs_splits": {
@@ -15452,7 +15453,7 @@
    ],
    "calls": [],
    "file": "il/rank1/k1_fourstep.h",
-   "line": 82,
+   "line": 83,
    "refs": []
   },
   "vfft_natorder_2d_build_axis": {
@@ -16353,7 +16354,7 @@
    "callers": [],
    "calls": [],
    "file": "il/planning/policy_il.h",
-   "line": 399,
+   "line": 422,
    "refs": []
   },
   "vfft_policy_ilnd_mt_serial_arm": {
@@ -16382,7 +16383,16 @@
    ],
    "calls": [],
    "file": "il/planning/policy_il.h",
-   "line": 355,
+   "line": 378,
+   "refs": []
+  },
+  "vfft_policy_k1fs_inner_order": {
+   "callers": [
+    "vfft_k1fs_create"
+   ],
+   "calls": [],
+   "file": "il/planning/policy_il.h",
+   "line": 341,
    "refs": []
   },
   "vfft_policy_ord": {

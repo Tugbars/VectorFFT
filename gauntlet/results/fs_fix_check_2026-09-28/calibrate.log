@@ -1,0 +1,6 @@
+524288     banked       123ms replayed  fs
+1048576    banked        95ms replayed  fs
+2097152    banked        93ms replayed  fs
+4194304    banked       100ms replayed  fs
+8388608    banked       104ms replayed  fs
+16777216   banked       126ms replayed  fs

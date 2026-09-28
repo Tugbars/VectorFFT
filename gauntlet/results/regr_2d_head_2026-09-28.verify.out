@@ -1,0 +1,62 @@
+2026-09-28 17:22:47 verify: 59 cells, contract 2D out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+4x4     csk+rb  oop fwd 8.98e-17  rt 2.36e-16  ok  mkl fwd 8.98e-17
+7x64    csk     oop fwd 2.19e-16  rt 5.68e-16  ok  mkl fwd 1.94e-16
+8x8     chain+rb oop fwd 1.37e-16  rt 4.48e-16  ok  mkl fwd 1.38e-16
+8x1024  csk     oop fwd 2.75e-16  rt 7.77e-16  ok  mkl fwd 3.04e-16
+9x9     csk+rb  oop fwd 3.08e-16  rt 8.26e-16  ok  mkl fwd 1.96e-16
+12x12    csk+rb  oop fwd 3.64e-16  rt 9.93e-16  ok  mkl fwd 1.56e-16
+15x64    csk     oop fwd 2.55e-16  rt 6.67e-16  ok  mkl fwd 1.97e-16
+16x16    csk+rb2 oop fwd 1.89e-16  rt 4.44e-16  ok  mkl fwd 2.13e-16
+16x4096  csk     oop fwd 3.11e-16  rt 1.11e-15  ok  mkl fwd 2.89e-16
+17x17    csk+rb  oop fwd 7.11e-16  rt 1.21e-15  ok  mkl fwd 3.81e-16
+21x35    chain   oop fwd 4.37e-16  rt 9.48e-16  ok  mkl fwd 3.80e-16
+23x64    chain+rb2 oop fwd 3.67e-16  rt 1.02e-15  ok  mkl fwd 7.49e-16
+24x24    chain   oop fwd 3.52e-16  rt 1.20e-15  ok  mkl fwd 2.32e-16
+27x81    chain   oop fwd 5.23e-16  rt 1.34e-15  ok  mkl fwd 3.42e-16
+31x31    csk+rb  oop fwd 5.29e-16  rt 1.23e-15  ok  mkl fwd 5.11e-16
+32x32    chain+rb2 oop fwd 2.08e-16  rt 5.56e-16  ok  mkl fwd 1.62e-16
+32x8192  chain   oop fwd 4.83e-16  rt 1.11e-15  ok  mkl fwd 3.63e-16
+37x64    chain+rb2 oop fwd 3.62e-16  rt 1.18e-15  ok  mkl fwd 6.72e-16
+45x128   chain   oop fwd 3.76e-16  rt 1.12e-15  ok  mkl fwd 3.03e-16
+48x64    chain+rb2 oop fwd 3.51e-16  rt 8.82e-16  ok  mkl fwd 3.06e-16
+60x60    chain   oop fwd 5.52e-16  rt 1.44e-15  ok  mkl fwd 3.14e-16
+64x7     chain+rb oop fwd 3.01e-16  rt 7.82e-16  ok  mkl fwd 2.26e-16
+64x23    chain+rb oop fwd 3.92e-16  rt 9.49e-16  ok  mkl fwd 3.28e-16
+64x37    turn    oop fwd 4.16e-16  rt 1.30e-15  ok  mkl fwd 2.46e-16
+64x48    chain   oop fwd 3.24e-16  rt 8.90e-16  ok  mkl fwd 2.07e-16
+64x64    chain+rb2 oop fwd 3.09e-16  rt 7.77e-16  ok  mkl fwd 2.38e-16
+64x256   chain   oop fwd 2.59e-16  rt 9.99e-16  ok  mkl fwd 2.03e-16
+81x27    chain   oop fwd 6.06e-16  rt 1.67e-15  ok  mkl fwd 3.24e-16
+96x96    chain   oop fwd 3.51e-16  rt 1.25e-15  ok  mkl fwd 2.99e-16
+96x128   chain   oop fwd 2.69e-16  rt 1.29e-15  ok  mkl fwd 2.47e-16
+97x128   tpc     oop fwd 5.22e-16  rt 1.83e-15  ok  mkl fwd 5.12e-16
+101x256   tpc     oop fwd 5.26e-16  rt 1.90e-15  ok  mkl fwd 6.07e-16
+120x120   chain   oop fwd 4.79e-16  rt 1.42e-15  ok  mkl fwd 3.42e-16
+125x125   chain   oop fwd 3.41e-16  rt 1.39e-15  ok  mkl fwd 3.46e-16
+127x127   blu     oop fwd 6.24e-16  rt 2.94e-15  ok  mkl fwd 8.10e-16
+128x45    chain   oop fwd 7.58e-01  rt 6.51e-02  *** FAIL ***  mkl fwd 3.15e-16
+128x97    chain   oop fwd 5.08e-16  rt 1.87e-15  ok  mkl fwd 4.73e-16
+128x128   chain   oop fwd 2.87e-16  rt 9.99e-16  ok  mkl fwd 2.83e-16
+128x2048  chain   oop fwd 4.76e-16  rt 1.11e-15  ok  mkl fwd 2.84e-16
+180x180   chain   oop fwd 4.96e-16  rt 1.59e-15  ok  mkl fwd 3.33e-16
+225x225   chain   oop fwd 5.19e-16  rt 1.61e-15  ok  mkl fwd 3.76e-16
+240x256   chain   oop fwd 3.78e-16  rt 1.50e-15  ok  mkl fwd 3.13e-16
+243x243   chain   oop fwd 4.01e-01  rt 1.26e-02  *** FAIL ***  mkl fwd 4.69e-16
+256x64    chain   oop fwd 2.92e-16  rt 8.88e-16  ok  mkl fwd 2.82e-16
+256x101   chain   oop fwd 4.85e-16  rt 1.85e-15  ok  mkl fwd 5.30e-16
+256x256   chain   oop fwd 2.96e-16  rt 1.11e-15  ok  mkl fwd 2.67e-16
+360x360   chain   oop fwd 5.31e-16  rt 1.67e-15  ok  mkl fwd 3.88e-16
+512x512   chain   oop fwd 4.89e-16  rt 1.44e-15  ok  mkl fwd 2.93e-16
+640x480   chain   oop fwd 4.49e-16  rt 1.80e-15  ok  mkl fwd 3.71e-16
+720x720   chain   oop fwd 6.57e-16  rt 1.92e-15  ok  mkl fwd 4.04e-16
+1000x1000  chain   oop fwd 4.59e-16  rt 2.05e-15  ok  mkl fwd 3.99e-16
+1009x64    tpc     oop fwd 4.87e-16  rt 1.82e-15  ok  mkl fwd 4.26e-16
+1024x8     turn    oop fwd 2.93e-16  rt 7.77e-16  ok  mkl fwd 3.01e-16
+1024x1024  chain   oop fwd 1.25e-15  rt 1.33e-15  ok  mkl fwd 3.19e-16
+1920x1080  chain   oop fwd 5.65e-16  rt 2.12e-15  ok  mkl fwd 4.12e-16
+2048x128   chain   oop fwd 4.67e-16  rt 1.33e-15  ok  mkl fwd 2.91e-16
+2048x2048  chain   oop fwd 2.72e-15  rt 1.55e-15  ok  mkl fwd 4.54e-16
+4096x16    turn    oop fwd 2.70e-16  rt 8.88e-16  ok  mkl fwd 2.97e-16
+8192x32    chain+rb2 oop fwd 4.73e-16  rt 1.44e-15  ok  mkl fwd 3.09e-16
+=== 59 cells, 2 failed: *** FAIL *** ===
+2026-09-28 17:26:12 verify: === 59 cells, 2 failed: *** FAIL *** === -> verify_2d.csv

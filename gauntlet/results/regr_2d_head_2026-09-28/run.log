@@ -1,0 +1,13 @@
+2026-09-28 17:19:14 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-28 17:19:14 run: 59 cells, contract 2D out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-28 17:19:14 calibrate: 59 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-09-28 17:19:36   calibrated 25/59 (64x48), 22 s elapsed
+2026-09-28 17:19:51   calibrated 50/59 (720x720), 37 s elapsed
+2026-09-28 17:21:03   calibrated 59/59 (8192x32), 109 s elapsed
+2026-09-28 17:21:03 bench: 59 cells (0 already benched, 0 not banked -> not benched)
+2026-09-28 17:21:38   benched 25/59 (64x48), 34 s elapsed
+2026-09-28 17:22:15   benched 50/59 (720x720), 71 s elapsed
+2026-09-28 17:22:45   benched 59/59 (8192x32), 101 s elapsed
+2026-09-28 17:22:46 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regr_2d_head_2026-09-28\report_2d.md
+2026-09-28 17:22:47 verify: 59 cells, contract 2D out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-28 17:26:12 verify: === 59 cells, 2 failed: *** FAIL *** === -> verify_2d.csv
