@@ -374,17 +374,29 @@ let emit
     | Some v -> (try int_of_string v with _ -> 9)
     | None -> 9
   in
-  (* The odd blocked form's FRAME (2026-09-28). VFFT_CX_ODDROLL=1: the term
-     loops stay rolled (#pragma GCC unroll 1) and S[] is 64-B aligned.
-     Unrolled (gcc does it at h <= ~16), the loops index S[] by constants,
-     S[] dissolves into registers, and gcc spills them to its own slots --
-     only 16-B aligned under the Win64 ABI, so every 32-B spill splits a
-     line in one of the two stack states the caller can hand the kernel
-     (measured: radix-29 t2 797 vs 1153 ns on the caller's rsp alone).
-     VFFT_CX_ODDP1=1: PASS 1 in pair order (see emit_odd_blocked). Default
-     OFF => byte-identical. *)
-  let odd_roll = Sys.getenv_opt "VFFT_CX_ODDROLL" = Some "1" in
-  let odd_p1 = Sys.getenv_opt "VFFT_CX_ODDP1" = Some "1" in
+  (* The odd blocked form's FRAME at 256 bits. ROLL: the term loops stay
+     rolled (#pragma GCC unroll 1) and S[] is 64-B aligned. Unrolled (gcc
+     does it at h <= ~16), the loops index S[] by constants, S[] dissolves
+     into registers, and gcc spills them to its own slots -- only 16-B
+     aligned under the Win64 ABI, so every 32-B spill splits a line in one of
+     the two stack states a caller can hand the kernel (radix-29 t2: 797 vs
+     1153 ns on the caller's rsp alone). P1: PASS 1 in pair order (see
+     emit_odd_blocked). Both leave every output bit unchanged. Taken where
+     they measured faster in the worse stack state (the tail_policy
+     harness, n1 / t2 at radix 9..47): P1 on the twiddled kinds at every
+     radix and on the twiddle-free ones from radix 23; ROLL on the twiddled
+     kinds from radix 21 and the twiddle-free ones from radix 37. Below
+     those the unrolled form fits the 16 registers and is the faster.
+     VFFT_CX_ODDROLL / VFFT_CX_ODDP1 = 1 or 0 override. *)
+  let twiddled = pre_tw || post_tw in
+  let frame_knob name rule =
+    match Sys.getenv_opt name with
+    | Some "1" -> true
+    | Some "0" -> false
+    | _ -> vw <= 4 && rule
+  in
+  let odd_roll = frame_knob "VFFT_CX_ODDROLL" (if twiddled then radix >= 21 else radix >= 37) in
+  let odd_p1 = frame_knob "VFFT_CX_ODDP1" (twiddled || radix >= 23) in
   let odd_blocked =
     (not blocked)
     && radix mod 2 = 1
@@ -1526,9 +1538,11 @@ let emit
            (if odd_blocked
             then
               Printf.sprintf
-                " oddblk=%d%s"
+                " oddblk=%d%s%s%s"
                 oddblk_bw
                 (if tail_policy = "narrow" then "" else " tail=" ^ tail_policy)
+                (if odd_p1 then " p1" else "")
+                (if odd_roll then " roll" else "")
             else "")
        ]);
   Buffer.add_string

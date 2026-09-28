@@ -75,6 +75,35 @@ Wins vs MKL: 238/238 (100%)
 ns/call. "scale" = that engine's OWN T1/T8 (8.00 = perfect on 8 cores).
 ```
 
+### INTERLEAVED transform-contiguous batch — K=3 at one thread (2026-09-29)
+
+Three transforms end to end (transform t at `z[2tN .. 2(t+1)N)`), natural order, out
+of place, one thread on both sides: ours through the front door (`howmany = 3`,
+`VFFT_BATCH_TRANSFORM_CONTIGUOUS`), MKL with `NUMBER_OF_TRANSFORMS = 3`,
+`DISTANCE = N` on the same memory. `gauntlet/k3_batch_probe.c`: core 2 pinned with its
+SMT sibling held, 15 rounds with the arms in alternating order, each the minimum of 5
+batches, median. Our batch runs as three K=1 transforms, so every stage of an odd N runs
+its one-column remainder in each of them. Output matches MKL to 1e-15 everywhere.
+
+```
+ N      factors      ours (ns)    MKL (ns)   vs MKL
+──────────────────────────────────────────────────
+ 1024   2^10            2,295       2,481    1.08×
+ 45     3^2·5             101         136    1.35×
+ 99     3^2·11            250         325    1.30×
+ 121    11^2              324         357    1.10×
+ 529    23^2            4,670       8,280    1.77×
+ 989    23·43           7,867      25,733    3.27×
+ 999    3^3·37         11,050      16,925    1.53×
+ 1025   5^2·41          6,471      19,571    3.02×
+ 1073   29·37           8,400      27,580    3.28×
+ 1849   43^2           17,300      67,600    3.91×
+ 3025   5^2·11^2       18,075      17,525    0.97×
+```
+
+MKL's batched call costs 0.93–1.00× its three K=1 calls (the batch saves the most at
+N ≤ 121).
+
 ### Natural order — in-place (single-thread)
 
 ```
