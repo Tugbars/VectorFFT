@@ -11,7 +11,9 @@ and never edited by hand, so it always matches the tree it was generated from.
 | [`generated/zones.md`](generated/zones.md) | The six zones and the include edges between them, checked against the dependency rules. Start here. |
 | [`generated/folders.md`](generated/folders.md) | One diagram per zone: its folders and the includes among them. |
 | [`generated/folders/`](generated/folders/) | One diagram per folder: its files, what each is for, and what they include. |
+| [`generated/calls/`](generated/calls/) | Call graphs: `create.md` and `execute.md` from the entry points, then one per side of the layout fork (`create_split`, `create_il`, `create_real`, `execute_split`, `execute_il`, `execute_real`). |
 | [`generated/map.md`](generated/map.md) | Plain text, no rendering needed: every file with its one-line role, its includes and who includes it. |
+| [`generated/functions.md`](generated/functions.md) | Plain text: every function with its file, line, callees, the functions it references by name, and its callers. |
 | [`generated/graph.json`](generated/graph.json) | The same data, for other tools. |
 
 The diagrams are [Mermaid](https://mermaid.js.org/); GitHub, GitLab and VS Code
@@ -50,15 +52,31 @@ python src/tools/archgraph.py --focus bridge --depth 2  # a zone, two steps out
 ```
 
 prints one Mermaid diagram of that part and its neighbours, plus the roles of the
-files it was asked about. Paste it into any Mermaid renderer or a markdown file.
+files it was asked about. For functions:
+
+```
+python src/tools/archgraph.py --calls _vfft_split_create            # what it calls
+python src/tools/archgraph.py --calls vfft_cs2pi_exact --up         # who calls it
+python src/tools/archgraph.py --calls _vfft_il_execute --depth 2    # exactly two levels
+```
+
+Paste the output into any Mermaid renderer or a markdown file.
+
+The call graph is best effort. It reads the source text, not the compiled program:
+both sides of every `#if` count, and calls made through a function pointer or a
+macro are not followed. Where a function is handed over by name (a thread-pool
+task, a dispatch table, a plan's execute pointer) it shows as a dashed edge, which
+is how most of the execute-time dispatch stays visible. Helpers called from six
+or more places are left out of the call views and listed under each diagram.
 
 ## Using it with an AI assistant
 
 `generated/map.md` is written to be read by a model: one line of purpose per
-file and its full include lists, grouped by zone and folder. To get a diagram
-of something the generated views do not show (a data flow, the path one
-transform takes, what a change would touch), give the assistant
-`generated/map.md`, and `generated/zones.md` for the rules, and ask for a
-Mermaid diagram of it. For a scoped question, the output of `--focus` is a
-smaller starting point. The source headers each open with a comment that
-explains the file; the map's roles are their first sentences.
+file and its full include lists, grouped by zone and folder; `generated/functions.md`
+does the same for functions. To get a diagram of something the generated views
+do not show (a data flow, the path one transform takes, what a change would
+touch), give the assistant `generated/map.md` and `generated/functions.md`, with
+`generated/zones.md` for the rules, and ask for a Mermaid diagram of it. For a
+scoped question, the output of `--focus` or `--calls` is a smaller starting point.
+The source headers each open with a comment that explains the file; the map's
+roles are their first sentences.

@@ -17,7 +17,16 @@ writes, under docs/architecture/generated/:
                     (the first sentence of its opening comment), what it
                     includes and what includes it. Written to be read by a
                     person or pasted to an AI; nothing needs rendering.
+  functions.md      every function defined in src/core: file, line, the core
+                    functions it calls, the ones it references by name
+                    (thread-pool tasks, dispatch tables, function pointers)
+                    and its callers
+  calls/*.md        call graphs from the entry points: vfft_create,
+                    vfft_execute and each side of their layout fork
   graph.json        the same data, for any other tool
+
+The call graph is best effort, not a compiler: both sides of every #if are
+read, and calls through function pointers or macros are not followed.
 
 Everything is derived from the code, so the output is never edited by hand.
 Only the standard library is used; Python 3.8+.
@@ -30,6 +39,9 @@ USAGE (from anywhere in the repo)
                                               neighbours to stdout; X is a file
                                               (ztt.h), a folder (split/real) or a zone
                                               (il). --depth N widens it (default 1).
+  python src/tools/archgraph.py --calls F     print the call graph of function F (as deep
+                                              as fits ~70 nodes, or --depth N levels);
+                                              --up: its callers instead
 """
 import argparse
 import json
@@ -110,6 +122,99 @@ def role_of(text, name):
     return s if len(s) <= 180 else s[:177].rstrip() + "..."
 
 
+# ---------------------------------------------------------------- functions
+# Best effort, not a compiler: comments, strings and preprocessor lines are
+# blanked, both sides of every #if are read, and a call is a core function's
+# name followed by '('. A core function named WITHOUT a call (handed to the
+# thread pool, stored in a dispatch table or a plan's function pointer) is a
+# reference. Calls through function pointers and macros are not followed.
+_KW = {"if", "for", "while", "switch", "return", "sizeof", "_Alignof", "alignof", "__attribute__",
+       "defined", "else", "do", "case", "__declspec", "_Static_assert", "static_assert",
+       "typeof", "__typeof__"}
+_HEAD = re.compile(r"([A-Za-z_]\w*)\s*\(([^;{}()]|\([^;{}()]*\))*\)\s*(__attribute__\s*\(\(.*?\)\)\s*)*$", re.S)
+_WORD = re.compile(r"\b([A-Za-z_]\w*)\b(\s*\()?")
+
+
+def _clean(t):
+    out, i, n = [], 0, len(t)
+    while i < n:
+        if t.startswith("/*", i):
+            j = t.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append(re.sub(r"[^\n]", " ", t[i:j]))
+            i = j
+        elif t.startswith("//", i):
+            j = t.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif t[i] in "\"'":
+            q, j = t[i], i + 1
+            while j < n and t[j] != q and t[j] != "\n":
+                j += 2 if t[j] == "\\" else 1
+            out.append(q + re.sub(r"[^\n]", " ", t[i + 1:j]) + q)
+            i = j + 1
+        else:
+            out.append(t[i])
+            i += 1
+    lines, cont = "".join(out).split("\n"), False
+    for k, l in enumerate(lines):
+        if cont or l.lstrip().startswith("#"):
+            cont = l.rstrip().endswith("\\")
+            lines[k] = ""
+    return "\n".join(lines)
+
+
+def _defs(text):
+    """[(name, first line, body)] of the functions defined at file scope."""
+    s = _clean(text)
+    res, depth, last, name, start = [], 0, 0, None, 0
+    for i, c in enumerate(s):
+        if c == "{":
+            if depth == 0:
+                head = s[last:i]
+                m = _HEAD.search(head)
+                h = head.strip()
+                name = (m.group(1) if m and m.group(1) not in _KW and "=" not in h
+                        and not re.match(r"^(typedef|struct|union|enum)\b", h) else None)
+                start = i
+            depth += 1
+        elif c == "}":
+            depth = max(0, depth - 1)
+            if depth == 0:
+                if name:
+                    res.append((name, s[:start].count("\n") + 1, s[start:i + 1]))
+                name, last = None, i + 1
+        elif c == ";" and depth == 0:
+            last = i + 1
+    return res
+
+
+def scan_functions(files, texts):
+    funcs = {}
+    bodies = []
+    for rel in sorted(files):
+        for name, line, body in _defs(texts[rel]):
+            f = funcs.setdefault(name, {"file": rel, "line": line, "calls": set(), "refs": set()})
+            bodies.append((name, body))
+    names = set(funcs)
+    for name, body in bodies:
+        for m in _WORD.finditer(body):
+            t = m.group(1)
+            if t in names and t != name:
+                (funcs[name]["calls"] if m.group(2) else funcs[name]["refs"]).add(t)
+    for f in funcs.values():
+        f["refs"] -= f["calls"]
+        f["callers"] = set()
+    for name, f in funcs.items():
+        for t in f["calls"] | f["refs"]:
+            funcs[t]["callers"].add(name)
+    for f in funcs.values():
+        for k in ("calls", "refs", "callers"):
+            f[k] = sorted(f[k])
+    return funcs
+
+
 def scan():
     dirs = toolchain.include_dirs()
     files = {}
@@ -130,13 +235,13 @@ def scan():
                     f["includes"].append(t)
             elif inc not in f["external"]:
                 f["external"].append(inc)
+    texts = {rel: f.pop("text") for rel, f in files.items()}
     for f in files.values():
-        del f["text"]
         f["included_by"] = []
     for rel, f in sorted(files.items()):
         for t in f["includes"]:
             files[t]["included_by"].append(rel)
-    return files
+    return files, scan_functions(files, texts)
 
 
 # ---------------------------------------------------------------- Mermaid
@@ -280,12 +385,128 @@ def map_md(files):
     return "\n".join(out)
 
 
-def outputs(files):
-    res = {"zones.md": zones_md(files), "folders.md": folders_md(files), "map.md": map_md(files)}
+# ---------------------------------------------------------------- call views
+HELPER_FANIN = 6     # a function with this many callers or more is a shared helper
+CALL_VIEWS = [
+    ("create", "vfft_create", "vfft_create: validation, the layout fork, the tiers"),
+    ("execute", "vfft_execute", "vfft_execute: the signature check and the layout fork"),
+    ("create_split", "_vfft_split_create", "the SPLIT side of the create fork"),
+    ("create_il", "_vfft_il_create", "the INTERLEAVED side of the create fork"),
+    ("create_real", "_vfft_create_real", "the 1D real create (through the bridge)"),
+    ("execute_split", "_vfft_split_execute", "the SPLIT side of the execute fork"),
+    ("execute_il", "_vfft_il_execute", "the INTERLEAVED side of the execute fork"),
+    ("execute_real", "_vfft_real_bridge_execute", "the 1D real execute (through the bridge)"),
+]
+
+
+def _helper(funcs, name):
+    return len(funcs[name]["callers"]) >= HELPER_FANIN
+
+
+def call_graph(files, funcs, entry, up=False, maxn=70, maxdepth=4):
+    """BFS from entry (callees, or callers with up=True), shared helpers left
+    out, as deep as fits in maxn nodes. Returns (mermaid lines, depth, notes)."""
+    def nxt(n):
+        if up:
+            return [(c, "call" if n in funcs[c]["calls"] else "ref") for c in funcs[n]["callers"]]
+        return ([(c, "call") for c in funcs[n]["calls"]] + [(c, "ref") for c in funcs[n]["refs"]])
+    for depth in range(maxdepth, 0, -1):
+        seen, frontier, edges, helpers = {entry: 0}, [entry], set(), set()
+        for d in range(1, depth + 1):
+            new = []
+            for n in frontier:
+                for c, kind in nxt(n):
+                    if not up and _helper(funcs, c):
+                        helpers.add(c)
+                        continue
+                    edges.add((n, c, kind) if not up else (c, n, kind))
+                    if c not in seen:
+                        seen[c] = d
+                        new.append(c)
+            frontier = new
+        if len(seen) <= maxn or depth == 1:
+            break
+    cut = {}
+    for n, d in seen.items():
+        if d == depth:
+            more = [c for c, _ in nxt(n) if c not in seen and (up or not _helper(funcs, c))]
+            if more:
+                cut[n] = len(set(more))
+    lines = ["flowchart LR"]
+    byfolder = {}
+    for n in seen:
+        byfolder.setdefault(files[funcs[n]["file"]]["folder"], []).append(n)
+    for fo in sorted(byfolder):
+        lines.append('    subgraph %s["%s"]' % (nid("f_" + fo), "src/core" if fo == "(core)" else fo))
+        for n in sorted(byfolder[fo]):
+            label = "%s%s<br/>%s" % (n, (" +%d" % cut[n]) if n in cut else "",
+                                     os.path.basename(funcs[n]["file"]))
+            lines.append('        %s["%s"]%s' % (nid("fn_" + n), lbl(label), ":::entry" if n == entry else ""))
+        lines.append("    end")
+    for a, b, kind in sorted(edges):
+        lines.append("    %s %s %s" % (nid("fn_" + a), "-->" if kind == "call" else "-.->", nid("fn_" + b)))
+    lines.append("    classDef entry stroke-width:3px")
+    return lines, depth, sorted(helpers), cut
+
+
+def call_view_md(files, funcs, entry, title):
+    lines, depth, helpers, cut = call_graph(files, funcs, entry)
+    f = funcs[entry]
+    out = ["# %s" % title, "",
+           "Generated by `src/tools/archgraph.py`. Do not edit.", "",
+           "What `%s` (`%s`, line %d) calls, %d level%s deep. A solid arrow is a direct call; a"
+           % (entry, f["file"], f["line"], depth, "" if depth == 1 else "s"),
+           "dashed arrow is a function passed or stored by name (a thread-pool task, a dispatch",
+           "table entry, a plan's function pointer). `+N` on a node: N more callees not drawn",
+           "(see `functions.md`, or run `python src/tools/archgraph.py --calls NAME`).", "",
+           "```mermaid"] + lines + ["```", ""]
+    if helpers:
+        out += ["Shared helpers left out (%d or more callers each): %s." % (
+            HELPER_FANIN, ", ".join("`%s`" % h for h in helpers)), ""]
+    out += ["Best effort: calls through function pointers and macros are not followed; both",
+            "sides of every `#if` are read."]
+    return "\n".join(out) + "\n"
+
+
+def functions_md(files, funcs):
+    out = ["# Functions of src/core", "",
+           "Generated by `src/tools/archgraph.py`. Do not edit.", "",
+           "Every function defined in `src/core`, by file: its line, the core functions it calls,",
+           "the ones it references by name without calling (tasks, table entries, function",
+           "pointers) and its callers. Best effort: calls through function pointers and macros",
+           "are not followed. %d functions." % len(funcs), ""]
+    byfile = {}
+    for n, f in funcs.items():
+        byfile.setdefault(f["file"], []).append(n)
+    for z in ZONES:
+        for rel in sorted(r for r in byfile if files[r]["zone"] == z):
+            out += ["## %s" % rel, ""]
+            for n in sorted(byfile[rel], key=lambda x: funcs[x]["line"]):
+                f = funcs[n]
+                parts = []
+                if f["calls"]:
+                    parts.append("calls " + ", ".join(f["calls"]))
+                if f["refs"]:
+                    parts.append("refs " + ", ".join(f["refs"]))
+                if f["callers"]:
+                    c = f["callers"]
+                    parts.append("called by " + ", ".join(c[:15]) + (" (+%d more)" % (len(c) - 15) if len(c) > 15 else ""))
+                out.append("- `%s` (line %d)%s" % (n, f["line"], (": " + "; ".join(parts)) if parts else ""))
+            out.append("")
+    return "\n".join(out)
+
+
+def outputs(files, funcs):
+    res = {"zones.md": zones_md(files), "folders.md": folders_md(files), "map.md": map_md(files),
+           "functions.md": functions_md(files, funcs)}
+    for key, entry, title in CALL_VIEWS:
+        if entry in funcs:
+            res["calls/%s.md" % key] = call_view_md(files, funcs, entry, title)
     for folder in sorted({f["folder"] for f in files.values()}):
         res["folders/%s.md" % folder_file(folder)] = folder_md(files, folder)
     data = {r: {k: v for k, v in f.items() if k != "path"} for r, f in sorted(files.items())}
-    res["graph.json"] = json.dumps({"zones": ZONE_ROLE, "files": data}, indent=1, sort_keys=True) + "\n"
+    res["graph.json"] = json.dumps({"zones": ZONE_ROLE, "files": data, "functions": funcs},
+                                   indent=1, sort_keys=True) + "\n"
     return res
 
 
@@ -333,12 +554,27 @@ def main():
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--focus")
     ap.add_argument("--depth", type=int, default=1)
+    ap.add_argument("--calls", help="print the call graph of one function")
+    ap.add_argument("--up", action="store_true", help="with --calls: its callers instead")
     a = ap.parse_args()
-    files = scan()
+    files, funcs = scan()
     if a.focus:
         focus(files, a.focus, a.depth)
         return 0
-    want = outputs(files)
+    if a.calls:
+        if a.calls not in funcs:
+            sys.exit("archgraph: no function named %r in src/core" % a.calls)
+        lines, depth, helpers, _ = call_graph(files, funcs, a.calls, up=a.up,
+                                              maxn=10 ** 6 if a.depth > 1 else 70,
+                                              maxdepth=a.depth if a.depth > 1 else 4)
+        print("```mermaid\n" + "\n".join(lines) + "\n```")
+        f = funcs[a.calls]
+        print("\n%s: %s line %d; %d level(s) of %s" % (a.calls, f["file"], f["line"], depth,
+                                                      "callers" if a.up else "callees"))
+        if helpers:
+            print("shared helpers left out: " + ", ".join(helpers))
+        return 0
+    want = outputs(files, funcs)
     if a.check:
         stale = []
         for name, text in sorted(want.items()):
