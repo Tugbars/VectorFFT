@@ -506,7 +506,29 @@ let emit
      loop-invariant constants (the R16 lesson: rip-const 27->4). ~lazy_store
      is opt-in per caller because the corner-turned N1T store pairs groups and
      must NOT be interleaved per-index. *)
-  let emit_pass
+  (* The leg accesses of a pass. A remainder pass under LS_masked reaches
+     zin / zout through the mask; S[] and the twiddle stream stay whole
+     vectors (both are padded to whole vectors). *)
+  let pass_load (isa : Isa.t) (mode : Isa.ls_mode) (a : caddr) : string =
+    match mode, a with
+    | Isa.LS_masked _, (AZinLeg _ | AZoutLeg _) -> Isa.loadu_pd ~mode isa (addr_str a)
+    | _ -> render_load isa a
+  in
+  let pass_store (isa : Isa.t) (mode : Isa.ls_mode) (a : caddr) (v : string) : string =
+    match mode, a with
+    | Isa.LS_masked _, (AZinLeg _ | AZoutLeg _) -> Isa.storeu_pd ~mode isa (addr_str a) v
+    | _ -> render_store isa a v
+  in
+  (* ~body ~isa ~mode ~msuf ~tw_vw target a pass: emit_pass (below) is the
+     bulk loop at the kernel's own width; the blocked remainder arms (see
+     tail_policy) emit the same passes into their own buffer at the tail's
+     width. *)
+  let emit_pass_to
+        ~(body : Buffer.t)
+        ~(isa : Isa.t)
+        ~(mode : Isa.ls_mode)
+        ~(msuf : string)
+        ~(tw_vw : int)
         ~(lazy_store : bool)
         ~(label : string)
         ~(nin : int)
@@ -545,7 +567,7 @@ let emit
                       the day the odd blocked passes reached them, 2026-09-23;
                       the pow2 blocked form refuses those kinds). Byte-identical
                       elsewhere: render_load falls back to the same string. *)
-                   (render_load isa (laddr_of i)))))
+                   (pass_load isa mode (laddr_of i)))))
         ins;
     let load_emitted : (int, unit) Hashtbl.t = Hashtbl.create 64 in
     let emit_load_p (l : t) =
@@ -559,7 +581,7 @@ let emit
              (Isa.const_decl
                 isa
                 (Printf.sprintf "z%d" l.tag)
-                (render_load isa a)))
+                (pass_load isa mode a)))
       | _ -> ()
     in
     let stored : (int, unit) Hashtbl.t = Hashtbl.create 32 in
@@ -580,7 +602,7 @@ let emit
                    (Isa.const_decl
                       isa
                       (Printf.sprintf "z%d" e.tag)
-                      (render ~ctx isa tbl e)))));
+                      (render ~ctx ~mode ~tw_vw ~msuf isa tbl e)))));
          if ls
          then (
            match eref with
@@ -592,6 +614,7 @@ let emit
     Array.iteri (fun i (e : t) -> if not (Hashtbl.mem stored i) then store i e) outs;
     Buffer.add_string body "        }\n"
   in
+  let emit_pass = emit_pass_to ~body ~isa ~mode:Isa.LS_vector ~msuf:"" ~tw_vw:0 in
   (* ─── BLOCKED (2-pass) construction ──────────────────────────────
      Straight-line radix-R needs R values live at once; there are only 16
      vector registers, so from R=16 up gcc spills hard — MEASURED stack
@@ -899,15 +922,28 @@ let emit
      monolithic tail compute bit-identical values. Everything goes through
      S[] and no leg is re-read after a store, so the in-place kinds are
      safe. *)
-  let emit_odd_blocked ~(bw : int) () =
+  let emit_odd_blocked
+        ?(body = body)
+        ?(isa = isa)
+        ?(mode = Isa.LS_vector)
+        ?(msuf = "")
+        ?(tw_vw = 0)
+        ~(bw : int)
+        ()
+    =
     let h = (radix - 1) / 2 in
     let store_to (ad : caddr) (e : t) =
       let (_ : t) = cstore ad e in
       Buffer.add_string
         body
-        (Printf.sprintf "        %s;\n" (render_store isa ad (Printf.sprintf "z%d" e.tag)))
+        (Printf.sprintf "        %s;\n" (pass_store isa mode ad (Printf.sprintf "z%d" e.tag)))
     in
-    emit_pass
+    emit_pass_to
+      ~body
+      ~isa
+      ~mode
+      ~msuf
+      ~tw_vw
       ~lazy_store:true
       ~label:(Printf.sprintf "ODD PASS 1: legs -> X[0], pairs -> S[0..%d]" (2 * h))
       ~nin:radix
@@ -1014,6 +1050,9 @@ let emit
             let tw = ctwl leg x in
             render
               ~ctx
+              ~mode
+              ~tw_vw
+              ~msuf
               ~name:(fun t -> if t = x.tag then src else Printf.sprintf "z%d" t)
               isa
               tbl
@@ -1026,7 +1065,7 @@ let emit
             (Printf.sprintf "        %s\n" (Isa.const_decl isa vn (out_expr leg src)));
           Buffer.add_string
             body
-            (Printf.sprintf "        %s;\n" (render_store isa (AZoutLeg leg) vn))
+            (Printf.sprintf "        %s;\n" (pass_store isa mode (AZoutLeg leg) vn))
         in
         emit_out m an (Printf.sprintf "oa%d" j);
         emit_out (radix - m) bn (Printf.sprintf "ob%d" j)
@@ -1238,7 +1277,7 @@ let emit
      isa itself under LS_masked); msuf names that arm's own mask/prologue twins
      ("" = reuse the wide names). ~lane_off: add 2*(k % per) to the stream
      cursor (per-lane VTW2/gen2 records read at the column's own lane). *)
-  let tail_arm ~(nisa : Isa.t) ~(msuf : string) ~(mode : Isa.ls_mode) ~(lane_off : bool) body_n =
+  let tail_prologue ~(nisa : Isa.t) ~(msuf : string) ~(mode : Isa.ls_mode) ~(lane_off : bool) body_n =
     if kind = T2
     then
       Buffer.add_string
@@ -1252,7 +1291,26 @@ let emit
     then emit_log3_prologue ~mode ~tw_vw:vw ~msuf body_n nisa radix;
     if kind = T2 && ctx.tw_gen2
     then emit_gen2_prologue ~mode ~tw_vw:vw ~msuf body_n nisa radix;
-    if kind = T2C && msuf <> "" then emit_group_prologue ~tw_vw:vw ~msuf body_n nisa radix;
+    if kind = T2C && msuf <> "" then emit_group_prologue ~tw_vw:vw ~msuf body_n nisa radix
+  in
+  (* the BLOCKED remainder pass: the bulk loop's own blocked construction
+     re-emitted at the tail's width (odd-blocked kernels only; the monolithic
+     tail_arm below is the other construction) *)
+  let tail_blocked ~(nisa : Isa.t) ~(msuf : string) ~(mode : Isa.ls_mode) body_n =
+    if not odd_blocked
+    then
+      failwith
+        (Printf.sprintf
+           "codelet_cil: VFFT_TAIL256=%s re-emits the odd blocked passes in the \
+            remainder; radix %d %s has no odd blocked form"
+           (Option.value ~default:"" (Sys.getenv_opt "VFFT_TAIL256"))
+           radix
+           (kind_name kind));
+    tail_prologue ~nisa ~msuf ~mode ~lane_off:false body_n;
+    emit_odd_blocked ~body:body_n ~isa:nisa ~mode ~msuf ~tw_vw:vw ~bw:oddblk_bw ()
+  in
+  let tail_arm ~(nisa : Isa.t) ~(msuf : string) ~(mode : Isa.ls_mode) ~(lane_off : bool) body_n =
+    tail_prologue ~nisa ~msuf ~mode ~lane_off body_n;
     for l = 0 to radix - 1 do
       Buffer.add_string
         body_n
@@ -1303,7 +1361,9 @@ let emit
              body_n
              (Printf.sprintf
                 "        %s;\n"
-                (render_store nisa a (Printf.sprintf "z%d" e.tag))))
+                (match mode with
+                 | Isa.LS_vector -> render_store nisa a (Printf.sprintf "z%d" e.tag)
+                 | _ -> Isa.storeu_pd ~mode nisa (addr_str a) (Printf.sprintf "z%d" e.tag))))
         outs
   in
   (* Remainder policy at per > 2 — the law is written once, as L10 in
@@ -1316,10 +1376,25 @@ let emit
      ymm rung would store two columns through a one-column turn address. The
      column-stride kinds take the plain "ladder" (3 -> ymm + xmm): their
      columns sit Gs apart, so a contiguous masked zmm access cannot reach them.
-     VFFT_TAIL512 overrides (recorded in the provenance Env line). At vw = 4
-     the shipped behaviour is untouched. *)
+     VFFT_TAIL512 overrides (recorded in the provenance Env line).
+     At vw = 4 the leftover is at most ONE column. Default "narrow": the
+     monolithic DAG at VEX-128. VFFT_TAIL256 selects the arms under study:
+     "masked" (the monolithic DAG in one ymm pass, lane 1 masked off),
+     "blk_narrow" / "blk_masked" (the odd blocked passes at VEX-128 / masked
+     ymm), "blk_overrun" (the blocked passes unmasked: reads and WRITES one
+     column past the end -- a cost floor, never a kernel). *)
   let tail_policy =
-    if vw <= 4 then "narrow"
+    if vw <= 4
+    then (
+      match Sys.getenv_opt "VFFT_TAIL256" with
+      | None -> "narrow"
+      | Some (("narrow" | "masked" | "blk_narrow" | "blk_masked" | "blk_overrun") as s) -> s
+      | Some s ->
+        failwith
+          (Printf.sprintf
+             "codelet_cil: VFFT_TAIL256=%s is not an AVX2 arm (narrow masked blk_narrow \
+              blk_masked blk_overrun)"
+             s))
     else match Sys.getenv_opt "VFFT_TAIL512" with
       | Some s -> s
       | None ->
@@ -1344,6 +1419,9 @@ let emit
      tail_arm ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:true body_n;
      tail_arm ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") ~lane_off:false body_m
    | "narrowfix" -> tail_arm ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:true body_n
+   | "blk_narrow" -> tail_blocked ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector body_n
+   | "blk_masked" -> tail_blocked ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") body_n
+   | "blk_overrun" -> tail_blocked ~nisa:isa ~msuf:"" ~mode:Isa.LS_vector body_n
    | _ (* narrow: the shipped avx2 behaviour, byte-identical at vw=4 *) ->
      tail_arm ~nisa:Isa.sse2 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:false body_n);
   let buf = Buffer.create 8192 in
@@ -1453,7 +1531,7 @@ let emit
   then (
     Buffer.add_string buf (Isa.im_mask_decl isa "_M_IM");
     Buffer.add_string buf "  /* negate im lanes: x*(-i) */\n";
-    if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"]) then (
+    if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"; "blk_masked"; "blk_overrun"]) then (
     Buffer.add_string buf (Isa.im_mask_decl Isa.sse2 "_M_IM_n");
     Buffer.add_string buf "  /* tail twin */\n");
     if List.mem tail_policy ["ladder"; "ladder_m3"; "hyb2"] then (
@@ -1462,7 +1540,7 @@ let emit
   else (
     Buffer.add_string buf (Isa.re_mask_decl isa "_M_RE");
     Buffer.add_string buf "  /* negate re lanes: x*(+i) */\n";
-    if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"]) then (
+    if not (List.mem tail_policy ["masked"; "hyb2"; "zunmasked"; "blk_masked"; "blk_overrun"]) then (
     Buffer.add_string buf (Isa.re_mask_decl Isa.sse2 "_M_RE_n");
     Buffer.add_string buf "  /* tail twin */\n");
     if List.mem tail_policy ["ladder"; "ladder_m3"; "hyb2"] then (
@@ -1687,7 +1765,36 @@ let emit
      management for no numerical gain. *)
   (
     let cnt = if rowloop then "cnt_" else "count" in
+    (* at vw = 4 the leftover is one column: a constant lane mask *)
+    let ymm_mask = "        const __m256i _tm = _mm256_setr_epi64x(-1, -1, 0, 0);\n" in
     (match tail_policy with
+     | "masked" when vw <= 4 ->
+       Buffer.add_string buf
+         (Printf.sprintf "    if (k < %s) {  /* masked tail: the leftover column in ONE ymm pass */\n" cnt);
+       Buffer.add_string buf ymm_mask;
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
+     | "blk_narrow" ->
+       if kind = T2 && ctx.tw_gen2 then
+         Buffer.add_string buf
+           (Printf.sprintf "    %s\n    %s\n"
+              (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
+              (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
+       Buffer.add_string buf
+         (Printf.sprintf "    if (k < %s) {  /* the odd blocked passes at VEX-128, one complex */\n" cnt);
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
+     | "blk_masked" ->
+       Buffer.add_string buf
+         (Printf.sprintf "    if (k < %s) {  /* the odd blocked passes in ymm, lane 1 masked off */\n" cnt);
+       Buffer.add_string buf ymm_mask;
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
+     | "blk_overrun" ->
+       Buffer.add_string buf
+         (Printf.sprintf "    if (k < %s) {  /* MEASUREMENT ONLY: the odd blocked passes unmasked (overruns) */\n" cnt);
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
      | "masked" ->
        Buffer.add_string buf
          (Printf.sprintf "    if (k < %s) {  /* masked tail: 1..%d leftover complex in ONE zmm pass */\n        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(%s - k))) - 1u);\n" cnt (per - 1) cnt);
