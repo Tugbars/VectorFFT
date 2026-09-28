@@ -1,10 +1,15 @@
-/* nat_modes.h - the natural-order mode ids stored in @nat wisdom rows.
+/* nat_modes.h - the natural-order mode ids stored in split @nat wisdom rows.
  *
  * Carved verbatim out of split/planning/wisdom_reader.h (layout separation
- * phase 4): the split modes (FREE/SCR/PURE_CYCLE/PSWAP) and three
- * interleaved ones (ZCASC/ILP/CONV) share this one numbering today. Decision
- * D2 (owner, 2026-09-27) gives the interleaved in-place door its own lay=il
- * row; the IL values then leave this list. Numbers are a file format. */
+ * phase 4). Owner decision D2 (2026-09-27): the interleaved values ZCASC (6),
+ * ILP (7) and CONV (8) left this list; the IL in-place door keeps its verdict
+ * on its own kind-3 lay=il row (il/rank1/c2c_ip_create_il.h). Numbers are a
+ * file format: 2, 6, 7 and 8 are retired and NEVER reused. A row carrying 6,
+ * 7 or 8 is no split verdict: the wisdom2 reader reads it as absent, and the
+ * split in-place natural arm ignores it in the frozen spike table (which still
+ * carries such rows and is left as it is). Read as a split verdict it made
+ * that arm skip its reorder tape, and a NATURAL request came back in
+ * scrambled order (the shipped rows N = 128/256/255/512/1024, K = 1). */
 #ifndef VFFT_NAT_MODES_H
 #define VFFT_NAT_MODES_H
 
@@ -13,21 +18,6 @@
  * files may still carry it with the old meaning. */
 enum { VFFT_NAT_UNSET = 0, VFFT_NAT_FREE = 1, VFFT_NAT_LEAF_IP = 2,
        VFFT_NAT_SCR = 3, VFFT_NAT_PURE_CYCLE = 4, VFFT_NAT_PSWAP = 5,
-       /* ZCASC: the verdict of the K=1 interleaved zturn cascade with the
-        * natural terminator (no reorder pass). The cascade engine is retired;
-        * the value stays so stored records keep parsing. The @nat entry
-        * stored only the verdict; the chain came from the kind-4 oop line. */
-       VFFT_NAT_ZCASC = 6,
-       /* ILP: the K=1 interleaved IN-PLACE cells served by the native IL
-        * engines (mono structurally refuses aliasing) — natural output, no
-        * tape, no layout conversion. An explicit-SCRAMBLED in-place create
-        * attaches only on a hit (identity permutation), which keeps @nat
-        * single-writer. */
-       VFFT_NAT_ILP = 7,
-       /* CONV: the banked LOSS of the scrambled in-place IL race — "raced,
-        * the convert incumbent won" — in the ord=scr mode cell only (the @nat
-        * natural cells never carry it), so a lost race is not re-run on every
-        * create. */
-       VFFT_NAT_CONV = 8 };
+       VFFT_NAT_MAX = VFFT_NAT_PSWAP /* the last mode; 6-8 retired by D2 */ };
 
 #endif /* VFFT_NAT_MODES_H */

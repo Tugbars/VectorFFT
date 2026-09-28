@@ -111,7 +111,11 @@ static const cell_t CELLS[] = {
     {"c2c.split.oop.default.1d",   VFFT_C2C, VFFT_OUTOFPLACE, VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 1,  1},
     {"c2c.split.ip.default.1d",    VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 1,  1},
     {"c2c.split.ip.scrambled",     VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_SCRAMBLED, 1, 256, 0, 1,  1},
-    {"c2c.split.ip.natural",       VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_NATURAL,   1, 256, 0, 1,  1},
+    /* K=4: the split natural verdicts are banked at q=4 and q=32 only. At K=1
+     * this cell was served by a mode=ilp row that skipped the reorder tape, so
+     * its "natural" digests equalled the scrambled cell's (the order bug D2
+     * fixed, 2026-09-28); with that row gone, K=1 has no banked verdict and races. */
+    {"c2c.split.ip.natural",       VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_NATURAL,   1, 256, 0, 4,  1},
     {"c2c.il.ip.default",          VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_INTERLEAVED, VFFT_ORDER_DEFAULT,   1, 256, 0, 1,  1},
     {"c2c.il.oop.default",         VFFT_C2C, VFFT_OUTOFPLACE, VFFT_LAYOUT_INTERLEAVED, VFFT_ORDER_DEFAULT,   1, 256, 0, 1,  1},
     /* K=4, not K=8. A golden cell MUST be banked in the wisdom store, or create

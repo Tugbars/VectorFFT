@@ -38,16 +38,6 @@
  * change here. This is one of the few places in the tree where obj_equiv is the
  * only guard.
  *
- * THE STRIDE-ROW BANKER
- * ---------------------
- * _bank_nat_1d banks the in-place natural cell (ord=nat) of the split stride
- * engine, called from the in-place create. The out-of-place natural and mode
- * rows a shipped store carries are still SERVED; nothing writes new ones.
- * The order axis does not share a cell with the scrambled one: a
- * natural-order create can never perturb the scrambled plan, and vice versa -
- * the regimes are calibrated independently because they are genuinely
- * different engines, not one engine with a flag.
- *
  * INCLUSION CONTRACT
  * ------------------
  * Include after the engine prelude, after vfft_internal.h, and AFTER

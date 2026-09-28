@@ -596,10 +596,12 @@ The create serves the cell with an IL engine and races only IL plans:
   PLACE (z -> z), banked on the in-place cell's own kind-3 row keyed `place=ip`
   (with its `dir=bwd` sibling and `ord=scr` cell). The out-of-place verdict is
   never served in place; the mode rows (`mode=ilp` with a reference to the
-  out-of-place row, `mode=zcasc` for the deleted cascade) are legacy and dead.
+  out-of-place row, `mode=zcasc` for the deleted cascade, `mode=conv`) are gone:
+  D2 (2026-09-28) retired modes 6-8 from the split `@nat` enum and deleted the
+  shipped rows, and a store that still holds one reads it as absent.
   One arm serves and banks; no arm refuses the create.
 
-`mode=conv` and the tape modes are not IL verdicts; a row carrying one re-races.
+The `@nat` mode rows are split verdicts (the tape modes); the IL door never reads them.
 
 ### II.1e — natural order
 

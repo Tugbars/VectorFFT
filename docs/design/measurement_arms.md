@@ -497,7 +497,9 @@ BANK       the in-place cell's OWN kind-3 row (2026-09-21): t=c2c n=N q=1
            out-of-place cell's row is never served in place, and no mode row
            is read or written: the @nat/@scrmode mode rows (mode=ilp with a
            reference to the place=oop row, mode=zcasc for the deleted cascade)
-           are legacy and dead. The convert machinery (deinterleave/split/
+           were retired by D2 (2026-09-28) and deleted from the shipped
+           wisdom; a store that still holds one reads it as absent. The
+           convert machinery (deinterleave/split/
            reinterleave, il_me pad A/B, the OOP convert executor, the il2il
            executors) is DELETED from the library.
 CALLER     1D c2c IN-PLACE interleaved, any order.

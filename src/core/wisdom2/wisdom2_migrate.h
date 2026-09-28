@@ -1156,6 +1156,18 @@ static inline int vw2_migrate_stride(const char *spike_path, const char *rfft_pa
     return rc;
 }
 
+/* does the codec refuse this natural row? (vw2__migst_file quarantines it) */
+static inline int vw2__migst_nat_refused(const vfft_proto_nat_entry_t *ne, int pl)
+{
+    vw2_rec_t rtmp;
+    const char *why = NULL;
+    if (vw2_stride_rec_from_nat_mig(&rtmp, ne, pl, VW2_LAY_ANY,
+                                    "migrated", "gate", &why) != 0)
+        return 1;
+    vw2_rec_free(&rtmp);
+    return 0;
+}
+
 /* Reader gate: every legacy-servable stride cell resolves FIELD-IDENTICAL
  * through the vw2 twins (memset both sides -> whole-struct memcmp). */
 static inline int vw2_migrate_stride_reader_gate(const char *spike_path,
@@ -1210,6 +1222,17 @@ static inline int vw2_migrate_stride_reader_gate(const char *spike_path,
                     vfft_proto_nat_lookup(&w, w.nat[i].N, w.nat[i].K);
                 memset(&got, 0, sizeof got);
                 cells++;
+                /* codec-refused rows must MISS, as above: among them the
+                 * retired interleaved modes 6-8 the frozen spike table still
+                 * carries (D2, nat_modes.h) */
+                if (vw2__migst_nat_refused(served, VW2_PL_IP)) {
+                    if (vw2_stride_lookup_nat(&st, VW2_LAY_ANY, served->N, served->K, &got)) {
+                        fprintf(stderr, "[reader-gate-stride] nat N=%d K=%zu: refused row RESOLVED\n",
+                                served->N, served->K);
+                        bad++;
+                    }
+                    continue;
+                }
                 /* VW2_LAY_ANY: the gate round-trips PRE-1.2 rows; a lay=ANY request
                  * matches exactly the lay-less vintage (strict-equality
                  * serves), byte-for-byte the pre-1.2 resolution. */
@@ -1226,6 +1249,14 @@ static inline int vw2_migrate_stride_reader_gate(const char *spike_path,
                     vfft_proto_natoop_lookup(&w, w.natoop[i].N, w.natoop[i].K);
                 memset(&got, 0, sizeof got);
                 cells++;
+                if (vw2__migst_nat_refused(served, VW2_PL_OOP)) {
+                    if (vw2_stride_lookup_natoop(&st, VW2_LAY_ANY, served->N, served->K, &got)) {
+                        fprintf(stderr, "[reader-gate-stride] natoop N=%d K=%zu: refused row RESOLVED\n",
+                                served->N, served->K);
+                        bad++;
+                    }
+                    continue;
+                }
                 if (!vw2_stride_lookup_natoop(&st, VW2_LAY_ANY, served->N, served->K, &got) ||
                     memcmp(&got, served, sizeof got)) {
                     fprintf(stderr, "[reader-gate-stride] natoop N=%d K=%zu mismatch\n",
@@ -1568,7 +1599,8 @@ static inline int vw2_export_stride(const char *store_dir,
  * must resolve field-identical from the EXPORTED file, in both tables, and
  * the export must be byte-reproducible. Proves the snapshot carries every
  * bit of information a legacy reader can see — the cutover's losslessness
- * claim, checkable without the OCaml toolchain. */
+ * claim, checkable without the OCaml toolchain. The rows the codec refuses
+ * (junk cells; the natural modes D2 retired) are in neither, by design. */
 static inline int vw2_export_stride_gate(const char *store_dir,
                                          const char *orig_spike,
                                          const char *orig_rfft,
@@ -1631,6 +1663,16 @@ static inline int vw2_export_stride_gate(const char *store_dir,
                 const vfft_proto_nat_entry_t *got =
                     vfft_proto_nat_lookup(&x, o.nat[i].N, o.nat[i].K);
                 cells++;
+                if (want->mode > VFFT_NAT_MAX) {
+                    /* a retired interleaved mode (D2): the codec refuses the
+                     * row, so neither the store nor the export carries it */
+                    if (got) {
+                        fprintf(stderr, "[export-gate] nat N=%d K=%zu retired row EXPORTED\n",
+                                want->N, want->K);
+                        bad++;
+                    }
+                    continue;
+                }
                 if (!got || memcmp(got, want, sizeof *got)) {
                     fprintf(stderr, "[export-gate] nat N=%d K=%zu mismatch\n", want->N, want->K);
                     bad++;
@@ -1642,6 +1684,14 @@ static inline int vw2_export_stride_gate(const char *store_dir,
                 const vfft_proto_nat_entry_t *got =
                     vfft_proto_natoop_lookup(&x, o.natoop[i].N, o.natoop[i].K);
                 cells++;
+                if (want->mode > VFFT_NAT_MAX) {   /* retired (D2), as above */
+                    if (got) {
+                        fprintf(stderr, "[export-gate] natoop N=%d K=%zu retired row EXPORTED\n",
+                                want->N, want->K);
+                        bad++;
+                    }
+                    continue;
+                }
                 if (!got || memcmp(got, want, sizeof *got)) {
                     fprintf(stderr, "[export-gate] natoop N=%d K=%zu mismatch\n", want->N, want->K);
                     bad++;
@@ -1655,6 +1705,73 @@ static inline int vw2_export_stride_gate(const char *store_dir,
     fprintf(stderr, "[export-gate] %d cell(s) checked, %d mismatch(es) — %s\n",
             cells, bad, (bad || fail) ? "FAIL" : "ALL PASS");
     return (bad || fail) ? 1 : 0;
+}
+
+/* ── D2 (owner decision, 2026-09-27): drop the retired interleaved @nat rows ──
+ * The @nat family (the split stride store's natural-order verdicts) once also
+ * carried interleaved verdicts: mode=zcasc (the retired z-cascade), mode=ilp
+ * (the IL in-place door, which now keeps its verdict on its own kind-3 lay=il
+ * row) and mode=conv (its banked convert loss), with their eng=zturn / eng=k1
+ * and ref= signposts. The readers treat them as ABSENT (nat_modes.h); this
+ * deletes them from a store directory. Only rows carrying one of those three
+ * mode tokens are touched -- kind-3 IL rows (eng=k1, il_route=...) have no
+ * mode token. Merge-on-save would carry a deleted row back from disk, so, the
+ * rekey discipline above: every shard that held one is moved aside, the
+ * store is saved from memory, and the moved files are dropped (restored on
+ * any failure). Idempotent. Returns the number of rows dropped, or -1. */
+static inline int vw2_migrate_drop_retired_nat(const char *dir)
+{
+    vw2_store_t st;
+    char path[VW2_NSHARDS][640], bak[VW2_NSHARDS][720];
+    int i, j, sh, n = 0, hit[VW2_NSHARDS] = {0}, moved[VW2_NSHARDS] = {0};
+    vw2_open(&st, dir, 1);
+    if (!st.writable) {
+        vw2_close(&st);
+        fprintf(stderr, "[wisdom2_migrate] drop-retired-nat: %s is not writable\n", dir);
+        return -1;
+    }
+    /* order-preserving: vw2_save writes a shard in memory order */
+    for (i = 0, j = 0; i < st.nrec; i++) {
+        const char *m = vw2_rec_get(&st.rec[i], "mode");
+        if (m && (!strcmp(m, "zcasc") || !strcmp(m, "ilp") || !strcmp(m, "conv"))) {
+            hit[st.rec[i].shard] = 1;
+            vw2_rec_free(&st.rec[i]);
+            n++;
+            continue;
+        }
+        st.rec[j++] = st.rec[i];
+    }
+    st.nrec = j;
+    if (!n) {
+        vw2_close(&st);
+        fprintf(stderr, "[wisdom2_migrate] drop-retired-nat: nothing to drop in %s\n", dir);
+        return 0;
+    }
+    for (sh = 0; sh < VW2_NSHARDS; sh++) {
+        if (!hit[sh]) continue;
+        snprintf(path[sh], sizeof path[sh], "%s/%s", dir, vw2_shard_name[sh]);
+        snprintf(bak[sh], sizeof bak[sh], "%s.d2.bak", path[sh]);
+        remove(bak[sh]);
+        if (rename(path[sh], bak[sh]) != 0) goto restore;
+        moved[sh] = 1;
+        st.dirty[sh] = 1;
+    }
+    if (vw2_save(&st) != VW2_OK) goto restore;
+    for (sh = 0; sh < VW2_NSHARDS; sh++)
+        if (moved[sh]) remove(bak[sh]);
+    vw2_close(&st);
+    fprintf(stderr, "[wisdom2_migrate] drop-retired-nat: %d row(s) dropped in %s\n", n, dir);
+    return n;
+restore:
+    for (sh = 0; sh < VW2_NSHARDS; sh++)
+        if (moved[sh]) {
+            remove(path[sh]);
+            if (rename(bak[sh], path[sh]) != 0)
+                fprintf(stderr, "[wisdom2_migrate] drop-retired-nat: RESTORE FAILED -- "
+                                "recover %s manually\n", bak[sh]);
+        }
+    vw2_close(&st);
+    return -1;
 }
 
 #endif /* VFFT_WISDOM2_MIGRATE_H */

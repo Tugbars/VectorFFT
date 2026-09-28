@@ -10,6 +10,12 @@
 #ifndef VFFT_IL_C2C_IP_CREATE_IL_H
 #define VFFT_IL_C2C_IP_CREATE_IL_H
 
+/* the IL in-place natural marker on the handle (h->nat_mode): a K=1 IL engine
+ * serves the cell in natural order, no tape. Its verdict lives on the cell's
+ * own kind-3 lay=il row. The value is the one the handle carried as the split
+ * enum's VFFT_NAT_ILP before D2, kept so plan fingerprints read the same. */
+#define VFFT_IL_NAT_K1 7
+
 
 /* ── IN-PLACE INTERLEAVED c2c: the IL tier's own create ───────────────────
  * Split is not a fallback of IL: no split plan is built for an interleaved
@@ -97,10 +103,10 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     /* 3. the verdict IS the cell's own row: read above, or raced in place
      *    and banked by _k1_il_candidate / the prime cell */
     if (have_k1)
-        mode = VFFT_NAT_ILP;
+        mode = VFFT_IL_NAT_K1;
 
     /* 4. attach the verdict; the loser dies here */
-    if (mode == VFFT_NAT_ILP && have_k1)
+    if (mode == VFFT_IL_NAT_K1 && have_k1)
     {
         h->k1il2p = il2;
         h->k1il3p = il3;
@@ -111,7 +117,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         h->k1_mono_ilf = mono_f;
         h->k1_mono_ilb = mono_b;
         il2 = NULL; il3 = NULL; ilp = NULL; ifd = NULL; ztt = NULL; fs = NULL;
-        h->nat_mode = nat ? VFFT_NAT_ILP : 0;
+        h->nat_mode = nat ? VFFT_IL_NAT_K1 : 0;
         if (getenv("VFFT_NAT_LOG"))
             fprintf(stderr, "[ipil] N=%d: %s ILP (%s)\n", N,
                     "attach",
