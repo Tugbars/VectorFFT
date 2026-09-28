@@ -92,7 +92,7 @@ Within each ABI, three codelet kinds:
 `oop_leaf_registry.h` is the hand-written fast-path switch (`vfft_oop_leaf_fn`,
 `vfft_oop_t1p_fn`); `oop_codelets.h` is the ABI-typed struct the **auto-emitted**
 `oop_registry_{isa}.h` populates (coverage-complete; coexists during the transition).
-ISA is a per-binary choice (`__AVX512F__` → avx512 + GROUPW=8, else avx2 + GROUPW=4).
+ISA is a per-binary choice, the build's (`build_isa.h`: `VFFT_BUILD_ISA_AVX512` → avx512 + GROUPW=8, else avx2 + GROUPW=4).
 
 ---
 

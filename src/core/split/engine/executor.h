@@ -14,6 +14,7 @@
 #ifndef VFFT_PROTO_CORE_EXECUTOR_H
 #define VFFT_PROTO_CORE_EXECUTOR_H
 
+#include "build_isa.h" /* VFFT_BUILD_ISA_AVX512: the build's ISA (D4) */
 #include "plan.h"
 #include "executor_generic.h"  // IWYU pragma: keep
 
@@ -37,7 +38,7 @@
 static inline vfft_proto_exec_fn
 _vfft_proto_lookup_fwd(const stride_plan_t *plan)
 {
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
     return vfft_proto_lookup_fwd_avx512(plan);
 #else
     return vfft_proto_lookup_fwd_avx2(plan);
@@ -47,7 +48,7 @@ _vfft_proto_lookup_fwd(const stride_plan_t *plan)
 static inline vfft_proto_exec_fn
 _vfft_proto_lookup_bwd(const stride_plan_t *plan)
 {
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
     return vfft_proto_lookup_bwd_avx512(plan);
 #else
     return vfft_proto_lookup_bwd_avx2(plan);

@@ -8,6 +8,7 @@
 #ifndef VFFT_C2R_H
 #define VFFT_C2R_H
 
+#include "build_isa.h" /* VFFT_BUILD_ISA_AVX512: the build's ISA (D4) */
 #include <immintrin.h>
 #include "rfft.h"
 
@@ -159,7 +160,7 @@ static inline void c2r_mid_inv_column(int r, int m, size_t Q, size_t K,
                                       const double *Minv, double *dst_base)
 {
     size_t v = 0;
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
     __m512d in[32];
     for (; v + 8 <= vl; v += 8) {
         for (int t = 0; t < r; t++)

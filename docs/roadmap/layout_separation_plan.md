@@ -564,6 +564,19 @@ not govern linkage. The checker reads the `#include` lines.
     should win.
   - That is a behaviour change, so it gets its own step and a race/gauntlet check, not a
     silent part of a move.
+  - **Done (2026-09-28).** Every split and common choice between avx512 and avx2 code
+    reads `VFFT_BUILD_ISA_AVX512` from `build_isa.h`: the OOP registry
+    (`VFFT_OOP_FORCE_AVX2` is gone), the Tier 1 executor lookup, the rfft/c2r registry
+    pick in `vfft.c`, and the hand-vectorized loops in `r2c.h`, `c2r.h`, `rfft.h`,
+    `fft2d_r2c.h`, `strided_rows.h` and `transpose.h` (24 tests, 9 files). Guards that
+    only ask whether AVX2 intrinsics exist (`__AVX2__ || __AVX512F__`) are not choices
+    and stay.
+    - Proof: with the shipped flags the two vfft.c objects (O2 identity, O3 shipped)
+      are BYTE-IDENTICAL to the previous commit's at avx2 and avx512.
+    - What changes: only a build with AVX-512F but not AVX-512DQ. Before, it linked
+      273 avx512 codelets from the split side next to 2,420 avx2 ones while
+      `vfft_isa()` said avx2; now it is avx2 throughout (0 avx512 references).
+    - Owner to test on the target machines.
 - **D5. De-duplication that changes bits.** Examples: routing split twiddles through
   `tw_exact.h`, and unifying the two digit-reversal permutations. These are
   improvements, not restructuring. Do them after the tree is split, each with its own

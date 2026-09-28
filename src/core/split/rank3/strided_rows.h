@@ -1,5 +1,6 @@
 #ifndef VFFT_STRIDED_ROWS_H
 #define VFFT_STRIDED_ROWS_H
+#include "build_isa.h" /* VFFT_BUILD_ISA_AVX512: the build's ISA (D4) */
 #include "common/math/pi.h"
 
 /* ── OPT-IN STRIDED ROW PASS (define VFFT_STRIDED_ROWS) ──────────────────
@@ -18,7 +19,7 @@
 #ifdef VFFT_STRIDED_ROWS
 typedef void (*_vfft_strided_fn)(double*, double*, const double*,
                                   const double*, size_t, size_t);
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
+#if defined(VFFT_BUILD_ISA_AVX512)
 void radix8_n1_fwd_avx512_strided(double*,double*,const double*,const double*,size_t,size_t);
 void radix8_n1_bwd_avx512_strided(double*,double*,const double*,const double*,size_t,size_t);
 void radix16_n1_fwd_avx512_strided(double*,double*,const double*,const double*,size_t,size_t);

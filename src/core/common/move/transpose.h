@@ -58,6 +58,7 @@
 #ifndef VFFT_COMMON_TRANSPOSE_H
 #define VFFT_COMMON_TRANSPOSE_H
 
+#include "build_isa.h" /* VFFT_BUILD_ISA_AVX512: the build's ISA (D4) */
 #include <stddef.h>
 #include <string.h>
 
@@ -90,7 +91,7 @@
  * small sizes, so we keep base=32 there. */
 #define TP_BASE_SMALL 16  /* L1 regime, kernel A */
 #define TP_BASE_MEDIUM 32 /* medium regime, kernel B or C */
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
 #define TP_BASE_LARGE 64 /* large regime: AVX-512 wants bigger tile */
 #else
 #define TP_BASE_LARGE 32 /* large regime: AVX2 prefers same as medium */
@@ -180,7 +181,7 @@ __attribute__((target("avx2,fma"))) static inline void _t8x4(const double *__res
  * Peak register pressure: ~16 ZMMs of 32 available.
  * ═══════════════════════════════════════════════════════════════ */
 
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
 __attribute__((target("avx512f"))) static inline void _t8x8(const double *__restrict__ src, size_t lds,
                                                             double *__restrict__ dst, size_t ldd)
 {
@@ -276,7 +277,7 @@ static void _base_B(const double *__restrict__ src, size_t lds,
 {
     size_t ii = 0;
 
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
     /* 8×8 ZMM main loop: step 8 rows × 8 cols per iteration. */
     for (; ii + 8 <= rows; ii += 8)
     {
