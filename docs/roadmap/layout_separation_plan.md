@@ -544,7 +544,14 @@ not govern linkage. The checker reads the `#include` lines.
       posix-style calls became `p = vfft_aligned_alloc(n)` (statement) or
       `!(p = vfft_aligned_alloc(n))` (condition: non-zero on failure, as before).
       The huge-page pair (`stride_alloc_huge` / `stride_free_huge`, DTLB motivation,
-      never called) stays by owner decision; restructuring it is a follow-up.
+      never called) stays by owner decision.
+    - huge pages (side job, owner: "keep that feature, restructure it if needed"):
+      `common/support/hugepage.h` (`vfft_alloc_huge` / `vfft_free_huge`,
+      `VFFT_HUGEPAGE_THRESHOLD`) replaces the env.h pair. The backing is a function of
+      (platform, size) alone -- heap below 64 KB; `mmap` (hugetlb, else THP) or
+      `VirtualAlloc` (large, else ordinary pages) at and above -- so the free no longer
+      guesses by 2 MB alignment (an ordinary `mmap` is only 4 KB aligned; the old free
+      could hand `mmap` memory to `free()`). Still not wired in; included by nothing.
 - **D6. Dead code.** Delete it (recommended) rather than move it:
   - `conv/conv.h`, `fftnd_natorder.h`, `fftnd_planner.h`, `fftnd_wisdom.h`;
   - `engine/compat.h`;

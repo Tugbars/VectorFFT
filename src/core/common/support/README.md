@@ -33,15 +33,19 @@ libraries enable them). **MXCSR is per-thread**, so `vfft_env_init()` must be ca
 back). Call it once at program start on the main thread, and inside each worker.
 
 **Aligned + huge-page allocation.**
-- `vfft_aligned_alloc` / `vfft_aligned_free` — 64-byte aligned (`VFFT_ALIGNMENT`), one cache line, the
-  SIMD load/store requirement. `_aligned_malloc` (Windows) / `posix_memalign` (POSIX).
-- `stride_alloc_huge` / `stride_free_huge` — **2 MB huge pages** for the big `re[]`/`im[]`
-  data buffers (above `STRIDE_HUGEPAGE_THRESHOLD = 64 KB`). **Why:** strided FFT access blows
-  the DTLB with 4 KB pages — VTune measured **23% DTLB-Store overhead** at N=1000 K=256;
+- `vfft_aligned_alloc` / `vfft_aligned_free` (`zalloc.h`) — THE allocator: 64-byte aligned
+  (`VFFT_ALIGNMENT`), one cache line, the SIMD load/store requirement; size rounded up to a
+  multiple of 64. `_aligned_malloc`/`_aligned_free` (Windows) / `aligned_alloc`/`free` (POSIX).
+- `vfft_alloc_huge` / `vfft_free_huge` (`hugepage.h`) — **2 MB pages** for the big `re[]`/`im[]`
+  data planes (at and above `VFFT_HUGEPAGE_THRESHOLD = 64 KB`). **Why:** strided FFT access
+  blows the DTLB with 4 KB pages — VTune measured **23% DTLB-Store overhead** at N=1000 K=256;
   2 MB pages cut the page count 512× and largely erase it. Windows: `VirtualAlloc` +
-  `MEM_LARGE_PAGES` (needs the *"Lock pages in memory"* privilege). Linux: `mmap` +
-  `MAP_HUGETLB` (needs `nr_hugepages > 0`) → **THP fallback** (`madvise(MADV_HUGEPAGE)`) →
-  plain aligned alloc. `stride_free_huge` tells huge from fallback by 2 MB-alignment.
+  `MEM_LARGE_PAGES` (needs the *"Lock pages in memory"* privilege), else ordinary pages. Linux:
+  `mmap` + `MAP_HUGETLB` (needs `nr_hugepages > 0`), else `mmap` + `madvise(MADV_HUGEPAGE)` (THP).
+  The backing depends only on the size, so `vfft_free_huge(p, bytes)` never guesses (the old
+  `stride_free_huge` told huge from heap by 2 MB alignment, which an ordinary `mmap` does not
+  guarantee). **Not wired in yet**: no allocation uses it; which buffers should is a measured
+  decision. `split/real/rfft.h` has its own opt-in Windows large-page path (`VFFT_RFFT_HUGE`).
 
 **Version / ISA / CPU query.** `VFFT_ISA_NAME` resolves to `avx512`/`avx2`/`scalar` from
 compile macros (per-binary ISA, no runtime fat-dispatch). `vfft_set_verbose` +
