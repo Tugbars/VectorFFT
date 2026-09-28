@@ -197,17 +197,17 @@ static inline void vfft_ilprime_destroy(vfft_ilprime_plan_t *p)
 {
     if (!p) return;
     _ilprime_inner_free(&p->inner);
-    VFFT_IL2P_FREE(p->chf); VFFT_IL2P_FREE(p->chb);
-    VFFT_IL2P_FREE(p->kf);  VFFT_IL2P_FREE(p->kb);
-    VFFT_IL2P_FREE(p->omf); VFFT_IL2P_FREE(p->omb);
+    vfft_aligned_free(p->chf); vfft_aligned_free(p->chb);
+    vfft_aligned_free(p->kf);  vfft_aligned_free(p->kb);
+    vfft_aligned_free(p->omf); vfft_aligned_free(p->omb);
     free(p->gpow); free(p->ginvpow);
-    VFFT_IL2P_FREE(p->za);  VFFT_IL2P_FREE(p->zb);
+    vfft_aligned_free(p->za);  vfft_aligned_free(p->zb);
     free(p);
 }
 
 static inline double *_ilprime_alloc(size_t doubles)
 {
-    return (double *)VFFT_IL2P_ALLOC(doubles * sizeof(double));
+    return (double *)vfft_aligned_alloc(doubles * sizeof(double));
 }
 
 /* Bluestein plan: M = next pow2 >= max(16, 2N-1) (16 = il2p's floor pair
@@ -380,7 +380,7 @@ static inline vfft_ilprime_plan_t *vfft_ilprime_create_method(int N, int hint)
         int r;
         if (!zi || !zo)
         { /* OOM: keep Rader (the measured-on-split ~2x prior) */
-            VFFT_IL2P_FREE(zi); VFFT_IL2P_FREE(zo);
+            vfft_aligned_free(zi); vfft_aligned_free(zo);
             vfft_ilprime_destroy(pb);
             return pr;
         }
@@ -398,8 +398,8 @@ static inline vfft_ilprime_plan_t *vfft_ilprime_create_method(int N, int hint)
             tr = ns[0];
             tb = ns[1];
         }
-        VFFT_IL2P_FREE(zi);
-        VFFT_IL2P_FREE(zo);
+        vfft_aligned_free(zi);
+        vfft_aligned_free(zo);
         if (getenv("VFFT_ILPR_LOG"))
             fprintf(stderr, "[ilprime] race N=%d: rader=%.0f blue=%.0f "
                             "-> %s\n",

@@ -107,10 +107,10 @@ static inline void vfft_oop_plan_create_champions(
     *out_nat = nat; *out_mb = mb;
     if (!nat && !mb) return;
     size_t T = (size_t)N * K;
-    double *sr = (double *)VFFT_OOP_AALLOC(T * 8), *si = (double *)VFFT_OOP_AALLOC(T * 8);
-    double *dr = (double *)VFFT_OOP_AALLOC(T * 8), *di = (double *)VFFT_OOP_AALLOC(T * 8);
+    double *sr = (double *)vfft_aligned_alloc(T * 8), *si = (double *)vfft_aligned_alloc(T * 8);
+    double *dr = (double *)vfft_aligned_alloc(T * 8), *di = (double *)vfft_aligned_alloc(T * 8);
     if (!sr || !si || !dr || !di) {
-        VFFT_OOP_AFREE(sr); VFFT_OOP_AFREE(si); VFFT_OOP_AFREE(dr); VFFT_OOP_AFREE(di);
+        vfft_aligned_free(sr); vfft_aligned_free(si); vfft_aligned_free(dr); vfft_aligned_free(di);
         return;                                   /* OOM: leave ns at 1e30 — caller still persists */
     }
     for (size_t i = 0; i < T; i++) {
@@ -137,7 +137,7 @@ static inline void vfft_oop_plan_create_champions(
         }
         *out_mb_ns = (double)bm;
     }
-    VFFT_OOP_AFREE(sr); VFFT_OOP_AFREE(si); VFFT_OOP_AFREE(dr); VFFT_OOP_AFREE(di);
+    vfft_aligned_free(sr); vfft_aligned_free(si); vfft_aligned_free(dr); vfft_aligned_free(di);
 }
 
 /* The DEFAULT (order-agnostic) 2-axis joint chooser (CALIBRATION-TIME), thin over champions():

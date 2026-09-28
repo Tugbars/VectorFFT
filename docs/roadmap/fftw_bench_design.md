@@ -338,7 +338,7 @@ typedef struct { double *re, *im; void *blk; size_t stride; } ref_planes_t;
 
 static ref_planes_t ref_planes_alloc(size_t n_doubles)
 {   size_t s = ref_plane_stride(n_doubles * sizeof(double));
-    void *blk = NULL; vfft_proto_posix_memalign(&blk, 64, 2 * s);
+    void *blk = NULL; vfft_aligned_alloc(&blk, 64, 2 * s);
     ref_planes_t p = { (double*)blk, (double*)((char*)blk + s), blk, s };
     return p;                    /* ii - ri is now a pure function of (N,K) */
 }

@@ -166,14 +166,10 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
     size_t scalar_per_grp = (size_t)(R - 1);
 
     if (n_tw_groups > 0) {
-        vfft_proto_posix_memalign((void **)&st->tw_pool_re, 64,
-            (size_t)n_tw_groups * per_grp * sizeof(double));
-        vfft_proto_posix_memalign((void **)&st->tw_pool_im, 64,
-            (size_t)n_tw_groups * per_grp * sizeof(double));
-        vfft_proto_posix_memalign((void **)&st->tw_scalar_pool_re, 64,
-            (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
-        vfft_proto_posix_memalign((void **)&st->tw_scalar_pool_im, 64,
-            (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
+        st->tw_pool_re = vfft_aligned_alloc((size_t)n_tw_groups * per_grp * sizeof(double));
+        st->tw_pool_im = vfft_aligned_alloc((size_t)n_tw_groups * per_grp * sizeof(double));
+        st->tw_scalar_pool_re = vfft_aligned_alloc((size_t)n_tw_groups * scalar_per_grp * sizeof(double));
+        st->tw_scalar_pool_im = vfft_aligned_alloc((size_t)n_tw_groups * scalar_per_grp * sizeof(double));
     } else {
         st->tw_pool_re = st->tw_pool_im = NULL;
         st->tw_scalar_pool_re = st->tw_scalar_pool_im = NULL;
@@ -379,14 +375,10 @@ static inline void vfft_proto_compute_twiddles_dif(stride_plan_t *plan, int s)
     size_t scalar_per_grp = (size_t)(R - 1);
 
     if (n_tw_groups > 0) {
-        vfft_proto_posix_memalign((void **)&st->tw_pool_re, 64,
-            (size_t)n_tw_groups * per_grp * sizeof(double));
-        vfft_proto_posix_memalign((void **)&st->tw_pool_im, 64,
-            (size_t)n_tw_groups * per_grp * sizeof(double));
-        vfft_proto_posix_memalign((void **)&st->tw_scalar_pool_re, 64,
-            (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
-        vfft_proto_posix_memalign((void **)&st->tw_scalar_pool_im, 64,
-            (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
+        st->tw_pool_re = vfft_aligned_alloc((size_t)n_tw_groups * per_grp * sizeof(double));
+        st->tw_pool_im = vfft_aligned_alloc((size_t)n_tw_groups * per_grp * sizeof(double));
+        st->tw_scalar_pool_re = vfft_aligned_alloc((size_t)n_tw_groups * scalar_per_grp * sizeof(double));
+        st->tw_scalar_pool_im = vfft_aligned_alloc((size_t)n_tw_groups * scalar_per_grp * sizeof(double));
     } else {
         st->tw_pool_re = st->tw_pool_im = NULL;
         st->tw_scalar_pool_re = st->tw_scalar_pool_im = NULL;
@@ -500,13 +492,13 @@ static inline void vfft_proto_free_plan_tables(stride_plan_t *plan)
 {
     for (int s = 0; s < plan->num_stages; s++) {
         stride_stage_t *st = &plan->stages[s];
-        /* Pools allocated via vfft_proto_posix_memalign — MUST use the
+        /* Pools allocated via vfft_aligned_alloc — MUST use the
          * matching aligned-free on Windows. Calling plain free() on
          * _aligned_malloc memory is UB and corrupts the heap. */
-        if (st->tw_scalar_pool_re) vfft_proto_aligned_free(st->tw_scalar_pool_re);
-        if (st->tw_scalar_pool_im) vfft_proto_aligned_free(st->tw_scalar_pool_im);
-        if (st->tw_pool_re)        vfft_proto_aligned_free(st->tw_pool_re);
-        if (st->tw_pool_im)        vfft_proto_aligned_free(st->tw_pool_im);
+        if (st->tw_scalar_pool_re) vfft_aligned_free(st->tw_scalar_pool_re);
+        if (st->tw_scalar_pool_im) vfft_aligned_free(st->tw_scalar_pool_im);
+        if (st->tw_pool_re)        vfft_aligned_free(st->tw_pool_re);
+        if (st->tw_pool_im)        vfft_aligned_free(st->tw_pool_im);
         /* Pointer arrays + cf_all were allocated with calloc — plain free. */
         free(st->tw_scalar_re); free(st->tw_scalar_im);
         free(st->grp_tw_re);    free(st->grp_tw_im);
@@ -514,7 +506,7 @@ static inline void vfft_proto_free_plan_tables(stride_plan_t *plan)
         free(st->group_base);
         free(st->needs_tw);
         free(st->cf0_re); free(st->cf0_im);
-        if (st->tape) vfft_proto_aligned_free(st->tape);
+        if (st->tape) vfft_aligned_free(st->tape);
     }
 }
 

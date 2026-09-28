@@ -51,7 +51,7 @@ row phase it ran afterwards, a re-read of the plane, is gone for that
 arm). A finished row leaves by streaming stores; a row the walk will
 revisit (the strip arm, the unbanded walk: rows after the pass) leaves by
 a cached copy, so the row phase finds it in L2. The staging is 64-B
-aligned (`VFFT_ZS_ALLOC`).
+aligned (`vfft_aligned_alloc`).
 
 The leaf's form is a RACED plan parameter at T > 1 (built 2026-09-16, the
 raced-twin law): the serial walk is staged outright — staged wins every

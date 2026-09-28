@@ -2023,14 +2023,14 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
     }
     if (!any)
         return 0;
-    z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves */
+    z = (double *)vfft_aligned_alloc(2 * T * sizeof(double));   /* aligned like every plane the door serves */
     if (!z)
         return 0;
     for (i = 0; i < 2 * T; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 1023);
     if (_il2d_build_tables(N1, nst, Rs, Ls, tf, tb))
     {
-        VFFT_ZS_FREE(z);
+        vfft_aligned_free(z);
         return 0;
     }
     for (s = 0; s < nst; s++)
@@ -2083,7 +2083,7 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
         free(tf[s]);
         free(tb[s]);
     }
-    VFFT_ZS_FREE(z);
+    vfft_aligned_free(z);
     for (s = 0; s < nst && off < (int)fsz - 8; s++)
         off += snprintf(forms + off, fsz - off, "%s%s", s ? "." : "", pick[s]);
     return 1;
@@ -2111,17 +2111,17 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns, int nat)
 {
     const size_t T = (size_t)N1 * N2;
-    double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves */
-    double *nscr = nat ? (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double)) : NULL;   /* aligned like every plane the door serves */
-    double *nstage = nat ? (double *)VFFT_ZS_ALLOC(2 * 64 * (size_t)N2 * sizeof(double)) : NULL;   /* R_last <= 64 */
+    double *z = (double *)vfft_aligned_alloc(2 * T * sizeof(double));   /* aligned like every plane the door serves */
+    double *nscr = nat ? (double *)vfft_aligned_alloc(2 * T * sizeof(double)) : NULL;   /* aligned like every plane the door serves */
+    double *nstage = nat ? (double *)vfft_aligned_alloc(2 * 64 * (size_t)N2 * sizeof(double)) : NULL;   /* R_last <= 64 */
     int ci, win = -1;
     double wns = 1e300;
     size_t i;
     if (!z || (nat && !nscr))
     {
-        VFFT_ZS_FREE(z);
-        VFFT_ZS_FREE(nscr);
-        VFFT_ZS_FREE(nstage);
+        vfft_aligned_free(z);
+        vfft_aligned_free(nscr);
+        vfft_aligned_free(nstage);
         return -1;
     }
     for (i = 0; i < 2 * T; i++)
@@ -2211,9 +2211,9 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
             free(cb[a].perm);
         }
     }
-    VFFT_ZS_FREE(z);
-    VFFT_ZS_FREE(nscr);
-    VFFT_ZS_FREE(nstage);
+    vfft_aligned_free(z);
+    vfft_aligned_free(nscr);
+    vfft_aligned_free(nstage);
     *best_ns = wns;
     return win;
 }
@@ -2272,7 +2272,7 @@ static void _il2d_nat_sscr_free(vfft_ilcol_t *c)
     if (c->natsscr)
     {
         for (t = 0; t < c->nnatsscr; t++)
-            VFFT_ZS_FREE(c->natsscr[t]);
+            vfft_aligned_free(c->natsscr[t]);
         free(c->natsscr);
     }
     c->natsscr = NULL;
@@ -2296,7 +2296,7 @@ static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, int N2, int T)
         return 0;
     for (t = 0; t < T; t++)
     {
-        c->natsscr[t] = (double *)VFFT_ZS_ALLOC(2 * (size_t)N1 * (size_t)swcap * sizeof(double));
+        c->natsscr[t] = (double *)vfft_aligned_alloc(2 * (size_t)N1 * (size_t)swcap * sizeof(double));
         if (!c->natsscr[t])
         {
             c->nnatsscr = t;
@@ -2322,7 +2322,7 @@ static void _il2d_col_free(vfft_ilcol_t *c)
         free(c->tb[s]);
     }
     free(c->natperm);
-    VFFT_ZS_FREE(c->natscr);
+    vfft_aligned_free(c->natscr);
     _il2d_nat_sscr_free(c);
     free(c->bluchf);
     free(c->bluchb);
@@ -2418,7 +2418,7 @@ static int _il2d_tpc_build(const vfft_config_t *cfg, vfft_ilcol_t *c, int N, siz
     c->tpcplan = (struct vfft_plan_s *)vfft_create(&tc);
     if (!c->tpcplan)
         return 0;
-    c->tpcscr = (double *)VFFT_ZS_ALLOC(2 * VFFT_IL2D_TPC_PITCH(c->N) * rn * sizeof(double));
+    c->tpcscr = (double *)vfft_aligned_alloc(2 * VFFT_IL2D_TPC_PITCH(c->N) * rn * sizeof(double));
     if (!c->tpcscr)
     {
         vfft_destroy(c->tpcplan);
@@ -2433,7 +2433,7 @@ static void _il2d_tpc_drop(vfft_ilcol_t *c)
         vfft_destroy(c->tpcplan);
     c->tpcplan = NULL;
     if (c->tpcscr)
-        VFFT_ZS_FREE(c->tpcscr);
+        vfft_aligned_free(c->tpcscr);
     c->tpcscr = NULL;
     c->tpc = 0;
 }
@@ -2470,12 +2470,12 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         _il2d_blu_drop_tables(c);
         return;
     }
-    z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
-    zo = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
+    z = (double *)vfft_aligned_alloc(2 * T * sizeof(double));
+    zo = (double *)vfft_aligned_alloc(2 * T * sizeof(double));
     if (!z || !zo)
     {
-        if (z) VFFT_ZS_FREE(z);
-        if (zo) VFFT_ZS_FREE(zo);
+        if (z) vfft_aligned_free(z);
+        if (zo) vfft_aligned_free(zo);
         _il2d_tpc_drop(c);
         return;
     }
@@ -2496,8 +2496,8 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         if (t1 - t0 < tb) tb = t1 - t0;
         if (t2 - t1 < tt) tt = t2 - t1;
     }
-    VFFT_ZS_FREE(z);
-    VFFT_ZS_FREE(zo);
+    vfft_aligned_free(z);
+    vfft_aligned_free(zo);
     c->tpc = (tt < tb);
     if (getenv("VFFT_IL2D_LOG"))
         fprintf(stderr, "[il2d] tpc race at N=%d x %lu lanes: blu %.0f us, turned %.0f us -> %s\n",
@@ -2661,7 +2661,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
          * perm builder refuses on any convention mismatch. */
         c->natperm = _il2d_nat_perm(c->R, c->nst, N);
         if (c->natperm)
-            c->natscr = (double *)VFFT_ZS_ALLOC(   /* 64-B aligned: the strip workers' pieces of a row must not share a line */
+            c->natscr = (double *)vfft_aligned_alloc(   /* 64-B aligned: the strip workers' pieces of a row must not share a line */
             
                 2 * (size_t)N * (int)rn * sizeof(double));
         if (!c->natperm || !c->natscr)
@@ -2751,7 +2751,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 if (c->nat)
                 {
                     free(c->natperm);
-                    VFFT_ZS_FREE(c->natscr);
+                    vfft_aligned_free(c->natscr);
                     c->natperm = NULL;
                     c->natscr = NULL;
                     c->nat = 0;
@@ -2863,7 +2863,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                     if (c->nat)
                     { /* blu is natural by construction */
                         free(c->natperm);
-                        VFFT_ZS_FREE(c->natscr);
+                        vfft_aligned_free(c->natscr);
                         c->natperm = NULL;
                         c->natscr = NULL;
                         c->nat = 0;
@@ -2979,11 +2979,11 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             const vfft_config_t *cfg, int N1, int N2)
 {
     const size_t T = (size_t)N1 * N2;
-    double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));   /* aligned like every plane the door serves */
+    double *z = (double *)vfft_aligned_alloc(2 * T * sizeof(double));   /* aligned like every plane the door serves */
     /* THE RACE RUNS THE CELL'S OWN PLACEMENT: an out-of-place cell races
      * x -> y like the door serves it; racing z -> z would rank a
      * placement-sensitive route (the skewed column pass) the other way round */
-    double *zo = (h->placement == VFFT_OUTOFPLACE) ? (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double)) : z;   /* aligned like every plane the door serves */
+    double *zo = (h->placement == VFFT_OUTOFPLACE) ? (double *)vfft_aligned_alloc(2 * T * sizeof(double)) : z;   /* aligned like every plane the door serves */
     int wlc[14], nwl = 1, wi, ro, bwl = 0, bro = 0, bwc = 0, bkb = 8, bcsk = 0, csk;
     int swl[6], nsw = 0;
     double best = 1e300;
@@ -3001,8 +3001,8 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     if (reps < 2) reps = 2;
     if (!z || !zo)
     {
-        VFFT_ZS_FREE(z);
-        if (zo != z) VFFT_ZS_FREE(zo);
+        vfft_aligned_free(z);
+        if (zo != z) vfft_aligned_free(zo);
         return;
     }
     for (i = 0; i < 2 * T; i++)
@@ -3205,8 +3205,8 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, h->nthreads, "csk", h->il2d_csk);     /* the skewed column pass */
     }
     _vw2_persist(W, cfg);
-    if (zo != z) VFFT_ZS_FREE(zo);
-    VFFT_ZS_FREE(z);
+    if (zo != z) vfft_aligned_free(zo);
+    vfft_aligned_free(z);
 }
 
 /* ── c2c MT clones. Worker t > 0 needs its own row child: the
@@ -3347,15 +3347,15 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
     const size_t PN = (size_t)N1 * N2;
     /* aligned like every plane the door serves, and the cell's own placement
      * (an out-of-place cell races x -> y), as in the axis race */
-    double *z = (double *)VFFT_ZS_ALLOC(2 * PN * sizeof(double));
-    double *zo = (h->placement == VFFT_OUTOFPLACE) ? (double *)VFFT_ZS_ALLOC(2 * PN * sizeof(double)) : z;
+    double *z = (double *)vfft_aligned_alloc(2 * PN * sizeof(double));
+    double *zo = (h->placement == VFFT_OUTOFPLACE) ? (double *)vfft_aligned_alloc(2 * PN * sizeof(double)) : z;
     double st = 1e300, mt = 1e300;
     int p;
     size_t i;
     if (!z || !zo)
     {
-        VFFT_ZS_FREE(z);
-        if (zo != z) VFFT_ZS_FREE(zo);
+        vfft_aligned_free(z);
+        if (zo != z) vfft_aligned_free(zo);
         return;
     }
     for (i = 0; i < 2 * PN; i++)
@@ -3363,8 +3363,8 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
     if (!_il2d_c2c_mt(h, z, zo, VFFT_FORWARD, h->nthreads))
     {
         h->il2d_col.colmt = 0; /* cannot engage — that IS the verdict */
-        VFFT_ZS_FREE(z);
-        if (zo != z) VFFT_ZS_FREE(zo);
+        vfft_aligned_free(z);
+        if (zo != z) vfft_aligned_free(zo);
         vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
                              h->il2d_col.wl, h->il2d_col.tfuse, _il2d_ro_of(h),
                              0, h->nthreads,
@@ -3434,8 +3434,8 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
     }
     h->il2d_col.colmt = (mt < st);
     if (!h->il2d_col.colmt) { h->il2d_col.natarm = 0; h->il2d_col.msw = 0; h->il2d_col.natst = 1; }
-    VFFT_ZS_FREE(z);
-    if (zo != z) VFFT_ZS_FREE(zo);
+    vfft_aligned_free(z);
+    if (zo != z) vfft_aligned_free(zo);
     if (getenv("VFFT_IL2D_LOG"))
         fprintf(stderr, "[il2d-c2c] colmt race %dx%d T=%d: st=%.0f "
                         "mt=%.0f -> %s%s\n",

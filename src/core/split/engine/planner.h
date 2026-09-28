@@ -189,8 +189,7 @@ static inline stride_plan_t *vfft_proto_plan_create_ex(
     for (int s = 0; s < nf; s++) {
         stride_stage_t *st = &plan->stages[s];
         const int G = st->num_groups;
-        if (vfft_proto_posix_memalign((void **)&st->tape, 64,
-                           (size_t)G * sizeof(stride_invocation_t)) != 0) {
+        if (!(st->tape = vfft_aligned_alloc((size_t)G * sizeof(stride_invocation_t)))) {
             st->tape = NULL;
             continue;
         }

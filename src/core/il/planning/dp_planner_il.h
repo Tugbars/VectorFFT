@@ -51,7 +51,7 @@
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
 #include "il_flatdit.h" /* the FLAT mixed-radix DIT: the odd-N engine         */
 #include "il_flatdit_race.h" /* its FORM and TILE races on the shared race body */
-#include "common/support/zalloc.h"   /* VFFT_ZS_ALLOC/FREE: the context arenas */
+#include "common/support/zalloc.h"   /* vfft_aligned_alloc / vfft_aligned_free: the context arenas */
 #include "ztt.h"        /* ZTURN-T: the run-contiguous DIT, one fused driver per cell */
 #include "il_prime.h"   /* the prime cell (Rader/Bluestein); after ztt.h (its ZTURN-T inner branch) */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
@@ -239,10 +239,10 @@ static void vfft_il_dp_init(vfft_il_dp_context_t *ctx, int max_N)
     ctx->beam = VFFT_IL_DP_BEAM_MEASURE;
 
     size_t bytes = ctx->buf_total * sizeof(double);
-    ctx->z_orig = (double *)VFFT_ZS_ALLOC(bytes);
-    ctx->z_in   = (double *)VFFT_ZS_ALLOC(bytes);
-    ctx->z_out  = (double *)VFFT_ZS_ALLOC(bytes);
-    ctx->z_ref  = (double *)VFFT_ZS_ALLOC(bytes);
+    ctx->z_orig = (double *)vfft_aligned_alloc(bytes);
+    ctx->z_in   = (double *)vfft_aligned_alloc(bytes);
+    ctx->z_out  = (double *)vfft_aligned_alloc(bytes);
+    ctx->z_ref  = (double *)vfft_aligned_alloc(bytes);
 
     /* Deterministic seed so two runs bench identical data (as dp_planner.h). */
     srand(42);
@@ -252,10 +252,10 @@ static void vfft_il_dp_init(vfft_il_dp_context_t *ctx, int max_N)
 
 static void vfft_il_dp_destroy(vfft_il_dp_context_t *ctx)
 {
-    VFFT_ZS_FREE(ctx->z_orig);
-    VFFT_ZS_FREE(ctx->z_in);
-    VFFT_ZS_FREE(ctx->z_out);
-    VFFT_ZS_FREE(ctx->z_ref);
+    vfft_aligned_free(ctx->z_orig);
+    vfft_aligned_free(ctx->z_in);
+    vfft_aligned_free(ctx->z_out);
+    vfft_aligned_free(ctx->z_ref);
     memset(ctx, 0, sizeof(*ctx));
 }
 

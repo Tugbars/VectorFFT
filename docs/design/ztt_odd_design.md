@@ -379,7 +379,7 @@ not exist are no longer candidates and ZTURN-T enumerates first.
    and env laws; the public `vfft_zt_mt_passes`; the benches and gates that
    were the cascade's; 64 codelets and their corpus rows (the boundary
    corpus is 54/54); `il_registry_avx2.h` regenerated. The house 64-B
-   allocator `VFFT_ZS_ALLOC/FREE` moved to `support/zalloc.h`. The full
+   allocator `vfft_aligned_alloc/FREE` moved to `support/zalloc.h`. The full
    gate sweep on the cascade-free tree: 26 of 26 pass. Kept on
    purpose: the retired enum slots `VFFT_K1_IL_CASCADE`,
    `VFFT_OOP_KIND_ZSPLIT`, `VFFT_NAT_ZCASC` and the `zcasc` mode name

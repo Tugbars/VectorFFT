@@ -388,8 +388,8 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_turnw);
             free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
             free(h->il2d_col.natperm);
-            VFFT_ZS_FREE(h->il2d_col.natscr);   /* aligned since 2026-09-24 */
-            VFFT_ZS_FREE(h->il2d_col.natstage);
+            vfft_aligned_free(h->il2d_col.natscr);   /* aligned since 2026-09-24 */
+            vfft_aligned_free(h->il2d_col.natstage);
             _il2d_nat_sscr_free(&h->il2d_col);   /* the strips' dense scratch (2026-09-24) */
             free(h->il2d_col.bluchf);
             free(h->il2d_col.bluchb);
@@ -399,14 +399,14 @@ void vfft_destroy(vfft_plan h)
             if (h->il2d_col.tpcplan)
                 vfft_destroy(h->il2d_col.tpcplan); /* the turned prime pass's 1D plan */
             if (h->il2d_col.tpcscr)
-                VFFT_ZS_FREE(h->il2d_col.tpcscr);
-            VFFT_ZS_FREE(h->il2d_rowb2_scr);   /* the two-pass rows' chunk scratch (route 3) */
+                vfft_aligned_free(h->il2d_col.tpcscr);
+            vfft_aligned_free(h->il2d_rowb2_scr);   /* the two-pass rows' chunk scratch (route 3) */
             if (h->il2d_turn_plan)
                 vfft_destroy(h->il2d_turn_plan); /* the turn route's N1 plan */
-            VFFT_ZS_FREE(h->il2d_turn_scr);
+            vfft_aligned_free(h->il2d_turn_scr);
             if (h->il2d_csk_row)
                 vfft_destroy(h->il2d_csk_row); /* the skewed column pass's OOP row plan */
-            VFFT_ZS_FREE(h->il2d_csk_scr);
+            vfft_aligned_free(h->il2d_csk_scr);
             free(h->il2d_col.bandscr);
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
             if (h->il2d_rows)
@@ -449,8 +449,8 @@ void vfft_destroy(vfft_plan h)
         vfft_oop_plan_destroy(h->k1sp);
     if (h->zr2c_child)
         vfft_destroy((vfft_plan)h->zr2c_child); /* §D2: recursive child */
-    vfft_proto_aligned_free(h->zr2c_aff);      /* posix_memalign-backed */
-    vfft_proto_aligned_free(h->zr2c_scratch);
+    vfft_aligned_free(h->zr2c_aff);      /* posix_memalign-backed */
+    vfft_aligned_free(h->zr2c_scratch);
     if (h->rplan)
         vfft_r2c_plan_destroy(h->rplan);
     if (h->c2rdisp)

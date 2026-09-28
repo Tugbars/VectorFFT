@@ -109,9 +109,9 @@ static int staged_pass(void)
     {
         const vfft_ztt_cell_t *c = &vfft_ztt_cells_avx2[i];
         const long N = c->n;
-        double *x = (double *)VFFT_ZTT_ALLOC((size_t)2 * N * sizeof(double));
-        double *a = (double *)VFFT_ZTT_ALLOC((size_t)2 * N * sizeof(double));
-        double *b = (double *)VFFT_ZTT_ALLOC((size_t)2 * N * sizeof(double));
+        double *x = (double *)vfft_aligned_alloc((size_t)2 * N * sizeof(double));
+        double *a = (double *)vfft_aligned_alloc((size_t)2 * N * sizeof(double));
+        double *b = (double *)vfft_aligned_alloc((size_t)2 * N * sizeof(double));
         char cs[64];
         chain_str(c->chain, c->nf, cs);
         fill(x, N, (unsigned)i + 7u);
@@ -154,7 +154,7 @@ static int staged_pass(void)
                 vfft_ztt_destroy(pf);
                 vfft_ztt_destroy(ps);
             }
-        VFFT_ZTT_FREE(x); VFFT_ZTT_FREE(a); VFFT_ZTT_FREE(b);
+        vfft_aligned_free(x); vfft_aligned_free(a); vfft_aligned_free(b);
     }
     printf("  %d cells, %d executions, %d failures\n\n", cells, runs, g_fail - fails0);
     return g_fail == fails0;
@@ -193,13 +193,13 @@ static int odd_pass(void)
         const odd_cell_t *c = &ODD[i];
         const long N = c->N;
         const size_t nb = (size_t)2 * N * sizeof(double);
-        double *x = (double *)VFFT_ZTT_ALLOC(nb);
-        double *ref = (double *)VFFT_ZTT_ALLOC(nb);
-        double *nat = (double *)VFFT_ZTT_ALLOC(nb);
-        double *nat_ip = (double *)VFFT_ZTT_ALLOC(nb);
-        double *pl = (double *)VFFT_ZTT_ALLOC(nb);
-        double *t1 = (double *)VFFT_ZTT_ALLOC(nb);
-        double *t2 = (double *)VFFT_ZTT_ALLOC(nb + 64);
+        double *x = (double *)vfft_aligned_alloc(nb);
+        double *ref = (double *)vfft_aligned_alloc(nb);
+        double *nat = (double *)vfft_aligned_alloc(nb);
+        double *nat_ip = (double *)vfft_aligned_alloc(nb);
+        double *pl = (double *)vfft_aligned_alloc(nb);
+        double *t1 = (double *)vfft_aligned_alloc(nb);
+        double *t2 = (double *)vfft_aligned_alloc(nb + 64);
         vfft_ztt_plan_t *pn, *pp;
         char cs[64], tiles[64] = "";
         double e_nat = -1, e_rt = -1, e_rti = -1, e_ord = -1;
@@ -302,8 +302,8 @@ static int odd_pass(void)
         printf("  %-8ld %-18s %10.2e %10.2e %10.2e %10.2e  %s\n", N, cs, e_nat, e_rt, e_rti, e_ord, tiles[0] ? tiles : "(untiled only)");
         vfft_ztt_destroy(pn);
         vfft_ztt_destroy(pp);
-        VFFT_ZTT_FREE(x); VFFT_ZTT_FREE(ref); VFFT_ZTT_FREE(nat); VFFT_ZTT_FREE(nat_ip);
-        VFFT_ZTT_FREE(pl); VFFT_ZTT_FREE(t1); VFFT_ZTT_FREE(t2);
+        vfft_aligned_free(x); vfft_aligned_free(ref); vfft_aligned_free(nat); vfft_aligned_free(nat_ip);
+        vfft_aligned_free(pl); vfft_aligned_free(t1); vfft_aligned_free(t2);
         (void)tl;
     }
     /* the grammar's refusals: an odd radix at an end, a radix outside the set */
@@ -343,7 +343,7 @@ static int frontdoor_mt_pass(const char *wisdir)
     const int N = 245760;
     const size_t nb = (size_t)2 * N * sizeof(double);
     int fails0 = g_fail;
-    double *x = (double *)VFFT_ZTT_ALLOC(nb), *y1 = (double *)VFFT_ZTT_ALLOC(nb), *y8 = (double *)VFFT_ZTT_ALLOC(nb);
+    double *x = (double *)vfft_aligned_alloc(nb), *y1 = (double *)vfft_aligned_alloc(nb), *y8 = (double *)vfft_aligned_alloc(nb);
     vfft_wisdom *W = vfft_wisdom_load(wisdir);
     printf("THE FRONT DOOR, THREADED (N=%d natural OOP, T=8)\n", N);
     CHECK(W != NULL, "wisdom load");
@@ -380,7 +380,7 @@ static int frontdoor_mt_pass(const char *wisdir)
         (void)e0;
         vfft_wisdom_free(W);
     }
-    VFFT_ZTT_FREE(x); VFFT_ZTT_FREE(y1); VFFT_ZTT_FREE(y8);
+    vfft_aligned_free(x); vfft_aligned_free(y1); vfft_aligned_free(y8);
     printf("  %d failures\n\n", g_fail - fails0);
     return g_fail == fails0;
 }
@@ -443,8 +443,8 @@ static int frontdoor_pass(const char *wisdir)
     {
         const int N = NS[i];
         const size_t nb = (size_t)2 * N * sizeof(double);
-        double *x = (double *)VFFT_ZTT_ALLOC(nb), *ref = (double *)VFFT_ZTT_ALLOC(nb);
-        double *o = (double *)VFFT_ZTT_ALLOC(nb), *b = (double *)VFFT_ZTT_ALLOC(nb);
+        double *x = (double *)vfft_aligned_alloc(nb), *ref = (double *)vfft_aligned_alloc(nb);
+        double *o = (double *)vfft_aligned_alloc(nb), *b = (double *)vfft_aligned_alloc(nb);
         vfft_wisdom *W = vfft_wisdom_load(wisdir);
         CHECK(W != NULL, "N=%d: wisdom load", N);
         if (!W) continue;
@@ -486,7 +486,7 @@ static int frontdoor_pass(const char *wisdir)
             printf("  %-6d banked: ord=nat il_route=%s %s, ord=scr il_route=%s il_ztt=%s\n",
                    N, hn ? rn : "none", cn[0] ? cn : "", hs ? rs : "none", cs);
         }
-        VFFT_ZTT_FREE(x); VFFT_ZTT_FREE(ref); VFFT_ZTT_FREE(o); VFFT_ZTT_FREE(b);
+        vfft_aligned_free(x); vfft_aligned_free(ref); vfft_aligned_free(o); vfft_aligned_free(b);
     }
     printf("  %d failures\n\n", g_fail - fails0);
     return g_fail == fails0;

@@ -125,14 +125,14 @@ static int g_trial_pace_ms = 0;
 static double *alloc_d(size_t n)
 {
     double *p = NULL;
-    if (vfft_proto_posix_memalign((void **)&p, 64, n * sizeof(double)) != 0)
+    if (!(p = vfft_aligned_alloc(n * sizeof(double))))
     {
         fprintf(stderr, "alloc failed\n");
         exit(1);
     }
     return p;
 }
-static void free_d(double *p) { vfft_proto_aligned_free(p); }
+static void free_d(double *p) { vfft_aligned_free(p); }
 static void cachebust(void)
 {
     size_t s = 32 * 1024 * 1024 / sizeof(double);

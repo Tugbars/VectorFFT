@@ -537,12 +537,12 @@ static void _bluestein_destroy(void *data) {
     if (!d) return;
     free(d->chirp_re);
     free(d->chirp_im);
-    STRIDE_ALIGNED_FREE(d->B_hat_re);
-    STRIDE_ALIGNED_FREE(d->B_hat_im);
-    STRIDE_ALIGNED_FREE(d->C_hat_re);
-    STRIDE_ALIGNED_FREE(d->C_hat_im);
-    STRIDE_ALIGNED_FREE(d->scratch_re);
-    STRIDE_ALIGNED_FREE(d->scratch_im);
+    vfft_aligned_free(d->B_hat_re);
+    vfft_aligned_free(d->B_hat_im);
+    vfft_aligned_free(d->C_hat_re);
+    vfft_aligned_free(d->C_hat_im);
+    vfft_aligned_free(d->scratch_re);
+    vfft_aligned_free(d->scratch_im);
     if (d->inner_plan) stride_plan_destroy(d->inner_plan);
     free(d);
 }
@@ -589,17 +589,17 @@ static stride_plan_t *stride_bluestein_plan(
 
     /* Convolution kernels: M*B expanded (pre-broadcast for flat SIMD multiply) */
     size_t MB = (size_t)M * block_K;
-    d->B_hat_re = (double *)STRIDE_ALIGNED_ALLOC(64, MB * sizeof(double));
-    d->B_hat_im = (double *)STRIDE_ALIGNED_ALLOC(64, MB * sizeof(double));
-    d->C_hat_re = (double *)STRIDE_ALIGNED_ALLOC(64, MB * sizeof(double));
-    d->C_hat_im = (double *)STRIDE_ALIGNED_ALLOC(64, MB * sizeof(double));
+    d->B_hat_re = (double *)vfft_aligned_alloc(MB * sizeof(double));
+    d->B_hat_im = (double *)vfft_aligned_alloc(MB * sizeof(double));
+    d->C_hat_re = (double *)vfft_aligned_alloc(MB * sizeof(double));
+    d->C_hat_im = (double *)vfft_aligned_alloc(MB * sizeof(double));
 
     /* Scratch: T_plan * M * block_K — one slot per parallel worker.
      * Slot 0 (the first MB doubles) is reused by kernel precompute below
      * (single-threaded) and by the T==1 execute fast path. */
     size_t scratch_total = (size_t)T_plan * MB;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_total * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_total * sizeof(double));
+    d->scratch_re = (double *)vfft_aligned_alloc(scratch_total * sizeof(double));
+    d->scratch_im = (double *)vfft_aligned_alloc(scratch_total * sizeof(double));
 
     /* Precompute forward kernel: B_hat = FFT_M(conj(chirp) extended) / M */
     _bluestein_precompute_kernel(N, M, block_K, d->chirp_re, d->chirp_im,

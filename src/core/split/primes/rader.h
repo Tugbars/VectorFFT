@@ -379,12 +379,12 @@ static void _rader_destroy(void *data) {
     if (!d) return;
     free(d->gpow);
     free(d->ginvpow);
-    STRIDE_ALIGNED_FREE(d->omega_fwd_re);
-    STRIDE_ALIGNED_FREE(d->omega_fwd_im);
-    STRIDE_ALIGNED_FREE(d->omega_bwd_re);
-    STRIDE_ALIGNED_FREE(d->omega_bwd_im);
-    STRIDE_ALIGNED_FREE(d->scratch_re);
-    STRIDE_ALIGNED_FREE(d->scratch_im);
+    vfft_aligned_free(d->omega_fwd_re);
+    vfft_aligned_free(d->omega_fwd_im);
+    vfft_aligned_free(d->omega_bwd_re);
+    vfft_aligned_free(d->omega_bwd_im);
+    vfft_aligned_free(d->scratch_re);
+    vfft_aligned_free(d->scratch_im);
     if (d->inner_plan) stride_plan_destroy(d->inner_plan);
     free(d);
 }
@@ -430,17 +430,17 @@ static stride_plan_t *stride_rader_plan(
 
     /* Kernels: (N-1)*B expanded */
     size_t NB = (size_t)nm1 * block_K;
-    d->omega_fwd_re = (double *)STRIDE_ALIGNED_ALLOC(64, NB * sizeof(double));
-    d->omega_fwd_im = (double *)STRIDE_ALIGNED_ALLOC(64, NB * sizeof(double));
-    d->omega_bwd_re = (double *)STRIDE_ALIGNED_ALLOC(64, NB * sizeof(double));
-    d->omega_bwd_im = (double *)STRIDE_ALIGNED_ALLOC(64, NB * sizeof(double));
+    d->omega_fwd_re = (double *)vfft_aligned_alloc(NB * sizeof(double));
+    d->omega_fwd_im = (double *)vfft_aligned_alloc(NB * sizeof(double));
+    d->omega_bwd_re = (double *)vfft_aligned_alloc(NB * sizeof(double));
+    d->omega_bwd_im = (double *)vfft_aligned_alloc(NB * sizeof(double));
 
     /* Scratch: T_plan * N * B per slot ((N-1)*B FFT + B DC = N*B per worker).
      * Slot 0 (the first N*B doubles) is reused by kernel precompute below. */
     size_t scratch_per_slot = (size_t)N * block_K;
     size_t scratch_total = (size_t)T_plan * scratch_per_slot;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_total * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_total * sizeof(double));
+    d->scratch_re = (double *)vfft_aligned_alloc(scratch_total * sizeof(double));
+    d->scratch_im = (double *)vfft_aligned_alloc(scratch_total * sizeof(double));
 
     /* Precompute forward kernel: b_rev[m] = W_N^{ginvpow[m]}, sign = -1 */
     _rader_precompute_kernel(N, block_K, d->ginvpow, -1.0,

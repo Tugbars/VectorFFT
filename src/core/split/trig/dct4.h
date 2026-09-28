@@ -245,8 +245,8 @@ static void _dct4_destroy(void *data) {
     free(d->post_cos2);
     free(d->post_sin2);
     free(d->perm);
-    STRIDE_ALIGNED_FREE(d->psi_re);
-    STRIDE_ALIGNED_FREE(d->psi_im);
+    vfft_aligned_free(d->psi_re);
+    vfft_aligned_free(d->psi_im);
     if (d->fft_plan) stride_plan_destroy(d->fft_plan);
     free(d);
 }
@@ -298,8 +298,8 @@ static stride_plan_t *stride_dct4_plan(int N, size_t K, stride_plan_t *fft_plan_
     }
 
     size_t psi_sz = (size_t)halfN * K;
-    d->psi_re = (double *)STRIDE_ALIGNED_ALLOC(64, psi_sz * sizeof(double));
-    d->psi_im = (double *)STRIDE_ALIGNED_ALLOC(64, psi_sz * sizeof(double));
+    d->psi_re = (double *)vfft_aligned_alloc(psi_sz * sizeof(double));
+    d->psi_im = (double *)vfft_aligned_alloc(psi_sz * sizeof(double));
     if (!d->psi_re || !d->psi_im) { _dct4_destroy(d); return NULL; }
 
     /* Compute mixed-radix digit-reversal permutation for the inner FFT.

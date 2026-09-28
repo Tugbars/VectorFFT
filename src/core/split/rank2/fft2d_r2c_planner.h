@@ -126,13 +126,13 @@ static double vfft_fft2d_r2c_plan_measure(int N1, int N2,
 
     /* 2D bench scratch (one allocation, reused across all candidates → fair) */
     size_t RN = (size_t)N1 * (size_t)N2, CN = (size_t)N1 * hp1;
-    double *x   = (double *)STRIDE_ALIGNED_ALLOC(64, RN * sizeof(double));
-    double *ore = (double *)STRIDE_ALIGNED_ALLOC(64, CN * sizeof(double));
-    double *oim = (double *)STRIDE_ALIGNED_ALLOC(64, CN * sizeof(double));
-    double *xr  = (double *)STRIDE_ALIGNED_ALLOC(64, RN * sizeof(double));
+    double *x   = (double *)vfft_aligned_alloc(RN * sizeof(double));
+    double *ore = (double *)vfft_aligned_alloc(CN * sizeof(double));
+    double *oim = (double *)vfft_aligned_alloc(CN * sizeof(double));
+    double *xr  = (double *)vfft_aligned_alloc(RN * sizeof(double));
     if (!x || !ore || !oim || !xr) {
-        STRIDE_ALIGNED_FREE(x); STRIDE_ALIGNED_FREE(ore);
-        STRIDE_ALIGNED_FREE(oim); STRIDE_ALIGNED_FREE(xr);
+        vfft_aligned_free(x); vfft_aligned_free(ore);
+        vfft_aligned_free(oim); vfft_aligned_free(xr);
         return 1e18;
     }
     srand(17 + N1 + N2);
@@ -173,8 +173,8 @@ static double vfft_fft2d_r2c_plan_measure(int N1, int N2,
         }
     }
 
-    STRIDE_ALIGNED_FREE(x); STRIDE_ALIGNED_FREE(ore);
-    STRIDE_ALIGNED_FREE(oim); STRIDE_ALIGNED_FREE(xr);
+    vfft_aligned_free(x); vfft_aligned_free(ore);
+    vfft_aligned_free(oim); vfft_aligned_free(xr);
 
     if (best_r < 0) { if (verbose) printf("  [2d-planner] no candidate passed the gate\n"); return 1e18; }
 

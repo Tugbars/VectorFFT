@@ -133,12 +133,12 @@ static void vfft_k1fs_destroy(vfft_k1fs_plan_t *p)
         p->c2d->il2d_fs_tw = NULL;
         vfft_destroy((vfft_plan)p->c2d);
     }
-    VFFT_ZS_FREE(p->tw);
-    VFFT_ZS_FREE(p->plane);
+    vfft_aligned_free(p->tw);
+    vfft_aligned_free(p->plane);
     free(p->k1_of_p);
     free(p->p_of_k1);
     free(p->sbK);
-    VFFT_ZS_FREE(p->sbscr);
+    vfft_aligned_free(p->sbscr);
     {
         int q;
         for (q = 0; q < p->sbnst; q++) { free(p->sbtf[q]); free(p->sbtb[q]); }
@@ -236,7 +236,7 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
                     { vfft_k1fs_destroy(p); return NULL; }
                 p->sbK[j * p->sbwl + i] = base;
             }
-        p->sbscr = (double *)VFFT_ZS_ALLOC((size_t)p->nthreads * 2 * (size_t)p->sbR0 * (size_t)p->sbwl *
+        p->sbscr = (double *)vfft_aligned_alloc((size_t)p->nthreads * 2 * (size_t)p->sbR0 * (size_t)p->sbwl *
                                            (size_t)N2 * sizeof(double));
         if (!p->sbscr) { vfft_k1fs_destroy(p); return NULL; }
     }
@@ -246,7 +246,7 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     while ((B << 1) * (B << 1) <= N2) B <<= 1;
     p->B = B;
     rec = 2 * ((size_t)N2 / (size_t)B + (size_t)B);
-    p->tw = (double *)VFFT_ZS_ALLOC((size_t)N1 * rec * sizeof(double));
+    p->tw = (double *)vfft_aligned_alloc((size_t)N1 * rec * sizeof(double));
     if (!p->tw) { vfft_k1fs_destroy(p); return NULL; }
     for (q = 0; q < N1; q++)
     {
@@ -275,7 +275,7 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     p->c2d->il2d_fs_B = B;
     if (!scr)
     {
-        p->plane = (double *)VFFT_ZS_ALLOC(2 * (size_t)N * sizeof(double));
+        p->plane = (double *)vfft_aligned_alloc(2 * (size_t)N * sizeof(double));
         if (!p->plane) { vfft_k1fs_destroy(p); return NULL; }
     }
     return p;

@@ -20,7 +20,7 @@
 #include "rfft.h"            /* rfft_codelets_t, rfft_plan_create_ex, execute   */
 #include "dp_planner.h"      /* vfft_now_ns                               */
 #include "wisdom_reader.h"   /* vfft_proto_wisdom_entry_t + STRIDE_MAX_STAGES   */
-#include "proto_stride_compat.h" /* vfft_proto_posix_memalign / aligned_free    */
+#include "proto_stride_compat.h" /* vfft_aligned_alloc / vfft_aligned_free */
 #include <math.h>
 #include <string.h>
 
@@ -81,10 +81,10 @@ static int vfft_rfft_calibrate(int N, size_t K, const rfft_codelets_t *reg,
 
     size_t total = (size_t)N * K;
     double *x = NULL, *ref = NULL, *buf = NULL;
-    if (vfft_proto_posix_memalign((void **)&x,   64, total * sizeof(double)) ||
-        vfft_proto_posix_memalign((void **)&ref, 64, total * sizeof(double)) ||
-        vfft_proto_posix_memalign((void **)&buf, 64, total * sizeof(double))) {
-        vfft_proto_aligned_free(x); vfft_proto_aligned_free(ref); vfft_proto_aligned_free(buf);
+    if (!(x = vfft_aligned_alloc(total * sizeof(double))) ||
+        !(ref = vfft_aligned_alloc(total * sizeof(double))) ||
+        !(buf = vfft_aligned_alloc(total * sizeof(double)))) {
+        vfft_aligned_free(x); vfft_aligned_free(ref); vfft_aligned_free(buf);
         return -1;
     }
     for (size_t i = 0; i < total; i++)
@@ -92,7 +92,7 @@ static int vfft_rfft_calibrate(int N, size_t K, const rfft_codelets_t *reg,
 
     /* reference = the seed factorization on the (roundtrip-validated) engine. */
     rfft_plan_t *dp = rfft_plan_create_ex(N, K, fz[0].factors, fz[0].nf, NULL, reg);
-    if (!dp) { vfft_proto_aligned_free(x); vfft_proto_aligned_free(ref); vfft_proto_aligned_free(buf); return -1; }
+    if (!dp) { vfft_aligned_free(x); vfft_aligned_free(ref); vfft_aligned_free(buf); return -1; }
     memset(ref, 0, total * sizeof(double));
     rfft_execute_fwd_packed(dp, x, ref);
     rfft_plan_destroy(dp);
@@ -140,7 +140,7 @@ static int vfft_rfft_calibrate(int N, size_t K, const rfft_codelets_t *reg,
         }
     }
 
-    vfft_proto_aligned_free(x); vfft_proto_aligned_free(ref); vfft_proto_aligned_free(buf);
+    vfft_aligned_free(x); vfft_aligned_free(ref); vfft_aligned_free(buf);
     if (best_nf == 0) return -1;
 
     memset(out, 0, sizeof *out);

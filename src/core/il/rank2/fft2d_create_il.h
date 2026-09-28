@@ -304,7 +304,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 if (il2d_rowb2_leaf_f && il2d_rowb2_mid_f && il2d_rowb2_t2t_b && il2d_rowb2_n1_b)
                 {
                     const int Tn = _vfft_plan_threads(cfg) > 0 ? _vfft_plan_threads(cfg) : 1;
-                    il2d_rowb2_scr = (double *)VFFT_ZS_ALLOC((size_t)Tn * 2 * (size_t)VFFT_IL2D_RB2_CHUNK
+                    il2d_rowb2_scr = (double *)vfft_aligned_alloc((size_t)Tn * 2 * (size_t)VFFT_IL2D_RB2_CHUNK
                                                             * (size_t)N2 * sizeof(double));
                 }
                 if (!il2d_rowb2_scr)
@@ -346,7 +346,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 il2d_turn_plan = (struct vfft_plan_s *)vfft_create(&tc);
                 if (il2d_turn_plan)
                 {
-                    il2d_turn_scr = (double *)VFFT_ZS_ALLOC(2 * VFFT_IL2D_TURN_PITCH(N1) * (size_t)N2 * sizeof(double));
+                    il2d_turn_scr = (double *)vfft_aligned_alloc(2 * VFFT_IL2D_TURN_PITCH(N1) * (size_t)N2 * sizeof(double));
                     if (!il2d_turn_scr)
                     {
                         vfft_destroy(il2d_turn_plan);
@@ -374,7 +374,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             {   /* its own single column stage (the n1c pair at radix N1, natural
                  * by construction): the route stands beside the banked chain
                  * whatever the chain race picked */
-                il2d_csk_scr = (double *)VFFT_ZS_ALLOC(2 * (size_t)N1 * ((size_t)N2 + 8) * sizeof(double));
+                il2d_csk_scr = (double *)vfft_aligned_alloc(2 * (size_t)N1 * ((size_t)N2 + 8) * sizeof(double));
                 if (il2d_csk_scr)
                 {
                     vfft_config_t oc;
@@ -863,7 +863,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     {   /* the leaf's staging, one block per worker (il2d_natural_leaf_design.md) */
         const int Rl = il2d_R[il2d_nst - 1];
         const int T = h->nthreads > 0 ? h->nthreads : 1;
-        h->il2d_col.natstage = (double *)VFFT_ZS_ALLOC((size_t)T * 2 * (size_t)Rl * h->il2d_col.rn * sizeof(double));
+        h->il2d_col.natstage = (double *)vfft_aligned_alloc((size_t)T * 2 * (size_t)Rl * h->il2d_col.rn * sizeof(double));
     }
     h->il2d_col.blu = il2d_blu;
     h->il2d_col.bluchf = il2d_bluchf;

@@ -77,7 +77,7 @@ the arrangement's edge. The chains the planner picked: 8.8.8.8 (4096),
 
 **Defect found by this verdict — the natural door's race buffers.** The door
 (`c2c_oop_create.h`, `[natorder]`) raced both arms on plain `malloc` memory
-(16-B aligned on Windows) while the planner (`VFFT_ZS_ALLOC`) and the bench
+(16-B aligned on Windows) while the planner (`vfft_aligned_alloc`) and the bench
 (posix_memalign 64) race on 64-B arenas. ZTURN-T's drivers store unaligned,
 so an unaligned destination runs but splits lines: the door clocked ZTURN-T
 at 3712 / 5904 / 3758 ns in three consecutive processes at 4096 and at

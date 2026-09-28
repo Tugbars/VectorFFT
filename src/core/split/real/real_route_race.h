@@ -96,16 +96,16 @@ static int _r2c_race_arms(vfft_r2c_plan_t *pr, vfft_r2c_plan_t *ps,
     double *x = NULL, *orr = NULL, *oii = NULL, *z = NULL;
     double a[9], b[9];
     int reps, r;
-    if (vfft_proto_posix_memalign((void **)&x, 64, insz * sizeof(double)) ||
+    if (!(x = vfft_aligned_alloc(insz * sizeof(double))) ||
         (as_z
-             ? vfft_proto_posix_memalign((void **)&z, 64, 2 * outsz * sizeof(double))
-             : (vfft_proto_posix_memalign((void **)&orr, 64, outsz * sizeof(double)) ||
-                vfft_proto_posix_memalign((void **)&oii, 64, outsz * sizeof(double)))))
+             ? !(z = vfft_aligned_alloc(2 * outsz * sizeof(double)))
+             : (!(orr = vfft_aligned_alloc(outsz * sizeof(double))) ||
+                !(oii = vfft_aligned_alloc(outsz * sizeof(double))))))
     {
-        vfft_proto_aligned_free(x);
-        vfft_proto_aligned_free(orr);
-        vfft_proto_aligned_free(oii);
-        vfft_proto_aligned_free(z);
+        vfft_aligned_free(x);
+        vfft_aligned_free(orr);
+        vfft_aligned_free(oii);
+        vfft_aligned_free(z);
         return -1;
     }
     for (size_t i = 0; i < insz; i++)
@@ -129,10 +129,10 @@ static int _r2c_race_arms(vfft_r2c_plan_t *pr, vfft_r2c_plan_t *ps,
         *n_rfft = ns[0];
         *n_stride = ns[1];
     }
-    vfft_proto_aligned_free(x);
-    vfft_proto_aligned_free(orr);
-    vfft_proto_aligned_free(oii);
-    vfft_proto_aligned_free(z);
+    vfft_aligned_free(x);
+    vfft_aligned_free(orr);
+    vfft_aligned_free(oii);
+    vfft_aligned_free(z);
     return 0;
 }
 
@@ -150,16 +150,16 @@ static int _c2r_race_arms(vfft_c2r_disp_t *pn, vfft_c2r_disp_t *ps,
     double *re = NULL, *im = NULL, *y = NULL, *z = NULL;
     double a[9], b[9];
     int reps, r;
-    if (vfft_proto_posix_memalign((void **)&y, 64, outsz * sizeof(double)) ||
+    if (!(y = vfft_aligned_alloc(outsz * sizeof(double))) ||
         (as_z
-             ? vfft_proto_posix_memalign((void **)&z, 64, 2 * hcsz * sizeof(double))
-             : (vfft_proto_posix_memalign((void **)&re, 64, hcsz * sizeof(double)) ||
-                vfft_proto_posix_memalign((void **)&im, 64, hcsz * sizeof(double)))))
+             ? !(z = vfft_aligned_alloc(2 * hcsz * sizeof(double)))
+             : (!(re = vfft_aligned_alloc(hcsz * sizeof(double))) ||
+                !(im = vfft_aligned_alloc(hcsz * sizeof(double))))))
     {
-        vfft_proto_aligned_free(re);
-        vfft_proto_aligned_free(im);
-        vfft_proto_aligned_free(y);
-        vfft_proto_aligned_free(z);
+        vfft_aligned_free(re);
+        vfft_aligned_free(im);
+        vfft_aligned_free(y);
+        vfft_aligned_free(z);
         return -1;
     }
     if (as_z)
@@ -190,10 +190,10 @@ static int _c2r_race_arms(vfft_c2r_disp_t *pn, vfft_c2r_disp_t *ps,
         *n_nat = ns[0];
         *n_split = ns[1];
     }
-    vfft_proto_aligned_free(re);
-    vfft_proto_aligned_free(im);
-    vfft_proto_aligned_free(y);
-    vfft_proto_aligned_free(z);
+    vfft_aligned_free(re);
+    vfft_aligned_free(im);
+    vfft_aligned_free(y);
+    vfft_aligned_free(z);
     return 0;
 }
 

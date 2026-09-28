@@ -120,8 +120,8 @@ static void _dct1_destroy(void *data)
     stride_dct1_data_t *d = (stride_dct1_data_t *)data;
     if (!d)
         return;
-    STRIDE_ALIGNED_FREE(d->buf_re);
-    STRIDE_ALIGNED_FREE(d->buf_im);
+    vfft_aligned_free(d->buf_re);
+    vfft_aligned_free(d->buf_im);
     if (d->r2c_plan)
         stride_plan_destroy(d->r2c_plan);
     free(d);
@@ -235,8 +235,8 @@ static stride_plan_t *_boundary_plan(
     { int T = thread_pool_size(); d->n_threads = (T < 1) ? 1 : T; }
 
     size_t MK = (size_t)M * K;
-    d->buf_re = (double *)STRIDE_ALIGNED_ALLOC(64, MK * sizeof(double));
-    d->buf_im = (double *)STRIDE_ALIGNED_ALLOC(64, MK * sizeof(double));
+    d->buf_re = (double *)vfft_aligned_alloc(MK * sizeof(double));
+    d->buf_im = (double *)vfft_aligned_alloc(MK * sizeof(double));
 
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     if (!plan)

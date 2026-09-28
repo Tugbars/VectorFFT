@@ -100,19 +100,17 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
      * allocates no scratch at all, ran 1137-1261 everywhere. The correlation
      * is exact across all four arms. */
     double *aff = NULL, *scr = NULL;
-    if (vfft_proto_posix_memalign((void **)&aff, 64,
-                                  sizeof(double) * 4u * (size_t)(top + 1)) != 0)
+    if (!(aff = vfft_aligned_alloc(sizeof(double) * 4u * (size_t)(top + 1))))
         aff = NULL;
     if (route == 0 &&
-        vfft_proto_posix_memalign((void **)&scr, 64,
-                                  sizeof(double) * ((size_t)N + 2)) != 0)
+        !(scr = vfft_aligned_alloc(sizeof(double) * ((size_t)N + 2))))
         scr = NULL;
     if (!h || !aff || (route == 0 && !scr))
     {
         vfft_destroy((vfft_plan)child);
         free(h);
-        vfft_proto_aligned_free(aff);
-        vfft_proto_aligned_free(scr);
+        vfft_aligned_free(aff);
+        vfft_aligned_free(scr);
         return NULL;
     }
     /* four tables: [affS | affC | bwdS | bwdC] in one allocation. The
@@ -278,12 +276,12 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
         return h0 ? h0 : h1;
 
     size_t xs = (size_t)N + 2;
-    double *a = (double *)STRIDE_ALIGNED_ALLOC(64, (xs * 8 + 63) & ~(size_t)63);
-    double *b = (double *)STRIDE_ALIGNED_ALLOC(64, (xs * 8 + 63) & ~(size_t)63);
+    double *a = (double *)vfft_aligned_alloc((xs * 8 + 63) & ~(size_t)63);
+    double *b = (double *)vfft_aligned_alloc((xs * 8 + 63) & ~(size_t)63);
     if (!a || !b)
     {
-        STRIDE_ALIGNED_FREE(a);
-        STRIDE_ALIGNED_FREE(b);
+        vfft_aligned_free(a);
+        vfft_aligned_free(b);
         vfft_destroy((vfft_plan)(def ? h0 : h1));
         return def ? h1 : h0;
     }
@@ -321,8 +319,8 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
         n0 = ns[0];
         n1 = ns[1];
     }
-    STRIDE_ALIGNED_FREE(a);
-    STRIDE_ALIGNED_FREE(b);
+    vfft_aligned_free(a);
+    vfft_aligned_free(b);
     int win = (def == 0) ? ((n1 < n0 * 0.97) ? 1 : 0)
                          : ((n0 < n1 * 0.97) ? 0 : 1);
     if (getenv("VFFT_ZRACE_VERBOSE"))

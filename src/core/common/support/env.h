@@ -15,9 +15,9 @@
  * PART 1 — CPU / RUNTIME ENVIRONMENT
  *
  *   vfft_env_init();  // once per thread (FTZ/DAZ)
- *   double *re = stride_alloc(N * K * sizeof(double));
+ *   double *re = vfft_aligned_alloc(N * K * sizeof(double));
  *   ...
- *   stride_free(re);
+ *   vfft_aligned_free(re);
  * ===========================================================================
  */
 
@@ -109,7 +109,8 @@ static inline void vfft_env_restore(unsigned int saved_mxcsr)
 /* =====================================================================
  * ALIGNED + HUGE-PAGE MEMORY ALLOCATION
  *
- *  stride_alloc / stride_free            — 64-byte aligned, standard pages.
+ *  (64-byte aligned standard pages: vfft_aligned_alloc / vfft_aligned_free,
+ *   support/zalloc.h.)
  *  stride_alloc_huge / stride_free_huge  — 2MB huge pages for FFT data buffers
  *      (re[]/im[]) when size > 64KB; eliminates DTLB misses from stride access
  *      (VTune: 23% DTLB Store Overhead at N=1000 K=256 with 4KB pages). Falls
@@ -118,22 +119,9 @@ static inline void vfft_env_restore(unsigned int saved_mxcsr)
  *      echo N > /proc/sys/vm/nr_hugepages (or THP).
  * ===================================================================== */
 
-#define STRIDE_ALIGNMENT 64
 #define STRIDE_HUGEPAGE_THRESHOLD (64 * 1024) /* use huge pages above 64KB */
 
-static inline void *stride_alloc(size_t bytes)
-{
-    if (bytes == 0)
-        return NULL;
-#ifdef _WIN32
-    return _aligned_malloc(bytes, STRIDE_ALIGNMENT);
-#else
-    void *p = NULL;
-    if (posix_memalign(&p, STRIDE_ALIGNMENT, bytes) != 0)
-        return NULL;
-    return p;
-#endif
-}
+#include "common/support/zalloc.h" /* vfft_aligned_alloc / vfft_aligned_free: the one allocator */
 
 static inline void *stride_alloc_huge(size_t bytes)
 {
@@ -142,7 +130,7 @@ static inline void *stride_alloc_huge(size_t bytes)
 
     /* Only use huge pages for large allocations */
     if (bytes < STRIDE_HUGEPAGE_THRESHOLD)
-        return stride_alloc(bytes);
+        return vfft_aligned_alloc(bytes);
 
 #ifdef _WIN32
     /* VirtualAlloc with MEM_LARGE_PAGES. Requires "Lock pages in memory"
@@ -187,19 +175,9 @@ static inline void *stride_alloc_huge(size_t bytes)
 #ifdef _WIN32
 fallback:
 #endif
-    return stride_alloc(bytes);
+    return vfft_aligned_alloc(bytes);
 }
 
-static inline void stride_free(void *p)
-{
-    if (!p)
-        return;
-#ifdef _WIN32
-    _aligned_free(p);
-#else
-    free(p);
-#endif
-}
 
 /* Detects huge vs fallback by 2MB-alignment heuristic. */
 static inline void stride_free_huge(void *p, size_t bytes)
@@ -209,7 +187,7 @@ static inline void stride_free_huge(void *p, size_t bytes)
 
     if (bytes < STRIDE_HUGEPAGE_THRESHOLD)
     {
-        stride_free(p);
+        vfft_aligned_free(p);
         return;
     }
 
@@ -230,7 +208,7 @@ static inline void stride_free_huge(void *p, size_t bytes)
     }
     free(p);
 #else
-    stride_free(p);
+    vfft_aligned_free(p);
 #endif
 }
 

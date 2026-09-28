@@ -110,7 +110,7 @@ typedef struct {
 static double *_sp_ad(size_t n)
 {
     double *p = NULL;
-    if (vfft_proto_posix_memalign((void **)&p, 64, n * sizeof(double)) != 0)
+    if (!(p = vfft_aligned_alloc(n * sizeof(double))))
         return NULL;
     return p;
 }
@@ -488,10 +488,10 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
                    cand[k].R1, cand[k].R2, cand[k].best);
     }
 
-    vfft_proto_aligned_free(b.xr); vfft_proto_aligned_free(b.xi);
-    vfft_proto_aligned_free(b.dr); vfft_proto_aligned_free(b.di);
-    vfft_proto_aligned_free(b.wr); vfft_proto_aligned_free(b.wi);
-    vfft_proto_aligned_free(b.Rr); vfft_proto_aligned_free(b.Ri);
+    vfft_aligned_free(b.xr); vfft_aligned_free(b.xi);
+    vfft_aligned_free(b.dr); vfft_aligned_free(b.di);
+    vfft_aligned_free(b.wr); vfft_aligned_free(b.wi);
+    vfft_aligned_free(b.Rr); vfft_aligned_free(b.Ri);
     *np_out = np;
     return nc;
 }

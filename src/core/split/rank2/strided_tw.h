@@ -32,20 +32,7 @@
 #ifndef VFFT_STRIDED_TW_H
 #define VFFT_STRIDED_TW_H
 #include "common/math/pi.h"
-/* win-compat: mingw lacks C11 aligned_alloc; Windows must pair _aligned_malloc/_aligned_free
- * (same shim as proto_stride_compat.h, guarded so whichever comes first wins). */
-#ifndef STRIDE_ALIGNED_ALLOC
-#if defined(_WIN32) || defined(_MSC_VER)
-#include <malloc.h>
-#define STRIDE_ALIGNED_ALLOC(align, size) _aligned_malloc((size), (align))
-#define STRIDE_ALIGNED_FREE(p) _aligned_free(p)
-#else
-#include <stdlib.h>
-#define STRIDE_ALIGNED_ALLOC(align, size) \
-    aligned_alloc((align), ((size) + (size_t)(align) - 1) & ~((size_t)(align) - 1))
-#define STRIDE_ALIGNED_FREE(p) free(p)
-#endif
-#endif
+#include "common/support/zalloc.h" /* vfft_aligned_alloc / vfft_aligned_free: the one allocator */
 
 
 #include <immintrin.h>
@@ -84,9 +71,9 @@ static inline int _stw_tables_init(_stw_tables_t *t, int N)
     t->r = N / 64;
     size_t per = (size_t)N / (size_t)t->r;
     size_t cnt = (t->r == 2) ? per : 3 * per;
-    t->twr = (double *)STRIDE_ALIGNED_ALLOC(64, cnt * sizeof(double));
-    t->twi = (double *)STRIDE_ALIGNED_ALLOC(64, cnt * sizeof(double));
-    if (!t->twr || !t->twi) { STRIDE_ALIGNED_FREE(t->twr); STRIDE_ALIGNED_FREE(t->twi); return 0; }
+    t->twr = (double *)vfft_aligned_alloc(cnt * sizeof(double));
+    t->twi = (double *)vfft_aligned_alloc(cnt * sizeof(double));
+    if (!t->twr || !t->twi) { vfft_aligned_free(t->twr); vfft_aligned_free(t->twi); return 0; }
     if (t->r == 2) {
         for (size_t m = 0; m < per; m++) {
             double a = -2.0 * VFFT_PI * (double)m / (double)N;
@@ -105,7 +92,7 @@ static inline int _stw_tables_init(_stw_tables_t *t, int N)
 
 static inline void _stw_tables_free(_stw_tables_t *t)
 {
-    STRIDE_ALIGNED_FREE(t->twr); STRIDE_ALIGNED_FREE(t->twi); t->twr = t->twi = 0;
+    vfft_aligned_free(t->twr); vfft_aligned_free(t->twi); t->twr = t->twi = 0;
 }
 
 /* ── DIF fronts (engine kernels; vectorized along the row) ──────────── */

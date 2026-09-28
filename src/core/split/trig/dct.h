@@ -489,8 +489,8 @@ static void _dct2_destroy(void *data) {
     if (!d) return;
     free(d->cos_tw);
     free(d->sin_tw);
-    STRIDE_ALIGNED_FREE(d->buf_re);
-    STRIDE_ALIGNED_FREE(d->buf_im);
+    vfft_aligned_free(d->buf_re);
+    vfft_aligned_free(d->buf_im);
     if (d->r2c_plan) stride_plan_destroy(d->r2c_plan);
     free(d);
 }
@@ -535,8 +535,8 @@ static stride_plan_t *stride_dct2_plan(int N, size_t K, stride_plan_t *r2c_plan_
 
     /* Internal scratch: N*K (HALF the size of the textbook 2N-R2C approach) */
     size_t buf_sz = (size_t)N * K;
-    d->buf_re = (double *)STRIDE_ALIGNED_ALLOC(64, buf_sz * sizeof(double));
-    d->buf_im = (double *)STRIDE_ALIGNED_ALLOC(64, buf_sz * sizeof(double));
+    d->buf_re = (double *)vfft_aligned_alloc(buf_sz * sizeof(double));
+    d->buf_im = (double *)vfft_aligned_alloc(buf_sz * sizeof(double));
     if (!d->buf_re || !d->buf_im) { _dct2_destroy(d); return NULL; }
 
     /* Wrap with override pointers */

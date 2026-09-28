@@ -1454,13 +1454,13 @@ static void _r2c_destroy(void *data)
     stride_r2c_data_t *d = (stride_r2c_data_t *)data;
     if (!d)
         return;
-    STRIDE_ALIGNED_FREE(d->tw_re);
-    STRIDE_ALIGNED_FREE(d->tw_im);
+    vfft_aligned_free(d->tw_re);
+    vfft_aligned_free(d->tw_im);
     free(d->perm);
     free(d->iperm);
-    STRIDE_ALIGNED_FREE(d->scratch_re);
-    STRIDE_ALIGNED_FREE(d->scratch_im);
-    STRIDE_ALIGNED_FREE(d->c2r_im_buf);
+    vfft_aligned_free(d->scratch_re);
+    vfft_aligned_free(d->scratch_im);
+    vfft_aligned_free(d->c2r_im_buf);
     free(d->rowscr_re);  /* row-mode lazies (rowsplit fusion) */
     free(d->rowscr_im);
     free(d->rowwork);
@@ -1620,8 +1620,8 @@ static stride_plan_t *_r2c_plan_odd(
     /* tw arrays are unused on the odd path; allocated so that
      * _r2c_destroy's unconditional frees stay uniform. */
     size_t twn = (size_t)(halfN > 0 ? halfN : 1);
-    d->tw_re = (double *)STRIDE_ALIGNED_ALLOC(64, twn * sizeof(double));
-    d->tw_im = (double *)STRIDE_ALIGNED_ALLOC(64, twn * sizeof(double));
+    d->tw_re = (double *)vfft_aligned_alloc(twn * sizeof(double));
+    d->tw_im = (double *)vfft_aligned_alloc(twn * sizeof(double));
 
     /* Full-N permutation (the inner plan is the full N-point FFT). */
     d->perm = (int *)malloc((size_t)N * sizeof(int));
@@ -1639,10 +1639,10 @@ static stride_plan_t *_r2c_plan_odd(
     }
 
     size_t NK = (size_t)N * K;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, NK * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, NK * sizeof(double));
+    d->scratch_re = (double *)vfft_aligned_alloc(NK * sizeof(double));
+    d->scratch_im = (double *)vfft_aligned_alloc(NK * sizeof(double));
     /* Backward Hermitian-fill workspace: full N rows, not H. */
-    d->c2r_im_buf = (double *)STRIDE_ALIGNED_ALLOC(64, NK * sizeof(double));
+    d->c2r_im_buf = (double *)vfft_aligned_alloc(NK * sizeof(double));
 
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     if (!plan)
@@ -1713,8 +1713,8 @@ static stride_plan_t *stride_r2c_plan(
     d->n_threads = T_plan;
 
     /* Twiddle factors: W_N^k for k=0..N/2-1 */
-    d->tw_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)halfN * sizeof(double));
-    d->tw_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)halfN * sizeof(double));
+    d->tw_re = (double *)vfft_aligned_alloc((size_t)halfN * sizeof(double));
+    d->tw_im = (double *)vfft_aligned_alloc((size_t)halfN * sizeof(double));
     _r2c_init_twiddles(N, d->tw_re, d->tw_im);
 
     /* Digit-reversal permutation from inner plan's factorization.
@@ -1742,11 +1742,11 @@ static stride_plan_t *stride_r2c_plan(
      * Slot 0 is also the single-thread fast path's working buffer. */
     size_t scratch_per_slot = (size_t)halfN * block_K;
     size_t scratch_total = (size_t)T_plan * scratch_per_slot;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_total * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_total * sizeof(double));
+    d->scratch_re = (double *)vfft_aligned_alloc(scratch_total * sizeof(double));
+    d->scratch_im = (double *)vfft_aligned_alloc(scratch_total * sizeof(double));
 
     /* Pre-allocated im buffer for stride_execute_c2r (avoids malloc per call) */
-    d->c2r_im_buf = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)(halfN + 1) * K * sizeof(double));
+    d->c2r_im_buf = (double *)vfft_aligned_alloc((size_t)(halfN + 1) * K * sizeof(double));
 
     /* Build plan shell */
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));

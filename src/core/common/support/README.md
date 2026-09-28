@@ -33,7 +33,7 @@ libraries enable them). **MXCSR is per-thread**, so `vfft_env_init()` must be ca
 back). Call it once at program start on the main thread, and inside each worker.
 
 **Aligned + huge-page allocation.**
-- `stride_alloc` / `stride_free` — 64-byte aligned (`STRIDE_ALIGNMENT`), one cache line, the
+- `vfft_aligned_alloc` / `vfft_aligned_free` — 64-byte aligned (`VFFT_ALIGNMENT`), one cache line, the
   SIMD load/store requirement. `_aligned_malloc` (Windows) / `posix_memalign` (POSIX).
 - `stride_alloc_huge` / `stride_free_huge` — **2 MB huge pages** for the big `re[]`/`im[]`
   data buffers (above `STRIDE_HUGEPAGE_THRESHOLD = 64 KB`). **Why:** strided FFT access blows

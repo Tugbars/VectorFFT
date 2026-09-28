@@ -27,7 +27,7 @@
 #ifndef VFFT_PROTO_DP_PLANNER_H
 #define VFFT_PROTO_DP_PLANNER_H
 
-#include "plan.h"          /* stride_plan_t, vfft_proto_posix_memalign */
+#include "plan.h"          /* stride_plan_t */
 #include "planner.h"       /* vfft_proto_plan_create, vfft_proto_plan_destroy */
 #include "executor.h"      /* vfft_proto_execute_fwd */
 #include "registry.h"  /* vfft_proto_registry_t, VFFT_PROTO_REG_MAX_RADIX */
@@ -40,13 +40,6 @@
 
 #include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 
-/* Pointer-returning wrapper over vfft_proto_posix_memalign (which returns
- * int and writes the pointer through an out-arg). */
-static inline void *_vfft_proto_dp_aligned_alloc(size_t align, size_t size) {
-    void *p = NULL;
-    if (vfft_proto_posix_memalign(&p, align, size) != 0) return NULL;
-    return p;
-}
 
 /* Factorization + permutation types, shared with exhaustive_plan.h. */
 #define VFFT_PROTO_DP_MAX_STAGES STRIDE_MAX_STAGES
@@ -205,10 +198,10 @@ static void vfft_proto_dp_init(vfft_proto_dp_context_t *ctx, size_t K, int max_N
     ctx->believe_subplan_cost = 1; /* default: MEASURE semantics */
     ctx->beam = VFFT_PROTO_DP_BEAM_MEASURE;
 
-    ctx->re = (double *)_vfft_proto_dp_aligned_alloc(64, ctx->buf_total * sizeof(double));
-    ctx->im = (double *)_vfft_proto_dp_aligned_alloc(64, ctx->buf_total * sizeof(double));
-    ctx->orig_re = (double *)_vfft_proto_dp_aligned_alloc(64, ctx->buf_total * sizeof(double));
-    ctx->orig_im = (double *)_vfft_proto_dp_aligned_alloc(64, ctx->buf_total * sizeof(double));
+    ctx->re = (double *)vfft_aligned_alloc(ctx->buf_total * sizeof(double));
+    ctx->im = (double *)vfft_aligned_alloc(ctx->buf_total * sizeof(double));
+    ctx->orig_re = (double *)vfft_aligned_alloc(ctx->buf_total * sizeof(double));
+    ctx->orig_im = (double *)vfft_aligned_alloc(ctx->buf_total * sizeof(double));
 
     srand(42);
     for (size_t i = 0; i < ctx->buf_total; i++)
@@ -220,10 +213,10 @@ static void vfft_proto_dp_init(vfft_proto_dp_context_t *ctx, size_t K, int max_N
 
 static void vfft_proto_dp_destroy(vfft_proto_dp_context_t *ctx)
 {
-    vfft_proto_aligned_free(ctx->re);
-    vfft_proto_aligned_free(ctx->im);
-    vfft_proto_aligned_free(ctx->orig_re);
-    vfft_proto_aligned_free(ctx->orig_im);
+    vfft_aligned_free(ctx->re);
+    vfft_aligned_free(ctx->im);
+    vfft_aligned_free(ctx->orig_re);
+    vfft_aligned_free(ctx->orig_im);
     memset(ctx, 0, sizeof(*ctx));
 }
 
