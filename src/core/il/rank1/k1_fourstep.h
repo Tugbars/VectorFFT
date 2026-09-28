@@ -10,9 +10,10 @@
  * tier's banded walk with the row pass fused per band; step 2 rides in that
  * walk's row seam (_il2d_row_exec, il2d_tier.h) through the child's
  * il2d_fs_tw table — one plane position p = one row = one two-level record.
- * The 2D child is created through the public create at (N1, N2), DEFAULT
- * order (its column chain leaves k1 digit-reversed; the twiddle is built
- * per POSITION so the plan never permutes at run time), the request's
+ * The 2D child is created through the public create at (N1, N2), SCRAMBLED
+ * order whatever the request asked (vfft_policy_k1fs_inner_order, policy_il.h:
+ * its column chain leaves k1 digit-reversed; the twiddle is built per
+ * POSITION so the plan never permutes at run time), the request's
  * placement and thread count, so every verdict of the child (chain, band
  * width, row route, threading) is the rank-2 cell's own, banked on its
  * own rows, and one 2D cell serves both 1D order classes.
@@ -174,7 +175,7 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     rc.n[0] = N1;
     rc.n[1] = N2;
     rc.howmany = 1;
-    rc.order = VFFT_ORDER_DEFAULT;      /* the column chain's own order; the twiddle is per position */
+    rc.order = vfft_policy_k1fs_inner_order();   /* SCRAMBLED, the algorithm's own (policy_il.h) */
     rc.layout = VFFT_LAYOUT_INTERLEAVED;
     rc.nthreads = p->nthreads;
     rc.wisdom = (vfft_wisdom *)W;

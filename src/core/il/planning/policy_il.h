@@ -319,6 +319,29 @@ static inline int vfft_policy_ilnd_mt_serial_arm(long bytes)
  * faster. At ONE thread both forms stay raced (nf=): there the cycle form
  * keeps the cubes that fit L3. */
 
+/* -- rank 1, the FOUR-STEP: its inner 2D plan is SCRAMBLED, whatever the
+ * request asked ----------------------------------------------------------
+ * The K=1 four-step (il/rank1/k1_fourstep.h) serves N = N1 x N2 through an
+ * inner 2D interleaved plan. The order of that intermediate belongs to the
+ * algorithm, not to the caller, and it is SCRAMBLED for both order classes:
+ *   - the four-step's result is transposed by construction (frequency
+ *     k1 + N1*k2 lands at plane position p(k1)*N2 + k2), so a NATURAL result
+ *     needs one transpose whatever the inner plan does. That transpose reads
+ *     each row from its scrambled position and writes it to its natural
+ *     place in the same sweep; a SCRAMBLED result is the plane as it is;
+ *   - a natural inner plan would spend its own reordering pass and the
+ *     transpose would still follow: the same output, one more sweep over the
+ *     whole signal;
+ *   - the per-position twiddle table and the transpose are built around the
+ *     scrambled column comb, and the create refuses a natural inner plan
+ *     rather than compute a wrong result.
+ * An inner plan names its order and never passes DEFAULT: DEFAULT is the
+ * caller's contract (L4), and a plan that borrowed it would change with it. */
+static inline int vfft_policy_k1fs_inner_order(void)
+{
+    return VFFT_ORDER_SCRAMBLED;
+}
+
 /* -- L3 (retired 2026-09-25). The per-thread-count fence lived here while a
  * threaded verdict was a payload token tagged with the T it was raced at.
  * Since wisdom2 v1.3 the thread count is a KEY axis (nthreads=): a threaded
