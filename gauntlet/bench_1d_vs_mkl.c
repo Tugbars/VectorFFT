@@ -100,6 +100,37 @@ long vfft_ilnd_mt_passes(void);     /* the rank-3 tier's MT engagement counter *
 #include "kfr_arm.h"   /* the KFR comparator arm (C++ behind a C interface; wired 2026-09-25, untested) */
 static int g_cmp_kfr = 0;   /* --cmp kfr: the K=1 cell's comparator is KFR instead of MKL */
 #endif
+/* ── THE FFTW COMPARATOR ARM (--cmp fftw, 2026-09-28) ───────────────────────
+ * Needs NO build flag and NO link: ref_fftw.h binds fftw3 at runtime from
+ * $VFFT_FFTW_DLL by absolute path and asserts the library is genuine FFTW
+ * (MKL exports 92 fftw_* wrappers, so a linked fftw3 can be MKL in disguise).
+ * The arm therefore compiles into every build of this bench and is inert
+ * until --cmp fftw selects it.
+ *
+ * WHY HERE AND NOT IN bench_1d_vs_fftw.c: that separate bench has drifted
+ * from this one's protocol (measured 2026-09-28: 1 of this file's 16
+ * discipline markers -- it has neither the two-window timing nor the sibling
+ * guard). A comparator that does not share the timed path cannot be compared
+ * with one that does, so FFTW becomes an ARM of the canonical bench and
+ * inherits the pacing, the cool-downs, the cachebust, the flip, the pin and
+ * the control cell by construction, exactly as the KFR arm does. */
+#include "ref_fftw.h"
+static int        g_cmp_fftw = 0;
+static fftwx_api_t g_fx_arm;
+static int        g_fx_arm_ok = -1;   /* -1 = not yet bound */
+static int fftw_arm_bind(void)
+{
+    char err[512];
+    if (g_fx_arm_ok < 0)
+    {
+        g_fx_arm_ok = fftwx_bind(&g_fx_arm, err, sizeof err) ? 1 : 0;
+        if (!g_fx_arm_ok)
+            fprintf(stderr, "--cmp fftw: %s\n", err);
+        else
+            printf("# comparator: %s (%s)\n", g_fx_arm.version, g_fx_arm.dll_path);
+    }
+    return g_fx_arm_ok;
+}
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
 #include <mkl_service.h>
@@ -701,7 +732,7 @@ static double k1z_time_kfr(int N, const double *z0, size_t total)
 }
 #endif
 /* the K=1 cell's comparator: MKL, or KFR under --cmp kfr (2026-09-25) */
-static double k1z_time_cmp(int N, const double *z0, size_t total)
+static double k1z_time_cmp_mkl_or_kfr(int N, const double *z0, size_t total)
 {
 #ifdef VFFT_HAS_KFR
     if (g_cmp_kfr)
@@ -710,6 +741,74 @@ static double k1z_time_cmp(int N, const double *z0, size_t total)
     return k1z_time_mkl(N, z0, total);
 }
 #endif
+
+/* The FFTW arm's timed path: the twin of k1z_time_mkl / k1z_time_kfr, window
+ * for window -- 10 warm-ups, then TWO timing windows (the second preceded by
+ * the idle and the re-warm), best of 5 trials each, reps_for(total) reps per
+ * trial, g_trial_pace_ms between trials. In place under --k1zip, mirroring the
+ * MKL arm's DFTI_INPLACE. A plan is built ONCE here and destroyed after, so no
+ * planning cost is inside any timed window; FFTW_MEASURE matches the MKL arm's
+ * "commit once, then time" shape and $VFFT_FFTW_WIS (imported by the caller)
+ * makes it a wisdom replay. */
+static double k1z_time_fftw(int N, const double *z0, size_t total)
+{
+    if (!fftw_arm_bind())
+        return 0;
+    double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
+    fftwx_plan p = g_k1zip
+        ? g_fx_arm.plan_dft_1d(N, (fftwx_complex *)zi, (fftwx_complex *)zi,
+                               FFTWX_FORWARD, FFTWX_MEASURE)
+        : g_fx_arm.plan_dft_1d(N, (fftwx_complex *)zi, (fftwx_complex *)zo,
+                               FFTWX_FORWARD, FFTWX_MEASURE);
+    if (!p) { free_d(zi); free_d(zo); return 0; }
+    memcpy(zi, z0, 2 * total * sizeof(double));   /* AFTER planning: MEASURE scribbles */
+    for (int w = 0; w < 10; w++)
+        g_fx_arm.execute(p);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int win = 0; win < 2; win++)
+    {
+        if (win)
+        {
+            const double tw0 = vfft_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                g_fx_arm.execute(p);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_now_ns();
+            for (int i = 0; i < reps; i++)
+                g_fx_arm.execute(p);
+            double ns = (vfft_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
+    }
+    g_fx_arm.destroy_plan(p);
+    free_d(zi);
+    free_d(zo);
+    return best;
+}
+
+/* THE comparator entry. Always defined -- the FFTW arm needs no build flag, so
+ * a bench built without MKL still has a comparator when --cmp fftw selects it.
+ * Returns 0 when none is active, which the caller reports as "no comparator"
+ * exactly as a no-MKL build did before. */
+static double k1z_time_cmp(int N, const double *z0, size_t total)
+{
+    if (g_cmp_fftw)
+        return k1z_time_fftw(N, z0, total);
+#ifdef VFFT_HAS_MKL
+    return k1z_time_cmp_mkl_or_kfr(N, z0, total);
+#else
+    (void)N; (void)z0; (void)total;
+    return 0;
+#endif
+}
 
 /* A CELL'S ROW IS REPLACED, NEVER DUPLICATED (2026-09-21). A gauntlet re-runs
  * the cells a fix touched into the SAME csv, so an earlier row for the same
@@ -860,8 +959,40 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
             maxmag = m;
     }
     double rel = maxmag > 0 ? maxerr / maxmag : maxerr;
+    /* The FFTW arm's twin of the cross-engine gate below: both engines
+     * natural, same input, same spectrum, so `rel` becomes an ELEMENTWISE
+     * comparison rather than a roundtrip (which cannot gate ordering). Same
+     * reasoning and same overwrite as the MKL branch. */
+    if (g_cmp_fftw && g_k1nat && fftw_arm_bind())
+    {
+        double *zf = alloc_d(2 * total), *zv = alloc_d(2 * total);
+        fftwx_plan p = g_fx_arm.plan_dft_1d(N, (fftwx_complex *)zf,
+                                            (fftwx_complex *)zf,
+                                            FFTWX_FORWARD, FFTWX_MEASURE);
+        if (p)
+        {
+            memcpy(zf, z0, 2 * total * sizeof(double));   /* after planning */
+            memcpy(zv, z0, 2 * total * sizeof(double));
+            g_fx_arm.execute(p);
+            if (g_k1zip)
+                vfft_execute(h, VFFT_FORWARD, zv, NULL, zv, NULL);
+            else
+                vfft_execute(h, VFFT_FORWARD, z0, NULL, zv, NULL);
+            double xe = 0.0, xm = 0.0;
+            for (size_t i = 0; i < 2 * total; i++)
+            {
+                double e = fabs(zv[i] - zf[i]), m = fabs(zf[i]);
+                if (e > xe) xe = e;
+                if (m > xm) xm = m;
+            }
+            rel = xm > 0 ? xe / xm : xe;
+            g_fx_arm.destroy_plan(p);
+        }
+        free_d(zf);
+        free_d(zv);
+    }
 #ifdef VFFT_HAS_MKL
-    if (g_k1nat)
+    if (g_k1nat && !g_cmp_fftw)
     {
         /* --k1nat: the correctness column is the CROSS-ENGINE elementwise
          * compare — both engines natural, same input, same spectrum. This is
@@ -910,9 +1041,11 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
      * team parks (trap b); the timing helpers warm >= 5 ms each. */
     double vns = 0, mns = 0;
     long eng = 0;
-#ifdef VFFT_HAS_MKL
+    /* The comparator arm is no longer MKL-only: the FFTW arm binds at runtime,
+     * so this A/B runs in every build. k1z_time_cmp returns 0 when none is
+     * active, which reproduces the old no-MKL behaviour (ns only, ratio 0). */
     if (flip)
-    { /* MKL first */
+    { /* comparator first */
         if (g_k1noop_mt) vfft_set_num_threads(1);
         mns = k1z_time_cmp(N, z0, total);
         cachebust();
@@ -937,11 +1070,6 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
         if (g_k1noop_mt) vfft_set_num_threads(1);
         mns = k1z_time_cmp(N, z0, total);
     }
-#else
-    (void)cool_ms;
-    (void)flip;
-    vns = k1z_time_vfft(h, z0, S, total);
-#endif
     /* --k1dir: same cell, backward, same process/buffers/discipline. bwd/fwd
      * is the number that matters -- it is INTERNAL to one run, so it survives
      * the thermal drift that makes cross-run ns incomparable on this host. */
@@ -4927,8 +5055,11 @@ int main(int argc, char **argv)
             g_kzb = 1;
         }
         else if (strcmp(argv[1], "--cmp") == 0 && argc >= 3)
-        {   /* --cmp kfr: the K=1 cell's comparator (2026-09-25; the arm exists
-             * only in a --kfr build, else the flag is refused below) */
+        {   /* the K=1 cell's comparator. kfr (2026-09-25) exists only in a
+             * --kfr build; fftw (2026-09-28) needs no build flag -- it binds
+             * at runtime from $VFFT_FFTW_DLL and is refused loudly there if
+             * the library is absent or is MKL's wrapper layer. */
+            g_cmp_fftw = (strcmp(argv[2], "fftw") == 0);
 #ifdef VFFT_HAS_KFR
             g_cmp_kfr = (strcmp(argv[2], "kfr") == 0);
 #else
@@ -4938,6 +5069,11 @@ int main(int argc, char **argv)
                 return 2;
             }
 #endif
+            if (!g_cmp_fftw && strcmp(argv[2], "kfr") && strcmp(argv[2], "mkl"))
+            {
+                fprintf(stderr, "--cmp: unknown comparator '%s' (mkl | fftw | kfr)\n", argv[2]);
+                return 2;
+            }
             argv++;
             argc--;
         }
@@ -4963,6 +5099,14 @@ int main(int argc, char **argv)
         return 2;
     }
 #endif
+    /* the FFTW arm serves the same cell as KFR's: the K=1 1D c2c contract.
+     * The 2D/3D/real modes have their own comparator shapes and are not
+     * wired to it, so refuse rather than silently report a zero ratio. */
+    if (g_cmp_fftw && (twod || il2d || il3d || real2d || r2c || c2r1d))
+    {
+        fprintf(stderr, "--cmp fftw: the FFTW arm is the 1D c2c K=1 cell only\n");
+        return 2;
+    }
     g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat) && mt;   /* the 2D/3D cells share the
                                                                           * threaded-cell discipline (2026-09-24) */
     if (g_k1noop_mt)
