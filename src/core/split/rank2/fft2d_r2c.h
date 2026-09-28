@@ -34,6 +34,7 @@
  */
 #ifndef STRIDE_FFT2D_R2C_H
 #define STRIDE_FFT2D_R2C_H
+#include "build_isa.h" /* VFFT_BUILD_ISA_AVX512: the build's ISA (D4) */
 #include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 #include "common/math/pi.h"
 
@@ -102,7 +103,7 @@ _F2D_SR2C_DECL(8) _F2D_SR2C_DECL(12) _F2D_SR2C_DECL(16)
 _F2D_SR2C_DECL(20) _F2D_SR2C_DECL(32) _F2D_SR2C_DECL(64)
 _F2D_SR2C_DECL(128) _F2D_SR2C_DECL(256) _F2D_SR2C_DECL(512)
 #undef _F2D_SR2C_DECL
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
+#if defined(VFFT_BUILD_ISA_AVX512)
 /* avx512 editions (build-target selected, the strided_rows.h convention).
  * N=12/20 have no width-8 edition (radix % 8): at avx512 they are ABSENT
  * (the resolver returns 0 and the create keeps its tiled row pass), never an
@@ -125,7 +126,7 @@ _F2D_SR2C_D512(128) _F2D_SR2C_D512(256) _F2D_SR2C_D512(512)
  * whenever built. */
 static inline _f2d_sr2c_fwd_fn _f2d_sr2c_fwd_resolve(int N2, int *blk) {
     *blk = 4;
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
+#if defined(VFFT_BUILD_ISA_AVX512)
     *blk = 8;
     switch (N2) {
     case 8:   return radix8_n1_fwd_avx512_strided_r2c;
@@ -307,7 +308,7 @@ static inline void _f2d_sr2c_bwd_rows(_f2d_sr2c_bwd_fn fn, int blk, int N,
 
 static inline _f2d_sr2c_bwd_fn _f2d_sr2c_bwd_resolve(int N2, int *blk) {
     *blk = 4;
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
+#if defined(VFFT_BUILD_ISA_AVX512)
     *blk = 8;
     switch (N2) {
     case 8:   return radix8_n1_bwd_avx512_strided_r2c;

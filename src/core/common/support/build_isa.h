@@ -4,9 +4,12 @@
  * build.py's option); the build turns it into compiler flags (-mavx512f
  * -mavx512dq for avx512; -mavx2 plus the -mno-avx512f clamp for avx2), and
  * this header reads those flags back. It is the ONE test in the core: the
- * public vfft_isa() (VFFT_ISA_NAME, env.h) and the IL family's kernel and
- * registry selection (oop/il_isa.h) both take it from here, so what the
- * library reports and what it runs cannot disagree. Build-time only; there is
+ * public vfft_isa() (VFFT_ISA_NAME, env.h), the IL family's kernel and
+ * registry selection (il/isa/il_isa.h) and every split choice between
+ * avx512 and avx2 code (codelet sets, registries, hand-vectorized loops;
+ * owner decision D4, 2026-09-28) take it from here, so what the library
+ * reports and what it runs cannot disagree. Guards that only ask whether
+ * AVX2 intrinsics exist (__AVX2__ || __AVX512F__) are not choices and stay. Build-time only; there is
  * no runtime detection and no fallback from one ISA to another. */
 #ifndef VFFT_BUILD_ISA_H
 #define VFFT_BUILD_ISA_H

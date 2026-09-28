@@ -28,6 +28,7 @@
  */
 #ifndef STRIDE_R2C_H
 #define STRIDE_R2C_H
+#include "build_isa.h" /* VFFT_BUILD_ISA_AVX512: the build's ISA (D4) */
 #include "common/math/pi.h"
 
 #include "executor.h"
@@ -253,7 +254,7 @@ static inline __m256d _r2c_ldr4v(const double *in_re, const double *zi, size_t i
     return _mm256_unpacklo_pd(t0, t1);
 }
 #endif
-#ifdef __AVX512F__
+#if defined(VFFT_BUILD_ISA_AVX512)
 static inline void _r2c_st8(double *out_re, double *out_im, double *zo,
                             size_t idx, __m512d r, __m512d i) {
     if (!zo) { _mm512_storeu_pd(out_re+idx, r); _mm512_storeu_pd(out_im+idx, i); }
@@ -307,7 +308,7 @@ static void _r2c_postprocess(
     {
         size_t nyq_off = (size_t)half_N * K + b0;
         size_t k = 0;
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
         for (; k + 8 <= B; k += 8)
         {
             __m512d zr = _mm512_loadu_pd(z_re + k);
@@ -355,7 +356,7 @@ static void _r2c_postprocess(
         if (do_mirror) { wrm = tw_re[mirror]; wim = tw_im[mirror]; }
 
         size_t k = 0;
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
         {
             __m512d half_v = _mm512_set1_pd(0.5);
             __m512d vwr    = _mm512_set1_pd(wr);
@@ -659,7 +660,7 @@ static void _r2c_preprocess(
         size_t z0_out = (size_t)perm[0] * B;
         size_t nyq = (size_t)half_N * K + b0;
         size_t k = 0;
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
         {
             __m512d half_v = _mm512_set1_pd(0.5);
             for (; k + 8 <= B; k += 8)
@@ -717,7 +718,7 @@ static void _r2c_preprocess(
         }
 
         size_t k = 0;
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
         {
             __m512d half_v = _mm512_set1_pd(0.5);
             __m512d sign = _mm512_set1_pd(-0.0);
@@ -1069,7 +1070,7 @@ typedef void (*_r2c_oop11_fn)(const double *, const double *, double *,
         size_t, size_t, size_t);
 _R2C_DIFOOP_DECL(5, avx2) _R2C_DIFOOP_DECL(10, avx2)
 _R2C_DIFOOP_DECL(20, avx2) _R2C_DIFOOP_DECL(25, avx2)
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
+#if defined(VFFT_BUILD_ISA_AVX512)
 _R2C_DIFOOP_DECL(5, avx512) _R2C_DIFOOP_DECL(10, avx512)
 _R2C_DIFOOP_DECL(20, avx512) _R2C_DIFOOP_DECL(25, avx512)
 #endif
@@ -1078,7 +1079,7 @@ _R2C_DIFOOP_DECL(20, avx512) _R2C_DIFOOP_DECL(25, avx512)
 static int _r2c_dif_fused_hits;   /* gate hook (same-TU visibility) */
 
 static inline _r2c_oop11_fn _r2c_difoop_t1(int r) {
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
+#if defined(VFFT_BUILD_ISA_AVX512)
     switch (r) {
     case 5:  return radix5_t1_dif_oop_fwd_avx512_UG_UG;
     case 10: return radix10_t1_dif_oop_fwd_avx512_UG_UG;
@@ -1095,7 +1096,7 @@ static inline _r2c_oop11_fn _r2c_difoop_t1(int r) {
     }
 }
 static inline _r2c_oop11_fn _r2c_difoop_n1(int r) {
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
+#if defined(VFFT_BUILD_ISA_AVX512)
     switch (r) {
     case 5:  return radix5_n1_oop_fwd_avx512_UG_UG;
     case 10: return radix10_n1_oop_fwd_avx512_UG_UG;
@@ -1229,7 +1230,7 @@ static void _r2c_worker_fwd(void *arg) {
                 double *dst_r = sr + (size_t)n * B;
                 double *dst_i = si + (size_t)n * B;
                 size_t k = 0;
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
                 for (; k + 8 <= B; k += 8) {
                     _mm512_storeu_pd(dst_r + k, _mm512_loadu_pd(even + k));
                     _mm512_storeu_pd(dst_i + k, _mm512_loadu_pd(odd + k));
@@ -1380,7 +1381,7 @@ static void _r2c_worker_bwd(void *arg) {
                 double *odd  = re + (size_t)(2 * n + 1) * K + b0;
                 size_t k = 0;
                 /* Scratch loads UNALIGNED (loadu): src = scratch + n*B, not VW-aligned for odd B. */
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
                 {
                     __m512d two = _mm512_set1_pd(2.0);
                     for (; k + 8 <= B; k += 8) {
@@ -1850,7 +1851,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
                 double *dst_r = sr + (size_t)n * B;
                 double *dst_i = si + (size_t)n * B;
                 size_t k = 0;
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
                 for (; k + 8 <= B; k += 8) {
                     _mm512_storeu_pd(dst_r + k, _mm512_loadu_pd(even + k));
                     _mm512_storeu_pd(dst_i + k, _mm512_loadu_pd(odd + k));

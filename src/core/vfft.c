@@ -48,7 +48,7 @@
 #include "r2c_dispatch.h"   /* r2c (real->complex) front-end: rfft / decoupled */
 #include "zr2c.h"           /* §D2: interleaved-CCE real folds (zr2c route) */
 #include "rfft_calibrate.h" /* vfft_rfft_calibrate — rfft factor+variant sweep */
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
 #include "rfft_registry_avx512.h"
 #define _VFFT_RFFT_REGISTER rfft_register_all_avx512
 #include "c2r_registry_avx512.h"

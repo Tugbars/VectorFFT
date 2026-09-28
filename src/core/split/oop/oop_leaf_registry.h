@@ -12,16 +12,17 @@
 #ifndef VFFT_OOP_LEAF_REGISTRY_H
 #define VFFT_OOP_LEAF_REGISTRY_H
 
+#include "build_isa.h" /* VFFT_BUILD_ISA_AVX512: the build's ISA (D4) */
 #include <stddef.h>
 
-/* ISA selection, per-ISA-binary model (same as the proto executor).
- * avx512 builds bind the avx512 codelet symbols; otherwise avx2.
- * Override with -DVFFT_OOP_FORCE_AVX2 to force the avx2 set in an
- * avx512-capable build. GROUPW is the codelet position-group width and
+/* ISA selection: the build's ISA (build_isa.h, owner decision D4), the one
+ * test the whole library uses. avx512 builds bind the avx512 codelet
+ * symbols; otherwise avx2. There is no override: the user picks the ISA
+ * when building, and avx2 is never a fallback of an avx512 build. GROUPW is the codelet position-group width and
  * governs the twiddle-table replication granularity (rows = count/GROUPW,
  * verified in the generated sources: avx512 b+=8 tw[r*(me/8)+b/8];
  * avx2 b+=4 tw[r*(me/4)+b/4]). */
-#if defined(__AVX512F__) && !defined(VFFT_OOP_FORCE_AVX2)
+#if defined(VFFT_BUILD_ISA_AVX512)
 #define VFFT_OOP_ISA avx512
 #define VFFT_OOP_GROUPW 8u
 #else

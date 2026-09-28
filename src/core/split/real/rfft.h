@@ -25,6 +25,7 @@
  * ═══════════════════════════════════════════════════════════════ */
 #ifndef VFFT_RFFT_H
 #define VFFT_RFFT_H
+#include "build_isa.h" /* VFFT_BUILD_ISA_AVX512: the build's ISA (D4) */
 #include "common/math/pi.h"
 
 #include <stdlib.h>
@@ -514,7 +515,7 @@ static inline void rfft_mid_column(int r, int m, int np, size_t Q,
                                    double *zo)
 {
     size_t v = 0;
-#if defined(__AVX512F__)
+#if defined(VFFT_BUILD_ISA_AVX512)
     for (; v + 8 <= vl; v += 8) {
         for (int s0 = 0; s0 < r; s0 += 4) {
             int sn = (s0 + 4 <= r) ? 4 : (r - s0);
