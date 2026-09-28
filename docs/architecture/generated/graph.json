@@ -1,0 +1,2389 @@
+{
+ "files": {
+  "bridge/real_bridge.h": {
+   "external": [],
+   "folder": "bridge",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "il/real/real_create_il.h",
+    "split/real/real_create_split.h"
+   ],
+   "lines": 212,
+   "role": "the 1D r2c / c2r CREATE: where the two layouts still meet.",
+   "zone": "bridge"
+  },
+  "bridge/real_bridge_exec.h": {
+   "external": [],
+   "folder": "bridge",
+   "included_by": [
+    "vfft_execute.h"
+   ],
+   "includes": [],
+   "lines": 111,
+   "role": "the 1D r2c / c2r EXECUTE: where the layouts still meet.",
+   "zone": "bridge"
+  },
+  "common/abi/codelet_abi.h": {
+   "external": [],
+   "folder": "common/abi",
+   "included_by": [
+    "il/isa/il_solo_registry.h",
+    "split/oop/oop_leaf_registry.h"
+   ],
+   "includes": [],
+   "lines": 18,
+   "role": "the 11-argument codelet signature both layouts share.",
+   "zone": "common"
+  },
+  "common/abi/nat_modes.h": {
+   "external": [],
+   "folder": "common/abi",
+   "included_by": [
+    "split/planning/wisdom_reader.h"
+   ],
+   "includes": [],
+   "lines": 23,
+   "role": "the natural-order mode ids stored in split @nat wisdom rows.",
+   "zone": "common"
+  },
+  "common/abi/route_ids.h": {
+   "external": [],
+   "folder": "common/abi",
+   "included_by": [
+    "common/wisdom/wisdom2_oop_legacy.h",
+    "il/planning/dp_planner_il.h",
+    "il/wisdom/wisdom2_oop_il.h",
+    "split/oop/oop_plan.h"
+   ],
+   "includes": [],
+   "lines": 117,
+   "role": "the K=1 route ids of BOTH layouts and the OOP wisdom/plan kinds.",
+   "zone": "common"
+  },
+  "common/math/numtheory.h": {
+   "external": [],
+   "folder": "common/math",
+   "included_by": [
+    "il/rank1/il_prime.h",
+    "split/primes/bluestein_calibrator.h",
+    "split/primes/prime_dispatch.h",
+    "split/primes/rader.h"
+   ],
+   "includes": [],
+   "lines": 75,
+   "role": "the small integer helpers both prime engines need, once.",
+   "zone": "common"
+  },
+  "common/math/pi.h": {
+   "external": [],
+   "folder": "common/math",
+   "included_by": [
+    "common/math/tw_exact.h",
+    "il/planning/dp_planner_il.h",
+    "il/rank1/il2p.h",
+    "il/rank1/ztt.h",
+    "il/rank2/il2d_proto.h",
+    "il/real/zr2c.h",
+    "split/engine/twiddle.h",
+    "split/natorder/natorder_perm.h",
+    "split/oop/oop_plan.h",
+    "split/planning/dp_planner_split_oop.h",
+    "split/primes/bluestein.h",
+    "split/primes/rader.h",
+    "split/rank2/fft2d_r2c.h",
+    "split/rank2/strided_tw.h",
+    "split/rank3/fftnd_r2c.h",
+    "split/rank3/strided_rows.h",
+    "split/real/r2c.h",
+    "split/real/rfft.h",
+    "split/trig/dct.h",
+    "split/trig/dct1.h",
+    "split/trig/dct4.h",
+    "wisdom2/wisdom2_2d_gate.h"
+   ],
+   "includes": [],
+   "lines": 30,
+   "role": "THE value of pi, once (the utilities merge, 2026-09-27).",
+   "zone": "common"
+  },
+  "common/math/tw_exact.h": {
+   "external": [],
+   "folder": "common/math",
+   "included_by": [
+    "il/isa/avx512/vtw_avx512.h",
+    "il/rank1/il2p.h",
+    "il/rank1/il_flatdit.h",
+    "il/rank1/il_prime.h",
+    "il/rank1/k1_fourstep.h",
+    "il/rank1/ztt.h",
+    "il/rank2/il2d_cols.h",
+    "split/engine/twiddle.h",
+    "split/oop/oop_plan.h",
+    "split/primes/bluestein.h",
+    "split/primes/rader.h",
+    "split/rank2/strided_tw.h",
+    "split/real/r2c.h",
+    "split/real/rfft.h",
+    "split/trig/dct.h",
+    "split/trig/dct4.h"
+   ],
+   "includes": [
+    "common/math/pi.h"
+   ],
+   "lines": 77,
+   "role": "cos/sin(2*pi*p/n) rounded ONCE to double, from the integers.",
+   "zone": "common"
+  },
+  "common/move/k1_transpose.h": {
+   "external": [],
+   "folder": "common/move",
+   "included_by": [
+    "split/oop/oop_plan.h"
+   ],
+   "includes": [],
+   "lines": 73,
+   "role": "the plane transposes of the K=1 four-step passes.",
+   "zone": "common"
+  },
+  "common/move/transpose.h": {
+   "external": [],
+   "folder": "common/move",
+   "included_by": [
+    "split/rank2/fft2d.h",
+    "split/rank2/fft2d_r2c.h",
+    "split/rank3/fft3d.h",
+    "split/rank3/fftnd.h"
+   ],
+   "includes": [
+    "common/support/build_isa.h",
+    "common/support/cpu_cache.h"
+   ],
+   "lines": 582,
+   "role": "Multi-regime cache-oblivious SIMD matrix transpose",
+   "zone": "common"
+  },
+  "common/plan/vfft_internal.h": {
+   "external": [],
+   "folder": "common/plan",
+   "included_by": [
+    "il/rank1/k1_commit.h",
+    "il/rank2/il2d_tier.h",
+    "il/rank2/plane_queue.h",
+    "il/real/zr2c_build.h",
+    "vfft.c",
+    "vfft_execute.h"
+   ],
+   "includes": [
+    "common/support/zalloc.h"
+   ],
+   "lines": 516,
+   "role": "the three private handle types.",
+   "zone": "common"
+  },
+  "common/policy/policy_cache.h": {
+   "external": [],
+   "folder": "common/policy",
+   "included_by": [
+    "il/planning/policy_il.h"
+   ],
+   "includes": [],
+   "lines": 53,
+   "role": "L8, a working set against the cache the CPU reports.",
+   "zone": "common"
+  },
+  "common/policy/policy_order.h": {
+   "external": [],
+   "folder": "common/policy",
+   "included_by": [
+    "il/planning/policy_il.h"
+   ],
+   "includes": [],
+   "lines": 85,
+   "role": "L4, the ORDER law, and the CELL: layout-neutral policy.",
+   "zone": "common"
+  },
+  "common/support/build_isa.h": {
+   "external": [],
+   "folder": "common/support",
+   "included_by": [
+    "common/move/transpose.h",
+    "common/support/env.h",
+    "il/isa/il_isa.h",
+    "split/engine/executor.h",
+    "split/oop/oop_leaf_registry.h",
+    "split/rank2/fft2d_r2c.h",
+    "split/rank2/strided_tw.h",
+    "split/rank3/strided_rows.h",
+    "split/real/c2r.h",
+    "split/real/r2c.h",
+    "split/real/rfft.h"
+   ],
+   "includes": [],
+   "lines": 27,
+   "role": "THE build's ISA, decided once.",
+   "zone": "common"
+  },
+  "common/support/cpu_cache.h": {
+   "external": [],
+   "folder": "common/support",
+   "included_by": [
+    "common/move/transpose.h",
+    "common/support/threads.h",
+    "il/planning/dp_planner_il.h",
+    "il/planning/policy_il.h",
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 504,
+   "role": "cache capacities and SMT width, discovered once at PLAN time.",
+   "zone": "common"
+  },
+  "common/support/diag.h": {
+   "external": [
+    "vfft.h"
+   ],
+   "folder": "common/support",
+   "included_by": [
+    "il/rank2/il2d_cols.h",
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 64,
+   "role": "the loud-refusal helpers.",
+   "zone": "common"
+  },
+  "common/support/env.h": {
+   "external": [],
+   "folder": "common/support",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/support/zalloc.h",
+    "common/support/build_isa.h"
+   ],
+   "lines": 239,
+   "role": "the runtime environment. Two parts:",
+   "zone": "common"
+  },
+  "common/support/hugepage.h": {
+   "external": [],
+   "folder": "common/support",
+   "included_by": [],
+   "includes": [
+    "common/support/zalloc.h"
+   ],
+   "lines": 133,
+   "role": "2 MB pages for big data planes: vfft_alloc_huge / vfft_free_huge.",
+   "zone": "common"
+  },
+  "common/support/race.h": {
+   "external": [],
+   "folder": "common/support",
+   "included_by": [
+    "il/rank1/il_flatdit_race.h",
+    "il/rank1/k1_commit.h",
+    "il/rank1/ztt_mt.h",
+    "il/real/zr2c_build.h",
+    "split/natorder/natorder_calibrate.h",
+    "split/planning/pad_calibrate.h",
+    "split/real/real_route_race.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/support/race_timing.h"
+   ],
+   "lines": 194,
+   "role": "the one race body shared by the in-process racers.",
+   "zone": "common"
+  },
+  "common/support/race_timing.h": {
+   "external": [],
+   "folder": "common/support",
+   "included_by": [
+    "common/support/race.h",
+    "il/planning/dp_planner_il.h",
+    "il/rank1/il_prime.h",
+    "il/rank2/il2d_tier.h",
+    "split/planning/dp_planner.h",
+    "split/planning/dp_planner_split_oop.h",
+    "split/primes/bluestein_calibrator.h",
+    "split/rank2/fft2d_r2c.h",
+    "split/rank3/fftnd_r2c.h",
+    "split/real/r2c.h",
+    "split/real/rfft.h",
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 39,
+   "role": "THE monotonic clock: every racer and planner times with it.",
+   "zone": "common"
+  },
+  "common/support/ref.h": {
+   "external": [],
+   "folder": "common/support",
+   "included_by": [],
+   "includes": [],
+   "lines": 297,
+   "role": "the benchmark reference-backend interface.",
+   "zone": "common"
+  },
+  "common/support/slot_check.h": {
+   "external": [],
+   "folder": "common/support",
+   "included_by": [
+    "il/planning/il_slot_probe.h"
+   ],
+   "includes": [],
+   "lines": 105,
+   "role": "the one SLOT-INVARIANT walk, shared by the form checkers.",
+   "zone": "common"
+  },
+  "common/support/threads.h": {
+   "external": [],
+   "folder": "common/support",
+   "included_by": [
+    "il/rank1/ztt_mt.h",
+    "il/rank2/il2d_tier.h",
+    "il/rank2/plane_queue.h",
+    "split/engine/mt_execute.h",
+    "split/engine/proto_stride_compat.h",
+    "split/natorder/natorder_mt.h",
+    "split/oop/oop_mt.h",
+    "split/rank2/fft2d.h",
+    "split/rank2/fft2d_r2c.h",
+    "split/rank3/fft3d.h",
+    "split/rank3/fftnd.h",
+    "split/real/r2c_dispatch.h",
+    "split/trig/dct1.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/support/cpu_cache.h"
+   ],
+   "lines": 334,
+   "role": "the thread pool.",
+   "zone": "common"
+  },
+  "common/support/zalloc.h": {
+   "external": [],
+   "folder": "common/support",
+   "included_by": [
+    "common/plan/vfft_internal.h",
+    "common/support/env.h",
+    "common/support/hugepage.h",
+    "il/planning/dp_planner_il.h",
+    "il/rank1/il2p.h",
+    "il/rank1/k1_fourstep.h",
+    "il/rank1/ztt.h",
+    "split/engine/plan.h",
+    "split/engine/proto_stride_compat.h",
+    "split/oop/oop_auto.h",
+    "split/rank2/strided_tw.h",
+    "split/real/rfft.h"
+   ],
+   "includes": [],
+   "lines": 58,
+   "role": "THE allocator: 64-byte-aligned memory for every buffer, table and scratch arena in the library (the utilities merge, 2026-09-27).",
+   "zone": "common"
+  },
+  "common/wisdom/wisdom2.h": {
+   "external": [],
+   "folder": "common/wisdom",
+   "included_by": [
+    "common/wisdom/wisdom2_oop_rows.h",
+    "common/wisdom/wisdom2_rank_rows.h",
+    "common/wisdom/wisdom2_selftest.h",
+    "il/wisdom/wisdom2_2d_il_reader.h",
+    "il/wisdom/wisdom2_oddr.h",
+    "split/wisdom/wisdom2_2d_split_reader.h",
+    "split/wisdom/wisdom2_real_reader.h",
+    "split/wisdom/wisdom2_stride_reader.h",
+    "wisdom2/wisdom2_migrate.h",
+    "wisdom2/wisdom2_oop_reader.h",
+    "wisdom2/wisdom2_real_gate.h"
+   ],
+   "includes": [],
+   "lines": 1470,
+   "role": "THE VectorFFT wisdom store: the only parser and the only writer of the @vw2 grammar, everywhere (library, calibrators, benches, gates).",
+   "zone": "common"
+  },
+  "common/wisdom/wisdom2_oop_legacy.h": {
+   "external": [],
+   "folder": "common/wisdom",
+   "included_by": [
+    "il/rank1/k1_commit.h",
+    "il/wisdom/wisdom2_oop_il.h",
+    "split/wisdom/wisdom2_oop_split.h",
+    "wisdom2/wisdom2_oop.h"
+   ],
+   "includes": [
+    "common/abi/route_ids.h"
+   ],
+   "lines": 304,
+   "role": "the FROZEN legacy oop_wisdom.txt format: its dual entry struct, table, loader and lookups.",
+   "zone": "common"
+  },
+  "common/wisdom/wisdom2_oop_rows.h": {
+   "external": [],
+   "folder": "common/wisdom",
+   "included_by": [
+    "il/wisdom/wisdom2_oop_il.h",
+    "split/wisdom/wisdom2_oop_split.h"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2.h"
+   ],
+   "lines": 169,
+   "role": "the OOP family's row MECHANICS, shared by both layouts' codecs: token parsing, the engine tag, the date stamp, the kind-3 (K=1) row scan by layout, and the existence queries.",
+   "zone": "common"
+  },
+  "common/wisdom/wisdom2_rank_rows.h": {
+   "external": [],
+   "folder": "common/wisdom",
+   "included_by": [
+    "il/wisdom/wisdom2_2d_il_reader.h",
+    "split/wisdom/wisdom2_2d_split_reader.h"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2.h"
+   ],
+   "lines": 102,
+   "role": "the rank>=2 row helpers both layouts' 2D/3D codecs use: the canonical request key, the record key, the MEASURE/provenance tail and the fill-only bank.",
+   "zone": "common"
+  },
+  "common/wisdom/wisdom2_selftest.h": {
+   "external": [],
+   "folder": "common/wisdom",
+   "included_by": [],
+   "includes": [
+    "common/wisdom/wisdom2.h"
+   ],
+   "lines": 734,
+   "role": "the unit gates for the wisdom2 module, OWNED BY THE MODULE (the thin-driver law): bench files only make calls; every scenario, assertion, and helper lives here beside the code i...",
+   "zone": "common"
+  },
+  "il/il_create.h": {
+   "external": [],
+   "folder": "il",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "il/rank2/fft2d_create_il.h",
+    "il/rank1/c2c_ip_create_il.h",
+    "il/rank1/c2c_oop_create_il.h"
+   ],
+   "lines": 64,
+   "role": "the INTERLEAVED create: the IL side of vfft_create's one fork.",
+   "zone": "il"
+  },
+  "il/il_execute.h": {
+   "external": [],
+   "folder": "il",
+   "included_by": [
+    "vfft_execute.h"
+   ],
+   "includes": [],
+   "lines": 736,
+   "role": "the INTERLEAVED execute: the IL side of vfft_execute's one fork.",
+   "zone": "il"
+  },
+  "il/isa/avx512/vtw_avx512.h": {
+   "external": [],
+   "folder": "il/isa/avx512",
+   "included_by": [
+    "il/isa/il_isa.h"
+   ],
+   "includes": [
+    "common/math/tw_exact.h",
+    "il/isa/ztt_qw16384.h"
+   ],
+   "lines": 296,
+   "role": "every AVX-512 twiddle table of the IL runtime, and nothing else.",
+   "zone": "il"
+  },
+  "il/isa/il_isa.h": {
+   "external": [
+    "il_registry_avx512.h",
+    "il_registry_avx2.h"
+   ],
+   "folder": "il/isa",
+   "included_by": [
+    "il/isa/il_solo_registry.h",
+    "il/rank1/il2p.h",
+    "il/rank1/ztt.h"
+   ],
+   "includes": [
+    "common/support/build_isa.h",
+    "il/isa/avx512/vtw_avx512.h"
+   ],
+   "lines": 55,
+   "role": "the IL (interleaved-complex, zil) family at the build's ISA.",
+   "zone": "il"
+  },
+  "il/isa/il_solo_registry.h": {
+   "external": [],
+   "folder": "il/isa",
+   "included_by": [
+    "il/planning/dp_planner_il.h",
+    "il/rank1/il2p.h"
+   ],
+   "includes": [
+    "common/abi/codelet_abi.h",
+    "il/isa/il_isa.h"
+   ],
+   "lines": 97,
+   "role": "the interleaved K=1 SOLO tier's kernels and resolvers.",
+   "zone": "il"
+  },
+  "il/isa/ztt_qw16384.h": {
+   "external": [],
+   "folder": "il/isa",
+   "included_by": [
+    "il/isa/avx512/vtw_avx512.h",
+    "il/rank1/ztt.h"
+   ],
+   "includes": [],
+   "lines": 4116,
+   "role": "ZTURN-T's BAKED QUARTER-WAVE: sin(2*pi*k/16384), k = 0..4096, 4097 doubles (32776 B of .rodata), generated by zt_bake_qw.c (hex-float, exact).",
+   "zone": "il"
+  },
+  "il/planning/dp_planner_il.h": {
+   "external": [],
+   "folder": "il/planning",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/pi.h",
+    "common/abi/route_ids.h",
+    "il/isa/il_solo_registry.h",
+    "il/wisdom/wisdom2_oop_il.h",
+    "il/rank1/il2p.h",
+    "il/rank1/il_flatdit.h",
+    "il/rank1/il_flatdit_race.h",
+    "common/support/zalloc.h",
+    "il/rank1/ztt.h",
+    "il/rank1/il_prime.h",
+    "common/support/cpu_cache.h",
+    "common/support/race_timing.h"
+   ],
+   "lines": 2046,
+   "role": "measured plan search for the INTERLEAVED (IL) K=1 axis.",
+   "zone": "il"
+  },
+  "il/planning/il_slot_probe.h": {
+   "external": [],
+   "folder": "il/planning",
+   "included_by": [],
+   "includes": [
+    "common/support/slot_check.h"
+   ],
+   "lines": 151,
+   "role": "the INTERLEAVED PAIR tier's half of the slot invariant: which slots exist, and how to build and check one.",
+   "zone": "il"
+  },
+  "il/planning/policy_il.h": {
+   "external": [],
+   "folder": "il/planning",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/support/cpu_cache.h",
+    "common/policy/policy_order.h",
+    "common/policy/policy_cache.h"
+   ],
+   "lines": 405,
+   "role": "THE planning policy: the one place a law about a REQUEST is written (docs/design/planning_policy_design.md).",
+   "zone": "il"
+  },
+  "il/rank1/c2c_ip_create_il.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "il/il_create.h"
+   ],
+   "includes": [],
+   "lines": 165,
+   "role": "the c2c IN-PLACE create, interleaved tier.",
+   "zone": "il"
+  },
+  "il/rank1/c2c_oop_create_il.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "il/il_create.h"
+   ],
+   "includes": [],
+   "lines": 410,
+   "role": "the c2c OUT-OF-PLACE create, interleaved tier.",
+   "zone": "il"
+  },
+  "il/rank1/il2p.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "il/planning/dp_planner_il.h",
+    "il/rank1/il_flatdit.h",
+    "il/rank1/il_prime.h",
+    "il/rank1/k1_commit.h",
+    "il/rank2/il2d_col.h",
+    "il/rank2/il2d_cols.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/tw_exact.h",
+    "common/math/pi.h",
+    "common/support/zalloc.h",
+    "il/isa/il_isa.h",
+    "il/isa/il_solo_registry.h"
+   ],
+   "lines": 1533,
+   "role": "PURE-IL two-pass K=1 route (bailey2 shape, interleaved end to end).",
+   "zone": "il"
+  },
+  "il/rank1/il_flatdit.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "il/planning/dp_planner_il.h",
+    "il/rank1/il_flatdit_race.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/tw_exact.h",
+    "il/rank1/il2p.h"
+   ],
+   "lines": 879,
+   "role": "the FLAT mixed-radix DIT chain, un-turned: the generic-N engine on the pure-IL kinds.",
+   "zone": "il"
+  },
+  "il/rank1/il_flatdit_mt.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 320,
+   "role": "the FLAT mixed-radix DIT's intra-transform threading (docs/design/3D_mt_il_strategy.md declares the method).",
+   "zone": "il"
+  },
+  "il/rank1/il_flatdit_race.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "il/planning/dp_planner_il.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "il/rank1/il_flatdit.h",
+    "common/support/race.h"
+   ],
+   "lines": 227,
+   "role": "the flat DIT's create-time races on the shared race body.",
+   "zone": "il"
+  },
+  "il/rank1/il_prime.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "il/planning/dp_planner_il.h",
+    "il/rank1/k1_commit.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/numtheory.h",
+    "common/math/tw_exact.h",
+    "il/rank1/il2p.h",
+    "common/support/race_timing.h"
+   ],
+   "lines": 496,
+   "role": "PRIME-N K=1 route on the PURE-IL machinery (OOP, NATURAL, interleaved z->z, both directions).",
+   "zone": "il"
+  },
+  "il/rank1/k1_commit.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/plan/vfft_internal.h",
+    "il/rank1/il2p.h",
+    "il/rank1/il_prime.h",
+    "il/wisdom/wisdom2_oop_il.h",
+    "common/wisdom/wisdom2_oop_legacy.h",
+    "common/support/race.h"
+   ],
+   "lines": 1311,
+   "role": "the K=1 plan's replay, race, and commit.",
+   "zone": "il"
+  },
+  "il/rank1/k1_fourstep.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/support/zalloc.h",
+    "common/math/tw_exact.h",
+    "il/rank1/k1_fourstep_band.h"
+   ],
+   "lines": 624,
+   "role": "the K=1 INTERLEAVED four-step above ZTURN-T's ceiling (docs/design/k1_fourstep_design.md): the standard method at 256k and above.",
+   "zone": "il"
+  },
+  "il/rank1/k1_fourstep_band.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "il/rank1/k1_fourstep.h",
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 23,
+   "role": "the K=1 interleaved four-step's BAND (docs/design/ k1_fourstep_design.md): the sizes the engine serves and the side ladder its splits draw from.",
+   "zone": "il"
+  },
+  "il/rank1/ztt.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "il/planning/dp_planner_il.h",
+    "il/rank1/ztt_mt.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/tw_exact.h",
+    "common/math/pi.h",
+    "il/isa/il_isa.h",
+    "il/isa/ztt_qw16384.h",
+    "common/support/zalloc.h"
+   ],
+   "lines": 766,
+   "role": "ZTURN-T: the RUN-CONTIGUOUS DIT engine for K=1 interleaved c2c, 16 <= N <= 262144, route VFFT_K1_IL_ZTT.",
+   "zone": "il"
+  },
+  "il/rank1/ztt_mt.h": {
+   "external": [],
+   "folder": "il/rank1",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "il/rank1/ztt.h",
+    "common/support/threads.h",
+    "common/support/race.h"
+   ],
+   "lines": 345,
+   "role": "ZTURN-T's THREADED arm: the staged walk, sectioned (docs/design/ztt_mt_design.md).",
+   "zone": "il"
+  },
+  "il/rank2/fft2d_create_il.h": {
+   "external": [],
+   "folder": "il/rank2",
+   "included_by": [
+    "il/il_create.h"
+   ],
+   "includes": [],
+   "lines": 1012,
+   "role": "the rank-2 CREATE, interleaved tier.",
+   "zone": "il"
+  },
+  "il/rank2/fft2d_real_il.h": {
+   "external": [],
+   "folder": "il/rank2",
+   "included_by": [
+    "il/rank2/il2d_cols.h",
+    "il/rank2/il2d_tier.h",
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 244,
+   "role": "the native IL 2D REAL tier's execution kernels (docs/roadmap/fft2d_real_il_design.md; the row-pass drivers live in il2d_tier.h \u2014 this header holds the kernel-grade data movement...",
+   "zone": "il"
+  },
+  "il/rank2/il2d_col.h": {
+   "external": [],
+   "folder": "il/rank2",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "il/rank1/il2p.h"
+   ],
+   "lines": 85,
+   "role": "THE COLUMN-AXIS PASS DESCRIPTOR.",
+   "zone": "il"
+  },
+  "il/rank2/il2d_cols.h": {
+   "external": [],
+   "folder": "il/rank2",
+   "included_by": [
+    "il/rank2/il2d_tier.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "il/rank1/il2p.h",
+    "common/math/tw_exact.h",
+    "il/rank2/fft2d_real_il.h",
+    "common/support/diag.h"
+   ],
+   "lines": 908,
+   "role": "native IL 2D: the column-chain machinery.",
+   "zone": "il"
+  },
+  "il/rank2/il2d_proto.h": {
+   "external": [],
+   "folder": "il/rank2",
+   "included_by": [],
+   "includes": [
+    "common/math/pi.h"
+   ],
+   "lines": 176,
+   "role": "SCALAR SIMULATOR for the native IL 2D c2c tier's stage maps (docs/roadmap/fft2d_il_c2c_design.md).",
+   "zone": "il"
+  },
+  "il/rank2/il2d_tier.h": {
+   "external": [],
+   "folder": "il/rank2",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/plan/vfft_internal.h",
+    "il/rank2/il2d_cols.h",
+    "il/rank2/fft2d_real_il.h",
+    "common/support/threads.h",
+    "common/support/race_timing.h",
+    "il/wisdom/wisdom2_2d_il_reader.h"
+   ],
+   "lines": 3464,
+   "role": "the native interleaved 2D tier.",
+   "zone": "il"
+  },
+  "il/rank2/plane_queue.h": {
+   "external": [],
+   "folder": "il/rank2",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/plan/vfft_internal.h",
+    "common/support/threads.h"
+   ],
+   "lines": 284,
+   "role": "the 2D plane queue (howmany > 1).",
+   "zone": "il"
+  },
+  "il/rank3/fftnd_il.h": {
+   "external": [],
+   "folder": "il/rank3",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 1918,
+   "role": "the rank-N INTERLEAVED c2c tier (design of record: docs/roadmap/fftnd_il_design.md).",
+   "zone": "il"
+  },
+  "il/real/real_create_il.h": {
+   "external": [],
+   "folder": "il/real",
+   "included_by": [
+    "bridge/real_bridge.h"
+   ],
+   "includes": [],
+   "lines": 53,
+   "role": "the r2c / c2r CREATE, interleaved tier.",
+   "zone": "il"
+  },
+  "il/real/zr2c.h": {
+   "external": [],
+   "folder": "il/real",
+   "included_by": [
+    "il/real/zr2c_build.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/pi.h"
+   ],
+   "lines": 487,
+   "role": "INTERLEAVED (z) real-transform folds: the \"CCE-mirror IL\" route's two hand-written passes (measured \u221230\u2026\u221259% vs the K-axis fold).",
+   "zone": "il"
+  },
+  "il/real/zr2c_build.h": {
+   "external": [],
+   "folder": "il/real",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/plan/vfft_internal.h",
+    "il/real/zr2c.h",
+    "common/support/race.h"
+   ],
+   "lines": 343,
+   "role": "the interleaved-CCE real route (\"kind 5\").",
+   "zone": "il"
+  },
+  "il/wisdom/wisdom2_2d_il_reader.h": {
+   "external": [],
+   "folder": "il/wisdom",
+   "included_by": [
+    "il/rank2/il2d_tier.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2.h",
+    "common/wisdom/wisdom2_rank_rows.h"
+   ],
+   "lines": 563,
+   "role": "the INTERLEAVED rank>=2 cell codec: the lay=il rows of the native IL 2D tier (column chains, forms, axis races), the IL 2D real rows and the rank-3 IL (ilnd) tokens.",
+   "zone": "il"
+  },
+  "il/wisdom/wisdom2_oddr.h": {
+   "external": [],
+   "folder": "il/wisdom",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2.h"
+   ],
+   "lines": 67,
+   "role": "the ODD-REAL route verdict row (lay=il component row).",
+   "zone": "il"
+  },
+  "il/wisdom/wisdom2_oop_il.h": {
+   "external": [],
+   "folder": "il/wisdom",
+   "included_by": [
+    "il/planning/dp_planner_il.h",
+    "il/rank1/k1_commit.h",
+    "wisdom2/wisdom2_oop.h"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2_oop_rows.h",
+    "common/wisdom/wisdom2_oop_legacy.h",
+    "common/abi/route_ids.h"
+   ],
+   "lines": 714,
+   "role": "the INTERLEAVED library's OOP-family wisdom: its K=1 record and codec.",
+   "zone": "il"
+  },
+  "split/engine/executor.h": {
+   "external": [],
+   "folder": "split/engine",
+   "included_by": [
+    "split/engine/mt_execute.h",
+    "split/engine/proto_stride_compat.h",
+    "split/natorder/natorder_scatter.h",
+    "split/planning/dp_planner.h",
+    "split/planning/dp_planner_split_oop.h",
+    "split/planning/exhaustive_plan.h",
+    "split/planning/pad_calibrate.h",
+    "split/primes/bluestein.h",
+    "split/primes/bluestein_calibrator.h",
+    "split/primes/rader.h",
+    "split/rank2/fft2d.h",
+    "split/rank2/fft2d_r2c.h",
+    "split/rank3/fft3d.h",
+    "split/rank3/fftnd.h",
+    "split/real/r2c.h",
+    "split/real/r2c_dispatch.h",
+    "split/trig/dct.h",
+    "split/trig/dct1.h",
+    "split/trig/dct4.h",
+    "split/trig/dht.h",
+    "split/trig/dst.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/support/build_isa.h",
+    "split/engine/plan.h",
+    "split/engine/executor_generic.h"
+   ],
+   "lines": 121,
+   "role": "single-threaded, in-place 1D C2C execution dispatch.",
+   "zone": "split"
+  },
+  "split/engine/executor_generic.h": {
+   "external": [],
+   "folder": "split/engine",
+   "included_by": [
+    "split/engine/executor.h",
+    "split/oop/oop_execute.h"
+   ],
+   "includes": [
+    "split/engine/plan.h"
+   ],
+   "lines": 317,
+   "role": "cold-cell fallback executor for 1D C2C.",
+   "zone": "split"
+  },
+  "split/engine/mt_execute.h": {
+   "external": [],
+   "folder": "split/engine",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "common/support/threads.h"
+   ],
+   "lines": 172,
+   "role": "the generic K-split multithreaded executor.",
+   "zone": "split"
+  },
+  "split/engine/plan.h": {
+   "external": [
+    "plan_executors.h"
+   ],
+   "folder": "split/engine",
+   "included_by": [
+    "split/engine/executor.h",
+    "split/engine/executor_generic.h",
+    "split/engine/planner.h",
+    "split/engine/twiddle.h",
+    "split/oop/oop_execute.h",
+    "split/planning/dp_planner.h",
+    "split/planning/exhaustive_plan.h",
+    "split/planning/wisdom_reader.h"
+   ],
+   "includes": [
+    "common/support/zalloc.h"
+   ],
+   "lines": 13,
+   "role": "the entry point for stride_plan_t / stride_stage_t (1D C2C).",
+   "zone": "split"
+  },
+  "split/engine/planner.h": {
+   "external": [
+    "registry.h"
+   ],
+   "folder": "split/engine",
+   "included_by": [
+    "split/natorder/natorder_scatter.h",
+    "split/oop/oop_plan.h",
+    "split/planning/dp_planner.h",
+    "split/planning/dp_planner_split_oop.h",
+    "split/planning/exhaustive_plan.h",
+    "split/planning/pad_calibrate.h",
+    "split/primes/bluestein_calibrator.h",
+    "split/primes/prime_dispatch.h",
+    "split/rank2/fft2d.h",
+    "split/rank2/fft2d_r2c.h",
+    "split/rank3/fft3d.h",
+    "split/rank3/fftnd.h",
+    "split/real/c2r_dispatch.h",
+    "split/real/r2c_dispatch.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/plan.h",
+    "split/engine/twiddle.h",
+    "split/planning/wisdom_reader.h"
+   ],
+   "lines": 277,
+   "role": "1D C2C plan construction (the in-place stride engine).",
+   "zone": "split"
+  },
+  "split/engine/proto_stride_compat.h": {
+   "external": [],
+   "folder": "split/engine",
+   "included_by": [
+    "split/primes/bluestein_calibrator.h",
+    "split/primes/prime_dispatch.h",
+    "split/rank2/fft2d.h",
+    "split/rank2/fft2d_r2c.h",
+    "split/rank3/fft3d.h",
+    "split/rank3/fftnd.h",
+    "split/real/r2c_dispatch.h",
+    "split/real/rfft_calibrate.h"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "common/support/threads.h",
+    "common/support/zalloc.h"
+   ],
+   "lines": 238,
+   "role": "the stride_* API over the vfft_proto_* engine.",
+   "zone": "split"
+  },
+  "split/engine/twiddle.h": {
+   "external": [],
+   "folder": "split/engine",
+   "included_by": [
+    "split/engine/planner.h"
+   ],
+   "includes": [
+    "split/engine/plan.h",
+    "common/math/pi.h",
+    "common/math/tw_exact.h"
+   ],
+   "lines": 521,
+   "role": "per-stage layout + twiddle compute for 1D C2C plans (the in-place stride engine).",
+   "zone": "split"
+  },
+  "split/natorder/natorder_2d.h": {
+   "external": [],
+   "folder": "split/natorder",
+   "included_by": [
+    "split/rank2/fft2d_c2c_planner.h"
+   ],
+   "includes": [
+    "split/natorder/natorder_perm.h"
+   ],
+   "lines": 87,
+   "role": "shared 2D natural-order axis reorder-tape builder.",
+   "zone": "split"
+  },
+  "split/natorder/natorder_calibrate.h": {
+   "external": [
+    "jit_runtime.h"
+   ],
+   "folder": "split/natorder",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/natorder/natorder_perm.h",
+    "split/natorder/natorder_exec.h",
+    "split/natorder/natorder_scatter.h",
+    "common/support/race.h"
+   ],
+   "lines": 303,
+   "role": "the ORDER_NATURAL per-cell verdict race: PURE (floor) vs injected-chain PSWAP vs SCR scatter terminator.",
+   "zone": "split"
+  },
+  "split/natorder/natorder_exec.h": {
+   "external": [],
+   "folder": "split/natorder",
+   "included_by": [
+    "split/natorder/natorder_calibrate.h",
+    "split/natorder/natorder_mt.h",
+    "split/rank2/fft2d.h",
+    "split/rank3/fft3d.h",
+    "split/rank3/fftnd.h",
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 182,
+   "role": "execute-time reorder passes for VFFT_ORDER_NATURAL.",
+   "zone": "split"
+  },
+  "split/natorder/natorder_mt.h": {
+   "external": [],
+   "folder": "split/natorder",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/natorder/natorder_exec.h",
+    "split/natorder/natorder_scatter.h",
+    "split/oop/oop_execute.h",
+    "common/support/threads.h"
+   ],
+   "lines": 195,
+   "role": "the natural-order reorder passes, multithreaded.",
+   "zone": "split"
+  },
+  "split/natorder/natorder_perm.h": {
+   "external": [],
+   "folder": "split/natorder",
+   "included_by": [
+    "split/natorder/natorder_2d.h",
+    "split/natorder/natorder_calibrate.h",
+    "split/natorder/natorder_scatter.h",
+    "split/rank3/fftnd_r2c.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/pi.h"
+   ],
+   "lines": 133,
+   "role": "plan-time permutation machinery for VFFT_ORDER_NATURAL (in-place 1D c2c).",
+   "zone": "split"
+  },
+  "split/natorder/natorder_scatter.h": {
+   "external": [],
+   "folder": "split/natorder",
+   "included_by": [
+    "split/natorder/natorder_calibrate.h",
+    "split/natorder/natorder_mt.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "split/oop/oop_execute.h",
+    "split/engine/planner.h",
+    "split/natorder/natorder_perm.h"
+   ],
+   "lines": 181,
+   "role": "SCR (scatter terminator) mode for VFFT_ORDER_NATURAL (in-place 1D c2c).",
+   "zone": "split"
+  },
+  "split/oop/oop_auto.h": {
+   "external": [],
+   "folder": "split/oop",
+   "included_by": [
+    "split/oop/oop_dp.h",
+    "split/oop/oop_mt.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "split/oop/oop_plan.h",
+    "split/planning/wisdom_reader.h",
+    "common/support/zalloc.h"
+   ],
+   "lines": 185,
+   "role": "wisdom-backed auto plan creation and the divisor-pair tuner.",
+   "zone": "split"
+  },
+  "split/oop/oop_dp.h": {
+   "external": [],
+   "folder": "split/oop",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/oop/oop_auto.h",
+    "split/planning/dp_planner.h"
+   ],
+   "lines": 162,
+   "role": "DP-planner-backed OOP c2c plan creation.",
+   "zone": "split"
+  },
+  "split/oop/oop_execute.h": {
+   "external": [],
+   "folder": "split/oop",
+   "included_by": [
+    "split/natorder/natorder_mt.h",
+    "split/natorder/natorder_scatter.h",
+    "split/oop/oop_plan.h"
+   ],
+   "includes": [
+    "split/engine/plan.h",
+    "split/engine/executor_generic.h"
+   ],
+   "lines": 114,
+   "role": "Mode B out-of-place execution on the stride executor (plan.h / executor_generic.h path).",
+   "zone": "split"
+  },
+  "split/oop/oop_leaf_registry.h": {
+   "external": [],
+   "folder": "split/oop",
+   "included_by": [
+    "split/oop/oop_plan.h"
+   ],
+   "includes": [
+    "common/support/build_isa.h",
+    "common/abi/codelet_abi.h"
+   ],
+   "lines": 328,
+   "role": "hand-written registry for the OOP codelet families (11-arg generic ABI) and the K=1 mono/solo kernels on the same ABI.",
+   "zone": "split"
+  },
+  "split/oop/oop_mt.h": {
+   "external": [],
+   "folder": "split/oop",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/oop/oop_auto.h",
+    "common/support/threads.h"
+   ],
+   "lines": 116,
+   "role": "out-of-place c2c, multithreaded by lane slice.",
+   "zone": "split"
+  },
+  "split/oop/oop_plan.h": {
+   "external": [],
+   "folder": "split/oop",
+   "included_by": [
+    "split/oop/oop_auto.h",
+    "split/planning/dp_planner_split_oop.h",
+    "split/wisdom/wisdom2_oop_split.h"
+   ],
+   "includes": [
+    "split/oop/oop_leaf_registry.h",
+    "split/oop/oop_execute.h",
+    "split/engine/planner.h",
+    "common/math/pi.h",
+    "common/math/tw_exact.h",
+    "common/abi/route_ids.h",
+    "common/move/k1_transpose.h"
+   ],
+   "lines": 789,
+   "role": "the split-layout OOP plan kinds.",
+   "zone": "split"
+  },
+  "split/oop/strided_codelets.h": {
+   "external": [],
+   "folder": "split/oop",
+   "included_by": [],
+   "includes": [],
+   "lines": 36,
+   "role": "the typed registry for the strided (Design C, 2D row) codelet family.",
+   "zone": "split"
+  },
+  "split/planning/adopt_wisdom.h": {
+   "external": [],
+   "folder": "split/planning",
+   "included_by": [
+    "split/rank2/fft2d_r2c.h",
+    "split/rank3/fftnd_r2c.h"
+   ],
+   "includes": [],
+   "lines": 132,
+   "role": "persisted strided-adoption decisions.",
+   "zone": "split"
+  },
+  "split/planning/dp_planner.h": {
+   "external": [
+    "registry.h"
+   ],
+   "folder": "split/planning",
+   "included_by": [
+    "split/oop/oop_dp.h",
+    "split/planning/dp_planner_split_oop.h",
+    "split/planning/exhaustive_plan.h",
+    "split/real/rfft_calibrate.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/plan.h",
+    "split/engine/planner.h",
+    "split/engine/executor.h",
+    "common/support/race_timing.h"
+   ],
+   "lines": 762,
+   "role": "Recursive dynamic programming planner",
+   "zone": "split"
+  },
+  "split/planning/dp_planner_split_oop.h": {
+   "external": [],
+   "folder": "split/planning",
+   "included_by": [],
+   "includes": [
+    "split/engine/executor.h",
+    "split/engine/planner.h",
+    "split/oop/oop_plan.h",
+    "split/wisdom/wisdom2_oop_split.h",
+    "split/planning/dp_planner.h",
+    "split/planning/measure.h",
+    "split/planning/wisdom_reader.h",
+    "common/math/pi.h",
+    "common/support/race_timing.h"
+   ],
+   "lines": 608,
+   "role": "the SPLIT-OOP-engine planner (kind-3 sp fields).",
+   "zone": "split"
+  },
+  "split/planning/exhaustive_knobs.h": {
+   "external": [],
+   "folder": "split/planning",
+   "included_by": [
+    "split/planning/exhaustive_plan.h"
+   ],
+   "includes": [],
+   "lines": 82,
+   "role": "the split EXHAUSTIVE planner's depth / prune knobs.",
+   "zone": "split"
+  },
+  "split/planning/exhaustive_plan.h": {
+   "external": [
+    "registry.h"
+   ],
+   "folder": "split/planning",
+   "included_by": [
+    "split/planning/measure.h",
+    "split/rank2/fft2d.h",
+    "split/rank3/fft3d.h",
+    "split/rank3/fftnd.h"
+   ],
+   "includes": [
+    "split/engine/plan.h",
+    "split/engine/executor.h",
+    "split/engine/planner.h",
+    "split/planning/dp_planner.h",
+    "split/planning/exhaustive_knobs.h"
+   ],
+   "lines": 377,
+   "role": "exhaustive measurement-based planner (stride engine).",
+   "zone": "split"
+  },
+  "split/planning/measure.h": {
+   "external": [],
+   "folder": "split/planning",
+   "included_by": [
+    "split/planning/dp_planner_split_oop.h",
+    "split/rank2/fft2d_c2c_planner.h",
+    "split/rank2/fft2d_r2c_planner.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "split/planning/exhaustive_plan.h"
+   ],
+   "lines": 521,
+   "role": "VFFT_MEASURE: top-K + variant-aware (DIT/DIF) planner.",
+   "zone": "split"
+  },
+  "split/planning/pad_calibrate.h": {
+   "external": [],
+   "folder": "split/planning",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/planner.h",
+    "split/engine/executor.h",
+    "common/support/race.h"
+   ],
+   "lines": 200,
+   "role": "the pad-vs-tail calibrator.",
+   "zone": "split"
+  },
+  "split/planning/wisdom_reader.h": {
+   "external": [],
+   "folder": "split/planning",
+   "included_by": [
+    "split/engine/planner.h",
+    "split/oop/oop_auto.h",
+    "split/planning/dp_planner_split_oop.h",
+    "split/real/rfft_calibrate.h",
+    "split/wisdom/wisdom2_stride_reader.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/plan.h",
+    "common/abi/nat_modes.h"
+   ],
+   "lines": 390,
+   "role": "the stride engine's c2c wisdom table (text format).",
+   "zone": "split"
+  },
+  "split/primes/bluestein.h": {
+   "external": [],
+   "folder": "split/primes",
+   "included_by": [
+    "split/primes/bluestein_calibrator.h",
+    "split/primes/prime_dispatch.h",
+    "split/primes/rader.h"
+   ],
+   "includes": [
+    "common/math/pi.h",
+    "common/math/tw_exact.h",
+    "split/engine/executor.h"
+   ],
+   "lines": 651,
+   "role": "Bluestein's algorithm for arbitrary-size FFT",
+   "zone": "split"
+  },
+  "split/primes/bluestein_calibrator.h": {
+   "external": [],
+   "folder": "split/primes",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/numtheory.h",
+    "split/engine/executor.h",
+    "split/engine/planner.h",
+    "split/engine/proto_stride_compat.h",
+    "split/primes/bluestein.h",
+    "split/primes/rader.h",
+    "split/primes/bluestein_wisdom.h",
+    "common/support/race_timing.h"
+   ],
+   "lines": 236,
+   "role": "Bluestein/Rader (M, B) parameter calibration.",
+   "zone": "split"
+  },
+  "split/primes/bluestein_wisdom.h": {
+   "external": [],
+   "folder": "split/primes",
+   "included_by": [
+    "split/primes/bluestein_calibrator.h",
+    "split/primes/prime_dispatch.h"
+   ],
+   "includes": [],
+   "lines": 151,
+   "role": "Per-(N, K) wisdom for Bluestein/Rader prime cells.",
+   "zone": "split"
+  },
+  "split/primes/prime_dispatch.h": {
+   "external": [],
+   "folder": "split/primes",
+   "included_by": [
+    "split/rank2/fft2d.h",
+    "split/rank3/fft3d.h",
+    "split/rank3/fftnd.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/numtheory.h",
+    "split/engine/planner.h",
+    "split/engine/proto_stride_compat.h",
+    "split/primes/rader.h",
+    "split/primes/bluestein.h",
+    "split/primes/bluestein_wisdom.h"
+   ],
+   "lines": 75,
+   "role": "prime-N planning for the stride engine (Rader, Bluestein).",
+   "zone": "split"
+  },
+  "split/primes/rader.h": {
+   "external": [],
+   "folder": "split/primes",
+   "included_by": [
+    "split/primes/bluestein_calibrator.h",
+    "split/primes/prime_dispatch.h"
+   ],
+   "includes": [
+    "common/math/numtheory.h",
+    "common/math/pi.h",
+    "common/math/tw_exact.h",
+    "split/engine/executor.h",
+    "split/primes/bluestein.h"
+   ],
+   "lines": 493,
+   "role": "Rader's algorithm for prime-size FFT",
+   "zone": "split"
+  },
+  "split/rank1/c2c_ip_create_split.h": {
+   "external": [],
+   "folder": "split/rank1",
+   "included_by": [
+    "split/split_create.h"
+   ],
+   "includes": [],
+   "lines": 550,
+   "role": "the c2c IN-PLACE create, split tier.",
+   "zone": "split"
+  },
+  "split/rank1/c2c_oop_create_split.h": {
+   "external": [],
+   "folder": "split/rank1",
+   "included_by": [
+    "split/split_create.h"
+   ],
+   "includes": [],
+   "lines": 347,
+   "role": "the c2c OUT-OF-PLACE create, split tier.",
+   "zone": "split"
+  },
+  "split/rank1/vfft_batch.h": {
+   "external": [],
+   "folder": "split/rank1",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 300,
+   "role": "the OWNED-BATCH allocator (migration step 28).",
+   "zone": "split"
+  },
+  "split/rank2/fft2d.h": {
+   "external": [
+    "jit_runtime.h"
+   ],
+   "folder": "split/rank2",
+   "included_by": [
+    "split/wisdom/wisdom2_fftnd.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "split/engine/planner.h",
+    "split/primes/prime_dispatch.h",
+    "split/planning/exhaustive_plan.h",
+    "common/support/threads.h",
+    "split/engine/proto_stride_compat.h",
+    "common/move/transpose.h",
+    "split/rank3/strided_rows.h",
+    "split/natorder/natorder_exec.h"
+   ],
+   "lines": 561,
+   "role": "split-complex 2D FFT with two methods: tiled and Bailey",
+   "zone": "split"
+  },
+  "split/rank2/fft2d_c2c_planner.h": {
+   "external": [],
+   "folder": "split/rank2",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/planning/measure.h",
+    "split/wisdom/wisdom2_fftnd.h",
+    "split/natorder/natorder_2d.h"
+   ],
+   "lines": 393,
+   "role": "dedicated 2D C2C planner (one (N1,N2) cell).",
+   "zone": "split"
+  },
+  "split/rank2/fft2d_c2r_planner.h": {
+   "external": [],
+   "folder": "split/rank2",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/rank2/fft2d_r2c_planner.h"
+   ],
+   "lines": 153,
+   "role": "dedicated 2D C2R planner (one (N1,N2) cell).",
+   "zone": "split"
+  },
+  "split/rank2/fft2d_create_split.h": {
+   "external": [],
+   "folder": "split/rank2",
+   "included_by": [
+    "split/split_create.h"
+   ],
+   "includes": [],
+   "lines": 250,
+   "role": "the rank-2 CREATE, split tier.",
+   "zone": "split"
+  },
+  "split/rank2/fft2d_r2c.h": {
+   "external": [
+    "jit_runtime.h"
+   ],
+   "folder": "split/rank2",
+   "included_by": [
+    "split/rank3/fftnd_r2c.h",
+    "split/wisdom/wisdom2_fftnd.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "common/support/build_isa.h",
+    "common/support/race_timing.h",
+    "common/math/pi.h",
+    "split/engine/executor.h",
+    "split/engine/planner.h",
+    "common/support/threads.h",
+    "split/engine/proto_stride_compat.h",
+    "common/move/transpose.h",
+    "split/real/r2c.h",
+    "split/real/rfft.h",
+    "split/real/c2r.h",
+    "split/rank2/strided_tw.h",
+    "split/planning/adopt_wisdom.h"
+   ],
+   "lines": 1253,
+   "role": "2D Real-to-Complex / Complex-to-Real FFT",
+   "zone": "split"
+  },
+  "split/rank2/fft2d_r2c_planner.h": {
+   "external": [],
+   "folder": "split/rank2",
+   "included_by": [
+    "split/rank2/fft2d_c2r_planner.h"
+   ],
+   "includes": [
+    "split/planning/measure.h",
+    "split/wisdom/wisdom2_fftnd.h"
+   ],
+   "lines": 203,
+   "role": "dedicated 2D R2C planner (one (N1,N2) cell).",
+   "zone": "split"
+  },
+  "split/rank2/strided_tw.h": {
+   "external": [],
+   "folder": "split/rank2",
+   "included_by": [
+    "split/rank2/fft2d_r2c.h"
+   ],
+   "includes": [
+    "common/math/pi.h",
+    "common/math/tw_exact.h",
+    "common/support/zalloc.h",
+    "common/support/build_isa.h"
+   ],
+   "lines": 375,
+   "role": "the strided TWIDDLE-STAGE row engine.",
+   "zone": "split"
+  },
+  "split/rank3/fft3d.h": {
+   "external": [
+    "jit_runtime.h"
+   ],
+   "folder": "split/rank3",
+   "included_by": [
+    "split/wisdom/wisdom2_fftnd.h"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "split/engine/planner.h",
+    "split/primes/prime_dispatch.h",
+    "split/planning/exhaustive_plan.h",
+    "common/support/threads.h",
+    "split/engine/proto_stride_compat.h",
+    "common/move/transpose.h",
+    "split/natorder/natorder_exec.h",
+    "split/rank3/strided_rows.h"
+   ],
+   "lines": 685,
+   "role": "3D c2c FFT: three tensor-factor passes over a row-major cube.",
+   "zone": "split"
+  },
+  "split/rank3/fftnd.h": {
+   "external": [
+    "jit_runtime.h"
+   ],
+   "folder": "split/rank3",
+   "included_by": [
+    "split/rank3/fftnd_r2c.h"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "split/engine/planner.h",
+    "split/primes/prime_dispatch.h",
+    "split/planning/exhaustive_plan.h",
+    "common/support/threads.h",
+    "split/engine/proto_stride_compat.h",
+    "split/rank3/strided_rows.h",
+    "common/move/transpose.h",
+    "split/natorder/natorder_exec.h"
+   ],
+   "lines": 674,
+   "role": "rank-general (2..4D) c2c FFT: unfused leading passes + a fused trailing group",
+   "zone": "split"
+  },
+  "split/rank3/fftnd_create_split.h": {
+   "external": [],
+   "folder": "split/rank3",
+   "included_by": [
+    "split/split_create.h"
+   ],
+   "includes": [],
+   "lines": 204,
+   "role": "the rank-3 and rank-4 SPLIT create tiers.",
+   "zone": "split"
+  },
+  "split/rank3/fftnd_r2c.h": {
+   "external": [
+    "jit_runtime.h"
+   ],
+   "folder": "split/rank3",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/pi.h",
+    "common/support/race_timing.h",
+    "split/rank3/fftnd.h",
+    "split/real/r2c.h",
+    "split/rank2/fft2d_r2c.h",
+    "split/natorder/natorder_perm.h",
+    "split/planning/adopt_wisdom.h"
+   ],
+   "lines": 570,
+   "role": "rank-general (2..4D) real-to-complex / complex-to-real, reducing along the LAST axis (the usual convention).",
+   "zone": "split"
+  },
+  "split/rank3/strided_rows.h": {
+   "external": [],
+   "folder": "split/rank3",
+   "included_by": [
+    "split/rank2/fft2d.h",
+    "split/rank3/fft3d.h",
+    "split/rank3/fftnd.h"
+   ],
+   "includes": [
+    "common/support/build_isa.h",
+    "common/math/pi.h"
+   ],
+   "lines": 129,
+   "role": "OPT-IN STRIDED ROW PASS (define VFFT_STRIDED_ROWS) The strided mono n1 codelets (codelets/strided/, \"Design C, 2D rows\") load VW CONSECUTIVE rows in their natural contiguous lay...",
+   "zone": "split"
+  },
+  "split/real/c2r.h": {
+   "external": [],
+   "folder": "split/real",
+   "included_by": [
+    "split/rank2/fft2d_r2c.h",
+    "split/real/c2r_dispatch.h"
+   ],
+   "includes": [
+    "common/support/build_isa.h",
+    "split/real/rfft.h"
+   ],
+   "lines": 548,
+   "role": "backward real transform (halfcomplex -> real), the inverse of rfft.h's forward cascade.",
+   "zone": "split"
+  },
+  "split/real/c2r_dispatch.h": {
+   "external": [
+    "c2r_jit_runtime.h"
+   ],
+   "folder": "split/real",
+   "included_by": [
+    "split/real/real_route_race.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/planner.h",
+    "split/real/c2r.h",
+    "split/real/r2c_dispatch.h"
+   ],
+   "lines": 352,
+   "role": "wisdom-first entry point for the backward real FFT (c2r).",
+   "zone": "split"
+  },
+  "split/real/r2c.h": {
+   "external": [],
+   "folder": "split/real",
+   "included_by": [
+    "split/rank2/fft2d_r2c.h",
+    "split/rank3/fftnd_r2c.h",
+    "split/real/r2c_dispatch.h",
+    "split/real/real_route_race.h",
+    "split/trig/dct.h",
+    "split/trig/dct1.h",
+    "split/trig/dht.h"
+   ],
+   "includes": [
+    "common/support/build_isa.h",
+    "common/math/pi.h",
+    "common/math/tw_exact.h",
+    "split/engine/executor.h",
+    "common/support/race_timing.h"
+   ],
+   "lines": 2136,
+   "role": "Real-to-Complex (R2C) and Complex-to-Real (C2R) FFT",
+   "zone": "split"
+  },
+  "split/real/r2c_dispatch.h": {
+   "external": [
+    "rfft_jit_runtime.h"
+   ],
+   "folder": "split/real",
+   "included_by": [
+    "split/real/c2r_dispatch.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "split/engine/planner.h",
+    "common/support/threads.h",
+    "split/engine/proto_stride_compat.h",
+    "split/real/rfft.h",
+    "split/real/r2c.h"
+   ],
+   "lines": 565,
+   "role": "top-level real-to-complex (r2c) entry point.",
+   "zone": "split"
+  },
+  "split/real/real_create_split.h": {
+   "external": [],
+   "folder": "split/real",
+   "included_by": [
+    "bridge/real_bridge.h"
+   ],
+   "includes": [],
+   "lines": 214,
+   "role": "the r2c / c2r CREATE, split tier.",
+   "zone": "split"
+  },
+  "split/real/real_dispatch_config.h": {
+   "external": [],
+   "folder": "split/real",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 54,
+   "role": "INTERNAL. Cross-TU setters for the r2c/c2r dispatch knobs.",
+   "zone": "split"
+  },
+  "split/real/real_route_race.h": {
+   "external": [],
+   "folder": "split/real",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/real/r2c.h",
+    "split/real/c2r_dispatch.h",
+    "common/support/race.h"
+   ],
+   "lines": 200,
+   "role": "the r2c/c2r route racers.",
+   "zone": "split"
+  },
+  "split/real/rfft.h": {
+   "external": [],
+   "folder": "split/real",
+   "included_by": [
+    "split/rank2/fft2d_r2c.h",
+    "split/real/c2r.h",
+    "split/real/r2c_dispatch.h",
+    "split/real/rfft_calibrate.h"
+   ],
+   "includes": [
+    "common/support/build_isa.h",
+    "common/math/pi.h",
+    "common/math/tw_exact.h",
+    "common/support/zalloc.h",
+    "common/support/race_timing.h"
+   ],
+   "lines": 1080,
+   "role": "native real mixed-radix FFT (r2hc), forward",
+   "zone": "split"
+  },
+  "split/real/rfft_calibrate.h": {
+   "external": [],
+   "folder": "split/real",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/real/rfft.h",
+    "split/planning/dp_planner.h",
+    "split/planning/wisdom_reader.h",
+    "split/engine/proto_stride_compat.h"
+   ],
+   "lines": 152,
+   "role": "measured calibration of the rfft (real-FFT forward) axis.",
+   "zone": "split"
+  },
+  "split/split_create.h": {
+   "external": [],
+   "folder": "split",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/rank3/fftnd_create_split.h",
+    "split/rank2/fft2d_create_split.h",
+    "split/rank1/c2c_ip_create_split.h",
+    "split/rank1/c2c_oop_create_split.h",
+    "split/trig/trig_create.h"
+   ],
+   "lines": 231,
+   "role": "the SPLIT create: the split side of vfft_create's one fork.",
+   "zone": "split"
+  },
+  "split/split_execute.h": {
+   "external": [],
+   "folder": "split",
+   "included_by": [
+    "vfft_execute.h"
+   ],
+   "includes": [],
+   "lines": 208,
+   "role": "the SPLIT execute: the split side of vfft_execute's one fork.",
+   "zone": "split"
+  },
+  "split/trig/dct.h": {
+   "external": [],
+   "folder": "split/trig",
+   "included_by": [
+    "split/trig/dst.h",
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "split/real/r2c.h",
+    "split/trig/dct2_n8_avx2.h",
+    "split/trig/dct3_n8_avx2.h",
+    "common/math/pi.h",
+    "common/math/tw_exact.h"
+   ],
+   "lines": 581,
+   "role": "Discrete Cosine Transforms II and III (real-to-real)",
+   "zone": "split"
+  },
+  "split/trig/dct1.h": {
+   "external": [],
+   "folder": "split/trig",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "common/support/threads.h",
+    "split/real/r2c.h",
+    "common/math/pi.h"
+   ],
+   "lines": 293,
+   "role": "DCT-I and DST-I shells (the even/odd whole-sample forms).",
+   "zone": "split"
+  },
+  "split/trig/dct2_n8_avx2.h": {
+   "external": [],
+   "folder": "split/trig",
+   "included_by": [
+    "split/trig/dct.h"
+   ],
+   "includes": [],
+   "lines": 124,
+   "role": "DCT-II N=8 straight-line codelet.",
+   "zone": "split"
+  },
+  "split/trig/dct3_n8_avx2.h": {
+   "external": [],
+   "folder": "split/trig",
+   "included_by": [
+    "split/trig/dct.h"
+   ],
+   "includes": [],
+   "lines": 102,
+   "role": "DCT-III N=8 straight-line codelet (unnormalized).",
+   "zone": "split"
+  },
+  "split/trig/dct4.h": {
+   "external": [],
+   "folder": "split/trig",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "common/math/pi.h",
+    "common/math/tw_exact.h"
+   ],
+   "lines": 361,
+   "role": "DCT-IV (real-to-real, unnormalized convention)",
+   "zone": "split"
+  },
+  "split/trig/dht.h": {
+   "external": [],
+   "folder": "split/trig",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "split/real/r2c.h"
+   ],
+   "lines": 241,
+   "role": "Discrete Hartley Transform (real-to-real)",
+   "zone": "split"
+  },
+  "split/trig/dst.h": {
+   "external": [],
+   "folder": "split/trig",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "split/engine/executor.h",
+    "split/trig/dct.h"
+   ],
+   "lines": 310,
+   "role": "Discrete Sine Transforms II and III (real-to-real)",
+   "zone": "split"
+  },
+  "split/trig/trig_codelets.h": {
+   "external": [],
+   "folder": "split/trig",
+   "included_by": [],
+   "includes": [],
+   "lines": 45,
+   "role": "ABI-typed registry struct for the trig (real-to-real) codelet family: DCT-I/II/III/IV, DST-I/II/III/IV, DHT.",
+   "zone": "split"
+  },
+  "split/trig/trig_create.h": {
+   "external": [],
+   "folder": "split/trig",
+   "included_by": [
+    "split/split_create.h"
+   ],
+   "includes": [],
+   "lines": 221,
+   "role": "the trig CREATE tier and its builders.",
+   "zone": "split"
+  },
+  "split/wisdom/wisdom2_2d_split_reader.h": {
+   "external": [],
+   "folder": "split/wisdom",
+   "included_by": [
+    "vfft.c",
+    "wisdom2/wisdom2_migrate.h"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2.h",
+    "split/wisdom/wisdom2_fftnd.h",
+    "common/wisdom/wisdom2_rank_rows.h"
+   ],
+   "lines": 428,
+   "role": "the SPLIT rank>=2 (2D/3D) family codec: wisdom2 records <-> the EXACT legacy entry structs the plan constructors consume.",
+   "zone": "split"
+  },
+  "split/wisdom/wisdom2_fftnd.h": {
+   "external": [],
+   "folder": "split/wisdom",
+   "included_by": [
+    "split/rank2/fft2d_c2c_planner.h",
+    "split/rank2/fft2d_r2c_planner.h",
+    "split/wisdom/wisdom2_2d_split_reader.h"
+   ],
+   "includes": [
+    "split/rank2/fft2d.h",
+    "split/rank2/fft2d_r2c.h",
+    "split/rank3/fft3d.h"
+   ],
+   "lines": 653,
+   "role": "the rank>=2 (2D/3D) transform-recipe home: entry structs, recipe->plan builders, the 3D scratch table, and the LEGACY file machinery.",
+   "zone": "split"
+  },
+  "split/wisdom/wisdom2_oop_split.h": {
+   "external": [],
+   "folder": "split/wisdom",
+   "included_by": [
+    "split/planning/dp_planner_split_oop.h",
+    "wisdom2/wisdom2_oop.h"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2_oop_rows.h",
+    "common/wisdom/wisdom2_oop_legacy.h",
+    "split/oop/oop_plan.h"
+   ],
+   "lines": 445,
+   "role": "the SPLIT library's OOP wisdom: its record and codec.",
+   "zone": "split"
+  },
+  "split/wisdom/wisdom2_real_reader.h": {
+   "external": [],
+   "folder": "split/wisdom",
+   "included_by": [
+    "vfft.c",
+    "wisdom2/wisdom2_real_gate.h"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2.h"
+   ],
+   "lines": 238,
+   "role": "the REAL-ROUTE family codec: which top-level route an r2c / c2r problem takes at a given cell.",
+   "zone": "split"
+  },
+  "split/wisdom/wisdom2_stride_reader.h": {
+   "external": [],
+   "folder": "split/wisdom",
+   "included_by": [
+    "vfft.c",
+    "wisdom2/wisdom2_migrate.h"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2.h",
+    "split/planning/wisdom_reader.h"
+   ],
+   "lines": 514,
+   "role": "the stride (spike/rfft) family codec: wisdom2 records <-> the EXACT legacy entry structs (wisdom_reader.h) the plan constructors consume.",
+   "zone": "split"
+  },
+  "vfft.c": {
+   "external": [
+    "vfft.h",
+    "vfft_diagnostics.h",
+    "rfft_registry_avx512.h",
+    "c2r_registry_avx512.h",
+    "rfft_registry_avx2.h",
+    "c2r_registry_avx2.h",
+    "registry.h",
+    "jit/jit_runtime.h",
+    "jit/k1_jit_runtime.h"
+   ],
+   "folder": "(core)",
+   "included_by": [],
+   "includes": [
+    "split/real/real_dispatch_config.h",
+    "common/support/env.h",
+    "common/support/threads.h",
+    "split/engine/planner.h",
+    "split/engine/executor.h",
+    "split/planning/wisdom_reader.h",
+    "split/planning/dp_planner.h",
+    "split/planning/measure.h",
+    "split/oop/oop_auto.h",
+    "split/oop/oop_dp.h",
+    "wisdom2/wisdom2_oop.h",
+    "split/wisdom/wisdom2_2d_split_reader.h",
+    "il/wisdom/wisdom2_2d_il_reader.h",
+    "split/wisdom/wisdom2_stride_reader.h",
+    "split/wisdom/wisdom2_real_reader.h",
+    "il/wisdom/wisdom2_oddr.h",
+    "common/support/diag.h",
+    "common/support/race_timing.h",
+    "common/support/race.h",
+    "wisdom2/wisdom2_oop_reader.h",
+    "split/natorder/natorder_perm.h",
+    "split/natorder/natorder_exec.h",
+    "common/support/cpu_cache.h",
+    "il/rank1/il2p.h",
+    "il/rank2/il2d_col.h",
+    "il/rank1/ztt.h",
+    "il/rank1/il_prime.h",
+    "il/rank1/il_flatdit.h",
+    "il/rank1/il_flatdit_mt.h",
+    "il/rank1/ztt_mt.h",
+    "il/rank1/il_flatdit_race.h",
+    "split/natorder/natorder_scatter.h",
+    "split/natorder/natorder_calibrate.h",
+    "split/real/r2c_dispatch.h",
+    "il/real/zr2c.h",
+    "split/real/rfft_calibrate.h",
+    "split/real/c2r_dispatch.h",
+    "split/trig/dct.h",
+    "split/trig/dct1.h",
+    "split/trig/dct4.h",
+    "split/trig/dst.h",
+    "split/trig/dht.h",
+    "split/rank2/fft2d.h",
+    "split/rank3/fftnd_r2c.h",
+    "split/rank2/fft2d_r2c.h",
+    "il/rank2/fft2d_real_il.h",
+    "split/primes/prime_dispatch.h",
+    "split/primes/bluestein_calibrator.h",
+    "split/rank2/fft2d_c2c_planner.h",
+    "split/rank2/fft2d_c2r_planner.h",
+    "common/plan/vfft_internal.h",
+    "il/rank1/k1_fourstep_band.h",
+    "il/planning/policy_il.h",
+    "il/rank1/k1_fourstep.h",
+    "split/planning/pad_calibrate.h",
+    "split/real/real_route_race.h",
+    "split/engine/mt_execute.h",
+    "split/natorder/natorder_mt.h",
+    "split/oop/oop_mt.h",
+    "il/rank2/il2d_cols.h",
+    "il/rank2/il2d_tier.h",
+    "il/real/zr2c_build.h",
+    "il/planning/dp_planner_il.h",
+    "il/rank1/k1_commit.h",
+    "il/rank3/fftnd_il.h",
+    "split/split_create.h",
+    "il/il_create.h",
+    "bridge/real_bridge.h",
+    "split/rank1/vfft_batch.h",
+    "il/rank2/plane_queue.h",
+    "vfft_execute.h",
+    "vfft_fingerprint.h"
+   ],
+   "lines": 2285,
+   "role": "the vfft_create / vfft_execute front door: resolve wisdom -> calibrate-on-miss at the chosen rigor -> build -> execute.",
+   "zone": "front"
+  },
+  "vfft_execute.h": {
+   "external": [],
+   "folder": "(core)",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/plan/vfft_internal.h",
+    "il/il_execute.h",
+    "split/split_execute.h",
+    "bridge/real_bridge_exec.h"
+   ],
+   "lines": 480,
+   "role": "THE execute entry point.",
+   "zone": "front"
+  },
+  "vfft_fingerprint.h": {
+   "external": [],
+   "folder": "(core)",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [],
+   "lines": 84,
+   "role": "the create-time PLAN FINGERPRINT.",
+   "zone": "front"
+  },
+  "wisdom2/wisdom2_2d_gate.h": {
+   "external": [
+    "vfft.h"
+   ],
+   "folder": "wisdom2",
+   "included_by": [],
+   "includes": [
+    "common/math/pi.h"
+   ],
+   "lines": 332,
+   "role": "the 2D/3D store gate (module-owned; the bench is a thin driver).",
+   "zone": "wisdom2"
+  },
+  "wisdom2/wisdom2_migrate.h": {
+   "external": [],
+   "folder": "wisdom2",
+   "included_by": [],
+   "includes": [
+    "common/wisdom/wisdom2.h",
+    "wisdom2/wisdom2_oop_reader.h",
+    "wisdom2/wisdom2_oop.h",
+    "split/wisdom/wisdom2_2d_split_reader.h",
+    "split/wisdom/wisdom2_stride_reader.h"
+   ],
+   "lines": 1777,
+   "role": "the one-shot LOSSLESS migrator: legacy wisdom files -> the wisdom2 store.",
+   "zone": "wisdom2"
+  },
+  "wisdom2/wisdom2_oop.h": {
+   "external": [],
+   "folder": "wisdom2",
+   "included_by": [
+    "vfft.c",
+    "wisdom2/wisdom2_migrate.h",
+    "wisdom2/wisdom2_oop_reader.h"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2_oop_legacy.h",
+    "split/wisdom/wisdom2_oop_split.h",
+    "il/wisdom/wisdom2_oop_il.h"
+   ],
+   "lines": 18,
+   "role": "the front door's OOP-family wisdom include.",
+   "zone": "wisdom2"
+  },
+  "wisdom2/wisdom2_oop_reader.h": {
+   "external": [],
+   "folder": "wisdom2",
+   "included_by": [
+    "vfft.c",
+    "wisdom2/wisdom2_migrate.h",
+    "wisdom2/wisdom2_real_gate.h"
+   ],
+   "includes": [
+    "common/wisdom/wisdom2.h",
+    "wisdom2/wisdom2_oop.h"
+   ],
+   "lines": 189,
+   "role": "the LEGACY (dual) half of the OOP-family codec, for the migrator and the vw2_off_oop kill switch only.",
+   "zone": "wisdom2"
+  },
+  "wisdom2/wisdom2_real_gate.h": {
+   "external": [],
+   "folder": "wisdom2",
+   "included_by": [],
+   "includes": [
+    "common/wisdom/wisdom2.h",
+    "split/wisdom/wisdom2_real_reader.h",
+    "wisdom2/wisdom2_oop_reader.h"
+   ],
+   "lines": 330,
+   "role": "the store gate for the r2c/c2r ROUTE family.",
+   "zone": "wisdom2"
+  }
+ },
+ "zones": {
+  "bridge": "the only place besides the front door that sees both layouts (temporary)",
+  "common": "shared by both layouts: ABI types, math, support, the wisdom2 store core, the plan struct",
+  "front": "the public front door: vfft.c and its helpers",
+  "il": "the INTERLEAVED library (z[] of (re, im) pairs)",
+  "split": "the SPLIT library (separate re[] / im[] planes)",
+  "wisdom2": "front-side wisdom glue spanning both layouts (legacy readers, migration)"
+ }
+}
