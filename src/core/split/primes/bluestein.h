@@ -26,6 +26,7 @@
 #ifndef STRIDE_BLUESTEIN_H
 #define STRIDE_BLUESTEIN_H
 #include "common/math/pi.h"
+#include "common/math/tw_exact.h" /* vfft_cs2pi_exact: every twiddle, rounded once (D5) */
 
 #include "executor.h"
 
@@ -181,9 +182,10 @@ static void _bluestein_chirp(int N, double *chirp_re, double *chirp_im) {
     long long n2 = 2 * (long long)N;
     long long ksq = 0;
     for (int k = 0; k < N; k++) {
-        double angle = -VFFT_PI * (double)ksq / (double)N;
-        chirp_re[k] = cos(angle);
-        chirp_im[k] = sin(angle);
+        double c, s;
+        vfft_cs2pi_exact(ksq, n2, &c, &s);   /* pi k^2 / N = 2 pi ksq / 2N */
+        chirp_re[k] = c;
+        chirp_im[k] = -s;
         ksq = (ksq + 2 * k + 1) % n2;
     }
 }

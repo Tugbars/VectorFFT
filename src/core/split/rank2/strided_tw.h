@@ -32,6 +32,7 @@
 #ifndef VFFT_STRIDED_TW_H
 #define VFFT_STRIDED_TW_H
 #include "common/math/pi.h"
+#include "common/math/tw_exact.h" /* vfft_cs2pi_exact: every twiddle, rounded once (D5) */
 #include "common/support/zalloc.h" /* vfft_aligned_alloc / vfft_aligned_free: the one allocator */
 
 
@@ -76,15 +77,17 @@ static inline int _stw_tables_init(_stw_tables_t *t, int N)
     if (!t->twr || !t->twi) { vfft_aligned_free(t->twr); vfft_aligned_free(t->twi); return 0; }
     if (t->r == 2) {
         for (size_t m = 0; m < per; m++) {
-            double a = -2.0 * VFFT_PI * (double)m / (double)N;
-            t->twr[m] = cos(a); t->twi[m] = sin(a);
+            double c, s;
+            vfft_cs2pi_exact((long long)m, (long long)N, &c, &s);
+            t->twr[m] = c; t->twi[m] = -s;
         }
     } else {
         for (int j = 1; j <= 3; j++)
             for (size_t m = 0; m < per; m++) {
-                double a = -2.0 * VFFT_PI * (double)j * (double)m / (double)N;
-                t->twr[(size_t)(j - 1) * per + m] = cos(a);
-                t->twi[(size_t)(j - 1) * per + m] = sin(a);
+                double c, s;
+                vfft_cs2pi_exact((long long)j * (long long)m, (long long)N, &c, &s);
+                t->twr[(size_t)(j - 1) * per + m] = c;
+                t->twi[(size_t)(j - 1) * per + m] = -s;
             }
     }
     return 1;

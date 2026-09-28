@@ -41,6 +41,7 @@
 #include <math.h>
 
 #include "common/math/pi.h"
+#include "common/math/tw_exact.h" /* vfft_cs2pi_exact: every twiddle, rounded once (D5) */
 
 typedef struct {
     int N;                  /* DCT-IV size (must be even) */
@@ -287,14 +288,13 @@ static stride_plan_t *stride_dct4_plan(int N, size_t K, stride_plan_t *fft_plan_
         _dct4_destroy(d); return NULL;
     }
     for (int m = 0; m < halfN; m++) {
-        const double a = VFFT_PI * (double)m / (double)N;
-        d->pre_cos[m] = cos(a);
-        d->pre_sin[m] = sin(a);
+        vfft_cs2pi_exact(m, 2LL * N, &d->pre_cos[m], &d->pre_sin[m]); /* pi m / N */
     }
     for (int kp = 0; kp < halfN; kp++) {
-        const double a = VFFT_PI * (double)(4 * kp + 1) / (4.0 * (double)N);
-        d->post_cos2[kp] = 2.0 * cos(a);
-        d->post_sin2[kp] = 2.0 * sin(a);
+        double c, s;
+        vfft_cs2pi_exact(4LL * kp + 1, 8LL * N, &c, &s); /* pi (4k'+1) / (4N) */
+        d->post_cos2[kp] = 2.0 * c;
+        d->post_sin2[kp] = 2.0 * s;
     }
 
     size_t psi_sz = (size_t)halfN * K;

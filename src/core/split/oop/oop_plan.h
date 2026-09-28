@@ -51,6 +51,7 @@
 #define VFFT_K1_CC_MAX_NF 7
 
 #include "common/math/pi.h"
+#include "common/math/tw_exact.h" /* vfft_cs2pi_exact: every twiddle, rounded once (D5) */
 
 #include "common/abi/route_ids.h" /* VFFT_K1_SP_* / VFFT_K1_IL_* route ids, vfft_oop_kind_t */
 
@@ -145,8 +146,9 @@ static inline int _vfft_oop_fill_bailey(vfft_oop_plan_t *p,
     for (int l2 = 1; l2 < R1; l2++)
         for (int k2 = 0; k2 < R2; k2++)
         {
-            double a = -2.0 * VFFT_PI * (double)((long)l2 * k2) / (double)N;
-            double cr = cos(a), ci = sin(a);
+            double cr, ci;
+            vfft_cs2pi_exact((long long)l2 * k2, N, &cr, &ci);
+            ci = -ci; /* W_N^(l2 k2) */
             const size_t base = (size_t)(l2 - 1) * rows + (size_t)k2 * reps;
             for (size_t g = 0; g < reps; g++)
             {
@@ -250,12 +252,12 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
                 for (int l = 1; l < R1; l++)
                     for (int k = 0; k < 4; k++)
                     {
-                        double a = -2.0 * VFFT_PI *
-                                   (double)((long)l * (b0 + k)) / (double)N;
+                        double cr, ci;
                         size_t idx = (size_t)b0 * (R1 - 1) +
                                      (size_t)(l - 1) * 4 + (size_t)k;
-                        p->Qlr[idx] = cos(a);
-                        p->Qli[idx] = sin(a);
+                        vfft_cs2pi_exact((long long)l * (b0 + k), N, &cr, &ci);
+                        p->Qlr[idx] = cr;
+                        p->Qli[idx] = -ci;
                     }
         }
         else
@@ -436,9 +438,10 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc_v(
     /* odd-K (K=1) flat-t1 table layout, same as _vfft_oop_fill_bailey */
     for (int l2 = 1; l2 < R1; l2++)
         for (int k2 = 0; k2 < R2; k2++) {
-            double a = -2.0 * VFFT_PI * (double)((long)l2 * k2) / (double)N;
-            p->Qr[(size_t)(l2 - 1) * R2 + k2] = cos(a);
-            p->Qi[(size_t)(l2 - 1) * R2 + k2] = sin(a);
+            double cr, ci;
+            vfft_cs2pi_exact((long long)l2 * k2, N, &cr, &ci);
+            p->Qr[(size_t)(l2 - 1) * R2 + k2] = cr;
+            p->Qi[(size_t)(l2 - 1) * R2 + k2] = -ci;
         }
 
     /* perm discovery: every column carries the same signal, so output row q

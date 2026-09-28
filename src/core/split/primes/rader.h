@@ -24,6 +24,7 @@
 #define STRIDE_RADER_H
 #include "common/math/numtheory.h"  /* vfft_powmod, vfft_primitive_root */
 #include "common/math/pi.h"
+#include "common/math/tw_exact.h" /* vfft_cs2pi_exact: every twiddle, rounded once (D5) */
 
 #include "executor.h"
 #include "bluestein.h"   /* reuse _blue_cmul_vv, _bluestein_block_size */
@@ -131,8 +132,9 @@ static void _rader_precompute_kernel(
     memset(work_im, 0, NB * sizeof(double));
 
     for (int m = 0; m < nm1; m++) {
-        double angle = sign * 2.0 * VFFT_PI * (double)perm[m] / (double)N;
-        double wr = cos(angle), wi = sin(angle);
+        double wr, wi;
+        vfft_cs2pi_exact(perm[m], N, &wr, &wi);
+        if (sign < 0) wi = -wi;   /* forward exp(-2 pi i perm/N), backward + */
         size_t base = (size_t)m * B;
         for (size_t k = 0; k < B; k++) {
             work_re[base + k] = wr;
