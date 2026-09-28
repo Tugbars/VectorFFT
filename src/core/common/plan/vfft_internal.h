@@ -47,7 +47,7 @@
 #ifndef VFFT_INTERNAL_H
 #define VFFT_INTERNAL_H
 
-#include "common/support/zalloc.h"   /* the house 64-B allocator (VFFT_ZS_ALLOC/FREE) */
+#include "common/support/zalloc.h"   /* the one allocator: vfft_aligned_alloc / vfft_aligned_free */
 
 /* ════════════════════════════════════════════════════════════════════════
  * OPAQUE TYPES

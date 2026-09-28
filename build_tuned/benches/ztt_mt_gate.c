@@ -67,8 +67,8 @@ int main(void)
         const cell_t *c = &CELLS[ci];
         const long N = c->N;
         const size_t nb = (size_t)2 * N * sizeof(double);
-        double *x = (double *)VFFT_ZTT_ALLOC(nb), *ys = (double *)VFFT_ZTT_ALLOC(nb);
-        double *ym = (double *)VFFT_ZTT_ALLOC(nb), *rt = (double *)VFFT_ZTT_ALLOC(nb);
+        double *x = (double *)vfft_aligned_alloc(nb), *ys = (double *)vfft_aligned_alloc(nb);
+        double *ym = (double *)vfft_aligned_alloc(nb), *rt = (double *)vfft_aligned_alloc(nb);
         char cs[48];
         int off = 0;
         for (int s = 0; s < c->nf; s++) off += sprintf(cs + off, "%s%d", s ? "." : "", c->chain[s]);
@@ -124,7 +124,7 @@ int main(void)
                 runs += cruns; declined += cdecl;
                 printf("  %-8ld %-16s %-4d %-6zu %-9ld %-9ld %s\n", N, cs, scr, tile, cruns, cdecl, g_fail == f0 ? "ok" : "*** FAIL ***");
             }
-        VFFT_ZTT_FREE(x); VFFT_ZTT_FREE(ys); VFFT_ZTT_FREE(ym); VFFT_ZTT_FREE(rt);
+        vfft_aligned_free(x); vfft_aligned_free(ys); vfft_aligned_free(ym); vfft_aligned_free(rt);
     }
     printf("\n%ld threaded executions bitwise the serial walk, %ld declined (untiled TILES arm), %d failures\n", runs, declined, g_fail);
     printf("%s\n", g_fail ? "*** GATE FAILED ***" : "ALL PASS");

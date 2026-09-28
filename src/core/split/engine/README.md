@@ -16,7 +16,7 @@ multithreading.
 
 | file | role |
 |------|------|
-| `plan.h` | re-export of the plan types + portable aligned alloc (`vfft_proto_posix_memalign`/`_aligned_free`) |
+| `plan.h` | re-export of the plan types + portable aligned alloc (`vfft_aligned_alloc`/`_aligned_free`) |
 | `planner.h` | build a `stride_plan_t` from (N,K): factorize, choose variants, wire codelets, compute twiddles |
 | `executor.h` | single-thread dispatch (`vfft_proto_execute_fwd/bwd`) — Tier-1 lookup → generic fallback |
 | `executor_generic.h` | cold-cell correctness baseline: per-stage function-pointer loop |

@@ -773,7 +773,7 @@ static void _ilnd_free_strips(vfft_ilnd_t *d)
     if (d->sscr)
     {
         for (t = 0; t < d->nsscr; t++)
-            VFFT_ZS_FREE(d->sscr[t]);
+            vfft_aligned_free(d->sscr[t]);
         free(d->sscr);
         d->sscr = NULL;
     }
@@ -790,7 +790,7 @@ static int _ilnd_strips_ensure(vfft_ilnd_t *d, int T, int maxw)
         return 0;
     for (t = 0; t < T; t++)
     {
-        d->sscr[t] = (double *)VFFT_ZS_ALLOC(2 * (size_t)d->N[0] * (size_t)maxw * sizeof(double));
+        d->sscr[t] = (double *)vfft_aligned_alloc(2 * (size_t)d->N[0] * (size_t)maxw * sizeof(double));
         if (!d->sscr[t])
         {
             d->nsscr = t;
@@ -1250,8 +1250,8 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
 {
     const size_t T = (size_t)d->N[0] * d->plane;
     /* the plan's own placement on aligned buffers (2026-09-25): zo == z in place */
-    double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
-    double *zo = d->ip ? z : (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
+    double *z = (double *)vfft_aligned_alloc(2 * T * sizeof(double));
+    double *zo = d->ip ? z : (double *)vfft_aligned_alloc(2 * T * sizeof(double));
     /* serial (small cubes) + per structure {full team, half team}: 5 at most */
     _ilnd_mt_ctx_t cx[5];
     vfft_race_arm_t arms[5];
@@ -1270,8 +1270,8 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
     *ptw_out = 0;
     if (!z || !zo)
     {
-        if (zo && zo != z) VFFT_ZS_FREE(zo);
-        if (z) VFFT_ZS_FREE(z);
+        if (zo && zo != z) vfft_aligned_free(zo);
+        if (z) vfft_aligned_free(z);
         return;
     }
     d->nf = nf0;
@@ -1354,8 +1354,8 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
         *nf_out = cx[best].nf;
         *ptw_out = cx[best].mt == 2 ? cx[best].ptw : 0;
     }
-    if (zo != z) VFFT_ZS_FREE(zo);
-    VFFT_ZS_FREE(z);
+    if (zo != z) vfft_aligned_free(zo);
+    vfft_aligned_free(z);
     if (getenv("VFFT_IL2D_LOG"))
     {
         fprintf(stderr, "[ilnd] %dx%dx%d%s: MT race T=%d reps=%d rounds=%d", d->N[0], d->N[1], d->N[2],
@@ -1588,8 +1588,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     {
         const size_t T = (size_t)N1 * d->plane;
         /* the plan's own placement on aligned buffers (2026-09-25): zo == z in place */
-        double *z = (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
-        double *zo = d->ip ? z : (double *)VFFT_ZS_ALLOC(2 * T * sizeof(double));
+        double *z = (double *)vfft_aligned_alloc(2 * T * sizeof(double));
+        double *zo = d->ip ? z : (double *)vfft_aligned_alloc(2 * T * sizeof(double));
         _ilnd_arm_ctx_t ac[VFFT_RACE_MAX_ARMS];
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
         double ns[VFFT_RACE_MAX_ARMS];
@@ -1599,8 +1599,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         if (reps > 64) reps = 64;
         if (!z || !zo)
         {
-            if (zo && zo != z) VFFT_ZS_FREE(zo);
-            if (z) VFFT_ZS_FREE(z);
+            if (zo && zo != z) vfft_aligned_free(zo);
+            if (z) vfft_aligned_free(z);
             vfft_ilnd_destroy(d);
             return NULL;
         }
@@ -1669,8 +1669,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                     sw_best = ac[a].sw;
                 }
         }
-        if (zo != z) VFFT_ZS_FREE(zo);
-        VFFT_ZS_FREE(z);
+        if (zo != z) vfft_aligned_free(zo);
+        vfft_aligned_free(z);
         if (getenv("VFFT_IL2D_LOG"))
         {
             fprintf(stderr, "[ilnd] %dx%dx%d%s: race", N1, N2, N3, nat ? " nat" : "");

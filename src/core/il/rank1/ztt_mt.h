@@ -313,7 +313,7 @@ static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const double *zin,
     rs.dst = zout; rs.src = ip ? p->plane : zin; rs.nb = 0;   /* placeholder, set below */
     if (ip)
     {   /* aliased arms: re-seed the buffer from a copy before every sample */
-        double *seed = (double *)VFFT_ZTT_ALLOC((size_t)2 * p->N * sizeof(double));
+        double *seed = (double *)vfft_aligned_alloc((size_t)2 * p->N * sizeof(double));
         if (!seed) { p->mt = 0; return 0; }
         memcpy(seed, zout, (size_t)2 * p->N * sizeof(double));
         rs.src = seed; rs.nb = (size_t)2 * p->N * sizeof(double);
@@ -321,7 +321,7 @@ static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const double *zin,
             const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, _ztt_mt_reseed, &rs, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
             vfft_race_run(&proto, arms, na, ns);
         }
-        VFFT_ZTT_FREE(seed);
+        vfft_aligned_free(seed);
     }
     else
     {

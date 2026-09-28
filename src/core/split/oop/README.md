@@ -226,7 +226,7 @@ cells**, correctness verified (MODEB bit-exact vs in-place; LEAF/BAILEY2 roundtr
 - **Backward = pointer-swap identity** on the forward plan: `IDFT(re,im)=swap(DFT(im,re))`,
   unnormalized, same ordering as forward.
 - **`K % 8 == 0` is mandatory** (lane contract; sub-8 K is rejected, not padded — v1).
-- **mingw** lacks C11 `aligned_alloc` → `VFFT_OOP_AALLOC/AFREE` = `_aligned_malloc/_free`
+- **mingw** lacks C11 `aligned_alloc` → `vfft_aligned_alloc/AFREE` = `_aligned_malloc/_free`
   (must pair; not `free`).
 - **DP measures** (~150 sub-benches) → calibration-time only; runtime is pure lookup.
 - `oop_plan.h` Phase-1 **leaks the MODEB `mb` sub-plan** on destroy (the proto planner has

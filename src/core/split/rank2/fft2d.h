@@ -346,8 +346,8 @@ static void _fft2d_destroy(void *data) {
     if (!d) return;
     if (d->plan_col) stride_plan_destroy(d->plan_col);
     if (d->plan_row) stride_plan_destroy(d->plan_row);
-    STRIDE_ALIGNED_FREE(d->scratch_re);
-    STRIDE_ALIGNED_FREE(d->scratch_im);
+    vfft_aligned_free(d->scratch_re);
+    vfft_aligned_free(d->scratch_im);
     free(d);
 }
 
@@ -398,8 +398,8 @@ static int _fft2d_alloc_scratch(stride_fft2d_data_t *d, size_t tile_sz) {
 
     d->tile_sz = tile_sz;
     d->num_scratch = T;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)T * tile_sz * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)T * tile_sz * sizeof(double));
+    d->scratch_re = (double *)vfft_aligned_alloc((size_t)T * tile_sz * sizeof(double));
+    d->scratch_im = (double *)vfft_aligned_alloc((size_t)T * tile_sz * sizeof(double));
 
     if (!d->scratch_re || !d->scratch_im) return 0;
     return T;
@@ -496,8 +496,8 @@ static stride_plan_t *stride_plan_2d_bailey(
     /* Bailey only needs 1 scratch (not tile-parallel) */
     d->num_scratch = 1;
     d->tile_sz = (size_t)N1 * N2;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, d->tile_sz * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, d->tile_sz * sizeof(double));
+    d->scratch_re = (double *)vfft_aligned_alloc(d->tile_sz * sizeof(double));
+    d->scratch_im = (double *)vfft_aligned_alloc(d->tile_sz * sizeof(double));
 
     if (!d->scratch_re || !d->scratch_im) {
         _fft2d_destroy(d);

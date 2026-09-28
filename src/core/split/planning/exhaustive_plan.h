@@ -203,10 +203,10 @@ static inline double vfft_proto_exhaustive_search(
     size_t total = (size_t)N * K;
 
     double *re = NULL, *im = NULL, *orig_re = NULL, *orig_im = NULL;
-    vfft_proto_posix_memalign((void**)&re,      64, total * sizeof(double));
-    vfft_proto_posix_memalign((void**)&im,      64, total * sizeof(double));
-    vfft_proto_posix_memalign((void**)&orig_re, 64, total * sizeof(double));
-    vfft_proto_posix_memalign((void**)&orig_im, 64, total * sizeof(double));
+    re = vfft_aligned_alloc(total * sizeof(double));
+    im = vfft_aligned_alloc(total * sizeof(double));
+    orig_re = vfft_aligned_alloc(total * sizeof(double));
+    orig_im = vfft_aligned_alloc(total * sizeof(double));
     for (size_t i = 0; i < total; i++) {
         orig_re[i] = (double)rand() / RAND_MAX - 0.5;
         orig_im[i] = (double)rand() / RAND_MAX - 0.5;
@@ -310,10 +310,10 @@ static inline double vfft_proto_exhaustive_search(
     }
 
     free(flist);
-    vfft_proto_aligned_free(re);
-    vfft_proto_aligned_free(im);
-    vfft_proto_aligned_free(orig_re);
-    vfft_proto_aligned_free(orig_im);
+    vfft_aligned_free(re);
+    vfft_aligned_free(im);
+    vfft_aligned_free(orig_re);
+    vfft_aligned_free(orig_im);
 
     return global_best_ns;
 }

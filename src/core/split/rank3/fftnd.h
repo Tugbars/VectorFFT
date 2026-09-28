@@ -526,8 +526,8 @@ static void _fftnd_destroy(void *data) {
     if (!d) return;
     for (int m = 0; m < d->rank; m++)
         if (d->plan[m]) stride_plan_destroy(d->plan[m]);
-    STRIDE_ALIGNED_FREE(d->scratch_re);
-    STRIDE_ALIGNED_FREE(d->scratch_im);
+    vfft_aligned_free(d->scratch_re);
+    vfft_aligned_free(d->scratch_im);
     free(d);
 }
 
@@ -596,8 +596,8 @@ static int _fftnd_alloc_scratch(stride_fftnd_data_t *d, size_t tile_sz) {
     int T = thread_pool_workers_for(0); /* create time: the pool as it is now = this plan's slot count */
     d->tile_sz = tile_sz;
     d->num_scratch = T;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)T * tile_sz * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)T * tile_sz * sizeof(double));
+    d->scratch_re = (double *)vfft_aligned_alloc((size_t)T * tile_sz * sizeof(double));
+    d->scratch_im = (double *)vfft_aligned_alloc((size_t)T * tile_sz * sizeof(double));
     return (d->scratch_re && d->scratch_im) ? T : 0;
 }
 

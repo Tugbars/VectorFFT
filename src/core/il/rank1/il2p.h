@@ -43,14 +43,7 @@
 
 #include "common/math/pi.h"
 
-#if defined(_WIN32)
-#include <malloc.h>
-#define VFFT_IL2P_ALLOC(n) _aligned_malloc((n), 64)
-#define VFFT_IL2P_FREE(p)  _aligned_free(p)
-#else
-#define VFFT_IL2P_ALLOC(n) aligned_alloc(64, (((n) + 63u) / 64u) * 64u)
-#define VFFT_IL2P_FREE(p)  free(p)
-#endif
+#include "common/support/zalloc.h" /* vfft_aligned_alloc / vfft_aligned_free: the one allocator */
 
 typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
                              const double *, const double *,
@@ -498,9 +491,9 @@ typedef struct {
 static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
 {
     if (!p) return;
-    VFFT_IL2P_FREE(p->mid);
-    VFFT_IL2P_FREE(p->tw);
-    VFFT_IL2P_FREE(p->twb);
+    vfft_aligned_free(p->mid);
+    vfft_aligned_free(p->tw);
+    vfft_aligned_free(p->twb);
     free(p);
 }
 
@@ -1040,9 +1033,9 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
     size_t npair = ((size_t)R2 + 1u) / 2u;
     size_t ntw = npair * (size_t)(R1 - 1) * 8u;
 #endif
-    p->mid = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
-    p->tw  = (double *)VFFT_IL2P_ALLOC(ntw * sizeof(double));
-    p->twb = (double *)VFFT_IL2P_ALLOC(ntw * sizeof(double));
+    p->mid = (double *)vfft_aligned_alloc((size_t)N * 2u * sizeof(double));
+    p->tw  = (double *)vfft_aligned_alloc(ntw * sizeof(double));
+    p->twb = (double *)vfft_aligned_alloc(ntw * sizeof(double));
     if (!p->mid || !p->tw || !p->twb) { vfft_il2p_destroy(p); return 0; }
 
 #if VFFT_IL_VW == 8
@@ -1281,12 +1274,12 @@ typedef struct {
 static inline void vfft_il3p_destroy(vfft_il3p_plan_t *p)
 {
     if (!p) return;
-    VFFT_IL2P_FREE(p->mid1);
-    VFFT_IL2P_FREE(p->mid2);
-    VFFT_IL2P_FREE(p->twB);
-    VFFT_IL2P_FREE(p->twA);
-    VFFT_IL2P_FREE(p->twAc);
-    VFFT_IL2P_FREE(p->twBc);
+    vfft_aligned_free(p->mid1);
+    vfft_aligned_free(p->mid2);
+    vfft_aligned_free(p->twB);
+    vfft_aligned_free(p->twA);
+    vfft_aligned_free(p->twAc);
+    vfft_aligned_free(p->twBc);
     free(p);
 }
 
@@ -1311,14 +1304,14 @@ static inline double *_vfft_il3p_vtw2(int legs, int blocks, int cols,
                                       int modulus, int conj)
 {
 #if VFFT_IL_VW == 8
-    double *tw512 = (double *)VFFT_IL2P_ALLOC(vfft_vtw512_il3p_doubles(legs, blocks, cols)
+    double *tw512 = (double *)vfft_aligned_alloc(vfft_vtw512_il3p_doubles(legs, blocks, cols)
                                               * sizeof(double));
     if (tw512) vfft_vtw512_il3p_fill(tw512, legs, blocks, cols, modulus, conj);
     return tw512;
 #endif
     const size_t npair = _vfft_il3p_vtw2_recs(cols);
     size_t nrec = (size_t)blocks * npair * (size_t)(legs - 1);
-    double *tw = (double *)VFFT_IL2P_ALLOC(nrec * 8u * sizeof(double));
+    double *tw = (double *)vfft_aligned_alloc(nrec * 8u * sizeof(double));
     if (!tw) return 0;
     for (int blk = 0; blk < blocks; blk++)
         for (size_t pp = 0; pp < npair; pp++)
@@ -1419,8 +1412,8 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
     p->leaf_f = lf; p->n1_b = nb;
     p->tA_f = af; p->tB_f = bf;
     p->tA_b = ab; p->tBg_b = btg;
-    p->mid1 = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
-    p->mid2 = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
+    p->mid1 = (double *)vfft_aligned_alloc((size_t)N * 2u * sizeof(double));
+    p->mid2 = (double *)vfft_aligned_alloc((size_t)N * 2u * sizeof(double));
     /* stage B: A blocks of R2 columns share ONE block's table (its angle
      * depends on the local column only: modulus B*R2, k = local);
      * stage A: B blocks of R2 columns, k global (modulus N). */

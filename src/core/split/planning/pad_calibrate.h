@@ -118,7 +118,7 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
     const size_t szP = (size_t)N * Kp;                          /* padded plane */
     const size_t need = 4 * SKEW + 2 * szT + 2 * szP + 2 * szT; /* + reference planes */
     double *arena = NULL;
-    if (vfft_proto_posix_memalign((void **)&arena, 64, need * sizeof(double)))
+    if (!(arena = vfft_aligned_alloc(need * sizeof(double))))
     {
         vfft_proto_plan_destroy(pT);
         vfft_proto_plan_destroy(pP);
@@ -191,7 +191,7 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
             exec_me = 0; /* winner failed the roundtrip -> caller falls back to tight */
     }
 
-    vfft_proto_aligned_free(arena);
+    vfft_aligned_free(arena);
     vfft_proto_plan_destroy(pT);
     vfft_proto_plan_destroy(pP);
     return exec_me;

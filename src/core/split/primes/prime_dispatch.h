@@ -1,7 +1,7 @@
 /* prime_dispatch.h — prime-N planning for the stride engine (Rader, Bluestein).
  *
  * Lives ABOVE planner.h: pulls proto_stride_compat.h and rader.h /
- * bluestein.h, which use the stride_* API (thread pool, STRIDE_ALIGNED_ALLOC,
+ * bluestein.h, which use the stride_* API (thread pool, vfft_aligned_alloc,
  * stride_* names). proto_stride_compat.h must come AFTER planner.h and BEFORE
  * rader/bluestein, which is why this dispatch can't live inside planner.h.
  *
@@ -22,7 +22,7 @@
 #include "common/math/numtheory.h"  /* vfft_is_prime, vfft_is_radix_smooth */
 
 #include "planner.h"             /* vfft_proto_auto_plan, vfft_proto_plan_destroy */
-#include "proto_stride_compat.h" /* bridge: threads.h + STRIDE_ALIGNED_ALLOC + stride_* */
+#include "proto_stride_compat.h" /* bridge: threads.h + vfft_aligned_alloc + stride_* */
 #include "rader.h"               /* stride_rader_plan */
 #include "bluestein.h"           /* _bluestein_block_size, _bluestein_choose_m, stride_bluestein_plan */
 #include "bluestein_wisdom.h"    /* bluestein_wisdom_lookup (optional Bluestein M/B) */

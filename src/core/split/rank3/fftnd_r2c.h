@@ -361,13 +361,13 @@ static void _fndr_destroy(void *data) {
     if (d->plan_r2c) stride_plan_destroy(d->plan_r2c);
     for (int m = 0; m < d->rank - 1; m++)
         if (d->cplan[m]) stride_plan_destroy(d->cplan[m]);
-    STRIDE_ALIGNED_FREE(d->scratch_re);
-    STRIDE_ALIGNED_FREE(d->scratch_im);
-    STRIDE_ALIGNED_FREE(d->pad_re);
-    STRIDE_ALIGNED_FREE(d->pad_im);
+    vfft_aligned_free(d->scratch_re);
+    vfft_aligned_free(d->scratch_im);
+    vfft_aligned_free(d->pad_re);
+    vfft_aligned_free(d->pad_im);
     for (int m_ = 0; m_ < FFTND_MAX_RANK; m_++) free(d->nat_ax[m_]);
-    STRIDE_ALIGNED_FREE(d->nat_rtmp);
-    STRIDE_ALIGNED_FREE(d->snd_tail_scr);
+    vfft_aligned_free(d->nat_rtmp);
+    vfft_aligned_free(d->snd_tail_scr);
     free(d);
 }
 
@@ -413,10 +413,10 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
         d->num_scratch = T;
         d->tile_real_sz = (size_t)N[rank-1] * d->B;
         d->tile_cplx_sz = d->hp1 * d->B;
-        d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)T * d->tile_real_sz * 8);
-        d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)T * d->tile_cplx_sz * 8);
-        d->pad_re = (double *)STRIDE_ALIGNED_ALLOC(64, d->R * d->K_pad * 8);
-        d->pad_im = (double *)STRIDE_ALIGNED_ALLOC(64, d->R * d->K_pad * 8);
+        d->scratch_re = (double *)vfft_aligned_alloc((size_t)T * d->tile_real_sz * 8);
+        d->scratch_im = (double *)vfft_aligned_alloc((size_t)T * d->tile_cplx_sz * 8);
+        d->pad_re = (double *)vfft_aligned_alloc(d->R * d->K_pad * 8);
+        d->pad_im = (double *)vfft_aligned_alloc(d->R * d->K_pad * 8);
         ok = d->scratch_re && d->scratch_im && d->pad_re && d->pad_im;
     }
     if (!ok) { _fndr_destroy(d); return NULL; }
@@ -445,8 +445,8 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
         for (int m = 0; m < rank - 1 && !det_fail; m++) {
             const int Nm = d->N[m];
             const size_t Kc = d->Kc[m];
-            double *pr_ = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)Nm * Kc * 8);
-            double *pi_ = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)Nm * Kc * 8);
+            double *pr_ = (double *)vfft_aligned_alloc((size_t)Nm * Kc * 8);
+            double *pi_ = (double *)vfft_aligned_alloc((size_t)Nm * Kc * 8);
             int *M_ = (int *)malloc((size_t)Nm * sizeof(int));
             char *seen_ = (char *)calloc((size_t)Nm, 1);
             if (!pr_ || !pi_ || !M_ || !seen_) { det_fail = 1; }
@@ -474,10 +474,10 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
                 if (!det_fail && !ident)
                     d->nat_ax[m] = vfft_natorder_mk_cycles(Nm, M_);
             }
-            STRIDE_ALIGNED_FREE(pr_); STRIDE_ALIGNED_FREE(pi_); free(M_); free(seen_);
+            vfft_aligned_free(pr_); vfft_aligned_free(pi_); free(M_); free(seen_);
         }
         if (!det_fail && maxKc) {
-            d->nat_rtmp = (double *)STRIDE_ALIGNED_ALLOC(64, 2 * maxKc * 8);
+            d->nat_rtmp = (double *)vfft_aligned_alloc(2 * maxKc * 8);
             if (!d->nat_rtmp) det_fail = 1;
         }
         if (det_fail) { _fndr_destroy(d); return NULL; }
@@ -494,13 +494,12 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
         _f2d_sr2c_fwd_fn sf_ = _f2d_sr2c_fwd_resolve(NL_, &d->snd_blk);
         _f2d_sr2c_bwd_fn sb_ = _f2d_sr2c_bwd_resolve(NL_, &d->snd_blk);
         if ((sf_ || sb_) && (d->R % (2 * (size_t)d->snd_blk) != 0)) {
-            d->snd_tail_scr = (double *)STRIDE_ALIGNED_ALLOC(64,
-                (2 * (size_t)d->snd_blk
+            d->snd_tail_scr = (double *)vfft_aligned_alloc((2 * (size_t)d->snd_blk
                      * ((size_t)NL_ + 2 * d->hp1)) * sizeof(double));
             if (!d->snd_tail_scr) { sf_ = 0; sb_ = 0; }
         }
         double *xin_ = (sf_ || sb_)
-            ? (double *)STRIDE_ALIGNED_ALLOC(64, d->total_real * sizeof(double))
+            ? (double *)vfft_aligned_alloc(d->total_real * sizeof(double))
             : NULL;
         if (xin_) {
             int awf_ = 0, awb_ = 0;
@@ -513,7 +512,7 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
                                   &awf_, &awb_)) {
                 d->snd_fwd = (awf_ && sf_) ? sf_ : 0;
                 d->snd_bwd = (awb_ && sb_) ? sb_ : 0;
-                STRIDE_ALIGNED_FREE(xin_);
+                vfft_aligned_free(xin_);
                 goto awnd_done;
             }
             for (size_t ii = 0; ii < d->total_real; ii++)
@@ -552,7 +551,7 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
             }
             vfft_adopt_record("nd", (int)d->R, NL_, d->snd_blk,
                               d->snd_fwd ? 1 : 0, d->snd_bwd ? 1 : 0);
-            STRIDE_ALIGNED_FREE(xin_);
+            vfft_aligned_free(xin_);
 awnd_done:;
         }
     }

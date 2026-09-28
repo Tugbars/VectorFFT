@@ -206,14 +206,14 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
     }
 
     size_t T = (size_t)N1 * (size_t)N2;
-    double *xr = (double *)STRIDE_ALIGNED_ALLOC(64, T * sizeof(double));
-    double *xi = (double *)STRIDE_ALIGNED_ALLOC(64, T * sizeof(double));
-    double *re = (double *)STRIDE_ALIGNED_ALLOC(64, T * sizeof(double));
-    double *im = (double *)STRIDE_ALIGNED_ALLOC(64, T * sizeof(double));
-    double *d1tmp = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)2 * N2 * sizeof(double)); /* dim1 cycle scratch */
+    double *xr = (double *)vfft_aligned_alloc(T * sizeof(double));
+    double *xi = (double *)vfft_aligned_alloc(T * sizeof(double));
+    double *re = (double *)vfft_aligned_alloc(T * sizeof(double));
+    double *im = (double *)vfft_aligned_alloc(T * sizeof(double));
+    double *d1tmp = (double *)vfft_aligned_alloc((size_t)2 * N2 * sizeof(double)); /* dim1 cycle scratch */
     if (!xr || !xi || !re || !im || !d1tmp) {
-        STRIDE_ALIGNED_FREE(xr); STRIDE_ALIGNED_FREE(xi);
-        STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im); STRIDE_ALIGNED_FREE(d1tmp);
+        vfft_aligned_free(xr); vfft_aligned_free(xi);
+        vfft_aligned_free(re); vfft_aligned_free(im); vfft_aligned_free(d1tmp);
         return 1e18;
     }
     srand(11 + N1 + N2);
@@ -304,8 +304,8 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
         }
     }
 
-    STRIDE_ALIGNED_FREE(xr); STRIDE_ALIGNED_FREE(xi);
-    STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im); STRIDE_ALIGNED_FREE(d1tmp);
+    vfft_aligned_free(xr); vfft_aligned_free(xi);
+    vfft_aligned_free(re); vfft_aligned_free(im); vfft_aligned_free(d1tmp);
 
     /* NATURAL margin + tie-break: among candidates within 5% of the fastest (averaged) natural total, prefer
      * the cheapest reorder class (FREE < PSWAP-pairs < PURE-cycle), then fewer col stages, then the

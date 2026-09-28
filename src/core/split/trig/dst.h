@@ -237,7 +237,7 @@ static void _dst3_execute_fwd(void *data, double *re, double *im) {
 static void _dst_destroy(void *data) {
     stride_dst_data_t *d = (stride_dst_data_t *)data;
     if (!d) return;
-    STRIDE_ALIGNED_FREE(d->prebuf);
+    vfft_aligned_free(d->prebuf);
     if (d->dct_plan) stride_plan_destroy(d->dct_plan);
     free(d);
 }
@@ -270,7 +270,7 @@ static stride_plan_t *stride_dst2_plan(int N, size_t K, stride_plan_t *dct_plan)
     d->n_threads = T_plan;
 
     size_t buf_sz = (size_t)N * K;
-    d->prebuf = (double *)STRIDE_ALIGNED_ALLOC(64, buf_sz * sizeof(double));
+    d->prebuf = (double *)vfft_aligned_alloc(buf_sz * sizeof(double));
     if (!d->prebuf) { _dst_destroy(d); return NULL; }
 
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));

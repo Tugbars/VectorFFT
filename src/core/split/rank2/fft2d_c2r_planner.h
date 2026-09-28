@@ -75,13 +75,13 @@ static double vfft_fft2d_c2r_plan_measure(int N1, int N2,
     if (ncol == 0) { if (verbose) printf("  [2d-c2r-planner] col seed failed\n"); return 1e18; }
 
     size_t RN = (size_t)N1 * (size_t)N2, CN = (size_t)N1 * hp1;
-    double *x   = (double *)STRIDE_ALIGNED_ALLOC(64, RN * sizeof(double));
-    double *ore = (double *)STRIDE_ALIGNED_ALLOC(64, CN * sizeof(double));
-    double *oim = (double *)STRIDE_ALIGNED_ALLOC(64, CN * sizeof(double));
-    double *xr  = (double *)STRIDE_ALIGNED_ALLOC(64, RN * sizeof(double));
+    double *x   = (double *)vfft_aligned_alloc(RN * sizeof(double));
+    double *ore = (double *)vfft_aligned_alloc(CN * sizeof(double));
+    double *oim = (double *)vfft_aligned_alloc(CN * sizeof(double));
+    double *xr  = (double *)vfft_aligned_alloc(RN * sizeof(double));
     if (!x || !ore || !oim || !xr) {
-        STRIDE_ALIGNED_FREE(x); STRIDE_ALIGNED_FREE(ore);
-        STRIDE_ALIGNED_FREE(oim); STRIDE_ALIGNED_FREE(xr);
+        vfft_aligned_free(x); vfft_aligned_free(ore);
+        vfft_aligned_free(oim); vfft_aligned_free(xr);
         return 1e18;
     }
     srand(23 + N1 + N2);
@@ -123,8 +123,8 @@ static double vfft_fft2d_c2r_plan_measure(int N1, int N2,
         }
     }
 
-    STRIDE_ALIGNED_FREE(x); STRIDE_ALIGNED_FREE(ore);
-    STRIDE_ALIGNED_FREE(oim); STRIDE_ALIGNED_FREE(xr);
+    vfft_aligned_free(x); vfft_aligned_free(ore);
+    vfft_aligned_free(oim); vfft_aligned_free(xr);
 
     if (best_r < 0) { if (verbose) printf("  [2d-c2r-planner] no candidate passed the gate\n"); return 1e18; }
 

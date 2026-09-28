@@ -533,6 +533,18 @@ not govern linkage. The checker reads the `#include` lines.
       `race_timing.h` is the only file in core that reads a clock. `__rdtsc` in the
       split OOP tuner stays: it banks cycles (`units=cyc`), a different unit. The race
       intervals are exact below 2^53 ns of uptime (~104 days), a couple of ns after.
+    - the allocators (B): `vfft_aligned_alloc(bytes)` / `vfft_aligned_free(p)`
+      (`common/support/zalloc.h`, 64-byte aligned, `VFFT_ALIGNMENT`) replace eleven
+      families: `VFFT_ZS_ALLOC/FREE`, `stride_alloc/free`,
+      `vfft_proto_posix_memalign`/`vfft_proto_aligned_free`, `STRIDE_ALIGNED_ALLOC/FREE`
+      (two copies), `VFFT_OOP_AALLOC/AFREE`, `RFFT_ALIGNED_ALLOC/FREE`,
+      `_vfft_proto_dp_aligned_alloc`, `VFFT_IL2P_ALLOC/FREE`, `VFFT_ZTT_ALLOC/FREE`. All
+      were 64-byte aligned, `_aligned_malloc`/`_aligned_free` on Windows and
+      `free()`-compatible elsewhere, so every pairing maps onto the one pair. 30
+      posix-style calls became `p = vfft_aligned_alloc(n)` (statement) or
+      `!(p = vfft_aligned_alloc(n))` (condition: non-zero on failure, as before).
+      The huge-page pair (`stride_alloc_huge` / `stride_free_huge`, DTLB motivation,
+      never called) stays by owner decision; restructuring it is a follow-up.
 - **D6. Dead code.** Delete it (recommended) rather than move it:
   - `conv/conv.h`, `fftnd_natorder.h`, `fftnd_planner.h`, `fftnd_wisdom.h`;
   - `engine/compat.h`;

@@ -56,12 +56,12 @@
  * AVX-512 (VW=8) extension — see the padding design doc. This handle DRIVES the padded
  * c2c in-place execute path: pass it as config.batch to vfft_create and the plan is built
  * at Kp + run at the padded wisdom's exec_me (see the padded branch in vfft_create). */
-/* stride_alloc + zero (pad columns MUST be zero); NULL-safe caller frees on partial fail. */
+/* vfft_aligned_alloc + zero (pad columns MUST be zero); NULL-safe caller frees on partial fail. */
 static double *_batch_plane(size_t doubles)
 {
-    double *p = (double *)stride_alloc(doubles * sizeof(double));
+    double *p = (double *)vfft_aligned_alloc(doubles * sizeof(double));
     if (p)
-        memset(p, 0, doubles * sizeof(double)); /* stride_alloc does NOT zero */
+        memset(p, 0, doubles * sizeof(double)); /* vfft_aligned_alloc does NOT zero */
     return p;
 }
 
@@ -151,15 +151,15 @@ static void _own_batch_free(vfft_batch b)
     if (!b)
         return;
     if (b->real)
-        stride_free(b->real); /* Windows: stride_free == _aligned_free; free() is UB */
+        vfft_aligned_free(b->real); /* Windows: vfft_aligned_free == _aligned_free; free() is UB */
     if (b->re)
-        stride_free(b->re);
+        vfft_aligned_free(b->re);
     if (b->im)
-        stride_free(b->im);
+        vfft_aligned_free(b->im);
     if (b->ore)
-        stride_free(b->ore);
+        vfft_aligned_free(b->ore);
     if (b->oim)
-        stride_free(b->oim);
+        vfft_aligned_free(b->oim);
     free(b);
 }
 /* THE public allocator (batch API consolidation, 9 fns -> 4): the batch is

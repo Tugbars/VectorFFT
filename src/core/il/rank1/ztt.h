@@ -125,14 +125,7 @@ _ZTT_KFN2(_ztt_kfn_tmgd, tmgd, VFFT_IL_TMGD_FWD_RADICES, _ZTT_NONE)
 #define VFFT_ZTT_QW_Q 4096       /* M / 4 */
 #define VFFT_ZTT_QW_LGQ 12
 
-#if defined(_WIN32)
-#include <malloc.h>
-#define VFFT_ZTT_ALLOC(sz) _aligned_malloc((sz), 64)
-#define VFFT_ZTT_FREE(p) _aligned_free(p)
-#else
-#define VFFT_ZTT_ALLOC(sz) aligned_alloc(64, ((((sz)) + 63u) / 64u) * 64u)
-#define VFFT_ZTT_FREE(p) free(p)
-#endif
+#include "common/support/zalloc.h" /* vfft_aligned_alloc / vfft_aligned_free: the one allocator */
 
 typedef struct
 {
@@ -202,11 +195,11 @@ static inline const vfft_ztt_cell_t *vfft_ztt_lookup(int N, const int *chain, in
 static inline void vfft_ztt_destroy(vfft_ztt_plan_t *p)
 {
     if (!p) return;
-    VFFT_ZTT_FREE(p->tw);
-    VFFT_ZTT_FREE(p->twb);
-    VFFT_ZTT_FREE(p->rb);
-    VFFT_ZTT_FREE(p->plane);
-    VFFT_ZTT_FREE(p->perm);
+    vfft_aligned_free(p->tw);
+    vfft_aligned_free(p->twb);
+    vfft_aligned_free(p->rb);
+    vfft_aligned_free(p->plane);
+    vfft_aligned_free(p->perm);
     free(p);
 }
 
@@ -440,9 +433,9 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
         p->twdoubles = 0;
         for (s = 0; s < nf - 1; s++)
             p->twdoubles += (size_t)2 * (size_t)(chain[s] - 1) * (size_t)p->len[s + 1];
-        p->tw = (double *)VFFT_ZTT_ALLOC(p->twdoubles * sizeof(double));
-        p->twb = (double *)VFFT_ZTT_ALLOC(p->twdoubles * sizeof(double));
-        p->perm = (size_t *)VFFT_ZTT_ALLOC((size_t)N * sizeof(size_t));
+        p->tw = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
+        p->twb = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
+        p->perm = (size_t *)vfft_aligned_alloc((size_t)N * sizeof(size_t));
         if (!p->tw || !p->twb || !p->perm) { vfft_ztt_destroy(p); return NULL; }
         for (s = 0, off = 0; s < nf - 1; s++)
         {
@@ -497,10 +490,10 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
         p->twdoubles += (size_t)2 * (size_t)(chain[s] - 1) * (size_t)p->L[s];
         if (s + 1 < nf) p->L[s + 1] = RL;
     }
-    p->tw = (double *)VFFT_ZTT_ALLOC(p->twdoubles * sizeof(double));
-    p->twb = (double *)VFFT_ZTT_ALLOC(p->twdoubles * sizeof(double));
-    p->rb = (size_t *)VFFT_ZTT_ALLOC((size_t)p->ncol * sizeof(size_t));
-    p->plane = (double *)VFFT_ZTT_ALLOC((size_t)2 * (size_t)N * sizeof(double) + 4096u);
+    p->tw = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
+    p->twb = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
+    p->rb = (size_t *)vfft_aligned_alloc((size_t)p->ncol * sizeof(size_t));
+    p->plane = (double *)vfft_aligned_alloc((size_t)2 * (size_t)N * sizeof(double) + 4096u);
     if (!p->tw || !p->twb || !p->rb || !p->plane) { vfft_ztt_destroy(p); return NULL; }
     /* the streams, stage order, ONE allocation each (the fused driver's
      * carried cursor walks straight from one stage's end into the next) */

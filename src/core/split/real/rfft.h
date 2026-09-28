@@ -34,17 +34,7 @@
 #if defined(__AVX512F__) || defined(__AVX2__)
 #include <immintrin.h>
 
-/* Portable 64-byte aligned alloc/free. mingw/MSVC lack C11 aligned_alloc and
- * REQUIRE _aligned_free for _aligned_malloc memory (plain free corrupts the heap).
- * (Windows portability shim over the bundle's Linux-only aligned_alloc.) */
-#if defined(_WIN32) || defined(_MSC_VER)
-#  include <malloc.h>
-#  define RFFT_ALIGNED_ALLOC(a, sz) _aligned_malloc((sz), (a))
-#  define RFFT_ALIGNED_FREE(p)      _aligned_free(p)
-#else
-#  define RFFT_ALIGNED_ALLOC(a, sz) aligned_alloc((a), (sz))
-#  define RFFT_ALIGNED_FREE(p)      free(p)
-#endif
+#include "common/support/zalloc.h" /* vfft_aligned_alloc / vfft_aligned_free: the one allocator */
 
 /* Optional 2MB LARGE-PAGE allocation for the plane buffers (env VFFT_RFFT_HUGE=1).
  * VTune showed high-K rfft is store-DTLB-bound (41% DTLB-store at N=256 K=256): the
@@ -52,7 +42,7 @@
  * across them, thrashing the ~96-entry DTLB. A 2MB page collapses the plane to ~1
  * page, removing the TLB tax. Needs the "Lock pages in memory" privilege
  * (SeLockMemoryPrivilege, enabled by the harness) + elevation; ALWAYS falls back to
- * RFFT_ALIGNED_ALLOC if large pages are unavailable, so it is safe by default.
+ * vfft_aligned_alloc if large pages are unavailable, so it is safe by default.
  * Manual Win32 decls avoid pulling <windows.h> into this widely-included header. */
 #if defined(_WIN32)
 #  if !defined(_WINDOWS_)   /* <windows.h> not included by this TU: declare what we use */
@@ -87,14 +77,14 @@ static inline void *rfft_buf_alloc(size_t bytes, int *huge) {
         }
     }
 #endif
-    return RFFT_ALIGNED_ALLOC(64, bytes);
+    return vfft_aligned_alloc(bytes);
 }
 static inline void rfft_buf_free(void *p, int huge) {
     if (!p) return;
 #if defined(_WIN32)
     if (huge) { VirtualFree(p, 0, RFFT_MEM_RELEASE); return; }
 #endif
-    RFFT_ALIGNED_FREE(p);
+    vfft_aligned_free(p);
 }
 #endif
 /* Software prefetch of the NEXT column's rows. MEASURED NEGATIVE on a
@@ -272,8 +262,8 @@ static inline void rfft_plan_destroy(rfft_plan_t *p)
         free(p->st[d].mid_c); free(p->st[d].mid_s);
     }
     rfft_buf_free(p->planeA, p->planeA_huge); rfft_buf_free(p->planeB, p->planeB_huge);
-    RFFT_ALIGNED_FREE(p->nat_k0);
-    RFFT_ALIGNED_FREE(p->zscr);
+    vfft_aligned_free(p->nat_k0);
+    vfft_aligned_free(p->zscr);
     free(p);
 }
 
@@ -393,8 +383,7 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
                                           : reg->hc2c[p->st[0].radix])
         : NULL;
     p->hcnr = (nf >= 2) ? reg->hc2c_rng[p->st[0].radix] : NULL;
-    p->nat_k0 = (double *)RFFT_ALIGNED_ALLOC(64,
-        (size_t)VFFT_RFFT_MAX_RADIX * K * 8);
+    p->nat_k0 = (double *)vfft_aligned_alloc((size_t)VFFT_RFFT_MAX_RADIX * K * 8);
     if (!p->nat_k0) goto fail;
     /* z-terminator scratch, sized at plan time. Chunk width zch keeps
      * the 4 planes within ~24KB of L1 (768 = 24576B / (4 planes * 8B)) and is
@@ -408,8 +397,7 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
         if (_zc < 1) _zc = 1;
         if (_zk >= 1 && _zc > _zk) _zc = _zk;
         p->zch = _zc;
-        p->zscr = (double *)RFFT_ALIGNED_ALLOC(64,
-            (size_t)4 * (size_t)_zr * (size_t)_zc * K * sizeof(double));
+        p->zscr = (double *)vfft_aligned_alloc((size_t)4 * (size_t)_zr * (size_t)_zc * K * sizeof(double));
         if (!p->zscr) goto fail;
     }
     /* Lane-blocking default: OFF (Kb = K). The L2-slab heuristic

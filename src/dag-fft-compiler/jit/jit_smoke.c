@@ -78,9 +78,9 @@ int main(int argc, char **argv) {
     if (!fn) { printf("  resolve returned NULL (toolchain?) — generic fallback\n"); }
 
     size_t n = (size_t)N * K;
-    double *src_re = stride_alloc(n*8), *src_im = stride_alloc(n*8);
-    double *re     = stride_alloc(n*8), *im     = stride_alloc(n*8);
-    double *ref_re = stride_alloc(n*8), *ref_im = stride_alloc(n*8);
+    double *src_re = vfft_aligned_alloc(n*8), *src_im = vfft_aligned_alloc(n*8);
+    double *re     = vfft_aligned_alloc(n*8), *im     = vfft_aligned_alloc(n*8);
+    double *ref_re = vfft_aligned_alloc(n*8), *ref_im = vfft_aligned_alloc(n*8);
     for (size_t i = 0; i < n; i++) { src_re[i] = sin(0.1*i); src_im[i] = cos(0.07*i); }
 
     /* reference: generic */

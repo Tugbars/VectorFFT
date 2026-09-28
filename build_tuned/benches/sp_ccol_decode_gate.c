@@ -90,9 +90,9 @@ static int gate_cell(const vfft_oop_sp_entry_t *ke)
     int ok = (m > 0 && e / m < 1e-9);
     printf("[%d] %s: served chain matches, relerr %.2e\n",
            N, ok ? "PASS" : "FAIL", m > 0 ? e / m : e);
-    vfft_proto_aligned_free(sre); vfft_proto_aligned_free(sim);
-    vfft_proto_aligned_free(dre); vfft_proto_aligned_free(dim);
-    vfft_proto_aligned_free(Rr);  vfft_proto_aligned_free(Ri);
+    vfft_aligned_free(sre); vfft_aligned_free(sim);
+    vfft_aligned_free(dre); vfft_aligned_free(dim);
+    vfft_aligned_free(Rr);  vfft_aligned_free(Ri);
     vfft_destroy(p);
     return ok ? 0 : 1;
 }

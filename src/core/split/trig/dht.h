@@ -168,8 +168,8 @@ static void _dht_execute(void *data, double *re, double *im) {
 static void _dht_destroy(void *data) {
     stride_dht_data_t *d = (stride_dht_data_t *)data;
     if (!d) return;
-    STRIDE_ALIGNED_FREE(d->buf_re);
-    STRIDE_ALIGNED_FREE(d->buf_im);
+    vfft_aligned_free(d->buf_re);
+    vfft_aligned_free(d->buf_im);
     if (d->r2c_plan) stride_plan_destroy(d->r2c_plan);
     free(d);
 }
@@ -204,8 +204,8 @@ static stride_plan_t *stride_dht_plan(int N, size_t K, stride_plan_t *r2c_plan_N
      * buf_im: (N/2+1)*K (matches R2C's split Im output). */
     size_t buf_re_sz = (size_t)N * K;
     size_t buf_im_sz = (size_t)(N / 2 + 1) * K;
-    d->buf_re = (double *)STRIDE_ALIGNED_ALLOC(64, buf_re_sz * sizeof(double));
-    d->buf_im = (double *)STRIDE_ALIGNED_ALLOC(64, buf_im_sz * sizeof(double));
+    d->buf_re = (double *)vfft_aligned_alloc(buf_re_sz * sizeof(double));
+    d->buf_im = (double *)vfft_aligned_alloc(buf_im_sz * sizeof(double));
     if (!d->buf_re || !d->buf_im) { _dht_destroy(d); return NULL; }
 
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));

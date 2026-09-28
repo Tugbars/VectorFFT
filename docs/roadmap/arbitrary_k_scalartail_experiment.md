@@ -450,8 +450,8 @@ borderline radix and r16/r32 are masked-tail radixes anyway.
 ---
 
 ## Gotchas hit (save the next session the time)
-- **`vfft_proto_posix_memalign` = `_aligned_malloc` on Windows → MUST free with
-  `vfft_proto_aligned_free`, not `free()`.** Freeing with `free()` = silent heap
+- **`vfft_aligned_alloc` = `_aligned_malloc` on Windows → MUST free with
+  `vfft_aligned_free`, not `free()`.** Freeing with `free()` = silent heap
   corruption → crash (exit 116 after the work completed). This cost a debug cycle.
 - **MKL run needs Intel `setvars.bat`** (manual PATH + local-dll-copy is not
   enough) **+ `MKL_THREADING_LAYER=SEQUENTIAL`** (else it loads

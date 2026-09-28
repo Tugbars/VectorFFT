@@ -179,6 +179,6 @@ fixed probe and 15 flip to threaded.
    never measured. The tall class is not a demonstrated win: at N2 = 8 the comparator scales
    4.9x to our 3.2x.
 
-Hygiene: the clones' scratch buffers are plain `malloc` where the rule is `VFFT_ZS_ALLOC`.
+Hygiene: the clones' scratch buffers are plain `malloc` where the rule is `vfft_aligned_alloc`.
 Dropped: streaming stores on the axis-0 pass, and "256x8x128's axis-0 pass scales only 3.1x",
 which was the width defect.

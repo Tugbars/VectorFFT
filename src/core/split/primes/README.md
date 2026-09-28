@@ -39,7 +39,7 @@ compat `stride_execute_fwd` both honor, and `plan_destroy` frees via `override_d
 
 > **Include-order gotcha:** `prime_dispatch.h` sits *above* `planner.h` and pulls
 > `proto_stride_compat.h` (the bridge that supplies the stride API — thread pool,
-> `STRIDE_ALIGNED_ALLOC`, `stride_*` names — that `rader.h`/`bluestein.h` are written
+> `vfft_aligned_alloc`, `stride_*` names — that `rader.h`/`bluestein.h` are written
 > against). That bridge must load *after* `planner.h` and *before* rader/bluestein, which
 > is exactly why this dispatch can't live inside `planner.h`.
 

@@ -446,7 +446,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
             return 0;   /* nothing to build: nothing to serve, nothing to fall back to */
         zi = _ilprime_alloc((size_t)2 * N);
         zo = _ilprime_alloc((size_t)2 * N);
-        if (!zi || !zo) { VFFT_IL2P_FREE(zi); VFFT_IL2P_FREE(zo); return 0; }
+        if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); return 0; }
         for (h = 0; h < 2 * N; h++) zi[h] = 1.0 + 1e-6 * (double)(h & 255);
         /* HEATS */
         for (h = 0; h < nc; h += _ILPR_HEAT)
@@ -467,10 +467,10 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                 if (a != w) vfft_ilprime_destroy(plans[a]);
             fin[nfin] = plans[w]; fin_ci[nfin] = ci[w]; nfin++;
         }
-        if (nfin == 0) { VFFT_IL2P_FREE(zi); VFFT_IL2P_FREE(zo); return 0; }
+        if (nfin == 0) { vfft_aligned_free(zi); vfft_aligned_free(zo); return 0; }
         /* THE FINAL */
         w = _ilprime_race_plans(fin, nfin, zi, zo);
-        VFFT_IL2P_FREE(zi); VFFT_IL2P_FREE(zo);
+        vfft_aligned_free(zi); vfft_aligned_free(zo);
         for (h = 0; h < nfin; h++)
             if (h != w) vfft_ilprime_destroy(fin[h]);
         wci = fin_ci[w];
@@ -1086,15 +1086,15 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
     }
     {   /* the race on 64-B aligned scratch, in the plan's own placement */
         const size_t nb = (size_t)2 * N * sizeof(double);
-        double *zi = (double *)VFFT_ZS_ALLOC(nb);
-        double *zo = (double *)VFFT_ZS_ALLOC(nb);
+        double *zi = (double *)vfft_aligned_alloc(nb);
+        double *zo = (double *)vfft_aligned_alloc(nb);
         size_t i;
-        if (!zi || !zo) { VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo); p->mt = 0; return; }
+        if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); p->mt = 0; return; }
         for (i = 0; i < 2 * (size_t)N; i++) zi[i] = 1.0 + 1e-6 * (double)(i & 1023);
         _vfft_pool_arm(T);
         if (ip) { memcpy(zo, zi, nb); vfft_ztt_mt_race(p, T, zo, zo, NULL); }
         else vfft_ztt_mt_race(p, T, zi, zo, NULL);
-        VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo);
+        vfft_aligned_free(zi); vfft_aligned_free(zo);
     }
     if (r && !W->vw2_off_oop)
     {
@@ -1206,8 +1206,8 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
     {   /* the race: every split (x form x chain for the natural class) at T
          * on 64-B aligned scratch, the plan's placement */
         const size_t nb = (size_t)2 * N * sizeof(double);
-        double *zi = (double *)VFFT_ZS_ALLOC(nb);
-        double *zo = (double *)VFFT_ZS_ALLOC(nb);
+        double *zi = (double *)vfft_aligned_alloc(nb);
+        double *zo = (double *)vfft_aligned_alloc(nb);
         vfft_k1fs_plan_t *cand[VFFT_RACE_MAX_ARMS];
         _k1fs_mt_ctx_t cx[VFFT_RACE_MAX_ARMS];
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
@@ -1216,7 +1216,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         _k1fs_mt_rst_t rs;
         int na = 0, best = 0, reps, a;
         size_t k;
-        if (!zi || !zo) { VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo); return; }
+        if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); return; }
         for (k = 0; k < 2 * (size_t)N; k++) zi[k] = 1.0 + 1e-6 * (double)(k & 1023);
         _vfft_pool_arm(T);
         for (i = 0; i < ns && na < VFFT_RACE_MAX_ARMS; i++)
@@ -1250,7 +1250,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
                 na++;
             }
         }
-        if (na == 0) { VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo); return; }
+        if (na == 0) { vfft_aligned_free(zi); vfft_aligned_free(zo); return; }
         {   /* reps from one timing of the serial verdict's plan at T */
             double t0;
             if (ip) memcpy(zo, zi, nb);
@@ -1277,7 +1277,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
             for (a = 0; a < na; a++) fprintf(stderr, " %s=%.0f", arms[a].name, tns[a]);
             fprintf(stderr, " -> %s\n", arms[best].name);
         }
-        VFFT_ZS_FREE(zi); VFFT_ZS_FREE(zo);
+        vfft_aligned_free(zi); vfft_aligned_free(zo);
     }
     if (r && W && !W->vw2_off_oop)
     {

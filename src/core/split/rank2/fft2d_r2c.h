@@ -812,14 +812,14 @@ static void _fft2d_r2c_destroy(void *data) {
     if (!d) return;
     if (d->plan_r2c) stride_plan_destroy(d->plan_r2c);
     if (d->plan_col) stride_plan_destroy(d->plan_col);
-    STRIDE_ALIGNED_FREE(d->scratch_re);
-    STRIDE_ALIGNED_FREE(d->scratch_im);
-    STRIDE_ALIGNED_FREE(d->re_pad);
-    STRIDE_ALIGNED_FREE(d->im_pad);
-    STRIDE_ALIGNED_FREE(d->oop_re_tmp);
-    STRIDE_ALIGNED_FREE(d->oop_im_tmp);
-    if (d->stw_work) { _stw_tables_free(&d->stw_tab); STRIDE_ALIGNED_FREE(d->stw_work); }
-    STRIDE_ALIGNED_FREE(d->tail_scr);
+    vfft_aligned_free(d->scratch_re);
+    vfft_aligned_free(d->scratch_im);
+    vfft_aligned_free(d->re_pad);
+    vfft_aligned_free(d->im_pad);
+    vfft_aligned_free(d->oop_re_tmp);
+    vfft_aligned_free(d->oop_im_tmp);
+    if (d->stw_work) { _stw_tables_free(&d->stw_tab); vfft_aligned_free(d->stw_work); }
+    vfft_aligned_free(d->tail_scr);
     free(d->perm);
     free(d);
 }
@@ -887,20 +887,14 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
     int T = thread_pool_workers_for(0); /* create time: the pool as it is now = this plan's slot count */
     d->num_scratch = T;
 
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64,
-        (size_t)T * d->tile_real_sz * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64,
-        (size_t)T * d->tile_complex_sz * sizeof(double));
+    d->scratch_re = (double *)vfft_aligned_alloc((size_t)T * d->tile_real_sz * sizeof(double));
+    d->scratch_im = (double *)vfft_aligned_alloc((size_t)T * d->tile_complex_sz * sizeof(double));
     /* Padded col-FFT scratch: N1 * K_pad doubles each. */
-    d->re_pad = (double *)STRIDE_ALIGNED_ALLOC(64,
-        (size_t)N1 * K_pad * sizeof(double));
-    d->im_pad = (double *)STRIDE_ALIGNED_ALLOC(64,
-        (size_t)N1 * K_pad * sizeof(double));
+    d->re_pad = (double *)vfft_aligned_alloc((size_t)N1 * K_pad * sizeof(double));
+    d->im_pad = (double *)vfft_aligned_alloc((size_t)N1 * K_pad * sizeof(double));
     /* OOP wrapper scratch, allocated once (see struct comment). */
-    d->oop_re_tmp = (double *)STRIDE_ALIGNED_ALLOC(64,
-        (size_t)N1 * (size_t)N2 * sizeof(double));
-    d->oop_im_tmp = (double *)STRIDE_ALIGNED_ALLOC(64,
-        (size_t)N1 * hp1 * sizeof(double));
+    d->oop_re_tmp = (double *)vfft_aligned_alloc((size_t)N1 * (size_t)N2 * sizeof(double));
+    d->oop_im_tmp = (double *)vfft_aligned_alloc((size_t)N1 * hp1 * sizeof(double));
     if (!d->scratch_re || !d->scratch_im || !d->re_pad || !d->im_pad ||
         !d->oop_re_tmp || !d->oop_im_tmp) {
         _fft2d_r2c_destroy(d);
@@ -985,8 +979,7 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
         _f2d_sr2c_fwd_fn sf = _f2d_sr2c_fwd_resolve(N2, &d->str_blk);
         if ((sf) && ((size_t)N1 % (2 * (size_t)d->str_blk) != 0)) {
             const size_t hp1a = (size_t)(N2 / 2 + 1);
-            d->tail_scr = (double *)STRIDE_ALIGNED_ALLOC(64,
-                (2 * (size_t)d->str_blk * ((size_t)N2 + 2 * hp1a))
+            d->tail_scr = (double *)vfft_aligned_alloc((2 * (size_t)d->str_blk * ((size_t)N2 + 2 * hp1a))
                     * sizeof(double));
             if (!d->tail_scr) sf = 0;   /* fail-safe: no staging, no engine */
         }
@@ -1073,14 +1066,12 @@ aw2d_done:;
     if ((N2 == 128 || N2 == 256) && N1 >= 8
         && !_f2d_sr2c_fwd_resolve(N2, &(int){0})
         && _stw_tables_init(&d->stw_tab, N2)) {
-        d->stw_work = (double *)STRIDE_ALIGNED_ALLOC(64,
-            2 * 8 * (size_t)N2 * sizeof(double));
+        d->stw_work = (double *)vfft_aligned_alloc(2 * 8 * (size_t)N2 * sizeof(double));
         if (!d->stw_work) { _stw_tables_free(&d->stw_tab); }
         else {
             double *xin = d->oop_re_tmp;
             double *xre = d->oop_im_tmp;                /* N1*hp1-sized */
-            double *xim = (double *)STRIDE_ALIGNED_ALLOC(64,
-                (size_t)N1 * hp1 * sizeof(double));
+            double *xim = (double *)vfft_aligned_alloc((size_t)N1 * hp1 * sizeof(double));
             if (!xim) goto stw_gate_done;
             for (size_t ii = 0; ii < (size_t)N1 * (size_t)N2; ii++)
                 xin[ii] = 1.0 + 1e-3 * (double)(ii & 63);
@@ -1116,7 +1107,7 @@ aw2d_done:;
             t1_ = vfft_now_ns();
             t_str = (t1_ - t0_);
             d->stw_on_bwd = (t_str * 20 < t_tile * 19) ? 1 : 0;
-            STRIDE_ALIGNED_FREE(xim);
+            vfft_aligned_free(xim);
         }
     }
 stw_gate_done: ;
