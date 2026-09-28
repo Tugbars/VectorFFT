@@ -137,4 +137,11 @@ src/wisdom/**/*.bak_pre_merge_*
 gauntlet/kfr_capi.dll
 
 # Prototype/harness scratch: local only, never tracked
-docs/roadmap/zil_avx512_prototypes/
+# ...except the AVX-512 tail-policy study's harness (owner, 2026-09-28): the
+# evidence behind policy law L10. Git cannot re-include a file below an
+# excluded folder, so the rule opens one level at a time.
+docs/roadmap/zil_avx512_prototypes/*
+!docs/roadmap/zil_avx512_prototypes/harness/
+docs/roadmap/zil_avx512_prototypes/harness/*
+!docs/roadmap/zil_avx512_prototypes/harness/tail_policy/
+!docs/roadmap/zil_avx512_prototypes/harness/tail_policy/**
