@@ -27,6 +27,9 @@ core/
                 kind-3 reader and migration, the OOP codec aggregator, gates
 ```
 
+**Architecture diagrams**: `docs/architecture/` (zones, folders, files and a text
+map, generated from the includes by `python src/tools/archgraph.py`).
+
 **Layout separation** (`docs/roadmap/layout_separation_plan.md`): phases 1-7
 done. `split/` and `il/` include only `common/` and themselves; `bridge/`,
 `wisdom2/` and the front door may include both. `python

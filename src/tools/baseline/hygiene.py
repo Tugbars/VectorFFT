@@ -9,6 +9,7 @@ layout dependency rules.
                          that resolves to no file: a move that forgot an
                          include path. Compared against the reference, since a
                          few are optional (guarded) by design.
+  (and the architecture graphs of docs/architecture/: src/tools/archgraph.py --check)
   dep_violations()       docs/roadmap/layout_separation_plan.md section 4:
                            common/ includes only common/
                            split/  never includes il/ or bridge/
@@ -121,3 +122,11 @@ if __name__ == "__main__":
           else ("clean" if not d else "%d violations" % len(d)))
     for r in d or []:
         print("  " + r)
+    # the generated architecture graphs (docs/architecture/) must match the tree
+    import subprocess
+    ag = os.path.join(ROOT, "src", "tools", "archgraph.py")
+    if os.path.isfile(ag):
+        r = subprocess.run([sys.executable, ag, "--check"], capture_output=True, text=True)
+        print("architecture graphs:", "current" if r.returncode == 0 else "STALE")
+        if r.returncode:
+            sys.stdout.write("".join("  " + l + "\n" for l in r.stdout.splitlines()[1:]))
