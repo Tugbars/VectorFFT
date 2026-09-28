@@ -1482,6 +1482,8 @@ let provenance_env_overrides () : string =
     ; "VFFT_CX_ROTFMA"
     ; "VFFT_TAIL512"
     ; "VFFT_TAIL256"
+    ; "VFFT_CX_ODDROLL"
+    ; "VFFT_CX_ODDP1"
     ; "VFFT_CX_SPILL"
     ; "VFFT_CX_SCHED"
     ; "VFFT_CX_CPL_CAP"
