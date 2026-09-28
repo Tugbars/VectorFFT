@@ -356,7 +356,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
   - included by: vfft.c
 - **il/planning/il_slot_probe.h** (151 lines): the INTERLEAVED PAIR tier's half of the slot invariant: which slots exist, and how to build and check one.
   - includes: common/support/slot_check.h
-- **il/planning/policy_il.h** (405 lines): THE planning policy: the one place a law about a REQUEST is written (docs/design/planning_policy_design.md).
+- **il/planning/policy_il.h** (428 lines): THE planning policy: the one place a law about a REQUEST is written (docs/design/planning_policy_design.md).
   - includes: common/support/cpu_cache.h, common/policy/policy_order.h, common/policy/policy_cache.h
   - included by: vfft.c
 ### il/rank1
@@ -382,7 +382,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
 - **il/rank1/k1_commit.h** (1311 lines): the K=1 plan's replay, race, and commit.
   - includes: common/plan/vfft_internal.h, il/rank1/il2p.h, il/rank1/il_prime.h, il/wisdom/wisdom2_oop_il.h, common/wisdom/wisdom2_oop_legacy.h, common/support/race.h
   - included by: vfft.c
-- **il/rank1/k1_fourstep.h** (624 lines): the K=1 INTERLEAVED four-step above ZTURN-T's ceiling (docs/design/k1_fourstep_design.md): the standard method at 256k and above.
+- **il/rank1/k1_fourstep.h** (625 lines): the K=1 INTERLEAVED four-step above ZTURN-T's ceiling (docs/design/k1_fourstep_design.md): the standard method at 256k and above.
   - includes: common/support/zalloc.h, common/math/tw_exact.h, il/rank1/k1_fourstep_band.h
   - included by: vfft.c
 - **il/rank1/k1_fourstep_band.h** (23 lines): the K=1 interleaved four-step's BAND (docs/design/ k1_fourstep_design.md): the sizes the engine serves and the side ladder its splits draw from.
@@ -402,7 +402,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
 - **il/rank2/il2d_col.h** (85 lines): THE COLUMN-AXIS PASS DESCRIPTOR.
   - includes: il/rank1/il2p.h
   - included by: vfft.c
-- **il/rank2/il2d_cols.h** (908 lines): native IL 2D: the column-chain machinery.
+- **il/rank2/il2d_cols.h** (911 lines): native IL 2D: the column-chain machinery.
   - includes: il/rank1/il2p.h, common/math/tw_exact.h, il/rank2/fft2d_real_il.h, common/support/diag.h
   - included by: il/rank2/il2d_tier.h, vfft.c
 - **il/rank2/il2d_proto.h** (176 lines): SCALAR SIMULATOR for the native IL 2D c2c tier's stage maps (docs/roadmap/fft2d_il_c2c_design.md).

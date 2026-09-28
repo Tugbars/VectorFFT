@@ -247,10 +247,13 @@ static void _il2d_row_stream(double *dst, const double *src, size_t w, int nt)
 {   /* nt: the row is FINISHED (its plan ran in the staging) — bypass the
      * cache; else a cached copy, the row phase reads it back from L2 */
     if (nt && (((uintptr_t)dst | (uintptr_t)src) & 31) == 0)
-    {
+    {   /* two complex per store; an odd row's last complex goes alone (a
+         * 4-double store there would write the next row's first element) */
         size_t q;
-        for (q = 0; q < 2 * w; q += 4)
+        for (q = 0; q + 4 <= 2 * w; q += 4)
             _mm256_stream_pd(dst + q, _mm256_load_pd(src + q));
+        if (q < 2 * w)
+            _mm_stream_pd(dst + q, _mm_load_pd(src + q));
     }
     else
         memcpy(dst, src, 2 * w * sizeof(double));
