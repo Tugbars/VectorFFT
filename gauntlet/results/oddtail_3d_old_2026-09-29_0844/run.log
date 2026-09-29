@@ -1,0 +1,6 @@
+2026-09-29 09:12:42 run: 14 cells, contract out of place, bin C:/Users/Tugbars/AppData/Local/Temp/claude/c--Users-Tugbars-Desktop-highSpeedFFT/06015967-850f-49d4-a1b3-34bc9127dbe6/scratchpad/wt_aac38094/gauntlet
+2026-09-29 09:12:42 calibrate: 14 cells (0 already done)
+2026-09-29 09:12:43   calibrated 14/14 (64x23x29), 1 s elapsed
+2026-09-29 09:12:43 bench: 14 cells (0 already benched, 0 not banked -> not benched)
+2026-09-29 09:13:09   benched 14/14 (64x23x29), 25 s elapsed
+2026-09-29 09:13:11 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\oddtail_3d_old_2026-09-29_0844\report_3d.md

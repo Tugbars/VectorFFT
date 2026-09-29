@@ -1,0 +1,46 @@
+2026-09-29 08:57:57 run: 508 cells, contract out of place, bin C:/Users/Tugbars/Desktop/highSpeedFFT/gauntlet
+2026-09-29 08:57:57 calibrate: 508 cells (0 already done)
+2026-09-29 08:57:59   calibrated 25/508 (55), 2 s elapsed
+2026-09-29 08:58:01   calibrated 50/508 (145), 5 s elapsed
+2026-09-29 08:58:04   calibrated 75/508 (247), 7 s elapsed
+2026-09-29 08:58:06   calibrated 100/508 (361), 10 s elapsed
+2026-09-29 08:58:09   calibrated 125/508 (483), 12 s elapsed
+2026-09-29 08:58:11   calibrated 150/508 (625), 14 s elapsed
+2026-09-29 08:58:13   calibrated 175/508 (779), 17 s elapsed
+2026-09-29 08:58:16   calibrated 200/508 (943), 19 s elapsed
+2026-09-29 08:58:18   calibrated 225/508 (1107), 22 s elapsed
+2026-09-29 08:58:21   calibrated 250/508 (1309), 24 s elapsed
+2026-09-29 08:58:23   calibrated 275/508 (1517), 27 s elapsed
+2026-09-29 08:58:26   calibrated 300/508 (1725), 29 s elapsed
+2026-09-29 08:58:28   calibrated 325/508 (1955), 31 s elapsed
+2026-09-29 08:58:30   calibrated 350/508 (2209), 34 s elapsed
+2026-09-29 08:58:33   calibrated 375/508 (2475), 36 s elapsed
+2026-09-29 08:58:35   calibrated 400/508 (2755), 39 s elapsed
+2026-09-29 08:58:38   calibrated 425/508 (3059), 41 s elapsed
+2026-09-29 08:58:40   calibrated 450/508 (3335), 43 s elapsed
+2026-09-29 08:58:43   calibrated 475/508 (3663), 46 s elapsed
+2026-09-29 08:58:45   calibrated 500/508 (3971), 48 s elapsed
+2026-09-29 08:58:46   calibrated 508/508 (4095), 49 s elapsed
+2026-09-29 08:58:46 bench: 508 cells (0 already benched, 0 not banked -> not benched)
+2026-09-29 08:59:20   benched 25/508 (55), 33 s elapsed
+2026-09-29 08:59:54   benched 50/508 (145), 67 s elapsed
+2026-09-29 09:00:28   benched 75/508 (247), 101 s elapsed
+2026-09-29 09:01:04   benched 100/508 (361), 137 s elapsed
+2026-09-29 09:01:40   benched 125/508 (483), 173 s elapsed
+2026-09-29 09:02:15   benched 150/508 (625), 208 s elapsed
+2026-09-29 09:02:52   benched 175/508 (779), 245 s elapsed
+2026-09-29 09:03:30   benched 200/508 (943), 283 s elapsed
+2026-09-29 09:04:07   benched 225/508 (1107), 320 s elapsed
+2026-09-29 09:04:44   benched 250/508 (1309), 357 s elapsed
+2026-09-29 09:05:22   benched 275/508 (1517), 395 s elapsed
+2026-09-29 09:06:00   benched 300/508 (1725), 433 s elapsed
+2026-09-29 09:06:38   benched 325/508 (1955), 471 s elapsed
+2026-09-29 09:07:16   benched 350/508 (2209), 509 s elapsed
+2026-09-29 09:07:53   benched 375/508 (2475), 546 s elapsed
+2026-09-29 09:08:33   benched 400/508 (2755), 585 s elapsed
+2026-09-29 09:09:10   benched 425/508 (3059), 623 s elapsed
+2026-09-29 09:09:48   benched 450/508 (3335), 661 s elapsed
+2026-09-29 09:10:26   benched 475/508 (3663), 699 s elapsed
+2026-09-29 09:11:05   benched 500/508 (3971), 738 s elapsed
+2026-09-29 09:11:18   benched 508/508 (4095), 751 s elapsed
+2026-09-29 09:11:19 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\oddtail_1d_new_2026-09-29_0844\report.md

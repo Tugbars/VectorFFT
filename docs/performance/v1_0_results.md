@@ -84,21 +84,23 @@ of place, one thread on both sides: ours through the front door (`howmany = 3`,
 SMT sibling held, 15 rounds with the arms in alternating order, each the minimum of 5
 batches, median. Our batch runs as three K=1 transforms, so every stage of an odd N runs
 its one-column remainder in each of them. Output matches MKL to 1e-15 everywhere.
+Measured on the kernels with the AVX2 remainder and odd-frame rules (b6b8d52f); it
+supersedes the same day's run on the earlier kernels (529 1.77×, 989 3.27×, 1849 3.91×).
 
 ```
  N      factors      ours (ns)    MKL (ns)   vs MKL
 ──────────────────────────────────────────────────
- 1024   2^10            2,295       2,481    1.08×
- 45     3^2·5             101         136    1.35×
- 99     3^2·11            250         325    1.30×
- 121    11^2              324         357    1.10×
- 529    23^2            4,670       8,280    1.77×
- 989    23·43           7,867      25,733    3.27×
- 999    3^3·37         11,050      16,925    1.53×
- 1025   5^2·41          6,471      19,571    3.02×
- 1073   29·37           8,400      27,580    3.28×
- 1849   43^2           17,300      67,600    3.91×
- 3025   5^2·11^2       18,075      17,525    0.97×
+ 1024   2^10            2,300       2,433    1.06×
+ 45     3^2·5             101         136    1.34×
+ 99     3^2·11            241         326    1.35×
+ 121    11^2              307         359    1.17×
+ 529    23^2            3,808       8,292    2.18×
+ 989    23·43           6,629      25,757    3.89×
+ 999    3^3·37         11,200      16,925    1.51×
+ 1025   5^2·41          6,114      19,571    3.20×
+ 1073   29·37           8,220      27,320    3.32×
+ 1849   43^2           14,900      67,850    4.55×
+ 3025   5^2·11^2       17,525      17,525    1.00×
 ```
 
 MKL's batched call costs 0.93–1.00× its three K=1 calls (the batch saves the most at

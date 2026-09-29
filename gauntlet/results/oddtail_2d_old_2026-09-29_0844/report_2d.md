@@ -1,0 +1,72 @@
+# gauntlet report (2D)
+
+run: `oddtail_2d_old_2026-09-29_0844`  contract: 2D c2c interleaved, natural, out of place, K=1  cells: 25 listed, 25 benched, comparator: MKL DFTI 2D (out of place)
+
+control cell 64x64: 4 readings, 1.066..1.223
+
+
+## every shape
+
+```
+       shape  N1 factors   route  served       ours ns     cmp ns       x   GFLOPS   rt err
+       23x23  23           chain+rb replayed         978       1836    1.74     24.5  1.1e-15
+       23x45  23           chain  replayed        1472       2680    1.53     35.2  9.3e-16
+       23x47  23           chain+rb replayed        2788       5056    1.79     19.5  1.8e-15
+       23x63  23           csk    replayed        2179       4069    1.72     34.9  7.9e-16
+       29x23  29           csk+rb replayed        1395       2035    1.29     22.4  8.9e-16
+       29x45  29           chain  replayed        2158       3066    1.18     31.3  5.5e-16
+       29x47  29           chain+rb replayed        3610       5892    1.36     19.7  1.3e-15
+       29x63  29           chain  replayed        3140       4644    1.40     31.5  6.2e-16
+       37x23  37           chain+rb replayed        1853       2690    1.43     22.4  1.1e-15
+       37x45  37           csk    replayed        3170       4360    1.25     28.1  9.4e-16
+       37x47  37           chain+rb replayed        4659       7903    1.60     20.1  1.5e-15
+       37x63  37           csk    replayed        4967       6351    1.26     26.2  9.3e-16
+       43x23  43           csk+rb replayed        2292       3185    1.25     21.5  9.6e-16
+       43x45  43           chain  replayed        4079       5301    1.20     25.9  5.9e-16
+       43x47  43           csk+rb replayed        5815       9246    1.37     19.1  1.5e-15
+       43x63  43           chain  replayed        5508       7397    1.14     28.0  6.8e-16
+       47x23  47           chain+rb replayed        2703       5050    1.83     20.2  1.8e-15
+       47x45  47           chain  replayed        4651       9004    1.82     25.1  1.3e-15
+       47x47  47           chain+rb replayed        6398      13384    2.01     19.2  1.5e-15
+       47x63  47           csk    replayed        6448      12545    1.71     26.5  1.3e-15
+       256x3  2^8          turn   replayed         690       1534    2.21     53.3  3.6e-16
+      1024x3  2^10         turn   replayed        4008       7205    1.79     44.4  3.6e-16
+      1024x5  2^10         turn   replayed        6973      10255    1.16     45.2  3.9e-16
+      1024x7  2^10         turn   replayed       10569      15679    1.47     43.4  3.1e-16
+      4096x3  2^12         turn   replayed       18411      30357    1.64     45.3  4.1e-16
+```
+
+
+## by route (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ chain+rb                         7      0      0   1.36   1.74   2.01    1.67
+ chain                            6      0      0   1.14   1.30   1.82    1.36
+ turn                             5      0      0   1.16   1.64   2.21    1.62
+ csk                              4      0      0   1.25   1.48   1.72    1.47
+ csk+rb                           3      0      0   1.25   1.29   1.37    1.30
+ ALL                             25      0      0   1.18   1.47   1.83    1.50
+```
+
+
+## by column class (N1) (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ prime column                    20      0      0   1.20   1.41   1.83    1.47
+ pow2 column                      5      0      0   1.16   1.64   2.21    1.62
+ ALL                             25      0      0   1.18   1.47   1.83    1.50
+```
+
+
+## by size (points) (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ 1025..4096                      17      0      0   1.18   1.53   1.83    1.50
+ 257..1024                        5      0      0   1.25   1.43   2.21    1.55
+ 4097..65536                      3      0      0   1.16   1.47   1.64    1.41
+ ALL                             25      0      0   1.18   1.47   1.83    1.50
+```
+
+
+worst 10: 43x63 (chain 1.14), 1024x5 (turn 1.16), 29x45 (chain 1.18), 43x45 (chain 1.20), 43x23 (csk+rb 1.25), 37x45 (csk 1.25), 37x63 (csk 1.26), 29x23 (csk+rb 1.29), 29x47 (chain+rb 1.36), 43x47 (csk+rb 1.37)
+best 5: 256x3 (turn 2.21), 47x47 (chain+rb 2.01), 47x23 (chain+rb 1.83), 47x45 (chain 1.82), 23x47 (chain+rb 1.79)

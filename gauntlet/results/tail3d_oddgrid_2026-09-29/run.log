@@ -1,0 +1,7 @@
+2026-09-29 09:43:25 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-29 09:43:25 run: 20 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 09:43:25 calibrate: 20 cells (0 already done)
+2026-09-29 09:44:11   calibrated 20/20 (75x15x9), 46 s elapsed
+2026-09-29 09:44:11 bench: 20 cells (0 already benched, 0 not banked -> not benched)
+2026-09-29 09:44:41   benched 20/20 (75x15x9), 28 s elapsed
+2026-09-29 09:44:42 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\tail3d_oddgrid_2026-09-29\report_3d.md

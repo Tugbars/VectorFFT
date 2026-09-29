@@ -10,7 +10,9 @@
  * Protocol: core 2 HIGH + sibling guard, 15 rounds with the arms in
  * alternating order, each the minimum of 5 batches of ~50 us, median; 200 ms
  * between cells. Correctness: ours vs MKL batched, elementwise.
- * Usage: k3_batch_probe <wisdom dir> <K> <N> [N ...]
+ * Usage: k3_batch_probe <wisdom dir> <K> <cell> [cell ...]; a cell is N (1D) or
+ * N1xN2 (2D, N1 = the column length, N2 contiguous; MKL DFTI 2D with the same
+ * lengths, DISTANCE = N1*N2)
  * Build: python gauntlet/build.py --compile --mkl --vfft --src gauntlet/k3_batch_probe.c */
 #include <stdio.h>
 #include <stdlib.h>
@@ -78,20 +80,24 @@ int main(int argc, char **argv)
     bench_guard_sibling(2);
     mkl_set_num_threads(1);
     printf("K=%d, one thread, transform-contiguous; ns per batch (median of %d rounds); x = MKL / ours\n", K, ROUNDS);
-    printf("%6s %10s %10s %10s %8s %8s %10s\n", "N", "ours", "mkl", "mkl x K", "x mkl", "x mklxK", "err");
+    printf("%10s %10s %10s %10s %8s %8s %10s\n", "cell", "ours", "mkl", "mkl x K", "x mkl", "x mklxK", "err");
     for (int a = 3; a < argc; a++)
     {
         cell_t c;
         memset(&c, 0, sizeof c);
-        c.N = atoi(argv[a]);
+        int n1 = atoi(argv[a]), n2 = 0;
+        const char *xs = strchr(argv[a], 'x');
+        if (xs) n2 = atoi(xs + 1);
+        c.N = n2 ? n1 * n2 : n1;   /* points per transform */
         c.K = K;
         const size_t total = (size_t)c.N * K;
         vfft_config_t cfg;
         memset(&cfg, 0, sizeof cfg);
         cfg.transform = VFFT_C2C;
         cfg.placement = VFFT_OUTOFPLACE;
-        cfg.dims = 1;
-        cfg.n[0] = c.N;
+        cfg.dims = n2 ? 2 : 1;
+        cfg.n[0] = n1;
+        cfg.n[1] = n2;
         cfg.howmany = (size_t)K;
         cfg.order = VFFT_ORDER_NATURAL;
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
@@ -99,14 +105,17 @@ int main(int argc, char **argv)
         cfg.nthreads = 1;
         cfg.wisdom = W;
         c.h = vfft_create(&cfg);
-        if (!c.h) { printf("%6d   ours: vfft_create refused\n", c.N); continue; }
-        DftiCreateDescriptor(&c.db, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)c.N);
+        if (!c.h) { printf("%10s   ours: vfft_create refused\n", argv[a]); continue; }
+        MKL_LONG lens[2] = { n1, n2 };
+        if (n2) DftiCreateDescriptor(&c.db, DFTI_DOUBLE, DFTI_COMPLEX, 2, lens);
+        else DftiCreateDescriptor(&c.db, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)c.N);
         DftiSetValue(c.db, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
         DftiSetValue(c.db, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
         DftiSetValue(c.db, DFTI_INPUT_DISTANCE, (MKL_LONG)c.N);
         DftiSetValue(c.db, DFTI_OUTPUT_DISTANCE, (MKL_LONG)c.N);
         DftiCommitDescriptor(c.db);
-        DftiCreateDescriptor(&c.d1, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)c.N);
+        if (n2) DftiCreateDescriptor(&c.d1, DFTI_DOUBLE, DFTI_COMPLEX, 2, lens);
+        else DftiCreateDescriptor(&c.d1, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)c.N);
         DftiSetValue(c.d1, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
         DftiCommitDescriptor(c.d1);
         c.zi = _aligned_malloc(16 * total + 64, 64);
@@ -139,7 +148,7 @@ int main(int argc, char **argv)
             qsort(t[arm], ROUNDS, sizeof(double), cmpd);
             med[arm] = t[arm][ROUNDS / 2];
         }
-        printf("%6d %10.0f %10.0f %10.0f %7.2fx %7.2fx %10.1e\n", c.N, med[0], med[1], med[2], med[1] / med[0],
+        printf("%10s %10.0f %10.0f %10.0f %7.2fx %7.2fx %10.1e\n", argv[a], med[0], med[1], med[2], med[1] / med[0],
                med[2] / med[0], err / mag);
         fflush(stdout);
         vfft_destroy(c.h);

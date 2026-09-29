@@ -1,0 +1,57 @@
+# gauntlet report (3D)
+
+run: `oddtail_3d_new_2026-09-29_0844`  contract: 3D c2c interleaved, natural, out of place, K=1  cells: 14 listed, 14 benched, comparator: MKL DFTI 3D (out of place)
+
+control cell 64x64x64: 4 readings, 1.389..1.420
+
+
+## every shape
+
+```
+       shape  N1 factors   route  served       ours ns     cmp ns       x   GFLOPS   rt err
+    23x23x23  23           chain  replayed       31915      95695    2.76     25.9  9.0e-16
+    23x29x31  23           chain  replayed       73283     178108    2.14     20.2  7.9e-16
+    23x64x64  23           chain  replayed      293610     483064    1.64     26.5  5.9e-16
+    25x27x29  5^2          chain  replayed       52564     101437    1.47     26.5  6.3e-16
+    29x29x29  29           chain  replayed       96565     221702    1.93     18.4  7.3e-16
+    31x31x31  31           chain  replayed      129503     284346    2.13     17.1  9.2e-16
+    32x47x47  2^5          chain  replayed      220461     758526    3.38     25.8  1.6e-15
+    37x37x37  37           chain  replayed      159185     600843    3.76     24.9  9.1e-16
+    41x43x47  41           chain  replayed      302817    1216433    4.01     22.4  7.8e-16
+    43x43x43  43           chain  replayed      283584    1133482    3.99     22.8  7.4e-16
+    45x45x45  3^2.5        chain  replayed      190514     261047    1.36     39.4  6.3e-16
+    47x32x32  47           chain  replayed      100054     391935    3.91     37.4  6.2e-16
+    47x47x47  47           chain  replayed      408837    1797355    4.36     21.2  1.3e-15
+    64x23x29  2^6          chain  replayed      123739     275231    2.17     26.5  9.2e-16
+```
+
+
+## by route (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ chain                           14      0      0   1.47   2.47   4.01    2.59
+ ALL                             14      0      0   1.47   2.47   4.01    2.59
+```
+
+
+## by column class (N1) (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ prime column                    10      0      0   1.93   3.26   4.36    2.89
+ odd column                       2      0      0   1.36   1.42   1.47    1.42
+ pow2 column                      2      0      0   2.17   2.78   3.38    2.71
+ ALL                             14      0      0   1.47   2.47   4.01    2.59
+```
+
+
+## by size (points) (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ 4097..65536                      8      0      0   1.47   2.16   3.91    2.41
+ > 65536 points                   6      0      0   1.36   3.69   4.36    2.84
+ ALL                             14      0      0   1.47   2.47   4.01    2.59
+```
+
+
+worst 10: 45x45x45 (chain 1.36), 25x27x29 (chain 1.47), 23x64x64 (chain 1.64), 29x29x29 (chain 1.93), 31x31x31 (chain 2.13), 23x29x31 (chain 2.14), 64x23x29 (chain 2.17), 23x23x23 (chain 2.76), 32x47x47 (chain 3.38), 37x37x37 (chain 3.76)
+best 5: 47x47x47 (chain 4.36), 41x43x47 (chain 4.01), 43x43x43 (chain 3.99), 47x32x32 (chain 3.91), 37x37x37 (chain 3.76)
