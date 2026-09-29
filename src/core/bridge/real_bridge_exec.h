@@ -74,6 +74,11 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
          * on a POOL THREAD, and vfft_set_num_threads from a worker
          * creates/destroys the very pool it is running on. Same edit in the
          * C2R branch below; keep the two in step. */
+        if (h->zrm)
+        {
+            _exec_zrm(h, sre, dre); /* the real mono: one kernel, pool-free */
+            return;
+        }
         if (h->zttr)
         {
             _exec_zttr(h, sre, dre); /* ZTT-r: the fold fused into the terminator, pool-free */
@@ -104,6 +109,11 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
          *
          * 🔴 Pool-free zr2c: the mirror of the R2C branch above -- read
          * that comment before moving either call. */
+        if (h->zrm)
+        {
+            _exec_zrm(h, sre, dre); /* the real mono's c2r: one kernel, pool-free */
+            return;
+        }
         if (h->zttr)
         {
             _exec_zttr(h, sre, dre); /* ZTT-r's c2r: the fold fused into the ingest, pool-free */

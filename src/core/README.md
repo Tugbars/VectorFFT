@@ -95,6 +95,7 @@ their content is accurate, their paths are the old ones. Map:
 | `il2d_*`, `fft2d_real_il.h`, `oop/il2d_proto.h` | `il/rank2/` |
 | `fftnd_il.h` | `il/rank3/` |
 | `zr2c.h`, `zr2c_build.h` | `il/real/` |
+| `zrp.h`, `zrp_build.h`, `zttr.h`, `zrm.h` | `il/real/` |
 | `transforms/fft2d/plane_queue.h` | `plane_queue.h` (front door) |
 
 Deleted in phase 1 (dead): `transforms/conv/`, `fftnd_natorder.h`,

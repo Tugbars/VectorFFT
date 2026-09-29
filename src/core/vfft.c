@@ -34,6 +34,7 @@
 #include "il/rank2/il2d_col.h" /* the column-axis pass descriptor the plan embeds */
 #include "ztt.h"                /* ZTURN-T: the run-contiguous DIT, 16..16384 (2026-09-09); before il_prime.h: the prime inner's ZTURN-T branch is #ifdef VFFT_ZTT_H */
 #include "zttr.h"               /* ZTT-r (il/real/zttr.h): the real fold fused into the ZTT; its plan type, before vfft_internal.h */
+#include "zrm.h"                /* the real mono (il/real/zrm.h): one rn1 kernel = the whole small real transform; its resolver */
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
@@ -1237,6 +1238,8 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
          * c2c child + private buffers — safe iff the child is (il2p/
          * il3p/ilprime are; a cascade child consults its own arm). */
         return _tc_inner_mt_safe(g->oddr_child);
+    if (g->zrm)
+        return 1; /* the real mono: one pure kernel, no pool, no child, no scratch */
     if (g->zrp)
         return 1; /* the real pair: two serial kernels, no pool, no child */
     if (g->zttr)
@@ -1420,6 +1423,15 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         /* odd-real bridge: equivalent iff the c2c children are (the
          * bridge itself carries only buffers). */
         return _tc_clone_equiv(a->oddr_child, b->oddr_child);
+    if (!a->zrm != !b->zrm)
+        TC_NEQ("real mono");
+    if (a->zrm)
+    {
+        /* the real mono: the plan IS the kernel */
+        if (a->zrm != b->zrm)
+            TC_NEQ("real mono kernel");
+        return 1;
+    }
     if (!a->zttr != !b->zttr)
         TC_NEQ("ZTT-r");
     if (a->zttr)
@@ -2270,6 +2282,8 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
      * handle carries one so every other plan's line is unchanged */
     if (h->zrp)
         FP__ADD(" zrp=[%dx%d]", h->zrp->R1, h->zrp->R2);
+    if (h->zrm)
+        FP__ADD(" zrm=rn1");
     if (h->zttr)
     {
         char cs[40];

@@ -1,0 +1,12 @@
+2026-09-30 00:56:13 run: 63 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-30 00:56:13 calibrate: 63 cells (0 already done)
+2026-09-30 00:56:20   calibrated 25/63 (26), 7 s elapsed
+2026-09-30 00:56:25   calibrated 50/63 (51), 12 s elapsed
+2026-09-30 00:56:27   calibrated 63/63 (64), 14 s elapsed
+2026-09-30 00:56:27 bench: 62 cells (0 already benched, 1 not banked -> not benched)
+2026-09-30 00:57:01   benched 25/62 (27), 32 s elapsed
+2026-09-30 00:57:37   benched 50/62 (52), 69 s elapsed
+2026-09-30 00:57:56   benched 62/62 (64), 87 s elapsed
+2026-09-30 00:57:58 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zrm_tiny_c2r_2026-09-30\report_c2r_fftw.md
+2026-09-30 01:12:40 merge: 0 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-30 01:12:40 merged into C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom
