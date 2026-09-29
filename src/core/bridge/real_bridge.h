@@ -165,12 +165,12 @@ static struct vfft_plan_s *_real_oddr_race(struct vfft_plan_s *h,
     return h;
 }
 
-static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
-                                   vfft_batch ob,
-                                   struct vfft_wisdom_s *W,
-                                   const vfft_proto_registry_t *reg,
-                                   int N,
-                                   size_t K)
+static vfft_plan _vfft_create_real_routes(const vfft_config_t *cfg,
+                                          vfft_batch ob,
+                                          struct vfft_wisdom_s *W,
+                                          const vfft_proto_registry_t *reg,
+                                          int N,
+                                          size_t K)
 {
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
         K == 1 && (N & 1) && N >= 3 &&
@@ -208,6 +208,144 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
     if (h && cfg->transform == VFFT_R2C)
         h = _real_oddr_race(h, cfg, W, N, K);
     return _real_finish(h);
+}
+
+/* The real MONO at odd N (il/real/zrm.h): one rn1 kernel against the odd-real
+ * routes above (the split rfft, the c2c bridge), the cell's verdict banked in
+ * the real shard beside the routes' own record (wisdom2_real_il.h; a different
+ * key from wisdom2_oddr.h's, so neither bank touches the other). Even N races
+ * the mono inside the door (il/real/zrp_build.h). Out of place only, as the
+ * odd routes are. VFFT_ZRM=1 pins the mono, VFFT_ZRM=0 keeps it out. */
+typedef struct { struct vfft_plan_s *h; const double *in; double *out; } _zrm_odd_arm_t;
+static void _zrm_odd_arm_run(void *v)
+{
+    _zrm_odd_arm_t *c = (_zrm_odd_arm_t *)v;
+    if (c->h->zrm)
+        _exec_zrm(c->h, c->in, c->out);
+    else
+        vfft_execute((vfft_plan)c->h, c->h->transform == VFFT_C2R ? VFFT_BACKWARD : VFFT_FORWARD,
+                     (double *)c->in, NULL, c->out, NULL);
+}
+static vfft_plan _vfft_create_real_odd_mono(const vfft_config_t *cfg, vfft_batch ob,
+                                            struct vfft_wisdom_s *W, const vfft_proto_registry_t *reg,
+                                            int N, size_t K)
+{
+    const int c2r = cfg->transform == VFFT_C2R;
+    const int env = _zrm_env();
+    struct vfft_plan_s *hi, *hm;
+    if (env == 0 || !vfft_zrm_fn(N, c2r))
+        return _vfft_create_real_routes(cfg, ob, W, reg, N, K);
+    if (env == 1)
+    {
+        hm = _zrm_build_plan(cfg, N);
+        if (hm)
+            return _real_finish(hm);
+    }
+    if (W && !W->vw2_off_oop && !cfg->recalibrate)
+    {
+        int R1, R2, form;
+        const char *eng = vw2_real_il_lookup(&W->vw2, N, c2r, 0, &R1, &R2, &form);
+        if (eng && !strcmp(eng, "zrm"))
+        {
+            hm = _zrm_build_plan(cfg, N);
+            if (hm)
+                return _real_finish(hm);
+        }
+        else if (eng)
+            return _vfft_create_real_routes(cfg, ob, W, reg, N, K); /* decided: the routes replay their own record */
+    }
+    hi = (struct vfft_plan_s *)_vfft_create_real_routes(cfg, ob, W, reg, N, K); /* the incumbent, finished */
+    if (!hi || !W || W->vw2_off_oop)
+        return (vfft_plan)hi;
+    hm = _zrm_build_plan(cfg, N);
+    if (!hm)
+        return (vfft_plan)hi;
+    {
+        /* the gate (the mono's output against the incumbent's), then the race */
+        const size_t xs = (size_t)N + 3;
+        const size_t nchk = c2r ? (size_t)N : (size_t)N + 1; /* odd N: (N+1)/2 bins, N reals */
+        double *a = (double *)vfft_aligned_alloc(xs * sizeof(double));
+        double *b = (double *)vfft_aligned_alloc(xs * sizeof(double));
+        double *ref = (double *)vfft_aligned_alloc(xs * sizeof(double));
+        double ns[2], e, t0, est;
+        int reps, win;
+        if (!a || !b || !ref)
+        {
+            vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
+            vfft_destroy((vfft_plan)hm);
+            return (vfft_plan)hi;
+        }
+        {
+            unsigned sd = 0x9e3779b9u ^ (unsigned)N ^ (unsigned)(c2r << 8);
+            for (size_t i = 0; i < xs; i++)
+            {
+                sd = sd * 1664525u + 1013904223u;
+                a[i] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
+            }
+        }
+        if (c2r)
+            a[1] = 0.0; /* a CCE spectrum: real DC (odd N has no Nyquist bin) */
+        memset(ref, 0, xs * sizeof(double));
+        memset(b, 0, xs * sizeof(double));
+        vfft_execute((vfft_plan)hi, c2r ? VFFT_BACKWARD : VFFT_FORWARD, a, NULL, ref, NULL);
+        _exec_zrm(hm, a, b);
+        e = _zrpr_relerr(b, ref, nchk);
+        if (e >= 1e-10)
+        {
+            fprintf(stderr, "[zrm] N=%d %s oop the real mono FAILS the gate (rel %.2e vs the odd route) -- dropped\n",
+                    N, c2r ? "c2r" : "r2c", e);
+            vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
+            vfft_destroy((vfft_plan)hm);
+            return (vfft_plan)hi;
+        }
+        _vfft_create_race_count++;
+        t0 = vfft_now_ns();
+        vfft_execute((vfft_plan)hi, c2r ? VFFT_BACKWARD : VFFT_FORWARD, a, NULL, ref, NULL);
+        est = vfft_now_ns() - t0;
+        reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
+        if (reps < 2) reps = 2;
+        if (reps > 4096) reps = 4096;
+        {
+            _zrm_odd_arm_t ci = { hi, a, ref }, cm = { hm, a, b };
+            const vfft_race_arm_t arms[2] = { { "oddr", _zrm_odd_arm_run, &ci }, { "zrm", _zrm_odd_arm_run, &cm } };
+            const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1 };
+            vfft_race_run(&proto, arms, 2, ns);
+        }
+        win = vfft_race_beats(ns[1], ns[0], 0.97); /* 3% hysteresis toward the incumbent */
+        if (getenv("VFFT_ZRACE_VERBOSE"))
+            fprintf(stderr, "[zrm] N=%d %s oop odd race: reps=%d hyst=3%% | oddr=%.0f zrm=%.0f -> %s\n",
+                    N, c2r ? "c2r" : "r2c", reps, ns[0], ns[1], win ? "zrm" : "oddr");
+        vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
+        {
+            const int rc = win ? vw2_real_il_bank_zrm(&W->vw2, N, c2r, 0, ns[1])
+                               : vw2_real_il_bank_eng(&W->vw2, N, c2r, 0, "oddr", ns[0]);
+            if (rc == VW2_OK)
+                _vw2_persist(W, cfg);
+            else
+                fprintf(stderr, "vfft: real engine verdict NOT banked at odd N=%d (rc=%d) -- the cell will re-race\n", N, rc);
+        }
+        if (win)
+        {
+            vfft_destroy((vfft_plan)hi);
+            return _real_finish(hm);
+        }
+        vfft_destroy((vfft_plan)hm);
+        return (vfft_plan)hi;
+    }
+}
+
+static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
+                                   vfft_batch ob,
+                                   struct vfft_wisdom_s *W,
+                                   const vfft_proto_registry_t *reg,
+                                   int N,
+                                   size_t K)
+{
+    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && !ob &&
+        (N & 1) && N >= 3 && N <= VFFT_ZRM_MAX_N && cfg->placement == VFFT_OUTOFPLACE)
+        return _vfft_create_real_odd_mono(cfg, ob, W, reg, N, K);
+    return _vfft_create_real_routes(cfg, ob, W, reg, N, K);
 }
 
 #endif /* VFFT_BRIDGE_REAL_BRIDGE_H */

@@ -1,14 +1,18 @@
 /* real_create_il.h — the r2c / c2r CREATE, interleaved tier.
  *
- * Two engines serve an even N, K==1, INTERLEAVED request with no
+ * Four engines serve an even N, K==1, INTERLEAVED request with no
  * caller-supplied batch (il/real/zrp_build.h, the door's engine pick):
  *   zr2c  the CCE plane reinterpreted as z[N/2], a c2c child, and the
  *         Hermitian fold (zr2c_build.h); the same route serves r2c and c2r
  *         (the c2r twin folds first);
  *   zrp   the real pair: the stock n1t leaf over the packed view and the
- *         t2h Hermitian top stage, no fold pass (zrp.h), its c2r the mirror.
+ *         t2h Hermitian top stage, no fold pass (zrp.h), its c2r the mirror;
+ *   zttr  ZTT-r: the ZTT at N/2 with the fold fused into the terminator or
+ *         the ingest (zttr.h);
+ *   zrm   the real mono: the whole transform as one rn1 kernel, N <= 64
+ *         (zrm.h; odd N races it in the bridge, not here).
  * The cell's engine is banked in the real shard (wisdom2_real_il.h); a miss
- * races the two. The real bridge (bridge/real_bridge.h) holds the gate and
+ * races them. The real bridge (bridge/real_bridge.h) holds the gate and
  * calls this only for a matching request.
  *
  * Returns the handle; or NULL with *refused=0 to let an out-of-place request

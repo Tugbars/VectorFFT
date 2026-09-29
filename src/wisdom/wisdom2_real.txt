@@ -9,41 +9,41 @@
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
 @meta host=intel-f6m183 isa=avx2 l1d=49152
-@cell t=r2c n=16384 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=10980.0 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=16384 q=1 ord=nat place=oop | eng=zttr chain=8.4.8.8.4 tile=2048 stk=3 | ran=1 src=race ns=9655.6 metric=fwd1 units=ns date=2026-09-29
 @cell t=r2c n=16384 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=10566.7 metric=fwd1 units=ns date=2026-08-22
-@cell t=c2r n=16384 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=13633.3 metric=bwd1 units=ns date=2026-08-22
+@cell t=c2r n=16384 q=1 ord=nat place=oop | eng=zttr chain=4.8.4.8.8 tile=2048 stk=2 | ran=1 src=race ns=9766.7 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=16384 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=12066.7 metric=bwd1 units=ns date=2026-08-22
-@cell t=r2c n=32768 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=23166.7 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=32768 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=23700.0 metric=fwd1 units=ns date=2026-09-29
 @cell t=r2c n=32768 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=22950.0 metric=fwd1 units=ns date=2026-08-22
-@cell t=c2r n=32768 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=28100.0 metric=bwd1 units=ns date=2026-08-22
+@cell t=c2r n=32768 q=1 ord=nat place=oop | eng=zttr chain=4.8.8.8.8 tile=2048 stk=3 | ran=1 src=race ns=20700.0 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=32768 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=25300.0 metric=bwd1 units=ns date=2026-08-22
-@cell t=r2c n=65536 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=53850.0 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=65536 q=1 ord=nat place=oop | eng=zttr chain=8.4.4.8.8.4 tile=1024 stk=3 | ran=1 src=race ns=47550.0 metric=fwd1 units=ns date=2026-09-29
 @cell t=r2c n=65536 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=50050.0 metric=fwd1 units=ns date=2026-08-22
-@cell t=c2r n=65536 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:111
+@cell t=c2r n=65536 q=1 ord=nat place=oop | eng=zttr chain=4.8.4.8.8.4 tile=2048 stk=0 | ran=1 src=race ns=48350.0 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=65536 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=54250.0 metric=bwd1 units=ns date=2026-08-22
-@cell t=r2c n=256 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=145.5 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=256 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=142.9 metric=fwd1 units=ns date=2026-09-29
 @cell t=r2c n=256 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=160.9 metric=fwd1 units=ns date=2026-08-22
-@cell t=c2r n=256 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=150.0 metric=bwd1 units=ns date=2026-08-22
+@cell t=c2r n=256 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=169.2 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=256 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=142.2 metric=bwd1 units=ns date=2026-08-22
-@cell t=r2c n=512 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=271.7 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=512 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=281.8 metric=fwd1 units=ns date=2026-09-29
 @cell t=r2c n=512 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=234.4 metric=fwd1 units=ns date=2026-08-22
-@cell t=c2r n=512 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=319.2 metric=bwd1 units=ns date=2026-08-22
+@cell t=c2r n=512 q=1 ord=nat place=oop | eng=zttr chain=4.8.8 tile=0 stk=1 | ran=1 src=race ns=234.4 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=512 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=318.8 metric=bwd1 units=ns date=2026-08-22
-@cell t=r2c n=1024 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=526.3 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=1024 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=473.9 metric=fwd1 units=ns date=2026-09-29
 @cell t=r2c n=1024 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=431.2 metric=fwd1 units=ns date=2026-08-22
-@cell t=c2r n=1024 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:114
+@cell t=c2r n=1024 q=1 ord=nat place=oop | eng=zttr chain=4.8.4.4 tile=0 stk=1 | ran=1 src=race ns=484.4 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=1024 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=550.0 metric=bwd1 units=ns date=2026-08-22
-@cell t=r2c n=2048 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1088.2 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=2048 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1350.0 metric=fwd1 units=ns date=2026-09-29
 @cell t=r2c n=2048 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=1081.8 metric=fwd1 units=ns date=2026-08-22
-@cell t=c2r n=2048 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=1305.3 metric=bwd1 units=ns date=2026-08-22
+@cell t=c2r n=2048 q=1 ord=nat place=oop | eng=zttr chain=4.8.8.4 tile=0 stk=3 | ran=1 src=race ns=1035.9 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=2048 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=1182.6 metric=bwd1 units=ns date=2026-08-22
-@cell t=r2c n=4096 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=2490.0 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=4096 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=2100.0 metric=fwd1 units=ns date=2026-09-29
 @cell t=r2c n=4096 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=2388.9 metric=fwd1 units=ns date=2026-08-22
-@cell t=c2r n=4096 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=2980.0 metric=bwd1 units=ns date=2026-08-22
+@cell t=c2r n=4096 q=1 ord=nat place=oop | eng=zttr chain=4.4.4.8.4 tile=0 stk=3 | ran=1 src=race ns=2175.7 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=4096 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=2618.8 metric=bwd1 units=ns date=2026-08-22
-@cell t=r2c n=8192 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=5175.0 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=8192 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=4550.0 metric=fwd1 units=ns date=2026-09-29
 @cell t=r2c n=8192 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=5150.0 metric=fwd1 units=ns date=2026-08-22
-@cell t=c2r n=8192 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=6271.4 metric=bwd1 units=ns date=2026-08-22
+@cell t=c2r n=8192 q=1 ord=nat place=oop | eng=zttr chain=4.8.8.4.4 tile=2048 stk=0 | ran=1 src=race ns=4647.1 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=8192 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=5612.5 metric=bwd1 units=ns date=2026-08-22
 @cell t=r2c n=510 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=368.8 metric=fwd1 units=ns date=2026-08-22
 @cell t=r2c n=256 q=8 ord=scr place=ip | eng=stride chain=8.32 vars=log3.flat dif=0 | ran=8 ns=853.07 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:5
@@ -59,8 +59,8 @@
 @cell t=r2c n=8192 q=1 ord=scr place=ip | eng=stride chain=8.8.16.8 vars=t1s.flat.t1s.flat dif=0 | ran=1 ns=20799.59 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:15
 @cell t=r2c n=16384 q=1 ord=scr place=ip | eng=stride chain=8.16.16.8 vars=t1s.flat.flat.flat dif=0 | ran=1 ns=43067.21 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:16
 @cell t=r2c n=32768 q=1 ord=scr place=ip | eng=stride chain=16.16.16.8 vars=log3.flat.flat.flat dif=0 | ran=1 ns=138998.36 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:17
-@cell t=r2c n=64 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=40.6 metric=fwd1 units=ns date=2026-08-26
-@cell t=c2r n=64 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=37.5 metric=bwd1 units=ns date=2026-08-26
+@cell t=r2c n=64 q=1 ord=nat place=oop | eng=zrp pair=4.16 leaf=r2z | ran=1 src=race ns=25.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=c2r n=64 q=1 ord=nat place=oop | eng=zrp pair=4.16 leaf=r2z | ran=1 src=race ns=24.4 metric=bwd1 units=ns date=2026-09-30
 @cell t=r2c n=64 q=32 ord=scr place=ip | eng=stride chain=4.16 vars=t1s.flat dif=0 | ran=32 ns=508.71 metric=fwd1 units=ns src=race date=2026-08-26
 @cell t=r2c n=64 q=64 ord=scr place=ip | eng=stride chain=4.16 vars=flat.flat dif=0 | ran=64 ns=1623.98 metric=fwd1 units=ns src=race date=2026-08-26
 @cell t=r2c n=256 q=32 ord=scr place=ip | eng=stride chain=8.4.8 vars=log3.log3.flat dif=0 | ran=32 ns=6102.87 metric=fwd1 units=ns src=race date=2026-08-26
@@ -69,12 +69,357 @@
 @cell t=r2c n=512 q=64 ord=scr place=ip | eng=stride chain=4.4.4.8 vars=flat.log3.log3.flat dif=0 | ran=64 ns=26429.51 metric=fwd1 units=ns src=race date=2026-08-26
 @cell t=r2c n=1024 q=32 ord=scr place=ip | eng=stride chain=8.4.4.8 vars=log3.flat.t1s.flat dif=0 | ran=32 ns=32378.69 metric=fwd1 units=ns src=race date=2026-08-26
 @cell t=r2c n=1024 q=64 ord=scr place=ip | eng=stride chain=8.4.4.8 vars=log3.t1s.t1s.flat dif=0 | ran=64 ns=66893.33 metric=fwd1 units=ns src=race date=2026-08-26
-@cell t=r2c n=16 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=34.0 metric=fwd1 units=ns date=2026-08-26
+@cell t=r2c n=16 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=8.9 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=16 q=32 ord=scr place=ip | eng=stride chain=16 vars=flat dif=0 | ran=32 ns=44.30 metric=fwd1 units=ns src=race date=2026-08-26
 @cell t=r2c n=16 q=64 ord=scr place=ip | eng=stride chain=16 vars=flat dif=0 | ran=64 ns=81.86 metric=fwd1 units=ns src=race date=2026-08-26
-@cell t=c2r n=16 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=25.0 metric=bwd1 units=ns date=2026-08-26
-@cell t=r2c n=128 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=80.0 metric=fwd1 units=ns date=2026-09-02
-@cell t=c2r n=128 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=78.3 metric=bwd1 units=ns date=2026-09-02
-@cell t=r2c n=255 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-02
-@cell t=r2c n=405 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=rfft | ran=1 src=race date=2026-09-02
-@cell t=r2c n=100 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=154.5 metric=fwd1 units=ns date=2026-09-02
+@cell t=c2r n=16 q=1 ord=nat place=oop | eng=zrp pair=4.4 leaf=n1t | ran=1 src=race ns=9.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=r2c n=128 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=69.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=c2r n=128 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=76.9 metric=bwd1 units=ns date=2026-09-29
+@cell t=r2c n=255 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=405 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=100 q=1 ord=nat place=oop | eng=zrp pair=10.10 leaf=r2z | ran=1 src=race ns=64.1 metric=fwd1 units=ns date=2026-09-29
+@cell t=c2r n=6 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=4.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=10 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=6.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=12 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=7.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=14 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=10.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=18 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=13.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=20 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=16.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=24 q=1 ord=nat place=oop | eng=zrp pair=4.6 leaf=r2z | ran=1 src=race ns=11.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=28 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=28.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=30 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=29.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=32 q=1 ord=nat place=oop | eng=zrp pair=4.8 leaf=r2z | ran=1 src=race ns=15.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=36 q=1 ord=nat place=oop | eng=zrp pair=6.6 leaf=r2z | ran=1 src=race ns=17.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=40 q=1 ord=nat place=oop | eng=zrp pair=4.10 leaf=r2z | ran=1 src=race ns=15.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=42 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=37.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=48 q=1 ord=nat place=oop | eng=zrp pair=4.12 leaf=r2z | ran=1 src=race ns=18.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=50 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=38.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=54 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=35.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=56 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=36.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=60 q=1 ord=nat place=oop | eng=zrp pair=6.10 leaf=r2z | ran=1 src=race ns=27.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=70 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=42.9 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=72 q=1 ord=nat place=oop | eng=zrp pair=12.6 leaf=r2z | ran=1 src=race ns=46.9 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=80 q=1 ord=nat place=oop | eng=zrp pair=8.10 leaf=r2z | ran=1 src=race ns=45.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=90 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=65.5 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=96 q=1 ord=nat place=oop | eng=zrp pair=8.12 leaf=r2z | ran=1 src=race ns=57.8 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=98 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=53.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=100 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=66.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=108 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=72.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=112 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=66.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=120 q=1 ord=nat place=oop | eng=zrp pair=12.10 leaf=r2z | ran=1 src=race ns=75.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=126 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=75.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=144 q=1 ord=nat place=oop | eng=zrp pair=12.12 leaf=r2z | ran=1 src=race ns=68.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=150 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=112.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=160 q=1 ord=nat place=oop | eng=zrp pair=16.10 leaf=r2z | ran=1 src=race ns=70.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=162 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=118.5 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=180 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=120.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=192 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=120.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=200 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=125.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=210 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=157.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=216 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=122.2 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=224 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=144.4 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=240 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=155.6 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=250 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=163.6 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=270 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=204.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=288 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=184.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=294 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=227.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=320 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=195.8 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=350 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=247.6 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=360 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=256.5 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=378 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=252.2 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=384 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=236.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=400 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=270.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=432 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=247.8 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=448 q=1 ord=nat place=oop | eng=zttr chain=8.7.4 tile=0 stk=2 | ran=1 src=race ns=231.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=450 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=281.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=480 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=245.8 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=486 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=405.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=490 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=409.5 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=576 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=304.8 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=630 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=452.9 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=640 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=419.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=686 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=596.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=720 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=410.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=750 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=600.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=768 q=1 ord=nat place=oop | eng=zttr chain=4.8.3.4 tile=0 stk=0 | ran=1 src=race ns=365.6 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=800 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=466.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=810 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=568.8 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=864 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=477.8 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=882 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=600.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=896 q=1 ord=nat place=oop | eng=zttr chain=4.7.4.4 tile=0 stk=3 | ran=1 src=race ns=448.4 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=960 q=1 ord=nat place=oop | eng=zttr chain=8.5.3.4 tile=0 stk=0 | ran=1 src=race ns=506.2 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1000 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=662.5 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1050 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=763.2 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1134 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=868.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1152 q=1 ord=nat place=oop | eng=zttr chain=4.4.3.3.4 tile=0 stk=2 | ran=1 src=race ns=589.1 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1250 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=970.6 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1280 q=1 ord=nat place=oop | eng=zttr chain=4.8.5.4 tile=0 stk=3 | ran=1 src=race ns=646.9 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1350 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1166.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1440 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=1078.6 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1458 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1326.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1470 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=1275.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1536 q=1 ord=nat place=oop | eng=zttr chain=4.4.4.3.4 tile=0 stk=2 | ran=1 src=race ns=776.6 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1600 q=1 ord=nat place=oop | eng=zttr chain=8.5.5.4 tile=0 stk=1 | ran=1 src=race ns=945.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1728 q=1 ord=nat place=oop | eng=zttr chain=8.3.3.3.4 tile=0 stk=2 | ran=1 src=race ns=993.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1750 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=1400.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1792 q=1 ord=nat place=oop | eng=zttr chain=4.7.8.4 tile=0 stk=0 | ran=1 src=race ns=973.8 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1890 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=1607.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=1920 q=1 ord=nat place=oop | eng=zttr chain=4.5.3.4.4 tile=0 stk=3 | ran=1 src=race ns=1028.6 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=2000 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=1538.5 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=2058 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=1908.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=2250 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=2153.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=2304 q=1 ord=nat place=oop | eng=zttr chain=4.8.3.3.4 tile=0 stk=3 | ran=1 src=race ns=1242.6 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=2430 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=2250.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=2450 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=2292.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=2560 q=1 ord=nat place=oop | eng=zttr chain=4.5.4.4.4 tile=0 stk=1 | ran=1 src=race ns=1349.1 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=2646 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=2969.2 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=2880 q=1 ord=nat place=oop | eng=zttr chain=8.5.3.3.4 tile=0 stk=1 | ran=1 src=race ns=1692.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=3000 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=2936.4 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=3072 q=1 ord=nat place=oop | eng=zttr chain=4.8.3.4.4 tile=0 stk=3 | ran=1 src=race ns=1633.3 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=3150 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=3500.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=3200 q=1 ord=nat place=oop | eng=zttr chain=4.5.4.5.4 tile=0 stk=3 | ran=1 src=race ns=1769.2 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=3402 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=3722.2 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=3430 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=3816.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=3456 q=1 ord=nat place=oop | eng=zttr chain=4.4.3.3.3.4 tile=0 stk=3 | ran=1 src=race ns=1980.6 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=3584 q=1 ord=nat place=oop | eng=zttr chain=4.8.7.8 tile=0 stk=3 | ran=1 src=race ns=2034.5 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=3750 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=4785.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=3840 q=1 ord=nat place=oop | eng=zttr chain=4.5.3.8.4 tile=0 stk=2 | ran=1 src=race ns=2116.7 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=4000 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=4350.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=c2r n=4050 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=5350.0 metric=bwd1 units=ns date=2026-09-29
+@cell t=r2c n=3 q=1 ord=scr place=ip | eng=stride chain=3 vars=flat dif=0 | ran=1 ns=4.06 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=3 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=rfft | ran=1 src=race date=2026-09-30
+@cell t=r2c n=5 q=1 ord=scr place=ip | eng=stride chain=5 vars=flat dif=0 | ran=1 ns=5.42 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=5 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=6 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=4.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=7 q=1 ord=scr place=ip | eng=stride chain=7 vars=flat dif=0 | ran=1 ns=7.37 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=7 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=9 q=1 ord=scr place=ip | eng=stride chain=3.3 vars=t1s.flat dif=0 | ran=1 ns=21.61 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=9 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=10 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=6.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=11 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=12 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=8.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=13 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=14 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=9.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=15 q=1 ord=scr place=ip | eng=stride chain=5.3 vars=t1s.flat dif=0 | ran=1 ns=30.10 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=15 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=18 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=20.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=20 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=23.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=21 q=1 ord=scr place=ip | eng=stride chain=3.7 vars=flat.flat dif=0 | ran=1 ns=39.81 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=21 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=24 q=1 ord=nat place=oop | eng=zrp pair=4.6 leaf=r2z | ran=1 src=race ns=14.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=25 q=1 ord=scr place=ip | eng=stride chain=5.5 vars=t1s.flat dif=0 | ran=1 ns=44.32 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=25 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=27 q=1 ord=scr place=ip | eng=stride chain=3.3.3 vars=log3.log3.flat dif=0 | ran=1 ns=63.45 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=27 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=rfft | ran=1 src=race date=2026-09-30
+@cell t=r2c n=28 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=25.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=30 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=31.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=32 q=1 ord=nat place=oop | eng=zrp pair=4.8 leaf=r2z | ran=1 src=race ns=16.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=33 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=36 q=1 ord=nat place=oop | eng=zrp pair=6.6 leaf=r2z | ran=1 src=race ns=20.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=40 q=1 ord=nat place=oop | eng=zrp pair=4.10 leaf=r2z | ran=1 src=race ns=16.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=42 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=36.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=45 q=1 ord=scr place=ip | eng=stride chain=5.3.3 vars=flat.t1s.flat dif=0 | ran=1 ns=87.76 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=45 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=48 q=1 ord=nat place=oop | eng=zrp pair=4.12 leaf=r2z | ran=1 src=race ns=21.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=50 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=37.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=54 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=50.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=56 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=40.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=60 q=1 ord=nat place=oop | eng=zrp pair=6.10 leaf=r2z | ran=1 src=race ns=28.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=63 q=1 ord=scr place=ip | eng=stride chain=7.3.3 vars=log3.log3.flat dif=0 | ran=1 ns=121.58 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=63 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=70 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=51.5 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=72 q=1 ord=nat place=oop | eng=zrp pair=6.12 leaf=r2z | ran=1 src=race ns=48.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=80 q=1 ord=nat place=oop | eng=zrp pair=8.10 leaf=r2z | ran=1 src=race ns=48.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=81 q=1 ord=scr place=ip | eng=stride chain=3.3.3.3 vars=flat.log3.log3.flat dif=0 | ran=1 ns=173.08 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=81 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=90 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=71.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=96 q=1 ord=nat place=oop | eng=zrp pair=6.16 leaf=r2z | ran=1 src=race ns=46.9 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=98 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=70.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=99 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=105 q=1 ord=scr place=ip | eng=stride chain=5.7.3 vars=log3.t1s.flat dif=0 | ran=1 ns=192.74 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=105 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=108 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=58.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=112 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=72.2 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=120 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=73.9 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=125 q=1 ord=scr place=ip | eng=stride chain=5.5.5 vars=log3.flat.flat dif=0 | ran=1 ns=226.98 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=125 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=126 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=93.8 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=135 q=1 ord=scr place=ip | eng=stride chain=5.3.3.3 vars=flat.t1s.log3.flat dif=0 | ran=1 ns=261.07 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=135 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=144 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=94.6 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=150 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=111.1 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=160 q=1 ord=nat place=oop | eng=zrp pair=16.10 leaf=r2z | ran=1 src=race ns=67.2 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=162 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=115.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=180 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=116.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=189 q=1 ord=scr place=ip | eng=stride chain=7.3.3.3 vars=log3.log3.flat.flat dif=0 | ran=1 ns=400.49 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=189 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=192 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=82.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=200 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=125.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=210 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=166.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=216 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=150.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=224 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=140.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=225 q=1 ord=scr place=ip | eng=stride chain=5.3.5.3 vars=log3.t1s.t1s.flat dif=0 | ran=1 ns=429.22 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=225 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=240 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=150.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=243 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=250 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=192.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=270 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=203.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=288 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=189.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=294 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=239.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=315 q=1 ord=scr place=ip | eng=stride chain=5.7.3.3 vars=log3.log3.flat.flat dif=0 | ran=1 ns=586.46 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=315 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=320 q=1 ord=nat place=oop | eng=zttr chain=8.5.4 tile=0 stk=0 | ran=1 src=race ns=140.6 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=350 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=216.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=360 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=260.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=378 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=304.2 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=384 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=225.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=400 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=264.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=432 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=240.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=441 q=1 ord=scr place=ip | eng=stride chain=7.7.3.3 vars=log3.t1s.flat.flat dif=0 | ran=1 ns=833.75 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=441 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=448 q=1 ord=nat place=oop | eng=zttr chain=8.7.4 tile=0 stk=2 | ran=1 src=race ns=203.1 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=450 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=354.5 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=480 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=307.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=486 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=391.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=490 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=316.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=525 q=1 ord=scr place=ip | eng=stride chain=5.5.7.3 vars=t1s.log3.log3.flat dif=0 | ran=1 ns=953.05 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=525 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=576 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=376.2 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=625 q=1 ord=scr place=ip | eng=stride chain=5.5.5.5 vars=log3.t1s.t1s.flat dif=0 | ran=1 ns=1168.85 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=625 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=630 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=376.2 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=640 q=1 ord=nat place=oop | eng=zttr chain=4.5.4.4 tile=0 stk=2 | ran=1 src=race ns=276.6 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=675 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=686 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=432.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=720 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=395.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=729 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=750 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=455.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=768 q=1 ord=nat place=oop | eng=zttr chain=4.8.3.4 tile=0 stk=1 | ran=1 src=race ns=334.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=800 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=563.2 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=810 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=575.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=864 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=447.8 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=882 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=566.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=896 q=1 ord=nat place=oop | eng=zttr chain=4.7.4.4 tile=0 stk=1 | ran=1 src=race ns=409.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=945 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=960 q=1 ord=nat place=oop | eng=zttr chain=8.5.3.4 tile=0 stk=3 | ran=1 src=race ns=448.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1000 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=647.8 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1001 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=1050 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=780.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1134 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=752.6 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1152 q=1 ord=nat place=oop | eng=zttr chain=4.3.4.3.4 tile=0 stk=1 | ran=1 src=race ns=539.1 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1215 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=1250 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=933.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1280 q=1 ord=nat place=oop | eng=zttr chain=4.5.8.4 tile=0 stk=1 | ran=1 src=race ns=584.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1331 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=1350 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=968.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1440 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=946.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1458 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1036.8 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1470 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1218.8 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1536 q=1 ord=nat place=oop | eng=zttr chain=8.8.3.4 tile=0 stk=0 | ran=1 src=race ns=723.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1575 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=1600 q=1 ord=nat place=oop | eng=zttr chain=8.5.5.4 tile=0 stk=0 | ran=1 src=race ns=773.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1701 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=1728 q=1 ord=nat place=oop | eng=zttr chain=8.3.3.3.4 tile=0 stk=3 | ran=1 src=race ns=867.2 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1750 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1423.5 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1792 q=1 ord=nat place=oop | eng=zttr chain=4.8.7.4 tile=0 stk=1 | ran=1 src=race ns=875.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1890 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1614.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=1920 q=1 ord=nat place=oop | eng=zttr chain=4.5.4.3.4 tile=0 stk=0 | ran=1 src=race ns=943.7 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=2000 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1300.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=2058 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1894.1 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=2187 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=2250 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=1923.5 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=2304 q=1 ord=nat place=oop | eng=zttr chain=8.4.3.3.4 tile=0 stk=0 | ran=1 src=race ns=1151.8 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=2401 q=1 ord=scr place=ip | eng=stride chain=7.7.7.7 vars=log3.flat.flat.flat dif=0 | ran=1 ns=6036.66 metric=fwd1 units=ns src=race date=2026-09-29
+@cell t=r2c n=2401 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=2430 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=2121.4 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=2450 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=2257.1 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=2560 q=1 ord=nat place=oop | eng=zttr chain=8.5.8.4 tile=0 stk=3 | ran=1 src=race ns=1267.2 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=2646 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=2527.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=2835 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=2880 q=1 ord=nat place=oop | eng=zttr chain=8.5.3.3.4 tile=0 stk=3 | ran=1 src=race ns=1502.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3000 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=2230.8 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3072 q=1 ord=nat place=oop | eng=zttr chain=8.4.4.3.4 tile=0 stk=2 | ran=1 src=race ns=1533.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3125 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=3150 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=2975.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3200 q=1 ord=nat place=oop | eng=zttr chain=4.5.5.4.4 tile=0 stk=1 | ran=1 src=race ns=1697.6 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3375 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=3402 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=3030.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3430 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=3300.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3456 q=1 ord=nat place=oop | eng=zttr chain=4.3.3.3.4.4 tile=0 stk=0 | ran=1 src=race ns=1863.6 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3584 q=1 ord=nat place=oop | eng=zttr chain=8.7.8.4 tile=0 stk=3 | ran=1 src=race ns=1876.9 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3750 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=3945.5 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3840 q=1 ord=nat place=oop | eng=zttr chain=4.5.3.8.4 tile=0 stk=2 | ran=1 src=race ns=1990.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=3969 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=4000 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=3233.3 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=4050 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=3800.0 metric=fwd1 units=ns date=2026-09-29
+@cell t=r2c n=4095 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-29
+@cell t=r2c n=2 q=1 ord=scr place=ip | eng=stride chain=2 vars=flat dif=0 | ran=1 ns=3.41 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=3 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=2.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=4 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=2.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=5 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=3.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=7 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=4.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=8 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=4.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=9 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=5.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=11 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=8.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=13 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=13.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=15 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=13.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=17 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=17 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=18.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=19 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=19 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=23.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=21 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=28.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=22 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=19.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=23 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=35.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=25 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=30.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=26 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=27.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=27 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=46.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=29 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=55.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=31 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=59.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=34 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=34.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=35 q=1 ord=scr place=ip | eng=stride chain=5.7 vars=flat.flat dif=0 | ran=1 ns=60.60 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=35 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=37 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=87.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=38 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=40.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=39 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=41 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=105.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=43 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=116.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=44 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=41.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=46 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=40.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=47 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=131.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=49 q=1 ord=scr place=ip | eng=stride chain=7.7 vars=t1s.flat dif=0 | ran=1 ns=86.44 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=r2c n=49 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=51 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=52 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=52.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=55 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=57 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
+@cell t=r2c n=58 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=57.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=62 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=89.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=c2r n=3 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=2.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=4 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=2.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=5 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=3.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=7 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=4.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=8 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=4.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=9 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=6.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=11 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=8.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=13 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=15.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=15 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=12.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=17 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=18.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=19 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=25.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=21 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=29.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=22 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=21.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=23 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=36.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=25 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=34.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=26 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=27.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=27 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=39.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=29 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=54.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=31 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=61.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=34 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=35.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=37 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=88.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=38 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=40.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=41 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=106.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=43 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=119.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=44 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=31.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=46 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=40.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=47 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=132.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=52 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=50.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=58 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=77.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=62 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=90.5 metric=bwd1 units=ns date=2026-09-30

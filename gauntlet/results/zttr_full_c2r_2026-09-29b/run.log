@@ -428,3 +428,5 @@
 2026-09-29 23:54:56   benched 175/196 (3301), 334 s elapsed
 2026-09-29 23:55:46   benched 196/196 (65536), 385 s elapsed
 2026-09-29 23:55:48 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zttr_full_c2r_2026-09-29b\report_c2r_fftw.md
+2026-09-30 01:12:40 merge: 0 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-30 01:12:40 merged into C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom

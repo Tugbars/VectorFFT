@@ -268,6 +268,12 @@ struct vfft_plan_s
      * door's third engine, calibrated per cell over its chains and tiles and
      * banked (eng=zttr chain= tile= stk=). zttr != NULL selects it. */
     vfft_zttr_plan_t *zttr;         /* ZTT-r's plan (owned)               */
+    /* the REAL MONO (2026-09-30, il/real/zrm.h): the whole real transform of
+     * N <= 64 as ONE rn1 kernel, no child, no fold, no table; the real door's
+     * fourth engine, raced per cell (even N in the door, odd N in the real
+     * bridge) and banked (eng=zrm). zrm != NULL selects it; the bound
+     * execute calls the kernel directly. */
+    vfft_oop11_fn zrm;              /* the real mono's kernel (not owned)  */
     stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
     struct vfft_ilnd_s *ilnd;  /* the rank-N INTERLEAVED c2c tier (fftnd_il.h), owned */
     vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */

@@ -132,6 +132,14 @@ static int _k1x_real(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
     _vfft_real_bridge_execute(h, dir, (double *)zin, NULL, zout, NULL);
     return 0;
 }
+/* the real mono (il/real/zrm.h): the kernel call itself, nothing between the
+ * public execute and the transform */
+static int _k1x_zrm(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir; /* the kernel is the plan's direction */
+    vfft_zrm_execute(h->zrm, zin, zout);
+    return 0;
+}
 static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
@@ -139,6 +147,11 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
     h->k1_exec = NULL;
     if (h->transform != VFFT_R2C && h->transform != VFFT_C2R) return hp;
     if (h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
+    if (h->zrm)
+    {
+        h->k1_exec = _k1x_zrm;
+        return hp;
+    }
     if (h->oddr_child || (!h->pq_inner && !h->tcb && h->N2 == 0))
         h->k1_exec = _k1x_real;
     return hp;

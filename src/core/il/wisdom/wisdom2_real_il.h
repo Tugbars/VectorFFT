@@ -8,6 +8,11 @@
  *                                                  n1t = form A, r2z = form B)
  *   eng=zttr chain=4.8.8.4 tile=512 stk=3         (ZTT-r, il/real/zttr.h: the chain,
  *                                                  the tile width, the stack state)
+ *   eng=zrm                                       (the real mono, il/real/zrm.h: one
+ *                                                  rn1 kernel, N <= 64, no plan input)
+ *   eng=oddr                                      (odd N: the odd-real routes stood
+ *                                                  against the mono; their own route
+ *                                                  record is wisdom2_oddr.h's)
  * The door (il/real/real_create_il.h) reads the engine first and lets the
  * engine read its own plan input; a miss races the engines and banks the
  * winner here. The zr2c route banker keeps its own-engine guard, so a cell
@@ -31,8 +36,8 @@ static inline void vw2_real_il_key(vw2_key_t *k, int realN, int is_c2r, int is_i
     k->pl = is_inplace ? VW2_PL_IP : VW2_PL_OOP;
 }
 
-/* The cell's banked engine: "zr2c", "zrp", or NULL (no measured record; a
- * seed row counts as none). For eng=zrp the pair and the form are decoded
+/* The cell's banked engine ("zr2c", "zrp", "zttr", "zrm", "oddr") or NULL
+ * (no measured record; a seed row counts as none). For eng=zrp the pair and the form are decoded
  * (*R1 = 0 when the pair token is missing or malformed: a miss; *form = 0
  * for leaf=n1t or no leaf token, 1 for leaf=r2z). */
 static inline const char *vw2_real_il_lookup(const vw2_store_t *s, int realN,
@@ -85,6 +90,36 @@ static inline int vw2_real_il_bank_zrp(vw2_store_t *s, int realN, int is_c2r,
     rc = vw2_bank(s, &r);
     if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
     return VW2_OK;
+}
+
+/* Bank an engine with no plan input at the cell (replacing whatever engine
+ * held it): eng=zrm (the real mono; the kernel follows from the transform
+ * and N) or eng=oddr (odd N: the odd-real routes stood). */
+static inline int vw2_real_il_bank_eng(vw2_store_t *s, int realN, int is_c2r,
+                                       int is_inplace, const char *eng, double ns)
+{
+    vw2_rec_t r;
+    char b[48];
+    int rc;
+    memset(&r, 0, sizeof r);
+    vw2_real_il_key(&r.key, realN, is_c2r, is_inplace);
+    if (vw2_rec_set(&r, 1, "eng", eng) != VW2_OK ||
+        vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
+        vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    if (ns > 0.0) {
+        snprintf(b, sizeof b, "%.1f", ns);
+        if (vw2_rec_set(&r, 2, "ns", b) != VW2_OK ||
+            vw2_rec_set(&r, 2, "metric", is_c2r ? "bwd1" : "fwd1") != VW2_OK ||
+            vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    }
+    vw2__oop_stamp_date(&r);
+    rc = vw2_bank(s, &r);
+    if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
+    return VW2_OK;
+}
+static inline int vw2_real_il_bank_zrm(vw2_store_t *s, int realN, int is_c2r, int is_inplace, double ns)
+{
+    return vw2_real_il_bank_eng(s, realN, is_c2r, is_inplace, "zrm", ns);
 }
 
 /* The banked ZTT-r plan input at the cell: 1 with chain[0..*nf-1], *tile,

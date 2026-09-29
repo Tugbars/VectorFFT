@@ -1,8 +1,8 @@
-/* zrp_build.h - the real pair's and ZTT-r's handles and the real door's
- * engine race.
+/* zrp_build.h - the real pair's, ZTT-r's and the real mono's handles and the
+ * real door's engine race.
  *
  * THE DOOR (il/real/real_create_il.h) serves an even-N, K=1, interleaved
- * real request with one of three engines:
+ * real request with one of four engines:
  *   zr2c  x read as z[N/2] -> a c2c(N/2) child -> the Hermitian fold pass
  *         (zr2c_build.h; it races its own child route and banks it)
  *   zrp   the real pair (zrp.h): form A = the stock n1t leaf over the packed
@@ -15,13 +15,17 @@
  *         {4,8,3,5,7,9,15} mids (the ZTT's odd band: 2^a*odd cells run
  *         staged) at every tile width burst-timed, the four fastest (and
  *         the winner's other stack states) join the race.
+ *   zrm   the real mono (zrm.h): the whole transform as one rn1 kernel at
+ *         N <= 64; no plan input. Odd N races it in bridge/real_bridge.h
+ *         against the odd-real routes (the door is even-N).
  * The cell's engine is read from the real shard (wisdom2_real_il.h); a miss
  * races zr2c against every legal pair in every form and the ZTT-r shortlist
  * through the finished handles, gates each arm's output against zr2c's
  * before timing, and banks the winner (3% hysteresis toward zr2c, the
  * incumbent). VFFT_ZRP=R1.R2[.f] pins a pair (f = 0 form A, 1 form B;
  * default A), VFFT_ZRP=0 pins zr2c, VFFT_ZTTR=chain/tile[/stk] (4.8.8.4/512/3)
- * pins ZTT-r; env beats wisdom and never banks.
+ * pins ZTT-r, VFFT_ZRM=1 pins the real mono and VFFT_ZRM=0 keeps it out of
+ * the race; env beats wisdom and never banks.
  *
  * INCLUSION CONTRACT: after zr2c_build.h and _vw2_persist (vfft.c), the
  * kind-5 precedent.
@@ -36,6 +40,7 @@
 #include "vfft_internal.h"
 #include "zrp.h"
 #include "zttr.h"
+#include "zrm.h"
 #include "wisdom2_real_il.h"
 #include "common/support/race.h"
 
@@ -119,6 +124,41 @@ static void _exec_zttr(struct vfft_plan_s *h, const double *sre, double *dre)
     }
 }
 
+/* the real mono's handle: the kernel IS the plan (nothing owned) */
+static struct vfft_plan_s *_zrm_build_plan(const vfft_config_t *cfg, int N)
+{
+    vfft_oop11_fn fn = vfft_zrm_fn(N, cfg->transform == VFFT_C2R);
+    struct vfft_plan_s *h;
+    if (!fn)
+        return NULL;
+    h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+    if (!h)
+        return NULL;
+    h->transform = cfg->transform;
+    h->placement = cfg->placement;
+    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->N = N;
+    h->K = 1;
+    h->nthreads = _vfft_plan_threads(cfg);
+    h->zrm = fn;
+    return h;
+}
+
+/* one call, in place or out (the kind is alias-tolerant) */
+static void _exec_zrm(struct vfft_plan_s *h, const double *sre, double *dre)
+{
+    vfft_zrm_execute(h->zrm, sre, dre);
+}
+
+/* VFFT_ZRM at create: 1 = the mono pinned, 0 = kept out of the race, -1 = unset */
+static int _zrm_env(void)
+{
+    const char *e = getenv("VFFT_ZRM");
+    if (!e || !e[0])
+        return -1;
+    return e[0] == '0' ? 0 : 1;
+}
+
 /* the legal arms of N: (R1, R2, form), R1 ascending, form A before B */
 #define VFFT_ZRP_MAX_ARMS 32
 static int _zrp_arms(int N, int out[][3], int cap)
@@ -154,7 +194,9 @@ typedef struct
 static void _zrpr_arm_run(void *v)
 {
     _zrpr_arm_t *c = (_zrpr_arm_t *)v;
-    if (c->h->zttr)
+    if (c->h->zrm)
+        _exec_zrm(c->h, c->s0, c->b);
+    else if (c->h->zttr)
         _exec_zttr(c->h, c->s0, c->b);
     else if (c->h->zrp)
         _exec_zrp(c->h, c->s0, c->b);
@@ -163,7 +205,8 @@ static void _zrpr_arm_run(void *v)
 }
 static void _real_il_exec_any(struct vfft_plan_s *h, const double *s0, double *b)
 {
-    if (h->zttr) _exec_zttr(h, s0, b);
+    if (h->zrm) _exec_zrm(h, s0, b);
+    else if (h->zttr) _exec_zttr(h, s0, b);
     else if (h->zrp) _exec_zrp(h, s0, b);
     else _exec_zr2c(h, s0, b);
 }
@@ -255,7 +298,9 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
     int arms_in[VFFT_ZRP_MAX_ARMS][3];
     const int np = _zrp_arms(N, arms_in, VFFT_ZRP_MAX_ARMS);
     struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);   /* races + banks its own route */
-    if (np == 0 && N < 64)
+    /* the real mono: one kernel at N <= 64 (VFFT_ZRM=0 keeps it out) */
+    struct vfft_plan_s *hm = (N <= VFFT_ZRM_MAX_N && _zrm_env() != 0) ? _zrm_build_plan(cfg, N) : NULL;
+    if (np == 0 && N < 64 && !hm)
         return hz;
     struct vfft_plan_s *hp[VFFT_ZRP_MAX_ARMS];
     int spec[VFFT_ZRP_MAX_ARMS][3];
@@ -271,7 +316,15 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
         }
     }
     if (!hz)
-        return na ? hp[0] : NULL; /* zr2c could not build: the first pair serves, no bank */
+    {
+        /* zr2c could not build: the mono, else the first pair, serves; no bank */
+        if (hm)
+        {
+            for (int i = 0; i < na; i++) vfft_destroy((vfft_plan)hp[i]);
+            return hm;
+        }
+        return na ? hp[0] : NULL;
+    }
     const size_t xs = (size_t)N + 2;
     double *a = (double *)vfft_aligned_alloc(xs * sizeof(double));
     double *b = (double *)vfft_aligned_alloc(xs * sizeof(double));
@@ -280,6 +333,7 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
     {
         vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
         for (int i = 0; i < na; i++) vfft_destroy((vfft_plan)hp[i]);
+        if (hm) vfft_destroy((vfft_plan)hm);
         return hz;
     }
     unsigned sd = 0x9e3779b9u ^ (unsigned)N ^ (unsigned)(c2r << 8) ^ (unsigned)(ip << 9);
@@ -317,10 +371,24 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
         }
     }
     na = keep;
+    /* the real mono, gated the same way */
+    if (hm)
+    {
+        memcpy(b, a, xs * sizeof(double));
+        _exec_zrm(hm, s0, b);
+        double e = _zrpr_relerr(b, ref, nchk);
+        if (e >= 1e-10)
+        {
+            fprintf(stderr, "[zrm] N=%d %s %s the real mono FAILS the gate (rel %.2e vs zr2c) -- dropped\n",
+                    N, c2r ? "c2r" : "r2c", ip ? "ip" : "oop", e);
+            vfft_destroy((vfft_plan)hm);
+            hm = NULL;
+        }
+    }
     /* ZTT-r: the sweep's shortlist, gated in the sweep */
     struct vfft_plan_s *ht[VFFT_ZTTR_MAX_ARMS];
     const int nt = N >= 64 ? _zttr_sweep(cfg, N, a, ref, b, s0, xs, nchk, ht) : 0;
-    if (na == 0 && nt == 0)
+    if (na == 0 && nt == 0 && !hm)
     {
         vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
         return hz;
@@ -332,8 +400,8 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
     double est = vfft_now_ns() - t0;
     int reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
     if (reps < 2) reps = 2;
-    if (reps > 64) reps = 64;
-    enum { NARMS = 1 + VFFT_ZRP_MAX_ARMS + VFFT_ZTTR_MAX_ARMS };
+    if (reps > 4096) reps = 4096; /* a sample stays ~0.3 ms: the tiny cells (tens of ns a shot) need the reps */
+    enum { NARMS = 2 + VFFT_ZRP_MAX_ARMS + VFFT_ZTTR_MAX_ARMS };
     _zrpr_arm_t ctx[NARMS];
     vfft_race_arm_t arms[NARMS];
     char names[NARMS][40];
@@ -342,6 +410,14 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
     ctx[0].h = hz; ctx[0].s0 = s0; ctx[0].b = b;
     arms[0].name = "zr2c"; arms[0].run = _zrpr_arm_run; arms[0].ctx = &ctx[0];
     hall[nall++] = hz;
+    if (hm)
+    {
+        ctx[nall].h = hm; ctx[nall].s0 = s0; ctx[nall].b = b;
+        snprintf(names[nall], sizeof names[nall], "zrm");
+        arms[nall].name = names[nall]; arms[nall].run = _zrpr_arm_run; arms[nall].ctx = &ctx[nall];
+        hall[nall] = hm;
+        nall++;
+    }
     for (int i = 0; i < na; i++)
     {
         ctx[nall].h = hp[i]; ctx[nall].s0 = s0; ctx[nall].b = b;
@@ -391,7 +467,9 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
     {
         struct vfft_plan_s *hw = hall[best];
         int rc;
-        if (hw->zttr)
+        if (hw->zrm)
+            rc = vw2_real_il_bank_zrm(&W->vw2, N, c2r, ip, ns[best]);
+        else if (hw->zttr)
             rc = vw2_real_il_bank_zttr(&W->vw2, N, c2r, ip, hw->zttr->zt->chain, hw->zttr->zt->nf,
                                        hw->zttr->zt->tile, hw->zttr->stk, ns[best]);
         else
@@ -454,11 +532,27 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
             _vfft_warn("vfft_create: VFFT_ZTTR=%s does not build at N=%d (falling through to the door)", e, N);
         }
     }
+    if (_zrm_env() == 1)
+    {
+        struct vfft_plan_s *h = _zrm_build_plan(cfg, N);
+        if (h)
+            return h;
+        _vfft_warn("vfft_create: VFFT_ZRM=1 has no real mono kernel at N=%d (falling through to the door)", N);
+    }
     if (W && !W->vw2_off_oop && !cfg->recalibrate)
     {
         int R1, R2, form;
         const char *eng = vw2_real_il_lookup(&W->vw2, N, c2r, ip, &R1, &R2, &form);
-        if (eng && !strcmp(eng, "zttr"))
+        if (eng && !strcmp(eng, "zrm"))
+        {
+            struct vfft_plan_s *h = _zrm_env() == 0 ? NULL : _zrm_build_plan(cfg, N);
+            if (h)
+                return h;
+            if (_zrm_env() == 0)
+                return _zr2c_build(cfg, N, W); /* the mono kept out by env: the incumbent serves */
+            /* a banked mono without a kernel at this ISA: fall through to the race */
+        }
+        else if (eng && !strcmp(eng, "zttr"))
         {
             int chain[8], nf, stk;
             size_t tile;
