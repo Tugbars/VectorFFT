@@ -11,9 +11,10 @@
  *   zttr  ZTT-r (zttr.h): the ZTT at N/2 with the fold fused into the
  *         terminator (r2c) or the ingest (c2r); no fold pass, no scratch
  *         out of place. Its chain, tile and stack state are PLAN INPUT,
- *         found by the door's sweep: every {4,8} chain at every tile width
- *         burst-timed, the four fastest (and the winner's other stack
- *         states) join the race.
+ *         found by the door's sweep: every chain with {4,8} ends and
+ *         {4,8,3,5,7,9,15} mids (the ZTT's odd band: 2^a*odd cells run
+ *         staged) at every tile width burst-timed, the four fastest (and
+ *         the winner's other stack states) join the race.
  * The cell's engine is read from the real shard (wisdom2_real_il.h); a miss
  * races zr2c against every legal pair in every form and the ZTT-r shortlist
  * through the finished handles, gates each arm's output against zr2c's
@@ -180,10 +181,10 @@ static int _zttr_sweep(const vfft_config_t *cfg, int N, const double *a, const d
 {
     static const size_t tiles[5] = { 0, 512, 1024, 2048, 3072 };
     const int M = N / 2;
-    int chains[64][8], nfs[64];
-    const int nc = vfft_zttr_chains(M, chains, nfs, 64);
+    int chains[VFFT_ZTTR_MAX_CHAINS][8], nfs[VFFT_ZTTR_MAX_CHAINS];
+    const int nc = vfft_zttr_chains(M, chains, nfs, VFFT_ZTTR_MAX_CHAINS);
     typedef struct { int c, ti; double ns; } cand_t;
-    cand_t cand[64 * 5];
+    cand_t cand[VFFT_ZTTR_MAX_CHAINS * 5];
     int ncand = 0;
     for (int c = 0; c < nc; c++)
         for (int ti = 0; ti < 5; ti++)

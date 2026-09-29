@@ -66,9 +66,10 @@ static void _oddr_arm_exec(void *v)
  * real engines thread internally; no pool arm: create-entry owns it) — the
  * finish exists so a shared step would land in one place and so each early
  * serving's skips are spelled at its return, not implied. */
+static vfft_plan _vfft_real_bind_exec(vfft_plan hp); /* il/il_execute.h: the bound 1D real dispatch */
 static vfft_plan _real_finish(struct vfft_plan_s *h)
 {
-    return h;
+    return _vfft_real_bind_exec((vfft_plan)h);
 }
 
 #include "il/real/real_create_il.h"

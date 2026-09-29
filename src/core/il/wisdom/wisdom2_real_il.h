@@ -109,7 +109,7 @@ static inline int vw2_real_il_lookup_zttr(const vw2_store_t *s, int realN, int i
     while (*ch && n < 8) {
         char *end;
         long v = strtol(ch, &end, 10);
-        if (end == ch || (v != 4 && v != 8)) return 0;
+        if (end == ch || !(v == 4 || v == 8 || v == 3 || v == 5 || v == 7 || v == 9 || v == 15)) return 0;
         chain[n++] = (int)v;
         ch = end;
         if (*ch == '.') ch++;
