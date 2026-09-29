@@ -1,0 +1,14 @@
+# sibling guard: cpu 2's SMT sibling cpu 3 held by a TPAUSE-C0.2 thread for this process (VFFT_BENCH_GUARD=0 lifts)
+K=3, one thread, transform-contiguous; ns per batch (median of 15 rounds); x = MKL / ours
+     N       ours        mkl    mkl x K    x mkl  x mklxK        err
+  1024       2300       2433       2524    1.06x    1.10x    1.8e-16
+    45        101        136        146    1.34x    1.44x    3.0e-16
+    99        241        326        345    1.35x    1.43x    2.3e-16
+   121        307        359        370    1.17x    1.21x    3.2e-16
+   529       3808       8292       8338    2.18x    2.19x    3.2e-16
+   989       6629      25757      25957    3.89x    3.92x    1.3e-15
+   999      11200      16925      17050    1.51x    1.52x    2.6e-16
+  1025       6114      19571      19729    3.20x    3.23x    2.3e-16
+  1073       8220      27320      27480    3.32x    3.34x    3.4e-16
+  1849      14900      67850      67675    4.55x    4.54x    1.2e-15
+  3025      17525      17525      17675    1.00x    1.01x    4.2e-16

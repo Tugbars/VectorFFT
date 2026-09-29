@@ -1,0 +1,19 @@
+2026-09-29 09:37:19 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-29 09:37:19 run: 169 cells, contract 2D out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 09:37:19 calibrate: 169 cells (0 already done)
+2026-09-29 09:37:38   calibrated 25/169 (15x99), 19 s elapsed
+2026-09-29 09:37:57   calibrated 50/169 (25x75), 38 s elapsed
+2026-09-29 09:38:16   calibrated 75/169 (33x63), 57 s elapsed
+2026-09-29 09:38:35   calibrated 100/169 (45x49), 77 s elapsed
+2026-09-29 09:38:55   calibrated 125/169 (63x45), 97 s elapsed
+2026-09-29 09:39:16   calibrated 150/169 (99x35), 118 s elapsed
+2026-09-29 09:39:33   calibrated 169/169 (121x121), 135 s elapsed
+2026-09-29 09:39:33 bench: 169 cells (0 already benched, 0 not banked -> not benched)
+2026-09-29 09:40:08   benched 25/169 (15x99), 33 s elapsed
+2026-09-29 09:40:42   benched 50/169 (25x75), 67 s elapsed
+2026-09-29 09:41:15   benched 75/169 (33x63), 101 s elapsed
+2026-09-29 09:41:50   benched 100/169 (45x49), 136 s elapsed
+2026-09-29 09:42:24   benched 125/169 (63x45), 169 s elapsed
+2026-09-29 09:42:58   benched 150/169 (99x35), 203 s elapsed
+2026-09-29 09:43:23   benched 169/169 (121x121), 229 s elapsed
+2026-09-29 09:43:25 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\tail2d_oddgrid_2026-09-29\report_2d.md
