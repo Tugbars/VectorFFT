@@ -1694,13 +1694,17 @@ let emit
        ~static_inline:grouploop
        (* il2p calls the forward T2 and the backward N1 with zin == zout on
           its out-of-place fast path (il2p.h), so those two must not promise
-          the compiler their planes are disjoint. Every other kind keeps
-          __restrict__ -- it is load-bearing for them. *)
+          the compiler their planes are disjoint. The real mono RN1 is the
+          in-place real solo (il/real/zrm.h calls it with zin == zout; every
+          load of a loop body precedes every store, so the alias is legal
+          once the promise is gone). Every other kind keeps __restrict__ --
+          it is load-bearing for them. *)
        ~alias_tolerant:
          ((kind = T2 && dir = Fwd)
           || (kind = N1 && dir = Bwd)
           || kind = N1C
-          || kind = T2C)
+          || kind = T2C
+          || kind = RN1)
        ~symbol:
          (if grouploop
           then Printf.sprintf "_t2csgn%d_body" radix
