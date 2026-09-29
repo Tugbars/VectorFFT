@@ -21,8 +21,10 @@ token selects it, and what in it is unused.
 | [`avx2/flat/`](avx2/flat/) | 198 | `t2cp`, `t2cs`, `t2csg`, `t2csgn`, `t2csgt`, `t2csgnt` | the flat mixed-radix DIT for odd N: `il_route=flat` |
 | [`avx2/flat/odd_mid/`](avx2/flat/odd_mid/) | 15 | `msz`, `mszt` | the flat engine's odd middle radices 3..15 |
 | [`avx2/ztt/`](avx2/ztt/) | 39 | `t0tp`, `tmg`, `tlf`, `tlfi`, `t0d`, `tmgd`, `tld` | ZTURN-T, 2048..262144: `il_route=ztt`, `il_tw=` |
+| [`avx2/real/pair/`](avx2/real/pair/) | 48 | `r2z`, `t2h`, `t2m` | the real pair (`il/real/zrp.h`): an even-N r2c/c2r as a leaf and a Hermitian top stage, no fold pass: `eng=zrp` |
+| [`avx2/real/mono/`](avx2/real/mono/) | 60 | `rn1` | the real mono (`il/real/zrm.h`): the whole real transform of N = 3..64 in one kernel: `eng=zrm` |
 
-740 files. Two layouts and two emitters: every folder but `ztt/` and
+848 files (the real family, `real/`, is one folder per engine since 2026-09-30). Two layouts and two emitters: every folder but `ztt/` and
 `flat/odd_mid/` is **pure IL** (packed complex through all the arithmetic,
 `generator/lib/gen/c2c_il.ml`, corpus rows `zil_pure_cells`); those two are
 **boundary IL / split interior** (`cascade_z.ml`, rows `zil_boundary_cells`).
@@ -48,6 +50,7 @@ the 4 `b416` column forms.
 | `src/core/oop/il2p.h` | `n1`, `n1t`, `t2`, `t2t` and their blocked (`b*`), tangent (`tan`), wide (`w32`) forms; `msz`/`mszt` | the K=1 pair and chain3 engines: `n1t` leaf with the four-step transpose fused into its stores, `t2` twiddled mid, `t2t` the backward twin; the odd mids at 3/5/7/9/15 are `msz` |
 | `src/core/oop/il_flatdit.h` | `n1c`, `t2c`, `t2cs`, `t2csg`, `t2csgn`, `t2csgt`, `t2csgnt`, `t2cp`; `msz`/`mszt` | the flat mixed-radix DIT (both order classes) over the column-form kinds |
 | `src/core/transforms/fft2d/il2d_cols.h`, `fftnd/fftnd_il.h` | `n1c`, `t2c` (+ blocked `cb*`) | the N-D column passes: a lane is a column, vectorized ACROSS columns; rows are a K=1 plan through the front door |
+| `src/core/il/real/zrp.h`, `zrm.h` | `r2z`, `t2h`, `t2m`; `rn1` | the real engines of the interleaved door: the pair (two kernels, no fold) and the mono (one kernel, N <= 64); the door races them against zr2c and ZTT-r and banks `eng=` |
 | `src/core/oop/ztt.h` | `t0tp`, `tmg`, `tlf`, `tlfi`, `t0d`, `tmgd`, `tld` (+ `_bwd`) | ZTURN-T, natural and plain (scrambled) classes: pow2 cells as the fused codelets in `generator/generated/fused_codelets/`, 2^a·odd cells as these kernels called per stage |
 
 Which engine serves a cell is a raced wisdom verdict, never a rule in this

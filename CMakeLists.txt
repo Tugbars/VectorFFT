@@ -222,7 +222,7 @@ set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2
 # kernels exist only as env-knob/sed recipes outside the corpus
 # (docs/roadmap/zil_avx512_design.md, decision D3).
 set(VFFT_ABSENT_avx2)                      # avx2 carries the full corpus
-set(VFFT_ABSENT_avx512 zil/pair2p/tangent zil/real)
+set(VFFT_ABSENT_avx512 zil/pair2p/tangent zil/real/pair zil/real/mono)
 
 set(VFFT_CODELET_SRCS)
 
@@ -291,7 +291,7 @@ endforeach()
 # simply ABSENT -- THE 598-vs-863 gap, exactly 265 files. Globs are
 # non-recursive, so pure_il and pure_il/tangent are listed separately
 # (build.py does the same).
-foreach(_zdir shared shared/col shared/col/blocked mono pair2p pair2p/blocked pair2p/tangent rows chain3 flat flat/odd_mid ztt real)
+foreach(_zdir shared shared/col shared/col/blocked mono pair2p pair2p/blocked pair2p/tangent rows chain3 flat flat/odd_mid ztt real/pair real/mono)
     vfft_add_codelet_dir("zil/${_zdir}" "${DAG_CODELETS}/zil/${VFFT_ISA}/${_zdir}")
 endforeach()
 # ZTURN-T's FUSED CODELETS (2026-09-09): one whole-transform driver per pow2 cell,

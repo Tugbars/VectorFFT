@@ -35,8 +35,10 @@ Grouped by the engine that uses it — which is also the proposed folder layout.
 | `ztt/` | `t0tp`, `tmg`, `tlf`, `tlfi` · `t0d`, `tmgd`, `tld` | 39 | ZTURN-T, N = 2048 to 262144. Natural order with no reorder pass; re and im are split inside the kernel, which removes the lane shuffles of the complex multiply. The scrambled set (`t0d`/`tmgd`/`tld`) skips one full sweep of the array and wins in place only. |
 | `shared/col/` | `n1c`, `t2c` | 110 | The 2D column stage. Twiddles are hoisted out of the column loop. The kernels allow input = output, so they run in place — which is also how the 1D in-place MONO path uses `n1c`. |
 | `shared/col/blocked/` | `n1cb*`, `t2cb*` (`b48`, `b84`, `b88`, `b416`) | 16 | Blocked 2D column forms at radix 32 and 64, raced per cell. |
+| `real/pair/` | `r2z`, `t2h`, `t2m` | 48 | The real pair (2026-09-29): an even-N r2c/c2r as a real leaf and a Hermitian top stage, no fold pass. |
+| `real/mono/` | `rn1` | 60 | The real mono (2026-09-30): the whole real transform of N = 3..64 in one kernel, CCE half out, Hermitian half in. |
 
-Total 748 = 746 today + the 2 `mono64_il` files moved in. The fused drivers stay where they
+Total 748 = 746 today + the 2 `mono64_il` files moved in; the real family (`real/pair/` 48, `real/mono/` 60, one folder per engine since 2026-09-30) came later. The fused drivers stay where they
 are: they are derived output with their own build rule, and `ztt/README.md` points to them.
 
 **The rule behind most of this:** splitting a radix into passes pays exactly when the

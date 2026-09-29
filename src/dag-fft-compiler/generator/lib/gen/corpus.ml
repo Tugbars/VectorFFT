@@ -1969,7 +1969,7 @@ let zil_pure_cells : (string * string list) list =
   ; ( "radix16_z_n1rtan_bwd_avx2.c"
     , [ "16"; "--cil-n1"; "--cil-tangent"; "--cil-rowloop"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
     (* the interleaved REAL pair's top stage t2h (real_il.ml, 2026-09-29):
-       fwd + bwd at the even pair radices; zil/avx2/real *)
+       fwd + bwd at the even pair radices; zil/avx2/real/pair *)
   ; ( "radix4_z_t2h_avx2.c"
     , [ "4"; "--cil-t2h"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix4_z_t2h_bwd_avx2.c"
@@ -2069,7 +2069,7 @@ let zil_pure_cells : (string * string list) list =
     , [ "64"; "--cil-r2z"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
     (* the real MONO rn1 (c2c_il.ml, 2026-09-30): the whole small real
        transform as one n1 body, fwd (r2c) + bwd (c2r), the n1 radices to 64;
-       zil/avx2/real *)
+       zil/avx2/real/mono *)
   ; ( "radix3_z_rn1_avx2.c"
     , [ "3"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix3_z_rn1_bwd_avx2.c"
@@ -2749,7 +2749,8 @@ let zil_folder (name : string) : string option =
          else if List.mem base [ "t2cp"; "t2cs"; "t2csg"; "t2csgn"; "t2csgt"; "t2csgnt" ] then "flat"
          else if base = "msz" || base = "mszt" then "flat/odd_mid"
          else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "ztt"
-         else if base = "t2h" || base = "t2m" || base = "r2z" || base = "rn1" then "real"
+         else if base = "rn1" then "real/mono"
+         else if base = "t2h" || base = "t2m" || base = "r2z" then "real/pair"
          else "pair2p/tangent")
     | _ -> None
 
