@@ -4,6 +4,9 @@
  * bench_1d_vs_mkl --k1noop benches the same cell on the same store.
  *
  * Run:   recal_1d_probe.exe <wisdir> <N> [scr=0] [ip=0] [T=1] [recal=1]
+ *        recal_1d_probe.exe <wisdir> --r2c|--c2r <N | --2d N1 N2> [scr=0] [ip=0] [T=1] [recal=1]
+ *        (2026-09-29: the REAL cell -- r2c or c2r, interleaved CCE, natural --
+ *        through the same door; the flag precedes the shape)
  *        recal_1d_probe.exe <wisdir> --2d <N1> <N2> [scr=0] [ip=0] [T=1] [recal=1]
  *        recal_1d_probe.exe <wisdir> --3d <N1> <N2> <N3> [scr=0] [ip=0] [T=1] [recal=1]
  *        (2026-09-24: the 3D interleaved cell, dims=3; its verdicts bank into wisdom2_3d.txt)
@@ -40,6 +43,16 @@ static double now_ms(void)
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : ".";
+    /* --r2c / --c2r: shifted out here so the shape parser below is unchanged */
+    int xform = VFFT_C2C;
+    if (argc > 2 && (!strcmp(argv[2], "--r2c") || !strcmp(argv[2], "--c2r")))
+    {
+        xform = !strcmp(argv[2], "--r2c") ? VFFT_R2C : VFFT_C2R;
+        for (int i = 2; i + 1 < argc; i++)
+            argv[i] = argv[i + 1];
+        argc--;
+    }
+    const char *tn = xform == VFFT_R2C ? "r2c " : xform == VFFT_C2R ? "c2r " : "";
     const int twod = argc > 2 && !strcmp(argv[2], "--2d");
     const int threed = argc > 2 && !strcmp(argv[2], "--3d");   /* the 3D cell (2026-09-24) */
     const int nd = threed ? 3 : twod ? 2 : 1;
@@ -82,25 +95,26 @@ int main(int argc, char **argv)
     }
     W = vfft_wisdom_load(dir);
     memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C;
+    cfg.transform = xform;
     cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
     cfg.rigor = VFFT_PATIENT;
     cfg.dims = nd; cfg.n[0] = N; cfg.n[1] = nd > 1 ? N2 : 0; cfg.n[2] = nd > 2 ? N3 : 0; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
+    cfg.order = xform != VFFT_C2C ? VFFT_ORDER_DEFAULT   /* a real spectrum is natural */
+              : scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
     cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
     cfg.recalibrate = recal;
     t0 = now_ms();
     p = vfft_create(&cfg);
     t1 = now_ms();
     if (threed)
-        printf("N=%dx%dx%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", N, N2, N3, scr ? "scr" : "nat",
+        printf("%sN=%dx%dx%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", tn, N, N2, N3, scr ? "scr" : "nat",
                ip ? "ip" : "oop", T, recal, p ? "banked" : "REFUSED", t1 - t0);
     else if (twod)
-        printf("N=%dx%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", N, N2, scr ? "scr" : "nat",
+        printf("%sN=%dx%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", tn, N, N2, scr ? "scr" : "nat",
                ip ? "ip" : "oop", T, recal, p ? "banked" : "REFUSED", t1 - t0);
     else
-        printf("N=%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", N, scr ? "scr" : "nat",
+        printf("%sN=%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", tn, N, scr ? "scr" : "nat",
                ip ? "ip" : "oop", T, recal, p ? "banked" : "REFUSED", t1 - t0);
     if (p) vfft_destroy(p);
     vfft_wisdom_free(W);

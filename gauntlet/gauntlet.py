@@ -196,8 +196,10 @@ class Run:
         self.dims = dims                      # 1, or 2 for the 2D contract (shapes)
         self.threads = int(args.threads)
         self.ip = 1 if args.inplace else 0
-        self.cmp = getattr(args, "cmp", "mkl") or "mkl"   # the comparator: mkl (the default) or kfr (2026-09-25, its own csv)
-        self.sfx = ("_%dd" % dims if dims >= 2 else "") + ("_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "") + ("_" + self.cmp if self.cmp != "mkl" else "")
+        self.cmp = getattr(args, "cmp", "mkl") or "mkl"   # the comparator: mkl (the default), kfr (2026-09-25) or fftw (2026-09-29), each its own csv
+        self.real = getattr(args, "real", None)           # the real contract (2026-09-29): "r2c" / "c2r", else the c2c cell
+        self.k = int(getattr(args, "k", 1) or 1)          # the 1D real cell's batch count (transform-contiguous rows)
+        self.sfx = ("_%dd" % dims if dims >= 2 else "") + ("_" + self.real if self.real else "") + ("_k%d" % self.k if self.k > 1 else "") + ("_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "") + ("_" + self.cmp if self.cmp != "mkl" else "")
         name = args.name or self.default_name()
         self.dir = os.path.join(RESULTS, name)
         self.store = args.store or os.path.join(self.dir, "store")
@@ -251,6 +253,10 @@ class Run:
     def env(self):
         e = os.environ.copy()
         e["VFFT_WISDOM_DIR"] = self.store
+        if self.cmp == "fftw":
+            # the comparator's twin of the store: FFTW's wisdom for this run,
+            # measured once per problem and replayed by every later cell
+            e["VFFT_FFTW_WIS"] = os.path.join(self.dir, "fftw.wis")
         if self.threads > 1:
             e["VFFT_MT"] = str(self.threads)
         if os.name == "nt":
@@ -276,15 +282,24 @@ def keep_awake(on):
 
 # ── the store's rows for one cell (raced / replayed / refused) ─────────────
 
-def cell_rows(store, n, ip, threads=1):
+def cell_rows(store, n, ip, threads=1, real=None):
     """the wisdom rows that decide this cell: the K=1 rows at its placement (both
     order classes) and the prime row; for a 2D shape the wisdom2_2d rows at its
     placement; at threads > 1 the rows keyed nthreads=T (a threaded plan's row is
-    its own), at one thread the rows without the token. Returns key -> payload."""
+    its own), at one thread the rows without the token. A REAL cell (real =
+    "r2c" / "c2r"): its own row in wisdom2_real.txt (the zr2c route or the
+    odd-N bridge verdict) and the zr2c child's c2c(N/2) row; a 2D real shape
+    the direction-shared t=r2c row in wisdom2_2d.txt. Returns key -> payload."""
     out = {}
     pl = "ip" if ip else "oop"
     want_t = int(threads) if int(threads) > 1 else 0
-    if is2d(n):
+    if real and is2d(n):
+        pats = (("wisdom2_2d.txt", r"@cell t=r2c n=%s q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (ckey(n), pl)),)
+    elif real:
+        pats = (("wisdom2_real.txt", r"@cell t=%s n=%d q=1 [^|\n]*place=%s[^|\n]*\| ([^\n]*)" % (real, n, pl)),
+                ("wisdom2_oop.txt", r"@cell t=c2c n=%d q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (n // 2, pl)),
+                ("wisdom2_oop.txt", r"@cell t=c2c n=%d q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (n, pl)))
+    elif is2d(n):
         pats = (("wisdom2_%dd.txt" % len(n), r"@cell t=c2c n=%s q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (ckey(n), pl)),)
     else:
         pats = (("wisdom2_oop.txt", r"@cell t=c2c n=%d q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (n, pl)),
@@ -304,6 +319,10 @@ def cell_rows(store, n, ip, threads=1):
 
 
 def route_of(rows):
+    for k, v in rows.items():                 # the real cells: the zr2c route or the odd-N bridge verdict
+        if ("t=r2c" in k or "t=c2r" in k) and "route=" in v:
+            r = re.search(r"route=(\w+)", v).group(1)
+            return ("zr2c:" + r) if "eng=zr2c" in v else r
     for k, v in rows.items():
         if "ord=nat" in k and "il_route=" in v:
             return re.search(r"il_route=(\w+)", v).group(1)
@@ -332,15 +351,15 @@ def stage_calibrate(run, cells, recal):
     probe = run.exe("recal_1d_probe")
     t0 = time.time()
     for i, n in enumerate(todo, 1):
-        before = cell_rows(run.store, n, run.ip, run.threads)
+        before = cell_rows(run.store, n, run.ip, run.threads, run.real)
         s0 = time.time()
         shape = (["--%dd" % len(n)] + [str(v) for v in n]) if is2d(n) else [str(n)]
-        r = subprocess.run([probe, run.store] + shape + ["0", str(run.ip), str(run.threads), "1" if recal else "0"],
+        r = subprocess.run([probe, run.store] + (["--" + run.real] if run.real else []) + shape + ["0", str(run.ip), str(run.threads), "1" if recal else "0"],
                            capture_output=True, text=True, errors="replace", env=run.env())
         ms = int((time.time() - s0) * 1000)
         text = r.stdout + r.stderr
         status = "REFUSED" if "REFUSED" in text else ("banked" if "banked" in text else "ERROR")
-        after = cell_rows(run.store, n, run.ip, run.threads)
+        after = cell_rows(run.store, n, run.ip, run.threads, run.real)
         if status != "banked":
             served = "refused"
         elif after != before:
@@ -365,10 +384,18 @@ def bench_cell(run, n, csv_path):
         # the 3D interleaved cell: the shape N1xN2xN3 in the N slot (bench --3dilnat, 2026-09-24)
         flag = ["--3dilnat"] + (["--mt"] if run.threads > 1 else [])   # --mt: the threaded cell at $VFFT_MT (2026-09-24)
         nstr, kstr = ckey(n), "1"
+    elif is2d(n) and run.real:
+        # the 2D REAL cell (2026-09-29): N1 in the N slot, N2 in the K slot (bench --2drealnat)
+        flag = ["--2drealnat", "--realfwd" if run.real == "r2c" else "--realbwd"]
+        nstr, kstr = str(n[0]), str(n[1])
     elif is2d(n):
         # the 2D interleaved cell: N1 in the N slot, N2 in the K slot (bench --2dilnat)
         flag = ["--2dilnat"] + (["--mt"] if run.threads > 1 else [])
         nstr, kstr = str(n[0]), str(n[1])
+    elif run.real:
+        # the 1D REAL cell (2026-09-29): K transform-contiguous rows in the K slot
+        flag = ["--realfwd" if run.real == "r2c" else "--realbwd"]
+        nstr, kstr = str(n), str(run.k)
     else:
         flag = ["--k1nat" if run.ip else "--k1noop"] + (["--mt"] if run.threads > 1 else [])
         nstr, kstr = str(n), "1"
@@ -548,7 +575,9 @@ def main():
     ap.add_argument("--primes", help="the prime set of the mixed group, e.g. 2,3,5,7 (default 2,3,5)")
     ap.add_argument("--threads", default="1")
     ap.add_argument("--inplace", action="store_true")
-    ap.add_argument("--cmp", choices=["mkl", "kfr"], default="mkl", help="the comparator: mkl (default) or kfr (a bench built with build.py --kfr; 1D, one thread; its own csv suffix)")
+    ap.add_argument("--cmp", choices=["mkl", "kfr", "fftw"], default="mkl", help="the comparator: mkl (default), kfr (a bench built with build.py --kfr; 1D c2c, one thread) or fftw (bound at runtime from vcpkg's fftw3.dll or $VFFT_FFTW_DLL; FFTW_MEASURE; the 1D c2c and the real cells, one thread); its own csv suffix")
+    ap.add_argument("--real", choices=["r2c", "c2r"], help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells or 2D shapes; its own csv suffix _r2c / _c2r")
+    ap.add_argument("--k", type=int, default=1, help="the batch count of the 1D real cell: K transform-contiguous rows (real rows at pitch N, CCE rows at pitch N+2); suffix _k<K>")
     ap.add_argument("--name", help="run directory name under gauntlet/results/ (default: group_date)")
     ap.add_argument("--store", help="use this wisdom store instead of a fresh copy of the shipped one")
     ap.add_argument("--bin-dir", help="where the gauntlet binaries are (default: beside the sources, else <build>/gauntlet)")
@@ -576,8 +605,14 @@ def main():
             if "x" in first:
                 dims = first.count("x") + 1
     run = Run(args, dims)
-    if run.cmp == "kfr" and (dims != 1 or run.threads > 1):
+    if run.cmp == "kfr" and (dims != 1 or run.threads > 1 or run.real):
         raise SystemExit("--cmp kfr: the KFR arm is the 1D c2c cell at one thread only")
+    if run.cmp == "fftw" and (run.threads > 1 or dims == 3 or run.ip):
+        raise SystemExit("--cmp fftw: the FFTW arm serves the 1D c2c cell and the 1D/2D real cells, out of place, one thread")
+    if run.real and (run.threads > 1 or run.ip or dims == 3):
+        raise SystemExit("--real: the real contract is out of place, one thread, 1D or 2D")
+    if run.k > 1 and (not run.real or dims != 1):
+        raise SystemExit("--k: the batch count belongs to the 1D real cell")
     cal_s, bench_s = estimate_seconds(cells, run.threads, args.calibrate)
     if args.verb == "cells":
         print("%d cells: %s%s" % (len(cells), " ".join(ckey(c) for c in cells[:12]), " ..." if len(cells) > 12 else ""))
@@ -598,7 +633,10 @@ def main():
         if args.verb in ("run", "bench"):
             stage_bench(run, cells)
         if args.verb == "verify":
-            stage_verify(run, cells)
+            if run.real:   # the real cells gate elementwise against the comparator inside the bench (2026-09-29)
+                run.note("verify: no reference probe for the real contract; the bench's rt_err column is the elementwise check against the comparator")
+            else:
+                stage_verify(run, cells)
         if args.verb in ("run", "bench", "report"):
             stage_report(run)
         if args.verb == "gflops":

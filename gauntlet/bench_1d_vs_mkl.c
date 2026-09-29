@@ -118,6 +118,21 @@ static int g_cmp_kfr = 0;   /* --cmp kfr: the K=1 cell's comparator is KFR inste
 static int        g_cmp_fftw = 0;
 static fftwx_api_t g_fx_arm;
 static int        g_fx_arm_ok = -1;   /* -1 = not yet bound */
+/* $VFFT_FFTW_WIS: the arm's wisdom file, imported at bind and re-exported
+ * after every plan it builds, so the run's first MEASURE verdict for a
+ * problem serves every later process of the run (one process per cell): the
+ * comparator holds still across cells, directions and method races, as our
+ * banked wisdom does. Unset: each process measures afresh. */
+static const char *fftw_wis_path(void)
+{
+    const char *e = getenv("VFFT_FFTW_WIS");
+    return (e && *e) ? e : NULL;
+}
+static void fftw_wis_export(void)
+{
+    if (fftw_wis_path())
+        g_fx_arm.export_wisdom_to_filename(fftw_wis_path());
+}
 static int fftw_arm_bind(void)
 {
     char err[512];
@@ -127,7 +142,11 @@ static int fftw_arm_bind(void)
         if (!g_fx_arm_ok)
             fprintf(stderr, "--cmp fftw: %s\n", err);
         else
-            printf("# comparator: %s (%s)\n", g_fx_arm.version, g_fx_arm.dll_path);
+        {
+            const int wis = fftw_wis_path() ? g_fx_arm.import_wisdom_from_filename(fftw_wis_path()) : 0;
+            printf("# comparator: %s (%s) wisdom %s\n", g_fx_arm.version, g_fx_arm.dll_path,
+                   fftw_wis_path() ? (wis ? "replayed" : "cold") : "per process");
+        }
     }
     return g_fx_arm_ok;
 }
@@ -761,6 +780,7 @@ static double k1z_time_fftw(int N, const double *z0, size_t total)
         : g_fx_arm.plan_dft_1d(N, (fftwx_complex *)zi, (fftwx_complex *)zo,
                                FFTWX_FORWARD, FFTWX_MEASURE);
     if (!p) { free_d(zi); free_d(zo); return 0; }
+    fftw_wis_export();
     memcpy(zi, z0, 2 * total * sizeof(double));   /* AFTER planning: MEASURE scribbles */
     for (int w = 0; w < 10; w++)
         g_fx_arm.execute(p);
@@ -1105,6 +1125,353 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     free_d(z0);
     free_d(S);
     free_d(rt);
+    vfft_destroy(h);
+}
+
+/* ═════════════════════════════════════════════════
+ * --realfwd / --realbwd : the REAL gauntlet cell (2026-09-29): 1D at K=1, 1D
+ * at K>1 (transform-contiguous rows: real rows at pitch N, CCE rows at pitch
+ * N+2 -- the geometry FFTW's howmany means), and with --2drealnat the 2D
+ * shape (N1 in the N slot, N2 in the K slot; real plane N1 x N2, CCE plane
+ * N1 x (N2/2+1) pairs). The K=1 natural cell's protocol on a VFFT_R2C /
+ * VFFT_C2R plan: pin + sibling guard, the front door on the store (OUT OF
+ * PLACE, interleaved CCE, natural, one thread), the comparator's spectrum of
+ * the same input as the reference (r2c: ours vs it elementwise; c2r: both
+ * backwards fed that spectrum, checked against N*x -- never a roundtrip),
+ * then the two timers with cachebust + cool between engines, best-of-5 in two
+ * windows, the engine order per the driver's flip. Comparator: FFTW (--cmp
+ * fftw: plan_dft_r2c_1d / plan_many_dft_r2c / plan_dft_r2c_2d and the c2r
+ * twins, FFTW_MEASURE, out of place; FFTW's c2r destroys its input, so it
+ * runs on a copy) or MKL (DFTI_REAL, CCE = COMPLEX_COMPLEX, NOT_INPLACE,
+ * NUMBER_OF_TRANSFORMS = K with the row distances). GFLOPS = 2.5 T log2 T per
+ * transform, T = the points (a real transform is half a complex one). Row =
+ * the K=1 cell's columns (N,K,... or N1,N2,...); plan "z:r2c" / "z:c2r"
+ * ("z:r2c2d" / "z:c2r2d"), path "nat-oop". Nothing else runs in the process. */
+static int g_real = 0;    /* 1 = r2c (forward), 2 = c2r (backward) */
+static int g_k2real = 0;  /* --2drealnat: the 2D real cell */
+
+/* the cell's geometry: nd = 1 or 2; K blocks (1D rows; 2D: one block) of rp
+ * reals and cp CCE doubles each */
+typedef struct { int nd, N1, N2; size_t K, rp, cp, pts; } real_geo_t;
+
+typedef void (*real_body_f)(void *ctx);
+/* the K=1 cell's timing shape (k1z_time_vfft_d): 10 warm-ups, then TWO windows
+ * of best-of-5, the second after the idle + re-warm gap. `total` sizes the
+ * reps (reps_for) -- the complex-equivalent points/2 keeps the batch duration
+ * on the c2c cells' scale. */
+static double real_time_body(real_body_f f, void *ctx, size_t total)
+{
+    for (int w = 0; w < 10; w++)
+        f(ctx);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int win = 0; win < 2; win++)
+    {
+        if (win)
+        {
+            const double tw0 = vfft_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                f(ctx);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_now_ns();
+            for (int i = 0; i < reps; i++)
+                f(ctx);
+            double ns = (vfft_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
+    }
+    return best;
+}
+typedef struct { vfft_plan h; int dir; double *src, *dst; } real_ours_t;
+static void real_ours_body(void *v)
+{
+    real_ours_t *c = (real_ours_t *)v;
+    vfft_execute(c->h, c->dir, c->src, NULL, c->dst, NULL);
+}
+typedef struct { fftwx_plan p; } real_fx_t;
+static void real_fx_body(void *v) { g_fx_arm.execute(((real_fx_t *)v)->p); }
+/* FFTW's plan for the geometry, over the caller's planes (planned BEFORE the
+ * planes are filled: MEASURE scribbles) */
+static fftwx_plan real_fx_plan(const real_geo_t *g, int c2r, double *a, double *b)
+{
+    const int N = g->N1, K = (int)g->K;
+    fftwx_plan p;
+    if (g->nd == 2)
+        p = c2r ? g_fx_arm.plan_dft_c2r_2d(g->N1, g->N2, (fftwx_complex *)a, b, FFTWX_MEASURE)
+                : g_fx_arm.plan_dft_r2c_2d(g->N1, g->N2, a, (fftwx_complex *)b, FFTWX_MEASURE);
+    else if (K > 1)
+        p = c2r ? g_fx_arm.plan_many_dft_c2r(1, &N, K, (fftwx_complex *)a, NULL, 1, (int)(g->cp / 2),
+                                             b, NULL, 1, (int)g->rp, FFTWX_MEASURE)
+                : g_fx_arm.plan_many_dft_r2c(1, &N, K, a, NULL, 1, (int)g->rp,
+                                             (fftwx_complex *)b, NULL, 1, (int)(g->cp / 2), FFTWX_MEASURE);
+    else
+        p = c2r ? g_fx_arm.plan_dft_c2r_1d(N, (fftwx_complex *)a, b, FFTWX_MEASURE)
+                : g_fx_arm.plan_dft_r2c_1d(N, a, (fftwx_complex *)b, FFTWX_MEASURE);
+    if (p)
+        fftw_wis_export();
+    return p;
+}
+#ifdef VFFT_HAS_MKL
+typedef struct { DFTI_DESCRIPTOR_HANDLE d; double *a, *b; int c2r; } real_mk_t;
+static void real_mk_body(void *v)
+{
+    real_mk_t *c = (real_mk_t *)v;
+    if (c->c2r) DftiComputeBackward(c->d, c->a, c->b);
+    else        DftiComputeForward(c->d, c->a, c->b);
+}
+/* MKL's descriptor for the geometry, PER DIRECTION: this MKL applies the
+ * distances and strides to the arrays handed to the compute call (the
+ * --c2r cell's precedent: a backward descriptor with the distances
+ * swapped), so c2r gets its own. The 2D CCE strides are set explicitly:
+ * MKL's default output pitch is N2 complex, not N2/2+1 (measured with
+ * gauntlet/mkl_real_strides_probe.c), and the explicit {0, N2/2+1, 1} is
+ * the layout FFTW and we write. */
+static DFTI_DESCRIPTOR_HANDLE real_mk_desc(const real_geo_t *g, int c2r)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    MKL_LONG dims[2] = { g->N1, g->N2 };
+    const MKL_LONG rc = g->nd == 2 ? DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_REAL, 2, dims)
+                                   : DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)g->N1);
+    if (rc != DFTI_NO_ERROR)
+        return NULL;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    DftiSetValue(d, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
+    if (g->nd == 2)
+    {
+        MKL_LONG rs[3] = { 0, g->N2, 1 }, cs[3] = { 0, g->N2 / 2 + 1, 1 };
+        DftiSetValue(d, DFTI_INPUT_STRIDES, c2r ? cs : rs);
+        DftiSetValue(d, DFTI_OUTPUT_STRIDES, c2r ? rs : cs);
+    }
+    else if (g->K > 1)
+    {
+        const MKL_LONG rd = (MKL_LONG)g->rp, cd = (MKL_LONG)(g->cp / 2);   /* reals, complex */
+        DftiSetValue(d, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)g->K);
+        DftiSetValue(d, DFTI_INPUT_DISTANCE, c2r ? cd : rd);
+        DftiSetValue(d, DFTI_OUTPUT_DISTANCE, c2r ? rd : cd);
+    }
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
+    {
+        DftiFreeDescriptor(&d);
+        return NULL;
+    }
+    return d;
+}
+#endif
+
+/* the comparator's CCE spectrum of the real planes x into ref; 1 on success */
+static int real_ref_spectrum(const real_geo_t *g, const double *x, double *ref)
+{
+    const size_t rn = g->K * g->rp + 2, cn = g->K * g->cp;
+    if (g_cmp_fftw)
+    {
+        if (!fftw_arm_bind())
+            return 0;
+        double *xi = alloc_d(rn), *zo = alloc_d(cn);
+        fftwx_plan p = real_fx_plan(g, 0, xi, zo);
+        if (!p)
+        {
+            free_d(xi);
+            free_d(zo);
+            return 0;
+        }
+        memcpy(xi, x, rn * sizeof(double));   /* AFTER planning: MEASURE scribbles */
+        g_fx_arm.execute(p);
+        memcpy(ref, zo, cn * sizeof(double));
+        g_fx_arm.destroy_plan(p);
+        free_d(xi);
+        free_d(zo);
+        return 1;
+    }
+#ifdef VFFT_HAS_MKL
+    {
+        DFTI_DESCRIPTOR_HANDLE d = real_mk_desc(g, 0);
+        if (!d)
+            return 0;
+        double *xi = alloc_d(rn);
+        memcpy(xi, x, rn * sizeof(double));
+        DftiComputeForward(d, xi, ref);
+        DftiFreeDescriptor(&d);
+        free_d(xi);
+        return 1;
+    }
+#else
+    return 0;
+#endif
+}
+
+/* the comparator's timed arm: its own plan, built and destroyed outside the
+ * timed windows; the input seeded once (a dense transform is data-oblivious
+ * after FFTW's c2r has consumed it) */
+static double real_time_cmp(const real_geo_t *g, int c2r, const double *x, const double *ref)
+{
+    const size_t rn = g->K * g->rp + 2, cn = g->K * g->cp, tot = g->pts / 2;
+    const size_t an = c2r ? cn : rn, bn = c2r ? rn : cn;
+    if (g_cmp_fftw)
+    {
+        if (!fftw_arm_bind())
+            return 0;
+        double *a = alloc_d(an), *b = alloc_d(bn);
+        fftwx_plan p = real_fx_plan(g, c2r, a, b);
+        if (!p)
+        {
+            free_d(a);
+            free_d(b);
+            return 0;
+        }
+        memcpy(a, c2r ? ref : x, an * sizeof(double));   /* after planning */
+        real_fx_t c = { p };
+        double ns = real_time_body(real_fx_body, &c, tot);
+        g_fx_arm.destroy_plan(p);
+        free_d(a);
+        free_d(b);
+        return ns;
+    }
+#ifdef VFFT_HAS_MKL
+    {
+        real_mk_t c;
+        c.d = real_mk_desc(g, c2r);
+        if (!c.d)
+            return 0;
+        c.a = alloc_d(an);
+        c.b = alloc_d(bn);
+        c.c2r = c2r;
+        memcpy(c.a, c2r ? ref : x, an * sizeof(double));
+        double ns = real_time_body(real_mk_body, &c, tot);
+        DftiFreeDescriptor(&c.d);
+        free_d(c.a);
+        free_d(c.b);
+        return ns;
+    }
+#else
+    return 0;
+#endif
+}
+
+static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
+{
+    const int c2r = (g_real == 2);
+    const size_t rn = g->K * g->rp + 2, cn = g->K * g->cp, tot = g->pts / 2;
+    const char *plan_s = g->nd == 2 ? (c2r ? "z:c2r2d" : "z:r2c2d") : (c2r ? "z:c2r" : "z:r2c");
+    const char *path = "nat-oop";
+    char shape[32];
+    if (g->nd == 2) snprintf(shape, sizeof shape, "%dx%d", g->N1, g->N2);
+    else            snprintf(shape, sizeof shape, "%d", g->N1);
+    bench_pin_one_thread();
+    vfft_wisdom *W = k1z_bundle();
+    if (!W)
+    {
+        printf("%-8s %-16s   SKIP (front-door bundle unavailable)\n", shape, plan_s);
+        return;
+    }
+    vfft_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = c2r ? VFFT_C2R : VFFT_R2C;
+    cfg.placement = VFFT_OUTOFPLACE;
+    cfg.rigor = VFFT_MEASURE;
+    cfg.dims = g->nd;
+    cfg.n[0] = g->N1;
+    cfg.n[1] = g->nd == 2 ? g->N2 : 0;
+    cfg.howmany = g->K;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.batch_geom = g->K > 1 ? VFFT_BATCH_TRANSFORM_CONTIGUOUS : VFFT_BATCH_DEFAULT;
+    cfg.order = g->nd == 2 ? VFFT_ORDER_NATURAL : VFFT_ORDER_DEFAULT;   /* a real spectrum is natural */
+    cfg.nthreads = 1;
+    cfg.wisdom = W;   /* wisdom_write 0: a bench never banks */
+    vfft_plan h = vfft_create(&cfg);
+    if (!h)
+    {
+        printf("%-8s %-16s   vfft_create FAILED\n", shape, plan_s);
+        return;
+    }
+    double *x = alloc_d(rn), *ref = alloc_d(cn), *o = alloc_d(cn > rn ? cn : rn), *src = alloc_d(cn > rn ? cn : rn);
+    srand(42 + g->N1 + 1);
+    for (size_t i = 0; i < rn; i++)
+        x[i] = 0.0;
+    for (size_t t = 0; t < g->K; t++)
+        for (size_t i = 0; i < (size_t)g->N1 * (g->nd == 2 ? (size_t)g->N2 : 1); i++)
+            x[t * g->rp + i] = (double)rand() / RAND_MAX - 0.5;
+    const int haveref = real_ref_spectrum(g, x, ref);
+    memcpy(src, c2r ? ref : x, (c2r ? cn : rn) * sizeof(double));
+    for (size_t i = 0; i < (cn > rn ? cn : rn); i++)
+        o[i] = -1.0e300;   /* poison: a refused execute leaves it */
+    vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, NULL, o, NULL);
+    if (o[0] == -1.0e300)
+    {
+        printf("%-8s %-16s   execute REFUSED\n", shape, plan_s);
+        free_d(x); free_d(ref); free_d(o); free_d(src);
+        vfft_destroy(h);
+        return;
+    }
+    double rel = -1.0;
+    if (haveref)
+    {
+        double w = 0, m = 0;
+        const size_t pts1 = g->pts / g->K;   /* points per transform */
+        if (c2r)
+        {   /* backward vs pts1 * x, block by block */
+            for (size_t t = 0; t < g->K; t++)
+                for (size_t i = 0; i < pts1; i++)
+                {
+                    double d = fabs(o[t * g->rp + i] - (double)pts1 * x[t * g->rp + i]), q = fabs(x[t * g->rp + i]);
+                    if (d > w) w = d;
+                    if (q > m) m = q;
+                }
+            rel = m > 0 ? w / ((double)pts1 * m) : w;
+        }
+        else
+        {   /* forward vs the comparator's CCE planes */
+            for (size_t i = 0; i < cn; i++)
+            {
+                double d = fabs(o[i] - ref[i]), q = fabs(ref[i]);
+                if (d > w) w = d;
+                if (q > m) m = q;
+            }
+            rel = m > 0 ? w / m : w;
+        }
+    }
+    double vns = 0, mns = 0;
+    real_ours_t oc = { h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, o };
+    if (flip)
+    { /* comparator first */
+        mns = real_time_cmp(g, c2r, x, ref);
+        cachebust();
+        pace(cool_ms);
+        vns = real_time_body(real_ours_body, &oc, tot);
+    }
+    else
+    {
+        vns = real_time_body(real_ours_body, &oc, tot);
+        cachebust();
+        pace(cool_ms);
+        mns = real_time_cmp(g, c2r, x, ref);
+    }
+    double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
+    const double pts1 = (double)(g->pts / g->K);
+    double vgf = (vns > 0) ? (double)g->K * 2.5 * pts1 * log2(pts1) / vns : 0;
+    printf("%-8s %-16s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e\n",
+           shape, plan_s, path, vns, mns, vgf, ratio, rel);
+    if (out)
+    {
+        char row[320];
+        if (g->nd == 2)
+            snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
+                     g->N1, g->N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
+        else
+            snprintf(row, sizeof row, "%d,%zu,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
+                     g->N1, g->K, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
+        fflush(out);
+        if (!k1z_csv_replace(g_csv_path, row))   /* a re-run REPLACES the cell's row */
+            fputs(row, out);
+        fflush(out);
+    }
+    free_d(x); free_d(ref); free_d(o); free_d(src);
     vfft_destroy(h);
 }
 
@@ -5077,6 +5444,18 @@ int main(int argc, char **argv)
             argv++;
             argc--;
         }
+        else if (strcmp(argv[1], "--realfwd") == 0)
+        {
+            g_real = 1;   /* the 1D real gauntlet cell, r2c (2026-09-29) */
+        }
+        else if (strcmp(argv[1], "--realbwd") == 0)
+        {
+            g_real = 2;   /* ... c2r */
+        }
+        else if (strcmp(argv[1], "--2drealnat") == 0)
+        {
+            g_k2real = 1; /* the 2D real gauntlet cell: N1 in the N slot, N2 in the K slot */
+        }
         else if (strcmp(argv[1], "--ilmt") == 0)
         {
             /* TC-batch MT vs MKL batched MT (2026-08-06). Implies the MT
@@ -5093,7 +5472,7 @@ int main(int argc, char **argv)
     }
     g_oop_mt = (oop && mt);
 #ifdef VFFT_HAS_KFR
-    if (g_cmp_kfr && (mt || twod || il2d || il3d || real2d || r2c))
+    if (g_cmp_kfr && (mt || twod || il2d || il3d || real2d || r2c || g_real))
     {
         fprintf(stderr, "--cmp kfr: the KFR arm is the 1D c2c cell at one thread only\n");
         return 2;
@@ -5756,6 +6135,8 @@ int main(int argc, char **argv)
     {
         if (g_k3nat)
             fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,%sflip\n", g_k1noop_mt ? "engaged," : "");
+        else if (g_k2real)
+            fprintf(out, "N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
         else if (g_k2nat)
             fprintf(out, "N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,%sflip\n", g_k1noop_mt ? "engaged," : "");
         else if (g_ilmt)
@@ -5789,6 +6170,45 @@ int main(int argc, char **argv)
             return 2;
         }
         run_k2z_cell(n1, n2, n3, out, cool_ms, flip);
+        if (out)
+            fclose(out);
+        printf("\nbenched 1 cell.  CSV -> %s\n", csv);
+        return 0;
+    }
+    if (g_real || g_k2real)
+    {   /* --realfwd / --realbwd / --2drealnat: one isolated real cell per
+         * process (the N and K slots); nothing else runs in this process */
+        if (!target_N)
+        {
+            printf("--realfwd / --realbwd need the cell's N\n");
+            return 2;
+        }
+        {
+            real_geo_t g;
+            memset(&g, 0, sizeof g);
+            if (g_k2real)
+            {   /* N1 in the N slot, N2 in the K slot */
+                if (target_K < 2 || (target_K & 1))
+                {
+                    printf("--2drealnat needs N1 in the N slot and an EVEN N2 in the K slot\n");
+                    return 2;
+                }
+                g.nd = 2; g.N1 = target_N; g.N2 = (int)target_K; g.K = 1;
+                g.rp = (size_t)g.N1 * (size_t)g.N2;
+                g.cp = 2u * (size_t)g.N1 * ((size_t)g.N2 / 2u + 1u);
+                g.pts = g.rp;
+            }
+            else
+            {
+                g.nd = 1; g.N1 = target_N; g.N2 = 0; g.K = target_K > 1 ? (size_t)target_K : 1u;
+                g.rp = (size_t)g.N1;
+                g.cp = 2u * ((size_t)g.N1 / 2u + 1u);
+                g.pts = g.K * g.rp;
+            }
+            if (!g_real)
+                g_real = 1;   /* --2drealnat alone: forward */
+            run_real_cell(&g, out, cool_ms, flip);
+        }
         if (out)
             fclose(out);
         printf("\nbenched 1 cell.  CSV -> %s\n", csv);

@@ -1,0 +1,12 @@
+16         banked       117ms replayed  zr2c:child_oop_il
+32         banked        96ms raced     zr2c:child_oop_il
+64         banked        87ms replayed  zr2c:child_oop_il
+96         banked        93ms raced     zr2c:child_oop_il
+128        banked        91ms replayed  zr2c:child_nat_ip
+256        banked        89ms replayed  zr2c:child_oop_il
+512        banked        91ms replayed  zr2c:child_nat_ip
+1000       banked        92ms raced     zr2c:child_oop_il
+1024       banked        90ms replayed  zr2c:child_oop_il
+1215       banked        91ms raced     bridge
+2048       banked        88ms replayed  zr2c:child_oop_il
+4096       banked        90ms replayed  zr2c:child_oop_il
