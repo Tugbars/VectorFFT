@@ -65,6 +65,9 @@ type cil_form =
   | Cil_t2c
   | Cil_n1t
   | Cil_t2
+  | Cil_t2h (* --cil-t2h: the interleaved real pair's Hermitian top stage (real_il.ml) *)
+  | Cil_t2m (* --cil-t2m: the real pair's top over the real leaf's half spectra *)
+  | Cil_r2z (* --cil-r2z: the real pair's real leaf *)
 
 type cil_turn =
   | Turnst

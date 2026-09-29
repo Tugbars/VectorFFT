@@ -118,6 +118,39 @@ let addr_str (a : caddr) : string =
   | AZinAbs i -> Printf.sprintf "zin[%d]" i
   | AZoutAbs i -> Printf.sprintf "zout[%d]" i
   | ATw i -> Printf.sprintf "twp[%d]" i
+  | AZoutSpec (q, 0) -> Printf.sprintf "zout[2*((size_t)%d*OLs)]" q
+  | AZoutSpec (q, _) -> Printf.sprintf "zout[2*((size_t)%d*OLs + count)]" q
+  | AZoutSpecT (c, 0) -> Printf.sprintf "zout[2*((size_t)%d)]" c
+  | AZoutSpecT (c, _) -> Printf.sprintf "zout[2*((size_t)count*OLs + %d)]" c
+  | AXinLeg l -> Printf.sprintf "zin[(size_t)%d*Ls + k]" l
+  | AXoutLeg l -> Printf.sprintf "zout[(size_t)%d*OLs + k]" l
+  | AZinLegOff (l, o) -> Printf.sprintf "zin[2*((size_t)%d*Ls + k + %d)]" l o
+  | AZinMir _ | AZoutMir _ | AZoutTurnMir _ | AZinSpec _ | AZinSpecC _ | AZinSpecB _ | AZinSpecP _ ->
+    failwith "cx_render.addr_str: a mirror / special form renders through render_load or render_store"
+;;
+
+(* ── the t2h mirror and special forms (real_il.ml) ──────────────────────
+   A mirror LOAD is the reversed, conjugated vector of the mirror columns:
+   at 256 bits one permute4x64 (swap the 128-bit halves) and one xor; at
+   VEX-128 the reversal is the identity and only the xor remains. A mirror
+   STORE is the same two ops on the value. The turned mirror store lands one
+   column per store, so it conjugates only. The masks are the file's own
+   _M_IM (256) / _M_IM_n (128) — both are declared by every t2h file. *)
+let mir_mask (isa : Isa.t) : string = if isa.Isa.vec_width = 2 then "_M_IM_n" else "_M_IM"
+
+let mir_value (isa : Isa.t) (v : string) : string =
+  match isa.Isa.vec_width with
+  | 4 -> Printf.sprintf "_mm256_xor_pd(_mm256_permute4x64_pd(%s, 0x4E), _M_IM)" v
+  | 2 -> Printf.sprintf "_mm_xor_pd(%s, _M_IM_n)" v
+  | w -> failwith (Printf.sprintf "cx_render.mir_value: no mirror at vec_width %d" w)
+;;
+
+let spec_gather (i0 : string) (i1 : string) : string =
+  Printf.sprintf
+    "_mm256_insertf128_pd(_mm256_castpd128_pd256(_mm_loadu_pd(&zin[2*(%s)])), \
+     _mm_loadu_pd(&zin[2*(%s)]), 1)"
+    i0
+    i1
 ;;
 
 (* VFFT_CX_STORE128 — the M-128 store edge (TURNED-axis, mid slot): each
@@ -137,6 +170,44 @@ let store128 = ref (Sys.getenv_opt "VFFT_CX_STORE128" = Some "1")
    the plain wide load. *)
 let render_load (isa : Isa.t) (a : caddr) : string =
   match a with
+  | AZinMir m ->
+    mir_value
+      isa
+      (Isa.loadu_pd
+         isa
+         (Printf.sprintf "zin[2*((size_t)%d*Ls - k - %d)]" m ((isa.Isa.vec_width / 2) - 1)))
+  | AZinSpecP c ->
+    (* the packed (DC, Nyquist) slot of real leg c as the two real legs of
+       the self-mirrored columns: (a, b) -> [a 0 | b 0] *)
+    Printf.sprintf
+      "_mm256_blend_pd(_mm256_permute4x64_pd(_mm256_castpd128_pd256(_mm_loadu_pd(&zin[2*((size_t)%d*Ls)])), 0x50), _mm256_setzero_pd(), 0xA)"
+      c
+  | AZinSpec c ->
+    spec_gather (Printf.sprintf "(size_t)%d*Ls" c) (Printf.sprintf "(size_t)%d*Ls + count" c)
+  | AZinSpecC c ->
+    Printf.sprintf
+      "_mm256_xor_pd(%s, _M_IM)"
+      (spec_gather (Printf.sprintf "(size_t)%d*Ls" c) (Printf.sprintf "(size_t)%d*Ls + count" c))
+  | AZinSpecB (r, q) ->
+    (* the c2r special leg q: lane 0 = X[q R2] (q > R/2: conj X[(R-q) R2]),
+       lane 1 = X[q R2 + R2/2] (q >= R/2: conj X[(R-1-q) R2 + R2/2]) *)
+    let h = r / 2 in
+    let i0, c0 =
+      if q <= h
+      then Printf.sprintf "(size_t)%d*Ls" q, false
+      else Printf.sprintf "(size_t)%d*Ls" (r - q), true
+    in
+    let i1, c1 =
+      if q < h
+      then Printf.sprintf "(size_t)%d*Ls + count" q, false
+      else Printf.sprintf "(size_t)%d*Ls + count" (r - 1 - q), true
+    in
+    let v = spec_gather i0 i1 in
+    (match c0, c1 with
+     | false, false -> v
+     | true, true -> Printf.sprintf "_mm256_xor_pd(%s, _M_IM)" v
+     | false, true -> Printf.sprintf "_mm256_xor_pd(%s, _M_IMHI)" v
+     | true, false -> failwith "cx_render.render_load: AZinSpecB lane pattern")
   | AZinLeg l when !colstride && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm256_loadu2_m128d(&zin[2*((size_t)%d*Ls + ((size_t)k + 1)*Gs)], \
@@ -155,6 +226,16 @@ let render_load (isa : Isa.t) (a : caddr) : string =
 
 let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
   match a with
+  | AZoutMir m ->
+    Isa.storeu_pd
+      isa
+      (Printf.sprintf "zout[2*((size_t)%d*OLs - k - %d)]" m ((isa.Isa.vec_width / 2) - 1))
+      (mir_value isa v)
+  | AZoutTurnMir (l, c) ->
+    Isa.storeu_pd
+      isa
+      (Printf.sprintf "zout[2*(((size_t)Ls - k - %d)*OLs + %d)]" c l)
+      (Isa.xor_mask_pd isa v (mir_mask isa))
   | AZoutLeg l when !colstride && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm256_storeu2_m128d(&zout[2*((size_t)%d*OLs + ((size_t)k + 1)*OGs)], \
@@ -211,6 +292,12 @@ let render
   | CLoad a -> Isa.loadu_pd ~mode isa (addr_str a)
   | CStore _ -> failwith "codelet_cil.render: CStore is a statement — use render_store"
   | CTurn (a, b, odd) -> Isa.cx_deint_pd isa ~odd (v a) (v b)
+  | CUnpack (a, b, hi) ->
+    (match isa.Isa.vec_width with
+     | 8 -> Printf.sprintf "_mm512_unpack%s_pd(%s, %s)" (if hi then "hi" else "lo") (v a) (v b)
+     | 4 -> Printf.sprintf "_mm256_unpack%s_pd(%s, %s)" (if hi then "hi" else "lo") (v a) (v b)
+     | 2 -> Printf.sprintf "_mm_unpack%s_pd(%s, %s)" (if hi then "hi" else "lo") (v a) (v b)
+     | w -> failwith (Printf.sprintf "cx_render: no unpack at vec_width %d" w))
   | CPart (a, c) -> Isa.cx_part_pd isa (v a) c
   | CAdd (a, { node = CRotNI y; _ }) when ctx.rotfma ->
     (* a + (-i)·y = a - [-1,+1]·cflip y : fnmadd on the (1,1) pair's _s. *)

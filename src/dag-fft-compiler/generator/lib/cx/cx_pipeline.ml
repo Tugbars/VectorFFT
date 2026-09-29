@@ -39,7 +39,7 @@ let children (e : t) : t list =
   | CNeg a | CRotNI a | CRotPI a | CPart (a, _) -> [ a ]
   | CStore (_, v) -> [ v ]
   | CAdd (a, b) | CSub (a, b) | CRotAdd (a, b) -> [ a; b ]
-  | CTurn (a, b, _) -> [ a; b ]
+  | CTurn (a, b, _) | CUnpack (a, b, _) -> [ a; b ]
   | CFmaC (_, x, e) | CFnmaC (_, x, e) -> [ x; e ]
   | CTwC (_, _, x) | CTwV (_, x) | CTwL (_, x) -> [ x ]
 ;;
@@ -105,6 +105,7 @@ let dedup_sub_pairs_cx (assigns : (Expr.elem_ref * t) list)
              | CPart (a, c) -> cpart (rw a) c
              | CStore (a, v) -> cstore a (rw v)
              | CTurn (a, b, odd) -> cturn (rw a) (rw b) odd
+             | CUnpack (a, b, hi) -> cunpack (rw a) (rw b) hi
              | CAdd (a, b) -> cadd (rw a) (rw b)
              | CSub (a, b) -> csub (rw a) (rw b)
              | CRotAdd (a, b) -> crotadd (rw a) (rw b)
@@ -165,7 +166,7 @@ let print_stats
     | CAdd _ | CRotAdd _ -> incr n_add
     | CSub _ -> incr n_sub
     | CNeg _ -> incr n_neg
-    | CRotNI _ | CRotPI _ | CTurn _ | CPart _ -> incr n_rot
+    | CRotNI _ | CRotPI _ | CTurn _ | CPart _ | CUnpack _ -> incr n_rot
     | CFmaC _ | CFnmaC _ -> incr n_fma
     | CTwC _ | CTwV _ | CTwL _ -> incr n_tw);
   let cp_str =

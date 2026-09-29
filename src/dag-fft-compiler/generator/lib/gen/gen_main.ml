@@ -488,6 +488,15 @@ let run (argv : string array) : unit =
       cil_pretw := true)
     else if arg = "--cil-n1t"
     then cil_kind := "n1t"
+    else if arg = "--cil-t2h"
+    then
+      (* the interleaved REAL pair's top stage (real_il.ml, 2026-09-29):
+         the Hermitian half-spectrum mid over the stock n1t leaf's plane *)
+      cil_kind := "t2h"
+    else if arg = "--cil-t2m"
+    then cil_kind := "t2m" (* the real pair's top over the real leaf's half spectra *)
+    else if arg = "--cil-r2z"
+    then cil_kind := "r2z" (* the real pair's real leaf (cx_real.ml) *)
     else if arg = "--cil-t2"
     then cil_kind := "t2"
     else if arg = "--cil-bwd"
@@ -1279,6 +1288,15 @@ let run (argv : string array) : unit =
            ~chain_b
            ~isa
            ~uarch))
+    else if !cil_kind = "t2h" || !cil_kind = "t2m" || !cil_kind = "r2z"
+    then
+      print_string
+        (Real_il.emit
+           ~kind:(Real_il.kind_of_string !cil_kind)
+           ~dir:(if !cil_bwd then Real_il.Bwd else Real_il.Fwd)
+           ~radix:n
+           ~isa
+           ~uarch)
     else if !cil_kind <> ""
     then
       (* interleaved-complex (full-IL) family: N (positional) = the radix.

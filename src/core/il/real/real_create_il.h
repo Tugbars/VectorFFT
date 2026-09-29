@@ -1,14 +1,19 @@
 /* real_create_il.h — the r2c / c2r CREATE, interleaved tier.
  *
- * The zr2c route (il/real/zr2c_build.h): even N, K==1, INTERLEAVED, no
- * caller-supplied batch — the CCE plane reinterpreted as z[N/2], a c2c child,
- * and the Hermitian fold. The same route serves r2c and c2r (the c2r twin
- * folds first). The real bridge (bridge/real_bridge.h) holds
- * the gate and calls this only for a matching request.
+ * Two engines serve an even N, K==1, INTERLEAVED request with no
+ * caller-supplied batch (il/real/zrp_build.h, the door's engine pick):
+ *   zr2c  the CCE plane reinterpreted as z[N/2], a c2c child, and the
+ *         Hermitian fold (zr2c_build.h); the same route serves r2c and c2r
+ *         (the c2r twin folds first);
+ *   zrp   the real pair: the stock n1t leaf over the packed view and the
+ *         t2h Hermitian top stage, no fold pass (zrp.h), its c2r the mirror.
+ * The cell's engine is banked in the real shard (wisdom2_real_il.h); a miss
+ * races the two. The real bridge (bridge/real_bridge.h) holds the gate and
+ * calls this only for a matching request.
  *
  * Returns the handle; or NULL with *refused=0 to let an out-of-place request
  * fall through to the split real engines (the D1 bridge, phase 7); or NULL
- * with *refused=1 when the request is in place and zr2c could not be built.
+ * with *refused=1 when the request is in place and no engine could be built.
  *
  * It runs BEFORE the split-path calibrate-on-miss blocks on purpose: a
  * zr2c-served cell must not pay for (or bank) c2c(N/2, K)/rfft rows it never
@@ -25,10 +30,10 @@ static struct vfft_plan_s *_vfft_create_real_il(const vfft_config_t *cfg,
                                                 struct vfft_wisdom_s *W,
                                                 int N, int *refused)
 {
-    struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);
+    struct vfft_plan_s *hz = _real_il_build(cfg, N, W);
     *refused = 0;
     if (hz)
-        return hz; /* zr2c serving: banks its own kind-5 cell */
+        return hz; /* the banked engine, or the race's winner: banks its own cell */
     /* 🔴 NO SILENT DEGRADE TO OUT-OF-PLACE. The in-place refusal in create
      * ADMITTED this shape, so falling through would stamp
      * h->placement = INPLACE onto a handle whose executor is the OOP
@@ -36,8 +41,8 @@ static struct vfft_plan_s *_vfft_create_real_il(const vfft_config_t *cfg,
      * N+2-double CCE plane and were never gated for aliasing. The
      * caller then makes the documented (z,NULL,z,NULL) call and gets
      * an out-of-place executor whose source aliases its destination.
-     * zr2c is the ONLY in-place real path, so if it could not be
-     * built there is no in-place plan to give: refuse loudly.
+     * The interleaved engines are the ONLY in-place real path, so if none
+     * could be built there is no in-place plan to give: refuse loudly.
      * Out-of-place callers keep the fall-through unchanged. */
     if (cfg->placement == VFFT_INPLACE)
     {

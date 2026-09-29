@@ -258,6 +258,16 @@ struct vfft_plan_s
     int zr2c_route;                 /* 0 = OOP-IL child, 1 = NAT-IP child */
     double *zr2c_aff;               /* affS ++ affC (one allocation)      */
     double *zr2c_scratch;           /* N+2 dbl, route-0 placements only   */
+    /* the REAL PAIR (2026-09-29, il/real/zrp.h): the stock n1t leaf over
+     * the packed view and the t2h Hermitian top stage, no fold pass; the
+     * real door's other engine beside zr2c, raced per cell and banked
+     * (eng=zrp pair=R1.R2). zrp != NULL selects it at execute. */
+    vfft_zrp_plan_t *zrp;           /* the real pair's plan (owned)       */
+    /* ZTT-r (2026-09-29, il/real/zttr.h): the ZTT at N/2 with the Hermitian
+     * fold fused into the terminator (r2c) or the ingest (c2r); the real
+     * door's third engine, calibrated per cell over its chains and tiles and
+     * banked (eng=zttr chain= tile= stk=). zttr != NULL selects it. */
+    vfft_zttr_plan_t *zttr;         /* ZTT-r's plan (owned)               */
     stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
     struct vfft_ilnd_s *ilnd;  /* the rank-N INTERLEAVED c2c tier (fftnd_il.h), owned */
     vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */

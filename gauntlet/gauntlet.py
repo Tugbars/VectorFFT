@@ -319,7 +319,11 @@ def cell_rows(store, n, ip, threads=1, real=None):
 
 
 def route_of(rows):
-    for k, v in rows.items():                 # the real cells: the zr2c route or the odd-N bridge verdict
+    for k, v in rows.items():                 # the real cells: the engine (zrp pair / zr2c route) or the odd-N bridge verdict
+        if ("t=r2c" in k or "t=c2r" in k) and "eng=zrp" in v:
+            m = re.search(r"pair=([\d.]+)", v)
+            lf = re.search(r"leaf=(\w+)", v)
+            return "zrp:" + (m.group(1) if m else "?") + ":" + (lf.group(1) if lf else "n1t")
         if ("t=r2c" in k or "t=c2r" in k) and "route=" in v:
             r = re.search(r"route=(\w+)", v).group(1)
             return ("zr2c:" + r) if "eng=zr2c" in v else r
