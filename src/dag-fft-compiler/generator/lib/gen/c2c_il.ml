@@ -147,6 +147,13 @@ type kind =
            directions (DIF; bwd = conjugated driver-built table), records
            per (d, leg) HOISTED out of the k loop — the z-T1S broadcast
            sourcing (6c). *)
+  | RN1 (* the REAL MONO (2026-09-30): the n1 body on REAL input with the
+           CCE half output (fwd: outputs 0..R/2 of the DFT of (x, 0)), and on
+           the Hermitian half input with REAL output (bwd: bins 0..R/2 loaded,
+           bins R/2+1..R-1 the conjugates of their mirrors, the real lane of
+           every output stored). One straight-line kernel is the whole small
+           real transform: no promote pass, no c2c child, no fold. Monolithic
+           only; count = 1 runs the VEX-128 tail (the K=1 solo). *)
 
 let kind_of_string = function
   | "n1" -> N1
@@ -154,9 +161,10 @@ let kind_of_string = function
   | "n1t" -> N1T
   | "t2" -> T2
   | "t2c" -> T2C
+  | "rn1" -> RN1
   | s ->
     failwith
-      (Printf.sprintf "codelet_cil: unknown kind %s (n1 | n1c | n1t | t2 | t2c)" s)
+      (Printf.sprintf "codelet_cil: unknown kind %s (n1 | n1c | n1t | t2 | t2c | rn1)" s)
 ;;
 
 let kind_name = function
@@ -165,6 +173,7 @@ let kind_name = function
   | N1T -> "n1t"
   | T2 -> "t2"
   | T2C -> "t2c"
+  | RN1 -> "rn1"
 ;;
 
 (* DIRECTION.
@@ -245,6 +254,8 @@ let emit
      warning 16), and making the policy explicit at every call site is better
      anyway. Only T2 streams a runtime table, so log3 is meaningless on the
      other kinds — refuse rather than silently ignore. *)
+  if kind = RN1 && blocked
+  then failwith "codelet_cil: rn1 (the real mono) is monolithic; --cil-blocked does not apply";
   if log3 && kind <> T2
   then
     failwith
@@ -399,6 +410,7 @@ let emit
   let odd_p1 = frame_knob "VFFT_CX_ODDP1" (twiddled || radix >= 23) in
   let odd_blocked =
     (not blocked)
+    && kind <> RN1
     && radix mod 2 = 1
     && radix >= oddblk_min
     && oddblk_bw > 0
@@ -416,6 +428,22 @@ let emit
      ORIGIN's listing order, so asis reproduces the hand kernel's interleaved
      load/ingest/butterfly stream (peak 15). Bypasses the normal input+ingest
      pre-pass, which front-loads all 16 ingests and forces peak 16. *)
+  (* THE REAL MONO's edges (RN1): leg l loads as a real lane (fwd) or, on the
+     backward, as the CCE bin l for l <= R/2 and the conjugate of bin R-l
+     above; outputs store as CCE bins 0..R/2 (fwd) or as real lanes (bwd).
+     Every other kind keeps the leg forms, so nothing else changes. *)
+  let half = radix / 2 in
+  let laddr (l : int) : caddr =
+    if kind <> RN1
+    then AZinLeg l
+    else if dir = Fwd
+    then AZinReal l
+    else if l <= half
+    then AZinLeg l
+    else AZinHerm (l, radix)
+  in
+  let oaddr (l : int) : caddr = if kind = RN1 && dir = Bwd then AZoutReal l else AZoutLeg l in
+  let keep_out (l : int) : bool = (not (kind = RN1 && dir = Fwd)) || l <= half in
   let use_wing_t2 =
     kind = T2 && dir = Fwd && radix = 16 && ctx.tangent && ctx.wing_enabled
   in
@@ -427,7 +455,7 @@ let emit
         Array.init radix (fun i ->
           (* T2 fwd PRE-twiddles legs 1..R-1 from the streamed table; leg 0 is
              untwiddled (w^0 = 1), which is why records start at leg 1. *)
-          if pre_tw && i > 0 then ctwl i (cload (AZinLeg i)) else cload (AZinLeg i))
+          if pre_tw && i > 0 then ctwl i (cload (laddr i)) else cload (laddr i))
       in
       dft_small ~sign ~ctx radix inputs)
   in
@@ -439,6 +467,16 @@ let emit
   (* Label outputs with Expr.elem_ref so the shared scheduler can identify
      sinks; only the index is meaningful here (one complex output per leg). *)
   let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
+  (* the real mono's forward keeps the CCE half: the scheduler sees only
+     those sinks, so the other half's arithmetic is never emitted *)
+  let assigns =
+    List.filter
+      (fun (eref, _) ->
+         match eref with
+         | Expr.Output (i, _) -> keep_out i
+         | _ -> true)
+      assigns
+  in
   (* THE PIPELINE SEAM: every cil body flows through the cx pass cascade
      between construction and scheduling — cil is pipeline-hosted. *)
   let assigns =
@@ -459,7 +497,7 @@ let emit
      On the MONOLITHIC path nothing has reset, so this is a hashcons hit and
      the tag is identical to what the tail computed inline before -- the
      existing monolithic files stay byte-identical. *)
-  let leg_tags = Array.init radix (fun l -> (cload (AZinLeg l)).tag) in
+  let leg_tags = Array.init radix (fun l -> (cload (laddr l)).tag) in
   let tbl : consts = Hashtbl.create 16 in
   (* Render the body first: it populates the constant table that the file
      preamble must declare. *)
@@ -1310,12 +1348,12 @@ let emit
          then (
            match eref with
            | Some (Expr.Output (i, _)) ->
-             let (_ : t) = cstore (AZoutLeg i) e in
+             let (_ : t) = cstore (oaddr i) e in
              Buffer.add_string
                body
                (Printf.sprintf
                   "        %s;\n"
-                  (render_store isa (AZoutLeg i) (cur_name e.tag)));
+                  (render_store isa (oaddr i) (cur_name e.tag)));
              Hashtbl.replace stored_inline i ()
            | _ -> ()))
       scheduled);
@@ -1394,8 +1432,8 @@ let emit
               nisa
               (Printf.sprintf "z%d" leg_tags.(l))
               (match mode with
-               | Isa.LS_vector -> render_load nisa (AZinLeg l)
-               | _ -> Isa.loadu_pd ~mode nisa (addr_str (AZinLeg l)))))
+               | Isa.LS_vector -> render_load nisa (laddr l)
+               | _ -> Isa.loadu_pd ~mode nisa (addr_str (laddr l)))))
     done;
     let seen_n : (int, unit) Hashtbl.t = Hashtbl.create 256 in
     List.iter
@@ -1416,16 +1454,18 @@ let emit
                      (render ~ctx ~mode ~tw_vw:vw ~msuf nisa tbl e)))))
       scheduled;
     match if ctx.st_turn then N1T else kind with
-    | N1 | N1C | T2 | T2C ->
+    | N1 | N1C | T2 | T2C | RN1 ->
       Array.iteri
         (fun l (e : t) ->
-           Buffer.add_string
-             body_n
-             (Printf.sprintf
-                "        %s;\n"
-                (match mode with
-                 | Isa.LS_vector -> render_store nisa (AZoutLeg l) (Printf.sprintf "z%d" e.tag)
-                 | _ -> Isa.storeu_pd ~mode nisa (addr_str (AZoutLeg l)) (Printf.sprintf "z%d" e.tag))))
+           if keep_out l
+           then
+             Buffer.add_string
+               body_n
+               (Printf.sprintf
+                  "        %s;\n"
+                  (match mode with
+                   | Isa.LS_vector -> render_store nisa (oaddr l) (Printf.sprintf "z%d" e.tag)
+                   | _ -> Isa.storeu_pd ~mode nisa (addr_str (oaddr l)) (Printf.sprintf "z%d" e.tag))))
         outs
     | N1T ->
       Array.iteri
@@ -1479,7 +1519,8 @@ let emit
     else match Sys.getenv_opt "VFFT_TAIL512" with
       | Some s -> s
       | None ->
-        if kind = N1T || ctx.st_turn then "narrowfix"
+        if kind = RN1 then "narrow"
+        else if kind = N1T || ctx.st_turn then "narrowfix"
         else if ctx.colstride then "ladder"
         else "ladder_m3"
   in
@@ -1571,11 +1612,16 @@ let emit
         | T2 -> "bailey2 stage-2 mid t2 (streamed VTW2 twiddles, BYTW2 apply)"
         | T2C ->
           "2D column-stage mid t2c (same-slot DIF stage; per-(d,leg) broadcast \
-           records hoisted out of the column loop — z-T1S/6c)")
+           records hoisted out of the column loop — z-T1S/6c)"
+        | RN1 ->
+          "the REAL MONO rn1: the whole small real transform as one n1 body -- fwd: \
+           real input lanes (x, 0), the CCE bins 0..R/2 stored; bwd: bins 0..R/2 \
+           loaded, R/2+1..R-1 the conjugates of their mirrors, real lanes stored. \
+           count = 1 is the K=1 solo (the VEX-128 tail); 2 rows per vector wide")
        per
        (vw * 64)
        (match kind with
-        | N1 | N1C -> "tw_re/tw_im unused."
+        | N1 | N1C | RN1 -> "tw_re/tw_im unused."
         | T2C ->
           "tw_re = the stage table, d-major: per digit d in [0,OGs), per leg \
            1..R-1 one record [c x VW][sign-folded s x VW], DRIVER-built. fwd \
@@ -1769,8 +1815,8 @@ let emit
            "        %s\n"
            (Isa.const_decl
               isa
-              (Printf.sprintf "z%d" (cload (AZinLeg l)).tag)
-              (render_load isa (AZinLeg l))))
+              (Printf.sprintf "z%d" (cload (laddr l)).tag)
+              (render_load isa (laddr l))))
     done;
   Buffer.add_buffer buf body;
   (* Store edge (blocked emits its own inside PASS 2). Dispatch on the store
@@ -1778,21 +1824,21 @@ let emit
   if not (blocked || odd_blocked)
   then (
     match if ctx.st_turn then N1T else kind with
-    | N1 | N1C | T2 | T2C ->
+    | N1 | N1C | T2 | T2C | RN1 ->
       (* leg-major: leg l's `per` columns stay contiguous. COMPLETE-IR: the
         store is a CStore NODE (address in the DAG); built post-schedule so
         no existing tag shifts, printed via render_store (addr_str carries
         the byte-identity contract). *)
       Array.iteri
         (fun l (e : t) ->
-           if not (Hashtbl.mem stored_inline l)
+           if keep_out l && not (Hashtbl.mem stored_inline l)
            then (
-             let (_ : t) = cstore (AZoutLeg l) e in
+             let (_ : t) = cstore (oaddr l) e in
              Buffer.add_string
                buf
                (Printf.sprintf
                   "        %s;\n"
-                  (render_store isa (AZoutLeg l) (Printf.sprintf "z%d" e.tag)))))
+                  (render_store isa (oaddr l) (Printf.sprintf "z%d" e.tag)))))
         outs
     | N1T ->
       if ctx.st_turn_gs

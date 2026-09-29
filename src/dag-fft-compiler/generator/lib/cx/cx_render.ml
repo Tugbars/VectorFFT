@@ -125,6 +125,9 @@ let addr_str (a : caddr) : string =
   | AXinLeg l -> Printf.sprintf "zin[(size_t)%d*Ls + k]" l
   | AXoutLeg l -> Printf.sprintf "zout[(size_t)%d*OLs + k]" l
   | AZinLegOff (l, o) -> Printf.sprintf "zin[2*((size_t)%d*Ls + k + %d)]" l o
+  | AZinReal l -> Printf.sprintf "zin[(size_t)%d*Ls + k]" l
+  | AZinHerm (l, r) -> Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" (r - l)
+  | AZoutReal l -> Printf.sprintf "zout[(size_t)%d*OLs + k]" l
   | AZinMir _ | AZoutMir _ | AZoutTurnMir _ | AZinSpec _ | AZinSpecC _ | AZinSpecB _ | AZinSpecP _ ->
     failwith "cx_render.addr_str: a mirror / special form renders through render_load or render_store"
 ;;
@@ -221,6 +224,24 @@ let render_load (isa : Isa.t) (a : caddr) : string =
        &zin[2*((size_t)%d*Ls + (size_t)k*Gs)])), _mm256_loadu2_m128d(&zin[2*((size_t)%d*Ls + ((size_t)k + 3)*Gs)], \
        &zin[2*((size_t)%d*Ls + ((size_t)k + 2)*Gs)]), 1)"
       l l l l
+  (* the real mono's loads: a real lane per column, imaginary zero; the
+     backward's Hermitian half as the conjugate of the mirrored bin *)
+  | AZinReal l when isa.Isa.vec_width = 4 ->
+    Printf.sprintf
+      "_mm256_setr_pd(zin[(size_t)%d*Ls + k], 0.0, zin[(size_t)%d*Ls + k + 1], 0.0)"
+      l
+      l
+  | AZinReal l when isa.Isa.vec_width = 2 -> Printf.sprintf "_mm_load_sd(&zin[(size_t)%d*Ls + k])" l
+  | AZinReal _ -> failwith "cx_render.render_load: AZinReal renders at 256 / 128 bits only"
+  | AZinHerm (l, r) when isa.Isa.vec_width = 4 ->
+    Printf.sprintf
+      "_mm256_xor_pd(_mm256_loadu_pd(&zin[2*((size_t)%d*Ls + k)]), _mm256_setr_pd(0.0, -0.0, 0.0, -0.0))"
+      (r - l)
+  | AZinHerm (l, r) when isa.Isa.vec_width = 2 ->
+    Printf.sprintf
+      "_mm_xor_pd(_mm_loadu_pd(&zin[2*((size_t)%d*Ls + k)]), _mm_setr_pd(0.0, -0.0))"
+      (r - l)
+  | AZinHerm _ -> failwith "cx_render.render_load: AZinHerm renders at 256 / 128 bits only"
   | _ -> Isa.loadu_pd isa (addr_str a)
 ;;
 
@@ -258,6 +279,16 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
       v
       (addr_str a)
       v
+  (* the real mono's backward: the real lane of each column *)
+  | AZoutReal l when isa.Isa.vec_width = 4 ->
+    Printf.sprintf
+      "_mm_store_sd(&zout[(size_t)%d*OLs + k], _mm256_castpd256_pd128(%s)); _mm_store_sd(&zout[(size_t)%d*OLs + k + 1], _mm256_extractf128_pd(%s, 1))"
+      l
+      v
+      l
+      v
+  | AZoutReal l when isa.Isa.vec_width = 2 -> Printf.sprintf "_mm_store_sd(&zout[(size_t)%d*OLs + k], %s)" l v
+  | AZoutReal _ -> failwith "cx_render.render_store: AZoutReal renders at 256 / 128 bits only"
   | _ -> Isa.storeu_pd isa (addr_str a) v
 ;;
 

@@ -54,6 +54,13 @@ type caddr =
   | AXoutLeg of int (* l: zout[(size_t)l*OLs + k]                            *)
   | AZinLegOff of int * int (* (l, off): zin[2*((size_t)l*Ls + k + off)]     *)
   | AZinSpecP of int (* c: the packed slot zin[2*(c*Ls)] = (a, b) as [a 0 | b 0] *)
+  (* ── the real MONO rn1 (c2c_il.ml, 2026-09-30): the whole small real
+     transform as one n1 body. REAL input lanes, (x, 0) per column; the
+     backward's Hermitian half input (bin r-l conjugated) and REAL output
+     lanes. No factor 2 in the real addresses. ── *)
+  | AZinReal of int (* l: zin[(size_t)l*Ls + k] -> (x, 0) per column        *)
+  | AZinHerm of int * int (* (l, r): conj of bin r-l, zin[2*((size_t)(r-l)*Ls + k)] *)
+  | AZoutReal of int (* l: zout[(size_t)l*OLs + k], the real lane per column   *)
 
 type cx_kind =
   | CIn of int (* input leg i (a packed-complex load) *)
