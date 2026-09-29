@@ -133,7 +133,7 @@ def build_2d(run_dir, sfx="_2d"):
     keys = sorted(set(cells) | set(cal))
     W("# gauntlet report (%dD)\n" % nd)
     W("run: `%s`  contract: %dD c2c interleaved, natural, out of place, K=1%s  cells: %d listed, %d benched, comparator: %s\n" % (
-        os.path.basename(os.path.abspath(run_dir)), nd, sfx.replace("_%dd" % nd, ""), len(keys), len(cells), ("MKL DFTI %dD (out of place)" % nd) if has_cmp else "none (absolute numbers)"))
+        os.path.basename(os.path.abspath(run_dir)), nd, sfx.replace("_%dd" % nd, ""), len(keys), len(cells), (("FFTW %dD (out of place, MEASURE)" % nd) if "_fftw" in sfx else ("MKL DFTI %dD (out of place)" % nd)) if has_cmp else "none (absolute numbers)"))
     if ctl:
         W("control cell %s: %d readings, %.3f..%.3f\n" % ("64x64x64" if nd == 3 else "64x64", len(ctl), min(ctl), max(ctl)))
     if any("engaged" in r for rs in rows.values() for r in rs):
@@ -219,7 +219,7 @@ def build(run_dir, sfx=""):
     ns = sorted(set(cells) | set(cal))
     W("# gauntlet report\n")
     W("run: `%s`  contract file suffix: `%s`  cells: %d listed, %d benched, comparator: %s\n" % (
-        os.path.basename(os.path.abspath(run_dir)), sfx or "(oop, T=1)", len(ns), len(cells), "MKL" if has_cmp else "none (absolute numbers)"))
+        os.path.basename(os.path.abspath(run_dir)), sfx or "(oop, T=1)", len(ns), len(cells), ("FFTW" if "_fftw" in sfx else "KFR" if "_kfr" in sfx else "MKL") if has_cmp else "none (absolute numbers)"))
     if ctl:
         W("control cell: %d readings, %.3f..%.3f (a run is internally comparable when the first and the last agree)\n" % (len(ctl), min(ctl), max(ctl)))
     # the per-cell table

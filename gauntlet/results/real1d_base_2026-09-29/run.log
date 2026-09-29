@@ -1,0 +1,89 @@
+2026-09-29 12:54:17 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-29 12:54:17 run: 237 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 12:54:17 calibrate: 237 cells (0 already done)
+2026-09-29 12:54:20   calibrated 25/237 (42), 3 s elapsed
+2026-09-29 12:54:28   calibrated 50/237 (135), 11 s elapsed
+2026-09-29 12:54:43   calibrated 75/237 (320), 26 s elapsed
+2026-09-29 12:54:57   calibrated 100/237 (686), 40 s elapsed
+2026-09-29 12:55:00   calibrated 125/237 (1280), 44 s elapsed
+2026-09-29 12:55:04   calibrated 150/237 (2137), 48 s elapsed
+2026-09-29 13:05:30   calibrated 175/237 (3301), 674 s elapsed
+2026-09-29 13:06:19 run: 237 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 13:06:19 calibrate: 237 cells (0 already done)
+2026-09-29 13:06:22   calibrated 25/237 (42), 3 s elapsed
+2026-09-29 13:06:25   calibrated 50/237 (135), 5 s elapsed
+2026-09-29 13:06:27   calibrated 75/237 (320), 8 s elapsed
+2026-09-29 13:06:30   calibrated 100/237 (686), 11 s elapsed
+2026-09-29 13:06:33   calibrated 125/237 (1280), 13 s elapsed
+2026-09-29 13:06:35   calibrated 150/237 (2137), 16 s elapsed
+2026-09-29 13:06:38   calibrated 175/237 (3301), 18 s elapsed
+2026-09-29 13:06:43 run: 196 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 13:06:43 calibrate: 196 cells (0 already done)
+2026-09-29 13:06:45   calibrated 25/196 (42), 2 s elapsed
+2026-09-29 13:06:48   calibrated 50/196 (135), 5 s elapsed
+2026-09-29 13:06:50   calibrated 75/196 (320), 8 s elapsed
+2026-09-29 13:06:53   calibrated 100/196 (686), 10 s elapsed
+2026-09-29 13:06:55   calibrated 125/196 (1280), 13 s elapsed
+2026-09-29 13:06:58   calibrated 150/196 (2137), 15 s elapsed
+2026-09-29 13:07:00   calibrated 175/196 (3301), 18 s elapsed
+2026-09-29 13:07:12 run: 196 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 13:07:12 calibrate: 196 cells (0 already done)
+2026-09-29 13:07:15   calibrated 25/196 (42), 2 s elapsed
+2026-09-29 13:07:17   calibrated 50/196 (135), 5 s elapsed
+2026-09-29 13:07:20   calibrated 75/196 (320), 8 s elapsed
+2026-09-29 13:07:22   calibrated 100/196 (686), 10 s elapsed
+2026-09-29 13:07:25   calibrated 125/196 (1280), 13 s elapsed
+2026-09-29 13:07:28   calibrated 150/196 (2137), 15 s elapsed
+2026-09-29 13:07:30   calibrated 175/196 (3301), 18 s elapsed
+2026-09-29 13:07:46 run: 196 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 13:07:46 calibrate: 20 cells (176 already done)
+2026-09-29 13:14:50   calibrated 20/20 (65536), 424 s elapsed
+2026-09-29 13:14:50 bench: 196 cells (0 already benched, 0 not banked -> not benched)
+2026-09-29 13:15:24   benched 25/196 (42), 32 s elapsed
+2026-09-29 13:15:58   benched 50/196 (135), 67 s elapsed
+2026-09-29 13:16:39   benched 75/196 (320), 107 s elapsed
+2026-09-29 13:17:26   benched 100/196 (686), 154 s elapsed
+2026-09-29 13:18:16   benched 125/196 (1280), 204 s elapsed
+2026-09-29 13:19:17   benched 150/196 (2137), 265 s elapsed
+2026-09-29 13:20:27   benched 175/196 (3301), 335 s elapsed
+2026-09-29 13:21:16   benched 196/196 (65536), 385 s elapsed
+2026-09-29 13:21:18 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\real1d_base_2026-09-29\report_r2c_fftw.md
+2026-09-29 13:21:18 run: 196 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 13:21:18 calibrate: 20 cells (176 already done)
+2026-09-29 13:21:35   calibrated 20/20 (65536), 17 s elapsed
+2026-09-29 13:21:35 bench: 196 cells (0 already benched, 0 not banked -> not benched)
+2026-09-29 13:22:10   benched 25/196 (42), 33 s elapsed
+2026-09-29 13:22:45   benched 50/196 (135), 68 s elapsed
+2026-09-29 13:23:29   benched 75/196 (320), 112 s elapsed
+2026-09-29 13:24:21   benched 100/196 (686), 164 s elapsed
+2026-09-29 13:25:21   benched 125/196 (1280), 224 s elapsed
+2026-09-29 13:26:37   benched 150/196 (2137), 300 s elapsed
+2026-09-29 13:28:04   benched 175/196 (3301), 387 s elapsed
+2026-09-29 13:29:08   benched 196/196 (65536), 451 s elapsed
+2026-09-29 13:29:10 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\real1d_base_2026-09-29\report_c2r_fftw.md
+2026-09-29 13:29:10 run: 196 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 13:29:10 calibrate: 20 cells (176 already done)
+2026-09-29 13:29:12   calibrated 20/20 (65536), 2 s elapsed
+2026-09-29 13:29:12 bench: 196 cells (0 already benched, 0 not banked -> not benched)
+2026-09-29 13:29:46   benched 25/196 (42), 33 s elapsed
+2026-09-29 13:30:19   benched 50/196 (135), 66 s elapsed
+2026-09-29 13:30:55   benched 75/196 (320), 102 s elapsed
+2026-09-29 13:31:34   benched 100/196 (686), 141 s elapsed
+2026-09-29 13:32:13   benched 125/196 (1280), 180 s elapsed
+2026-09-29 13:32:56   benched 150/196 (2137), 223 s elapsed
+2026-09-29 13:33:45   benched 175/196 (3301), 271 s elapsed
+2026-09-29 13:34:19   benched 196/196 (65536), 305 s elapsed
+2026-09-29 13:34:20 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\real1d_base_2026-09-29\report_r2c.md
+2026-09-29 13:34:20 run: 196 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 13:34:20 calibrate: 20 cells (176 already done)
+2026-09-29 13:34:22   calibrated 20/20 (65536), 2 s elapsed
+2026-09-29 13:34:22 bench: 196 cells (0 already benched, 0 not banked -> not benched)
+2026-09-29 13:34:56   benched 25/196 (42), 33 s elapsed
+2026-09-29 13:35:29   benched 50/196 (135), 66 s elapsed
+2026-09-29 13:36:05   benched 75/196 (320), 102 s elapsed
+2026-09-29 13:36:44   benched 100/196 (686), 141 s elapsed
+2026-09-29 13:37:23   benched 125/196 (1280), 180 s elapsed
+2026-09-29 13:38:06   benched 150/196 (2137), 223 s elapsed
+2026-09-29 13:38:55   benched 175/196 (3301), 272 s elapsed
+2026-09-29 13:39:29   benched 196/196 (65536), 306 s elapsed
+2026-09-29 13:39:31 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\real1d_base_2026-09-29\report_c2r.md
