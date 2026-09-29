@@ -32,6 +32,28 @@ type caddr =
   | AZinAbs of int (* zin [i] — emit_k1 absolute (no k)             *)
   | AZoutAbs of int (* zout[i] — emit_k1 absolute                    *)
   | ATw of int (* twp [i] — the T2 streamed VTW2 cursor          *)
+  (* ── the real pair's top stage t2h (real_il.ml, 2026-09-29) ──
+     MIRROR forms: the value is reversed across the vector's complex lanes
+     and conjugated on the way in (load) or out (store); the address is the
+     mirror of column k's group, m*pitch - k - (per-1) with per = complex
+     per vector (at VEX-128 the reversal is the identity). The SPECIAL
+     forms serve the self-mirrored columns 0 and count (the DC/Nyquist
+     pass): a 2-lane gather of the two 128-bit slots (plain, conjugated,
+     or the backward's bin gather) and per-lane 128-bit stores. *)
+  | AZinMir of int (* m: zin [2*(m*Ls  - k - (per-1))], reversed + conj   *)
+  | AZoutMir of int (* m: zout[2*(m*OLs - k - (per-1))], reversed + conj   *)
+  | AZoutTurnMir of int * int (* (l, c): zout[2*((Ls - k - c)*OLs + l)], conj *)
+  | AZinSpec of int (* c: [zin[2*(c*Ls)] | zin[2*(c*Ls + count)]]           *)
+  | AZinSpecC of int (* the same, conjugated                                *)
+  | AZinSpecB of int * int (* (R, q): the c2r special leg q of radix R      *)
+  | AZoutSpec of int * int (* (q, lane): zout[2*(q*OLs [+ count])], 128-bit *)
+  | AZoutSpecT of int * int (* (c, which): zout[2*(c)] / zout[2*(count*OLs + c)] *)
+  (* ── the real leaf r2z (real_il.ml): REAL lanes, no factor 2 in the
+     address; the t2m mid's packed DC/Nyquist gather ── *)
+  | AXinLeg of int (* l: zin [(size_t)l*Ls + k]   vec_width real columns   *)
+  | AXoutLeg of int (* l: zout[(size_t)l*OLs + k]                            *)
+  | AZinLegOff of int * int (* (l, off): zin[2*((size_t)l*Ls + k + off)]     *)
+  | AZinSpecP of int (* c: the packed slot zin[2*(c*Ls)] = (a, b) as [a 0 | b 0] *)
 
 type cx_kind =
   | CIn of int (* input leg i (a packed-complex load) *)
@@ -42,6 +64,11 @@ type cx_kind =
   (* a store node: address + the value it sinks. First-class so the
      scheduler CAN see stores (Node.is_store, the B2 hook) — whether it
      SCHEDULES them is the placement policy's choice, not the IR's. *)
+  | CUnpack of t * t * bool
+  (* the 64-bit interleave within each 128-bit lane: lo (false) = unpacklo_pd
+     [a0 b0 a2 b2], hi (true) = unpackhi_pd [a1 b1 a3 b3]. With CTurn it is
+     the real leaf's store edge: four columns' (re, im) vectors -> the
+     interleaved slots of each column (real_il.ml). *)
   | CTurn of t * t * bool
   (* COMPLEX-LANE DEINTERLEAVE of two vectors (the corner-turn round):
        even (false): [a0,a2,..,b0,b2,..]   odd (true): [a1,a3,..,b1,b3,..]
@@ -181,6 +208,7 @@ let cin i = mk (CIn i)
 let cload a = mk (CLoad a)
 let cstore a v = mk (CStore (a, v))
 let cturn a b odd = mk (CTurn (a, b, odd))
+let cunpack a b hi = mk (CUnpack (a, b, hi))
 let cpart a c = mk (CPart (a, c))
 let clo a = cpart a 0
 let chi a = cpart a 1

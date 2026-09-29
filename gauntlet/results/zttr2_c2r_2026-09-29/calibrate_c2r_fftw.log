@@ -1,0 +1,16 @@
+2          REFUSED      119ms refused   mono
+4          banked       681ms raced     zr2c:child_oop_il
+8          banked       712ms raced     zr2c:child_oop_il
+16         banked       895ms raced     zrp:4.4:r2z
+32         banked      1254ms raced     zrp:4.8:r2z
+64         banked      1945ms raced     zrp:4.16:r2z
+128        banked      2173ms raced     zr2c:child_oop_il
+256        banked      3524ms raced     zr2c:child_oop_il
+512        banked      3972ms raced     zr2c:child_oop_il
+1024       banked      4722ms raced     2p
+2048       banked      5798ms raced     2p
+4096       banked      7128ms raced     2p
+8192       banked     12856ms raced     2p
+16384      banked     16631ms raced     ztt
+32768      banked     21911ms raced     ztt
+65536      banked     30421ms raced     ztt

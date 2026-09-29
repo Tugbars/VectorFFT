@@ -30,8 +30,10 @@
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
 #include "cpu_cache.h"          /* L1d capacity for the tcut width stamp; PLANNING ONLY */
 #include "il2p.h"               /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
+#include "zrp.h"                /* the real pair (il/real/zrp.h): its plan type, before vfft_internal.h */
 #include "il/rank2/il2d_col.h" /* the column-axis pass descriptor the plan embeds */
 #include "ztt.h"                /* ZTURN-T: the run-contiguous DIT, 16..16384 (2026-09-09); before il_prime.h: the prime inner's ZTURN-T branch is #ifdef VFFT_ZTT_H */
+#include "zttr.h"               /* ZTT-r (il/real/zttr.h): the real fold fused into the ZTT; its plan type, before vfft_internal.h */
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
@@ -1114,6 +1116,7 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 /* Placed AFTER _vw2_persist above: the kind-5 banker calls it, and it is a
  * general wisdom helper that stays in this file. */
 #include "il/real/zr2c_build.h" /* interleaved-CCE real route (step 18) */
+#include "il/real/zrp_build.h"  /* the real pair + the real door's engine race (2026-09-29) */
 
 #include "il/planning/dp_planner_il.h" /* the IL plan race at create (2026-09-03): pair x forms, chain3 x forms */
 #include "il/rank1/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */
@@ -1234,6 +1237,10 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
          * c2c child + private buffers — safe iff the child is (il2p/
          * il3p/ilprime are; a cascade child consults its own arm). */
         return _tc_inner_mt_safe(g->oddr_child);
+    if (g->zrp)
+        return 1; /* the real pair: two serial kernels, no pool, no child */
+    if (g->zttr)
+        return g->zttr->scratch == NULL; /* ZTT-r: serial kernels, pool-free; an in-place plan owns ONE scratch plane */
     if (g->zr2c_child)
         /* §D2 real composite: _exec_zr2c is a fold (pure, serial, no pool)
          * plus vfft_execute on the child, and the R2C/C2R execute branches
@@ -1413,6 +1420,26 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         /* odd-real bridge: equivalent iff the c2c children are (the
          * bridge itself carries only buffers). */
         return _tc_clone_equiv(a->oddr_child, b->oddr_child);
+    if (!a->zttr != !b->zttr)
+        TC_NEQ("ZTT-r");
+    if (a->zttr)
+    {
+        /* ZTT-r: the plan IS the chain, the tile and the stack state */
+        if (a->zttr->zt->nf != b->zttr->zt->nf || a->zttr->zt->tile != b->zttr->zt->tile ||
+            a->zttr->stk != b->zttr->stk ||
+            memcmp(a->zttr->zt->chain, b->zttr->zt->chain, sizeof(int) * (size_t)a->zttr->zt->nf))
+            TC_NEQ("ZTT-r chain");
+        return 1;
+    }
+    if (!a->zrp != !b->zrp)
+        TC_NEQ("real pair");
+    if (a->zrp)
+    {
+        /* the real pair: the plan IS the pair (both kernels follow from it) */
+        if (a->zrp->R1 != b->zrp->R1 || a->zrp->R2 != b->zrp->R2)
+            TC_NEQ("real pair radices");
+        return 1;
+    }
     if (!a->zr2c_child != !b->zr2c_child)
         TC_NEQ("real composite");
     if (a->zr2c_child)
@@ -2239,6 +2266,16 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->ilnd ? h->ilnd->mt : 0, h->ilnd ? h->ilnd->mt_t : 0,
             h->ilnd ? (h->ilnd->arm == 1 ? h->ilnd->wn1 : h->ilnd->wn2) : 0);
 
+    /* the real pair (il/real/zrp.h): its plan input, printed only when the
+     * handle carries one so every other plan's line is unchanged */
+    if (h->zrp)
+        FP__ADD(" zrp=[%dx%d]", h->zrp->R1, h->zrp->R2);
+    if (h->zttr)
+    {
+        char cs[40];
+        vfft_ztt_chain_str(h->zttr->zt, cs, sizeof cs);
+        FP__ADD(" zttr=[%s/%zu/s%d]", cs, h->zttr->zt->tile, h->zttr->stk);
+    }
     /* 4 — recurse. create re-enters itself for these, so the fingerprint is a
      * TREE; a child that silently changed route is otherwise invisible. */
     used = vfft__fp_child(h->zr2c_child, "zr2c", depth + 1, out, cap, used);

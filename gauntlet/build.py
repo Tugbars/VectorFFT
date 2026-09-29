@@ -80,6 +80,7 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'flat',
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'flat' / 'odd_mid',
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'ztt',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'real',   # the real pair's t2h top stage (real_il.ml, 2026-09-29)
         DAG / 'codelets' / 'trig' / DAG_ISA,   # trig (DCT/DST) specializations
         # the avx512 drivers sit in their own subfolder so an avx2 build never compiles them
         (DAG / 'generator' / 'generated' / 'fused_codelets' / 'avx512' if DAG_ISA == 'avx512'

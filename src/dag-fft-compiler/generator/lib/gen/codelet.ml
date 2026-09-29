@@ -70,6 +70,9 @@ type cil_form =
   | Cil_t2c
   | Cil_n1t
   | Cil_t2
+  | Cil_t2h (* --cil-t2h: the interleaved real pair's Hermitian top stage (real_il.ml) *)
+  | Cil_t2m (* --cil-t2m: the real pair's top over the real leaf's half spectra *)
+  | Cil_r2z (* --cil-r2z: the real pair's real leaf *)
 
 type cil_turn =
   | Turnst
@@ -503,7 +506,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
              ] ->
       push (String.sub t 2 (String.length t - 2));
       go tl
-    | t :: tl when List.mem t [ "--cil-n1"; "--cil-n1c"; "--cil-n1t"; "--cil-t2"; "--cil-t2c" ] ->
+    | t :: tl when List.mem t [ "--cil-n1"; "--cil-n1c"; "--cil-n1t"; "--cil-t2"; "--cil-t2c"; "--cil-t2h"; "--cil-t2m"; "--cil-r2z" ] ->
       push (String.sub t 2 (String.length t - 2));
       go tl
     | "--cil-t2cs" :: tl ->
@@ -653,7 +656,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
          | "dst3" -> Dst3
          | "dst4" -> Dst4
          | _ -> Dht)
-    | [ t ] when List.mem t [ "cil-n1"; "cil-n1c"; "cil-n1t"; "cil-t2"; "cil-t2c" ] ->
+    | [ t ] when List.mem t [ "cil-n1"; "cil-n1c"; "cil-n1t"; "cil-t2"; "cil-t2c"; "cil-t2h"; "cil-t2m"; "cil-r2z" ] ->
       Cil
         { form =
             (if t = "cil-n1"
@@ -664,6 +667,12 @@ let of_argv ?(strict = true) (argv : string list) : t =
              then Cil_t2c
              else if t = "cil-n1t"
              then Cil_n1t
+             else if t = "cil-t2h"
+             then Cil_t2h
+             else if t = "cil-t2m"
+             then Cil_t2m
+             else if t = "cil-r2z"
+             then Cil_r2z
              else Cil_t2)
         ; tangent = !cil_tangent
         ; blocked = !blocked
@@ -828,6 +837,9 @@ let to_argv (c : t) : string list =
          | Cil_n1c -> if colstride then "--cil-n1ccs" else "--cil-n1c"
          | Cil_t2c -> if pre_tw then "--cil-t2cp" else "--cil-t2c"
          | Cil_n1t -> "--cil-n1t"
+         | Cil_t2h -> "--cil-t2h"
+         | Cil_t2m -> "--cil-t2m"
+         | Cil_r2z -> "--cil-r2z"
          | Cil_t2 ->
            if grouploop
            then (if transposed then "--cil-t2csgnt" else "--cil-t2csgn")

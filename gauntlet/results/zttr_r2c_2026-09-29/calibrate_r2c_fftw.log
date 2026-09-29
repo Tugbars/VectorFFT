@@ -1,0 +1,16 @@
+2          banked       151ms replayed  mono
+4          banked       676ms raced     zr2c:child_oop_il
+8          banked       723ms raced     zr2c:child_oop_il
+16         banked       908ms raced     zrp:4.4:r2z
+32         banked      1262ms raced     zrp:4.8:r2z
+64         banked      1959ms raced     zrp:8.8:r2z
+128        banked      2173ms raced     zr2c:child_oop_il
+256        banked      3527ms raced     zr2c:child_oop_il
+512        banked      3987ms raced     zr2c:child_oop_il
+1024       banked      4727ms raced     zr2c:child_oop_il
+2048       banked      6101ms raced     zr2c:child_oop_il
+4096       banked      7091ms raced     zr2c:child_oop_il
+8192       banked     12478ms raced     zr2c:child_oop_il
+16384      banked     15886ms raced     zr2c:child_oop_il
+32768      banked     21503ms raced     zr2c:child_oop_il
+65536      banked     29657ms raced     zr2c:child_oop_il

@@ -74,6 +74,16 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
          * on a POOL THREAD, and vfft_set_num_threads from a worker
          * creates/destroys the very pool it is running on. Same edit in the
          * C2R branch below; keep the two in step. */
+        if (h->zttr)
+        {
+            _exec_zttr(h, sre, dre); /* ZTT-r: the fold fused into the terminator, pool-free */
+            return;
+        }
+        if (h->zrp)
+        {
+            _exec_zrp(h, sre, dre); /* the real pair: two kernels, pool-free */
+            return;
+        }
         if (h->zr2c_child)
         {
             _exec_zr2c(h, sre, dre); /* §D2 composite (incl. in place) */
@@ -94,6 +104,16 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
          *
          * 🔴 Pool-free zr2c: the mirror of the R2C branch above -- read
          * that comment before moving either call. */
+        if (h->zttr)
+        {
+            _exec_zttr(h, sre, dre); /* ZTT-r's c2r: the fold fused into the ingest, pool-free */
+            return;
+        }
+        if (h->zrp)
+        {
+            _exec_zrp(h, sre, dre); /* the real pair's c2r: the mirror, pool-free */
+            return;
+        }
         if (h->zr2c_child)
         {
             _exec_zr2c(h, sre, dre); /* §D2 composite (incl. in place) */

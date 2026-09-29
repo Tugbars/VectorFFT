@@ -24,7 +24,7 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
     | CNeg a | CRotNI a | CRotPI a | CPart (a, _) -> [ a ]
     | CStore (_, v) -> [ v ]
     | CAdd (a, b) | CSub (a, b) | CRotAdd (a, b) -> [ a; b ]
-    | CTurn (a, b, _) -> [ a; b ]
+    | CTurn (a, b, _) | CUnpack (a, b, _) -> [ a; b ]
     | CFmaC (_, x, e) | CFnmaC (_, x, e) -> [ x; e ]
     | CTwC (_, _, x) | CTwV (_, x) | CTwL (_, x) -> [ x ]
   ;;
@@ -42,7 +42,7 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
     | CNeg _ -> uarch.add_latency
     (* CTurn = one permute2f128; CLo is a free cast, CHi one extract —
        charged like the other lane ops. *)
-    | CTurn _ | CPart _ -> uarch.add_latency
+    | CTurn _ | CPart _ | CUnpack _ -> uarch.add_latency
     | CRotNI _ | CRotPI _ -> uarch.add_latency
     | CFmaC _ | CFnmaC _ -> uarch.fma_latency
     | CTwC _ | CTwV _ -> uarch.fma_latency
@@ -77,7 +77,7 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
     | CIn _ | CLoad _ -> 'L'
     | CStore _ -> 'S'
     | CAdd _ | CSub _ | CNeg _ | CRotAdd _ -> 'A'
-    | CTurn _ | CPart _ -> 'R'
+    | CTurn _ | CPart _ | CUnpack _ -> 'R'
     | CRotNI _ | CRotPI _ -> 'R'
     | CFmaC _ | CFnmaC _ -> 'F'
     | CTwC _ | CTwV _ -> 'X'
