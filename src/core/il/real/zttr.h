@@ -102,21 +102,41 @@ static inline int vfft_zttr_set_inplace(vfft_zttr_plan_t *p)
     return p->scratch != NULL;
 }
 
-/* every ordered {4,8} chain with product m, 2..7 stages, (m / r0) % 4 == 0 --
- * the candidates a per-cell calibration sweeps (the ZTT's create is the law) */
+/* every ZTT-r chain of m: the ends in {4, 8} (the fused ingest and the fused
+ * terminator are lane lattices), the mids in {4, 8, 3, 5, 7, 9, 15} (the
+ * ZTT's odd band), product m, 2..7 stages, (m / r0) % 4 == 0 -- the
+ * candidates a per-cell calibration sweeps; the ZTT's create is the law on
+ * legality (a run not in whole blocks, a pow2 chain without a driver) and
+ * vfft_zttr_create on the terminator's run length */
+#define VFFT_ZTTR_MAX_CHAINS 256
+static inline void _zttr_chains_rec(int rem, int pos, int ch[8], int out[][8], int *nfs, int cap, int *n)
+{
+    static const int mids[7] = { 4, 8, 3, 5, 7, 9, 15 };
+    if (*n >= cap) return;
+    if (rem == 4 || rem == 8)
+    {   /* the remaining product is the last radix */
+        ch[pos] = rem;
+        memcpy(out[*n], ch, sizeof(int) * (size_t)(pos + 1));
+        nfs[*n] = pos + 1;
+        (*n)++;
+    }
+    if (pos >= 6) return;
+    for (int i = 0; i < 7 && *n < cap; i++)
+        if (rem % mids[i] == 0 && rem / mids[i] >= 4)
+        {
+            ch[pos] = mids[i];
+            _zttr_chains_rec(rem / mids[i], pos + 1, ch, out, nfs, cap, n);
+        }
+}
 static inline int vfft_zttr_chains(int m, int out[][8], int *nfs, int cap)
 {
     int n = 0, ch[8];
-    for (int nf = 2; nf <= 7 && n < cap; nf++)
-        for (long code = 0; code < (1L << nf) && n < cap; code++)
-        {
-            long prod = 1;
-            for (int s = 0; s < nf; s++) { ch[s] = (code >> s) & 1 ? 8 : 4; prod *= ch[s]; }
-            if (prod != m || (m / ch[0]) % 4) continue;
-            memcpy(out[n], ch, sizeof(int) * (size_t)nf);
-            nfs[n] = nf;
-            n++;
-        }
+    for (int r0 = 4; r0 <= 8 && n < cap; r0 += 4)
+    {
+        if (m % r0 || (m / r0) % 4) continue;
+        ch[0] = r0;
+        _zttr_chains_rec(m / r0, 1, ch, out, nfs, cap, &n);
+    }
     return n;
 }
 

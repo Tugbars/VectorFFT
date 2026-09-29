@@ -121,6 +121,29 @@ static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
  * not the cascade (its dispatcher carries the MT arm). Out of place the
  * route is the committed k1_il_route (route truthfulness at create); in
  * place the engine pointer, in the dispatch's own order. NULL plans pass. */
+/* THE BOUND 1D REAL DISPATCH (2026-09-30): a 1D, K == 1, INTERLEAVED real
+ * plan without a wrapper (tcb / plane queue / rank-N) -- the odd-real bridge
+ * included -- executes through the real bridge in one indirect call, the
+ * same fast path the c2c plans take; the general signature walk it skips
+ * cost 4-6 ns per call, half of a 3-point r2c (gauntlet/call_overhead.c). */
+static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir, double *sre, double *sim, double *dre, double *dim); /* bridge/real_bridge_exec.h, later in this TU */
+static int _k1x_real(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    _vfft_real_bridge_execute(h, dir, (double *)zin, NULL, zout, NULL);
+    return 0;
+}
+static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
+{
+    struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
+    if (!h) return hp;
+    h->k1_exec = NULL;
+    if (h->transform != VFFT_R2C && h->transform != VFFT_C2R) return hp;
+    if (h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
+    if (h->oddr_child || (!h->pq_inner && !h->tcb && h->N2 == 0))
+        h->k1_exec = _k1x_real;
+    return hp;
+}
+
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;

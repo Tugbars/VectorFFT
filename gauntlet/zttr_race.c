@@ -40,22 +40,6 @@ static void zttr_exec(const vfft_zttr_plan_t *p, const double *in, double *out)
 static void arm_door(void *v) { ctx_t *c = (ctx_t *)v; vfft_execute(c->h, g_c2r ? VFFT_BACKWARD : VFFT_FORWARD, c->x, NULL, c->X, NULL); }
 static void arm_zttr(void *v) { ctx_t *c = (ctx_t *)v; zttr_exec(c->p, c->x, c->X); }
 
-/* every ordered {4,8} chain with product m, nf >= 2, (m / r0) % 4 == 0 */
-static int chains_of(int m, int out[][8], int *nfs, int cap)
-{
-    int n = 0, ch[8];
-    for (int nf = 2; nf <= 7 && n < cap; nf++)
-        for (long code = 0; code < (1L << nf) && n < cap; code++)
-        {
-            long prod = 1;
-            for (int s = 0; s < nf; s++) { ch[s] = (code >> s) & 1 ? 8 : 4; prod *= ch[s]; }
-            if (prod != m || (m / ch[0]) % 4) continue;
-            memcpy(out[n], ch, sizeof(int) * (size_t)nf);
-            nfs[n] = nf;
-            n++;
-        }
-    return n;
-}
 
 typedef struct { int chain[8], nf; size_t tile; double ns; } arm_t;
 
@@ -67,17 +51,18 @@ int main(int argc, char **argv)
 #endif
     if (argc < 2) { fprintf(stderr, "usage: zttr_race <wisdom dir> [N]\n"); return 2; }
     vfft_wisdom *W = vfft_wisdom_load(argv[1]);
-    static const int Ns[] = { 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536 };
+    static const int Ns_pow2[] = { 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536 };
     static const size_t tiles[] = { 0, 512, 1024, 2048, 3072 };
     int only = 0;
     for (int a = 2; a < argc; a++) { if (!strcmp(argv[a], "--c2r")) g_c2r = 1; else only = atoi(argv[a]); }
+    const int *Ns = only ? &only : Ns_pow2;
+    const int nNs = only ? 1 : (int)(sizeof Ns_pow2 / sizeof Ns_pow2[0]);
     unsigned seed = 0x13579u;
     if (g_c2r) printf("c2r: the fused backward ingest against the door's c2r\n");
     printf("%-6s %-16s %5s  %8s %8s  %s\n", "N", "best chain/tile", "err", "door", "zttr", "door/zttr (shortlist)");
-    for (int ni = 0; ni < (int)(sizeof Ns / sizeof Ns[0]); ni++)
+    for (int ni = 0; ni < nNs; ni++)
     {
         const int N = Ns[ni], M = N / 2;
-        if (only && N != only) continue;
         double *x = (double *)vfft_aligned_alloc((size_t)(N + 2) * sizeof(double));
         double *X = (double *)vfft_aligned_alloc((size_t)(N + 2) * sizeof(double));
         double *Xd = (double *)vfft_aligned_alloc((size_t)(N + 2) * sizeof(double));
@@ -101,9 +86,9 @@ int main(int argc, char **argv)
         vfft_execute(h, g_c2r ? VFFT_BACKWARD : VFFT_FORWARD, x, NULL, Xd, NULL);
         const size_t gn = g_c2r ? (size_t)N : (size_t)N + 2;
         /* phase 1: the sweep, best-of-5 bursts per arm */
-        int chains[64][8], nfs[64];
-        const int nc = chains_of(M, chains, nfs, 64);
-        arm_t arms[64 * 5];
+        int chains[VFFT_ZTTR_MAX_CHAINS][8], nfs[VFFT_ZTTR_MAX_CHAINS];
+        const int nc = vfft_zttr_chains(M, chains, nfs, VFFT_ZTTR_MAX_CHAINS);
+        arm_t arms[VFFT_ZTTR_MAX_CHAINS * 5];
         int na = 0, bad = 0;
         for (int c = 0; c < nc; c++)
             for (int ti = 0; ti < 5; ti++)

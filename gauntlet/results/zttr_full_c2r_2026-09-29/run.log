@@ -1,0 +1,6 @@
+2026-09-29 22:49:06 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-09-29 22:49:06 run: 196 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-29 22:49:06 calibrate: 196 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-09-29 22:49:51   calibrated 25/196 (42), 45 s elapsed
+2026-09-29 22:52:44   calibrated 50/196 (135), 219 s elapsed
+2026-09-29 23:00:08   calibrated 75/196 (320), 662 s elapsed

@@ -58,7 +58,11 @@ int main(int argc, char **argv)
     if (argc < 2) { fprintf(stderr, "usage: real_door_check <scratch wisdom dir> [N]\n"); return 2; }
     vfft_wisdom *W = vfft_wisdom_load(argv[1]);
     const int only = argc > 2 ? atoi(argv[2]) : 0;
-    static const int Ns[] = { 512, 1024, 2048, 4096, 8192, 32768 };
+    /* pow2, then the 2^a*odd band (ZTT-r needs 2^7 * odd: the ingest's runs in whole blocks,
+     * the terminator's run length a multiple of 8) */
+    static const int Ns[] = { 512, 1024, 2048, 4096, 8192, 32768,
+                              384, 768, 1536, 3072, 6144, 12288, 640, 1280, 2560, 5120, 896, 1792, 3584,
+                              1152, 2304, 4608, 1920, 3840, 7680, 15360 };
     unsigned seed = 0x777u;
     int fails = 0;
     for (int ni = 0; ni < (int)(sizeof Ns / sizeof Ns[0]); ni++)
