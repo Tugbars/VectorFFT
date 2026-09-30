@@ -37,6 +37,7 @@
 #include "zrm.h"                /* the real mono (il/real/zrm.h): one rn1 kernel = the whole small real transform; its resolver */
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
+#include "zrf.h"                /* the real flat DIT (il/real/zrf.h): odd-N r2c/c2r on the flat DIT's stages (2026-09-30) */
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
 #include "il/rank1/ztt_mt.h"         /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
 #include "il/real/zttr_mt.h"         /* ZTT-r's threaded arms: the same walk, the fold staying fused (2026-09-30) */
@@ -1250,6 +1251,8 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
         return 1; /* the real mono: one pure kernel, no pool, no child, no scratch */
     if (g->zfsr)
         return 0; /* the real four-step owns its plane: one transform at a time */
+    if (g->zrf)
+        return 0; /* the real flat DIT owns its level planes: one transform at a time */
     if (g->zrp)
         return 1; /* the real pair: two serial kernels, no pool, no child */
     if (g->zttr)
@@ -1440,6 +1443,16 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         /* the real four-step: the plan IS the split */
         if (a->zfsr->N1 != b->zfsr->N1 || a->zfsr->N2 != b->zfsr->N2)
             TC_NEQ("real four-step split");
+        return 1;
+    }
+    if (!a->zrf != !b->zrf)
+        TC_NEQ("real flat DIT");
+    if (a->zrf)
+    {
+        /* the real flat DIT: the plan IS the chain and the form switch */
+        if (a->zrf->K != b->zrf->K || a->zrf->nomsz != b->zrf->nomsz ||
+            memcmp(a->zrf->R, b->zrf->R, sizeof(int) * (size_t)a->zrf->K))
+            TC_NEQ("real flat DIT chain");
         return 1;
     }
     if (!a->zrm != !b->zrm)
@@ -1833,7 +1846,12 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * have no dims test at all, so the same feature accepted dims==0
          * out-of-place and rejected it in-place. */
         !(cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-          cfg->howmany == 1 && (cfg->n[0] % 2) == 0))
+          cfg->howmany == 1 && (cfg->n[0] % 2) == 0) &&
+        /* an odd cell with a real flat DIT chain goes on to the odd real race
+         * (bridge/real_bridge.h): that engine is one pipeline in both
+         * placements, and the race's in-place incumbent is the bridge below */
+        !(cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->howmany == 1 && !ob &&
+          (cfg->n[0] & 1) && _zrf_has_chain(cfg->n[0])))
     {
         /* ODD N in-place (2026-08-27, (c) of the odd-real list): the
          * CCE plane contract holds at odd N too — 2*(N/2+1) = N+1
@@ -2305,6 +2323,12 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         FP__ADD(" zrm=rn1");
     if (h->zfsr)
         FP__ADD(" zfsr=[%dx%d]", h->zfsr->N1, h->zfsr->N2);
+    if (h->zrf)
+    {
+        char cs[48];
+        vfft_zrf_chain_str(h->zrf->R, h->zrf->K, cs, sizeof cs);
+        FP__ADD(" zrf=[%s%s]", cs, h->zrf->nomsz ? "/t" : "");
+    }
     if (h->zttr)
     {
         char cs[40];

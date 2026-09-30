@@ -140,6 +140,20 @@ static int _k1x_zrm(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, do
     vfft_zrm_execute(h->zrm, zin, zout);
     return 0;
 }
+/* the real flat DIT (il/real/zrf.h): the engine's execute, bound by the
+ * plan's direction */
+static int _k1x_zrf_fwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    vfft_zrf_execute_fwd(h->zrf, zin, zout);
+    return 0;
+}
+static int _k1x_zrf_bwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    vfft_zrf_execute_bwd(h->zrf, zin, zout);
+    return 0;
+}
 static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
@@ -150,6 +164,11 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
     if (h->zrm)
     {
         h->k1_exec = _k1x_zrm;
+        return hp;
+    }
+    if (h->zrf)
+    {
+        h->k1_exec = h->transform == VFFT_R2C ? _k1x_zrf_fwd : _k1x_zrf_bwd;
         return hp;
     }
     if (h->oddr_child || (!h->pq_inner && !h->tcb && h->N2 == 0))

@@ -280,6 +280,13 @@ struct vfft_plan_s
      * engine above ZTT-r's band (N >= 2^20), its split swept and raced per
      * cell and banked (eng=zfsr split=N1xN2). zfsr != NULL selects it. */
     struct vfft_zfsr_s *zfsr;       /* the real four-step's plan (owned)   */
+    /* the REAL FLAT DIT (2026-09-30, il/real/zrf.h): the odd-N real transform
+     * on the c2c flat DIT's stages -- a real leaf (r1c), the c2c stages on the
+     * digit blocks 1..(R-1)/2, the real digit-0 run one level down to a mono;
+     * the odd real race's engine beside the odd routes and the mono
+     * (bridge/real_bridge.h), its chain swept at create and banked
+     * (eng=zrf chain= msz=). zrf != NULL selects it. */
+    struct vfft_zrf_s *zrf;         /* the real flat DIT's plan (owned)    */
     stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
     struct vfft_ilnd_s *ilnd;  /* the rank-N INTERLEAVED c2c tier (fftnd_il.h), owned */
     vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */
