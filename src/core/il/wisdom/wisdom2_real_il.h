@@ -14,9 +14,11 @@
  *                                                  the split of N/2)
  *   eng=zrm                                       (the real mono, il/real/zrm.h: one
  *                                                  rn1 kernel, N <= 64, no plan input)
- *   eng=zrf  chain=9.9.5 msz=0|1                  (the real flat DIT, il/real/zrf.h, odd N:
- *                                                  the chain, and whether the split-body
- *                                                  stage form runs where it exists)
+ *   eng=zrf  chain=9.9.5 msz=0|1 tile=256 [mt=1]  (the real flat DIT, il/real/zrf.h, odd N:
+ *                                                  the chain, whether the split-body stage
+ *                                                  form runs where it exists, the tile
+ *                                                  budget in complex, 0 = untiled; on a
+ *                                                  threaded plan's row the threaded form)
  *   eng=oddr                                      (odd N: the odd-real routes stood
  *                                                  against the mono and the flat DIT;
  *                                                  their own route record is
@@ -131,24 +133,25 @@ static inline int vw2_real_il_bank_zrm(vw2_store_t *s, int realN, int is_c2r, in
     return vw2_real_il_bank_eng(s, realN, is_c2r, is_inplace, T, "zrm", ns);
 }
 
-/* The banked real flat DIT plan input at the cell: 1 with chain[0..*K-1] and
- * *nomsz filled, 0 when the cell's engine is not zrf or the tokens are
- * malformed (a miss). max = the capacity of chain[]. */
+/* The banked real flat DIT plan input at the cell: 1 with chain[0..*K-1],
+ * *nomsz and *tile filled, 0 when the cell's engine is not zrf or the tokens
+ * are malformed (a miss). max = the capacity of chain[]. */
 static inline int vw2_real_il_lookup_zrf(const vw2_store_t *s, int realN, int is_c2r,
-                                         int is_inplace, int T, int *chain, int max, int *K, int *nomsz)
+                                         int is_inplace, int T, int *chain, int max, int *K, int *nomsz,
+                                         int *tile, int *mt)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    const char *eng, *ch, *ms;
+    const char *eng, *ch, *ms, *tl;
     long prod = 1;
     int n = 0;
-    *K = 0; *nomsz = 0;
+    *K = 0; *nomsz = 0; *tile = 0; *mt = 0;
     vw2_real_il_key(&k, realN, is_c2r, is_inplace, T);
     r = vw2_lookup(s, &k);
     if (!r || vw2__is_seed(r)) return 0;
     eng = vw2_rec_get(r, "eng");
     if (!eng || strcmp(eng, "zrf")) return 0;
-    ch = vw2_rec_get(r, "chain"); ms = vw2_rec_get(r, "msz");
+    ch = vw2_rec_get(r, "chain"); ms = vw2_rec_get(r, "msz"); tl = vw2_rec_get(r, "tile");
     if (!ch) return 0;
     while (*ch && n < max) {
         char *end;
@@ -163,12 +166,17 @@ static inline int vw2_real_il_lookup_zrf(const vw2_store_t *s, int realN, int is
     if (n < 2 || *ch || prod != (long)realN) return 0;
     *K = n;
     *nomsz = (ms && ms[0] == '0') ? 1 : 0;
+    if (tl) { const int v = atoi(tl); if (v < 0) return 0; *tile = v; }
+    {   /* the threaded form of a threaded plan's row; absent = serial */
+        const char *m = vw2_rec_get(r, "mt");
+        if (m && atoi(m) == 1) *mt = 1;
+    }
     return 1;
 }
 
 /* Bank the real flat DIT verdict at the cell (replacing whatever engine held it). */
 static inline int vw2_real_il_bank_zrf(vw2_store_t *s, int realN, int is_c2r, int is_inplace, int T,
-                                       const int *chain, int K, int nomsz, double ns)
+                                       const int *chain, int K, int nomsz, int tile, int mt, double ns)
 {
     vw2_rec_t r;
     char b[64];
@@ -179,7 +187,10 @@ static inline int vw2_real_il_bank_zrf(vw2_store_t *s, int realN, int is_c2r, in
         off += snprintf(b + off, sizeof b - (size_t)off, "%s%d", i ? "." : "", chain[i]);
     if (vw2_rec_set(&r, 1, "eng", "zrf") != VW2_OK ||
         vw2_rec_set(&r, 1, "chain", b) != VW2_OK ||
-        vw2_rec_set(&r, 1, "msz", nomsz ? "0" : "1") != VW2_OK ||
+        vw2_rec_set(&r, 1, "msz", nomsz ? "0" : "1") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    snprintf(b, sizeof b, "%d", tile > 0 ? tile : 0);
+    if (vw2_rec_set(&r, 1, "tile", b) != VW2_OK ||
+        (mt > 0 && vw2_rec_set(&r, 1, "mt", "1") != VW2_OK) ||
         vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
         vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
     if (ns > 0.0) {

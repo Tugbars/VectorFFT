@@ -1,5 +1,6 @@
 /* zrf_check.c -- the real flat DIT (il/real/zrf.h) as an engine, before the
- * door: per odd N, every chain x the split-body switch:
+ * door: per odd N, every chain x the split-body switch x the tile budgets
+ * (0, 64, 256, 1024; a budget no level takes is the untiled plan, skipped):
  *   gate   r2c against a long double real DFT, c2r(r2c(x)) = N x, both out
  *          of place and in place;
  *   race   the best three chains per direction (a quick best-of-5 pass picks
@@ -77,7 +78,8 @@ int main(int argc, char **argv)
         const int nc = vfft_zrf_chains(N, ch, len, MAXC, &dropped);
         double *x = (double *)_aligned_malloc(NX * 8, 64), *ref = (double *)_aligned_malloc(NX * 8, 64);
         double *X = (double *)_aligned_malloc(NX * 8, 64), *y = (double *)_aligned_malloc(NX * 8, 64), *b = (double *)_aligned_malloc(NX * 8, 64);
-        vfft_zrf_plan_t *pl[2 * MAXC]; char nm[2 * MAXC][48]; double qf[2 * MAXC], qb[2 * MAXC];
+        vfft_zrf_plan_t *pl[8 * MAXC]; char nm[8 * MAXC][48]; double qf[8 * MAXC], qb[8 * MAXC];
+        static const int tiles[4] = { 0, 64, 256, 1024 };
         int np = 0;
         if (!nc) { printf("N=%d: no chain\n", N); continue; }
         for (size_t i = 0; i < NX; i++) { seed = seed * 1664525u + 1013904223u; x[i] = (double)(seed >> 8) / (double)(1u << 24) - 0.5; }
@@ -93,19 +95,22 @@ int main(int argc, char **argv)
         }
         for (int ci = 0; ci < nc; ci++)
             for (int nomsz = 0, any = 0; nomsz < 2; nomsz++)
+            for (int ti = 0; ti < 4; ti++)
             {
-                vfft_zrf_plan_t *p = vfft_zrf_create(N, ch[ci], len[ci], nomsz);
+                vfft_zrf_plan_t *p = vfft_zrf_create(N, ch[ci], len[ci], nomsz, tiles[ti]);
                 char cs[40];
                 vfft_zrf_chain_str(ch[ci], len[ci], cs, sizeof cs);
-                if (!p) { if (!nomsz) printf("N=%d %s: not built\n", N, cs); continue; }
-                if (!nomsz)
+                if (!p) { if (!nomsz && !ti) printf("N=%d %s: not built\n", N, cs); continue; }
+                if (ti && !vfft_zrf_tiled(p)) { vfft_zrf_destroy(p); continue; }
+                if (!nomsz && !ti)
                     for (int j = 0; j < p->J; j++) for (int s = 1; s <= p->lv[j].ns; s++) any |= p->lv[j].fd->msz[s];
-                else if (!any)
+                else if (nomsz && !any)
                 {   /* no stage takes the split body: the twin is the same plan */
                     vfft_zrf_destroy(p);
                     continue;
                 }
-                snprintf(nm[np], sizeof nm[np], "%s%s", cs, nomsz ? "/t" : "");
+                if (ti) snprintf(nm[np], sizeof nm[np], "%s%s/w%d", cs, nomsz ? "/t" : "", tiles[ti]);
+                else snprintf(nm[np], sizeof nm[np], "%s%s", cs, nomsz ? "/t" : "");
                 double e1, e2, e3, e4;
                 memset(X, 0, NX * 8); memset(y, 0, NX * 8);
                 X[2 * nb] = 777.0; y[N] = 777.0;
@@ -138,7 +143,7 @@ int main(int argc, char **argv)
             {
                 vfft_plan h = d ? hb : hf;
                 double *q = d ? qb : qf;
-                zarm_t za[2 * MAXC];
+                zarm_t za[8 * MAXC];
                 int best[3] = { -1, -1, -1 }, reps;
                 for (int i = 0; i < np; i++) { za[i].p = pl[i]; za[i].bwd = d; za[i].in = d ? X : x; za[i].out = d ? y : b; }
                 { const double t0 = vfft_now_ns(); zarm_run(&za[0]); const double est = vfft_now_ns() - t0;
@@ -170,8 +175,8 @@ int main(int argc, char **argv)
         }
         if (getenv("ZRF_PARTS"))
         {   /* the forward's parts on its quickest plan, each alone in a hot loop */
-            int bi = 0;
-            for (int i = 1; i < np; i++) if (qf[i] < qf[bi]) bi = i;
+            int bi = -1;
+            for (int i = 0; i < np; i++) if (!vfft_zrf_tiled(pl[i]) && (bi < 0 || qf[i] < qf[bi])) bi = i;
             const vfft_zrf_plan_t *p = pl[bi];
             const int reps = 2000;
             double whole, sum = 0;
@@ -191,7 +196,7 @@ int main(int argc, char **argv)
                     printf(" s%d r%d %.0f", s + 1, lv->fd->R[s + 1], best); sum += best;
                 }
                 best = 1e300;
-                for (int r = 0; r < 7; r++) { const double t0 = vfft_now_ns(); for (int i = 0; i < reps; i++) _zrf_sweep(lv, b); const double t = (vfft_now_ns() - t0) / reps; if (t < best) best = t; }
+                for (int r = 0; r < 7; r++) { const double t0 = vfft_now_ns(); for (int i = 0; i < reps; i++) _zrf_sweep(lv, b, 0, lv->nlb); const double t = (vfft_now_ns() - t0) / reps; if (t < best) best = t; }
                 printf(" sweep %.0f", best); sum += best;
                 src = lv->plane;
             }

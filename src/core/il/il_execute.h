@@ -166,8 +166,8 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
         h->k1_exec = _k1x_zrm;
         return hp;
     }
-    if (h->zrf)
-    {
+    if (h->zrf && !h->zrf->mt)
+    {   /* serial: the engine's execute itself (a threaded form goes through the bridge, which arms the pool) */
         h->k1_exec = h->transform == VFFT_R2C ? _k1x_zrf_fwd : _k1x_zrf_bwd;
         return hp;
     }

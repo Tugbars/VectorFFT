@@ -86,7 +86,7 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
         }
         if (h->zrf)
         {
-            _exec_zrf(h, sre, dre); /* the real flat DIT: serial kernels on the plan's planes, pool-free */
+            _exec_zrf(h, sre, dre); /* the real flat DIT: the plan's planes; pool-free unless its threaded form is bound */
             return;
         }
         if (h->zttr)

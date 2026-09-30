@@ -95,7 +95,7 @@ their content is accurate, their paths are the old ones. Map:
 | `il2d_*`, `fft2d_real_il.h`, `oop/il2d_proto.h` | `il/rank2/` |
 | `fftnd_il.h` | `il/rank3/` |
 | `zr2c.h`, `zr2c_build.h` | `il/real/` |
-| `zrp.h`, `zrp_build.h`, `zttr.h`, `zrm.h`, `zfsr.h` | `il/real/` |
+| `zrp.h`, `zrp_build.h`, `zttr.h`, `zttr_mt.h`, `zrm.h`, `zfsr.h`, `zrf.h` | `il/real/` |
 | `transforms/fft2d/plane_queue.h` | `plane_queue.h` (front door) |
 
 Deleted in phase 1 (dead): `transforms/conv/`, `fftnd_natorder.h`,
@@ -136,7 +136,10 @@ as linked `.c` files; they include no core headers.
 - **c2c K=1, interleaved**: `il/rank1/` (il2p pair / il3p chain3, the flat DIT,
   ZTURN-T, the four-step, IL primes), raced by `il/planning/dp_planner_il.h`.
 - **r2c/c2r**: `split/real/r2c_dispatch.h` / `c2r_dispatch.h`; interleaved
-  even-N K=1 `il/real/zr2c.h`.
+  K=1: even N in the real door `il/real/zrp_build.h` (zr2c, the pair, ZTT-r,
+  the mono, the four-step), odd N in the odd real race of
+  `bridge/real_bridge.h` (the mono, the real flat DIT `il/real/zrf.h`, the
+  odd routes).
 - **trig/DSP**: `split/trig/{dct,dct1,dct4,dst,dht}.h`.
 - **2D/3D/4D**: split `split/rank2/`, `split/rank3/`; interleaved `il/rank2/`
   (il2d tier), `il/rank3/fftnd_il.h`.
