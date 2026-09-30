@@ -1,6 +1,0 @@
-2026-09-30 20:11:21 run: 7 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
-2026-09-30 20:11:21 calibrate: 7 cells (0 already done)
-2026-09-30 20:13:04   calibrated 7/7 (4782969), 103 s elapsed
-2026-09-30 20:13:04 bench: 7 cells (0 already benched, 0 not banked -> not benched)
-2026-09-30 20:13:35   benched 7/7 (4782969), 30 s elapsed
-2026-09-30 20:13:37 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zrf_big_c2r_rt_mt8_2026-09-30\report_c2r_mt8.md

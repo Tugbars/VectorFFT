@@ -1,7 +1,0 @@
-2026-09-29 20:53:35 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
-2026-09-29 20:53:35 run: 16 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
-2026-09-29 20:53:35 calibrate: 16 cells (0 already done), RECALIBRATE (every cell re-raced)
-2026-09-29 20:55:30   calibrated 16/16 (65536), 115 s elapsed
-2026-09-29 20:55:30 bench: 15 cells (0 already benched, 1 not banked -> not benched)
-2026-09-29 20:55:55   benched 15/15 (65536), 24 s elapsed
-2026-09-29 20:55:57 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zttr2_c2r_2026-09-29\report_c2r_fftw.md
