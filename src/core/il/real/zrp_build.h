@@ -214,8 +214,8 @@ static void _exec_zrf(struct vfft_plan_s *h, const double *sre, double *dre)
 }
 
 /* VFFT_ZRF at create: 1 = pinned at the chain "9.9.5" (then "/t" = the split
- * body off, "/w256" = the tile budget, "/m" = the threaded form at the
- * plan's T), 0 = kept out of the race, -1 = unset */
+ * body off, "/w256" = the tile budget, "/m1" | "/m2" ("/m" = 1) = the
+ * threaded arm at the plan's T), 0 = kept out of the race, -1 = unset */
 static int _zrf_env(int *R, int *K, int *nomsz, int *tile, int *mt)
 {
     const char *e = getenv("VFFT_ZRF");
@@ -238,7 +238,7 @@ static int _zrf_env(int *R, int *K, int *nomsz, int *tile, int *mt)
         return 0;
     if (!strncmp(e, "/t", 2)) { *nomsz = 1; e += 2; }
     if (!strncmp(e, "/w", 2)) { *tile = atoi(e + 2); e += 2; while (*e >= '0' && *e <= '9') e++; }
-    if (!strncmp(e, "/m", 2)) { *mt = 1; e += 2; }
+    if (!strncmp(e, "/m", 2)) { e += 2; *mt = (*e == '2') ? 2 : 1; if (*e == '1' || *e == '2') e++; }
     if (*e || *tile < 0)
         return 0;
     *K = n;
