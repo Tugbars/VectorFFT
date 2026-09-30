@@ -1,0 +1,5 @@
+524288     banked      6612ms raced     zr2c:child_nat_ip
+1048576    banked       662ms raced     fs
+2097152    banked      1048ms raced     fs
+4194304    banked      1795ms raced     fs
+8388608    banked      3401ms raced     fs

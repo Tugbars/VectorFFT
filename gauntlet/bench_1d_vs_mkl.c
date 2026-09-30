@@ -54,6 +54,9 @@
 #include "env.h"     /* vfft_env_init + vfft_pin_thread */
 long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h: the odd-N flat DIT MT engagement counter */
 long vfft_il2d_col_mt_passes(void); /* the 2D tier's MT engagement counter (column walk + the c2c MT walk) */
+long vfft_zfsr_mt_passes(void);     /* the real four-step's threaded order sweeps */
+long vfft_zr2c_fold_mt_passes(void); /* zr2c's fold cut across workers */
+long vfft_tc_mt_dispatches(void);   /* the transform-contiguous batch's worker dispatches */
 long vfft_ilnd_mt_passes(void);     /* the rank-3 tier's MT engagement counter */
 #include "planner.h"
 #include "dp_planner.h" /* vfft_now_ns + dp_set_patient */
@@ -1363,7 +1366,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     char shape[32];
     if (g->nd == 2) snprintf(shape, sizeof shape, "%dx%d", g->N1, g->N2);
     else            snprintf(shape, sizeof shape, "%d", g->N1);
-    bench_pin_one_thread();
+    if (!g_k1noop_mt) bench_pin_one_thread();   /* --mt: the threaded cell's two-team protocol (main) */
     vfft_wisdom *W = k1z_bundle();
     if (!W)
     {
@@ -1382,7 +1385,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.batch_geom = g->K > 1 ? VFFT_BATCH_TRANSFORM_CONTIGUOUS : VFFT_BATCH_DEFAULT;
     cfg.order = g->nd == 2 ? VFFT_ORDER_NATURAL : VFFT_ORDER_DEFAULT;   /* a real spectrum is natural */
-    cfg.nthreads = 1;
+    cfg.nthreads = g_k1noop_mt ? g_mt : 1;   /* --mt: the plan's thread snapshot; the comparator gets the same T */
     cfg.wisdom = W;   /* wisdom_write 0: a bench never banks */
     vfft_plan h = vfft_create(&cfg);
     if (!h)
@@ -1437,21 +1440,42 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         }
     }
     double vns = 0, mns = 0;
+    long eng = 0;
     real_ours_t oc = { h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, o };
+/* the threaded executes engaged in the timed arm: the child's (ZTURN-T, the
+ * four-step's 2D tier, the flat DIT), the real four-step's sweeps, the batch's
+ * worker dispatches */
+#define REAL_ENG() (vfft_ztt_mt_passes() + vfft_il2d_col_mt_passes() + vfft_ilfd_mt_passes() + vfft_zfsr_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_tc_mt_dispatches())
     if (flip)
-    { /* comparator first */
+    { /* comparator first; --mt: the two-team protocol of the K=1 c2c cell (our pool down while the comparator runs) */
+        if (g_k1noop_mt) vfft_set_num_threads(1);
         mns = real_time_cmp(g, c2r, x, ref);
         cachebust();
         pace(cool_ms);
-        vns = real_time_body(real_ours_body, &oc, tot);
+        if (g_k1noop_mt) vfft_set_num_threads(g_mt);
+        {
+            const long e0 = REAL_ENG();
+            vns = real_time_body(real_ours_body, &oc, tot);
+            eng = REAL_ENG() - e0;
+        }
     }
     else
     {
-        vns = real_time_body(real_ours_body, &oc, tot);
+        if (g_k1noop_mt) vfft_set_num_threads(g_mt);
+        {
+            const long e0 = REAL_ENG();
+            vns = real_time_body(real_ours_body, &oc, tot);
+            eng = REAL_ENG() - e0;
+        }
         cachebust();
         pace(cool_ms);
+        if (g_k1noop_mt) vfft_set_num_threads(1);
         mns = real_time_cmp(g, c2r, x, ref);
     }
+#undef REAL_ENG
+    if (g_k1noop_mt)
+        printf("         real-mt %s T=%d: engaged %ld threaded executes in the timed arm%s\n",
+               shape, g_mt, eng, eng > 0 ? "" : " (SERIAL verdict or declined)");
     double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
     const double pts1 = (double)(g->pts / g->K);
     double vgf = (vns > 0) ? (double)g->K * 2.5 * pts1 * log2(pts1) / vns : 0;
@@ -1463,6 +1487,9 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         if (g->nd == 2)
             snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
                      g->N1, g->N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
+        else if (g_k1noop_mt)   /* the threaded run's own column, as the K=1 c2c cell's */
+            snprintf(row, sizeof row, "%d,%zu,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d,%ld\n",
+                     g->N1, g->K, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip, eng);
         else
             snprintf(row, sizeof row, "%d,%zu,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
                      g->N1, g->K, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
@@ -5486,7 +5513,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "--cmp fftw: the FFTW arm is the 1D c2c K=1 cell only\n");
         return 2;
     }
-    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat) && mt;   /* the 2D/3D cells share the
+    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat || (g_real && !g_k2real)) && mt;   /* the 2D/3D cells share the
                                                                           * threaded-cell discipline (2026-09-24) */
     if (g_k1noop_mt)
     {

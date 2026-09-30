@@ -451,6 +451,7 @@ void vfft_destroy(vfft_plan h)
         vfft_destroy((vfft_plan)h->zr2c_child); /* §D2: recursive child */
     vfft_zrp_destroy(h->zrp);                    /* the real pair (il/real/zrp.h) */
     vfft_zttr_destroy(h->zttr);                  /* ZTT-r (il/real/zttr.h) */
+    vfft_zfsr_destroy(h->zfsr);                  /* the real four-step (il/real/zfsr.h) */
     vfft_aligned_free(h->zr2c_aff);      /* posix_memalign-backed */
     vfft_aligned_free(h->zr2c_scratch);
     if (h->rplan)

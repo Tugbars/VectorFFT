@@ -131,6 +131,11 @@ long vfft_ilfd_mt_passes(void) { return _vfft_ilfd_mt_count; }
 /* ZTURN-T's threaded arm (ztt_mt.h): threaded executes actually run */
 long _vfft_ztt_mt_count = 0;
 long vfft_ztt_mt_passes(void) { return _vfft_ztt_mt_count; }
+/* the real four-step's order sweeps (il/real/zfsr.h): sweeps actually cut across workers */
+long _vfft_zr2c_fold_mt_count = 0;   /* zr2c's fold cut across workers (il/real/zr2c.h) */
+long vfft_zr2c_fold_mt_passes(void) { return _vfft_zr2c_fold_mt_count; }
+long _vfft_zfsr_mt_count = 0;
+long vfft_zfsr_mt_passes(void) { return _vfft_zfsr_mt_count; }
 /* the gate's hook (benches/ztt_mt_gate.c): build a ZTURN-T plan, bind the
  * arm for T, run it threaded on the process pool, write y; returns 1 when
  * the threaded walk ran, 0 when it declined (then y is untouched), -1 when
@@ -1240,6 +1245,8 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
         return _tc_inner_mt_safe(g->oddr_child);
     if (g->zrm)
         return 1; /* the real mono: one pure kernel, no pool, no child, no scratch */
+    if (g->zfsr)
+        return 0; /* the real four-step owns its plane: one transform at a time */
     if (g->zrp)
         return 1; /* the real pair: two serial kernels, no pool, no child */
     if (g->zttr)
@@ -1423,6 +1430,15 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         /* odd-real bridge: equivalent iff the c2c children are (the
          * bridge itself carries only buffers). */
         return _tc_clone_equiv(a->oddr_child, b->oddr_child);
+    if (!a->zfsr != !b->zfsr)
+        TC_NEQ("real four-step");
+    if (a->zfsr)
+    {
+        /* the real four-step: the plan IS the split */
+        if (a->zfsr->N1 != b->zfsr->N1 || a->zfsr->N2 != b->zfsr->N2)
+            TC_NEQ("real four-step split");
+        return 1;
+    }
     if (!a->zrm != !b->zrm)
         TC_NEQ("real mono");
     if (a->zrm)
@@ -2284,6 +2300,8 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         FP__ADD(" zrp=[%dx%d]", h->zrp->R1, h->zrp->R2);
     if (h->zrm)
         FP__ADD(" zrm=rn1");
+    if (h->zfsr)
+        FP__ADD(" zfsr=[%dx%d]", h->zfsr->N1, h->zfsr->N2);
     if (h->zttr)
     {
         char cs[40];
