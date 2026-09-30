@@ -671,16 +671,19 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.wisdom = cfg->wisdom;
             rc.wisdom_write = cfg->wisdom_write;
             il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
-            /* PURITY GATE: the TC inner must be the zr2c composite —
-             * the 1D OOP real create quietly falls through to the
-             * split-interior CCE path when the zr2c child fails, and
-             * serving that here would rebuild the veneer under a
-             * native flag (a hybrid IL/split route). */
+            /* PURITY GATE: the TC inner must be one of the interleaved
+             * real engines — zr2c (the composite), the real pair, ZTT-r
+             * or the real mono (il/real/zrp_build.h: the door's four
+             * engines, banked per 1D cell) — because the 1D OOP real
+             * create quietly falls through to the split-interior CCE
+             * path when none builds, and serving that here would rebuild
+             * the veneer under a native flag (a hybrid IL/split route). */
             if (il2d_row &&
-                !(il2d_row->tcb && il2d_row->tcb->zr2c_child))
+                !(il2d_row->tcb && (il2d_row->tcb->zr2c_child || il2d_row->tcb->zrp ||
+                                    il2d_row->tcb->zttr || il2d_row->tcb->zrm)))
             {
                 _vfft_warn("vfft_create: IL 2D real %dx%d — the row "
-                           "door at N2=%d is not the zr2c route "
+                           "door at N2=%d is not an interleaved real engine "
                            "(purity gate); the cell refuses",
                            N1, N2, N2);
                 vfft_destroy(il2d_row);
