@@ -1,6 +1,6 @@
-2026-09-30 16:43:02 run: 23 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
-2026-09-30 16:43:02 calibrate: 23 cells (0 already done)
-2026-09-30 16:43:34   calibrated 23/23 (8388608), 32 s elapsed
-2026-09-30 16:43:34 bench: 22 cells (0 already benched, 1 not banked -> not benched)
-2026-09-30 16:44:20   benched 22/22 (8388608), 44 s elapsed
-2026-09-30 16:44:21 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\real_pow2_c2r_mt8_2026-09-30\report_c2r_mt8.md
+2026-09-30 17:11:34 run: 23 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-30 17:11:34 calibrate: 23 cells (0 already done)
+2026-09-30 17:12:07   calibrated 23/23 (8388608), 33 s elapsed
+2026-09-30 17:12:07 bench: 22 cells (0 already benched, 1 not banked -> not benched)
+2026-09-30 17:12:51   benched 22/22 (8388608), 42 s elapsed
+2026-09-30 17:12:52 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\real_pow2_c2r_mt8_2026-09-30\report_c2r_mt8.md
