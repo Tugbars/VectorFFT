@@ -7,8 +7,9 @@
  *   eng=zr2c route=child_oop_il|child_nat_ip      (kind-5, wisdom2_oop_il.h)
  *   eng=zrp  pair=R1.R2 leaf=n1t|r2z              (the real pair, il/real/zrp.h:
  *                                                  n1t = form A, r2z = form B)
- *   eng=zttr chain=4.8.8.4 tile=512 stk=3         (ZTT-r, il/real/zttr.h: the chain,
- *                                                  the tile width, the stack state)
+ *   eng=zttr chain=4.8.8.4 tile=512 stk=3 [mt=1|2] (ZTT-r, il/real/zttr.h: the chain,
+ *                                                  the tile width, the stack state; on a
+ *                                                  threaded plan's row the threaded arm)
  *   eng=zfsr split=1024x2048                      (the real four-step, il/real/zfsr.h:
  *                                                  the split of N/2)
  *   eng=zrm                                       (the real mono, il/real/zrm.h: one
@@ -225,13 +226,13 @@ static inline int vw2_real_il_bank_zfsr(vw2_store_t *s, int realN, int is_c2r, i
  * malformed (a miss). */
 static inline int vw2_real_il_lookup_zttr(const vw2_store_t *s, int realN, int is_c2r,
                                           int is_inplace, int T, int chain[8], int *nf,
-                                          size_t *tile, int *stk)
+                                          size_t *tile, int *stk, int *mt)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *eng, *ch, *tl, *st;
     int n = 0;
-    *nf = 0; *tile = 0; *stk = 3;
+    *nf = 0; *tile = 0; *stk = 3; *mt = 0;
     vw2_real_il_key(&k, realN, is_c2r, is_inplace, T);
     r = vw2_lookup(s, &k);
     if (!r || vw2__is_seed(r)) return 0;
@@ -252,12 +253,16 @@ static inline int vw2_real_il_lookup_zttr(const vw2_store_t *s, int realN, int i
     *nf = n;
     if (tl) *tile = (size_t)strtoul(tl, NULL, 10);
     if (st) { int v = atoi(st); if (v >= 0 && v <= 3) *stk = v; }
+    {   /* the threaded arm of a threaded plan's row: 1 BLOCKS, 2 TILES; absent = serial */
+        const char *m = vw2_rec_get(r, "mt");
+        if (m) { int v = atoi(m); if (v >= 1 && v <= 2) *mt = v; }
+    }
     return 1;
 }
 
 /* Bank the ZTT-r verdict at the cell (replacing whatever engine held it). */
 static inline int vw2_real_il_bank_zttr(vw2_store_t *s, int realN, int is_c2r, int is_inplace, int T,
-                                        const int *chain, int nf, size_t tile, int stk, double ns)
+                                        const int *chain, int nf, size_t tile, int stk, int mt, double ns)
 {
     vw2_rec_t r;
     char b[64];
@@ -270,6 +275,11 @@ static inline int vw2_real_il_bank_zttr(vw2_store_t *s, int realN, int is_c2r, i
         vw2_rec_set(&r, 1, "chain", b) != VW2_OK) { vw2_rec_free(&r); return -1; }
     snprintf(b, sizeof b, "%zu", tile);
     if (vw2_rec_set(&r, 1, "tile", b) != VW2_OK) { vw2_rec_free(&r); return -1; }
+    if (mt > 0)
+    {
+        snprintf(b, sizeof b, "%d", mt);
+        if (vw2_rec_set(&r, 1, "mt", b) != VW2_OK) { vw2_rec_free(&r); return -1; }
+    }
     snprintf(b, sizeof b, "%d", stk);
     if (vw2_rec_set(&r, 1, "stk", b) != VW2_OK ||
         vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||

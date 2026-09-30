@@ -56,6 +56,7 @@ long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h: the odd-N flat DIT MT eng
 long vfft_il2d_col_mt_passes(void); /* the 2D tier's MT engagement counter (column walk + the c2c MT walk) */
 long vfft_zfsr_mt_passes(void);     /* the real four-step's threaded order sweeps */
 long vfft_zr2c_fold_mt_passes(void); /* zr2c's fold cut across workers */
+long vfft_zttr_mt_passes(void);      /* ZTT-r's threaded arms */
 long vfft_tc_mt_dispatches(void);   /* the transform-contiguous batch's worker dispatches */
 long vfft_ilnd_mt_passes(void);     /* the rank-3 tier's MT engagement counter */
 #include "planner.h"
@@ -1445,7 +1446,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
 /* the threaded executes engaged in the timed arm: the child's (ZTURN-T, the
  * four-step's 2D tier, the flat DIT), the real four-step's sweeps, the batch's
  * worker dispatches */
-#define REAL_ENG() (vfft_ztt_mt_passes() + vfft_il2d_col_mt_passes() + vfft_ilfd_mt_passes() + vfft_zfsr_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_tc_mt_dispatches())
+#define REAL_ENG() (vfft_ztt_mt_passes() + vfft_il2d_col_mt_passes() + vfft_ilfd_mt_passes() + vfft_zfsr_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_zttr_mt_passes() + vfft_tc_mt_dispatches())
     if (flip)
     { /* comparator first; --mt: the two-team protocol of the K=1 c2c cell (our pool down while the comparator runs) */
         if (g_k1noop_mt) vfft_set_num_threads(1);

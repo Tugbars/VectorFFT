@@ -75,6 +75,7 @@ typedef struct {
                                * bS[2n], bS[2n+1] = sin(2 pi n/N); bC = -cos; 2M doubles each */
     int blocked;              /* the terminator form: 2 = tlfhc (natural lanes), 1 = tlfhb, 0 = monolithic */
     int stk;                  /* the kernels' stack state 0..3: rsp = 64k - 32 - 16 stk at their call */
+    int mt, mt_t;             /* the threaded arm (zttr_mt.h): 0 serial, 1 BLOCKS, 2 TILES; bound for mt_t threads */
     double *scratch;          /* N+2 doubles, IN-PLACE placements only (vfft_zttr_set_inplace): the
                                * ingest and the mids run here, the last stage lands in the caller's buffer */
 } vfft_zttr_plan_t;
@@ -676,6 +677,26 @@ ZTTR_TLFHB_BODY(4)
 ZTTR_TLFHB_BODY(8)
 #undef ZTTR_TLFHB_BODY
 
+/* One call's work for the two fused kernels (tlfhc, t0h): the plan and a range
+ * of columns. The serial run is one job over everything; the threaded run
+ * (zttr_mt.h) gives every worker its own range. mode bit 0: compute the
+ * peeled centre column into cen (tlfhc); bit 1: store it (tlfhc) / run the
+ * centre column (t0h). */
+typedef struct
+{
+    const vfft_zttr_plan_t *p;
+    long lo, hi;
+    int mode;
+    double *cen;              /* tlfhc: 2R doubles, the caller's */
+    const double *carry;      /* tlfhc, a threaded range: the RAW block at its first mirror column, 8 doubles a leg */
+    const double *edge;       /* tlfhc, a threaded range: the RAW block its last partner load reads, 8 doubles a leg.
+                               * The run is in the destination plane: the stage's input is split blocks and its
+                               * output interleaved pairs, so the next range's first store overwrites two values of
+                               * this block and this range's last store overwrites the rest -- both are read from a
+                               * snapshot taken before the workers start (zttr_mt.h). NULL = read the plane. */
+} _zttr_job_t;
+typedef void (*_zttr_job_fn)(const _zttr_job_t *, const double *, double *);
+
 /* ── the NATURAL-ORDER blocked terminator (tlfhc) ──
  * The primary quad keeps its lane order (lane i = column k+i, no reversal);
  * the partner window is REVERSED as it is assembled: lanes 0..3 = columns
@@ -689,19 +710,22 @@ ZTTR_TLFHB_BODY(8)
  * (0xD8), X[m] with the reversal folded into its pre-permute (0x27) at the
  * window's (unaligned) address. Otherwise the tlfhb pass discipline. */
 #define ZTTR_TLFHC_BODY(RR)                                                                               \
-static __attribute__((noinline)) void _zttr_tlfhc##RR(const vfft_zttr_plan_t *p, const double *W, double *X) \
+static __attribute__((noinline)) void _zttr_tlfhc##RR(const _zttr_job_t *jb, const double *W, double *X)     \
 {                                                                                                         \
     enum { R = RR, H = RR / 2 };                                                                          \
+    const vfft_zttr_plan_t *const p = jb->p;                                                              \
     const long L = p->L;                                                                                  \
+    const long c0 = jb->lo ? L - jb->lo : 0;            /* the range's first mirror column (column L is column 0) */\
+    const double *const ein = jb->edge;                   /* a range's last partner block, from the snapshot */    \
     const size_t M = (size_t)p->M;                                                                        \
     const double *affS = p->affS3, *affC = p->affC3;                                                      \
-    double cen[2 * R];                                                                                    \
+    double *const cen = jb->cen;                                                                            \
     double raw[40 * R + 8];                              /* the parking and the carry, aligned by hand */ \
     double *const SP = (double *)(((uintptr_t)raw + 63u) & ~(uintptr_t)63u);                              \
     double *const SW = SP + 16 * R;                                                                       \
     double *const CR = SW + 16 * R;                                                                       \
     const int pf = (W != X);        /* the plane mode: X went cold under W, prefetch its lines */        \
-    {   /* the centre column L/2: lane 0 of the quad k = L/2, its partner lane 0 of leg R-1-r */         \
+    if (jb->mode & 1) { /* the centre column L/2: lane 0 of the quad k = L/2, its partner lane 0 of leg R-1-r */         \
         const double *twr = p->twr3 + (size_t)(L / 8) * (size_t)(R - 1) * 8u;                             \
         __m256d pr[R], pi[R], Pr[R], Pi[R];                                                               \
         ZTTR_UNROLL for (int r = 0; r < R; r++)                                                           \
@@ -725,13 +749,14 @@ static __attribute__((noinline)) void _zttr_tlfhc##RR(const vfft_zttr_plan_t *p,
         }                                                                                                 \
     }                                                                                                     \
     ZTTR_UNROLL for (int r = 0; r < R; r++)                                                               \
-    {   /* the carry's start: column L of run r is its column 0 */                                        \
-        _mm256_storeu_pd(CR + 8 * r, _mm256_loadu_pd(W + 2 * ((size_t)r * (size_t)L)));                   \
-        _mm256_storeu_pd(CR + 8 * r + 4, _mm256_loadu_pd(W + 2 * ((size_t)r * (size_t)L) + 4));           \
+    {   /* the carry's start: lane 0 of the block at the first mirror column */                                 \
+        _mm256_storeu_pd(CR + 8 * r, jb->carry ? _mm256_loadu_pd(jb->carry + 8 * r) : _mm256_castpd128_pd256(_mm_load_sd(W + 2 * ((size_t)r * (size_t)L + (size_t)c0)))); \
+        _mm256_storeu_pd(CR + 8 * r + 4, jb->carry ? _mm256_loadu_pd(jb->carry + 8 * r + 4) : _mm256_castpd128_pd256(_mm_load_sd(W + 2 * ((size_t)r * (size_t)L + (size_t)c0) + 4))); \
     }                                                                                                     \
-    for (long k = 0; k < L / 2; k += 4)                                                                   \
+    for (long k = jb->lo; k < jb->hi; k += 4)                                                             \
     {                                                                                                     \
         const long q = k / 4;                                                                             \
+        const int edge = (k + 4 == jb->hi) && ein;                                                        \
         const double *twr = p->twr3 + (size_t)q * (size_t)(R - 1) * 8u;                                   \
         const double *twp = p->twp3 + (size_t)q * (size_t)(R - 1) * 8u;                                   \
         if (pf)                                                                                           \
@@ -748,7 +773,8 @@ static __attribute__((noinline)) void _zttr_tlfhc##RR(const vfft_zttr_plan_t *p,
             {                                                                                            \
                 const int r = 2 * j + par;                                                               \
                 const double *a = W + 2 * ((size_t)r * (size_t)L + (size_t)(L - k - 4));                 \
-                const __m256d ar = _mm256_loadu_pd(a), ai = _mm256_loadu_pd(a + 4);                      \
+                const double *as = edge ? ein + 8 * r : a; const __m256d ar = _mm256_loadu_pd(as);               \
+                const __m256d ai = _mm256_loadu_pd(as + 4);                                              \
                 __m256d wr = _mm256_blend_pd(_mm256_permute4x64_pd(ar, 0x6C), _mm256_loadu_pd(CR + 8 * r), 0x1);\
                 __m256d wi = _mm256_blend_pd(_mm256_permute4x64_pd(ai, 0x6C), _mm256_loadu_pd(CR + 8 * r + 4), 0x1);\
                 _mm256_storeu_pd(CR + 8 * r, ar); _mm256_storeu_pd(CR + 8 * r + 4, ai);                  \
@@ -827,6 +853,7 @@ static __attribute__((noinline)) void _zttr_tlfhc##RR(const vfft_zttr_plan_t *p,
             }                                                                                             \
         }                                                                                                 \
     }                                                                                                     \
+    if (jb->mode & 2)                                                                                   \
     ZTTR_UNROLL for (int r = 0; r < R; r++)                                                               \
     {                                                                                                     \
         double *o = X + 2 * ((size_t)r * (size_t)L + (size_t)(L / 2));                                    \
@@ -868,9 +895,35 @@ static inline void _zttr_call_aligned(_zttr_term_fn fn, const vfft_zttr_plan_t *
           "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "memory", "cc");
 }
 
+/* the same aligned entry for a job (tlfhc, t0h): the stack state is the job's plan's */
+static inline void _zttr_call_job(_zttr_job_fn fn, const _zttr_job_t *jb, const double *W, double *X)
+{
+    register const _zttr_job_t *a0 __asm__("rcx") = jb;
+    register const double *a1 __asm__("rdx") = W;
+    register double *a2 __asm__("r8") = X;
+    register _zttr_job_fn f __asm__("r10") = fn;
+    register long ad __asm__("r11") = 32 + 16 * (long)(jb->p->stk & 3);
+    __asm__ volatile(
+        "movq %%rsp, %%r12\n\t"
+        "andq $-64, %%rsp\n\t"
+        "subq %%r11, %%rsp\n\t"
+        "call *%%r10\n\t"
+        "movq %%r12, %%rsp\n\t"
+        : "+r"(a0), "+r"(a1), "+r"(a2), "+r"(f), "+r"(ad)
+        :
+        : "rax", "r9", "r12", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "memory", "cc");
+}
+
 static inline void _zttr_tlfh(const vfft_zttr_plan_t *p, const double *W, double *X)
 {
-    if (p->blocked == 2) { _zttr_call_aligned(p->R == 4 ? _zttr_tlfhc4 : _zttr_tlfhc8, p, W, X); return; }
+    if (p->blocked == 2)
+    {   /* the whole run as one job: every column quad, the centre computed and stored */
+        double cen[16];
+        const _zttr_job_t jb = { p, 0, p->L / 2, 3, cen };
+        _zttr_call_job(p->R == 4 ? _zttr_tlfhc4 : _zttr_tlfhc8, &jb, W, X);
+        return;
+    }
     if (p->blocked) { _zttr_call_aligned(p->R == 4 ? _zttr_tlfhb4 : _zttr_tlfhb8, p, W, X); return; }
     if (p->R == 4) _zttr_tlfh4(p, W, X); else _zttr_tlfh8(p, W, X);
 }
@@ -1007,14 +1060,15 @@ static inline __attribute__((always_inline)) void _zttr_blk_store(
     }
 }
 #define ZTTR_T0H_BODY(RR)                                                                                 \
-static __attribute__((noinline)) void _zttr_t0h##RR(const vfft_zttr_plan_t *p, const double *X, double *W) \
+static __attribute__((noinline)) void _zttr_t0h##RR(const _zttr_job_t *jb, const double *X, double *W)     \
 {                                                                                                         \
     enum { R = RR, BLK = 2 * RR };                    /* doubles per column run */                        \
+    const vfft_zttr_plan_t *const p = jb->p;                                                              \
     const size_t Ls = (size_t)p->zt->ncol;                                                                \
     const size_t *rb = p->zt->rb;                                                                         \
     const double *SB = p->bS, *CB = p->bC;                                                                \
     const __m256d ZLO = _mm256_setzero_pd();                                                              \
-    for (size_t k = 0; k < Ls / 2; k += 2)                                                                \
+    for (size_t k = (size_t)jb->lo; k < (size_t)jb->hi; k += 2)                                         \
     {                                                                                                     \
         __m256d z[R], m[R], Y[R];                                                                         \
         ZTTR_UNROLL for (int j = 0; j < R; j++)                                                           \
@@ -1033,7 +1087,7 @@ static __attribute__((noinline)) void _zttr_t0h##RR(const vfft_zttr_plan_t *p, c
         _zttr_blk_store(Y, k ? W + BLK * rb[Ls - k] : NULL, W + BLK * rb[Ls - k - 1]);                    \
         if (R == 8) _zttr_blk_store(Y + 4, k ? W + BLK * rb[Ls - k] + 8 : NULL, W + BLK * rb[Ls - k - 1] + 8); \
     }                                                                                                     \
-    {   /* the centre column Ls/2: its partner is column Ls/2 of the mirror leg; the high lane          \
+    if (jb->mode & 2) { /* the centre column Ls/2: its partner is column Ls/2 of the mirror leg; the high lane          \
          * (column Ls/2 + 1) was stored by the loop as a mirror and is left alone */                    \
         __m256d z[R], m[R], Y[R];                                                                         \
         const size_t k = Ls / 2;                                                                          \
@@ -1064,7 +1118,10 @@ static inline void _zttr_run_bwd(const vfft_zttr_plan_t *p, const double *X, dou
     const int nf = zt->nf;
     const size_t M = (size_t)p->M, tile = zt->tile;
     const double *tw = zt->twb;
-    _zttr_call_aligned(zt->chain[0] == 4 ? (_zttr_term_fn)_zttr_t0h4 : (_zttr_term_fn)_zttr_t0h8, p, X, W);
+    {   /* the whole fused ingest as one job: every column pair, then the centre column */
+        const _zttr_job_t jb = { p, 0, (long)(zt->ncol / 2), 2, NULL };
+        _zttr_call_job(zt->chain[0] == 4 ? _zttr_t0h4 : _zttr_t0h8, &jb, X, W);
+    }
     if (tile)
         for (size_t t = 0; t < M / tile; t++)
         {

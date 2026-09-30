@@ -70,6 +70,9 @@ extern "C"
   /* the real four-step's fused order sweeps (1D r2c/c2r from 2^20): sweeps
    * cut across the pool's workers; a serial sweep leaves it unchanged. */
   long vfft_zfsr_mt_passes(void);
+  /* ZTT-r's threaded arms (the ZTT's walk with the real fold fused):
+   * threaded executes actually run; a serial serve leaves it unchanged. */
+  long vfft_zttr_mt_passes(void);
   /* zr2c's Hermitian fold cut across the pool's workers (a raced plan
    * input at T > 1); a serial fold leaves it unchanged. */
   long vfft_zr2c_fold_mt_passes(void);
