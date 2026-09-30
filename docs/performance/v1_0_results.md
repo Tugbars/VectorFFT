@@ -711,6 +711,62 @@ the copy back that zr2c paid around the same child are gone. c2r there sits just
 out-of-place destination is written cold. c2r is also soft against FFTW at 16, 256..1024 and
 8192 (0.83 to 0.95). N = 2 c2r is refused.
 
+### K=1 INTERLEAVED r2c and c2r — every power of two at T=8 vs MKL at T=8 (2026-09-30)
+
+One transform across eight threads, out of place, natural order; MKL DFTI at eight threads;
+the ratio is MKL / ours, the worse of the two order flips. Runs `real_pow2_{r2c,c2r}_mt8_2026-09-30`
+(controls 1.20..1.25 and 1.26..1.33). A threaded plan's verdict is its own row (`nthreads=8`):
+the door raced the engines at eight threads. `engaged` = threaded executes counted in the timed
+arm (0 = a serial verdict). `scale` = the same library's one-thread time of the same day over its
+eight-thread time. Cells below 2^12 are serial verdicts on both sides and are left out.
+
+```
+ r2c     N  engine at T=8                         engaged    ours ns  MKL@8 ns      x  scale  MKL scale
+      4096  zr2c                                      0       2093      2525   1.21  1.00x      0.99x
+      8192  zr2c                                      0       4732      6061   1.28  0.97x      0.99x
+     16384  ZTT-r 8.4.8.8.4 tile 2048, tiles       2476       7808     10443   1.34  1.26x      1.23x
+     32768  ZTT-r 8.4.8.8.8 tile 2048, tiles       1301      14182     17231   1.22  1.51x      1.59x
+     65536  ZTT-r 4.4.8.4.8.8 tile 512, tiles       621      18169     24869   1.37  2.52x      2.21x
+    131072  ZTT-r 4.4.8.8.8.8 tile 1024, tiles      311      28923     51227   1.77  3.57x      2.85x
+    262144  ZTT-r 4.4.8.4.4.8.8 tile 2048, tiles    161      56533    105120   1.86  4.85x      3.20x
+    524288  ZTT-r 8.4.4.4.8.8.8 tile 2048, tiles     92     110975    193388   1.74  5.90x      4.46x
+   1048576  four-step 512x1024                      218     282537    374800   1.33  5.14x      4.96x
+   2097152  four-step 512x2048                      182     622600   1306988   2.10  5.51x      3.96x
+   4194304  four-step 512x4096                      186    1718088   3738063   2.18  5.13x      3.45x
+   8388608  four-step 2048x2048                     182    6943387   9644238   1.39  3.15x      3.06x
+```
+
+```
+ c2r     N  engine at T=8                         engaged    ours ns  MKL@8 ns      x  scale  MKL scale
+      4096  ZTT-r 4.8.4.4.4 tile 0, serial            0       2137      2702   1.26  1.01x      1.00x
+      8192  ZTT-r 8.4.4.4.8 tile 512, tiles        4891       4114      6251   1.52  1.12x      1.00x
+     16384  ZTT-r 4.4.4.4.4.8 tile 1024, tiles     3341       5223     10309   1.97  1.87x      1.28x
+     32768  ZTT-r 4.4.4.8.4.8 tile 2048, tiles     1231      10999     16601   1.51  1.84x      1.69x
+     65536  ZTT-r 4.8.8.4.4.8 tile 1024, tiles      621      17526     29639   1.69  2.71x      1.99x
+    131072  ZTT-r 4.4.4.8.4.4.8 tile 512, tiles     574      27523     49377   1.79  3.89x      3.12x
+    262144  ZTT-r 4.4.4.8.4.8.8 tile 2048, tiles    305      57287    100473   1.75  4.47x      3.59x
+    524288  ZTT-r 4.8.4.4.8.8.8 tile 512, tiles      91     116750    185912   1.59  5.94x      4.26x
+   1048576  four-step 512x1024                      184     378150    364500   0.96  5.21x      5.04x
+   2097152  four-step 1024x1024                     182    1020000   1155963   1.13  4.79x      4.06x
+   4194304  four-step 512x4096                      182    2713675   3650100   1.34  4.48x      3.29x
+   8388608  four-step 2048x2048                     182    7720925   9699225   1.26  3.40x      2.85x
+```
+
+```
+ contract                      cells   median   <1.0
+ r2c, 2^14..2^23                  10     1.57      0
+ c2r, 2^14..2^23                  10     1.55      1
+```
+
+From 2^13 or 2^14 to 2^19 the serving is ZTT-r THREADED (il/real/zttr_mt.h): the ZTT's threaded
+walk with the Hermitian fold staying fused in the last forward stage and the first backward one,
+each taking a range of columns; the TILES arm (a tile's whole prefix on one thread) wins every
+threaded cell, and the threaded output is bitwise the serial run (gauntlet/zttr_mt_check.c).
+From 2^20 the real four-step serves with its order sweeps cut over the threads. The one cell
+below parity is c2r at 2^20 (0.96). Scaling is 1.3x at 2^14, 2.5x at 2^16 and 5.9x at 2^19:
+below 2^16 a transform of 10 to 25 us cannot pay for a fork-join per stage, and at 2^23 every
+pass is bound by memory (3.2x, as MKL's 3.1x). Odd N has no threaded real form yet.
+
 ### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-06)
 
 ```
