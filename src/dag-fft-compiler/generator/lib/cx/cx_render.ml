@@ -128,6 +128,8 @@ let addr_str (a : caddr) : string =
   | AZinReal l -> Printf.sprintf "zin[(size_t)%d*Ls + k]" l
   | AZinHerm (l, r) -> Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" (r - l)
   | AZoutReal l -> Printf.sprintf "zout[(size_t)%d*OLs + k]" l
+  | ADigOut (d, o) -> Printf.sprintf "zout[(size_t)%d*OLs + 2*k + %d]" (2 * d) o
+  | ADigIn (d, o) -> Printf.sprintf "zin[(size_t)%d*Ls + 2*k + %d]" (2 * d) o
   | AZinMir _ | AZoutMir _ | AZoutTurnMir _ | AZinSpec _ | AZinSpecC _ | AZinSpecB _ | AZinSpecP _ ->
     failwith "cx_render.addr_str: a mirror / special form renders through render_load or render_store"
 ;;

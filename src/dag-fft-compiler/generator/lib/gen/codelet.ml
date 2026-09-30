@@ -74,6 +74,7 @@ type cil_form =
   | Cil_t2m (* --cil-t2m: the real pair's top over the real leaf's half spectra *)
   | Cil_r2z (* --cil-r2z: the real pair's real leaf *)
   | Cil_rn1 (* --cil-rn1: the real MONO, the whole small real transform as one n1 body (c2c_il.ml RN1) *)
+  | Cil_r1c (* --cil-r1c: the real FLAT leaf, real legs -> the digit runs (real_il.ml R1c) *)
 
 type cil_turn =
   | Turnst
@@ -507,7 +508,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
              ] ->
       push (String.sub t 2 (String.length t - 2));
       go tl
-    | t :: tl when List.mem t [ "--cil-n1"; "--cil-n1c"; "--cil-n1t"; "--cil-t2"; "--cil-t2c"; "--cil-t2h"; "--cil-t2m"; "--cil-r2z"; "--cil-rn1" ] ->
+    | t :: tl when List.mem t [ "--cil-n1"; "--cil-n1c"; "--cil-n1t"; "--cil-t2"; "--cil-t2c"; "--cil-t2h"; "--cil-t2m"; "--cil-r2z"; "--cil-rn1"; "--cil-r1c" ] ->
       push (String.sub t 2 (String.length t - 2));
       go tl
     | "--cil-t2cs" :: tl ->
@@ -657,7 +658,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
          | "dst3" -> Dst3
          | "dst4" -> Dst4
          | _ -> Dht)
-    | [ t ] when List.mem t [ "cil-n1"; "cil-n1c"; "cil-n1t"; "cil-t2"; "cil-t2c"; "cil-t2h"; "cil-t2m"; "cil-r2z"; "cil-rn1" ] ->
+    | [ t ] when List.mem t [ "cil-n1"; "cil-n1c"; "cil-n1t"; "cil-t2"; "cil-t2c"; "cil-t2h"; "cil-t2m"; "cil-r2z"; "cil-rn1"; "cil-r1c" ] ->
       Cil
         { form =
             (if t = "cil-n1"
@@ -676,6 +677,8 @@ let of_argv ?(strict = true) (argv : string list) : t =
              then Cil_r2z
              else if t = "cil-rn1"
              then Cil_rn1
+             else if t = "cil-r1c"
+             then Cil_r1c
              else Cil_t2)
         ; tangent = !cil_tangent
         ; blocked = !blocked
@@ -844,6 +847,7 @@ let to_argv (c : t) : string list =
          | Cil_t2m -> "--cil-t2m"
          | Cil_r2z -> "--cil-r2z"
          | Cil_rn1 -> "--cil-rn1"
+         | Cil_r1c -> "--cil-r1c"
          | Cil_t2 ->
            if grouploop
            then (if transposed then "--cil-t2csgnt" else "--cil-t2csgn")

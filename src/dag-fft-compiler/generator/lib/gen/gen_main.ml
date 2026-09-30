@@ -499,6 +499,8 @@ let run (argv : string array) : unit =
     then cil_kind := "r2z" (* the real pair's real leaf (cx_real.ml) *)
     else if arg = "--cil-rn1"
     then cil_kind := "rn1" (* the real MONO: the whole small real transform as one n1 body *)
+    else if arg = "--cil-r1c"
+    then cil_kind := "r1c" (* the real FLAT leaf: real legs -> the digit runs *)
     else if arg = "--cil-t2"
     then cil_kind := "t2"
     else if arg = "--cil-bwd"
@@ -1290,7 +1292,7 @@ let run (argv : string array) : unit =
            ~chain_b
            ~isa
            ~uarch))
-    else if !cil_kind = "t2h" || !cil_kind = "t2m" || !cil_kind = "r2z"
+    else if !cil_kind = "t2h" || !cil_kind = "t2m" || !cil_kind = "r2z" || !cil_kind = "r1c"
     then
       print_string
         (Real_il.emit
