@@ -67,6 +67,12 @@ extern "C"
   /* ZTURN-T's threaded arm (the staged walk sectioned): threaded executes
    * actually run; raced per T at create, VFFT_ZTT_MT=0|1|2 pins. */
   long vfft_ztt_mt_passes(void);
+  /* the real four-step's fused order sweeps (1D r2c/c2r from 2^20): sweeps
+   * cut across the pool's workers; a serial sweep leaves it unchanged. */
+  long vfft_zfsr_mt_passes(void);
+  /* zr2c's Hermitian fold cut across the pool's workers (a raced plan
+   * input at T > 1); a serial fold leaves it unchanged. */
+  long vfft_zr2c_fold_mt_passes(void);
   /* the flat DIT's create-time races (forms, tile): arms whose timed batch
    * was under half the sample target. A property, not an outcome: 0 means
    * every verdict was decided above the clock's tick. */

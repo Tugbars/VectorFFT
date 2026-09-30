@@ -258,6 +258,7 @@ struct vfft_plan_s
     int zr2c_route;                 /* 0 = OOP-IL child, 1 = NAT-IP child */
     double *zr2c_aff;               /* affS ++ affC (one allocation)      */
     double *zr2c_scratch;           /* N+2 dbl, route-0 placements only   */
+    int zr2c_fold_mt;               /* 1 = the fold cut over the plan's threads (raced at T > 1, fold=mt) */
     /* the REAL PAIR (2026-09-29, il/real/zrp.h): the stock n1t leaf over
      * the packed view and the t2h Hermitian top stage, no fold pass; the
      * real door's other engine beside zr2c, raced per cell and banked
@@ -274,6 +275,11 @@ struct vfft_plan_s
      * bridge) and banked (eng=zrm). zrm != NULL selects it; the bound
      * execute calls the kernel directly. */
     vfft_oop11_fn zrm;              /* the real mono's kernel (not owned)  */
+    /* the REAL FOUR-STEP (2026-09-30, il/real/zfsr.h): the c2c four-step at
+     * N/2 with the Hermitian fold fused into its order sweep; the real door's
+     * engine above ZTT-r's band (N >= 2^20), its split swept and raced per
+     * cell and banked (eng=zfsr split=N1xN2). zfsr != NULL selects it. */
+    struct vfft_zfsr_s *zfsr;       /* the real four-step's plan (owned)   */
     stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
     struct vfft_ilnd_s *ilnd;  /* the rank-N INTERLEAVED c2c tier (fftnd_il.h), owned */
     vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */

@@ -599,96 +599,117 @@ non-temporal store rate of about 90. A fused slab form (first and second axis pe
 cache-resident strip of lanes) was prototyped and refuted: at 4 to 8 lanes the narrow
 column passes cost more than the residency saves.
 
-## 3. vs MKL — 1D R2C
+## 3. vs MKL — 1D R2C / C2R
 
-### Single-thread — the packing tax
+### K=1 INTERLEAVED r2c and c2r — every N from 2 to 2048 vs MKL, the gauntlet (2026-09-30)
 
-```
- N      K     path    dag/MKL    note
-──────────────────────────────────────────────
- 256    8     rfft     1.07×     JIT-wired rfft, low-K win
- 256    16    rfft     1.15×
- 256    256   stride   1.04×
- 512    8     rfft     1.17×
- 1024   8     rfft     0.64×     large-N rfft plane = L2-bound
- 1024   256   stride   0.80×     decoupled-r2c structural gap
-──────────────────────────────────────────────
- 18 cells: 6 win.  Median 0.79×, range 0.46–1.17×.
-```
-
-### Multi-threaded (T=8) — the layout payoff
+Out of place, natural order, one thread, MKL DFTI in its CCE home layout; the ratio is
+MKL / ours, the worse of the two order flips. Runs `real_2_2048_r2c_2026-09-30` and
+`real_2_2048_c2r_2026-09-30`; every cell served by the engine the real door raced and
+banked (the mono, the pair, zr2c, ZTT-r, or the odd routes). Supersedes the 2026-08
+tables that stood here: the split-layout batch cells (r2c median 0.79x, c2r 0.55-0.92x
+at one thread), the seven-cell zr2c table (r2c 1.01-1.40x, c2r 0.66-1.30x out of place)
+and the seven-cell odd/prime table.
 
 ```
- N      K     path    dag/MKL-T8   dag self-scale ST→T8
-──────────────────────────────────────────────────────
- 256    8     rfft      21.75×     ~1.0× (rfft is ST)
- 256    256   stride     5.30×     2.79×
- 512    256   stride     4.47×     4.87×
- 1024   256   stride     3.65×     3.72×
- 1024   16    rfft       1.74×     ~1.0×
-──────────────────────────────────────────────────────
- 18 cells: 18 win.  Median ~4.7×, range 1.74–21.75×.
+ r2c engine      cells   <0.8   <1.0    p10    med    p90   gmean
+ mono              21      1      3   0.99   1.64   2.56    1.66
+ pair              12      0      2   0.92   1.43   1.67    1.33
+ zr2c             990      6     55   1.11   1.46   2.80    1.62
+ ZTT-r             14      0      0   1.50   1.75   1.81    1.68
+ odd route       1010     24    154   0.93   1.22   2.68    1.44
+ ALL             2047     31    214   0.99   1.38   2.72    1.53
 ```
 
-### 1D C2R (backward) — the natural split path
-
-#### Single-thread — the packing tax (again)
 ```
- N      K     path      dag/MKL    note
-──────────────────────────────────────────────
- 256    8     natural    0.92×     ≈parity — packed-speed on split input
- 256    16    natural    0.74×
- 256    64    natural    0.55×     mid-K: MKL compute-bound / L1-resident
- 256    128   natural    0.55×
-──────────────────────────────────────────────
- natural ≈ 2× the old forced-stride path; reaches MKL parity only at K=8.
+ c2r engine      cells   <0.8   <1.0    p10    med    p90   gmean
+ mono              19      0      1   1.29   1.77   2.52    1.81
+ pair              14      0      0   1.34   1.52   1.79    1.50
+ zr2c             988      6     65   1.06   1.41   2.46    1.54
+ ZTT-r             15      0      1   1.09   1.56   1.64    1.42
+ odd route       1010     23    155   0.93   1.25   2.53    1.44
+ ALL             2046     29    222   0.98   1.35   2.50    1.49
 ```
 
-#### Multi-threaded (T=8) — the layout payoff (again)
 ```
- N      K     path      dag/MKL-T8   dag self-scale ST→T8
-──────────────────────────────────────────────────────
- 256    8     natural    ~17×        ~1.0× (K<16: lane-split floor)
- 256    32    natural    ~7.9×       ~1.4×
- 256    64    natural    3.9×        1.9×
- 256    128   natural    3.0×        2.2×
- 256    256   natural     —          2.8×   (MKL-T8 crashes at N·K≥131072)
- 512    256   natural     —          3.6×
- 1024   256   natural     —          2.8×
+ size band        r2c cells  median   <1.0  |  c2r cells  median   <1.0
+ 2..16                   15    1.80      1  |         14    1.88      0
+ 17..64                  48    1.26      9  |         48    1.35     13
+ 65..256                192    1.66      3  |        192    1.68      8
+ 257..512               256    1.66     11  |        256    1.58     18
+ 513..1024              512    1.44     58  |        512    1.38     50
+ 1025..2048            1024    1.25    132  |       1024    1.25    133
 ```
 
-### 1D INTERLEAVED r2c/c2r, K=1 — the D2 zr2c route (like-for-like vs MKL's home layout)
+```
+ class              r2c cells  median   <1.0  |  c2r cells  median   <1.0
+ pow2                      11    1.26      0  |         10    1.25      1
+ 2^a*odd (a >= 3)         247    1.56      8  |        247    1.46      9
+ even composite           766    1.45     50  |        766    1.40     56
+ odd composite            715    1.23    118  |        715    1.27    122
+ prime                    308    1.19     38  |        308    1.20     34
+```
+
+Both directions pooled: 4093 cells, median 1.37x, geometric mean 1.51x, 436 below parity, 60 below 0.8x.
+The worst r2c cells are composites carrying a prime factor above 100: 749 (0.62), 909 (0.63), 1130 (0.63), 1057 (0.63), 579 (0.65), 1028 (0.66), 1031 (0.67), 1135 (0.68).
+The worst c2r cells mix those with smooth odd composites (945, 1365, 1375): 1043 (0.56), 1375 (0.62), 1063 (0.63), 1057 (0.65), 1950 (0.65), 1365 (0.69), 945 (0.70), 1109 (0.71).
+N = 2 c2r is refused (no engine builds it). The control cell drifted during both runs
+(r2c 0.86..1.21, c2r 1.25..1.58): the class and band medians hold, a single cell may be off.
+In place was not raced in these runs.
+
+### K=1 INTERLEAVED r2c and c2r — every power of two 2..2^23 vs MKL and FFTW (2026-09-30)
+
+Out of place, natural order, one thread; the ratio is comparator / ours, the worse of the
+two order flips. Four runs on one store, so both comparators face the same banked plan:
+`real_pow2_{r2c,c2r}_{mkl,fftw}_2026-09-30` (controls 1.11..1.27, tight within each run).
+The rows from 2^20 up are the real four-step's, re-run the same day with the engine in the
+door (`zfsr_top_{r2c,c2r}_{mkl,fftw}_2026-09-30`, controls 1.08..1.27); they supersede the
+zr2c readings of the first runs (r2c 1.02 / 1.20 / 1.20 / 1.16 and c2r 0.77 / 0.84 / 0.89 /
+0.89 vs MKL at 2^20..2^23).
 
 ```
- N        r2c OOP   r2c IN-PLACE | c2r OOP   c2r IN-PLACE   <- as SHIPPED (wisdom picks the route)
---------------------------------------------------------------------------------
- 512       1.40x       1.50x     |  1.30x       1.49x
- 1024      1.22x       1.24x     |  1.03x       1.03x
- 2048      1.21x       1.32x     |  0.97x       1.02x
- 4096      1.08x       1.04x     |  0.66x       0.94x
- 8192      1.20x       1.21x     |  0.81x       1.10x
- 16384     1.23x       1.24x     |  0.93x       1.06x
- 65536     1.01x       1.06x     |  0.88x       1.05x
---------------------------------------------------------------------------------
- r2c WINS EVERY CELL, both placements. In-place >= out-of-place everywhere
- except 4096. c2r wins at the small end and in-place from 8192 up.
-
- THE c2r OOP COLUMN IS A KNOWN-BAD ROUTE PICK, not an engine result. All 37
- shipped kind-5 route rows are src=migrated with no ns= - nothing was ever
- raced; a structural rule (place=oop -> route 0) was written down once. Where
- the race disagrees, forcing route 1 gives:
-     2048   0.97x -> 1.12x      4096   0.66x -> 0.82x
-     8192   0.81x -> 1.01x      65536  0.88x -> 0.88x
- i.e. the banked pick costs up to 27-35% on c2r OOP. Seeding those rows and
- re-racing is the open item (audit G3); until then read the c2r OOP column as
- "what the stale verdict serves", not as the engine's reach.
-
- UNRESOLVED: front-door route-0 OOP c2r runs ~22% slower than the identically
- shaped hand-built arm (2048: ~1680 vs ~1373 ns, reproducible). Same algorithm
- on paper, so the difference is buffer placement - the plan's internal scratch
- vs the bench's, or 4KB aliasing. Do not bank a front-door c2r OOP number
- until that is explained.
+                 ------------- r2c -------------   ------------- c2r -------------
+      N          engine    ours ns    MKL   FFTW   engine    ours ns    MKL   FFTW
+ 2^1          2  zr2c            9   1.29   0.43   -               -      -      -
+ 2^2          4  mono            4   3.02   1.12   mono            4   3.08   0.98
+ 2^3          8  mono            6   2.24   1.12   mono            6   2.27   0.96
+ 2^4         16  mono           10   1.32   0.95   pair           12   1.35   0.83
+ 2^5         32  pair           18   1.12   1.02   pair           16   1.35   1.22
+ 2^6         64  pair           26   1.15   1.31   pair           25   1.35   1.33
+ 2^7        128  zr2c           51   1.11   1.01   zr2c           54   1.15   1.02
+ 2^8        256  zr2c          101   1.26   1.01   zr2c          110   1.16   0.94
+ 2^9        512  zr2c          200   1.30   1.04   ZTT-r         235   1.11   0.86
+ 2^10      1024  zr2c          422   1.26   1.00   ZTT-r         482   1.11   0.90
+ 2^11      2048  zr2c          967   1.24   1.04   ZTT-r        1026   1.22   1.02
+ 2^12      4096  zr2c         2093   1.19   1.15   ZTT-r        2168   1.25   1.11
+ 2^13      8192  zr2c         4573   1.31   1.23   ZTT-r        4624   1.35   0.95
+ 2^14     16384  ZTT-r        9857   1.30   1.31   ZTT-r        9744   1.35   1.32
+ 2^15     32768  zr2c        21464   1.27   1.25   ZTT-r       20277   1.38   1.34
+ 2^16     65536  ZTT-r       45856   1.20   1.28   ZTT-r       47510   1.24   1.27
+ 2^17    131072  zr2c       103370   1.41   1.44   ZTT-r      107167   1.44   1.24
+ 2^18    262144  ZTT-r      274013   1.23   1.41   ZTT-r      256253   1.41   1.61
+ 2^19    524288  ZTT-r      654800   1.32   1.42   ZTT-r      693663   1.14   1.40
+ 2^20   1048576  4-step    1451825   1.28   1.39   4-step    1970763   0.93   1.12
+ 2^21   2097152  4-step    3432225   1.51   1.74   4-step    4889475   0.96   1.18
+ 2^22   4194304  4-step    8807675   1.46   1.68   4-step   12151400   0.99   1.22
+ 2^23   8388608  4-step   21884950   1.35   1.47   4-step   26218537   1.05   1.21
 ```
+
+```
+ contract        cells   median   gmean   <1.0
+ r2c vs MKL         23     1.29    1.36      0
+ r2c vs FFTW        23     1.23    1.17      2
+ c2r vs MKL         22     1.25    1.29      3
+ c2r vs FFTW        22     1.15    1.12      7
+```
+
+r2c is ahead of MKL at every power of two and behind FFTW only at 2 (no mono kernel) and 16.
+From 2^20 up the serving is the real four-step (il/real/zfsr.h): the 1D c2c four-step at N/2
+with the Hermitian fold fused into its order sweep, so the fold pass, the natural transpose and
+the copy back that zr2c paid around the same child are gone. c2r there sits just under MKL
+(0.93 to 0.99 at 2^20..2^22): the four-step's backward is slower than its forward and the
+out-of-place destination is written cold. c2r is also soft against FFTW at 16, 256..1024 and
+8192 (0.83 to 0.95). N = 2 c2r is refused.
 
 ### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-06)
 
@@ -765,21 +786,6 @@ column passes cost more than the residency saves.
  194481              97,440         195,170    2.00×    1.3e-15
 ──────────────────────────────────────────────────────────────────────
                                               10/11 win, median ~1.73×
-```
-
-### 1D ODD/PRIME r2c/c2r — full coverage, priced vs MKL (2026-08-27)
-
-```
- N      class       r2c vs MKL   c2r vs MKL   serving
-────────────────────────────────────────────────────────
- 101    prime          1.67×        2.00×     bridge
- 1021   prime          1.27×        1.33×     bridge
- 129    3·43           0.90×        0.90×     bridge
- 255    smooth         1.75×        1.60×     bridge (raced in —
-                                              was 0.42× on rfft)
- 63     smooth         ~par         ~par      bridge (raced in)
- 1215   3⁵·5           0.67×        0.12×     rfft / bridge-only
- 4095   smooth         0.30×        0.31×     bridge (raced in)
 ```
 
 ### 2D NATURAL order — native tier, both transforms, multithreaded (2026-09-04)

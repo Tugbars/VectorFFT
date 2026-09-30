@@ -79,6 +79,11 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
             _exec_zrm(h, sre, dre); /* the real mono: one kernel, pool-free */
             return;
         }
+        if (h->zfsr)
+        {
+            _exec_zfsr(h, sre, dre); /* the real four-step: the c2c four-step + the fused order sweep */
+            return;
+        }
         if (h->zttr)
         {
             _exec_zttr(h, sre, dre); /* ZTT-r: the fold fused into the terminator, pool-free */
@@ -112,6 +117,11 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
         if (h->zrm)
         {
             _exec_zrm(h, sre, dre); /* the real mono's c2r: one kernel, pool-free */
+            return;
+        }
+        if (h->zfsr)
+        {
+            _exec_zfsr(h, sre, dre); /* the real four-step's c2r: the fused sweep, then the four-step backward */
             return;
         }
         if (h->zttr)

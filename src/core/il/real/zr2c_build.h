@@ -141,6 +141,16 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
     const double *bC = h->zr2c_aff + 3 * (top + 1);
     vfft_plan ch = (vfft_plan)h->zr2c_child;
     size_t xs = (size_t)N + 2;
+    /* the fold's serving: the plan's threads when the race said so (never on a
+     * batch clone: the flag is set only on a K = 1 plan raced at T > 1) */
+    const int fmt = h->zr2c_fold_mt && h->nthreads > 1;
+    const int fT = fmt ? thread_pool_workers_for(h->nthreads) : 1;
+#define ZR2C_FWD(zi, xo) do { if (fmt) _zr2c_fold_mt((zi), (xo), aS, aC, N, 0, fT); \
+                              else _zr2c_fold_fwd((zi), (xo), aS, aC, N, 1, xs, xs); } while (0)
+#define ZR2C_BWD(xi, zo) do { if (fmt) _zr2c_fold_mt((xi), (zo), bS, bC, N, 1, fT); \
+                              else _zr2c_fold_bwd((xi), (zo), bS, bC, N, 1, xs, (size_t)N); } while (0)
+    if (fmt)
+        _vfft_pool_arm(h->nthreads); /* the snapshot pool, as the threaded child asserts it */
     if (h->transform == VFFT_R2C)
     {
         if (h->zr2c_route == 0)
@@ -155,13 +165,13 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
                  * qualifier silently -- the warning was real, the behaviour
                  * was not. */
                 vfft_execute(ch, VFFT_FORWARD, (double *)sre, NULL, dre, NULL);
-                _zr2c_fold_fwd(dre, dre, aS, aC, N, 1, xs, xs);
+                ZR2C_FWD(dre, dre);
             }
             else
             { /* in place: child OOP plane->scratch, fold scratch->plane */
                 vfft_execute(ch, VFFT_FORWARD, (double *)sre, NULL,
                              h->zr2c_scratch, NULL);   /* OOP child: reads only */
-                _zr2c_fold_fwd(h->zr2c_scratch, dre, aS, aC, N, 1, xs, xs);
+                ZR2C_FWD(h->zr2c_scratch, dre);
             }
         }
         else
@@ -177,22 +187,24 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
             if (dre != sre)
                 memcpy(dre, sre, (size_t)N * sizeof(double));
             vfft_execute(ch, VFFT_FORWARD, dre, NULL, dre, NULL);
-            _zr2c_fold_fwd(dre, dre, aS, aC, N, 1, xs, xs);
+            ZR2C_FWD(dre, dre);
         }
     }
     else /* VFFT_C2R: CCE spectrum in sre -> N reals in dre */
     {
         if (h->zr2c_route == 0)
         { /* fold sre->scratch (zhat), child OOP scratch->dre */
-            _zr2c_fold_bwd(sre, h->zr2c_scratch, bS, bC, N, 1, xs, (size_t)N);
+            ZR2C_BWD(sre, h->zr2c_scratch);
             vfft_execute(ch, VFFT_BACKWARD, h->zr2c_scratch, NULL, dre, NULL);
         }
         else
         { /* fold sre->dre (alias-safe when in place), child in place on dre */
-            _zr2c_fold_bwd(sre, dre, bS, bC, N, 1, xs, (size_t)N);
+            ZR2C_BWD(sre, dre);
             vfft_execute(ch, VFFT_BACKWARD, dre, NULL, dre, NULL);
         }
     }
+#undef ZR2C_FWD
+#undef ZR2C_BWD
 }
 
 /* Bank a kind-5 zr2c route verdict: one per-(transform,placement) record in

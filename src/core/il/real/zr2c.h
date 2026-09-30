@@ -61,6 +61,10 @@
 #endif
 
 #include "common/math/pi.h"
+#include "common/support/threads.h"   /* the pool: the threaded fold */
+
+/* Defined in vfft.c with external linkage (the engagement counters' rule). */
+extern long _vfft_zr2c_fold_mt_count;
 
 /* Pair tables, N/4+1 entries each (f = 0..N/4 inclusive covers every pair
  * index for any even N; entry 0 is never read — kept for direct indexing).
@@ -92,6 +96,67 @@ static void _zr2c_init_aff(int N, double *affS, double *affC,
     }
 }
 
+/* the pairs f0 <= f < f1 (and their mirrors half - f) of one transform: the
+ * vector quads, then the scalar rest. The whole fold is (1, (half + 1) / 2);
+ * disjoint ranges touch disjoint bins, so the ranges may run on different
+ * threads, in place included. */
+static void _zr2c_fold_fwd_pairs(const double *z, double *o,
+        const double *affS, const double *affC, int half, int f0, int f1)
+{
+    int f = f0;
+#if defined(__AVX2__)
+    {
+        const __m256d CONJ = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
+        for (; f + 4 <= f1 && 2 * (f + 3) < half; f += 4)
+        {
+            int m3 = half - f - 3;
+            /* A: bins f..f+3, already interleaved -- ZERO shuffles. */
+            __m256d a0 = _mm256_loadu_pd(z + 2 * f);
+            __m256d a1 = _mm256_loadu_pd(z + 2 * f + 4);
+            /* B: mirror bins, needed REVERSED so each pairs with its
+             * partner.  4-complex reverse over two ymm = a register swap
+             * (free, renaming) plus one lane swap each. */
+            __m256d b0 = _mm256_loadu_pd(z + 2 * m3);
+            __m256d b1 = _mm256_loadu_pd(z + 2 * m3 + 4);
+            __m256d cb0 = _mm256_xor_pd(_mm256_permute2f128_pd(b1, b1, 0x01), CONJ);
+            __m256d cb1 = _mm256_xor_pd(_mm256_permute2f128_pd(b0, b0, 0x01), CONJ);
+            __m256d t0 = _mm256_sub_pd(a0, cb0);      /* t = A - conj(B) */
+            __m256d t1 = _mm256_sub_pd(a1, cb1);
+            __m256d S4 = _mm256_loadu_pd(affS + f);
+            __m256d C4 = _mm256_loadu_pd(affC + f);
+            __m256d nC4 = _mm256_sub_pd(_mm256_setzero_pd(), C4);
+            __m256d wr0 = _mm256_permute4x64_pd(S4, 0x50);
+            __m256d wr1 = _mm256_permute4x64_pd(S4, 0xFA);
+            __m256d wi0 = _mm256_permute4x64_pd(nC4, 0x50);
+            __m256d wi1 = _mm256_permute4x64_pd(nC4, 0xFA);
+            __m256d ts0 = _mm256_permute_pd(t0, 0x5);
+            __m256d ts1 = _mm256_permute_pd(t1, 0x5);
+            __m256d x0 = _mm256_fmaddsub_pd(wr0, t0, _mm256_mul_pd(wi0, ts0));
+            __m256d x1 = _mm256_fmaddsub_pd(wr1, t1, _mm256_mul_pd(wi1, ts1));
+            /* X[f] = conj(B) + x -- stores straight out, no shuffle. */
+            _mm256_storeu_pd(o + 2 * f,     _mm256_add_pd(cb0, x0));
+            _mm256_storeu_pd(o + 2 * f + 4, _mm256_add_pd(cb1, x1));
+            /* X[m] = conj(A - x), reversed back to memory order. */
+            __m256d m0 = _mm256_xor_pd(_mm256_sub_pd(a0, x0), CONJ);
+            __m256d m1 = _mm256_xor_pd(_mm256_sub_pd(a1, x1), CONJ);
+            _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(m1, m1, 0x01));
+            _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(m0, m0, 0x01));
+        }
+    }
+#endif
+    for (; f < f1 && 2 * f < half; f++)
+    {
+        int m = half - f;
+        double Ar = z[2 * f], Ai = z[2 * f + 1];
+        double Br = z[2 * m], Bi = z[2 * m + 1];
+        double S = affS[f], C = affC[f];
+        double t1 = Ar - Br, t2 = Ai + Bi;
+        double xr = S * t1 + C * t2, xi = S * t2 - C * t1;
+        o[2 * f] = Br + xr; o[2 * f + 1] = xi - Bi;
+        o[2 * m] = Ar - xr; o[2 * m + 1] = xi - Ai;
+    }
+}
+
 /* forward fold: Z (N/2 complex, natural, interleaved) -> X (CCE, N/2+1
  * complex, interleaved). X may alias Z (in-place; needs the padded plane). */
 /* 🔴 NO __restrict__ ON THE DATA PLANES. Both of these folds are called
@@ -115,58 +180,7 @@ static void _zr2c_fold_fwd(const double *z_in,
         const double *z = z_in + t * zs;
         double *o = X_out + t * xs;
         double z0r = z[0], z0i = z[1];
-        int f = 1;
-#if defined(__AVX2__)
-        {
-            const __m256d CONJ = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
-            for (; 2 * (f + 3) < half; f += 4)
-            {
-                int m3 = half - f - 3;
-                /* A: bins f..f+3, already interleaved -- ZERO shuffles. */
-                __m256d a0 = _mm256_loadu_pd(z + 2 * f);
-                __m256d a1 = _mm256_loadu_pd(z + 2 * f + 4);
-                /* B: mirror bins, needed REVERSED so each pairs with its
-                 * partner.  4-complex reverse over two ymm = a register swap
-                 * (free, renaming) plus one lane swap each. */
-                __m256d b0 = _mm256_loadu_pd(z + 2 * m3);
-                __m256d b1 = _mm256_loadu_pd(z + 2 * m3 + 4);
-                __m256d cb0 = _mm256_xor_pd(_mm256_permute2f128_pd(b1, b1, 0x01), CONJ);
-                __m256d cb1 = _mm256_xor_pd(_mm256_permute2f128_pd(b0, b0, 0x01), CONJ);
-                __m256d t0 = _mm256_sub_pd(a0, cb0);      /* t = A - conj(B) */
-                __m256d t1 = _mm256_sub_pd(a1, cb1);
-                __m256d S4 = _mm256_loadu_pd(affS + f);
-                __m256d C4 = _mm256_loadu_pd(affC + f);
-                __m256d nC4 = _mm256_sub_pd(_mm256_setzero_pd(), C4);
-                __m256d wr0 = _mm256_permute4x64_pd(S4, 0x50);
-                __m256d wr1 = _mm256_permute4x64_pd(S4, 0xFA);
-                __m256d wi0 = _mm256_permute4x64_pd(nC4, 0x50);
-                __m256d wi1 = _mm256_permute4x64_pd(nC4, 0xFA);
-                __m256d ts0 = _mm256_permute_pd(t0, 0x5);
-                __m256d ts1 = _mm256_permute_pd(t1, 0x5);
-                __m256d x0 = _mm256_fmaddsub_pd(wr0, t0, _mm256_mul_pd(wi0, ts0));
-                __m256d x1 = _mm256_fmaddsub_pd(wr1, t1, _mm256_mul_pd(wi1, ts1));
-                /* X[f] = conj(B) + x -- stores straight out, no shuffle. */
-                _mm256_storeu_pd(o + 2 * f,     _mm256_add_pd(cb0, x0));
-                _mm256_storeu_pd(o + 2 * f + 4, _mm256_add_pd(cb1, x1));
-                /* X[m] = conj(A - x), reversed back to memory order. */
-                __m256d m0 = _mm256_xor_pd(_mm256_sub_pd(a0, x0), CONJ);
-                __m256d m1 = _mm256_xor_pd(_mm256_sub_pd(a1, x1), CONJ);
-                _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(m1, m1, 0x01));
-                _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(m0, m0, 0x01));
-            }
-        }
-#endif
-        for (; 2 * f < half; f++)
-        {
-            int m = half - f;
-            double Ar = z[2 * f], Ai = z[2 * f + 1];
-            double Br = z[2 * m], Bi = z[2 * m + 1];
-            double S = affS[f], C = affC[f];
-            double t1 = Ar - Br, t2 = Ai + Bi;
-            double xr = S * t1 + C * t2, xi = S * t2 - C * t1;
-            o[2 * f] = Br + xr; o[2 * f + 1] = xi - Bi;
-            o[2 * m] = Ar - xr; o[2 * m + 1] = xi - Ai;
-        }
+        _zr2c_fold_fwd_pairs(z, o, affS, affC, half, 1, (half + 1) / 2);
         if ((half & 1) == 0)
         { /* center bin: X = conj(Z) */
             int cb = half / 2;
@@ -176,6 +190,66 @@ static void _zr2c_fold_fwd(const double *z_in,
         /* DC / Nyquist last (in-place: z[0..1] were saved up front) */
         o[0] = z0r + z0i; o[1] = 0.0;
         o[2 * half] = z0r - z0i; o[2 * half + 1] = 0.0;
+    }
+}
+
+/* the pairs f0 <= f < f1 (and their mirrors half - f) of one transform: the
+ * vector quads, then the scalar rest. The whole fold is (1, (half + 1) / 2);
+ * disjoint ranges touch disjoint bins, so the ranges may run on different
+ * threads, in place included. */
+static void _zr2c_fold_bwd_pairs(const double *x, double *o,
+        const double *bwdS, const double *bwdC, int half, int f0, int f1)
+{
+    int f = f0;
+#if defined(__AVX2__)
+    {
+        const __m256d CONJ = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
+        for (; f + 4 <= f1 && 2 * (f + 3) < half; f += 4)
+        {
+            int m3 = half - f - 3;
+            __m256d a0 = _mm256_loadu_pd(x + 2 * f);        /* F */
+            __m256d a1 = _mm256_loadu_pd(x + 2 * f + 4);
+            __m256d b0 = _mm256_loadu_pd(x + 2 * m3);       /* M, reversed */
+            __m256d b1 = _mm256_loadu_pd(x + 2 * m3 + 4);
+            __m256d cm0 = _mm256_xor_pd(_mm256_permute2f128_pd(b1, b1, 0x01), CONJ);
+            __m256d cm1 = _mm256_xor_pd(_mm256_permute2f128_pd(b0, b0, 0x01), CONJ);
+            __m256d t0 = _mm256_sub_pd(a0, cm0);     /* t  = F - conj(M) */
+            __m256d t1 = _mm256_sub_pd(a1, cm1);
+            __m256d e0 = _mm256_add_pd(a0, cm0);     /* Ep = F + conj(M) */
+            __m256d e1 = _mm256_add_pd(a1, cm1);
+            /* conj(w) = (sin, -cos), banked at create. cy = t*conj(w)
+             * is exactly conj(conj(t)*w), so BOTH conjugations fall out
+             * of the loop -- same products, same signs, bitwise equal. */
+            __m256d s4 = _mm256_loadu_pd(bwdS + f);
+            __m256d c4 = _mm256_loadu_pd(bwdC + f);
+            __m256d wr0 = _mm256_permute4x64_pd(s4, 0x50);
+            __m256d wr1 = _mm256_permute4x64_pd(s4, 0xFA);
+            __m256d wi0 = _mm256_permute4x64_pd(c4, 0x50);
+            __m256d wi1 = _mm256_permute4x64_pd(c4, 0xFA);
+            __m256d ts0 = _mm256_permute_pd(t0, 0x5);
+            __m256d ts1 = _mm256_permute_pd(t1, 0x5);
+            __m256d cy0 = _mm256_fmaddsub_pd(wr0, t0, _mm256_mul_pd(wi0, ts0));
+            __m256d cy1 = _mm256_fmaddsub_pd(wr1, t1, _mm256_mul_pd(wi1, ts1));
+            _mm256_storeu_pd(o + 2 * f,     _mm256_sub_pd(e0, cy0));
+            _mm256_storeu_pd(o + 2 * f + 4, _mm256_sub_pd(e1, cy1));
+            __m256d zm0 = _mm256_xor_pd(_mm256_add_pd(e0, cy0), CONJ);
+            __m256d zm1 = _mm256_xor_pd(_mm256_add_pd(e1, cy1), CONJ);
+            _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(zm1, zm1, 0x01));
+            _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(zm0, zm0, 0x01));
+        }
+    }
+#endif
+    for (; f < f1 && 2 * f < half; f++)
+    {
+        int m = half - f;
+        double Fr = x[2 * f], Fi = x[2 * f + 1];
+        double Mr = x[2 * m], Mi = x[2 * m + 1];
+        double s = bwdS[f], c = -bwdC[f];   /* bwdC banks -cos */
+        double t1 = Fr - Mr, t2 = Fi + Mi;
+        double yr = c * t2 + s * t1, yi = c * t1 - s * t2;
+        double Epr = Fr + Mr, Epi = Fi - Mi;
+        o[2 * f] = Epr - yr; o[2 * f + 1] = Epi + yi;
+        o[2 * m] = Epr + yr; o[2 * m + 1] = yi - Epi;
     }
 }
 
@@ -195,57 +269,7 @@ static void _zr2c_fold_bwd(const double *X_in,
         const double *x = X_in + t * xs;
         double *o = z_out + t * zs;
         double X0 = x[0], XN = x[2 * half];
-        int f = 1;
-#if defined(__AVX2__)
-        {
-            const __m256d CONJ = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
-            for (; 2 * (f + 3) < half; f += 4)
-            {
-                int m3 = half - f - 3;
-                __m256d a0 = _mm256_loadu_pd(x + 2 * f);        /* F */
-                __m256d a1 = _mm256_loadu_pd(x + 2 * f + 4);
-                __m256d b0 = _mm256_loadu_pd(x + 2 * m3);       /* M, reversed */
-                __m256d b1 = _mm256_loadu_pd(x + 2 * m3 + 4);
-                __m256d cm0 = _mm256_xor_pd(_mm256_permute2f128_pd(b1, b1, 0x01), CONJ);
-                __m256d cm1 = _mm256_xor_pd(_mm256_permute2f128_pd(b0, b0, 0x01), CONJ);
-                __m256d t0 = _mm256_sub_pd(a0, cm0);     /* t  = F - conj(M) */
-                __m256d t1 = _mm256_sub_pd(a1, cm1);
-                __m256d e0 = _mm256_add_pd(a0, cm0);     /* Ep = F + conj(M) */
-                __m256d e1 = _mm256_add_pd(a1, cm1);
-                /* conj(w) = (sin, -cos), banked at create. cy = t*conj(w)
-                 * is exactly conj(conj(t)*w), so BOTH conjugations fall out
-                 * of the loop -- same products, same signs, bitwise equal. */
-                __m256d s4 = _mm256_loadu_pd(bwdS + f);
-                __m256d c4 = _mm256_loadu_pd(bwdC + f);
-                __m256d wr0 = _mm256_permute4x64_pd(s4, 0x50);
-                __m256d wr1 = _mm256_permute4x64_pd(s4, 0xFA);
-                __m256d wi0 = _mm256_permute4x64_pd(c4, 0x50);
-                __m256d wi1 = _mm256_permute4x64_pd(c4, 0xFA);
-                __m256d ts0 = _mm256_permute_pd(t0, 0x5);
-                __m256d ts1 = _mm256_permute_pd(t1, 0x5);
-                __m256d cy0 = _mm256_fmaddsub_pd(wr0, t0, _mm256_mul_pd(wi0, ts0));
-                __m256d cy1 = _mm256_fmaddsub_pd(wr1, t1, _mm256_mul_pd(wi1, ts1));
-                _mm256_storeu_pd(o + 2 * f,     _mm256_sub_pd(e0, cy0));
-                _mm256_storeu_pd(o + 2 * f + 4, _mm256_sub_pd(e1, cy1));
-                __m256d zm0 = _mm256_xor_pd(_mm256_add_pd(e0, cy0), CONJ);
-                __m256d zm1 = _mm256_xor_pd(_mm256_add_pd(e1, cy1), CONJ);
-                _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(zm1, zm1, 0x01));
-                _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(zm0, zm0, 0x01));
-            }
-        }
-#endif
-        for (; 2 * f < half; f++)
-        {
-            int m = half - f;
-            double Fr = x[2 * f], Fi = x[2 * f + 1];
-            double Mr = x[2 * m], Mi = x[2 * m + 1];
-            double s = bwdS[f], c = -bwdC[f];   /* bwdC banks -cos */
-            double t1 = Fr - Mr, t2 = Fi + Mi;
-            double yr = c * t2 + s * t1, yi = c * t1 - s * t2;
-            double Epr = Fr + Mr, Epi = Fi - Mi;
-            o[2 * f] = Epr - yr; o[2 * f + 1] = Epi + yi;
-            o[2 * m] = Epr + yr; o[2 * m + 1] = yi - Epi;
-        }
+        _zr2c_fold_bwd_pairs(x, o, bwdS, bwdC, half, 1, (half + 1) / 2);
         if ((half & 1) == 0)
         { /* center: Zhat = 2*conj(X) */
             int cb = half / 2;
@@ -254,6 +278,57 @@ static void _zr2c_fold_bwd(const double *X_in,
         }
         o[0] = X0 + XN; o[1] = X0 - XN;   /* DC/Nyq (pads saved up front) */
     }
+}
+
+/* THE FOLD OVER THE PLAN'S THREADS (K = 1). After a threaded child the plane
+ * sits in the caches of the cores that wrote it: a serial fold then pulls
+ * every line across cores (65536 at T = 8: the fold costs 23 us where it
+ * costs 7 alone, and the whole cell barely scales). Cut over the pair index,
+ * each worker folds its own range of pairs and their mirrors -- disjoint
+ * bins, in place included; the centre and DC / Nyquist are read before the
+ * workers start and written after. A raced plan input (zrp_build.h), never a
+ * rule: fold=mt on the thread-keyed record. */
+typedef struct { const double *in; double *out; const double *S, *C; int half, f0, f1, bwd; } _zr2c_fold_arg_t;
+static void _zr2c_fold_tramp(void *v)
+{
+    const _zr2c_fold_arg_t *a = (const _zr2c_fold_arg_t *)v;
+    if (a->f0 >= a->f1) return;
+    if (a->bwd) _zr2c_fold_bwd_pairs(a->in, a->out, a->S, a->C, a->half, a->f0, a->f1);
+    else _zr2c_fold_fwd_pairs(a->in, a->out, a->S, a->C, a->half, a->f0, a->f1);
+}
+static void _zr2c_fold_mt(const double *in, double *out, const double *S, const double *C,
+                          int N, int bwd, int T)
+{
+    const int half = N / 2, fe = (half + 1) / 2, cb = half / 2;
+    const double a0 = in[0], a1 = bwd ? in[2 * half] : in[1];
+    const double cr = in[2 * cb], ci = in[2 * cb + 1];
+    if (T > THREAD_POOL_MAX_DISPATCH) T = THREAD_POOL_MAX_DISPATCH;
+    if (T <= 1)
+    {
+        if (bwd) _zr2c_fold_bwd_pairs(in, out, S, C, half, 1, fe);
+        else _zr2c_fold_fwd_pairs(in, out, S, C, half, 1, fe);
+    }
+    else
+    {
+        _zr2c_fold_arg_t a[THREAD_POOL_MAX_DISPATCH];
+        const int quads = (fe - 1) / 4;
+        int t;
+        for (t = 0; t < T; t++)
+        {
+            a[t].in = in; a[t].out = out; a[t].S = S; a[t].C = C; a[t].half = half; a[t].bwd = bwd;
+            a[t].f0 = 1 + 4 * (int)((long)quads * t / T);
+            a[t].f1 = t == T - 1 ? fe : 1 + 4 * (int)((long)quads * (t + 1) / T);
+        }
+        thread_pool_run(T, _zr2c_fold_tramp, a, sizeof a[0]);
+        _vfft_zr2c_fold_mt_count++;
+    }
+    if ((half & 1) == 0)
+    {
+        if (bwd) { out[2 * cb] = 2.0 * cr; out[2 * cb + 1] = -2.0 * ci; }
+        else     { out[2 * cb] = cr;       out[2 * cb + 1] = -ci; }
+    }
+    if (bwd) { out[0] = a0 + a1; out[1] = a0 - a1; }
+    else     { out[0] = a0 + a1; out[1] = 0.0; out[2 * half] = a0 - a1; out[2 * half + 1] = 0.0; }
 }
 
 /* Mixed-radix digit-reversal perm builders (self-contained copies of the

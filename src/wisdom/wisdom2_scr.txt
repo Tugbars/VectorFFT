@@ -822,3 +822,10 @@
 @cell t=c2c n=1023 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=flat il_flat=31.11.3 il_forms=n.n il_kv=0 | ran=1 ns=2121.7 metric=fwd1 units=ns src=race date=2026-09-25
 @cell t=c2c n=1025 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=2p il_pair=41.25 il_kv=80 | ran=1 ns=2028.7 metric=fwd1 units=ns src=race date=2026-09-25
 @cell t=c2c n=1032 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=flat il_flat=43.8.3 il_forms=n.n il_kv=0 | ran=1 ns=2209.2 metric=fwd1 units=ns src=race date=2026-09-25
+@cell t=c2c n=65536 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=ztt il_ztt=8.8.8.4.4.8 il_tw=1024 il_kv=0 | ran=1 ns=80828.1 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=c2c n=131072 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=ztt il_ztt=8.8.8.8.4.8 il_tw=2048 il_kv=0 | ran=1 ns=200800.0 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=c2c n=262144 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=ztt il_ztt=8.8.4.8.4.4.8 il_tw=1024 il_kv=0 | ran=1 ns=637250.0 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=c2c n=524288 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=fs il_pair=1024.512 il_kv=0 | ran=1 ns=1045500.0 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=c2c n=1048576 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=fs il_pair=512.2048 il_kv=0 | ran=1 ns=2567500.0 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=c2c n=2097152 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=fs il_pair=2048.1024 il_kv=0 | ran=1 ns=5877400.0 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=c2c n=4194304 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=fs il_pair=1024.4096 il_kv=0 | ran=1 ns=14087900.0 metric=fwd1 units=ns src=race date=2026-09-30

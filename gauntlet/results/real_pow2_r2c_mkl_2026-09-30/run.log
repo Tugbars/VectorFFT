@@ -1,0 +1,6 @@
+2026-09-30 11:08:06 run: 23 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-30 11:08:06 calibrate: 23 cells (0 already done)
+2026-09-30 11:09:37   calibrated 23/23 (8388608), 90 s elapsed
+2026-09-30 11:09:37 bench: 23 cells (0 already benched, 0 not banked -> not benched)
+2026-09-30 11:10:30   benched 23/23 (8388608), 52 s elapsed
+2026-09-30 11:10:32 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\real_pow2_r2c_mkl_2026-09-30\report_r2c.md

@@ -232,6 +232,7 @@ static vfft_plan _vfft_create_real_odd_mono(const vfft_config_t *cfg, vfft_batch
 {
     const int c2r = cfg->transform == VFFT_C2R;
     const int env = _zrm_env();
+    const int Tk = _vfft_plan_threads(cfg);   /* the verdict's thread key */
     struct vfft_plan_s *hi, *hm;
     if (env == 0 || !vfft_zrm_fn(N, c2r))
         return _vfft_create_real_routes(cfg, ob, W, reg, N, K);
@@ -244,7 +245,7 @@ static vfft_plan _vfft_create_real_odd_mono(const vfft_config_t *cfg, vfft_batch
     if (W && !W->vw2_off_oop && !cfg->recalibrate)
     {
         int R1, R2, form;
-        const char *eng = vw2_real_il_lookup(&W->vw2, N, c2r, 0, &R1, &R2, &form);
+        const char *eng = vw2_real_il_lookup(&W->vw2, N, c2r, 0, Tk, &R1, &R2, &form);
         if (eng && !strcmp(eng, "zrm"))
         {
             hm = _zrm_build_plan(cfg, N);
@@ -317,8 +318,8 @@ static vfft_plan _vfft_create_real_odd_mono(const vfft_config_t *cfg, vfft_batch
                     N, c2r ? "c2r" : "r2c", reps, ns[0], ns[1], win ? "zrm" : "oddr");
         vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
         {
-            const int rc = win ? vw2_real_il_bank_zrm(&W->vw2, N, c2r, 0, ns[1])
-                               : vw2_real_il_bank_eng(&W->vw2, N, c2r, 0, "oddr", ns[0]);
+            const int rc = win ? vw2_real_il_bank_zrm(&W->vw2, N, c2r, 0, Tk, ns[1])
+                               : vw2_real_il_bank_eng(&W->vw2, N, c2r, 0, Tk, "oddr", ns[0]);
             if (rc == VW2_OK)
                 _vw2_persist(W, cfg);
             else

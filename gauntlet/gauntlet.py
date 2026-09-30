@@ -353,6 +353,9 @@ def stage_calibrate(run, cells, recal):
     todo = [n for n in cells if ckey(n) not in done]
     run.note("calibrate: %d cells (%d already done)%s" % (len(todo), len(done), ", RECALIBRATE (every cell re-raced)" if recal else ""))
     probe = run.exe("recal_1d_probe")
+    # the log lines live in memory for the whole stage: re-reading the file per cell lost 331 lines
+    # of a 2047-cell run on one transient read miss (2026-09-30), and those cells were never benched
+    lines = list(io.open(run.cal_log, encoding="utf-8", errors="ignore")) if os.path.isfile(run.cal_log) else []
     t0 = time.time()
     for i, n in enumerate(todo, 1):
         before = cell_rows(run.store, n, run.ip, run.threads, run.real)
@@ -372,9 +375,7 @@ def stage_calibrate(run, cells, recal):
             served = "replayed"
         route = route_of(after)
         # replace an older line for this cell (rerun) so the log has one line per cell
-        lines = []
-        if os.path.isfile(run.cal_log):
-            lines = [l for l in io.open(run.cal_log, encoding="utf-8", errors="ignore") if not (l.split() and l.split()[0] == ckey(n))]
+        lines = [l for l in lines if not (l.split() and l.split()[0] == ckey(n))]
         lines.append("%-10s %-8s %7dms %-9s %s\n" % (ckey(n), status, ms, served, route))
         io.open(run.cal_log, "w", encoding="utf-8", newline="\n").write("".join(lines))
         if i % 25 == 0 or i == len(todo):
@@ -398,7 +399,7 @@ def bench_cell(run, n, csv_path):
         nstr, kstr = str(n[0]), str(n[1])
     elif run.real:
         # the 1D REAL cell (2026-09-29): K transform-contiguous rows in the K slot
-        flag = ["--realfwd" if run.real == "r2c" else "--realbwd"]
+        flag = ["--realfwd" if run.real == "r2c" else "--realbwd"] + (["--mt"] if run.threads > 1 else [])   # --mt: the threaded real cell at $VFFT_MT (2026-09-30)
         nstr, kstr = str(n), str(run.k)
     else:
         flag = ["--k1nat" if run.ip else "--k1noop"] + (["--mt"] if run.threads > 1 else [])
@@ -613,8 +614,8 @@ def main():
         raise SystemExit("--cmp kfr: the KFR arm is the 1D c2c cell at one thread only")
     if run.cmp == "fftw" and (run.threads > 1 or dims == 3 or run.ip):
         raise SystemExit("--cmp fftw: the FFTW arm serves the 1D c2c cell and the 1D/2D real cells, out of place, one thread")
-    if run.real and (run.threads > 1 or run.ip or dims == 3):
-        raise SystemExit("--real: the real contract is out of place, one thread, 1D or 2D")
+    if run.real and (run.ip or dims == 3 or (run.threads > 1 and dims != 1)):
+        raise SystemExit("--real: the real contract is out of place, 1D or 2D; --threads serves the 1D cell only (2026-09-30)")
     if run.k > 1 and (not run.real or dims != 1):
         raise SystemExit("--k: the batch count belongs to the 1D real cell")
     cal_s, bench_s = estimate_seconds(cells, run.threads, args.calibrate)
