@@ -39,6 +39,7 @@
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
 #include "il/rank1/ztt_mt.h"         /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
+#include "il/real/zttr_mt.h"         /* ZTT-r's threaded arms: the same walk, the fold staying fused (2026-09-30) */
 #include "il_flatdit_race.h"    /* its FORM / TILE races on the shared race body      */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
@@ -132,6 +133,8 @@ long vfft_ilfd_mt_passes(void) { return _vfft_ilfd_mt_count; }
 long _vfft_ztt_mt_count = 0;
 long vfft_ztt_mt_passes(void) { return _vfft_ztt_mt_count; }
 /* the real four-step's order sweeps (il/real/zfsr.h): sweeps actually cut across workers */
+long _vfft_zttr_mt_count = 0;        /* ZTT-r's threaded arms (il/real/zttr_mt.h): threaded executes run */
+long vfft_zttr_mt_passes(void) { return _vfft_zttr_mt_count; }
 long _vfft_zr2c_fold_mt_count = 0;   /* zr2c's fold cut across workers (il/real/zr2c.h) */
 long vfft_zr2c_fold_mt_passes(void) { return _vfft_zr2c_fold_mt_count; }
 long _vfft_zfsr_mt_count = 0;
@@ -2306,7 +2309,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     {
         char cs[40];
         vfft_ztt_chain_str(h->zttr->zt, cs, sizeof cs);
-        FP__ADD(" zttr=[%s/%zu/s%d]", cs, h->zttr->zt->tile, h->zttr->stk);
+        FP__ADD(" zttr=[%s/%zu/s%d/m%d]", cs, h->zttr->zt->tile, h->zttr->stk, h->zttr->mt);
     }
     /* 4 — recurse. create re-enters itself for these, so the fingerprint is a
      * TREE; a child that silently changed route is otherwise invisible. */

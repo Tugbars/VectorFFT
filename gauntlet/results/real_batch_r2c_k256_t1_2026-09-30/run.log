@@ -1,0 +1,6 @@
+2026-09-30 16:48:56 run: 6 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-30 16:48:56 calibrate: 6 cells (0 already done)
+2026-09-30 16:48:57   calibrated 6/6 (16384), 1 s elapsed
+2026-09-30 16:48:57 bench: 6 cells (0 already benched, 0 not banked -> not benched)
+2026-09-30 16:49:09   benched 6/6 (16384), 11 s elapsed
+2026-09-30 16:49:11 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\real_batch_r2c_k256_t1_2026-09-30\report_r2c_k256.md

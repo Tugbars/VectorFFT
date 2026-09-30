@@ -27,7 +27,7 @@
  * before timing, and banks the winner (3% hysteresis toward zr2c, the
  * incumbent). VFFT_ZRP=R1.R2[.f] pins a pair (f = 0 form A, 1 form B;
  * default A), VFFT_ZRP=0 pins zr2c, VFFT_ZTTR=chain/tile[/stk] (4.8.8.4/512/3)
- * pins ZTT-r, VFFT_ZRM=1 pins the real mono and VFFT_ZRM=0 keeps it out of
+ * [/mt] pins ZTT-r (mt = its threaded arm on a threaded plan), VFFT_ZRM=1 pins the real mono and VFFT_ZRM=0 keeps it out of
  * the race, VFFT_ZFSR=N1xN2 pins the real four-step and VFFT_ZFSR=0 keeps it
  * out; env beats wisdom and never banks.
  *
@@ -117,6 +117,12 @@ static struct vfft_plan_s *_zttr_build_plan(const vfft_config_t *cfg, int N,
 static void _exec_zttr(struct vfft_plan_s *h, const double *sre, double *dre)
 {
     const int aliased = (sre == dre) && h->zttr->scratch;
+    if (h->zttr->mt > 0 && h->nthreads > 1)
+    {   /* the threaded arm the race bound (zttr_mt.h); it declines on a clamped pool */
+        _vfft_pool_arm(h->nthreads);
+        if (vfft_zttr_execute_mt(h->zttr, sre, aliased ? h->zttr->scratch : dre, dre, h->transform != VFFT_R2C))
+            return;
+    }
     if (h->transform == VFFT_R2C)
     {
         if (aliased) vfft_zttr_execute_fwd_ip(h->zttr, dre);
@@ -284,7 +290,8 @@ static int _zttr_sweep(const vfft_config_t *cfg, int N, const double *a, const d
     const int M = N / 2;
     int chains[VFFT_ZTTR_MAX_CHAINS][8], nfs[VFFT_ZTTR_MAX_CHAINS];
     const int nc = vfft_zttr_chains(M, chains, nfs, VFFT_ZTTR_MAX_CHAINS);
-    typedef struct { int c, ti; double ns; } cand_t;
+    typedef struct { int c, ti, mt; double ns; } cand_t;
+    const int Tk = _vfft_plan_threads(cfg);   /* a threaded plan sweeps the threaded arms too */
     cand_t cand[VFFT_ZTTR_MAX_CHAINS * 5];
     int ncand = 0;
     for (int c = 0; c < nc; c++)
@@ -306,14 +313,26 @@ static int _zttr_sweep(const vfft_config_t *cfg, int N, const double *a, const d
             if (reps < 2) reps = 2;
             if (reps > 64) reps = 64;
             double best = 1e30;
-            for (int r = 0; r < 5; r++)
-            {
-                double t = vfft_now_ns();
-                for (int i = 0; i < reps; i++) _exec_zttr(h, s0, b);
-                t = (vfft_now_ns() - t) / reps;
-                if (t < best) best = t;
+            int bmt = 0;
+            for (int arm = 0; arm <= (Tk > 1 ? 2 : 0); arm++)
+            {   /* serial, then BLOCKS and TILES at the plan's T */
+                if (arm)
+                {
+                    if (!vfft_zttr_mt_bind(h->zttr, Tk, arm)) continue;
+                    memcpy(b, a, xs * sizeof(double));
+                    _exec_zttr(h, s0, b);     /* gated like the serial run, and warm */
+                    if (_zrpr_relerr(b, ref, nchk) >= 1e-10) continue;
+                    _exec_zttr(h, s0, b);
+                }
+                for (int r = 0; r < 5; r++)
+                {
+                    double t = vfft_now_ns();
+                    for (int i = 0; i < reps; i++) _exec_zttr(h, s0, b);
+                    t = (vfft_now_ns() - t) / reps;
+                    if (t < best) { best = t; bmt = arm; }
+                }
             }
-            cand[ncand].c = c; cand[ncand].ti = ti; cand[ncand].ns = best;
+            cand[ncand].c = c; cand[ncand].ti = ti; cand[ncand].ns = best; cand[ncand].mt = bmt;
             ncand++;
             vfft_destroy((vfft_plan)h);
         }
@@ -325,11 +344,13 @@ static int _zttr_sweep(const vfft_config_t *cfg, int N, const double *a, const d
     for (int i = 0; i < ncand && i < 4; i++)
     {
         struct vfft_plan_s *h = _zttr_build_plan(cfg, N, chains[cand[i].c], nfs[cand[i].c], tiles[cand[i].ti], 3);
+        if (h && cand[i].mt) vfft_zttr_mt_bind(h->zttr, Tk, cand[i].mt);
         if (h) hz[n++] = h;
     }
     for (int st = 0; st < 3 && n < VFFT_ZTTR_MAX_ARMS; st++)
     {
         struct vfft_plan_s *h = _zttr_build_plan(cfg, N, chains[cand[0].c], nfs[cand[0].c], tiles[cand[0].ti], st);
+        if (h && cand[0].mt) vfft_zttr_mt_bind(h->zttr, Tk, cand[0].mt);
         if (h) hz[n++] = h;
     }
     return n;
@@ -580,7 +601,7 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
         char cs[32];
         ctx[nall].h = ht[i]; ctx[nall].s0 = s0; ctx[nall].b = b;
         vfft_ztt_chain_str(ht[i]->zttr->zt, cs, sizeof cs);
-        snprintf(names[nall], sizeof names[nall], "zttr%s/%zu/s%d", cs, ht[i]->zttr->zt->tile, ht[i]->zttr->stk);
+        snprintf(names[nall], sizeof names[nall], "zttr%s/%zu/s%d/m%d", cs, ht[i]->zttr->zt->tile, ht[i]->zttr->stk, ht[i]->zttr->mt);
         arms[nall].name = names[nall]; arms[nall].run = _zrpr_arm_run; arms[nall].ctx = &ctx[nall];
         hall[nall] = ht[i];
         nall++;
@@ -631,7 +652,7 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
             rc = vw2_real_il_bank_zrm(&W->vw2, N, c2r, ip, Tk, ns[best]);
         else if (hw->zttr)
             rc = vw2_real_il_bank_zttr(&W->vw2, N, c2r, ip, Tk, hw->zttr->zt->chain, hw->zttr->zt->nf,
-                                       hw->zttr->zt->tile, hw->zttr->stk, ns[best]);
+                                       hw->zttr->zt->tile, hw->zttr->stk, hw->zttr->mt, ns[best]);
         else
             rc = vw2_real_il_bank_zrp(&W->vw2, N, c2r, ip, Tk, hw->zrp->R1, hw->zrp->R2,
                                       hw->zrp->form, ns[best]);
@@ -671,7 +692,7 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
         const char *e = getenv("VFFT_ZTTR");
         if (e && e[0])
         {
-            int chain[8], nf = 0, stk = 3;
+            int chain[8], nf = 0, stk = 3, pmt = 0;
             unsigned long tile = 0;
             const char *q = e;
             while (*q && nf < 8)
@@ -683,10 +704,15 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
                 q = end;
                 if (*q == '.') q++; else break;
             }
-            if (*q == '/') { tile = strtoul(q + 1, (char **)&q, 10); if (*q == '/') stk = atoi(q + 1); }
+            if (*q == '/')
+            {   /* /tile[/stk[/mt]] */
+                tile = strtoul(q + 1, (char **)&q, 10);
+                if (*q == '/') { stk = (int)strtol(q + 1, (char **)&q, 10); if (*q == '/') pmt = atoi(q + 1); }
+            }
             if (nf >= 2)
             {
                 struct vfft_plan_s *h = _zttr_build_plan(cfg, N, chain, nf, (size_t)tile, stk);
+                if (h && pmt > 0 && Tk > 1) vfft_zttr_mt_bind(h->zttr, Tk, pmt);
                 if (h)
                     return h;
             }
@@ -736,11 +762,12 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
         }
         else if (eng && !strcmp(eng, "zttr"))
         {
-            int chain[8], nf, stk;
+            int chain[8], nf, stk, bmt;
             size_t tile;
-            if (vw2_real_il_lookup_zttr(&W->vw2, N, c2r, ip, Tk, chain, &nf, &tile, &stk))
+            if (vw2_real_il_lookup_zttr(&W->vw2, N, c2r, ip, Tk, chain, &nf, &tile, &stk, &bmt))
             {
                 struct vfft_plan_s *h = _zttr_build_plan(cfg, N, chain, nf, tile, stk);
+                if (h && bmt > 0 && Tk > 1) vfft_zttr_mt_bind(h->zttr, Tk, bmt);
                 if (h)
                     return h;
             }
