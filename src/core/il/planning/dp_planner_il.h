@@ -915,7 +915,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
          * The budget is L1d below 2048 (the plane is 2-32 KB there and a
          * tile that fits L2 gates nothing), L2 above. */
         c->il_tw = vfft_ilfd_race_tw(b.ifd, ctx->z_in, ctx->z_out,
-                                     N < 2048 ? vfft_cpu_l1d_bytes() : vfft_cpu_l2_bytes());
+                                     N < 2048 ? vfft_cpu_l1d_bytes() : vfft_cpu_l2_bytes(), 0);
     }
 
     /* warmup */

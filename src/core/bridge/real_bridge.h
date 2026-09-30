@@ -220,8 +220,8 @@ static vfft_plan _vfft_create_real_routes(const vfft_config_t *cfg,
  *        factors are the leaf's radices, both placements. Its chain, its
  *        split-body switch and its tile budget are plan input: every chain
  *        is gated and burst-timed untiled, the two fastest again at every
- *        budget (a threaded plan: each budget serial and in its threaded
- *        form, il/real/zrf_mt.h), and the two fastest plans of all join the
+ *        budget (a threaded plan: each budget serial and in both threaded
+ *        arms, il/real/zrf_mt.h), and the two fastest plans of all join the
  *        race.
  * The cell's verdict is banked in the real shard beside the routes' own
  * record (wisdom2_real_il.h; a different key from wisdom2_oddr.h's, so
@@ -261,8 +261,8 @@ static int _zrf_try(const vfft_config_t *cfg, int N, const int *R, int K, int no
         vfft_destroy((vfft_plan)h);
         return 1;
     }
-    if (mt && !vfft_zrf_mt_bind(h->zrf, h->nthreads))
-    {   /* the threaded form declines this plan */
+    if (mt && !vfft_zrf_mt_bind(h->zrf, h->nthreads, mt))
+    {   /* the threaded arm declines this plan */
         vfft_destroy((vfft_plan)h);
         return 1;
     }
@@ -348,7 +348,10 @@ static int _zrf_chain_sweep(const vfft_config_t *cfg, int N, const double *a, co
         {
             _zrf_try(cfg, N, seedR[i], seedK[i], seedm[i], budgets[t], 0, a, ref, b, s0, xs, nchk, out, bns, NULL, 1);
             if (_vfft_plan_threads(cfg) > 1)
+            {   /* the two threaded arms: FIRST and LEVELS (il/real/zrf_mt.h) */
                 _zrf_try(cfg, N, seedR[i], seedK[i], seedm[i], budgets[t], 1, a, ref, b, s0, xs, nchk, out, bns, NULL, 1);
+                _zrf_try(cfg, N, seedR[i], seedK[i], seedm[i], budgets[t], 2, a, ref, b, s0, xs, nchk, out, bns, NULL, 1);
+            }
         }
     return (out[0] != NULL) + (out[1] != NULL);
 }
@@ -393,7 +396,7 @@ static vfft_plan _vfft_create_real_odd_race(const vfft_config_t *cfg, vfft_batch
         struct vfft_plan_s *hf = _zrf_build_plan(cfg, N, fR, fK, fnomsz, ftile);
         if (hf)
         {
-            if (fmt) vfft_zrf_mt_bind(hf->zrf, hf->nthreads);
+            if (fmt) vfft_zrf_mt_bind(hf->zrf, hf->nthreads, fmt);
             return _real_finish(hf);
         }
     }
@@ -415,7 +418,7 @@ static vfft_plan _vfft_create_real_odd_race(const vfft_config_t *cfg, vfft_batch
                 struct vfft_plan_s *hf = _zrf_build_plan(cfg, N, ch, ck, cn, ct);
                 if (hf)
                 {
-                    if (cm) vfft_zrf_mt_bind(hf->zrf, hf->nthreads); /* the banked threaded form, at the row's T */
+                    if (cm) vfft_zrf_mt_bind(hf->zrf, hf->nthreads, cm); /* the banked threaded arm, at the row's T */
                     return _real_finish(hf);
                 }
             }
@@ -556,7 +559,7 @@ static vfft_plan _vfft_create_real_odd_race(const vfft_config_t *cfg, vfft_batch
                 if (arm[i]->zrf)
                 {
                     vfft_zrf_chain_str(arm[i]->zrf->R, arm[i]->zrf->K, cs, sizeof cs);
-                    snprintf(ws, sizeof ws, "/w%d%s", arm[i]->zrf->tile, arm[i]->zrf->mt ? "/m" : "");
+                    snprintf(ws, sizeof ws, "/w%d%s", arm[i]->zrf->tile, arm[i]->zrf->mt == 2 ? "/m2" : arm[i]->zrf->mt ? "/m1" : "");
                 }
                 fprintf(stderr, " %s%s%s%s=%.0f%s", i < a0 ? "oddr" : arm[i]->zrm ? "zrm" : "zrf:", cs,
                         (arm[i]->zrf && arm[i]->zrf->nomsz) ? "/t" : "", ws, ns[i], i == win ? "*" : "");

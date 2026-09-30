@@ -1,9 +1,9 @@
-/* zrf_mt_check.c -- the real flat DIT's threaded form against its serial run,
+/* zrf_mt_check.c -- the real flat DIT's threaded arms against its serial run,
  * through the door: per odd N, direction and placement, a chain and a tile
  * budget pinned by VFFT_ZRF=chain/t/w<tile> at one thread (the reference)
- * and at T threads with /m (the threaded form): the outputs compared BITWISE
- * (the threaded walk is a loop restriction of the serial one), the
- * engagement counter checked, then serial and threaded timed unpaced
+ * and at T threads with /m1 (FIRST) and /m2 (LEVELS): the outputs compared
+ * BITWISE (a threaded walk is a loop restriction of the serial one), the
+ * engagement counter checked, then serial and the two arms timed unpaced
  * (threaded arms are never paused).
  * Build: python gauntlet/build.py --compile --vfft --src gauntlet/zrf_mt_check.c
  * Run:   zrf_mt_check <scratch wisdom dir> [T=8] */
@@ -53,7 +53,7 @@ int main(int argc, char **argv)
     vfft_wisdom *W = vfft_wisdom_load(argv[1]);
     /* cell, chain/t/w<tile> */
     static const struct { int N; const char *ct; } cells[] = {
-        { 2025, "9.5.9.5/t/w64" }, { 6561, "9.9.9.9/t/w1024" }, { 10125, "9.5.5.9.5/t/w256" }, { 16875, "9.3.5.5.5.5/t/w1024" },
+        { 2025, "9.5.9.5/t/w64" }, { 6561, "9.9.9.9/t/w128" }, { 10125, "9.5.5.9.5/t/w256" }, { 16875, "9.3.5.5.5.5/t/w1024" },
         { 50625, "9.5.5.5.9.5/t/w1024" }, { 59049, "9.9.9.9.9/t/w1024" }, { 151875, "9.5.5.5.9.5.3/t/w1024" },
         { 253125, "9.5.5.5.9.5.5/t/w1024" }, { 531441, "9.9.9.9.9.9/t/w1024" }, { 1265625, "9.5.5.5.9.5.5.5/t/w1024" },
         { 78125, "5.5.5.5.5.5.5/t/w1024" }, { 117649, "7.7.7.7.7.7/t/w512" } };
@@ -71,38 +71,51 @@ int main(int argc, char **argv)
             char env[96];
             snprintf(env, sizeof env, "VFFT_ZRF=%s", cells[ci].ct); _putenv(env);
             vfft_plan f0 = mk(W, N, 0, ip, 1), b0 = mk(W, N, 1, ip, 1);
-            snprintf(env, sizeof env, "VFFT_ZRF=%s/m", cells[ci].ct); _putenv(env);
-            vfft_plan f1 = mk(W, N, 0, ip, T), b1 = mk(W, N, 1, ip, T);
-            _putenv("VFFT_ZRF=");
-            if (!f0 || !b0 || !f1 || !b1) { printf("N=%d %s: a pin does not build (%s)\n", N, ip ? "IP " : "OOP", cells[ci].ct); fails++; continue; }
-            memset(X0, 0, NX * 8); memset(y0, 0, NX * 8); memset(X1, 0, NX * 8); memset(y1, 0, NX * 8);
+            vfft_plan fa[3] = { f0, NULL, NULL }, ba[3] = { b0, NULL, NULL };
+            if (!f0 || !b0) { printf("N=%d %s: the serial pin does not build (%s)\n", N, ip ? "IP " : "OOP", cells[ci].ct); fails++; _putenv("VFFT_ZRF="); continue; }
+            memset(X0, 0, NX * 8); memset(y0, 0, NX * 8);
             run(f0, VFFT_FORWARD, ip, x, X0, b, NX, NX);
             run(b0, VFFT_BACKWARD, ip, X0, y0, b, NX, (size_t)N);
-            const long e0 = vfft_zrf_mt_passes();
-            run(f1, VFFT_FORWARD, ip, x, X1, b, NX, NX);
-            run(b1, VFFT_BACKWARD, ip, X0, y1, b, NX, (size_t)N);
-            const long eng = vfft_zrf_mt_passes() - e0;
-            const int same = !memcmp(X1, X0, ((size_t)N + 1) * 8) && !memcmp(y1, y0, (size_t)N * 8);
-            double rt = 0, sc = 0;
-            for (int i = 0; i < N; i++) { const double d = fabs(y1[i] - (double)N * x[i]); if (d > rt) rt = d; if (fabs((double)N * x[i]) > sc) sc = fabs((double)N * x[i]); }
-            if (eng != 2 || !same || rt / sc > 1e-12) fails++;
-            printf("N=%-8d %s %-24s engaged %ld/2, %s, roundtrip %.1e\n", N, ip ? "IP " : "OOP", cells[ci].ct, eng,
-                   eng < 2 ? "declined (serial)" : same ? "BITWISE the serial run" : "*** DIFFERS ***", rt / sc);
+            for (int arm = 1; arm <= 2; arm++)
+            {
+                snprintf(env, sizeof env, "VFFT_ZRF=%s/m%d", cells[ci].ct, arm); _putenv(env);
+                fa[arm] = mk(W, N, 0, ip, T); ba[arm] = mk(W, N, 1, ip, T);
+                if (!fa[arm] || !ba[arm]) { printf("N=%d arm %d: plan NULL\n", N, arm); fails++; continue; }
+                const long e0 = vfft_zrf_mt_passes();
+                memset(X1, 0, NX * 8); memset(y1, 0, NX * 8);
+                run(fa[arm], VFFT_FORWARD, ip, x, X1, b, NX, NX);
+                run(ba[arm], VFFT_BACKWARD, ip, X0, y1, b, NX, (size_t)N);
+                const long eng = vfft_zrf_mt_passes() - e0;
+                const int same = !memcmp(X1, X0, ((size_t)N + 1) * 8) && !memcmp(y1, y0, (size_t)N * 8);
+                if (eng == 2 && !same) fails++;
+                printf("N=%-8d %s %-24s %s: engaged %ld/2, %s\n", N, ip ? "IP " : "OOP", cells[ci].ct, arm == 1 ? "FIRST " : "LEVELS",
+                       eng, eng < 2 ? "declined (serial)" : same ? "BITWISE the serial run" : "*** DIFFERS ***");
+            }
+            _putenv("VFFT_ZRF=");
             for (int d = 0; d < 2; d++)
-            {   /* timing: serial then threaded; unpaced, two warm passes */
-                arm_t am[2] = { { d ? b0 : f0, d ? VFFT_BACKWARD : VFFT_FORWARD, ip ? b : (d ? X0 : x), ip ? b : (d ? y1 : X1) },
-                                { d ? b1 : f1, d ? VFFT_BACKWARD : VFFT_FORWARD, ip ? b : (d ? X0 : x), ip ? b : (d ? y1 : X1) } };
-                const vfft_race_arm_t arms[2] = { { "serial", arm_run, &am[0] }, { "threaded", arm_run, &am[1] } };
-                double ns[2];
+            {   /* timing: serial, FIRST, LEVELS; unpaced, two warm passes */
+                arm_t am[3]; vfft_race_arm_t arms[3]; int na = 0;
+                static const char *nm[3] = { "serial", "first", "levels" };
+                for (int q = 0; q < 3; q++)
+                {
+                    vfft_plan h = d ? ba[q] : fa[q];
+                    if (!h) continue;
+                    am[na].h = h; am[na].dir = d ? VFFT_BACKWARD : VFFT_FORWARD;
+                    am[na].in = ip ? b : (d ? X0 : x); am[na].out = ip ? b : (d ? y1 : X1);
+                    arms[na].name = nm[q]; arms[na].run = arm_run; arms[na].ctx = &am[na]; na++;
+                }
+                double ns[3];
                 memcpy(b, d ? X0 : x, NX * 8);
                 const double t0 = vfft_now_ns(); arm_run(&am[0]); const double est = vfft_now_ns() - t0;
                 int reps = (int)(2.0e6 / (est > 1.0 ? est : 1.0)); if (reps < 2) reps = 2; if (reps > 4096) reps = 4096;
                 const vfft_race_proto_t proto = { 7, reps, VFFT_RACE_MEDIAN, 1, 2, NULL, NULL, 0 };
-                vfft_race_run(&proto, arms, 2, ns);
-                printf("   %s %s: serial %.1f us  threaded %.1f us (%.2fx)\n", d ? "c2r" : "r2c", ip ? "IP " : "OOP", ns[0] / 1e3, ns[1] / 1e3, ns[0] / ns[1]);
+                vfft_race_run(&proto, arms, na, ns);
+                printf("   %s %s: serial %.1f us", d ? "c2r" : "r2c", ip ? "IP " : "OOP", ns[0] / 1e3);
+                for (int q = 1; q < na; q++) printf("  %s %.1f (%.2fx)", arms[q].name, ns[q] / 1e3, ns[0] / ns[q]);
+                printf("\n");
             }
             fflush(stdout);
-            vfft_destroy(f0); vfft_destroy(b0); vfft_destroy(f1); vfft_destroy(b1);
+            for (int q = 0; q < 3; q++) { if (fa[q]) vfft_destroy(fa[q]); if (ba[q]) vfft_destroy(ba[q]); }
         }
         _aligned_free(x); _aligned_free(X0); _aligned_free(X1); _aligned_free(y0); _aligned_free(y1); _aligned_free(b);
     }

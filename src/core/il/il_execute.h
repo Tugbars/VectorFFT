@@ -125,7 +125,7 @@ static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
  * plan without a wrapper (tcb / plane queue / rank-N) -- the odd-real bridge
  * included -- executes through the real bridge in one indirect call, the
  * same fast path the c2c plans take; the general signature walk it skips
- * cost 4-6 ns per call, half of a 3-point r2c (gauntlet/call_overhead.c). */
+ * cost 4-6 ns per call, half of a 3-point r2c (measured 2026-09-30). */
 static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir, double *sre, double *sim, double *dre, double *dim); /* bridge/real_bridge_exec.h, later in this TU */
 static int _k1x_real(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {

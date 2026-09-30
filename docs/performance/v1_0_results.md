@@ -80,7 +80,7 @@ ns/call. "scale" = that engine's OWN T1/T8 (8.00 = perfect on 8 cores).
 Three transforms end to end (transform t at `z[2tN .. 2(t+1)N)`), natural order, out
 of place, one thread on both sides: ours through the front door (`howmany = 3`,
 `VFFT_BATCH_TRANSFORM_CONTIGUOUS`), MKL with `NUMBER_OF_TRANSFORMS = 3`,
-`DISTANCE = N` on the same memory. `gauntlet/k3_batch_probe.c`: core 2 pinned with its
+`DISTANCE = N` on the same memory. The probe (retired 2026-09-30): core 2 pinned with its
 SMT sibling held, 15 rounds with the arms in alternating order, each the minimum of 5
 batches, median. Our batch runs as three K=1 transforms, so every stage of an odd N runs
 its one-column remainder in each of them. Output matches MKL to 1e-15 everywhere.

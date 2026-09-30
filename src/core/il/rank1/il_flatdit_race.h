@@ -128,20 +128,25 @@ static inline void _ilfd_race_audit(const vfft_race_arm_t *arms, const double *n
 /* Per-stage FORM race: on each tail-capable stage the letters t / n / o
  * (o = natural-base order, last stage of the natural class only), then on
  * each msz-eligible stage m against the stage's best non-msz form; pipeline
- * order. Leaves the plan bound at the verdict and zout transformed. */
+ * order. Leaves the plan bound at the verdict and zout transformed.
+ * THE PAUSE (VFFT_RACE_PACE_MS) runs ONCE, before the chain's first race:
+ * every race of the sequence decides within itself, on a core the previous
+ * race left at steady state (each still takes its untimed warm pass). A
+ * pause per race made a cold odd cell's create 246 pauses long (49 of its
+ * 62 s at N = 6561, 2026-09-30). */
 static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin, double *zout)
 {
     _ilfd_race_ctx_t cx[3];
     vfft_race_arm_t arms[3];
     double ns[3];
     const int log = _ilfd_race_log();
-    int s, reps;
+    int s, reps, pace = 1;
     vfft_ilfd_bind(p);
     reps = _ilfd_race_reps(p, zin, zout);
     if (log) fprintf(stderr, "[k1fd-race] N=%d K=%d forms: reps=%d (sample >= %.0f us)\n",
                      p->N, p->K, reps, VFFT_ILFD_RACE_SAMPLE_NS / 1e3);
     for (s = 1; s < p->K; s++) {
-        const vfft_race_proto_t proto = { VFFT_ILFD_RACE_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, NULL, NULL, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        vfft_race_proto_t proto = { VFFT_ILFD_RACE_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, NULL, NULL, 1 }; /* single-thread arms: the chain's first race paced */
         int na, a, best;
 #define ILFD_FARM(GL, GORD, MSZ, NAME) do { \
             cx[na].p = p; cx[na].zin = zin; cx[na].zout = zout; cx[na].s = s; \
@@ -157,6 +162,7 @@ static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin, 
             ILFD_FARM(0, 0, 0, "t");
             ILFD_FARM(1, 0, 0, "n");
             if (last && !p->scr) ILFD_FARM(1, 1, 0, "o");
+            proto.pace = pace; pace = 0;
             best = vfft_race_run(&proto, arms, na, ns);
             if (best < 0) best = 0;
             _ilfd_race_audit(arms, ns, na, reps, p->N);
@@ -176,6 +182,7 @@ static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin, 
             na = 0;
             ILFD_FARM(gl, gord, 0, p->fgl[s] ? (gl ? (gord && s == p->K - 1 ? "o" : "n") : "t") : "t");
             ILFD_FARM(gl, gord, 1, "m");
+            proto.pace = pace; pace = 0;
             best = vfft_race_run(&proto, arms, na, ns);
             if (best < 0) best = 0;
             _ilfd_race_audit(arms, ns, na, reps, p->N);
@@ -191,9 +198,11 @@ static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin, 
 
 /* the TILE race: every legal width whose tile fits cache_bytes (<= 0 = no
  * gate), on the whole forward, after the forms. Applies and returns the
- * winner (0 = untiled). Leaves zout transformed. */
+ * winner (0 = untiled). Leaves zout transformed. pace = 0 when it follows
+ * the chain's form race on the same core (the planner), 1 when it stands
+ * alone. */
 static inline int vfft_ilfd_race_tw(vfft_ilfd_plan_t *p, const double *zin, double *zout,
-                                    long cache_bytes)
+                                    long cache_bytes, int pace)
 {
     _ilfd_race_ctx_t cx[VFFT_ILFD_MAX_K + 1];
     vfft_race_arm_t arms[VFFT_ILFD_MAX_K + 1];
@@ -210,7 +219,7 @@ static inline int vfft_ilfd_race_tw(vfft_ilfd_plan_t *p, const double *zin, doub
         arms[i].name = cx[i].name; arms[i].run = _ilfd_race_arm_run; arms[i].ctx = &cx[i];
     }
     {
-        const vfft_race_proto_t proto = { VFFT_ILFD_RACE_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, NULL, NULL, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        const vfft_race_proto_t proto = { VFFT_ILFD_RACE_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, NULL, NULL, pace }; /* single-thread arms */
         best = vfft_race_run(&proto, arms, n, ns);
         if (best < 0) best = 0;
         _ilfd_race_audit(arms, ns, n, reps, p->N);

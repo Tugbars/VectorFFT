@@ -1235,8 +1235,8 @@ static void real_mk_body(void *v)
  * distances and strides to the arrays handed to the compute call (the
  * --c2r cell's precedent: a backward descriptor with the distances
  * swapped), so c2r gets its own. The 2D CCE strides are set explicitly:
- * MKL's default output pitch is N2 complex, not N2/2+1 (measured with
- * gauntlet/mkl_real_strides_probe.c), and the explicit {0, N2/2+1, 1} is
+ * MKL's default output pitch is N2 complex, not N2/2+1 (measured
+ * 2026-09-29), and the explicit {0, N2/2+1, 1} is
  * the layout FFTW and we write. */
 static DFTI_DESCRIPTOR_HANDLE real_mk_desc(const real_geo_t *g, int c2r)
 {

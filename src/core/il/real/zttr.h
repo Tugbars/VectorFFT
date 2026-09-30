@@ -170,7 +170,7 @@ static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf
     vfft_zttr_plan_t *p = (vfft_zttr_plan_t *)calloc(1, sizeof *p);
     if (!p) { vfft_ztt_destroy(zt); return NULL; }
     p->N = N; p->M = M; p->R = R; p->L = L; p->zt = zt;
-    p->blocked = 2;                                  /* tlfhc, at stack state 3 (gauntlet/zttr_forms.c) */
+    p->blocked = 2;                                  /* tlfhc, at stack state 3 */
     p->stk = 3;
     const long nq = L / 8 + 1;                       /* quads k = 0, 4, .., L/2 */
     const size_t recs = (size_t)nq * (size_t)(R - 1) * 8u;

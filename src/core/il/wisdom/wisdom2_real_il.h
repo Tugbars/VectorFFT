@@ -14,11 +14,12 @@
  *                                                  the split of N/2)
  *   eng=zrm                                       (the real mono, il/real/zrm.h: one
  *                                                  rn1 kernel, N <= 64, no plan input)
- *   eng=zrf  chain=9.9.5 msz=0|1 tile=256 [mt=1]  (the real flat DIT, il/real/zrf.h, odd N:
+ *   eng=zrf  chain=9.9.5 msz=0|1 tile=256 [mt=1|2] (the real flat DIT, il/real/zrf.h, odd N:
  *                                                  the chain, whether the split-body stage
  *                                                  form runs where it exists, the tile
  *                                                  budget in complex, 0 = untiled; on a
- *                                                  threaded plan's row the threaded form)
+ *                                                  threaded plan's row the threaded arm:
+ *                                                  1 FIRST, 2 LEVELS)
  *   eng=oddr                                      (odd N: the odd-real routes stood
  *                                                  against the mono and the flat DIT;
  *                                                  their own route record is
@@ -167,9 +168,9 @@ static inline int vw2_real_il_lookup_zrf(const vw2_store_t *s, int realN, int is
     *K = n;
     *nomsz = (ms && ms[0] == '0') ? 1 : 0;
     if (tl) { const int v = atoi(tl); if (v < 0) return 0; *tile = v; }
-    {   /* the threaded form of a threaded plan's row; absent = serial */
+    {   /* the threaded arm of a threaded plan's row: 1 FIRST, 2 LEVELS; absent = serial */
         const char *m = vw2_rec_get(r, "mt");
-        if (m && atoi(m) == 1) *mt = 1;
+        if (m) { const int v = atoi(m); if (v >= 1 && v <= 2) *mt = v; }
     }
     return 1;
 }
@@ -190,7 +191,7 @@ static inline int vw2_real_il_bank_zrf(vw2_store_t *s, int realN, int is_c2r, in
         vw2_rec_set(&r, 1, "msz", nomsz ? "0" : "1") != VW2_OK) { vw2_rec_free(&r); return -1; }
     snprintf(b, sizeof b, "%d", tile > 0 ? tile : 0);
     if (vw2_rec_set(&r, 1, "tile", b) != VW2_OK ||
-        (mt > 0 && vw2_rec_set(&r, 1, "mt", "1") != VW2_OK) ||
+        (mt > 0 && vw2_rec_set(&r, 1, "mt", mt == 2 ? "2" : "1") != VW2_OK) ||
         vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
         vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
     if (ns > 0.0) {

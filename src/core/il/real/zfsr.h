@@ -18,7 +18,7 @@
  * real plane. No fold pass, no natural transpose, no copy back: zr2c above
  * the ZTT band pays all three around the same child.
  *
- * THE SWEEP'S TWO LAWS (measured at 2^20, gauntlet/fs_split_time.c: the c2c
+ * THE SWEEP'S TWO LAWS (measured at 2^20, 2026-09-30: the c2c
  * order pass 361 us, zr2c's fold ~450; a first sweep with unaligned mirror
  * runs and the full pair tables cost ~1000):
  *   every output run leaves as whole aligned lines, streamed. X[f] for
