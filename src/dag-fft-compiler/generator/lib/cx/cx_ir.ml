@@ -61,6 +61,12 @@ type caddr =
   | AZinReal of int (* l: zin[(size_t)l*Ls + k] -> (x, 0) per column        *)
   | AZinHerm of int * int (* (l, r): conj of bin r-l, zin[2*((size_t)(r-l)*Ls + k)] *)
   | AZoutReal of int (* l: zout[(size_t)l*OLs + k], the real lane per column   *)
+  (* ── the real FLAT leaf r1c (real_il.ml, 2026-09-30): digit p >= 1 of a
+     column is a complex value, and the digit's run of `count` columns is
+     block p of the c2c flat plane: complex p*pitch + k. off = the double
+     offset of the vector inside the group's columns. ── *)
+  | ADigOut of int * int (* (p, off): zout[(size_t)2p*OLs + 2*k + off] *)
+  | ADigIn of int * int (* (p, off): zin [(size_t)2p*Ls  + 2*k + off] *)
 
 type cx_kind =
   | CIn of int (* input leg i (a packed-complex load) *)

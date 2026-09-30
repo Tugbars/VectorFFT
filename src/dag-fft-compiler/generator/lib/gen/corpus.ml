@@ -2190,6 +2190,85 @@ let zil_pure_cells : (string * string list) list =
     , [ "64"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix64_z_rn1_bwd_avx2.c"
     , [ "64"; "--cil-rn1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* the real FLAT leaf r1c (real_il.ml, 2026-09-30): real legs over contiguous
+       columns -> the digit runs, fwd + bwd at the flat DIT's odd radices;
+       zil/avx2/real/flat *)
+  ; ( "radix3_z_r1c_avx2.c"
+    , [ "3"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_r1c_bwd_avx2.c"
+    , [ "3"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_r1c_avx2.c"
+    , [ "5"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_r1c_bwd_avx2.c"
+    , [ "5"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_r1c_avx2.c"
+    , [ "7"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_r1c_bwd_avx2.c"
+    , [ "7"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_r1c_avx2.c"
+    , [ "9"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_r1c_bwd_avx2.c"
+    , [ "9"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix11_z_r1c_avx2.c"
+    , [ "11"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix11_z_r1c_bwd_avx2.c"
+    , [ "11"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix13_z_r1c_avx2.c"
+    , [ "13"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix13_z_r1c_bwd_avx2.c"
+    , [ "13"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_r1c_avx2.c"
+    , [ "15"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_r1c_bwd_avx2.c"
+    , [ "15"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix17_z_r1c_avx2.c"
+    , [ "17"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix17_z_r1c_bwd_avx2.c"
+    , [ "17"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix19_z_r1c_avx2.c"
+    , [ "19"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix19_z_r1c_bwd_avx2.c"
+    , [ "19"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_r1c_avx2.c"
+    , [ "21"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_r1c_bwd_avx2.c"
+    , [ "21"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix23_z_r1c_avx2.c"
+    , [ "23"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix23_z_r1c_bwd_avx2.c"
+    , [ "23"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_r1c_avx2.c"
+    , [ "25"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_r1c_bwd_avx2.c"
+    , [ "25"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_r1c_avx2.c"
+    , [ "27"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_r1c_bwd_avx2.c"
+    , [ "27"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix29_z_r1c_avx2.c"
+    , [ "29"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix29_z_r1c_bwd_avx2.c"
+    , [ "29"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix31_z_r1c_avx2.c"
+    , [ "31"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix31_z_r1c_bwd_avx2.c"
+    , [ "31"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix37_z_r1c_avx2.c"
+    , [ "37"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix37_z_r1c_bwd_avx2.c"
+    , [ "37"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix41_z_r1c_avx2.c"
+    , [ "41"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix41_z_r1c_bwd_avx2.c"
+    , [ "41"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix43_z_r1c_avx2.c"
+    , [ "43"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix43_z_r1c_bwd_avx2.c"
+    , [ "43"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix47_z_r1c_avx2.c"
+    , [ "47"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix47_z_r1c_bwd_avx2.c"
+    , [ "47"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ]
 ;;
 
@@ -2750,6 +2829,7 @@ let zil_folder (name : string) : string option =
          else if base = "msz" || base = "mszt" then "flat/odd_mid"
          else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "ztt"
          else if base = "rn1" then "real/mono"
+         else if base = "r1c" then "real/flat"
          else if base = "t2h" || base = "t2m" || base = "r2z" then "real/pair"
          else "pair2p/tangent")
     | _ -> None

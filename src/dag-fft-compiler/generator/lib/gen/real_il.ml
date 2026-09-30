@@ -75,18 +75,21 @@ type kind =
   | T2h (* form A top: the untangling Hermitian mid over the packed leaf *)
   | T2m (* form B top: the Hermitian mid over the real leaf's half spectra *)
   | R2z (* form B leaf: real columns -> packed half spectra (bwd: the inverse) *)
+  | R1c (* the real FLAT leaf: real legs over contiguous columns -> the digit runs *)
 
 let kind_name = function
   | T2h -> "t2h"
   | T2m -> "t2m"
   | R2z -> "r2z"
+  | R1c -> "r1c"
 ;;
 
 let kind_of_string = function
   | "t2h" -> T2h
   | "t2m" -> T2m
   | "r2z" -> R2z
-  | s -> failwith ("real_il: unknown kind " ^ s ^ " (t2h | t2m | r2z)")
+  | "r1c" -> R1c
+  | s -> failwith ("real_il: unknown kind " ^ s ^ " (t2h | t2m | r2z | r1c)")
 ;;
 
 (* ═══════════════════════════════════════════════════════════════
@@ -635,6 +638,204 @@ let emit_leaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : st
   Buffer.contents buf
 ;;
 
+(* ═══════════════════════════════════════════════════════════════
+   THE REAL FLAT LEAF: r1c (2026-09-30; the real flat DIT's one kind)
+
+   The flat DIT's first stage transforms across the most significant digit:
+   R legs at stride D = N/R, count = D contiguous columns. On REAL input
+   that stage is the real R-point DFT of each column (cx_real.ml) and its
+   output is Hermitian in the digit p, so only p = 0..(R-1)/2 exist: digit 0
+   is a REAL run of D (the same problem again, R times smaller) and every
+   digit p >= 1 a COMPLEX run of D -- the state the c2c flat DIT is in after
+   its own leaf, for that digit's block. R odd.
+
+   fwd: legs zin[l*Ls + k] (real) -> digit 0 at zout[k] (real), digit p at
+        zout[2p*OLs + 2k] (interleaved complex) = block p of the c2c flat
+        plane at pitch OLs, so the c2c stages run on the digit blocks as
+        they stand (the second half of block 0 is unused).
+   bwd: the inverse, unnormalized (R times x).
+   Four real columns per vector; the digit store interleaves (re, im) per
+   column (two unpacks and two lane turns per digit). count is ANY: a
+   two-column step at VEX-128, then the last lone column (D is odd for an
+   odd N). Out of place only (a digit's run interleaves into columns the
+   walk has not read yet). tw_re, tw_im, Gs, OGs unused.
+   ═══════════════════════════════════════════════════════════════ *)
+let emit_rleaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
+  let vw = isa.Isa.vec_width in
+  if vw <> 4 then failwith "real_il: r1c is emitted for the 256-bit ISA only";
+  if radix < 3 || radix mod 2 <> 1 then failwith "real_il: r1c needs an odd radix >= 3";
+  let h = radix / 2 in
+  let ctx =
+    make_ctx
+      ~tw_group:false
+      ~tw_log3:false
+      ~tw_pre:false
+      ~tw_gen2:false
+      ~colstride:false
+      ~st_turn:false
+      ~st_turn_gs:false
+      ~tangent:false
+  in
+  let tbl : consts = Hashtbl.create 16 in
+  let dname = if dir = Fwd then "fwd" else "bwd" in
+  (* one column group: `lanes` real columns (4 wide; 2 or 1 at VEX-128) *)
+  let emit_group ~(body : Buffer.t) ~(nisa : Isa.t) ~(lanes : int) ~(label : string) : unit =
+    reset ();
+    let loads = ref [] in
+    let ld (a : caddr) : t =
+      let e = cload a in
+      loads := (a, e) :: !loads;
+      e
+    in
+    let name (e : t) = Printf.sprintf "z%d" e.tag in
+    let line (s : string) = Buffer.add_string body (Printf.sprintf "        %s\n" s) in
+    let assigns, stores =
+      match dir with
+      | Fwd ->
+        let x = Array.init radix (fun l -> ld (if lanes = 1 then AZinReal l else AXinLeg l)) in
+        let xs = Cx_real.rdft radix x in
+        let d0 = Cx_real.get (fst xs.(0)) "r1c digit 0" in
+        let roots = ref [ d0 ]
+        and st = ref [ (if lanes = 1 then AZoutReal 0 else AXoutLeg 0), d0 ] in
+        for d = 1 to h do
+          let re = Cx_real.get (fst xs.(d)) "r1c re"
+          and im = Cx_real.get (snd xs.(d)) "r1c im" in
+          let ulo = cunpack re im false in
+          if lanes = 4
+          then (
+            let uhi = cunpack re im true in
+            let t0 = cturn ulo uhi false
+            and t1 = cturn ulo uhi true in
+            roots := t1 :: t0 :: !roots;
+            st := (ADigOut (d, 4), t1) :: (ADigOut (d, 0), t0) :: !st)
+          else if lanes = 2
+          then (
+            let uhi = cunpack re im true in
+            roots := uhi :: ulo :: !roots;
+            st := (ADigOut (d, 2), uhi) :: (ADigOut (d, 0), ulo) :: !st)
+          else (
+            roots := ulo :: !roots;
+            st := (ADigOut (d, 0), ulo) :: !st)
+        done;
+        let roots = List.rev !roots
+        and st = List.rev !st in
+        ( List.mapi (fun i e -> Expr.Output (i, true), e) roots
+        , fun () -> List.iter (fun (a, e) -> line (render_store nisa a (name e) ^ ";")) st )
+      | Bwd ->
+        let xs = Array.make (h + 1) (None, None) in
+        xs.(0) <- Some (ld (if lanes = 1 then AZinReal 0 else AXinLeg 0)), None;
+        for d = 1 to h do
+          let re, im =
+            if lanes = 4
+            then (
+              let l0 = ld (ADigIn (d, 0))
+              and l1 = ld (ADigIn (d, 4)) in
+              let z0 = cturn l0 l1 false
+              and z1 = cturn l0 l1 true in
+              cunpack z0 z1 false, cunpack z0 z1 true)
+            else if lanes = 2
+            then (
+              let l0 = ld (ADigIn (d, 0))
+              and l1 = ld (ADigIn (d, 2)) in
+              cunpack l0 l1 false, cunpack l0 l1 true)
+            else (
+              let l0 = ld (ADigIn (d, 0)) in
+              l0, cunpack l0 l0 true)
+          in
+          xs.(d) <- Some re, Some im
+        done;
+        let out = Cx_real.irdft radix xs in
+        ( Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) out)
+        , fun () ->
+            Array.iteri
+              (fun j (e : t) ->
+                 line (render_store nisa (if lanes = 1 then AZoutReal j else AXoutLeg j) (name e) ^ ";"))
+              out )
+    in
+    let assigns =
+      Cx_pipeline.prepare_codelet
+        ~who:(Printf.sprintf "r%d_r1c_%s_%d" radix dname lanes)
+        ~uarch
+        assigns
+    in
+    let sch = C2c_il.cx_schedule uarch assigns in
+    Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
+    List.iter
+      (fun ((a : caddr), (e : t)) -> line (Isa.const_decl nisa (name e) (render_load nisa a)))
+      (List.rev !loads);
+    let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    List.iter
+      (fun ((_ : Expr.elem_ref option), (e : t)) ->
+         match e.node with
+         | CIn _ | CLoad _ -> ()
+         | _ ->
+           if not (Hashtbl.mem seen e.tag)
+           then (
+             Hashtbl.replace seen e.tag ();
+             line (Isa.const_decl nisa (name e) (render ~ctx nisa tbl e))))
+      sch;
+    stores ();
+    Buffer.add_string body "        }\n"
+  in
+  let body_w = Buffer.create 8192 in
+  let body_n = Buffer.create 4096 in
+  let body_1 = Buffer.create 4096 in
+  emit_group ~body:body_w ~nisa:isa ~lanes:4 ~label:"four real columns";
+  emit_group ~body:body_n ~nisa:Isa.sse2 ~lanes:2 ~label:"two columns at VEX-128";
+  emit_group ~body:body_1 ~nisa:Isa.sse2 ~lanes:1 ~label:"the last lone column";
+  let buf = Buffer.create 16384 in
+  Buffer.add_string
+    buf
+    (Emit_render.provenance_block
+       ~family:(Printf.sprintf "full-IL (interleaved-complex) r1c, radix-%d %s" radix dname)
+       [ Printf.sprintf "ISA: %s; %d real columns per vector" isa.Isa.name vw
+       ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
+       ; "Form: the real flat DIT's leaf (real_il.ml, cx_real.ml)"
+       ]);
+  Buffer.add_string
+    buf
+    (Printf.sprintf
+       "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
+       \ * PIPELINE-HOSTED (real_il.ml). radix-%d r1c %s: %s\n\
+       \ * count = the columns (any: four per wide iteration, then two at VEX-128,\n\
+       \ * then the lone last one). Out of place. tw_re, tw_im, Gs, OGs unused. */\n"
+       radix
+       dname
+       (if dir = Fwd
+        then
+          "R real legs (leg l at zin[l*Ls + k]) -> the digit runs of the\n\
+          \ * real R-point DFT of each column: digit 0 real at zout[k], digit p in\n\
+          \ * 1..(R-1)/2 complex at zout[2p*OLs + 2k]; real arithmetic (cx_real.ml)."
+        else
+          "the digit runs (digit 0 real at zin[k], digit p complex at\n\
+          \ * zin[2p*Ls + 2k]) -> R real legs zout[l*OLs + k], the unnormalized\n\
+          \ * inverse (R times x)."));
+  Buffer.add_string buf "#include <immintrin.h>\n#include <stddef.h>\n\n";
+  Buffer.add_string buf (emit_const_decls isa tbl);
+  Buffer.add_string buf "\n";
+  Buffer.add_string
+    buf
+    (Abi.z11_signature
+       ~alias_tolerant:false
+       ~symbol:(Printf.sprintf "radix%d_z_r1c_%s_%s" radix dname isa.Isa.name)
+       ~target_attr:(Isa.cx_target_attr isa)
+       ());
+  Buffer.add_string buf "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im; (void)Gs; (void)OGs;\n";
+  Buffer.add_string buf "    size_t k = 0;\n";
+  Buffer.add_string buf (Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" vw vw);
+  Buffer.add_buffer buf body_w;
+  Buffer.add_string buf "    }\n";
+  Buffer.add_string buf "    if (k + 2 <= count) {  /* two columns at VEX-128 */\n";
+  Buffer.add_buffer buf body_n;
+  Buffer.add_string buf "        k += 2;\n";
+  Buffer.add_string buf "    }\n";
+  Buffer.add_string buf "    if (k < count) {  /* the last lone column */\n";
+  Buffer.add_buffer buf body_1;
+  Buffer.add_string buf "    }\n";
+  Buffer.add_string buf "}\n";
+  Buffer.contents buf
+;;
+
 let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
   if isa.Isa.vec_width <> 4
   then failwith "real_il: the real pair's kinds are emitted for the 256-bit ISA only";
@@ -642,4 +843,5 @@ let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uar
   | T2h -> emit_top ~untangle:true ~dir ~radix ~isa ~uarch
   | T2m -> emit_top ~untangle:false ~dir ~radix ~isa ~uarch
   | R2z -> emit_leaf ~dir ~radix ~isa ~uarch
+  | R1c -> emit_rleaf ~dir ~radix ~isa ~uarch
 ;;
