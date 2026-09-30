@@ -41,6 +41,7 @@
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
 #include "il/rank1/ztt_mt.h"         /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
 #include "il/real/zttr_mt.h"         /* ZTT-r's threaded arms: the same walk, the fold staying fused (2026-09-30) */
+#include "il/real/zrf_mt.h"          /* the real flat DIT's threaded form: the first level cut by columns and tiles (2026-09-30) */
 #include "il_flatdit_race.h"    /* its FORM / TILE races on the shared race body      */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
@@ -140,6 +141,8 @@ long _vfft_zr2c_fold_mt_count = 0;   /* zr2c's fold cut across workers (il/real/
 long vfft_zr2c_fold_mt_passes(void) { return _vfft_zr2c_fold_mt_count; }
 long _vfft_zfsr_mt_count = 0;
 long vfft_zfsr_mt_passes(void) { return _vfft_zfsr_mt_count; }
+long _vfft_zrf_mt_count = 0;         /* the real flat DIT's threaded form (il/real/zrf_mt.h): threaded executes run */
+long vfft_zrf_mt_passes(void) { return _vfft_zrf_mt_count; }
 /* the gate's hook (benches/ztt_mt_gate.c): build a ZTURN-T plan, bind the
  * arm for T, run it threaded on the process pool, write y; returns 1 when
  * the threaded walk ran, 0 when it declined (then y is untouched), -1 when
@@ -1449,8 +1452,8 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         TC_NEQ("real flat DIT");
     if (a->zrf)
     {
-        /* the real flat DIT: the plan IS the chain and the form switch */
-        if (a->zrf->K != b->zrf->K || a->zrf->nomsz != b->zrf->nomsz ||
+        /* the real flat DIT: the plan IS the chain, the form switch and the tile budget */
+        if (a->zrf->K != b->zrf->K || a->zrf->nomsz != b->zrf->nomsz || a->zrf->tile != b->zrf->tile ||
             memcmp(a->zrf->R, b->zrf->R, sizeof(int) * (size_t)a->zrf->K))
             TC_NEQ("real flat DIT chain");
         return 1;
@@ -2327,7 +2330,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     {
         char cs[48];
         vfft_zrf_chain_str(h->zrf->R, h->zrf->K, cs, sizeof cs);
-        FP__ADD(" zrf=[%s%s]", cs, h->zrf->nomsz ? "/t" : "");
+        FP__ADD(" zrf=[%s%s/w%d/m%d]", cs, h->zrf->nomsz ? "/t" : "", h->zrf->tile, h->zrf->mt);
     }
     if (h->zttr)
     {

@@ -22,8 +22,9 @@
  *         N <= 64; no plan input. Odd N races it in bridge/real_bridge.h
  *         against the odd-real routes (the door is even-N).
  *   zrf   the real flat DIT (zrf.h): odd N on the c2c flat DIT's stages
- *         behind a real leaf; the chain and the split-body switch are
- *         PLAN INPUT, swept by the odd race in bridge/real_bridge.h.
+ *         behind a real leaf; the chain, the split-body switch and the
+ *         tile budget are PLAN INPUT, swept by the odd race in
+ *         bridge/real_bridge.h.
  * The cell's engine is read from the real shard (wisdom2_real_il.h); a miss
  * races zr2c against every legal pair in every form and the ZTT-r shortlist
  * through the finished handles, gates each arm's output against zr2c's
@@ -174,10 +175,10 @@ static int _zrm_env(void)
     return e[0] == '0' ? 0 : 1;
 }
 
-/* the real flat DIT's handle: the chain and the split-body switch are plan input */
-static struct vfft_plan_s *_zrf_build_plan(const vfft_config_t *cfg, int N, const int *R, int K, int nomsz)
+/* the real flat DIT's handle: the chain, the split-body switch and the tile budget are plan input */
+static struct vfft_plan_s *_zrf_build_plan(const vfft_config_t *cfg, int N, const int *R, int K, int nomsz, int tile)
 {
-    vfft_zrf_plan_t *zp = vfft_zrf_create(N, R, K, nomsz);
+    vfft_zrf_plan_t *zp = vfft_zrf_create(N, R, K, nomsz, tile);
     struct vfft_plan_s *h;
     if (!zp)
         return NULL;
@@ -200,19 +201,26 @@ static struct vfft_plan_s *_zrf_build_plan(const vfft_config_t *cfg, int N, cons
 /* both placements are the same pipeline (the planes are the plan's own) */
 static void _exec_zrf(struct vfft_plan_s *h, const double *sre, double *dre)
 {
+    if (h->zrf->mt > 0 && h->nthreads > 1)
+    {   /* the threaded form the race bound (zrf_mt.h); it declines on a clamped pool */
+        _vfft_pool_arm(h->nthreads);
+        if (vfft_zrf_execute_mt(h->zrf, sre, dre, h->transform != VFFT_R2C))
+            return;
+    }
     if (h->transform == VFFT_R2C)
         vfft_zrf_execute_fwd(h->zrf, sre, dre);
     else
         vfft_zrf_execute_bwd(h->zrf, sre, dre);
 }
 
-/* VFFT_ZRF at create: 1 = pinned at the chain "9.9.5" ("/t" = the split
- * body off), 0 = kept out of the race, -1 = unset */
-static int _zrf_env(int *R, int *K, int *nomsz)
+/* VFFT_ZRF at create: 1 = pinned at the chain "9.9.5" (then "/t" = the split
+ * body off, "/w256" = the tile budget, "/m" = the threaded form at the
+ * plan's T), 0 = kept out of the race, -1 = unset */
+static int _zrf_env(int *R, int *K, int *nomsz, int *tile, int *mt)
 {
     const char *e = getenv("VFFT_ZRF");
     int n = 0;
-    *K = 0; *nomsz = 0;
+    *K = 0; *nomsz = 0; *tile = 0; *mt = 0;
     if (!e || !e[0])
         return -1;
     while (*e && n < VFFT_ILFD_MAX_K)
@@ -226,9 +234,14 @@ static int _zrf_env(int *R, int *K, int *nomsz)
         if (*e == '.') e++;
         else break;
     }
-    if (n < 2 || (*e && strcmp(e, "/t")))
+    if (n < 2)
         return 0;
-    *K = n; *nomsz = *e != 0;
+    if (!strncmp(e, "/t", 2)) { *nomsz = 1; e += 2; }
+    if (!strncmp(e, "/w", 2)) { *tile = atoi(e + 2); e += 2; while (*e >= '0' && *e <= '9') e++; }
+    if (!strncmp(e, "/m", 2)) { *mt = 1; e += 2; }
+    if (*e || *tile < 0)
+        return 0;
+    *K = n;
     return 1;
 }
 

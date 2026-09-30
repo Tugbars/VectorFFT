@@ -1,0 +1,32 @@
+2026-09-30 18:35:34 run: 324 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-30 18:35:34 calibrate: 324 cells (0 already done)
+2026-09-30 18:35:44   calibrated 25/324 (99), 10 s elapsed
+2026-09-30 18:35:54   calibrated 50/324 (189), 20 s elapsed
+2026-09-30 18:36:04   calibrated 75/324 (297), 29 s elapsed
+2026-09-30 18:36:13   calibrated 100/324 (407), 39 s elapsed
+2026-09-30 18:36:23   calibrated 125/324 (551), 48 s elapsed
+2026-09-30 18:36:33   calibrated 150/324 (697), 58 s elapsed
+2026-09-30 18:36:42   calibrated 175/324 (847), 68 s elapsed
+2026-09-30 18:36:52   calibrated 200/324 (1023), 78 s elapsed
+2026-09-30 18:37:02   calibrated 225/324 (1197), 88 s elapsed
+2026-09-30 18:37:12   calibrated 250/324 (1395), 97 s elapsed
+2026-09-30 18:37:22   calibrated 275/324 (1595), 107 s elapsed
+2026-09-30 18:37:32   calibrated 300/324 (1827), 117 s elapsed
+2026-09-30 18:37:41   calibrated 324/324 (2035), 127 s elapsed
+2026-09-30 18:37:41 bench: 324 cells (0 already benched, 0 not banked -> not benched)
+2026-09-30 18:38:21   benched 25/324 (99), 38 s elapsed
+2026-09-30 18:39:03   benched 50/324 (189), 80 s elapsed
+2026-09-30 18:39:46   benched 75/324 (297), 123 s elapsed
+2026-09-30 18:40:31   benched 100/324 (407), 169 s elapsed
+2026-09-30 18:41:16   benched 125/324 (551), 213 s elapsed
+2026-09-30 18:42:00   benched 150/324 (697), 258 s elapsed
+2026-09-30 18:42:46   benched 175/324 (847), 303 s elapsed
+2026-09-30 18:43:34   benched 200/324 (1023), 351 s elapsed
+2026-09-30 18:44:20   benched 225/324 (1197), 397 s elapsed
+2026-09-30 18:45:06   benched 250/324 (1395), 443 s elapsed
+2026-09-30 18:45:53   benched 275/324 (1595), 490 s elapsed
+2026-09-30 18:46:41   benched 300/324 (1827), 538 s elapsed
+2026-09-30 18:47:27   benched 324/324 (2035), 584 s elapsed
+2026-09-30 18:47:28 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zrf_odd_r2c_2026-09-30\report_r2c.md
+2026-09-30 19:00:16 merge: 0 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-09-30 19:00:16 merged into C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom

@@ -358,20 +358,20 @@
 @cell t=r2c n=5 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=3.5 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=7 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=4.5 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=8 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=4.2 metric=fwd1 units=ns date=2026-09-30
-@cell t=r2c n=9 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=5.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=9 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=11.4 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=11 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=8.2 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=13 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=13.5 metric=fwd1 units=ns date=2026-09-30
-@cell t=r2c n=15 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=13.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=15 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=17.3 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=17 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
 @cell t=r2c n=17 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=18.8 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=19 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-30
 @cell t=r2c n=19 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=23.8 metric=fwd1 units=ns date=2026-09-30
-@cell t=r2c n=21 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=28.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=21 q=1 ord=nat place=oop | eng=zrf chain=7.3 msz=1 tile=0 | ran=1 src=race ns=25.3 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=22 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=19.3 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=23 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=35.2 metric=fwd1 units=ns date=2026-09-30
-@cell t=r2c n=25 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=30.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=25 q=1 ord=nat place=oop | eng=zrf chain=5.5 msz=1 tile=0 | ran=1 src=race ns=33.6 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=26 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=27.6 metric=fwd1 units=ns date=2026-09-30
-@cell t=r2c n=27 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=46.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=27 q=1 ord=nat place=oop | eng=zrf chain=9.3 msz=1 tile=0 | ran=1 src=race ns=29.6 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=29 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=55.4 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=31 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=59.5 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=34 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=34.4 metric=fwd1 units=ns date=2026-09-30
@@ -398,18 +398,18 @@
 @cell t=c2r n=5 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=3.7 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=7 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=4.8 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=8 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=4.5 metric=bwd1 units=ns date=2026-09-30
-@cell t=c2r n=9 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=6.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=9 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=7.7 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=11 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=8.4 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=13 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=15.6 metric=bwd1 units=ns date=2026-09-30
-@cell t=c2r n=15 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=12.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=15 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=12.9 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=17 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=18.7 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=19 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=25.2 metric=bwd1 units=ns date=2026-09-30
-@cell t=c2r n=21 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=29.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=21 q=1 ord=nat place=oop | eng=zrf chain=3.7 msz=1 tile=0 | ran=1 src=race ns=29.6 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=22 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=21.2 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=23 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=36.2 metric=bwd1 units=ns date=2026-09-30
-@cell t=c2r n=25 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=34.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=25 q=1 ord=nat place=oop | eng=zrf chain=5.5 msz=1 tile=0 | ran=1 src=race ns=28.3 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=26 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=27.8 metric=bwd1 units=ns date=2026-09-30
-@cell t=c2r n=27 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=39.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=27 q=1 ord=nat place=oop | eng=zrf chain=3.3.3 msz=1 tile=0 | ran=1 src=race ns=34.8 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=29 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=54.9 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=31 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=61.2 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=34 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=35.7 metric=bwd1 units=ns date=2026-09-30
@@ -2405,3 +2405,679 @@
 @cell t=c2r n=2097152 q=1 ord=nat place=oop | eng=zfsr split=256x4096 | ran=1 src=race ns=5057100.0 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=4194304 q=1 ord=nat place=oop | eng=zfsr split=512x4096 | ran=1 src=race ns=12184450.0 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=8388608 q=1 ord=nat place=oop | eng=zfsr split=1024x4096 | ran=1 src=race ns=26853250.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=r2c n=33 q=1 ord=nat place=oop | eng=zrf chain=11.3 msz=1 tile=0 | ran=1 src=race ns=37.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=35 q=1 ord=nat place=oop | eng=zrf chain=7.5 msz=1 tile=0 | ran=1 src=race ns=33.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=39 q=1 ord=nat place=oop | eng=zrf chain=13.3 msz=1 tile=0 | ran=1 src=race ns=50.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=45 q=1 ord=nat place=oop | eng=zrf chain=9.5 msz=1 tile=0 | ran=1 src=race ns=37.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=49 q=1 ord=nat place=oop | eng=zrf chain=7.7 msz=1 tile=0 | ran=1 src=race ns=48.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=51 q=1 ord=nat place=oop | eng=zrf chain=17.3 msz=1 tile=0 | ran=1 src=race ns=61.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=55 q=1 ord=nat place=oop | eng=zrf chain=11.5 msz=1 tile=0 | ran=1 src=race ns=46.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=57 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=76.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=63 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=60.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=65 q=1 ord=nat place=oop | eng=zrf chain=13.5 msz=1 tile=0 | ran=1 src=race ns=54.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=69 q=1 ord=nat place=oop | eng=zrf chain=23.3 msz=1 tile=0 | ran=1 src=race ns=100.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=75 q=1 ord=nat place=oop | eng=zrf chain=15.5 msz=1 tile=0 | ran=1 src=race ns=64.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=77 q=1 ord=nat place=oop | eng=zrf chain=11.7 msz=1 tile=0 | ran=1 src=race ns=66.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=81 q=1 ord=nat place=oop | eng=zrf chain=9.9 msz=1 tile=0 | ran=1 src=race ns=65.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=85 q=1 ord=nat place=oop | eng=zrf chain=17.5 msz=1 tile=0 | ran=1 src=race ns=78.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=87 q=1 ord=nat place=oop | eng=zrf chain=29.3 msz=1 tile=0 | ran=1 src=race ns=141.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=91 q=1 ord=nat place=oop | eng=zrf chain=13.7 msz=1 tile=0 | ran=1 src=race ns=77.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=93 q=1 ord=nat place=oop | eng=zrf chain=31.3 msz=1 tile=0 | ran=1 src=race ns=164.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=95 q=1 ord=nat place=oop | eng=zrf chain=19.5 msz=1 tile=0 | ran=1 src=race ns=97.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=99 q=1 ord=nat place=oop | eng=zrf chain=11.9 msz=1 tile=0 | ran=1 src=race ns=137.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=105 q=1 ord=nat place=oop | eng=zrf chain=7.3.5 msz=0 tile=0 | ran=1 src=race ns=87.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=111 q=1 ord=nat place=oop | eng=zrf chain=3.37 msz=1 tile=0 | ran=1 src=race ns=272.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=115 q=1 ord=nat place=oop | eng=zrf chain=23.5 msz=1 tile=0 | ran=1 src=race ns=132.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=117 q=1 ord=nat place=oop | eng=zrf chain=13.9 msz=1 tile=0 | ran=1 src=race ns=98.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=119 q=1 ord=nat place=oop | eng=zrf chain=17.7 msz=1 tile=0 | ran=1 src=race ns=113.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=121 q=1 ord=nat place=oop | eng=zrf chain=11.11 msz=1 tile=0 | ran=1 src=race ns=119.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=123 q=1 ord=nat place=oop | eng=zrf chain=3.41 msz=1 tile=0 | ran=1 src=race ns=406.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=125 q=1 ord=nat place=oop | eng=zrf chain=5.5.5 msz=0 tile=0 | ran=1 src=race ns=117.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=129 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=269.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=133 q=1 ord=nat place=oop | eng=zrf chain=19.7 msz=1 tile=0 | ran=1 src=race ns=138.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=135 q=1 ord=nat place=oop | eng=zrf chain=9.3.5 msz=0 tile=0 | ran=1 src=race ns=108.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=141 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=317.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=143 q=1 ord=nat place=oop | eng=zrf chain=13.11 msz=1 tile=0 | ran=1 src=race ns=130.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=145 q=1 ord=nat place=oop | eng=zrf chain=29.5 msz=1 tile=0 | ran=1 src=race ns=181.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=147 q=1 ord=nat place=oop | eng=zrf chain=3.7.7 msz=0 tile=2048 | ran=1 src=race ns=124.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=153 q=1 ord=nat place=oop | eng=zrf chain=17.9 msz=1 tile=0 | ran=1 src=race ns=137.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=155 q=1 ord=nat place=oop | eng=zrf chain=5.31 msz=1 tile=0 | ran=1 src=race ns=232.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=161 q=1 ord=nat place=oop | eng=zrf chain=23.7 msz=1 tile=0 | ran=1 src=race ns=189.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=165 q=1 ord=nat place=oop | eng=zrf chain=3.11.5 msz=1 tile=2048 | ran=1 src=race ns=136.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=169 q=1 ord=nat place=oop | eng=zrf chain=13.13 msz=1 tile=0 | ran=1 src=race ns=152.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=171 q=1 ord=nat place=oop | eng=zrf chain=9.19 msz=1 tile=0 | ran=1 src=race ns=170.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=175 q=1 ord=nat place=oop | eng=zrf chain=5.7.5 msz=0 tile=0 | ran=1 src=race ns=134.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=185 q=1 ord=nat place=oop | eng=zrf chain=5.37 msz=1 tile=0 | ran=1 src=race ns=354.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=187 q=1 ord=nat place=oop | eng=zrf chain=11.17 msz=1 tile=0 | ran=1 src=race ns=187.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=189 q=1 ord=nat place=oop | eng=zrf chain=3.9.7 msz=0 tile=512 | ran=1 src=race ns=152.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=195 q=1 ord=nat place=oop | eng=zrf chain=3.13.5 msz=1 tile=0 | ran=1 src=race ns=162.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=203 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=297.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=205 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=364.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=207 q=1 ord=nat place=oop | eng=zrf chain=9.23 msz=1 tile=0 | ran=1 src=race ns=226.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=209 q=1 ord=nat place=oop | eng=zrf chain=11.19 msz=1 tile=0 | ran=1 src=race ns=228.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=215 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=422.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=217 q=1 ord=nat place=oop | eng=zrf chain=7.31 msz=1 tile=0 | ran=1 src=race ns=336.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=221 q=1 ord=nat place=oop | eng=zrf chain=17.13 msz=1 tile=0 | ran=1 src=race ns=208.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=225 q=1 ord=nat place=oop | eng=zrf chain=5.9.5 msz=1 tile=0 | ran=1 src=race ns=170.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=231 q=1 ord=nat place=oop | eng=zrf chain=3.11.7 msz=1 tile=256 | ran=1 src=race ns=190.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=235 q=1 ord=nat place=oop | eng=zrf chain=5.47 msz=1 tile=0 | ran=1 src=race ns=688.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=243 q=1 ord=nat place=oop | eng=zrf chain=3.9.9 msz=0 tile=0 | ran=1 src=race ns=196.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=245 q=1 ord=nat place=oop | eng=zrf chain=7.7.5 msz=0 tile=0 | ran=1 src=race ns=185.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=247 q=1 ord=nat place=oop | eng=zrf chain=13.19 msz=1 tile=0 | ran=1 src=race ns=245.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=253 q=1 ord=nat place=oop | eng=zrf chain=11.23 msz=1 tile=0 | ran=1 src=race ns=299.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=255 q=1 ord=nat place=oop | eng=zrf chain=3.17.5 msz=1 tile=256 | ran=1 src=race ns=231.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=259 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=417.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=261 q=1 ord=nat place=oop | eng=zrf chain=9.29 msz=1 tile=0 | ran=1 src=race ns=316.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=273 q=1 ord=nat place=oop | eng=zrf chain=3.13.7 msz=1 tile=256 | ran=1 src=race ns=230.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=275 q=1 ord=nat place=oop | eng=zrf chain=5.11.5 msz=1 tile=0 | ran=1 src=race ns=215.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=279 q=1 ord=nat place=oop | eng=zrf chain=9.31 msz=1 tile=0 | ran=1 src=race ns=364.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=285 q=1 ord=nat place=oop | eng=zrf chain=3.19.5 msz=1 tile=128 | ran=1 src=race ns=271.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=287 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=500.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=289 q=1 ord=nat place=oop | eng=zrf chain=17.17 msz=1 tile=0 | ran=1 src=race ns=300.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=297 q=1 ord=nat place=oop | eng=zrf chain=3.11.9 msz=1 tile=256 | ran=1 src=race ns=252.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=299 q=1 ord=nat place=oop | eng=zrf chain=13.23 msz=1 tile=0 | ran=1 src=race ns=322.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=301 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=600.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=315 q=1 ord=nat place=oop | eng=zrf chain=7.9.5 msz=0 tile=0 | ran=1 src=race ns=232.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=319 q=1 ord=nat place=oop | eng=zrf chain=11.29 msz=1 tile=0 | ran=1 src=race ns=416.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=323 q=1 ord=nat place=oop | eng=zrf chain=17.19 msz=1 tile=0 | ran=1 src=race ns=334.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=325 q=1 ord=nat place=oop | eng=zrf chain=5.13.5 msz=1 tile=0 | ran=1 src=race ns=253.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=329 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=688.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=333 q=1 ord=nat place=oop | eng=zrf chain=9.37 msz=1 tile=0 | ran=1 src=race ns=519.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=341 q=1 ord=nat place=oop | eng=zrf chain=11.31 msz=1 tile=0 | ran=1 src=race ns=476.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=343 q=1 ord=nat place=oop | eng=zrf chain=7.7.7 msz=0 tile=0 | ran=1 src=race ns=256.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=345 q=1 ord=nat place=oop | eng=zrf chain=3.23.5 msz=1 tile=0 | ran=1 src=race ns=355.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=351 q=1 ord=nat place=oop | eng=zrf chain=3.13.9 msz=1 tile=256 | ran=1 src=race ns=293.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=357 q=1 ord=nat place=oop | eng=zrf chain=3.17.7 msz=1 tile=0 | ran=1 src=race ns=334.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=361 q=1 ord=nat place=oop | eng=zrf chain=19.19 msz=1 tile=0 | ran=1 src=race ns=448.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=363 q=1 ord=nat place=oop | eng=zrf chain=3.11.11 msz=1 tile=128 | ran=1 src=race ns=340.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=369 q=1 ord=nat place=oop | eng=zrf chain=9.41 msz=1 tile=0 | ran=1 src=race ns=706.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=375 q=1 ord=nat place=oop | eng=zrf chain=5.5.3.5 msz=0 tile=0 | ran=1 src=race ns=305.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=377 q=1 ord=nat place=oop | eng=zrf chain=13.29 msz=1 tile=0 | ran=1 src=race ns=445.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=385 q=1 ord=nat place=oop | eng=zrf chain=7.11.5 msz=1 tile=0 | ran=1 src=race ns=295.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=387 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=694.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=391 q=1 ord=nat place=oop | eng=zrf chain=17.23 msz=1 tile=0 | ran=1 src=race ns=437.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=399 q=1 ord=nat place=oop | eng=zrf chain=3.19.7 msz=1 tile=512 | ran=1 src=race ns=381.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=403 q=1 ord=nat place=oop | eng=zrf chain=13.31 msz=1 tile=0 | ran=1 src=race ns=497.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=405 q=1 ord=nat place=oop | eng=zrf chain=9.9.5 msz=0 tile=0 | ran=1 src=race ns=295.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=407 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=690.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=423 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=896.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=425 q=1 ord=nat place=oop | eng=zrf chain=5.17.5 msz=1 tile=0 | ran=1 src=race ns=369.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=429 q=1 ord=nat place=oop | eng=zrf chain=3.11.13 msz=1 tile=256 | ran=1 src=race ns=397.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=435 q=1 ord=nat place=oop | eng=zrf chain=15.29 msz=1 tile=0 | ran=1 src=race ns=548.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=437 q=1 ord=nat place=oop | eng=zrf chain=19.23 msz=1 tile=0 | ran=1 src=race ns=543.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=441 q=1 ord=nat place=oop | eng=zrf chain=7.9.7 msz=0 tile=0 | ran=1 src=race ns=324.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=451 q=1 ord=nat place=oop | eng=zrf chain=11.41 msz=1 tile=0 | ran=1 src=race ns=874.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=455 q=1 ord=nat place=oop | eng=zrf chain=5.13.7 msz=1 tile=0 | ran=1 src=race ns=362.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=459 q=1 ord=nat place=oop | eng=zrf chain=3.17.9 msz=1 tile=256 | ran=1 src=race ns=418.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=465 q=1 ord=nat place=oop | eng=zrf chain=3.5.31 msz=0 tile=0 | ran=1 src=race ns=626.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=473 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=937.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=475 q=1 ord=nat place=oop | eng=zrf chain=5.19.5 msz=1 tile=0 | ran=1 src=race ns=424.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=481 q=1 ord=nat place=oop | eng=zrf chain=13.37 msz=1 tile=0 | ran=1 src=race ns=706.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=483 q=1 ord=nat place=oop | eng=zrf chain=3.23.7 msz=1 tile=512 | ran=1 src=race ns=503.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=493 q=1 ord=nat place=oop | eng=zrf chain=17.29 msz=1 tile=0 | ran=1 src=race ns=633.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=495 q=1 ord=nat place=oop | eng=zrf chain=11.9.5 msz=0 tile=0 | ran=1 src=race ns=373.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=507 q=1 ord=nat place=oop | eng=zrf chain=3.13.13 msz=1 tile=0 | ran=1 src=race ns=475.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=513 q=1 ord=nat place=oop | eng=zrf chain=3.19.9 msz=1 tile=512 | ran=1 src=race ns=484.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=517 q=1 ord=nat place=oop | eng=zrf chain=11.47 msz=1 tile=0 | ran=1 src=race ns=1108.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=525 q=1 ord=nat place=oop | eng=zrf chain=5.3.7.5 msz=0 tile=0 | ran=1 src=race ns=405.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=527 q=1 ord=nat place=oop | eng=zrf chain=17.31 msz=1 tile=0 | ran=1 src=race ns=678.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=529 q=1 ord=nat place=oop | eng=zrf chain=23.23 msz=1 tile=0 | ran=1 src=race ns=782.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=533 q=1 ord=nat place=oop | eng=zrf chain=13.41 msz=1 tile=0 | ran=1 src=race ns=915.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=539 q=1 ord=nat place=oop | eng=zrf chain=7.11.7 msz=1 tile=0 | ran=1 src=race ns=409.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=551 q=1 ord=nat place=oop | eng=zrf chain=19.29 msz=1 tile=0 | ran=1 src=race ns=750.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=555 q=1 ord=nat place=oop | eng=zrf chain=15.37 msz=1 tile=0 | ran=1 src=race ns=880.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=559 q=1 ord=nat place=oop | eng=zrf chain=13.43 msz=1 tile=0 | ran=1 src=race ns=1005.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=561 q=1 ord=nat place=oop | eng=zrf chain=3.11.17 msz=1 tile=1024 | ran=1 src=race ns=551.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=567 q=1 ord=nat place=oop | eng=zrf chain=7.9.9 msz=0 tile=0 | ran=1 src=race ns=437.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=575 q=1 ord=nat place=oop | eng=zrf chain=5.23.5 msz=1 tile=0 | ran=1 src=race ns=579.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=585 q=1 ord=nat place=oop | eng=zrf chain=9.13.5 msz=1 tile=0 | ran=1 src=race ns=478.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=589 q=1 ord=nat place=oop | eng=zrf chain=19.31 msz=1 tile=0 | ran=1 src=race ns=941.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=595 q=1 ord=nat place=oop | eng=zrf chain=7.17.5 msz=1 tile=0 | ran=1 src=race ns=531.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=605 q=1 ord=nat place=oop | eng=zrf chain=11.11.5 msz=1 tile=0 | ran=1 src=race ns=481.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=609 q=1 ord=nat place=oop | eng=zrf chain=29.3.7 msz=0 tile=0 | ran=1 src=race ns=766.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=611 q=1 ord=nat place=oop | eng=zrf chain=13.47 msz=1 tile=0 | ran=1 src=race ns=1153.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=615 q=1 ord=nat place=oop | eng=zrf chain=15.41 msz=1 tile=0 | ran=1 src=race ns=1088.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=621 q=1 ord=nat place=oop | eng=zrf chain=3.23.9 msz=1 tile=1024 | ran=1 src=race ns=643.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=625 q=1 ord=nat place=oop | eng=zrf chain=5.5.5.5 msz=0 tile=0 | ran=1 src=race ns=490.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=627 q=1 ord=nat place=oop | eng=zrf chain=3.11.19 msz=1 tile=0 | ran=1 src=race ns=642.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=629 q=1 ord=nat place=oop | eng=zrf chain=17.37 msz=1 tile=0 | ran=1 src=race ns=956.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=637 q=1 ord=nat place=oop | eng=zrf chain=7.13.7 msz=1 tile=0 | ran=1 src=race ns=507.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=645 q=1 ord=nat place=oop | eng=zrf chain=15.43 msz=1 tile=0 | ran=1 src=race ns=1194.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=651 q=1 ord=nat place=oop | eng=zrf chain=3.7.31 msz=0 tile=0 | ran=1 src=race ns=870.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=663 q=1 ord=nat place=oop | eng=zrf chain=3.13.17 msz=1 tile=256 | ran=1 src=race ns=639.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=665 q=1 ord=nat place=oop | eng=zrf chain=7.19.5 msz=1 tile=0 | ran=1 src=race ns=610.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=667 q=1 ord=nat place=oop | eng=zrf chain=23.29 msz=1 tile=0 | ran=1 src=race ns=1036.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=675 q=1 ord=nat place=oop | eng=zrf chain=5.3.9.5 msz=0 tile=0 | ran=1 src=race ns=514.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=693 q=1 ord=nat place=oop | eng=zrf chain=9.11.7 msz=1 tile=0 | ran=1 src=race ns=547.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=697 q=1 ord=nat place=oop | eng=zrf chain=17.41 msz=1 tile=0 | ran=1 src=race ns=1150.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=703 q=1 ord=nat place=oop | eng=zrf chain=19.37 msz=1 tile=0 | ran=1 src=race ns=1180.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=705 q=1 ord=nat place=oop | eng=zrf chain=15.47 msz=1 tile=0 | ran=1 src=race ns=1353.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=713 q=1 ord=nat place=oop | eng=zrf chain=23.31 msz=1 tile=0 | ran=1 src=race ns=1209.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=715 q=1 ord=nat place=oop | eng=zrf chain=13.11.5 msz=1 tile=0 | ran=1 src=race ns=583.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=725 q=1 ord=nat place=oop | eng=zrf chain=5.29.5 msz=1 tile=0 | ran=1 src=race ns=869.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=729 q=1 ord=nat place=oop | eng=zrf chain=9.9.9 msz=0 tile=0 | ran=1 src=race ns=575.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=731 q=1 ord=nat place=oop | eng=zrf chain=17.43 msz=1 tile=0 | ran=1 src=race ns=1276.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=735 q=1 ord=nat place=oop | eng=zrf chain=7.3.7.5 msz=0 tile=0 | ran=1 src=race ns=566.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=741 q=1 ord=nat place=oop | eng=zrf chain=3.13.19 msz=1 tile=512 | ran=1 src=race ns=740.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=759 q=1 ord=nat place=oop | eng=zrf chain=3.11.23 msz=1 tile=0 | ran=1 src=race ns=836.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=765 q=1 ord=nat place=oop | eng=zrf chain=9.17.5 msz=1 tile=0 | ran=1 src=race ns=645.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=775 q=1 ord=nat place=oop | eng=zrf chain=5.31.5 msz=1 tile=0 | ran=1 src=race ns=966.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=777 q=1 ord=nat place=oop | eng=zrf chain=3.7.37 msz=0 tile=512 | ran=1 src=race ns=1238.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=779 q=1 ord=nat place=oop | eng=zrf chain=19.41 msz=1 tile=0 | ran=1 src=race ns=1414.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=783 q=1 ord=nat place=oop | eng=zrf chain=3.9.29 msz=0 tile=0 | ran=1 src=race ns=923.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=799 q=1 ord=nat place=oop | eng=zrf chain=17.47 msz=1 tile=0 | ran=1 src=race ns=1469.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=805 q=1 ord=nat place=oop | eng=zrf chain=7.23.5 msz=1 tile=0 | ran=1 src=race ns=775.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=817 q=1 ord=nat place=oop | eng=zrf chain=19.43 msz=1 tile=0 | ran=1 src=race ns=1537.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=819 q=1 ord=nat place=oop | eng=zrf chain=7.13.9 msz=1 tile=0 | ran=1 src=race ns=692.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=825 q=1 ord=nat place=oop | eng=zrf chain=5.3.11.5 msz=0 tile=0 | ran=1 src=race ns=657.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=833 q=1 ord=nat place=oop | eng=zrf chain=7.17.7 msz=1 tile=0 | ran=1 src=race ns=731.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=837 q=1 ord=nat place=oop | eng=zrf chain=3.9.31 msz=0 tile=0 | ran=1 src=race ns=1023.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=841 q=1 ord=nat place=oop | eng=zrf chain=29.29 msz=1 tile=0 | ran=1 src=race ns=1718.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=845 q=1 ord=nat place=oop | eng=zrf chain=13.13.5 msz=1 tile=0 | ran=1 src=race ns=725.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=847 q=1 ord=nat place=oop | eng=zrf chain=11.11.7 msz=1 tile=0 | ran=1 src=race ns=722.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=851 q=1 ord=nat place=oop | eng=zrf chain=23.37 msz=1 tile=0 | ran=1 src=race ns=1528.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=855 q=1 ord=nat place=oop | eng=zrf chain=9.19.5 msz=1 tile=0 | ran=1 src=race ns=759.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=861 q=1 ord=nat place=oop | eng=zrf chain=21.41 msz=1 tile=0 | ran=1 src=race ns=1451.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=867 q=1 ord=nat place=oop | eng=zrf chain=3.17.17 msz=1 tile=512 | ran=1 src=race ns=885.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=875 q=1 ord=nat place=oop | eng=zrf chain=5.5.7.5 msz=0 tile=0 | ran=1 src=race ns=666.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=891 q=1 ord=nat place=oop | eng=zrf chain=9.11.9 msz=1 tile=0 | ran=1 src=race ns=713.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=893 q=1 ord=nat place=oop | eng=zrf chain=19.47 msz=1 tile=0 | ran=1 src=race ns=1787.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=897 q=1 ord=nat place=oop | eng=zrf chain=13.23.3 msz=1 tile=0 | ran=1 src=race ns=1005.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=899 q=1 ord=nat place=oop | eng=zrf chain=29.31 msz=1 tile=0 | ran=1 src=race ns=1626.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=903 q=1 ord=nat place=oop | eng=zrf chain=21.43 msz=1 tile=0 | ran=1 src=race ns=1587.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=925 q=1 ord=nat place=oop | eng=zrf chain=5.5.37 msz=0 tile=0 | ran=1 src=race ns=1315.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=931 q=1 ord=nat place=oop | eng=zrf chain=7.19.7 msz=1 tile=0 | ran=1 src=race ns=858.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=935 q=1 ord=nat place=oop | eng=zrf chain=11.17.5 msz=1 tile=0 | ran=1 src=race ns=841.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=943 q=1 ord=nat place=oop | eng=zrf chain=23.41 msz=1 tile=0 | ran=1 src=race ns=1719.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=945 q=1 ord=nat place=oop | eng=zrf chain=9.3.5.7 msz=0 tile=0 | ran=1 src=race ns=742.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=957 q=1 ord=nat place=oop | eng=zrf chain=3.11.29 msz=1 tile=0 | ran=1 src=race ns=1204.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=961 q=1 ord=nat place=oop | eng=zrf chain=31.31 msz=1 tile=0 | ran=1 src=race ns=1859.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=969 q=1 ord=nat place=oop | eng=zrf chain=3.17.19 msz=1 tile=0 | ran=1 src=race ns=1051.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=975 q=1 ord=nat place=oop | eng=zrf chain=13.3.5.5 msz=0 tile=0 | ran=1 src=race ns=852.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=987 q=1 ord=nat place=oop | eng=zrf chain=21.47 msz=1 tile=0 | ran=1 src=race ns=1792.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=989 q=1 ord=nat place=oop | eng=zrf chain=23.43 msz=1 tile=0 | ran=1 src=race ns=1963.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=999 q=1 ord=nat place=oop | eng=zrf chain=3.9.37 msz=0 tile=0 | ran=1 src=race ns=1468.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1001 q=1 ord=nat place=oop | eng=zrf chain=13.11.7 msz=1 tile=0 | ran=1 src=race ns=849.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1015 q=1 ord=nat place=oop | eng=zrf chain=7.29.5 msz=1 tile=0 | ran=1 src=race ns=1166.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1023 q=1 ord=nat place=oop | eng=zrf chain=3.11.31 msz=1 tile=0 | ran=1 src=race ns=1339.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1025 q=1 ord=nat place=oop | eng=zrf chain=5.5.41 msz=0 tile=0 | ran=1 src=race ns=1650.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1029 q=1 ord=nat place=oop | eng=zrf chain=7.3.7.7 msz=0 tile=0 | ran=1 src=race ns=842.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1035 q=1 ord=nat place=oop | eng=zrf chain=9.23.5 msz=1 tile=0 | ran=1 src=race ns=1010.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1045 q=1 ord=nat place=oop | eng=zrf chain=11.19.5 msz=1 tile=0 | ran=1 src=race ns=961.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1053 q=1 ord=nat place=oop | eng=zrf chain=9.13.9 msz=1 tile=0 | ran=1 src=race ns=881.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1071 q=1 ord=nat place=oop | eng=zrf chain=7.9.17 msz=0 tile=0 | ran=1 src=race ns=980.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1073 q=1 ord=nat place=oop | eng=zrf chain=29.37 msz=1 tile=0 | ran=1 src=race ns=2113.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1075 q=1 ord=nat place=oop | eng=zrf chain=5.5.43 msz=1 tile=0 | ran=1 src=race ns=1826.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1081 q=1 ord=nat place=oop | eng=zrf chain=23.47 msz=1 tile=0 | ran=1 src=race ns=2272.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1083 q=1 ord=nat place=oop | eng=zrf chain=3.19.19 msz=1 tile=2048 | ran=1 src=race ns=1201.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1085 q=1 ord=nat place=oop | eng=zrf chain=7.5.31 msz=0 tile=0 | ran=1 src=race ns=1333.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1089 q=1 ord=nat place=oop | eng=zrf chain=11.11.9 msz=1 tile=0 | ran=1 src=race ns=953.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1105 q=1 ord=nat place=oop | eng=zrf chain=5.13.17 msz=1 tile=0 | ran=1 src=race ns=1039.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1107 q=1 ord=nat place=oop | eng=zrf chain=3.9.41 msz=0 tile=0 | ran=1 src=race ns=1808.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1125 q=1 ord=nat place=oop | eng=zrf chain=5.5.9.5 msz=0 tile=0 | ran=1 src=race ns=894.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1127 q=1 ord=nat place=oop | eng=zrf chain=7.23.7 msz=1 tile=0 | ran=1 src=race ns=1175.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1131 q=1 ord=nat place=oop | eng=zrf chain=3.13.29 msz=1 tile=512 | ran=1 src=race ns=1394.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1147 q=1 ord=nat place=oop | eng=zrf chain=31.37 msz=1 tile=0 | ran=1 src=race ns=2166.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1155 q=1 ord=nat place=oop | eng=zrf chain=11.3.7.5 msz=0 tile=0 | ran=1 src=race ns=993.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1161 q=1 ord=nat place=oop | eng=zrf chain=3.9.43 msz=0 tile=2048 | ran=1 src=race ns=1963.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1173 q=1 ord=nat place=oop | eng=zrf chain=3.23.17 msz=1 tile=0 | ran=1 src=race ns=1324.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1175 q=1 ord=nat place=oop | eng=zrf chain=5.47.5 msz=1 tile=0 | ran=1 src=race ns=2216.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1183 q=1 ord=nat place=oop | eng=zrf chain=13.13.7 msz=1 tile=0 | ran=1 src=race ns=1057.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1189 q=1 ord=nat place=oop | eng=zrf chain=41.29 msz=1 tile=0 | ran=1 src=race ns=2373.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1197 q=1 ord=nat place=oop | eng=zrf chain=9.19.7 msz=1 tile=0 | ran=1 src=race ns=1131.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1209 q=1 ord=nat place=oop | eng=zrf chain=3.13.31 msz=1 tile=0 | ran=1 src=race ns=1550.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1215 q=1 ord=nat place=oop | eng=zrf chain=9.3.9.5 msz=0 tile=0 | ran=1 src=race ns=1019.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1221 q=1 ord=nat place=oop | eng=zrf chain=3.11.37 msz=1 tile=512 | ran=1 src=race ns=1846.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1225 q=1 ord=nat place=oop | eng=zrf chain=5.7.7.5 msz=0 tile=0 | ran=1 src=race ns=1005.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1235 q=1 ord=nat place=oop | eng=zrf chain=5.13.19 msz=1 tile=0 | ran=1 src=race ns=1231.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1247 q=1 ord=nat place=oop | eng=zrf chain=29.43 msz=1 tile=0 | ran=1 src=race ns=2496.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1265 q=1 ord=nat place=oop | eng=zrf chain=11.23.5 msz=1 tile=0 | ran=1 src=race ns=1352.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1269 q=1 ord=nat place=oop | eng=zrf chain=9.47.3 msz=1 tile=0 | ran=1 src=race ns=2402.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1271 q=1 ord=nat place=oop | eng=zrf chain=31.41 msz=1 tile=0 | ran=1 src=race ns=2541.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1275 q=1 ord=nat place=oop | eng=zrf chain=5.15.17 msz=0 tile=0 | ran=1 src=race ns=1230.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1287 q=1 ord=nat place=oop | eng=zrf chain=11.13.9 msz=1 tile=0 | ran=1 src=race ns=1135.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1295 q=1 ord=nat place=oop | eng=zrf chain=7.5.37 msz=1 tile=0 | ran=1 src=race ns=1903.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1305 q=1 ord=nat place=oop | eng=zrf chain=5.9.29 msz=0 tile=0 | ran=1 src=race ns=1578.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1309 q=1 ord=nat place=oop | eng=zrf chain=7.11.17 msz=1 tile=0 | ran=1 src=race ns=1220.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1311 q=1 ord=nat place=oop | eng=zrf chain=23.19.3 msz=1 tile=0 | ran=1 src=race ns=1717.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1323 q=1 ord=nat place=oop | eng=zrf chain=7.3.9.7 msz=0 tile=0 | ran=1 src=race ns=1156.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1331 q=1 ord=nat place=oop | eng=zrf chain=11.11.11 msz=1 tile=0 | ran=1 src=race ns=1252.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1333 q=1 ord=nat place=oop | eng=zrf chain=43.31 msz=1 tile=0 | ran=1 src=race ns=2988.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1353 q=1 ord=nat place=oop | eng=zrf chain=3.11.41 msz=1 tile=0 | ran=1 src=race ns=2370.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1363 q=1 ord=nat place=oop | eng=zrf chain=47.29 msz=1 tile=0 | ran=1 src=race ns=3038.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1365 q=1 ord=nat place=oop | eng=zrf chain=13.3.5.7 msz=0 tile=0 | ran=1 src=race ns=1269.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1369 q=1 ord=nat place=oop | eng=zrf chain=37.37 msz=1 tile=0 | ran=1 src=race ns=2702.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1375 q=1 ord=nat place=oop | eng=zrf chain=11.5.5.5 msz=0 tile=0 | ran=1 src=race ns=1238.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1377 q=1 ord=nat place=oop | eng=zrf chain=9.17.9 msz=1 tile=0 | ran=1 src=race ns=1296.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1395 q=1 ord=nat place=oop | eng=zrf chain=5.9.31 msz=0 tile=0 | ran=1 src=race ns=1777.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1419 q=1 ord=nat place=oop | eng=zrf chain=3.11.43 msz=1 tile=1024 | ran=1 src=race ns=2512.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1421 q=1 ord=nat place=oop | eng=zrf chain=7.7.29 msz=0 tile=0 | ran=1 src=race ns=1752.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1425 q=1 ord=nat place=oop | eng=zrf chain=5.15.19 msz=0 tile=0 | ran=1 src=race ns=1496.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1435 q=1 ord=nat place=oop | eng=zrf chain=7.41.5 msz=1 tile=0 | ran=1 src=race ns=2364.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1443 q=1 ord=nat place=oop | eng=zrf chain=13.37.3 msz=1 tile=0 | ran=1 src=race ns=2229.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1445 q=1 ord=nat place=oop | eng=zrf chain=5.17.17 msz=1 tile=0 | ran=1 src=race ns=1473.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1449 q=1 ord=nat place=oop | eng=zrf chain=7.9.23 msz=0 tile=0 | ran=1 src=race ns=1571.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1457 q=1 ord=nat place=oop | eng=zrf chain=31.47 msz=1 tile=0 | ran=1 src=race ns=3627.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1463 q=1 ord=nat place=oop | eng=zrf chain=7.11.19 msz=1 tile=0 | ran=1 src=race ns=1498.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1479 q=1 ord=nat place=oop | eng=zrf chain=3.17.29 msz=1 tile=2048 | ran=1 src=race ns=2049.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1485 q=1 ord=nat place=oop | eng=zrf chain=9.3.11.5 msz=0 tile=0 | ran=1 src=race ns=1367.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1495 q=1 ord=nat place=oop | eng=zrf chain=5.23.13 msz=1 tile=0 | ran=1 src=race ns=1676.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1505 q=1 ord=nat place=oop | eng=zrf chain=7.43.5 msz=1 tile=0 | ran=1 src=race ns=2547.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1517 q=1 ord=nat place=oop | eng=zrf chain=41.37 msz=1 tile=0 | ran=1 src=race ns=3154.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1519 q=1 ord=nat place=oop | eng=zrf chain=7.7.31 msz=0 tile=0 | ran=1 src=race ns=2027.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1521 q=1 ord=nat place=oop | eng=zrf chain=13.13.9 msz=1 tile=0 | ran=1 src=race ns=1475.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1539 q=1 ord=nat place=oop | eng=zrf chain=9.19.9 msz=1 tile=0 | ran=1 src=race ns=1566.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1547 q=1 ord=nat place=oop | eng=zrf chain=7.13.17 msz=1 tile=0 | ran=1 src=race ns=1530.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1551 q=1 ord=nat place=oop | eng=zrf chain=3.11.47 msz=1 tile=0 | ran=1 src=race ns=2988.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1573 q=1 ord=nat place=oop | eng=zrf chain=11.11.13 msz=1 tile=0 | ran=1 src=race ns=1526.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1575 q=1 ord=nat place=oop | eng=zrf chain=7.5.9.5 msz=0 tile=0 | ran=1 src=race ns=1432.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1581 q=1 ord=nat place=oop | eng=zrf chain=17.31.3 msz=1 tile=0 | ran=1 src=race ns=2312.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1587 q=1 ord=nat place=oop | eng=zrf chain=23.23.3 msz=1 tile=0 | ran=1 src=race ns=2413.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1591 q=1 ord=nat place=oop | eng=zrf chain=37.43 msz=1 tile=0 | ran=1 src=race ns=3566.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1595 q=1 ord=nat place=oop | eng=zrf chain=11.29.5 msz=1 tile=0 | ran=1 src=race ns=1994.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1599 q=1 ord=nat place=oop | eng=zrf chain=13.41.3 msz=1 tile=0 | ran=1 src=race ns=2723.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1615 q=1 ord=nat place=oop | eng=zrf chain=17.19.5 msz=1 tile=0 | ran=1 src=race ns=1828.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1617 q=1 ord=nat place=oop | eng=zrf chain=11.3.7.7 msz=0 tile=0 | ran=1 src=race ns=1529.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1625 q=1 ord=nat place=oop | eng=zrf chain=13.5.5.5 msz=0 tile=0 | ran=1 src=race ns=1581.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1645 q=1 ord=nat place=oop | eng=zrf chain=7.5.47 msz=0 tile=0 | ran=1 src=race ns=3026.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1653 q=1 ord=nat place=oop | eng=zrf chain=3.19.29 msz=1 tile=2048 | ran=1 src=race ns=2541.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1665 q=1 ord=nat place=oop | eng=zrf chain=9.37.5 msz=1 tile=0 | ran=1 src=race ns=2482.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1677 q=1 ord=nat place=oop | eng=zrf chain=13.43.3 msz=1 tile=0 | ran=1 src=race ns=2900.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1681 q=1 ord=nat place=oop | eng=zrf chain=41.41 msz=1 tile=0 | ran=1 src=race ns=3707.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1683 q=1 ord=nat place=oop | eng=zrf chain=9.11.17 msz=1 tile=0 | ran=1 src=race ns=1703.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1701 q=1 ord=nat place=oop | eng=zrf chain=9.3.9.7 msz=0 tile=0 | ran=1 src=race ns=1600.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1705 q=1 ord=nat place=oop | eng=zrf chain=11.31.5 msz=1 tile=0 | ran=1 src=race ns=2317.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1715 q=1 ord=nat place=oop | eng=zrf chain=7.7.7.5 msz=0 tile=0 | ran=1 src=race ns=1646.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1725 q=1 ord=nat place=oop | eng=zrf chain=15.23.5 msz=1 tile=0 | ran=1 src=race ns=2081.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1729 q=1 ord=nat place=oop | eng=zrf chain=13.19.7 msz=1 tile=0 | ran=1 src=race ns=1889.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1739 q=1 ord=nat place=oop | eng=zrf chain=47.37 msz=1 tile=0 | ran=1 src=race ns=4081.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1755 q=1 ord=nat place=oop | eng=zrf chain=9.3.13.5 msz=0 tile=0 | ran=1 src=race ns=1770.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1763 q=1 ord=nat place=oop | eng=zrf chain=43.41 msz=1 tile=0 | ran=1 src=race ns=4115.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1767 q=1 ord=nat place=oop | eng=zrf chain=3.19.31 msz=1 tile=1024 | ran=1 src=race ns=2840.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1771 q=1 ord=nat place=oop | eng=zrf chain=11.7.23 msz=0 tile=0 | ran=1 src=race ns=2111.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1785 q=1 ord=nat place=oop | eng=zrf chain=17.3.7.5 msz=0 tile=0 | ran=1 src=race ns=1932.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1805 q=1 ord=nat place=oop | eng=zrf chain=19.19.5 msz=1 tile=0 | ran=1 src=race ns=2247.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1813 q=1 ord=nat place=oop | eng=zrf chain=7.7.37 msz=0 tile=0 | ran=1 src=race ns=2889.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1815 q=1 ord=nat place=oop | eng=zrf chain=11.3.11.5 msz=0 tile=0 | ran=1 src=race ns=1792.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1827 q=1 ord=nat place=oop | eng=zrf chain=7.29.9 msz=1 tile=0 | ran=1 src=race ns=2388.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1833 q=1 ord=nat place=oop | eng=zrf chain=13.47.3 msz=1 tile=0 | ran=1 src=race ns=3343.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1845 q=1 ord=nat place=oop | eng=zrf chain=9.41.5 msz=1 tile=0 | ran=1 src=race ns=3047.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1849 q=1 ord=nat place=oop | eng=zrf chain=43.43 msz=1 tile=0 | ran=1 src=race ns=5453.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1859 q=1 ord=nat place=oop | eng=zrf chain=11.13.13 msz=1 tile=0 | ran=1 src=race ns=2034.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1863 q=1 ord=nat place=oop | eng=zrf chain=9.23.9 msz=1 tile=0 | ran=1 src=race ns=2146.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1875 q=1 ord=nat place=oop | eng=zrf chain=15.5.5.5 msz=0 tile=0 | ran=1 src=race ns=1888.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1881 q=1 ord=nat place=oop | eng=zrf chain=11.19.9 msz=1 tile=0 | ran=1 src=race ns=2064.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1885 q=1 ord=nat place=oop | eng=zrf chain=13.29.5 msz=1 tile=0 | ran=1 src=race ns=2557.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1887 q=1 ord=nat place=oop | eng=zrf chain=17.37.3 msz=1 tile=0 | ran=1 src=race ns=3093.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1911 q=1 ord=nat place=oop | eng=zrf chain=13.3.7.7 msz=0 tile=0 | ran=1 src=race ns=1940.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1925 q=1 ord=nat place=oop | eng=zrf chain=11.5.7.5 msz=0 tile=0 | ran=1 src=race ns=1870.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1927 q=1 ord=nat place=oop | eng=zrf chain=41.47 msz=1 tile=0 | ran=1 src=race ns=6018.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1935 q=1 ord=nat place=oop | eng=zrf chain=9.5.43 msz=0 tile=0 | ran=1 src=race ns=3303.1 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1953 q=1 ord=nat place=oop | eng=zrf chain=7.31.9 msz=1 tile=0 | ran=1 src=race ns=2703.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1955 q=1 ord=nat place=oop | eng=zrf chain=23.17.5 msz=1 tile=0 | ran=1 src=race ns=2546.4 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1989 q=1 ord=nat place=oop | eng=zrf chain=13.17.9 msz=1 tile=0 | ran=1 src=race ns=2211.5 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1995 q=1 ord=nat place=oop | eng=zrf chain=19.3.7.5 msz=0 tile=0 | ran=1 src=race ns=2265.2 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=2001 q=1 ord=nat place=oop | eng=zrf chain=3.23.29 msz=1 tile=0 | ran=1 src=race ns=3335.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=2009 q=1 ord=nat place=oop | eng=zrf chain=7.7.41 msz=0 tile=0 | ran=1 src=race ns=3414.8 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=2015 q=1 ord=nat place=oop | eng=zrf chain=13.31.5 msz=1 tile=0 | ran=1 src=race ns=2843.7 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=2021 q=1 ord=nat place=oop | eng=zrf chain=47.43 msz=1 tile=0 | ran=1 src=race ns=5333.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=2023 q=1 ord=nat place=oop | eng=zrf chain=7.17.17 msz=1 tile=0 | ran=1 src=race ns=2378.9 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=2025 q=1 ord=nat place=oop | eng=zrf chain=9.9.5.5 msz=0 tile=0 | ran=1 src=race ns=2013.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=2035 q=1 ord=nat place=oop | eng=zrf chain=11.37.5 msz=1 tile=0 | ran=1 src=race ns=3052.6 metric=fwd1 units=ns date=2026-09-30
+@cell t=c2r n=33 q=1 ord=nat place=oop | eng=zrf chain=11.3 msz=1 tile=0 | ran=1 src=race ns=37.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=35 q=1 ord=nat place=oop | eng=zrf chain=7.5 msz=1 tile=0 | ran=1 src=race ns=42.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=39 q=1 ord=nat place=oop | eng=zrf chain=13.3 msz=1 tile=0 | ran=1 src=race ns=46.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=45 q=1 ord=nat place=oop | eng=zrf chain=9.5 msz=1 tile=0 | ran=1 src=race ns=41.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=49 q=1 ord=nat place=oop | eng=zrf chain=7.7 msz=1 tile=0 | ran=1 src=race ns=63.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=51 q=1 ord=nat place=oop | eng=zrf chain=17.3 msz=1 tile=0 | ran=1 src=race ns=59.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=55 q=1 ord=nat place=oop | eng=zrf chain=11.5 msz=1 tile=0 | ran=1 src=race ns=45.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=57 q=1 ord=nat place=oop | eng=zrf chain=19.3 msz=1 tile=0 | ran=1 src=race ns=70.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=63 q=1 ord=nat place=oop | eng=zrf chain=9.7 msz=1 tile=0 | ran=1 src=race ns=51.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=65 q=1 ord=nat place=oop | eng=zrf chain=13.5 msz=1 tile=0 | ran=1 src=race ns=75.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=69 q=1 ord=nat place=oop | eng=zrf chain=23.3 msz=1 tile=0 | ran=1 src=race ns=97.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=75 q=1 ord=nat place=oop | eng=zrf chain=5.3.5 msz=0 tile=0 | ran=1 src=race ns=68.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=77 q=1 ord=nat place=oop | eng=zrf chain=11.7 msz=1 tile=0 | ran=1 src=race ns=64.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=81 q=1 ord=nat place=oop | eng=zrf chain=9.9 msz=1 tile=0 | ran=1 src=race ns=67.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=85 q=1 ord=nat place=oop | eng=zrf chain=17.5 msz=1 tile=0 | ran=1 src=race ns=75.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=87 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=168.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=91 q=1 ord=nat place=oop | eng=zrf chain=13.7 msz=1 tile=0 | ran=1 src=race ns=72.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=93 q=1 ord=nat place=oop | eng=zrf chain=31.3 msz=1 tile=0 | ran=1 src=race ns=165.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=95 q=1 ord=nat place=oop | eng=zrf chain=19.5 msz=1 tile=0 | ran=1 src=race ns=91.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=99 q=1 ord=nat place=oop | eng=zrf chain=11.9 msz=1 tile=0 | ran=1 src=race ns=85.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=105 q=1 ord=nat place=oop | eng=zrf chain=15.7 msz=1 tile=0 | ran=1 src=race ns=88.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=111 q=1 ord=nat place=oop | eng=zrf chain=37.3 msz=1 tile=0 | ran=1 src=race ns=233.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=115 q=1 ord=nat place=oop | eng=zrf chain=23.5 msz=1 tile=0 | ran=1 src=race ns=127.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=117 q=1 ord=nat place=oop | eng=zrf chain=13.9 msz=1 tile=0 | ran=1 src=race ns=94.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=119 q=1 ord=nat place=oop | eng=zrf chain=17.7 msz=1 tile=0 | ran=1 src=race ns=107.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=121 q=1 ord=nat place=oop | eng=zrf chain=11.11 msz=1 tile=0 | ran=1 src=race ns=112.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=123 q=1 ord=nat place=oop | eng=zrf chain=3.41 msz=1 tile=0 | ran=1 src=race ns=377.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=125 q=1 ord=nat place=oop | eng=zrf chain=5.5.5 msz=0 tile=0 | ran=1 src=race ns=116.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=129 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=275.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=133 q=1 ord=nat place=oop | eng=zrf chain=19.7 msz=1 tile=0 | ran=1 src=race ns=127.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=135 q=1 ord=nat place=oop | eng=zrf chain=9.3.5 msz=0 tile=0 | ran=1 src=race ns=106.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=141 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=320.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=143 q=1 ord=nat place=oop | eng=zrf chain=13.11 msz=1 tile=0 | ran=1 src=race ns=128.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=145 q=1 ord=nat place=oop | eng=zrf chain=29.5 msz=1 tile=0 | ran=1 src=race ns=172.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=147 q=1 ord=nat place=oop | eng=zrf chain=3.7.7 msz=0 tile=128 | ran=1 src=race ns=123.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=153 q=1 ord=nat place=oop | eng=zrf chain=17.9 msz=1 tile=0 | ran=1 src=race ns=138.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=155 q=1 ord=nat place=oop | eng=zrf chain=31.5 msz=1 tile=0 | ran=1 src=race ns=235.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=161 q=1 ord=nat place=oop | eng=zrf chain=23.7 msz=1 tile=0 | ran=1 src=race ns=178.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=165 q=1 ord=nat place=oop | eng=zrf chain=11.3.5 msz=0 tile=0 | ran=1 src=race ns=131.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=169 q=1 ord=nat place=oop | eng=zrf chain=13.13 msz=1 tile=0 | ran=1 src=race ns=147.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=171 q=1 ord=nat place=oop | eng=zrf chain=19.9 msz=1 tile=0 | ran=1 src=race ns=162.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=175 q=1 ord=nat place=oop | eng=zrf chain=5.7.5 msz=0 tile=0 | ran=1 src=race ns=134.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=185 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=307.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=187 q=1 ord=nat place=oop | eng=zrf chain=11.17 msz=1 tile=0 | ran=1 src=race ns=183.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=189 q=1 ord=nat place=oop | eng=zrf chain=3.9.7 msz=0 tile=128 | ran=1 src=race ns=149.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=195 q=1 ord=nat place=oop | eng=zrf chain=3.13.5 msz=1 tile=0 | ran=1 src=race ns=159.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=203 q=1 ord=nat place=oop | eng=zrf chain=29.7 msz=1 tile=0 | ran=1 src=race ns=295.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=205 q=1 ord=nat place=oop | eng=zrf chain=5.41 msz=1 tile=0 | ran=1 src=race ns=531.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=207 q=1 ord=nat place=oop | eng=zrf chain=23.9 msz=1 tile=0 | ran=1 src=race ns=215.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=209 q=1 ord=nat place=oop | eng=zrf chain=19.11 msz=1 tile=0 | ran=1 src=race ns=218.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=215 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=434.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=217 q=1 ord=nat place=oop | eng=zrf chain=7.31 msz=1 tile=0 | ran=1 src=race ns=329.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=221 q=1 ord=nat place=oop | eng=zrf chain=13.17 msz=1 tile=0 | ran=1 src=race ns=209.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=225 q=1 ord=nat place=oop | eng=zrf chain=5.9.5 msz=0 tile=0 | ran=1 src=race ns=167.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=231 q=1 ord=nat place=oop | eng=zrf chain=3.11.7 msz=1 tile=2048 | ran=1 src=race ns=184.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=235 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=458.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=243 q=1 ord=nat place=oop | eng=zrf chain=3.9.9 msz=0 tile=256 | ran=1 src=race ns=200.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=245 q=1 ord=nat place=oop | eng=zrf chain=7.5.7 msz=0 tile=0 | ran=1 src=race ns=183.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=247 q=1 ord=nat place=oop | eng=zrf chain=13.19 msz=1 tile=0 | ran=1 src=race ns=242.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=253 q=1 ord=nat place=oop | eng=zrf chain=11.23 msz=1 tile=0 | ran=1 src=race ns=277.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=255 q=1 ord=nat place=oop | eng=zrf chain=3.17.5 msz=1 tile=512 | ran=1 src=race ns=233.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=259 q=1 ord=nat place=oop | eng=zrf chain=7.37 msz=1 tile=0 | ran=1 src=race ns=561.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=261 q=1 ord=nat place=oop | eng=zrf chain=9.29 msz=1 tile=0 | ran=1 src=race ns=316.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=273 q=1 ord=nat place=oop | eng=zrf chain=3.13.7 msz=1 tile=2048 | ran=1 src=race ns=218.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=275 q=1 ord=nat place=oop | eng=zrf chain=5.11.5 msz=1 tile=0 | ran=1 src=race ns=207.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=279 q=1 ord=nat place=oop | eng=zrf chain=9.31 msz=1 tile=0 | ran=1 src=race ns=345.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=285 q=1 ord=nat place=oop | eng=zrf chain=3.19.5 msz=1 tile=0 | ran=1 src=race ns=263.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=287 q=1 ord=nat place=oop | eng=zrf chain=7.41 msz=1 tile=0 | ran=1 src=race ns=695.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=289 q=1 ord=nat place=oop | eng=zrf chain=17.17 msz=1 tile=0 | ran=1 src=race ns=288.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=297 q=1 ord=nat place=oop | eng=zrf chain=3.11.9 msz=1 tile=128 | ran=1 src=race ns=251.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=299 q=1 ord=nat place=oop | eng=zrf chain=13.23 msz=1 tile=0 | ran=1 src=race ns=305.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=301 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=615.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=315 q=1 ord=nat place=oop | eng=zrf chain=7.9.5 msz=0 tile=0 | ran=1 src=race ns=225.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=319 q=1 ord=nat place=oop | eng=zrf chain=11.29 msz=1 tile=0 | ran=1 src=race ns=412.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=323 q=1 ord=nat place=oop | eng=zrf chain=17.19 msz=1 tile=0 | ran=1 src=race ns=338.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=325 q=1 ord=nat place=oop | eng=zrf chain=5.13.5 msz=1 tile=0 | ran=1 src=race ns=249.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=329 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=708.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=333 q=1 ord=nat place=oop | eng=zrf chain=9.37 msz=1 tile=0 | ran=1 src=race ns=489.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=341 q=1 ord=nat place=oop | eng=zrf chain=11.31 msz=1 tile=0 | ran=1 src=race ns=462.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=343 q=1 ord=nat place=oop | eng=zrf chain=7.7.7 msz=0 tile=0 | ran=1 src=race ns=256.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=345 q=1 ord=nat place=oop | eng=zrf chain=3.23.5 msz=1 tile=0 | ran=1 src=race ns=343.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=351 q=1 ord=nat place=oop | eng=zrf chain=3.13.9 msz=1 tile=0 | ran=1 src=race ns=290.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=357 q=1 ord=nat place=oop | eng=zrf chain=3.17.7 msz=1 tile=512 | ran=1 src=race ns=312.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=361 q=1 ord=nat place=oop | eng=zrf chain=19.19 msz=1 tile=0 | ran=1 src=race ns=423.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=363 q=1 ord=nat place=oop | eng=zrf chain=3.11.11 msz=1 tile=0 | ran=1 src=race ns=333.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=369 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=667.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=375 q=1 ord=nat place=oop | eng=zrf chain=5.5.3.5 msz=0 tile=0 | ran=1 src=race ns=293.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=377 q=1 ord=nat place=oop | eng=zrf chain=13.29 msz=1 tile=0 | ran=1 src=race ns=440.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=385 q=1 ord=nat place=oop | eng=zrf chain=11.7.5 msz=0 tile=0 | ran=1 src=race ns=290.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=387 q=1 ord=nat place=oop | eng=zrf chain=9.43 msz=1 tile=0 | ran=1 src=race ns=775.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=391 q=1 ord=nat place=oop | eng=zrf chain=17.23 msz=1 tile=0 | ran=1 src=race ns=430.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=399 q=1 ord=nat place=oop | eng=zrf chain=3.19.7 msz=1 tile=1024 | ran=1 src=race ns=363.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=403 q=1 ord=nat place=oop | eng=zrf chain=13.31 msz=1 tile=0 | ran=1 src=race ns=483.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=405 q=1 ord=nat place=oop | eng=zrf chain=9.9.5 msz=0 tile=0 | ran=1 src=race ns=289.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=407 q=1 ord=nat place=oop | eng=zrf chain=11.37 msz=1 tile=0 | ran=1 src=race ns=716.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=423 q=1 ord=nat place=oop | eng=zrf chain=9.47 msz=1 tile=0 | ran=1 src=race ns=881.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=425 q=1 ord=nat place=oop | eng=zrf chain=5.17.5 msz=1 tile=0 | ran=1 src=race ns=364.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=429 q=1 ord=nat place=oop | eng=zrf chain=13.11.3 msz=1 tile=0 | ran=1 src=race ns=394.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=435 q=1 ord=nat place=oop | eng=zrf chain=3.29.5 msz=1 tile=0 | ran=1 src=race ns=533.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=437 q=1 ord=nat place=oop | eng=zrf chain=19.23 msz=1 tile=0 | ran=1 src=race ns=520.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=441 q=1 ord=nat place=oop | eng=zrf chain=7.9.7 msz=0 tile=0 | ran=1 src=race ns=317.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=451 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=828.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=455 q=1 ord=nat place=oop | eng=zrf chain=7.13.5 msz=1 tile=0 | ran=1 src=race ns=344.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=459 q=1 ord=nat place=oop | eng=zrf chain=3.17.9 msz=1 tile=512 | ran=1 src=race ns=410.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=465 q=1 ord=nat place=oop | eng=zrf chain=15.31 msz=1 tile=0 | ran=1 src=race ns=620.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=473 q=1 ord=nat place=oop | eng=zrf chain=11.43 msz=1 tile=0 | ran=1 src=race ns=945.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=475 q=1 ord=nat place=oop | eng=zrf chain=5.19.5 msz=1 tile=0 | ran=1 src=race ns=415.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=481 q=1 ord=nat place=oop | eng=zrf chain=13.37 msz=1 tile=0 | ran=1 src=race ns=662.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=483 q=1 ord=nat place=oop | eng=zrf chain=3.23.7 msz=1 tile=1024 | ran=1 src=race ns=479.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=493 q=1 ord=nat place=oop | eng=zrf chain=17.29 msz=1 tile=0 | ran=1 src=race ns=603.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=495 q=1 ord=nat place=oop | eng=zrf chain=11.9.5 msz=0 tile=0 | ran=1 src=race ns=360.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=507 q=1 ord=nat place=oop | eng=zrf chain=3.13.13 msz=1 tile=512 | ran=1 src=race ns=467.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=513 q=1 ord=nat place=oop | eng=zrf chain=3.19.9 msz=1 tile=0 | ran=1 src=race ns=479.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=517 q=1 ord=nat place=oop | eng=zrf chain=11.47 msz=1 tile=0 | ran=1 src=race ns=1081.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=525 q=1 ord=nat place=oop | eng=zrf chain=5.3.7.5 msz=0 tile=0 | ran=1 src=race ns=395.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=527 q=1 ord=nat place=oop | eng=zrf chain=17.31 msz=1 tile=0 | ran=1 src=race ns=679.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=529 q=1 ord=nat place=oop | eng=zrf chain=23.23 msz=1 tile=0 | ran=1 src=race ns=739.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=533 q=1 ord=nat place=oop | eng=zrf chain=13.41 msz=1 tile=0 | ran=1 src=race ns=885.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=539 q=1 ord=nat place=oop | eng=zrf chain=7.11.7 msz=1 tile=0 | ran=1 src=race ns=396.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=551 q=1 ord=nat place=oop | eng=zrf chain=19.29 msz=1 tile=0 | ran=1 src=race ns=750.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=555 q=1 ord=nat place=oop | eng=zrf chain=15.37 msz=1 tile=0 | ran=1 src=race ns=889.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=559 q=1 ord=nat place=oop | eng=zrf chain=13.43 msz=1 tile=0 | ran=1 src=race ns=973.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=561 q=1 ord=nat place=oop | eng=zrf chain=3.11.17 msz=1 tile=0 | ran=1 src=race ns=543.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=567 q=1 ord=nat place=oop | eng=zrf chain=9.9.7 msz=0 tile=0 | ran=1 src=race ns=411.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=575 q=1 ord=nat place=oop | eng=zrf chain=5.23.5 msz=1 tile=0 | ran=1 src=race ns=544.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=585 q=1 ord=nat place=oop | eng=zrf chain=13.9.5 msz=0 tile=0 | ran=1 src=race ns=435.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=589 q=1 ord=nat place=oop | eng=zrf chain=19.31 msz=1 tile=0 | ran=1 src=race ns=888.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=595 q=1 ord=nat place=oop | eng=zrf chain=7.17.5 msz=1 tile=0 | ran=1 src=race ns=491.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=605 q=1 ord=nat place=oop | eng=zrf chain=11.11.5 msz=1 tile=0 | ran=1 src=race ns=459.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=609 q=1 ord=nat place=oop | eng=zrf chain=29.3.7 msz=0 tile=0 | ran=1 src=race ns=710.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=611 q=1 ord=nat place=oop | eng=zrf chain=13.47 msz=1 tile=0 | ran=1 src=race ns=1108.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=615 q=1 ord=nat place=oop | eng=zrf chain=15.41 msz=1 tile=0 | ran=1 src=race ns=1077.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=621 q=1 ord=nat place=oop | eng=zrf chain=3.23.9 msz=1 tile=0 | ran=1 src=race ns=623.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=625 q=1 ord=nat place=oop | eng=zrf chain=5.5.5.5 msz=0 tile=0 | ran=1 src=race ns=476.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=627 q=1 ord=nat place=oop | eng=zrf chain=3.19.11 msz=1 tile=1024 | ran=1 src=race ns=634.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=629 q=1 ord=nat place=oop | eng=zrf chain=17.37 msz=1 tile=0 | ran=1 src=race ns=953.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=637 q=1 ord=nat place=oop | eng=zrf chain=7.13.7 msz=1 tile=0 | ran=1 src=race ns=486.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=645 q=1 ord=nat place=oop | eng=zrf chain=15.43 msz=1 tile=0 | ran=1 src=race ns=1179.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=651 q=1 ord=nat place=oop | eng=zrf chain=3.7.31 msz=0 tile=2048 | ran=1 src=race ns=861.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=663 q=1 ord=nat place=oop | eng=zrf chain=3.13.17 msz=1 tile=512 | ran=1 src=race ns=638.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=665 q=1 ord=nat place=oop | eng=zrf chain=7.19.5 msz=1 tile=0 | ran=1 src=race ns=572.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=667 q=1 ord=nat place=oop | eng=zrf chain=23.29 msz=1 tile=0 | ran=1 src=race ns=1021.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=675 q=1 ord=nat place=oop | eng=zrf chain=3.5.9.5 msz=0 tile=0 | ran=1 src=race ns=501.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=693 q=1 ord=nat place=oop | eng=zrf chain=11.9.7 msz=0 tile=0 | ran=1 src=race ns=514.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=697 q=1 ord=nat place=oop | eng=zrf chain=17.41 msz=1 tile=0 | ran=1 src=race ns=1192.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=703 q=1 ord=nat place=oop | eng=zrf chain=19.37 msz=1 tile=0 | ran=1 src=race ns=1128.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=705 q=1 ord=nat place=oop | eng=zrf chain=15.47 msz=1 tile=0 | ran=1 src=race ns=1340.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=713 q=1 ord=nat place=oop | eng=zrf chain=23.31 msz=1 tile=0 | ran=1 src=race ns=1156.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=715 q=1 ord=nat place=oop | eng=zrf chain=11.13.5 msz=1 tile=0 | ran=1 src=race ns=558.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=725 q=1 ord=nat place=oop | eng=zrf chain=5.29.5 msz=1 tile=0 | ran=1 src=race ns=795.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=729 q=1 ord=nat place=oop | eng=zrf chain=9.9.9 msz=0 tile=0 | ran=1 src=race ns=572.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=731 q=1 ord=nat place=oop | eng=zrf chain=17.43 msz=1 tile=0 | ran=1 src=race ns=1295.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=735 q=1 ord=nat place=oop | eng=zrf chain=7.3.5.7 msz=0 tile=0 | ran=1 src=race ns=551.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=741 q=1 ord=nat place=oop | eng=zrf chain=3.19.13 msz=1 tile=0 | ran=1 src=race ns=754.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=759 q=1 ord=nat place=oop | eng=zrf chain=3.23.11 msz=1 tile=512 | ran=1 src=race ns=827.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=765 q=1 ord=nat place=oop | eng=zrf chain=9.17.5 msz=1 tile=0 | ran=1 src=race ns=641.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=775 q=1 ord=nat place=oop | eng=zrf chain=5.31.5 msz=1 tile=0 | ran=1 src=race ns=950.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=777 q=1 ord=nat place=oop | eng=zrf chain=21.37 msz=1 tile=0 | ran=1 src=race ns=1205.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=779 q=1 ord=nat place=oop | eng=zrf chain=19.41 msz=1 tile=0 | ran=1 src=race ns=1350.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=783 q=1 ord=nat place=oop | eng=zrf chain=3.29.9 msz=1 tile=1024 | ran=1 src=race ns=901.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=799 q=1 ord=nat place=oop | eng=zrf chain=17.47 msz=1 tile=0 | ran=1 src=race ns=1442.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=805 q=1 ord=nat place=oop | eng=zrf chain=7.23.5 msz=1 tile=0 | ran=1 src=race ns=757.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=817 q=1 ord=nat place=oop | eng=zrf chain=19.43 msz=1 tile=0 | ran=1 src=race ns=1490.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=819 q=1 ord=nat place=oop | eng=zrf chain=13.9.7 msz=0 tile=0 | ran=1 src=race ns=616.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=825 q=1 ord=nat place=oop | eng=zrf chain=11.3.5.5 msz=0 tile=0 | ran=1 src=race ns=641.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=833 q=1 ord=nat place=oop | eng=zrf chain=7.17.7 msz=1 tile=0 | ran=1 src=race ns=698.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=837 q=1 ord=nat place=oop | eng=zrf chain=3.9.31 msz=0 tile=512 | ran=1 src=race ns=1033.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=841 q=1 ord=nat place=oop | eng=zrf chain=29.29 msz=1 tile=0 | ran=1 src=race ns=1386.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=845 q=1 ord=nat place=oop | eng=zrf chain=13.13.5 msz=1 tile=0 | ran=1 src=race ns=674.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=847 q=1 ord=nat place=oop | eng=zrf chain=11.11.7 msz=1 tile=0 | ran=1 src=race ns=648.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=851 q=1 ord=nat place=oop | eng=zrf chain=23.37 msz=1 tile=0 | ran=1 src=race ns=1427.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=855 q=1 ord=nat place=oop | eng=zrf chain=9.19.5 msz=1 tile=0 | ran=1 src=race ns=740.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=861 q=1 ord=nat place=oop | eng=zrf chain=41.3.7 msz=0 tile=0 | ran=1 src=race ns=1458.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=867 q=1 ord=nat place=oop | eng=zrf chain=3.17.17 msz=1 tile=512 | ran=1 src=race ns=882.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=875 q=1 ord=nat place=oop | eng=zrf chain=5.5.7.5 msz=0 tile=0 | ran=1 src=race ns=646.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=891 q=1 ord=nat place=oop | eng=zrf chain=11.9.9 msz=0 tile=0 | ran=1 src=race ns=712.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=893 q=1 ord=nat place=oop | eng=zrf chain=19.47 msz=1 tile=0 | ran=1 src=race ns=1669.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=897 q=1 ord=nat place=oop | eng=zrf chain=3.23.13 msz=1 tile=2048 | ran=1 src=race ns=958.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=899 q=1 ord=nat place=oop | eng=zrf chain=31.29 msz=1 tile=0 | ran=1 src=race ns=1558.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=903 q=1 ord=nat place=oop | eng=zrf chain=21.43 msz=1 tile=0 | ran=1 src=race ns=1542.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=925 q=1 ord=nat place=oop | eng=zrf chain=5.37.5 msz=1 tile=0 | ran=1 src=race ns=1365.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=931 q=1 ord=nat place=oop | eng=zrf chain=7.19.7 msz=1 tile=0 | ran=1 src=race ns=797.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=935 q=1 ord=nat place=oop | eng=zrf chain=11.17.5 msz=1 tile=0 | ran=1 src=race ns=801.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=943 q=1 ord=nat place=oop | eng=zrf chain=23.41 msz=1 tile=0 | ran=1 src=race ns=1686.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=945 q=1 ord=nat place=oop | eng=zrf chain=7.3.9.5 msz=0 tile=0 | ran=1 src=race ns=705.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=957 q=1 ord=nat place=oop | eng=zrf chain=3.11.29 msz=1 tile=512 | ran=1 src=race ns=1193.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=961 q=1 ord=nat place=oop | eng=zrf chain=31.31 msz=1 tile=0 | ran=1 src=race ns=1911.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=969 q=1 ord=nat place=oop | eng=zrf chain=3.17.19 msz=1 tile=0 | ran=1 src=race ns=1029.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=975 q=1 ord=nat place=oop | eng=zrf chain=15.13.5 msz=1 tile=0 | ran=1 src=race ns=793.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=987 q=1 ord=nat place=oop | eng=zrf chain=21.47 msz=1 tile=0 | ran=1 src=race ns=1775.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=989 q=1 ord=nat place=oop | eng=zrf chain=23.43 msz=1 tile=0 | ran=1 src=race ns=1928.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=999 q=1 ord=nat place=oop | eng=zrf chain=3.9.37 msz=0 tile=512 | ran=1 src=race ns=1443.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1001 q=1 ord=nat place=oop | eng=zrf chain=13.11.7 msz=1 tile=0 | ran=1 src=race ns=780.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1015 q=1 ord=nat place=oop | eng=zrf chain=7.29.5 msz=1 tile=0 | ran=1 src=race ns=1143.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1023 q=1 ord=nat place=oop | eng=zrf chain=3.11.31 msz=1 tile=1024 | ran=1 src=race ns=1316.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1025 q=1 ord=nat place=oop | eng=zrf chain=41.5.5 msz=0 tile=0 | ran=1 src=race ns=1695.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1029 q=1 ord=nat place=oop | eng=zrf chain=7.3.7.7 msz=0 tile=0 | ran=1 src=race ns=778.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1035 q=1 ord=nat place=oop | eng=zrf chain=9.23.5 msz=1 tile=0 | ran=1 src=race ns=969.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1045 q=1 ord=nat place=oop | eng=zrf chain=11.19.5 msz=1 tile=0 | ran=1 src=race ns=929.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1053 q=1 ord=nat place=oop | eng=zrf chain=13.9.9 msz=0 tile=0 | ran=1 src=race ns=858.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1071 q=1 ord=nat place=oop | eng=zrf chain=17.9.7 msz=0 tile=0 | ran=1 src=race ns=915.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1073 q=1 ord=nat place=oop | eng=zrf chain=29.37 msz=1 tile=0 | ran=1 src=race ns=1859.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1075 q=1 ord=nat place=oop | eng=zrf chain=5.5.43 msz=0 tile=0 | ran=1 src=race ns=1833.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1081 q=1 ord=nat place=oop | eng=zrf chain=23.47 msz=1 tile=0 | ran=1 src=race ns=2141.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1083 q=1 ord=nat place=oop | eng=zrf chain=3.19.19 msz=1 tile=512 | ran=1 src=race ns=1216.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1085 q=1 ord=nat place=oop | eng=zrf chain=7.31.5 msz=1 tile=0 | ran=1 src=race ns=1309.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1089 q=1 ord=nat place=oop | eng=zrf chain=11.11.9 msz=1 tile=0 | ran=1 src=race ns=925.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1105 q=1 ord=nat place=oop | eng=zrf chain=13.17.5 msz=1 tile=0 | ran=1 src=race ns=976.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1107 q=1 ord=nat place=oop | eng=zrf chain=3.9.41 msz=0 tile=512 | ran=1 src=race ns=1748.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1125 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.5 msz=0 tile=0 | ran=1 src=race ns=870.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1127 q=1 ord=nat place=oop | eng=zrf chain=7.23.7 msz=1 tile=0 | ran=1 src=race ns=1091.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1131 q=1 ord=nat place=oop | eng=zrf chain=3.13.29 msz=1 tile=0 | ran=1 src=race ns=1403.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1147 q=1 ord=nat place=oop | eng=zrf chain=31.37 msz=1 tile=0 | ran=1 src=race ns=2112.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1155 q=1 ord=nat place=oop | eng=zrf chain=11.3.7.5 msz=0 tile=0 | ran=1 src=race ns=905.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1161 q=1 ord=nat place=oop | eng=zrf chain=3.9.43 msz=0 tile=512 | ran=1 src=race ns=2031.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1173 q=1 ord=nat place=oop | eng=zrf chain=3.17.23 msz=1 tile=0 | ran=1 src=race ns=1366.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1175 q=1 ord=nat place=oop | eng=zrf chain=5.5.47 msz=0 tile=0 | ran=1 src=race ns=2192.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1183 q=1 ord=nat place=oop | eng=zrf chain=13.13.7 msz=1 tile=0 | ran=1 src=race ns=984.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1189 q=1 ord=nat place=oop | eng=zrf chain=41.29 msz=1 tile=0 | ran=1 src=race ns=2300.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1197 q=1 ord=nat place=oop | eng=zrf chain=9.19.7 msz=1 tile=0 | ran=1 src=race ns=1057.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1209 q=1 ord=nat place=oop | eng=zrf chain=3.13.31 msz=1 tile=2048 | ran=1 src=race ns=1572.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1215 q=1 ord=nat place=oop | eng=zrf chain=9.3.9.5 msz=0 tile=0 | ran=1 src=race ns=940.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1221 q=1 ord=nat place=oop | eng=zrf chain=3.11.37 msz=1 tile=1024 | ran=1 src=race ns=1896.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1225 q=1 ord=nat place=oop | eng=zrf chain=7.5.5.7 msz=0 tile=0 | ran=1 src=race ns=961.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1235 q=1 ord=nat place=oop | eng=zrf chain=19.13.5 msz=1 tile=0 | ran=1 src=race ns=1151.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1247 q=1 ord=nat place=oop | eng=zrf chain=29.43 msz=1 tile=0 | ran=1 src=race ns=2482.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1265 q=1 ord=nat place=oop | eng=zrf chain=11.23.5 msz=1 tile=0 | ran=1 src=race ns=1230.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1269 q=1 ord=nat place=oop | eng=zrf chain=3.9.47 msz=0 tile=512 | ran=1 src=race ns=2431.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1271 q=1 ord=nat place=oop | eng=zrf chain=31.41 msz=1 tile=0 | ran=1 src=race ns=2525.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1275 q=1 ord=nat place=oop | eng=zrf chain=17.5.3.5 msz=0 tile=0 | ran=1 src=race ns=1215.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1287 q=1 ord=nat place=oop | eng=zrf chain=9.11.13 msz=1 tile=0 | ran=1 src=race ns=1159.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1295 q=1 ord=nat place=oop | eng=zrf chain=7.5.37 msz=1 tile=0 | ran=1 src=race ns=1865.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1305 q=1 ord=nat place=oop | eng=zrf chain=9.29.5 msz=1 tile=0 | ran=1 src=race ns=1503.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1309 q=1 ord=nat place=oop | eng=zrf chain=11.17.7 msz=1 tile=0 | ran=1 src=race ns=1142.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1311 q=1 ord=nat place=oop | eng=zrf chain=3.19.23 msz=1 tile=0 | ran=1 src=race ns=1658.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1323 q=1 ord=nat place=oop | eng=zrf chain=7.3.9.7 msz=0 tile=0 | ran=1 src=race ns=1056.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1331 q=1 ord=nat place=oop | eng=zrf chain=11.11.11 msz=1 tile=0 | ran=1 src=race ns=1245.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1333 q=1 ord=nat place=oop | eng=zrf chain=43.31 msz=1 tile=0 | ran=1 src=race ns=2890.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1353 q=1 ord=nat place=oop | eng=zrf chain=3.11.41 msz=1 tile=2048 | ran=1 src=race ns=2318.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1363 q=1 ord=nat place=oop | eng=zrf chain=29.47 msz=1 tile=0 | ran=1 src=race ns=3168.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1365 q=1 ord=nat place=oop | eng=zrf chain=13.3.7.5 msz=0 tile=0 | ran=1 src=race ns=1107.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1369 q=1 ord=nat place=oop | eng=zrf chain=37.37 msz=1 tile=0 | ran=1 src=race ns=2745.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1375 q=1 ord=nat place=oop | eng=zrf chain=11.5.5.5 msz=0 tile=0 | ran=1 src=race ns=1137.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1377 q=1 ord=nat place=oop | eng=zrf chain=9.9.17 msz=0 tile=0 | ran=1 src=race ns=1270.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1395 q=1 ord=nat place=oop | eng=zrf chain=9.5.31 msz=0 tile=0 | ran=1 src=race ns=1747.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1419 q=1 ord=nat place=oop | eng=zrf chain=3.11.43 msz=1 tile=2048 | ran=1 src=race ns=2484.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1421 q=1 ord=nat place=oop | eng=zrf chain=7.7.29 msz=0 tile=0 | ran=1 src=race ns=1787.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1425 q=1 ord=nat place=oop | eng=zrf chain=15.19.5 msz=1 tile=0 | ran=1 src=race ns=1440.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1435 q=1 ord=nat place=oop | eng=zrf chain=7.41.5 msz=1 tile=0 | ran=1 src=race ns=2305.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1443 q=1 ord=nat place=oop | eng=zrf chain=3.13.37 msz=1 tile=512 | ran=1 src=race ns=2181.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1445 q=1 ord=nat place=oop | eng=zrf chain=17.17.5 msz=1 tile=0 | ran=1 src=race ns=1486.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1449 q=1 ord=nat place=oop | eng=zrf chain=9.23.7 msz=1 tile=0 | ran=1 src=race ns=1461.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1457 q=1 ord=nat place=oop | eng=zrf chain=31.47 msz=1 tile=0 | ran=1 src=race ns=3259.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1463 q=1 ord=nat place=oop | eng=zrf chain=11.19.7 msz=1 tile=0 | ran=1 src=race ns=1350.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1479 q=1 ord=nat place=oop | eng=zrf chain=17.29.3 msz=1 tile=0 | ran=1 src=race ns=1982.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1485 q=1 ord=nat place=oop | eng=zrf chain=9.3.11.5 msz=0 tile=0 | ran=1 src=race ns=1235.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1495 q=1 ord=nat place=oop | eng=zrf chain=13.23.5 msz=1 tile=0 | ran=1 src=race ns=1484.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1505 q=1 ord=nat place=oop | eng=zrf chain=7.43.5 msz=1 tile=0 | ran=1 src=race ns=2491.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1517 q=1 ord=nat place=oop | eng=zrf chain=37.41 msz=1 tile=0 | ran=1 src=race ns=3126.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1519 q=1 ord=nat place=oop | eng=zrf chain=7.7.31 msz=0 tile=0 | ran=1 src=race ns=1987.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1521 q=1 ord=nat place=oop | eng=zrf chain=13.13.9 msz=1 tile=0 | ran=1 src=race ns=1298.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1539 q=1 ord=nat place=oop | eng=zrf chain=9.19.9 msz=1 tile=0 | ran=1 src=race ns=1507.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1547 q=1 ord=nat place=oop | eng=zrf chain=17.13.7 msz=1 tile=0 | ran=1 src=race ns=1469.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1551 q=1 ord=nat place=oop | eng=zrf chain=3.11.47 msz=1 tile=1024 | ran=1 src=race ns=2910.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1573 q=1 ord=nat place=oop | eng=zrf chain=11.11.13 msz=1 tile=0 | ran=1 src=race ns=1462.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1575 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.7 msz=0 tile=0 | ran=1 src=race ns=1338.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1581 q=1 ord=nat place=oop | eng=zrf chain=17.31.3 msz=1 tile=0 | ran=1 src=race ns=2284.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1587 q=1 ord=nat place=oop | eng=zrf chain=3.23.23 msz=1 tile=0 | ran=1 src=race ns=2270.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1591 q=1 ord=nat place=oop | eng=zrf chain=43.37 msz=1 tile=0 | ran=1 src=race ns=3574.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1595 q=1 ord=nat place=oop | eng=zrf chain=11.29.5 msz=1 tile=0 | ran=1 src=race ns=1822.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1599 q=1 ord=nat place=oop | eng=zrf chain=13.41.3 msz=1 tile=0 | ran=1 src=race ns=2510.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1615 q=1 ord=nat place=oop | eng=zrf chain=17.19.5 msz=1 tile=0 | ran=1 src=race ns=1645.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1617 q=1 ord=nat place=oop | eng=zrf chain=11.3.7.7 msz=0 tile=0 | ran=1 src=race ns=1324.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1625 q=1 ord=nat place=oop | eng=zrf chain=13.5.5.5 msz=0 tile=0 | ran=1 src=race ns=1326.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1645 q=1 ord=nat place=oop | eng=zrf chain=7.47.5 msz=1 tile=0 | ran=1 src=race ns=2862.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1653 q=1 ord=nat place=oop | eng=zrf chain=3.19.29 msz=1 tile=0 | ran=1 src=race ns=2466.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1665 q=1 ord=nat place=oop | eng=zrf chain=9.37.5 msz=1 tile=0 | ran=1 src=race ns=2357.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1677 q=1 ord=nat place=oop | eng=zrf chain=13.43.3 msz=1 tile=0 | ran=1 src=race ns=2738.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1681 q=1 ord=nat place=oop | eng=zrf chain=41.41 msz=1 tile=0 | ran=1 src=race ns=3755.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1683 q=1 ord=nat place=oop | eng=zrf chain=11.17.9 msz=1 tile=0 | ran=1 src=race ns=1571.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1701 q=1 ord=nat place=oop | eng=zrf chain=9.3.9.7 msz=0 tile=0 | ran=1 src=race ns=1477.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1705 q=1 ord=nat place=oop | eng=zrf chain=11.31.5 msz=1 tile=0 | ran=1 src=race ns=2035.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1715 q=1 ord=nat place=oop | eng=zrf chain=7.5.7.7 msz=0 tile=0 | ran=1 src=race ns=1498.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1725 q=1 ord=nat place=oop | eng=zrf chain=15.23.5 msz=1 tile=0 | ran=1 src=race ns=1834.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1729 q=1 ord=nat place=oop | eng=zrf chain=13.19.7 msz=1 tile=0 | ran=1 src=race ns=1598.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1739 q=1 ord=nat place=oop | eng=zrf chain=37.47 msz=1 tile=0 | ran=1 src=race ns=4110.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1755 q=1 ord=nat place=oop | eng=zrf chain=9.3.13.5 msz=0 tile=0 | ran=1 src=race ns=1622.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1763 q=1 ord=nat place=oop | eng=zrf chain=41.43 msz=1 tile=0 | ran=1 src=race ns=4743.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1767 q=1 ord=nat place=oop | eng=zrf chain=3.19.31 msz=1 tile=2048 | ran=1 src=race ns=2657.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1771 q=1 ord=nat place=oop | eng=zrf chain=11.23.7 msz=1 tile=0 | ran=1 src=race ns=1795.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1785 q=1 ord=nat place=oop | eng=zrf chain=17.3.7.5 msz=0 tile=0 | ran=1 src=race ns=1644.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1805 q=1 ord=nat place=oop | eng=zrf chain=19.19.5 msz=1 tile=0 | ran=1 src=race ns=2008.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1813 q=1 ord=nat place=oop | eng=zrf chain=7.7.37 msz=0 tile=0 | ran=1 src=race ns=2645.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1815 q=1 ord=nat place=oop | eng=zrf chain=11.3.11.5 msz=0 tile=0 | ran=1 src=race ns=1581.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1827 q=1 ord=nat place=oop | eng=zrf chain=9.7.29 msz=0 tile=0 | ran=1 src=race ns=2336.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1833 q=1 ord=nat place=oop | eng=zrf chain=13.47.3 msz=1 tile=0 | ran=1 src=race ns=3102.7 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1845 q=1 ord=nat place=oop | eng=zrf chain=9.41.5 msz=1 tile=0 | ran=1 src=race ns=2872.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1849 q=1 ord=nat place=oop | eng=zrf chain=43.43 msz=1 tile=0 | ran=1 src=race ns=5310.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1859 q=1 ord=nat place=oop | eng=zrf chain=11.13.13 msz=1 tile=0 | ran=1 src=race ns=1743.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1863 q=1 ord=nat place=oop | eng=zrf chain=9.23.9 msz=1 tile=0 | ran=1 src=race ns=2050.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1875 q=1 ord=nat place=oop | eng=zrf chain=15.5.5.5 msz=0 tile=0 | ran=1 src=race ns=1612.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1881 q=1 ord=nat place=oop | eng=zrf chain=11.19.9 msz=1 tile=0 | ran=1 src=race ns=1882.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1885 q=1 ord=nat place=oop | eng=zrf chain=13.29.5 msz=1 tile=0 | ran=1 src=race ns=2174.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1887 q=1 ord=nat place=oop | eng=zrf chain=17.37.3 msz=1 tile=0 | ran=1 src=race ns=2870.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1911 q=1 ord=nat place=oop | eng=zrf chain=13.3.7.7 msz=0 tile=0 | ran=1 src=race ns=1627.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1925 q=1 ord=nat place=oop | eng=zrf chain=11.5.5.7 msz=0 tile=0 | ran=1 src=race ns=1646.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1927 q=1 ord=nat place=oop | eng=zrf chain=47.41 msz=1 tile=0 | ran=1 src=race ns=4782.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1935 q=1 ord=nat place=oop | eng=zrf chain=9.43.5 msz=1 tile=0 | ran=1 src=race ns=3093.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1953 q=1 ord=nat place=oop | eng=zrf chain=9.31.7 msz=1 tile=0 | ran=1 src=race ns=2527.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1955 q=1 ord=nat place=oop | eng=zrf chain=17.23.5 msz=1 tile=0 | ran=1 src=race ns=2295.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1989 q=1 ord=nat place=oop | eng=zrf chain=13.17.9 msz=1 tile=0 | ran=1 src=race ns=1928.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1995 q=1 ord=nat place=oop | eng=zrf chain=15.19.7 msz=1 tile=0 | ran=1 src=race ns=2022.2 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=2001 q=1 ord=nat place=oop | eng=zrf chain=3.23.29 msz=1 tile=2048 | ran=1 src=race ns=3292.9 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=2009 q=1 ord=nat place=oop | eng=zrf chain=7.7.41 msz=0 tile=0 | ran=1 src=race ns=3260.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=2015 q=1 ord=nat place=oop | eng=zrf chain=13.31.5 msz=1 tile=0 | ran=1 src=race ns=2441.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=2021 q=1 ord=nat place=oop | eng=zrf chain=47.43 msz=1 tile=0 | ran=1 src=race ns=5104.3 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=2023 q=1 ord=nat place=oop | eng=zrf chain=17.17.7 msz=1 tile=0 | ran=1 src=race ns=2138.8 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=2025 q=1 ord=nat place=oop | eng=zrf chain=9.5.9.5 msz=0 tile=0 | ran=1 src=race ns=1845.5 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=2035 q=1 ord=nat place=oop | eng=zrf chain=11.37.5 msz=1 tile=0 | ran=1 src=race ns=2815.6 metric=bwd1 units=ns date=2026-09-30
+@cell t=r2c n=3375 q=1 ord=nat place=oop | eng=zrf chain=9.5.3.5.5 msz=0 tile=0 | ran=1 src=race ns=3614.3 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=6561 q=1 ord=nat place=oop | eng=zrf chain=9.9.9.9 msz=0 tile=0 | ran=1 src=race ns=8250.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=10125 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.9.5 msz=0 tile=256 | ran=1 src=race ns=12275.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=16875 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.3.5.5 msz=0 tile=512 | ran=1 src=race ns=21600.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=30375 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.3.9.5 msz=0 tile=2048 | ran=1 src=race ns=40650.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=50625 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.5.9.5 msz=0 tile=512 | ran=1 src=race ns=70450.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=59049 q=1 ord=nat place=oop | eng=zrf chain=9.9.3.3.9.9 msz=0 tile=2048 | ran=1 src=race ns=88600.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=78125 q=1 ord=nat place=oop | eng=zrf chain=5.5.5.5.5.5.5 msz=0 tile=1024 | ran=1 src=race ns=128650.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=117649 q=1 ord=nat place=oop | eng=zrf chain=7.7.7.7.7.7 msz=0 tile=0 | ran=1 src=race ns=214550.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=151875 q=1 ord=nat place=oop | eng=zrf chain=9.5.9.5.3.5.5 msz=0 tile=0 | ran=1 src=race ns=267000.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=177147 q=1 ord=nat place=oop | eng=zrf chain=9.9.3.3.3.9.9 msz=0 tile=2048 | ran=1 src=race ns=320300.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=253125 q=1 ord=nat place=oop | eng=zrf chain=9.5.9.5.5.5.5 msz=0 tile=2048 | ran=1 src=race ns=485450.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=390625 q=1 ord=nat place=oop | eng=zrf chain=5.5.5.5.5.5.5.5 msz=0 tile=1024 | ran=1 src=race ns=814150.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=531441 q=1 ord=nat place=oop | eng=zrf chain=9.9.9.9.9.9 msz=0 tile=2048 | ran=1 src=race ns=1139050.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=759375 q=1 ord=nat place=oop | eng=zrf chain=9.9.5.5.5.3.5.5 msz=0 tile=2048 | ran=1 src=race ns=1751300.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1265625 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.5.5.3.5.15 msz=0 tile=512 | ran=1 src=race ns=3517700.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1594323 q=1 ord=nat place=oop | eng=zrf chain=9.9.9.3.9.9.9 msz=0 tile=1024 | ran=1 src=race ns=4616100.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1953125 q=1 ord=nat place=oop | eng=zrf chain=25.5.5.5.5.5.25 msz=0 tile=1024 | ran=1 src=race ns=6913200.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=4782969 q=1 ord=nat place=oop | eng=zrf chain=9.9.9.9.9.9.9 msz=0 tile=2048 | ran=1 src=race ns=17679950.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=c2r n=3375 q=1 ord=nat place=oop | eng=zrf chain=9.5.3.5.5 msz=0 tile=512 | ran=1 src=race ns=3323.1 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=6561 q=1 ord=nat place=oop | eng=zrf chain=9.9.9.9 msz=0 tile=0 | ran=1 src=race ns=7236.4 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=10125 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.9.5 msz=0 tile=1024 | ran=1 src=race ns=10700.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=16875 q=1 ord=nat place=oop | eng=zrf chain=9.5.3.5.5.5 msz=0 tile=512 | ran=1 src=race ns=18525.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=30375 q=1 ord=nat place=oop | eng=zrf chain=9.5.3.5.9.5 msz=0 tile=256 | ran=1 src=race ns=36150.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=50625 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.5.9.5 msz=0 tile=1024 | ran=1 src=race ns=62900.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=59049 q=1 ord=nat place=oop | eng=zrf chain=9.9.3.3.9.9 msz=0 tile=256 | ran=1 src=race ns=80200.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=78125 q=1 ord=nat place=oop | eng=zrf chain=5.5.5.5.5.5.5 msz=0 tile=1024 | ran=1 src=race ns=114600.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=117649 q=1 ord=nat place=oop | eng=zrf chain=7.7.7.7.7.7 msz=0 tile=0 | ran=1 src=race ns=189650.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=151875 q=1 ord=nat place=oop | eng=zrf chain=9.9.5.5.3.5.5 msz=0 tile=1024 | ran=1 src=race ns=232750.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=177147 q=1 ord=nat place=oop | eng=zrf chain=9.9.3.9.9.9 msz=0 tile=1024 | ran=1 src=race ns=282500.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=253125 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.5.9.5.5 msz=0 tile=2048 | ran=1 src=race ns=421350.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=390625 q=1 ord=nat place=oop | eng=zrf chain=5.5.5.5.5.5.5.5 msz=0 tile=2048 | ran=1 src=race ns=684850.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=531441 q=1 ord=nat place=oop | eng=zrf chain=9.9.9.9.9.9 msz=0 tile=1024 | ran=1 src=race ns=1042250.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=759375 q=1 ord=nat place=oop | eng=zrf chain=9.9.5.3.5.5.5.5 msz=0 tile=1024 | ran=1 src=race ns=1624350.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1265625 q=1 ord=nat place=oop | eng=zrf chain=9.5.5.5.5.5.5.9 msz=0 tile=2048 | ran=1 src=race ns=3063050.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1594323 q=1 ord=nat place=oop | eng=zrf chain=9.9.9.3.3.3.9.9 msz=0 tile=2048 | ran=1 src=race ns=4683950.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1953125 q=1 ord=nat place=oop | eng=zrf chain=5.5.5.25.25.25 msz=0 tile=1024 | ran=1 src=race ns=6853400.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=4782969 q=1 ord=nat place=oop | eng=zrf chain=9.9.9.9.9.9.9 msz=0 tile=2048 | ran=1 src=race ns=16834300.0 metric=bwd1 units=ns date=2026-09-30
