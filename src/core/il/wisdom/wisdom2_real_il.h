@@ -14,9 +14,13 @@
  *                                                  the split of N/2)
  *   eng=zrm                                       (the real mono, il/real/zrm.h: one
  *                                                  rn1 kernel, N <= 64, no plan input)
+ *   eng=zrf  chain=9.9.5 msz=0|1                  (the real flat DIT, il/real/zrf.h, odd N:
+ *                                                  the chain, and whether the split-body
+ *                                                  stage form runs where it exists)
  *   eng=oddr                                      (odd N: the odd-real routes stood
- *                                                  against the mono; their own route
- *                                                  record is wisdom2_oddr.h's)
+ *                                                  against the mono and the flat DIT;
+ *                                                  their own route record is
+ *                                                  wisdom2_oddr.h's)
  * The door (il/real/real_create_il.h) reads the engine first and lets the
  * engine read its own plan input; a miss races the engines and banks the
  * winner here. The zr2c route banker keeps its own-engine guard, so a cell
@@ -41,7 +45,7 @@ static inline void vw2_real_il_key(vw2_key_t *k, int realN, int is_c2r, int is_i
     k->nthreads = (uint8_t)(T > 1 ? T : 0);   /* a threaded plan's row is its own (v1.3) */
 }
 
-/* The cell's banked engine ("zr2c", "zrp", "zttr", "zrm", "oddr") or NULL
+/* The cell's banked engine ("zr2c", "zrp", "zttr", "zfsr", "zrm", "zrf", "oddr") or NULL
  * (no measured record; a seed row counts as none). For eng=zrp the pair and the form are decoded
  * (*R1 = 0 when the pair token is missing or malformed: a miss; *form = 0
  * for leaf=n1t or no leaf token, 1 for leaf=r2z). */
@@ -125,6 +129,69 @@ static inline int vw2_real_il_bank_eng(vw2_store_t *s, int realN, int is_c2r,
 static inline int vw2_real_il_bank_zrm(vw2_store_t *s, int realN, int is_c2r, int is_inplace, int T, double ns)
 {
     return vw2_real_il_bank_eng(s, realN, is_c2r, is_inplace, T, "zrm", ns);
+}
+
+/* The banked real flat DIT plan input at the cell: 1 with chain[0..*K-1] and
+ * *nomsz filled, 0 when the cell's engine is not zrf or the tokens are
+ * malformed (a miss). max = the capacity of chain[]. */
+static inline int vw2_real_il_lookup_zrf(const vw2_store_t *s, int realN, int is_c2r,
+                                         int is_inplace, int T, int *chain, int max, int *K, int *nomsz)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *eng, *ch, *ms;
+    long prod = 1;
+    int n = 0;
+    *K = 0; *nomsz = 0;
+    vw2_real_il_key(&k, realN, is_c2r, is_inplace, T);
+    r = vw2_lookup(s, &k);
+    if (!r || vw2__is_seed(r)) return 0;
+    eng = vw2_rec_get(r, "eng");
+    if (!eng || strcmp(eng, "zrf")) return 0;
+    ch = vw2_rec_get(r, "chain"); ms = vw2_rec_get(r, "msz");
+    if (!ch) return 0;
+    while (*ch && n < max) {
+        char *end;
+        long v = strtol(ch, &end, 10);
+        if (end == ch || v < 3 || !(v & 1)) return 0;
+        chain[n++] = (int)v;
+        prod *= v;
+        ch = end;
+        if (*ch == '.') ch++;
+        else if (*ch) return 0;
+    }
+    if (n < 2 || *ch || prod != (long)realN) return 0;
+    *K = n;
+    *nomsz = (ms && ms[0] == '0') ? 1 : 0;
+    return 1;
+}
+
+/* Bank the real flat DIT verdict at the cell (replacing whatever engine held it). */
+static inline int vw2_real_il_bank_zrf(vw2_store_t *s, int realN, int is_c2r, int is_inplace, int T,
+                                       const int *chain, int K, int nomsz, double ns)
+{
+    vw2_rec_t r;
+    char b[64];
+    int rc, off = 0;
+    memset(&r, 0, sizeof r);
+    vw2_real_il_key(&r.key, realN, is_c2r, is_inplace, T);
+    for (int i = 0; i < K && off < (int)sizeof b - 4; i++)
+        off += snprintf(b + off, sizeof b - (size_t)off, "%s%d", i ? "." : "", chain[i]);
+    if (vw2_rec_set(&r, 1, "eng", "zrf") != VW2_OK ||
+        vw2_rec_set(&r, 1, "chain", b) != VW2_OK ||
+        vw2_rec_set(&r, 1, "msz", nomsz ? "0" : "1") != VW2_OK ||
+        vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
+        vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    if (ns > 0.0) {
+        snprintf(b, sizeof b, "%.1f", ns);
+        if (vw2_rec_set(&r, 2, "ns", b) != VW2_OK ||
+            vw2_rec_set(&r, 2, "metric", is_c2r ? "bwd1" : "fwd1") != VW2_OK ||
+            vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    }
+    vw2__oop_stamp_date(&r);
+    rc = vw2_bank(s, &r);
+    if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
+    return VW2_OK;
 }
 
 /* zr2c on a THREADED plan's row (T > 1): the record is complete on its own --

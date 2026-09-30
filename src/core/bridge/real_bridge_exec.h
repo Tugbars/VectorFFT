@@ -84,6 +84,11 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
             _exec_zfsr(h, sre, dre); /* the real four-step: the c2c four-step + the fused order sweep */
             return;
         }
+        if (h->zrf)
+        {
+            _exec_zrf(h, sre, dre); /* the real flat DIT: serial kernels on the plan's planes, pool-free */
+            return;
+        }
         if (h->zttr)
         {
             _exec_zttr(h, sre, dre); /* ZTT-r: the fold fused into the terminator, pool-free */
@@ -122,6 +127,11 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
         if (h->zfsr)
         {
             _exec_zfsr(h, sre, dre); /* the real four-step's c2r: the fused sweep, then the four-step backward */
+            return;
+        }
+        if (h->zrf)
+        {
+            _exec_zrf(h, sre, dre); /* the real flat DIT's c2r */
             return;
         }
         if (h->zttr)

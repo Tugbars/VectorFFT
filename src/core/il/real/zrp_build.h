@@ -21,6 +21,9 @@
  *   zrm   the real mono (zrm.h): the whole transform as one rn1 kernel at
  *         N <= 64; no plan input. Odd N races it in bridge/real_bridge.h
  *         against the odd-real routes (the door is even-N).
+ *   zrf   the real flat DIT (zrf.h): odd N on the c2c flat DIT's stages
+ *         behind a real leaf; the chain and the split-body switch are
+ *         PLAN INPUT, swept by the odd race in bridge/real_bridge.h.
  * The cell's engine is read from the real shard (wisdom2_real_il.h); a miss
  * races zr2c against every legal pair in every form and the ZTT-r shortlist
  * through the finished handles, gates each arm's output against zr2c's
@@ -46,6 +49,7 @@
 #include "zttr.h"
 #include "zrm.h"
 #include "zfsr.h"
+#include "zrf.h"
 #include "wisdom2_real_il.h"
 #include "common/support/race.h"
 
@@ -168,6 +172,64 @@ static int _zrm_env(void)
     if (!e || !e[0])
         return -1;
     return e[0] == '0' ? 0 : 1;
+}
+
+/* the real flat DIT's handle: the chain and the split-body switch are plan input */
+static struct vfft_plan_s *_zrf_build_plan(const vfft_config_t *cfg, int N, const int *R, int K, int nomsz)
+{
+    vfft_zrf_plan_t *zp = vfft_zrf_create(N, R, K, nomsz);
+    struct vfft_plan_s *h;
+    if (!zp)
+        return NULL;
+    h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+    if (!h)
+    {
+        vfft_zrf_destroy(zp);
+        return NULL;
+    }
+    h->transform = cfg->transform;
+    h->placement = cfg->placement;
+    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->N = N;
+    h->K = 1;
+    h->nthreads = _vfft_plan_threads(cfg);
+    h->zrf = zp;
+    return h;
+}
+
+/* both placements are the same pipeline (the planes are the plan's own) */
+static void _exec_zrf(struct vfft_plan_s *h, const double *sre, double *dre)
+{
+    if (h->transform == VFFT_R2C)
+        vfft_zrf_execute_fwd(h->zrf, sre, dre);
+    else
+        vfft_zrf_execute_bwd(h->zrf, sre, dre);
+}
+
+/* VFFT_ZRF at create: 1 = pinned at the chain "9.9.5" ("/t" = the split
+ * body off), 0 = kept out of the race, -1 = unset */
+static int _zrf_env(int *R, int *K, int *nomsz)
+{
+    const char *e = getenv("VFFT_ZRF");
+    int n = 0;
+    *K = 0; *nomsz = 0;
+    if (!e || !e[0])
+        return -1;
+    while (*e && n < VFFT_ILFD_MAX_K)
+    {
+        char *end;
+        const long v = strtol(e, &end, 10);
+        if (end == e || v < 3)
+            return 0;
+        R[n++] = (int)v;
+        e = end;
+        if (*e == '.') e++;
+        else break;
+    }
+    if (n < 2 || (*e && strcmp(e, "/t")))
+        return 0;
+    *K = n; *nomsz = *e != 0;
+    return 1;
 }
 
 /* the real four-step's handle: the split is plan input */
