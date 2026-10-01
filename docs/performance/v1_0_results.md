@@ -852,6 +852,24 @@ c2r: median 2.25x over 9 cells (min 1.55, max 4.27); control cell 4 readings, 1.
 REFUSED in both directions: the Bluestein needs an inner at M >= (3N-1)/2 and the inner pool ends
 at 262144 (the ZTT band), and the routes' complex child at those N has none either.
 
+AGAINST FFTW (3.3.10, FFTW_MEASURE; the same banked plans replayed, runs `zrb_odd_{r2c,c2r}_fftw_2026-10-01`,
+`zrb_big_{r2c,c2r}_fftw_2026-10-01`; the ratio is FFTW / ours, the worse flip):
+
+```
+ vs FFTW            r2c cells  median  gmean   <1.0  |  c2r cells  median  gmean   <1.0
+ ALL                      682    3.38   3.20      0  |        682    3.32   3.17      0
+ prime                    291    3.83   3.75      0  |        291    3.80   3.70      0
+ composite                391    2.96   2.85      0  |        391    2.96   2.82      0
+ 65..256                   44    4.22   3.94      0  |         44    4.06   3.84      0
+ 257..512                  77    3.86   3.54      0  |         77    3.86   3.49      0
+ 513..1024                173    2.94   2.81      0  |        173    2.96   2.80      0
+ 1025..2048               388    3.45   3.25      0  |        388    3.44   3.21      0
+```
+The weakest vs FFTW: r2c 885 (1.23), 915 (1.30), 795 (1.31), 689 (1.33), 1431 (1.38), 871 (1.44); c2r 885 (1.25), 795 (1.28), 871 (1.33), 915 (1.33), 689 (1.39), 869 (1.40).
+r2c: control cell 16 readings, 1.147..1.203.
+c2r: control cell 16 readings, 1.085..1.106.
+The large cells vs FFTW: 4099 r2c 3.53 / c2r 3.51; 6563 r2c 4.13 / c2r 3.58; 10007 r2c 3.91 / c2r 3.97; 16411 r2c 3.40 / c2r 3.43; 30011 r2c 3.43 / c2r 3.41; 50021 r2c 3.22 / c2r 3.11; 65537 r2c 2.30 / c2r 2.21; 100003 r2c 4.57 / c2r 4.51; 131071 r2c 5.18 / c2r 5.02.
+
 ### K=1 INTERLEAVED r2c and c2r — odd N on the real flat DIT vs FFTW, the 324 smooth odd cells and the 19 large cells (2026-10-01)
 
 Out of place, natural order, one thread; FFTW 3.3.10 (vcpkg's fftw3.dll bound at run time,

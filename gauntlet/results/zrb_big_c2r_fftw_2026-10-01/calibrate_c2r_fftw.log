@@ -1,0 +1,12 @@
+4099       banked       135ms replayed  prime
+6563       banked       135ms replayed  prime
+10007      banked       135ms replayed  -
+16411      banked       139ms replayed  -
+30011      banked       141ms replayed  -
+50021      banked       148ms replayed  -
+65537      banked     22939ms raced     ztt
+100003     banked       158ms replayed  -
+131071     banked       162ms replayed  -
+262147     REFUSED      136ms refused   -
+524287     REFUSED      135ms refused   -
+1000003    REFUSED      135ms refused   -

@@ -1,0 +1,6 @@
+2026-10-01 13:01:08 run: 12 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-01 13:01:08 calibrate: 12 cells (0 already done)
+2026-10-01 13:01:33   calibrated 12/12 (1000003), 25 s elapsed
+2026-10-01 13:01:33 bench: 9 cells (0 already benched, 3 not banked -> not benched)
+2026-10-01 13:02:20   benched 9/9 (131071), 46 s elapsed
+2026-10-01 13:02:22 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zrb_big_c2r_fftw_2026-10-01\report_c2r_fftw.md
