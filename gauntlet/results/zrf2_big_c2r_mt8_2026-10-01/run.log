@@ -4,3 +4,5 @@
 2026-10-01 01:56:17 bench: 19 cells (0 already benched, 0 not banked -> not benched)
 2026-10-01 01:57:09   benched 19/19 (4782969), 51 s elapsed
 2026-10-01 01:57:11 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zrf2_big_c2r_mt8_2026-10-01\report_c2r_mt8.md
+2026-10-01 13:10:17 merge: 0 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-01 13:10:17 merged into C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom
