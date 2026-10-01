@@ -724,7 +724,6 @@ let emit
     Array.iteri (fun i (e : t) -> if not (Hashtbl.mem stored i) then store i e) outs;
     Buffer.add_string body "        }\n"
   in
-  let emit_pass = emit_pass_to ~body ~isa ~mode:Isa.LS_vector ~msuf:"" ~tw_vw:0 in
   (* ─── BLOCKED (2-pass) construction ──────────────────────────────
      Straight-line radix-R needs R values live at once; there are only 16
      vector registers, so from R=16 up gcc spills hard — MEASURED stack
@@ -737,7 +736,11 @@ let emit
      stages at all. Mirrors codelet_zil's emit_z_blocked_body, but each pass
      is scheduled by the SHARED scheduler and the twiddles stay compile-time
      constants. *)
-  let emit_blocked () =
+  let emit_blocked ?(body = body) ?(isa = isa) ?(mode = Isa.LS_vector) ?(msuf = "") ?(tw_vw = 0) () =
+    (* the pass target: the bulk loop by default; the blocked remainder arm
+       (tail_blocked) re-emits the same passes into its own buffer at the
+       tail's width. S[] keeps the bulk loop's slot spacing (vw). *)
+    let emit_pass = emit_pass_to ~body ~isa ~mode ~msuf ~tw_vw in
     (* Cooley-Tukey split R = m * p, decimating legs by residue mod m:
          n = a*m + i    ->   A_i[j] = DFT_p over a of x[a*m+i]
          X[j + p*k2]    =   DFT_m over i of ( A_i[j] * W_R^{i*j} )
@@ -1538,17 +1541,25 @@ let emit
      re-emitted at the tail's width (odd-blocked kernels only; the monolithic
      tail_arm below is the other construction) *)
   let tail_blocked ~(nisa : Isa.t) ~(msuf : string) ~(mode : Isa.ls_mode) body_n =
-    if not odd_blocked
+    if (not odd_blocked) && not (blocked && kind = N1C && not ctx.colstride)
     then
       failwith
         (Printf.sprintf
-           "codelet_cil: VFFT_TAIL256=%s re-emits the odd blocked passes in the \
-            remainder; radix %d %s has no odd blocked form"
+           "codelet_cil: VFFT_TAIL256=%s re-emits the blocked passes in the \
+            remainder; radix %d %s has no blocked form to re-emit"
            (Option.value ~default:"" (Sys.getenv_opt "VFFT_TAIL256"))
            radix
            (kind_name kind));
     tail_prologue ~nisa ~msuf ~mode ~lane_off:false body_n;
-    emit_odd_blocked ~body:body_n ~isa:nisa ~mode ~msuf ~tw_vw:vw ~bw:oddblk_bw ()
+    if odd_blocked
+    then emit_odd_blocked ~body:body_n ~isa:nisa ~mode ~msuf ~tw_vw:vw ~bw:oddblk_bw ()
+    else
+      (* the power-of-two blocked column leaf: its own passes at the tail's
+         width. The monolithic tail of a blocked leaf is the unblocked kernel
+         at half width -- at radix 128 it costs three wide iterations (374 ns
+         against 121, measured 2026-10-01), and a real plane's column count
+         is always odd, so every call runs it. *)
+      emit_blocked ~body:body_n ~isa:nisa ~mode ~msuf ~tw_vw:vw ()
   in
   let tail_arm ~(nisa : Isa.t) ~(msuf : string) ~(mode : Isa.ls_mode) ~(lane_off : bool) body_n =
     tail_prologue ~nisa ~msuf ~mode ~lane_off body_n;
@@ -1637,7 +1648,10 @@ let emit
     if vw <= 4
     then (
       match Sys.getenv_opt "VFFT_TAIL256" with
-      | None -> if odd_blocked && radix >= 11 then "blk_narrow" else "narrow"
+      | None ->
+        if (odd_blocked && radix >= 11) || (blocked && split3 <> None)
+        then "blk_narrow"
+        else "narrow"
       | Some (("narrow" | "masked" | "overrun" | "blk_narrow" | "blk_masked" | "blk_overrun") as s) -> s
       | Some s ->
         failwith

@@ -240,11 +240,45 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
     return hp;
 }
 
+/* THE BOUND 2D REAL DISPATCH (2026-10-02): a serial interleaved 2D r2c / c2r
+ * plan -- one plane, one thread, the column pass not threaded -- executes its
+ * two passes straight from the door's fast path: no signature walk, no
+ * transform fork, no pool re-assert (nothing under a serial plan dispatches).
+ * The passes are the ones the general path runs, in its order. Fixed cost was
+ * the whole story on tiny planes (2x4: 16 ns against the comparator's 9,
+ * measured 2026-10-01). An aliased call (the plan is out of place) declines
+ * to the general path, which says why. */
+static int _k2x_il2d_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir; /* r2c is the forward math, as in 1D */
+    if (zin == (const double *)zout)
+        return 1;
+    _il2d_real_rows_fwd(h, zin, zout);
+    _il2d_real_cols(h, zout, zout, /*reverse=*/0);
+    return 0;
+}
+static int _k2x_il2d_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir; /* c2r is the inverse math, unnormalized */
+    if (zin == (const double *)zout)
+        return 1;
+    _il2d_real_cols(h, zin, h->il2d_rscr, /*reverse=*/1);
+    _il2d_real_rows_bwd(h, h->il2d_rscr, zout);
+    return 0;
+}
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
     if (!h) return hp;
     h->k1_exec = NULL;
+    if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
+        h->layout == (int)VFFT_LAYOUT_INTERLEAVED && h->N2 > 0 && h->il2d_row &&
+        !h->pq_inner && !h->tcb && !h->ilnd && !h->oddr_child &&
+        h->nthreads <= 1 && !h->il2d_col.colmt)
+    {
+        h->k1_exec = h->transform == VFFT_R2C ? _k2x_il2d_r2c : _k2x_il2d_c2r;
+        return hp;
+    }
     if (h->transform != VFFT_C2C || h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
     if (h->K != 1 || h->N2 > 0 || h->tcb || h->pq_inner || h->oddr_child || h->ilnd) return hp;
     if (h->placement == VFFT_OUTOFPLACE)
