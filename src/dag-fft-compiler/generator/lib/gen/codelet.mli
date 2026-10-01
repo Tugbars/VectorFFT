@@ -133,6 +133,7 @@ type kind =
       ; grouploop : bool (* --cil-t2csgn: t2csg with the in-kernel group loop *)
       ; transposed : bool (* --cil-t2csgt / --cil-t2csgnt: the transposed backward tails *)
       ; herm : bool (* --cil-t2csgh / --cil-t2csght: the Hermitian edge (the real flat DIT's last stage) *)
+      ; st128 : bool (* --cil-st128: the n1c column leaf's plane stores as two 128-bit halves (tag h) *)
       ; rowloop : bool (* --cil-rowloop: the in-kernel row loop (2026-09-23) *)
       ; form_tag : bool
         (* --cil-form-tag: name the FORM in the emitted symbol, so a split /

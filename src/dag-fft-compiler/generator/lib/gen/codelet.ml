@@ -148,6 +148,7 @@ type kind =
       ; grouploop : bool (* --cil-t2csgn: t2csg with the in-kernel group loop *)
       ; transposed : bool (* --cil-t2csgt / --cil-t2csgnt: the transposed backward tails *)
       ; herm : bool (* --cil-t2csgh / --cil-t2csght: the Hermitian edge (the real flat DIT's last stage) *)
+      ; st128 : bool (* --cil-st128: the n1c column leaf's plane stores as two 128-bit halves (tag h) *)
       ; rowloop : bool
         (* --cil-rowloop (2026-09-23): the in-kernel ROW LOOP -- one call runs the
            stage over count/Ls rows (in pitch Gs, out pitch OGs); the 2D tier's
@@ -353,6 +354,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
   and grouploop = ref false
   and transposed = ref false
   and herm = ref false
+  and st128 = ref false
   and rowloop = ref false in
   let k1_r1 = ref None
   and k1_il = ref false
@@ -583,6 +585,9 @@ let of_argv ?(strict = true) (argv : string list) : t =
     | "--cil-blocked" :: tl ->
       blocked := true;
       go tl
+    | "--cil-st128" :: tl ->
+      st128 := true;
+      go tl
     | "--cil-oddct" :: tl ->
       oddct := true;
       go tl
@@ -708,6 +713,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
         ; grouploop = !grouploop
         ; transposed = !transposed
         ; herm = !herm
+        ; st128 = !st128
         ; rowloop = !rowloop
         ; form_tag = !cil_form_tag
         }
@@ -854,7 +860,7 @@ let to_argv (c : t) : string list =
     @ emitc
   | Strided_r2c -> n @ [ "--strided-r2c" ] @ g (m.dir = Bwd) "--bwd" @ isa @ emitc
   | N1_oop_strided -> n @ [ "--oop-strided" ] @ isa @ emitc
-  | Cil { form; tangent; blocked; oddct; split; turn; pre_tw; colstride; gen2; grouploop; transposed; herm; rowloop; form_tag } ->
+  | Cil { form; tangent; blocked; oddct; split; turn; pre_tw; colstride; gen2; grouploop; transposed; herm; st128; rowloop; form_tag } ->
     n
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
@@ -891,6 +897,7 @@ let to_argv (c : t) : string list =
     @ g (m.table = Log3) "--cil-log3"
     @ g (pre_tw && form <> Cil_t2c) "--cil-pretw"
     @ g form_tag "--cil-form-tag"
+    @ g st128 "--cil-st128"
     @ g (m.dir = Bwd) "--cil-bwd"
     @ isa
     @ uarch

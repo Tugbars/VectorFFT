@@ -190,6 +190,7 @@ let run (argv : string array) : unit =
   let cil_grouploop = ref false in
   let cil_transposed = ref false in
   let cil_herm = ref false in
+  let cil_st128 = ref false in
   let cil_turnst = ref false in
   let cil_turnst_gs = ref false in
   let oop_spec_named = ref false in
@@ -537,6 +538,11 @@ let run (argv : string array) : unit =
       Cx_math.odd_ct_enabled := true
     else if arg = "--cil-blocked"
     then cil_blocked := true
+    else if arg = "--cil-st128"
+    then
+      (* the n1c column leaf's half-store twin (symbol tag `h`, 2026-10-01):
+         the plane stores as two 128-bit halves *)
+      cil_st128 := true
     else if arg = "--cil-tangent"
     then cil_tangent := true
     else if arg = "--cil-rowloop"
@@ -1335,6 +1341,7 @@ let run (argv : string array) : unit =
            ~grouploop:!cil_grouploop
            ~transposed:!cil_transposed
            ~herm:!cil_herm
+           ~st128:!cil_st128
            ~rowloop:!cil_rowloop
            ~turnst:!cil_turnst
            ~turnst_gs:!cil_turnst_gs

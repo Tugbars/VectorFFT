@@ -12,6 +12,7 @@ token selects it, and what in it is unused.
 | [`avx2/shared/`](avx2/shared/) | 62 | `n1` | a whole small transform in registers: MONO forward, the pair's and chain3's backward leaf |
 | [`avx2/shared/col/`](avx2/shared/col/) | 110 | `n1c`, `t2c` | the N-D column stage (2D, 3D) and the in-place 1D MONO path; `chain=` |
 | [`avx2/shared/col/blocked/`](avx2/shared/col/blocked/) | 12 | `n1cb*`, `t2cb*` | the radix-32/64 column forms, raced: `forms=` |
+| [`avx2/shared/col/half/`](avx2/shared/col/half/) | 32 | `n1ch`, `n1cb*h` | the forward column leaf's half-store twins (the plane stores as two 128-bit halves: the odd CCE pitch of the 2D real r2c column pass), raced: `forms=` |
 | [`avx2/mono/`](avx2/mono/) | 2 | `mono64_il` | N = 64 as a fused 8x8, MONO form 1 (raced; the pair wins here) |
 | [`avx2/pair2p/`](avx2/pair2p/) | 161 | `n1t`, `t2`, `t2t`, `*_ct` | the two-pass Bailey pair: `il_route=2p`, `il_kv` |
 | [`avx2/pair2p/blocked/`](avx2/pair2p/blocked/) | 18 | `n1b*`, `n1tb*`, `t2b*`, `t2bt*` | radix 16/32/64 as two passes: an `il_kv` variant |
@@ -26,7 +27,7 @@ token selects it, and what in it is unused.
 | [`avx2/real/flat/`](avx2/real/flat/) | 38 | `r1c` | the real flat DIT's leaf (`il/real/zrf.h`): odd-N r2c/c2r on the `flat/` stages, real legs in, digit runs out: `eng=zrf` |
 | [`avx2/real/flat/herm/`](avx2/real/flat/herm/) | 38 | `t2csgh`, `t2csght` | the real flat DIT's last stage: the `t2csgn` group-loop tail storing the half spectrum (legs mirrored and conjugated as their bins demand), and its transposed backward reading it |
 
-924 files (the real family, `real/`, is one folder per engine since 2026-09-30). Two layouts and two emitters: every folder but `ztt/` and
+956 files (the real family, `real/`, is one folder per engine since 2026-09-30). Two layouts and two emitters: every folder but `ztt/` and
 `flat/odd_mid/` is **pure IL** (packed complex through all the arithmetic,
 `generator/lib/gen/c2c_il.ml`, corpus rows `zil_pure_cells`); those two are
 **boundary IL / split interior** (`cascade_z.ml`, rows `zil_boundary_cells`).

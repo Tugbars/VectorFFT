@@ -237,6 +237,7 @@ let emit
       ~(grouploop : bool)
       ~(transposed : bool)
       ~(herm : bool)
+      ~(st128 : bool)
       ~(rowloop : bool)
       ~(tangent : bool)
       ~(form_tag : bool)
@@ -251,6 +252,20 @@ let emit
       ~(uarch : Uarch.t)
   : string
   =
+  (* --cil-st128 (2026-10-01): the column leaf's plane STORES leave as two
+     128-bit halves (Cx_render.store128 on AZoutLeg) -- the 2D real column
+     pass runs at the odd CCE pitch hp1 = N2/2 + 1, where a 256-bit store of a
+     column pair crosses a cache line on every other row. The forward n1c leaf
+     only (the 2D real r2c leaf, in place, storing last): the measured cost of
+     the odd pitch is on the leaf's stores (the mids lose ~3% to it), and the
+     halves cost the mids 9-16% everywhere. The backward leaf (c2r's first
+     stage, out of place into its scratch plane) is a separate question. *)
+  if st128 && (kind <> N1C || colstride)
+  then failwith "codelet_cil: --cil-st128 is the n1c column leaf's store edge (plain or blocked)";
+  if st128 && dir = Bwd
+  then failwith "codelet_cil: --cil-st128 is the forward leaf's (the 2D real r2c column pass); no backward twin";
+  if st128 && isa.Isa.vec_width <> 4
+  then failwith "codelet_cil: --cil-st128 renders at 256 bits (the halves of a column pair)";
   (* Required, not optional: an optional arg here cannot be erased (OCaml
      warning 16), and making the policy explicit at every call site is better
      anyway. Only T2 streams a runtime table, so log3 is meaningless on the
@@ -317,6 +332,7 @@ let emit
        column-stride, group loop, blocked, log3, turnst-gs";
   let pretw = pretw || (colstride && kind = T2 && dir = Bwd && not transposed) in
   Cx_render.colstride := colstride;
+  Cx_render.store128 := st128 || Cx_render.store128_env;
   Cx_render.herm := (if herm then (if transposed then 2 else 1) else 0);
   Cx_render.herm_hl := radix / 2;
   if kind = T2C && (turnst || turnst_gs)
@@ -1747,6 +1763,7 @@ let emit
                 then "_ct"
                 else "")
              ^ form_tag_of ~on:form_tag ~blocked ~tangent:ctx.tangent ~split
+             ^ (if st128 then "h" else "")
              ^ if ctx.tw_log3 then "_log3" else "")
             (if dir = Fwd then "fwd" else "bwd")
             isa.Isa.name)

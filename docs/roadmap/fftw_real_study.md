@@ -204,10 +204,25 @@ transpose). The differences are mechanical:
 4. Odd N: FFTW is scalar end to end, five passes at 1215, twiddle-dominated. A
    vectorized real odd leaf (the odd blocked emission with real inputs) on our
    mids competes against scalar code there.
-5. Batches: FFTW gains nothing from K > 1 in the real stage; K separate K = 1
-   transforms (our transform-contiguous route) is the same work.
-6. Rank >= 2: our 2D real tier already has FFTW's shape (rows real, columns
-   complex over hp1, no transpose); the natural-order restriction is ours.
+5. Batches: FFTW gains nothing from K > 1 in the real stage, and K separate
+   K = 1 transforms (our transform-contiguous route) is the same arithmetic;
+   it is not the same time. In the row role of a plane every row arrives from
+   L2 once per pass, and the K = 1 verdict was raced L1-hot: per row of 1024
+   we take 587 ns against FFTW's 509 where both take 422 at K = 1 (§5b); at
+   N2 = 16 the public execute per row adds 1.3 ns and rn1 runs the complex
+   body on (x, 0) lanes. The row engine of a plane IS the transform-contiguous
+   real batch, and it needs its own race in the row role: a real-input codelet
+   (zero imaginary inputs through the simplifier, outputs 0..N/2, the row loop
+   inside), a lane-major twin (four rows across the lanes, 4x4 transposes at
+   the edges), the existing engines; the pass count over an L2 row decides.
+6. Rank >= 2: our 2D real tier has FFTW's shape (rows real, columns complex
+   over hp1, no transpose). What it lacks is a race in its own plane: the
+   column kinds were raced on even-pitch c2c planes (the half-store leaf form
+   is the first in-situ race), the natural request skips the band race at tall
+   N1, and N1 = 128 runs a two-stage chain through the natural scratch plane
+   against one in-place pass. A monolithic or blocked 128 leaf is not the
+   answer there (it would spill; owner, 2026-10-01): the open question is the
+   scratch pass.
 7. Things to take: the untangle-in-the-butterfly math, the negative-stride
    mirror walk per lane, the ×i folded into the twiddle multiply, the
    self-mirror bins as tiny separate real DFTs, per-lane twiddle tables.
