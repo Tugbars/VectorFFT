@@ -453,6 +453,8 @@ void vfft_destroy(vfft_plan h)
     vfft_zttr_destroy(h->zttr);                  /* ZTT-r (il/real/zttr.h) */
     vfft_zfsr_destroy(h->zfsr);                  /* the real four-step (il/real/zfsr.h) */
     vfft_zrf_destroy(h->zrf);                    /* the real flat DIT (il/real/zrf.h) */
+    vfft_zrb_destroy(h->zrb);                    /* the real Bluestein (il/real/zrb.h) */
+    vfft_zrbl_destroy(h->zrbl);                  /* the lane Bluestein (il/real/zrb_lanes.h) */
     vfft_aligned_free(h->zr2c_aff);      /* posix_memalign-backed */
     vfft_aligned_free(h->zr2c_scratch);
     if (h->rplan)

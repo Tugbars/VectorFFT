@@ -287,6 +287,18 @@ struct vfft_plan_s
      * (bridge/real_bridge.h), its chain swept at create and banked
      * (eng=zrf chain= msz=). zrf != NULL selects it. */
     struct vfft_zrf_s *zrf;         /* the real flat DIT's plan (owned)    */
+    /* the REAL BLUESTEIN (2026-10-01, il/real/zrb.h): the odd-N real transform
+     * without a chain as a chirp-z convolution at M >= (3N-1)/2 (the half
+     * spectrum's own bound) on a matched IL inner pair; the odd real race's
+     * engine beside the odd routes, its M and inner swept at create and banked
+     * (eng=zrb m= in= in_sh= in_tw=). zrb != NULL selects it. */
+    struct vfft_zrb_s *zrb;         /* the real Bluestein's plan (owned)   */
+    /* the real Bluestein over K LANES (2026-10-01, il/real/zrb_lanes.h): the
+     * interleaved real batch in its lane-major geometry at an odd N without a
+     * chain, the convolution on the IL column pass at M over the K lanes;
+     * banked on the cell's q=K row (eng=zrbl m= chain= forms= wc=).
+     * zrbl != NULL selects it. */
+    struct vfft_zrbl_s *zrbl;       /* the lane Bluestein's plan (owned)   */
     stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
     struct vfft_ilnd_s *ilnd;  /* the rank-N INTERLEAVED c2c tier (fftnd_il.h), owned */
     vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */

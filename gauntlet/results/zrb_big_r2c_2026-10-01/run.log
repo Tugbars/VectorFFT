@@ -1,0 +1,8 @@
+2026-10-01 11:27:46 run: 12 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-01 11:27:46 calibrate: 12 cells (0 already done)
+2026-10-01 11:32:57   calibrated 12/12 (1000003), 311 s elapsed
+2026-10-01 11:32:57 bench: 9 cells (0 already benched, 3 not banked -> not benched)
+2026-10-01 11:33:27   benched 9/9 (131071), 28 s elapsed
+2026-10-01 11:33:28 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zrb_big_r2c_2026-10-01\report_r2c.md
+2026-10-01 11:40:29 merge: 0 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-01 11:40:29 merged into C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom

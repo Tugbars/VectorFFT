@@ -1,14 +1,15 @@
-/* real_door_check.c -- the real door with ZTT-r, the real mono and the real
- * flat DIT wired in: at each N, both directions and both placements, the
- * door's pick (raced on a scratch store under recalibrate=1, then REPLAYED
- * from its bank) against the incumbent pinned by VFFT_ZRP=0 VFFT_ZRM=0
- * VFFT_ZRF=0 (zr2c at even N, the odd-real routes at odd N -- out of place
+/* real_door_check.c -- the real door with ZTT-r, the real mono, the real
+ * flat DIT and the real Bluestein wired in: at each N, both directions and
+ * both placements, the door's pick (raced on a scratch store under
+ * recalibrate=1, then REPLAYED from its bank) against the incumbent pinned
+ * by VFFT_ZRP=0 VFFT_ZRM=0 VFFT_ZRF=0 VFFT_ZRB=0 (zr2c at even N, the
+ * odd-real routes at odd N -- out of place
  * always: in place the odd incumbent runs through a copy), gated (relerr <
  * 1e-12), the roundtrip c2r(r2c(x)) = N x checked, the replay checked, then
  * the pick raced against the incumbent (the library body, 9 rounds, paced,
  * alternated).
  * Build: python gauntlet/build.py --compile --vfft --src gauntlet/real_door_check.c
- * Run:   real_door_check <scratch wisdom dir> [N | tiny | big | odd]   (the store is WRITTEN) */
+ * Run:   real_door_check <scratch wisdom dir> [N | tiny | big | odd | prime]   (the store is WRITTEN) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,7 +63,7 @@ int main(int argc, char **argv)
     vfft_wisdom *W = vfft_wisdom_load(argv[1]);
     const char *sel = argc > 2 ? argv[2] : "";
     const int only = atoi(sel);
-    const int tiny_only = !strcmp(sel, "tiny"), big_only = !strcmp(sel, "big"), odd_only = !strcmp(sel, "odd");
+    const int tiny_only = !strcmp(sel, "tiny"), big_only = !strcmp(sel, "big"), odd_only = !strcmp(sel, "odd"), prime_only = !strcmp(sel, "prime");
     /* the real mono's band (every rn1 radix), then pow2, then the 2^a*odd band (ZTT-r
      * needs 2^7 * odd: the ingest's runs in whole blocks, the terminator's run length a
      * multiple of 8) */
@@ -74,13 +75,20 @@ int main(int argc, char **argv)
                               /* the odd band: the real flat DIT's cells (il/real/zrf.h) */
                               33, 35, 39, 45, 49, 51, 55, 63, 75, 99, 105, 135, 165, 225, 243, 315, 405, 525, 625,
                               675, 729, 945, 1125, 1215, 1365, 1375, 1575, 2025, 2187, 3125, 3375, 6561, 10125, 16875 };
+    /* the Bluestein's cells (il/real/zrb.h): odd N past the mono with a prime factor
+     * outside the flat DIT's pool -- primes, and composites carrying one */
+    static const int Np[] = { 67, 101, 107, 127, 159, 251, 371, 509, 749, 909, 1009, 1031, 1063, 1535, 2047,
+                              4099, 6563, 10007, 65537, 100003 };
+    const int nNs = (int)(sizeof Ns / sizeof Ns[0]), nNp = (int)(sizeof Np / sizeof Np[0]);
     unsigned seed = 0x777u;
     int fails = 0;
-    for (int ni = 0; ni < (int)(sizeof Ns / sizeof Ns[0]); ni++)
+    for (int ni = 0; ni < nNs + nNp; ni++)
     {
-        const int N = Ns[ni];
+        const int N = ni < nNs ? Ns[ni] : Np[ni - nNs];
         const size_t NX = (size_t)N + 2;
         if (only > 0 && N != only) continue;
+        if ((tiny_only || big_only) && ni >= nNs) continue;
+        if (prime_only && ni < nNs) continue;
         if (tiny_only && N > 64) continue;
         if (big_only && (N <= 64 || (N & 1))) continue;
         if (odd_only && (!(N & 1) || N < 33)) continue;
@@ -95,9 +103,9 @@ int main(int argc, char **argv)
         {
             const int ip0 = (N & 1) ? 0 : ip;   /* the odd incumbent is out of place */
             /* the incumbent, pinned; the door's pick raced (recalibrate) then replayed */
-            _putenv("VFFT_ZRP=0"); _putenv("VFFT_ZRM=0"); _putenv("VFFT_ZRF=0");
+            _putenv("VFFT_ZRP=0"); _putenv("VFFT_ZRM=0"); _putenv("VFFT_ZRF=0"); _putenv("VFFT_ZRB=0");
             vfft_plan f0 = mk(W, N, 0, ip0, 0), b0 = mk(W, N, 1, ip0, 0);
-            _putenv("VFFT_ZRP="); _putenv("VFFT_ZRM="); _putenv("VFFT_ZRF=");
+            _putenv("VFFT_ZRP="); _putenv("VFFT_ZRM="); _putenv("VFFT_ZRF="); _putenv("VFFT_ZRB=");
             vfft_plan f1 = mk(W, N, 0, ip, 1), b1 = mk(W, N, 1, ip, 1);
             vfft_plan f2 = mk(W, N, 0, ip, 0), b2 = mk(W, N, 1, ip, 0);
             if (!f0 || !b0 || !f1 || !b1 || !f2 || !b2) { printf("N=%d ip=%d: a plan is NULL\n", N, ip); fails++; continue; }

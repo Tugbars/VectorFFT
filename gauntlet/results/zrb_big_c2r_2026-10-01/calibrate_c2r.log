@@ -1,0 +1,12 @@
+4099       banked      1899ms raced     prime
+6563       banked      2718ms raced     prime
+10007      banked      2830ms raced     prime
+16411      banked      5096ms raced     prime
+30011      banked     13690ms raced     prime
+50021      banked     32864ms raced     prime
+65537      banked     38008ms raced     ztt
+100003     banked     86365ms raced     prime
+131071     banked    126928ms raced     prime
+262147     REFUSED      125ms refused   -
+524287     REFUSED      126ms refused   -
+1000003    REFUSED      127ms refused   -

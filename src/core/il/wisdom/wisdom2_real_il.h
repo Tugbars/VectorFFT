@@ -20,9 +20,13 @@
  *                                                  budget in complex, 0 = untiled; on a
  *                                                  threaded plan's row the threaded arm:
  *                                                  1 FIRST, 2 LEVELS)
+ *   eng=zrb  m=1152 in=ztt in_sh=4.4.8.9 in_tw=0  (the real Bluestein, il/real/zrb.h, odd N
+ *                                                  without a chain: the convolution length
+ *                                                  and the inner pair's descriptor, the
+ *                                                  prime route's own spelling)
  *   eng=oddr                                      (odd N: the odd-real routes stood
- *                                                  against the mono and the flat DIT;
- *                                                  their own route record is
+ *                                                  against the mono, the flat DIT and the
+ *                                                  Bluestein; their own route record is
  *                                                  wisdom2_oddr.h's)
  * The door (il/real/real_create_il.h) reads the engine first and lets the
  * engine read its own plan input; a miss races the engines and banks the
@@ -198,6 +202,148 @@ static inline int vw2_real_il_bank_zrf(vw2_store_t *s, int realN, int is_c2r, in
         snprintf(b, sizeof b, "%.1f", ns);
         if (vw2_rec_set(&r, 2, "ns", b) != VW2_OK ||
             vw2_rec_set(&r, 2, "metric", is_c2r ? "bwd1" : "fwd1") != VW2_OK ||
+            vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    }
+    vw2__oop_stamp_date(&r);
+    rc = vw2_bank(s, &r);
+    if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
+    return VW2_OK;
+}
+
+/* The banked real Bluestein plan input at the cell: 1 with *M and the inner's
+ * kind / shape / tile filled, 0 when the cell's engine is not zrb or the
+ * tokens are malformed (a miss). */
+static inline int vw2_real_il_lookup_zrb_q(const vw2_store_t *s, int realN, int K, int is_c2r,
+                                           int is_inplace, int T, int *M, char *kind, size_t ksz,
+                                           char *shape, size_t ssz, int *tw)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *eng, *m, *in, *sh, *t;
+    *M = 0; *tw = 0; kind[0] = 0; shape[0] = 0;
+    vw2_real_il_key(&k, realN, is_c2r, is_inplace, T);
+    k.q = K;   /* the q=1 row is the one-row cell; a batch's lane-major verdict is its q=K row */
+    r = vw2_lookup(s, &k);
+    if (!r || vw2__is_seed(r)) return 0;
+    eng = vw2_rec_get(r, "eng");
+    if (!eng || strcmp(eng, "zrb")) return 0;
+    m = vw2_rec_get(r, "m"); in = vw2_rec_get(r, "in"); sh = vw2_rec_get(r, "in_sh"); t = vw2_rec_get(r, "in_tw");
+    if (!m || !in || !sh) return 0;
+    *M = atoi(m);
+    if (*M < realN + (realN - 1) / 2) return 0;
+    snprintf(kind, ksz, "%s", in);
+    snprintf(shape, ssz, "%s", sh);
+    if (t) { const int v = atoi(t); if (v < 0) return 0; *tw = v; }
+    return 1;
+}
+static inline int vw2_real_il_lookup_zrb(const vw2_store_t *s, int realN, int is_c2r,
+                                         int is_inplace, int T, int *M, char *kind, size_t ksz,
+                                         char *shape, size_t ssz, int *tw)
+{
+    return vw2_real_il_lookup_zrb_q(s, realN, 1, is_c2r, is_inplace, T, M, kind, ksz, shape, ssz, tw);
+}
+
+/* Bank the real Bluestein verdict at the cell (replacing whatever engine held it);
+ * K > 1 = the lane-major batch's q=K row. */
+static inline int vw2_real_il_bank_zrb_q(vw2_store_t *s, int realN, int K, int is_c2r, int is_inplace, int T,
+                                         int M, const char *kind, const char *shape, int tw, double ns)
+{
+    vw2_rec_t r;
+    char b[64];
+    int rc;
+    memset(&r, 0, sizeof r);
+    vw2_real_il_key(&r.key, realN, is_c2r, is_inplace, T);
+    r.key.q = K;
+    snprintf(b, sizeof b, "%d", M);
+    if (vw2_rec_set(&r, 1, "eng", "zrb") != VW2_OK ||
+        vw2_rec_set(&r, 1, "m", b) != VW2_OK ||
+        vw2_rec_set(&r, 1, "in", kind) != VW2_OK ||
+        vw2_rec_set(&r, 1, "in_sh", shape) != VW2_OK) { vw2_rec_free(&r); return -1; }
+    snprintf(b, sizeof b, "%d", tw > 0 ? tw : 0);
+    if (vw2_rec_set(&r, 1, "in_tw", b) != VW2_OK ||
+        vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
+        vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    if (ns > 0.0) {
+        snprintf(b, sizeof b, "%.1f", ns);
+        if (vw2_rec_set(&r, 2, "ns", b) != VW2_OK ||
+            vw2_rec_set(&r, 2, "metric", K > 1 ? (is_c2r ? "bwdK" : "fwdK") : (is_c2r ? "bwd1" : "fwd1")) != VW2_OK ||
+            vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    }
+    vw2__oop_stamp_date(&r);
+    rc = vw2_bank(s, &r);
+    if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
+    return VW2_OK;
+}
+static inline int vw2_real_il_bank_zrb(vw2_store_t *s, int realN, int is_c2r, int is_inplace, int T,
+                                       int M, const char *kind, const char *shape, int tw, double ns)
+{
+    return vw2_real_il_bank_zrb_q(s, realN, 1, is_c2r, is_inplace, T, M, kind, shape, tw, ns);
+}
+
+/* The lane Bluestein's cell is the q=K row (the batch count is the key's
+ * quantity): eng=zrbl m= chain= forms= wc=. */
+static inline void vw2_real_il_key_k(vw2_key_t *k, int realN, int K, int is_c2r, int is_inplace, int T)
+{
+    vw2_real_il_key(k, realN, is_c2r, is_inplace, T);
+    k->q = K;
+}
+static inline int vw2_real_il_lookup_zrbl(const vw2_store_t *s, int realN, int K, int is_c2r,
+                                          int is_inplace, int T, int *M, int *chain, int max, int *nst,
+                                          char *forms, size_t fsz, int *wc)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *eng, *m, *ch, *fo, *w;
+    long prod = 1;
+    int n = 0;
+    *M = 0; *nst = 0; *wc = 0; forms[0] = 0;
+    vw2_real_il_key_k(&k, realN, K, is_c2r, is_inplace, T);
+    r = vw2_lookup(s, &k);
+    if (!r || vw2__is_seed(r)) return 0;
+    eng = vw2_rec_get(r, "eng");
+    if (!eng || strcmp(eng, "zrbl")) return 0;
+    m = vw2_rec_get(r, "m"); ch = vw2_rec_get(r, "chain"); fo = vw2_rec_get(r, "forms"); w = vw2_rec_get(r, "wc");
+    if (!m || !ch) return 0;
+    *M = atoi(m);
+    if (*M < realN + (realN - 1) / 2) return 0;
+    while (*ch && n < max) {
+        char *end;
+        long v = strtol(ch, &end, 10);
+        if (end == ch || v < 2) return 0;
+        chain[n++] = (int)v;
+        prod *= v;
+        ch = end;
+        if (*ch == '.') ch++;
+        else if (*ch) return 0;
+    }
+    if (n < 1 || *ch || prod != (long)*M) return 0;
+    *nst = n;
+    if (fo && strcmp(fo, "-")) snprintf(forms, fsz, "%s", fo);
+    if (w) { const int v = atoi(w); if (v < 0) return 0; *wc = v; }
+    return 1;
+}
+static inline int vw2_real_il_bank_zrbl(vw2_store_t *s, int realN, int K, int is_c2r, int is_inplace, int T,
+                                        int M, const int *chain, int nst, const char *forms, int wc, double ns)
+{
+    vw2_rec_t r;
+    char b[64];
+    int rc, off = 0;
+    memset(&r, 0, sizeof r);
+    vw2_real_il_key_k(&r.key, realN, K, is_c2r, is_inplace, T);
+    snprintf(b, sizeof b, "%d", M);
+    if (vw2_rec_set(&r, 1, "eng", "zrbl") != VW2_OK || vw2_rec_set(&r, 1, "m", b) != VW2_OK) { vw2_rec_free(&r); return -1; }
+    for (int i = 0; i < nst && off < (int)sizeof b - 4; i++)
+        off += snprintf(b + off, sizeof b - (size_t)off, "%s%d", i ? "." : "", chain[i]);
+    if (vw2_rec_set(&r, 1, "chain", b) != VW2_OK ||
+        vw2_rec_set(&r, 1, "forms", forms && forms[0] ? forms : "-") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    snprintf(b, sizeof b, "%d", wc > 0 ? wc : 0);
+    if (vw2_rec_set(&r, 1, "wc", b) != VW2_OK ||
+        vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
+        vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    if (ns > 0.0) {
+        snprintf(b, sizeof b, "%.1f", ns);
+        if (vw2_rec_set(&r, 2, "ns", b) != VW2_OK ||
+            vw2_rec_set(&r, 2, "metric", is_c2r ? "bwdK" : "fwdK") != VW2_OK ||
             vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) { vw2_rec_free(&r); return -1; }
     }
     vw2__oop_stamp_date(&r);

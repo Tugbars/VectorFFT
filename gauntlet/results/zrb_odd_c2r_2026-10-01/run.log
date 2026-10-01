@@ -1,0 +1,62 @@
+2026-10-01 10:58:25 run: 682 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-01 10:58:25 calibrate: 682 cells (0 already done)
+2026-10-01 10:58:29   calibrated 25/682 (179), 3 s elapsed
+2026-10-01 10:58:32   calibrated 50/682 (271), 7 s elapsed
+2026-10-01 10:58:36   calibrated 75/682 (365), 10 s elapsed
+2026-10-01 10:58:39   calibrated 100/682 (447), 14 s elapsed
+2026-10-01 10:58:42   calibrated 125/682 (523), 17 s elapsed
+2026-10-01 10:58:46   calibrated 150/682 (601), 21 s elapsed
+2026-10-01 10:58:49   calibrated 175/682 (681), 24 s elapsed
+2026-10-01 10:58:53   calibrated 200/682 (753), 28 s elapsed
+2026-10-01 10:58:56   calibrated 225/682 (823), 31 s elapsed
+2026-10-01 10:59:00   calibrated 250/682 (905), 35 s elapsed
+2026-10-01 10:59:03   calibrated 275/682 (971), 38 s elapsed
+2026-10-01 10:59:07   calibrated 300/682 (1041), 41 s elapsed
+2026-10-01 10:59:10   calibrated 325/682 (1113), 45 s elapsed
+2026-10-01 10:59:14   calibrated 350/682 (1179), 48 s elapsed
+2026-10-01 10:59:17   calibrated 375/682 (1245), 52 s elapsed
+2026-10-01 10:59:21   calibrated 400/682 (1315), 55 s elapsed
+2026-10-01 10:59:24   calibrated 425/682 (1383), 59 s elapsed
+2026-10-01 10:59:28   calibrated 450/682 (1447), 62 s elapsed
+2026-10-01 10:59:31   calibrated 475/682 (1511), 66 s elapsed
+2026-10-01 10:59:35   calibrated 500/682 (1577), 69 s elapsed
+2026-10-01 10:59:38   calibrated 525/682 (1643), 73 s elapsed
+2026-10-01 10:59:42   calibrated 550/682 (1709), 76 s elapsed
+2026-10-01 10:59:45   calibrated 575/682 (1775), 80 s elapsed
+2026-10-01 10:59:48   calibrated 600/682 (1837), 83 s elapsed
+2026-10-01 10:59:52   calibrated 625/682 (1903), 87 s elapsed
+2026-10-01 10:59:55   calibrated 650/682 (1965), 90 s elapsed
+2026-10-01 10:59:59   calibrated 675/682 (2031), 94 s elapsed
+2026-10-01 11:00:00   calibrated 682/682 (2047), 95 s elapsed
+2026-10-01 11:00:00 bench: 682 cells (0 already benched, 0 not banked -> not benched)
+2026-10-01 11:00:57   benched 25/682 (179), 56 s elapsed
+2026-10-01 11:01:55   benched 50/682 (271), 114 s elapsed
+2026-10-01 11:02:54   benched 75/682 (365), 172 s elapsed
+2026-10-01 11:03:53   benched 100/682 (447), 231 s elapsed
+2026-10-01 11:04:48   benched 125/682 (523), 287 s elapsed
+2026-10-01 11:05:49   benched 150/682 (601), 347 s elapsed
+2026-10-01 11:06:50   benched 175/682 (681), 408 s elapsed
+2026-10-01 11:07:53   benched 200/682 (753), 472 s elapsed
+2026-10-01 11:08:55   benched 225/682 (823), 534 s elapsed
+2026-10-01 11:09:55   benched 250/682 (905), 594 s elapsed
+2026-10-01 11:10:55   benched 275/682 (971), 653 s elapsed
+2026-10-01 11:11:57   benched 300/682 (1041), 716 s elapsed
+2026-10-01 11:13:01   benched 325/682 (1113), 779 s elapsed
+2026-10-01 11:14:04   benched 350/682 (1179), 842 s elapsed
+2026-10-01 11:15:08   benched 375/682 (1245), 906 s elapsed
+2026-10-01 11:16:12   benched 400/682 (1315), 970 s elapsed
+2026-10-01 11:17:16   benched 425/682 (1383), 1035 s elapsed
+2026-10-01 11:18:21   benched 450/682 (1447), 1099 s elapsed
+2026-10-01 11:19:23   benched 475/682 (1511), 1162 s elapsed
+2026-10-01 11:20:30   benched 500/682 (1577), 1228 s elapsed
+2026-10-01 11:21:30   benched 525/682 (1643), 1289 s elapsed
+2026-10-01 11:22:31   benched 550/682 (1709), 1349 s elapsed
+2026-10-01 11:23:31   benched 575/682 (1775), 1410 s elapsed
+2026-10-01 11:24:33   benched 600/682 (1837), 1472 s elapsed
+2026-10-01 11:25:32   benched 625/682 (1903), 1530 s elapsed
+2026-10-01 11:26:31   benched 650/682 (1965), 1589 s elapsed
+2026-10-01 11:27:28   benched 675/682 (2031), 1647 s elapsed
+2026-10-01 11:27:45   benched 682/682 (2047), 1663 s elapsed
+2026-10-01 11:27:46 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zrb_odd_c2r_2026-10-01\report_c2r.md
+2026-10-01 11:40:29 merge: 0 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-01 11:40:29 merged into C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom

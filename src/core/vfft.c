@@ -38,6 +38,7 @@
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
 #include "zrf.h"                /* the real flat DIT (il/real/zrf.h): odd-N r2c/c2r on the flat DIT's stages (2026-09-30) */
+#include "il/real/zrb.h"        /* the real Bluestein (il/real/zrb.h): odd N without a chain as a chirp-z convolution at (3N-1)/2 (2026-10-01) */
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
 #include "il/rank1/ztt_mt.h"         /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
 #include "il/real/zttr_mt.h"         /* ZTT-r's threaded arms: the same walk, the fold staying fused (2026-09-30) */
@@ -1041,6 +1042,7 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
 
 #include "il/rank2/il2d_cols.h" /* IL2D column kernels, chain enumerator,
                                           * table builders (migration step 6b) */
+#include "il/real/zrb_lanes.h"  /* the lane Bluestein: the real batch's lane-major geometry on the column pass (2026-10-01) */
 
 /* the ODD-REAL BRIDGE handle builder (struct comment at oddr_child):
  * a self-contained plan - the c2c(N) NATURAL IL child + the row pair
@@ -1256,6 +1258,10 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
         return 0; /* the real four-step owns its plane: one transform at a time */
     if (g->zrf)
         return 0; /* the real flat DIT owns its level planes: one transform at a time */
+    if (g->zrb)
+        return 0; /* the real Bluestein owns its two planes: one transform at a time */
+    if (g->zrbl)
+        return 0; /* the lane Bluestein owns its M x K plane */
     if (g->zrp)
         return 1; /* the real pair: two serial kernels, no pool, no child */
     if (g->zttr)
@@ -1446,6 +1452,27 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         /* the real four-step: the plan IS the split */
         if (a->zfsr->N1 != b->zfsr->N1 || a->zfsr->N2 != b->zfsr->N2)
             TC_NEQ("real four-step split");
+        return 1;
+    }
+    if (!a->zrbl != !b->zrbl)
+        TC_NEQ("lane Bluestein");
+    if (a->zrbl)
+    {
+        /* the lane Bluestein: the plan IS the length, the column chain, its forms and the window */
+        if (a->zrbl->M != b->zrbl->M || a->zrbl->K != b->zrbl->K || a->zrbl->nst != b->zrbl->nst ||
+            a->zrbl->wc != b->zrbl->wc || strcmp(a->zrbl->forms, b->zrbl->forms) ||
+            memcmp(a->zrbl->Rs, b->zrbl->Rs, sizeof(int) * (size_t)a->zrbl->nst))
+            TC_NEQ("lane Bluestein length/chain");
+        return 1;
+    }
+    if (!a->zrb != !b->zrb)
+        TC_NEQ("real Bluestein");
+    if (a->zrb)
+    {
+        /* the real Bluestein: the plan IS the length and the inner */
+        if (a->zrb->M != b->zrb->M || a->zrb->itw != b->zrb->itw ||
+            strcmp(a->zrb->ikind, b->zrb->ikind) || strcmp(a->zrb->ishape, b->zrb->ishape))
+            TC_NEQ("real Bluestein length/inner");
         return 1;
     }
     if (!a->zrf != !b->zrf)
@@ -1850,11 +1877,12 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * out-of-place and rejected it in-place. */
         !(cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
           cfg->howmany == 1 && (cfg->n[0] % 2) == 0) &&
-        /* an odd cell with a real flat DIT chain goes on to the odd real race
-         * (bridge/real_bridge.h): that engine is one pipeline in both
-         * placements, and the race's in-place incumbent is the bridge below */
+        /* an odd cell with a real flat DIT chain, or the Bluestein's, goes on
+         * to the odd real race (bridge/real_bridge.h): those engines are one
+         * pipeline in both placements, and the race's in-place incumbent is
+         * the bridge below */
         !(cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->howmany == 1 && !ob &&
-          (cfg->n[0] & 1) && _zrf_has_chain(cfg->n[0])))
+          (cfg->n[0] & 1) && (_zrf_has_chain(cfg->n[0]) || _zrb_ok(cfg->n[0]))))
     {
         /* ODD N in-place (2026-08-27, (c) of the odd-real list): the
          * CCE plane contract holds at odd N too — 2*(N/2+1) = N+1
@@ -2331,6 +2359,19 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         char cs[48];
         vfft_zrf_chain_str(h->zrf->R, h->zrf->K, cs, sizeof cs);
         FP__ADD(" zrf=[%s%s/w%d/m%d]", cs, h->zrf->nomsz ? "/t" : "", h->zrf->tile, h->zrf->mt);
+    }
+    if (h->zrb)
+    {
+        char cs[96];
+        vfft_zrb_str(h->zrb, cs, sizeof cs);
+        if (h->K > 1) FP__ADD(" zrb=[K%zu/%s]", h->K, cs);
+        else FP__ADD(" zrb=[%s]", cs);
+    }
+    if (h->zrbl)
+    {
+        char cs[128];
+        vfft_zrbl_str(h->zrbl, cs, sizeof cs);
+        FP__ADD(" zrbl=[K%d/%s]", h->zrbl->K, cs);
     }
     if (h->zttr)
     {

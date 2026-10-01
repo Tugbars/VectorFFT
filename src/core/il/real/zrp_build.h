@@ -51,6 +51,7 @@
 #include "zrm.h"
 #include "zfsr.h"
 #include "zrf.h"
+#include "zrb.h"
 #include "wisdom2_real_il.h"
 #include "common/support/race.h"
 
@@ -211,6 +212,40 @@ static void _exec_zrf(struct vfft_plan_s *h, const double *sre, double *dre)
         vfft_zrf_execute_fwd(h->zrf, sre, dre);
     else
         vfft_zrf_execute_bwd(h->zrf, sre, dre);
+}
+
+/* the real Bluestein (zrb.h): both placements are the same pipeline (the
+ * planes are the plan's own); the handle is built in the bridge, where the
+ * inner descriptors live */
+static void _exec_zrb(struct vfft_plan_s *h, const double *sre, double *dre)
+{
+    if (h->K > 1)
+    {   /* the lane-major batch: the one-row pipeline per lane, edges at the lane stride */
+        if (h->transform == VFFT_R2C)
+            vfft_zrb_execute_fwd_lanes(h->zrb, sre, dre, (int)h->K);
+        else
+            vfft_zrb_execute_bwd_lanes(h->zrb, sre, dre, (int)h->K);
+        return;
+    }
+    if (h->transform == VFFT_R2C)
+        vfft_zrb_execute_fwd(h->zrb, sre, dre);
+    else
+        vfft_zrb_execute_bwd(h->zrb, sre, dre);
+}
+
+/* the lane Bluestein (zrb_lanes.h): K lanes, out of place, the plane the plan's own */
+static void _exec_zrbl(struct vfft_plan_s *h, const double *sre, double *dre)
+{
+    if (h->transform == VFFT_R2C)
+        vfft_zrbl_execute_fwd(h->zrbl, sre, dre);
+    else
+        vfft_zrbl_execute_bwd(h->zrbl, sre, dre);
+}
+
+/* the real Bluestein's cells: odd N past the mono's (64) with no flat DIT chain */
+static int _zrb_ok(int N)
+{
+    return (N & 1) && N > VFFT_ZRM_MAX_N && !_zrf_has_chain(N);
 }
 
 /* VFFT_ZRF at create: 1 = pinned at the chain "9.9.5" (then "/t" = the split
