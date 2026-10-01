@@ -67,6 +67,14 @@ type caddr =
      offset of the vector inside the group's columns. ── *)
   | ADigOut of int * int (* (p, off): zout[(size_t)2p*OLs + 2*k + off] *)
   | ADigIn of int * int (* (p, off): zin [(size_t)2p*Ls  + 2*k + off] *)
+  (* ── the real ROWS kind r2zr (real_il.ml, 2026-10-01): the real leaf over
+     ROW-MAJOR rows. A lane is a ROW: row k+r's samples off.. load as one
+     vector (Ls = the row pitch in doubles) and a block of vec_width such
+     loads is transposed into the per-sample lane vectors. AZeroV is the
+     zero vector (the imaginary lane of the real DC / Nyquist slots): no
+     address, a register xor. ── *)
+  | AXinRow of int * int (* (r, off): zin[((size_t)k + r)*Ls + off] *)
+  | AZeroV
 
 type cx_kind =
   | CIn of int (* input leg i (a packed-complex load) *)

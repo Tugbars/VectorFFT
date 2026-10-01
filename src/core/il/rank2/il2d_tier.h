@@ -126,8 +126,9 @@ static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
  * row-route race (race == serving path). il2d_rows set = the ROWSPLIT
  * band route (transpose rows->lanes, split engine at (N2,K=rw),
  * fused transpose+zip back); NULL = the per-row TC door. */
-static void _il2d_real_rows_fwd(struct vfft_plan_s *h, const double *sre,
-                                double *dre)
+static void _il2d_rowx_fwd(struct vfft_plan_s *h, const double *sre, double *dre); /* il2d_real_rows.h, later in this TU */
+static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
+                                      double *dre)
 {
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
     if (h->il2d_oddn2)
@@ -174,6 +175,20 @@ static void _il2d_real_rows_fwd(struct vfft_plan_s *h, const double *sre,
     else
         vfft_execute(h->il2d_row, VFFT_FORWARD, (double *)sre, NULL,
                      dre, NULL);
+}
+
+/* the r2c row pass: the plan's own row plan when one is bound (the row
+ * race's verdict -- the rows kernel, a real engine per row, or the route
+ * above -- entered at the plan's stack state), else the route as it stands */
+static void _il2d_real_rows_fwd(struct vfft_plan_s *h, const double *sre,
+                                double *dre)
+{
+    if (h->il2d_rx_on)
+    {
+        _il2d_rowx_fwd(h, sre, dre);
+        return;
+    }
+    _il2d_real_rows_fwd_route(h, sre, dre);
 }
 
 static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,

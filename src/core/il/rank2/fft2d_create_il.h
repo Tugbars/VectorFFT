@@ -995,6 +995,13 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             fprintf(stderr, "[il2d] forms %dx%d: %s could not be banked on the real row\n",
                     N1, N2, il2d_fm);
     }
+    /* the r2c ROW ENGINE (il2d_real_rows.h): the plan's own row plan -- env
+     * pin, the banked rx=, or the row race in the row role. After the forms
+     * re-bank above, so the row it banks on is the cell's. One thread, even
+     * N2: a threaded plan keeps the per-row door's slabs, odd N2 its c2c
+     * child, c2r its own row pass. */
+    if (h->transform == VFFT_R2C && h->il2d_row && !il2d_oddn2 && h->nthreads <= 1)
+        _il2d_real_rowplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* the column-MT verdict. Serve a banked one ONLY when it was
      * raced at THIS thread count; otherwise race and bank. A
      * single-threaded plan never threads columns and never races. */

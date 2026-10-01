@@ -70,6 +70,7 @@ type cil_form =
   | Cil_r2z (* --cil-r2z: the real pair's real leaf *)
   | Cil_rn1 (* --cil-rn1: the real MONO, the whole small real transform as one n1 body (c2c_il.ml RN1) *)
   | Cil_r1c (* --cil-r1c: the real FLAT leaf, real legs -> the digit runs (real_il.ml R1c) *)
+  | Cil_r2zr (* --cil-r2zr: the real ROWS, the real leaf over row-major rows (real_il.ml R2zr) *)
 
 type cil_turn =
   | Turnst

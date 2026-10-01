@@ -282,6 +282,27 @@ static inline const char *vw2__rl_tok(int is_c2r, int which)
     return is_c2r ? C2R[which] : R2C[which];
 }
 
+/* one string token on the shared real IL row -- the r2c row engine's verdict
+ * (rx=, rxs=: il/rank2/il2d_real_rows.h). Absent = NULL; a set on a missing
+ * row is refused (the chain bank makes the row). */
+static inline const char *vw2_2d_rl_tok_gets(const vw2_store_t *s, int N1, int N2, int ord, int T,
+                                             const char *name)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
+    r = vw2_lookup(s, &k);
+    return r ? vw2_rec_get(r, name) : NULL;
+}
+static inline int vw2_2d_rl_tok_sets(vw2_store_t *st, int N1, int N2, int ord, int T,
+                                     const char *name, const char *val)
+{
+    vw2_key_t k;
+    vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
+    if (!vw2_lookup(st, &k)) return -1;
+    return vw2_update_field(st, &k, name, val) == VW2_OK ? 0 : -1;
+}
+
 static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
                                    int is_c2r,
                                    int *Rs, int *nst, int *rw, int *wl,

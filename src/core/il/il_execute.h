@@ -14,10 +14,21 @@
 #define VFFT_IL_EXECUTE_H
 
 /* TRANSFORM-CONTIGUOUS batch MT: worker t runs transforms [t0, t0+tc) of
- * the batch through vfft_execute on its OWN clone handle (tcbw comment on
- * the struct) — full independence, no barriers, disjoint blocks. The clone's
- * route is pool-free by _tc_inner_mt_safe, so this re-entry into
- * vfft_execute from a pool thread can never touch the pool. */
+ * the batch on its OWN clone handle (tcbw comment on the struct) — full
+ * independence, no barriers, disjoint blocks. The clone's route is pool-free
+ * by _tc_inner_mt_safe, so this re-entry from a pool thread can never touch
+ * the pool. */
+/* One transform of a transform-contiguous batch: the inner handle's bound
+ * executor itself. The batch call paid the door's checks once; paying them
+ * again per transform through the public execute cost 1 ns a transform at
+ * N = 16 (10% of the transform) and with the bridge's engine walk 2-3 ns at
+ * 32..1024 (measured 2026-10-01). An unbound or declining inner takes the
+ * public execute. */
+static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, double *s, double *d)
+{
+    if (!in->k1_exec || in->k1_exec(in, dir, s, d) != 0)
+        vfft_execute(in, dir, s, NULL, d, NULL);
+}
 typedef struct
 {
     struct vfft_plan_s *p;
@@ -31,8 +42,7 @@ static void _tc_mt_tramp(void *v)
 {
     _tc_mt_arg *a = (_tc_mt_arg *)v;
     for (size_t t = 0; t < a->tc; t++)
-        vfft_execute(a->p, a->dir, a->s + (a->t0 + t) * a->sn, NULL,
-                     a->d + (a->t0 + t) * a->dn, NULL);
+        _tc_one(a->p, a->dir, a->s + (a->t0 + t) * a->sn, a->d + (a->t0 + t) * a->dn);
 }
 
 /* the flat DIT's serving: the threaded verdict at the plan's T when it
@@ -168,6 +178,34 @@ static int _k1x_zrb_bwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin
     vfft_zrb_execute_bwd(h->zrb, zin, zout);
     return 0;
 }
+/* the real four-step, ZTT-r, the real pair and the zr2c composite
+ * (il/real/zrp_build.h, zr2c_build.h): the engine's execute itself, the call
+ * the bridge's engine walk ends in. Each arms the pool itself when its
+ * threaded form is bound and takes either placement. */
+static int _k1x_zfsr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    _exec_zfsr(h, zin, zout);
+    return 0;
+}
+static int _k1x_zttr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    _exec_zttr(h, zin, zout);
+    return 0;
+}
+static int _k1x_zrp(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    _exec_zrp(h, zin, zout);
+    return 0;
+}
+static int _k1x_zr2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    _exec_zr2c(h, zin, zout);
+    return 0;
+}
 static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
@@ -189,6 +227,13 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
     {   /* serial: the engine's execute itself (a threaded form goes through the bridge, which arms the pool) */
         h->k1_exec = h->transform == VFFT_R2C ? _k1x_zrf_fwd : _k1x_zrf_bwd;
         return hp;
+    }
+    if (!h->oddr_child && !h->pq_inner && !h->tcb && h->N2 == 0 && h->K == 1)
+    {   /* the bridge's own order */
+        if (h->zfsr) { h->k1_exec = _k1x_zfsr; return hp; }
+        if (h->zttr) { h->k1_exec = _k1x_zttr; return hp; }
+        if (h->zrp) { h->k1_exec = _k1x_zrp; return hp; }
+        if (h->zr2c_child) { h->k1_exec = _k1x_zr2c; return hp; }
     }
     if (h->oddr_child || (!h->pq_inner && !h->tcb && h->N2 == 0))
         h->k1_exec = _k1x_real;
@@ -297,7 +342,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
             return;
         }
         for (size_t t = 0; t < h->K; t++)
-            vfft_execute(h->tcb, dir, sre + t * sn, NULL, d + t * dn, NULL);
+            _tc_one(h->tcb, dir, sre + t * sn, d + t * dn);
         return;
     }
     if (h->N2 > 0)

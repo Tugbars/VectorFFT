@@ -1132,6 +1132,7 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
  * general wisdom helper that stays in this file. */
 #include "il/real/zr2c_build.h" /* interleaved-CCE real route (step 18) */
 #include "il/real/zrp_build.h"  /* the real pair + the real door's engine race (2026-09-29) */
+#include "il/rank2/il2d_real_rows.h" /* the 2D real tier's row engine and its planner: the row race in the row role (2026-10-01) */
 
 #include "il/planning/dp_planner_il.h" /* the IL plan race at create (2026-09-03): pair x forms, chain3 x forms */
 #include "il/rank1/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */

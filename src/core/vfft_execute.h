@@ -411,6 +411,8 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
             if (h->il2d_rows)
                 vfft_destroy(h->il2d_rows); /* the rowsplit band engine */
+            if (h->il2d_rx_eng)
+                vfft_destroy((vfft_plan)h->il2d_rx_eng); /* the real tier's row engine */
             free(h->il2d_lx);
             free(h->il2d_lre);
             free(h->il2d_lim);

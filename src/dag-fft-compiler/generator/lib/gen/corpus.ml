@@ -2261,6 +2261,21 @@ let zil_pure_cells : (string * string list) list =
     (* the real FLAT leaf r1c (real_il.ml, 2026-09-30): real legs over contiguous
        columns -> the digit runs, fwd + bwd at the flat DIT's odd radices;
        zil/avx2/real/flat *)
+  (* the real ROWS r2zr (2026-10-01): the real leaf over row-major rows, forward *)
+  ; ( "radix4_z_r2zr_avx2.c"
+    , [ "4"; "--cil-r2zr"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix6_z_r2zr_avx2.c"
+    , [ "6"; "--cil-r2zr"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_r2zr_avx2.c"
+    , [ "8"; "--cil-r2zr"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix10_z_r2zr_avx2.c"
+    , [ "10"; "--cil-r2zr"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix12_z_r2zr_avx2.c"
+    , [ "12"; "--cil-r2zr"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_r2zr_avx2.c"
+    , [ "16"; "--cil-r2zr"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_r2zr_avx2.c"
+    , [ "32"; "--cil-r2zr"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix3_z_r1c_avx2.c"
     , [ "3"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix3_z_r1c_bwd_avx2.c"
@@ -2980,6 +2995,7 @@ let zil_folder (name : string) : string option =
          else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "ztt"
          else if base = "rn1" then "real/mono"
          else if base = "r1c" then "real/flat"
+         else if base = "r2zr" then "real/rows"
          else if base = "t2csgh" || base = "t2csght" then "real/flat/herm"
          else if base = "t2h" || base = "t2m" || base = "r2z" then "real/pair"
          else "pair2p/tangent")

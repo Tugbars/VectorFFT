@@ -76,12 +76,14 @@ type kind =
   | T2m (* form B top: the Hermitian mid over the real leaf's half spectra *)
   | R2z (* form B leaf: real columns -> packed half spectra (bwd: the inverse) *)
   | R1c (* the real FLAT leaf: real legs over contiguous columns -> the digit runs *)
+  | R2zr (* the real ROWS: the real leaf over row-major rows -> each row's CCE bins *)
 
 let kind_name = function
   | T2h -> "t2h"
   | T2m -> "t2m"
   | R2z -> "r2z"
   | R1c -> "r1c"
+  | R2zr -> "r2zr"
 ;;
 
 let kind_of_string = function
@@ -89,7 +91,8 @@ let kind_of_string = function
   | "t2m" -> T2m
   | "r2z" -> R2z
   | "r1c" -> R1c
-  | s -> failwith ("real_il: unknown kind " ^ s ^ " (t2h | t2m | r2z | r1c)")
+  | "r2zr" -> R2zr
+  | s -> failwith ("real_il: unknown kind " ^ s ^ " (t2h | t2m | r2z | r1c | r2zr)")
 ;;
 
 (* ═══════════════════════════════════════════════════════════════
@@ -639,6 +642,224 @@ let emit_leaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : st
 ;;
 
 (* ═══════════════════════════════════════════════════════════════
+   THE REAL ROWS: r2zr (2026-10-01; the row pass of a real plane)
+
+   The whole real R-point DFT of every ROW of a row-major plane, a lane a
+   row: row k's samples at zin[k*Ls + j] (Ls = the row pitch in doubles),
+   its CCE bins 0..R/2 at zout[2*(k*OLs + p)] (OLs = the row pitch in
+   complex, >= R/2 + 1). The arithmetic is the real leaf's (cx_real.ml,
+   real throughout, four rows per vector); the edges are the row-major ones:
+
+   - the load edge takes four rows' samples 4b..4b+3 as four vectors and
+     transposes the block (two unpacks per row pair, one turn per sample),
+     so sample j across the four rows is one vector; R = 4m + 2 takes its
+     last two samples from an overlapping block at R - 4;
+   - the store edge is r2z's per-row interleave over the slots 0..R/2, with
+     the DC and Nyquist slots as (x, 0): slots pair up (p, p+1) into one
+     256-bit store per row, a lone last slot leaves as per-row halves.
+
+   count rows, at least two: four per wide iteration, then two at VEX-128;
+   a lone last row runs with the row before it (out of place, the same
+   values written again). Forward only: the backward twin is not built.
+   ═══════════════════════════════════════════════════════════════ *)
+let emit_rows ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
+  let vw = isa.Isa.vec_width in
+  if vw <> 4 then failwith "real_il: r2zr is emitted for the 256-bit ISA only";
+  if radix < 4 || radix mod 2 <> 0 then failwith "real_il: r2zr needs an even radix >= 4";
+  if dir = Bwd then failwith "real_il: r2zr is the forward kind (no backward twin)";
+  let h = radix / 2 in
+  let ctx =
+    make_ctx
+      ~tw_group:false
+      ~tw_log3:false
+      ~tw_pre:false
+      ~tw_gen2:false
+      ~colstride:false
+      ~st_turn:false
+      ~st_turn_gs:false
+      ~tangent:false
+  in
+  let tbl : consts = Hashtbl.create 16 in
+  let emit_group ~(body : Buffer.t) ~(nisa : Isa.t) ~(label : string) : unit =
+    reset ();
+    let lanes = nisa.Isa.vec_width in
+    let loads = ref [] in
+    let ld (a : caddr) : t =
+      let e = cload a in
+      loads := (a, e) :: !loads;
+      e
+    in
+    let name (e : t) = Printf.sprintf "z%d" e.tag in
+    let line (s : string) = Buffer.add_string body (Printf.sprintf "        %s\n" s) in
+    (* the load edge: a block = `lanes` rows x `lanes` samples, transposed;
+       `keep` = the samples of the block this call supplies *)
+    let x : t option array = Array.make radix None in
+    let block (off : int) (keep : int list) : unit =
+      let s =
+        if lanes = 4
+        then (
+          let a = Array.init 4 (fun r -> ld (AXinRow (r, off))) in
+          let u0 = cunpack a.(0) a.(1) false
+          and u1 = cunpack a.(0) a.(1) true
+          and u2 = cunpack a.(2) a.(3) false
+          and u3 = cunpack a.(2) a.(3) true in
+          [| cturn u0 u2 false; cturn u1 u3 false; cturn u0 u2 true; cturn u1 u3 true |])
+        else (
+          let a0 = ld (AXinRow (0, off))
+          and a1 = ld (AXinRow (1, off)) in
+          [| cunpack a0 a1 false; cunpack a0 a1 true |])
+      in
+      List.iter (fun j -> x.(off + j) <- Some s.(j)) keep
+    in
+    for b = 0 to (radix / lanes) - 1 do
+      block (b * lanes) (List.init lanes Fun.id)
+    done;
+    if radix mod lanes <> 0 then block (radix - lanes) [ lanes - 2; lanes - 1 ];
+    let x =
+      Array.mapi
+        (fun j v ->
+           match v with
+           | Some e -> e
+           | None -> failwith (Printf.sprintf "real_il.r2zr: sample %d not loaded" j))
+        x
+    in
+    let xs = Cx_real.rdft radix x in
+    let zero = ld AZeroV in
+    let force (v : t option) : t =
+      match v with
+      | Some e -> e
+      | None -> zero
+    in
+    (* slot p's (A, B) vectors over the rows: A = re, B = im; the DC and the
+       Nyquist slots are real *)
+    let ab p =
+      if p = 0 || p = h then force (fst xs.(p)), zero else force (fst xs.(p)), force (snd xs.(p))
+    in
+    let roots = ref []
+    and st = ref [] in
+    if lanes = 4
+    then (
+      let p = ref 0 in
+      while !p <= h do
+        if !p + 1 <= h
+        then (
+          let a0, b0 = ab !p
+          and a1, b1 = ab (!p + 1) in
+          let ulo = cunpack a0 b0 false
+          and uhi = cunpack a0 b0 true
+          and vlo = cunpack a1 b1 false
+          and vhi = cunpack a1 b1 true in
+          let t0 = cturn ulo vlo false
+          and t2 = cturn ulo vlo true
+          and t1 = cturn uhi vhi false
+          and t3 = cturn uhi vhi true in
+          List.iter
+            (fun (c, tnode) ->
+               roots := tnode :: !roots;
+               st := (AZoutTurn (!p, c), tnode, None) :: !st)
+            [ 0, t0; 1, t1; 2, t2; 3, t3 ];
+          p := !p + 2)
+        else (
+          (* the lone last slot: its two unpacks leave as per-row halves *)
+          let a0, b0 = ab !p in
+          let ulo = cunpack a0 b0 false
+          and uhi = cunpack a0 b0 true in
+          roots := uhi :: ulo :: !roots;
+          st := (AZoutTurn (!p, 0), ulo, Some 0) :: (AZoutTurn (!p, 2), ulo, Some 1)
+                :: (AZoutTurn (!p, 1), uhi, Some 0) :: (AZoutTurn (!p, 3), uhi, Some 1) :: !st;
+          p := !p + 1)
+      done)
+    else
+      (* VEX-128: two rows; unpacklo = row k's slot, unpackhi = row k+1's *)
+      for p = 0 to h do
+        let a, b = ab p in
+        let ulo = cunpack a b false
+        and uhi = cunpack a b true in
+        roots := uhi :: ulo :: !roots;
+        st := (AZoutTurn (p, 1), uhi, None) :: (AZoutTurn (p, 0), ulo, None) :: !st
+      done;
+    let roots = List.rev !roots
+    and st = List.rev !st in
+    let assigns = List.mapi (fun i e -> Expr.Output (i, true), e) roots in
+    let assigns =
+      Cx_pipeline.prepare_codelet ~who:(Printf.sprintf "r%d_r2zr_fwd_%d" radix lanes) ~uarch assigns
+    in
+    let sch = C2c_il.cx_schedule uarch assigns in
+    Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
+    List.iter
+      (fun ((a : caddr), (e : t)) -> line (Isa.const_decl nisa (name e) (render_load nisa a)))
+      (List.rev !loads);
+    let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    List.iter
+      (fun ((_ : Expr.elem_ref option), (e : t)) ->
+         match e.node with
+         | CIn _ | CLoad _ -> ()
+         | _ ->
+           if not (Hashtbl.mem seen e.tag)
+           then (
+             Hashtbl.replace seen e.tag ();
+             line (Isa.const_decl nisa (name e) (render ~ctx nisa tbl e))))
+      sch;
+    List.iter
+      (fun (a, e, part) ->
+         match part with
+         | None -> line (render_store nisa a (name e) ^ ";")
+         | Some c -> line (render_store Isa.sse2 a (Isa.cx_part_pd nisa (name e) c) ^ ";"))
+      st;
+    Buffer.add_string body "        }\n"
+  in
+  let body_w = Buffer.create 8192 in
+  let body_n = Buffer.create 4096 in
+  emit_group ~body:body_w ~nisa:isa ~label:"four rows";
+  emit_group ~body:body_n ~nisa:Isa.sse2 ~label:"two rows at VEX-128";
+  let buf = Buffer.create 16384 in
+  Buffer.add_string
+    buf
+    (Emit_render.provenance_block
+       ~family:(Printf.sprintf "full-IL (interleaved-complex) r2zr, radix-%d fwd" radix)
+       [ Printf.sprintf "ISA: %s; %d rows per vector" isa.Isa.name vw
+       ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
+       ; "Form: the real rows (real_il.ml, cx_real.ml)"
+       ]);
+  Buffer.add_string
+    buf
+    (Printf.sprintf
+       "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
+       \ * PIPELINE-HOSTED (real_il.ml). radix-%d r2zr fwd: the real %d-point DFT of every\n\
+       \ * ROW of a row-major plane (row k's samples at zin[k*Ls + j]) -> its CCE\n\
+       \ * bins 0..%d at zout[2*(k*OLs + p)]; real arithmetic throughout (cx_real.ml),\n\
+       \ * the DC and Nyquist bins stored with a zero imaginary part.\n\
+       \ * count = the rows, at least two: four per wide iteration, then two at\n\
+       \ * VEX-128 (a lone last row runs with the row before it). Out of place.\n\
+       \ * tw_re, tw_im, Gs, OGs unused. */\n"
+       radix
+       radix
+       h);
+  Buffer.add_string buf "#include <immintrin.h>\n#include <stddef.h>\n\n";
+  Buffer.add_string buf (emit_const_decls isa tbl);
+  Buffer.add_string buf "\n";
+  Buffer.add_string
+    buf
+    (Abi.z11_signature
+       ~alias_tolerant:false
+       ~symbol:(Printf.sprintf "radix%d_z_r2zr_fwd_%s" radix isa.Isa.name)
+       ~target_attr:(Isa.cx_target_attr isa)
+       ());
+  Buffer.add_string buf "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im; (void)Gs; (void)OGs;\n";
+  Buffer.add_string buf "    size_t k = 0;\n";
+  Buffer.add_string buf (Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" vw vw);
+  Buffer.add_buffer buf body_w;
+  Buffer.add_string buf "    }\n";
+  Buffer.add_string buf "    while (k < count) {  /* two rows at VEX-128 */\n";
+  Buffer.add_string buf "        if (k + 2 > count) k = count - 2;  /* a lone last row: with the row before it */\n";
+  Buffer.add_buffer buf body_n;
+  Buffer.add_string buf "        k += 2;\n";
+  Buffer.add_string buf "    }\n";
+  Buffer.add_string buf "}\n";
+  Buffer.contents buf
+;;
+
+(* ═══════════════════════════════════════════════════════════════
    THE REAL FLAT LEAF: r1c (2026-09-30; the real flat DIT's one kind)
 
    The flat DIT's first stage transforms across the most significant digit:
@@ -844,4 +1065,5 @@ let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uar
   | T2m -> emit_top ~untangle:false ~dir ~radix ~isa ~uarch
   | R2z -> emit_leaf ~dir ~radix ~isa ~uarch
   | R1c -> emit_rleaf ~dir ~radix ~isa ~uarch
+  | R2zr -> emit_rows ~dir ~radix ~isa ~uarch
 ;;
