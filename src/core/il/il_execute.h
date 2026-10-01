@@ -154,6 +154,20 @@ static int _k1x_zrf_bwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin
     vfft_zrf_execute_bwd(h->zrf, zin, zout);
     return 0;
 }
+/* the real Bluestein (il/real/zrb.h): the engine's execute, bound by the
+ * plan's direction */
+static int _k1x_zrb_fwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    vfft_zrb_execute_fwd(h->zrb, zin, zout);
+    return 0;
+}
+static int _k1x_zrb_bwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    vfft_zrb_execute_bwd(h->zrb, zin, zout);
+    return 0;
+}
 static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
@@ -164,6 +178,11 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
     if (h->zrm)
     {
         h->k1_exec = _k1x_zrm;
+        return hp;
+    }
+    if (h->zrb && h->K == 1)
+    {   /* one row: the engine's execute itself (a lane-major batch goes through the bridge) */
+        h->k1_exec = h->transform == VFFT_R2C ? _k1x_zrb_fwd : _k1x_zrb_bwd;
         return hp;
     }
     if (h->zrf && !h->zrf->mt)

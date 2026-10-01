@@ -791,6 +791,67 @@ every level with a tile per worker in one balanced tiles dispatch. Both are bitw
 serial plan (gauntlet/zrf_mt_check.c). Above ~390625 the odd routes build no c2r plan at
 all, so those cells are the flat DIT's alone, gated by the roundtrip through the r2c routes.
 
+### K=1 INTERLEAVED r2c and c2r — odd N without a chain on the real Bluestein, the 682 cells 65..2047 and 12 large cells vs MKL (2026-10-01)
+
+Out of place, natural order, one thread, MKL DFTI in its CCE home layout; the ratio is
+MKL / ours, the worse of the two order flips. The cells: every odd N in 65..2047 with a
+prime factor of 53 or more (291 primes, 391 composites) -- the odd cells the real flat DIT
+has no chain for, served until now by the odd routes (the c2c prime route on the widened
+input). Runs `zrb_odd_{r2c,c2r}_2026-10-01` (the stripped-store protocol: the cells raced
+at create, the Bluestein's length and inner swept against the routes, the verdict banked
+and replayed); `before` = the same cell in `real_2_2048_*_2026-09-30`.
+
+```
+ r2c engine      cells   <0.8   <1.0    p10    med    p90   gmean   before med
+ Bluestein         657      0      1   1.59   2.14   3.47    2.22        1.13
+ odd route          25      0      0   1.44   2.23   4.27    2.20        2.31
+ ALL               682      0      1   1.59   2.15   3.47    2.22        1.14
+```
+
+```
+ c2r engine      cells   <0.8   <1.0    p10    med    p90   gmean   before med
+ Bluestein         658      0      0   1.60   2.15   3.46    2.21        1.16
+ odd route          24      0      0   1.46   2.28   4.30    2.26        2.34
+ ALL               682      0      0   1.58   2.15   3.46    2.21        1.17
+```
+
+```
+ class / band       r2c cells  median  before   <1.0  |  c2r cells  median  before   <1.0
+ prime                    291    2.11    1.16      1  |        291    2.07    1.17      0
+ composite                391    2.29    1.12      0  |        391    2.25    1.16      0
+ 65..256                   44    2.34    1.98      0  |         44    2.33    1.99      0
+ 257..512                  77    2.27    1.28      0  |         77    2.26    1.25      0
+ 513..1024                173    1.95    1.13      1  |        173    1.95    1.14      0
+ 1025..2048               388    2.18    1.11      0  |        388    2.15    1.15      0
+```
+
+r2c: the Bluestein's length is 1.49-2.39x N (median 1.63; the complex route's is 2-4x); inners ztt 459, 2p 137, 3p 61.
+c2r: the Bluestein's length is 1.49-2.39x N (median 1.63; the complex route's is 2-4x); inners ztt 457, 2p 137, 3p 64.
+The weakest cells: r2c 971 (0.97), 1013 (1.06), 967 (1.09), 863 (1.15), 929 (1.16), 883 (1.16), 907 (1.24), 879 (1.25); c2r 929 (1.15), 985 (1.21), 983 (1.22), 865 (1.26), 921 (1.26), 879 (1.26), 947 (1.26), 863 (1.27).
+The strongest: r2c 83 (6.23), 89 (6.18), 249 (5.87), 415 (5.36), 79 (5.34); c2r 89 (6.12), 83 (6.06), 249 (5.74), 415 (5.33), 79 (5.18).
+r2c: control cell 16 readings, 0.860..1.197.
+c2r: control cell 16 readings, 1.073..1.282.
+
+The large cells, one thread (runs `zrb_big_{r2c,c2r}_2026-10-01`):
+
+```
+          N   r2c engine            ours us   MKL us  vs MKL  |  c2r engine            ours us   MKL us  vs MKL
+       4099   zrb 7168/4.7.8.8.4       24.1     54.5    2.26  |    zrb 7168/4.7.8.4.8       23.6     55.5    2.35
+       6563   zrb 10240/4.5.8.8.8      28.1     57.3    2.04  |    zrb 10240/4.5.8.8.8      28.2     58.5    2.08
+      10007   zrb 16384/8.8.8.8.4      48.3    111.3    2.30  |    zrb 16384/8.8.4.4.4.     47.8    113.5    2.37
+      16411   zrb 28672/8.7.8.4.4.     96.6    302.3    3.13  |    zrb 28672/4.7.4.4.8.    101.7    310.9    3.06
+      30011   zrb 49152/8.8.8.4.3.    176.0    313.7    1.78  |    zrb 49152/4.3.8.8.8.    211.1    326.9    1.55
+      50021   zrb 81920/8.8.5.8.4.    356.5    736.2    2.06  |    zrb 81920/8.8.5.8.8.    334.5    752.2    2.25
+      65537   oddr                    392.0   1737.1    4.43  |    oddr                    413.5   1767.0    4.27
+     100003   zrb 163840/8.8.5.8.8    782.2   1777.9    2.27  |    zrb 163840/8.5.8.8.8    823.8   1811.8    2.20
+     131071   zrb 196608/8.8.8.3.4    968.4   1820.3    1.88  |    zrb 196608/8.8.8.4.3    984.5   1836.9    1.87
+```
+r2c: median 2.26x over 9 cells (min 1.78, max 4.43); control cell 4 readings, 1.178..1.194.
+c2r: median 2.25x over 9 cells (min 1.55, max 4.27); control cell 4 readings, 1.261..1.277.
+65537 stays with the odd routes (a Fermat prime: Rader at 65536). 262147, 524287 and 1000003 are
+REFUSED in both directions: the Bluestein needs an inner at M >= (3N-1)/2 and the inner pool ends
+at 262144 (the ZTT band), and the routes' complex child at those N has none either.
+
 ### K=1 INTERLEAVED r2c and c2r — odd N on the real flat DIT vs FFTW, the 324 smooth odd cells and the 19 large cells (2026-10-01)
 
 Out of place, natural order, one thread; FFTW 3.3.10 (vcpkg's fftw3.dll bound at run time,

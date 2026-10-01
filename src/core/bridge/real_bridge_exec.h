@@ -89,6 +89,16 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
             _exec_zrf(h, sre, dre); /* the real flat DIT: the plan's planes; pool-free unless its threaded form is bound */
             return;
         }
+        if (h->zrb)
+        {
+            _exec_zrb(h, sre, dre); /* the real Bluestein: the plan's planes, pool-free */
+            return;
+        }
+        if (h->zrbl)
+        {
+            _exec_zrbl(h, sre, dre); /* the lane Bluestein: K lanes on the column pass, pool-free */
+            return;
+        }
         if (h->zttr)
         {
             _exec_zttr(h, sre, dre); /* ZTT-r: the fold fused into the terminator, pool-free */
@@ -132,6 +142,16 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
         if (h->zrf)
         {
             _exec_zrf(h, sre, dre); /* the real flat DIT's c2r */
+            return;
+        }
+        if (h->zrb)
+        {
+            _exec_zrb(h, sre, dre); /* the real Bluestein's c2r */
+            return;
+        }
+        if (h->zrbl)
+        {
+            _exec_zrbl(h, sre, dre); /* the lane Bluestein's c2r */
             return;
         }
         if (h->zttr)
