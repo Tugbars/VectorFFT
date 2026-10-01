@@ -1921,7 +1921,7 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns, int nat);
 static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
-                            size_t fsz);
+                            size_t fsz, int half);
 static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
                                   const vfft_config_t *cfg,
                                   const vw2_ilcol_key_t *key, const char *base,
@@ -1996,16 +1996,19 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
 }
 
 /* PER-STAGE FORM RACE: coordinate descent over the
- * stages whose radix has rival forms (vfft_il2p_col_forms), each stage's
- * two arms timed on the WHOLE column pass with the other stages held at
- * their current pick (the pass is the only thing the form changes; same
- * harness as the chain race). The construction-table default is the
- * incumbent and keeps ties; the rival must beat it by 3%. Installs the
- * winners into ff/fb and spells them into `forms`. Returns 1 when any
+ * stages whose radix has rival forms (vfft_il2p_col_forms: the blocked
+ * shapes at r32/r64, the leaf's half-store twins), each stage's arms timed
+ * on the WHOLE column pass with the other stages held at their current pick
+ * (the pass is the only thing the form changes; same harness as the chain
+ * race; the plane at the pass's own pitch, so an odd CCE pitch is what the
+ * arms meet). The construction-table default is the incumbent and keeps
+ * ties; a rival must beat it by 3%. half = the leaf's half-store twins are
+ * in the pool (the 2D real r2c plan only: _il2d_forms_serve_key). Installs
+ * the winners into ff/fb and spells them into `forms`. Returns 1 when any
  * stage had a choice, 0 otherwise (forms = ""). */
 static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
-                            size_t fsz)
+                            size_t fsz, int half)
 {
     const size_t T = (size_t)N1 * N2;
     const char *pick[8];
@@ -2015,11 +2018,10 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
     forms[0] = 0;
     for (s = 0; s < nst; s++)
     {
-        const char *nm[2];
-        (void)vfft_il2p_col_forms(Rs[s], nm);
-        pick[s] = nm[0];
-        if (nm[1])
+        const char *nm[VFFT_IL2P_COL_MAXFORMS];
+        if (vfft_il2p_col_forms(Rs[s], half && s == nst - 1, nm) > 1)
             any = 1;
+        pick[s] = nm[0];
     }
     if (!any)
         return 0;
@@ -2035,48 +2037,60 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
     }
     for (s = 0; s < nst; s++)
     {
-        const char *nm[2];
+        const char *nm[VFFT_IL2P_COL_MAXFORMS], *an[VFFT_IL2P_COL_MAXFORMS];
         const int last = (s == nst - 1);
-        vfft_il2p_fn ffa[2][8];
-        _il2d_race_ctx_t rc[2];
-        vfft_race_arm_t arm[2];
+        vfft_il2p_fn ffa[VFFT_IL2P_COL_MAXFORMS][8], fba[VFFT_IL2P_COL_MAXFORMS][8];
+        _il2d_race_ctx_t rc[VFFT_IL2P_COL_MAXFORMS];
+        vfft_race_arm_t arm[VFFT_IL2P_COL_MAXFORMS];
         const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
-        double ns[2] = { 1e300, 1e300 };
-        int a, win;
-        if (vfft_il2p_col_forms(Rs[s], nm) < 2)
+        double ns[VFFT_IL2P_COL_MAXFORMS];
+        const int nf = vfft_il2p_col_forms(Rs[s], half && last, nm);
+        int f, na = 0, win = 0;
+        if (nf < 2)
             continue;
-        for (a = 0; a < 2; a++)
-        {
-            memcpy(ffa[a], ff, sizeof ffa[a]);
-            ffa[a][s] = last ? vfft_il2p_n1c_form_fn(Rs[s], nm[a], 0)
-                             : vfft_il2p_t2c_form_fn(Rs[s], nm[a], 0);
-            if (!ffa[a][s])
-                break;
-            memset(&rc[a], 0, sizeof rc[a]);
-            rc[a].z = z;
-            rc[a].ok = 1;
-            rc[a].N1 = N1;
-            rc[a].N2 = (size_t)N2;
-            rc[a].nst = nst;
-            rc[a].R = Rs;
-            rc[a].Ls = Ls;
-            rc[a].ff = ffa[a];
-            rc[a].tf = tf;
-            arm[a].name = nm[a];
-            arm[a].run = _il2d_arm_chain;
-            arm[a].ctx = &rc[a];
+        for (f = 0; f < nf; f++)
+        {   /* a form without a kernel pair at this stage is no arm (the
+             * backward of a half-store leaf form is its full-store twin) */
+            memcpy(ffa[na], ff, sizeof ffa[na]);
+            memcpy(fba[na], fb, sizeof fba[na]);
+            ffa[na][s] = last ? vfft_il2p_n1c_form_fn(Rs[s], nm[f], 0)
+                              : vfft_il2p_t2c_form_fn(Rs[s], nm[f], 0);
+            fba[na][s] = last ? vfft_il2p_n1c_form_fn(Rs[s], nm[f], 1)
+                              : vfft_il2p_t2c_form_fn(Rs[s], nm[f], 1);
+            if (!ffa[na][s] || !fba[na][s])
+                continue;
+            memset(&rc[na], 0, sizeof rc[na]);
+            rc[na].z = z;
+            rc[na].ok = 1;
+            rc[na].N1 = N1;
+            rc[na].N2 = (size_t)N2;
+            rc[na].nst = nst;
+            rc[na].R = Rs;
+            rc[na].Ls = Ls;
+            rc[na].ff = ffa[na];
+            rc[na].tf = tf;
+            an[na] = nm[f];
+            arm[na].name = nm[f];
+            arm[na].run = _il2d_arm_chain;
+            arm[na].ctx = &rc[na];
+            na++;
         }
-        if (a < 2)
-            continue;
-        vfft_race_run(&proto, arm, 2, ns);
-        win = (ns[1] < 0.97 * ns[0]) ? 1 : 0;
-        pick[s] = nm[win];
+        if (na < 2 || strcmp(an[0], nm[0]))
+            continue;   /* no rival, or the incumbent itself did not build */
+        vfft_race_run(&proto, arm, na, ns);
+        for (f = 1; f < na; f++)   /* a rival takes the stage past 3% of the incumbent and of the best so far */
+            if (ns[f] < 0.97 * ns[0] && ns[f] < ns[win])
+                win = f;
+        pick[s] = an[win];
         ff[s] = ffa[win][s];
-        fb[s] = last ? vfft_il2p_n1c_form_fn(Rs[s], nm[win], 1)
-                     : vfft_il2p_t2c_form_fn(Rs[s], nm[win], 1);
+        fb[s] = fba[win][s];
         if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d] forms %dx%d stage %d r%d: %s %.0f ns vs %s %.0f ns -> %s\n",
-                    N1, N2, s, Rs[s], nm[0], ns[0], nm[1], ns[1], nm[win]);
+        {
+            fprintf(stderr, "[il2d] forms %dx%d stage %d r%d:", N1, N2, s, Rs[s]);
+            for (f = 0; f < na; f++)
+                fprintf(stderr, " %s %.0f ns%s", an[f], ns[f], f == win ? "*" : "");
+            fprintf(stderr, "\n");
+        }
     }
     for (s = 0; s < nst; s++)
     {
@@ -2345,12 +2359,19 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
                                   char *forms, size_t fsz)
 {
     const char *pin = getenv("VFFT_IL2D_FORMS");
+    /* the leaf's half-store twins race for the 2D real r2c plan only: its
+     * column pass runs in place at the odd CCE pitch, the leaf storing last
+     * (shared/col/half/README.md). A c2r plan's pool is the one it had (its
+     * backward leaf stores into the scratch plane, a different question: a
+     * separate piece of work), and a c2r replaying a forward-banked half form
+     * runs the full-store twin (vfft_il2p_n1c_form_fn, bwd). */
+    const int half = key->rank == 2 && key->real && cfg->transform == VFFT_R2C;
     int s, any = 0;
     forms[0] = 0;
     for (s = 0; s < nst; s++)
     {   /* the AUTHORITY (vfft_il2p_col_forms), not a restatement of it (R4) */
-        const char *nm[2];
-        if (vfft_il2p_col_forms(Rs[s], nm) > 1)
+        const char *nm[VFFT_IL2P_COL_MAXFORMS];
+        if (vfft_il2p_col_forms(Rs[s], half && s == nst - 1, nm) > 1)
             any = 1;
     }
     if (!any)
@@ -2379,7 +2400,7 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
                    base, forms, N, (int)rn);
         (void)_il2d_resolve(Rs, nst, ff, fb);
     }
-    if (_il2d_race_forms(N, (int)rn, Rs, nst, ff, fb, forms, fsz) && forms[0])
+    if (_il2d_race_forms(N, (int)rn, Rs, nst, ff, fb, forms, fsz, half) && forms[0])
     {
         const int banked = vw2_ilcol_forms_bank_base(&W->vw2, key, base, forms);
         if (banked)

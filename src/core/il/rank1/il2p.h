@@ -415,19 +415,60 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
  * r32/r64 the column kinds exist in rival BLOCKED forms and the pick is per
  * cell per stage - raced at create, banked BY NAME on the 2D chain row
  * (forms=), replayed through these resolvers. Monolithic is never served at
- * r32/r64 (standing rule); every other radix has one form, spelled "-".
- * names[0] is the construction-table default (the race's incumbent). */
-static inline int vfft_il2p_col_forms(int R, const char **names /* [2] */)
+ * r32/r64 (standing rule); every other radix has one body, spelled "-".
+ * The forward LEAF (n1c, the closing stage) has a second axis: the
+ * HALF-STORE twin ("h", codelets/zil/<isa>/shared/col/half, 2026-10-01), the
+ * same body with its plane stores as two 128-bit halves -- a column pass at
+ * an odd row pitch (the 2D real CCE plane, hp1 = N2/2 + 1) splits a 256-bit
+ * store of a column pair across a cache line on every other row. Mids keep
+ * one store form (the halves cost them 9-16% at every pitch, measured
+ * 2026-10-01). half = the caller offers the leaf's half-store twins (the 2D
+ * real r2c plan's forms race). The twins are forward kernels: the backward
+ * of a half-store form is its full-store twin (vfft_il2p_n1c_form_fn).
+ * names[0] is the construction-table default (the race's incumbent); up to
+ * VFFT_IL2P_COL_MAXFORMS names. */
+#define VFFT_IL2P_COL_MAXFORMS 4
+static inline int vfft_il2p_col_forms(int R, int half, const char **names /* [VFFT_IL2P_COL_MAXFORMS] */)
 {
+    int n;
     switch (R) {
-    case 32: names[0] = "b48"; names[1] = "b84";  return 2;
-    case 64: names[0] = "b88"; names[1] = 0;      return 1;   /* no b416: it never won a banked cell */
-    default: names[0] = "-";   names[1] = 0;      return 1;
+    case 32: names[0] = "b48"; names[1] = "b84"; n = 2; break;
+    case 64: names[0] = "b88"; n = 1; break;   /* no b416: it never won a banked cell */
+    default: names[0] = "-";   n = 1; break;
     }
+#if defined(VFFT_IL_N1CH_FWD_RADICES)
+    if (half)
+    {   /* the half-store twin of each leaf form that has one */
+        switch (R) {
+        case 32: names[2] = "b48h"; names[3] = "b84h"; n = 4; break;
+        case 64: names[1] = "b88h"; n = 2; break;
+        default:
+        {
+            int has = 0;
+#define C(R_) if (R == R_) has = 1;
+            VFFT_IL_N1CH_FWD_RADICES(C)
+#undef C
+            if (has) names[n++] = "h";
+        }
+        }
+    }
+#else
+    (void)half;
+#endif
+    return n;
 }
 static inline vfft_il2p_fn vfft_il2p_n1c_form_fn(int R, const char *form,
                                                  int bwd)
 {
+    if (bwd && form && form[0] && form[strlen(form) - 1] == 'h')
+    {   /* a half-store form names a forward kernel: its backward is the full-store twin */
+        char base[8];
+        const size_t l = strlen(form) - 1;
+        if (l >= sizeof base) return 0;
+        memcpy(base, form, l);
+        base[l] = 0;
+        return vfft_il2p_n1c_form_fn(R, l ? base : "-", 1);
+    }
     if (!form || !strcmp(form, "-")) return vfft_il2p_n1c_fn(R, bwd);
     if (R == 32 && !strcmp(form, "b48"))
         return bwd ? VFFT_IL_SYM(radix32_z_n1cb48_bwd) : VFFT_IL_SYM(radix32_z_n1cb48_fwd);
@@ -435,6 +476,19 @@ static inline vfft_il2p_fn vfft_il2p_n1c_form_fn(int R, const char *form,
         return bwd ? VFFT_IL_SYM(radix32_z_n1cb84_bwd) : VFFT_IL_SYM(radix32_z_n1cb84_fwd);
     if (R == 64 && !strcmp(form, "b88"))
         return bwd ? VFFT_IL_SYM(radix64_z_n1cb88_bwd) : VFFT_IL_SYM(radix64_z_n1cb88_fwd);
+#if defined(VFFT_IL_N1CH_FWD_RADICES)
+    /* the forward half-store twins (bwd never reaches here: see the top) */
+    if (R == 32 && !strcmp(form, "b48h")) return VFFT_IL_SYM(radix32_z_n1cb48h_fwd);
+    if (R == 32 && !strcmp(form, "b84h")) return VFFT_IL_SYM(radix32_z_n1cb84h_fwd);
+    if (R == 64 && !strcmp(form, "b88h")) return VFFT_IL_SYM(radix64_z_n1cb88h_fwd);
+    if (!strcmp(form, "h"))
+        switch (R) {
+#define C(R_) case R_: return VFFT_IL_SYM(radix##R_##_z_n1ch_fwd);
+        VFFT_IL_N1CH_FWD_RADICES(C)
+#undef C
+        default: return 0;
+        }
+#endif
     return 0;
 }
 static inline vfft_il2p_fn vfft_il2p_t2c_form_fn(int R, const char *form,

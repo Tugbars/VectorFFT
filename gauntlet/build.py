@@ -71,6 +71,7 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'shared',
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'shared' / 'col',
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'shared' / 'col' / 'blocked',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'shared' / 'col' / 'half',   # the n1c leaf's half-store twins (the "h" form)
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'mono',
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'pair2p',
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'pair2p' / 'blocked',

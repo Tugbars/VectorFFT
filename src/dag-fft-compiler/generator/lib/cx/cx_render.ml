@@ -179,8 +179,12 @@ let spec_gather (i0 : string) (i1 : string) : string =
    measured on the R16 tangent mid, VTune 2026-08-15) at the price of one
    extractf128 + one extra store uop per output. Scoped to AZoutLeg on the
    256-bit ISA only — the S plane, turn stores, and the VEX-128 odd-count
-   tail (whose values are __m128d) are untouched. Default OFF ⇒ byte-identical. *)
-let store128 = ref (Sys.getenv_opt "VFFT_CX_STORE128" = Some "1")
+   tail (whose values are __m128d) are untouched. Default OFF ⇒ byte-identical.
+   Since 2026-10-01 also a kind flag: --cil-st128 sets it for one emission (the
+   n1c column leaf's half-store twin, the "h" form); C2c_il.emit resets it to
+   the environment's default for every other emission. *)
+let store128_env = Sys.getenv_opt "VFFT_CX_STORE128" = Some "1"
+let store128 = ref store128_env
 
 (* A store node as a C statement (no trailing ';'). The value operand is the
  * def name of the sunk node — same convention as `render`'s operands. *)
