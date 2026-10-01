@@ -1,0 +1,6 @@
+2026-10-01 01:43:11 run: 19 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-01 01:43:11 calibrate: 19 cells (0 already done)
+2026-10-01 01:49:11   calibrated 19/19 (4782969), 360 s elapsed
+2026-10-01 01:49:11 bench: 19 cells (0 already benched, 0 not banked -> not benched)
+2026-10-01 01:50:04   benched 19/19 (4782969), 51 s elapsed
+2026-10-01 01:50:06 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zrf2_big_r2c_mt8_2026-10-01\report_r2c_mt8.md

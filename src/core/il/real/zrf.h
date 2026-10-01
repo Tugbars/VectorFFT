@@ -15,54 +15,49 @@
  *             stages 1.. run on blocks 1..h as they stand -- a contiguous
  *             range of every stage's units -- in the SCRAMBLED class, in
  *             place on the level's plane.
- * The one new kernel is the leaf, r1c (codelets/zil/<isa>/real/flat/,
- * generator/lib/gen/real_il.ml): real legs in, digit 0 real at plane[k],
- * digit p complex at block p of the c2c plane (complex p*D + k), so no
- * pointer is shifted and no block is copied. A level's plane is (R+1)*D
- * doubles; the second half of block 0 is unused.
- *
- * Block p holds the bins congruent to p mod R0, in the scrambled class's
- * block order. The r2c wants bins 0..N/2: a bin f above N/2 is stored as
- * conj at N - f. One ORDER SWEEP per level moves the blocks to the caller's
- * half spectrum. It walks the last stage's blocks: a block of Rl legs holds
- * the bins low + l*Nj/Rl, so legs below Rl/2 go out in natural order at a
- * constant stride from the block's base, legs above it conjugated at the
- * mirrored stride, and the middle leg by the block's flag -- one table
- * entry per block, none per element. c2r starts each level with the same
- * walk as a gather, runs the scrambled class's TRANSPOSED stages, and ends
- * with the leaf's inverse. Every stage works on (N - D0)/2 complex where
- * the c2c transform of the widened input works on N.
+ * Two kernels are the engine's own (codelets/zil/<isa>/real/flat/):
+ *   r1c       the leaf (generator/lib/gen/real_il.ml): real legs in, digit 0
+ *             real at plane[k], digit p complex at block p of the c2c plane
+ *             (complex p*D + k), so no pointer is shifted and no block is
+ *             copied. A level's plane is (R+1)*D doubles; the second half of
+ *             block 0 is unused.
+ *   t2csgh    the LAST stage (c2c_il.ml, the t2csgn group-loop tail with a
+ *             Hermitian store edge). Block p holds the bins congruent to p mod
+ *             R0; the r2c wants bins 0..N/2, a bin above N/2 as conj at N - f.
+ *             The stage's legs are one block's bins (leg l = natural base +
+ *             l*Nj/Rl, scaled by N/Nj to the caller's bins), so the kernel
+ *             writes legs below Rl/2 to their places, legs above Rl/2
+ *             conjugated at the mirror, and the middle leg by its bin --
+ *             straight into the half spectrum, no order pass. Its backward
+ *             twin t2csght reads the half spectrum the same way into the
+ *             plane's block order (the scrambled class's transposed first
+ *             stage). Every stage works on (N - D0)/2 complex where the c2c
+ *             transform of the widened input works on N; the order pass
+ *             that the sweep was (12% of the transform at N <= 2048,
+ *             2026-09-30) is gone.
  *
  * THE TILE AXIS is the c2c flat DIT's (its validator is the law): a level
- * with a tile width runs its stages from the cut on, and its sweep,
- * depth-first per tile -- one block of the cut stage at a time -- so a
- * tile's stages and its sweep meet it in L1. The plan input is a width
- * BUDGET; each level takes its widest legal stage span within it.
- * A tile holds the bins congruent to its slow digits' index Q modulo
- * P = the tiles of the whole plane: a comb across the half spectrum, its
- * direct legs at residue Q and its mirrored legs at residue P - Q. The
- * tiles are walked in ascending min(Q, P - Q), and a contiguous range of
- * the walk owns a contiguous set of residues (the threaded form's
- * workers, zrf_mt.h, write disjoint lines). The sweep is by GROUPS of
- * consecutive tiles: a group's stages run tile by tile (each tile L1-hot),
- * then the group's bins go out in OUTPUT order -- for every period P and
- * leg, one run of consecutive residues, each bin fetched from its tile's
- * block (the direct-class tile of that residue, or the mirror-class tile of
- * the opposite residue, conjugated from its mirrored leg). A tile swept
- * alone writes its bins as a comb over the whole half spectrum (one page
- * touch and one line per bin); a group writes runs. The group is sized
- * so its tiles stay in L2 (VFFT_ZRF_GROUP_BYTES). The threaded form sweeps
- * by groups; the serial plan sweeps each tile from L1 (faster on one core).
+ * with a tile width runs its stages from the cut on depth-first per tile --
+ * one block of the cut stage at a time -- so a tile's stages meet it in L1.
+ * The plan input is a width BUDGET; each level takes its widest legal stage
+ * span within it. A tile holds the bins congruent to its slow digits' index
+ * Q modulo P = the tiles of the whole plane: a comb across the half spectrum,
+ * its direct legs at residue Q and its mirrored legs at residue P - Q. The
+ * tiles are walked in ascending min(Q, P - Q), so consecutive tiles fill the
+ * same output lines while those are still in cache, and a contiguous range
+ * of the walk owns a contiguous set of residues (the threaded form's workers,
+ * zrf_mt.h, write disjoint lines).
  *
  * Both placements are one pipeline: the first leaf reads the whole input
- * before any sweep writes (r2c), and every gather reads before the last leaf
- * writes (c2r). Unnormalized: c2r(r2c(x)) = N x.
+ * before any last stage writes (r2c), and every level's first stage reads
+ * the spectrum before the last leaf writes (c2r). Unnormalized: c2r(r2c(x))
+ * = N x.
  *
  * The plan inputs are the chain, the split-body form switch and the tile
  * budget; the odd real race sweeps them at create and banks eng=zrf
  * (bridge/real_bridge.h, wisdom2_real_il.h). The level at which the mono
  * takes over is derived: the first run with an rn1 kernel. The threaded
- * form is zrf_mt.h.
+ * forms are zrf_mt.h.
  */
 #ifndef VFFT_ZRF_H
 #define VFFT_ZRF_H
@@ -77,7 +72,6 @@
 #include "zrm.h"        /* the real mono: the terminal level */
 
 #define VFFT_ZRF_MAX_LV VFFT_ILFD_MAX_K
-#define VFFT_ZRF_GROUP_BYTES (1u << 20)   /* a sweep group's tiles: half of L2 */
 
 /* the leaf at radix R in one direction, or 0 when the kind has no such radix */
 static inline vfft_il2p_fn vfft_zrf_leaf_fn(int R, int bwd)
@@ -92,9 +86,22 @@ static inline vfft_il2p_fn vfft_zrf_leaf_fn(int R, int bwd)
     default: (void)bwd; return 0;
     }
 }
+/* the Hermitian last stage at radix R: fwd = t2csgh, bwd = t2csght */
+static inline vfft_il2p_fn vfft_zrf_last_fn(int R, int bwd)
+{
+    switch (R)
+    {
+#if defined(VFFT_IL_T2CSGH_FWD_RADICES) && defined(VFFT_IL_T2CSGHT_BWD_RADICES) && VFFT_IL_VW == 4
+#define C(R_) case R_: return bwd ? VFFT_IL_SYM(radix##R_##_z_t2csght_bwd) : VFFT_IL_SYM(radix##R_##_z_t2csgh_fwd);
+    VFFT_IL_T2CSGH_FWD_RADICES(C)
+#undef C
+#endif
+    default: (void)bwd; return 0;
+    }
+}
 
 /* one LEVEL: a real run of Nj = R * D through the leaf, then the c2c stages
- * on blocks 1..h of its plane */
+ * on blocks 1..h of its plane, the last of them into the half spectrum */
 typedef struct {
     int R, h, ns;                 /* the leaf radix, its digits 1..h, the c2c stages (the level's chain - 1) */
     size_t Nj, D;
@@ -105,23 +112,18 @@ typedef struct {
      * and runs once (t = 1); a TILED one is the c2c plan's per-tile record
      * and runs per tile t of [t0, t1). nwide = the forward's leading wide
      * records (all of them when untiled); the backward's first ns - nwide
-     * are the tiled ones. */
+     * are the tiled ones. cf[ns-1] and ct[0] are the HERMITIAN last stage:
+     * their spectrum side is the caller's buffer, absolute through hb, and
+     * the mirror base is passed at the call (_zrf_call_herm). */
     vfft_ilfd_call_t cf[VFFT_ILFD_MAX_K], ct[VFFT_ILFD_MAX_K];
     int nwide;
-    size_t tw, t0, t1, bpt;       /* the tile width (complex; 0 = untiled), its tiles in blocks 1..h
-                                   * (the plane's tile numbering), last-stage blocks per tile */
+    size_t tw, t0, t1;            /* the tile width (complex; 0 = untiled), its tiles in blocks 1..h
+                                   * (the plane's tile numbering) */
     double *t2;                   /* a tail stage 1: the group base of block 1, fwd then conj */
     double *plane;                /* (R + 1) * D doubles */
-    size_t Rl, ost, top, nlb;     /* the sweep: the last stage's radix, a leg's stride in the half
-                                   * spectrum (doubles), 2N, the last-stage blocks in blocks 1..h */
-    uint32_t *low;                /* per such block: its base (doubles) | the middle leg mirrored << 31 */
+    size_t *hb;                   /* per last-stage block: its natural base scaled to the caller's bins */
     uint32_t *tord;               /* the tiles of [t0, t1) in walk order: ascending min(Q, P - Q) */
-    /* the group sweep (tiled levels): P = the plane's tiles, nst = Nj/Rl, sc = the
-     * caller's doubles per level bin (2N/Nj), gsz = tiles per group; per walk entry
-     * its key, its Q and its first block's complex index; jofm = the block of a
-     * tile holding natural offset m (the same for every tile) */
-    size_t P, nst, sc, gsz;
-    uint32_t *tkey, *tQ, *tbase, *jofm;
+    size_t n2;                    /* 2N: the mirror base's offset from the caller's buffer, doubles */
 } _zrf_level_t;
 
 typedef struct vfft_zrf_s {
@@ -147,9 +149,8 @@ static inline void vfft_zrf_destroy(vfft_zrf_plan_t *p)
         vfft_ilfd_destroy(p->lv[j].fd);
         vfft_aligned_free(p->lv[j].t2);
         vfft_aligned_free(p->lv[j].plane);
-        free(p->lv[j].low);
+        free(p->lv[j].hb);
         free(p->lv[j].tord);
-        free(p->lv[j].tkey); free(p->lv[j].tQ); free(p->lv[j].tbase); free(p->lv[j].jofm);
     }
     free(p);
 }
@@ -216,8 +217,8 @@ static inline void vfft_zrf_chain_str(const int *R, int K, char *buf, size_t n)
 
 /* Create from a chain (N = the product, every radix odd), the split-body
  * switch and the tile budget. NULL when a level has no leaf, a c2c stage has
- * no transposed twin, or N itself is the mono's (the first level must be
- * flat). */
+ * no transposed twin, the last stage is not the group-loop form, or N itself
+ * is the mono's (the first level must be flat). */
 static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int nomsz, int tile)
 {
 #if VFFT_IL_VW == 4
@@ -241,6 +242,7 @@ static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int n
         if (j >= 1 && Nj <= (size_t)VFFT_ZRM_MAX_N && vfft_zrm_fn((int)Nj, 0) && vfft_zrm_fn((int)Nj, 1)) break;
         if (Kj < 2) { vfft_zrf_destroy(p); return 0; }
         lv->R = R[j]; lv->h = R[j] / 2; lv->Nj = Nj; lv->D = Nj / (size_t)R[j]; lv->ns = Kj - 1;
+        lv->n2 = 2 * (size_t)N;
         lv->lf = vfft_zrf_leaf_fn(R[j], 0);
         lv->lb = vfft_zrf_leaf_fn(R[j], 1);
         if (!lv->lf || !lv->lb) { vfft_zrf_destroy(p); return 0; }
@@ -287,33 +289,47 @@ static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int n
                 !_zrf_range_rec(fd, s, (size_t)lv->h, lv->t2 ? lv->t2 + 8 : 0, ct))
             { vfft_zrf_destroy(p); return 0; }
         }
-        lv->Rl = (size_t)R[K - 1];
-        lv->nlb = (size_t)lv->h * lv->D / lv->Rl;
-        if (lv->tw) { lv->t0 = lv->D / lv->tw; lv->t1 = ((size_t)lv->h + 1) * lv->D / lv->tw; lv->bpt = lv->tw / lv->Rl; }
-        lv->plane = (double *)vfft_aligned_alloc((((size_t)lv->R + 1) * lv->D + 8) * sizeof(double));
-        lv->low = (uint32_t *)malloc(lv->nlb * sizeof(uint32_t));
-        if (!lv->plane || !lv->low) { vfft_zrf_destroy(p); return 0; }
-        memset(lv->plane, 0, (((size_t)lv->R + 1) * lv->D + 8) * sizeof(double));
-        {   /* block order -> the half spectrum: block b of the last stage holds the level's
-             * bins natbase[b] + l*Nj/Rl, the transform's bins those times N/Nj. In doubles:
-             * leg l direct at base + l*ost, mirrored at 2N - base - l*ost. */
-            const size_t M = (size_t)N / Nj, b0 = lv->D / lv->Rl;
-            size_t bi;
-            lv->ost = 2 * M * (Nj / lv->Rl);
-            lv->top = 2 * (size_t)N;
-            for (bi = 0; bi < lv->nlb; bi++)
-            {
-                const size_t base = 2 * M * fd->natbase[b0 + bi];
-                const int mir = base + (lv->Rl / 2) * lv->ost > (size_t)N; /* the middle leg's bin is above N/2 */
-                lv->low[bi] = (uint32_t)base | (mir ? 0x80000000u : 0u);
-            }
+        {   /* THE HERMITIAN LAST STAGE: the group-loop tail's records, their spectrum side
+             * turned absolute -- the base table scaled to the caller's bins, the leg
+             * stride and column pitch there (a level's bin f is the transform's bin
+             * M f, M = N/Nj), the mirror passed at the call. */
+            const int sl = Kj - 1;
+            const size_t Rl = (size_t)fd->R[sl], nb = fd->nblk[sl], M = (size_t)N / Nj, nst = Nj / Rl;
+            vfft_ilfd_call_t *cf = &lv->cf[sl - 1], *ct = &lv->ct[0];
+            size_t W = 1, b;
+            int q;
+            for (q = 0; q < sl - 1; q++) W *= (size_t)fd->R[q];   /* the weight of digit q_{sl-1} */
+            if (!fd->gl[sl] || cf->op != _ILFD_ONE || !cf->a1 || ct->op != _ILFD_ONE || !ct->a1)
+            { vfft_zrf_destroy(p); return 0; }
+            cf->fn = vfft_zrf_last_fn((int)Rl, 0);
+            ct->fn = vfft_zrf_last_fn((int)Rl, 1);
+            if (!cf->fn || !ct->fn) { vfft_zrf_destroy(p); return 0; }
+            lv->hb = (size_t *)malloc(nb * sizeof(size_t));
+            if (!lv->hb) { vfft_zrf_destroy(p); return 0; }
+            for (b = 0; b < nb; b++) lv->hb[b] = M * fd->natbase[b];
+            cf->a1 = (const double *)(sl == 1 ? lv->hb + 1 : lv->hb);   /* the column range at stage 1 starts at block 1 */
+            cf->a3 = 0;
+            cf->OLs = M * nst; cf->OGs = M * W;
+            cf->out_sel = _ILFD_ZOUT; cf->out_tstep = 0;                /* the spectrum: absolute */
+            ct->a1 = cf->a1;
+            ct->a3 = 0;
+            ct->Ls = M * nst; ct->OLs = M * W;                          /* the spectrum's strides on the load side */
+            ct->out_tstep = ct->in_tstep; ct->in_tstep = 0;             /* the plane keeps the relative step */
+            ct->in_sel = _ILFD_ZIN; ct->out_sel = _ILFD_ZOUT;
         }
+        if (lv->tw)
+        {
+            lv->t0 = lv->D / lv->tw; lv->t1 = ((size_t)lv->h + 1) * lv->D / lv->tw;
+        }
+        lv->plane = (double *)vfft_aligned_alloc((((size_t)lv->R + 1) * lv->D + 8) * sizeof(double));
+        if (!lv->plane) { vfft_zrf_destroy(p); return 0; }
+        memset(lv->plane, 0, (((size_t)lv->R + 1) * lv->D + 8) * sizeof(double));
         if (lv->tw)
         {   /* the walk order: a counting sort on min(Q, P - Q) (distinct: P - Q is a tile of the
              * mirrored blocks, never of blocks 1..h) */
             const size_t P = Nj / lv->tw, nt = lv->t1 - lv->t0;
             uint32_t *at = (uint32_t *)malloc((P + 1) * sizeof(uint32_t));
-            size_t k = 0, q, t;
+            size_t k = 0, q2, t;
             lv->tord = (uint32_t *)malloc(nt * sizeof(uint32_t));
             if (!at || !lv->tord) { free(at); vfft_zrf_destroy(p); return 0; }
             memset(at, 0xff, (P + 1) * sizeof(uint32_t));
@@ -322,35 +338,9 @@ static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int n
                 const size_t Q = _ilfd_block_Q(fd, fd->tcut, t);
                 at[Q < P - Q ? Q : P - Q] = (uint32_t)t;
             }
-            for (q = 0; q <= P; q++) if (at[q] != 0xffffffffu) lv->tord[k++] = at[q];
+            for (q2 = 0; q2 <= P; q2++) if (at[q2] != 0xffffffffu) lv->tord[k++] = at[q2];
             free(at);
             if (k != nt) { vfft_zrf_destroy(p); return 0; }
-            /* the group sweep's tables */
-            lv->P = P; lv->nst = Nj / lv->Rl; lv->sc = 2 * ((size_t)N / Nj);
-            lv->gsz = VFFT_ZRF_GROUP_BYTES / (lv->tw * 16); if (lv->gsz < 1) lv->gsz = 1;
-            lv->tkey = (uint32_t *)malloc(nt * sizeof(uint32_t));
-            lv->tQ = (uint32_t *)malloc(nt * sizeof(uint32_t));
-            lv->tbase = (uint32_t *)malloc(nt * sizeof(uint32_t));
-            lv->jofm = (uint32_t *)malloc(lv->bpt * sizeof(uint32_t));
-            if (!lv->tkey || !lv->tQ || !lv->tbase || !lv->jofm) { vfft_zrf_destroy(p); return 0; }
-            for (k = 0; k < nt; k++)
-            {
-                const size_t tt = lv->tord[k], Q = _ilfd_block_Q(fd, fd->tcut, tt);
-                lv->tQ[k] = (uint32_t)Q; lv->tkey[k] = (uint32_t)(Q < P - Q ? Q : P - Q);
-                lv->tbase[k] = (uint32_t)(tt * lv->bpt * lv->Rl);
-            }
-            {   /* block jb of the first tile holds natural offset (natbase - Q) / P */
-                const size_t Q0 = _ilfd_block_Q(fd, fd->tcut, lv->t0);
-                size_t jb;
-                memset(lv->jofm, 0xff, lv->bpt * sizeof(uint32_t));
-                for (jb = 0; jb < lv->bpt; jb++)
-                {
-                    const size_t d = fd->natbase[lv->t0 * lv->bpt + jb] - Q0;
-                    if (d % P || d / P >= lv->bpt) { vfft_zrf_destroy(p); return 0; }
-                    lv->jofm[d / P] = (uint32_t)jb;
-                }
-                for (jb = 0; jb < lv->bpt; jb++) if (lv->jofm[jb] == 0xffffffffu) { vfft_zrf_destroy(p); return 0; }
-            }
         }
         Nj = lv->D;
     }
@@ -416,185 +406,76 @@ static inline int _zrf_has_chain(int N)
 }
 
 #if defined(__AVX2__) || defined(__SSE2__)
-/* the order sweep: last-stage blocks [b0, b1) of blocks 1..h -> the half
- * spectrum. Rl is a constant at the dispatch below, so the leg loops unroll. */
-static inline __attribute__((always_inline)) void _zrf_sweep_r(const _zrf_level_t *lv, double *out,
-                                                               size_t b0, size_t b1, const size_t Rl)
+/* the Hermitian last stage's call: as _ilfd_call's one-call form, the
+ * spectrum side (zout forward, zin backward) the caller's buffer and its
+ * mirror base passed in the zout_unused slot */
+static inline void _zrf_call_herm(const vfft_ilfd_call_t *c, size_t t, const double *zin, double *zout,
+                                  double *mirror)
 {
-    const __m128d cj = _mm_castsi128_pd(_mm_set_epi64x((long long)0x8000000000000000ull, 0));
-    const size_t hl = Rl / 2, st = lv->ost;
-    const double *src = lv->plane + 2 * lv->D + 2 * Rl * b0;
-    const uint32_t *lo = lv->low;
-    size_t b, l;
-    for (b = b0; b < b1; b++, src += 2 * Rl)
-    {
-        const uint32_t e = lo[b];
-        const size_t mir = e >> 31;
-        double *d = out + (e & 0x7fffffffu);            /* leg l direct at d + l*st */
-        double *m = out + lv->top - (e & 0x7fffffffu);  /* leg l mirrored at m - l*st */
-        for (l = 0; l < hl; l++)
-            _mm_storeu_pd(d + l * st, _mm_load_pd(src + 2 * l));
-        {   /* the middle leg: by the block's flag, no branch */
-            const __m128d v = _mm_load_pd(src + 2 * hl);
-            const __m128d sg = _mm_and_pd(cj, _mm_castsi128_pd(_mm_set1_epi64x(-(long long)mir)));
-            _mm_storeu_pd(mir ? m - hl * st : d + hl * st, _mm_xor_pd(v, sg));
-        }
-        for (l = hl + 1; l < Rl; l++)
-            _mm_storeu_pd(m - l * st, _mm_xor_pd(_mm_load_pd(src + 2 * l), cj));
-    }
-}
-static inline void _zrf_sweep(const _zrf_level_t *lv, double *out, size_t b0, size_t b1)
-{
-    switch (lv->Rl)
-    {
-    case 3: _zrf_sweep_r(lv, out, b0, b1, 3); return;
-    case 5: _zrf_sweep_r(lv, out, b0, b1, 5); return;
-    case 7: _zrf_sweep_r(lv, out, b0, b1, 7); return;
-    case 9: _zrf_sweep_r(lv, out, b0, b1, 9); return;
-    default: _zrf_sweep_r(lv, out, b0, b1, lv->Rl); return;
-    }
-}
-/* its inverse: the half spectrum -> last-stage blocks [b0, b1) in block order */
-static inline __attribute__((always_inline)) void _zrf_gather_r(const _zrf_level_t *lv, const double *in,
-                                                                size_t b0, size_t b1, const size_t Rl)
-{
-    const __m128d cj = _mm_castsi128_pd(_mm_set_epi64x((long long)0x8000000000000000ull, 0));
-    const size_t hl = Rl / 2, st = lv->ost;
-    double *dst = lv->plane + 2 * lv->D + 2 * Rl * b0;
-    const uint32_t *lo = lv->low;
-    size_t b, l;
-    for (b = b0; b < b1; b++, dst += 2 * Rl)
-    {
-        const uint32_t e = lo[b];
-        const size_t mir = e >> 31;
-        const double *d = in + (e & 0x7fffffffu);
-        const double *m = in + lv->top - (e & 0x7fffffffu);
-        for (l = 0; l < hl; l++)
-            _mm_store_pd(dst + 2 * l, _mm_loadu_pd(d + l * st));
-        {
-            const __m128d v = _mm_loadu_pd(mir ? m - hl * st : d + hl * st);
-            const __m128d sg = _mm_and_pd(cj, _mm_castsi128_pd(_mm_set1_epi64x(-(long long)mir)));
-            _mm_store_pd(dst + 2 * hl, _mm_xor_pd(v, sg));
-        }
-        for (l = hl + 1; l < Rl; l++)
-            _mm_store_pd(dst + 2 * l, _mm_xor_pd(_mm_loadu_pd(m - l * st), cj));
-    }
-}
-static inline void _zrf_gather(const _zrf_level_t *lv, const double *in, size_t b0, size_t b1)
-{
-    switch (lv->Rl)
-    {
-    case 3: _zrf_gather_r(lv, in, b0, b1, 3); return;
-    case 5: _zrf_gather_r(lv, in, b0, b1, 5); return;
-    case 7: _zrf_gather_r(lv, in, b0, b1, 7); return;
-    case 9: _zrf_gather_r(lv, in, b0, b1, 9); return;
-    default: _zrf_gather_r(lv, in, b0, b1, lv->Rl); return;
-    }
+    const double *in = zin + t * c->in_tstep;
+    double *out = zout + t * c->out_tstep;
+    const double *tw = c->tw ? c->tw + t * c->tw_tstep : 0;
+    const double *t2 = c->t2 ? c->t2 + t * c->t2_tstep : 0;
+    const double *a1 = c->a1 + t * c->a1_tstep;
+    c->fn(in, a1, out, mirror, tw, t2, c->Ls, c->Gs, c->OLs, c->OGs, c->count);
 }
 
-/* THE GROUP SWEEP: the tiles at walk entries [k0, k1) -> the half spectrum in
- * output order. The group owns two residue bands: its keys, and P minus
- * them. For a residue c the direct-class tile is the one with Q = c (its
- * legs below Rl/2 sit at c + P*m + l*ns), the mirror-class tile the one with
- * Q = P - c (its mirrored leg Rl-1-l at block bpt-1-m lands at the same bin,
- * conjugated); every walk entry is one or the other for each band. The
- * middle leg exists only while its bin is below N/2. Rl is a constant at
- * the dispatch below. */
-static inline __attribute__((always_inline)) void _zrf_sweep_group_r(const _zrf_level_t *lv, double *out,
-                                                                     size_t k0, size_t k1, const size_t Rl)
+/* the tiles at walk entries [k0, k1), forward: each tile's stages depth-first,
+ * the last of them into the half spectrum */
+static inline void _zrf_tiles_fwd(const _zrf_level_t *lv, double *out, size_t k0, size_t k1)
 {
-    const __m128d cj = _mm_castsi128_pd(_mm_set_epi64x((long long)0x8000000000000000ull, 0));
-    const size_t hl = Rl / 2, P = lv->P, bpt = lv->bpt, ns = lv->nst, sc = lv->sc, nG = k1 - k0;
-    const double *pl = lv->plane;
-    int band;
-    for (band = 0; band < 2; band++)
+    size_t k;
+    int i;
+    for (k = k0; k < k1; k++)
     {
-        size_t m, l, i;
-        for (m = 0; m < bpt; m++)
-        {
-            const size_t jd = (size_t)lv->jofm[m] * Rl, jm = (size_t)lv->jofm[bpt - 1 - m] * Rl;
-            for (l = 0; l <= hl; l++)
-                for (i = 0; i < nG; i++)
-                {
-                    const size_t k = band ? k1 - 1 - i : k0 + i;
-                    const size_t key = lv->tkey[k], c = band ? P - key : key, base = c + P * m;
-                    const size_t dir = (size_t)((lv->tQ[k] == key) ^ (size_t)band);   /* 1 = the direct-class tile of c */
-                    const size_t src = lv->tbase[k] + (dir ? jd + l : jm + Rl - 1 - l);
-                    const __m128d sg = _mm_and_pd(cj, _mm_castsi128_pd(_mm_set1_epi64x(-(long long)(dir ^ 1))));
-                    if (l == hl && 2 * base >= ns) continue;   /* the middle leg's bin above N/2 */
-                    _mm_storeu_pd(out + sc * (base + l * ns), _mm_xor_pd(_mm_load_pd(pl + 2 * src), sg));
-                }
-        }
+        const size_t t = lv->tord[k];
+        for (i = lv->nwide; i < lv->ns - 1; i++) _ilfd_call(lv->fd, &lv->cf[i], t, lv->plane, lv->plane);
+        _zrf_call_herm(&lv->cf[lv->ns - 1], t, lv->plane, out, out + lv->n2);
     }
 }
-static inline void _zrf_sweep_group(const _zrf_level_t *lv, double *out, size_t k0, size_t k1)
+/* and backward: each tile's first stage from the half spectrum, then its
+ * transposed stages */
+static inline void _zrf_tiles_bwd(const _zrf_level_t *lv, const double *in, size_t k0, size_t k1)
 {
-    switch (lv->Rl)
+    const int ntl = lv->ns - lv->nwide;
+    size_t k;
+    int i;
+    for (k = k0; k < k1; k++)
     {
-    case 3: _zrf_sweep_group_r(lv, out, k0, k1, 3); return;
-    case 5: _zrf_sweep_group_r(lv, out, k0, k1, 5); return;
-    case 7: _zrf_sweep_group_r(lv, out, k0, k1, 7); return;
-    case 9: _zrf_sweep_group_r(lv, out, k0, k1, 9); return;
-    default: _zrf_sweep_group_r(lv, out, k0, k1, lv->Rl); return;
-    }
-}
-
-/* the tiles at walk entries [k0, k1), forward. group = 0: each tile's stages
- * then its own sweep, read where its stages left it in L1 (the serial
- * plan: measured faster than groups on one core, 2026-09-30). group = 1:
- * groups of gsz tiles, each tile's stages then the group's sweep in output
- * order (the threaded form: the workers' runs stay disjoint and
- * contiguous). Bitwise the same output either way. */
-static inline void _zrf_tiles_fwd(const _zrf_level_t *lv, double *out, size_t k0, size_t k1, int group)
-{
-    const size_t gs = group ? lv->gsz : 1;
-    size_t g0;
-    for (g0 = k0; g0 < k1; g0 += gs)
-    {
-        const size_t g1 = g0 + gs < k1 ? g0 + gs : k1;
-        size_t k;
-        int i;
-        for (k = g0; k < g1; k++)
-        {
-            const size_t t = lv->tord[k];
-            for (i = lv->nwide; i < lv->ns; i++) _ilfd_call(lv->fd, &lv->cf[i], t, lv->plane, lv->plane);
-            if (!group) _zrf_sweep(lv, out, (t - lv->t0) * lv->bpt, (t - lv->t0 + 1) * lv->bpt);
-        }
-        if (group) _zrf_sweep_group(lv, out, g0, g1);
+        const size_t t = lv->tord[k];
+        _zrf_call_herm(&lv->ct[0], t, in, lv->plane, (double *)in + lv->n2);
+        for (i = 1; i < ntl; i++) _ilfd_call(lv->fd, &lv->ct[i], t, lv->plane, lv->plane);
     }
 }
 
 /* one level's complex side, forward: the wide stages over blocks 1..h, then
- * (tiled) the tiles, or the rest and one sweep */
+ * the tiles (or, untiled, the last stage over the range) */
 static inline void _zrf_level_fwd(const _zrf_level_t *lv, double *out)
 {
+    const int nw = lv->nwide < lv->ns ? lv->nwide : lv->ns - 1;
     int i;
-    for (i = 0; i < lv->nwide; i++) _ilfd_call(lv->fd, &lv->cf[i], 1, lv->plane, lv->plane);
+    for (i = 0; i < nw; i++) _ilfd_call(lv->fd, &lv->cf[i], 1, lv->plane, lv->plane);
     if (lv->tw)
-        _zrf_tiles_fwd(lv, out, 0, lv->t1 - lv->t0, 0);
+        _zrf_tiles_fwd(lv, out, 0, lv->t1 - lv->t0);
     else
-        _zrf_sweep(lv, out, 0, lv->nlb);
+        _zrf_call_herm(&lv->cf[lv->ns - 1], 1, lv->plane, out, out + lv->n2);
 }
-/* and backward: the gather and the transposed stages, tile by tile, then the
- * wide stages */
+/* and backward: the first stage from the half spectrum and the transposed
+ * stages, tile by tile (or over the range), then the wide stages */
 static inline void _zrf_level_bwd(const _zrf_level_t *lv, const double *in)
 {
     const int ntl = lv->ns - lv->nwide;
     int i;
     if (lv->tw)
     {
-        const size_t nt = lv->t1 - lv->t0;
-        size_t k;
-        for (k = 0; k < nt; k++)
-        {
-            const size_t t = lv->tord[k];
-            _zrf_gather(lv, in, (t - lv->t0) * lv->bpt, (t - lv->t0 + 1) * lv->bpt);
-            for (i = 0; i < ntl; i++) _ilfd_call(lv->fd, &lv->ct[i], t, lv->plane, lv->plane);
-        }
+        _zrf_tiles_bwd(lv, in, 0, lv->t1 - lv->t0);
+        for (i = ntl; i < lv->ns; i++) _ilfd_call(lv->fd, &lv->ct[i], 1, lv->plane, lv->plane);
     }
     else
-        _zrf_gather(lv, in, 0, lv->nlb);
-    for (i = ntl; i < lv->ns; i++) _ilfd_call(lv->fd, &lv->ct[i], 1, lv->plane, lv->plane);
+    {
+        _zrf_call_herm(&lv->ct[0], 1, in, lv->plane, (double *)in + lv->n2);
+        for (i = 1; i < lv->ns; i++) _ilfd_call(lv->fd, &lv->ct[i], 1, lv->plane, lv->plane);
+    }
 }
 
 /* r2c: x[N] -> bins 0..N/2 (N + 1 doubles); x == out is legal */

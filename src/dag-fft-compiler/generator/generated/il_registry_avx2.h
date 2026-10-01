@@ -839,6 +839,50 @@ VFFT_IL_DECL(radix47_z_t2csg_bwd_avx2)
 #define VFFT_IL_T2CSG_BWD_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(11) X(13) X(15) X(16) X(17) X(19) X(21) X(23) X(25) X(27) X(29) X(31) X(37) X(41) X(43) X(47)
 #define VFFT_IL_T2CSG_PAIR_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(11) X(13) X(15) X(16) X(17) X(19) X(21) X(23) X(25) X(27) X(29) X(31) X(37) X(41) X(43) X(47)
 
+/* ── t2csgh ── fwd 19 · bwd 0 · pair 0 */
+VFFT_IL_DECL(radix3_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix5_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix7_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix9_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix11_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix13_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix15_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix17_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix19_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix21_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix23_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix25_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix27_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix29_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix31_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix37_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix41_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix43_z_t2csgh_fwd_avx2)
+VFFT_IL_DECL(radix47_z_t2csgh_fwd_avx2)
+#define VFFT_IL_T2CSGH_FWD_RADICES(X) X(3) X(5) X(7) X(9) X(11) X(13) X(15) X(17) X(19) X(21) X(23) X(25) X(27) X(29) X(31) X(37) X(41) X(43) X(47)
+
+/* ── t2csght ── fwd 0 · bwd 19 · pair 0 */
+VFFT_IL_DECL(radix3_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix5_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix7_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix9_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix11_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix13_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix15_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix17_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix19_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix21_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix23_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix25_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix27_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix29_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix31_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix37_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix41_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix43_z_t2csght_bwd_avx2)
+VFFT_IL_DECL(radix47_z_t2csght_bwd_avx2)
+#define VFFT_IL_T2CSGHT_BWD_RADICES(X) X(3) X(5) X(7) X(9) X(11) X(13) X(15) X(17) X(19) X(21) X(23) X(25) X(27) X(29) X(31) X(37) X(41) X(43) X(47)
+
 /* ── t2csgn ── fwd 22 · bwd 22 · pair 22 */
 VFFT_IL_DECL(radix3_z_t2csgn_fwd_avx2)
 VFFT_IL_DECL(radix4_z_t2csgn_fwd_avx2)
@@ -1125,6 +1169,6 @@ VFFT_IL_DECL(radix9_z_tmgd_fwd_avx2)
 VFFT_IL_DECL(radix15_z_tmgd_fwd_avx2)
 #define VFFT_IL_TMGD_FWD_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(15)
 
-/* 864 declarations over 58 kinds */
+/* 902 declarations over 60 kinds */
 
 #endif

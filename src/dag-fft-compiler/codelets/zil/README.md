@@ -24,8 +24,9 @@ token selects it, and what in it is unused.
 | [`avx2/real/pair/`](avx2/real/pair/) | 48 | `r2z`, `t2h`, `t2m` | the real pair (`il/real/zrp.h`): an even-N r2c/c2r as a leaf and a Hermitian top stage, no fold pass: `eng=zrp` |
 | [`avx2/real/mono/`](avx2/real/mono/) | 60 | `rn1` | the real mono (`il/real/zrm.h`): the whole real transform of N = 3..64 in one kernel: `eng=zrm` |
 | [`avx2/real/flat/`](avx2/real/flat/) | 38 | `r1c` | the real flat DIT's leaf (`il/real/zrf.h`): odd-N r2c/c2r on the `flat/` stages, real legs in, digit runs out: `eng=zrf` |
+| [`avx2/real/flat/herm/`](avx2/real/flat/herm/) | 38 | `t2csgh`, `t2csght` | the real flat DIT's last stage: the `t2csgn` group-loop tail storing the half spectrum (legs mirrored and conjugated as their bins demand), and its transposed backward reading it |
 
-886 files (the real family, `real/`, is one folder per engine since 2026-09-30). Two layouts and two emitters: every folder but `ztt/` and
+924 files (the real family, `real/`, is one folder per engine since 2026-09-30). Two layouts and two emitters: every folder but `ztt/` and
 `flat/odd_mid/` is **pure IL** (packed complex through all the arithmetic,
 `generator/lib/gen/c2c_il.ml`, corpus rows `zil_pure_cells`); those two are
 **boundary IL / split interior** (`cascade_z.ml`, rows `zil_boundary_cells`).

@@ -1,0 +1,30 @@
+2026-10-01 02:19:31 run: 324 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-01 02:19:31 calibrate: 324 cells (0 already done)
+2026-10-01 02:19:34   calibrated 25/324 (99), 3 s elapsed
+2026-10-01 02:19:38   calibrated 50/324 (189), 7 s elapsed
+2026-10-01 02:19:41   calibrated 75/324 (297), 10 s elapsed
+2026-10-01 02:19:44   calibrated 100/324 (407), 13 s elapsed
+2026-10-01 02:19:48   calibrated 125/324 (551), 17 s elapsed
+2026-10-01 02:19:51   calibrated 150/324 (697), 20 s elapsed
+2026-10-01 02:19:54   calibrated 175/324 (847), 23 s elapsed
+2026-10-01 02:19:58   calibrated 200/324 (1023), 27 s elapsed
+2026-10-01 02:20:01   calibrated 225/324 (1197), 30 s elapsed
+2026-10-01 02:20:04   calibrated 250/324 (1395), 33 s elapsed
+2026-10-01 02:20:08   calibrated 275/324 (1595), 37 s elapsed
+2026-10-01 02:20:11   calibrated 300/324 (1827), 40 s elapsed
+2026-10-01 02:20:14   calibrated 324/324 (2035), 43 s elapsed
+2026-10-01 02:20:14 bench: 324 cells (0 already benched, 0 not banked -> not benched)
+2026-10-01 02:20:55   benched 25/324 (99), 39 s elapsed
+2026-10-01 02:21:37   benched 50/324 (189), 81 s elapsed
+2026-10-01 02:22:20   benched 75/324 (297), 124 s elapsed
+2026-10-01 02:23:04   benched 100/324 (407), 168 s elapsed
+2026-10-01 02:23:49   benched 125/324 (551), 213 s elapsed
+2026-10-01 02:24:33   benched 150/324 (697), 257 s elapsed
+2026-10-01 02:25:18   benched 175/324 (847), 302 s elapsed
+2026-10-01 02:26:06   benched 200/324 (1023), 350 s elapsed
+2026-10-01 02:26:52   benched 225/324 (1197), 395 s elapsed
+2026-10-01 02:27:38   benched 250/324 (1395), 442 s elapsed
+2026-10-01 02:28:25   benched 275/324 (1595), 489 s elapsed
+2026-10-01 02:29:14   benched 300/324 (1827), 538 s elapsed
+2026-10-01 02:30:00   benched 324/324 (2035), 584 s elapsed
+2026-10-01 02:30:01 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\zrf2_odd_c2r_fftw_2026-10-01\report_c2r_fftw.md
