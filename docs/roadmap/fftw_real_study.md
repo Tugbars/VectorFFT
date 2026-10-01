@@ -111,6 +111,70 @@ radix stage (two passes at N = 256).
   across a batch; the SIMD lanes are always along m'.
 - `hc2cb` (c2r) reads bins 0..n/2 only and assumes conjugate symmetry.
 
+## 5b. Rank 2 as planned and timed on this machine (2026-10-01)
+
+The plans `plan_dft_r2c_2d` / `plan_dft_c2r_2d` print under FFTW_MEASURE out of
+place, and each pass timed alone (`plan_many_dft_r2c` over the rows,
+`plan_many_dft` over the columns in place: the two children sum to the 2D
+time within 1%):
+
+| Shape | Rows | Columns |
+|---|---|---|
+| N2 <= 32 (16x16 .. 4096x16, 32x32 .. 128x32) | `rdft2-r2hc-direct-N2-xN1`: ONE call of the scalar `r2cf_N2` codelet, the row loop inside it | N1 <= 128: `dft-direct-N1-x(hp1)`, ONE call of the straight-line `n1fv_N1` (n1fv_128 included) over every column, two columns per vector; N1 >= 512: `dft-buffered`, a few columns at a time copied into a contiguous buffer, a full 1D plan there, copied back |
+| N2 >= 256 | `rdft2-vrank>=1` over the rows of `rdft2-ct-dit/r` (`hc2cfdftv_r` over the N2/2 child, r = 4 at 256, r = 2 at 512 and 1024) | the same column rule (`n1fv_128` x513 at 128x1024; `vrank>=1` of a ct plan at 512x256) |
+| c2r | the mirror: `r2cb_N2` / `hc2cbdftv_r` | first, in place on the input (destroyed) |
+
+The odd column count (hp1 = N2/2 + 1 is odd for every even N2) costs FFTW
+nothing: `apply_extra_iter` (`dft/direct.c`) runs the codelet on hp1 - 1
+columns and the last one as a two-lane call at vector stride 0. And no access
+of FFTW's ever splits a cache line: the double AVX `LD` is a 128-bit load plus
+`insertf128` of the next column's 128-bit load, `ST` the two halves stored
+separately (`simd-support/simd-avx.h`), so every complex element is one
+16-byte-aligned access whatever the row pitch.
+
+Against ours (the IL 2D real tier, natural order, the default request; one
+thread, same machine, the same day), r2c in ns, FFTW / ours:
+
+| Shape | rows | columns | total |
+|---|---|---|---|
+| 128x16 | 769 / 1276 | 625 / 851 | 1404 / 2127 |
+| 4096x16 | 31340 / 41220 | 73740 / 90780 | 105080 / 132000 |
+| 128x32 | 2063 / 2312 | 1132 / 1944 | 3195 / 4256 |
+| 16x1024 | 8147 / 9388 | 2706 / 5426 | 10853 / 14814 |
+| 128x128 | 7502 / 7614 | 4726 / 7798 | 12228 / 15412 |
+| 128x1024 | 69820 / 79267 | 40947 / 80173 | 110767 / 159440 |
+| 512x256 | 62107 / 73760 | 83280 / 78647 | 145387 / 152407 |
+
+The pass structure is the same (rows, then columns over hp1 in place, no
+transpose). The differences are mechanical:
+
+1. THE ODD PITCH SPLITS OUR LINES. Our column kinds load and store a column
+   pair as one 32-byte `vmovupd`; at an odd pitch every other row starts 16
+   bytes off a 32-byte boundary and a quarter of the accesses cross a 64-byte
+   line. Inside L1 that is cheap (the radix-16 leaf runs at 0.80-0.83 of
+   n1fv_16's time up to 65 columns); past L1 it is not: the radix-16 leaf over
+   513 columns takes 6288 ns at pitch 513 and 2015 at pitch 514 (the same
+   kernel, the same column count; n1fv_16: 2702). Radix 32: 7214 -> 6257 (FFTW
+   6449); radix 64: 15879 -> 14019 (15663). Every 2D real plane has an odd
+   pitch, so every column pass past L1 pays it: the 16xN2 column passes run at
+   2x FFTW's.
+2. THE ROW KERNEL AT SMALL N2. FFTW's scalar `r2cf_16` is 6.0 ns a row; our
+   rn1 called directly is 8.7 (the complex n1 body on (x, 0) lanes at count 1,
+   one complex per 128-bit vector), 10.0 through the transform-contiguous
+   wrapper (one public execute per row). N2 = 32: 15.5-16.7 against 18 (the
+   pair) / 25-29 (rn1); N2 = 64: 41 against 60. FFTW vectorizes nothing across
+   rows; it wins on the real codelet's halved arithmetic.
+3. N1 = 128 COLUMNS. One `n1fv_128` pass against our two-stage chain (8.16 /
+   16.8) through the natural column pass and its scratch plane: 851 / 625 at
+   128x16 (L1-resident, so not item 1), 1944 / 1132 at 128x32.
+4. TALL COLUMNS. FFTW buffers a few columns into contiguous scratch at
+   N1 >= 512; our natural request runs the multi-stage chain unbanded (the
+   create races the row route and the band only for the scrambled class and
+   single-stage chains).
+5. WIDE ROWS. Per row 8-19% behind in the batch (512x256: 144 against 121 ns),
+   level with FFTW at 128x128; the hc2c form with the fold in a radix-4 stage
+   is ZTT-r's and the real pair's ground.
+
 ## 6. The planner
 
 - MEASURE times each sub-problem in isolation on zeroed, cache-warm data
