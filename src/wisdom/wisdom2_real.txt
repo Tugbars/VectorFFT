@@ -4463,3 +4463,41 @@
 @cell t=c2r n=65537 q=1 ord=nat place=oop | eng=oddr | ran=1 src=race ns=465400.0 metric=bwd1 units=ns date=2026-10-01
 @cell t=c2r n=100003 q=1 ord=nat place=oop | eng=zrb m=163840 in=ztt in_sh=8.5.8.8.8.8 in_tw=2048 | ran=1 src=race ns=1101900.0 metric=bwd1 units=ns date=2026-10-01
 @cell t=c2r n=131071 q=1 ord=nat place=oop | eng=zrb m=196608 in=ztt in_sh=8.8.8.4.3.4.8 in_tw=3072 | ran=1 src=race ns=1315600.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=r2c n=3375 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.3.5.5 msz=0 tile=0 | ran=1 src=race ns=3073.7 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=6561 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.3.3.9.9 msz=0 tile=256 | ran=1 src=race ns=7081.8 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=10125 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.9.5.5 msz=0 tile=1024 | ran=1 src=race ns=10885.7 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=16875 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.5.3.5.5 msz=0 tile=512 | ran=1 src=race ns=18066.7 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=30375 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.3.9.5.5 msz=0 tile=2048 mt=1 | ran=1 src=race ns=30100.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=50625 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.5.3.3.5.5 msz=0 tile=2048 mt=2 | ran=1 src=race ns=41400.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=59049 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.3.3.9.9 msz=0 tile=1024 mt=1 | ran=1 src=race ns=44550.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=78125 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=5.5.5.5.5.25 msz=0 tile=1024 mt=2 | ran=1 src=race ns=67050.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=117649 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=7.7.7.7.7.7 msz=1 tile=2048 mt=2 | ran=1 src=race ns=90700.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=151875 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.3.5.5.5.5 msz=0 tile=2048 mt=1 | ran=1 src=race ns=80700.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=177147 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.3.3.9.27 msz=0 tile=2048 mt=1 | ran=1 src=race ns=114600.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=253125 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.5.5.15.15 msz=0 tile=2048 mt=2 | ran=1 src=race ns=145750.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=390625 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=5.5.5.5.5.5.5.5 msz=0 tile=1024 mt=2 | ran=1 src=race ns=271200.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=531441 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.9.3.9.27 msz=0 tile=2048 mt=2 | ran=1 src=race ns=298600.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=759375 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.5.5.5.5.3.5 msz=0 tile=2048 mt=2 | ran=1 src=race ns=431750.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=1265625 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.5.5.5.5.9.5 msz=1 tile=2048 mt=2 | ran=1 src=race ns=893700.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=1594323 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.9.9.9.27 msz=1 tile=512 mt=2 | ran=1 src=race ns=1190650.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=1953125 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=5.5.5.5.5.25.25 msz=0 tile=1024 mt=2 | ran=1 src=race ns=1738600.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=r2c n=4782969 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.9.9.3.9.27 msz=0 tile=1024 mt=2 | ran=1 src=race ns=5277950.0 metric=fwd1 units=ns date=2026-10-01
+@cell t=c2r n=3375 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.3.5.5 msz=0 tile=0 | ran=1 src=race ns=2921.4 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=6561 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.9.3.3 msz=0 tile=1024 mt=1 | ran=1 src=race ns=4216.7 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=10125 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.5.9.5 msz=0 tile=2048 mt=1 | ran=1 src=race ns=5760.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=16875 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.3.5.5.5 msz=0 tile=512 mt=1 | ran=1 src=race ns=8975.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=30375 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.3.5.9.5 msz=0 tile=1024 mt=2 | ran=1 src=race ns=13800.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=50625 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.5.5.9.5 msz=0 tile=2048 mt=2 | ran=1 src=race ns=18900.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=59049 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.3.3.9.9 msz=0 tile=2048 mt=1 | ran=1 src=race ns=19400.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=78125 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=5.5.5.5.5.5.5 msz=0 tile=2048 mt=1 | ran=1 src=race ns=39500.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=117649 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=7.7.7.7.7.7 msz=1 tile=512 mt=2 | ran=1 src=race ns=62200.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=151875 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.3.5.5.5.5 msz=0 tile=2048 mt=2 | ran=1 src=race ns=43100.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=177147 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.3.9.9.9.9 msz=0 tile=2048 mt=1 | ran=1 src=race ns=67150.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=253125 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.5.5.5.5.9 msz=0 tile=2048 mt=2 | ran=1 src=race ns=93950.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=390625 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=5.5.5.5.5.5.5.5 msz=0 tile=1024 mt=2 | ran=1 src=race ns=192100.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=531441 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.9.9.9.9 msz=0 tile=2048 mt=2 | ran=1 src=race ns=197500.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=759375 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.5.5.5.3.5.5 msz=0 tile=2048 mt=2 | ran=1 src=race ns=277850.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=1265625 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.5.5.5.5.3.15.5 msz=0 tile=2048 mt=2 | ran=1 src=race ns=797200.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=1594323 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.9.3.3.9.9.3 msz=0 tile=2048 mt=2 | ran=1 src=race ns=1077100.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=1953125 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=5.5.5.5.5.5.5.5.5 msz=0 tile=1024 mt=2 | ran=1 src=race ns=2009100.0 metric=bwd1 units=ns date=2026-10-01
+@cell t=c2r n=4782969 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.9.9.9.9.27.3 msz=0 tile=2048 mt=2 | ran=1 src=race ns=5069150.0 metric=bwd1 units=ns date=2026-10-01
