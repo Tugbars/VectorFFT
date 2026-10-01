@@ -2269,6 +2269,84 @@ let zil_pure_cells : (string * string list) list =
     , [ "47"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix47_z_r1c_bwd_avx2.c"
     , [ "47"; "--cil-r1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* the real flat DIT's Hermitian last stage (2026-10-01): t2csgh stores the
+       half spectrum, t2csght reads it; the flat tail radices; zil/avx2/real/flat/herm *)
+  ; ( "radix3_z_t2csgh_avx2.c"
+    , [ "3"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_t2csght_bwd_avx2.c"
+    , [ "3"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_t2csgh_avx2.c"
+    , [ "5"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_t2csght_bwd_avx2.c"
+    , [ "5"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_t2csgh_avx2.c"
+    , [ "7"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_t2csght_bwd_avx2.c"
+    , [ "7"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_t2csgh_avx2.c"
+    , [ "9"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_t2csght_bwd_avx2.c"
+    , [ "9"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix11_z_t2csgh_avx2.c"
+    , [ "11"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix11_z_t2csght_bwd_avx2.c"
+    , [ "11"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix13_z_t2csgh_avx2.c"
+    , [ "13"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix13_z_t2csght_bwd_avx2.c"
+    , [ "13"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_t2csgh_avx2.c"
+    , [ "15"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_t2csght_bwd_avx2.c"
+    , [ "15"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix17_z_t2csgh_avx2.c"
+    , [ "17"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix17_z_t2csght_bwd_avx2.c"
+    , [ "17"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix19_z_t2csgh_avx2.c"
+    , [ "19"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix19_z_t2csght_bwd_avx2.c"
+    , [ "19"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_t2csgh_avx2.c"
+    , [ "21"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_t2csght_bwd_avx2.c"
+    , [ "21"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix23_z_t2csgh_avx2.c"
+    , [ "23"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix23_z_t2csght_bwd_avx2.c"
+    , [ "23"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_t2csgh_avx2.c"
+    , [ "25"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_t2csght_bwd_avx2.c"
+    , [ "25"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_t2csgh_avx2.c"
+    , [ "27"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_t2csght_bwd_avx2.c"
+    , [ "27"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix29_z_t2csgh_avx2.c"
+    , [ "29"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix29_z_t2csght_bwd_avx2.c"
+    , [ "29"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix31_z_t2csgh_avx2.c"
+    , [ "31"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix31_z_t2csght_bwd_avx2.c"
+    , [ "31"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix37_z_t2csgh_avx2.c"
+    , [ "37"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix37_z_t2csght_bwd_avx2.c"
+    , [ "37"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix41_z_t2csgh_avx2.c"
+    , [ "41"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix41_z_t2csght_bwd_avx2.c"
+    , [ "41"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix43_z_t2csgh_avx2.c"
+    , [ "43"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix43_z_t2csght_bwd_avx2.c"
+    , [ "43"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix47_z_t2csgh_avx2.c"
+    , [ "47"; "--cil-t2csgh"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix47_z_t2csght_bwd_avx2.c"
+    , [ "47"; "--cil-t2csght"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ]
 ;;
 
@@ -2830,6 +2908,7 @@ let zil_folder (name : string) : string option =
          else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "ztt"
          else if base = "rn1" then "real/mono"
          else if base = "r1c" then "real/flat"
+         else if base = "t2csgh" || base = "t2csght" then "real/flat/herm"
          else if base = "t2h" || base = "t2m" || base = "r2z" then "real/pair"
          else "pair2p/tangent")
     | _ -> None

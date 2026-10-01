@@ -15,25 +15,23 @@
  *                 are constant along a block's run).
  *   the tiles     by ranges of the WALK ORDER (zrf.h: ascending min(Q, P - Q));
  *                 a contiguous range of a level's walk owns a contiguous set
- *                 of that level's output residues, so the workers' sweeps
- *                 write disjoint lines.
+ *                 of that level's output residues, so the workers' last
+ *                 stages write disjoint lines of the half spectrum.
  * The two arms, raced at the plan's T and banked on the threaded plan's row
  * (eng=zrf ... mt=1|2):
  *   mt=1 FIRST    the first level's units cut; the levels under it (the real
  *                 run of N/R0, 1/R0 of the work) run serial on the caller
  *                 inside the tiles dispatch, which takes that much less of
- *                 the tiles; each tile's sweep follows its stages from L1.
- *                 One fork-join for the leaf, one per wide stage, one for the
- *                 tiles.
+ *                 the tiles. One fork-join for the leaf, one per wide stage,
+ *                 one for the tiles.
  *   mt=2 LEVELS   every level with a tile per worker is cut: the leaves
  *                 level by level, every level's wide records of one index in
  *                 one dispatch, then ONE tiles dispatch over all those
  *                 levels' walks, the ranges balanced by tile work (the small
- *                 levels and the mono serial on slot 0, charged to it); a
- *                 worker sweeps its tiles in GROUPS in output order (zrf.h:
- *                 runs instead of a comb per tile). More fork-joins, no
- *                 serial run on the critical path.
- * Measured 2026-09-30 at N = 531441, T = 8: under FIRST the caller's slot
+ *                 levels and the mono serial on slot 0, charged to it). More
+ *                 fork-joins, no serial run on the critical path.
+ * Measured 2026-09-30 at N = 531441, T = 8 (with the order sweep the
+ * Hermitian last stage has since replaced): under FIRST the caller's slot
  * ran 181 us (the serial levels) where the others ran 122 for r2c, while
  * c2r's tile jobs balanced against it by themselves; LEVELS took r2c from
  * 354 to 309 us and c2r from 227 to 250. Hence two arms, the race decides.
@@ -91,22 +89,10 @@ static inline void _zrf_serial_tail_bwd(const vfft_zrf_plan_t *p, int j0, const 
 
 /* the tiles at walk entries [k0, k1) of one level, this direction */
 static inline void _zrf_mt_tiles_run(const _zrf_level_t *lv, const double *in, double *out, size_t k0, size_t k1,
-                                     int bwd, int group)
+                                     int bwd)
 {
-    if (!bwd)
-        _zrf_tiles_fwd(lv, out, k0, k1, group);
-    else
-    {
-        const int ntl = lv->ns - lv->nwide;
-        size_t k;
-        int i;
-        for (k = k0; k < k1; k++)
-        {
-            const size_t t = lv->tord[k];
-            _zrf_gather(lv, in, (t - lv->t0) * lv->bpt, (t - lv->t0 + 1) * lv->bpt);
-            for (i = 0; i < ntl; i++) _ilfd_call(lv->fd, &lv->ct[i], t, lv->plane, lv->plane);
-        }
-    }
+    if (!bwd) _zrf_tiles_fwd(lv, out, k0, k1);
+    else _zrf_tiles_bwd(lv, in, k0, k1);
 }
 
 static void _zrf_mt_tramp(void *v)
@@ -136,9 +122,9 @@ static void _zrf_mt_tramp(void *v)
         if (a->deep && a->bwd) _zrf_serial_tail_bwd(p, j0, a->in);
         if (a->arm == 2)
             for (j = 0; j < p->mt_lv; j++)
-                _zrf_mt_tiles_run(&p->lv[j], a->in, a->out, a->tlo[j], a->thi[j], a->bwd, 1);
+                _zrf_mt_tiles_run(&p->lv[j], a->in, a->out, a->tlo[j], a->thi[j], a->bwd);
         else
-            _zrf_mt_tiles_run(lv, a->in, a->out, a->lo, a->hi, a->bwd, 0);
+            _zrf_mt_tiles_run(lv, a->in, a->out, a->lo, a->hi, a->bwd);
         if (a->deep && !a->bwd) _zrf_serial_tail_fwd(p, j0, a->out);
     }
 }
@@ -172,11 +158,11 @@ static inline int vfft_zrf_mt_bind(vfft_zrf_plan_t *p, int T, int arm)
         for (j = 0; j < p->mt_lv; j++)
         {
             const _zrf_level_t *lv = &p->lv[j];
-            wt[j] = (double)lv->tw * (double)(lv->ns - lv->nwide + 1);   /* per tile: its stages and its sweep */
+            wt[j] = (double)lv->tw * (double)(lv->ns - lv->nwide);       /* per tile: its stages */
             W += wt[j] * (double)(lv->t1 - lv->t0);
         }
         for (j = p->mt_lv; j < p->J; j++)
-            deep += (double)p->lv[j].Nj * (double)(p->lv[j].ns + 2) / 2.0;   /* a serial level: leaf, stages, sweep */
+            deep += (double)p->lv[j].Nj * (double)(p->lv[j].ns + 1) / 2.0;   /* a serial level: leaf and stages */
         deep += (double)p->NJ * 4.0;
         s0 = (W + deep) / (double)T - deep;
         if (s0 < 0.0) s0 = 0.0;

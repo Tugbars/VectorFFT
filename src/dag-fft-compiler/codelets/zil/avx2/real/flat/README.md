@@ -25,6 +25,9 @@ for its imaginary part. Every operation is real. The kernels are monolithic:
 none spills through radix 9; from radix 11 the compiler spills, lightly to
 15 and heavily from 21.
 
+The engine's other kind, the Hermitian last stage `t2csgh` / `t2csght`,
+sits in [`herm/`](herm/README.md).
+
 Run by `src/core/il/real/zrf.h` under `eng=zrf`: the odd real race
 (`bridge/real_bridge.h`) sweeps the chains and banks the winner in the real
 shard. Emitted by `generator/lib/gen/real_il.ml` (`gen_radix R --cil-r1c

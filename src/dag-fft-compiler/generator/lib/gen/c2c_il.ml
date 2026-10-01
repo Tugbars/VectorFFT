@@ -236,6 +236,7 @@ let emit
       ~(gen2 : bool)
       ~(grouploop : bool)
       ~(transposed : bool)
+      ~(herm : bool)
       ~(rowloop : bool)
       ~(tangent : bool)
       ~(form_tag : bool)
@@ -291,6 +292,11 @@ let emit
      forcing is skipped. Backward only; the symbol carries a "t". *)
   if transposed && (not colstride || dir <> Bwd)
   then failwith "codelet_cil: --cil-t2csgt / --cil-t2csgnt are backward column-stride tails";
+  (* the HERMITIAN last stage of the real flat DIT (2026-10-01): t2csgn whose
+     store edge writes the half spectrum (fwd), and the transposed t2csgnt
+     whose load edge reads it (bwd). Cx_render.herm renders the edges. *)
+  if herm && not (grouploop && ((dir = Fwd && not transposed) || (dir = Bwd && transposed)))
+  then failwith "codelet_cil: --cil-t2csgh is the forward t2csgn, --cil-t2csght the backward t2csgnt, with the Hermitian edge";
   (* the in-kernel ROW LOOP (2026-09-23): the lane loop (wide + tail) wrapped in
      a loop over rows. The row-loop ABI on the frozen 11-arg signature: count =
      TOTAL lanes = rows x Ls; Ls = the leg stride = the lanes per row (the
@@ -311,6 +317,8 @@ let emit
        column-stride, group loop, blocked, log3, turnst-gs";
   let pretw = pretw || (colstride && kind = T2 && dir = Bwd && not transposed) in
   Cx_render.colstride := colstride;
+  Cx_render.herm := (if herm then (if transposed then 2 else 1) else 0);
+  Cx_render.herm_hl := radix / 2;
   if kind = T2C && (turnst || turnst_gs)
   then
     failwith
@@ -1663,6 +1671,13 @@ let emit
      to avoid an unused static const; blocked now renders the same DAG at
      Isa.sse2 in its tail and references _M_IM_n / _M_RE_n by name, so
      withholding the declaration is a compile error rather than tidiness. *)
+  if herm && dir = Bwd
+  then (
+    (* the Hermitian load edge conjugates: the imaginary mask beside the backward's own *)
+    Buffer.add_string buf (Isa.im_mask_decl isa "_M_IM");
+    Buffer.add_string buf "  /* conj at the mirror */\n";
+    Buffer.add_string buf (Isa.im_mask_decl Isa.sse2 "_M_IM_n");
+    Buffer.add_string buf "  /* tail twin */\n");
   if dir = Fwd
   then (
     Buffer.add_string buf (Isa.im_mask_decl isa "_M_IM");
@@ -1707,7 +1722,7 @@ let emit
           || kind = RN1)
        ~symbol:
          (if grouploop
-          then Printf.sprintf "_t2csgn%d_body" radix
+          then Printf.sprintf (if herm then (if transposed then "_t2csght%d_body" else "_t2csgh%d_body") else "_t2csgn%d_body") radix
           else
             Printf.sprintf
             "radix%d_z_%s_%s_%s"
@@ -1744,6 +1759,13 @@ let emit
        (if kind = T2C then "" else " (void)Gs;")
        (if ctx.st_turn_gs || kind = T2C then "" else " (void)OGs;")
        (if kind = T2 || kind = T2C then "" else " (void)tw_re;"));
+  if herm
+  then
+    Buffer.add_string
+      buf
+      (if transposed
+       then "    const size_t _d0 = (size_t)(zin - zout_unused) / 2;   /* this column's place in the half spectrum */\n"
+       else "    const size_t _d0 = (size_t)(zout - zin_unused) / 2;   /* this column's place in the half spectrum */\n");
   if blocked || odd_blocked
   then
     Buffer.add_string
@@ -2020,13 +2042,56 @@ let emit
          ~alias_tolerant:true
          ~symbol:
            (Printf.sprintf
-              "radix%d_z_t2csgn%s_%s_%s"
+              "radix%d_z_t2csg%s%s_%s_%s"
               radix
+              (if herm then "h" else "n")
               (if transposed then "t" else "")
               (if dir = Fwd then "fwd" else "bwd")
               isa.Isa.name)
          ~target_attr:(Isa.cx_target_attr isa)
          ());
+    if herm && not transposed
+    then
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "    /* t2csgh: the group loop of t2csgn, the stores into the HALF SPECTRUM: zin_unused = \
+            obase (the natural bases scaled to the caller's bins, stride count), zout = the \
+            caller's spectrum, zout_unused = its mirror base (out + 2N); OLs / OGs = the leg \
+            stride and column pitch there. Gs = groups; one call per stage. */\n\
+           \    const size_t *obase = (const size_t *)zin_unused;\n\
+           \    for (size_t g = 0; g < Gs; g++) {\n\
+           \        for (size_t c = 0; c < Ls; c++)\n\
+           \            _t2csgh%d_body(zin + 2 * (g * count * %d * Ls + c), zout,\n\
+           \                           zout + 2 * (obase[g * count] + c), zout_unused,\n\
+           \                           tw_re, tw_im + %d * g, Ls, %d * Ls, OLs, OGs, count);\n\
+           \    }\n\
+            }\n"
+           radix
+           radix
+           (2 * vw)
+           radix)
+    else if herm
+    then
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "    /* t2csght: the transposed group loop reading the HALF SPECTRUM: zin = the \
+            caller's spectrum, zin_unused = obase (its natural bases, scaled, stride count), \
+            zout_unused = its mirror base (in + 2N); Ls / OLs = the leg stride and column \
+            pitch there; the blocks go out in block order (a last stage: one column per \
+            block, leg stride 1, column pitch R). Gs = groups; one call per stage. */\n\
+           \    const size_t *obase = (const size_t *)zin_unused;\n\
+           \    for (size_t g = 0; g < Gs; g++)   /* a last stage: one column per block */\n\
+           \        _t2csght%d_body(zin + 2 * obase[g * count], zout_unused,\n\
+           \                        zout + 2 * (g * count * %d), zin,\n\
+           \                        tw_re, tw_im + %d * g, Ls, OLs, 1, %d, count);\n\
+            }\n"
+           radix
+           radix
+           (2 * vw)
+           radix)
+    else
     Buffer.add_string
       buf
       (Printf.sprintf

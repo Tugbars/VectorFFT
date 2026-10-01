@@ -38,8 +38,9 @@ Grouped by the engine that uses it — which is also the proposed folder layout.
 | `real/pair/` | `r2z`, `t2h`, `t2m` | 48 | The real pair (2026-09-29): an even-N r2c/c2r as a real leaf and a Hermitian top stage, no fold pass. |
 | `real/mono/` | `rn1` | 60 | The real mono (2026-09-30): the whole real transform of N = 3..64 in one kernel, CCE half out, Hermitian half in. |
 | `real/flat/` | `r1c` | 38 | The real flat DIT's leaf (2026-09-30): the flat engine's first stage on real input, odd radices 3..47. Real legs in; digit 0 out as a real run, digits 1..(R-1)/2 as the complex blocks the `flat/` stages then run on. |
+| `real/flat/herm/` | `t2csgh`, `t2csght` | 38 | The real flat DIT's last stage (2026-10-01): the `t2csgn` group-loop tail whose store edge writes the half spectrum -- legs below R/2 in place, legs above R/2 conjugated at the mirror, the middle leg by its bin -- and its transposed backward whose load edge reads it. Removes the order pass. |
 
-Total 748 = 746 today + the 2 `mono64_il` files moved in; the real family (`real/pair/` 48, `real/mono/` 60, `real/flat/` 38, one folder per engine since 2026-09-30) came later. The fused drivers stay where they
+Total 748 = 746 today + the 2 `mono64_il` files moved in; the real family (`real/pair/` 48, `real/mono/` 60, `real/flat/` 38, `real/flat/herm/` 38, one folder per engine since 2026-09-30) came later. The fused drivers stay where they
 are: they are derived output with their own build rule, and `ztt/README.md` points to them.
 
 **The rule behind most of this:** splitting a radix into passes pays exactly when the

@@ -189,6 +189,7 @@ let run (argv : string array) : unit =
   let cil_gen2 = ref false in
   let cil_grouploop = ref false in
   let cil_transposed = ref false in
+  let cil_herm = ref false in
   let cil_turnst = ref false in
   let cil_turnst_gs = ref false in
   let oop_spec_named = ref false in
@@ -472,6 +473,23 @@ let run (argv : string array) : unit =
       cil_gen2 := true;
       cil_grouploop := true;
       cil_transposed := true)
+    else if arg = "--cil-t2csgh"
+    then (
+      (* the real flat DIT's Hermitian last stage: t2csgn storing the half spectrum (2026-10-01) *)
+      cil_kind := "t2";
+      cil_colstride := true;
+      cil_gen2 := true;
+      cil_grouploop := true;
+      cil_herm := true)
+    else if arg = "--cil-t2csght"
+    then (
+      (* its transposed backward: t2csgnt reading the half spectrum *)
+      cil_kind := "t2";
+      cil_colstride := true;
+      cil_gen2 := true;
+      cil_grouploop := true;
+      cil_transposed := true;
+      cil_herm := true)
     else if arg = "--cil-t2cs"
     then (
       (* the column-stride TAIL form of the T2 mid (t2cs, 2026-09-04): the
@@ -1316,6 +1334,7 @@ let run (argv : string array) : unit =
            ~gen2:!cil_gen2
            ~grouploop:!cil_grouploop
            ~transposed:!cil_transposed
+           ~herm:!cil_herm
            ~rowloop:!cil_rowloop
            ~turnst:!cil_turnst
            ~turnst_gs:!cil_turnst_gs

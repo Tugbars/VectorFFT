@@ -101,6 +101,20 @@ let emit_const_decls (_isa : Isa.t) (tbl : consts) : string =
    which emit two 128-bit halves (columns k and k+1). *)
 let colstride = ref false
 
+(* the HERMITIAN edge of the real flat DIT's last stage (t2csgh / t2csght,
+   2026-10-01; set by C2c_il.emit for those kinds, 0 otherwise): the stage's
+   legs are the bins of one block, leg l at l*OLs (fwd: OLs = the leg stride
+   of the half spectrum, OGs = its column pitch); the half spectrum holds bins
+   0..N/2 only, so leg l < R/2 goes to its place, leg l > R/2 conjugated to
+   the mirror N - bin, and the middle leg to whichever side its bin is on. The
+   body knows its column's absolute place through _d0 = (zout - origin)/2 (the
+   wrapper passes the origin in zin_unused and the mirror base out + 2N in
+   zout_unused); the transposed backward reads the same way (origin in
+   zout_unused, mirror in zin_unused, _d0 = (zin - origin)/2). herm = 1 the
+   store edge, 2 the load edge; herm_hl = R/2. *)
+let herm = ref 0
+let herm_hl = ref 0
+
 let addr_str (a : caddr) : string =
   match a with
   | AZinLeg l when !colstride -> Printf.sprintf "zin[2*((size_t)%d*Ls + (size_t)k*Gs)]" l
@@ -213,6 +227,30 @@ let render_load (isa : Isa.t) (a : caddr) : string =
      | true, true -> Printf.sprintf "_mm256_xor_pd(%s, _M_IM)" v
      | false, true -> Printf.sprintf "_mm256_xor_pd(%s, _M_IMHI)" v
      | true, false -> failwith "cx_render.render_load: AZinSpecB lane pattern")
+  (* the Hermitian load edge: the mirrored legs conjugated from the mirror, the
+     middle leg per column by its bin (2*place < Ls: below N/2) *)
+  | AZinLeg l when !colstride && !herm = 2 && l > !herm_hl && isa.Isa.vec_width = 4 ->
+    Printf.sprintf
+      "_mm256_xor_pd(_mm256_loadu2_m128d(zin_unused - 2*(_d0 + ((size_t)k + 1)*Gs + (size_t)%d*Ls), \
+       zin_unused - 2*(_d0 + (size_t)k*Gs + (size_t)%d*Ls)), _M_IM)"
+      l
+      l
+  | AZinLeg l when !colstride && !herm = 2 && l = !herm_hl && isa.Isa.vec_width = 4 ->
+    Printf.sprintf
+      "({ const size_t _dk = _d0 + (size_t)k*Gs, _dk1 = _d0 + ((size_t)k + 1)*Gs; \
+       const __m128d _c0 = (2*_dk < Ls) ? _mm_loadu_pd(&zin[2*((size_t)%d*Ls + (size_t)k*Gs)]) \
+       : _mm_xor_pd(_mm_loadu_pd(zin_unused - 2*(_dk + (size_t)%d*Ls)), _M_IM_n); \
+       const __m128d _c1 = (2*_dk1 < Ls) ? _mm_loadu_pd(&zin[2*((size_t)%d*Ls + ((size_t)k + 1)*Gs)]) \
+       : _mm_xor_pd(_mm_loadu_pd(zin_unused - 2*(_dk1 + (size_t)%d*Ls)), _M_IM_n); \
+       _mm256_insertf128_pd(_mm256_castpd128_pd256(_c0), _c1, 1); })"
+      l l l l
+  | AZinLeg l when !colstride && !herm = 2 && l > !herm_hl && isa.Isa.vec_width = 2 ->
+    Printf.sprintf "_mm_xor_pd(_mm_loadu_pd(zin_unused - 2*(_d0 + (size_t)k*Gs + (size_t)%d*Ls)), _M_IM_n)" l
+  | AZinLeg l when !colstride && !herm = 2 && l = !herm_hl && isa.Isa.vec_width = 2 ->
+    Printf.sprintf
+      "((2*(_d0 + (size_t)k*Gs) < Ls) ? _mm_loadu_pd(&zin[2*((size_t)%d*Ls + (size_t)k*Gs)]) \
+       : _mm_xor_pd(_mm_loadu_pd(zin_unused - 2*(_d0 + (size_t)k*Gs + (size_t)%d*Ls)), _M_IM_n))"
+      l l
   | AZinLeg l when !colstride && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm256_loadu2_m128d(&zin[2*((size_t)%d*Ls + ((size_t)k + 1)*Gs)], \
@@ -259,6 +297,29 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
       isa
       (Printf.sprintf "zout[2*(((size_t)Ls - k - %d)*OLs + %d)]" c l)
       (Isa.xor_mask_pd isa v (mir_mask isa))
+  (* the Hermitian store edge (see herm above) *)
+  | AZoutLeg l when !colstride && !herm = 1 && l > !herm_hl && isa.Isa.vec_width = 4 ->
+    Printf.sprintf
+      "_mm256_storeu2_m128d(zout_unused - 2*(_d0 + ((size_t)k + 1)*OGs + (size_t)%d*OLs), \
+       zout_unused - 2*(_d0 + (size_t)k*OGs + (size_t)%d*OLs), _mm256_xor_pd(%s, _M_IM))"
+      l
+      l
+      v
+  | AZoutLeg l when !colstride && !herm = 1 && l = !herm_hl && isa.Isa.vec_width = 4 ->
+    Printf.sprintf
+      "{ const __m256d _hv = %s; const size_t _dk = _d0 + (size_t)k*OGs, _dk1 = _d0 + ((size_t)k + 1)*OGs; \
+       if (2*_dk < OLs) _mm_storeu_pd(&zout[2*((size_t)%d*OLs + (size_t)k*OGs)], _mm256_castpd256_pd128(_hv)); \
+       else _mm_storeu_pd(zout_unused - 2*(_dk + (size_t)%d*OLs), _mm_xor_pd(_mm256_castpd256_pd128(_hv), _M_IM_n)); \
+       if (2*_dk1 < OLs) _mm_storeu_pd(&zout[2*((size_t)%d*OLs + ((size_t)k + 1)*OGs)], _mm256_extractf128_pd(_hv, 1)); \
+       else _mm_storeu_pd(zout_unused - 2*(_dk1 + (size_t)%d*OLs), _mm_xor_pd(_mm256_extractf128_pd(_hv, 1), _M_IM_n)); }"
+      v l l l l
+  | AZoutLeg l when !colstride && !herm = 1 && l > !herm_hl && isa.Isa.vec_width = 2 ->
+    Printf.sprintf "_mm_storeu_pd(zout_unused - 2*(_d0 + (size_t)k*OGs + (size_t)%d*OLs), _mm_xor_pd(%s, _M_IM_n))" l v
+  | AZoutLeg l when !colstride && !herm = 1 && l = !herm_hl && isa.Isa.vec_width = 2 ->
+    Printf.sprintf
+      "{ const __m128d _hv = %s; if (2*(_d0 + (size_t)k*OGs) < OLs) _mm_storeu_pd(&zout[2*((size_t)%d*OLs + (size_t)k*OGs)], _hv); \
+       else _mm_storeu_pd(zout_unused - 2*(_d0 + (size_t)k*OGs + (size_t)%d*OLs), _mm_xor_pd(_hv, _M_IM_n)); }"
+      v l l
   | AZoutLeg l when !colstride && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm256_storeu2_m128d(&zout[2*((size_t)%d*OLs + ((size_t)k + 1)*OGs)], \

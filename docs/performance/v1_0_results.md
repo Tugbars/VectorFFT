@@ -657,46 +657,49 @@ N = 2 c2r is refused (no engine builds it). The control cell drifted during both
 (r2c 0.86..1.21, c2r 1.25..1.58): the class and band medians hold, a single cell may be off.
 In place was not raced in these runs.
 
-### K=1 INTERLEAVED r2c and c2r — odd N on the real flat DIT, the 324 smooth odd cells to 2047 vs MKL (2026-09-30)
+### K=1 INTERLEAVED r2c and c2r — odd N on the real flat DIT, the 324 smooth odd cells to 2047 vs MKL (2026-10-01)
 
 Out of place, natural order, one thread, MKL DFTI in its CCE home layout; the ratio is
 MKL / ours, the worse of the two order flips. The cells are every odd composite N <= 2047
 whose prime factors are at most 47: the cells the real flat DIT (`il/real/zrf.h`) has a
-chain for. Runs `zrf_odd_r2c_2026-09-30` and `zrf_odd_c2r_2026-09-30`; each cell is served
-by the engine the odd real race banked for it. `before` is the same cell in the 2..2048
-runs above, where the odd routes or the mono served it.
+chain for. Runs `zrf2_odd_r2c_2026-10-01` and `zrf2_odd_c2r_2026-10-01`, the engine with
+its Hermitian last stage (the order sweep gone); each cell is served by the engine the odd
+real race banked for it. `09-30` is the same cell with the sweep (runs `zrf_odd_*_2026-09-30`),
+`before` the same cell in the 2..2048 runs, where the odd routes or the mono served it.
 
 ```
  r2c engine      cells   <0.8   <1.0    p10    med    p90   gmean
- flat DIT          307      0      0   1.48   3.39   4.43    2.86
- mono                2      0      1   0.96   1.38   1.81    1.32
- odd route          15      0      0   2.21   3.64   3.85    3.24
- ALL               324      0      1   1.48   3.44   4.42    2.86
+ flat DIT          312      0      0   1.60   3.89   4.95    3.21
+ mono                2      0      1   0.97   1.40   1.83    1.33
+ odd route          10      0      0   2.46   3.67   4.00    3.15
+ ALL               324      0      1   1.60   3.85   4.94    3.19
+ 09-30             324      0      1   1.48   3.44   4.42    2.86
  before            324     10     58   0.90   1.88   3.37    1.77
 ```
 
 ```
  c2r engine      cells   <0.8   <1.0    p10    med    p90   gmean
- flat DIT          312      0      1   1.52   3.76   4.68    3.02
+ flat DIT          317      0      0   1.76   4.43   5.66    3.63
  mono                2      0      0   1.15   1.51   1.88    1.47
- odd route          10      0      0   3.35   3.69   4.30    3.57
- ALL               324      0      1   1.52   3.74   4.68    3.02
+ odd route           5      0      0   3.43   3.63   4.30    3.76
+ ALL               324      0      0   1.76   4.39   5.65    3.61
+ 09-30             324      0      1   1.52   3.74   4.68    3.02
  before            324     16     70   0.86   1.86   2.91    1.70
 ```
 
 ```
- size band        r2c cells  median   <1.0  before  |  c2r cells  median   <1.0  before
- 9..64                   14    1.16      1    1.03  |         14    1.14      1    0.98
- 65..256                 52    2.56      0    1.61  |         52    2.49      0    1.84
- 257..512                51    3.46      0    2.31  |         51    3.66      0    2.15
- 513..1024               83    3.83      0    1.90  |         83    3.99      0    1.83
- 1025..2048             124    3.85      0    1.86  |        124    4.13      0    1.90
+ size band        r2c cells  median  09-30  before  |  c2r cells  median  09-30  before
+ 9..64                   14    1.34   1.16    1.03  |         14    1.48   1.14    0.98
+ 65..256                 52    2.60   2.56    1.61  |         52    3.28   2.49    1.84
+ 257..512                51    3.76   3.46    2.31  |         51    4.43   3.66    2.15
+ 513..1024               83    4.23   3.83    1.90  |         83    4.83   3.99    1.83
+ 1025..2048             124    4.22   3.85    1.86  |        124    4.70   4.13    1.90
 ```
 
-On the cells the flat DIT took, our own time against the 2..2048 runs is 1.67x (r2c) and 1.88x (c2r) at the median.
-The weakest cells: r2c 15 (0.96), 39 (1.04), 33 (1.05), 21 (1.06), 63 (1.08), 25 (1.13); c2r 21 (0.89), 25 (1.03), 27 (1.03), 39 (1.03), 33 (1.04), 49 (1.10).
-r2c: control cell: 10 readings, 1.182..1.195 (a run is internally comparable when the first and the last agree).
-c2r: control cell: 10 readings, 1.093..1.283 (a run is internally comparable when the first and the last agree).
+Against the 09-30 runs our own time on the same cells is 1.13x (r2c) and 1.19x (c2r) at the median: the sweep's pass.
+The weakest cells: r2c 15 (0.97), 49 (1.09), 39 (1.20), 21 (1.21), 33 (1.22), 125 (1.25); c2r 147 (1.13), 15 (1.15), 25 (1.21), 125 (1.27), 39 (1.27), 65 (1.28).
+r2c: control cell 10 readings, 1.189..1.195.
+c2r: control cell 10 readings, 1.259..1.283.
 
 With these cells replaced, the 2..2048 contract above reads:
 
@@ -705,86 +708,155 @@ With these cells replaced, the 2..2048 contract above reads:
  pow2                      11    1.26      0  |         10    1.25      1
  2^a*odd (a >= 3)         247    1.56      8  |        247    1.46      9
  even composite           766    1.45     50  |        766    1.40     56
- odd composite            715    1.65     61  |        715    1.70     53
+ odd composite            715    1.72     61  |        715    1.82     52
  prime                    308    1.19     38  |        308    1.20     34
- ALL                     2047    1.45    157  |       2046    1.41    153
+ ALL                     2047    1.46    157  |       2046    1.44    152
 ```
 
-Both directions pooled: 4093 cells, median 1.44x, geometric mean 1.64x, 310 below parity, 34 below 0.8x.
+Both directions pooled: 4093 cells, median 1.45x, geometric mean 1.68x, 309 below parity, 34 below 0.8x.
 The odd cells left to the odd routes are the primes and the composites carrying a prime
 factor above 47. In place serves the same engine (one pipeline in both placements); it
 was not raced in these runs.
 
-### K=1 INTERLEAVED r2c and c2r — large odd N on the real flat DIT, T=1 and T=8 vs MKL (2026-09-30)
+### K=1 INTERLEAVED r2c and c2r — large odd N on the real flat DIT, T=1 and T=8 vs MKL (2026-10-01)
 
 Out of place, natural order, MKL DFTI in its CCE home layout; the ratio is MKL / ours, the
 worse of the two order flips. Nineteen odd cells whose factors are 3, 5 and 7, from 3375 to
-4782969, every one served by the real flat DIT (`il/real/zrf.h`): at one thread the serial
-plan (runs `zrf_big_{r2c,c2r}_2026-09-30`), at eight threads the plan the odd real race
-banked on the threaded row (`nthreads=8`; runs `zrf_big_{r2c,c2r}_mt8_2026-09-30`), MKL at
-eight threads too. `scale` = the same library's one-thread time over its eight-thread time;
-`eng` = threaded executes counted in the timed arm.
+4782969, every one served by the real flat DIT (`il/real/zrf.h`) with its Hermitian last
+stage: at one thread the serial plan (runs `zrf2_big_{r2c,c2r}_2026-10-01`), at eight threads
+the plan the odd real race banked on the threaded row (`nthreads=8`; runs
+`zrf2_big_{r2c,c2r}_mt8_2026-10-01`), MKL at eight threads too. `scale` = the same library's
+one-thread time over its eight-thread time; `eng` = threaded executes counted in the timed
+arm; `09-30` = the same cell and thread count with the order sweep (runs `zrf_big_*`).
 
 ```
- r2c        N   T=1 ours us   MKL us     x  |  T=8 ours us  MKL@8 us     x   eng  scale  MKL scale  plan at T=8
-       3375          3.7      6.1  1.68  |          4.2       6.1  1.45     0   0.86x      1.00x  zrf 9.5.3.5.5
-       6561          8.3     14.5  1.75  |          9.5      14.5  1.53  6670   0.87x      1.00x  zrf 9.9.9.9 w128 mt
-      10125         13.1     22.3  1.70  |         12.4      22.2  1.79  3961   1.06x      1.01x  zrf 9.9.5.5.5 w128 mt
-      16875         21.7     39.4  1.82  |         23.0      39.4  1.71  2476   0.94x      1.00x  zrf 9.5.5.3.5.5 w1024 mt
-      30375         39.7     73.8  1.86  |         33.7      73.6  2.18  1321   1.18x      1.00x  zrf 9.5.3.5.3.3.5 w1024 mt
-      50625         68.6    133.2  1.94  |         41.5     135.3  3.26   801   1.65x      0.98x  zrf 9.5.3.5.3.5.5 w2048 mt
-      59049         86.8    163.6  1.88  |         45.6     164.2  3.60   681   1.90x      1.00x  zrf 9.9.3.3.9.9 w2048 mt
-      78125        124.1    209.1  1.69  |         67.4     211.8  3.14   618   1.84x      0.99x  zrf 5.25.5.5.5.5 w1024 mt
-     117649        209.9    324.6  1.55  |        126.4     323.6  2.56   374   1.66x      1.00x  zrf 7.7.7.7.7.7 w512 mt
-     151875        263.6    491.8  1.87  |         80.7     488.4  6.05   279   3.27x      1.01x  zrf 9.9.3.5.5.5.5 w2048 mt
-     177147        317.8    600.0  1.89  |        130.2     610.0  4.69   276   2.44x      0.98x  zrf 9.9.3.9.9.9 w1024 mt
-     253125        453.7    950.7  2.10  |        176.8     984.1  5.57   175   2.57x      0.97x  zrf 9.5.9.5.5.5.5 w2048 mt
-     390625        765.7   1400.8  1.83  |        373.2    1421.9  3.81   115   2.05x      0.99x  zrf 5.5.5.5.5.5.5.5 w2048 mt
-     531441       1088.2   2278.1  2.09  |        321.4    2300.5  7.16   108   3.39x      0.99x  zrf 9.9.9.9.9.9 w1024 mt
-     759375       1588.2   3470.3  2.19  |        463.2    3475.2  7.50   104   3.43x      1.00x  zrf 9.9.5.5.3.5.5.5 w2048 mt
-    1265625       3199.6   7493.3  2.34  |        758.2    7362.5  9.71    91   4.22x      1.02x  zrf 9.5.5.5.5.5.5.9 w2048 mt
-    1594323       4372.6  11273.3  2.58  |       1159.6   10947.5  9.44    91   3.77x      1.03x  zrf 9.9.9.3.9.9.9 w2048 mt
-    1953125       6598.8  13420.9  2.03  |       2127.2   13181.0  6.20    91   3.10x      1.02x  zrf 5.5.5.5.5.5.5.25 w2048 mt
-    4782969      17093.0  51851.8  3.03  |       5312.6   49811.4  9.38    91   3.22x      1.04x  zrf 9.9.9.9.27.27 w1024 mt
+ r2c        N   T=1 ours us   MKL us     x  09-30  |  T=8 ours us  MKL@8 us     x  09-30   eng  scale  MKL scale  plan at T=8
+       3375          3.1      6.1  1.99   1.68  |          3.6       6.1  1.69   1.45     0   0.85x      1.00x  9.3.5.5.5
+       6561          7.0     14.5  2.08   1.75  |          7.3      14.4  1.98   1.53     0   0.96x      1.01x  9.9.9.9 w1024
+      10125         11.1     22.3  2.01   1.70  |         11.7      22.3  1.91   1.79  3961   0.95x      1.00x  9.9.5.5.5 w256 FIRST
+      16875         18.1     39.3  2.17   1.82  |         22.5      39.6  1.76   1.71     0   0.81x      0.99x  9.5.3.5.5.5 w1024
+      30375         33.9     73.7  2.17   1.86  |         32.3      73.5  2.27   2.18  1348   1.05x      1.00x  9.5.3.9.5.5 w2048 FIRST
+      50625         60.7    133.3  2.20   1.94  |         41.4     133.8  3.23   3.26  1039   1.46x      1.00x  9.5.5.3.3.5.5 w2048 LEVELS
+      59049         73.3    163.5  2.23   1.88  |         48.3     163.6  3.39   3.60   681   1.52x      1.00x  9.9.3.3.9.9 w1024 FIRST
+      78125        110.9    209.0  1.89   1.69  |         77.0     246.3  3.20   3.14   521   1.44x      0.85x  5.5.5.5.5.25 w1024 LEVELS
+     117649        191.3    324.2  1.70   1.55  |         89.8     331.8  3.69   2.56   369   2.13x      0.98x  7.7.7.7.7.7 w2048 LEVELS
+     151875        234.6    487.5  2.08   1.87  |         85.0     521.8  6.14   6.05   271   2.76x      0.93x  9.9.3.5.5.5.5 w2048 FIRST
+     177147        289.3    597.9  2.07   1.89  |        127.3     629.9  4.95   4.69   245   2.27x      0.95x  9.9.3.3.9.27 w2048 FIRST
+     253125        423.6    956.5  2.26   2.10  |        145.5     974.3  6.70   5.57   161   2.91x      0.98x  9.5.5.5.15.15 w2048 LEVELS
+     390625        697.3   1400.9  2.01   1.83  |        341.4    1450.4  4.25   3.81   111   2.04x      0.97x  5.5.5.5.5.5.5.5 w1024 LEVELS
+     531441       1069.0   2255.2  2.11   2.09  |        351.7    2309.3  6.57   7.16    91   3.04x      0.98x  9.9.9.3.9.27 w2048 LEVELS
+     759375       1723.0   3375.8  1.96   2.19  |        369.0    3567.3  9.67   7.50    91   4.67x      0.95x  9.9.5.5.5.5.3.5 w2048 LEVELS
+    1265625       2776.9   7420.3  2.67   2.34  |        851.9    7298.0  8.57   9.71   100   3.26x      1.02x  9.5.5.5.5.5.9.5 w2048 LEVELS
+    1594323       3999.3  11147.1  2.79   2.58  |       1151.2   11170.4  9.70   9.44    96   3.47x      1.00x  9.9.9.9.9.27 w512 LEVELS
+    1953125       5935.4  13628.8  2.30   2.03  |       1494.3   13284.3  8.89   6.20    94   3.97x      1.03x  5.5.5.5.5.25.25 w1024 LEVELS
+    4782969      15981.6  52413.2  3.28   3.03  |       4872.1   49973.4 10.26   9.38    91   3.28x      1.05x  9.9.9.9.3.9.27 w1024 LEVELS
 ```
 
 ```
- c2r        N   T=1 ours us   MKL us     x  |  T=8 ours us  MKL@8 us     x   eng  scale  MKL scale  plan at T=8
-       3375          3.3      7.0  2.09  |          2.4       8.7  3.69 12908   1.41x      0.80x  zrf 9.3.5.5.5 w512 mt
-       6561          7.3     16.0  2.21  |          3.8      16.1  4.24  6101   1.91x      1.00x  zrf 9.3.3.9.9 w2048 mt
-      10125         10.7     25.6  2.38  |          5.6      25.4  4.56  5335   1.93x      1.01x  zrf 9.5.5.9.5 w2048 mt
-      16875         18.6     44.8  2.42  |          7.7      44.5  5.75  2381   2.40x      1.01x  zrf 9.5.5.3.5.5 w2048 mt
-      30375         38.9     84.0  2.16  |         17.5      83.7  4.79  1808   2.23x      1.00x  zrf 9.5.3.5.9.5 w2048 mt
-      50625         62.8    145.4  2.32  |         23.1     144.6  6.26   803   2.72x      1.01x  zrf 9.5.3.5.3.5.5 w2048 mt
-      59049         76.4    179.3  2.35  |         26.6     189.1  7.12   681   2.87x      0.95x  zrf 9.9.3.3.9.9 w1024 mt
-      78125        109.2    231.1  2.12  |         52.5     232.6  4.43   598   2.08x      0.99x  zrf 5.5.5.5.5.5.5 w1024 mt
-     117649        179.1    361.2  2.02  |         73.6     363.7  4.94   341   2.43x      0.99x  zrf 7.7.7.7.7.7 w512 mt
-     151875        227.9    562.4  2.47  |         86.5     566.6  6.55   333   2.64x      0.99x  zrf 9.5.9.3.5.5.5 w1024 mt
-     177147        281.2    728.2  2.59  |         91.2     726.2  7.96   231   3.08x      1.00x  zrf 9.3.9.9.9.9 w1024 mt
-     253125        403.7   1215.3  3.01  |        129.3    1225.8  9.48   197   3.12x      0.99x  zrf 9.5.5.5.9.5.5 w2048 mt
-     390625        659.1   1689.3  2.56  |        237.2    1693.5  7.14   111   2.78x      1.00x  zrf 25.5.5.5.5.5.5 w1024 mt
-     531441        902.1   2596.4  2.88  |        286.0    2604.6  9.11    94   3.15x      1.00x  zrf 9.9.9.9.9.9 w1024 mt
-     759375       1484.6   3872.5  2.61  |        359.7    3909.6 10.87    91   4.13x      0.99x  zrf 9.9.5.15.5.5.5 w2048 mt
-    1265625       2893.3   8129.7  2.81  |        667.0    7953.1 11.92    99   4.34x      1.02x  zrf 9.5.5.5.5.5.9.5 w2048 mt
-    1594323       4083.7  10648.5  2.61  |        985.6   10507.5 10.66    91   4.14x      1.01x  zrf 9.9.9.3.9.9.9 w1024 mt
-    1953125       6584.2  12857.9  1.95  |       2033.8   12877.3  6.33    92   3.24x      1.00x  zrf 5.5.5.25.25.25 w1024 mt
-    4782969      16822.0  52027.3  3.09  |       4970.7   48945.2  9.85    91   3.38x      1.06x  zrf 9.9.9.9.27.27 w1024 mt
+ c2r        N   T=1 ours us   MKL us     x  09-30  |  T=8 ours us  MKL@8 us     x  09-30   eng  scale  MKL scale  plan at T=8
+       3375          3.1      7.0  2.29   2.09  |          4.4       6.9  1.58   3.69 11857   0.70x      1.01x  5.9.3.5.5 w1024 FIRST
+       6561          7.2     16.0  2.23   2.21  |          6.4      16.1  2.53   4.24  6104   1.13x      1.00x  9.9.9.3.3 w1024 FIRST
+      10125         10.2     25.6  2.51   2.38  |          7.2      25.6  3.58   4.56  3979   1.42x      1.00x  9.5.5.9.5 w2048 FIRST
+      16875         17.3     44.8  2.60   2.42  |         11.0      44.5  4.05   5.75  2407   1.57x      1.01x  9.5.3.5.5.5 w512 FIRST
+      30375         31.8     83.8  2.63   2.16  |         16.4      83.7  5.11   4.79  1321   1.94x      1.00x  9.5.3.5.9.5 w1024 LEVELS
+      50625         57.8    145.4  2.52   2.32  |         22.3     145.5  6.54   6.26  1021   2.60x      1.00x  9.5.5.5.9.5 w2048 LEVELS
+      59049         73.9    179.5  2.43   2.35  |         25.3     180.7  7.14   7.12   681   2.92x      0.99x  9.9.3.3.9.9 w2048 FIRST
+      78125        107.3    231.9  2.16   2.12  |         44.7     257.9  5.77   4.43   713   2.40x      0.90x  5.5.5.5.5.5.5 w2048 FIRST
+     117649        173.2    360.4  2.08   2.02  |         72.8     368.0  5.05   4.94   341   2.38x      0.98x  7.7.7.7.7.7 w512 LEVELS
+     151875        207.7    564.9  2.72   2.47  |         45.4     565.3 12.46   6.55   271   4.58x      1.00x  9.9.3.5.5.5.5 w2048 LEVELS
+     177147        265.1    729.4  2.75   2.59  |         85.2     737.3  8.65   7.96   231   3.11x      0.99x  9.3.9.9.9.9 w2048 FIRST
+     253125        379.5   1217.5  3.21   3.01  |        132.0    1241.3  9.40   9.48   179   2.88x      0.98x  9.5.5.5.5.5.9 w2048 LEVELS
+     390625        636.5   1669.3  2.62      -  |        250.6    1716.6  6.85      -   111   2.54x      0.97x  5.5.5.5.5.5.5.5 w1024 LEVELS
+     531441        825.4   2571.7  3.12      -  |        282.7    2603.8  9.21      -    91   2.92x      0.99x  9.9.9.9.9.9 w2048 LEVELS
+     759375       1337.5   3901.4  2.92      -  |        244.2    3898.6 15.96      -    91   5.48x      1.00x  9.9.5.5.5.3.5.5 w2048 LEVELS
+    1265625       3134.9   8173.0  2.61      -  |        679.7    7934.9 11.67      -    91   4.61x      1.03x  9.5.5.5.5.3.15.5 w2048 LEVELS
+    1594323       6151.1  10597.6  1.72      -  |        822.7   10341.7 12.57      -    91   7.48x      1.02x  9.9.9.3.3.9.9.3 w2048 LEVELS
+    1953125       6819.7  12912.1  1.89      -  |       1846.0   12689.8  6.87      -    91   3.69x      1.02x  5.5.5.5.5.5.5.5.5 w1024 LEVELS
+    4782969      18794.0  51367.2  2.73      -  |       4962.9   48382.9  9.75      -    91   3.79x      1.06x  9.9.9.9.9.27.3 w2048 LEVELS
 ```
 
-r2c: T=1 median 1.88x over 19 cells (min 1.55), T=8 median 3.81x over 19 cells (min 1.45); scaling from 50625 median 2.83x, best 4.22x.
-c2r: T=1 median 2.42x over 19 cells (min 1.95), T=8 median 6.55x over 19 cells (min 3.69); scaling from 50625 median 3.10x, best 4.34x.
-r2c controls: T=1 4 readings, 1.185..1.199; T=8 2 readings, 1.201..1.206.
-c2r controls: T=1 4 readings, 1.265..1.278; T=8 2 readings, 1.246..1.251.
+r2c: T=1 median 2.11x over 19 cells (min 1.70), T=8 median 4.25x over 19 cells (min 1.69); scaling from 50625 median 2.84x, best 4.67x; against 09-30 our time is 1.12x (T=1) and 1.04x (T=8) at the median.
+c2r: T=1 median 2.60x over 19 cells (min 1.72), T=8 median 6.87x over 19 cells (min 1.58); scaling from 50625 median 3.02x, best 7.48x; against 09-30 our time is 1.06x (T=1) and 1.02x (T=8) at the median.
+The threaded arms the race banked: r2c FIRST at 5 cells, LEVELS at 11 cells, serial at 3 cells; c2r FIRST at 7 cells, LEVELS at 12 cells.
+r2c controls: T=1 4 readings, 1.193..1.195; T=8 2 readings, 1.165..1.213.
+c2r controls: T=1 4 readings, 1.098..1.275; T=8 2 readings, 1.264..1.273.
 
+The 09-30 column is blank where that run's results were not kept (the c2r cells above 390625 came from a rerun
+whose directory was not retained). At 1594323 c2r, T=1, the two order flips read 4.1 and 6.2 ms and the
+table carries the worse; the race timed the same plan at 4.8 ms.
 MKL does not thread the odd real transform (its eight-thread time is its one-thread time
-at every cell). The threaded form (`il/real/zrf_mt.h`) cuts the first level -- the leaf by
-column ranges, the wide stages by column ranges, the tiles by ranges of their walk order,
-the deeper levels on the caller beside its tiles -- and is bitwise the serial plan
-(gauntlet/zrf_mt_check.c). It is banked from about N = 6561; below that the fork-joins
-cost more than they save. c2r scales better than r2c: the r2c sweep writes each tile's
-bins as a comb across the whole half spectrum, where the c2r gather only reads one.
-Above ~390625 the odd routes build no c2r plan at all, so those cells are the flat DIT's
-alone, gated by the roundtrip through the r2c routes.
+at every cell). The threaded forms (`il/real/zrf_mt.h`) are two arms raced per cell: FIRST
+cuts the first level and runs the deeper levels on the caller beside its tiles; LEVELS cuts
+every level with a tile per worker in one balanced tiles dispatch. Both are bitwise the
+serial plan (gauntlet/zrf_mt_check.c). Above ~390625 the odd routes build no c2r plan at
+all, so those cells are the flat DIT's alone, gated by the roundtrip through the r2c routes.
+
+### K=1 INTERLEAVED r2c and c2r — odd N on the real flat DIT vs FFTW, the 324 smooth odd cells and the 19 large cells (2026-10-01)
+
+Out of place, natural order, one thread; FFTW 3.3.10 (vcpkg's fftw3.dll bound at run time,
+FFTW_MEASURE); the ratio is FFTW / ours, the worse of the two order flips. The same cells and
+the same banked plans as the MKL entries above, replayed from the calibrated store (runs
+`zrf2_odd_{r2c,c2r}_fftw_2026-10-01`, `zrf2_big_{r2c,c2r}_fftw_2026-10-01`). `vs MKL` is the same
+cell from the MKL run of the same day.
+
+```
+ r2c engine      cells   <0.8   <1.0    p10    med    p90   gmean   vs MKL med
+ flat DIT          312      0      0   2.23   3.62   4.57    3.38        3.89
+ mono                2      1      1   0.70   0.90   1.09    0.88        1.40
+ odd route          10      0      0   2.39   2.56   2.87    2.53        3.67
+ ALL               324      1      1   2.21   3.58   4.55    3.32        3.85
+```
+
+```
+ c2r engine      cells   <0.8   <1.0    p10    med    p90   gmean   vs MKL med
+ flat DIT          317      1      1   2.60   4.13   5.04    3.80        4.43
+ mono                2      1      2   0.69   0.78   0.87    0.78        1.51
+ odd route           5      0      0   2.36   2.55   2.80    2.53        3.63
+ ALL               324      2      3   2.50   4.10   5.00    3.73        4.39
+```
+
+```
+ size band        r2c cells  vs FFTW   <1.0  vs MKL  |  c2r cells  vs FFTW   <1.0  vs MKL
+ 9..64                   14     2.07      1    1.34  |         14     2.20      3    1.48
+ 65..256                 52     2.58      0    2.60  |         52     2.85      0    3.28
+ 257..512                51     3.28      0    3.76  |         51     3.91      0    4.43
+ 513..1024               83     3.88      0    4.23  |         83     4.36      0    4.83
+ 1025..2048             124     3.87      0    4.22  |        124     4.33      0    4.70
+```
+
+The weakest cells vs FFTW: r2c 15 (0.70), 9 (1.09), 25 (1.14), 135 (1.48), 567 (1.71), 49 (1.77), 125 (1.81), 75 (1.82); c2r 15 (0.69), 25 (0.80), 9 (0.87), 135 (1.46), 65 (1.77), 165 (1.77), 45 (1.79), 125 (1.81).
+The strongest: r2c 969 (5.74), 1083 (5.58), 1173 (5.47), 1311 (5.46), 1615 (5.44); c2r 1173 (6.03), 1445 (6.03), 1615 (5.94), 629 (5.89), 527 (5.85).
+r2c: control cell 10 readings, 1.137..1.152.
+c2r: control cell 10 readings, 1.110..1.142.
+
+The large cells, one thread:
+
+```
+          N   r2c ours us  FFTW us  vs FFTW  vs MKL  |  c2r ours us  FFTW us  vs FFTW  vs MKL
+       3375          3.1      6.7     2.18    1.99  |           3.0      7.5     2.49    2.29
+       6561          7.1     17.4     2.44    2.08  |           7.3     18.9     2.59    2.23
+      10125         11.2     23.4     2.09    2.01  |           9.9     28.0     2.83    2.51
+      16875         18.4     41.8     2.27    2.17  |          17.1     49.9     2.92    2.60
+      30375         34.3     80.9     2.36    2.17  |          32.4     96.9     2.99    2.63
+      50625         80.4    139.5     1.74    2.20  |          57.0    165.5     2.90    2.52
+      59049         76.2    197.6     2.59    2.23  |          73.8    212.4     2.88    2.43
+      78125        111.2    259.7     2.33    1.89  |          97.8    273.9     2.80    2.16
+     117649        193.3    482.4     2.50    1.70  |         172.7    513.2     2.97    2.08
+     151875        225.0    673.6     2.99    2.08  |         200.5    763.4     3.81    2.72
+     177147        290.2    882.8     3.04    2.07  |         264.0    964.5     3.65    2.75
+     253125        462.1   1106.8     2.40    2.26  |         367.3   1339.1     3.65    3.21
+     390625        697.0   1919.0     2.75    2.01  |         625.5   2152.6     3.44    2.62
+     531441       1007.6   3179.3     3.15    2.11  |         854.7   3383.6     3.96    3.12
+     759375       1467.6   3899.5     2.66    1.96  |        1364.9   4711.7     3.45    2.92
+    1265625       2823.8   7641.3     2.71    2.67  |        3111.6   8953.3     2.88    2.61
+    1594323       3955.0  13015.0     3.29    2.79  |        4486.9  13372.6     2.98    1.72
+    1953125       5861.4  14576.0     2.49    2.30  |        6877.5  14813.2     2.15    1.89
+    4782969      16330.1  60796.3     3.72    3.28  |       18818.1  48451.1     2.58    2.73
+```
+r2c: vs FFTW median 2.50x over 19 cells (min 1.74, max 3.72); control cell 4 readings, 1.121..1.144.
+c2r: vs FFTW median 2.92x over 19 cells (min 2.15, max 3.96); control cell 4 readings, 1.092..1.109.
+The weakest large cell, 50625 r2c (1.74), is ours: its own time (80 us) sits above 59049's (76 us),
+the 5^6 verdict's cost, the same in the MKL run of the day.
 
 ### K=1 INTERLEAVED r2c and c2r — every power of two 2..2^23 vs MKL and FFTW (2026-09-30)
 
