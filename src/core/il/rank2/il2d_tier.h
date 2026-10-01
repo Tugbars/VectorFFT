@@ -126,7 +126,7 @@ static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
  * row-route race (race == serving path). il2d_rows set = the ROWSPLIT
  * band route (transpose rows->lanes, split engine at (N2,K=rw),
  * fused transpose+zip back); NULL = the per-row TC door. */
-static void _il2d_rowx_fwd(struct vfft_plan_s *h, const double *sre, double *dre); /* il2d_real_rows.h, later in this TU */
+static void _il2d_rowx_fwd(struct vfft_plan_s *h, const double *sre, double *dre); /* il2d_real_plan.h, later in this TU */
 static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
                                       double *dre)
 {
@@ -344,8 +344,8 @@ static void _il2d_tpc_cols_range(const vfft_ilcol_t *c, const double *src, doubl
  * (leaf-redirected), Bluestein, turned, banded (no row fusion: the owning plan
  * runs the rows) or unbanded, both directions, by the descriptor alone. The
  * c2c 2D serial walk with the fused row pass lives in vfft_execute.h. */
-static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
-                           double *dst, int reverse)
+static void _il2d_col_exec_st(const vfft_ilcol_t *c, const double *src,
+                              double *dst, int reverse, double *stage)
 {
     const size_t hp1 = c->rn;
     if (c->nat)
@@ -355,7 +355,7 @@ static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
                            c->L,
                            reverse ? c->b : c->f,
                            reverse ? c->tb : c->tf, reverse,
-                           c->natperm, c->natscr, NULL);
+                           c->natperm, c->natscr, stage);
         return;
     }
     if (c->blu && c->tpc)
@@ -412,6 +412,12 @@ static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
                    c->L, reverse ? c->b : c->f,
                    reverse ? c->tb : c->tf, reverse);
 }
+/* the natural leaf at its natural stride (the standing serial form) */
+static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
+                           double *dst, int reverse)
+{
+    _il2d_col_exec_st(c, src, dst, reverse, NULL);
+}
 
 /* ── native IL 2D REAL column pass (banded-aware; execute AND the wl
  * race serve through it — race == serving path): the descriptor's, over hp1
@@ -423,9 +429,15 @@ static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
  * (the Hermitian transpose chain) = per band the REVERSED suffix (its first
  * executed stage does the OOP move for c2r's z->rscr), then the reversed
  * prefix in place on dst. */
+static void _il2d_colx_fwd(struct vfft_plan_s *h, const double *src, double *dst); /* il2d_real_plan.h, later in this TU */
 static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
                             double *dst, int reverse)
 {
+    if (!reverse && h->il2d_cx_on)
+    { /* the r2c column plan: the pass at the plan's stack state, the natural leaf in its raced form */
+        _il2d_colx_fwd(h, src, dst);
+        return;
+    }
     _il2d_col_exec(&h->il2d_col, src, dst, reverse);
 }
 
