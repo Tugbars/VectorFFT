@@ -85,6 +85,7 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'real' / 'mono',   # the real mono (il/real/zrm.h): rn1, the whole small real transform
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'real' / 'flat',   # the real flat DIT (il/real/zrf.h): r1c, the real leaf
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'real' / 'flat' / 'herm',   # its Hermitian last stage: t2csgh, t2csght
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'real' / 'rows',   # the real rows (the 2D real tier's row pass): r2zr
         DAG / 'codelets' / 'trig' / DAG_ISA,   # trig (DCT/DST) specializations
         # the avx512 drivers sit in their own subfolder so an avx2 build never compiles them
         (DAG / 'generator' / 'generated' / 'fused_codelets' / 'avx512' if DAG_ISA == 'avx512'

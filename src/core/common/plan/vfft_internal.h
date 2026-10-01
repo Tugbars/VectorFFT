@@ -438,6 +438,20 @@ struct vfft_plan_s
      * serving verdicts are M3's route race). */
     struct vfft_plan_s *il2d_rows;
     int il2d_rw;
+    /* THE REAL TIER'S ROW ENGINE, r2c (il/rank2/il2d_real_rows.h): the row
+     * pass's own plan, picked by the create's row race in the row role and
+     * banked on the 2D real row (rx= / rxs=). il2d_rx_lm = the rows kernel
+     * (r2zr: the whole pass in one call); il2d_rx_eng = a real engine's
+     * handle run per row, built by the door's builders from the row's token
+     * (owned). Both NULL = the row route above (the door). il2d_rx_stk = the
+     * row pass's stack state 0..3 (the aligned entry). il2d_rx_on = the row
+     * plan is bound: the pass enters through the aligned entry, the door
+     * included. */
+    int il2d_rx_on;
+    void (*il2d_rx_lm)(const double *, const double *, double *, double *, const double *, const double *,
+                       size_t, size_t, size_t, size_t, size_t);
+    struct vfft_plan_s *il2d_rx_eng;
+    int il2d_rx_stk;
     /* il2d_col.colmt: INC-3: the RACED column-MT verdict for this cell
                       * (1 = thread the column pass, 0 = serial). Never a
                       * structural default — at 512x32 (hp1=17, so the
