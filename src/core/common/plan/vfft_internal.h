@@ -438,7 +438,7 @@ struct vfft_plan_s
      * serving verdicts are M3's route race). */
     struct vfft_plan_s *il2d_rows;
     int il2d_rw;
-    /* THE REAL TIER'S ROW ENGINE, r2c (il/rank2/il2d_real_rows.h): the row
+    /* THE REAL TIER'S ROW ENGINE, r2c (il/rank2/il2d_real_plan.h): the row
      * pass's own plan, picked by the create's row race in the row role and
      * banked on the 2D real row (rx= / rxs=). il2d_rx_lm = the rows kernel
      * (r2zr: the whole pass in one call); il2d_rx_eng = a real engine's
@@ -452,6 +452,12 @@ struct vfft_plan_s
                        size_t, size_t, size_t, size_t, size_t);
     struct vfft_plan_s *il2d_rx_eng;
     int il2d_rx_stk;
+    /* THE REAL TIER'S COLUMN PLAN, r2c (il2d_real_plan.h): the serial column
+     * pass entered through the aligned entry at il2d_cx_stk (0..3), the
+     * natural leaf staged (il2d_cx_st = 1) or at its natural stride (0);
+     * raced on the cell's own column pass, banked cx= / cxs= on the 2D real
+     * row. il2d_cx_on = bound. */
+    int il2d_cx_on, il2d_cx_st, il2d_cx_stk;
     /* il2d_col.colmt: INC-3: the RACED column-MT verdict for this cell
                       * (1 = thread the column pass, 0 = serial). Never a
                       * structural default — at 512x32 (hp1=17, so the

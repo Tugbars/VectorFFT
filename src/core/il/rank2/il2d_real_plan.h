@@ -1,4 +1,5 @@
-/* il2d_real_rows.h — the 2D real tier's ROW PLAN (r2c) and its planner.
+/* il2d_real_plan.h — the 2D real tier's r2c PASS PLANS and their planners:
+ * the ROW PLAN (below) and the COLUMN PLAN (at the end of the file).
  *
  * The row pass of a real plane is the plan's own: which engine transforms a
  * row is decided by THIS plan's race, in the row role (the N1 rows of the
@@ -36,8 +37,8 @@
  *
  * Included after il/real/zrp_build.h (the builders) and il2d_tier.h (the row
  * route, and the dispatcher that calls _il2d_rowx_fwd). */
-#ifndef VFFT_IL2D_REAL_ROWS_H
-#define VFFT_IL2D_REAL_ROWS_H
+#ifndef VFFT_IL2D_REAL_PLAN_H
+#define VFFT_IL2D_REAL_PLAN_H
 
 /* the rows kernel at N2 (the generated registry's list) */
 static inline vfft_il2p_fn vfft_il2d_rows_fn(int R)
@@ -226,27 +227,28 @@ static void _il2d_rowx_arm_run(void *v)
 /* bank the verdict on the shared real IL row; the row is made when the cell
  * has none yet (the served chain, no row-axis tokens: fft2d_create_il.h's
  * forms bank does the same) */
-static void _il2d_rowx_bank(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
-                            int N1, int N2, int ord, int T, const char *name, int stk)
+static void _il2d_real_plan_bank(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                                 int N1, int N2, int ord, int T, const char *tok, const char *name,
+                                 const char *stok, int stk)
 {
     char sb[8];
     int ok;
     if (!W || W->vw2_off_2d)
         return;
     snprintf(sb, sizeof sb, "%d", stk & 3);
-    ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, "rx", name) == 0;
+    ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tok, name) == 0;
     if (!ok)
     {
         vw2_2d_rl_bank(&W->vw2, N1, N2, 0, h->il2d_col.R, h->il2d_col.nst, -1, -1, -1, 0,
                        (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, ord, T);
-        ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, "rx", name) == 0;
+        ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tok, name) == 0;
     }
     if (ok)
-        ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, "rxs", sb) == 0;
+        ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, stok, sb) == 0;
     if (ok)
         _vw2_persist(W, cfg);
     else
-        fprintf(stderr, "vfft: the 2D real row plan NOT banked at %dx%d -- the cell will re-race\n", N1, N2);
+        fprintf(stderr, "vfft: the 2D real %s plan NOT banked at %dx%d -- the cell will re-race\n", tok, N1, N2);
 }
 
 /* THE ROW PLAN: env pin, the banked rx=, or the race. Runs after the plan's
@@ -457,9 +459,155 @@ static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, c
         h->il2d_rx_eng = ctx[best].eng;
         h->il2d_rx_stk = ctx[best].stk;
         h->il2d_rx_on = 1;
-        _il2d_rowx_bank(h, W, cfg, N1, N2, ord, T, names[best / 4], ctx[best].stk);
+        _il2d_real_plan_bank(h, W, cfg, N1, N2, ord, T, "rx", names[best / 4], "rxs", ctx[best].stk);
         vfft_aligned_free(a); vfft_aligned_free(z); vfft_aligned_free(ref);
     }
 }
 
-#endif /* VFFT_IL2D_REAL_ROWS_H */
+/* ═══════════════════════════════════════════════════════════════════════
+ * THE COLUMN PLAN (r2c). The serial column pass has the row pass's exposure:
+ * its kernels spill from radix 16, so the pass runs at one of several speeds
+ * by the caller's rsp (the natural pass at 128x32: 2464 ns in one caller,
+ * 1785 in another, measured 2026-10-01). And the natural leaf has two forms
+ * -- at its natural stride, or through the staging -- of which the staged one
+ * is 6-20% ahead on planes past L1 and the strided one 2x ahead inside it.
+ * Both are plan input here: the pass enters through the aligned entry, and
+ * the create races leaf form x stack state on the cell's own column pass.
+ *
+ * WISDOM, r2c's own tokens on the shared real IL row:
+ *   cx=   plain (a chain without the natural leaf) | strided | staged
+ *   cxs=  the column pass's stack state 0..3
+ * VFFT_IL2D_CX=<cx>[/s<state>] pins; VFFT_IL2D_CX=off leaves the pass unbound.
+ * The prime-column routes (Bluestein, turned) keep their own passes; c2r and
+ * the threaded column walks are untouched.
+ * ═══════════════════════════════════════════════════════════════════════ */
+static void _il2d_colx_body(const struct vfft_plan_s *h, const double *src, double *dst)
+{
+    const vfft_ilcol_t *c = &h->il2d_col;
+    _il2d_col_exec_st(c, src, dst, 0, (c->nat && h->il2d_cx_st) ? c->natstage : NULL);
+}
+static void _il2d_colx_fwd(struct vfft_plan_s *h, const double *src, double *dst)
+{
+    _il2d_rowx_call(_il2d_colx_body, h, src, dst, h->il2d_cx_stk);
+}
+
+typedef struct
+{
+    struct vfft_plan_s *h;
+    double *z;
+    int st, stk;
+} _il2d_colx_arm_t;
+static void _il2d_colx_arm_run(void *v)
+{
+    _il2d_colx_arm_t *c = (_il2d_colx_arm_t *)v;
+    c->h->il2d_cx_st = c->st;
+    c->h->il2d_cx_stk = c->stk;
+    c->h->il2d_cx_on = 1;
+    _il2d_real_cols(c->h, c->z, c->z, 0);
+}
+
+static void _il2d_real_colplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                               int N1, int N2, int ord, int T)
+{
+    const size_t hp1 = (size_t)N2 / 2 + 1, CN = 2 * (size_t)N1 * hp1;
+    const vfft_ilcol_t *col = &h->il2d_col;
+    const int nat = col->nat != 0, nf = (nat && col->natstage) ? 2 : 1;
+    const char *const fname[2] = { nat ? "strided" : "plain", "staged" };
+    const char *log = getenv("VFFT_IL2D_LOG");
+    int f, s;
+    h->il2d_cx_on = h->il2d_cx_st = h->il2d_cx_stk = 0;
+    if (col->blu || col->tpc)
+        return;
+    {   /* 1. env: the racing hook. Beats wisdom, never banks. */
+        const char *e = getenv("VFFT_IL2D_CX");
+        if (e && e[0])
+        {
+            const char *sl = strchr(e, '/');
+            const size_t n = sl ? (size_t)(sl - e) : strlen(e);
+            if (!strcmp(e, "off"))
+                return;
+            for (f = 0; f < nf; f++)
+                if (strlen(fname[f]) == n && !strncmp(e, fname[f], n))
+                {
+                    h->il2d_cx_st = f;
+                    h->il2d_cx_stk = (sl && sl[1] == 's') ? atoi(sl + 2) & 3 : 0;
+                    h->il2d_cx_on = 1;
+                    return;
+                }
+            _vfft_warn("vfft_create: VFFT_IL2D_CX=%s is not a column form of %dx%d (the pass stays unbound)", e, N1, N2);
+            return;
+        }
+    }
+    if (!W || W->vw2_off_2d)
+        return;
+    if (!cfg->recalibrate)
+    {   /* 2. the banked verdict */
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cx");
+        if (tok)
+            for (f = 0; f < nf; f++)
+                if (!strcmp(tok, fname[f]))
+                {
+                    const char *sv = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxs");
+                    h->il2d_cx_st = f;
+                    h->il2d_cx_stk = sv ? atoi(sv) & 3 : 0;
+                    h->il2d_cx_on = 1;
+                    return;
+                }
+    }
+    /* 3. the race: every leaf form at every stack state, the pass in place on a scratch plane
+     * (the values compound: benign, the chain race's precedent) */
+    {
+        _il2d_colx_arm_t ctx[8];
+        vfft_race_arm_t arms[8];
+        char xn[8][24];
+        double ns[8], t0, est;
+        int na = 0, best = 0, reps, i;
+        double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
+        if (!z)
+            return;
+        {
+            unsigned sd = 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 12);
+            size_t j;
+            for (j = 0; j < CN + 8; j++)
+            {
+                sd = sd * 1664525u + 1013904223u;
+                z[j] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
+            }
+        }
+        for (f = 0; f < nf; f++)
+            for (s = 0; s < 4; s++)
+            {
+                ctx[na].h = h; ctx[na].z = z; ctx[na].st = f; ctx[na].stk = s;
+                snprintf(xn[na], sizeof xn[na], "%s/s%d", fname[f], s);
+                arms[na].name = xn[na]; arms[na].run = _il2d_colx_arm_run; arms[na].ctx = &ctx[na];
+                na++;
+            }
+        _vfft_create_race_count++;
+        _il2d_colx_arm_run(&ctx[0]);
+        t0 = vfft_now_ns();
+        _il2d_colx_arm_run(&ctx[0]);
+        est = vfft_now_ns() - t0;
+        reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
+        if (reps < 1) reps = 1;
+        if (reps > 4096) reps = 4096;
+        {   /* 9 rounds alternated, median */
+            const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1 };
+            vfft_race_run(&proto, arms, na, ns);
+        }
+        for (i = 1; i < na; i++)
+            if (ns[i] < ns[best]) best = i;
+        if (log)
+        {
+            fprintf(stderr, "[il2d-real] cols %dx%d column plan race: reps=%d |", N1, N2, reps);
+            for (i = 0; i < na; i++) fprintf(stderr, " %s=%.0f", xn[i], ns[i]);
+            fprintf(stderr, " -> %s\n", xn[best]);
+        }
+        h->il2d_cx_st = ctx[best].st;
+        h->il2d_cx_stk = ctx[best].stk;
+        h->il2d_cx_on = 1;
+        _il2d_real_plan_bank(h, W, cfg, N1, N2, ord, T, "cx", fname[ctx[best].st], "cxs", ctx[best].stk);
+        vfft_aligned_free(z);
+    }
+}
+
+#endif /* VFFT_IL2D_REAL_PLAN_H */

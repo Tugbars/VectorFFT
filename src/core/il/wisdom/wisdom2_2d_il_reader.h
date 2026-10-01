@@ -283,7 +283,7 @@ static inline const char *vw2__rl_tok(int is_c2r, int which)
 }
 
 /* one string token on the shared real IL row -- the r2c row engine's verdict
- * (rx=, rxs=: il/rank2/il2d_real_rows.h). Absent = NULL; a set on a missing
+ * (rx=, rxs=: il/rank2/il2d_real_plan.h). Absent = NULL; a set on a missing
  * row is refused (the chain bank makes the row). */
 static inline const char *vw2_2d_rl_tok_gets(const vw2_store_t *s, int N1, int N2, int ord, int T,
                                              const char *name)

@@ -247,11 +247,36 @@ let emit
       ~(dir : dir)
       ~(blocked : bool)
       ~(split : (int * int) option)
+      ~(split3 : (int * int * int) option)
       ~(radix : int)
       ~(isa : Isa.t)
       ~(uarch : Uarch.t)
   : string
   =
+  (* --cil-split3 m.m2.q (2026-10-01): the THREE-PASS blocked form of the
+     column leaf, R = m * m2 * q. The two-pass form's pass 1 runs m sub-DFTs
+     of p = m2 * q points; at p = 16 a sub-DFT holds more values than the
+     file has registers and the compiler spills on its own (116 spills a
+     column pair at 128 = 8.16, measured 2026-10-01). Split again, no pass
+     holds more than max(m, m2, q) values: every parked value sits in S[].
+     To the rest of the emitter it is the split m.p. *)
+  let split =
+    match split3 with
+    | None -> split
+    | Some (m, m2, q) ->
+      if kind <> N1C || (not blocked) || colstride || pretw
+      then failwith "codelet_cil: --cil-split3 is the blocked n1c column leaf's three-pass form";
+      if m < 2 || m2 < 2 || q < 2 || m * m2 * q <> radix
+      then
+        failwith
+          (Printf.sprintf
+             "codelet_cil: --cil-split3 %d.%d.%d does not factor radix %d"
+             m
+             m2
+             q
+             radix);
+      Some (m, m2 * q)
+  in
   (* --cil-st128 (2026-10-01): the column leaf's plane STORES leave as two
      128-bit halves (Cx_render.store128 on AZoutLeg) -- the 2D real column
      pass runs at the odd CCE pitch hp1 = N2/2 + 1, where a 256-bit store of a
@@ -761,6 +786,9 @@ let emit
     let pi = 4.0 *. atan 1.0 in
     let sgn = if dir = Fwd then -1.0 else 1.0 in
     (* PASS 1: sub-DFT i over legs { a*m + i } *)
+    (match split3 with
+     | None ->
+    (* PASS 1: sub-DFT i over legs { a*m + i } *)
     for i = 0 to m - 1 do
       emit_pass
         ~lazy_store:true
@@ -794,7 +822,84 @@ let emit
             (Printf.sprintf
                "        %s;\n"
                (render_store isa ad (Printf.sprintf "z%d" e.tag))))
-    done;
+    done
+     | Some (_, m2, q) ->
+       (* PASS 1 in two: p = m2 * q. With a = b*m2 + c,
+            B_{i,c}[t]      = DFT_q over b of x[(b*m2+c)*m + i]
+            A_i[t + q*k]    = DFT_m2 over c of ( B_{i,c}[t] * W_p^{c*t} )
+          1a parks B at S[i*p + c*q + t]; 1b reloads the m2 values of (i, t),
+          twiddles, and stores A_i back into the SAME slots (every load of a
+          group precedes its stores: each output depends on all m2 inputs). *)
+       for i = 0 to m - 1 do
+         for c = 0 to m2 - 1 do
+           emit_pass
+             ~lazy_store:true
+             ~label:
+               (Printf.sprintf
+                  "PASS 1a.%d.%d: legs {(b*%d+%d)*%d+%d} -> S[%d..%d]"
+                  i
+                  c
+                  m2
+                  c
+                  m
+                  i
+                  ((i * p) + (c * q))
+                  ((i * p) + (c * q) + q - 1))
+             ~nin:q
+             ~laddr_of:(fun b -> AZinLeg ((((b * m2) + c) * m) + i))
+             ~build:(fun ins -> dft_small ~sign ~ctx q ins)
+             ~store:(fun tt e ->
+               let ad = AS (vw * ((i * p) + (c * q) + tt)) in
+               let (_ : t) = cstore ad e in
+               Buffer.add_string
+                 body
+                 (Printf.sprintf
+                    "        %s;\n"
+                    (render_store isa ad (Printf.sprintf "z%d" e.tag))))
+         done
+       done;
+       for i = 0 to m - 1 do
+         for tt = 0 to q - 1 do
+           emit_pass
+             ~lazy_store:true
+             ~label:
+               (Printf.sprintf
+                  "PASS 1b.%d.%d: S[%d + c*%d + %d] -> S[%d + %d + %d*k]"
+                  i
+                  tt
+                  (i * p)
+                  q
+                  tt
+                  (i * p)
+                  tt
+                  q)
+             ~nin:m2
+             ~laddr_of:(fun c -> AS (vw * ((i * p) + (c * q) + tt)))
+             ~build:(fun ins ->
+               let tw =
+                 Array.mapi
+                   (fun c x ->
+                      let e = c * tt mod p in
+                      if e = 0
+                      then x
+                      else if 4 * e = p
+                      then if sign = `Fwd then crot x else crotp x
+                      else (
+                        let a = sgn *. 2.0 *. pi *. float_of_int e /. float_of_int p in
+                        ctw (cos a) (sin a) x))
+                   ins
+               in
+               dft_small ~sign ~ctx m2 tw)
+             ~store:(fun k e ->
+               let ad = AS (vw * ((i * p) + tt + (q * k))) in
+               let (_ : t) = cstore ad e in
+               Buffer.add_string
+                 body
+                 (Printf.sprintf
+                    "        %s;\n"
+                    (render_store isa ad (Printf.sprintf "z%d" e.tag))))
+         done
+       done);
     (* Shared PASS-2 math: twiddle group j by W_R^{i*j}, DFT_m, and (T2 bwd)
        post-twiddle — factored so the plain and TURNED store paths below run
        the IDENTICAL dataflow and differ only in the store edge. *)
@@ -1762,7 +1867,9 @@ let emit
                    && odd_spf radix <> radix
                 then "_ct"
                 else "")
-             ^ form_tag_of ~on:form_tag ~blocked ~tangent:ctx.tangent ~split
+             ^ (match split3 with
+                | Some (m, m2, q) when form_tag -> Printf.sprintf "%d%d%d" m m2 q
+                | _ -> form_tag_of ~on:form_tag ~blocked ~tangent:ctx.tangent ~split)
              ^ (if st128 then "h" else "")
              ^ if ctx.tw_log3 then "_log3" else "")
             (if dir = Fwd then "fwd" else "bwd")

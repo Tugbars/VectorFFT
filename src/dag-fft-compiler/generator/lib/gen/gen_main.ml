@@ -172,6 +172,8 @@ let run (argv : string array) : unit =
      non-pow2 blocked emission — the emitter validates it but never invents
      one (a factorization is a plan input, not an emitter decision). *)
   let cil_split = ref "" in
+  (* --cil-split3 m.m2.q : the blocked column leaf's THREE-pass factorization *)
+  let cil_split3 = ref "" in
   let cil_bwd = ref false in
   let cil_k1 = ref false in
   (* --cil-chain r0.r1: the fused K=1 factorization, supplied by the PLANNER.
@@ -428,6 +430,10 @@ let run (argv : string array) : unit =
     then zp_kind := "tld"
     else if arg = "--zp-tldb"
     then zp_kind := "tldb"
+    else if arg = "--cil-split3" && !i + 1 < Array.length arr
+    then (
+      cil_split3 := arr.(!i + 1);
+      incr i)
     else if arg = "--cil-split" && !i + 1 < Array.length arr
     then (
       cil_split := arr.(!i + 1);
@@ -1367,6 +1373,23 @@ let run (argv : string array) : unit =
                     (Printf.sprintf
                        "gen_main: --cil-split %s: expected exactly m.p"
                        !cil_split)))
+           ~split3:
+             (if !cil_split3 = ""
+              then None
+              else (
+                match String.split_on_char '.' !cil_split3 with
+                | [ a; b; c ] ->
+                  (try Some (int_of_string a, int_of_string b, int_of_string c) with
+                   | _ ->
+                     failwith
+                       (Printf.sprintf
+                          "gen_main: --cil-split3 %s: expected three integers m.m2.q"
+                          !cil_split3))
+                | _ ->
+                  failwith
+                    (Printf.sprintf
+                       "gen_main: --cil-split3 %s: expected exactly m.m2.q"
+                       !cil_split3)))
            ~radix:n
            ~isa
            ~uarch)

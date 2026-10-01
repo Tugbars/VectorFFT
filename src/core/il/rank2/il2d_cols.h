@@ -698,6 +698,62 @@ static void _il2d_col_pass_nat_strip(const double *src, double *dst, int N1,
     }
 }
 
+/* the natural pass over ONE TILE [k, k+w), forward: the tile's columns
+ * COPIED into a dense scratch (N1 x w, pitch w), every stage but the leaf
+ * run IN PLACE there with the stock block calls -- the whole chain in cache
+ * -- and the leaf scattering scr -> dst at the natural rows. The plane is
+ * read once and written once and no second plane exists: the natural pass
+ * through the pre-leaf plane costs 1.6-2x the in-place pass once plane +
+ * scratch leave L1 (measured 2026-10-01, 128 x 17: stage 0 961 ns into the
+ * scratch against 586 in place, the leaf 960 against 595). In place by
+ * construction (the tile is read whole before any row of it is written).
+ * The copy is the move the strip form (above) folds into stage 0 at one
+ * kernel call per row digit; here it is one vector loop and stage 0 keeps
+ * its one call per block. Same kernels, tables and values as
+ * _il2d_col_pass_nat: the output is bitwise. Requires nst >= 2. */
+static void _il2d_col_pass_nat_tile(const double *src, double *dst, int N1,
+                                    size_t rn, size_t k, size_t w, int nst,
+                                    const int *Rst, const int *Lst,
+                                    vfft_il2p_fn const *fns,
+                                    double *const *tabs, const int *perm,
+                                    double *scr)
+{
+    const int Rl = Rst[nst - 1];
+    const size_t nstride = (size_t)(N1 / Rl) * rn, w2 = 2 * w;
+    int s, b, r;
+    if (!w)
+        return;
+    for (r = 0; r < N1; r++)
+    {
+        const double *sp = src + 2 * ((size_t)r * rn + k);
+        double *dp = scr + (size_t)r * w2;
+        size_t q = 0;
+#if defined(__AVX2__)
+        for (; q + 4 <= w2; q += 4)
+            _mm256_storeu_pd(dp + q, _mm256_loadu_pd(sp + q));
+        if (q < w2)
+            _mm_storeu_pd(dp + q, _mm_loadu_pd(sp + q));
+#else
+        for (; q < w2; q++)
+            dp[q] = sp[q];
+#endif
+    }
+    for (s = 0; s < nst - 1; s++)
+    {
+        const int R = Rst[s], D = Lst[s] / R;
+        for (b = 0; b < N1 / Lst[s]; b++)
+        {
+            const size_t off = 2 * (size_t)b * Lst[s] * w;
+            fns[s](scr + off, NULL, scr + off, NULL, tabs[s], NULL,
+                   (size_t)D * w, w, (size_t)D * w, (size_t)D, w);
+        }
+    }
+    for (b = 0; b < N1 / Rl; b++)
+        fns[nst - 1](scr + 2 * (size_t)b * Rl * w, NULL,
+                     dst + 2 * ((size_t)perm[b * Rl] * rn + k), NULL,
+                     NULL, NULL, w, 0, nstride, 0, w);
+}
+
 /* ── the COLUMN-AXIS BLUESTEIN: ONE implementation for THREE users: the
  * c2c no-chain path, the chain-vs-blu RACE (the odd chains are emitted,
  * so both arms exist for odd N1), and the REAL tier (rn = hp1 there; the
