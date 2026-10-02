@@ -139,6 +139,9 @@ type kind =
            the n1b E9 verdict) while the unspilled form wins 2.2-2.6x at
            R=25/27. Same factorization, different materialization. *)
       ; split : (int * int) option (* --cil-split A.B *)
+      ; split3 : (int * int * int) option
+        (* --cil-split3 A.B.C: the blocked n1c column leaf's THREE-pass form
+           (pass 1 split in two, in place in the park) *)
       ; turn : cil_turn option
       ; pre_tw : bool (* --cil-pretw (bwd pre-twiddle) *)
       ; colstride : bool
@@ -348,6 +351,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
   let blocked = ref false
   and oddct = ref false
   and split = ref None
+  and split3 = ref None
   and turn = ref None
   and pre_tw = ref false
   and colstride = ref false
@@ -597,6 +601,11 @@ let of_argv ?(strict = true) (argv : string list) : t =
        | [ a; b ] -> split := Some (int_of_string a, int_of_string b)
        | _ -> fail "--cil-split expects A.B");
       go tl
+    | "--cil-split3" :: v :: tl ->
+      (match String.split_on_char '.' v with
+       | [ a; b; c ] -> split3 := Some (int_of_string a, int_of_string b, int_of_string c)
+       | _ -> fail "--cil-split3 expects A.B.C");
+      go tl
     | "--cil-turnst" :: tl ->
       turn := Some Turnst;
       go tl
@@ -709,6 +718,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
         ; blocked = !blocked
         ; oddct = !oddct
         ; split = !split
+        ; split3 = !split3
         ; turn = !turn
         ; pre_tw = !pre_tw
         ; colstride = !colstride
@@ -863,7 +873,7 @@ let to_argv (c : t) : string list =
     @ emitc
   | Strided_r2c -> n @ [ "--strided-r2c" ] @ g (m.dir = Bwd) "--bwd" @ isa @ emitc
   | N1_oop_strided -> n @ [ "--oop-strided" ] @ isa @ emitc
-  | Cil { form; tangent; blocked; oddct; split; turn; pre_tw; colstride; gen2; grouploop; transposed; herm; st128; rowloop; form_tag } ->
+  | Cil { form; tangent; blocked; oddct; split; split3; turn; pre_tw; colstride; gen2; grouploop; transposed; herm; st128; rowloop; form_tag } ->
     n
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
@@ -894,6 +904,9 @@ let to_argv (c : t) : string list =
     @ (match split with
        | None -> []
        | Some (a, b) -> [ "--cil-split"; Printf.sprintf "%d.%d" a b ])
+    @ (match split3 with
+       | None -> []
+       | Some (a, b, c) -> [ "--cil-split3"; Printf.sprintf "%d.%d.%d" a b c ])
     @ (match turn with
        | None -> []
        | Some Turnst -> [ "--cil-turnst" ]

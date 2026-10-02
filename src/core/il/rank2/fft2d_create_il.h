@@ -1002,8 +1002,10 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * child, c2r its own row pass. */
     if (h->transform == VFFT_R2C && h->il2d_row && !il2d_oddn2 && h->nthreads <= 1)
         _il2d_real_rowplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
-    /* the r2c COLUMN PLAN: the serial column pass's stack state and the natural
-     * leaf's form, raced on the cell's own column pass (any N2 parity) */
+    /* the r2c COLUMN PLAN: the serial column pass's form (the chain's natural
+     * leaf strided or staged, or the one-kernel leaf at N1 = 128) and its
+     * per-kernel stack states, raced on the cell's own column pass (any N2
+     * parity) */
     if (h->transform == VFFT_R2C && h->il2d_row && h->nthreads <= 1)
         _il2d_real_colplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* the column-MT verdict. Serve a banked one ONLY when it was

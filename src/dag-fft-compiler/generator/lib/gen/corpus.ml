@@ -1804,6 +1804,15 @@ let zil_pure_cells : (string * string list) list =
     , [ "64"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "8.8"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix64_z_n1cb88_bwd_avx2.c"
     , [ "64"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "8.8"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* the 128 column leaf (2026-10-02): the whole column pass of an N1 = 128
+       plane in ONE kernel, natural in place by construction (no second
+       plane); two-pass 8.16 and three-pass 4.4.8, forward only -- the 2D
+       real r2c column plan's leaf forms, raced per cell (b816 for few
+       columns, b448 for many) *)
+  ; ( "radix128_z_n1cb816_avx2.c"
+    , [ "128"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "8.16"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix128_z_n1cb448_avx2.c"
+    , [ "128"; "--cil-n1c"; "--cil-blocked"; "--cil-split3"; "4.4.8"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
     (* the n1c column leaf's HALF-STORE twins (--cil-st128, the "h" form,
        2026-10-01): the plane stores as two 128-bit halves -- the odd CCE pitch
        of the 2D real column pass; forward only (the 2D real r2c leaf), raced

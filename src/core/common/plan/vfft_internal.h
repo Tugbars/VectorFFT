@@ -444,7 +444,8 @@ struct vfft_plan_s
      * (r2zr: the whole pass in one call); il2d_rx_eng = a real engine's
      * handle run per row, built by the door's builders from the row's token
      * (owned). Both NULL = the row route above (the door). il2d_rx_stk = the
-     * row pass's stack state 0..3 (the aligned entry). il2d_rx_on = the row
+     * row pass's stack state 0..3 (the aligned entry; -1 = entered
+     * directly, its four states tied). il2d_rx_on = the row
      * plan is bound: the pass enters through the aligned entry, the door
      * included. */
     int il2d_rx_on;
@@ -453,11 +454,18 @@ struct vfft_plan_s
     struct vfft_plan_s *il2d_rx_eng;
     int il2d_rx_stk;
     /* THE REAL TIER'S COLUMN PLAN, r2c (il2d_real_plan.h): the serial column
-     * pass entered through the aligned entry at il2d_cx_stk (0..3), the
-     * natural leaf staged (il2d_cx_st = 1) or at its natural stride (0);
-     * raced on the cell's own column pass, banked cx= / cxs= on the 2D real
-     * row. il2d_cx_on = bound. */
-    int il2d_cx_on, il2d_cx_st, il2d_cx_stk;
+     * pass, raced on the cell's own column pass and banked cx= / cxs= on the
+     * 2D real row. il2d_cx_on = bound. The form: il2d_cx_leaf = the whole
+     * pass as ONE kernel call (the N1-point blocked column leaf, or a
+     * one-stage chain's own kernel); NULL = the chain, its natural leaf
+     * staged (il2d_cx_st = 1) or at its natural stride (0). The stack state:
+     * il2d_cx_stk, one for the pass (0..3 through the aligned entry, -1 =
+     * entered directly); or, il2d_cx_perk set, il2d_cx_ks[s] per chain stage,
+     * each stage under its own entry. */
+    int il2d_cx_on, il2d_cx_st, il2d_cx_stk, il2d_cx_perk;
+    signed char il2d_cx_ks[8];
+    void (*il2d_cx_leaf)(const double *, const double *, double *, double *, const double *, const double *,
+                         size_t, size_t, size_t, size_t, size_t);
     /* il2d_col.colmt: INC-3: the RACED column-MT verdict for this cell
                       * (1 = thread the column pass, 0 = serial). Never a
                       * structural default — at 512x32 (hp1=17, so the

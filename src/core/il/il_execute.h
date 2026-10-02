@@ -257,6 +257,21 @@ static int _k2x_il2d_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zi
     _il2d_real_cols(h, zout, zout, /*reverse=*/0);
     return 0;
 }
+/* TWO KERNELS: the rows kernel, then the column plan's leaf (a one-stage
+ * chain's kernel, or the N1-point blocked column leaf) over the hp1 columns,
+ * both stack-insensitive by their races (rxs = cxs = any). The calls are the
+ * ones _il2d_rowx_body and _il2d_colx_body make for such a plan, argument for
+ * argument, without the layers between. */
+static int _k2x_il2d_r2c_2k(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
+    (void)dir;
+    if (zin == (const double *)zout)
+        return 1;
+    h->il2d_rx_lm(zin, NULL, zout, NULL, NULL, NULL, rn2, 0, hp1, 0, (size_t)h->N);
+    h->il2d_cx_leaf(zout, NULL, zout, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
+    return 0;
+}
 static int _k2x_il2d_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
     (void)dir; /* c2r is the inverse math, unnormalized */
@@ -277,6 +292,9 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         h->nthreads <= 1 && !h->il2d_col.colmt)
     {
         h->k1_exec = h->transform == VFFT_R2C ? _k2x_il2d_r2c : _k2x_il2d_c2r;
+        if (h->transform == VFFT_R2C && h->il2d_rx_on && h->il2d_rx_lm && h->il2d_rx_stk < 0 &&
+            h->il2d_cx_on && h->il2d_cx_leaf && !h->il2d_cx_perk && h->il2d_cx_stk < 0)
+            h->k1_exec = _k2x_il2d_r2c_2k;
         return hp;
     }
     if (h->transform != VFFT_C2C || h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;

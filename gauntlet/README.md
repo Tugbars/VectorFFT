@@ -18,12 +18,14 @@ python gauntlet/gauntlet.py run --group pow2 --inplace       # in place
 ## What a run does
 
 1. **calibrate** -- one create per cell through `vfft_create` on a scratch copy
-   of the shipped wisdom (`gauntlet/results/<run>/store/`). A cell the shipped
-   wisdom covers is replayed; a cell it does not is raced and banked there.
-   `--calibrate` re-races every cell (recalibrate), which is how you calibrate
-   the library for a different CPU. The calibrate log records, per cell, whether
-   it was **raced**, **replayed** or **refused** (no engine serves it).
-2. **bench** -- one process per cell, both engine orders, best-of-5 in two
+   of the shipped wisdom (`gauntlet/results/<run>/store/`). Every cell is
+   re-raced (`config.recalibrate = 1`) and its verdict banked there, so a run
+   measures the library as it is now and never a verdict from an older build.
+   `--replay` serves the store's verdicts instead and races only the cells it
+   does not cover. The calibrate log records, per cell, whether it was
+   **raced**, **replayed** or **refused** (no engine serves it).
+2. **bench** -- the verdict the calibrate stage banked, replayed: one process
+   per cell, both engine orders, best-of-5 in two
    timing windows, cachebust and a cool-down between engines, the caller pinned
    with its SMT sibling held, a control cell every 100 cells so a long run can
    be checked for drift. With MKL the ratio column; without it ns and GFLOPS.
@@ -31,6 +33,11 @@ python gauntlet/gauntlet.py run --group pow2 --inplace       # in place
    checks the forward transform against a long-double reference).
 3. **report** -- `report.md` in the run directory: every cell with how it was
    served, then the tables by route, size and family.
+4. **merge** -- the run's verdicts into the library's shipped wisdom
+   (`src/wisdom/`), with backups: a row keyed the same replaces the shipped
+   one, a new row is added, rows the run did not touch are kept. Every run
+   writes to wisdom; `--no-merge` keeps the verdicts in the run's own store
+   (the `merge` verb merges a finished run later).
 
 `gflops` turns a run into a GFLOPS list, VectorFFT beside MKL, one line per
 cell (`gflops.csv` in the run directory; 5 N log2 N per transform, the best of
@@ -52,11 +59,9 @@ python gauntlet/gauntlet.py verify --name tw_exact_verify_2026-09-24 --cells 2..
 python src/tools/plots/gen_precision.py gauntlet/results/tw_exact_verify_2026-09-24/verify.csv --out src/tools/plots/vectorfft-precision.svg
 ```
 
-`--merge` (or the `merge` verb) copies the run's verdicts back into the
-library's shipped wisdom (`src/wisdom/`), with backups, so a calibration done
-on your host is kept.
-
-A stopped run resumes where it left off (`run` again with the same `--name`).
+A stopped run resumes where it left off (`run` again with the same `--name`):
+the cells it already re-raced and benched are not repeated, so a new run of
+the same cells takes a new name.
 The driver keeps the machine awake for the duration on Windows.
 
 ## Contracts
