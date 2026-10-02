@@ -127,6 +127,7 @@ type kind =
       ; blocked : bool
       ; oddct : bool
       ; split : (int * int) option
+      ; split3 : (int * int * int) option (* --cil-split3 A.B.C: the blocked column leaf's three-pass form *)
       ; turn : cil_turn option
       ; pre_tw : bool
       ; colstride : bool (* --cil-t2cs: the column-stride tail form of t2 *)

@@ -504,6 +504,50 @@ static inline vfft_il2p_fn vfft_il2p_t2c_form_fn(int R, const char *form,
     return 0;
 }
 
+/* THE ONE-KERNEL COLUMN LEAF (2026-10-02): the whole column pass of an
+ * N-row plane in a single n1c kernel at radix N -- natural order in place by
+ * construction, no second plane. Radix 128 exists only blocked, in two forms:
+ * b816 (two-pass 8x16; the faster on few columns) and b448 (three-pass
+ * 4x4x8: a third of the compiler spills; the faster on many). Forward
+ * kernels, NOT chain radices: the 2D real r2c column plan races them against
+ * its chain's pass per cell (il2d_real_plan.h, cx=); the chain pool and every
+ * other tier are untouched. The registry's lists are the authority. */
+#define VFFT_IL2P_COL_MAXLEAF 2
+static inline vfft_il2p_fn vfft_il2p_col_leaf_fn(int N, const char *form)
+{
+    if (!form)
+        return 0;
+#ifdef VFFT_IL_N1CB816_FWD_RADICES
+    if (!strcmp(form, "b816"))
+        switch (N) {
+#define C(R_) case R_: return VFFT_IL_SYM(radix##R_##_z_n1cb816_fwd);
+        VFFT_IL_N1CB816_FWD_RADICES(C)
+#undef C
+        default: return 0;
+        }
+#endif
+#ifdef VFFT_IL_N1CB448_FWD_RADICES
+    if (!strcmp(form, "b448"))
+        switch (N) {
+#define C(R_) case R_: return VFFT_IL_SYM(radix##R_##_z_n1cb448_fwd);
+        VFFT_IL_N1CB448_FWD_RADICES(C)
+#undef C
+        default: return 0;
+        }
+#endif
+    (void)N;
+    return 0;
+}
+static inline int vfft_il2p_col_leaf_forms(int N, const char **names /* [VFFT_IL2P_COL_MAXLEAF] */)
+{
+    static const char *const all[VFFT_IL2P_COL_MAXLEAF] = { "b816", "b448" };
+    int i, n = 0;
+    for (i = 0; i < VFFT_IL2P_COL_MAXLEAF; i++)
+        if (vfft_il2p_col_leaf_fn(N, all[i]))
+            names[n++] = all[i];
+    return n;
+}
+
 /* 🔴 The whole tree standardizes on t2t semantics for the backward. There is
  * no pre-twiddle backward kind (PRE-twiddle + backward butterfly + straight
  * store): it lost the bwd race at every R1 <= 32. F-DIAG below is the

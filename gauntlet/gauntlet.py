@@ -260,10 +260,25 @@ class Run:
         if self.threads > 1:
             e["VFFT_MT"] = str(self.threads)
         if os.name == "nt":
-            # the comparator's runtime and the toolchain's runtime, when present
+            # the comparator's runtime and the toolchain's runtime, when present.
+            # 🔴 THE TOOLCHAIN HALF WAS MISSING until 2026-10-02 (the comment
+            # promised it, the list held only MKL). A MinGW-built bench needs
+            # libgcc_s_seh-1.dll / libwinpthread-1.dll at LOAD time and Windows
+            # resolves them through PATH, so launched from a shell without the
+            # toolchain's bin on PATH EVERY bench process dies 0xC0000139
+            # (STATUS_ENTRYPOINT_NOT_FOUND) before main() with NO output -- and
+            # the driver cheerfully reports "benched N cells" having written not
+            # one csv row. Measured on the Zen 4 host: 500 cells "benched", empty
+            # csv, 0-byte stderr. Same failure class, and the same fix, as
+            # build.py's build_env(): the harness must be self-sufficient
+            # regardless of the caller's PATH.
             extra = [os.path.join(os.environ.get("MKLROOT", ""), "bin"),
                      r"C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin",
-                     r"C:\Program Files\Intel\oneAPI\mkl\latest\bin"]
+                     r"C:\Program Files\Intel\oneAPI\mkl\latest\bin",
+                     r"C:\mingw152\mingw64\bin",                        # the original dev toolchain
+                     r"C:\msys64\ucrt64\bin",                           # MSYS2 UCRT64, system install
+                     os.path.expanduser(r"~\msys64\ucrt64\bin"),        # MSYS2 UCRT64, per-user
+                     r"C:\msys64\mingw64\bin"]
             e["PATH"] = os.pathsep.join([d for d in extra if d and os.path.isdir(d)] + [e.get("PATH", "")])
         return e
 

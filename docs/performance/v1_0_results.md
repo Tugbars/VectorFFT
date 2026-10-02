@@ -1,5 +1,8 @@
 # VectorFFT v1.0 — performance results
 
+Host: **i9-14900KF**, comparator MKL. Zen 4 results:
+[v1_0_Zen4_results.md](v1_0_Zen4_results.md) (not comparable).
+
 ## 1. vs MKL — 1D C2C
 
 ```
@@ -1377,3 +1380,6 @@ Pass 3: post-process / post-twiddle  — compute + memory mix
 | R=64 | 27% | load + store DTLB overflow (~160 pages) |
 
 ## See also
+
+- [v1_0_Zen4_results.md](v1_0_Zen4_results.md) — AMD Zen 4 host
+  (Ryzen 5 PRO 8640HS) vs FFTW 3.3.10 AVX2.

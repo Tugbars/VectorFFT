@@ -65,12 +65,13 @@ library reads them from there whatever store directory it is given
   benches and the probes all take a scratch copy; a create on a writable copy
   of this folder banks into it. The gauntlet makes that copy itself
   (`gauntlet/results/<run>/store/`).
-- **New verdicts arrive by merge.** `python gauntlet/gauntlet.py run ... --merge`,
-  or the `merge` verb on a finished run, copies a run's rows into these shards:
+- **New verdicts arrive by merge, on every run.** `python gauntlet/gauntlet.py run ...`
+  re-races its cells and merges them (`--no-merge` holds them back; the `merge`
+  verb merges a finished run), copying the run's rows into these shards:
   a row with the same key replaces the shipped one, a new row is added, rows the
   run did not race are kept. The merge writes a backup beside each shard.
 - **Re-measure, don't edit.** A verdict that looks wrong is re-raced
-  (`--calibrate`, or `config.recalibrate = 1` on the cell) and merged; the file
+  (a gauntlet run of the cell, or `config.recalibrate = 1` on it) and merged; the file
   is never hand-edited, regenerated, or trimmed to tidy it.
 - **Add a host, not a file.** Another machine's store goes in a subfolder with
   the same six shards, never in new file names.

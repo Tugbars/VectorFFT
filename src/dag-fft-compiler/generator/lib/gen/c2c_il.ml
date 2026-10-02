@@ -1632,8 +1632,13 @@ let emit
      columns sit Gs apart, so a contiguous masked zmm access cannot reach them.
      VFFT_TAIL512 overrides (recorded in the provenance Env line).
      At vw = 4 the leftover is at most ONE column, and it runs at VEX-128:
-     the odd blocked kernels from radix 11 re-run their blocked passes
-     ("blk_narrow"), every other kernel the monolithic DAG ("narrow"). A
+     the odd blocked kernels from radix 11 and the power-of-two blocked column
+     leaves (n1c at 32, 64, 128) re-run their blocked passes ("blk_narrow"),
+     every other kernel the monolithic DAG ("narrow"). The leaf's monolithic
+     tail is the unblocked kernel at half width: the lone column of a real
+     plane (its column count is always odd) cost 64 ns at radix 64 against 49
+     blocked, 26 against 21 at radix 32, 374 against 139-203 at radix 128
+     (measured 2026-10-02). A
      256-bit arm cannot win a one-column remainder on this core: a ymm pass
      costs what an xmm pass costs, and the mask adds 4-14% (measured, the
      tail_policy harness). The blocked tail costs 1.9-2.3 ordinary columns
@@ -1649,7 +1654,7 @@ let emit
     then (
       match Sys.getenv_opt "VFFT_TAIL256" with
       | None ->
-        if (odd_blocked && radix >= 11) || (blocked && split3 <> None)
+        if (odd_blocked && radix >= 11) || (blocked && kind = N1C && not ctx.colstride)
         then "blk_narrow"
         else "narrow"
       | Some (("narrow" | "masked" | "overrun" | "blk_narrow" | "blk_masked" | "blk_overrun") as s) -> s
@@ -2082,7 +2087,8 @@ let emit
               (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
               (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
        Buffer.add_string buf
-         (Printf.sprintf "    if (k < %s) {  /* the odd blocked passes at VEX-128, one complex */\n" cnt);
+         (Printf.sprintf "    if (k < %s) {  /* %s at VEX-128, one complex */\n" cnt
+            (if odd_blocked then "the odd blocked passes" else "the lone column: the blocked passes"));
        Buffer.add_buffer buf body_n;
        Buffer.add_string buf "    }\n"
      | "blk_masked" ->
