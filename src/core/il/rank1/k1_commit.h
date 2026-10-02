@@ -490,6 +490,36 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
     }
 }
 
+/* the four-step's row cells, warmed BEFORE a race that holds the planner
+ * (created and destroyed once: a cold one races and banks its own row), so
+ * the four-step's candidates find them banked -- a nested race refuses
+ * (_k1_il_dp_busy). Every race whose pool can hold the four-step at N calls
+ * it: the K=1 race below and the zr2c child's race in the real role. */
+static void _k1_il_fs_warm(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
+{
+    if ((N & (N - 1)) == 0 && vfft_k1fs_band(N))
+    {
+        int n1[8], n2[8], ns = vfft_k1fs_splits(N, n1, n2, 8), i, j;
+        for (i = 0; i < ns; i++)
+        {
+            int seen = 0;
+            for (j = 0; j < i; j++) if (n2[j] == n2[i]) seen = 1;
+            if (seen) continue;
+            {
+                vfft_config_t rc;
+                vfft_plan rp;
+                memset(&rc, 0, sizeof rc);
+                rc.transform = VFFT_C2C; rc.placement = VFFT_INPLACE; rc.rigor = cfg->rigor;
+                rc.dims = 1; rc.n[0] = n2[i]; rc.howmany = 1; rc.order = VFFT_ORDER_NATURAL;
+                rc.layout = VFFT_LAYOUT_INTERLEAVED; rc.nthreads = 1;
+                rc.wisdom = (vfft_wisdom *)W; rc.wisdom_write = cfg->wisdom_write;
+                rp = vfft_create(&rc);
+                if (rp) vfft_destroy(rp);
+            }
+        }
+    }
+}
+
 /* ── THE IL PLAN RACE AT CREATE ─────────────────────────────────────────────
  * A kind-3 MISS (or recalibrate) runs the IL dp planner — the same search
  * calibrate_k1_il runs offline: the solos, every legal pair x its kernel
@@ -524,27 +554,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
      * banks its own row) and (b) a nested call refuses */
     if (_k1_il_dp_busy)
         return 0;
-    if ((N & (N - 1)) == 0 && vfft_k1fs_band(N))
-    {
-        int n1[8], n2[8], ns = vfft_k1fs_splits(N, n1, n2, 8), i, j;
-        for (i = 0; i < ns; i++)
-        {
-            int seen = 0;
-            for (j = 0; j < i; j++) if (n2[j] == n2[i]) seen = 1;
-            if (seen) continue;
-            {
-                vfft_config_t rc;
-                vfft_plan rp;
-                memset(&rc, 0, sizeof rc);
-                rc.transform = VFFT_C2C; rc.placement = VFFT_INPLACE; rc.rigor = cfg->rigor;
-                rc.dims = 1; rc.n[0] = n2[i]; rc.howmany = 1; rc.order = VFFT_ORDER_NATURAL;
-                rc.layout = VFFT_LAYOUT_INTERLEAVED; rc.nthreads = 1;
-                rc.wisdom = (vfft_wisdom *)W; rc.wisdom_write = cfg->wisdom_write;
-                rp = vfft_create(&rc);
-                if (rp) vfft_destroy(rp);
-            }
-        }
-    }
+    _k1_il_fs_warm(W, cfg, N);
     /* the PRIME arm: the prime cell built ONCE here -- a cold
      * cell races its inner pool and banks the prime shard's row -- and lent
      * to the race through _k1pr_ctx (dp_planner_il.h), at the lengths the

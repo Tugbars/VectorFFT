@@ -188,8 +188,27 @@ static void _il2d_rowx_name(vfft_il2p_fn lm, const struct vfft_plan_s *e, char *
         snprintf(b, n, "zr2c_r%d", e->zr2c_route);
 }
 
+/* a zr2c row engine at a route: its child from the 1D real cell's row when
+ * that row banks this route, else raced in the real role (banking nothing).
+ * Reading the 1D row is the deferred 2D/3D-own-wisdom item: the recipe
+ * belongs on the 2D row (owner, 2026-10-01). */
+static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_config_t *c, struct vfft_wisdom_s *W, int N2, int route)
+{
+    int r = 0, fmt = 0;
+    vw2_zr2c_child_t ch;
+    if (W && !W->vw2_off_oop && vw2_real_il_lookup_zr2c(&W->vw2, N2, 0, 0, 1, &r, &fmt, &ch) && r == route)
+    {
+        vfft_il_cand_t kc;
+        struct vfft_plan_s *e;
+        _zr2c_cand_of_child(&kc, &ch);
+        if ((e = _zr2c_build_route(c, W, N2, route, &kc)) != NULL)
+            return e;
+    }
+    return _zr2c_build_route(c, W, N2, route, NULL);
+}
+
 /* a token's engine: 1 = built (door: nothing to build), 0 = it does not build here */
-static int _il2d_rowx_build(const vfft_config_t *cfg, int N1, int N2, const char *tok,
+static int _il2d_rowx_build(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N1, int N2, const char *tok,
                             vfft_il2p_fn *lm, struct vfft_plan_s **eng)
 {
     vfft_config_t c;
@@ -214,7 +233,7 @@ static int _il2d_rowx_build(const vfft_config_t *cfg, int N1, int N2, const char
             *eng = _zrp_build_pair(&c, N2, R1, R2, f == 'b');
     }
     else if (!strncmp(tok, "zr2c_r", 6) && (tok[6] == '0' || tok[6] == '1') && !tok[7])
-        *eng = _zr2c_build_route(&c, N2, tok[6] == '1');
+        *eng = _il2d_rowx_zr2c(&c, W, N2, tok[6] == '1');
     else if (!strncmp(tok, "zttr_", 5))
     {
         int chain[8], nf = 0, stk = 3;
@@ -317,7 +336,7 @@ static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, c
                 n = sizeof tok - 1;
             memcpy(tok, e, n);
             tok[n] = 0;
-            if (_il2d_rowx_build(cfg, N1, N2, tok, &lm, &eng))
+            if (_il2d_rowx_build(cfg, W, N1, N2, tok, &lm, &eng))
             {
                 h->il2d_rx_lm = lm;
                 h->il2d_rx_eng = eng;
@@ -337,7 +356,7 @@ static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, c
         if (tok)
         {
             const char *sv = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "rxs");
-            if (_il2d_rowx_build(cfg, N1, N2, tok, &lm, &eng))
+            if (_il2d_rowx_build(cfg, W, N1, N2, tok, &lm, &eng))
             {
                 h->il2d_rx_lm = lm;
                 h->il2d_rx_eng = eng;
@@ -383,10 +402,10 @@ static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, c
         if (N1 >= 2 && vfft_il2d_rows_fn(N2))
             ROWX_ARM(vfft_il2d_rows_fn(N2), NULL);
         {
-            struct vfft_plan_s *hz = _zr2c_build_route(&c, N2, 0), *e;
+            struct vfft_plan_s *hz = _il2d_rowx_zr2c(&c, W, N2, 0), *e;
             if (hz)
                 ROWX_ARM(NULL, hz);
-            if ((e = _zr2c_build_route(&c, N2, 1)) != NULL)
+            if ((e = _il2d_rowx_zr2c(&c, W, N2, 1)) != NULL)
                 ROWX_ARM(NULL, e);
             if (N2 <= VFFT_ZRM_MAX_N && (e = _zrm_build_plan(&c, N2)) != NULL)
                 ROWX_ARM(NULL, e);

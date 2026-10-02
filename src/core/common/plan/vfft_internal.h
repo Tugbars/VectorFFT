@@ -91,6 +91,7 @@ struct vfft_wisdom_s
     char dir[512];     /* the bundle's directory (wisdom2 opens from it) */
 };
 
+struct vfft_zr2c_kid_s;   /* the zr2c child (il/real/zr2c_build.h) */
 struct vfft_plan_s
 {
     vfft_transform_t transform;
@@ -235,14 +236,16 @@ struct vfft_plan_s
     vfft_c2r_disp_t *c2rdisp;  /* 1D c2r 2-axis: NATURAL/STRIDE (owned) */
     /* §D2 zr2c (2026-08-13, DESIGN_interleaved_r2c.md Phase 2): 1D
      * INTERLEAVED-CCE real transforms as reinterpret + CHILD c2c(N/2) +
-     * the zr2c.h fold. zr2c_child != NULL selects this route over
+     * the zr2c.h fold. zr2c_kid != NULL selects this route over
      * rplan/c2rdisp at execute. route 0 = OOP-IL child (natural OOP c2c);
      * route 1 = NAT-IP cascade child (natural in-place c2c — the usual
      * regime routing by size, validated 2026-08-13). Verdicts belong to the
      * zr2c-owned wisdom kind (owner directive); until the calibrator
      * lands, create uses the placement-matched STRUCTURAL default and
      * the VFFT_ZR2C_ROUTE env override (env beats wisdom, house rule). */
-    struct vfft_plan_s *zr2c_child; /* c2c(N/2) plan (owned)              */
+    struct vfft_zr2c_kid_s *zr2c_kid; /* the child c2c(N/2): its recipe, raced in the real
+                                       * role and banked on the real row, and the engines
+                                       * built from it (il/real/zr2c_build.h; owned) */
     /* ── the ODD-REAL BRIDGE (2026-08-27, 1D K==1): real <-> CCE through
      * the c2c engine — fwd: promote real -> complex, c2c fwd, keep the
      * hp1 bins; bwd: Hermitian-extend hp1 -> N (no Nyquist at odd N —

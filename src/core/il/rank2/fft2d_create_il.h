@@ -679,7 +679,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
              * path when none builds, and serving that here would rebuild
              * the veneer under a native flag (a hybrid IL/split route). */
             if (il2d_row &&
-                !(il2d_row->tcb && (il2d_row->tcb->zr2c_child || il2d_row->tcb->zrp ||
+                !(il2d_row->tcb && (il2d_row->tcb->zr2c_kid || il2d_row->tcb->zrp ||
                                     il2d_row->tcb->zttr || il2d_row->tcb->zrm || il2d_row->tcb->zfsr)))
             {
                 _vfft_warn("vfft_create: IL 2D real %dx%d — the row "

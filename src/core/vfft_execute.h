@@ -449,8 +449,7 @@ void vfft_destroy(vfft_plan h)
     vfft_k1fs_destroy(h->k1fs);
     if (h->k1sp)
         vfft_oop_plan_destroy(h->k1sp);
-    if (h->zr2c_child)
-        vfft_destroy((vfft_plan)h->zr2c_child); /* §D2: recursive child */
+    _zr2c_kid_destroy(h->zr2c_kid);              /* the zr2c child: its engines (il/real/zr2c_build.h) */
     vfft_zrp_destroy(h->zrp);                    /* the real pair (il/real/zrp.h) */
     vfft_zttr_destroy(h->zttr);                  /* ZTT-r (il/real/zttr.h) */
     vfft_zfsr_destroy(h->zfsr);                  /* the real four-step (il/real/zfsr.h) */
