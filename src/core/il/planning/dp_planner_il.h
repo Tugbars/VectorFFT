@@ -1449,10 +1449,10 @@ static void _il_dp_enumerate_mono(int N, vfft_il_cand_sink_t *s)
 static void _il_dp_enumerate_prime(int N, vfft_il_cand_sink_t *s)
 {
     vfft_il_cand_t c;
-    /* the prime cell as ONE candidate: its method and inner
-     * are the prime shard's own verdict, raced there (k1_commit.h); this
-     * race measures the whole convolution against the chains. The plan is
-     * the door's warm one (_k1pr_ctx): no plan, no candidate. */
+    /* the prime cell as ONE candidate, at the lengths no chain carries
+     * (the band map's law): its method and inner are the prime shard's own
+     * verdict, raced there (k1_commit.h). The plan is the door's warm one
+     * (_k1pr_ctx): no plan, no candidate. */
     if (!_k1pr_ctx.plan || _k1pr_ctx.N != N) return;
     memset(&c, 0, sizeof c);
     c.route = VFFT_K1_IL_PRIME;

@@ -13,7 +13,7 @@ AVX2 is the fair local yardstick. The i9-14900KF/MKL record is
  cores       6 physical / 12 logical (SMT 2)
  caches      L1d 32 KB 8-way · L2 1 MB per core · L3 16 MB shared
  toolchain   MSYS2 UCRT64 gcc 16.2.0, -march=native → znver4
- ISA         AVX2   (the IL tier has no AVX-512 registry)
+ ISA         AVX2 for every result below (build.py's default clamp)
  host tag    amd-f25m117
 ```
 
@@ -73,7 +73,7 @@ The trailing digits are the committed factorization — `2p 16.64` is the pair,
 ```
 
 Roundtrip error 0 … 2.8e-15 across every cell. The sub-32 losses are call
-overhead, not the transform (§4). **65536 is an FFTW anomaly** — it reads
+overhead, not the transform. **65536 is an FFTW anomaly** — it reads
 504,837 ns against 511,900 ns at twice the size, so its plan is bad rather than
 ours being good; the summary below reports with and without it.
 
@@ -146,57 +146,7 @@ as it tracks our own engine.
 
 ---
 
-## 3. 8192 / 16384 — ported tile vs re-raced tile
-
-ZTURN-T's tile ladder is hardcoded `{1024, 2048}` on a 48 KB-L1 rationale; on a
-32 KB L1 a 2048-wide tile is the whole L1 at 16384. Re-raced with `recal=1`.
-`..._fftw_big/` (09-21) vs `..._fftw_rerace/` (09-22).
-
-```
- N       tile                ours ns   FFTW ns   ratio
-───────────────────────────────────────────────────────
- 8192    ported (48 KB L1)     11425     19192   1.68×
- 8192    re-raced on host       9910     13936   1.41×
- 16384   ported (48 KB L1)     41801     69821   1.67×
- 16384   re-raced on host      36905     59816   1.62×
-───────────────────────────────────────────────────────
- ours, ported → re-raced:   8192  −13.3%
-                           16384  −11.7%
-```
-
-Read the self-comparison, not the ratio: re-racing the tile bought 12–13%. The
-ratio fell at 8192 only because FFTW also read faster that day, and the two runs
-are different thermal states.
-
----
-
-## 4. Call overhead — race vs bench at small N
-
-The race times the kernel internally; the bench times it through
-`vfft_execute`. The flat ~2.5 ns gap is the public-API call cost, which is 28%
-of a 10 ns transform at N=2 and 4% by N=32. FFTW's `fftw_execute(plan)` is one
-indirect call with no signature validation and pays almost none of it.
-
-```
- N     race ns   bench ns   delta
-──────────────────────────────────
- 2         7.2         10    +2.8
- 4        10.6         13    +2.4
- 16       20.3         23    +2.7
- 32       33.6         35    +1.4
-```
-
-**Convention: read family and narrow-band medians from N ≥ 16.** Below that the
-ratio is reporting the API call cost, not the transform — N=2, 4 and 8 are 28%,
-19% and 15% call overhead respectively, so they say nothing about the engine.
-This matters for a small population and almost not at all for a large one: on
-the 2047-cell sweep the floor moves the median by 0.01× (§6), while on the
-11-cell pow2 family it moves the geomean by 0.04×. Both figures are always
-given, so nothing is hidden by the choice.
-
----
-
-## 5. r2c / 2D / 3D — race verdicts
+## 3. r2c / 2D / 3D — race verdicts
 
 Race-time ns only — no FFTW comparison was captured for these cells, so these
 are **not** head-to-head numbers.
@@ -212,9 +162,9 @@ are **not** head-to-head numbers.
 
 ---
 
-## 6. Dense sweep — every N from 2 to 2048
+## 4. Dense sweep — every N from 2 to 2048
 
-### 6.1 Served from the 14900KF store (no host calibration)
+### 4.1 Served from the 14900KF store (no host calibration)
 
 The run store was seeded from `src/wisdom` — stamped
 `@meta host=intel-f6m183 isa=avx2 l1d=49152` — and run **without**
@@ -246,7 +196,7 @@ calibration.
 ```
 
 `mono` is the only losing route and holds only the smallest cells, where the
-call overhead of §4 dominates. `prime` carries half the range.
+call overhead dominates. `prime` carries half the range.
 
 What the Intel store **selects** here — `ztt` is all but absent, so this sweep
 says nothing about it either way; its band starts at 2048 (§1):
@@ -262,7 +212,7 @@ says nothing about it either way; its band starts at 2048 (§1):
 Run noise: 44 control readings at N=4096, median 6052 ns, 31 of them within 10%
 of the fastest — occasional outliers rather than drift.
 
-### 6.2 Calibrated on this host
+### 4.2 Calibrated on this host
 
 The same 2047 cells with `--calibrate`, every one re-raced here at
 `VFFT_PATIENT`. Source: `gauntlet/results/zen4_2_2048_B_recal/`.
@@ -286,7 +236,7 @@ The same 2047 cells with `--calibrate`, every one re-raced here at
  mono        24    0.90×
 ```
 
-Powers of two inside this range, both phases, read from N ≥ 16 per §4. This is
+Powers of two inside this range, both phases, read from N ≥ 16. This is
 the family with the least headroom (see the note in §2), and the range stops
 before `ztt` and `fs` take over above 2048 where pow2 actually wins (§1):
 
@@ -302,7 +252,7 @@ Calibration's pow2 moves are `2p → ztt` at 32 (+15%) and 64 (+5%) and a gain a
 2048, against `ztt → 2p` at 1024 which lost 5% — eight cells, so directional
 only.
 
-What this host selects for itself — against §6.1, `flat` halves (240 → 120) and
+What this host selects for itself — against §4.1, `flat` halves (240 → 120) and
 `chain3` takes most of it (346 → 435):
 
 ```
@@ -313,10 +263,10 @@ What this host selects for itself — against §6.1, `flat` halves (240 → 120)
  1024..2048      19     259     61      0    685     1
 ```
 
-### 6.3 What calibration is worth
+### 4.3 What calibration is worth
 
 Median vs FFTW moves **1.55× → 1.56×** over all cells (1.55× → 1.64× on the
-1750 cells §6.1 could replay). But the raw A→B delta is not the gain: the 297
+1750 cells §4.1 could replay). But the raw A→B delta is not the gain: the 297
 cells that raced in **both** phases are a null control, and they move by the
 same amount, so ~3% of it is a run-to-run systematic that affects our engine and
 not FFTW (whose own readings match to 0.4% across the two runs).
@@ -360,7 +310,113 @@ reasonable but not airtight since they are all N > 1024. Per-cell join:
 
 ---
 
-## 7. Wisdom store
+## 5. AVX-512 — pow2 ladder, 2 … 2²³
+
+Zen 4 has AVX-512 (`avx512f`/`vl`/`bw`/`dq` all present) on double-pumped
+256-bit datapaths, so any gain comes from the ISA — masking, 32 registers — not
+from width. Built with `VFFT_ISA=avx512` (which lifts build.py's
+`-mno-avx512f` clamp), 1299 codelets against avx2's 1588. Comparator is FFTW's
+own **AVX-512** build, `fftw/avx512/bin/libfftw3-3.dll`. Full recalibration.
+Source: `gauntlet/results/zen4_pow2_avx512_2026-10-02/`.
+
+**Reported from N ≥ 128.** Everything below is excluded as not measuring the
+ISA: 2–8 are call-overhead dominated, and 16/32 are blocked by a registry
+gap (§5.1). N=64 is excluded with them for a clean floor, though it is in fact a
+win (48 ns vs FFTW's 60, 1.25×), so the exclusion is conservative.
+
+```
+ N         route       ours ns      FFTW ns       x
+────────────────────────────────────────────────────
+ 128       ztt             102          101   0.99×
+ 256       ztt             204          206   1.01×
+ 512       ztt             440          449   1.02×
+ 1024      ztt             973         1044   1.07×
+ 2048      ztt            2191         2597   1.19×
+ 4096      ztt            4867         6774   1.39×
+ 8192      ztt           10208        14765   1.45×
+ 16384     ztt           31593        44022   1.39×
+ 32768     ztt           49759        74077   1.49×
+ 65536     ztt          112753       213830   1.90×
+ 131072    ztt          241313       470973   1.95×
+ 262144    ztt          526012      1070837   2.04×
+ 524288    fs          2083675      5756725   2.76×
+ 1048576   fs          6871437     15720312   2.29×
+ 2097152   fs         13668137     31419387   2.30×
+ 4194304   fs         28703375     66331162   2.31×
+ 8388608   fs        120599437    160482738   1.33×
+────────────────────────────────────────────────────
+ 17 cells    median 1.45×   gmean 1.56×   16/17 win
+             range 0.99× … 2.76×
+```
+
+Level at 128–512, then the margin climbs monotonically to 2.0–2.8× from 65536
+up. The single non-win is 128 at 0.99×. The 8388608 fall-off to 1.33× is the
+only break in the trend — that cell is DRAM-bound at 128 MiB of working set, so
+neither engine's ISA matters much there.
+
+Our own gain from the ISA, same contract and protocol, both benched 2026-10-02
+(the avx2 column is §4.2's run):
+
+```
+ N         avx2 ns   avx512 ns   speedup   avx2 route   avx512 route
+─────────────────────────────────────────────────────────────────────
+ 128           120         102     1.18×      2p            ztt
+ 256           234         204     1.15×      2p            ztt
+ 512           521         440     1.18×      2p            ztt
+ 1024         1303         973     1.34×      2p            ztt
+ 2048         2797        2191     1.28×      ztt           ztt
+─────────────────────────────────────────────────────────────────────
+ 5 cells    median 1.18×   gmean 1.22×
+```
+
+The avx2 reference only reaches 2048 (§4.2's range), so this is the 128–2048
+overlap. **~15–34%**, and the route column is the structural part:
+AVX-512 pushes `ztt` down from 2048 to 128, displacing `2p`. The wider registers
+make ZTURN-T's L1-resident tiling viable at sizes where it was not.
+
+### 5.1 N=16 and N=32 are a registry gap, not a result
+
+Both cells regress under AVX-512 — and reproducibly, across three independent
+re-calibrations with a fresh store each time:
+
+```
+ N    avx2 verdict        avx512 verdict (3/3 reps)    delta
+──────────────────────────────────────────────────────────────
+ 16   ztt 4.4   19.3 ns   2p     24–25 ns              −25%
+ 32   ztt 8.4   30.4 ns   mono   52–53 ns              −42%
+```
+
+The cause is that the plans the avx2 race chose **do not exist** as AVX-512
+entry points, so the race never saw them:
+
+```
+ ztt_16_4_4    avx2 present    avx512 ABSENT
+ ztt_32_8_4    avx2 present    avx512 ABSENT
+
+ ztt registry covers N =
+   avx2       16 32 64 128 … 262144
+   avx512           64 128 … 262144      ← starts at 64
+```
+
+It traces to four missing radix-4 AVX-512 ztt codelets (radix8 is fully
+covered):
+
+```
+ radix4_z_t0tp      radix4_z_t0tp_bwd
+ radix4_z_tld       radix4_z_tld_bwd
+```
+
+So these two rows are not AVX-512-vs-AVX-512 comparisons; they are AVX-512
+minus two kernels. **The fix is code generation, not tuning** — emit those four
+from `generator/bin/gen_radix.ml` / `emit_ztt_drivers.ml` at `--isa avx512`,
+then regenerate `ztt_registry_avx512.h` via `emit_ztt_registry.ml`, rebuild and
+re-race 16 and 32. It needs the OCaml/dune toolchain, which is **not installed
+on this host**, and the generated headers are marked do-not-edit-by-hand, so it
+is left open here.
+
+---
+
+## 6. Wisdom store
 
 Stores never mix — each calibration host gets its own folder, and 14900KF
 wisdom is never loaded here. `src/wisdom/Zen4/` holds this host's verdicts, all
@@ -369,8 +425,8 @@ five shards stamped `@meta host=amd-f25m117`:
 ```
  shard               rows   source
 ──────────────────────────────────────────────────────────────────
- wisdom2_oop.txt     4105   §6.2 recalibration (2026-10-02)
- wisdom2_prime.txt   1509   §6.2 recalibration (2026-10-02)
+ wisdom2_oop.txt     4105   §4.2 recalibration (2026-10-02)
+ wisdom2_prime.txt   1509   §4.2 recalibration (2026-10-02)
  wisdom2_scr.txt        4   2026-09-03
  wisdom2_2d.txt         1   2026-09-03 (512×512)
  wisdom2_real.txt       1   2026-09-03 (r2c 4096)
@@ -388,7 +444,7 @@ python gauntlet/merge_to_host.py --name <run> --host Zen4
 ```
 
 ⚠️ Every shard records `l1d=49152` even here, because `VFFT_L1D_DISCOVER`
-defaults to 0 and pins `l1d_used` to 48 KB on any host (§3). The stamp therefore
+defaults to 0 and pins `l1d_used` to 48 KB on any host. The stamp therefore
 does not record this machine's 32 KB L1, and must be left as the library writes
 it — correcting it by hand would make `vw2_open` report a spurious
 `HOST MISMATCH` on every run.

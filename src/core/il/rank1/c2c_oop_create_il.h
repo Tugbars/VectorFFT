@@ -75,7 +75,8 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
      * _k1_il_plan_race carries the N gate (vfft_policy_races). */
     if (cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
         !W->vw2_off_oop &&
-        (cfg->recalibrate || !ki || !ki->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
+        (cfg->recalibrate || !ki || !ki->il_kv_raced ||   /* a pair-only row (forms unraced) plans too */
+         (ki->k1_il_route == VFFT_K1_IL_PRIME && !vfft_policy_prime_cell(N))))   /* a prime verdict where a chain carries N: stale, the chains race */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)
         {

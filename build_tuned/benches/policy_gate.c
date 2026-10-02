@@ -24,6 +24,7 @@
 #include "il/rank1/ztt.h"
 #include "il/rank1/k1_fourstep_band.h"
 #include "ztt_registry_avx2.h"   /* ground truth for ZTURN-T's band */
+#include "il_registry_avx2.h"    /* ground truth for the chain radices (the prime cell's admission) */
 #include "il/planning/policy_il.h"
 
 static int g_fail = 0;
@@ -99,6 +100,34 @@ static int _ref_races(int N)
     if ((long)N > _ref_race_max_n(N)) return 0;
     return 1;
 }
+/* the prime cell's admission, owner ruling 2026-10-02: "bluestein only fills
+ * some primes that flat can't handle" -- N has a prime factor larger than every
+ * prime the chain kernels carry. Spelled independently of the module: the
+ * largest prime factor by trial division, against the registry's largest
+ * prime t2cp radix (the flat DIT's mid kind; _check_chain_max_prime proves
+ * the other chain kinds stop at the same prime). */
+static int _ref_isprime(int n)
+{
+    int d;
+    if (n < 2) return 0;
+    for (d = 2; d * d <= n; d++) if (n % d == 0) return 0;
+    return 1;
+}
+static int _ref_reg_max_prime(void)
+{
+    int m = 0;
+#define C(R) if (_ref_isprime(R) && (R) > m) m = (R);
+    VFFT_IL_T2CP_PAIR_RADICES(C)
+#undef C
+    return m;
+}
+static int _ref_prime_cell(int N)
+{
+    int lpf = 1, n = N, d;
+    for (d = 2; d * d <= n; d++) while (n % d == 0) { lpf = d; n /= d; }
+    if (n > 1) lpf = n;
+    return N >= 2 && lpf > _ref_reg_max_prime();
+}
 #define REF_PUSH(f) do { if (n < max) out[n] = (f); n++; } while (0)
 static int _ref_pool_natural(int N, int with_flat, vfft_fam_t *out, int max)
 {
@@ -116,7 +145,7 @@ static int _ref_pool_natural(int N, int with_flat, vfft_fam_t *out, int max)
     REF_PUSH(VFFT_FAM_CHAIN3);
     if (with_flat && !pow2 && !vfft_ztt_odd_band(N)) REF_PUSH(VFFT_FAM_FLAT);   /* 2026-09-22: every non-pow2 cell but the odd band's */
     if (_ref_ztt_registry_has(N)) REF_PUSH(VFFT_FAM_ZTT);
-    if (with_flat && !pow2) REF_PUSH(VFFT_FAM_PRIME);   /* the prime cell, an arm at every non-pow2 N (2026-09-21) */
+    if (with_flat && _ref_prime_cell(N)) REF_PUSH(VFFT_FAM_PRIME);   /* the prime cell: the lengths no chain carries (owner, 2026-10-02) */
     return n;
 }
 static int _ref_pool(int N, int ord, vfft_fam_t *out, int max)
@@ -131,7 +160,7 @@ static int _ref_pool(int N, int ord, vfft_fam_t *out, int max)
     {   /* 2026-09-22: no longer fenced to N < 2048 or no factor of 4 */
         n = _ref_pool_natural(N, 0, out, max);
         if (!pow2) { if (n < max) out[n] = VFFT_FAM_FLAT; n++; }
-        if (!pow2) { if (n < max) out[n] = VFFT_FAM_PRIME; n++; }
+        if (_ref_prime_cell(N)) { if (n < max) out[n] = VFFT_FAM_PRIME; n++; }   /* owner, 2026-10-02 */
     }
     return n;
 }
@@ -271,6 +300,30 @@ int main(void)
            "(L4 order, L9 ceilings, L1/L2 the band map, L3 the per-T fence, "
            "L6 engine presence, L8 the ladders; rank>=2: R3 the tcut laws, R7 the axis pass), "
            "%d N x %d order classes\n", nn, 3);
+
+    /* the prime cell's constant against the registry: every chain kind stops
+     * at the same largest prime radix (a chain at a larger prime would be a
+     * length the prime cell must leave to the chains) */
+    {
+        int m1 = 0, m2 = 0, m3 = 0, m4 = 0;
+#define C(R) if (_ref_isprime(R) && (R) > m1) m1 = (R);
+        VFFT_IL_N1C_PAIR_RADICES(C)
+#undef C
+#define C(R) if (_ref_isprime(R) && (R) > m2) m2 = (R);
+        VFFT_IL_N1T_PAIR_RADICES(C)
+#undef C
+#define C(R) if (_ref_isprime(R) && (R) > m3) m3 = (R);
+        VFFT_IL_T2_PAIR_RADICES(C)
+#undef C
+#define C(R) if (_ref_isprime(R) && (R) > m4) m4 = (R);
+        VFFT_IL_T2CSG_PAIR_RADICES(C)
+#undef C
+        CHECK(VFFT_POLICY_CHAIN_MAX_PRIME == _ref_reg_max_prime() && m1 == _ref_reg_max_prime() &&
+              m2 == _ref_reg_max_prime() && m3 == _ref_reg_max_prime() && m4 == _ref_reg_max_prime(),
+              "chain max prime: policy %d, registry t2cp %d n1c %d n1t %d t2 %d t2csg %d",
+              VFFT_POLICY_CHAIN_MAX_PRIME, _ref_reg_max_prime(), m1, m2, m3, m4);
+        nchk++;
+    }
 
     for (i = 0; i < nn; i++)
     {
