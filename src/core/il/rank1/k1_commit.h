@@ -547,12 +547,13 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     }
     /* the PRIME arm: the prime cell built ONCE here -- a cold
      * cell races its inner pool and banks the prime shard's row -- and lent
-     * to the race through _k1pr_ctx (dp_planner_il.h); every non-pow2 cell
-     * where it builds (the band map admits it at every non-pow2 N). The
-     * verdict's plan is handed to the candidate after the race; a losing
-     * plan dies below. */
+     * to the race through _k1pr_ctx (dp_planner_il.h), at the lengths the
+     * band map admits it: those no chain carries (vfft_policy_prime_cell).
+     * Nowhere else is it built, so a chain-carried cell never pays its inner
+     * race. The verdict's plan is handed to the candidate after the race; a
+     * losing plan dies below. */
     _k1pr_release();
-    if ((N & (N - 1)) != 0 && cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+    if (vfft_policy_prime_cell(N) && cfg->layout == VFFT_LAYOUT_INTERLEAVED)
     {
         _k1pr_ctx.plan = _ilprime_create_banked(W, cfg, N);
         _k1pr_ctx.N = _k1pr_ctx.plan ? N : 0;
@@ -666,7 +667,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * the N gate. The scrambled pow2 band races here too: its writer is the
      * PLAIN ZTURN-T schedule, banked on the ord=scr row like every other cell. */
     if (!W->vw2_off_oop &&
-        (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
+        (cfg->recalibrate || !ke || !ke->il_kv_raced ||   /* a pair-only row (forms unraced) plans too */
+         (ke->k1_il_route == VFFT_K1_IL_PRIME && !vfft_policy_prime_cell(N))))   /* a prime verdict where a chain carries N: stale, the chains race */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)
         {

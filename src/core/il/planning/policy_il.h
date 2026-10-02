@@ -94,13 +94,31 @@ static inline long vfft_policy_race_max_n(int N)
  * agree exactly — cells at every pow2 16..262144 — and policy_gate proves
  * it over the whole domain.)
  *
- * PRIME is a raced arm at every non-pow2 N where it builds: Rader or
+ * PRIME fills the lengths NO CHAIN CAN CARRY (owner, 2026-10-02): Rader or
  * Bluestein on the WHOLE length, its inner the prime shard's own raced
- * verdict, in both order classes, measured against the chains. A chain's
- * cost per point is the sum of its radices' (~0.6 R + 3 intrinsics each)
- * while the convolution's is flat (~40 units), so a chain of large radices
- * (47.43, 43.43) loses to Bluestein. Above the race ceiling the door builds
- * it unraced (its only route). */
+ * verdict, at an N with a prime factor past the chain radices
+ * (vfft_policy_prime_cell). It never races a chain: where a chain exists the
+ * chains' race decides, and a convolution of 2-3x the length is not an arm
+ * of it. Above the race ceiling the door builds it unraced (its only
+ * route). */
+/* the largest prime a chain carries: the chain kernels' largest prime radix
+ * (n1c / t2cp / t2cs / n1t / t2 / n1 all stop at 47; il_registry_<isa>.h,
+ * checked by policy_gate). */
+#define VFFT_POLICY_CHAIN_MAX_PRIME 47
+
+/* THE PRIME CELL's admission: N has a prime factor no chain radix carries.
+ * Every other N factors over the chain radices, and its chains race. */
+static inline int vfft_policy_prime_cell(int N)
+{
+    int m = N, p;
+    if (N < 2)
+        return 0;
+    for (p = 2; p <= VFFT_POLICY_CHAIN_MAX_PRIME; p++)
+        while (m % p == 0)
+            m /= p;
+    return m > 1;   /* what is left is a product of primes past the chain radices */
+}
+
 typedef enum
 {
     VFFT_FAM_MONO = 0,    /* the solo kernels (one call, every registry form) */
@@ -145,7 +163,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
             VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
             if (vfft_ztt_band(N)) VFFT__POOL_PUSH(VFFT_FAM_ZTT);
             if (!pow2)            VFFT__POOL_PUSH(VFFT_FAM_FLAT);
-            if (!pow2)            VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* natural output: a legal scrambled permutation */
+            if (vfft_policy_prime_cell(N)) VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* no chain carries N; natural output: a legal scrambled permutation */
         }
         return n;                      /* else: empty — the cell refuses */
     }
@@ -162,7 +180,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
     VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
     if (!pow2 && !vfft_ztt_odd_band(N)) VFFT__POOL_PUSH(VFFT_FAM_FLAT);   /* every non-pow2 cell but the odd band's */
     if (vfft_ztt_band(N))               VFFT__POOL_PUSH(VFFT_FAM_ZTT);
-    if (!pow2)                          VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* every non-pow2 cell */
+    if (vfft_policy_prime_cell(N))      VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* the lengths no chain carries */
 #undef VFFT__POOL_PUSH
     return n;
 }
