@@ -183,10 +183,12 @@ typedef struct
     int            N;
     int            ord;
     int            inplace;   /* the cell's placement: its own verdicts */
+    int            role_key;  /* the role it was raced in (0 = the c2c cell itself) */
     int            n_top;
     vfft_il_cand_t top[VFFT_IL_DP_TOPK_MAX];
 } vfft_il_dp_entry_t;
 
+struct _il_dp_built_s;   /* a candidate built once (below) */
 typedef struct
 {
     vfft_il_dp_entry_t entries[VFFT_IL_DP_CACHE_MAX];
@@ -223,6 +225,21 @@ typedef struct
      * input every 32 executes. The verdict banks on the place=ip row. Set
      * by vfft_il_dp_plan_and_bank from the request; part of the cache key. */
     int inplace;
+
+    /* THE ROLE (2026-10-02). A plan raced as a COMPONENT of a composite --
+     * the zr2c real plan's complex child -- is timed IN THE COMPOSITE'S ROLE:
+     * role_run executes the candidate between the composite's own passes (the
+     * fold), from z_in, at the cell's placement, and the race ranks that. NULL
+     * = the c2c cell itself. role_bwd: the composite runs the candidate's
+     * BACKWARD (the c2r child), so the backward is gated and the backward
+     * form axis raced, and the forward forms (which it never runs) are not.
+     * role_key keys the cache (one context may serve several roles). A role
+     * race never banks the c2c cell: its caller banks the verdict on its own
+     * row. */
+    int (*role_run)(void *role_ctx, const vfft_il_cand_t *c, const struct _il_dp_built_s *b,
+                    double *zin, double *zout, int inplace);
+    void *role_ctx;
+    int role_bwd, role_key;
 
     int n_benchmarks;
     int n_cache_hits;
@@ -277,7 +294,7 @@ static vfft_il_dp_entry_t *_il_dp_lookup(vfft_il_dp_context_t *ctx, int N, int o
 {
     for (int i = 0; i < ctx->count; i++)
         if (ctx->entries[i].N == N && ctx->entries[i].ord == ord &&
-            ctx->entries[i].inplace == ctx->inplace)
+            ctx->entries[i].inplace == ctx->inplace && ctx->entries[i].role_key == ctx->role_key)
             return &ctx->entries[i];
     return NULL;
 }
@@ -290,6 +307,7 @@ static vfft_il_dp_entry_t *_il_dp_insert(vfft_il_dp_context_t *ctx, int N, int o
     e->N = N;
     e->ord = ord;
     e->inplace = ctx->inplace;
+    e->role_key = ctx->role_key;
     return e;
 }
 
@@ -311,11 +329,12 @@ static void _il_dp_maybe_pace(vfft_il_dp_context_t *ctx, int N)
  * live OUTSIDE the timing loop or the planner measures create cost instead
  * of execute cost (at N=256, ~3.6 us against a true ~0.15 us: it ranks
  * table-building, not transforms). */
-typedef struct
+typedef struct _il_dp_built_s
 {
     vfft_il2p_plan_t   *ip;    /* 2P_PURE (full IL, no split planes) */
     vfft_il3p_plan_t   *i3;    /* CHAIN3 (3-stage IL chain) */
     vfft_oop11_fn       mono;  /* MONO    */
+    vfft_oop11_fn       monob; /* MONO's backward (NULL: the form has none) */
     vfft_ilfd_plan_t   *ifd;   /* FLAT (the flat DIT) */
     vfft_ztt_plan_t    *ztt;   /* ZTT (ZTURN-T) */
     vfft_k1fs_plan_t   *fs;    /* FS (the four-step) */
@@ -441,6 +460,8 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b, int i
     {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64) */
         b->mono = inplace ? (c->il_kv == 0 ? vfft_k1_mono_ilc_fn(N, 0) : 0)   /* in place: the alias-tolerant n1c solo; only form 0 has one */
                           : vfft_k1_mono_il_form_fn(N, c->il_kv, 0);
+        b->monob = inplace ? (c->il_kv == 0 ? vfft_k1_mono_ilc_fn(N, 1) : 0)
+                           : vfft_k1_mono_il_form_fn(N, c->il_kv, 1);
         return b->mono ? 0 : -1;
     }
     return -1; /* unknown/retired route (e.g. legacy 2P/3P) -> not a candidate */
@@ -457,87 +478,70 @@ static void _il_dp_free(_il_dp_built_t *b)
     memset(b, 0, sizeof(*b));
 }
 
+/* Execute a built candidate from `in` to `out`, forward or backward (bwd).
+ * The one dispatch over the routes: the planner's own runs (z_in -> the
+ * destination) and a composite that serves a built candidate (the zr2c
+ * child) both call it. 0 = ran; -1 = refused (MONO with no backward form, an
+ * unknown route, or the pair's backward with no composition: never a timed
+ * empty call). */
+static int _il_dp_exec_io(const vfft_il_cand_t *c, const _il_dp_built_t *b,
+                          const double *in, double *out, int bwd)
+{
+    switch (c->route)
+    {
+    case VFFT_K1_IL_2P_PURE:
+        if (!bwd) { vfft_il2p_execute_fwd(b->ip, in, out); return 0; }
+        /* 🔴 PROPAGATE, never discard. vfft_il2p_execute_bwd returns -1 and
+         * leaves zout UNTOUCHED when neither the t2t composition nor the fdiag
+         * fallback is available. Swallowing that turns a refusal into a timed
+         * empty call: the arm posts a near-zero time, wins the race, and banks
+         * a verdict for kernels that never ran. */
+        return vfft_il2p_execute_bwd(b->ip, in, out);
+    case VFFT_K1_IL_CHAIN3:
+        if (bwd) vfft_il3p_execute_bwd(b->i3, in, out);   /* t2 bwd, t2tg, n1 bwd: the leaf slot is the form axis */
+        else     vfft_il3p_execute_fwd(b->i3, in, out);
+        return 0;
+    case VFFT_K1_IL_FLAT:
+        if (bwd) vfft_ilfd_execute_bwd(b->ifd, in, out);  /* the conjugate pipeline: same forms, backward kernels */
+        else     vfft_ilfd_execute_fwd(b->ifd, in, out);
+        return 0;
+    case VFFT_K1_IL_ZTT:
+        if (bwd) vfft_ztt_execute_bwd(b->ztt, in, out);   /* the bwd driver on the s-negated streams */
+        else     vfft_ztt_execute_fwd(b->ztt, in, out);
+        return 0;
+    case VFFT_K1_IL_FS:
+        if (bwd) vfft_k1fs_execute_bwd(b->fs, in, out);
+        else     vfft_k1fs_execute_fwd(b->fs, in, out);
+        return 0;
+    case VFFT_K1_IL_MONO:
+    {
+        vfft_oop11_fn f = bwd ? b->monob : b->mono;
+        if (!f) return -1;
+        f((double *)in, 0, out, 0, 0, 0, 1, 0, 1, 0, 1);   /* one leg */
+        return 0;
+    }
+    case VFFT_K1_IL_PRIME:   /* the whole convolution: modulate, inner, demodulate (bwd: the conjugate chirp, unnormalized) */
+        if (bwd) vfft_ilprime_execute_bwd(b->ilp, in, out);
+        else     vfft_ilprime_execute_fwd(b->ilp, in, out);
+        return 0;
+    default:
+        return -1;   /* unknown/retired route — _il_dp_build already refused it */
+    }
+}
+
 /* Execute a built candidate FORWARD: z_in -> the destination (z_out, or z_in
  * itself for an in-place cell). The gate reads the destination. */
 static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                        const _il_dp_built_t *b)
 {
-    if (c->route == VFFT_K1_IL_2P_PURE)
-    {
-        vfft_il2p_execute_fwd(b->ip, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    if (c->route == VFFT_K1_IL_CHAIN3)
-    {
-        vfft_il3p_execute_fwd(b->i3, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    if (c->route == VFFT_K1_IL_FLAT)
-    {
-        vfft_ilfd_execute_fwd(b->ifd, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    if (c->route == VFFT_K1_IL_ZTT)
-    {
-        vfft_ztt_execute_fwd(b->ztt, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    if (c->route == VFFT_K1_IL_FS)
-    {
-        vfft_k1fs_execute_fwd(b->fs, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    if (c->route == VFFT_K1_IL_MONO)
-    {
-        b->mono(ctx->z_in, 0, _il_dp_dst(ctx), 0, 0, 0, 1, 0, 1, 0, 1); /* one leg */
-        return 0;
-    }
-    if (c->route == VFFT_K1_IL_PRIME)
-    {   /* the whole convolution: modulate, inner, demodulate */
-        vfft_ilprime_execute_fwd(b->ilp, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    return -1; /* unknown/retired route — _il_dp_build already refused it */
+    return _il_dp_exec_io(c, b, ctx->z_in, _il_dp_dst(ctx), 0);
 }
 
-/* Execute a built candidate BACKWARD: z_in -> the destination. Every route
- * but MONO; -1 = refused. */
+/* Execute a built candidate BACKWARD: z_in -> the destination; -1 = refused. */
 static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                            const _il_dp_built_t *b)
 {
-    if (c->route == VFFT_K1_IL_CHAIN3)
-    {   /* the chain's backward (t2 bwd, t2tg, n1 bwd) - its leaf slot is the
-         * directional form axis */
-        vfft_il3p_execute_bwd(b->i3, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    if (c->route == VFFT_K1_IL_FLAT)
-    {   /* the conjugate pipeline: same forms, backward kernels */
-        vfft_ilfd_execute_bwd(b->ifd, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    if (c->route == VFFT_K1_IL_ZTT)
-    {   /* the conjugate pipeline: the bwd driver on the s-negated streams */
-        vfft_ztt_execute_bwd(b->ztt, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    if (c->route == VFFT_K1_IL_PRIME)
-    {   /* the conjugate chirp / kernels, unnormalized like every IL bwd */
-        vfft_ilprime_execute_bwd(b->ilp, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    if (c->route == VFFT_K1_IL_FS)
-    {
-        vfft_k1fs_execute_bwd(b->fs, ctx->z_in, _il_dp_dst(ctx));
-        return 0;
-    }
-    if (c->route != VFFT_K1_IL_2P_PURE) return -1;
-    /* 🔴 PROPAGATE, never discard. vfft_il2p_execute_bwd returns -1 and
-     * leaves zout UNTOUCHED when neither the t2t composition nor the fdiag
-     * fallback is available. Swallowing that turns a refusal into a timed
-     * empty call: the arm posts a near-zero time, wins the race, and banks
-     * a verdict for kernels that never ran. */
-    return vfft_il2p_execute_bwd(b->ip, ctx->z_in, _il_dp_dst(ctx));
+    return _il_dp_exec_io(c, b, ctx->z_in, _il_dp_dst(ctx), 1);
 }
 
 /* Build + run once (for the correctness gate). Not used for timing. */
@@ -874,6 +878,8 @@ static double _il_dp_gate_err(vfft_il_dp_context_t *ctx, int N,
 static int _il_dp_exec_dir(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                            const _il_dp_built_t *b, int bwd)
 {
+    if (ctx->role_run)   /* the composite's pass with the candidate inside (its direction is the role's) */
+        return ctx->role_run(ctx->role_ctx, c, b, ctx->z_in, ctx->z_out, ctx->inplace);
     if (bwd) return _il_dp_exec_bwd(ctx, c, b);
     return _il_dp_exec(ctx, c, b);
 }
@@ -904,7 +910,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
         _ILDP_WHY(why, VFFT_IL_DP_WHY_ABSENT);
         return 1e18;
     }
-    if (c->route == VFFT_K1_IL_FLAT && !bwd)
+    if (c->route == VFFT_K1_IL_FLAT && (!bwd || ctx->role_run))
     {   /* the flat DIT's per-stage FORM race, on the planner's own data and
          * clock (real stage inputs, pipeline order); the verdict rides in
          * the candidate so the cell's winner banks it (il_forms=) */
@@ -934,22 +940,20 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
         double worst = 0.0;
         long i;
         double *dst = _il_dp_dst(ctx);
+        /* the roundtrip lands back in z_in out of place (the plan's own
+         * shape, in != out), in the destination in place */
+        double *back = ctx->inplace ? dst : ctx->z_in;
         /* the warmup above ran the BACKWARD on z_in; IN PLACE that consumed
          * the input, so refill it before the forward the roundtrip starts
          * from (out of place z_in is still pristine: a no-op) */
         memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
         if (_il_dp_exec(ctx, c, &b) != 0)
         { _ILDP_WHY(why, "BUILT but the forward executor refused it"); _il_dp_free(&b); return 1e18; }
-        /* zin == zout is safe for il2p: stage 1 reads zin into p->mid and
-         * stage 2 reads mid into zout, so the input is fully consumed. The
-         * chain (il3p) documents the same contract. */
-        if (c->route == VFFT_K1_IL_CHAIN3)
-            vfft_il3p_execute_bwd(b.i3, dst, dst);
-        else if (vfft_il2p_execute_bwd(b.ip, dst, dst) != 0)
+        if (_il_dp_exec_io(c, &b, dst, back, 1) != 0)
         { _ILDP_WHY(why, "BUILT but the backward executor refused it"); _il_dp_free(&b); return 1e18; }
         for (i = 0; i < 2L * N; i++)
         {
-            double d = fabs(dst[i] / (double)N - ctx->z_orig[i]);
+            double d = fabs(back[i] / (double)N - ctx->z_orig[i]);
             if (!(d < 1e300)) { worst = 1e30; break; }   /* NaN/Inf -> refuse */
             if (d > worst) worst = d;
         }
@@ -963,6 +967,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
             _il_dp_free(&b);
             return 1e18;
         }
+        memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));   /* out of place the roundtrip wrote z_in */
     }
     double best = 1e30, elapsed = 0.0;
     int reps = 1, calibrated = 0;
@@ -1013,11 +1018,12 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
     return best;
 }
 
-/* The forward metric. */
+/* The ranking metric: the forward, or in a role the composite's pass (on
+ * the backward when the role runs the candidate backward). */
 static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
                            vfft_il_cand_t *c)
 {
-    return _il_dp_bench_dir(ctx, N, c, 0, NULL);
+    return _il_dp_bench_dir(ctx, N, c, ctx->role_run ? ctx->role_bwd : 0, NULL);
 }
 
 /* ── the BACKWARD variant pass ─────────────────────────────────────────── */
@@ -1761,6 +1767,16 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
             return 1e18;
         }
     }
+    if (ncand > 0 && ctx->role_run && ctx->role_bwd && !e)
+    {   /* a role that runs the candidate BACKWARD never runs its forward:
+         * the forward form variants of the pair and the chain are the same
+         * plan there (their backward forms are the separate axis below) */
+        int k = 0, i;
+        for (i = 0; i < ncand; i++)
+            if (!((cand[i].route == VFFT_K1_IL_2P_PURE || cand[i].route == VFFT_K1_IL_CHAIN3) && cand[i].il_kv != 0))
+                cand[k++] = cand[i];
+        ncand = k;
+    }
     if (ncand <= 0) return 1e18;
 
     /* ONE reference for the whole cell, built BEFORE any candidate runs and
@@ -1846,7 +1862,8 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     /* The backward axis rides on the FORWARD winner, chosen above. It cannot
      * reorder cand[] — the sort key is cost_ns, the forward metric — so this
      * only fills in the second half of the winning plan. */
-    if (cand[0].route == VFFT_K1_IL_2P_PURE || cand[0].route == VFFT_K1_IL_CHAIN3)
+    if ((cand[0].route == VFFT_K1_IL_2P_PURE || cand[0].route == VFFT_K1_IL_CHAIN3) &&
+        !(ctx->role_run && !ctx->role_bwd))   /* a forward-only role never runs the backward */
         (void)_il_dp_race_bwd(ctx, N, &cand[0], verbose);
 
     if (!e) e = _il_dp_insert(ctx, N, ord);

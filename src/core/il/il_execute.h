@@ -233,7 +233,7 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
         if (h->zfsr) { h->k1_exec = _k1x_zfsr; return hp; }
         if (h->zttr) { h->k1_exec = _k1x_zttr; return hp; }
         if (h->zrp) { h->k1_exec = _k1x_zrp; return hp; }
-        if (h->zr2c_child) { h->k1_exec = _k1x_zr2c; return hp; }
+        if (h->zr2c_kid) { h->k1_exec = _k1x_zr2c; return hp; }
     }
     if (h->oddr_child || (!h->pq_inner && !h->tcb && h->N2 == 0))
         h->k1_exec = _k1x_real;

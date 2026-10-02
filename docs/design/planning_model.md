@@ -631,9 +631,15 @@ this race is real. The odd/prime axes remain the least-verified part of this doc
 
 ## II.2 — 1D real, interleaved
 
-Interleaved real builds a **child plan** — a c2c transform at N/2 — and the child runs its
-own complete set of c2c tournaments. So a 1D IL r2c plan carries two independent verdict
-sets: its own route, and everything the child decided.
+Interleaved real at even N races its engines (`zr2c`, `zrp`, `zttr`, `zrm`, `zfsr`) and
+banks the winner on the real cell's own row. The `zr2c` engine runs a **child** — a c2c
+transform at N/2 — between its own passes (the Hermitian fold after it for r2c, before it
+for c2r). The child's plan is the real cell's verdict, not the c2c cell's: per route the IL
+planner's whole pool for N/2 races **in the real role** (each candidate timed with the fold,
+at the route's placement, in the one direction the plan runs), and the winner's recipe is
+banked on the real row in the c2c K=1 record's vocabulary (`il_route`, `il_pair`, ... plus
+`il_bkv`, the backward forms). Replay builds the child from that recipe; a zr2c create reads
+and writes no c2c row, and a recalibrate re-races the child in role and nothing in c2c.
 
 **The `zr2c` composite route** picks between `child_oop_il` (an out-of-place child plus a
 fold into a separate plane) and `child_nat_ip` (an in-place child).
@@ -641,8 +647,9 @@ fold into a separate plane) and `child_nat_ip` (an in-place child).
 **In-place real lives only here.** 1D interleaved is the one place the library accepts an
 in-place real transform.
 
-Measured: `1d.il.ip.r2c.1024` → `zr2c=1` with a `zr2c` child; `1d.il.oop.r2c.1024` →
-`zr2c=0` but *still* carries the child.
+A threaded zr2c plan threads the fold (`fold=mt`); its child runs on one thread. The child's
+components keep their own verdicts: the prime cell's method and inner (the prime shard) and
+the four-step's 2D child (its rank-2 cell).
 
 ## II.3 — 2D c2c, interleaved (the il2d tier)
 

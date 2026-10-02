@@ -1128,14 +1128,14 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
     }
 }
 
-/* Placed AFTER _vw2_persist above: the kind-5 banker calls it, and it is a
- * general wisdom helper that stays in this file. */
+#include "il/planning/dp_planner_il.h" /* the IL plan race at create (2026-09-03): pair x forms, chain3 x forms */
+#include "il/rank1/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */
+/* The real engines: AFTER _vw2_persist above (their bankers call it), and
+ * after the IL planner and the K=1 commit -- the zr2c child is raced in the
+ * real role on the planner and built by its builder. */
 #include "il/real/zr2c_build.h" /* interleaved-CCE real route (step 18) */
 #include "il/real/zrp_build.h"  /* the real pair + the real door's engine race (2026-09-29) */
 #include "il/rank2/il2d_real_plan.h" /* the 2D real tier's row engine and its planner: the row race in the row role (2026-10-01) */
-
-#include "il/planning/dp_planner_il.h" /* the IL plan race at create (2026-09-03): pair x forms, chain3 x forms */
-#include "il/rank1/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */
 #include "il/rank3/fftnd_il.h"     /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
 /* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
  * allocator and the padded-batch create tier used to retype this sequence
@@ -1267,14 +1267,13 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
         return 1; /* the real pair: two serial kernels, no pool, no child */
     if (g->zttr)
         return g->zttr->scratch == NULL; /* ZTT-r: serial kernels, pool-free; an in-place plan owns ONE scratch plane */
-    if (g->zr2c_child)
-        /* §D2 real composite: _exec_zr2c is a fold (pure, serial, no pool)
-         * plus vfft_execute on the child, and the R2C/C2R execute branches
-         * skip the pool re-assert on this path precisely so it stays clean.
-         * So the whole question reduces to the CHILD's route -- ask it the
-         * same question. Depth is 1 by construction: a zr2c child is a plain
-         * c2c(N/2) and never itself carries a zr2c_child. */
-        return _tc_inner_mt_safe(g->zr2c_child);
+    if (g->zr2c_kid)
+        /* §D2 real composite: a fold (pure, serial, no pool) and the child's
+         * engines called directly (the IL planner's builds: serial, pool-free,
+         * plan-owned scratch, the four-step at one thread); the R2C/C2R execute
+         * branches skip the pool re-assert on this path. A batch clone is its
+         * own create: its own child. */
+        return 1;
     if (g->placement == VFFT_INPLACE)
         /* in-place interleaved: the K=1 engine arms are engine-pure; a
          * handle with none of them is treated as unsafe. */
@@ -1515,19 +1514,23 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
             TC_NEQ("real pair radices");
         return 1;
     }
-    if (!a->zr2c_child != !b->zr2c_child)
+    if (!a->zr2c_kid != !b->zr2c_kid)
         TC_NEQ("real composite");
-    if (a->zr2c_child)
+    if (a->zr2c_kid)
     {
         /* §D2 real composite. Everything that decides output bits lives in
-         * the CHILD (pair, il_kv, dir=bwd form, natoop mode), so compare it
-         * recursively. zr2c_route is compared too: child_oop_il and
-         * child_nat_ip are numerically equivalent but reach the child through
-         * different placements, and a batch must not mix routes -- the same
-         * rule as the cascade chain above. */
+         * the CHILD's recipe (route, chain, forms, tile), so compare it.
+         * zr2c_route is compared too: child_oop_il and child_nat_ip are
+         * numerically equivalent but reach the child through different
+         * placements, and a batch must not mix routes. */
+        vw2_zr2c_child_t ca, cb;
         if (a->zr2c_route != b->zr2c_route)
             TC_NEQ("real composite route");
-        return _tc_clone_equiv(a->zr2c_child, b->zr2c_child);
+        _zr2c_child_of_cand(&ca, &a->zr2c_kid->c);
+        _zr2c_child_of_cand(&cb, &b->zr2c_kid->c);
+        if (memcmp(&ca, &cb, sizeof ca))
+            TC_NEQ("real composite child recipe");
+        return 1;
     }
     if (!a->k1il2p != !b->k1il2p || !a->k1il3p != !b->k1il3p ||
         !a->k1ilpr != !b->k1ilpr ||
@@ -2317,7 +2320,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr), FP__P(k1ilfd), FP__P(k1ztt),
             FP__P(k1fs),   /* D5, 2026-09-18: route 10 had no bit and no line */
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
-            FP__P(zr2c_child), FP__P(oddr_child), FP__P(tplan),
+            FP__P(zr2c_kid), FP__P(oddr_child), FP__P(tplan),
             FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */
     FP__ADD(" il2dhave=%d%d%d%d%d",   /* the OOP row child's slot deleted 2026-09-23 */
             FP__P(il2d_row), FP__P(il2d_roww),
@@ -2382,7 +2385,12 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     }
     /* 4 — recurse. create re-enters itself for these, so the fingerprint is a
      * TREE; a child that silently changed route is otherwise invisible. */
-    used = vfft__fp_child(h->zr2c_child, "zr2c", depth + 1, out, cap, used);
+    if (h->zr2c_kid)
+    {   /* the zr2c child: its recipe (it is the real cell's own verdict, not a plan node) */
+        const vfft_il_cand_t *kc = &h->zr2c_kid->c;
+        FP__ADD(" zr2c_child=[r%d %d.%d c3=%d.%d fl=%d zt=%d tw=%d kv=%d bkv=%d %s]", kc->route, kc->R1, kc->R2,
+                kc->c3_A, kc->c3_B, kc->il_fl_n, kc->il_zt_n, kc->il_tw, kc->il_kv, kc->il_bkv, kc->il_flf);
+    }
     used = vfft__fp_child(h->oddr_child, "oddr", depth + 1, out, cap, used);
     used = vfft__fp_child(h->tcb, "tcb", depth + 1, out, cap, used);
     used = vfft__fp_child(h->pq_inner, "pq", depth + 1, out, cap, used);

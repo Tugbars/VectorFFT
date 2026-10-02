@@ -4,7 +4,9 @@
  * THE DOOR (il/real/real_create_il.h) serves an even-N, K=1, interleaved
  * real request with one of four engines:
  *   zr2c  x read as z[N/2] -> a c2c(N/2) child -> the Hermitian fold pass
- *         (zr2c_build.h; it races its own child route and banks it)
+ *         (zr2c_build.h: the child raced in the real role per route, the
+ *         two composites raced; the route and the child's recipe are
+ *         banked here when zr2c wins)
  *   zrp   the real pair (zrp.h): form A = the stock n1t leaf over the packed
  *         view + t2h, form B = the real leaf r2z + t2m; no fold pass. The
  *         pair and the form are PLAN INPUT.
@@ -35,8 +37,7 @@
  * the race, VFFT_ZFSR=N1xN2 pins the real four-step and VFFT_ZFSR=0 keeps it
  * out; env beats wisdom and never banks.
  *
- * INCLUSION CONTRACT: after zr2c_build.h and _vw2_persist (vfft.c), the
- * kind-5 precedent.
+ * INCLUSION CONTRACT: after zr2c_build.h and _vw2_persist (vfft.c).
  */
 #ifndef VFFT_TRANSFORMS_REAL_ZRP_BUILD_H
 #define VFFT_TRANSFORMS_REAL_ZRP_BUILD_H
@@ -534,7 +535,7 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
     const int Tk = _vfft_plan_threads(cfg);   /* the verdict's thread key */
     int arms_in[VFFT_ZRP_MAX_ARMS][3];
     const int np = _zrp_arms(N, arms_in, VFFT_ZRP_MAX_ARMS);
-    struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);   /* races + banks its own route */
+    struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);   /* its child raced in role, its route raced; banked below when it wins */
     /* the real mono: one kernel at N <= 64 (VFFT_ZRM=0 keeps it out) */
     struct vfft_plan_s *hm = (N <= VFFT_ZRM_MAX_N && _zrm_env() != 0) ? _zrm_build_plan(cfg, N) : NULL;
     if (np == 0 && N < 64 && !hm)
@@ -637,7 +638,7 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
     struct vfft_plan_s *hzm = NULL;
     if (Tk > 1 && N >= 64)
     {
-        hzm = _zr2c_build_route(cfg, N, hz->zr2c_route);
+        hzm = _zr2c_build_route(cfg, W, N, hz->zr2c_route, &hz->zr2c_kid->c);   /* the same child */
         if (hzm)
         {
             hzm->zr2c_fold_mt = 1;
@@ -742,11 +743,14 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
     vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
     if (best == 0)
     {
-        /* zr2c's own (thread-free) route record stands; a threaded plan's verdict is its own
-         * row, so the engine is banked at the thread key too or the cell would re-race */
-        if (Tk > 1 && W && !W->vw2_off_oop &&
-            vw2_real_il_bank_zr2c_t(&W->vw2, N, c2r, ip, Tk, hz->zr2c_route, 0, ns[0]) == VW2_OK)
-            _vw2_persist(W, cfg);
+        /* zr2c: its route and its child's recipe on the cell's row (every thread count) */
+        if (W && !W->vw2_off_oop)
+        {
+            if (_zr2c_bank(W, cfg, N, hz, ns[0]) == VW2_OK)
+                _vw2_persist(W, cfg);
+            else
+                fprintf(stderr, "vfft: real engine verdict NOT banked at N=%d (zr2c) -- the cell will re-race\n", N);
+        }
         for (int i = 1; i < nall; i++) vfft_destroy((vfft_plan)hall[i]);
         return hz;
     }
@@ -754,8 +758,8 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
     {
         struct vfft_plan_s *hw = hall[best];
         int rc;
-        if (hw->zr2c_child)
-            rc = vw2_real_il_bank_zr2c_t(&W->vw2, N, c2r, ip, Tk, hw->zr2c_route, hw->zr2c_fold_mt, ns[best]);
+        if (hw->zr2c_kid)
+            rc = _zr2c_bank(W, cfg, N, hw, ns[best]);
         else if (hw->zfsr)
             rc = vw2_real_il_bank_zfsr(&W->vw2, N, c2r, ip, Tk, hw->zfsr->N1, hw->zfsr->N2, ns[best]);
         else if (hw->zrm)
@@ -892,17 +896,11 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
         }
         else if (eng && !strcmp(eng, "zr2c"))
         {
-            int route, fmt;
-            if (Tk > 1 && vw2_real_il_lookup_zr2c_t(&W->vw2, N, c2r, ip, Tk, &route, &fmt))
-            {
-                struct vfft_plan_s *h = _zr2c_build_route(cfg, N, route);
-                if (h)
-                {
-                    h->zr2c_fold_mt = fmt;
-                    return h;
-                }
-            }
-            return _zr2c_build(cfg, N, W);
+            struct vfft_plan_s *h = _zr2c_replay(cfg, N, W);
+            if (h)
+                return h;
+            /* a zr2c row without its child's recipe (it predates the in-role
+             * child), or one that no longer builds: the race */
         }
     }
     if (!W || W->vw2_off_oop)

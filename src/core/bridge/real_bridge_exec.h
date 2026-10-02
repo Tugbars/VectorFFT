@@ -109,7 +109,7 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
             _exec_zrp(h, sre, dre); /* the real pair: two kernels, pool-free */
             return;
         }
-        if (h->zr2c_child)
+        if (h->zr2c_kid)
         {
             _exec_zr2c(h, sre, dre); /* §D2 composite (incl. in place) */
             return;
@@ -164,7 +164,7 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
             _exec_zrp(h, sre, dre); /* the real pair's c2r: the mirror, pool-free */
             return;
         }
-        if (h->zr2c_child)
+        if (h->zr2c_kid)
         {
             _exec_zr2c(h, sre, dre); /* §D2 composite (incl. in place) */
             return;

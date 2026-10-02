@@ -4,7 +4,14 @@
  * real shard (nthreads= on a threaded plan's row; nothing serves across thread counts),
  * exactly the key the zr2c route records use; the level-1 tokens name the
  * engine and its plan input:
- *   eng=zr2c route=child_oop_il|child_nat_ip      (kind-5, wisdom2_oop_il.h)
+ *   eng=zr2c route=child_oop_il|child_nat_ip      (il/real/zr2c_build.h: the child's
+ *            [fold=st|mt] il_route=... il_*=...   placement; on a threaded plan's row the
+ *                                                  fold's serving; and the CHILD -- the
+ *                                                  c2c(N/2) plan raced in the real role --
+ *                                                  in the c2c K=1 record's own words:
+ *                                                  il_route il_pair il_chain il_flat il_forms
+ *                                                  il_tw il_ztt il_sb il_kv, and il_bkv =
+ *                                                  the backward forms a c2r child runs)
  *   eng=zrp  pair=R1.R2 leaf=n1t|r2z              (the real pair, il/real/zrp.h:
  *                                                  n1t = form A, r2z = form B)
  *   eng=zttr chain=4.8.8.4 tile=512 stk=3 [mt=1|2] (ZTT-r, il/real/zttr.h: the chain,
@@ -41,6 +48,7 @@
 
 #include "wisdom2.h"
 #include "wisdom2_oop_rows.h" /* vw2__oop_stamp_date */
+#include "wisdom2_oop_il.h"   /* the c2c K=1 vocabulary: the zr2c child's recipe */
 
 static inline void vw2_real_il_key(vw2_key_t *k, int realN, int is_c2r, int is_inplace, int T)
 {
@@ -352,51 +360,129 @@ static inline int vw2_real_il_bank_zrbl(vw2_store_t *s, int realN, int K, int is
     return VW2_OK;
 }
 
-/* zr2c on a THREADED plan's row (T > 1): the record is complete on its own --
- * the child route and the fold's serving (fold=mt: cut over the plan's
- * threads) -- because the thread-free route record may belong to another
- * engine. 1 with *route, *fold_mt filled, 0 on a miss. */
-static inline int vw2_real_il_lookup_zr2c_t(const vw2_store_t *s, int realN, int is_c2r,
-                                            int is_inplace, int T, int *route, int *fold_mt)
+/* THE zr2c ROW. The child -- the c2c(N/2) plan raced IN THE REAL ROLE (with
+ * the fold, at the route's placement) -- is the cell's own verdict, so its
+ * recipe rides on the cell's row, never in the c2c cell's: a zr2c create
+ * reads and writes no c2c row. The recipe is written in the c2c K=1 record's
+ * vocabulary (wisdom2_oop_il.h), plus il_bkv (the backward forms, the only
+ * forms a c2r child runs). One record per (transform, N, placement, T); on a
+ * threaded plan's row fold= says how the fold is served. */
+typedef struct
 {
-    vw2_key_t k;
-    const vw2_rec_t *r;
-    const char *eng, *rt, *fd;
-    *route = 0; *fold_mt = 0;
-    vw2_real_il_key(&k, realN, is_c2r, is_inplace, T);
-    r = vw2_lookup(s, &k);
-    if (!r || vw2__is_seed(r)) return 0;
-    eng = vw2_rec_get(r, "eng");
-    if (!eng || strcmp(eng, "zr2c")) return 0;
-    rt = vw2_rec_get(r, "route"); fd = vw2_rec_get(r, "fold");
-    if (!rt) return 0;
-    *route = !strcmp(rt, "child_nat_ip") ? 1 : 0;
-    *fold_mt = (fd && !strcmp(fd, "mt")) ? 1 : 0;
-    return 1;
+    int  route;            /* il_route: VFFT_K1_IL_* */
+    int  R1, R2;           /* il_pair (the pair; the four-step's N1 x N2) */
+    int  c3[3];            /* il_chain (chain3: R2.A.B) */
+    int  fl[10], fl_n;     /* il_flat (the flat DIT's chain) */
+    char flf[24];          /* il_forms (its per-stage forms) */
+    int  tw;               /* il_tw (the flat DIT's / ZTURN-T's tile) */
+    int  zt[7], zt_n;      /* il_ztt (ZTURN-T's chain) / il_sb (the four-step's super-band chain) */
+    int  kv, bkv;          /* il_kv (forward forms), il_bkv (backward forms) */
+} vw2_zr2c_child_t;
+
+static inline int vw2__zr2c_ints_str(char *b, size_t cap, const int *v, int n)
+{
+    size_t off = 0;
+    int i;
+    b[0] = 0;
+    for (i = 0; i < n; i++)
+    {
+        int rr = snprintf(b + off, cap - off, "%s%d", i ? "." : "", v[i]);
+        if (rr < 0 || (size_t)rr >= cap - off) return -1;
+        off += (size_t)rr;
+    }
+    return 0;
 }
-static inline int vw2_real_il_bank_zr2c_t(vw2_store_t *s, int realN, int is_c2r, int is_inplace,
-                                          int T, int route, int fold_mt, double ns)
+
+static inline int vw2_real_il_bank_zr2c(vw2_store_t *s, int realN, int is_c2r, int is_inplace, int T,
+                                        int route, int fold_mt, const vw2_zr2c_child_t *ch, double ns)
 {
     vw2_rec_t r;
-    char b[48];
+    char b[64];
     int rc;
+    if (!ch || ch->route <= VFFT_K1_IL_NONE || ch->route > VW2_OOP_IL_ROUTE_MAX) return -1;
     memset(&r, 0, sizeof r);
     vw2_real_il_key(&r.key, realN, is_c2r, is_inplace, T);
-    if (vw2_rec_set(&r, 1, "eng", "zr2c") != VW2_OK ||
-        vw2_rec_set(&r, 1, "route", route ? "child_nat_ip" : "child_oop_il") != VW2_OK ||
-        vw2_rec_set(&r, 1, "fold", fold_mt ? "mt" : "st") != VW2_OK ||
-        vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
-        vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
-    if (ns > 0.0) {
+#define VW2__ZS(n, v) do { if (vw2_rec_set(&r, 1, (n), (v)) != VW2_OK) { vw2_rec_free(&r); return -1; } } while (0)
+    VW2__ZS("eng", "zr2c");
+    VW2__ZS("route", route ? "child_nat_ip" : "child_oop_il");
+    if (T > 1) VW2__ZS("fold", fold_mt ? "mt" : "st");
+    VW2__ZS("il_route", vw2_oop_il_name[ch->route]);
+    if (ch->R1 || ch->R2) { snprintf(b, sizeof b, "%d.%d", ch->R1, ch->R2); VW2__ZS("il_pair", b); }
+    if (ch->route == VFFT_K1_IL_CHAIN3) { if (vw2__zr2c_ints_str(b, sizeof b, ch->c3, 3)) goto bad; VW2__ZS("il_chain", b); }
+    if (ch->route == VFFT_K1_IL_FLAT && ch->fl_n >= 2)
+    {
+        if (vw2__zr2c_ints_str(b, sizeof b, ch->fl, ch->fl_n)) goto bad;
+        VW2__ZS("il_flat", b);
+        if (ch->flf[0]) VW2__ZS("il_forms", ch->flf);
+    }
+    if (ch->zt_n >= 2 && (ch->route == VFFT_K1_IL_ZTT || ch->route == VFFT_K1_IL_FS))
+    {
+        if (vw2__zr2c_ints_str(b, sizeof b, ch->zt, ch->zt_n)) goto bad;
+        VW2__ZS(ch->route == VFFT_K1_IL_ZTT ? "il_ztt" : "il_sb", b);
+    }
+    if (ch->tw > 0) { snprintf(b, sizeof b, "%d", ch->tw); VW2__ZS("il_tw", b); }
+    snprintf(b, sizeof b, "%d", ch->kv);  VW2__ZS("il_kv", b);
+    snprintf(b, sizeof b, "%d", ch->bkv); VW2__ZS("il_bkv", b);
+#undef VW2__ZS
+    if (vw2_rec_set(&r, 2, "ran", "1") != VW2_OK || vw2_rec_set(&r, 2, "src", "race") != VW2_OK) goto bad;
+    if (ns > 0.0)
+    {
         snprintf(b, sizeof b, "%.1f", ns);
         if (vw2_rec_set(&r, 2, "ns", b) != VW2_OK ||
+            /* the c2r composite runs the fold and then the child backward: bwd1 */
             vw2_rec_set(&r, 2, "metric", is_c2r ? "bwd1" : "fwd1") != VW2_OK ||
-            vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) { vw2_rec_free(&r); return -1; }
+            vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) goto bad;
     }
     vw2__oop_stamp_date(&r);
     rc = vw2_bank(s, &r);
     if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
     return VW2_OK;
+bad:
+    vw2_rec_free(&r);
+    return -1;
+}
+
+/* 1 with *route, *fold_mt and the child's recipe filled; 0 on a miss -- and a
+ * zr2c row WITHOUT a child recipe is a miss: it predates the in-role child
+ * (its child was the c2c cell's verdict), so the cell races again. */
+static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int is_c2r, int is_inplace,
+                                          int T, int *route, int *fold_mt, vw2_zr2c_child_t *ch)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *eng, *rt, *fd, *il, *ff;
+    int v[10], n;
+    *route = 0; *fold_mt = 0;
+    memset(ch, 0, sizeof *ch);
+    vw2_real_il_key(&k, realN, is_c2r, is_inplace, T);
+    r = vw2_lookup(s, &k);
+    if (!r || vw2__is_seed(r)) return 0;
+    eng = vw2_rec_get(r, "eng");
+    if (!eng || strcmp(eng, "zr2c")) return 0;
+    rt = vw2_rec_get(r, "route"); fd = vw2_rec_get(r, "fold"); il = vw2_rec_get(r, "il_route");
+    if (!rt || !il) return 0;
+    if (!strcmp(rt, "child_nat_ip")) *route = 1;
+    else if (strcmp(rt, "child_oop_il")) return 0;
+    *fold_mt = (fd && !strcmp(fd, "mt")) ? 1 : 0;
+    ch->route = vw2__oop_name_idx(vw2_oop_il_name, VW2_OOP_IL_ROUTE_MAX + 1, il);
+    if (ch->route <= VFFT_K1_IL_NONE) return 0;
+    if (vw2__oop_split_ints(vw2_rec_get(r, "il_pair"), v, 2) == 2) { ch->R1 = v[0]; ch->R2 = v[1]; }
+    if (vw2__oop_split_ints(vw2_rec_get(r, "il_chain"), v, 3) == 3) { ch->c3[0] = v[0]; ch->c3[1] = v[1]; ch->c3[2] = v[2]; }
+    n = vw2__oop_split_ints(vw2_rec_get(r, "il_flat"), v, 10);
+    if (n >= 2) { memcpy(ch->fl, v, sizeof(int) * (size_t)n); ch->fl_n = n; }
+    ff = vw2_rec_get(r, "il_forms");
+    if (ff) { strncpy(ch->flf, ff, sizeof ch->flf - 1); ch->flf[sizeof ch->flf - 1] = 0; }
+    n = vw2__oop_split_ints(vw2_rec_get(r, ch->route == VFFT_K1_IL_FS ? "il_sb" : "il_ztt"), v, 7);
+    if (n >= 2) { memcpy(ch->zt, v, sizeof(int) * (size_t)n); ch->zt_n = n; }
+    ch->tw = vw2__oop_geti(r, "il_tw", 0);
+    ch->kv = vw2__oop_geti(r, "il_kv", 0);
+    ch->bkv = vw2__oop_geti(r, "il_bkv", 0);
+    /* the recipe's own shape: a route without its payload is no recipe */
+    if ((ch->route == VFFT_K1_IL_2P_PURE || ch->route == VFFT_K1_IL_FS) && !(ch->R1 > 0 && ch->R2 > 0)) return 0;
+    if (ch->route == VFFT_K1_IL_CHAIN3 && !ch->c3[0]) return 0;
+    if (ch->route == VFFT_K1_IL_FLAT && ch->fl_n < 2) return 0;
+    if (ch->route == VFFT_K1_IL_ZTT && ch->zt_n < 2) return 0;
+    return 1;
 }
 
 /* The banked real four-step split at the cell: 1 with *n1, *n2 filled, 0 when
