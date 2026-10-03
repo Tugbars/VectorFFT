@@ -1592,103 +1592,31 @@ static void _il2d_arm_chain(void *v)
         _il2d_col_pass(c->z, c->z, c->N1, c->N2, 0, c->nst, c->R, c->Ls,
                        c->ff, c->tf, /*reverse=*/0);
 }
-/* ── the ROW-ROUTE race: per-row TC door vs ROWSPLIT over the legal W
- * pool, timed on the SAME row-pass helpers execute serves with, min-of-3
- * each on scratch planes (r2c/c2r read-only inputs — no compounding, no
- * refills). Winner installed on h + banked (chain + rw) in the
+/* ── the WL race: the banded column walk's width (rows stay OUTSIDE per
+ * fft2d_real_il_design.md §2.5): the unbanded arm + the static pool +
+ * L2-admitted stage spans (the c2c lever — row width here is hp1 complex),
+ * timed on the column pass alone (the only thing wl changes), min-of-3 in
+ * place on a z scratch (compounding is benign — the c2c chain-race
+ * precedent). Winner installed on h + banked (chain + wl) in the
  * direction-shared lay=il real cell. MUST run after the h-> field commits
- * (it executes h — the axis-race law). */
-static void _il2d_real_rowrace(struct vfft_plan_s *h,
-                               struct vfft_wisdom_s *W,
-                               const vfft_config_t *cfg, int N1, int N2)
+ * (it executes h — the axis-race law). (Until 2026-10-03 this race also
+ * held the ROWSPLIT row arm -- the split engines hired for the rows; it
+ * measured no better than the per-row door and is gone.) */
+static void _il2d_real_wlrace(struct vfft_plan_s *h,
+                              struct vfft_wisdom_s *W,
+                              const vfft_config_t *cfg, int N1, int N2)
 {
-    static const int POOL[] = { 32, 64, 128, 256 };
-    const size_t RN = (size_t)N1 * N2;
     const size_t CN = (size_t)N1 * ((size_t)N2 / 2 + 1);
     const int isr = (h->transform == VFFT_R2C);
-    double *a = (double *)malloc(RN * sizeof(double));
     double *bz = (double *)malloc((2 * CN + 8) * sizeof(double));
-    /* +8: the fused c2r unzip reads past the last row's tail (rscr law) */
-    double bestns = 1e300;
-    int bw = 0, pi, p;
     size_t i;
-    /* current best's resources (arm 0 = the per-row door: all NULL) */
-    struct vfft_plan_s *brows = NULL;
-    double *blx = NULL, *blre = NULL, *blim = NULL;
-    double *btre = NULL, *btim = NULL;
-    if (!a || !bz)
-    {
-        free(a);
-        free(bz);
+    if (!bz)
         return;
-    }
-    for (i = 0; i < RN; i++)
-        a[i] = 1.0 + 1e-6 * (double)(i & 1023);
     for (i = 0; i < 2 * CN + 8; i++)
         bz[i] = 1.0 + 1e-6 * (double)(i & 511);
-    /* arm 0: the per-row TC door */
-    _il2d_race_ctx_t rc = { h, a, bz, isr, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
-    const vfft_race_arm_t rows_arm = { "rows", _il2d_arm_rows, &rc };
+    _il2d_race_ctx_t rc = { h, NULL, bz, isr, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
     const vfft_race_arm_t cols_arm = { "cols", _il2d_arm_cols, &rc };
-    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* min-of-3, A then B */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
-    (void)p;
-    h->il2d_rows = NULL;
-    h->il2d_rw = 0;
-    vfft_race_run(&proto, &rows_arm, 1, &bestns);
-    for (pi = 0; pi < 4; pi++)
-    {
-        const int Wb = POOL[pi];
-        struct vfft_plan_s *rows = NULL;
-        double *lx = NULL, *lre = NULL, *lim = NULL;
-        double *tre = NULL, *tim = NULL;
-        double ns = 1e300;
-        if (Wb > N1 || N1 % Wb != 0 || (N2 % 4) != 0)
-            continue;
-        if (!_il2d_rowsplit_build(cfg, Wb, N2, &rows, &lx, &lre, &lim,
-                                  &tre, &tim))
-            continue;
-        h->il2d_rows = rows;
-        h->il2d_rw = Wb;
-        h->il2d_lx = lx;
-        h->il2d_lre = lre;
-        h->il2d_lim = lim;
-        h->il2d_tre = tre;
-        h->il2d_tim = tim;
-        vfft_race_run(&proto, &rows_arm, 1, &ns);
-        if (ns < bestns)
-        {
-            if (brows)
-            {
-                vfft_destroy(brows);
-                free(blx); free(blre); free(blim);
-                free(btre); free(btim);
-            }
-            bestns = ns;
-            bw = Wb;
-            brows = rows;
-            blx = lx; blre = lre; blim = lim;
-            btre = tre; btim = tim;
-        }
-        else
-        {
-            vfft_destroy(rows);
-            free(lx); free(lre); free(lim); free(tre); free(tim);
-        }
-    }
-    /* install the winner (NULLs = the per-row door) */
-    h->il2d_rows = brows;
-    h->il2d_rw = bw;
-    h->il2d_lx = blx;
-    h->il2d_lre = blre;
-    h->il2d_lim = blim;
-    h->il2d_tre = btre;
-    h->il2d_tim = btim;
-    /* ── the wl axis (the banded column walk; rows stay OUTSIDE per
-     * fft2d_real_il_design.md §2.5): unbanded arm + the static pool + L2-admitted stage spans
-     * (the c2c lever — row width here is hp1 complex), timed on the
-     * column pass alone (the only thing wl changes), min-of-3 in place
-     * on the z scratch (compounding is benign — the c2c chain-race
-     * precedent). */
+    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* min-of-3 */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
     {
         const size_t hp1 = (size_t)N2 / 2 + 1;
         int wlc[14], nwl = 0, wi, s2;
@@ -1737,16 +1665,13 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
         }
         h->il2d_col.wl = bwl;
         h->il2d_col.cut = bcut;
-        free(a);
         free(bz);
         if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d-real] rowrace %s %dx%d -> rw=%d "
-                            "wl=%d (%.0f ns rows / %.0f ns cols)\n",
-                    isr ? "r2c" : "c2r", N1, N2, bw, bwl, bestns,
-                    cbest);
-        vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_col.R, h->il2d_col.nst, bw,
+            fprintf(stderr, "[il2d-real] wlrace %s %dx%d -> wl=%d (%.0f ns cols)\n",
+                    isr ? "r2c" : "c2r", N1, N2, bwl, cbest);
+        vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_col.R, h->il2d_col.nst,
                        bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                       bestns + cbest, vfft_policy_ord_rankn(cfg), h->nthreads);
+                       cbest, vfft_policy_ord_rankn(cfg), h->nthreads);
         _vw2_persist(W, cfg);
     }
 }
@@ -1792,7 +1717,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
             h->il2d_col.colmt = 0;
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                            h->il2d_col.R, h->il2d_col.nst,
-                           h->il2d_rw, h->il2d_col.wl, 0, h->nthreads,
+                           h->il2d_col.wl, 0, h->nthreads,
                            (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, vfft_policy_ord_rankn(cfg), h->nthreads);
             _vw2_persist(W, cfg);
             return;
@@ -1806,7 +1731,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
                 N1, N2, h->nthreads, st, mt,
                 h->il2d_col.colmt ? "THREADED" : "serial");
     vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
-                   h->il2d_col.R, h->il2d_col.nst, h->il2d_rw,
+                   h->il2d_col.R, h->il2d_col.nst,
                    h->il2d_col.wl, h->il2d_col.colmt, h->nthreads,
                    (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
                    h->il2d_col.colmt ? mt : st, vfft_policy_ord_rankn(cfg), h->nthreads);
