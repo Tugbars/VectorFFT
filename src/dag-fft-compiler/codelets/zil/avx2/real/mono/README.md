@@ -1,8 +1,10 @@
 # real/mono/ — the real mono kind `rn1`: the whole small real transform in one kernel
 
-60 files, `radixN_z_rn1_avx2.c` (r2c) and `radixN_z_rn1_bwd_avx2.c` (c2r) at
+66 files, `radixN_z_rn1_avx2.c` (r2c) and `radixN_z_rn1_bwd_avx2.c` (c2r) at
 the `n1` radices N = 3..64 (3-17, 19, 21-23, 25-27, 29, 31, 32, 37, 41, 43,
-47, 64). The `n1` body on real input: the forward loads N reals (a lane is
+47, 64) and at the primes 53, 59, 61 (no `n1` kernel there: the mono is the
+one engine between the chain's largest radix and the real Bluestein's
+floor). The `n1` body on real input: the forward loads N reals (a lane is
 `(x, 0)`), computes the N-point DFT and stores bins 0..N/2 only (the CCE
 half); the backward loads bins 0..N/2 and forms bin N-l as the conjugate of
 bin l (a sign flip on the imaginary lane, no load), then stores N real lanes.

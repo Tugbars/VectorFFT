@@ -1888,26 +1888,11 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         !(cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->howmany == 1 && !ob &&
           _real_il_odd_admits(cfg->n[0], cfg->transform == VFFT_C2R)))
     {
-        /* ODD N in-place (2026-08-27, (c) of the odd-real list): the
-         * CCE plane contract holds at odd N too — 2*(N/2+1) = N+1
-         * doubles, N reals in front, hp1 bins written over — and the
-         * BRIDGE is aliasing-safe by construction (promote/extend copy
-         * the plane OUT before anything writes back). Serve it. */
-        if (cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-            cfg->howmany == 1 && (cfg->n[0] & 1) && cfg->n[0] >= 3)
-        {
-            struct vfft_plan_s *hh = _oddr_build(cfg, cfg->n[0]);
-            if (hh)
-            {
-                hh->placement = VFFT_INPLACE;
-                return hh;
-            }
-        }
         _vfft_warn("vfft_create: in-place %s is supported only for 1D "
-                   "LAYOUT_INTERLEAVED (CCE), howmany==1, even N (the zr2c route; "
-                   "padded 2*(N/2+1)-double plane), or howmany>1 with "
-                   "batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS (that plane per "
-                   "transform, end to end) — use VFFT_OUTOFPLACE otherwise",
+                   "LAYOUT_INTERLEAVED (CCE), howmany==1 (the interleaved real "
+                   "engines; padded 2*(N/2+1)-double plane, N+1 at odd N), or "
+                   "howmany>1 with batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS (that "
+                   "plane per transform, end to end) — use VFFT_OUTOFPLACE otherwise",
                    _vfft_tname(cfg->transform));
         return NULL;
     }
