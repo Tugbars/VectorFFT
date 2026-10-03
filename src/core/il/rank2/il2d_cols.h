@@ -22,11 +22,14 @@
  * this file, and the Bluestein builder calls back into the column pass;
  * forward declarations resolve both.
  *
- * ON THE CAP
- * ----------
- * VFFT_IL2D_MAXCAND bounds the candidate pool. When it bites, the drop is
- * LOGGED - the no-silent-caps law. A truncated pool is a biased pool, so a cap
- * that trims quietly would skew every verdict that followed it.
+ * ON THE POOL
+ * -----------
+ * The candidate pool is complete: VFFT_IL2D_POOL_MAX is its storage, above
+ * the largest pool in reach (170, at N1 = 8640), and the race takes it in
+ * heats (il2d_tier.h). Were the storage ever exceeded the drop is LOGGED -
+ * the no-silent-caps law. A truncated pool is a biased pool (the enumerator
+ * walks the largest radices first, so a cut drops the small-radix openings),
+ * and a cut that trims quietly would skew every verdict that followed it.
  */
 #ifndef VFFT_TRANSFORMS_FFT2D_IL2D_COLS_H
 #define VFFT_TRANSFORMS_FFT2D_IL2D_COLS_H
@@ -43,7 +46,7 @@
 /* ── native IL 2D c2c: column-chain builders
  * (docs/roadmap/fft2d_il_c2c_design.md).
  * _il2d_enum_rec: every ordered composition of N1 over the t2c/n1c radix
- * set (depth <= 4, capped) -- THE candidate pool; the race picks, wisdom
+ * set (depth <= 4, every one) -- THE candidate pool; the race picks, wisdom
  * banks. _il2d_env_chain: the VFFT_IL2D_CHAIN pin, and nothing else (a
  * chain is raced, never derived). A chain's stages 0..m-2 resolve t2c
  * pairs, the last resolves the n1c pair.
@@ -118,10 +121,11 @@ static int _il2d_apply_forms(const int *Rs, int m, const char *forms,
     return *p == 0; /* exactly m names */
 }
 
-/* ordered compositions of N1 over the codelet radices, depth <= 4, capped
- * at VFFT_IL2D_MAXCAND (planning/policy.h). The recursion is the body; the
- * entry below it is what callers reach, and it enforces the no-silent-caps
- * law ITSELF, so no caller has to remember to warn. */
+/* ordered compositions of N1 over the codelet radices, depth <= 4, all of
+ * them (stored up to VFFT_IL2D_POOL_MAX, planning/policy_il.h). The
+ * recursion is the body; the entry below it is what callers reach, and it
+ * enforces the no-silent-caps law ITSELF, so no caller has to remember to
+ * warn. */
 /* the column radices with an n1c kind and NO t2c kind (the registry's two
  * lists differ by exactly these): legal only as the closing stage */
 static int _il2d_pool_closing_only(int R)
@@ -148,7 +152,7 @@ static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
     {
         if (depth == 0)
             return;
-        if (*n >= VFFT_IL2D_MAXCAND)
+        if (*n >= VFFT_IL2D_POOL_MAX)
         {
             (*dropped)++;
             return;
@@ -179,9 +183,9 @@ static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
 {
     _il2d_enum_rec_body(L, depth, cur, out, lens, n, dropped);
     if (depth == 0 && *dropped)
-        _vfft_warn("il2d chain pool capped at %d (%d candidate(s) dropped) "
+        _vfft_warn("il2d chain pool storage (%d) exceeded (%d candidate(s) dropped) "
                    "at N1=%d -- the race saw a truncated pool",
-                   VFFT_IL2D_MAXCAND, *dropped, L);
+                   VFFT_IL2D_POOL_MAX, *dropped, L);
 }
 
 /* the column pass, shared by execute and the create-time chain race

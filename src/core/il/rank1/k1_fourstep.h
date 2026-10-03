@@ -632,7 +632,7 @@ static int _k1fs_sb_admit(int N)
  * depth <= 3), else the full form axis */
 static int _k1fs_sb_chains(int N1, int (*out)[8], int *lens, int max, int tight)
 {
-    int cand[VFFT_IL2D_MAXCAND][8], cl[VFFT_IL2D_MAXCAND], cur[8], nc = 0, dropped = 0, k, n = 0;
+    int cand[VFFT_IL2D_POOL_MAX][8], cl[VFFT_IL2D_POOL_MAX], cur[8], nc = 0, dropped = 0, k, n = 0;
     _il2d_enum_rec(N1, 0, cur, cand, cl, &nc, &dropped);
     for (k = 0; k < nc && n < max; k++)
     {

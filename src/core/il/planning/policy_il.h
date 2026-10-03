@@ -246,13 +246,18 @@ static inline int vfft_policy_admits(const vfft_cell_t *c, vfft_fam_t f)
 
 /* -- L2, rank >= 2: the COLUMN CHAIN POOL's cap ---------------------------
  * The 2D/3D interleaved column axis enumerates every ordered composition of
- * N1 over the radix pool (il2d_cols.h, _il2d_enum_rec) and races them all;
- * this is how many it will hold. A pool cap is policy: it decides which
- * candidates EXIST. It lives here, ahead of every consumer, because the
- * four-step's super-band (oop/k1_fourstep.h) sizes its arrays by it and is
- * included long before the enumerator. The no-silent-caps law is enforced
- * by the enumerator itself. */
-#define VFFT_IL2D_MAXCAND 24
+ * N1 over the radix pool (il2d_cols.h, _il2d_enum_rec) and races them all
+ * (owner, 2026-10-03: the pool is complete, raced in heats). POOL_MAX is the
+ * pool's STORAGE, not a cap: the largest pool in the enumerator's reach
+ * (depth <= 4) is 170 chains, at N1 = 8640. HEAT is the race's heat: the
+ * pool races in balanced heats of at most HEAT arms and the heat winners
+ * meet in a final (il2d_tier.h, _il2d_race_chains), so no race holds more
+ * chains' tables at once. They live here, ahead of every consumer, because
+ * the four-step's super-band (il/rank1/k1_fourstep.h) sizes its arrays by
+ * the pool and is included long before the enumerator. The no-silent-caps
+ * law is enforced by the enumerator itself. */
+#define VFFT_IL2D_POOL_MAX 256
+#define VFFT_IL2D_HEAT 32
 
 /* -- L2, rank >= 2: the BAND-WIDTH LADDER ---------------------------------
  * The widths the 2D c2c tier, the 2D real tier and the 3D tier may race for

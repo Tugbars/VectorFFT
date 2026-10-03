@@ -200,12 +200,15 @@ static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_config_t *c, struct vfft_w
     {
         vfft_il_cand_t kc;
         _zr2c_prime_t pr;
+        struct vfft_wisdom_s *fsS = NULL;
         struct vfft_plan_s *e;
         _zr2c_cand_of_child(&kc, &ch);
-        if (_zr2c_prime_of_child(&pr, &ch) && (e = _zr2c_build_route(c, W, N2, route, &kc, &pr)) != NULL)
+        if (_zr2c_prime_of_child(&pr, &ch) &&
+            (ch.route != VFFT_K1_IL_FS || (fsS = _zr2c_fs_store(ch.fs, ch.R1, ch.R2, route)) != NULL) &&
+            (e = _zr2c_build_route(c, N2, route, &kc, &pr, fsS)) != NULL)
             return e;
     }
-    return _zr2c_build_route(c, W, N2, route, NULL, NULL);
+    return _zr2c_build_route(c, N2, route, NULL, NULL, NULL);
 }
 
 /* a token's engine: 1 = built (door: nothing to build), 0 = it does not build here */

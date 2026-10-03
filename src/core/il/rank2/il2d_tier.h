@@ -1805,7 +1805,7 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
         return 1;
     }
     {
-        int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
+        int cand[VFFT_IL2D_POOL_MAX][8], lens[VFFT_IL2D_POOL_MAX];
         int cur[8], ncand = 0, dropped = 0, win;
         double bns = 0;
         _il2d_enum_rec(M, 0, cur, cand, lens, &ncand, &dropped);
@@ -1960,8 +1960,102 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
     _il2d_forms_serve_key(W, cfg, &ck, "forms", N1, (size_t)N2, Rs, nst, ff, fb, forms, fsz);
 }
 
-/* the chain RACE: time every candidate's column pass on scratch (min of
- * 3 passes), return the winner's index. -1 = race impossible. */
+/* one HEAT of the chain race: the candidates idx[0..n-1] (n <= VFFT_IL2D_HEAT)
+ * as the arms of ONE race. Every buildable candidate's tables and (natural)
+ * permutation are built up front, then vfft_race_run samples every arm once
+ * per round with the rounds alternating direction -- the house protocol -- so
+ * a drift of the host (its throttled state lasts minutes) hits all chains
+ * alike (timing each chain in its own burst, one after another, let two cold
+ * runs at 1215x243 natural bank different chains). Min of 3 single executes
+ * per arm; VFFT_IL2D_HEAT <= the template's VFFT_RACE_MAX_ARMS. The winner's
+ * candidate index, -1 when none builds; *wns its ns. */
+static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, const int *idx, int n,
+                           int nat, double *z, double *nscr, double *nstage, double *wns)
+{
+    struct
+    {
+        vfft_il2p_fn ff[8], fb[8];
+        int Ls[8];
+        double *tf[8], *tb[8];
+        int *perm;
+        int ci;
+    } cb[VFFT_IL2D_HEAT];
+    _il2d_race_ctx_t rc[VFFT_IL2D_HEAT];
+    vfft_race_arm_t arms[VFFT_IL2D_HEAT];
+    double ns[VFFT_IL2D_HEAT];
+    int na = 0, a, s2, k, win = -1;
+    *wns = 1e300;
+    for (k = 0; k < n && na < VFFT_IL2D_HEAT; k++)
+    {
+        const int ci = idx[k];
+        int *perm = NULL;
+        if (!_il2d_resolve(cand[ci], lens[ci], cb[na].ff, cb[na].fb))
+            continue;
+        if (nat && lens[ci] > 1)
+        {
+            perm = _il2d_nat_perm(cand[ci], lens[ci], N1);
+            if (!perm)
+                continue; /* no natural leaf for this chain: not a candidate */
+        }
+        if (_il2d_build_tables(N1, lens[ci], cand[ci], cb[na].Ls, cb[na].tf, cb[na].tb))
+        {
+            free(perm);
+            continue;
+        }
+        cb[na].perm = perm;
+        cb[na].ci = ci;
+        {
+            _il2d_race_ctx_t c0 = { NULL, NULL, z, 0, 1, N1, (size_t)N2,
+                                    lens[ci], cand[ci], cb[na].Ls, cb[na].ff, cb[na].tf,
+                                    nat && perm != NULL, perm, nscr, 0, nstage };
+            rc[na] = c0;
+        }
+        arms[na].name = "chain";
+        arms[na].run = _il2d_arm_chain;
+        arms[na].ctx = &rc[na];
+        na++;
+    }
+    if (na > 0)
+    {
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 0, NULL, NULL, 1 }; /* min-of-3, alternated */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        const int best = vfft_race_run(&proto, arms, na, ns);
+        if (best >= 0)
+        {
+            win = cb[best].ci;
+            *wns = ns[best];
+        }
+        if (getenv("VFFT_IL2D_LOG"))
+        {
+            fprintf(stderr, "[il2d] chain race %dx%d (%s): %d arm(s)", N1, N2,
+                    nat ? "nat" : "scr", na);
+            for (a = 0; a < na; a++)
+            {
+                int q;
+                fprintf(stderr, " ");
+                for (q = 0; q < lens[cb[a].ci]; q++)
+                    fprintf(stderr, "%s%d", q ? "." : "", cand[cb[a].ci][q]);
+                fprintf(stderr, "=%.0f", ns[a]);
+            }
+            fprintf(stderr, " -> arm %d\n", best);
+        }
+    }
+    for (a = 0; a < na; a++)
+    {
+        for (s2 = 0; s2 < lens[cb[a].ci]; s2++)
+        {
+            free(cb[a].tf[s2]);
+            free(cb[a].tb[s2]);
+        }
+        free(cb[a].perm);
+    }
+    return win;
+}
+
+/* the chain RACE over the whole pool (owner, 2026-10-03: complete, in heats):
+ * balanced heats of at most VFFT_IL2D_HEAT chains, the heat winners raced
+ * again the same way until one stands -- for every pool in reach the heats
+ * and one final. Returns the winner's index (its ns in *best_ns, from the
+ * last race it ran), -1 = race impossible. */
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns, int nat)
 {
@@ -1969,106 +2063,57 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
     double *z = (double *)vfft_aligned_alloc(2 * T * sizeof(double));   /* aligned like every plane the door serves */
     double *nscr = nat ? (double *)vfft_aligned_alloc(2 * T * sizeof(double)) : NULL;   /* aligned like every plane the door serves */
     double *nstage = nat ? (double *)vfft_aligned_alloc(2 * 64 * (size_t)N2 * sizeof(double)) : NULL;   /* R_last <= 64 */
-    int ci, win = -1;
+    int *surv = (int *)malloc((size_t)(ncand > 0 ? ncand : 1) * sizeof(int));
+    int *next = (int *)malloc((size_t)(ncand > 0 ? ncand : 1) * sizeof(int));
+    int ns = ncand, win = -1, i, rounds = 0, heats = 0;
     double wns = 1e300;
-    size_t i;
-    if (!z || (nat && !nscr))
+    size_t q;
+    if (!z || (nat && !nscr) || !surv || !next)
     {
         vfft_aligned_free(z);
         vfft_aligned_free(nscr);
         vfft_aligned_free(nstage);
+        free(surv);
+        free(next);
         return -1;
     }
-    for (i = 0; i < 2 * T; i++)
-        z[i] = 1.0 + 1e-6 * (double)(i & 1023);
-    /* Every buildable candidate is an ARM of ONE race: the tables and
-     * (natural) the permutation of all candidates are built up front, then
-     * vfft_race_run samples every arm once per round with the rounds
-     * alternating direction — the house protocol — so a drift of the host
-     * (its throttled state lasts minutes) hits all chains alike (timing each
-     * chain in its own burst, one after another, let two cold runs at
-     * 1215x243 natural bank different chains). Min of 3 single executes per
-     * arm; the arm count is VFFT_IL2D_MAXCAND <= the template's
-     * VFFT_RACE_MAX_ARMS. */
+    for (q = 0; q < 2 * T; q++)
+        z[q] = 1.0 + 1e-6 * (double)(q & 1023);
+    for (i = 0; i < ncand; i++)
+        surv[i] = i;
+    while (ns > 0)
     {
-        struct
+        const int nh = (ns + VFFT_IL2D_HEAT - 1) / VFFT_IL2D_HEAT;
+        int h, nn = 0;
+        rounds++;
+        heats += nh;
+        for (h = 0; h < nh; h++)
         {
-            vfft_il2p_fn ff[8], fb[8];
-            int Ls[8];
-            double *tf[8], *tb[8];
-            int *perm;
-            int ci;
-        } cb[VFFT_IL2D_MAXCAND];
-        _il2d_race_ctx_t rc[VFFT_IL2D_MAXCAND];
-        vfft_race_arm_t arms[VFFT_IL2D_MAXCAND];
-        double ns[VFFT_IL2D_MAXCAND];
-        int na = 0, a, s2;
-        for (ci = 0; ci < ncand && na < VFFT_IL2D_MAXCAND; ci++)
-        {
-            int *perm = NULL;
-            if (!_il2d_resolve(cand[ci], lens[ci], cb[na].ff, cb[na].fb))
-                continue;
-            if (nat && lens[ci] > 1)
+            const int lo = (int)((long)ns * h / nh), hi = (int)((long)ns * (h + 1) / nh);
+            double hns;
+            const int w = _il2d_race_heat(N1, N2, cand, lens, surv + lo, hi - lo, nat, z, nscr, nstage, &hns);
+            if (w >= 0)
             {
-                perm = _il2d_nat_perm(cand[ci], lens[ci], N1);
-                if (!perm)
-                    continue; /* no natural leaf for this chain: not a candidate */
-            }
-            if (_il2d_build_tables(N1, lens[ci], cand[ci], cb[na].Ls, cb[na].tf, cb[na].tb))
-            {
-                free(perm);
-                continue;
-            }
-            cb[na].perm = perm;
-            cb[na].ci = ci;
-            {
-                _il2d_race_ctx_t c0 = { NULL, NULL, z, 0, 1, N1, (size_t)N2,
-                                        lens[ci], cand[ci], cb[na].Ls, cb[na].ff, cb[na].tf,
-                                        nat && perm != NULL, perm, nscr, 0, nstage };
-                rc[na] = c0;
-            }
-            arms[na].name = "chain";
-            arms[na].run = _il2d_arm_chain;
-            arms[na].ctx = &rc[na];
-            na++;
-        }
-        if (na > 0)
-        {
-            const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 0, NULL, NULL, 1 }; /* min-of-3, alternated */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
-            const int best = vfft_race_run(&proto, arms, na, ns);
-            if (best >= 0)
-            {
-                win = cb[best].ci;
-                wns = ns[best];
-            }
-            if (getenv("VFFT_IL2D_LOG"))
-            {
-                fprintf(stderr, "[il2d] chain race %dx%d (%s): %d arm(s)", N1, N2,
-                        nat ? "nat" : "scr", na);
-                for (a = 0; a < na; a++)
-                {
-                    int q;
-                    fprintf(stderr, " ");
-                    for (q = 0; q < lens[cb[a].ci]; q++)
-                        fprintf(stderr, "%s%d", q ? "." : "", cand[cb[a].ci][q]);
-                    fprintf(stderr, "=%.0f", ns[a]);
-                }
-                fprintf(stderr, " -> arm %d\n", best);
+                next[nn++] = w;
+                win = w;
+                wns = hns;
             }
         }
-        for (a = 0; a < na; a++)
-        {
-            for (s2 = 0; s2 < lens[cb[a].ci]; s2++)
-            {
-                free(cb[a].tf[s2]);
-                free(cb[a].tb[s2]);
-            }
-            free(cb[a].perm);
-        }
+        if (nh == 1)
+            break;   /* one heat: its winner is the race's */
+        memcpy(surv, next, (size_t)nn * sizeof(int));
+        ns = nn;
+        win = -1;
+        wns = 1e300;
     }
+    if (getenv("VFFT_IL2D_LOG") && heats > 1)
+        fprintf(stderr, "[il2d] chain race %dx%d (%s): %d chain(s) in %d heat(s) over %d round(s)\n",
+                N1, N2, nat ? "nat" : "scr", ncand, heats, rounds);
     vfft_aligned_free(z);
     vfft_aligned_free(nscr);
     vfft_aligned_free(nstage);
+    free(surv);
+    free(next);
     *best_ns = wns;
     return win;
 }
@@ -2440,7 +2485,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
          * N-arm block below -- at every rank. */
         if (!chain_ok)
         {
-            int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
+            int cand[VFFT_IL2D_POOL_MAX][8], lens[VFFT_IL2D_POOL_MAX];
             int cur[8], ncand = 0, dropped = 0;
             _il2d_enum_rec(N, 0, cur, cand, lens, &ncand,
                            &dropped);

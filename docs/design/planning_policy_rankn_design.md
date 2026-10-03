@@ -3,8 +3,10 @@
 The K=1 rank-1 migration (`planning_policy_design.md`, steps 1-8) put every
 law about a 1D REQUEST in `planning/policy.h`. The 2D and 3D interleaved
 tiers -- ~6600 lines -- were left with one contribution from the module
-(`vfft_policy_ord_rankn`) and, since 2026-09-17, one constant
-(`VFFT_IL2D_MAXCAND`). This design does for them what the first did for 1D:
+(`vfft_policy_ord_rankn`) and, since 2026-09-17, the column pool's constants
+(today `VFFT_IL2D_POOL_MAX`, the complete pool's storage, and `VFFT_IL2D_HEAT`,
+the race's heat size: since 2026-10-03 the pool is never capped and races in
+heats of 32). This design does for them what the first did for 1D:
 each law written once, each move behavior-preserving, each gated.
 
 ## What rank >= 2 policy IS, and is not

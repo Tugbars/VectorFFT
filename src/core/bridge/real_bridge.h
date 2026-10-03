@@ -136,7 +136,7 @@ static int _zrbl_nchains(int M, int (*ch)[8], int *lens, int warn)
 static int _zrbl_m_cands(int N, int *out)
 {
     static const int q[5] = { 3, 5, 7, 9, 15 };
-    static int ch[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
+    static int ch[VFFT_IL2D_POOL_MAX][8], lens[VFFT_IL2D_POOL_MAX];
     const int mn = vfft_zrb_min_m(N);
     int sm[64], nsm = 0, n = 0, p2 = 16, i, a, k, M;
     while (p2 < mn) p2 <<= 1;
@@ -212,7 +212,7 @@ static int _zrbl_sweep(const vfft_config_t *cfg, int N, int K, const double *a, 
                        size_t nout, struct vfft_plan_s *out[2])
 {
     static const int wins[6] = { 2, 4, 8, 16, 32, 64 };
-    static int ch[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
+    static int ch[VFFT_IL2D_POOL_MAX][8], lens[VFFT_IL2D_POOL_MAX];
     int Ms[VFFT_ZRB_MAX_M + 2];
     const int nm = _zrbl_m_cands(N, Ms);
     double bns[2] = { 1e300, 1e300 };
