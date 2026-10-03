@@ -285,14 +285,41 @@ static int _zrf_env(int *R, int *K, int *nomsz, int *tile, int *mt)
     return 1;
 }
 
-/* the real four-step's handle: the split is plan input */
+/* the real four-step's handle: the split and the child are plan input. The
+ * child races into the plan's private store (c2d, crow NULL) or replays the
+ * rows it is given (the real row's fs_*, fs_row_*, and fs_row_bwd_* where
+ * cbwd holds any); a replay whose child raced -- its store gained a row --
+ * does not serve that row: NULL. */
 static struct vfft_plan_s *_zfsr_build_plan(const vfft_config_t *cfg, int N, int n1, int n2,
-                                            struct vfft_wisdom_s *W)
+                                            const vw2_rec_t *c2d, const vw2_rec_t *crow,
+                                            const vw2_rec_t *cbwd)
 {
-    vfft_zfsr_plan_t *zp = vfft_zfsr_create(N, n1, n2, W, cfg, _vfft_plan_threads(cfg));
+    struct vfft_wisdom_s *S = _k1fs_store_new();
+    const int T = _vfft_plan_threads(cfg);
+    vfft_zfsr_plan_t *zp;
     struct vfft_plan_s *h;
+    int seeded = 0;
+    if (!S)
+        return NULL;
+    if (c2d && crow)
+    {
+        vw2_key_t k2, kr, kb;
+        if (!_k1fs_child_keys(n1, n2, 0, T, &k2, &kr, &kb) || _k1fs_seed(S, &k2, c2d) || _k1fs_seed(S, &kr, crow) ||
+            (cbwd && cbwd->ntok > 0 && _k1fs_seed(S, &kb, cbwd)))
+        {
+            vfft_wisdom_free((vfft_wisdom *)S);
+            return NULL;
+        }
+        seeded = S->vw2.nrec;
+    }
+    zp = vfft_zfsr_create(N, n1, n2, S, cfg, T);   /* the plan owns S from here */
     if (!zp)
         return NULL;
+    if (seeded && zp->S->vw2.nrec != seeded)
+    {
+        vfft_zfsr_destroy(zp);
+        return NULL;
+    }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     if (!h)
     {
@@ -484,7 +511,7 @@ static struct vfft_plan_s *_zfsr_sweep(const vfft_config_t *cfg, int N, struct v
     double bestns = 1e300;
     for (int i = 0; i < ns; i++)
     {
-        struct vfft_plan_s *h = _zfsr_build_plan(cfg, N, n1[i], n2[i], W);
+        struct vfft_plan_s *h = _zfsr_build_plan(cfg, N, n1[i], n2[i], NULL, NULL, NULL);
         double t = 1e300;
         if (!h) continue;
         memcpy(b, a, xs * sizeof(double));
@@ -880,7 +907,12 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N, struct
         if (hw->zr2c_kid)
             rc = _zr2c_bank(W, cfg, N, hw, ns[best]);
         else if (hw->zfsr)
-            rc = vw2_real_il_bank_zfsr(&W->vw2, N, c2r, ip, Tk, hw->zfsr->N1, hw->zfsr->N2, ns[best]);
+        {   /* the split and the child's rows from the plan's private store */
+            const vw2_rec_t *c2d, *crow, *cbwd;
+            _k1fs_child_rows(hw->zfsr->S, hw->zfsr->N1, hw->zfsr->N2, 0, Tk, &c2d, &crow, &cbwd);
+            rc = vw2_real_il_bank_zfsr(&W->vw2, N, c2r, ip, Tk, hw->zfsr->N1, hw->zfsr->N2, c2d, crow, cbwd,
+                                       ns[best]);
+        }
         else if (hw->zrm)
             rc = vw2_real_il_bank_zrm(&W->vw2, N, c2r, ip, Tk, ns[best]);
         else if (hw->zttr)
@@ -968,7 +1000,7 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
         int e1 = 0, e2 = 0;
         if (_zfsr_env(&e1, &e2) == 1)
         {
-            struct vfft_plan_s *h = _zfsr_build_plan(cfg, N, e1, e2, W);
+            struct vfft_plan_s *h = _zfsr_build_plan(cfg, N, e1, e2, NULL, NULL, NULL);
             if (h)
                 return h;
             _vfft_warn("vfft_create: VFFT_ZFSR=%dx%d does not build at N=%d (the door decides)", e1, e2, N);
@@ -988,9 +1020,13 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
         if (eng && !strcmp(eng, "zfsr") && !out_zfsr)
         {
             int s1, s2;
-            if (vw2_real_il_lookup_zfsr(&W->vw2, N, c2r, ip, Tk, &s1, &s2))
+            vw2_rec_t c2d, crow, cbwd;
+            if (vw2_real_il_lookup_zfsr(&W->vw2, N, c2r, ip, Tk, &s1, &s2, &c2d, &crow, &cbwd))
             {
-                struct vfft_plan_s *h = _zfsr_build_plan(cfg, N, s1, s2, W);
+                struct vfft_plan_s *h = _zfsr_build_plan(cfg, N, s1, s2, &c2d, &crow, &cbwd);
+                vw2_rec_free(&c2d);
+                vw2_rec_free(&crow);
+                vw2_rec_free(&cbwd);
                 if (h)
                     return h;
             }

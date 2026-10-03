@@ -34,9 +34,14 @@
  * The plane is the plan's own (M complex), so both placements are the same
  * pipeline: the caller's buffer is fully read before it is written.
  *
- * The plan input is the split (N1, N2): the real door sweeps the splits of
- * M at create, races the best against the other engines and banks
- * eng=zfsr split=N1xN2 (il/real/zrp_build.h, wisdom2_real_il.h).
+ * The plan input is the split (N1, N2) and the four-step's child: the real
+ * door sweeps the splits of M at create, each split's child (the 2D plan at
+ * N1 x N2 and its row plan at N2) racing into the plan's own private store
+ * (k1_fourstep.h, _k1fs_store_new), races the best against the other engines
+ * and banks eng=zfsr split=N1xN2 with the child's rows in their own words
+ * (fs_*, fs_row_*, fs_row_bwd_*; il/real/zrp_build.h, wisdom2_real_il.h).
+ * Replay seeds the private store from that row: the shipped 2D and c2c
+ * stores are never read or written.
  */
 #ifndef VFFT_ZFSR_H
 #define VFFT_ZFSR_H
@@ -58,6 +63,7 @@ typedef struct vfft_zfsr_s
 {
     int N, M, N1, N2;
     vfft_k1fs_plan_t *fs; /* the c2c four-step at M, SCRAMBLED class, out of place (owned) */
+    struct vfft_wisdom_s *S; /* the child's private store: the rows it serves from (owned) */
     double *plane;        /* M complex: the four-step's plane (64-B aligned, owned) */
     double *V;            /* (cos, sin)(2*pi*k1/N), k1 = 0..N1 (owned) */
     double *U;            /* (cos, sin)(2*pi*N1*k2/N), k2 = 0..N2/2 (owned) */
@@ -67,6 +73,7 @@ static void vfft_zfsr_destroy(vfft_zfsr_plan_t *p)
 {
     if (!p) return;
     vfft_k1fs_destroy(p->fs);
+    vfft_wisdom_free((vfft_wisdom *)p->S);
     vfft_aligned_free(p->plane);
     vfft_aligned_free(p->V);
     vfft_aligned_free(p->U);
@@ -79,18 +86,34 @@ static inline int vfft_zfsr_band(int N)
     return N >= 4 && (N & 1) == 0 && vfft_k1fs_band(N / 2);
 }
 
-static vfft_zfsr_plan_t *vfft_zfsr_create(int N, int N1, int N2, struct vfft_wisdom_s *W,
+/* S = the child's private store, empty (the child races into it) or seeded
+ * (the child replays from it); the plan owns it from here, failure included */
+static vfft_zfsr_plan_t *vfft_zfsr_create(int N, int N1, int N2, struct vfft_wisdom_s *S,
                                           const vfft_config_t *cfg, int nthreads)
 {
     vfft_zfsr_plan_t *p;
+    vfft_config_t cc;
     const int M = N / 2;
     int k;
-    if (!vfft_zfsr_band(N) || (long)N1 * (long)N2 != (long)M) return NULL;
-    if (N1 % VFFT_ZFSR_TB || N2 % (2 * VFFT_ZFSR_TB)) return NULL;
+    if (!vfft_zfsr_band(N) || (long)N1 * (long)N2 != (long)M ||
+        N1 % VFFT_ZFSR_TB || N2 % (2 * VFFT_ZFSR_TB))
+    {
+        vfft_wisdom_free((vfft_wisdom *)S);
+        return NULL;
+    }
     p = (vfft_zfsr_plan_t *)calloc(1, sizeof *p);
-    if (!p) return NULL;
+    if (!p)
+    {
+        vfft_wisdom_free((vfft_wisdom *)S);
+        return NULL;
+    }
     p->N = N; p->M = M; p->N1 = N1; p->N2 = N2;
-    p->fs = vfft_k1fs_create(M, N1, N2, /*scr=*/1, W, cfg, /*inplace=*/0, nthreads, 0, NULL, 0);
+    p->S = S;
+    cc = *cfg;   /* the child's request: its own store, nothing persisted, nothing re-raced over it */
+    cc.wisdom = (vfft_wisdom *)S;
+    cc.wisdom_write = 0;
+    cc.recalibrate = 0;
+    p->fs = S ? vfft_k1fs_create(M, N1, N2, /*scr=*/1, S, &cc, /*inplace=*/0, nthreads, 0, NULL, 0) : NULL;
     p->plane = (double *)vfft_aligned_alloc((2 * (size_t)M + 8) * sizeof(double));
     p->V = (double *)vfft_aligned_alloc(2 * ((size_t)N1 + 2) * sizeof(double));
     p->U = (double *)vfft_aligned_alloc(2 * ((size_t)N2 / 2 + 2) * sizeof(double));

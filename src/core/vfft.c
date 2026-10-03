@@ -1409,6 +1409,22 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
     }
 }
 
+/* two rows' payloads (level-1 tokens) are the same set of name=value */
+static int _vw2_payload_eq(const vw2_rec_t *a, const vw2_rec_t *b)
+{
+    int i, na = 0, nb = 0;
+    for (i = 0; i < a->ntok; i++)
+        if (a->tok[i].sect == 1)
+        {
+            const char *v = vw2_rec_get(b, a->tok[i].name);
+            if (!v || strcmp(v, a->tok[i].val)) return 0;
+            na++;
+        }
+    for (i = 0; i < b->ntok; i++)
+        if (b->tok[i].sect == 1) nb++;
+    return na == nb;
+}
+
 /* Clones are built by RE-RUNNING create, and create is only deterministic
  * when every verdict it needs is banked: a wisdom-absent cascade cell
  * re-races per create and can pick a DIFFERENT chain — whose scrambled comb
@@ -1430,9 +1446,16 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         TC_NEQ("real four-step");
     if (a->zfsr)
     {
-        /* the real four-step: the plan IS the split */
+        /* the real four-step: the split and the child's rows (its private
+         * store's: the 2D plan's, the row plan's and its backward twin's) */
+        const vw2_rec_t *a2, *ar, *ab, *b2, *br, *bb;
         if (a->zfsr->N1 != b->zfsr->N1 || a->zfsr->N2 != b->zfsr->N2)
             TC_NEQ("real four-step split");
+        _k1fs_child_rows(a->zfsr->S, a->zfsr->N1, a->zfsr->N2, 0, a->nthreads, &a2, &ar, &ab);
+        _k1fs_child_rows(b->zfsr->S, b->zfsr->N1, b->zfsr->N2, 0, b->nthreads, &b2, &br, &bb);
+        if (!a2 || !ar || !b2 || !br || !_vw2_payload_eq(a2, b2) || !_vw2_payload_eq(ar, br) ||
+            !ab != !bb || (ab && !_vw2_payload_eq(ab, bb)))
+            TC_NEQ("real four-step child");
         return 1;
     }
     if (!a->zrbl != !b->zrbl)
@@ -2351,7 +2374,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     if (h->zrm)
         FP__ADD(" zrm=rn1");
     if (h->zfsr)
-        FP__ADD(" zfsr=[%dx%d]", h->zfsr->N1, h->zfsr->N2);
+        FP__ADD(" zfsr=[%dx%d]", h->zfsr->N1, h->zfsr->N2);   /* its child recurses below */
     if (h->zrf)
     {
         char cs[48];
@@ -2392,6 +2415,8 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         }
     }
     used = vfft__fp_child(h->tcb, "tcb", depth + 1, out, cap, used);
+    if (h->zfsr && h->zfsr->fs)
+        used = vfft__fp_child(h->zfsr->fs->c2d, "zfsrc2d", depth + 1, out, cap, used);
     used = vfft__fp_child(h->pq_inner, "pq", depth + 1, out, cap, used);
     used = vfft__fp_child(h->il2d_row, "il2drow", depth + 1, out, cap, used);
     used = vfft__fp_child(h->il2d_rows, "il2drows", depth + 1, out, cap, used);

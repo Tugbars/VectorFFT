@@ -126,6 +126,76 @@ typedef struct vfft_k1fs_s
  * before the race; the Bluestein inner-chain provider's pattern) */
 static struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; } _k1fs_ctx;
 
+/* THE CHILD'S OWN STORE (owner, 2026-10-03). A composite that runs this
+ * four-step as its engine -- the real four-step (il/real/zfsr.h) -- owns the
+ * child's verdict: the 2D child at (N1, N2) and its row plan at N2 race into
+ * a PRIVATE store (in memory, writable, never persisted), and the composite
+ * copies the rows the child serves from onto its own row. Its replay
+ * seeds a private store from that row and nothing else: the shipped 2D and
+ * c2c stores are never read or written. */
+static struct vfft_wisdom_s *_k1fs_store_new(void)
+{
+    struct vfft_wisdom_s *S = (struct vfft_wisdom_s *)calloc(1, sizeof *S);
+    if (S)
+        S->vw2.writable = 1;   /* banks land in memory: no directory, no save */
+    return S;
+}
+/* the child's rows' keys: the 2D child's (the algorithm's own order, the
+ * child's placement, the plan's thread count), its row plan's (the 2D tier's
+ * row child: in place, natural, one thread) and that row plan's backward
+ * twin (dir=bwd: the backward kernel forms, where its route has them) */
+static int _k1fs_child_keys(int N1, int N2, int inplace, int T, vw2_key_t *k2d, vw2_key_t *krow,
+                            vw2_key_t *kbwd)
+{
+    char b[160];
+    const int n = snprintf(b, sizeof b, "t=c2c n=%dx%d q=1 ord=%s place=%s lay=il", N1, N2,
+                           vfft_policy_k1fs_inner_order() == VFFT_ORDER_NATURAL ? "nat" : "scr",
+                           inplace ? "ip" : "oop");
+    if (T > 1)
+        snprintf(b + n, sizeof b - (size_t)n, " nthreads=%d", T);
+    if (vw2__key_parse(b, k2d) != 1)
+        return 0;
+    snprintf(b, sizeof b, "t=c2c n=%d q=1 ord=nat place=ip role=comp lay=il", N2);
+    if (vw2__key_parse(b, krow) != 1)
+        return 0;
+    snprintf(b, sizeof b, "t=c2c n=%d q=1 ord=nat place=ip dir=bwd role=comp lay=il", N2);
+    return vw2__key_parse(b, kbwd) == 1;
+}
+/* the child's rows in a store; NULL where one is missing (the backward twin
+ * is absent wherever the row plan's route has no backward forms) */
+static void _k1fs_child_rows(const struct vfft_wisdom_s *S, int N1, int N2, int inplace, int T,
+                             const vw2_rec_t **r2d, const vw2_rec_t **rrow, const vw2_rec_t **rbwd)
+{
+    vw2_key_t a, b, c;
+    *r2d = *rrow = *rbwd = NULL;
+    if (!S || !_k1fs_child_keys(N1, N2, inplace, T, &a, &b, &c))
+        return;
+    *r2d = vw2_lookup(&S->vw2, &a);
+    *rrow = vw2_lookup(&S->vw2, &b);
+    *rbwd = vw2_lookup(&S->vw2, &c);
+}
+/* one row into a private store under its key (its payload; the seed is the
+ * row as the composite banked it) */
+static int _k1fs_seed(struct vfft_wisdom_s *S, const vw2_key_t *k, const vw2_rec_t *src)
+{
+    vw2_rec_t r;
+    int i;
+    memset(&r, 0, sizeof r);
+    r.key = *k;
+    for (i = 0; i < src->ntok; i++)
+        if (vw2_rec_set(&r, src->tok[i].sect, src->tok[i].name, src->tok[i].val) != VW2_OK)
+        {
+            vw2_rec_free(&r);
+            return -1;
+        }
+    if (vw2_bank(&S->vw2, &r) != VW2_OK)
+    {
+        vw2_rec_free(&r);
+        return -1;
+    }
+    return 0;
+}
+
 static void vfft_k1fs_destroy(vfft_k1fs_plan_t *p)
 {
     if (!p) return;
