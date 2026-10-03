@@ -6,8 +6,7 @@ transform (r2c / c2r) is structured, how it is parallelized on a
 shared-memory multicore, and — the part that generalizes — the
 methodology by which every parallel decision is *selected by
 measurement* rather than by rule. Implementation lives in
-`src/core/vfft.c` and `src/core/transforms/`; companions:
-[`rowsplit_rowmode.md`](rowsplit_rowmode.md),
+`src/core/vfft.c` and `src/core/il/rank2/`; companion:
 [`../roadmap/fft2d_real_il_design.md`](../roadmap/fft2d_real_il_design.md).
 
 ---

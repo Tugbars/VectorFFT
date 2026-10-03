@@ -29,10 +29,10 @@ differs from section 4:
 
 - the two sides of the fork are `split/split_create.h` + `split/split_execute.h` and
   `il/il_create.h` + `il/il_execute.h` (unique basenames, rule 6);
-- `bridge/` holds `real_bridge.h` + `real_bridge_exec.h` (B1/B3 and the smooth-odd
-  race; temporary per D1). B4 (`nat_ilp.h`) is gone with D2. B2 (the IL 2D
-  real ROWSPLIT reaching into a split child) is still inside `il2d_tier.h`: a call,
-  not an include, so the checker does not see it;
+- `bridge/` holds `real_bridge.h` + `real_bridge_exec.h` (B1, the lane-major real
+  batch on the split engines; temporary per D1). B4 (`nat_ilp.h`) is gone with D2;
+  B3 (the odd-real bridge) and B2 (the IL 2D real ROWSPLIT rows on a split child)
+  are gone since 2026-10-03;
 - `vfft_internal.h` (the plan struct) is in `common/plan/`, shared by both layouts
   while D3 is deferred (phase 8 skipped for now);
 - `wisdom2/` stays at the front: the legacy kind-3 reader and migration, the OOP
@@ -357,11 +357,11 @@ C code that reads and writes them is regrouped.
   - Their `zo`/`zi` modes are fused into the split engines' pack/unpack for speed. Cutting
     them out loses the fusion.
   - Keep them as the split side's published "IL doors".
-- **B2. IL 2D real ROWSPLIT.**
-  - `il2d_tier.h:1515-1545` builds a split child through the public `vfft_create`, which
-    is clean.
-  - It then reaches into the child's `rplan`/`c2rdisp` for the `_rowz` doors
-    (`il2d_tier.h:160/211`), which is not clean.
+- **B2. IL 2D real ROWSPLIT.** GONE 2026-10-03 (measured no better than the IL
+  per-row door, beaten by the IL row plan; the split child, the `_rowz` doors and the
+  split r2c engine's row mode deleted).
+  - It built a split child through the public `vfft_create`, which was clean, then
+    reached into the child's `rplan`/`c2rdisp` for the `_rowz` doors, which was not.
 - **B3. The odd-N real bridge.**
   - `_oddr_build` (`vfft.c:1032`) builds an IL c2c child (`rc.layout = INTERLEAVED` at
     1044).

@@ -701,29 +701,26 @@ builds, or the create refuses.
 
 ## II.4 — 2D real, interleaved (the REAL tier)
 
-Everything from II.3, plus a **row route**:
+Everything from II.3, plus the **row pass**, pure IL:
 
 ```mermaid
 flowchart TD
-    RW{"<b>rw</b> — the row route"}
-    RW -->|"rw = 0"| TC["per-row TC door<br/>an INTERLEAVED child<br/>(c2c, in-place, N2, K=1, NATURAL)"]
-    RW -->|"rw = W"| RS["<b>ROWSPLIT</b> at width W<br/>a <b>SPLIT-layout</b> child<br/>(the caller's transform, OOP, N2, K=W)"]
-    RS --> ARMS["the split child brings its OWN<br/>sub-tournaments: rfft factorization,<br/>inner c2c (N2/2, W), r2c route, c2r route"]
-    ARMS --> BANK["the rfft factorization banks<br/><b>even when the arm LOSES</b>"]
-
-    style RS fill:#4a1f5f,color:#fff
-    style BANK fill:#5f3a1f,color:#fff
+    RX{"<b>rx</b> — the row engine (r2c, one thread)"}
+    RX -->|"banked / raced"| LM["the IL row plan<br/>(il2d_real_plan.h: the lane-major<br/>row kernel or a real engine per row)"]
+    RX -->|"none"| TC["per-row door<br/>the K=1 1D real engine at N2<br/>run over every row"]
+    ODD["odd N2: the c2c(N2) child<br/>with the promote / extend edges"]
 ```
 
-🔴 **This is the one bridge between the two families** — see Part IV.
+The 2D real plan never hires the split library for its rows. (The ROWSPLIT arm --
+a split-layout child at (N2, K = W) behind fused transposes -- was retired on
+2026-10-03: at one thread it never beat the per-row door by more than 3% and the IL
+row plan beat it 1.2-1.9x at every shape measured. A split 2D real plan is the
+split library's own, offered whole.)
 
-**Why a losing arm still banks.** The rfft factorization verdict concerns the rfft
-sub-problem, which is valid regardless of whether ROWSPLIT won the outer race. Discarding
-it would mean re-measuring it next time something else needs it.
-
-**The `oddn2` asymmetry is deliberate.** The row-route race is guarded with `!il2d_oddn2`;
-the column-MT guard eight lines below is **not**. Odd N2 has no ROWSPLIT arm to race, but
-column threading remains valid. Measured consistent: 128×127 at T=8 engages `cmt` and is
+**The `oddn2` asymmetry is deliberate.** The wl race is guarded with `!il2d_oddn2`;
+the column-MT guard eight lines below is **not**. Odd N2's rows ride the c2c child and
+the banded walk is not raced there, but column threading remains valid. Measured
+consistent: 128×127 at T=8 engages `cmt` and is
 **bit-identical** to the single-threaded result (0 of 16448 doubles differ).
 
 **Asymmetry worth flagging:** the column chain **is** raced for 2D c2c, but for the real
