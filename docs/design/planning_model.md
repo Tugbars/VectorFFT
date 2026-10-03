@@ -653,7 +653,17 @@ and TILES walks with the fold fused, bitwise equal to the serial run), and by th
 four-step above that band; zr2c is out of the MT conversation there (its threaded fold pulls
 every line across cores after a threaded child: 23 us against 7 at 2^16). The cell's race
 still decides and banks `mt=` on the `nthreads=T` row. A threaded zr2c plan threads only the
-fold (`fold=mt`); its child runs on one thread.
+fold (`fold=mt`); its child runs on one thread -- except a prime child (N = 2p, where no ZTT-r
+chain carries N/2).
+
+**The convolutions thread too (owner 2026-10-03).** Rader and Bluestein -- the IL prime cell
+(c2c prime N, and zr2c's 2p child) and the real Bluestein `zrb` (odd N without a chain) -- run
+their inner FFT through ZTURN-T's threaded walk and cut their own passes (modulate, pointwise
+multiply, demodulate; Rader's gather and scatter) into ranges on the same pool
+(`il_prime_mt.h`, `zrb_mt.h`): bitwise the serial run. The arm (1 BLOCKS, 2 TILES) is raced at
+T and banked per thread count: `il_mt=` on the c2c prime cell's own K=1 row, `mt=` on zrb's
+row, `il_mt=` on a zr2c row whose child is a prime cell. Batch clones run the serial form (the
+slab role).
 
 **A component's verdict rides on the real row (owner 2026-10-03).** The child's components
 race with no store of the library's and bank with the real cell: a prime-cell child's method

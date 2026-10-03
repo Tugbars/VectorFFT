@@ -37,9 +37,11 @@
  *                                                  threaded plan's row the threaded arm:
  *                                                  1 FIRST, 2 LEVELS)
  *   eng=zrb  m=1152 in=ztt in_sh=4.4.8.9 in_tw=0  (the real Bluestein, il/real/zrb.h, odd N
- *                                                  without a chain: the convolution length
+ *            [mt=1|2]                              without a chain: the convolution length
  *                                                  and the inner pair's descriptor, the
- *                                                  prime route's own spelling)
+ *                                                  prime route's own spelling; on a
+ *                                                  threaded plan's row the threaded arm,
+ *                                                  zrb_mt.h: 1 BLOCKS, 2 TILES)
  * The door (il/real/real_create_il.h) reads the engine first and lets the
  * engine read its own plan input; a miss races the engines and banks the
  * winner here. The zr2c route banker keeps its own-engine guard, so a cell
@@ -228,12 +230,13 @@ static inline int vw2_real_il_bank_zrf(vw2_store_t *s, int realN, int is_c2r, in
  * tokens are malformed (a miss). */
 static inline int vw2_real_il_lookup_zrb_q(const vw2_store_t *s, int realN, int K, int is_c2r,
                                            int is_inplace, int T, int *M, char *kind, size_t ksz,
-                                           char *shape, size_t ssz, int *tw)
+                                           char *shape, size_t ssz, int *tw, int *mt)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *eng, *m, *in, *sh, *t;
     *M = 0; *tw = 0; kind[0] = 0; shape[0] = 0;
+    if (mt) *mt = 0;
     vw2_real_il_key(&k, realN, is_c2r, is_inplace, T);
     k.q = K;   /* the q=1 row is the one-row cell; a batch's lane-major verdict is its q=K row */
     r = vw2_lookup(s, &k);
@@ -247,19 +250,21 @@ static inline int vw2_real_il_lookup_zrb_q(const vw2_store_t *s, int realN, int 
     snprintf(kind, ksz, "%s", in);
     snprintf(shape, ssz, "%s", sh);
     if (t) { const int v = atoi(t); if (v < 0) return 0; *tw = v; }
+    if (mt) { const int v = vw2__oop_geti(r, "mt", 0); *mt = (v >= 0 && v <= 2) ? v : 0; }
     return 1;
 }
+/* the one-row cell; *mt = the threaded arm on a threaded plan's row (zrb_mt.h) */
 static inline int vw2_real_il_lookup_zrb(const vw2_store_t *s, int realN, int is_c2r,
                                          int is_inplace, int T, int *M, char *kind, size_t ksz,
-                                         char *shape, size_t ssz, int *tw)
+                                         char *shape, size_t ssz, int *tw, int *mt)
 {
-    return vw2_real_il_lookup_zrb_q(s, realN, 1, is_c2r, is_inplace, T, M, kind, ksz, shape, ssz, tw);
+    return vw2_real_il_lookup_zrb_q(s, realN, 1, is_c2r, is_inplace, T, M, kind, ksz, shape, ssz, tw, mt);
 }
 
 /* Bank the real Bluestein verdict at the cell (replacing whatever engine held it);
  * K > 1 = the lane-major batch's q=K row. */
 static inline int vw2_real_il_bank_zrb_q(vw2_store_t *s, int realN, int K, int is_c2r, int is_inplace, int T,
-                                         int M, const char *kind, const char *shape, int tw, double ns)
+                                         int M, const char *kind, const char *shape, int tw, int mt, double ns)
 {
     vw2_rec_t r;
     char b[64];
@@ -273,8 +278,13 @@ static inline int vw2_real_il_bank_zrb_q(vw2_store_t *s, int realN, int K, int i
         vw2_rec_set(&r, 1, "in", kind) != VW2_OK ||
         vw2_rec_set(&r, 1, "in_sh", shape) != VW2_OK) { vw2_rec_free(&r); return -1; }
     snprintf(b, sizeof b, "%d", tw > 0 ? tw : 0);
-    if (vw2_rec_set(&r, 1, "in_tw", b) != VW2_OK ||
-        vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
+    if (vw2_rec_set(&r, 1, "in_tw", b) != VW2_OK) { vw2_rec_free(&r); return -1; }
+    if (mt > 0)
+    {   /* the threaded arm (zrb_mt.h), on a threaded plan's row */
+        snprintf(b, sizeof b, "%d", mt);
+        if (vw2_rec_set(&r, 1, "mt", b) != VW2_OK) { vw2_rec_free(&r); return -1; }
+    }
+    if (vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
         vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
     if (ns > 0.0) {
         snprintf(b, sizeof b, "%.1f", ns);
@@ -288,9 +298,9 @@ static inline int vw2_real_il_bank_zrb_q(vw2_store_t *s, int realN, int K, int i
     return VW2_OK;
 }
 static inline int vw2_real_il_bank_zrb(vw2_store_t *s, int realN, int is_c2r, int is_inplace, int T,
-                                       int M, const char *kind, const char *shape, int tw, double ns)
+                                       int M, const char *kind, const char *shape, int tw, int mt, double ns)
 {
-    return vw2_real_il_bank_zrb_q(s, realN, 1, is_c2r, is_inplace, T, M, kind, shape, tw, ns);
+    return vw2_real_il_bank_zrb_q(s, realN, 1, is_c2r, is_inplace, T, M, kind, shape, tw, mt, ns);
 }
 
 /* The lane Bluestein's cell is the q=K row (the batch count is the key's
@@ -389,6 +399,8 @@ typedef struct
     char pin[8];           /* il_prime_in (the inner's kind: 2p | 3p | ztt) */
     char psh[64];          /* il_prime_sh (its shape) */
     int  ptw;              /* il_prime_tw (its tile, 0 = untiled) */
+    int  pmt;              /* il_mt: on a threaded plan's row, the prime cell's threaded
+                            * arm (il_prime_mt.h: 1 BLOCKS, 2 TILES); absent = serial */
     char fs[512];          /* route FS: its four-step child's rows -- the fs_*
                             * fs_row_* fs_row_bwd_* tokens, space-joined */
 } vw2_zr2c_child_t;
@@ -442,6 +454,7 @@ static inline int vw2_real_il_bank_zr2c(vw2_store_t *s, int realN, int is_c2r, i
         VW2__ZS("il_prime_in", ch->pin);
         VW2__ZS("il_prime_sh", ch->psh);
         snprintf(b, sizeof b, "%d", ch->ptw); VW2__ZS("il_prime_tw", b);
+        if (ch->pmt > 0) { snprintf(b, sizeof b, "%d", ch->pmt); VW2__ZS("il_mt", b); }
     }
     if (ch->route == VFFT_K1_IL_FS)
     {   /* the four-step's child: no rows, no recipe */
@@ -522,6 +535,7 @@ static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int i
         strcpy(ch->pin, pin);
         strcpy(ch->psh, psh);
         ch->ptw = vw2__oop_geti(r, "il_prime_tw", 0);
+        ch->pmt = vw2__oop_geti(r, "il_mt", 0);
     }
     if (ch->route == VFFT_K1_IL_FS)
     {   /* a four-step child without its own child's rows is no recipe */

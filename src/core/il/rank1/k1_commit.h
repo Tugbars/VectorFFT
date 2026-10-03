@@ -1119,6 +1119,44 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
     }
 }
 
+/* ── the PRIME CELL's threading verdict (il_prime_mt.h; ZTURN-T's law above):
+ * the banked arm at THIS T on the cell's own row (il_route=prime, the plan's
+ * placement and order class, nthreads=T) > the race at T (serial vs blocks
+ * vs tiles on the whole convolution, hot), banked il_mt= on that row -- the
+ * K=1 record's word for a threaded arm. A cell whose inner is not ZTURN-T
+ * has no threaded form and banks il_mt=0. */
+static void _ilpr_mt_replay_or_race(struct vfft_plan_s *h,
+                                    struct vfft_wisdom_s *W,
+                                    const vfft_config_t *cfg, int N)
+{
+    vfft_ilprime_plan_t *p = h->k1ilpr;
+    const int T = h->nthreads;
+    const int ip = (h->placement == VFFT_INPLACE);
+    const int scr = (vfft_policy_ord_k1(cfg, N, ip) == VW2_ORD_SCR);
+    const vw2_rec_t *r = NULL;
+    if (!p || T < 2)
+        return;
+    if (W && !W->vw2_off_oop)
+        r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, scr, ip ? VW2_PL_IP : VW2_PL_OOP, T);   /* the plan's own row (v1.3) */
+    if (r && !cfg->recalibrate && vw2_rec_get(r, "il_mt"))
+    {
+        const int v = vw2__oop_geti(r, "il_mt", 0);
+        vfft_ilprime_mt_bind(p, T, (v >= 0 && v <= 2) ? v : 0);
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[ilpr-mt] N=%d T=%d%s: replay mt=%d src=wisdom\n", N, T, ip ? " ip" : "", p->mt);
+        return;
+    }
+    _vfft_pool_arm(T);
+    vfft_ilprime_mt_race(p, T, NULL);
+    if (r && !W->vw2_off_oop)
+    {
+        char b[16];
+        snprintf(b, sizeof b, "%d", p->mt);
+        if (vw2_update_field(&W->vw2, &r->key, "il_mt", b) == VW2_OK)
+            _vw2_persist(W, cfg);
+    }
+}
+
 /* ── the FOUR-STEP's threaded arm: the SPLIT (and the natural class's FORM)
  * is the per-T verdict ──
  * The 1D race picks the split at one thread; at T > 1 the children's own

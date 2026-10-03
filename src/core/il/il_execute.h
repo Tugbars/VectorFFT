@@ -119,10 +119,24 @@ static int _k1x_fs(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, dou
     vfft_k1fs_execute(h->k1fs, dir, zin, zout);
     return 0;
 }
+/* the prime cell: its threaded form when the race bound one at this T
+ * (il_prime_mt.h: the inner's walk + the passes cut), else the serial run.
+ * Both directions, both placements (the convolution is alias-safe). */
+static void _ilpr_serve(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    const vfft_ilprime_plan_t *p = h->k1ilpr;
+    if (p->mt > 0 && h->nthreads > 1)
+    {
+        _vfft_pool_arm(h->nthreads); /* re-assert the snapshot pool */
+        if (vfft_ilprime_execute_mt(p, zin, zout, dir == VFFT_BACKWARD))
+            return;
+    }
+    if (dir == VFFT_FORWARD) vfft_ilprime_execute_fwd(p, zin, zout);
+    else vfft_ilprime_execute_bwd(p, zin, zout);
+}
 static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
-    if (dir == VFFT_FORWARD) vfft_ilprime_execute_fwd(h->k1ilpr, zin, zout);
-    else vfft_ilprime_execute_bwd(h->k1ilpr, zin, zout);
+    _ilpr_serve(h, dir, zin, zout);
     return 0;
 }
 /* Bind at the c2c create exits. The conditions are exactly those under
@@ -218,8 +232,9 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
         h->k1_exec = _k1x_zrm;
         return hp;
     }
-    if (h->zrb && h->K == 1)
-    {   /* one row: the engine's execute itself (a lane-major batch goes through the bridge) */
+    if (h->zrb && h->K == 1 && !h->zrb->mt)
+    {   /* one row, serial: the engine's execute itself (a lane-major batch, and a
+         * threaded form, go through the bridge, which arms the pool) */
         h->k1_exec = h->transform == VFFT_R2C ? _k1x_zrb_fwd : _k1x_zrb_bwd;
         return hp;
     }
@@ -791,12 +806,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                 _k1x_fs(h, dir, sre, zo);
             }
             else
-            {
-                if (dir == VFFT_FORWARD)
-                    vfft_ilprime_execute_fwd(h->k1ilpr, sre, zo);
-                else
-                    vfft_ilprime_execute_bwd(h->k1ilpr, sre, zo);
-            }
+                _ilpr_serve(h, dir, sre, zo);
             return;
         }
         /* OWNER LAW (2026-09-03): no split-behind-convert engine for an
@@ -882,10 +892,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                  * unnormalized inverse like every IL bwd. */
                 if (h->k1ilpr)
                 {
-                    if (fwd)
-                        vfft_ilprime_execute_fwd(h->k1ilpr, sre, dre);
-                    else
-                        vfft_ilprime_execute_bwd(h->k1ilpr, sre, dre);
+                    _ilpr_serve(h, fwd ? VFFT_FORWARD : VFFT_BACKWARD, sre, dre);
                     return;
                 }
                 break; /* -> convert fallback (NEVER a silent no-op) */

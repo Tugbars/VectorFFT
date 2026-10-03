@@ -1220,8 +1220,9 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
     if (g->zrb)
         /* the real Bluestein: its two planes are the plan's own (a clone owns
          * its own), its inner pair is built directly (il2p / il3p / ZTT, no
-         * pool) and its execute never touches the pool */
-        return 1;
+         * pool) and its serial execute never touches the pool; the threaded
+         * form (il/real/zrb_mt.h) slabs the pool */
+        return g->zrb->mt == 0;
     if (g->zrbl)
         return 0; /* the lane Bluestein owns its M x K plane */
     if (g->zrp)
@@ -1235,13 +1236,16 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
          * engines called directly (the IL planner's builds: serial, pool-free,
          * plan-owned scratch, the four-step at one thread); the R2C/C2R execute
          * branches skip the pool re-assert on this path. A batch clone is its
-         * own create: its own child. The threaded fold (fold=mt) slabs the
-         * pool and re-asserts it. */
-        return !g->zr2c_fold_mt;
+         * own create: its own child. The threaded fold (fold=mt) and a prime
+         * child's threaded form (il_prime_mt.h) slab the pool. */
+        return !g->zr2c_fold_mt && !(g->zr2c_kid->ilp && g->zr2c_kid->ilp->mt);
     if (g->placement == VFFT_INPLACE)
         /* in-place interleaved: the K=1 engine arms are engine-pure; a
-         * handle with none of them is treated as unsafe. */
-        return (g->k1il2p || g->k1il3p || g->k1ilfd || g->k1ztt || g->k1fs) ? 1 : 0;
+         * handle with none of them is treated as unsafe. A threaded arm
+         * (ZTURN-T's, the flat DIT's) slabs the pool, and the four-step's 2D
+         * child threads on it at T > 1 (no serial form to fall to). */
+        return (g->k1il2p || g->k1il3p || (g->k1ilfd && g->k1ilfd->mt == 0) ||
+                (g->k1ztt && g->k1ztt->mt == 0) || (g->k1fs && g->nthreads <= 1)) ? 1 : 0;
     if (!g->k1_on)
         return 0; /* OOP classic path: _oop_mt re-asserts + slabs the pool */
     switch (g->k1_il_route)
@@ -1257,13 +1261,16 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
     case VFFT_K1_IL_CHAIN3:
         return g->k1il3p != NULL;
     case VFFT_K1_IL_FLAT:
-        return g->k1ilfd != NULL;   /* engine-pure: own staging plane, both dirs */
+        return g->k1ilfd != NULL && g->k1ilfd->mt == 0;   /* engine-pure: own staging plane, both dirs; the threaded arm slabs the pool */
     case VFFT_K1_IL_ZTT:
-        return g->k1ztt != NULL;    /* engine-pure: one fused driver, own plane, both dirs */
+        return g->k1ztt != NULL && g->k1ztt->mt == 0;     /* engine-pure: one fused driver, own plane, both dirs; the threaded arm slabs the pool */
     case VFFT_K1_IL_FS:
-        return g->k1fs != NULL;     /* the four-step: its 2D child owns its scratch, both dirs */
+        /* the four-step: its 2D child owns its scratch, both dirs -- but at
+         * T > 1 that child threads on the pool and has no serial form to fall
+         * to, so it is never a slab clone: its batch runs the serial loop */
+        return g->k1fs != NULL && g->nthreads <= 1;
     case VFFT_K1_IL_PRIME:
-        return g->k1ilpr != NULL;
+        return g->k1ilpr != NULL && g->k1ilpr->mt == 0;   /* the threaded form slabs the pool */
     default:
         return 0; /* no IL route -> convert fallback */
     }
@@ -1276,14 +1283,21 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
  * threaded arm can win -- so a clone in the slab role runs the SERIAL form of
  * the same recipe. The threaded forms the real door binds are flags set on
  * the plan (no allocation; the serial run is bitwise the threaded one, gated
- * in gauntlet/zrf_mt_check.c and zttr_mt_check.c): zrf's arm, ZTT-r's arm and
- * zr2c's threaded fold. _tc_threaded_form says whether a plan runs one;
- * _tc_slab_role unbinds them and rebinds the plan's execute to the serial
- * path. The primary keeps its threaded form for the serial-loop arm; the two
+ * in gauntlet/zrf_mt_check.c and zttr_mt_check.c): zrf's arm, ZTT-r's arm,
+ * zr2c's threaded fold, the convolutions' threaded forms (zrb's, a zr2c
+ * prime child's, the c2c prime cell's: il_prime_mt.h, zrb_mt.h, bitwise the
+ * serial run), and the c2c K=1 arms (ZTURN-T's, the flat DIT's; ztt_mt.h,
+ * il_flatdit_mt.h, bitwise the serial walk). A c2c four-step at T > 1 is
+ * never cloned (_tc_inner_mt_safe). _tc_threaded_form says whether a plan runs one; _tc_slab_role
+ * unbinds them and, for a real plan, rebinds its execute to the serial path
+ * (a c2c plan's K=1 execute reads the arm at run time). The primary keeps its threaded form for the serial-loop arm; the two
  * arms are raced per cell (_tc_mt_decide). */
 static int _tc_threaded_form(const struct vfft_plan_s *g)
 {
-    return (g->zrf && g->zrf->mt) || (g->zttr && g->zttr->mt) || (g->zr2c_kid && g->zr2c_fold_mt);
+    return (g->zrf && g->zrf->mt) || (g->zttr && g->zttr->mt) || (g->zr2c_kid && g->zr2c_fold_mt) ||
+           (g->k1ztt && g->k1ztt->mt) || (g->k1ilfd && g->k1ilfd->mt) ||
+           (g->zrb && g->zrb->mt) || (g->zr2c_kid && g->zr2c_kid->ilp && g->zr2c_kid->ilp->mt) ||
+           (g->k1ilpr && g->k1ilpr->mt);
 }
 static void _tc_slab_role(struct vfft_plan_s *c)
 {
@@ -1293,9 +1307,22 @@ static void _tc_slab_role(struct vfft_plan_s *c)
         vfft_zrf_mt_bind(c->zrf, c->nthreads, 0);   /* arm 0: unbound */
     if (c->zttr && c->zttr->mt)
         vfft_zttr_mt_bind(c->zttr, c->nthreads, 0); /* arm 0: unbound */
+    if (c->zrb && c->zrb->mt)
+        vfft_zrb_mt_bind(c->zrb, c->nthreads, 0);   /* arm 0: unbound */
     if (c->zr2c_kid)
+    {
         c->zr2c_fold_mt = 0;
-    _vfft_real_bind_exec((vfft_plan)c);             /* the serial execute path */
+        if (c->zr2c_kid->ilp)
+            vfft_ilprime_mt_bind(c->zr2c_kid->ilp, c->nthreads, 0);
+    }
+    if (c->k1ilpr && c->k1ilpr->mt)
+        vfft_ilprime_mt_bind(c->k1ilpr, c->nthreads, 0);
+    if (c->k1ztt && c->k1ztt->mt)
+        vfft_ztt_mt_bind(c->k1ztt, c->nthreads, 0);   /* arm 0: unbound */
+    if (c->k1ilfd && c->k1ilfd->mt)
+        c->k1ilfd->mt = 0;                           /* the flat DIT's serial run */
+    if (c->transform == VFFT_R2C || c->transform == VFFT_C2R)
+        _vfft_real_bind_exec((vfft_plan)c);         /* the serial execute path */
 }
 
 /* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict (2026-09-04) ──
@@ -2392,8 +2419,10 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         char cs[96];
         vfft_zrb_str(h->zrb, cs, sizeof cs);
         if (h->K > 1) FP__ADD(" zrb=[K%zu/%s]", h->K, cs);
-        else FP__ADD(" zrb=[%s]", cs);
+        else FP__ADD(" zrb=[%s/m%d]", cs, h->zrb->mt);
     }
+    if (h->k1ilpr)
+        FP__ADD(" ilpr=[%s/M%d/m%d]", h->k1ilpr->method ? "rader" : "bluestein", h->k1ilpr->M, h->k1ilpr->mt);
     if (h->zrbl)
     {
         char cs[128];
@@ -2417,7 +2446,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         {
             vw2_zr2c_child_t kr;
             _zr2c_child_of_kid(&kr, h->zr2c_kid);
-            FP__ADD(" zr2c_prime=[m%d %s %s tw=%d]", kr.pm, kr.pin, kr.psh, kr.ptw);
+            FP__ADD(" zr2c_prime=[m%d %s %s tw=%d mt=%d]", kr.pm, kr.pin, kr.psh, kr.ptw, kr.pmt);
         }
     }
     used = vfft__fp_child(h->tcb, "tcb", depth + 1, out, cap, used);

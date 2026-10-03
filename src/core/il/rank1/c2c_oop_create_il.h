@@ -24,6 +24,8 @@ static vfft_plan _c2c_oop_finish_il(struct vfft_plan_s *h, int zt_mt,
         _ilfd_mt_replay_or_race(h, W, cfg, N); /* the flat DIT's, per-T banked */
     if (h->k1ztt && h->K == 1 && h->nthreads > 1)
         _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's, per-T banked */
+    if (h->k1ilpr && h->K == 1 && h->nthreads > 1)
+        _ilpr_mt_replay_or_race(h, W, cfg, N); /* the prime cell's, per-T banked */
     if (h->k1fs && h->K == 1 && h->nthreads > 1)
         _k1fs_mt_replay_or_race(h, W, cfg, N); /* the four-step's split at T, per-T banked */
     return h;
