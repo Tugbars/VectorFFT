@@ -157,9 +157,6 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     int il2d_staged = 0, il2d_pitch = 0;
     double *il2d_bandscr = NULL;
     double *il2d_rscr = NULL;
-    struct vfft_plan_s *il2d_rows = NULL;
-    int il2d_rw = 0;
-    int il2d_brw = -1; /* banked row-route verdict; -1 = unraced */
     int il2d_oddn2 = 0;        /* odd-N2 real: c2c row child */
     double *il2d_orbuf = NULL; /* its 2 x 2*N2 row pair buffer  */
     int il2d_blu = 0;          /* odd/prime N1: column Bluestein M */
@@ -193,8 +190,6 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     double *il2d_tpcscr = NULL;
     int il2d_bcmt = -1, il2d_bcmtt = -1; /* banked column-MT verdict
                                           * and the T it was raced at */
-    double *il2d_lx = NULL, *il2d_lre = NULL, *il2d_lim = NULL;
-    double *il2d_tre = NULL, *il2d_tim = NULL;
     int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
     vfft_il2p_fn il2d_f[8] = { 0 }, il2d_b[8] = { 0 };
     double *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
@@ -516,7 +511,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     /* ── native IL 2D REAL tier (docs/roadmap/fft2d_real_il_design.md)
      * — THE serving for IL real 2D callers (split is not a fallback of
      * IL — native or LOUD refusal). Pure IL end-to-end:
-     * rows = the raced row route (per-row TC door or ROWSPLIT),
+     * rows = the per-row door (the K=1 1D real engine at N2) or the
+     * raced IL row plan (il2d_real_plan.h),
      * columns = the n1c/t2c chain over hp1 = N2/2+1 columns with the
      * raced banded walk. Two-phase law (§2.5): the Hermitian fold is
      * R-linear and does not commute with the column stages — fwd
@@ -583,16 +579,15 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 il2d_nat = col.nat;
                 il2d_natperm = col.natperm;
                 il2d_natscr = col.natscr;
-                /* the per-direction verdicts (rw wl cmt cmtt):
-                 * from the row, this direction's tokens, never under
-                 * recalibrate; -1 = unraced, and the row-route race below
-                 * fills them in */
+                /* the per-direction verdicts (wl cmt cmtt): from the
+                 * row, this direction's tokens, never under recalibrate;
+                 * -1 = unraced, and the wl race below fills it in */
                 if (!cfg->recalibrate)
                 {
                     int tR[8], tn = 0, tblu = -1;
                     (void)vw2_2d_rl_lookup(&W->vw2, N1, N2,
                                            cfg->transform == VFFT_C2R, tR, &tn,
-                                           &il2d_brw, &il2d_bwl, &il2d_bcmt,
+                                           &il2d_bwl, &il2d_bcmt,
                                            &il2d_bcmtt, &tblu, il2d_ord, il2d_T);
                 }
             }
@@ -706,42 +701,6 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                     il2d_row = NULL;
                 }
             }
-            /* ── the ROWSPLIT route (struct comment). Precedence:
-             * env VFFT_IL2D_ROWSPLIT (0 pins the per-row door,
-             * W>0 pins rowsplit) > the banked rw= verdict > the
-             * create-time race (after the commits below).
-             * Constraints: W%8 (the split engines' lane grain),
-             * W | N1, N2%4 (the 4x4 transpose grain). Any build
-             * failure keeps the per-row TC door — never a refusal. */
-            if (il2d_row)
-            {
-                const char *rse = getenv("VFFT_IL2D_ROWSPLIT");
-                const int Wb = rse ? atoi(rse)
-                                   : (il2d_brw > 0 ? il2d_brw : 0);
-                if (Wb > 0)
-                {
-                    if (Wb >= 8 && Wb % 8 == 0 && Wb <= N1 &&
-                        N1 % Wb == 0 && (N2 % 4) == 0)
-                    {
-                        if (_il2d_rowsplit_build(cfg, Wb, N2,
-                                                 &il2d_rows,
-                                                 &il2d_lx, &il2d_lre,
-                                                 &il2d_lim, &il2d_tre,
-                                                 &il2d_tim))
-                            il2d_rw = Wb;
-                        else
-                            _vfft_warn("il2d rowsplit W=%d: split "
-                                       "row engine unavailable at "
-                                       "%dx%d — per-row door serves",
-                                       Wb, N1, N2);
-                    }
-                    else
-                        _vfft_warn("il2d rowsplit W=%d illegal at "
-                                   "%dx%d (needs W%%8==0, W|N1, "
-                                   "N2%%4==0) — per-row door serves",
-                                   Wb, N1, N2);
-                }
-            }
             /* ── the banded column walk's width (env VFFT_IL2D_WL,
              * shared name with c2c; 0 pins unbanded) > banked wl= >
              * the create-time race. Legality: wl | N1 and a suffix
@@ -853,8 +812,6 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     h->il2d_col.pitch = il2d_pitch;
     h->il2d_col.bandscr = il2d_bandscr;
     h->il2d_rscr = il2d_rscr;
-    h->il2d_rows = il2d_rows;
-    h->il2d_rw = il2d_rw;
     h->il2d_oddn2 = il2d_oddn2;
     h->il2d_orbuf = il2d_orbuf;
     h->il2d_col.nat = il2d_nat;
@@ -877,13 +834,6 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     h->il2d_col.tpc = il2d_tpc;
     h->il2d_col.tpcplan = il2d_tpcplan;
     h->il2d_col.tpcscr = il2d_tpcscr;
-    /* A/B race knob (struct comment): create-time env read only. */
-    h->il2d_norowz = getenv("VFFT_IL2D_NO_ROWZ") != NULL;
-    h->il2d_lx = il2d_lx;
-    h->il2d_lre = il2d_lre;
-    h->il2d_lim = il2d_lim;
-    h->il2d_tre = il2d_tre;
-    h->il2d_tim = il2d_tim;
     memcpy(h->il2d_col.R, il2d_R, sizeof il2d_R);
     memcpy(h->il2d_col.L, il2d_L, sizeof il2d_L);
     memcpy(h->il2d_col.f, il2d_f, sizeof il2d_f);
@@ -957,20 +907,19 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     if (h->transform == VFFT_C2C && W && !W->vw2_off_2d && !getenv("VFFT_IL2D_FORMS") &&
         vw2_2d_forms_rebank(&W->vw2, 0, N1, N2, il2d_fm, il2d_ord, il2d_T))
         _vw2_persist(W, cfg);
-    /* ── the REAL tier's row-route race (per-row door vs ROWSPLIT W
-     * pool): runs only when env is FULLY silent (an env-pinned chain
-     * skips the banked-row read AND must never bank — env beats
-     * wisdom, never writes it) and the rl cell carries
-     * no rw= verdict; banks chain+rw direction-shared. Same
-     * after-the-commits law as the c2c axis race — it executes h. */
+    /* ── the REAL tier's wl race (the banded column walk's width): runs
+     * only when env is FULLY silent (an env-pinned chain skips the
+     * banked-row read AND must never bank — env beats wisdom, never writes
+     * it) and the rl cell carries no wl= verdict; banks chain+wl
+     * direction-shared. Same after-the-commits law as the c2c axis race —
+     * it executes h. */
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         h->il2d_row && !il2d_oddn2 && !il2d_blu && !il2d_nat &&
-        !getenv("VFFT_IL2D_ROWSPLIT") &&
         !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_WL") &&
-        (il2d_brw < 0 || il2d_bwl < 0))
-        _il2d_real_rowrace(h, W, cfg, N1, N2);
+        il2d_bwl < 0)
+        _il2d_real_wlrace(h, W, cfg, N1, N2);
     /* the raced per-stage forms land on the real chain row HERE: on a
-     * cold real cell that row is first written by the rowrace's rl bank
+     * cold real cell that row is first written by the wl race's rl bank
      * above, after the forms step ran — without this re-bank the next
      * create (a column-MT clone, the replay) would re-race the forms and
      * could serve different kernels than this handle (MT != ST). */
@@ -979,13 +928,13 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     {
         int ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord, il2d_T);
         if (!ok)
-        {   /* no real row yet: the rowrace did not run (an env pin on the
-             * row axis, e.g. a gate's VFFT_IL2D_ROWSPLIT) or refused. The
-             * forms verdict still has a home — the row with the served
-             * chain and NO row-axis tokens (rw/wl unraced, never erased:
-             * a later rowrace MERGES into this row). */
+        {   /* no real row yet: the wl race did not run (an env pin on the
+             * axis, e.g. a gate's VFFT_IL2D_WL) or refused. The forms
+             * verdict still has a home — the row with the served chain and
+             * NO axis tokens (wl unraced, never erased: a later wl race
+             * MERGES into this row). */
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
-                           h->il2d_col.R, h->il2d_col.nst, -1, -1, -1, 0,
+                           h->il2d_col.R, h->il2d_col.nst, -1, -1, 0,
                            (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, il2d_ord, il2d_T);
             ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord, il2d_T);
         }

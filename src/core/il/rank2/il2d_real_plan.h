@@ -297,7 +297,7 @@ static void _il2d_real_plan_bank(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tok, name) == 0;
     if (!ok)
     {
-        vw2_2d_rl_bank(&W->vw2, N1, N2, 0, h->il2d_col.R, h->il2d_col.nst, -1, -1, -1, 0,
+        vw2_2d_rl_bank(&W->vw2, N1, N2, 0, h->il2d_col.R, h->il2d_col.nst, -1, -1, 0,
                        (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, ord, T);
         ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tok, name) == 0;
     }
