@@ -207,9 +207,17 @@ struct vfft_plan_s
      * chains would emit different scrambled combs inside ONE batch. A clone
      * that fails the check is destroyed and the worker set stops growing
      * (degrade = fewer workers / serial, never a mixed batch). tcbw_n == 0
-     * <=> tcbw == NULL <=> serial loop (today's path, byte-identical). */
+     * <=> tcbw == NULL <=> serial loop (today's path, byte-identical).
+     * THE SLAB ROLE (2026-10-03): a slab worker IS the thread, so every clone
+     * runs the SERIAL form of the primary's recipe -- a threaded arm the
+     * cell's T-row bound (zrf / ZTT-r arms, zr2c's fold) is unbound on the
+     * clone (_tc_slab_role). The primary keeps its threaded form for the
+     * serial-loop arm; tcb0 is its serial twin, run by the caller's own slab
+     * (slot 0), NULL when the primary is serial already. The two arms are
+     * raced per cell (_tc_mt_decide). */
     struct vfft_plan_s **tcbw;
     int tcbw_n;
+    struct vfft_plan_s *tcb0;
     /* The THREADING verdict for the wrapper: 1 = slabs over the clones,
      * 0 = the serial loop. Raced at create (serial vs slabs on this cell)
      * or replayed from its eng=tcb row; T-free (one transform per core).

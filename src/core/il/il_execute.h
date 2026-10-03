@@ -371,8 +371,9 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
              * no partial-lane count, no padding, nothing to get wrong.
              * Gated at K=43 over 8 threads (slabs 6,6,6,6,6,6,6,1).
              *
-             * Slot 0 is the caller on the PRIMARY plan h->tcb; slot t>=1 is
-             * worker t-1 on its own clone h->tcbw[t-1] (a clone per worker
+             * Slot 0 is the caller on the PRIMARY plan h->tcb (on its serial
+             * twin h->tcb0 when the primary runs a threaded form); slot t>=1
+             * is worker t-1 on its own clone h->tcbw[t-1] (a clone per worker
              * is what makes the pool-free inner route safe to run
              * concurrently). The pool's fork-join dispatches exactly that. */
             const size_t S = (h->K + (size_t)T - 1) / (size_t)T;
@@ -386,7 +387,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                 size_t te = t0 + S;
                 if (te > h->K)
                     te = h->K;
-                a[n++] = (_tc_mt_arg){t == 0 ? h->tcb : h->tcbw[t - 1], dir, sre, d,
+                a[n++] = (_tc_mt_arg){t == 0 ? (h->tcb0 ? h->tcb0 : h->tcb) : h->tcbw[t - 1], dir, sre, d,
                                       t0, te - t0, sn, dn};
             }
             thread_pool_run(n, _tc_mt_tramp, a, sizeof a[0]);

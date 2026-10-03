@@ -647,9 +647,15 @@ fold into a separate plane) and `child_nat_ip` (an in-place child).
 **In-place real lives only here.** 1D interleaved is the one place the library accepts an
 in-place real transform.
 
-A threaded zr2c plan threads the fold (`fold=mt`); its child runs on one thread. The child's
-components keep their own verdicts: the prime cell's method and inner (the prime shard) and
-the four-step's 2D child (its rank-2 cell).
+**Threaded real plans: ZTT-r is the MT engine (owner 2026-09-30).** From 2^13 to 2^19 a
+threaded even real cell is served by ZTT-r's threaded arms (`il/real/zttr_mt.h`: ZTT's BLOCKS
+and TILES walks with the fold fused, bitwise equal to the serial run), and by the real
+four-step above that band; zr2c is out of the MT conversation there (its threaded fold pulls
+every line across cores after a threaded child: 23 us against 7 at 2^16). The cell's race
+still decides and banks `mt=` on the `nthreads=T` row. A threaded zr2c plan threads only the
+fold (`fold=mt`); its child runs on one thread. The child's components keep their own
+verdicts: the prime cell's method and inner (the prime shard) and the four-step's 2D child
+(its rank-2 cell).
 
 ## II.3 — 2D c2c, interleaved (the il2d tier)
 

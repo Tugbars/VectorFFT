@@ -480,7 +480,9 @@ not govern linkage. The checker reads the `#include` lines.
     library's engine); the zr2c out-of-place fall-through onto the split engines is a
     refusal too. `_oddr_build`, `oddr_child`/`oddr_buf`, `wisdom2_oddr.h` and the
     `eng=oddr` rows are deleted. What remains of D1 is the interleaved lane-major real
-    BATCH (K > 1, the layout's default geometry) on the split engines.
+    BATCH (K > 1, the layout's default geometry) on the split engines; its native IL
+    engine is planned, not started (`il_real_lane_major_batch.md`), and the crossing
+    is cut when that engine serves.
 - **D2. B4, the `@nat` → IL recipe signpost.** Keep it in `bridge/` for now (no format
   change). Or give the IL in-place door its own `lay=il` row and retire `VFFT_NAT_ILP`,
   `ZCASC` and `CONV` from the split enum. That changes the wisdom format, so it needs a
