@@ -31,10 +31,6 @@
  *                                                  without a chain: the convolution length
  *                                                  and the inner pair's descriptor, the
  *                                                  prime route's own spelling)
- *   eng=oddr                                      (odd N: the odd-real routes stood
- *                                                  against the mono, the flat DIT and the
- *                                                  Bluestein; their own route record is
- *                                                  wisdom2_oddr.h's)
  * The door (il/real/real_create_il.h) reads the engine first and lets the
  * engine read its own plan input; a miss races the engines and banks the
  * winner here. The zr2c route banker keeps its own-engine guard, so a cell
@@ -60,7 +56,7 @@ static inline void vw2_real_il_key(vw2_key_t *k, int realN, int is_c2r, int is_i
     k->nthreads = (uint8_t)(T > 1 ? T : 0);   /* a threaded plan's row is its own (v1.3) */
 }
 
-/* The cell's banked engine ("zr2c", "zrp", "zttr", "zfsr", "zrm", "zrf", "oddr") or NULL
+/* The cell's banked engine ("zr2c", "zrp", "zttr", "zfsr", "zrm", "zrf", "zrb") or NULL
  * (no measured record; a seed row counts as none). For eng=zrp the pair and the form are decoded
  * (*R1 = 0 when the pair token is missing or malformed: a miss; *form = 0
  * for leaf=n1t or no leaf token, 1 for leaf=r2z). */
@@ -118,7 +114,7 @@ static inline int vw2_real_il_bank_zrp(vw2_store_t *s, int realN, int is_c2r,
 
 /* Bank an engine with no plan input at the cell (replacing whatever engine
  * held it): eng=zrm (the real mono; the kernel follows from the transform
- * and N) or eng=oddr (odd N: the odd-real routes stood). */
+ * and N). */
 static inline int vw2_real_il_bank_eng(vw2_store_t *s, int realN, int is_c2r,
                                        int is_inplace, int T, const char *eng, double ns)
 {

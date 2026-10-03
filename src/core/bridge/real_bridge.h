@@ -80,11 +80,12 @@ static vfft_plan _vfft_create_real_routes(const vfft_config_t *cfg,
                                           int N,
                                           size_t K)
 {
-    if (cfg->transform == VFFT_R2C && K == 1 && (N & 1) && !vfft_is_radix_smooth(N))
+    if (cfg->transform == VFFT_R2C && (N & 1) && !vfft_is_radix_smooth(N))
     {
-        _vfft_warn("vfft_create: split R2C odd N=%d: no split real engine serves a "
+        _vfft_warn("vfft_create: %s R2C odd N=%d (K=%zu): no split real engine serves a "
                    "non-smooth odd length (the split rfft takes the radix-smooth odd "
-                   "lengths only); unsupported", N);
+                   "lengths only); unsupported",
+                   cfg->layout == VFFT_LAYOUT_INTERLEAVED ? "lane-major" : "split", N, K);
         return NULL;
     }
     return _real_finish(_vfft_create_real_split(cfg, ob, W, reg, N, K));
