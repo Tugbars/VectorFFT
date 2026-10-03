@@ -2,13 +2,14 @@
  *
  * BRIDGE, AND TEMPORARY (owner decision D1, 2026-09-27)
  * -----------------------------------------------------
- * An IL real engine for K>1 will be built; until then the crossings below live
- * here, the one place allowed to include both split/ and il/:
- *   - an interleaved request that zr2c cannot serve (K>1, or an out-of-place
- *     zr2c child failure) runs on the SPLIT real engines (CCE contract);
- *   - the odd-real bridge serves either layout through an IL c2c child;
- *   - the smooth-odd r2c race sets the split rfft handle against that bridge.
- * No new crossing may be added. The front door (vfft.c) routes every 1D real
+ * The one crossing left (2026-10-03): an interleaved real BATCH in its
+ * lane-major geometry (K > 1, the layout's default) runs on the SPLIT real
+ * engines through their z-doors (CCE contract), except the odd N without a
+ * chain, which the lane Bluestein (il/real/zrb_lanes.h) serves natively.
+ * Gone the same day: the odd-real bridge (an IL c2c child serving either
+ * layout's odd N -- every interleaved odd cell now has an IL engine, the
+ * split layout's odd real refuses) and the smooth-odd r2c race. No new
+ * crossing may be added. The front door (vfft.c) routes every 1D real
  * request here before its layout fork.
  *
  *
@@ -17,23 +18,14 @@
  * The front dispatcher of the real-transform create. The arms, in order (each
  * returns on every path):
  *
- *   0. an odd interleaved K==1 cell with an IL real engine (the mono, the
- *      real flat DIT, the real Bluestein: il/real/odd_build.h) goes to the
- *      interleaved tier's odd door, which serves it or refuses; the routes
- *      below never see it. The lane-major K>1 odd cell without a chain goes
- *      to the lane Bluestein's create (below) first.
- *   1. the ODD-N BRIDGE — odd N, K==1, out-of-place. Builds the transform on
- *      a c2c child (_oddr_build) rather than on a real codelet, and refuses
- *      LOUDLY when that child cannot be built. What still reaches it: the
- *      split layout's odd real, and the interleaved odd cells the IL door
- *      does not admit (53, 59, 61: no rn1 kernel, no chain, below the real
- *      Bluestein's floor).
- *      r2c takes the bridge only when N is NOT radix-smooth (a smooth odd N is
- *      better served by rfft), while c2r takes it unconditionally — the two
- *      directions do not have the same incumbent.
- *   2. the interleaved tier (il/real/real_create_il.h): the zr2c route;
- *   3. the split tier (split/real/real_create_split.h): r2c and c2r, then the
- *      smooth-odd r2c bridge race (_real_oddr_race) on the r2c handle.
+ *   0. the lane-major K>1 odd cell without a chain: the lane Bluestein's
+ *      create (below);
+ *   1. an interleaved K==1 cell: the interleaved tier's door
+ *      (il/real/real_create_il.h: even N in zrp_build.h, odd N in
+ *      odd_build.h), which serves it or refuses -- never the split engines;
+ *   2. the routes: the split tier (split/real/real_create_split.h) for the
+ *      split layout and for the lane-major batch; a non-smooth odd r2c at
+ *      K==1 refuses there (the split rfft takes the radix-smooth odd lengths).
  *
  * BOTH REAL DIRECTIONS ARE A 2-AXIS CHOICE
  * ----------------------------------------
@@ -56,19 +48,12 @@
  * POSITION IN vfft.c IS LOAD-BEARING
  * ----------------------------------
  * Not a standalone header. It calls file-scope statics that live in vfft.c
- * (_oddr_build among them), so it must be included after those are defined and
- * before _vfft_create_inner.
+ * (_vfft_plan_threads, _vw2_persist among them), so it must be included after
+ * those are defined and before _vfft_create_inner.
  */
 #ifndef VFFT_BRIDGE_REAL_BRIDGE_H
 #define VFFT_BRIDGE_REAL_BRIDGE_H
 
-/* the two arms of the smooth-odd bridge race: two finished handles */
-typedef struct { struct vfft_plan_s *h; double *xr, *zr; } _oddr_arm_t;
-static void _oddr_arm_exec(void *v)
-{
-    _oddr_arm_t *c = (_oddr_arm_t *)v;
-    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->xr, NULL, c->zr, NULL);
-}
 /* ── the tier's ONE exit. No shared post-step exists here (no mt gate: the
  * real engines thread internally; no pool arm: create-entry owns it) — the
  * finish exists so a shared step would land in one place and so each early
@@ -82,96 +67,12 @@ static vfft_plan _real_finish(struct vfft_plan_s *h)
 #include "il/real/real_create_il.h"
 #include "split/real/real_create_split.h"
 
-/* The smooth-odd r2c bridge race (D1, moves to bridge/ in phase 7): the
- * split-built rfft handle h against the IL c2c bridge. Returns the serving
- * handle (the loser is destroyed). */
-static struct vfft_plan_s *_real_oddr_race(struct vfft_plan_s *h,
-                                           const vfft_config_t *cfg,
-                                           struct vfft_wisdom_s *W,
-                                           int N, size_t K)
-{
-    /* SMOOTH-ODD r2c: race this (rfft-served) handle against the
-     * c2c bridge - both arms FINISHED handles, min-of-3 alternated,
-     * loser destroyed. The winner flips per cell. K==1 OOP IL only;
-     * the verdict is banked (vw2_oddr_route) and replayed. */
-    if (K == 1 && (N & 1) && N >= 3 &&
-        cfg->placement == VFFT_OUTOFPLACE &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-        !getenv("VFFT_ODDR_NORACE"))
-    {
-        /* REPLAY the banked route: 1 = the rfft handle serves as
-         * built, 2 = the bridge serves; only a miss (or recalibrate)
-         * races. */
-        const int banked = (W && !W->vw2_off_oop && !cfg->recalibrate)
-                               ? vw2_oddr_route_lookup(&W->vw2, N) : 0;
-        struct vfft_plan_s *hb = NULL;
-        if (banked == 1)
-        {
-            if (getenv("VFFT_ODDR_LOG"))
-                fprintf(stderr, "[oddr] N=%d: replay rfft src=wisdom\n", N);
-            return h;
-        }
-        hb = _oddr_build(cfg, N);
-        if (hb && banked == 2)
-        {
-            if (getenv("VFFT_ODDR_LOG"))
-                fprintf(stderr, "[oddr] N=%d: replay bridge src=wisdom\n", N);
-            vfft_destroy((vfft_plan)h);
-            return hb;
-        }
-        if (hb)
-        {
-            const size_t hp1r = (size_t)N / 2 + 1;
-            double *xr = (double *)malloc((size_t)N
-                                          * sizeof(double));
-            double *zr2 = (double *)calloc(2 * (hp1r + 8),
-                                           sizeof(double));
-            double ta = 1e300, tb2 = 1e300;
-            if (xr && zr2)
-            {
-                int r2, j2;
-                for (j2 = 0; j2 < N; j2++)
-                    xr[j2] = 1.0 + 1e-6 * (double)(j2 & 511);
-                vfft_execute((vfft_plan)h, VFFT_FORWARD, xr, NULL,
-                             zr2, NULL);
-                vfft_execute((vfft_plan)hb, VFFT_FORWARD, xr, NULL,
-                             zr2, NULL);
-                {
-                    _oddr_arm_t ca = { h, xr, zr2 }, cb = { hb, xr, zr2 };
-                    const vfft_race_arm_t arms[2] = {
-                        { "rfft", _oddr_arm_exec, &ca },
-                        { "bridge", _oddr_arm_exec, &cb } };
-                    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
-                    double ns[2];
-                    (void)r2;
-                    vfft_race_run(&proto, arms, 2, ns);
-                    ta = ns[0];
-                    tb2 = ns[1];
-                }
-                if (getenv("VFFT_ODDR_LOG"))
-                    fprintf(stderr, "[oddr] race N=%d: rfft=%.0f "
-                                    "bridge=%.0f -> %s\n",
-                            N, ta, tb2,
-                            tb2 < ta ? "BRIDGE" : "rfft");
-            }
-            free(xr);
-            free(zr2);
-            if (xr && zr2 && W && !W->vw2_off_oop)
-            {   /* bank the verdict (the race ran) */
-                if (vw2_oddr_route_bank(&W->vw2, N, tb2 < ta ? 2 : 1) == VW2_OK)
-                    _vw2_persist(W, cfg);
-            }
-            if (tb2 < ta)
-            {
-                vfft_destroy((vfft_plan)h);
-                return hb; /* the bridge won: it replaces the fully-built h */
-            }
-            vfft_destroy((vfft_plan)hb);
-        }
-    }
-    return h;
-}
-
+/* The split real engines (split/real/real_create_split.h), and -- the one
+ * crossing left -- the interleaved real batch in its lane-major geometry at
+ * K > 1 (the CCE contract on the split interior; D1). An odd N is served by
+ * the split rfft where it is radix-smooth (r2c) and refused otherwise: the
+ * split library has no odd real engine of its own (owner 2026-10-03: refuse,
+ * never the other library's). */
 static vfft_plan _vfft_create_real_routes(const vfft_config_t *cfg,
                                           vfft_batch ob,
                                           struct vfft_wisdom_s *W,
@@ -179,42 +80,14 @@ static vfft_plan _vfft_create_real_routes(const vfft_config_t *cfg,
                                           int N,
                                           size_t K)
 {
-    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-        K == 1 && (N & 1) && N >= 3 &&
-        cfg->placement == VFFT_OUTOFPLACE &&
-        (cfg->transform == VFFT_C2R || !vfft_is_radix_smooth(N) ||
-         getenv("VFFT_ODDR_FORCE") != NULL))
+    if (cfg->transform == VFFT_R2C && K == 1 && (N & 1) && !vfft_is_radix_smooth(N))
     {
-        struct vfft_plan_s *hh = _oddr_build(cfg, N);
-        if (hh)
-            return _real_finish(hh); /* odd-real direct: skips every lookup,
-                                      * calibrate and route race below BY
-                                      * DESIGN (self-contained c2c bridge) */
-        _vfft_warn("vfft_create: %s odd N=%d - the c2c bridge child "
-                   "could not be built; unsupported",
-                   _vfft_tname(cfg->transform), N);
+        _vfft_warn("vfft_create: split R2C odd N=%d: no split real engine serves a "
+                   "non-smooth odd length (the split rfft takes the radix-smooth odd "
+                   "lengths only); unsupported", N);
         return NULL;
     }
-    /* the interleaved tier: the zr2c route (even N, K==1, no batch). c2r odd
-     * N never matches the even-N gate (the c2r odd refusal stays in the split
-     * tier, as before). */
-    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && (N % 2) == 0 && !ob)
-    {
-        int refused = 0;
-        struct vfft_plan_s *hz = _vfft_create_real_il(cfg, W, N, &refused);
-        if (hz)
-            return _real_finish(hz); /* zr2c serving: banks its own
-                                      * kind-5 cell; the split-path
-                                      * calibrates are for rows it
-                                      * never reads — skipped BY DESIGN */
-        if (refused)
-            return NULL;
-    }
-    struct vfft_plan_s *h = _vfft_create_real_split(cfg, ob, W, reg, N, K);
-    if (h && cfg->transform == VFFT_R2C)
-        h = _real_oddr_race(h, cfg, W, N, K);
-    return _real_finish(h);
+    return _real_finish(_vfft_create_real_split(cfg, ob, W, reg, N, K));
 }
 
 /* THE LANE BLUESTEIN'S CREATE (il/real/zrb_lanes.h): the interleaved real
@@ -225,7 +98,7 @@ static vfft_plan _vfft_create_real_routes(const vfft_config_t *cfg,
  * smooth lengths, the two smallest with a chain), every chain the enumerator
  * yields at each (the no-silent-caps law is the enumerator's), the window
  * ladder on the two fastest; every candidate gated against K one-lane
- * transforms through the odd routes and burst-timed; the two fastest race
+ * transforms through the odd door's c2c reference and burst-timed; the two fastest race
  * (the library body, paced) and the winner is banked on the cell's q=K row.
  * VFFT_ZRBL=0 keeps it out; NULL = nothing built (the request goes where it
  * went). */
@@ -300,7 +173,7 @@ static int _zrbl_try(const vfft_config_t *cfg, int N, int K, int M, const int *R
         {
             char cs[128];
             vfft_zrbl_str(h->zrbl, cs, sizeof cs);
-            fprintf(stderr, "[zrbl] N=%d K=%d %s FAILS the gate (rel %.2e vs the odd routes) -- dropped\n", N, K, cs, e);
+            fprintf(stderr, "[zrbl] N=%d K=%d %s FAILS the gate (rel %.2e vs the c2c reference) -- dropped\n", N, K, cs, e);
             vfft_destroy((vfft_plan)h);
             return 1;
         }
@@ -374,7 +247,8 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
     const size_t hp1 = (size_t)N / 2 + 1, nin = c2r ? 2 * hp1 * (size_t)K : (size_t)N * (size_t)K;
     const size_t nout = c2r ? (size_t)N * (size_t)K : 2 * hp1 * (size_t)K;
     const char *e = getenv("VFFT_ZRBL");
-    struct vfft_plan_s *href, *hz[2] = { NULL, NULL };
+    _real_il_odd_ref_t href;
+    struct vfft_plan_s *hz[2] = { NULL, NULL };
     double *a, *ref, *b, *ti, *to;
     vfft_config_t c1;
     if (e && e[0] == '0' && !e[1])
@@ -403,13 +277,13 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
     }
     if (!W || W->vw2_off_oop)
         return NULL;
-    /* the reference: K one-lane transforms through the odd routes */
+    /* the reference: K one-lane transforms through the odd door's c2c
+     * reference (il/real/odd_build.h) */
     c1 = *cfg;
     c1.howmany = 1;
     c1.batch_geom = VFFT_BATCH_DEFAULT;
     c1.placement = VFFT_OUTOFPLACE;
-    href = _oddr_build(&c1, N);
-    if (!href)
+    if (!_real_il_odd_ref_open(&c1, N, &href))
         return NULL;
     a = (double *)vfft_aligned_alloc((nin + 8) * sizeof(double));
     ref = (double *)vfft_aligned_alloc((nout + 8) * sizeof(double));
@@ -419,7 +293,7 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
     if (!a || !ref || !b || !ti || !to)
     {
         vfft_aligned_free(a); vfft_aligned_free(ref); vfft_aligned_free(b); vfft_aligned_free(ti); vfft_aligned_free(to);
-        vfft_destroy((vfft_plan)href);
+        _real_il_odd_ref_close(&href);
         return NULL;
     }
     {
@@ -433,22 +307,22 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
             for (int t = 0; t < K; t++) a[2 * t + 1] = 0.0;   /* a CCE spectrum: real DC in every lane */
         memset(ref, 0, nout * sizeof(double));
         for (int t = 0; t < K; t++)
-        {   /* lane t out, through the one-lane routes, back into its lane */
+        {   /* lane t out, through the one-lane reference, back into its lane */
             if (c2r)
             {
                 for (size_t f = 0; f < hp1; f++) { ti[2 * f] = a[2 * (f * (size_t)K + t)]; ti[2 * f + 1] = a[2 * (f * (size_t)K + t) + 1]; }
-                vfft_execute((vfft_plan)href, VFFT_BACKWARD, ti, NULL, to, NULL);
+                _real_il_odd_ref_run(&href, ti, to);
                 for (size_t n = 0; n < (size_t)N; n++) ref[n * (size_t)K + t] = to[n];
             }
             else
             {
                 for (size_t n = 0; n < (size_t)N; n++) ti[n] = a[n * (size_t)K + t];
-                vfft_execute((vfft_plan)href, VFFT_FORWARD, ti, NULL, to, NULL);
+                _real_il_odd_ref_run(&href, ti, to);
                 for (size_t f = 0; f < hp1; f++) { ref[2 * (f * (size_t)K + t)] = to[2 * f]; ref[2 * (f * (size_t)K + t) + 1] = to[2 * f + 1]; }
             }
         }
     }
-    vfft_destroy((vfft_plan)href);
+    _real_il_odd_ref_close(&href);
     vfft_aligned_free(ti); vfft_aligned_free(to);
     {
         /* THE ARMS: the column form's podium (two), and the one-row engine
@@ -582,6 +456,22 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
         int refused = 0;
         struct vfft_plan_s *h = _vfft_create_real_il(cfg, W, N, &refused);
         return h ? _real_finish(h) : NULL;
+    }
+    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && !ob && (N % 2) == 0)
+    {
+        /* an even cell: the interleaved tier's door (zr2c, the pair, ZTT-r,
+         * the four-step, the mono) serves it or refuses -- no fall-through to
+         * the split engines (2026-10-03) */
+        int refused = 0;
+        struct vfft_plan_s *h = _vfft_create_real_il(cfg, W, N, &refused);
+        if (h)
+            return _real_finish(h); /* banks its own cell; the split-path
+                                     * calibrates are for rows it never reads */
+        if (!refused)
+            _vfft_warn("vfft_create: %s N=%d out of place: no IL real engine built at this cell; unsupported",
+                       _vfft_tname(cfg->transform), N);
+        return NULL;
     }
     return _vfft_create_real_routes(cfg, ob, W, reg, N, K);
 }

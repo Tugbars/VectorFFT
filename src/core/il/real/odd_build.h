@@ -51,15 +51,16 @@ static int _real_il_odd_admits(int N, int c2r)
            ((N <= VFFT_ZRM_MAX_N && vfft_zrm_fn(N, c2r) != 0) || _zrf_has_chain(N) || _zrb_ok(N));
 }
 
-/* the gate's reference (header): ref = 2*(N/2+1) doubles (r2c: the bins of the
- * N reals in a) or N doubles (c2r: N x from the (N+1)/2 bins in a). 0 when the
- * c2c cell cannot be built. */
-static int _real_il_odd_ref(const vfft_config_t *cfg, int N, const double *a, double *ref)
+/* the gate's reference (header): the c2c(N) plan and its two complex rows,
+ * opened once per create and run per input. One run: ref = 2*(N/2+1)
+ * doubles (r2c: the bins of the N reals in a) or N doubles (c2r: N x from
+ * the (N+1)/2 bins in a). open = 0 when the c2c cell cannot be built. */
+typedef struct { struct vfft_plan_s *hc; double *z1, *z2; int N, c2r; } _real_il_odd_ref_t;
+static int _real_il_odd_ref_open(const vfft_config_t *cfg, int N, _real_il_odd_ref_t *r)
 {
-    const size_t n = (size_t)N, hp1 = n / 2 + 1;
+    const size_t n = (size_t)N;
     vfft_config_t rc;
-    struct vfft_plan_s *hc;
-    double *z1, *z2;
+    memset(r, 0, sizeof *r);
     memset(&rc, 0, sizeof rc);
     rc.transform = VFFT_C2C;
     rc.placement = VFFT_OUTOFPLACE;
@@ -72,32 +73,43 @@ static int _real_il_odd_ref(const vfft_config_t *cfg, int N, const double *a, do
     rc.nthreads = 1;
     rc.wisdom = cfg->wisdom;
     rc.wisdom_write = cfg->wisdom_write;
-    hc = (struct vfft_plan_s *)vfft_create(&rc);
-    if (!hc)
+    r->hc = (struct vfft_plan_s *)vfft_create(&rc);
+    if (!r->hc)
         return 0;
-    z1 = (double *)vfft_aligned_alloc(2 * n * sizeof(double));
-    z2 = (double *)vfft_aligned_alloc(2 * n * sizeof(double));
-    if (!z1 || !z2)
+    r->z1 = (double *)vfft_aligned_alloc(2 * n * sizeof(double));
+    r->z2 = (double *)vfft_aligned_alloc(2 * n * sizeof(double));
+    if (!r->z1 || !r->z2)
     {
-        vfft_aligned_free(z1); vfft_aligned_free(z2);
-        vfft_destroy((vfft_plan)hc);
+        vfft_aligned_free(r->z1); vfft_aligned_free(r->z2);
+        vfft_destroy((vfft_plan)r->hc);
+        memset(r, 0, sizeof *r);
         return 0;
     }
-    if (cfg->transform == VFFT_R2C)
+    r->N = N;
+    r->c2r = cfg->transform == VFFT_C2R;
+    return 1;
+}
+static void _real_il_odd_ref_run(const _real_il_odd_ref_t *r, const double *a, double *ref)
+{
+    const size_t n = (size_t)r->N, hp1 = n / 2 + 1;
+    if (!r->c2r)
     {
-        _il2d_row_promote(a, z1, n);
-        vfft_execute((vfft_plan)hc, VFFT_FORWARD, z1, NULL, z2, NULL);
-        memcpy(ref, z2, 2 * hp1 * sizeof(double));
+        _il2d_row_promote(a, r->z1, n);
+        vfft_execute((vfft_plan)r->hc, VFFT_FORWARD, r->z1, NULL, r->z2, NULL);
+        memcpy(ref, r->z2, 2 * hp1 * sizeof(double));
     }
     else
     {
-        _il2d_row_extend(a, z1, n, hp1);
-        vfft_execute((vfft_plan)hc, VFFT_BACKWARD, z1, NULL, z2, NULL);
-        _il2d_row_re(z2, ref, n);
+        _il2d_row_extend(a, r->z1, n, hp1);
+        vfft_execute((vfft_plan)r->hc, VFFT_BACKWARD, r->z1, NULL, r->z2, NULL);
+        _il2d_row_re(r->z2, ref, n);
     }
-    vfft_aligned_free(z1); vfft_aligned_free(z2);
-    vfft_destroy((vfft_plan)hc);
-    return 1;
+}
+static void _real_il_odd_ref_close(_real_il_odd_ref_t *r)
+{
+    vfft_aligned_free(r->z1); vfft_aligned_free(r->z2);
+    if (r->hc) vfft_destroy((vfft_plan)r->hc);
+    memset(r, 0, sizeof *r);
 }
 
 typedef struct { struct vfft_plan_s *h; const double *in; double *out; } _odd_arm_t;
@@ -442,12 +454,17 @@ static struct vfft_plan_s *_real_il_odd_race(const vfft_config_t *cfg, int N, st
         a[1] = 0.0; /* a CCE spectrum: real DC (odd N has no Nyquist bin) */
     memset(ref, 0, xs * sizeof(double));
     memset(b, 0, xs * sizeof(double));
-    if (!_real_il_odd_ref(cfg, N, a, ref))
     {
-        _vfft_warn("vfft_create: %s odd N=%d: the gate's c2c reference could not be built; no engine is raced",
-                   _vfft_tname(cfg->transform), N);
-        vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
-        return NULL;
+        _real_il_odd_ref_t rr;
+        if (!_real_il_odd_ref_open(cfg, N, &rr))
+        {
+            _vfft_warn("vfft_create: %s odd N=%d: the gate's c2c reference could not be built; no engine is raced",
+                       _vfft_tname(cfg->transform), N);
+            vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
+            return NULL;
+        }
+        _real_il_odd_ref_run(&rr, a, ref);
+        _real_il_odd_ref_close(&rr);
     }
     if (mono_ok)
     {

@@ -138,10 +138,9 @@ static struct vfft_plan_s *_vfft_create_real_split(const vfft_config_t *cfg,
     {
         if ((N % 2) != 0)
         {
-            _vfft_warn("vfft_create: C2R odd N=%d — served at K==1 "
-                       "OUT-OF-PLACE (the c2c bridge); this shape "
-                       "(K=%zu, placement=%d) is unsupported",
-                       N, K, (int)cfg->placement);
+            _vfft_warn("vfft_create: split C2R odd N=%d (K=%zu): no split real "
+                       "engine serves an odd length backward; unsupported",
+                       N, K);
             return NULL;
         }
         /* PADDED (opt-in): build at Kp (ordinary aligned (N,Kp) c2r cell) so the plan strides
