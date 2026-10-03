@@ -2415,6 +2415,8 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         }
     }
     used = vfft__fp_child(h->tcb, "tcb", depth + 1, out, cap, used);
+    if (h->zr2c_kid && h->zr2c_kid->b.fs)
+        used = vfft__fp_child(h->zr2c_kid->b.fs->c2d, "zr2cfsc2d", depth + 1, out, cap, used);
     if (h->zfsr && h->zfsr->fs)
         used = vfft__fp_child(h->zfsr->fs->c2d, "zfsrc2d", depth + 1, out, cap, used);
     used = vfft__fp_child(h->pq_inner, "pq", depth + 1, out, cap, used);

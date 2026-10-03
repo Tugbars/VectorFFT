@@ -653,9 +653,17 @@ and TILES walks with the fold fused, bitwise equal to the serial run), and by th
 four-step above that band; zr2c is out of the MT conversation there (its threaded fold pulls
 every line across cores after a threaded child: 23 us against 7 at 2^16). The cell's race
 still decides and banks `mt=` on the `nthreads=T` row. A threaded zr2c plan threads only the
-fold (`fold=mt`); its child runs on one thread. The child's components keep their own
-verdicts: the prime cell's method and inner (the prime shard) and the four-step's 2D child
-(its rank-2 cell).
+fold (`fold=mt`); its child runs on one thread.
+
+**A component's verdict rides on the real row (owner 2026-10-03).** The child's components
+race with no store of the library's and bank with the real cell: a prime-cell child's method
+and inner (`il_prime`, `il_prime_in`, `il_prime_sh`, `il_prime_tw`), raced on the prime cell's
+own convolution; a four-step child's own child, in its rows' words (`fs_*` for the 2D plan,
+`fs_row_*` for its row plan, `fs_row_bwd_*` for that row plan's backward forms). The real
+four-step (`zfsr`) banks its child the same way: its 2D plan at N1×N2 and the row plan at N2
+race into the plan's private store (in memory, never persisted) and ride on the row with the
+split. Replay seeds a private store from the row and nothing else; no real create reads or
+writes a prime, 2D or c2c row.
 
 ## II.3 — 2D c2c, interleaved (the il2d tier)
 

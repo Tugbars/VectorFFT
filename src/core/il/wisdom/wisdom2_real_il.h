@@ -11,7 +11,10 @@
  *                                                  in the c2c K=1 record's own words:
  *                                                  il_route il_pair il_chain il_flat il_forms
  *                                                  il_tw il_ztt il_sb il_kv, and il_bkv =
- *                                                  the backward forms a c2r child runs)
+ *                                                  the backward forms a c2r child runs;
+ *                                                  a four-step child (il_route=fs) adds
+ *                                                  its own child's rows, fs_* as on the
+ *                                                  zfsr row)
  *   eng=zrp  pair=R1.R2 leaf=n1t|r2z              (the real pair, il/real/zrp.h:
  *                                                  n1t = form A, r2z = form B)
  *   eng=zttr chain=4.8.8.4 tile=512 stk=3 [mt=1|2] (ZTT-r, il/real/zttr.h: the chain,
@@ -386,6 +389,8 @@ typedef struct
     char pin[8];           /* il_prime_in (the inner's kind: 2p | 3p | ztt) */
     char psh[64];          /* il_prime_sh (its shape) */
     int  ptw;              /* il_prime_tw (its tile, 0 = untiled) */
+    char fs[512];          /* route FS: its four-step child's rows -- the fs_*
+                            * fs_row_* fs_row_bwd_* tokens, space-joined */
 } vw2_zr2c_child_t;
 
 static inline int vw2__zr2c_ints_str(char *b, size_t cap, const int *v, int n)
@@ -437,6 +442,19 @@ static inline int vw2_real_il_bank_zr2c(vw2_store_t *s, int realN, int is_c2r, i
         VW2__ZS("il_prime_in", ch->pin);
         VW2__ZS("il_prime_sh", ch->psh);
         snprintf(b, sizeof b, "%d", ch->ptw); VW2__ZS("il_prime_tw", b);
+    }
+    if (ch->route == VFFT_K1_IL_FS)
+    {   /* the four-step's child: no rows, no recipe */
+        char fb[sizeof ch->fs], *sp = fb, *t;
+        if (!ch->fs[0]) goto bad;
+        memcpy(fb, ch->fs, sizeof fb);
+        while ((t = vw2__tok(&sp)) != NULL)
+        {
+            char *eq = strchr(t, '=');
+            if (!eq) goto bad;
+            *eq = 0;
+            VW2__ZS(t, eq + 1);
+        }
     }
     snprintf(b, sizeof b, "%d", ch->kv);  VW2__ZS("il_kv", b);
     snprintf(b, sizeof b, "%d", ch->bkv); VW2__ZS("il_bkv", b);
@@ -504,6 +522,20 @@ static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int i
         strcpy(ch->pin, pin);
         strcpy(ch->psh, psh);
         ch->ptw = vw2__oop_geti(r, "il_prime_tw", 0);
+    }
+    if (ch->route == VFFT_K1_IL_FS)
+    {   /* a four-step child without its own child's rows is no recipe */
+        size_t off = 0;
+        int i;
+        for (i = 0; i < r->ntok; i++)
+        {
+            int w;
+            if (r->tok[i].sect != 1 || strncmp(r->tok[i].name, "fs_", 3)) continue;
+            w = snprintf(ch->fs + off, sizeof ch->fs - off, "%s%s=%s", off ? " " : "", r->tok[i].name, r->tok[i].val);
+            if (w < 0 || (size_t)w >= sizeof ch->fs - off) return 0;
+            off += (size_t)w;
+        }
+        if (!off) return 0;
     }
     /* the recipe's own shape: a route without its payload is no recipe */
     if ((ch->route == VFFT_K1_IL_2P_PURE || ch->route == VFFT_K1_IL_FS) && !(ch->R1 > 0 && ch->R2 > 0)) return 0;

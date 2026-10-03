@@ -777,7 +777,8 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N, struct
         struct vfft_plan_s *hzm = NULL;
         if (hz && Tk > 1 && N >= 64)
         {
-            hzm = _zr2c_build_route(cfg, W, N, hz->zr2c_route, &hz->zr2c_kid->c, &hz->zr2c_kid->pr);
+            hzm = _zr2c_build_route(cfg, N, hz->zr2c_route, &hz->zr2c_kid->c, &hz->zr2c_kid->pr,
+                                    _zr2c_fs_dup(hz->zr2c_kid));
             if (hzm)
             {
                 hzm->zr2c_fold_mt = 1;
