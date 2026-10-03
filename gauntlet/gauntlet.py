@@ -297,17 +297,25 @@ def keep_awake(on):
 
 # ── the store's rows for one cell (raced / replayed / refused) ─────────────
 
-def cell_rows(store, n, ip, threads=1, real=None):
+def cell_rows(store, n, ip, threads=1, real=None, k=1):
     """the wisdom rows that decide this cell: the K=1 rows at its placement (both
     order classes) and the prime row; for a 2D shape the wisdom2_2d rows at its
     placement; at threads > 1 the rows keyed nthreads=T (a threaded plan's row is
     its own), at one thread the rows without the token. A REAL cell (real =
     "r2c" / "c2r"): its own row in wisdom2_real.txt (the zr2c route or the
     odd-N bridge verdict) and the zr2c child's c2c(N/2) row; a 2D real shape
-    the direction-shared t=r2c row in wisdom2_2d.txt. Returns key -> payload."""
+    the direction-shared t=r2c row in wisdom2_2d.txt. A 1D real batch (k > 1)
+    adds the batch's own threading verdict, eng=tcb tcmt= on its q=K row, which
+    is thread-count-free (no nthreads= token at any T). Returns key -> payload."""
     out = {}
     pl = "ip" if ip else "oop"
     want_t = int(threads) if int(threads) > 1 else 0
+    if real and not is2d(n) and int(k) > 1:
+        p = os.path.join(store, "wisdom2_real.txt")
+        if os.path.isfile(p):
+            t = io.open(p, encoding="utf-8", errors="ignore").read()
+            for m in re.finditer(r"@cell t=%s n=%d q=%d [^|\n]*place=%s[^|\n]*\| (eng=tcb[^\n]*)" % (real, n, int(k), pl), t):
+                out[m.group(0).split(" | ")[0]] = re.sub(r" date=\S+", "", m.group(1))
     if real and is2d(n):
         pats = (("wisdom2_2d.txt", r"@cell t=r2c n=%s q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (ckey(n), pl)),)
     elif real:
@@ -373,15 +381,18 @@ def stage_calibrate(run, cells, recal):
     lines = list(io.open(run.cal_log, encoding="utf-8", errors="ignore")) if os.path.isfile(run.cal_log) else []
     t0 = time.time()
     for i, n in enumerate(todo, 1):
-        before = cell_rows(run.store, n, run.ip, run.threads, run.real)
+        before = cell_rows(run.store, n, run.ip, run.threads, run.real, run.k)
         s0 = time.time()
         shape = (["--%dd" % len(n)] + [str(v) for v in n]) if is2d(n) else [str(n)]
-        r = subprocess.run([probe, run.store] + (["--" + run.real] if run.real else []) + shape + ["0", str(run.ip), str(run.threads), "1" if recal else "0"],
+        # a 1D real batch (--k K > 1): the probe creates the bench's batch, so the batch's own
+        # verdicts (its inner's row, its threading verdict tcmt=) bank in the run's store too
+        kk = [str(run.k)] if (run.real and not is2d(n) and run.k > 1) else []
+        r = subprocess.run([probe, run.store] + (["--" + run.real] if run.real else []) + shape + ["0", str(run.ip), str(run.threads), "1" if recal else "0"] + kk,
                            capture_output=True, text=True, errors="replace", env=run.env())
         ms = int((time.time() - s0) * 1000)
         text = r.stdout + r.stderr
         status = "REFUSED" if "REFUSED" in text else ("banked" if "banked" in text else "ERROR")
-        after = cell_rows(run.store, n, run.ip, run.threads, run.real)
+        after = cell_rows(run.store, n, run.ip, run.threads, run.real, run.k)
         if status != "banked":
             served = "refused"
         elif after != before:

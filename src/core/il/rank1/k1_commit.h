@@ -372,19 +372,25 @@ typedef struct { int rader; _ilprime_inner_desc_t d; } _ilprime_cand_t;
 
 /* the prime cell, banked: replay its OWN verdict (method + inner), else
  * race every buildable (method, inner) pair on the whole convolution and
- * bank the winner. Env pin VFFT_ILPR_METHOD never replays or banks. */
+ * bank the winner. The store off (W NULL or vw2_off_oop) races and banks
+ * nothing; the env pin VFFT_ILPR_METHOD=rader|blue races only that method's
+ * pool and never replays or banks. Nothing buildable: NULL, never a
+ * structural default. `won` (may be NULL) receives the served inner's
+ * descriptor, replayed or raced: a composite that banks the prime cell on
+ * its own row (zr2c) records it from there. */
 static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                                                    const vfft_config_t *cfg,
-                                                   int N)
+                                                   int N, _ilprime_inner_desc_t *won)
 {
     int hint = 0;
+    const int store = W && !W->vw2_off_oop;
+    const char *pin = getenv("VFFT_ILPR_METHOD");
+    const int pin_m = (pin && pin[0] == 'r') ? 1 : (pin && pin[0] == 'b') ? 2 : 0;   /* 1 rader, 2 bluestein */
+    const int bank = store && !pin_m;
     /* COMPOSITES COME IN TOO: Bluestein needs no primality, and the raced
-     * pool reaches as far as the ZTURN-T grammars do, where
-     * vfft_ilprime_create's structural inner (a balanced pair) stops at
-     * M = 4096. The Rader ARM is excluded below. */
-    if (!W || W->vw2_off_oop || getenv("VFFT_ILPR_METHOD"))
-        return vfft_ilprime_create(N);
-    if (!cfg->recalibrate)
+     * pool reaches as far as the ZTURN-T grammars do. The Rader ARM is
+     * excluded below. */
+    if (bank && !cfg->recalibrate)
     {
         char kind[8], shape[64];
         int tw = 0;
@@ -400,6 +406,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                     if (getenv("VFFT_ILPR_LOG"))
                         fprintf(stderr, "[ilprime] N=%d: replay %s inner %s %s tw=%d src=wisdom\n",
                                 N, hint == 1 ? "RADER" : "BLUESTEIN", kind, shape, tw);
+                    if (won) *won = d;
                     return p;
                 }
             }
@@ -420,6 +427,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
              * rather than let it offer inners that can never build, which
              * would also trip the built-none warning on every composite. */
             if (rader && !vfft_is_prime(N)) continue;
+            if (pin_m && pin_m != (rader ? 1 : 2)) continue;   /* the env pin: that method's pool only */
             static _ilprime_inner_desc_t pool[_ILPR_MAX_CANDS];   /* off the stack */
             int M, n, q;
             /* The banked method is NOT a filter here: reaching this point
@@ -479,13 +487,15 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                            N, ncm[1]);
             if (getenv("VFFT_ILPR_LOG"))
                 fprintf(stderr, "[ilprime] N=%d: inner race %d arm(s) in %d heat(s) "
-                                "[rader %d/%d, blue %d/%d] -> %s inner %s %s tw=%d, banked\n",
+                                "[rader %d/%d, blue %d/%d] -> %s inner %s %s tw=%d, %s\n",
                         N, nbuilt, nfin, builtm[0], ncm[0], builtm[1], ncm[1],
-                        fin[w]->method == 1 ? "RADER" : "BLUESTEIN", kind, shape, cands[wci].d.tw);
-            if (vw2_prime_method_bank(&W->vw2, N, fin[w]->method == 1 ? 1 : 2,
-                                      kind, shape, cands[wci].d.tw) == VW2_OK)
+                        fin[w]->method == 1 ? "RADER" : "BLUESTEIN", kind, shape, cands[wci].d.tw,
+                        bank ? "banked" : "not banked");
+            if (bank && vw2_prime_method_bank(&W->vw2, N, fin[w]->method == 1 ? 1 : 2,
+                                              kind, shape, cands[wci].d.tw) == VW2_OK)
                 _vw2_persist(W, cfg);
         }
+        if (won) *won = cands[wci].d;
         return fin[w];
     }
 }
@@ -565,7 +575,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     _k1pr_release();
     if (vfft_policy_prime_cell(N) && cfg->layout == VFFT_LAYOUT_INTERLEAVED)
     {
-        _k1pr_ctx.plan = _ilprime_create_banked(W, cfg, N);
+        _k1pr_ctx.plan = _ilprime_create_banked(W, cfg, N, NULL);
         _k1pr_ctx.N = _k1pr_ctx.plan ? N : 0;
     }
     _k1fs_ctx.W = W;
@@ -717,7 +727,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 _k1pr_ctx.N = 0;
             }
             else
-                *ilp_out = _ilprime_create_banked(W, cfg, N);
+                *ilp_out = _ilprime_create_banked(W, cfg, N, NULL);
             if (getenv("VFFT_NAT_LOG") && *ilp_out)
                 fprintf(stderr, "[k1pr] N=%d: %s prime cell (%s, M=%d) src=wisdom\n", N,
                         ip_req ? "in place" : "out of place",

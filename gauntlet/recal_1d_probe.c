@@ -4,9 +4,13 @@
  * bench_1d_vs_mkl --k1noop benches the same cell on the same store.
  *
  * Run:   recal_1d_probe.exe <wisdir> <N> [scr=0] [ip=0] [T=1] [recal=1]
- *        recal_1d_probe.exe <wisdir> --r2c|--c2r <N | --2d N1 N2> [scr=0] [ip=0] [T=1] [recal=1]
+ *        recal_1d_probe.exe <wisdir> --r2c|--c2r <N | --2d N1 N2> [scr=0] [ip=0] [T=1] [recal=1] [K=1]
  *        (2026-09-29: the REAL cell -- r2c or c2r, interleaved CCE, natural --
- *        through the same door; the flag precedes the shape)
+ *        through the same door; the flag precedes the shape. K > 1 (1D,
+ *        2026-10-03): the batch the bench's real cell creates -- K
+ *        transform-contiguous rows -- so the create banks the batch's own
+ *        verdicts too: its K=1 inner's row and its threading verdict, eng=tcb
+ *        tcmt= on the q=K row)
  *        recal_1d_probe.exe <wisdir> --2d <N1> <N2> [scr=0] [ip=0] [T=1] [recal=1]
  *        recal_1d_probe.exe <wisdir> --3d <N1> <N2> <N3> [scr=0] [ip=0] [T=1] [recal=1]
  *        (2026-09-24: the 3D interleaved cell, dims=3; its verdicts bank into wisdom2_3d.txt)
@@ -64,6 +68,7 @@ int main(int argc, char **argv)
     const int ip = argc > a0 + 2 ? atoi(argv[a0 + 2]) : 0;
     const int T = argc > a0 + 3 ? atoi(argv[a0 + 3]) : 1;
     const int recal = argc > a0 + 4 ? atoi(argv[a0 + 4]) : 1;
+    const int K = (nd == 1 && xform != VFFT_C2C && argc > a0 + 5) ? atoi(argv[a0 + 5]) : 1;
     vfft_wisdom *W;
     vfft_config_t cfg; vfft_plan p;
     double t0, t1;
@@ -98,7 +103,9 @@ int main(int argc, char **argv)
     cfg.transform = xform;
     cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
     cfg.rigor = VFFT_PATIENT;
-    cfg.dims = nd; cfg.n[0] = N; cfg.n[1] = nd > 1 ? N2 : 0; cfg.n[2] = nd > 2 ? N3 : 0; cfg.howmany = 1;
+    cfg.dims = nd; cfg.n[0] = N; cfg.n[1] = nd > 1 ? N2 : 0; cfg.n[2] = nd > 2 ? N3 : 0;
+    cfg.howmany = K > 1 ? (size_t)K : 1;
+    cfg.batch_geom = K > 1 ? VFFT_BATCH_TRANSFORM_CONTIGUOUS : VFFT_BATCH_DEFAULT; /* the bench's real batch */
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.order = xform != VFFT_C2C ? VFFT_ORDER_DEFAULT   /* a real spectrum is natural */
               : scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
@@ -112,6 +119,9 @@ int main(int argc, char **argv)
                ip ? "ip" : "oop", T, recal, p ? "banked" : "REFUSED", t1 - t0);
     else if (twod)
         printf("%sN=%dx%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", tn, N, N2, scr ? "scr" : "nat",
+               ip ? "ip" : "oop", T, recal, p ? "banked" : "REFUSED", t1 - t0);
+    else if (K > 1)
+        printf("%sN=%d K=%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", tn, N, K, scr ? "scr" : "nat",
                ip ? "ip" : "oop", T, recal, p ? "banked" : "REFUSED", t1 - t0);
     else
         printf("%sN=%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", tn, N, scr ? "scr" : "nat",

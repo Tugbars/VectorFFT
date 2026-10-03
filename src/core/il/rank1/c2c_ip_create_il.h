@@ -92,7 +92,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         if (!il2 && !il3 && !ifd && !ztt && !fs && !ilp)
             (void)_k1_il_mono_candidate(W, cfg, N, &mono_f, &mono_b);
         if (!il2 && !il3 && !ifd && !ztt && !fs && !mono_f && !ilp && (N & (N - 1)) != 0)
-            ilp = _ilprime_create_banked(W, cfg, N);   /* a route, never a fallback: the unraced cell above the ceiling */
+            ilp = _ilprime_create_banked(W, cfg, N, NULL);   /* a route, never a fallback: the unraced cell above the ceiling */
         have_k1 = vfft_policy_k1_engine_present(
             /* mono   */ mono_f != 0,   /* in place the solo tier IS a resolved fn pair */
             /* pair   */ il2 != NULL, /* chain3 */ il3 != NULL,

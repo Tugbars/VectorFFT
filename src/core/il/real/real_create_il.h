@@ -11,12 +11,11 @@
  * races. The real bridge (bridge/real_bridge.h) holds the gate and calls
  * this only for a matching request.
  *
- * Returns the handle; or NULL with *refused=0 to let an EVEN out-of-place
- * request fall through to the split real engines (the D1 bridge, phase 7);
- * or NULL with *refused=1 when no engine could be built and nothing else may
- * serve: an in-place request (the interleaved engines are the only in-place
- * real path), or any odd request (an odd cell this door admits is served by
- * its engines or refused -- never by the other library's).
+ * Returns the handle, or NULL when no engine could be built at N -- never
+ * another library's engine. *refused=1 says this door already warned (an
+ * in-place request, any odd request); *refused=0 leaves the warning to the
+ * dispatcher (bridge/real_bridge.h), which refuses an even out-of-place cell
+ * the same way.
  *
  * It runs BEFORE the split-path calibrate-on-miss blocks on purpose: a
  * zr2c-served cell must not pay for (or bank) c2c(N/2, K)/rfft rows it never

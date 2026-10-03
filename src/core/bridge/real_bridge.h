@@ -99,7 +99,7 @@ static vfft_plan _vfft_create_real_routes(const vfft_config_t *cfg,
  * smooth lengths, the two smallest with a chain), every chain the enumerator
  * yields at each (the no-silent-caps law is the enumerator's), the window
  * ladder on the two fastest; every candidate gated against K one-lane
- * transforms through the odd door's c2c reference and burst-timed; the two fastest race
+ * transforms through the doors' independent reference and burst-timed; the two fastest race
  * (the library body, paced) and the winner is banked on the cell's q=K row.
  * VFFT_ZRBL=0 keeps it out; NULL = nothing built (the request goes where it
  * went). */
@@ -174,7 +174,7 @@ static int _zrbl_try(const vfft_config_t *cfg, int N, int K, int M, const int *R
         {
             char cs[128];
             vfft_zrbl_str(h->zrbl, cs, sizeof cs);
-            fprintf(stderr, "[zrbl] N=%d K=%d %s FAILS the gate (rel %.2e vs the c2c reference) -- dropped\n", N, K, cs, e);
+            fprintf(stderr, "[zrbl] N=%d K=%d %s FAILS the gate (rel %.2e vs the reference) -- dropped\n", N, K, cs, e);
             vfft_destroy((vfft_plan)h);
             return 1;
         }
@@ -248,9 +248,9 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
     const size_t hp1 = (size_t)N / 2 + 1, nin = c2r ? 2 * hp1 * (size_t)K : (size_t)N * (size_t)K;
     const size_t nout = c2r ? (size_t)N * (size_t)K : 2 * hp1 * (size_t)K;
     const char *e = getenv("VFFT_ZRBL");
-    _real_il_odd_ref_t href;
     struct vfft_plan_s *hz[2] = { NULL, NULL };
     double *a, *ref, *b, *ti, *to;
+    int refbad = 0;
     vfft_config_t c1;
     if (e && e[0] == '0' && !e[1])
         return NULL;
@@ -278,14 +278,12 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
     }
     if (!W || W->vw2_off_oop)
         return NULL;
-    /* the reference: K one-lane transforms through the odd door's c2c
-     * reference (il/real/odd_build.h) */
+    /* the reference: K one-lane transforms through the doors' independent
+     * reference (_real_il_ref, il/real/zrp_build.h) */
     c1 = *cfg;
     c1.howmany = 1;
     c1.batch_geom = VFFT_BATCH_DEFAULT;
     c1.placement = VFFT_OUTOFPLACE;
-    if (!_real_il_odd_ref_open(&c1, N, &href))
-        return NULL;
     a = (double *)vfft_aligned_alloc((nin + 8) * sizeof(double));
     ref = (double *)vfft_aligned_alloc((nout + 8) * sizeof(double));
     b = (double *)vfft_aligned_alloc((nout + 8) * sizeof(double));
@@ -294,7 +292,6 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
     if (!a || !ref || !b || !ti || !to)
     {
         vfft_aligned_free(a); vfft_aligned_free(ref); vfft_aligned_free(b); vfft_aligned_free(ti); vfft_aligned_free(to);
-        _real_il_odd_ref_close(&href);
         return NULL;
     }
     {
@@ -307,24 +304,30 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
         if (c2r)
             for (int t = 0; t < K; t++) a[2 * t + 1] = 0.0;   /* a CCE spectrum: real DC in every lane */
         memset(ref, 0, nout * sizeof(double));
-        for (int t = 0; t < K; t++)
+        for (int t = 0; t < K && !refbad; t++)
         {   /* lane t out, through the one-lane reference, back into its lane */
             if (c2r)
             {
                 for (size_t f = 0; f < hp1; f++) { ti[2 * f] = a[2 * (f * (size_t)K + t)]; ti[2 * f + 1] = a[2 * (f * (size_t)K + t) + 1]; }
-                _real_il_odd_ref_run(&href, ti, to);
+                if (_real_il_ref(1, N, ti, to) != 0) { refbad = 1; break; }
                 for (size_t n = 0; n < (size_t)N; n++) ref[n * (size_t)K + t] = to[n];
             }
             else
             {
                 for (size_t n = 0; n < (size_t)N; n++) ti[n] = a[n * (size_t)K + t];
-                _real_il_odd_ref_run(&href, ti, to);
+                if (_real_il_ref(0, N, ti, to) != 0) { refbad = 1; break; }
                 for (size_t f = 0; f < hp1; f++) { ref[2 * (f * (size_t)K + t)] = to[2 * f]; ref[2 * (f * (size_t)K + t) + 1] = to[2 * f + 1]; }
             }
         }
     }
-    _real_il_odd_ref_close(&href);
     vfft_aligned_free(ti); vfft_aligned_free(to);
+    if (refbad)
+    {
+        _vfft_warn("vfft_create: %s N=%d K=%d lane-major: the gate's reference failed its self-check; no engine is raced",
+                   _vfft_tname(cfg->transform), N, K);
+        vfft_aligned_free(a); vfft_aligned_free(ref); vfft_aligned_free(b);
+        return NULL;
+    }
     {
         /* THE ARMS: the column form's podium (two), and the one-row engine
          * over the lanes with its edges at the lane stride -- built from the

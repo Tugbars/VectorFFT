@@ -1507,8 +1507,8 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         vw2_zr2c_child_t ca, cb;
         if (a->zr2c_route != b->zr2c_route)
             TC_NEQ("real composite route");
-        _zr2c_child_of_cand(&ca, &a->zr2c_kid->c);
-        _zr2c_child_of_cand(&cb, &b->zr2c_kid->c);
+        _zr2c_child_of_kid(&ca, a->zr2c_kid);
+        _zr2c_child_of_kid(&cb, b->zr2c_kid);
         if (memcmp(&ca, &cb, sizeof ca))
             TC_NEQ("real composite child recipe");
         return 1;
@@ -2384,6 +2384,12 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         const vfft_il_cand_t *kc = &h->zr2c_kid->c;
         FP__ADD(" zr2c_child=[r%d %d.%d c3=%d.%d fl=%d zt=%d tw=%d kv=%d bkv=%d %s]", kc->route, kc->R1, kc->R2,
                 kc->c3_A, kc->c3_B, kc->il_fl_n, kc->il_zt_n, kc->il_tw, kc->il_kv, kc->il_bkv, kc->il_flf);
+        if (kc->route == VFFT_K1_IL_PRIME)
+        {
+            vw2_zr2c_child_t kr;
+            _zr2c_child_of_kid(&kr, h->zr2c_kid);
+            FP__ADD(" zr2c_prime=[m%d %s %s tw=%d]", kr.pm, kr.pin, kr.psh, kr.ptw);
+        }
     }
     used = vfft__fp_child(h->tcb, "tcb", depth + 1, out, cap, used);
     used = vfft__fp_child(h->pq_inner, "pq", depth + 1, out, cap, used);

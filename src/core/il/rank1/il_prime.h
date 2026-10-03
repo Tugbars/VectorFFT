@@ -12,10 +12,10 @@
  *   - both directions ride the same tables (conjugated twins), because
  *     every inner serves both directions.
  *
- * METHOD: when both construct, Rader (convolution length N-1) and
- * Bluestein (M = next pow2 >= 2N-1) are RACED at create and the verdict
- * banks (vfft_ilprime_create_method). The band is whatever the inner can
- * build.
+ * METHOD: Rader (convolution length N-1) and Bluestein (M = next pow2 >=
+ * 2N-1), each with every inner of its pool, are RACED at create and the
+ * verdict banks (k1_commit.h: _ilprime_create_banked). The band is whatever
+ * the inner can build.
  *
  * MATH (from the gated split implementations — rader.h / bluestein.h —
  * with layout translated, not re-derived):
@@ -325,98 +325,6 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
 
 static inline void _ilprime_exec_bluestein(const vfft_ilprime_plan_t *p,
                                            const double *zin, double *zout,
-                                           int bwd);
-static inline void _ilprime_exec_rader(const vfft_ilprime_plan_t *p,
-                                       const double *zin, double *zout,
-                                       int bwd);
-/* the two arms of the method race */
-typedef struct { vfft_ilprime_plan_t *pr, *pb; double *zi, *zo; } _ilprime_arm_t;
-static void _ilprime_arm_rader(void *v)
-{
-    _ilprime_arm_t *c = (_ilprime_arm_t *)v;
-    _ilprime_exec_rader(c->pr, c->zi, c->zo, 0);
-}
-static void _ilprime_arm_blue(void *v)
-{
-    _ilprime_arm_t *c = (_ilprime_arm_t *)v;
-    _ilprime_exec_bluestein(c->pb, c->zi, c->zo, 0);
-}
-/* The prime cell's create.
- *   - PRIME N >= 5: Rader when its (N-1) inner builds, else Bluestein. When
- *     BOTH construct, the pick is RACED (min-of-3 forward walks on scratch,
- *     winner kept).
- *   - COMPOSITE N (e.g. a prime factor past the leaf set: 115 = 5*23,
- *     202 = 2*101): Bluestein, which is valid for any N.
- * hint = the banked method verdict: 0 = race, 1 = Rader, 2 = Bluestein.
- * VFFT_ILPR_METHOD=rader|blue pins it (env beats wisdom, never banks). */
-static inline vfft_ilprime_plan_t *vfft_ilprime_create_method(int N, int hint)
-{
-    vfft_ilprime_plan_t *pr, *pb;
-    const char *me;
-    if (N < 5) return 0;
-    if (!vfft_is_prime(N))
-        return _ilprime_create_bluestein(N);
-    me = getenv("VFFT_ILPR_METHOD");
-    if (me && me[0] == 'r')
-        return _ilprime_create_rader(N);
-    if (me && me[0] == 'b')
-        return _ilprime_create_bluestein(N);
-    if (hint == 1) {
-        pr = _ilprime_create_rader(N);
-        return pr ? pr : _ilprime_create_bluestein(N);
-    }
-    if (hint == 2)
-        return _ilprime_create_bluestein(N);
-    pr = _ilprime_create_rader(N);
-    if (!pr)
-        return _ilprime_create_bluestein(N);
-    pb = _ilprime_create_bluestein(N);
-    if (!pb)
-        return pr;
-    { /* the method race: both constructed — measure, keep the winner */
-        double *zi = _ilprime_alloc((size_t)2 * N);
-        double *zo = _ilprime_alloc((size_t)2 * N);
-        double tr = 1e300, tb = 1e300;
-        int r;
-        if (!zi || !zo)
-        { /* OOM: keep Rader (the measured-on-split ~2x prior) */
-            vfft_aligned_free(zi); vfft_aligned_free(zo);
-            vfft_ilprime_destroy(pb);
-            return pr;
-        }
-        for (r = 0; r < 2 * N; r++)
-            zi[r] = 1.0 + 1e-6 * (double)(r & 255);
-        _ilprime_exec_rader(pr, zi, zo, 0);     /* warm both */
-        _ilprime_exec_bluestein(pb, zi, zo, 0);
-        {
-            _ilprime_arm_t c = { pr, pb, zi, zo };
-            const vfft_race_arm_t arms[2] = { { "rader", _ilprime_arm_rader, &c },
-                                              { "bluestein", _ilprime_arm_blue, &c } };
-            const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* min-of-3, A then B */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
-            double ns[2];
-            vfft_race_run(&proto, arms, 2, ns);
-            tr = ns[0];
-            tb = ns[1];
-        }
-        vfft_aligned_free(zi);
-        vfft_aligned_free(zo);
-        if (getenv("VFFT_ILPR_LOG"))
-            fprintf(stderr, "[ilprime] race N=%d: rader=%.0f blue=%.0f "
-                            "-> %s\n",
-                    N, tr, tb, tr <= tb ? "RADER" : "BLUESTEIN");
-        (void)0;
-        if (tr <= tb)
-        {
-            vfft_ilprime_destroy(pb);
-            return pr;
-        }
-        vfft_ilprime_destroy(pr);
-        return pb;
-    }
-}
-
-static inline void _ilprime_exec_bluestein(const vfft_ilprime_plan_t *p,
-                                           const double *zin, double *zout,
                                            int bwd)
 {
     const int N = p->N, M = p->M;
@@ -486,11 +394,6 @@ static inline void vfft_ilprime_execute_bwd(const vfft_ilprime_plan_t *p,
 {
     if (p->method) _ilprime_exec_rader(p, zin, zout, 1);
     else           _ilprime_exec_bluestein(p, zin, zout, 1);
-}
-
-static inline vfft_ilprime_plan_t *vfft_ilprime_create(int N)
-{
-    return vfft_ilprime_create_method(N, 0);
 }
 
 #endif /* VFFT_IL_PRIME_H */

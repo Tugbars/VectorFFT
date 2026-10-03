@@ -199,12 +199,13 @@ static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_config_t *c, struct vfft_w
     if (W && !W->vw2_off_oop && vw2_real_il_lookup_zr2c(&W->vw2, N2, 0, 0, 1, &r, &fmt, &ch) && r == route)
     {
         vfft_il_cand_t kc;
+        _zr2c_prime_t pr;
         struct vfft_plan_s *e;
         _zr2c_cand_of_child(&kc, &ch);
-        if ((e = _zr2c_build_route(c, W, N2, route, &kc)) != NULL)
+        if (_zr2c_prime_of_child(&pr, &ch) && (e = _zr2c_build_route(c, W, N2, route, &kc, &pr)) != NULL)
             return e;
     }
-    return _zr2c_build_route(c, W, N2, route, NULL);
+    return _zr2c_build_route(c, W, N2, route, NULL, NULL);
 }
 
 /* a token's engine: 1 = built (door: nothing to build), 0 = it does not build here */
