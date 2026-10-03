@@ -2263,6 +2263,20 @@ let zil_pure_cells : (string * string list) list =
     , [ "47"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix47_z_rn1_bwd_avx2.c"
     , [ "47"; "--cil-rn1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* 53, 59, 61 (2026-10-03): the odd primes between the chain's largest
+       radix and the real Bluestein's floor -- the mono is their one engine *)
+  ; ( "radix53_z_rn1_avx2.c"
+    , [ "53"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix53_z_rn1_bwd_avx2.c"
+    , [ "53"; "--cil-rn1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix59_z_rn1_avx2.c"
+    , [ "59"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix59_z_rn1_bwd_avx2.c"
+    , [ "59"; "--cil-rn1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix61_z_rn1_avx2.c"
+    , [ "61"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix61_z_rn1_bwd_avx2.c"
+    , [ "61"; "--cil-rn1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix64_z_rn1_avx2.c"
     , [ "64"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix64_z_rn1_bwd_avx2.c"

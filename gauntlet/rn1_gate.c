@@ -44,6 +44,9 @@ DECL(37)
 DECL(41)
 DECL(43)
 DECL(47)
+DECL(53)
+DECL(59)
+DECL(61)
 DECL(64)
 #undef DECL
 
@@ -80,6 +83,9 @@ static const cell_t cells[] = {
     { 41, radix41_z_rn1_fwd_avx2, radix41_z_rn1_bwd_avx2 },
     { 43, radix43_z_rn1_fwd_avx2, radix43_z_rn1_bwd_avx2 },
     { 47, radix47_z_rn1_fwd_avx2, radix47_z_rn1_bwd_avx2 },
+    { 53, radix53_z_rn1_fwd_avx2, radix53_z_rn1_bwd_avx2 },
+    { 59, radix59_z_rn1_fwd_avx2, radix59_z_rn1_bwd_avx2 },
+    { 61, radix61_z_rn1_fwd_avx2, radix61_z_rn1_bwd_avx2 },
     { 64, radix64_z_rn1_fwd_avx2, radix64_z_rn1_bwd_avx2 },
 };
 
