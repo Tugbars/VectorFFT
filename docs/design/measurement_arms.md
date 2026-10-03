@@ -932,15 +932,17 @@ no column-MT race can run. Verified three independent ways:
 ### E2. IL - the REAL tier
 
 ```
-E2.1 rw - the ROW ROUTE       RACED, PER DIRECTION. The per-row TC door (one
-                              vfft_execute on the transform-contiguous batch
-                              handle at (N2, K=N1)) vs ROWSPLIT at width W.
-                              r2c and c2r race their own rw/wl/cmt and bank them
-                              as separate token sets (c2r: rw_c2r wl_c2r
-                              cmt_c2r) on the ONE direction-shared real IL row
-                              (the chain is shared by the pair law). Until
-                              2026-09-02 both directions wrote the same tokens and
-                              c2r replayed r2c's verdicts.
+E2.1 rx - the ROW ENGINE      RACED in the row role (r2c, one thread, even N2:
+                              il2d_real_plan.h); none = the per-row door (the
+                              K=1 1D real engine at N2 over every row). The
+                              ROWSPLIT row arm (a split-layout child at (N2,
+                              K=W)) and its rw= token were RETIRED 2026-10-03:
+                              measured no better than the door, beaten by the
+                              row plan 1.2-1.9x.
+                              r2c and c2r race their own wl/cmt and bank them
+                              as separate token sets (c2r: wl_c2r cmt_c2r) on
+                              the ONE direction-shared real IL row (the chain
+                              is shared by the pair law).
 E2.2 wl - banded column walk  RACED. unbanded vs WPOOL, filtered by
                               _il2d_real_wl_cut >= 0 and wl < N1.
 E2.3 cmt / cmtt               RACED, per-T. serial _il2d_real_cols vs threaded
@@ -949,16 +951,14 @@ E2.3 cmt / cmtt               RACED, per-T. serial _il2d_real_cols vs threaded
                               cannot engage (T<2 or units<T) the early bank writes
                               cmt=0.
 E2.4 zr2c route (row child)   RACED, kind-5.
-E2.5 rfft factorization for a ROWSPLIT arm  RACED - and banked EVEN WHEN THE ARM
-                              LOSES.
-E2.6 inner c2c (N2/2, W) for a ROWSPLIT arm  RACED.
-E2.7 r2c route for a ROWSPLIT arm            RACED.
-E2.8 c2r route for a ROWSPLIT arm            RACED.
+E2.5-E2.8                     RETIRED 2026-10-03 with the ROWSPLIT arm (its split
+                              child's rfft factorization, inner c2c, r2c and c2r
+                              route sub-tournaments).
 E2.9 column chain             STRUCTURAL for the real tier: precedence is
                               env > banked lay=il real row > greedy-longest.
                               (Asymmetry with E1.1, which IS raced for c2c.)
 E2.10 oddn2                   STRUCTURAL. Odd N2 real rows ride a K=1 c2c child.
-E2.11 norowz                  ENV only (VFFT_IL2D_NO_ROWZ).
+E2.11 norowz                  RETIRED 2026-10-03 (the ROWSPLIT doors' A/B knob).
 E2.12 wc / roop               STRUCTURALLY UNREACHABLE for real.
 E2.13 column-axis Bluestein M STRUCTURAL. M = 16, then while (M < 2*N1-1) M <<= 1.
                               Its INNER chain at M: served from the (M, N2) 2D
@@ -968,9 +968,9 @@ E2.13 column-axis Bluestein M STRUCTURAL. M = 16, then while (M < 2*N1-1) M <<= 
                               measured.
 ```
 
-**The oddn2 / column-MT guard asymmetry is DELIBERATE.** The row-route race at
-`vfft.c:6914-6919` carries `!il2d_oddn2`; the column-MT guard at `:6923-6924` does not.
-Odd N2 has no ROWSPLIT arm to race, but column threading stays valid. Measured
+**The oddn2 / column-MT guard asymmetry is DELIBERATE.** The wl race carries
+`!il2d_oddn2`; the column-MT guard does not. Odd N2's rows ride the c2c child and the
+banded walk is not raced there, but column threading stays valid. Measured
 consistent: 128x127 at T=8 engages `cmt` and is BIT-IDENTICAL to T=1 (0 of 16448 doubles
 differ).
 

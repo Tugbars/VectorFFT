@@ -31,7 +31,7 @@ four fastest and the winner's stack states raced against zr2c and the pairs,
 the winner banked as `eng=zttr chain= tile= stk=`, in place through a plan
 scratch with the ZTT's prefetching in-place terminator), odd N = the
 promote-to-complex bridge, K>1 = the split real engines behind the z-doors,
-2D = per-row zr2c or ROWSPLIT rows then the il2d columns. The baseline
+2D = per-row zr2c rows then the il2d columns (ROWSPLIT retired 2026-10-03). The baseline
 below predates ZTT-r in the door. Measured by the gauntlet's real contract (`--real r2c|c2r`,
 `--k K`, `--cmp fftw|mkl`; the bench cell `--realfwd/--realbwd/--2drealnat`)
 against FFTW 3.3.10 (MEASURE, out of place) and MKL on the same banked plans.
