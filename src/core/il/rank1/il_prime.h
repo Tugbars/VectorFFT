@@ -191,6 +191,10 @@ typedef struct {
     double *omf, *omb;         /* 2(N-1): FFT kernels, 1/(N-1) baked */
     /* scratch: two packed planes of the inner size */
     double *za, *zb;
+    /* the threaded form (il_prime_mt.h): 0 = serial, 1 = BLOCKS, 2 = TILES
+     * -- the inner ZTURN-T's walk -- bound for mt_t threads; plan input,
+     * raced per thread count */
+    int mt, mt_t;
 } vfft_ilprime_plan_t;
 
 static inline void vfft_ilprime_destroy(vfft_ilprime_plan_t *p)
@@ -323,6 +327,56 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
     return p;
 }
 
+/* the convolution's own passes over a RANGE of the plane: the serial run
+ * takes the whole range, the threaded form (il_prime_mt.h) cuts it -- the
+ * same code for every element either way */
+/* Bluestein's modulate: za[n] = zin[n] c[n] below N, 0 above, n in [lo, hi) */
+static inline void _ilprime_bs_in(const double *zin, const double *c, double *za, size_t N,
+                                  size_t lo, size_t hi)
+{
+    const size_t e = hi < N ? hi : N;
+    for (size_t n = lo; n < e; n++) {
+        double xr = zin[2 * n], xi = zin[2 * n + 1];
+        double cr = c[2 * n], ci = c[2 * n + 1];
+        za[2 * n]     = xr * cr - xi * ci;
+        za[2 * n + 1] = xr * ci + xi * cr;
+    }
+    if (hi > N)
+    {
+        const size_t z0 = lo > N ? lo : N;
+        memset(za + 2 * z0, 0, 2 * (hi - z0) * sizeof(double));
+    }
+}
+/* Bluestein's demodulate: zout[k] = za[k] c[k], k in [lo, hi) */
+static inline void _ilprime_bs_out(const double *za, const double *c, double *zout, size_t lo, size_t hi)
+{
+    for (size_t k = lo; k < hi; k++) {
+        double vr = za[2 * k], vi = za[2 * k + 1];
+        double cr = c[2 * k], ci = c[2 * k + 1];
+        zout[2 * k]     = vr * cr - vi * ci;
+        zout[2 * k + 1] = vr * ci + vi * cr;
+    }
+}
+/* Rader's gather: za[q] = zin[gat[q]], q in [lo, hi) */
+static inline void _ilprime_rd_in(const double *zin, const int *gat, double *za, size_t lo, size_t hi)
+{
+    for (size_t q = lo; q < hi; q++) {
+        int s = gat[q];
+        za[2 * q] = zin[2 * s];
+        za[2 * q + 1] = zin[2 * s + 1];
+    }
+}
+/* Rader's scatter: zout[sct[q]] = x0 + za[q], q in [lo, hi) */
+static inline void _ilprime_rd_out(const double *za, const int *sct, double *zout, double x0r, double x0i,
+                                   size_t lo, size_t hi)
+{
+    for (size_t q = lo; q < hi; q++) {
+        int s = sct[q];
+        zout[2 * s]     = x0r + za[2 * q];
+        zout[2 * s + 1] = x0i + za[2 * q + 1];
+    }
+}
+
 static inline void _ilprime_exec_bluestein(const vfft_ilprime_plan_t *p,
                                            const double *zin, double *zout,
                                            int bwd)
@@ -330,22 +384,11 @@ static inline void _ilprime_exec_bluestein(const vfft_ilprime_plan_t *p,
     const int N = p->N, M = p->M;
     const double *c = bwd ? p->chb : p->chf;
     const double *kern = bwd ? p->kb : p->kf;
-    memset(p->za, 0, (size_t)2 * M * sizeof(double));
-    for (int n = 0; n < N; n++) {
-        double xr = zin[2 * n], xi = zin[2 * n + 1];
-        double cr = c[2 * n], ci = c[2 * n + 1];
-        p->za[2 * n]     = xr * cr - xi * ci;
-        p->za[2 * n + 1] = xr * ci + xi * cr;
-    }
+    _ilprime_bs_in(zin, c, p->za, (size_t)N, 0, (size_t)M);
     _ilprime_inner_fwd(&p->inner, p->za, p->zb);
     _ilprime_cmul_vec(p->zb, kern, (size_t)M);
     _ilprime_inner_bwd(&p->inner, p->zb, p->za);
-    for (int k = 0; k < N; k++) {
-        double vr = p->za[2 * k], vi = p->za[2 * k + 1];
-        double cr = c[2 * k], ci = c[2 * k + 1];
-        zout[2 * k]     = vr * cr - vi * ci;
-        zout[2 * k + 1] = vr * ci + vi * cr;
-    }
+    _ilprime_bs_out(p->za, c, zout, 0, (size_t)N);
 }
 
 static inline void _ilprime_exec_rader(const vfft_ilprime_plan_t *p,
@@ -362,19 +405,11 @@ static inline void _ilprime_exec_rader(const vfft_ilprime_plan_t *p,
         dcr += zin[2 * n];
         dci += zin[2 * n + 1];
     }
-    for (int q = 0; q < nm1; q++) {
-        int s = gat[q];
-        p->za[2 * q] = zin[2 * s];
-        p->za[2 * q + 1] = zin[2 * s + 1];
-    }
+    _ilprime_rd_in(zin, gat, p->za, 0, (size_t)nm1);
     _ilprime_inner_fwd(&p->inner, p->za, p->zb);
     _ilprime_cmul_vec(p->zb, om, (size_t)nm1);
     _ilprime_inner_bwd(&p->inner, p->zb, p->za);
-    for (int q = 0; q < nm1; q++) {
-        int s = sct[q];
-        zout[2 * s]     = x0r + p->za[2 * q];
-        zout[2 * s + 1] = x0i + p->za[2 * q + 1];
-    }
+    _ilprime_rd_out(p->za, sct, zout, x0r, x0i, 0, (size_t)nm1);
     zout[0] = dcr;
     zout[1] = dci;
 }
