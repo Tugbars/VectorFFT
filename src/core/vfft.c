@@ -1135,6 +1135,7 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
  * real role on the planner and built by its builder. */
 #include "il/real/zr2c_build.h" /* interleaved-CCE real route (step 18) */
 #include "il/real/zrp_build.h"  /* the real pair + the real door's engine race (2026-09-29) */
+#include "il/real/odd_build.h"  /* the real door's odd-N engine pick: zrm / zrf / zrb, the odd real race (2026-10-03) */
 #include "il/rank2/il2d_real_plan.h" /* the 2D real tier's row engine and its planner: the row race in the row role (2026-10-01) */
 #include "il/rank3/fftnd_il.h"     /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
 /* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
@@ -1881,12 +1882,11 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * out-of-place and rejected it in-place. */
         !(cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
           cfg->howmany == 1 && (cfg->n[0] % 2) == 0) &&
-        /* an odd cell with a real flat DIT chain, or the Bluestein's, goes on
-         * to the odd real race (bridge/real_bridge.h): those engines are one
-         * pipeline in both placements, and the race's in-place incumbent is
-         * the bridge below */
+        /* an odd cell with an IL real engine (the mono, the real flat DIT,
+         * the real Bluestein: one pipeline in both placements) goes on to the
+         * real door's odd race (il/real/odd_build.h) */
         !(cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->howmany == 1 && !ob &&
-          (cfg->n[0] & 1) && (_zrf_has_chain(cfg->n[0]) || _zrb_ok(cfg->n[0]))))
+          _real_il_odd_admits(cfg->n[0], cfg->transform == VFFT_C2R)))
     {
         /* ODD N in-place (2026-08-27, (c) of the odd-real list): the
          * CCE plane contract holds at odd N too — 2*(N/2+1) = N+1

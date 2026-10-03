@@ -137,9 +137,9 @@ as linked `.c` files; they include no core headers.
   ZTURN-T, the four-step, IL primes), raced by `il/planning/dp_planner_il.h`.
 - **r2c/c2r**: `split/real/r2c_dispatch.h` / `c2r_dispatch.h`; interleaved
   K=1: even N in the real door `il/real/zrp_build.h` (zr2c, the pair, ZTT-r,
-  the mono, the four-step), odd N in the odd real race of
-  `bridge/real_bridge.h` (the mono, the real flat DIT `il/real/zrf.h`, the
-  odd routes).
+  the mono, the four-step), odd N in the door's odd race `il/real/odd_build.h`
+  (the mono, the real flat DIT `il/real/zrf.h`, the real Bluestein
+  `il/real/zrb.h`; gated against an IL c2c reference).
 - **trig/DSP**: `split/trig/{dct,dct1,dct4,dst,dht}.h`.
 - **2D/3D/4D**: split `split/rank2/`, `split/rank3/`; interleaved `il/rank2/`
   (il2d tier), `il/rank3/fftnd_il.h`.
