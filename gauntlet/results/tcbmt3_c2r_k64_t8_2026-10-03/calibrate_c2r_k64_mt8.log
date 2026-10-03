@@ -1,0 +1,15 @@
+45         banked       175ms replayed  chain
+97         banked       133ms replayed  -
+105        banked       196ms raced     chain
+159        banked       191ms raced     -
+225        banked       192ms raced     chain
+251        banked       195ms raced     -
+315        banked       196ms raced     chain
+509        banked       201ms raced     -
+1001       banked       194ms raced     flat
+1009       banked       195ms raced     -
+2003       banked       206ms raced     flat
+2025       banked       191ms raced     chain
+3465       banked       197ms raced     chain
+4099       banked       209ms raced     -
+6561       banked       201ms raced     chain

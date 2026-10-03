@@ -10263,5 +10263,3 @@
 @cell t=c2c n=4194304 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=fs il_pair=1024.4096 il_kv=0 | ran=1 ns=20776300.0 metric=fwd1 units=ns src=race date=2026-09-30
 @cell t=c2c n=4099 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=49379.7 metric=fwd1 units=ns src=race date=2026-10-03
 @cell t=c2c n=4099 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=50264.1 metric=fwd1 units=ns src=race date=2026-10-03
-@cell t=c2c n=6561 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.9.9.9 il_forms=t.t.o il_kv=0 | ran=1 ns=13820.7 metric=fwd1 units=ns src=race date=2026-10-03
-@cell t=c2c n=6561 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.9.9.9 il_forms=t.t.n il_kv=0 | ran=1 ns=12355.9 metric=fwd1 units=ns src=race date=2026-10-03

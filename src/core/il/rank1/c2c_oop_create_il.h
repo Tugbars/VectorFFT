@@ -297,7 +297,7 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
             _k1pr_ctx.N = 0;
         }
         else
-            ilpr = _ilprime_create_banked(W, cfg, N);
+            ilpr = _ilprime_create_banked(W, cfg, N, NULL);
         _k1pr_release();
         ilr = ilpr ? VFFT_K1_IL_PRIME : VFFT_K1_IL_NONE;   /* truthful: the route names a plan that exists */
         if (ilpr && getenv("VFFT_NAT_LOG"))

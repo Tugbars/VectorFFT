@@ -1,0 +1,15 @@
+45         banked       222ms raced     chain
+97         banked       195ms raced     -
+105        banked       203ms raced     chain
+159        banked       203ms raced     -
+225        banked       200ms raced     chain
+251        banked       204ms raced     -
+315        banked       198ms raced     chain
+509        banked       210ms raced     -
+1001       banked       203ms raced     flat
+1009       banked       195ms raced     -
+2003       banked       202ms raced     flat
+2025       banked       192ms raced     chain
+3465       banked       195ms raced     chain
+4099       banked       210ms raced     -
+6561       banked       196ms raced     chain

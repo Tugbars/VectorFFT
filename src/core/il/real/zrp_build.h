@@ -6,7 +6,7 @@
  *   zr2c  x read as z[N/2] -> a c2c(N/2) child -> the Hermitian fold pass
  *         (zr2c_build.h: the child raced in the real role per route, the
  *         two composites raced; the route and the child's recipe are
- *         banked here when zr2c wins)
+ *         banked here when zr2c wins) -- an ordinary candidate
  *   zrp   the real pair (zrp.h): form A = the stock n1t leaf over the packed
  *         view + t2h, form B = the real leaf r2z + t2m; no fold pass. The
  *         pair and the form are PLAN INPUT.
@@ -21,21 +21,25 @@
  *         c2c four-step at N/2 with the fold fused into its order sweep;
  *         the split is PLAN INPUT, swept at create.
  *   zrm   the real mono (zrm.h): the whole transform as one rn1 kernel at
- *         N <= 64; no plan input. Odd N races it in bridge/real_bridge.h
- *         against the odd-real routes (the door is even-N).
+ *         N <= 64; no plan input. Odd N races it in il/real/odd_build.h
+ *         (the door is even-N).
  *   zrf   the real flat DIT (zrf.h): odd N on the c2c flat DIT's stages
  *         behind a real leaf; the chain, the split-body switch and the
  *         tile budget are PLAN INPUT, swept by the odd race in
- *         bridge/real_bridge.h.
+ *         il/real/odd_build.h.
  * The cell's engine is read from the real shard (wisdom2_real_il.h); a miss
- * races zr2c against every legal pair in every form and the ZTT-r shortlist
- * through the finished handles, gates each arm's output against zr2c's
- * before timing, and banks the winner (3% hysteresis toward zr2c, the
- * incumbent). VFFT_ZRP=R1.R2[.f] pins a pair (f = 0 form A, 1 form B;
- * default A), VFFT_ZRP=0 pins zr2c, VFFT_ZTTR=chain/tile[/stk] (4.8.8.4/512/3)
- * [/mt] pins ZTT-r (mt = its threaded arm on a threaded plan), VFFT_ZRM=1 pins the real mono and VFFT_ZRM=0 keeps it out of
- * the race, VFFT_ZFSR=N1xN2 pins the real four-step and VFFT_ZFSR=0 keeps it
- * out; env beats wisdom and never banks.
+ * races every candidate the band admits (the c2c band map at N/2: zr2c at
+ * every even N, its threaded fold at T > 1, the mono to 64, the pairs inside
+ * their band, ZTT-r's shortlist, the four-step in its band) through the
+ * finished handles, gates each against the independent reference before
+ * timing, and banks the fastest -- no incumbent, no bias; one candidate is
+ * still timed and banked, none is a refusal. VFFT_ZRP=R1.R2[.f] pins a pair
+ * (f = 0 form A, 1 form B; default A), VFFT_ZTTR=chain/tile[/stk]
+ * (4.8.8.4/512/3) [/mt] pins ZTT-r (mt = its threaded arm on a threaded
+ * plan), VFFT_ZRM=1 pins the real mono, VFFT_ZFSR=N1xN2 pins the real
+ * four-step; VFFT_ZRP=0, VFFT_ZRM=0 and VFFT_ZFSR=0 keep that engine out of
+ * the race. Env beats wisdom and never banks: a pin serves unbanked, and a
+ * race with an engine kept out banks nothing.
  *
  * INCLUSION CONTRACT: after zr2c_build.h and _vw2_persist (vfft.c).
  */
@@ -389,7 +393,7 @@ static void _real_il_exec_any(struct vfft_plan_s *h, const double *s0, double *b
 static double _zrpr_relerr(const double *a, const double *b, size_t n);
 
 /* ZTT-r's sweep: every {4,8} chain of N/2 at the tile widths {untiled, 512,
- * 1024, 2048, 3072}, each gated against zr2c's output, then burst-timed
+ * 1024, 2048, 3072}, each gated against the reference, then burst-timed
  * (best of five); the four fastest and the winner's other three stack
  * states become race arms. The finished handles are returned in hz[]. */
 #define VFFT_ZTTR_MAX_ARMS 8
@@ -467,8 +471,8 @@ static int _zttr_sweep(const vfft_config_t *cfg, int N, const double *a, const d
     return n;
 }
 
-/* the real four-step's sweep: every split of N/2, each gated against zr2c's
- * output, then burst-timed (best of three); the fastest is returned as the
+/* the real four-step's sweep: every split of N/2, each gated against the
+ * reference, then burst-timed (best of three); the fastest is returned as the
  * one race arm, the others destroyed. */
 static struct vfft_plan_s *_zfsr_sweep(const vfft_config_t *cfg, int N, struct vfft_wisdom_s *W,
                                        const double *a, const double *ref, double *b,
@@ -489,7 +493,7 @@ static struct vfft_plan_s *_zfsr_sweep(const vfft_config_t *cfg, int N, struct v
             const double e = _zrpr_relerr(b, ref, nchk);
             if (e >= 1e-10)
             {
-                fprintf(stderr, "[zfsr] N=%d split %dx%d FAILS the gate (rel %.2e vs zr2c) -- dropped\n",
+                fprintf(stderr, "[zfsr] N=%d split %dx%d FAILS the gate (rel %.2e vs the reference) -- dropped\n",
                         N, n1[i], n2[i], e);
                 vfft_destroy((vfft_plan)h);
                 continue;
@@ -527,234 +531,349 @@ static double _zrpr_relerr(const double *a, const double *b, size_t n)
     return m > 0.0 ? e / m : e;
 }
 
-/* The engine race. Returns the serving handle; NULL only when nothing builds. */
-static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
-                                         struct vfft_wisdom_s *W)
+/* THE GATE'S REFERENCE (both real doors: this one and il/real/odd_build.h, and
+ * the lane Bluestein's create): the INDEPENDENT forward DFT the c2c planner
+ * gates against (il/planning/dp_planner_il.h) -- the scalar radix-2 transform
+ * at a pow2 N, the long-double mixed-radix DIT at any N whose primes the
+ * chain radices carry, and at an N with a prime factor past them (where the
+ * mixed-radix form turns quadratic: minutes at a prime near 2^18) a Bluestein
+ * convolution over the radix-2 transform, its chirp in long double. It shares
+ * nothing with the candidates (no codelet, no plan, no table) and touches no
+ * wisdom; it checks itself against VFFT_IL_DP_REF_PROBES bins summed directly.
+ * In place over N complex points; 0 = trusted, -1 = refuse the cell. */
+static int _real_il_ref_bluestein(double *z, long N)
+{
+    long M = 1, k;
+    double *a, *b;
+    while (M < 2 * N - 1) M <<= 1;
+    a = (double *)malloc((size_t)M * 4u * sizeof(double));
+    if (!a)
+        return -1;
+    b = a + 2 * M;
+    memset(a, 0, (size_t)M * 4u * sizeof(double));
+    for (k = 0; k < N; k++)
+    {   /* w_k = exp(-i pi k^2 / N), the angle reduced mod 2N exactly */
+        const long double ang = VFFT_PI_L * (long double)(((long long)k * k) % (2LL * N)) / (long double)N;
+        const double wr = (double)cosl(ang), wi = -(double)sinl(ang);
+        a[2 * k] = z[2 * k] * wr - z[2 * k + 1] * wi;
+        a[2 * k + 1] = z[2 * k] * wi + z[2 * k + 1] * wr;
+        b[2 * k] = wr; b[2 * k + 1] = -wi;                    /* conj(w_k) */
+        if (k)
+        {
+            b[2 * (M - k)] = wr; b[2 * (M - k) + 1] = -wi;
+        }
+    }
+    _il_dp_ref_dft(a, M);
+    _il_dp_ref_dft(b, M);
+    for (k = 0; k < M; k++)
+    {   /* the product, conjugated: the inverse is conj(forward(conj)) */
+        const double xr = a[2 * k] * b[2 * k] - a[2 * k + 1] * b[2 * k + 1];
+        const double xi = a[2 * k] * b[2 * k + 1] + a[2 * k + 1] * b[2 * k];
+        a[2 * k] = xr; a[2 * k + 1] = -xi;
+    }
+    _il_dp_ref_dft(a, M);
+    for (k = 0; k < N; k++)
+    {   /* conv_k = conj(a_k) / M, then X_k = w_k conv_k */
+        const long double ang = VFFT_PI_L * (long double)(((long long)k * k) % (2LL * N)) / (long double)N;
+        const double wr = (double)cosl(ang), wi = -(double)sinl(ang);
+        const double cr = a[2 * k] / (double)M, ci = -a[2 * k + 1] / (double)M;
+        z[2 * k] = cr * wr - ci * wi;
+        z[2 * k + 1] = cr * wi + ci * wr;
+    }
+    free(a);
+    return 0;
+}
+static int _real_il_ref_dft(double *z, long N)
+{
+    double *z0 = (double *)malloc((size_t)N * 2u * sizeof(double));
+    double scale = 0.0;
+    if (!z0 || N < 2)
+    {
+        free(z0);
+        return -1;
+    }
+    memcpy(z0, z, (size_t)N * 2u * sizeof(double));
+    if ((N & (N - 1)) == 0)
+        _il_dp_ref_dft(z, N);
+    else if (vfft_policy_prime_cell((int)N))
+    {
+        if (_real_il_ref_bluestein(z, N) != 0)
+        {
+            free(z0);
+            return -1;
+        }
+    }
+    else
+        _il_dp_ref_dft_mixed(z, N);
+    for (long m = 0; m < N; m++)
+    {
+        const double g = fabs(z[2 * m]) + fabs(z[2 * m + 1]);
+        if (g > scale) scale = g;
+    }
+    if (!(scale > 0.0))
+    {
+        free(z0);
+        return -1;                            /* also catches a NaN reference */
+    }
+    for (int p = 0; p < VFFT_IL_DP_REF_PROBES; p++)
+    {
+        const long m = ((long)p * N) / VFFT_IL_DP_REF_PROBES + p;
+        double sr = 0.0, si = 0.0, d;
+        if (m >= N) break;
+        for (long j = 0; j < N; j++)
+        {
+            const double ang = -2.0 * VFFT_PI * (double)(((long long)j * m) % N) / (double)N;
+            const double cr = cos(ang), ci = sin(ang);
+            sr += z0[2 * j] * cr - z0[2 * j + 1] * ci;
+            si += z0[2 * j] * ci + z0[2 * j + 1] * cr;
+        }
+        d = fabs(z[2 * m] - sr) + fabs(z[2 * m + 1] - si);
+        if (!(d / scale <= VFFT_IL_DP_REF_TOL))
+        {
+            free(z0);
+            return -1;                        /* NaN-safe */
+        }
+    }
+    free(z0);
+    return 0;
+}
+/* the real cell's reference from the independent DFT: r2c = the bins
+ * 0..N/2 of the N reals in a (2*(N/2+1) doubles); c2r = N x from the N/2+1
+ * bins in a (an even N's Nyquist bin real): the unnormalised inverse is
+ * conj(forward(conj)) of the Hermitian-extended spectrum. 0 = trusted. */
+static int _real_il_ref(int c2r, int N, const double *a, double *ref)
+{
+    const size_t n = (size_t)N, hp1 = n / 2 + 1;
+    double *z = (double *)malloc(2 * n * sizeof(double));
+    int rc;
+    if (!z)
+        return -1;
+    if (!c2r)
+    {
+        _il2d_row_promote(a, z, n);
+        rc = _real_il_ref_dft(z, (long)N);
+        if (rc == 0)
+            memcpy(ref, z, 2 * hp1 * sizeof(double));
+    }
+    else
+    {
+        _il2d_row_extend(a, z, n, hp1);
+        for (size_t k = 0; k < n; k++) z[2 * k + 1] = -z[2 * k + 1];
+        rc = _real_il_ref_dft(z, (long)N);
+        if (rc == 0)
+            for (size_t k = 0; k < n; k++) ref[k] = z[2 * k];   /* Re(conj(.)) = Re(.) */
+    }
+    free(z);
+    return rc;
+}
+
+/* The pairs' band: the c2c band map at N/2 (il/planning/policy_il.h) -- the
+ * pairs lost every pow2 c2c cell at 2048 and above, so a real pair whose N/2
+ * is such a cell is out of the race. */
+static int _real_il_pair_band(int N)
+{
+    const int M = N / 2;
+    return !((M & (M - 1)) == 0 && M >= 2048);
+}
+
+/* THE ENGINE RACE (no incumbent). The candidates, admitted per band (the c2c
+ * band map at N/2; each family answers for itself whether it builds at N):
+ *   zr2c   at every even N (the fold and a c2c(N/2) child raced in the real
+ *          role, its route raced inside its build); its threaded fold at
+ *          T > 1 is a candidate of its own;
+ *   zrm    N <= 64 with an rn1 kernel;
+ *   zrp    every legal pair in both forms, inside the pairs' band;
+ *   zttr   ZTT-r's sweep shortlist (N >= 64, a ZTT chain at N/2);
+ *   zfsr   the real four-step's fastest split, in its band.
+ * Every candidate is gated against the independent reference before timing,
+ * then all race on equal terms (9 rounds alternated, median; a threaded
+ * plan's arms unpaced) and the fastest serves. A single candidate is still
+ * timed and banked: it IS the cell's verdict. No candidate: NULL (the door
+ * warns and refuses). bank = 0 (the store off, or an env switch keeping an
+ * engine out of the field) races without banking. out_zrp / out_zrm keep the
+ * pairs / the mono out (VFFT_ZRP=0 / VFFT_ZRM=0); the four-step's own switch
+ * (VFFT_ZFSR=0) is read here. */
+static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N, struct vfft_wisdom_s *W,
+                                         int bank, int out_zrp, int out_zrm)
 {
     const int c2r = cfg->transform == VFFT_C2R, ip = cfg->placement == VFFT_INPLACE;
     const int Tk = _vfft_plan_threads(cfg);   /* the verdict's thread key */
-    int arms_in[VFFT_ZRP_MAX_ARMS][3];
-    const int np = _zrp_arms(N, arms_in, VFFT_ZRP_MAX_ARMS);
-    struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);   /* its child raced in role, its route raced; banked below when it wins */
-    /* the real mono: one kernel at N <= 64 (VFFT_ZRM=0 keeps it out) */
-    struct vfft_plan_s *hm = (N <= VFFT_ZRM_MAX_N && _zrm_env() != 0) ? _zrm_build_plan(cfg, N) : NULL;
-    if (np == 0 && N < 64 && !hm)
-        return hz;
-    struct vfft_plan_s *hp[VFFT_ZRP_MAX_ARMS];
-    int spec[VFFT_ZRP_MAX_ARMS][3];
-    int na = 0;
-    for (int i = 0; i < np; i++)
-    {
-        struct vfft_plan_s *h = _zrp_build_pair(cfg, N, arms_in[i][0], arms_in[i][1], arms_in[i][2]);
-        if (h)
-        {
-            hp[na] = h;
-            memcpy(spec[na], arms_in[i], sizeof spec[na]);
-            na++;
-        }
-    }
-    if (!hz)
-    {
-        /* zr2c could not build: the mono, else the first pair, serves; no bank */
-        if (hm)
-        {
-            for (int i = 0; i < na; i++) vfft_destroy((vfft_plan)hp[i]);
-            return hm;
-        }
-        return na ? hp[0] : NULL;
-    }
+    enum { NARMS = 4 + VFFT_ZRP_MAX_ARMS + VFFT_ZTTR_MAX_ARMS };
     const size_t xs = (size_t)N + 2;
+    const size_t nchk = c2r ? (size_t)N : xs;
+    struct vfft_plan_s *hall[NARMS];
+    char names[NARMS][40];
+    int nall = 0;
     double *a = (double *)vfft_aligned_alloc(xs * sizeof(double));
     double *b = (double *)vfft_aligned_alloc(xs * sizeof(double));
     double *ref = (double *)vfft_aligned_alloc(xs * sizeof(double));
+    const double *s0 = ip ? b : a;
     if (!a || !b || !ref)
     {
         vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
-        for (int i = 0; i < na; i++) vfft_destroy((vfft_plan)hp[i]);
-        if (hm) vfft_destroy((vfft_plan)hm);
-        return hz;
+        return NULL;
     }
-    unsigned sd = 0x9e3779b9u ^ (unsigned)N ^ (unsigned)(c2r << 8) ^ (unsigned)(ip << 9);
-    for (size_t i = 0; i < xs; i++)
     {
-        sd = sd * 1664525u + 1013904223u;
-        a[i] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
+        unsigned sd = 0x9e3779b9u ^ (unsigned)N ^ (unsigned)(c2r << 8) ^ (unsigned)(ip << 9);
+        for (size_t i = 0; i < xs; i++)
+        {
+            sd = sd * 1664525u + 1013904223u;
+            a[i] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
+        }
     }
     if (c2r)
         a[1] = a[2 * (N / 2) + 1] = 0.0; /* a CCE spectrum: real DC and Nyquist */
-    const double *s0 = ip ? b : a;
-    /* the gate: each arm's output against zr2c's, before any timing */
-    memcpy(b, a, xs * sizeof(double));
-    _exec_zr2c(hz, s0, b);
-    memcpy(ref, b, xs * sizeof(double));
-    const size_t nchk = c2r ? (size_t)N : xs;
-    int keep = 0;
-    for (int i = 0; i < na; i++)
+    memset(ref, 0, xs * sizeof(double));
+    if (_real_il_ref(c2r, N, a, ref) != 0)
     {
-        memcpy(b, a, xs * sizeof(double));
-        _exec_zrp(hp[i], s0, b);
-        double e = _zrpr_relerr(b, ref, nchk);
-        if (e < 1e-10)
-        {
-            hp[keep] = hp[i];
-            memcpy(spec[keep], spec[i], sizeof spec[keep]);
-            keep++;
-        }
-        else
-        {
-            fprintf(stderr, "[zrp] N=%d %s %s pair %d.%d form %c FAILS the gate (rel %.2e vs zr2c) -- dropped\n",
-                    N, c2r ? "c2r" : "r2c", ip ? "ip" : "oop", spec[i][0], spec[i][1],
-                    spec[i][2] ? 'B' : 'A', e);
-            vfft_destroy((vfft_plan)hp[i]);
-        }
+        _vfft_warn("vfft_create: %s N=%d: the gate's reference failed its self-check; no engine is raced",
+                   _vfft_tname(cfg->transform), N);
+        vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
+        return NULL;
     }
-    na = keep;
-    /* the real mono, gated the same way */
-    if (hm)
+#define ZRPR_GATE(h, what)                                                                          \
+    do {                                                                                            \
+        memcpy(b, a, xs * sizeof(double));                                                          \
+        _real_il_exec_any((h), s0, b);                                                              \
+        const double e_ = _zrpr_relerr(b, ref, nchk);                                               \
+        if (e_ >= 1e-10)                                                                            \
+        {                                                                                           \
+            fprintf(stderr, "[real] N=%d %s %s %s FAILS the gate (rel %.2e vs the reference) -- dropped\n", \
+                    N, c2r ? "c2r" : "r2c", ip ? "ip" : "oop", (what), e_);                         \
+            vfft_destroy((vfft_plan)(h));                                                           \
+            (h) = NULL;                                                                             \
+        }                                                                                           \
+    } while (0)
+    /* zr2c, and its threaded fold at T > 1 (the same child route) */
     {
-        memcpy(b, a, xs * sizeof(double));
-        _exec_zrm(hm, s0, b);
-        double e = _zrpr_relerr(b, ref, nchk);
-        if (e >= 1e-10)
+        struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);
+        struct vfft_plan_s *hzm = NULL;
+        if (hz && Tk > 1 && N >= 64)
         {
-            fprintf(stderr, "[zrm] N=%d %s %s the real mono FAILS the gate (rel %.2e vs zr2c) -- dropped\n",
-                    N, c2r ? "c2r" : "r2c", ip ? "ip" : "oop", e);
-            vfft_destroy((vfft_plan)hm);
-            hm = NULL;
+            hzm = _zr2c_build_route(cfg, W, N, hz->zr2c_route, &hz->zr2c_kid->c, &hz->zr2c_kid->pr);
+            if (hzm)
+            {
+                hzm->zr2c_fold_mt = 1;
+                ZRPR_GATE(hzm, "zr2c+foldmt");
+            }
         }
-    }
-    /* ZTT-r: the sweep's shortlist, gated in the sweep */
-    struct vfft_plan_s *ht[VFFT_ZTTR_MAX_ARMS];
-    const int nt = N >= 64 ? _zttr_sweep(cfg, N, a, ref, b, s0, xs, nchk, ht) : 0;
-    /* the real four-step above ZTT-r's band: the fastest split (VFFT_ZFSR=0 keeps it out) */
-    struct vfft_plan_s *hf = NULL;
-    {
-        int e1, e2;
-        if (vfft_zfsr_band(N) && _zfsr_env(&e1, &e2) != 0)
-            hf = _zfsr_sweep(cfg, N, W, a, ref, b, s0, xs, nchk);
-    }
-    /* zr2c with its fold cut over the plan's threads: an arm of its own at T > 1
-     * (the same child route, gated like every arm) */
-    struct vfft_plan_s *hzm = NULL;
-    if (Tk > 1 && N >= 64)
-    {
-        hzm = _zr2c_build_route(cfg, W, N, hz->zr2c_route, &hz->zr2c_kid->c);   /* the same child */
+        if (hz)
+            ZRPR_GATE(hz, "zr2c");
+        if (hz)
+        {
+            snprintf(names[nall], sizeof names[nall], "zr2c");
+            hall[nall++] = hz;
+        }
         if (hzm)
         {
-            hzm->zr2c_fold_mt = 1;
-            memcpy(b, a, xs * sizeof(double));
-            _exec_zr2c(hzm, s0, b);
-            if (_zrpr_relerr(b, ref, nchk) >= 1e-10)
+            snprintf(names[nall], sizeof names[nall], "zr2c+foldmt");
+            hall[nall++] = hzm;
+        }
+    }
+    /* the real mono */
+    if (N <= VFFT_ZRM_MAX_N && !out_zrm)
+    {
+        struct vfft_plan_s *hm = _zrm_build_plan(cfg, N);
+        if (hm)
+            ZRPR_GATE(hm, "zrm");
+        if (hm)
+        {
+            snprintf(names[nall], sizeof names[nall], "zrm");
+            hall[nall++] = hm;
+        }
+    }
+    /* the pairs, inside their band */
+    if (!out_zrp && _real_il_pair_band(N))
+    {
+        int arms_in[VFFT_ZRP_MAX_ARMS][3];
+        const int np = _zrp_arms(N, arms_in, VFFT_ZRP_MAX_ARMS);
+        for (int i = 0; i < np && nall < NARMS; i++)
+        {
+            char what[24];
+            struct vfft_plan_s *h = _zrp_build_pair(cfg, N, arms_in[i][0], arms_in[i][1], arms_in[i][2]);
+            snprintf(what, sizeof what, "zrp%d.%d%c", arms_in[i][0], arms_in[i][1], arms_in[i][2] ? 'B' : 'A');
+            if (h)
+                ZRPR_GATE(h, what);
+            if (h)
             {
-                fprintf(stderr, "[zr2c] N=%d %s %s the threaded fold FAILS the gate -- dropped\n",
-                        N, c2r ? "c2r" : "r2c", ip ? "ip" : "oop");
-                vfft_destroy((vfft_plan)hzm);
-                hzm = NULL;
+                snprintf(names[nall], sizeof names[nall], "%s", what);
+                hall[nall++] = h;
             }
         }
     }
-    if (na == 0 && nt == 0 && !hm && !hf && !hzm)
+    /* ZTT-r: the sweep's shortlist, gated in the sweep */
+    if (N >= 64)
+    {
+        struct vfft_plan_s *ht[VFFT_ZTTR_MAX_ARMS];
+        const int nt = _zttr_sweep(cfg, N, a, ref, b, s0, xs, nchk, ht);
+        for (int i = 0; i < nt; i++)
+        {
+            char cs[32];
+            if (nall >= NARMS) { vfft_destroy((vfft_plan)ht[i]); continue; }
+            vfft_ztt_chain_str(ht[i]->zttr->zt, cs, sizeof cs);
+            snprintf(names[nall], sizeof names[nall], "zttr%s/%zu/s%d/m%d", cs, ht[i]->zttr->zt->tile, ht[i]->zttr->stk, ht[i]->zttr->mt);
+            hall[nall++] = ht[i];
+        }
+    }
+    /* the real four-step in its band: the fastest split (VFFT_ZFSR=0 keeps it out) */
+    {
+        int e1, e2;
+        if (vfft_zfsr_band(N) && _zfsr_env(&e1, &e2) != 0 && nall < NARMS)
+        {
+            struct vfft_plan_s *hf = _zfsr_sweep(cfg, N, W, a, ref, b, s0, xs, nchk);
+            if (hf)
+            {
+                snprintf(names[nall], sizeof names[nall], "zfsr%dx%d", hf->zfsr->N1, hf->zfsr->N2);
+                hall[nall++] = hf;
+            }
+        }
+    }
+#undef ZRPR_GATE
+    if (nall == 0)
     {
         vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
-        return hz;
+        return NULL;
     }
     _vfft_create_race_count++;
-    double t0 = vfft_now_ns();
-    memcpy(b, a, xs * sizeof(double));
-    _exec_zr2c(hz, s0, b);
-    double est = vfft_now_ns() - t0;
-    int reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
-    if (reps < 2) reps = 2;
-    if (reps > 4096) reps = 4096; /* a sample stays ~0.3 ms: the tiny cells (tens of ns a shot) need the reps */
-    enum { NARMS = 4 + VFFT_ZRP_MAX_ARMS + VFFT_ZTTR_MAX_ARMS };
-    _zrpr_arm_t ctx[NARMS];
-    vfft_race_arm_t arms[NARMS];
-    char names[NARMS][40];
-    struct vfft_plan_s *hall[NARMS];
-    int nall = 0;
-    ctx[0].h = hz; ctx[0].s0 = s0; ctx[0].b = b;
-    arms[0].name = "zr2c"; arms[0].run = _zrpr_arm_run; arms[0].ctx = &ctx[0];
-    hall[nall++] = hz;
-    if (hzm)
-    {
-        ctx[nall].h = hzm; ctx[nall].s0 = s0; ctx[nall].b = b;
-        snprintf(names[nall], sizeof names[nall], "zr2c+foldmt");
-        arms[nall].name = names[nall]; arms[nall].run = _zrpr_arm_run; arms[nall].ctx = &ctx[nall];
-        hall[nall] = hzm;
-        nall++;
-    }
-    if (hm)
-    {
-        ctx[nall].h = hm; ctx[nall].s0 = s0; ctx[nall].b = b;
-        snprintf(names[nall], sizeof names[nall], "zrm");
-        arms[nall].name = names[nall]; arms[nall].run = _zrpr_arm_run; arms[nall].ctx = &ctx[nall];
-        hall[nall] = hm;
-        nall++;
-    }
-    for (int i = 0; i < na; i++)
-    {
-        ctx[nall].h = hp[i]; ctx[nall].s0 = s0; ctx[nall].b = b;
-        snprintf(names[nall], sizeof names[nall], "zrp%d.%d%c", spec[i][0], spec[i][1], spec[i][2] ? 'B' : 'A');
-        arms[nall].name = names[nall]; arms[nall].run = _zrpr_arm_run; arms[nall].ctx = &ctx[nall];
-        hall[nall] = hp[i];
-        nall++;
-    }
-    if (hf)
-    {
-        ctx[nall].h = hf; ctx[nall].s0 = s0; ctx[nall].b = b;
-        snprintf(names[nall], sizeof names[nall], "zfsr%dx%d", hf->zfsr->N1, hf->zfsr->N2);
-        arms[nall].name = names[nall]; arms[nall].run = _zrpr_arm_run; arms[nall].ctx = &ctx[nall];
-        hall[nall] = hf;
-        nall++;
-    }
-    for (int i = 0; i < nt; i++)
-    {
-        char cs[32];
-        ctx[nall].h = ht[i]; ctx[nall].s0 = s0; ctx[nall].b = b;
-        vfft_ztt_chain_str(ht[i]->zttr->zt, cs, sizeof cs);
-        snprintf(names[nall], sizeof names[nall], "zttr%s/%zu/s%d/m%d", cs, ht[i]->zttr->zt->tile, ht[i]->zttr->stk, ht[i]->zttr->mt);
-        arms[nall].name = names[nall]; arms[nall].run = _zrpr_arm_run; arms[nall].ctx = &ctx[nall];
-        hall[nall] = ht[i];
-        nall++;
-    }
-    na = nall - 1;
     double ns[NARMS];
-    {
-        /* 9 rounds alternated, median; the in-place arms walk b, which the
-         * race never reseeds: the values drift but the work does not. A
-         * threaded plan's arms are never paced (a pause parks the pool and the
-         * next round pays the wake) and take two untimed passes first */
-        const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, Tk > 1 ? 2 : 1, NULL, NULL, Tk > 1 ? 0 : 1 };
-        vfft_race_run(&proto, arms, nall, ns);
-    }
     int best = 0;
-    for (int i = 1; i <= na; i++)
+    {
+        _zrpr_arm_t ctx[NARMS];
+        vfft_race_arm_t arms[NARMS];
+        double t0, est;
+        int reps;
+        for (int i = 0; i < nall; i++)
+        {
+            ctx[i].h = hall[i]; ctx[i].s0 = s0; ctx[i].b = b;
+            arms[i].name = names[i]; arms[i].run = _zrpr_arm_run; arms[i].ctx = &ctx[i];
+        }
+        memcpy(b, a, xs * sizeof(double));
+        t0 = vfft_now_ns();
+        _zrpr_arm_run(&ctx[0]);
+        est = vfft_now_ns() - t0;
+        reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
+        if (reps < 2) reps = 2;
+        if (reps > 4096) reps = 4096; /* a sample stays ~0.3 ms: the tiny cells (tens of ns a shot) need the reps */
+        {
+            /* 9 rounds alternated, median; the in-place arms walk b, which the
+             * race never reseeds: the values drift but the work does not. A
+             * threaded plan's arms are never paced (a pause parks the pool and
+             * the next round pays the wake) and take two untimed passes first */
+            const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, Tk > 1 ? 2 : 1, NULL, NULL, Tk > 1 ? 0 : 1 };
+            vfft_race_run(&proto, arms, nall, ns);
+        }
+    }
+    for (int i = 1; i < nall; i++)
         if (ns[i] < ns[best]) best = i;
-    /* 3% hysteresis toward zr2c, the incumbent */
-    if (best != 0 && !vfft_race_beats(ns[best], ns[0], 0.97))
-        best = 0;
     if (getenv("VFFT_ZRACE_VERBOSE"))
     {
-        fprintf(stderr, "[zrp] N=%d %s %s engine race: reps=%d hyst=3%% | zr2c=%.0f", N,
-                c2r ? "c2r" : "r2c", ip ? "ip" : "oop", reps, ns[0]);
-        for (int i = 1; i <= na; i++) fprintf(stderr, " %s=%.0f", names[i], ns[i]);
-        fprintf(stderr, " -> %s\n", best ? names[best] : "zr2c");
+        fprintf(stderr, "[real] N=%d %s %s engine race%s: |", N, c2r ? "c2r" : "r2c", ip ? "ip" : "oop",
+                bank ? "" : " (not banked)");
+        for (int i = 0; i < nall; i++) fprintf(stderr, " %s=%.0f%s", names[i], ns[i], i == best ? "*" : "");
+        fprintf(stderr, "\n");
     }
     vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
-    if (best == 0)
-    {
-        /* zr2c: its route and its child's recipe on the cell's row (every thread count) */
-        if (W && !W->vw2_off_oop)
-        {
-            if (_zr2c_bank(W, cfg, N, hz, ns[0]) == VW2_OK)
-                _vw2_persist(W, cfg);
-            else
-                fprintf(stderr, "vfft: real engine verdict NOT banked at N=%d (zr2c) -- the cell will re-race\n", N);
-        }
-        for (int i = 1; i < nall; i++) vfft_destroy((vfft_plan)hall[i]);
-        return hz;
-    }
-    if (W && !W->vw2_off_oop)
+    if (bank && W && !W->vw2_off_oop)
     {
         struct vfft_plan_s *hw = hall[best];
         int rc;
@@ -780,25 +899,37 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N,
     return hall[best];
 }
 
-/* The door's engine pick: env pin, the banked engine, or the race. */
+/* The door's engine pick: an env pin, the banked engine, or the race. A pin
+ * serves its engine (never banks, never replays); an out-switch (VFFT_ZRP=0,
+ * VFFT_ZRM=0, VFFT_ZFSR=0) keeps that engine out of the field, and a race run
+ * with an engine out never banks (a verdict of a partial field is not the
+ * cell's). A banked row naming an engine that no longer builds, or one kept
+ * out, is a miss: the race. NULL = no engine builds at N. */
 static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
                                           struct vfft_wisdom_s *W)
 {
     const int c2r = cfg->transform == VFFT_C2R, ip = cfg->placement == VFFT_INPLACE;
     const int Tk = _vfft_plan_threads(cfg);   /* the verdict's thread key */
+    int out_zrp = 0;
+    const int out_zrm = _zrm_env() == 0;
+    int out_zfsr;
+    {
+        int e1 = 0, e2 = 0;
+        out_zfsr = _zfsr_env(&e1, &e2) == 0;
+    }
     {
         const char *e = getenv("VFFT_ZRP");
         if (e && e[0])
         {
             int R1 = 0, R2 = 0, form = 0;
             if (!strcmp(e, "0"))
-                return _zr2c_build(cfg, N, W);
-            if (sscanf(e, "%d.%d.%d", &R1, &R2, &form) >= 2)
+                out_zrp = 1;
+            else if (sscanf(e, "%d.%d.%d", &R1, &R2, &form) >= 2)
             {
                 struct vfft_plan_s *h = _zrp_build_pair(cfg, N, R1, R2, form ? 1 : 0);
                 if (h)
                     return h;
-                _vfft_warn("vfft_create: VFFT_ZRP=%s does not build at N=%d (falling through to the door)", e, N);
+                _vfft_warn("vfft_create: VFFT_ZRP=%s does not build at N=%d (the door decides)", e, N);
             }
         }
     }
@@ -830,7 +961,7 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
                 if (h)
                     return h;
             }
-            _vfft_warn("vfft_create: VFFT_ZTTR=%s does not build at N=%d (falling through to the door)", e, N);
+            _vfft_warn("vfft_create: VFFT_ZTTR=%s does not build at N=%d (the door decides)", e, N);
         }
     }
     {
@@ -840,7 +971,7 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
             struct vfft_plan_s *h = _zfsr_build_plan(cfg, N, e1, e2, W);
             if (h)
                 return h;
-            _vfft_warn("vfft_create: VFFT_ZFSR=%dx%d does not build at N=%d (falling through to the door)", e1, e2, N);
+            _vfft_warn("vfft_create: VFFT_ZFSR=%dx%d does not build at N=%d (the door decides)", e1, e2, N);
         }
     }
     if (_zrm_env() == 1)
@@ -848,13 +979,13 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
         struct vfft_plan_s *h = _zrm_build_plan(cfg, N);
         if (h)
             return h;
-        _vfft_warn("vfft_create: VFFT_ZRM=1 has no real mono kernel at N=%d (falling through to the door)", N);
+        _vfft_warn("vfft_create: VFFT_ZRM=1 has no real mono kernel at N=%d (the door decides)", N);
     }
     if (W && !W->vw2_off_oop && !cfg->recalibrate)
     {
         int R1, R2, form;
         const char *eng = vw2_real_il_lookup(&W->vw2, N, c2r, ip, Tk, &R1, &R2, &form);
-        if (eng && !strcmp(eng, "zfsr"))
+        if (eng && !strcmp(eng, "zfsr") && !out_zfsr)
         {
             int s1, s2;
             if (vw2_real_il_lookup_zfsr(&W->vw2, N, c2r, ip, Tk, &s1, &s2))
@@ -863,16 +994,12 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
                 if (h)
                     return h;
             }
-            /* a banked split that no longer builds: fall through to the race */
         }
-        else if (eng && !strcmp(eng, "zrm"))
+        else if (eng && !strcmp(eng, "zrm") && !out_zrm)
         {
-            struct vfft_plan_s *h = _zrm_env() == 0 ? NULL : _zrm_build_plan(cfg, N);
+            struct vfft_plan_s *h = _zrm_build_plan(cfg, N);
             if (h)
                 return h;
-            if (_zrm_env() == 0)
-                return _zr2c_build(cfg, N, W); /* the mono kept out by env: the incumbent serves */
-            /* a banked mono without a kernel at this ISA: fall through to the race */
         }
         else if (eng && !strcmp(eng, "zttr"))
         {
@@ -885,14 +1012,12 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
                 if (h)
                     return h;
             }
-            /* a banked chain that no longer builds: fall through to the race */
         }
-        else if (eng && !strcmp(eng, "zrp") && R1 > 0)
+        else if (eng && !strcmp(eng, "zrp") && R1 > 0 && !out_zrp)
         {
             struct vfft_plan_s *h = _zrp_build_pair(cfg, N, R1, R2, form);
             if (h)
                 return h;
-            /* a banked pair that no longer builds: fall through to the race */
         }
         else if (eng && !strcmp(eng, "zr2c"))
         {
@@ -902,10 +1027,10 @@ static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
             /* a zr2c row without its child's recipe (it predates the in-role
              * child), or one that no longer builds: the race */
         }
+        /* any other row (an engine kept out, a recipe that no longer builds):
+         * the race, which overwrites it */
     }
-    if (!W || W->vw2_off_oop)
-        return _zr2c_build(cfg, N, W);
-    return _real_il_race(cfg, N, W);
+    return _real_il_race(cfg, N, W, !out_zrp && !out_zrm && !out_zfsr, out_zrp, out_zrm);
 }
 
 #endif /* VFFT_TRANSFORMS_REAL_ZRP_BUILD_H */

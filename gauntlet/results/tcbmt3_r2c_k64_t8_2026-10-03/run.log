@@ -1,0 +1,8 @@
+2026-10-03 12:49:58 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-10-03 12:49:58 run: 15 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-03 12:49:58 calibrate: 15 cells (0 already done)
+2026-10-03 12:50:01   calibrated 15/15 (6561), 3 s elapsed
+2026-10-03 12:50:01 bench: 15 cells (0 already benched, 0 not banked -> not benched)
+2026-10-03 12:50:35   benched 15/15 (6561), 26 s elapsed
+2026-10-03 12:50:43 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\tcbmt3_r2c_k64_t8_2026-10-03\report_r2c_k64_mt8.md
+2026-10-03 12:50:43 merged into C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom

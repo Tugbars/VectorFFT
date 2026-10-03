@@ -362,7 +362,10 @@ static inline int vw2_real_il_bank_zrbl(vw2_store_t *s, int realN, int K, int is
  * reads and writes no c2c row. The recipe is written in the c2c K=1 record's
  * vocabulary (wisdom2_oop_il.h), plus il_bkv (the backward forms, the only
  * forms a c2r child runs). One record per (transform, N, placement, T); on a
- * threaded plan's row fold= says how the fold is served. */
+ * threaded plan's row fold= says how the fold is served. A PRIME child's
+ * prime cell rides here too, in the prime row's vocabulary under il_prime*:
+ * the method and the inner, raced on the cell's own convolution with no
+ * store -- a zr2c create reads and writes no prime row either. */
 typedef struct
 {
     int  route;            /* il_route: VFFT_K1_IL_* */
@@ -373,6 +376,10 @@ typedef struct
     int  tw;               /* il_tw (the flat DIT's / ZTURN-T's tile) */
     int  zt[7], zt_n;      /* il_ztt (ZTURN-T's chain) / il_sb (the four-step's super-band chain) */
     int  kv, bkv;          /* il_kv (forward forms), il_bkv (backward forms) */
+    int  pm;               /* il_prime: 1 rader, 2 bluestein (route PRIME only) */
+    char pin[8];           /* il_prime_in (the inner's kind: 2p | 3p | ztt) */
+    char psh[64];          /* il_prime_sh (its shape) */
+    int  ptw;              /* il_prime_tw (its tile, 0 = untiled) */
 } vw2_zr2c_child_t;
 
 static inline int vw2__zr2c_ints_str(char *b, size_t cap, const int *v, int n)
@@ -417,6 +424,14 @@ static inline int vw2_real_il_bank_zr2c(vw2_store_t *s, int realN, int is_c2r, i
         VW2__ZS(ch->route == VFFT_K1_IL_ZTT ? "il_ztt" : "il_sb", b);
     }
     if (ch->tw > 0) { snprintf(b, sizeof b, "%d", ch->tw); VW2__ZS("il_tw", b); }
+    if (ch->route == VFFT_K1_IL_PRIME)
+    {   /* the prime cell: no method and inner, no recipe */
+        if ((ch->pm != 1 && ch->pm != 2) || !ch->pin[0] || !ch->psh[0]) goto bad;
+        VW2__ZS("il_prime", ch->pm == 1 ? "rader" : "bluestein");
+        VW2__ZS("il_prime_in", ch->pin);
+        VW2__ZS("il_prime_sh", ch->psh);
+        snprintf(b, sizeof b, "%d", ch->ptw); VW2__ZS("il_prime_tw", b);
+    }
     snprintf(b, sizeof b, "%d", ch->kv);  VW2__ZS("il_kv", b);
     snprintf(b, sizeof b, "%d", ch->bkv); VW2__ZS("il_bkv", b);
 #undef VW2__ZS
@@ -446,7 +461,7 @@ static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int i
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    const char *eng, *rt, *fd, *il, *ff;
+    const char *eng, *rt, *fd, *il, *ff, *pm, *pin, *psh;
     int v[10], n;
     *route = 0; *fold_mt = 0;
     memset(ch, 0, sizeof *ch);
@@ -473,6 +488,17 @@ static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int i
     ch->tw = vw2__oop_geti(r, "il_tw", 0);
     ch->kv = vw2__oop_geti(r, "il_kv", 0);
     ch->bkv = vw2__oop_geti(r, "il_bkv", 0);
+    if (ch->route == VFFT_K1_IL_PRIME)
+    {   /* a prime child without its method and inner is no recipe */
+        pm = vw2_rec_get(r, "il_prime"); pin = vw2_rec_get(r, "il_prime_in"); psh = vw2_rec_get(r, "il_prime_sh");
+        if (!pm || !pin || !psh || strlen(pin) >= sizeof ch->pin || strlen(psh) >= sizeof ch->psh) return 0;
+        if (!strcmp(pm, "rader")) ch->pm = 1;
+        else if (!strcmp(pm, "bluestein")) ch->pm = 2;
+        else return 0;
+        strcpy(ch->pin, pin);
+        strcpy(ch->psh, psh);
+        ch->ptw = vw2__oop_geti(r, "il_prime_tw", 0);
+    }
     /* the recipe's own shape: a route without its payload is no recipe */
     if ((ch->route == VFFT_K1_IL_2P_PURE || ch->route == VFFT_K1_IL_FS) && !(ch->R1 > 0 && ch->R2 > 0)) return 0;
     if (ch->route == VFFT_K1_IL_CHAIN3 && !ch->c3[0]) return 0;
