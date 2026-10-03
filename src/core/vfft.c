@@ -42,6 +42,8 @@
 #include "il/rank1/ztt_mt.h"         /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
 #include "il/real/zttr_mt.h"         /* ZTT-r's threaded arms: the same walk, the fold staying fused (2026-09-30) */
 #include "il/real/zrf_mt.h"          /* the real flat DIT's threaded form: the first level cut by columns and tiles (2026-09-30) */
+#include "il/rank1/il_prime_mt.h"     /* the prime cell's threaded form: the inner's walk + the passes cut (2026-10-03) */
+#include "il/real/zrb_mt.h"          /* the real Bluestein's threaded form, the same (2026-10-03) */
 #include "il_flatdit_race.h"    /* its FORM / TILE races on the shared race body      */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
@@ -143,6 +145,10 @@ long _vfft_zfsr_mt_count = 0;
 long vfft_zfsr_mt_passes(void) { return _vfft_zfsr_mt_count; }
 long _vfft_zrf_mt_count = 0;         /* the real flat DIT's threaded form (il/real/zrf_mt.h): threaded executes run */
 long vfft_zrf_mt_passes(void) { return _vfft_zrf_mt_count; }
+long _vfft_ilpr_mt_count = 0;        /* the prime cell's threaded form (il/rank1/il_prime_mt.h): threaded executes run */
+long vfft_ilpr_mt_passes(void) { return _vfft_ilpr_mt_count; }
+long _vfft_zrb_mt_count = 0;         /* the real Bluestein's threaded form (il/real/zrb_mt.h): threaded executes run */
+long vfft_zrb_mt_passes(void) { return _vfft_zrb_mt_count; }
 /* the gate's hook (benches/ztt_mt_gate.c): build a ZTURN-T plan, bind the
  * arm for T, run it threaded on the process pool, write y; returns 1 when
  * the threaded walk ran, 0 when it declined (then y is untouched), -1 when

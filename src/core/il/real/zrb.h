@@ -51,6 +51,8 @@ typedef struct vfft_zrb_s
     double *za, *zb;            /* two packed planes of M */
     char ikind[8], ishape[64];  /* the inner's name, as the prime route spells it (banked, fingerprinted) */
     int itw;                    /* the inner's tile, 0 = untiled */
+    int mt, mt_t;               /* the threaded form (zrb_mt.h): 0 serial, 1 BLOCKS, 2 TILES --
+                                 * the inner ZTURN-T's walk -- bound for mt_t threads */
 } vfft_zrb_plan_t;
 
 /* the smallest legal M at odd N: (3N-1)/2 */
