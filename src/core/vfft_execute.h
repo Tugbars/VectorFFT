@@ -401,15 +401,8 @@ void vfft_destroy(vfft_plan h)
             vfft_aligned_free(h->il2d_csk_scr);
             free(h->il2d_col.bandscr);
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
-            if (h->il2d_rows)
-                vfft_destroy(h->il2d_rows); /* the rowsplit band engine */
             if (h->il2d_rx_eng)
                 vfft_destroy((vfft_plan)h->il2d_rx_eng); /* the real tier's row engine */
-            free(h->il2d_lx);
-            free(h->il2d_lre);
-            free(h->il2d_lim);
-            free(h->il2d_tre);
-            free(h->il2d_tim);
             for (s2 = 0; s2 < h->il2d_col.nst; s2++)
             {
                 free(h->il2d_col.tf[s2]);

@@ -417,18 +417,6 @@ struct vfft_plan_s
      * not commute with the column stages (§2.5), rows sit OUTSIDE any
      * banded walk. */
     double *il2d_rscr;
-    /* the ROWSPLIT row route (owner 2026-08-26: "il at the boundary,
-     * split inside" — the cascade pattern, NOT the banned wrapper): rows
-     * in bands of il2d_rw; per band = SIMD transpose rows->lanes ->
-     * il2d_rows (the raced SPLIT r2c/c2r engine at (N2, K=rw)) ->
-     * transpose + zip into the IL plane. Kills the per-row dispatch toll
-     * at tiny N2 (priced 7.7 vs 29 ns/row at 4096x16). Lane planes are
-     * padded to hp1p = (hp1+3)&~3 rows (the 4x4 transpose reads whole
-     * quads; the garbage tail lands in rows nothing reads). NULL/0 =
-     * the per-row TC door serves. Env VFFT_IL2D_ROWSPLIT=W (raced arm;
-     * serving verdicts are M3's route race). */
-    struct vfft_plan_s *il2d_rows;
-    int il2d_rw;
     /* THE REAL TIER'S ROW ENGINE, r2c (il/rank2/il2d_real_plan.h): the row
      * pass's own plan, picked by the create's row race in the row role and
      * banked on the 2D real row (rx= / rxs=). il2d_rx_lm = the rows kernel
@@ -508,13 +496,6 @@ struct vfft_plan_s
                           * plane it still reads (block b's natural
                           * targets can be block b' > b's unread comb
                           * rows — the clobber the first cut shipped) */
-    int il2d_norowz; /* 1 = skip the fused row-mode doors (the staged
-                      * 3-pass route serves) — the A/B race knob, read
-                      * from VFFT_IL2D_NO_ROWZ at CREATE (env cost never
-                      * reaches execute; two plans in one process can
-                      * differ = same-run arms). */
-    double *il2d_lx, *il2d_lre, *il2d_lim; /* lane-major: N2*rw, hp1p*rw x2 */
-    double *il2d_tre, *il2d_tim;           /* row-major halves: rw*hp1p x2 */
     /* 1 = the c2c in-place plan's codelet IGNORES the partial-lane count `me` (processes the full baked K),
      * so a _c2c_mt K-split slab would overrun adjacent lanes -> wrong output. Detected once at create by a
      * whole-vs-split self-check; when set, the FFT runs WHOLE-BATCH under MT (the reorder pass still threads).

@@ -10,7 +10,7 @@
  * (wide, ranged, banded, natural, Bluestein).
  *
  * NOT here, and not by oversight (both live in il2d_tier.h):
- *   - the RACERS (_il2d_race_chains, _il2d_axis_race, _il2d_real_rowrace,
+ *   - the RACERS (_il2d_race_chains, _il2d_axis_race, _il2d_real_wlrace,
  *     the MT races). They carry the create-time protocol and the banking, and
  *     they belong with the wisdom write path, not with the kernels.
  *   - anything that dereferences a plan (_il2d_real_wl_cut reads h->N,

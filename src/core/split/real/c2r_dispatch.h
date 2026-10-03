@@ -198,37 +198,6 @@ static inline void vfft_c2r_disp_execute(const vfft_c2r_disp_t *p,
         stride_execute_c2r(p->stride, in_a, in_b, out);
 }
 
-/* ── ROW-MODE backward door (the rowsplit fusion mirror): transform t's
- * interleaved CCE row at zrows + t*zp -> its REAL row at xrows + t*xp.
- * The rows are unzipped ONCE into the plan's lane-major working planes
- * (_r2c_row_pack doubles as the (re,im)-pair unzip — same movement),
- * the bwd runs on them directly (no split-door memcpys), and the worker
- * transposes each lane block to rows while L1-hot. STRIDE even-N plans
- * only; returns -1 with NOTHING done otherwise. */
-static inline int vfft_c2r_disp_execute_rowz(
-    vfft_c2r_disp_t *p, const double *zrows, size_t zp, double *xrows,
-    size_t xp)
-{
-    if (!p->stride || p->stride->override_bwd != _r2c_execute_bwd)
-        return -1;
-    {
-        stride_r2c_data_t *d =
-            (stride_r2c_data_t *)p->stride->override_data;
-        if (!d->rowwork)
-            d->rowwork = (double *)malloc(
-                (size_t)2 * d->half_N * d->K * sizeof(double));
-        if (!d->rowwork)
-            return -1;
-        _r2c_row_pack(zrows, zp, d->rowwork, d->c2r_im_buf,
-                      d->half_N + 1, d->K, 0);
-        d->rowxo = xrows;
-        d->rowxop = xp;
-        _r2c_execute_bwd(d, d->rowwork, d->c2r_im_buf);
-        d->rowxo = NULL;
-    }
-    return 0;
-}
-
 /* inverse with INTERLEAVED spectrum input (z[2*(f*K+t)]). STRIDE: native
  * zi-mode preprocess, real_out via the in-place bwd (im arg unused in zi mode:
  * worker_bwd touches im only through _r2c_preprocess). NATURAL: the natural

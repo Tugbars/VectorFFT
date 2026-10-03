@@ -1,8 +1,7 @@
 /* k1_transpose.h - the plane transposes of the K=1 four-step passes.
  *
  * Pure data movement, layout-neutral: the split OOP plan (BAILEY2V, CCOL)
- * transposes its column planes with them and the interleaved 2D tier's
- * ROWSPLIT route transposes its split child's planes. Carved verbatim out of
+ * transposes its column planes with them. Carved verbatim out of
  * oop/oop_plan.h (layout separation phase 4). */
 #ifndef VFFT_K1_TRANSPOSE_H
 #define VFFT_K1_TRANSPOSE_H
