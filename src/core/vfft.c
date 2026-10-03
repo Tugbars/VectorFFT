@@ -1205,24 +1205,33 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
     if (g->zrm)
         return 1; /* the real mono: one pure kernel, no pool, no child, no scratch */
     if (g->zfsr)
-        return 0; /* the real four-step owns its plane: one transform at a time */
+        return 0; /* the real four-step: its four-step team threads on the pool */
     if (g->zrf)
-        return 0; /* the real flat DIT owns its level planes: one transform at a time */
+        /* the real flat DIT: its level planes are the plan's own (a clone owns
+         * its own set), its serial execute is pool-free; the threaded arm
+         * (il/real/zrf_mt.h, bound when the cell's row says so) slabs the pool */
+        return g->zrf->mt == 0;
     if (g->zrb)
-        return 0; /* the real Bluestein owns its two planes: one transform at a time */
+        /* the real Bluestein: its two planes are the plan's own (a clone owns
+         * its own), its inner pair is built directly (il2p / il3p / ZTT, no
+         * pool) and its execute never touches the pool */
+        return 1;
     if (g->zrbl)
         return 0; /* the lane Bluestein owns its M x K plane */
     if (g->zrp)
         return 1; /* the real pair: two serial kernels, no pool, no child */
     if (g->zttr)
-        return g->zttr->scratch == NULL; /* ZTT-r: serial kernels, pool-free; an in-place plan owns ONE scratch plane */
+        /* ZTT-r: serial kernels, pool-free; an in-place plan owns ONE scratch
+         * plane; the threaded arm (il/real/zttr_mt.h) slabs the pool */
+        return g->zttr->scratch == NULL && g->zttr->mt == 0;
     if (g->zr2c_kid)
         /* §D2 real composite: a fold (pure, serial, no pool) and the child's
          * engines called directly (the IL planner's builds: serial, pool-free,
          * plan-owned scratch, the four-step at one thread); the R2C/C2R execute
          * branches skip the pool re-assert on this path. A batch clone is its
-         * own create: its own child. */
-        return 1;
+         * own create: its own child. The threaded fold (fold=mt) slabs the
+         * pool and re-asserts it. */
+        return !g->zr2c_fold_mt;
     if (g->placement == VFFT_INPLACE)
         /* in-place interleaved: the K=1 engine arms are engine-pure; a
          * handle with none of them is treated as unsafe. */
@@ -1252,6 +1261,35 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
     default:
         return 0; /* no IL route -> convert fallback */
     }
+}
+
+/* ── THE SLAB ROLE (2026-10-03) ───────────────────────────────────────────
+ * A slab worker IS the thread: the batch's per-transform plan in the slab arm
+ * runs one transform on one core. The K=1 create the batch replays is the
+ * cell's T-row, whose verdict is for ONE transform at T threads -- where a
+ * threaded arm can win -- so a clone in the slab role runs the SERIAL form of
+ * the same recipe. The threaded forms the real door binds are flags set on
+ * the plan (no allocation; the serial run is bitwise the threaded one, gated
+ * in gauntlet/zrf_mt_check.c and zttr_mt_check.c): zrf's arm, ZTT-r's arm and
+ * zr2c's threaded fold. _tc_threaded_form says whether a plan runs one;
+ * _tc_slab_role unbinds them and rebinds the plan's execute to the serial
+ * path. The primary keeps its threaded form for the serial-loop arm; the two
+ * arms are raced per cell (_tc_mt_decide). */
+static int _tc_threaded_form(const struct vfft_plan_s *g)
+{
+    return (g->zrf && g->zrf->mt) || (g->zttr && g->zttr->mt) || (g->zr2c_kid && g->zr2c_fold_mt);
+}
+static void _tc_slab_role(struct vfft_plan_s *c)
+{
+    if (!_tc_threaded_form(c))
+        return;
+    if (c->zrf && c->zrf->mt)
+        vfft_zrf_mt_bind(c->zrf, c->nthreads, 0);   /* arm 0: unbound */
+    if (c->zttr && c->zttr->mt)
+        vfft_zttr_mt_bind(c->zttr, c->nthreads, 0); /* arm 0: unbound */
+    if (c->zr2c_kid)
+        c->zr2c_fold_mt = 0;
+    _vfft_real_bind_exec((vfft_plan)c);             /* the serial execute path */
 }
 
 /* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict (2026-09-04) ──
@@ -1723,17 +1761,35 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * the equivalence check is an invariant, not a coin flip — but it is
          * what turns a nondeterministic-create bug into fewer workers
          * instead of a mixed-permutation batch. */
-        if (h->nthreads > 1 && !getenv("VFFT_NO_TCMT") &&
-            _tc_inner_mt_safe(inner))
+        if (h->nthreads > 1 && !getenv("VFFT_NO_TCMT"))
         { /* VFFT_NO_TCMT: create-time kill switch (VFFT_NO_ZTURN precedent)
            * — no clones => execute is the serial loop, the pre-MT behavior.
-           * Also the bench's A/B hook through the front door. */
+           * Also the bench's A/B hook through the front door.
+           * Every clone is built in the SLAB ROLE (_tc_slab_role): replayed,
+           * checked equivalent, then run serially. When the primary runs a
+           * threaded form, the caller's own slab needs a serial plan too:
+           * tcb0, its twin in the slab role. */
+            const int thr = _tc_threaded_form(inner);
             int nw = h->nthreads - 1;
             if ((size_t)nw > K - 1)
                 nw = (int)(K - 1);
             if (nw > THREAD_POOL_MAX_DISPATCH - 1)
                 nw = THREAD_POOL_MAX_DISPATCH - 1; /* one clone per dispatchable worker */
-            if (nw > 0)
+            if (thr && nw > 0)
+            {
+                struct vfft_plan_s *c0 = vfft_create(&c1);
+                if (c0 && _tc_clone_equiv(inner, c0))
+                {
+                    _tc_slab_role(c0);
+                    if (_tc_inner_mt_safe(c0))
+                        h->tcb0 = c0;
+                    else
+                        vfft_destroy(c0);
+                }
+                else if (c0)
+                    vfft_destroy(c0);
+            }
+            if (nw > 0 && (thr ? h->tcb0 != NULL : _tc_inner_mt_safe(inner)))
                 h->tcbw = (struct vfft_plan_s **)calloc((size_t)nw,
                                                         sizeof *h->tcbw);
             if (h->tcbw)
@@ -1747,6 +1803,12 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         vfft_destroy(c);
                         break;
                     }
+                    _tc_slab_role(c);
+                    if (!_tc_inner_mt_safe(c))
+                    {
+                        vfft_destroy(c);
+                        break;
+                    }
                     h->tcbw[t] = c;
                     h->tcbw_n = t + 1;
                 }
@@ -1754,6 +1816,11 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             {
                 free(h->tcbw);
                 h->tcbw = NULL;
+            }
+            if (!h->tcbw && h->tcb0)
+            {   /* no workers: the caller's slab has nothing to share */
+                vfft_destroy(h->tcb0);
+                h->tcb0 = NULL;
             }
         }
         /* VFFT_TCMT_VERBOSE: report the worker count on stderr (the

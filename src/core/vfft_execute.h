@@ -426,6 +426,8 @@ void vfft_destroy(vfft_plan h)
             vfft_destroy(h->tcbw[t]);
         free(h->tcbw);
     }
+    if (h->tcb0)
+        vfft_destroy(h->tcb0); /* the primary's serial twin, the caller's slab */
     vfft_il2p_destroy(h->k1il2p);
     vfft_il3p_destroy(h->k1il3p);
     vfft_ilprime_destroy(h->k1ilpr);
