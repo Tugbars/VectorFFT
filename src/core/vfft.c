@@ -19,7 +19,6 @@
 #include "il/wisdom/wisdom2_2d_il_reader.h"  /* wisdom2: the lay=il rank>=2 cells */
 #include "split/wisdom/wisdom2_stride_reader.h" /* wisdom2: stride family codec (wave-4 flip) */
 #include "split/wisdom/wisdom2_real_reader.h" /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
-#include "il/wisdom/wisdom2_oddr.h" /* the odd-real route verdict row (lay=il) */
 #include "common/support/diag.h"              /* loud-refusal helpers: _vfft_warn, _vfft_tname (step 6a) */
 #include "common/support/race_timing.h"        /* the racers' shared clock + median (step 5) */
 #include "common/support/race.h"               /* the one race body: arms x protocol -> aggregates */
@@ -214,10 +213,6 @@ static void _pq_mt_race(struct vfft_plan_s *h);
 static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
                                   struct vfft_wisdom_s *W,
                                   const vfft_config_t *cfg);
-
-/* the ODD-REAL BRIDGE handle builder — defined after the plan struct
- * (it sizes it); used by the create gate and the smooth-odd race. */
-static struct vfft_plan_s *_oddr_build(const vfft_config_t *cfg, int N);
 
 /* ── POOL ARMING: a plan may GROW the process pool, never SHRINK it ──
  * 🔴 MEASURED BUG (2026-08-26, benches/pool_teardown_probe.c): every
@@ -1044,48 +1039,6 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
                                           * table builders (migration step 6b) */
 #include "il/real/zrb_lanes.h"  /* the lane Bluestein: the real batch's lane-major geometry on the column pass (2026-10-01) */
 
-/* the ODD-REAL BRIDGE handle builder (struct comment at oddr_child):
- * a self-contained plan - the c2c(N) NATURAL IL child + the row pair
- * buffer. Used by the direct-serve gate in create AND as the race arm
- * at the smooth-odd r2c commit. */
-static struct vfft_plan_s *_oddr_build(const vfft_config_t *cfg, int N)
-{
-    vfft_config_t rc;
-    struct vfft_plan_s *hh;
-    memset(&rc, 0, sizeof rc);
-    rc.transform = VFFT_C2C;
-    rc.placement = VFFT_OUTOFPLACE;
-    rc.rigor = cfg->rigor;
-    rc.dims = 1;
-    rc.n[0] = N;
-    rc.howmany = 1;
-    rc.order = VFFT_ORDER_NATURAL; /* the CCE bins must be in order */
-    rc.layout = VFFT_LAYOUT_INTERLEAVED;
-    rc.nthreads = 1;
-    rc.wisdom = cfg->wisdom;
-    rc.wisdom_write = cfg->wisdom_write;
-    hh = (struct vfft_plan_s *)calloc(1, sizeof *hh);
-    if (!hh)
-        return NULL;
-    hh->oddr_child = (struct vfft_plan_s *)vfft_create(&rc);
-    if (hh->oddr_child)
-        hh->oddr_buf = (double *)malloc(4 * (size_t)N * sizeof(double));
-    if (!hh->oddr_child || !hh->oddr_buf)
-    {
-        if (hh->oddr_child)
-            vfft_destroy((vfft_plan)hh->oddr_child);
-        free(hh);
-        return NULL;
-    }
-    hh->transform = cfg->transform;
-    hh->placement = VFFT_OUTOFPLACE;
-    hh->layout = (int)cfg->layout;
-    hh->N = N;
-    hh->K = 1;
-    hh->nthreads = _vfft_plan_threads(cfg);
-    return hh;
-}
-
 #include "il/rank2/il2d_tier.h" /* IL 2D real/c2c tier: passes, MT,
                                          * and the four racers (step 17) */
 
@@ -1249,11 +1202,6 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
  * unsafe even though its fwd is fine — execute takes either dir. */
 static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
 {
-    if (g->oddr_child)
-        /* the ODD-REAL BRIDGE (2026-08-27): a wrapper over one pure-IL
-         * c2c child + private buffers — safe iff the child is (il2p/
-         * il3p/ilprime are; a cascade child consults its own arm). */
-        return _tc_inner_mt_safe(g->oddr_child);
     if (g->zrm)
         return 1; /* the real mono: one pure kernel, no pool, no child, no scratch */
     if (g->zfsr)
@@ -1440,12 +1388,6 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
 #define TC_NEQ(what) do { if (getenv("VFFT_IL2D_LOG")) \
         fprintf(stderr, "[clone] N=%d not equivalent: %s (route %d vs %d)\n", a->N, what, a->k1_il_route, b->k1_il_route); \
     return 0; } while (0)
-    if (!a->oddr_child != !b->oddr_child)
-        TC_NEQ("odd-real bridge");
-    if (a->oddr_child)
-        /* odd-real bridge: equivalent iff the c2c children are (the
-         * bridge itself carries only buffers). */
-        return _tc_clone_equiv(a->oddr_child, b->oddr_child);
     if (!a->zfsr != !b->zfsr)
         TC_NEQ("real four-step");
     if (a->zfsr)
@@ -2300,12 +2242,12 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->il2d_col.tpc); /* tpc = the turned prime column pass (2026-09-24) */
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
-    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
+    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
             FP__P(cplan), FP__P(oplan), FP__P(k1sp),
             FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr), FP__P(k1ilfd), FP__P(k1ztt),
             FP__P(k1fs),   /* D5, 2026-09-18: route 10 had no bit and no line */
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
-            FP__P(zr2c_kid), FP__P(oddr_child), FP__P(tplan),
+            FP__P(zr2c_kid), FP__P(tplan),  /* the odd-real bridge's bit retired 2026-10-03 */
             FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */
     FP__ADD(" il2dhave=%d%d%d%d%d",   /* the OOP row child's slot deleted 2026-09-23 */
             FP__P(il2d_row), FP__P(il2d_roww),
@@ -2376,7 +2318,6 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         FP__ADD(" zr2c_child=[r%d %d.%d c3=%d.%d fl=%d zt=%d tw=%d kv=%d bkv=%d %s]", kc->route, kc->R1, kc->R2,
                 kc->c3_A, kc->c3_B, kc->il_fl_n, kc->il_zt_n, kc->il_tw, kc->il_kv, kc->il_bkv, kc->il_flf);
     }
-    used = vfft__fp_child(h->oddr_child, "oddr", depth + 1, out, cap, used);
     used = vfft__fp_child(h->tcb, "tcb", depth + 1, out, cap, used);
     used = vfft__fp_child(h->pq_inner, "pq", depth + 1, out, cap, used);
     used = vfft__fp_child(h->il2d_row, "il2drow", depth + 1, out, cap, used);

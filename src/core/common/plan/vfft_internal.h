@@ -246,18 +246,6 @@ struct vfft_plan_s
     struct vfft_zr2c_kid_s *zr2c_kid; /* the child c2c(N/2): its recipe, raced in the real
                                        * role and banked on the real row, and the engines
                                        * built from it (il/real/zr2c_build.h; owned) */
-    /* ── the ODD-REAL BRIDGE (2026-08-27, 1D K==1): real <-> CCE through
-     * the c2c engine — fwd: promote real -> complex, c2c fwd, keep the
-     * hp1 bins; bwd: Hermitian-extend hp1 -> N (no Nyquist at odd N —
-     * the mirror is exact), c2c bwd, take Re. The 2D odd-N2 row
-     * primitives lifted to the 1D front door. Serves BOTH layouts (the
-     * split spellings pack/unpack around the same child). Closes the
-     * two 1D real holes: c2r at ANY odd N (nothing else exists), and
-     * r2c at non-radix-smooth odd N (prime/awkward — the c2c child
-     * rides the pair/chain/prime engines). Smooth-odd r2c keeps its
-     * native rfft route; racing the two is the sweep's. */
-    struct vfft_plan_s *oddr_child; /* c2c(N) K=1 NATURAL OOP IL (owned) */
-    double *oddr_buf;               /* 2 x 2N doubles: the row pair      */
     int zr2c_route;                 /* 0 = OOP-IL child, 1 = NAT-IP child */
     double *zr2c_aff;               /* affS ++ affC (one allocation)      */
     double *zr2c_scratch;           /* N+2 dbl, route-0 placements only   */

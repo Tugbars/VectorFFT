@@ -329,9 +329,8 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         return; /* THE BOUND K=1 IL DISPATCH: one indirect call, bound at create */
     /* 1D real: the one place the layouts still meet (bridge/, owner
      * decision D1 - temporary until the IL real engine lands). */
-    if (h->oddr_child ||
-        (!h->pq_inner && !h->tcb && h->N2 == 0 &&
-         (h->transform == VFFT_R2C || h->transform == VFFT_C2R)))
+    if (!h->pq_inner && !h->tcb && h->N2 == 0 &&
+        (h->transform == VFFT_R2C || h->transform == VFFT_C2R))
     {
         _vfft_real_bridge_execute(h, dir, sre, sim, dre, dim);
         return;
@@ -357,13 +356,6 @@ void vfft_destroy(vfft_plan h)
             for (t = 0; t < h->pq_wn; t++)
                 vfft_destroy((vfft_plan)h->pq_w[t]);
             free(h->pq_w);
-            free(h);
-            return;
-        }
-        if (h->oddr_child)
-        { /* the odd-real bridge: the child + one buffer */
-            vfft_destroy((vfft_plan)h->oddr_child);
-            free(h->oddr_buf);
             free(h);
             return;
         }

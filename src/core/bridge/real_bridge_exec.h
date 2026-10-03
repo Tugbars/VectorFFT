@@ -1,9 +1,9 @@
 /* real_bridge_exec.h — the 1D r2c / c2r EXECUTE: where the layouts still meet.
  *
  * The execute twin of bridge/real_bridge.h (owner decision D1: TEMPORARY until
- * the IL real engine lands). The odd-real bridge's c2c child (either layout),
- * the zr2c composite (IL), and the split real engines behind their
- * interleaved z-doors (vfft_r2c_execute_fwd_z / vfft_c2r_disp_execute_z) or
+ * the IL real engine lands). The interleaved real engines (IL), and the split
+ * real engines behind their interleaved z-doors (vfft_r2c_execute_fwd_z /
+ * vfft_c2r_disp_execute_z: the lane-major batch, the one crossing left) or
  * their split planes.
  *
  * Included by vfft_execute.h under VFFT_EXECUTE_IMPL.
@@ -14,50 +14,6 @@
 static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
                                       double *sre, double *sim, double *dre, double *dim)
 {
-    if (h->oddr_child)
-    { /* the ODD-REAL BRIDGE (struct comment at oddr_child): 1D K==1
-       * odd-N real transforms through the c2c child. Both layouts —
-       * the split spellings pack/unpack around the same child. */
-        const size_t n = (size_t)h->N, hp1 = n / 2 + 1;
-        double *b1 = h->oddr_buf, *b2 = h->oddr_buf + 2 * n;
-        size_t k;
-        if (h->transform == VFFT_R2C)
-        {
-            _il2d_row_promote(sre, b1, n);
-            vfft_execute((vfft_plan)h->oddr_child, VFFT_FORWARD, b1,
-                         NULL, b2, NULL);
-            if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
-                memcpy(dre, b2, 2 * hp1 * sizeof(double));
-            else
-                for (k = 0; k < hp1; k++)
-                {
-                    dre[k] = b2[2 * k];
-                    dim[k] = b2[2 * k + 1];
-                }
-        }
-        else
-        {
-            if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
-                _il2d_row_extend(sre, b1, n, hp1);
-            else
-            {
-                for (k = 0; k < hp1; k++)
-                {
-                    b1[2 * k] = sre[k];
-                    b1[2 * k + 1] = sim[k];
-                }
-                for (k = 1; k < hp1; k++)
-                {
-                    b1[2 * (n - k)] = sre[k];
-                    b1[2 * (n - k) + 1] = -sim[k];
-                }
-            }
-            vfft_execute((vfft_plan)h->oddr_child, VFFT_BACKWARD, b1,
-                         NULL, b2, NULL);
-            _il2d_row_re(b2, dre, n);
-        }
-        return;
-    }
     if (h->transform == VFFT_R2C)
     {
         /* forward only: real in (sre); spectrum out per the committed layout

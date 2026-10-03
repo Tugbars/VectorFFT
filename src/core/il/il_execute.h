@@ -228,14 +228,14 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
         h->k1_exec = h->transform == VFFT_R2C ? _k1x_zrf_fwd : _k1x_zrf_bwd;
         return hp;
     }
-    if (!h->oddr_child && !h->pq_inner && !h->tcb && h->N2 == 0 && h->K == 1)
+    if (!h->pq_inner && !h->tcb && h->N2 == 0 && h->K == 1)
     {   /* the bridge's own order */
         if (h->zfsr) { h->k1_exec = _k1x_zfsr; return hp; }
         if (h->zttr) { h->k1_exec = _k1x_zttr; return hp; }
         if (h->zrp) { h->k1_exec = _k1x_zrp; return hp; }
         if (h->zr2c_kid) { h->k1_exec = _k1x_zr2c; return hp; }
     }
-    if (h->oddr_child || (!h->pq_inner && !h->tcb && h->N2 == 0))
+    if (!h->pq_inner && !h->tcb && h->N2 == 0)
         h->k1_exec = _k1x_real;
     return hp;
 }
@@ -288,7 +288,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
     h->k1_exec = NULL;
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         h->layout == (int)VFFT_LAYOUT_INTERLEAVED && h->N2 > 0 && h->il2d_row &&
-        !h->pq_inner && !h->tcb && !h->ilnd && !h->oddr_child &&
+        !h->pq_inner && !h->tcb && !h->ilnd &&
         h->nthreads <= 1 && !h->il2d_col.colmt)
     {
         h->k1_exec = h->transform == VFFT_R2C ? _k2x_il2d_r2c : _k2x_il2d_c2r;
@@ -298,7 +298,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         return hp;
     }
     if (h->transform != VFFT_C2C || h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
-    if (h->K != 1 || h->N2 > 0 || h->tcb || h->pq_inner || h->oddr_child || h->ilnd) return hp;
+    if (h->K != 1 || h->N2 > 0 || h->tcb || h->pq_inner || h->ilnd) return hp;
     if (h->placement == VFFT_OUTOFPLACE)
     {
         if (!h->k1_on) return hp;
