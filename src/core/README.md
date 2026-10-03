@@ -21,8 +21,9 @@ core/
   il/           the INTERLEAVED (z) library: isa/, planning/, rank1/, rank2/,
                 rank3/, real/, wisdom/; il_create.h + il_execute.h are its side
   bridge/       the ONLY place besides the front door that sees both, and
-                TEMPORARY: 1D real (real_bridge.h, real_bridge_exec.h) until the
-                IL real engine lands (D1)
+                TEMPORARY: the 1D real dispatcher (real_bridge.h,
+                real_bridge_exec.h); its one crossing left is the interleaved
+                lane-major real BATCH on the split engines (D1)
   wisdom2/      front-side wisdom glue that spans both layouts: the legacy
                 kind-3 reader and migration, the OOP codec aggregator, gates
 ```
