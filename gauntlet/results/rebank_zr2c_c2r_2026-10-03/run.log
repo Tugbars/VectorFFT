@@ -76,3 +76,11 @@
 2026-10-03 20:22:38   benched 800/1000 (1664), 1448 s elapsed
 2026-10-03 20:23:24   benched 825/1000 (1714), 1495 s elapsed
 2026-10-03 20:24:10   benched 850/1000 (1766), 1541 s elapsed
+2026-10-03 20:24:58   benched 875/1000 (1818), 1589 s elapsed
+2026-10-03 20:25:45   benched 900/1000 (1868), 1636 s elapsed
+2026-10-03 20:26:31   benched 925/1000 (1918), 1682 s elapsed
+2026-10-03 20:27:17   benched 950/1000 (1970), 1728 s elapsed
+2026-10-03 20:28:03   benched 975/1000 (2020), 1774 s elapsed
+2026-10-03 20:28:47   benched 1000/1000 (4050), 1818 s elapsed
+2026-10-03 20:28:49 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rebank_zr2c_c2r_2026-10-03\report_c2r.md
+2026-10-03 20:28:49 merged into C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom

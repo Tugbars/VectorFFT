@@ -17,8 +17,14 @@
  *   eng=zttr chain=4.8.8.4 tile=512 stk=3 [mt=1|2] (ZTT-r, il/real/zttr.h: the chain,
  *                                                  the tile width, the stack state; on a
  *                                                  threaded plan's row the threaded arm)
- *   eng=zfsr split=1024x2048                      (the real four-step, il/real/zfsr.h:
- *                                                  the split of N/2)
+ *   eng=zfsr split=1024x2048 fs_*=.. fs_row_*=..  (the real four-step, il/real/zfsr.h:
+ *                                                  the split of N/2, and its CHILD in its
+ *                                                  own rows' words: the 2D plan's payload
+ *                                                  under fs_ (fs_chain fs_wl fs_tf fs_ro
+ *                                                  ...), the row plan's at N2 under
+ *                                                  fs_row_ (fs_row_il_route ...), its
+ *                                                  backward twin's under fs_row_bwd_
+ *                                                  where it has one)
  *   eng=zrm                                       (the real mono, il/real/zrm.h: one
  *                                                  rn1 kernel, N <= 64, no plan input)
  *   eng=zrf  chain=9.9.5 msz=0|1 tile=256 [mt=1|2] (the real flat DIT, il/real/zrf.h, odd N:
@@ -507,16 +513,60 @@ static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int i
     return 1;
 }
 
-/* The banked real four-step split at the cell: 1 with *n1, *n2 filled, 0 when
- * the cell's engine is not zfsr or the token is malformed (a miss). */
+/* THE FOUR-STEP CHILD on the real row (owner, 2026-10-03). The real
+ * four-step's child -- the 2D plan at N1 x N2 and its row plan at N2, raced
+ * into the plan's private store (il/rank1/k1_fourstep.h) -- rides here in its
+ * own rows' words: every payload token of the 2D row under fs_, of the row
+ * plan's under fs_row_, of the row plan's backward twin (dir=bwd: its
+ * backward kernel forms, where its route has them) under fs_row_bwd_. Replay
+ * rebuilds the rows from them (their keys follow from the split and the
+ * thread count). */
+static inline int vw2__fs_put(vw2_rec_t *dst, const char *pre, const vw2_rec_t *src)
+{
+    char nm[96];
+    int i;
+    for (i = 0; i < src->ntok; i++)
+    {
+        if (src->tok[i].sect != 1) continue;
+        if (snprintf(nm, sizeof nm, "%s%s", pre, src->tok[i].name) >= (int)sizeof nm) return -1;
+        if (vw2_rec_set(dst, 1, nm, src->tok[i].val) != VW2_OK) return -1;
+    }
+    return 0;
+}
+/* the payload tokens under `pre` (and not under `skip`) into dst, the prefix
+ * stripped; the count, -1 on failure */
+static inline int vw2__fs_get(vw2_rec_t *dst, const vw2_rec_t *src, const char *pre, const char *skip)
+{
+    const size_t lp = strlen(pre), ls = skip ? strlen(skip) : 0;
+    int i, n = 0;
+    for (i = 0; i < src->ntok; i++)
+    {
+        const char *nm = src->tok[i].name;
+        if (src->tok[i].sect != 1 || strncmp(nm, pre, lp)) continue;
+        if (skip && !strncmp(nm, skip, ls)) continue;
+        if (vw2_rec_set(dst, 1, nm + lp, src->tok[i].val) != VW2_OK) return -1;
+        n++;
+    }
+    return n;
+}
+
+/* The banked real four-step at the cell: 1 with *n1, *n2 and the child's
+ * rows (payload only, *cbwd empty where the row plan has no backward twin;
+ * the caller keys them and frees them) filled; 0 when the cell's engine is
+ * not zfsr, a token is malformed, or the row carries no child -- a zfsr row
+ * from before the child rode on it is a miss, so the cell races again. */
 static inline int vw2_real_il_lookup_zfsr(const vw2_store_t *s, int realN, int is_c2r,
-                                          int is_inplace, int T, int *n1, int *n2)
+                                          int is_inplace, int T, int *n1, int *n2,
+                                          vw2_rec_t *c2d, vw2_rec_t *crow, vw2_rec_t *cbwd)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *eng, *sp;
     int a = 0, b = 0;
     *n1 = *n2 = 0;
+    memset(c2d, 0, sizeof *c2d);
+    memset(crow, 0, sizeof *crow);
+    memset(cbwd, 0, sizeof *cbwd);
     vw2_real_il_key(&k, realN, is_c2r, is_inplace, T);
     r = vw2_lookup(s, &k);
     if (!r || vw2__is_seed(r)) return 0;
@@ -524,22 +574,37 @@ static inline int vw2_real_il_lookup_zfsr(const vw2_store_t *s, int realN, int i
     if (!eng || strcmp(eng, "zfsr")) return 0;
     sp = vw2_rec_get(r, "split");
     if (!sp || sscanf(sp, "%dx%d", &a, &b) != 2 || a <= 0 || b <= 0) return 0;
+    if (vw2__fs_get(c2d, r, "fs_", "fs_row_") <= 0 || vw2__fs_get(crow, r, "fs_row_", "fs_row_bwd_") <= 0 ||
+        vw2__fs_get(cbwd, r, "fs_row_bwd_", NULL) < 0)
+    {
+        vw2_rec_free(c2d);
+        vw2_rec_free(crow);
+        vw2_rec_free(cbwd);
+        return 0;
+    }
     *n1 = a; *n2 = b;
     return 1;
 }
 
-/* Bank the real four-step verdict at the cell (replacing whatever engine held it). */
+/* Bank the real four-step verdict at the cell (replacing whatever engine held
+ * it): the split and the child's rows (cbwd NULL where the row plan has no
+ * backward twin) -- a four-step without its child is no recipe, and is not
+ * banked. */
 static inline int vw2_real_il_bank_zfsr(vw2_store_t *s, int realN, int is_c2r, int is_inplace, int T,
-                                        int n1, int n2, double ns)
+                                        int n1, int n2, const vw2_rec_t *c2d, const vw2_rec_t *crow,
+                                        const vw2_rec_t *cbwd, double ns)
 {
     vw2_rec_t r;
     char b[48];
     int rc;
+    if (!c2d || !crow) return -1;
     memset(&r, 0, sizeof r);
     vw2_real_il_key(&r.key, realN, is_c2r, is_inplace, T);
     snprintf(b, sizeof b, "%dx%d", n1, n2);
     if (vw2_rec_set(&r, 1, "eng", "zfsr") != VW2_OK ||
         vw2_rec_set(&r, 1, "split", b) != VW2_OK ||
+        vw2__fs_put(&r, "fs_", c2d) != 0 || vw2__fs_put(&r, "fs_row_", crow) != 0 ||
+        (cbwd && vw2__fs_put(&r, "fs_row_bwd_", cbwd) != 0) ||
         vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
         vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
     if (ns > 0.0) {
