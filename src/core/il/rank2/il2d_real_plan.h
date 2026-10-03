@@ -14,7 +14,7 @@
  *   zrp    the real pair per row            (il/real/zrp.h), a pair and a form
  *   zr2c   the zr2c composite per row       (il/real/zr2c_build.h), a route
  *   zttr   ZTT-r per row                    (il/real/zttr.h), chain/tile/stack
- *   door   the row route the tier had (the per-row door, or the rowsplit band)
+ *   door   the row route the tier had (the per-row door)
  * The per-row engines are built by the real door's BUILDERS from the row's
  * token; the handle is the plan's own.
  *

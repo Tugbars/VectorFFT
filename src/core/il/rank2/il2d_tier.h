@@ -45,9 +45,9 @@
  *
  * ONE ASYMMETRY THAT LOOKS LIKE A BUG AND IS NOT
  * ----------------------------------------------
- * The row-route race is guarded with !il2d_oddn2; the column-MT guard is not.
- * That is deliberate: an odd N2 has no ROWSPLIT arm to race, but column
- * threading stays valid. Measured consistent - 128x127 at T=8 engages cmt and
+ * The wl race is guarded with !il2d_oddn2; the column-MT guard is not. That
+ * is deliberate: an odd N2's rows ride the c2c child and the banded walk
+ * is not raced there, but column threading stays valid. Measured consistent - 128x127 at T=8 engages cmt and
  * is BIT-IDENTICAL to the single-threaded result.
  *
  * THE ENGAGEMENT COUNTER STAYS IN vfft.c

@@ -53,8 +53,6 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
     h->il2d_col.N = N1;
     h->il2d_col.rn = (cfg->transform == VFFT_C2C) ? (size_t)N2 : (size_t)N2 / 2 + 1;
     h->il2d_col.natst = 1;
-    /* A/B race knob (struct comment): create-time env read only. */
-    h->il2d_norowz = getenv("VFFT_IL2D_NO_ROWZ") != NULL;
     /* rfft-engine row inner for the R2C 2D row pass — the rfft path
      * wins at the tile's low K (−27%/call measured). Force the rfft
      * dispatch; adopt only if it landed (RFFT path, split, plan bound).

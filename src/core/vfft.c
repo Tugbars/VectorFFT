@@ -2234,12 +2234,12 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     FP__ADD(" tcbw=%d tcmt=%d tcbsn=%ld tcbdn=%ld pqw=%d pqmt=%d pqn=%ld",
             h->tcbw_n, h->tc_mt, (long)h->tcb_sn, (long)h->tcb_dn,
             h->pq_wn, h->pq_mt, (long)h->pq_n);
-    FP__ADD(" il2d=[nst=%d wc=%d wl=%d cut=%d tf=%d roop=%d rw=%d cmt=%d"
-            " oddn2=%d nat=%d blu=%d norowz=%d turn=%d csk=%d tpc=%d]",
+    FP__ADD(" il2d=[nst=%d wc=%d wl=%d cut=%d tf=%d roop=%d cmt=%d"
+            " oddn2=%d nat=%d blu=%d turn=%d csk=%d tpc=%d]",
             h->il2d_col.nst, h->il2d_col.wc, h->il2d_col.wl, h->il2d_col.cut, h->il2d_col.tfuse,
-            _il2d_ro_of(h), h->il2d_rw, h->il2d_col.colmt, h->il2d_oddn2, /* roop = the row-route value 0|2|3 */
-            h->il2d_col.nat, h->il2d_col.blu, h->il2d_norowz, h->il2d_turn, h->il2d_csk,
-            h->il2d_col.tpc); /* tpc = the turned prime column pass (2026-09-24) */
+            _il2d_ro_of(h), h->il2d_col.colmt, h->il2d_oddn2, /* roop = the row-route value 0|2|3 */
+            h->il2d_col.nat, h->il2d_col.blu, h->il2d_turn, h->il2d_csk,
+            h->il2d_col.tpc); /* tpc = the turned prime column pass (2026-09-24); rw= and norowz= (ROWSPLIT) retired 2026-10-03 */
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
     FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
@@ -2249,9 +2249,9 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
             FP__P(zr2c_kid), FP__P(tplan),  /* the odd-real bridge's bit retired 2026-10-03 */
             FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */
-    FP__ADD(" il2dhave=%d%d%d%d%d",   /* the OOP row child's slot deleted 2026-09-23 */
+    FP__ADD(" il2dhave=%d%d%d%d",   /* the OOP row child's slot deleted 2026-09-23; the rowsplit slot 2026-10-03 */
             FP__P(il2d_row), FP__P(il2d_roww),
-            FP__P(il2d_rows), ((h->il2d_col.natperm) ? 1 : 0), FP__P(pq_inner)); /* natperm moved into il2d_col */
+            ((h->il2d_col.natperm) ? 1 : 0), FP__P(pq_inner)); /* natperm moved into il2d_col */
     /* the K=1 FOUR-STEP (route 10, k1_fourstep.h): the raced split, the order
      * class, the natural form and its band width. Until 2026-09-18 the plan
      * had neither a presence bit nor a detail line, so two four-step plans
