@@ -473,6 +473,14 @@ not govern linkage. The checker reads the `#include` lines.
     the zr2c out-of-place fall-through onto the split CCE engines, the odd-real bridge,
     the smooth-odd r2c race) move to `bridge/` in phase 7 as a TEMPORARY holding place,
     to be removed once the IL real engine lands. No new crossing may be added.
+  - **2026-10-03: B3 and the smooth-odd race are gone.** Every interleaved odd K=1 cell
+    has an IL engine (`il/real/odd_build.h`: the mono at every rn1 radix incl. 53/59/61,
+    both placements; the real flat DIT; the real Bluestein), gated against an IL c2c
+    reference; the split layout's odd real refuses (owner: refuse, never the other
+    library's engine); the zr2c out-of-place fall-through onto the split engines is a
+    refusal too. `_oddr_build`, `oddr_child`/`oddr_buf`, `wisdom2_oddr.h` and the
+    `eng=oddr` rows are deleted. What remains of D1 is the interleaved lane-major real
+    BATCH (K > 1, the layout's default geometry) on the split engines.
 - **D2. B4, the `@nat` → IL recipe signpost.** Keep it in `bridge/` for now (no format
   change). Or give the IL in-place door its own `lay=il` row and retire `VFFT_NAT_ILP`,
   `ZCASC` and `CONV` from the split enum. That changes the wisdom format, so it needs a

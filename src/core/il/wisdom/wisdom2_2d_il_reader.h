@@ -263,22 +263,22 @@ static inline int vw2_2d_il_tok_seti(vw2_store_t *st, int N1, int N2, int ord, i
  * r2c-keyed row (the pair law requires ONE chain for both directions).
  * The AXES are raced per direction (r2c and c2r have different row
  * kernels and a different column pass), so the shared row carries ONE
- * TOKEN SET PER DIRECTION — r2c = rw wl cmt cmtt, c2r = rw_c2r wl_c2r
- * cmt_c2r cmtt_c2r — or the two directions would overwrite each other's
- * tokens. COLLISION-FREE with the split tier's real cells
- * (vw2_2d_r2c_lookup): the lay axis separates them, and their
- * rowplan/colplan payload (never chain=) makes the chain-token check
- * refuse a vintage lay=ANY row on the fallback phase. Payload: chain=
- * (the raced column-pass factorization) + rw= (the ROW ROUTE verdict:
- * 0 = the per-row TC door, W>0 = the ROWSPLIT band width) + wl= (the
- * banded column walk's band width in ROWS; 0 = unbanded — rows sit
- * OUTSIDE the walk per §2.5, tfuse structurally absent for real).
- * ABSENT axis -> -1 = unraced. */
+ * TOKEN SET PER DIRECTION — r2c = wl cmt cmtt, c2r = wl_c2r cmt_c2r
+ * cmtt_c2r — or the two directions would overwrite each other's tokens.
+ * COLLISION-FREE with the split tier's real cells (vw2_2d_r2c_lookup): the
+ * lay axis separates them, and their rowplan/colplan payload (never
+ * chain=) makes the chain-token check refuse a vintage lay=ANY row on the
+ * fallback phase. Payload: chain= (the raced column-pass factorization) +
+ * wl= (the banded column walk's band width in ROWS; 0 = unbanded — rows
+ * sit OUTSIDE the walk per §2.5, tfuse structurally absent for real).
+ * ABSENT axis -> -1 = unraced. (The rw= row-route token -- the ROWSPLIT
+ * band on the split engines -- was retired 2026-10-03 with that route; an
+ * old row's rw= is dead text.) */
 /* the direction's token names on the shared real IL row */
 static inline const char *vw2__rl_tok(int is_c2r, int which)
 {
-    static const char *const R2C[4] = { "rw", "wl", "cmt", "cmtt" };
-    static const char *const C2R[4] = { "rw_c2r", "wl_c2r", "cmt_c2r", "cmtt_c2r" };
+    static const char *const R2C[3] = { "wl", "cmt", "cmtt" };
+    static const char *const C2R[3] = { "wl_c2r", "cmt_c2r", "cmtt_c2r" };
     return is_c2r ? C2R[which] : R2C[which];
 }
 
@@ -305,7 +305,7 @@ static inline int vw2_2d_rl_tok_sets(vw2_store_t *st, int N1, int N2, int ord, i
 
 static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
                                    int is_c2r,
-                                   int *Rs, int *nst, int *rw, int *wl,
+                                   int *Rs, int *nst, int *wl,
                                    int *cmt, int *cmtt, int *blu, int ord, int T)
 {
     vw2_key_t k;
@@ -317,13 +317,12 @@ static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
     if (!r) return 0;
     cv = vw2_rec_get(r, "chain");
     if (!cv) return 0;                       /* a veneer/ANY row: refuse */
-    if (rw) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 0)); *rw = v ? atoi(v) : -1; }
-    if (wl) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 1)); *wl = v ? atoi(v) : -1; }
+    if (wl) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 0)); *wl = v ? atoi(v) : -1; }
     /* cmt = the COLUMN-PASS MT verdict (1 = thread it, 0 = serial) at the
      * row's own thread count (the key's nthreads, v1.3); cmtt is read only
      * from a pre-1.3 row that load did not split. */
-    if (cmt) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 2)); *cmt = v ? atoi(v) : -1; }
-    if (cmtt) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 3)); *cmtt = v ? atoi(v) : -1; }
+    if (cmt) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 1)); *cmt = v ? atoi(v) : -1; }
+    if (cmtt) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 2)); *cmtt = v ? atoi(v) : -1; }
     if (blu) { const char *v = vw2_rec_get(r, "blu"); *blu = v ? atoi(v) : -1; }  /* direction-shared */
     while (*cv && m < 8) {
         int v = 0;
@@ -341,7 +340,7 @@ static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
 
 static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
                                  int is_c2r,
-                                 const int *Rs, int nst, int rw, int wl,
+                                 const int *Rs, int nst, int wl,
                                  int cmt, int cmtt, int blu, double ns,
                                  int ord, int T)
 {
@@ -365,10 +364,9 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
             !strcmp(vw2_rec_get(have, "chain"), b)) {
             char v[24];
             int rc = VW2_OK;
-            if (rw >= 0) { snprintf(v, sizeof v, "%d", rw); rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 0), v); }
-            if (wl >= 0) { snprintf(v, sizeof v, "%d", wl); rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 1), v); }
+            if (wl >= 0) { snprintf(v, sizeof v, "%d", wl); rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 0), v); }
             if (cmt >= 0 && cmtt > 0) {   /* the T is the row's key (v1.3) */
-                snprintf(v, sizeof v, "%d", cmt);  rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 2), v);
+                snprintf(v, sizeof v, "%d", cmt);  rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 1), v);
             }
             if (blu >= 0) { snprintf(v, sizeof v, "%d", blu); rc |= vw2_update_field(st, &k, "blu", v); }
             if (rc != VW2_OK)
@@ -385,17 +383,9 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
         fprintf(stderr, "[wisdom2] il2d real bank refused (token)\n");
         return -1;
     }
-    if (rw >= 0) {
-        snprintf(b, sizeof b, "%d", rw);
-        if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 0), b) != VW2_OK) {
-            vw2_rec_free(r);
-            fprintf(stderr, "[wisdom2] il2d real rw bank refused (token)\n");
-            return -1;
-        }
-    }
     if (wl >= 0) {
         snprintf(b, sizeof b, "%d", wl);
-        if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 1), b) != VW2_OK) {
+        if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 0), b) != VW2_OK) {
             vw2_rec_free(r);
             fprintf(stderr, "[wisdom2] il2d real wl bank refused (token)\n");
             return -1;
@@ -403,7 +393,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     }
     if (cmt >= 0 && cmtt > 0) {   /* the column-MT verdict; its T is the row's key (v1.3) */
         snprintf(b, sizeof b, "%d", cmt);
-        if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 2), b) != VW2_OK) {
+        if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 1), b) != VW2_OK) {
             vw2_rec_free(r);
             fprintf(stderr, "[wisdom2] il2d real cmt bank refused (token)\n");
             return -1;

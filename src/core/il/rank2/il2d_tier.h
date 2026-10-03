@@ -123,9 +123,9 @@ static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
 
 /* ── native IL 2D REAL row passes (docs/roadmap/fft2d_real_il_design.md §2.4): ONE
  * function per direction, used by BOTH the execute and the create-time
- * row-route race (race == serving path). il2d_rows set = the ROWSPLIT
- * band route (transpose rows->lanes, split engine at (N2,K=rw),
- * fused transpose+zip back); NULL = the per-row TC door. */
+ * races (race == serving path). The route: the per-row door (the K=1 1D
+ * real engine at N2, il2d_row) over every row; at an odd N2 its c2c(N2)
+ * child with the promote / extend edges. */
 static void _il2d_rowx_fwd(struct vfft_plan_s *h, const double *sre, double *dre); /* il2d_real_plan.h, later in this TU */
 static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
                                       double *dre)
@@ -145,36 +145,7 @@ static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
         }
         return;
     }
-    if (h->il2d_rows)
-    {
-        const int W2 = h->il2d_rw, rn2 = h->N2;
-        size_t b;
-        for (b = 0; b < (size_t)h->N / W2; b++)
-        {
-            const double *xb = sre + b * (size_t)W2 * rn2;
-            double *zb = dre + b * (size_t)W2 * 2 * hp1;
-            /* fused ROW-MODE door (r2c.h rowsplit fusion): rows in, rows
-             * out, boundaries folded into the engine's own pack/store
-             * passes. -1 = this plan can't serve it (non-stride path) —
-             * the staged transpose route below stays the fallback. */
-            if (!h->il2d_norowz && h->il2d_rows->rplan &&
-                vfft_r2c_execute_fwd_rowz(h->il2d_rows->rplan, xb, rn2,
-                                          zb, 2 * hp1) == 0)
-                continue;
-            if (!h->il2d_norowz && getenv("VFFT_IL2D_LOG"))
-                fprintf(stderr, "[il2d-real] rowz fwd door FELL BACK "
-                                "(staged route) at N2=%d W=%d\n",
-                        rn2, W2);
-            _vfft_k1_transpose(xb, h->il2d_lx, W2, rn2);
-            vfft_execute(h->il2d_rows, VFFT_FORWARD, h->il2d_lx, NULL,
-                         h->il2d_lre, h->il2d_lim);
-            _il2d_transpose_zip(h->il2d_lre, h->il2d_lim, zb, W2,
-                                (int)hp1);
-        }
-    }
-    else
-        vfft_execute(h->il2d_row, VFFT_FORWARD, (double *)sre, NULL,
-                     dre, NULL);
+    vfft_execute(h->il2d_row, VFFT_FORWARD, (double *)sre, NULL, dre, NULL);
 }
 
 /* the r2c row pass: the plan's own row plan when one is bound (the row
@@ -211,38 +182,7 @@ static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,
         }
         return;
     }
-    if (h->il2d_rows)
-    {
-        const int W2 = h->il2d_rw, rn2 = h->N2;
-        size_t b;
-        for (b = 0; b < (size_t)h->N / W2; b++)
-        {
-            const double *zs = zsrc + b * (size_t)W2 * 2 * hp1;
-            double *xb = dre + b * (size_t)W2 * rn2;
-            /* fused ROW-MODE door (mirror): unzip-once into the plan's
-             * working planes, bwd without the split-door memcpys, hot
-             * per-block transpose out. -1 = staged fallback below. */
-            if (!h->il2d_norowz && h->il2d_rows->c2rdisp &&
-                vfft_c2r_disp_execute_rowz(h->il2d_rows->c2rdisp, zs,
-                                           2 * hp1, xb, rn2) == 0)
-                continue;
-            if (!h->il2d_norowz && getenv("VFFT_IL2D_LOG"))
-                fprintf(stderr, "[il2d-real] rowz bwd door FELL BACK "
-                                "(staged route) at N2=%d W=%d\n",
-                        rn2, W2);
-            /* fused de-zip+transpose reads FULL 4-wide e-blocks — legal
-             * because zsrc is the tier's over-allocated rscr plane (+8
-             * dbl pad at create; the c2r execute passes rscr here). */
-            _il2d_unzip_transpose(zs, h->il2d_lre, h->il2d_lim, W2,
-                                  (int)hp1);
-            vfft_execute(h->il2d_rows, VFFT_BACKWARD, h->il2d_lre,
-                         h->il2d_lim, h->il2d_lx, NULL);
-            _vfft_k1_transpose(h->il2d_lx, xb, rn2, W2);
-        }
-    }
-    else
-        vfft_execute(h->il2d_row, VFFT_BACKWARD, (double *)zsrc, NULL,
-                     dre, NULL);
+    vfft_execute(h->il2d_row, VFFT_BACKWARD, (double *)zsrc, NULL, dre, NULL);
 }
 
 
@@ -1534,49 +1474,6 @@ static int _il2d_real_wl_cut(const struct vfft_plan_s *h, int wl)
     return vfft_policy_il2d_wl_cut(h->N, h->il2d_col.nst, h->il2d_col.L, wl);
 }
 
-/* build one ROWSPLIT arm's engine + scratch (legality is the caller's:
- * W%8==0, W|N1, N2%4==0). Returns 1 on success with all six outputs
- * set; 0 with everything freed/NULL. */
-static int _il2d_rowsplit_build(const vfft_config_t *cfg, int Wb, int N2,
-                                struct vfft_plan_s **rows, double **lx,
-                                double **lre, double **lim, double **tre,
-                                double **tim)
-{
-    const int hp1i = N2 / 2 + 1;
-    const int hp1p = (hp1i + 3) & ~3;
-    vfft_config_t sc;
-    memset(&sc, 0, sizeof sc);
-    sc.transform = cfg->transform;
-    sc.placement = VFFT_OUTOFPLACE;
-    sc.rigor = cfg->rigor;
-    sc.dims = 1;
-    sc.n[0] = N2;
-    sc.howmany = (size_t)Wb;
-    sc.layout = VFFT_LAYOUT_SPLIT;
-    sc.nthreads = 1;
-    sc.wisdom = cfg->wisdom;
-    sc.wisdom_write = cfg->wisdom_write;
-    *rows = (struct vfft_plan_s *)vfft_create(&sc);
-    if (!*rows)
-        return 0;
-    *lx = (double *)malloc((size_t)N2 * Wb * sizeof(double));
-    *lre = (double *)malloc((size_t)hp1p * Wb * sizeof(double));
-    *lim = (double *)malloc((size_t)hp1p * Wb * sizeof(double));
-    *tre = NULL; /* fused boundaries (transpose_zip/unzip_transpose):   */
-    *tim = NULL; /* no row-major staging halves                         */
-    if (*lx && *lre && *lim)
-    {
-        memset(*lre, 0, (size_t)hp1p * Wb * sizeof(double));
-        memset(*lim, 0, (size_t)hp1p * Wb * sizeof(double));
-        return 1;
-    }
-    vfft_destroy(*rows);
-    free(*lx); free(*lre); free(*lim);
-    *rows = NULL;
-    *lx = *lre = *lim = NULL;
-    return 0;
-}
-
 /* ── the arms of the il2d races (support/race.h): one context, the same
  * functions execute serves with. For the column-MT race the threaded arm
  * reports whether it could engage; the race runs to completion either way
@@ -1585,7 +1482,7 @@ typedef struct
 {
     struct vfft_plan_s *h;
     double *a, *z;          /* real plane / complex scratch (in place) */
-    int isr;                /* rows: r2c fwd (a -> z) or c2r bwd (z -> a) */
+    int isr;                /* r2c fwd (a -> z) or c2r bwd (z -> a) */
     int ok;                 /* colmt: the threaded arm engaged */
     /* chain candidate (the chain race) */
     int N1;
@@ -1618,14 +1515,6 @@ static void _il2d_arm_cols_mt(void *v)
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
     if (c->ok && !_il2d_real_cols_mt(c->h, c->z, c->z, 0, c->h->nthreads))
         c->ok = 0; /* the threaded arm cannot engage on this cell */
-}
-static void _il2d_arm_rows(void *v)
-{
-    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
-    if (c->isr)
-        _il2d_real_rows_fwd(c->h, c->a, c->z);
-    else
-        _il2d_real_rows_bwd(c->h, c->z, c->a);
 }
 static void _il2d_arm_exec_st(void *v)
 {
