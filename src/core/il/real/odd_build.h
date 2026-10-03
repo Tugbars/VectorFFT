@@ -278,7 +278,7 @@ static int _zrb_m_cands(int N, int *out)
     out[n++] = p2;
     return n;
 }
-static int _zrb_try(const vfft_config_t *cfg, int N, int M, _ilprime_inner_desc_t *d,
+static int _zrb_try(const vfft_config_t *cfg, int N, int M, _ilprime_inner_desc_t *d, int mt,
                     const double *a, const double *ref, double *b, const double *s0, size_t xs, size_t nchk,
                     struct vfft_plan_s *out[2], double bns[2])
 {
@@ -287,6 +287,11 @@ static int _zrb_try(const vfft_config_t *cfg, int N, int M, _ilprime_inner_desc_
     int reps;
     if (!h)
         return 0;
+    if (mt && !vfft_zrb_mt_bind(h->zrb, h->nthreads, mt))
+    {   /* the threaded arm declines this plan (no ZTURN-T inner, or no tiles) */
+        vfft_destroy((vfft_plan)h);
+        return 1;
+    }
     memcpy(b, a, xs * sizeof(double));
     _exec_zrb(h, s0, b);
     {
@@ -343,12 +348,23 @@ static int _zrb_sweep(const vfft_config_t *cfg, int N, const double *a, const do
         const int nc = _ilprime_inner_cands(Ms[m], pool, _ILPR_MAX_CANDS);
         int nb = 0;
         for (int c = 0; c < nc; c++)
-            nb += _zrb_try(cfg, N, Ms[m], &pool[c], a, ref, b, s0, xs, nchk, out, bns);
+            nb += _zrb_try(cfg, N, Ms[m], &pool[c], 0, a, ref, b, s0, xs, nchk, out, bns);
         built += nb;
         if (getenv("VFFT_ZRACE_VERBOSE"))
             fprintf(stderr, "[zrb] N=%d M=%d: %d of %d inner(s) built; best so far %.0f ns\n", N, Ms[m], nb, nc, bns[0]);
     }
     (void)built;
+    if (_vfft_plan_threads(cfg) > 1)
+    {   /* the threaded forms of the two fastest (zrb_mt.h): BLOCKS and TILES */
+        _ilprime_inner_desc_t sd[2];
+        int sM[2], ns2 = 0;
+        for (int i = 0; i < 2; i++)
+            if (out[i] && _ilprime_desc_parse(&sd[ns2], out[i]->zrb->ikind, out[i]->zrb->ishape, out[i]->zrb->itw))
+                sM[ns2++] = out[i]->zrb->M;
+        for (int i = 0; i < ns2; i++)
+            for (int mt = 1; mt <= 2; mt++)
+                _zrb_try(cfg, N, sM[i], &sd[i], mt, a, ref, b, s0, xs, nchk, out, bns);
+    }
     return (out[0] != NULL) + (out[1] != NULL);
 }
 
@@ -475,7 +491,10 @@ static struct vfft_plan_s *_real_il_odd_race(const vfft_config_t *cfg, int N, st
                 snprintf(ws, sizeof ws, "/w%d%s", arm[i]->zrf->tile, arm[i]->zrf->mt == 2 ? "/m2" : arm[i]->zrf->mt ? "/m1" : "");
             }
             else if (arm[i]->zrb)
+            {
                 vfft_zrb_str(arm[i]->zrb, cs, sizeof cs);
+                if (arm[i]->zrb->mt) snprintf(ws, sizeof ws, "/m%d", arm[i]->zrb->mt);
+            }
             fprintf(stderr, " %s%s%s%s=%.0f%s", arm[i]->zrm ? "zrm" : arm[i]->zrb ? "zrb:" : "zrf:", cs,
                     (arm[i]->zrf && arm[i]->zrf->nomsz) ? "/t" : "", ws, ns[i], i == win ? "*" : "");
         }
@@ -489,7 +508,7 @@ static struct vfft_plan_s *_real_il_odd_race(const vfft_config_t *cfg, int N, st
             const int rc = hw->zrf ? vw2_real_il_bank_zrf(&W->vw2, N, c2r, ip, Tk, hw->zrf->R, hw->zrf->K, hw->zrf->nomsz,
                                                           hw->zrf->tile, hw->zrf->mt, ns[win])
                          : hw->zrb ? vw2_real_il_bank_zrb(&W->vw2, N, c2r, ip, Tk, hw->zrb->M, hw->zrb->ikind, hw->zrb->ishape,
-                                                          hw->zrb->itw, ns[win])
+                                                          hw->zrb->itw, hw->zrb->mt, ns[win])
                                    : vw2_real_il_bank_zrm(&W->vw2, N, c2r, ip, Tk, ns[win]);
             if (rc == VW2_OK)
                 _vw2_persist(W, cfg);
@@ -562,13 +581,16 @@ static struct vfft_plan_s *_real_il_odd_build(const vfft_config_t *cfg, int N, s
         else if (eng && !strcmp(eng, "zrb") && benv != 0)
         {
             char kind[8], shape[64];
-            int M = 0, tw = 0;
-            if (vw2_real_il_lookup_zrb(&W->vw2, N, c2r, ip, Tk, &M, kind, sizeof kind, shape, sizeof shape, &tw) &&
+            int M = 0, tw = 0, bmt = 0;
+            if (vw2_real_il_lookup_zrb(&W->vw2, N, c2r, ip, Tk, &M, kind, sizeof kind, shape, sizeof shape, &tw, &bmt) &&
                 _ilprime_desc_parse(&bd, kind, shape, tw))
             {
                 struct vfft_plan_s *hb = _zrb_build_plan(cfg, N, M, &bd);
                 if (hb)
+                {
+                    if (bmt) vfft_zrb_mt_bind(hb->zrb, hb->nthreads, bmt); /* the banked threaded arm, at the row's T */
                     return hb;
+                }
             }
         }
         /* any other row (an engine this door does not build, a recipe that no

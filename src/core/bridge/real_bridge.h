@@ -265,7 +265,7 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
             if (h)
                 return _real_finish(h);
         }
-        if (vw2_real_il_lookup_zrb_q(&W->vw2, N, K, c2r, 0, Tk, &M, kind, sizeof kind, shape, sizeof shape, &tw) &&
+        if (vw2_real_il_lookup_zrb_q(&W->vw2, N, K, c2r, 0, Tk, &M, kind, sizeof kind, shape, sizeof shape, &tw, NULL) &&
             _ilprime_desc_parse(&d, kind, shape, tw))
         {   /* the one-row engine over the lanes, its edges at the lane stride */
             struct vfft_plan_s *h = _zrb_build_plan(cfg, N, M, &d);
@@ -419,7 +419,7 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
                 ? vw2_real_il_bank_zrbl(&W->vw2, N, K, c2r, 0, Tk, hw->zrbl->M, hw->zrbl->Rs, hw->zrbl->nst,
                                         hw->zrbl->forms, hw->zrbl->wc, ns[win])
                 : vw2_real_il_bank_zrb_q(&W->vw2, N, K, c2r, 0, Tk, hw->zrb->M, hw->zrb->ikind, hw->zrb->ishape,
-                                         hw->zrb->itw, ns[win]);
+                                         hw->zrb->itw, 0, ns[win]);
             if (rc == VW2_OK)
                 _vw2_persist(W, cfg);
             else

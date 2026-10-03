@@ -74,6 +74,8 @@ extern "C"
    * threaded executes actually run; a serial serve leaves it unchanged. */
   long vfft_zttr_mt_passes(void);
   long vfft_zrf_mt_passes(void);   /* the real flat DIT's threaded executes */
+  long vfft_ilpr_mt_passes(void);  /* the prime cell's (Rader / Bluestein) threaded executes */
+  long vfft_zrb_mt_passes(void);   /* the real Bluestein's threaded executes */
   /* zr2c's Hermitian fold cut across the pool's workers (a raced plan
    * input at T > 1); a serial fold leaves it unchanged. */
   long vfft_zr2c_fold_mt_passes(void);

@@ -157,6 +157,8 @@ static vfft_plan _c2c_ip_finish_il(struct vfft_plan_s *h,
 {
     if (h->k1ztt && h->K == 1 && h->nthreads > 1)
         _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's threaded arm, in place: its own per-T pair */
+    if (h->k1ilpr && h->K == 1 && h->nthreads > 1)
+        _ilpr_mt_replay_or_race(h, W, cfg, N); /* the prime cell's, in place: its own per-T row */
     if (h->k1fs && h->K == 1 && h->nthreads > 1)
         _k1fs_mt_replay_or_race(h, W, cfg, N); /* the four-step's split at T, in place: its own per-T pair */
     return h;

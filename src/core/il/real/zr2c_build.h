@@ -101,6 +101,8 @@ static void _zr2c_kid_destroy(struct vfft_zr2c_kid_s *k)
 /* the child's run: z_in -> z_out, the direction the transform needs */
 static inline int _zr2c_kid_exec(const struct vfft_zr2c_kid_s *k, const double *in, double *out, int bwd)
 {
+    if (k->ilp && k->ilp->mt > 0 && vfft_ilprime_execute_mt(k->ilp, in, out, bwd))
+        return 0;   /* a prime child's threaded form (il_prime_mt.h; _exec_zr2c armed the pool) */
     return _il_dp_exec_io(&k->c, &k->b, in, out, bwd);
 }
 
@@ -255,6 +257,7 @@ static void _zr2c_child_of_kid(vw2_zr2c_child_t *o, const struct vfft_zr2c_kid_s
     o->pm = k->pr.m;
     _ilprime_desc_str(&k->pr.d, o->pin, sizeof o->pin, o->psh, sizeof o->psh);
     o->ptw = k->pr.d.tw;
+    o->pmt = k->ilp ? k->ilp->mt : 0;   /* its threaded arm, on a threaded plan's row */
 }
 /* the row's prime cell; 0 when a PRIME recipe's inner does not parse */
 static int _zr2c_prime_of_child(_zr2c_prime_t *pr, const vw2_zr2c_child_t *o)
@@ -561,8 +564,8 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
                               else _zr2c_fold_fwd((zi), (xo), aS, aC, N, 1, xs, xs); } while (0)
 #define ZR2C_BWD(xi, zo) do { if (fmt) _zr2c_fold_mt((xi), (zo), bS, bC, N, 1, fT); \
                               else _zr2c_fold_bwd((xi), (zo), bS, bC, N, 1, xs, (size_t)N); } while (0)
-    if (fmt)
-        _vfft_pool_arm(h->nthreads); /* the snapshot pool, as the threaded fold asserts it */
+    if (fmt || (kid->ilp && kid->ilp->mt > 0 && h->nthreads > 1))
+        _vfft_pool_arm(h->nthreads); /* the snapshot pool, as the threaded fold / child assert it */
     if (h->transform == VFFT_R2C)
     {
         if (h->zr2c_route == 0)
@@ -653,7 +656,11 @@ static struct vfft_plan_s *_zr2c_replay(const vfft_config_t *cfg, int N, struct 
     _zr2c_cand_of_child(&c, &ch);
     h = _zr2c_build_route(cfg, N, route, &c, &pr, fsS);
     if (h)
+    {
         h->zr2c_fold_mt = fmt && _vfft_plan_threads(cfg) > 1;
+        if (ch.pmt > 0 && h->zr2c_kid->ilp)   /* the prime child's banked threaded arm, at the row's T */
+            vfft_ilprime_mt_bind(h->zr2c_kid->ilp, _vfft_plan_threads(cfg), ch.pmt);
+    }
     return h;
 }
 

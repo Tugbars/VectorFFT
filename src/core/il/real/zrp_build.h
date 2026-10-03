@@ -232,6 +232,12 @@ static void _exec_zrb(struct vfft_plan_s *h, const double *sre, double *dre)
             vfft_zrb_execute_bwd_lanes(h->zrb, sre, dre, (int)h->K);
         return;
     }
+    if (h->zrb->mt > 0 && h->nthreads > 1)
+    {   /* the threaded form the race bound (zrb_mt.h); it declines on a clamped pool */
+        _vfft_pool_arm(h->nthreads);
+        if (vfft_zrb_execute_mt(h->zrb, sre, dre, h->transform != VFFT_R2C))
+            return;
+    }
     if (h->transform == VFFT_R2C)
         vfft_zrb_execute_fwd(h->zrb, sre, dre);
     else
@@ -782,6 +788,13 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N, struct
             if (hzm)
             {
                 hzm->zr2c_fold_mt = 1;
+                if (hzm->zr2c_kid->ilp)
+                {   /* a prime child (N = 2p: no ZTT-r chain carries N/2): its
+                     * threaded form, raced at T on its own convolution
+                     * (il_prime_mt.h); serial when it does not win */
+                    _vfft_pool_arm(Tk);
+                    vfft_ilprime_mt_race(hzm->zr2c_kid->ilp, Tk, NULL);
+                }
                 ZRPR_GATE(hzm, "zr2c+foldmt");
             }
         }

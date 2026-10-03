@@ -214,9 +214,11 @@ static inline int vfft_ilprime_mt_race(vfft_ilprime_plan_t *p, int T, double *ns
     vfft_ilprime_mt_bind(p, T, cx[best].mt);
     if (ns_out) *ns_out = ns[best];
     if (getenv("VFFT_NAT_LOG"))
-        fprintf(stderr, "[ilpr-mt] N=%d %s M=%d T=%d race: serial=%.0f blocks=%.0f%s%.0f -> mt=%d\n", p->N,
-                p->method ? "RADER" : "BLUESTEIN", p->M, T, ns[0], na > 1 ? ns[1] : 0.0,
-                na > 2 ? " tiles=" : "", na > 2 ? ns[2] : 0.0, p->mt);
+    {
+        fprintf(stderr, "[ilpr-mt] N=%d %s M=%d T=%d race:", p->N, p->method ? "RADER" : "BLUESTEIN", p->M, T);
+        for (a = 0; a < na; a++) fprintf(stderr, " %s=%.0f", names[a], ns[a]);
+        fprintf(stderr, " -> mt=%d\n", p->mt);
+    }
     return p->mt;
 }
 
