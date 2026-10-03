@@ -1187,6 +1187,8 @@ typedef struct
     vfft_il_cand_t *out;
     int             n;
     int             dropped;
+    int             flat;   /* the flat DIT's family is in the pool: its chain
+                             * search runs once the cell's reference exists */
 } vfft_il_cand_sink_t;
 
 static void _il_dp_push(vfft_il_cand_sink_t *s, const vfft_il_cand_t *c)
@@ -1200,82 +1202,364 @@ static void _il_dp_push(vfft_il_cand_sink_t *s, const vfft_il_cand_t *c)
  * while split reaches 128 (at N=16384 the balanced split pick 128x128 has no
  * IL halves). Each engine's create is the validator (NULL == illegal); a
  * second copy of a validator here would drift. */
-/* FLAT DIT candidates: ordered compositions of N over the
- * engine's radix pool in its seed order (so the greedy seed chain comes
- * first), depth 2..VFFT_ILFD_MAX_K, capped and LOGGED like the 2D tier's
- * enumerator (no silent caps). Kernel availability, counts and the inverse
- * are validated at build (vfft_ilfd_create_chain); the per-stage FORMS are
- * raced at bench time, never enumerated (see _il_dp_bench_dir). */
-#define VFFT_IL_DP_FLAT_MAXCAND 24
-static void _il_dp_flat_rec(int L, int depth, int *cur,
-                            int (*out)[VFFT_ILFD_MAX_K], int *lens,
-                            int *n, int *dropped)
+/* ── THE FLAT DIT's CHAIN SEARCH (owner, 2026-10-04: complete, measured) ──
+ * The flat DIT's pool is every ordered composition of N over its radix pool
+ * (depth 2..VFFT_ILFD_MAX_K): 92 chains at 945, 1385 at 50625, 41007 at
+ * 893025 -- almost all of them ORDERINGS of a few radix sets (8 to 53 below
+ * 2^20) -- and benching a chain races its per-stage forms and its tile. So
+ * the search runs in three measured levels, nothing cut unmeasured:
+ *   1. RADIX SETS: every set in its canonical order (the pool's order, the
+ *      seed chain; where that order does not build, the next one that does),
+ *      default forms, untiled, gated, raced in heats;
+ *   2. ORDERINGS of the best two sets: every distinct ordering raced in heats
+ *      where a set has at most VFFT_IL_DP_FLAT_ORD_EXH of them; a larger set
+ *      is ordered STAGE BY STAGE (each position takes the radix whose chain --
+ *      the rest in canonical order -- runs fastest): measured, not
+ *      exhaustive, and said so on stderr;
+ *   3. the best two orderings of each set join the cell's candidates, where
+ *      the bench races their forms and tile (_il_dp_bench_dir) and the
+ *      planner ranks them against the other families.
+ * A heat holds at most VFFT_IL_DP_FLAT_HEAT chains, fewer where their tables
+ * together would pass VFFT_IL_DP_FLAT_HEAT_BYTES (a 9-stage plan at 893025
+ * carries ~250 MB); the heats' winners race again until one heat stands. The
+ * lone factor 2 (cells 2 x odd) is a fixed leaf: the registry has n1c at 2
+ * and no t2cp/t2csg there. In a role race (the zr2c child) every level times
+ * the composite's pass. Kernel availability, counts and the inverse are the
+ * create's (vfft_ilfd_create_chain): a chain it refuses is no arm. */
+#define VFFT_IL_DP_FLAT_HEAT       32                    /* chains per heat, at most */
+#define VFFT_IL_DP_FLAT_HEAT_BYTES ((size_t)512 << 20)   /* a heat's tables together, at most */
+#define VFFT_IL_DP_FLAT_ORD_EXH    256                   /* a set's orderings raced exhaustively, at most */
+#define VFFT_IL_DP_FLAT_SETS_MAX   4096                  /* the sets' storage (the most below 2^20 is 53) */
+
+/* the pool, in its order: the seed chain first */
+static const int _il_dp_flat_pool[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16, 29, 31, 37, 41, 43, 47 };
+#define VFFT_IL_DP_FLAT_NPOOL ((int)(sizeof _il_dp_flat_pool / sizeof _il_dp_flat_pool[0]))
+
+typedef struct
 {
-    /* The pool: every radix at which this engine's kinds exist -- n1c for
-     * the leaf, t2cp for a mid, t2cs/t2csg for a tail (the optional
-     * split-body form msz stops at 15: a per-stage choice, not an admission
-     * rule). The create resolves every stage and refuses a radix it cannot
-     * build, so a pool entry can only ever add a race arm, never a wrong
-     * plan. */
-    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16, 29, 31, 37, 41, 43, 47 };
-    int p;
+    int R[VFFT_ILFD_MAX_K];   /* the stages, leaf first */
+    int n;                    /* how many */
+    int lead2;                /* 1 = R[0] is the fixed lone 2 */
+} _il_dp_fchain_t;
+
+static int _il_dp_flat_pidx(int r)
+{
+    int i;
+    for (i = 0; i < VFFT_IL_DP_FLAT_NPOOL; i++)
+        if (_il_dp_flat_pool[i] == r) return i;
+    return -1;
+}
+/* every radix set of L (stages in pool order), after `depth` fixed stages */
+static void _il_dp_flat_sets_rec(int L, int i0, int depth, int *cur, int lead2,
+                                 _il_dp_fchain_t *out, int *n, int *over)
+{
+    int i;
     if (L == 1)
     {
         if (depth < 2) return;
-        if (*n >= VFFT_IL_DP_FLAT_MAXCAND) { (*dropped)++; return; }
-        memcpy(out[*n], cur, sizeof(int) * VFFT_ILFD_MAX_K);
-        lens[*n] = depth;
+        if (*n >= VFFT_IL_DP_FLAT_SETS_MAX) { (*over)++; return; }
+        memset(&out[*n], 0, sizeof out[*n]);
+        memcpy(out[*n].R, cur, sizeof(int) * (size_t)depth);
+        out[*n].n = depth;
+        out[*n].lead2 = lead2;
         (*n)++;
         return;
     }
     if (depth >= VFFT_ILFD_MAX_K) return;
-    /* THE LONE FACTOR 2 (cells 2 x odd: 14, 22, 26, ..., 2002). Nothing
-     * else places a SINGLE factor of 2 -- this pool's 4/8/16 need two or
-     * more, the 2^a*odd grammar needs a 4, and the pair needs R1 >= 3 and an
-     * n1t leaf, which has no radix 2. The registry does have n1c at 2, and
-     * the create's leaf slot takes any n1c radix. So 2 is admitted as the
-     * LEAF, and only when L/2 is odd: at any other slot a 2 needs t2cp/t2csg
-     * at radix 2, which do not exist (each refusal spends one of the 24
-     * candidate slots), and at a 4*odd cell a 2-led chain only re-spells
-     * chains 4/8/16 already reach. This states WHERE a kernel exists; which
-     * chain wins is the race's. */
-    if (depth == 0 && (L & 1) == 0 && ((L >> 1) & 1))
-    {
-        cur[0] = 2;
-        _il_dp_flat_rec(L >> 1, 1, cur, out, lens, n, dropped);
-    }
-    for (p = 0; p < (int)(sizeof POOL / sizeof POOL[0]); p++)
-        if (L % POOL[p] == 0)
+    for (i = i0; i < VFFT_IL_DP_FLAT_NPOOL; i++)
+        if (L % _il_dp_flat_pool[i] == 0)
         {
-            cur[depth] = POOL[p];
-            _il_dp_flat_rec(L / POOL[p], depth + 1, cur, out, lens, n, dropped);
+            cur[depth] = _il_dp_flat_pool[i];
+            _il_dp_flat_sets_rec(L / _il_dp_flat_pool[i], i, depth + 1, cur, lead2, out, n, over);
         }
 }
-static void _il_dp_enumerate_flat_ord(int N, vfft_il_cand_sink_t *s, int scr);
-static void _il_dp_enumerate_flat(int N, vfft_il_cand_sink_t *s)
+/* the next distinct ordering of R[lead2..n) in pool order; 0 after the last */
+static int _il_dp_flat_next(_il_dp_fchain_t *f)
 {
-    _il_dp_enumerate_flat_ord(N, s, 0);
+    int i = f->n - 2, j, t;
+    while (i >= f->lead2 && _il_dp_flat_pidx(f->R[i]) >= _il_dp_flat_pidx(f->R[i + 1])) i--;
+    if (i < f->lead2) return 0;
+    j = f->n - 1;
+    while (_il_dp_flat_pidx(f->R[j]) <= _il_dp_flat_pidx(f->R[i])) j--;
+    t = f->R[i]; f->R[i] = f->R[j]; f->R[j] = t;
+    for (i = i + 1, j = f->n - 1; i < j; i++, j--) { t = f->R[i]; f->R[i] = f->R[j]; f->R[j] = t; }
+    return 1;
 }
-static void _il_dp_enumerate_flat_ord(int N, vfft_il_cand_sink_t *s, int scr)
+/* back to the canonical order (pool order after the fixed leaf) */
+static void _il_dp_flat_sort(_il_dp_fchain_t *f)
 {
-    int out[VFFT_IL_DP_FLAT_MAXCAND][VFFT_ILFD_MAX_K];
-    int lens[VFFT_IL_DP_FLAT_MAXCAND], cur[VFFT_ILFD_MAX_K];
-    int n = 0, dropped = 0, i;
-    vfft_il_cand_t c;
-    memset(cur, 0, sizeof cur);
-    _il_dp_flat_rec(N, 0, cur, out, lens, &n, &dropped);
-    if (dropped)
-        fprintf(stderr, "[il-dp] N=%d: flat chain pool capped at %d (%d more "
-                        "compositions not raced)\n", N, VFFT_IL_DP_FLAT_MAXCAND, dropped);
-    for (i = 0; i < n; i++)
+    int i, j, t;
+    for (i = f->lead2 + 1; i < f->n; i++)
+        for (j = i; j > f->lead2 && _il_dp_flat_pidx(f->R[j]) < _il_dp_flat_pidx(f->R[j - 1]); j--)
+        { t = f->R[j]; f->R[j] = f->R[j - 1]; f->R[j - 1] = t; }
+}
+/* how many distinct orderings the set has */
+static long _il_dp_flat_norders(const _il_dp_fchain_t *f)
+{
+    int m[VFFT_IL_DP_FLAT_NPOOL], i, k = f->n - f->lead2;
+    long r = 1;
+    memset(m, 0, sizeof m);
+    for (i = 2; i <= k; i++) r *= i;
+    for (i = f->lead2; i < f->n; i++) m[_il_dp_flat_pidx(f->R[i])]++;
+    for (i = 0; i < VFFT_IL_DP_FLAT_NPOOL; i++)
+        for (int q = 2; q <= m[i]; q++) r /= q;
+    return r;
+}
+static void _il_dp_flat_cand(vfft_il_cand_t *c, const _il_dp_fchain_t *f, int scr)
+{
+    memset(c, 0, sizeof *c);
+    c->route = VFFT_K1_IL_FLAT;
+    memcpy(c->il_fl, f->R, sizeof(int) * (size_t)f->n);
+    c->il_fl_n = f->n;
+    c->il_scr = scr;
+}
+static void _il_dp_flat_str(const _il_dp_fchain_t *f, char *b, size_t sz)
+{
+    int i, off = 0;
+    b[0] = 0;
+    for (i = 0; i < f->n && off < (int)sz - 4; i++)
+        off += snprintf(b + off, sz - (size_t)off, "%s%d", i ? "." : "", f->R[i]);
+}
+
+typedef struct { vfft_il_dp_context_t *ctx; vfft_il_cand_t c; _il_dp_built_t b; } _il_dp_flat_arm_t;
+typedef struct { vfft_il_dp_context_t *ctx; int N; } _il_dp_flat_rs_t;
+static void _il_dp_flat_arm_run(void *v)
+{
+    _il_dp_flat_arm_t *a = (_il_dp_flat_arm_t *)v;
+    (void)_il_dp_exec_dir(a->ctx, &a->c, &a->b, 0);
+}
+static void _il_dp_flat_reset(void *v)
+{   /* the pristine input before every sample: an in-place arm walks its own output */
+    const _il_dp_flat_rs_t *r = (const _il_dp_flat_rs_t *)v;
+    memcpy(r->ctx->z_in, r->ctx->z_orig, (size_t)r->N * 2u * sizeof(double));
+}
+/* ONE HEAT: the chains f[idx[0..n)] (n <= VFFT_IL_DP_FLAT_HEAT) built,
+ * gated against the cell's reference and raced on the planner's planes
+ * (min of 3 alternated rounds, paced: one-thread arms); ns[k] per entry,
+ * 1e18 = refused or wrong. `fix`: an order that does not build gives way to
+ * the set's next one that does (level 1; the set keeps the order raced). */
+static void _il_dp_flat_heat(vfft_il_dp_context_t *ctx, int N, int scr, _il_dp_fchain_t *f,
+                             const int *idx, int n, int fix, double *ns)
+{
+    static _il_dp_flat_arm_t arm[VFFT_IL_DP_FLAT_HEAT];   /* off the stack: the planner is single-threaded */
+    vfft_race_arm_t ra[VFFT_IL_DP_FLAT_HEAT];
+    double rns[VFFT_IL_DP_FLAT_HEAT], t0, est;
+    int map[VFFT_IL_DP_FLAT_HEAT], na = 0, k, reps;
+    _il_dp_flat_rs_t rs = { ctx, N };
+    for (k = 0; k < n; k++)
     {
-        memset(&c, 0, sizeof c);
-        c.route = VFFT_K1_IL_FLAT;
-        memcpy(c.il_fl, out[i], sizeof(int) * VFFT_ILFD_MAX_K);
-        c.il_fl_n = lens[i];
-        c.il_scr = scr;
-        _il_dp_push(s, &c);
+        _il_dp_fchain_t *ch = &f[idx[k]];
+        int tries = 0, ok = 0;
+        ns[k] = 1e18;
+        for (;;)
+        {
+            _il_dp_flat_cand(&arm[na].c, ch, scr);
+            if (_il_dp_build(N, &arm[na].c, &arm[na].b, ctx->inplace) == 0)
+            {
+                double g;
+                memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+                g = _il_dp_exec(ctx, &arm[na].c, &arm[na].b) == 0 ? _il_dp_gate_err(ctx, N, &arm[na].c) : -1.0;
+                if (g >= 0.0 && g <= VFFT_IL_DP_GATE_TOL) { ok = 1; break; }
+                _il_dp_free(&arm[na].b);
+            }
+            if (!fix || ++tries >= 16 || !_il_dp_flat_next(ch)) break;
+        }
+        if (!ok) continue;
+        arm[na].ctx = ctx;
+        map[na] = k;
+        ra[na].name = "flat"; ra[na].run = _il_dp_flat_arm_run; ra[na].ctx = &arm[na];
+        na++;
     }
+    if (na == 0) return;
+    _il_dp_flat_reset(&rs);
+    _il_dp_flat_arm_run(&arm[0]);
+    _il_dp_flat_reset(&rs);
+    t0 = vfft_now_ns();
+    _il_dp_flat_arm_run(&arm[0]);
+    est = vfft_now_ns() - t0;
+    reps = (int)(2.0e5 / (est > 1.0 ? est : 1.0));
+    if (reps < 1) reps = 1;
+    if (reps > (ctx->inplace ? 32 : 1024)) reps = ctx->inplace ? 32 : 1024;   /* in place: the data grows per pass */
+    {
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 1, _il_dp_flat_reset, &rs, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        vfft_race_run(&proto, ra, na, rns);
+    }
+    for (k = 0; k < na; k++)
+    {
+        ns[map[k]] = rns[k];
+        _il_dp_free(&arm[k].b);
+    }
+}
+/* A TOURNAMENT over f[idx[0..n)]: balanced heats of at most `cap`, each
+ * heat's winner on to the next round, until one heat stands; that heat's
+ * ranking (fastest first) fills top[0..keep). Returns how many it filled. */
+static int _il_dp_flat_tourney(vfft_il_dp_context_t *ctx, int N, int scr, _il_dp_fchain_t *f,
+                               const int *idx, int n, int fix, int cap, int keep, int *top, int *heats)
+{
+    int *surv = (int *)malloc((size_t)(n > 0 ? n : 1) * sizeof(int));
+    int *next = (int *)malloc((size_t)(n > 0 ? n : 1) * sizeof(int));
+    double hns[VFFT_IL_DP_FLAT_HEAT];
+    int ns = n, got = 0, h, k;
+    if (!surv || !next) { free(surv); free(next); return 0; }
+    memcpy(surv, idx, (size_t)n * sizeof(int));
+    while (ns > 0)
+    {
+        const int nh = (ns + cap - 1) / cap;
+        int nn = 0;
+        for (h = 0; h < nh; h++)
+        {
+            const int lo = (int)((long)ns * h / nh), hi = (int)((long)ns * (h + 1) / nh);
+            _il_dp_flat_heat(ctx, N, scr, f, surv + lo, hi - lo, fix, hns);
+            (*heats)++;
+            if (nh == 1)
+            {   /* the last heat: its ranking */
+                for (got = 0; got < keep; got++)
+                {
+                    int b = -1;
+                    for (k = 0; k < hi - lo; k++)
+                        if (hns[k] < 1e17 && (b < 0 || hns[k] < hns[b])) b = k;
+                    if (b < 0) break;
+                    top[got] = surv[lo + b];
+                    hns[b] = 1e18;
+                }
+                free(surv); free(next);
+                return got;
+            }
+            {
+                int b = -1;
+                for (k = 0; k < hi - lo; k++)
+                    if (hns[k] < 1e17 && (b < 0 || hns[k] < hns[b])) b = k;
+                if (b >= 0) next[nn++] = surv[lo + b];
+            }
+        }
+        memcpy(surv, next, (size_t)nn * sizeof(int));
+        ns = nn;
+    }
+    free(surv); free(next);
+    return 0;
+}
+/* a set ordered STAGE BY STAGE: at each position the remaining radices are
+ * offered one at a time (the rest in canonical order behind it) and the
+ * fastest chain fixes that position; *f is left at the ordering */
+static void _il_dp_flat_stagewise(vfft_il_dp_context_t *ctx, int N, int scr, _il_dp_fchain_t *f, int cap, int *heats)
+{
+    _il_dp_fchain_t c[VFFT_ILFD_MAX_K];
+    int idx[VFFT_ILFD_MAX_K], p, q, nc, top;
+    _il_dp_flat_sort(f);
+    for (p = f->lead2; p < f->n - 1; p++)
+    {
+        nc = 0;
+        for (q = p; q < f->n; q++)
+        {
+            int r;
+            if (q > p && f->R[q] == f->R[q - 1]) continue;   /* the same radix: the same chain */
+            c[nc] = *f;
+            for (r = q; r > p; r--) c[nc].R[r] = c[nc].R[r - 1];
+            c[nc].R[p] = f->R[q];
+            idx[nc] = nc;
+            nc++;
+        }
+        if (nc < 2) continue;
+        if (_il_dp_flat_tourney(ctx, N, scr, c, idx, nc, 0, cap, 1, &top, heats) == 1)
+            *f = c[top];
+    }
+}
+/* THE SEARCH: the finalists (at most `room`) into out[] as FLAT candidates;
+ * returns how many */
+static int _il_dp_flat_search(vfft_il_dp_context_t *ctx, int N, int scr, vfft_il_cand_t *out, int room, int verbose)
+{
+    _il_dp_fchain_t *sets = (_il_dp_fchain_t *)malloc(sizeof(_il_dp_fchain_t) * VFFT_IL_DP_FLAT_SETS_MAX);
+    _il_dp_fchain_t fin[4];
+    int cur[VFFT_ILFD_MAX_K], ns = 0, over = 0, i, nmax = 2, cap, top[2], nt, nfin = 0, heats = 0, nout = 0;
+    long chains = 0;
+    size_t per;
+    if (!sets) return 0;
+    memset(cur, 0, sizeof cur);
+    if ((N & 1) == 0 && ((N >> 1) & 1))
+    {   /* the lone factor 2: the leaf */
+        cur[0] = 2;
+        _il_dp_flat_sets_rec(N >> 1, 0, 1, cur, 1, sets, &ns, &over);
+    }
+    _il_dp_flat_sets_rec(N, 0, 0, cur, 0, sets, &ns, &over);
+    if (over)
+        fprintf(stderr, "[il-dp] N=%d: flat radix-set storage (%d) exceeded, %d set(s) not raced\n",
+                N, VFFT_IL_DP_FLAT_SETS_MAX, over);
+    if (ns == 0) { free(sets); return 0; }
+    for (i = 0; i < ns; i++)
+    {
+        chains += _il_dp_flat_norders(&sets[i]);
+        if (sets[i].n > nmax) nmax = sets[i].n;
+    }
+    /* the heat: at most VFFT_IL_DP_FLAT_HEAT, fewer where the chains' tables
+     * (two directions, one table a stage, N complex each) would pass the budget */
+    per = (size_t)N * 2u * sizeof(double) * 2u * (size_t)nmax;
+    cap = (int)(VFFT_IL_DP_FLAT_HEAT_BYTES / (per ? per : 1));
+    if (cap > VFFT_IL_DP_FLAT_HEAT) cap = VFFT_IL_DP_FLAT_HEAT;
+    if (cap < 2) cap = 2;
+    {   /* 1. the radix sets */
+        int *idx = (int *)malloc(sizeof(int) * (size_t)ns);
+        if (!idx) { free(sets); return 0; }
+        for (i = 0; i < ns; i++) idx[i] = i;
+        nt = _il_dp_flat_tourney(ctx, N, scr, sets, idx, ns, 1, cap, 2, top, &heats);
+        free(idx);
+    }
+    for (i = 0; i < nt; i++)
+    {   /* 2. the orderings of each of the best sets */
+        _il_dp_fchain_t s = sets[top[i]];
+        const long no = _il_dp_flat_norders(&s);
+        char cs[64];
+        if (no <= 1)
+            fin[nfin++] = s;
+        else if (no <= VFFT_IL_DP_FLAT_ORD_EXH)
+        {
+            _il_dp_fchain_t *ord = (_il_dp_fchain_t *)malloc(sizeof(_il_dp_fchain_t) * (size_t)no);
+            int *idx = (int *)malloc(sizeof(int) * (size_t)no), no2 = 0, t2[2], g;
+            if (ord && idx)
+            {
+                _il_dp_flat_sort(&s);
+                do { ord[no2] = s; idx[no2] = no2; no2++; } while (no2 < no && _il_dp_flat_next(&s));
+                g = _il_dp_flat_tourney(ctx, N, scr, ord, idx, no2, 0, cap, 2, t2, &heats);
+                for (int k = 0; k < g && nfin < 4; k++) fin[nfin++] = ord[t2[k]];
+            }
+            free(ord); free(idx);
+        }
+        else
+        {
+            _il_dp_fchain_t g = s;
+            _il_dp_flat_str(&s, cs, sizeof cs);
+            fprintf(stderr, "[il-dp] N=%d: flat set %s has %ld orderings (> %d): ordered stage by stage "
+                            "(measured, not exhaustive)\n", N, cs, no, VFFT_IL_DP_FLAT_ORD_EXH);
+            _il_dp_flat_stagewise(ctx, N, scr, &g, cap, &heats);
+            fin[nfin++] = g;
+            if (nfin < 4 && memcmp(g.R, s.R, sizeof g.R)) fin[nfin++] = s;   /* and the order level 1 raced */
+        }
+    }
+    for (i = 0; i < nfin && nout < room; i++)
+    {   /* 3. the finalists, once each */
+        int k, dup = 0;
+        for (k = 0; k < i; k++)
+            if (fin[k].n == fin[i].n && !memcmp(fin[k].R, fin[i].R, sizeof(int) * (size_t)fin[i].n)) dup = 1;
+        if (dup) continue;
+        _il_dp_flat_cand(&out[nout++], &fin[i], scr);
+    }
+    if (verbose)
+    {
+        fprintf(stderr, "  [il-dp] N=%d %s flat search: %d radix set(s), %ld chain(s), heats of %d, %d heat(s) ->",
+                N, scr ? "scr" : "nat", ns, chains, cap, heats);
+        for (i = 0; i < nout; i++)
+        {
+            char cs[64];
+            _il_dp_fchain_t t;
+            memset(&t, 0, sizeof t);
+            memcpy(t.R, out[i].il_fl, sizeof(int) * (size_t)out[i].il_fl_n);
+            t.n = out[i].il_fl_n;
+            _il_dp_flat_str(&t, cs, sizeof cs);
+            fprintf(stderr, " %s", cs);
+        }
+        fprintf(stderr, "\n");
+    }
+    free(sets);
+    return nout;
 }
 
 /* the FOUR-STEP's candidates: every split of the ladder, each a 2D child on
@@ -1699,7 +1983,7 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
         case VFFT_FAM_MONO:    _il_dp_enumerate_mono(N, s);          break;
         case VFFT_FAM_PAIR:    _il_dp_enumerate_pairs(N, s);         break;
         case VFFT_FAM_CHAIN3:  _il_dp_enumerate_chain3(N, s);        break;
-        case VFFT_FAM_FLAT:    _il_dp_enumerate_flat_ord(N, s, scr); break;
+        case VFFT_FAM_FLAT:    s->flat = 1;                          break;   /* searched: _il_dp_flat_search */
         case VFFT_FAM_ZTT:     _il_dp_enumerate_ztt_ord(N, s, scr);  break;
         case VFFT_FAM_FS:      _il_dp_enumerate_fs(N, s, scr);       break;
         case VFFT_FAM_PRIME:   _il_dp_enumerate_prime(N, s);        break;
@@ -1733,7 +2017,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     }
 
     vfft_il_cand_t cand[VFFT_IL_DP_MAX_CAND];
-    int ncand;
+    int ncand, want_flat = 0;
 
     if (e)
     {
@@ -1745,9 +2029,10 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     }
     else
     {
-        vfft_il_cand_sink_t sink = { cand, 0, 0 };
+        vfft_il_cand_sink_t sink = { cand, 0, 0, 0 };
         _il_dp_enumerate(N, ord, &sink);
         ncand = sink.n;
+        want_flat = sink.flat;
 
         /* 🔴 REFUSE a truncated cell rather than banking the best of a prefix.
          * Silently returning the winner of a subset is worse than returning
@@ -1777,7 +2062,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
                 cand[k++] = cand[i];
         ncand = k;
     }
-    if (ncand <= 0) return 1e18;
+    if (ncand <= 0 && !want_flat) return 1e18;
 
     /* ONE reference for the whole cell, built BEFORE any candidate runs and
      * shared by every one of them (and by the other order class at this N).
@@ -1790,6 +2075,10 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
                             " -- cell refused\n", N, ord);
         return 1e18;
     }
+    if (want_flat)   /* the flat DIT's finalists: its chain search, gated against this reference */
+        ncand += _il_dp_flat_search(ctx, N, ord != VFFT_IL_ORD_NATURAL, cand + ncand,
+                                    VFFT_IL_DP_MAX_CAND - ncand, verbose);
+    if (ncand <= 0) return 1e18;
 
     int nlive = 0;
     for (int i = 0; i < ncand; i++)

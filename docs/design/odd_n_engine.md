@@ -588,17 +588,28 @@ engagement. The method is the one declared in
 
 ### 9.1 Candidates
 
-`_il_dp_enumerate_flat` (dp_planner_il.h) walks the ordered
-compositions of N over the pool in the pool's order (so the greedy seed
-chain — 9 first, then 7, 5, 3, 25, 27, … — is the first candidate; at
-N ≡ 2 mod 4 the 2-led chains come first, the lone 2 being the leaf and
-nothing else), depth 2 to `VFFT_ILFD_MAX_K` (10), capped at 24 per cell. The cap is
-LOGGED when it bites (`flat chain pool capped at 24 (n more compositions
-not raced)`); it bites hard on smooth N. Each candidate is a chain only;
-its forms are raced when it is benched. Kernel availability, run
-contracts and the existence of the inverse are validated by
-`vfft_ilfd_create_chain` at build — a chain that cannot build or cannot
-invert is dropped, never patched.
+The pool is every ordered composition of N over the radix pool, depth 2 to
+`VFFT_ILFD_MAX_K` (10); at N = 2 mod 4 the lone 2 is the leaf and nothing else. It is
+large -- 92 chains at 945, 1385 at 50625, 41007 at 893025 -- and almost all of it is
+ORDERINGS of a few radix sets (8 to 53 below 2^20). So `_il_dp_flat_search`
+(dp_planner_il.h, 2026-10-04) searches it in three measured levels, after the cell's
+reference exists:
+
+1. **Radix sets.** Every set in its canonical order (the pool's order: 9 first, then 7,
+   5, 3, 25, 27, ...; where that order cannot build, the set's next one that can),
+   default forms, untiled, gated, raced in heats.
+2. **Orderings** of the best two sets: every distinct ordering raced in heats where a
+   set has at most 256; a larger set is ordered stage by stage -- each position takes
+   the radix whose chain (the rest in canonical order) runs fastest -- measured but not
+   exhaustive, and logged (`flat set ... has n orderings (> 256): ordered stage by
+   stage`).
+3. The best two orderings of each set join the cell's candidates, where the bench
+   races their forms and tile and the planner ranks them against the other families.
+
+A heat holds at most 32 chains, fewer where their tables together would pass 512 MB;
+the heats' winners race again until one heat stands. Kernel availability, run
+contracts and the existence of the inverse are validated by `vfft_ilfd_create_chain`
+at build -- a chain that cannot build or cannot invert is no arm, never patched.
 
 ### 9.2 Measurement
 
