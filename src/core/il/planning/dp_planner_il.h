@@ -51,6 +51,7 @@
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
 #include "il_flatdit.h" /* the FLAT mixed-radix DIT: the odd-N engine         */
 #include "il_flatdit_race.h" /* its FORM and TILE races on the shared race body */
+#include "il/planning/chain_search.h" /* the flat DIT's chain pick: the shared measured search */
 #include "common/support/zalloc.h"   /* vfft_aligned_alloc / vfft_aligned_free: the context arenas */
 #include "ztt.h"        /* ZTURN-T: the run-contiguous DIT, one fused driver per cell */
 #include "il_prime.h"   /* the prime cell (Rader/Bluestein); after ztt.h (its ZTURN-T inner branch) */
@@ -75,9 +76,8 @@ static inline void _il_dp_sleep_ms(int ms)
 #define VFFT_IL_DP_TIME_REPEAT   6        /* best-of trials                  */
 #define VFFT_IL_DP_TIME_MIN_NS   2.0e6    /* min wall-clock per trial (2 ms) */
 #define VFFT_IL_DP_TIME_LIMIT_NS 5.0e8    /* per-bench cap (~0.5 s)          */
-#define VFFT_IL_DP_PACE_EVERY    4        /* pace every Nth benchmark        */
-#define VFFT_IL_DP_PACE_MS       VFFT_RACE_PACE_MS   /* ONE constant: support/race.h */
-#define VFFT_IL_DP_PACE_N_THRESHOLD 8192  /* unused: pacing has no N gate (_il_dp_maybe_pace) */
+#define VFFT_IL_DP_PACE_MS       VFFT_RACE_PACE_MS   /* after EVERY benchmark; ONE constant: support/race.h */
+#define VFFT_IL_DP_PACE_N_THRESHOLD 8192  /* unused: pacing has no N gate (_il_dp_pace) */
 
 #define VFFT_IL_DP_CACHE_MAX     512
 #define VFFT_IL_DP_TOPK_MAX      8
@@ -311,15 +311,16 @@ static vfft_il_dp_entry_t *_il_dp_insert(vfft_il_dp_context_t *ctx, int N, int o
     return e;
 }
 
-static void _il_dp_maybe_pace(vfft_il_dp_context_t *ctx, int N)
+static void _il_dp_pace(void)
 {
     /* Thermal drift re-ranks plans (+/-5% placement swings flip verdicts).
-     * Pacing is not optional.
+     * Pacing is not optional, and it follows EVERY benchmark (owner,
+     * 2026-10-04): the candidates are timed one after another, so the one
+     * benched right after another without a pause starts on a hotter core
+     * than its rivals.
      *
      * NO N GATE: SMALL cells bench fastest, so they run back-to-back and heat
      * the part hardest (unpaced runs disagreed on the N=1024 winner). */
-    (void)N;
-    if ((ctx->n_benchmarks % VFFT_IL_DP_PACE_EVERY) != 0) return;
     _il_dp_sleep_ms(VFFT_IL_DP_PACE_MS);
 }
 
@@ -1014,7 +1015,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
 
     _il_dp_free(&b);
     ctx->n_benchmarks++;
-    _il_dp_maybe_pace(ctx, N);
+    _il_dp_pace();
     return best;
 }
 
@@ -1202,110 +1203,27 @@ static void _il_dp_push(vfft_il_cand_sink_t *s, const vfft_il_cand_t *c)
  * while split reaches 128 (at N=16384 the balanced split pick 128x128 has no
  * IL halves). Each engine's create is the validator (NULL == illegal); a
  * second copy of a validator here would drift. */
-/* ── THE FLAT DIT's CHAIN SEARCH (owner, 2026-10-04: complete, measured) ──
- * The flat DIT's pool is every ordered composition of N over its radix pool
- * (depth 2..VFFT_ILFD_MAX_K): 92 chains at 945, 1385 at 50625, 41007 at
- * 893025 -- almost all of them ORDERINGS of a few radix sets (8 to 53 below
- * 2^20) -- and benching a chain races its per-stage forms and its tile. So
- * the search runs in three measured levels, nothing cut unmeasured:
- *   1. RADIX SETS: every set in its canonical order (the pool's order, the
- *      seed chain; where that order does not build, the next one that does),
- *      default forms, untiled, gated, raced in heats;
- *   2. ORDERINGS of the best two sets: every distinct ordering raced in heats
- *      where a set has at most VFFT_IL_DP_FLAT_ORD_EXH of them; a larger set
- *      is ordered STAGE BY STAGE (each position takes the radix whose chain --
- *      the rest in canonical order -- runs fastest): measured, not
- *      exhaustive, and said so on stderr;
- *   3. the best two orderings of each set join the cell's candidates, where
- *      the bench races their forms and tile (_il_dp_bench_dir) and the
- *      planner ranks them against the other families.
- * A heat holds at most VFFT_IL_DP_FLAT_HEAT chains, fewer where their tables
- * together would pass VFFT_IL_DP_FLAT_HEAT_BYTES (a 9-stage plan at 893025
- * carries ~250 MB); the heats' winners race again until one heat stands. The
- * lone factor 2 (cells 2 x odd) is a fixed leaf: the registry has n1c at 2
- * and no t2cp/t2csg there. In a role race (the zr2c child) every level times
- * the composite's pass. Kernel availability, counts and the inverse are the
- * create's (vfft_ilfd_create_chain): a chain it refuses is no arm. */
-#define VFFT_IL_DP_FLAT_HEAT       32                    /* chains per heat, at most */
-#define VFFT_IL_DP_FLAT_HEAT_BYTES ((size_t)512 << 20)   /* a heat's tables together, at most */
-#define VFFT_IL_DP_FLAT_ORD_EXH    256                   /* a set's orderings raced exhaustively, at most */
-#define VFFT_IL_DP_FLAT_SETS_MAX   4096                  /* the sets' storage (the most below 2^20 is 53) */
-
-/* the pool, in its order: the seed chain first */
+/* ── THE FLAT DIT's CHAIN PICK ─────────────────────────────────────────────
+ * The shared measured search (il/planning/chain_search.h: every radix set in
+ * two orders -- its lowest radix as the first stage, its second-lowest as the
+ * first stage -- the best three sets' orderings, the finalists) with this
+ * planner's HEAT: every chain built by the planner's builder, gated against
+ * the cell's reference, raced on the planner's planes in one same-run race
+ * (in a role race, the composite's pass). The finalists join the cell's
+ * candidates, where the bench races their forms and tile (_il_dp_bench_dir)
+ * and the planner ranks them against the other families. The lone factor 2
+ * (cells 2 x odd) is a fixed leaf: the registry has n1c at 2 and no
+ * t2cp/t2csg there. A heat's plans together stay under 512 MB (a 9-stage
+ * plan at 893025 carries ~250 MB). Kernel availability, counts and the
+ * inverse are the create's (vfft_ilfd_create_chain): a chain it refuses is
+ * no arm. */
+#if VFFT_CHAIN_MAX_K != VFFT_ILFD_MAX_K
+#error "chain_search.h's VFFT_CHAIN_MAX_K must be the flat DIT's VFFT_ILFD_MAX_K"
+#endif
+#define VFFT_IL_DP_FLAT_HEAT_BYTES ((size_t)512 << 20)
 static const int _il_dp_flat_pool[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16, 29, 31, 37, 41, 43, 47 };
-#define VFFT_IL_DP_FLAT_NPOOL ((int)(sizeof _il_dp_flat_pool / sizeof _il_dp_flat_pool[0]))
 
-typedef struct
-{
-    int R[VFFT_ILFD_MAX_K];   /* the stages, leaf first */
-    int n;                    /* how many */
-    int lead2;                /* 1 = R[0] is the fixed lone 2 */
-} _il_dp_fchain_t;
-
-static int _il_dp_flat_pidx(int r)
-{
-    int i;
-    for (i = 0; i < VFFT_IL_DP_FLAT_NPOOL; i++)
-        if (_il_dp_flat_pool[i] == r) return i;
-    return -1;
-}
-/* every radix set of L (stages in pool order), after `depth` fixed stages */
-static void _il_dp_flat_sets_rec(int L, int i0, int depth, int *cur, int lead2,
-                                 _il_dp_fchain_t *out, int *n, int *over)
-{
-    int i;
-    if (L == 1)
-    {
-        if (depth < 2) return;
-        if (*n >= VFFT_IL_DP_FLAT_SETS_MAX) { (*over)++; return; }
-        memset(&out[*n], 0, sizeof out[*n]);
-        memcpy(out[*n].R, cur, sizeof(int) * (size_t)depth);
-        out[*n].n = depth;
-        out[*n].lead2 = lead2;
-        (*n)++;
-        return;
-    }
-    if (depth >= VFFT_ILFD_MAX_K) return;
-    for (i = i0; i < VFFT_IL_DP_FLAT_NPOOL; i++)
-        if (L % _il_dp_flat_pool[i] == 0)
-        {
-            cur[depth] = _il_dp_flat_pool[i];
-            _il_dp_flat_sets_rec(L / _il_dp_flat_pool[i], i, depth + 1, cur, lead2, out, n, over);
-        }
-}
-/* the next distinct ordering of R[lead2..n) in pool order; 0 after the last */
-static int _il_dp_flat_next(_il_dp_fchain_t *f)
-{
-    int i = f->n - 2, j, t;
-    while (i >= f->lead2 && _il_dp_flat_pidx(f->R[i]) >= _il_dp_flat_pidx(f->R[i + 1])) i--;
-    if (i < f->lead2) return 0;
-    j = f->n - 1;
-    while (_il_dp_flat_pidx(f->R[j]) <= _il_dp_flat_pidx(f->R[i])) j--;
-    t = f->R[i]; f->R[i] = f->R[j]; f->R[j] = t;
-    for (i = i + 1, j = f->n - 1; i < j; i++, j--) { t = f->R[i]; f->R[i] = f->R[j]; f->R[j] = t; }
-    return 1;
-}
-/* back to the canonical order (pool order after the fixed leaf) */
-static void _il_dp_flat_sort(_il_dp_fchain_t *f)
-{
-    int i, j, t;
-    for (i = f->lead2 + 1; i < f->n; i++)
-        for (j = i; j > f->lead2 && _il_dp_flat_pidx(f->R[j]) < _il_dp_flat_pidx(f->R[j - 1]); j--)
-        { t = f->R[j]; f->R[j] = f->R[j - 1]; f->R[j - 1] = t; }
-}
-/* how many distinct orderings the set has */
-static long _il_dp_flat_norders(const _il_dp_fchain_t *f)
-{
-    int m[VFFT_IL_DP_FLAT_NPOOL], i, k = f->n - f->lead2;
-    long r = 1;
-    memset(m, 0, sizeof m);
-    for (i = 2; i <= k; i++) r *= i;
-    for (i = f->lead2; i < f->n; i++) m[_il_dp_flat_pidx(f->R[i])]++;
-    for (i = 0; i < VFFT_IL_DP_FLAT_NPOOL; i++)
-        for (int q = 2; q <= m[i]; q++) r /= q;
-    return r;
-}
-static void _il_dp_flat_cand(vfft_il_cand_t *c, const _il_dp_fchain_t *f, int scr)
+static void _il_dp_flat_cand(vfft_il_cand_t *c, const vfft_chain_t *f, int scr)
 {
     memset(c, 0, sizeof *c);
     c->route = VFFT_K1_IL_FLAT;
@@ -1313,16 +1231,9 @@ static void _il_dp_flat_cand(vfft_il_cand_t *c, const _il_dp_fchain_t *f, int sc
     c->il_fl_n = f->n;
     c->il_scr = scr;
 }
-static void _il_dp_flat_str(const _il_dp_fchain_t *f, char *b, size_t sz)
-{
-    int i, off = 0;
-    b[0] = 0;
-    for (i = 0; i < f->n && off < (int)sz - 4; i++)
-        off += snprintf(b + off, sz - (size_t)off, "%s%d", i ? "." : "", f->R[i]);
-}
 
 typedef struct { vfft_il_dp_context_t *ctx; vfft_il_cand_t c; _il_dp_built_t b; } _il_dp_flat_arm_t;
-typedef struct { vfft_il_dp_context_t *ctx; int N; } _il_dp_flat_rs_t;
+typedef struct { vfft_il_dp_context_t *ctx; int N, scr; } _il_dp_flat_hctx_t;
 static void _il_dp_flat_arm_run(void *v)
 {
     _il_dp_flat_arm_t *a = (_il_dp_flat_arm_t *)v;
@@ -1330,30 +1241,31 @@ static void _il_dp_flat_arm_run(void *v)
 }
 static void _il_dp_flat_reset(void *v)
 {   /* the pristine input before every sample: an in-place arm walks its own output */
-    const _il_dp_flat_rs_t *r = (const _il_dp_flat_rs_t *)v;
-    memcpy(r->ctx->z_in, r->ctx->z_orig, (size_t)r->N * 2u * sizeof(double));
+    const _il_dp_flat_hctx_t *h = (const _il_dp_flat_hctx_t *)v;
+    memcpy(h->ctx->z_in, h->ctx->z_orig, (size_t)h->N * 2u * sizeof(double));
 }
-/* ONE HEAT: the chains f[idx[0..n)] (n <= VFFT_IL_DP_FLAT_HEAT) built,
- * gated against the cell's reference and raced on the planner's planes
- * (min of 3 alternated rounds, paced: one-thread arms); ns[k] per entry,
- * 1e18 = refused or wrong. `fix`: an order that does not build gives way to
- * the set's next one that does (level 1; the set keeps the order raced). */
-static void _il_dp_flat_heat(vfft_il_dp_context_t *ctx, int N, int scr, _il_dp_fchain_t *f,
-                             const int *idx, int n, int fix, double *ns)
+/* THE HEAT: the chains f[idx[0..n)] built, gated against the cell's
+ * reference and raced on the planner's planes (min of 3 alternated rounds,
+ * paced: one-thread arms); ns[k] per entry, 1e18 = refused or wrong. `fix`:
+ * an order that does not build gives way to the set's next one that does
+ * (the set keeps the order raced). */
+static void _il_dp_flat_heat(void *hv, vfft_chain_t *f, const int *idx, int n, int fix, double *ns)
 {
-    static _il_dp_flat_arm_t arm[VFFT_IL_DP_FLAT_HEAT];   /* off the stack: the planner is single-threaded */
-    vfft_race_arm_t ra[VFFT_IL_DP_FLAT_HEAT];
-    double rns[VFFT_IL_DP_FLAT_HEAT], t0, est;
-    int map[VFFT_IL_DP_FLAT_HEAT], na = 0, k, reps;
-    _il_dp_flat_rs_t rs = { ctx, N };
+    _il_dp_flat_hctx_t *hc = (_il_dp_flat_hctx_t *)hv;
+    vfft_il_dp_context_t *ctx = hc->ctx;
+    const int N = hc->N;
+    static _il_dp_flat_arm_t arm[VFFT_CHAIN_HEAT];   /* off the stack: the planner is single-threaded */
+    vfft_race_arm_t ra[VFFT_CHAIN_HEAT];
+    double rns[VFFT_CHAIN_HEAT], t0, est;
+    int map[VFFT_CHAIN_HEAT], na = 0, k, reps;
     for (k = 0; k < n; k++)
     {
-        _il_dp_fchain_t *ch = &f[idx[k]];
+        vfft_chain_t *ch = &f[idx[k]];
         int tries = 0, ok = 0;
         ns[k] = 1e18;
         for (;;)
         {
-            _il_dp_flat_cand(&arm[na].c, ch, scr);
+            _il_dp_flat_cand(&arm[na].c, ch, hc->scr);
             if (_il_dp_build(N, &arm[na].c, &arm[na].b, ctx->inplace) == 0)
             {
                 double g;
@@ -1362,7 +1274,7 @@ static void _il_dp_flat_heat(vfft_il_dp_context_t *ctx, int N, int scr, _il_dp_f
                 if (g >= 0.0 && g <= VFFT_IL_DP_GATE_TOL) { ok = 1; break; }
                 _il_dp_free(&arm[na].b);
             }
-            if (!fix || ++tries >= 16 || !_il_dp_flat_next(ch)) break;
+            if (!fix || ++tries >= 16 || !vfft_chain_next(ch)) break;
         }
         if (!ok) continue;
         arm[na].ctx = ctx;
@@ -1371,9 +1283,9 @@ static void _il_dp_flat_heat(vfft_il_dp_context_t *ctx, int N, int scr, _il_dp_f
         na++;
     }
     if (na == 0) return;
-    _il_dp_flat_reset(&rs);
+    _il_dp_flat_reset(hc);
     _il_dp_flat_arm_run(&arm[0]);
-    _il_dp_flat_reset(&rs);
+    _il_dp_flat_reset(hc);
     t0 = vfft_now_ns();
     _il_dp_flat_arm_run(&arm[0]);
     est = vfft_now_ns() - t0;
@@ -1381,7 +1293,7 @@ static void _il_dp_flat_heat(vfft_il_dp_context_t *ctx, int N, int scr, _il_dp_f
     if (reps < 1) reps = 1;
     if (reps > (ctx->inplace ? 32 : 1024)) reps = ctx->inplace ? 32 : 1024;   /* in place: the data grows per pass */
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 1, _il_dp_flat_reset, &rs, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 1, _il_dp_flat_reset, hc, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
         vfft_race_run(&proto, ra, na, rns);
     }
     for (k = 0; k < na; k++)
@@ -1390,175 +1302,39 @@ static void _il_dp_flat_heat(vfft_il_dp_context_t *ctx, int N, int scr, _il_dp_f
         _il_dp_free(&arm[k].b);
     }
 }
-/* A TOURNAMENT over f[idx[0..n)]: balanced heats of at most `cap`, each
- * heat's winner on to the next round, until one heat stands; that heat's
- * ranking (fastest first) fills top[0..keep). Returns how many it filled. */
-static int _il_dp_flat_tourney(vfft_il_dp_context_t *ctx, int N, int scr, _il_dp_fchain_t *f,
-                               const int *idx, int n, int fix, int cap, int keep, int *top, int *heats)
-{
-    int *surv = (int *)malloc((size_t)(n > 0 ? n : 1) * sizeof(int));
-    int *next = (int *)malloc((size_t)(n > 0 ? n : 1) * sizeof(int));
-    double hns[VFFT_IL_DP_FLAT_HEAT];
-    int ns = n, got = 0, h, k;
-    if (!surv || !next) { free(surv); free(next); return 0; }
-    memcpy(surv, idx, (size_t)n * sizeof(int));
-    while (ns > 0)
-    {
-        const int nh = (ns + cap - 1) / cap;
-        int nn = 0;
-        for (h = 0; h < nh; h++)
-        {
-            const int lo = (int)((long)ns * h / nh), hi = (int)((long)ns * (h + 1) / nh);
-            _il_dp_flat_heat(ctx, N, scr, f, surv + lo, hi - lo, fix, hns);
-            (*heats)++;
-            if (nh == 1)
-            {   /* the last heat: its ranking */
-                for (got = 0; got < keep; got++)
-                {
-                    int b = -1;
-                    for (k = 0; k < hi - lo; k++)
-                        if (hns[k] < 1e17 && (b < 0 || hns[k] < hns[b])) b = k;
-                    if (b < 0) break;
-                    top[got] = surv[lo + b];
-                    hns[b] = 1e18;
-                }
-                free(surv); free(next);
-                return got;
-            }
-            {
-                int b = -1;
-                for (k = 0; k < hi - lo; k++)
-                    if (hns[k] < 1e17 && (b < 0 || hns[k] < hns[b])) b = k;
-                if (b >= 0) next[nn++] = surv[lo + b];
-            }
-        }
-        memcpy(surv, next, (size_t)nn * sizeof(int));
-        ns = nn;
-    }
-    free(surv); free(next);
-    return 0;
-}
-/* a set ordered STAGE BY STAGE: at each position the remaining radices are
- * offered one at a time (the rest in canonical order behind it) and the
- * fastest chain fixes that position; *f is left at the ordering */
-static void _il_dp_flat_stagewise(vfft_il_dp_context_t *ctx, int N, int scr, _il_dp_fchain_t *f, int cap, int *heats)
-{
-    _il_dp_fchain_t c[VFFT_ILFD_MAX_K];
-    int idx[VFFT_ILFD_MAX_K], p, q, nc, top;
-    _il_dp_flat_sort(f);
-    for (p = f->lead2; p < f->n - 1; p++)
-    {
-        nc = 0;
-        for (q = p; q < f->n; q++)
-        {
-            int r;
-            if (q > p && f->R[q] == f->R[q - 1]) continue;   /* the same radix: the same chain */
-            c[nc] = *f;
-            for (r = q; r > p; r--) c[nc].R[r] = c[nc].R[r - 1];
-            c[nc].R[p] = f->R[q];
-            idx[nc] = nc;
-            nc++;
-        }
-        if (nc < 2) continue;
-        if (_il_dp_flat_tourney(ctx, N, scr, c, idx, nc, 0, cap, 1, &top, heats) == 1)
-            *f = c[top];
-    }
-}
-/* THE SEARCH: the finalists (at most `room`) into out[] as FLAT candidates;
- * returns how many */
+/* the finalists (at most `room`) into out[] as FLAT candidates; returns how many */
 static int _il_dp_flat_search(vfft_il_dp_context_t *ctx, int N, int scr, vfft_il_cand_t *out, int room, int verbose)
 {
-    _il_dp_fchain_t *sets = (_il_dp_fchain_t *)malloc(sizeof(_il_dp_fchain_t) * VFFT_IL_DP_FLAT_SETS_MAX);
-    _il_dp_fchain_t fin[4];
-    int cur[VFFT_ILFD_MAX_K], ns = 0, over = 0, i, nmax = 2, cap, top[2], nt, nfin = 0, heats = 0, nout = 0;
-    long chains = 0;
-    size_t per;
-    if (!sets) return 0;
-    memset(cur, 0, sizeof cur);
-    if ((N & 1) == 0 && ((N >> 1) & 1))
-    {   /* the lone factor 2: the leaf */
-        cur[0] = 2;
-        _il_dp_flat_sets_rec(N >> 1, 0, 1, cur, 1, sets, &ns, &over);
-    }
-    _il_dp_flat_sets_rec(N, 0, 0, cur, 0, sets, &ns, &over);
-    if (over)
-        fprintf(stderr, "[il-dp] N=%d: flat radix-set storage (%d) exceeded, %d set(s) not raced\n",
-                N, VFFT_IL_DP_FLAT_SETS_MAX, over);
-    if (ns == 0) { free(sets); return 0; }
-    for (i = 0; i < ns; i++)
-    {
-        chains += _il_dp_flat_norders(&sets[i]);
-        if (sets[i].n > nmax) nmax = sets[i].n;
-    }
-    /* the heat: at most VFFT_IL_DP_FLAT_HEAT, fewer where the chains' tables
-     * (two directions, one table a stage, N complex each) would pass the budget */
-    per = (size_t)N * 2u * sizeof(double) * 2u * (size_t)nmax;
-    cap = (int)(VFFT_IL_DP_FLAT_HEAT_BYTES / (per ? per : 1));
-    if (cap > VFFT_IL_DP_FLAT_HEAT) cap = VFFT_IL_DP_FLAT_HEAT;
-    if (cap < 2) cap = 2;
-    {   /* 1. the radix sets */
-        int *idx = (int *)malloc(sizeof(int) * (size_t)ns);
-        if (!idx) { free(sets); return 0; }
-        for (i = 0; i < ns; i++) idx[i] = i;
-        nt = _il_dp_flat_tourney(ctx, N, scr, sets, idx, ns, 1, cap, 2, top, &heats);
-        free(idx);
-    }
-    for (i = 0; i < nt; i++)
-    {   /* 2. the orderings of each of the best sets */
-        _il_dp_fchain_t s = sets[top[i]];
-        const long no = _il_dp_flat_norders(&s);
-        char cs[64];
-        if (no <= 1)
-            fin[nfin++] = s;
-        else if (no <= VFFT_IL_DP_FLAT_ORD_EXH)
-        {
-            _il_dp_fchain_t *ord = (_il_dp_fchain_t *)malloc(sizeof(_il_dp_fchain_t) * (size_t)no);
-            int *idx = (int *)malloc(sizeof(int) * (size_t)no), no2 = 0, t2[2], g;
-            if (ord && idx)
-            {
-                _il_dp_flat_sort(&s);
-                do { ord[no2] = s; idx[no2] = no2; no2++; } while (no2 < no && _il_dp_flat_next(&s));
-                g = _il_dp_flat_tourney(ctx, N, scr, ord, idx, no2, 0, cap, 2, t2, &heats);
-                for (int k = 0; k < g && nfin < 4; k++) fin[nfin++] = ord[t2[k]];
-            }
-            free(ord); free(idx);
-        }
-        else
-        {
-            _il_dp_fchain_t g = s;
-            _il_dp_flat_str(&s, cs, sizeof cs);
-            fprintf(stderr, "[il-dp] N=%d: flat set %s has %ld orderings (> %d): ordered stage by stage "
-                            "(measured, not exhaustive)\n", N, cs, no, VFFT_IL_DP_FLAT_ORD_EXH);
-            _il_dp_flat_stagewise(ctx, N, scr, &g, cap, &heats);
-            fin[nfin++] = g;
-            if (nfin < 4 && memcmp(g.R, s.R, sizeof g.R)) fin[nfin++] = s;   /* and the order level 1 raced */
-        }
-    }
-    for (i = 0; i < nfin && nout < room; i++)
-    {   /* 3. the finalists, once each */
-        int k, dup = 0;
-        for (k = 0; k < i; k++)
-            if (fin[k].n == fin[i].n && !memcmp(fin[k].R, fin[i].R, sizeof(int) * (size_t)fin[i].n)) dup = 1;
-        if (dup) continue;
+    _il_dp_flat_hctx_t hc;
+    vfft_chain_engine_t e;
+    vfft_chain_t fin[VFFT_CHAIN_FIN_MAX];
+    vfft_chain_stats_t st;
+    int nf, i, nout = 0;
+    hc.ctx = ctx; hc.N = N; hc.scr = scr;
+    e.pool = _il_dp_flat_pool;
+    e.npool = (int)(sizeof _il_dp_flat_pool / sizeof _il_dp_flat_pool[0]);
+    e.lead2 = 1;
+    e.heat = _il_dp_flat_heat;
+    e.hctx = &hc;
+    e.budget = VFFT_IL_DP_FLAT_HEAT_BYTES;
+    e.per_stage_point = 2u * 2u * sizeof(double);   /* a table a stage, both directions, N complex */
+    e.tag = "[il-dp]";
+    nf = vfft_chain_search(&e, N, fin, &st);
+    for (i = 0; i < nf && nout < room; i++)
         _il_dp_flat_cand(&out[nout++], &fin[i], scr);
-    }
     if (verbose)
     {
-        fprintf(stderr, "  [il-dp] N=%d %s flat search: %d radix set(s), %ld chain(s), heats of %d, %d heat(s) ->",
-                N, scr ? "scr" : "nat", ns, chains, cap, heats);
+        fprintf(stderr, "  [il-dp] N=%d %s flat search: %d radix set(s) (%d lowest/second-lowest-first orders), "
+                        "%ld chain(s), heats of %d, %d heat(s) ->", N, scr ? "scr" : "nat", st.nsets, st.nord,
+                st.chains, st.cap, st.heats);
         for (i = 0; i < nout; i++)
         {
             char cs[64];
-            _il_dp_fchain_t t;
-            memset(&t, 0, sizeof t);
-            memcpy(t.R, out[i].il_fl, sizeof(int) * (size_t)out[i].il_fl_n);
-            t.n = out[i].il_fl_n;
-            _il_dp_flat_str(&t, cs, sizeof cs);
+            vfft_chain_str(&fin[i], cs, sizeof cs);
             fprintf(stderr, " %s", cs);
         }
         fprintf(stderr, "\n");
     }
-    free(sets);
     return nout;
 }
 
@@ -1991,14 +1767,145 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
         }
 }
 
-/* ── the entry point ───────────────────────────────────────────────────── */
-
 static int _il_dp_cand_cmp(const void *a, const void *b)
 {
     double x = ((const vfft_il_cand_t *)a)->cost_ns;
     double y = ((const vfft_il_cand_t *)b)->cost_ns;
     return x < y ? -1 : (x > y ? 1 : 0);
 }
+
+/* ── THE SCREENING'S HEATS (owner, 2026-10-04) ──────────────────────────
+ * Every candidate is benched on its own above (its form and tile races, its
+ * gate, its own time, the pause after it). Those times are taken one after
+ * another, each at its own moment of the machine's state, so they do not
+ * rank the candidates: the live ones race in HEATS (heats.h) -- balanced
+ * groups of at most VFFT_IL_DP_HEAT, each one same-run race whose arms
+ * alternate round by round, VFFT_IL_DP_HEAT_ROUNDS rounds, paced (one-thread
+ * arms) -- each heat's best on to the next round, and the last heat's
+ * ranking orders the cell's candidates. Each arm is rebuilt from its
+ * candidate (the forms and tile its bench raced ride in it) and gated again
+ * before it races. A heat's plans together stay under
+ * VFFT_IL_DP_HEAT_BYTES. */
+#define VFFT_IL_DP_HEAT        VFFT_HEATS_MAX
+#define VFFT_IL_DP_HEAT_ROUNDS 15
+#define VFFT_IL_DP_HEAT_BYTES  ((size_t)512 << 20)
+#define VFFT_IL_DP_HEAT_PLAN_B 256u   /* a plan's bytes per point, estimated (tables, planes, a 2D child) */
+
+typedef struct
+{
+    vfft_il_dp_context_t *ctx;
+    const vfft_il_cand_t *c;
+    _il_dp_built_t b;
+    int N, bwd;
+    unsigned calls;
+} _il_dp_heat_arm_t;
+typedef struct { vfft_il_dp_context_t *ctx; int N; vfft_il_cand_t *cand; } _il_dp_heat_ctx_t;
+static void _il_dp_heat_arm_run(void *v)
+{
+    _il_dp_heat_arm_t *a = (_il_dp_heat_arm_t *)v;
+    /* IN PLACE the arm transforms its own output: the input restored every
+     * 32 executes, as the bench does (the same copy for every arm) */
+    if (a->ctx->inplace && (++a->calls & 31u) == 0)
+        memcpy(a->ctx->z_in, a->ctx->z_orig, (size_t)a->N * 2u * sizeof(double));
+    (void)_il_dp_exec_dir(a->ctx, a->c, &a->b, a->bwd);
+}
+static void _il_dp_heat_reset(void *v)
+{   /* the pristine input before every sample */
+    const _il_dp_heat_ctx_t *h = (const _il_dp_heat_ctx_t *)v;
+    memcpy(h->ctx->z_in, h->ctx->z_orig, (size_t)h->N * 2u * sizeof(double));
+}
+/* THE HEAT: candidates idx[0..n) rebuilt, gated, raced; a candidate that no
+ * longer builds or passes is dead (cost 1e18) */
+static void _il_dp_heat(void *hv, const int *idx, int n, double *ns)
+{
+    _il_dp_heat_ctx_t *h = (_il_dp_heat_ctx_t *)hv;
+    vfft_il_dp_context_t *ctx = h->ctx;
+    const int N = h->N, bwd = ctx->role_run ? ctx->role_bwd : 0;
+    static _il_dp_heat_arm_t arm[VFFT_IL_DP_HEAT];   /* off the stack: the planner is single-threaded */
+    vfft_race_arm_t ra[VFFT_IL_DP_HEAT];
+    double rns[VFFT_IL_DP_HEAT], fast = 1e18;
+    int map[VFFT_IL_DP_HEAT], na = 0, k, reps;
+    for (k = 0; k < n; k++)
+    {
+        vfft_il_cand_t *c = &h->cand[idx[k]];
+        double g;
+        ns[k] = 1e18;
+        if (_il_dp_build(N, c, &arm[na].b, ctx->inplace) != 0)
+        { c->cost_ns = 1e18; continue; }
+        memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+        g = _il_dp_exec(ctx, c, &arm[na].b) == 0 ? _il_dp_gate_err(ctx, N, c) : -1.0;   /* right after its build: the four-step's map is its own */
+        if (!(g >= 0.0) || g > VFFT_IL_DP_GATE_TOL)
+        { _il_dp_free(&arm[na].b); c->cost_ns = 1e18; continue; }
+        arm[na].ctx = ctx; arm[na].c = c; arm[na].N = N; arm[na].bwd = bwd; arm[na].calls = 0;
+        if (c->cost_ns < fast) fast = c->cost_ns;
+        map[na] = k;
+        ra[na].name = "il-dp"; ra[na].run = _il_dp_heat_arm_run; ra[na].ctx = &arm[na];
+        na++;
+    }
+    if (na == 0) return;
+    /* a sample ~0.2 ms at the fastest arm's bench time */
+    reps = (int)(2.0e5 / (fast > 1.0 && fast < 1e17 ? fast : 2.0e5));
+    if (reps < 1) reps = 1;
+    if (reps > (1 << 20)) reps = 1 << 20;
+    {
+        const vfft_race_proto_t proto = { VFFT_IL_DP_HEAT_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, _il_dp_heat_reset, h, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        vfft_race_run(&proto, ra, na, rns);
+    }
+    for (k = 0; k < na; k++)
+    {
+        ns[map[k]] = rns[k];
+        _il_dp_free(&arm[k].b);
+    }
+}
+/* the live candidates ranked by the heats: the last heat's ranking first
+ * (its times their costs), then the rest by their bench times, the dead
+ * last; returns how many stay live (0 = the cell is refused) */
+static int _il_dp_screen(vfft_il_dp_context_t *ctx, int N, int ord, vfft_il_cand_t *cand, int ncand, int verbose)
+{
+    _il_dp_heat_ctx_t hc;
+    int *idx = (int *)malloc(sizeof(int) * (size_t)ncand), top[VFFT_IL_DP_HEAT], nl = 0, nt, heats = 0, cap, i, k;
+    double tns[VFFT_IL_DP_HEAT];
+    vfft_il_cand_t *tmp = (vfft_il_cand_t *)malloc(sizeof(vfft_il_cand_t) * (size_t)ncand);
+    size_t per = (size_t)N * VFFT_IL_DP_HEAT_PLAN_B;
+    if (!idx || !tmp)
+    {   /* no heats without their storage: the cell is refused, never ranked
+         * by the one-after-another bench times */
+        fprintf(stderr, "[il-dp] N=%d ord=%d: no memory for the screening's heats -- cell refused\n", N, ord);
+        free(idx); free(tmp);
+        return 0;
+    }
+    for (i = 0; i < ncand; i++)
+        if (cand[i].cost_ns < 1e17) idx[nl++] = i;
+    cap = (int)(VFFT_IL_DP_HEAT_BYTES / (per ? per : 1));
+    if (cap > VFFT_IL_DP_HEAT) cap = VFFT_IL_DP_HEAT;
+    if (cap < 2) cap = 2;
+    hc.ctx = ctx; hc.N = N; hc.cand = cand;
+    nt = nl >= 2 ? vfft_heats_run(_il_dp_heat, &hc, idx, nl, cap, VFFT_IL_DP_HEAT, cap >= 12 ? 3 : 1, top, tns, &heats) : 0;
+    k = 0;
+    for (i = 0; i < nt; i++)
+    {   /* the last heat's ranking */
+        tmp[k] = cand[top[i]];
+        tmp[k].cost_ns = tns[i];
+        k++;
+        cand[top[i]].cost_ns = -1.0;   /* placed */
+    }
+    {
+        const int rest0 = k;
+        for (i = 0; i < ncand; i++)
+            if (cand[i].cost_ns >= 0.0) tmp[k++] = cand[i];
+        qsort(tmp + rest0, (size_t)(k - rest0), sizeof(tmp[0]), _il_dp_cand_cmp);
+    }
+    memcpy(cand, tmp, sizeof(cand[0]) * (size_t)ncand);
+    for (i = 0, nl = 0; i < ncand; i++) if (cand[i].cost_ns < 1e17) nl++;
+    if (verbose && nt > 0)
+        fprintf(stderr, "  [il-dp] N=%d ord=%d screening: %d live, heats of %d, %d heat(s), %d rounds -> "
+                        "route=%d %dx%d %.1f ns\n", N, ord, nl, cap, heats, VFFT_IL_DP_HEAT_ROUNDS,
+                cand[0].route, cand[0].R1, cand[0].R2, cand[0].cost_ns);
+    free(idx); free(tmp);
+    return nl;
+}
+
+/* ── the entry point ───────────────────────────────────────────────────── */
 
 /* Plan (N, ord). Returns the best MEASURED ns/iter (1e18 if nothing is
  * runnable) and fills *best. Candidates that fail to build or fail the gate
@@ -2146,7 +2053,8 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     }
     if (!nlive) return 1e18;
 
-    qsort(cand, (size_t)ncand, sizeof(cand[0]), _il_dp_cand_cmp);
+    nlive = _il_dp_screen(ctx, N, ord, cand, ncand, verbose);   /* the ranking: same-run heats */
+    if (!nlive) return 1e18;
 
     /* The backward axis rides on the FORWARD winner, chosen above. It cannot
      * reorder cand[] — the sort key is cost_ns, the forward metric — so this

@@ -365,44 +365,26 @@ static inline int vfft_zrf_tiled(const vfft_zrf_plan_t *p)
     return 0;
 }
 
-/* The chain candidates: ordered compositions of N over the leaf's radices in
- * the flat DIT's seed order, at most `max`; *dropped counts the ones past
- * the cap. The create is the validator. */
-static inline void _zrf_chains_rec(int L, int depth, int *cur, int (*out)[VFFT_ILFD_MAX_K], int *lens,
-                                   int *n, int max, int *dropped)
+/* the real flat DIT's radices (odd: its Hermitian last stage and the rn1 /
+ * n1c kinds); the door's chain pick races chains over them
+ * (il/real/odd_build.h) */
+static const int VFFT_ZRF_POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 29, 31, 37, 41, 43, 47 };
+#define VFFT_ZRF_NPOOL ((int)(sizeof VFFT_ZRF_POOL / sizeof VFFT_ZRF_POOL[0]))
+/* 1 when L splits into at least `need` more stages over the pool */
+static inline int _zrf_chain_rec(int L, int depth, int need)
 {
-    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 29, 31, 37, 41, 43, 47 };
     int i;
-    if (L == 1)
-    {
-        if (depth < 2) return;
-        if (*n >= max) { (*dropped)++; return; }
-        memcpy(out[*n], cur, sizeof(int) * VFFT_ILFD_MAX_K);
-        lens[(*n)++] = depth;
-        return;
-    }
-    if (depth >= VFFT_ILFD_MAX_K) return;
-    for (i = 0; i < (int)(sizeof POOL / sizeof POOL[0]); i++)
-        if (L % POOL[i] == 0)
-        {
-            cur[depth] = POOL[i];
-            _zrf_chains_rec(L / POOL[i], depth + 1, cur, out, lens, n, max, dropped);
-        }
+    if (L == 1) return depth >= need;
+    if (depth >= VFFT_ILFD_MAX_K) return 0;
+    for (i = 0; i < VFFT_ZRF_NPOOL; i++)
+        if (L % VFFT_ZRF_POOL[i] == 0 && _zrf_chain_rec(L / VFFT_ZRF_POOL[i], depth + 1, need)) return 1;
+    return 0;
 }
-static inline int vfft_zrf_chains(int N, int (*out)[VFFT_ILFD_MAX_K], int *lens, int max, int *dropped)
-{
-    int cur[VFFT_ILFD_MAX_K], n = 0, d = 0;
-    memset(cur, 0, sizeof cur);
-    if (N >= 9 && (N & 1)) _zrf_chains_rec(N, 0, cur, out, lens, &n, max, &d);
-    if (dropped) *dropped = d;
-    return n;
-}
-
-/* 1 when N has at least one chain to sweep (the create still validates it) */
+/* 1 when N has at least one chain of two or more stages (the create still
+ * validates it) */
 static inline int _zrf_has_chain(int N)
 {
-    int ch[1][VFFT_ILFD_MAX_K], len[1];
-    return VFFT_IL_VW == 4 && vfft_zrf_chains(N, ch, len, 1, NULL) > 0;
+    return VFFT_IL_VW == 4 && N >= 9 && (N & 1) && _zrf_chain_rec(N, 0, 2);
 }
 
 #if defined(__AVX2__) || defined(__SSE2__)

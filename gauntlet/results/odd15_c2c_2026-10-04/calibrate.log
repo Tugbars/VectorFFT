@@ -1,0 +1,15 @@
+3375       banked     13563ms raced     chain3
+6561       banked      5663ms raced     flat
+10125      banked     13032ms raced     flat
+15625      banked      4950ms raced     chain3
+19683      banked      6188ms raced     flat
+30375      banked      5628ms raced     flat
+45927      banked      4624ms raced     flat
+50625      banked      4354ms raced     flat
+59049      banked      3465ms raced     flat
+99225      banked      7924ms raced     flat
+117649     banked      1509ms raced     flat
+151875     banked     19047ms raced     flat
+177147     banked      8970ms raced     flat
+225225     banked     17580ms raced     flat
+253125     banked     15681ms raced     flat

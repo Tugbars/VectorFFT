@@ -7,8 +7,10 @@
  *   zrf  the real flat DIT (zrf.h): a real leaf, the c2c flat DIT's stages on
  *        the digit blocks, a mono at the bottom; every N whose factors are
  *        the leaf's radices, both placements. Its chain, its split-body
- *        switch and its tile budget are plan input: every chain is gated and
- *        burst-timed untiled, the two fastest again at every budget (a
+ *        switch and its tile budget are plan input: the chain pick (the
+ *        shared measured search, il/planning/chain_search.h) names the
+ *        finalists, each is gated and burst-timed untiled with and without
+ *        the split body, the two fastest again at every budget (a
  *        threaded plan: each budget serial and in both threaded arms,
  *        zrf_mt.h), and the two fastest plans of all join the race;
  *   zrb  the real Bluestein (zrb.h): the chirp-z convolution at M >= (3N-1)/2
@@ -37,8 +39,9 @@
  * VFFT_ZRACE_VERBOSE=1 logs the race.
  *
  * POSITION IN vfft.c IS LOAD-BEARING: after zrp_build.h (the engines' plan
- * builders, the race body, _zrpr_relerr) and k1_commit.h (the prime route's
- * inner pool); before vfft_create (the admission).
+ * builders, the race body, _zrpr_relerr), k1_commit.h (the prime route's
+ * inner pool) and dp_planner_il.h (chain_search.h); before vfft_create (the
+ * admission).
  */
 #ifndef VFFT_IL_REAL_ODD_BUILD_H
 #define VFFT_IL_REAL_ODD_BUILD_H
@@ -135,28 +138,138 @@ static int _zrf_try(const vfft_config_t *cfg, int N, const int *R, int K, int no
     return 1;
 }
 
-/* every chain x the split-body switch untiled; then the two fastest at each
- * tile budget. The two fastest plans of all are returned as finished handles. */
-#define VFFT_ZRF_MAX_CAND 48
+/* ── THE CHAIN PICK: the shared measured search (il/planning/chain_search.h:
+ * every radix set in two orders -- its lowest radix as the first stage, its
+ * second-lowest as the first stage -- the best three sets' orderings, the
+ * finalists) with zrf's HEAT: every chain built serial and untiled, gated
+ * against the reference, raced in one same-run race on the door's planes.
+ * A heat's plans together stay under 512 MB. */
+#if VFFT_CHAIN_MAX_K != VFFT_ILFD_MAX_K
+#error "chain_search.h's VFFT_CHAIN_MAX_K must be the flat DIT's VFFT_ILFD_MAX_K"
+#endif
+typedef struct
+{
+    const vfft_config_t *cfg;
+    int N;
+    const double *a, *ref, *s0;
+    double *b;
+    size_t xs, nchk;
+} _zrf_hctx_t;
+typedef struct { struct vfft_plan_s *h; const double *s0; double *b; } _zrf_arm_t;
+static void _zrf_arm_run(void *v)
+{
+    _zrf_arm_t *a = (_zrf_arm_t *)v;
+    _exec_zrf(a->h, a->s0, a->b);
+}
+static void _zrf_arm_reset(void *v)
+{   /* the input before every sample: an in-place arm walks its own output */
+    const _zrf_hctx_t *c = (const _zrf_hctx_t *)v;
+    memcpy(c->b, c->a, c->xs * sizeof(double));
+}
+static void _zrf_heat(void *hv, vfft_chain_t *f, const int *idx, int n, int fix, double *ns)
+{
+    _zrf_hctx_t *c = (_zrf_hctx_t *)hv;
+    static _zrf_arm_t arm[VFFT_CHAIN_HEAT];   /* off the stack: creates are single-threaded */
+    vfft_race_arm_t ra[VFFT_CHAIN_HEAT];
+    double rns[VFFT_CHAIN_HEAT], t0, est;
+    int map[VFFT_CHAIN_HEAT], na = 0, k, reps;
+    const int ip = (c->s0 == c->b);
+    for (k = 0; k < n; k++)
+    {
+        vfft_chain_t *ch = &f[idx[k]];
+        int tries = 0;
+        struct vfft_plan_s *h = NULL;
+        ns[k] = 1e18;
+        for (;;)
+        {
+            h = _zrf_build_plan(c->cfg, c->N, ch->R, ch->n, 0, 0);
+            if (h)
+            {
+                double e;
+                memcpy(c->b, c->a, c->xs * sizeof(double));
+                _exec_zrf(h, c->s0, c->b);
+                e = _zrpr_relerr(c->b, c->ref, c->nchk);
+                if (e < 1e-10) break;
+                {
+                    char cs[64];
+                    vfft_chain_str(ch, cs, sizeof cs);
+                    fprintf(stderr, "[zrf] N=%d chain %s FAILS the gate (rel %.2e vs the reference) -- dropped\n",
+                            c->N, cs, e);
+                }
+                vfft_destroy((vfft_plan)h);
+                h = NULL;
+            }
+            if (!fix || ++tries >= 16 || !vfft_chain_next(ch)) break;
+        }
+        if (!h) continue;
+        arm[na].h = h; arm[na].s0 = c->s0; arm[na].b = c->b;
+        map[na] = k;
+        ra[na].name = "zrf"; ra[na].run = _zrf_arm_run; ra[na].ctx = &arm[na];
+        na++;
+    }
+    if (na == 0) return;
+    _zrf_arm_reset(c);
+    _zrf_arm_run(&arm[0]);
+    _zrf_arm_reset(c);
+    t0 = vfft_now_ns();
+    _zrf_arm_run(&arm[0]);
+    est = vfft_now_ns() - t0;
+    reps = (int)(2.0e5 / (est > 1.0 ? est : 1.0));
+    if (reps < 1) reps = 1;
+    if (reps > (ip ? 32 : 1024)) reps = ip ? 32 : 1024;   /* in place: the data grows per pass */
+    {
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 1, _zrf_arm_reset, c, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        vfft_race_run(&proto, ra, na, rns);
+    }
+    for (k = 0; k < na; k++)
+    {
+        ns[map[k]] = rns[k];
+        vfft_destroy((vfft_plan)arm[k].h);
+    }
+}
+/* the chain pick's finalists x the split-body switch untiled; then the two
+ * fastest at each tile budget (and, threaded, its two threaded arms). The two
+ * fastest plans of all are returned as finished handles. */
 static int _zrf_chain_sweep(const vfft_config_t *cfg, int N, const double *a, const double *ref, double *b,
                             const double *s0, size_t xs, size_t nchk, struct vfft_plan_s *out[2])
 {
     static const int budgets[] = { 64, 128, 256, 512, 1024, 2048 };
-    int ch[VFFT_ZRF_MAX_CAND][VFFT_ILFD_MAX_K], len[VFFT_ZRF_MAX_CAND], dropped = 0;
-    const int nc = vfft_zrf_chains(N, ch, len, VFFT_ZRF_MAX_CAND, &dropped);
+    _zrf_hctx_t hc;
+    vfft_chain_engine_t e;
+    vfft_chain_t fin[VFFT_CHAIN_FIN_MAX];
+    vfft_chain_stats_t st;
     double bns[2] = { 1e300, 1e300 };
-    int seedR[2][VFFT_ILFD_MAX_K], seedK[2] = { 0, 0 }, seedm[2] = { 0, 0 };
+    int seedR[2][VFFT_ILFD_MAX_K], seedK[2] = { 0, 0 }, seedm[2] = { 0, 0 }, nf;
     out[0] = out[1] = NULL;
-    if (dropped && getenv("VFFT_ZRACE_VERBOSE"))
-        fprintf(stderr, "[zrf] N=%d: chain pool capped at %d (%d more compositions not swept)\n",
-                N, VFFT_ZRF_MAX_CAND, dropped);
-    for (int c = 0; c < nc; c++)
+    hc.cfg = cfg; hc.N = N; hc.a = a; hc.ref = ref; hc.s0 = s0; hc.b = b; hc.xs = xs; hc.nchk = nchk;
+    e.pool = VFFT_ZRF_POOL;
+    e.npool = VFFT_ZRF_NPOOL;
+    e.lead2 = 0;
+    e.heat = _zrf_heat;
+    e.hctx = &hc;
+    e.budget = (size_t)512 << 20;
+    e.per_stage_point = 2u * 2u * sizeof(double);
+    e.tag = "[zrf]";
+    nf = vfft_chain_search(&e, N, fin, &st);
+    if (getenv("VFFT_ZRACE_VERBOSE"))
+    {
+        fprintf(stderr, "[zrf] N=%d chain pick: %d radix set(s) (%d orders), %ld chain(s), heats of %d, %d heat(s) ->",
+                N, st.nsets, st.nord, st.chains, st.cap, st.heats);
+        for (int i = 0; i < nf; i++)
+        {
+            char cs[64];
+            vfft_chain_str(&fin[i], cs, sizeof cs);
+            fprintf(stderr, " %s", cs);
+        }
+        fprintf(stderr, "\n");
+    }
+    for (int c = 0; c < nf; c++)
     {
         int any = 0;
-        if (!_zrf_try(cfg, N, ch[c], len[c], 0, 0, 0, a, ref, b, s0, xs, nchk, out, bns, &any, 0))
+        if (!_zrf_try(cfg, N, fin[c].R, fin[c].n, 0, 0, 0, a, ref, b, s0, xs, nchk, out, bns, &any, 0))
             continue;
         if (any) /* a stage takes the split body: its twin without it is another plan */
-            _zrf_try(cfg, N, ch[c], len[c], 1, 0, 0, a, ref, b, s0, xs, nchk, out, bns, NULL, 0);
+            _zrf_try(cfg, N, fin[c].R, fin[c].n, 1, 0, 0, a, ref, b, s0, xs, nchk, out, bns, NULL, 0);
     }
     for (int i = 0; i < 2; i++)
         if (out[i])
