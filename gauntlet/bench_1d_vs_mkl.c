@@ -2156,15 +2156,18 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
 static int g_ilmt = 0;
 static int g_zr2c = 0;   /* --zr2c: D2 interleaved r2c/c2r vs MKL real-CCE in-place */
 
-/* THE ONE-THREAD PROTOCOL (2026-09-07): the calling thread PINNED to core 2
- * (mask 0x4) at HIGH priority. Without the pin a paced sample wakes on
- * whichever core the scheduler picks (cold caches, that core's own
- * frequency ramp) and the pace measures the migration, not the transform;
- * MKL at one thread runs on this same calling thread, so both arms sit on
- * the same core. Every one-thread cell runner calls this once; the threaded
- * runners use ilmt_pin_pcores() instead. VFFT_BENCH_PIN=0 lifts it (the
- * control for "did the pin itself move a number?"). */
-#include "sibling_guard.h"   /* THE SIBLING GUARD (2026-09-21): shared with the calibrate probe since 2026-09-23; Linux too since 2026-09-26 */
+/* THE ONE-THREAD PROTOCOL: the library's measurement scope (vfft.h), entered
+ * for the process -- the calling thread pinned to the library's measuring
+ * core (the second P-core: logical 2, mask 0x4, on this host), its SMT
+ * sibling held, the process at HIGH priority, the machine's measurement lock
+ * held. Without the pin a paced sample wakes on whichever core the scheduler
+ * picks (cold caches, that core's own frequency ramp) and the pace measures
+ * the migration, not the transform; MKL at one thread runs on this same
+ * calling thread, so both arms sit on the same core. Every one-thread cell
+ * runner calls this once; the threaded runners use ilmt_pin_pcores() instead.
+ * VFFT_BENCH_PIN=0 lifts it (the control for "did the pin itself move a
+ * number?"): then the library's own races float too. */
+#include "bench_scope.h"   /* the gauntlet's switches (VFFT_BENCH_GUARD, VFFT_PCORE_MASK) onto the library's scope */
 static void bench_pin_one_thread(void)
 {
     static int done = 0;
@@ -2172,18 +2175,18 @@ static void bench_pin_one_thread(void)
     if (done) return;
     done = 1;
     if (e && !strcmp(e, "0")) {
+        bench_scope_lifted();
         printf("# one-thread protocol: pin LIFTED (VFFT_BENCH_PIN=0) — the caller floats\n");
         return;
     }
-    bench_pin_caller(2);   /* SetThreadAffinityMask 0x4 + HIGH_PRIORITY_CLASS; Linux: affinity + setpriority */
-    printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority (VFFT_BENCH_PIN=0 lifts)\n");
-    bench_guard_sibling(2);
+    bench_scope(-1, 1, bench_guard_mode());
+    printf("# one-thread protocol: the library's measurement scope at HIGH priority (VFFT_BENCH_PIN=0 lifts)\n");
 }
 
-/* the 8 distinct P-cores; VFFT_PCORE_MASK overrides for a different CPU. */
+/* one logical CPU per P-core; VFFT_PCORE_MASK overrides. */
 static void ilmt_pin_pcores(void)
 {
-    bench_pin_pcores();   /* shared with the calibrate probe since 2026-09-25 (sibling_guard.h) */
+    bench_pin_pcores();   /* shared with the calibrate probe (bench_scope.h) */
 }
 
 /* ours: transform-contiguous batch through the FRONT DOOR (one handle, one
@@ -5645,10 +5648,9 @@ int main(int argc, char **argv)
         if (core < 0)
             core = 0;
     }
-    if (core >= 0 && vfft_pin_thread(core) != 0)
-        fprintf(stderr, "warn: pin cpu%d failed\n", core);
-    else if (core >= 0 && !mt)
-        bench_guard_sibling(core);   /* every single-thread mode (the 2D/R2C/zr2c ones included) holds its sibling (2026-09-22) */
+    if (core >= 0)   /* the library's measurement scope on that core; every single-thread mode (the
+                      * 2D/R2C/zr2c ones included) holds its sibling (2026-09-22), a threaded one does not */
+        bench_scope(core, 0, mt ? VFFT_MEASURE_GUARD_OFF : bench_guard_mode());
     if (mt)
         if (!g_k1noop_mt)             /* trap (d): the front-door MT mode must not own a
                                        * second pool in this TU (idle spinners on the

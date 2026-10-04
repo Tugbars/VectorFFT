@@ -455,4 +455,4 @@ it — correcting it by hand would make `vw2_open` report a spurious
 
 - [v1_0_results.md](v1_0_results.md) — i9-14900KF / MKL record.
 - [../design/cpu_discovery.md](../design/cpu_discovery.md) — discovery layer.
-- `gauntlet/sibling_guard.h` — MONITORX/MWAITX sibling guard (AMD path).
+- `src/core/common/support/race_scope.h` — MONITORX/MWAITX sibling guard (AMD path), part of the library's measurement scope.

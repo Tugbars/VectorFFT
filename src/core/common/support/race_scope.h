@@ -26,9 +26,10 @@
  *       instruction -- TPAUSE into C0.2 (WAITPKG, Intel), MONITORX/MWAITX
  *       (AMD, measured on Zen 4) -- which costs the timed thread nothing
  *       measurable. A PAUSE spinner costs it ~12% (a level shift on every
- *       arm, so ratios hold) and is used only when asked for. A guard whose
- *       own pin is refused (its CPU is outside the process's mask) ends at
- *       once: floating, it would land on a core the measurement uses.
+ *       arm, so ratios hold) and is used only when asked for. No guard is
+ *       started on a CPU outside the set the thread was confined to, and one
+ *       whose own pin is refused ends at once: floating, it would land on a
+ *       core the measurement uses.
  *   THE PRIORITY  the racing thread raised for the scope. Best effort: where
  *       it cannot be raised (Linux without CAP_SYS_NICE) the scope is still
  *       clean.
@@ -246,6 +247,8 @@ static void _vfs_guard_stop(void)
     g->live = 0;
 }
 
+static int _vfs_allowed(int c);   /* below, with the pin */
+
 /* hold the sibling of `core`; returns once the guard sits there. Nothing is
  * started without a sibling, without a wait instruction, or with the guard
  * turned off. */
@@ -253,30 +256,38 @@ static void _vfs_guard_start(int core)
 {
     _vfs_guard_t *g = &_vfs.guard;
     const int sib = vfft_topo_sibling(core);
-    int spins;
     g->live = 0;
     g->kind = 0;
     g->cpu = -1;
     if (_vfs_cfg.guard == 1 || sib < 0 || sib >= 64) return;
+    if (!_vfs_allowed(sib)) return;      /* outside the set this thread was confined to: no thread of ours goes there */
     g->kind = (_vfs_cfg.guard == 2) ? 3 : _vfs_has_waitpkg() ? 1 : _vfs_has_monitorx() ? 2 : 0;
     if (!g->kind) return;
     g->stop = 0;
     g->placed = 0;
     g->cpu = sib;
+    /* wait until it has pinned itself (or was refused); a thread that takes
+     * longer than a second to start is left to arrive */
 #if defined(_WIN32)
     g->th = CreateThread(NULL, 0, _vfs_guard_thread, g, 0, NULL);
     g->live = (g->th != NULL);
+    {
+        const ULONGLONG t0 = GetTickCount64();
+        while (g->live && !g->placed && GetTickCount64() - t0 < 1000) Sleep(0);
+    }
 #elif defined(__linux__)
     g->live = (pthread_create(&g->th, NULL, _vfs_guard_thread, g) == 0);
-#endif
-    for (spins = 0; g->live && !g->placed && spins < 2000; spins++)
     {
-#if defined(_WIN32)
-        Sleep(0);
-#elif defined(__linux__)
-        sched_yield();
-#endif
+        struct timespec a, n;
+        clock_gettime(CLOCK_MONOTONIC, &a);
+        n = a;
+        while (g->live && !g->placed && (n.tv_sec - a.tv_sec) * 1000L + (n.tv_nsec - a.tv_nsec) / 1000000L < 1000)
+        {
+            sched_yield();
+            clock_gettime(CLOCK_MONOTONIC, &n);
+        }
     }
+#endif
     if (g->live && g->placed < 0)
         _vfs_guard_stop();   /* refused: it has ended */
 }
@@ -436,21 +447,26 @@ static int _vfs_is_pcore(int c)
 /* pin the calling thread; returns the logical CPU, -1 = it stays where it is */
 static int _vfs_pin_pick(void)
 {
-    const vfft_topology_t *t = vfft_topology();
-    int k, c;
+    int k, c, pass;
     if (_vfs_cfg.pin == 1) return -1;                        /* the pin is turned off */
     if (_vfs_cfg.pin == 2)
         return (_vfs_allowed(_vfs_cfg.pin_core) && _vfs_pin_to(_vfs_cfg.pin_core)) ? _vfs_cfg.pin_core : -1;
     if (thread_pool_size() > 1 && _vfs_is_pcore(0) && _vfs_allowed(0) && _vfs_pin_to(0))
         return 0;                                            /* the pool's layout: its caller's core */
-    /* the second P-core, then the rest in order, the first one last */
-    for (k = 1; (c = vfft_topo_pcore_cpu(k)) >= 0; k++)
-        if (_vfs_allowed(c) && _vfs_pin_to(c)) return c;
-    c = vfft_topo_pcore_cpu(0);
-    if (c >= 0 && _vfs_allowed(c) && _vfs_pin_to(c)) return c;
-    /* the P-cores' other logical CPUs (a mask that allows only siblings) */
-    for (c = 0; c < t->ncpu; c++)
-        if (t->pcore[c] && _vfs_allowed(c) && _vfs_pin_to(c)) return c;
+    /* the second P-core, then the rest in order, the first one last; each
+     * core's first logical CPU, then (a mask that allows only siblings) its
+     * other one */
+    for (pass = 0; pass < 2; pass++)
+    {
+        for (k = 1; (c = vfft_topo_pcore_cpu(k)) >= 0; k++)
+        {
+            if (pass) c = vfft_topo_sibling(c);
+            if (c >= 0 && _vfs_allowed(c) && _vfs_pin_to(c)) return c;
+        }
+        c = vfft_topo_pcore_cpu(0);
+        if (pass && c >= 0) c = vfft_topo_sibling(c);
+        if (c >= 0 && _vfs_allowed(c) && _vfs_pin_to(c)) return c;
+    }
     return -1;
 }
 
