@@ -579,7 +579,7 @@ static int _real_il_ref_bluestein(double *z, long N)
     long M = 1, k;
     double *a, *b;
     while (M < 2 * N - 1) M <<= 1;
-    a = (double *)malloc((size_t)M * 4u * sizeof(double));
+    a = (double *)vfft_aligned_alloc((size_t)M * 4u * sizeof(double));
     if (!a)
         return -1;
     b = a + 2 * M;
@@ -613,16 +613,16 @@ static int _real_il_ref_bluestein(double *z, long N)
         z[2 * k] = cr * wr - ci * wi;
         z[2 * k + 1] = cr * wi + ci * wr;
     }
-    free(a);
+    vfft_aligned_free(a);
     return 0;
 }
 static int _real_il_ref_dft(double *z, long N)
 {
-    double *z0 = (double *)malloc((size_t)N * 2u * sizeof(double));
+    double *z0 = (double *)vfft_aligned_alloc((size_t)N * 2u * sizeof(double));
     double scale = 0.0;
     if (!z0 || N < 2)
     {
-        free(z0);
+        vfft_aligned_free(z0);
         return -1;
     }
     memcpy(z0, z, (size_t)N * 2u * sizeof(double));
@@ -632,7 +632,7 @@ static int _real_il_ref_dft(double *z, long N)
     {
         if (_real_il_ref_bluestein(z, N) != 0)
         {
-            free(z0);
+            vfft_aligned_free(z0);
             return -1;
         }
     }
@@ -645,7 +645,7 @@ static int _real_il_ref_dft(double *z, long N)
     }
     if (!(scale > 0.0))
     {
-        free(z0);
+        vfft_aligned_free(z0);
         return -1;                            /* also catches a NaN reference */
     }
     for (int p = 0; p < VFFT_IL_DP_REF_PROBES; p++)
@@ -663,11 +663,11 @@ static int _real_il_ref_dft(double *z, long N)
         d = fabs(z[2 * m] - sr) + fabs(z[2 * m + 1] - si);
         if (!(d / scale <= VFFT_IL_DP_REF_TOL))
         {
-            free(z0);
+            vfft_aligned_free(z0);
             return -1;                        /* NaN-safe */
         }
     }
-    free(z0);
+    vfft_aligned_free(z0);
     return 0;
 }
 /* the real cell's reference from the independent DFT: r2c = the bins
@@ -677,7 +677,7 @@ static int _real_il_ref_dft(double *z, long N)
 static int _real_il_ref(int c2r, int N, const double *a, double *ref)
 {
     const size_t n = (size_t)N, hp1 = n / 2 + 1;
-    double *z = (double *)malloc(2 * n * sizeof(double));
+    double *z = (double *)vfft_aligned_alloc(2 * n * sizeof(double));
     int rc;
     if (!z)
         return -1;
@@ -696,7 +696,7 @@ static int _real_il_ref(int c2r, int N, const double *a, double *ref)
         if (rc == 0)
             for (size_t k = 0; k < n; k++) ref[k] = z[2 * k];   /* Re(conj(.)) = Re(.) */
     }
-    free(z);
+    vfft_aligned_free(z);
     return rc;
 }
 

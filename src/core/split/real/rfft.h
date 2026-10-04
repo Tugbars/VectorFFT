@@ -260,8 +260,8 @@ static inline void rfft_plan_destroy(rfft_plan_t *p)
 {
     if (!p) return;
     for (int d = 0; d < p->nf - 1; d++) {
-        free(p->st[d].tw_re); free(p->st[d].tw_im);
-        free(p->st[d].mid_c); free(p->st[d].mid_s);
+        vfft_aligned_free(p->st[d].tw_re); vfft_aligned_free(p->st[d].tw_im);
+        vfft_aligned_free(p->st[d].mid_c); vfft_aligned_free(p->st[d].mid_s);
     }
     rfft_buf_free(p->planeA, p->planeA_huge); rfft_buf_free(p->planeB, p->planeB_huge);
     vfft_aligned_free(p->nat_k0);
@@ -341,8 +341,8 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
         if (st->kmax >= 1) {
             /* broadcast-twiddle codelets (--t1s): r SCALARS per column */
             size_t sz = (size_t)st->kmax * (size_t)r;
-            st->tw_re = (double *)malloc(sz * 8);
-            st->tw_im = (double *)malloc(sz * 8);
+            st->tw_re = (double *)vfft_aligned_alloc(sz * 8);
+            st->tw_im = (double *)vfft_aligned_alloc(sz * 8);
             if (!st->tw_re || !st->tw_im) goto fail;
             /* unified slot convention: leg j loads
              * Twiddle slot j-1; slot r-1 in each column block is dead. */
@@ -358,8 +358,8 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
             }
         }
         if (st->has_mid) {
-            st->mid_c = (double *)malloc((size_t)r * (size_t)r * 8);
-            st->mid_s = (double *)malloc((size_t)r * (size_t)r * 8);
+            st->mid_c = (double *)vfft_aligned_alloc((size_t)r * (size_t)r * 8);
+            st->mid_s = (double *)vfft_aligned_alloc((size_t)r * (size_t)r * 8);
             if (!st->mid_c || !st->mid_s) goto fail;
             for (int s = 0; s < r; s++)
                 for (int j = 0; j < r; j++) {

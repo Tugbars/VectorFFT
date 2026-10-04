@@ -76,7 +76,7 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
             double *sr0 = _fft2d_r2c_scratch_re(d2, 0);
             double *si0 = _fft2d_r2c_scratch_im(d2, 0);
             size_t tsz = d2->tile_real_sz;
-            double *bak2 = (double *)malloc(tsz * sizeof(double));
+            double *bak2 = (double *)vfft_aligned_alloc(tsz * sizeof(double));
             for (size_t ii = 0; ii < tsz; ii++)
                 bak2[ii] = 1.0 + 1e-3 * (double)(ii & 63);
             rfft_plan_t *rp2 = h->rfft_row->rfft;
@@ -104,7 +104,7 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
             }
             t1_ = vfft_now_ns();
             t_rff = (t1_ - t0_);
-            free(bak2);
+            vfft_aligned_free(bak2);
             /* hysteresis — engine deltas measured <=3%, inside
              * regime-to-regime noise; create-time gates flipped winners
              * across weather regimes. The challenger must beat the
@@ -137,8 +137,8 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
             double *sr0 = _fft2d_r2c_scratch_re(d2, 0);
             double *si0 = _fft2d_r2c_scratch_im(d2, 0);
             size_t tcz = d2->tile_complex_sz, trz = d2->tile_real_sz;
-            double *bkr = (double *)malloc((tcz > trz ? tcz : trz) * sizeof(double));
-            double *bki = (double *)malloc(tcz * sizeof(double));
+            double *bkr = (double *)vfft_aligned_alloc((tcz > trz ? tcz : trz) * sizeof(double));
+            double *bki = (double *)vfft_aligned_alloc(tcz * sizeof(double));
             for (size_t ii = 0; ii < tcz; ii++)
             {
                 bkr[ii] = 1.0 + 1e-3 * (double)(ii & 63);
@@ -171,8 +171,8 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
             }
             t1_ = vfft_now_ns();
             t_c2r = (t1_ - t0_);
-            free(bkr);
-            free(bki);
+            vfft_aligned_free(bkr);
+            vfft_aligned_free(bki);
             if (t_c2r * 20 < t_str * 19) /* the >5% hysteresis */
                 d2->c2r_row = cp2;
             else
@@ -230,7 +230,7 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
          * the live count here can be smaller than the one _natorder_2d sees at execute;
          * that side clamps by the same h->nthreads (natorder_mt.h), so the slot count
          * and the slot index come from one number. */
-        h->nat2d_tmp = (double *)malloc((size_t)(h->nthreads < 1 ? 1 : h->nthreads) * 2 * N2 * sizeof(double));
+        h->nat2d_tmp = (double *)vfft_aligned_alloc((size_t)(h->nthreads < 1 ? 1 : h->nthreads) * 2 * N2 * sizeof(double));
         if (!h->nat2d_tmp)
         {
             vfft_destroy(h);

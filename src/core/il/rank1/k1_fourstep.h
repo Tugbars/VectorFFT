@@ -223,7 +223,7 @@ static void vfft_k1fs_destroy(vfft_k1fs_plan_t *p)
     vfft_aligned_free(p->sbscr);
     {
         int q;
-        for (q = 0; q < p->sbnst; q++) { free(p->sbtf[q]); free(p->sbtb[q]); }
+        for (q = 0; q < p->sbnst; q++) { vfft_aligned_free(p->sbtf[q]); vfft_aligned_free(p->sbtb[q]); }
     }
     free(p);
 }

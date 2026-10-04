@@ -118,13 +118,13 @@ static double *_sp_ad(size_t n)
 static void _sp_cachebust(void)
 {
     size_t s = 32u * 1024u * 1024u / 8u;
-    double *j = (double *)malloc(s * 8);
+    double *j = (double *)vfft_aligned_alloc(s * 8);
     volatile double a = 0;
     if (!j) return;
     for (size_t i = 0; i < s; i++) j[i] = (double)i * 0.5;
     for (size_t i = 0; i < s; i++) a += j[i];
     (void)a;
-    free(j);
+    vfft_aligned_free(j);
 }
 
 static void _sp_reseed(_sp_bench_t *b)

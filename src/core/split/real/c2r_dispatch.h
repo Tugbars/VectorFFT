@@ -229,7 +229,7 @@ static inline void vfft_c2r_disp_execute_z(
          * packed plane, never split planes). Packed layout: re rows 0..nh,
          * then im rows nh-1..1. */
         if (!p->ztmp)
-            p->ztmp = (double *)malloc((size_t)N * K * sizeof(double));
+            p->ztmp = (double *)vfft_aligned_alloc((size_t)N * K * sizeof(double));
         size_t nh2 = N / 2;
         for (size_t f = 0; f <= nh2; f++)
             for (size_t t = 0; t < K; t++)
@@ -241,7 +241,7 @@ static inline void vfft_c2r_disp_execute_z(
         return;
     }
     if (!p->ztmp)
-        p->ztmp = (double *)malloc(2 * HK * sizeof(double));
+        p->ztmp = (double *)vfft_aligned_alloc(2 * HK * sizeof(double));
     double *tr = p->ztmp, *ti = p->ztmp + HK;
     size_t i = 0;
 #if defined(__AVX2__) || defined(__AVX512F__)
@@ -257,7 +257,7 @@ static inline void vfft_c2r_disp_execute_z(
 
 static inline void vfft_c2r_disp_destroy(vfft_c2r_disp_t *p)
 {
-    if (p) free(p->ztmp);
+    if (p) vfft_aligned_free(p->ztmp);
     if (!p) return;
     if (p->packed) c2r_plan_destroy(p->packed);
     if (p->stride) stride_plan_destroy(p->stride);

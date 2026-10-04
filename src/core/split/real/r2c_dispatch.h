@@ -502,7 +502,7 @@ static inline void vfft_r2c_execute_fwd_z(
         return;
     }
     if (!p->ztmp)
-        p->ztmp = (double *)malloc((size_t)p->N * p->K * sizeof(double));
+        p->ztmp = (double *)vfft_aligned_alloc((size_t)p->N * p->K * sizeof(double));
     vfft_r2c_execute_fwd(p, real_in, p->ztmp, NULL);
     {
         size_t K = p->K, N = (size_t)p->N, nh = N / 2;
@@ -522,7 +522,7 @@ static inline void vfft_r2c_plan_destroy(vfft_r2c_plan_t *p)
         rfft_plan_destroy(p->rfft);
     if (p->stride)
         stride_plan_destroy(p->stride);
-    free(p->ztmp);
+    vfft_aligned_free(p->ztmp);
     free(p);
 }
 

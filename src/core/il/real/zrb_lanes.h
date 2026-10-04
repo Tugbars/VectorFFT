@@ -52,7 +52,7 @@ static inline void vfft_zrbl_destroy(vfft_zrbl_plan_t *p)
 {
     int s;
     if (!p) return;
-    for (s = 0; s < p->nst; s++) { free(p->tf[s]); free(p->tb[s]); }
+    for (s = 0; s < p->nst; s++) { vfft_aligned_free(p->tf[s]); vfft_aligned_free(p->tb[s]); }
     vfft_aligned_free(p->c);
     vfft_aligned_free(p->kf); vfft_aligned_free(p->kb);
     vfft_aligned_free(p->scr);
@@ -91,9 +91,9 @@ static inline vfft_zrbl_plan_t *vfft_zrbl_create(int N, int K, int M, const int 
     p->kf = _ilprime_alloc((size_t)2 * M);
     p->kb = _ilprime_alloc((size_t)2 * M);
     p->scr = _ilprime_alloc((size_t)2 * M * (size_t)K);
-    za = (double *)calloc((size_t)2 * M, sizeof(double));
-    zb = (double *)malloc((size_t)2 * M * sizeof(double));
-    if (!p->c || !p->kf || !p->kb || !p->scr || !za || !zb) { free(za); free(zb); vfft_zrbl_destroy(p); return NULL; }
+    za = (double *)vfft_aligned_calloc((size_t)2 * M, sizeof(double));
+    zb = (double *)vfft_aligned_alloc((size_t)2 * M * sizeof(double));
+    if (!p->c || !p->kf || !p->kb || !p->scr || !za || !zb) { vfft_aligned_free(za); vfft_aligned_free(zb); vfft_zrbl_destroy(p); return NULL; }
     for (n = 0; n < N; n++)
     {
         const long long m2 = ((long long)n * n) % (2LL * N);
@@ -112,7 +112,7 @@ static inline vfft_zrbl_plan_t *vfft_zrbl_create(int N, int K, int M, const int 
     for (j = 1; j <= p->h; j++) { za[2 * (M - j)] = p->c[2 * j]; za[2 * (M - j) + 1] = p->c[2 * j + 1]; }
     _il2d_col_pass(za, zb, M, 1, 1, nst, p->Rs, p->Ls, p->ff, p->tf, 0);
     for (j = 0; j < 2 * M; j++) p->kb[j] = zb[j] / (double)M;
-    free(za); free(zb);
+    vfft_aligned_free(za); vfft_aligned_free(zb);
     (void)s;
     return p;
 }

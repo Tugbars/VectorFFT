@@ -135,12 +135,12 @@ static inline int _vfft_oop_fill_bailey(vfft_oop_plan_t *p,
         return -1;
     const size_t reps = aligned ? (K / VFFT_OOP_GROUPW) : K;
     const size_t rows = (size_t)R2 * reps;
-    p->Qr = (double *)malloc((size_t)(R1 - 1) * rows * 8);
-    p->Qi = (double *)malloc((size_t)(R1 - 1) * rows * 8);
+    p->Qr = (double *)vfft_aligned_alloc((size_t)(R1 - 1) * rows * 8);
+    p->Qi = (double *)vfft_aligned_alloc((size_t)(R1 - 1) * rows * 8);
     if (!p->Qr || !p->Qi)
     {
-        free(p->Qr);
-        free(p->Qi);
+        vfft_aligned_free(p->Qr);
+        vfft_aligned_free(p->Qi);
         return -1;
     }
     for (int l2 = 1; l2 < R1; l2++)
@@ -223,12 +223,12 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
         return NULL;
     }
     p->kind = VFFT_OOP_KIND_BAILEY2V;
-    p->col_re  = (double *)malloc((size_t)N * 8);
-    p->col_im  = (double *)malloc((size_t)N * 8);
+    p->col_re  = (double *)vfft_aligned_alloc((size_t)N * 8);
+    p->col_im  = (double *)vfft_aligned_alloc((size_t)N * 8);
     if (!p->col_re || !p->col_im)
     {
-        free(p->col_re); free(p->col_im);
-        free(p->Qr); free(p->Qi);
+        vfft_aligned_free(p->col_re); vfft_aligned_free(p->col_im);
+        vfft_aligned_free(p->Qr); vfft_aligned_free(p->Qi);
         free(p);
         return NULL;
     }
@@ -244,8 +244,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
          * W_N^{l*(b0+k)} (same values as Qr/Qi, different order → the twl
          * codelet is bit-identical to t1_ul). */
         const size_t rows = (size_t)(R1 - 1) * (size_t)R2;
-        p->Qlr = (double *)malloc(rows * 8);
-        p->Qli = (double *)malloc(rows * 8);
+        p->Qlr = (double *)vfft_aligned_alloc(rows * 8);
+        p->Qli = (double *)vfft_aligned_alloc(rows * 8);
         if (p->Qlr && p->Qli)
         {
             for (int b0 = 0; b0 < R2; b0 += 4)
@@ -262,7 +262,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
         }
         else
         {
-            free(p->Qlr); free(p->Qli);
+            vfft_aligned_free(p->Qlr); vfft_aligned_free(p->Qli);
             p->Qlr = p->Qli = NULL;
             p->t1_ul_twl = 0;
         }
@@ -428,10 +428,10 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc_v(
 
     p->colp = vfft_proto_plan_create(R2, (size_t)R1, chain, variants, nf, reg);
     p->cc_perm = (int *)malloc((size_t)R2 * sizeof(int));
-    p->col_re = (double *)malloc((size_t)N * 8);
-    p->col_im = (double *)malloc((size_t)N * 8);
-    p->Qr = (double *)malloc((size_t)(R1 - 1) * (size_t)R2 * 8);
-    p->Qi = (double *)malloc((size_t)(R1 - 1) * (size_t)R2 * 8);
+    p->col_re = (double *)vfft_aligned_alloc((size_t)N * 8);
+    p->col_im = (double *)vfft_aligned_alloc((size_t)N * 8);
+    p->Qr = (double *)vfft_aligned_alloc((size_t)(R1 - 1) * (size_t)R2 * 8);
+    p->Qi = (double *)vfft_aligned_alloc((size_t)(R1 - 1) * (size_t)R2 * 8);
     if (!p->colp || !p->cc_perm || !p->col_re || !p->col_im || !p->Qr || !p->Qi)
         goto fail;
 
@@ -448,11 +448,11 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc_v(
      * holds S[m] for the m with perm[m] == q. Local LCG — library code must
      * not touch the global rand() state. */
     {
-        double *pr = (double *)malloc((size_t)N * 8);
-        double *pi = (double *)malloc((size_t)N * 8);
-        double *qr = (double *)malloc((size_t)N * 8);
-        double *qi = (double *)malloc((size_t)N * 8);
-        double *sr = (double *)malloc((size_t)R2 * 4 * 8);
+        double *pr = (double *)vfft_aligned_alloc((size_t)N * 8);
+        double *pi = (double *)vfft_aligned_alloc((size_t)N * 8);
+        double *qr = (double *)vfft_aligned_alloc((size_t)N * 8);
+        double *qi = (double *)vfft_aligned_alloc((size_t)N * 8);
+        double *sr = (double *)vfft_aligned_alloc((size_t)R2 * 4 * 8);
         int bad = (!pr || !pi || !qr || !qi || !sr);
         if (!bad) {
             double *si_ = sr + R2, *Sr = sr + 2 * R2, *Si = sr + 3 * R2;
@@ -498,7 +498,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc_v(
                 }
             }
         }
-        free(pr); free(pi); free(qr); free(qi); free(sr);
+        vfft_aligned_free(pr); vfft_aligned_free(pi); vfft_aligned_free(qr); vfft_aligned_free(qi); vfft_aligned_free(sr);
         if (bad)
             goto fail;
     }
@@ -506,8 +506,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc_v(
 
 fail:
     if (p->colp) vfft_proto_plan_destroy(p->colp);
-    free(p->cc_perm); free(p->col_re); free(p->col_im);
-    free(p->Qr); free(p->Qi);
+    free(p->cc_perm); vfft_aligned_free(p->col_re); vfft_aligned_free(p->col_im);
+    vfft_aligned_free(p->Qr); vfft_aligned_free(p->Qi);
     free(p);
     return NULL;
 }
@@ -771,10 +771,10 @@ static inline void vfft_oop_plan_destroy(vfft_oop_plan_t *p)
 {
     if (!p)
         return;
-    free(p->Qr);
-    free(p->Qi);
-    free(p->Qlr); free(p->Qli);
-    free(p->col_re); free(p->col_im);
+    vfft_aligned_free(p->Qr);
+    vfft_aligned_free(p->Qi);
+    vfft_aligned_free(p->Qlr); vfft_aligned_free(p->Qli);
+    vfft_aligned_free(p->col_re); vfft_aligned_free(p->col_im);
     /* CCOL: the column plan is a full stride plan; the perm is ours. */
     if (p->colp)
         vfft_proto_plan_destroy(p->colp);

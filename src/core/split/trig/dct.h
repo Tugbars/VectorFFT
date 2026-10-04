@@ -488,8 +488,8 @@ static void _dct3_execute_fwd(void *data, double *re, double *im) {
 static void _dct2_destroy(void *data) {
     stride_dct2_data_t *d = (stride_dct2_data_t *)data;
     if (!d) return;
-    free(d->cos_tw);
-    free(d->sin_tw);
+    vfft_aligned_free(d->cos_tw);
+    vfft_aligned_free(d->sin_tw);
     vfft_aligned_free(d->buf_re);
     vfft_aligned_free(d->buf_im);
     if (d->r2c_plan) stride_plan_destroy(d->r2c_plan);
@@ -525,8 +525,8 @@ static stride_plan_t *stride_dct2_plan(int N, size_t K, stride_plan_t *r2c_plan_
 
     /* Twiddles: cos(πi/(2N)), sin(πi/(2N)) for i=0..N/2 (need N/2+1 entries) */
     int n_tw = N / 2 + 1;
-    d->cos_tw = (double *)malloc((size_t)n_tw * sizeof(double));
-    d->sin_tw = (double *)malloc((size_t)n_tw * sizeof(double));
+    d->cos_tw = (double *)vfft_aligned_alloc((size_t)n_tw * sizeof(double));
+    d->sin_tw = (double *)vfft_aligned_alloc((size_t)n_tw * sizeof(double));
     if (!d->cos_tw || !d->sin_tw) { _dct2_destroy(d); return NULL; }
     for (int i = 0; i < n_tw; i++) {
         /* pi i / (2N) = 2 pi i / (4N) */

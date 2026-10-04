@@ -241,10 +241,10 @@ static void _dct4_execute(void *data, double *re, double *im) {
 static void _dct4_destroy(void *data) {
     stride_dct4_data_t *d = (stride_dct4_data_t *)data;
     if (!d) return;
-    free(d->pre_cos);
-    free(d->pre_sin);
-    free(d->post_cos2);
-    free(d->post_sin2);
+    vfft_aligned_free(d->pre_cos);
+    vfft_aligned_free(d->pre_sin);
+    vfft_aligned_free(d->post_cos2);
+    vfft_aligned_free(d->post_sin2);
     free(d->perm);
     vfft_aligned_free(d->psi_re);
     vfft_aligned_free(d->psi_im);
@@ -280,10 +280,10 @@ static stride_plan_t *stride_dct4_plan(int N, size_t K, stride_plan_t *fft_plan_
 
     const int halfN = N / 2;
 
-    d->pre_cos = (double *)malloc((size_t)halfN * sizeof(double));
-    d->pre_sin = (double *)malloc((size_t)halfN * sizeof(double));
-    d->post_cos2 = (double *)malloc((size_t)halfN * sizeof(double));
-    d->post_sin2 = (double *)malloc((size_t)halfN * sizeof(double));
+    d->pre_cos = (double *)vfft_aligned_alloc((size_t)halfN * sizeof(double));
+    d->pre_sin = (double *)vfft_aligned_alloc((size_t)halfN * sizeof(double));
+    d->post_cos2 = (double *)vfft_aligned_alloc((size_t)halfN * sizeof(double));
+    d->post_sin2 = (double *)vfft_aligned_alloc((size_t)halfN * sizeof(double));
     if (!d->pre_cos || !d->pre_sin || !d->post_cos2 || !d->post_sin2) {
         _dct4_destroy(d); return NULL;
     }

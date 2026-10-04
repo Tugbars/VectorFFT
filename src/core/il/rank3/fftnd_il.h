@@ -721,8 +721,8 @@ static void _ilnd_free_clones(vfft_ilnd_t *d, int arm)
         {
             for (t = 0; t < d->wn2; t++)
             {
-                free(d->ax1w[t].bluscr); /* the per-clone allocations */
-                free(d->ax1w[t].natscr);
+                vfft_aligned_free(d->ax1w[t].bluscr); /* the per-clone allocations */
+                vfft_aligned_free(d->ax1w[t].natscr);
             }
             free(d->ax1w);
             d->ax1w = NULL;
@@ -754,11 +754,11 @@ static void _ilnd_free_nat(vfft_ilnd_t *d)
     free(d->natp); free(d->natinv); free(d->walk_f); free(d->walk_b); free(d->coff); free(d->cycw);
     d->natp = d->natinv = d->walk_f = d->walk_b = d->coff = d->cycw = NULL;
     free(d->cycwp); d->cycwp = NULL;
-    free(d->buf); d->buf = NULL;
+    vfft_aligned_free(d->buf); d->buf = NULL;
     if (d->bufw)
     {
         for (t = 0; t < d->nbufw; t++)
-            free(d->bufw[t]);
+            vfft_aligned_free(d->bufw[t]);
         free(d->bufw);
         d->bufw = NULL;
     }
@@ -807,11 +807,11 @@ static void _ilnd_free_cycles(vfft_ilnd_t *d)
     int t;
     free(d->cycw); d->cycw = NULL;
     free(d->cycwp); d->cycwp = NULL;
-    free(d->buf); d->buf = NULL;
+    vfft_aligned_free(d->buf); d->buf = NULL;
     if (d->bufw)
     {
         for (t = 0; t < d->nbufw; t++)
-            free(d->bufw[t]);
+            vfft_aligned_free(d->bufw[t]);
         free(d->bufw);
         d->bufw = NULL;
     }
@@ -925,10 +925,10 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
             d->ax1w[t].bluscr = NULL;
             d->ax1w[t].natscr = NULL;
             if (d->ax1.blu)
-                d->ax1w[t].bluscr = (double *)malloc(
+                d->ax1w[t].bluscr = (double *)vfft_aligned_alloc(
                     2 * (size_t)d->ax1.blu * (size_t)d->N[2] * sizeof(double));
             if (d->ax1.nat)
-                d->ax1w[t].natscr = (double *)malloc(2 * pl * sizeof(double));
+                d->ax1w[t].natscr = (double *)vfft_aligned_alloc(2 * pl * sizeof(double));
             if (!c || !_tc_clone_equiv(d->row, c) || c->tcb || c->tcbw ||
                 (d->ax1.blu && !d->ax1w[t].bluscr) || (d->ax1.nat && !d->ax1w[t].natscr))
             {
@@ -958,7 +958,7 @@ static int _ilnd_nat_build(vfft_ilnd_t *d)
     d->walk_b = (int *)malloc((size_t)N0 * sizeof(int));
     d->coff = (int *)malloc(((size_t)N0 + 1) * sizeof(int));
     visited = (int *)calloc((size_t)N0, sizeof(int));
-    d->buf = (double *)malloc(2 * d->plane * sizeof(double));
+    d->buf = (double *)vfft_aligned_alloc(2 * d->plane * sizeof(double));
     if (!d->natp || !d->natinv || !d->walk_f || !d->walk_b || !d->coff || !visited || !d->buf)
     {
         free(visited);
@@ -1093,7 +1093,7 @@ static int _ilnd_nat_bind(vfft_ilnd_t *d, int T)
         d->bufw = nb;
         for (t = d->nbufw; t < T - 1; t++)
         {
-            d->bufw[t] = (double *)malloc(2 * d->plane * sizeof(double));
+            d->bufw[t] = (double *)vfft_aligned_alloc(2 * d->plane * sizeof(double));
             if (!d->bufw[t])
             {
                 d->nbufw = t;

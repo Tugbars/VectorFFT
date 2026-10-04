@@ -79,10 +79,10 @@ static inline int natorder_scr_build(natorder_scr_t *s, const stride_plan_t *ful
     free(rb2g);
     if (!good) { free(s->src); free(s->twg); s->src = NULL; s->twg = NULL; return 0; }
 
-    s->scr_re = (double *)malloc((size_t)N * K * sizeof(double));
-    s->scr_im = (double *)malloc((size_t)N * K * sizeof(double));
+    s->scr_re = (double *)vfft_aligned_alloc((size_t)N * K * sizeof(double));
+    s->scr_im = (double *)vfft_aligned_alloc((size_t)N * K * sizeof(double));
     if (!s->scr_re || !s->scr_im) {
-        free(s->scr_re); free(s->scr_im); free(s->src); free(s->twg);
+        vfft_aligned_free(s->scr_re); vfft_aligned_free(s->scr_im); free(s->src); free(s->twg);
         memset(s, 0, sizeof *s); return 0;
     }
     s->sub = *full;                                  /* shallow: shares stage table */
@@ -116,15 +116,15 @@ static inline int natorder_scr_build_dit(int N, size_t K, const int *chain, int 
     stride_plan_t *p = vfft_proto_plan_create_ex(N, K, chain, vb, nf, 0, reg); /* DIT */
     if (!p) return 0;
     size_t tot = (size_t)N * K;
-    double *cre = (double *)calloc(tot, sizeof(double));
-    double *cim = (double *)calloc(tot, sizeof(double));
+    double *cre = (double *)vfft_aligned_calloc(tot, sizeof(double));
+    double *cim = (double *)vfft_aligned_calloc(tot, sizeof(double));
     int *M = NULL;
     if (cre && cim) {
         cre[K] = 1.0;                                /* impulse at n0=1, lane 0 */
         vfft_proto_execute_fwd(p, cre, cim, K);
         M = vfft_natorder_detect(N, chain, nf, K, cre, cim, 1);
     }
-    free(cre); free(cim);
+    vfft_aligned_free(cre); vfft_aligned_free(cim);
     int ok = 0;
     if (M) {
         int *IM = (int *)malloc((size_t)N * 4);
@@ -174,7 +174,7 @@ static inline void natorder_scr_fwd(natorder_scr_t *s, double *ure, double *uim,
 static inline void natorder_scr_free(natorder_scr_t *s)
 {
     if (!s) return;
-    free(s->scr_re); free(s->scr_im); free(s->src); free(s->twg);
+    vfft_aligned_free(s->scr_re); vfft_aligned_free(s->scr_im); free(s->src); free(s->twg);
     memset(s, 0, sizeof *s);
 }
 

@@ -67,17 +67,17 @@ static int _c2c_mt_safe(const stride_plan_t *p, vfft_proto_exec_fn fn)
     if (K < 16)
         return 1; /* _c2c_mt runs ST for K<8; K<16 never splits into >=2 slabs of 8 */
     size_t tot = (size_t)p->N * K;
-    double *xr = (double *)malloc(tot * 8), *xi = (double *)malloc(tot * 8);
-    double *ar = (double *)malloc(tot * 8), *ai = (double *)malloc(tot * 8);
-    double *br = (double *)malloc(tot * 8), *bi = (double *)malloc(tot * 8);
+    double *xr = (double *)vfft_aligned_alloc(tot * 8), *xi = (double *)vfft_aligned_alloc(tot * 8);
+    double *ar = (double *)vfft_aligned_alloc(tot * 8), *ai = (double *)vfft_aligned_alloc(tot * 8);
+    double *br = (double *)vfft_aligned_alloc(tot * 8), *bi = (double *)vfft_aligned_alloc(tot * 8);
     if (!xr || !xi || !ar || !ai || !br || !bi)
     {
-        free(xr);
-        free(xi);
-        free(ar);
-        free(ai);
-        free(br);
-        free(bi);
+        vfft_aligned_free(xr);
+        vfft_aligned_free(xi);
+        vfft_aligned_free(ar);
+        vfft_aligned_free(ai);
+        vfft_aligned_free(br);
+        vfft_aligned_free(bi);
         return 1;
     }
     unsigned long long st = 0x243F6A8885A308D3ULL; /* xorshift64: well-mixed, non-periodic -> exposes (b) */
@@ -118,12 +118,12 @@ static int _c2c_mt_safe(const stride_plan_t *p, vfft_proto_exec_fn fn)
                 break;
             }
     }
-    free(xr);
-    free(xi);
-    free(ar);
-    free(ai);
-    free(br);
-    free(bi);
+    vfft_aligned_free(xr);
+    vfft_aligned_free(xi);
+    vfft_aligned_free(ar);
+    vfft_aligned_free(ai);
+    vfft_aligned_free(br);
+    vfft_aligned_free(bi);
     return !unsafe;
 }
 /* In-place c2c, pool K-split. `fn` is the transparent JIT/baked-resolved executor

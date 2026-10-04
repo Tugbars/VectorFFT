@@ -84,9 +84,9 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
                                * the same cell T more times, against the
                                * clones' law above ("wisdom-served from
                                * the verdicts the primary just banked") */
-        ps = (double *)malloc(h->pq_sdist * sizeof(double));
-        p0 = (double *)malloc(h->pq_ddist * sizeof(double));
-        p1 = (double *)malloc(h->pq_ddist * sizeof(double));
+        ps = (double *)vfft_aligned_alloc(h->pq_sdist * sizeof(double));
+        p0 = (double *)vfft_aligned_alloc(h->pq_ddist * sizeof(double));
+        p1 = (double *)vfft_aligned_alloc(h->pq_ddist * sizeof(double));
         h->pq_w = (struct vfft_plan_s **)calloc(
             (size_t)T, sizeof *h->pq_w);
         if (ps && p0 && p1 && h->pq_w && T >= 2)
@@ -127,9 +127,9 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
                 h->pq_wn = 0;
             }
         }
-        free(ps);
-        free(p0);
-        free(p1);
+        vfft_aligned_free(ps);
+        vfft_aligned_free(p0);
+        vfft_aligned_free(p1);
         if (h->pq_wn > 0)
             _pq_mt_replay_or_race(h, W, cfg); /* banked per (P,T) */
     }
@@ -492,7 +492,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                     }
                     if (il2d_pitch > 0)
                     {
-                        il2d_bandscr = (double *)malloc(
+                        il2d_bandscr = (double *)vfft_aligned_alloc(
                             2 * (size_t)il2d_wl * il2d_pitch
                             * sizeof(double));
                         if (il2d_bandscr)
@@ -614,7 +614,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
             if (il2d_row)
             {
-                il2d_orbuf = (double *)malloc(
+                il2d_orbuf = (double *)vfft_aligned_alloc(
                     4 * (size_t)N2 * sizeof(double));
                 if (!il2d_orbuf)
                 {
@@ -633,13 +633,13 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             }
             if (cfg->transform == VFFT_C2R)
             {
-                il2d_rscr = (double *)malloc(
+                il2d_rscr = (double *)vfft_aligned_alloc(
                     (2 * (size_t)N1 * ((size_t)N2 / 2 + 1) + 8)
                     * sizeof(double));
                 if (!il2d_rscr)
                 {
                     vfft_destroy(il2d_row);
-                    free(il2d_orbuf);
+                    vfft_aligned_free(il2d_orbuf);
                     return NULL;
                 }
             }
@@ -692,7 +692,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                  * and write the caller's real dst. */
                 /* +8 dbl pad: the fused c2r unzip reads full 4-wide
                  * e-blocks past the last row's tail (benign lanes). */
-                il2d_rscr = (double *)malloc(
+                il2d_rscr = (double *)vfft_aligned_alloc(
                     (2 * (size_t)N1 * ((size_t)N2 / 2 + 1) + 8)
                     * sizeof(double));
                 if (!il2d_rscr)
@@ -744,8 +744,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             int s2;
             for (s2 = 0; s2 < il2d_nst; s2++)
             {
-                free(il2d_tf[s2]);
-                free(il2d_tb[s2]);
+                vfft_aligned_free(il2d_tf[s2]);
+                vfft_aligned_free(il2d_tb[s2]);
                 il2d_tf[s2] = il2d_tb[s2] = NULL;
             }
             il2d_nst = 0;
@@ -772,7 +772,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     {
         if (il2d_row)
             vfft_destroy(il2d_row);
-        free(il2d_rscr);
+        vfft_aligned_free(il2d_rscr);
         return NULL;
     }
     h->transform = cfg->transform;

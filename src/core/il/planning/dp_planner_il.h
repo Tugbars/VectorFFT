@@ -579,7 +579,7 @@ static int _il_dp_run_once(vfft_il_dp_context_t *ctx, int N,
  * it judges. Cost is one-time per (N, ord) at plan time. */
 static void _il_dp_ref_dft_direct(double *z, long N)
 {
-    double *out = (double *)malloc((size_t)N * 2u * sizeof(double));
+    double *out = (double *)vfft_aligned_alloc((size_t)N * 2u * sizeof(double));
     long f, n;
     if (!out) return;                     /* caller's scale check catches it */
     for (f = 0; f < N; f++)
@@ -598,7 +598,7 @@ static void _il_dp_ref_dft_direct(double *z, long N)
         out[2 * f + 1] = (double)si;
     }
     memcpy(z, out, (size_t)N * 2u * sizeof(double));
-    free(out);
+    vfft_aligned_free(out);
 }
 
 /* O(N * sum of prime factors) mixed-radix scalar DIT in long double, natural

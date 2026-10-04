@@ -801,13 +801,13 @@ static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
         return 0;   /* no provider, or it declined: no M chain, no heuristic */
     if (_il2d_build_tables(M, *nst, Rs, Ls, tf, tb))
         return 0;
-    *chf = (double *)malloc(2 * (size_t)N1 * sizeof(double));
-    *chb = (double *)malloc(2 * (size_t)N1 * sizeof(double));
-    *kf = (double *)malloc(2 * (size_t)M * sizeof(double));
-    *kb = (double *)malloc(2 * (size_t)M * sizeof(double));
-    *scr = (double *)malloc(2 * (size_t)M * rn * sizeof(double));
-    za = (double *)calloc(2 * (size_t)M, sizeof(double));
-    zb2 = (double *)malloc(2 * (size_t)M * sizeof(double));
+    *chf = (double *)vfft_aligned_alloc(2 * (size_t)N1 * sizeof(double));
+    *chb = (double *)vfft_aligned_alloc(2 * (size_t)N1 * sizeof(double));
+    *kf = (double *)vfft_aligned_alloc(2 * (size_t)M * sizeof(double));
+    *kb = (double *)vfft_aligned_alloc(2 * (size_t)M * sizeof(double));
+    *scr = (double *)vfft_aligned_alloc(2 * (size_t)M * rn * sizeof(double));
+    za = (double *)vfft_aligned_calloc(2 * (size_t)M, sizeof(double));
+    zb2 = (double *)vfft_aligned_alloc(2 * (size_t)M * sizeof(double));
     if (*chf && *chb && *kf && *kb && *scr && za && zb2)
     {
         int r, d2;
@@ -842,16 +842,16 @@ static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
         }
         ok = 1;
     }
-    free(za);
-    free(zb2);
+    vfft_aligned_free(za);
+    vfft_aligned_free(zb2);
     if (!ok)
     {
-        free(*chf); free(*chb); free(*kf); free(*kb); free(*scr);
+        vfft_aligned_free(*chf); vfft_aligned_free(*chb); vfft_aligned_free(*kf); vfft_aligned_free(*kb); vfft_aligned_free(*scr);
         *chf = *chb = *kf = *kb = *scr = NULL;
         for (s2 = 0; s2 < *nst; s2++)
         {
-            free(tf[s2]); tf[s2] = NULL;
-            free(tb[s2]); tb[s2] = NULL;
+            vfft_aligned_free(tf[s2]); tf[s2] = NULL;
+            vfft_aligned_free(tb[s2]); tb[s2] = NULL;
         }
         return 0;
     }
@@ -922,25 +922,25 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
         {
 #if VFFT_IL_VW == 8
             /* one broadcast record per (digit d, leg r): Q = d, L = this stage's span */
-            double *f = (double *)malloc(vfft_vtw512_blocks_doubles((size_t)D, R) * sizeof(double));
-            double *bt = (double *)malloc(vfft_vtw512_blocks_doubles((size_t)D, R) * sizeof(double));
+            double *f = (double *)vfft_aligned_alloc(vfft_vtw512_blocks_doubles((size_t)D, R) * sizeof(double));
+            double *bt = (double *)vfft_aligned_alloc(vfft_vtw512_blocks_doubles((size_t)D, R) * sizeof(double));
             if (!f || !bt)
             {
-                free(f);
-                free(bt);
+                vfft_aligned_free(f);
+                vfft_aligned_free(bt);
                 return -1;
             }
             vfft_vtw512_blocks_bcast(f, (size_t)D, R, (size_t)L, NULL, NULL, 0);
             vfft_vtw512_blocks_bcast(bt, (size_t)D, R, (size_t)L, NULL, NULL, 1);   /* conj */
 #else
             const size_t nrec = (size_t)D * (R - 1);
-            double *f = (double *)malloc(nrec * 8 * sizeof(double));
-            double *bt = (double *)malloc(nrec * 8 * sizeof(double));
+            double *f = (double *)vfft_aligned_alloc(nrec * 8 * sizeof(double));
+            double *bt = (double *)vfft_aligned_alloc(nrec * 8 * sizeof(double));
             int d, r, lane;
             if (!f || !bt)
             {
-                free(f);
-                free(bt);
+                vfft_aligned_free(f);
+                vfft_aligned_free(bt);
                 return -1;
             }
             for (d = 0; d < D; d++)

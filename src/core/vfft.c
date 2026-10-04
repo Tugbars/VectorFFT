@@ -702,12 +702,12 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg);
 static double _vfft_measure_2d_c2c(stride_plan_t *p, int N1, int N2)
 {
     size_t T = (size_t)N1 * (size_t)N2;
-    double *re = (double *)malloc(T * sizeof(double));
-    double *im = (double *)malloc(T * sizeof(double));
+    double *re = (double *)vfft_aligned_alloc(T * sizeof(double));
+    double *im = (double *)vfft_aligned_alloc(T * sizeof(double));
     if (!re || !im)
     {
-        free(re);
-        free(im);
+        vfft_aligned_free(re);
+        vfft_aligned_free(im);
         return 1e18;
     }
     for (size_t i = 0; i < T; i++)
@@ -716,8 +716,8 @@ static double _vfft_measure_2d_c2c(stride_plan_t *p, int N1, int N2)
         im[i] = (double)rand() / RAND_MAX - 0.5;
     }
     double ns = vfft_fft2d_c2c_bench_min(p, N1, N2, re, im);
-    free(re);
-    free(im);
+    vfft_aligned_free(re);
+    vfft_aligned_free(im);
     return ns;
 }
 
@@ -727,22 +727,22 @@ static double _vfft_measure_2d_c2c(stride_plan_t *p, int N1, int N2)
 static double _vfft_measure_2d_r2c(stride_plan_t *p, int N1, int N2)
 {
     size_t RN = (size_t)N1 * (size_t)N2, hp1 = (size_t)(N2 / 2 + 1), CN = (size_t)N1 * hp1;
-    double *x = (double *)malloc(RN * sizeof(double));
-    double *ore = (double *)malloc(CN * sizeof(double));
-    double *oim = (double *)malloc(CN * sizeof(double));
+    double *x = (double *)vfft_aligned_alloc(RN * sizeof(double));
+    double *ore = (double *)vfft_aligned_alloc(CN * sizeof(double));
+    double *oim = (double *)vfft_aligned_alloc(CN * sizeof(double));
     if (!x || !ore || !oim)
     {
-        free(x);
-        free(ore);
-        free(oim);
+        vfft_aligned_free(x);
+        vfft_aligned_free(ore);
+        vfft_aligned_free(oim);
         return 1e18;
     }
     for (size_t i = 0; i < RN; i++)
         x[i] = (double)rand() / RAND_MAX - 0.5;
     double ns = vfft_fft2d_r2c_bench_min(p, N1, N2, x, ore, oim);
-    free(x);
-    free(ore);
-    free(oim);
+    vfft_aligned_free(x);
+    vfft_aligned_free(ore);
+    vfft_aligned_free(oim);
     return ns;
 }
 
@@ -751,26 +751,26 @@ static double _vfft_measure_2d_r2c(stride_plan_t *p, int N1, int N2)
 static double _vfft_measure_2d_c2r(stride_plan_t *p, int N1, int N2)
 {
     size_t RN = (size_t)N1 * (size_t)N2, hp1 = (size_t)(N2 / 2 + 1), CN = (size_t)N1 * hp1;
-    double *x = (double *)malloc(RN * sizeof(double));
-    double *ore = (double *)malloc(CN * sizeof(double));
-    double *oim = (double *)malloc(CN * sizeof(double));
-    double *xr = (double *)malloc(RN * sizeof(double));
+    double *x = (double *)vfft_aligned_alloc(RN * sizeof(double));
+    double *ore = (double *)vfft_aligned_alloc(CN * sizeof(double));
+    double *oim = (double *)vfft_aligned_alloc(CN * sizeof(double));
+    double *xr = (double *)vfft_aligned_alloc(RN * sizeof(double));
     if (!x || !ore || !oim || !xr)
     {
-        free(x);
-        free(ore);
-        free(oim);
-        free(xr);
+        vfft_aligned_free(x);
+        vfft_aligned_free(ore);
+        vfft_aligned_free(oim);
+        vfft_aligned_free(xr);
         return 1e18;
     }
     for (size_t i = 0; i < RN; i++)
         x[i] = (double)rand() / RAND_MAX - 0.5;
     stride_execute_2d_r2c(p, x, ore, oim); /* valid half-spectrum for c2r input */
     double ns = vfft_fft2d_c2r_bench_min(p, N1, N2, ore, oim, xr);
-    free(x);
-    free(ore);
-    free(oim);
-    free(xr);
+    vfft_aligned_free(x);
+    vfft_aligned_free(ore);
+    vfft_aligned_free(oim);
+    vfft_aligned_free(xr);
     return ns;
 }
 
@@ -1397,14 +1397,14 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
         const vfft_dir_t dir = (cfg->transform == VFFT_C2R) ? VFFT_BACKWARD : VFFT_FORWARD;
         const size_t ns_ = K * h->tcb_sn, nd_ = K * h->tcb_dn;
         const size_t nb = ns_ * sizeof(double);
-        double *src = (double *)malloc(nb);
-        double *dst = ip ? src : (double *)malloc(nd_ * sizeof(double));
-        double *s0 = ip ? (double *)malloc(nb) : NULL;
+        double *src = (double *)vfft_aligned_alloc(nb);
+        double *dst = ip ? src : (double *)vfft_aligned_alloc(nd_ * sizeof(double));
+        double *s0 = ip ? (double *)vfft_aligned_alloc(nb) : NULL;
         double st = 0, mt = 0;
         size_t i;
         if (!src || !dst || (ip && !s0))
         {
-            free(src); if (!ip) free(dst); free(s0);
+            vfft_aligned_free(src); if (!ip) vfft_aligned_free(dst); vfft_aligned_free(s0);
             return;                               /* no buffers: serial */
         }
         for (i = 0; i < ns_; i++)
@@ -1435,7 +1435,7 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
             fprintf(stderr, "[tcmt] %s N=%d K=%zu T=%d %s: race serial=%.0f slabs=%.0f -> %s\n",
                     tn, N, K, T, ip ? "ip" : "oop", st, mt,
                     h->tc_mt ? "SLABS" : "serial");
-        free(src); if (!ip) free(dst); free(s0);
+        vfft_aligned_free(src); if (!ip) vfft_aligned_free(dst); vfft_aligned_free(s0);
         if (W && vw2_stride_bank_tcmt(&W->vw2, t, N, K, ord, pl, lay,
                                       h->tc_mt, T, h->tc_mt ? mt : st) == VW2_OK)
             _vw2_persist(W, cfg);
