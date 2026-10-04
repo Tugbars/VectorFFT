@@ -243,7 +243,10 @@ extern "C"
    *    (or config.recalibrate) races the cell's candidates on scratch data at
    *    config.rigor, a pause of milliseconds to seconds, banks the winner and
    *    saves it to the store before create returns. A store that cannot be
-   *    written keeps the winner for the process and says so once.
+   *    written keeps the winner for the process and says so once. The races
+   *    run inside the measurement scope (vfft_measure_config_t): the calling
+   *    thread is pinned to a P-core and raised for their duration, and is
+   *    given back as it was.
    * -# Build the plan: the kernels are bound, the twiddle tables computed,
    *    and everything the plan runs on allocated by the plan itself: the
    *    scratch and staging planes, 64-byte aligned; the tables; the child
@@ -381,6 +384,117 @@ extern "C"
                                double **dre, double **dim);
   /** @brief Release a vfft_plan_alloc() set and every buffer in it. NULL is accepted. */
   void vfft_buffers_free(vfft_buffers b);
+
+  /* ── the measurement scope ────────────────────────────────────────────── */
+
+  /**
+   * @brief How the library sets a thread up for measuring. Zero is the
+   *        default of every field.
+   *
+   * vfft_create() measures (races) a cell's candidates whenever wisdom does
+   * not serve it, and saves the winner. It runs every race inside one scope
+   * and undoes it before it returns:
+   * - a lock for the whole machine, so two measurements never run at once.
+   *   The wait is bounded; past it the race runs anyway.
+   * - the measuring thread pinned to one P-core: the second one in a process
+   *   without workers, logical CPU 0 once the pool exists (see
+   *   vfft_set_num_threads()).
+   * - a guard thread holding that core's hyperthread sibling, so nothing
+   *   else is scheduled there. It waits with the processor's idle
+   *   instruction (TPAUSE on Intel, MWAITX on AMD), which costs the measured
+   *   thread nothing; a part with neither runs unguarded.
+   * - the measuring thread's priority raised, where the system allows it.
+   *
+   * A winner measured without the lock, or on a thread that is not pinned to
+   * a P-core, is served for the process and not saved. The application's own
+   * threads and the machine's other load are the caller's to keep quiet.
+   */
+  typedef struct
+  {
+    int pin;          /**< VFFT_MEASURE_PIN_DEFAULT, _OFF or _CORE */
+    int pin_core;     /**< the logical CPU for VFFT_MEASURE_PIN_CORE */
+    int guard;        /**< VFFT_MEASURE_GUARD_DEFAULT, _OFF or _PAUSE */
+    int priority;     /**< VFFT_MEASURE_PRIORITY_THREAD, _LEAVE or _PROCESS */
+    int lock_wait_ms; /**< the longest wait for another measurement on the
+                           machine, in milliseconds; 0 = 60000 */
+  } vfft_measure_config_t;
+
+  /** @brief vfft_measure_config_t.pin */
+  enum
+  {
+    VFFT_MEASURE_PIN_DEFAULT = 0, /**< the library's own core (see above) */
+    VFFT_MEASURE_PIN_OFF = 1,     /**< the thread is not moved; winners are served, not saved */
+    VFFT_MEASURE_PIN_CORE = 2     /**< logical CPU pin_core; winners are saved only when it is a P-core */
+  };
+  /** @brief vfft_measure_config_t.guard */
+  enum
+  {
+    VFFT_MEASURE_GUARD_DEFAULT = 0, /**< the processor's idle instruction, where it has one */
+    VFFT_MEASURE_GUARD_OFF = 1,
+    VFFT_MEASURE_GUARD_PAUSE = 2    /**< a PAUSE spinner: works on every part with hyperthreads, and
+                                         slows the measured thread about 12% (every candidate alike) */
+  };
+  /** @brief vfft_measure_config_t.priority */
+  enum
+  {
+    VFFT_MEASURE_PRIORITY_THREAD = 0,  /**< raise the measuring thread */
+    VFFT_MEASURE_PRIORITY_LEAVE = 1,
+    VFFT_MEASURE_PRIORITY_PROCESS = 2  /**< raise the whole process */
+  };
+  /** @brief What vfft_measure_begin() returns (0 = a clean scope). */
+  enum
+  {
+    VFFT_MEASURE_CONTENDED = 1, /**< the lock was not obtained within the wait */
+    VFFT_MEASURE_UNPINNED = 2   /**< the thread is not pinned to a P-core */
+  };
+
+  /**
+   * @brief Set how this process measures: the scope of every later
+   *        vfft_create() race and vfft_measure_begin().
+   * @param config The settings; NULL restores the defaults. Call it during
+   *        setup, outside any scope.
+   */
+  void vfft_measure_configure(const vfft_measure_config_t *config);
+
+  /**
+   * @brief Enter the measurement scope on the calling thread, for code the
+   *        caller times itself.
+   *
+   * The same scope vfft_create() uses for its races: the machine-wide lock,
+   * the pin, the sibling guard, the priority. A vfft_create() inside it adds
+   * nothing and leaves it in place. Calls nest; the scope ends at the
+   * matching outermost vfft_measure_end(), on the same thread.
+   *
+   * @return 0, or VFFT_MEASURE_CONTENDED and/or VFFT_MEASURE_UNPINNED:
+   *         winners raced in such a scope are served, not saved.
+   */
+  int vfft_measure_begin(void);
+
+  /**
+   * @brief Leave the scope: the guard ends, the thread's priority and
+   *        affinity return to what they were, the lock is released. One pin
+   *        stays: the pool's pin of its caller to logical CPU 0, when the
+   *        pool was sized or grown inside the scope.
+   */
+  void vfft_measure_end(void);
+
+  /**
+   * @brief Confine the process to a set of logical CPUs, for a threaded
+   *        comparison: every thread created afterwards, by any library, runs
+   *        inside it.
+   * @param mask Bit c = logical CPU c; 0 = one logical CPU per P-core (no
+   *        hyperthread siblings, no E-cores).
+   * @return The mask applied, 0 when the system refused it. Not undone by
+   *         vfft_measure_end().
+   */
+  unsigned long long vfft_measure_confine(unsigned long long mask);
+
+  /**
+   * @brief One line describing the calling thread's most recent scope: the
+   *        pinned CPU, the guard, the priority, the lock.
+   * @return buf.
+   */
+  const char *vfft_measure_describe(char *buf, size_t n);
 
   /* ── the worker pool and the build ────────────────────────────────────── */
 

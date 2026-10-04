@@ -1422,6 +1422,16 @@ static inline int vw2_bank(vw2_store_t *s, vw2_rec_t *rec)
     return vw2__bank_pinned(s, rec, shard);
 }
 
+/* Nothing this process banked so far is ever saved by the create path: the
+ * rows stay in memory and serve. For winners raced under conditions the
+ * library knows were bad (common/support/race_scope.h). The explicit full
+ * save (vw2_save) is not affected. */
+static inline void vw2_disown(vw2_store_t *s)
+{
+    int i;
+    for (i = 0; i < s->nrec; i++) s->rec[i].own = 0;
+}
+
 /* Field-scoped promotion (README §4.2): set one payload field on the record
  * at `key`. Residency is sticky — promotion never re-routes a record. */
 static inline int vw2_update_field(vw2_store_t *s, const vw2_key_t *key,
