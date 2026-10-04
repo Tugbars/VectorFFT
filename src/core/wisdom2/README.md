@@ -68,18 +68,19 @@ droppings, not wisdom — never migration inputs.
 
 - One directory holds the store: an explicit `vfft_wisdom_load(dir)`, else
   `$VFFT_WISDOM_DIR`, else the build's compiled default (`src/wisdom/`,
-  `VFFT_WISDOM_DIR_DEFAULT`), else the current directory; the last two open
-  READ-ONLY. The frozen bundle (`spike_wisdom.txt` and its companions) is not
+  `VFFT_WISDOM_DIR_DEFAULT`), else none: a build that knows no store keeps its
+  winners in memory and never writes the current directory. The frozen bundle (`spike_wisdom.txt` and its companions) is not
   in the store: it stays in `generator/generated/` and the library reads it
   from there (`VFFT_FROZEN_WISDOM_DIR`).
-- **The library default is read-only wisdom.** In serving mode (default),
-  hits are served, and a miss races in memory for process coherence but
-  writes nothing to disk (one loud line per process notes the unpersisted
-  verdict). In measurement mode — `config.wisdom_write = 1`, the guard the
-  owner placed in the build config — calibrate-on-miss persists.
-  Calibrators, benches, and gates set the field; an application can never
-  accidentally bank. Banking with the env unset is refused with one loud
-  stderr line regardless (the wrong-cwd colony law).
+- **A winner is always kept and always saved** (owner, 2026-10-04). A bank
+  is accepted in memory whatever the store's disk guard says; a create that
+  races saves the rows it banked before it returns (`vw2_save_banked`, under
+  the store lock `wisdom2.lock`). `config.wisdom_write` is retired at the
+  front door; a create the library makes inside another one (a child, a
+  worker clone, a private store's plan) keeps the flag its parent passed, and
+  a clone or a private store never saves. `VFFT_WISDOM_WRITE=0` turns saving
+  off for a process. A store directory that cannot be written is said once
+  and its winners stay in memory.
 - Tools that own their store directly (the migrator, offline planners) pass
   an explicit writable flag at open instead. ⏳ Optional extension (open):
   an env twin for the config field — not implemented; add only on owner
@@ -173,8 +174,8 @@ is stale the moment its source improves.
 Syntax: `ref=cell(<complete key tuple, comma-joined>)` — always the full key,
 never partial. Resolution scope: the union of all loaded files. A dangling
 ref (target deleted, quarantined, or not yet present) makes the referencing
-verdict a MISS — one loud stderr line, then the normal miss path (re-race in
-memory; re-bank in measurement mode). Never a hard error, never a silent
+verdict a MISS — one loud stderr line, then the normal miss path (re-race,
+re-bank, save). Never a hard error, never a silent
 default.
 
 Emission scope: a writer emits a signpost only where a component record
@@ -263,8 +264,7 @@ Two layers, encoded once:
    banked `il_kv` beats `VFFT_NO_ILBLK`.
 1. exact key →
 2. migration wildcard (`q=*`, then `ord=*`/`place=*`) →
-3. MISS: the caller falls to the default spine (serving mode) or races and
-   banks (measurement mode).
+3. MISS: the caller races, banks and saves.
 
 **Neighbor cells are never served as verdicts** — a separate seed iterator
 exposes them as race PROPOSALS only.

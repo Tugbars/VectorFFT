@@ -329,16 +329,17 @@ static void _bundle_load(struct vfft_wisdom_s *W)
     bluestein_wisdom_init(&W->bluestein);
     bluestein_wisdom_load(&W->bluestein, W->path_bluestein);
     vfft_c2r_path_load(W->path_c2r_path); /* c2r NATURAL/STRIDE per-cell path table */
-    /* wisdom2 (the live oop-family store since the wave-1 flip). Opened
-     * writable so create-time races can bank IN MEMORY (process coherence);
-     * DISK persistence is separately gated by config.wisdom_write. The
-     * unset-env case still forces read-only inside vw2_open (colony law). */
+    /* wisdom2 (the live store). A bank always lands in memory, and a
+     * create's winner is saved before the create returns (owner,
+     * 2026-10-04): an explicit directory, VFFT_WISDOM_DIR or the build's
+     * compiled default opens writable. A build that knows no store keeps
+     * its winners in memory (vw2_open). */
     {
-        /* colony law: a bundle that fell back to "." with no env is never
-         * writable — vw2_open(NULL) re-resolves and forces read-only with
-         * its own loud line; an explicit directory opens writable (memory
-         * banking; disk persistence stays behind config.wisdom_write). */
-        int dir_known = (strcmp(W->dir, ".") != 0) || (getenv("VFFT_WISDOM_DIR") != NULL);
+        /* a bundle with no directory of its own ("." from a NULL dir) lets
+         * vw2_open resolve the store: VFFT_WISDOM_DIR, else the compiled
+         * default. The working directory is never the store by accident
+         * (vfft_wisdom_load(NULL) with the env set used to open it). */
+        int dir_known = (strcmp(W->dir, ".") != 0);
         /* KILL SWITCHES RETIRED 2026-08-20 together with the legacy files
          * they read. Equivalence was machine-proven first: every cell the
          * legacy readers could serve resolved field-identical from the
@@ -1049,14 +1050,39 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
                                          * and the four racers (step 17) */
 
 
-/* Serving-mode/measurement-mode persistence seam (README §2.2): banks are
- * always in-memory (process coherence); DISK writes happen only under
- * config.wisdom_write. Loud ONCE per process when a verdict stays
- * memory-only so a calibration run with the guard forgotten is visible. */
+/* THE SAVE (owner, 2026-10-04: "the planner found the winner, why don't
+ * write it to wisdom?"). A bank is always in memory; this writes the rows
+ * this process banked to the store, under the store lock, before the create
+ * returns. cfg->wisdom_write is the create's SAVE flag: the front door sets
+ * it for the outermost create (vfft_create), and a create the library makes
+ * inside another one carries what its parent passed -- a worker clone and a
+ * private store's plan carry 0 and never save. A process with saving turned
+ * off, or a store whose directory cannot be written, says so once and keeps
+ * its winners in memory. */
+static int _vfft_save_enabled(void);
 static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 {
-    static int warned;
-    if (cfg && cfg->wisdom_write)
+    static int said_off, said_unwritable;
+    if (!(cfg && cfg->wisdom_write))
+    {
+        if (!_vfft_save_enabled() && !said_off)
+        {
+            said_off = 1;
+            fprintf(stderr, "[wisdom2] saving is off (VFFT_WISDOM_WRITE=0): winners are kept "
+                            "for this process only\n");
+        }
+        return;
+    }
+    if (!W->vw2.writable)
+    {
+        if (!said_unwritable)
+        {
+            said_unwritable = 1;
+            fprintf(stderr, "[wisdom2] the store '%s' cannot be written: winners are kept for "
+                            "this process only\n", W->vw2.dir);
+        }
+        return;
+    }
     {
         /* A FAILED SAVE IS LOUD, AND RETRIED (2026-09-20). vw2_save's atomic
          * replace returns VW2_EIO when the target cannot be swapped in -- on
@@ -1067,23 +1093,27 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
          * row was gone. Found by the 2026-09-20 gauntlet, cell 515: raced,
          * reported banked, absent from every shard. A watcher's lock lasts
          * milliseconds, so retry briefly; then say so, with the reason. */
-        int rc = vw2_save(&W->vw2), tries = 0;
+        int rc = vw2_save_banked(&W->vw2), tries = 0;
+        if (rc == VW2_EREADONLY)
+        {   /* the directory is missing or cannot be written: not a transient */
+            W->vw2.writable = 0;
+            if (!said_unwritable)
+            {
+                said_unwritable = 1;
+                fprintf(stderr, "[wisdom2] the store directory '%s' is missing or cannot be "
+                                "written: winners are kept for this process only\n", W->vw2.dir);
+            }
+            return;
+        }
         while (rc != VW2_OK && ++tries < 4)
         {
             vfft_race_sleep_ms(25 * tries);
-            rc = vw2_save(&W->vw2);
+            rc = vw2_save_banked(&W->vw2);
         }
         if (rc != VW2_OK)
-            _vfft_warn("wisdom2: verdict NOT persisted (save rc=%d after %d tries) -- "
+            _vfft_warn("wisdom2: verdict NOT saved (save rc=%d after %d tries) -- "
                        "the row is lost when this process exits; is the store file open elsewhere?",
                        rc, tries);
-        return;
-    }
-    if (!warned)
-    {
-        warned = 1;
-        fprintf(stderr, "[wisdom2] verdict raced and held in memory; NOT persisted "
-                        "(serving mode — set config.wisdom_write=1 to bank)\n");
     }
 }
 
@@ -2107,13 +2137,27 @@ int vfft_c2r_load_path(const char *path)
 /* owned_buffers=1: the plan owns its planes, built from the SAME cfg — so the
  * inner create's batch cross-checks are invariants, and vfft_destroy frees them.
  * See docs/design/vfft_front_door.md. */
-vfft_plan vfft_create(const vfft_config_t *cfg)
+/* saving is on unless the process turned it off (VFFT_WISDOM_WRITE=0, read
+ * once): for a rare test whose subject makes a save meaningless. Tests run
+ * with saving on against a scratch store -- the save and its read-back are
+ * where wisdom defects show. */
+static int _vfft_save_enabled(void)
 {
-    if (!cfg)
+    static int v = -1;
+    if (v < 0)
     {
-        _vfft_warn("vfft_create: NULL config");
-        return NULL;
+        const char *e = getenv("VFFT_WISDOM_WRITE");
+        v = !(e && e[0] == '0' && !e[1]);
     }
+    return v;
+}
+
+/* how deep this thread is inside vfft_create: 0 outside, 1 in the caller's
+ * create, more in a create the library makes for a child plan or a clone */
+static _Thread_local int _vfft_create_depth;
+
+static vfft_plan _vfft_create_outer(const vfft_config_t *cfg)
+{
     if (!cfg->owned_buffers)
         return _vfft_create_inner(cfg, NULL);
 
@@ -2127,6 +2171,27 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         return NULL;
     }
     h->own_batch = ob;
+    return h;
+}
+
+/* THE FRONT DOOR. The caller's create saves its winner: config.wisdom_write
+ * is retired there (ignored), and the save flag is on unless the process
+ * turned saving off. A nested create keeps the flag its parent passed. */
+vfft_plan vfft_create(const vfft_config_t *cfg)
+{
+    vfft_config_t c;
+    vfft_plan h;
+    if (!cfg)
+    {
+        _vfft_warn("vfft_create: NULL config");
+        return NULL;
+    }
+    c = *cfg;
+    if (_vfft_create_depth == 0)
+        c.wisdom_write = _vfft_save_enabled();
+    _vfft_create_depth++;
+    h = _vfft_create_outer(&c);
+    _vfft_create_depth--;
     return h;
 }
 

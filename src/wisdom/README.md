@@ -39,16 +39,14 @@ pinned by `.gitattributes`.
 `vfft_wisdom_load(dir)` opens a store directory; `config.wisdom = NULL` means
 the library opens one itself, resolved in this order:
 
-1. `VFFT_WISDOM_DIR`, if set: opened writable, so a miss is banked and, with
-   `config.wisdom_write = 1`, persisted;
+1. `VFFT_WISDOM_DIR`, if set;
 2. otherwise the directory the build compiled in as `VFFT_WISDOM_DIR_DEFAULT`,
-   which is this folder for an in-tree build: opened **read-only**, so a miss
-   is raced and served but never written;
-3. otherwise the current directory, read-only.
+   which is this folder for an in-tree build;
+3. otherwise no store: winners are kept in memory for the process.
 
-Only an explicit directory or the environment variable can bank. That is
-deliberate: no process that merely runs the library can write the shipped
-store.
+A create that races saves its winner here before it returns, under the store
+lock (`wisdom2.lock`). `VFFT_WISDOM_WRITE=0` turns saving off for a process.
+Tests and probes point `VFFT_WISDOM_DIR` at a scratch copy.
 
 ## The frozen bundle is elsewhere
 

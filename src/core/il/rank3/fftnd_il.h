@@ -1684,8 +1684,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         if (nsarm > 1) s_src = 3;
         if (nwl > 1) wl_src = 3;
         if (nf_raced) nf_src = 3;
-        /* bank what was RACED (pins never bank) */
-        if (usable_w && cfg->wisdom_write)
+        /* bank what was RACED (pins never bank); _vw2_persist carries the save flag */
+        if (usable_w)
         {
             int banked = 0;
             /* the row first: every bank below is a field update on it */
@@ -1783,7 +1783,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
             mts = (mt_v > 0) ? arm_v : arm;
             mtf = (mt_v > 0) ? nf_v : nf;
             mt_src = (c1 || c2) ? 3 : 4;
-            if (usable_w && cfg->wisdom_write && !pin && !wpin)
+            if (usable_w && !pin && !wpin)
             {
                 int banked = 0;
                 if (vw2_ilcol_chain_bank(&W->vw2, &key0, d->ax0.R, d->ax0.nst, -1, -1, -1,

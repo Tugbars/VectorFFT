@@ -58,10 +58,10 @@ battery (`api_matrix_gate` (the serve/refuse table, benches/api_matrix_gate.c)).
 Wisdom: the store is `src/wisdom/` (the `wisdom2_*.txt` shards and the per-host
 subtrees); `VFFT_WISDOM_DIR` or an explicit `vfft_wisdom_load(dir)` points the
 library at another directory (gates and benches use a scratch copy), and with
-neither the build's compiled default (`src/wisdom/`) opens READ-ONLY. The frozen
+neither the build's compiled default (`src/wisdom/`) is the store. The frozen
 bundle (`spike_wisdom.txt`, `bluestein_wisdom.txt`, `c2r_path.txt`) stays in
 `src/dag-fft-compiler/generator/generated/` and is read from there. Misses race
-at `config.rigor` and bank.
+at `config.rigor`, bank, and save the winner before create returns.
 
 Runtime knobs (diagnostics/kill switches): `VFFT_NO_ZTURN` (fall back to the
 legacy zsplit cascade), `VFFT_FORCE_ZROUTE` (pin the K=1 cascade route),

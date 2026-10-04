@@ -149,7 +149,7 @@ extern "C"
   /**
    * @brief The data contract vfft_create() commits to. A zeroed struct is a
    *        1D split-layout C2C of size n[0], one transform, one thread,
-   *        natural order, the library's wisdom, nothing written.
+   *        natural order, the library's wisdom.
    */
   typedef struct
   {
@@ -199,9 +199,10 @@ extern "C"
 
     vfft_wisdom *wisdom; /**< NULL = the library's store; else this table */
     int recalibrate;     /**< 1 = re-measure this cell even on a hit */
-    int wisdom_write;    /**< 0 (default) = serve hits, race misses in memory,
-                              write nothing to disk. 1 = a miss or recalibrate
-                              persists its verdict to the store. */
+    int wisdom_write;    /**< retired, ignored: a create that races always
+                              saves its winner to the store before it returns.
+                              The environment variable VFFT_WISDOM_WRITE=0
+                              turns saving off for a process. */
   } vfft_config_t;
 
   /** @brief vfft_config_t.order */
@@ -240,8 +241,9 @@ extern "C"
    *    or reinterpreted to make it fit.
    * -# Resolve the plan from wisdom. A hit serves the banked verdict. A miss
    *    (or config.recalibrate) races the cell's candidates on scratch data at
-   *    config.rigor, a pause of milliseconds to seconds, and banks the winner
-   *    in memory; it reaches the store only when config.wisdom_write is 1.
+   *    config.rigor, a pause of milliseconds to seconds, banks the winner and
+   *    saves it to the store before create returns. A store that cannot be
+   *    written keeps the winner for the process and says so once.
    * -# Build the plan: the kernels are bound, the twiddle tables computed,
    *    and everything the plan runs on allocated by the plan itself: the
    *    scratch and staging planes, 64-byte aligned; the tables; the child

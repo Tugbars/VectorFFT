@@ -402,22 +402,33 @@ static inline int vw2_g0_selftest(const char *dir)
         VW2_ST_CHECK(vw2_lookup(&st, &q) == NULL, "concrete-key seed is never served either");
     }
 
-    /* ---- T12: read-only guard --------------------------------------------- */
+    /* ---- T12: the disk guard (a bank is always accepted in memory) -------- */
     printf("T12 read-only:\n");
     vw2_close(&st);
     vw2_open(&st, dir, 0);
     r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 2048, 1, VW2_ORD_SCR, VW2_PL_IP),
               "eng", 1, "stride", "ran", 2, "1", "src", 2, "race", "date", 2, "2026-08-19", NULL);
     rc = vw2_bank(&st, &r);
-    VW2_ST_CHECK(rc == VW2_EREADONLY, "bank refused on read-only store");
+    VW2_ST_CHECK(rc == VW2_OK, "bank accepted in memory on a read-only store");
     vw2_rec_free(&r);
+    {
+        vw2_key_t q = vw2__st_key(VW2_T_C2C, 2048, 1, VW2_ORD_SCR, VW2_PL_IP);
+        VW2_ST_CHECK(vw2_lookup(&st, &q) != NULL, "the banked winner is served from memory");
+    }
     VW2_ST_CHECK(vw2_save(&st) == VW2_EREADONLY, "save refused on read-only store");
+    VW2_ST_CHECK(vw2_save_banked(&st) == VW2_EREADONLY, "own-rows save refused on read-only store");
     VW2_ST_CHECK(vw2_quarantine_append(&st, "x", "y", "z") == VW2_EREADONLY,
           "quarantine refused on read-only store");
     {
         vw2_key_t q = vw2__st_key(VW2_T_C2C, 512, 8, VW2_ORD_SCR, VW2_PL_IP);
-        VW2_ST_CHECK(vw2_update_field(&st, &q, "t2q", "1") == VW2_EREADONLY,
-              "update_field refused on read-only store");
+        VW2_ST_CHECK(vw2_update_field(&st, &q, "t2q", "1") == VW2_OK,
+              "update_field accepted in memory on a read-only store");
+    }
+    vw2_close(&st);
+    vw2_open(&st, dir, 0);
+    {
+        vw2_key_t q = vw2__st_key(VW2_T_C2C, 2048, 1, VW2_ORD_SCR, VW2_PL_IP);
+        VW2_ST_CHECK(vw2_lookup(&st, &q) == NULL, "nothing reached the disk from the read-only store");
     }
     vw2_close(&st);
 
@@ -726,6 +737,84 @@ static inline int vw2_g0_selftest(const char *dir)
     VW2_ST_CHECK(buf[0] == 0, "zero-byte file untouched by save");
     vw2_close(&st);
     remove(path);
+
+    /* ---- T29: vw2_save_banked writes only THIS process's rows ---------------------------------------
+     * Two stores on one directory stand for two processes. A loads, B loads; B
+     * re-races cell X and saves; A banks cell Y and saves its own rows. A's
+     * older copy of X must not come back, and both Y and B's X are on disk. */
+    printf("T29 own-rows save:\n");
+    vw2__st_wipe(dir);
+    vw2_open(&sa, dir, 1);
+    r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 640, 4, VW2_ORD_SCR, VW2_PL_IP),
+              "eng", 1, "stride", "f", 1, "old", "ran", 2, "4", "src", 2, "race", "date", 2, "2026-10-04", NULL);
+    vw2_bank(&sa, &r);
+    VW2_ST_CHECK(vw2_save_banked(&sa) == VW2_OK, "the first own-rows save writes the banked row");
+    vw2_close(&sa);
+    vw2_open(&sa, dir, 1);                               /* process A: holds X = old */
+    vw2_open(&sb, dir, 1);                               /* process B */
+    r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 640, 4, VW2_ORD_SCR, VW2_PL_IP),
+              "eng", 1, "stride", "f", 1, "new", "ran", 2, "4", "src", 2, "race", "date", 2, "2026-10-04", NULL);
+    vw2_bank(&sb, &r);
+    VW2_ST_CHECK(vw2_save_banked(&sb) == VW2_OK, "B saves its re-race of X");
+    r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 648, 4, VW2_ORD_SCR, VW2_PL_IP),
+              "eng", 1, "stride", "f", 1, "y", "ran", 2, "4", "src", 2, "race", "date", 2, "2026-10-04", NULL);
+    vw2_bank(&sa, &r);
+    VW2_ST_CHECK(vw2_save_banked(&sa) == VW2_OK, "A saves its own row Y");
+    vw2_close(&sa);
+    vw2_close(&sb);
+    vw2_open(&st, dir, 0);
+    {
+        vw2_key_t qx = vw2__st_key(VW2_T_C2C, 640, 4, VW2_ORD_SCR, VW2_PL_IP);
+        vw2_key_t qy = vw2__st_key(VW2_T_C2C, 648, 4, VW2_ORD_SCR, VW2_PL_IP);
+        const vw2_rec_t *x = vw2_lookup(&st, &qx), *y = vw2_lookup(&st, &qy);
+        const char *fx = x ? vw2_rec_get(x, "f") : NULL;
+        VW2_ST_CHECK(fx && !strcmp(fx, "new"), "A's same-day copy of X did not overwrite B's re-race");
+        VW2_ST_CHECK(y != NULL, "A's own row Y is on disk");
+    }
+    vw2_close(&st);
+    /* the full save keeps its meaning: every resident of a dirty shard is written */
+    vw2_open(&sa, dir, 1);
+    vw2__st_wipe(dir);
+    {
+        int sh2;
+        for (sh2 = 0; sh2 < VW2_NSHARDS; sh2++) sa.dirty[sh2] = 1;
+    }
+    VW2_ST_CHECK(vw2_save(&sa) == VW2_OK, "full save after the files were removed");
+    vw2_close(&sa);
+    vw2_open(&st, dir, 0);
+    {
+        vw2_key_t qx = vw2__st_key(VW2_T_C2C, 640, 4, VW2_ORD_SCR, VW2_PL_IP);
+        vw2_key_t qy = vw2__st_key(VW2_T_C2C, 648, 4, VW2_ORD_SCR, VW2_PL_IP);
+        VW2_ST_CHECK(vw2_lookup(&st, &qx) && vw2_lookup(&st, &qy), "the full save wrote every loaded row back");
+    }
+    vw2_close(&st);
+
+    /* ---- T30: the store lock ----------------------------------------------------------------------- */
+    printf("T30 store lock:\n");
+    {
+        vw2_lock_t held = vw2__lock(dir, 0), second;
+        VW2_ST_CHECK(held != VW2_LOCK_NONE, "the lock is taken on a free store");
+        second = vw2__lock(dir, 50);
+        VW2_ST_CHECK(second == VW2_LOCK_NONE, "a second taker waits and gives up while it is held");
+        vw2_open(&sa, dir, 1);
+        r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 656, 4, VW2_ORD_SCR, VW2_PL_IP),
+                  "eng", 1, "stride", "ran", 2, "4", "src", 2, "race", "date", 2, "2026-10-04", NULL);
+        vw2_bank(&sa, &r);
+        VW2_ST_CHECK(vw2__save(&sa, 1, 50) == VW2_EIO, "a save cannot run while another holder has the lock");
+        VW2_ST_CHECK(sa.dirty[VW2_SHARD_STRIDE] == 1, "the failed save leaves the shard dirty");
+        vw2__unlock(held);
+        VW2_ST_CHECK(vw2__save(&sa, 1, 50) == VW2_OK, "the same save runs once the lock is released");
+        vw2_close(&sa);
+        second = vw2__lock(dir, 0);
+        VW2_ST_CHECK(second != VW2_LOCK_NONE, "a finished save leaves the lock free");
+        vw2__unlock(second);
+    }
+    vw2_open(&st, dir, 0);
+    {
+        vw2_key_t q = vw2__st_key(VW2_T_C2C, 656, 4, VW2_ORD_SCR, VW2_PL_IP);
+        VW2_ST_CHECK(vw2_lookup(&st, &q) != NULL, "the row saved after the release is on disk");
+    }
+    vw2_close(&st);
 
     printf("\n[wisdom2_g0] %s — %d failure(s)\n", vw2__st_fail ? "FAIL" : "ALL PASS", vw2__st_fail);
     return vw2__st_fail;

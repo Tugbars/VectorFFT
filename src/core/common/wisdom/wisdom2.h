@@ -36,6 +36,16 @@
  *     MoveFileEx / rename), with every write checked — a failed emit
  *     removes the tmp and leaves the old file intact. Stale tmps are swept
  *     at OPEN only (never during a save's merge re-read).
+ *   - A BANK IS ALWAYS ACCEPTED IN MEMORY (owner, 2026-10-04): `writable`
+ *     guards the DISK only (vw2_save, the quarantine). A store that cannot
+ *     be written still keeps and serves every winner for its process.
+ *   - EVERY SAVE HOLDS THE STORE LOCK (<dir>/wisdom2.lock, an OS file lock,
+ *     released when its holder dies) across its read-merge-replace, so two
+ *     processes saving at once lose no row. vw2_save writes every resident
+ *     of a dirty shard (tools, migrations, the explicit save); the create
+ *     path's vw2_save_banked writes only the rows THIS process banked
+ *     (vw2_rec_t.own), so a copy loaded earlier never overwrites a row
+ *     another process raced since.
  */
 #ifndef VFFT_WISDOM2_H
 #define VFFT_WISDOM2_H
@@ -56,6 +66,9 @@
 #else
 #  include <unistd.h>
 #  include <dirent.h>
+#  include <fcntl.h>
+#  include <time.h>
+#  include <sys/file.h>
 #  define VW2__GETPID() getpid()
 #endif
 
@@ -113,7 +126,7 @@ enum {
     VW2_OK = 0,
     VW2_EOPEN      = -1,  /* cannot open for read (missing file is NOT an error) */
     VW2_EVERSION   = -2,  /* bad/missing magic or major -> file poisoned         */
-    VW2_EREADONLY  = -3,  /* bank/save refused: store not writable               */
+    VW2_EREADONLY  = -3,  /* save refused: the store or its directory is not writable */
     VW2_EPOISON    = -4,  /* bank/save refused: file failed to load              */
     VW2_EWILDCARD  = -5,  /* fresh bank carried a wildcard without from=         */
     VW2_EMETRIC    = -6,  /* cross-metric/units replacement refused              */
@@ -169,6 +182,9 @@ typedef struct {
     vw2_key_t  key;
     vw2_tok_t *tok;  int ntok, captok;
     int        shard;            /* RESIDENCY: which file it lives in        */
+    uint8_t    own;              /* banked or changed by THIS process (never
+                                    set by a load): what vw2_save_banked
+                                    writes; cleared when its shard is saved  */
 } vw2_rec_t;
 
 /* ------------------------------------------------------------------ store */
@@ -205,7 +221,9 @@ typedef struct {
     uint8_t    poisoned[VW2_NSHARDS];  /* per-file: load failed => no save   */
     uint8_t    dirty[VW2_NSHARDS];
     uint8_t    present[VW2_NSHARDS];   /* file existed at load               */
-    uint8_t    writable;               /* the write guard (README §2.2)      */
+    uint8_t    writable;               /* the DISK guard: saves and the
+                                          quarantine (banks are always
+                                          accepted in memory)                */
     char       meta[256];              /* @meta payload; captured at load,
                                           settable via vw2_set_meta          */
 } vw2_store_t;
@@ -935,6 +953,7 @@ static inline int vw2__migrate_nthreads(vw2_store_t *s)
                 for (j = 0; MT[j]; j++) vw2__rec_del(r, MT[j]);
                 for (j = 0; TWIN[j][0]; j++) vw2__rec_del(r, TWIN[j][0]);
                 s->dirty[r->shard] = 1;
+                r->own = 1;
                 continue;
             }
         }
@@ -978,6 +997,8 @@ static inline int vw2__migrate_nthreads(vw2_store_t *s)
             r = &s->rec[i];
         }
         nr.shard = r->shard;
+        nr.own = 1;
+        r->own = 1;
         s->rec[s->nrec++] = nr;
         s->dirty[r->shard] = 1;
         split++;
@@ -985,8 +1006,87 @@ static inline int vw2__migrate_nthreads(vw2_store_t *s)
     return split;
 }
 
+/* ------------------------------------------------------------ store lock */
+
+/* ONE LOCK PER STORE DIRECTORY (owner, 2026-10-04), held across a save's
+ * read-merge-replace and across the stale-tmp sweep. It is an OS lock on
+ * <dir>/wisdom2.lock (LockFileEx / flock): a holder that dies releases it,
+ * and nothing is ever broken by pid. The file stays in the directory.
+ * vw2__lock waits up to wait_ms (0 = one try); VW2_LOCK_NONE = not taken:
+ * held by another process past the wait, or (*cant_open) the directory
+ * cannot hold the file -- missing, or not writable. */
+#if defined(_WIN32)
+typedef HANDLE vw2_lock_t;
+#  define VW2_LOCK_NONE INVALID_HANDLE_VALUE
+#else
+typedef int vw2_lock_t;
+#  define VW2_LOCK_NONE (-1)
+#endif
+#define VW2_LOCK_NAME "wisdom2.lock"
+#define VW2_SAVE_LOCK_WAIT_MS 10000   /* a save is tens of milliseconds */
+
+static inline vw2_lock_t vw2__lock_ex(const char *dir, int wait_ms, int *cant_open)
+{
+    char p[640];
+    int waited = 0;
+    if (cant_open) *cant_open = 0;
+    snprintf(p, sizeof p, "%s/" VW2_LOCK_NAME, dir);
+#if defined(_WIN32)
+    {
+        HANDLE h = CreateFileA(p, GENERIC_READ | GENERIC_WRITE,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) { if (cant_open) *cant_open = 1; return VW2_LOCK_NONE; }
+        for (;;) {
+            OVERLAPPED ov;
+            memset(&ov, 0, sizeof ov);
+            if (LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ov))
+                return h;
+            if (waited >= wait_ms) { CloseHandle(h); return VW2_LOCK_NONE; }
+            Sleep(10);
+            waited += 10;
+        }
+    }
+#else
+    {
+        int fd = open(p, O_RDWR | O_CREAT, 0644);
+        if (fd < 0) { if (cant_open) *cant_open = 1; return VW2_LOCK_NONE; }
+        for (;;) {
+            struct timespec ts = { 0, 10 * 1000000L };
+            if (flock(fd, LOCK_EX | LOCK_NB) == 0) return fd;
+            if (waited >= wait_ms) { close(fd); return VW2_LOCK_NONE; }
+            nanosleep(&ts, NULL);
+            waited += 10;
+        }
+    }
+#endif
+}
+
+static inline vw2_lock_t vw2__lock(const char *dir, int wait_ms)
+{
+    return vw2__lock_ex(dir, wait_ms, NULL);
+}
+
+static inline void vw2__unlock(vw2_lock_t l)
+{
+    if (l == VW2_LOCK_NONE) return;
+#if defined(_WIN32)
+    {
+        OVERLAPPED ov;
+        memset(&ov, 0, sizeof ov);
+        UnlockFileEx(l, 0, 1, 0, &ov);
+        CloseHandle(l);
+    }
+#else
+    flock(l, LOCK_UN);
+    close(l);
+#endif
+}
+
 /* stale-tmp sweep at OPEN only (never during a save's merge re-read):
- * removes every "<shard>.tmp*" left by crashed writers. */
+ * removes every "<shard>.tmp*" left by crashed writers. Runs under the store
+ * lock, taken without waiting: a save in progress owns a live tmp, so an open
+ * that finds the lock held sweeps nothing. */
 static inline void vw2__sweep_tmps(const char *dir)
 {
 #if defined(_WIN32)
@@ -995,24 +1095,35 @@ static inline void vw2__sweep_tmps(const char *dir)
     HANDLE h;
     snprintf(pat, sizeof pat, "%s/wisdom2_*.txt.tmp*", dir);
     h = FindFirstFileA(pat, &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
-    do {
-        snprintf(full, sizeof full, "%s/%s", dir, fd.cFileName);
-        remove(full);
-    } while (FindNextFileA(h, &fd));
+    if (h == INVALID_HANDLE_VALUE) return;      /* nothing to sweep: no lock file made */
+    {
+        vw2_lock_t lk = vw2__lock(dir, 0);
+        if (lk != VW2_LOCK_NONE) {
+            do {
+                snprintf(full, sizeof full, "%s/%s", dir, fd.cFileName);
+                remove(full);
+            } while (FindNextFileA(h, &fd));
+            vw2__unlock(lk);
+        }
+    }
     FindClose(h);
 #else
     DIR *d = opendir(dir);
     struct dirent *e;
     char full[900];
+    vw2_lock_t lk = VW2_LOCK_NONE;
+    int tried = 0;
     if (!d) return;
     while ((e = readdir(d)) != NULL) {
         const char *n = e->d_name;
         if (!strncmp(n, "wisdom2_", 8) && strstr(n, ".txt.tmp")) {
+            if (!tried) { lk = vw2__lock(dir, 0); tried = 1; }
+            if (lk == VW2_LOCK_NONE) break;
             snprintf(full, sizeof full, "%s/%s", dir, n);
             remove(full);
         }
     }
+    vw2__unlock(lk);
     closedir(d);
 #endif
 }
@@ -1042,11 +1153,12 @@ static inline void vw2__dedup_loaded(vw2_store_t *s)
 
 /* Open the store. dir==NULL resolves $VFFT_WISDOM_DIR, else the compiled
  * default VFFT_WISDOM_DIR_DEFAULT (the tree's src/wisdom/, set by the
- * build), else "." — and both fallbacks FORCE read-only: only an explicit
- * directory or the env can bank (the wrong-cwd colony killer, README §2.2;
- * the shipped store is never written by a stray process). `writable` is
- * the measurement-mode guard: tools pass it here, the create path applies
- * config.wisdom_write through vw2_set_writable (README §2.2). */
+ * build), else ".". The compiled default opens as asked: a create's winner
+ * is saved there (owner, 2026-10-04: "the planner found the winner, why
+ * don't write it to wisdom?"). Only the "." fallback of a build that knows
+ * no store is never written -- a process must not scatter wisdom files into
+ * whatever directory it runs in -- and its winners stay in memory.
+ * `writable` guards the disk, never a bank. */
 static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
 {
     int i, worst = VW2_OK;
@@ -1059,12 +1171,12 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
             dir = VFFT_WISDOM_DIR_DEFAULT;
 #else
             dir = ".";
-#endif
             if (writable) {
-                fprintf(stderr, "[wisdom2] VFFT_WISDOM_DIR unset — store at '%s' opened READ-ONLY "
-                                "(explicit dir required to bank)\n", dir);
+                fprintf(stderr, "[wisdom2] no wisdom directory (VFFT_WISDOM_DIR unset, none "
+                                "compiled in) — winners are kept for this process only\n");
                 writable = 0;
             }
+#endif
         }
     }
     if (strlen(dir) >= sizeof s->dir) {
@@ -1094,6 +1206,7 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
             s->dirty[s->rec[i].shard] = 1;
             s->dirty[want] = 1;
             s->rec[i].shard = want;
+            s->rec[i].own = 1;
             moved++;
         }
         if (moved)
@@ -1159,6 +1272,7 @@ static inline void vw2_repoint(vw2_store_t *s, const char *dir)
         s->poisoned[i] = 0;      /* new dir: poison state belongs to old files */
         s->dirty[i] = 1;
     }
+    for (i = 0; i < s->nrec; i++) s->rec[i].own = 1;
 }
 
 /* ---------------------------------------------------------------- lookup */
@@ -1284,12 +1398,14 @@ static inline int vw2__bank_pinned(vw2_store_t *s, vw2_rec_t *rec, int shard)
     return VW2_OK;
 }
 
-/* Public bank: guard + wildcard law + routing, then the pinned upsert.
- * On success the record's tokens are MOVED (caller must not free them). */
+/* Public bank: wildcard law + routing, then the pinned upsert. ALWAYS
+ * accepted in memory: a store that cannot be written keeps and serves the
+ * winner for its process (the disk guard is the save's). The record is
+ * marked as this process's own. On success its tokens are MOVED (caller
+ * must not free them). */
 static inline int vw2_bank(vw2_store_t *s, vw2_rec_t *rec)
 {
     int shard;
-    if (!s->writable) { fprintf(stderr, "[wisdom2] bank refused: store is read-only\n"); return VW2_EREADONLY; }
     if (vw2_key_has_wildcard(&rec->key) && !vw2_rec_get(rec, "from")) {
         fprintf(stderr, "[wisdom2] bank refused: wildcard key without from= "
                         "(wildcards are migration-vintage only)\n");
@@ -1301,6 +1417,7 @@ static inline int vw2_bank(vw2_store_t *s, vw2_rec_t *rec)
                 vw2_shard_name[shard]);
         return VW2_EPOISON;
     }
+    rec->own = 1;
     return vw2__bank_pinned(s, rec, shard);
 }
 
@@ -1310,13 +1427,12 @@ static inline int vw2_update_field(vw2_store_t *s, const vw2_key_t *key,
                                    const char *name, const char *val)
 {
     int i;
-    if (!s->writable) { fprintf(stderr, "[wisdom2] update refused: read-only\n"); return VW2_EREADONLY; }
     for (i = 0; i < s->nrec; i++)
         if (vw2_key_eq(&s->rec[i].key, key)) {
             int r;
             if (s->poisoned[s->rec[i].shard]) return VW2_EPOISON;
             r = vw2_rec_set(&s->rec[i], 1, name, val);
-            if (r == VW2_OK) s->dirty[s->rec[i].shard] = 1;
+            if (r == VW2_OK) { s->dirty[s->rec[i].shard] = 1; s->rec[i].own = 1; }
             return r;
         }
     return VW2_EKEY;
@@ -1347,11 +1463,29 @@ static inline int vw2__replace_file(const char *tmp, const char *path)
 /* Dirty-only, merge-on-save, atomic, RESIDENCY-emitted (README §4.2).
  * Every write is checked: any failure removes the tmp and leaves the old
  * file intact. Records this store holds in a DIFFERENT shard are scrubbed
- * from this shard's disk copy (the re-route cleanup). */
-static inline int vw2_save(vw2_store_t *s)
+ * from this shard's disk copy (the re-route cleanup). The whole save runs
+ * under the store lock. own_only = upsert only the rows this process banked
+ * (vw2_save_banked); else every resident of a dirty shard (vw2_save). A
+ * saved shard's rows are no longer `own`: they are the disk's. */
+static inline int vw2__save(vw2_store_t *s, int own_only, int lock_wait_ms)
 {
     int shard, i, j, rc = VW2_OK;
+    vw2_lock_t lk;
     if (!s->writable) { fprintf(stderr, "[wisdom2] save refused: read-only\n"); return VW2_EREADONLY; }
+    for (shard = 0; shard < VW2_NSHARDS; shard++)
+        if (s->dirty[shard]) break;
+    if (shard == VW2_NSHARDS) return VW2_OK;          /* nothing to write */
+    {
+        int cant_open = 0;
+        lk = vw2__lock_ex(s->dir, lock_wait_ms, &cant_open);
+        if (lk == VW2_LOCK_NONE && cant_open)
+            return VW2_EREADONLY;     /* a missing or unwritable directory: the caller says it once */
+        if (lk == VW2_LOCK_NONE) {
+            fprintf(stderr, "[wisdom2] save FAILED: the store lock %s/" VW2_LOCK_NAME " is held by "
+                            "another process\n", s->dir);
+            return VW2_EIO;
+        }
+    }
     for (shard = 0; shard < VW2_NSHARDS; shard++) {
         char path[640], tmp[720];
         FILE *f;
@@ -1384,6 +1518,7 @@ static inline int vw2_save(vw2_store_t *s)
         for (i = 0; i < s->nrec && !err; i++) {
             vw2_rec_t cp; int t, copy_ok = 1;
             if (s->rec[i].shard != shard) continue;
+            if (own_only && !s->rec[i].own) continue;
             memset(&cp, 0, sizeof cp);
             cp.key = s->rec[i].key;
             for (t = 0; t < s->rec[i].ntok; t++)
@@ -1425,10 +1560,25 @@ static inline int vw2_save(vw2_store_t *s)
             rc = VW2_EIO;
         } else {
             s->dirty[shard] = 0;
+            for (i = 0; i < s->nrec; i++)
+                if (s->rec[i].shard == shard) s->rec[i].own = 0;
         }
         vw2_close(&disk);
     }
+    vw2__unlock(lk);
     return rc;
+}
+
+/* every resident of each dirty shard: tools, migrations, the explicit save */
+static inline int vw2_save(vw2_store_t *s)
+{
+    return vw2__save(s, 0, VW2_SAVE_LOCK_WAIT_MS);
+}
+
+/* the create path: only the rows this process banked */
+static inline int vw2_save_banked(vw2_store_t *s)
+{
+    return vw2__save(s, 1, VW2_SAVE_LOCK_WAIT_MS);
 }
 
 /* ------------------------------------------------------------ quarantine */
