@@ -843,17 +843,61 @@ static double k1z_time_cmp(int N, const double *z0, size_t total)
  * file is rewritten through a fresh handle: the appending handle stays open
  * and idle (flushed first), and a gauntlet csv is a few hundred KB. Lines are
  * copied without their line ending and re-terminated, so the rewrite keeps
- * the text-mode convention the appending handle writes with. */
+ * the text-mode convention the appending handle writes with.
+ * THE FLIP IS FOUND BY NAME (2026-10-04): the column `flip` of the file's own
+ * header line, wherever a schema puts it -- a threaded run's `engaged`
+ * column follows it in the 1D rows, so a key on the LAST field matched the
+ * two flips of a cell whose engaged counts agree (every four-step: its 2D
+ * child's threading is not counted) and the second flip erased the first.
+ * A header without `flip` keys on the last field. */
 static const char *g_csv_path = NULL;
 
-static int _k1z_row_matches(const char *line, size_t n, const char *key, size_t klen,
+/* field `col` (0-based) of the csv line s (n chars): *f, *fn; 0 when the
+ * line has fewer fields; col < 0 = the last field */
+static int _k1z_field(const char *s, size_t n, int col, const char **f, size_t *fn)
+{
+    size_t i = 0, j;
+    int c;
+    while (n && (s[n - 1] == '\n' || s[n - 1] == '\r')) n--;
+    if (col < 0)
+    {
+        for (i = n; i > 0 && s[i - 1] != ','; i--) ;
+        *f = s + i;
+        *fn = n - i;
+        return 1;
+    }
+    for (c = 0; c < col; c++)
+    {
+        while (i < n && s[i] != ',') i++;
+        if (i >= n) return 0;
+        i++;
+    }
+    for (j = i; j < n && s[j] != ','; j++) ;
+    *f = s + i;
+    *fn = j - i;
+    return 1;
+}
+
+/* the 0-based index of column `name` in the header line h (n chars); -1 when absent */
+static int _k1z_col_index(const char *h, size_t n, const char *name)
+{
+    const size_t ln = strlen(name);
+    const char *f;
+    size_t fn;
+    int c;
+    for (c = 0; _k1z_field(h, n, c, &f, &fn); c++)
+        if (fn == ln && memcmp(f, name, ln) == 0) return c;
+    return -1;
+}
+
+static int _k1z_row_matches(const char *line, size_t n, const char *key, size_t klen, int fcol,
                             const char *fl, size_t fln)
 {
-    const char *lc;
+    const char *f;
+    size_t fn;
     while (n && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
     if (n < klen || memcmp(line, key, klen) != 0) return 0;
-    for (lc = line + n; lc > line && lc[-1] != ','; lc--) ;
-    return (size_t)(line + n - lc) == fln && memcmp(lc, fl, fln) == 0;
+    return _k1z_field(line, n, fcol, &f, &fn) && fn == fln && memcmp(f, fl, fln) == 0;
 }
 
 static int k1z_csv_replace(const char *path, const char *row)
@@ -863,16 +907,12 @@ static int k1z_csv_replace(const char *path, const char *row)
     const char *fl;
     long len;
     size_t klen, fln, ln;
-    int kf = 0, hits = 0;
+    int kf = 0, hits = 0, fcol;
     if (!path) return 0;
     for (p = (char *)row; *p; p++)
         if (*p == ',' && ++kf == 4) break;
     if (kf < 4) return 0;
     klen = (size_t)(p - row) + 1;              /* "N,K,plan,path," */
-    fl = strrchr(row, ',');
-    if (!fl) return 0;
-    fl++;
-    for (fln = 0; fl[fln] && fl[fln] != '\n' && fl[fln] != '\r'; fln++) ;
     f = fopen(path, "rb");
     if (!f) return 0;
     fseek(f, 0, SEEK_END);
@@ -884,11 +924,14 @@ static int k1z_csv_replace(const char *path, const char *row)
     len = (long)fread(buf, 1, (size_t)len, f);
     fclose(f);
     buf[len] = 0;
+    nl = strchr(buf, '\n');
+    fcol = _k1z_col_index(buf, nl ? (size_t)(nl - buf) : strlen(buf), "flip");   /* the header's own flip column */
+    if (!_k1z_field(row, strlen(row), fcol, &fl, &fln)) { free(buf); return 0; }
     for (p = buf; *p; p = nl)
     {
         nl = strchr(p, '\n');
         nl = nl ? nl + 1 : p + strlen(p);
-        if (_k1z_row_matches(p, (size_t)(nl - p), row, klen, fl, fln)) hits++;
+        if (_k1z_row_matches(p, (size_t)(nl - p), row, klen, fcol, fl, fln)) hits++;
     }
     if (!hits) { free(buf); return 0; }
     f = fopen(path, "w");
@@ -897,7 +940,7 @@ static int k1z_csv_replace(const char *path, const char *row)
     {
         nl = strchr(p, '\n');
         nl = nl ? nl + 1 : p + strlen(p);
-        if (_k1z_row_matches(p, (size_t)(nl - p), row, klen, fl, fln)) continue;
+        if (_k1z_row_matches(p, (size_t)(nl - p), row, klen, fcol, fl, fln)) continue;
         ln = (size_t)(nl - p);
         while (ln && (p[ln - 1] == '\n' || p[ln - 1] == '\r')) ln--;
         if (!ln) continue;

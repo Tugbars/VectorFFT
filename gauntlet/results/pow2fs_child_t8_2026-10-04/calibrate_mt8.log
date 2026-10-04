@@ -1,0 +1,5 @@
+262144     banked    110945ms raced     ztt
+524288     banked     75432ms raced     fs
+1048576    banked    135209ms raced     fs
+2097152    banked    127927ms raced     fs
+4194304    banked    186257ms raced     fs
