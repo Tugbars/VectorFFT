@@ -5823,9 +5823,9 @@
 @cell t=c2c n=3373 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=24958.6 metric=fwd1 units=ns src=race date=2026-09-22
 @cell t=c2c n=3374 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=23032.8 metric=fwd1 units=ns src=race date=2026-09-22
 @cell t=c2c n=3374 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=23028.9 metric=fwd1 units=ns src=race date=2026-09-22
-@cell t=c2c n=3375 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=225.15 il_chain=15.15.15 il_kv=1365 | ran=1 ns=5383.6 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=3375 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=chain3 il_pair=225.15 il_kv=1280 il_chain=15.15.15 | ran=1 ns=6982.4 metric=bwd1 units=ns src=race
-@cell t=c2c n=3375 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=135.25 il_chain=25.15.9 il_kv=1285 | ran=1 ns=5491.4 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=3375 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=225.15 il_chain=15.15.15 il_kv=1365 | ran=1 ns=5229.9 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=3375 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=chain3 il_pair=225.15 il_kv=1280 il_chain=15.15.15 | ran=1 ns=7056.2 metric=bwd1 units=ns src=race
+@cell t=c2c n=3375 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=225.15 il_chain=15.15.15 il_kv=1365 | ran=1 ns=5148.4 metric=fwd1 units=ns src=race date=2026-10-04
 @cell t=c2c n=3376 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=22961.7 metric=fwd1 units=ns src=race date=2026-09-22
 @cell t=c2c n=3376 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=22936.7 metric=fwd1 units=ns src=race date=2026-09-22
 @cell t=c2c n=3377 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=23317.2 metric=fwd1 units=ns src=race date=2026-09-22
@@ -10263,34 +10263,32 @@
 @cell t=c2c n=4194304 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=fs il_pair=1024.4096 il_kv=0 | ran=1 ns=20776300.0 metric=fwd1 units=ns src=race date=2026-09-30
 @cell t=c2c n=4099 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=49379.7 metric=fwd1 units=ns src=race date=2026-10-03
 @cell t=c2c n=4099 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=50264.1 metric=fwd1 units=ns src=race date=2026-10-03
-@cell t=c2c n=6561 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=243.27 il_chain=27.27.9 il_kv=1280 | ran=1 ns=14359.8 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=6561 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.9.9.9 il_forms=t.t.t il_tw=729 il_kv=0 | ran=1 ns=12693.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=10125 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=375.27 il_chain=27.25.15 il_kv=1360 | ran=1 ns=20818.8 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=10125 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=5.3.5.3.3.3.5 il_forms=t.m.t.t.t.n il_tw=2025 il_kv=0 | ran=1 ns=20184.4 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=15625 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=5.5.5.5.5.5 il_forms=t.t.t.t.o il_tw=625 il_kv=0 | ran=1 ns=32829.7 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=6561 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.9.9.9 il_forms=t.t.o il_kv=0 | ran=1 ns=14002.7 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=6561 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.9.9.9 il_forms=t.t.n il_kv=0 | ran=1 ns=12405.1 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=10125 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.5.5.9.5 il_forms=t.t.t.o il_tw=1125 il_kv=0 | ran=1 ns=19690.6 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=10125 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.5.5.9.5 il_forms=t.t.t.n il_tw=1125 il_kv=0 | ran=1 ns=18112.5 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=15625 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=5.5.5.5.5.5 il_forms=t.t.t.t.o il_tw=625 il_kv=0 | ran=1 ns=32910.9 metric=fwd1 units=ns src=race date=2026-10-04
 @cell t=c2c n=15625 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=chain3 il_pair=625.25 il_kv=1280 il_chain=25.25.25 | ran=1 ns=48137.5 metric=bwd1 units=ns src=race
-@cell t=c2c n=15625 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=5.5.5.5.5.5 il_forms=t.t.t.t.n il_tw=625 il_kv=0 | ran=1 ns=29995.3 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=19683 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.3.3.9.9 il_forms=t.t.t.t.t il_tw=2187 il_kv=0 | ran=1 ns=46550.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=19683 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.3.3.9.9 il_forms=t.t.t.t.t il_tw=2187 il_kv=0 | ran=1 ns=41779.7 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=30375 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=15.9.5.9.5 il_forms=t.t.t.o il_tw=2025 il_kv=0 | ran=1 ns=67968.8 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=30375 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.5.5.9.5 il_forms=t.t.t.t.n il_tw=1125 il_kv=0 | ran=1 ns=62253.1 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=45927 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.3.9.9.7 il_forms=m.t.t.t.o il_tw=1701 il_kv=0 | ran=1 ns=110475.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=45927 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.9.9.9.7 il_forms=t.t.t.n il_kv=0 | ran=1 ns=102553.1 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=50625 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.5.5.5.9.5 il_forms=t.m.t.t.o il_tw=1125 il_kv=0 | ran=1 ns=120425.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=50625 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.5.5.5.9.5 il_forms=t.t.t.t.n il_tw=1125 il_kv=0 | ran=1 ns=110153.1 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=59049 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.3.9.9.9 il_forms=t.t.t.t.o il_tw=2187 il_kv=0 | ran=1 ns=158337.5 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=59049 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.9.9.9.9 il_forms=t.t.t.t il_tw=729 il_kv=0 | ran=1 ns=138237.5 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=99225 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.7.5.5.9.7 il_forms=m.t.t.t.o il_tw=1575 il_kv=0 | ran=1 ns=277075.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=99225 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=21.15.21.15 il_forms=t.t.n il_tw=4725 il_kv=0 | ran=1 ns=273562.5 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=117649 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=7.7.7.7.7.7 il_forms=m.m.m.t.o il_tw=2401 il_kv=0 | ran=1 ns=345375.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=117649 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=7.7.7.7.7.7 il_forms=m.m.m.t.n il_tw=2401 il_kv=0 | ran=1 ns=296175.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=151875 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=5.5.9.5.3.9.5 il_forms=t.t.t.t.t.o il_tw=675 il_kv=0 | ran=1 ns=462037.5 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=151875 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=15.5.5.5.9.9 il_forms=t.t.m.t.t il_tw=10125 il_kv=0 | ran=1 ns=384762.5 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=177147 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.9.9.9.9 il_forms=m.t.t.t.o il_tw=19683 il_kv=0 | ran=1 ns=583300.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=177147 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.9.9.9.27 il_forms=t.t.t.n il_tw=19683 il_kv=0 | ran=1 ns=538900.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=225225 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.11.25.13.7 il_forms=t.t.t.o il_tw=25025 il_kv=0 | ran=1 ns=780550.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=225225 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.7.11.5.5.13 il_forms=m.t.t.t.n il_tw=25025 il_kv=0 | ran=1 ns=642700.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=253125 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=15.15.15.15.5 il_forms=t.t.t.o il_tw=16875 il_kv=0 | ran=1 ns=850325.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=253125 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=15.15.15.15.5 il_forms=t.t.t.t il_tw=16875 il_kv=0 | ran=1 ns=782100.0 metric=fwd1 units=ns src=race date=2026-10-04
-@cell t=c2c n=6561 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=chain3 il_pair=243.27 il_kv=1280 il_chain=27.27.9 | ran=1 ns=18179.7 metric=bwd1 units=ns src=race
-@cell t=c2c n=10125 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=chain3 il_pair=375.27 il_kv=1280 il_chain=27.25.15 | ran=1 ns=30811.7 metric=bwd1 units=ns src=race
+@cell t=c2c n=15625 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=5.5.5.5.5.5 il_forms=t.t.t.t.n il_tw=625 il_kv=0 | ran=1 ns=29389.8 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=19683 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.3.3.9.9 il_forms=t.t.t.t.o il_tw=2187 il_kv=0 | ran=1 ns=44329.7 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=19683 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.9.9.9 il_forms=t.t.t.n il_tw=2187 il_kv=0 | ran=1 ns=39645.3 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=30375 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.5.3.5.9.5 il_forms=t.t.t.t.o il_tw=675 il_kv=0 | ran=1 ns=65131.2 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=30375 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=3.3.3.3.5.3.5.5 il_forms=t.t.t.t.t.t.n il_tw=1125 il_kv=0 | ran=1 ns=62525.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=45927 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.9.9.9.7 il_forms=t.t.t.o il_tw=5103 il_kv=0 | ran=1 ns=118562.5 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=45927 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.7.3.9.9 il_forms=t.m.t.t.t il_tw=1701 il_kv=0 | ran=1 ns=101400.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=50625 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=15.3.3.3.5.5.5 il_forms=t.t.t.t.t.o il_tw=1125 il_kv=0 | ran=1 ns=122565.6 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=50625 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.5.5.5.5.9 il_forms=t.t.t.t.n il_tw=1125 il_kv=0 | ran=1 ns=112706.2 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=59049 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.3.3.3.9.9 il_forms=t.t.t.t.t.o il_tw=2187 il_kv=0 | ran=1 ns=155500.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=59049 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.3.3.3.9.9 il_forms=t.t.t.t.t.n il_tw=2187 il_kv=0 | ran=1 ns=135706.2 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=99225 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=21.9.5.7.15 il_forms=t.t.t.o il_tw=4725 il_kv=0 | ran=1 ns=303387.5 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=99225 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.7.5.7.5.9 il_forms=m.t.m.t.n il_tw=1575 il_kv=0 | ran=1 ns=244125.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=117649 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=7.7.7.7.7.7 il_forms=m.m.m.t.o il_tw=2401 il_kv=0 | ran=1 ns=348200.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=117649 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=7.7.7.7.7.7 il_forms=m.t.m.t.t il_tw=16807 il_kv=0 | ran=1 ns=301550.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=151875 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=15.5.5.9.9.5 il_forms=t.t.t.t.o il_tw=10125 il_kv=0 | ran=1 ns=420350.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=151875 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.5.5.3.5.5.9 il_forms=t.t.t.t.t.n il_tw=675 il_kv=0 | ran=1 ns=398175.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=177147 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.9.9.9.9 il_forms=t.t.m.t.o il_tw=6561 il_kv=0 | ran=1 ns=596150.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=177147 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.3.9.9.9.9 il_forms=t.t.t.t.t il_tw=6561 il_kv=0 | ran=1 ns=477137.5 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=225225 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=21.15.5.13.11 il_forms=m.t.t.o il_tw=10725 il_kv=0 | ran=1 ns=710375.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=225225 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=13.15.7.11.15 il_forms=t.t.t.n il_tw=17325 il_kv=0 | ran=1 ns=630150.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=253125 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=15.5.15.15.15 il_forms=m.m.t.o il_tw=16875 il_kv=0 | ran=1 ns=890200.0 metric=fwd1 units=ns src=race date=2026-10-04
+@cell t=c2c n=253125 q=1 ord=scr place=oop role=comp lay=il | eng=k1 il_route=flat il_flat=9.9.5.5.5.5.5 il_forms=t.t.m.t.t.n il_tw=28125 il_kv=0 | ran=1 ns=704025.0 metric=fwd1 units=ns src=race date=2026-10-04
