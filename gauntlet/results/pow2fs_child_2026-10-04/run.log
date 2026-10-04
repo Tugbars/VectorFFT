@@ -1,0 +1,8 @@
+2026-10-04 13:07:25 store: fresh copy of the shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom)
+2026-10-04 13:07:25 run: 5 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-04 13:07:25 calibrate: 5 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-10-04 13:14:39   calibrated 5/5 (4194304), 434 s elapsed
+2026-10-04 13:14:39 bench: 5 cells (0 already benched, 0 not banked -> not benched)
+2026-10-04 13:15:02   benched 5/5 (4194304), 22 s elapsed
+2026-10-04 13:15:03 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\pow2fs_child_2026-10-04\report.md
+2026-10-04 13:15:03 merged into C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom
