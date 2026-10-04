@@ -1293,7 +1293,7 @@ static void _il_dp_flat_heat(void *hv, vfft_chain_t *f, const int *idx, int n, i
     if (reps < 1) reps = 1;
     if (reps > (ctx->inplace ? 32 : 1024)) reps = ctx->inplace ? 32 : 1024;   /* in place: the data grows per pass */
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 1, _il_dp_flat_reset, hc, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 1, _il_dp_flat_reset, hc, 1, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS); each sample warm */
         vfft_race_run(&proto, ra, na, rns);
     }
     for (k = 0; k < na; k++)
@@ -1781,7 +1781,9 @@ static int _il_dp_cand_cmp(const void *a, const void *b)
  * rank the candidates: the live ones race in HEATS (heats.h) -- balanced
  * groups of at most VFFT_IL_DP_HEAT, each one same-run race whose arms
  * alternate round by round, VFFT_IL_DP_HEAT_ROUNDS rounds, paced (one-thread
- * arms) -- each heat's best on to the next round, and the last heat's
+ * arms), each sample after one untimed pass of its arm (warm_each: the heat's
+ * other arms evict its tables between its samples) -- each heat's best on to
+ * the next round, and the last heat's
  * ranking orders the cell's candidates. Each arm is rebuilt from its
  * candidate (the forms and tile its bench raced ride in it) and gated again
  * before it races. A heat's plans together stay under
@@ -1848,7 +1850,7 @@ static void _il_dp_heat(void *hv, const int *idx, int n, double *ns)
     if (reps < 1) reps = 1;
     if (reps > (1 << 20)) reps = 1 << 20;
     {
-        const vfft_race_proto_t proto = { VFFT_IL_DP_HEAT_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, _il_dp_heat_reset, h, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        const vfft_race_proto_t proto = { VFFT_IL_DP_HEAT_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, _il_dp_heat_reset, h, 1, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS); each sample warm */
         vfft_race_run(&proto, ra, na, rns);
     }
     for (k = 0; k < na; k++)

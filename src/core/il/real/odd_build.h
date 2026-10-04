@@ -218,7 +218,7 @@ static void _zrf_heat(void *hv, vfft_chain_t *f, const int *idx, int n, int fix,
     if (reps < 1) reps = 1;
     if (reps > (ip ? 32 : 1024)) reps = ip ? 32 : 1024;   /* in place: the data grows per pass */
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 1, _zrf_arm_reset, c, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 1, _zrf_arm_reset, c, 1, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS); each sample warm */
         vfft_race_run(&proto, ra, na, rns);
     }
     for (k = 0; k < na; k++)
