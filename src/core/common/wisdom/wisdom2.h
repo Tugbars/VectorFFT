@@ -1028,7 +1028,6 @@ typedef int vw2_lock_t;
 static inline vw2_lock_t vw2__lock_ex(const char *dir, int wait_ms, int *cant_open)
 {
     char p[640];
-    int waited = 0;
     if (cant_open) *cant_open = 0;
     snprintf(p, sizeof p, "%s/" VW2_LOCK_NAME, dir);
 #if defined(_WIN32)
@@ -1036,27 +1035,29 @@ static inline vw2_lock_t vw2__lock_ex(const char *dir, int wait_ms, int *cant_op
         HANDLE h = CreateFileA(p, GENERIC_READ | GENERIC_WRITE,
                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        const ULONGLONG t0 = GetTickCount64();
         if (h == INVALID_HANDLE_VALUE) { if (cant_open) *cant_open = 1; return VW2_LOCK_NONE; }
         for (;;) {
             OVERLAPPED ov;
             memset(&ov, 0, sizeof ov);
             if (LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ov))
                 return h;
-            if (waited >= wait_ms) { CloseHandle(h); return VW2_LOCK_NONE; }
+            if (GetTickCount64() - t0 >= (ULONGLONG)(wait_ms > 0 ? wait_ms : 0)) { CloseHandle(h); return VW2_LOCK_NONE; }
             Sleep(10);
-            waited += 10;
         }
     }
 #else
     {
         int fd = open(p, O_RDWR | O_CREAT, 0644);
+        struct timespec a, n;
         if (fd < 0) { if (cant_open) *cant_open = 1; return VW2_LOCK_NONE; }
+        clock_gettime(CLOCK_MONOTONIC, &a);
         for (;;) {
             struct timespec ts = { 0, 10 * 1000000L };
             if (flock(fd, LOCK_EX | LOCK_NB) == 0) return fd;
-            if (waited >= wait_ms) { close(fd); return VW2_LOCK_NONE; }
+            clock_gettime(CLOCK_MONOTONIC, &n);
+            if ((n.tv_sec - a.tv_sec) * 1000L + (n.tv_nsec - a.tv_nsec) / 1000000L >= (long)wait_ms) { close(fd); return VW2_LOCK_NONE; }
             nanosleep(&ts, NULL);
-            waited += 10;
         }
     }
 #endif

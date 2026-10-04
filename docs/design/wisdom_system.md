@@ -1,7 +1,7 @@
 # The wisdom system
 
-**Status:** decided 2026-10-04 (owner), not built. §11 is the build order; §12 lists
-what is still open. Scope: the wisdom system only. Engines, the split library and the
+**Status:** decided 2026-10-04 (owner). Step 1 of the build order (§11) is built; the
+rest is not. §12 lists what is still open. Scope: the wisdom system only. Engines, the split library and the
 public defaults stay as they are (§9).
 
 Wisdom is the record of race winners that `vfft_create` plans from. This document
@@ -188,7 +188,7 @@ owner's review.
 
 | step | contents | check |
 | --- | --- | --- |
-| 1 | keep the bank, save by default, the store lock and merge-own-rows save, the off switch, `vfft.h` text | per family: a cold cell is raced once, is on disk, and a second process replays it with 0 races, bitwise; a read-only directory serves from memory; two processes saving at once lose no row; a killed lock holder does not block |
+| 1 (built) | keep the bank, save by default, the store lock and merge-own-rows save, the off switch, `vfft.h` text | per family: a cold cell is raced once, is on disk, and a second process replays it with 0 races, bitwise; a read-only directory serves from memory; two processes saving at once lose no row; a killed lock holder does not block |
 | 2 | a row that does not build is empty (1D c2c doors); the order pick stops banking; zr2c's bias removed | rows naming a missing form, chain and tile each re-race and are replaced on disk |
 | 3 | the race scope in the library (lock, pin, guard, priority, restore), public in `vfft.h`; the gauntlet calls it and `sibling_guard.h` goes | affinity and priority equal before and after create at every door, races forced; a clock read during create outside the scope fails the check; two racing processes take turns; an unpinnable process serves and does not save |
 | 4 | the CPU identity, per-CPU folders, `new/`, the 14900KF move, measured cache sizes; gauntlet and tool paths follow | this machine selects its folder; a forged identity selects `new/` and stamps it; a claimed `new/` leads to a created folder; the 14900KF's picks are unchanged by the measured sizes |
