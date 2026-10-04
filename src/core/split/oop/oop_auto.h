@@ -126,6 +126,9 @@ static inline int vfft_oop_tune_pairs_v(int N, size_t K,
         best[c] = ~0ULL;
         vfft_oop_execute_fwd(cand[c], sr, si, dr, di); /* warm */
     }
+#ifdef VFFT_SUPPORT_RACE_SCOPE_H
+    _vfft_scope_touch();   /* this race reads the TSC, not the library's clock: enter the race scope by name */
+#endif
     for (int r = 0; r < ROUNDS; r++)
         for (int c = 0; c < nc; c++)
         {

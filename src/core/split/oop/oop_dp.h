@@ -117,6 +117,9 @@ static inline void vfft_oop_plan_create_champions(
         sr[i] = (double)(i % 251) * 0.013 - 1.6;
         si[i] = (double)(i % 257) * 0.011 - 1.4;
     }
+#ifdef VFFT_SUPPORT_RACE_SCOPE_H
+    _vfft_scope_touch();   /* this race reads the TSC, not the library's clock: enter the race scope by name */
+#endif
     if (nat) {
         vfft_oop_execute_fwd(nat, sr, si, dr, di);            /* warm */
         unsigned long long bn = ~0ULL;

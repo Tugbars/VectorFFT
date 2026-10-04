@@ -7,6 +7,8 @@
 
 #include "env.h"                /* vfft_env_init, ISA/version, pinning           */
 #include "threads.h"            /* pool: set/get threads, dispatch/wait            */
+#include "common/support/race_scope.h" /* THE RACE SCOPE (lock, pin, sibling guard, priority): before
+                                          every header that reads the clock -- it redefines vfft_now_ns */
 #include "planner.h"            /* vfft_proto_auto_plan, plan_destroy              */
 #include "executor.h"           /* vfft_proto_execute_fwd/bwd (in-place per-slice) */
 #include "wisdom_reader.h"      /* c2c wisdom load/lookup/add/save/free            */
@@ -241,6 +243,7 @@ static void _vfft_pool_arm(int n)
     {
         thread_pool_resize(n);
         vfft_pin_thread(0); /* pool pins workers 1..n-1; caller = 0 */
+        _vfs_rehome(0);     /* inside a race scope: its guard follows, and this pin stays */
     }
 }
 
@@ -1071,6 +1074,13 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
             fprintf(stderr, "[wisdom2] saving is off (VFFT_WISDOM_WRITE=0): winners are kept "
                             "for this process only\n");
         }
+        return;
+    }
+    if (_vfft_scope_nosave())
+    {   /* a race scope the library knows measured badly (the measurement lock
+         * not obtained, or no P-core pin; each said once by the scope): the
+         * rows banked so far are served and never saved */
+        vw2_disown(&W->vw2);
         return;
     }
     if (!W->vw2.writable)
@@ -2152,10 +2162,6 @@ static int _vfft_save_enabled(void)
     return v;
 }
 
-/* how deep this thread is inside vfft_create: 0 outside, 1 in the caller's
- * create, more in a create the library makes for a child plan or a clone */
-static _Thread_local int _vfft_create_depth;
-
 static vfft_plan _vfft_create_outer(const vfft_config_t *cfg)
 {
     if (!cfg->owned_buffers)
@@ -2176,7 +2182,9 @@ static vfft_plan _vfft_create_outer(const vfft_config_t *cfg)
 
 /* THE FRONT DOOR. The caller's create saves its winner: config.wisdom_write
  * is retired there (ignored), and the save flag is on unless the process
- * turned saving off. A nested create keeps the flag its parent passed. */
+ * turned saving off. A nested create keeps the flag its parent passed.
+ * _vfft_create_depth (common/support/race_scope.h) counts the nesting; the
+ * race scope a clock read entered on the way is left here, on every path. */
 vfft_plan vfft_create(const vfft_config_t *cfg)
 {
     vfft_config_t c;
@@ -2191,7 +2199,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         c.wisdom_write = _vfft_save_enabled();
     _vfft_create_depth++;
     h = _vfft_create_outer(&c);
-    _vfft_create_depth--;
+    if (--_vfft_create_depth == 0)
+        _vfft_scope_create_done();
     return h;
 }
 
@@ -2237,6 +2246,7 @@ size_t vfft_plan_stride(vfft_plan p)
 }
 
 #include "vfft_memory.h" /* vfft_malloc / vfft_free / vfft_alignment, vfft_plan_alloc / vfft_buffers_free */
+#include "vfft_measure.h" /* vfft_measure_configure / _begin / _end / _confine / _describe: the race scope, for a caller's own timing */
 
 /* ── wisdom (caller-owned bundle; `dir` holds the per-feature files) ── */
 vfft_wisdom *vfft_wisdom_load(const char *dir)
@@ -2301,7 +2311,10 @@ void vfft_set_num_threads(int n)
 {
     thread_pool_resize(n);
     if (n > 1)
+    {
         vfft_pin_thread(0); /* pool pins workers to 1..n-1; caller=0 */
+        _vfs_rehome(0);     /* inside a measurement scope: its guard follows, and this pin stays */
+    }
 }
 int vfft_plan_tc_workers(vfft_plan p)
 {

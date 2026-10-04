@@ -91,6 +91,11 @@ extern "C"
    * plan's own banked verdicts). */
   long vfft_pq_mt_passes(void);
 
+  /* Measurement scopes entered by this process (vfft.h, "the measurement
+   * scope"): one per vfft_create that raced, one per outermost
+   * vfft_measure_begin. A create served from wisdom leaves it unchanged. */
+  long vfft_measure_scopes(void);
+
 #ifdef __cplusplus
 }
 #endif
