@@ -182,6 +182,44 @@ static inline int vw2_oop_lookup_k1_il_cell(const vw2_store_t *s, int N, int wan
     return got;
 }
 
+/* THE FOUR-STEP CHILD's codec (owner, 2026-10-03; the c2c row 2026-10-04).
+ * A four-step's child -- the 2D plan at N1 x N2 and its row plan at N2, raced
+ * into a private store (il/rank1/k1_fourstep.h) -- rides on the row that
+ * banks the four-step (the c2c K=1 row, the real row) in its own rows'
+ * words: every payload token of the 2D row under fs_, of the row plan's
+ * under fs_row_, of the row plan's backward twin (dir=bwd: its backward
+ * kernel forms, where its route has them) under fs_row_bwd_. Replay rebuilds
+ * the rows from them (their keys follow from the split, the placement and the
+ * thread count). */
+static inline int vw2__fs_put(vw2_rec_t *dst, const char *pre, const vw2_rec_t *src)
+{
+    char nm[96];
+    int i;
+    for (i = 0; i < src->ntok; i++)
+    {
+        if (src->tok[i].sect != 1) continue;
+        if (snprintf(nm, sizeof nm, "%s%s", pre, src->tok[i].name) >= (int)sizeof nm) return -1;
+        if (vw2_rec_set(dst, 1, nm, src->tok[i].val) != VW2_OK) return -1;
+    }
+    return 0;
+}
+/* the payload tokens under `pre` (and not under `skip`) into dst, the prefix
+ * stripped; the count, -1 on failure */
+static inline int vw2__fs_get(vw2_rec_t *dst, const vw2_rec_t *src, const char *pre, const char *skip)
+{
+    const size_t lp = strlen(pre), ls = skip ? strlen(skip) : 0;
+    int i, n = 0;
+    for (i = 0; i < src->ntok; i++)
+    {
+        const char *nm = src->tok[i].name;
+        if (src->tok[i].sect != 1 || strncmp(nm, pre, lp)) continue;
+        if (skip && !strncmp(nm, skip, ls)) continue;
+        if (vw2_rec_set(dst, 1, nm + lp, src->tok[i].val) != VW2_OK) return -1;
+        n++;
+    }
+    return n;
+}
+
 /* THE K=1 ROW AT T > 1 (v1.3). The K=1 route is thread-independent (serial
  * kernels; threading is a flag on the route), so the route race banks the
  * one-thread row and a plan at T gets its own row as a COPY of that route,
@@ -192,6 +230,9 @@ static inline int vw2_oop_lookup_k1_il_cell(const vw2_store_t *s, int N, int wan
 static inline int vw2_oop_k1_row_at_T(vw2_store_t *s, int N, int want_scr, int inplace, int T)
 {
     static const char *const THREADED[] = { "il_mt", "il_mt_tw", "il_mtsb", NULL };
+    /* and the four-step's child (fs_*): the one-thread row's is the child at
+     * one thread; the threaded split race banks the child at T beside il_mt
+     * (il/rank1/k1_fourstep.h) */
     const vw2_rec_t *r;
     vw2_rec_t nr;
     int i, k;
@@ -204,6 +245,7 @@ static inline int vw2_oop_k1_row_at_T(vw2_store_t *s, int N, int want_scr, int i
     for (i = 0; i < r->ntok; i++) {
         int skip = 0;
         for (k = 0; THREADED[k]; k++) if (!strcmp(r->tok[i].name, THREADED[k])) skip = 1;
+        if (r->tok[i].sect == 1 && !strncmp(r->tok[i].name, "fs_", 3)) skip = 1;
         if (skip) continue;
         if (vw2_rec_set(&nr, r->tok[i].sect, r->tok[i].name, r->tok[i].val) != VW2_OK) { vw2_rec_free(&nr); return 0; }
     }

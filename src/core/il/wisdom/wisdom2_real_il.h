@@ -566,35 +566,8 @@ static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int i
  * plan's under fs_row_, of the row plan's backward twin (dir=bwd: its
  * backward kernel forms, where its route has them) under fs_row_bwd_. Replay
  * rebuilds the rows from them (their keys follow from the split and the
- * thread count). */
-static inline int vw2__fs_put(vw2_rec_t *dst, const char *pre, const vw2_rec_t *src)
-{
-    char nm[96];
-    int i;
-    for (i = 0; i < src->ntok; i++)
-    {
-        if (src->tok[i].sect != 1) continue;
-        if (snprintf(nm, sizeof nm, "%s%s", pre, src->tok[i].name) >= (int)sizeof nm) return -1;
-        if (vw2_rec_set(dst, 1, nm, src->tok[i].val) != VW2_OK) return -1;
-    }
-    return 0;
-}
-/* the payload tokens under `pre` (and not under `skip`) into dst, the prefix
- * stripped; the count, -1 on failure */
-static inline int vw2__fs_get(vw2_rec_t *dst, const vw2_rec_t *src, const char *pre, const char *skip)
-{
-    const size_t lp = strlen(pre), ls = skip ? strlen(skip) : 0;
-    int i, n = 0;
-    for (i = 0; i < src->ntok; i++)
-    {
-        const char *nm = src->tok[i].name;
-        if (src->tok[i].sect != 1 || strncmp(nm, pre, lp)) continue;
-        if (skip && !strncmp(nm, skip, ls)) continue;
-        if (vw2_rec_set(dst, 1, nm + lp, src->tok[i].val) != VW2_OK) return -1;
-        n++;
-    }
-    return n;
-}
+ * thread count). *//* (the fs_ codec, vw2__fs_put / vw2__fs_get: wisdom2_oop_il.h, the c2c
+ * four-step's row carries the same child) */
 
 /* The banked real four-step at the cell: 1 with *n1, *n2 and the child's
  * rows (payload only, *cbwd empty where the row plan has no backward twin;

@@ -629,6 +629,16 @@ min-of-3 **alternated** forward executes. Raced but never banked.
 *(An earlier claim that the prime method is "never raced" was refuted by verification —
 this race is real. The odd/prime axes remain the least-verified part of this document.)*
 
+### II.1g — the four-step's child rides on the c2c row
+
+The K=1 four-step (N ≥ 262144) runs a 2D child at N1×N2 and a row plan at N2. Its child is
+its own (owner 2026-10-04), as the real four-step's: the race's four-step candidates build
+their children on one private store, the winner's child is banked on the K=1 row as `fs_*`,
+`fs_row_*`, `fs_row_bwd_*` beside `il_pair`, and a replay seeds a private store from the row
+alone. A threaded row (nthreads=T) carries the child at T, banked by the threaded split race
+beside `il_mt` (the copy of the one-thread row drops the one-thread child). No c2c four-step
+reads or writes a 2D row or a K=1 row at N2.
+
 ## II.2 — 1D real, interleaved
 
 Interleaved real at even N races its engines (`zr2c`, `zrp`, `zttr`, `zrm`, `zfsr`) and
