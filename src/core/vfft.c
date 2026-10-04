@@ -2171,6 +2171,8 @@ size_t vfft_plan_stride(vfft_plan p)
     return p->own_batch ? _own_batch_stride(p->own_batch) : p->K;
 }
 
+#include "vfft_memory.h" /* vfft_malloc / vfft_free / vfft_alignment, vfft_plan_alloc / vfft_buffers_free */
+
 /* ── wisdom (caller-owned bundle; `dir` holds the per-feature files) ── */
 vfft_wisdom *vfft_wisdom_load(const char *dir)
 {

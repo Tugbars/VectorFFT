@@ -8,8 +8,17 @@
  *                              64-byte block, never NULL. NULL means failure.
  *   vfft_aligned_free(p)       releases it; NULL is a no-op.
  *
- * Windows pairs _aligned_malloc with _aligned_free: plain free() on that
- * memory corrupts the heap, so release ONLY with vfft_aligned_free.
+ * THE PROCESS HEAP ON WINDOWS (owner, 2026-10-04). The block comes from
+ * GetProcessHeap() -- the heap the UCRT's own malloc uses -- over-allocated by
+ * VFFT_ALIGNMENT bytes, with the heap's own pointer stored in the 8 bytes just
+ * below the aligned one. The library is static, so every module that links it
+ * carries its own copy of these functions, bound to its own C runtime;
+ * msvcrt, the UCRT and the debug CRT keep different malloc heaps, and
+ * _aligned_malloc rode on those. The process heap is one heap for every
+ * module, so any copy releases any copy's block. POSIX: aligned_alloc, then
+ * free. Release ONLY with vfft_aligned_free on every platform: plain free()
+ * on this memory corrupts the heap. The public face of this body is
+ * vfft_malloc / vfft_free (vfft.h; src/core/vfft_memory.h).
  *
  * It replaces eleven families that were all 64-byte aligned, all
  * _aligned_malloc/_aligned_free on Windows and all free()-compatible
@@ -28,19 +37,34 @@
 #include <stdint.h>
 #include <stdlib.h>
 #if defined(_WIN32)
-#include <malloc.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #endif
 
 #define VFFT_ALIGNMENT 64
 
 static inline void *vfft_aligned_alloc(size_t bytes)
 {
-    if (bytes > SIZE_MAX - VFFT_ALIGNMENT)
+#if defined(_WIN32)
+    void *raw;
+    uintptr_t a;
+#endif
+    if (bytes > SIZE_MAX - 2 * (size_t)VFFT_ALIGNMENT)   /* the rounding, and the header's room */
         return NULL;
     bytes = bytes ? (bytes + VFFT_ALIGNMENT - 1) & ~(size_t)(VFFT_ALIGNMENT - 1)
                   : (size_t)VFFT_ALIGNMENT;
 #if defined(_WIN32)
-    return _aligned_malloc(bytes, VFFT_ALIGNMENT);
+    /* the heap's block is at least 8-byte aligned, so the aligned pointer sits
+     * 8..64 bytes into it: VFFT_ALIGNMENT bytes of room hold the pointer slot
+     * and the shift, and the block's end stays inside the allocation */
+    raw = HeapAlloc(GetProcessHeap(), 0, bytes + VFFT_ALIGNMENT);
+    if (!raw)
+        return NULL;
+    a = ((uintptr_t)raw + sizeof(void *) + VFFT_ALIGNMENT - 1) & ~(uintptr_t)(VFFT_ALIGNMENT - 1);
+    ((void **)a)[-1] = raw;
+    return (void *)a;
 #else
     return aligned_alloc(VFFT_ALIGNMENT, bytes);
 #endif
@@ -49,7 +73,8 @@ static inline void *vfft_aligned_alloc(size_t bytes)
 static inline void vfft_aligned_free(void *p)
 {
 #if defined(_WIN32)
-    _aligned_free(p);
+    if (p)
+        HeapFree(GetProcessHeap(), 0, ((void **)p)[-1]);
 #else
     free(p);
 #endif

@@ -10,8 +10,9 @@
  * - vfft_execute() runs the plan. Pure: no allocation, no measurement, no
  *   decision; the direction is the only parameter.
  * - The handlers configure: the wisdom store (load / save / free), the worker
- *   pool (set / get threads), and the plan's own buffers and route
- *   (planes / stride / route).
+ *   pool (set / get threads), the plan's own buffers and route
+ *   (planes / stride / route), and memory at the alignment the plans were
+ *   measured on (vfft_malloc / vfft_free, vfft_plan_alloc).
  *
  * The one law: a cell is served natively or refused. vfft_create() returns
  * NULL after printing why; vfft_execute() refuses a pointer signature that
@@ -251,10 +252,18 @@ extern "C"
    *    form is measured and served at that count.
    *
    * The plan owns everything it allocated and vfft_destroy() frees it all.
-   * Create never reads or writes the caller's data. The caller's buffers need
-   * no particular alignment: the kernels use unaligned vector access
-   * (cache-line alignment avoids split loads). Not safe to call concurrently
-   * with vfft_set_num_threads().
+   * Create never reads or writes the caller's data. Any double-aligned buffer
+   * address computes the same values: the kernels use unaligned vector
+   * access. The measured speed holds for buffers whose base is aligned to
+   * vfft_alignment() bytes (read it at run time; the value belongs to the
+   * build), each buffer a separate allocation, as vfft_malloc() and
+   * vfft_plan_alloc() provide them; plain malloc() guarantees less. A SPLIT
+   * plan's planes are separate allocations too: carved back to back out of
+   * one block they can sit at one 4 KB offset, which can run measurably
+   * slower than the planes the races measured. Inside a buffer, each batch
+   * transform and batch plane starts where the data contract puts it; one
+   * that starts off a cache line runs at a phase its route was not raced at.
+   * Not safe to call concurrently with vfft_set_num_threads().
    *
    * @param config The contract; read during the call only.
    * @return The plan, or NULL with the reason printed.
@@ -311,6 +320,65 @@ extern "C"
    *         its buffers; 0 for NULL. Read it, never compute it.
    */
   size_t vfft_plan_stride(vfft_plan p);
+
+  /* ── memory at the alignment the plans were measured on ───────────────── */
+
+  /**
+   * @brief Allocate a buffer for vfft_execute().
+   *
+   * The block is aligned to vfft_alignment() bytes, the alignment every plan
+   * was measured on, and its size is rounded up to a multiple of it. The
+   * memory is uninitialised; 0 bytes gives a unique block. Release it with
+   * vfft_free() only, never free() or delete; a block allocated by one module
+   * that links the library may be released by any other. Compute sizes in
+   * size_t (2 * (size_t)N * sizeof(double)), or take the buffers from
+   * vfft_plan_alloc(), which sizes them with the arithmetic checked.
+   *
+   * @param bytes The size in bytes.
+   * @return The block; NULL when memory runs out, or with the reason printed
+   *         for a size whose rounding overflows.
+   */
+  void *vfft_malloc(size_t bytes);
+  /** @brief Release a vfft_malloc() block. NULL is accepted. */
+  void vfft_free(void *p);
+  /**
+   * @brief The alignment in bytes of every vfft_malloc() block and of the
+   *        buffers every plan was measured on. A build-time fact: read it at
+   *        run time rather than writing the number down.
+   */
+  size_t vfft_alignment(void);
+
+  /** @brief One set of buffers sized for a plan (opaque). */
+  typedef struct vfft_buffers_s *vfft_buffers;
+
+  /**
+   * @brief Allocate one set of the buffers vfft_execute(p, ...) takes, in the
+   *        plan's own geometry.
+   *
+   * Each role is its own vfft_malloc() block, sized by the plan with the
+   * arithmetic checked: the in-place real plane of 2 (N/2 + 1) doubles, the
+   * spectrum of a real transform, the K transforms or planes of a batch. A
+   * SPLIT plan created with config.owned_buffers = 1 gets its planes at the
+   * plan's measured stride (vfft_plan_stride()) with the pad lanes zeroed;
+   * every other plan gets the tight planes of its data contract. The data
+   * is uninitialised. A plan may hand out any number of sets, and a set stays
+   * valid after vfft_destroy(p). Refused (printed): a SPLIT plan of rank 2 or
+   * more, and an INTERLEAVED real batch in its lane-major geometry that runs
+   * on the split engines.
+   *
+   * @param p A plan from vfft_create().
+   * @param sre,sim,dre,dim Out-params in vfft_execute()'s roles: unused roles
+   *        are set to NULL, in place dre == sre (and dim == sim), and any
+   *        out-param may itself be NULL.
+   * @return The set, released with vfft_buffers_free() only, never by passing
+   *         one of its buffers to vfft_free() or free(); NULL (every out-param
+   *         NULL) when refused, with the reason printed, or when memory runs
+   *         out.
+   */
+  vfft_buffers vfft_plan_alloc(vfft_plan p, double **sre, double **sim,
+                               double **dre, double **dim);
+  /** @brief Release a vfft_plan_alloc() set and every buffer in it. NULL is accepted. */
+  void vfft_buffers_free(vfft_buffers b);
 
   /* ── the worker pool and the build ────────────────────────────────────── */
 
