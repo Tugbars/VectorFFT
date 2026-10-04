@@ -56,6 +56,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     vfft_oop11_fn mono_f = 0, mono_b = 0;   /* the alias-tolerant solo (MONO verdict) */
     vfft_ilprime_plan_t *ilp = NULL;
     int have_k1 = 0, mode = VFFT_NAT_UNSET;
+    vfft_config_t rcfg;                     /* the recalibrating config of a re-raced cell */
     if (K > 1)
     {
         _vfft_warn("vfft_create: in-place C2C N=%d howmany=%zu with layout=INTERLEAVED and "
@@ -87,10 +88,37 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
      *    the prime cell (a raced arm; unraced only above the race ceiling) */
     if (!getenv("VFFT_NO_NAT_ILP"))
     {
-        _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs, &ilp);   /* ilp: a PRIME verdict */
+        int stale = _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs, &ilp);   /* ilp: a PRIME verdict */
+        if (!il2 && !il3 && !ifd && !ztt && !fs && !ilp &&
+            _k1_il_mono_candidate(W, cfg, N, &mono_f, &mono_b) < 0)
+            stale = 1;
+        if (stale && !cfg->recalibrate)
+        {   /* THE BANKED ROW IS EMPTY (owner, 2026-10-04): it did not build as
+             * written, so the cell is raced from scratch -- one recalibrating
+             * pass, whose winner replaces the row. The rest of this create
+             * runs under that config. */
+            if (il2) vfft_il2p_destroy(il2);
+            if (il3) vfft_il3p_destroy(il3);
+            if (ilp) vfft_ilprime_destroy(ilp);
+            if (ifd) vfft_ilfd_destroy(ifd);
+            if (ztt) vfft_ztt_destroy(ztt);
+            if (fs) vfft_k1fs_destroy(fs);
+            il2 = NULL; il3 = NULL; ilp = NULL; ifd = NULL; ztt = NULL; fs = NULL;
+            mono_f = mono_b = 0;
+            fprintf(stderr, "[wisdom2] c2c N=%d in place: the banked row does not build in this "
+                            "library -- the cell is raced from scratch\n", N);
+            rcfg = *cfg;
+            rcfg.recalibrate = 1;
+            cfg = &rcfg;
+            stale = _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs, &ilp);
+            if (!il2 && !il3 && !ifd && !ztt && !fs && !ilp &&
+                _k1_il_mono_candidate(W, cfg, N, &mono_f, &mono_b) < 0)
+                stale = 1;
+            if (stale)
+                fprintf(stderr, "[wisdom2] c2c N=%d in place: the row still does not build after "
+                                "the race\n", N);
+        }
         if (ztt) vfft_ztt_bind(ztt, 1);   /* in place: the plane drivers */
-        if (!il2 && !il3 && !ifd && !ztt && !fs && !ilp)
-            (void)_k1_il_mono_candidate(W, cfg, N, &mono_f, &mono_b);
         if (!il2 && !il3 && !ifd && !ztt && !fs && !mono_f && !ilp && (N & (N - 1)) != 0)
             ilp = _ilprime_create_banked(W, cfg, N, NULL);   /* a route, never a fallback: the unraced cell above the ceiling */
         have_k1 = vfft_policy_k1_engine_present(

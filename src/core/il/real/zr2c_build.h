@@ -673,7 +673,7 @@ static void _zr2c_arm_run(void *v)
 }
 /* The zr2c composite: env pin, the banked verdict, or the race -- each route's
  * child raced in the real role, then the two FULL composites through
- * _exec_zr2c, 3% hysteresis toward the placement's structural route. Banks
+ * _exec_zr2c, the faster one taken. Banks
  * nothing: the door's engine race banks the cell's winner (zrp_build.h), zr2c
  * included. */
 static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
@@ -753,10 +753,9 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
     }
     vfft_aligned_free(a);
     vfft_aligned_free(b);
-    int win = (def == 0) ? ((n1 < n0 * 0.97) ? 1 : 0)
-                         : ((n0 < n1 * 0.97) ? 0 : 1);
+    int win = (n1 < n0) ? 1 : 0;   /* the faster route, no bias (owner, 2026-10-04) */
     if (getenv("VFFT_ZRACE_VERBOSE"))
-        fprintf(stderr, "[zr2c] N=%d %s %s route race: reps=%d hyst=3%% "
+        fprintf(stderr, "[zr2c] N=%d %s %s route race: reps=%d "
                         "alt-order median | oop-il=%.0f nat-ip=%.0f -> "
                         "route=%d\n",
                 N, cfg->transform == VFFT_C2R ? "c2r" : "r2c",

@@ -59,23 +59,27 @@
 
 /* the CHAIN3 twin of _k1_il2p_apply_kv: the banked three-slot il_kv on the
  * chain3 row overrides the create's structural defaults; env VFFT_IL_KV /
- * VFFT_IL_BKV pin. */
-static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
-                              const vfft_oop_il_entry_t *ke,
-                              const vw2_store_t *st, int N, int ip)
+ * VFFT_IL_BKV pin. Returns 1 when a BANKED form names a kernel this build
+ * does not have (the row is empty: the door re-races the cell), else 0; an
+ * env pin never counts. */
+static int _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
+                             const vfft_oop_il_entry_t *ke,
+                             const vw2_store_t *st, int N, int ip)
 {
+    int bad = 0;
     if (!p)
-        return;
-    if (ke)
-        vfft_il3p_apply_kv_forms(p, ke->il_kv);
+        return 0;
+    if (ke && vfft_il3p_apply_kv_forms(p, ke->il_kv) != 0)
+        bad = 1;
     /* the BACKWARD cell: its own dir=bwd row, validated against the chain it
      * was raced at; outside the ke guard like the pair's */
     if (st)
     {
         int c3[3] = { 0, 0, 0 };
         int bkv = vw2_oop_lookup_k1_bwd_chain_pl(st, N, c3, ip ? VW2_PL_IP : VW2_PL_OOP);
-        if (bkv >= 0 && c3[0] == p->R2 && c3[1] == p->A && c3[2] == p->B)
-            vfft_il3p_apply_kv_forms_bwd(p, bkv);
+        if (bkv >= 0 && c3[0] == p->R2 && c3[1] == p->A && c3[2] == p->B &&
+            vfft_il3p_apply_kv_forms_bwd(p, bkv) != 0)
+            bad = 1;
     }
     {
         const char *e = getenv("VFFT_IL_KV");
@@ -87,12 +91,17 @@ static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
         if (e && e[0])
             vfft_il3p_apply_kv_forms_bwd(p, (int)strtol(e, NULL, 0));
     }
+    return bad;
 }
 
-static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
-                              const vfft_oop_il_entry_t *ke,
-                              const vw2_store_t *st, int N, int ip)
+/* Returns 1 when a BANKED form (the row's il_kv, or its matching dir=bwd
+ * row's) names a kernel this build does not have -- the row is empty and the
+ * door re-races the cell -- else 0. An env pin never counts. */
+static int _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
+                             const vfft_oop_il_entry_t *ke,
+                             const vw2_store_t *st, int N, int ip)
 {
+    int bad = 0;
     /* Wisdom variant verdict — runs AFTER create, so it OVERRIDES the
      * structural blocked default (il2p.h): a banked per-cell measurement
      * always outranks the structural rule. Nibble VFFT_IL_KV_MONO (0xF)
@@ -100,11 +109,11 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
      * the R>=32 default, so a platform where blocked measures slower
      * stays expressible as a verdict rather than only as an env. */
     if (!p)
-        return;
-    if (ke)
-        vfft_il2p_apply_kv_forms(p, ke->il_kv); /* shared nibble semantics —
-                                                 * one definition (il2p.h),
-                                                 * planner uses the same fn */
+        return 0;
+    if (ke && vfft_il2p_apply_kv_forms(p, ke->il_kv) != 0) /* shared nibble semantics —
+                                                            * one definition (il2p.h),
+                                                            * planner uses the same fn */
+        bad = 1;
     /* BACKWARD arm. The backward kernel-variant verdict is its
      * OWN CELL, keyed `dir=bwd`, rather than more il_kv bits: wisdom2 keys
      * DIRECTION and does not key kernel forms. Deliberately outside the `ke`
@@ -126,8 +135,9 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
          * which is always correct if slower. */
         int bR1 = 0, bR2 = 0;
         int bkv = vw2_oop_lookup_k1_bwd_pl(st, N, &bR1, &bR2, ip ? VW2_PL_IP : VW2_PL_OOP);   /* -1 = no row */
-        if (bkv >= 0 && bR1 == p->R1 && bR2 == p->R2)
-            vfft_il2p_apply_kv_forms_bwd(p, bkv);
+        if (bkv >= 0 && bR1 == p->R1 && bR2 == p->R2 &&
+            vfft_il2p_apply_kv_forms_bwd(p, bkv) != 0)
+            bad = 1;
     }
     /* Env applied LAST — it beats the banked verdict (racing hook). Packed
      * nibbles: VFFT_IL_KV=0x25 => mid 5, leaf 2 (VFFT_IL_KV_PACK, il2p.h).
@@ -142,6 +152,7 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
         if (e && e[0])
             vfft_il2p_apply_kv_forms_bwd(p, (int)strtol(e, NULL, 0));
     }
+    return bad;
 }
 
 /* the two arms of the (R1,R2) ordering race: two il2p plans on one
@@ -158,7 +169,7 @@ static void _k1ord_reseed(void *v)
     memcpy(c->rz, c->r0, c->nb);
 }
 static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int il_kv, int *chain, int *form); /* below, with the threaded arm */
-static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              int N, vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out,
                              vfft_ilfd_plan_t **ilfd_out,
@@ -653,9 +664,15 @@ static int _k1fs_row_stale(struct vfft_wisdom_s *W, int N, int scr, int ip, int 
  * "IL runs its OWN pair search" rules in c2c_oop_create.h: il2p registries
  * stop at R=64, no parity constraint) — if you touch one, touch both.
  * Planning side only. */
-static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
-                             int N,
-                             vfft_il2p_plan_t **il2p_out,
+/* Returns 1 when the cell's BANKED row did not build as written -- its engine,
+ * chain or tile is refused, or a form names a kernel this build does not have.
+ * Such a row is EMPTY (owner, 2026-10-04): what was built here from the
+ * pair/default path is not the cell's plan, and the door races the cell from
+ * scratch (a recalibrating second call). 0 = built as the row says, or the
+ * cell has no row. */
+static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                            int N,
+                            vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out,
                              vfft_ilfd_plan_t **ilfd_out,   /* NULL = caller cannot take a flat plan */
                              vfft_ztt_plan_t **ztt_out,     /* NULL = caller cannot take a ZTURN-T plan */
@@ -669,8 +686,9 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     if (fs_out) *fs_out = NULL;
     if (ilp_out) *ilp_out = NULL;
     if (getenv("VFFT_NO_IL2P"))
-        return;
+        return 0;
     int iR1 = 0, iR2 = 0;
+    int stale = 0;
     vfft_oop_il_entry_t keb;
     /* the request's ORDER CELL: an explicit SCRAMBLED request reads the
      * ord=scr row — the scrambled pool's own verdict — and nothing else;
@@ -723,14 +741,14 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     {   /* the writer-band law (planning/policy.h): no fallback here */
         const vfft_cell_t sc = vfft_policy_cell(cfg, N, 1, 1, 0, 1);
         if (scr_req && vfft_policy_scr_writer_band(&sc) && !ke)
-            return;
+            return 0;
     }
     /* MONO verdict: the cell's plan is ONE solo kernel; no pair is built
      * here — the caller serves the mono door (the OOP block reads the form
      * itself; in place, _k1_il_mono_candidate). Without this return an
      * in-place create would replay a MONO row as the balanced pair. */
     if (ke && ke->k1_il_route == VFFT_K1_IL_MONO && vfft_k1_mono_il_fn(N, 0))
-        return;
+        return 0;
     /* PRIME verdict: the cell's plan is the prime cell. The race's warm plan
      * is handed over when the race just ran (never rebuilt: under
      * recalibrate a rebuild would race the inner a second time and could
@@ -753,7 +771,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                         (*ilp_out)->method ? "RADER" : "BLUESTEIN", (*ilp_out)->M);
         }
         _k1pr_release();
-        return;
+        return (ilp_out && !*ilp_out) ? 1 : 0;   /* a prime verdict whose cell does not build */
     }
     /* CHAIN3 verdict: the banked 3-stage chain replays as
      * written; a build refusal falls through to the pair/default path */
@@ -762,11 +780,11 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         *il3p_out = vfft_il3p_create(N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
         if (*il3p_out)
         {
-            _k1_il3p_apply_kv(*il3p_out, ke, &W->vw2, N, ip_req);   /* banked forms > default */
+            stale = _k1_il3p_apply_kv(*il3p_out, ke, &W->vw2, N, ip_req);   /* banked forms > default */
             if (getenv("VFFT_NAT_LOG"))
                 fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d src=wisdom\n",
                         N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
-            return;
+            return stale;
         }
     }
     /* FLAT DIT verdict: the banked chain + per-stage forms
@@ -801,7 +819,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                         N, chs, ke->il_flf[0] ? ke->il_flf : "-", ke->il_tw,
                         scr_req ? "SCRAMBLED class" : "natural");
             }
-            return;
+            return 0;
         }
     }
     /* ZTURN-T verdict: the banked chain replays as written (validated by the
@@ -826,7 +844,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 vfft_ztt_chain_str(zp, chs, sizeof chs);
                 fprintf(stderr, "[k1ztt] N=%d: replay ZTURN-T chain %s tile=%zu src=wisdom\n", N, chs, zp->tile);
             }
-            return;
+            return 0;
         }
     }
     /* the FOUR-STEP (route 10): a banked verdict replays its split with its
@@ -839,9 +857,17 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         if (fp)
         {
             *fs_out = fp;
-            return;
+            return 0;
         }
     }
+    /* a banked MONO, CHAIN3, FLAT, ZTURN-T or four-step verdict that reaches
+     * this point was not built: what follows is the pair/default path, not the
+     * row's plan */
+    if (ke && (ke->k1_il_route == VFFT_K1_IL_MONO || ke->k1_il_route == VFFT_K1_IL_CHAIN3 ||
+               (ke->k1_il_route == VFFT_K1_IL_FLAT && ilfd_out) ||
+               (ke->k1_il_route == VFFT_K1_IL_ZTT && ztt_out) ||
+               (ke->k1_il_route == VFFT_K1_IL_FS && fs_out)))
+        stale = 1;
     if (ke && ke->il_R1)
     {
         iR1 = ke->il_R1;
@@ -869,8 +895,14 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     {   /* braces load-bearing: apply_kv must not run when the pair axis
          * was skipped. */
         *il2p_out = vfft_il2p_create(N, iR1, iR2);
-        _k1_il2p_apply_kv(*il2p_out, ke, &W->vw2, N, ip_req);   /* wisdom verdict > default */
+        if (_k1_il2p_apply_kv(*il2p_out, ke, &W->vw2, N, ip_req))   /* wisdom verdict > default */
+            stale = 1;
     }
+    /* a banked pair that the pair engine refuses */
+    if (ke && ke->il_R1 && !*il2p_out &&
+        (ke->k1_il_route == VFFT_K1_IL_2P_PURE || ke->k1_il_route == VFFT_K1_IL_2P ||
+         ke->k1_il_route == VFFT_K1_IL_3P))
+        stale = 1;
     /* Ordering is a measured axis: (R1,R2) and (R2,R1) install different mid
      * kernels. Heuristic pairs only — a wisdom pair is the calibrator's.
      * See docs/design/vfft_front_door.md. */
@@ -941,25 +973,10 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                     "swapped %d.%d=%.0f -> %s\n",
                             N, iR1, iR2, ta, iR2, iR1, tb,
                             picked_swap ? "SWAPPED" : "heuristic");
-                /* BANK the winner as the cell's kind-3 pair verdict: the pair
-                 * ORDER is exactly what il_pair= says,
-                 * so the existing replay (ke->il_R1 above) serves it and this
-                 * race never runs again for the cell. Measure-less (ns=0):
-                 * the offline planner's measured row replaces it. */
-                if (W && !W->vw2_off_oop && cfg)
-                {
-                    vfft_oop_il_entry_t ne;
-                    memset(&ne, 0, sizeof ne);
-                    ne.N = N;
-                    ne.K = 1;
-                    ne.k1_il_route = VFFT_K1_IL_2P_PURE;
-                    ne.il_R1 = picked_swap ? iR2 : iR1;
-                    ne.il_R2 = picked_swap ? iR1 : iR2;
-                    ne.ord_scr = scr_req;   /* the request's own order cell */
-                    ne.nthreads = _vfft_plan_threads(cfg);   /* the plan's own row (v1.3) */
-                    if (vw2_oop_bank_k1_il(&W->vw2, &ne) == VW2_OK)
-                        _vw2_persist(W, cfg);
-                }
+                /* NOTHING IS BANKED (owner, 2026-10-04): the two arms are the two
+                 * orders of a pair a rule picked, not the cell's pool, so the
+                 * pick is no verdict. The per-process memo below keeps every
+                 * create in this process on one order. */
             }
             vfft_aligned_free(rz);
             vfft_aligned_free(r0);
@@ -981,6 +998,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         if (vfft_il3p_default_chain(N, &cR2, &cA, &cB))
             *il3p_out = vfft_il3p_create(N, cR2, cA, cB);
     }
+    return stale;
 }
 
 
@@ -1438,7 +1456,9 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
  * race on a miss) says MONO: the alias-tolerant n1c solo, both directions.
  * The row's form axis names the OOP kernel family (solo n1 vs mono64); in
  * place both forms map onto the ONE alias-safe solo, n1c(N). Returns 1 and
- * fills the pair when served, 0 otherwise (nothing built, nothing to free). */
+ * fills the pair when served, 0 when the row is not a MONO verdict, -1 when
+ * it is one and its kernel is missing (the row is empty); nothing is built
+ * or left to free in either case. */
 static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                  int N, vfft_oop11_fn *ilf, vfft_oop11_fn *ilb)
 {
@@ -1454,7 +1474,7 @@ static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_config_t *c
     if (!ke || ke->k1_il_route != VFFT_K1_IL_MONO) return 0;
     *ilf = vfft_k1_mono_ilc_fn(N, 0);
     *ilb = vfft_k1_mono_ilc_fn(N, 1);
-    if (!*ilf || !*ilb) { *ilf = *ilb = 0; return 0; }
+    if (!*ilf || !*ilb) { *ilf = *ilb = 0; return -1; }
     return 1;
 }
 

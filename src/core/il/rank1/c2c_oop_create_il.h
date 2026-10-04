@@ -31,12 +31,19 @@ static vfft_plan _c2c_oop_finish_il(struct vfft_plan_s *h, int zt_mt,
     return h;
 }
 
+/* *stale = 1 when the cell's BANKED row did not build as written: the engine
+ * its route names is not the one built, or a form names a kernel this build
+ * does not have. Such a row is EMPTY (owner, 2026-10-04) and the caller races
+ * the cell from scratch; what this call built from the default paths is not
+ * the cell's plan. */
 static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
                                                  struct vfft_wisdom_s *W,
-                                                 int N)
+                                                 int N, int *stale)
 {
     int ilr = VFFT_K1_IL_2P;
     int iR1 = 0, iR2 = 0;
+    int forms_bad = 0, c3_from_row = 0;
+    *stale = 0;
     /* the kind-3 cell's INTERLEAVED axis (il/wisdom/wisdom2_oop_il.h):
      * kin the natural cell, ki the request's order cell. The vw2_off_oop
      * kill switch serves it from the one legacy line. */
@@ -166,7 +173,8 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
              * pair axis was skipped (it survived unbraced only because
              * it null-checks — a latent trap, not a working shortcut) */
             il2p = vfft_il2p_create(N, iR1, iR2);
-            _k1_il2p_apply_kv(il2p, ki, &W->vw2, N, 0);   /* banked variant verdict (the out-of-place cell) */
+            if (_k1_il2p_apply_kv(il2p, ki, &W->vw2, N, 0))   /* banked variant verdict (the out-of-place cell) */
+                forms_bad = 1;
         }
         ilr = il2p ? VFFT_K1_IL_2P_PURE : VFFT_K1_IL_NONE;
     }
@@ -189,7 +197,9 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
         {
             il3p = vfft_il3p_create(N, ki->il_c3[0], ki->il_c3[1],
                                     ki->il_c3[2]);
-            _k1_il3p_apply_kv(il3p, ki, &W->vw2, N, 0);   /* banked forms > default (the out-of-place cell) */
+            c3_from_row = (il3p != NULL);
+            if (_k1_il3p_apply_kv(il3p, ki, &W->vw2, N, 0))   /* banked forms > default (the out-of-place cell) */
+                forms_bad = 1;
             if (il3p && getenv("VFFT_NAT_LOG"))
                 fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d "
                                 "src=wisdom (oop)\n", N, ki->il_c3[0],
@@ -319,6 +329,18 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
             !vfft_k1_mono_il_form_fn(N, mf, 1))
             ilr = VFFT_K1_IL_NONE;
     }
+    /* did the banked row build as written? Its route names one engine; the
+     * blocks above degrade to another (the default chain, the prime cell) or
+     * to none when that engine, its chain or its tile is refused. */
+    if (il_banked && !getenv("VFFT_NO_IL2P"))
+    {
+        int want = ki->k1_il_route;
+        if (want == VFFT_K1_IL_2P || want == VFFT_K1_IL_3P)
+            want = VFFT_K1_IL_2P_PURE;                    /* the legacy aliases */
+        if (want > 0 && (ilr != want || forms_bad ||
+                         (want == VFFT_K1_IL_CHAIN3 && !c3_from_row)))
+            *stale = 1;
+    }
     /* Handle exists when ANY IL route does. 🔴 Every IL engine MUST be in
      * this guard, or a cell with an IL plan would drop to the "no
      * interleaved engine" refusal. IL handles are INTERLEAVED-committed
@@ -384,7 +406,30 @@ static vfft_plan _vfft_create_c2c_oop_il(const vfft_config_t *cfg,
 {
     if (K == 1)
     {
-        struct vfft_plan_s *hk = _c2c_oop_create_k1_il(cfg, W, N);
+        int stale = 0;
+        struct vfft_plan_s *hk = _c2c_oop_create_k1_il(cfg, W, N, &stale);
+        if (stale && !cfg->recalibrate)
+        {   /* THE BANKED ROW IS EMPTY (owner, 2026-10-04: "that entry is
+             * obsoleted ... should be re-raced and the winner has to be picked
+             * from scratch"): one recalibrating create, whose winner replaces
+             * the row */
+            vfft_config_t rc = *cfg;
+            struct vfft_plan_s *h2;
+            int stale2 = 0;
+            rc.recalibrate = 1;
+            fprintf(stderr, "[wisdom2] c2c N=%d out of place: the banked row does not build in this "
+                            "library -- the cell is raced from scratch\n", N);
+            h2 = _c2c_oop_create_k1_il(&rc, W, N, &stale2);
+            if (h2)
+            {
+                if (hk)
+                    vfft_destroy((vfft_plan)hk);
+                if (stale2)
+                    fprintf(stderr, "[wisdom2] c2c N=%d out of place: the row still does not build "
+                                    "after the race\n", N);
+                return _c2c_oop_finish_il(h2, 0, W, &rc, N);
+            }
+        }
         if (hk)
             return _c2c_oop_finish_il(hk, 0, W, cfg, N);
     }
