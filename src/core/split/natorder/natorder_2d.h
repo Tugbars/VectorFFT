@@ -23,8 +23,8 @@ static inline int vfft_natorder_2d_build_axis(int N, const stride_plan_t *inner,
     if (inner->num_stages <= 1)
         return 1;                                   /* FREE: already natural on this axis */
     size_t K = inner->K, tot = (size_t)N * K;
-    double *cre = (double *)calloc(tot, sizeof(double));
-    double *cim = (double *)calloc(tot, sizeof(double));
+    double *cre = (double *)vfft_aligned_calloc(tot, sizeof(double));
+    double *cim = (double *)vfft_aligned_calloc(tot, sizeof(double));
     int *M = NULL;
     if (cre && cim)
     {
@@ -32,8 +32,8 @@ static inline int vfft_natorder_2d_build_axis(int N, const stride_plan_t *inner,
         vfft_proto_execute_fwd((stride_plan_t *)inner, cre, cim, K);
         M = vfft_natorder_detect(N, inner->factors, inner->num_stages, K, cre, cim, 1);
     }
-    free(cre);
-    free(cim);
+    vfft_aligned_free(cre);
+    vfft_aligned_free(cim);
     if (!M)
         return 0;                                   /* orientation not detected => refuse natural */
     if (try_pairs)

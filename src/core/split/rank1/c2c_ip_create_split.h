@@ -174,8 +174,8 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
                 (cfg->recalibrate || !bluestein_wisdom_lookup(&W->bluestein, N, K)))
             {
                 size_t tot = (size_t)N * K;
-                double *cre = (double *)malloc(tot * sizeof(double));
-                double *cim = (double *)malloc(tot * sizeof(double));
+                double *cre = (double *)vfft_aligned_alloc(tot * sizeof(double));
+                double *cim = (double *)vfft_aligned_alloc(tot * sizeof(double));
                 if (cre && cim)
                 {
                     for (size_t i = 0; i < tot; i++)
@@ -195,8 +195,8 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
                     if (cfg->wisdom_write && W->path_bluestein[0])
                         bluestein_wisdom_save(&W->bluestein, W->path_bluestein);
                 }
-                free(cre);
-                free(cim);
+                vfft_aligned_free(cre);
+                vfft_aligned_free(cim);
             }
         }
         else
@@ -336,7 +336,7 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
                  * later, and the reorder slices tmp + slot*2*K per worker. The execute
                  * side clamps by the same h->nthreads (natorder_mt.h), so the two numbers
                  * cannot disagree. natorder_scratch_gate asserts this. */
-                h->nat_tmp = (double *)malloc((size_t)(h->nthreads < 1 ? 1 : h->nthreads) * 2 * K * sizeof(double));
+                h->nat_tmp = (double *)vfft_aligned_alloc((size_t)(h->nthreads < 1 ? 1 : h->nthreads) * 2 * K * sizeof(double));
                 if (!h->nat_tmp)
                 {
                     vfft_destroy(h);
@@ -412,8 +412,8 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
                 if (!h->nat_scr)
                 {
                     size_t tot = (size_t)N * K;
-                    double *cre = (double *)calloc(tot, sizeof(double));
-                    double *cim = (double *)calloc(tot, sizeof(double));
+                    double *cre = (double *)vfft_aligned_calloc(tot, sizeof(double));
+                    double *cim = (double *)vfft_aligned_calloc(tot, sizeof(double));
                     int *M = NULL;
                     if (cre && cim)
                     {
@@ -421,8 +421,8 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
                         vfft_proto_execute_fwd(p, cre, cim, K);
                         M = vfft_natorder_detect(N, dfac, dnf, K, cre, cim, 1);
                     }
-                    free(cre);
-                    free(cim);
+                    vfft_aligned_free(cre);
+                    vfft_aligned_free(cim);
                     if (!M)
                     {
                         vfft_destroy(h);

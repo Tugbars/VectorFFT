@@ -209,15 +209,15 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
         if (!p) continue;
         /* orientation via impulse probe on THIS plan (fail => drop candidate) */
         size_t tot = (size_t)N * K;
-        double *cre = (double *)calloc(tot, sizeof(double));
-        double *cim = (double *)calloc(tot, sizeof(double));
+        double *cre = (double *)vfft_aligned_calloc(tot, sizeof(double));
+        double *cim = (double *)vfft_aligned_calloc(tot, sizeof(double));
         int *M = NULL;
         if (cre && cim) {
             cre[K] = 1.0; /* impulse at n0=1, lane 0 */
             vfft_proto_execute_fwd(p, cre, cim, K);
             M = vfft_natorder_detect(N, chains[c], nfs[c], K, cre, cim, 1);
         }
-        free(cre); free(cim);
+        vfft_aligned_free(cre); vfft_aligned_free(cim);
         int *pl = M ? vfft_natorder_mk_pairs(N, M) : NULL;
         free(M);
         if (!pl) { vfft_proto_plan_destroy(p); continue; }
@@ -226,8 +226,8 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
 
     /* interleaved timing rounds (order-neutralized), averaged */
     size_t n = (size_t)N * K;
-    double *re = (double *)malloc(n * 8), *im = (double *)malloc(n * 8);
-    if (!re || !im) { free(re); free(im); goto cleanup_losers; }
+    double *re = (double *)vfft_aligned_alloc(n * 8), *im = (double *)vfft_aligned_alloc(n * 8);
+    if (!re || !im) { vfft_aligned_free(re); vfft_aligned_free(im); goto cleanup_losers; }
     /* JIT-resolve each candidate's deployed forward (no-op unless built --jit). Scoring the deployed
      * path is what lets the injected single-stage/palindrome be ranked as it will actually run (generic
      * mis-ranks extra stages — the 2D calibrator proved this). Cost is at create for order=NATURAL only,
@@ -287,7 +287,7 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
             for (int s = 0; s < nfs[bestp]; s++) v->factors[s] = chains[bestp][s];
         }
     }
-    free(re); free(im);
+    vfft_aligned_free(re); vfft_aligned_free(im);
 cleanup_losers:
     for (int c = 0; c < nc; c++) {
         if (pb[c]) vfft_proto_plan_destroy(pb[c]);

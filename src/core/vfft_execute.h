@@ -378,16 +378,16 @@ void vfft_destroy(vfft_plan h)
             for (s2 = 0; s2 < h->il2d_turnw_n; s2++)
                 vfft_destroy(h->il2d_turnw[s2]); /* the threaded turn's N1 plan clones */
             free(h->il2d_turnw);
-            free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
+            vfft_aligned_free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
             free(h->il2d_col.natperm);
             vfft_aligned_free(h->il2d_col.natscr);   /* aligned since 2026-09-24 */
             vfft_aligned_free(h->il2d_col.natstage);
             _il2d_nat_sscr_free(&h->il2d_col);   /* the strips' dense scratch (2026-09-24) */
-            free(h->il2d_col.bluchf);
-            free(h->il2d_col.bluchb);
-            free(h->il2d_col.blukf);
-            free(h->il2d_col.blukb);
-            free(h->il2d_col.bluscr);
+            vfft_aligned_free(h->il2d_col.bluchf);
+            vfft_aligned_free(h->il2d_col.bluchb);
+            vfft_aligned_free(h->il2d_col.blukf);
+            vfft_aligned_free(h->il2d_col.blukb);
+            vfft_aligned_free(h->il2d_col.bluscr);
             if (h->il2d_col.tpcplan)
                 vfft_destroy(h->il2d_col.tpcplan); /* the turned prime pass's 1D plan */
             if (h->il2d_col.tpcscr)
@@ -399,14 +399,14 @@ void vfft_destroy(vfft_plan h)
             if (h->il2d_csk_row)
                 vfft_destroy(h->il2d_csk_row); /* the skewed column pass's OOP row plan */
             vfft_aligned_free(h->il2d_csk_scr);
-            free(h->il2d_col.bandscr);
-            free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
+            vfft_aligned_free(h->il2d_col.bandscr);
+            vfft_aligned_free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
             if (h->il2d_rx_eng)
                 vfft_destroy((vfft_plan)h->il2d_rx_eng); /* the real tier's row engine */
             for (s2 = 0; s2 < h->il2d_col.nst; s2++)
             {
-                free(h->il2d_col.tf[s2]);
-                free(h->il2d_col.tb[s2]);
+                vfft_aligned_free(h->il2d_col.tf[s2]);
+                vfft_aligned_free(h->il2d_col.tb[s2]);
             }
         }
     }
@@ -456,7 +456,7 @@ void vfft_destroy(vfft_plan h)
     if (h->tplan)
         stride_plan_destroy(h->tplan); /* frees inner r2c/c2c via override_destroy */
     free(h->nat_list);
-    free(h->nat_tmp);
+    vfft_aligned_free(h->nat_tmp);
     free(h->nat_cyc_off);
     if (h->nat_scr)
     {
@@ -465,7 +465,7 @@ void vfft_destroy(vfft_plan h)
     }
     free(h->nat2d_row_list);
     free(h->nat2d_col_list);
-    free(h->nat2d_tmp);
+    vfft_aligned_free(h->nat2d_tmp);
     free(h->nat2d_cyc_off);
     free(h);
 }

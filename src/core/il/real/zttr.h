@@ -874,8 +874,13 @@ ZTTR_TLFHC_BODY(8)
  * (p->stk) is a plan knob the calibration can race. Win64 call: args in
  * rcx, rdx, r8; 32 B of shadow space below the return address; rcx, rdx,
  * r8-r11, rax and every vector register volatile (ymm6-15's upper halves
- * are not preserved either), r12 callee-saved. */
+ * are not preserved either), r12 callee-saved.
+ * The entry exists for the Win64 ABI under GCC-style inline asm (mingw gcc,
+ * clang, icx). Elsewhere -- the System V ABI passes rdi, rsi, rdx and keeps
+ * a red zone below rsp that the entry's call would overwrite -- the
+ * terminator is entered directly and p->stk binds nothing. */
 typedef void (*_zttr_term_fn)(const vfft_zttr_plan_t *, const double *, double *);
+#if defined(_WIN64) && defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
 static inline void _zttr_call_aligned(_zttr_term_fn fn, const vfft_zttr_plan_t *p, const double *W, double *X)
 {
     register const vfft_zttr_plan_t *a0 __asm__("rcx") = p;
@@ -914,6 +919,17 @@ static inline void _zttr_call_job(_zttr_job_fn fn, const _zttr_job_t *jb, const 
         : "rax", "r9", "r12", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
           "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "memory", "cc");
 }
+#else
+static inline void _zttr_call_aligned(_zttr_term_fn fn, const vfft_zttr_plan_t *p, const double *W, double *X)
+{
+    fn(p, W, X);
+}
+
+static inline void _zttr_call_job(_zttr_job_fn fn, const _zttr_job_t *jb, const double *W, double *X)
+{
+    fn(jb, W, X);
+}
+#endif
 
 static inline void _zttr_tlfh(const vfft_zttr_plan_t *p, const double *W, double *X)
 {

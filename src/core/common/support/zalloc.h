@@ -6,6 +6,8 @@
  *                              rounded up to a multiple of 64, which C11
  *                              aligned_alloc requires; 0 bytes gives one
  *                              64-byte block, never NULL. NULL means failure.
+ *   vfft_aligned_calloc(n, s)  the same block for n * s bytes, zeroed; NULL
+ *                              when n * s overflows or memory runs out.
  *   vfft_aligned_free(p)       releases it; NULL is a no-op.
  *
  * THE PROCESS HEAP ON WINDOWS (owner, 2026-10-04). The block comes from
@@ -36,6 +38,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -43,7 +46,7 @@
 #include <windows.h>
 #endif
 
-#define VFFT_ALIGNMENT 64
+#define VFFT_ALIGNMENT 64   /* 64, not 32, in the AVX2 build too: why, src/core/vfft_memory.h */
 
 static inline void *vfft_aligned_alloc(size_t bytes)
 {
@@ -68,6 +71,17 @@ static inline void *vfft_aligned_alloc(size_t bytes)
 #else
     return aligned_alloc(VFFT_ALIGNMENT, bytes);
 #endif
+}
+
+static inline void *vfft_aligned_calloc(size_t n, size_t size)
+{
+    void *p;
+    if (size && n > SIZE_MAX / size)
+        return NULL;
+    p = vfft_aligned_alloc(n * size);
+    if (p)
+        memset(p, 0, n * size);
+    return p;
 }
 
 static inline void vfft_aligned_free(void *p)

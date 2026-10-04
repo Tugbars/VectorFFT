@@ -904,8 +904,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         int picked_swap = 0;
         if (alt)
         {
-            double *rz = (double *)malloc(2 * (size_t)N * sizeof(double));
-            double *r0 = (double *)malloc(2 * (size_t)N * sizeof(double));
+            double *rz = (double *)vfft_aligned_alloc(2 * (size_t)N * sizeof(double));
+            double *r0 = (double *)vfft_aligned_alloc(2 * (size_t)N * sizeof(double));
             if (rz && r0)
             {
                 for (long i = 0; i < 2L * N; i++)
@@ -961,8 +961,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                         _vw2_persist(W, cfg);
                 }
             }
-            free(rz);
-            free(r0);
+            vfft_aligned_free(rz);
+            vfft_aligned_free(r0);
             if (alt)
                 vfft_il2p_destroy(alt);
         }
@@ -1038,12 +1038,12 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
         return;
     }
     {   /* the race on scratch, out of place (the in-place serving is the same lists) */
-        double *zi = (double *)malloc(2 * (size_t)N * sizeof(double));
-        double *zo = (double *)malloc(2 * (size_t)N * sizeof(double));
+        double *zi = (double *)vfft_aligned_alloc(2 * (size_t)N * sizeof(double));
+        double *zo = (double *)vfft_aligned_alloc(2 * (size_t)N * sizeof(double));
         size_t i;
         if (!zi || !zo)
         {
-            free(zi); free(zo);
+            vfft_aligned_free(zi); vfft_aligned_free(zo);
             p->mt = 0;
             return;
         }
@@ -1051,7 +1051,7 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
             zi[i] = 1.0 + 1e-6 * (double)(i & 1023);
         vfft_ilfd_mt_race(p, T, tw0, zi, zo, &mt_tw);
         p->mt_tw = mt_tw;
-        free(zi); free(zo);
+        vfft_aligned_free(zi); vfft_aligned_free(zo);
     }
     if (r && !W->vw2_off_oop)
     {

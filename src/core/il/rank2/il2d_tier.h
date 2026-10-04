@@ -1608,7 +1608,7 @@ static void _il2d_real_wlrace(struct vfft_plan_s *h,
 {
     const size_t CN = (size_t)N1 * ((size_t)N2 / 2 + 1);
     const int isr = (h->transform == VFFT_R2C);
-    double *bz = (double *)malloc((2 * CN + 8) * sizeof(double));
+    double *bz = (double *)vfft_aligned_alloc((2 * CN + 8) * sizeof(double));
     size_t i;
     if (!bz)
         return;
@@ -1665,7 +1665,7 @@ static void _il2d_real_wlrace(struct vfft_plan_s *h,
         }
         h->il2d_col.wl = bwl;
         h->il2d_col.cut = bcut;
-        free(bz);
+        vfft_aligned_free(bz);
         if (getenv("VFFT_IL2D_LOG"))
             fprintf(stderr, "[il2d-real] wlrace %s %dx%d -> wl=%d (%.0f ns cols)\n",
                     isr ? "r2c" : "c2r", N1, N2, bwl, cbest);
@@ -1692,7 +1692,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
 {
     const size_t hp1 = (size_t)N2 / 2 + 1;
     const size_t CN = (size_t)N1 * hp1;
-    double *z = (double *)malloc((2 * CN + 8) * sizeof(double));
+    double *z = (double *)vfft_aligned_alloc((2 * CN + 8) * sizeof(double));
     double st = 1e300, mt = 1e300;
     int p;
     size_t i;
@@ -1713,7 +1713,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
         if (!rc.ok)
         {
             /* the threaded arm cannot even engage on this cell */
-            free(z);
+            vfft_aligned_free(z);
             h->il2d_col.colmt = 0;
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                            h->il2d_col.R, h->il2d_col.nst,
@@ -1724,7 +1724,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
         }
     }
     h->il2d_col.colmt = (mt < st);
-    free(z);
+    vfft_aligned_free(z);
     if (getenv("VFFT_IL2D_LOG"))
         fprintf(stderr, "[il2d-real] colmt race %dx%d T=%d: st=%.0f "
                         "mt=%.0f -> %s\n",
@@ -1935,8 +1935,8 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
     }
     for (s = 0; s < nst; s++)
     {
-        free(tf[s]);
-        free(tb[s]);
+        vfft_aligned_free(tf[s]);
+        vfft_aligned_free(tb[s]);
     }
     vfft_aligned_free(z);
     for (s = 0; s < nst && off < (int)fsz - 8; s++)
@@ -2043,8 +2043,8 @@ static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, cons
     {
         for (s2 = 0; s2 < lens[cb[a].ci]; s2++)
         {
-            free(cb[a].tf[s2]);
-            free(cb[a].tb[s2]);
+            vfft_aligned_free(cb[a].tf[s2]);
+            vfft_aligned_free(cb[a].tb[s2]);
         }
         free(cb[a].perm);
     }
@@ -2218,18 +2218,18 @@ static void _il2d_col_free(vfft_ilcol_t *c)
     int s;
     for (s = 0; s < c->nst && s < 8; s++)
     {
-        free(c->tf[s]);
-        free(c->tb[s]);
+        vfft_aligned_free(c->tf[s]);
+        vfft_aligned_free(c->tb[s]);
     }
     free(c->natperm);
     vfft_aligned_free(c->natscr);
     _il2d_nat_sscr_free(c);
-    free(c->bluchf);
-    free(c->bluchb);
-    free(c->blukf);
-    free(c->blukb);
-    free(c->bluscr);
-    free(c->bandscr);
+    vfft_aligned_free(c->bluchf);
+    vfft_aligned_free(c->bluchb);
+    vfft_aligned_free(c->blukf);
+    vfft_aligned_free(c->blukb);
+    vfft_aligned_free(c->bluscr);
+    vfft_aligned_free(c->bandscr);
     _il2d_tpc_drop(c);
     memset(c, 0, sizeof *c);
 }
@@ -2346,11 +2346,11 @@ static void _il2d_tpc_drop(vfft_ilcol_t *c)
 }
 static void _il2d_blu_drop_tables(vfft_ilcol_t *c)
 {   /* the Bluestein's tables when the turned pass serves; blu = M stays */
-    free(c->bluchf);
-    free(c->bluchb);
-    free(c->blukf);
-    free(c->blukb);
-    free(c->bluscr);
+    vfft_aligned_free(c->bluchf);
+    vfft_aligned_free(c->bluchb);
+    vfft_aligned_free(c->blukf);
+    vfft_aligned_free(c->blukb);
+    vfft_aligned_free(c->bluscr);
     c->bluchf = c->bluchb = c->blukf = c->blukb = c->bluscr = NULL;
 }
 static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
@@ -2673,10 +2673,10 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             {
                 for (s3 = 0; s3 < bnst; s3++)
                 {
-                    free(btf[s3]);
-                    free(btb[s3]);
+                    vfft_aligned_free(btf[s3]);
+                    vfft_aligned_free(btb[s3]);
                 }
-                free(bchf); free(bchb); free(bkf); free(bkb); free(bscr);
+                vfft_aligned_free(bchf); vfft_aligned_free(bchb); vfft_aligned_free(bkf); vfft_aligned_free(bkb); vfft_aligned_free(bscr);
             }
         }
         else if (hasodd && il2d_bblu == 0 && !be && !cfg->recalibrate)
@@ -2702,7 +2702,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                  &bkf, &bkb, &bscr);
             if (M2)
             {
-                double *sc = (double *)malloc(
+                double *sc = (double *)vfft_aligned_alloc(
                     2 * (size_t)N * (int)rn * sizeof(double));
                 double tc = 1e300, tbu = 1e300;
                 int rr, use_blu = (be != NULL); /* env pin */
@@ -2728,7 +2728,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                         tbu = ns[1];
                     }
                 }
-                free(sc);
+                vfft_aligned_free(sc);
                 if (!use_blu)
                     use_blu = (tbu < tc);
                 if (getenv("VFFT_IL2D_LOG"))
@@ -2751,8 +2751,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 {
                     for (s3 = 0; s3 < c->nst; s3++)
                     {
-                        free(c->tf[s3]);
-                        free(c->tb[s3]);
+                        vfft_aligned_free(c->tf[s3]);
+                        vfft_aligned_free(c->tb[s3]);
                     }
                     memcpy(c->R, bR, sizeof bR);
                     memcpy(c->L, bL, sizeof bL);
@@ -2780,11 +2780,11 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 {
                     for (s3 = 0; s3 < bnst; s3++)
                     {
-                        free(btf[s3]);
-                        free(btb[s3]);
+                        vfft_aligned_free(btf[s3]);
+                        vfft_aligned_free(btb[s3]);
                     }
-                    free(bchf); free(bchb);
-                    free(bkf); free(bkb); free(bscr);
+                    vfft_aligned_free(bchf); vfft_aligned_free(bchb);
+                    vfft_aligned_free(bkf); vfft_aligned_free(bkb); vfft_aligned_free(bscr);
                 }
             }
         }

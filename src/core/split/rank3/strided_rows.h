@@ -109,9 +109,9 @@ static inline void _vfft_strided_tail_padded(_vfft_strided_fn fn,
  * the covered bulk (sub-VW tails run native+tape, also natural). */
 static inline int _vfft_strided_verify_natural(_vfft_strided_fn f, int N) {
     size_t me = (size_t)_VFFT_STRIDED_VW;
-    double *re = (double *)calloc((size_t)N * me, sizeof(double));
-    double *im = (double *)calloc((size_t)N * me, sizeof(double));
-    if (!re || !im) { free(re); free(im); return 0; }
+    double *re = (double *)vfft_aligned_calloc((size_t)N * me, sizeof(double));
+    double *im = (double *)vfft_aligned_calloc((size_t)N * me, sizeof(double));
+    if (!re || !im) { vfft_aligned_free(re); vfft_aligned_free(im); return 0; }
     for (size_t b = 0; b < me; b++) re[b * (size_t)N + 1] = 1.0;
     f(re, im, NULL, NULL, (size_t)N, me);
     double mx = 0.0;
@@ -120,7 +120,7 @@ static inline int _vfft_strided_verify_natural(_vfft_strided_fn f, int N) {
                  + fabs(im[k] - sin(-2.0 * VFFT_PI * k / N));
         if (d > mx) mx = d;
     }
-    free(re); free(im);
+    vfft_aligned_free(re); vfft_aligned_free(im);
     return mx < 1e-9;
 }
 

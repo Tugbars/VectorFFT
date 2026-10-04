@@ -34,7 +34,7 @@ typedef struct {
 static inline void c2r_plan_destroy(c2r_plan_t *p)
 {
     if (!p) return;
-    for (int d = 0; d < VFFT_RFFT_MAX_STAGES; d++) free(p->mid_inv[d]);
+    for (int d = 0; d < VFFT_RFFT_MAX_STAGES; d++) vfft_aligned_free(p->mid_inv[d]);
     if (p->base) rfft_plan_destroy(p->base);
     free(p);
 }
@@ -42,10 +42,10 @@ static inline void c2r_plan_destroy(c2r_plan_t *p)
 static inline double *c2r_build_mid_inv(const rfft_stage_t *st)
 {
     const int r = st->radix, m = st->m, np = st->np;
-    double *M = (double *)malloc((size_t)r * r * 8);
-    double *A = (double *)malloc((size_t)r * r * 8);
-    double *inv = (double *)malloc((size_t)r * r * 8);
-    if (!M || !A || !inv) { free(M); free(A); free(inv); return NULL; }
+    double *M = (double *)vfft_aligned_alloc((size_t)r * r * 8);
+    double *A = (double *)vfft_aligned_alloc((size_t)r * r * 8);
+    double *inv = (double *)vfft_aligned_alloc((size_t)r * r * 8);
+    if (!M || !A || !inv) { vfft_aligned_free(M); vfft_aligned_free(A); vfft_aligned_free(inv); return NULL; }
     for (int t = 0; t < r; t++) {
         int pp = m / 2 + t * m;
         for (int j = 0; j < r; j++)
@@ -59,7 +59,7 @@ static inline double *c2r_build_mid_inv(const rfft_stage_t *st)
         int piv = col;
         for (int i = col + 1; i < r; i++)
             if (fabs(A[i * r + col]) > fabs(A[piv * r + col])) piv = i;
-        if (fabs(A[piv * r + col]) < 1e-12) { free(M); free(A); free(inv); return NULL; }
+        if (fabs(A[piv * r + col]) < 1e-12) { vfft_aligned_free(M); vfft_aligned_free(A); vfft_aligned_free(inv); return NULL; }
         if (piv != col)
             for (int j = 0; j < r; j++) {
                 double t1 = A[col * r + j]; A[col * r + j] = A[piv * r + j]; A[piv * r + j] = t1;
@@ -78,7 +78,7 @@ static inline double *c2r_build_mid_inv(const rfft_stage_t *st)
         }
     }
     for (int i = 0; i < r * r; i++) inv[i] *= (double)r;
-    free(M); free(A);
+    vfft_aligned_free(M); vfft_aligned_free(A);
     return inv;
 }
 

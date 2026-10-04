@@ -537,8 +537,8 @@ static void _bluestein_execute_bwd(void *data, double *re, double *im) {
 static void _bluestein_destroy(void *data) {
     stride_bluestein_data_t *d = (stride_bluestein_data_t *)data;
     if (!d) return;
-    free(d->chirp_re);
-    free(d->chirp_im);
+    vfft_aligned_free(d->chirp_re);
+    vfft_aligned_free(d->chirp_im);
     vfft_aligned_free(d->B_hat_re);
     vfft_aligned_free(d->B_hat_im);
     vfft_aligned_free(d->C_hat_re);
@@ -585,8 +585,8 @@ static stride_plan_t *stride_bluestein_plan(
     d->n_threads = T_plan;
 
     /* Chirp sequence (N scalars) */
-    d->chirp_re = (double *)malloc((size_t)N * sizeof(double));
-    d->chirp_im = (double *)malloc((size_t)N * sizeof(double));
+    d->chirp_re = (double *)vfft_aligned_alloc((size_t)N * sizeof(double));
+    d->chirp_im = (double *)vfft_aligned_alloc((size_t)N * sizeof(double));
     _bluestein_chirp(N, d->chirp_re, d->chirp_im);
 
     /* Convolution kernels: M*B expanded (pre-broadcast for flat SIMD multiply) */

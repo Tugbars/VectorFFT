@@ -83,9 +83,10 @@ static void _il2d_rowx_body(const void *v, const double *sre, double *dre)
  * whatever the caller's stack. Win64 call: args in rcx, rdx, r8; 32 B of
  * shadow space; r12 callee-saved. The first argument is the callee's own
  * context: the plan (a pass), or a stage of it (the column plan's per-kernel
- * entries). */
+ * entries). The Win64 ABI under GCC-style inline asm only, as zttr.h's;
+ * elsewhere the pass is entered directly and the stack state binds nothing. */
 typedef void (*_il2d_rowx_fn)(const void *, const double *, double *);
-#if defined(_WIN64) && defined(__GNUC__) && defined(__x86_64__)
+#if defined(_WIN64) && defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
 static inline void _il2d_rowx_call(_il2d_rowx_fn fn, const void *h, const double *s, double *d, int stk)
 {
     register const void *a0 __asm__("rcx") = h;

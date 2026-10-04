@@ -109,8 +109,8 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
     st->grp_tw_im = (double **)calloc(ng, sizeof(double *));
     st->tw_scalar_re = (double **)calloc(ng, sizeof(double *));
     st->tw_scalar_im = (double **)calloc(ng, sizeof(double *));
-    st->cf0_re = (double *)calloc(ng, sizeof(double));
-    st->cf0_im = (double *)calloc(ng, sizeof(double));
+    st->cf0_re = (double *)vfft_aligned_calloc(ng, sizeof(double));
+    st->cf0_im = (double *)vfft_aligned_calloc(ng, sizeof(double));
 
     if (s == 0) {
         /* First stage: no twiddles. */
@@ -177,8 +177,8 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
     }
 
     /* Backward cf: full per-element twiddle for all groups. */
-    st->cf_all_re = (double *)calloc((size_t)ng * R * K, sizeof(double));
-    st->cf_all_im = (double *)calloc((size_t)ng * R * K, sizeof(double));
+    st->cf_all_re = (double *)vfft_aligned_calloc((size_t)ng * R * K, sizeof(double));
+    st->cf_all_im = (double *)vfft_aligned_calloc((size_t)ng * R * K, sizeof(double));
 
     /* Fill per-group data. */
     int counter[STRIDE_MAX_STAGES];
@@ -324,8 +324,8 @@ static inline void vfft_proto_compute_twiddles_dif(stride_plan_t *plan, int s)
     st->grp_tw_im = (double **)calloc(ng, sizeof(double *));
     st->tw_scalar_re = (double **)calloc(ng, sizeof(double *));
     st->tw_scalar_im = (double **)calloc(ng, sizeof(double *));
-    st->cf0_re = (double *)calloc(ng, sizeof(double));
-    st->cf0_im = (double *)calloc(ng, sizeof(double));
+    st->cf0_re = (double *)vfft_aligned_calloc(ng, sizeof(double));
+    st->cf0_im = (double *)vfft_aligned_calloc(ng, sizeof(double));
 
     if (s == nf - 1) {
         /* Last stage in DIF: no output-edge twiddle. */
@@ -390,8 +390,8 @@ static inline void vfft_proto_compute_twiddles_dif(stride_plan_t *plan, int s)
         st->tw_scalar_pool_re = st->tw_scalar_pool_im = NULL;
     }
 
-    st->cf_all_re = (double *)calloc((size_t)ng * R * K, sizeof(double));
-    st->cf_all_im = (double *)calloc((size_t)ng * R * K, sizeof(double));
+    st->cf_all_re = (double *)vfft_aligned_calloc((size_t)ng * R * K, sizeof(double));
+    st->cf_all_im = (double *)vfft_aligned_calloc((size_t)ng * R * K, sizeof(double));
 
     int counter[STRIDE_MAX_STAGES];
     memset(counter, 0, sizeof(counter));
@@ -501,19 +501,20 @@ static inline void vfft_proto_free_plan_tables(stride_plan_t *plan)
     for (int s = 0; s < plan->num_stages; s++) {
         stride_stage_t *st = &plan->stages[s];
         /* Pools allocated via vfft_aligned_alloc — MUST use the
-         * matching aligned-free on Windows. Calling plain free() on
-         * _aligned_malloc memory is UB and corrupts the heap. */
+         * matching vfft_aligned_free. Calling plain free() on that
+         * memory corrupts the heap. */
         if (st->tw_scalar_pool_re) vfft_aligned_free(st->tw_scalar_pool_re);
         if (st->tw_scalar_pool_im) vfft_aligned_free(st->tw_scalar_pool_im);
         if (st->tw_pool_re)        vfft_aligned_free(st->tw_pool_re);
         if (st->tw_pool_im)        vfft_aligned_free(st->tw_pool_im);
-        /* Pointer arrays + cf_all were allocated with calloc — plain free. */
+        /* Pointer and index arrays are calloc/malloc — plain free;
+         * cf_all and cf0 are vfft_aligned_calloc. */
         free(st->tw_scalar_re); free(st->tw_scalar_im);
         free(st->grp_tw_re);    free(st->grp_tw_im);
-        free(st->cf_all_re);    free(st->cf_all_im);
+        vfft_aligned_free(st->cf_all_re);    vfft_aligned_free(st->cf_all_im);
         free(st->group_base);
         free(st->needs_tw);
-        free(st->cf0_re); free(st->cf0_im);
+        vfft_aligned_free(st->cf0_re); vfft_aligned_free(st->cf0_im);
         if (st->tape) vfft_aligned_free(st->tape);
     }
 }

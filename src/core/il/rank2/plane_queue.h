@@ -233,8 +233,8 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
 static void _pq_mt_race(struct vfft_plan_s *h)
 {
     const size_t sb = h->pq_n * h->pq_sdist, db = h->pq_n * h->pq_ddist;
-    double *src = (double *)malloc(sb * sizeof(double));
-    double *dst = (double *)malloc(db * sizeof(double));
+    double *src = (double *)vfft_aligned_alloc(sb * sizeof(double));
+    double *dst = (double *)vfft_aligned_alloc(db * sizeof(double));
     double tl = 1e300, tq = 1e300;
     const vfft_dir_t dir =
         (h->transform == VFFT_C2R) ? VFFT_BACKWARD : VFFT_FORWARD;
@@ -244,14 +244,14 @@ static void _pq_mt_race(struct vfft_plan_s *h)
     if (ce)
     {
         h->pq_mt = (atoi(ce) == 0 && h->pq_wn > 0);
-        free(src);
-        free(dst);
+        vfft_aligned_free(src);
+        vfft_aligned_free(dst);
         return;
     }
     if (!src || !dst || h->pq_wn <= 0)
     {
-        free(src);
-        free(dst);
+        vfft_aligned_free(src);
+        vfft_aligned_free(dst);
         return; /* loop serves */
     }
     for (i = 0; i < sb; i++)
@@ -277,8 +277,8 @@ static void _pq_mt_race(struct vfft_plan_s *h)
                         "queue=%.0f -> %s\n",
                 h->N, h->N2, h->pq_n, h->pq_wn, tl, tq,
                 h->pq_mt ? "QUEUE" : "loop");
-    free(src);
-    free(dst);
+    vfft_aligned_free(src);
+    vfft_aligned_free(dst);
 }
 
 #endif /* VFFT_TRANSFORMS_FFT2D_PLANE_QUEUE_H */
