@@ -126,7 +126,7 @@ numbers and correctness. With both, the report says which library answered.
 - `k1_fwd_ref_probe.c` -- the forward reference check and the precision record (`verify`)
 - `build.py` -- the gcc build harness (the gauntlet's copy)
 - `results/<run>/` -- cells.txt, store/, calibrate.log, gauntlet.csv, control.csv, verify.csv, gflops.csv, run.log, report.md
-- `kfr_arm.c/.h`, `ref_fftw.h`, `sibling_guard.h` -- the KFR arm, the run-time FFTW binding, the pin protocol's SMT-sibling guard
+- `kfr_arm.c/.h`, `ref_fftw.h`, `bench_scope.h` -- the KFR arm, the run-time FFTW binding, the gauntlet's switches (`VFFT_BENCH_GUARD`, `VFFT_PCORE_MASK`) onto the library's measurement scope (`vfft.h`: the pin, the SMT-sibling guard, the priority, the machine's measurement lock)
 - five checks that are not benches (kept because the gauntlet cannot reach what they cover): `rn1_gate.c` and `r1c_gate.c`
   (the real mono and the real flat leaf at column counts the door never runs), `zttr_mt_check.c` and `zrf_mt_check.c`
   (threaded output bitwise against the serial plan), `real_door_check.c` (the real door in place, which the gauntlet refuses)

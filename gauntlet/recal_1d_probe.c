@@ -17,11 +17,9 @@
  *        (2026-09-23: the 2D interleaved cell, dims=2, the same door and store;
  *        its verdicts bank into wisdom2_2d.txt)
  * Build: python build.py --compile --vfft --src benches/recal_1d_probe.c
- *        (Linux, 2026-09-26: the Win32 clock and pin are behind _WIN32; the
- *        pin and the guard go through sibling_guard.h on both hosts) */
-#if !defined(_WIN32) && !defined(_GNU_SOURCE)
-#define _GNU_SOURCE 1   /* pthread_setaffinity_np (sibling_guard.h) */
-#endif
+ *        (the pin, the guard and the priority are the library's measurement
+ *        scope, vfft.h, on both hosts; bench_scope.h maps the gauntlet's
+ *        switches onto it) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +29,7 @@
 #include <time.h>
 #endif
 #include "vfft.h"
-#include "sibling_guard.h"   /* the bench's SMT-sibling guard: the door's races run in this process (2026-09-23) */
+#include "bench_scope.h"   /* the gauntlet's switches onto the library's measurement scope */
 static double now_ms(void)
 {
 #ifdef _WIN32
@@ -72,12 +70,13 @@ int main(int argc, char **argv)
     vfft_wisdom *W;
     vfft_config_t cfg; vfft_plan p;
     double t0, t1;
-    /* THE ONE-THREAD PROTOCOL, the same as the bench's (2026-09-20): core 2
-     * (mask 0x4) at HIGH priority. The create's races are measurements, and
-     * the library pins only when its thread pool is engaged, so an unpinned
-     * probe raced wherever the scheduler put it. The 2026-09-20 gauntlet's
-     * first 1100 cells ran that way; their recorded times matched pinned
-     * bench times within a few percent, so they stand -- but by luck. */
+    /* THE ONE-THREAD PROTOCOL, the same as the bench's: the library's
+     * measurement scope (vfft.h) entered for the process -- its measuring
+     * core (logical 2, mask 0x4, on this host), the SMT sibling held, the
+     * machine's measurement lock -- with the process at HIGH priority. The
+     * create's races are the measurements the verdicts come from; the create
+     * inside this scope adds nothing to it. VFFT_BENCH_PIN=0 lifts it: the
+     * races float, and their winners are not saved. */
     if (T > 1 && (!getenv("VFFT_BENCH_PIN") || atoi(getenv("VFFT_BENCH_PIN")) != 0))
     {   /* THE THREADED PROTOCOL (2026-09-25), the bench's: the process on the
          * P-cores, the caller on logical 0 (the core the pool reserves for
@@ -85,19 +84,13 @@ int main(int argc, char **argv)
          * every threaded arm of the create's races carried that handicap),
          * HIGH priority, no sibling guard, the pool sized before the create */
         bench_pin_pcores();
-        bench_pin_caller(0);   /* logical 0 at HIGH priority */
+        bench_scope(0, 1, VFFT_MEASURE_GUARD_OFF);
         vfft_set_num_threads(T);
     }
     else if (!getenv("VFFT_BENCH_PIN") || atoi(getenv("VFFT_BENCH_PIN")) != 0)
-    {
-        bench_pin_caller(2);   /* core 2 (mask 0x4) at HIGH priority */
-        /* and the SIBLING GUARD (2026-09-23): the create's races are the
-         * measurements the verdicts come from, and unguarded they ran in the
-         * same two-speed lottery the bench fixed on 2026-09-21 -- the second
-         * pow2 grid re-raced 256x64 and 128x128 onto column chains 25-30%
-         * slower than the first run's, with every arm of that race slow */
-        bench_guard_sibling(2);
-    }
+        bench_scope(-1, 1, bench_guard_mode());
+    else
+        bench_scope_lifted();
     W = vfft_wisdom_load(dir);
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = xform;

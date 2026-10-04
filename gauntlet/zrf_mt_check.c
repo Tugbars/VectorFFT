@@ -15,7 +15,7 @@
 #include "vfft.h"
 #include "common/support/race.h"
 #include "common/support/race_timing.h"
-#include "sibling_guard.h"
+#include "bench_scope.h"   /* the gauntlet's switches onto the library's measurement scope */
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -45,10 +45,7 @@ int main(int argc, char **argv)
     if (argc < 2) { fprintf(stderr, "usage: zrf_mt_check <scratch wisdom dir> [T]\n"); return 2; }
     const int T = argc > 2 ? atoi(argv[2]) : 8;
     bench_pin_pcores();
-#ifdef _WIN32
-    SetThreadAffinityMask(GetCurrentThread(), 0x1);
-    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-#endif
+    bench_scope(0, 1, VFFT_MEASURE_GUARD_OFF);   /* the threaded protocol: logical 0 at HIGH priority, the library's scope */
     vfft_set_num_threads(T);
     vfft_wisdom *W = vfft_wisdom_load(argv[1]);
     /* cell, chain/t/w<tile> */

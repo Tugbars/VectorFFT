@@ -123,8 +123,9 @@ and its threaded form on one row: the strips at 16 columns with the staged leaf.
 ## 5. The protocol that measures
 
 A process that races or times threaded arms confines itself to the eight performance cores
-(`bench_pin_pcores` in `gauntlet/sibling_guard.h`: mask 0x5555, `VFFT_PCORE_MASK`
-overriding, 0 = the unmasked control), pins the caller to logical 0 (the core the pool
+(`vfft_measure_confine`, `vfft.h`; the gauntlet's `bench_pin_pcores` in `gauntlet/bench_scope.h`:
+one logical CPU per P-core, mask 0x5555 on this host, `VFFT_PCORE_MASK` overriding, 0 = the
+unmasked control), pins the caller to logical 0 (the core the pool
 reserves for it; pinned to core 2 the caller shared a physical core with worker 1 and every
 barrier waited for the pair), raises its priority, and sizes the pool before the create. It
 warms every timed arm untimed first (the races: two passes; the bench: at least 5 ms), never
@@ -156,5 +157,5 @@ including 64x64.
 | the axis race at T and its bank | `_il2d_axis_race` (`il2d_tier.h`); the T verdict read `il2d_axmt` (`fft2d_create.h`) |
 | the threading race and its bank | `_il2d_c2c_mt_race` (`il2d_tier.h`); `vw2_2d_il_chain_bank`, `vw2_2d_il_tok_seti/geti` (`wisdom2_2d_reader.h`) |
 | the engagement counter | `vfft_il2d_col_mt_passes()` (`vfft.c`) |
-| the protocol | `gauntlet/sibling_guard.h`, `gauntlet/recal_1d_probe.c`, `gauntlet/bench_1d_vs_mkl.c`; the gates `il2d_*_gate`, `mt_c2c_gate` (`build_tuned/benches`) |
+| the protocol | the measurement scope (`vfft.h`; `src/core/common/support/race_scope.h`), `gauntlet/bench_scope.h`, `gauntlet/recal_1d_probe.c`, `gauntlet/bench_1d_vs_mkl.c`; the gates `il2d_*_gate`, `mt_c2c_gate` (`build_tuned/benches`) |
 | the records | `gauntlet/results/2d-pow2_mt8_2026-09-24` (the grid), `mt8_losers_2026-09-24`, `mt8_still*_2026-09-2[45]` (the losers re-raced) |
