@@ -12,6 +12,8 @@ math here — this is the floor the engine stands on.
 | `ref.h` | **declarations-only** vtable type for the benchmark **reference backends** (MKL / FFTW) + the reference-independent helpers: role/regime enums, `ref_shape_t`, `ref_caps_t`, the N-arm order-neutralising scheduler, `ref_race_check`, `ref_ratio`, `csv_for`. Implementations (`ref_mkl.h`, `ref_fftw.h`) live in `build_tuned/benches/` — they pull in `mkl_dfti.h` / bind `fftw3.dll`, which core must not |
 | `diag.h` | loud-refusal helpers `_vfft_warn` / `_vfft_tname` — a config-space mistake is refused with an actionable line on stderr, never a bare NULL |
 | `race_timing.h` | the racers' shared clock and median (`vfft_now_ns`, `_il_ab_med9`) — every A/B in the tree times through these, so the protocol is one place |
+| `race_scope.h` | **the race scope**: the conditions every measurement runs under — the machine-wide measurement lock, the pin to a P-core, the hyperthread-sibling guard (TPAUSE / MWAITX), the priority, and their restore. `vfft_create` enters it at its first clock read (this header redefines `vfft_now_ns` to touch it) and leaves it when it returns; the public `vfft_measure_*` calls (`vfft.h`, bodies in `core/vfft_measure.h`) put the same scope around a caller's own timing. Included by `vfft.c` only, before every header that reads the clock |
+| `cpu_topology.h` | which logical CPU is which: physical cores, hyperthread siblings, P-cores and E-cores, read from the OS once (`vfft_topology`, `vfft_topo_sibling`, `vfft_topo_pcore_cpu`) |
 
 ---
 

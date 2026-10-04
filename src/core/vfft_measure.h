@@ -64,7 +64,11 @@ unsigned long long vfft_measure_confine(unsigned long long mask)
         CPU_ZERO(&s);
         for (c = 0; c < 64; c++)
             if (mask & (1ull << c)) CPU_SET(c, &s);
-        return sched_setaffinity(0, sizeof s, &s) == 0 ? mask : 0;
+        if (sched_setaffinity(0, sizeof s, &s) != 0)
+            return 0;
+        _vfs_proc_set = s;              /* the set this process may run on, from now */
+        _vfs_proc_set_state = 1;
+        return mask;
     }
 #else
     return 0;

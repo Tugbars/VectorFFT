@@ -66,6 +66,10 @@
 #include <immintrin.h>
 #include <x86intrin.h>
 #include "common/support/threads.h"      /* the pool's size; windows.h / pthread.h */
+#if defined(_WIN32) && defined(_MSC_VER)
+#  pragma comment(lib, "advapi32")        /* the measurement lock's security descriptor: not among the
+                                           * MSVC-ABI toolchains' default libraries (ICX, clang-cl) */
+#endif
 #if defined(__linux__)
 #  include <sched.h>
 #  include <fcntl.h>
@@ -247,7 +251,7 @@ static void _vfs_guard_stop(void)
     g->live = 0;
 }
 
-static int _vfs_allowed(int c);   /* below, with the pin */
+static int _vfs_allowed(int c);   /* below, with the pin: the set this process may run on */
 
 /* hold the sibling of `core`; returns once the guard sits there. Nothing is
  * started without a sibling, without a wait instruction, or with the guard
@@ -406,9 +410,25 @@ static void _vfs_restore_affinity(void)
     if (_vfs.have_old_aff) pthread_setaffinity_np(pthread_self(), sizeof _vfs.old_aff, &_vfs.old_aff);
 #endif
 }
-/* may this thread run on logical CPU c (the set read before the pin: the
- * process's mask on Windows, the thread's own on Linux, where a cgroup or
- * taskset confines through it) */
+/* THE SET THIS PROCESS MAY RUN ON. Windows keeps one (the process affinity
+ * mask). Linux does not: a thread's own mask is all there is, a cgroup or
+ * taskset confines through it, and the library itself narrows the caller's
+ * (the pool pins it to logical CPU 0). So on Linux the set is read ONCE, from
+ * the first thread that reaches the library's pinning code, before anything is
+ * pinned (here and in vfft.c's two pool sites); vfft_measure_confine replaces
+ * it. */
+#if defined(__linux__)
+static cpu_set_t _vfs_proc_set;
+static int _vfs_proc_set_state;   /* 0 unread, 1 read, -1 unreadable */
+#endif
+static void _vfs_proc_set_read(void)
+{
+#if defined(__linux__)
+    if (_vfs_proc_set_state == 0)
+        _vfs_proc_set_state = (sched_getaffinity(0, sizeof _vfs_proc_set, &_vfs_proc_set) == 0) ? 1 : -1;
+#endif
+}
+/* may a thread of this process run on logical CPU c */
 static int _vfs_allowed(int c)
 {
 #if defined(_WIN32)
@@ -418,7 +438,8 @@ static int _vfs_allowed(int c)
     return (int)((pm >> c) & 1);
 #elif defined(__linux__)
     if (c < 0 || c >= CPU_SETSIZE) return 0;
-    return _vfs.have_old_aff ? (CPU_ISSET(c, &_vfs.old_aff) ? 1 : 0) : 1;
+    _vfs_proc_set_read();
+    return _vfs_proc_set_state == 1 ? (CPU_ISSET(c, &_vfs_proc_set) ? 1 : 0) : 1;
 #else
     (void)c;
     return 0;
@@ -535,6 +556,7 @@ static int _vfs_enter(void)
     _vfs.flags = 0;
     _vfs.pool_pinned = 0;
     _vfft_scope_count++;
+    _vfs_proc_set_read();
     _vfs.lock_state = _vfs_lock_take(wait_ms);
     if (_vfs.lock_state == 0)
     {
