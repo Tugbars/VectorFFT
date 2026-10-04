@@ -614,7 +614,8 @@ levels:
 
 The engine supplies the heat: it builds each chain, gates it against its own
 reference and races the ones that pass in one same-run race (min of 3 alternated
-rounds, paced). A heat holds at most 32 chains, fewer where their tables together
+rounds, paced, each sample after one untimed pass of its arm; the c2c planner's
+samples are the screening's, back-to-back executes on the same input). A heat holds at most 32 chains, fewer where their tables together
 would pass 512 MB. Each heat's best go on to race again until one heat stands: its
 top three where heats hold at least 12 chains, otherwise its winner. Kernel
 availability, run contracts and the existence of the inverse are validated by the
@@ -625,11 +626,25 @@ that cannot build or cannot invert is no arm, never patched.
 
 The planner's bench builds the candidate, runs the per-stage form race
 on the planner's own data and clock, writes the resulting token into the
-candidate, and times the forward transform. Every candidate is gated
-before timing against an independent reference: the mixed-radix scalar
-DIT in long double (`_il_dp_ref_dft_mixed`, O(N·Σp) — it shares no code,
-table or plan with the engines), itself spot-checked against direct
-sums. The tolerance is 10⁻¹² relative to the reference's scale.
+candidate, and times the forward transform; a 200 ms pause follows every
+bench. Every candidate is gated before timing against an independent
+reference: the mixed-radix scalar DIT in long double (`_il_dp_ref_dft_mixed`,
+O(N·Σp) — it shares no code, table or plan with the engines), itself
+spot-checked against direct sums. The tolerance is 10⁻¹² relative to the
+reference's scale.
+
+The bench times are taken one after another, each at its own moment of the
+machine's state, so they do not rank the candidates. The live candidates
+race in HEATS (`_il_dp_screen`, `il/planning/heats.h`): balanced groups of
+at most 32, fewer where their plans together would pass 512 MB, each one
+same-run race of 15 rounds whose arms alternate round by round, paced. A
+sample is the gauntlet's definition of speed: at least 8 and at least 2 ms of
+back-to-back executes on the same input, opened by one untimed execute of the
+arm (out of place the input is never rewritten; in place it is restored
+before each sample and every 32 executes). Every arm is rebuilt from its
+candidate and gated again before it races. Each heat's best three (its
+winner where heats hold fewer than 12) go on to the next round; the last
+heat's ranking orders the cell's candidates, and its times are their costs.
 
 ### 9.3 Banking and replay: one cell per order
 
