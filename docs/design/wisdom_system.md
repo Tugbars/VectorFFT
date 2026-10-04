@@ -88,21 +88,24 @@ src/wisdom/
 
 ## 5. The race scope
 
-One scope surrounds every race in the process. It is entered at the first clock read
-inside a create and left when the outermost `vfft_create` returns, so no race site can
-miss it and no exit path can leak it.
+One scope surrounds every race in the process (`common/support/race_scope.h`). It is
+entered at the first clock read inside a create and left when the outermost
+`vfft_create` returns, so no race site can miss it and no exit path can leak it.
 
 | part | rule |
 | --- | --- |
-| **measurement lock** | One lock for the machine, so two processes (or two threads) never race at once. A hit takes none. The wait is bounded (60 s by default); after it the race runs anyway and its winner is served, not saved. |
-| **pin** | The racing thread is pinned to the caller's own core in the library's layout: core 2 when the process has no workers, core 0 when it has (worker 1 spins on core 2, `common/support/threads.h:176`). The core must be allowed and must be a P-core; otherwise the next allowed P-core is taken. If no core can be pinned, the winner is served, not saved. |
-| **sibling guard** | A guard thread holds the pinned core's hyperthread sibling for the race, so the OS cannot park another thread there (today `gauntlet/sibling_guard.h`: 1.1-1.5x slower without it). |
+| **measurement lock** | One lock for the machine, so two processes (or two threads) never race at once: a named mutex on Windows, a locked file in `/tmp` on Linux, both released by the OS when the holder dies. A hit takes none. The wait is bounded (60 s by default); after it the race runs anyway and its winner is served, not saved. |
+| **pin** | The racing thread is pinned to the caller's own core in the library's layout: the second P-core (logical CPU 2 on a hyperthreaded part) when the process has no workers, logical CPU 0 when it has (worker 1 spins on the second P-core, `common/support/threads.h:176`). Only a P-core the process is allowed is taken; the others are walked in order. P-cores, E-cores and siblings are read from the OS (`common/support/cpu_topology.h`), on Intel and AMD alike. A thread that ends on no P-core races where it is, and the winner is served, not saved. |
+| **sibling guard** | A guard thread holds the pinned core's hyperthread sibling for the race, so the OS cannot park another thread there (1.1-1.5x slower without it). It waits with TPAUSE (Intel) or MWAITX (AMD), which cost the racing thread nothing; a part with neither races unguarded. No guard goes to a CPU outside the set the process is confined to. |
 | **priority** | The racing thread's priority is raised for the race. Best effort: where it cannot be raised (Linux without `CAP_SYS_NICE`), the winner is still saved. |
-| **restore** | Affinity and priority return to what they were, except that a caller pinned to core 0 by a pool created during this create stays there, as today. |
+| **restore** | The guard ends, and affinity and priority return to what they were, except that a caller pinned to logical CPU 0 by a pool created during this create stays there, as today. |
 
-- The same scope is public in `vfft.h` (names in §12), set up by one configuration call,
-  so the gauntlet and a user's own timing code run under the conditions the races ran
-  under. `gauntlet/sibling_guard.h` is deleted; the gauntlet calls the library.
+- The same scope is public in `vfft.h`: `vfft_measure_configure()` sets it up (pin,
+  guard, priority, the lock wait), `vfft_measure_begin()` and `vfft_measure_end()` put
+  it around a caller's own timing, `vfft_measure_confine()` confines a process to one
+  logical CPU per P-core for a threaded comparison, and `vfft_measure_describe()`
+  reports it. A create inside a caller's scope adds nothing to it. The gauntlet holds no
+  pin or guard code: `gauntlet/bench_scope.h` maps its switches onto these calls.
 - Not covered: the application's own threads on the race core, and other software's
   load. That is the user's responsibility.
 - Threaded plans keep today's layout: the caller on core 0, workers on cores 2, 4, ...
@@ -190,7 +193,7 @@ owner's review.
 | --- | --- | --- |
 | 1 (built) | keep the bank, save by default, the store lock and merge-own-rows save, the off switch, `vfft.h` text | per family: a cold cell is raced once, is on disk, and a second process replays it with 0 races, bitwise; a read-only directory serves from memory; two processes saving at once lose no row; a killed lock holder does not block |
 | 2 (built) | a row that does not build is empty (1D c2c doors); the order pick stops banking; zr2c's bias removed | rows naming a missing form, chain and tile each re-race and are replaced on disk |
-| 3 | the race scope in the library (lock, pin, guard, priority, restore), public in `vfft.h`; the gauntlet calls it and `sibling_guard.h` goes | affinity and priority equal before and after create at every door, races forced; a clock read during create outside the scope fails the check; two racing processes take turns; an unpinnable process serves and does not save |
+| 3 (built) | the race scope in the library (lock, pin, guard, priority, restore), public in `vfft.h`; the gauntlet calls it and `sibling_guard.h` goes | affinity and priority equal before and after create at every door, races forced; a clock read during create outside the scope fails the check; two racing processes take turns; an unpinnable process serves and does not save |
 | 4 | the CPU identity, per-CPU folders, `new/`, the 14900KF move, measured cache sizes; gauntlet and tool paths follow | this machine selects its folder; a forged identity selects `new/` and stamps it; a claimed `new/` leads to a created folder; the 14900KF's picks are unchanged by the measured sizes |
 | 5 | the build stamp and the report call | every new row carries the stamp; the report groups rows by build |
 | 6 | 2D and 3D children raced in role | a cold 2D and 3D create leaves the 1D files byte-identical; replay is bitwise with 0 races |
@@ -203,9 +206,10 @@ Until step 6 a 2D or 3D create still reads and writes 1D rows, as today.
   `CMakeLists.txt:28` says 2.0.0 and the results document is titled v1.0. The stamp
   uses `vfft_version()`.
 - **Names, proposed (the owner may change them):** folders `new/` and `14900KF/`; the
-  token `bld=`; the prefixes of §7; `VFFT_WISDOM_WRITE=0` (saving off) and
-  `VFFT_RACE_WAIT_MS` (the lock wait); `vfft_measure_configure()`,
-  `vfft_measure_begin()` and `vfft_measure_end()` for the race scope;
+  token `bld=`; the prefixes of §7; `VFFT_WISDOM_WRITE=0` (saving off);
+  `vfft_measure_configure()`, `vfft_measure_begin()`, `vfft_measure_end()`,
+  `vfft_measure_confine()` and `vfft_measure_describe()` for the race scope (the lock
+  wait is a field of its configuration, not an environment variable);
   `vfft_wisdom_report()` for the rows-by-build report.
 - **Not ruled:** threaded plans leave the caller pinned to core 0 permanently
   (`vfft.c:238-244`), documented only at `vfft_set_num_threads`.

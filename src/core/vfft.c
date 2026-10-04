@@ -241,6 +241,7 @@ static void _vfft_pool_arm(int n)
 {
     if (n > thread_pool_size())
     {
+        _vfs_proc_set_read(); /* Linux: the set this process may run on, before the caller's is narrowed */
         thread_pool_resize(n);
         vfft_pin_thread(0); /* pool pins workers 1..n-1; caller = 0 */
         _vfs_rehome(0);     /* inside a race scope: its guard follows, and this pin stays */
@@ -2309,6 +2310,7 @@ void vfft_wisdom_free(vfft_wisdom *w)
 /* ── global control ── */
 void vfft_set_num_threads(int n)
 {
+    _vfs_proc_set_read(); /* Linux: the set this process may run on, before the caller's is narrowed */
     thread_pool_resize(n);
     if (n > 1)
     {
