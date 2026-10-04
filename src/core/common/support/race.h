@@ -89,6 +89,11 @@ typedef struct
     int pace;                /* 1 = single-thread arms: VFFT_RACE_PACE_MS before the
                               * race + at least one untimed pass; 0 = threaded arms or
                               * unclassified: no pause (see VFFT_RACE_PACE_MS) */
+    int warm_each;           /* untimed passes of the arm before EACH timed sample
+                              * (after the reset): a heat of many arms evicts an
+                              * arm's tables between its samples, and a short
+                              * sample would time the cold start, not the warm
+                              * transform; 0 = none */
 } vfft_race_proto_t;
 
 /* median of n, sorting v in place; the middle element for odd n */
@@ -168,6 +173,8 @@ static int vfft_race_run(const vfft_race_proto_t *p, const vfft_race_arm_t *arms
             const int a = (p->alternate && (r & 1)) ? n - 1 - k : k;
             if (p->reset)
                 p->reset(p->reset_ctx);
+            for (int w = 0; w < p->warm_each; w++)
+                arms[a].run(arms[a].ctx);
             const double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
                 arms[a].run(arms[a].ctx);

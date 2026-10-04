@@ -1221,6 +1221,8 @@ static void _il_dp_push(vfft_il_cand_sink_t *s, const vfft_il_cand_t *c)
 #error "chain_search.h's VFFT_CHAIN_MAX_K must be the flat DIT's VFFT_ILFD_MAX_K"
 #endif
 #define VFFT_IL_DP_FLAT_HEAT_BYTES ((size_t)512 << 20)
+#define VFFT_IL_DP_FLAT_SAMPLE_NS  2.0e6   /* the gauntlet's sample, as the screening's heats */
+#define VFFT_IL_DP_FLAT_MIN_REPS   8
 static const int _il_dp_flat_pool[] = { 9, 7, 5, 3, 25, 27, 21, 23, 19, 17, 15, 13, 11, 8, 4, 16, 29, 31, 37, 41, 43, 47 };
 
 static void _il_dp_flat_cand(vfft_il_cand_t *c, const vfft_chain_t *f, int scr)
@@ -1240,13 +1242,15 @@ static void _il_dp_flat_arm_run(void *v)
     (void)_il_dp_exec_dir(a->ctx, &a->c, &a->b, 0);
 }
 static void _il_dp_flat_reset(void *v)
-{   /* the pristine input before every sample: an in-place arm walks its own output */
+{   /* the pristine input (in place: before every sample, the arm walks its own output) */
     const _il_dp_flat_hctx_t *h = (const _il_dp_flat_hctx_t *)v;
     memcpy(h->ctx->z_in, h->ctx->z_orig, (size_t)h->N * 2u * sizeof(double));
 }
 /* THE HEAT: the chains f[idx[0..n)] built, gated against the cell's
  * reference and raced on the planner's planes (min of 3 alternated rounds,
- * paced: one-thread arms); ns[k] per entry, 1e18 = refused or wrong. `fix`:
+ * paced: one-thread arms; a sample is the screening's, the gauntlet's:
+ * back-to-back executes on the same input); ns[k] per entry, 1e18 = refused
+ * or wrong. `fix`:
  * an order that does not build gives way to the set's next one that does
  * (the set keeps the order raced). */
 static void _il_dp_flat_heat(void *hv, vfft_chain_t *f, const int *idx, int n, int fix, double *ns)
@@ -1289,11 +1293,13 @@ static void _il_dp_flat_heat(void *hv, vfft_chain_t *f, const int *idx, int n, i
     t0 = vfft_now_ns();
     _il_dp_flat_arm_run(&arm[0]);
     est = vfft_now_ns() - t0;
-    reps = (int)(2.0e5 / (est > 1.0 ? est : 1.0));
-    if (reps < 1) reps = 1;
-    if (reps > (ctx->inplace ? 32 : 1024)) reps = ctx->inplace ? 32 : 1024;   /* in place: the data grows per pass */
+    reps = (int)(VFFT_IL_DP_FLAT_SAMPLE_NS / (est > 1.0 ? est : 1.0));
+    if (reps < VFFT_IL_DP_FLAT_MIN_REPS) reps = VFFT_IL_DP_FLAT_MIN_REPS;
+    if (reps > (1 << 20)) reps = 1 << 20;
+    if (ctx->inplace && reps > 32) reps = 32;   /* in place: the data grows per pass, restored per sample */
+    _il_dp_flat_reset(hc);   /* the input, once (out of place it stays) */
     {
-        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 1, _il_dp_flat_reset, hc, 1, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS); each sample warm */
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 1, ctx->inplace ? _il_dp_flat_reset : NULL, hc, 1, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS); each sample warm */
         vfft_race_run(&proto, ra, na, rns);
     }
     for (k = 0; k < na; k++)
@@ -1781,10 +1787,20 @@ static int _il_dp_cand_cmp(const void *a, const void *b)
  * rank the candidates: the live ones race in HEATS (heats.h) -- balanced
  * groups of at most VFFT_IL_DP_HEAT, each one same-run race whose arms
  * alternate round by round, VFFT_IL_DP_HEAT_ROUNDS rounds, paced (one-thread
- * arms), each sample after one untimed pass of its arm (warm_each: the heat's
- * other arms evict its tables between its samples) -- each heat's best on to
- * the next round, and the last heat's
- * ranking orders the cell's candidates. Each arm is rebuilt from its
+ * arms) -- each heat's best on to the next round, and the last heat's
+ * ranking orders the cell's candidates.
+ *
+ * A SAMPLE IS THE GAUNTLET'S (owner, 2026-10-04): back-to-back executes on
+ * the same input, at least VFFT_IL_DP_HEAT_MIN_REPS of them and at least
+ * VFFT_IL_DP_HEAT_SAMPLE_NS at the fastest arm's bench time -- the speed the
+ * gauntlet publishes against MKL, and steady repeated use. One untimed
+ * execute of the arm opens each sample (warm_each: the heat's other arms
+ * evict its tables between its samples). Out of place the input is set once
+ * and never rewritten; in place the arm walks its own output, so the input is
+ * restored before each sample and every 32 executes inside it, as the bench
+ * does. (A sample of ONE execute after a fresh input copy ranked the
+ * four-step ahead of ZTURN-T at 262144 by 1-7% while the gauntlet measured
+ * it 3% behind: a different definition of fast, not noise.) Each arm is rebuilt from its
  * candidate (the forms and tile its bench raced ride in it) and gated again
  * before it races. A heat's plans together stay under
  * VFFT_IL_DP_HEAT_BYTES. */
@@ -1792,6 +1808,8 @@ static int _il_dp_cand_cmp(const void *a, const void *b)
 #define VFFT_IL_DP_HEAT_ROUNDS 15
 #define VFFT_IL_DP_HEAT_BYTES  ((size_t)512 << 20)
 #define VFFT_IL_DP_HEAT_PLAN_B 256u   /* a plan's bytes per point, estimated (tables, planes, a 2D child) */
+#define VFFT_IL_DP_HEAT_SAMPLE_NS 2.0e6   /* a sample, at least (ns at the fastest arm) ... */
+#define VFFT_IL_DP_HEAT_MIN_REPS  8       /* ... and at least this many executes (the gauntlet's reps floor) */
 
 typedef struct
 {
@@ -1801,7 +1819,26 @@ typedef struct
     int N, bwd;
     unsigned calls;
 } _il_dp_heat_arm_t;
-typedef struct { vfft_il_dp_context_t *ctx; int N; vfft_il_cand_t *cand; } _il_dp_heat_ctx_t;
+typedef struct { vfft_il_dp_context_t *ctx; int N, ord, verbose, nheat; vfft_il_cand_t *cand; } _il_dp_heat_ctx_t;
+/* a candidate's identity for the log: route, chain or split, tile */
+static void _il_dp_cand_str(const vfft_il_cand_t *c, char *s, size_t sz)
+{
+    int off = 0, i;
+    const char *r = c->route == VFFT_K1_IL_ZTT ? "ztt" : c->route == VFFT_K1_IL_FS ? "fs" : c->route == VFFT_K1_IL_FLAT ? "flat"
+                  : c->route == VFFT_K1_IL_PRIME ? "prime" : c->route == VFFT_K1_IL_CHAIN3 ? "chain3"
+                  : c->route == VFFT_K1_IL_2P_PURE ? "pair" : c->route == VFFT_K1_IL_MONO ? "mono" : "?";
+    off += snprintf(s + off, sz - (size_t)off, "%s", r);
+    if (c->route == VFFT_K1_IL_FLAT)
+        for (i = 0; i < c->il_fl_n && off < (int)sz - 8; i++) off += snprintf(s + off, sz - (size_t)off, "%c%d", i ? '.' : ' ', c->il_fl[i]);
+    else if (c->il_zt_n)
+        for (i = 0; i < c->il_zt_n && off < (int)sz - 8; i++) off += snprintf(s + off, sz - (size_t)off, "%c%d", i ? '.' : ' ', c->il_zt[i]);
+    else if (c->R1 || c->R2)
+        off += snprintf(s + off, sz - (size_t)off, " %dx%d", c->R1, c->R2);
+    if (c->route == VFFT_K1_IL_FS && c->il_kv)
+        off += snprintf(s + off, sz - (size_t)off, " form%d", c->il_kv);
+    if (c->il_tw > 0 && off < (int)sz - 8)
+        snprintf(s + off, sz - (size_t)off, " w%d", c->il_tw);
+}
 static void _il_dp_heat_arm_run(void *v)
 {
     _il_dp_heat_arm_t *a = (_il_dp_heat_arm_t *)v;
@@ -1812,7 +1849,7 @@ static void _il_dp_heat_arm_run(void *v)
     (void)_il_dp_exec_dir(a->ctx, a->c, &a->b, a->bwd);
 }
 static void _il_dp_heat_reset(void *v)
-{   /* the pristine input before every sample */
+{   /* the pristine input before every sample (in place: the arm walks its own output) */
     const _il_dp_heat_ctx_t *h = (const _il_dp_heat_ctx_t *)v;
     memcpy(h->ctx->z_in, h->ctx->z_orig, (size_t)h->N * 2u * sizeof(double));
 }
@@ -1845,17 +1882,30 @@ static void _il_dp_heat(void *hv, const int *idx, int n, double *ns)
         na++;
     }
     if (na == 0) return;
-    /* a sample ~0.2 ms at the fastest arm's bench time */
-    reps = (int)(2.0e5 / (fast > 1.0 && fast < 1e17 ? fast : 2.0e5));
-    if (reps < 1) reps = 1;
+    /* the gauntlet's sample: >= VFFT_IL_DP_HEAT_SAMPLE_NS and >= VFFT_IL_DP_HEAT_MIN_REPS
+     * back-to-back executes at the fastest arm's bench time */
+    reps = (int)(VFFT_IL_DP_HEAT_SAMPLE_NS / (fast > 1.0 && fast < 1e17 ? fast : VFFT_IL_DP_HEAT_SAMPLE_NS));
+    if (reps < VFFT_IL_DP_HEAT_MIN_REPS) reps = VFFT_IL_DP_HEAT_MIN_REPS;
     if (reps > (1 << 20)) reps = 1 << 20;
+    memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));   /* the input, once (out of place it stays) */
     {
-        const vfft_race_proto_t proto = { VFFT_IL_DP_HEAT_ROUNDS, reps, VFFT_RACE_MIN, 1, 1, _il_dp_heat_reset, h, 1, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS); each sample warm */
+        const vfft_race_proto_t proto = { VFFT_IL_DP_HEAT_ROUNDS, reps, VFFT_RACE_MIN, 1, 1,
+                                          ctx->inplace ? _il_dp_heat_reset : NULL, h, 1, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS); each sample warm */
         vfft_race_run(&proto, ra, na, rns);
     }
+    h->nheat++;
+    if (h->verbose)
+        fprintf(stderr, "  [il-dp] N=%d ord=%d heat %d: %d arm(s), %d round(s), reps %d\n", N, h->ord, h->nheat, na,
+                VFFT_IL_DP_HEAT_ROUNDS, reps);
     for (k = 0; k < na; k++)
     {
         ns[map[k]] = rns[k];
+        if (h->verbose)
+        {
+            char cs[96];
+            _il_dp_cand_str(arm[k].c, cs, sizeof cs);
+            fprintf(stderr, "  [il-dp]     %-36s bench %10.1f  heat %10.1f ns\n", cs, arm[k].c->cost_ns, rns[k]);
+        }
         _il_dp_free(&arm[k].b);
     }
 }
@@ -1881,7 +1931,7 @@ static int _il_dp_screen(vfft_il_dp_context_t *ctx, int N, int ord, vfft_il_cand
     cap = (int)(VFFT_IL_DP_HEAT_BYTES / (per ? per : 1));
     if (cap > VFFT_IL_DP_HEAT) cap = VFFT_IL_DP_HEAT;
     if (cap < 2) cap = 2;
-    hc.ctx = ctx; hc.N = N; hc.cand = cand;
+    hc.ctx = ctx; hc.N = N; hc.ord = ord; hc.verbose = verbose; hc.nheat = 0; hc.cand = cand;
     nt = nl >= 2 ? vfft_heats_run(_il_dp_heat, &hc, idx, nl, cap, VFFT_IL_DP_HEAT, cap >= 12 ? 3 : 1, top, tns, &heats) : 0;
     k = 0;
     for (i = 0; i < nt; i++)
