@@ -2146,6 +2146,16 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
  *
  * Returns the number of verdicts banked; the caller owns opening/saving the
  * store. */
+/* a FOUR-STEP verdict's child onto its row (k1_fourstep.h): the race's
+ * private store holds it (_k1fs_ctx.W); a row left without it is stale and
+ * its cell races again at its next create */
+static void _il_dp_bank_fs_child(vw2_store_t *st, int N, int scr, int inplace, const vfft_il_cand_t *c)
+{
+    const vw2_rec_t *r = vw2__oop_k1_scan_pl(st, N, VW2_LAY_IL, scr, inplace ? VW2_PL_IP : VW2_PL_OOP, 1);
+    if (!r || !_k1fs_ctx.W || _k1fs_row_put_child(st, r, _k1fs_ctx.W, c->R1, c->R2, inplace, 1) != VW2_OK)
+        fprintf(stderr, "vfft: the four-step's child at N=%d (%dx%d, %s) NOT banked on its row -- the cell will re-race\n",
+                N, c->R1, c->R2, scr ? "scr" : "nat");
+}
 static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
                                   const vfft_il_cand_t *nat,
                                   const vfft_il_cand_t *scr)
@@ -2204,6 +2214,8 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
                     off += snprintf(cb + off, sizeof cb - (size_t)off, "%s%d", k ? "." : "", nat->il_zt[k]);
                 if (r) vw2_update_field(st, &r->key, "il_sb", cb);
             }
+            if (nat->route == VFFT_K1_IL_FS)
+                _il_dp_bank_fs_child(st, N, 0, inplace, nat);
         }
         /* The dir=bwd SIBLING: its OWN cell (keyed dir=bwd) carrying ONLY
          * interleaved payload (vw2_oop_rec_k1_bwd is IL-only), so nothing
@@ -2277,7 +2289,11 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
         e.ord_scr = 1;
         e.ns = scr->cost_ns;
         if (vw2_oop_bank_k1_il(st, &e) == VW2_OK)
+        {
             lines++;
+            if (scr->route == VFFT_K1_IL_FS)
+                _il_dp_bank_fs_child(st, N, 1, inplace, scr);
+        }
     }
     return lines;
 }

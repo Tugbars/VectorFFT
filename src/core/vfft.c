@@ -1603,8 +1603,8 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
                 TC_NEQ("flat DIT stages");
     }
     if (a->k1fs)
-    {   /* the four-step: the same split and order class (the child's own
-         * verdicts are the rank-2 cell's, banked, so equal here) */
+    {   /* the four-step: the same split and order class (the child replays
+         * from the same row's fs_ tokens, so equal here) */
         const vfft_k1fs_plan_t *x = a->k1fs, *y = b->k1fs;
         if (!y || x->N != y->N || x->N1 != y->N1 || x->N2 != y->N2 || x->scr != y->scr)
             TC_NEQ("four-step plan");

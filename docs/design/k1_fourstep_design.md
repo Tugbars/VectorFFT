@@ -117,10 +117,17 @@ cell by 12% (6.46 against 7.31 ms) and loses the serial one.
 
 The 1D cell (N, il, order, placement) races its SPLITS: every (N1, N2) with
 N1·N2 = N and both in {256, 512, 1024, 2048, 4096} — at most five arms per
-cell — each arm a 2D child on its own rank-2 cell (N1×N2, lay=il, ord=scr,
-in place), whose column chain, band width, row route and threading are that
-cell's own raced verdicts, banked on its own rows (one 2D cell serves both
-1D classes). At 262144 the standing ZTURN-T plan is an arm of the same race
+cell — each arm a 2D child at N1×N2 (lay=il, ord=scr) with its row plan at
+N2. THE CHILD IS THE FOUR-STEP'S OWN (owner, 2026-10-04): the race's
+four-step candidates build their children on one PRIVATE store (in memory,
+never persisted), where the 2D child's column chain, band width, row route
+and threading and the row plan's verdict are raced; the winner's child rides
+on the 1D row in its rows' words -- `fs_*` (the 2D row), `fs_row_*` (the
+row plan's), `fs_row_bwd_*` (its backward forms) -- and a replay seeds a
+private store from those tokens alone. No four-step reads or writes a 2D row
+or a K=1 row at N2; a four-step row without its child is stale and its cell
+races. The 2D child's tokens are keyed out of place for both placements (the
+rank-2 rows' key). At 262144 the standing ZTURN-T plan is an arm of the same race
 in the NATURAL cell only: the scrambled pow2 cell to ZTURN-T's ceiling is
 the plain ZTURN-T's alone (design_contracts.md 8b, the ztt gate's law —
 enforced 2026-09-16 after a race under load banked a four-step split

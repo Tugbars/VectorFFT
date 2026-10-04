@@ -78,7 +78,8 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
     if (cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
         !W->vw2_off_oop &&
         (cfg->recalibrate || !ki || !ki->il_kv_raced ||   /* a pair-only row (forms unraced) plans too */
-         (ki->k1_il_route == VFFT_K1_IL_PRIME && !vfft_policy_prime_cell(N))))   /* a prime verdict where a chain carries N: stale, the chains race */
+         (ki->k1_il_route == VFFT_K1_IL_PRIME && !vfft_policy_prime_cell(N)) ||   /* a prime verdict where a chain carries N: stale, the chains race */
+         _k1fs_row_stale(W, N, scr_req, 0, _vfft_plan_threads(cfg), ki)))   /* a four-step verdict without its child: stale */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)
         {
@@ -258,22 +259,14 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
     }
     if (ilr == VFFT_K1_IL_ZTT && !ztt)
         ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
-    /* the FOUR-STEP (route 10): a banked split (il_pair =
-     * N1.N2) replays through the create — the 2D child out of place at
-     * the plan's thread count, the order class the row's */
+    /* the FOUR-STEP (route 10): a banked split replays with its child from
+     * the row (_k1fs_replay, k1_commit.h) -- out of place at the plan's
+     * thread count, the order class the row's */
     vfft_k1fs_plan_t *fs = NULL;
     if (ilr == VFFT_K1_IL_FS && !il2p && !il3p && !ilfd && !ztt && !getenv("VFFT_NO_IL2P") &&
         cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_R1 > 0 && ki->il_R2 > 0 &&
         (long)ki->il_R1 * (long)ki->il_R2 == (long)N)
-    {
-        int pn1 = ki->il_R1, pn2 = ki->il_R2, sbc[8], sbn = 0, form = 0;
-        const int pinned = _k1fs_pin(N, &pn1, &pn2);
-        if (!scr_req) sbn = _k1fs_row_sb(W, N, ki->il_kv, sbc, &form);
-        fs = vfft_k1fs_create(N, pn1, pn2, scr_req, W, cfg, 0, _vfft_plan_threads(cfg), form, sbc, sbn);
-        if (fs && getenv("VFFT_NAT_LOG"))
-            fprintf(stderr, "[k1fs] N=%d: replay FOUR-STEP %dx%d form=%d src=%s (oop)\n", N, fs->N1, fs->N2,
-                    fs->form, pinned ? "pin" : "wisdom");
-    }
+        fs = _k1fs_replay(W, cfg, N, scr_req, 0, ki);
     if (ilr == VFFT_K1_IL_FS && !fs)
         ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
     /* PRIME N (route 7): Rader/Bluestein on the IL machinery

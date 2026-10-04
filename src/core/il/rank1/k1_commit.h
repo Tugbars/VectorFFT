@@ -546,6 +546,8 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
 {
     vfft_il_cand_t top;
     int lines;
+    struct vfft_wisdom_s *fsS;   /* the four-step candidates' children race into it (k1_fourstep.h) */
+    vfft_config_t fscfg;
     /* WISDOM OR RACE, never a fallback: a request names (N, layout, order,
      * placement); the door looks that cell up and on a miss RACES the
      * interleaved planner's pool, banks the winner and serves it. Which N
@@ -561,10 +563,20 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
      * 2D children whose row plans come back through this door — a nested
      * race would corrupt the outer one, so (a) the row cells are warmed
      * BEFORE the race (created and destroyed once: a cold one races and
-     * banks its own row) and (b) a nested call refuses */
+     * banks its own row) and (b) a nested call refuses. THE CHILD'S OWN
+     * STORE (k1_fourstep.h): the row cells and every four-step candidate's
+     * 2D child race into the race's PRIVATE store, never the caller's; the
+     * winner's child is banked on its K=1 row (vfft_il_dp_emit_wisdom). */
     if (_k1_il_dp_busy)
         return 0;
-    _k1_il_fs_warm(W, cfg, N);
+    fsS = _k1fs_store_new();
+    if (!fsS)
+        return 0;
+    fscfg = *cfg;
+    fscfg.wisdom = (vfft_wisdom *)fsS;
+    fscfg.wisdom_write = 0;
+    fscfg.recalibrate = 0;
+    _k1_il_fs_warm(fsS, &fscfg, N);
     /* the PRIME arm: the prime cell built ONCE here -- a cold
      * cell races its inner pool and banks the prime shard's row -- and lent
      * to the race through _k1pr_ctx (dp_planner_il.h), at the lengths the
@@ -578,8 +590,8 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
         _k1pr_ctx.plan = _ilprime_create_banked(W, cfg, N, NULL);
         _k1pr_ctx.N = _k1pr_ctx.plan ? N : 0;
     }
-    _k1fs_ctx.W = W;
-    _k1fs_ctx.cfg = cfg;
+    _k1fs_ctx.W = fsS;
+    _k1fs_ctx.cfg = &fscfg;
     if (!_k1_il_dp_ctx_ready)
     {
         vfft_il_dp_init(&_k1_il_dp_ctx, VFFT_K1_IL_PLAN_MAX_N);
@@ -604,6 +616,9 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
                                      cfg->placement == VFFT_INPLACE,   /* the cell's placement */
                                      getenv("VFFT_IL_DP_VERBOSE") != NULL);
     _k1_il_dp_busy = 0;
+    _k1fs_ctx.W = NULL;
+    _k1fs_ctx.cfg = NULL;
+    vfft_wisdom_free((vfft_wisdom *)fsS);
     if (lines > 0)
         _vw2_persist(W, cfg);
     if (_k1pr_ctx.plan)
@@ -626,6 +641,9 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     return lines;
 }
 
+static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N, int scr, int ip,
+                                      const vfft_oop_il_entry_t *ke);
+static int _k1fs_row_stale(struct vfft_wisdom_s *W, int N, int scr, int ip, int T, const vfft_oop_il_entry_t *ke);
 /* ── the K=1 IL-engine candidate: the request's cell (order x placement),
  * raced and banked on a miss, resolved to exactly one plan — the banked
  * route's (prime / chain3 / flat / ZTURN-T / four-step / pair), else the
@@ -688,7 +706,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
      * PLAIN ZTURN-T schedule, banked on the ord=scr row like every other cell. */
     if (!W->vw2_off_oop &&
         (cfg->recalibrate || !ke || !ke->il_kv_raced ||   /* a pair-only row (forms unraced) plans too */
-         (ke->k1_il_route == VFFT_K1_IL_PRIME && !vfft_policy_prime_cell(N))))   /* a prime verdict where a chain carries N: stale, the chains race */
+         (ke->k1_il_route == VFFT_K1_IL_PRIME && !vfft_policy_prime_cell(N)) ||   /* a prime verdict where a chain carries N: stale, the chains race */
+         _k1fs_row_stale(W, N, scr_req, ip_req, T, ke)))   /* a four-step verdict without its child: stale */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)
         {
@@ -810,24 +829,16 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             return;
         }
     }
-    /* the FOUR-STEP (route 10): a banked verdict replays its split
-     * (il_pair = N1.N2) through the create — the 2D child at the request's
-     * placement and thread count, the order class the row's */
+    /* the FOUR-STEP (route 10): a banked verdict replays its split with its
+     * child from the row (_k1fs_replay) -- the request's placement and
+     * thread count, the order class the row's */
     if (ke && ke->k1_il_route == VFFT_K1_IL_FS && fs_out && ke->il_R1 > 0 && ke->il_R2 > 0 &&
         (long)ke->il_R1 * (long)ke->il_R2 == (long)N)
     {
-        int pn1 = ke->il_R1, pn2 = ke->il_R2, sbc[8], sbn = 0, form = 0;
-        const int pinned = _k1fs_pin(N, &pn1, &pn2);
-        vfft_k1fs_plan_t *fp;
-        if (!scr_req) sbn = _k1fs_row_sb(W, N, ke->il_kv, sbc, &form);
-        fp = vfft_k1fs_create(N, pn1, pn2, scr_req, W, cfg,
-                              cfg->placement == VFFT_INPLACE, _vfft_plan_threads(cfg), form, sbc, sbn);
+        vfft_k1fs_plan_t *fp = _k1fs_replay(W, cfg, N, scr_req, ip_req, ke);
         if (fp)
         {
             *fs_out = fp;
-            if (getenv("VFFT_NAT_LOG"))
-                fprintf(stderr, "[k1fs] N=%d: replay FOUR-STEP %dx%d form=%d src=%s (%s)\n", N, fp->N1, fp->N2,
-                        fp->form, pinned ? "pin" : "wisdom", cfg->placement == VFFT_INPLACE ? "ip" : "oop");
             return;
         }
     }
@@ -1214,6 +1225,55 @@ static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int il_kv, int *chain, i
     }
     return 0;
 }
+/* THE BANKED FOUR-STEP (owner, 2026-10-04: its child on its own row,
+ * k1_fourstep.h). The request's row (order, placement, thread count) names
+ * the split -- il_mt where a threaded row's split race banked one, il_pair
+ * otherwise -- and carries the child (fs_ tokens) the build replays from a
+ * private store. A row without its child (a threaded row before its split
+ * race; a pinned split) builds on an empty private store: the child races
+ * into it. A banked child that did not replay is said loudly; the plan is
+ * still the row's split. NULL = the split does not build. */
+static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N, int scr, int ip,
+                                      const vfft_oop_il_entry_t *ke)
+{
+    const int T = _vfft_plan_threads(cfg);
+    const vw2_rec_t *r = (W && !W->vw2_off_oop)
+                             ? vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, scr, ip ? VW2_PL_IP : VW2_PL_OOP, T)
+                             : NULL;
+    int pn1 = ke->il_R1, pn2 = ke->il_R2, sbc[8], sbn = 0, form = 0, grew = 0;
+    const int pinned = _k1fs_pin(N, &pn1, &pn2);
+    const int child = !pinned && _k1fs_row_has_child(r);
+    vfft_k1fs_plan_t *fp;
+    if (!pinned && T > 1 && child && vw2_rec_get(r, "il_mt"))
+    {   /* the threaded row's own split and form: its split race's verdict, the child its own */
+        const int v = vw2__oop_geti(r, "il_mt", 0);
+        const char *sv = vw2_rec_get(r, "il_mtsb");
+        if (v >= 4 && N % v == 0) { pn1 = v; pn2 = N / v; }
+        if (sv && strcmp(sv, "0") != 0)
+        {
+            sbn = _k1fs_parse_chain(sv, sbc);
+            form = sbn >= 2;
+            if (!form) sbn = 0;
+        }
+    }
+    else if (!scr)
+        sbn = _k1fs_row_sb(W, N, ke->il_kv, sbc, &form);
+    fp = _k1fs_build_own(N, pn1, pn2, scr, cfg, ip, T, form, sbc, sbn, child ? r : NULL, &grew);
+    if (fp && grew)
+        fprintf(stderr, "vfft: the four-step's banked child at N=%d (%dx%d) did not replay -- it raced in the plan's "
+                        "private store (the row's fs_ tokens are incomplete)\n", N, pn1, pn2);
+    if (fp && getenv("VFFT_NAT_LOG"))
+        fprintf(stderr, "[k1fs] N=%d: replay FOUR-STEP %dx%d form=%d src=%s (%s, T=%d)\n", N, fp->N1, fp->N2, fp->form,
+                pinned ? "pin" : child ? "wisdom" : "wisdom, child raced", ip ? "ip" : "oop", T);
+    return fp;
+}
+/* a one-thread FOUR-STEP row without its child is stale: the cell races (a
+ * threaded row's child is its split race's, _k1fs_mt_replay_or_race) */
+static int _k1fs_row_stale(struct vfft_wisdom_s *W, int N, int scr, int ip, int T, const vfft_oop_il_entry_t *ke)
+{
+    return ke && ke->k1_il_route == VFFT_K1_IL_FS && T == 1 && W && !W->vw2_off_oop &&
+           !_k1fs_row_has_child(vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, scr, ip ? VW2_PL_IP : VW2_PL_OOP, 1));
+}
 static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
                                     struct vfft_wisdom_s *W,
                                     const vfft_config_t *cfg, int N)
@@ -1231,7 +1291,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, p->scr,
                                 h->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP, T);   /* the plan's own row (v1.3) */
     ns = vfft_k1fs_splits(N, n1, n2, 8);
-    if (r && !cfg->recalibrate && vw2_rec_get(r, tok_v))
+    if (r && !cfg->recalibrate && vw2_rec_get(r, tok_v) && _k1fs_row_has_child(r))   /* the verdict AND its child at T */
     {
         const int v = vw2__oop_geti(r, tok_v, 0);
         const char *sv = vw2_rec_get(r, tok_s);
@@ -1242,7 +1302,11 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         _k1fs_chain_str(p, cur, sizeof cur);
         if (i < ns && (v != p->N1 || form != p->form || (form && strcmp(sv, cur) != 0)))
         {
-            vfft_k1fs_plan_t *q = vfft_k1fs_create(N, n1[i], n2[i], p->scr, W, cfg, ip, T, form, ch, cn);
+            int grew = 0;
+            vfft_k1fs_plan_t *q = _k1fs_build_own(N, n1[i], n2[i], p->scr, cfg, ip, T, form, ch, cn, r, &grew);
+            if (q && grew)
+                fprintf(stderr, "vfft: the four-step's banked child at N=%d T=%d (%dx%d) did not replay -- it raced in "
+                                "the plan's private store\n", N, T, n1[i], n2[i]);
             if (q) { vfft_k1fs_destroy(p); h->k1fs = p = q; }
         }
         if (getenv("VFFT_NAT_LOG"))
@@ -1254,10 +1318,14 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         return;
     }
     {   /* the race: every split (x form x chain for the natural class) at T
-         * on 64-B aligned scratch, the plan's placement */
+         * on 64-B aligned scratch, the plan's placement; the candidates'
+         * children race into ONE private store (a copy of the plan's own,
+         * k1_fourstep.h) that the winner keeps */
         const size_t nb = (size_t)2 * N * sizeof(double);
         double *zi = (double *)vfft_aligned_alloc(nb);
         double *zo = (double *)vfft_aligned_alloc(nb);
+        struct vfft_wisdom_s *mS = p->own ? _k1fs_store_dup(p->own) : _k1fs_store_new();
+        vfft_config_t mcfg = *cfg;
         vfft_k1fs_plan_t *cand[VFFT_RACE_MAX_ARMS];
         _k1fs_mt_ctx_t cx[VFFT_RACE_MAX_ARMS];
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
@@ -1266,7 +1334,15 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         _k1fs_mt_rst_t rs;
         int na = 0, best = 0, reps, a;
         size_t k;
-        if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); return; }
+        if (!zi || !zo || !mS)
+        {
+            vfft_aligned_free(zi); vfft_aligned_free(zo);
+            vfft_wisdom_free((vfft_wisdom *)mS);
+            return;
+        }
+        mcfg.wisdom = (vfft_wisdom *)mS;
+        mcfg.wisdom_write = 0;
+        mcfg.recalibrate = 0;
         for (k = 0; k < 2 * (size_t)N; k++) zi[k] = 1.0 + 1e-6 * (double)(k & 1023);
         _vfft_pool_arm(T);
         for (i = 0; i < ns && na < VFFT_RACE_MAX_ARMS; i++)
@@ -1274,7 +1350,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
             int ch[24][8], cl[24], nch = 0, c;
             /* form 0 (the current plan when it is this split and form) */
             cand[na] = (n1[i] == p->N1 && p->form == 0) ? p
-                     : vfft_k1fs_create(N, n1[i], n2[i], p->scr, W, cfg, ip, T, 0, NULL, 0);
+                     : vfft_k1fs_create(N, n1[i], n2[i], p->scr, mS, &mcfg, ip, T, 0, NULL, 0);
             if (cand[na])
             {
                 cx[na].p = cand[na]; cx[na].zi = zi; cx[na].zo = zo; cx[na].ip = ip;
@@ -1292,7 +1368,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
                     off += snprintf(cs + off, sizeof cs - (size_t)off, "%s%d", q ? "." : "", ch[c][q]);
                 if (n1[i] == p->N1 && p->form == 1 && p->sbnst == cl[c] && memcmp(p->sbR, ch[c], (size_t)cl[c] * sizeof(int)) == 0)
                     same = 1;
-                cand[na] = same ? p : vfft_k1fs_create(N, n1[i], n2[i], 0, W, cfg, ip, T, 1, ch[c], cl[c]);
+                cand[na] = same ? p : vfft_k1fs_create(N, n1[i], n2[i], 0, mS, &mcfg, ip, T, 1, ch[c], cl[c]);
                 if (!cand[na]) continue;
                 cx[na].p = cand[na]; cx[na].zi = zi; cx[na].zo = zo; cx[na].ip = ip;
                 snprintf(names[na], sizeof names[na], "%dx%d/%s", n1[i], n2[i], cs);
@@ -1300,7 +1376,12 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
                 na++;
             }
         }
-        if (na == 0) { vfft_aligned_free(zi); vfft_aligned_free(zo); return; }
+        if (na == 0)
+        {
+            vfft_aligned_free(zi); vfft_aligned_free(zo);
+            vfft_wisdom_free((vfft_wisdom *)mS);
+            return;
+        }
         {   /* reps from one timing of the serial verdict's plan at T */
             double t0;
             if (ip) memcpy(zo, zi, nb);
@@ -1318,6 +1399,12 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         }
         for (a = 1; a < na; a++) if (tns[a] < tns[best]) best = a;
         h->k1fs = cx[best].p;
+        if (h->k1fs != p)
+        {   /* the winner keeps the race's store: its child is there */
+            h->k1fs->own = mS;
+            mS = NULL;
+        }
+        vfft_wisdom_free((vfft_wisdom *)mS);
         for (a = 0; a < na; a++) if (cand[a] && cand[a] != h->k1fs && cand[a] != p) vfft_k1fs_destroy(cand[a]);
         if (p != h->k1fs) vfft_k1fs_destroy(p);
         p = h->k1fs;
@@ -1337,8 +1424,12 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         ok = ok && vw2_update_field(&W->vw2, &r->key, tok_v, b) == VW2_OK;
         _k1fs_chain_str(p, b, sizeof b);
         ok = ok && vw2_update_field(&W->vw2, &r->key, tok_s, b) == VW2_OK;
+        /* and the served plan's child at T (re-banks the row: r is stale after) */
+        ok = ok && _k1fs_row_put_child(&W->vw2, r, p->own, p->N1, p->N2, ip, T) == VW2_OK;
         if (ok)
             _vw2_persist(W, cfg);
+        else
+            fprintf(stderr, "vfft: the four-step's threaded verdict at N=%d T=%d NOT banked -- the plan races again\n", N, T);
     }
 }
 

@@ -31,9 +31,10 @@
  * every row BEFORE any column stage (the tier's rows-first backward walks,
  * il2d_tier.h / vfft_execute.h).
  *
- * The planner's race builds candidates through vfft_k1fs_create with the
- * wisdom + config it was handed (_k1fs_ctx, the Bluestein inner-chain
- * precedent); the door replays the banked split (il_R1, il_R2). */
+ * The planner's race builds candidates through vfft_k1fs_create on the
+ * race's private store (_k1fs_ctx); the door replays the banked split
+ * (il_R1, il_R2; il_mt at a threaded row) with its child from the row's
+ * fs_ tokens (_k1fs_build_own, THE CHILD'S OWN STORE below). */
 #ifndef VFFT_OOP_K1_FOURSTEP_H
 #define VFFT_OOP_K1_FOURSTEP_H
 
@@ -120,19 +121,24 @@ typedef struct vfft_k1fs_s
     int sbR0, sbwl, nsb;          /* R_0 blocks of wl rows per super-band; nsb super-bands */
     int *sbK;                     /* per (j, i): the run's first column R_0 * K(j, i) */
     double *sbscr;                /* T x R_0 * wl x N2 complexes (64-B aligned) */
+    struct vfft_wisdom_s *own;    /* the child's private store when the plan owns it (the c2c
+                                   * four-step, _k1fs_build_own); NULL = the caller's (a race,
+                                   * the real four-step) */
 } vfft_k1fs_plan_t;
 
-/* the planner's race: the child's wisdom + config (set by _k1_il_plan_race
- * before the race; the Bluestein inner-chain provider's pattern) */
+/* the planner's race: the child's PRIVATE store + its config (set by
+ * _k1_il_plan_race, and by zr2c's in-role race, for the race; NULL outside) */
 static struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; } _k1fs_ctx;
 
-/* THE CHILD'S OWN STORE (owner, 2026-10-03). A composite that runs this
- * four-step as its engine -- the real four-step (il/real/zfsr.h) -- owns the
- * child's verdict: the 2D child at (N1, N2) and its row plan at N2 race into
- * a PRIVATE store (in memory, writable, never persisted), and the composite
- * copies the rows the child serves from onto its own row. Its replay
- * seeds a private store from that row and nothing else: the shipped 2D and
- * c2c stores are never read or written. */
+/* THE CHILD'S OWN STORE (owner, 2026-10-03; the c2c four-step 2026-10-04).
+ * Whoever banks this four-step owns the child's verdict -- the c2c K=1 row
+ * (the c2c four-step) and the real row (the real four-step, il/real/zfsr.h):
+ * the 2D child at (N1, N2) and its row plan at N2 race into a PRIVATE store
+ * (in memory, writable, never persisted), and the row that banks the
+ * four-step carries the rows the child serves from (fs_*, wisdom2_oop_il.h).
+ * Its replay seeds a private store from that row and nothing else: the
+ * shipped 2D rows and the c2c rows at N2 are never read or written by a
+ * four-step. */
 static struct vfft_wisdom_s *_k1fs_store_new(void)
 {
     struct vfft_wisdom_s *S = (struct vfft_wisdom_s *)calloc(1, sizeof *S);
@@ -141,16 +147,19 @@ static struct vfft_wisdom_s *_k1fs_store_new(void)
     return S;
 }
 /* the child's rows' keys: the 2D child's (the algorithm's own order, the
- * child's placement, the plan's thread count), its row plan's (the 2D tier's
- * row child: in place, natural, one thread) and that row plan's backward
- * twin (dir=bwd: the backward kernel forms, where its route has them) */
+ * plan's thread count; OUT OF PLACE for either placement -- the rank-2 rows
+ * are keyed place=oop whatever the request's, wisdom2_rank_rows.h
+ * vw2__2d_rec_key), its row plan's (the 2D tier's row child: in place,
+ * natural, one thread) and that row plan's backward twin (dir=bwd: the
+ * backward kernel forms, where its route has them). `inplace` names the
+ * child's placement and keys nothing today. */
 static int _k1fs_child_keys(int N1, int N2, int inplace, int T, vw2_key_t *k2d, vw2_key_t *krow,
                             vw2_key_t *kbwd)
 {
     char b[160];
-    const int n = snprintf(b, sizeof b, "t=c2c n=%dx%d q=1 ord=%s place=%s lay=il", N1, N2,
-                           vfft_policy_k1fs_inner_order() == VFFT_ORDER_NATURAL ? "nat" : "scr",
-                           inplace ? "ip" : "oop");
+    const int n = snprintf(b, sizeof b, "t=c2c n=%dx%d q=1 ord=%s place=oop lay=il", N1, N2,
+                           vfft_policy_k1fs_inner_order() == VFFT_ORDER_NATURAL ? "nat" : "scr");
+    (void)inplace;
     if (T > 1)
         snprintf(b + n, sizeof b - (size_t)n, " nthreads=%d", T);
     if (vw2__key_parse(b, k2d) != 1)
@@ -204,6 +213,8 @@ static void vfft_k1fs_destroy(vfft_k1fs_plan_t *p)
         p->c2d->il2d_fs_tw = NULL;
         vfft_destroy((vfft_plan)p->c2d);
     }
+    if (p->own)
+        vfft_wisdom_free((vfft_wisdom *)p->own);
     vfft_aligned_free(p->tw);
     vfft_aligned_free(p->plane);
     free(p->k1_of_p);
@@ -350,6 +361,145 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
         if (!p->plane) { vfft_k1fs_destroy(p); return NULL; }
     }
     return p;
+}
+
+/* ── THE C2C FOUR-STEP's CHILD ON ITS ROW (owner, 2026-10-04) ──────────────
+ * The planner's race builds every four-step candidate of the cell on ONE
+ * private store (_k1fs_ctx, set by _k1_il_plan_race) and banks the winner's
+ * child on the one-thread K=1 row; a threaded row (nthreads=T) carries the
+ * child at T, banked by the threaded split race (_k1fs_mt_replay_or_race)
+ * beside il_mt. A served plan owns its store (_k1fs_build_own). */
+
+/* 1 when a row carries its four-step child (the 2D row and the row plan) */
+static int _k1fs_row_has_child(const vw2_rec_t *r)
+{
+    int i, has2d = 0, hasrow = 0;
+    if (!r)
+        return 0;
+    for (i = 0; i < r->ntok; i++)
+    {
+        const char *nm = r->tok[i].name;
+        if (r->tok[i].sect != 1 || strncmp(nm, "fs_", 3))
+            continue;
+        if (strncmp(nm, "fs_row_", 7))
+            has2d = 1;
+        else if (strncmp(nm, "fs_row_bwd_", 11))
+            hasrow = 1;
+    }
+    return has2d && hasrow;
+}
+/* a new private store seeded from a row's child under the child's keys (the
+ * split, the placement, the thread count); NULL when the tokens do not parse */
+static struct vfft_wisdom_s *_k1fs_store_from_row(const vw2_rec_t *r, int N1, int N2, int ip, int T)
+{
+    vw2_rec_t r2, rr, rb;
+    vw2_key_t k2, kr, kb;
+    struct vfft_wisdom_s *S = NULL;
+    int ok;
+    memset(&r2, 0, sizeof r2);
+    memset(&rr, 0, sizeof rr);
+    memset(&rb, 0, sizeof rb);
+    ok = r && vw2__fs_get(&r2, r, "fs_", "fs_row_") > 0 && vw2__fs_get(&rr, r, "fs_row_", "fs_row_bwd_") > 0 &&
+         vw2__fs_get(&rb, r, "fs_row_bwd_", NULL) >= 0 && _k1fs_child_keys(N1, N2, ip, T, &k2, &kr, &kb);
+    if (ok && (S = _k1fs_store_new()) != NULL &&
+        (_k1fs_seed(S, &k2, &r2) || _k1fs_seed(S, &kr, &rr) || (rb.ntok > 0 && _k1fs_seed(S, &kb, &rb))))
+    {
+        vfft_wisdom_free((vfft_wisdom *)S);
+        S = NULL;
+    }
+    vw2_rec_free(&r2);
+    vw2_rec_free(&rr);
+    vw2_rec_free(&rb);
+    return S;
+}
+/* a copy of a private store (the threaded split race starts from the
+ * served plan's child) */
+static struct vfft_wisdom_s *_k1fs_store_dup(const struct vfft_wisdom_s *S)
+{
+    struct vfft_wisdom_s *D = _k1fs_store_new();
+    int i;
+    if (!D || !S)
+        return D;
+    for (i = 0; i < S->vw2.nrec; i++)
+        if (_k1fs_seed(D, &S->vw2.rec[i].key, &S->vw2.rec[i]))
+        {
+            vfft_wisdom_free((vfft_wisdom *)D);
+            return NULL;
+        }
+    return D;
+}
+/* THE C2C FOUR-STEP ON ITS OWN STORE: seeded from the row's child (r), or
+ * empty with r NULL (the child races into it). A seeded build whose store
+ * GREW raced part of its child: the plan is still the row's split, built
+ * and correct, so it is returned with *grew = 1 for the caller to say so.
+ * The plan owns the store; NULL = the split does not build. */
+static vfft_k1fs_plan_t *_k1fs_build_own(int N, int N1, int N2, int scr, const vfft_config_t *cfg, int ip, int T,
+                                         int form, const int *sbc, int sbn, const vw2_rec_t *r, int *grew)
+{
+    struct vfft_wisdom_s *S = r ? _k1fs_store_from_row(r, N1, N2, ip, T) : _k1fs_store_new();
+    vfft_config_t cc;
+    vfft_k1fs_plan_t *p;
+    int seeded;
+    if (grew)
+        *grew = 0;
+    if (!S && r)
+    {   /* the row's child does not parse: built on an empty store, said so */
+        S = _k1fs_store_new();
+        r = NULL;
+        if (grew)
+            *grew = 1;
+    }
+    if (!S)
+        return NULL;
+    seeded = r ? S->vw2.nrec : 0;
+    cc = *cfg;   /* the child's request: its own store, nothing persisted, nothing re-raced over it */
+    cc.wisdom = (vfft_wisdom *)S;
+    cc.wisdom_write = 0;
+    cc.recalibrate = 0;
+    p = vfft_k1fs_create(N, N1, N2, scr, S, &cc, ip, T, form, sbc, sbn);
+    if (!p)
+    {
+        vfft_wisdom_free((vfft_wisdom *)S);
+        return NULL;
+    }
+    p->own = S;
+    if (seeded && S->vw2.nrec != seeded && grew)
+        *grew = 1;
+    return p;
+}
+/* the child's rows from store S onto the K=1 row `row`, its old fs_ tokens
+ * replaced (the row is re-banked: pointers into the store are stale after);
+ * VW2_OK, or an error when a child row is missing */
+static int _k1fs_row_put_child(vw2_store_t *st, const vw2_rec_t *row, const struct vfft_wisdom_s *S,
+                               int N1, int N2, int ip, int T)
+{
+    const vw2_rec_t *r2, *rr, *rb;
+    vw2_rec_t nr;
+    int i, rc;
+    if (!st || !row || !S)
+        return VW2_EKEY;
+    _k1fs_child_rows(S, N1, N2, ip, T, &r2, &rr, &rb);
+    if (!r2 || !rr)
+        return VW2_EKEY;
+    memset(&nr, 0, sizeof nr);
+    nr.key = row->key;
+    for (i = 0; i < row->ntok; i++)
+        if (!(row->tok[i].sect == 1 && !strncmp(row->tok[i].name, "fs_", 3)) &&
+            vw2_rec_set(&nr, row->tok[i].sect, row->tok[i].name, row->tok[i].val) != VW2_OK)
+        {
+            vw2_rec_free(&nr);
+            return VW2_ENOMEM;
+        }
+    if (vw2__fs_put(&nr, "fs_", r2) || vw2__fs_put(&nr, "fs_row_", rr) ||
+        (rb && vw2__fs_put(&nr, "fs_row_bwd_", rb)))
+    {
+        vw2_rec_free(&nr);
+        return VW2_ENOMEM;
+    }
+    rc = vw2_bank(st, &nr);
+    if (rc != VW2_OK)
+        vw2_rec_free(&nr);
+    return rc;
 }
 
 /* the natural class's transposes, 16 x 16 complexes per block, the row
