@@ -1278,8 +1278,13 @@ static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_config
         sbn = _k1fs_row_sb(W, N, ke->il_kv, sbc, &form);
     fp = _k1fs_build_own(N, pn1, pn2, scr, cfg, ip, T, form, sbc, sbn, child ? r : NULL, &grew);
     if (fp && grew)
+    {
         fprintf(stderr, "vfft: the four-step's banked child at N=%d (%dx%d) did not replay -- it raced in the plan's "
                         "private store (the row's fs_ tokens are incomplete)\n", N, pn1, pn2);
+        /* the completed child back onto the row (re-banks it; r is stale after), so the cell does not race again */
+        if (r && W && !W->vw2_off_oop && _k1fs_row_put_child(&W->vw2, r, fp->own, fp->N1, fp->N2, ip, T) == VW2_OK)
+            _vw2_persist(W, cfg);
+    }
     if (fp && getenv("VFFT_NAT_LOG"))
         fprintf(stderr, "[k1fs] N=%d: replay FOUR-STEP %dx%d form=%d src=%s (%s, T=%d)\n", N, fp->N1, fp->N2, fp->form,
                 pinned ? "pin" : child ? "wisdom" : "wisdom, child raced", ip ? "ip" : "oop", T);

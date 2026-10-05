@@ -185,12 +185,12 @@ static inline int vw2_oop_lookup_k1_il_cell(const vw2_store_t *s, int N, int wan
 /* THE FOUR-STEP CHILD's codec (owner, 2026-10-03; the c2c row 2026-10-04).
  * A four-step's child -- the 2D plan at N1 x N2 and its row plan at N2, raced
  * into a private store (il/rank1/k1_fourstep.h) -- rides on the row that
- * banks the four-step (the c2c K=1 row, the real row) in its own rows'
- * words: every payload token of the 2D row under fs_, of the row plan's
- * under fs_row_, of the row plan's backward twin (dir=bwd: its backward
- * kernel forms, where its route has them) under fs_row_bwd_. Replay rebuilds
- * the rows from them (their keys follow from the split, the placement and the
- * thread count). */
+ * banks the four-step (the c2c K=1 row, the real row) in its own row's
+ * words: every payload token of the 2D row under fs_. The 2D row carries its
+ * row plan itself (rp_*, il/wisdom/wisdom2_child.h, 2026-10-05); rows banked
+ * before that carry the row plan under fs_row_ and its backward twin under
+ * fs_row_bwd_, read as optional. Replay rebuilds the rows from them (their
+ * keys follow from the split, the placement and the thread count). */
 static inline int vw2__fs_put(vw2_rec_t *dst, const char *pre, const vw2_rec_t *src)
 {
     char nm[96];

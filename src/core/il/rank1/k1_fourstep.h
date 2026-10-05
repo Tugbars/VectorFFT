@@ -43,6 +43,7 @@
 #include <immintrin.h>
 #include <stdint.h>
 #include "common/support/zalloc.h"
+#include "il/wisdom/wisdom2_child.h"   /* a child's private store: seeded rows are not "raced" (vw2_disown), vfft_child_store_raced */
 #include "tw_exact.h"        /* once-rounded cos/sin(2*pi*p/n) for the twiddle records */
 
 /* the 2D tier's column map (il2d_cols.h, included after this header in the
@@ -370,23 +371,21 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
  * child at T, banked by the threaded split race (_k1fs_mt_replay_or_race)
  * beside il_mt. A served plan owns its store (_k1fs_build_own). */
 
-/* 1 when a row carries its four-step child (the 2D row and the row plan) */
+/* 1 when a row carries its four-step child: the 2D row's tokens under fs_
+ * (the 2D row carries its own row plan as rp_*, wisdom2_child.h; the older
+ * fs_row_ tokens are not required) */
 static int _k1fs_row_has_child(const vw2_rec_t *r)
 {
-    int i, has2d = 0, hasrow = 0;
+    int i;
     if (!r)
         return 0;
     for (i = 0; i < r->ntok; i++)
     {
         const char *nm = r->tok[i].name;
-        if (r->tok[i].sect != 1 || strncmp(nm, "fs_", 3))
-            continue;
-        if (strncmp(nm, "fs_row_", 7))
-            has2d = 1;
-        else if (strncmp(nm, "fs_row_bwd_", 11))
-            hasrow = 1;
+        if (r->tok[i].sect == 1 && !strncmp(nm, "fs_", 3) && strncmp(nm, "fs_row_", 7))
+            return 1;
     }
-    return has2d && hasrow;
+    return 0;
 }
 /* a new private store seeded from a row's child under the child's keys (the
  * split, the placement, the thread count); NULL when the tokens do not parse */
@@ -399,14 +398,16 @@ static struct vfft_wisdom_s *_k1fs_store_from_row(const vw2_rec_t *r, int N1, in
     memset(&r2, 0, sizeof r2);
     memset(&rr, 0, sizeof rr);
     memset(&rb, 0, sizeof rb);
-    ok = r && vw2__fs_get(&r2, r, "fs_", "fs_row_") > 0 && vw2__fs_get(&rr, r, "fs_row_", "fs_row_bwd_") > 0 &&
+    ok = r && vw2__fs_get(&r2, r, "fs_", "fs_row_") > 0 && vw2__fs_get(&rr, r, "fs_row_", "fs_row_bwd_") >= 0 &&
          vw2__fs_get(&rb, r, "fs_row_bwd_", NULL) >= 0 && _k1fs_child_keys(N1, N2, ip, T, &k2, &kr, &kb);
     if (ok && (S = _k1fs_store_new()) != NULL &&
-        (_k1fs_seed(S, &k2, &r2) || _k1fs_seed(S, &kr, &rr) || (rb.ntok > 0 && _k1fs_seed(S, &kb, &rb))))
+        (_k1fs_seed(S, &k2, &r2) || (rr.ntok > 0 && _k1fs_seed(S, &kr, &rr)) || (rb.ntok > 0 && _k1fs_seed(S, &kb, &rb))))
     {
         vfft_wisdom_free((vfft_wisdom *)S);
         S = NULL;
     }
+    if (S)
+        vw2_disown(&S->vw2);   /* seeded, not raced: a later own row means the child raced */
     vw2_rec_free(&r2);
     vw2_rec_free(&rr);
     vw2_rec_free(&rb);
@@ -426,20 +427,21 @@ static struct vfft_wisdom_s *_k1fs_store_dup(const struct vfft_wisdom_s *S)
             vfft_wisdom_free((vfft_wisdom *)D);
             return NULL;
         }
+    vw2_disown(&D->vw2);
     return D;
 }
 /* THE C2C FOUR-STEP ON ITS OWN STORE: seeded from the row's child (r), or
  * empty with r NULL (the child races into it). A seeded build whose store
- * GREW raced part of its child: the plan is still the row's split, built
- * and correct, so it is returned with *grew = 1 for the caller to say so.
- * The plan owns the store; NULL = the split does not build. */
+ * CHANGED -- a row banked by this process: part of the child raced, or the
+ * 2D row completed its own children (wisdom2_child.h) -- is still the row's
+ * split, built and correct, so it is returned with *grew = 1 for the caller
+ * to re-bank the row. The plan owns the store; NULL = the split does not build. */
 static vfft_k1fs_plan_t *_k1fs_build_own(int N, int N1, int N2, int scr, const vfft_config_t *cfg, int ip, int T,
                                          int form, const int *sbc, int sbn, const vw2_rec_t *r, int *grew)
 {
     struct vfft_wisdom_s *S = r ? _k1fs_store_from_row(r, N1, N2, ip, T) : _k1fs_store_new();
     vfft_config_t cc;
     vfft_k1fs_plan_t *p;
-    int seeded;
     if (grew)
         *grew = 0;
     if (!S && r)
@@ -451,7 +453,6 @@ static vfft_k1fs_plan_t *_k1fs_build_own(int N, int N1, int N2, int scr, const v
     }
     if (!S)
         return NULL;
-    seeded = r ? S->vw2.nrec : 0;
     cc = *cfg;   /* the child's request: its own store, nothing persisted, nothing re-raced over it */
     cc.wisdom = (vfft_wisdom *)S;
     cc.wisdom_write = 0;
@@ -463,7 +464,7 @@ static vfft_k1fs_plan_t *_k1fs_build_own(int N, int N1, int N2, int scr, const v
         return NULL;
     }
     p->own = S;
-    if (seeded && S->vw2.nrec != seeded && grew)
+    if (r && vfft_child_store_raced(S) && grew)
         *grew = 1;
     return p;
 }
@@ -479,8 +480,9 @@ static int _k1fs_row_put_child(vw2_store_t *st, const vw2_rec_t *row, const stru
     if (!st || !row || !S)
         return VW2_EKEY;
     _k1fs_child_rows(S, N1, N2, ip, T, &r2, &rr, &rb);
-    if (!r2 || !rr)
+    if (!r2)
         return VW2_EKEY;
+    (void)rr; (void)rb;   /* the 2D row carries its row plan itself (rp_*): nothing rides under fs_row_ */
     memset(&nr, 0, sizeof nr);
     nr.key = row->key;
     for (i = 0; i < row->ntok; i++)
@@ -490,8 +492,7 @@ static int _k1fs_row_put_child(vw2_store_t *st, const vw2_rec_t *row, const stru
             vw2_rec_free(&nr);
             return VW2_ENOMEM;
         }
-    if (vw2__fs_put(&nr, "fs_", r2) || vw2__fs_put(&nr, "fs_row_", rr) ||
-        (rb && vw2__fs_put(&nr, "fs_row_bwd_", rb)))
+    if (vw2__fs_put(&nr, "fs_", r2))
     {
         vw2_rec_free(&nr);
         return VW2_ENOMEM;

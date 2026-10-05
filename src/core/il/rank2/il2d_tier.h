@@ -73,6 +73,7 @@
 #include "common/support/threads.h"               /* the pool */
 #include "common/support/race_timing.h"           /* the shared clock */
 #include "il/wisdom/wisdom2_2d_il_reader.h"     /* the lay=il 2D cell codec */
+#include "il/wisdom/wisdom2_child.h"            /* a child plan in role: its private store, its recipe on the cell's row */
 
 /* Defined in vfft.c with external linkage; see the note above. */
 extern long _vfft_il2d_col_mt_count;
@@ -2306,10 +2307,19 @@ static int _il2d_tpc_admits(const vw2_ilcol_key_t *key, const vfft_ilcol_t *c)
 {
     return c->blu > 0 && !key->real && key->axis == 0;
 }
-static int _il2d_tpc_build(const vfft_config_t *cfg, vfft_ilcol_t *c, int N, size_t rn)
+static int _il2d_tpc_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg, const vw2_ilcol_key_t *key,
+                           vfft_ilcol_t *c, int N, size_t rn)
 {
     vfft_config_t tc;
     c->N = N;   /* the builder's caller stamps it later; the pass reads it */
+    if (!c->tpcS)
+    {   /* the turned prime column plan in role: its own store, its recipe from the column row (tpc_*) */
+        vw2_key_t pk;
+        vw2__ilcol_key(key, &pk);
+        c->tpcS = vfft_child_store_for(W ? &W->vw2 : NULL, &pk, "tpc_");
+        if (!c->tpcS)
+            return 0;
+    }
     memset(&tc, 0, sizeof tc);
     tc.transform = VFFT_C2C;
     tc.placement = VFFT_INPLACE;
@@ -2320,8 +2330,9 @@ static int _il2d_tpc_build(const vfft_config_t *cfg, vfft_ilcol_t *c, int N, siz
     tc.order = VFFT_ORDER_NATURAL;
     tc.layout = VFFT_LAYOUT_INTERLEAVED;
     tc.nthreads = 1;
-    tc.wisdom = cfg->wisdom;
-    tc.wisdom_write = cfg->wisdom_write;
+    tc.wisdom = (vfft_wisdom *)c->tpcS;
+    tc.wisdom_write = 0;
+    tc.recalibrate = cfg->recalibrate;
     c->tpcplan = (struct vfft_plan_s *)vfft_create(&tc);
     if (!c->tpcplan)
         return 0;
@@ -2339,6 +2350,8 @@ static void _il2d_tpc_drop(vfft_ilcol_t *c)
     if (c->tpcplan)
         vfft_destroy(c->tpcplan);
     c->tpcplan = NULL;
+    vfft_child_store_free(c->tpcS);
+    c->tpcS = NULL;
     if (c->tpcscr)
         vfft_aligned_free(c->tpcscr);
     c->tpcscr = NULL;
@@ -2365,7 +2378,7 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         return;
     if (pin && atoi(pin) == 0)
         return;
-    if (!_il2d_tpc_build(cfg, c, N, rn))
+    if (!_il2d_tpc_build(W, cfg, key, c, N, rn))
     {
         if (getenv("VFFT_IL2D_LOG"))
             fprintf(stderr, "[il2d] tpc: the 1D in-place plan at N=%d could not be built\n", N);
@@ -2431,7 +2444,7 @@ static void _il2d_tpc_replay(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     }
     if (want != 1)
         return;
-    if (!_il2d_tpc_build(cfg, c, N, rn))
+    if (!_il2d_tpc_build(W, cfg, key, c, N, rn))
         return;
     c->tpc = 1;
     _il2d_blu_drop_tables(c);
@@ -3116,6 +3129,28 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     vfft_aligned_free(z);
 }
 
+/* the children's recipes onto the cell's row (wisdom2_child.h): the ones
+ * that raced in this create, and any the row did not carry yet; saved like
+ * any winner. The 2D create's last act. */
+static void _il2d_children_put(struct vfft_wisdom_s *W, const vfft_config_t *cfg, struct vfft_plan_s *h,
+                               int N1, int N2, int ord, int T)
+{
+    vw2_ilcol_key_t ck;
+    vw2_key_t pk;
+    int changed = 0;
+    if (!W || W->vw2_off_2d)
+        return;
+    memset(&ck, 0, sizeof ck);
+    ck.rank = 2; ck.n0 = N1; ck.n1 = N2; ck.ord = ord; ck.nthreads = T;
+    vw2__ilcol_key(&ck, &pk);
+    changed |= vfft_child_row_update(&W->vw2, &pk, "rp_", h->il2d_rowS);
+    changed |= vfft_child_row_update(&W->vw2, &pk, "turn_", h->il2d_turnS);
+    changed |= vfft_child_row_update(&W->vw2, &pk, "csk_", h->il2d_cskS);
+    changed |= vfft_child_row_update(&W->vw2, &pk, "tpc_", h->il2d_col.tpcS);
+    if (changed)
+        _vw2_persist(W, cfg);
+}
+
 /* ── c2c MT clones. Worker t > 0 needs its own row child: the
  * serving path runs ONE plan through ONE rowscr, and two concurrent
  * bands interleaving that state produce garbage, not slowness. Clones
@@ -3127,7 +3162,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
  * counter shows it — never a half-cloned dispatch. */
 static int _tc_clone_equiv(const struct vfft_plan_s *a,
                            const struct vfft_plan_s *b);
-static int _il2d_clone_set(const struct vfft_plan_s *prim, const vfft_config_t *cfg,
+static int _il2d_clone_set(const struct vfft_plan_s *prim, struct vfft_wisdom_s *S, const vfft_config_t *cfg,
                            int N, int placement, int T,
                            struct vfft_plan_s ***out, int *out_n, const char *what)
 {
@@ -3135,7 +3170,7 @@ static int _il2d_clone_set(const struct vfft_plan_s *prim, const vfft_config_t *
     vfft_config_t rc;
     struct vfft_plan_s **arr;
     int t;
-    if (n <= 0 || *out || !prim)
+    if (n <= 0 || *out || !prim || !S)
         return 0;
     memset(&rc, 0, sizeof rc);
     rc.transform = VFFT_C2C;
@@ -3147,8 +3182,8 @@ static int _il2d_clone_set(const struct vfft_plan_s *prim, const vfft_config_t *
     rc.order = VFFT_ORDER_NATURAL;
     rc.layout = VFFT_LAYOUT_INTERLEAVED;
     rc.nthreads = 1;
-    rc.wisdom = cfg->wisdom;
-    rc.wisdom_write = 0; /* clones read warm wisdom, never bank */
+    rc.wisdom = (vfft_wisdom *)S; /* the child's own store: a clone replays its recipe, never a 1D row */
+    rc.wisdom_write = 0;
     arr = (struct vfft_plan_s **)calloc((size_t)n, sizeof *arr);
     if (!arr)
         return 0;
@@ -3181,18 +3216,18 @@ static void _il2d_c2c_build_clones(struct vfft_plan_s *h,
 {
     if (h->il2d_turn)
     {
-        _il2d_clone_set(h->il2d_turn_plan, cfg, h->N, VFFT_INPLACE, T,
+        _il2d_clone_set(h->il2d_turn_plan, h->il2d_turnS, cfg, h->N, VFFT_INPLACE, T,
                         &h->il2d_turnw, &h->il2d_turnw_n, "turn");
         return;
     }
     if (h->il2d_csk)
     {
         if (!h->il2d_rowb && !h->il2d_rowb2)
-            _il2d_clone_set(h->il2d_csk_row, cfg, h->N2, VFFT_OUTOFPLACE, T,
+            _il2d_clone_set(h->il2d_csk_row, h->il2d_cskS, cfg, h->N2, VFFT_OUTOFPLACE, T,
                             &h->il2d_cskw, &h->il2d_cskw_n, "csk row");
         return;
     }
-    _il2d_clone_set(h->il2d_row, cfg, h->N2, VFFT_INPLACE, T,
+    _il2d_clone_set(h->il2d_row, h->il2d_rowS, cfg, h->N2, VFFT_INPLACE, T,
                     &h->il2d_roww, &h->il2d_roww_n, "row");
 }
 /* the T-aware axis race needs every route's set BEFORE it runs:
@@ -3201,11 +3236,11 @@ static void _il2d_c2c_build_clones(struct vfft_plan_s *h,
  * does not run are dropped. */
 static void _il2d_c2c_build_clone_sets_all(struct vfft_plan_s *h, const vfft_config_t *cfg, int T)
 {
-    _il2d_clone_set(h->il2d_row, cfg, h->N2, VFFT_INPLACE, T, &h->il2d_roww, &h->il2d_roww_n, "row");
+    _il2d_clone_set(h->il2d_row, h->il2d_rowS, cfg, h->N2, VFFT_INPLACE, T, &h->il2d_roww, &h->il2d_roww_n, "row");
     if (h->il2d_csk_row)
-        _il2d_clone_set(h->il2d_csk_row, cfg, h->N2, VFFT_OUTOFPLACE, T, &h->il2d_cskw, &h->il2d_cskw_n, "csk row");
+        _il2d_clone_set(h->il2d_csk_row, h->il2d_cskS, cfg, h->N2, VFFT_OUTOFPLACE, T, &h->il2d_cskw, &h->il2d_cskw_n, "csk row");
     if (h->il2d_turn_plan)
-        _il2d_clone_set(h->il2d_turn_plan, cfg, h->N, VFFT_INPLACE, T, &h->il2d_turnw, &h->il2d_turnw_n, "turn");
+        _il2d_clone_set(h->il2d_turn_plan, h->il2d_turnS, cfg, h->N, VFFT_INPLACE, T, &h->il2d_turnw, &h->il2d_turnw_n, "turn");
 }
 static void _il2d_clone_set_drop(struct vfft_plan_s ***arr, int *n)
 {

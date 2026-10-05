@@ -188,10 +188,11 @@ static int _zr2c_fs_str(char *o, size_t cap, const struct vfft_wisdom_s *S, int 
     int i, ok = 1;
     o[0] = 0;
     _k1fs_child_rows(S, N1, N2, inplace, 1, &r2, &rr, &rb);
-    if (!r2 || !rr)
+    if (!r2)
         return 0;
+    (void)rr; (void)rb;   /* the 2D row carries its row plan itself (rp_*, wisdom2_child.h) */
     memset(&t, 0, sizeof t);
-    if (vw2__fs_put(&t, "fs_", r2) || vw2__fs_put(&t, "fs_row_", rr) || (rb && vw2__fs_put(&t, "fs_row_bwd_", rb)))
+    if (vw2__fs_put(&t, "fs_", r2))
         ok = 0;
     for (i = 0; ok && i < t.ntok; i++)
     {
@@ -225,14 +226,16 @@ static struct vfft_wisdom_s *_zr2c_fs_store(const char *fs, int N1, int N2, int 
         *eq = 0;
         if (vw2_rec_set(&all, 1, tk, eq + 1) != VW2_OK) ok = 0;
     }
-    ok = ok && vw2__fs_get(&r2, &all, "fs_", "fs_row_") > 0 && vw2__fs_get(&rr, &all, "fs_row_", "fs_row_bwd_") > 0 &&
+    ok = ok && vw2__fs_get(&r2, &all, "fs_", "fs_row_") > 0 && vw2__fs_get(&rr, &all, "fs_row_", "fs_row_bwd_") >= 0 &&
          vw2__fs_get(&rb, &all, "fs_row_bwd_", NULL) >= 0 && _k1fs_child_keys(N1, N2, inplace, 1, &k2, &kr, &kb);
     if (ok && (S = _k1fs_store_new()) != NULL &&
-        (_k1fs_seed(S, &k2, &r2) || _k1fs_seed(S, &kr, &rr) || (rb.ntok > 0 && _k1fs_seed(S, &kb, &rb))))
+        (_k1fs_seed(S, &k2, &r2) || (rr.ntok > 0 && _k1fs_seed(S, &kr, &rr)) || (rb.ntok > 0 && _k1fs_seed(S, &kb, &rb))))
     {
         vfft_wisdom_free((vfft_wisdom *)S);
         S = NULL;
     }
+    if (S)
+        vw2_disown(&S->vw2);   /* seeded, not raced */
     vw2_rec_free(&all); vw2_rec_free(&r2); vw2_rec_free(&rr); vw2_rec_free(&rb);
     return S;
 }

@@ -20,14 +20,14 @@
  *   eng=zttr chain=4.8.8.4 tile=512 stk=3 [mt=1|2] (ZTT-r, il/real/zttr.h: the chain,
  *                                                  the tile width, the stack state; on a
  *                                                  threaded plan's row the threaded arm)
- *   eng=zfsr split=1024x2048 fs_*=.. fs_row_*=..  (the real four-step, il/real/zfsr.h:
+ *   eng=zfsr split=1024x2048 fs_*=..             (the real four-step, il/real/zfsr.h:
  *                                                  the split of N/2, and its CHILD in its
- *                                                  own rows' words: the 2D plan's payload
+ *                                                  own row's words: the 2D plan's payload
  *                                                  under fs_ (fs_chain fs_wl fs_tf fs_ro
- *                                                  ...), the row plan's at N2 under
- *                                                  fs_row_ (fs_row_il_route ...), its
- *                                                  backward twin's under fs_row_bwd_
- *                                                  where it has one)
+ *                                                  ...), which carries the row plan at N2
+ *                                                  itself as rp_* (il/wisdom/wisdom2_child.h);
+ *                                                  rows from before that carry fs_row_*
+ *                                                  tokens, read as optional)
  *   eng=zrm                                       (the real mono, il/real/zrm.h: one
  *                                                  rn1 kernel, N <= 64, no plan input)
  *   eng=zrf  chain=9.9.5 msz=0|1 tile=256 [mt=1|2] (the real flat DIT, il/real/zrf.h, odd N:
@@ -563,8 +563,8 @@ static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int i
  * four-step's child -- the 2D plan at N1 x N2 and its row plan at N2, raced
  * into the plan's private store (il/rank1/k1_fourstep.h) -- rides here in its
  * own rows' words: every payload token of the 2D row under fs_, of the row
- * plan's under fs_row_, of the row plan's backward twin (dir=bwd: its
- * backward kernel forms, where its route has them) under fs_row_bwd_. Replay
+ * plan's under fs_row_ (older rows only: a 2D row carries its row plan as rp_*
+ * since 2026-10-05), of the row plan's backward twin under fs_row_bwd_. Replay
  * rebuilds the rows from them (their keys follow from the split and the
  * thread count). *//* (the fs_ codec, vw2__fs_put / vw2__fs_get: wisdom2_oop_il.h, the c2c
  * four-step's row carries the same child) */
@@ -593,7 +593,7 @@ static inline int vw2_real_il_lookup_zfsr(const vw2_store_t *s, int realN, int i
     if (!eng || strcmp(eng, "zfsr")) return 0;
     sp = vw2_rec_get(r, "split");
     if (!sp || sscanf(sp, "%dx%d", &a, &b) != 2 || a <= 0 || b <= 0) return 0;
-    if (vw2__fs_get(c2d, r, "fs_", "fs_row_") <= 0 || vw2__fs_get(crow, r, "fs_row_", "fs_row_bwd_") <= 0 ||
+    if (vw2__fs_get(c2d, r, "fs_", "fs_row_") <= 0 || vw2__fs_get(crow, r, "fs_row_", "fs_row_bwd_") < 0 ||
         vw2__fs_get(cbwd, r, "fs_row_bwd_", NULL) < 0)
     {
         vw2_rec_free(c2d);
@@ -616,13 +616,13 @@ static inline int vw2_real_il_bank_zfsr(vw2_store_t *s, int realN, int is_c2r, i
     vw2_rec_t r;
     char b[48];
     int rc;
-    if (!c2d || !crow) return -1;
+    if (!c2d) return -1;
     memset(&r, 0, sizeof r);
     vw2_real_il_key(&r.key, realN, is_c2r, is_inplace, T);
     snprintf(b, sizeof b, "%dx%d", n1, n2);
     if (vw2_rec_set(&r, 1, "eng", "zfsr") != VW2_OK ||
         vw2_rec_set(&r, 1, "split", b) != VW2_OK ||
-        vw2__fs_put(&r, "fs_", c2d) != 0 || vw2__fs_put(&r, "fs_row_", crow) != 0 ||
+        vw2__fs_put(&r, "fs_", c2d) != 0 || (crow && vw2__fs_put(&r, "fs_row_", crow) != 0) ||
         (cbwd && vw2__fs_put(&r, "fs_row_bwd_", cbwd) != 0) ||
         vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
         vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }

@@ -320,6 +320,8 @@ struct vfft_plan_s
      * fallback of IL, the convert wrapper is GONE; inexpressible cells
      * REFUSE at create. Cold cells race + bank (lay=il) + serve. */
     struct vfft_plan_s *il2d_row;
+    struct vfft_wisdom_s *il2d_rowS;    /* the row plan's PRIVATE store: it races and replays in role, its
+                                         * recipe rides on this cell's row as rp_* (il/wisdom/wisdom2_child.h) */
     /* the column chain: stage s has radix il2d_col.R[s] over sub-length
      * il2d_col.L[s] (D = L/R); stages 0..nst-2 are t2c with driver-built
      * d-major record tables (il2d_col.tf fwd / il2d_col.tb conjugated bwd), the
@@ -374,6 +376,7 @@ struct vfft_plan_s
      * worker t's clone of the N1 plan, the back-turn over row slabs (cmt). */
     int il2d_turn;
     struct vfft_plan_s *il2d_turn_plan; /* the in-place K=1 natural plan at N1 */
+    struct vfft_wisdom_s *il2d_turnS;   /* its private store: turn_* on this cell's row */
     double *il2d_turn_scr;              /* the N2 x P plane, P = N1 + 8 complex (the skewed pitch) */
     struct vfft_plan_s **il2d_turnw;    /* the threaded turn: clones of il2d_turn_plan, T-1 slots */
     int il2d_turnw_n;
@@ -391,6 +394,7 @@ struct vfft_plan_s
     int il2d_csk;
     double *il2d_csk_scr;               /* the N1 x (N2 + 8) plane */
     struct vfft_plan_s *il2d_csk_row;   /* the OOP K=1 natural plan at N2: the per-row route from the scratch */
+    struct vfft_wisdom_s *il2d_cskS;    /* its private store: csk_* on this cell's row */
     struct vfft_plan_s **il2d_cskw;     /* the threaded csk rows on route 0: clones of il2d_csk_row, T-1 slots */
     int il2d_cskw_n;
     vfft_il2p_fn il2d_csk_f, il2d_csk_b; /* the route's own single column stage: the n1c pair at radix N1 */

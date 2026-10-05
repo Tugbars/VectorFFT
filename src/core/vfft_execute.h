@@ -369,6 +369,10 @@ void vfft_destroy(vfft_plan h)
         {
             int s2;
             vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
+            vfft_child_store_free(h->il2d_rowS);   /* the children's private stores (il/wisdom/wisdom2_child.h) */
+            vfft_child_store_free(h->il2d_turnS);
+            vfft_child_store_free(h->il2d_cskS);
+            vfft_child_store_free(h->il2d_col.tpcS);
             for (s2 = 0; s2 < h->il2d_roww_n; s2++)
                 vfft_destroy(h->il2d_roww[s2]); /* the MT row clones */
             free(h->il2d_roww);
