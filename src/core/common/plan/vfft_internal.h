@@ -429,12 +429,13 @@ struct vfft_plan_s
      * not commute with the column stages (§2.5), rows sit OUTSIDE any
      * banded walk. */
     double *il2d_rscr;
-    /* THE REAL TIER'S ROW ENGINE, r2c (il/rank2/il2d_real_plan.h): the row
-     * pass's own plan, picked by the create's row race in the row role and
-     * banked on the 2D real row (rx= / rxs=). il2d_rx_lm = the rows kernel
-     * (r2zr: the whole pass in one call); il2d_rx_eng = a real engine's
-     * handle run per row, built by the door's builders from the row's token
-     * (owned). Both NULL = the row route above (the door). il2d_rx_stk = the
+    /* THE REAL TIER'S ROW ENGINE, by the plan's direction (il/rank2/
+     * il2d_real_plan.h): the row pass's own plan, picked by the create's row
+     * race in the row role and banked on the 2D real row (rx= / rxs=; a c2r
+     * plan's rx_c2r= / rxs_c2r=). il2d_rx_lm = the rows kernel (r2zr: the
+     * whole pass in one call; its backward for c2r); il2d_rx_eng = a real
+     * engine's handle run per row (its backward for c2r), built by the
+     * door's builders from the row's token (owned). Both NULL = the row route above (the door). il2d_rx_stk = the
      * row pass's stack state 0..3 (the aligned entry; -1 = entered
      * directly, its four states tied). il2d_rx_on = the row
      * plan is bound: the pass enters through the aligned entry, the door
@@ -446,11 +447,13 @@ struct vfft_plan_s
     int il2d_rx_stk;
     struct vfft_wisdom_s *il2d_rxS;     /* the row engines' PRIVATE store: a zr2c engine's child recipe
                                          * rides on the real row as rx_* (il/wisdom/wisdom2_child.h) */
-    /* THE REAL TIER'S COLUMN PLAN, r2c (il2d_real_plan.h): the serial column
-     * pass, raced on the cell's own column pass and banked cx= / cxs= on the
-     * 2D real row. il2d_cx_on = bound. The form: il2d_cx_leaf = the whole
-     * pass as ONE kernel call (the N1-point blocked column leaf, or a
-     * one-stage chain's own kernel); NULL = the chain, its natural leaf
+    /* THE REAL TIER'S COLUMN PLAN, by the plan's direction
+     * (il2d_real_plan.h): the serial column pass, raced on the cell's own
+     * column pass (a c2r plan: its reverse pass) and banked cx= / cxs= (c2r:
+     * cx_c2r= / cxs_c2r=) on the 2D real row. il2d_cx_on = bound. The form:
+     * il2d_cx_leaf = the whole pass as ONE kernel call (the N1-point blocked
+     * column leaf -- its backward for c2r -- or a one-stage chain's own
+     * kernel); NULL = the chain, its natural leaf
      * staged (il2d_cx_st = 1) or at its natural stride (0). The stack state:
      * il2d_cx_stk, one for the pass (0..3 through the aligned entry, -1 =
      * entered directly); or, il2d_cx_perk set, il2d_cx_ks[s] per chain stage,

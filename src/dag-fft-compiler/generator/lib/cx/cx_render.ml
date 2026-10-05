@@ -146,6 +146,11 @@ let addr_str (a : caddr) : string =
   | ADigIn (d, o) -> Printf.sprintf "zin[(size_t)%d*Ls + 2*k + %d]" (2 * d) o
   | AXinRow (0, o) -> Printf.sprintf "zin[(size_t)k*Ls + %d]" o
   | AXinRow (r, o) -> Printf.sprintf "zin[((size_t)k + %d)*Ls + %d]" r o
+  | AZinTurn (l, 0) -> Printf.sprintf "zin[2*((size_t)k*Ls + %d)]" l
+  | AZinTurn (l, r) -> Printf.sprintf "zin[2*(((size_t)k + %d)*Ls + %d)]" r l
+  | AXoutRow (0, o) -> Printf.sprintf "zout[(size_t)k*OLs + %d]" o
+  | AXoutRow (r, o) -> Printf.sprintf "zout[((size_t)k + %d)*OLs + %d]" r o
+  | AZinTurnH _ -> failwith "cx_render.addr_str: the half-row pair renders through render_load"
   | AZeroV -> failwith "cx_render.addr_str: the zero vector has no address (render_load)"
   | AZinMir _ | AZoutMir _ | AZoutTurnMir _ | AZinSpec _ | AZinSpecC _ | AZinSpecB _ | AZinSpecP _ ->
     failwith "cx_render.addr_str: a mirror / special form renders through render_load or render_store"
@@ -292,6 +297,10 @@ let render_load (isa : Isa.t) (a : caddr) : string =
   | AZeroV when isa.Isa.vec_width = 4 -> "_mm256_setzero_pd()"
   | AZeroV when isa.Isa.vec_width = 2 -> "_mm_setzero_pd()"
   | AZeroV -> failwith "cx_render.render_load: AZeroV renders at 256 / 128 bits only"
+  (* the r2zr backward's lone last slot: rows k+r and k+r+2 as the two halves *)
+  | AZinTurnH (l, r) when isa.Isa.vec_width = 4 ->
+    Printf.sprintf "_mm256_loadu2_m128d(&%s, &%s)" (addr_str (AZinTurn (l, r + 2))) (addr_str (AZinTurn (l, r)))
+  | AZinTurnH _ -> failwith "cx_render.render_load: AZinTurnH renders at 256 bits only"
   | _ -> Isa.loadu_pd isa (addr_str a)
 ;;
 

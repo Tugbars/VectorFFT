@@ -75,6 +75,13 @@ type caddr =
      address, a register xor. ── *)
   | AXinRow of int * int (* (r, off): zin[((size_t)k + r)*Ls + off] *)
   | AZeroV
+  (* its backward (2026-10-05): the CCE bins of row k+r load as one vector
+     (slots l, l+1 at 256 bits; slot l at 128), the lone last slot as the
+     two half rows (k+r, k+r+2) in one vector; the samples store a row block
+     at a time (Ls, OLs = the row pitches, in complex and in doubles). *)
+  | AZinTurn of int * int (* (l, r): zin[2*(((size_t)k + r)*Ls + l)] *)
+  | AZinTurnH of int * int (* (l, r): rows k+r (low half) and k+r+2 (high), slot l *)
+  | AXoutRow of int * int (* (r, off): zout[((size_t)k + r)*OLs + off] *)
 
 type cx_kind =
   | CIn of int (* input leg i (a packed-complex load) *)

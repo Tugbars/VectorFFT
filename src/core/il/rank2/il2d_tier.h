@@ -163,8 +163,9 @@ static void _il2d_real_rows_fwd(struct vfft_plan_s *h, const double *sre,
     _il2d_real_rows_fwd_route(h, sre, dre);
 }
 
-static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,
-                                double *dre)
+static void _il2d_rowx_bwd(struct vfft_plan_s *h, const double *zsrc, double *dre); /* il2d_real_plan.h, later in this TU */
+static void _il2d_real_rows_bwd_route(struct vfft_plan_s *h, const double *zsrc,
+                                      double *dre)
 {
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
     if (h->il2d_oddn2)
@@ -184,6 +185,21 @@ static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,
         return;
     }
     vfft_execute(h->il2d_row, VFFT_BACKWARD, (double *)zsrc, NULL, dre, NULL);
+}
+
+/* the c2r row pass: the plan's own row plan when one is bound (the c2r row
+ * race's verdict -- the backward rows kernel, a real engine's backward per
+ * row, or the route above -- entered at the plan's stack state), else the
+ * route as it stands */
+static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,
+                                double *dre)
+{
+    if (h->il2d_rx_on)
+    {
+        _il2d_rowx_bwd(h, zsrc, dre);
+        return;
+    }
+    _il2d_real_rows_bwd_route(h, zsrc, dre);
 }
 
 
@@ -371,12 +387,18 @@ static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
  * executed stage does the OOP move for c2r's z->rscr), then the reversed
  * prefix in place on dst. */
 static void _il2d_colx_fwd(struct vfft_plan_s *h, const double *src, double *dst); /* il2d_real_plan.h, later in this TU */
+static void _il2d_colx_bwd(struct vfft_plan_s *h, const double *src, double *dst); /* its c2r twin */
 static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
                             double *dst, int reverse)
 {
     if (!reverse && h->il2d_cx_on)
     { /* the r2c column plan: the pass at the plan's stack state, the natural leaf in its raced form */
         _il2d_colx_fwd(h, src, dst);
+        return;
+    }
+    if (reverse && h->il2d_cx_on)
+    { /* the c2r column plan (a c2r plan's own, cx_c2r=): the reverse chain at its stack states, or the backward leaf */
+        _il2d_colx_bwd(h, src, dst);
         return;
     }
     _il2d_col_exec(&h->il2d_col, src, dst, reverse);
@@ -3152,8 +3174,8 @@ static void _il2d_children_put(struct vfft_wisdom_s *W, const vfft_config_t *cfg
 }
 
 /* the real door's twin: the row child (rp_*, or rp_c2r_* for a c2r plan:
- * the two directions' rows differ) and the row engines (rx_*) onto the real
- * row. */
+ * the two directions' rows differ) and the row engines (rx_*, or rx_c2r_*:
+ * each direction's row plan has its own) onto the real row. */
 static void _il2d_real_children_put(struct vfft_wisdom_s *W, const vfft_config_t *cfg, struct vfft_plan_s *h,
                                     int N1, int N2, int ord, int T)
 {
@@ -3166,7 +3188,7 @@ static void _il2d_real_children_put(struct vfft_wisdom_s *W, const vfft_config_t
     ck.rank = 2; ck.n0 = N1; ck.n1 = N2; ck.ord = ord; ck.real = 1; ck.nthreads = T;
     vw2__ilcol_key(&ck, &pk);
     changed |= vfft_child_row_update(&W->vw2, &pk, h->transform == VFFT_C2R ? "rp_c2r_" : "rp_", h->il2d_rowS);
-    changed |= vfft_child_row_update(&W->vw2, &pk, "rx_", h->il2d_rxS);
+    changed |= vfft_child_row_update(&W->vw2, &pk, h->transform == VFFT_C2R ? "rx_c2r_" : "rx_", h->il2d_rxS);
     if (changed)
         _vw2_persist(W, cfg);
 }

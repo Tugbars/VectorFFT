@@ -167,11 +167,14 @@ per cell, or the cell keeps the veneer — measured serving, no faith.
   the native tier is THE serving for every interleaved 2D real create
   (odd N2 / NATURAL order REFUSE loudly; split-layout callers keep the
   split engine untouched). Verdict cells live in wisdom2_2d.txt:
-  {t=r2c ord=scr lay=il | chain= wl= rx= rxs= cx= cxs=}, DIRECTION-SHARED
-  (c2r reads the r2c row), raced at create on miss (the row plan, the
-  banded wl incl. L2-admitted spans, the column plan),
-  env(VFFT_IL2D_RX/CX/WL/CHAIN) > banked > race, env never banks (the rw=
-  row-route token retired 2026-10-03 with ROWSPLIT). The pinned door race:
+  {t=r2c ord=scr lay=il | chain= wl= rx= rxs= cx= cxs= | wl_c2r= rx_c2r=
+  rxs_c2r= cx_c2r= cxs_c2r=}, DIRECTION-SHARED (one row for both
+  directions, each direction's own token set: the c2r row and column plans
+  are the r2c plans' twins over the backward row pass and the reverse
+  column pass, 2026-10-05), raced at create on miss (the row plan, the
+  banded wl incl. L2-admitted spans, the column plan, per direction),
+  env(VFFT_IL2D_RX/CX/WL/CHAIN, RX_C2R/CX_C2R) > banked > race, env never
+  banks (the rw= row-route token retired 2026-10-03 with ROWSPLIT). The pinned door race:
   20/20 rows win-or-parity vs MKL CCE (0.9-2.25x; knee cells 1.66-2.20x via
   the banded walk). STILL M3-OPEN: the
   chain race (chain= banked as deployed-greedy; re-raced at the

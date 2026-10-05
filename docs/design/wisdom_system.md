@@ -171,7 +171,7 @@ entered at the first clock read inside a create and left when the outermost
   | `tpc_` | the turned prime column plan | `il/rank2/il2d_tier.h` `_il2d_tpc_build` |
   | `plane_` | the 3D tier's 2D child (with its own `rp_` and friends inside) | `fftnd_il.h` `_ilnd_build_child` |
   | `rp_` / `rp_c2r_` | the real 2D door's row child: the c2c plan at an odd N2, else the real batch at N2 x N1 (by the plan's direction: the two differ) | `fft2d_create_il.h` (the real branch) |
-  | `rx_` | the real 2D door's per-row engines: a zr2c engine's child recipe (the row engines' own store) | `il/rank2/il2d_real_plan.h` `_il2d_real_rowplan` |
+  | `rx_` / `rx_c2r_` | the real 2D door's per-row engines, by the plan's direction: a zr2c engine's child recipe (the row engines' own store) | `il/rank2/il2d_real_plan.h` `_il2d_real_rowplan` / `_c2r` |
 
 - The four-step's child codec follows: the 2D child row under `fs_` carries its row
   plan itself (`fs_rp_*`), so `fs_row_` / `fs_row_bwd_` are no longer written and are

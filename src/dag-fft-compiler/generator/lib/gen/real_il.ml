@@ -660,13 +660,12 @@ let emit_leaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : st
 
    count rows, at least two: four per wide iteration, then two at VEX-128;
    a lone last row runs with the row before it (out of place, the same
-   values written again). Forward only: the backward twin is not built.
+   values written again). The backward twin follows it (emit_rows_bwd).
    ═══════════════════════════════════════════════════════════════ *)
-let emit_rows ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
+let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
   let vw = isa.Isa.vec_width in
   if vw <> 4 then failwith "real_il: r2zr is emitted for the 256-bit ISA only";
   if radix < 4 || radix mod 2 <> 0 then failwith "real_il: r2zr needs an even radix >= 4";
-  if dir = Bwd then failwith "real_il: r2zr is the forward kind (no backward twin)";
   let h = radix / 2 in
   let ctx =
     make_ctx
@@ -857,6 +856,213 @@ let emit_rows ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : st
   Buffer.add_string buf "    }\n";
   Buffer.add_string buf "}\n";
   Buffer.contents buf
+;;
+
+(* ═══════════════════════════════════════════════════════════════
+   THE REAL ROWS, BACKWARD: r2zr bwd (2026-10-05): the CCE bins 0..R/2 of
+   every row of a row-major plane -> its R real samples, unnormalized (R
+   times x). The arithmetic is cx_real.ml's inverse recursion; the edges
+   are the forward's, swapped:
+   - the load edge takes four rows' slot pairs (p, p+1) as four vectors
+     (row k+r's bins at zin[2*((k+r)*Ls + p)]) and turns them into the
+     per-slot (re, im) lane vectors: one 128-bit lane turn per row pair,
+     one unpack per component. The DC and Nyquist imaginary parts are
+     never read. A lone last slot (R/2 even) loads as the half rows (0, 2)
+     and (1, 3), one vector each;
+   - the store edge transposes four sample vectors back into four row
+     blocks through the forward's load network (its own inverse); R = 4m + 2
+     leaves its last two samples as per-row halves.
+   count rows, at least two: four per wide iteration, then two at VEX-128;
+   a lone last row runs with the row before it. Out of place.
+   ═══════════════════════════════════════════════════════════════ *)
+let emit_rows_bwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
+  let vw = isa.Isa.vec_width in
+  if vw <> 4 then failwith "real_il: r2zr is emitted for the 256-bit ISA only";
+  if radix < 4 || radix mod 2 <> 0 then failwith "real_il: r2zr needs an even radix >= 4";
+  let h = radix / 2 in
+  let ctx =
+    make_ctx
+      ~tw_group:false
+      ~tw_log3:false
+      ~tw_pre:false
+      ~tw_gen2:false
+      ~colstride:false
+      ~st_turn:false
+      ~st_turn_gs:false
+      ~tangent:false
+  in
+  let tbl : consts = Hashtbl.create 16 in
+  let emit_group ~(body : Buffer.t) ~(nisa : Isa.t) ~(label : string) : unit =
+    reset ();
+    let lanes = nisa.Isa.vec_width in
+    let loads = ref [] in
+    let ld (a : caddr) : t =
+      let e = cload a in
+      loads := (a, e) :: !loads;
+      e
+    in
+    let name (e : t) = Printf.sprintf "z%d" e.tag in
+    let line (s : string) = Buffer.add_string body (Printf.sprintf "        %s\n" s) in
+    (* the load edge: slot p's (re, im) vectors over the rows; the DC and
+       Nyquist slots real *)
+    let xs = Array.make (h + 1) (None, None) in
+    let slot (p : int) (lo : t) (hi : t) : unit =
+      let re = cunpack lo hi false in
+      if p = 0 || p = h then xs.(p) <- (Some re, None) else xs.(p) <- (Some re, Some (cunpack lo hi true))
+    in
+    if lanes = 4
+    then (
+      let p = ref 0 in
+      while !p <= h do
+        if !p + 1 <= h
+        then (
+          (* rows 0..3, slots (p, p+1): a lane turn per row pair *)
+          let l = Array.init 4 (fun r -> ld (AZinTurn (!p, r))) in
+          let ulo = cturn l.(0) l.(2) false
+          and uhi = cturn l.(1) l.(3) false
+          and vlo = cturn l.(0) l.(2) true
+          and vhi = cturn l.(1) l.(3) true in
+          slot !p ulo uhi;
+          slot (!p + 1) vlo vhi;
+          p := !p + 2)
+        else (
+          (* the lone last slot: the half rows (0, 2) and (1, 3) *)
+          let ulo = ld (AZinTurnH (!p, 0))
+          and uhi = ld (AZinTurnH (!p, 1)) in
+          slot !p ulo uhi;
+          p := !p + 1)
+      done)
+    else
+      (* VEX-128: two rows; slot p of each row as one load *)
+      for p = 0 to h do
+        let l0 = ld (AZinTurn (p, 0))
+        and l1 = ld (AZinTurn (p, 1)) in
+        slot p l0 l1
+      done;
+    let x = Cx_real.irdft radix xs in
+    (* the store edge: the sample vectors back into row blocks *)
+    let roots = ref []
+    and st = ref [] in
+    if lanes = 4
+    then (
+      let block (off : int) : unit =
+        let u0 = cunpack x.(off) x.(off + 1) false
+        and u1 = cunpack x.(off) x.(off + 1) true
+        and u2 = cunpack x.(off + 2) x.(off + 3) false
+        and u3 = cunpack x.(off + 2) x.(off + 3) true in
+        List.iter
+          (fun (r, e) ->
+             roots := e :: !roots;
+             st := (AXoutRow (r, off), e, None) :: !st)
+          [ 0, cturn u0 u2 false; 1, cturn u1 u3 false; 2, cturn u0 u2 true; 3, cturn u1 u3 true ]
+      in
+      for b = 0 to (radix / 4) - 1 do
+        block (4 * b)
+      done;
+      if radix mod 4 <> 0
+      then (
+        (* the last two samples: two unpacks, four per-row halves *)
+        let off = radix - 2 in
+        let u0 = cunpack x.(off) x.(off + 1) false
+        and u1 = cunpack x.(off) x.(off + 1) true in
+        roots := u1 :: u0 :: !roots;
+        st := (AXoutRow (0, off), u0, Some 0) :: (AXoutRow (2, off), u0, Some 1)
+              :: (AXoutRow (1, off), u1, Some 0) :: (AXoutRow (3, off), u1, Some 1) :: !st))
+    else
+      (* VEX-128: two rows, a sample pair per store; unpacklo = row k's, unpackhi = row k+1's *)
+      for b = 0 to h - 1 do
+        let off = 2 * b in
+        let u0 = cunpack x.(off) x.(off + 1) false
+        and u1 = cunpack x.(off) x.(off + 1) true in
+        roots := u1 :: u0 :: !roots;
+        st := (AXoutRow (1, off), u1, None) :: (AXoutRow (0, off), u0, None) :: !st
+      done;
+    let roots = List.rev !roots
+    and st = List.rev !st in
+    let assigns = List.mapi (fun i e -> Expr.Output (i, true), e) roots in
+    let assigns =
+      Cx_pipeline.prepare_codelet ~who:(Printf.sprintf "r%d_r2zr_bwd_%d" radix lanes) ~uarch assigns
+    in
+    let sch = C2c_il.cx_schedule uarch assigns in
+    Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
+    List.iter
+      (fun ((a : caddr), (e : t)) -> line (Isa.const_decl nisa (name e) (render_load nisa a)))
+      (List.rev !loads);
+    let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    List.iter
+      (fun ((_ : Expr.elem_ref option), (e : t)) ->
+         match e.node with
+         | CIn _ | CLoad _ -> ()
+         | _ ->
+           if not (Hashtbl.mem seen e.tag)
+           then (
+             Hashtbl.replace seen e.tag ();
+             line (Isa.const_decl nisa (name e) (render ~ctx nisa tbl e))))
+      sch;
+    List.iter
+      (fun (a, e, part) ->
+         match part with
+         | None -> line (render_store nisa a (name e) ^ ";")
+         | Some c -> line (render_store Isa.sse2 a (Isa.cx_part_pd nisa (name e) c) ^ ";"))
+      st;
+    Buffer.add_string body "        }\n"
+  in
+  let body_w = Buffer.create 8192 in
+  let body_n = Buffer.create 4096 in
+  emit_group ~body:body_w ~nisa:isa ~label:"four rows";
+  emit_group ~body:body_n ~nisa:Isa.sse2 ~label:"two rows at VEX-128";
+  let buf = Buffer.create 16384 in
+  Buffer.add_string
+    buf
+    (Emit_render.provenance_block
+       ~family:(Printf.sprintf "full-IL (interleaved-complex) r2zr, radix-%d bwd" radix)
+       [ Printf.sprintf "ISA: %s; %d rows per vector" isa.Isa.name vw
+       ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
+       ; "Form: the real rows, backward (real_il.ml, cx_real.ml)"
+       ]);
+  Buffer.add_string
+    buf
+    (Printf.sprintf
+       "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
+       \ * PIPELINE-HOSTED (real_il.ml). radix-%d r2zr bwd: the CCE bins 0..%d of every\n\
+       \ * ROW of a row-major plane (row k's bins at zin[2*(k*Ls + p)]) -> its %d real\n\
+       \ * samples at zout[k*OLs + j], unnormalized (%d times x); real arithmetic\n\
+       \ * throughout (cx_real.ml), the DC and Nyquist imaginary parts never read.\n\
+       \ * count = the rows, at least two: four per wide iteration, then two at\n\
+       \ * VEX-128 (a lone last row runs with the row before it). Out of place.\n\
+       \ * tw_re, tw_im, Gs, OGs unused. */\n"
+       radix
+       h
+       radix
+       radix);
+  Buffer.add_string buf "#include <immintrin.h>\n#include <stddef.h>\n\n";
+  Buffer.add_string buf (emit_const_decls isa tbl);
+  Buffer.add_string buf "\n";
+  Buffer.add_string
+    buf
+    (Abi.z11_signature
+       ~alias_tolerant:false
+       ~symbol:(Printf.sprintf "radix%d_z_r2zr_bwd_%s" radix isa.Isa.name)
+       ~target_attr:(Isa.cx_target_attr isa)
+       ());
+  Buffer.add_string buf "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im; (void)Gs; (void)OGs;\n";
+  Buffer.add_string buf "    size_t k = 0;\n";
+  Buffer.add_string buf (Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" vw vw);
+  Buffer.add_buffer buf body_w;
+  Buffer.add_string buf "    }\n";
+  Buffer.add_string buf "    while (k < count) {  /* two rows at VEX-128 */\n";
+  Buffer.add_string buf "        if (k + 2 > count) k = count - 2;  /* a lone last row: with the row before it */\n";
+  Buffer.add_buffer buf body_n;
+  Buffer.add_string buf "        k += 2;\n";
+  Buffer.add_string buf "    }\n";
+  Buffer.add_string buf "}\n";
+  Buffer.contents buf
+;;
+
+let emit_rows ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
+  match dir with
+  | Fwd -> emit_rows_fwd ~radix ~isa ~uarch
+  | Bwd -> emit_rows_bwd ~radix ~isa ~uarch
 ;;
 
 (* ═══════════════════════════════════════════════════════════════
