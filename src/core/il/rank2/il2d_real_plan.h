@@ -43,7 +43,8 @@
  * own: an r2c verdict is never read by a c2r plan, nor the reverse.
  *
  * The column plan's forms and its per-kernel stack states are described at
- * its section.
+ * its section; the destroying c2r (a request's destroy_input permission: the
+ * one-kernel column pass in place on the caller's plane) at the last one.
  *
  * One thread, even N2. A threaded plan keeps the per-row door's slabs; odd
  * N2 its c2c child.
@@ -1174,6 +1175,286 @@ static void _il2d_real_colplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom_s *
                                    int N1, int N2, int ord, int T)
 {
     _il2d_real_colplan_dir(h, W, cfg, N1, N2, ord, T, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * THE DESTROYING C2R (2026-10-06). A c2r request may permit the plan to
+ * overwrite its input (vfft_config_t.destroy_input: a permission). Where the
+ * reverse column pass is ONE kernel call (the law: policy_il.h,
+ * vfft_policy_il2d_c2r_destroy_ok), that call can run IN PLACE on the
+ * caller's CCE plane and the row pass read it: the column-inverse plane
+ * (il2d_rscr) is never touched. Past L1 that is a plane the transform no
+ * longer writes and reads back (measured 2026-10-06, one plan both ways:
+ * 1.06-1.27 on the one-kernel cells; L1-sized planes go either way, which is
+ * why the form is raced and never assumed).
+ *
+ * THE RACE, on the WHOLE transform (the saving is the row pass's as much as
+ * the column pass's: the rows read the plane the kernel just wrote): the
+ * scratch form as the plan stands (its c2r column plan and row plan) against
+ * every one-kernel candidate in place -- `plain` (the one-stage chain's
+ * backward kernel) or the backward leaves of the cell (b816 | b448), each
+ * gated against the scratch form's output -- at the four stack states. The
+ * caller's plane is rewritten before every timed sample (the race's reset
+ * hook: repeated in-place inverses grow by N1 a call) and a sample is short
+ * enough to stay finite. 3% hysteresis toward the scratch form: the input is
+ * destroyed only where that clearly pays.
+ *
+ * WISDOM, on the shared real IL row:
+ *   cxd_c2r=   off | plain | b816 | b448     (off: the scratch form won)
+ *   cxds_c2r=  the in-place kernel's stack state 0..3 | any
+ * VFFT_IL2D_CXD_C2R=<cxd>[/s<state>] pins (beats the bank, never banks);
+ * VFFT_IL2D_CXD_C2R=off keeps the scratch form. Read and raced only for a
+ * request that carries the permission: a plan without it never looks at
+ * these tokens and preserves its input as it always did.
+ * ═══════════════════════════════════════════════════════════════════════ */
+static void _il2d_cxd_body(const void *v, const double *z, double *zz)
+{
+    const struct vfft_plan_s *h = (const struct vfft_plan_s *)v;
+    const size_t rn = h->il2d_col.rn;
+    (void)z;
+    h->il2d_cxd_leaf(zz, NULL, zz, NULL, NULL, NULL, rn, 0, rn, 0, rn);
+}
+/* the reverse column pass: the one kernel, in place on the caller's plane */
+static void _il2d_cxd_cols(struct vfft_plan_s *h, double *z)
+{
+    if (h->il2d_cxd_stk < 0)
+        _il2d_cxd_body(h, z, z);
+    else
+        _il2d_rowx_call(_il2d_cxd_body, h, z, z, h->il2d_cxd_stk);
+}
+/* a cxd name (n characters) onto the plan: `plain` at a one-stage chain, or a
+ * backward leaf of this cell; 0 = neither */
+static int _il2d_cxd_form_set(struct vfft_plan_s *h, const char *name, size_t n, int one_stage,
+                              const char *const *lname, int nl)
+{
+    int f;
+    h->il2d_cxd_leaf = NULL;
+    if (n == 5 && !strncmp(name, "plain", 5))
+        h->il2d_cxd_leaf = one_stage ? h->il2d_col.b[0] : NULL;
+    else
+        for (f = 0; f < nl; f++)
+            if (strlen(lname[f]) == n && !strncmp(name, lname[f], n))
+                h->il2d_cxd_leaf = vfft_il2p_col_leaf_bwd_fn(h->il2d_col.N, lname[f]);
+    return h->il2d_cxd_leaf != NULL;
+}
+
+/* the race's arm: the whole c2r, the scratch form (leaf NULL) or one kernel in place */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    double *z, *y;   /* the caller's CCE plane, the real plane */
+    vfft_il2p_fn leaf;
+    int stk;
+} _il2d_cxd_arm_t;
+static void _il2d_cxd_arm_run(void *v)
+{
+    _il2d_cxd_arm_t *c = (_il2d_cxd_arm_t *)v;
+    struct vfft_plan_s *h = c->h;
+    if (!c->leaf)
+    {
+        h->il2d_cxd_on = 0;
+        _il2d_real_cols(h, c->z, h->il2d_rscr, 1);
+        _il2d_real_rows_bwd(h, h->il2d_rscr, c->y);
+        return;
+    }
+    h->il2d_cxd_leaf = c->leaf;
+    h->il2d_cxd_stk = c->stk;
+    h->il2d_cxd_on = 1;
+    _il2d_cxd_cols(h, c->z);
+    _il2d_real_rows_bwd(h, c->z, c->y);
+}
+/* the race's reset: the caller's plane rewritten (the same values every time) */
+typedef struct
+{
+    double *z;
+    size_t n;
+    unsigned sd;
+} _il2d_cxd_seed_t;
+static void _il2d_cxd_seed(void *v)
+{
+    const _il2d_cxd_seed_t *s = (const _il2d_cxd_seed_t *)v;
+    unsigned sd = s->sd;
+    size_t j;
+    for (j = 0; j < s->n; j++)
+    {
+        sd = sd * 1664525u + 1013904223u;
+        s->z[j] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
+    }
+}
+
+static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                                       int N1, int N2, int ord, int T)
+{
+    enum { MAXC = 1 + VFFT_IL2P_COL_MAXLEAF };   /* plain, the leaves */
+    const size_t hp1 = (size_t)N2 / 2 + 1, RN = (size_t)N1 * (size_t)N2, CN = 2 * (size_t)N1 * hp1;
+    const vfft_ilcol_t *col = &h->il2d_col;
+    const int one_stage = col->nst == 1 && !col->nat && !col->blu && !col->tpc && (col->wl == 0 || col->wl == col->N) &&
+                          col->L[0] == col->N && col->b[0] != NULL;
+    const char *lname[VFFT_IL2P_COL_MAXLEAF];
+    const char *log = getenv("VFFT_IL2D_LOG");
+    int nl = 0;
+    h->il2d_cxd_on = 0;
+    h->il2d_cxd_stk = 0;
+    h->il2d_cxd_leaf = NULL;
+    /* a leaf writes natural order: offered where the column plan offers it */
+    if (!col->blu && !col->tpc && (col->nat || col->nst == 1))
+        nl = vfft_il2p_col_leaf_bwd_forms(N1, lname);
+    if (!h->il2d_rscr || !vfft_policy_il2d_c2r_destroy_ok(cfg, h->nthreads, one_stage, nl, col->blu || col->tpc))
+        return;
+    {   /* 1. env: the racing hook. Beats wisdom, never banks. */
+        const char *e = getenv("VFFT_IL2D_CXD_C2R");
+        if (e && e[0])
+        {
+            const char *sl = strchr(e, '/');
+            const size_t n = sl ? (size_t)(sl - e) : strlen(e);
+            if (!strcmp(e, "off"))
+                return;
+            if (_il2d_cxd_form_set(h, e, n, one_stage, lname, nl))
+            {
+                h->il2d_cxd_stk = sl ? _il2d_plan_stk_parse(sl + 1) : 0;
+                h->il2d_cxd_on = 1;
+            }
+            else
+                _vfft_warn("vfft_create: VFFT_IL2D_CXD_C2R=%s is not a one-kernel column form of %dx%d (the scratch form serves)", e, N1, N2);
+            return;
+        }
+    }
+    if (!W || W->vw2_off_2d)
+        return;
+    if (!cfg->recalibrate)
+    {   /* 2. the banked verdict */
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxd_c2r");
+        if (tok)
+        {
+            if (!strcmp(tok, "off"))
+                return; /* the scratch form won this cell's race */
+            if (_il2d_cxd_form_set(h, tok, strlen(tok), one_stage, lname, nl))
+            {
+                h->il2d_cxd_stk = _il2d_plan_stk_parse(vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxds_c2r"));
+                h->il2d_cxd_on = 1;
+                return;
+            }
+            /* a banked kernel that no longer builds here: the race */
+        }
+    }
+    /* 3. the race: the whole transform, the scratch form against every one-kernel
+     * candidate in place at every stack state */
+    {
+        _il2d_cxd_arm_t cand[MAXC], ctx[1 + 4 * MAXC];
+        vfft_race_arm_t arms[1 + 4 * MAXC];
+        char names[MAXC][8], xn[1 + 4 * MAXC][24], sb[8];
+        double ns[1 + 4 * MAXC];
+        _il2d_cxd_seed_t seed;
+        int nc = 0, na, best = 1, ci = 0, win = 0, i, s, f, reps, lg = 1;
+        double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
+        double *y = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
+        double *ref = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
+        if (!z || !y || !ref)
+        {
+            vfft_aligned_free(z); vfft_aligned_free(y); vfft_aligned_free(ref);
+            return;
+        }
+        seed.z = z;
+        seed.n = CN + 8;
+        seed.sd = 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 12);
+        /* the reference: the scratch form's plane */
+        ctx[0].h = h; ctx[0].z = z; ctx[0].y = ref; ctx[0].leaf = NULL; ctx[0].stk = 0;
+        _il2d_cxd_seed(&seed);
+        memset(ref, 0, (RN + 8) * sizeof(double));
+        _il2d_cxd_arm_run(&ctx[0]);
+        ctx[0].y = y;
+        /* the candidates, each gated against it */
+        for (f = -1; f < nl; f++)
+        {
+            const char *nm = f < 0 ? "plain" : lname[f];
+            vfft_il2p_fn k = f < 0 ? (one_stage ? col->b[0] : NULL) : vfft_il2p_col_leaf_bwd_fn(N1, lname[f]);
+            double e;
+            if (!k)
+                continue;
+            cand[nc].h = h; cand[nc].z = z; cand[nc].y = y; cand[nc].leaf = k; cand[nc].stk = -1;
+            _il2d_cxd_seed(&seed);
+            memset(y, 0, RN * sizeof(double));
+            _il2d_cxd_arm_run(&cand[nc]);
+            e = _zrpr_relerr(y, ref, RN);
+            if (e < 1e-10)
+            {
+                snprintf(names[nc], sizeof names[nc], "%s", nm);
+                nc++;
+            }
+            else
+                fprintf(stderr, "[il2d-real] c2r destroy %dx%d: %s in place FAILS the gate (rel %.2e) -- dropped\n", N1, N2, nm, e);
+        }
+        if (!nc)
+        {   /* no candidate stands: the scratch form serves, nothing is banked */
+            h->il2d_cxd_on = 0; h->il2d_cxd_leaf = NULL; h->il2d_cxd_stk = 0;
+            vfft_aligned_free(z); vfft_aligned_free(y); vfft_aligned_free(ref);
+            return;
+        }
+        arms[0].name = "scratch"; arms[0].run = _il2d_cxd_arm_run; arms[0].ctx = &ctx[0];
+        for (i = 0; i < nc; i++)
+            for (s = 0; s < 4; s++)
+            {
+                const int x = 1 + 4 * i + s;
+                ctx[x] = cand[i];
+                ctx[x].stk = s;
+                snprintf(xn[x], sizeof xn[x], "%s/s%d", names[i], s);
+                arms[x].name = xn[x]; arms[x].run = _il2d_cxd_arm_run; arms[x].ctx = &ctx[x];
+            }
+        na = 1 + 4 * nc;
+        {
+            double t0, est;
+            _vfft_create_race_count++;
+            _il2d_cxd_seed(&seed);
+            _il2d_cxd_arm_run(&ctx[0]);
+            t0 = vfft_now_ns();
+            _il2d_cxd_arm_run(&ctx[0]);
+            est = vfft_now_ns() - t0;
+            reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
+            if (reps > 4096) reps = 4096;
+            /* an in-place call grows the plane by at most N1: a sample of reps calls stays finite */
+            while ((1 << lg) < N1) lg++;
+            if (reps > 900 / lg) reps = 900 / lg;
+            if (reps < 1) reps = 1;
+            {   /* 9 rounds alternated, median; the plane rewritten before every sample */
+                const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, _il2d_cxd_seed, &seed, 1 };
+                vfft_race_run(&proto, arms, na, ns);
+            }
+        }
+        for (i = 2; i < na; i++)
+            if (ns[i] < ns[best]) best = i;
+        ci = (best - 1) / 4;
+        /* 3% hysteresis toward the scratch form: the input is destroyed where that clearly pays */
+        win = vfft_race_beats(ns[best], ns[0], 0.97);
+        if (log)
+        {
+            fprintf(stderr, "[il2d-real] c2r destroy %dx%d race: reps=%d | scratch=%.0f |", N1, N2, reps, ns[0]);
+            for (i = 0; i < nc; i++)
+            {
+                int bs = 0;
+                for (s = 1; s < 4; s++)
+                    if (ns[1 + 4 * i + s] < ns[1 + 4 * i + bs]) bs = s;
+                fprintf(stderr, " %s=%.0f(s%d;%.0f/%.0f/%.0f/%.0f)", names[i], ns[1 + 4 * i + bs], bs,
+                        ns[1 + 4 * i], ns[2 + 4 * i], ns[3 + 4 * i], ns[4 + 4 * i]);
+            }
+            fprintf(stderr, " -> %s\n", win ? xn[best] : "scratch (off)");
+        }
+        if (win)
+        {
+            h->il2d_cxd_leaf = cand[ci].leaf;
+            h->il2d_cxd_stk = _il2d_plan_stk(&ns[1 + 4 * ci], ctx[best].stk);
+            h->il2d_cxd_on = 1;
+            _il2d_plan_stk_str(h->il2d_cxd_stk, sb, sizeof sb);
+        }
+        else
+        {
+            h->il2d_cxd_on = 0;
+            h->il2d_cxd_leaf = NULL;
+            h->il2d_cxd_stk = 0;
+            snprintf(sb, sizeof sb, "any");
+        }
+        _il2d_real_plan_bank(h, W, cfg, N1, N2, ord, T, "cxd_c2r", win ? names[ci] : "off", "cxds_c2r", sb, 1);
+        vfft_aligned_free(z); vfft_aligned_free(y); vfft_aligned_free(ref);
+    }
 }
 
 #endif /* VFFT_IL2D_REAL_PLAN_H */

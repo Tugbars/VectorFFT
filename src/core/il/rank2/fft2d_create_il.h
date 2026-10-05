@@ -24,6 +24,10 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
     struct vfft_plan_s *h;
     ic = *cfg;
     ic.howmany = 1;
+    ic.destroy_input = 0;   /* the permission is the K = 1 plan's own (policy_il.h): the queue's
+                             * primary and its serial clones must be ONE plan -- a threaded
+                             * queue's primary is not eligible while its clones would be -- and
+                             * the clone probe reads one plane through every instance */
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     if (!h)
         return NULL;
@@ -1000,6 +1004,14 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * stack states, raced on the cell's own reverse pass (cx_c2r= / cxs_c2r=) */
     if (h->transform == VFFT_C2R && h->il2d_row && h->nthreads <= 1)
         _il2d_real_colplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* the DESTROYING c2r (2026-10-06): a request that permits its input to be
+     * overwritten (vfft_config_t.destroy_input) races the one-kernel column
+     * pass in place on the caller's plane against the scratch form, where the
+     * law admits the cell (policy_il.h); banked cxd_c2r= / cxds_c2r=. After
+     * the c2r row and column plans: the race runs the whole transform through
+     * them. */
+    if (h->transform == VFFT_C2R && h->il2d_row && cfg->destroy_input)
+        _il2d_real_destroyplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* the column-MT verdict. Serve a banked one ONLY when it was
      * raced at THIS thread count; otherwise race and bank. A
      * single-threaded plan never threads columns and never races. */

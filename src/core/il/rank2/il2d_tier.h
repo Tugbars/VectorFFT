@@ -388,6 +388,7 @@ static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
  * prefix in place on dst. */
 static void _il2d_colx_fwd(struct vfft_plan_s *h, const double *src, double *dst); /* il2d_real_plan.h, later in this TU */
 static void _il2d_colx_bwd(struct vfft_plan_s *h, const double *src, double *dst); /* its c2r twin */
+static void _il2d_cxd_cols(struct vfft_plan_s *h, double *z);   /* the destroying c2r's column pass, in place on the caller's plane */
 static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
                             double *dst, int reverse)
 {

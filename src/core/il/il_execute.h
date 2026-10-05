@@ -310,6 +310,32 @@ static int _k2x_il2d_c2r_2k(struct vfft_plan_s *h, vfft_dir_t dir, const double 
     h->il2d_rx_lm(h->il2d_rscr, NULL, zout, NULL, NULL, NULL, hp1, 0, rn2, 0, (size_t)h->N);
     return 0;
 }
+/* THE DESTROYING C2R (the request's destroy_input permission, where the
+ * destroying column plan won its race): the reverse column pass as one
+ * kernel IN PLACE on the caller's plane, the row pass from it; the
+ * column-inverse plane is not touched. The caller's z holds the
+ * column-inverse plane afterwards. */
+static int _k2x_il2d_c2r_d(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    if (zin == (const double *)zout)
+        return 1;
+    _il2d_cxd_cols(h, (double *)zin);
+    _il2d_real_rows_bwd(h, zin, zout);
+    return 0;
+}
+/* its two-kernel form: the in-place column kernel, then the backward rows
+ * kernel, both stack-insensitive by their races */
+static int _k2x_il2d_c2r_d2k(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
+    (void)dir;
+    if (zin == (const double *)zout)
+        return 1;
+    h->il2d_cxd_leaf(zin, NULL, (double *)zin, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
+    h->il2d_rx_lm(zin, NULL, zout, NULL, NULL, NULL, hp1, 0, rn2, 0, (size_t)h->N);
+    return 0;
+}
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
@@ -327,6 +353,9 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         if (h->transform == VFFT_C2R && h->il2d_rx_on && h->il2d_rx_lm && h->il2d_rx_stk < 0 &&
             h->il2d_cx_on && h->il2d_cx_leaf && !h->il2d_cx_perk && h->il2d_cx_stk < 0)
             h->k1_exec = _k2x_il2d_c2r_2k;
+        if (h->transform == VFFT_C2R && h->il2d_cxd_on && h->il2d_cxd_leaf)
+            h->k1_exec = (h->il2d_rx_on && h->il2d_rx_lm && h->il2d_rx_stk < 0 && h->il2d_cxd_stk < 0)
+                             ? _k2x_il2d_c2r_d2k : _k2x_il2d_c2r_d;
         return hp;
     }
     if (h->transform != VFFT_C2C || h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
@@ -765,6 +794,14 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
              * door folds rows scratch -> the caller's real plane. dir is
              * ignored (c2r = inverse math, unnormalized: caller divides
              * by N1*N2). */
+            if (h->il2d_cxd_on && h->il2d_cxd_leaf && (const void *)sre != (const void *)dre)
+            {   /* the destroying form (the request's permission; one thread): the
+                 * column kernel in place on the caller's plane, the rows from it
+                 * (never on an aliased call: the rows would read what they write) */
+                _il2d_cxd_cols(h, (double *)sre);
+                _il2d_real_rows_bwd(h, sre, dre);
+                return;
+            }
             if (!h->il2d_col.colmt ||
                 !_il2d_real_cols_mt(h, sre, h->il2d_rscr, 1,
                                     h->nthreads))

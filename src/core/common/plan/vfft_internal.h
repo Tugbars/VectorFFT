@@ -462,6 +462,18 @@ struct vfft_plan_s
     signed char il2d_cx_ks[8];
     void (*il2d_cx_leaf)(const double *, const double *, double *, double *, const double *, const double *,
                          size_t, size_t, size_t, size_t, size_t);
+    /* THE DESTROYING C2R COLUMN PLAN (il2d_real_plan.h; the request's
+     * destroy_input permission, the law in policy_il.h): il2d_cxd_on = the
+     * reverse column pass runs IN PLACE on the caller's CCE plane as one
+     * kernel call (il2d_cxd_leaf: the one-stage chain's backward kernel, or a
+     * backward one-kernel leaf) at the stack state il2d_cxd_stk (0..3 through
+     * the aligned entry, -1 = entered directly), and the row pass reads that
+     * plane; the column-inverse plane is not touched. Raced against the
+     * scratch form per cell on the whole transform, banked cxd_c2r= /
+     * cxds_c2r= on the 2D real row (cxd_c2r=off: the scratch form won). */
+    int il2d_cxd_on, il2d_cxd_stk;
+    void (*il2d_cxd_leaf)(const double *, const double *, double *, double *, const double *, const double *,
+                          size_t, size_t, size_t, size_t, size_t);
     /* il2d_col.colmt: INC-3: the RACED column-MT verdict for this cell
                       * (1 = thread the column pass, 0 = serial). Never a
                       * structural default — at 512x32 (hp1=17, so the
