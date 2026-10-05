@@ -302,7 +302,11 @@ exposes them as race PROPOSALS only.
   scrubbed on the next writable save. The quarantine file is append-only,
   honors the write guard, and carries the version header.
 - A verdict bank after the chain step is a FIELD UPDATE on the axis-0 row,
-  and only the chain race writes that row. A tier that banks structure,
+  and only the chain race writes that row: a chain race that lands on the
+  row's own chain (a recalibrate's) updates it in place -- every other verdict
+  survives (the other direction's on the direction-shared real row, the
+  children, the forms) and the measurement is refreshed; a chain race that
+  lands elsewhere replaces the row. A tier that banks structure,
   width, form or forms verdicts calls `vw2_ilcol_row_ensure` first (the row
   with its chain and no verdict tokens, when none exists). A forms verdict
   the column builder raced before the row existed is re-banked by the create

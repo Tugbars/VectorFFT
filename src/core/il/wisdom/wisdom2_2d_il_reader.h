@@ -130,6 +130,32 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
     return vw2_ilcol_chain_lookup(s, &ck, Rs, nst, wl, tf, ro, cmt, cmtt, blu);
 }
 
+/* the row's MEASURE refreshed in place (a chain race that confirmed the
+ * row's chain): ns= metric= units= src=race, the date and the build stamp;
+ * the payload untouched, an import's from= dropped (the row is this
+ * machine's measurement now) */
+static inline void vw2__ilcol_measure(vw2_store_t *st, const vw2_key_t *k, double ns)
+{
+    int i;
+    for (i = 0; i < st->nrec; i++)
+        if (vw2_key_eq(&st->rec[i].key, k)) {
+            vw2_rec_t *r = &st->rec[i];
+            char v[48];
+            if (st->poisoned[r->shard]) return;
+            snprintf(v, sizeof v, "%.1f", ns);
+            if (vw2_rec_set(r, 2, "ns", v) != VW2_OK) return;
+            (void)vw2_rec_set(r, 2, "metric", "fwd1");
+            (void)vw2_rec_set(r, 2, "units", "ns");
+            (void)vw2_rec_set(r, 2, "src", "race");
+            vw2__rec_del(r, "from");
+            vw2__2d_stamp_date(r);
+            st->dirty[r->shard] = 1;
+            r->own = 1;
+            if (st->build[0]) (void)vw2_rec_set(r, 2, "bld", st->build);
+            return;
+        }
+}
+
 /* bank one axis's chain and verdicts: axis 0 writes the row (the 2D
  * tier's record, unchanged), a later axis updates its suffixed tokens on
  * the row axis 0 wrote — the row must exist. Negative verdicts are not
@@ -152,16 +178,29 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
      * bank carries no measurement (ns <= 0: the N-arm verdict banked after
      * the chain race, or after a replayed chain) — a fresh measure-less
      * record would be refused against the measured row (the metric law),
-     * and the N-arm verdict would never land. */
+     * and the N-arm verdict would never land — or MEASURES THE ROW'S OWN
+     * CHAIN (a chain race, a recalibrate's, that landed where the row
+     * stands): the row is updated in place, every verdict it carries that
+     * this bank does not survives — the other direction's on the
+     * direction-shared real row, the children, the forms — and the
+     * measurement is refreshed. A chain race that lands elsewhere replaces
+     * the row, the verdicts raced against the old chain with it. */
     {
         vw2_key_t k;
         char tb[16], vb[24];
+        const vw2_rec_t *have;
+        int same = 0;
         vw2__ilcol_key(ck, &k);
-        if (ck->axis > 0 && !vw2_lookup(st, &k)) {
+        have = vw2_lookup(st, &k);
+        if (ck->axis > 0 && !have) {
             fprintf(stderr, "[wisdom2] il column axis %d bank refused (no row)\n", ck->axis);
             return -1;
         }
-        if (ck->axis > 0 || (ns <= 0.0 && vw2_lookup(st, &k))) {
+        if (have) {
+            const char *hc = vw2_rec_get(have, vw2__ilcol_tok(ck, "chain", tb, sizeof tb));
+            same = hc && !strcmp(hc, b);
+        }
+        if (ck->axis > 0 || (have && (ns <= 0.0 || same))) {
         if (vw2_update_field(st, &k, vw2__ilcol_tok(ck, "chain", tb, sizeof tb), b) != VW2_OK) return -1;
 #define VW2__ILCOL_UPD(base, val) do { \
         snprintf(vb, sizeof vb, "%d", (val)); \
@@ -173,6 +212,7 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
         if (cmt >= 0 && cmtt > 0) VW2__ILCOL_UPD("cmt", cmt);   /* the T is the row's key (v1.3) */
         if (blu >= 0) VW2__ILCOL_UPD("blu", blu);
 #undef VW2__ILCOL_UPD
+        if (ns > 0.0) vw2__ilcol_measure(st, &k, ns);   /* the re-race's time onto the row it confirmed */
         return VW2_OK;
         }
     }
@@ -354,7 +394,9 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
                         Rs[i]);
     /* MERGE into the shared row when its chain is the same: only THIS
      * direction's tokens move, the other direction's verdicts survive.
-     * Unraced axes (-1 / cmtt 0) never erase a banked token. */
+     * Unraced axes (-1 / cmtt 0) never erase a banked token. (The chain
+     * bank, vw2_ilcol_chain_bank, obeys the same law: a chain race that
+     * lands on the row's chain updates it in place.) */
     {
         vw2_key_t k;
         const vw2_rec_t *have;
