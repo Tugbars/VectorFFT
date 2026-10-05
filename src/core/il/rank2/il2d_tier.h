@@ -1528,6 +1528,7 @@ typedef struct
     double *nstage;           /* the natural leaf's staging for the chain arm */
     int lst;                  /* the natural leaf: staged (1) or strided (0) for this arm */
     double *zo;               /* the threading race's destination plane: the cell's own placement */
+    int wl, cut;              /* the chain race's banded arm: the band width and its cut (wl = 0: unbanded) */
 } _il2d_race_ctx_t;
 static void _il2d_arm_cols(void *v)
 {
@@ -1615,6 +1616,101 @@ static void _il2d_arm_chain(void *v)
     else
         _il2d_col_pass(c->z, c->z, c->N1, c->N2, 0, c->nst, c->R, c->Ls,
                        c->ff, c->tf, /*reverse=*/0);
+}
+/* THE CHAIN RACE'S ARMS ARE THE SERVING WALK (2026-10-06). A chain used to be
+ * timed as the unbanded column pass alone: on a plane past L2 every stage of
+ * that pass is a DRAM sweep, so the race crowned the chain with the fewest
+ * stages (32.8.8 at 2048x1024) -- while the walk that SERVES is banded, where
+ * only the wide prefix stages sweep the plane and the suffix runs inside an
+ * L2-resident band. There the cost is the wide stage's radix (a radix-32 wide
+ * stage runs 64 streams 16 KB apart, past the prefetchers and the first-level
+ * TLB: 2.7 copies of the plane where a radix-8 stage costs one), and a chain
+ * of four stages beat the verdict by 24% (phase split, 2048x1024). So every
+ * candidate is timed as the column walk it would serve with -- out of place
+ * from z into zo, as the door runs it: unbanded, and banded at every width the
+ * band law admits for it (the ladder, the stage spans that fit L2) -- and its
+ * score is its best form. The rows are not in these arms (their cost does not
+ * depend on the chain); the width itself is raced again on the full execute
+ * by the axis race, for the chain that won. */
+static void _il2d_arm_chain_oop(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    if (c->nat)
+        _il2d_col_pass_nat(c->z, c->zo, c->N1, c->N2, c->nst, c->R, c->Ls,
+                           c->ff, c->tf, /*reverse=*/0, c->perm, c->nscr, c->nstage);
+    else
+        _il2d_col_pass(c->z, c->zo, c->N1, c->N2, 0, c->nst, c->R, c->Ls,
+                       c->ff, c->tf, /*reverse=*/0);
+}
+static void _il2d_arm_chain_banded(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    const int cut = c->cut, nst = c->nst, N1 = c->N1;
+    const size_t rn = c->N2, wl = (size_t)c->wl;
+    size_t b0;
+    if (c->nat)
+    {   /* the natural banded walk's column part (il_execute.h): the wide prefix
+         * z -> nscr, per band the suffix in place on nscr and the staged leaf's
+         * blocks scattered to their natural rows of zo */
+        const int Rl = c->R[nst - 1];
+        if (cut > 0)
+            _il2d_col_stages(c->z, c->nscr, N1, rn, 0, cut, c->R, c->Ls, c->ff, c->tf, 0);
+        for (b0 = 0; b0 < (size_t)N1; b0 += wl)
+        {
+            const size_t blo = b0 / (size_t)Rl, bhi = (b0 + wl) / (size_t)Rl;
+            const double *lf = (cut > 0) ? c->nscr : c->z;
+            if (cut < nst - 1)
+            {
+                _il2d_col_stages(lf + 2 * b0 * rn, c->nscr + 2 * b0 * rn, (int)wl, rn, cut, nst - 1,
+                                 c->R, c->Ls, c->ff, c->tf, 0);
+                lf = c->nscr;
+            }
+            _il2d_nat_leaf_range(lf, c->zo, N1, rn, Rl, c->ff[nst - 1], c->perm, blo, bhi, 0, c->nstage);
+        }
+        return;
+    }
+    /* the scrambled banded walk: the wide prefix z -> zo, per band the suffix in place on zo */
+    if (cut > 0)
+        _il2d_col_stages(c->z, c->zo, N1, rn, 0, cut, c->R, c->Ls, c->ff, c->tf, 0);
+    for (b0 = 0; b0 < (size_t)N1; b0 += wl)
+        _il2d_col_stages((cut > 0 ? c->zo : c->z) + 2 * b0 * rn, c->zo + 2 * b0 * rn, (int)wl, rn, cut, nst,
+                         c->R, c->Ls, c->ff, c->tf, 0);
+}
+/* the band widths the chain race offers a candidate: the serving law's own
+ * admission (the axis race's) -- the ladder under the tcut law, the stage
+ * spans that fit L2; a VFFT_IL2D_WL pin narrows it to that width (a probe) */
+static int _il2d_race_widths(int N1, int N2, int nst, const int *Ls, int *wlc, int cap)
+{
+    int nwl = 0, p, s2;
+    for (p = 0; p < VFFT_IL2D_WL_LADDER_N && nwl < cap; p++)
+        if (vfft_policy_il2d_wl_cut(N1, nst, Ls, VFFT_IL2D_WL_LADDER[p]) >= 0)
+            wlc[nwl++] = VFFT_IL2D_WL_LADDER[p];
+    for (s2 = 1; s2 < nst && nwl < cap; s2++)
+    {
+        const int w = Ls[s2];
+        int dup = 0, p2;
+        if (!vfft_policy_il2d_band_ok(N1, nst, Ls, w))
+            continue;
+        if (!vfft_policy_fits_l2((long)w * N2 * 16))
+            continue;
+        for (p2 = 0; p2 < nwl; p2++)
+            if (wlc[p2] == w)
+                dup = 1;
+        if (!dup)
+            wlc[nwl++] = w;
+    }
+    {
+        const char *e = getenv("VFFT_IL2D_WL");
+        if (e)
+        {
+            const int w = atoi(e);
+            int p2, hit = 0;
+            for (p2 = 0; p2 < nwl; p2++) if (wlc[p2] == w) hit = 1;
+            if (hit) { wlc[0] = w; nwl = 1; }
+            else nwl = 0;   /* 0 = the pin asks for the unbanded form */
+        }
+    }
+    return nwl;
 }
 /* ── the WL race: the banded column walk's width (rows stay OUTSIDE per
  * fft2d_real_il_design.md §2.5): the unbanded arm + the static pool +
@@ -1783,7 +1879,7 @@ static struct {
     int commit;
 } _il2d_blu_ctx;
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
-                             const int *lens, double *best_ns, int nat);
+                             const int *lens, double *best_ns, int nat, int banded, int *best_wl);
 static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
                             size_t fsz, int half);
@@ -1834,7 +1930,7 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
         double bns = 0;
         _il2d_enum_rec(M, 0, cur, cand, lens, &ncand, &dropped);
         if (ncand < 1) return 0;   /* (a capped pool warns from inside the enumerator) */
-        win = (ncand > 1) ? _il2d_race_chains(M, N2, ncand, cand, lens, &bns, 0) : 0;
+        win = (ncand > 1) ? _il2d_race_chains(M, N2, ncand, cand, lens, &bns, 0, /*banded=*/0, NULL) : 0;   /* the inner runs unbanded */
         if (win < 0) return 0;
         memcpy(Rs, cand[win], sizeof cand[win]);
         *nst = lens[win];
@@ -1984,17 +2080,22 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
     _il2d_forms_serve_key(W, cfg, &ck, "forms", N1, (size_t)N2, Rs, nst, ff, fb, forms, fsz);
 }
 
-/* one HEAT of the chain race: the candidates idx[0..n-1] (n <= VFFT_IL2D_HEAT)
- * as the arms of ONE race. Every buildable candidate's tables and (natural)
- * permutation are built up front, then vfft_race_run samples every arm once
- * per round with the rounds alternating direction -- the house protocol -- so
- * a drift of the host (its throttled state lasts minutes) hits all chains
- * alike (timing each chain in its own burst, one after another, let two cold
- * runs at 1215x243 natural bank different chains). Min of 3 single executes
- * per arm; VFFT_IL2D_HEAT <= the template's VFFT_RACE_MAX_ARMS. The winner's
- * candidate index, -1 when none builds; *wns its ns. */
+/* one HEAT of the chain race: the candidates idx[0..n-1] (n <= the heat's
+ * chain count) as the arms of ONE race. Every buildable candidate's tables and
+ * (natural) permutation are built up front, then vfft_race_run samples every
+ * arm once per round with the rounds alternating direction -- the house
+ * protocol -- so a drift of the host (its throttled state lasts minutes) hits
+ * all chains alike (timing each chain in its own burst, one after another, let
+ * two cold runs at 1215x243 natural bank different chains). Min of 3 single
+ * executes per arm. A candidate's arms are its SERVING forms (banded = 1): the
+ * unbanded walk and the banded walk at every width the band law admits for it,
+ * each out of place z -> zo; its score is its best form (banded = 0: the
+ * unbanded in-place arm alone, the Bluestein inner's). The arms of a heat stay
+ * within VFFT_RACE_MAX_ARMS: the caller sizes its heats by the widths. The
+ * winner's candidate index, -1 when none builds; *wns its ns, *wwl its width. */
 static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, const int *idx, int n,
-                           int nat, double *z, double *nscr, double *nstage, double *wns)
+                           int nat, double *z, double *nscr, double *nstage, double *wns,
+                           double *zo, int banded, int *wwl)
 {
     struct
     {
@@ -2004,16 +2105,19 @@ static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, cons
         int *perm;
         int ci;
     } cb[VFFT_IL2D_HEAT];
-    _il2d_race_ctx_t rc[VFFT_IL2D_HEAT];
-    vfft_race_arm_t arms[VFFT_IL2D_HEAT];
-    double ns[VFFT_IL2D_HEAT];
-    int na = 0, a, s2, k, win = -1;
+    _il2d_race_ctx_t rc[VFFT_RACE_MAX_ARMS];
+    vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
+    double ns[VFFT_RACE_MAX_ARMS];
+    int armc[VFFT_RACE_MAX_ARMS];   /* the arm's chain slot */
+    int na = 0, nc = 0, a, s2, k, win = -1;
     *wns = 1e300;
-    for (k = 0; k < n && na < VFFT_IL2D_HEAT; k++)
+    if (wwl) *wwl = 0;
+    for (k = 0; k < n && nc < VFFT_IL2D_HEAT; k++)
     {
         const int ci = idx[k];
         int *perm = NULL;
-        if (!_il2d_resolve(cand[ci], lens[ci], cb[na].ff, cb[na].fb))
+        int wlc[14], nwl = 0, w;
+        if (!_il2d_resolve(cand[ci], lens[ci], cb[nc].ff, cb[nc].fb))
             continue;
         if (nat && lens[ci] > 1)
         {
@@ -2021,23 +2125,41 @@ static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, cons
             if (!perm)
                 continue; /* no natural leaf for this chain: not a candidate */
         }
-        if (_il2d_build_tables(N1, lens[ci], cand[ci], cb[na].Ls, cb[na].tf, cb[na].tb))
+        if (_il2d_build_tables(N1, lens[ci], cand[ci], cb[nc].Ls, cb[nc].tf, cb[nc].tb))
         {
             free(perm);
             continue;
         }
-        cb[na].perm = perm;
-        cb[na].ci = ci;
-        {
-            _il2d_race_ctx_t c0 = { NULL, NULL, z, 0, 1, N1, (size_t)N2,
-                                    lens[ci], cand[ci], cb[na].Ls, cb[na].ff, cb[na].tf,
-                                    nat && perm != NULL, perm, nscr, 0, nstage };
-            rc[na] = c0;
+        if (banded)
+            nwl = _il2d_race_widths(N1, N2, lens[ci], cb[nc].Ls, wlc, 14);
+        if (na + 1 + nwl > VFFT_RACE_MAX_ARMS)
+        {   /* the heat is full: this chain waits for the next (the caller sizes heats so this is rare) */
+            for (s2 = 0; s2 < lens[ci]; s2++)
+            {
+                vfft_aligned_free(cb[nc].tf[s2]);
+                vfft_aligned_free(cb[nc].tb[s2]);
+            }
+            free(perm);
+            break;
         }
-        arms[na].name = "chain";
-        arms[na].run = _il2d_arm_chain;
-        arms[na].ctx = &rc[na];
-        na++;
+        cb[nc].perm = perm;
+        cb[nc].ci = ci;
+        for (w = -1; w < nwl; w++)
+        {   /* w = -1: the unbanded arm; then every admitted width */
+            _il2d_race_ctx_t c0 = { NULL, NULL, z, 0, 1, N1, (size_t)N2,
+                                    lens[ci], cand[ci], cb[nc].Ls, cb[nc].ff, cb[nc].tf,
+                                    nat && perm != NULL, perm, nscr, 0, nstage };
+            c0.zo = zo;
+            c0.wl = w < 0 ? 0 : wlc[w];
+            c0.cut = w < 0 ? 0 : vfft_policy_il2d_wl_cut(N1, lens[ci], cb[nc].Ls, wlc[w]);
+            rc[na] = c0;
+            arms[na].name = "chain";
+            arms[na].run = w < 0 ? (banded ? _il2d_arm_chain_oop : _il2d_arm_chain) : _il2d_arm_chain_banded;
+            arms[na].ctx = &rc[na];
+            armc[na] = nc;
+            na++;
+        }
+        nc++;
     }
     if (na > 0)
     {
@@ -2045,25 +2167,28 @@ static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, cons
         const int best = vfft_race_run(&proto, arms, na, ns);
         if (best >= 0)
         {
-            win = cb[best].ci;
+            win = cb[armc[best]].ci;
             *wns = ns[best];
+            if (wwl) *wwl = rc[best].wl;
         }
         if (getenv("VFFT_IL2D_LOG"))
         {
-            fprintf(stderr, "[il2d] chain race %dx%d (%s): %d arm(s)", N1, N2,
-                    nat ? "nat" : "scr", na);
+            fprintf(stderr, "[il2d] chain race %dx%d (%s): %d chain(s), %d arm(s)", N1, N2,
+                    nat ? "nat" : "scr", nc, na);
             for (a = 0; a < na; a++)
             {
                 int q;
                 fprintf(stderr, " ");
-                for (q = 0; q < lens[cb[a].ci]; q++)
-                    fprintf(stderr, "%s%d", q ? "." : "", cand[cb[a].ci][q]);
+                for (q = 0; q < lens[cb[armc[a]].ci]; q++)
+                    fprintf(stderr, "%s%d", q ? "." : "", cand[cb[armc[a]].ci][q]);
+                if (rc[a].wl > 0)
+                    fprintf(stderr, "/wl%d", rc[a].wl);
                 fprintf(stderr, "=%.0f", ns[a]);
             }
             fprintf(stderr, " -> arm %d\n", best);
         }
     }
-    for (a = 0; a < na; a++)
+    for (a = 0; a < nc; a++)
     {
         for (s2 = 0; s2 < lens[cb[a].ci]; s2++)
         {
@@ -2081,20 +2206,26 @@ static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, cons
  * and one final. Returns the winner's index (its ns in *best_ns, from the
  * last race it ran), -1 = race impossible. */
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
-                             const int *lens, double *best_ns, int nat)
+                             const int *lens, double *best_ns, int nat, int banded, int *best_wl)
 {
     const size_t T = (size_t)N1 * N2;
     double *z = (double *)vfft_aligned_alloc(2 * T * sizeof(double));   /* aligned like every plane the door serves */
+    double *zo = banded ? (double *)vfft_aligned_alloc(2 * T * sizeof(double)) : NULL;   /* the serving forms' destination plane */
     double *nscr = nat ? (double *)vfft_aligned_alloc(2 * T * sizeof(double)) : NULL;   /* aligned like every plane the door serves */
     double *nstage = nat ? (double *)vfft_aligned_alloc(2 * 64 * (size_t)N2 * sizeof(double)) : NULL;   /* R_last <= 64 */
     int *surv = (int *)malloc((size_t)(ncand > 0 ? ncand : 1) * sizeof(int));
     int *next = (int *)malloc((size_t)(ncand > 0 ? ncand : 1) * sizeof(int));
-    int ns = ncand, win = -1, i, rounds = 0, heats = 0;
+    /* the heat's chain count: VFFT_IL2D_HEAT, or what the arm budget holds when
+     * every chain brings its widths (the unbanded arm + at most 14 widths) */
+    const int heat = banded ? (VFFT_RACE_MAX_ARMS / 15 < VFFT_IL2D_HEAT ? VFFT_RACE_MAX_ARMS / 15 : VFFT_IL2D_HEAT) : VFFT_IL2D_HEAT;
+    int ns = ncand, win = -1, wwl = 0, i, rounds = 0, heats = 0;
     double wns = 1e300;
     size_t q;
-    if (!z || (nat && !nscr) || !surv || !next)
+    if (best_wl) *best_wl = 0;
+    if (!z || (banded && !zo) || (nat && !nscr) || !surv || !next)
     {
         vfft_aligned_free(z);
+        vfft_aligned_free(zo);
         vfft_aligned_free(nscr);
         vfft_aligned_free(nstage);
         free(surv);
@@ -2107,7 +2238,7 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
         surv[i] = i;
     while (ns > 0)
     {
-        const int nh = (ns + VFFT_IL2D_HEAT - 1) / VFFT_IL2D_HEAT;
+        const int nh = (ns + heat - 1) / heat;
         int h, nn = 0;
         rounds++;
         heats += nh;
@@ -2115,12 +2246,15 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
         {
             const int lo = (int)((long)ns * h / nh), hi = (int)((long)ns * (h + 1) / nh);
             double hns;
-            const int w = _il2d_race_heat(N1, N2, cand, lens, surv + lo, hi - lo, nat, z, nscr, nstage, &hns);
+            int hwl = 0;
+            const int w = _il2d_race_heat(N1, N2, cand, lens, surv + lo, hi - lo, nat, z, nscr, nstage, &hns,
+                                          zo, banded, &hwl);
             if (w >= 0)
             {
                 next[nn++] = w;
                 win = w;
                 wns = hns;
+                wwl = hwl;
             }
         }
         if (nh == 1)
@@ -2133,7 +2267,9 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
     if (getenv("VFFT_IL2D_LOG") && heats > 1)
         fprintf(stderr, "[il2d] chain race %dx%d (%s): %d chain(s) in %d heat(s) over %d round(s)\n",
                 N1, N2, nat ? "nat" : "scr", ncand, heats, rounds);
+    if (best_wl) *best_wl = wwl;
     vfft_aligned_free(z);
+    vfft_aligned_free(zo);
     vfft_aligned_free(nscr);
     vfft_aligned_free(nstage);
     free(surv);
@@ -2532,8 +2668,9 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             if (ncand >= 1)
             {
                 double bns = 0;
+                int bwl = 0;
                 int win = _il2d_race_chains(N, (int)rn, ncand, cand,
-                                            lens, &bns, nat_req);
+                                            lens, &bns, nat_req, /*banded=*/1, &bwl);   /* the serving forms: the width is re-raced on the full execute (the axis race) */
                 /* nat_req, NOT key->ord: key->ord is the ROW LABEL, nat_req
                  * is which PASS this build will run. They are equal at the 2D
                  * tier and at the 3D tier's axis 1; they are NOT equal at the
@@ -2549,6 +2686,9 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                            sizeof cand[win]);
                     c->nst = lens[win];
                     chain_ok = 1;
+                    if (getenv("VFFT_IL2D_LOG"))
+                        fprintf(stderr, "[il2d] chain race %dx%d: the winner's serving form had wl=%d (%.0f ns; the axis race re-races the width)\n",
+                                N, (int)rn, bwl, bns);
                     vw2_ilcol_chain_bank(&W->vw2, key,
                                          c->R, c->nst,
                                          -1, -1, -1, -1, -1, -1,
