@@ -306,6 +306,26 @@ static const rfft_codelets_t *_rfft_registry(void)
     return &_rreg;
 }
 
+/* THE BUILD'S ID: <library version>-<commit>, the stamp (bld=) of every
+ * wisdom row this build banks (common/wisdom/wisdom2.h, vw2_set_build). The
+ * commit is the last one that touched the library's sources, -dirty when they
+ * carry uncommitted changes; the build supplies it as VFFT_BUILD_COMMIT (a
+ * definition, or the generated vfft_build_id.h of gauntlet/build.py). A build
+ * that knows no commit carries the version alone. */
+#if !defined(VFFT_BUILD_COMMIT) && defined(__has_include)
+#  if __has_include("vfft_build_id.h")
+#    include "vfft_build_id.h"
+#  endif
+#endif
+static const char *_vfft_build_id(void)
+{
+#ifdef VFFT_BUILD_COMMIT
+    return VFFT_VERSION_STRING "-" VFFT_BUILD_COMMIT;
+#else
+    return VFFT_VERSION_STRING;
+#endif
+}
+
 static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
 {
     const char *d = (dir && dir[0]) ? dir : ".";
@@ -379,6 +399,7 @@ static void _bundle_load(struct vfft_wisdom_s *W)
             (void)env;
 #endif
             vw2_open(&W->vw2, open_dir, 1);
+            vw2_set_build(&W->vw2, _vfft_build_id());   /* every row banked here carries bld= */
 
             /* THE STAMP. An unstamped store becomes this CPU's (in memory now,
              * on disk at the first save). A stamp from before the identity
@@ -2335,6 +2356,101 @@ void vfft_wisdom_free(vfft_wisdom *w)
 
 const char *vfft_wisdom_folder(void) { return _default_wisdom()->vw2.dir; }
 const char *vfft_wisdom_identity(void) { return vfft_cpu_identity(); }
+const char *vfft_wisdom_build(void) { return _vfft_build_id(); }
+
+/* one more formatted piece of the report text (grown as needed) */
+typedef struct { char *t; size_t len, cap; } _vfft_rep_t;
+static void _vfft_rep(_vfft_rep_t *r, const char *fmt, ...)
+{
+    va_list ap;
+    int need;
+    va_start(ap, fmt);
+    need = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (need <= 0) return;
+    if (r->len + (size_t)need + 1 > r->cap)
+    {
+        size_t nc = r->cap ? r->cap * 2 : 1024;
+        char *nt;
+        while (nc < r->len + (size_t)need + 1) nc *= 2;
+        nt = (char *)realloc(r->t, nc);
+        if (!nt) return;
+        r->t = nt; r->cap = nc;
+    }
+    va_start(ap, fmt);
+    vsnprintf(r->t + r->len, r->cap - r->len, fmt, ap);
+    va_end(ap);
+    r->len += (size_t)need;
+}
+
+/* The report of the library's own store: the folder, the identity, this
+ * build's id, and its rows counted by the build that raced them. With
+ * list_build, one line per row of that build as well ("" = the rows banked
+ * before the stamp existed). snprintf's contract: the text is cut to n - 1
+ * characters and the full length is returned. */
+size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n)
+{
+    const vw2_store_t *s = &_default_wisdom()->vw2;
+    const char *me = _vfft_build_id();
+    const char **id = NULL;
+    int *cnt = NULL, nid = 0, cap = 0, i, j, none = 0, me_at = -1;
+    _vfft_rep_t r = { NULL, 0, 0 };
+    size_t len;
+    for (i = 0; i < s->nrec; i++)
+    {
+        const char *b = vw2_rec_get(&s->rec[i], "bld");
+        if (!b) { none++; continue; }
+        for (j = 0; j < nid; j++)
+            if (!strcmp(id[j], b)) break;
+        if (j == nid)
+        {
+            if (nid == cap)
+            {
+                const int nc = cap ? cap * 2 : 16;
+                const char **ni = (const char **)realloc((void *)id, (size_t)nc * sizeof *ni);
+                int *nn;
+                if (!ni) continue;
+                id = ni;
+                nn = (int *)realloc(cnt, (size_t)nc * sizeof *nn);
+                if (!nn) continue;
+                cnt = nn;
+                cap = nc;
+            }
+            id[nid] = b; cnt[nid] = 0; nid++;
+        }
+        cnt[j]++;
+        if (!strcmp(b, me)) me_at = j;
+    }
+    _vfft_rep(&r, "wisdom folder: %s\n", s->dir);
+    _vfft_rep(&r, "identity:      %s\n", s->meta[0] ? s->meta : vfft_cpu_identity());
+    _vfft_rep(&r, "this build:    %s\n", me);
+    _vfft_rep(&r, "rows by build: %d row(s)\n", s->nrec);
+    if (me_at >= 0) _vfft_rep(&r, "  %-28s %7d   (this build)\n", me, cnt[me_at]);
+    for (j = 0; j < nid; j++)
+        if (j != me_at) _vfft_rep(&r, "  %-28s %7d\n", id[j], cnt[j]);
+    if (none) _vfft_rep(&r, "  %-28s %7d   (saved before rows carried a build stamp)\n", "(no stamp)", none);
+    if (list_build)
+    {
+        _vfft_rep(&r, "rows of %s:\n", list_build[0] ? list_build : "(no stamp)");
+        for (i = 0; i < s->nrec; i++)
+        {
+            const char *b = vw2_rec_get(&s->rec[i], "bld");
+            char kb[192];
+            if (list_build[0] ? !(b && !strcmp(b, list_build)) : (b != NULL)) continue;
+            vw2__key_format(&s->rec[i].key, kb, sizeof kb);
+            _vfft_rep(&r, "  %s\n", kb);
+        }
+    }
+    len = r.len;
+    if (buf && n)
+    {
+        const size_t k = len < n - 1 ? len : n - 1;
+        if (r.t && k) memcpy(buf, r.t, k);
+        buf[k] = '\0';
+    }
+    free(r.t); free((void *)id); free(cnt);
+    return len;
+}
 
 /* ── global control ── */
 void vfft_set_num_threads(int n)

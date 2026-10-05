@@ -1,6 +1,6 @@
 # The wisdom system
 
-**Status:** decided 2026-10-04 (owner). Steps 1 to 3 of the build order (§11) are
+**Status:** decided 2026-10-04 (owner). Steps 1 to 4 of the build order (§11) are
 built; the rest is not. §12 lists what is still open. Scope: the wisdom system only. Engines, the split library and the
 public defaults stay as they are (§9).
 
@@ -33,20 +33,29 @@ src/wisdom/
   Zen4/       the Zen 4 laptop's rows
 ```
 
-- **Selection.** The library reads the identity stamp (§3) inside each folder's files
-  and uses the folder whose stamp equals this CPU's identity. Folder names carry no
-  meaning; a user may rename theirs.
+- **Selection** (`common/wisdom/wisdom2_folders.h`). The library reads the identity
+  stamp (§3) inside each folder's files and uses the folder whose stamp equals this
+  CPU's identity. Folder names carry no meaning; a user may rename theirs.
 - **No match.** The library uses `new/` and stamps it with this CPU's identity at the
   first save. Every plan for that CPU is stored there from then on.
 - **`new/` already claimed by another CPU, and no match.** The library creates a folder
-  named after this CPU's identity.
+  named after this CPU's identity (its values joined by `-`). A save never writes a
+  file that another CPU stamped after the store was opened.
 - **A twin of one of our CPUs** matches our folder, is served our rows, and saves its
   own races there. `new/` stays empty.
 - **Our machines** always match their own folders, so `new/` stays empty in the repo.
-- **`VFFT_WISDOM_DIR`** keeps today's meaning: the directory it names is the store, with
-  no scan. Tests and probes use it with a scratch copy.
+- **`VFFT_WISDOM_DIR`** keeps its meaning: the directory it names is the store, with
+  no scan, and so is a directory passed to `vfft_wisdom_load`. Tests and probes use it
+  with a scratch copy. A named store stamped before the identity carried caches and
+  core counts (`host= isa= l1d=` only) with this host and ISA is this CPU's older
+  stamp: the first save replaces it. A named store raced on another CPU is served as
+  it is and said once.
 - When no folder matches, one line names the identity that was looked for and the
   folder taken.
+- `vfft_wisdom_folder()` returns the folder in use and `vfft_wisdom_identity()` this
+  CPU's identity (`vfft.h`). Tools ask them (`gauntlet/wisdom_folder.py`, through
+  `recal_1d_probe --where`): the gauntlet seeds a run's store from this CPU's folder
+  and merges into it.
 
 ## 3. The CPU identity
 
@@ -64,9 +73,10 @@ src/wisdom/
   13900K match; an i7-14700K (12 E-cores, 33 MB) and an i5-14600K (6 P-cores, 24 MB) do
   not. A threaded verdict depends on the core counts and the four-step's admission on
   L3, so both are part of the identity and no row carries a per-row condition.
-- The cache sizes are read from the CPU while pinned to a P-core, never taken from a
-  build-time constant. Today's stamp (`@meta host= isa= l1d=`) carries the compile-time
-  48 KiB on every host (`common/support/cpu_cache.h:411`, `vfft.c:361`).
+- The cache sizes are read from the CPU on a P-core, never taken from a build-time
+  constant: the first read moves the calling thread to a P-core it is allowed and
+  gives it back (`common/support/cpu_cache.h`). The stamp is the `@meta` line of every
+  shard: `host= isa= l1d= l2= l3= pcores= ecores=` (`common/support/cpu_identity.h`).
 - The core counts come from the machine's topology, not from the process's allowed set,
   so a restricted affinity mask does not change the identity.
 - Every field has an AMD path where the concept applies (`cpu_cache.h` already reads
@@ -177,10 +187,12 @@ The real doors already treat a row that no longer builds as a miss
 
 ## 10. Cache sizes
 
-The planner acts on the measured sizes. Discovery (`cpu_cache.h`) becomes the default
-and the build-time 48 KiB / 2 MB is used only when the CPU cannot be read. The read is
-taken inside the race scope, pinned to a P-core, so an E-core's caches are never read.
-On the 14900KF the measured sizes equal the old constants.
+The planner acts on the measured sizes: discovery (`cpu_cache.h`) is the default. The
+read is taken on a P-core (the calling thread is moved there for it and given back), so
+an E-core's caches never size anything. A read that cannot be taken on a P-core, or
+whose geometry contradicts its label, sizes from the fallbacks (32 KiB, 1 MB): an
+undershoot degrades gracefully, an overshoot does not. `-DVFFT_L1D_DISCOVER=0` pins the
+old constants (48 KiB, 2 MB). On the 14900KF the measured sizes equal them.
 
 ## 11. Build order
 
@@ -194,7 +206,7 @@ owner's review.
 | 1 (built) | keep the bank, save by default, the store lock and merge-own-rows save, the off switch, `vfft.h` text | per family: a cold cell is raced once, is on disk, and a second process replays it with 0 races, bitwise; a read-only directory serves from memory; two processes saving at once lose no row; a killed lock holder does not block |
 | 2 (built) | a row that does not build is empty (1D c2c doors); the order pick stops banking; zr2c's bias removed | rows naming a missing form, chain and tile each re-race and are replaced on disk |
 | 3 (built) | the race scope in the library (lock, pin, guard, priority, restore), public in `vfft.h`; the gauntlet calls it and `sibling_guard.h` goes | affinity and priority equal before and after create at every door, races forced; a clock read during create outside the scope fails the check; two racing processes take turns; an unpinnable process serves and does not save |
-| 4 | the CPU identity, per-CPU folders, `new/`, the 14900KF move, measured cache sizes; gauntlet and tool paths follow | this machine selects its folder; a forged identity selects `new/` and stamps it; a claimed `new/` leads to a created folder; the 14900KF's picks are unchanged by the measured sizes |
+| 4 (built) | the CPU identity, per-CPU folders, `new/`, the 14900KF move, measured cache sizes; gauntlet and tool paths follow | this machine selects its folder; a forged identity selects `new/` and stamps it; a claimed `new/` leads to a created folder; the 14900KF's picks are unchanged by the measured sizes |
 | 5 | the build stamp and the report call | every new row carries the stamp; the report groups rows by build |
 | 6 | 2D and 3D children raced in role | a cold 2D and 3D create leaves the 1D files byte-identical; replay is bitwise with 0 races |
 
@@ -210,6 +222,13 @@ Until step 6 a 2D or 3D create still reads and writes 1D rows, as today.
   `vfft_measure_configure()`, `vfft_measure_begin()`, `vfft_measure_end()`,
   `vfft_measure_confine()` and `vfft_measure_describe()` for the race scope (the lock
   wait is a field of its configuration, not an environment variable);
-  `vfft_wisdom_report()` for the rows-by-build report.
+  `vfft_wisdom_folder()` and `vfft_wisdom_identity()` for the folder in use and the
+  identity; `vfft_wisdom_report()` for the rows-by-build report.
+- **The Zen 4 folder's stamp is written from the documented readings** of the laptop
+  (32 KiB, 1 MB, 16 MB, 6 cores: `docs/performance/v1_0_Zen4_results.md`), not read on
+  it. If the laptop reads another value it takes `new/` and says which identity it
+  looked for; its rows were raced with the 48 KiB constant and are re-raced there.
+- **A virtual machine is its own CPU.** WSL on the 14900KF presents 16 P-cores and no
+  E-cores, so the library gives it a folder of its own.
 - **Not ruled:** threaded plans leave the caller pinned to core 0 permanently
   (`vfft.c:238-244`), documented only at `vfft_set_num_threads`.

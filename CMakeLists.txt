@@ -53,6 +53,25 @@ set(VFFT_WISDOM  "${CMAKE_SOURCE_DIR}/src/wisdom" CACHE PATH
 set(VFFT_WISDOM_DEFS
     "VFFT_WISDOM_DIR_DEFAULT=\"${VFFT_WISDOM}\""
     "VFFT_FROZEN_WISDOM_DIR=\"${DAG_GEN}\"")
+# The build stamp of banked wisdom rows, bld=<version>-<commit> (src/core/vfft.c):
+# the last commit that touched the library's sources, -dirty when they carry
+# uncommitted changes. Read at CONFIGURE time; without git the library stamps
+# its version alone.
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" log -1 --format=%h --abbrev=8 -- src/core include
+                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" OUTPUT_VARIABLE VFFT_BUILD_COMMIT
+                    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" status --porcelain -- src/core include
+                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" OUTPUT_VARIABLE VFFT_BUILD_DIRTY
+                    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(VFFT_BUILD_COMMIT)
+        if(VFFT_BUILD_DIRTY)
+            string(APPEND VFFT_BUILD_COMMIT "-dirty")
+        endif()
+        list(APPEND VFFT_WISDOM_DEFS "VFFT_BUILD_COMMIT=\"${VFFT_BUILD_COMMIT}\"")
+    endif()
+endif()
 set(DAG_JIT      "${DAG}/jit")
 set(DAG_CODELETS "${DAG}/codelets")
 

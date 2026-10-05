@@ -113,7 +113,7 @@ end-of-line (escape-free, so any legacy line survives verbatim).
 ```text
 @vw2 1.0
 @legend <one line per rule — writer-emitted, §3.5>
-@meta host=i9-14900KF isa=avx2 l1d=49152
+@meta host=intel-f6m183 isa=avx2 l1d=49152 l2=2097152 l3=37748736 pcores=8 ecores=16
 
 @cell t=c2c n=8192 q=* ord=* place=* | eng=split_oop sp_route=ccol chain=8.32.32 vars=t1s.flat.log3 | ran=4 ns=19289.3 metric=fwd1 units=ns src=migrated from=oop_wisdom.txt:119
 @cell t=c2c n=4096 q=1 ord=nat place=ip | mode=zcasc ref=cell(t=c2c,n=4096,q=1,ord=scr,place=oop) | ran=1 ns=8891.0 metric=fwd1 units=ns arms=2 src=race bin=vfft_create@ce40f78d date=2026-08-19

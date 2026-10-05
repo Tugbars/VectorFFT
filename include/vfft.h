@@ -166,6 +166,31 @@ extern "C"
    *         Static storage.
    */
   const char *vfft_wisdom_identity(void);
+  /**
+   * @brief This build's id, "<version>-<commit>": the stamp (bld=) every row
+   *        this build races is saved with. The commit is the last one that
+   *        touched the library's sources, "-dirty" when the build was made
+   *        from changed ones; a build that knows no commit returns the
+   *        version alone. Static storage.
+   */
+  const char *vfft_wisdom_build(void);
+  /**
+   * @brief Report the library's own store: the folder in use, the identity,
+   *        this build's id, and the rows counted by the build that raced
+   *        them.
+   *
+   * Rows are served whatever build raced them. The report shows which ones an
+   * older build left, so they can be listed and re-raced
+   * (config.recalibrate = 1 on the cell).
+   *
+   * @param list_build NULL for the summary alone; a build id to add one line
+   *        per row that build raced; "" for the rows saved before rows
+   *        carried a stamp.
+   * @param buf,n Where the text goes, cut to n - 1 characters; buf may be
+   *        NULL with n == 0 to size it.
+   * @return The length of the whole report, as snprintf() counts it.
+   */
+  size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n);
 
   /* ── the configuration ────────────────────────────────────────────────── */
 

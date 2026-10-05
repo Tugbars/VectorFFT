@@ -224,6 +224,8 @@ typedef struct {
     uint8_t    writable;               /* the DISK guard: saves and the
                                           quarantine (banks are always
                                           accepted in memory)                */
+    char       build[64];              /* this build's id: stamped as bld= on every
+                                          row banked here ("" = no stamp)   */
     char       meta[256];              /* @meta payload; captured at load,
                                           settable via vw2_set_meta          */
 } vw2_store_t;
@@ -296,6 +298,9 @@ static const vw2_field_t vw2_fields[] = {
     { "units",   VW2_FC_INFO }, { "arms", VW2_FC_INFO }, { "src",    VW2_FC_INFO },
     { "bin",     VW2_FC_INFO }, { "date", VW2_FC_INFO }, { "host",   VW2_FC_INFO },
     { "l1d",     VW2_FC_INFO }, { "from", VW2_FC_INFO },
+    /* the build that raced the row: <library version>-<commit>, set by the
+     * bank from the store's build id (vw2_set_build) */
+    { "bld",     VW2_FC_INFO },
 };
 #define VW2_NFIELDS ((int)(sizeof vw2_fields / sizeof vw2_fields[0]))
 
@@ -1251,6 +1256,17 @@ static inline void vw2_set_meta(vw2_store_t *s, const char *meta)
     snprintf(s->meta, sizeof s->meta, "%s", meta ? meta : "");
 }
 
+/* THE BUILD STAMP. A store that was told its build's id (vfft.c: the library
+ * version and the commit of its sources) stamps every row it banks, and every
+ * row it changes a field of, with bld=<id>: the build that raced it. Rows are
+ * served whatever their stamp; it exists so the rows of an older build can be
+ * listed and re-raced (vfft_wisdom_report). A row with no bld= was banked
+ * before the stamp existed and counts as older than any build. */
+static inline void vw2_set_build(vw2_store_t *s, const char *id)
+{
+    snprintf(s->build, sizeof s->build, "%s", id ? id : "");
+}
+
 /* the value of key= in a stamp, into out; 1 = present */
 static inline int vw2__meta_field(const char *meta, const char *key, char *out, size_t n)
 {
@@ -1454,6 +1470,7 @@ static inline int vw2_bank(vw2_store_t *s, vw2_rec_t *rec)
         return VW2_EPOISON;
     }
     rec->own = 1;
+    if (s->build[0]) (void)vw2_rec_set(rec, 2, "bld", s->build);
     return vw2__bank_pinned(s, rec, shard);
 }
 
@@ -1478,7 +1495,11 @@ static inline int vw2_update_field(vw2_store_t *s, const vw2_key_t *key,
             int r;
             if (s->poisoned[s->rec[i].shard]) return VW2_EPOISON;
             r = vw2_rec_set(&s->rec[i], 1, name, val);
-            if (r == VW2_OK) { s->dirty[s->rec[i].shard] = 1; s->rec[i].own = 1; }
+            if (r == VW2_OK) {
+                s->dirty[s->rec[i].shard] = 1;
+                s->rec[i].own = 1;
+                if (s->build[0]) (void)vw2_rec_set(&s->rec[i], 2, "bld", s->build);
+            }
             return r;
         }
     return VW2_EKEY;

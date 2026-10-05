@@ -51,7 +51,20 @@ int main(int argc, char **argv)
      * re-deriving the selection. */
     if (argc > 1 && !strcmp(argv[1], "--where"))
     {
-        printf("folder=%s\nidentity=%s\n", vfft_wisdom_folder(), vfft_wisdom_identity());
+        printf("folder=%s\nidentity=%s\nbuild=%s\n", vfft_wisdom_folder(), vfft_wisdom_identity(), vfft_wisdom_build());
+        return 0;
+    }
+    /* --report [BUILD]: the library's own store by the build that raced each
+     * row; with BUILD, the rows of that build ("" = the unstamped ones) */
+    if (argc > 1 && !strcmp(argv[1], "--report"))
+    {
+        const char *lb = argc > 2 ? argv[2] : NULL;
+        const size_t need = vfft_wisdom_report(lb, NULL, 0);
+        char *txt = (char *)malloc(need + 1);
+        if (!txt) return 1;
+        vfft_wisdom_report(lb, txt, need + 1);
+        fputs(txt, stdout);
+        free(txt);
         return 0;
     }
     /* --r2c / --c2r: shifted out here so the shape parser below is unchanged */
