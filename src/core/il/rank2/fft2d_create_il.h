@@ -148,6 +148,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * inexpressible cells (no chain; child failure) REFUSE loudly.
      * The split tplan below is built ONLY for split-layout callers. */
     struct vfft_plan_s *il2d_row = NULL;
+    struct vfft_wisdom_s *il2d_rowS = NULL, *il2d_turnS = NULL, *il2d_cskS = NULL, *il2d_tpcS = NULL;
+    vw2_key_t il2d_pk;        /* this cell's row key: the children's recipes ride on that row (wisdom2_child.h) */
     char il2d_fm[64] = "";   /* the raced per-stage forms; re-banked once the chain row lands */
     int il2d_nst = 0;
     int il2d_wc = 0;
@@ -227,6 +229,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             il2d_tpc = col.tpc;
             il2d_tpcplan = col.tpcplan;
             il2d_tpcscr = col.tpcscr;
+            il2d_tpcS = col.tpcS;
             il2d_nat = col.nat;
             il2d_natperm = col.natperm;
             il2d_natscr = col.natscr;
@@ -244,9 +247,16 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.order = VFFT_ORDER_NATURAL;
             rc.layout = VFFT_LAYOUT_INTERLEAVED;
             rc.nthreads = 1;
-            rc.wisdom = cfg->wisdom;
-            rc.wisdom_write = cfg->wisdom_write;
-            il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
+            {   /* THE ROW PLAN IN ROLE (owner, 2026-10-02): its own store, seeded
+                 * from this cell's row (rp_*); it never reads or writes a 1D row */
+                const vw2_ilcol_key_t ck2 = { 2, N1, N2, 0, il2d_ord, 0, 0, il2d_T };
+                vw2__ilcol_key(&ck2, &il2d_pk);
+                il2d_rowS = vfft_child_store_for(&W->vw2, &il2d_pk, "rp_");
+            }
+            rc.wisdom = (vfft_wisdom *)il2d_rowS;
+            rc.wisdom_write = 0;
+            rc.recalibrate = cfg->recalibrate;
+            il2d_row = il2d_rowS ? (struct vfft_plan_s *)vfft_create(&rc) : NULL;
             if (il2d_row && !il2d_blu && !il2d_tbl_done &&
                 _il2d_build_tables(N1, il2d_nst, il2d_R,
                                    il2d_L, il2d_tf, il2d_tb))
@@ -260,6 +270,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                            "row child / stage tables failed; "
                            "unsupported (no wrapper by owner law)",
                            N1, N2);
+                vfft_child_store_free(il2d_rowS);
                 return NULL;
             }
             /* the BATCHED row route (ro=2): the n1ccs pair
@@ -336,9 +347,11 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 tc.order = VFFT_ORDER_NATURAL;
                 tc.layout = VFFT_LAYOUT_INTERLEAVED;
                 tc.nthreads = 1;
-                tc.wisdom = cfg->wisdom;
-                tc.wisdom_write = cfg->wisdom_write;
-                il2d_turn_plan = (struct vfft_plan_s *)vfft_create(&tc);
+                il2d_turnS = vfft_child_store_for(&W->vw2, &il2d_pk, "turn_");   /* the turn plan in role (turn_*) */
+                tc.wisdom = (vfft_wisdom *)il2d_turnS;
+                tc.wisdom_write = 0;
+                tc.recalibrate = cfg->recalibrate;
+                il2d_turn_plan = il2d_turnS ? (struct vfft_plan_s *)vfft_create(&tc) : NULL;
                 if (il2d_turn_plan)
                 {
                     il2d_turn_scr = (double *)vfft_aligned_alloc(2 * VFFT_IL2D_TURN_PITCH(N1) * (size_t)N2 * sizeof(double));
@@ -383,9 +396,11 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                     oc.order = VFFT_ORDER_NATURAL;
                     oc.layout = VFFT_LAYOUT_INTERLEAVED;
                     oc.nthreads = 1;
-                    oc.wisdom = cfg->wisdom;
-                    oc.wisdom_write = cfg->wisdom_write;
-                    il2d_csk_row = (struct vfft_plan_s *)vfft_create(&oc);
+                    il2d_cskS = vfft_child_store_for(&W->vw2, &il2d_pk, "csk_");   /* the skewed pass's row plan in role (csk_*) */
+                    oc.wisdom = (vfft_wisdom *)il2d_cskS;
+                    oc.wisdom_write = 0;
+                    oc.recalibrate = cfg->recalibrate;
+                    il2d_csk_row = il2d_cskS ? (struct vfft_plan_s *)vfft_create(&oc) : NULL;
                 }
                 if (il2d_csk_scr && !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_CSK") &&
                     vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "csk", 0) == 1)
@@ -783,6 +798,9 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     h->K = K;
     h->nthreads = _vfft_plan_threads(cfg);
     h->il2d_row = il2d_row;
+    h->il2d_rowS = il2d_rowS;
+    h->il2d_turnS = il2d_turnS;
+    h->il2d_cskS = il2d_cskS;
     h->il2d_col.N = N1;
     h->il2d_col.rn = (cfg->transform == VFFT_C2C) ? (size_t)N2 : (size_t)N2 / 2 + 1;
     h->il2d_col.nst = il2d_nst;
@@ -834,6 +852,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     h->il2d_col.tpc = il2d_tpc;
     h->il2d_col.tpcplan = il2d_tpcplan;
     h->il2d_col.tpcscr = il2d_tpcscr;
+    h->il2d_col.tpcS = il2d_tpcS;
     memcpy(h->il2d_col.R, il2d_R, sizeof il2d_R);
     memcpy(h->il2d_col.L, il2d_L, sizeof il2d_L);
     memcpy(h->il2d_col.f, il2d_f, sizeof il2d_f);
@@ -971,6 +990,9 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
         else
             _il2d_real_colmt_race(h, W, cfg, N1, N2);
     }
+    /* the c2c children's recipes onto this cell's row (wisdom2_child.h) */
+    if (h->transform == VFFT_C2C)
+        _il2d_children_put(W, cfg, h, N1, N2, il2d_ord, il2d_T);
     return h;
 }
 

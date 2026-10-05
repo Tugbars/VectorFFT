@@ -80,6 +80,7 @@ typedef struct {
     int tpc;
     struct vfft_plan_s *tpcplan;
     double *tpcscr;           /* rn x VFFT_IL2D_TPC_PITCH(N) complex */
+    struct vfft_wisdom_s *tpcS;   /* the plan's private store: its recipe rides on the column row as tpc_* */
 } vfft_ilcol_t;
 
 #endif /* VFFT_TRANSFORMS_FFT2D_IL2D_COL_H */

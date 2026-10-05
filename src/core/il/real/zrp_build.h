@@ -292,10 +292,10 @@ static int _zrf_env(int *R, int *K, int *nomsz, int *tile, int *mt)
 }
 
 /* the real four-step's handle: the split and the child are plan input. The
- * child races into the plan's private store (c2d, crow NULL) or replays the
- * rows it is given (the real row's fs_*, fs_row_*, and fs_row_bwd_* where
- * cbwd holds any); a replay whose child raced -- its store gained a row --
- * does not serve that row: NULL. */
+ * child races into the plan's private store (c2d NULL) or replays the rows it
+ * is given (the real row's fs_*: the 2D row, which carries its row plan as
+ * rp_*; older rows' fs_row_* and fs_row_bwd_* as well); a replay whose child
+ * raced -- its store gained a row -- does not serve that row: NULL. */
 static struct vfft_plan_s *_zfsr_build_plan(const vfft_config_t *cfg, int N, int n1, int n2,
                                             const vw2_rec_t *c2d, const vw2_rec_t *crow,
                                             const vw2_rec_t *cbwd)
@@ -307,22 +307,24 @@ static struct vfft_plan_s *_zfsr_build_plan(const vfft_config_t *cfg, int N, int
     int seeded = 0;
     if (!S)
         return NULL;
-    if (c2d && crow)
-    {
+    if (c2d)
+    {   /* the 2D row (it carries its row plan as rp_*); older rows' separate row-plan rows as well */
         vw2_key_t k2, kr, kb;
-        if (!_k1fs_child_keys(n1, n2, 0, T, &k2, &kr, &kb) || _k1fs_seed(S, &k2, c2d) || _k1fs_seed(S, &kr, crow) ||
+        if (!_k1fs_child_keys(n1, n2, 0, T, &k2, &kr, &kb) || _k1fs_seed(S, &k2, c2d) ||
+            (crow && crow->ntok > 0 && _k1fs_seed(S, &kr, crow)) ||
             (cbwd && cbwd->ntok > 0 && _k1fs_seed(S, &kb, cbwd)))
         {
             vfft_wisdom_free((vfft_wisdom *)S);
             return NULL;
         }
-        seeded = S->vw2.nrec;
+        vw2_disown(&S->vw2);   /* seeded, not raced */
+        seeded = 1;
     }
     zp = vfft_zfsr_create(N, n1, n2, S, cfg, T);   /* the plan owns S from here */
     if (!zp)
         return NULL;
-    if (seeded && zp->S->vw2.nrec != seeded)
-    {
+    if (seeded && vfft_child_store_raced(zp->S))
+    {   /* the child raced (a row of its store was banked here): not the row's plan */
         vfft_zfsr_destroy(zp);
         return NULL;
     }

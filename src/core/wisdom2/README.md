@@ -216,7 +216,8 @@ without a method, so the inner was re-raced on every other create.
 | `ns=` `metric=` `units=` | the number with EXPLICIT identity: `metric=fwd1` (forward-only per call) \| `bwd1` (backward-only per call) \| `joint2` (joint fwd+bwd); `units=ns` \| `cyc`. Numbers with different metric/units are never compared or converted — the module's compare helper refuses. Informational records carry no `ns=` token (absent ≠ 0.0). |
 | `arms=` | how many arms the race had. `arms=1` + `src=env:<VAR>` marks an env-shaped one-armed verdict; a later real race outranks it at merge. |
 | `src=` | `race` \| `env:<VAR>` \| `migrated` \| `seed` (a seed proposes candidates for a future race and is never served as a verdict). `migrated` serves like `race` (the number WAS raced); a fresh same-metric race outranks it. |
-| `bin= date= host= l1d= from=` | writer binary + vintage, date (migrated records keep the original race date when known), host stamps, and lineage (`from=<file>:<line>` for records carried in from legacy stores). |
+| `rp_* turn_* csk_* tpc_* plane_*` | a 2D/3D row's CHILDREN in role (`il/wisdom/wisdom2_child.h`): row i of the child's private store as `<pre>k<i>=<key, spaces as commas>` plus `<pre><i>_<token>=<value>` per payload token; a 2D row nests whole under a 3D row's `plane_` |
+| `bin= date= bld= host= l1d= from=` | writer binary + vintage, date (migrated records keep the original race date when known), host stamps, and lineage (`from=<file>:<line>` for records carried in from legacy stores). |
 
 ### 3.5 The header: legend + evolution rules
 

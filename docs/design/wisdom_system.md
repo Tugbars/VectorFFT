@@ -1,7 +1,7 @@
 # The wisdom system
 
-**Status:** decided 2026-10-04 (owner). Steps 1 to 4 of the build order (§11) are
-built; the rest is not. §12 lists what is still open. Scope: the wisdom system only. Engines, the split library and the
+**Status:** decided 2026-10-04 (owner). The six steps of the build order (§11) are
+built. §12 lists what is still open. §12 lists what is still open. Scope: the wisdom system only. Engines, the split library and the
 public defaults stay as they are (§9).
 
 Wisdom is the record of race winners that `vfft_create` plans from. This document
@@ -141,27 +141,43 @@ entered at the first clock read inside a create and left when the outermost
 ## 7. Rows
 
 - **The build stamp.** Every banked row carries `bld=<version>-<commit>`, for example
-  `bld=0.1.0-358acb83`: the library version and the git commit of the build that raced
-  it. A build without git carries the version only; a build from a modified tree is
-  marked. Rows are served whatever their stamp. One call reports the folder in use, its
-  identity, and the rows grouped by build, so older rows can be listed and re-raced.
+  `bld=0.1.0-358acb83`: the library version and the commit of the build that raced it.
+  The commit is the last one that touched the library's sources (`src/core`,
+  `include`), so the id moves only when the library does. A build without git carries
+  the version only; a build from changed sources is marked `-dirty`. The store stamps
+  the row at the bank (`vw2_set_build`, `common/wisdom/wisdom2.h`); the build supplies
+  the commit (`gauntlet/build.py` generates `vfft_build_id.h`, CMake defines
+  `VFFT_BUILD_COMMIT` at configure time). Rows are served whatever their stamp.
+  `vfft_wisdom_report()` reports the folder in use, its identity, this build's id
+  (`vfft_wisdom_build()`) and the rows counted by build, and lists the rows of one
+  build, so older rows can be found and re-raced (`recal_1d_probe --report [BUILD]`).
   Rows banked before this change carry no stamp and count as older than any build.
-- **Child recipes.** A 2D or 3D row carries the recipe of each child plan it runs,
-  raced inside the 2D/3D create in the child's own role, on a private store. A 2D/3D
-  create reads and writes no 1D row. The child's row tokens ride on the parent row
-  under a prefix, as the four-step's child does today (`fs_`, `fs_row_`,
-  `il/wisdom/wisdom2_oop_il.h:185-220`):
+- **Child recipes** (`il/wisdom/wisdom2_child.h`). A 2D or 3D row carries the recipe
+  of each child plan it runs, raced inside the 2D/3D create in the child's own role, on
+  a private store (in memory, never saved). A 2D/3D create reads and writes no 1D row;
+  a child's clones are created against the same store. Every row the child's store
+  holds rides on the parent row under a prefix: row i as `<pre>k<i>=<its key, spaces as
+  commas>` and `<pre><i>_<token>=<value>` for each of its payload tokens, so a route
+  row, a backward twin, a prime method's row or a four-step child's `fs_` tokens all
+  come back whole, and a 2D row that carries its own children nests under a 3D row's
+  prefix. The parent row is re-banked (and saved) when a child raced in the create or
+  the row carried no recipe yet; a hit stamps nothing.
 
   | prefix | child | built at |
   | --- | --- | --- |
-  | `row_` (`row_bwd_`) | the row plan at N2; the 3D row plan at N3 | `il/rank2/fft2d_create_il.h:236, 600, 655`; `il/rank3/fftnd_il.h:1186` |
-  | `turn_` (`turn_bwd_`) | the turn plan at N1 | `fft2d_create_il.h:330` |
-  | `csk_` (`csk_bwd_`) | the skewed pass's row plan | `fft2d_create_il.h:378` |
-  | `tpc_` (`tpc_bwd_`) | the turned prime column plan | `il/rank2/il2d_tier.h:2309` |
-  | `plane_` (`plane_row_`) | the 3D tier's 2D child | `fftnd_il.h:1155` |
+  | `rp_` | the row plan at N2; the 3D row plan at N3 (`row_` would collide with the four-step's `fs_row_`) | `il/rank2/fft2d_create_il.h`, `il/rank3/fftnd_il.h` `_ilnd_build_flat` |
+  | `turn_` | the turn plan at N1 | `fft2d_create_il.h` |
+  | `csk_` | the skewed pass's row plan | `fft2d_create_il.h` |
+  | `tpc_` | the turned prime column plan | `il/rank2/il2d_tier.h` `_il2d_tpc_build` |
+  | `plane_` | the 3D tier's 2D child (with its own `rp_` and friends inside) | `fftnd_il.h` `_ilnd_build_child` |
 
-- The format change is additive: a binary that predates it skips the tokens it does not
-  know.
+- The four-step's child codec follows: the 2D child row under `fs_` carries its row
+  plan itself (`fs_rp_*`), so `fs_row_` / `fs_row_bwd_` are no longer written and are
+  read as optional. A row from before (twelve in the 14900KF store) completes its child
+  once, at its next create, and is re-banked.
+- Rows from before this change carry no child recipe: the first create of such a 2D or
+  3D cell races its children in role once and re-banks the row. The format change is
+  additive: a binary that predates it skips the tokens it does not know.
 
 ## 8. Door changes
 
@@ -170,7 +186,8 @@ entered at the first clock read inside a create and left when the outermost
 | every tier | a read-only store refuses the bank; the 1D c2c door then serves its structural pair (827 ns at N=1024 against the winner's 718), the real and 2D doors race again on every create | the winner is banked, saved and served (§6) |
 | 1D c2c, both placements | a row that will not build falls to a default chain, an unraced prime cell or a refusal; a form the build lacks leaves the default kernel in place (`il/rank1/k1_commit.h:60-105`); the two-order pick banks an unmeasured pair (`k1_commit.h:940-960`) | the row is empty: full race, winner saved; the order pick banks nothing |
 | zr2c | the route race keeps the structural route unless the other is 3% faster (`il/real/zr2c_build.h:756-757`) | the faster route wins |
-| 2D, 3D | children are 1D creates on the caller's store | children raced in role, recipes on the parent row (§7) |
+| 2D, 3D c2c | children are 1D creates on the caller's store | children raced in role, recipes on the parent row (§7) |
+| 2D real | the row child (odd N2: a 1D c2c create; else a 1D real batch create at N2 x N1) and the per-row engines are built on the caller's store | unchanged: they still read and write 1D rows (reported, not in step 6) |
 
 The real doors already treat a row that no longer builds as a miss
 (`il/real/zrp_build.h:952`, `zr2c_build.h:636`, `odd_build.h:24`).
@@ -207,10 +224,10 @@ owner's review.
 | 2 (built) | a row that does not build is empty (1D c2c doors); the order pick stops banking; zr2c's bias removed | rows naming a missing form, chain and tile each re-race and are replaced on disk |
 | 3 (built) | the race scope in the library (lock, pin, guard, priority, restore), public in `vfft.h`; the gauntlet calls it and `sibling_guard.h` goes | affinity and priority equal before and after create at every door, races forced; a clock read during create outside the scope fails the check; two racing processes take turns; an unpinnable process serves and does not save |
 | 4 (built) | the CPU identity, per-CPU folders, `new/`, the 14900KF move, measured cache sizes; gauntlet and tool paths follow | this machine selects its folder; a forged identity selects `new/` and stamps it; a claimed `new/` leads to a created folder; the 14900KF's picks are unchanged by the measured sizes |
-| 5 | the build stamp and the report call | every new row carries the stamp; the report groups rows by build |
-| 6 | 2D and 3D children raced in role | a cold 2D and 3D create leaves the 1D files byte-identical; replay is bitwise with 0 races |
+| 5 (built) | the build stamp and the report call | every new row carries the stamp; the report groups rows by build |
+| 6 (built) | 2D and 3D c2c children raced in role | a cold 2D and 3D create leaves the 1D files byte-identical; replay is bitwise with 0 races; a four-step row from before completes its child once and replays |
 
-Until step 6 a 2D or 3D create still reads and writes 1D rows, as today.
+The 2D REAL door's children (§8) still read and write 1D rows.
 
 ## 12. Open
 

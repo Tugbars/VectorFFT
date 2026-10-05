@@ -176,6 +176,8 @@ typedef struct vfft_ilnd_s {
     struct vfft_plan_s *child;    /* arm 1: the rank-(n-1) IL c2c plan (in place; natural: out of place) */
     vfft_ilcol_t ax1;             /* arm 2: N[1] rows over N[2] complex, per plane */
     struct vfft_plan_s *row;      /* arm 2: the K=1 IL row plan, in place, natural */
+    struct vfft_wisdom_s *childS, *rowS;   /* the children's private stores: their recipes ride on the
+                                            * cell's row as plane_* and rp_* (il/wisdom/wisdom2_child.h) */
     char forms0[64], forms1[64];
     /* MT: the raced verdict and the per-worker clones (worker t > 0 = slot t-1) */
     int mt;                       /* 0 serial | 1 band | 2 plane */
@@ -842,6 +844,8 @@ static void vfft_ilnd_destroy(vfft_ilnd_t *d)
     _ilnd_free_nat(d);
     _ilnd_free_strips(d);
     _il2d_col_free(&d->ax0);
+    vfft_child_store_free(d->childS);
+    vfft_child_store_free(d->rowS);
     free(d);
 }
 
@@ -869,8 +873,10 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
         cc.order = cfg->order;
         cc.layout = VFFT_LAYOUT_INTERLEAVED;
         cc.nthreads = 1;
-        cc.wisdom = cfg->wisdom;
+        cc.wisdom = (vfft_wisdom *)d->childS;   /* the child's own store: a clone replays its recipe */
         cc.wisdom_write = 0;
+        if (!d->childS)
+            return 0;
         d->childw = (struct vfft_plan_s **)calloc((size_t)n, sizeof *d->childw);
         if (!d->childw)
             return 0;
@@ -907,8 +913,10 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
         rc.order = VFFT_ORDER_NATURAL;
         rc.layout = VFFT_LAYOUT_INTERLEAVED;
         rc.nthreads = 1;
-        rc.wisdom = cfg->wisdom;
+        rc.wisdom = (vfft_wisdom *)d->rowS;   /* the row plan's own store: a clone replays its recipe */
         rc.wisdom_write = 0;
+        if (!d->rowS)
+            return 0;
         d->roww = (struct vfft_plan_s **)calloc((size_t)n, sizeof *d->roww);
         d->ax1w = (vfft_ilcol_t *)calloc((size_t)n, sizeof *d->ax1w);
         if (!d->roww || !d->ax1w)
@@ -1149,11 +1157,20 @@ static int _ilnd_wl_pool(const vfft_ilcol_t *c, int *out, int max)
 }
 
 /* ── the arms' builders ─────────────────────────────────────────────── */
-static int _ilnd_build_child(vfft_ilnd_t *d, const vfft_config_t *cfg)
+static int _ilnd_build_child(vfft_ilnd_t *d, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                             const vw2_ilcol_key_t *key0)
 {
     vfft_config_t cc;
     if (d->child)
         return 1;
+    if (!d->childS)
+    {   /* the plane plan in role: its own store, its recipe from this cell's row (plane_*) */
+        vw2_key_t pk;
+        vw2__ilcol_key(key0, &pk);
+        d->childS = vfft_child_store_for(W ? &W->vw2 : NULL, &pk, "plane_");
+        if (!d->childS)
+            return 0;
+    }
     memset(&cc, 0, sizeof cc);
     cc.transform = VFFT_C2C;
     cc.placement = d->nat ? VFFT_OUTOFPLACE : VFFT_INPLACE; /* natural: the plane pass moves planes */
@@ -1165,8 +1182,8 @@ static int _ilnd_build_child(vfft_ilnd_t *d, const vfft_config_t *cfg)
     cc.order = cfg->order;
     cc.layout = VFFT_LAYOUT_INTERLEAVED;
     cc.nthreads = 1;
-    cc.wisdom = cfg->wisdom;
-    cc.wisdom_write = cfg->wisdom_write;
+    cc.wisdom = (vfft_wisdom *)d->childS;
+    cc.wisdom_write = 0;
     cc.recalibrate = cfg->recalibrate;
     d->child = (struct vfft_plan_s *)vfft_create(&cc);
     return d->child != NULL;
@@ -1185,6 +1202,17 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
                          vfft_policy_rankn_axis_nat(3, 1, key1.ord), &d->ax1,
                          d->forms1, sizeof d->forms1, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
         return 0;
+    if (!d->rowS)
+    {   /* the row plan in role: its own store, its recipe from this cell's row (rp_*) */
+        vw2_key_t pk;
+        vw2__ilcol_key(key0, &pk);
+        d->rowS = vfft_child_store_for(W ? &W->vw2 : NULL, &pk, "rp_");
+        if (!d->rowS)
+        {
+            _il2d_col_free(&d->ax1);
+            return 0;
+        }
+    }
     memset(&rc, 0, sizeof rc);
     rc.transform = VFFT_C2C;
     rc.placement = VFFT_INPLACE;
@@ -1195,8 +1223,8 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
     rc.order = VFFT_ORDER_NATURAL;
     rc.layout = VFFT_LAYOUT_INTERLEAVED;
     rc.nthreads = 1;
-    rc.wisdom = cfg->wisdom;
-    rc.wisdom_write = cfg->wisdom_write;
+    rc.wisdom = (vfft_wisdom *)d->rowS;
+    rc.wisdom_write = 0;
     rc.recalibrate = cfg->recalibrate;   /* as _ilnd_build_child: without it a
                                           * recalibrate 3D IL create re-races the
                                           * parent but replays the flat child's
@@ -1500,7 +1528,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
          * threading without the child arm: the calibrated T=8 grid banked the
          * flat structure on every large short-N1 cell where the child wins. */
         if (want2) ok2 = _ilnd_build_flat(d, W, cfg, &key0);
-        if (want1) ok1 = _ilnd_build_child(d, cfg);
+        if (want1) ok1 = _ilnd_build_child(d, W, cfg, &key0);
         if (!ok1 && !ok2)
         {
             _vfft_warn("vfft_create: 3D INTERLEAVED c2c %dx%dx%d%s — no structure arm could "
@@ -1751,7 +1779,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                 mtf = 1; /* the banked strip form needs a width, the plane partition and a permuting chain */
             if (d->mt > 0)
             {   /* the threaded structure may differ from the one-thread one */
-                const int okb = (mts == 1) ? _ilnd_build_child(d, cfg) : _ilnd_build_flat(d, W, cfg, &key0);
+                const int okb = (mts == 1) ? _ilnd_build_child(d, W, cfg, &key0) : _ilnd_build_flat(d, W, cfg, &key0);
                 if (!okb || !_ilnd_build_clones(d, cfg, nthr, mts))
                 {
                     _vfft_warn("ilnd: the banked threaded structure (cmts=%d) cannot be served at "
@@ -1772,7 +1800,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
             /* the strip form threads iff its width is set and every worker has a scratch */
             const int strip_ok = nat && (nf == 2 || (nnf > 1)) && d->nsw > 0 &&
                                  _ilnd_strips_ensure(d, nthr, maxsw > d->nsw ? maxsw : d->nsw);
-            if (_ilnd_build_child(d, cfg))
+            if (_ilnd_build_child(d, W, cfg, &key0))
                 c1 = _ilnd_build_clones(d, cfg, nthr, 1);
             if (_ilnd_build_flat(d, W, cfg, &key0))
                 c2 = _ilnd_build_clones(d, cfg, nthr, 2);
@@ -1890,6 +1918,18 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     h->K = 1;
     h->nthreads = nthr;
     h->ilnd = d;
+    if (usable_w)
+    {   /* the children's recipes onto the cell's row (wisdom2_child.h): the
+         * ones that raced here, and any the row did not carry yet */
+        vw2_key_t pk;
+        int changed = 0;
+        vw2__ilcol_key(&key0, &pk);
+        changed |= vfft_child_row_update(&W->vw2, &pk, "plane_", d->childS);
+        changed |= vfft_child_row_update(&W->vw2, &pk, "rp_", d->rowS);
+        changed |= vfft_child_row_update(&W->vw2, &pk, "tpc_", d->ax0.tpcS);
+        if (changed)
+            _vw2_persist(W, cfg);
+    }
     return h;
 }
 

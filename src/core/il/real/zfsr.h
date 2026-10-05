@@ -36,10 +36,10 @@
  *
  * The plan input is the split (N1, N2) and the four-step's child: the real
  * door sweeps the splits of M at create, each split's child (the 2D plan at
- * N1 x N2 and its row plan at N2) racing into the plan's own private store
- * (k1_fourstep.h, _k1fs_store_new), races the best against the other engines
- * and banks eng=zfsr split=N1xN2 with the child's rows in their own words
- * (fs_*, fs_row_*, fs_row_bwd_*; il/real/zrp_build.h, wisdom2_real_il.h).
+ * N1 x N2, which carries its row plan at N2 as rp_*) racing into the plan's
+ * own private store (k1_fourstep.h, _k1fs_store_new), races the best against
+ * the other engines and banks eng=zfsr split=N1xN2 with the child's row in its
+ * own words (fs_*; il/real/zrp_build.h, wisdom2_real_il.h).
  * Replay seeds the private store from that row: the shipped 2D and c2c
  * stores are never read or written.
  */
