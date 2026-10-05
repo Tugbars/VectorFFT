@@ -49,7 +49,7 @@ ROOT = HERE.parent  # repo root: highSpeedFFT/
 DAG          = ROOT / 'src' / 'dag-fft-compiler'   # the compiler (generator + generated + jit)
 DAG_CORE     = ROOT / 'src' / 'core'               # the runtime library (moved out of the compiler)
 DAG_GEN      = DAG / 'generator' / 'generated'   # generated registry + the FROZEN wisdom bundle (spike_wisdom.txt)
-WISDOM       = ROOT / 'src' / 'wisdom'           # the wisdom2 store (2026-09-24): the shards the library serves from
+WISDOM       = ROOT / 'src' / 'wisdom'           # the wisdom2 store's ROOT: one folder per CPU, the library picks its own
 DAG_ISA      = os.environ.get('VFFT_ISA', 'avx2')  # avx2 | avx512
 DAG_CODELETS = DAG / 'codelets' / 'inplace' / DAG_ISA
 
@@ -533,8 +533,9 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
     # warnings — they spam thousands of lines and bury real errors.
     flags = ['-O3', '-mavx2', '-mfma', '-march=native', '-fpermissive',
              '-D_CRT_SECURE_NO_WARNINGS',
-             # the store's home and the frozen bundle's (2026-09-24): a NULL
-             # wisdom dir with no VFFT_WISDOM_DIR opens src/wisdom READ-ONLY;
+             # the store's root and the frozen bundle's home: with no directory
+             # named (NULL wisdom dir, VFFT_WISDOM_DIR unset) the library serves
+             # from and saves into THIS CPU's folder under src/wisdom/;
              # spike_wisdom.txt & co. are read from generated/ whatever the dir
              '-DVFFT_WISDOM_DIR_DEFAULT="%s"' % WISDOM.as_posix(),
              '-DVFFT_FROZEN_WISDOM_DIR="%s"' % DAG_GEN.as_posix(),

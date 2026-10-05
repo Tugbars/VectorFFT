@@ -1244,10 +1244,45 @@ static inline void vw2_close(vw2_store_t *s)
     memset(s, 0, sizeof *s);
 }
 
-/* host/isa/l1d stamp for the header; also captured from files at load. */
+/* The CPU identity stamp for the header (common/support/cpu_identity.h builds
+ * it); also captured from files at load. */
 static inline void vw2_set_meta(vw2_store_t *s, const char *meta)
 {
     snprintf(s->meta, sizeof s->meta, "%s", meta ? meta : "");
+}
+
+/* the value of key= in a stamp, into out; 1 = present */
+static inline int vw2__meta_field(const char *meta, const char *key, char *out, size_t n)
+{
+    const size_t kl = strlen(key);
+    const char *p = meta;
+    while (*p) {
+        while (*p == ' ') p++;
+        if (!strncmp(p, key, kl) && p[kl] == '=') {
+            size_t k = 0;
+            p += kl + 1;
+            while (*p && *p != ' ' && k + 1 < n) out[k++] = *p++;
+            out[k] = '\0';
+            return 1;
+        }
+        while (*p && *p != ' ') p++;
+    }
+    if (n) out[0] = '\0';
+    return 0;
+}
+
+/* Is `stamp` a stamp of the CPU `identity` names? Equal strings are; so is a
+ * stamp from before the identity carried its caches and core counts (it has
+ * no pcores= field) when its host= and isa= agree: that one names the same
+ * CPU less completely, and the save replaces it with the full identity. */
+static inline int vw2_meta_same_cpu(const char *stamp, const char *identity)
+{
+    char a[64], b[64];
+    if (!strcmp(stamp, identity)) return 1;
+    if (vw2__meta_field(stamp, "pcores", a, sizeof a)) return 0;
+    if (!vw2__meta_field(stamp, "host", a, sizeof a) || !vw2__meta_field(identity, "host", b, sizeof b) || strcmp(a, b)) return 0;
+    if (!vw2__meta_field(stamp, "isa", a, sizeof a) || !vw2__meta_field(identity, "isa", b, sizeof b) || strcmp(a, b)) return 0;
+    return 1;
 }
 
 /* The measurement-mode guard, togglable by the owner of the store (the
@@ -1547,7 +1582,19 @@ static inline int vw2__save(vw2_store_t *s, int own_only, int lock_wait_ms)
         }
         if (err) { vw2_close(&disk); rc = VW2_ENOMEM; continue; }
 
-        if (!disk.meta[0] && s->meta[0]) snprintf(disk.meta, sizeof disk.meta, "%s", s->meta);
+        /* the stamp: an unstamped file takes this store's; an older stamp of
+         * the same CPU is replaced by the full identity. A file stamped for
+         * ANOTHER CPU since this store was opened (two new CPUs reached one
+         * unstamped folder) is not written: one CPU, one folder. */
+        if (s->meta[0] && disk.meta[0] && !vw2_meta_same_cpu(disk.meta, s->meta)) {
+            fprintf(stderr, "[wisdom2] save REFUSED for %s/%s: it was stamped for another CPU (%s) after this "
+                            "store was opened; this CPU's rows (%s) stay in memory\n",
+                    s->dir, vw2_shard_name[shard], disk.meta, s->meta);
+            vw2_close(&disk);
+            rc = VW2_EIO;
+            continue;
+        }
+        if (s->meta[0]) snprintf(disk.meta, sizeof disk.meta, "%s", s->meta);
 
         vw2__path(s, shard, path, sizeof path);
         snprintf(tmp, sizeof tmp, "%s.tmp.%d", path, (int)VW2__GETPID());

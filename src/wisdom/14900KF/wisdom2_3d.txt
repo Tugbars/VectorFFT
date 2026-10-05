@@ -8,7 +8,7 @@
 @legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
-@meta host=intel-f6m183 isa=avx2 l1d=49152
+@meta host=intel-f6m183 isa=avx2 l1d=49152 l2=2097152 l3=37748736 pcores=8 ecores=16
 @cell t=c2c n=2x2x2 q=1 ord=nat place=oop lay=il | chain=2 chain1=2 s=1 | ran=1 src=race date=2026-09-24
 @cell t=c2c n=2x2x4 q=1 ord=nat place=oop lay=il | chain=2 chain1=2 s=1 | ran=1 src=race date=2026-09-24
 @cell t=c2c n=2x2x8 q=1 ord=nat place=oop lay=il | chain=2 chain1=2 s=1 | ran=1 src=race date=2026-09-24

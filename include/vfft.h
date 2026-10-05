@@ -144,6 +144,29 @@ extern "C"
   /** @brief Free a table returned by vfft_wisdom_load(). NULL is accepted. */
   void vfft_wisdom_free(vfft_wisdom *w);
 
+  /**
+   * @brief The directory of the library's own store: this CPU's folder.
+   *
+   * Wisdom is kept per CPU. The library's store is a root of folders, each
+   * stamped with the identity of the CPU that raced its rows
+   * (vfft_wisdom_identity()), and a process uses the folder stamped with its
+   * own: rows are never taken from another CPU's folder. A CPU the root has
+   * not seen is given the folder `new`, which its first saved winner stamps.
+   * The environment variable VFFT_WISDOM_DIR names one directory as the store
+   * instead, with no selection.
+   *
+   * @return The directory. Static storage.
+   */
+  const char *vfft_wisdom_folder(void);
+  /**
+   * @brief This CPU's identity, as a store is stamped with it: vendor and
+   *        model, the build's instruction set, the P-core's L1d and L2 and
+   *        the L3 in bytes, and the counts of P- and E-cores.
+   * @return "host=... isa=... l1d=... l2=... l3=... pcores=... ecores=...".
+   *         Static storage.
+   */
+  const char *vfft_wisdom_identity(void);
+
   /* ── the configuration ────────────────────────────────────────────────── */
 
   /**

@@ -8,7 +8,7 @@
 @legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
-@meta host=intel-f6m183 isa=avx2 l1d=49152
+@meta host=intel-f6m183 isa=avx2 l1d=49152 l2=2097152 l3=37748736 pcores=8 ecores=16
 @cell t=c2c n=1024 q=128 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.4 vars=flat.t1s.t1s.t1s.t1s | ran=128 ns=181911.5 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:1
 @cell t=c2c n=8 q=32 ord=nat place=oop | eng=classic route=leaf | ran=32 ns=44.4 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:2
 @cell t=c2c n=16 q=32 ord=nat place=oop | eng=classic route=bailey2 chain=4.4 t1p=flat | ran=32 ns=111.9 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:3

@@ -45,6 +45,15 @@ static double now_ms(void)
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : ".";
+    /* --where: this CPU's folder of the library's own store and the identity
+     * it is stamped with (vfft.h). The gauntlet's driver seeds a run's store
+     * from that folder and merges into it; it asks here instead of
+     * re-deriving the selection. */
+    if (argc > 1 && !strcmp(argv[1], "--where"))
+    {
+        printf("folder=%s\nidentity=%s\n", vfft_wisdom_folder(), vfft_wisdom_identity());
+        return 0;
+    }
     /* --r2c / --c2r: shifted out here so the shape parser below is unchanged */
     int xform = VFFT_C2C;
     if (argc > 2 && (!strcmp(argv[2], "--r2c") || !strcmp(argv[2], "--c2r")))

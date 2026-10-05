@@ -14,7 +14,8 @@
  *     E (Gracemont)   cpu 16-31: L1d 32 KB,  8-way, L2 4 MB shared
  * A width sized for a P-core is 150% of an E-core's L1, and overshoot costs
  * everything at once rather than degrading, so an E-core read never sizes
- * anything.
+ * anything: the read moves the calling thread to an allowed P-core for its
+ * duration (cpu_topology.h names them) and gives it back.
  */
 #ifndef VFFT_CPU_CACHE_H
 #define VFFT_CPU_CACHE_H
@@ -23,6 +24,11 @@
 #include <stdio.h>    /* snprintf, for the host tag */
 #include <stdlib.h>   /* malloc/free/atoi in the OS tier */
 #include <string.h>   /* vendor-string compare in _vfft_cpu_cache_fill */
+#include "cpu_topology.h"   /* the P-cores: the read runs on one */
+#if defined(__linux__)
+#include <unistd.h>
+#include <sys/syscall.h>    /* the affinity calls by number: no cpu_set_t, so no _GNU_SOURCE ordering to get wrong */
+#endif
 
 /* -DVFFT_CPU_DISABLE_CPUID skips the instruction entirely and discovery falls
  * through to the OS tier below — for sandboxes that trap CPUID, and for
@@ -81,19 +87,23 @@ static inline void _vfft_cpuid(unsigned leaf, unsigned sub, unsigned r[4])
  * gracefully, overshooting does not. */
 #define VFFT_L1D_FALLBACK_BYTES (32 * 1024)
 
-/* Pinned by default, so a stray query or a thread that drifted onto an E-core
- * can never resize a measurement. Build with -DVFFT_L1D_DISCOVER=1 to size from
- * the live CPUID answer instead. The discovered value is recorded either way,
- * so the two can be compared. */
+/* MEASURED BY DEFAULT (owner, 2026-10-04: "the lib measures cache sizes and
+ * acts accordingly"): every sizing decision uses the L1d and L2 this CPU's
+ * P-core reports, read on a P-core (see _vfft_cpu_cache_fill), and the store's
+ * identity stamp carries them. A read that could not be taken on a P-core, or
+ * whose geometry contradicts its label, sizes from the fallbacks above and
+ * below instead. Build with -DVFFT_L1D_DISCOVER=0 to pin both sizes to the
+ * constants here whatever the CPU says. The discovered value is recorded either
+ * way, so the two can be compared. */
 #ifndef VFFT_L1D_PCORE_BYTES
 #define VFFT_L1D_PCORE_BYTES (48 * 1024)
 #endif
 #ifndef VFFT_L1D_DISCOVER
-#define VFFT_L1D_DISCOVER 0
+#define VFFT_L1D_DISCOVER 1
 #endif
 
-/* L2: the same discipline as L1d, pinned by default and discovered under the
- * same VFFT_L1D_DISCOVER switch. The E-core caveat is sharper here: a
+/* L2: the same discipline as L1d, measured by default under the same
+ * VFFT_L1D_DISCOVER switch. The E-core caveat is sharper here: a
  * Gracemont module's 4 MB L2 is SHARED by 4 cores, so sizing a private-L2
  * decision off an E-core read overshoots by up to 4x; the refuse rule below
  * treats it exactly like the L1 case. */
@@ -311,7 +321,78 @@ static inline void _vfft_cpu_os_fill(vfft_cpu_cache_t *o)
 static inline void _vfft_cpu_os_fill(vfft_cpu_cache_t *o) { (void)o; }
 #endif
 
+/* ── THE READ RUNS ON A P-CORE ──────────────────────────────────────────────
+ * CPUID answers for the core it executes on, and the library pins no thread
+ * of its own at one thread: on a hybrid part an unpinned first query read a
+ * P-core's 48 KB or an E-core's 32 KB by chance. So the calling thread is
+ * moved to the first logical CPU of a P-core it is allowed (the OS's own
+ * list, cpu_topology.h) for the read and given back as it was. When none is allowed the read is
+ * taken where the thread is, and the refuse rule in the fill sizes nothing off
+ * an E-core. */
+typedef struct {
+    int moved;
+#if defined(_WIN32)
+    DWORD_PTR old;
+#elif defined(__linux__)
+    unsigned long old[16];      /* 1024 CPUs */
+    long nbytes;
+#endif
+} _vfft_cpu_pin_t;
+
+static inline void _vfft_cpu_pcore_enter(_vfft_cpu_pin_t *p)
+{
+    const vfft_topology_t *t = vfft_topology();
+    int c;
+    p->moved = 0;
+#if defined(_WIN32)
+    {
+        DWORD_PTR pm = 0, sm = 0;
+        if (!GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm)) return;
+        for (c = 0; c < t->ncpu && c < 64; c++)
+            if (t->pcore[c] && ((pm >> c) & 1)) {
+                p->old = SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << c);
+                if (p->old) { p->moved = 1; return; }
+            }
+    }
+#elif defined(__linux__)
+    {
+        const int bits = (int)(8 * sizeof(unsigned long));
+        p->nbytes = syscall(SYS_sched_getaffinity, 0, sizeof p->old, p->old);
+        if (p->nbytes <= 0) return;
+        for (c = 0; c < t->ncpu && c < (int)(8 * p->nbytes); c++)
+            if (t->pcore[c] && ((p->old[c / bits] >> (c % bits)) & 1ul)) {
+                unsigned long one[16];
+                memset(one, 0, sizeof one);
+                one[c / bits] = 1ul << (c % bits);
+                if (syscall(SYS_sched_setaffinity, 0, sizeof one, one) == 0) { p->moved = 1; return; }
+            }
+    }
+#else
+    (void)t; (void)c;
+#endif
+}
+static inline void _vfft_cpu_pcore_leave(_vfft_cpu_pin_t *p)
+{
+    if (!p->moved) return;
+#if defined(_WIN32)
+    SetThreadAffinityMask(GetCurrentThread(), p->old);
+#elif defined(__linux__)
+    (void)syscall(SYS_sched_setaffinity, 0, (size_t)p->nbytes, p->old);
+#endif
+    p->moved = 0;
+}
+
+static inline void _vfft_cpu_cache_read(vfft_cpu_cache_t *o);
+
 static inline void _vfft_cpu_cache_fill(vfft_cpu_cache_t *o)
+{
+    _vfft_cpu_pin_t pin;
+    _vfft_cpu_pcore_enter(&pin);
+    _vfft_cpu_cache_read(o);
+    _vfft_cpu_pcore_leave(&pin);
+}
+
+static inline void _vfft_cpu_cache_read(vfft_cpu_cache_t *o)
 {
     unsigned r[4];
     o->l1d_seen = 0; o->l1d_ways = 0; o->core_type = 0;
@@ -407,13 +488,14 @@ static inline void _vfft_cpu_cache_fill(vfft_cpu_cache_t *o)
         o->l2_used = VFFT_L2_FALLBACK_BYTES;     /* same refuse rule; the
                                                   * E-core L2 is SHARED    */
 #else
-    o->l1d_used = VFFT_L1D_PCORE_BYTES;          /* pinned for our own runs */
+    o->l1d_used = VFFT_L1D_PCORE_BYTES;          /* -DVFFT_L1D_DISCOVER=0: the build's constants */
     o->l2_used = VFFT_L2_PCORE_BYTES;
 #endif
 }
 
-/* Cached. The FIRST call performs CPUID; make sure that first call happens
- * during planning. */
+/* Cached. The FIRST call performs CPUID, on a P-core (it moves the calling
+ * thread there and back); make sure that first call happens during planning.
+ * The store's open makes it (the identity stamp), before any plan exists. */
 static inline const vfft_cpu_cache_t *vfft_cpu_cache(void)
 {
     static vfft_cpu_cache_t c;

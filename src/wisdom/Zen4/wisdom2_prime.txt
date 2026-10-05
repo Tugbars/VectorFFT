@@ -8,7 +8,7 @@
 @legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
-@meta host=amd-f25m117 isa=avx2 l1d=49152
+@meta host=amd-f25m117 isa=avx2 l1d=32768 l2=1048576 l3=16777216 pcores=6 ecores=0
 @cell t=c2c n=127 q=1 ord=scr place=ip role=comp lay=il | eng=bluestein in=ztt in_sh=4.8.8 in_tw=0 | ran=1 src=race date=2026-10-02
 @cell t=c2c n=131 q=1 ord=scr place=ip role=comp lay=il | eng=rader in=2p in_sh=13.10 in_tw=0 | ran=1 src=race date=2026-10-02
 @cell t=c2c n=251 q=1 ord=scr place=ip role=comp lay=il | eng=bluestein in=ztt in_sh=8.8.8 in_tw=0 | ran=1 src=race date=2026-10-02

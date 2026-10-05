@@ -8,7 +8,7 @@
 @legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
-@meta host=intel-f6m183 isa=avx2 l1d=49152
+@meta host=intel-f6m183 isa=avx2 l1d=49152 l2=2097152 l3=37748736 pcores=8 ecores=16
 @cell t=c2c n=128x128 q=1 ord=scr place=* | rowplan=8.16 rowvars=flat.flat rowdif=1 colplan=4.4.8 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=24643.4 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:4
 @cell t=c2c n=256x256 q=1 ord=scr place=* | rowplan=16.16 rowvars=flat.t1s rowdif=0 colplan=4.4.4.4 colvars=flat.t1s.t1s.log3 coldif=0 b=8 | ran=1 ns=118836.7 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:5
 @cell t=c2c n=512x512 q=1 ord=scr place=* | rowplan=32.16 rowvars=flat.t1s rowdif=0 colplan=4.4.4.4.2 colvars=flat.t1s.t1s.t1s.t1s coldif=0 b=8 | ran=1 ns=773775.0 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:6

@@ -47,7 +47,7 @@ set(DAG          "${CMAKE_SOURCE_DIR}/src/dag-fft-compiler")
 set(DAG_CORE     "${CMAKE_SOURCE_DIR}/src/core")
 set(DAG_GEN      "${DAG}/generator/generated")
 set(VFFT_WISDOM  "${CMAKE_SOURCE_DIR}/src/wisdom" CACHE PATH
-    "The wisdom store the library opens when no directory and no VFFT_WISDOM_DIR is given (read-only)")
+    "The root of the wisdom store: one folder per CPU. With no directory named and no VFFT_WISDOM_DIR the library serves from and saves into this CPU's folder under it")
 # The frozen bundle (spike_wisdom.txt, bluestein_wisdom.txt, c2r_path.txt) stays
 # in generator/generated/ and is read from there whatever store is given.
 set(VFFT_WISDOM_DEFS
