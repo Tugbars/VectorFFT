@@ -9,6 +9,12 @@ mechanism, not a design history. Companions:
 [`measurement_arms.md`](measurement_arms.md),
 `src/core/wisdom2/README.md` §4.3 (field portability classes).
 
+**The switch's default is MEASURED since 2026-10-05** (`VFFT_L1D_DISCOVER`
+defaults to 1; `docs/design/wisdom_system.md` §3, §10): the sizes a P-core
+reports are the sizes used, the read is taken on a P-core, and the store's
+stamp is the CPU identity (`common/support/cpu_identity.h`). Where this paper
+says "default" for the pinned mode, read "`-DVFFT_L1D_DISCOVER=0`".
+
 **The thesis in one sentence:** the library never computes a tuning
 parameter from a cache size — widths and chains are found by racing —
 so discovery exists for three narrower jobs: size a few *candidate

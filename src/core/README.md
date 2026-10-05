@@ -55,10 +55,14 @@ in `include/vfft.h` (the capabilities table + the SIGNATURE TABLE /
 SUPPORT MATRIX blocks above `vfft_execute`); the machine proof is the gate
 battery (`api_matrix_gate` (the serve/refuse table, benches/api_matrix_gate.c)).
 
-Wisdom: the store is `src/wisdom/` (the `wisdom2_*.txt` shards and the per-host
-subtrees); `VFFT_WISDOM_DIR` or an explicit `vfft_wisdom_load(dir)` points the
-library at another directory (gates and benches use a scratch copy), and with
-neither the build's compiled default (`src/wisdom/`) is the store. The frozen
+Wisdom: the store is `src/wisdom/`, a root of per-CPU folders (`14900KF/`,
+`Zen4/`, the empty `new/`), each holding the `wisdom2_*.txt` shards stamped with
+the identity of the CPU that raced them. With no directory named, the library
+serves from and saves into the folder stamped with this CPU's identity
+(`common/support/cpu_identity.h`, `common/wisdom/wisdom2_folders.h`); nothing is
+taken from another CPU's folder. `VFFT_WISDOM_DIR` or an explicit
+`vfft_wisdom_load(dir)` names one directory as the store instead, unscanned
+(gates and benches use a scratch copy of this CPU's folder). The frozen
 bundle (`spike_wisdom.txt`, `bluestein_wisdom.txt`, `c2r_path.txt`) stays in
 `src/dag-fft-compiler/generator/generated/` and is read from there. Misses race
 at `config.rigor`, bank, and save the winner before create returns.

@@ -5,7 +5,7 @@
 runs on T > 1 threads, and how every threaded decision is selected by measurement at the
 thread count it serves. Implementation: `src/core/transforms/fft2d/{il2d_tier.h,
 il2d_cols.h, fft2d_create.h, il2d_col.h}`, `src/core/vfft_execute.h`; the verdict rows in
-`src/wisdom/wisdom2_2d.txt` (`src/core/wisdom2/wisdom2_2d_reader.h`). Companions: the routes
+`src/wisdom/<this CPU's folder>/wisdom2_2d.txt` (`src/core/wisdom2/wisdom2_2d_reader.h`). Companions: the routes
 and the one-thread races in [`il2d_c2c_strategy.md`](il2d_c2c_strategy.md); the strip width
 ladder in [`il2d_large_plane_design.md`](il2d_large_plane_design.md); the leaf's staged and
 strided forms in [`il2d_natural_leaf_design.md`](il2d_natural_leaf_design.md); the verdict

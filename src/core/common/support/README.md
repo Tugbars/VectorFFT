@@ -14,6 +14,8 @@ math here — this is the floor the engine stands on.
 | `race_timing.h` | the racers' shared clock and median (`vfft_now_ns`, `_il_ab_med9`) — every A/B in the tree times through these, so the protocol is one place |
 | `race_scope.h` | **the race scope**: the conditions every measurement runs under — the machine-wide measurement lock, the pin to a P-core, the hyperthread-sibling guard (TPAUSE / MWAITX), the priority, and their restore. `vfft_create` enters it at its first clock read (this header redefines `vfft_now_ns` to touch it) and leaves it when it returns; the public `vfft_measure_*` calls (`vfft.h`, bodies in `core/vfft_measure.h`) put the same scope around a caller's own timing. Included by `vfft.c` only, before every header that reads the clock |
 | `cpu_topology.h` | which logical CPU is which: physical cores, hyperthread siblings, P-cores and E-cores, read from the OS once (`vfft_topology`, `vfft_topo_sibling`, `vfft_topo_pcore_cpu`) |
+| `cpu_cache.h` | the P-core's L1d and L2, the L3 and the SMT width, read once at plan time **on a P-core** (the read moves the calling thread there and back); measured by default, `-DVFFT_L1D_DISCOVER=0` pins the old constants |
+| `cpu_identity.h` | **the CPU identity** (`host= isa= l1d= l2= l3= pcores= ecores=`): the stamp of a wisdom folder, and what selects this CPU's folder under the store's root (`common/wisdom/wisdom2_folders.h`) |
 
 ---
 
