@@ -11,7 +11,10 @@ declares how winners are measured, kept, stored per CPU, and served.
 
 1. **A winner is always kept and always saved.** A create that races serves the winner
    and writes it to the store before it returns. Execution never waits on planning.
-2. **A recalibration always overwrites** the cell's row.
+2. **A recalibration always overwrites** the cell's verdicts. On a row two plans share
+   (the 2D real row: one chain for both directions), a recalibrate rewrites its own
+   direction's verdicts in place and leaves the other direction's standing; only a
+   chain that changes replaces the row.
 3. **A row that no longer builds is empty.** The cell races from scratch and the winner
    replaces the row.
 4. **One CPU, one folder.** A row is served only on the CPU identity that raced it.

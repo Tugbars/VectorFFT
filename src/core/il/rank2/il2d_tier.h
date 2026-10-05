@@ -1812,8 +1812,8 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
      * (which checked prod == blu) and handed over here. Never the (M, N2,
      * scr) row: that is a user's own scrambled M x N2 cell, and a bank there
      * (a positive time with every axis verdict at -1 is the REPLACE path of
-     * vw2_2d_il_chain_bank) would wipe its width, form and column-MT
-     * verdicts. */
+     * vw2_2d_il_chain_bank whenever the chain differs) would wipe its width,
+     * form and column-MT verdicts. */
     if (_il2d_blu_ctx.rep_R && _il2d_blu_ctx.rep_nst > 0 &&
         _il2d_chain_prod(_il2d_blu_ctx.rep_R, _il2d_blu_ctx.rep_nst) == M)
     {

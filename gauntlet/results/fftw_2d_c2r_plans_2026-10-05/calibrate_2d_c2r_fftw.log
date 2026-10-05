@@ -1,0 +1,5 @@
+32x63      banked     14894ms raced     2p
+32x64      banked      5920ms raced     zrp:4.16:r2z
+64x64      banked      5718ms raced     zrp:4.16:r2z
+64x256     banked      8132ms raced     zr2c:child_oop_il
+128x128    banked      6017ms raced     zrp:4.32:r2z
