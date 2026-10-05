@@ -766,7 +766,17 @@ E1.1 il2d chain (sets nst, R[], L[])  RACED. Every factorization of N1 over
      24 candidates with the drop LOGGED.
      Every buildable candidate is an ARM of ONE alternated race (2026-09-06);
      the per-candidate burst loop it replaced banked different chains on two
-     cold runs of the same cell.
+     cold runs of the same cell. The pool is complete, raced in heats (2026-10-03).
+     THE ARMS ARE THE SERVING WALK (2026-10-06): a candidate is timed as the
+     column walk it would serve with, out of place -- unbanded, and BANDED at
+     every width E1.2 admits for it -- and its score is its best form. The
+     unbanded-only arm it replaced made every stage a DRAM sweep on planes past
+     L2 and crowned the fewest stages (32.8.8 at 2048x1024) where the served
+     banded walk pays for the wide stage's radix instead (a radix-32 wide stage
+     = 64 streams, 2.7 copies of the plane; four stages of 8 and 4 = 1.9): the
+     serving-walk race recovered 22-29% at 2048x1024 and 14% at 1024x1024 and
+     left 512x256, 1024x512 and 2048x2048 on their verdicts. The width itself
+     is re-raced for the winner by E1.2 on the full execute.
 E1.2 wl - banded column walk width    RACED. {0 unbanded} + WPOOL
      {8,16,32,64,128,256} filtered by (w<=N1, N1%w==0, some stage with w%L[s]==0)
      + the L2-gated cascade width. NATURAL cells race it too (2026-09-05:

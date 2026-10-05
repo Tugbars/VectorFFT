@@ -250,7 +250,9 @@ Two items close the tier's measured story once the bodies are settled:
   14–30% where alive (chain: 1.30x at 4096x64, 1.18x at 1024²; band:
   +15/+21/+17% at 256²/512²/4096x64, −8% at 1024²) — but the band axis is
   ENV-ONLY today. Adding `wl=`/`tfuse=` beside `chain=` in the `lay=il`
-  cells (full-execute race arm; the chain race stays column-only) turns
+  cells (full-execute race arm; the chain race stays column-only, but its
+  arms are the serving walk: unbanded and banded at every admitted width,
+  2026-10-06) turns
   those falsifier results into served verdicts and finishes the
   per-cell-tuning story.
 - **Price the wide-prefix aliasing, then decide the staged/skew route.**
