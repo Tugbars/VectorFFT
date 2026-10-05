@@ -1,0 +1,9 @@
+2026-10-05 17:56:23 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-10-05 17:56:23 run: 5 cells, contract 2D out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-05 17:56:23 calibrate: 5 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-10-05 17:57:18   calibrated 5/5 (128x128), 55 s elapsed
+2026-10-05 17:57:18 bench: 5 cells (0 already benched, 0 not banked -> not benched)
+2026-10-05 17:57:20   bench 32x63 flip 0: exit 2: ['[wisdom2] C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\gauntlet\\results\\fftw_2d_r2c_2026-10-05\\store: 20930 record(s) loaded, writable']
+2026-10-05 17:57:20   bench 32x63 flip 1: exit 2: ['[wisdom2] C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\gauntlet\\results\\fftw_2d_r2c_2026-10-05\\store: 20930 record(s) loaded, writable']
+2026-10-05 17:57:27   benched 5/5 (128x128), 7 s elapsed
+2026-10-05 17:57:28 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\fftw_2d_r2c_2026-10-05\report_2d_r2c_fftw.md
