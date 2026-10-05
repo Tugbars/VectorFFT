@@ -444,6 +444,8 @@ struct vfft_plan_s
                        size_t, size_t, size_t, size_t, size_t);
     struct vfft_plan_s *il2d_rx_eng;
     int il2d_rx_stk;
+    struct vfft_wisdom_s *il2d_rxS;     /* the row engines' PRIVATE store: a zr2c engine's child recipe
+                                         * rides on the real row as rx_* (il/wisdom/wisdom2_child.h) */
     /* THE REAL TIER'S COLUMN PLAN, r2c (il2d_real_plan.h): the serial column
      * pass, raced on the cell's own column pass and banked cx= / cxs= on the
      * 2D real row. il2d_cx_on = bound. The form: il2d_cx_leaf = the whole

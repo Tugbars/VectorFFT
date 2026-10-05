@@ -407,6 +407,7 @@ void vfft_destroy(vfft_plan h)
             vfft_aligned_free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
             if (h->il2d_rx_eng)
                 vfft_destroy((vfft_plan)h->il2d_rx_eng); /* the real tier's row engine */
+            vfft_child_store_free(h->il2d_rxS);          /* the row engines' private store */
             for (s2 = 0; s2 < h->il2d_col.nst; s2++)
             {
                 vfft_aligned_free(h->il2d_col.tf[s2]);

@@ -3151,6 +3151,26 @@ static void _il2d_children_put(struct vfft_wisdom_s *W, const vfft_config_t *cfg
         _vw2_persist(W, cfg);
 }
 
+/* the real door's twin: the row child (rp_*, or rp_c2r_* for a c2r plan:
+ * the two directions' rows differ) and the row engines (rx_*) onto the real
+ * row. */
+static void _il2d_real_children_put(struct vfft_wisdom_s *W, const vfft_config_t *cfg, struct vfft_plan_s *h,
+                                    int N1, int N2, int ord, int T)
+{
+    vw2_ilcol_key_t ck;
+    vw2_key_t pk;
+    int changed = 0;
+    if (!W || W->vw2_off_2d)
+        return;
+    memset(&ck, 0, sizeof ck);
+    ck.rank = 2; ck.n0 = N1; ck.n1 = N2; ck.ord = ord; ck.real = 1; ck.nthreads = T;
+    vw2__ilcol_key(&ck, &pk);
+    changed |= vfft_child_row_update(&W->vw2, &pk, h->transform == VFFT_C2R ? "rp_c2r_" : "rp_", h->il2d_rowS);
+    changed |= vfft_child_row_update(&W->vw2, &pk, "rx_", h->il2d_rxS);
+    if (changed)
+        _vw2_persist(W, cfg);
+}
+
 /* ── c2c MT clones. Worker t > 0 needs its own row child: the
  * serving path runs ONE plan through ONE rowscr, and two concurrent
  * bands interleaving that state produce garbage, not slowness. Clones

@@ -153,7 +153,7 @@ static void _il2d_rowx_fwd(struct vfft_plan_s *h, const double *sre, double *dre
 }
 
 /* the K = 1 request the per-row engines are built for */
-static void _il2d_rowx_cfg(const vfft_config_t *cfg, int N2, vfft_config_t *c)
+static void _il2d_rowx_cfg(const vfft_config_t *cfg, int N2, vfft_config_t *c, struct vfft_wisdom_s *S)
 {
     memset(c, 0, sizeof *c);
     c->transform = VFFT_R2C;
@@ -164,8 +164,9 @@ static void _il2d_rowx_cfg(const vfft_config_t *cfg, int N2, vfft_config_t *c)
     c->howmany = 1;
     c->layout = VFFT_LAYOUT_INTERLEAVED;
     c->nthreads = 1;
-    c->wisdom = cfg->wisdom;
-    c->wisdom_write = cfg->wisdom_write;
+    c->wisdom = (vfft_wisdom *)S;   /* the row engines' own store (wisdom2_child.h), never the library's */
+    c->wisdom_write = 0;
+    c->recalibrate = cfg->recalibrate;
 }
 
 /* an engine's token */
@@ -189,31 +190,34 @@ static void _il2d_rowx_name(vfft_il2p_fn lm, const struct vfft_plan_s *e, char *
         snprintf(b, n, "zr2c_r%d", e->zr2c_route);
 }
 
-/* a zr2c row engine at a route: its child from the 1D real cell's row when
- * that row banks this route, else raced in the real role (banking nothing).
- * Reading the 1D row is the deferred 2D/3D-own-wisdom item: the recipe
- * belongs on the 2D row (owner, 2026-10-01). */
-static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_config_t *c, struct vfft_wisdom_s *W, int N2, int route)
+/* a zr2c row engine at a route: its child from the row engines' own store
+ * (the real row's rx_* tokens, wisdom2_child.h) when that banks this route,
+ * else raced in the real role and banked there, so the recipe rides on the
+ * 2D row. A 1D row is never read (owner, 2026-10-01). */
+static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_config_t *c, struct vfft_wisdom_s *S, int N2, int route)
 {
     int r = 0, fmt = 0;
     vw2_zr2c_child_t ch;
-    if (W && !W->vw2_off_oop && vw2_real_il_lookup_zr2c(&W->vw2, N2, 0, 0, 1, &r, &fmt, &ch) && r == route)
+    struct vfft_plan_s *e;
+    if (S && !c->recalibrate && vw2_real_il_lookup_zr2c(&S->vw2, N2, 0, 0, 1, &r, &fmt, &ch) && r == route)
     {
         vfft_il_cand_t kc;
         _zr2c_prime_t pr;
         struct vfft_wisdom_s *fsS = NULL;
-        struct vfft_plan_s *e;
         _zr2c_cand_of_child(&kc, &ch);
         if (_zr2c_prime_of_child(&pr, &ch) &&
             (ch.route != VFFT_K1_IL_FS || (fsS = _zr2c_fs_store(ch.fs, ch.R1, ch.R2, route)) != NULL) &&
             (e = _zr2c_build_route(c, N2, route, &kc, &pr, fsS)) != NULL)
             return e;
     }
-    return _zr2c_build_route(c, N2, route, NULL, NULL, NULL);
+    e = _zr2c_build_route(c, N2, route, NULL, NULL, NULL);
+    if (e && S)
+        (void)_zr2c_bank(S, c, N2, e, 0.0);   /* the raced child's recipe into the engines' store */
+    return e;
 }
 
 /* a token's engine: 1 = built (door: nothing to build), 0 = it does not build here */
-static int _il2d_rowx_build(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N1, int N2, const char *tok,
+static int _il2d_rowx_build(const vfft_config_t *cfg, struct vfft_wisdom_s *S, int N1, int N2, const char *tok,
                             vfft_il2p_fn *lm, struct vfft_plan_s **eng)
 {
     vfft_config_t c;
@@ -226,7 +230,7 @@ static int _il2d_rowx_build(const vfft_config_t *cfg, struct vfft_wisdom_s *W, i
         *lm = N1 >= 2 ? vfft_il2d_rows_fn(N2) : NULL;
         return *lm != NULL;
     }
-    _il2d_rowx_cfg(cfg, N2, &c);
+    _il2d_rowx_cfg(cfg, N2, &c, S);
     if (!strcmp(tok, "zrm"))
         *eng = N2 <= VFFT_ZRM_MAX_N ? _zrm_build_plan(&c, N2) : NULL;
     else if (!strncmp(tok, "zrp_", 4))
@@ -238,7 +242,7 @@ static int _il2d_rowx_build(const vfft_config_t *cfg, struct vfft_wisdom_s *W, i
             *eng = _zrp_build_pair(&c, N2, R1, R2, f == 'b');
     }
     else if (!strncmp(tok, "zr2c_r", 6) && (tok[6] == '0' || tok[6] == '1') && !tok[7])
-        *eng = _il2d_rowx_zr2c(&c, W, N2, tok[6] == '1');
+        *eng = _il2d_rowx_zr2c(&c, S, N2, tok[6] == '1');
     else if (!strncmp(tok, "zttr_", 5))
     {
         int chain[8], nf = 0, stk = 3;
@@ -328,6 +332,12 @@ static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, c
     h->il2d_rx_eng = NULL;
     h->il2d_rx_stk = 0;
     h->il2d_rx_on = 0;
+    if (!h->il2d_rxS)
+    {   /* THE ROW ENGINES IN ROLE: their own store, seeded from this cell's real row (rx_*) */
+        vw2_key_t pk;
+        vw2__2d_key(&pk, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
+        h->il2d_rxS = vfft_child_store_for(W ? &W->vw2 : NULL, &pk, "rx_");
+    }
     {   /* 1. env: the racing hook. Beats wisdom, never banks. */
         const char *e = getenv("VFFT_IL2D_RX");
         if (e && e[0])
@@ -341,7 +351,7 @@ static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, c
                 n = sizeof tok - 1;
             memcpy(tok, e, n);
             tok[n] = 0;
-            if (_il2d_rowx_build(cfg, W, N1, N2, tok, &lm, &eng))
+            if (_il2d_rowx_build(cfg, h->il2d_rxS, N1, N2, tok, &lm, &eng))
             {
                 h->il2d_rx_lm = lm;
                 h->il2d_rx_eng = eng;
@@ -361,7 +371,7 @@ static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, c
         if (tok)
         {
             const char *sv = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "rxs");
-            if (_il2d_rowx_build(cfg, W, N1, N2, tok, &lm, &eng))
+            if (_il2d_rowx_build(cfg, h->il2d_rxS, N1, N2, tok, &lm, &eng))
             {
                 h->il2d_rx_lm = lm;
                 h->il2d_rx_eng = eng;
@@ -398,7 +408,7 @@ static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, c
                 a[j] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
             }
         }
-        _il2d_rowx_cfg(cfg, N2, &c);
+        _il2d_rowx_cfg(cfg, N2, &c, h->il2d_rxS);
 #define ROWX_ARM(LM, ENG) do { if (na < NARMS) { \
             cand[na].h = h; cand[na].a = a; cand[na].z = z; cand[na].lm = (LM); cand[na].eng = (ENG); cand[na].stk = 0; \
             _il2d_rowx_name(cand[na].lm, cand[na].eng, names[na], sizeof names[na]); na++; } \
@@ -407,10 +417,10 @@ static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, c
         if (N1 >= 2 && vfft_il2d_rows_fn(N2))
             ROWX_ARM(vfft_il2d_rows_fn(N2), NULL);
         {
-            struct vfft_plan_s *hz = _il2d_rowx_zr2c(&c, W, N2, 0), *e;
+            struct vfft_plan_s *hz = _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 0), *e;
             if (hz)
                 ROWX_ARM(NULL, hz);
-            if ((e = _il2d_rowx_zr2c(&c, W, N2, 1)) != NULL)
+            if ((e = _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 1)) != NULL)
                 ROWX_ARM(NULL, e);
             if (N2 <= VFFT_ZRM_MAX_N && (e = _zrm_build_plan(&c, N2)) != NULL)
                 ROWX_ARM(NULL, e);
@@ -522,6 +532,8 @@ static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, c
         h->il2d_rx_eng = ctx[best].eng;
         h->il2d_rx_stk = _il2d_plan_stk(&ns[4 * (best / 4)], ctx[best].stk);
         h->il2d_rx_on = 1;
+        if (h->il2d_rx_eng && h->il2d_rx_eng->zr2c_kid && h->il2d_rxS)
+            (void)_zr2c_bank(h->il2d_rxS, &c, N2, h->il2d_rx_eng, 0.0);   /* the winner's child: the recipe the row carries */
         if (log && h->il2d_rx_stk < 0)
             fprintf(stderr, "[il2d-real] rows %dx%d: %s is stack-insensitive -> any\n", N1, N2, names[best / 4]);
         {
