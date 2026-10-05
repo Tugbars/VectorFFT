@@ -624,9 +624,16 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.order = VFFT_ORDER_NATURAL;
             rc.layout = VFFT_LAYOUT_INTERLEAVED;
             rc.nthreads = 1;
-            rc.wisdom = cfg->wisdom;
-            rc.wisdom_write = cfg->wisdom_write;
-            il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
+            {   /* THE ROW CHILD IN ROLE: its own store, seeded from this cell's real row
+                 * (rp_*, or rp_c2r_* for a c2r plan); it never reads or writes a 1D row */
+                const vw2_ilcol_key_t ck2 = { 2, N1, N2, 0, il2d_ord, 0, 1, il2d_T };
+                vw2__ilcol_key(&ck2, &il2d_pk);
+                il2d_rowS = vfft_child_store_for(&W->vw2, &il2d_pk, cfg->transform == VFFT_C2R ? "rp_c2r_" : "rp_");
+            }
+            rc.wisdom = (vfft_wisdom *)il2d_rowS;
+            rc.wisdom_write = 0;
+            rc.recalibrate = cfg->recalibrate;
+            il2d_row = il2d_rowS ? (struct vfft_plan_s *)vfft_create(&rc) : NULL;
             if (il2d_row)
             {
                 il2d_orbuf = (double *)vfft_aligned_alloc(
@@ -644,6 +651,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                            "refuses (no split fallback by owner "
                            "law)",
                            _vfft_tname(cfg->transform), N1, N2, N2);
+                vfft_child_store_free(il2d_rowS);
                 return NULL;
             }
             if (cfg->transform == VFFT_C2R)
@@ -678,9 +686,16 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
              * and _tc_clone_equiv proves each clone bit-equivalent), so
              * the caller's thread budget passes straight through. */
             rc.nthreads = cfg->nthreads;
-            rc.wisdom = cfg->wisdom;
-            rc.wisdom_write = cfg->wisdom_write;
-            il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
+            {   /* THE ROW CHILD IN ROLE (the real batch at N2 x N1 and everything it
+                 * banks: its rows, its inner's); seeded from this cell's real row */
+                const vw2_ilcol_key_t ck2 = { 2, N1, N2, 0, il2d_ord, 0, 1, il2d_T };
+                vw2__ilcol_key(&ck2, &il2d_pk);
+                il2d_rowS = vfft_child_store_for(&W->vw2, &il2d_pk, cfg->transform == VFFT_C2R ? "rp_c2r_" : "rp_");
+            }
+            rc.wisdom = (vfft_wisdom *)il2d_rowS;
+            rc.wisdom_write = 0;
+            rc.recalibrate = cfg->recalibrate;
+            il2d_row = il2d_rowS ? (struct vfft_plan_s *)vfft_create(&rc) : NULL;
             /* PURITY GATE: the TC inner must be one of the interleaved
              * real engines — zr2c (the composite), the real pair, ZTT-r
              * or the real mono (il/real/zrp_build.h: the door's four
@@ -990,9 +1005,11 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
         else
             _il2d_real_colmt_race(h, W, cfg, N1, N2);
     }
-    /* the c2c children's recipes onto this cell's row (wisdom2_child.h) */
+    /* the children's recipes onto this cell's row (wisdom2_child.h) */
     if (h->transform == VFFT_C2C)
         _il2d_children_put(W, cfg, h, N1, N2, il2d_ord, il2d_T);
+    else
+        _il2d_real_children_put(W, cfg, h, N1, N2, il2d_ord, il2d_T);
     return h;
 }
 

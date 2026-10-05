@@ -1,0 +1,5 @@
+97         banked      1097ms raced     prime
+1000       banked     29629ms raced     chain3
+1024       banked      9247ms raced     2p
+4096       banked     21326ms raced     2p
+16384      banked     36481ms raced     ztt

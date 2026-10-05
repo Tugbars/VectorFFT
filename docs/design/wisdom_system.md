@@ -170,6 +170,8 @@ entered at the first clock read inside a create and left when the outermost
   | `csk_` | the skewed pass's row plan | `fft2d_create_il.h` |
   | `tpc_` | the turned prime column plan | `il/rank2/il2d_tier.h` `_il2d_tpc_build` |
   | `plane_` | the 3D tier's 2D child (with its own `rp_` and friends inside) | `fftnd_il.h` `_ilnd_build_child` |
+  | `rp_` / `rp_c2r_` | the real 2D door's row child: the c2c plan at an odd N2, else the real batch at N2 x N1 (by the plan's direction: the two differ) | `fft2d_create_il.h` (the real branch) |
+  | `rx_` | the real 2D door's per-row engines: a zr2c engine's child recipe (the row engines' own store) | `il/rank2/il2d_real_plan.h` `_il2d_real_rowplan` |
 
 - The four-step's child codec follows: the 2D child row under `fs_` carries its row
   plan itself (`fs_rp_*`), so `fs_row_` / `fs_row_bwd_` are no longer written and are
@@ -187,7 +189,7 @@ entered at the first clock read inside a create and left when the outermost
 | 1D c2c, both placements | a row that will not build falls to a default chain, an unraced prime cell or a refusal; a form the build lacks leaves the default kernel in place (`il/rank1/k1_commit.h:60-105`); the two-order pick banks an unmeasured pair (`k1_commit.h:940-960`) | the row is empty: full race, winner saved; the order pick banks nothing |
 | zr2c | the route race keeps the structural route unless the other is 3% faster (`il/real/zr2c_build.h:756-757`) | the faster route wins |
 | 2D, 3D c2c | children are 1D creates on the caller's store | children raced in role, recipes on the parent row (§7) |
-| 2D real | the row child (odd N2: a 1D c2c create; else a 1D real batch create at N2 x N1) and the per-row engines are built on the caller's store | unchanged: they still read and write 1D rows (reported, not in step 6) |
+| 2D real | the row child (odd N2: a 1D c2c create; else a 1D real batch create at N2 x N1) and the per-row engines are built on the caller's store | children raced in role, recipes on the real row (`rp_` / `rp_c2r_`, `rx_`; §7) |
 
 The real doors already treat a row that no longer builds as a miss
 (`il/real/zrp_build.h:952`, `zr2c_build.h:636`, `odd_build.h:24`).
@@ -225,9 +227,7 @@ owner's review.
 | 3 (built) | the race scope in the library (lock, pin, guard, priority, restore), public in `vfft.h`; the gauntlet calls it and `sibling_guard.h` goes | affinity and priority equal before and after create at every door, races forced; a clock read during create outside the scope fails the check; two racing processes take turns; an unpinnable process serves and does not save |
 | 4 (built) | the CPU identity, per-CPU folders, `new/`, the 14900KF move, measured cache sizes; gauntlet and tool paths follow | this machine selects its folder; a forged identity selects `new/` and stamps it; a claimed `new/` leads to a created folder; the 14900KF's picks are unchanged by the measured sizes |
 | 5 (built) | the build stamp and the report call | every new row carries the stamp; the report groups rows by build |
-| 6 (built) | 2D and 3D c2c children raced in role | a cold 2D and 3D create leaves the 1D files byte-identical; replay is bitwise with 0 races; a four-step row from before completes its child once and replays |
-
-The 2D REAL door's children (§8) still read and write 1D rows.
+| 6 (built) | 2D and 3D children raced in role, the real 2D door's included | a cold 2D and 3D create leaves the 1D files byte-identical; replay is bitwise with 0 races; a four-step row from before completes its child once and replays |
 
 ## 12. Open
 
