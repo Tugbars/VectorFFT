@@ -1813,6 +1813,11 @@ let zil_pure_cells : (string * string list) list =
     , [ "128"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "8.16"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix128_z_n1cb448_avx2.c"
     , [ "128"; "--cil-n1c"; "--cil-blocked"; "--cil-split3"; "4.4.8"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  (* their backward (2026-10-05): the 2D real c2r column plan's one-kernel leaves *)
+  ; ( "radix128_z_n1cb816_bwd_avx2.c"
+    , [ "128"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "8.16"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix128_z_n1cb448_bwd_avx2.c"
+    , [ "128"; "--cil-n1c"; "--cil-blocked"; "--cil-split3"; "4.4.8"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
     (* the n1c column leaf's HALF-STORE twins (--cil-st128, the "h" form,
        2026-10-01): the plane stores as two 128-bit halves -- the odd CCE pitch
        of the 2D real column pass; forward only (the 2D real r2c leaf), raced
@@ -2299,6 +2304,21 @@ let zil_pure_cells : (string * string list) list =
     , [ "16"; "--cil-r2zr"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_r2zr_avx2.c"
     , [ "32"; "--cil-r2zr"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  (* its backward (2026-10-05): the CCE bins of every row -> its real samples, the 2D real c2r row pass *)
+  ; ( "radix4_z_r2zr_bwd_avx2.c"
+    , [ "4"; "--cil-r2zr"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix6_z_r2zr_bwd_avx2.c"
+    , [ "6"; "--cil-r2zr"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_r2zr_bwd_avx2.c"
+    , [ "8"; "--cil-r2zr"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix10_z_r2zr_bwd_avx2.c"
+    , [ "10"; "--cil-r2zr"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix12_z_r2zr_bwd_avx2.c"
+    , [ "12"; "--cil-r2zr"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_r2zr_bwd_avx2.c"
+    , [ "16"; "--cil-r2zr"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_r2zr_bwd_avx2.c"
+    , [ "32"; "--cil-r2zr"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix3_z_r1c_avx2.c"
     , [ "3"; "--cil-r1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix3_z_r1c_bwd_avx2.c"

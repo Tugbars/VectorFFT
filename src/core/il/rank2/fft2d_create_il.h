@@ -982,15 +982,24 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * pin, the banked rx=, or the row race in the row role. After the forms
      * re-bank above, so the row it banks on is the cell's. One thread, even
      * N2: a threaded plan keeps the per-row door's slabs, odd N2 its c2c
-     * child, c2r its own row pass. */
+     * child. */
     if (h->transform == VFFT_R2C && h->il2d_row && !il2d_oddn2 && h->nthreads <= 1)
         _il2d_real_rowplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* its c2r twin (2026-10-05): the backward row pass's own plan, raced in
+     * the row role on a CCE plane and banked as the row's rx_c2r= / rxs_c2r= */
+    if (h->transform == VFFT_C2R && h->il2d_row && !il2d_oddn2 && h->nthreads <= 1)
+        _il2d_real_rowplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* the r2c COLUMN PLAN: the serial column pass's form (the chain's natural
      * leaf strided or staged, or the one-kernel leaf at N1 = 128) and its
      * per-kernel stack states, raced on the cell's own column pass (any N2
      * parity) */
     if (h->transform == VFFT_R2C && h->il2d_row && h->nthreads <= 1)
         _il2d_real_colplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* its c2r twin: the reverse column pass's form (the chain's natural leaf
+     * strided or staged, or the backward one-kernel leaf) and its per-kernel
+     * stack states, raced on the cell's own reverse pass (cx_c2r= / cxs_c2r=) */
+    if (h->transform == VFFT_C2R && h->il2d_row && h->nthreads <= 1)
+        _il2d_real_colplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* the column-MT verdict. Serve a banked one ONLY when it was
      * raced at THIS thread count; otherwise race and bank. A
      * single-threaded plan never threads columns and never races. */

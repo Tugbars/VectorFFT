@@ -508,10 +508,11 @@ static inline vfft_il2p_fn vfft_il2p_t2c_form_fn(int R, const char *form,
  * N-row plane in a single n1c kernel at radix N -- natural order in place by
  * construction, no second plane. Radix 128 exists only blocked, in two forms:
  * b816 (two-pass 8x16; the faster on few columns) and b448 (three-pass
- * 4x4x8: a third of the compiler spills; the faster on many). Forward
- * kernels, NOT chain radices: the 2D real r2c column plan races them against
- * its chain's pass per cell (il2d_real_plan.h, cx=); the chain pool and every
- * other tier are untouched. The registry's lists are the authority. */
+ * 4x4x8: a third of the compiler spills; the faster on many). NOT chain
+ * radices: the 2D real r2c column plan races the forward kernels against its
+ * chain's pass per cell (il2d_real_plan.h, cx=), the c2r column plan their
+ * backward twins (cx_c2r=); the chain pool and every other tier are
+ * untouched. The registry's lists are the authority. */
 #define VFFT_IL2P_COL_MAXLEAF 2
 static inline vfft_il2p_fn vfft_il2p_col_leaf_fn(int N, const char *form)
 {
@@ -544,6 +545,43 @@ static inline int vfft_il2p_col_leaf_forms(int N, const char **names /* [VFFT_IL
     int i, n = 0;
     for (i = 0; i < VFFT_IL2P_COL_MAXLEAF; i++)
         if (vfft_il2p_col_leaf_fn(N, all[i]))
+            names[n++] = all[i];
+    return n;
+}
+/* the backward twins (2026-10-05): the inverse column transform of an N-row
+ * plane in one kernel, natural in and out -- the 2D real c2r column plan's
+ * leaves (cx_c2r=) */
+static inline vfft_il2p_fn vfft_il2p_col_leaf_bwd_fn(int N, const char *form)
+{
+    if (!form)
+        return 0;
+#ifdef VFFT_IL_N1CB816_BWD_RADICES
+    if (!strcmp(form, "b816"))
+        switch (N) {
+#define C(R_) case R_: return VFFT_IL_SYM(radix##R_##_z_n1cb816_bwd);
+        VFFT_IL_N1CB816_BWD_RADICES(C)
+#undef C
+        default: return 0;
+        }
+#endif
+#ifdef VFFT_IL_N1CB448_BWD_RADICES
+    if (!strcmp(form, "b448"))
+        switch (N) {
+#define C(R_) case R_: return VFFT_IL_SYM(radix##R_##_z_n1cb448_bwd);
+        VFFT_IL_N1CB448_BWD_RADICES(C)
+#undef C
+        default: return 0;
+        }
+#endif
+    (void)N;
+    return 0;
+}
+static inline int vfft_il2p_col_leaf_bwd_forms(int N, const char **names /* [VFFT_IL2P_COL_MAXLEAF] */)
+{
+    static const char *const all[VFFT_IL2P_COL_MAXLEAF] = { "b816", "b448" };
+    int i, n = 0;
+    for (i = 0; i < VFFT_IL2P_COL_MAXLEAF; i++)
+        if (vfft_il2p_col_leaf_bwd_fn(N, all[i]))
             names[n++] = all[i];
     return n;
 }

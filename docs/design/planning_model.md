@@ -739,8 +739,8 @@ Everything from II.3, plus the **row pass**, pure IL:
 
 ```mermaid
 flowchart TD
-    RX{"<b>rx</b> — the row engine (r2c, one thread)"}
-    RX -->|"banked / raced"| LM["the IL row plan<br/>(il2d_real_plan.h: the lane-major<br/>row kernel or a real engine per row)"]
+    RX{"<b>rx</b> / <b>rx_c2r</b> — the row engine (one thread, per direction)"}
+    RX -->|"banked / raced"| LM["the IL row plan<br/>(il2d_real_plan.h: the rows kernel or a real<br/>engine per row, each direction's own)"]
     RX -->|"none"| TC["per-row door<br/>the K=1 1D real engine at N2<br/>run over every row"]
     ODD["odd N2: the c2c(N2) child<br/>with the promote / extend edges"]
 ```

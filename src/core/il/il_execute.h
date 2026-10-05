@@ -296,6 +296,20 @@ static int _k2x_il2d_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const double *zi
     _il2d_real_rows_bwd(h, h->il2d_rscr, zout);
     return 0;
 }
+/* the c2r twin of the two-kernel form: the column plan's backward leaf out of
+ * place into the column-inverse plane, then the backward rows kernel; both
+ * stack-insensitive by their races (rxs_c2r = cxs_c2r = any). The calls are
+ * the ones _il2d_colx_body_bwd and _il2d_rowx_body_bwd make. */
+static int _k2x_il2d_c2r_2k(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
+    (void)dir;
+    if (zin == (const double *)zout)
+        return 1;
+    h->il2d_cx_leaf(zin, NULL, h->il2d_rscr, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
+    h->il2d_rx_lm(h->il2d_rscr, NULL, zout, NULL, NULL, NULL, hp1, 0, rn2, 0, (size_t)h->N);
+    return 0;
+}
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
@@ -310,6 +324,9 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         if (h->transform == VFFT_R2C && h->il2d_rx_on && h->il2d_rx_lm && h->il2d_rx_stk < 0 &&
             h->il2d_cx_on && h->il2d_cx_leaf && !h->il2d_cx_perk && h->il2d_cx_stk < 0)
             h->k1_exec = _k2x_il2d_r2c_2k;
+        if (h->transform == VFFT_C2R && h->il2d_rx_on && h->il2d_rx_lm && h->il2d_rx_stk < 0 &&
+            h->il2d_cx_on && h->il2d_cx_leaf && !h->il2d_cx_perk && h->il2d_cx_stk < 0)
+            h->k1_exec = _k2x_il2d_c2r_2k;
         return hp;
     }
     if (h->transform != VFFT_C2C || h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;

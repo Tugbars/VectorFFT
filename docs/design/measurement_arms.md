@@ -932,9 +932,11 @@ no column-MT race can run. Verified three independent ways:
 ### E2. IL - the REAL tier
 
 ```
-E2.1 rx - the ROW ENGINE      RACED in the row role (r2c, one thread, even N2:
-                              il2d_real_plan.h); none = the per-row door (the
-                              K=1 1D real engine at N2 over every row). The
+E2.1 rx - the ROW ENGINE      RACED in the row role (one thread, even N2, per
+                              direction: r2c rx= / rxs=, c2r rx_c2r= / rxs_c2r=
+                              over the backward pass; il2d_real_plan.h); none =
+                              the per-row door (the K=1 1D real engine at N2
+                              over every row). The
                               ROWSPLIT row arm (a split-layout child at (N2,
                               K=W)) and its rw= token were RETIRED 2026-10-03:
                               measured no better than the door, beaten by the
