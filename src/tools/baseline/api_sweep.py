@@ -51,6 +51,8 @@ sys.path.insert(0, HERE)
 import toolchain  # noqa: E402
 
 ROOT = toolchain.ROOT
+sys.path.insert(0, os.path.join(ROOT, "gauntlet"))
+from wisdom_folder import shipped_folder  # noqa: E402  this CPU's folder of src/wisdom/, asked of the library
 
 
 def opt(name, default=None):
@@ -110,7 +112,7 @@ def _pool_map(fn, items, jobs):
 
 def cmd_bank():
     exe, out = opt("--exe"), opt("--store-out")
-    src = opt("--store", os.path.join(ROOT, "src", "wisdom"))
+    src = opt("--store") or shipped_folder()[0]   # default: this CPU's folder of the shipped store
     copy_store(src, out)
     names = cells(exe)
     for i, n in enumerate(names):

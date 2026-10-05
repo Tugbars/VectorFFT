@@ -57,7 +57,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))          # src/tools/baseline 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 BENCH = HERE                     # the harness sources live here; gauntlet/build.py puts the binaries beside them
 BUILD_PY = os.path.join(ROOT, "gauntlet", "build.py")
-STORE = os.path.join(ROOT, "src", "wisdom")   # the wisdom2 store (2026-09-24)
+sys.path.insert(0, os.path.join(ROOT, "gauntlet"))
+from wisdom_folder import shipped_folder  # noqa: E402  this CPU's folder of src/wisdom/, asked of the library
+
+def STORE():
+    """this CPU's folder of the shipped store (src/wisdom/<folder>): the rows the
+    library serves on this machine (gauntlet/wisdom_folder.py asks the library)"""
+    return shipped_folder()[0]
+
 # per-run scratch from tempfile (was $TEMP, which does not exist off Windows);
 # --scratch overrides it
 SCRATCH = None
@@ -71,9 +78,10 @@ def seeded_dir(tag):
     d = os.path.join(SCRATCH, tag)
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d, exist_ok=True)
-    for f in os.listdir(STORE):
+    store = STORE()
+    for f in os.listdir(store):
         if f.endswith(".txt"):
-            shutil.copy2(os.path.join(STORE, f), d)
+            shutil.copy2(os.path.join(store, f), d)
     return d
 
 

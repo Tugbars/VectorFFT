@@ -30,7 +30,8 @@ import argparse, csv, ctypes, datetime, io, math, os, re, shutil, statistics, su
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-SHIPPED = os.path.join(ROOT, "src", "wisdom")                                    # the wisdom2 store (2026-09-24)
+sys.path.insert(0, HERE)
+from wisdom_folder import shipped_folder   # this CPU's folder of src/wisdom/, asked of the library (recal_1d_probe --where)
 FROZEN = os.path.join(ROOT, "src", "dag-fft-compiler", "generator", "generated")  # spike_wisdom.txt: the frozen bundle, the bench's argv contract
 RESULTS = os.path.join(HERE, "results")
 WISDOM_FILES = ("wisdom2_oop.txt", "wisdom2_prime.txt", "wisdom2_scr.txt", "wisdom2_2d.txt",
@@ -236,13 +237,22 @@ class Run:
         os.makedirs(self.dir, exist_ok=True)
         if not os.path.isdir(self.store) or not os.listdir(self.store):
             os.makedirs(self.store, exist_ok=True)
+            shipped = self.shipped()
             for f in WISDOM_FILES:
-                src = os.path.join(FROZEN if f == "spike_wisdom.txt" else SHIPPED, f)
+                src = os.path.join(FROZEN if f == "spike_wisdom.txt" else shipped, f)
                 if os.path.isfile(src):
                     shutil.copyfile(src, os.path.join(self.store, f))
-            self.note("store: fresh copy of the shipped wisdom (%s)" % SHIPPED)
+            self.note("store: fresh copy of this CPU's shipped wisdom (%s)" % shipped)
         if cells:
             io.open(self.cells_file, "w", encoding="utf-8", newline="\n").write("\n".join(ckey(c) for c in cells) + "\n")
+
+    def shipped(self):
+        """this CPU's folder of the shipped store (src/wisdom/<folder>): the one the
+        library itself serves from, so a run is seeded from and merged into the rows
+        this machine raced, never another CPU's"""
+        if not getattr(self, "_shipped", None):
+            self._shipped, self._identity = shipped_folder(self.bin)
+        return self._shipped
 
     def note(self, msg):
         line = "%s %s" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), msg)
@@ -520,8 +530,9 @@ def stage_merge(run):
     the shipped one, a new row is ADDED, shipped rows the run lacks are KEPT;
     backups beside the shipped files."""
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    shipped = run.shipped()
     for f in WISDOM_FILES:
-        src, dst = os.path.join(run.store, f), os.path.join(SHIPPED, f)
+        src, dst = os.path.join(run.store, f), os.path.join(shipped, f)
         if not os.path.isfile(src) or not os.path.isfile(dst) or f == "spike_wisdom.txt":
             continue
         def parse(p):
@@ -550,7 +561,7 @@ def stage_merge(run):
         body = [l for l in h_d if l.strip()] + [r_d[k] for k in o_d]
         io.open(dst, "w", encoding="utf-8", newline="\n").write("\n".join(body) + "\n")
         print("%-18s %d replaced, %d added -> %s (backup .bak_%s)" % (f, replaced, added, dst, stamp))
-    run.note("merged into %s" % SHIPPED)
+    run.note("merged into %s" % shipped)
 
 
 def stage_gflops(run):

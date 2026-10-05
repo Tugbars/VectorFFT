@@ -58,6 +58,8 @@ import toolchain  # noqa: E402
 import sym_census  # noqa: E402
 
 ROOT = toolchain.ROOT
+sys.path.insert(0, os.path.join(ROOT, "gauntlet"))
+from wisdom_folder import shipped_folder  # noqa: E402  this CPU's folder of src/wisdom/, asked of the library
 VFFT_C = os.path.join(toolchain.CORE, "vfft.c")
 WARN_FLAGS = ["-Wimplicit-function-declaration", "-Wunused-function"]
 
@@ -261,10 +263,10 @@ def semantics(isa, out, sweep_store, repeat, jobs):
     for args, what in (
             (["capture", "--store", sweep_store, "--out", os.path.join(out, "api_sweep.txt"),
               "--repeat", str(repeat), "--jobs", str(jobs)] + refv("api_sweep.txt"), "api_sweep"),
-            (["replay", "--store", os.path.join(ROOT, "src", "wisdom"),
+            (["replay", "--store", shipped_folder()[0],
               "--out", os.path.join(out, "wisdom_replay.txt"), "--jobs", str(jobs),
               "--repeat", str(max(repeat, 4))] + refv("wisdom_replay.txt"), "wisdom_replay"),
-            (["roundtrip", "--store", os.path.join(ROOT, "src", "wisdom"),
+            (["roundtrip", "--store", shipped_folder()[0],
               "--out", os.path.join(out, "roundtrip.txt")], "roundtrip")):
         _ok(toolchain.run([py, sw, args[0], "--exe", exe] + args[1:]), what)
         log("%s captured" % what)

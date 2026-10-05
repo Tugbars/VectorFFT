@@ -30,6 +30,8 @@
 #include "natorder_perm.h"      /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
 #include "cpu_cache.h"          /* L1d capacity for the tcut width stamp; PLANNING ONLY */
+#include "common/support/cpu_identity.h"   /* the CPU identity: the store's stamp, and which folder is this CPU's */
+#include "common/wisdom/wisdom2_folders.h" /* one CPU, one folder: the folder of a store root this identity owns */
 #include "il2p.h"               /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
 #include "zrp.h"                /* the real pair (il/real/zrp.h): its plan type, before vfft_internal.h */
 #include "il/rank2/il2d_col.h" /* the column-axis pass descriptor the plan embeds */
@@ -353,27 +355,51 @@ static void _bundle_load(struct vfft_wisdom_s *W)
         if (getenv("VFFT_WISDOM2_OFF"))
             fprintf(stderr, "[wisdom2] VFFT_WISDOM2_OFF is RETIRED and ignored — "
                             "the legacy wisdom files it selected are deleted\n");
-        vw2_open(&W->vw2, dir_known ? W->dir : NULL, 1);
-
-        /* @meta host stamp (2026-09-03). No shipped store carried one, so a
-         * store raced on one uarch replayed its placement-luck verdicts on
-         * any other in silence. Unstamped => adopt this host; stamped for
-         * another => say so once. A REPORT, not a refusal: structural
-         * verdicts (routes, chains) do port. Per-field action is README
-         * §4.3's job and stays an owner decision. */
+        /* ONE CPU, ONE FOLDER (owner, 2026-10-04; docs/design/wisdom_system.md
+         * §2-§3). The library's own store -- no directory named by the caller
+         * or by VFFT_WISDOM_DIR -- is a ROOT of per-CPU folders, and this
+         * process uses the one stamped with this CPU's identity: the unstamped
+         * new/ for a CPU the root has not seen (the first save stamps it), a
+         * folder created for it when new/ is another CPU's by now. Nothing is
+         * read from another CPU's folder. A directory the caller names is the
+         * store by itself, never scanned. */
         {
-            char cur[128];
-            snprintf(cur, sizeof cur, "host=%s isa=%s l1d=%ld",
-                     vfft_cpu_host_tag(), VFFT_ISA_NAME, vfft_cpu_l1d_bytes());
+            const char *id = vfft_cpu_identity();
+            const char *env = getenv("VFFT_WISDOM_DIR");
+            const char *open_dir = dir_known ? W->dir : NULL;
+#ifdef VFFT_WISDOM_DIR_DEFAULT
+            char folder[512], id_name[160];
+            if (!dir_known && !(env && env[0]))
+            {
+                vfft_cpu_identity_folder_name(id, id_name, sizeof id_name);
+                vw2_folder_select(VFFT_WISDOM_DIR_DEFAULT, id, id_name, folder, sizeof folder);
+                open_dir = folder;
+            }
+#else
+            (void)env;
+#endif
+            vw2_open(&W->vw2, open_dir, 1);
+
+            /* THE STAMP. An unstamped store becomes this CPU's (in memory now,
+             * on disk at the first save). A stamp from before the identity
+             * carried its caches and core counts, naming this host and ISA,
+             * is this CPU's older stamp: the full identity replaces it. A
+             * store the caller named that was raced on ANOTHER CPU is served
+             * as it is, and said once: its rows are that machine's
+             * measurements. */
             if (!W->vw2.meta[0])
-                vw2_set_meta(&W->vw2, cur);
-            else if (strcmp(W->vw2.meta, cur) != 0)
-                fprintf(stderr,
-                        "[wisdom2] HOST MISMATCH: store '%s' was raced on '%s', "
-                        "this host is '%s' — placement-luck fields (t2q/kv/il_kv/"
-                        "pad) are NOT valid here; recalibrate into a per-host "
-                        "VFFT_WISDOM_DIR for full performance.\n",
-                        W->vw2.dir, W->vw2.meta, cur);
+                vw2_set_meta(&W->vw2, id);
+            else if (strcmp(W->vw2.meta, id) != 0)
+            {
+                if (vw2_meta_same_cpu(W->vw2.meta, id))
+                    vw2_set_meta(&W->vw2, id);
+                else
+                    fprintf(stderr,
+                            "[wisdom2] the store '%s' was raced on another CPU (%s); this one is "
+                            "(%s). Its rows are served as that machine's measurements: recalibrate, "
+                            "or name a store of this CPU's own.\n",
+                            W->vw2.dir, W->vw2.meta, id);
+            }
         }
     }
 }
@@ -2306,6 +2332,9 @@ void vfft_wisdom_free(vfft_wisdom *w)
     vw2_close(&w->vw2);
     free(w);
 }
+
+const char *vfft_wisdom_folder(void) { return _default_wisdom()->vw2.dir; }
+const char *vfft_wisdom_identity(void) { return vfft_cpu_identity(); }
 
 /* ── global control ── */
 void vfft_set_num_threads(int n)

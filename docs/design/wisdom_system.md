@@ -1,6 +1,6 @@
 # The wisdom system
 
-**Status:** decided 2026-10-04 (owner). Steps 1 and 2 of the build order (§11) are
+**Status:** decided 2026-10-04 (owner). Steps 1 to 3 of the build order (§11) are
 built; the rest is not. §12 lists what is still open. Scope: the wisdom system only. Engines, the split library and the
 public defaults stay as they are (§9).
 
