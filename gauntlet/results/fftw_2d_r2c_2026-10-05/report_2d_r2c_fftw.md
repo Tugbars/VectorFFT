@@ -1,0 +1,46 @@
+# gauntlet report (2D)
+
+run: `fftw_2d_r2c_2026-10-05`  contract: 2D c2c interleaved, natural, out of place, K=1_r2c_fftw  cells: 5 listed, 4 benched, comparator: FFTW 2D (out of place, MEASURE)
+
+control cell 64x64: 4 readings, 1.242..1.286
+
+
+## every shape
+
+```
+       shape  N1 factors   route  served       ours ns     cmp ns       x   GFLOPS   rt err
+       32x63  2^5          2p     raced              -          -       -        - not benched
+       32x64  2^5          chain  raced           1159       1700    1.45     48.6  2.8e-16
+       64x64  2^6          chain  raced           2594       3209    1.23     47.4  2.7e-16
+      64x256  2^6          chain  raced          10957      11506    1.04     52.3  3.9e-16
+     128x128  2^7          chain  raced          11535      12118    1.04     49.7  3.6e-16
+```
+
+
+## by route (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ chain                            4      0      0   1.04   1.14   1.45    1.18
+ ALL                              4      0      0   1.04   1.14   1.45    1.18
+```
+
+
+## by column class (N1) (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ pow2 column                      4      0      0   1.04   1.14   1.45    1.18
+ ALL                              4      0      0   1.04   1.14   1.45    1.18
+```
+
+
+## by size (points) (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ 1025..4096                       2      0      0   1.23   1.34   1.45    1.34
+ 4097..65536                      2      0      0   1.04   1.04   1.04    1.04
+ ALL                              4      0      0   1.04   1.14   1.45    1.18
+```
+
+
+worst 10: 128x128 (chain 1.04), 64x256 (chain 1.04), 64x64 (chain 1.23), 32x64 (chain 1.45)
+best 5: 32x64 (chain 1.45), 64x64 (chain 1.23), 64x256 (chain 1.04), 128x128 (chain 1.04)
