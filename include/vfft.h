@@ -251,6 +251,16 @@ extern "C"
                               saves its winner to the store before it returns.
                               The environment variable VFFT_WISDOM_WRITE=0
                               turns saving off for a process. */
+    int destroy_input;   /**< 1 = the plan MAY overwrite the input buffer of an
+                              out-of-place transform: a permission, not a
+                              promise. A plan with a faster form that needs no
+                              scratch plane uses it where that form won its
+                              race, and the input then holds an intermediate
+                              result after vfft_execute(); the output is the
+                              same transform. 0 (default): the input is
+                              preserved. Used by the interleaved 2D C2R of one
+                              plane (howmany == 1), one thread, whose column
+                              pass is one kernel; ignored everywhere else. */
   } vfft_config_t;
 
   /** @brief vfft_config_t.order */
@@ -344,6 +354,11 @@ extern "C"
    * bins; dre == sre is required and a distinct dre is refused. Element
    * addressing follows config.batch_geom. Pure: no allocation, no
    * measurement. Safe to call concurrently on different plans.
+   *
+   * An out-of-place transform preserves its input unless the request permitted
+   * otherwise (config.destroy_input): a plan that uses the permission leaves
+   * an intermediate result in the input (the interleaved 2D C2R: z_spec holds
+   * the column-inverse plane).
    *
    * @param p   A plan from vfft_create().
    * @param dir VFFT_FORWARD or the unnormalized inverse.

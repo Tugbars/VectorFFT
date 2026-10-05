@@ -299,6 +299,29 @@ static inline int vfft_policy_il2d_band_ok(int N, int nst, const int *L, int w)
     return w >= 8 && vfft_policy_il2d_wl_cut(N, nst, L, w) >= 0;
 }
 
+/* -- rank 2, real: the DESTROYING c2r -------------------------------------
+ * A c2r request may permit the plan to overwrite its input
+ * (vfft_config_t.destroy_input). The permission is used in ONE structure: the
+ * reverse column pass served as a SINGLE KERNEL CALL -- a one-stage chain
+ * (one_stage), or a one-kernel leaf registered at N1 (nleaf) -- run in place
+ * on the caller's CCE plane, the row pass reading it, the column-inverse
+ * plane untouched. A chain of two stages or more runs through its own scratch
+ * whatever plane it lands on: there is nothing to save (measured 2026-10-06,
+ * one plan both ways: 256x256 and 512x512 at 1.00; the one-kernel cells
+ * 1.06-1.27 once the planes leave L1). One thread; never a prime-column route
+ * (Bluestein, the turned pass). The request's own K = 1 plan only: a plan
+ * never hands the permission to a child (the 2D plane queue clears it for its
+ * inner plans). NO SIZE RULE: an eligible cell RACES the
+ * in-place form against the scratch form (L1-sized planes go either way),
+ * and the scratch form serves everywhere else, whatever the request
+ * permits. */
+static inline int vfft_policy_il2d_c2r_destroy_ok(const vfft_config_t *cfg, int nthreads, int one_stage,
+                                                  int nleaf, int prime_col)
+{
+    return cfg && cfg->destroy_input && cfg->transform == VFFT_C2R && nthreads <= 1 && !prime_col &&
+           (one_stage || nleaf > 0);
+}
+
 /* -- rank >= 2: which PASS an axis runs ------------------------------------
  * The shared column builder races and builds either the NATURAL-leaf pass
  * or the SCRAMBLED pass for one axis. Which one is a law of (rank, axis,

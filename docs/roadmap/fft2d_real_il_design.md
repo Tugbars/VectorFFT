@@ -159,7 +159,14 @@ per cell, or the cell keeps the veneer — measured serving, no faith.
   26/26 [il2d-real] log lines, §2.6 input preservation held. OOP c2r
   contract DECIDED: input-preserving via the il2d_rscr plane (the
   reversed chain's first executed stage does the z->scratch move — no
-  extra sweep; FFTW must destroy input here, we don't).
+  extra sweep; FFTW must destroy input here, we don't). A request may
+  waive it (`vfft_config_t.destroy_input`, a permission, 2026-10-06):
+  where the reverse column pass is ONE kernel call (the law:
+  `il/planning/policy_il.h`, `vfft_policy_il2d_c2r_destroy_ok`) that kernel
+  is raced in place on the caller's plane against the scratch form on the
+  whole transform, and the verdict is banked (`cxd_c2r=` / `cxds_c2r=`);
+  every other cell, and every request without the permission, keeps the
+  scratch form.
 - **M2 — the pitch race**: OOP door only — bare hp1 plane vs padded
   pitch (a PERFORMANCE axis — aliasing — legality needs neither; the
   in-place door's padded pitch is contract, §2.7), per cell class.
@@ -168,12 +175,12 @@ per cell, or the cell keeps the veneer — measured serving, no faith.
   (odd N2 / NATURAL order REFUSE loudly; split-layout callers keep the
   split engine untouched). Verdict cells live in wisdom2_2d.txt:
   {t=r2c ord=scr lay=il | chain= wl= rx= rxs= cx= cxs= | wl_c2r= rx_c2r=
-  rxs_c2r= cx_c2r= cxs_c2r=}, DIRECTION-SHARED (one row for both
+  rxs_c2r= cx_c2r= cxs_c2r= cxd_c2r= cxds_c2r=}, DIRECTION-SHARED (one row for both
   directions, each direction's own token set: the c2r row and column plans
   are the r2c plans' twins over the backward row pass and the reverse
   column pass, 2026-10-05), raced at create on miss (the row plan, the
   banded wl incl. L2-admitted spans, the column plan, per direction),
-  env(VFFT_IL2D_RX/CX/WL/CHAIN, RX_C2R/CX_C2R) > banked > race, env never
+  env(VFFT_IL2D_RX/CX/WL/CHAIN, RX_C2R/CX_C2R/CXD_C2R) > banked > race, env never
   banks (the rw= row-route token retired 2026-10-03 with ROWSPLIT). The pinned door race:
   20/20 rows win-or-parity vs MKL CCE (0.9-2.25x; knee cells 1.66-2.20x via
   the banded walk). STILL M3-OPEN: the
