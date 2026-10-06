@@ -752,8 +752,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             else if ((ENG) != NULL) vfft_destroy((vfft_plan)(ENG)); } while (0)
         ROWX_ARM(NULL, NULL);   /* arm 0: the row route the tier has */
         /* THE GATE'S REFERENCE: the tier's own row route over the plane (every
-         * arm is gated against it below; at an odd N2 its first row is also the
-         * reference the odd engines' sweeps gate against) */
+         * arm is gated against it below; at T > 1 it is the whole transform) */
         memset(ref, 0, (ON + 8) * sizeof(double));
         if (c2r)
             cand[0].a = ref;
@@ -769,9 +768,10 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
              * mono (below, N2 <= 64), the real flat DIT and the real Bluestein
              * through the odd door's own sweeps (il/real/odd_build.h: the chain
              * pick, the lengths and inners), every candidate gated against the
-             * route's transform of the plane's first row and burst-timed, the two
-             * fastest of each sweep joining the race. The route (arm 0: the promote
-             * and the c2c child) stays the plan's when nothing beats it. */
+             * route's ROW PASS of the plane's first row (the pass alone: at T > 1
+             * the gate's reference above is the whole transform) and burst-timed,
+             * the two fastest of each sweep joining the race. The route (arm 0: the
+             * promote and the c2c child) stays the plan's when nothing beats it. */
             const size_t xs = (size_t)N2 + 3;   /* the odd door's row buffers */
             const size_t nin = c2r ? 2 * hp1 : (size_t)N2, nchk = c2r ? (size_t)N2 : (size_t)N2 + 1;
             double *rb = (double *)vfft_aligned_alloc(xs * sizeof(double));
@@ -783,7 +783,11 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                 memset(rb, 0, xs * sizeof(double));
                 memset(rr, 0, xs * sizeof(double));
                 memcpy(rb, c2r ? z : a, nin * sizeof(double));   /* the plane's first row */
-                memcpy(rr, ref, nchk * sizeof(double));          /* its transform by the route */
+                if (c2r)                                          /* its transform by the route's row pass */
+                    _il2d_real_rows_bwd_route(h, z, a);           /* (the pass's output plane is scratch here) */
+                else
+                    _il2d_real_rows_fwd_route(h, a, z);
+                memcpy(rr, c2r ? a : z, nchk * sizeof(double));
                 if (_zrf_has_chain(N2) && _zrf_chain_sweep(&c, N2, rb, rr, rt, rb, xs, nchk, ho) > 0)
                 {
                     ROWX_ARM(NULL, ho[0]);
@@ -803,16 +807,20 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             vfft_aligned_free(rt);
         }
         {
-            struct vfft_plan_s *hz = _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 0), *e;
+            /* the even door's engines (zr2c, the pairs, ZTT-r) are candidates at an
+             * EVEN N2 only: at an odd N2 their builders still build (a zr2c at N=15
+             * raced its child and banked it into the row engines' store before the
+             * gate dropped it), so they are not asked */
+            struct vfft_plan_s *hz = (N2 & 1) ? NULL : _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 0), *e;
             if (hz)
                 ROWX_ARM(NULL, hz);
-            if ((e = _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 1)) != NULL)
+            if (!(N2 & 1) && (e = _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 1)) != NULL)
                 ROWX_ARM(NULL, e);
             if (N2 <= VFFT_ZRM_MAX_N && (e = _zrm_build_plan(&c, N2)) != NULL)
                 ROWX_ARM(NULL, e);
             {
                 int pa[VFFT_ZRP_MAX_ARMS][3];
-                const int np = _zrp_arms(N2, pa, VFFT_ZRP_MAX_ARMS);
+                const int np = (N2 & 1) ? 0 : _zrp_arms(N2, pa, VFFT_ZRP_MAX_ARMS);
                 for (i = 0; i < np; i++)
                     if ((e = _zrp_build_pair(&c, N2, pa[i][0], pa[i][1], pa[i][2])) != NULL)
                         ROWX_ARM(NULL, e);

@@ -983,7 +983,8 @@ E2.5-E2.8                     RETIRED 2026-10-03 with the ROWSPLIT arm (its spli
 E2.9 column chain             STRUCTURAL for the real tier: precedence is
                               env > banked lay=il real row > greedy-longest.
                               (Asymmetry with E1.1, which IS raced for c2c.)
-E2.10 oddn2                   STRUCTURAL. Odd N2 real rows ride a K=1 c2c child.
+E2.10 oddn2                   RACED in r2c (2026-10-07): the K=1 c2c child route vs
+                              the odd door's engines per row (rx=); c2r rides the child.
 E2.11 norowz                  RETIRED 2026-10-03 (the ROWSPLIT doors' A/B knob).
 E2.12 wc / roop               STRUCTURALLY UNREACHABLE for real.
 E2.13 column-axis Bluestein M STRUCTURAL. M = 16, then while (M < 2*N1-1) M <<= 1.
@@ -995,8 +996,9 @@ E2.13 column-axis Bluestein M STRUCTURAL. M = 16, then while (M < 2*N1-1) M <<= 
 ```
 
 **The oddn2 / column-MT guard asymmetry is DELIBERATE.** The wl race carries
-`!il2d_oddn2`; the column-MT guard does not. Odd N2's rows ride the c2c child and the
-banded walk is not raced there, but column threading stays valid. Measured
+`!il2d_oddn2`; the column-MT guard does not. Odd N2's rows ride the c2c child, or (r2c,
+since 2026-10-07) the odd engine the row race picked over it; the banded walk is not
+raced there, but column threading stays valid. Measured
 consistent: 128x127 at T=8 engages `cmt` and is BIT-IDENTICAL to T=1 (0 of 16448 doubles
 differ).
 
