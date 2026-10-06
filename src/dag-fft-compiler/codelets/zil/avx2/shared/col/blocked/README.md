@@ -1,6 +1,11 @@
 # shared/col/blocked/ — the blocked column forms
 
-16 files: `n1cb48`, `n1cb84`, `n1cb88` and `t2cb48`, `t2cb84`, `t2cb88` (+ `_bwd`),
+18 files: `t2cb44` (+ `_bwd`), the radix-16 twiddle stage as 4x4 -- its ONE body
+since 2026-10-06 (the one-pass stage parked 40 vectors per iteration under gcc;
+the 4x4 form raced 2-5% ahead in the band role and 6-7% in the wide sweep,
+dominating 8x2 and 2x8, so the monolithic file is gone; the radix-16 leaf `n1c`
+is clean and stays in `../`); `n1cb48`, `n1cb84`, `n1cb88` and `t2cb48`, `t2cb84`,
+`t2cb88` (+ `_bwd`),
 radix 32 as 4x8 or 8x4 and radix 64 as 8x8, two passes through a small parked
 buffer because the one-pass column kernel spills at those radices; and
 `n1cb816`, `n1cb448` (+ `_bwd`), radix 128 as 8x16 (two passes) and 4x4x8

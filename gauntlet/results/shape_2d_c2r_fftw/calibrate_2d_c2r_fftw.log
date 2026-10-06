@@ -1,0 +1,5 @@
+512x256    banked      8545ms raced     zr2c:child_oop_il
+1024x512   banked      8351ms raced     zr2c:child_oop_il
+1024x1024  banked     11614ms raced     zr2c:child_nat_ip
+2048x1024  banked     16425ms raced     zr2c:child_nat_ip
+2048x2048  banked     28209ms raced     zr2c:child_nat_ip
