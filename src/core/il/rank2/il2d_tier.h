@@ -77,6 +77,7 @@
 
 /* Defined in vfft.c with external linkage; see the note above. */
 extern long _vfft_il2d_col_mt_count;
+extern long _vfft_il2d_row_mt_count;   /* the 2D real ROW plan's threaded passes (il2d_real_plan.h) */
 
 /* the K=1 FOUR-STEP's inter-pass twiddle on one row (oop/k1_fourstep.h):
  * the row at plane position p times W_N^(k1(p) * n2), n2 = a*B + b, from
@@ -389,6 +390,12 @@ static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
 static void _il2d_colx_fwd(struct vfft_plan_s *h, const double *src, double *dst); /* il2d_real_plan.h, later in this TU */
 static void _il2d_colx_bwd(struct vfft_plan_s *h, const double *src, double *dst); /* its c2r twin */
 static void _il2d_cxd_cols(struct vfft_plan_s *h, double *z);   /* the destroying c2r's column pass, in place on the caller's plane */
+static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src, double *dst, int reverse, int T); /* below */
+/* THE COLUMN PASS AS IT SERVES (2026-10-06, the thread guard lifted): the
+ * plan's form when one is bound (it threads itself under the cell's colmt
+ * verdict, il2d_real_plan.h), else the chain's pass -- threaded under the
+ * verdict, serial when the threaded walk cannot engage or the verdict is
+ * serial. The execute and every create-time race come through here. */
 static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
                             double *dst, int reverse)
 {
@@ -402,6 +409,8 @@ static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
         _il2d_colx_bwd(h, src, dst);
         return;
     }
+    if (h->il2d_col.colmt && h->nthreads > 1 && _il2d_real_cols_mt(h, src, dst, reverse, h->nthreads))
+        return;
     _il2d_col_exec(&h->il2d_col, src, dst, reverse);
 }
 
@@ -429,7 +438,12 @@ typedef struct
     size_t lo, hi;   /* band index range, or column range */
     int strip;
     int natleaf; /* natural x MT: this dispatch is the leaf block range */
+    int tid;     /* this dispatch's worker: its staging slot (the column plan's staged form) */
+    int stk;     /* the column plan's pass state: the body entered through the aligned call when >= 0 */
 } _il2d_cmt_arg;
+static double *_il2d_nat_stage_of(struct vfft_plan_s *h, int tid); /* below */
+static inline void _il2d_rowx_call(void (*fn)(const void *, const double *, double *), const void *h,
+                                   const double *s, double *d, int stk); /* il2d_real_plan.h: the aligned entry */
 
 /* ── the DIGIT axis of a wide (prefix) stage ─────────────────────────
  * A stage's kernel walks digits itself — per digit it advances
@@ -491,25 +505,33 @@ static int _il2d_stage_digits_mt(const double *src, double *dst,
     return 1;
 }
 
-static void _il2d_cmt_tramp(void *v)
+/* the dispatched unit's body; the trampoline enters it at the column plan's
+ * pass state when the plan is bound (every worker at the one state, as the
+ * serial pass is entered), directly otherwise */
+static void _il2d_cmt_body(const void *v, const double *src, double *dst)
 {
-    _il2d_cmt_arg *a = (_il2d_cmt_arg *)v;
+    const _il2d_cmt_arg *a = (const _il2d_cmt_arg *)v;
     struct vfft_plan_s *h = a->h;
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
     vfft_il2p_fn const *fns = a->reverse ? h->il2d_col.b : h->il2d_col.f;
     double *const *tabs = a->reverse ? h->il2d_col.tb : h->il2d_col.tf;
     if (a->natleaf)
-    {   /* natural x MT: the leaf scatter/gather over [lo,hi) blocks */
-        _il2d_nat_leaf_range(a->src, a->dst, h->N, hp1,
-                             h->il2d_col.R[h->il2d_col.nst - 1], fns[h->il2d_col.nst - 1],
-                             h->il2d_col.natperm, a->lo, a->hi, a->reverse, NULL);
+    {   /* natural x MT: the leaf scatter/gather over [lo,hi) blocks -- the forward
+         * scatter through this worker's own staging block when the r2c column
+         * plan's form is staged (bitwise the strided leaf: the same values in the
+         * same order); the reverse leaf gathers at its stride (the c2r column plan
+         * has no staged form: the gather is cheap at the plane's odd pitch) */
+        const int nst = h->il2d_col.nst;
+        _il2d_nat_leaf_range(src, dst, h->N, hp1, h->il2d_col.R[nst - 1], fns[nst - 1],
+                             h->il2d_col.natperm, a->lo, a->hi, a->reverse,
+                             (!a->reverse && h->il2d_cx_on && h->il2d_cx_st) ? _il2d_nat_stage_of(h, a->tid) : NULL);
         return;
     }
     if (a->strip)
     {
         if (h->il2d_col.blu)
         {   /* Bluestein column axis: the window pipeline */
-            _il2d_blu_cols_range(a->src, a->dst, h->N, hp1, a->lo, a->hi,
+            _il2d_blu_cols_range(src, dst, h->N, hp1, a->lo, a->hi,
                                  h->il2d_col.blu, h->il2d_col.nst, h->il2d_col.R,
                                  h->il2d_col.L, h->il2d_col.f, h->il2d_col.b,
                                  h->il2d_col.tf, h->il2d_col.tb,
@@ -518,7 +540,7 @@ static void _il2d_cmt_tramp(void *v)
                                  h->il2d_col.bluscr);
             return;
         }
-        _il2d_col_pass_range(a->src, a->dst, h->N, hp1, a->lo, a->hi,
+        _il2d_col_pass_range(src, dst, h->N, hp1, a->lo, a->hi,
                              h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
                              tabs, a->reverse);
         return;
@@ -529,12 +551,20 @@ static void _il2d_cmt_tramp(void *v)
         for (b = a->lo; b < a->hi; b++)
         {
             const size_t b0 = b * wl;
-            const double *bs = a->src + 2 * b0 * hp1;
-            _il2d_col_stages(bs, a->dst + 2 * b0 * hp1, (int)wl, hp1,
+            const double *bs = src + 2 * b0 * hp1;
+            _il2d_col_stages(bs, dst + 2 * b0 * hp1, (int)wl, hp1,
                              h->il2d_col.cut, h->il2d_col.nst, h->il2d_col.R,
                              h->il2d_col.L, fns, tabs, a->reverse);
         }
     }
+}
+static void _il2d_cmt_tramp(void *v)
+{
+    _il2d_cmt_arg *a = (_il2d_cmt_arg *)v;
+    if (a->stk >= 0)
+        _il2d_rowx_call(_il2d_cmt_body, a, a->src, a->dst, a->stk);
+    else
+        _il2d_cmt_body(a, a->src, a->dst);
 }
 
 /* Returns 1 when it ran threaded, 0 when the caller must run serial. */
@@ -584,6 +614,8 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
             a[t].reverse = reverse;
             a[t].strip = 0;
             a[t].natleaf = 1;
+            a[t].tid = t;
+            a[t].stk = (h->il2d_cx_on && !h->il2d_cx_perk) ? h->il2d_cx_stk : -1;
             a[t].lo = nb * (size_t)t / (size_t)Tb;
             a[t].hi = nb * (size_t)(t + 1) / (size_t)Tb;
         }
@@ -636,6 +668,8 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
         a[t].reverse = reverse;
         a[t].strip = strip;
         a[t].natleaf = 0;
+        a[t].tid = t;
+        a[t].stk = (h->il2d_cx_on && !h->il2d_cx_perk) ? h->il2d_cx_stk : -1;
         a[t].lo = units * (size_t)t / (size_t)T;
         a[t].hi = units * (size_t)(t + 1) / (size_t)T;
     }
@@ -939,8 +973,40 @@ static double *_il2d_nat_stage_of(struct vfft_plan_s *h, int tid)
                ? h->il2d_col.natstage + (size_t)(tid > 0 ? tid : 0) * 2 * (size_t)Rl * h->il2d_col.rn
                : NULL;
 }
-static void _il2d_nat_leaf_blocks(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
-                                  const double *from, double *to, size_t blo, size_t bhi, int fuse)
+/* THE NATURAL BACKWARD THROUGH THE FORWARD'S WALK (2026-10-06). The inverse
+ * DFT along the column axis is the forward DFT with its output index negated,
+ * so a natural backward runs the forward's walk SHAPE -- the wide prefix with
+ * the FORWARD kernels and tables, the band suffix, the forward leaf through
+ * the staging with the BACKWARD row child fused after it, as the forward
+ * fuses its rows -- and the staged scatter writes natural row i to row
+ * (N1 - i) mod N1 (_il2d_nat_stage_out_rev). The same memory pattern as the
+ * forward by construction. Wherever the leaf is staged, on the serial walks
+ * (banded or not), the MT block arm and the MT tile arm (they apply the same
+ * kernels at the same points: MT == ST stays bitwise). Not for a strips
+ * verdict (a strip cannot carry whole rows: that arm, and the serial twin of
+ * such a plan, keep the mirrored walk with rows last), nor for a four-step
+ * child (its backward hook wants the rows before every column stage). The
+ * mirrored walk -- the gather, the reversed suffix, the reversed prefix with
+ * the Hermitian-transpose kernel set, rows last -- stays for those. Before
+ * this the backward's rows were a separate sweep over the plane: 24% over
+ * the forward with the same chain (8.88 vs 7.15 ms at 2048x1024); the
+ * mirrored walk with its gather fused (a step on the way) still read the
+ * plane as a bare copy at the DRAM roof, 8-15% over. */
+static int _il2d_nat_bwd_fused(struct vfft_plan_s *h)
+{
+    return h->il2d_col.nat && h->il2d_col.nst >= 2 && h->il2d_col.natarm != 1 && !h->il2d_fs_tw &&
+           _il2d_nat_stage_of(h, 0) != NULL;
+}
+/* the natural leaf over [blo, bhi) blocks through worker tid's staging; fuse =
+ * run the block's rows inside, after the leaf: forward, the block's rows
+ * finished and streamed to their natural rows; backward (dir = BACKWARD with
+ * fuse: the backward through the forward's walk), the FORWARD leaf from the
+ * scratch comb, the backward rows, the block streamed to the rows
+ * (N1 - i) mod N1. fuse = 0 backward is the mirrored walk's gather (natural
+ * rows -> the scratch comb, no rows). Returns 1 when the rows ran inside, 0
+ * when the caller must run them (the strided leaf, or the mirrored gather). */
+static int _il2d_nat_leaf_blocks(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
+                                 const double *from, double *to, size_t blo, size_t bhi, int fuse)
 {
     const int nst = h->il2d_col.nst, Rl = h->il2d_col.R[nst - 1];
     const size_t rn = h->il2d_col.rn, nstride_rows = (size_t)(h->N / Rl);
@@ -948,16 +1014,34 @@ static void _il2d_nat_leaf_blocks(struct vfft_plan_s *h, int tid, vfft_dir_t dir
     vfft_il2p_fn fn = fwd ? h->il2d_col.f[nst - 1] : h->il2d_col.b[nst - 1];
     double *stage = _il2d_nat_stage_of(h, tid);
     size_t b;
-    if (!stage || !fwd || !fuse)
+    if (!stage || !fuse)
     {
         _il2d_nat_leaf_range(from, to, h->N, rn, Rl, fn, h->il2d_col.natperm, blo, bhi, !fwd, stage);
         if (fwd && fuse)
+        {
             for (b = blo; b < bhi; b++)
             {
                 const size_t r0 = (size_t)h->il2d_col.natperm[b * (size_t)Rl];
                 _il2d_rows_exec(h, tid, dir, to + 2 * r0 * rn, rn, nstride_rows * rn, r0, nstride_rows, (size_t)Rl);
             }
-        return;
+            return 1;
+        }
+        return 0;
+    }
+    if (!fwd)
+    {   /* the backward through the forward's walk: the forward leaf from the
+         * comb into the staging, the backward rows there, the block to the
+         * rows (N1 - i) mod N1 */
+        vfft_il2p_fn ff = h->il2d_col.f[nst - 1];
+        for (b = blo; b < bhi; b++)
+        {
+            const size_t coff = 2 * b * (size_t)Rl * rn;
+            const size_t nrow0 = (size_t)h->il2d_col.natperm[b * (size_t)Rl];
+            ff(from + coff, NULL, stage, NULL, NULL, NULL, rn, 0, rn, 0, rn);
+            _il2d_rows_exec(h, tid, dir, stage, rn, rn, nrow0, nstride_rows, (size_t)Rl);
+            _il2d_nat_stage_out_rev(stage, to, nrow0, nstride_rows, Rl, rn, 0, rn, 1, (size_t)h->N);
+        }
+        return 1;
     }
     for (b = blo; b < bhi; b++)
     {
@@ -967,6 +1051,7 @@ static void _il2d_nat_leaf_blocks(struct vfft_plan_s *h, int tid, vfft_dir_t dir
         _il2d_rows_exec(h, tid, dir, stage, rn, rn, nrow0, nstride_rows, (size_t)Rl);
         _il2d_nat_stage_out(stage, to, nrow0, nstride_rows, Rl, rn, 0, rn, 1);   /* finished rows: streamed */
     }
+    return 1;
 }
 
 typedef struct
@@ -1064,7 +1149,7 @@ static void _il2d_c2c_mt_tramp(void *v)
     case 4: /* natural x MT: the leaf scatter (fwd: src = scratch, dst =
              * plane) / gather (bwd: src = natural plane, dst = scratch)
              * over [lo,hi) blocks */
-        _il2d_nat_leaf_blocks(h, a->tid, a->dir, a->src, a->dst, a->lo, a->hi, /*fuse=*/a->fwd);
+        (void)_il2d_nat_leaf_blocks(h, a->tid, a->dir, a->src, a->dst, a->lo, a->hi, /*fuse=*/a->fwd);
         break;
     case 3: /* Bluestein column axis: the window pipeline */
         _il2d_blu_cols_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
@@ -1131,8 +1216,8 @@ static void _il2d_c2c_mt_tramp(void *v)
             for (t = a->lo; t < a->hi; t++)
             {
                 double *tile = a->dst + 2 * t * D0 * rn;
-                _il2d_nat_leaf_blocks(h, a->tid, a->dir, a->src, a->dst,
-                                      t * D0 / (size_t)Rl, (t + 1) * D0 / (size_t)Rl, 0);
+                (void)_il2d_nat_leaf_blocks(h, a->tid, a->dir, a->src, a->dst,
+                                            t * D0 / (size_t)Rl, (t + 1) * D0 / (size_t)Rl, 0);
                 if (h->il2d_col.nst > 2)
                     _il2d_col_stages2(tile, tile, (int)D0, rn, rn, 1, h->il2d_col.nst - 1,
                                       h->il2d_col.R, h->il2d_col.L, fns, tabs, 1);
@@ -1312,13 +1397,13 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
             const int Tt = (R0 < T) ? R0 : T;
             if (R0 < 2 || Tt < 2 || D0 % (size_t)Rl)
                 return 0;
-            if (fwd)
-            {
+            if (fwd || _il2d_nat_bwd_fused(h))
+            {   /* the forward's shape (a fused backward runs it with the backward rows) */
                 if (!_il2d_stage_digits_mt(sre, scr, h->N, rn, rn, R0, h->il2d_col.L[0],
                                            h->il2d_col.f[0], h->il2d_col.tf[0], T))
                     _il2d_col_stages(sre, scr, h->N, rn, 0, 1, h->il2d_col.R, h->il2d_col.L,
                                      h->il2d_col.f, h->il2d_col.tf, 0);
-                _il2d_c2c_mt_phase(h, scr, dre, dir, fwd, 11, (size_t)R0, Tt);
+                _il2d_c2c_mt_phase(h, scr, dre, dir, /*the shape*/ 1, 11, (size_t)R0, Tt);
             }
             else
             {
@@ -1327,7 +1412,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                                            h->il2d_col.b[0], h->il2d_col.tb[0], T))
                     _il2d_col_stages(scr, dre, h->N, rn, 0, 1, h->il2d_col.R, h->il2d_col.L,
                                      h->il2d_col.b, h->il2d_col.tb, 0);
-                _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);   /* the backward's rows after its columns */
+                _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);   /* the mirrored walk: the rows after its columns */
             }
             _vfft_il2d_col_mt_count++;
             return 1;
@@ -1356,8 +1441,8 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
             _vfft_il2d_col_mt_count++;
             return 1;
         }
-        if (fwd)
-        {
+        if (fwd || _il2d_nat_bwd_fused(h))
+        {   /* the forward's shape (a fused backward runs it with the backward rows) */
             for (s = 0; s < h->il2d_col.nst - 1; s++)
             {
                 const double *ssrc = (s == 0) ? sre : scr;
@@ -1369,17 +1454,17 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                                      h->il2d_col.tf, 0);
             }
             if (Tb >= 2)
-                _il2d_c2c_mt_phase(h, scr, dre, dir, fwd, 4, nb, Tb);
+                _il2d_c2c_mt_phase(h, scr, dre, dir, /*the shape*/ 1, 4, nb, Tb);
             else
-                _il2d_nat_leaf_blocks(h, 0, dir, scr, dre, 0, nb, 1);
+                (void)_il2d_nat_leaf_blocks(h, 0, dir, scr, dre, 0, nb, 1);
             rows_done = 1;   /* the block arm fused its rows in the leaf */
         }
         else
-        {
+        {   /* the mirrored walk */
             if (Tb >= 2)
                 _il2d_c2c_mt_phase(h, sre, scr, dir, fwd, 4, nb, Tb);
             else
-                _il2d_nat_leaf_blocks(h, 0, dir, sre, scr, 0, nb, 0);
+                (void)_il2d_nat_leaf_blocks(h, 0, dir, sre, scr, 0, nb, 0);
             for (s = h->il2d_col.nst - 2; s >= 0; s--)
             {
                 double *out = (s == 0) ? dre : scr;
@@ -1820,6 +1905,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
         return;
     for (i = 0; i < 2 * CN + 8; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 511);
+    h->il2d_col.colmt = 0;   /* the serial arm runs the chain's serial pass (the dispatcher threads under the verdict) */
     {
         _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
         const vfft_race_arm_t arms[2] = { { "serial", _il2d_arm_cols, &rc },

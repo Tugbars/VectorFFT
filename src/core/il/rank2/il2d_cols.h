@@ -271,6 +271,28 @@ static void _il2d_nat_stage_out(const double *stage, double *dst, size_t nrow0,
                          stage + 2 * (size_t)r * w, w, nt);
     if (nt) _mm_sfence();
 }
+/* the gather into the staging: the block's R natural rows copied, one row
+ * at a time (interleaving the rows' streams and prefetching the next row
+ * were both measured 2026-10-06 at 2048x1024: no change -- the phase reads
+ * the plane at the single-core DRAM roof already) */
+/* the scatter of a finished block to the rows (N1 - i) mod N1 of its natural
+ * rows i = nrow0 + r*nstride_rows: THE BACKWARD THROUGH THE FORWARD'S WALK
+ * (2026-10-06). The inverse DFT along the column axis is the forward DFT
+ * with its output index negated, so a natural backward runs the forward's
+ * shape and kernels and only this scatter's addressing differs. */
+static void _il2d_nat_stage_out_rev(const double *stage, double *dst, size_t nrow0,
+                                    size_t nstride_rows, int R, size_t rn, size_t k_lo, size_t w,
+                                    int nt, size_t N1)
+{
+    int r;
+    for (r = 0; r < R; r++)
+    {
+        const size_t i = nrow0 + (size_t)r * nstride_rows;
+        const size_t j = i ? N1 - i : 0;
+        _il2d_row_stream(dst + 2 * (j * rn + k_lo), stage + 2 * (size_t)r * w, w, nt);
+    }
+    if (nt) _mm_sfence();
+}
 static void _il2d_nat_stage_in(double *stage, const double *src, size_t nrow0,
                                size_t nstride_rows, int R, size_t rn, size_t k_lo, size_t w)
 {
@@ -280,8 +302,6 @@ static void _il2d_nat_stage_in(double *stage, const double *src, size_t nrow0,
                src + 2 * ((nrow0 + (size_t)r * nstride_rows) * rn + k_lo),
                2 * w * sizeof(double));
 }
-/* one leaf block, staged: forward from the scratch comb to the natural
- * rows of `to`, backward from the natural rows of `from` to the comb */
 static void _il2d_nat_leaf_block_st(const double *from, double *to, int N1, size_t rn,
                                     int Rl, vfft_il2p_fn fn, const int *perm, size_t b,
                                     size_t k_lo, size_t w, int reverse, double *stage)

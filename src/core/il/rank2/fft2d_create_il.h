@@ -982,39 +982,11 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             fprintf(stderr, "[il2d] forms %dx%d: %s could not be banked on the real row\n",
                     N1, N2, il2d_fm);
     }
-    /* the r2c ROW ENGINE (il2d_real_plan.h): the plan's own row plan -- env
-     * pin, the banked rx=, or the row race in the row role. After the forms
-     * re-bank above, so the row it banks on is the cell's. One thread, even
-     * N2: a threaded plan keeps the per-row door's slabs, odd N2 its c2c
-     * child. */
-    if (h->transform == VFFT_R2C && h->il2d_row && !il2d_oddn2 && h->nthreads <= 1)
-        _il2d_real_rowplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
-    /* its c2r twin (2026-10-05): the backward row pass's own plan, raced in
-     * the row role on a CCE plane and banked as the row's rx_c2r= / rxs_c2r= */
-    if (h->transform == VFFT_C2R && h->il2d_row && !il2d_oddn2 && h->nthreads <= 1)
-        _il2d_real_rowplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
-    /* the r2c COLUMN PLAN: the serial column pass's form (the chain's natural
-     * leaf strided or staged, or the one-kernel leaf at N1 = 128) and its
-     * per-kernel stack states, raced on the cell's own column pass (any N2
-     * parity) */
-    if (h->transform == VFFT_R2C && h->il2d_row && h->nthreads <= 1)
-        _il2d_real_colplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
-    /* its c2r twin: the reverse column pass's form (the chain's natural leaf
-     * strided or staged, or the backward one-kernel leaf) and its per-kernel
-     * stack states, raced on the cell's own reverse pass (cx_c2r= / cxs_c2r=) */
-    if (h->transform == VFFT_C2R && h->il2d_row && h->nthreads <= 1)
-        _il2d_real_colplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
-    /* the DESTROYING c2r (2026-10-06): a request that permits its input to be
-     * overwritten (vfft_config_t.destroy_input) races the one-kernel column
-     * pass in place on the caller's plane against the scratch form, where the
-     * law admits the cell (policy_il.h); banked cxd_c2r= / cxds_c2r=. After
-     * the c2r row and column plans: the race runs the whole transform through
-     * them. */
-    if (h->transform == VFFT_C2R && h->il2d_row && cfg->destroy_input)
-        _il2d_real_destroyplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* the column-MT verdict. Serve a banked one ONLY when it was
      * raced at THIS thread count; otherwise race and bank. A
-     * single-threaded plan never threads columns and never races. */
+     * single-threaded plan never threads columns and never races. Before
+     * the row and column plans (2026-10-06): at T > 1 their races run their
+     * forms under this verdict, the pass each cell serves. */
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         h->il2d_row && h->nthreads > 1)
     {   /* (Bluestein cells race too) */
@@ -1026,6 +998,37 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
         else
             _il2d_real_colmt_race(h, W, cfg, N1, N2);
     }
+    /* the r2c ROW ENGINE (il2d_real_plan.h): the plan's own row plan -- env
+     * pin, the banked rx=, or the row race in the row role. After the forms
+     * re-bank above, so the row it banks on is the cell's. Even N2 (odd N2
+     * keeps its c2c child); at every thread count since 2026-10-06 -- under
+     * T > 1 the pass threads by row ranges (an engine through its worker
+     * clones) and the verdict lands on the T row. */
+    if (h->transform == VFFT_R2C && h->il2d_row && !il2d_oddn2)
+        _il2d_real_rowplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* its c2r twin (2026-10-05): the backward row pass's own plan, raced in
+     * the row role on a CCE plane and banked as the row's rx_c2r= / rxs_c2r= */
+    if (h->transform == VFFT_C2R && h->il2d_row && !il2d_oddn2)
+        _il2d_real_rowplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* the r2c COLUMN PLAN: the column pass's form (the chain's natural leaf
+     * strided or staged, or the one-kernel leaf at N1 = 128) and its stack
+     * states, raced on the cell's own column pass as it serves (any N2 parity;
+     * threaded under the colmt verdict at T > 1, one state for the pass there) */
+    if (h->transform == VFFT_R2C && h->il2d_row)
+        _il2d_real_colplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* its c2r twin: the reverse column pass's form (the chain's natural leaf
+     * strided or staged, or the backward one-kernel leaf) and its stack
+     * states, raced on the cell's own reverse pass (cx_c2r= / cxs_c2r=) */
+    if (h->transform == VFFT_C2R && h->il2d_row)
+        _il2d_real_colplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* the DESTROYING c2r (2026-10-06): a request that permits its input to be
+     * overwritten (vfft_config_t.destroy_input) races the one-kernel column
+     * pass in place on the caller's plane against the scratch form, where the
+     * law admits the cell (policy_il.h); banked cxd_c2r= / cxds_c2r=. After
+     * the c2r row and column plans: the race runs the whole transform through
+     * them. */
+    if (h->transform == VFFT_C2R && h->il2d_row && cfg->destroy_input)
+        _il2d_real_destroyplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* the children's recipes onto this cell's row (wisdom2_child.h) */
     if (h->transform == VFFT_C2C)
         _il2d_children_put(W, cfg, h, N1, N2, il2d_ord, il2d_T);

@@ -390,12 +390,18 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
  * DRIVER-built, d-major, bwd = conjugated table (same kernel shape). */
 static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
 {
-    /* CONSTRUCTION TABLE (same race): r4/r8/r16 monolithic · r32 b48
+    /* CONSTRUCTION TABLE (same race): r4/r8 monolithic, r16 the blocked 4x4 body
+     * t2cb44 (2026-10-06: the one-pass radix-16 stage parked 40 vectors per
+     * iteration -- gcc spills, not the design -- and the 4x4 form ran 2-5% ahead
+     * in the band role and 6-7% in the wide sweep, dominating 8x2 and 2x8; the
+     * monolithic body is deleted, this is the stage's one body, spelled "-") · r32 b48
      * (+20-24%) · r64 b88 (+28-54%, beats b416 both regimes — the 8x8
      * law). Tangent interiors raced NOT-ADOPTED under the SR scheduler
      * (±1-4%); the wing-class forms (cpl scheduler, blocked-tangent,
      * [c,tan] records) are the open tangent levers. */
     switch (R) {
+    case 16: return bwd ? VFFT_IL_SYM(radix16_z_t2cb44_bwd)
+                        : VFFT_IL_SYM(radix16_z_t2cb44_fwd);
     case 32: return bwd ? VFFT_IL_SYM(radix32_z_t2cb48_bwd)
                         : VFFT_IL_SYM(radix32_z_t2cb48_fwd);
     case 64: return bwd ? VFFT_IL_SYM(radix64_z_t2cb88_bwd)
@@ -415,7 +421,10 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
  * r32/r64 the column kinds exist in rival BLOCKED forms and the pick is per
  * cell per stage - raced at create, banked BY NAME on the 2D chain row
  * (forms=), replayed through these resolvers. Monolithic is never served at
- * r32/r64 (standing rule); every other radix has one body, spelled "-".
+ * r32/r64 (standing rule), nor as the r16 twiddle stage since 2026-10-06 (its
+ * one body is the blocked t2cb44, spelled "-"; the r16 leaf n1c stays
+ * monolithic: it parks 8 vectors, the stage parked 40); every other radix has
+ * one body, spelled "-".
  * The forward LEAF (n1c, the closing stage) has a second axis: the
  * HALF-STORE twin ("h", codelets/zil/<isa>/shared/col/half, 2026-10-01), the
  * same body with its plane stores as two 128-bit halves -- a column pass at

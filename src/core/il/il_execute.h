@@ -560,27 +560,35 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                      * independent blocks differs (bitwise-identical;
                      * the row pass sees the same leaf output either
                      * way, so the MT partitions stay bitwise too).
-                     * bwd = the Hermitian chain: per band the leaf
-                     * GATHERS its blocks from sre's natural rows into
-                     * the scratch comb, the suffix runs REVERSED on
-                     * the band (into dre when nothing is left wide),
-                     * then the reversed prefix wide scratch -> dre;
-                     * the rows LAST on dre — unfused, so that bwd
-                     * stays bitwise with the MT arms (which run rows
-                     * after every column stage). The width verdict
-                     * is a forward measurement anyway. */
+                     * bwd, staged (2026-10-06, _il2d_nat_bwd_fused): THE
+                     * FORWARD'S WALK with the forward kernels and the
+                     * backward row child fused after the leaf, the leaf
+                     * blocks scattered to the rows (N1 - i) mod N1 (the
+                     * inverse DFT along the columns is the forward DFT
+                     * with its output index negated): the same memory
+                     * pattern as the forward; the MT block and tile arms
+                     * run the same shape, so bwd stays bitwise with them.
+                     * bwd otherwise (the strided leaf, a strips verdict,
+                     * the four-step child) = the mirrored walk: per band
+                     * the leaf GATHERS its blocks from sre's natural rows
+                     * into the scratch comb, the suffix runs REVERSED on
+                     * the band (into dre when nothing is left wide), then
+                     * the reversed prefix wide scratch -> dre, the rows
+                     * LAST on dre (unfused, bitwise with the strips arm).
+                     * The width verdict is a forward measurement anyway. */
                     const int cut = h->il2d_col.cut, nst = h->il2d_col.nst;
+                    const int shape_fwd = fwd || _il2d_nat_bwd_fused(h);
                     const int Rl = h->il2d_col.R[nst - 1];
                     const size_t wl = (size_t)h->il2d_col.wl;
                     const size_t nstride = (size_t)h->N / (size_t)Rl;
                     const int *perm = h->il2d_col.natperm;
                     double *scr = h->il2d_col.natscr;
-                    vfft_il2p_fn const *fns = fwd ? h->il2d_col.f
-                                                  : h->il2d_col.b;
-                    double *const *tabs = fwd ? h->il2d_col.tf
-                                              : h->il2d_col.tb;
+                    vfft_il2p_fn const *fns = shape_fwd ? h->il2d_col.f
+                                                        : h->il2d_col.b;
+                    double *const *tabs = shape_fwd ? h->il2d_col.tf
+                                                    : h->il2d_col.tb;
                     size_t b0;
-                    if (fwd)
+                    if (shape_fwd)
                     {
                         if (cut > 0)
                             _il2d_col_stages(sre, scr, h->N, rn, 0, cut,
@@ -601,10 +609,10 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                                                  h->il2d_col.L, fns, tabs, 0);
                                 lf_from = scr;
                             }
-                            _il2d_nat_leaf_blocks(h, 0, dir, lf_from, dre, blo, bhi,
-                                                  h->il2d_col.tfuse);
+                            (void)_il2d_nat_leaf_blocks(h, 0, dir, lf_from, dre, blo, bhi,
+                                                        fwd ? h->il2d_col.tfuse : 1);
                         }
-                        if (!h->il2d_col.tfuse)
+                        if (fwd && !h->il2d_col.tfuse)
                             _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                         return;
                     }
@@ -612,7 +620,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                     {
                         const size_t blo = b0 / (size_t)Rl;
                         const size_t bhi = (b0 + wl) / (size_t)Rl;
-                        _il2d_nat_leaf_blocks(h, 0, dir, sre, scr, blo, bhi, 0);
+                        (void)_il2d_nat_leaf_blocks(h, 0, dir, sre, scr, blo, bhi, 0);
                         if (cut < nst - 1)
                             _il2d_col_stages(scr + 2 * b0 * rn,
                                              (cut > 0 ? scr : dre) + 2 * b0 * rn,
@@ -735,6 +743,22 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                                    h->il2d_col.tb, 1);
                     return;
                 }
+                if (h->il2d_col.nat && !fwd && _il2d_nat_bwd_fused(h))
+                {   /* the unbanded natural backward through the forward's walk
+                     * (2026-10-06): the mids with the forward kernels sre ->
+                     * scratch (stage 0 the move), the forward leaf through the
+                     * staging with the backward rows fused, scattered to the
+                     * rows (N1 - i) mod N1 -- no row sweep */
+                    const int nst = h->il2d_col.nst, Rl = h->il2d_col.R[nst - 1];
+                    double *scr = h->il2d_col.natscr;
+                    int s;
+                    for (s = 0; s < nst - 1; s++)
+                        _il2d_col_stages(s == 0 ? sre : scr, scr, h->N, rn, s, s + 1,
+                                         h->il2d_col.R, h->il2d_col.L, h->il2d_col.f,
+                                         h->il2d_col.tf, 0);
+                    (void)_il2d_nat_leaf_blocks(h, 0, dir, scr, dre, 0, (size_t)h->N / (size_t)Rl, 1);
+                    return;
+                }
                 if (h->il2d_col.nat)
                     _il2d_col_pass_nat(sre, dre, h->N, rn,
                                        h->il2d_col.nst, h->il2d_col.R,
@@ -775,13 +799,11 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
              * stay natural. dir is ignored (r2c = forward math, the 1D
              * contract). */
             _il2d_real_rows_fwd(h, sre, dre);
-            /* INC-3: threaded column pass (band or strip arm, both pure
-             * loop restrictions => bitwise identical); falls through to
-             * the serial pass when there is not enough independent work
-             * or the pool is absent. */
-            if (!h->il2d_col.colmt ||
-                !_il2d_real_cols_mt(h, dre, dre, 0, h->nthreads))
-                _il2d_real_cols(h, dre, dre, /*reverse=*/0);
+            /* INC-3: the column pass as it serves -- the plan's form, threaded
+             * under the colmt verdict (band or strip arm, both pure loop
+             * restrictions => bitwise identical), serial when the threaded
+             * walk cannot engage or the verdict is serial (the dispatcher). */
+            _il2d_real_cols(h, dre, dre, /*reverse=*/0);
         }
         else if (h->transform == VFFT_C2R && h->il2d_row)
         {
@@ -802,10 +824,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                 _il2d_real_rows_bwd(h, sre, dre);
                 return;
             }
-            if (!h->il2d_col.colmt ||
-                !_il2d_real_cols_mt(h, sre, h->il2d_rscr, 1,
-                                    h->nthreads))
-                _il2d_real_cols(h, sre, h->il2d_rscr, /*reverse=*/1);
+            _il2d_real_cols(h, sre, h->il2d_rscr, /*reverse=*/1);   /* threaded under the colmt verdict (the dispatcher) */
             _il2d_real_rows_bwd(h, h->il2d_rscr, dre);
         }
         return;

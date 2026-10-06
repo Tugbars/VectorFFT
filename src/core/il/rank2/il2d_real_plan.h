@@ -186,8 +186,100 @@ static void _il2d_plan_stk_str(int stk, char *buf, size_t cap)
         snprintf(buf, cap, "%d", stk & 3);
 }
 
+/* THE THREADED ROW PASS (2026-10-06, the thread guard lifted): rows [lo, hi)
+ * per worker -- the rows kernel over its rows (a lane is one row; the grouping
+ * into vectors never crosses lanes, so the split is bitwise), an engine
+ * through worker t's CLONE il2d_rxw[t-1] (one plan instance per worker,
+ * il2d_real_mt.md §6.2: the same token replayed from the engines' store). The
+ * door route is not split here: the door's batch threads itself. Every worker
+ * enters its body at the plan's stack state, as the serial pass does. */
+typedef struct
+{
+    const struct vfft_plan_s *h;
+    const double *s;
+    double *d;
+    size_t lo, hi;
+    int tid, bwd;
+} _il2d_rowx_mt_t;
+static void _il2d_rowx_range(const void *v, const double *s, double *d)
+{
+    const _il2d_rowx_mt_t *a = (const _il2d_rowx_mt_t *)v;
+    const struct vfft_plan_s *h = a->h;
+    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
+    size_t r;
+    if (h->il2d_rx_lm)
+    {
+        if (a->bwd)
+            h->il2d_rx_lm(s + a->lo * 2 * hp1, NULL, d + a->lo * rn2, NULL, NULL, NULL, hp1, 0, rn2, 0, a->hi - a->lo);
+        else
+            h->il2d_rx_lm(s + a->lo * rn2, NULL, d + a->lo * 2 * hp1, NULL, NULL, NULL, rn2, 0, hp1, 0, a->hi - a->lo);
+        return;
+    }
+    {
+        struct vfft_plan_s *e = a->tid > 0 ? h->il2d_rxw[a->tid - 1] : h->il2d_rx_eng;
+        if (a->bwd)
+            for (r = a->lo; r < a->hi; r++)
+                _real_il_exec_any(e, s + r * 2 * hp1, d + r * rn2);
+        else
+            for (r = a->lo; r < a->hi; r++)
+                _real_il_exec_any(e, s + r * rn2, d + r * 2 * hp1);
+    }
+}
+static void _il2d_rowx_mt_tramp(void *v)
+{
+    _il2d_rowx_mt_t *a = (_il2d_rowx_mt_t *)v;
+    if (a->h->il2d_rx_stk < 0)
+        _il2d_rowx_range(a, a->s, a->d);
+    else
+        _il2d_rowx_call(_il2d_rowx_range, a, a->s, a->d, a->h->il2d_rx_stk);
+}
+/* the workers the row pass can use: the plan's T under the pool's clamp, every
+ * worker at least two rows (the rows kernel's floor), an engine only as far as
+ * its clones go; 1 = the pass runs serial (the door route always: its batch
+ * threads itself) */
+static int _il2d_rowx_T(const struct vfft_plan_s *h)
+{
+    int T;
+    if (h->nthreads <= 1 || (!h->il2d_rx_lm && !h->il2d_rx_eng))
+        return 1;
+    T = thread_pool_workers_for(h->nthreads);
+    if (h->il2d_rx_lm)
+    {
+        if ((size_t)T > (size_t)h->N / 2)
+            T = (int)((size_t)h->N / 2);
+    }
+    else
+    {
+        if (T > h->il2d_rxw_n + 1)
+            T = h->il2d_rxw_n + 1;
+        if (T > h->N)
+            T = h->N;
+    }
+    return T < 1 ? 1 : T;
+}
+/* 1 = the pass ran threaded */
+static int _il2d_rowx_mt(struct vfft_plan_s *h, const double *s, double *d, int bwd)
+{
+    _il2d_rowx_mt_t a[THREAD_POOL_MAX_DISPATCH];
+    const int T = _il2d_rowx_T(h);
+    const size_t n1 = (size_t)h->N;
+    int t;
+    if (T < 2)
+        return 0;
+    for (t = 0; t < T; t++)
+    {
+        a[t].h = h; a[t].s = s; a[t].d = d; a[t].tid = t; a[t].bwd = bwd;
+        a[t].lo = n1 * (size_t)t / (size_t)T;
+        a[t].hi = n1 * (size_t)(t + 1) / (size_t)T;
+    }
+    thread_pool_run(T, _il2d_rowx_mt_tramp, a, sizeof a[0]); /* caller = a[0] */
+    _vfft_il2d_row_mt_count++; /* engagement, see vfft.c */
+    return 1;
+}
 static void _il2d_rowx_fwd(struct vfft_plan_s *h, const double *sre, double *dre)
 {
+    if (_il2d_rowx_mt(h, sre, dre, 0))
+        return;
     if (h->il2d_rx_stk < 0)
         _il2d_rowx_body(h, sre, dre);
     else
@@ -195,6 +287,8 @@ static void _il2d_rowx_fwd(struct vfft_plan_s *h, const double *sre, double *dre
 }
 static void _il2d_rowx_bwd(struct vfft_plan_s *h, const double *zsrc, double *dre)
 {
+    if (_il2d_rowx_mt(h, zsrc, dre, 1))
+        return;
     if (h->il2d_rx_stk < 0)
         _il2d_rowx_body_bwd(h, zsrc, dre);
     else
@@ -323,8 +417,62 @@ static int _il2d_rowx_build(const vfft_config_t *cfg, struct vfft_wisdom_s *S, i
     return *eng != NULL;
 }
 
+static void _il2d_rowx_clones_drop(struct vfft_plan_s **w, int n)
+{
+    int t;
+    if (!w)
+        return;
+    for (t = 0; t < n; t++)
+        if (w[t])
+            vfft_destroy((vfft_plan)w[t]);
+    free(w);
+}
+/* an engine's worker clones for T workers (T-1 of them), by its own token
+ * replayed from the engines' store (the recipe the primary banked; never a
+ * race): one plan instance per worker. Each clone's token is checked against
+ * the primary's (route equivalence); on any failure none are kept and the
+ * engine runs its rows serial. 1 = done (nothing to clone counts), 0 = failed. */
+static int _il2d_rowx_clones(const vfft_config_t *cfg, struct vfft_wisdom_s *S, int N1, int N2, const char *tok,
+                             int T, int c2r, struct vfft_plan_s ***out, int *out_n)
+{
+    const int n = (T > THREAD_POOL_MAX_DISPATCH ? THREAD_POOL_MAX_DISPATCH : T) - 1;
+    vfft_config_t c = *cfg;
+    struct vfft_plan_s **arr;
+    int t;
+    *out = NULL;
+    *out_n = 0;
+    if (n <= 0 || !tok || !tok[0] || !strcmp(tok, "lm") || !strcmp(tok, "door"))
+        return 1;
+    c.recalibrate = 0;
+    arr = (struct vfft_plan_s **)calloc((size_t)n, sizeof *arr);
+    if (!arr)
+        return 0;
+    for (t = 0; t < n; t++)
+    {
+        vfft_il2p_fn lm = NULL;
+        char nm[48];
+        if (!_il2d_rowx_build(&c, S, N1, N2, tok, &lm, &arr[t], c2r) || lm || !arr[t])
+        {
+            _vfft_warn("il2d real rows: clone %d of %s failed to build at %dx%d -- the engine runs its rows serial", t, tok, N1, N2);
+            _il2d_rowx_clones_drop(arr, t + 1);
+            return 0;
+        }
+        _il2d_rowx_name(NULL, arr[t], nm, sizeof nm);
+        if (strcmp(nm, tok))
+        {
+            _vfft_warn("il2d real rows: clone %d of %s is %s at %dx%d -- the engine runs its rows serial", t, tok, nm, N1, N2);
+            _il2d_rowx_clones_drop(arr, t + 1);
+            return 0;
+        }
+    }
+    *out = arr;
+    *out_n = n;
+    return 1;
+}
+
 /* the race's arm: one candidate at one stack state installed on the plan, the
- * row pass run in the plan's direction (bwd: the CCE plane z -> the real plane a) */
+ * row pass run in the plan's direction (bwd: the CCE plane z -> the real plane a);
+ * at T > 1 the candidate's clones ride with it and the pass threads */
 typedef struct
 {
     struct vfft_plan_s *h;
@@ -332,19 +480,38 @@ typedef struct
     double *z;   /* the CCE plane */
     vfft_il2p_fn lm;
     struct vfft_plan_s *eng;
+    struct vfft_plan_s **w;   /* the engine's worker clones (T > 1), or NULL */
+    int wn;
     int stk, bwd;
+    int whole;   /* T > 1: the arm runs the WHOLE transform in serving order (the column pass
+                  * as the cell serves it, under the colmt verdict), so the cross-core exchange
+                  * between the passes is inside the measurement (il2d_real_mt.md §5.2) */
 } _il2d_rowx_arm_t;
 static void _il2d_rowx_arm_run(void *v)
 {
     _il2d_rowx_arm_t *c = (_il2d_rowx_arm_t *)v;
     c->h->il2d_rx_lm = c->lm;
     c->h->il2d_rx_eng = c->eng;
+    c->h->il2d_rxw = c->w;
+    c->h->il2d_rxw_n = c->wn;
     c->h->il2d_rx_stk = c->stk;
     c->h->il2d_rx_on = 1;
     if (c->bwd)
-        _il2d_real_rows_bwd(c->h, c->z, c->a);
+    {
+        if (c->whole)
+        {
+            _il2d_real_cols(c->h, c->z, c->h->il2d_rscr, 1);
+            _il2d_real_rows_bwd(c->h, c->h->il2d_rscr, c->a);
+        }
+        else
+            _il2d_real_rows_bwd(c->h, c->z, c->a);
+    }
     else
+    {
         _il2d_real_rows_fwd(c->h, c->a, c->z);
+        if (c->whole)
+            _il2d_real_cols(c->h, c->z, c->z, 0);
+    }
 }
 
 /* bank the verdict on the shared real IL row; the row is made when the cell
@@ -388,6 +555,8 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
     struct vfft_plan_s *eng = NULL;
     h->il2d_rx_lm = NULL;
     h->il2d_rx_eng = NULL;
+    h->il2d_rxw = NULL;
+    h->il2d_rxw_n = 0;
     h->il2d_rx_stk = 0;
     h->il2d_rx_on = 0;
     if (!h->il2d_rxS)
@@ -415,6 +584,8 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                 h->il2d_rx_eng = eng;
                 h->il2d_rx_stk = sl ? _il2d_plan_stk_parse(sl + 1) : 0;
                 h->il2d_rx_on = 1;
+                if (eng && h->nthreads > 1)
+                    (void)_il2d_rowx_clones(cfg, h->il2d_rxS, N1, N2, tok, h->nthreads, c2r, &h->il2d_rxw, &h->il2d_rxw_n);
             }
             else
                 _vfft_warn("vfft_create: %s=%s does not build at %dx%d (the row route stands)", ev, e, N1, N2);
@@ -435,6 +606,8 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                 h->il2d_rx_eng = eng;
                 h->il2d_rx_stk = _il2d_plan_stk_parse(sv);
                 h->il2d_rx_on = 1;
+                if (eng && h->nthreads > 1)
+                    (void)_il2d_rowx_clones(cfg, h->il2d_rxS, N1, N2, tok, h->nthreads, c2r, &h->il2d_rxw, &h->il2d_rxw_n);
                 return;
             }
             /* a banked engine that no longer builds: the race */
@@ -450,6 +623,8 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         vfft_config_t c;
         int na = 0, best = 0, bd = 0, i, s;
         const size_t ON = c2r ? RN : CN;   /* the pass's output plane */
+        /* T > 1: every arm runs the whole transform (the c2r reverse pass needs its plane) */
+        const int whole = h->nthreads > 1 && (!c2r || h->il2d_rscr != NULL);
         double *a = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
         double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
         double *ref = (double *)vfft_aligned_alloc((ON + 8) * sizeof(double));
@@ -482,6 +657,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         _il2d_rowx_cfg(cfg, N2, &c, h->il2d_rxS, c2r);
 #define ROWX_ARM(LM, ENG) do { if (na < NARMS) { \
             cand[na].h = h; cand[na].a = a; cand[na].z = z; cand[na].lm = (LM); cand[na].eng = (ENG); cand[na].stk = 0; \
+            cand[na].w = NULL; cand[na].wn = 0; cand[na].whole = whole; \
             cand[na].bwd = c2r; _il2d_rowx_name(cand[na].lm, cand[na].eng, names[na], sizeof names[na]); na++; } \
             else if ((ENG) != NULL) vfft_destroy((vfft_plan)(ENG)); } while (0)
         ROWX_ARM(NULL, NULL);   /* arm 0: the row route the tier has */
@@ -557,6 +733,29 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             }
             na = keep;
         }
+        if (h->nthreads > 1)
+        {   /* T > 1: every engine candidate gets its worker clones, and its
+             * THREADED pass is gated against the reference too (the clones'
+             * output is the primary's by construction; the gate says so) */
+            for (i = 1; i < na; i++)
+                if (cand[i].eng)
+                {
+                    double e;
+                    if (!_il2d_rowx_clones(cfg, h->il2d_rxS, N1, N2, names[i], h->nthreads, c2r, &cand[i].w, &cand[i].wn))
+                        continue;   /* no clones: the engine's rows run serial under this plan */
+                    memset(out, 0, ON * sizeof(double));
+                    _il2d_rowx_arm_run(&cand[i]);
+                    e = _zrpr_relerr(out, ref, ON);
+                    if (!(e < 1e-10))
+                    {
+                        fprintf(stderr, "[il2d-real] %srows %dx%d T=%d: %s threaded FAILS the gate (rel %.2e) -- its clones dropped\n",
+                                dn, N1, N2, h->nthreads, names[i], e);
+                        _il2d_rowx_clones_drop(cand[i].w, cand[i].wn);
+                        cand[i].w = NULL;
+                        cand[i].wn = 0;
+                    }
+                }
+        }
         for (i = 0; i < na; i++)
             for (s = 0; s < 4; s++)
             {
@@ -577,8 +776,14 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
             if (reps < 1) reps = 1;
             if (reps > 4096) reps = 4096;
-            {   /* 9 rounds alternated, median */
-                const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1 };
+            {   /* 9 rounds alternated, median; threaded arms (T > 1) under the
+                 * threaded protocol instead: min of 3, two untimed passes per
+                 * arm first, no pacing (a paced pool parks its workers) */
+                vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1 };
+                if (h->nthreads > 1)
+                {
+                    proto.rounds = 3; proto.agg = VFFT_RACE_MIN; proto.alternate = 0; proto.warm = 2; proto.pace = 0;
+                }
                 vfft_race_run(&proto, arms, 4 * na, ns);
             }
             for (i = 1; i < 4 * na; i++)
@@ -604,9 +809,14 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         }
         for (i = 1; i < na; i++)
             if (i != best / 4 && cand[i].eng)
+            {
+                _il2d_rowx_clones_drop(cand[i].w, cand[i].wn);
                 vfft_destroy((vfft_plan)cand[i].eng);
+            }
         h->il2d_rx_lm = ctx[best].lm;
         h->il2d_rx_eng = ctx[best].eng;
+        h->il2d_rxw = ctx[best].w;
+        h->il2d_rxw_n = ctx[best].wn;
         h->il2d_rx_stk = _il2d_plan_stk(&ns[4 * (best / 4)], ctx[best].stk);
         h->il2d_rx_on = 1;
         if (h->il2d_rx_eng && h->il2d_rx_eng->zr2c_kid && h->il2d_rxS)
@@ -672,16 +882,25 @@ static void _il2d_real_rowplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom_s *
  *         dot-separated: 2.any.0
  * VFFT_IL2D_CX=<cx>[/<cxs>] pins (s<state> is read too); VFFT_IL2D_CX=off
  * leaves the pass unbound. The prime-column routes (Bluestein, turned) keep
- * their own passes; the threaded column walks are untouched.
+ * their own passes.
+ *
+ * AT T > 1 (2026-10-06, the thread guard lifted): the plan races and serves
+ * under the cell's colmt verdict -- a leaf by column ranges, the chain through
+ * the tier's MT column pass with the leaf in the plan's form and the pass's
+ * one state on every dispatched body (no per-stage states). The verdict
+ * banks on the T row, as every real token does.
  *
  * THE C2R TWIN (2026-10-05): the same plan over the REVERSE pass (the
  * Hermitian-transpose chain, out of place from the caller's plane onto the
- * column-inverse plane): the same forms (plain | strided | staged, the
- * natural leaf's reverse gathering through the staging), the backward
- * leaves (b816 | b448: n1cb*_bwd), the per-stage states indexed by chain
- * stage as r2c's are (the stages run in reverse order). Raced on the
- * cell's own reverse pass, banked cx_c2r= / cxs_c2r=, pinned by
- * VFFT_IL2D_CX_C2R.
+ * column-inverse plane): the forms plain | strided (the natural leaf
+ * gathering the natural rows at its stride into the scratch comb, the mids
+ * in reverse order) and the backward leaves (b816 | b448: n1cb*_bwd), the
+ * per-stage states indexed by chain stage as r2c's are. NO staged form for
+ * the reverse pass: the gather is cheap at the real plane's odd pitch (no
+ * set conflicts) and a staging only adds traffic -- the forward's walk with
+ * a reversed scatter was raced and refuted 2026-10-06 (8-22% over strided
+ * at every chain cell but one tie). Raced on the cell's own reverse pass,
+ * banked cx_c2r= / cxs_c2r=, pinned by VFFT_IL2D_CX_C2R.
  * ═══════════════════════════════════════════════════════════════════════ */
 static void _il2d_colx_body(const void *v, const double *src, double *dst)
 {
@@ -704,7 +923,7 @@ static void _il2d_colx_body_bwd(const void *v, const double *src, double *dst)
         h->il2d_cx_leaf(src, NULL, dst, NULL, NULL, NULL, c->rn, 0, c->rn, 0, c->rn);
         return;
     }
-    _il2d_col_exec_st(c, src, dst, 1, (c->nat && h->il2d_cx_st) ? c->natstage : NULL);
+    _il2d_col_exec_st(c, src, dst, 1, NULL);   /* the reverse leaf gathers at its stride: no staged form */
 }
 
 /* ONE CHAIN STAGE under its own entry: the natural pass (_il2d_col_pass_nat,
@@ -754,8 +973,67 @@ static void _il2d_colx_perk(const struct vfft_plan_s *h, const double *src, doub
     k.s = nst - 1;
     _il2d_cxk_run(_il2d_cxk_natleaf, &k, c->natscr, dst, ks[nst - 1]);
 }
+/* THE THREADED COLUMN PASS (2026-10-06, the thread guard lifted): under the
+ * cell's colmt verdict the plan's form runs threaded -- a leaf by COLUMN
+ * RANGES (a column is one lane: bitwise), a chain through the tier's MT column
+ * pass (il2d_tier.h) with the natural leaf in the plan's form (strided, or
+ * each worker's own staging block) and the pass's one stack state on every
+ * dispatched body. The per-stage states are a serial plan's: a threaded pass
+ * has one state. 0 = the pass did not thread (the serial form runs). */
+typedef struct
+{
+    const struct vfft_plan_s *h;
+    const double *src;
+    double *dst;
+    size_t lo, hi;
+} _il2d_colx_mt_t;
+static void _il2d_colx_leaf_range(const void *v, const double *src, double *dst)
+{
+    const _il2d_colx_mt_t *a = (const _il2d_colx_mt_t *)v;
+    const vfft_ilcol_t *c = &a->h->il2d_col;
+    a->h->il2d_cx_leaf(src + 2 * a->lo, NULL, dst + 2 * a->lo, NULL, NULL, NULL, c->rn, 0, c->rn, 0, a->hi - a->lo);
+}
+static void _il2d_colx_leaf_tramp(void *v)
+{
+    _il2d_colx_mt_t *a = (_il2d_colx_mt_t *)v;
+    if (a->h->il2d_cx_stk < 0)
+        _il2d_colx_leaf_range(a, a->src, a->dst);
+    else
+        _il2d_rowx_call(_il2d_colx_leaf_range, a, a->src, a->dst, a->h->il2d_cx_stk);
+}
+static int _il2d_colx_mt(struct vfft_plan_s *h, const double *src, double *dst, int reverse)
+{
+    int T;
+    if (h->nthreads <= 1 || !h->il2d_col.colmt)
+        return 0;
+    T = thread_pool_workers_for(h->nthreads);
+    if (h->il2d_cx_leaf)
+    {
+        _il2d_colx_mt_t a[THREAD_POOL_MAX_DISPATCH];
+        const size_t cols = h->il2d_col.rn;
+        int t;
+        if ((size_t)T > cols)
+            T = (int)cols;
+        if (T < 2)
+            return 0;
+        for (t = 0; t < T; t++)
+        {
+            a[t].h = h; a[t].src = src; a[t].dst = dst;
+            a[t].lo = cols * (size_t)t / (size_t)T;
+            a[t].hi = cols * (size_t)(t + 1) / (size_t)T;
+        }
+        thread_pool_run(T, _il2d_colx_leaf_tramp, a, sizeof a[0]); /* caller = a[0] */
+        _vfft_il2d_col_mt_count++;
+        return 1;
+    }
+    if (h->il2d_cx_perk)
+        return 0;
+    return _il2d_real_cols_mt(h, src, dst, reverse, h->nthreads);
+}
 static void _il2d_colx_fwd(struct vfft_plan_s *h, const double *src, double *dst)
 {
+    if (_il2d_colx_mt(h, src, dst, 0))
+        return;
     if (h->il2d_cx_perk)
         _il2d_colx_perk(h, src, dst);
     else if (h->il2d_cx_stk < 0)
@@ -766,8 +1044,8 @@ static void _il2d_colx_fwd(struct vfft_plan_s *h, const double *src, double *dst
 
 /* THE C2R PER-STAGE ENTRIES: the reverse natural pass (_il2d_col_pass_nat,
  * reverse) a stage at a time -- the leaf gathers the natural src into the
- * scratch's comb, the mids run in reverse chain order in place, stage 0
- * writes the scratch -> dst; the same kernels, calls and order: bitwise. */
+ * scratch's comb at its stride, the mids run in reverse chain order in place,
+ * stage 0 writes the scratch -> dst; the same kernels, calls and order: bitwise. */
 static void _il2d_cxk_stage_bwd(const void *v, const double *src, double *dst)
 {
     const _il2d_cxk_t *k = (const _il2d_cxk_t *)v;
@@ -780,8 +1058,7 @@ static void _il2d_cxk_natleaf_bwd(const void *v, const double *src, double *scr)
     const struct vfft_plan_s *h = k->h;
     const vfft_ilcol_t *c = &h->il2d_col;
     const int Rl = c->R[c->nst - 1];
-    _il2d_nat_leaf_range(src, scr, c->N, c->rn, Rl, c->b[c->nst - 1], c->natperm, 0, (size_t)(c->N / Rl), 1,
-                         h->il2d_cx_st ? c->natstage : NULL);
+    _il2d_nat_leaf_range(src, scr, c->N, c->rn, Rl, c->b[c->nst - 1], c->natperm, 0, (size_t)(c->N / Rl), 1, NULL);
 }
 static void _il2d_colx_perk_bwd(const struct vfft_plan_s *h, const double *src, double *dst)
 {
@@ -801,6 +1078,8 @@ static void _il2d_colx_perk_bwd(const struct vfft_plan_s *h, const double *src, 
 }
 static void _il2d_colx_bwd(struct vfft_plan_s *h, const double *src, double *dst)
 {
+    if (_il2d_colx_mt(h, src, dst, 1))
+        return;
     if (h->il2d_cx_perk)
         _il2d_colx_perk_bwd(h, src, dst);
     else if (h->il2d_cx_stk < 0)
@@ -901,6 +1180,7 @@ typedef struct
 {
     struct vfft_plan_s *h;
     double *z;
+    double *a;   /* T > 1: the real plane the row pass runs with (the whole transform per arm) */
     int st, stk, perk, bwd;
     signed char ks[8];
     vfft_il2p_fn leaf;
@@ -916,9 +1196,17 @@ static void _il2d_colx_arm_run(void *v)
     h->il2d_cx_leaf = c->leaf;
     h->il2d_cx_on = 1;
     if (c->bwd)
+    {
         _il2d_real_cols(h, c->z, h->il2d_rscr, 1);   /* the reverse pass, out of place onto the plan's plane */
+        if (c->a)
+            _il2d_real_rows_bwd(h, h->il2d_rscr, c->a);   /* T > 1: the row pass after it, as the cell serves */
+    }
     else
+    {
+        if (c->a)
+            _il2d_real_rows_fwd(h, c->a, c->z);   /* T > 1: the row pass before it, as the cell serves */
         _il2d_real_cols(h, c->z, c->z, 0);
+    }
 }
 
 #define VFFT_IL2D_CX_MAXFORMS (2 + VFFT_IL2P_COL_MAXLEAF)
@@ -930,7 +1218,7 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
 {
     const size_t hp1 = (size_t)N2 / 2 + 1, CN = 2 * (size_t)N1 * hp1;
     const vfft_ilcol_t *col = &h->il2d_col;
-    const int nat = col->nat != 0, nf = (nat && col->natstage) ? 2 : 1;
+    const int nat = col->nat != 0, nf = (nat && col->natstage && !c2r) ? 2 : 1;   /* the reverse pass has no staged form */
     const char *fname[2];
     const char *lname[VFFT_IL2P_COL_MAXLEAF];
     const char *log = getenv("VFFT_IL2D_LOG");
@@ -987,12 +1275,19 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
         char names[VFFT_IL2D_CX_MAXFORMS][8], xn[4 * VFFT_IL2D_CX_MAXFORMS][24], sb[40];
         double ns[4 * VFFT_IL2D_CX_MAXFORMS], t0, est;
         const vfft_race_proto_t proto0 = { 9, 1, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1 };
-        vfft_race_proto_t proto = proto0; /* 9 rounds alternated, median */
+        vfft_race_proto_t proto = proto0; /* 9 rounds alternated, median; at T > 1 the threaded protocol below */
         int na = 0, best = 0, bc = 0, reps, i, f, u;
+        const size_t RN = (size_t)N1 * (size_t)N2;
         double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
         double *const out = c2r ? h->il2d_rscr : z;   /* the pass's output plane */
+        /* T > 1: the whole transform per arm -- the row pass (bound before this plan) runs with
+         * the arm in serving order, so the exchange between the passes is measured */
+        double *a = (h->nthreads > 1 && h->il2d_rx_on) ? (double *)vfft_aligned_alloc((RN + 8) * sizeof(double)) : NULL;
         if (!z)
+        {
+            vfft_aligned_free(a);
             return;
+        }
         {
             unsigned sd = 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 12);
             size_t j;
@@ -1001,11 +1296,20 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
                 sd = sd * 1664525u + 1013904223u;
                 z[j] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
             }
+            if (a)
+                for (j = 0; j < RN + 8; j++)
+                {
+                    sd = sd * 1664525u + 1013904223u;
+                    a[j] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
+                }
+            if (a && c2r)
+                for (j = 0; j < (size_t)N1; j++)   /* a CCE plane: the DC and Nyquist bins real */
+                    z[j * 2 * hp1 + 1] = z[j * 2 * hp1 + 2 * (hp1 - 1) + 1] = 0.0;
         }
         for (f = 0; f < nf; f++)
         {
             memset(&cand[na], 0, sizeof cand[na]);
-            cand[na].h = h; cand[na].z = z; cand[na].st = f; cand[na].stk = -1; cand[na].bwd = c2r;
+            cand[na].h = h; cand[na].z = z; cand[na].a = a; cand[na].st = f; cand[na].stk = -1; cand[na].bwd = c2r;
             snprintf(names[na], sizeof names[na], "%s", fname[f]);
             na++;
         }
@@ -1026,7 +1330,7 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
                 {
                     double e;
                     memset(&cand[na], 0, sizeof cand[na]);
-                    cand[na].h = h; cand[na].z = z; cand[na].stk = -1; cand[na].bwd = c2r;
+                    cand[na].h = h; cand[na].z = z; cand[na].a = a; cand[na].stk = -1; cand[na].bwd = c2r;
                     cand[na].leaf = c2r ? vfft_il2p_col_leaf_bwd_fn(N1, lname[f]) : vfft_il2p_col_leaf_fn(N1, lname[f]);
                     if (!cand[na].leaf)
                         continue;
@@ -1063,6 +1367,11 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
         if (reps < 1) reps = 1;
         if (reps > 4096) reps = 4096;
         proto.reps = reps;
+        if (h->nthreads > 1)
+        {   /* the pass threads under the colmt verdict: min of 3, two untimed
+             * passes per arm first, no pacing (a paced pool parks its workers) */
+            proto.rounds = 3; proto.agg = VFFT_RACE_MIN; proto.alternate = 0; proto.warm = 2; proto.pace = 0;
+        }
         vfft_race_run(&proto, arms, 4 * na, ns);
         for (i = 1; i < 4 * na; i++)
             if (ns[i] < ns[best]) best = i;
@@ -1086,8 +1395,9 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
         }
         u = _il2d_plan_stk(&ns[4 * (best / 4)], ctx[best].stk);
         ctx[best].stk = u;
-        if (!ctx[best].leaf && nat && col->nst >= 2 && u >= 0)
-        {   /* the per-kernel states: each stage's four with the others held, in chain order */
+        if (!ctx[best].leaf && nat && col->nst >= 2 && u >= 0 && h->nthreads <= 1)
+        {   /* the per-kernel states: each stage's four with the others held, in
+             * chain order (a serial pass's: a threaded pass has one state) */
             _il2d_colx_arm_t kc[4], fin[2];
             vfft_race_arm_t ka[4];
             char kn[4][24];
@@ -1149,6 +1459,7 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
             fprintf(stderr, "[il2d-real] %scols %dx%d: %s=%s %s=%s\n", dn, N1, N2, tk_cx, names[best / 4], tk_cxs, sb);
         _il2d_real_plan_bank(h, W, cfg, N1, N2, ord, T, tk_cx, names[best / 4], tk_cxs, sb, c2r);
         vfft_aligned_free(z);
+        vfft_aligned_free(a);
     }
 }
 
