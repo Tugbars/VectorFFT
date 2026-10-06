@@ -2248,10 +2248,16 @@ let zil_pure_cells : (string * string list) list =
     , [ "31"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix31_z_rn1_bwd_avx2.c"
     , [ "31"; "--cil-rn1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix32_z_rn1_avx2.c"
-    , [ "32"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix32_z_rn1_bwd_avx2.c"
-    , [ "32"; "--cil-rn1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* THE BLOCKED REAL MONO (2026-10-06): at 32 and 64 the mono is the c2c
+       blocked construction on its own edges (c2c_il.ml emit_blocked with
+       kind RN1): 4x8 at 32, the three-pass 4x4x4 at 64, both directions. The
+       kernel race: 7-14% over the monolithic bodies at count 1 and 2, spills
+       halved; the monolithic 32/64 bodies are deleted (the law: r32/r64
+       never monolithic). The 8x8 twin at 64 tied at count 1, lost at count 2. *)
+  ; ( "radix32_z_rn1b48_avx2.c"
+    , [ "32"; "--cil-rn1"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_rn1b48_bwd_avx2.c"
+    , [ "32"; "--cil-rn1"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix37_z_rn1_avx2.c"
     , [ "37"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix37_z_rn1_bwd_avx2.c"
@@ -2282,10 +2288,10 @@ let zil_pure_cells : (string * string list) list =
     , [ "61"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix61_z_rn1_bwd_avx2.c"
     , [ "61"; "--cil-rn1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix64_z_rn1_avx2.c"
-    , [ "64"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix64_z_rn1_bwd_avx2.c"
-    , [ "64"; "--cil-rn1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_rn1b444_avx2.c"
+    , [ "64"; "--cil-rn1"; "--cil-blocked"; "--cil-split3"; "4.4.4"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_rn1b444_bwd_avx2.c"
+    , [ "64"; "--cil-rn1"; "--cil-blocked"; "--cil-split3"; "4.4.4"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
     (* the real FLAT leaf r1c (real_il.ml, 2026-09-30): real legs over contiguous
        columns -> the digit runs, fwd + bwd at the flat DIT's odd radices;
        zil/avx2/real/flat *)
@@ -3036,7 +3042,7 @@ let zil_folder (name : string) : string option =
          else if List.mem base [ "t2cp"; "t2cs"; "t2csg"; "t2csgn"; "t2csgt"; "t2csgnt" ] then "flat"
          else if base = "msz" || base = "mszt" then "flat/odd_mid"
          else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "ztt"
-         else if base = "rn1" then "real/mono"
+         else if base = "rn1" || blocked "rn1b" then "real/mono"
          else if base = "r1c" then "real/flat"
          else if base = "r2zr" then "real/rows"
          else if base = "t2csgh" || base = "t2csght" then "real/flat/herm"
