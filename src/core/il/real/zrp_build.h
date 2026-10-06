@@ -422,6 +422,8 @@ static void _real_il_exec_any(struct vfft_plan_s *h, const double *s0, double *b
     else if (h->zrm) _exec_zrm(h, s0, b);
     else if (h->zttr) _exec_zttr(h, s0, b);
     else if (h->zrp) _exec_zrp(h, s0, b);
+    else if (h->zrf) _exec_zrf(h, s0, b);   /* the odd engines: a 2D real plan's row engine at an odd N2 */
+    else if (h->zrb) _exec_zrb(h, s0, b);
     else _exec_zr2c(h, s0, b);
 }
 

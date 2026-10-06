@@ -1000,11 +1000,13 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     }
     /* the r2c ROW ENGINE (il2d_real_plan.h): the plan's own row plan -- env
      * pin, the banked rx=, or the row race in the row role. After the forms
-     * re-bank above, so the row it banks on is the cell's. Even N2 (odd N2
-     * keeps its c2c child); at every thread count since 2026-10-06 -- under
-     * T > 1 the pass threads by row ranges (an engine through its worker
-     * clones) and the verdict lands on the T row. */
-    if (h->transform == VFFT_R2C && h->il2d_row && !il2d_oddn2)
+     * re-bank above, so the row it banks on is the cell's. Every N2 since
+     * 2026-10-07: an odd N2 races the odd door's engines (the real mono, the
+     * real flat DIT, the real Bluestein) in the row role against its c2c child
+     * route, which stays the route when nothing beats it. At every thread
+     * count since 2026-10-06 -- under T > 1 the pass threads by row ranges (an
+     * engine through its worker clones) and the verdict lands on the T row. */
+    if (h->transform == VFFT_R2C && h->il2d_row)
         _il2d_real_rowplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* its c2r twin (2026-10-05): the backward row pass's own plan, raced in
      * the row role on a CCE plane and banked as the row's rx_c2r= / rxs_c2r= */
