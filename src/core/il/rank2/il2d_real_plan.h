@@ -16,9 +16,16 @@
  *   zrp    the real pair per row            (il/real/zrp.h), a pair and a form
  *   zr2c   the zr2c composite per row       (il/real/zr2c_build.h), a route
  *   zttr   ZTT-r per row                    (il/real/zttr.h), chain/tile/stack
- *   door   the row route the tier had (the per-row door)
+ *   zrf    the real flat DIT per row        (il/real/zrf.h), odd N2: chain, split
+ *                                           body, tile budget
+ *   zrb    the real Bluestein per row       (il/real/zrb.h), odd N2: length, inner
+ *   door   the row route the tier had (the per-row door at an even N2; at an
+ *          odd N2 the promote and the c2c(N2) child)
  * The per-row engines are built by the real door's BUILDERS from the row's
- * token; the handle is the plan's own.
+ * token; the handle is the plan's own. At an odd N2 (2026-10-07) the race
+ * runs the odd door's sweeps in the row role (il/real/odd_build.h: the
+ * flat DIT's chain pick, the Bluestein's lengths and inners), each candidate
+ * gated against the route's transform of the plane's first row.
  *
  * THE STACK STATE. Win64 gives a callee a 16-B stack and mingw never
  * realigns a frame, so a spilling kernel under the row loop runs at one of
@@ -30,6 +37,8 @@
  *
  * WISDOM. Two tokens on the shared real IL row, r2c's own:
  *   rx=   door | lm | zrm | zrp_R1.R2_a|b | zr2c_r0|r1 | zttr_<chain>_t<tile>_s<stk>
+ *         | zrf_<chain>[_t]_w<tile> | zrb_<M>_<kind>:<shape>[_t<tw>]   (the odd
+ *         engines, in their env pins' spelling with '_' for '/')
  *   rxs=  the row pass's stack state 0..3, or `any`: the four states raced
  *         within 3% (the kernels do not spill), the pass entered directly
  * VFFT_IL2D_RX=<rx>[/s<state>] pins (beats the bank, never banks);
@@ -46,8 +55,10 @@
  * its section; the destroying c2r (a request's destroy_input permission: the
  * one-kernel column pass in place on the caller's plane) at the last one.
  *
- * One thread, even N2. A threaded plan keeps the per-row door's slabs; odd
- * N2 its c2c child.
+ * Every N2 (odd N2 since 2026-10-07, r2c; a c2r plan at an odd N2 keeps its
+ * c2c child until its own piece). A threaded plan threads the pass by row
+ * ranges through an engine's worker clones; the door route keeps its own
+ * threading (the per-row door's slabs at an even N2; the odd child is serial).
  *
  * Included after il/real/zrp_build.h (the builders) and il2d_tier.h (the row
  * route, and the dispatcher that calls _il2d_rowx_fwd). */
@@ -329,6 +340,19 @@ static void _il2d_rowx_name(vfft_il2p_fn lm, const struct vfft_plan_s *e, char *
         vfft_ztt_chain_str(e->zttr->zt, cs, sizeof cs);
         snprintf(b, n, "zttr_%s_t%zu_s%d", cs, e->zttr->zt->tile, e->zttr->stk);
     }
+    else if (e->zrf)
+    {   /* the real flat DIT (odd N2): the VFFT_ZRF pin's spelling, '_' for its '/' */
+        char cs[48];
+        vfft_zrf_chain_str(e->zrf->R, e->zrf->K, cs, sizeof cs);
+        snprintf(b, n, "zrf_%s%s_w%d", cs, e->zrf->nomsz ? "_t" : "", e->zrf->tile > 0 ? e->zrf->tile : 0);
+    }
+    else if (e->zrb)
+    {   /* the real Bluestein (odd N2): the VFFT_ZRB pin's spelling, '_' for its '/' */
+        if (e->zrb->itw > 0)
+            snprintf(b, n, "zrb_%d_%s:%s_t%d", e->zrb->M, e->zrb->ikind, e->zrb->ishape, e->zrb->itw);
+        else
+            snprintf(b, n, "zrb_%d_%s:%s", e->zrb->M, e->zrb->ikind, e->zrb->ishape);
+    }
     else
         snprintf(b, n, "zr2c_r%d", e->zr2c_route);
 }
@@ -412,6 +436,72 @@ static int _il2d_rowx_build(const vfft_config_t *cfg, struct vfft_wisdom_s *S, i
             if (end[0] == '_' && end[1] == 's')
                 stk = atoi(end + 2);
             *eng = _zttr_build_plan(&c, N2, chain, nf, (size_t)tile, stk);
+        }
+    }
+    else if (!strncmp(tok, "zrf_", 4))
+    {   /* zrf_<chain>[_t]_w<tile>: the real flat DIT at an odd N2 (il/real/zrf.h) */
+        int R[VFFT_ILFD_MAX_K], K = 0, nomsz = 0, tile = 0;
+        long prod = 1;
+        const char *q = tok + 4;
+        while (*q && K < VFFT_ILFD_MAX_K)
+        {
+            char *end;
+            long v = strtol(q, &end, 10);
+            if (end == q || v < 3 || !(v & 1))
+                break;
+            R[K++] = (int)v;
+            prod *= v;
+            q = end;
+            if (*q == '.')
+                q++;
+            else
+                break;
+        }
+        if (q[0] == '_' && q[1] == 't' && q[2] == '_')
+        {
+            nomsz = 1;
+            q += 2;
+        }
+        if (K >= 2 && prod == N2 && q[0] == '_' && q[1] == 'w')
+        {
+            char *end;
+            tile = (int)strtol(q + 2, &end, 10);
+            if (!*end && tile >= 0)
+                *eng = _zrf_build_plan(&c, N2, R, K, nomsz, tile);
+        }
+    }
+    else if (!strncmp(tok, "zrb_", 4))
+    {   /* zrb_<M>_<kind>:<shape>[_t<tw>]: the real Bluestein at an odd N2 (il/real/zrb.h), its
+         * inner in the prime route's spelling (il/rank1/k1_commit.h) */
+        char kind[8], shape[64], *end;
+        const char *q = tok + 4, *s;
+        size_t n;
+        int M = (int)strtol(q, &end, 10), tw = 0;
+        if (end != q && *end == '_' && M >= vfft_zrb_min_m(N2))
+        {
+            s = end + 1;
+            n = strcspn(s, ":");
+            if (s[n] && n > 0 && n < sizeof kind)
+            {
+                memcpy(kind, s, n);
+                kind[n] = 0;
+                s += n + 1;
+                n = strcspn(s, "_");
+                if (n > 0 && n < sizeof shape)
+                {
+                    _ilprime_inner_desc_t d;
+                    memcpy(shape, s, n);
+                    shape[n] = 0;
+                    s += n;
+                    if (s[0] == '_' && s[1] == 't')
+                    {
+                        tw = (int)strtol(s + 2, &end, 10);
+                        s = end;
+                    }
+                    if (!*s && tw >= 0 && _ilprime_desc_parse(&d, kind, shape, tw))
+                        *eng = _zrb_build_plan(&c, N2, M, &d);
+                }
+            }
         }
     }
     return *eng != NULL;
@@ -661,8 +751,57 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             cand[na].bwd = c2r; _il2d_rowx_name(cand[na].lm, cand[na].eng, names[na], sizeof names[na]); na++; } \
             else if ((ENG) != NULL) vfft_destroy((vfft_plan)(ENG)); } while (0)
         ROWX_ARM(NULL, NULL);   /* arm 0: the row route the tier has */
+        /* THE GATE'S REFERENCE: the tier's own row route over the plane (every
+         * arm is gated against it below; at an odd N2 its first row is also the
+         * reference the odd engines' sweeps gate against) */
+        memset(ref, 0, (ON + 8) * sizeof(double));
+        if (c2r)
+            cand[0].a = ref;
+        else
+            cand[0].z = ref;
+        _il2d_rowx_arm_run(&cand[0]);
+        cand[0].a = a;
+        cand[0].z = z;
         if (N1 >= 2 && (c2r ? vfft_il2d_rows_bwd_fn(N2) : vfft_il2d_rows_fn(N2)))
             ROWX_ARM(c2r ? vfft_il2d_rows_bwd_fn(N2) : vfft_il2d_rows_fn(N2), NULL);
+        if (h->il2d_oddn2)
+        {   /* ODD N2 (2026-10-07): the odd door's engines in the row role -- the real
+             * mono (below, N2 <= 64), the real flat DIT and the real Bluestein
+             * through the odd door's own sweeps (il/real/odd_build.h: the chain
+             * pick, the lengths and inners), every candidate gated against the
+             * route's transform of the plane's first row and burst-timed, the two
+             * fastest of each sweep joining the race. The route (arm 0: the promote
+             * and the c2c child) stays the plan's when nothing beats it. */
+            const size_t xs = (size_t)N2 + 3;   /* the odd door's row buffers */
+            const size_t nin = c2r ? 2 * hp1 : (size_t)N2, nchk = c2r ? (size_t)N2 : (size_t)N2 + 1;
+            double *rb = (double *)vfft_aligned_alloc(xs * sizeof(double));
+            double *rr = (double *)vfft_aligned_alloc(xs * sizeof(double));
+            double *rt = (double *)vfft_aligned_alloc(xs * sizeof(double));
+            if (rb && rr && rt)
+            {
+                struct vfft_plan_s *ho[2] = { NULL, NULL };
+                memset(rb, 0, xs * sizeof(double));
+                memset(rr, 0, xs * sizeof(double));
+                memcpy(rb, c2r ? z : a, nin * sizeof(double));   /* the plane's first row */
+                memcpy(rr, ref, nchk * sizeof(double));          /* its transform by the route */
+                if (_zrf_has_chain(N2) && _zrf_chain_sweep(&c, N2, rb, rr, rt, rb, xs, nchk, ho) > 0)
+                {
+                    ROWX_ARM(NULL, ho[0]);
+                    if (ho[1])
+                        ROWX_ARM(NULL, ho[1]);
+                }
+                ho[0] = ho[1] = NULL;
+                if (_zrb_ok(N2) && _zrb_sweep(&c, N2, rb, rr, rt, rb, xs, nchk, ho) > 0)
+                {
+                    ROWX_ARM(NULL, ho[0]);
+                    if (ho[1])
+                        ROWX_ARM(NULL, ho[1]);
+                }
+            }
+            vfft_aligned_free(rb);
+            vfft_aligned_free(rr);
+            vfft_aligned_free(rt);
+        }
         {
             struct vfft_plan_s *hz = _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 0), *e;
             if (hz)
@@ -698,15 +837,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             }
         }
 #undef ROWX_ARM
-        /* the gate: every arm's plane against the tier's own row route */
-        memset(ref, 0, (ON + 8) * sizeof(double));
-        if (c2r)
-            cand[0].a = ref;
-        else
-            cand[0].z = ref;
-        _il2d_rowx_arm_run(&cand[0]);
-        cand[0].a = a;
-        cand[0].z = z;
+        /* the gate: every arm's plane against the tier's own row route (ref) */
         {
             int keep = 1;
             for (i = 1; i < na; i++)
