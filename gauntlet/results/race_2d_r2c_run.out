@@ -1,0 +1,53 @@
+2026-10-06 01:58:17 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-10-06 01:58:17 run: 5 cells, contract 2D out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-06 01:58:17 calibrate: 5 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-10-06 02:00:06   calibrated 5/5 (2048x2048), 109 s elapsed
+2026-10-06 02:00:06 bench: 5 cells (0 already benched, 0 not banked -> not benched)
+2026-10-06 02:00:28   benched 5/5 (2048x2048), 15 s elapsed
+# gauntlet report (2D)
+
+run: `race_2d_r2c_fftw_2026-10-06`  contract: 2D c2c interleaved, natural, out of place, K=1_r2c_fftw  cells: 5 listed, 5 benched, comparator: FFTW 2D (out of place, MEASURE)
+
+control cell 64x64: 4 readings, 1.356..1.423
+
+
+## every shape
+
+```
+       shape  N1 factors   route  served       ours ns     cmp ns       x   GFLOPS   rt err
+     512x256  2^9          chain  raced         143207     146641    1.01     38.9  3.7e-16
+    1024x512  2^10         chain  raced         707350     746868    1.04     35.2  3.4e-16
+   1024x1024  2^10         chain  raced        1471412    1541187    1.04     35.6  4.5e-16
+   2048x1024  2^11         chain  raced        4008713    4693212    1.14     27.5  4.3e-16
+   2048x2048  2^11         chain  raced        8919700   11237737    1.22     25.9  5.3e-16
+```
+
+
+## by route (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ chain                            5      0      0   1.01   1.04   1.22    1.09
+ ALL                              5      0      0   1.01   1.04   1.22    1.09
+```
+
+
+## by column class (N1) (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ pow2 column                      5      0      0   1.01   1.04   1.22    1.09
+ ALL                              5      0      0   1.01   1.04   1.22    1.09
+```
+
+
+## by size (points) (worse of the two flips)
+```
+                              cells   <0.8   <1.0    p10    med    p90   gmean
+ > 65536 points                   5      0      0   1.01   1.04   1.22    1.09
+ ALL                              5      0      0   1.01   1.04   1.22    1.09
+```
+
+
+worst 10: 512x256 (chain 1.01), 1024x1024 (chain 1.04), 1024x512 (chain 1.04), 2048x1024 (chain 1.14), 2048x2048 (chain 1.22)
+best 5: 2048x2048 (chain 1.22), 2048x1024 (chain 1.14), 1024x512 (chain 1.04), 1024x1024 (chain 1.04), 512x256 (chain 1.01)
+
+2026-10-06 02:00:30 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\race_2d_r2c_fftw_2026-10-06\report_2d_r2c_fftw.md
