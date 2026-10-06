@@ -173,10 +173,23 @@ divisibility chain, so:
 - **natural banded** (2026-09-05): the same walk on the pre-leaf scratch
   plane — wide prefix into the scratch, per band the suffix in place, the
   band's leaf blocks SCATTERED to their natural rows (perm is block-affine)
-  and (tfuse) exactly those rows transformed while hot; bwd gathers per
-  band, runs the reversed suffix, the reversed prefix wide, rows last
-  (unfused, so bwd stays bitwise with the natural MT partitions). F0 holds
-  in both directions. Natural cells race wl / tfuse / roop and bank them on
+  and (tfuse) exactly those rows transformed while hot; bwd, staged, IS
+  THE FORWARD'S WALK (2026-10-06): the inverse DFT along the column axis is
+  the forward DFT with its output index negated, so the backward runs the
+  forward's shape with the forward column kernels and tables, the backward
+  row child fused after the leaf as the forward fuses its rows, and the
+  staged scatter writing natural row i to row (N1 - i) mod N1 -- the same
+  memory pattern as the forward by construction, pure addressing in the
+  scatter copy. The serial walks (banded or not) and the MT block and tile
+  arms run that shape, so bwd stays bitwise with them. The mirrored walk
+  (the gather, the reversed suffix, the reversed prefix with the
+  Hermitian-transpose kernel set, rows last) stays for the strided leaf, a
+  strips verdict (that arm cannot carry whole rows) and the four-step child
+  (its backward hook wants the rows first). Before this the backward's rows
+  were a separate sweep over the plane: 24% over the forward with the same
+  chain (8.88 vs 7.15 ms at 2048x1024); the mirrored walk with its gather
+  fused still read the plane as a bare copy at the DRAM roof, 8-15% over.
+  F0 holds in both directions. Natural cells race wl / tfuse / roop and bank them on
   the ord=nat row. Same-run A/B at odd cells, natural over scrambled:
   405² 1.38x unbanded -> 1.18x at wl=81, 729² 1.24 -> 1.11, 1215x243
   1.25 -> 1.11; 243² unchanged at 1.16 (three planes exceed L2 there).

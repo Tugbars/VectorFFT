@@ -42,8 +42,11 @@ via vl/ivs/ovs). A per-row-child arm exists only as a raced alternative
 where it wins a cell. Then the **il2d column machinery** (n1c/t2c chain,
 banded walk, L2-derived widths — the tier that beats MKL CCE 10/10 in
 2D c2c) runs the column pass with Ls = hp1. Backward (c2r) is the
-Hermitian mirror: reversed column chain (conj tables), then the batched
-K=N1 c2r row execute.
+Hermitian mirror: reversed column chain (conj tables), the leaf gathering
+the natural rows at its stride, then the batched K=N1 c2r row execute. No
+staged reverse leaf: the gather is cheap at the plane's odd pitch and a
+staging only adds traffic (the forward's walk with a reversed scatter was
+raced and refuted 2026-10-06, 8-22% over strided at every chain cell).
 
 **Two-phase law**: the fwd row pass COMPLETES before column stage 0;
 the bwd row pass runs AFTER the last column stage. The Hermitian fold

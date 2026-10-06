@@ -41,10 +41,17 @@ stride. Forward, the leaf writes its R rows into a per-worker STAGING
 block (R rows x the leaf's column count, contiguous, L2-resident: 1 MB at
 32 x 2048), the row plans run there when the walk fuses rows, and each
 row leaves as ONE sequential stream to its natural position (streaming
-stores when 32-B aligned, a plain copy otherwise). Backward, each natural
-row is copied sequentially into the staging before the leaf reads it (and
-the row plan runs there first when the walk fuses rows). The kernels see
-the same values in the same order: bitwise the unstaged walk. The sweep
+stores when 32-B aligned, a plain copy otherwise). Backward, the c2c
+walk's staged leaf runs THE FORWARD'S WALK (2026-10-06): the forward leaf
+writes its block into the staging, the backward row plan runs there, and
+each row leaves to row (N1 - i) mod N1 of its natural position -- the
+inverse DFT along the axis is the forward DFT with its output index
+negated. The mirrored gather (each natural row copied sequentially into
+the staging before the backward leaf reads it) stays where the c2c leaf is
+unstaged or a strip. The real tier's c2r leaf gathers at its stride and
+has no staged form: the gather is cheap at the plane's odd pitch and a
+staging only adds traffic (refuted 2026-10-06). The kernels see the same
+values in the same order: bitwise the unstaged walk. The sweep
 count does not change — the staging is the band's own L2 — and the block
 arm of the threaded natural walk fuses its rows into the leaf phase (the
 row phase it ran afterwards, a re-read of the plane, is gone for that
@@ -72,8 +79,9 @@ is partial); at the 64 MB planes the staged arms win by 27-40%.
 - `il2d_col.h` / `fft2d_create.h`: `natstage` (T x R_last x rn complexes)
   beside `natscr`, both aligned; freed with the plan.
 - `vfft_execute.h`: the serial banded natural walk fuses its rows in the
-  staging per block (forward: leaf, rows, stream out; backward: stage in,
-  rows, leaf), the unbanded walk stages the leaf.
+  staging per block (forward: leaf, rows, stream out; backward: the
+  forward leaf, the backward rows, the reversed stream out), the unbanded
+  walk stages the leaf.
 - `il2d_tier.h`: the threaded natural walk's block arm (mode 4) stages per
   block with its rows fused (the caller's tid picks the staging and the row
   clone) and skips the row phase; the strip arm (mode 5) stages its leaf
