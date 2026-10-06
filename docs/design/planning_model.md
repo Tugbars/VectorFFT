@@ -742,7 +742,7 @@ flowchart TD
     RX{"<b>rx</b> / <b>rx_c2r</b> — the row engine (one thread, per direction)"}
     RX -->|"banked / raced"| LM["the IL row plan<br/>(il2d_real_plan.h: the rows kernel or a real<br/>engine per row, each direction's own)"]
     RX -->|"none"| TC["per-row door<br/>the K=1 1D real engine at N2<br/>run over every row"]
-    ODD["odd N2: the c2c(N2) child<br/>with the promote / extend edges"]
+    ODD["odd N2: the route is the c2c(N2) child<br/>with the promote / extend edges; the r2c<br/>row race runs the odd engines (zrm / zrf / zrb)<br/>per row against it"]
 ```
 
 The 2D real plan never hires the split library for its rows. (The ROWSPLIT arm --
@@ -752,8 +752,9 @@ row plan beat it 1.2-1.9x at every shape measured. A split 2D real plan is the
 split library's own, offered whole.)
 
 **The `oddn2` asymmetry is deliberate.** The wl race is guarded with `!il2d_oddn2`;
-the column-MT guard eight lines below is **not**. Odd N2's rows ride the c2c child and
-the banded walk is not raced there, but column threading remains valid. Measured
+the column-MT guard eight lines below is **not**. Odd N2's rows ride the c2c child, or
+(r2c, since 2026-10-07) the odd engine the row race picked over it; the banded walk is
+not raced there, but column threading remains valid. Measured
 consistent: 128×127 at T=8 engages `cmt` and is
 **bit-identical** to the single-threaded result (0 of 16448 doubles differ).
 

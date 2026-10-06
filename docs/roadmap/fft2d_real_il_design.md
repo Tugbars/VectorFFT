@@ -71,9 +71,12 @@ between the row and column passes (2D), column twiddles column-invariant
    vector length — no pitch assumption); a padded-pitch arm may still
    be RACED for performance (4KB aliasing), never for legality. M1's
    gate exercises BOTH parities (no existing gate runs n1c/t2c at odd
-   counts). **Odd N2 is a LOUD refusal** — zr2c is even-N-only; FFTW's
-   scalar fallback covers odd/prime rows, we declare the gap instead
-   (the no-cross-layout law: gaps stay gaps until their feature lands).
+   counts). **Odd N2 rows are the row plan's** — zr2c is even-N-only, so
+   the odd-N2 row ROUTE is the c2c(N2) child with the promote / extend
+   edges, and the r2c row race (il2d_real_plan.h, 2026-10-07) runs the odd
+   door's engines per row against it — the real mono, the real flat DIT,
+   the real Bluestein, each gated against the route — banking the winner
+   as rx=; a c2r plan keeps the route until its own piece lands.
 2. **DC / Nyquist columns** (k2 = 0 and N2/2) are real-symmetric along
    N1. The generic column pass treats them as complex — correct,
    symmetry unexploited. Optimization lever, not a correctness item;
@@ -175,8 +178,10 @@ per cell, or the cell keeps the veneer — measured serving, no faith.
   in-place door's padded pitch is contract, §2.7), per cell class.
 - **M3 — SERVING + BANKING DONE (2026-08-26)**: the env gate is GONE —
   the native tier is THE serving for every interleaved 2D real create
-  (odd N2 / NATURAL order REFUSE loudly; split-layout callers keep the
-  split engine untouched). Verdict cells live in wisdom2_2d.txt:
+  (odd N2 and NATURAL order were refusals then; both serve now — natural
+  through the leaf-redirected pass, odd N2 through the c2c child route and,
+  in r2c, the odd engines raced in the row role; split-layout callers keep
+  the split engine untouched). Verdict cells live in wisdom2_2d.txt:
   {t=r2c ord=scr lay=il | chain= wl= rx= rxs= cx= cxs= | wl_c2r= rx_c2r=
   rxs_c2r= cx_c2r= cxs_c2r= cxd_c2r= cxds_c2r=}, DIRECTION-SHARED (one row for both
   directions, each direction's own token set: the c2r row and column plans
