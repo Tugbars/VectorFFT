@@ -1,6 +1,6 @@
 # shared/col/ — the column stage of the N-D tiers
 
-110 files, `n1c` and `t2c` (+ `_bwd`): one radix-R stage over `count` lanes,
+108 files, `n1c` and `t2c` (+ `_bwd`): one radix-R stage over `count` lanes,
 a lane being a column of the plane at pitch `Gs`. Twiddles are hoisted out of
 the column loop (`t2c` takes one (R-1)-record set for the whole call). The
 kernels allow input = output, so a stage runs in place; that is also how the
@@ -14,7 +14,9 @@ column-stride `n1ccs` twin in [`../../rows/`](../../rows/).
 | `oop/c2c_ip_create.h` | the in-place 1D MONO cell | `il_route=mono` |
 
 `blocked/` holds the radix-32 and radix-64 forms raced per cell (`b48`, `b84`,
-`b88`); the `b416` form was deleted on 2026-09-24 (it never won a cell).
+`b88`); the `b416` form was deleted on 2026-09-24 (it never won a cell). The
+radix-16 twiddle stage has no monolithic body since 2026-10-06: it is `t2cb44`
+in `blocked/` (the radix-16 leaf `n1c` stays here).
 
 Regeneration: through `gen_set` to a temporary root (`--root`), never in place;
 the folder a file lands in follows its kind (`Corpus.dir_of_file`), and the law

@@ -1,0 +1,5 @@
+512x256    banked      7548ms raced     2p
+1024x512   banked     10013ms raced     2p
+1024x1024  banked     15013ms raced     ztt
+2048x1024  banked     26552ms raced     ztt
+2048x2048  banked     46167ms raced     ztt
