@@ -23,7 +23,7 @@ token selects it, and what in it is unused.
 | [`avx2/flat/odd_mid/`](avx2/flat/odd_mid/) | 15 | `msz`, `mszt` | the flat engine's odd middle radices 3..15 |
 | [`avx2/ztt/`](avx2/ztt/) | 39 | `t0tp`, `tmg`, `tlf`, `tlfi`, `t0d`, `tmgd`, `tld` | ZTURN-T, 2048..262144: `il_route=ztt`, `il_tw=` |
 | [`avx2/real/pair/`](avx2/real/pair/) | 48 | `r2z`, `t2h`, `t2m` | the real pair (`il/real/zrp.h`): an even-N r2c/c2r as a leaf and a Hermitian top stage, no fold pass: `eng=zrp` |
-| [`avx2/real/mono/`](avx2/real/mono/) | 66 | `rn1` | the real mono (`il/real/zrm.h`): the whole real transform of N = 3..64 in one kernel: `eng=zrm` |
+| [`avx2/real/mono/`](avx2/real/mono/) | 66 | `rn1`, `rn1b48`, `rn1b444` | the real mono (`il/real/zrm.h`): the whole real transform of N = 3..64 in one kernel, blocked at 32 (4x8) and 64 (4x4x4) since 2026-10-06: `eng=zrm` |
 | [`avx2/real/flat/`](avx2/real/flat/) | 38 | `r1c` | the real flat DIT's leaf (`il/real/zrf.h`): odd-N r2c/c2r on the `flat/` stages, real legs in, digit runs out: `eng=zrf` |
 | [`avx2/real/flat/herm/`](avx2/real/flat/herm/) | 38 | `t2csgh`, `t2csght` | the real flat DIT's last stage: the `t2csgn` group-loop tail storing the half spectrum (legs mirrored and conjugated as their bins demand), and its transposed backward reading it |
 | [`avx2/real/rows/`](avx2/real/rows/) | 7 | `r2zr` | the real rows: the real N-point DFT of every row of a row-major plane, four rows per vector (N = 4..32 even, forward); a row engine of the 2D real tier's row race (`il/rank2/`), banked on the 2D real row |

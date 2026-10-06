@@ -264,8 +264,11 @@ let emit
     match split3 with
     | None -> split
     | Some (m, m2, q) ->
-      if kind <> N1C || (not blocked) || colstride || pretw
-      then failwith "codelet_cil: --cil-split3 is the blocked n1c column leaf's three-pass form";
+      if (kind <> N1C && kind <> RN1) || (not blocked) || colstride || pretw
+      then
+        failwith
+          "codelet_cil: --cil-split3 is the three-pass form of the blocked n1c column leaf or of \
+           the blocked real mono";
       if m < 2 || m2 < 2 || q < 2 || m * m2 * q <> radix
       then
         failwith
@@ -295,8 +298,13 @@ let emit
      warning 16), and making the policy explicit at every call site is better
      anyway. Only T2 streams a runtime table, so log3 is meaningless on the
      other kinds — refuse rather than silently ignore. *)
-  if kind = RN1 && blocked
-  then failwith "codelet_cil: rn1 (the real mono) is monolithic; --cil-blocked does not apply";
+  (* THE BLOCKED REAL MONO (2026-10-06): rn1 takes the blocked construction
+     (emit_blocked) on its own edges -- the real legs enter pass 1 through
+     laddr, the backward's CCE bins and their Hermitian mirrors likewise; pass
+     2 stores through oaddr and keeps the forward's CCE half only (keep_out,
+     applied per pass as the scheduled sinks). Its remainder arm is the
+     blocked passes at VEX-128: zrm calls the mono with count = 1, so the
+     tail is the kernel there. *)
   if log3 && kind <> T2
   then
     failwith
@@ -633,7 +641,8 @@ let emit
      bulk loop at the kernel's own width; the blocked remainder arms (see
      tail_policy) emit the same passes into their own buffer at the tail's
      width. *)
-  let emit_pass_to
+  let emit_pass_to_k
+        ~(keep : int -> bool)
         ~(body : Buffer.t)
         ~(isa : Isa.t)
         ~(mode : Isa.ls_mode)
@@ -655,6 +664,16 @@ let emit
     let ins = Array.init nin (fun i -> cload (laddr_of i)) in
     let outs = build ins in
     let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
+    (* the kept sinks only (the real mono's forward keeps the CCE half): the
+       scheduler never sees the others' arithmetic; every other caller keeps all *)
+    let assigns =
+      List.filter
+        (fun (eref, _) ->
+           match eref with
+           | Expr.Output (i, _) -> keep i
+           | _ -> true)
+        assigns
+    in
     let assigns = Cx_pipeline.prepare_codelet ~who:label ~uarch assigns in
     let sch = cx_schedule uarch assigns in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
@@ -721,8 +740,13 @@ let emit
              Hashtbl.replace stored i ()
            | _ -> ()))
       sch;
-    Array.iteri (fun i (e : t) -> if not (Hashtbl.mem stored i) then store i e) outs;
+    Array.iteri (fun i (e : t) -> if keep i && not (Hashtbl.mem stored i) then store i e) outs;
     Buffer.add_string body "        }\n"
+  in
+  let emit_pass_to ~body ~isa ~mode ~msuf ~tw_vw ~lazy_store ~label ~nin ~laddr_of ~build ~store =
+    emit_pass_to_k
+      ~keep:(fun _ -> true)
+      ~body ~isa ~mode ~msuf ~tw_vw ~lazy_store ~label ~nin ~laddr_of ~build ~store
   in
   (* ─── BLOCKED (2-pass) construction ──────────────────────────────
      Straight-line radix-R needs R values live at once; there are only 16
@@ -741,6 +765,7 @@ let emit
        (tail_blocked) re-emits the same passes into its own buffer at the
        tail's width. S[] keeps the bulk loop's slot spacing (vw). *)
     let emit_pass = emit_pass_to ~body ~isa ~mode ~msuf ~tw_vw in
+    let emit_pass_k ~keep = emit_pass_to_k ~keep ~body ~isa ~mode ~msuf ~tw_vw in
     (* Cooley-Tukey split R = m * p, decimating legs by residue mod m:
          n = a*m + i    ->   A_i[j] = DFT_p over a of x[a*m+i]
          X[j + p*k2]    =   DFT_m over i of ( A_i[j] * W_R^{i*j} )
@@ -804,7 +829,7 @@ let emit
              (i * p)
              ((i * p) + p - 1))
         ~nin:p
-        ~laddr_of:(fun a -> AZinLeg ((a * m) + i))
+        ~laddr_of:(fun a -> laddr ((a * m) + i))
         ~build:(fun ins ->
           let ins =
             if pre_tw
@@ -849,7 +874,7 @@ let emit
                   ((i * p) + (c * q))
                   ((i * p) + (c * q) + q - 1))
              ~nin:q
-             ~laddr_of:(fun b -> AZinLeg ((((b * m2) + c) * m) + i))
+             ~laddr_of:(fun b -> laddr ((((b * m2) + c) * m) + i))
              ~build:(fun ins -> dft_small ~sign ~ctx q ins)
              ~store:(fun tt e ->
                let ad = AS (vw * ((i * p) + (c * q) + tt)) in
@@ -986,14 +1011,15 @@ let emit
     then
       (* PASS 2 (plain leg-major stores): per j, one scheduled group. *)
       for j = 0 to p - 1 do
-        emit_pass
+        emit_pass_k
+          ~keep:(fun k2 -> keep_out (j + (p * k2)))
           ~lazy_store:true
           ~label:(Printf.sprintf "PASS 2.%d: S[i*%d+%d] -> X[%d + %d*k2]" j p j j p)
           ~nin:m
           ~laddr_of:(fun i -> AS (vw * ((i * p) + j)))
           ~build:(fun ins -> pass2_math ~jv:j ins)
           ~store:(fun k2 e ->
-            let ad = AZoutLeg (j + (p * k2)) in
+            let ad = oaddr (j + (p * k2)) in
             let (_ : t) = cstore ad e in
             Buffer.add_string
               body
@@ -1541,7 +1567,7 @@ let emit
      re-emitted at the tail's width (odd-blocked kernels only; the monolithic
      tail_arm below is the other construction) *)
   let tail_blocked ~(nisa : Isa.t) ~(msuf : string) ~(mode : Isa.ls_mode) body_n =
-    if (not odd_blocked) && not (blocked && kind = N1C && not ctx.colstride)
+    if (not odd_blocked) && not (blocked && (kind = N1C || kind = RN1) && not ctx.colstride)
     then
       failwith
         (Printf.sprintf
@@ -1654,7 +1680,7 @@ let emit
     then (
       match Sys.getenv_opt "VFFT_TAIL256" with
       | None ->
-        if (odd_blocked && radix >= 11) || (blocked && kind = N1C && not ctx.colstride)
+        if (odd_blocked && radix >= 11) || (blocked && (kind = N1C || kind = RN1) && not ctx.colstride)
         then "blk_narrow"
         else "narrow"
       | Some (("narrow" | "masked" | "overrun" | "blk_narrow" | "blk_masked" | "blk_overrun") as s) -> s
