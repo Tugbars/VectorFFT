@@ -181,11 +181,15 @@ divisibility chain, so:
   staged scatter writing natural row i to row (N1 - i) mod N1 -- the same
   memory pattern as the forward by construction, pure addressing in the
   scatter copy. The serial walks (banded or not) and the MT block and tile
-  arms run that shape, so bwd stays bitwise with them. The mirrored walk
-  (the gather, the reversed suffix, the reversed prefix with the
-  Hermitian-transpose kernel set, rows last) stays for the strided leaf, a
-  strips verdict (that arm cannot carry whole rows) and the four-step child
-  (its backward hook wants the rows first). Before this the backward's rows
+  arms run that shape, so bwd stays bitwise with them. The backward's leaf
+  is staged wherever the staging exists (every natural plan carries it):
+  the strided-vs-staged verdict is the forward's, and a tile-strided T > 1
+  plan's backward runs the forward's shape through the staging rather than
+  the mirrored walk (26.6 vs 34.4 us at 256x256 T=8, 55.7 vs 64.7 at
+  512x256, measured 2026-10-06). The mirrored walk (the gather, the
+  reversed suffix, the reversed prefix with the Hermitian-transpose kernel
+  set, rows last) stays for a strips verdict (that arm cannot carry whole
+  rows) and the four-step child (its backward hook wants the rows first). Before this the backward's rows
   were a separate sweep over the plane: 24% over the forward with the same
   chain (8.88 vs 7.15 ms at 2048x1024); the mirrored walk with its gather
   fused still read the plane as a bare copy at the DRAM roof, 8-15% over.

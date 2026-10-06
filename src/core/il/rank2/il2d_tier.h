@@ -966,12 +966,19 @@ static void _il2d_turn_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double 
  * natural row leaves finished, one sequential stream); backward the leaf
  * gathers only — the backward's rows stay after the column pass, the
  * order every backward arm shares (il2d_natural_leaf_design.md) */
-static double *_il2d_nat_stage_of(struct vfft_plan_s *h, int tid)
-{
+static double *_il2d_nat_stage_buf(struct vfft_plan_s *h, int tid)
+{   /* worker tid's staging block, wherever the plan carries the buffer (every
+     * natural plan: T slots, fft2d_create_il.h) */
     const int Rl = h->il2d_col.R[h->il2d_col.nst - 1];
-    return (h->il2d_col.natstage && h->il2d_col.natst)
+    return h->il2d_col.natstage
                ? h->il2d_col.natstage + (size_t)(tid > 0 ? tid : 0) * 2 * (size_t)Rl * h->il2d_col.rn
                : NULL;
+}
+/* the FORWARD leaf's staging: the buffer under the staged verdict (nls =
+ * natst, raced against the strided leaf at create); NULL = strided */
+static double *_il2d_nat_stage_of(struct vfft_plan_s *h, int tid)
+{
+    return h->il2d_col.natst ? _il2d_nat_stage_buf(h, tid) : NULL;
 }
 /* THE NATURAL BACKWARD THROUGH THE FORWARD'S WALK (2026-10-06). The inverse
  * DFT along the column axis is the forward DFT with its output index negated,
@@ -991,11 +998,18 @@ static double *_il2d_nat_stage_of(struct vfft_plan_s *h, int tid)
  * this the backward's rows were a separate sweep over the plane: 24% over
  * the forward with the same chain (8.88 vs 7.15 ms at 2048x1024); the
  * mirrored walk with its gather fused (a step on the way) still read the
- * plane as a bare copy at the DRAM roof, 8-15% over. */
+ * plane as a bare copy at the DRAM roof, 8-15% over.
+ * THE BACKWARD'S LEAF IS STAGED WHEREVER THE STAGING EXISTS (2026-10-06):
+ * the strided-vs-staged verdict (natst) is the forward's -- at T = 8 the
+ * natural race takes the tile arm with the strided leaf at 256x256 and
+ * 512x256, and the mirrored backward of that plan cost 1.50-1.56x the
+ * forward; through the staging it costs the forward (26.6 vs 34.4 us,
+ * 55.7 vs 64.7). The buffer is every natural plan's, so the backward takes
+ * it regardless of the verdict; the serial twin does the same, bitwise. */
 static int _il2d_nat_bwd_fused(struct vfft_plan_s *h)
 {
     return h->il2d_col.nat && h->il2d_col.nst >= 2 && h->il2d_col.natarm != 1 && !h->il2d_fs_tw &&
-           _il2d_nat_stage_of(h, 0) != NULL;
+           _il2d_nat_stage_buf(h, 0) != NULL;
 }
 /* the natural leaf over [blo, bhi) blocks through worker tid's staging; fuse =
  * run the block's rows inside, after the leaf: forward, the block's rows
@@ -1012,7 +1026,8 @@ static int _il2d_nat_leaf_blocks(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
     const size_t rn = h->il2d_col.rn, nstride_rows = (size_t)(h->N / Rl);
     const int fwd = (dir == VFFT_FORWARD);
     vfft_il2p_fn fn = fwd ? h->il2d_col.f[nst - 1] : h->il2d_col.b[nst - 1];
-    double *stage = _il2d_nat_stage_of(h, tid);
+    /* the forward's staging is the verdict's; a fused backward takes the buffer wherever it exists */
+    double *stage = (!fwd && fuse) ? _il2d_nat_stage_buf(h, tid) : _il2d_nat_stage_of(h, tid);
     size_t b;
     if (!stage || !fuse)
     {
