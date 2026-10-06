@@ -439,11 +439,18 @@ struct vfft_plan_s
      * row pass's stack state 0..3 (the aligned entry; -1 = entered
      * directly, its four states tied). il2d_rx_on = the row
      * plan is bound: the pass enters through the aligned entry, the door
-     * included. */
+     * included. Under T > 1 (the thread guard lifted 2026-10-06) the pass
+     * threads by ROW RANGES: the rows kernel over each worker's rows, an
+     * engine through that worker's clone (il2d_rxw[t-1], the same token
+     * replayed from il2d_rxS); the door route threads as the door's batch
+     * does. The verdict lands on the T row. */
     int il2d_rx_on;
     void (*il2d_rx_lm)(const double *, const double *, double *, double *, const double *, const double *,
                        size_t, size_t, size_t, size_t, size_t);
     struct vfft_plan_s *il2d_rx_eng;
+    struct vfft_plan_s **il2d_rxw;      /* the row engine's WORKER CLONES (T-1 slots, il2d_real_plan.h): NULL
+                                         * under one thread, for the rows kernel, or the door route */
+    int il2d_rxw_n;
     int il2d_rx_stk;
     struct vfft_wisdom_s *il2d_rxS;     /* the row engines' PRIVATE store: a zr2c engine's child recipe
                                          * rides on the real row as rx_* (il/wisdom/wisdom2_child.h) */

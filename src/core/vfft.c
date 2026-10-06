@@ -131,6 +131,9 @@ long vfft_tc_mt_dispatches(void) { return _vfft_tc_mt_dispatch_count; }
  * Step 21 does the same for the remaining engagement counters. */
 long _vfft_il2d_col_mt_count = 0;
 long vfft_il2d_col_mt_passes(void) { return _vfft_il2d_col_mt_count; }
+/* the 2D real ROW plan's threaded passes (il2d_real_plan.h, 2026-10-06) */
+long _vfft_il2d_row_mt_count = 0;
+long vfft_il2d_row_mt_passes(void) { return _vfft_il2d_row_mt_count; }
 /* the rank-N INTERLEAVED tier's MT engagement (fftnd_il.h, 2026-09-07) */
 long _vfft_ilnd_mt_count = 0;
 long vfft_ilnd_mt_passes(void) { return _vfft_ilnd_mt_count; }
@@ -2710,7 +2713,7 @@ void vfft__fp_counters(long *out6)
     if (!out6) return;
     out6[0] = _vfft_tc_mt_dispatch_count;
     out6[1] = _vfft_il2d_col_mt_count;
-    out6[2] = 0;   /* the cascade MT counter, retired 2026-09-15 */
+    out6[2] = _vfft_il2d_row_mt_count;   /* the 2D real row plan's threaded passes (2026-10-06; the cascade's slot, retired 2026-09-15) */
     out6[3] = _vfft_pq_mt_count;
     out6[4] = _vfft_trig_mt_count;
     out6[5] = _vfft_create_race_count;
