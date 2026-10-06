@@ -330,6 +330,36 @@ flowchart TB
     Q -->|threaded| CP["prefix stages: digits split<br/>(ordered, one join each)<br/>then suffix bands or strips split"]
 ```
 
+### 6.4 The row and column plans under T > 1 (2026-10-06)
+
+The row plan (`rx=`, `rx_c2r=`) and the column plan (`cx=`, `cx_c2r=`) of
+`il2d_real_plan.h` race and serve at every thread count; until 2026-10-06
+they were one-thread plans and a threaded transform kept the batched door
+rows and the column verdict above. Each plan's threaded form is a
+restriction of its serial pass, so MT == ST is structural here too:
+
+| plan | threaded form | per-worker state |
+|---|---|---|
+| rows kernel (`lm`) | row ranges, every worker at least two rows | none (every lane is one row) |
+| a row engine (zrm, zrp, zr2c, ZTT-r) | row ranges, worker t through its own clone | `il2d_rxw[t-1]`, the engine's token replayed from the engines' store, token-checked against the primary |
+| the door route | not split here: the door's batch threads itself | the door's own |
+| a column leaf (b816, b448, a one-stage chain's kernel) | column ranges | none (a column is one lane) |
+| the chain's pass | the tier's MT column pass (§3) in the plan's form | the r2c staged leaf through worker t's staging block (the c2r leaf gathers at its stride: no staged form) |
+
+Every dispatched body enters at the plan's one stack state, as the serial
+pass does; the per-stage states are a serial plan's. The column pass
+threads only under the cell's column verdict, which is raced first.
+
+**The races at T > 1 time the whole transform.** A pass timed alone on a
+plane its workers already hold in cache never pays the exchange with its
+neighbour: at 64x256 c2r and eight threads the rows alone cost 1.3 us and
+the columns alone 6.2 us, the two in sequence 35 us (measured 2026-10-06).
+So at T > 1 each arm of either plan runs both passes in serving order (the
+other pass as the cell serves it), under the threaded protocol (min of 3,
+two untimed passes, no pacing); at one thread the passes share a core and
+the arms stay the pass alone. Engagement: `vfft_il2d_row_mt_passes()`
+beside the column counter; the gate asserts both.
+
 ---
 
 ## 7. Results
@@ -451,3 +481,10 @@ raced verdicts choose per cell without a constant anywhere.
   another and has not yet been shown to win.
 - **The engage decision is per-cell but not per-call**: a plan serves one
   verdict regardless of system load at execution time.
+- **The row plan has no serial arm at T > 1.** Every row arm threads (the
+  door through its batch's own verdict), so a cell whose columns serve
+  serial pays the exchange with any threaded rows and cannot bank "serial
+  rows": at 64x256 c2r and eight threads every arm costs ~30 us against
+  12.6 us for the one-thread plan (measured 2026-10-06). The serial twin
+  of each row arm needs a spelling for its verdict (an `rxm`-like token on
+  the T row); the token is the owner's.

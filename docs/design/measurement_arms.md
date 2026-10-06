@@ -921,8 +921,11 @@ E1.11 column-stage KERNEL FORM          RACED per cell per stage (2026-09-02, pa
                                       installing the named kernels over the
                                       resolved defaults; both tiers and the
                                       Bluestein inner (M, N2) row. Monolithic is
-                                      never served at r32/r64 (standing rule);
-                                      r4/8/16 and the odd radices have one form.
+                                      never served at r32/r64 (standing rule),
+                                      nor as the r16 twiddle stage since
+                                      2026-10-06 (its one form is the blocked
+                                      t2cb44, spelled "-"); r4/8/16 and the odd
+                                      radices have one form.
                                       Env VFFT_IL2D_FORMS pins, never banks.
 ```
 
@@ -942,11 +945,22 @@ no column-MT race can run. Verified three independent ways:
 ### E2. IL - the REAL tier
 
 ```
-E2.1 rx - the ROW ENGINE      RACED in the row role (one thread, even N2, per
-                              direction: r2c rx= / rxs=, c2r rx_c2r= / rxs_c2r=
-                              over the backward pass; il2d_real_plan.h); none =
-                              the per-row door (the K=1 1D real engine at N2
-                              over every row). The
+E2.1 rx - the ROW ENGINE      RACED in the row role (every thread count since
+                              2026-10-06, even N2, per direction: r2c rx= / rxs=,
+                              c2r rx_c2r= / rxs_c2r= over the backward pass;
+                              il2d_real_plan.h); none = the per-row door (the
+                              K=1 1D real engine at N2 over every row). The
+                              COLUMN PLAN (cx= / cxs=, cx_c2r= / cxs_c2r=: the
+                              pass's form and stack states, 2026-10-02/05) races
+                              the same way. AT T > 1 the arms are the THREADED
+                              forms (rows by row ranges, an engine through its
+                              worker clones; a leaf by column ranges; the chain
+                              through E2.3's pass in the plan's form) and each
+                              arm runs the WHOLE transform in serving order, so
+                              the exchange between the passes is measured
+                              (il2d_real_mt.md §6.4); threaded protocol (min of
+                              3, two untimed passes, no pacing). No serial-rows
+                              arm at T > 1 yet (il2d_real_mt.md §10). The
                               ROWSPLIT row arm (a split-layout child at (N2,
                               K=W)) and its rw= token were RETIRED 2026-10-03:
                               measured no better than the door, beaten by the

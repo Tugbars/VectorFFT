@@ -33,8 +33,8 @@ Grouped by the engine that uses it — which is also the proposed folder layout.
 | `flat/` | `t2cp`, `t2cs`, `t2csg`, `t2csgn`, `t2csgt`, `t2csgnt` | 198 | Odd N. ZTURN-T's first stage needs a power-of-two item count, so odd N runs one sweep per factor instead; these kinds keep the short last sweep fast by putting the loop inside the kernel. |
 | `flat/odd_mid/` | `msz`, `mszt` | 15 | The odd middle radices (3, 5, 7, 9, 15) for the flat engine. |
 | `ztt/` | `t0tp`, `tmg`, `tlf`, `tlfi` · `t0d`, `tmgd`, `tld` | 39 | ZTURN-T, N = 2048 to 262144. Natural order with no reorder pass; re and im are split inside the kernel, which removes the lane shuffles of the complex multiply. The scrambled set (`t0d`/`tmgd`/`tld`) skips one full sweep of the array and wins in place only. |
-| `shared/col/` | `n1c`, `t2c` | 110 | The 2D column stage. Twiddles are hoisted out of the column loop. The kernels allow input = output, so they run in place — which is also how the 1D in-place MONO path uses `n1c`. |
-| `shared/col/blocked/` | `n1cb*`, `t2cb*` (`b48`, `b84`, `b88`, `b416`) | 16 | Blocked 2D column forms at radix 32 and 64, raced per cell. |
+| `shared/col/` | `n1c`, `t2c` | 108 | The 2D column stage. Twiddles are hoisted out of the column loop. The kernels allow input = output, so they run in place — which is also how the 1D in-place MONO path uses `n1c`. |
+| `shared/col/blocked/` | `n1cb*`, `t2cb*` (`b44`, `b48`, `b84`, `b88`) | 18 | Blocked 2D column forms: the radix-16 twiddle stage's one body (`t2cb44`, 2026-10-06) and the radix 32 and 64 forms raced per cell. |
 | `shared/col/half/` | `n1ch`, `n1cb48h`, `n1cb84h`, `n1cb88h` | 32 | The forward column leaf's half-store twins (plane stores as two 128-bit halves; the odd CCE pitch of the 2D real r2c column pass), raced per cell. |
 | `real/pair/` | `r2z`, `t2h`, `t2m` | 48 | The real pair (2026-09-29): an even-N r2c/c2r as a real leaf and a Hermitian top stage, no fold pass. |
 | `real/mono/` | `rn1` | 60 | The real mono (2026-09-30): the whole real transform of N = 3..64 in one kernel, CCE half out, Hermitian half in. |
