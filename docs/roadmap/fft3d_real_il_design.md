@@ -1,7 +1,7 @@
 # fft3d real IL — the rank-3 INTERLEAVED real tier (design of record)
 
-*Declaration of `src/core/il/rank3/fftnd_real_il.h` (DESIGN 2026-10-07; nothing
-built). The rank-3 c2c tier (`fftnd_il.h`, [`fftnd_il_design.md`](fftnd_il_design.md))
+*Declaration of `src/core/il/rank3/fftnd_real_il.h` (DESIGN 2026-10-07, the five
+decisions closed with the owner the same day; nothing built). The rank-3 c2c tier (`fftnd_il.h`, [`fftnd_il_design.md`](fftnd_il_design.md))
 and the rank-2 real tier (`il/rank2/`, [`fft2d_real_il_design.md`](fft2d_real_il_design.md))
 are the two pieces this tier is made of. The split rank-N real tier
 (`split/rank3/fftnd_r2c.h`) is a different layout and stays untouched: the two
@@ -52,7 +52,7 @@ input, and its multi-dimensional c2r cannot preserve it; ours is stricter.)
 | arm | `s=` | per plane |
 |---|---|---|
 | child | 1 | the 2D REAL door's plan on (N2, N3), out of place, order as requested, one thread — the real rows and axis 1 with every rank-2 real verdict (rx, cx, the fused walk, the real axis on N1 at odd N3, the pitch forms, the c2r twins) raced as a standalone 2D real transform on its own rank-2 real cell, under the `plane_` child store |
-| flat | 2 | the CHILD'S VERDICTS RECOMPOSED CUBE-WIDE (owner 2026-10-07): the child's row engine run over all N1·N2 rows of the cube at once (the rows kernel at the cube's count, the engine per row over the cube, the door batch over N1·N2 rows seeded from the child's `rp_` recipe), then the child's axis-1 chain and forms run plane by plane, then axis 0. No race of its own: it differs from the child only in COMPOSITION (cube-wide passes against per-plane passes), which is what the structure race measures |
+| flat | 2 | THE PAY-ONCE FORM (proposed 2026-10-07 after the owner's objection to paying the order tax per axis): the child's row engine over all N1·N2 rows of the cube into a PRIVATE CCE volume, then the PLAIN in-place column chain on axis 1 per plane (the child's chain tokens, the natural request off: no natural leaf), then axis 0's stages in place on the private volume and its LEAF out of place into the caller's output with the addresses chosen once for both permutations (the plane to its natural plane, each row block of hp3 complex to its natural row). No race of its own beyond the structure race |
 
 Both arms are built at create and raced on the whole transform on scratch (the
 2D law since 2026-10-06: at T>1 every arm runs every pass in serving order);
@@ -60,16 +60,23 @@ the loser is freed. `VFFT_ILND_ARM=1|2` pins for a probe, never banks.
 DECIDED 2026-10-07 (owner, the c2c rule restated): both arms, raced at every
 cell, in phase 1.
 
-What the flat arm can win that the child cannot: the row pass batched over
-the whole cube (N1·N2 rows at once: the door's slabs, the rows kernel's
-count). What the child wins: the 2D real tier's whole-plan forms (the fused
-walk, the pitch forms, the real axis on N1) which exist only on a 2D real
-plan. The c2c tier gave its flat arm an axis-1 chain raced next to axis 0;
-this tier forgoes that so nothing at N3 or at (N2, hp3) is raced twice and
-the 2D row-plan race is never generalized to N1·N2 rows; if the structure
-race keeps picking flat at the big cubes, an own axis-1 race is a later
-piece. The create then races only what is new at rank 3: axis 0, the
-structure, the MT arms.
+The two arms are two ways to pay the ORDER TAX. The child pays it per axis as
+leaf addressing (axis 1's natural leaf writes rows at natural positions, a
+few percent of a column pass; axis 0's natural leaf moves whole planes, near
+free) and needs no private volume in r2c; it carries the 2D real tier's
+whole-plan forms (the fused walk, the pitch forms, the real axis on N1). The
+flat arm pays it ONCE, at the last pass's own write: no natural leaf
+anywhere, one private CCE volume in r2c (c2r has it by §2). Neither pays an
+extra sweep; neither needs a scrambled real engine at any rank (a scrambled
+1D real engine would remove a tax the 1D c2c engines do not pay — natural
+order is free there by the shipped verdicts — and turn the fold into a
+gather; a "scrambled 2D real engine" is this tier's own column call with the
+natural request off). The block-addressed leaf is the existing natural leaf
+called per row block of the virtual row with the leg stride N2·hp3 and the
+output base at the block's natural row. c2r mirrors: axis 0's leaf gathers
+from the caller's volume with the same block addressing into the private
+volume in scrambled order, the stages run in place there, then the plain
+backward chain and the backward rows per plane into the output.
 
 ## 4. Axis 0: the 2D real column plan over the virtual plane
 
@@ -83,7 +90,7 @@ raced as the 2D real tier races it: bands of planes, the per-plane structure
 OUTSIDE the walk (in r2c it ran first; in c2r it runs after). Bluestein axes
 (prime N1) stay unbanded as in the c2c tier.
 
-Not in phase 1, each its own later form: the SCRAMBLED CHILD (§5), the FUSED WALK at rank 3 (the planes
+Not in phase 1, each its own later form: the FUSED WALK at rank 3 (the planes
 of stage 0's digit-d set {d + j·N1/R0} produced straight before the digit's
 butterfly — the 2D real fused walk with planes for rows; L3-only there), the
 c2r band fusion (the plane structure inside the band suffix, legal in c2r
@@ -105,17 +112,9 @@ structure's own 2D verdicts. There is no cycle walk: the c2c tier needed one
 because its axis 0 ran first and scrambled the planes; here the planes are
 finished before axis 0 touches them, so axis 0 itself decides the plane order.
 
-THE SCRAMBLED CHILD (a later form, owner 2026-10-07): a child whose axis 1
-runs scrambled keeps the plain in-place column chain and leaves the same
-row permutation inside every plane; a plane row is a contiguous block of hp3
-complex and axis 0 never mixes columns, so axis 0 absorbs the permutation by
-addressing its output per row block (the natural leaf called per block with
-the block's natural row as its output base): same bytes, other addresses, no
-extra sweep. Free in c2r (the axis-0 backward pass writes the private volume
-out of place anyway, in the child's row order); in r2c axis 0 runs in place,
-so it needs an out-of-place axis-0 pass or a block cycle walk with one
-N1 x hp3 buffer. Raced as a second child kind inside the structure race,
-c2r first, after the scrambled 2D real contract exists and is gated.
+A scrambled-axis-1 plane with the permutation absorbed by axis 0's
+block-addressed write is exactly the flat arm of §3 (the pay-once form); it
+needs no scrambled 2D real contract, so no separate "scrambled child" form.
 
 ## 6. Contracts and phases
 
@@ -123,17 +122,20 @@ c2r first, after the scrambled 2D real contract exists and is gated.
 |---|---|---|
 | 1 | R2C, rank 3, howmany 1, OUT OF PLACE, interleaved, DEFAULT/NATURAL (SCRAMBLED refused), any N1,N2 ≥ 2 and N3 ≥ 2 (odd N3 through the row plan's odd door), one thread | DESIGN |
 | 2 | C2R, the same cell (direction-shared row, `_c2r` tokens), input preserved; `destroy_input` = axis 0 in place | after 1 |
-| 3 | MT (§7): the plane arm transposed, raced per (cell, T) with the structure | after 2 |
+| 3 | MT (§7): the plane arm transposed, strips aligned to row blocks, raced per (cell, T) with the structure, no band arm | after 2 (DECIDED) |
 | 4 | the later forms of §4; rank 4 | owner's call |
 
 In place is refused (the 2D real tier's law: the in-place real door needs the
 padded-pitch caller contract). Everything outside the contract is refused
 loudly by the tier; never bridged, never the split engine behind a repack.
 
-## 7. Multithreading (the c2c tier's plane arm, transposed) — designed now, built after phase 2
+## 7. Multithreading (the c2c tier's plane arm, transposed) — DECIDED 2026-10-07, built as phase 3
 
 Two phases per direction, each a pure loop restriction of the serial walk, so
-MT == ST BITWISE (the probe gates it):
+MT == ST BITWISE (the probe gates it). THE STRIPS ALIGN TO ROW BLOCKS: a strip
+of the virtual plane is a whole number of row blocks of hp3 columns, so under
+the pay-once form each worker's permuted writes land in rows nobody else
+writes (and under the child arm a strip never splits a plane row).
 
 | direction | phase A | phase B |
 |---|---|---|
@@ -146,8 +148,13 @@ threaded): plane × {child, flat} × {full team, half team} plus serial on a
 small cube only (`vfft_policy_ilnd_mt_serial_arm`, the c2c law). The half
 team (`cmtp=`) exists for the same reason as in c2c: a worker's plane-sized
 scratch (the child's column-inverse plane and stagings, the flat arm's axis-1
-scratch) is warm from its second plane on. The band arm is not raced (the
-c2c tier's verdict: 528 of 534).
+scratch) is warm from its second plane on. NO BAND ARM: in r2c it cannot be
+formed (the planes are finished before axis 0 runs); in c2r it is legal (the
+plane structure fused into the band suffix) but the c2c verdict (528 of 534
+against it) excludes it from the tier's race — it is measured once as a c2r
+shape in the scratch probe before the tier is built, and admitted only by
+that number. The natural class's cycle and strip forms have no counterpart:
+no pass here permutes the planes.
 
 Clones: a 2D REAL child clone is route-equivalent to the primary iff every
 verdict that decides output bits matches — the row plan (`rx=`: engine
@@ -180,12 +187,15 @@ own token set on the one row):
 | tokens | owner | meaning |
 |---|---|---|
 | `chain= blu= wl= cx= cxs=` / `cx_c2r= cxs_c2r=` | axis 0 | the column plan's chain, N-arm, band width, form and stack state, spelled as the 2D real row spells them |
-| (none) | the flat arm | it carries no verdict of its own: the child's `plane_*` recipe is its recipe; `s=2` says it runs cube-wide |
+| (none) | the flat arm | it carries no verdict of its own: the child's `plane_*` recipe (row engine, axis-1 chain) is its recipe; `s=2` says it runs the pay-once form |
 | `s=` | the structure race | 1 child, 2 flat |
 | `cmt= cmts= cmtp=` (on the `nthreads=T` row) | the MT race | the c2c tier's spelling |
 | `plane_*` | the child | the 2D real child's recipe in role (the child store; `il/wisdom/wisdom2_child.h`) |
 
-Axis 0's chain bank creates the row; every later verdict is a field update.
+TOKEN SPELLING DECIDED 2026-10-07 (the table above): the 2D real row's
+spelling for axis 0 and the children, the c2c rank-3 spelling for `s=` and
+the MT verdicts; no token the flat arm owns. Axis 0's chain bank creates the
+row; every later verdict is a field update.
 THE WISDOM LAW (owner 2026-10-07): the 3D create MAY READ the 2D shard's
 banked rows — the child's rank-2 real cell (N2, N3), the flat arm's row cell
 at N3 and its axis-1 column cell — to seed a child store whose parent row
