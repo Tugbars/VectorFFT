@@ -1,7 +1,10 @@
 # The public header surface
 
 What belongs in `include/vfft.h` and what moves to `include/vfft_diagnostics.h`.
-Agreed with the owner on 2026-10-06. Nothing has been moved yet.
+Agreed with the owner on 2026-10-06; the decided moves were made on 2026-10-07
+(the four scope calls with `vfft_measure_begin()`'s return codes, and `vfft_isa()`,
+now declared in `vfft_diagnostics.h`; `gauntlet/bench_scope.h` and the two Zen 4
+benches include it). The open items below are still open.
 
 ## The rule
 

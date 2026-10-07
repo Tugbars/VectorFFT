@@ -96,6 +96,69 @@ extern "C"
    * vfft_measure_begin. A create served from wisdom leaves it unchanged. */
   long vfft_measure_scopes(void);
 
+  /* ── THE MEASUREMENT SCOPE AS A TOOL (moved here from vfft.h, 2026-10-07:
+   * docs/design/public_header_surface.md). Timing your own code under the
+   * scope vfft_create() races in is benchmarking, not computing a transform.
+   * vfft_measure_configure() stays in vfft.h: it changes what vfft_create()
+   * does to the process. ─────────────────────────────────────────────── */
+
+  /** @brief What vfft_measure_begin() returns (0 = a clean scope). */
+  enum
+  {
+    VFFT_MEASURE_CONTENDED = 1, /**< the lock was not obtained within the wait */
+    VFFT_MEASURE_UNPINNED = 2   /**< the thread is not pinned to a P-core */
+  };
+
+  /**
+   * @brief Enter the measurement scope on the calling thread, for code the
+   *        caller times itself.
+   *
+   * The same scope vfft_create() uses for its races: the machine-wide lock,
+   * the pin, the sibling guard, the priority (vfft_measure_configure() in
+   * vfft.h sets them). A vfft_create() inside it adds nothing and leaves it
+   * in place. Calls nest; the scope ends at the matching outermost
+   * vfft_measure_end(), on the same thread.
+   *
+   * @return 0, or VFFT_MEASURE_CONTENDED and/or VFFT_MEASURE_UNPINNED:
+   *         winners raced in such a scope are served, not saved.
+   */
+  int vfft_measure_begin(void);
+
+  /**
+   * @brief Leave the scope: the guard ends, the thread's priority and
+   *        affinity return to what they were, the lock is released. One pin
+   *        stays: the pool's pin of its caller to logical CPU 0, when the
+   *        pool was sized or grown inside the scope.
+   */
+  void vfft_measure_end(void);
+
+  /**
+   * @brief Confine the process to a set of logical CPUs, for a threaded
+   *        comparison: every thread created afterwards, by any library, runs
+   *        inside it.
+   * @param mask Bit c = logical CPU c; 0 = one logical CPU per P-core (no
+   *        hyperthread siblings, no E-cores).
+   * @return The mask applied, 0 when the system refused it. Not undone by
+   *         vfft_measure_end().
+   */
+  unsigned long long vfft_measure_confine(unsigned long long mask);
+
+  /**
+   * @brief One line describing the calling thread's most recent scope: the
+   *        pinned CPU, the guard, the priority, the lock.
+   * @return buf.
+   */
+  const char *vfft_measure_describe(char *buf, size_t n);
+
+  /**
+   * @brief The SIMD level this build was compiled for (a fact for logs; the
+   *        same fact is part of vfft_wisdom_identity(), and buffer alignment
+   *        comes from vfft_alignment() in vfft.h).
+   * @return "avx512", "avx2" or "scalar": a build-time fact, not runtime
+   *         detection. Static storage.
+   */
+  const char *vfft_isa(void);
+
 #ifdef __cplusplus
 }
 #endif

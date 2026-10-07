@@ -22,6 +22,7 @@
 #include <math.h>
 #include <windows.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"   /* vfft_isa() lives here since 2026-10-07 */
 #include "ref_fftw.h"
 
 static double now_ns(void)

@@ -504,60 +504,14 @@ extern "C"
     VFFT_MEASURE_PRIORITY_LEAVE = 1,
     VFFT_MEASURE_PRIORITY_PROCESS = 2  /**< raise the whole process */
   };
-  /** @brief What vfft_measure_begin() returns (0 = a clean scope). */
-  enum
-  {
-    VFFT_MEASURE_CONTENDED = 1, /**< the lock was not obtained within the wait */
-    VFFT_MEASURE_UNPINNED = 2   /**< the thread is not pinned to a P-core */
-  };
-
   /**
    * @brief Set how this process measures: the scope of every later
-   *        vfft_create() race and vfft_measure_begin().
+   *        vfft_create() race (and of vfft_measure_begin(), the scope as a
+   *        tool for timing your own code: vfft_diagnostics.h).
    * @param config The settings; NULL restores the defaults. Call it during
    *        setup, outside any scope.
    */
   void vfft_measure_configure(const vfft_measure_config_t *config);
-
-  /**
-   * @brief Enter the measurement scope on the calling thread, for code the
-   *        caller times itself.
-   *
-   * The same scope vfft_create() uses for its races: the machine-wide lock,
-   * the pin, the sibling guard, the priority. A vfft_create() inside it adds
-   * nothing and leaves it in place. Calls nest; the scope ends at the
-   * matching outermost vfft_measure_end(), on the same thread.
-   *
-   * @return 0, or VFFT_MEASURE_CONTENDED and/or VFFT_MEASURE_UNPINNED:
-   *         winners raced in such a scope are served, not saved.
-   */
-  int vfft_measure_begin(void);
-
-  /**
-   * @brief Leave the scope: the guard ends, the thread's priority and
-   *        affinity return to what they were, the lock is released. One pin
-   *        stays: the pool's pin of its caller to logical CPU 0, when the
-   *        pool was sized or grown inside the scope.
-   */
-  void vfft_measure_end(void);
-
-  /**
-   * @brief Confine the process to a set of logical CPUs, for a threaded
-   *        comparison: every thread created afterwards, by any library, runs
-   *        inside it.
-   * @param mask Bit c = logical CPU c; 0 = one logical CPU per P-core (no
-   *        hyperthread siblings, no E-cores).
-   * @return The mask applied, 0 when the system refused it. Not undone by
-   *         vfft_measure_end().
-   */
-  unsigned long long vfft_measure_confine(unsigned long long mask);
-
-  /**
-   * @brief One line describing the calling thread's most recent scope: the
-   *        pinned CPU, the guard, the priority, the lock.
-   * @return buf.
-   */
-  const char *vfft_measure_describe(char *buf, size_t n);
 
   /* ── the worker pool and the build ────────────────────────────────────── */
 
@@ -578,13 +532,6 @@ extern "C"
   int vfft_get_num_threads(void);
 
   /**
-   * @brief The SIMD level this build was compiled for.
-   * @return "avx512", "avx2" or "scalar": a build-time fact, not runtime
-   *         detection. Static storage.
-   */
-  const char *vfft_isa(void);
-
-  /**
    * @brief The route a plan committed to.
    * @return For a K=1 interleaved plan its route name ("mono", "2p",
    *         "chain3", "prime", "flat", "ztt", "fs", or a 2D route); "-" for a
@@ -596,8 +543,10 @@ extern "C"
   /** @brief The library version, "MAJOR.MINOR.PATCH". Static storage. */
   const char *vfft_version(void);
 
-  /* Threading diagnostics (engagement counters) are in vfft_diagnostics.h;
-   * none is needed to compute a transform. */
+  /* Not needed to compute a transform, so not here but in vfft_diagnostics.h
+   * (shipped beside this header): the threading diagnostics (engagement
+   * counters), the measurement scope as a tool for timing your own code
+   * (vfft_measure_begin/end/confine/describe), and vfft_isa(). */
 
 #ifdef __cplusplus
 }
