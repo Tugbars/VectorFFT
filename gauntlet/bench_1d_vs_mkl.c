@@ -1180,8 +1180,8 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
  * --realfwd / --realbwd : the REAL gauntlet cell (2026-09-29): 1D at K=1, 1D
  * at K>1 (transform-contiguous rows: real rows at pitch N, CCE rows at pitch
  * N+2 -- the geometry FFTW's howmany means), and with --2drealnat the 2D
- * shape (N1 in the N slot, N2 in the K slot; real plane N1 x N2, CCE plane
- * N1 x (N2/2+1) pairs). The K=1 natural cell's protocol on a VFFT_R2C /
+ * shape (N1 in the N slot, N2 in the K slot, N2 of either parity; real plane
+ * N1 x N2, CCE plane N1 x (N2/2+1) pairs). The K=1 natural cell's protocol on a VFFT_R2C /
  * VFFT_C2R plan: pin + sibling guard, the front door on the store (OUT OF
  * PLACE, interleaved CCE, natural, one thread), the comparator's spectrum of
  * the same input as the reference (r2c: ours vs it elementwise; c2r: both
@@ -6261,10 +6261,12 @@ int main(int argc, char **argv)
             real_geo_t g;
             memset(&g, 0, sizeof g);
             if (g_k2real)
-            {   /* N1 in the N slot, N2 in the K slot */
-                if (target_K < 2 || (target_K & 1))
+            {   /* N1 in the N slot, N2 in the K slot, either parity (odd N2 since
+                 * 2026-10-07: the CCE plane is N1 x (N2/2+1) pairs for both; the
+                 * library serves it, FFTW and MKL plan it) */
+                if (target_K < 2)
                 {
-                    printf("--2drealnat needs N1 in the N slot and an EVEN N2 in the K slot\n");
+                    printf("--2drealnat needs N1 in the N slot and N2 >= 2 in the K slot\n");
                     return 2;
                 }
                 g.nd = 2; g.N1 = target_N; g.N2 = (int)target_K; g.K = 1;

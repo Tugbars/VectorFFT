@@ -3431,6 +3431,11 @@ static void _il2d_real_children_put(struct vfft_wisdom_s *W, const vfft_config_t
     vw2__ilcol_key(&ck, &pk);
     changed |= vfft_child_row_update(&W->vw2, &pk, h->transform == VFFT_C2R ? "rp_c2r_" : "rp_", h->il2d_rowS);
     changed |= vfft_child_row_update(&W->vw2, &pk, h->transform == VFFT_C2R ? "rx_c2r_" : "rx_", h->il2d_rxS);
+    if (h->il2d_rax_on)
+    {   /* the real axis on N1 (il2d_real_axis.h): its column chain and its row batch, when the form serves */
+        changed |= vfft_child_row_update(&W->vw2, &pk, "rax_", h->il2d_raxS);
+        changed |= vfft_child_row_update(&W->vw2, &pk, "raxr_", h->il2d_rax_rowS);
+    }
     if (changed)
         _vw2_persist(W, cfg);
 }
