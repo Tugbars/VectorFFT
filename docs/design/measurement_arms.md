@@ -1011,6 +1011,16 @@ E3.R3 s_c2r / wl_c2r          RACED in 3D c2r (2026-10-07): the c2r structure on
                               jointly with nf_c2r/nsw_c2r; whole transform on scratch. Pins
                               VFFT_ILNDR_ARM=1|2|3, VFFT_ILNDR_WL=w. The input is preserved
                               (axis 0 out of place into the private volume) unless destroy_input.
+E3.R4 cmt (rank-3 real)       RACED at the plan's T (2026-10-07, both directions): serial on a cube
+                              of 512 KB or less (vfft_policy_ilnd_mt_serial_arm) + the plane arm x
+                              {child, pay-once, c2r band per legal cut} x {in place, strips} x
+                              {full team, half team where a full-team worker would hold one plane},
+                              every arm the whole transform at T with the structure's clones, REPS
+                              from one serial timing (>= 4, >= 48 executes, 3..15 rounds), never
+                              paused; cmt= cmtt= cmts= cmtf= cmtp= (+ _c2r, cmtw_c2r=) on the
+                              nthreads=T row. Pins VFFT_ILNDR_MT=0|2, VFFT_ILNDR_PT=w. MT == ST
+                              bitwise by construction (loop restrictions); the engagement counter is
+                              the c2c tier's (vfft_ilnd_mt_passes).
 E3.R2 nf / nsw (rank-3 real)  RACED jointly with E3.R1: axis 0's execution form, in place (the
                               natural pass or the one-stage kernel; the pay-once leaf out of place)
                               vs dense column strips at the policy width; nf=1|2 nsw= on the row.

@@ -139,7 +139,7 @@ needs no scrambled 2D real contract, so no separate "scrambled child" form.
 |---|---|---|
 | 1 | R2C, rank 3, howmany 1, OUT OF PLACE, interleaved, DEFAULT/NATURAL (SCRAMBLED refused), any N1,N2 ≥ 2 and N3 ≥ 2 (odd N3 through the row plan's odd door), one thread; a threaded request is served by the serial walk until phase 3 | BUILT 2026-10-07 (`il/rank3/fftnd_real_il.h`; gate `r3d_gate.c`: vs FFTW ≤ 6e-16, replays bitwise with zero races, pins never bank, the 2D borrow fires) |
 | 2 | C2R, the same cell (direction-shared row: `s_c2r= nf_c2r= nsw_c2r= wl_c2r=`, the chain tokens shared), input preserved through the private volume; `destroy_input` = axis 0 in place; structures child, pay-once, band (every legal cut an arm) | BUILT 2026-10-07 (gate `r3d_gate_c2r.c`: vs FFTW ≤ 1.2e-15, input preserved, replays bitwise, pins never bank, the destroying twin correct) |
-| 3 | MT (§7): the plane arm transposed, strips aligned to row blocks, raced per (cell, T) with the structure, no band arm | after 2 (DECIDED) |
+| 3 | MT (§7): the plane arm transposed, strips aligned to row blocks, raced per (cell, T) with the structure, the form and the team; the c2r band arm per worker-owned bands | BUILT 2026-10-07 (gate `r3d_gate_mt.c` at T=8: engaged, MT == ST bitwise, replays bitwise with zero races, both directions) |
 | 4 | the later forms of §4; rank 4 | owner's call |
 
 In place is refused (the 2D real tier's law: the in-place real door needs the
@@ -180,21 +180,29 @@ here permutes the planes); the STRIP FORM does exist as an axis-0 EXECUTION
 form (§4).
 
 Clones: a 2D REAL child clone is route-equivalent to the primary iff every
-verdict that decides output bits matches — the row plan (`rx=`: engine
-token, the rows kernel or the engine's recipe, `_tc_clone_equiv` on the
-door batch), the column plan (`cx=`: chain, kernel pointers, natural form,
-stack states are not bits), the fused walk, the real axis on N1, the
-pitch forms, the destroying form; the flat arm's clones are row-plan clones
-(the 2D real tier's `il2d_rxw` machinery) plus their own axis-1 descriptors
-sharing the tables. Clones read warm wisdom and never bank; any clone
+verdict that decides output bits matches (`_ilndr_child_equiv`): the row
+engine by its name (the rows kernel or the engine's recipe) and the door
+batch's row plan (`_tc_clone_equiv`), the column plan (chain, kernel
+pointers, natural form, leaf, staged leaf), the whole-plan forms (fused walk,
+real axis, skewed plane, destroying c2r), the column-inverse plane's pitch,
+the odd door; stack states are not bits. The pay-once arm's workers run the
+clone's row engine and share the axis-1 tables read-only (the plain chain
+runs in place: no scratch); each worker owns a strip scratch. The in-place
+natural pass of a multi-stage axis 0 (the cube-sized pre-leaf scratch) does
+not thread; its arm is excluded from the threaded race. Clones read warm wisdom and never bank; any clone
 failure tears that structure's set down and MT declines loudly. The pool is
 the one owner; the plan's T is the snapshot. The child is created at
 `nthreads = 1`: the 3D tier owns the threads (the 2D real tier's own T>1
 forms never run inside a 3D plan).
 
 Banked on the rank-3 real row keyed at the plan's thread count (`nthreads=`):
-`cmt= cmts= cmtp=` as the c2c tier spells them, both directions on the
-direction-shared row. `VFFT_ILND_MT=0|2` and `VFFT_ILND_PT=w` pin; the
+`cmt= cmtt= cmts= cmtf= cmtp=` (r2c) and their `_c2r` twins plus `cmtw_c2r=`
+(the threaded band's width) on the direction-shared row — each direction
+carries its own marker (`cmtt`), because the row is shared and the r2c
+verdict's presence must not read as a c2r one (a bug caught by the gate
+2026-10-07). The threaded verdict's structure and form may differ from the
+serial `s=`/`nf=` on the same row; the serial pieces are kept alive through
+the threaded race and freed by its verdict. `VFFT_ILND_MT=0|2` and `VFFT_ILND_PT=w` pin; the
 engagement counter is the c2c tier's (`vfft_ilnd_mt_passes()`); a threaded
 number without it is vacuous. Measurement: every race sample runs REPS
 executes after warm passes (the c2c tier's protocol: the cache partition
