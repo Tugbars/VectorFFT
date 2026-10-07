@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
         { "3D c2c OOP IL 16^3 howmany=2",         0, VFFT_C2C, OOP, IL, DEF, 3, 16, 16, 16, 0, 2, 0 },
         { "3D c2c IP IL 16^3",                    1, VFFT_C2C, IP,  IL, DEF, 3, 16, 16, 16, 0, 1, 0 },
         { "3D c2c IP IL odd 9x15x27 SCRAMBLED",   1, VFFT_C2C, IP,  IL, SCR, 3, 9, 15, 27, 0, 1, 0 },
-        { "3D r2c OOP IL 16^3",                   0, VFFT_R2C, OOP, IL, DEF, 3, 16, 16, 16, 0, 1, 0 },
+        { "3D r2c OOP IL 16^3",                   1, VFFT_R2C, OOP, IL, DEF, 3, 16, 16, 16, 0, 1, 0 },   /* served since 2026-10-07: the rank-3 real tier (fftnd_real_il.h) */
         { "3D c2c OOP SPLIT 16^3",                1, VFFT_C2C, OOP, SP, DEF, 3, 16, 16, 16, 0, 1, 0 },
         { "3D c2c OOP SPLIT 16^3 NATURAL",        0, VFFT_C2C, OOP, SP, NAT, 3, 16, 16, 16, 0, 1, 0 },
         { "3D c2c OOP SPLIT 16^3 howmany=2",      0, VFFT_C2C, OOP, SP, DEF, 3, 16, 16, 16, 0, 2, 0 },

@@ -23,7 +23,7 @@
  * Override the DLL under test: VFFT_FFTW_DLL=<path>.
  * Untimed except plan-cost banners; this gate is correctness machinery, not a bench.
  */
-#include "ref_fftw.h"
+#include "../../../gauntlet/ref_fftw.h"   /* the FFTW binder (the gate moved to src/tools/gates 2026-10-07) */
 
 #include <math.h>
 
