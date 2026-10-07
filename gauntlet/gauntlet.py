@@ -429,7 +429,7 @@ def bench_cell(run, n, csv_path):
     bench = run.exe("bench_1d_vs_mkl")
     if is2d(n) and len(n) == 3 and run.real:
         # the 3D REAL cell (2026-10-07): the shape N1xN2xN3 in the N slot (bench --3dreal; the rank-3 real tier, one thread)
-        flag = ["--3dreal", "--realfwd" if run.real == "r2c" else "--realbwd"]
+        flag = ["--3dreal", "--realfwd" if run.real == "r2c" else "--realbwd"] + (["--mt"] if run.threads > 1 else [])   # --mt: the threaded cell at $VFFT_MT, MKL at the same T
         nstr, kstr = ckey(n), "1"
     elif is2d(n) and len(n) == 3:
         # the 3D interleaved cell: the shape N1xN2xN3 in the N slot (bench --3dilnat, 2026-09-24)
@@ -661,8 +661,8 @@ def main():
         raise SystemExit("--cmp kfr: the KFR arm is the 1D c2c cell at one thread only")
     if run.cmp == "fftw" and (run.threads > 1 or (dims == 3 and not run.real) or run.ip):
         raise SystemExit("--cmp fftw: the FFTW arm serves the 1D c2c cell and the 1D/2D/3D real cells, out of place, one thread")
-    if run.real and (run.ip or (run.threads > 1 and dims != 1)):
-        raise SystemExit("--real: the real contract is out of place, 1D, 2D or 3D; --threads serves the 1D cell only (2026-09-30)")
+    if run.real and (run.ip or (run.threads > 1 and dims == 2)):
+        raise SystemExit("--real: the real contract is out of place, 1D, 2D or 3D; --threads serves the 1D and 3D cells (2026-10-07), not 2D")
     if run.k > 1 and (not run.real or dims != 1):
         raise SystemExit("--k: the batch count belongs to the 1D real cell")
     cal_s, bench_s = estimate_seconds(cells, run.threads, args.calibrate)

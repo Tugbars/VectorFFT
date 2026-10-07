@@ -259,8 +259,12 @@ layout refused.
 cell at rank 3, the shape N1xN2xN3 in the N slot, against MKL (DFTI REAL 3D,
 CCE strides {0, N2·hp3, hp3, 1}, NOT_INPLACE) or, under `--cmp fftw`, the
 runtime-bound FFTW arm (`r2c_3d` / `c2r_3d`; its c2r destroys its input and is
-timed on a restored copy as the 2D cell is); one thread until phase 3. The
-gauntlet: `--real r2c|c2r --group 3d-real` (the pow2 cube grid 4..256 per axis
+timed on a restored copy as the 2D cell is); `--mt` = the threaded cell at
+`$VFFT_MT` under the two-team protocol (the P-cores for both engines, MKL's
+OpenMP team created before the caller is pinned, our pool down while MKL runs),
+MKL at the same T, the `engaged` column = the rank-3 tier's threaded executes
+in the timed arm (0 = a serial verdict). The gauntlet: `--real r2c|c2r --group
+3d-real [--threads T]` (the pow2 cube grid 4..256 per axis
 up to 2^20 points plus odd-N3 cubes; 3D shapes in `--cells` too), the row
 reader on `wisdom2_3d.txt`'s `t=r2c` row, `recal_1d_probe --r2c|--c2r --3d`.
 `VFFT_ILNDR_PROF=1` (bound at create) prints the planes' and axis 0's ns per
