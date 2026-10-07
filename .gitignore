@@ -147,3 +147,4 @@ docs/roadmap/zil_avx512_prototypes/*
 docs/roadmap/zil_avx512_prototypes/harness/*
 !docs/roadmap/zil_avx512_prototypes/harness/tail_policy/
 !docs/roadmap/zil_avx512_prototypes/harness/tail_policy/**
+build_tuned/REDISTRIBUTION.md
