@@ -832,7 +832,7 @@ has four parts:
    - `capture_baseline.py`: the exe suffix; the scratch dir via `tempfile`.
    - `race_census.py`: the input is the glob, and a missing path is a hard error.
    - `slice_ladder.py`: use `toolchain.py` and the generated include set.
-   - `build_all_gates.sh`: delete it, or point it at `build_tuned/`.
+   - `build_all_gates.sh`: delete it, or point it at the gates (it points at `src/tools/gates/` since 2026-10-07).
    - `wisdom_store.sha256`: re-derive it for today's `src/wisdom`.
    - Record the git SHA with a check that it is reachable.
 

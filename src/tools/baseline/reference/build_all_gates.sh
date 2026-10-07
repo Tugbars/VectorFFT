@@ -12,7 +12,7 @@
 # sp_ccol_decode_gate is the one hard exception -- it #includes vfft.c
 # textually, so compiling vfft.c beside it is a duplicate-symbol error.
 #
-# Repointed 2026-09-27: the gates live in build_tuned/benches/ and build with
+# Repointed 2026-10-07: the gates live in src/tools/gates/ and build with
 # gauntlet/build.py (the script used to cd to src/tools/ and glob a
 # benches/ folder that no longer exists there). Run from anywhere; it works
 # from the repo root. The ISA is build.py's: set VFFT_ISA.
@@ -20,7 +20,7 @@ cd "$(dirname "$0")/../../../.." || exit 1
 OUT=src/tools/baseline/reference/gates_build.txt
 : > "$OUT"
 ok=0; fail=0
-for g in build_tuned/benches/*gate*.c; do
+for g in src/tools/gates/*gate*.c; do
   n=$(basename "$g" .c)
   if [ "$n" = "sp_ccol_decode_gate" ]; then
     if python3 gauntlet/build.py --src "$g" --compile >/dev/null 2>&1; then

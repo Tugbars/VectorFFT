@@ -27,6 +27,8 @@ vfft_*.png
 !docs/performance/*.png
 # the gates' stderr taps (src/tools/gates/_*.log; the gates moved there from build_tuned/ 2026-10-07)
 src/tools/gates/*.log
+# the VTune harness's result folders (run.bat writes vt_<mode>/ beside its sources)
+/src/tools/VtuneHarness/vt_*
 
 # IDE / tools
 /.vscode/

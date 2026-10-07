@@ -3,8 +3,8 @@
  *
  * LAW: stride maps are derived with the algebra shown, then proven by a
  * running simulator, BEFORE any SIMD code uses them — guessed maps do not
- * survive. This header is that simulator; build_tuned/benches/
- * il2d_proto_gate.c is its gate vs a naive separable DFT, elementwise, per
+ * survive. This header is that simulator; il2d_proto_gate.c (deleted in
+ * 1d0b0e72, "bench cleanup") was its gate vs a naive separable DFT, elementwise, per
  * direction (roundtrip never gates a permuted transform).
  *
  * ── THE ALGEBRA (column pass: same-slot in-place DIF along axis i) ──

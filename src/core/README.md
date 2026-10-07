@@ -156,7 +156,7 @@ as linked `.c` files; they include no core headers.
 
 API surface: `api_matrix_gate` (the serve/refuse table, benches/api_matrix_gate.c)
 (session scratchpad; walk the full support matrix + misuse diagnostics + the
-header's compiled QUICK START). Feature gates live in `build_tuned/benches/`
+header's compiled QUICK START). Feature gates live in `src/tools/gates/`
 (`zsplit_wis_gate`, `zsplit_api_gate`, `gate_vfft_rz`, `gate_4d`,
 `gate_fndr_q1`, natorder/natmt tests, `regression_vs_mkl`). Run them with
 `VFFT_WISDOM_DIR` pointed at a scratch dir so banked wisdom stays untouched.

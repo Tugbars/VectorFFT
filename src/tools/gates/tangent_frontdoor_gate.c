@@ -8,8 +8,8 @@
  * the wrong kernel, the transform is simply incorrect — and that shows up
  * here and nowhere else.
  *
- * Build (from build_tuned/):
- *   python build.py --src benches/tangent_frontdoor_gate.c --vfft
+ * Build (from the repo root):
+ *   python gauntlet/build.py --src src/tools/gates/tangent_frontdoor_gate.c --vfft
  */
 #include <stdio.h>
 #include <stdlib.h>

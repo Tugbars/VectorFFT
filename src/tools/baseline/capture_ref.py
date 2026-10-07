@@ -300,7 +300,7 @@ def cmake_leg(isa, out, bdir):
 
 
 def gates(isa, out):
-    r = toolchain.run([sys.executable, os.path.join(ROOT, "build_tuned", "run_gates.py"),
+    r = toolchain.run([sys.executable, os.path.join(ROOT, "src", "tools", "gates", "run_gates.py"),
                        "--out", os.path.join(out, "gates.txt")],
                       env=dict(os.environ, VFFT_ISA=isa), timeout=6 * 3600)
     log("gates: exit %d" % r.returncode)

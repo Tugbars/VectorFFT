@@ -157,5 +157,5 @@ including 64x64.
 | the axis race at T and its bank | `_il2d_axis_race` (`il2d_tier.h`); the T verdict read `il2d_axmt` (`fft2d_create.h`) |
 | the threading race and its bank | `_il2d_c2c_mt_race` (`il2d_tier.h`); `vw2_2d_il_chain_bank`, `vw2_2d_il_tok_seti/geti` (`wisdom2_2d_reader.h`) |
 | the engagement counter | `vfft_il2d_col_mt_passes()` (`vfft.c`) |
-| the protocol | the measurement scope (`vfft.h`; `src/core/common/support/race_scope.h`), `gauntlet/bench_scope.h`, `gauntlet/recal_1d_probe.c`, `gauntlet/bench_1d_vs_mkl.c`; the gates `il2d_*_gate`, `mt_c2c_gate` (`build_tuned/benches`) |
+| the protocol | the measurement scope (`vfft.h`; `src/core/common/support/race_scope.h`), `gauntlet/bench_scope.h`, `gauntlet/recal_1d_probe.c`, `gauntlet/bench_1d_vs_mkl.c`; the gates `il2d_*_gate`, `mt_c2c_gate` (`src/tools/gates`) |
 | the records | `gauntlet/results/2d-pow2_mt8_2026-09-24` (the grid), `mt8_losers_2026-09-24`, `mt8_still*_2026-09-2[45]` (the losers re-raced) |

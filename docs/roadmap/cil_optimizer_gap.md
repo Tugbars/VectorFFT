@@ -14,7 +14,7 @@ no CSE, no factoring, no FMA lifting — while both sibling emitters do.
 passing its sanity gate on the three cells that matter.** Do not re-port it.
 
 - Reference copy (tracked, verbatim from the recovered commit):
-  `build_tuned/VtuneHarness/` — see its `RESTORED.md`.
+  `src/tools/VtuneHarness/` — see its `RESTORED.md`.
 - **Working copy, ported to the current API and already built:**
   `docs/research/mkl512_gap_campaign/vtune/bench_vtune.exe`, built by
   `vtune/build_vtune.py` (build.py could not express the ITT include/lib

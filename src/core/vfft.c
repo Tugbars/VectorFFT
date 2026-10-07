@@ -252,7 +252,7 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
                                   const vfft_config_t *cfg);
 
 /* ── POOL ARMING: a plan may GROW the process pool, never SHRINK it ──
- * 🔴 MEASURED BUG (2026-08-26, benches/pool_teardown_probe.c): every
+ * 🔴 MEASURED BUG (2026-08-26, pool_teardown_probe.c, deleted 2026-10-07; in git at 9c78df17): every
  * tier builds inner plans with `nthreads = 1` (the house spelling of
  * "this child is serial"), create asserts that count on the GLOBAL pool,
  * and thread_pool_resize(n<=1) DESTROYS the pool (threads.h). So

@@ -29,7 +29,7 @@ DTLB misses, etc.) to a named region in the GUI's task view.
 ## Quick check (no VTune)
 
 ```cmd
-build_tuned\dev\bench_vtune\run.bat
+src\tools\VtuneHarness\run.bat
 ```
 
 Just builds + runs the bench, prints per-cell wall time + GFLOP/s + ratio.
@@ -41,7 +41,7 @@ before running under VTune.
 ### Microarchitecture exploration (most useful for codelet analysis)
 
 ```cmd
-build_tuned\dev\bench_vtune\run.bat --collect uarch-exploration
+src\tools\VtuneHarness\run.bat --collect uarch-exploration
 ```
 
 Captures port utilization, retiring % per task, frontend / backend bound
@@ -52,7 +52,7 @@ CLOSE cells — figuring out *why* MKL is competitive at large pow2 K=4
 ### Hotspots (which functions dominate per cell)
 
 ```cmd
-build_tuned\dev\bench_vtune\run.bat --collect hotspots
+src\tools\VtuneHarness\run.bat --collect hotspots
 ```
 
 Function-level CPU time. Use to validate the DECISIVE cells route
@@ -62,7 +62,7 @@ and that twiddle / executor overhead is amortized.
 ### Threading
 
 ```cmd
-build_tuned\dev\bench_vtune\run.bat --collect threading
+src\tools\VtuneHarness\run.bat --collect threading
 ```
 
 Not very useful here — the bench runs single-threaded by design (T=1
@@ -87,7 +87,7 @@ For richer interactive analysis open the result dir in the VTune GUI:
 
 ```cmd
 "C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\vtune-gui.exe" ^
-    build_tuned\dev\bench_vtune\vt_uarch-exploration
+    src\tools\VtuneHarness\vt_uarch-exploration
 ```
 
 Each task is named `VFFT_N{N}_K{K}_{CATEGORY}` or `MKL_N{N}_K{K}_{CATEGORY}`

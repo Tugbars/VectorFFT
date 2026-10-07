@@ -18,7 +18,7 @@ replay has almost nothing to replay here, and several trig configs RACE at
 create — every rigor level measures (`VFFT_ESTIMATE` is unimplemented), so with
 nothing to replay the clock picks the plan.
 
-Output coverage is therefore `build_tuned/trig_digest_probe.c` +
+Output coverage is therefore `trig_digest_probe.c` (last in 4cb8c930) +
 `trig_capture.py`: digests over 14 cells against a warmed scratch fixture.
 That is a REGRESSION check — it proves the output did not change, not that it
 is correct. The naive O(N²) reference that would prove correctness is still

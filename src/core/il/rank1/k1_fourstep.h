@@ -510,7 +510,7 @@ static int _k1fs_row_put_child(vw2_store_t *st, const vw2_rec_t *row, const stru
  * output rows leave as whole lines — streaming stores when the destination
  * is 32-B aligned (no read-for-ownership: the sweep is bandwidth), plain
  * unaligned stores otherwise, the bytes identical either way. Measured
- * against the scalar 16 x 16 walk at 1024 x 4096 (benches/tp_probe.c):
+ * against the scalar 16 x 16 walk at 1024 x 4096 (tp_probe.c, deleted 2026-10-07; in git at 9c78df17):
  * 10.3 -> 2.9 ms at one thread, 4.2 -> 1.5 ms at eight. One kernel over
  * a k1 range, so the pool cuts the blocks across the workers: disjoint
  * spans in both directions, the output bitwise the serial walk. Runs on

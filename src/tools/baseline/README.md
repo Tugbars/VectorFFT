@@ -77,4 +77,4 @@ python src/tools/baseline/step_gate.py --ref <scratch>/ref/avx512 --isa avx512 [
 Fixed on the way: `race_census.py` now scans every header under `src/core` (the
 old fixed list silently dropped a moved header) and errors on a missing input;
 `capture_baseline.py` finds its binaries off Windows and takes its scratch from
-`tempfile`; `reference/build_all_gates.sh` points at `build_tuned/`.
+`tempfile`; `reference/build_all_gates.sh` points at `src/tools/gates/`.

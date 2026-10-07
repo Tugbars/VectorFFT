@@ -36,7 +36,7 @@ sys.path.insert(0, HERE)
 import toolchain  # noqa: E402
 
 ROOT, CORE = toolchain.ROOT, toolchain.CORE
-SCAN = [CORE, os.path.join(ROOT, "gauntlet"), os.path.join(ROOT, "build_tuned"),
+SCAN = [CORE, os.path.join(ROOT, "gauntlet"), os.path.join(ROOT, "src", "tools", "gates"),
         os.path.join(ROOT, "src", "tools")]
 _INC = re.compile(r'(#\s*include\s+")([^"]*/[^"]*)(")')
 
