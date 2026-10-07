@@ -1,0 +1,4 @@
+8x128x2048 banked     22148ms raced     zr2c:child_oop_il
+16x256x256 banked     16811ms raced     zr2c:child_oop_il
+64x64x64   banked      9416ms raced     zrp:4.16:r2z
+128x128x128 banked     14828ms raced     zrp:8.16:r2z

@@ -1504,7 +1504,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
 /* the threaded executes engaged in the timed arm: the child's (ZTURN-T, the
  * four-step's 2D tier, the flat DIT), the real four-step's sweeps, the batch's
  * worker dispatches */
-#define REAL_ENG() (vfft_ztt_mt_passes() + vfft_il2d_col_mt_passes() + vfft_ilfd_mt_passes() + vfft_zfsr_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_zttr_mt_passes() + vfft_zrf_mt_passes() + vfft_tc_mt_dispatches())
+#define REAL_ENG() (vfft_ztt_mt_passes() + vfft_il2d_col_mt_passes() + vfft_ilfd_mt_passes() + vfft_zfsr_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_zttr_mt_passes() + vfft_zrf_mt_passes() + vfft_tc_mt_dispatches() + vfft_ilnd_mt_passes())   /* + the rank-3 tiers' counter (the 3D real cell, 2026-10-07) */
     if (flip)
     { /* comparator first; --mt: the two-team protocol of the K=1 c2c cell (our pool down while the comparator runs) */
         if (g_k1noop_mt) vfft_set_num_threads(1);
@@ -1543,7 +1543,10 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     if (out)
     {
         char row[320];
-        if (g->nd == 3)
+        if (g->nd == 3 && g_k1noop_mt)   /* the threaded cell's engaged column before flip, as the 3D c2c row's */
+            snprintf(row, sizeof row, "%d,%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%ld,%d\n",
+                     g->N1, g->N2, g->N3, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), eng, flip);
+        else if (g->nd == 3)
             snprintf(row, sizeof row, "%d,%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
                      g->N1, g->N2, g->N3, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
         else if (g->nd == 2)
@@ -5582,7 +5585,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "--cmp fftw: the FFTW arm is the 1D c2c K=1 cell only\n");
         return 2;
     }
-    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat || (g_real && !g_k2real && !g_k3real)) && mt;   /* the 2D/3D cells share the
+    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat || (g_real && !g_k2real)) && mt;   /* the 3D real cell threads too (2026-10-07) */   /* the 2D/3D cells share the
                                                                           * threaded-cell discipline (2026-09-24) */
     if (g_k1noop_mt)
     {
@@ -6231,7 +6234,7 @@ int main(int argc, char **argv)
         if (g_k3nat)
             fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,%sflip\n", g_k1noop_mt ? "engaged," : "");
         else if (g_k3real)
-            fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
+            fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,%sflip\n", g_k1noop_mt ? "engaged," : "");
         else if (g_k2real)
             fprintf(out, "N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
         else if (g_k2nat)
