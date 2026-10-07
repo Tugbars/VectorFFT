@@ -1939,15 +1939,19 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
  * here): rank-3 c2c is the native tier above; real rank >= 3 and rank 4 are
  * refused loudly. Layout separation phase 6: the interleaved peel of the
  * pre-separation _vfft_create_rank34, verbatim. */
+static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vfft_wisdom_s *W, size_t K); /* fftnd_real_il.h, included after this header */
 static vfft_plan _vfft_create_rank34_il(const vfft_config_t *cfg,
                                         struct vfft_wisdom_s *W,
                                         size_t K)
 {
-    /* 3D/4D INTERLEAVED: rank-3 c2c is the native IL tier (fftnd_il.h);
-     * real rank >= 3 and rank 4 are refused loudly. No fallback: never the
-     * split ND engine behind a repack — refuse, never bridge. */
+    /* 3D/4D INTERLEAVED: rank-3 c2c is the native IL tier (fftnd_il.h),
+     * rank-3 R2C the real tier (fftnd_real_il.h, 2026-10-07); rank-3 C2R
+     * (the real tier's phase 2) and rank 4 are refused loudly. No fallback:
+     * never the split ND engine behind a repack — refuse, never bridge. */
     if (cfg->transform == VFFT_C2C && cfg->dims == 3)
         return _vfft_create_fftnd_il(cfg, W, K);
+    if (cfg->transform == VFFT_R2C && cfg->dims == 3)
+        return _vfft_create_fftnd_real_il(cfg, W, K);
     _vfft_warn("vfft_create: %dD %s with layout=INTERLEAVED is not wired yet "
                "(the rank-3+ interleaved tier is a planned feature); use "
                "VFFT_LAYOUT_SPLIT",

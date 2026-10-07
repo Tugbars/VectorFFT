@@ -365,6 +365,12 @@ void vfft_destroy(vfft_plan h)
             free(h);
             return;
         }
+        if (h->ilndr)
+        { /* the rank-3 interleaved real tier owns its axes, child, volume and scratch */
+            vfft_ilndr_destroy(h->ilndr);
+            free(h);
+            return;
+        }
         if (h->il2d_row)
         {
             int s2;

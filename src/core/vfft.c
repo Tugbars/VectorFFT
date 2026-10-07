@@ -1191,6 +1191,7 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 #include "il/rank2/il2d_real_fuse.h" /* the fused walk: the r2c rows fused into column stage 0 by digit, the suffix tiled, raced vs the standard walk (2026-10-07) */
 #include "il/rank2/il2d_real_pitch.h" /* the pitch forms: the c2r column-inverse plane off hp1, the r2c one-kernel pass on a skewed plane, raced (2026-10-07) */
 #include "il/rank3/fftnd_il.h"     /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
+#include "il/rank3/fftnd_real_il.h" /* the rank-3 INTERLEAVED REAL tier: planes first, then axis 0; child vs pay-once raced (2026-10-07) */
 /* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
  * allocator and the padded-batch create tier used to retype this sequence
  * (seed both legs from the store, calibrate-on-miss, re-lookup because
@@ -1814,7 +1815,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * there = the M4-lite leaf redirection / the blu route, both
          * wired 2026-08-27. The bins (n2 axis) stay natural always. */
         !((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-          cfg->dims == 2 && cfg->order == VFFT_ORDER_NATURAL &&
+          (cfg->dims == 2 || cfg->dims == 3) && cfg->order == VFFT_ORDER_NATURAL &&   /* 3D: the real tier (fftnd_real_il.h, 2026-10-07) */
           cfg->layout == VFFT_LAYOUT_INTERLEAVED && !ob))
     {
         _vfft_warn("vfft_create: order=%s is only wired for C2C plans without a padded batch "

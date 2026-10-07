@@ -300,6 +300,7 @@ struct vfft_plan_s
     struct vfft_zrbl_s *zrbl;       /* the lane Bluestein's plan (owned)   */
     stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
     struct vfft_ilnd_s *ilnd;  /* the rank-N INTERLEAVED c2c tier (fftnd_il.h), owned */
+    struct vfft_ilndr_s *ilndr; /* the rank-3 INTERLEAVED REAL tier (fftnd_real_il.h, 2026-10-07), owned */
     vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */
     vfft_c2r_disp_t *c2r_row;  /* §6a32: 2D bwd row-pass c2r inner (owned) */
     /* config.owned_buffers: the planes THIS plan allocated and will free.
