@@ -985,6 +985,25 @@ E2.9 column chain             STRUCTURAL for the real tier: precedence is
                               (Asymmetry with E1.1, which IS raced for c2c.)
 E2.10 oddn2                   RACED in r2c (2026-10-07): the K=1 c2c child route vs
                               the odd door's engines per row (rx=); c2r rides the child.
+E2.15 tf (real)               RACED in r2c AND c2r (2026-10-07): the fused walk (il2d_real_fuse.h:
+                              r2c = the rows into column stage 0 by digit through a staging, the
+                              suffix and the leaf per stage-0 tile; c2r = the leaf and the reversed
+                              suffix per tile, then stage 0 by digit into the staging and the
+                              backward rows of the set) vs rows-then-columns, whole transform,
+                              the race's margin; tf=1|0 / tf_c2r=1|0 on the real row; natural
+                              chains of 2+ stages, one thread; no size rule (pays past L2).
+E2.16 cxp_c2r                 RACED in c2r (2026-10-07): the column-inverse plane (il2d_rscr) at
+                              hp1 + d (d = 1, or 3 where 16 (hp1 + 1) is itself a 4 KB multiple;
+                              policy_il.h) vs at hp1, whole transform, the race's margin;
+                              cxp_c2r=d|0 on the real row (il2d_real_pitch.h). Only a ONE-KERNEL
+                              column pass at an ODD hp1 (512 | N2 is where the pitch aliases),
+                              one thread, not the destroying form, not the fused walk.
+E2.17 csk (real)              RACED in r2c (2026-10-07): the one-kernel column pass on a SKEWED
+                              private plane at hp1 + 8 (the rows landing there, the finished
+                              rows copied out) vs in place at hp1, whole transform, the race's
+                              margin; csk=1|0 on the real row (il2d_real_pitch.h; the c2c tier's
+                              csk= is its own token on its own row). One-kernel passes, one
+                              thread, not the real axis on N1, not the fused walk.
 E2.14 raxis                   RACED in r2c (2026-10-07): at an even N1 and an odd N2 the
                               real axis on N1 (il2d_real_axis.h: row pairs packed, the
                               c2c chain at N1/2 on the columns, the fold, c2c(N2) on

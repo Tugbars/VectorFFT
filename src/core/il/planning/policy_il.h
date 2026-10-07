@@ -363,6 +363,72 @@ static inline int vfft_policy_il2d_raxis_ok(const vfft_config_t *cfg, int nthrea
            N1 >= 4 && (N1 & 1) == 0 && (N2 & 1) != 0;
 }
 
+/* -- rank 2, real: THE FUSED WALK (the rows fused into column stage 0) ------
+ * The r2c plan's whole-walk form (il2d_real_fuse.h): the row pass runs a
+ * stage-0 digit's row set {d + j N1/R0} at a time into a dense staging, and
+ * stage 0's digit butterfly reads the staging straight away; the suffix and
+ * the natural leaf then run per stage-0 sub-problem (a tile of N1/R0 rows).
+ * One plane write and one plane read fewer than rows-then-columns. It is a
+ * CANDIDATE at every interleaved out-of-place r2c request on a natural
+ * column chain of two stages or more (the structural part the planner
+ * keeps) at one thread, and the race against the standard walk decides per
+ * cell -- NO SIZE RULE, although the gain was measured past L2 only (2026-10-07,
+ * docs/research/il2d_real_levers: L3 gm 1.10 r2c, 1.19 c2r, up to 1.38 /
+ * 1.46; L2 0.99 / 1.02): an L2 cell races and keeps the standard walk. The
+ * two-phase law's rationale stands (every row is complete before any column
+ * stage reads it); its letter (the row PASS complete before stage 0) is what
+ * this form gives up (owner, 2026-10-07). Both directions: the c2r twin runs
+ * the reverse leaf and the mids per tile, then stage 0's digit d into the
+ * staging and that digit's backward rows from it -- the column-inverse plane
+ * never written. Each direction's verdict is its own (tf= / tf_c2r=). The
+ * threaded form is its own piece. */
+static inline int vfft_policy_il2d_tfuse_ok(const vfft_config_t *cfg, int nthreads)
+{
+    return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+           cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_OUTOFPLACE && nthreads <= 1;
+}
+
+/* -- rank 2, real: THE PITCH FORMS (il2d_real_pitch.h) ----------------------
+ * The CCE plane's pitch hp1 = N2/2 + 1 is the caller's. Two planes the
+ * caller never sees may leave it, where the one-kernel column pass (the
+ * N1-point leaf at N1 <= 64, the blocked leaf at 128) runs in place on a
+ * plane whose pitch is 16 bytes past a multiple of 4096 (512 | N2) and its
+ * 32-byte loads of the next column pair alias the stores of the pair just
+ * written (measured 2026-10-06: n1c_16 2.4-2.8x slower at 16x1024 and
+ * 16x4096; 1.06-1.16x at N1 = 32; nothing from 64; docs/research/il2d_real_levers):
+ *   cxp  a c2r plan's column-inverse plane at hp1 + d: the one-kernel pass
+ *        writes it, the rows read it, nothing else sees it. Only where hp1 is
+ *        ODD (N2 = 0 mod 4): an even hp1 is already off the aliasing pitch.
+ *        The law of d: 1, unless 16 (hp1 + 1) is itself a multiple of 4096
+ *        (N2 = 1020, 1021 mod 1024: the kernel ran 2.1x slower there), then 3.
+ *   csk  an r2c plan's one-kernel pass on a SKEWED private plane at hp1 + 8
+ *        (the c2c tier's skewed column pass keeps the same +8 complex), the
+ *        rows landing there and copied out afterwards: the copy pays only
+ *        where the kernel's loss was large (N1 = 16, the plane in L2:
+ *        1.15-1.31; 0.80-0.99 everywhere else measured).
+ * Both are CANDIDATES raced against the plan as it stands, whole transform,
+ * no size rule; one thread (the threaded passes keep hp1). The c2r plan's
+ * destroying form and the fused walk have their own planes and are not
+ * combined with these. */
+static inline int vfft_policy_il2d_cxp_ok(const vfft_config_t *cfg, int nthreads, int N2)
+{
+    return cfg && cfg->transform == VFFT_C2R && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+           cfg->placement == VFFT_OUTOFPLACE && nthreads <= 1 && ((N2 / 2 + 1) & 1) != 0;
+}
+static inline size_t vfft_policy_il2d_cxp_pitch(size_t hp1)
+{
+    return ((16 * (hp1 + 1)) % 4096 == 0) ? hp1 + 3 : hp1 + 1;
+}
+static inline int vfft_policy_il2d_rcsk_ok(const vfft_config_t *cfg, int nthreads)
+{
+    return cfg && cfg->transform == VFFT_R2C && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+           cfg->placement == VFFT_OUTOFPLACE && nthreads <= 1;
+}
+static inline size_t vfft_policy_il2d_rcsk_pitch(size_t hp1)
+{
+    return hp1 + 8;
+}
+
 /* -- rank >= 2: which PASS an axis runs ------------------------------------
  * The shared column builder races and builds either the NATURAL-leaf pass
  * or the SCRAMBLED pass for one axis. Which one is a law of (rank, axis,

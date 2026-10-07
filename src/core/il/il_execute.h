@@ -306,8 +306,8 @@ static int _k2x_il2d_c2r_2k(struct vfft_plan_s *h, vfft_dir_t dir, const double 
     (void)dir;
     if (zin == (const double *)zout)
         return 1;
-    h->il2d_cx_leaf(zin, NULL, h->il2d_rscr, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
-    h->il2d_rx_lm(h->il2d_rscr, NULL, zout, NULL, NULL, NULL, hp1, 0, rn2, 0, (size_t)h->N);
+    h->il2d_cx_leaf(zin, NULL, h->il2d_rscr, NULL, NULL, NULL, hp1, 0, h->il2d_rscr_P, 0, hp1);   /* the plane at its raced pitch */
+    h->il2d_rx_lm(h->il2d_rscr, NULL, zout, NULL, NULL, NULL, h->il2d_rscr_P, 0, rn2, 0, (size_t)h->N);
     return 0;
 }
 /* THE DESTROYING C2R (the request's destroy_input permission, where the
@@ -344,7 +344,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         h->layout == (int)VFFT_LAYOUT_INTERLEAVED && h->N2 > 0 && h->il2d_row &&
         !h->pq_inner && !h->tcb && !h->ilnd &&
-        h->nthreads <= 1 && !h->il2d_col.colmt && !h->il2d_rax_on)   /* the real axis on N1 takes the general path */
+        h->nthreads <= 1 && !h->il2d_col.colmt && !h->il2d_rax_on && !h->il2d_tf_on && !h->il2d_rcsk_on)   /* the real axis on N1, the fused walk and the skewed plane take the general path */
     {
         h->k1_exec = h->transform == VFFT_R2C ? _k2x_il2d_r2c : _k2x_il2d_c2r;
         if (h->transform == VFFT_R2C && h->il2d_rx_on && h->il2d_rx_lm && h->il2d_rx_stk < 0 &&
@@ -793,6 +793,16 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                 _il2d_rax_exec_fwd(h, sre, dre);
                 return;
             }
+            if (h->il2d_tf_on)
+            {   /* the fused walk (il2d_real_fuse.h): the rows fused into stage 0 by digit */
+                _il2d_tf_exec_fwd(h, sre, dre);
+                return;
+            }
+            if (h->il2d_rcsk_on)
+            {   /* the skewed plane (il2d_real_pitch.h): the one-kernel pass off the aliasing pitch */
+                _il2d_rcsk_exec_fwd(h, sre, dre);
+                return;
+            }
             /* ── native IL 2D REAL fwd (fft2d_real_il_design.md): the
              * batched TC K=N1 zr2c row door does the OOP move (real rows
              * at pitch N2 -> CCE half-spectrum plane at pitch hp1), then
@@ -821,6 +831,11 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
              * door folds rows scratch -> the caller's real plane. dir is
              * ignored (c2r = inverse math, unnormalized: caller divides
              * by N1*N2). */
+            if (h->il2d_tf_on)
+            {   /* the fused walk's c2r twin (il2d_real_fuse.h): the column-inverse plane never written */
+                _il2d_tf_exec_bwd(h, sre, dre);
+                return;
+            }
             if (h->il2d_cxd_on && h->il2d_cxd_leaf && (const void *)sre != (const void *)dre)
             {   /* the destroying form (the request's permission; one thread): the
                  * column kernel in place on the caller's plane, the rows from it

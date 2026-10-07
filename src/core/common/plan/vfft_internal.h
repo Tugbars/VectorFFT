@@ -502,6 +502,24 @@ struct vfft_plan_s
      * written out. Raced against the standard walk on the whole transform,
      * banked raxis=n1|n2 on the real row; the children in role under rax_*
      * (the chain) and raxr_* (the batch). il2d_rax_on = the form serves. */
+    /* ── THE FUSED WALK (2026-10-07, il/rank2/il2d_real_fuse.h): the r2c rows
+     * fused into column stage 0 digit by digit through a dense staging of R0
+     * rows (il2d_tf_stg, pitch il2d_tf_P), the suffix and the natural leaf per
+     * stage-0 sub-problem; raced against the standard walk, banked tf=1|0 on
+     * the real row. il2d_tf_on = the form serves. */
+    int il2d_tf_on;
+    double *il2d_tf_stg;
+    size_t il2d_tf_P;
+    /* ── THE PITCH FORMS (2026-10-07, il/rank2/il2d_real_pitch.h). il2d_rscr_P =
+     * the c2r column-inverse plane's pitch in complex: hp1, or hp1 + d off the
+     * 4K-aliasing pitch (raced, cxp_c2r=d; the plane is allocated at hp1 + 3).
+     * il2d_rcsk_* = the r2c one-kernel column pass on a SKEWED private plane
+     * (N1 x il2d_rcsk_P): the rows land there, the kernel runs in place there,
+     * the rows are copied out to the caller's plane (raced, csk=1|0). */
+    size_t il2d_rscr_P;
+    int il2d_rcsk_on;
+    double *il2d_rcsk_scr;
+    size_t il2d_rcsk_P;
     int il2d_rax_on, il2d_rax_M;
     double *il2d_rax_W, *il2d_rax_A, *il2d_rax_T, *il2d_rax_tw;
     int *il2d_rax_perm;                 /* natural row k -> the scrambled pass's row; NULL = natural */

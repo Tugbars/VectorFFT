@@ -661,7 +661,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             if (cfg->transform == VFFT_C2R)
             {
                 il2d_rscr = (double *)vfft_aligned_alloc(
-                    (2 * (size_t)N1 * ((size_t)N2 / 2 + 1) + 8)
+                    (2 * (size_t)N1 * ((size_t)N2 / 2 + 1 + 3) + 8)   /* room for the raced pitch hp1 + 3 (il2d_real_pitch.h) */
                     * sizeof(double));
                 if (!il2d_rscr)
                 {
@@ -727,7 +727,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 /* +8 dbl pad: the fused c2r unzip reads full 4-wide
                  * e-blocks past the last row's tail (benign lanes). */
                 il2d_rscr = (double *)vfft_aligned_alloc(
-                    (2 * (size_t)N1 * ((size_t)N2 / 2 + 1) + 8)
+                    (2 * (size_t)N1 * ((size_t)N2 / 2 + 1 + 3) + 8)   /* room for the raced pitch hp1 + 3 (il2d_real_pitch.h) */
                     * sizeof(double));
                 if (!il2d_rscr)
                 {
@@ -849,6 +849,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     h->il2d_col.pitch = il2d_pitch;
     h->il2d_col.bandscr = il2d_bandscr;
     h->il2d_rscr = il2d_rscr;
+    h->il2d_rscr_P = (size_t)N2 / 2 + 1;   /* the CCE pitch until the pitch form races (il2d_real_pitch.h) */
     h->il2d_oddn2 = il2d_oddn2;
     h->il2d_orbuf = il2d_orbuf;
     h->il2d_col.nat = il2d_nat;
@@ -1025,6 +1026,16 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * race); its children in role on the real row (rax_*, raxr_*). One thread. */
     if (h->transform == VFFT_R2C && h->il2d_row)
         _il2d_rax_plan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* THE FUSED WALK (2026-10-07, il2d_real_fuse.h): the rows fused into
+     * column stage 0 by digit, the suffix tiled -- raced against the standard
+     * walk where that walk serves (a natural chain of two stages or more, the
+     * real axis on N1 not serving); env pin, the banked tf=, or the race. */
+    if (h->transform == VFFT_R2C && h->il2d_row)
+        _il2d_tf_plan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* the r2c SKEWED plane (il2d_real_pitch.h): a one-kernel column pass on a private
+     * plane off the aliasing pitch, the rows copied out -- raced; csk= */
+    if (h->transform == VFFT_R2C && h->il2d_row)
+        _il2d_rcsk_plan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* its c2r twin: the reverse column pass's form (the chain's natural leaf
      * strided or staged, or the backward one-kernel leaf) and its stack
      * states, raced on the cell's own reverse pass (cx_c2r= / cxs_c2r=) */
@@ -1038,6 +1049,16 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * them. */
     if (h->transform == VFFT_C2R && h->il2d_row && cfg->destroy_input)
         _il2d_real_destroyplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* the fused walk's c2r twin (il2d_real_fuse.h): the reverse leaf and the mids
+     * per tile, stage 0 by digit into the staging, the backward rows from it --
+     * raced against columns-then-rows where that walk serves (never beside the
+     * destroying form); env pin, the banked tf_c2r=, or the race. */
+    if (h->transform == VFFT_C2R && h->il2d_row)
+        _il2d_tf_plan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* the c2r column-inverse plane's PITCH (il2d_real_pitch.h): hp1 + d off the
+     * aliasing pitch for a one-kernel pass -- raced; cxp_c2r= */
+    if (h->transform == VFFT_C2R && h->il2d_row)
+        _il2d_cxp_plan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* the children's recipes onto this cell's row (wisdom2_child.h) */
     if (h->transform == VFFT_C2C)
         _il2d_children_put(W, cfg, h, N1, N2, il2d_ord, il2d_T);

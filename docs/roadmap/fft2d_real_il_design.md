@@ -48,12 +48,32 @@ staged reverse leaf: the gather is cheap at the plane's odd pitch and a
 staging only adds traffic (the forward's walk with a reversed scatter was
 raced and refuted 2026-10-06, 8-22% over strided at every chain cell).
 
-**Two-phase law**: the fwd row pass COMPLETES before column stage 0;
-the bwd row pass runs AFTER the last column stage. The Hermitian fold
-conjugates (R-linear, not C-linear) and does not commute with the
-complex column stages — unlike c2c, where row/column commutation is
-what legalized tfuse (§2.5). FFTW's apply_r2hc/apply_hc2r run the same
-two disjoint phases, never interleaved.
+**Two-phase law** (its letter relaxed 2026-10-07, owner): EVERY ROW is
+complete before any column stage reads it, and in the backward direction
+every column stage that writes a row is complete before that row's
+backward transform reads it. The Hermitian fold conjugates (R-linear, not
+C-linear) and does not commute with the complex column stages — unlike
+c2c, where row/column commutation is what legalized tfuse (§2.5) — so a
+row is never half-transformed when a column stage touches it. The ROW
+PASS AS A WHOLE need not finish first: the fused walk (il2d_real_fuse.h)
+runs stage 0's digit-d row set {d + j·N1/R0} through the row engine into a
+staging and stage 0's digit-d butterfly straight after, digit by digit,
+then the suffix and the leaf per stage-0 sub-problem; every row a stage
+reads is a finished row transform. Raced against rows-then-columns,
+banked tf= (r2c) / tf_c2r= (c2r: the leaf and the reversed suffix per
+tile first, then stage 0 by digit into the staging and the backward rows
+of the set). FFTW's apply_r2hc/apply_hc2r run the two phases disjoint.
+
+THE PITCH FORMS (il2d_real_pitch.h, 2026-10-07). The CCE pitch hp1 is the
+caller's; a one-kernel column pass in place at that pitch aliases itself
+where 16 hp1 is 16 bytes past a 4 KB multiple (512 | N2: n1c_16 2.4-2.8x
+slower). Two planes the caller never sees may leave the pitch, each raced
+on the whole transform against the plan as it stands: the c2r
+column-inverse plane at hp1 + d (d by the law in policy_il.h; banked
+cxp_c2r=d|0; the plane is allocated at hp1 + 3), and the r2c one-kernel
+pass on a skewed private plane at hp1 + 8, the rows landing there and
+copied out (banked csk=1|0 on the real row). Neither changes a kernel or a
+call; only an address moves, so each is bitwise against the form it races.
 
 No transpose (adjacent columns contiguous in IL), no inter-pass twiddle
 between the row and column passes (2D), column twiddles column-invariant
@@ -110,12 +130,17 @@ between the row and column passes (2D), column twiddles column-invariant
    the IL row plan (rx=) or the per-row door; the split 2D real plan is the
    split library's own, offered whole (the planning model's max-performance
    comparison, not a crossing).
-5. **Row/column fusion is ILLEGAL here — tfuse structurally OFF.** The
-   c2c banded walk fused rows into bands because rows commute with
-   every column stage (both C-linear, disjoint axes). The Hermitian
+5. **Row/column fusion: the c2c tier's banded tfuse is ILLEGAL here; the
+   real tier's own fusion is BY DIGIT (il2d_real_fuse.h, 2026-10-07).** The
+   c2c banded walk fused rows into contiguous bands because rows commute
+   with every column stage (both C-linear, disjoint axes). The Hermitian
    fold conjugates, so the real row pass does NOT commute — and cut>=1
    always (stage 0 spans N1, never divides wl<N1), so in NEITHER
-   direction is a band containing both column stages and rows legal.
+   direction is a CONTIGUOUS band containing both column stages and rows
+   legal. What IS legal is the digit-strided set: stage 0's digit d reads
+   exactly the rows {d + j·N1/R0}, so running the row pass over that set
+   and then the digit's butterfly keeps every row complete before the
+   stage reads it. That is the fused walk's form (raced, tf=).
    Consequences: (a) the c2c cells' banked wl/tf verdicts do NOT port —
    real lay=il cells re-race wl with rows OUTSIDE the walk and tf
    structurally 0; (b) the executor must not inherit the c2c banded
@@ -187,8 +212,8 @@ per cell, or the cell keeps the veneer — measured serving, no faith.
   through the leaf-redirected pass, odd N2 through the c2c child route and,
   in r2c, the odd engines raced in the row role; split-layout callers keep
   the split engine untouched). Verdict cells live in wisdom2_2d.txt:
-  {t=r2c ord=scr lay=il | chain= wl= rx= rxs= cx= cxs= raxis= | wl_c2r= rx_c2r=
-  rxs_c2r= cx_c2r= cxs_c2r= cxd_c2r= cxds_c2r=}, DIRECTION-SHARED (one row for both
+  {t=r2c ord=scr lay=il | chain= wl= rx= rxs= cx= cxs= raxis= tf= csk= | wl_c2r= rx_c2r=
+  rxs_c2r= cx_c2r= cxs_c2r= cxd_c2r= cxds_c2r= tf_c2r= cxp_c2r=}, DIRECTION-SHARED (one row for both
   directions, each direction's own token set: the c2r row and column plans
   are the r2c plans' twins over the backward row pass and the reverse
   column pass, 2026-10-05), raced at create on miss (the row plan, the
