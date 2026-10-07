@@ -48,18 +48,15 @@
 #ifndef VFFT_EXECUTE_H
 #define VFFT_EXECUTE_H
 
-#include "vfft_internal.h"   /* struct vfft_plan_s - the dispatch reads it */
+#include "vfft_internal.h" /* struct vfft_plan_s - the dispatch reads it */
 
 #ifdef VFFT_EXECUTE_IMPL
-
 
 /* ---- execute-side helpers ----
  * The front door's own helper (_vfft_sig_bad) is below; each layout's
  * helpers live with its execute side (il/il_execute.h, split/split_execute.h).
  * _pq_execute stays above this header's include point, in
  * il/rank2/plane_queue.h: the plane queue's create calls it too. */
-
-
 
 /* ── EXECUTE-SIDE SIGNATURE ENFORCEMENT ──
  * The pointer pattern must MATCH the plan's committed layout; the historical
@@ -127,7 +124,8 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
         {
             _vfft_warn("vfft_execute: this %s plan is IN-PLACE (one padded CCE plane of "
                        "2*(N/2+1) doubles) and must be called with dre == sre; got "
-                       "distinct pointers -- nothing executed", tn);
+                       "distinct pointers -- nothing executed",
+                       tn);
             return 1;
         }
         if (il && dim)
@@ -186,7 +184,8 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
         {
             _vfft_warn("vfft_execute: this %s plan is IN-PLACE (one padded CCE plane of "
                        "2*(N/2+1) doubles) and must be called with dre == sre; got "
-                       "distinct pointers -- nothing executed", tn);
+                       "distinct pointers -- nothing executed",
+                       tn);
             return 1;
         }
         if (il && sim)
@@ -284,8 +283,8 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
     return 0;
 }
 
-#include "il/il_execute.h"          /* the INTERLEAVED execute (IL side of the fork) */
-#include "split/split_execute.h"    /* the SPLIT execute */
+#include "il/il_execute.h"           /* the INTERLEAVED execute (IL side of the fork) */
+#include "split/split_execute.h"     /* the SPLIT execute */
 #include "bridge/real_bridge_exec.h" /* 1D real: the D1 crossing (temporary) */
 
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
@@ -308,7 +307,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     {
         if (h->k1_exec(h, dir, sre, dre) == 0)
             return;
-        k1_tried = 1;   /* the trampoline declined (il2p's unresolvable bwd arm): the general path decides */
+        k1_tried = 1; /* the trampoline declined (il2p's unresolvable bwd arm): the general path decides */
     }
     if (!h)
     {
@@ -374,8 +373,8 @@ void vfft_destroy(vfft_plan h)
         if (h->il2d_row)
         {
             int s2;
-            vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
-            vfft_child_store_free(h->il2d_rowS);   /* the children's private stores (il/wisdom/wisdom2_child.h) */
+            vfft_destroy(h->il2d_row);           /* native IL 2D tier owns its row child */
+            vfft_child_store_free(h->il2d_rowS); /* the children's private stores (il/wisdom/wisdom2_child.h) */
             vfft_child_store_free(h->il2d_turnS);
             vfft_child_store_free(h->il2d_cskS);
             vfft_child_store_free(h->il2d_col.tpcS);
@@ -390,9 +389,9 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_turnw);
             vfft_aligned_free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
             free(h->il2d_col.natperm);
-            vfft_aligned_free(h->il2d_col.natscr);   /* aligned since 2026-09-24 */
+            vfft_aligned_free(h->il2d_col.natscr); /* aligned since 2026-09-24 */
             vfft_aligned_free(h->il2d_col.natstage);
-            _il2d_nat_sscr_free(&h->il2d_col);   /* the strips' dense scratch (2026-09-24) */
+            _il2d_nat_sscr_free(&h->il2d_col); /* the strips' dense scratch (2026-09-24) */
             vfft_aligned_free(h->il2d_col.bluchf);
             vfft_aligned_free(h->il2d_col.bluchb);
             vfft_aligned_free(h->il2d_col.blukf);
@@ -402,7 +401,7 @@ void vfft_destroy(vfft_plan h)
                 vfft_destroy(h->il2d_col.tpcplan); /* the turned prime pass's 1D plan */
             if (h->il2d_col.tpcscr)
                 vfft_aligned_free(h->il2d_col.tpcscr);
-            vfft_aligned_free(h->il2d_rowb2_scr);   /* the two-pass rows' chunk scratch (route 3) */
+            vfft_aligned_free(h->il2d_rowb2_scr); /* the two-pass rows' chunk scratch (route 3) */
             if (h->il2d_turn_plan)
                 vfft_destroy(h->il2d_turn_plan); /* the turn route's N1 plan */
             vfft_aligned_free(h->il2d_turn_scr);
@@ -414,16 +413,16 @@ void vfft_destroy(vfft_plan h)
             if (h->il2d_rx_eng)
                 vfft_destroy((vfft_plan)h->il2d_rx_eng); /* the real tier's row engine */
             if (h->il2d_rxw)
-            {   /* its worker clones (the threaded row pass) */
+            { /* its worker clones (the threaded row pass) */
                 for (s2 = 0; s2 < h->il2d_rxw_n; s2++)
                     if (h->il2d_rxw[s2])
                         vfft_destroy((vfft_plan)h->il2d_rxw[s2]);
                 free(h->il2d_rxw);
             }
-            vfft_child_store_free(h->il2d_rxS);          /* the row engines' private store */
-            _il2d_rax_free(h);                           /* the real axis on N1: its planes, chain, batch and stores */
-            _il2d_tf_free(h);                            /* the fused walk's staging */
-            _il2d_rcsk_free(h);                          /* the skewed plane */
+            vfft_child_store_free(h->il2d_rxS); /* the row engines' private store */
+            _il2d_rax_free(h);                  /* the real axis on N1: its planes, chain, batch and stores */
+            _il2d_tf_free(h);                   /* the fused walk's staging */
+            _il2d_rcsk_free(h);                 /* the skewed plane */
             for (s2 = 0; s2 < h->il2d_col.nst; s2++)
             {
                 vfft_aligned_free(h->il2d_col.tf[s2]);
@@ -457,14 +456,14 @@ void vfft_destroy(vfft_plan h)
     vfft_k1fs_destroy(h->k1fs);
     if (h->k1sp)
         vfft_oop_plan_destroy(h->k1sp);
-    _zr2c_kid_destroy(h->zr2c_kid);              /* the zr2c child: its engines (il/real/zr2c_build.h) */
-    vfft_zrp_destroy(h->zrp);                    /* the real pair (il/real/zrp.h) */
-    vfft_zttr_destroy(h->zttr);                  /* ZTT-r (il/real/zttr.h) */
-    vfft_zfsr_destroy(h->zfsr);                  /* the real four-step (il/real/zfsr.h) */
-    vfft_zrf_destroy(h->zrf);                    /* the real flat DIT (il/real/zrf.h) */
-    vfft_zrb_destroy(h->zrb);                    /* the real Bluestein (il/real/zrb.h) */
-    vfft_zrbl_destroy(h->zrbl);                  /* the lane Bluestein (il/real/zrb_lanes.h) */
-    vfft_aligned_free(h->zr2c_aff);      /* posix_memalign-backed */
+    _zr2c_kid_destroy(h->zr2c_kid); /* the zr2c child: its engines (il/real/zr2c_build.h) */
+    vfft_zrp_destroy(h->zrp);       /* the real pair (il/real/zrp.h) */
+    vfft_zttr_destroy(h->zttr);     /* ZTT-r (il/real/zttr.h) */
+    vfft_zfsr_destroy(h->zfsr);     /* the real four-step (il/real/zfsr.h) */
+    vfft_zrf_destroy(h->zrf);       /* the real flat DIT (il/real/zrf.h) */
+    vfft_zrb_destroy(h->zrb);       /* the real Bluestein (il/real/zrb.h) */
+    vfft_zrbl_destroy(h->zrbl);     /* the lane Bluestein (il/real/zrb_lanes.h) */
+    vfft_aligned_free(h->zr2c_aff); /* posix_memalign-backed */
     vfft_aligned_free(h->zr2c_scratch);
     if (h->rplan)
         vfft_r2c_plan_destroy(h->rplan);
