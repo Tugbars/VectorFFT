@@ -84,7 +84,7 @@
 #include "common/support/cpu_cache.h"     /* _vfft_cpuid */
 #include "common/support/cpu_topology.h"  /* the P-cores and the siblings */
 
-/* what a scope reports (vfft.h repeats them as VFFT_MEASURE_CONTENDED / _UNPINNED) */
+/* what a scope reports (vfft_diagnostics.h repeats them as VFFT_MEASURE_CONTENDED / _UNPINNED, 2026-10-07) */
 #define VFFT_SCOPE_CONTENDED 1   /* the measurement lock was not obtained within the wait */
 #define VFFT_SCOPE_UNPINNED  2   /* the thread is not pinned to a P-core */
 

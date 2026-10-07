@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"   /* the measurement scope as a tool (moved out of vfft.h 2026-10-07) */
 
 static int bench_guard_mode(void)
 {

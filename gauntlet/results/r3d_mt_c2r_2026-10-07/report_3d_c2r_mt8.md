@@ -1,6 +1,6 @@
 # gauntlet report (3D)
 
-run: `r3d_mt_c2r_2026-10-07`  contract: 3D c2c interleaved, natural, out of place, K=1_c2r_mt8  cells: 4 listed, 4 benched, comparator: MKL DFTI 3D (out of place)
+run: `r3d_mt_c2r_2026-10-07`  contract: 3D c2r interleaved, natural, out of place, K=1_c2r_mt8  cells: 4 listed, 4 benched, comparator: MKL DFTI 3D (out of place)
 
 control cell 64x64x64: 4 readings, 1.034..1.093
 

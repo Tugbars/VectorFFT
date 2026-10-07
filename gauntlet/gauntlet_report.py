@@ -132,8 +132,9 @@ def build_2d(run_dir, sfx="_2d"):
     W = out.append
     keys = sorted(set(cells) | set(cal))
     W("# gauntlet report (%dD)\n" % nd)
-    W("run: `%s`  contract: %dD c2c interleaved, natural, out of place, K=1%s  cells: %d listed, %d benched, comparator: %s\n" % (
-        os.path.basename(os.path.abspath(run_dir)), nd, sfx.replace("_%dd" % nd, ""), len(keys), len(cells), (("FFTW %dD (out of place, MEASURE)" % nd) if "_fftw" in sfx else ("MKL DFTI %dD (out of place)" % nd)) if has_cmp else "none (absolute numbers)"))
+    W("run: `%s`  contract: %dD %s interleaved, natural, out of place, K=1%s  cells: %d listed, %d benched, comparator: %s\n" % (
+        os.path.basename(os.path.abspath(run_dir)), nd, "r2c" if "_r2c" in sfx else "c2r" if "_c2r" in sfx else "c2c",   # the real runs (2026-10-07)
+        sfx.replace("_%dd" % nd, ""), len(keys), len(cells), (("FFTW %dD (out of place, MEASURE)" % nd) if "_fftw" in sfx else ("MKL DFTI %dD (out of place)" % nd)) if has_cmp else "none (absolute numbers)"))
     if ctl:
         W("control cell %s: %d readings, %.3f..%.3f\n" % ("64x64x64" if nd == 3 else "64x64", len(ctl), min(ctl), max(ctl)))
     if any("engaged" in r for rs in rows.values() for r in rs):
