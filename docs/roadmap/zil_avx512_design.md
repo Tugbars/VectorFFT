@@ -687,7 +687,7 @@ policy, ZTURN-T at VW=8, k1 mono, corpus/registry ISA) are merged into
   hidden by `-w`).
 - `emit_ztt_drivers` opens its output before emitting, so a failure leaves a 0-byte `.c`
   that `build.py` would compile.
-- Kernel-level gates in `build_tuned/benches` hardcode `_avx2` symbols (blocked_tail_gate,
+- Kernel-level gates in `src/tools/gates` hardcode `_avx2` symbols (blocked_tail_gate,
   cil_ab, tangent gates, odd_ct_gate, ztt gates).
 
 ---

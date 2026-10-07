@@ -17,7 +17,7 @@
  *   bench_vtune.exe              # VFFT only
  *   bench_vtune.exe --mkl        # VFFT + MKL on same cells, side-by-side
  *
- * Recommended VTune command (from build_tuned/dev/bench_vtune/):
+ * Recommended VTune command (from src/tools/VtuneHarness/):
  *   vtune -collect uarch-exploration -result-dir vt_uarch -- ^
  *         bench_vtune.exe --mkl
  *   vtune -report hotspots -result-dir vt_uarch

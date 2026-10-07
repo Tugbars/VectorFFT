@@ -14,7 +14,7 @@
  * generated). Loaded caller-owned (vfft_wisdom_load) — the override table is
  * never auto-persisted, so pointing at the shipped folder is read-safe.
  *
- * Build (from build_tuned/): python build.py --src benches/zr2c_fd_gate.c --vfft
+ * Build (from the repo root): python gauntlet/build.py --src src/tools/gates/zr2c_fd_gate.c --vfft
  */
 #include <stdio.h>
 #include <stdlib.h>

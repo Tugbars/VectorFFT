@@ -163,7 +163,7 @@ pressure differs — and the best variant differs with it. The planner scores ea
 its own `(R, K, ios)` with the CPE above (precedence `log3→t1s→t1`), so the chosen plan is a
 **per-stage mix** that no uniform choice matches.
 
-Measured mix-vs-all-FLAT, single-thread, paced (`build_tuned/benches/bench_variant_flat_vs_mix.c`):
+Measured mix-vs-all-FLAT, single-thread, paced (`bench_variant_flat_vs_mix.c`, deleted in 6f9681af):
 
 | cell | factors | mix (stages 1+) | mix vs all-FLAT |
 |------|---------|-----------------|:---------------:|

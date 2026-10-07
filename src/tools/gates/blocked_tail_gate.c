@@ -30,9 +30,9 @@
  * hoisted `k` out of the bulk loop for blocked, which must not disturb the
  * even path that every shipping cell uses today.
  *
- * Build (from build_tuned/):
- *   gcc -O3 -mavx2 -mfma -march=native -o benches/blocked_tail_gate.exe \
- *       benches/blocked_tail_gate.c /tmp/k_blk.c /tmp/k_mono.c -lm
+ * Build (from the repo root):
+ *   gcc -O3 -mavx2 -mfma -march=native -o src/tools/gates/blocked_tail_gate.exe \
+ *       src/tools/gates/blocked_tail_gate.c /tmp/k_blk.c /tmp/k_mono.c -lm
  */
 #include <stdio.h>
 #include <stdlib.h>

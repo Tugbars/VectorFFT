@@ -334,7 +334,7 @@ def dag_codelet_lib(tc) -> str | None:
 def dag_write_jit_rsp():
     """Point the JIT runtime's codelet response file (jit/generated/codelets.rsp,
     its default VFFT_PROTO_JIT_CODELETS) at build.py's CACHED .obj objects — so the
-    --jit build config is fully self-contained in build_tuned (no separate
+    --jit build config is fully self-contained in this script (no separate
     jit/build_codelets.ps1 step). The JIT's runtime `gcc -shared` links these .o
     into each emitted single-plan .dll."""
     objdir = DAG / '.obj' / DAG_ISA
@@ -814,7 +814,7 @@ def main():
     ap.add_argument('--jit', action='store_true',
                     help='JIT build config: defines VFFT_USE_JIT (bench resolves '
                          'plans via vfft_proto_plan_jit_fwd) + points the JIT '
-                         'runtime at build.py-cached codelet objects. All in build_tuned.')
+                         'runtime at build.py-cached codelet objects. All in gauntlet/build.py.')
     ap.add_argument('--vfft', action='store_true',
                     help='Compile src/core/vfft.c alongside the source. Use this '
                          'when the source file uses the public vfft.h API '

@@ -31,7 +31,7 @@ import toolchain  # noqa: E402
 ROOT = toolchain.ROOT
 CORE = toolchain.CORE
 _INC = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.M)
-SCAN_DIRS = [CORE, os.path.join(ROOT, "gauntlet"), os.path.join(ROOT, "build_tuned", "benches"),
+SCAN_DIRS = [CORE, os.path.join(ROOT, "gauntlet"), os.path.join(ROOT, "src", "tools", "gates"),
              os.path.join(ROOT, "src", "tools")]
 
 

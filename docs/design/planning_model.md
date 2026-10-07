@@ -379,7 +379,7 @@ radix. Hundreds exist, in families with different tradeoffs.
 **bank** — write a verdict. **replay** — serve from the store without measuring.
 **hysteresis** — the margin needed to displace an incumbent.
 **offline vs create-time** — some tournaments run only in dedicated calibration programs
-(`build_tuned/benches/calibrate_*.c`), never during `vfft_create`. Their verdicts must
+(`gauntlet/calibrate_*.c`), never during `vfft_create`. Their verdicts must
 already be banked or the feature falls back.
 
 ---

@@ -7,7 +7,7 @@
  * Note: the c2r plan's base (rfft_plan_create) needs the rfft FORWARD codelets for
  * its twiddle tables, so register BOTH rfft + c2r families into one registry.
  *
- * Build: cd build_tuned && python build.py --src ../src/dag-fft-compiler/jit/c2r_jit_smoke.c --jit --compile
+ * Build: python gauntlet/build.py --src src/dag-fft-compiler/jit/c2r_jit_smoke.c --jit --compile
  */
 #define _GNU_SOURCE 1
 #include <stdio.h>

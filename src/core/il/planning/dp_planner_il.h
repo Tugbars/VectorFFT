@@ -94,7 +94,7 @@ static inline void _il_dp_sleep_ms(int ms)
 #define VFFT_IL_DP_TILE_KEEP     16
 
 /* Candidates per (N, ord). Sized from the enumerator census
- * (il_dp_cand_census.c (deleted 2026-10-07; git history at 9c78df17)) with a wide margin, so the cap is
+ * (il_dp_cand_census.c, deleted 2026-10-07; in git at 9c78df17) with a wide margin, so the cap is
  * non-binding rather than relied on: overflow is LOUD and REFUSES the cell
  * (_il_dp_push / vfft_il_dp_plan), and a refused cell banks nothing. Cost is
  * 1024 * sizeof(vfft_il_cand_t) on the stack in vfft_il_dp_plan, ~70 KB.

@@ -207,7 +207,7 @@ here — it only has to be the *same* garbage as before.
 
 Numerical correctness lives elsewhere: the fd-gate (38/38), `mt_c2c_gate`
 (MT == ST bitwise), the c2r matrix gate, and the bench correctness checks.
-Performance lives elsewhere again (`build_tuned/benches`, quiet-machine
+Performance lives elsewhere again (`gauntlet/`, quiet-machine
 protocol). Those gates and this one are complementary, and neither substitutes
 for the other.
 

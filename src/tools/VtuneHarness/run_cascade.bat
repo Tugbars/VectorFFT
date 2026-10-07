@@ -9,7 +9,7 @@ rem   run_cascade.bat                      build + run, no VTune
 rem   run_cascade.bat --collect uarch-exploration   build + profile
 
 set "ROOT=C:\Users\Tugbars\Desktop\highSpeedFFT"
-set "OUTDIR=%ROOT%\build_tuned\dev\bench_vtune"
+set "OUTDIR=%ROOT%\src\tools\VtuneHarness"
 set "PROTO=%ROOT%\src\prototype"
 set "VTUNE_ROOT=C:\Program Files (x86)\Intel\oneAPI\vtune\latest"
 set "ONEAPI_SETVARS=C:\Program Files (x86)\Intel\oneAPI\setvars.bat"

@@ -5,7 +5,7 @@
  *   assert fn(plan) output == rfft_execute_fwd_packed(plan) output  (bit-exact)
  *   time both at low K (where the per-stage dispatch JIT removes actually shows).
  *
- * Build: cd build_tuned && python build.py --src ../src/dag-fft-compiler/jit/rfft_jit_smoke.c --jit --compile
+ * Build: python gauntlet/build.py --src src/dag-fft-compiler/jit/rfft_jit_smoke.c --jit --compile
  * Run  : PATH += mingw bin ; (python + gcc on PATH for the runtime compile)
  */
 #define _GNU_SOURCE 1

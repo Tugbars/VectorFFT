@@ -16,7 +16,7 @@ rem   run.bat --collect threading   — build + run under VTune threading
 rem ─────────────────────────────────────────────────────────────────
 
 set "ROOT=C:\Users\Tugbars\Desktop\highSpeedFFT"
-set "OUTDIR=%ROOT%\build_tuned\dev\bench_vtune"
+set "OUTDIR=%ROOT%\src\tools\VtuneHarness"
 set "VTUNE_ROOT=C:\Program Files (x86)\Intel\oneAPI\vtune\latest"
 set "ONEAPI_COMPILER=C:\Program Files (x86)\Intel\oneAPI\compiler\2025.3"
 set "MKLROOT=C:\Program Files (x86)\Intel\oneAPI\mkl\latest"

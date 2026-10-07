@@ -347,7 +347,7 @@ target_compile_options(dagcodelets PRIVATE ${VFFT_CODE_FLAGS})
 # still names).
 # The bench and the tools that drive it live in gauntlet/ (2026-09-22): the
 # user-facing measurement path (calibrate / bench / report / merge), see
-# gauntlet/README.md. build_tuned/ is the development scratch space, retiring.
+# gauntlet/README.md. build_tuned/ was retired 2026-10-07; the gates live in src/tools/gates/.
 add_subdirectory(gauntlet)
 
 message(STATUS "")

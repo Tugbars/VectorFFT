@@ -50,9 +50,9 @@ rather than re-deriving; keep this directory as the clean reference.
 ## Usage (once ported)
 
 ```cmd
-build_tuned\VtuneHarness\run.bat                              :: build + run, no VTune
-build_tuned\VtuneHarness\run.bat --collect uarch-exploration  :: port utilization + top-down
-build_tuned\VtuneHarness\run.bat --collect hotspots           :: which codelet actually ran
+src\tools\VtuneHarness\run.bat                              :: build + run, no VTune
+src\tools\VtuneHarness\run.bat --collect uarch-exploration  :: port utilization + top-down
+src\tools\VtuneHarness\run.bat --collect hotspots           :: which codelet actually ran
 ```
 
 VTune 2025.10 is installed at

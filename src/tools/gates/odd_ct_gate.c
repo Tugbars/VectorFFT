@@ -22,7 +22,7 @@
  * tail arm and the new factored body are independent changes that must
  * compose.
  *
- * Build (from build_tuned/benches):
+ * Build (from src/tools/gates):
  *   gcc -O3 -mavx2 -mfma -march=native -o odd_ct_gate.exe odd_ct_gate.c \
  *       oc_off_9.c oc_on_9.c oc_off_15.c oc_on_15.c oc_off_21.c oc_on_21.c \
  *       oc_off_25.c oc_on_25.c oc_off_27.c oc_on_27.c -lm
