@@ -164,7 +164,12 @@ def group_cells(group, maxn, primes):
         m = maxn or 8192
         return [(1 << a, 1 << b, 1 << c) for a in range(1, 14) for b in range(1, 14) for c in range(1, 14)
                 if (1 << a) <= m and (1 << b) <= m and (1 << c) <= m and a + b + c <= 22]
-    raise SystemExit("unknown group %r (pow2 | primes | mixed | all | 2d-small | 2d-odd | 2d-pow2 | 2d-mixed | 3d-pow2)" % group)
+    if group == "3d-real":                  # the REAL cube grid (2026-10-07): every 2^a x 2^b x 2^c, 4..--max per axis (default 256), up to 2^20 points, plus odd-N3 cubes
+        m = maxn or 256
+        cells = [(1 << a, 1 << b, 1 << c) for a in range(2, 14) for b in range(2, 14) for c in range(2, 14)
+                 if (1 << a) <= m and (1 << b) <= m and (1 << c) <= m and a + b + c <= 20]
+        return cells + [(27, 9, 15), (36, 20, 28), (32, 32, 27), (64, 64, 15), (16, 64, 63)]
+    raise SystemExit("unknown group %r (pow2 | primes | mixed | all | 2d-small | 2d-odd | 2d-pow2 | 2d-mixed | 3d-pow2 | 3d-real)" % group)
 
 
 def estimate_seconds(cells, threads, calibrate):
@@ -327,7 +332,8 @@ def cell_rows(store, n, ip, threads=1, real=None, k=1):
             for m in re.finditer(r"@cell t=%s n=%d q=%d [^|\n]*place=%s[^|\n]*\| (eng=tcb[^\n]*)" % (real, n, int(k), pl), t):
                 out[m.group(0).split(" | ")[0]] = re.sub(r" date=\S+", "", m.group(1))
     if real and is2d(n):
-        pats = (("wisdom2_2d.txt", r"@cell t=r2c n=%s q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (ckey(n), pl)),)
+        # the direction-shared t=r2c row: wisdom2_2d.txt for a plane, wisdom2_3d.txt for a cube (the rank-3 real tier, 2026-10-07)
+        pats = (("wisdom2_%dd.txt" % len(n), r"@cell t=r2c n=%s q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (ckey(n), pl)),)
     elif real:
         pats = (("wisdom2_real.txt", r"@cell t=%s n=%d q=1 [^|\n]*place=%s[^|\n]*\| ([^\n]*)" % (real, n, pl)),
                 ("wisdom2_oop.txt", r"@cell t=c2c n=%d q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (n // 2, pl)),
@@ -421,7 +427,11 @@ def stage_calibrate(run, cells, recal):
 
 def bench_cell(run, n, csv_path):
     bench = run.exe("bench_1d_vs_mkl")
-    if is2d(n) and len(n) == 3:
+    if is2d(n) and len(n) == 3 and run.real:
+        # the 3D REAL cell (2026-10-07): the shape N1xN2xN3 in the N slot (bench --3dreal; the rank-3 real tier, one thread)
+        flag = ["--3dreal", "--realfwd" if run.real == "r2c" else "--realbwd"]
+        nstr, kstr = ckey(n), "1"
+    elif is2d(n) and len(n) == 3:
         # the 3D interleaved cell: the shape N1xN2xN3 in the N slot (bench --3dilnat, 2026-09-24)
         flag = ["--3dilnat"] + (["--mt"] if run.threads > 1 else [])   # --mt: the threaded cell at $VFFT_MT (2026-09-24)
         nstr, kstr = ckey(n), "1"
@@ -612,13 +622,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("verb", choices=["run", "calibrate", "bench", "report", "merge", "cells", "verify", "gflops"])
     ap.add_argument("--cells", help="4096 | 2..4096 | 1000,1024,4096 | @file")
-    ap.add_argument("--group", choices=["pow2", "primes", "mixed", "all", "2d-small", "2d-odd", "2d-pow2", "2d-mixed", "3d-pow2"])
+    ap.add_argument("--group", choices=["pow2", "primes", "mixed", "all", "2d-small", "2d-odd", "2d-pow2", "2d-mixed", "3d-pow2", "3d-real"])
     ap.add_argument("--max", type=int, help="ceiling for a group (pow2 2^23, primes 16384, mixed 4000000, 2d-small 64 per axis, 2d-pow2 8192 per axis, 2d-mixed 512)")
     ap.add_argument("--primes", help="the prime set of the mixed group, e.g. 2,3,5,7 (default 2,3,5)")
     ap.add_argument("--threads", default="1")
     ap.add_argument("--inplace", action="store_true")
     ap.add_argument("--cmp", choices=["mkl", "kfr", "fftw"], default="mkl", help="the comparator: mkl (default), kfr (a bench built with build.py --kfr; 1D c2c, one thread) or fftw (bound at runtime from vcpkg's fftw3.dll or $VFFT_FFTW_DLL; FFTW_MEASURE; the 1D c2c and the real cells, one thread); its own csv suffix")
-    ap.add_argument("--real", choices=["r2c", "c2r"], help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells or 2D shapes; its own csv suffix _r2c / _c2r")
+    ap.add_argument("--real", choices=["r2c", "c2r"], help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells, 2D shapes or 3D cubes (2026-10-07); its own csv suffix _r2c / _c2r")
     ap.add_argument("--k", type=int, default=1, help="the batch count of the 1D real cell: K transform-contiguous rows (real rows at pitch N, CCE rows at pitch N+2); suffix _k<K>")
     ap.add_argument("--name", help="run directory name under gauntlet/results/ (default: group_date)")
     ap.add_argument("--store", help="use this wisdom store instead of a fresh copy of the shipped one")
@@ -649,10 +659,10 @@ def main():
     run = Run(args, dims)
     if run.cmp == "kfr" and (dims != 1 or run.threads > 1 or run.real):
         raise SystemExit("--cmp kfr: the KFR arm is the 1D c2c cell at one thread only")
-    if run.cmp == "fftw" and (run.threads > 1 or dims == 3 or run.ip):
-        raise SystemExit("--cmp fftw: the FFTW arm serves the 1D c2c cell and the 1D/2D real cells, out of place, one thread")
-    if run.real and (run.ip or dims == 3 or (run.threads > 1 and dims != 1)):
-        raise SystemExit("--real: the real contract is out of place, 1D or 2D; --threads serves the 1D cell only (2026-09-30)")
+    if run.cmp == "fftw" and (run.threads > 1 or (dims == 3 and not run.real) or run.ip):
+        raise SystemExit("--cmp fftw: the FFTW arm serves the 1D c2c cell and the 1D/2D/3D real cells, out of place, one thread")
+    if run.real and (run.ip or (run.threads > 1 and dims != 1)):
+        raise SystemExit("--real: the real contract is out of place, 1D, 2D or 3D; --threads serves the 1D cell only (2026-09-30)")
     if run.k > 1 and (not run.real or dims != 1):
         raise SystemExit("--k: the batch count belongs to the 1D real cell")
     cal_s, bench_s = estimate_seconds(cells, run.threads, args.calibrate)

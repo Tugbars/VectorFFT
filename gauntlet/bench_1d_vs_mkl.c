@@ -1197,10 +1197,11 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
  * ("z:r2c2d" / "z:c2r2d"), path "nat-oop". Nothing else runs in the process. */
 static int g_real = 0;    /* 1 = r2c (forward), 2 = c2r (backward) */
 static int g_k2real = 0;  /* --2drealnat: the 2D real cell */
+static int g_k3real = 0;  /* --3dreal (2026-10-07): the 3D real cell, the shape N1xN2xN3 in the N slot (fftnd_real_il.h) */
 
 /* the cell's geometry: nd = 1 or 2; K blocks (1D rows; 2D: one block) of rp
  * reals and cp CCE doubles each */
-typedef struct { int nd, N1, N2; size_t K, rp, cp, pts; } real_geo_t;
+typedef struct { int nd, N1, N2, N3; size_t K, rp, cp, pts; } real_geo_t;   /* nd = 1, 2 or 3 (2026-10-07) */
 
 typedef void (*real_body_f)(void *ctx);
 /* the K=1 cell's timing shape (k1z_time_vfft_d): 10 warm-ups, then TWO windows
@@ -1251,7 +1252,10 @@ static fftwx_plan real_fx_plan(const real_geo_t *g, int c2r, double *a, double *
 {
     const int N = g->N1, K = (int)g->K;
     fftwx_plan p;
-    if (g->nd == 2)
+    if (g->nd == 3)
+        p = c2r ? g_fx_arm.plan_dft_c2r_3d(g->N1, g->N2, g->N3, (fftwx_complex *)a, b, FFTWX_MEASURE)
+                : g_fx_arm.plan_dft_r2c_3d(g->N1, g->N2, g->N3, a, (fftwx_complex *)b, FFTWX_MEASURE);
+    else if (g->nd == 2)
         p = c2r ? g_fx_arm.plan_dft_c2r_2d(g->N1, g->N2, (fftwx_complex *)a, b, FFTWX_MEASURE)
                 : g_fx_arm.plan_dft_r2c_2d(g->N1, g->N2, a, (fftwx_complex *)b, FFTWX_MEASURE);
     else if (K > 1)
@@ -1284,14 +1288,22 @@ static void real_mk_body(void *v)
 static DFTI_DESCRIPTOR_HANDLE real_mk_desc(const real_geo_t *g, int c2r)
 {
     DFTI_DESCRIPTOR_HANDLE d = NULL;
-    MKL_LONG dims[2] = { g->N1, g->N2 };
-    const MKL_LONG rc = g->nd == 2 ? DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_REAL, 2, dims)
+    MKL_LONG dims[3] = { g->N1, g->N2, g->N3 };
+    const MKL_LONG rc = g->nd == 3 ? DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_REAL, 3, dims)
+                      : g->nd == 2 ? DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_REAL, 2, dims)
                                    : DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)g->N1);
     if (rc != DFTI_NO_ERROR)
         return NULL;
     DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
     DftiSetValue(d, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
-    if (g->nd == 2)
+    if (g->nd == 3)
+    {   /* the 3D CCE strides, as the 2D ones: the explicit {0, N2 hp3, hp3, 1} is the layout FFTW and we write */
+        const MKL_LONG hp3 = g->N3 / 2 + 1;
+        MKL_LONG rs[4] = { 0, (MKL_LONG)g->N2 * g->N3, g->N3, 1 }, cs[4] = { 0, (MKL_LONG)g->N2 * hp3, hp3, 1 };
+        DftiSetValue(d, DFTI_INPUT_STRIDES, c2r ? cs : rs);
+        DftiSetValue(d, DFTI_OUTPUT_STRIDES, c2r ? rs : cs);
+    }
+    else if (g->nd == 2)
     {
         MKL_LONG rs[3] = { 0, g->N2, 1 }, cs[3] = { 0, g->N2 / 2 + 1, 1 };
         DftiSetValue(d, DFTI_INPUT_STRIDES, c2r ? cs : rs);
@@ -1406,11 +1418,12 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
 {
     const int c2r = (g_real == 2);
     const size_t rn = g->K * g->rp + 2, cn = g->K * g->cp, tot = g->pts / 2;
-    const char *plan_s = g->nd == 2 ? (c2r ? "z:c2r2d" : "z:r2c2d") : (c2r ? "z:c2r" : "z:r2c");
+    const char *plan_s = g->nd == 3 ? (c2r ? "z:c2r3d" : "z:r2c3d") : g->nd == 2 ? (c2r ? "z:c2r2d" : "z:r2c2d") : (c2r ? "z:c2r" : "z:r2c");
     const char *path = "nat-oop";
-    char shape[32];
-    if (g->nd == 2) snprintf(shape, sizeof shape, "%dx%d", g->N1, g->N2);
-    else            snprintf(shape, sizeof shape, "%d", g->N1);
+    char shape[48];
+    if (g->nd == 3)      snprintf(shape, sizeof shape, "%dx%dx%d", g->N1, g->N2, g->N3);
+    else if (g->nd == 2) snprintf(shape, sizeof shape, "%dx%d", g->N1, g->N2);
+    else                 snprintf(shape, sizeof shape, "%d", g->N1);
     if (!g_k1noop_mt) bench_pin_one_thread();   /* --mt: the threaded cell's two-team protocol (main) */
     vfft_wisdom *W = k1z_bundle();
     if (!W)
@@ -1425,11 +1438,12 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     cfg.rigor = VFFT_MEASURE;
     cfg.dims = g->nd;
     cfg.n[0] = g->N1;
-    cfg.n[1] = g->nd == 2 ? g->N2 : 0;
+    cfg.n[1] = g->nd >= 2 ? g->N2 : 0;
+    cfg.n[2] = g->nd == 3 ? g->N3 : 0;
     cfg.howmany = g->K;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.batch_geom = g->K > 1 ? VFFT_BATCH_TRANSFORM_CONTIGUOUS : VFFT_BATCH_DEFAULT;
-    cfg.order = g->nd == 2 ? VFFT_ORDER_NATURAL : VFFT_ORDER_DEFAULT;   /* a real spectrum is natural */
+    cfg.order = g->nd >= 2 ? VFFT_ORDER_NATURAL : VFFT_ORDER_DEFAULT;   /* a real spectrum is natural */
     cfg.nthreads = g_k1noop_mt ? g_mt : 1;   /* --mt: the plan's thread snapshot; the comparator gets the same T */
     cfg.wisdom = W;   /* wisdom_write 0: a bench never banks */
     vfft_plan h = vfft_create(&cfg);
@@ -1443,7 +1457,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     for (size_t i = 0; i < rn; i++)
         x[i] = 0.0;
     for (size_t t = 0; t < g->K; t++)
-        for (size_t i = 0; i < (size_t)g->N1 * (g->nd == 2 ? (size_t)g->N2 : 1); i++)
+        for (size_t i = 0; i < g->rp; i++)   /* the points of one transform at any rank */
             x[t * g->rp + i] = (double)rand() / RAND_MAX - 0.5;
     const int haveref = real_ref_spectrum(g, x, ref);
     memcpy(src, c2r ? ref : x, (c2r ? cn : rn) * sizeof(double));
@@ -1529,7 +1543,10 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     if (out)
     {
         char row[320];
-        if (g->nd == 2)
+        if (g->nd == 3)
+            snprintf(row, sizeof row, "%d,%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
+                     g->N1, g->N2, g->N3, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
+        else if (g->nd == 2)
             snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
                      g->N1, g->N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
         else if (g_k1noop_mt)   /* the threaded run's own column, as the K=1 c2c cell's */
@@ -5531,6 +5548,10 @@ int main(int argc, char **argv)
         {
             g_k2real = 1; /* the 2D real gauntlet cell: N1 in the N slot, N2 in the K slot */
         }
+        else if (strcmp(argv[1], "--3dreal") == 0)
+        {
+            g_k3real = 1; /* the 3D real gauntlet cell (2026-10-07): the shape N1xN2xN3 in the N slot */
+        }
         else if (strcmp(argv[1], "--ilmt") == 0)
         {
             /* TC-batch MT vs MKL batched MT (2026-08-06). Implies the MT
@@ -5561,7 +5582,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "--cmp fftw: the FFTW arm is the 1D c2c K=1 cell only\n");
         return 2;
     }
-    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat || (g_real && !g_k2real)) && mt;   /* the 2D/3D cells share the
+    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat || (g_real && !g_k2real && !g_k3real)) && mt;   /* the 2D/3D cells share the
                                                                           * threaded-cell discipline (2026-09-24) */
     if (g_k1noop_mt)
     {
@@ -6209,6 +6230,8 @@ int main(int argc, char **argv)
     {
         if (g_k3nat)
             fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,%sflip\n", g_k1noop_mt ? "engaged," : "");
+        else if (g_k3real)
+            fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
         else if (g_k2real)
             fprintf(out, "N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip\n");
         else if (g_k2nat)
@@ -6249,8 +6272,8 @@ int main(int argc, char **argv)
         printf("\nbenched 1 cell.  CSV -> %s\n", csv);
         return 0;
     }
-    if (g_real || g_k2real)
-    {   /* --realfwd / --realbwd / --2drealnat: one isolated real cell per
+    if (g_real || g_k2real || g_k3real)
+    {   /* --realfwd / --realbwd / --2drealnat / --3dreal: one isolated real cell per
          * process (the N and K slots); nothing else runs in this process */
         if (!target_N)
         {
@@ -6260,7 +6283,21 @@ int main(int argc, char **argv)
         {
             real_geo_t g;
             memset(&g, 0, sizeof g);
-            if (g_k2real)
+            if (g_k3real)
+            {   /* the 3D real cell (2026-10-07): the shape N1xN2xN3 in the N slot, any N3 parity;
+                 * the CCE volume N1 x N2 x (N3/2+1); the library's rank-3 real tier, FFTW and MKL plan it */
+                int n1 = 0, n2 = 0, n3 = 0;
+                if (argc < 5 || sscanf(argv[4], "%dx%dx%d", &n1, &n2, &n3) != 3 || n1 < 2 || n2 < 2 || n3 < 2)
+                {
+                    printf("--3dreal needs the shape N1xN2xN3 in the N argument\n");
+                    return 2;
+                }
+                g.nd = 3; g.N1 = n1; g.N2 = n2; g.N3 = n3; g.K = 1;
+                g.rp = (size_t)n1 * (size_t)n2 * (size_t)n3;
+                g.cp = 2u * (size_t)n1 * (size_t)n2 * ((size_t)n3 / 2u + 1u);
+                g.pts = g.rp;
+            }
+            else if (g_k2real)
             {   /* N1 in the N slot, N2 in the K slot, either parity (odd N2 since
                  * 2026-10-07: the CCE plane is N1 x (N2/2+1) pairs for both; the
                  * library serves it, FFTW and MKL plan it) */

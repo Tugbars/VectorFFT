@@ -1003,6 +1003,14 @@ E3.R1 s (rank-3 real)         RACED in 3D r2c (2026-10-07, fftnd_real_il.h): the
                               rows into a private volume, the plain axis-1 chain there, axis 0's one
                               permuting write), jointly with E3.R2, whole transform on scratch, min
                               of 3 paced rounds; s=1|2 on the rank-3 real row. Pin VFFT_ILNDR_ARM.
+E3.R3 s_c2r / wl_c2r          RACED in 3D c2r (2026-10-07): the c2r structure on the same row --
+                              child, pay-once (the plain forward chain on axis 1, the backward rows
+                              per leaf group), band (the forward chain's wide prefix into the
+                              private volume, the suffix per band of L[cut] planes with the band's
+                              planes' c2r while hot; every legal cut an arm, wl_c2r= its width) --
+                              jointly with nf_c2r/nsw_c2r; whole transform on scratch. Pins
+                              VFFT_ILNDR_ARM=1|2|3, VFFT_ILNDR_WL=w. The input is preserved
+                              (axis 0 out of place into the private volume) unless destroy_input.
 E3.R2 nf / nsw (rank-3 real)  RACED jointly with E3.R1: axis 0's execution form, in place (the
                               natural pass or the one-stage kernel; the pay-once leaf out of place)
                               vs dense column strips at the policy width; nf=1|2 nsw= on the row.
