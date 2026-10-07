@@ -43,7 +43,7 @@ Dynamic measurement; requires a calibration-grade host:
 
 ```
 # 1. Compile the harness (uses the same build script as everything else)
-python build_tuned/build.py --src tools/radix_profile/measure_cpe.c
+python gauntlet/build.py --src tools/radix_profile/measure_cpe.c
 
 # 2. Run it. By default this enforces a 5% coefficient-of-variation
 #    threshold across BENCH_N_RUNS=21 runs — if the host is too noisy,

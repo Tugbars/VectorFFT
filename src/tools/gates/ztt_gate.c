@@ -32,7 +32,7 @@
  *   in-place forward are asserted BITWISE the direct plain engine.
  *
  * Run:   ztt_gate.exe --wisdir <scratch dir>
- * Build: python build_tuned/build.py --compile --src build_tuned/benches/ztt_gate.c --vfft */
+ * Build: python gauntlet/build.py --compile --src src/tools/gates/ztt_gate.c --vfft */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>

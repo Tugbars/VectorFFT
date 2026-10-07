@@ -1136,7 +1136,7 @@ as a **diagnostic only**; whole-transform time is the ground truth.
 
 ### 6.2 Harness discipline — non-negotiable
 
-Model on `build_tuned/benches/bench_1d_vs_mkl.c` and `zil_sterm_pipe.c` (the only campaign
+Model on `gauntlet/bench_1d_vs_mkl.c` and `zil_sterm_pipe.c` (the only campaign
 bench with proper controls).
 
 1. **Pin logical core 2** (affinity mask `4`), `HIGH_PRIORITY_CLASS`.

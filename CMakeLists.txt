@@ -1,5 +1,5 @@
 # ============================================================================
-# VectorFFT — dag-fft-compiler build (CMake mirror of build_tuned/build.py)
+# VectorFFT — dag-fft-compiler build (CMake mirror of gauntlet/build.py)
 #
 # Builds the library's codelet corpus and the gauntlet's tools (gauntlet/) against the dag runtime:
 #   - the dag SIMD codelets (codelets/{inplace,rfft,c2r,oop}/<isa>/*.c) -> a
@@ -225,7 +225,7 @@ endif()
 # interleaved family is `zil`, handled by the second loop.
 # *_emit.c are generator bit-gate twins of the hand codelets (same symbol names);
 # linking both would collide — the gates compile them standalone. Mirrors
-# build_tuned/build.py dag_codelet_srcs().
+# gauntlet/build.py dag_codelet_srcs().
 # Families are discovered ONE AT A TIME and each REPORTS ITS OWN COUNT.
 # Rationale, learned the hard way on 2026-08-15: this file globbed 7 families
 # and printed a single plausible-looking "codelets: 598", while the three zil
@@ -267,7 +267,7 @@ macro(vfft_add_codelet_dir _label _dir)
                 "codelet family '${_label}' exists but matched 0 .c files:\n"
                 "    ${_dir}\n"
                 "  The directory is present and EMPTY -- the tree moved or a population\n"
-                "  was dropped. Re-sync this glob with build_tuned/build.py\n"
+                "  was dropped. Re-sync this glob with gauntlet/build.py\n"
                 "  dag_codelet_srcs(), or add '${_label}' to VFFT_RETIRED_FAMILIES if it\n"
                 "  is deliberately gone. (A family silently contributing zero is what hid\n"
                 "  the CMake-598 vs build.py-863 gap: 265 zil files absent behind a\n"
@@ -330,7 +330,7 @@ if(_ncodelets EQUAL 0)
 endif()
 message(STATUS "    ----------------------------")
 message(STATUS "    TOTAL                   ${_ncodelets}")
-message(STATUS "  (must equal build_tuned/build.py's '[codelets] cached lib (N codelets)';")
+message(STATUS "  (must equal gauntlet/build.py's '[codelets] cached lib (N codelets)';")
 message(STATUS "   the two build systems share one corpus -- a mismatch is a real defect)")
 message(STATUS "  runtime source:  ${DAG_CORE}/vfft.c  (the ONE non-header .c in the core)")
 

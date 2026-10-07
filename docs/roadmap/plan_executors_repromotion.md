@@ -55,7 +55,7 @@ behaviour; the dispatcher gained arms it did not have.
 
 ## The C-side gate (all run AFTER the promote, against the new header)
 
-Rebuilt through `build_tuned/build.py --vfft` (mingw 15.2, the 863-codelet
+Rebuilt through `gauntlet/build.py --vfft` (mingw 15.2, the 863-codelet
 cached lib). Every gate binary was **deleted before rebuilding** — a stale
 `.exe` makes a failed build look like a pass.
 

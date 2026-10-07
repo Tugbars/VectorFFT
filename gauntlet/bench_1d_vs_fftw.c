@@ -37,7 +37,7 @@
  * planes (ref_planes_alloc) are not needed in v1 — every arm here is
  * interleaved (the split wisdom-key hazard is a split-mode problem).
  *
- * Build:  python build_tuned/build.py --src build_tuned/benches/bench_1d_vs_fftw.c --vfft --jit
+ * Build:  python gauntlet/build.py --src gauntlet/bench_1d_vs_fftw.c --vfft --jit
  * Usage:  bench_1d_vs_fftw [--k1zip|--k1nat|--k1noop] [wisdomdir] [csv] [pace_ms] [N] [K]
  *                          [cool_ms] [flip] [core]
  *   wisdomdir : dir of the vfft wisdom store (front door serves the banked

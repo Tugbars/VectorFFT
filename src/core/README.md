@@ -114,7 +114,7 @@ Still mixed (to be cut): `oop/{oop_plan,oop_leaf_registry,k1_commit,c2c_ip_creat
 
 Headers cross-reference each other **bare**: `#include "executor.h"`, not
 `#include "engine/executor.h"`. The build system puts **every** `core/`
-subfolder on the `-I` search path (`build_tuned/build.py:build_includes()`
+subfolder on the `-I` search path (`gauntlet/build.py:build_includes()`
 walks `core/` recursively), so a bare include resolves regardless of which
 subfolder the target lives in. Consequences:
 

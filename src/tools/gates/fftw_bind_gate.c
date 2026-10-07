@@ -19,7 +19,7 @@
  *       P0.75 (cross-process/reboot is the smoke test's job).
  *
  * Build+run (NO --fftw and NO --mkl — the whole point is nothing on the link line):
- *   python build_tuned/build.py --src benches/fftw_bind_gate.c
+ *   python gauntlet/build.py --src benches/fftw_bind_gate.c
  * Override the DLL under test: VFFT_FFTW_DLL=<path>.
  * Untimed except plan-cost banners; this gate is correctness machinery, not a bench.
  */

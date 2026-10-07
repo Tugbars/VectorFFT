@@ -119,7 +119,7 @@ python emit_jit.py --N 131072 --K 4 --factors 4,4,4,32,64 --variants 2,2,1,2,2 -
 
 ```c
 #include "planner.h"      /* core tree under src/core/ — bare includes, resolved by */
-#include "executor.h"     /* the build's recursive core -I walk (see build_tuned/build.py) */
+#include "executor.h"     /* the build's recursive core -I walk (see gauntlet/build.py) */
 #include "jit_runtime.h"  /* src/dag-fft-compiler/jit/ — also on the -I list */
 
 stride_plan_t *plan = vfft_proto_plan_create_ex(N, K, factors, variants, nf, dif, &reg);

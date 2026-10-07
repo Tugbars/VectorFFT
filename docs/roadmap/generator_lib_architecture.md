@@ -443,7 +443,7 @@ for codelet generation"* and covers **75 %** (1,074/1,432); the claim is **false
 `--post-tw`, `--oop-load UL`, `--oop-store UL`, `--oop-tw-linear`, `--oop-spec-named`, `--strided-r2c`,
 `--r2c-term-ls` all ship codelets with no `Coverage` entry. (d) **The two build systems disagree about
 what the corpus IS** — `CMakeLists.txt:180` globs a **nonexistent `codelets/il/`** and never globs `zil/`;
-CMake compiles **598** files, `build_tuned/build.py` compiles **863**. (e) There is **no per-codelet
+CMake compiles **598** files, `gauntlet/build.py` compiles **863**. (e) There is **no per-codelet
 documentation channel**, so measured facts get stapled on by hand and fall straight out of the
 reproducible set. (f) **82 of 265 zil codelets are consumer-orphaned** in a coherent shape.
 

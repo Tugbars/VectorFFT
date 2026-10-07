@@ -21,7 +21,7 @@ tools/        research harnesses (schedulers, ablations, probes) — not in the 
 archive/      old-lib/, the pre-restructure monolith. Reference only; deleted at v1.0
 ```
 
-The C side is built from outside this tree: `build_tuned/build.py` (add `--vfft`
+The C side is built from outside this tree: `gauntlet/build.py` (add `--vfft`
 to link the runtime) or the root `CMakeLists.txt`. Both compile the same corpus
 — if their codelet counts ever disagree, that is a real defect, not a
 configuration difference.

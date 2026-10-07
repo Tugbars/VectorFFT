@@ -20,7 +20,7 @@
  * layout, reorders a spectrum or falls back silently.
  *
  * Results, the supported matrix and the design are in README.md and docs/;
- * the machine proof of the matrix is build_tuned/benches/api_matrix_gate.c.
+ * the machine proof of the matrix is src/tools/gates/api_matrix_gate.c.
  */
 #ifndef VFFT_H
 #define VFFT_H

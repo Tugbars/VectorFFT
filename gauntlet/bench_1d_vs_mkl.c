@@ -17,7 +17,7 @@
  * cache/thermal carryover cachebust() can't clear, so run EACH CELL ISOLATED
  * (fresh process; run.ps1 does this) and trust only isolated numbers.
  *
- * Build: build_tuned/build.py --mkl --vfft (dag core + cached codelet lib +
+ * Build: gauntlet/build.py --mkl --vfft (dag core + cached codelet lib +
  *   mkl_rt LP64 + src/core/vfft.c — the front door serves the K=1 kind-4
  *   SCRAMBLED-cascade cells, see run_k1z_cell).
  *   NOTE: LP64 (mkl_rt), NOT ILP64 — ILP64 corrupts the DFTI strides array

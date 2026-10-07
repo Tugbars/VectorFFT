@@ -32,7 +32,7 @@
  *   form / tile race of the run was decided above the clock's tick.
  *
  * Run:   k1_pow2_gate.exe --wisdir <scratch dir>
- * Build: python build_tuned/build.py --compile --src build_tuned/benches/k1_pow2_gate.c --vfft */
+ * Build: python gauntlet/build.py --compile --src src/tools/gates/k1_pow2_gate.c --vfft */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
