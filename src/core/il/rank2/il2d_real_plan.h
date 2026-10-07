@@ -112,23 +112,104 @@ static void _il2d_rowx_body(const void *v, const double *sre, double *dre)
 }
 /* the c2r pass: the backward rows kernel in one call, an engine's backward
  * row by row (the engines run their plan's direction), or the c2r row route */
+static void _il2d_rows_bwd_set(struct vfft_plan_s *h, const double *src, size_t P, size_t d, size_t D0, size_t R0, double *y);
 static void _il2d_rowx_body_bwd(const void *v, const double *zsrc, double *dre)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)v;
     const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1, n1 = (size_t)h->N;
+    /* the plan's own column-inverse plane may sit at its raced pitch (il2d_real_pitch.h);
+     * every other source (a race's plane) is at the CCE pitch */
+    const size_t P = (zsrc == h->il2d_rscr && h->il2d_rscr_P) ? h->il2d_rscr_P : hp1;
     size_t r;
     if (h->il2d_rx_lm)
     {
-        h->il2d_rx_lm(zsrc, NULL, dre, NULL, NULL, NULL, hp1, 0, rn2, 0, n1);
+        h->il2d_rx_lm(zsrc, NULL, dre, NULL, NULL, NULL, P, 0, rn2, 0, n1);
         return;
     }
     if (!h->il2d_rx_eng)
     {
-        _il2d_real_rows_bwd_route((struct vfft_plan_s *)h, zsrc, dre);
+        if (P != hp1)
+            _il2d_rows_bwd_set((struct vfft_plan_s *)h, zsrc, P, 0, 1, n1, dre);   /* the route, row by row at the pitch */
+        else
+            _il2d_real_rows_bwd_route((struct vfft_plan_s *)h, zsrc, dre);
         return;
     }
     for (r = 0; r < n1; r++)
-        _real_il_exec_any(h->il2d_rx_eng, zsrc + r * 2 * hp1, dre + r * rn2);
+        _real_il_exec_any(h->il2d_rx_eng, zsrc + r * 2 * P, dre + r * rn2);
+}
+
+/* THE ROW PASS OVER A ROW SET: the rows {d + j D0, j < R0} of the real plane (pitch N2)
+ * to R0 consecutive CCE rows at pitch P (fwd), or back (bwd) -- the plan's row engine on
+ * that set: the rows kernel at the set's stride, an engine per row, the odd-N2 route per
+ * row, or the door batch's K = 1 inner per row. d = 0, D0 = 1, R0 = N1 is the whole pass
+ * at pitch P. Shared by the fused walk (il2d_real_fuse.h) and the pitch forms
+ * (il2d_real_pitch.h). */
+static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, double *s, double *d);   /* il/il_execute.h */
+static void _il2d_rows_fwd_set(struct vfft_plan_s *h, const double *x, size_t d, size_t D0, size_t R0,
+                               double *out, size_t P)
+{
+    const size_t N2 = (size_t)h->N2, hp1 = N2 / 2 + 1;
+    size_t j;
+    if (h->il2d_rx_on && h->il2d_rx_lm)
+    {
+        h->il2d_rx_lm(x + d * N2, NULL, out, NULL, NULL, NULL, D0 * N2, 0, P, 0, R0);
+        return;
+    }
+    if (h->il2d_rx_on && h->il2d_rx_eng)
+    {
+        for (j = 0; j < R0; j++)
+            _real_il_exec_any(h->il2d_rx_eng, x + (d + j * D0) * N2, out + j * 2 * P);
+        return;
+    }
+    if (h->il2d_oddn2)
+    {
+        double *b1 = h->il2d_orbuf, *b2 = h->il2d_orbuf + 2 * N2;
+        for (j = 0; j < R0; j++)
+        {
+            _il2d_row_promote(x + (d + j * D0) * N2, b1, N2);
+            vfft_execute((vfft_plan)h->il2d_row, VFFT_FORWARD, b1, NULL, b2, NULL);
+            memcpy(out + j * 2 * P, b2, 2 * hp1 * sizeof(double));
+        }
+        return;
+    }
+    {
+        struct vfft_plan_s *in = h->il2d_row->tcb0 ? h->il2d_row->tcb0 : h->il2d_row->tcb;
+        for (j = 0; j < R0; j++)
+            _tc_one(in, VFFT_FORWARD, (double *)(x + (d + j * D0) * N2), out + j * 2 * P);
+    }
+}
+static void _il2d_rows_bwd_set(struct vfft_plan_s *h, const double *src, size_t P, size_t d, size_t D0, size_t R0,
+                               double *y)
+{
+    const size_t N2 = (size_t)h->N2, hp1 = N2 / 2 + 1;
+    size_t j;
+    if (h->il2d_rx_on && h->il2d_rx_lm)
+    {
+        h->il2d_rx_lm(src, NULL, y + d * N2, NULL, NULL, NULL, P, 0, D0 * N2, 0, R0);
+        return;
+    }
+    if (h->il2d_rx_on && h->il2d_rx_eng)
+    {
+        for (j = 0; j < R0; j++)
+            _real_il_exec_any(h->il2d_rx_eng, src + j * 2 * P, y + (d + j * D0) * N2);
+        return;
+    }
+    if (h->il2d_oddn2)
+    {
+        double *b1 = h->il2d_orbuf, *b2 = h->il2d_orbuf + 2 * N2;
+        for (j = 0; j < R0; j++)
+        {
+            _il2d_row_extend(src + j * 2 * P, b1, N2, hp1);
+            vfft_execute((vfft_plan)h->il2d_row, VFFT_BACKWARD, b1, NULL, b2, NULL);
+            _il2d_row_re(b2, y + (d + j * D0) * N2, N2);
+        }
+        return;
+    }
+    {
+        struct vfft_plan_s *in = h->il2d_row->tcb0 ? h->il2d_row->tcb0 : h->il2d_row->tcb;
+        for (j = 0; j < R0; j++)
+            _tc_one(in, VFFT_BACKWARD, (double *)(src + j * 2 * P), y + (d + j * D0) * N2);
+    }
 }
 
 /* THE STACK-ALIGNING ENTRY (zttr.h's): rsp set to the chosen residue mod 64
@@ -1061,9 +1142,16 @@ static void _il2d_colx_body_bwd(const void *v, const double *src, double *dst)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)v;
     const vfft_ilcol_t *c = &h->il2d_col;
+    /* the plan's own column-inverse plane may sit at its raced pitch (il2d_real_pitch.h) */
+    const size_t Po = (dst == h->il2d_rscr && h->il2d_rscr_P) ? h->il2d_rscr_P : c->rn;
     if (h->il2d_cx_leaf)
     {
-        h->il2d_cx_leaf(src, NULL, dst, NULL, NULL, NULL, c->rn, 0, c->rn, 0, c->rn);
+        h->il2d_cx_leaf(src, NULL, dst, NULL, NULL, NULL, c->rn, 0, Po, 0, c->rn);
+        return;
+    }
+    if (Po != c->rn)
+    {   /* the one-stage chain's kernel out of place at the plane's pitch (the pitch form admits one-kernel passes only) */
+        c->b[0](src, NULL, dst, NULL, NULL, NULL, c->rn, 0, Po, 0, c->rn);
         return;
     }
     _il2d_col_exec_st(c, src, dst, 1, NULL);   /* the reverse leaf gathers at its stride: no staged form */
