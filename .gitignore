@@ -25,12 +25,8 @@ src/test-codelets.zip
 # Generated plots at root (but allow docs/performance/ for README images)
 vfft_*.png
 !docs/performance/*.png
-# Allow committing notebook-generated plots from build_tuned/results/ for README use.
-!build_tuned/results/vfft_*.png
-
-# build_tuned/ scratch + run artifacts
-build_tuned/**/*.log
-build_tuned/vfft_wisdom_tmp.txt
+# the gates' stderr taps (src/tools/gates/_*.log; the gates moved there from build_tuned/ 2026-10-07)
+src/tools/gates/*.log
 
 # IDE / tools
 /.vscode/
@@ -57,15 +53,7 @@ Thumbs.db
 /build_msvc
 /build_check
 /build_msvc_ex
-/build_tuned/dev/bench_vtune/vt_hotspots
-build_tuned/vfft_wisdom_tuned_bluestein.6cells.txt.bak
-build_tuned/vfft_wisdom_tuned_bluestein.calib1.bak
-/build_tuned/dev/bench_vtune/vt_uarch-exploration
-build_tuned/dev/bench_vtune/bench_output_hotspots.txt
-build_tuned/dev/bench_vtune/bench_output_uarch-exploration.txt
-build_tuned/dev/bench_vtune/bench_output_hotspots.txt
 /src/prototype/_build/default
-/build_tuned/dev/bench_vtune/vt_cascade_uarch-exploration
 src/prototype/docs/59_avx512_strided_test_guide.md
 /src/prototype/_build/default
 /src/prototype/_build
@@ -75,9 +63,6 @@ src/prototype/docs/59_avx512_strided_test_guide.md
 src/dag-fft-compiler/MKLBench/_smoke.txt
 /docs/r2c_bundle
 /src/dag-fft-compiler/generator/_build
-/build_tuned/benches/vt_rfft_mkl
-/build_tuned/benches/vt_rfft_ours
-build_tuned/benches/mb_256.txt
 *.txt
 # ...except the gauntlet's CMake file, which this rule hid from the repository
 # (the root CMakeLists.txt add_subdirectory()s it; found missing 2026-09-26)
@@ -103,15 +88,9 @@ build_tuned/benches/mb_256.txt
 # Throwaway codelets, benches, and search drivers live here so experiments
 # can't leak into production (see docs/roadmap/schedule_search_plan.md).
 /src/dag-fft-compiler/experiments/
-/build_tuned/benches/mkl_probes
 /docs/research
-/build_tuned/dev/bench_vtune
 /src/dag-fft-compiler/jit/generated
-build_tuned/exec_purity_audit.py
 docs/roadmap/cascade_natural_inplace_plan.md
-build_tuned/benches/smallre_mkl_probe.c
-build_tuned/benches/smallre_pairs_probe.c
-build_tuned/benches/smallre_split_probe.c
 
 # owner 2026-09-07: design comparison notes kept local
 docs/design/cascade_vs_mkl_method.md

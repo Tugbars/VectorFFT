@@ -223,7 +223,7 @@ static void st_fwd(vfft_proto_exec_fn fn, const stride_plan_t *plan,
 static const char *fftw_wis_path(void)
 {
     const char *e = getenv("VFFT_FFTW_WIS");
-    return (e && *e) ? e : "build_tuned/benches/_fftw_bench.wis";
+    return (e && *e) ? e : "gauntlet/_fftw_bench.wis";   /* repo-root-relative (moved from build_tuned/benches 2026-10-07) */
 }
 
 /* ------------------------------------------------------------- vfft bundle */

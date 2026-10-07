@@ -18,13 +18,13 @@
 #include <string.h>
 #include "vfft.h"
 
-/* stderr tap (the k1z/nat_front pattern; taps live under build_tuned/benches) */
+/* stderr tap (the k1z/nat_front pattern; taps live beside the gates, src/tools/gates) */
 static char g_errpath[1024];
 static long g_errpos = 0;
 static int err_tap_open(void)
 {
     snprintf(g_errpath, sizeof g_errpath,
-             "build_tuned/benches/_nat_bankloss_gate.log");
+             "src/tools/gates/_nat_bankloss_gate.log");
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     g_errpos = 0;

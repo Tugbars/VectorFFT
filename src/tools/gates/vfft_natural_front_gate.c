@@ -52,7 +52,7 @@ static char g_errpath[1024];
 static long g_errpos = 0;
 static int err_tap_open(const char *dir)
 {
-    snprintf(g_errpath, sizeof g_errpath, "build_tuned/benches/_nat_front_gate.log" /* cwd, 0.12: never inside a wisdom dir */ );
+    snprintf(g_errpath, sizeof g_errpath, "src/tools/gates/_nat_front_gate.log" /* cwd, 0.12: never inside a wisdom dir */ );
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     g_errpos = 0;
