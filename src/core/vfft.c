@@ -2,55 +2,55 @@
  * at the chosen rigor -> build -> execute. Feature coverage: src/core/README.md.
  * See docs/design/vfft_front_door.md. */
 #include "vfft.h"
-#include "vfft_diagnostics.h"   /* the MT engagement counters this file defines */
+#include "vfft_diagnostics.h"                /* the MT engagement counters this file defines */
 #include "split/real/real_dispatch_config.h" /* cross-TU r2c/c2r knobs, defined here */
 
-#include "env.h"                /* vfft_env_init, ISA/version, pinning           */
-#include "threads.h"            /* pool: set/get threads, dispatch/wait            */
-#include "common/support/race_scope.h" /* THE RACE SCOPE (lock, pin, sibling guard, priority): before
+#include "env.h"                                  /* vfft_env_init, ISA/version, pinning           */
+#include "threads.h"                              /* pool: set/get threads, dispatch/wait            */
+#include "common/support/race_scope.h"            /* THE RACE SCOPE (lock, pin, sibling guard, priority): before
                                           every header that reads the clock -- it redefines vfft_now_ns */
-#include "planner.h"            /* vfft_proto_auto_plan, plan_destroy              */
-#include "executor.h"           /* vfft_proto_execute_fwd/bwd (in-place per-slice) */
-#include "wisdom_reader.h"      /* c2c wisdom load/lookup/add/save/free            */
-#include "dp_planner.h"         /* dp context (calibration)                        */
-#include "measure.h"            /* vfft_proto_dp_plan_measure (variant-aware sweep)*/
-#include "oop_auto.h"           /* OOP plan + leaf/t1p slices                      */
-#include "oop_dp.h"             /* vfft_oop_plan_create_dp_best (calibration)      */
-#include "wisdom2_oop.h"        /* OOP wisdom structs/codecs + legacy loader (wisdom2 folder) */
-#include "split/wisdom/wisdom2_2d_split_reader.h"  /* wisdom2: the split rank>=2 family codec (wave-3 flip) */
-#include "il/wisdom/wisdom2_2d_il_reader.h"  /* wisdom2: the lay=il rank>=2 cells */
-#include "split/wisdom/wisdom2_stride_reader.h" /* wisdom2: stride family codec (wave-4 flip) */
-#include "split/wisdom/wisdom2_real_reader.h" /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
-#include "common/support/diag.h"              /* loud-refusal helpers: _vfft_warn, _vfft_tname (step 6a) */
-#include "common/support/race_timing.h"        /* the racers' shared clock + median (step 5) */
-#include "common/support/race.h"               /* the one race body: arms x protocol -> aggregates */
-#include "wisdom2/wisdom2_oop_reader.h" /* wisdom2: THE store (wave-1 flip) — reads via
+#include "planner.h"                              /* vfft_proto_auto_plan, plan_destroy              */
+#include "executor.h"                             /* vfft_proto_execute_fwd/bwd (in-place per-slice) */
+#include "wisdom_reader.h"                        /* c2c wisdom load/lookup/add/save/free            */
+#include "dp_planner.h"                           /* dp context (calibration)                        */
+#include "measure.h"                              /* vfft_proto_dp_plan_measure (variant-aware sweep)*/
+#include "oop_auto.h"                             /* OOP plan + leaf/t1p slices                      */
+#include "oop_dp.h"                               /* vfft_oop_plan_create_dp_best (calibration)      */
+#include "wisdom2_oop.h"                          /* OOP wisdom structs/codecs + legacy loader (wisdom2 folder) */
+#include "split/wisdom/wisdom2_2d_split_reader.h" /* wisdom2: the split rank>=2 family codec (wave-3 flip) */
+#include "il/wisdom/wisdom2_2d_il_reader.h"       /* wisdom2: the lay=il rank>=2 cells */
+#include "split/wisdom/wisdom2_stride_reader.h"   /* wisdom2: stride family codec (wave-4 flip) */
+#include "split/wisdom/wisdom2_real_reader.h"     /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
+#include "common/support/diag.h"                  /* loud-refusal helpers: _vfft_warn, _vfft_tname (step 6a) */
+#include "common/support/race_timing.h"           /* the racers' shared clock + median (step 5) */
+#include "common/support/race.h"                  /* the one race body: arms x protocol -> aggregates */
+#include "wisdom2/wisdom2_oop_reader.h"           /* wisdom2: THE store (wave-1 flip) — reads via
                                            the vw2_oop_* twins, banks via the shared
                                            family codec. See src/core/wisdom2/README.md */
-#include "natorder_perm.h"      /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
-#include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
-#include "cpu_cache.h"          /* L1d capacity for the tcut width stamp; PLANNING ONLY */
-#include "common/support/cpu_identity.h"   /* the CPU identity: the store's stamp, and which folder is this CPU's */
-#include "common/wisdom/wisdom2_folders.h" /* one CPU, one folder: the folder of a store root this identity owns */
-#include "il2p.h"               /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
-#include "zrp.h"                /* the real pair (il/real/zrp.h): its plan type, before vfft_internal.h */
-#include "il/rank2/il2d_col.h" /* the column-axis pass descriptor the plan embeds */
-#include "ztt.h"                /* ZTURN-T: the run-contiguous DIT, 16..16384 (2026-09-09); before il_prime.h: the prime inner's ZTURN-T branch is #ifdef VFFT_ZTT_H */
-#include "zttr.h"               /* ZTT-r (il/real/zttr.h): the real fold fused into the ZTT; its plan type, before vfft_internal.h */
-#include "zrm.h"                /* the real mono (il/real/zrm.h): one rn1 kernel = the whole small real transform; its resolver */
-#include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
-#include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
-#include "zrf.h"                /* the real flat DIT (il/real/zrf.h): odd-N r2c/c2r on the flat DIT's stages (2026-09-30) */
-#include "il/real/zrb.h"        /* the real Bluestein (il/real/zrb.h): odd N without a chain as a chirp-z convolution at (3N-1)/2 (2026-10-01) */
-#include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
-#include "il/rank1/ztt_mt.h"         /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
-#include "il/real/zttr_mt.h"         /* ZTT-r's threaded arms: the same walk, the fold staying fused (2026-09-30) */
-#include "il/real/zrf_mt.h"          /* the real flat DIT's threaded form: the first level cut by columns and tiles (2026-09-30) */
-#include "il/rank1/il_prime_mt.h"     /* the prime cell's threaded form: the inner's walk + the passes cut (2026-10-03) */
-#include "il/real/zrb_mt.h"          /* the real Bluestein's threaded form, the same (2026-10-03) */
-#include "il_flatdit_race.h"    /* its FORM / TILE races on the shared race body      */
-#include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
-#include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
+#include "natorder_perm.h"                        /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
+#include "natorder_exec.h"                        /* ORDER_NATURAL: cycle/pair reorder passes          */
+#include "cpu_cache.h"                            /* L1d capacity for the tcut width stamp; PLANNING ONLY */
+#include "common/support/cpu_identity.h"          /* the CPU identity: the store's stamp, and which folder is this CPU's */
+#include "common/wisdom/wisdom2_folders.h"        /* one CPU, one folder: the folder of a store root this identity owns */
+#include "il2p.h"                                 /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
+#include "zrp.h"                                  /* the real pair (il/real/zrp.h): its plan type, before vfft_internal.h */
+#include "il/rank2/il2d_col.h"                    /* the column-axis pass descriptor the plan embeds */
+#include "ztt.h"                                  /* ZTURN-T: the run-contiguous DIT, 16..16384 (2026-09-09); before il_prime.h: the prime inner's ZTURN-T branch is #ifdef VFFT_ZTT_H */
+#include "zttr.h"                                 /* ZTT-r (il/real/zttr.h): the real fold fused into the ZTT; its plan type, before vfft_internal.h */
+#include "zrm.h"                                  /* the real mono (il/real/zrm.h): one rn1 kernel = the whole small real transform; its resolver */
+#include "il_prime.h"                             /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
+#include "il_flatdit.h"                           /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
+#include "zrf.h"                                  /* the real flat DIT (il/real/zrf.h): odd-N r2c/c2r on the flat DIT's stages (2026-09-30) */
+#include "il/real/zrb.h"                          /* the real Bluestein (il/real/zrb.h): odd N without a chain as a chirp-z convolution at (3N-1)/2 (2026-10-01) */
+#include "il_flatdit_mt.h"                        /* its intra-transform threading (2026-09-07)         */
+#include "il/rank1/ztt_mt.h"                      /* ZTURN-T's threaded arm: the staged walk sectioned (2026-09-15) */
+#include "il/real/zttr_mt.h"                      /* ZTT-r's threaded arms: the same walk, the fold staying fused (2026-09-30) */
+#include "il/real/zrf_mt.h"                       /* the real flat DIT's threaded form: the first level cut by columns and tiles (2026-09-30) */
+#include "il/rank1/il_prime_mt.h"                 /* the prime cell's threaded form: the inner's walk + the passes cut (2026-10-03) */
+#include "il/real/zrb_mt.h"                       /* the real Bluestein's threaded form, the same (2026-10-03) */
+#include "il_flatdit_race.h"                      /* its FORM / TILE races on the shared race body      */
+#include "natorder_scatter.h"                     /* ORDER_NATURAL: SCR scatter terminator             */
+#include "natorder_calibrate.h"                   /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
 #ifndef VFFT_RFFT_MAX_RADIX
 #define VFFT_RFFT_MAX_RADIX 32
 #endif
@@ -80,8 +80,8 @@
 #include "dht.h"          /* DHT (inner r2c)                                 */
 #include "fft2d.h"
 #include "split/rank3/fftnd_r2c.h" /* §6a47/Q1: 3D real transforms */ /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
-#include "fft2d_r2c.h"                                                     /* 2D r2c / c2r                                    */
-#include "fft2d_real_il.h"                                                 /* native IL 2D real tier kernels                  */
+#include "fft2d_r2c.h"                                                /* 2D r2c / c2r                                    */
+#include "fft2d_real_il.h"                                            /* native IL 2D real tier kernels                  */
 /* rank>=2 wisdom structs/builders/legacy: wisdom2/wisdom2_fftnd.h (via the
  * split/wisdom/wisdom2_2d_split_reader.h include above — owner folder-structure directive) */
 #ifdef VFFT_USE_JIT
@@ -144,35 +144,49 @@ long vfft_ilfd_mt_passes(void) { return _vfft_ilfd_mt_count; }
 long _vfft_ztt_mt_count = 0;
 long vfft_ztt_mt_passes(void) { return _vfft_ztt_mt_count; }
 /* the real four-step's order sweeps (il/real/zfsr.h): sweeps actually cut across workers */
-long _vfft_zttr_mt_count = 0;        /* ZTT-r's threaded arms (il/real/zttr_mt.h): threaded executes run */
+long _vfft_zttr_mt_count = 0; /* ZTT-r's threaded arms (il/real/zttr_mt.h): threaded executes run */
 long vfft_zttr_mt_passes(void) { return _vfft_zttr_mt_count; }
-long _vfft_zr2c_fold_mt_count = 0;   /* zr2c's fold cut across workers (il/real/zr2c.h) */
+long _vfft_zr2c_fold_mt_count = 0; /* zr2c's fold cut across workers (il/real/zr2c.h) */
 long vfft_zr2c_fold_mt_passes(void) { return _vfft_zr2c_fold_mt_count; }
 long _vfft_zfsr_mt_count = 0;
 long vfft_zfsr_mt_passes(void) { return _vfft_zfsr_mt_count; }
-long _vfft_zrf_mt_count = 0;         /* the real flat DIT's threaded form (il/real/zrf_mt.h): threaded executes run */
+long _vfft_zrf_mt_count = 0; /* the real flat DIT's threaded form (il/real/zrf_mt.h): threaded executes run */
 long vfft_zrf_mt_passes(void) { return _vfft_zrf_mt_count; }
-long _vfft_ilpr_mt_count = 0;        /* the prime cell's threaded form (il/rank1/il_prime_mt.h): threaded executes run */
+long _vfft_ilpr_mt_count = 0; /* the prime cell's threaded form (il/rank1/il_prime_mt.h): threaded executes run */
 long vfft_ilpr_mt_passes(void) { return _vfft_ilpr_mt_count; }
-long _vfft_zrb_mt_count = 0;         /* the real Bluestein's threaded form (il/real/zrb_mt.h): threaded executes run */
+long _vfft_zrb_mt_count = 0; /* the real Bluestein's threaded form (il/real/zrb_mt.h): threaded executes run */
 long vfft_zrb_mt_passes(void) { return _vfft_zrb_mt_count; }
 /* the gate's hook (benches/ztt_mt_gate.c): build a ZTURN-T plan, bind the
  * arm for T, run it threaded on the process pool, write y; returns 1 when
  * the threaded walk ran, 0 when it declined (then y is untouched), -1 when
  * the plan refused. Lives here because the pool is this TU's. */
-static void _vfft_pool_arm(int n);   /* defined below: grow-only */
+static void _vfft_pool_arm(int n); /* defined below: grow-only */
 int vfft__ztt_mt_probe(int N, const int *chain, int nf, int scr, int inplace, size_t tile,
                        int T, int arm, int bwd, const double *x, double *y)
 {
     vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(N, chain, nf, scr);
     int rc;
-    if (!p) return -1;
-    if (tile && !vfft_ztt_set_tile(p, tile)) { vfft_ztt_destroy(p); return -1; }
+    if (!p)
+        return -1;
+    if (tile && !vfft_ztt_set_tile(p, tile))
+    {
+        vfft_ztt_destroy(p);
+        return -1;
+    }
     vfft_ztt_bind(p, inplace);
-    if (!vfft_ztt_mt_bind(p, T, arm)) { vfft_ztt_destroy(p); return 0; }
+    if (!vfft_ztt_mt_bind(p, T, arm))
+    {
+        vfft_ztt_destroy(p);
+        return 0;
+    }
     _vfft_pool_arm(T);
-    if (inplace) { memcpy(y, x, (size_t)2 * N * sizeof(double)); rc = vfft_ztt_execute_mt(p, y, y, bwd); }
-    else rc = vfft_ztt_execute_mt(p, x, y, bwd);
+    if (inplace)
+    {
+        memcpy(y, x, (size_t)2 * N * sizeof(double));
+        rc = vfft_ztt_execute_mt(p, y, y, bwd);
+    }
+    else
+        rc = vfft_ztt_execute_mt(p, x, y, bwd);
     vfft_ztt_destroy(p);
     return rc;
 }
@@ -183,12 +197,22 @@ int vfft__ztt_mt_race_probe(int N, const int *chain, int nf, int scr, int inplac
 {
     vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(N, chain, nf, scr);
     int mt;
-    if (!p) return -1;
-    if (tile && !vfft_ztt_set_tile(p, tile)) { vfft_ztt_destroy(p); return -1; }
+    if (!p)
+        return -1;
+    if (tile && !vfft_ztt_set_tile(p, tile))
+    {
+        vfft_ztt_destroy(p);
+        return -1;
+    }
     vfft_ztt_bind(p, inplace);
     _vfft_pool_arm(T);
-    if (inplace) { memcpy(y, x, (size_t)2 * N * sizeof(double)); mt = vfft_ztt_mt_race(p, T, y, y, ns3); }
-    else mt = vfft_ztt_mt_race(p, T, x, y, ns3);
+    if (inplace)
+    {
+        memcpy(y, x, (size_t)2 * N * sizeof(double));
+        mt = vfft_ztt_mt_race(p, T, y, y, ns3);
+    }
+    else
+        mt = vfft_ztt_mt_race(p, T, x, y, ns3);
     vfft_ztt_destroy(p);
     return mt;
 }
@@ -265,15 +289,15 @@ static int _vfft_plan_threads(const vfft_config_t *cfg)
     return pool;
 }
 
-#include "vfft_internal.h"   /* the three private structs (migration step 15) */
+#include "vfft_internal.h"             /* the three private structs (migration step 15) */
 #include "il/rank1/k1_fourstep_band.h" /* the four-step's BAND alone: standalone, and policy.h needs
                                   * it in scope. k1_fourstep.h includes it too (a no-op). */
-#include "il/planning/policy_il.h" /* THE planning policy: one place a law about a REQUEST is written
+#include "il/planning/policy_il.h"     /* THE planning policy: one place a law about a REQUEST is written
                              * (planning_policy_design.md, 2026-09-16). Sits above every engine
                              * (the bands are in scope by here) and below every planner and door.
                              * AHEAD of k1_fourstep.h since 2026-09-16: the four-step's super-band
                              * gate is an L8 law and calls vfft_policy_exceeds_l3. */
-#include "il/rank1/k1_fourstep.h"  /* the K=1 interleaved FOUR-STEP above ZTURN-T's ceiling (2026-09-15) */
+#include "il/rank1/k1_fourstep.h"      /* the K=1 interleaved FOUR-STEP above ZTURN-T's ceiling (2026-09-15) */
 
 static void _own_batch_free(vfft_batch b); /* defined below; used by vfft_destroy */
 
@@ -316,9 +340,9 @@ static const rfft_codelets_t *_rfft_registry(void)
  * definition, or the generated vfft_build_id.h of gauntlet/build.py). A build
  * that knows no commit carries the version alone. */
 #if !defined(VFFT_BUILD_COMMIT) && defined(__has_include)
-#  if __has_include("vfft_build_id.h")
-#    include "vfft_build_id.h"
-#  endif
+#if __has_include("vfft_build_id.h")
+#include "vfft_build_id.h"
+#endif
 #endif
 static const char *_vfft_build_id(void)
 {
@@ -402,7 +426,7 @@ static void _bundle_load(struct vfft_wisdom_s *W)
             (void)env;
 #endif
             vw2_open(&W->vw2, open_dir, 1);
-            vw2_set_build(&W->vw2, _vfft_build_id());   /* every row banked here carries bld= */
+            vw2_set_build(&W->vw2, _vfft_build_id()); /* every row banked here carries bld= */
 
             /* THE STAMP. An unstamped store becomes this CPU's (in memory now,
              * on disk at the first save). A stamp from before the identity
@@ -526,7 +550,6 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
 
 #include "split/planning/pad_calibrate.h" /* pad-vs-tail calibrator + _VFFT_PADVW (step 13) */
 
-
 /* [2026-07-27] The 4-arm ROUTE race (_calibrate_zroute: legacy{sterm,sterm2}
  * x zturn{stf,stf2}, joint fwd+bwd verdict) was DELETED here when the runtime
  * went ZTURN-only: a paced best-chains A/B (all 8 controls PASS) showed the
@@ -558,7 +581,6 @@ static inline uint8_t _vw2_lay_of(const vfft_config_t *cfg)
 
 #include "split/real/real_route_race.h" /* r2c/c2r route RACERS -
                                              * the deciders stay here (step 11) */
-
 
 /* may_race gates only step 3 — a BANKED verdict is honoured at every rigor
  * tier, which is the point of banking it. */
@@ -615,7 +637,7 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
         {
             thread_pool_resize(T);
             vfft_r2c_plan_destroy(pr);
-            return ps;  /* OOM in the racer: serve, do not bank a guess */
+            return ps; /* OOM in the racer: serve, do not bank a guess */
         }
         thread_pool_resize(T);
     }
@@ -638,7 +660,6 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
     vfft_r2c_plan_destroy(pr);
     return ps;
 }
-
 
 /* §W2 c2r twin of _r2c_route_decide — same precedence law. */
 static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
@@ -694,7 +715,7 @@ static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
         {
             thread_pool_resize(T);
             vfft_c2r_disp_destroy(pn);
-            return ps;  /* OOM in the racer: serve, do not bank a guess */
+            return ps; /* OOM in the racer: serve, do not bank a guess */
         }
         thread_pool_resize(T);
     }
@@ -732,9 +753,9 @@ static stride_plan_t *_inner_c2c(struct vfft_wisdom_s *W,
      * world; persistence is the caller's guarded save). */
     vfft_proto_wisdom_entry_t ne;
     int have = !recalib &&
-        (W->vw2_off_stride
-             ? (vfft_proto_wisdom_lookup(cw, innerN, K) != NULL)
-             : vw2_stride_lookup(&W->vw2, /*is_rfft=*/0, innerN, K, &ne));
+               (W->vw2_off_stride
+                    ? (vfft_proto_wisdom_lookup(cw, innerN, K) != NULL)
+                    : vw2_stride_lookup(&W->vw2, /*is_rfft=*/0, innerN, K, &ne));
     if (have && !W->vw2_off_stride)
         vfft_proto_wisdom_set(cw, &ne);
     if (!have)
@@ -751,7 +772,6 @@ static stride_plan_t *_inner_c2c(struct vfft_wisdom_s *W,
 /* A trig inner c2c is keyed (owning transform, OUTER N, K) — never as c2c(innerN), which would
  * collide with a genuine request there. Inner size derives from vw2_stride_trig_inner_n. */
 static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg);
-
 
 /* Measure an in-place 2D c2c plan end-to-end (for the calibrate-on-miss win-gate). */
 static double _vfft_measure_2d_c2c(stride_plan_t *p, int N1, int N2)
@@ -944,7 +964,11 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                 if (!W->vw2_off_2d && vw2_2d_c2c_lookup_nat(&W->vw2, N1, N2, lay, &neb2))
                 {
                     stride_plan_t *p = vfft_fft2d_c2c_plan_from_nat_entry(&neb2, reg);
-                    if (p) { stride_plan_destroy(fb); return p; }
+                    if (p)
+                    {
+                        stride_plan_destroy(fb);
+                        return p;
+                    }
                 }
                 return fb; /* no natural record -> fb (scrambled chain + downstream bolt-on reorder) */
             }
@@ -954,7 +978,11 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                 if (!W->vw2_off_2d && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, lay, &seb2))
                 {
                     stride_plan_t *p = vfft_fft2d_c2c_plan_from_entry(&seb2, reg);
-                    if (p) { stride_plan_destroy(fb); return p; }
+                    if (p)
+                    {
+                        stride_plan_destroy(fb);
+                        return p;
+                    }
                 }
                 return fb;
             }
@@ -984,7 +1012,8 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
             else if (vw2_2d_r2c_lookup(&W->vw2, t == VFFT_C2R, N1, N2, lay, &reb))
             {
                 stride_plan_t *p = vfft_fft2d_r2c_plan_from_entry(&reb, reg);
-                if (p) return p;
+                if (p)
+                    return p;
                 return vfft_fft2d_r2c_plan_create_wisdom(N1, N2, rw, reg);
             }
         }
@@ -1033,7 +1062,11 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                                       lay); /* calibrated wins -> bank */
                 {
                     stride_plan_t *p = vfft_fft2d_r2c_plan_from_entry(&cal, reg);
-                    if (p) { stride_plan_destroy(fb); return p; }
+                    if (p)
+                    {
+                        stride_plan_destroy(fb);
+                        return p;
+                    }
                 }
             }
         }
@@ -1042,7 +1075,7 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
     return NULL; /* 2D trig not wired */
 }
 
-#include "split/engine/mt_execute.h"  /* generic K-split MT executor + trampoline (step 7) */
+#include "split/engine/mt_execute.h" /* generic K-split MT executor + trampoline (step 7) */
 
 #include "split/natorder/natorder_mt.h" /* natural-order + SCR MT reorder
                                              * passes (migration step 8) */
@@ -1058,7 +1091,6 @@ static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
                          h->nat_ncyc, h->nat_mode == VFFT_NAT_PSWAP, h->nat_tmp, dir == 0,
                          h->nthreads); /* the snapshot nat_tmp was sized for */
 }
-
 
 /* ── ORDER_NATURAL for 2D c2c (first cut, single-thread PURE cycles). The 2D output is scrambled on
  * BOTH axes independently: buffer re[i1*N2+i2] = natural[perm1_inv(i1)][perm2_inv(i2)], perm1 from
@@ -1088,7 +1120,7 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
                          h->nthreads); /* the snapshot nat2d_tmp was sized for */
 }
 
-#include "split/oop/oop_mt.h"  /* OOP c2c lane-slice MT dispatch (migration step 9) */
+#include "split/oop/oop_mt.h" /* OOP c2c lane-slice MT dispatch (migration step 9) */
 
 /* Bank a SELF-CONTAINED 1D natural record (order-tagged @nat table) + persist. The natural verdict
  * stores its OWN deployed chain (fac/var/nf/use_dif) + mode + measured total — never a copy of the
@@ -1102,7 +1134,6 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
 
 #include "il/rank2/il2d_tier.h" /* IL 2D real/c2c tier: passes, MT,
                                          * and the four racers (step 17) */
-
 
 /* THE SAVE (owner, 2026-10-04: "the planner found the winner, why don't
  * write it to wisdom?"). A bank is always in memory; this writes the rows
@@ -1128,9 +1159,9 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
         return;
     }
     if (_vfft_scope_nosave())
-    {   /* a race scope the library knows measured badly (the measurement lock
-         * not obtained, or no P-core pin; each said once by the scope): the
-         * rows banked so far are served and never saved */
+    { /* a race scope the library knows measured badly (the measurement lock
+       * not obtained, or no P-core pin; each said once by the scope): the
+       * rows banked so far are served and never saved */
         vw2_disown(&W->vw2);
         return;
     }
@@ -1140,7 +1171,8 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
         {
             said_unwritable = 1;
             fprintf(stderr, "[wisdom2] the store '%s' cannot be written: winners are kept for "
-                            "this process only\n", W->vw2.dir);
+                            "this process only\n",
+                    W->vw2.dir);
         }
         return;
     }
@@ -1156,13 +1188,14 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
          * milliseconds, so retry briefly; then say so, with the reason. */
         int rc = vw2_save_banked(&W->vw2), tries = 0;
         if (rc == VW2_EREADONLY)
-        {   /* the directory is missing or cannot be written: not a transient */
+        { /* the directory is missing or cannot be written: not a transient */
             W->vw2.writable = 0;
             if (!said_unwritable)
             {
                 said_unwritable = 1;
                 fprintf(stderr, "[wisdom2] the store directory '%s' is missing or cannot be "
-                                "written: winners are kept for this process only\n", W->vw2.dir);
+                                "written: winners are kept for this process only\n",
+                        W->vw2.dir);
             }
             return;
         }
@@ -1179,19 +1212,19 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 }
 
 #include "il/planning/dp_planner_il.h" /* the IL plan race at create (2026-09-03): pair x forms, chain3 x forms */
-#include "il/rank1/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */
+#include "il/rank1/k1_commit.h"        /* K=1 replay, race-and-bank, commit (step 19) */
 /* The real engines: AFTER _vw2_persist above (their bankers call it), and
  * after the IL planner and the K=1 commit -- the zr2c child is raced in the
  * real role on the planner and built by its builder. */
-#include "il/real/zr2c_build.h" /* interleaved-CCE real route (step 18) */
-#include "il/real/zrp_build.h"  /* the real pair + the real door's engine race (2026-09-29) */
-#include "il/real/odd_build.h"  /* the real door's odd-N engine pick: zrm / zrf / zrb, the odd real race (2026-10-03) */
-#include "il/rank2/il2d_real_plan.h" /* the 2D real tier's row engine and its planner: the row race in the row role (2026-10-01) */
-#include "il/rank2/il2d_real_axis.h" /* the real axis on N1: the r2c plan's whole-plan form at an even N1 and an odd N2, raced vs the standard walk (2026-10-07) */
-#include "il/rank2/il2d_real_fuse.h" /* the fused walk: the r2c rows fused into column stage 0 by digit, the suffix tiled, raced vs the standard walk (2026-10-07) */
+#include "il/real/zr2c_build.h"       /* interleaved-CCE real route (step 18) */
+#include "il/real/zrp_build.h"        /* the real pair + the real door's engine race (2026-09-29) */
+#include "il/real/odd_build.h"        /* the real door's odd-N engine pick: zrm / zrf / zrb, the odd real race (2026-10-03) */
+#include "il/rank2/il2d_real_plan.h"  /* the 2D real tier's row engine and its planner: the row race in the row role (2026-10-01) */
+#include "il/rank2/il2d_real_axis.h"  /* the real axis on N1: the r2c plan's whole-plan form at an even N1 and an odd N2, raced vs the standard walk (2026-10-07) */
+#include "il/rank2/il2d_real_fuse.h"  /* the fused walk: the r2c rows fused into column stage 0 by digit, the suffix tiled, raced vs the standard walk (2026-10-07) */
 #include "il/rank2/il2d_real_pitch.h" /* the pitch forms: the c2r column-inverse plane off hp1, the r2c one-kernel pass on a skewed plane, raced (2026-10-07) */
-#include "il/rank3/fftnd_il.h"     /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
-#include "il/rank3/fftnd_real_il.h" /* the rank-3 INTERLEAVED REAL tier: planes first, then axis 0; child vs pay-once raced (2026-10-07) */
+#include "il/rank3/fftnd_il.h"        /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
+#include "il/rank3/fftnd_real_il.h"   /* the rank-3 INTERLEAVED REAL tier: planes first, then axis 0; child vs pay-once raced (2026-10-07) */
 /* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
  * allocator and the padded-batch create tier used to retype this sequence
  * (seed both legs from the store, calibrate-on-miss, re-lookup because
@@ -1221,7 +1254,7 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
     const vfft_proto_wisdom_entry_t *ae;
     int dirty = 0;
     if (!W->vw2_off_stride)
-    {   /* store-hit OVERWRITES the (possibly stale) frozen-file preload */
+    { /* store-hit OVERWRITES the (possibly stale) frozen-file preload */
         vfft_proto_wisdom_entry_t sb;
         if (vw2_stride_lookup(&W->vw2, 0, N, K, &sb))
             vfft_proto_wisdom_set(&W->c2c, &sb);
@@ -1246,7 +1279,7 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
     {
         const int measure = recal || te->exec_me == 0;
         const int need_aligned = measure ||
-            (ensure_pad_plan && te->exec_me == (int)Kp);
+                                 (ensure_pad_plan && te->exec_me == (int)Kp);
         if (need_aligned && (!ae || recal))
         {
             vfft_proto_wisdom_entry_t ne;
@@ -1278,16 +1311,17 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
     }
     if (dirty)
         _vw2_persist(W, cfg);
-    if (te_out) *te_out = te;
-    if (ae_out) *ae_out = ae;
+    if (te_out)
+        *te_out = te;
+    if (ae_out)
+        *ae_out = ae;
     return stride;
 }
 
 #include "split/split_create.h" /* the SPLIT create: the split side of the one fork */
 #include "il/il_create.h"       /* the INTERLEAVED create: the IL side of the one fork */
 #include "bridge/real_bridge.h" /* 1D real: where the layouts still meet (D1, temporary) */
-#include "vfft_batch.h" /* owned-batch allocator (step 28) */
-
+#include "vfft_batch.h"         /* owned-batch allocator (step 28) */
 
 /* ── TRANSFORM-CONTIGUOUS MT: clone safety + equivalence ─────────────────
  * A TC worker calls vfft_execute on its clone from a POOL THREAD, so the
@@ -1340,7 +1374,9 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
          * (ZTURN-T's, the flat DIT's) slabs the pool, and the four-step's 2D
          * child threads on it at T > 1 (no serial form to fall to). */
         return (g->k1il2p || g->k1il3p || (g->k1ilfd && g->k1ilfd->mt == 0) ||
-                (g->k1ztt && g->k1ztt->mt == 0) || (g->k1fs && g->nthreads <= 1)) ? 1 : 0;
+                (g->k1ztt && g->k1ztt->mt == 0) || (g->k1fs && g->nthreads <= 1))
+                   ? 1
+                   : 0;
     if (!g->k1_on)
         return 0; /* OOP classic path: _oop_mt re-asserts + slabs the pool */
     switch (g->k1_il_route)
@@ -1356,16 +1392,16 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
     case VFFT_K1_IL_CHAIN3:
         return g->k1il3p != NULL;
     case VFFT_K1_IL_FLAT:
-        return g->k1ilfd != NULL && g->k1ilfd->mt == 0;   /* engine-pure: own staging plane, both dirs; the threaded arm slabs the pool */
+        return g->k1ilfd != NULL && g->k1ilfd->mt == 0; /* engine-pure: own staging plane, both dirs; the threaded arm slabs the pool */
     case VFFT_K1_IL_ZTT:
-        return g->k1ztt != NULL && g->k1ztt->mt == 0;     /* engine-pure: one fused driver, own plane, both dirs; the threaded arm slabs the pool */
+        return g->k1ztt != NULL && g->k1ztt->mt == 0; /* engine-pure: one fused driver, own plane, both dirs; the threaded arm slabs the pool */
     case VFFT_K1_IL_FS:
         /* the four-step: its 2D child owns its scratch, both dirs -- but at
          * T > 1 that child threads on the pool and has no serial form to fall
          * to, so it is never a slab clone: its batch runs the serial loop */
         return g->k1fs != NULL && g->nthreads <= 1;
     case VFFT_K1_IL_PRIME:
-        return g->k1ilpr != NULL && g->k1ilpr->mt == 0;   /* the threaded form slabs the pool */
+        return g->k1ilpr != NULL && g->k1ilpr->mt == 0; /* the threaded form slabs the pool */
     default:
         return 0; /* no IL route -> convert fallback */
     }
@@ -1399,11 +1435,11 @@ static void _tc_slab_role(struct vfft_plan_s *c)
     if (!_tc_threaded_form(c))
         return;
     if (c->zrf && c->zrf->mt)
-        vfft_zrf_mt_bind(c->zrf, c->nthreads, 0);   /* arm 0: unbound */
+        vfft_zrf_mt_bind(c->zrf, c->nthreads, 0); /* arm 0: unbound */
     if (c->zttr && c->zttr->mt)
         vfft_zttr_mt_bind(c->zttr, c->nthreads, 0); /* arm 0: unbound */
     if (c->zrb && c->zrb->mt)
-        vfft_zrb_mt_bind(c->zrb, c->nthreads, 0);   /* arm 0: unbound */
+        vfft_zrb_mt_bind(c->zrb, c->nthreads, 0); /* arm 0: unbound */
     if (c->zr2c_kid)
     {
         c->zr2c_fold_mt = 0;
@@ -1413,11 +1449,11 @@ static void _tc_slab_role(struct vfft_plan_s *c)
     if (c->k1ilpr && c->k1ilpr->mt)
         vfft_ilprime_mt_bind(c->k1ilpr, c->nthreads, 0);
     if (c->k1ztt && c->k1ztt->mt)
-        vfft_ztt_mt_bind(c->k1ztt, c->nthreads, 0);   /* arm 0: unbound */
+        vfft_ztt_mt_bind(c->k1ztt, c->nthreads, 0); /* arm 0: unbound */
     if (c->k1ilfd && c->k1ilfd->mt)
-        c->k1ilfd->mt = 0;                           /* the flat DIT's serial run */
+        c->k1ilfd->mt = 0; /* the flat DIT's serial run */
     if (c->transform == VFFT_R2C || c->transform == VFFT_C2R)
-        _vfft_real_bind_exec((vfft_plan)c);         /* the serial execute path */
+        _vfft_real_bind_exec((vfft_plan)c); /* the serial execute path */
 }
 
 /* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict (2026-09-04) ──
@@ -1433,14 +1469,24 @@ static void _tc_slab_role(struct vfft_plan_s *c)
  * VFFT_NO_TCMT (no clones at all) stays the create-time kill switch.
  * This replaces the 2048-complex-point scalar floor, which was an offline
  * table (2026-08-22) and never a verdict. */
-typedef struct { struct vfft_plan_s *h; vfft_dir_t dir; double *s, *d; int mt; } _tc_mt_race_arm_t;
+typedef struct
+{
+    struct vfft_plan_s *h;
+    vfft_dir_t dir;
+    double *s, *d;
+    int mt;
+} _tc_mt_race_arm_t;
 static void _tc_mt_race_arm(void *v)
 {
     _tc_mt_race_arm_t *a = (_tc_mt_race_arm_t *)v;
     a->h->tc_mt = a->mt;
     vfft_execute(a->h, a->dir, a->s, NULL, a->d, NULL);
 }
-typedef struct { double *s, *s0; size_t nb; } _tc_mt_reseed_t;
+typedef struct
+{
+    double *s, *s0;
+    size_t nb;
+} _tc_mt_reseed_t;
 static void _tc_mt_reseed(void *v)
 {
     _tc_mt_reseed_t *r = (_tc_mt_reseed_t *)v;
@@ -1450,8 +1496,9 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
                           int N, size_t K)
 {
     struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();
-    const int t = cfg->transform == VFFT_C2C ? VW2_T_C2C
-                : cfg->transform == VFFT_R2C ? VW2_T_R2C : VW2_T_C2R;
+    const int t = cfg->transform == VFFT_C2C   ? VW2_T_C2C
+                  : cfg->transform == VFFT_R2C ? VW2_T_R2C
+                                               : VW2_T_C2R;
     const int pl = cfg->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP;
     /* the RANK-1 law (2026-09-17), not the rank-N spelling this line carried:
      * this is a rank-1 cell (vw2__tcmt_key keys rank 1, q = K) and the two
@@ -1467,7 +1514,7 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
     const char *tn = _vfft_tname(h->transform);
     h->tc_mt = 0;
     if (h->tcbw_n == 0)
-        return;                                   /* no workers: no arm */
+        return; /* no workers: no arm */
     if (pin)
     {
         h->tc_mt = atoi(pin) ? 1 : 0;
@@ -1488,7 +1535,7 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
             return;
         }
     }
-    {   /* the race: serial loop vs slabs, on this cell's own buffers */
+    { /* the race: serial loop vs slabs, on this cell's own buffers */
         const vfft_dir_t dir = (cfg->transform == VFFT_C2R) ? VFFT_BACKWARD : VFFT_FORWARD;
         const size_t ns_ = K * h->tcb_sn, nd_ = K * h->tcb_dn;
         const size_t nb = ns_ * sizeof(double);
@@ -1499,18 +1546,22 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
         size_t i;
         if (!src || !dst || (ip && !s0))
         {
-            vfft_aligned_free(src); if (!ip) vfft_aligned_free(dst); vfft_aligned_free(s0);
-            return;                               /* no buffers: serial */
+            vfft_aligned_free(src);
+            if (!ip)
+                vfft_aligned_free(dst);
+            vfft_aligned_free(s0);
+            return; /* no buffers: serial */
         }
         for (i = 0; i < ns_; i++)
             src[i] = 1.0 + 1e-6 * (double)(i & 511);
-        if (ip) memcpy(s0, src, nb);
+        if (ip)
+            memcpy(s0, src, nb);
         {
-            _tc_mt_race_arm_t a = { h, dir, src, dst, 0 };
-            _tc_mt_race_arm_t b = { h, dir, src, dst, 1 };
-            _tc_mt_reseed_t rs = { src, s0, nb };
-            const vfft_race_arm_t arms[2] = { { "serial", _tc_mt_race_arm, &a },
-                                              { "slabs", _tc_mt_race_arm, &b } };
+            _tc_mt_race_arm_t a = {h, dir, src, dst, 0};
+            _tc_mt_race_arm_t b = {h, dir, src, dst, 1};
+            _tc_mt_reseed_t rs = {src, s0, nb};
+            const vfft_race_arm_t arms[2] = {{"serial", _tc_mt_race_arm, &a},
+                                             {"slabs", _tc_mt_race_arm, &b}};
             vfft_race_proto_t proto;
             double ns[2];
             const size_t pts = (cfg->transform == VFFT_C2C ? (size_t)N : (size_t)N / 2u) * K;
@@ -1523,14 +1574,18 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
             proto.reset = ip ? _tc_mt_reseed : NULL;
             proto.reset_ctx = ip ? &rs : NULL;
             vfft_race_run(&proto, arms, 2, ns);
-            st = ns[0]; mt = ns[1];
+            st = ns[0];
+            mt = ns[1];
         }
         h->tc_mt = (mt < st);
         if (lg)
             fprintf(stderr, "[tcmt] %s N=%d K=%zu T=%d %s: race serial=%.0f slabs=%.0f -> %s\n",
                     tn, N, K, T, ip ? "ip" : "oop", st, mt,
                     h->tc_mt ? "SLABS" : "serial");
-        vfft_aligned_free(src); if (!ip) vfft_aligned_free(dst); vfft_aligned_free(s0);
+        vfft_aligned_free(src);
+        if (!ip)
+            vfft_aligned_free(dst);
+        vfft_aligned_free(s0);
         if (W && vw2_stride_bank_tcmt(&W->vw2, t, N, K, ord, pl, lay,
                                       h->tc_mt, T, h->tc_mt ? mt : st) == VW2_OK)
             _vw2_persist(W, cfg);
@@ -1545,11 +1600,13 @@ static int _vw2_payload_eq(const vw2_rec_t *a, const vw2_rec_t *b)
         if (a->tok[i].sect == 1)
         {
             const char *v = vw2_rec_get(b, a->tok[i].name);
-            if (!v || strcmp(v, a->tok[i].val)) return 0;
+            if (!v || strcmp(v, a->tok[i].val))
+                return 0;
             na++;
         }
     for (i = 0; i < b->ntok; i++)
-        if (b->tok[i].sect == 1) nb++;
+        if (b->tok[i].sect == 1)
+            nb++;
     return na == nb;
 }
 
@@ -1567,9 +1624,13 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
                            const struct vfft_plan_s *b)
 {
     /* a refused clone names the field group when VFFT_IL2D_LOG is set (2026-09-25) */
-#define TC_NEQ(what) do { if (getenv("VFFT_IL2D_LOG")) \
-        fprintf(stderr, "[clone] N=%d not equivalent: %s (route %d vs %d)\n", a->N, what, a->k1_il_route, b->k1_il_route); \
-    return 0; } while (0)
+#define TC_NEQ(what)                                                                                                           \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        if (getenv("VFFT_IL2D_LOG"))                                                                                           \
+            fprintf(stderr, "[clone] N=%d not equivalent: %s (route %d vs %d)\n", a->N, what, a->k1_il_route, b->k1_il_route); \
+        return 0;                                                                                                              \
+    } while (0)
     if (!a->zfsr != !b->zfsr)
         TC_NEQ("real four-step");
     if (a->zfsr)
@@ -1688,7 +1749,7 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
             TC_NEQ("chain3 plan");
     }
     if (a->k1ilfd)
-    {   /* the flat DIT: same chain and the same per-stage forms */
+    { /* the flat DIT: same chain and the same per-stage forms */
         const vfft_ilfd_plan_t *x = a->k1ilfd, *y = b->k1ilfd;
         int s;
         if (!y || x->K != y->K || x->gord != y->gord || x->scr != y->scr || x->tw != y->tw)
@@ -1698,16 +1759,16 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
                 TC_NEQ("flat DIT stages");
     }
     if (a->k1fs)
-    {   /* the four-step: the same split and order class (the child replays
-         * from the same row's fs_ tokens, so equal here) */
+    { /* the four-step: the same split and order class (the child replays
+       * from the same row's fs_ tokens, so equal here) */
         const vfft_k1fs_plan_t *x = a->k1fs, *y = b->k1fs;
         if (!y || x->N != y->N || x->N1 != y->N1 || x->N2 != y->N2 || x->scr != y->scr)
             TC_NEQ("four-step plan");
     }
     if (a->k1ztt)
-    {   /* ZTURN-T: the same chain, ORDER CLASS (natural or the plain schedule,
-         * 2026-09-14), tile width and placement binding — each names a
-         * different fused codelet or a different walk of the same one */
+    { /* ZTURN-T: the same chain, ORDER CLASS (natural or the plain schedule,
+       * 2026-09-14), tile width and placement binding — each names a
+       * different fused codelet or a different walk of the same one */
         const vfft_ztt_plan_t *x = a->k1ztt, *y = b->k1ztt;
         int s;
         if (!y || x->N != y->N || x->nf != y->nf || x->scr != y->scr ||
@@ -1815,7 +1876,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * there = the M4-lite leaf redirection / the blu route, both
          * wired 2026-08-27. The bins (n2 axis) stay natural always. */
         !((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-          (cfg->dims == 2 || cfg->dims == 3) && cfg->order == VFFT_ORDER_NATURAL &&   /* 3D: the real tier (fftnd_real_il.h, 2026-10-07) */
+          (cfg->dims == 2 || cfg->dims == 3) && cfg->order == VFFT_ORDER_NATURAL && /* 3D: the real tier (fftnd_real_il.h, 2026-10-07) */
           cfg->layout == VFFT_LAYOUT_INTERLEAVED && !ob))
     {
         _vfft_warn("vfft_create: order=%s is only wired for C2C plans without a padded batch "
@@ -1848,146 +1909,146 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * strides derived below. Gate: 1D INTERLEAVED K>1; C2C on DEFAULT-or-explicit, real on the EXPLICIT flag only.
      * See docs/design/vfft_front_door.md. */
     {
-    const int tc_c2c = (cfg->transform == VFFT_C2C) &&
-                       (cfg->batch_geom == VFFT_BATCH_DEFAULT ||
-                        cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS);
-    const int tc_real = (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-                        cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS;
-    if ((tc_c2c || tc_real) && cfg->dims < 2 &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1 && !ob)
-    {
-        vfft_config_t c1 = *cfg;
-        c1.howmany = 1;
-        c1.batch_geom = VFFT_BATCH_LANE_MAJOR; /* identical at K=1; keeps the
-                                                * inner create off this path */
-        struct vfft_plan_s *inner = vfft_create(&c1);
-        if (!inner)
+        const int tc_c2c = (cfg->transform == VFFT_C2C) &&
+                           (cfg->batch_geom == VFFT_BATCH_DEFAULT ||
+                            cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS);
+        const int tc_real = (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+                            cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS;
+        if ((tc_c2c || tc_real) && cfg->dims < 2 &&
+            cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1 && !ob)
         {
-            _vfft_warn("vfft_create: transform-contiguous batch needs a K=1 plan for "
-                       "N=%d and none could be built — the batch geometry adds no "
-                       "coverage of its own",
-                       N);
-            return NULL;
-        }
-        struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
-        if (!h)
-        {
-            vfft_destroy(inner);
-            return NULL;
-        }
-        h->transform = cfg->transform;
-        h->placement = cfg->placement;
-        h->layout = (int)cfg->layout;
-        h->N = N;
-        h->K = K;
-        h->nthreads = _vfft_plan_threads(cfg);
-        h->tcb = inner;
-        /* Block strides in doubles from the committed (transform, placement). N/2+1 is the
-         * CCE bin count for either parity; even-N is the inner K=1 create's gate, not this one. */
-        {
-            const size_t cce = 2u * ((size_t)N / 2u + 1u);
-            const size_t re = (size_t)N;
-            if (cfg->transform == VFFT_C2C)
-                h->tcb_sn = h->tcb_dn = 2u * (size_t)N;
-            else if (cfg->placement == VFFT_INPLACE)
-                h->tcb_sn = h->tcb_dn = cce;
-            else if (cfg->transform == VFFT_R2C)
+            vfft_config_t c1 = *cfg;
+            c1.howmany = 1;
+            c1.batch_geom = VFFT_BATCH_LANE_MAJOR; /* identical at K=1; keeps the
+                                                    * inner create off this path */
+            struct vfft_plan_s *inner = vfft_create(&c1);
+            if (!inner)
             {
-                h->tcb_sn = re;
-                h->tcb_dn = cce;
+                _vfft_warn("vfft_create: transform-contiguous batch needs a K=1 plan for "
+                           "N=%d and none could be built — the batch geometry adds no "
+                           "coverage of its own",
+                           N);
+                return NULL;
             }
-            else
+            struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+            if (!h)
             {
-                h->tcb_sn = cce;
-                h->tcb_dn = re;
+                vfft_destroy(inner);
+                return NULL;
             }
-        }
-        /* MT worker clones (struct comment at tcbw). Built only when the
-         * pool exists AND the inner route is pool-free (_tc_inner_mt_safe).
-         * The inner create above already applied cfg->nthreads to the global
-         * pool (the K=1 path's own snapshot-before-build), so h->nthreads
-         * and the clone count see the requested value, not a stale one.
-         * Clone creates replay the SAME banked wisdom the primary just used
-         * (any create-time race banks in-process on the first create), so
-         * the equivalence check is an invariant, not a coin flip — but it is
-         * what turns a nondeterministic-create bug into fewer workers
-         * instead of a mixed-permutation batch. */
-        if (h->nthreads > 1 && !getenv("VFFT_NO_TCMT"))
-        { /* VFFT_NO_TCMT: create-time kill switch (VFFT_NO_ZTURN precedent)
-           * — no clones => execute is the serial loop, the pre-MT behavior.
-           * Also the bench's A/B hook through the front door.
-           * Every clone is built in the SLAB ROLE (_tc_slab_role): replayed,
-           * checked equivalent, then run serially. When the primary runs a
-           * threaded form, the caller's own slab needs a serial plan too:
-           * tcb0, its twin in the slab role. */
-            const int thr = _tc_threaded_form(inner);
-            int nw = h->nthreads - 1;
-            if ((size_t)nw > K - 1)
-                nw = (int)(K - 1);
-            if (nw > THREAD_POOL_MAX_DISPATCH - 1)
-                nw = THREAD_POOL_MAX_DISPATCH - 1; /* one clone per dispatchable worker */
-            if (thr && nw > 0)
+            h->transform = cfg->transform;
+            h->placement = cfg->placement;
+            h->layout = (int)cfg->layout;
+            h->N = N;
+            h->K = K;
+            h->nthreads = _vfft_plan_threads(cfg);
+            h->tcb = inner;
+            /* Block strides in doubles from the committed (transform, placement). N/2+1 is the
+             * CCE bin count for either parity; even-N is the inner K=1 create's gate, not this one. */
             {
-                struct vfft_plan_s *c0 = vfft_create(&c1);
-                if (c0 && _tc_clone_equiv(inner, c0))
+                const size_t cce = 2u * ((size_t)N / 2u + 1u);
+                const size_t re = (size_t)N;
+                if (cfg->transform == VFFT_C2C)
+                    h->tcb_sn = h->tcb_dn = 2u * (size_t)N;
+                else if (cfg->placement == VFFT_INPLACE)
+                    h->tcb_sn = h->tcb_dn = cce;
+                else if (cfg->transform == VFFT_R2C)
                 {
-                    _tc_slab_role(c0);
-                    if (_tc_inner_mt_safe(c0))
-                        h->tcb0 = c0;
-                    else
+                    h->tcb_sn = re;
+                    h->tcb_dn = cce;
+                }
+                else
+                {
+                    h->tcb_sn = cce;
+                    h->tcb_dn = re;
+                }
+            }
+            /* MT worker clones (struct comment at tcbw). Built only when the
+             * pool exists AND the inner route is pool-free (_tc_inner_mt_safe).
+             * The inner create above already applied cfg->nthreads to the global
+             * pool (the K=1 path's own snapshot-before-build), so h->nthreads
+             * and the clone count see the requested value, not a stale one.
+             * Clone creates replay the SAME banked wisdom the primary just used
+             * (any create-time race banks in-process on the first create), so
+             * the equivalence check is an invariant, not a coin flip — but it is
+             * what turns a nondeterministic-create bug into fewer workers
+             * instead of a mixed-permutation batch. */
+            if (h->nthreads > 1 && !getenv("VFFT_NO_TCMT"))
+            { /* VFFT_NO_TCMT: create-time kill switch (VFFT_NO_ZTURN precedent)
+               * — no clones => execute is the serial loop, the pre-MT behavior.
+               * Also the bench's A/B hook through the front door.
+               * Every clone is built in the SLAB ROLE (_tc_slab_role): replayed,
+               * checked equivalent, then run serially. When the primary runs a
+               * threaded form, the caller's own slab needs a serial plan too:
+               * tcb0, its twin in the slab role. */
+                const int thr = _tc_threaded_form(inner);
+                int nw = h->nthreads - 1;
+                if ((size_t)nw > K - 1)
+                    nw = (int)(K - 1);
+                if (nw > THREAD_POOL_MAX_DISPATCH - 1)
+                    nw = THREAD_POOL_MAX_DISPATCH - 1; /* one clone per dispatchable worker */
+                if (thr && nw > 0)
+                {
+                    struct vfft_plan_s *c0 = vfft_create(&c1);
+                    if (c0 && _tc_clone_equiv(inner, c0))
+                    {
+                        _tc_slab_role(c0);
+                        if (_tc_inner_mt_safe(c0))
+                            h->tcb0 = c0;
+                        else
+                            vfft_destroy(c0);
+                    }
+                    else if (c0)
                         vfft_destroy(c0);
                 }
-                else if (c0)
-                    vfft_destroy(c0);
-            }
-            if (nw > 0 && (thr ? h->tcb0 != NULL : _tc_inner_mt_safe(inner)))
-                h->tcbw = (struct vfft_plan_s **)calloc((size_t)nw,
-                                                        sizeof *h->tcbw);
-            if (h->tcbw)
-                for (int t = 0; t < nw; t++)
+                if (nw > 0 && (thr ? h->tcb0 != NULL : _tc_inner_mt_safe(inner)))
+                    h->tcbw = (struct vfft_plan_s **)calloc((size_t)nw,
+                                                            sizeof *h->tcbw);
+                if (h->tcbw)
+                    for (int t = 0; t < nw; t++)
+                    {
+                        struct vfft_plan_s *c = vfft_create(&c1);
+                        if (!c)
+                            break;
+                        if (!_tc_clone_equiv(inner, c))
+                        {
+                            vfft_destroy(c);
+                            break;
+                        }
+                        _tc_slab_role(c);
+                        if (!_tc_inner_mt_safe(c))
+                        {
+                            vfft_destroy(c);
+                            break;
+                        }
+                        h->tcbw[t] = c;
+                        h->tcbw_n = t + 1;
+                    }
+                if (h->tcbw && h->tcbw_n == 0)
                 {
-                    struct vfft_plan_s *c = vfft_create(&c1);
-                    if (!c)
-                        break;
-                    if (!_tc_clone_equiv(inner, c))
-                    {
-                        vfft_destroy(c);
-                        break;
-                    }
-                    _tc_slab_role(c);
-                    if (!_tc_inner_mt_safe(c))
-                    {
-                        vfft_destroy(c);
-                        break;
-                    }
-                    h->tcbw[t] = c;
-                    h->tcbw_n = t + 1;
+                    free(h->tcbw);
+                    h->tcbw = NULL;
                 }
-            if (h->tcbw && h->tcbw_n == 0)
-            {
-                free(h->tcbw);
-                h->tcbw = NULL;
+                if (!h->tcbw && h->tcb0)
+                { /* no workers: the caller's slab has nothing to share */
+                    vfft_destroy(h->tcb0);
+                    h->tcb0 = NULL;
+                }
             }
-            if (!h->tcbw && h->tcb0)
-            {   /* no workers: the caller's slab has nothing to share */
-                vfft_destroy(h->tcb0);
-                h->tcb0 = NULL;
-            }
+            /* VFFT_TCMT_VERBOSE: report the worker count on stderr (the
+             * VFFT_ZRACE_VERBOSE precedent). Clone building is CONDITIONAL --
+             * pool size, the inner route's pool-freedom, and clone equivalence
+             * can each silently reduce it to zero -- and a wrapper with zero
+             * workers runs the serial loop, which makes an MT==ST check pass
+             * without ever having threaded. Gates assert this line is > 0 so a
+             * green result cannot mean "MT never ran". */
+            if (getenv("VFFT_TCMT_VERBOSE"))
+                fprintf(stderr, "[tcmt] %s N=%d K=%zu nthreads=%d workers=%d\n",
+                        _vfft_tname(h->transform), h->N, h->K, h->nthreads,
+                        h->tcbw_n);
+            _tc_mt_decide(h, cfg, N, K); /* the threading verdict: replay or race */
+            return h;
         }
-        /* VFFT_TCMT_VERBOSE: report the worker count on stderr (the
-         * VFFT_ZRACE_VERBOSE precedent). Clone building is CONDITIONAL --
-         * pool size, the inner route's pool-freedom, and clone equivalence
-         * can each silently reduce it to zero -- and a wrapper with zero
-         * workers runs the serial loop, which makes an MT==ST check pass
-         * without ever having threaded. Gates assert this line is > 0 so a
-         * green result cannot mean "MT never ran". */
-        if (getenv("VFFT_TCMT_VERBOSE"))
-            fprintf(stderr, "[tcmt] %s N=%d K=%zu nthreads=%d workers=%d\n",
-                    _vfft_tname(h->transform), h->N, h->K, h->nthreads,
-                    h->tcbw_n);
-        _tc_mt_decide(h, cfg, N, K);   /* the threading verdict: replay or race */
-        return h;
-    }
     }
     if (cfg->batch_geom != VFFT_BATCH_DEFAULT &&
         cfg->batch_geom != VFFT_BATCH_LANE_MAJOR &&
@@ -2152,7 +2213,6 @@ static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir,
         _natorder_mt(h, re, im, 1);
 }
 
-
 /* The engagement COUNTER stays here, with its public accessor. It is mutable
  * file-scope state, and a static in a header is one copy per includer - the
  * accessor would then read a different object than the increment writes, and
@@ -2187,17 +2247,14 @@ int vfft_c2r_load_path(const char *path)
 
 #include "plane_queue.h" /* 2D plane queue, howmany>1 (step 20) */
 
-
 /* THE execute entry point - every transform, BOTH layouts.
  *
  * The include still cannot move earlier: _pq_execute is also called from the
  * create side (il/rank2/fft2d_create_il.h), so it stays in
  * il/rank2/plane_queue.h, included just above, and the declaration order that
  * forces the include to sit here is its. */
-#define VFFT_EXECUTE_IMPL   /* this TU owns the definition - see the header */
+#define VFFT_EXECUTE_IMPL /* this TU owns the definition - see the header */
 #include "vfft_execute.h"
-
-
 
 /* owned_buffers=1: the plan owns its planes, built from the SAME cfg — so the
  * inner create's batch cross-checks are invariants, and vfft_destroy frees them.
@@ -2300,7 +2357,7 @@ size_t vfft_plan_stride(vfft_plan p)
     return p->own_batch ? _own_batch_stride(p->own_batch) : p->K;
 }
 
-#include "vfft_memory.h" /* vfft_malloc / vfft_free / vfft_alignment, vfft_plan_alloc / vfft_buffers_free */
+#include "vfft_memory.h"  /* vfft_malloc / vfft_free / vfft_alignment, vfft_plan_alloc / vfft_buffers_free */
 #include "vfft_measure.h" /* vfft_measure_configure / _begin / _end / _confine / _describe: the race scope, for a caller's own timing */
 
 /* ── wisdom (caller-owned bundle; `dir` holds the per-feature files) ── */
@@ -2366,7 +2423,11 @@ const char *vfft_wisdom_identity(void) { return vfft_cpu_identity(); }
 const char *vfft_wisdom_build(void) { return _vfft_build_id(); }
 
 /* one more formatted piece of the report text (grown as needed) */
-typedef struct { char *t; size_t len, cap; } _vfft_rep_t;
+typedef struct
+{
+    char *t;
+    size_t len, cap;
+} _vfft_rep_t;
 static void _vfft_rep(_vfft_rep_t *r, const char *fmt, ...)
 {
     va_list ap;
@@ -2374,15 +2435,19 @@ static void _vfft_rep(_vfft_rep_t *r, const char *fmt, ...)
     va_start(ap, fmt);
     need = vsnprintf(NULL, 0, fmt, ap);
     va_end(ap);
-    if (need <= 0) return;
+    if (need <= 0)
+        return;
     if (r->len + (size_t)need + 1 > r->cap)
     {
         size_t nc = r->cap ? r->cap * 2 : 1024;
         char *nt;
-        while (nc < r->len + (size_t)need + 1) nc *= 2;
+        while (nc < r->len + (size_t)need + 1)
+            nc *= 2;
         nt = (char *)realloc(r->t, nc);
-        if (!nt) return;
-        r->t = nt; r->cap = nc;
+        if (!nt)
+            return;
+        r->t = nt;
+        r->cap = nc;
     }
     va_start(ap, fmt);
     vsnprintf(r->t + r->len, r->cap - r->len, fmt, ap);
@@ -2401,14 +2466,19 @@ size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n)
     const char *me = _vfft_build_id();
     const char **id = NULL;
     int *cnt = NULL, nid = 0, cap = 0, i, j, none = 0, me_at = -1;
-    _vfft_rep_t r = { NULL, 0, 0 };
+    _vfft_rep_t r = {NULL, 0, 0};
     size_t len;
     for (i = 0; i < s->nrec; i++)
     {
         const char *b = vw2_rec_get(&s->rec[i], "bld");
-        if (!b) { none++; continue; }
+        if (!b)
+        {
+            none++;
+            continue;
+        }
         for (j = 0; j < nid; j++)
-            if (!strcmp(id[j], b)) break;
+            if (!strcmp(id[j], b))
+                break;
         if (j == nid)
         {
             if (nid == cap)
@@ -2416,26 +2486,34 @@ size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n)
                 const int nc = cap ? cap * 2 : 16;
                 const char **ni = (const char **)realloc((void *)id, (size_t)nc * sizeof *ni);
                 int *nn;
-                if (!ni) continue;
+                if (!ni)
+                    continue;
                 id = ni;
                 nn = (int *)realloc(cnt, (size_t)nc * sizeof *nn);
-                if (!nn) continue;
+                if (!nn)
+                    continue;
                 cnt = nn;
                 cap = nc;
             }
-            id[nid] = b; cnt[nid] = 0; nid++;
+            id[nid] = b;
+            cnt[nid] = 0;
+            nid++;
         }
         cnt[j]++;
-        if (!strcmp(b, me)) me_at = j;
+        if (!strcmp(b, me))
+            me_at = j;
     }
     _vfft_rep(&r, "wisdom folder: %s\n", s->dir);
     _vfft_rep(&r, "identity:      %s\n", s->meta[0] ? s->meta : vfft_cpu_identity());
     _vfft_rep(&r, "this build:    %s\n", me);
     _vfft_rep(&r, "rows by build: %d row(s)\n", s->nrec);
-    if (me_at >= 0) _vfft_rep(&r, "  %-28s %7d   (this build)\n", me, cnt[me_at]);
+    if (me_at >= 0)
+        _vfft_rep(&r, "  %-28s %7d   (this build)\n", me, cnt[me_at]);
     for (j = 0; j < nid; j++)
-        if (j != me_at) _vfft_rep(&r, "  %-28s %7d\n", id[j], cnt[j]);
-    if (none) _vfft_rep(&r, "  %-28s %7d   (saved before rows carried a build stamp)\n", "(no stamp)", none);
+        if (j != me_at)
+            _vfft_rep(&r, "  %-28s %7d\n", id[j], cnt[j]);
+    if (none)
+        _vfft_rep(&r, "  %-28s %7d   (saved before rows carried a build stamp)\n", "(no stamp)", none);
     if (list_build)
     {
         _vfft_rep(&r, "rows of %s:\n", list_build[0] ? list_build : "(no stamp)");
@@ -2443,7 +2521,8 @@ size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n)
         {
             const char *b = vw2_rec_get(&s->rec[i], "bld");
             char kb[192];
-            if (list_build[0] ? !(b && !strcmp(b, list_build)) : (b != NULL)) continue;
+            if (list_build[0] ? !(b && !strcmp(b, list_build)) : (b != NULL))
+                continue;
             vw2__key_format(&s->rec[i].key, kb, sizeof kb);
             _vfft_rep(&r, "  %s\n", kb);
         }
@@ -2452,10 +2531,13 @@ size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n)
     if (buf && n)
     {
         const size_t k = len < n - 1 ? len : n - 1;
-        if (r.t && k) memcpy(buf, r.t, k);
+        if (r.t && k)
+            memcpy(buf, r.t, k);
         buf[k] = '\0';
     }
-    free(r.t); free((void *)id); free(cnt);
+    free(r.t);
+    free((void *)id);
+    free(cnt);
     return len;
 }
 
@@ -2497,22 +2579,30 @@ const char *vfft_plan_route(vfft_plan p)
     if (!h || h->layout != (int)VFFT_LAYOUT_INTERLEAVED)
         return "-";
     if (h->ilndr)
-    {   /* the rank-3 real tier (2026-10-07): the structure and axis 0's form -- the threaded verdict's
-         * where the plan threads (prefixed plane+), the serial one otherwise */
+    { /* the rank-3 real tier (2026-10-07): the structure and axis 0's form -- the threaded verdict's
+       * where the plan threads (prefixed plane+), the serial one otherwise */
         const int mt = h->ilndr->mt == 2 && h->ilndr->mt_t > 1;
         const int a = mt ? h->ilndr->mts : h->ilndr->arm, f = mt ? h->ilndr->mtf : h->ilndr->nf;
-        const char *s = a == 3 ? (f == 2 ? "band+strips" : "band") : a == 2 ? (f == 2 ? "payonce+strips" : "payonce") : (f == 2 ? "child+strips" : "child");
-        if (!mt) return s;
-        return a == 3 ? "plane+band" : a == 2 ? (f == 2 ? "plane+payonce+strips" : "plane+payonce") : (f == 2 ? "plane+child+strips" : "plane+child");
+        const char *s = a == 3 ? (f == 2 ? "band+strips" : "band") : a == 2 ? (f == 2 ? "payonce+strips" : "payonce")
+                                                                            : (f == 2 ? "child+strips" : "child");
+        if (!mt)
+            return s;
+        return a == 3 ? "plane+band" : a == 2 ? (f == 2 ? "plane+payonce+strips" : "plane+payonce")
+                                              : (f == 2 ? "plane+child+strips" : "plane+child");
     }
     if (h->N2 > 0 && h->N3 == 0 && h->il2d_col.nst > 0)
-    {   /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the
-         * batched rows, +rb2 = the batched two-pass rows; turn = the whole
-         * plane through the 1D engine; csk = the skewed column pass */
-        if (h->il2d_turn) return "turn";
-        if (h->il2d_col.blu) return h->il2d_col.tpc ? "tpc" : "blu";   /* tpc = the turned prime pass (2026-09-24) */
-        if (h->il2d_csk) return h->il2d_rowb2 ? "csk+rb2" : h->il2d_rowb ? "csk+rb" : "csk";
-        return h->il2d_rowb2 ? "chain+rb2" : h->il2d_rowb ? "chain+rb" : "chain";
+    { /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the
+       * batched rows, +rb2 = the batched two-pass rows; turn = the whole
+       * plane through the 1D engine; csk = the skewed column pass */
+        if (h->il2d_turn)
+            return "turn";
+        if (h->il2d_col.blu)
+            return h->il2d_col.tpc ? "tpc" : "blu"; /* tpc = the turned prime pass (2026-09-24) */
+        if (h->il2d_csk)
+            return h->il2d_rowb2 ? "csk+rb2" : h->il2d_rowb ? "csk+rb"
+                                                            : "csk";
+        return h->il2d_rowb2 ? "chain+rb2" : h->il2d_rowb ? "chain+rb"
+                                                          : "chain";
     }
     if (!h->k1_on)
     {
@@ -2520,13 +2610,20 @@ const char *vfft_plan_route(vfft_plan p)
          * handles without the out-of-place door's route field, so the route
          * is read off whichever handle is attached (2026-09-21, the in-place
          * gauntlet's route column). One handle at most is non-NULL. */
-        if (h->k1il2p)      return "2p";
-        if (h->k1il3p)      return "chain3";
-        if (h->k1ilfd)      return "flat";
-        if (h->k1ztt)       return "ztt";
-        if (h->k1fs)        return "fs";
-        if (h->k1_mono_ilf) return "mono";
-        if (h->k1ilpr)      return "prime";
+        if (h->k1il2p)
+            return "2p";
+        if (h->k1il3p)
+            return "chain3";
+        if (h->k1ilfd)
+            return "flat";
+        if (h->k1ztt)
+            return "ztt";
+        if (h->k1fs)
+            return "fs";
+        if (h->k1_mono_ilf)
+            return "mono";
+        if (h->k1ilpr)
+            return "prime";
         return "-";
     }
     if (h->k1_il_route < 0 || h->k1_il_route > VW2_OOP_IL_ROUTE_MAX)
@@ -2547,11 +2644,13 @@ const char *vfft_version(void) { return VFFT_VERSION_STRING; }
 #ifdef VFFT_FINGERPRINT
 #include "vfft_fingerprint.h"
 
-#define FP__ADD(...)                                                        \
-    do {                                                                    \
-        int _w = snprintf(out + used, used < cap ? cap - used : 0,          \
-                          __VA_ARGS__);                                     \
-        if (_w > 0) used += (size_t)_w;                                     \
+#define FP__ADD(...)                                               \
+    do                                                             \
+    {                                                              \
+        int _w = snprintf(out + used, used < cap ? cap - used : 0, \
+                          __VA_ARGS__);                            \
+        if (_w > 0)                                                \
+            used += (size_t)_w;                                    \
     } while (0)
 
 /* presence, never the address: a pointer value is not reproducible */
@@ -2562,9 +2661,9 @@ const char *vfft_version(void) { return VFFT_VERSION_STRING; }
  * differently-configured builds silently stop being comparable and the diff
  * reflows instead of pointing at what moved. Absent field -> 0, fixed width. */
 #ifdef VFFT_USE_JIT
-#  define FP__JIT ((h->k1_jit) ? 1 : 0)
+#define FP__JIT ((h->k1_jit) ? 1 : 0)
 #else
-#  define FP__JIT 0
+#define FP__JIT 0
 #endif
 
 static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
@@ -2573,7 +2672,8 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
 static size_t vfft__fp_child(const struct vfft_plan_s *c, const char *tag,
                              int depth, char *out, size_t cap, size_t used)
 {
-    if (!c) return used;
+    if (!c)
+        return used;
     FP__ADD("@fp d=%d via=%s ", depth, tag);
     return vfft__fp_node(c, depth, out, cap, used);
 }
@@ -2581,7 +2681,8 @@ static size_t vfft__fp_child(const struct vfft_plan_s *c, const char *tag,
 static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
                             char *out, size_t cap, size_t used)
 {
-    if (!h) return used;
+    if (!h)
+        return used;
 
     /* 1 — config echo: what the caller asked for */
     FP__ADD("t=%d place=%d lay=%d n=%d,%d,%d,%d q=%ld nthr=%d "
@@ -2593,7 +2694,8 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     /* 2 — route selectors: the "chose differently" surface */
     FP__ADD(" | k1=%d sp=%d il=%d zr2c=%d",
             h->k1_on, h->k1_sp_route, h->k1_il_route,
-            h->zr2c_route);   /* zroute/ztmt/ztf left with the cascade 2026-09-15 */ /* ilme/ilrace retired 2026-09-03 with the convert machinery */
+            h->zr2c_route);
+        /* zroute/ztmt/ztf left with the cascade 2026-09-15 */ /* ilme/ilrace retired 2026-09-03 with the convert machinery */
     FP__ADD(" nat=%d nat2d=%d natpairs=%d natcyc=%d nat2dcyc=%d mtunsafe=%d",
             h->nat_mode, h->nat2d, h->nat2d_row_is_pairs, h->nat_ncyc,
             h->nat2d_ncyc, h->mt_unsafe);
@@ -2611,11 +2713,11 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
             FP__P(cplan), FP__P(oplan), FP__P(k1sp),
             FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr), FP__P(k1ilfd), FP__P(k1ztt),
-            FP__P(k1fs),   /* D5, 2026-09-18: route 10 had no bit and no line */
+            FP__P(k1fs), /* D5, 2026-09-18: route 10 had no bit and no line */
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
-            FP__P(zr2c_kid), FP__P(tplan),  /* the odd-real bridge's bit retired 2026-10-03 */
-            FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */
-    FP__ADD(" il2dhave=%d%d%d%d",   /* the OOP row child's slot deleted 2026-09-23; the rowsplit slot 2026-10-03 */
+            FP__P(zr2c_kid), FP__P(tplan), /* the odd-real bridge's bit retired 2026-10-03 */
+            FP__P(own_batch), FP__JIT);    /* cplan_il retired 2026-09-03 */
+    FP__ADD(" il2dhave=%d%d%d%d",          /* the OOP row child's slot deleted 2026-09-23; the rowsplit slot 2026-10-03 */
             FP__P(il2d_row), FP__P(il2d_roww),
             ((h->il2d_col.natperm) ? 1 : 0), FP__P(pq_inner)); /* natperm moved into il2d_col */
     /* the K=1 FOUR-STEP (route 10, k1_fourstep.h): the raced split, the order
@@ -2650,7 +2752,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     if (h->zrm)
         FP__ADD(" zrm=rn1");
     if (h->zfsr)
-        FP__ADD(" zfsr=[%dx%d]", h->zfsr->N1, h->zfsr->N2);   /* its child recurses below */
+        FP__ADD(" zfsr=[%dx%d]", h->zfsr->N1, h->zfsr->N2); /* its child recurses below */
     if (h->zrf)
     {
         char cs[48];
@@ -2661,8 +2763,10 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     {
         char cs[96];
         vfft_zrb_str(h->zrb, cs, sizeof cs);
-        if (h->K > 1) FP__ADD(" zrb=[K%zu/%s]", h->K, cs);
-        else FP__ADD(" zrb=[%s/m%d]", cs, h->zrb->mt);
+        if (h->K > 1)
+            FP__ADD(" zrb=[K%zu/%s]", h->K, cs);
+        else
+            FP__ADD(" zrb=[%s/m%d]", cs, h->zrb->mt);
     }
     if (h->k1ilpr)
         FP__ADD(" ilpr=[%s/M%d/m%d]", h->k1ilpr->method ? "rader" : "bluestein", h->k1ilpr->M, h->k1ilpr->mt);
@@ -2681,7 +2785,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     /* 4 — recurse. create re-enters itself for these, so the fingerprint is a
      * TREE; a child that silently changed route is otherwise invisible. */
     if (h->zr2c_kid)
-    {   /* the zr2c child: its recipe (it is the real cell's own verdict, not a plan node) */
+    { /* the zr2c child: its recipe (it is the real cell's own verdict, not a plan node) */
         const vfft_il_cand_t *kc = &h->zr2c_kid->c;
         FP__ADD(" zr2c_child=[r%d %d.%d c3=%d.%d fl=%d zt=%d tw=%d kv=%d bkv=%d %s]", kc->route, kc->R1, kc->R2,
                 kc->c3_A, kc->c3_B, kc->il_fl_n, kc->il_zt_n, kc->il_tw, kc->il_kv, kc->il_bkv, kc->il_flf);
@@ -2712,10 +2816,15 @@ size_t vfft__fingerprint(void *hv, char *out, size_t cap)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)hv;
     size_t used = 0;
-    if (!out || cap == 0) return 0;
+    if (!out || cap == 0)
+        return 0;
     out[0] = '\0';
     FP__ADD("@fpv 1\n");
-    if (!h) { FP__ADD("@fp NULL\n"); return used; }
+    if (!h)
+    {
+        FP__ADD("@fp NULL\n");
+        return used;
+    }
     FP__ADD("@fp d=0 via=root ");
     used = vfft__fp_node(h, 0, out, cap, used);
     return used;
@@ -2723,10 +2832,11 @@ size_t vfft__fingerprint(void *hv, char *out, size_t cap)
 
 void vfft__fp_counters(long *out6)
 {
-    if (!out6) return;
+    if (!out6)
+        return;
     out6[0] = _vfft_tc_mt_dispatch_count;
     out6[1] = _vfft_il2d_col_mt_count;
-    out6[2] = _vfft_il2d_row_mt_count;   /* the 2D real row plan's threaded passes (2026-10-06; the cascade's slot, retired 2026-09-15) */
+    out6[2] = _vfft_il2d_row_mt_count; /* the 2D real row plan's threaded passes (2026-10-06; the cascade's slot, retired 2026-09-15) */
     out6[3] = _vfft_pq_mt_count;
     out6[4] = _vfft_trig_mt_count;
     out6[5] = _vfft_create_race_count;
