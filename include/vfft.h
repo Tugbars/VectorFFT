@@ -144,53 +144,13 @@ extern "C"
   /** @brief Free a table returned by vfft_wisdom_load(). NULL is accepted. */
   void vfft_wisdom_free(vfft_wisdom *w);
 
-  /**
-   * @brief The directory of the library's own store: this CPU's folder.
-   *
-   * Wisdom is kept per CPU. The library's store is a root of folders, each
-   * stamped with the identity of the CPU that raced its rows
-   * (vfft_wisdom_identity()), and a process uses the folder stamped with its
-   * own: rows are never taken from another CPU's folder. A CPU the root has
-   * not seen is given the folder `new`, which its first saved winner stamps.
-   * The environment variable VFFT_WISDOM_DIR names one directory as the store
-   * instead, with no selection.
-   *
-   * @return The directory. Static storage.
-   */
-  const char *vfft_wisdom_folder(void);
-  /**
-   * @brief This CPU's identity, as a store is stamped with it: vendor and
-   *        model, the build's instruction set, the P-core's L1d and L2 and
-   *        the L3 in bytes, and the counts of P- and E-cores.
-   * @return "host=... isa=... l1d=... l2=... l3=... pcores=... ecores=...".
-   *         Static storage.
-   */
-  const char *vfft_wisdom_identity(void);
-  /**
-   * @brief This build's id, "<version>-<commit>": the stamp (bld=) every row
-   *        this build races is saved with. The commit is the last one that
-   *        touched the library's sources, "-dirty" when the build was made
-   *        from changed ones; a build that knows no commit returns the
-   *        version alone. Static storage.
-   */
-  const char *vfft_wisdom_build(void);
-  /**
-   * @brief Report the library's own store: the folder in use, the identity,
-   *        this build's id, and the rows counted by the build that raced
-   *        them.
-   *
-   * Rows are served whatever build raced them. The report shows which ones an
-   * older build left, so they can be listed and re-raced
-   * (config.recalibrate = 1 on the cell).
-   *
-   * @param list_build NULL for the summary alone; a build id to add one line
-   *        per row that build raced; "" for the rows saved before rows
-   *        carried a stamp.
-   * @param buf,n Where the text goes, cut to n - 1 characters; buf may be
-   *        NULL with n == 0 to size it.
-   * @return The length of the whole report, as snprintf() counts it.
-   */
-  size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n);
+  /* Where the library's own store is and what stamps it -- this CPU's folder
+   * and identity, this build's id, the store report -- are facts for logs and
+   * tools: vfft_wisdom_folder / identity / build / report in vfft_diagnostics.h.
+   * Wisdom is kept per CPU: the library's store is a root of folders, each
+   * stamped with the identity of the CPU that raced its rows, and a process
+   * uses the folder stamped with its own; the environment variable
+   * VFFT_WISDOM_DIR names one directory as the store instead. */
 
   /* ── the configuration ────────────────────────────────────────────────── */
 

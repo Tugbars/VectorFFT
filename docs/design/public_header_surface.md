@@ -55,9 +55,12 @@ benches include it). The open items below are still open.
      with no handle and nothing to free, and move the three calls to a tooling header;
    - (c) keep `vfft_wisdom_load()` and `vfft_wisdom_free()` public and drop only
      `vfft_wisdom_save()`.
-3. **`vfft_wisdom_folder()`, `vfft_wisdom_identity()`, `vfft_wisdom_build()` and
-   `vfft_wisdom_report()`.** The same question as item 2. The gauntlet's tooling calls
-   them through `gauntlet/wisdom_folder.py`. Their other callers have not been traced.
+3. ~~**`vfft_wisdom_folder()`, `vfft_wisdom_identity()`, `vfft_wisdom_build()` and
+   `vfft_wisdom_report()`.**~~ DECIDED and MOVED 2026-10-07 (owner: "some of the wisdom
+   stuff can be in diagnostics"): the four are facts for logs and tools and now live in
+   `vfft_diagnostics.h`; their only callers are `recal_1d_probe` (`--where`, `--report`),
+   which reaches the header through `bench_scope.h`, and `wisdom_folder.py` through it.
+   `vfft.h` keeps a pointer comment where they were.
 
 ## Gap, reported and not filled
 
