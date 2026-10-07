@@ -137,7 +137,7 @@ needs no scrambled 2D real contract, so no separate "scrambled child" form.
 
 | phase | contract | status |
 |---|---|---|
-| 1 | R2C, rank 3, howmany 1, OUT OF PLACE, interleaved, DEFAULT/NATURAL (SCRAMBLED refused), any N1,N2 ≥ 2 and N3 ≥ 2 (odd N3 through the row plan's odd door), one thread | DESIGN |
+| 1 | R2C, rank 3, howmany 1, OUT OF PLACE, interleaved, DEFAULT/NATURAL (SCRAMBLED refused), any N1,N2 ≥ 2 and N3 ≥ 2 (odd N3 through the row plan's odd door), one thread; a threaded request is served by the serial walk until phase 3 | BUILT 2026-10-07 (`il/rank3/fftnd_real_il.h`; gate `r3d_gate.c`: vs FFTW ≤ 6e-16, replays bitwise with zero races, pins never bank, the 2D borrow fires) |
 | 2 | C2R, the same cell (direction-shared row, `_c2r` tokens), input preserved; `destroy_input` = axis 0 in place | after 1 |
 | 3 | MT (§7): the plane arm transposed, strips aligned to row blocks, raced per (cell, T) with the structure, no band arm | after 2 (DECIDED) |
 | 4 | the later forms of §4; rank 4 | owner's call |
@@ -209,9 +209,10 @@ own token set on the one row):
 
 | tokens | owner | meaning |
 |---|---|---|
-| `chain= blu= wl= cx= cxs=` / `cx_c2r= cxs_c2r=` | axis 0 | the column plan's chain, N-arm, band width, form and stack state, spelled as the 2D real row spells them |
-| (none) | the flat arm | it carries no verdict of its own: the child's `plane_*` recipe (row engine, axis-1 chain) is its recipe; `s=2` says it runs the pay-once form |
-| `s=` | the structure race | 1 child, 2 flat |
+| `chain= blu= forms=` | axis 0 | the column builder's spelling (the chain, the N-arm, the kernel forms), as the c2c rank-3 row spells them |
+| `nf= nsw=` | axis 0's execution form | 1 in place (the natural pass or the one-stage kernel; the pay-once twin: stages in place, the leaf out of place), 2 strips, with the strip width — the c2c rank-3 row's own names, the same meaning |
+| `chain1=` | the pay-once arm's axis 1 | the plain per-plane chain, raced at the plane's size (cheap; the one race the flat arm owns) |
+| `s=` | the structure race | 1 child, 2 pay-once (the flat arm carries no other verdict: the child's `plane_*` recipe is its row engine's) |
 | `cmt= cmts= cmtp=` (on the `nthreads=T` row) | the MT race | the c2c tier's spelling |
 | `plane_*` | the child | the 2D real child's recipe in role (the child store; `il/wisdom/wisdom2_child.h`) |
 
@@ -257,7 +258,7 @@ here.
 
 | file | role |
 |---|---|
-| `il/rank3/fftnd_real_il.h` (NEW) | `vfft_ilndr_t` (axis 0 descriptor, the child, the flat arm's row plan and axis-1 descriptor, the c2r scratch volume, the clones), the walks, the structure race, the MT arms, `_vfft_create_fftnd_real_il` |
+| `il/rank3/fftnd_real_il.h` (BUILT, phase 1) | `vfft_ilndr_t` (axis 0's plain and natural descriptors, the child and its store, the pay-once axis-1 descriptor and private volume, the strip scratch), the walks, the 2D borrow, the structure x form race, `_vfft_create_fftnd_real_il`, execute, destroy |
 | `il/rank3/fftnd_il.h` | `_vfft_create_rank34_il` dispatches rank-3 interleaved R2C/C2R here; its clone and race helpers lent where they fit (the strips, the plane team, the race protocol) |
 | `il/rank2/il2d_col.h`, `il2d_tier.h`, `il2d_real_plan.h` | the column build/execute and the real row-plan race, lent (no rank-3 code lives there) |
 | `il/planning/policy_il.h` | `vfft_policy_ilndr_ok` (the contract), the MT serial-arm law reused |

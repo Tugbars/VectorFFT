@@ -998,6 +998,17 @@ E2.16 cxp_c2r                 RACED in c2r (2026-10-07): the column-inverse plan
                               cxp_c2r=d|0 on the real row (il2d_real_pitch.h). Only a ONE-KERNEL
                               column pass at an ODD hp1 (512 | N2 is where the pitch aliases),
                               one thread, not the destroying form, not the fused walk.
+E3.R1 s (rank-3 real)         RACED in 3D r2c (2026-10-07, fftnd_real_il.h): the structure, child
+                              (the 2D real plan per plane, axis 0 in place after) vs pay-once (the
+                              rows into a private volume, the plain axis-1 chain there, axis 0's one
+                              permuting write), jointly with E3.R2, whole transform on scratch, min
+                              of 3 paced rounds; s=1|2 on the rank-3 real row. Pin VFFT_ILNDR_ARM.
+E3.R2 nf / nsw (rank-3 real)  RACED jointly with E3.R1: axis 0's execution form, in place (the
+                              natural pass or the one-stage kernel; the pay-once leaf out of place)
+                              vs dense column strips at the policy width; nf=1|2 nsw= on the row.
+                              Pins VFFT_ILNDR_NF / VFFT_ILNDR_SW. The axis-0 chain itself is the
+                              column builder's race (E1.1 at rank 3); the pay-once axis-1 chain
+                              (chain1=) the same at the plane's size.
 E2.17 csk (real)              RACED in r2c (2026-10-07): the one-kernel column pass on a SKEWED
                               private plane at hp1 + 8 (the rows landing there, the finished
                               rows copied out) vs in place at hp1, whole transform, the race's
