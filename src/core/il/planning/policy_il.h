@@ -42,11 +42,11 @@
  * ("may this N race at all?") and that question is policy. The engines'
  * own bands (vfft_ztt_band, vfft_k1fs_band) stay with their engines. */
 #ifndef VFFT_K1_IL_PLAN_MAX_N
-#define VFFT_K1_IL_PLAN_MAX_N 16384      /* odd N above 2048 race here; 4 scratch
-                                          * planes of this size is the budget */
+#define VFFT_K1_IL_PLAN_MAX_N 16384 /* odd N above 2048 race here; 4 scratch \
+                                     * planes of this size is the budget */
 #endif
 #ifndef VFFT_K1_IL_PLAN_ODD_MAX_N
-#define VFFT_K1_IL_PLAN_ODD_MAX_N 262144 /* the flat DIT's cells (no factor of 4)
+#define VFFT_K1_IL_PLAN_ODD_MAX_N 262144 /* the flat DIT's cells (no factor of 4) \
                                           * race to the odd band's ceiling */
 #endif
 
@@ -58,8 +58,10 @@ static inline long vfft_policy_race_max_n(int N)
 {
     const int pow2 = (N & (N - 1)) == 0;
     const int oddband = vfft_ztt_odd_band(N);
-    if (pow2)    return (long)VFFT_K1FS_MAX_N;
-    if (oddband) return (long)VFFT_ZTT_MAX_N;
+    if (pow2)
+        return (long)VFFT_K1FS_MAX_N;
+    if (oddband)
+        return (long)VFFT_ZTT_MAX_N;
     return (N & 3) ? (long)VFFT_K1_IL_PLAN_ODD_MAX_N : (long)VFFT_K1_IL_PLAN_MAX_N;
 }
 
@@ -116,25 +118,25 @@ static inline int vfft_policy_prime_cell(int N)
     for (p = 2; p <= VFFT_POLICY_CHAIN_MAX_PRIME; p++)
         while (m % p == 0)
             m /= p;
-    return m > 1;   /* what is left is a product of primes past the chain radices */
+    return m > 1; /* what is left is a product of primes past the chain radices */
 }
 
 typedef enum
 {
-    VFFT_FAM_MONO = 0,    /* the solo kernels (one call, every registry form) */
-    VFFT_FAM_PAIR,        /* the Bailey pairs, R1 x R2 with the form axis     */
-    VFFT_FAM_CHAIN3,      /* the 3-stage chain                                */
-    VFFT_FAM_FLAT,        /* the flat mixed-radix DIT (odd N)                 */
-    VFFT_FAM_ZTT,         /* ZTURN-T, the run-contiguous DIT at pow2          */
-    VFFT_FAM_ZTT_ODD,     /* ZTURN-T's staged chains at 2^a * odd             */
-    VFFT_FAM_FS,          /* the four-step on the 2D tier                     */
-    VFFT_FAM_PRIME,       /* the prime cell: Rader/Bluestein on the whole N   */
+    VFFT_FAM_MONO = 0, /* the solo kernels (one call, every registry form) */
+    VFFT_FAM_PAIR,     /* the Bailey pairs, R1 x R2 with the form axis     */
+    VFFT_FAM_CHAIN3,   /* the 3-stage chain                                */
+    VFFT_FAM_FLAT,     /* the flat mixed-radix DIT (odd N)                 */
+    VFFT_FAM_ZTT,      /* ZTURN-T, the run-contiguous DIT at pow2          */
+    VFFT_FAM_ZTT_ODD,  /* ZTURN-T's staged chains at 2^a * odd             */
+    VFFT_FAM_FS,       /* the four-step on the 2D tier                     */
+    VFFT_FAM_PRIME,    /* the prime cell: Rader/Bluestein on the whole N   */
     VFFT_FAM_NFAM
 } vfft_fam_t;
 
 static inline const char *vfft_policy_fam_name(vfft_fam_t f)
 {
-    static const char *N[VFFT_FAM_NFAM] = { "mono", "pair", "chain3", "flat", "ztt", "ztt_odd", "fs", "prime" };
+    static const char *N[VFFT_FAM_NFAM] = {"mono", "pair", "chain3", "flat", "ztt", "ztt_odd", "fs", "prime"};
     return (f >= 0 && f < VFFT_FAM_NFAM) ? N[f] : "?";
 }
 
@@ -146,41 +148,68 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
     const int N = c->N;
     const int pow2 = (N & (N - 1)) == 0;
     int n = 0;
-#define VFFT__POOL_PUSH(f) do { if (n < (max)) out[n] = (f); n++; } while (0)
+#define VFFT__POOL_PUSH(f) \
+    do                     \
+    {                      \
+        if (n < (max))     \
+            out[n] = (f);  \
+        n++;               \
+    } while (0)
     if (c->ord == VW2_ORD_SCR)
-    {   /* ORDER IS A CONTRACT: the scrambled pool races SCRAMBLED WRITERS
-         * only — one family per band, never the natural engines */
-        if (vfft_ztt_band(N))          { VFFT__POOL_PUSH(VFFT_FAM_ZTT);     return n; }
-        if (pow2 && vfft_k1fs_band(N)) { VFFT__POOL_PUSH(VFFT_FAM_FS);      return n; }
-        if (vfft_ztt_odd_band(N))      { VFFT__POOL_PUSH(VFFT_FAM_ZTT_ODD); return n; }
-        if (!pow2 || N < 2048)         /* a pow2 above the four-step's band has no scrambled writer: empty */
-        {   /* outside the bands every engine that legally answers a scrambled
-             * request competes: the natural writers (identity is a legal
-             * scrambled permutation) and, at a non-pow2, the flat's own
-             * scrambled class. */
+    { /* ORDER IS A CONTRACT: the scrambled pool races SCRAMBLED WRITERS
+       * only — one family per band, never the natural engines */
+        if (vfft_ztt_band(N))
+        {
+            VFFT__POOL_PUSH(VFFT_FAM_ZTT);
+            return n;
+        }
+        if (pow2 && vfft_k1fs_band(N))
+        {
+            VFFT__POOL_PUSH(VFFT_FAM_FS);
+            return n;
+        }
+        if (vfft_ztt_odd_band(N))
+        {
+            VFFT__POOL_PUSH(VFFT_FAM_ZTT_ODD);
+            return n;
+        }
+        if (!pow2 || N < 2048) /* a pow2 above the four-step's band has no scrambled writer: empty */
+        {                      /* outside the bands every engine that legally answers a scrambled
+                                * request competes: the natural writers (identity is a legal
+                                * scrambled permutation) and, at a non-pow2, the flat's own
+                                * scrambled class. */
             VFFT__POOL_PUSH(VFFT_FAM_MONO);
             VFFT__POOL_PUSH(VFFT_FAM_PAIR);
             VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
-            if (vfft_ztt_band(N)) VFFT__POOL_PUSH(VFFT_FAM_ZTT);
-            if (!pow2)            VFFT__POOL_PUSH(VFFT_FAM_FLAT);
-            if (vfft_policy_prime_cell(N)) VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* no chain carries N; natural output: a legal scrambled permutation */
+            if (vfft_ztt_band(N))
+                VFFT__POOL_PUSH(VFFT_FAM_ZTT);
+            if (!pow2)
+                VFFT__POOL_PUSH(VFFT_FAM_FLAT);
+            if (vfft_policy_prime_cell(N))
+                VFFT__POOL_PUSH(VFFT_FAM_PRIME); /* no chain carries N; natural output: a legal scrambled permutation */
         }
-        return n;                      /* else: empty — the cell refuses */
+        return n; /* else: empty — the cell refuses */
     }
     if (pow2 && N >= 2048)
-    {   /* ZTURN-T ALONE to its ceiling; the four-step above it; both AT it */
-        if (N <= VFFT_ZTT_MAX_N)    VFFT__POOL_PUSH(VFFT_FAM_ZTT);
-        if (vfft_k1fs_band(N))      VFFT__POOL_PUSH(VFFT_FAM_FS);
+    { /* ZTURN-T ALONE to its ceiling; the four-step above it; both AT it */
+        if (N <= VFFT_ZTT_MAX_N)
+            VFFT__POOL_PUSH(VFFT_FAM_ZTT);
+        if (vfft_k1fs_band(N))
+            VFFT__POOL_PUSH(VFFT_FAM_FS);
         return n;
     }
     /* the competition band and everything below/beside it */
-    if (vfft_ztt_odd_band(N)) VFFT__POOL_PUSH(VFFT_FAM_ZTT_ODD);
+    if (vfft_ztt_odd_band(N))
+        VFFT__POOL_PUSH(VFFT_FAM_ZTT_ODD);
     VFFT__POOL_PUSH(VFFT_FAM_MONO);
     VFFT__POOL_PUSH(VFFT_FAM_PAIR);
     VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
-    if (!pow2 && !vfft_ztt_odd_band(N)) VFFT__POOL_PUSH(VFFT_FAM_FLAT);   /* every non-pow2 cell but the odd band's */
-    if (vfft_ztt_band(N))               VFFT__POOL_PUSH(VFFT_FAM_ZTT);
-    if (vfft_policy_prime_cell(N))      VFFT__POOL_PUSH(VFFT_FAM_PRIME);   /* the lengths no chain carries */
+    if (!pow2 && !vfft_ztt_odd_band(N))
+        VFFT__POOL_PUSH(VFFT_FAM_FLAT); /* every non-pow2 cell but the odd band's */
+    if (vfft_ztt_band(N))
+        VFFT__POOL_PUSH(VFFT_FAM_ZTT);
+    if (vfft_policy_prime_cell(N))
+        VFFT__POOL_PUSH(VFFT_FAM_PRIME); /* the lengths no chain carries */
 #undef VFFT__POOL_PUSH
     return n;
 }
@@ -227,8 +256,10 @@ static inline int vfft_policy_races(const vfft_cell_t *c)
     const int N = c->N;
     const int pow2 = (N & (N - 1)) == 0;
     const int oddband = vfft_ztt_odd_band(N);
-    if (pow2)    return (long)N <= (long)VFFT_K1FS_MAX_N;
-    if (oddband) return (long)N <= (long)VFFT_ZTT_MAX_N;
+    if (pow2)
+        return (long)N <= (long)VFFT_K1FS_MAX_N;
+    if (oddband)
+        return (long)N <= (long)VFFT_ZTT_MAX_N;
     return (long)N <= (long)((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N);
 }
 
@@ -240,7 +271,8 @@ static inline int vfft_policy_admits(const vfft_cell_t *c, vfft_fam_t f)
     const int n = vfft_policy_pool(c, pool, VFFT_FAM_NFAM);
     int i;
     for (i = 0; i < n && i < VFFT_FAM_NFAM; i++)
-        if (pool[i] == f) return 1;
+        if (pool[i] == f)
+            return 1;
     return 0;
 }
 
@@ -264,7 +296,7 @@ static inline int vfft_policy_admits(const vfft_cell_t *c, vfft_fam_t f)
  * their column band (wl). A ladder is a pool: the RACE decides. The STRIP
  * ladders are NOT here on purpose: the 2D tier's {16..256} and the 3D
  * tier's {8..1024} are different lists by design. */
-static const int VFFT_IL2D_WL_LADDER[] = { 8, 16, 32, 64, 128, 256 };
+static const int VFFT_IL2D_WL_LADDER[] = {8, 16, 32, 64, 128, 256};
 #define VFFT_IL2D_WL_LADDER_N \
     ((int)(sizeof VFFT_IL2D_WL_LADDER / sizeof VFFT_IL2D_WL_LADDER[0]))
 
@@ -463,8 +495,10 @@ static inline int vfft_policy_ilndr_ok(const vfft_config_t *cfg, size_t howmany)
 static inline int vfft_policy_ilndr_strip_w(int N1, size_t plane)
 {
     size_t w = (256u * 1024u) / (16u * (size_t)N1);
-    if (w > plane) w = plane;
-    if (w < 8) w = 8;
+    if (w > plane)
+        w = plane;
+    if (w < 8)
+        w = 8;
     return (int)w;
 }
 
@@ -587,11 +621,12 @@ static inline int vfft_policy_k1_engine_present(int mono, int pair, int chain3,
  * arm wins a one-column remainder on Raptor Lake: a ymm pass costs what an
  * xmm pass costs and the mask adds 4-14%, so a masked pass pays only where
  * it replaces two narrow passes -- never with one column left. */
-typedef enum {
-    VFFT_TAIL_NONE = 0,   /* count % per == 0: no tail */
-    VFFT_TAIL_XMM,        /* one 128-bit pass per leftover column */
-    VFFT_TAIL_YMM,        /* one 256-bit pass: 2 columns */
-    VFFT_TAIL_ZMM_MASKED  /* one k-masked 512-bit pass */
+typedef enum
+{
+    VFFT_TAIL_NONE = 0,  /* count % per == 0: no tail */
+    VFFT_TAIL_XMM,       /* one 128-bit pass per leftover column */
+    VFFT_TAIL_YMM,       /* one 256-bit pass: 2 columns */
+    VFFT_TAIL_ZMM_MASKED /* one k-masked 512-bit pass */
 } vfft_tail_arm_t;
 
 /* The arm that serves the FIRST leftover pass of a codelet with `per`
@@ -601,8 +636,10 @@ typedef enum {
  * column-stride kind (3 -> ymm, then 1 -> xmm). */
 static inline vfft_tail_arm_t vfft_policy_il_tail_arm(int per, int rem, int turned, int colstride)
 {
-    if (rem <= 0) return VFFT_TAIL_NONE;
-    if (per <= 2 || turned || rem == 1) return VFFT_TAIL_XMM;
+    if (rem <= 0)
+        return VFFT_TAIL_NONE;
+    if (per <= 2 || turned || rem == 1)
+        return VFFT_TAIL_XMM;
     return (rem == 2 || colstride) ? VFFT_TAIL_YMM : VFFT_TAIL_ZMM_MASKED;
 }
 
