@@ -164,7 +164,7 @@ int main(void)
         }
 
         /* ------------------------------------------------ G5: wisdom roundtrip */
-        const char *wis = "build_tuned/benches/_fftw_bind_gate.wis";
+        const char *wis = "src/tools/gates/_fftw_bind_gate.wis";   /* repo-root-relative: run_gates.py runs from the root */
         int ex = api.export_wisdom_to_filename(wis);
         api.forget_wisdom();
         int im = api.import_wisdom_from_filename(wis);

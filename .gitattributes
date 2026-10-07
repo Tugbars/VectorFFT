@@ -25,20 +25,11 @@ src/dag-fft-compiler/codelets/**/*.md      -linguist-generated
 # machine output, not decision-making code. Excluded from the language bar.
 src/dag-fft-compiler/generator/generated/** linguist-generated
 
-# Benchmarks, dev scratch, and tests — kept in the repo for users, but not
-# part of the shipped library, so excluded from the language bar.
-build_tuned/benches/** linguist-vendored
-
 # Everything under docs/roadmap/ (plans, prototype harnesses, their .c benches
 # and result logs) is reference material, not part of the library: excluded
 # from the language bar whatever its extension.
 docs/roadmap/**        linguist-vendored
 docs/roadmap/**/*.c    linguist-vendored
-build_tuned/dev/**     linguist-vendored
-build_tuned/test/**    linguist-vendored
-# Every C file anywhere under build_tuned (bench_compilers/, future probe
-# dirs, stray root-level harnesses) — same rationale.
-build_tuned/**/*.c     linguist-vendored
 
 # DAG-compiler experiments — probe/sandbox campaigns, not shipped library
 # code. Excluded from the language bar.

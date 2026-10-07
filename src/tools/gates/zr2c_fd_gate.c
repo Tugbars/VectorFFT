@@ -60,7 +60,7 @@ static char g_errpath[512];
 static long g_errpos = 0;
 static int err_tap_open(void)
 {
-    snprintf(g_errpath, sizeof g_errpath, "build_tuned/benches/_zr2c_fd_gate.log");
+    snprintf(g_errpath, sizeof g_errpath, "src/tools/gates/_zr2c_fd_gate.log");
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     g_errpos = 0;
@@ -521,15 +521,15 @@ int main(int argc, char **argv)
      * this: the verdict is a measured crossover per cell. Set before any
      * plan is created. */
     _putenv("VFFT_TCMT=1");
-    /* CWD-proof wisdom resolution: build.py runs binaries from build_tuned/
-     * while a manual run starts in benches/ — probe both relative roots and
+    /* CWD-proof wisdom resolution: run_gates.py runs binaries from the repo
+     * root while a manual run starts in src/tools/gates — probe both relative roots and
      * take the one whose oop_wisdom.txt actually opens. vfft_wisdom_load
      * returns a (valid, EMPTY) bundle on a total miss, so a pointer check
      * alone would hide the miss — hence the fopen probe + row-count print. */
     const char *cand[3] = {
         (argc >= 2) ? argv[1] : NULL,
-        "../src/dag-fft-compiler/generator/generated",    /* from build_tuned */
-        "../../src/dag-fft-compiler/generator/generated", /* from benches */
+        "src/dag-fft-compiler/generator/generated",          /* from the repo root */
+        "../../../src/dag-fft-compiler/generator/generated", /* from src/tools/gates */
     };
     const char *wdir = NULL;
     for (int i = 0; i < 3 && !wdir; i++) {

@@ -39,7 +39,7 @@ gets a FRESH scratch directory. The few that need real data to do their job get 
 scratch COPY of the store. A gate must never be able to write the shipped tree.
 
 USAGE
-  python build_tuned/run_gates.py [--out FILE] [--only SUBSTR] [--keep]
+  python src/tools/gates/run_gates.py [--out FILE] [--only SUBSTR] [--keep]
 Exit 0 when every gate passes.
 """
 import os
@@ -112,15 +112,15 @@ def _kill_children_when_i_die():
         pass                      # best effort; the per-gate timeout still applies
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BENCH = os.path.join(HERE, "benches")
-# Gates run from the REPO ROOT, not from benches/. fftw_bind_gate writes its
-# wisdom to the repo-root-relative path "build_tuned/benches/_fftw_bind_gate.wis";
-# from benches/ that resolves to benches/build_tuned/benches/... which does not
+BENCH = HERE   # src/tools/gates: the gates' sources and their exes (moved from build_tuned/benches 2026-10-07)
+# Gates run from the REPO ROOT, not from here. fftw_bind_gate writes its
+# wisdom to the repo-root-relative path "src/tools/gates/_fftw_bind_gate.wis";
+# from src/tools/gates/ that resolves to src/tools/gates/src/tools/gates/... which does not
 # exist, so export and import both return 0 and the gate reports a FALSE RED
-# (verified: VERDICT FAIL from benches/, VERDICT PASS from the root). A harness
+# (verified: VERDICT FAIL from the gate folder, VERDICT PASS from the root). A harness
 # that manufactures reds is worse than none - it teaches you to ignore it.
-ROOT = os.path.dirname(HERE)
-STORE = os.path.normpath(os.path.join(HERE, "..", "src", "wisdom"))   # the wisdom2 store (2026-09-24); the frozen bundle stays in generated/ and the library reads it from there
+ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+STORE = os.path.join(ROOT, "src", "wisdom")   # the wisdom2 store (2026-09-24); the frozen bundle stays in generated/ and the library reads it from there
 
 # How each gate wants its wisdom directory.
 #   "none"        - takes no argument
@@ -146,7 +146,7 @@ ARGSTYLE = {
     # COLD on purpose, same class as vfft_natural_front_gate: it asserts a RACE
     # OCCURRED. Seeded, it correctly replays the banked verdict and reports
     # "NO RACE" with accuracy fine (7.8e-16) - a green engine, a red gate.
-    # These two are the whole class: grep "NO RACE" over benches/*gate*.c.
+    # These two are the whole class: grep "NO RACE" over src/tools/gates/*gate*.c.
     "vfft_ilp_front_gate":     ("flag", False),
     "vfft_k1scr_gate":         ("flag", True),
     # COLD: the MONO tier (solo kernels) races once per cell and must land route=mono
@@ -200,8 +200,8 @@ def build(src, name):
     modes = [("textual", ["--compile"])] if name in TEXTUAL else [
         ("standalone", ["--compile"]), ("vfft", ["--vfft", "--compile"])]
     for label, flags in modes:
-        r = subprocess.run([sys.executable, "build.py", "--src", src] + flags,
-                           cwd=HERE, capture_output=True, text=True)
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "gauntlet", "build.py"), "--src", src] + flags,
+                           cwd=ROOT, capture_output=True, text=True)   # the one build script (build_tuned/build.py retired 2026-10-07)
         if r.returncode == 0:
             return label
     return None
@@ -285,7 +285,7 @@ def main():
         print(line, flush=True)
 
     for g in gates:
-        src = os.path.join("benches", g + ".c")
+        src = os.path.join(BENCH, g + ".c")
         mode = build(src, g)
         if mode is None:
             emit("BUILD_FAIL %-28s" % g)
