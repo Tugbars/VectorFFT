@@ -761,9 +761,12 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         _il2d_rowx_arm_run(&cand[0]);
         cand[0].a = a;
         cand[0].z = z;
-        if (N1 >= 2 && (c2r ? vfft_il2d_rows_bwd_fn(N2) : vfft_il2d_rows_fn(N2)))
+        /* WHICH DOOR'S ENGINES RACE is the policy's law of N2's parity
+         * (vfft_policy_il2d_rows_even_door / _odd_door, planning/policy_il.h);
+         * the mono's band is the engine's own */
+        if (N1 >= 2 && vfft_policy_il2d_rows_even_door(N2) && (c2r ? vfft_il2d_rows_bwd_fn(N2) : vfft_il2d_rows_fn(N2)))
             ROWX_ARM(c2r ? vfft_il2d_rows_bwd_fn(N2) : vfft_il2d_rows_fn(N2), NULL);
-        if (h->il2d_oddn2)
+        if (vfft_policy_il2d_rows_odd_door(N2))
         {   /* ODD N2 (2026-10-07): the odd door's engines in the row role -- the real
              * mono (below, N2 <= 64), the real flat DIT and the real Bluestein
              * through the odd door's own sweeps (il/real/odd_build.h: the chain
@@ -808,19 +811,20 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         }
         {
             /* the even door's engines (zr2c, the pairs, ZTT-r) are candidates at an
-             * EVEN N2 only: at an odd N2 their builders still build (a zr2c at N=15
-             * raced its child and banked it into the row engines' store before the
-             * gate dropped it), so they are not asked */
-            struct vfft_plan_s *hz = (N2 & 1) ? NULL : _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 0), *e;
+             * EVEN N2 only (the policy's law): at an odd N2 their builders still
+             * build (a zr2c at N=15 raced its child and banked it into the row
+             * engines' store before the gate dropped it), so they are not asked */
+            const int even_door = vfft_policy_il2d_rows_even_door(N2);
+            struct vfft_plan_s *hz = even_door ? _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 0) : NULL, *e;
             if (hz)
                 ROWX_ARM(NULL, hz);
-            if (!(N2 & 1) && (e = _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 1)) != NULL)
+            if (even_door && (e = _il2d_rowx_zr2c(&c, h->il2d_rxS, N2, 1)) != NULL)
                 ROWX_ARM(NULL, e);
             if (N2 <= VFFT_ZRM_MAX_N && (e = _zrm_build_plan(&c, N2)) != NULL)
                 ROWX_ARM(NULL, e);
             {
                 int pa[VFFT_ZRP_MAX_ARMS][3];
-                const int np = (N2 & 1) ? 0 : _zrp_arms(N2, pa, VFFT_ZRP_MAX_ARMS);
+                const int np = even_door ? _zrp_arms(N2, pa, VFFT_ZRP_MAX_ARMS) : 0;
                 for (i = 0; i < np; i++)
                     if ((e = _zrp_build_pair(&c, N2, pa[i][0], pa[i][1], pa[i][2])) != NULL)
                         ROWX_ARM(NULL, e);
@@ -929,8 +933,8 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                 if (ns[i] < ns[best]) best = i;
             for (s = 1; s < 4; s++)
                 if (ns[s] < ns[bd]) bd = s;
-            /* 3% hysteresis toward the tier's route at its own best state */
-            if (best / 4 != 0 && !vfft_race_beats(ns[best], ns[bd], 0.97))
+            /* the race's margin toward the tier's route at its own best state */
+            if (best / 4 != 0 && !vfft_race_beats(ns[best], ns[bd], VFFT_RACE_HYST))
                 best = bd;
             if (log)
             {
@@ -1516,8 +1520,8 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
             if (ns[i] < ns[best]) best = i;
         for (i = 1; i < 4 * nf; i++)
             if (ns[i] < ns[bc]) bc = i;
-        /* 3% hysteresis toward the chain: a leaf serves where it clearly wins */
-        if (ctx[best].leaf && !vfft_race_beats(ns[best], ns[bc], 0.97))
+        /* the race's margin toward the chain: a leaf serves where it clearly wins */
+        if (ctx[best].leaf && !vfft_race_beats(ns[best], ns[bc], VFFT_RACE_HYST))
             best = bc;
         if (log)
         {
@@ -1561,8 +1565,8 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
                 vfft_race_run(&proto, ka, 4, kns);
                 for (t = 1; t < 4; t++)
                     if (kns[t] < kns[kb]) kb = t;
-                if (kb != ks[s] && vfft_race_beats(kns[kb], kns[ks[s]], 0.97))
-                    ks[s] = (signed char)kb; /* 3% toward the pass's state */
+                if (kb != ks[s] && vfft_race_beats(kns[kb], kns[ks[s]], VFFT_RACE_HYST))
+                    ks[s] = (signed char)kb; /* the race's margin toward the pass's state */
                 if (_il2d_plan_stk(kns, ks[s]) < 0)
                     ks[s] = -1;
                 if (ks[s] != u)
@@ -1582,8 +1586,8 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
                 vfft_race_run(&proto, ka, 2, kns);
                 if (log)
                     fprintf(stderr, "[il2d-real] %scols %dx%d one state %.0f vs per stage %.0f -> %s\n", dn, N1, N2, kns[0], kns[1],
-                            vfft_race_beats(kns[1], kns[0], 0.97) ? "per stage" : "one state");
-                if (vfft_race_beats(kns[1], kns[0], 0.97))
+                            vfft_race_beats(kns[1], kns[0], VFFT_RACE_HYST) ? "per stage" : "one state");
+                if (vfft_race_beats(kns[1], kns[0], VFFT_RACE_HYST))
                     ctx[best] = fin[1];
             }
         }
@@ -1873,8 +1877,8 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
         for (i = 2; i < na; i++)
             if (ns[i] < ns[best]) best = i;
         ci = (best - 1) / 4;
-        /* 3% hysteresis toward the scratch form: the input is destroyed where that clearly pays */
-        win = vfft_race_beats(ns[best], ns[0], 0.97);
+        /* the race's margin toward the scratch form: the input is destroyed where that clearly pays */
+        win = vfft_race_beats(ns[best], ns[0], VFFT_RACE_HYST);
         if (log)
         {
             fprintf(stderr, "[il2d-real] c2r destroy %dx%d race: reps=%d | scratch=%.0f |", N1, N2, reps, ns[0]);

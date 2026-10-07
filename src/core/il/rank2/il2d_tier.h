@@ -2140,8 +2140,8 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
         if (na < 2 || strcmp(an[0], nm[0]))
             continue;   /* no rival, or the incumbent itself did not build */
         vfft_race_run(&proto, arm, na, ns);
-        for (f = 1; f < na; f++)   /* a rival takes the stage past 3% of the incumbent and of the best so far */
-            if (ns[f] < 0.97 * ns[0] && ns[f] < ns[win])
+        for (f = 1; f < na; f++)   /* a rival takes the stage past the race's margin of the incumbent and of the best so far */
+            if (vfft_race_beats(ns[f], ns[0], VFFT_RACE_HYST) && ns[f] < ns[win])
                 win = f;
         pick[s] = an[win];
         ff[s] = ffa[win][s];

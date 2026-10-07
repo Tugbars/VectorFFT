@@ -32,12 +32,14 @@
  * PLANNING. A candidate, never a default: raced at create against the
  * standard walk on the whole transform (the plan's own row and column plans,
  * as it serves them), its plane gated against the standard walk's at 1e-10,
- * the 3% hysteresis toward the standard walk; banked raxis=n1 (the form
- * serves) or raxis=n2 (the standard walk) on the real row at the plan's T.
- * VFFT_IL2D_RAXIS=n1|n2 pins (beats wisdom, never banks). Admission: r2c,
- * the row child present (the standard walk exists), odd N2, even N1 >= 4,
- * one thread (the serial form; the threaded form is its own piece). The c2r
- * twin is its own piece (the owner's rule: r2c and c2r are separate).
+ * the race's margin (VFFT_RACE_HYST) toward the standard walk; banked
+ * raxis=n1 (the form serves) or raxis=n2 (the standard walk) on the real row
+ * at the plan's T. VFFT_IL2D_RAXIS=n1|n2 pins (beats wisdom, never banks).
+ * Admission is the policy's law (vfft_policy_il2d_raxis_ok,
+ * planning/policy_il.h: r2c, interleaved, out of place, one thread, an even
+ * N1 >= 4, an odd N2) with the standard walk present to race against. The
+ * threaded form and the c2r twin are their own pieces (the owner's rule: r2c
+ * and c2r are separate).
  *
  * Included after il2d_real_plan.h (the row and column plans the standard
  * walk's arm runs) and before vfft_execute.h (the dispatch and the destroy).
@@ -45,11 +47,11 @@
 #ifndef VFFT_IL2D_REAL_AXIS_H
 #define VFFT_IL2D_REAL_AXIS_H
 
-/* the form's admission at this plan */
-static int _il2d_rax_admits(const struct vfft_plan_s *h)
+/* the form's admission at this plan: the policy's law of the request
+ * (planning/policy_il.h), and the standard walk present to race against */
+static int _il2d_rax_admits(const struct vfft_plan_s *h, const vfft_config_t *cfg)
 {
-    return h->transform == VFFT_R2C && h->il2d_row && h->il2d_oddn2 && h->nthreads <= 1 &&
-           h->N >= 4 && (h->N & 1) == 0 && (h->N2 & 1) != 0;
+    return h->il2d_row && h->il2d_oddn2 && vfft_policy_il2d_raxis_ok(cfg, h->nthreads, h->N, h->N2);
 }
 
 /* everything the form owns, back to nothing (the plan's standard walk untouched) */
@@ -366,7 +368,7 @@ static void _il2d_rax_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
 {
     const char *log = getenv("VFFT_IL2D_LOG"), *e = getenv("VFFT_IL2D_RAXIS");
     h->il2d_rax_on = 0;
-    if (!_il2d_rax_admits(h))
+    if (!_il2d_rax_admits(h, cfg))
         return;
     if (e && e[0])
     {   /* the pin: beats wisdom, never banks */
@@ -460,7 +462,7 @@ static void _il2d_rax_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
             const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1, 0 };
             vfft_race_run(&proto, arms, 2, ns);
         }
-        win = vfft_race_beats(ns[1], ns[0], 0.97);   /* 3% hysteresis toward the standard walk */
+        win = vfft_race_beats(ns[1], ns[0], VFFT_RACE_HYST);   /* the race's margin toward the standard walk */
         if (log)
         {
             char cs[48];

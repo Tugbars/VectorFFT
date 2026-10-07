@@ -192,6 +192,13 @@ static int vfft_race_run(const vfft_race_proto_t *p, const vfft_race_arm_t *arms
 
 /* The hysteresis verdict: the challenger displaces the incumbent only when
  * it is faster by more than the margin (hyst = 0.97 for a 3% margin). */
+/* THE RACE'S MARGIN: a challenger serves only where it beats the incumbent by
+ * 3% -- the incumbent being the structural arm (the tier's route, the chain's
+ * form, the scratch form, the standard walk, the one stack state): a race
+ * inside the noise keeps what stands, so re-creates do not flap. Every site
+ * that keeps an incumbent passes this; a race with no incumbent (an open
+ * pool) takes the fastest. */
+#define VFFT_RACE_HYST 0.97
 static inline int vfft_race_beats(double challenger_ns, double incumbent_ns,
                                   double hyst)
 {

@@ -322,6 +322,47 @@ static inline int vfft_policy_il2d_c2r_destroy_ok(const vfft_config_t *cfg, int 
            (one_stage || nleaf > 0);
 }
 
+/* -- rank 2, real: the ROW ENGINES' DOORS by the parity of N2 --------------
+ * The 2D real row plan races per-row engines in the row role
+ * (il2d_real_plan.h). Which door's engines are candidates is a law of N2's
+ * parity, the law the 1D real door keeps (real_create_il.h): the EVEN door's
+ * -- the rows kernel, zr2c at its routes, the real pairs, ZTT-r -- at an
+ * even N2; the ODD door's -- the real flat DIT, the real Bluestein -- at an
+ * odd N2; the real mono at either parity inside its own band. An even-door
+ * engine asked at an odd N2 is not merely slow: zr2c builds, races its child
+ * and banks the recipe before any gate drops it (2026-10-07). The row route
+ * the tier has (the row child) is arm 0 at every N2. */
+static inline int vfft_policy_il2d_rows_even_door(int N2)
+{
+    return (N2 & 1) == 0;
+}
+static inline int vfft_policy_il2d_rows_odd_door(int N2)
+{
+    return (N2 & 1) != 0;
+}
+
+/* -- rank 2, real: THE REAL AXIS ON N1 --------------------------------------
+ * The r2c plan's whole-plan form (il2d_real_axis.h): row pairs packed into
+ * one complex row, the c2c column chain at N1/2, the fold across columns,
+ * c2c(N2) on N1/2+1 rows. It is a CANDIDATE wherever the walk can be built
+ * -- an interleaved out-of-place r2c request at an even N1 >= 4 (a half
+ * plane with a column chain) and an odd N2 (where the standard walk's rows
+ * are the odd door's engines, each near a full c2c at a prime N2) -- and the
+ * race against the standard walk decides per cell, never a size rule
+ * (measured 2026-10-07: it wins every prime N2 with N1/2 >= 4 by 1.08-1.44x
+ * and N2 = 15, and loses every composite odd N2 raced). One thread: the
+ * serial form; the threaded form is its own piece. An even N2 is never
+ * admitted: the standard walk's rows are the even door's engines there and
+ * the form lost at every even N2 measured (0.50-0.98,
+ * docs/research/il2d_real_levers). The request's own plan only, never a
+ * child's. */
+static inline int vfft_policy_il2d_raxis_ok(const vfft_config_t *cfg, int nthreads, int N1, int N2)
+{
+    return cfg && cfg->transform == VFFT_R2C && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+           cfg->placement == VFFT_OUTOFPLACE && nthreads <= 1 &&
+           N1 >= 4 && (N1 & 1) == 0 && (N2 & 1) != 0;
+}
+
 /* -- rank >= 2: which PASS an axis runs ------------------------------------
  * The shared column builder races and builds either the NATURAL-leaf pass
  * or the SCRAMBLED pass for one axis. Which one is a law of (rank, axis,
