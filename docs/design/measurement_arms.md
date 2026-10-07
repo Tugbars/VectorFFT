@@ -985,6 +985,11 @@ E2.9 column chain             STRUCTURAL for the real tier: precedence is
                               (Asymmetry with E1.1, which IS raced for c2c.)
 E2.10 oddn2                   RACED in r2c (2026-10-07): the K=1 c2c child route vs
                               the odd door's engines per row (rx=); c2r rides the child.
+E2.14 raxis                   RACED in r2c (2026-10-07): at an even N1 and an odd N2 the
+                              real axis on N1 (il2d_real_axis.h: row pairs packed, the
+                              c2c chain at N1/2 on the columns, the fold, c2c(N2) on
+                              N1/2+1 rows) vs the standard walk, whole transform, 3%
+                              hysteresis; raxis=n1|n2, children rax_* / raxr_*. One thread.
 E2.11 norowz                  RETIRED 2026-10-03 (the ROWSPLIT doors' A/B knob).
 E2.12 wc / roop               STRUCTURALLY UNREACHABLE for real.
 E2.13 column-axis Bluestein M STRUCTURAL. M = 16, then while (M < 2*N1-1) M <<= 1.

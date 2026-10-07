@@ -1018,6 +1018,13 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * threaded under the colmt verdict at T > 1, one state for the pass there) */
     if (h->transform == VFFT_R2C && h->il2d_row)
         _il2d_real_colplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* THE REAL AXIS ON N1 (2026-10-07, il2d_real_axis.h): at an even N1 and an
+     * odd N2 the whole-plan form -- row pairs packed, the c2c chain at N1/2 on
+     * the columns, the fold, c2c(N2) on N1/2+1 rows -- raced against the
+     * standard walk just bound above (env pin, the banked raxis=, or the
+     * race); its children in role on the real row (rax_*, raxr_*). One thread. */
+    if (h->transform == VFFT_R2C && h->il2d_row)
+        _il2d_rax_plan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* its c2r twin: the reverse column pass's form (the chain's natural leaf
      * strided or staged, or the backward one-kernel leaf) and its stack
      * states, raced on the cell's own reverse pass (cx_c2r= / cxs_c2r=) */

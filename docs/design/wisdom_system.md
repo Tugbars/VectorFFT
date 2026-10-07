@@ -175,6 +175,8 @@ entered at the first clock read inside a create and left when the outermost
   | `plane_` | the 3D tier's 2D child (with its own `rp_` and friends inside) | `fftnd_il.h` `_ilnd_build_child` |
   | `rp_` / `rp_c2r_` | the real 2D door's row child: the c2c plan at an odd N2, else the real batch at N2 x N1 (by the plan's direction: the two differ) | `fft2d_create_il.h` (the real branch) |
   | `rx_` / `rx_c2r_` | the real 2D door's per-row engines, by the plan's direction: a zr2c engine's child recipe (the row engines' own store); the odd engines (zrf, zrb) carry their recipe in the `rx=` value itself | `il/rank2/il2d_real_plan.h` `_il2d_real_rowplan` / `_c2r` |
+  | `rax_` | the real axis on N1 (the r2c plan's whole-plan form at an even N1 and an odd N2, `raxis=n1`): its c2c column chain at N1/2, the (N1/2, N2) scrambled column row | `il/rank2/il2d_real_axis.h` `_il2d_rax_build` |
+  | `raxr_` | the same form's row batch: the c2c(N2) transform-contiguous batch over N1/2+1 rows | `il/rank2/il2d_real_axis.h` `_il2d_rax_build` |
 
 - The four-step's child codec follows: the 2D child row under `fs_` carries its row
   plan itself (`fs_rp_*`), so `fs_row_` / `fs_row_bwd_` are no longer written and are

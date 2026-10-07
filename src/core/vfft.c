@@ -1187,6 +1187,7 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 #include "il/real/zrp_build.h"  /* the real pair + the real door's engine race (2026-09-29) */
 #include "il/real/odd_build.h"  /* the real door's odd-N engine pick: zrm / zrf / zrb, the odd real race (2026-10-03) */
 #include "il/rank2/il2d_real_plan.h" /* the 2D real tier's row engine and its planner: the row race in the row role (2026-10-01) */
+#include "il/rank2/il2d_real_axis.h" /* the real axis on N1: the r2c plan's whole-plan form at an even N1 and an odd N2, raced vs the standard walk (2026-10-07) */
 #include "il/rank3/fftnd_il.h"     /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
 /* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
  * allocator and the padded-batch create tier used to retype this sequence

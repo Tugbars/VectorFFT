@@ -493,6 +493,22 @@ struct vfft_plan_s
                       * column machinery is count-agnostic so everything
                       * past the rows is the even path unchanged. */
     double *il2d_orbuf; /* 2 x 2*N2 doubles: the odd row's in/out pair */
+    /* ── THE REAL AXIS ON N1 (2026-10-07, il/rank2/il2d_real_axis.h): a whole-plan
+     * FORM of the r2c plan at an even N1 and an odd N2 -- row pairs packed into
+     * one complex row (il2d_rax_W, N1/2 x N2), the c2c column chain at N1/2
+     * (il2d_rax_col, scrambled, in place), the fold across columns into the
+     * N1/2+1 real column spectra (il2d_rax_A), the c2c(N2) batch over those
+     * rows (il2d_rax_row, into il2d_rax_T), the CCE rows and their mirrors
+     * written out. Raced against the standard walk on the whole transform,
+     * banked raxis=n1|n2 on the real row; the children in role under rax_*
+     * (the chain) and raxr_* (the batch). il2d_rax_on = the form serves. */
+    int il2d_rax_on, il2d_rax_M;
+    double *il2d_rax_W, *il2d_rax_A, *il2d_rax_T, *il2d_rax_tw;
+    int *il2d_rax_perm;                 /* natural row k -> the scrambled pass's row; NULL = natural */
+    vfft_ilcol_t il2d_rax_col;
+    struct vfft_wisdom_s *il2d_raxS;
+    struct vfft_plan_s *il2d_rax_row;
+    struct vfft_wisdom_s *il2d_rax_rowS;
     /* ── ODD/PRIME N1 c2c (2026-08-27): the COLUMN-AXIS BLUESTEIN.
      * When N1 has no native chain, the column transform runs as a
      * chirp convolution at M = next pow2 >= 2*N1-1, riding the SHIPPED

@@ -344,7 +344,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         h->layout == (int)VFFT_LAYOUT_INTERLEAVED && h->N2 > 0 && h->il2d_row &&
         !h->pq_inner && !h->tcb && !h->ilnd &&
-        h->nthreads <= 1 && !h->il2d_col.colmt)
+        h->nthreads <= 1 && !h->il2d_col.colmt && !h->il2d_rax_on)   /* the real axis on N1 takes the general path */
     {
         h->k1_exec = h->transform == VFFT_R2C ? _k2x_il2d_r2c : _k2x_il2d_c2r;
         if (h->transform == VFFT_R2C && h->il2d_rx_on && h->il2d_rx_lm && h->il2d_rx_stk < 0 &&
@@ -788,6 +788,11 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
         }
         else if (h->transform == VFFT_R2C && h->il2d_row)
         {
+            if (h->il2d_rax_on)
+            {   /* the real axis on N1 (il2d_real_axis.h): the form's own walk */
+                _il2d_rax_exec_fwd(h, sre, dre);
+                return;
+            }
             /* ── native IL 2D REAL fwd (fft2d_real_il_design.md): the
              * batched TC K=N1 zr2c row door does the OOP move (real rows
              * at pitch N2 -> CCE half-spectrum plane at pitch hp1), then

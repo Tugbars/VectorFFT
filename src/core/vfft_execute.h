@@ -415,6 +415,7 @@ void vfft_destroy(vfft_plan h)
                 free(h->il2d_rxw);
             }
             vfft_child_store_free(h->il2d_rxS);          /* the row engines' private store */
+            _il2d_rax_free(h);                           /* the real axis on N1: its planes, chain, batch and stores */
             for (s2 = 0; s2 < h->il2d_col.nst; s2++)
             {
                 vfft_aligned_free(h->il2d_col.tf[s2]);

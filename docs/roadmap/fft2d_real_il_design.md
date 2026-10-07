@@ -76,7 +76,12 @@ between the row and column passes (2D), column twiddles column-invariant
    edges, and the r2c row race (il2d_real_plan.h, 2026-10-07) runs the odd
    door's engines per row against it — the real mono, the real flat DIT,
    the real Bluestein, each gated against the route — banking the winner
-   as rx=; a c2r plan keeps the route until its own piece lands.
+   as rx=; a c2r plan keeps the route until its own piece lands. At an
+   EVEN N1 the r2c plan also races THE REAL AXIS ON N1 (il2d_real_axis.h,
+   docs/roadmap/il2d_real_axis_n1.md): row pairs packed into one complex
+   row, the c2c column chain at N1/2 scrambled in place, the fold across
+   columns, c2c(N2) on N1/2+1 rows, the CCE rows and mirrors out — a
+   whole-plan form raced against the standard walk, banked raxis=n1|n2.
 2. **DC / Nyquist columns** (k2 = 0 and N2/2) are real-symmetric along
    N1. The generic column pass treats them as complex — correct,
    symmetry unexploited. Optimization lever, not a correctness item;
@@ -182,7 +187,7 @@ per cell, or the cell keeps the veneer — measured serving, no faith.
   through the leaf-redirected pass, odd N2 through the c2c child route and,
   in r2c, the odd engines raced in the row role; split-layout callers keep
   the split engine untouched). Verdict cells live in wisdom2_2d.txt:
-  {t=r2c ord=scr lay=il | chain= wl= rx= rxs= cx= cxs= | wl_c2r= rx_c2r=
+  {t=r2c ord=scr lay=il | chain= wl= rx= rxs= cx= cxs= raxis= | wl_c2r= rx_c2r=
   rxs_c2r= cx_c2r= cxs_c2r= cxd_c2r= cxds_c2r=}, DIRECTION-SHARED (one row for both
   directions, each direction's own token set: the c2r row and column plans
   are the r2c plans' twins over the backward row pass and the reverse
