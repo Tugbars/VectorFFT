@@ -218,4 +218,4 @@ Measured at T=8, same-run: 6561 1.7×, 19683 2.7×, 59049 5.0×, 98415 5.1×,
 | `wisdom2/wisdom2_2d_reader.h` | `cmt=` through the axis bank, on the row keyed `nthreads=T`; `cmts=` through `vw2_ilnd_mts_lookup/bank`; `cmtp=` through `vw2_ilnd_ptw_lookup/bank` |
 | `support/threads.h` | the pool owner |
 | `vfft.c`, `include/vfft_diagnostics.h` | `vfft_ilnd_mt_passes()` |
-| `build_tuned/benches/bench_1d_vs_mkl.c` | `--3dil --mt`, the two-team protocol |
+| `gauntlet/bench_1d_vs_mkl.c` | `--3dil --mt`, the two-team protocol |

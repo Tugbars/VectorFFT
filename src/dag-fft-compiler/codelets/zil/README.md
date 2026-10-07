@@ -40,7 +40,7 @@ place; the folder a file lands in follows its kind (`Corpus.dir_of_file`), and
 the law is byte identity against the shipped file (the index is LF; a checkout
 may carry CRLF). `generator/gates/full_corpus_gate.sh` is the tracked
 acceptance gate for the whole corpus; the builds (`gauntlet/build.py`,
-`build_tuned/build.py`, `CMakeLists.txt`) list the folders explicitly and fail
+`gauntlet/build.py`, `CMakeLists.txt`) list the folders explicitly and fail
 loudly on an empty one.
 
 Deleted on 2026-09-24 as unused (the owner's ruling): the 52 `log3` kernels,

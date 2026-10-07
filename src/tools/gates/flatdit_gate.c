@@ -35,7 +35,7 @@
  * is threaded (a serial verdict is legal: it is printed, not required).
  *
  * Run:   flatdit_gate.exe --wisdir <scratch dir>
- * Build: python build_tuned/build.py --compile --src build_tuned/benches/flatdit_gate.c --vfft */
+ * Build: python gauntlet/build.py --compile --src src/tools/gates/flatdit_gate.c --vfft */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>

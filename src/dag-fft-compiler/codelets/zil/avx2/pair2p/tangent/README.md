@@ -52,7 +52,7 @@ with no numerical risk and may be gated on bit-identity rather than tolerance.
 Re-gate them any time:
 
 ```sh
-gcc -O2 -static -o tangent_gate build_tuned/benches/tangent_gate.c \
+gcc -O2 -static -o tangent_gate src/tools/gates/tangent_gate.c \
     src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/*.c -lm && ./tangent_gate
 ```
 
@@ -66,7 +66,7 @@ They ship as **`il_kv` variant 3**, alongside the existing blocked forms
 | registry | `src/core/oop/il2p.h` | `vfft_il2p_mid_v_fn` / `vfft_il2p_leaf_v_fn` return the tangent symbol for variant 3 |
 | plan search | `src/core/planning/dp_planner_il.h` | variant 3 enters the candidate pool wherever a form exists, so the cell can measure it |
 | apply | `src/core/vfft.c` | unchanged — `_k1_il2p_apply_kv` was already generic over the nibble |
-| build | `build_tuned/build.py` | the `tangent/` dir is in the codelet source list |
+| build | `gauntlet/build.py` | the `tangent/` dir is in the codelet source list |
 
 Two details the registry encodes deliberately:
 
@@ -109,7 +109,7 @@ Two gates, and they check different things:
 
 ```sh
 # 1. the codelets in isolation (own twiddle table, direct calls)
-gcc -O2 -static -o tangent_gate build_tuned/benches/tangent_gate.c \
+gcc -O2 -static -o tangent_gate src/tools/gates/tangent_gate.c \
     src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/*.c -lm && ./tangent_gate
 
 # 2. the WIRED path: il2p's own table + geometry + the il_kv plumbing

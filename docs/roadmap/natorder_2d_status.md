@@ -189,7 +189,7 @@ Two regimes:
 
 ## 7. Reproduction
 
-Untracked probes in `build_tuned/test/` (build with `python build_tuned/build.py --src <file> --vfft
+Untracked probes in `build_tuned/test/` (build with `python gauntlet/build.py --src <file> --vfft
 --jit`; the tax probes need a P-core-pinned quiet host for stable numbers):
 
 - `natorder_2d_test.c` — correctness (naive separable 2D DFT + roundtrip), DEFAULT/NATURAL/SCRAMBLED.

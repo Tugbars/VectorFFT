@@ -47,7 +47,7 @@ the tolerance, and it needs no corroboration filter at all. These targets are th
 fallback for when no archived binary exists, and the sanity anchor.
 
 USAGE
-  python build_tuned/perf_targets.py [--band 0.10] [--out FILE]
+  python src/tools/baseline/perf_targets.py [--band 0.10] [--out FILE]
 """
 import csv
 import os

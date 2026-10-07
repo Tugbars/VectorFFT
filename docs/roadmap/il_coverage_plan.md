@@ -190,7 +190,7 @@ batching, and where.
     many loops. No padding, no remainder kernel, no `exec_me`
     verdict, no even-K constraint — the property the campaign docs
     already noted about MKL ("odd K is just one more transform").
-  - **Gate**: `build_tuned/benches/vfft_tcbatch_gate.c` ALL PASS —
+  - **Gate**: `src/tools/gates/vfft_tcbatch_gate.c` ALL PASS —
     fwd/bwd vs independent scalar DFT per transform with DIFFERENT data
     in each block (catches a route that transformed only one block),
     BITWISE identity vs K separate K=1 executes, in-place both

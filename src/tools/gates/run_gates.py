@@ -120,7 +120,18 @@ BENCH = HERE   # src/tools/gates: the gates' sources and their exes (moved from 
 # (verified: VERDICT FAIL from the gate folder, VERDICT PASS from the root). A harness
 # that manufactures reds is worse than none - it teaches you to ignore it.
 ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
-STORE = os.path.join(ROOT, "src", "wisdom")   # the wisdom2 store (2026-09-24); the frozen bundle stays in generated/ and the library reads it from there
+# The SEEDED gates copy THIS CPU's folder of the shipped store (src/wisdom/<CPU folder>, the one
+# gauntlet/wisdom_folder.py names: recal_1d_probe --where). Since the per-CPU folders (2026-10-05)
+# the src/wisdom root holds only README.md, and copying the root seeded every gate with nothing.
+# Resolved once, on the first seeded gate; a probe that cannot answer stops the run loudly.
+_STORE = None
+def store():
+    global _STORE
+    if _STORE is None:
+        sys.path.insert(0, os.path.join(ROOT, "gauntlet"))
+        from wisdom_folder import shipped_folder
+        _STORE = shipped_folder()[0]
+    return _STORE
 
 # How each gate wants its wisdom directory.
 #   "none"        - takes no argument
@@ -167,14 +178,8 @@ ARGSTYLE = {
     # the four-step (2026-09-15): a bare scratch dir, SEEDED so the upper-band
     # cells replay their banked verdicts instead of racing 2^19..2^21 cold
     "k1_fourstep_gate":        ("bare", True),
-    "il2d_m1_gate":            ("bare", True),
     "il2d_real_gate":          ("bare", True),
     "odd_partner_cells_gate":  ("bare", True),
-    "wisdom2_g0_gate":         ("bare", False),
-    # SCRATCH ONLY - see the fixture-collision note in the header
-    "wisdom2_real_gate":       ("bare", False),
-    "wisdom2_2d_gate":         ("bare", True),  # SEEDED: create-twice coherence needs the 2D shard; VFFT_WISDOM2_OFF is RETIRED (no legacy arm, no dual fixture)
-    "zr2c_store_decode_gate":  ("bare", True),
     # decode real wisdom -> seeded copy
     "sp_ccol_decode_gate":     ("bare", True),
     "zr2c_fd_gate":            ("bare", True),
@@ -201,7 +206,7 @@ def build(src, name):
         ("standalone", ["--compile"]), ("vfft", ["--vfft", "--compile"])]
     for label, flags in modes:
         r = subprocess.run([sys.executable, os.path.join(ROOT, "gauntlet", "build.py"), "--src", src] + flags,
-                           cwd=ROOT, capture_output=True, text=True)   # the one build script (build_tuned/build.py retired 2026-10-07)
+                           cwd=ROOT, capture_output=True, text=True)   # the one build script (gauntlet/build.py retired 2026-10-07)
         if r.returncode == 0:
             return label
     return None
@@ -213,9 +218,9 @@ def run(name, workdir):
     scratch = os.path.join(workdir, name)
     os.makedirs(scratch, exist_ok=True)
     if seeded:
-        for f in os.listdir(STORE):
+        for f in os.listdir(store()):
             if f.endswith(".txt"):
-                shutil.copy2(os.path.join(STORE, f), scratch)
+                shutil.copy2(os.path.join(store(), f), scratch)
 
     exe = os.path.join(BENCH, name + ".exe")
     argv = [exe]

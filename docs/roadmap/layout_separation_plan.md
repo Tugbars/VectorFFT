@@ -730,7 +730,7 @@ Notes:
 > ISAs. **After this split, everything has to be tested thoroughly on the
 > owner's own machines** (the i9-14900KF AVX2 box and the Zen 4 AVX-512
 > laptop) before the branch is trusted:
-> - the gate battery (`build_tuned/run_gates.py`) at both ISAs;
+> - the gate battery (`src/tools/gates/run_gates.py`) at both ISAs;
 > - cold creates that RACE and BANK into a scratch store, then a replay of
 >   that store (the banking path is what the split rewrote, and the VM's
 >   replay mostly exercises lookups);
@@ -796,7 +796,7 @@ has four parts:
    - (e) the race census over a **glob** of all core headers, plus a per-basename site
      count;
    - (f) `golden_bits.txt` and `fp_replay.txt` with repeats;
-   - (g) `gates.txt` (pass/fail per gate from `build_tuned/run_gates.py`, no timings);
+   - (g) `gates.txt` (pass/fail per gate from `src/tools/gates/run_gates.py`, no timings);
    - (h) the API sweep;
    - (i) the wisdom replay;
    - (j) `layout.txt`: `sizeof`/`offsetof` of `vfft_plan_s` and of every struct that

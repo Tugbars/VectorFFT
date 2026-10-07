@@ -463,11 +463,11 @@ above): the external consumers need no changes at all.
 - `scripts/bootstrap.sh:173-178` regenerates plan_executors.h from
   `generated/spike_wisdom.txt` and sanity-counts its rows — reading a
   frozen, immutable snapshot is exactly right; the count still matches.
-- `build_tuned/run_bench.py:38` reads the same file to ENUMERATE cells to
+- `run_bench.py (deleted 2026-10-07; git history at 9c78df17):38` reads the same file to ENUMERATE cells to
   bench. Read-only and correct; it enumerates freeze-time cells, the same
   documented limitation as bench_1d_vs_mkl's wisdom-view arms, and the
   exporter is the forward path when it should see live cells.
-- `build_tuned/build.py:44` only names the path in a comment.
+- `gauntlet/build.py:44` only names the path in a comment.
 
 🔴 DEAD TOOLING FOUND: `build_tuned/calibrate.py` orchestrates
 `src/dag-fft-compiler/calibrator/calibrate.exe` — that directory does not

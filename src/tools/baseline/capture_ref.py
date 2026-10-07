@@ -31,7 +31,7 @@ WHAT IS CAPTURED (file -> rung)
   api_sweep.txt         R5  the public-API sweep, replayed from sweep_store/
   wisdom_replay.txt     R5  a stratified sample of src/wisdom's rows, replayed
   roundtrip.txt         R5  the store's load -> save round trip
-  gates.txt             R5  (--gates) build_tuned/run_gates.py
+  gates.txt             R5  (--gates) src/tools/gates/run_gates.py
 
 USAGE
   python capture_ref.py --isa avx2|avx512 --out DIR

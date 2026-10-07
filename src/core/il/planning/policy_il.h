@@ -19,7 +19,7 @@
  * it sits ABOVE every engine in the one-TU include order (after the band
  * headers ztt.h and k1_fourstep_band.h) and BELOW every planner and door
  * (dp_planner_il.h, k1_commit.h, the two c2c doors, the 2D/3D tiers),
- * which all call it. build_tuned/benches/policy_gate.c asserts it against
+ * which all call it. src/tools/gates/policy_gate.c asserts it against
  * the predicates the sites used to spell inline.
  *
  * SPLIT is out of scope: SPLIT and IL are two libraries. The layout-neutral

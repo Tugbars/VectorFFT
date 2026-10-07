@@ -11,7 +11,7 @@ Code of record: `src/core/planning/dp_planner_il.h`
 Kernel registry of record: `src/core/oop/il2p.h`.
 
 > **Counts in this document are MEASURED**, by
-> `build_tuned/benches/il_dp_cand_census.exe`, never inferred from the shape
+> `il_dp_cand_census.exe (deleted 2026-10-07; git history at 9c78df17)`, never inferred from the shape
 > of the loops. That probe exists because an envelope estimate over the loop
 > nesting was wrong by ~2.4x. Re-run it after adding any axis.
 

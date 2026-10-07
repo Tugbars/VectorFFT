@@ -42,7 +42,7 @@ Counts are call sites, not lines. `src/core/` is implied.
 | `oop/k1_commit.h:316,330,442` | the race gate's `pow2`/`oddband` split, the four-step's row pre-warm, the scrambled-refusal band |
 | `planning/dp_planner_il.h:1359,1443,1513,1522,1802,1809,1814` | the same predicates again, per pool |
 | `oop/k1_fourstep.h:162` | the engine re-checks its own band at create |
-| `build_tuned/benches/bench_1d_vs_mkl.c:5643` | the bench's own copy of the admission |
+| `gauntlet/bench_1d_vs_mkl.c:5643` | the bench's own copy of the admission |
 
 Plus the unnamed inline bands: `(N & (N-1)) == 0 && N >= 2048` and
 `N < 2048 || (N & 3)` in both pools, and the odd-with-factor-of-4 fence in
@@ -152,7 +152,7 @@ banked as `il_route=?` because the table had 11 names and a `[10]` bound.
 
 ### L11. The bench and calibrator copies
 
-`build_tuned/benches/bench_1d_vs_mkl.c` (the direct-cell admission),
+`gauntlet/bench_1d_vs_mkl.c` (the direct-cell admission),
 `calibrate_k1_il.c`, and the census/probe benches each re-derive "which
 cells exist" from L1's predicates.
 

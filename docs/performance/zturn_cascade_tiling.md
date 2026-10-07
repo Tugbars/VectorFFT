@@ -415,27 +415,27 @@ the K-across-SIMD question (il_coverage_plan Phase C3), not routing.
 
 ```sh
 # correctness — memcmp vs untiled, both directions, every legal width
-python build_tuned/build.py --src build_tuned/benches/zturn_tcut_gate.c --vfft --compile
+python gauntlet/build.py --src build_tuned/benches/zturn_tcut_gate.c --vfft --compile
 zturn_tcut_gate.exe --wisdir $SCRATCH/wisdir --no-dft
 
 # the legal width space per cell + working sets — arithmetic only, no timing
-python build_tuned/build.py --src build_tuned/benches/zturn_tile_census.c
+python gauntlet/build.py --src build_tuned/benches/zturn_tile_census.c
 
 # internal A/B (NOT a vs-MKL number — that only comes from bench_1d_vs_mkl.c)
-python build_tuned/build.py --src build_tuned/benches/zturn_tcut_ab.c --vfft --compile
+python gauntlet/build.py --src build_tuned/benches/zturn_tcut_ab.c --vfft --compile
 zturn_tcut_ab.exe --wisdir $SCRATCH/wisdir --cell 16384 --rounds 21 --cool 200
 
 # §6.3 — refresh the kind-4 vintage FIRST (chains + widths; the burned-table rule),
 # then the same-vintage order pair, cell-per-process, pinned core 2
-python build_tuned/build.py --src benches/calibrate_zchain.c --vfft --compile
+python gauntlet/build.py --src benches/calibrate_zchain.c --vfft --compile
 calibrate_zchain.exe <dir-of-oop_wisdom.txt> 1 2048 4096 8192 16384 32768
-python build_tuned/build.py --src benches/bench_1d_vs_mkl.c --mkl --vfft --compile
+python gauntlet/build.py --src benches/bench_1d_vs_mkl.c --mkl --vfft --compile
 bench_1d_vs_mkl.exe --k1zip <dir>/oop_wisdom.txt out_zip.csv 200 <N> 1 400 <flip> 2
 bench_1d_vs_mkl.exe --k1nat <dir>/oop_wisdom.txt out_nat.csv 200 <N> 1 400 <flip> 2
 
 # order=NATURAL front-door correctness (cold-start, scratch wisdom, both dirs
 # vs naive DFT IN ORDER — roundtrip cannot gate ordering)
-python build_tuned/build.py --src benches/vfft_natural_front_gate.c --vfft --compile
+python gauntlet/build.py --src benches/vfft_natural_front_gate.c --vfft --compile
 vfft_natural_front_gate.exe --wisdir $SCRATCH/natwis
 ```
 

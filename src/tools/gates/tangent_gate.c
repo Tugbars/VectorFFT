@@ -3,7 +3,7 @@
  *   MID fwd : Y[o] = sum_l W_R^{ol} . w512^{lk} . x_l      (pre-twiddle)
  *   LEAF    : Y[o] = sum_l W_R^{ol} x_l, stored corner-turned (no table)
  * Build (from the repo root):
- *   gcc -O2 -static -o tangent_gate build_tuned/benches/tangent_gate.c \
+ *   gcc -O2 -static -o tangent_gate src/tools/gates/tangent_gate.c \
  *       src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/*.c -lm
  */
 #include <immintrin.h>

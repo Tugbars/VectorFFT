@@ -4,7 +4,7 @@
 Research complete (recon ×5, three competing proposals, two judgments, three
 adversarial verifications, ~40 compiled probes). Every claim below is labeled
 **[M]** measured/compiled on this host, **[D]** read from source or the FFTW
-manual, **[I]** inferred. Nothing in `src/`, `build_tuned/benches/bench_1d_vs_mkl.c`,
+manual, **[I]** inferred. Nothing in `src/`, `gauntlet/bench_1d_vs_mkl.c`,
 `build.py` or `run_bench.py` was modified to produce it.
 
 **Decision trail (gitignored, `docs/research/fftw_bench/`):** `SYNTHESIS.md` is the
@@ -42,7 +42,7 @@ changes what P5 costs.
 > 🔴 **The same-file `--ref=` decision below is OVERRULED.** Owner: *"It's the canonical bench
 > for MKL, not for FFTW. FFTW should have its own file."* The canonical-bench law is
 > **MKL-scoped**, and this is the owner ratification §7's Proposal C said it required.
-> ⇒ **The deliverable is `build_tuned/benches/bench_1d_vs_fftw.c`** — its own file, same mode
+> ⇒ **The deliverable is `gauntlet/bench_1d_vs_fftw.c`** — its own file, same mode
 > vocabulary, and the SAME protocol via the shared backend (`core/support/ref.h` +
 > `benches/ref_fftw.h` + the ref_time core), which is what keeps the two files from drifting.
 > `bench_1d_vs_mkl.c` is NOT touched. Everything else in this document — the mode mapping
@@ -76,7 +76,7 @@ not by copying**: the FFTW arm reaches the same mode surface at the same protoco
 inside the canonical file.
 
 🔴 **The sibling file was already tried, and deleting it is why the law exists.**
-`build_tuned/benches/bench_1d_vs_fftw.c` existed (456 lines). Its own header read
+`gauntlet/bench_1d_vs_fftw.c` existed (456 lines). Its own header read
 *"Companion to bench_1d_vs_mkl.c. Same 207-cell grid…"*. It was deleted at `6f9681af`
 (2026-07-29) while the MKL bench grew to 4,494 lines — and its output, *"beats FFTW3
 202/207, median 3.21×"*, is **still published** at `docs/performance/v1_0_results.md:901-974`
@@ -125,7 +125,7 @@ fftw imports and reports genuine FFTW with MKL live in-process. 🟢 **`build.py
 needs no link change at all**, and the `find_fftw()` edit becomes optional hygiene rather
 than a prerequisite. One rule: `LoadLibraryA` must take an **absolute** path (default
 `C:/vcpkg/installed/x64-windows/bin/fftw3.dll`, overridable by `VFFT_FFTW_DLL`), or it
-inherits the exe-dir-first search that lets the pre-staged `build_tuned/benches/fftw3.dll`
+inherits the exe-dir-first search that lets the pre-staged `src/tools/gates/fftw3.dll`
 win silently.
 
 **Permanent guard, in the banner and in every CSV row:** print `fftw_version`, and refuse to

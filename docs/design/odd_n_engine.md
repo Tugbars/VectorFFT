@@ -821,7 +821,7 @@ the scatter at the end and then arranging that scatter to be cheap.
     codelets/zil/avx2/boundary_split/*_msz_*, *_msz_bwd_*, *_mszt_bwd_*
     generator/lib/gen/c2c_il.ml               t2cp / t2cs / t2csg / t2csgn emission, the group-loop wrapper
     generator/lib/gen/cascade_z.ml            msz / mszb: interleaved edges, unordered lanes, the narrow arms
-    build_tuned/benches/flatdit_gate.c        the front-door gate
+    src/tools/gates/flatdit_gate.c        the front-door gate
     build_tuned/benches/ilfd_probe.c          the standalone probe (chains raced, vs MKL)
     build_tuned/benches/msz_probe.c           the per-stage form A/B
     build_tuned/benches/bind_ab.c             the executor's identity check + same-run A/B (bound list vs per-stage vs per-block)

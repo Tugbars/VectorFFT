@@ -45,6 +45,7 @@ gauntlet/** linguist-vendored
 
 # The gate suite: correctness gates and their runner. Tooling, not library
 # code; excluded from the language bar.
+src/tools/gates/*.c linguist-vendored
 src/tools/gates/** linguist-vendored
 
 # JIT runtime-codegen OUTPUT (machine-generated .c/.dll codelets emitted at

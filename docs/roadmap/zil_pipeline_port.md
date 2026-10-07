@@ -482,7 +482,7 @@ aside for instant rollback — they regenerate from `--z-*` flags anyway):
 `radix{4,8}_z_msg_bwd_avx2.c` ← `--zp-msgb`, `radix8_z_sterm_avx2.c` ←
 `--zp-sterm`, `radix8_z_sterm2_avx2.c` ← `--zp-sterm2`,
 `radix8_z_sterm_bwd_avx2.c` ← `--zp-stermb`. Then rebuild via
-build_tuned/build.py and run, unchanged: the zsplit gate benches,
+gauntlet/build.py and run, unchanged: the zsplit gate benches,
 `zsplit_wis_gate.c` (calibrate→wisdom→create round trip), and the API
 1e-15 gates 2048–16384 fwd+bwd. Expected: identical results to the legacy
 build — the kernels are bit-identical, so any deviation is a build/harness

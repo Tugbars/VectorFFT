@@ -23,7 +23,7 @@
  *
  * REQUIRES dp_planner_il.h (the internals it probes) to be included first.
  * Not part of the shipped create path: it is the checking half of the
- * contract, consumed by build_tuned/benches/form_slot_gate.c.
+ * contract, consumed by src/tools/gates/form_slot_gate.c.
  */
 #ifndef VFFT_IL_SLOT_PROBE_H
 #define VFFT_IL_SLOT_PROBE_H

@@ -74,7 +74,7 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
  * (the variant registry below); create itself does no timing. The mid
  * twins are forward; the backward's blocked forms are the t2t twins
  * (t2t_bwd_v_fn). Blocked forms carry the inline VEX-128 narrow tail, so
- * an odd partner count is legal (build_tuned/benches/blocked_tail_gate.c). */
+ * an odd partner count is legal (src/tools/gates/blocked_tail_gate.c). */
 #define VFFT_IL2P_DECL_T2B(SYM) \
   extern void SYM( \
       const double *, const double *, double *, double *, \
@@ -669,7 +669,7 @@ extern void radix16_z_n1ttan_fwd_avx2(const double *, const double *,
 /* the tangent BACKWARD twins: the same recipe as the forward twins plus
  * --cil-bwd (the mid with --cil-turnst, the pair's backward stage-1 store
  * contract); radix 8 is BIT-IDENTICAL to the classic backward at every
- * count, radix 16 within 5e-17 (build_tuned/benches/tangent_bwd_gate.c).
+ * count, radix 16 within 5e-17 (src/tools/gates/tangent_bwd_gate.c).
  * Backward variant 3 in the resolvers below; the backward forms race
  * (il_bkv) offers them and the cell decides. */
 extern void radix8_z_t2ttan_bwd_avx2(const double *, const double *,
@@ -713,7 +713,7 @@ extern void radix32_z_n1tbw32_fwd_avx2(const double *, const double *,
  * Returns 0 for any (radix, variant) with no emitted kernel, so an
  * unsupported verdict degrades to the monolithic kernel — always correct.
  * The `count_ok` argument is vestigial: blocked kernels carry the odd-count
- * narrow tail (build_tuned/benches/blocked_tail_gate.c); it stays so a
+ * narrow tail (src/tools/gates/blocked_tail_gate.c); it stays so a
  * future tail-less form has somewhere to be refused. */
 
 /* TURNED-axis edge variants (variant 4): same tangent interior, different

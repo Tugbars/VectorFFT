@@ -54,7 +54,7 @@ go (the clean-library law says the latter unless someone wants them).
 
 ## 5. Found in passing (2026-09-16): an include swallowed by a comment
 
-In `build_tuned/benches/bench_1d_vs_mkl.c` the `vfft.h` include opens a
+In `gauntlet/bench_1d_vs_mkl.c` the `vfft.h` include opens a
 three-line comment, and `#include "real_dispatch_config.h"` sits INSIDE it:
 
 ```

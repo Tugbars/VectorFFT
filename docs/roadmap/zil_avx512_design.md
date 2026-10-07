@@ -131,7 +131,7 @@ until then the zil tree has no working byte gate.
 
 ### 3.1 An "avx2" build on an AVX-512 host is not an AVX2 binary — FIXED in `b8f91cc`
 
-The codelet library's flags — `gauntlet/build.py:244`, `build_tuned/build.py:243` — were
+The codelet library's flags — `gauntlet/build.py:244`, `gauntlet/build.py:243` — were
 `-O3 -mavx2 -mfma -march=native` **without** the `-mno-avx512f` clamp that the driver flags
 carry. CMake had no clamp at all. `__attribute__((target("avx2,fma")))` adds ISA, it does
 not remove the command line's.
@@ -593,7 +593,7 @@ starts:
    `VFFT_WISDOM_DIR` into scratch and assert a clean `git status` across the whole repo.
 10. **The registry self-check cannot run inside dune** (its root is `generator/`); move it
     into a gate script.
-11. `build_tuned/benches/k_blk.c` and `k_mono.c` hardcode avx2 zil names and have no owner.
+11. `k_blk.c (deleted 2026-10-07; git history at 9c78df17)` and `k_mono.c` hardcode avx2 zil names and have no owner.
 12. The new front-door gate needs a time budget in `run_gates.py` and a `--quick` default.
 13. **The ladder tail was never measured on the turned kinds** (they could not be generated
     in the tail prototype); D1 should note that, and the tail benchmark should add turned

@@ -21,7 +21,7 @@ WHAT IT ENFORCES BEFORE TOUCHING ANYTHING
     the whole transformation legal, so it is checked, not assumed.
 
 USAGE
-  python build_tuned/slice_extract.py --start N --end M --cond "cfg->dims == 2"
+  python src/tools/baseline/slice_extract.py --start N --end M --cond "cfg->dims == 2"
       --helper _vfft_create_2d --header src/core/transforms/fft2d/fft2d_create.h
       --guard VFFT_TRANSFORMS_FFT2D_CREATE_H --doc <preamble.txt>
       --after-include "oop/k1_commit.h" --note "2D create tier (step 23)"
