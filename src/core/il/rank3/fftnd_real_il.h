@@ -462,12 +462,19 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
             vfft_ilndr_destroy(d);
             return NULL;
         }
+        /* the budget (the c2c tier's longer race, 2026-09-26): reps from ~1 ms of work with a
+         * floor of 4, rounds for at least 48 timed executes per arm (3..15) -- a 3 x 1 race at a
+         * 2 ms cell picked a 7% slower arm (16x256x256, 2026-10-07) */
         reps = (int)(1e6 / (double)(N1 * d->plane + 1));
-        if (reps < 1) reps = 1;
+        if (reps < 4) reps = 4;
         if (reps > 64) reps = 64;
         if (na > 1)
         {
-            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 0, NULL, NULL, 1 }; /* single-thread arms: paced */
+            int rounds = (48 + reps - 1) / reps;
+            vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 0, NULL, NULL, 1 }; /* single-thread arms: paced */
+            if (rounds < 3) rounds = 3;
+            if (rounds > 15) rounds = 15;
+            proto.rounds = rounds;
             _vfft_create_race_count++;
             vfft_race_run(&proto, arms, na, ns);
             for (a = 1; a < na; a++)
