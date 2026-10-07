@@ -445,14 +445,14 @@ static inline int vfft_policy_rankn_axis_nat(int rank, int axis, int ord)
 }
 
 /* -- rank 3, REAL (fftnd_real_il.h, 2026-10-07) ---------------------------
- * The contract of the rank-3 interleaved real tier, phase 1: R2C, one
+ * The contract of the rank-3 interleaved real tier: R2C and C2R, one
  * transform, OUT OF PLACE (the 2D real law: in place needs the padded-pitch
  * caller contract), DEFAULT/NATURAL order (SCRAMBLED exists for no real
- * transform), every dim >= 2. C2R and the threaded forms are later phases;
- * a threaded request is served by the serial walk until then. */
+ * transform), every dim >= 2. The threaded forms are the next phase; a
+ * threaded request is served by the serial walk until then. */
 static inline int vfft_policy_ilndr_ok(const vfft_config_t *cfg, size_t howmany)
 {
-    return cfg && cfg->transform == VFFT_R2C && cfg->dims == 3 && howmany == 1 &&
+    return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 3 && howmany == 1 &&
            cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_OUTOFPLACE &&
            (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL) &&
            cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;

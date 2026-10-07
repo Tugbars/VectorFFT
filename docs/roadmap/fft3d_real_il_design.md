@@ -138,7 +138,7 @@ needs no scrambled 2D real contract, so no separate "scrambled child" form.
 | phase | contract | status |
 |---|---|---|
 | 1 | R2C, rank 3, howmany 1, OUT OF PLACE, interleaved, DEFAULT/NATURAL (SCRAMBLED refused), any N1,N2 ≥ 2 and N3 ≥ 2 (odd N3 through the row plan's odd door), one thread; a threaded request is served by the serial walk until phase 3 | BUILT 2026-10-07 (`il/rank3/fftnd_real_il.h`; gate `r3d_gate.c`: vs FFTW ≤ 6e-16, replays bitwise with zero races, pins never bank, the 2D borrow fires) |
-| 2 | C2R, the same cell (direction-shared row, `_c2r` tokens), input preserved; `destroy_input` = axis 0 in place | after 1 |
+| 2 | C2R, the same cell (direction-shared row: `s_c2r= nf_c2r= nsw_c2r= wl_c2r=`, the chain tokens shared), input preserved through the private volume; `destroy_input` = axis 0 in place; structures child, pay-once, band (every legal cut an arm) | BUILT 2026-10-07 (gate `r3d_gate_c2r.c`: vs FFTW ≤ 1.2e-15, input preserved, replays bitwise, pins never bank, the destroying twin correct) |
 | 3 | MT (§7): the plane arm transposed, strips aligned to row blocks, raced per (cell, T) with the structure, no band arm | after 2 (DECIDED) |
 | 4 | the later forms of §4; rank 4 | owner's call |
 
@@ -210,9 +210,9 @@ own token set on the one row):
 | tokens | owner | meaning |
 |---|---|---|
 | `chain= blu= forms=` | axis 0 | the column builder's spelling (the chain, the N-arm, the kernel forms), as the c2c rank-3 row spells them |
-| `nf= nsw=` | axis 0's execution form | 1 in place (the natural pass or the one-stage kernel; the pay-once twin: stages in place, the leaf out of place), 2 strips, with the strip width — the c2c rank-3 row's own names, the same meaning |
+| `nf= nsw=` / `nf_c2r= nsw_c2r=` | axis 0's execution form, per direction | 1 in place (the natural pass or the one-stage kernel; the pay-once twin: stages in place, the leaf out of place), 2 strips, with the strip width — the c2c rank-3 row's own names, the same meaning |
 | `chain1=` | the pay-once arm's axis 1 | the plain per-plane chain, raced at the plane's size (cheap; the one race the flat arm owns) |
-| `s=` | the structure race | 1 child, 2 pay-once (the flat arm carries no other verdict: the child's `plane_*` recipe is its row engine's) |
+| `s=` / `s_c2r=` | the structure race, per direction | 1 child, 2 pay-once, 3 band (c2r only; `wl_c2r=` its width in planes); the flat arm carries no other verdict: the child's `plane_*` recipe is its row engine's |
 | `cmt= cmts= cmtp=` (on the `nthreads=T` row) | the MT race | the c2c tier's spelling |
 | `plane_*` | the child | the 2D real child's recipe in role (the child store; `il/wisdom/wisdom2_child.h`) |
 
@@ -247,12 +247,16 @@ layout refused.
 
 ## 10. Measurement
 
-`bench_1d_vs_mkl --3dreal` (DFTI REAL 3D CCE NOT_INPLACE, both directions,
-out of place, natural, the two-team protocol at T) and `bench_1d_vs_fftw`'s
-twin (`r2c_3d` / `c2r_3d`; FFTW's c2r destroys its input: timed like the 2D
-cell, input restored outside the timed call). The gauntlet group `3d-real`:
-the pow2 grid plus odd-N3 cells. Numbers live in the results folders, never
-here.
+`bench_1d_vs_mkl --3dreal --realfwd|--realbwd` (BUILT 2026-10-07): the real
+cell at rank 3, the shape N1xN2xN3 in the N slot, against MKL (DFTI REAL 3D,
+CCE strides {0, N2·hp3, hp3, 1}, NOT_INPLACE) or, under `--cmp fftw`, the
+runtime-bound FFTW arm (`r2c_3d` / `c2r_3d`; its c2r destroys its input and is
+timed on a restored copy as the 2D cell is); one thread until phase 3. The
+gauntlet: `--real r2c|c2r --group 3d-real` (the pow2 cube grid 4..256 per axis
+up to 2^20 points plus odd-N3 cubes; 3D shapes in `--cells` too), the row
+reader on `wisdom2_3d.txt`'s `t=r2c` row, `recal_1d_probe --r2c|--c2r --3d`.
+`VFFT_ILNDR_PROF=1` (bound at create) prints the planes' and axis 0's ns per
+execute. Numbers live in the results folders, never here.
 
 ## 11. File map
 
