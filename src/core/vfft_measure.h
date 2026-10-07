@@ -21,11 +21,14 @@ void vfft_measure_configure(const vfft_measure_config_t *config)
     memset(&c, 0, sizeof c);
     if (config)
     {
-        c.pin = (config->pin == VFFT_MEASURE_PIN_OFF) ? 1 : (config->pin == VFFT_MEASURE_PIN_CORE) ? 2 : 0;
+        c.pin = (config->pin == VFFT_MEASURE_PIN_OFF) ? 1 : (config->pin == VFFT_MEASURE_PIN_CORE) ? 2
+                                                                                                   : 0;
         c.pin_core = config->pin_core;
-        c.guard = (config->guard == VFFT_MEASURE_GUARD_OFF) ? 1 : (config->guard == VFFT_MEASURE_GUARD_PAUSE) ? 2 : 0;
-        c.priority = (config->priority == VFFT_MEASURE_PRIORITY_LEAVE) ? 1
-                   : (config->priority == VFFT_MEASURE_PRIORITY_PROCESS) ? 2 : 0;
+        c.guard = (config->guard == VFFT_MEASURE_GUARD_OFF) ? 1 : (config->guard == VFFT_MEASURE_GUARD_PAUSE) ? 2
+                                                                                                              : 0;
+        c.priority = (config->priority == VFFT_MEASURE_PRIORITY_LEAVE)     ? 1
+                     : (config->priority == VFFT_MEASURE_PRIORITY_PROCESS) ? 2
+                                                                           : 0;
         c.lock_wait_ms = config->lock_wait_ms > 0 ? config->lock_wait_ms : 0;
     }
     _vfs_cfg = c;
@@ -39,17 +42,18 @@ int vfft_measure_begin(void)
 void vfft_measure_end(void)
 {
     if (_vfs.auto_on && _vfs.depth == 1)
-        return;   /* the scope a create entered is the create's to leave */
+        return; /* the scope a create entered is the create's to leave */
     _vfs_leave();
 }
 
 unsigned long long vfft_measure_confine(unsigned long long mask)
 {
     if (mask == 0)
-    {   /* the first logical CPU of each P-core */
+    { /* the first logical CPU of each P-core */
         int k, c;
         for (k = 0; (c = vfft_topo_pcore_cpu(k)) >= 0; k++)
-            if (c < 64) mask |= 1ull << c;
+            if (c < 64)
+                mask |= 1ull << c;
     }
     if (mask == 0)
         return 0;
@@ -63,10 +67,11 @@ unsigned long long vfft_measure_confine(unsigned long long mask)
         int c;
         CPU_ZERO(&s);
         for (c = 0; c < 64; c++)
-            if (mask & (1ull << c)) CPU_SET(c, &s);
+            if (mask & (1ull << c))
+                CPU_SET(c, &s);
         if (sched_setaffinity(0, sizeof s, &s) != 0)
             return 0;
-        _vfs_proc_set = s;              /* the set this process may run on, from now */
+        _vfs_proc_set = s; /* the set this process may run on, from now */
         _vfs_proc_set_state = 1;
         return mask;
     }
@@ -77,7 +82,7 @@ unsigned long long vfft_measure_confine(unsigned long long mask)
 
 const char *vfft_measure_describe(char *buf, size_t n)
 {
-    static const char *const gk[] = { "none", "TPAUSE (C0.2)", "MONITORX/MWAITX", "PAUSE spinner" };
+    static const char *const gk[] = {"none", "TPAUSE (C0.2)", "MONITORX/MWAITX", "PAUSE spinner"};
     char pin[64], guard[80];
     if (!buf || !n)
         return "";
@@ -96,8 +101,10 @@ const char *vfft_measure_describe(char *buf, size_t n)
         snprintf(guard, sizeof guard, "none");
     snprintf(buf, n, "pin: %s; sibling guard: %s; priority: %s; measurement lock: %s%s",
              pin, guard,
-             _vfs_last.prio == 2 ? "process raised" : _vfs_last.prio == 1 ? "thread raised" : "unchanged",
-             _vfs_last.lock_state > 0 ? "held" : _vfs_last.lock_state == 0 ? "NOT obtained" : "none on this system",
+             _vfs_last.prio == 2 ? "process raised" : _vfs_last.prio == 1 ? "thread raised"
+                                                                          : "unchanged",
+             _vfs_last.lock_state > 0 ? "held" : _vfs_last.lock_state == 0 ? "NOT obtained"
+                                                                           : "none on this system",
              _vfs_last.flags ? "; winners are not saved" : "");
     return buf;
 }

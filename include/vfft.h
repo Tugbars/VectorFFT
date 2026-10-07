@@ -165,11 +165,11 @@ extern "C"
     vfft_placement_t placement;
     vfft_rigor_t rigor; /**< the sweep on a miss or recalibrate; a hit ignores it */
 
-    int dims;         /**< 1 (default), 2, 3 or 4 */
-    int n[4];         /**< n[0] = N (1D); {N1, N2}; {N1, N2, N3}; {N1, N2, N3, N4}.
-                           dims 3 and 4 take howmany == 1. */
-    size_t howmany;   /**< K, the batch count; where the K transforms sit is
-                           batch_geom */
+    int dims;          /**< 1 (default), 2, 3 or 4 */
+    int n[4];          /**< n[0] = N (1D); {N1, N2}; {N1, N2, N3}; {N1, N2, N3, N4}.
+                            dims 3 and 4 take howmany == 1. */
+    size_t howmany;    /**< K, the batch count; where the K transforms sit is
+                            batch_geom */
     int owned_buffers; /**< 1 = create allocates the planes this plan needs, at a
                             measured stride, zeroed, and destroy frees them; read
                             them with vfft_plan_planes() and vfft_plan_stride().
@@ -454,15 +454,15 @@ extern "C"
   {
     VFFT_MEASURE_GUARD_DEFAULT = 0, /**< the processor's idle instruction, where it has one */
     VFFT_MEASURE_GUARD_OFF = 1,
-    VFFT_MEASURE_GUARD_PAUSE = 2    /**< a PAUSE spinner: works on every part with hyperthreads, and
-                                         slows the measured thread about 12% (every candidate alike) */
+    VFFT_MEASURE_GUARD_PAUSE = 2 /**< a PAUSE spinner: works on every part with hyperthreads, and
+                                      slows the measured thread about 12% (every candidate alike) */
   };
   /** @brief vfft_measure_config_t.priority */
   enum
   {
-    VFFT_MEASURE_PRIORITY_THREAD = 0,  /**< raise the measuring thread */
+    VFFT_MEASURE_PRIORITY_THREAD = 0, /**< raise the measuring thread */
     VFFT_MEASURE_PRIORITY_LEAVE = 1,
-    VFFT_MEASURE_PRIORITY_PROCESS = 2  /**< raise the whole process */
+    VFFT_MEASURE_PRIORITY_PROCESS = 2 /**< raise the whole process */
   };
   /**
    * @brief Set how this process measures: the scope of every later
