@@ -343,7 +343,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
     h->k1_exec = NULL;
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         h->layout == (int)VFFT_LAYOUT_INTERLEAVED && h->N2 > 0 && h->il2d_row &&
-        !h->pq_inner && !h->tcb && !h->ilnd &&
+        !h->pq_inner && !h->tcb && !h->ilnd && !h->ilndr &&
         h->nthreads <= 1 && !h->il2d_col.colmt && !h->il2d_rax_on && !h->il2d_tf_on && !h->il2d_rcsk_on)   /* the real axis on N1, the fused walk and the skewed plane take the general path */
     {
         h->k1_exec = h->transform == VFFT_R2C ? _k2x_il2d_r2c : _k2x_il2d_c2r;
@@ -462,6 +462,11 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
     if (h->N2 > 0)
     { /* ── 2D (dispatch before the same-named 1D transforms) ── */
         _vfft_pool_arm(h->nthreads);
+        if (h->ilndr)
+        {   /* the rank-3 INTERLEAVED REAL tier (fftnd_real_il.h): the planes, then axis 0 */
+            vfft_ilndr_execute(h->ilndr, dir, sre, dre);
+            return;
+        }
         if (h->transform == VFFT_C2C)
         {
             /* tiled-row + native-col, in-place. OOP = copy src->dst then in-place. */

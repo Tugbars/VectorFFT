@@ -76,7 +76,14 @@ called per row block of the virtual row with the leg stride N2·hp3 and the
 output base at the block's natural row. c2r mirrors: axis 0's leaf gathers
 from the caller's volume with the same block addressing into the private
 volume in scrambled order, the stages run in place there, then the plain
-backward chain and the backward rows per plane into the output.
+backward chain and the backward rows per plane into the output. THE
+BACKWARD ROWS ARE WRITTEN PER LEAF GROUP, not per row (probe finding
+2026-10-07): the rows kernel takes two rows at least, and the scrambled
+axis-1 chain's leaf makes the row permutation block-affine — positions
+g·Rl + r hold bins b0 + r·N2/Rl — so each leaf group's natural rows are an
+arithmetic progression the kernel writes in one call with a descending
+output stride; the group that wraps at row 0 takes two calls. An engine per
+row or the door route goes row by row as before.
 
 ## 4. Axis 0: the 2D real column plan over the virtual plane
 
@@ -89,6 +96,16 @@ staged, and the scrambled chain for SCRAMBLED. The banded walk (`wl=`) is
 raced as the 2D real tier races it: bands of planes, the per-plane structure
 OUTSIDE the walk (in r2c it ran first; in c2r it runs after). Bluestein axes
 (prime N1) stay unbanded as in the c2c tier.
+
+THE AXIS-0 FORMS MUST INCLUDE THE STRIP FORM (probe 2026-10-07): the virtual
+row's pitch N2·hp3 is a multiple of 4 KB at many cells (16x256x256: 129
+pages), where an in-place leaf over the cube thrashes the cache sets — the
+in-place leaf served 0.99 of FFTW there, dense column strips (N1 x W complex
+gathered into a strip scratch, the chain there, rows scattered to natural
+planes; the c2c tier's nf=2 form) 1.26, and the pay-once leaf out of place
+1.27; at 8x128x2048 strips 1.06 vs in place 0.95. At the small cubes the
+in-place leaf wins (32³ 1.09 vs strips 0.69, 64³ 1.11 vs 0.84). Raced per
+cell like every other form; the strips align to row blocks (§7).
 
 Not in phase 1, each its own later form: the FUSED WALK at rank 3 (the planes
 of stage 0's digit-d set {d + j·N1/R0} produced straight before the digit's
@@ -148,13 +165,19 @@ threaded): plane × {child, flat} × {full team, half team} plus serial on a
 small cube only (`vfft_policy_ilnd_mt_serial_arm`, the c2c law). The half
 team (`cmtp=`) exists for the same reason as in c2c: a worker's plane-sized
 scratch (the child's column-inverse plane and stagings, the flat arm's axis-1
-scratch) is warm from its second plane on. NO BAND ARM: in r2c it cannot be
-formed (the planes are finished before axis 0 runs); in c2r it is legal (the
-plane structure fused into the band suffix) but the c2c verdict (528 of 534
-against it) excludes it from the tier's race — it is measured once as a c2r
-shape in the scratch probe before the tier is built, and admitted only by
-that number. The natural class's cycle and strip forms have no counterpart:
-no pass here permutes the planes.
+scratch) is warm from its second plane on. THE BAND ARM, c2r ONLY: in r2c it
+cannot be formed (the planes are finished before axis 0 runs); in c2r it is
+the forward chain's wide prefix out of place into the private volume, then
+per band of L[cut] planes the suffix in place and the band's planes' c2r
+while hot. The owner excluded it from the race by the c2c verdict (528 of
+534 against) unless the scratch probe's number admitted it — and it did
+(2026-10-07, one thread, serving/FFTW): the band form is the best c2r arm at
+32³ 1.31, 64³ 1.33 and 128³ 1.15 (the child 1.28 / 1.28 / 1.12), the
+pay-once form at 16x256x256 1.54, 8x128x2048 1.10 and 36x20x28 1.18. So the
+c2r race carries three structures: child, pay-once, band. The natural
+class's cycle and strip forms have no counterpart as ORDER forms (no pass
+here permutes the planes); the STRIP FORM does exist as an axis-0 EXECUTION
+form (§4).
 
 Clones: a 2D REAL child clone is route-equivalent to the primary iff every
 verdict that decides output bits matches — the row plan (`rx=`: engine

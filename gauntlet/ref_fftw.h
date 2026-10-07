@@ -82,6 +82,8 @@ typedef fftwx_plan (*fftwx_plan_dft_r2c_1d_f)(int, double *, fftwx_complex *, un
 typedef fftwx_plan (*fftwx_plan_dft_c2r_1d_f)(int, fftwx_complex *, double *, unsigned);
 typedef fftwx_plan (*fftwx_plan_dft_r2c_2d_f)(int, int, double *, fftwx_complex *, unsigned);
 typedef fftwx_plan (*fftwx_plan_dft_c2r_2d_f)(int, int, fftwx_complex *, double *, unsigned);
+typedef fftwx_plan (*fftwx_plan_dft_r2c_3d_f)(int, int, int, double *, fftwx_complex *, unsigned);   /* the 3D real pair (2026-10-07) */
+typedef fftwx_plan (*fftwx_plan_dft_c2r_3d_f)(int, int, int, fftwx_complex *, double *, unsigned);
 typedef fftwx_plan (*fftwx_plan_many_dft_r2c_f)(int, const int *, int,
                                                 double *, const int *, int, int,
                                                 fftwx_complex *, const int *, int, int, unsigned);
@@ -123,6 +125,8 @@ typedef struct {
     fftwx_plan_dft_c2r_1d_f          plan_dft_c2r_1d;
     fftwx_plan_dft_r2c_2d_f          plan_dft_r2c_2d;
     fftwx_plan_dft_c2r_2d_f          plan_dft_c2r_2d;
+    fftwx_plan_dft_r2c_3d_f          plan_dft_r2c_3d;
+    fftwx_plan_dft_c2r_3d_f          plan_dft_c2r_3d;
     fftwx_plan_many_dft_r2c_f        plan_many_dft_r2c;
     fftwx_plan_many_dft_c2r_f        plan_many_dft_c2r;
     fftwx_plan_guru_split_dft_r2c_f  plan_guru_split_dft_r2c;
@@ -165,6 +169,8 @@ static const struct fftwx__sym fftwx__tab[] = {
     FFTWX__ENTRY(plan_dft_c2r_1d,           "fftw_plan_dft_c2r_1d"),
     FFTWX__ENTRY(plan_dft_r2c_2d,           "fftw_plan_dft_r2c_2d"),
     FFTWX__ENTRY(plan_dft_c2r_2d,           "fftw_plan_dft_c2r_2d"),
+    FFTWX__ENTRY(plan_dft_r2c_3d,           "fftw_plan_dft_r2c_3d"),
+    FFTWX__ENTRY(plan_dft_c2r_3d,           "fftw_plan_dft_c2r_3d"),
     FFTWX__ENTRY(plan_many_dft_r2c,         "fftw_plan_many_dft_r2c"),
     FFTWX__ENTRY(plan_many_dft_c2r,         "fftw_plan_many_dft_c2r"),
     FFTWX__ENTRY(plan_guru_split_dft_r2c,   "fftw_plan_guru_split_dft_r2c"),

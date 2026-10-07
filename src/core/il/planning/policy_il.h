@@ -444,6 +444,30 @@ static inline int vfft_policy_rankn_axis_nat(int rank, int axis, int ord)
     return ord == VW2_ORD_NAT;
 }
 
+/* -- rank 3, REAL (fftnd_real_il.h, 2026-10-07) ---------------------------
+ * The contract of the rank-3 interleaved real tier, phase 1: R2C, one
+ * transform, OUT OF PLACE (the 2D real law: in place needs the padded-pitch
+ * caller contract), DEFAULT/NATURAL order (SCRAMBLED exists for no real
+ * transform), every dim >= 2. C2R and the threaded forms are later phases;
+ * a threaded request is served by the serial walk until then. */
+static inline int vfft_policy_ilndr_ok(const vfft_config_t *cfg, size_t howmany)
+{
+    return cfg && cfg->transform == VFFT_R2C && cfg->dims == 3 && howmany == 1 &&
+           cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_OUTOFPLACE &&
+           (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL) &&
+           cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
+}
+/* the strip form's default width: N1 x w complex within 256 KB (half of L2's
+ * way set, measured 2026-10-07 on the probe), at least 8 columns, at most the
+ * virtual row; the raced width (nsw=) replaces it */
+static inline int vfft_policy_ilndr_strip_w(int N1, size_t plane)
+{
+    size_t w = (256u * 1024u) / (16u * (size_t)N1);
+    if (w > plane) w = plane;
+    if (w < 8) w = 8;
+    return (int)w;
+}
+
 /* -- rank 3, threaded: where the SERIAL arm is raced ----------------------
  * The rank-3 tier's threaded race (fftnd_il.h) runs the plane partition
  * over both structures; serial joins it only on a cube this small. Measured
