@@ -829,3 +829,6 @@
 @cell t=c2c n=1048576 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=fs il_pair=512.2048 il_kv=0 | ran=1 ns=2567500.0 metric=fwd1 units=ns src=race date=2026-09-30
 @cell t=c2c n=2097152 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=fs il_pair=2048.1024 il_kv=0 | ran=1 ns=5877400.0 metric=fwd1 units=ns src=race date=2026-09-30
 @cell t=c2c n=4194304 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=fs il_pair=1024.4096 il_kv=0 | ran=1 ns=14087900.0 metric=fwd1 units=ns src=race date=2026-09-30
+@cell t=c2c n=256 q=36 ord=scr place=ip | eng=stride chain=16.16 vars=flat.t1s dif=0 | ran=36 ns=4555.27 metric=fwd1 units=ns src=race date=2026-10-07 bld=0.1.0-f45afdd9
+@cell t=c2c n=50 q=8 ord=scr place=ip | eng=stride chain=5.10 vars=flat.t1s dif=0 | ran=8 ns=259.40 metric=fwd1 units=ns src=race date=2026-10-07 bld=0.1.0-f45afdd9
+@cell t=dct2 n=64 q=1 ord=scr place=ip | eng=stride chain=32 vars=flat dif=1 | ran=1 ns=75.62 metric=fwd1 units=ns src=race date=2026-10-07 bld=0.1.0-f45afdd9

@@ -4313,3 +4313,7 @@
 @cell t=c2r n=3465 q=64 ord=nat place=oop lay=il | eng=tcb tcmt=1 tcmtt=8 | ran=64 ns=26400.02 metric=fwd1 units=ns src=race date=2026-10-03
 @cell t=c2r n=4099 q=64 ord=nat place=oop lay=il | eng=tcb tcmt=1 tcmtt=8 | ran=64 ns=197900.04 metric=fwd1 units=ns src=race date=2026-10-03
 @cell t=c2r n=6561 q=64 ord=nat place=oop lay=il | eng=tcb tcmt=1 tcmtt=8 | ran=64 ns=58899.99 metric=fwd1 units=ns src=race date=2026-10-03
+@cell t=r2c n=101 q=1 ord=nat place=oop | eng=zrb m=160 in=2p in_sh=16.10 in_tw=0 | ran=1 src=race ns=261.3 metric=fwd1 units=ns date=2026-10-07 bld=0.1.0-f45afdd9
+@cell t=r2c n=63 q=1 ord=nat place=ip | eng=zrf chain=7.3.3 msz=1 tile=0 | ran=1 src=race ns=56.1 metric=fwd1 units=ns date=2026-10-07 bld=0.1.0-f45afdd9
+@cell t=c2r n=63 q=1 ord=nat place=ip | eng=zrf chain=9.7 msz=1 tile=0 | ran=1 src=race ns=41.5 metric=bwd1 units=ns date=2026-10-07 bld=0.1.0-f45afdd9
+@cell t=r2c n=64 q=1 ord=nat place=ip | eng=zrp pair=4.16 leaf=r2z | ran=1 src=race ns=27.4 metric=fwd1 units=ns date=2026-10-07 bld=0.1.0-f45afdd9
