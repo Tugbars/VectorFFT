@@ -58,11 +58,11 @@ static void _il2d_cxp_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg, st
 {
     if (!W || W->vw2_off_2d)
         return;
-    if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tk, val) != 0)
+    if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tk, val, h->il2d_ip) != 0)
     {
         vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R, h->il2d_col.R, h->il2d_col.nst, -1, -1, 0,
-                       (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, ord, T);
-        if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tk, val) != 0)
+                       (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, ord, T, h->il2d_ip);
+        if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tk, val, h->il2d_ip) != 0)
         {
             fprintf(stderr, "vfft: the 2D real %s verdict NOT banked at %dx%d -- the cell will re-race\n", tk, N1, N2);
             return;
@@ -91,7 +91,7 @@ static void _il2d_cxp_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
         return;
     if (!cfg->recalibrate)
     {
-        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxp_c2r");
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxp_c2r", h->il2d_ip);
         if (tok)
         {
             const int d = atoi(tok);
@@ -258,7 +258,7 @@ static void _il2d_rcsk_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, cons
         return;
     if (!cfg->recalibrate)
     {
-        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "csk");
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "csk", h->il2d_ip);
         if (tok)
         {
             if (tok[0] != '1')
@@ -277,7 +277,9 @@ static void _il2d_rcsk_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, cons
         return;
     }
     {
-        const size_t hp1 = (size_t)N2 / 2 + 1, RN = (size_t)N1 * (size_t)N2, CN = 2 * (size_t)N1 * hp1;
+        const int ip = h->il2d_ip;
+        const size_t hp1 = (size_t)N2 / 2 + 1, CN = 2 * (size_t)N1 * hp1;
+        const size_t RN = ip ? CN : (size_t)N1 * (size_t)N2;   /* in place: x is the one plane's seed */
         double *x = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
         double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
         double *zr = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
@@ -304,6 +306,13 @@ static void _il2d_rcsk_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, cons
         ak.h = h; ak.x = x; ak.z = z;
         memset(zr, 0, (CN + 8) * sizeof(double));
         memset(z, 0, (CN + 8) * sizeof(double));
+        if (ip)
+        {   /* in place: each arm on its own copy of the input plane */
+            memcpy(zr, x, (RN + 8) * sizeof(double));
+            memcpy(z, x, (RN + 8) * sizeof(double));
+            as.x = zr;
+            ak.x = z;
+        }
         _il2d_rcsk_arm_std(&as);
         _il2d_rcsk_arm_skew(&ak);
         err = _zrpr_relerr(z, zr, CN);
@@ -323,8 +332,17 @@ static void _il2d_rcsk_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, cons
         reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
         if (reps < 1) reps = 1;
         if (reps > 4096) reps = 4096;
+        if (ip && reps > 32) reps = 32;   /* in place the plane grows a factor N1 N2 per pass: a sample stays finite */
         {
-            const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1, 0 };
+            _il2d_ip_reset_t rs = { z, x, RN + 8 };
+            vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1, 0 };
+            if (ip)
+            {   /* both arms on the one plane, re-laid before every sample */
+                as.x = as.z = z;
+                ak.x = ak.z = z;
+                proto.reset = _il2d_ip_reset;
+                proto.reset_ctx = &rs;
+            }
             vfft_race_run(&proto, arms, 2, ns);
         }
         win = vfft_race_beats(ns[1], ns[0], VFFT_RACE_HYST);

@@ -21,7 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define VFFT_HEATS_MAX 32   /* candidates per heat, at most */
+#define VFFT_HEATS_MAX 32 /* candidates per heat, at most */
 
 /* the caller's heat: race candidates idx[0..n) (n <= VFFT_HEATS_MAX) in one
  * same-run race; ns[k] = idx[k]'s aggregate, 1e18 = refused or wrong */
@@ -37,10 +37,18 @@ static int vfft_heats_run(vfft_heat_fn heat, void *hctx, const int *idx, int n, 
     int *next = (int *)malloc((size_t)(n > 0 ? n : 1) * sizeof(int));
     double hns[VFFT_HEATS_MAX];
     int ns = n, got = 0, h, k;
-    if (cap > VFFT_HEATS_MAX) cap = VFFT_HEATS_MAX;
-    if (cap < 2) cap = 2;
-    if (carry < 1) carry = 1;
-    if (!surv || !next) { free(surv); free(next); return 0; }
+    if (cap > VFFT_HEATS_MAX)
+        cap = VFFT_HEATS_MAX;
+    if (cap < 2)
+        cap = 2;
+    if (carry < 1)
+        carry = 1;
+    if (!surv || !next)
+    {
+        free(surv);
+        free(next);
+        return 0;
+    }
     memcpy(surv, idx, (size_t)n * sizeof(int));
     while (ns > 0)
     {
@@ -52,26 +60,32 @@ static int vfft_heats_run(vfft_heat_fn heat, void *hctx, const int *idx, int n, 
             heat(hctx, surv + lo, hi - lo, hns);
             (*heats)++;
             if (nh == 1)
-            {   /* the last heat: its ranking */
+            { /* the last heat: its ranking */
                 for (got = 0; got < keep; got++)
                 {
                     int b = -1;
                     for (k = 0; k < hi - lo; k++)
-                        if (hns[k] < 1e17 && (b < 0 || hns[k] < hns[b])) b = k;
-                    if (b < 0) break;
+                        if (hns[k] < 1e17 && (b < 0 || hns[k] < hns[b]))
+                            b = k;
+                    if (b < 0)
+                        break;
                     top[got] = surv[lo + b];
-                    if (topns) topns[got] = hns[b];
+                    if (topns)
+                        topns[got] = hns[b];
                     hns[b] = 1e18;
                 }
-                free(surv); free(next);
+                free(surv);
+                free(next);
                 return got;
             }
             for (int c = 0; c < carry; c++)
             {
                 int b = -1;
                 for (k = 0; k < hi - lo; k++)
-                    if (hns[k] < 1e17 && (b < 0 || hns[k] < hns[b])) b = k;
-                if (b < 0) break;
+                    if (hns[k] < 1e17 && (b < 0 || hns[k] < hns[b]))
+                        b = k;
+                if (b < 0)
+                    break;
                 next[nn++] = surv[lo + b];
                 hns[b] = 1e18;
             }
@@ -79,7 +93,8 @@ static int vfft_heats_run(vfft_heat_fn heat, void *hctx, const int *idx, int n, 
         memcpy(surv, next, (size_t)nn * sizeof(int));
         ns = nn;
     }
-    free(surv); free(next);
+    free(surv);
+    free(next);
     return 0;
 }
 

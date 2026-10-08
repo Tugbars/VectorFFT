@@ -49,8 +49,9 @@ static vfft_plan _vfft_il_create(const vfft_config_t *cfg,
          * transform). IL trig is refused before the fork. */
         if (K != 1)
             return _vfft_create_2d_pq_il(cfg, W, K);
-        /* IL c2c (any placement) and IL real out of place; IL real in
-         * place at rank 2 is refused before the fork */
+        /* IL c2c (any placement), IL real out of place, and IL real in
+         * place where the law admits it (vfft_policy_il2d_ip_ok: r2c, one
+         * thread; docs/roadmap/real_inplace_design.md) */
         return _vfft_create_2d_il(cfg, W, K);
     }
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE)

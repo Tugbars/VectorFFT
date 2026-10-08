@@ -518,6 +518,13 @@ struct vfft_plan_s
      * (N1 x il2d_rcsk_P): the rows land there, the kernel runs in place there,
      * the rows are copied out to the caller's plane (raced, csk=1|0). */
     size_t il2d_rscr_P;
+    /* ── IN PLACE (2026-10-08, docs/roadmap/real_inplace_design.md). il2d_ip = the
+     * real plan is in place: ONE padded plane holds the real rows (pitch
+     * 2 il2d_ipP doubles) and the CCE rows (pitch il2d_ipP complex) -- the
+     * caller's buffer at hp1 (FFTW's layout). 0 = out of place: the real plane
+     * at pitch N2, the CCE plane at hp1. */
+    int il2d_ip;
+    size_t il2d_ipP;
     int il2d_rcsk_on;
     double *il2d_rcsk_scr;
     size_t il2d_rcsk_P;

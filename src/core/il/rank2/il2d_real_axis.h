@@ -218,7 +218,7 @@ static int _il2d_rax_build(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
     vw2_key_t pk;
     int k;
     memset(&pck, 0, sizeof pck);
-    pck.rank = 2; pck.n0 = N1; pck.n1 = N2; pck.ord = ord; pck.real = 1; pck.nthreads = T;
+    pck.rank = 2; pck.n0 = N1; pck.n1 = N2; pck.ord = ord; pck.real = 1; pck.nthreads = T; pck.ip = h->il2d_ip;
     vw2__ilcol_key(&pck, &pk);
     if (!h->il2d_raxS)
         h->il2d_raxS = vfft_child_store_for(W ? &W->vw2 : NULL, &pk, "rax_");
@@ -329,11 +329,11 @@ static void _il2d_rax_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg, st
 {
     if (!W || W->vw2_off_2d)
         return;
-    if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, "raxis", val) != 0)
+    if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, "raxis", val, h->il2d_ip) != 0)
     {
         vw2_2d_rl_bank(&W->vw2, N1, N2, 0, h->il2d_col.R, h->il2d_col.nst, -1, -1, 0,
-                       (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, ord, T);
-        if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, "raxis", val) != 0)
+                       (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, ord, T, h->il2d_ip);
+        if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, "raxis", val, h->il2d_ip) != 0)
         {
             fprintf(stderr, "vfft: the 2D real raxis verdict NOT banked at %dx%d -- the cell will re-race\n", N1, N2);
             return;
@@ -392,7 +392,7 @@ static void _il2d_rax_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
         return;
     if (!cfg->recalibrate)
     {   /* the banked verdict */
-        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "raxis");
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "raxis", h->il2d_ip);
         if (tok)
         {
             if (strcmp(tok, "n1"))

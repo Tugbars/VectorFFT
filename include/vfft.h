@@ -311,8 +311,12 @@ extern "C"
    * In-place C2C: dre == sre (and dim == sim), or dre and dim NULL. In-place
    * R2C/C2R (1D, even N, INTERLEAVED, K == 1 or transform-contiguous): ONE
    * plane of 2 (N/2 + 1) doubles holds the N reals and then the N/2 + 1
-   * bins; dre == sre is required and a distinct dre is refused. Element
-   * addressing follows config.batch_geom. Pure: no allocation, no
+   * bins; dre == sre is required and a distinct dre is refused. In-place 2D
+   * R2C (INTERLEAVED, howmany == 1, one thread): one plane of N1 rows, each
+   * row 2 (N2/2 + 1) doubles holding its N2 reals and then its N2/2 + 1
+   * bins (the in-place layout of FFTW and MKL); dre == sre is required and
+   * a distinct dre is refused, as in 1D.
+   * Element addressing follows config.batch_geom. Pure: no allocation, no
    * measurement. Safe to call concurrently on different plans.
    *
    * An out-of-place transform preserves its input unless the request permitted

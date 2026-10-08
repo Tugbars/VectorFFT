@@ -143,11 +143,11 @@ static void _il2d_tf_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg, str
 {
     if (!W || W->vw2_off_2d)
         return;
-    if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tk, val) != 0)
+    if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tk, val, h->il2d_ip) != 0)
     {
         vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R, h->il2d_col.R, h->il2d_col.nst, -1, -1, 0,
-                       (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, ord, T);
-        if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tk, val) != 0)
+                       (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, ord, T, h->il2d_ip);
+        if (vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tk, val, h->il2d_ip) != 0)
         {
             fprintf(stderr, "vfft: the 2D real %s verdict NOT banked at %dx%d -- the cell will re-race\n", tk, N1, N2);
             return;
@@ -212,7 +212,7 @@ static void _il2d_tf_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const 
         return;
     if (!cfg->recalibrate)
     {
-        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk);
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk, h->il2d_ip);
         if (tok)
         {
             if (tok[0] != '1')
@@ -231,8 +231,10 @@ static void _il2d_tf_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const 
         return;
     }
     {
+        const int ip = h->il2d_ip;
         const size_t hp1 = (size_t)N2 / 2 + 1, RN = (size_t)N1 * (size_t)N2, CN = 2 * (size_t)N1 * hp1;
-        const size_t nin = c2r ? CN : RN, nout = c2r ? RN : CN;   /* the pass's planes in the plan's direction */
+        /* the pass's planes in the plan's direction; in place the one padded plane (in = its seed) */
+        const size_t nin = ip ? CN : (c2r ? CN : RN), nout = ip ? CN : (c2r ? RN : CN);
         double *in = (double *)vfft_aligned_alloc((nin + 8) * sizeof(double));
         double *out = (double *)vfft_aligned_alloc((nout + 8) * sizeof(double));
         double *ref = (double *)vfft_aligned_alloc((nout + 8) * sizeof(double));
@@ -262,6 +264,13 @@ static void _il2d_tf_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const 
         af.h = h; af.in = in; af.out = out;
         memset(ref, 0, (nout + 8) * sizeof(double));
         memset(out, 0, (nout + 8) * sizeof(double));
+        if (ip)
+        {   /* in place: each arm on its own copy of the input plane */
+            memcpy(ref, in, (nin + 8) * sizeof(double));
+            memcpy(out, in, (nin + 8) * sizeof(double));
+            as.in = ref;
+            af.in = out;
+        }
         _il2d_tf_arm_std(&as);
         _il2d_tf_arm_tf(&af);
         err = _zrpr_relerr(out, ref, nout);
@@ -281,8 +290,17 @@ static void _il2d_tf_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const 
         reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
         if (reps < 1) reps = 1;
         if (reps > 4096) reps = 4096;
+        if (ip && reps > 32) reps = 32;   /* in place the plane grows a factor N1 N2 per pass: a sample stays finite */
         {
-            const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1, 0 };
+            _il2d_ip_reset_t rs = { out, in, nin + 8 };
+            vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1, 0 };
+            if (ip)
+            {   /* both arms on the one plane, re-laid before every sample */
+                as.in = as.out = out;
+                af.in = af.out = out;
+                proto.reset = _il2d_ip_reset;
+                proto.reset_ctx = &rs;
+            }
             vfft_race_run(&proto, arms, 2, ns);
         }
         win = vfft_race_beats(ns[1], ns[0], VFFT_RACE_HYST);
