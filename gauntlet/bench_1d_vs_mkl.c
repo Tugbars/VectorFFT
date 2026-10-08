@@ -1297,9 +1297,10 @@ static DFTI_DESCRIPTOR_HANDLE real_mk_desc(const real_geo_t *g, int c2r, int ip)
     DftiSetValue(d, DFTI_PLACEMENT, ip ? DFTI_INPLACE : DFTI_NOT_INPLACE);   /* --realip: one padded plane */
     DftiSetValue(d, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
     if (g->nd == 3)
-    {   /* the 3D CCE strides, as the 2D ones: the explicit {0, N2 hp3, hp3, 1} is the layout FFTW and we write */
-        const MKL_LONG hp3 = g->N3 / 2 + 1;
-        MKL_LONG rs[4] = { 0, (MKL_LONG)g->N2 * g->N3, g->N3, 1 }, cs[4] = { 0, (MKL_LONG)g->N2 * hp3, hp3, 1 };
+    {   /* the 3D CCE strides, as the 2D ones: the explicit {0, N2 hp3, hp3, 1} is the layout FFTW and we write;
+         * in place the real rows sit at the padded pitch 2 hp3 */
+        const MKL_LONG hp3 = g->N3 / 2 + 1, rp3 = ip ? 2 * hp3 : g->N3;
+        MKL_LONG rs[4] = { 0, (MKL_LONG)g->N2 * rp3, rp3, 1 }, cs[4] = { 0, (MKL_LONG)g->N2 * hp3, hp3, 1 };
         DftiSetValue(d, DFTI_INPUT_STRIDES, c2r ? cs : rs);
         DftiSetValue(d, DFTI_OUTPUT_STRIDES, c2r ? rs : cs);
     }
@@ -1425,9 +1426,9 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     if (g->nd == 3)      snprintf(shape, sizeof shape, "%dx%dx%d", g->N1, g->N2, g->N3);
     else if (g->nd == 2) snprintf(shape, sizeof shape, "%dx%d", g->N1, g->N2);
     else                 snprintf(shape, sizeof shape, "%d", g->N1);
-    if (g_real_ip && (g->nd != 2 || c2r))
-    {   /* --realip: the 2D r2c cell today (real_inplace_design.md: c2r and rank 3 are the next pieces) */
-        printf("%-8s %-16s   SKIP (in place: the 2D r2c cell only)\n", shape, plan_s);
+    if (g_real_ip && !((g->nd == 2 && !c2r) || g->nd == 3))
+    {   /* --realip: the 2D r2c cell and the 3D cells (real_inplace_design.md: 2D c2r is the next piece) */
+        printf("%-8s %-16s   SKIP (in place: 2D r2c and 3D only)\n", shape, plan_s);
         return;
     }
     if (!g_k1noop_mt) bench_pin_one_thread();   /* --mt: the threaded cell's two-team protocol (main) */
@@ -1466,26 +1467,37 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         for (size_t i = 0; i < g->rp; i++)   /* the points of one transform at any rank */
             x[t * g->rp + i] = (double)rand() / RAND_MAX - 0.5;
     const int haveref = real_ref_spectrum(g, x, ref);
-    double *xp = NULL;   /* --realip: the input laid as the one padded plane (rows at pitch 2 (N2/2 + 1)) */
+    /* --realip: the rows of the last axis at the padded pitch 2 (N/2 + 1): the real input laid so (xp),
+     * the CCE spectrum already is; a c2r's real output comes back at that pitch */
+    const size_t ip_rows = g->nd == 3 ? (size_t)g->N1 * (size_t)g->N2 : (size_t)g->N1;
+    const size_t ip_last = (size_t)(g->nd == 3 ? g->N3 : g->N2), ip_P = 2 * (ip_last / 2 + 1);
+    double *xp = NULL;
     if (g_real_ip)
     {
-        const size_t P = 2 * ((size_t)g->N2 / 2 + 1);
         xp = alloc_d(cn);
         memset(xp, 0, cn * sizeof(double));
-        for (size_t r = 0; r < (size_t)g->N1; r++)
-            memcpy(xp + r * P, x + r * (size_t)g->N2, (size_t)g->N2 * sizeof(double));
-        memcpy(src, xp, cn * sizeof(double));
+        for (size_t r = 0; r < ip_rows; r++)
+            memcpy(xp + r * ip_P, x + r * ip_last, ip_last * sizeof(double));
+        memcpy(src, c2r ? ref : xp, cn * sizeof(double));
     }
     else
         memcpy(src, c2r ? ref : x, (c2r ? cn : rn) * sizeof(double));
     for (size_t i = 0; i < (cn > rn ? cn : rn); i++)
         o[i] = -1.0e300;   /* poison: a refused execute leaves it */
     if (g_real_ip)
-    {   /* in place: the plane transforms onto itself; its CCE rows are the comparator's layout */
-        vfft_execute(h, VFFT_FORWARD, src, NULL, src, NULL);
-        if (memcmp(src, xp, cn * sizeof(double)) != 0)
-            memcpy(o, src, cn * sizeof(double));   /* a refused execute leaves the input, and the poison */
-        memcpy(src, xp, cn * sizeof(double));   /* the timed arm starts from the input */
+    {   /* in place: the volume transforms onto itself; r2c's CCE rows are the comparator's layout,
+         * c2r's real rows come back at the padded pitch and are laid tight for the check */
+        const double *in0 = c2r ? ref : xp;
+        vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, NULL, src, NULL);
+        if (memcmp(src, in0, cn * sizeof(double)) != 0)   /* a refused execute leaves the input, and the poison */
+        {
+            if (c2r)
+                for (size_t r = 0; r < ip_rows; r++)
+                    memcpy(o + r * ip_last, src + r * ip_P, ip_last * sizeof(double));
+            else
+                memcpy(o, src, cn * sizeof(double));
+        }
+        memcpy(src, in0, cn * sizeof(double));   /* the timed arm starts from the input */
     }
     else
         vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, NULL, o, NULL);

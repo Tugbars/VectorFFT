@@ -508,6 +508,19 @@ static inline int vfft_policy_ilndr_ok(const vfft_config_t *cfg, size_t howmany)
            (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL) &&
            cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
 }
+/* IN PLACE at rank 3 (docs/roadmap/real_inplace_design.md, 2026-10-08): one
+ * volume, every row padded to 2 (N3/2 + 1) doubles (FFTW's and MKL's in-place
+ * real layout), in == out; R2C and C2R, one thread (the threaded forms are
+ * their own piece), DEFAULT/NATURAL order, every dim >= 2. A c2r in place
+ * destroys its input by nature: axis 0 runs in the caller's volume, and the
+ * planes walk the cycles of their positions through the plan's buffers. */
+static inline int vfft_policy_ilndr_ip_ok(const vfft_config_t *cfg, size_t howmany, int nthreads)
+{
+    return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 3 && howmany == 1 &&
+           cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_INPLACE && nthreads <= 1 &&
+           (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL) &&
+           cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
+}
 /* the strip form's default width: N1 x w complex within 256 KB (half of L2's
  * way set, measured 2026-10-07 on the probe), at least 8 columns, at most the
  * virtual row; the raced width (nsw=) replaces it */

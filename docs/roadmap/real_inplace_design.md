@@ -5,8 +5,9 @@
 [`fft3d_real_il_design.md`](fft3d_real_il_design.md)). DESIGN 2026-10-08, decided with the
 owner. BUILT 2026-10-08: 2D r2c in place through door 1 (§1), one thread, gated by
 `src/tools/gates/il2d_real_ip_gate.c` (vs FFTW in place, replay, the door's refusal,
-the store reloaded from disk; 71 checks). Door 2, the c2r twin, rank 3 and the
-threaded forms are the next pieces. In place is a feature the library provides whatever it
+the store reloaded from disk; 71 checks); 3D r2c and c2r in place the same day (§2,
+`il3d_real_ip_gate.c`, 100 checks). Door 2, the 2D c2r twin, the pay-once and band
+c2r arms in place, and the threaded forms are the next pieces. In place is a feature the library provides whatever it
 measures (owner, 2026-10-08): the race decides how it is served, never whether.
 The 1D in-place real contract (`vfft.c`, the zr2c route and the odd door) is the
 rank-1 case of the same layout and stays as it is.*
@@ -76,13 +77,22 @@ through its own scratch, the leaf back onto the plane. The private landing
 (`cxp_c2r=`) stays a raced form. The backward row pass runs in place row by
 row.
 
-**rank 3.** r2c: the planes in place on the volume (the rank-2 walk per
-plane), then axis 0 in place (the pass that already exists). c2r: axis 0 as
-the forward chain in place in the caller's volume (today's `destroy` form,
-the default here), then the planes. The pay-once structure keeps its private
-volume: its leaf is out of place by construction, so in place it is the
-out-of-place walk with the caller's volume as its output. The child structure
-has no private volume. The race decides per cell.
+**rank 3** (BUILT 2026-10-08, both directions, one thread; gate
+`src/tools/gates/il3d_real_ip_gate.c`, 100 checks). r2c: the child arm runs
+the rank-2 in-place plan per plane, then axis 0 in place (the pass that
+already existed); the pay-once arm moves each plane into its private volume
+first, where its row engine runs in place, and keeps its out-of-place leaf
+into the caller's volume. c2r: axis 0 as the forward chain in place in the
+caller's volume (`destroy` by nature), which leaves position q holding the
+CCE plane of real plane (N1 − nat[q]) mod N1; the planes then walk the cycles
+of that permutation through two plane buffers, the out-of-place rank-2 c2r
+child writing each plane's tight rows into a third, landed at the padded
+pitch — one extra plane read per plane, no rank-2 c2r in-place plan needed.
+The pay-once c2r rows and the band land out of place and are not in-place
+arms yet; the strips form is. The cell's own `pl=ip` row of the 3D shard; the
+2D borrow reads the 2D shard's `pl=ip` row for an in-place r2c plane child.
+The race decides per cell, in place on one volume re-laid before every
+sample.
 
 **Threads.** Unchanged in structure: the row pass by row ranges, each worker
 in place on its own rows; the column and axis-0 partitions as they are.

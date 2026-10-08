@@ -315,7 +315,9 @@ extern "C"
    * R2C (INTERLEAVED, howmany == 1, one thread): one plane of N1 rows, each
    * row 2 (N2/2 + 1) doubles holding its N2 reals and then its N2/2 + 1
    * bins (the in-place layout of FFTW and MKL); dre == sre is required and
-   * a distinct dre is refused, as in 1D.
+   * a distinct dre is refused, as in 1D. In-place 3D R2C and C2R (the same
+   * contract: one volume of N1 N2 rows, each 2 (N3/2 + 1) doubles; a C2R in
+   * place overwrites its spectrum by nature).
    * Element addressing follows config.batch_geom. Pure: no allocation, no
    * measurement. Safe to call concurrently on different plans.
    *
