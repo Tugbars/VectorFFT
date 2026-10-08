@@ -2112,15 +2112,17 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * every row padded to 2*(N2/2+1) doubles (FFTW's and MKL's in-place layout);
          * the law of admission is the policy's (one thread; the c2r twin and the
          * threaded forms are the next pieces) */
-        !(cfg->dims == 2 && !ob && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg))))
+        !(cfg->dims == 2 && !ob && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg))) &&
+        /* 3D R2C and C2R in place (the same layout per row; c2r destroys its input by nature) */
+        !(cfg->dims == 3 && !ob && vfft_policy_ilndr_ip_ok(cfg, cfg->howmany, _vfft_plan_threads(cfg))))
     {
         _vfft_warn("vfft_create: in-place %s is supported only for 1D "
                    "LAYOUT_INTERLEAVED (CCE), howmany==1 (the interleaved real "
                    "engines; padded 2*(N/2+1)-double plane, N+1 at odd N), "
                    "howmany>1 with batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS (that "
-                   "plane per transform, end to end), or 2D R2C LAYOUT_INTERLEAVED, "
-                   "howmany==1, one thread (one plane, every row padded to 2*(N2/2+1) "
-                   "doubles) — use VFFT_OUTOFPLACE otherwise",
+                   "plane per transform, end to end), 2D R2C or 3D R2C/C2R LAYOUT_INTERLEAVED, "
+                   "howmany==1, one thread (one plane or volume, every row padded to "
+                   "2*(N_last/2+1) doubles) — use VFFT_OUTOFPLACE otherwise",
                    _vfft_tname(cfg->transform));
         return NULL;
     }
