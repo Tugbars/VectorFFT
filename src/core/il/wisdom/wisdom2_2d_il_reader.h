@@ -40,6 +40,9 @@ typedef struct {
     int ip;            /* 1 = the IN-PLACE real cell's row (pl=ip): its own race,
                         * its own cells, never the out-of-place cell's
                         * (docs/roadmap/real_inplace_design.md, 2026-10-08);
+                        * 2 = the cell's PITCH TWIN (door 2, the plan's own plane
+                        * off the caller's pitch): the same pl=ip row, its own
+                        * pitch-sensitive verdicts as the _p token set;
                         * 0 = pl=oop: the out-of-place real row, and the c2c
                         * tier's placement-blind row */
 } vw2_ilcol_key_t;
@@ -47,8 +50,11 @@ typedef struct {
 static inline const char *vw2__ilcol_tok(const vw2_ilcol_key_t *k, const char *base,
                                          char *buf, size_t sz)
 {
-    if (k->axis <= 0) return base;
-    snprintf(buf, sz, "%s%d", base, k->axis);
+    if (k->axis <= 0 && k->ip != 2) return base;
+    if (k->axis <= 0)
+        snprintf(buf, sz, "%s_p", base);                            /* door 2's own verdicts */
+    else
+        snprintf(buf, sz, "%s%d%s", base, k->axis, k->ip == 2 ? "_p" : "");
     return buf;
 }
 static inline void vw2__ilcol_key(const vw2_ilcol_key_t *ck, vw2_key_t *k)
@@ -207,7 +213,7 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
             const char *hc = vw2_rec_get(have, vw2__ilcol_tok(ck, "chain", tb, sizeof tb));
             same = hc && !strcmp(hc, b);
         }
-        if (ck->axis > 0 || (have && (ns <= 0.0 || same))) {
+        if (ck->axis > 0 || (have && (ns <= 0.0 || same || ck->ip == 2))) {   /* the pitch twin: its own tokens on the cell's row */
         if (vw2_update_field(st, &k, vw2__ilcol_tok(ck, "chain", tb, sizeof tb), b) != VW2_OK) return -1;
 #define VW2__ILCOL_UPD(base, val) do { \
         snprintf(vb, sizeof vb, "%d", (val)); \
@@ -330,6 +336,20 @@ static inline const char *vw2__rl_tok(int is_c2r, int which)
     static const char *const C2R[3] = { "wl_c2r", "cmt_c2r", "cmtt_c2r" };
     return is_c2r ? C2R[which] : R2C[which];
 }
+/* the same at the plan's door: door 2 (ip == 2) keeps its own set, the _p suffix */
+static inline const char *vw2__rl_tokp(int is_c2r, int which, int ip, char *buf, size_t sz)
+{
+    const char *b = vw2__rl_tok(is_c2r, which);
+    if (ip != 2) return b;
+    snprintf(buf, sz, "%s_p", b);
+    return buf;
+}
+static inline const char *vw2__rl_name(const char *base, int ip, char *buf, size_t sz)
+{
+    if (ip != 2) return base;
+    snprintf(buf, sz, "%s_p", base);
+    return buf;
+}
 
 /* one string token on the shared real IL row -- the r2c row engine's verdict
  * (rx=, rxs=: il/rank2/il2d_real_plan.h). Absent = NULL; a set on a missing
@@ -368,19 +388,20 @@ static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *cv;
+    char tb[24];
     int m = 0;
     vw2__2d_rl_key(&k, N1, N2, ord, T, ip);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
-    cv = vw2_rec_get(r, "chain");
-    if (!cv) return 0;                       /* a veneer/ANY row: refuse */
-    if (wl) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 0)); *wl = v ? atoi(v) : -1; }
+    cv = vw2_rec_get(r, vw2__rl_name("chain", ip, tb, sizeof tb));
+    if (!cv) return 0;                       /* a veneer/ANY row, or no verdict at this door: refuse */
+    if (wl) { const char *v = vw2_rec_get(r, vw2__rl_tokp(is_c2r, 0, ip, tb, sizeof tb)); *wl = v ? atoi(v) : -1; }
     /* cmt = the COLUMN-PASS MT verdict (1 = thread it, 0 = serial) at the
      * row's own thread count (the key's nthreads, v1.3); cmtt is read only
      * from a pre-1.3 row that load did not split. */
-    if (cmt) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 1)); *cmt = v ? atoi(v) : -1; }
-    if (cmtt) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 2)); *cmtt = v ? atoi(v) : -1; }
-    if (blu) { const char *v = vw2_rec_get(r, "blu"); *blu = v ? atoi(v) : -1; }  /* direction-shared */
+    if (cmt) { const char *v = vw2_rec_get(r, vw2__rl_tokp(is_c2r, 1, ip, tb, sizeof tb)); *cmt = v ? atoi(v) : -1; }
+    if (cmtt) { const char *v = vw2_rec_get(r, vw2__rl_tokp(is_c2r, 2, ip, tb, sizeof tb)); *cmtt = v ? atoi(v) : -1; }
+    if (blu) { const char *v = vw2_rec_get(r, vw2__rl_name("blu", ip, tb, sizeof tb)); *blu = v ? atoi(v) : -1; }  /* direction-shared */
     while (*cv && m < 8) {
         int v = 0;
         if (*cv < '0' || *cv > '9') return 0;
@@ -404,7 +425,9 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
     const char *why = NULL;
-    char b[64];
+    char b[64], t0[24], t1[24], tc[24], tbl[24];
+    const char *ctk = vw2__rl_name("chain", ip, tc, sizeof tc), *btk = vw2__rl_name("blu", ip, tbl, sizeof tbl);
+    const char *wtk = vw2__rl_tokp(is_c2r, 0, ip, t0, sizeof t0), *mtk = vw2__rl_tokp(is_c2r, 1, ip, t1, sizeof t1);
     int i, off = 0;
     for (i = 0; i < nst && off < (int)sizeof b - 8; i++)
         off += snprintf(b + off, sizeof b - off, "%s%d", i ? "." : "",
@@ -413,21 +436,22 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
      * direction's tokens move, the other direction's verdicts survive.
      * Unraced axes (-1 / cmtt 0) never erase a banked token. (The chain
      * bank, vw2_ilcol_chain_bank, obeys the same law: a chain race that
-     * lands on the row's chain updates it in place.) */
+     * lands on the row's chain updates it in place.) The pitch twin (ip 2)
+     * always merges: its _p set lives on the cell's row beside door 1's. */
     {
         vw2_key_t k;
         const vw2_rec_t *have;
         vw2__2d_rl_key(&k, N1, N2, ord, T, ip);
         have = vw2_lookup(st, &k);
-        if (have && vw2_rec_get(have, "chain") &&
-            !strcmp(vw2_rec_get(have, "chain"), b)) {
+        if (have && (ip == 2 || (vw2_rec_get(have, ctk) && !strcmp(vw2_rec_get(have, ctk), b)))) {
             char v[24];
             int rc = VW2_OK;
-            if (wl >= 0) { snprintf(v, sizeof v, "%d", wl); rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 0), v); }
+            if (ip == 2) rc |= vw2_update_field(st, &k, ctk, b);
+            if (wl >= 0) { snprintf(v, sizeof v, "%d", wl); rc |= vw2_update_field(st, &k, wtk, v); }
             if (cmt >= 0 && cmtt > 0) {   /* the T is the row's key (v1.3) */
-                snprintf(v, sizeof v, "%d", cmt);  rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 1), v);
+                snprintf(v, sizeof v, "%d", cmt);  rc |= vw2_update_field(st, &k, mtk, v);
             }
-            if (blu >= 0) { snprintf(v, sizeof v, "%d", blu); rc |= vw2_update_field(st, &k, "blu", v); }
+            if (blu >= 0) { snprintf(v, sizeof v, "%d", blu); rc |= vw2_update_field(st, &k, btk, v); }
             if (rc != VW2_OK)
                 fprintf(stderr, "[wisdom2] il2d real merge refused (%s)\n",
                         is_c2r ? "c2r" : "r2c");
@@ -439,14 +463,14 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
                     /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL, T);
     if (ip)
         r->key.pl = VW2_PL_IP;   /* the in-place cell's own row */
-    if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
+    if (vw2_rec_set(r, 1, ctk, b) != VW2_OK) {
         vw2_rec_free(r);
         fprintf(stderr, "[wisdom2] il2d real bank refused (token)\n");
         return -1;
     }
     if (wl >= 0) {
         snprintf(b, sizeof b, "%d", wl);
-        if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 0), b) != VW2_OK) {
+        if (vw2_rec_set(r, 1, wtk, b) != VW2_OK) {
             vw2_rec_free(r);
             fprintf(stderr, "[wisdom2] il2d real wl bank refused (token)\n");
             return -1;
@@ -454,7 +478,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     }
     if (cmt >= 0 && cmtt > 0) {   /* the column-MT verdict; its T is the row's key (v1.3) */
         snprintf(b, sizeof b, "%d", cmt);
-        if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 1), b) != VW2_OK) {
+        if (vw2_rec_set(r, 1, mtk, b) != VW2_OK) {
             vw2_rec_free(r);
             fprintf(stderr, "[wisdom2] il2d real cmt bank refused (token)\n");
             return -1;
@@ -462,7 +486,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     }
     if (blu >= 0) {               /* the N1-arm verdict, direction-shared */
         snprintf(b, sizeof b, "%d", blu);
-        if (vw2_rec_set(r, 1, "blu", b) != VW2_OK) {
+        if (vw2_rec_set(r, 1, btk, b) != VW2_OK) {
             vw2_rec_free(r);
             fprintf(stderr, "[wisdom2] il2d real blu bank refused (token)\n");
             return -1;
