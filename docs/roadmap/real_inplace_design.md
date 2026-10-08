@@ -7,9 +7,11 @@ owner. BUILT 2026-10-08: 2D r2c in place through door 1 (§1), one thread, gated
 `src/tools/gates/il2d_real_ip_gate.c` (vs FFTW in place, replay, the door's refusal,
 the store reloaded from disk; 71 checks); 3D r2c and c2r in place the same day (§2,
 `il3d_real_ip_gate.c`, 100 checks), the pay-once c2r arm in place and door 2 for 2D r2c the
-same evening; the 2D c2r twin (both doors) and rank 3's door 2 that night (the gates at 183
-and 160 checks). The threaded in-place forms are the remaining piece; the band is not an
-in-place arm. In place is a feature the library provides whatever it
+same evening; the 2D c2r twin (both doors) and rank 3's door 2 that night, the threaded forms of both
+ranks the evening after (the gates at 239 and 216 checks, T = 8 cells both directions and
+both doors) with the 2D planner's T > 1 law (`il2d_real_mt.md` §6.4) that the measurement
+forced; the band is not an in-place arm; the 3D c2r cycle cut is the open piece (§3).
+In place is a feature the library provides whatever it
 measures (owner, 2026-10-08): the race decides how it is served, never whether.
 The 1D in-place real contract (`vfft.c`, the zr2c route and the odd door) is the
 rank-1 case of the same layout and stays as it is.*
@@ -222,6 +224,48 @@ set of the cell's row, `_p` at door 2.
     16×512/2048/4096, parity with FFTW; a raced twin, 7–14% slower off the
     pitch; not built; N1 = 16 only, the plain order barely suffers at 64 and
     128). Open, §4.
+
+**Threaded, measured** (gauntlet, T = 8, MKL at T = 8, `--cmp mkl`;
+`gauntlet/results/cr_2d_*`, `mt8_3d_*`; the 2D numbers after the planner
+law of `il2d_real_mt.md` §6.4 — the chain and width races timing the
+threaded pass — the earlier runs `mt8_2d_*` are the same cells before it).
+
+- *2D r2c in place vs MKL:* 1024² 1.06, 512² 1.05, 256² 1.09, 128² 1.15,
+  64×256 1.04, 32×1024 1.54, 16×1024 1.18; 2048² 0.36; the tiny cells
+  0.5–0.75 (15×16, 64×64, 64×30; parked). In place / out of place: 0.77–1.20
+  on the cells past L1 (1024² 0.77, 64×256 1.20, 128² 1.38). Before the
+  planner law the in-place cells read 0.37–0.59 at 1024², 512², 64×256,
+  32×1024 and 16×1000 (the serial races crowned chains whose radix-64 stage
+  could not split, or a width that left the threaded band arm one band).
+- *2D c2r in place vs MKL:* 1024² 1.23, 512² 1.04, 256² 1.06, 32×1024 0.86,
+  128×512 0.78, 256×1024 0.71, 64×256 0.61, 16×1024 0.55, 16×1000 0.52,
+  2048² 0.28; in place / out of place 0.7–1.1 past L1 (1024² 1.08).
+- *The row pass alone is placement-blind at T = 8* (the K-row batch at
+  N = 1024: 148 µs in place, 154 out of place; 16×1000 and 64×256 the same),
+  so the 2D in-place MT structure costs nothing; what the serial in-place
+  door costs is the inner's route (`child_nat_ip` 2.5 µs/row against the
+  out-of-place inner's 0.93 at N = 1024, T = 1).
+- *3D r2c in place at T = 8:* parity with out of place (0.80–1.31; 32³ 1.31,
+  32×8×1000 1.29, 9×16×30 1.26), vs MKL 0.72–1.69, scaling 5–7.6× past L2.
+- *3D c2r in place at T = 8 LOSES:* 16×256×256 0.28 of out of place (1.9×
+  scaling against 7.5×), 64³ 0.48, 8×128×2048 0.55, 64×128×128 0.58. The
+  cause is the cycle-per-worker deal: the position permutation's cycles are
+  few and long (N1 = 16, chain 4.4: lengths 10, 5, 1; N1 = 64, chain 8.8:
+  18, 18, 18, 9, 1; N1 = 8: 6, 1, 1), so most workers idle through the
+  planes phase. The remedy is to CUT the cycles (§2, Threads): the cycle
+  sequence split into T equal runs, every run's first plane copied out
+  before a barrier, every run walked backwards into the next run owner's
+  copy — N1/T planes per worker, T copies, MT == ST. Not built.
+- *2048² at T = 8 loses in both placements and both directions* (r2c 0.36
+  in place / 0.54 out of place, c2r 0.28 / 0.61 vs MKL) before and after
+  the planner law: the 32 MB plane's whole threaded walk, not a verdict.
+- *Open at the small cells:* the forms race still times the serial pass at
+  T > 1 (128² r2c out of place drew the half-store leaf and serves
+  threaded: 0.99 vs MKL from 1.52); a width timed through the threaded pass
+  is served serial where the colmt race says serial (64×64 c2r out of
+  place: `wl = 64`, 0.22 vs MKL from 0.39); the tiny in-place c2r cells read
+  worse in the bench than in a probe on the same store (16×1000: 35.6 µs
+  against 10.3 before the law; 10.1 after). Not addressed.
 
 ## 4. Open decisions (one at a time, with the owner)
 

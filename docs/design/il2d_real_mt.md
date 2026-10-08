@@ -360,6 +360,24 @@ two untimed passes, no pacing); at one thread the passes share a core and
 the arms stay the pass alone. Engagement: `vfft_il2d_row_mt_passes()`
 beside the column counter; the gate asserts both.
 
+**The chain race and the width race at T > 1 time the threaded pass
+(2026-10-08).** The threaded column pass's cost is the chain's digit
+structure, not its stage count: a prefix stage with fewer digits than
+workers (`D = L/R < T`) cannot split (§3.2) and runs serial inside the
+threaded pass. Timed serial, the chain race cannot see this — at 1024×1024
+it crowned `8.64.2` (two digits in its radix-64 stage; 650 µs through the
+threaded pass) over `32.32` (245 µs), and the width race, serial too, picked
+a band width that left the threaded band arm a single band (`cmt = 0`). So
+at T > 1 every form of every candidate chain — the unbanded walk (the
+natural partition or the strips) and the banded walk at every admitted
+width — is timed through the one threaded body the plan serves with
+(`_il2d_cols_mt_desc`, over the candidate's descriptor; the serial form
+stands in where a width cannot engage), under the threaded protocol; the
+width race times each width the same way (the column verdict on during
+it). The colmt race afterwards keeps the last word, serial or threaded, for
+the winner. Both placements; the c2c tier and the rank-3 axes (their own
+threaded walks) are not in this law.
+
 ---
 
 ## 7. Results
