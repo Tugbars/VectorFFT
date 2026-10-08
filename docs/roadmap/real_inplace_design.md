@@ -18,7 +18,8 @@ rank-1 case of the same layout and stays as it is.*
 
 ## 1. The contract
 
-**The layout is FFTW's and MKL's in-place real layout.** One interleaved plane
+**The layout is the padded in-place real layout the comparison baselines
+share, so a caller's buffer moves between libraries untouched.** One interleaved plane
 holds the real input and the CCE output; the last axis is padded so a row of N
 reals and its N/2+1 complex bins occupy the same `2·(N/2+1)` doubles (N+2 at
 even N, N+1 at odd N). `in == out`: a distinct output plane is refused at the

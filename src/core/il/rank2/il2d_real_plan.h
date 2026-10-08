@@ -90,20 +90,8 @@ static inline vfft_il2p_fn vfft_il2d_rows_bwd_fn(int R)
     }
 }
 
-/* THE IN-PLACE RACE's reset (support/race.h's hook): an in-place arm walks its
- * own output, so the plane is re-laid from its seed before every timed
- * sample (docs/roadmap/real_inplace_design.md) */
-typedef struct
-{
-    double *p;
-    const double *seed;
-    size_t n;
-} _il2d_ip_reset_t;
-static void _il2d_ip_reset(void *v)
-{
-    const _il2d_ip_reset_t *r = (const _il2d_ip_reset_t *)v;
-    memcpy(r->p, r->seed, r->n * sizeof(double));
-}
+/* (THE IN-PLACE RACE's reset, _il2d_ip_reset_t / _il2d_ip_reset, lives in il2d_tier.h since the
+ * column-verdict race there runs the whole transform in place too, 2026-10-08) */
 /* the relative error over the real rows of two planes at their pitches (the pad doubles
  * past N2 are not the transform's: a plane transformed in place keeps its bins there) */
 static double _il2d_relerr_rows(const double *a, const double *b, size_t rows, size_t n, size_t pa, size_t pb)
