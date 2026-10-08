@@ -1007,12 +1007,26 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * forms under this verdict, the pass each cell serves. */
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         h->il2d_row && h->nthreads > 1)
-    {   /* (Bluestein cells race too) */
+    {   /* (Bluestein cells race too). The verdict's shape rides with it since the strips joined
+         * (2026-10-08): mtarm= msw= on the row (the direction's twins, _p at door 2) -- a row
+         * without them (banked before the strips, or by the width race alone) races once more */
         const char *ce = getenv("VFFT_IL2D_NO_COLMT");
+        const int c2r = h->transform == VFFT_C2R;
+        char tkb_a[16], tkb_w[16];
+        const char *tk_mtarm = _il2d_tkp(h, c2r ? "mtarm_c2r" : "mtarm", tkb_a, sizeof tkb_a);
+        const char *tk_msw = _il2d_tkp(h, c2r ? "msw_c2r" : "msw", tkb_w, sizeof tkb_w);
+        const char *bm = (W && !W->vw2_off_2d && !cfg->recalibrate) ? vw2_2d_rl_tok_gets(&W->vw2, N1, N2, il2d_ord, il2d_T, tk_mtarm, il2d_ip) : NULL;
         if (ce)
             h->il2d_col.colmt = (atoi(ce) == 0);
-        else if (il2d_bcmt >= 0)   /* the row is the plan's own T (v1.3) */
+        else if (il2d_bcmt >= 0 && bm)   /* the row is the plan's own T (v1.3), its shape banked */
+        {
+            const char *bw = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, il2d_ord, il2d_T, tk_msw, il2d_ip);
             h->il2d_col.colmt = il2d_bcmt;
+            h->il2d_col.natarm = il2d_bcmt ? atoi(bm) : 0;
+            h->il2d_col.msw = (il2d_bcmt && bw) ? atoi(bw) : 0;
+            if (h->il2d_col.colmt && h->il2d_col.natarm == 1 && h->il2d_col.nat)
+                (void)_il2d_real_sscr_build(&h->il2d_col, N1, h->il2d_col.rn, thread_pool_workers_for(h->nthreads));
+        }
         else
             _il2d_real_colmt_race(h, W, cfg, N1, N2);
     }

@@ -601,6 +601,30 @@ static void _il2d_cmt_body(const void *v, const double *src, double *dst)
                              a->stage ? a->stage + (size_t)a->tid * 2 * (size_t)Rl * hp1 : NULL);
         return;
     }
+    if (a->strip == 2)
+    {   /* THE COLUMN BLOCKS (2026-10-08): the whole chain over this worker's columns
+         * [lo, hi) in sub-strips of msw (0 = the whole range) -- a natural chain through the worker's
+         * dense strip scratch (pitch = the strip width: the chain in L2, the plane read once and
+         * written once; the shared pre-leaf plane where the width exceeds the scratch), a scrambled
+         * or one-stage chain in place on the plane */
+        const size_t sw = c->msw > 0 ? (size_t)c->msw : a->hi - a->lo;
+        const int dense = c->nat && c->natdense && c->natsscr && a->tid < c->nnatsscr;
+        size_t k;
+        for (k = a->lo; k < a->hi; k += sw)
+        {
+            const size_t w = (k + sw < a->hi) ? sw : a->hi - k;
+            if (!c->nat)
+                _il2d_col_pass_range(src, dst, a->N1, hp1, k, k + w, c->nst, c->R, c->L, fns, tabs, a->reverse);
+            else if (dense && w <= (size_t)c->natswcap)
+                _il2d_col_pass_nat_strip(src, dst, a->N1, hp1, k, w, c->nst, c->R, c->L, fns, tabs, a->reverse,
+                                         c->natperm, c->natsscr[a->tid > 0 ? a->tid : 0]);
+            else
+                _il2d_col_pass_nat_range(src, dst, a->N1, hp1, k, k + w, c->nst, c->R, c->L, fns, tabs, a->reverse,
+                                         c->natperm, c->natscr,
+                                         a->stage ? a->stage + (size_t)a->tid * 2 * (size_t)c->R[c->nst - 1] * hp1 : NULL);
+        }
+        return;
+    }
     if (a->strip)
     {
         if (c->blu)
@@ -654,6 +678,28 @@ static int _il2d_cols_mt_desc(const vfft_ilcol_t *c, int N1, const double *src, 
     /* T arrives as the plan's snapshot (the plan's nthreads); the pool's one clamp
      * bounds it by the live pool and the arg-array size. */
     T = thread_pool_workers_for(T);
+    if (T >= 2 && c->natarm == 1 && !c->blu && !c->tpc && (!c->nat || c->nst >= 2))
+    {   /* mtarm = 1: the column blocks -- every worker the whole chain over its columns (the
+         * sub-strip arm of the body); every class but the Bluestein and turned axes */
+        const int Ts = hp1 < (size_t)T ? (int)hp1 : T;
+        if (Ts < 2)
+            return 0;
+        for (t = 0; t < Ts; t++)
+        {
+            a[t].c = c; a[t].N1 = N1; a[t].stage = stage;
+            a[t].src = src;
+            a[t].dst = dst;
+            a[t].reverse = reverse;
+            a[t].strip = 2;
+            a[t].natleaf = 0;
+            a[t].tid = t;
+            a[t].stk = stk;
+            a[t].lo = hp1 * (size_t)t / (size_t)Ts;
+            a[t].hi = hp1 * (size_t)(t + 1) / (size_t)Ts;
+        }
+        thread_pool_run(Ts, _il2d_cmt_tramp, a, sizeof a[0]); /* caller = a[0] */
+        return 1;
+    }
     if (T >= 2 && c->nat)
     {
         /* NATURAL x MT: the matched partition of the
@@ -1725,8 +1771,41 @@ static void _il2d_arm_cols(void *v)
 static void _il2d_arm_cols_mt(void *v)
 {
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    c->h->il2d_col.natarm = 0;   /* the matched partition */
     if (c->ok && !_il2d_real_cols_mt(c->h, c->z, c->z, 0, c->h->nthreads))
         c->ok = 0; /* the threaded arm cannot engage on this cell */
+}
+static void _il2d_arm_cols_mt_sw(void *v)
+{   /* the column blocks in sub-strips of c->sw columns (0 = the worker's whole range) */
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    c->h->il2d_col.natarm = 1;
+    c->h->il2d_col.msw = c->sw;
+    if (c->ok && !_il2d_real_cols_mt(c->h, c->z, c->z, 0, c->h->nthreads))
+        c->ok = 0;
+}
+/* THE WHOLE TRANSFORM as one arm of the column-verdict race: the column pass in the mode and
+ * shape the context names (colmt / natarm / msw), the rows as the cell serves them at this point
+ * of the create (the door route; the row plan is raced after, under this verdict) -- r2c the rows
+ * then the columns on the CCE plane, c2r the columns onto the column-inverse plane then the rows
+ * from it; in place on the one plane (a == z). A pass timed alone never pays the exchange between
+ * the passes (§6.4): the verdict must. */
+static void _il2d_arm_whole(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    struct vfft_plan_s *h = c->h;
+    h->il2d_col.colmt = c->lst;      /* the arm's mode */
+    h->il2d_col.natarm = c->nat;     /* the arm's shape */
+    h->il2d_col.msw = c->sw;
+    if (c->isr)
+    {
+        _il2d_real_rows_fwd(h, c->a, c->z);
+        _il2d_real_cols(h, c->z, c->z, 0);
+    }
+    else
+    {
+        _il2d_real_cols(h, c->z, h->il2d_rscr, 1);
+        _il2d_real_rows_bwd(h, h->il2d_rscr, c->a);
+    }
 }
 static void _il2d_arm_exec_st(void *v)
 {
@@ -1961,9 +2040,10 @@ static int _il2d_real_wlrace(struct vfft_plan_s *h,
     for (i = 0; i < 2 * CN + 8; i++)
         bz[i] = 1.0 + 1e-6 * (double)(i & 511);
     _il2d_race_ctx_t rc = { h, NULL, bz, isr, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
-    const vfft_race_arm_t arms[2] = { { "cols", _il2d_arm_cols, &rc }, { "cols-mt", _il2d_arm_cols_mt, &rc } };
-    const int mt = h->nthreads > 1;   /* T > 1: every width under BOTH modes -- the serial pass and the threaded pass
-                                       * the cell serves with -- and the winner's mode IS the column verdict (2026-10-08) */
+    const vfft_race_arm_t cols_arm = { "cols", _il2d_arm_cols, &rc };
+    const int mt = h->nthreads > 1;   /* T > 1: every width timed through the THREADED pass alone (the width is the
+                                       * column pass's own lever; the dispatcher runs a width serial where it cannot
+                                       * engage); the column verdict is the whole-transform race's (2026-10-08) */
     vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* min-of-3 */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
     if (mt)
     {   /* THREADED arms: two untimed passes per arm first, never paused (a paced pool parks its workers) */
@@ -1973,20 +2053,13 @@ static int _il2d_real_wlrace(struct vfft_plan_s *h,
     {
         const size_t hp1 = (size_t)N2 / 2 + 1;
         int wlc[14], nwl = 0, wi, s2;
-        double cbest = 1e300, ns2[2];
+        double cbest = 1e300;
         int bwl = 0, bcut = 0;
         h->il2d_col.wl = 0;
         h->il2d_col.cut = 0;
-        h->il2d_col.colmt = 0;
-        rc.ok = 1;
-        vfft_race_run(&proto, arms, mt ? 2 : 1, ns2);
-        cbest = ns2[0];
-        if (mt) bmode = 0;
-        if (mt && rc.ok && ns2[1] < cbest)
-        {
-            cbest = ns2[1];
-            bmode = 1;
-        }
+        h->il2d_col.colmt = mt;
+        h->il2d_col.natarm = 0;
+        vfft_race_run(&proto, &cols_arm, 1, &cbest);
         for (wi = 0; wi < VFFT_IL2D_WL_LADDER_N && nwl < 14; wi++)
             if (_il2d_real_wl_cut(h, VFFT_IL2D_WL_LADDER[wi]) >= 0)   /* w == N1 admitted like c2c/3D (R2) */
                 wlc[nwl++] = VFFT_IL2D_WL_LADDER[wi];
@@ -2014,40 +2087,31 @@ static int _il2d_real_wlrace(struct vfft_plan_s *h,
         for (wi = 0; wi < nwl; wi++)
         {
             const int cut = _il2d_real_wl_cut(h, wlc[wi]);
+            double ns = 1e300;
             h->il2d_col.wl = wlc[wi];
             h->il2d_col.cut = cut;
-            h->il2d_col.colmt = 0;
-            rc.ok = 1;
-            vfft_race_run(&proto, arms, mt ? 2 : 1, ns2);
-            if (ns2[0] < cbest)
+            vfft_race_run(&proto, &cols_arm, 1, &ns);
+            if (ns < cbest)
             {
-                cbest = ns2[0];
+                cbest = ns;
                 bwl = wlc[wi];
                 bcut = cut;
-                if (mt) bmode = 0;
-            }
-            if (mt && rc.ok && ns2[1] < cbest)
-            {
-                cbest = ns2[1];
-                bwl = wlc[wi];
-                bcut = cut;
-                bmode = 1;
             }
         }
         h->il2d_col.wl = bwl;
         h->il2d_col.cut = bcut;
-        h->il2d_col.colmt = bmode > 0;   /* the verdict at T > 1; nothing at one thread */
+        h->il2d_col.colmt = 0;   /* the column verdict is the whole-transform race's */
         vfft_aligned_free(bz);
         if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d-real] wlrace %s %dx%d%s -> wl=%d%s (%.0f ns cols)\n",
-                    isr ? "r2c" : "c2r", N1, N2, mt ? " (both modes)" : "", bwl,
-                    mt ? (bmode > 0 ? " THREADED" : " serial") : "", cbest);
+            fprintf(stderr, "[il2d-real] wlrace %s %dx%d%s -> wl=%d (%.0f ns cols)\n",
+                    isr ? "r2c" : "c2r", N1, N2, mt ? " (the threaded pass)" : "", bwl, cbest);
         vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_col.R, h->il2d_col.nst,
-                       bwl, mt ? bmode : -1, mt ? h->nthreads : -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
+                       bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
                        cbest, vfft_policy_ord_rankn(cfg), h->nthreads, h->il2d_ip);
         _vw2_persist(W, cfg);
     }
-    return bmode;
+    (void)bmode;
+    return -1;
 }
 
 /* ── the COLUMN-MT verdict race. Times the column pass SERIAL vs
@@ -2059,56 +2123,162 @@ static int _il2d_real_wlrace(struct vfft_plan_s *h,
  * exactly like a "yes". A verdict is only served back at the SAME
  * thread count it was raced at (cmtt) — a T=4 verdict never serves a
  * T=8 request. MUST run after the plan's stage arrays are committed. */
+static const char *_il2d_tkp(const struct vfft_plan_s *h, const char *base, char *buf, size_t sz);   /* il2d_real_plan.h: door 2's _p namer */
+/* THE IN-PLACE RACE's reset (support/race.h's hook): an in-place arm walks its
+ * own output, so the plane is re-laid from its seed before every timed
+ * sample (docs/roadmap/real_inplace_design.md) */
+typedef struct
+{
+    double *p;
+    const double *seed;
+    size_t n;
+} _il2d_ip_reset_t;
+static void _il2d_ip_reset(void *v)
+{
+    const _il2d_ip_reset_t *r = (const _il2d_ip_reset_t *)v;
+    memcpy(r->p, r->seed, r->n * sizeof(double));
+}
+static int _il2d_real_sscr_build(vfft_ilcol_t *c, int N1, size_t rn, int T);   /* below: the dense strip scratch */
+static int _il2d_real_sw_ladder(int N1, size_t rn, int T, int *out, int max);
+static void _il2d_nat_sscr_free(vfft_ilcol_t *c);
+/* THE COLUMN-VERDICT RACE (the column blocks joined 2026-10-08): the serial pass, the matched
+ * threaded partition (mtarm = 0: digit-split + leaf for a natural chain, band or strip per wl
+ * otherwise) and THE STRIPS (mtarm = 1: every worker the whole chain over its column block) in
+ * sub-strips of every width the ladder admits (msw; 0 = the worker's whole block), a natural chain
+ * through the dense per-worker scratch built here. The winner is served and banked: cmt, and
+ * mtarm= msw= (the direction's twins, _p at door 2). A dense scratch the verdict does not use is
+ * freed. */
 static void _il2d_real_colmt_race(struct vfft_plan_s *h,
                                   struct vfft_wisdom_s *W,
                                   const vfft_config_t *cfg, int N1,
                                   int N2)
 {
-    const size_t CN = (size_t)N1 * h->il2d_col.rn;   /* the plane at the plan's pitch */
-    double *z = (double *)vfft_aligned_alloc((2 * CN + 8) * sizeof(double));
-    double st = 1e300, mt = 1e300;
-    int p;
-    size_t i;
-    if (!z)
-        return;
-    for (i = 0; i < 2 * CN + 8; i++)
-        z[i] = 1.0 + 1e-6 * (double)(i & 511);
-    h->il2d_col.colmt = 0;   /* the serial arm runs the chain's serial pass (the dispatcher threads under the verdict) */
+    const size_t CN = 2 * (size_t)N1 * h->il2d_col.rn;   /* the CCE plane at the plan's pitch, doubles */
+    const int c2r = h->transform == VFFT_C2R, ord = vfft_policy_ord_rankn(cfg), ip = h->il2d_ip;
+    const size_t RN = ip ? CN : (size_t)N1 * (size_t)N2;   /* the real plane: in place the one padded plane */
+    double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
+    double *a = ip ? z : (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
+    double *seed = ip ? (double *)vfft_aligned_alloc((CN + 8) * sizeof(double)) : NULL;   /* the plane re-laid before every sample */
+    _il2d_ip_reset_t rs;
+    _il2d_race_ctx_t rc[10];
+    vfft_race_arm_t arms[10];
+    char names[10][16], tkb_a[16], tkb_w[16], vb[16];
+    const char *tk_mtarm = _il2d_tkp(h, c2r ? "mtarm_c2r" : "mtarm", tkb_a, sizeof tkb_a);
+    const char *tk_msw = _il2d_tkp(h, c2r ? "msw_c2r" : "msw", tkb_w, sizeof tkb_w);
+    double ns[10], t0, est;
+    int lad[6], nl = 0, na = 0, i, best = 0, strips_ok, reps, lg = 1;
+    size_t q;
+    if (!z || !a || (ip && !seed))
     {
-        _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
-        const vfft_race_arm_t arms[2] = { { "serial", _il2d_arm_cols, &rc },
-                                          { "threaded", _il2d_arm_cols_mt, &rc } };
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }; /* min-of-3, A then B, two untimed passes per arm first (a cold threaded arm reads 58 us for a 37-us plan) */ /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
-        double ns[2];
-        (void)p;
-        vfft_race_run(&proto, arms, 2, ns);
-        st = ns[0];
-        mt = ns[1];
-        if (!rc.ok)
+        vfft_aligned_free(z); if (!ip) vfft_aligned_free(a); vfft_aligned_free(seed);
+        return;
+    }
+    {   /* the input: a CCE plane for c2r (the DC and Nyquist bins real), a real plane for r2c */
+        unsigned sd = 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 12);
+        double *in = c2r ? z : a;
+        const size_t nin = c2r ? CN : RN;
+        for (q = 0; q < nin + 8; q++) { sd = sd * 1664525u + 1013904223u; in[q] = (double)(sd >> 8) / (double)(1u << 24) - 0.5; }
+        if (c2r)
+            for (q = 0; q < (size_t)N1; q++)
+                z[q * 2 * h->il2d_col.rn + 1] = z[q * 2 * h->il2d_col.rn + 2 * ((size_t)N2 / 2) + 1] = 0.0;
+        if (ip)
         {
-            /* the threaded arm cannot even engage on this cell */
-            vfft_aligned_free(z);
-            h->il2d_col.colmt = 0;
-            vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
-                           h->il2d_col.R, h->il2d_col.nst,
-                           h->il2d_col.wl, 0, h->nthreads,
-                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, vfft_policy_ord_rankn(cfg), h->nthreads, h->il2d_ip);
-            _vw2_persist(W, cfg);
-            return;
+            memcpy(seed, z, (CN + 8) * sizeof(double));
+            rs.p = z; rs.seed = seed; rs.n = CN + 8;
         }
     }
-    h->il2d_col.colmt = (mt < st);
-    vfft_aligned_free(z);
+    strips_ok = !h->il2d_col.blu && !h->il2d_col.tpc && (!h->il2d_col.nat || h->il2d_col.nst >= 2);
+    if (strips_ok)
+    {
+        nl = _il2d_real_sw_ladder(N1, h->il2d_col.rn, h->nthreads, lad, 6);
+        if (h->il2d_col.nat)
+            (void)_il2d_real_sscr_build(&h->il2d_col, N1, h->il2d_col.rn, thread_pool_workers_for(h->nthreads));
+    }
+    h->il2d_col.colmt = 0;
+    h->il2d_col.natarm = 0;
+    h->il2d_col.msw = 0;
+    /* the arms: ctx.lst = the mode (colmt), ctx.nat = the shape (natarm), ctx.sw = the width */
+#define _IL2D_CMT_ARM(NAME_, MODE_, SHAPE_, SW_) do { \
+        _il2d_race_ctx_t c0 = { h, a, z, !c2r, 1, 0, 0, 0, NULL, NULL, NULL, NULL }; \
+        c0.lst = (MODE_); c0.nat = (SHAPE_); c0.sw = (SW_); rc[na] = c0; \
+        snprintf(names[na], sizeof names[na], "%s", NAME_); \
+        arms[na].name = names[na]; arms[na].run = _il2d_arm_whole; arms[na].ctx = &rc[na]; na++; } while (0)
+    _IL2D_CMT_ARM("serial", 0, 0, 0);
+    _IL2D_CMT_ARM("threaded", 1, 0, 0);
+    if (strips_ok)
+    {
+        _IL2D_CMT_ARM("strips", 1, 1, 0);
+        for (i = 0; i < nl && na < 10; i++)
+        {
+            char nm[16];
+            snprintf(nm, sizeof nm, "strips/sw%d", lad[i]);
+            _IL2D_CMT_ARM(nm, 1, 1, lad[i]);
+        }
+    }
+#undef _IL2D_CMT_ARM
+    /* a threaded arm whose column pass does not engage on this cell is out (its time would be
+     * the serial arm's); the engagement counter says */
+    for (i = 1; i < na; i++)
+    {
+        const long e0 = _vfft_il2d_col_mt_count;
+        if (ip) memcpy(z, seed, (CN + 8) * sizeof(double));
+        _il2d_arm_whole(&rc[i]);
+        rc[i].ok = _vfft_il2d_col_mt_count != e0;
+    }
+    /* reps from the serial arm's timing (~0.3 ms of work per sample); in place the plane grows a
+     * factor N1 per pass: a sample stays finite */
+    if (ip) memcpy(z, seed, (CN + 8) * sizeof(double));
+    _il2d_arm_whole(&rc[0]);
+    if (ip) memcpy(z, seed, (CN + 8) * sizeof(double));
+    t0 = vfft_now_ns();
+    _il2d_arm_whole(&rc[0]);
+    est = vfft_now_ns() - t0;
+    reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
+    if (reps < 1) reps = 1;
+    if (reps > 4096) reps = 4096;
+    if (ip)
+    {
+        while ((1 << lg) < N1) lg++;
+        if (reps > 900 / lg) reps = 900 / lg;
+        if (reps > 32) reps = 32;
+        if (reps < 1) reps = 1;
+    }
+    {
+        vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }; /* min-of-3, A then B, two untimed passes per arm first */ /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
+        proto.reps = reps;
+        if (ip)
+        {   /* the one plane, re-laid before every sample */
+            proto.reset = _il2d_ip_reset;
+            proto.reset_ctx = &rs;
+        }
+        _vfft_create_race_count++;
+        vfft_race_run(&proto, arms, na, ns);
+    }
+    for (i = 1; i < na; i++)
+        if (rc[i].ok && ns[i] < ns[best])
+            best = i;
+    h->il2d_col.colmt = best > 0;
+    h->il2d_col.natarm = best >= 2 ? 1 : 0;
+    h->il2d_col.msw = best >= 2 ? rc[best].sw : 0;
+    if (h->il2d_col.natarm != 1 || !h->il2d_col.nat)
+        _il2d_nat_sscr_free(&h->il2d_col);   /* the dense scratch serves the strips only */
+    vfft_aligned_free(z); if (!ip) vfft_aligned_free(a); vfft_aligned_free(seed);
     if (getenv("VFFT_IL2D_LOG"))
-        fprintf(stderr, "[il2d-real] colmt race %dx%d T=%d: st=%.0f "
-                        "mt=%.0f -> %s\n",
-                N1, N2, h->nthreads, st, mt,
-                h->il2d_col.colmt ? "THREADED" : "serial");
-    vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
+    {
+        fprintf(stderr, "[il2d-real] colmt race %s%dx%d T=%d (the whole transform, reps=%d):", c2r ? "c2r " : "", N1, N2, h->nthreads, reps);
+        for (i = 0; i < na; i++)
+            fprintf(stderr, " %s=%.0f%s", names[i], ns[i], rc[i].ok ? "" : "(no)");
+        fprintf(stderr, " -> %s\n", names[best]);
+    }
+    vw2_2d_rl_bank(&W->vw2, N1, N2, c2r,
                    h->il2d_col.R, h->il2d_col.nst,
                    h->il2d_col.wl, h->il2d_col.colmt, h->nthreads,
                    (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                   h->il2d_col.colmt ? mt : st, vfft_policy_ord_rankn(cfg), h->nthreads, h->il2d_ip);
+                   ns[best], ord, h->nthreads, h->il2d_ip);
+    snprintf(vb, sizeof vb, "%d", h->il2d_col.natarm);
+    (void)vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, h->nthreads, tk_mtarm, vb, h->il2d_ip);
+    snprintf(vb, sizeof vb, "%d", h->il2d_col.msw);
+    (void)vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, h->nthreads, tk_msw, vb, h->il2d_ip);
     _vw2_persist(W, cfg);
 }
 
@@ -2681,6 +2851,55 @@ static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, int N2, int T)
     c->natswcap = swcap;
     {   /* the probe pin, read ONCE here: eight workers calling getenv at every
          * phase start would serialise on the CRT's environment lock */
+        const char *dpin = getenv("VFFT_IL2D_DENSE");
+        c->natdense = !(dpin && atoi(dpin) == 0);
+    }
+    return 1;
+}
+/* the real tier's strip-width ladder: the column count is odd (hp1) or a padded width, so no
+ * divisor law -- every width under a worker's column block that keeps N1 x w x 16 B in L2; the
+ * last sub-strip is narrower */
+static int _il2d_real_sw_ladder(int N1, size_t rn, int T, int *out, int max)
+{
+    static const int SW[] = { 8, 16, 32, 64, 128, 256 };
+    const size_t per = rn / (size_t)(T > 1 ? T : 1);
+    int i, n = 0;
+    for (i = 0; i < 6 && n < max; i++)
+        if ((size_t)SW[i] < per && vfft_policy_fits_l2((long)N1 * SW[i] * 16))
+            out[n++] = SW[i];
+    return n;
+}
+/* the real tier's dense strip scratch: T blocks of N1 x swcap complexes, swcap = the widest ladder
+ * width, or a worker's whole block where that fits L2 */
+static int _il2d_real_sscr_build(vfft_ilcol_t *c, int N1, size_t rn, int T)
+{
+    int lad[6], nl, k, swcap = 0, t;
+    const size_t per = rn / (size_t)(T > 1 ? T : 1);
+    if (!c->nat || T < 2 || c->natsscr)
+        return c->natsscr != NULL;
+    nl = _il2d_real_sw_ladder(N1, rn, T, lad, 6);
+    for (k = 0; k < nl; k++)
+        if (lad[k] > swcap) swcap = lad[k];
+    if (per >= 2 && vfft_policy_fits_l2((long)N1 * (long)per * 16) && (int)per > swcap)
+        swcap = (int)per;
+    if (swcap < 2)
+        return 0;
+    c->natsscr = (double **)calloc((size_t)T, sizeof *c->natsscr);
+    if (!c->natsscr)
+        return 0;
+    for (t = 0; t < T; t++)
+    {
+        c->natsscr[t] = (double *)vfft_aligned_alloc(2 * (size_t)N1 * (size_t)swcap * sizeof(double));
+        if (!c->natsscr[t])
+        {
+            c->nnatsscr = t;
+            _il2d_nat_sscr_free(c);
+            return 0;
+        }
+    }
+    c->nnatsscr = T;
+    c->natswcap = swcap;
+    {   /* the probe pin, read ONCE here (no getenv on the execute path) */
         const char *dpin = getenv("VFFT_IL2D_DENSE");
         c->natdense = !(dpin && atoi(dpin) == 0);
     }

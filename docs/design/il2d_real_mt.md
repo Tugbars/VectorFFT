@@ -382,6 +382,27 @@ runs only where the width race does not (a natural chain, a pinned axis, a
 Bluestein axis). Both placements; the c2c tier and the rank-3 axes (their
 own threaded walks) are not in this law.
 
+**The column blocks (2026-10-08).** The third partition of the column pass,
+`mtarm = 1`: the columns cut into one block per worker, every worker running
+the WHOLE chain over its block in sub-strips of `msw` columns — a natural
+chain through the worker's dense strip scratch (the c2c tier's form,
+`_il2d_col_pass_nat_strip`: pitch = the strip width, the chain in L2, the
+plane read once and written once), a scrambled or one-stage chain in place on
+the plane. The form is the one the c2c tier derived and measured for large
+planes (`il2d_large_plane_design.md`: a worker's dense strip keeps the whole
+chain in its own L2 and the plane is swept once), carried to the real tier's
+chains; it is the column-side twin of the row blocks of §6.4 — a thread owns
+a block of the vector dimension and runs the complete transform of its block
+through a cache-sized buffer, and the two passes meet only at the wall
+between them. The matched partition (`mtarm = 0`) stays the other arm. The
+column-verdict race decides among the serial pass, the matched partition and
+the strips at every width the ladder admits (`_il2d_real_sw_ladder`: a width
+under a worker's block that keeps N1 × w × 16 B in L2; the column count is
+odd, so the last sub-strip is narrower), and banks `cmt` with `mtarm=` `msw=`
+(the `_c2r` twins, `_p` at door 2); a row banked without the shape races once
+more. The dense scratch is built for the race and kept only under a strips
+verdict.
+
 ---
 
 ## 7. Results
