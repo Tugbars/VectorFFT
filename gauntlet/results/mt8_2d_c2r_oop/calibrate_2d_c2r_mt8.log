@@ -1,0 +1,16 @@
+15x16      banked      2842ms raced     zrp:4.4:n1t
+16x1000    banked     26242ms raced     zr2c:child_nat_ip
+16x1024    banked     10512ms raced     zr2c:child_oop_il
+17x64      banked      7199ms raced     zrp:4.16:r2z
+32x1024    banked     10807ms raced     zr2c:child_oop_il
+64x15      banked      5765ms raced     2p
+64x30      banked     14840ms raced     zr2c:child_oop_il
+64x64      banked      6967ms raced     zrp:4.16:r2z
+64x256     banked     10564ms raced     zr2c:child_nat_ip
+128x128    banked      8030ms raced     zrp:8.16:r2z
+128x512    banked      9161ms raced     zr2c:child_oop_il
+256x256    banked     10845ms raced     zr2c:child_oop_il
+256x1024   banked     10956ms raced     zr2c:child_oop_il
+512x512    banked      9332ms raced     zr2c:child_oop_il
+1024x1024  banked     13050ms raced     zr2c:child_oop_il
+2048x2048  banked     28671ms raced     zr2c:child_oop_il
