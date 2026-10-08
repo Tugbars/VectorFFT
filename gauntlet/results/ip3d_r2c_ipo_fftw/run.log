@@ -1,0 +1,7 @@
+2026-10-08 18:03:02 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-10-08 18:03:02 run: 11 cells, contract in place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-08 18:03:02 calibrate: 11 cells (0 already done)
+2026-10-08 18:05:32   calibrated 11/11 (128x128x128), 150 s elapsed
+2026-10-08 18:05:32 bench: 11 cells (0 already benched, 0 not banked -> not benched)
+2026-10-08 18:06:14   benched 11/11 (128x128x128), 40 s elapsed
+2026-10-08 18:06:15 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\ip3d_r2c_ipo_fftw\report_3d_r2c_ipo_fftw.md
