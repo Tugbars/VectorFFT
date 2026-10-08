@@ -1005,6 +1005,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * single-threaded plan never threads columns and never races. Before
      * the row and column plans (2026-10-06): at T > 1 their races run their
      * forms under this verdict, the pass each cell serves. */
+    int il2d_cmt_race = 0;   /* a cold cell at T > 1: the column-verdict race runs AFTER the row plan is bound (2026-10-09) */
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         h->il2d_row && h->nthreads > 1)
     {   /* (Bluestein cells race too). The verdict's shape rides with it since the strips joined
@@ -1028,7 +1029,19 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 (void)_il2d_real_sscr_build(&h->il2d_col, N1, h->il2d_col.rn, thread_pool_workers_for(h->nthreads));
         }
         else
-            _il2d_real_colmt_race(h, W, cfg, N1, N2);
+        {   /* the PROVISIONAL verdict the row plan races under: threaded, the matched partition (the
+             * dispatcher runs serial where it cannot engage); the race itself comes after the row
+             * plan, with the rows as the cell serves them -- a verdict taken under the door's rows
+             * (serial where the door's inner is not pool-free) misled 16x1024 / 32x1024 c2r in place */
+            h->il2d_col.colmt = 1;
+            h->il2d_col.natarm = 0;
+            h->il2d_col.msw = 0;
+            il2d_cmt_race = 1;
+        }
+        if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[il2d-real] column verdict %s%dx%d T=%d: %s (cmt=%d mtarm=%s)\n", c2r ? "c2r " : "", N1, N2,
+                    h->nthreads, ce ? "pinned" : il2d_cmt_race ? "raced after the row plan" : "banked",
+                    il2d_bcmt, bm ? bm : "-");
     }
     /* the r2c ROW ENGINE (il2d_real_plan.h): the plan's own row plan -- env
      * pin, the banked rx=, or the row race in the row role. After the forms
@@ -1044,6 +1057,11 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * the row role on a CCE plane and banked as the row's rx_c2r= / rxs_c2r= */
     if (h->transform == VFFT_C2R && h->il2d_row && !il2d_oddn2)
         _il2d_real_rowplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
+    /* THE COLUMN VERDICT (il2d_real_mt.md §6.4): the whole transform in serving order -- the rows as
+     * just bound, the columns serial / the matched partition / the column blocks at every width --
+     * raced here, after the row plan, banked cmt= mtarm= msw= (2026-10-09) */
+    if (il2d_cmt_race)
+        _il2d_real_colmt_race(h, W, cfg, N1, N2);
     /* the r2c COLUMN PLAN: the column pass's form (the chain's natural leaf
      * strided or staged, or the one-kernel leaf at N1 = 128) and its stack
      * states, raced on the cell's own column pass as it serves (any N2 parity;
