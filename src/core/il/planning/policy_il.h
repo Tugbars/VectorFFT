@@ -350,7 +350,8 @@ static inline int vfft_policy_il2d_band_ok(int N, int nst, const int *L, int w)
 static inline int vfft_policy_il2d_c2r_destroy_ok(const vfft_config_t *cfg, int nthreads, int one_stage,
                                                   int nleaf, int prime_col)
 {
-    return cfg && cfg->destroy_input && cfg->transform == VFFT_C2R && nthreads <= 1 && !prime_col &&
+    return cfg && (cfg->destroy_input || cfg->placement == VFFT_INPLACE) &&   /* in place: destroyed by nature */
+           cfg->transform == VFFT_C2R && nthreads <= 1 && !prime_col &&
            (one_stage || nleaf > 0);
 }
 
@@ -379,18 +380,24 @@ static inline int vfft_policy_il2d_rows_odd_door(int N2)
  * in == out. The cell races its own forms and banks on its own pl=ip row
  * (the wisdom key's placement); every walk shape that can serve in place
  * is a candidate, and placement is per PASS inside the plan (a private
- * landing can sit anywhere). Admitted: R2C (the C2R twin is the next
- * piece), one transform, one thread (the threaded forms are their own
- * piece), DEFAULT or NATURAL order -- the out-of-place tier's own classes.
+ * landing can sit anywhere). Admitted: R2C and C2R (a C2R in place
+ * destroys its input by nature: the column pass lands on the private plane
+ * or, as the destroying form, on the caller's; the rows land row by row),
+ * one transform, any thread count (the row pass by row ranges -- an engine
+ * through its clones, the door route across the batch's clones -- and the
+ * column pass under the colmt verdict; the whole-plan forms stay one thread,
+ * as out of place), DEFAULT or NATURAL order -- the out-of-place tier's own
+ * classes.
  * The rows kernel (r2zr) is out of place only (its two planes are
  * __restrict__, and a lone last row re-runs the row before it): the forms
  * that land it on a private plane keep it; the standard walk's row pass in
  * place is an engine with an in-place form. */
 static inline int vfft_policy_il2d_ip_ok(const vfft_config_t *cfg, int nthreads)
 {
-    return cfg && cfg->transform == VFFT_R2C && cfg->dims == 2 && cfg->howmany == 1 &&
+    (void)nthreads;   /* every thread count since 2026-10-08 night */
+    return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 2 && cfg->howmany == 1 &&
            cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_INPLACE &&
-           nthreads <= 1 && (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL);
+           (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL);
 }
 /* DOOR 2, the plan's own plane (owned_buffers = 1): the CCE pitch the plan
  * names, in complex. The caller's layout (hp1) where it is harmless; hp1 + 8
@@ -476,9 +483,9 @@ static inline int vfft_policy_il2d_tfuse_ok(const vfft_config_t *cfg, int nthrea
  * destroying form and the fused walk have their own planes and are not
  * combined with these. */
 static inline int vfft_policy_il2d_cxp_ok(const vfft_config_t *cfg, int nthreads, int N2)
-{
+{   /* both placements: the column-inverse plane is a private landing */
     return cfg && cfg->transform == VFFT_C2R && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-           cfg->placement == VFFT_OUTOFPLACE && nthreads <= 1 && ((N2 / 2 + 1) & 1) != 0;
+           nthreads <= 1 && ((N2 / 2 + 1) & 1) != 0;
 }
 static inline size_t vfft_policy_il2d_cxp_pitch(size_t hp1)
 {
@@ -523,14 +530,16 @@ static inline int vfft_policy_ilndr_ok(const vfft_config_t *cfg, size_t howmany)
 }
 /* IN PLACE at rank 3 (docs/roadmap/real_inplace_design.md, 2026-10-08): one
  * volume, every row padded to 2 (N3/2 + 1) doubles (FFTW's and MKL's in-place
- * real layout), in == out; R2C and C2R, one thread (the threaded forms are
- * their own piece), DEFAULT/NATURAL order, every dim >= 2. A c2r in place
- * destroys its input by nature: axis 0 runs in the caller's volume, and the
- * planes walk the cycles of their positions through the plan's buffers. */
+ * real layout), in == out; R2C and C2R, any thread count (the plane arm in
+ * place on the workers' clones; a threaded c2r deals the cycles of the planes'
+ * positions to the workers), DEFAULT/NATURAL order, every dim >= 2. A c2r in
+ * place destroys its input by nature: axis 0 runs in the caller's volume, and
+ * the planes walk the cycles of their positions through the plan's buffers. */
 static inline int vfft_policy_ilndr_ip_ok(const vfft_config_t *cfg, size_t howmany, int nthreads)
 {
+    (void)nthreads;   /* every thread count since 2026-10-08 night: the plane arm in place, the c2r planes by cycles */
     return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 3 && howmany == 1 &&
-           cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_INPLACE && nthreads <= 1 &&
+           cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_INPLACE &&
            (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL) &&
            cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
 }

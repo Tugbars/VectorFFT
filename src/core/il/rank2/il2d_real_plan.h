@@ -104,6 +104,21 @@ static void _il2d_ip_reset(void *v)
     const _il2d_ip_reset_t *r = (const _il2d_ip_reset_t *)v;
     memcpy(r->p, r->seed, r->n * sizeof(double));
 }
+/* the relative error over the real rows of two planes at their pitches (the pad doubles
+ * past N2 are not the transform's: a plane transformed in place keeps its bins there) */
+static double _il2d_relerr_rows(const double *a, const double *b, size_t rows, size_t n, size_t pa, size_t pb)
+{
+    double num = 0.0, den = 0.0;
+    size_t r, j;
+    for (r = 0; r < rows; r++)
+        for (j = 0; j < n; j++)
+        {
+            const double d = a[r * pa + j] - b[r * pb + j];
+            num += d * d;
+            den += b[r * pb + j] * b[r * pb + j];
+        }
+    return den > 0.0 ? sqrt(num / den) : sqrt(num);
+}
 /* a real-row token's name at the plan's door: door 2 (the pitch twin, il2d_ip == 2) keeps
  * its own pitch-sensitive verdicts as the _p set (real_inplace_design.md) */
 static const char *_il2d_tkp(const struct vfft_plan_s *h, const char *base, char *buf, size_t sz)
@@ -143,8 +158,9 @@ static void _il2d_rowx_body_bwd(const void *v, const double *zsrc, double *dre)
     const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1, n1 = (size_t)h->N, rp = _il2d_rp(h);
     /* the plan's own column-inverse plane may sit at its raced pitch (il2d_real_pitch.h);
      * every other source (a race's plane) is at the CCE pitch */
-    const size_t P = (zsrc == h->il2d_rscr && h->il2d_rscr_P) ? h->il2d_rscr_P : hp1;
+    const size_t P = (zsrc == h->il2d_rscr && h->il2d_rscr_P) ? h->il2d_rscr_P : h->il2d_col.rn;   /* the plane's pitch (door 2 past hp1) */
     size_t r;
+    (void)hp1;
     if (h->il2d_rx_lm)
     {
         h->il2d_rx_lm(zsrc, NULL, dre, NULL, NULL, NULL, P, 0, rp, 0, n1);
@@ -824,14 +840,17 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         /* T > 1: every arm runs the whole transform (the c2r reverse pass needs its plane) */
         const int whole = h->nthreads > 1 && (!c2r || h->il2d_rscr != NULL);
         double *a = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
-        double *z = ip ? a : (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));   /* in place: the one plane */
+        /* r2c in place: the one plane; c2r in place: the rows read a CCE plane and write the real
+         * plane (the landing form's call), the in-place call gated below */
+        const int ipw = ip && !c2r;
+        double *z = ipw ? a : (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
         double *ref = (double *)vfft_aligned_alloc((ON + 8) * sizeof(double));
-        double *seed = ip ? (double *)vfft_aligned_alloc((RN + 8) * sizeof(double)) : NULL;   /* the plane's input, re-laid before every sample */
+        double *seed = ipw ? (double *)vfft_aligned_alloc((RN + 8) * sizeof(double)) : NULL;   /* the plane's input, re-laid before every sample */
         double *const out = c2r ? a : z;
         _il2d_ip_reset_t rs;
-        if (!a || !z || !ref || (ip && !seed))
+        if (!a || !z || !ref || (ipw && !seed))
         {
-            vfft_aligned_free(a); if (!ip) vfft_aligned_free(z); vfft_aligned_free(ref); vfft_aligned_free(seed);
+            vfft_aligned_free(a); if (!ipw) vfft_aligned_free(z); vfft_aligned_free(ref); vfft_aligned_free(seed);
             return;
         }
         rs.p = a; rs.seed = seed; rs.n = RN + 8;
@@ -854,7 +873,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                 for (j = 0; j < (size_t)N1; j++)
                     z[j * 2 * cp + 1] = z[j * 2 * cp + 2 * (hp1 - 1) + 1] = 0.0;
             }
-            if (ip)
+            if (ipw)
                 memcpy(seed, a, (RN + 8) * sizeof(double));
         }
         _il2d_rowx_cfg(cfg, N2, &c, h->il2d_rxS, c2r);
@@ -867,7 +886,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         /* THE GATE'S REFERENCE: the tier's own row route over the plane (every
          * arm is gated against it below; at T > 1 it is the whole transform) */
         memset(ref, 0, (ON + 8) * sizeof(double));
-        if (ip)
+        if (ipw)
         {   /* in place: the route on a copy of the input plane */
             memcpy(ref, seed, (RN + 8) * sizeof(double));
             cand[0].a = cand[0].z = ref;
@@ -928,7 +947,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             vfft_aligned_free(rb);
             vfft_aligned_free(rr);
             vfft_aligned_free(rt);
-            if (ip)
+            if (ipw)
                 memcpy(a, seed, (RN + 8) * sizeof(double));   /* the route's run transformed the plane */
         }
         {
@@ -977,12 +996,12 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             for (i = 1; i < na; i++)
             {
                 double e;
-                if (ip)
+                if (ipw)
                     memcpy(a, seed, (RN + 8) * sizeof(double));
                 else
                     memset(out, 0, ON * sizeof(double));
                 _il2d_rowx_arm_run(&cand[i]);
-                e = _zrpr_relerr(out, ref, ON);
+                e = (ip && c2r) ? _il2d_relerr_rows(out, ref, (size_t)N1, (size_t)N2, _il2d_rp(h), _il2d_rp(h)) : _zrpr_relerr(out, ref, ON);   /* in place the pad doubles are not the transform: the rows alone */
                 if (e < 1e-10)
                 {
                     if (keep != i)
@@ -1001,6 +1020,40 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             }
             na = keep;
         }
+        if (ip && c2r)
+        {   /* the in-place call too (the destroying form's rows read the plane they write, row by
+             * row): every engine from a copy of the CCE plane onto itself, against the reference */
+            double *w = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
+            const size_t rp = _il2d_rp(h);
+            int keep = 1;
+            for (i = 1; w && i < na; i++)
+            {
+                double *sa = cand[i].a, *sz = cand[i].z, e;
+                memcpy(w, z, (CN + 8) * sizeof(double));
+                cand[i].a = w; cand[i].z = w;
+                _il2d_rowx_arm_run(&cand[i]);
+                cand[i].a = sa; cand[i].z = sz;
+                e = _il2d_relerr_rows(w, ref, (size_t)N1, (size_t)N2, rp, rp);
+                if (e < 1e-10)
+                {
+                    if (keep != i)
+                    {
+                        cand[keep] = cand[i];
+                        memcpy(names[keep], names[i], sizeof names[keep]);
+                    }
+                    keep++;
+                }
+                else
+                {
+                    fprintf(stderr, "[il2d-real] c2r rows %dx%d: %s in place (row by row) FAILS the gate (rel %.2e) -- dropped\n", N1, N2, names[i], e);
+                    if (cand[i].eng)
+                        vfft_destroy((vfft_plan)cand[i].eng);
+                }
+            }
+            if (w)
+                na = keep;
+            vfft_aligned_free(w);
+        }
         if (h->nthreads > 1)
         {   /* T > 1: every engine candidate gets its worker clones, and its
              * THREADED pass is gated against the reference too (the clones'
@@ -1011,9 +1064,12 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                     double e;
                     if (!_il2d_rowx_clones(cfg, h->il2d_rxS, N1, N2, names[i], h->nthreads, c2r, &cand[i].w, &cand[i].wn))
                         continue;   /* no clones: the engine's rows run serial under this plan */
-                    memset(out, 0, ON * sizeof(double));
+                    if (ipw)
+                        memcpy(a, seed, (RN + 8) * sizeof(double));
+                    else
+                        memset(out, 0, ON * sizeof(double));
                     _il2d_rowx_arm_run(&cand[i]);
-                    e = _zrpr_relerr(out, ref, ON);
+                    e = (ip && c2r) ? _il2d_relerr_rows(out, ref, (size_t)N1, (size_t)N2, _il2d_rp(h), _il2d_rp(h)) : _zrpr_relerr(out, ref, ON);
                     if (!(e < 1e-10))
                     {
                         fprintf(stderr, "[il2d-real] %srows %dx%d T=%d: %s threaded FAILS the gate (rel %.2e) -- its clones dropped\n",
@@ -1044,12 +1100,12 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
             if (reps < 1) reps = 1;
             if (reps > 4096) reps = 4096;
-            if (ip && reps > 32) reps = 32;   /* in place the plane grows a factor N2 per pass: a sample stays finite */
+            if (ipw && reps > 32) reps = 32;   /* in place the plane grows a factor N2 per pass: a sample stays finite */
             {   /* 9 rounds alternated, median; threaded arms (T > 1) under the
                  * threaded protocol instead: min of 3, two untimed passes per
                  * arm first, no pacing (a paced pool parks its workers) */
                 vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1 };
-                if (ip)
+                if (ipw)
                 {   /* the one plane, re-laid before every sample */
                     proto.reset = _il2d_ip_reset;
                     proto.reset_ctx = &rs;
@@ -1102,7 +1158,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             _il2d_plan_stk_str(h->il2d_rx_stk, sb, sizeof sb);
             _il2d_real_plan_bank(h, W, cfg, N1, N2, ord, T, tk_rx, names[best / 4], tk_rxs, sb, c2r);
         }
-        vfft_aligned_free(a); if (!ip) vfft_aligned_free(z); vfft_aligned_free(ref); vfft_aligned_free(seed);
+        vfft_aligned_free(a); if (!ipw) vfft_aligned_free(z); vfft_aligned_free(ref); vfft_aligned_free(seed);
     }
 }
 static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
@@ -1560,7 +1616,7 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
         const vfft_race_proto_t proto0 = { 9, 1, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1 };
         vfft_race_proto_t proto = proto0; /* 9 rounds alternated, median; at T > 1 the threaded protocol below */
         int na = 0, best = 0, bc = 0, reps, i, f, u;
-        const size_t RN = (size_t)N1 * (size_t)N2;
+        const size_t RN = h->il2d_ip ? CN : (size_t)N1 * (size_t)N2;   /* the real plane's extent: in place the one padded plane (the T > 1 arms run the row pass on it) */
         double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
         double *const out = c2r ? h->il2d_rscr : z;   /* the pass's output plane */
         /* T > 1: the whole transform per arm -- the row pass (bound before this plan) runs with
@@ -1886,6 +1942,10 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
                           col->L[0] == col->N && col->b[0] != NULL;
     const char *lname[VFFT_IL2P_COL_MAXLEAF];
     const char *log = getenv("VFFT_IL2D_LOG");
+    const int ip = h->il2d_ip;
+    const size_t RNp = ip ? CN : RN;   /* the real plane's extent: in place the one padded plane */
+    char tkb_d[16], tkb_ds[16];
+    const char *tk_cxd = _il2d_tkp(h, "cxd_c2r", tkb_d, sizeof tkb_d), *tk_cxds = _il2d_tkp(h, "cxds_c2r", tkb_ds, sizeof tkb_ds);
     int nl = 0;
     h->il2d_cxd_on = 0;
     h->il2d_cxd_stk = 0;
@@ -1917,14 +1977,14 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
         return;
     if (!cfg->recalibrate)
     {   /* 2. the banked verdict */
-        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxd_c2r", h->il2d_ip);
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_cxd, h->il2d_ip);
         if (tok)
         {
             if (!strcmp(tok, "off"))
                 return; /* the scratch form won this cell's race */
             if (_il2d_cxd_form_set(h, tok, strlen(tok), one_stage, lname, nl))
             {
-                h->il2d_cxd_stk = _il2d_plan_stk_parse(vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxds_c2r", h->il2d_ip));
+                h->il2d_cxd_stk = _il2d_plan_stk_parse(vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_cxds, h->il2d_ip));
                 h->il2d_cxd_on = 1;
                 return;
             }
@@ -1941,11 +2001,11 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
         _il2d_cxd_seed_t seed;
         int nc = 0, na, best = 1, ci = 0, win = 0, i, s, f, reps, lg = 1;
         double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
-        double *y = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
-        double *ref = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
+        double *y = ip ? z : (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));   /* in place: the one plane */
+        double *ref = (double *)vfft_aligned_alloc((RNp + 8) * sizeof(double));
         if (!z || !y || !ref)
         {
-            vfft_aligned_free(z); vfft_aligned_free(y); vfft_aligned_free(ref);
+            vfft_aligned_free(z); if (!ip) vfft_aligned_free(y); vfft_aligned_free(ref);
             return;
         }
         seed.z = z;
@@ -1954,7 +2014,7 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
         /* the reference: the scratch form's plane */
         ctx[0].h = h; ctx[0].z = z; ctx[0].y = ref; ctx[0].leaf = NULL; ctx[0].stk = 0;
         _il2d_cxd_seed(&seed);
-        memset(ref, 0, (RN + 8) * sizeof(double));
+        memset(ref, 0, (RNp + 8) * sizeof(double));
         _il2d_cxd_arm_run(&ctx[0]);
         ctx[0].y = y;
         /* the candidates, each gated against it */
@@ -1967,9 +2027,10 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
                 continue;
             cand[nc].h = h; cand[nc].z = z; cand[nc].y = y; cand[nc].leaf = k; cand[nc].stk = -1;
             _il2d_cxd_seed(&seed);
-            memset(y, 0, RN * sizeof(double));
+            if (!ip)
+                memset(y, 0, RN * sizeof(double));
             _il2d_cxd_arm_run(&cand[nc]);
-            e = _zrpr_relerr(y, ref, RN);
+            e = ip ? _il2d_relerr_rows(y, ref, (size_t)N1, (size_t)N2, _il2d_rp(h), _il2d_rp(h)) : _zrpr_relerr(y, ref, RN);
             if (e < 1e-10)
             {
                 snprintf(names[nc], sizeof names[nc], "%s", nm);
@@ -1981,7 +2042,7 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
         if (!nc)
         {   /* no candidate stands: the scratch form serves, nothing is banked */
             h->il2d_cxd_on = 0; h->il2d_cxd_leaf = NULL; h->il2d_cxd_stk = 0;
-            vfft_aligned_free(z); vfft_aligned_free(y); vfft_aligned_free(ref);
+            vfft_aligned_free(z); if (!ip) vfft_aligned_free(y); vfft_aligned_free(ref);
             return;
         }
         arms[0].name = "scratch"; arms[0].run = _il2d_cxd_arm_run; arms[0].ctx = &ctx[0];
@@ -2046,8 +2107,8 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
             h->il2d_cxd_stk = 0;
             snprintf(sb, sizeof sb, "any");
         }
-        _il2d_real_plan_bank(h, W, cfg, N1, N2, ord, T, "cxd_c2r", win ? names[ci] : "off", "cxds_c2r", sb, 1);
-        vfft_aligned_free(z); vfft_aligned_free(y); vfft_aligned_free(ref);
+        _il2d_real_plan_bank(h, W, cfg, N1, N2, ord, T, tk_cxd, win ? names[ci] : "off", tk_cxds, sb, 1);
+        vfft_aligned_free(z); if (!ip) vfft_aligned_free(y); vfft_aligned_free(ref);   /* in place: y is z */
     }
 }
 

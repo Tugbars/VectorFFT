@@ -37,6 +37,7 @@ static int _il2d_onek_pass(const struct vfft_plan_s *h)
 static int _il2d_cxp_admits(const struct vfft_plan_s *h, const vfft_config_t *cfg)
 {
     return h->transform == VFFT_C2R && h->il2d_row && h->il2d_rscr && !h->il2d_cxd_on && !h->il2d_tf_on &&
+           h->il2d_ip != 2 &&   /* door 2's plane is already off the alias */
            _il2d_onek_pass(h) && vfft_policy_il2d_cxp_ok(cfg, h->nthreads, h->N2);
 }
 typedef struct
@@ -77,7 +78,7 @@ static void _il2d_cxp_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
 {
     const size_t hp1 = (size_t)N2 / 2 + 1, Pc = vfft_policy_il2d_cxp_pitch(hp1);
     const char *log = getenv("VFFT_IL2D_LOG"), *e = getenv("VFFT_IL2D_CXP_C2R");
-    h->il2d_rscr_P = hp1;
+    h->il2d_rscr_P = h->il2d_col.rn;   /* the plane's pitch: hp1, or door 2's */
     if (!_il2d_cxp_admits(h, cfg))
         return;
     if (e && e[0])
@@ -91,7 +92,8 @@ static void _il2d_cxp_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
         return;
     if (!cfg->recalibrate)
     {
-        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxp_c2r", h->il2d_ip);
+        char tkb[16];
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, _il2d_tkp(h, "cxp_c2r", tkb, sizeof tkb), h->il2d_ip);
         if (tok)
         {
             const int d = atoi(tok);
@@ -101,7 +103,8 @@ static void _il2d_cxp_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
         }
     }
     {
-        const size_t RN = (size_t)N1 * (size_t)N2, CN = 2 * (size_t)N1 * hp1;
+        const size_t cp = h->il2d_col.rn, CN = 2 * (size_t)N1 * cp;   /* the caller's plane at its pitch */
+        const size_t RN = h->il2d_ip ? CN : (size_t)N1 * (size_t)N2;   /* in place the real rows land on a padded plane */
         double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
         double *y = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
         double *yr = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
@@ -124,7 +127,7 @@ static void _il2d_cxp_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
                 z[j] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
             }
             for (j = 0; j < (size_t)N1; j++)
-                z[j * 2 * hp1 + 1] = z[j * 2 * hp1 + 2 * (hp1 - 1) + 1] = 0.0;
+                z[j * 2 * cp + 1] = z[j * 2 * cp + 2 * (hp1 - 1) + 1] = 0.0;
         }
         a0.h = h; a0.z = z; a0.y = yr; a0.P = hp1;
         a1.h = h; a1.z = z; a1.y = y; a1.P = Pc;
@@ -160,7 +163,10 @@ static void _il2d_cxp_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
         vfft_aligned_free(z); vfft_aligned_free(y); vfft_aligned_free(yr);
         h->il2d_rscr_P = win ? Pc : hp1;
         snprintf(val, sizeof val, "%d", win ? (int)(Pc - hp1) : 0);
-        _il2d_cxp_bank(W, cfg, h, N1, N2, ord, T, "cxp_c2r", val);
+        {
+            char tkb[16];
+            _il2d_cxp_bank(W, cfg, h, N1, N2, ord, T, _il2d_tkp(h, "cxp_c2r", tkb, sizeof tkb), val);
+        }
     }
 }
 

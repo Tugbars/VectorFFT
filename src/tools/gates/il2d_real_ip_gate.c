@@ -12,6 +12,11 @@
  *      the first's;
  *   3  TWO PLANES: the in-place plan called with a distinct output is REFUSED at
  *      the execute door (the 1D law): nothing executed, both planes untouched;
+ *   c2r  FFTW's r2c spectrum of a real plane in, our in-place c2r on it against N x,
+ *      elementwise (never a roundtrip through ourselves); replay bitwise; two planes
+ *      refused -- at the caller's pitch and, door 2, on the plan's own plane;
+ *   T=8  the threaded in-place plans (both directions, both doors): the same checks at
+ *      nthreads = 8, and the threaded passes engaged in the execute are counted;
  * and, after every cell, the store is reloaded from disk and one cell replays
  * from it bitwise (the save and its read-back are where wisdom defects show).
  *
@@ -282,8 +287,256 @@ static int run_cell_own(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2)
     return g_fail != fails0;
 }
 
+/* THE C2R TWIN: FFTW's spectrum of a real plane -> ours in place -> N x; own = door 2 */
+static int run_cell_c2r(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int own)
+{
+    const int hp1 = N2 / 2 + 1;
+    const size_t P = 2 * (size_t)hp1, CN = (size_t)N1 * P;
+    const double scale = (double)N1 * (double)N2;
+    double *seed = (double *)vfft_malloc(CN * sizeof(double));
+    double *pf = (double *)api->fmalloc(CN * sizeof(double));
+    double *a = (double *)vfft_malloc(CN * sizeof(double));
+    double *b = (double *)vfft_malloc(CN * sizeof(double));
+    double *c = (double *)vfft_malloc(CN * sizeof(double));
+    double *d = (double *)vfft_malloc(CN * sizeof(double));
+    const char *tag = own ? "c2r own" : "c2r";
+    vfft_config_t cfg;
+    vfft_plan p, p2;
+    fftwx_plan fp;
+    double *pl = NULL, *pl2 = NULL;
+    size_t st, r, j, zero;
+    const int fails0 = g_fail;
+    if (!seed || !pf || !a || !b || !c || !d)
+    {
+        printf("IPGATE FAIL  %dx%d %s: out of memory\n", N1, N2, tag);
+        g_fail++;
+        return 1;
+    }
+    fill(seed, N1, N2, P, 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 12));
+    fp = api->plan_dft_r2c_2d(N1, N2, pf, (fftwx_complex *)pf, FFTWX_MEASURE);
+    if (!fp)
+    {
+        printf("IPGATE FAIL  %dx%d %s: FFTW plan refused\n", N1, N2, tag);
+        g_fail++;
+        return 1;
+    }
+    memcpy(pf, seed, CN * sizeof(double));
+    api->execute(fp);
+    api->destroy_plan(fp);   /* pf: the spectrum, FFTW's layout */
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2R;
+    cfg.placement = VFFT_INPLACE;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.dims = 2;
+    cfg.n[0] = N1;
+    cfg.n[1] = N2;
+    cfg.howmany = 1;
+    cfg.order = VFFT_ORDER_NATURAL;
+    cfg.nthreads = 1;
+    cfg.owned_buffers = own;
+    cfg.wisdom = W;
+    p = vfft_create(&cfg);
+    CHECK(p != NULL, "%dx%d %s: in-place plan created%s%s", N1, N2, tag, p ? " -- " : "", p ? vfft_plan_route(p) : "");
+    if (!p)
+        return 1;
+    if (own)
+    {
+        vfft_plan_planes(p, &pl, NULL, NULL, NULL);
+        st = vfft_plan_stride(p);
+        CHECK(pl != NULL && st >= P, "%dx%d %s: the plan's plane, row pitch %zu doubles (hp1 + %d pairs)", N1, N2, tag, st, (int)(st / 2) - hp1);
+        if (!pl || st < P)
+        {
+            vfft_destroy(p);
+            return 1;
+        }
+    }
+    else
+    {
+        pl = a;
+        st = P;
+    }
+    for (r = 0; r < (size_t)N1; r++)
+        memcpy(pl + r * st, pf + r * P, P * sizeof(double));   /* the spectrum rows at the plane's pitch */
+    vfft_execute(p, VFFT_BACKWARD, pl, NULL, pl, NULL);
+    {
+        double num = 0.0, den = 0.0, e;
+        for (r = 0; r < (size_t)N1; r++)
+            for (j = 0; j < (size_t)N2; j++)
+            {
+                const double ref = scale * seed[r * P + j], dd = pl[r * st + j] - ref;
+                num += dd * dd;
+                den += ref * ref;
+            }
+        e = den > 0 ? sqrt(num / den) : sqrt(num);
+        CHECK(e < 1e-11, "%dx%d %s: FFTW's spectrum in place -> N x, rel %.2e", N1, N2, tag, e);
+    }
+    p2 = vfft_create(&cfg);
+    CHECK(p2 != NULL, "%dx%d %s: second create (replay)", N1, N2, tag);
+    if (p2)
+    {
+        int same = 1;
+        size_t st2 = st;
+        if (own)
+        {
+            vfft_plan_planes(p2, &pl2, NULL, NULL, NULL);
+            st2 = vfft_plan_stride(p2);
+        }
+        else
+            pl2 = b;
+        if (pl2 && st2 == st)
+        {
+            for (r = 0; r < (size_t)N1; r++)
+                memcpy(pl2 + r * st, pf + r * P, P * sizeof(double));
+            vfft_execute(p2, VFFT_BACKWARD, pl2, NULL, pl2, NULL);
+            for (r = 0; r < (size_t)N1 && same; r++)
+                same = memcmp(pl2 + r * st, pl + r * st, (size_t)N2 * sizeof(double)) == 0;
+        }
+        else
+            same = 0;
+        CHECK(same, "%dx%d %s: replay bitwise", N1, N2, tag);
+        vfft_destroy(p2);
+    }
+    if (!own)
+    {   /* two planes on an in-place plan: refused, nothing executed */
+        memcpy(c, pf, CN * sizeof(double));
+        memset(d, 0, CN * sizeof(double));
+        vfft_execute(p, VFFT_BACKWARD, c, NULL, d, NULL);
+        for (j = 0, zero = 1; j < CN && zero; j++)
+            zero = d[j] == 0.0;
+        CHECK(zero && memcmp(c, pf, CN * sizeof(double)) == 0, "%dx%d %s: two planes refused at the door, both untouched", N1, N2, tag);
+    }
+    vfft_destroy(p);
+    vfft_free(seed); vfft_free(a); vfft_free(b); vfft_free(c); vfft_free(d);
+    api->ffree(pf);
+    return g_fail != fails0;
+}
+
+long vfft_il2d_row_mt_passes(void);   /* vfft.c: the row pass's threaded dispatches (not in the public header) */
+/* THE THREADED PLAN: nthreads = 8, both directions, both doors; the checks of the serial cells, and
+ * the threaded passes that ran in the execute (the row pass, the column pass, the batch's clones) */
+static int run_cell_mt(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int c2r, int own)
+{
+    const int hp1 = N2 / 2 + 1;
+    const size_t P = 2 * (size_t)hp1, CN = (size_t)N1 * P;
+    const double scale = (double)N1 * (double)N2;
+    double *seed = (double *)vfft_malloc(CN * sizeof(double));
+    double *pf = (double *)api->fmalloc(CN * sizeof(double));
+    double *a = (double *)vfft_malloc(CN * sizeof(double));
+    double *b = (double *)vfft_malloc(CN * sizeof(double));
+    char tag[32];
+    vfft_config_t cfg;
+    vfft_plan p, p2;
+    fftwx_plan fp;
+    double *pl = NULL, *pl2 = NULL;
+    size_t st, st2, r, j;
+    long e0, eng;
+    const int fails0 = g_fail;
+    snprintf(tag, sizeof tag, "%s T=8%s", c2r ? "c2r" : "r2c", own ? " own" : "");
+    if (!seed || !pf || !a || !b)
+    {
+        printf("IPGATE FAIL  %dx%d %s: out of memory\n", N1, N2, tag);
+        g_fail++;
+        return 1;
+    }
+    fill(seed, N1, N2, P, 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 12));
+    fp = api->plan_dft_r2c_2d(N1, N2, pf, (fftwx_complex *)pf, FFTWX_MEASURE);
+    if (!fp)
+    {
+        printf("IPGATE FAIL  %dx%d %s: FFTW plan refused\n", N1, N2, tag);
+        g_fail++;
+        return 1;
+    }
+    memcpy(pf, seed, CN * sizeof(double));
+    api->execute(fp);
+    api->destroy_plan(fp);
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = c2r ? VFFT_C2R : VFFT_R2C;
+    cfg.placement = VFFT_INPLACE;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.dims = 2;
+    cfg.n[0] = N1;
+    cfg.n[1] = N2;
+    cfg.howmany = 1;
+    cfg.order = VFFT_ORDER_NATURAL;
+    cfg.nthreads = 8;
+    cfg.owned_buffers = own;
+    cfg.wisdom = W;
+    p = vfft_create(&cfg);
+    CHECK(p != NULL, "%dx%d %s: in-place plan created%s%s", N1, N2, tag, p ? " -- " : "", p ? vfft_plan_route(p) : "");
+    if (!p)
+        return 1;
+    if (own)
+    {
+        vfft_plan_planes(p, &pl, NULL, NULL, NULL);
+        st = vfft_plan_stride(p);
+    }
+    else
+    {
+        pl = a;
+        st = P;
+    }
+    if (!pl || st < P)
+    {
+        CHECK(0, "%dx%d %s: the plan's plane", N1, N2, tag);
+        vfft_destroy(p);
+        return 1;
+    }
+    for (r = 0; r < (size_t)N1; r++)
+        memcpy(pl + r * st, (c2r ? pf : seed) + r * P, (c2r ? P : (size_t)N2) * sizeof(double));
+    e0 = vfft_il2d_col_mt_passes() + vfft_il2d_row_mt_passes() + vfft_tc_mt_dispatches();
+    vfft_execute(p, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl, NULL, pl, NULL);
+    eng = vfft_il2d_col_mt_passes() + vfft_il2d_row_mt_passes() + vfft_tc_mt_dispatches() - e0;
+    {
+        double num = 0.0, den = 0.0, e;
+        for (r = 0; r < (size_t)N1; r++)
+            for (j = 0; j < (c2r ? (size_t)N2 : P); j++)
+            {
+                const double ref = c2r ? scale * seed[r * P + j] : pf[r * P + j], dd = pl[r * st + j] - ref;
+                num += dd * dd;
+                den += ref * ref;
+            }
+        e = den > 0 ? sqrt(num / den) : sqrt(num);
+        CHECK(e < 1e-11, "%dx%d %s: %s, rel %.2e; %ld threaded pass(es) engaged%s", N1, N2, tag,
+              c2r ? "FFTW's spectrum -> N x" : "vs FFTW in place", e, eng, eng ? "" : " (the verdicts chose serial)");
+    }
+    p2 = vfft_create(&cfg);
+    CHECK(p2 != NULL, "%dx%d %s: second create (replay)", N1, N2, tag);
+    if (p2)
+    {
+        int same = 1;
+        st2 = st;
+        if (own)
+        {
+            vfft_plan_planes(p2, &pl2, NULL, NULL, NULL);
+            st2 = vfft_plan_stride(p2);
+        }
+        else
+            pl2 = b;
+        if (pl2 && st2 == st)
+        {
+            for (r = 0; r < (size_t)N1; r++)
+                memcpy(pl2 + r * st, (c2r ? pf : seed) + r * P, (c2r ? P : (size_t)N2) * sizeof(double));
+            vfft_execute(p2, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl2, NULL, pl2, NULL);
+            for (r = 0; r < (size_t)N1 && same; r++)
+                same = memcmp(pl2 + r * st, pl + r * st, (c2r ? (size_t)N2 : P) * sizeof(double)) == 0;
+        }
+        else
+            same = 0;
+        CHECK(same, "%dx%d %s: replay bitwise", N1, N2, tag);
+        vfft_destroy(p2);
+    }
+    vfft_destroy(p);
+    vfft_free(seed); vfft_free(a); vfft_free(b);
+    api->ffree(pf);
+    return g_fail != fails0;
+}
+
 int main(int argc, char **argv)
 {
+    static const int MT[][2] = { { 256, 256 }, { 512, 512 }, { 1024, 1024 }, { 16, 1024 }, { 64, 30 } };
+    static const int MTO[][2] = { { 16, 1024 }, { 512, 512 } };
+    static const int C2R[][2] = { { 16, 1024 }, { 64, 64 }, { 128, 128 }, { 256, 256 }, { 512, 512 }, { 16, 1000 }, { 64, 30 }, { 15, 16 }, { 17, 64 }, { 64, 15 } };
+    static const int C2RO[][2] = { { 16, 512 }, { 16, 1024 }, { 32, 1024 }, { 256, 256 } };
     static const int OWN[][2] = { { 16, 512 }, { 16, 1024 }, { 16, 2048 }, { 32, 1024 }, { 16, 1000 }, { 256, 256 }, { 64, 64 } };
     static const int NAT[][2] = {
         { 16, 1024 }, { 64, 64 }, { 128, 128 }, { 256, 256 }, { 512, 512 },
@@ -316,6 +569,21 @@ int main(int argc, char **argv)
         run_cell(W, &api, DFLT[ci][0], DFLT[ci][1], 0, NULL);
     for (ci = 0; ci < (int)(sizeof OWN / sizeof OWN[0]); ci++)
         run_cell_own(W, &api, OWN[ci][0], OWN[ci][1]);
+    for (ci = 0; ci < (int)(sizeof C2R / sizeof C2R[0]); ci++)
+        run_cell_c2r(W, &api, C2R[ci][0], C2R[ci][1], 0);
+    for (ci = 0; ci < (int)(sizeof C2RO / sizeof C2RO[0]); ci++)
+        run_cell_c2r(W, &api, C2RO[ci][0], C2RO[ci][1], 1);
+    vfft_set_num_threads(8);
+    for (ci = 0; ci < (int)(sizeof MT / sizeof MT[0]); ci++)
+    {
+        run_cell_mt(W, &api, MT[ci][0], MT[ci][1], 0, 0);
+        run_cell_mt(W, &api, MT[ci][0], MT[ci][1], 1, 0);
+    }
+    for (ci = 0; ci < (int)(sizeof MTO / sizeof MTO[0]); ci++)
+    {
+        run_cell_mt(W, &api, MTO[ci][0], MTO[ci][1], 0, 1);
+        run_cell_mt(W, &api, MTO[ci][0], MTO[ci][1], 1, 1);
+    }
     /* the store from disk: one cell replays bitwise from what the run saved */
     if (W)
     {

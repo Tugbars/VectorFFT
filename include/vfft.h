@@ -173,11 +173,11 @@ extern "C"
     int owned_buffers; /**< 1 = create allocates the planes this plan needs, at a
                             measured stride, zeroed, and destroy frees them; read
                             them with vfft_plan_planes() and vfft_plan_stride().
-                            1D SPLIT batches, and the in-place 2D R2C plan (one
-                            padded plane at the row pitch the plan chooses,
-                            vfft_plan_stride() doubles per row, the same plane in
-                            both roles); refused otherwise. 0 (default) = the
-                            caller's own tight planes. */
+                            1D SPLIT batches, and the in-place 2D and 3D real
+                            plans (one padded plane or volume at the row pitch the
+                            plan chooses, vfft_plan_stride() doubles per row, the
+                            same plane in both roles); refused otherwise. 0
+                            (default) = the caller's own tight planes. */
 
     int nthreads; /**< the plan's thread count, taken at create; 0 = the pool's
                        current size. Every threaded decision is measured and
@@ -315,12 +315,12 @@ extern "C"
    * R2C/C2R (1D, even N, INTERLEAVED, K == 1 or transform-contiguous): ONE
    * plane of 2 (N/2 + 1) doubles holds the N reals and then the N/2 + 1
    * bins; dre == sre is required and a distinct dre is refused. In-place 2D
-   * R2C (INTERLEAVED, howmany == 1, one thread): one plane of N1 rows, each
+   * R2C and C2R (INTERLEAVED, howmany == 1, any nthreads): one plane of N1 rows, each
    * row 2 (N2/2 + 1) doubles holding its N2 reals and then its N2/2 + 1
    * bins (the in-place layout of FFTW and MKL); dre == sre is required and
    * a distinct dre is refused, as in 1D. In-place 3D R2C and C2R (the same
-   * contract: one volume of N1 N2 rows, each 2 (N3/2 + 1) doubles; a C2R in
-   * place overwrites its spectrum by nature).
+   * contract: one volume of N1 N2 rows, each 2 (N3/2 + 1) doubles). A C2R in
+   * place, at either rank, overwrites its spectrum by nature.
    * Element addressing follows config.batch_geom. Pure: no allocation, no
    * measurement. Safe to call concurrently on different plans.
    *

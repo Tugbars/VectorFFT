@@ -2110,8 +2110,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
           _real_il_odd_admits(cfg->n[0], cfg->transform == VFFT_C2R)) &&
         /* 2D R2C in place (docs/roadmap/real_inplace_design.md, 2026-10-08): one plane,
          * every row padded to 2*(N2/2+1) doubles (FFTW's and MKL's in-place layout);
-         * the law of admission is the policy's (one thread; the c2r twin and the
-         * threaded forms are the next pieces) */
+         * the law of admission is the policy's (both directions, every thread count) */
         !(cfg->dims == 2 && !ob && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg))) &&
         /* 3D R2C and C2R in place (the same layout per row; c2r destroys its input by nature) */
         !(cfg->dims == 3 && !ob && vfft_policy_ilndr_ip_ok(cfg, cfg->howmany, _vfft_plan_threads(cfg))))
@@ -2120,8 +2119,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                    "LAYOUT_INTERLEAVED (CCE), howmany==1 (the interleaved real "
                    "engines; padded 2*(N/2+1)-double plane, N+1 at odd N), "
                    "howmany>1 with batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS (that "
-                   "plane per transform, end to end), 2D R2C or 3D R2C/C2R LAYOUT_INTERLEAVED, "
-                   "howmany==1, one thread (one plane or volume, every row padded to "
+                   "plane per transform, end to end), 2D or 3D R2C/C2R LAYOUT_INTERLEAVED, "
+                   "howmany==1 (one plane or volume, every row padded to "
                    "2*(N_last/2+1) doubles) — use VFFT_OUTOFPLACE otherwise",
                    _vfft_tname(cfg->transform));
         return NULL;
@@ -2287,21 +2286,36 @@ static vfft_plan _vfft_create_outer(const vfft_config_t *cfg)
 {
     if (!cfg->owned_buffers)
         return _vfft_create_inner(cfg, NULL);
-    if (cfg->dims == 2 && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg)))
-    {   /* THE PLAN'S OWN PLANE (docs/roadmap/real_inplace_design.md §1, door 2): the in-place 2D
-         * real plan at the pitch the policy names; one padded plane allocated here, zeroed, read
-         * back through vfft_plan_planes (both roles) and vfft_plan_stride (its row pitch) */
+    if ((cfg->dims == 2 && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg))) ||
+        (cfg->dims == 3 && vfft_policy_ilndr_ip_ok(cfg, cfg->howmany, _vfft_plan_threads(cfg))))
+    {   /* THE PLAN'S OWN PLANE (docs/roadmap/real_inplace_design.md §1, door 2): the in-place 2D or
+         * 3D real plan at the pitch the policy names; one padded plane (volume) allocated here,
+         * zeroed, read back through vfft_plan_planes (both roles) and vfft_plan_stride (its row
+         * pitch). A NESTED create (a rank-3 plan's plane child) takes the pitch and no plane. */
         struct vfft_plan_s *h = (struct vfft_plan_s *)_vfft_create_inner(cfg, NULL);
+        size_t rows, pitch;
         if (!h)
             return NULL;
-        h->own_pitch = 2 * h->il2d_ipP;
-        h->own_plane = (double *)vfft_aligned_alloc((size_t)h->N * h->own_pitch * sizeof(double));
+        if (_vfft_create_depth > 1)
+            return h;
+        if (cfg->dims == 3)
+        {
+            rows = (size_t)h->N * (size_t)h->N2;
+            pitch = 2 * (size_t)h->ilndr->hp3;
+        }
+        else
+        {
+            rows = (size_t)h->N;
+            pitch = 2 * h->il2d_ipP;
+        }
+        h->own_pitch = pitch;
+        h->own_plane = (double *)vfft_aligned_alloc(rows * pitch * sizeof(double));
         if (!h->own_plane)
         {
             vfft_destroy(h);
             return NULL;
         }
-        memset(h->own_plane, 0, (size_t)h->N * h->own_pitch * sizeof(double));
+        memset(h->own_plane, 0, rows * pitch * sizeof(double));
         return h;
     }
 
