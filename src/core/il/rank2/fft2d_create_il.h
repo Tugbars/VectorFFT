@@ -968,7 +968,12 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
         h->il2d_row && !il2d_oddn2 && !il2d_blu && !il2d_nat &&
         !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_WL") &&
         il2d_bwl < 0)
-        _il2d_real_wlrace(h, W, cfg, N1, N2);
+    {   /* at T > 1 the race decides the column verdict too (every width under both modes): the
+         * colmt block below serves it as a banked one */
+        const int m = _il2d_real_wlrace(h, W, cfg, N1, N2);
+        if (m >= 0)
+            il2d_bcmt = m;
+    }
     /* the raced per-stage forms land on the real chain row HERE: on a
      * cold real cell that row is first written by the wl race's rl bank
      * above, after the forms step ran — without this re-bank the next

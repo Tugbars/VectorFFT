@@ -372,11 +372,15 @@ at T > 1 every form of every candidate chain — the unbanded walk (the
 natural partition or the strips) and the banded walk at every admitted
 width — is timed through the one threaded body the plan serves with
 (`_il2d_cols_mt_desc`, over the candidate's descriptor; the serial form
-stands in where a width cannot engage), under the threaded protocol; the
-width race times each width the same way (the column verdict on during
-it). The colmt race afterwards keeps the last word, serial or threaded, for
-the winner. Both placements; the c2c tier and the rank-3 axes (their own
-threaded walks) are not in this law.
+stands in where a width cannot engage), under the threaded protocol. The
+per-stage forms race does the same (the natural partition with the chain's
+own permutation and staging for a natural chain, the strips otherwise). The
+width race runs every width under BOTH modes, the serial pass and the
+threaded one, and its winner's mode IS the column verdict, banked as `cmt`
+beside `wl` — a width timed threaded is never served serial; the colmt race
+runs only where the width race does not (a natural chain, a pinned axis, a
+Bluestein axis). Both placements; the c2c tier and the rank-3 axes (their
+own threaded walks) are not in this law.
 
 ---
 
