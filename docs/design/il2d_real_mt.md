@@ -403,6 +403,19 @@ odd, so the last sub-strip is narrower), and banks `cmt` with `mtarm=` `msw=`
 more. The dense scratch is built for the race and kept only under a strips
 verdict.
 
+**The column verdict is raced on the whole transform, after the row plan is
+bound (2026-10-09).** A column pass timed alone never pays the exchange with
+the rows (above), so the verdict's arms run both passes in serving order —
+and the rows must be the ones the cell will serve: a verdict taken under the
+door's rows misled the in-place c2r cells whose door inner is not pool-free
+(the in-place ZTT-r owns its scratch, so the batch has no worker clones and
+the door runs its rows serial there, while the row race then binds an engine
+through its own clones). So a cold cell at T > 1 gets a provisional threaded
+verdict (the matched partition) while the row plan races under it, and the
+column-verdict race runs after the row plan with the rows as bound; a banked
+verdict is served before the row plan, as before; the column plan races
+after, under the final verdict.
+
 ---
 
 ## 7. Results
