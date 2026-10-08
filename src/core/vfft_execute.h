@@ -434,6 +434,7 @@ void vfft_destroy(vfft_plan h)
         return;
     if (h->own_batch)
         _own_batch_free(h->own_batch); /* config.owned_buffers planes */
+    vfft_aligned_free(h->own_plane);   /* door 2's plane (real_inplace_design.md) */
     if (h->cplan)
         vfft_proto_plan_destroy(h->cplan);
     if (h->oplan)

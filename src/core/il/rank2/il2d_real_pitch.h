@@ -168,6 +168,7 @@ static void _il2d_cxp_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
 static int _il2d_rcsk_admits(const struct vfft_plan_s *h, const vfft_config_t *cfg)
 {
     return h->transform == VFFT_R2C && h->il2d_row && !h->il2d_rax_on && !h->il2d_tf_on && _il2d_onek_pass(h) &&
+           h->il2d_ip != 2 &&   /* door 2's plane is already off the alias */
            vfft_policy_il2d_rcsk_ok(cfg, h->nthreads);
 }
 static void _il2d_rcsk_free(struct vfft_plan_s *h)
@@ -278,7 +279,7 @@ static void _il2d_rcsk_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, cons
     }
     {
         const int ip = h->il2d_ip;
-        const size_t hp1 = (size_t)N2 / 2 + 1, CN = 2 * (size_t)N1 * hp1;
+        const size_t hp1 = (size_t)N2 / 2 + 1, CN = 2 * (size_t)N1 * h->il2d_col.rn;
         const size_t RN = ip ? CN : (size_t)N1 * (size_t)N2;   /* in place: x is the one plane's seed */
         double *x = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
         double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));

@@ -201,11 +201,11 @@ class Run:
         self.args = args
         self.dims = dims                      # 1, or 2 for the 2D contract (shapes)
         self.threads = int(args.threads)
-        self.ip = 1 if args.inplace else 0
+        self.ip = 2 if getattr(args, "owned", False) else (1 if args.inplace else 0)   # 2 = door 2 (2026-10-08): the plan's own plane at its pitch
         self.cmp = getattr(args, "cmp", "mkl") or "mkl"   # the comparator: mkl (the default), kfr (2026-09-25) or fftw (2026-09-29), each its own csv
         self.real = getattr(args, "real", None)           # the real contract (2026-09-29): "r2c" / "c2r", else the c2c cell
         self.k = int(getattr(args, "k", 1) or 1)          # the 1D real cell's batch count (transform-contiguous rows)
-        self.sfx = ("_%dd" % dims if dims >= 2 else "") + ("_" + self.real if self.real else "") + ("_k%d" % self.k if self.k > 1 else "") + ("_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "") + ("_" + self.cmp if self.cmp != "mkl" else "")
+        self.sfx = ("_%dd" % dims if dims >= 2 else "") + ("_" + self.real if self.real else "") + ("_k%d" % self.k if self.k > 1 else "") + ("_ipo" if self.ip == 2 else "_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "") + ("_" + self.cmp if self.cmp != "mkl" else "")
         name = args.name or self.default_name()
         self.dir = os.path.join(RESULTS, name)
         self.store = args.store or os.path.join(self.dir, "store")
@@ -437,7 +437,7 @@ def bench_cell(run, n, csv_path):
         nstr, kstr = ckey(n), "1"
     elif is2d(n) and run.real:
         # the 2D REAL cell (2026-09-29): N1 in the N slot, N2 in the K slot (bench --2drealnat)
-        flag = ["--2drealnat", "--realfwd" if run.real == "r2c" else "--realbwd"] + (["--realip"] if run.ip else [])   # --realip: in place on one padded plane (2026-10-08)
+        flag = ["--2drealnat", "--realfwd" if run.real == "r2c" else "--realbwd"] + (["--realown"] if run.ip == 2 else ["--realip"] if run.ip else [])   # --realip: in place on one padded plane; --realown: door 2 (2026-10-08)
         nstr, kstr = str(n[0]), str(n[1])
     elif is2d(n):
         # the 2D interleaved cell: N1 in the N slot, N2 in the K slot (bench --2dilnat)
@@ -627,6 +627,7 @@ def main():
     ap.add_argument("--primes", help="the prime set of the mixed group, e.g. 2,3,5,7 (default 2,3,5)")
     ap.add_argument("--threads", default="1")
     ap.add_argument("--inplace", action="store_true")
+    ap.add_argument("--owned", action="store_true", help="door 2 (2026-10-08): the plan's own plane at the pitch it chooses (owned_buffers = 1), in place; the 2D r2c contract; its own csv suffix _ipo")
     ap.add_argument("--cmp", choices=["mkl", "kfr", "fftw"], default="mkl", help="the comparator: mkl (default), kfr (a bench built with build.py --kfr; 1D c2c, one thread) or fftw (bound at runtime from vcpkg's fftw3.dll or $VFFT_FFTW_DLL; FFTW_MEASURE; the 1D c2c and the real cells, one thread); its own csv suffix")
     ap.add_argument("--real", choices=["r2c", "c2r"], help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells, 2D shapes or 3D cubes (2026-10-07); its own csv suffix _r2c / _c2r")
     ap.add_argument("--k", type=int, default=1, help="the batch count of the 1D real cell: K transform-contiguous rows (real rows at pitch N, CCE rows at pitch N+2); suffix _k<K>")
@@ -663,6 +664,8 @@ def main():
         raise SystemExit("--cmp fftw: the FFTW arm serves the 1D c2c cell and the 1D/2D/3D real cells, out of place, one thread")
     if run.real and run.ip and not ((dims == 2 and run.real == "r2c") or dims == 3):
         raise SystemExit("--real --inplace: the in-place real contract is the 2D r2c cell and the 3D cells (2026-10-08); 2D c2r is the next piece")
+    if run.ip == 2 and not (run.real == "r2c" and dims == 2):
+        raise SystemExit("--owned: door 2 is the 2D r2c contract (2026-10-08)")
     if run.real and run.threads > 1 and dims == 2:
         raise SystemExit("--real: --threads serves the 1D and 3D cells (2026-10-07), not 2D")
     if run.k > 1 and (not run.real or dims != 1):

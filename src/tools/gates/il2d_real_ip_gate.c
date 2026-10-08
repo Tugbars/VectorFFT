@@ -180,8 +180,111 @@ static int run_cell(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int 
     return g_fail != fails0;
 }
 
+/* DOOR 2 (owned_buffers = 1): the plan's own plane at the policy's pitch, ours there against
+ * FFTW's in-place r2c_2d at FFTW's layout, row by row; the replay bitwise; at 512 | N2 the
+ * pitch must have left the aliasing one */
+static int run_cell_own(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2)
+{
+    const int hp1 = N2 / 2 + 1;
+    const size_t P = 2 * (size_t)hp1, CN = (size_t)N1 * P;
+    const size_t m = (16 * (size_t)hp1) % 4096;
+    double *seed = (double *)vfft_malloc(CN * sizeof(double));
+    double *pf = (double *)api->fmalloc(CN * sizeof(double));
+    double *keep = (double *)malloc(CN * sizeof(double));
+    vfft_config_t cfg;
+    vfft_plan p, p2;
+    fftwx_plan fp;
+    double *pl = NULL, *pl2 = NULL;
+    size_t st = 0, st2 = 0, r;
+    const int fails0 = g_fail;
+    if (!seed || !pf || !keep)
+    {
+        printf("IPGATE FAIL  %dx%d own: out of memory\n", N1, N2);
+        g_fail++;
+        return 1;
+    }
+    fill(seed, N1, N2, P, 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 12));
+    fp = api->plan_dft_r2c_2d(N1, N2, pf, (fftwx_complex *)pf, FFTWX_MEASURE);
+    if (!fp)
+    {
+        printf("IPGATE FAIL  %dx%d own: FFTW plan refused\n", N1, N2);
+        g_fail++;
+        return 1;
+    }
+    memcpy(pf, seed, CN * sizeof(double));
+    api->execute(fp);
+    api->destroy_plan(fp);
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_R2C;
+    cfg.placement = VFFT_INPLACE;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.dims = 2;
+    cfg.n[0] = N1;
+    cfg.n[1] = N2;
+    cfg.howmany = 1;
+    cfg.order = VFFT_ORDER_NATURAL;
+    cfg.nthreads = 1;
+    cfg.owned_buffers = 1;
+    cfg.wisdom = W;
+    p = vfft_create(&cfg);
+    CHECK(p != NULL, "%dx%d own: door-2 plan created%s%s", N1, N2, p ? " -- " : "", p ? vfft_plan_route(p) : "");
+    if (!p)
+        return 1;
+    vfft_plan_planes(p, &pl, NULL, NULL, NULL);
+    st = vfft_plan_stride(p);
+    CHECK(pl != NULL && st >= P, "%dx%d own: the plan's plane, row pitch %zu doubles (hp1 + %d pairs)", N1, N2, st, (int)(st / 2) - hp1);
+    if (m == 16 || m == 4096 - 16)
+        CHECK(st != P, "%dx%d own: the aliasing pitch left (16 hp1 = %zu mod 4096)", N1, N2, m);
+    else
+        CHECK(st == P, "%dx%d own: the caller's pitch kept (no alias)", N1, N2);
+    if (pl && st >= P)
+    {
+        double num = 0.0, den = 0.0, e;
+        size_t j;
+        for (r = 0; r < (size_t)N1; r++)
+            memcpy(pl + r * st, seed + r * P, (size_t)N2 * sizeof(double));
+        vfft_execute(p, VFFT_FORWARD, pl, NULL, pl, NULL);
+        for (r = 0; r < (size_t)N1; r++)
+            for (j = 0; j < P; j++)
+            {
+                const double d = pl[r * st + j] - pf[r * P + j];
+                num += d * d;
+                den += pf[r * P + j] * pf[r * P + j];
+                keep[r * P + j] = pl[r * st + j];
+            }
+        e = den > 0 ? sqrt(num / den) : sqrt(num);
+        CHECK(e < 1e-11, "%dx%d own: vs FFTW in place (FFTW at its layout), rel %.2e", N1, N2, e);
+        p2 = vfft_create(&cfg);
+        CHECK(p2 != NULL, "%dx%d own: second create (replay)", N1, N2);
+        if (p2)
+        {
+            int same = 1;
+            vfft_plan_planes(p2, &pl2, NULL, NULL, NULL);
+            st2 = vfft_plan_stride(p2);
+            if (pl2 && st2 == st)
+            {
+                for (r = 0; r < (size_t)N1; r++)
+                    memcpy(pl2 + r * st, seed + r * P, (size_t)N2 * sizeof(double));
+                vfft_execute(p2, VFFT_FORWARD, pl2, NULL, pl2, NULL);
+                for (r = 0; r < (size_t)N1 && same; r++)
+                    same = memcmp(pl2 + r * st, keep + r * P, P * sizeof(double)) == 0;
+            }
+            else
+                same = 0;
+            CHECK(same, "%dx%d own: replay bitwise, the same pitch", N1, N2);
+            vfft_destroy(p2);
+        }
+    }
+    vfft_destroy(p);
+    vfft_free(seed);
+    api->ffree(pf);
+    free(keep);
+    return g_fail != fails0;
+}
+
 int main(int argc, char **argv)
 {
+    static const int OWN[][2] = { { 16, 512 }, { 16, 1024 }, { 16, 2048 }, { 32, 1024 }, { 16, 1000 }, { 256, 256 }, { 64, 64 } };
     static const int NAT[][2] = {
         { 16, 1024 }, { 64, 64 }, { 128, 128 }, { 256, 256 }, { 512, 512 },
         { 16, 1000 }, { 64, 30 }, { 32, 32 }, { 15, 16 }, { 17, 64 }, { 64, 15 },
@@ -211,6 +314,8 @@ int main(int argc, char **argv)
         run_cell(W, &api, NAT[ci][0], NAT[ci][1], 1, (NAT[ci][0] == 256 && NAT[ci][1] == 256) ? &kept : NULL);
     for (ci = 0; ci < (int)(sizeof DFLT / sizeof DFLT[0]); ci++)
         run_cell(W, &api, DFLT[ci][0], DFLT[ci][1], 0, NULL);
+    for (ci = 0; ci < (int)(sizeof OWN / sizeof OWN[0]); ci++)
+        run_cell_own(W, &api, OWN[ci][0], OWN[ci][1]);
     /* the store from disk: one cell replays bitwise from what the run saved */
     if (W)
     {

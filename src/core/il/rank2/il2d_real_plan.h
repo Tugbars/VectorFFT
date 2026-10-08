@@ -104,6 +104,14 @@ static void _il2d_ip_reset(void *v)
     const _il2d_ip_reset_t *r = (const _il2d_ip_reset_t *)v;
     memcpy(r->p, r->seed, r->n * sizeof(double));
 }
+/* a real-row token's name at the plan's door: door 2 (the pitch twin, il2d_ip == 2) keeps
+ * its own pitch-sensitive verdicts as the _p set (real_inplace_design.md) */
+static const char *_il2d_tkp(const struct vfft_plan_s *h, const char *base, char *buf, size_t sz)
+{
+    if (h->il2d_ip != 2) return base;
+    snprintf(buf, sz, "%s_p", base);
+    return buf;
+}
 
 /* the pass itself: the rows kernel in one call, an engine row by row, or the
  * tier's row route */
@@ -736,7 +744,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
 {
     enum { NARMS = VFFT_RACE_MAX_ARMS / 4 };
     const int ip = h->il2d_ip;
-    const size_t hp1 = (size_t)N2 / 2 + 1, CN = 2 * (size_t)N1 * hp1;
+    const size_t hp1 = (size_t)N2 / 2 + 1, cp = h->il2d_col.rn, CN = 2 * (size_t)N1 * cp;   /* cp = the CCE plane's pitch */
     const size_t RN = ip ? CN : (size_t)N1 * (size_t)N2;   /* the real plane's extent: in place the one padded plane */
     const char *log = getenv("VFFT_IL2D_LOG");
     const char *tk_rx = c2r ? "rx_c2r" : "rx", *tk_rxs = c2r ? "rxs_c2r" : "rxs";
@@ -844,7 +852,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                     z[j] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
                 }
                 for (j = 0; j < (size_t)N1; j++)
-                    z[j * 2 * hp1 + 1] = z[j * 2 * hp1 + 2 * (hp1 - 1) + 1] = 0.0;
+                    z[j * 2 * cp + 1] = z[j * 2 * cp + 2 * (hp1 - 1) + 1] = 0.0;
             }
             if (ip)
                 memcpy(seed, a, (RN + 8) * sizeof(double));
@@ -1489,13 +1497,15 @@ static void _il2d_colx_arm_run(void *v)
 static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                     int N1, int N2, int ord, int T, int c2r)
 {
-    const size_t hp1 = (size_t)N2 / 2 + 1, CN = 2 * (size_t)N1 * hp1;
+    const size_t hp1 = (size_t)N2 / 2 + 1, cp = h->il2d_col.rn, CN = 2 * (size_t)N1 * cp;   /* cp = the CCE plane's pitch */
     const vfft_ilcol_t *col = &h->il2d_col;
     const int nat = col->nat != 0, nf = (nat && col->natstage && !c2r) ? 2 : 1;   /* the reverse pass has no staged form */
     const char *fname[2];
     const char *lname[VFFT_IL2P_COL_MAXLEAF];
     const char *log = getenv("VFFT_IL2D_LOG");
-    const char *tk_cx = c2r ? "cx_c2r" : "cx", *tk_cxs = c2r ? "cxs_c2r" : "cxs";
+    char tkb_cx[16], tkb_cxs[16];
+    const char *tk_cx = _il2d_tkp(h, c2r ? "cx_c2r" : "cx", tkb_cx, sizeof tkb_cx);
+    const char *tk_cxs = _il2d_tkp(h, c2r ? "cxs_c2r" : "cxs", tkb_cxs, sizeof tkb_cxs);
     const char *ev = c2r ? "VFFT_IL2D_CX_C2R" : "VFFT_IL2D_CX", *dn = c2r ? "c2r " : "";
     int nl = 0, s;
     fname[0] = nat ? "strided" : "plain";
@@ -1577,7 +1587,7 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
                 }
             if (a && c2r)
                 for (j = 0; j < (size_t)N1; j++)   /* a CCE plane: the DC and Nyquist bins real */
-                    z[j * 2 * hp1 + 1] = z[j * 2 * hp1 + 2 * (hp1 - 1) + 1] = 0.0;
+                    z[j * 2 * cp + 1] = z[j * 2 * cp + 2 * (hp1 - 1) + 1] = 0.0;
         }
         for (f = 0; f < nf; f++)
         {
@@ -1870,7 +1880,7 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
                                        int N1, int N2, int ord, int T)
 {
     enum { MAXC = 1 + VFFT_IL2P_COL_MAXLEAF };   /* plain, the leaves */
-    const size_t hp1 = (size_t)N2 / 2 + 1, RN = (size_t)N1 * (size_t)N2, CN = 2 * (size_t)N1 * hp1;
+    const size_t hp1 = (size_t)N2 / 2 + 1, RN = (size_t)N1 * (size_t)N2, CN = 2 * (size_t)N1 * h->il2d_col.rn;
     const vfft_ilcol_t *col = &h->il2d_col;
     const int one_stage = col->nst == 1 && !col->nat && !col->blu && !col->tpc && (col->wl == 0 || col->wl == col->N) &&
                           col->L[0] == col->N && col->b[0] != NULL;

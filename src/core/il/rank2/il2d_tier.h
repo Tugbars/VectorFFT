@@ -1849,7 +1849,7 @@ static void _il2d_real_wlrace(struct vfft_plan_s *h,
                               struct vfft_wisdom_s *W,
                               const vfft_config_t *cfg, int N1, int N2)
 {
-    const size_t CN = (size_t)N1 * ((size_t)N2 / 2 + 1);
+    const size_t CN = (size_t)N1 * h->il2d_col.rn;   /* the plane at the plan's pitch */
     const int isr = (h->transform == VFFT_R2C);
     double *bz = (double *)vfft_aligned_alloc((2 * CN + 8) * sizeof(double));
     size_t i;

@@ -139,8 +139,9 @@ static int _vm_geometry(const struct vfft_plan_s *h, _vm_geom_t *g)
                 goto overflow;
         }
         else if (h->N3 == 0)
-        { /* 2D real: N rows of N2 reals against N rows of N2/2+1 bins, per plane */
-            const size_t h2 = (size_t)(h->N2 / 2 + 1);
+        { /* 2D real: N rows of N2 reals against N rows of N2/2+1 bins, per plane; in
+           * place the plan's pitch (door 2 may sit past N2/2+1) */
+            const size_t h2 = h->il2d_ipP ? h->il2d_ipP : (size_t)(h->N2 / 2 + 1);
             if (!_vm_mul(&a, N, (size_t)h->N2) || !_vm_mul(&a, a, K) || !_vm_mul(&b, N, h2) ||
                 !_vm_mul(&b, b, K) || !_vm_mul(&b, b, 2))
                 goto overflow;

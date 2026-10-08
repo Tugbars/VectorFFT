@@ -173,8 +173,11 @@ extern "C"
     int owned_buffers; /**< 1 = create allocates the planes this plan needs, at a
                             measured stride, zeroed, and destroy frees them; read
                             them with vfft_plan_planes() and vfft_plan_stride().
-                            1D and SPLIT only; refused otherwise. 0 (default) =
-                            the caller's own tight planes. */
+                            1D SPLIT batches, and the in-place 2D R2C plan (one
+                            padded plane at the row pitch the plan chooses,
+                            vfft_plan_stride() doubles per row, the same plane in
+                            both roles); refused otherwise. 0 (default) = the
+                            caller's own tight planes. */
 
     int nthreads; /**< the plan's thread count, taken at create; 0 = the pool's
                        current size. Every threaded decision is measured and
@@ -349,7 +352,8 @@ extern "C"
                         double **dre, double **dim);
   /**
    * @brief The stride to index the plan's planes with: element e of lane t
-   *        is at plane[e * stride + t].
+   *        is at plane[e * stride + t]; for an in-place 2D real plan, row r
+   *        starts at plane[r * stride] (its N2 reals, then its N2/2 + 1 bins).
    * @return The stride; equals config.howmany for a plan that does not own
    *         its buffers; 0 for NULL. Read it, never compute it.
    */

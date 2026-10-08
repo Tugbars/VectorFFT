@@ -2287,6 +2287,23 @@ static vfft_plan _vfft_create_outer(const vfft_config_t *cfg)
 {
     if (!cfg->owned_buffers)
         return _vfft_create_inner(cfg, NULL);
+    if (cfg->dims == 2 && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg)))
+    {   /* THE PLAN'S OWN PLANE (docs/roadmap/real_inplace_design.md §1, door 2): the in-place 2D
+         * real plan at the pitch the policy names; one padded plane allocated here, zeroed, read
+         * back through vfft_plan_planes (both roles) and vfft_plan_stride (its row pitch) */
+        struct vfft_plan_s *h = (struct vfft_plan_s *)_vfft_create_inner(cfg, NULL);
+        if (!h)
+            return NULL;
+        h->own_pitch = 2 * h->il2d_ipP;
+        h->own_plane = (double *)vfft_aligned_alloc((size_t)h->N * h->own_pitch * sizeof(double));
+        if (!h->own_plane)
+        {
+            vfft_destroy(h);
+            return NULL;
+        }
+        memset(h->own_plane, 0, (size_t)h->N * h->own_pitch * sizeof(double));
+        return h;
+    }
 
     vfft_batch ob = _own_batch_for(cfg); /* warns + returns NULL on misuse */
     if (!ob)
@@ -2341,6 +2358,18 @@ void vfft_plan_planes(vfft_plan p, double **sre, double **sim,
             *dim = NULL;
         return;
     }
+    if (p->own_plane)
+    {   /* the in-place 2D real plan's own plane: one plane, both roles */
+        if (sre)
+            *sre = p->own_plane;
+        if (sim)
+            *sim = NULL;
+        if (dre)
+            *dre = p->own_plane;
+        if (dim)
+            *dim = NULL;
+        return;
+    }
     if (!p->own_batch)
     {
         _vfft_warn("vfft_plan_planes: this plan does not own its buffers — "
@@ -2363,6 +2392,8 @@ size_t vfft_plan_stride(vfft_plan p)
 {
     if (!p)
         return 0;
+    if (p->own_plane)
+        return p->own_pitch;   /* the in-place 2D real plan: row r at plane[r * stride] */
     return p->own_batch ? _own_batch_stride(p->own_batch) : p->K;
 }
 

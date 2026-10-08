@@ -117,6 +117,7 @@ int main(int argc, char **argv)
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = xform;
     cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
+    cfg.owned_buffers = (ip == 2);   /* ip = 2: door 2, the plan's own plane at its pitch (real_inplace_design.md) */
     cfg.rigor = VFFT_PATIENT;
     cfg.dims = nd; cfg.n[0] = N; cfg.n[1] = nd > 1 ? N2 : 0; cfg.n[2] = nd > 2 ? N3 : 0;
     cfg.howmany = K > 1 ? (size_t)K : 1;
