@@ -110,11 +110,12 @@ static void _il2d_ip_reset(void *v)
 static void _il2d_rowx_body(const void *v, const double *sre, double *dre)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)v;
-    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1, n1 = (size_t)h->N, rp = _il2d_rp(h);
+    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1, n1 = (size_t)h->N, rp = _il2d_rp(h), cpd = _il2d_cpd(h);
     size_t r;
+    (void)hp1;
     if (h->il2d_rx_lm)
     {
-        h->il2d_rx_lm(sre, NULL, dre, NULL, NULL, NULL, rp, 0, hp1, 0, n1);
+        h->il2d_rx_lm(sre, NULL, dre, NULL, NULL, NULL, rp, 0, cpd / 2, 0, n1);
         return;
     }
     if (!h->il2d_rx_eng)
@@ -123,7 +124,7 @@ static void _il2d_rowx_body(const void *v, const double *sre, double *dre)
         return;
     }
     for (r = 0; r < n1; r++)
-        _real_il_exec_any(h->il2d_rx_eng, sre + r * rp, dre + r * rp);
+        _real_il_exec_any(h->il2d_rx_eng, sre + r * rp, dre + r * cpd);   /* the real row in, its CCE row out: each at its plane's pitch */
 }
 /* the c2r pass: the backward rows kernel in one call, an engine's backward
  * row by row (the engines run their plan's direction), or the c2r row route */
@@ -312,24 +313,24 @@ static void _il2d_rowx_range(const void *v, const double *s, double *d)
 {
     const _il2d_rowx_mt_t *a = (const _il2d_rowx_mt_t *)v;
     const struct vfft_plan_s *h = a->h;
-    const size_t hp1 = (size_t)h->N2 / 2 + 1, rp = _il2d_rp(h);
+    const size_t rp = _il2d_rp(h), cpd = _il2d_cpd(h);   /* the real plane's and the CCE plane's row pitches */
     size_t r;
     if (h->il2d_rx_lm)
     {
         if (a->bwd)
-            h->il2d_rx_lm(s + a->lo * 2 * hp1, NULL, d + a->lo * rp, NULL, NULL, NULL, hp1, 0, rp, 0, a->hi - a->lo);
+            h->il2d_rx_lm(s + a->lo * cpd, NULL, d + a->lo * rp, NULL, NULL, NULL, cpd / 2, 0, rp, 0, a->hi - a->lo);
         else
-            h->il2d_rx_lm(s + a->lo * rp, NULL, d + a->lo * 2 * hp1, NULL, NULL, NULL, rp, 0, hp1, 0, a->hi - a->lo);
+            h->il2d_rx_lm(s + a->lo * rp, NULL, d + a->lo * cpd, NULL, NULL, NULL, rp, 0, cpd / 2, 0, a->hi - a->lo);
         return;
     }
     {
         struct vfft_plan_s *e = a->tid > 0 ? h->il2d_rxw[a->tid - 1] : h->il2d_rx_eng;
         if (a->bwd)
             for (r = a->lo; r < a->hi; r++)
-                _real_il_exec_any(e, s + r * 2 * hp1, d + r * rp);
+                _real_il_exec_any(e, s + r * cpd, d + r * rp);
         else
             for (r = a->lo; r < a->hi; r++)
-                _real_il_exec_any(e, s + r * rp, d + r * 2 * hp1);
+                _real_il_exec_any(e, s + r * rp, d + r * cpd);
     }
 }
 static void _il2d_rowx_mt_tramp(void *v)
