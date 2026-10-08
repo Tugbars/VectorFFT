@@ -144,15 +144,26 @@ threaded pass and compares row-wise for c2r; the column race's threaded arms
 run the row pass on the padded plane. Rank 3: r2c's plane arm runs on
 in-place clones of the plane child (door 2's clones take the pitch and no
 plane: a nested create), the plane and row-block ranges as out of place;
-c2r's axis-0 chain by column ranges in place, then THE PLANES BY CYCLES: the
-cycles of the position permutation are found at create (starts and lengths,
-longest first) and dealt before every threaded execute to the worker carrying
-the least so far; each worker walks its cycles backwards through its own three
-buffers on its own clone. MT == ST bitwise: the same walk, another order of
-cycles. The band stays out; a threaded in-place arm needs every worker's
-buffers or it cannot engage. The threaded race runs in place on one volume
-re-laid before every sample (reps capped at 32); its verdicts are the `cmt*`
-set of the cell's row, `_p` at door 2.
+c2r's axis-0 chain by column ranges in place, then THE PLANES BY PIECES OF
+THE WALK (the cycle-per-worker deal measured 1.9× scaling at 16×256×256
+against 7.5× out of place: the permutation's cycles are few and long — N1 =
+16 under chain 4.4 has one of 10 planes — so most workers idled). The walk
+sequence S — every cycle from its start, position after position, S[i+1] =
+pos0[S[i]], plane S[i] produced from position S[i+1] into position S[i],
+the cycle's last plane from its first position — is found at create and cut
+before every threaded execute into pieces of at most ⌈N1/T⌉ planes (every
+cycle into equal pieces), dealt to the least-loaded worker. Phase A: every
+piece's first plane is copied into the piece's own buffer (the piece
+overwrites that position first thing, while the previous piece's last plane
+still needs it); barrier; phase B: every piece walked in order on its worker's
+clone, its last plane produced from the NEXT piece's copy, cyclic within the
+cycle. N1/T planes per worker, one copy per piece (at most T + cycles), the
+same production per plane as the serial walk: MT == ST bitwise (the gates
+check it). The serial walk keeps its one buffer per cycle. The band stays out;
+a threaded in-place arm needs every worker's buffers and every piece's, or it
+cannot engage. The threaded race runs in place on one volume re-laid before
+every sample (reps capped at 32); its verdicts are the `cmt*` set of the
+cell's row, `_p` at door 2.
 
 ## 3. What in place changes, measured
 

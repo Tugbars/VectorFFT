@@ -499,6 +499,32 @@ static int run_cell_mt(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, i
         CHECK(e < 1e-11, "%dx%d %s: %s, rel %.2e; %ld threaded pass(es) engaged%s", N1, N2, tag,
               c2r ? "FFTW's spectrum -> N x" : "vs FFTW in place", e, eng, eng ? "" : " (the verdicts chose serial)");
     }
+    {   /* MT == ST: the one-thread plan of the same cell on the same input, bitwise (b holds it) */
+        vfft_config_t c1 = cfg;
+        vfft_plan p1;
+        c1.nthreads = 1;
+        p1 = vfft_create(&c1);
+        CHECK(p1 != NULL, "%dx%d %s: the one-thread twin created", N1, N2, tag);
+        if (p1)
+        {
+            double *q1 = b;
+            size_t s1 = st;
+            int same = 1;
+            if (own) { vfft_plan_planes(p1, &q1, NULL, NULL, NULL); s1 = vfft_plan_stride(p1); }
+            if (q1 && s1 == st)
+            {
+                for (r = 0; r < (size_t)N1; r++)
+                    memcpy(q1 + r * s1, (c2r ? pf : seed) + r * P, (c2r ? P : (size_t)N2) * sizeof(double));
+                vfft_execute(p1, c2r ? VFFT_BACKWARD : VFFT_FORWARD, q1, NULL, q1, NULL);
+                for (r = 0; r < (size_t)N1 && same; r++)
+                    same = memcmp(q1 + r * s1, pl + r * st, (c2r ? (size_t)N2 : P) * sizeof(double)) == 0;
+            }
+            else
+                same = 0;
+            CHECK(same, "%dx%d %s: MT == ST bitwise", N1, N2, tag);
+            vfft_destroy(p1);
+        }
+    }
     p2 = vfft_create(&cfg);
     CHECK(p2 != NULL, "%dx%d %s: second create (replay)", N1, N2, tag);
     if (p2)

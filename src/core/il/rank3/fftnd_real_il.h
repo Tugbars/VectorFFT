@@ -103,10 +103,14 @@ typedef struct vfft_ilndr_s {
                                    * out-of-place 2D child writes (the child arm), [1] door 2: a source plane
                                    * compacted to the bin pitch for that child */
     char *vis;                    /* the walk's visited flags, N1 */
-    int *cycs, *cycl, *cyca, ncyc; /* c2r in place: the cycles of neg0 (starts, lengths, by length descending),
-                                   * and their worker assignment at a threaded execute */
-    double **pbw;                 /* the workers' buffers for the cycles (3 per worker: as pbuf) */
+    int *cycs, *cycl, ncyc;       /* c2r in place: the cycles of neg0 (starts, lengths, by length descending) */
+    int *seq, *cyc0;              /* the walk sequence S (every cycle from its start, S[i+1] = pos0[S[i]]) and each
+                                   * cycle's first index in it */
+    int *pc_a, *pc_n, *pc_next, *pc_w, npc, npc_max;   /* the threaded walk's PIECES of S: start, length, the next
+                                   * piece in the cycle (whose copy the last plane reads), the worker; dealt per execute */
+    double **pbw;                 /* the workers' buffers for the planes (3 per worker: as pbuf; [0] unused) */
     int npbw;
+    double **pcb;                 /* the pieces' first-plane copies (npc_max planes) */
     int mt_t;                     /* the plan's thread snapshot */
     int prof;                     /* VFFT_ILNDR_PROF, bound at create: per execute the planes' and axis 0's ns on stderr */
     /* THE THREADED FORMS (phase 3, 2026-10-07): the plane arm transposed. mt = the verdict at the
@@ -429,24 +433,83 @@ static void _ilndr_c2r_planes_ip(const vfft_ilndr_t *d, double *V)
     for (i = 0; i < d->ncyc; i++)
         _ilndr_c2r_cycle_w(d, d->cb, d->pbuf, d->arm, V, d->cycs[i]);
 }
-/* a worker's share of the cycles (cyca, dealt before the dispatch) on its clone and buffers */
-static void _ilndr_c2r_cycles_w(const vfft_ilndr_t *d, struct vfft_plan_s *cb, int tid, int arm, double *V)
+/* THE THREADED WALK CUTS THE CYCLES (2026-10-08). The cycle deal left most workers idle (the
+ * cycles are few and long: N1 = 16 under chain 4.4 has one of 10 planes). The walk sequence S --
+ * every cycle from its start, S[i+1] = pos0[S[i]]: plane S[i] is produced from position S[i+1]
+ * into position S[i], the cycle's last plane from its first position -- is cut into PIECES of at
+ * most ceil(N1/T) planes, dealt to the workers. Phase A: every piece's first plane is copied into
+ * the piece's own buffer (position S[a] is overwritten first thing by its piece, while the
+ * previous piece's last plane still needs it). Barrier. Phase B: every piece in order, its last
+ * plane produced from the NEXT piece's copy (cyclic within the cycle). The same production per
+ * plane as the serial walk: MT == ST bitwise. One copy per piece, at most T + cycles. */
+static void _ilndr_c2r_copies_w(const vfft_ilndr_t *d, int tid, double *V)
+{
+    const size_t pn = 2 * d->plane;
+    int p;
+    for (p = 0; p < d->npc; p++)
+        if (d->pc_w[p] == tid)
+            memcpy(d->pcb[p], V + (size_t)d->seq[d->pc_a[p]] * pn, pn * sizeof(double));
+}
+static void _ilndr_c2r_pieces_w(const vfft_ilndr_t *d, struct vfft_plan_s *cb, int tid, int arm, double *V)
 {
     double *const *pb = tid > 0 ? (double *const *)(d->pbw + 3 * (tid - 1)) : (double *const *)d->pbuf;
-    int i;
-    for (i = 0; i < d->ncyc; i++)
-        if (d->cyca[i] == tid)
-            _ilndr_c2r_cycle_w(d, cb, pb, arm, V, d->cycs[i]);
+    const size_t pn = 2 * d->plane;
+    int p, i;
+    for (p = 0; p < d->npc; p++)
+    {
+        if (d->pc_w[p] != tid)
+            continue;
+        for (i = d->pc_a[p]; i < d->pc_a[p] + d->pc_n[p]; i++)
+        {
+            const int cur = d->seq[i];
+            double *src = (i == d->pc_a[p] + d->pc_n[p] - 1) ? d->pcb[d->pc_next[p]] : V + (size_t)d->seq[i + 1] * pn;
+            _ilndr_c2r_plane_out_w(d, cb, pb, arm, src, V + (size_t)cur * pn);
+        }
+    }
 }
-/* the cycles of neg0 at create: their starts and lengths, longest first */
+/* the pieces for T workers: at most ceil(N1/T) planes each, every cycle cut into equal pieces,
+ * dealt to the least-loaded worker; 0 = more pieces than buffers (cannot engage) */
+static int _ilndr_pieces_deal(const vfft_ilndr_t *d, int T)
+{
+    long load[THREAD_POOL_MAX_DISPATCH];
+    const int N1 = d->N[0];
+    const int cap = (N1 + T - 1) / T > 0 ? (N1 + T - 1) / T : 1;
+    int i, j, t, npc = 0;
+    for (t = 0; t < T; t++)
+        load[t] = 0;
+    for (i = 0; i < d->ncyc; i++)
+    {
+        const int L = d->cycl[i], k = (L + cap - 1) / cap, first = npc;
+        if (npc + k > d->npc_max)
+            return 0;
+        for (j = 0; j < k; j++)
+        {
+            const int a = d->cyc0[i] + (int)((long)L * j / k), b = d->cyc0[i] + (int)((long)L * (j + 1) / k);
+            int best = 0;
+            d->pc_a[npc] = a;
+            d->pc_n[npc] = b - a;
+            d->pc_next[npc] = (j + 1 < k) ? npc + 1 : first;
+            for (t = 1; t < T; t++)
+                if (load[t] < load[best])
+                    best = t;
+            d->pc_w[npc] = best;
+            load[best] += b - a;
+            npc++;
+        }
+    }
+    *(int *)&d->npc = npc;   /* the deal is the execute's; the struct is const to the walk */
+    return npc > 0;
+}
+/* the cycles of neg0 at create: their starts and lengths, longest first; the walk sequence S */
 static int _ilndr_cycles(vfft_ilndr_t *d)
 {
     const int N1 = d->N[0];
-    int q0, n = 0, i, j;
+    int q0, n = 0, i, j, k = 0;
     d->cycs = (int *)malloc((size_t)N1 * sizeof(int));
     d->cycl = (int *)malloc((size_t)N1 * sizeof(int));
-    d->cyca = (int *)malloc((size_t)N1 * sizeof(int));
-    if (!d->cycs || !d->cycl || !d->cyca || !d->vis)
+    d->seq = (int *)malloc((size_t)N1 * sizeof(int));
+    d->cyc0 = (int *)malloc((size_t)N1 * sizeof(int));
+    if (!d->cycs || !d->cycl || !d->seq || !d->cyc0 || !d->vis)
         return 0;
     memset(d->vis, 0, (size_t)N1);
     for (q0 = 0; q0 < N1; q0++)
@@ -476,24 +539,17 @@ static int _ilndr_cycles(vfft_ilndr_t *d)
         d->cycl[j] = l;
     }
     d->ncyc = n;
-    return 1;
-}
-/* the deal: each cycle, longest first, to the worker carrying the least so far */
-static void _ilndr_cycles_deal(const vfft_ilndr_t *d, int T)
-{
-    long load[THREAD_POOL_MAX_DISPATCH];
-    int i, t;
-    for (t = 0; t < T; t++)
-        load[t] = 0;
-    for (i = 0; i < d->ncyc; i++)
-    {
-        int best = 0;
-        for (t = 1; t < T; t++)
-            if (load[t] < load[best])
-                best = t;
-        d->cyca[i] = best;
-        load[best] += d->cycl[i];
+    for (i = 0; i < n; i++)
+    {   /* S: cycle i from its start, position after position */
+        int cur = d->cycs[i];
+        d->cyc0[i] = k;
+        for (j = 0; j < d->cycl[i]; j++)
+        {
+            d->seq[k++] = cur;
+            cur = d->pos0[cur];
+        }
     }
+    return k == N1;
 }
 /* THE c2r SERIAL WALK: CCE volume z -> real cube y. Axis 0 is the forward chain on the natural
  * input (stage 0 out of place into V, or in place under destroy), then the planes */
@@ -581,8 +637,11 @@ static void _ilndr_mt_tramp(void *v)
     case 3: /* c2r planes [lo, hi) from V on this worker's clone */
         _ilndr_c2r_planes_on(d, cf, a->arm, (double *)a->in, a->out, (int)a->lo, (int)a->hi);
         break;
-    case 6: /* c2r in place: this worker's cycles of the planes' positions on its clone and buffers */
-        _ilndr_c2r_cycles_w(d, cf, a->tid, a->arm, a->out);
+    case 6: /* c2r in place: this worker's pieces of the walk sequence on its clone and buffers */
+        _ilndr_c2r_pieces_w(d, cf, a->tid, a->arm, a->out);
+        break;
+    case 7: /* c2r in place, before the pieces: this worker's pieces' first planes copied out */
+        _ilndr_c2r_copies_w(d, a->tid, a->out);
         break;
     case 4: /* the c2r band's prefix over the columns [lo, hi), z -> V */
         _il2d_col_stages2(a->in + 2 * a->lo, a->out + 2 * a->lo, d->N[0], d->plane, a->hi - a->lo,
@@ -674,11 +733,13 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
         }
         else
         {
+            if (d->ip && !_ilndr_pieces_deal(d, Tp))
+                return 0;   /* more pieces than buffers: serial -- decided before any phase touches the volume */
             _ilndr_mt_phase(d, in, V, NULL, 2, arm, nf, P, Ts);
             if (d->ip)
-            {   /* the planes by cycles, dealt to the workers by length */
-                _ilndr_cycles_deal(d, Tp);
-                _ilndr_mt_phase(d, V, V, NULL, 6, arm, nf, (size_t)d->ncyc, Tp);
+            {   /* the planes by PIECES of the walk sequence: the copies, the barrier, the walk */
+                _ilndr_mt_phase(d, V, V, NULL, 7, arm, nf, (size_t)d->npc, Tp);
+                _ilndr_mt_phase(d, V, V, NULL, 6, arm, nf, (size_t)d->npc, Tp);
             }
             else
                 _ilndr_mt_phase(d, V, out, NULL, 3, arm, nf, (size_t)d->N[0], Tp);
@@ -726,13 +787,25 @@ static void vfft_ilndr_destroy(vfft_ilndr_t *d)
     free(d->vis);
     free(d->cycs);
     free(d->cycl);
-    free(d->cyca);
+    free(d->seq);
+    free(d->cyc0);
+    free(d->pc_a);
+    free(d->pc_n);
+    free(d->pc_next);
+    free(d->pc_w);
     if (d->pbw)
     {
         int t;
         for (t = 0; t < 3 * d->npbw; t++)
             vfft_aligned_free(d->pbw[t]);
         free(d->pbw);
+    }
+    if (d->pcb)
+    {
+        int p;
+        for (p = 0; p < d->npc_max; p++)
+            vfft_aligned_free(d->pcb[p]);
+        free(d->pcb);
     }
     if (d->cw)
     {
@@ -845,16 +918,34 @@ static int _ilndr_build_clones(vfft_ilndr_t *d, const vfft_config_t *cfg, int T)
     }
     d->ncw = n;
     if (d->c2r && d->ip && d->npbw < n)
-    {   /* the workers' buffers for the cycles: the cycle's first plane, door 2's compaction, the tight plane */
+    {   /* the workers' buffers for the planes: door 2's compaction and the tight plane (the child arm) */
         d->pbw = (double **)calloc(3 * (size_t)n, sizeof *d->pbw);
         if (d->pbw)
             for (t = 0; t < n; t++)
             {
-                d->pbw[3 * t] = (double *)vfft_aligned_alloc((2 * d->plane + 8) * sizeof(double));
+                d->pbw[3 * t] = NULL;
                 d->pbw[3 * t + 1] = d->ip == 2 ? (double *)vfft_aligned_alloc((2 * (size_t)d->N[1] * (size_t)d->hpn + 8) * sizeof(double)) : NULL;
                 d->pbw[3 * t + 2] = (double *)vfft_aligned_alloc(((size_t)d->N[1] * (size_t)d->N[2] + 8) * sizeof(double));
-                if (!d->pbw[3 * t] || !d->pbw[3 * t + 2] || (d->ip == 2 && !d->pbw[3 * t + 1])) break;
+                if (!d->pbw[3 * t + 2] || (d->ip == 2 && !d->pbw[3 * t + 1])) break;
                 d->npbw = t + 1;
+            }
+    }
+    if (d->c2r && d->ip && !d->pcb)
+    {   /* the pieces' first-plane copies: at most T + cycles pieces (every cycle cut into pieces of
+         * ceil(N1/T) planes), and the piece tables */
+        const int m = d->ncyc + n + 1;
+        int p;
+        d->pcb = (double **)calloc((size_t)m, sizeof *d->pcb);
+        d->pc_a = (int *)malloc((size_t)m * sizeof(int));
+        d->pc_n = (int *)malloc((size_t)m * sizeof(int));
+        d->pc_next = (int *)malloc((size_t)m * sizeof(int));
+        d->pc_w = (int *)malloc((size_t)m * sizeof(int));
+        if (d->pcb && d->pc_a && d->pc_n && d->pc_next && d->pc_w)
+            for (p = 0; p < m; p++)
+            {
+                d->pcb[p] = (double *)vfft_aligned_alloc((2 * d->plane + 8) * sizeof(double));
+                if (!d->pcb[p]) break;
+                d->npc_max = p + 1;
             }
     }
     if (d->sscr && d->nsscrw < n)

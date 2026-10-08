@@ -1944,23 +1944,26 @@ static int _il2d_race_widths(int N1, int N2, int nst, const int *Ls, int *wlc, i
  * (it executes h — the axis-race law). (Until 2026-10-03 this race also
  * held the ROWSPLIT row arm -- the split engines hired for the rows; it
  * measured no better than the per-row door and is gone.) */
-static void _il2d_real_wlrace(struct vfft_plan_s *h,
-                              struct vfft_wisdom_s *W,
-                              const vfft_config_t *cfg, int N1, int N2)
+/* Returns the column verdict the race decided at T > 1 (0 serial, 1 threaded: every width timed
+ * under BOTH modes, the winner's mode banked as cmt beside wl), -1 when it decided none (one
+ * thread, or no race). */
+static int _il2d_real_wlrace(struct vfft_plan_s *h,
+                             struct vfft_wisdom_s *W,
+                             const vfft_config_t *cfg, int N1, int N2)
 {
     const size_t CN = (size_t)N1 * h->il2d_col.rn;   /* the plane at the plan's pitch */
     const int isr = (h->transform == VFFT_R2C);
     double *bz = (double *)vfft_aligned_alloc((2 * CN + 8) * sizeof(double));
     size_t i;
+    int bmode = -1;
     if (!bz)
-        return;
+        return -1;
     for (i = 0; i < 2 * CN + 8; i++)
         bz[i] = 1.0 + 1e-6 * (double)(i & 511);
     _il2d_race_ctx_t rc = { h, NULL, bz, isr, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
-    const vfft_race_arm_t cols_arm = { "cols", _il2d_arm_cols, &rc };
-    const int mt = h->nthreads > 1;   /* T > 1: every width timed through the THREADED pass, the one the cell serves
-                                       * with (the dispatcher runs a width serial where it cannot engage); the colmt
-                                       * race afterwards decides the served mode (2026-10-08) */
+    const vfft_race_arm_t arms[2] = { { "cols", _il2d_arm_cols, &rc }, { "cols-mt", _il2d_arm_cols_mt, &rc } };
+    const int mt = h->nthreads > 1;   /* T > 1: every width under BOTH modes -- the serial pass and the threaded pass
+                                       * the cell serves with -- and the winner's mode IS the column verdict (2026-10-08) */
     vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* min-of-3 */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
     if (mt)
     {   /* THREADED arms: two untimed passes per arm first, never paused (a paced pool parks its workers) */
@@ -1970,12 +1973,20 @@ static void _il2d_real_wlrace(struct vfft_plan_s *h,
     {
         const size_t hp1 = (size_t)N2 / 2 + 1;
         int wlc[14], nwl = 0, wi, s2;
-        double cbest = 1e300;
+        double cbest = 1e300, ns2[2];
         int bwl = 0, bcut = 0;
         h->il2d_col.wl = 0;
         h->il2d_col.cut = 0;
-        h->il2d_col.colmt = mt;
-        vfft_race_run(&proto, &cols_arm, 1, &cbest);
+        h->il2d_col.colmt = 0;
+        rc.ok = 1;
+        vfft_race_run(&proto, arms, mt ? 2 : 1, ns2);
+        cbest = ns2[0];
+        if (mt) bmode = 0;
+        if (mt && rc.ok && ns2[1] < cbest)
+        {
+            cbest = ns2[1];
+            bmode = 1;
+        }
         for (wi = 0; wi < VFFT_IL2D_WL_LADDER_N && nwl < 14; wi++)
             if (_il2d_real_wl_cut(h, VFFT_IL2D_WL_LADDER[wi]) >= 0)   /* w == N1 admitted like c2c/3D (R2) */
                 wlc[nwl++] = VFFT_IL2D_WL_LADDER[wi];
@@ -2003,29 +2014,40 @@ static void _il2d_real_wlrace(struct vfft_plan_s *h,
         for (wi = 0; wi < nwl; wi++)
         {
             const int cut = _il2d_real_wl_cut(h, wlc[wi]);
-            double ns = 1e300;
             h->il2d_col.wl = wlc[wi];
             h->il2d_col.cut = cut;
-            vfft_race_run(&proto, &cols_arm, 1, &ns);
-            if (ns < cbest)
+            h->il2d_col.colmt = 0;
+            rc.ok = 1;
+            vfft_race_run(&proto, arms, mt ? 2 : 1, ns2);
+            if (ns2[0] < cbest)
             {
-                cbest = ns;
+                cbest = ns2[0];
                 bwl = wlc[wi];
                 bcut = cut;
+                if (mt) bmode = 0;
+            }
+            if (mt && rc.ok && ns2[1] < cbest)
+            {
+                cbest = ns2[1];
+                bwl = wlc[wi];
+                bcut = cut;
+                bmode = 1;
             }
         }
         h->il2d_col.wl = bwl;
         h->il2d_col.cut = bcut;
-        h->il2d_col.colmt = 0;   /* the colmt race's to decide */
+        h->il2d_col.colmt = bmode > 0;   /* the verdict at T > 1; nothing at one thread */
         vfft_aligned_free(bz);
         if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d-real] wlrace %s %dx%d%s -> wl=%d (%.0f ns cols)\n",
-                    isr ? "r2c" : "c2r", N1, N2, mt ? " (the threaded pass)" : "", bwl, cbest);
+            fprintf(stderr, "[il2d-real] wlrace %s %dx%d%s -> wl=%d%s (%.0f ns cols)\n",
+                    isr ? "r2c" : "c2r", N1, N2, mt ? " (both modes)" : "", bwl,
+                    mt ? (bmode > 0 ? " THREADED" : " serial") : "", cbest);
         vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_col.R, h->il2d_col.nst,
-                       bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
+                       bwl, mt ? bmode : -1, mt ? h->nthreads : -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
                        cbest, vfft_policy_ord_rankn(cfg), h->nthreads, h->il2d_ip);
         _vw2_persist(W, cfg);
     }
+    return bmode;
 }
 
 /* ── the COLUMN-MT verdict race. Times the column pass SERIAL vs
@@ -2114,14 +2136,14 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns, int nat, int banded, int *best_wl, int T);
 static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
-                            size_t fsz, int half);
+                            size_t fsz, int half, int T, int nat);
 static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
                                   const vfft_config_t *cfg,
                                   const vw2_ilcol_key_t *key, const char *base,
                                   int N, size_t rn,
                                   const int *Rs, int nst,
                                   vfft_il2p_fn *ff, vfft_il2p_fn *fb,
-                                  char *forms, size_t fsz);
+                                  char *forms, size_t fsz, int T, int nat);
 static void _il2d_forms_serve(struct vfft_wisdom_s *W,
                               const vfft_config_t *cfg, int is_real, int N1,
                               int N2, const int *Rs, int nst,
@@ -2153,7 +2175,7 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
             fprintf(stderr, "[il2d] blu inner M=%d x %d: replay chain src=wisdom\n", M, N2);
         if (_il2d_resolve(Rs, *nst, ff, fb))
             _il2d_forms_serve_key(W, cfg, key, "bluforms", M, (size_t)N2,
-                                  Rs, *nst, ff, fb, forms, fsz);
+                                  Rs, *nst, ff, fb, forms, fsz, 1, 0);
         return 1;
     }
     {
@@ -2183,7 +2205,7 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
                                          : "(N-arm arm, unbanked)");
         if (_il2d_resolve(Rs, *nst, ff, fb))
             _il2d_forms_serve_key(W, cfg, key, "bluforms", M, (size_t)N2,
-                                  Rs, *nst, ff, fb, forms, fsz);
+                                  Rs, *nst, ff, fb, forms, fsz, 1, 0);
         return 1;
     }
 }
@@ -2199,14 +2221,39 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
  * in the pool (the 2D real r2c plan only: _il2d_forms_serve_key). Installs
  * the winners into ff/fb and spells them into `forms`. Returns 1 when any
  * stage had a choice, 0 otherwise (forms = ""). */
+/* THE FORMS THROUGH THE THREADED PASS (2026-10-08): at T > 1 the rank-2 real cell times every
+ * form through the pass it serves with -- the natural partition for a natural chain (its own
+ * perm, scratch and staging slots), the strips otherwise -- the serial pass standing in where it
+ * cannot engage; at one thread the scrambled pass in place, as before. */
+static void _il2d_arm_forms_mt(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    vfft_ilcol_t cv;
+    memset(&cv, 0, sizeof cv);
+    cv.N = c->N1;
+    cv.rn = c->N2;
+    cv.nst = c->nst;
+    memcpy(cv.R, c->R, (size_t)c->nst * sizeof cv.R[0]);
+    memcpy(cv.L, c->Ls, (size_t)c->nst * sizeof cv.L[0]);
+    memcpy(cv.f, c->ff, (size_t)c->nst * sizeof cv.f[0]);
+    memcpy(cv.tf, c->tf, (size_t)c->nst * sizeof cv.tf[0]);
+    cv.nat = c->nat;
+    cv.natperm = (int *)c->perm;
+    cv.natscr = c->nscr;
+    if (!_il2d_cols_mt_desc(&cv, c->N1, c->z, c->z, 0, c->T, c->nat ? c->nstage : NULL, -1))
+        _il2d_arm_chain(v);
+}
 static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
-                            size_t fsz, int half)
+                            size_t fsz, int half, int Tw, int nat)
 {
     const size_t T = (size_t)N1 * N2;
     const char *pick[8];
     int Ls[8], s, any = 0, off = 0;
     double *tf[8], *tb[8], *z;
+    int *perm = NULL;              /* the natural chain's leaf permutation, scratch and staging: the pass as served */
+    double *nscr = NULL, *nstage = NULL;
+    const int natpass = Tw > 1 && nat && nst > 1;
     size_t i;
     forms[0] = 0;
     for (s = 0; s < nst; s++)
@@ -2228,6 +2275,17 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
         vfft_aligned_free(z);
         return 0;
     }
+    if (natpass)
+    {
+        perm = _il2d_nat_perm(Rs, nst, N1);
+        nscr = (double *)vfft_aligned_alloc(2 * T * sizeof(double));
+        nstage = (double *)vfft_aligned_alloc(2 * 64 * (size_t)N2 * (size_t)Tw * sizeof(double));
+        if (!perm || !nscr || !nstage)
+        {   /* no natural pass to time: the scrambled strips stand in */
+            free(perm); vfft_aligned_free(nscr); vfft_aligned_free(nstage);
+            perm = NULL; nscr = NULL; nstage = NULL;
+        }
+    }
     for (s = 0; s < nst; s++)
     {
         const char *nm[VFFT_IL2P_COL_MAXFORMS], *an[VFFT_IL2P_COL_MAXFORMS];
@@ -2235,8 +2293,13 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
         vfft_il2p_fn ffa[VFFT_IL2P_COL_MAXFORMS][8], fba[VFFT_IL2P_COL_MAXFORMS][8];
         _il2d_race_ctx_t rc[VFFT_IL2P_COL_MAXFORMS];
         vfft_race_arm_t arm[VFFT_IL2P_COL_MAXFORMS];
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+        vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
         double ns[VFFT_IL2P_COL_MAXFORMS];
+        if (Tw > 1)
+        {   /* THREADED arms: two untimed passes per arm first, never paused (a paced pool parks its workers) */
+            proto.warm = 2;
+            proto.pace = 0;
+        }
         const int nf = vfft_il2p_col_forms(Rs[s], half && last, nm);
         int f, na = 0, win = 0;
         if (nf < 2)
@@ -2262,9 +2325,14 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
             rc[na].Ls = Ls;
             rc[na].ff = ffa[na];
             rc[na].tf = tf;
+            rc[na].nat = perm != NULL;
+            rc[na].perm = perm;
+            rc[na].nscr = nscr;
+            rc[na].nstage = nstage;
+            rc[na].T = Tw;
             an[na] = nm[f];
             arm[na].name = nm[f];
-            arm[na].run = _il2d_arm_chain;
+            arm[na].run = Tw > 1 ? _il2d_arm_forms_mt : _il2d_arm_chain;
             arm[na].ctx = &rc[na];
             na++;
         }
@@ -2279,7 +2347,8 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
         fb[s] = fba[win][s];
         if (getenv("VFFT_IL2D_LOG"))
         {
-            fprintf(stderr, "[il2d] forms %dx%d stage %d r%d:", N1, N2, s, Rs[s]);
+            fprintf(stderr, "[il2d] forms %dx%d stage %d r%d%s:", N1, N2, s, Rs[s],
+                    Tw > 1 ? (perm ? " (the threaded natural pass)" : " (the threaded pass)") : "");
             for (f = 0; f < na; f++)
                 fprintf(stderr, " %s %.0f ns%s", an[f], ns[f], f == win ? "*" : "");
             fprintf(stderr, "\n");
@@ -2291,6 +2360,9 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
         vfft_aligned_free(tb[s]);
     }
     vfft_aligned_free(z);
+    free(perm);
+    vfft_aligned_free(nscr);
+    vfft_aligned_free(nstage);
     for (s = 0; s < nst && off < (int)fsz - 8; s++)
         off += snprintf(forms + off, fsz - off, "%s%s", s ? "." : "", pick[s]);
     return 1;
@@ -2309,7 +2381,7 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
      * spelling of the precedence law (env pin > banked forms= > the
      * per-stage race) is the ilcol-key spelling with this key. */
     const vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
-    _il2d_forms_serve_key(W, cfg, &ck, "forms", N1, (size_t)N2, Rs, nst, ff, fb, forms, fsz);
+    _il2d_forms_serve_key(W, cfg, &ck, "forms", N1, (size_t)N2, Rs, nst, ff, fb, forms, fsz, 1, 0);
 }
 
 /* one HEAT of the chain race: the candidates idx[0..n-1] (n <= the heat's
@@ -2643,7 +2715,7 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
                                   int N, size_t rn,
                                   const int *Rs, int nst,
                                   vfft_il2p_fn *ff, vfft_il2p_fn *fb,
-                                  char *forms, size_t fsz)
+                                  char *forms, size_t fsz, int T, int nat)
 {
     const char *pin = getenv("VFFT_IL2D_FORMS");
     /* the leaf's half-store twins race for the 2D real r2c plan only: its
@@ -2687,7 +2759,7 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
                    base, forms, N, (int)rn);
         (void)_il2d_resolve(Rs, nst, ff, fb);
     }
-    if (_il2d_race_forms(N, (int)rn, Rs, nst, ff, fb, forms, fsz, half) && forms[0])
+    if (_il2d_race_forms(N, (int)rn, Rs, nst, ff, fb, forms, fsz, half, T, nat) && forms[0])
     {
         const int banked = vw2_ilcol_forms_bank_base(&W->vw2, key, base, forms);
         if (banked)
@@ -2946,7 +3018,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     {   /* per-stage kernel forms; a banked Bluestein cell's inner forms
          * serve through the chain provider (bluforms=) */
         _il2d_forms_serve_key(W, cfg, key, "forms", N, rn, c->R, c->nst,
-                          c->f, c->b, forms, fsz);
+                          c->f, c->b, forms, fsz,
+                          (key->rank == 2 && key->real) ? key->nthreads : 1, nat_req);   /* the rank-2 real cell at T > 1: through its threaded pass */
     }
     if (!chain_ok)
     {
