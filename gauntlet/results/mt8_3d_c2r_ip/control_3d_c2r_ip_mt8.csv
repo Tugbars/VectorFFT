@@ -1,0 +1,5 @@
+N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,engaged,flip
+64,64,64,z:c2r3d,nat-ip,101353,54220,116.390,0.535,1.110e-15,plane+payonce+strips,161,0
+64,64,64,z:c2r3d,nat-ip,95947,54880,122.948,0.572,1.110e-15,plane+payonce+strips,183,1
+64,64,64,z:c2r3d,nat-ip,103213,54587,114.292,0.529,1.110e-15,plane+payonce+strips,221,0
+64,64,64,z:c2r3d,nat-ip,101067,54593,116.720,0.540,1.110e-15,plane+payonce+strips,161,1

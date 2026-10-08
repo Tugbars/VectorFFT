@@ -1,0 +1,7 @@
+2026-10-08 20:06:45 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-10-08 20:06:45 run: 16 cells, contract 2D in place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-08 20:06:45 calibrate: 16 cells (0 already done)
+2026-10-08 20:14:35   calibrated 16/16 (2048x2048), 470 s elapsed
+2026-10-08 20:14:35 bench: 16 cells (0 already benched, 0 not banked -> not benched)
+2026-10-08 20:15:17   benched 16/16 (2048x2048), 40 s elapsed
+2026-10-08 20:15:19 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\mt8_2d_c2r_ip\report_2d_c2r_ip_mt8.md
