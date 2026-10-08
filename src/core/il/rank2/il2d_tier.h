@@ -134,12 +134,18 @@ static inline size_t _il2d_rp(const struct vfft_plan_s *h)
 {
     return h->il2d_ip ? 2 * h->il2d_ipP : (size_t)h->N2;
 }
+/* the CCE plane's row pitch in doubles: 2 (N2/2 + 1) out of place; in place the
+ * same padded row, 2 il2d_ipP */
+static inline size_t _il2d_cpd(const struct vfft_plan_s *h)
+{
+    return h->il2d_ip ? 2 * h->il2d_ipP : 2 * ((size_t)h->N2 / 2 + 1);
+}
 static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, double *s, double *d);   /* il/il_execute.h */
 static void _il2d_rowx_fwd(struct vfft_plan_s *h, const double *sre, double *dre); /* il2d_real_plan.h, later in this TU */
 static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
                                       double *dre)
 {
-    const size_t hp1 = (size_t)h->N2 / 2 + 1, rp = _il2d_rp(h);
+    const size_t hp1 = (size_t)h->N2 / 2 + 1, rp = _il2d_rp(h), cpd = _il2d_cpd(h);
     if (h->il2d_oddn2)
     { /* odd N2: promote -> c2c(N2) -> keep the hp1 CCE bins */
         const size_t rn2 = (size_t)h->N2;
@@ -150,7 +156,7 @@ static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
             _il2d_row_promote(sre + r * rp, b1, rn2);
             vfft_execute((vfft_plan)h->il2d_row, VFFT_FORWARD, b1, NULL,
                          b2, NULL);
-            memcpy(dre + r * 2 * hp1, b2, 2 * hp1 * sizeof(double));
+            memcpy(dre + r * cpd, b2, 2 * hp1 * sizeof(double));
         }
         return;
     }

@@ -95,6 +95,17 @@ in place on its own rows; the column and axis-0 partitions as they are.
   walk). The column pass gains nothing (its leaf writes cold lines either
   way); the fused walk gains footprint only. On one-kernel c2r cells the
   destroying form's landing is saved: 1.06–1.27 measured 2026-10-06.
+  Measured on the gauntlet, 2026-10-08, 2D r2c door 1, one thread, 16
+  cells, each contract its own race: in place over out of place 1.09–1.16
+  where the standard walk serves past L1 (16×1024, 32×1024, 128×512,
+  256×1024, 512×512), 1.00–1.05 at 64×64 to 1024×1024, 0.95 at 2048×2048
+  (both contracts the fused walk: nothing to save); FFTW in place over out
+  of place 0.92–0.95 at L2 sizes, 1.05–1.20 from 512×512. Against FFTW in
+  place: 1.05–1.40 from 64×64 up (16×1024 at parity, 0.99), 0.59–0.81 on the
+  tiny cells (64×15, 15×16, 64×30), where 15×16 in place costs 1.7× its own
+  out-of-place plan: the rows kernel is out of place only, and a per-row
+  engine at N2 = 16 is call overhead. The real axis on N1 (`raxis`) is not
+  yet admitted in place: 64×15 is 0.92 of its out-of-place plan for it.
 - **Unchanged:** the shuffle count. The shuffles are the kernels' lane-order
   conversions and the twiddle swap (the fold's 20 on port 5, the IL boundary
   stages); placement changes addresses, not lane order.
@@ -148,5 +159,10 @@ Every served in-place plan is gated against FFTW in place on the same padded
 plane; a one-thread plan against its out-of-place twin (the same numbers at
 ≤ 1e-12 relative, bitwise where the form is the same); the threaded form
 against the serial one; a replay bitwise against the create that banked it.
-The gauntlet grows an in-place column for the 2D and 3D real cells
-(`bench_1d_vs_mkl --2dreal/--3dreal --inplace`), both doors.
+The gauntlet's in-place real cell (2026-10-08): `bench_1d_vs_mkl --2drealnat
+--realfwd --realip` runs ours in place against FFTW or MKL in place on the same
+padded plane (the reference stays the comparator's out-of-place spectrum of
+the same input; path `nat-ip`), and `gauntlet.py --real r2c --inplace` drives
+it, its calibrate stage banking the cells' own `pl=ip` rows into the run's
+store copy. The out-of-place run of the same cells is the other half of the
+comparison. Rank 3 and c2r join the cell with their pieces; door 2 with its.

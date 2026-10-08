@@ -1194,6 +1194,10 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
 static int g_real = 0;    /* 1 = r2c (forward), 2 = c2r (backward) */
 static int g_k2real = 0;  /* --2drealnat: the 2D real cell */
 static int g_k3real = 0;  /* --3dreal (2026-10-07): the 3D real cell, the shape N1xN2xN3 in the N slot (fftnd_real_il.h) */
+static int g_real_ip = 0; /* --realip (2026-10-08): the real cell IN PLACE -- one padded plane, every row 2 (N2/2 + 1)
+                           * doubles (FFTW's and MKL's in-place real layout), ours vs the comparator in place on it; the
+                           * reference stays the comparator's out-of-place spectrum of the same input. The 2D r2c cell
+                           * today (docs/roadmap/real_inplace_design.md); path "nat-ip". */
 
 /* the cell's geometry: nd = 1 or 2; K blocks (1D rows; 2D: one block) of rp
  * reals and cp CCE doubles each */
@@ -1281,7 +1285,7 @@ static void real_mk_body(void *v)
  * MKL's default output pitch is N2 complex, not N2/2+1 (measured
  * 2026-09-29), and the explicit {0, N2/2+1, 1} is
  * the layout FFTW and we write. */
-static DFTI_DESCRIPTOR_HANDLE real_mk_desc(const real_geo_t *g, int c2r)
+static DFTI_DESCRIPTOR_HANDLE real_mk_desc(const real_geo_t *g, int c2r, int ip)
 {
     DFTI_DESCRIPTOR_HANDLE d = NULL;
     MKL_LONG dims[3] = { g->N1, g->N2, g->N3 };
@@ -1290,7 +1294,7 @@ static DFTI_DESCRIPTOR_HANDLE real_mk_desc(const real_geo_t *g, int c2r)
                                    : DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)g->N1);
     if (rc != DFTI_NO_ERROR)
         return NULL;
-    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    DftiSetValue(d, DFTI_PLACEMENT, ip ? DFTI_INPLACE : DFTI_NOT_INPLACE);   /* --realip: one padded plane */
     DftiSetValue(d, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
     if (g->nd == 3)
     {   /* the 3D CCE strides, as the 2D ones: the explicit {0, N2 hp3, hp3, 1} is the layout FFTW and we write */
@@ -1300,8 +1304,8 @@ static DFTI_DESCRIPTOR_HANDLE real_mk_desc(const real_geo_t *g, int c2r)
         DftiSetValue(d, DFTI_OUTPUT_STRIDES, c2r ? rs : cs);
     }
     else if (g->nd == 2)
-    {
-        MKL_LONG rs[3] = { 0, g->N2, 1 }, cs[3] = { 0, g->N2 / 2 + 1, 1 };
+    {   /* in place the real rows sit at the padded pitch 2 (N2/2 + 1) */
+        MKL_LONG rs[3] = { 0, ip ? 2 * (g->N2 / 2 + 1) : g->N2, 1 }, cs[3] = { 0, g->N2 / 2 + 1, 1 };
         DftiSetValue(d, DFTI_INPUT_STRIDES, c2r ? cs : rs);
         DftiSetValue(d, DFTI_OUTPUT_STRIDES, c2r ? rs : cs);
     }
@@ -1347,7 +1351,7 @@ static int real_ref_spectrum(const real_geo_t *g, const double *x, double *ref)
     }
 #ifdef VFFT_HAS_MKL
     {
-        DFTI_DESCRIPTOR_HANDLE d = real_mk_desc(g, 0);
+        DFTI_DESCRIPTOR_HANDLE d = real_mk_desc(g, 0, 0);   /* the reference: out of place, from the tight input */
         if (!d)
             return 0;
         double *xi = alloc_d(rn);
@@ -1368,17 +1372,18 @@ static int real_ref_spectrum(const real_geo_t *g, const double *x, double *ref)
 static double real_time_cmp(const real_geo_t *g, int c2r, const double *x, const double *ref)
 {
     const size_t rn = g->K * g->rp + 2, cn = g->K * g->cp, tot = g->pts / 2;
-    const size_t an = c2r ? cn : rn, bn = c2r ? rn : cn;
+    /* --realip: x is the padded plane and the arm's one plane holds it (a == b) */
+    const size_t an = g_real_ip ? cn : (c2r ? cn : rn), bn = c2r ? rn : cn;
     if (g_cmp_fftw)
     {
         if (!fftw_arm_bind())
             return 0;
-        double *a = alloc_d(an), *b = alloc_d(bn);
+        double *a = alloc_d(an), *b = g_real_ip ? a : alloc_d(bn);
         fftwx_plan p = real_fx_plan(g, c2r, a, b);
         if (!p)
         {
             free_d(a);
-            free_d(b);
+            if (!g_real_ip) free_d(b);
             return 0;
         }
         memcpy(a, c2r ? ref : x, an * sizeof(double));   /* after planning */
@@ -1386,23 +1391,23 @@ static double real_time_cmp(const real_geo_t *g, int c2r, const double *x, const
         double ns = real_time_body(real_fx_body, &c, tot);
         g_fx_arm.destroy_plan(p);
         free_d(a);
-        free_d(b);
+        if (!g_real_ip) free_d(b);
         return ns;
     }
 #ifdef VFFT_HAS_MKL
     {
         real_mk_t c;
-        c.d = real_mk_desc(g, c2r);
+        c.d = real_mk_desc(g, c2r, g_real_ip);
         if (!c.d)
             return 0;
         c.a = alloc_d(an);
-        c.b = alloc_d(bn);
+        c.b = g_real_ip ? c.a : alloc_d(bn);
         c.c2r = c2r;
         memcpy(c.a, c2r ? ref : x, an * sizeof(double));
         double ns = real_time_body(real_mk_body, &c, tot);
         DftiFreeDescriptor(&c.d);
         free_d(c.a);
-        free_d(c.b);
+        if (!g_real_ip) free_d(c.b);
         return ns;
     }
 #else
@@ -1415,11 +1420,16 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     const int c2r = (g_real == 2);
     const size_t rn = g->K * g->rp + 2, cn = g->K * g->cp, tot = g->pts / 2;
     const char *plan_s = g->nd == 3 ? (c2r ? "z:c2r3d" : "z:r2c3d") : g->nd == 2 ? (c2r ? "z:c2r2d" : "z:r2c2d") : (c2r ? "z:c2r" : "z:r2c");
-    const char *path = "nat-oop";
+    const char *path = g_real_ip ? "nat-ip" : "nat-oop";
     char shape[48];
     if (g->nd == 3)      snprintf(shape, sizeof shape, "%dx%dx%d", g->N1, g->N2, g->N3);
     else if (g->nd == 2) snprintf(shape, sizeof shape, "%dx%d", g->N1, g->N2);
     else                 snprintf(shape, sizeof shape, "%d", g->N1);
+    if (g_real_ip && (g->nd != 2 || c2r))
+    {   /* --realip: the 2D r2c cell today (real_inplace_design.md: c2r and rank 3 are the next pieces) */
+        printf("%-8s %-16s   SKIP (in place: the 2D r2c cell only)\n", shape, plan_s);
+        return;
+    }
     if (!g_k1noop_mt) bench_pin_one_thread();   /* --mt: the threaded cell's two-team protocol (main) */
     vfft_wisdom *W = k1z_bundle();
     if (!W)
@@ -1430,7 +1440,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = c2r ? VFFT_C2R : VFFT_R2C;
-    cfg.placement = VFFT_OUTOFPLACE;
+    cfg.placement = g_real_ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;   /* --realip (2026-10-08) */
     cfg.rigor = VFFT_MEASURE;
     cfg.dims = g->nd;
     cfg.n[0] = g->N1;
@@ -1456,14 +1466,34 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         for (size_t i = 0; i < g->rp; i++)   /* the points of one transform at any rank */
             x[t * g->rp + i] = (double)rand() / RAND_MAX - 0.5;
     const int haveref = real_ref_spectrum(g, x, ref);
-    memcpy(src, c2r ? ref : x, (c2r ? cn : rn) * sizeof(double));
+    double *xp = NULL;   /* --realip: the input laid as the one padded plane (rows at pitch 2 (N2/2 + 1)) */
+    if (g_real_ip)
+    {
+        const size_t P = 2 * ((size_t)g->N2 / 2 + 1);
+        xp = alloc_d(cn);
+        memset(xp, 0, cn * sizeof(double));
+        for (size_t r = 0; r < (size_t)g->N1; r++)
+            memcpy(xp + r * P, x + r * (size_t)g->N2, (size_t)g->N2 * sizeof(double));
+        memcpy(src, xp, cn * sizeof(double));
+    }
+    else
+        memcpy(src, c2r ? ref : x, (c2r ? cn : rn) * sizeof(double));
     for (size_t i = 0; i < (cn > rn ? cn : rn); i++)
         o[i] = -1.0e300;   /* poison: a refused execute leaves it */
-    vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, NULL, o, NULL);
+    if (g_real_ip)
+    {   /* in place: the plane transforms onto itself; its CCE rows are the comparator's layout */
+        vfft_execute(h, VFFT_FORWARD, src, NULL, src, NULL);
+        if (memcmp(src, xp, cn * sizeof(double)) != 0)
+            memcpy(o, src, cn * sizeof(double));   /* a refused execute leaves the input, and the poison */
+        memcpy(src, xp, cn * sizeof(double));   /* the timed arm starts from the input */
+    }
+    else
+        vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, NULL, o, NULL);
     if (o[0] == -1.0e300)
     {
         printf("%-8s %-16s   execute REFUSED\n", shape, plan_s);
         free_d(x); free_d(ref); free_d(o); free_d(src);
+        if (xp) free_d(xp);
         vfft_destroy(h);
         return;
     }
@@ -1496,7 +1526,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     }
     double vns = 0, mns = 0;
     long eng = 0;
-    real_ours_t oc = { h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, o };
+    real_ours_t oc = { h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, g_real_ip ? src : o };   /* in place: the one plane */
 /* the threaded executes engaged in the timed arm: the child's (ZTURN-T, the
  * four-step's 2D tier, the flat DIT), the real four-step's sweeps, the batch's
  * worker dispatches */
@@ -1504,7 +1534,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     if (flip)
     { /* comparator first; --mt: the two-team protocol of the K=1 c2c cell (our pool down while the comparator runs) */
         if (g_k1noop_mt) vfft_set_num_threads(1);
-        mns = real_time_cmp(g, c2r, x, ref);
+        mns = real_time_cmp(g, c2r, g_real_ip ? xp : x, ref);
         cachebust();
         pace(cool_ms);
         if (g_k1noop_mt) vfft_set_num_threads(g_mt);
@@ -1525,7 +1555,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         cachebust();
         pace(cool_ms);
         if (g_k1noop_mt) vfft_set_num_threads(1);
-        mns = real_time_cmp(g, c2r, x, ref);
+        mns = real_time_cmp(g, c2r, g_real_ip ? xp : x, ref);
     }
 #undef REAL_ENG
     if (g_k1noop_mt)
@@ -1560,6 +1590,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         fflush(out);
     }
     free_d(x); free_d(ref); free_d(o); free_d(src);
+    if (xp) free_d(xp);
     vfft_destroy(h);
 }
 
@@ -5550,6 +5581,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[1], "--3dreal") == 0)
         {
             g_k3real = 1; /* the 3D real gauntlet cell (2026-10-07): the shape N1xN2xN3 in the N slot */
+        }
+        else if (strcmp(argv[1], "--realip") == 0)
+        {
+            g_real_ip = 1; /* the real cell in place (2026-10-08): the 2D r2c cell on one padded plane */
         }
         else if (strcmp(argv[1], "--ilmt") == 0)
         {
