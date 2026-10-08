@@ -1428,14 +1428,9 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     if (g->nd == 3)      snprintf(shape, sizeof shape, "%dx%dx%d", g->N1, g->N2, g->N3);
     else if (g->nd == 2) snprintf(shape, sizeof shape, "%dx%d", g->N1, g->N2);
     else                 snprintf(shape, sizeof shape, "%d", g->N1);
-    if (g_real_ip && !((g->nd == 2 && !c2r) || g->nd == 3))
-    {   /* --realip: the 2D r2c cell and the 3D cells (real_inplace_design.md: 2D c2r is the next piece) */
-        printf("%-8s %-16s   SKIP (in place: 2D r2c and 3D only)\n", shape, plan_s);
-        return;
-    }
-    if (g_real_own && !(g->nd == 2 && !c2r))
-    {   /* --realown: door 2 is the 2D r2c cell */
-        printf("%-8s %-16s   SKIP (door 2: the 2D r2c cell)\n", shape, plan_s);
+    if (g_real_ip && g->nd != 2 && g->nd != 3)
+    {   /* --realip / --realown: the 2D and 3D cells, both directions (real_inplace_design.md) */
+        printf("%-8s %-16s   SKIP (in place: the 2D and 3D cells)\n", shape, plan_s);
         return;
     }
     if (!g_k1noop_mt) bench_pin_one_thread();   /* --mt: the threaded cell's two-team protocol (main) */
@@ -1507,11 +1502,14 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
             vfft_destroy(h);
             return;
         }
-        own_n = (size_t)g->N1 * own_P;
+        own_n = ip_rows * own_P;
         xo = alloc_d(own_n);
         memset(xo, 0, own_n * sizeof(double));
-        for (size_t r = 0; r < ip_rows; r++)
-            memcpy(xo + r * own_P, x + r * ip_last, ip_last * sizeof(double));
+        for (size_t r = 0; r < ip_rows; r++)   /* the input rows at the plan's pitch: the reals, or the spectrum's rows */
+            if (c2r)
+                memcpy(xo + r * own_P, ref + r * ip_P, ip_P * sizeof(double));
+            else
+                memcpy(xo + r * own_P, x + r * ip_last, ip_last * sizeof(double));
         memcpy(own, xo, own_n * sizeof(double));
     }
     if (g_real_ip)
@@ -1524,7 +1522,10 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, buf, NULL, buf, NULL);
         if (memcmp(buf, in0, bn * sizeof(double)) != 0)   /* a refused execute leaves the input, and the poison */
         {
-            if (g_real_own)
+            if (g_real_own && c2r)
+                for (size_t r = 0; r < ip_rows; r++)
+                    memcpy(o + r * ip_last, buf + r * own_P, ip_last * sizeof(double));   /* the real rows, tight for the check */
+            else if (g_real_own)
                 for (size_t r = 0; r < ip_rows; r++)
                     memcpy(o + r * ip_P, buf + r * own_P, ip_P * sizeof(double));
             else if (c2r)
@@ -1580,7 +1581,8 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
 /* the threaded executes engaged in the timed arm: the child's (ZTURN-T, the
  * four-step's 2D tier, the flat DIT), the real four-step's sweeps, the batch's
  * worker dispatches */
-#define REAL_ENG() (vfft_ztt_mt_passes() + vfft_il2d_col_mt_passes() + vfft_ilfd_mt_passes() + vfft_zfsr_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_zttr_mt_passes() + vfft_zrf_mt_passes() + vfft_tc_mt_dispatches() + vfft_ilnd_mt_passes())   /* + the rank-3 tiers' counter (the 3D real cell, 2026-10-07) */
+long vfft_il2d_row_mt_passes(void);   /* vfft.c: the 2D real row pass's threaded dispatches (not in the public header) */
+#define REAL_ENG() (vfft_ztt_mt_passes() + vfft_il2d_col_mt_passes() + vfft_ilfd_mt_passes() + vfft_zfsr_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_zttr_mt_passes() + vfft_zrf_mt_passes() + vfft_tc_mt_dispatches() + vfft_ilnd_mt_passes() + vfft_il2d_row_mt_passes())   /* + the rank-3 tiers' counter (the 3D real cell, 2026-10-07); + the 2D real row pass's (the in-place door route, 2026-10-08) */
     if (flip)
     { /* comparator first; --mt: the two-team protocol of the K=1 c2c cell (our pool down while the comparator runs) */
         if (g_k1noop_mt) vfft_set_num_threads(1);
@@ -1625,6 +1627,9 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         else if (g->nd == 3)
             snprintf(row, sizeof row, "%d,%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
                      g->N1, g->N2, g->N3, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
+        else if (g->nd == 2 && g_k1noop_mt)   /* the threaded 2D real cell (2026-10-08): engaged before flip, as the 3D row's */
+            snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%ld,%d\n",
+                     g->N1, g->N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), eng, flip);
         else if (g->nd == 2)
             snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d\n",
                      g->N1, g->N2, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), flip);
@@ -5672,7 +5677,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "--cmp fftw: the FFTW arm is the 1D c2c K=1 cell only\n");
         return 2;
     }
-    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat || (g_real && !g_k2real)) && mt;   /* the 3D real cell threads too (2026-10-07) */   /* the 2D/3D cells share the
+    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat || g_real) && mt;   /* the 3D real cell threads too (2026-10-07); the 2D real cell since 2026-10-08 */   /* the 2D/3D cells share the
                                                                           * threaded-cell discipline (2026-09-24) */
     if (g_k1noop_mt)
     {

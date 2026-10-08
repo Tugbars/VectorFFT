@@ -141,6 +141,51 @@ static inline size_t _il2d_cpd(const struct vfft_plan_s *h)
     return h->il2d_ip ? 2 * h->il2d_ipP : 2 * ((size_t)h->N2 / 2 + 1);
 }
 static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, double *s, double *d);   /* il/il_execute.h */
+/* THE DOOR ROUTE IN PLACE: the K = 1 in-place inner on every row of the plane, a landing's row
+ * (c2r from the column-inverse plane, at its pitch Pz) moved onto its own row first; at T > 1
+ * the rows split across the batch's own clones (each a serial in-place plan: the slab role,
+ * vfft.c), the caller on the primary's serial twin -- an engagement of the row pass. */
+typedef struct { struct vfft_plan_s *h; const double *s; double *d; int bwd, tid; size_t lo, hi, Pz; } _il2d_door_ip_t;
+static void _il2d_door_ip_range(void *v)
+{
+    const _il2d_door_ip_t *a = (const _il2d_door_ip_t *)v;
+    const struct vfft_plan_s *h = a->h;
+    struct vfft_plan_s *row = h->il2d_row;
+    struct vfft_plan_s *in = a->tid > 0 ? row->tcbw[a->tid - 1] : (row->tcb ? (row->tcb0 ? row->tcb0 : row->tcb) : row);
+    const size_t rp = _il2d_rp(h), hp1 = (size_t)h->N2 / 2 + 1;
+    size_t r;
+    for (r = a->lo; r < a->hi; r++)
+    {
+        double *dst = a->d + r * rp;
+        const double *src = a->bwd ? a->s + r * 2 * a->Pz : a->s + r * rp;
+        if (src != dst)
+            memcpy(dst, src, (a->bwd ? 2 * hp1 : (size_t)h->N2) * sizeof(double));
+        _tc_one(in, a->bwd ? VFFT_BACKWARD : VFFT_FORWARD, dst, dst);
+    }
+}
+static void _il2d_door_ip(struct vfft_plan_s *h, const double *s, double *d, int bwd, size_t Pz)
+{
+    _il2d_door_ip_t a[THREAD_POOL_MAX_DISPATCH];
+    const size_t n1 = (size_t)h->N;
+    struct vfft_plan_s *row = h->il2d_row;
+    int T = (h->nthreads > 1 && row->tcb) ? thread_pool_workers_for(h->nthreads) : 1, t;
+    if (T > row->tcbw_n + 1) T = row->tcbw_n + 1;
+    if ((size_t)T > n1) T = (int)n1;
+    if (T < 1) T = 1;
+    for (t = 0; t < T; t++)
+    {
+        a[t].h = h; a[t].s = s; a[t].d = d; a[t].bwd = bwd; a[t].tid = t; a[t].Pz = Pz;
+        a[t].lo = n1 * (size_t)t / (size_t)T;
+        a[t].hi = n1 * (size_t)(t + 1) / (size_t)T;
+    }
+    if (T < 2)
+    {
+        _il2d_door_ip_range(&a[0]);
+        return;
+    }
+    thread_pool_run(T, _il2d_door_ip_range, a, sizeof a[0]);
+    _vfft_il2d_row_mt_count++;   /* engagement, see vfft.c */
+}
 static void _il2d_rowx_fwd(struct vfft_plan_s *h, const double *sre, double *dre); /* il2d_real_plan.h, later in this TU */
 static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
                                       double *dre)
@@ -161,13 +206,9 @@ static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
         return;
     }
     if (h->il2d_ip)
-    {   /* in place: the door's K = 1 inner on every row of the one plane (the
-         * batch's own stride is the CCE plane's; the plane's pitch is the plan's) */
-        struct vfft_plan_s *in = h->il2d_row->tcb ? (h->il2d_row->tcb0 ? h->il2d_row->tcb0 : h->il2d_row->tcb)
-                                                   : h->il2d_row;
-        size_t r;
-        for (r = 0; r < (size_t)h->N; r++)
-            _tc_one(in, VFFT_FORWARD, (double *)(sre + r * rp), dre + r * rp);
+    {   /* in place: the door's K = 1 inner on every row of the one plane, the rows across the
+         * batch's clones at T > 1 */
+        _il2d_door_ip(h, sre, dre, 0, 0);
         return;
     }
     vfft_execute(h->il2d_row, VFFT_FORWARD, (double *)sre, NULL, dre, NULL);
@@ -197,15 +238,24 @@ static void _il2d_real_rows_bwd_route(struct vfft_plan_s *h, const double *zsrc,
        * inverse is unnormalized (x N2), matching the even tier's c2r
        * scale contract. */
         const size_t rn2 = (size_t)h->N2, rp = _il2d_rp(h);
+        const size_t Pz = (zsrc == h->il2d_rscr && h->il2d_rscr_P) ? h->il2d_rscr_P : h->il2d_col.rn;   /* the source's pitch */
         double *b1 = h->il2d_orbuf, *b2 = h->il2d_orbuf + 2 * rn2;
         size_t r;
         for (r = 0; r < (size_t)h->N; r++)
         {
-            _il2d_row_extend(zsrc + r * 2 * hp1, b1, rn2, hp1);
+            _il2d_row_extend(zsrc + r * 2 * Pz, b1, rn2, hp1);
             vfft_execute((vfft_plan)h->il2d_row, VFFT_BACKWARD, b1, NULL,
                          b2, NULL);
             _il2d_row_re(b2, dre + r * rp, rn2);
         }
+        return;
+    }
+    if (h->il2d_ip)
+    {   /* in place: the door's K = 1 in-place inner on every row of the plane, a row coming from
+         * the column-inverse plane (the private landing) moved onto its own row first; the rows
+         * across the batch's clones at T > 1 */
+        const size_t Pz = (zsrc == h->il2d_rscr && h->il2d_rscr_P) ? h->il2d_rscr_P : h->il2d_col.rn;
+        _il2d_door_ip(h, zsrc, dre, 1, Pz);
         return;
     }
     vfft_execute(h->il2d_row, VFFT_BACKWARD, (double *)zsrc, NULL, dre, NULL);
@@ -535,7 +585,7 @@ static void _il2d_cmt_body(const void *v, const double *src, double *dst)
 {
     const _il2d_cmt_arg *a = (const _il2d_cmt_arg *)v;
     struct vfft_plan_s *h = a->h;
-    const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    const size_t hp1 = h->il2d_col.rn;   /* the plane's pitch and lane count (door 2 past N2/2 + 1) */
     vfft_il2p_fn const *fns = a->reverse ? h->il2d_col.b : h->il2d_col.f;
     double *const *tabs = a->reverse ? h->il2d_col.tb : h->il2d_col.tf;
     if (a->natleaf)
@@ -594,7 +644,7 @@ static void _il2d_cmt_tramp(void *v)
 static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
                               double *dst, int reverse, int T)
 {
-    const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    const size_t hp1 = h->il2d_col.rn;   /* the plane's pitch and lane count (door 2 past N2/2 + 1) */
     const int strip = (h->il2d_col.wl <= 0);
     size_t units = strip ? hp1 : ((size_t)h->N / (size_t)h->il2d_col.wl);
     _il2d_cmt_arg a[THREAD_POOL_MAX_DISPATCH];
@@ -1933,8 +1983,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
                                   const vfft_config_t *cfg, int N1,
                                   int N2)
 {
-    const size_t hp1 = (size_t)N2 / 2 + 1;
-    const size_t CN = (size_t)N1 * hp1;
+    const size_t CN = (size_t)N1 * h->il2d_col.rn;   /* the plane at the plan's pitch */
     double *z = (double *)vfft_aligned_alloc((2 * CN + 8) * sizeof(double));
     double st = 1e300, mt = 1e300;
     int p;

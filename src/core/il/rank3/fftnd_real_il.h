@@ -73,12 +73,15 @@
 #define VFFT_IL_RANK3_FFTND_REAL_IL_H
 
 typedef struct vfft_ilndr_s {
-    int N[3], hp3;
+    int N[3], hp3;                /* hp3 = the CCE row's pitch in complex: N3/2 + 1, or door 2's policy pitch */
+    int hpn;                      /* the bins per row, N3/2 + 1 */
     size_t plane;                 /* complex per plane = N2 * hp3: the virtual row */
     int c2r;                      /* the plan's direction */
     int destroy;                  /* c2r: axis 0 in place in the caller's volume (destroy_input) */
     int ip;                       /* IN PLACE (real_inplace_design.md, 2026-10-08): one volume, every row padded
-                                   * to 2 hp3 doubles, in == out; c2r destroys by nature */
+                                   * to 2 hp3 doubles, in == out; c2r destroys by nature. 1 = the caller's volume at
+                                   * the bin pitch (door 1), 2 = the plan's own volume off it (door 2: the cell's
+                                   * pitch twin, its own _p verdicts) */
     int arm;                      /* s=: 1 child | 2 pay-once | 3 band (c2r) */
     int nf;                       /* nf=: 1 in place | 2 strips */
     int nsw;                      /* nsw=: the strip width in columns */
@@ -97,8 +100,13 @@ typedef struct vfft_ilndr_s {
     double *V;                    /* the private CCE volume (pay-once r2c; every c2r arm unless destroy) */
     double *sscr;                 /* the strip scratch, N1 x nsw complex */
     double *pbuf[3];              /* c2r in place: [0] the cycle's first plane, [2] the tight real plane the
-                                   * out-of-place 2D child writes (the child arm); [1] unused */
+                                   * out-of-place 2D child writes (the child arm), [1] door 2: a source plane
+                                   * compacted to the bin pitch for that child */
     char *vis;                    /* the walk's visited flags, N1 */
+    int *cycs, *cycl, *cyca, ncyc; /* c2r in place: the cycles of neg0 (starts, lengths, by length descending),
+                                   * and their worker assignment at a threaded execute */
+    double **pbw;                 /* the workers' buffers for the cycles (3 per worker: as pbuf) */
+    int npbw;
     int mt_t;                     /* the plan's thread snapshot */
     int prof;                     /* VFFT_ILNDR_PROF, bound at create: per execute the planes' and axis 0's ns on stderr */
     /* THE THREADED FORMS (phase 3, 2026-10-07): the plane arm transposed. mt = the verdict at the
@@ -370,46 +378,121 @@ static void _ilndr_c2r_planes(const vfft_ilndr_t *d, double *V, double *y, int q
  * landed at the padded pitch), the pay-once arm's axis-1 stages in place on the source position
  * and its rows landing directly. One plane copy per cycle, nothing else moved. The band's planes
  * land across bands: not an in-place arm. */
-static void _ilndr_c2r_plane_out(const vfft_ilndr_t *d, double *src, double *dstplane)
+static void _ilndr_c2r_plane_out_w(const vfft_ilndr_t *d, struct vfft_plan_s *cb, double *const *pb, int arm,
+                                   double *src, double *dstplane)
 {
     const size_t N3 = (size_t)d->N[2], rp3 = 2 * (size_t)d->hp3;
     size_t r;
-    if (d->arm == 2)
+    if (arm == 2)
     {   /* pay-once: the plain axis-1 chain in place on the source, the backward rows to their natural rows */
         const vfft_ilcol_t *a = &d->ax1;
         _il2d_col_stages(src, src, d->N[1], (size_t)d->hp3, 0, a->nst, a->R, a->L, a->f, a->tf, 0);
-        _ilndr_rows_bwd_payonce(d, d->cb, src, dstplane);
+        _ilndr_rows_bwd_payonce(d, cb, src, dstplane);
         return;
     }
-    vfft_execute((vfft_plan)d->cb, VFFT_BACKWARD, src, NULL, d->pbuf[2], NULL);
+    if (d->ip == 2)
+    {   /* door 2: the out-of-place child reads its rows at the bin pitch -- the source compacted first */
+        const size_t hpn = (size_t)d->hpn;
+        for (r = 0; r < (size_t)d->N[1]; r++)
+            memcpy(pb[1] + 2 * r * hpn, src + 2 * r * (size_t)d->hp3, 2 * hpn * sizeof(double));
+        src = pb[1];
+    }
+    vfft_execute((vfft_plan)cb, VFFT_BACKWARD, src, NULL, pb[2], NULL);
     for (r = 0; r < (size_t)d->N[1]; r++)
-        memcpy(dstplane + r * rp3, d->pbuf[2] + r * N3, N3 * sizeof(double));
+        memcpy(dstplane + r * rp3, pb[2] + r * N3, N3 * sizeof(double));
 }
-static void _ilndr_c2r_planes_ip(const vfft_ilndr_t *d, double *V)
+/* one cycle of the position permutation, walked backwards from its first position q0 through the
+ * buffer pb[0]: every plane of the cycle produced from the position holding it into its own place */
+static void _ilndr_c2r_cycle_w(const vfft_ilndr_t *d, struct vfft_plan_s *cb, double *const *pb, int arm,
+                               double *V, int q0)
 {
     const size_t pn = 2 * d->plane;
-    double *tmp = d->pbuf[0];
-    int q0;
-    memset(d->vis, 0, (size_t)d->N[0]);
-    for (q0 = 0; q0 < d->N[0]; q0++)
+    double *tmp = pb[0];
+    int cur = q0;   /* the plane being produced */
+    memcpy(tmp, V + (size_t)q0 * pn, pn * sizeof(double));   /* the cycle's first position, consumed last */
+    for (;;)
     {
-        int cur = q0;   /* the plane being produced */
+        const int pred = d->pos0[cur];   /* the position holding real plane cur */
+        if (pred == q0)
+        {
+            _ilndr_c2r_plane_out_w(d, cb, pb, arm, tmp, V + (size_t)cur * pn);
+            break;
+        }
+        _ilndr_c2r_plane_out_w(d, cb, pb, arm, V + (size_t)pred * pn, V + (size_t)cur * pn);
+        cur = pred;
+    }
+}
+/* the serial walk: every cycle on the primary child and the plan's buffers */
+static void _ilndr_c2r_planes_ip(const vfft_ilndr_t *d, double *V)
+{
+    int i;
+    for (i = 0; i < d->ncyc; i++)
+        _ilndr_c2r_cycle_w(d, d->cb, d->pbuf, d->arm, V, d->cycs[i]);
+}
+/* a worker's share of the cycles (cyca, dealt before the dispatch) on its clone and buffers */
+static void _ilndr_c2r_cycles_w(const vfft_ilndr_t *d, struct vfft_plan_s *cb, int tid, int arm, double *V)
+{
+    double *const *pb = tid > 0 ? (double *const *)(d->pbw + 3 * (tid - 1)) : (double *const *)d->pbuf;
+    int i;
+    for (i = 0; i < d->ncyc; i++)
+        if (d->cyca[i] == tid)
+            _ilndr_c2r_cycle_w(d, cb, pb, arm, V, d->cycs[i]);
+}
+/* the cycles of neg0 at create: their starts and lengths, longest first */
+static int _ilndr_cycles(vfft_ilndr_t *d)
+{
+    const int N1 = d->N[0];
+    int q0, n = 0, i, j;
+    d->cycs = (int *)malloc((size_t)N1 * sizeof(int));
+    d->cycl = (int *)malloc((size_t)N1 * sizeof(int));
+    d->cyca = (int *)malloc((size_t)N1 * sizeof(int));
+    if (!d->cycs || !d->cycl || !d->cyca || !d->vis)
+        return 0;
+    memset(d->vis, 0, (size_t)N1);
+    for (q0 = 0; q0 < N1; q0++)
+    {
+        int cur = q0, len = 0;
         if (d->vis[q0])
             continue;
-        memcpy(tmp, V + (size_t)q0 * pn, pn * sizeof(double));   /* the cycle's first position, consumed last */
-        d->vis[q0] = 1;
-        for (;;)
+        while (!d->vis[cur])
         {
-            const int pred = d->pos0[cur];   /* the position holding real plane cur */
-            if (pred == q0)
-            {
-                _ilndr_c2r_plane_out(d, tmp, V + (size_t)cur * pn);
-                break;
-            }
-            d->vis[pred] = 1;
-            _ilndr_c2r_plane_out(d, V + (size_t)pred * pn, V + (size_t)cur * pn);
-            cur = pred;
+            d->vis[cur] = 1;
+            len++;
+            cur = d->pos0[cur];
         }
+        d->cycs[n] = q0;
+        d->cycl[n] = len;
+        n++;
+    }
+    for (i = 1; i < n; i++)   /* longest first: the deal below balances the workers */
+    {
+        const int s = d->cycs[i], l = d->cycl[i];
+        for (j = i; j > 0 && d->cycl[j - 1] < l; j--)
+        {
+            d->cycs[j] = d->cycs[j - 1];
+            d->cycl[j] = d->cycl[j - 1];
+        }
+        d->cycs[j] = s;
+        d->cycl[j] = l;
+    }
+    d->ncyc = n;
+    return 1;
+}
+/* the deal: each cycle, longest first, to the worker carrying the least so far */
+static void _ilndr_cycles_deal(const vfft_ilndr_t *d, int T)
+{
+    long load[THREAD_POOL_MAX_DISPATCH];
+    int i, t;
+    for (t = 0; t < T; t++)
+        load[t] = 0;
+    for (i = 0; i < d->ncyc; i++)
+    {
+        int best = 0;
+        for (t = 1; t < T; t++)
+            if (load[t] < load[best])
+                best = t;
+        d->cyca[i] = best;
+        load[best] += d->cycl[i];
     }
 }
 /* THE c2r SERIAL WALK: CCE volume z -> real cube y. Axis 0 is the forward chain on the natural
@@ -498,6 +581,9 @@ static void _ilndr_mt_tramp(void *v)
     case 3: /* c2r planes [lo, hi) from V on this worker's clone */
         _ilndr_c2r_planes_on(d, cf, a->arm, (double *)a->in, a->out, (int)a->lo, (int)a->hi);
         break;
+    case 6: /* c2r in place: this worker's cycles of the planes' positions on its clone and buffers */
+        _ilndr_c2r_cycles_w(d, cf, a->tid, a->arm, a->out);
+        break;
     case 4: /* the c2r band's prefix over the columns [lo, hi), z -> V */
         _il2d_col_stages2(a->in + 2 * a->lo, a->out + 2 * a->lo, d->N[0], d->plane, a->hi - a->lo,
                           0, d->mtcut, c->R, c->L, c->f, c->tf, 0);
@@ -574,6 +660,8 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
     {
         double *V = d->destroy ? (double *)in : d->V;
         const int Ts = P < (size_t)T ? (int)P : T, Tp = _ilndr_plane_team(d, T);
+        if (d->ip && (arm == 3 || d->npbw < Tp - 1 || d->ncyc < 1))
+            return 0;   /* in place: the band is not an arm; every worker needs its buffers */
         if (arm == 3)
         {
             const int nb = d->mtwl > 0 ? d->N[0] / d->mtwl : 0;
@@ -587,7 +675,13 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
         else
         {
             _ilndr_mt_phase(d, in, V, NULL, 2, arm, nf, P, Ts);
-            _ilndr_mt_phase(d, V, out, NULL, 3, arm, nf, (size_t)d->N[0], Tp);
+            if (d->ip)
+            {   /* the planes by cycles, dealt to the workers by length */
+                _ilndr_cycles_deal(d, Tp);
+                _ilndr_mt_phase(d, V, V, NULL, 6, arm, nf, (size_t)d->ncyc, Tp);
+            }
+            else
+                _ilndr_mt_phase(d, V, out, NULL, 3, arm, nf, (size_t)d->N[0], Tp);
         }
     }
     _vfft_ilnd_mt_count++;   /* engagement: the c2c tier's counter, vfft_ilnd_mt_passes() */
@@ -630,6 +724,16 @@ static void vfft_ilndr_destroy(vfft_ilndr_t *d)
     vfft_aligned_free(d->pbuf[1]);
     vfft_aligned_free(d->pbuf[2]);
     free(d->vis);
+    free(d->cycs);
+    free(d->cycl);
+    free(d->cyca);
+    if (d->pbw)
+    {
+        int t;
+        for (t = 0; t < 3 * d->npbw; t++)
+            vfft_aligned_free(d->pbw[t]);
+        free(d->pbw);
+    }
     if (d->cw)
     {
         int t;
@@ -666,6 +770,7 @@ static int _ilndr_child_equiv(const struct vfft_plan_s *a, const struct vfft_pla
     else if (a->il2d_cx_st != b->il2d_cx_st) why = "staged leaf";
     else if (a->il2d_tf_on != b->il2d_tf_on || a->il2d_rax_on != b->il2d_rax_on || a->il2d_rcsk_on != b->il2d_rcsk_on || a->il2d_cxd_on != b->il2d_cxd_on) why = "whole-plan form";
     else if (a->il2d_rscr_P != b->il2d_rscr_P) why = "plane pitch";
+    else if (a->il2d_ip != b->il2d_ip || a->il2d_ipP != b->il2d_ipP) why = "placement";
     else
     {
         for (s = 0; s < x->nst && !why; s++)
@@ -710,7 +815,8 @@ static int _ilndr_build_clones(vfft_ilndr_t *d, const vfft_config_t *cfg, int T)
         return d->ncw;
     memset(&cc, 0, sizeof cc);
     cc.transform = cfg->transform;
-    cc.placement = VFFT_OUTOFPLACE;
+    cc.placement = (d->ip && !d->c2r) ? VFFT_INPLACE : VFFT_OUTOFPLACE;   /* as the primary: in place for r2c's planes */
+    cc.owned_buffers = (d->ip == 2 && !d->c2r);                            /* door 2: the pitch, no plane (a nested create) */
     cc.rigor = cfg->rigor;
     cc.dims = 2;
     cc.n[0] = d->N[1];
@@ -738,6 +844,19 @@ static int _ilndr_build_clones(vfft_ilndr_t *d, const vfft_config_t *cfg, int T)
         }
     }
     d->ncw = n;
+    if (d->c2r && d->ip && d->npbw < n)
+    {   /* the workers' buffers for the cycles: the cycle's first plane, door 2's compaction, the tight plane */
+        d->pbw = (double **)calloc(3 * (size_t)n, sizeof *d->pbw);
+        if (d->pbw)
+            for (t = 0; t < n; t++)
+            {
+                d->pbw[3 * t] = (double *)vfft_aligned_alloc((2 * d->plane + 8) * sizeof(double));
+                d->pbw[3 * t + 1] = d->ip == 2 ? (double *)vfft_aligned_alloc((2 * (size_t)d->N[1] * (size_t)d->hpn + 8) * sizeof(double)) : NULL;
+                d->pbw[3 * t + 2] = (double *)vfft_aligned_alloc(((size_t)d->N[1] * (size_t)d->N[2] + 8) * sizeof(double));
+                if (!d->pbw[3 * t] || !d->pbw[3 * t + 2] || (d->ip == 2 && !d->pbw[3 * t + 1])) break;
+                d->npbw = t + 1;
+            }
+    }
     if (d->sscr && d->nsscrw < n)
     {
         d->sscrw = (double **)calloc((size_t)n, sizeof *d->sscrw);
@@ -839,18 +958,19 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     const int usable_w = (W && !W->vw2_off_2d);
     const char *log = getenv("VFFT_IL2D_LOG");
     const char *apin = getenv("VFFT_ILNDR_ARM"), *fpin = getenv("VFFT_ILNDR_NF"), *wpin = getenv("VFFT_ILNDR_SW"), *bpin = getenv("VFFT_ILNDR_WL");
-    const char *tk_s = c2r ? "s_c2r" : "s", *tk_nf = c2r ? "nf_c2r" : "nf", *tk_nsw = c2r ? "nsw_c2r" : "nsw", *tk_wl = "wl_c2r";
+    char tkb_s[16], tkb_nf[16], tkb_nsw[16], tkb_wl[16];   /* the structure tokens; door 2 keeps its own _p set */
+    const char *tk_s = tkb_s, *tk_nf = tkb_nf, *tk_nsw = tkb_nsw, *tk_wl = tkb_wl;
     vfft_ilndr_t *d;
     struct vfft_plan_s *h;
     vw2_ilcol_key_t key0, key1;
     vw2_key_t pk;
     char forms0[64], forms1[64];
     int bwl, btf, bro, bcmt, bcmtt, bblu;
-    int payonce_ok, strips_ok, arm = 0, nf = 0, nsw = 0, wl = 0, cut = 0, raced = 0, pinned;
+    int payonce_ok, strips_ok, arm = 0, nf = 0, nsw = 0, wl = 0, cut = 0, raced = 0, pinned, ip2 = 0;
     if (!vfft_policy_ilndr_ok(cfg, K) && !vfft_policy_ilndr_ip_ok(cfg, K, nthr))
     {
         _vfft_warn("vfft_create: 3D INTERLEAVED real serves R2C and C2R, howmany==1, out of place, "
-                   "or in place at one thread (one volume, every row padded to 2*(N3/2+1) doubles), "
+                   "or in place (one volume, every row padded to 2*(N3/2+1) doubles), "
                    "DEFAULT/NATURAL order, every dim >= 2 (got %s, howmany=%zu, %dx%dx%d, %s)",
                    _vfft_tname(cfg->transform), K, N1, N2, N3, ip ? "in place" : "out of place");
         return NULL;
@@ -859,11 +979,19 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     if (!d)
         return NULL;
     d->N[0] = N1; d->N[1] = N2; d->N[2] = N3;
-    d->hp3 = N3 / 2 + 1;
+    d->hpn = N3 / 2 + 1;
+    /* door 2 (owned_buffers = 1, real_inplace_design.md §1): the rows at the pitch the policy names;
+     * the plan's hp3 IS that pitch, the plane and the virtual row follow (the pad columns are zeros) */
+    d->hp3 = (ip && cfg->owned_buffers) ? (int)vfft_policy_il2d_ip_pitch((size_t)d->hpn) : d->hpn;
+    ip2 = ip && d->hp3 != d->hpn;
     d->plane = (size_t)N2 * (size_t)d->hp3;
     d->c2r = c2r;
-    d->ip = ip;
+    d->ip = ip ? (ip2 ? 2 : 1) : 0;
     d->destroy = c2r && (cfg->destroy_input || ip);   /* in place: the input is the output */
+    snprintf(tkb_s, sizeof tkb_s, "%s%s", c2r ? "s_c2r" : "s", ip2 ? "_p" : "");
+    snprintf(tkb_nf, sizeof tkb_nf, "%s%s", c2r ? "nf_c2r" : "nf", ip2 ? "_p" : "");
+    snprintf(tkb_nsw, sizeof tkb_nsw, "%s%s", c2r ? "nsw_c2r" : "nsw", ip2 ? "_p" : "");
+    snprintf(tkb_wl, sizeof tkb_wl, "wl_c2r%s", ip2 ? "_p" : "");
     d->mt_t = nthr;
     d->prof = getenv("VFFT_ILNDR_PROF") != NULL;   /* bound once here: never read on the execute path */
     _il2d_blu_ctx.W = W;
@@ -872,7 +1000,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     memset(&key0, 0, sizeof key0);
     key0.rank = 3; key0.n0 = N1; key0.n1 = N2; key0.n2 = N3;
     key0.ord = VW2_ORD_NAT; key0.axis = 0; key0.real = 1; key0.nthreads = nthr;
-    key0.ip = ip;   /* the in-place cell's own row of the 3D shard */
+    key0.ip = ip2 ? 2 : ip;   /* the in-place cell's own row of the 3D shard; door 2 its own _p verdicts there */
     key1 = key0; key1.axis = 1;
     vw2__ilcol_key(&key0, &pk);
     /* ── the plane child: its store from the row's plane_ recipe, else from the 2D shard ── */
@@ -883,7 +1011,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         return NULL;
     }
     if (usable_w && d->childS->vw2.nrec == 0)
-        _ilndr_borrow_2d(W, d->childS, N2, N3, nthr, ip && !c2r);
+        _ilndr_borrow_2d(W, d->childS, N2, N3, nthr, (ip && !c2r) ? (ip2 ? 2 : 1) : 0);
     {
         vfft_config_t cc;
         struct vfft_plan_s *c;
@@ -891,6 +1019,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         cc.transform = cfg->transform;
         cc.placement = (ip && !c2r) ? VFFT_INPLACE : VFFT_OUTOFPLACE;   /* r2c in place: the 2D in-place plan per plane;
                                                                           * c2r: the out-of-place child feeds the cycle walk */
+        cc.owned_buffers = (ip2 && !c2r);   /* door 2: the plane child at the plan's pitch (a nested create takes the pitch, no plane) */
         cc.rigor = cfg->rigor;
         cc.dims = 2;
         cc.n[0] = N2;
@@ -925,6 +1054,11 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         d->neg0 = _ilndr_neg_of(d->nat0, N1);
     if (c2r && ip && d->neg0 && !(d->pos0 = _ilndr_inv_of(d->neg0, N1)))
     {
+        vfft_ilndr_destroy(d);
+        return NULL;
+    }
+    if (c2r && ip && (!(d->vis = (char *)malloc((size_t)N1)) || !_ilndr_cycles(d)))
+    {   /* the cycles of the planes' positions, for the serial walk and the workers' deal */
         vfft_ilndr_destroy(d);
         return NULL;
     }
@@ -1004,8 +1138,9 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     {
         d->pbuf[0] = (double *)vfft_aligned_alloc((2 * d->plane + 8) * sizeof(double));
         d->pbuf[2] = (double *)vfft_aligned_alloc(((size_t)N2 * (size_t)N3 + 8) * sizeof(double));
-        d->vis = (char *)malloc((size_t)N1);
-        if (!d->pbuf[0] || !d->pbuf[2] || !d->vis)
+        if (ip2)
+            d->pbuf[1] = (double *)vfft_aligned_alloc((2 * (size_t)N2 * (size_t)d->hpn + 8) * sizeof(double));
+        if (!d->pbuf[0] || !d->pbuf[2] || (ip2 && !d->pbuf[1]))
         {
             vfft_ilndr_destroy(d);
             return NULL;
@@ -1018,8 +1153,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     if (bpin && bpin[0]) wl = atoi(bpin);
     if (!pinned && usable_w && !cfg->recalibrate)
     {
-        arm = vw2_ilnd_arm_lookup(&W->vw2, &key0);
-        if (c2r) arm = vw2_ilnd_int_lookup(&W->vw2, &key0, tk_s);
+        arm = (c2r || ip2) ? vw2_ilnd_int_lookup(&W->vw2, &key0, tk_s) : vw2_ilnd_arm_lookup(&W->vw2, &key0);
         nf = vw2_ilnd_int_lookup(&W->vw2, &key0, tk_nf);
         if (c2r && arm == 3) wl = vw2_ilnd_int_lookup(&W->vw2, &key0, tk_wl);
     }
@@ -1175,7 +1309,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     {
         int banked = 0;
         if (vw2_ilcol_row_ensure(&W->vw2, &key0, d->ax0.R, d->ax0.nst)) banked = 1;
-        if (c2r ? vw2_ilnd_int_bank(&W->vw2, &key0, tk_s, arm) : vw2_ilnd_arm_bank(&W->vw2, &key0, arm)) banked = 1;
+        if ((c2r || ip2) ? vw2_ilnd_int_bank(&W->vw2, &key0, tk_s, arm) : vw2_ilnd_arm_bank(&W->vw2, &key0, arm)) banked = 1;
         if (vw2_ilnd_int_bank(&W->vw2, &key0, tk_nf, nf)) banked = 1;
         if (nf == 2 && !wpin && vw2_ilnd_int_bank(&W->vw2, &key0, tk_nsw, d->nsw)) banked = 1;
         if (arm == 3 && vw2_ilnd_int_bank(&W->vw2, &key0, tk_wl, wl)) banked = 1;
@@ -1191,9 +1325,15 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     if (nthr > 1)
     {
         const char *mpin = getenv("VFFT_ILNDR_MT"), *ppin = getenv("VFFT_ILNDR_PT");
-        const char *tk_cmt = c2r ? "cmt_c2r" : "cmt", *tk_cmts = c2r ? "cmts_c2r" : "cmts", *tk_cmtf = c2r ? "cmtf_c2r" : "cmtf";
-        const char *tk_cmtw = "cmtw_c2r", *tk_cmtp = c2r ? "cmtp_c2r" : "cmtp";
-        const char *tk_cmtt = c2r ? "cmtt_c2r" : "cmtt";   /* the direction's own marker: the row is direction-shared */
+        char tkb_cmt[20], tkb_cmts[20], tkb_cmtf[20], tkb_cmtw[20], tkb_cmtp[20], tkb_cmtt[20];   /* door 2: the _p set */
+        const char *tk_cmt = tkb_cmt, *tk_cmts = tkb_cmts, *tk_cmtf = tkb_cmtf, *tk_cmtw = tkb_cmtw, *tk_cmtp = tkb_cmtp;
+        const char *tk_cmtt = tkb_cmtt;   /* the direction's own marker: the row is direction-shared */
+        snprintf(tkb_cmt, sizeof tkb_cmt, "%s%s", c2r ? "cmt_c2r" : "cmt", ip2 ? "_p" : "");
+        snprintf(tkb_cmts, sizeof tkb_cmts, "%s%s", c2r ? "cmts_c2r" : "cmts", ip2 ? "_p" : "");
+        snprintf(tkb_cmtf, sizeof tkb_cmtf, "%s%s", c2r ? "cmtf_c2r" : "cmtf", ip2 ? "_p" : "");
+        snprintf(tkb_cmtw, sizeof tkb_cmtw, "cmtw_c2r%s", ip2 ? "_p" : "");
+        snprintf(tkb_cmtp, sizeof tkb_cmtp, "%s%s", c2r ? "cmtp_c2r" : "cmtp", ip2 ? "_p" : "");
+        snprintf(tkb_cmtt, sizeof tkb_cmtt, "%s%s", c2r ? "cmtt_c2r" : "cmtt", ip2 ? "_p" : "");
         const int mpinned = (mpin && mpin[0]) || (ppin && ppin[0]);
         int mt_v = -1, mts_v = arm, mtf_v = nf, mtcut_v = cut, mtwl_v = wl, ptw_v = 0, mraced = 0;
         /* the strips can thread wherever the serial strips could; the in-place forms thread except the
@@ -1243,9 +1383,11 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         else if (mt_v < 0)
         {   /* the race */
             const size_t RN = (size_t)N1 * (size_t)N2 * (size_t)N3, CN = 2 * (size_t)N1 * d->plane;
-            const size_t nin = c2r ? CN : RN, nout = c2r ? RN : CN;
+            const size_t nin = ip ? CN : (c2r ? CN : RN), nout = ip ? CN : (c2r ? RN : CN);   /* in place: the one volume */
             double *in = (double *)vfft_aligned_alloc((nin + 8) * sizeof(double));
-            double *out = (double *)vfft_aligned_alloc((nout + 8) * sizeof(double));
+            double *out = ip ? in : (double *)vfft_aligned_alloc((nout + 8) * sizeof(double));
+            double *mseed = ip ? (double *)vfft_aligned_alloc((nin + 8) * sizeof(double)) : NULL;   /* the volume re-laid before every sample */
+            _il2d_ip_reset_t mrs;
             _ilndr_mt_ctx_t cx[24];
             vfft_race_arm_t arms[24];
             double ns[24];
@@ -1254,13 +1396,19 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
             const size_t cb = (c2r ? CN : RN) * sizeof(double);
             const int serial_ok = vfft_policy_ilnd_mt_serial_arm(cb > (size_t)0x7fffffff ? 0x7fffffffL : (long)cb);
             const int have_clones = _ilndr_build_clones(d, cfg, nthr) > 0;
-            if (in && out && have_clones)
+            if (in && out && have_clones && (!ip || mseed))
             {
                 size_t j;
                 double t0;
                 unsigned sd = 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 10) ^ ((unsigned)N3 << 20);
                 for (j = 0; j < nin; j++) { sd = sd * 1664525u + 1013904223u; in[j] = (double)(sd >> 8) / (double)(1u << 24) - 0.5; }
-                memset(out, 0, (nout + 8) * sizeof(double));
+                if (ip)
+                {
+                    memcpy(mseed, in, (nin + 8) * sizeof(double));
+                    mrs.p = in; mrs.seed = mseed; mrs.n = nin + 8;
+                }
+                else
+                    memset(out, 0, (nout + 8) * sizeof(double));
                 /* reps from one serial timing (~20 ms of serial-equivalent work per sample): a worker's
                  * cache partition settles over the first executes, and single-execute samples time the
                  * transient; at least 48 timed executes per arm over 3..15 rounds (the c2c law) */
@@ -1269,9 +1417,12 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
                 t0 = vfft_now_ns();
                 if (c2r) _ilndr_execute_c2r(d, in, out); else _ilndr_execute_r2c(d, in, out);
                 t0 = vfft_now_ns() - t0;
+                if (ip)
+                    memcpy(in, mseed, (nin + 8) * sizeof(double));   /* the timing runs transformed the volume */
                 reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
                 if (reps < 4) reps = 4;
                 if (reps > 256) reps = 256;
+                if (ip && reps > 32) reps = 32;   /* in place the volume grows a factor N1 N2 N3 per pass: a sample stays finite */
                 rounds = (48 + reps - 1) / reps;
                 if (rounds < 3) rounds = 3;
                 if (rounds > 15) rounds = 15;
@@ -1297,7 +1448,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
                             if (!(st == 1 && !c2r && d->ax0n_on))
                                 _ILNDR_MTARM(2, st, 1, 0, 0, pt, st == 1 ? "plane/child" : "plane/payonce");
                         }
-                        if (c2r)
+                        if (c2r && !ip)
                         {
                             int s2;
                             for (s2 = 1; s2 < d->ax0.nst; s2++)
@@ -1313,7 +1464,12 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
 #undef _ILNDR_MTARM
                 if (na > 0)
                 {
-                    const vfft_race_proto_t proto = { rounds, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused */
+                    vfft_race_proto_t proto = { rounds, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }; /* THREADED arms: never paused */
+                    if (ip)
+                    {   /* the one volume, re-laid before every sample */
+                        proto.reset = _il2d_ip_reset;
+                        proto.reset_ctx = &mrs;
+                    }
                     _vfft_create_race_count++;
                     vfft_race_run(&proto, arms, na, ns);
                     for (a = 0; a < na; a++)
@@ -1339,7 +1495,8 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
             else
                 mt_v = 0;
             vfft_aligned_free(in);
-            vfft_aligned_free(out);
+            if (!ip) vfft_aligned_free(out);
+            vfft_aligned_free(mseed);
             d->arm = arm; d->nf = nf; d->cut = cut; d->wl = wl;   /* the serial verdict restored */
             if (usable_w && mraced)
             {

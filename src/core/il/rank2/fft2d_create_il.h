@@ -547,8 +547,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * rows complete before column stage 0, bwd rows follow the last
      * column stage; no tfuse, and the c2c cells' banked wl/tf
      * verdicts do not port. Out of place, and IN PLACE where the law
-     * admits the request (vfft_policy_il2d_ip_ok: r2c, one thread; the
-     * padded-row plane, docs/roadmap/real_inplace_design.md, 2026-10-08).
+     * admits the request (vfft_policy_il2d_ip_ok: r2c and c2r, every thread
+     * count; the padded-row plane, docs/roadmap/real_inplace_design.md, 2026-10-08).
      * SPLIT-layout callers keep the split engine
      * untouched. Inexpressible cells (chain/row failures) REFUSE
      * loudly. */
@@ -671,7 +671,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             if (cfg->transform == VFFT_C2R)
             {
                 il2d_rscr = (double *)vfft_aligned_alloc(
-                    (2 * (size_t)N1 * ((size_t)N2 / 2 + 1 + 3) + 8)   /* room for the raced pitch hp1 + 3 (il2d_real_pitch.h) */
+                    (2 * (size_t)N1 * ((il2d_ip ? il2d_ipP : il2d_hp) + 3) + 8)   /* the plane's pitch (door 2 past hp1), room for the raced pitch + 3 (il2d_real_pitch.h) */
                     * sizeof(double));
                 if (!il2d_rscr)
                 {
@@ -737,7 +737,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 /* +8 dbl pad: the fused c2r unzip reads full 4-wide
                  * e-blocks past the last row's tail (benign lanes). */
                 il2d_rscr = (double *)vfft_aligned_alloc(
-                    (2 * (size_t)N1 * ((size_t)N2 / 2 + 1 + 3) + 8)   /* room for the raced pitch hp1 + 3 (il2d_real_pitch.h) */
+                    (2 * (size_t)N1 * ((il2d_ip ? il2d_ipP : il2d_hp) + 3) + 8)   /* the plane's pitch (door 2 past hp1), room for the raced pitch + 3 (il2d_real_pitch.h) */
                     * sizeof(double));
                 if (!il2d_rscr)
                 {
@@ -859,7 +859,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     h->il2d_col.pitch = il2d_pitch;
     h->il2d_col.bandscr = il2d_bandscr;
     h->il2d_rscr = il2d_rscr;
-    h->il2d_rscr_P = (size_t)N2 / 2 + 1;   /* the CCE pitch until the pitch form races (il2d_real_pitch.h) */
+    h->il2d_rscr_P = il2d_ip ? il2d_ipP : il2d_hp;   /* the plane's CCE pitch until the pitch form races (il2d_real_pitch.h) */
     h->il2d_ip = il2d_ip;
     h->il2d_ipP = il2d_ipP;
     h->il2d_oddn2 = il2d_oddn2;
@@ -1059,7 +1059,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * law admits the cell (policy_il.h); banked cxd_c2r= / cxds_c2r=. After
      * the c2r row and column plans: the race runs the whole transform through
      * them. */
-    if (h->transform == VFFT_C2R && h->il2d_row && cfg->destroy_input)
+    if (h->transform == VFFT_C2R && h->il2d_row && (cfg->destroy_input || il2d_ip))   /* in place: destroyed by nature */
         _il2d_real_destroyplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* the fused walk's c2r twin (il2d_real_fuse.h): the reverse leaf and the mids
      * per tile, stage 0 by digit into the staging, the backward rows from it --

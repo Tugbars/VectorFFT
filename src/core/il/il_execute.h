@@ -290,9 +290,9 @@ static int _k2x_il2d_r2c_2k(struct vfft_plan_s *h, vfft_dir_t dir, const double 
 static int _k2x_il2d_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
     (void)dir; /* c2r is the inverse math, unnormalized */
-    if (zin == (const double *)zout)
-        return 1;
-    _il2d_real_cols(h, zin, h->il2d_rscr, /*reverse=*/1);
+    if ((zin == (const double *)zout) != (h->il2d_ip != 0))
+        return 1;   /* the plan's placement, or the general path (which says why) */
+    _il2d_real_cols(h, zin, h->il2d_rscr, /*reverse=*/1);   /* the private landing; in place the rows land on the plane */
     _il2d_real_rows_bwd(h, h->il2d_rscr, zout);
     return 0;
 }
@@ -318,10 +318,10 @@ static int _k2x_il2d_c2r_2k(struct vfft_plan_s *h, vfft_dir_t dir, const double 
 static int _k2x_il2d_c2r_d(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
     (void)dir;
-    if (zin == (const double *)zout)
+    if ((zin == (const double *)zout) != (h->il2d_ip != 0))
         return 1;
     _il2d_cxd_cols(h, (double *)zin);
-    _il2d_real_rows_bwd(h, zin, zout);
+    _il2d_real_rows_bwd(h, zin, zout);   /* in place: the rows read the plane they write, row by row */
     return 0;
 }
 /* its two-kernel form: the in-place column kernel, then the backward rows
@@ -841,10 +841,11 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                 _il2d_tf_exec_bwd(h, sre, dre);
                 return;
             }
-            if (h->il2d_cxd_on && h->il2d_cxd_leaf && (const void *)sre != (const void *)dre)
+            if (h->il2d_cxd_on && h->il2d_cxd_leaf && ((const void *)sre != (const void *)dre || h->il2d_ip))
             {   /* the destroying form (the request's permission; one thread): the
                  * column kernel in place on the caller's plane, the rows from it
-                 * (never on an aliased call: the rows would read what they write) */
+                 * (never on an aliased call of an out-of-place plan: the rows would read
+                 * what they write; an in-place plan's rows read and write row by row) */
                 _il2d_cxd_cols(h, (double *)sre);
                 _il2d_real_rows_bwd(h, sre, dre);
                 return;

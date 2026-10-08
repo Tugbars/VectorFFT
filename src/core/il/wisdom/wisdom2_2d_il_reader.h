@@ -181,7 +181,7 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
     const char *why = NULL;
-    char b[64];
+    char b[64], tn[16];   /* tn: a fresh record's token names through the key's namer (door 2's _p set) */
     int i, off = 0;
     for (i = 0; i < nst && off < (int)sizeof b - 8; i++)
         off += snprintf(b + off, sizeof b - off, "%s%d", i ? "." : "",
@@ -234,7 +234,7 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
                     /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL, ck->nthreads);
     if (ck->ip)
         r->key.pl = VW2_PL_IP;   /* the in-place real cell's own row (the key's placement) */
-    if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
+    if (vw2_rec_set(r, 1, vw2__ilcol_tok(ck, "chain", tn, sizeof tn), b) != VW2_OK) {
         vw2_rec_free(r);
         fprintf(stderr, "[wisdom2] il2d chain bank refused (token)\n");
         return -1;
@@ -242,23 +242,23 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
     /* the axis verdicts (negative = unraced: token not emitted) */
     if (wl >= 0) {
         snprintf(b, sizeof b, "%d", wl);
-        if (vw2_rec_set(r, 1, "wl", b) != VW2_OK) goto tokfail;
+        if (vw2_rec_set(r, 1, vw2__ilcol_tok(ck, "wl", tn, sizeof tn), b) != VW2_OK) goto tokfail;
     }
     if (tf >= 0) {
         snprintf(b, sizeof b, "%d", tf);
-        if (vw2_rec_set(r, 1, "tf", b) != VW2_OK) goto tokfail;
+        if (vw2_rec_set(r, 1, vw2__ilcol_tok(ck, "tf", tn, sizeof tn), b) != VW2_OK) goto tokfail;
     }
     if (ro >= 0) {
         snprintf(b, sizeof b, "%d", ro);
-        if (vw2_rec_set(r, 1, "ro", b) != VW2_OK) goto tokfail;
+        if (vw2_rec_set(r, 1, vw2__ilcol_tok(ck, "ro", tn, sizeof tn), b) != VW2_OK) goto tokfail;
     }
     if (cmt >= 0 && cmtt > 0) {   /* the MT verdict; its T is the row's key (v1.3) */
         snprintf(b, sizeof b, "%d", cmt);
-        if (vw2_rec_set(r, 1, "cmt", b) != VW2_OK) goto tokfail;
+        if (vw2_rec_set(r, 1, vw2__ilcol_tok(ck, "cmt", tn, sizeof tn), b) != VW2_OK) goto tokfail;
     }
     if (blu >= 0) {               /* the N1-arm verdict */
         snprintf(b, sizeof b, "%d", blu);
-        if (vw2_rec_set(r, 1, "blu", b) != VW2_OK) goto tokfail;
+        if (vw2_rec_set(r, 1, vw2__ilcol_tok(ck, "blu", tn, sizeof tn), b) != VW2_OK) goto tokfail;
     }
     if (0) {
     tokfail:

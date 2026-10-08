@@ -7,8 +7,9 @@ owner. BUILT 2026-10-08: 2D r2c in place through door 1 (§1), one thread, gated
 `src/tools/gates/il2d_real_ip_gate.c` (vs FFTW in place, replay, the door's refusal,
 the store reloaded from disk; 71 checks); 3D r2c and c2r in place the same day (§2,
 `il3d_real_ip_gate.c`, 100 checks), the pay-once c2r arm in place and door 2 for 2D r2c the
-same evening. Rank 3's door 2, the 2D c2r twin and the threaded forms are the next pieces;
-the band is not an in-place arm. In place is a feature the library provides whatever it
+same evening; the 2D c2r twin (both doors) and rank 3's door 2 that night (the gates at 183
+and 160 checks). The threaded in-place forms are the remaining piece; the band is not an
+in-place arm. In place is a feature the library provides whatever it
 measures (owner, 2026-10-08): the race decides how it is served, never whether.
 The 1D in-place real contract (`vfft.c`, the zr2c route and the odd door) is the
 rank-1 case of the same layout and stays as it is.*
@@ -50,8 +51,16 @@ PITCH TWIN (`il2d_ip = 2`): it races its own pitch-sensitive verdicts, banked
 as the `_p` token set on the cell's `pl=ip` row (`chain_p forms_p wl_p cx_p
 cxs_p tf_p`; the skewed plane is never offered to it), while `rx`/`rxs` and
 the child recipes, pitch-blind, are shared with door 1 (owner: "its own
-verdicts", 2026-10-08). Where the policy keeps hp1 the plan IS door 1. Rank 3
-takes door 2 with its own piece.
+verdicts", 2026-10-08). Where the policy keeps hp1 the plan IS door 1.
+
+Rank 3's door 2 BUILT the same night: the policy on hp3 names the row pitch,
+and the plan's `hp3` IS that pitch (the plane and the virtual row follow; the
+pad columns are zeros); the r2c plane child is a door-2 rank-2 plan (a nested
+create takes the pitch and no plane — the front door allocates the volume for
+the caller's create only); the c2r child arm compacts a source plane to the
+bin pitch for its out-of-place child, the pay-once arm needs nothing; the
+rank-3 row keeps its own `_p` set (`chain_p chain1_p s_p nf_p nsw_p`, the
+`_c2r` twins). `vfft_plan_stride()` is the row pitch at either rank.
 
 ## 2. The walks in place
 
@@ -84,12 +93,18 @@ back onto the caller's plane. The fused walk is legal as it stands: it reads
 every row before its first write to the plane. The one-kernel pass at the
 caller's pitch is §3's case.
 
-**c2r, rank 2.** The column pass lands where today's destroying form lands: a
-one-kernel reverse pass in place on the caller's plane, the default here
-(no permission to ask: in place destroys); a chain of two stages or more
-through its own scratch, the leaf back onto the plane. The private landing
-(`cxp_c2r=`) stays a raced form. The backward row pass runs in place row by
-row.
+**c2r, rank 2** (BUILT 2026-10-08, both doors). The column pass lands on the
+private column-inverse plane (a landing is legal in place; at door 2 it takes
+the plan's pitch, and the pitch form `cxp` is not offered there) or, as the
+destroying form, in place on the caller's plane (no permission to ask: in
+place destroys). The backward rows land at the plane's pitch: from the
+landing onto the plane, or row by row in place where they read the plane
+they write (the door route's K = 1 in-place inner per row, a landing's row
+moved onto its own row first). The row race gates every engine in both
+calling patterns, comparing the real rows alone (a plane transformed in place
+keeps its last bins in the pad doubles); the rows kernel stays out of place
+only. The fused walk's c2r twin is legal in place as it stands (the reverse
+leaf consumes every row before the rows write).
 
 **rank 3** (BUILT 2026-10-08, both directions, one thread; gate
 `src/tools/gates/il3d_real_ip_gate.c`, 100 checks). r2c: the child arm runs
@@ -113,8 +128,29 @@ directions. The cell's own `pl=ip` row of the 3D shard; the
 The race decides per cell, in place on one volume re-laid before every
 sample.
 
-**Threads.** Unchanged in structure: the row pass by row ranges, each worker
-in place on its own rows; the column and axis-0 partitions as they are.
+**Threads** (BUILT 2026-10-08, both ranks, both directions, both doors; the
+in-place policies admit every thread count). Rank 2: the row pass by row
+ranges — an engine through its worker clones, as out of place; the door route
+(the K = 1 in-place inner per row) across the batch's own worker clones, each
+a serial in-place plan in the slab role, the caller on the primary
+(`_il2d_door_ip`, an engagement of the row pass) — and the column pass under
+the cell's `colmt` verdict at the plane's pitch (door 2's pad columns ride
+along, as in the serial pass). The whole-plan forms (the fused walk, the skewed
+plane, the destroying c2r, the pitched landing) stay one thread, as out of
+place. The row race's threaded gate re-lays the plane before an engine's
+threaded pass and compares row-wise for c2r; the column race's threaded arms
+run the row pass on the padded plane. Rank 3: r2c's plane arm runs on
+in-place clones of the plane child (door 2's clones take the pitch and no
+plane: a nested create), the plane and row-block ranges as out of place;
+c2r's axis-0 chain by column ranges in place, then THE PLANES BY CYCLES: the
+cycles of the position permutation are found at create (starts and lengths,
+longest first) and dealt before every threaded execute to the worker carrying
+the least so far; each worker walks its cycles backwards through its own three
+buffers on its own clone. MT == ST bitwise: the same walk, another order of
+cycles. The band stays out; a threaded in-place arm needs every worker's
+buffers or it cannot engage. The threaded race runs in place on one volume
+re-laid before every sample (reps capped at 32); its verdicts are the `cmt*`
+set of the cell's row, `_p` at door 2.
 
 ## 3. What in place changes, measured
 
@@ -157,6 +193,19 @@ in place on its own rows; the column and axis-0 partitions as they are.
   256×1024 came out 0.95–0.96 of door 1 (another chain raced at 2048²; the
   eight pad columns' work is 1–2%). Where the policy keeps hp1 the plan is
   door 1, and the numbers agree within noise.
+  The 2D c2r twin (the same 16 cells, measured 2026-10-08 night): door 1
+  over out of place is flat on most cells (0.96–1.02), 1.10–1.17 at 512×512
+  and 16×1000, 0.89–0.92 at 256×256 and 16×1024, 0.62 at 15×16 (the parked
+  tiny-cell overhead); against FFTW in place 1.03–1.36 from 16×1000 up
+  (2048² 1.36, 1024² 1.27, 512² 1.22) with 16×1024 at 0.88 — and door 2
+  lifts exactly that cell, 1.35 over door 1 (1.18 against FFTW), while the
+  other alias cells sit within noise of door 1 (0.95–1.05). 64×15 c2r loses
+  0.34 in either placement: a pre-existing tiny-cell gap, not in-place's.
+  Rank 3's door 2: r2c 1.04–1.12 over door 1 on the five cells past L2
+  (32×256×256 1.12, 16×256×256 1.08, 64×128×128 1.07 — the one cell that
+  had trailed FFTW now 1.03 ahead), nothing lost elsewhere; c2r 1.05–1.06
+  at 128³ and 8×128×2048 (0.81 → 0.87 against FFTW), 0.94–0.96 at 32³ and
+  16×64×1024, the rest flat.
 - **Unchanged:** the shuffle count. The shuffles are the kernels' lane-order
   conversions and the twiddle swap (the fold's 20 on port 5, the IL boundary
   stages); placement changes addresses, not lane order.
@@ -178,6 +227,12 @@ in place on its own rows; the column and axis-0 partitions as they are.
 
 1. ~~The race.~~ DECIDED 2026-10-08, §2: the cell's own race and wisdom
    cells, every form and codelet in either placement a candidate.
+   (Decisions 2 and 4 below were taken the same day: the rows kernel stays
+   out of place only, no generator variant; the order was built as proposed,
+   with rank 3 before door 2 at the owner's redirection. Decision 3, the
+   strided twin for the caller's-buffer door at N1 = 16, is deferred until
+   the in-place verdicts show the need; door 2 covers those cells for a
+   caller who lets the plan allocate.)
 2. **The rows kernel.** r2zr (N2 ≤ 32) declares `__restrict__` in and out and
    serves a lone last row by re-running the row before it, so in place it
    is undefined and wrong. Either a generator variant for in place (no
@@ -204,16 +259,34 @@ pass in place. The front door admits the request through
 `vfft_policy_il2d_ip_ok`; the execute's fast path takes the in-place call and
 the door refuses two planes.
 
+The threaded forms touched (the same day): the two in-place policies admit
+every thread count; `_il2d_door_ip` (`il2d_tier.h`) is the door route's
+dispatch over the batch's clones; the threaded column pass and its body take
+the plane's pitch and lane count from `il2d_col.rn`; the column race's T > 1
+arms run the row pass on the padded plane (their real plane had the
+unpadded extent); the row race's threaded gate re-lays the plane and compares
+row-wise. Rank 3: `_ilndr_build_clones` builds the plane clones in the plan's
+placement and the workers' cycle buffers (`pbw`, three per worker);
+`_ilndr_cycles` finds the cycles at create, `_ilndr_cycles_deal` deals them
+per threaded execute, mode 6 of the worker trampoline walks a worker's share;
+`_ilndr_child_equiv` compares the placement and the pitch; the threaded race
+runs in place with the `_p` tokens at door 2.
+
 ## 6. Gates
 
 Every served in-place plan is gated against FFTW in place on the same padded
 plane; a one-thread plan against its out-of-place twin (the same numbers at
 ≤ 1e-12 relative, bitwise where the form is the same); the threaded form
-against the serial one; a replay bitwise against the create that banked it.
+against the serial one (the gates' T = 8 cells, both directions, both doors:
+the same checks, the threaded passes that engaged counted); a replay bitwise
+against the create that banked it.
 The gauntlet's in-place real cell (2026-10-08): `bench_1d_vs_mkl --2drealnat
 --realfwd --realip` runs ours in place against FFTW or MKL in place on the same
 padded plane (the reference stays the comparator's out-of-place spectrum of
 the same input; path `nat-ip`), and `gauntlet.py --real r2c --inplace` drives
 it, its calibrate stage banking the cells' own `pl=ip` rows into the run's
 store copy. The out-of-place run of the same cells is the other half of the
-comparison. Rank 3 and c2r join the cell with their pieces; door 2 with its.
+comparison. Rank 3 and c2r join the cell with their pieces; door 2 with its;
+`--threads 8` serves the 2D real cell too since the threaded forms (the bench's
+`--mt`, the `engaged` column counting the row pass, the column pass and the
+batch's dispatches).
