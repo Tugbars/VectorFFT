@@ -1,0 +1,5 @@
+N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
+64,64,64,z:r2c3d,nat-ip,292307,337753,40.357,1.155,3.872e-16,child+strips,0
+64,64,64,z:r2c3d,nat-ip,293593,338000,40.180,1.151,3.872e-16,child+strips,1
+64,64,64,z:r2c3d,nat-ip,295820,338267,39.877,1.143,3.872e-16,child+strips,0
+64,64,64,z:r2c3d,nat-ip,296873,338600,39.736,1.141,3.872e-16,child+strips,1

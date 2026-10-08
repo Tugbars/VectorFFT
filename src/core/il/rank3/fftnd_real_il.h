@@ -90,13 +90,14 @@ typedef struct vfft_ilndr_s {
     int ax1_on;
     int *nat0, *nat1;             /* scr row -> natural row (the identity for a one-stage chain) */
     int *neg0, *neg1;             /* c2r: position -> the real index of the forward chain's bin, (N - nat) mod N */
+    int *pos0;                    /* c2r in place: the inverse of neg0, the position holding real plane r */
     struct vfft_plan_s *cf;       /* r2c: the 2D real r2c child on (N2, N3), one thread */
     struct vfft_plan_s *cb;       /* c2r: the 2D real c2r child */
     struct vfft_wisdom_s *childS; /* their private store: the recipe rides on the row as plane_* */
     double *V;                    /* the private CCE volume (pay-once r2c; every c2r arm unless destroy) */
     double *sscr;                 /* the strip scratch, N1 x nsw complex */
-    double *pbuf[3];              /* c2r in place: two CCE planes for the cycle walk of the planes' positions,
-                                   * and the tight real plane the out-of-place 2D child writes */
+    double *pbuf[3];              /* c2r in place: [0] the cycle's first plane, [2] the tight real plane the
+                                   * out-of-place 2D child writes (the child arm); [1] unused */
     char *vis;                    /* the walk's visited flags, N1 */
     int mt_t;                     /* the plan's thread snapshot */
     int prof;                     /* VFFT_ILNDR_PROF, bound at create: per execute the planes' and axis 0's ns on stderr */
@@ -136,6 +137,15 @@ static int *_ilndr_nat_perm(const int *R, int nst, int N)
     if (p)
         for (j = 0; j < N; j++) p[j] = j;
     return p;
+}
+/* the inverse of a permutation */
+static int *_ilndr_inv_of(const int *p, int N)
+{
+    int *q = (int *)malloc((size_t)N * sizeof(int));
+    int j;
+    if (q)
+        for (j = 0; j < N; j++) q[p[j]] = j;
+    return q;
 }
 static int *_ilndr_neg_of(const int *nat, int N)
 {
@@ -304,14 +314,15 @@ static void _ilndr_execute_r2c(const vfft_ilndr_t *d, const double *x, double *z
  * at row 0 takes two calls. An engine per row or the door route goes row by row. */
 static void _ilndr_rows_bwd_payonce(const vfft_ilndr_t *d, struct vfft_plan_s *h, const double *pl, double *yp)
 {
-    const size_t hp3 = (size_t)d->hp3, N3 = (size_t)d->N[2];
+    const size_t hp3 = (size_t)d->hp3;
+    const size_t rp3 = d->ip ? 2 * hp3 : (size_t)d->N[2];   /* the real rows' pitch: padded in place */
     const int N2 = d->N[1], nst = d->ax1.nst, Rl = nst ? d->ax1.R[nst - 1] : N2, S = N2 / Rl;
-    const size_t negS = (size_t)0 - (size_t)S * N3;   /* the descending row stride, as the kernel's size_t */
+    const size_t negS = (size_t)0 - (size_t)S * rp3;   /* the descending row stride, as the kernel's size_t */
     int g, r;
     if (!(h->il2d_rx_on && h->il2d_rx_lm))
     {
         for (r = 0; r < N2; r++)
-            _il2d_rows_bwd_set(h, pl + 2 * (size_t)r * hp3, hp3, (size_t)d->neg1[r], 1, 1, yp);
+            _il2d_rows_bwd_set(h, pl + 2 * (size_t)r * hp3, hp3, (size_t)d->neg1[r], 1, 1, yp, rp3);
         return;
     }
     for (g = 0; g < N2 / Rl; g++)
@@ -320,12 +331,12 @@ static void _ilndr_rows_bwd_payonce(const vfft_ilndr_t *d, struct vfft_plan_s *h
         const double *in = pl + 2 * (size_t)g * Rl * hp3;
         if (b0 == 0)
         {   /* rows 0, N2-S, N2-2S, ...: positions {0,1} -> rows {0, N2-S}; then positions 1.. descending */
-            h->il2d_rx_lm(in, NULL, yp, NULL, NULL, NULL, hp3, 0, (size_t)(N2 - S) * N3, 0, 2);
+            h->il2d_rx_lm(in, NULL, yp, NULL, NULL, NULL, hp3, 0, (size_t)(N2 - S) * rp3, 0, 2);
             if (Rl >= 3)
-                h->il2d_rx_lm(in + 2 * hp3, NULL, yp + (size_t)(N2 - S) * N3, NULL, NULL, NULL, hp3, 0, negS, 0, (size_t)(Rl - 1));
+                h->il2d_rx_lm(in + 2 * hp3, NULL, yp + (size_t)(N2 - S) * rp3, NULL, NULL, NULL, hp3, 0, negS, 0, (size_t)(Rl - 1));
         }
         else
-            h->il2d_rx_lm(in, NULL, yp + (size_t)(N2 - b0) * N3, NULL, NULL, NULL, hp3, 0, negS, 0, (size_t)Rl);
+            h->il2d_rx_lm(in, NULL, yp + (size_t)(N2 - b0) * rp3, NULL, NULL, NULL, hp3, 0, negS, 0, (size_t)Rl);
     }
 }
 /* the planes' c2r from the axis-0 output V (position q = real plane neg0[q]) into y */
@@ -353,45 +364,51 @@ static void _ilndr_c2r_planes(const vfft_ilndr_t *d, double *V, double *y, int q
 }
 /* THE PLANES IN PLACE (real_inplace_design.md, 2026-10-08). V is the caller's volume: axis 0 ran in
  * place in it, so position q holds the CCE plane of real plane neg0[q]. The planes walk the cycles
- * of neg0 through two plane buffers: a position's plane is copied out, and once the plane it lands
- * on has its own CCE content in the other buffer, the out-of-place 2D c2r child writes the tight
- * real plane into the third buffer, whose rows land at the padded pitch. The child arm only (the
- * pay-once rows and the band land out of place: the next pieces). */
-static void _ilndr_c2r_plane_out(const vfft_ilndr_t *d, const double *cce, double *dstplane)
+ * of that permutation BACKWARDS through one buffer: the cycle's first plane is copied out, then
+ * every plane is produced from the position that holds it (pos0, the inverse) straight into its
+ * own place -- the child arm through the out-of-place 2D c2r child and the tight plane (its rows
+ * landed at the padded pitch), the pay-once arm's axis-1 stages in place on the source position
+ * and its rows landing directly. One plane copy per cycle, nothing else moved. The band's planes
+ * land across bands: not an in-place arm. */
+static void _ilndr_c2r_plane_out(const vfft_ilndr_t *d, double *src, double *dstplane)
 {
     const size_t N3 = (size_t)d->N[2], rp3 = 2 * (size_t)d->hp3;
     size_t r;
-    vfft_execute((vfft_plan)d->cb, VFFT_BACKWARD, (double *)cce, NULL, d->pbuf[2], NULL);
+    if (d->arm == 2)
+    {   /* pay-once: the plain axis-1 chain in place on the source, the backward rows to their natural rows */
+        const vfft_ilcol_t *a = &d->ax1;
+        _il2d_col_stages(src, src, d->N[1], (size_t)d->hp3, 0, a->nst, a->R, a->L, a->f, a->tf, 0);
+        _ilndr_rows_bwd_payonce(d, d->cb, src, dstplane);
+        return;
+    }
+    vfft_execute((vfft_plan)d->cb, VFFT_BACKWARD, src, NULL, d->pbuf[2], NULL);
     for (r = 0; r < (size_t)d->N[1]; r++)
         memcpy(dstplane + r * rp3, d->pbuf[2] + r * N3, N3 * sizeof(double));
 }
 static void _ilndr_c2r_planes_ip(const vfft_ilndr_t *d, double *V)
 {
     const size_t pn = 2 * d->plane;
-    double *a = d->pbuf[0], *b = d->pbuf[1];
+    double *tmp = d->pbuf[0];
     int q0;
     memset(d->vis, 0, (size_t)d->N[0]);
     for (q0 = 0; q0 < d->N[0]; q0++)
     {
-        int cur = q0;
+        int cur = q0;   /* the plane being produced */
         if (d->vis[q0])
             continue;
-        memcpy(a, V + (size_t)q0 * pn, pn * sizeof(double));
+        memcpy(tmp, V + (size_t)q0 * pn, pn * sizeof(double));   /* the cycle's first position, consumed last */
         d->vis[q0] = 1;
         for (;;)
         {
-            const int dst = d->neg0[cur];
-            double *t;
-            if (dst == q0)
-            {   /* the cycle closes: this plane's real rows land where the cycle began */
-                _ilndr_c2r_plane_out(d, a, V + (size_t)q0 * pn);
+            const int pred = d->pos0[cur];   /* the position holding real plane cur */
+            if (pred == q0)
+            {
+                _ilndr_c2r_plane_out(d, tmp, V + (size_t)cur * pn);
                 break;
             }
-            memcpy(b, V + (size_t)dst * pn, pn * sizeof(double));
-            d->vis[dst] = 1;
-            _ilndr_c2r_plane_out(d, a, V + (size_t)dst * pn);
-            t = a; a = b; b = t;
-            cur = dst;
+            d->vis[pred] = 1;
+            _ilndr_c2r_plane_out(d, V + (size_t)pred * pn, V + (size_t)cur * pn);
+            cur = pred;
         }
     }
 }
@@ -606,6 +623,7 @@ static void vfft_ilndr_destroy(vfft_ilndr_t *d)
     free(d->nat1);
     free(d->neg0);
     free(d->neg1);
+    free(d->pos0);
     vfft_aligned_free(d->V);
     vfft_aligned_free(d->sscr);
     vfft_aligned_free(d->pbuf[0]);
@@ -905,6 +923,11 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     d->nat0 = _ilndr_nat_perm(d->ax0.R, d->ax0.nst, N1);
     if (c2r && d->nat0)
         d->neg0 = _ilndr_neg_of(d->nat0, N1);
+    if (c2r && ip && d->neg0 && !(d->pos0 = _ilndr_inv_of(d->neg0, N1)))
+    {
+        vfft_ilndr_destroy(d);
+        return NULL;
+    }
     strips_ok = !d->ax0.blu && !d->ax0.tpc && d->nat0 != NULL;
     if (c2r && !strips_ok)
     {   /* c2r composes the forward chain's stages: a Bluestein or turned axis 0 has none */
@@ -928,7 +951,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         }
     }
     /* ── the pay-once pieces: axis 1's plain chain per plane (chain1=, direction-shared) ── */
-    payonce_ok = strips_ok && !(c2r && ip);   /* the pay-once c2r rows land out of place: not an in-place arm yet */
+    payonce_ok = strips_ok;
     if (payonce_ok)
     {
         forms1[0] = 0;
@@ -976,14 +999,13 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         if (!d->sscr)
             strips_ok = 0;
     }
-    /* ── c2r in place: the planes' cycle walk through two CCE planes and the tight real plane ── */
+    /* ── c2r in place: the planes' walk -- the cycle's first plane, and the child arm's tight plane ── */
     if (c2r && ip)
     {
         d->pbuf[0] = (double *)vfft_aligned_alloc((2 * d->plane + 8) * sizeof(double));
-        d->pbuf[1] = (double *)vfft_aligned_alloc((2 * d->plane + 8) * sizeof(double));
         d->pbuf[2] = (double *)vfft_aligned_alloc(((size_t)N2 * (size_t)N3 + 8) * sizeof(double));
         d->vis = (char *)malloc((size_t)N1);
-        if (!d->pbuf[0] || !d->pbuf[1] || !d->pbuf[2] || !d->vis)
+        if (!d->pbuf[0] || !d->pbuf[2] || !d->vis)
         {
             vfft_ilndr_destroy(d);
             return NULL;

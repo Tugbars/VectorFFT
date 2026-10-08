@@ -85,11 +85,16 @@ first, where its row engine runs in place, and keeps its out-of-place leaf
 into the caller's volume. c2r: axis 0 as the forward chain in place in the
 caller's volume (`destroy` by nature), which leaves position q holding the
 CCE plane of real plane (N1 − nat[q]) mod N1; the planes then walk the cycles
-of that permutation through two plane buffers, the out-of-place rank-2 c2r
-child writing each plane's tight rows into a third, landed at the padded
-pitch — one extra plane read per plane, no rank-2 c2r in-place plan needed.
-The pay-once c2r rows and the band land out of place and are not in-place
-arms yet; the strips form is. The cell's own `pl=ip` row of the 3D shard; the
+of that permutation BACKWARDS through one buffer (the cycle's first plane
+copied out, every other plane produced from the position that holds it,
+`pos0`, straight into its own place): the child arm through the out-of-place
+rank-2 c2r child and a tight plane whose rows land at the padded pitch, the
+pay-once arm's axis-1 stages in place on the source position and its rows
+landing directly (the backward row set takes the output pitch). One plane
+copy per cycle; no rank-2 c2r in-place plan needed. The band is not an
+in-place arm: its planes land across bands, and saving every destination's
+unprocessed content is the private volume again. The strips form serves both
+directions. The cell's own `pl=ip` row of the 3D shard; the
 2D borrow reads the 2D shard's `pl=ip` row for an in-place r2c plane child.
 The race decides per cell, in place on one volume re-laid before every
 sample.
@@ -116,6 +121,21 @@ in place on its own rows; the column and axis-0 partitions as they are.
   out-of-place plan: the rows kernel is out of place only, and a per-row
   engine at N2 = 16 is call overhead. The real axis on N1 (`raxis`) is not
   yet admitted in place: 64×15 is 0.92 of its out-of-place plan for it.
+  Rank 3, the same day, 11 cells: r2c in place over out of place 1.15–1.35
+  on every cell past L2 (8×128×2048 1.35, 128³ 1.33, 32×256×256 1.25), and
+  1.05–1.19 against FFTW in place from 32³ up (64×128×128 0.97; the tiny
+  cells 0.68–0.69, the plane child's call overhead at N3 ≤ 32); 128³ goes
+  from 0.83 of FFTW out of place to 1.05 in place. c2r in place, with the
+  planes walked backwards through one buffer and the pay-once arm in place
+  (it wins the in-place race at 9 of 10 gated cells): over its own
+  out-of-place plan 1.07–1.38 on 8 cells (128³ 1.38, 32×256×256 1.22, 64³
+  1.19, 64×128×128 1.14) and 0.93–0.98 on the three smallest; against FFTW
+  in place 1.16–1.49 at 16³, 32³, 64³, 16×256×256, 64×128×128, 32×256×256
+  and 128³, parity at 32×8×1000 and 16×64×1024 (0.96–0.97), behind at
+  8×128×2048 (0.81) and the tiny 9×16×30 (0.78). The first walk, two
+  buffers and the child arm only, had been 0.56–0.76 where the plane
+  buffers left L2; the backward walk recovered it (8×128×2048 0.56 → 0.81,
+  16×64×1024 0.76 → 0.96, 32×8×1000 0.75 → 0.97).
 - **Unchanged:** the shuffle count. The shuffles are the kernels' lane-order
   conversions and the twiddle swap (the fold's 20 on port 5, the IL boundary
   stages); placement changes addresses, not lane order.

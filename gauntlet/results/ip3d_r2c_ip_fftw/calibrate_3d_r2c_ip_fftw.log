@@ -2,3 +2,10 @@
 9x16x30    banked     12076ms raced     zr2c:child_nat_ip
 16x16x16   banked      3142ms raced     zr2c:child_nat_ip
 16x64x1024 banked     15850ms raced     zr2c:child_nat_ip
+16x256x256 banked     17173ms raced     zr2c:child_nat_ip
+32x8x1000  banked     23445ms raced     zr2c:child_nat_ip
+32x32x32   banked      6945ms raced     zrp:4.8:r2z
+32x256x256 banked     18028ms raced     zr2c:child_nat_ip
+64x64x64   banked      8972ms raced     zrp:4.16:r2z
+64x128x128 banked     11813ms raced     zr2c:child_oop_il
+128x128x128 banked     13280ms raced     zr2c:child_nat_ip
