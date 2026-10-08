@@ -128,7 +128,7 @@ static void _il2d_rowx_body(const void *v, const double *sre, double *dre)
 }
 /* the c2r pass: the backward rows kernel in one call, an engine's backward
  * row by row (the engines run their plan's direction), or the c2r row route */
-static void _il2d_rows_bwd_set(struct vfft_plan_s *h, const double *src, size_t P, size_t d, size_t D0, size_t R0, double *y);
+static void _il2d_rows_bwd_set(struct vfft_plan_s *h, const double *src, size_t P, size_t d, size_t D0, size_t R0, double *y, size_t rpy);
 static void _il2d_rowx_body_bwd(const void *v, const double *zsrc, double *dre)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)v;
@@ -145,7 +145,7 @@ static void _il2d_rowx_body_bwd(const void *v, const double *zsrc, double *dre)
     if (!h->il2d_rx_eng)
     {
         if (P != hp1)
-            _il2d_rows_bwd_set((struct vfft_plan_s *)h, zsrc, P, 0, 1, n1, dre);   /* the route, row by row at the pitch */
+            _il2d_rows_bwd_set((struct vfft_plan_s *)h, zsrc, P, 0, 1, n1, dre, 0);   /* the route, row by row at the pitch */
         else
             _il2d_real_rows_bwd_route((struct vfft_plan_s *)h, zsrc, dre);
         return;
@@ -195,9 +195,9 @@ static void _il2d_rows_fwd_set(struct vfft_plan_s *h, const double *x, size_t d,
     }
 }
 static void _il2d_rows_bwd_set(struct vfft_plan_s *h, const double *src, size_t P, size_t d, size_t D0, size_t R0,
-                               double *y)
-{
-    const size_t N2 = (size_t)h->N2, hp1 = N2 / 2 + 1, rp = _il2d_rp(h);
+                               double *y, size_t rpy)
+{   /* rpy = the real plane's row pitch, 0 = the plan's own (a rank-3 caller lands rows in its volume) */
+    const size_t N2 = (size_t)h->N2, hp1 = N2 / 2 + 1, rp = rpy ? rpy : _il2d_rp(h);
     size_t j;
     if (h->il2d_rx_on && h->il2d_rx_lm)
     {
