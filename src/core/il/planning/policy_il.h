@@ -392,6 +392,19 @@ static inline int vfft_policy_il2d_ip_ok(const vfft_config_t *cfg, int nthreads)
            cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_INPLACE &&
            nthreads <= 1 && (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL);
 }
+/* DOOR 2, the plan's own plane (owned_buffers = 1): the CCE pitch the plan
+ * names, in complex. The caller's layout (hp1) where it is harmless; hp1 + 8
+ * where 16 hp1 bytes is 16 bytes past or before a 4 KB multiple -- the pitch
+ * at which a one-kernel column pass in place aliases its loads against the
+ * stores of the pair just written (il2d_real_pitch.h: 512 | N2 and its
+ * neighbours). A plan at another pitch than hp1 is the cell's PITCH TWIN: it
+ * races its own pitch-sensitive verdicts, the _p token set on the cell's
+ * pl=ip row (owner, 2026-10-08). */
+static inline size_t vfft_policy_il2d_ip_pitch(size_t hp1)
+{
+    const size_t m = (16 * hp1) % 4096;
+    return (m == 16 || m == 4096 - 16) ? hp1 + 8 : hp1;
+}
 
 /* -- rank 2, real: THE REAL AXIS ON N1 --------------------------------------
  * The r2c plan's whole-plan form (il2d_real_axis.h): row pairs packed into

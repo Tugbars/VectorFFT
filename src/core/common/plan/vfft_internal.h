@@ -520,11 +520,14 @@ struct vfft_plan_s
     size_t il2d_rscr_P;
     /* ── IN PLACE (2026-10-08, docs/roadmap/real_inplace_design.md). il2d_ip = the
      * real plan is in place: ONE padded plane holds the real rows (pitch
-     * 2 il2d_ipP doubles) and the CCE rows (pitch il2d_ipP complex) -- the
-     * caller's buffer at hp1 (FFTW's layout). 0 = out of place: the real plane
-     * at pitch N2, the CCE plane at hp1. */
+     * 2 il2d_ipP doubles) and the CCE rows (pitch il2d_ipP complex): 1 = the
+     * caller's buffer at hp1 (FFTW's layout, door 1), 2 = the plan's own plane
+     * off hp1 (door 2, the cell's pitch twin: its own _p verdicts). 0 = out of
+     * place: the real plane at pitch N2, the CCE plane at hp1. */
     int il2d_ip;
     size_t il2d_ipP;
+    double *own_plane;            /* door 2 (owned_buffers = 1): the plan's own padded plane, both roles */
+    size_t own_pitch;             /* its row pitch in doubles (vfft_plan_stride) */
     int il2d_rcsk_on;
     double *il2d_rcsk_scr;
     size_t il2d_rcsk_P;

@@ -161,8 +161,14 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     int il2d_bwl = -1, il2d_btf = -1, il2d_bro = -1; /* banked axes */
     const int il2d_T = _vfft_plan_threads(cfg) > 0 ? _vfft_plan_threads(cfg) : 1;   /* the plan's thread count: its rows' key (v1.3) */
     /* the IN-PLACE real plan (docs/roadmap/real_inplace_design.md, 2026-10-08): one padded
-     * plane, its own race, its own rows (pl=ip). The c2c tier's row is placement-blind. */
-    const int il2d_ip = cfg->transform != VFFT_C2C && cfg->placement == VFFT_INPLACE;
+     * plane, its own race, its own rows (pl=ip). The c2c tier's row is placement-blind.
+     * il2d_ipP = the plane's CCE pitch: the caller's hp1 (door 1), or the policy's pitch for
+     * the plan's own plane (door 2, owned_buffers = 1); a plan off hp1 is the cell's PITCH
+     * TWIN (il2d_ip = 2): its own pitch-sensitive verdicts, the _p token set on the row. */
+    const size_t il2d_hp = (size_t)N2 / 2 + 1;
+    const size_t il2d_ipP = (cfg->transform != VFFT_C2C && cfg->placement == VFFT_INPLACE)
+                                ? (cfg->owned_buffers ? vfft_policy_il2d_ip_pitch(il2d_hp) : il2d_hp) : 0;
+    const int il2d_ip = il2d_ipP ? (il2d_ipP != il2d_hp ? 2 : 1) : 0;
     int il2d_staged = 0, il2d_pitch = 0;
     double *il2d_bandscr = NULL;
     double *il2d_rscr = NULL;
@@ -581,7 +587,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             vfft_ilcol_t col;
             int bwl_ = -1, btf_ = -1, bro_ = -1, bcmt_ = -1, bcmtt_ = -1;
             memset(&col, 0, sizeof col);
-            rok = _il2d_col_build(W, cfg, &ck, N1, (size_t)N2 / 2 + 1,
+            rok = _il2d_col_build(W, cfg, &ck, N1, il2d_ip ? il2d_ipP : il2d_hp,   /* the column pass over the plane's width */
                                   vfft_policy_rankn_axis_nat(2, 0, il2d_ord), &col,
                                   il2d_fm, sizeof il2d_fm, &bwl_, &btf_, &bro_,
                                   &bcmt_, &bcmtt_, &il2d_bblu);
@@ -825,7 +831,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     h->il2d_turnS = il2d_turnS;
     h->il2d_cskS = il2d_cskS;
     h->il2d_col.N = N1;
-    h->il2d_col.rn = (cfg->transform == VFFT_C2C) ? (size_t)N2 : (size_t)N2 / 2 + 1;
+    h->il2d_col.rn = (cfg->transform == VFFT_C2C) ? (size_t)N2 : (il2d_ip ? il2d_ipP : il2d_hp);
     h->il2d_col.nst = il2d_nst;
     h->il2d_col.wc = il2d_wc;
     h->il2d_col.wl = il2d_wl;
@@ -855,7 +861,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     h->il2d_rscr = il2d_rscr;
     h->il2d_rscr_P = (size_t)N2 / 2 + 1;   /* the CCE pitch until the pitch form races (il2d_real_pitch.h) */
     h->il2d_ip = il2d_ip;
-    h->il2d_ipP = il2d_ip ? (size_t)N2 / 2 + 1 : 0;   /* in place: the caller's plane at the CCE pitch (real_inplace_design.md §1, door 1) */
+    h->il2d_ipP = il2d_ipP;
     h->il2d_oddn2 = il2d_oddn2;
     h->il2d_orbuf = il2d_orbuf;
     h->il2d_col.nat = il2d_nat;
