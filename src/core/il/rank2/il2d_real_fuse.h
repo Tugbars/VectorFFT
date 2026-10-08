@@ -135,6 +135,8 @@ static int _il2d_tf_build(struct vfft_plan_s *h)
     const size_t hp1 = h->il2d_col.rn, R0 = (size_t)h->il2d_col.R[0];
     h->il2d_tf_P = hp1;
     h->il2d_tf_stg = (double *)vfft_aligned_alloc((2 * R0 * hp1 + 8) * sizeof(double));
+    if (h->il2d_tf_stg)   /* door 2: the pad columns past the bins are read by stage 0, never written by the rows */
+        memset(h->il2d_tf_stg, 0, (2 * R0 * hp1 + 8) * sizeof(double));
     return h->il2d_tf_stg != NULL;
 }
 
@@ -194,7 +196,8 @@ static void _il2d_tf_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const 
 {
     const int c2r = h->transform == VFFT_C2R;
     const char *log = getenv("VFFT_IL2D_LOG"), *e = getenv(c2r ? "VFFT_IL2D_TF_C2R" : "VFFT_IL2D_TF");
-    const char *tk = c2r ? "tf_c2r" : "tf", *dn = c2r ? "c2r " : "";
+    char tkb[16];
+    const char *tk = _il2d_tkp(h, c2r ? "tf_c2r" : "tf", tkb, sizeof tkb), *dn = c2r ? "c2r " : "";
     h->il2d_tf_on = 0;
     if (!_il2d_tf_admits(h, cfg))
         return;
@@ -232,7 +235,7 @@ static void _il2d_tf_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const 
     }
     {
         const int ip = h->il2d_ip;
-        const size_t hp1 = (size_t)N2 / 2 + 1, RN = (size_t)N1 * (size_t)N2, CN = 2 * (size_t)N1 * hp1;
+        const size_t hp1 = (size_t)N2 / 2 + 1, cp = h->il2d_col.rn, RN = (size_t)N1 * (size_t)N2, CN = 2 * (size_t)N1 * cp;
         /* the pass's planes in the plan's direction; in place the one padded plane (in = its seed) */
         const size_t nin = ip ? CN : (c2r ? CN : RN), nout = ip ? CN : (c2r ? RN : CN);
         double *in = (double *)vfft_aligned_alloc((nin + 8) * sizeof(double));
@@ -258,7 +261,7 @@ static void _il2d_tf_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const 
             }
             if (c2r)   /* a CCE plane: the DC and Nyquist bins real, as every engine's contract has them */
                 for (j = 0; j < (size_t)N1; j++)
-                    in[j * 2 * hp1 + 1] = in[j * 2 * hp1 + 2 * (hp1 - 1) + 1] = 0.0;
+                    in[j * 2 * cp + 1] = in[j * 2 * cp + 2 * (hp1 - 1) + 1] = 0.0;
         }
         as.h = h; as.in = in; as.out = ref;
         af.h = h; af.in = in; af.out = out;
