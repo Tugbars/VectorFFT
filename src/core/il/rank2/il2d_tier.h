@@ -128,11 +128,18 @@ static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
  * races (race == serving path). The route: the per-row door (the K=1 1D
  * real engine at N2, il2d_row) over every row; at an odd N2 its c2c(N2)
  * child with the promote / extend edges. */
+/* the real plane's row pitch in doubles: N2 out of place; in place the padded
+ * row of the one plane, 2 il2d_ipP (docs/roadmap/real_inplace_design.md) */
+static inline size_t _il2d_rp(const struct vfft_plan_s *h)
+{
+    return h->il2d_ip ? 2 * h->il2d_ipP : (size_t)h->N2;
+}
+static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, double *s, double *d);   /* il/il_execute.h */
 static void _il2d_rowx_fwd(struct vfft_plan_s *h, const double *sre, double *dre); /* il2d_real_plan.h, later in this TU */
 static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
                                       double *dre)
 {
-    const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    const size_t hp1 = (size_t)h->N2 / 2 + 1, rp = _il2d_rp(h);
     if (h->il2d_oddn2)
     { /* odd N2: promote -> c2c(N2) -> keep the hp1 CCE bins */
         const size_t rn2 = (size_t)h->N2;
@@ -140,11 +147,21 @@ static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
         size_t r;
         for (r = 0; r < (size_t)h->N; r++)
         {
-            _il2d_row_promote(sre + r * rn2, b1, rn2);
+            _il2d_row_promote(sre + r * rp, b1, rn2);
             vfft_execute((vfft_plan)h->il2d_row, VFFT_FORWARD, b1, NULL,
                          b2, NULL);
             memcpy(dre + r * 2 * hp1, b2, 2 * hp1 * sizeof(double));
         }
+        return;
+    }
+    if (h->il2d_ip)
+    {   /* in place: the door's K = 1 inner on every row of the one plane (the
+         * batch's own stride is the CCE plane's; the plane's pitch is the plan's) */
+        struct vfft_plan_s *in = h->il2d_row->tcb ? (h->il2d_row->tcb0 ? h->il2d_row->tcb0 : h->il2d_row->tcb)
+                                                   : h->il2d_row;
+        size_t r;
+        for (r = 0; r < (size_t)h->N; r++)
+            _tc_one(in, VFFT_FORWARD, (double *)(sre + r * rp), dre + r * rp);
         return;
     }
     vfft_execute(h->il2d_row, VFFT_FORWARD, (double *)sre, NULL, dre, NULL);
@@ -173,7 +190,7 @@ static void _il2d_real_rows_bwd_route(struct vfft_plan_s *h, const double *zsrc,
     { /* odd N2: Hermitian-extend hp1 -> N2 -> inverse c2c -> Re. The
        * inverse is unnormalized (x N2), matching the even tier's c2r
        * scale contract. */
-        const size_t rn2 = (size_t)h->N2;
+        const size_t rn2 = (size_t)h->N2, rp = _il2d_rp(h);
         double *b1 = h->il2d_orbuf, *b2 = h->il2d_orbuf + 2 * rn2;
         size_t r;
         for (r = 0; r < (size_t)h->N; r++)
@@ -181,7 +198,7 @@ static void _il2d_real_rows_bwd_route(struct vfft_plan_s *h, const double *zsrc,
             _il2d_row_extend(zsrc + r * 2 * hp1, b1, rn2, hp1);
             vfft_execute((vfft_plan)h->il2d_row, VFFT_BACKWARD, b1, NULL,
                          b2, NULL);
-            _il2d_row_re(b2, dre + r * rn2, rn2);
+            _il2d_row_re(b2, dre + r * rp, rn2);
         }
         return;
     }
@@ -1891,7 +1908,7 @@ static void _il2d_real_wlrace(struct vfft_plan_s *h,
                     isr ? "r2c" : "c2r", N1, N2, bwl, cbest);
         vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_col.R, h->il2d_col.nst,
                        bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                       cbest, vfft_policy_ord_rankn(cfg), h->nthreads);
+                       cbest, vfft_policy_ord_rankn(cfg), h->nthreads, h->il2d_ip);
         _vw2_persist(W, cfg);
     }
 }
@@ -1939,7 +1956,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                            h->il2d_col.R, h->il2d_col.nst,
                            h->il2d_col.wl, 0, h->nthreads,
-                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, vfft_policy_ord_rankn(cfg), h->nthreads);
+                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, vfft_policy_ord_rankn(cfg), h->nthreads, h->il2d_ip);
             _vw2_persist(W, cfg);
             return;
         }
@@ -1955,7 +1972,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
                    h->il2d_col.R, h->il2d_col.nst,
                    h->il2d_col.wl, h->il2d_col.colmt, h->nthreads,
                    (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                   h->il2d_col.colmt ? mt : st, vfft_policy_ord_rankn(cfg), h->nthreads);
+                   h->il2d_col.colmt ? mt : st, vfft_policy_ord_rankn(cfg), h->nthreads, h->il2d_ip);
     _vw2_persist(W, cfg);
 }
 
@@ -3427,7 +3444,7 @@ static void _il2d_real_children_put(struct vfft_wisdom_s *W, const vfft_config_t
     if (!W || W->vw2_off_2d)
         return;
     memset(&ck, 0, sizeof ck);
-    ck.rank = 2; ck.n0 = N1; ck.n1 = N2; ck.ord = ord; ck.real = 1; ck.nthreads = T;
+    ck.rank = 2; ck.n0 = N1; ck.n1 = N2; ck.ord = ord; ck.real = 1; ck.nthreads = T; ck.ip = h->il2d_ip;
     vw2__ilcol_key(&ck, &pk);
     changed |= vfft_child_row_update(&W->vw2, &pk, h->transform == VFFT_C2R ? "rp_c2r_" : "rp_", h->il2d_rowS);
     changed |= vfft_child_row_update(&W->vw2, &pk, h->transform == VFFT_C2R ? "rx_c2r_" : "rx_", h->il2d_rxS);

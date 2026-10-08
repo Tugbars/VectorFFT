@@ -266,8 +266,8 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
 static int _k2x_il2d_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
     (void)dir; /* r2c is the forward math, as in 1D */
-    if (zin == (const double *)zout)
-        return 1;
+    if ((zin == (const double *)zout) != (h->il2d_ip != 0))
+        return 1;   /* an aliased call on an out-of-place plan: the general path (the door refused the converse) */
     _il2d_real_rows_fwd(h, zin, zout);
     _il2d_real_cols(h, zout, zout, /*reverse=*/0);
     return 0;
@@ -792,7 +792,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
             return;
         }
         else if (h->transform == VFFT_R2C && h->il2d_row)
-        {
+        {   /* an in-place plan is called with one plane: the door refused two (vfft_execute.h) */
             if (h->il2d_rax_on)
             {   /* the real axis on N1 (il2d_real_axis.h): the form's own walk */
                 _il2d_rax_exec_fwd(h, sre, dre);

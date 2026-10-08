@@ -37,6 +37,11 @@ typedef struct {
     int real;          /* 1 = the real tier's row (t=r2c) */
     int nthreads;      /* the plan's thread count (v1.3): a threaded plan's
                         * row is its own, complete on its own; 0/1 = one */
+    int ip;            /* 1 = the IN-PLACE real cell's row (pl=ip): its own race,
+                        * its own cells, never the out-of-place cell's
+                        * (docs/roadmap/real_inplace_design.md, 2026-10-08);
+                        * 0 = pl=oop: the out-of-place real row, and the c2c
+                        * tier's placement-blind row */
 } vw2_ilcol_key_t;
 
 static inline const char *vw2__ilcol_tok(const vw2_ilcol_key_t *k, const char *base,
@@ -50,6 +55,8 @@ static inline void vw2__ilcol_key(const vw2_ilcol_key_t *ck, vw2_key_t *k)
 {
     vw2__2d_key(k, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, ck->n1,
                 ck->n2, ck->ord, VW2_LAY_IL, ck->nthreads);
+    if (ck->ip)
+        k->pl = VW2_PL_IP;   /* the in-place real cell's own row */
 }
 
 /* one integer verdict on a column row, by base name (axis-suffixed like the
@@ -219,6 +226,8 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
     memset(r, 0, sizeof *r);
     vw2__2d_rec_key(r, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, ck->n1, ck->n2, ck->ord,
                     /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL, ck->nthreads);
+    if (ck->ip)
+        r->key.pl = VW2_PL_IP;   /* the in-place real cell's own row (the key's placement) */
     if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
         vw2_rec_free(r);
         fprintf(stderr, "[wisdom2] il2d chain bank refused (token)\n");
@@ -325,20 +334,28 @@ static inline const char *vw2__rl_tok(int is_c2r, int which)
 /* one string token on the shared real IL row -- the r2c row engine's verdict
  * (rx=, rxs=: il/rank2/il2d_real_plan.h). Absent = NULL; a set on a missing
  * row is refused (the chain bank makes the row). */
+/* the real row's key: ip = 1 is the in-place cell's own row (pl=ip), 0 the
+ * out-of-place cell's (real_inplace_design.md, 2026-10-08) */
+static inline void vw2__2d_rl_key(vw2_key_t *k, int N1, int N2, int ord, int T, int ip)
+{
+    vw2__2d_key(k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
+    if (ip)
+        k->pl = VW2_PL_IP;
+}
 static inline const char *vw2_2d_rl_tok_gets(const vw2_store_t *s, int N1, int N2, int ord, int T,
-                                             const char *name)
+                                             const char *name, int ip)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
+    vw2__2d_rl_key(&k, N1, N2, ord, T, ip);
     r = vw2_lookup(s, &k);
     return r ? vw2_rec_get(r, name) : NULL;
 }
 static inline int vw2_2d_rl_tok_sets(vw2_store_t *st, int N1, int N2, int ord, int T,
-                                     const char *name, const char *val)
+                                     const char *name, const char *val, int ip)
 {
     vw2_key_t k;
-    vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
+    vw2__2d_rl_key(&k, N1, N2, ord, T, ip);
     if (!vw2_lookup(st, &k)) return -1;
     return vw2_update_field(st, &k, name, val) == VW2_OK ? 0 : -1;
 }
@@ -346,13 +363,13 @@ static inline int vw2_2d_rl_tok_sets(vw2_store_t *st, int N1, int N2, int ord, i
 static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
                                    int is_c2r,
                                    int *Rs, int *nst, int *wl,
-                                   int *cmt, int *cmtt, int *blu, int ord, int T)
+                                   int *cmt, int *cmtt, int *blu, int ord, int T, int ip)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *cv;
     int m = 0;
-    vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
+    vw2__2d_rl_key(&k, N1, N2, ord, T, ip);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     cv = vw2_rec_get(r, "chain");
@@ -382,7 +399,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
                                  int is_c2r,
                                  const int *Rs, int nst, int wl,
                                  int cmt, int cmtt, int blu, double ns,
-                                 int ord, int T)
+                                 int ord, int T, int ip)
 {
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
@@ -400,7 +417,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     {
         vw2_key_t k;
         const vw2_rec_t *have;
-        vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
+        vw2__2d_rl_key(&k, N1, N2, ord, T, ip);
         have = vw2_lookup(st, &k);
         if (have && vw2_rec_get(have, "chain") &&
             !strcmp(vw2_rec_get(have, "chain"), b)) {
@@ -420,6 +437,8 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     memset(r, 0, sizeof *r);
     vw2__2d_rec_key(r, VW2_T_R2C, 2, N1, N2, 0, ord,
                     /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL, T);
+    if (ip)
+        r->key.pl = VW2_PL_IP;   /* the in-place cell's own row */
     if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
         vw2_rec_free(r);
         fprintf(stderr, "[wisdom2] il2d real bank refused (token)\n");
@@ -601,15 +620,15 @@ static inline int vw2_2d_forms_lookup(vw2_store_t *s, int is_real, int N1,
     return vw2_ilcol_forms_lookup(s, &ck, out, osz);
 }
 static inline int vw2_2d_forms_bank(vw2_store_t *s, int is_real, int N1,
-                                    int N2, const char *forms, int ord, int T)
+                                    int N2, const char *forms, int ord, int T, int ip)
 {
-    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real, T };
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real, T, ip };
     return vw2_ilcol_forms_bank(s, &ck, forms);
 }
 static inline int vw2_2d_forms_rebank(vw2_store_t *s, int is_real, int N1,
-                                      int N2, const char *forms, int ord, int T)
+                                      int N2, const char *forms, int ord, int T, int ip)
 {
-    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real, T };
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real, T, ip };
     return vw2_ilcol_forms_rebank(s, &ck, forms);
 }
 

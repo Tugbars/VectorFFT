@@ -373,6 +373,26 @@ static inline int vfft_policy_il2d_rows_odd_door(int N2)
     return (N2 & 1) != 0;
 }
 
+/* -- rank 2, real: IN PLACE (docs/roadmap/real_inplace_design.md, 2026-10-08) --
+ * The in-place real contract at rank 2: ONE interleaved plane, every row
+ * padded to 2 (N2/2 + 1) doubles (FFTW's and MKL's in-place real layout),
+ * in == out. The cell races its own forms and banks on its own pl=ip row
+ * (the wisdom key's placement); every walk shape that can serve in place
+ * is a candidate, and placement is per PASS inside the plan (a private
+ * landing can sit anywhere). Admitted: R2C (the C2R twin is the next
+ * piece), one transform, one thread (the threaded forms are their own
+ * piece), DEFAULT or NATURAL order -- the out-of-place tier's own classes.
+ * The rows kernel (r2zr) is out of place only (its two planes are
+ * __restrict__, and a lone last row re-runs the row before it): the forms
+ * that land it on a private plane keep it; the standard walk's row pass in
+ * place is an engine with an in-place form. */
+static inline int vfft_policy_il2d_ip_ok(const vfft_config_t *cfg, int nthreads)
+{
+    return cfg && cfg->transform == VFFT_R2C && cfg->dims == 2 && cfg->howmany == 1 &&
+           cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_INPLACE &&
+           nthreads <= 1 && (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL);
+}
+
 /* -- rank 2, real: THE REAL AXIS ON N1 --------------------------------------
  * The r2c plan's whole-plan form (il2d_real_axis.h): row pairs packed into
  * one complex row, the c2c column chain at N1/2, the fold across columns,
@@ -415,9 +435,9 @@ static inline int vfft_policy_il2d_raxis_ok(const vfft_config_t *cfg, int nthrea
  * never written. Each direction's verdict is its own (tf= / tf_c2r=). The
  * threaded form is its own piece. */
 static inline int vfft_policy_il2d_tfuse_ok(const vfft_config_t *cfg, int nthreads)
-{
+{   /* both placements: the walk reads every row before its first write to the plane */
     return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-           cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_OUTOFPLACE && nthreads <= 1;
+           cfg->layout == VFFT_LAYOUT_INTERLEAVED && nthreads <= 1;
 }
 
 /* -- rank 2, real: THE PITCH FORMS (il2d_real_pitch.h) ----------------------
@@ -452,9 +472,8 @@ static inline size_t vfft_policy_il2d_cxp_pitch(size_t hp1)
     return ((16 * (hp1 + 1)) % 4096 == 0) ? hp1 + 3 : hp1 + 1;
 }
 static inline int vfft_policy_il2d_rcsk_ok(const vfft_config_t *cfg, int nthreads)
-{
-    return cfg && cfg->transform == VFFT_R2C && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-           cfg->placement == VFFT_OUTOFPLACE && nthreads <= 1;
+{   /* both placements: a private landing, the rows copied out onto the caller's plane */
+    return cfg && cfg->transform == VFFT_R2C && cfg->layout == VFFT_LAYOUT_INTERLEAVED && nthreads <= 1;
 }
 static inline size_t vfft_policy_il2d_rcsk_pitch(size_t hp1)
 {

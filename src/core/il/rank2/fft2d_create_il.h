@@ -160,6 +160,9 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     int il2d_wl = 0, il2d_cut = 0, il2d_tfuse = 0;
     int il2d_bwl = -1, il2d_btf = -1, il2d_bro = -1; /* banked axes */
     const int il2d_T = _vfft_plan_threads(cfg) > 0 ? _vfft_plan_threads(cfg) : 1;   /* the plan's thread count: its rows' key (v1.3) */
+    /* the IN-PLACE real plan (docs/roadmap/real_inplace_design.md, 2026-10-08): one padded
+     * plane, its own race, its own rows (pl=ip). The c2c tier's row is placement-blind. */
+    const int il2d_ip = cfg->transform != VFFT_C2C && cfg->placement == VFFT_INPLACE;
     int il2d_staged = 0, il2d_pitch = 0;
     double *il2d_bandscr = NULL;
     double *il2d_rscr = NULL;
@@ -537,14 +540,15 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * R-linear and does not commute with the column stages — fwd
      * rows complete before column stage 0, bwd rows follow the last
      * column stage; no tfuse, and the c2c cells' banked wl/tf
-     * verdicts do not port. OOP only (2D real in-place is refused
-     * above; the in-place door needs the padded-pitch caller
-     * contract, §2.7). SPLIT-layout callers keep the split engine
+     * verdicts do not port. Out of place, and IN PLACE where the law
+     * admits the request (vfft_policy_il2d_ip_ok: r2c, one thread; the
+     * padded-row plane, docs/roadmap/real_inplace_design.md, 2026-10-08).
+     * SPLIT-layout callers keep the split engine
      * untouched. Inexpressible cells (chain/row failures) REFUSE
      * loudly. */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
         cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-        cfg->placement == VFFT_OUTOFPLACE)
+        (cfg->placement == VFFT_OUTOFPLACE || vfft_policy_il2d_ip_ok(cfg, il2d_T)))
     {
         int rok = 1;
         const int oddn2 = (N2 % 2) != 0;
@@ -573,7 +577,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
              * vw2__rl_tok -- the builder does not know: its plain-name
              * out-params are ignored below and the four are re-read from
              * this direction's tokens. */
-            const vw2_ilcol_key_t ck = { 2, N1, N2, 0, il2d_ord, 0, /*real=*/1, il2d_T };
+            const vw2_ilcol_key_t ck = { 2, N1, N2, 0, il2d_ord, 0, /*real=*/1, il2d_T, il2d_ip };
             vfft_ilcol_t col;
             int bwl_ = -1, btf_ = -1, bro_ = -1, bcmt_ = -1, bcmtt_ = -1;
             memset(&col, 0, sizeof col);
@@ -607,7 +611,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                     (void)vw2_2d_rl_lookup(&W->vw2, N1, N2,
                                            cfg->transform == VFFT_C2R, tR, &tn,
                                            &il2d_bwl, &il2d_bcmt,
-                                           &il2d_bcmtt, &tblu, il2d_ord, il2d_T);
+                                           &il2d_bcmtt, &tblu, il2d_ord, il2d_T, il2d_ip);
                 }
             }
         }
@@ -630,7 +634,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.nthreads = 1;
             {   /* THE ROW CHILD IN ROLE: its own store, seeded from this cell's real row
                  * (rp_*, or rp_c2r_* for a c2r plan); it never reads or writes a 1D row */
-                const vw2_ilcol_key_t ck2 = { 2, N1, N2, 0, il2d_ord, 0, 1, il2d_T };
+                const vw2_ilcol_key_t ck2 = { 2, N1, N2, 0, il2d_ord, 0, 1, il2d_T, il2d_ip };
                 vw2__ilcol_key(&ck2, &il2d_pk);
                 il2d_rowS = vfft_child_store_for(&W->vw2, &il2d_pk, cfg->transform == VFFT_C2R ? "rp_c2r_" : "rp_");
             }
@@ -677,7 +681,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             vfft_config_t rc;
             memset(&rc, 0, sizeof rc);
             rc.transform = cfg->transform;
-            rc.placement = VFFT_OUTOFPLACE;
+            rc.placement = cfg->placement;   /* in place: the K = 1 in-place real plan per row, each on its padded row */
             rc.rigor = cfg->rigor;
             rc.dims = 1;
             rc.n[0] = N2;
@@ -692,7 +696,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.nthreads = cfg->nthreads;
             {   /* THE ROW CHILD IN ROLE (the real batch at N2 x N1 and everything it
                  * banks: its rows, its inner's); seeded from this cell's real row */
-                const vw2_ilcol_key_t ck2 = { 2, N1, N2, 0, il2d_ord, 0, 1, il2d_T };
+                const vw2_ilcol_key_t ck2 = { 2, N1, N2, 0, il2d_ord, 0, 1, il2d_T, il2d_ip };
                 vw2__ilcol_key(&ck2, &il2d_pk);
                 il2d_rowS = vfft_child_store_for(&W->vw2, &il2d_pk, cfg->transform == VFFT_C2R ? "rp_c2r_" : "rp_");
             }
@@ -850,6 +854,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     h->il2d_col.bandscr = il2d_bandscr;
     h->il2d_rscr = il2d_rscr;
     h->il2d_rscr_P = (size_t)N2 / 2 + 1;   /* the CCE pitch until the pitch form races (il2d_real_pitch.h) */
+    h->il2d_ip = il2d_ip;
+    h->il2d_ipP = il2d_ip ? (size_t)N2 / 2 + 1 : 0;   /* in place: the caller's plane at the CCE pitch (real_inplace_design.md §1, door 1) */
     h->il2d_oddn2 = il2d_oddn2;
     h->il2d_orbuf = il2d_orbuf;
     h->il2d_col.nat = il2d_nat;
@@ -944,7 +950,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * of the real tier's re-bank below: the column build raced them
      * before the axis race wrote the row (vw2_2d_forms_rebank) */
     if (h->transform == VFFT_C2C && W && !W->vw2_off_2d && !getenv("VFFT_IL2D_FORMS") &&
-        vw2_2d_forms_rebank(&W->vw2, 0, N1, N2, il2d_fm, il2d_ord, il2d_T))
+        vw2_2d_forms_rebank(&W->vw2, 0, N1, N2, il2d_fm, il2d_ord, il2d_T, 0))
         _vw2_persist(W, cfg);
     /* ── the REAL tier's wl race (the banded column walk's width): runs
      * only when env is FULLY silent (an env-pinned chain skips the
@@ -965,7 +971,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         il2d_fm[0] && W && !W->vw2_off_2d && !getenv("VFFT_IL2D_FORMS"))
     {
-        int ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord, il2d_T);
+        int ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord, il2d_T, il2d_ip);
         if (!ok)
         {   /* no real row yet: the wl race did not run (an env pin on the
              * axis, e.g. a gate's VFFT_IL2D_WL) or refused. The forms
@@ -974,8 +980,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
              * MERGES into this row). */
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                            h->il2d_col.R, h->il2d_col.nst, -1, -1, 0,
-                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, il2d_ord, il2d_T);
-            ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord, il2d_T);
+                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, il2d_ord, il2d_T, il2d_ip);
+            ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord, il2d_T, il2d_ip);
         }
         if (ok)
             _vw2_persist(W, cfg);

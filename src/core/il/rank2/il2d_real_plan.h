@@ -90,16 +90,31 @@ static inline vfft_il2p_fn vfft_il2d_rows_bwd_fn(int R)
     }
 }
 
+/* THE IN-PLACE RACE's reset (support/race.h's hook): an in-place arm walks its
+ * own output, so the plane is re-laid from its seed before every timed
+ * sample (docs/roadmap/real_inplace_design.md) */
+typedef struct
+{
+    double *p;
+    const double *seed;
+    size_t n;
+} _il2d_ip_reset_t;
+static void _il2d_ip_reset(void *v)
+{
+    const _il2d_ip_reset_t *r = (const _il2d_ip_reset_t *)v;
+    memcpy(r->p, r->seed, r->n * sizeof(double));
+}
+
 /* the pass itself: the rows kernel in one call, an engine row by row, or the
  * tier's row route */
 static void _il2d_rowx_body(const void *v, const double *sre, double *dre)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)v;
-    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1, n1 = (size_t)h->N;
+    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1, n1 = (size_t)h->N, rp = _il2d_rp(h);
     size_t r;
     if (h->il2d_rx_lm)
     {
-        h->il2d_rx_lm(sre, NULL, dre, NULL, NULL, NULL, rn2, 0, hp1, 0, n1);
+        h->il2d_rx_lm(sre, NULL, dre, NULL, NULL, NULL, rp, 0, hp1, 0, n1);
         return;
     }
     if (!h->il2d_rx_eng)
@@ -108,7 +123,7 @@ static void _il2d_rowx_body(const void *v, const double *sre, double *dre)
         return;
     }
     for (r = 0; r < n1; r++)
-        _real_il_exec_any(h->il2d_rx_eng, sre + r * rn2, dre + r * 2 * hp1);
+        _real_il_exec_any(h->il2d_rx_eng, sre + r * rp, dre + r * rp);
 }
 /* the c2r pass: the backward rows kernel in one call, an engine's backward
  * row by row (the engines run their plan's direction), or the c2r row route */
@@ -116,14 +131,14 @@ static void _il2d_rows_bwd_set(struct vfft_plan_s *h, const double *src, size_t 
 static void _il2d_rowx_body_bwd(const void *v, const double *zsrc, double *dre)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)v;
-    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1, n1 = (size_t)h->N;
+    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1, n1 = (size_t)h->N, rp = _il2d_rp(h);
     /* the plan's own column-inverse plane may sit at its raced pitch (il2d_real_pitch.h);
      * every other source (a race's plane) is at the CCE pitch */
     const size_t P = (zsrc == h->il2d_rscr && h->il2d_rscr_P) ? h->il2d_rscr_P : hp1;
     size_t r;
     if (h->il2d_rx_lm)
     {
-        h->il2d_rx_lm(zsrc, NULL, dre, NULL, NULL, NULL, P, 0, rn2, 0, n1);
+        h->il2d_rx_lm(zsrc, NULL, dre, NULL, NULL, NULL, P, 0, rp, 0, n1);
         return;
     }
     if (!h->il2d_rx_eng)
@@ -135,7 +150,7 @@ static void _il2d_rowx_body_bwd(const void *v, const double *zsrc, double *dre)
         return;
     }
     for (r = 0; r < n1; r++)
-        _real_il_exec_any(h->il2d_rx_eng, zsrc + r * 2 * P, dre + r * rn2);
+        _real_il_exec_any(h->il2d_rx_eng, zsrc + r * 2 * P, dre + r * rp);
 }
 
 /* THE ROW PASS OVER A ROW SET: the rows {d + j D0, j < R0} of the real plane (pitch N2)
@@ -148,17 +163,17 @@ static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, double *s, do
 static void _il2d_rows_fwd_set(struct vfft_plan_s *h, const double *x, size_t d, size_t D0, size_t R0,
                                double *out, size_t P)
 {
-    const size_t N2 = (size_t)h->N2, hp1 = N2 / 2 + 1;
+    const size_t N2 = (size_t)h->N2, hp1 = N2 / 2 + 1, rp = _il2d_rp(h);   /* the real plane's pitch */
     size_t j;
     if (h->il2d_rx_on && h->il2d_rx_lm)
     {
-        h->il2d_rx_lm(x + d * N2, NULL, out, NULL, NULL, NULL, D0 * N2, 0, P, 0, R0);
+        h->il2d_rx_lm(x + d * rp, NULL, out, NULL, NULL, NULL, D0 * rp, 0, P, 0, R0);
         return;
     }
     if (h->il2d_rx_on && h->il2d_rx_eng)
     {
         for (j = 0; j < R0; j++)
-            _real_il_exec_any(h->il2d_rx_eng, x + (d + j * D0) * N2, out + j * 2 * P);
+            _real_il_exec_any(h->il2d_rx_eng, x + (d + j * D0) * rp, out + j * 2 * P);
         return;
     }
     if (h->il2d_oddn2)
@@ -166,7 +181,7 @@ static void _il2d_rows_fwd_set(struct vfft_plan_s *h, const double *x, size_t d,
         double *b1 = h->il2d_orbuf, *b2 = h->il2d_orbuf + 2 * N2;
         for (j = 0; j < R0; j++)
         {
-            _il2d_row_promote(x + (d + j * D0) * N2, b1, N2);
+            _il2d_row_promote(x + (d + j * D0) * rp, b1, N2);
             vfft_execute((vfft_plan)h->il2d_row, VFFT_FORWARD, b1, NULL, b2, NULL);
             memcpy(out + j * 2 * P, b2, 2 * hp1 * sizeof(double));
         }
@@ -175,23 +190,23 @@ static void _il2d_rows_fwd_set(struct vfft_plan_s *h, const double *x, size_t d,
     {
         struct vfft_plan_s *in = h->il2d_row->tcb0 ? h->il2d_row->tcb0 : h->il2d_row->tcb;
         for (j = 0; j < R0; j++)
-            _tc_one(in, VFFT_FORWARD, (double *)(x + (d + j * D0) * N2), out + j * 2 * P);
+            _tc_one(in, VFFT_FORWARD, (double *)(x + (d + j * D0) * rp), out + j * 2 * P);
     }
 }
 static void _il2d_rows_bwd_set(struct vfft_plan_s *h, const double *src, size_t P, size_t d, size_t D0, size_t R0,
                                double *y)
 {
-    const size_t N2 = (size_t)h->N2, hp1 = N2 / 2 + 1;
+    const size_t N2 = (size_t)h->N2, hp1 = N2 / 2 + 1, rp = _il2d_rp(h);
     size_t j;
     if (h->il2d_rx_on && h->il2d_rx_lm)
     {
-        h->il2d_rx_lm(src, NULL, y + d * N2, NULL, NULL, NULL, P, 0, D0 * N2, 0, R0);
+        h->il2d_rx_lm(src, NULL, y + d * rp, NULL, NULL, NULL, P, 0, D0 * rp, 0, R0);
         return;
     }
     if (h->il2d_rx_on && h->il2d_rx_eng)
     {
         for (j = 0; j < R0; j++)
-            _real_il_exec_any(h->il2d_rx_eng, src + j * 2 * P, y + (d + j * D0) * N2);
+            _real_il_exec_any(h->il2d_rx_eng, src + j * 2 * P, y + (d + j * D0) * rp);
         return;
     }
     if (h->il2d_oddn2)
@@ -201,14 +216,14 @@ static void _il2d_rows_bwd_set(struct vfft_plan_s *h, const double *src, size_t 
         {
             _il2d_row_extend(src + j * 2 * P, b1, N2, hp1);
             vfft_execute((vfft_plan)h->il2d_row, VFFT_BACKWARD, b1, NULL, b2, NULL);
-            _il2d_row_re(b2, y + (d + j * D0) * N2, N2);
+            _il2d_row_re(b2, y + (d + j * D0) * rp, N2);
         }
         return;
     }
     {
         struct vfft_plan_s *in = h->il2d_row->tcb0 ? h->il2d_row->tcb0 : h->il2d_row->tcb;
         for (j = 0; j < R0; j++)
-            _tc_one(in, VFFT_BACKWARD, (double *)(src + j * 2 * P), y + (d + j * D0) * N2);
+            _tc_one(in, VFFT_BACKWARD, (double *)(src + j * 2 * P), y + (d + j * D0) * rp);
     }
 }
 
@@ -297,24 +312,24 @@ static void _il2d_rowx_range(const void *v, const double *s, double *d)
 {
     const _il2d_rowx_mt_t *a = (const _il2d_rowx_mt_t *)v;
     const struct vfft_plan_s *h = a->h;
-    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
+    const size_t hp1 = (size_t)h->N2 / 2 + 1, rp = _il2d_rp(h);
     size_t r;
     if (h->il2d_rx_lm)
     {
         if (a->bwd)
-            h->il2d_rx_lm(s + a->lo * 2 * hp1, NULL, d + a->lo * rn2, NULL, NULL, NULL, hp1, 0, rn2, 0, a->hi - a->lo);
+            h->il2d_rx_lm(s + a->lo * 2 * hp1, NULL, d + a->lo * rp, NULL, NULL, NULL, hp1, 0, rp, 0, a->hi - a->lo);
         else
-            h->il2d_rx_lm(s + a->lo * rn2, NULL, d + a->lo * 2 * hp1, NULL, NULL, NULL, rn2, 0, hp1, 0, a->hi - a->lo);
+            h->il2d_rx_lm(s + a->lo * rp, NULL, d + a->lo * 2 * hp1, NULL, NULL, NULL, rp, 0, hp1, 0, a->hi - a->lo);
         return;
     }
     {
         struct vfft_plan_s *e = a->tid > 0 ? h->il2d_rxw[a->tid - 1] : h->il2d_rx_eng;
         if (a->bwd)
             for (r = a->lo; r < a->hi; r++)
-                _real_il_exec_any(e, s + r * 2 * hp1, d + r * rn2);
+                _real_il_exec_any(e, s + r * 2 * hp1, d + r * rp);
         else
             for (r = a->lo; r < a->hi; r++)
-                _real_il_exec_any(e, s + r * rn2, d + r * 2 * hp1);
+                _real_il_exec_any(e, s + r * rp, d + r * 2 * hp1);
     }
 }
 static void _il2d_rowx_mt_tramp(void *v)
@@ -392,7 +407,7 @@ static void _il2d_rowx_cfg(const vfft_config_t *cfg, int N2, vfft_config_t *c, s
 {
     memset(c, 0, sizeof *c);
     c->transform = c2r ? VFFT_C2R : VFFT_R2C;
-    c->placement = VFFT_OUTOFPLACE;
+    c->placement = cfg->placement;   /* the plan's placement: in place, the engines' in-place forms */
     c->rigor = cfg->rigor;
     c->dims = 1;
     c->n[0] = N2;
@@ -475,8 +490,9 @@ static int _il2d_rowx_build(const vfft_config_t *cfg, struct vfft_wisdom_s *S, i
     if (!tok || !tok[0] || !strcmp(tok, "door"))
         return 1;
     if (!strcmp(tok, "lm"))
-    {
-        *lm = N1 >= 2 ? (c2r ? vfft_il2d_rows_bwd_fn(N2) : vfft_il2d_rows_fn(N2)) : NULL;
+    {   /* OUT OF PLACE ONLY (real_inplace_design.md): its two planes are __restrict__, and a
+         * lone last row re-runs the row before it -- in place that row is already overwritten */
+        *lm = (N1 >= 2 && cfg->placement != VFFT_INPLACE) ? (c2r ? vfft_il2d_rows_bwd_fn(N2) : vfft_il2d_rows_fn(N2)) : NULL;
         return *lm != NULL;
     }
     _il2d_rowx_cfg(cfg, N2, &c, S, c2r);
@@ -695,15 +711,15 @@ static void _il2d_real_plan_bank(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     int ok;
     if (!W || W->vw2_off_2d)
         return;
-    ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tok, name) == 0;
+    ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tok, name, h->il2d_ip) == 0;
     if (!ok)
     {
         vw2_2d_rl_bank(&W->vw2, N1, N2, c2r, h->il2d_col.R, h->il2d_col.nst, -1, -1, 0,
-                       (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, ord, T);
-        ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tok, name) == 0;
+                       (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, ord, T, h->il2d_ip);
+        ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, tok, name, h->il2d_ip) == 0;
     }
     if (ok)
-        ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, stok, sb) == 0;
+        ok = vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, stok, sb, h->il2d_ip) == 0;
     if (ok)
         _vw2_persist(W, cfg);
     else
@@ -718,7 +734,9 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                                    int N1, int N2, int ord, int T, int c2r)
 {
     enum { NARMS = VFFT_RACE_MAX_ARMS / 4 };
-    const size_t hp1 = (size_t)N2 / 2 + 1, RN = (size_t)N1 * (size_t)N2, CN = 2 * (size_t)N1 * hp1;
+    const int ip = h->il2d_ip;
+    const size_t hp1 = (size_t)N2 / 2 + 1, CN = 2 * (size_t)N1 * hp1;
+    const size_t RN = ip ? CN : (size_t)N1 * (size_t)N2;   /* the real plane's extent: in place the one padded plane */
     const char *log = getenv("VFFT_IL2D_LOG");
     const char *tk_rx = c2r ? "rx_c2r" : "rx", *tk_rxs = c2r ? "rxs_c2r" : "rxs";
     const char *ev = c2r ? "VFFT_IL2D_RX_C2R" : "VFFT_IL2D_RX", *dn = c2r ? "c2r " : "";
@@ -733,7 +751,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
     if (!h->il2d_rxS)
     {   /* THE ROW ENGINES IN ROLE: their own store, seeded from this cell's real row (rx_*, or rx_c2r_*) */
         vw2_key_t pk;
-        vw2__2d_key(&pk, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL, T);
+        vw2__2d_rl_key(&pk, N1, N2, ord, T, ip);
         h->il2d_rxS = vfft_child_store_for(W ? &W->vw2 : NULL, &pk, c2r ? "rx_c2r_" : "rx_");
     }
     {   /* 1. env: the racing hook. Beats wisdom, never banks. */
@@ -767,10 +785,10 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         return;
     if (!cfg->recalibrate)
     {   /* 2. the banked verdict */
-        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_rx);
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_rx, ip);
         if (tok)
         {
-            const char *sv = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_rxs);
+            const char *sv = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_rxs, ip);
             if (_il2d_rowx_build(cfg, h->il2d_rxS, N1, N2, tok, &lm, &eng, c2r))
             {
                 h->il2d_rx_lm = lm;
@@ -797,14 +815,17 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         /* T > 1: every arm runs the whole transform (the c2r reverse pass needs its plane) */
         const int whole = h->nthreads > 1 && (!c2r || h->il2d_rscr != NULL);
         double *a = (double *)vfft_aligned_alloc((RN + 8) * sizeof(double));
-        double *z = (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));
+        double *z = ip ? a : (double *)vfft_aligned_alloc((CN + 8) * sizeof(double));   /* in place: the one plane */
         double *ref = (double *)vfft_aligned_alloc((ON + 8) * sizeof(double));
+        double *seed = ip ? (double *)vfft_aligned_alloc((RN + 8) * sizeof(double)) : NULL;   /* the plane's input, re-laid before every sample */
         double *const out = c2r ? a : z;
-        if (!a || !z || !ref)
+        _il2d_ip_reset_t rs;
+        if (!a || !z || !ref || (ip && !seed))
         {
-            vfft_aligned_free(a); vfft_aligned_free(z); vfft_aligned_free(ref);
+            vfft_aligned_free(a); if (!ip) vfft_aligned_free(z); vfft_aligned_free(ref); vfft_aligned_free(seed);
             return;
         }
+        rs.p = a; rs.seed = seed; rs.n = RN + 8;
         {
             unsigned sd = 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 12);
             size_t j;
@@ -824,6 +845,8 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                 for (j = 0; j < (size_t)N1; j++)
                     z[j * 2 * hp1 + 1] = z[j * 2 * hp1 + 2 * (hp1 - 1) + 1] = 0.0;
             }
+            if (ip)
+                memcpy(seed, a, (RN + 8) * sizeof(double));
         }
         _il2d_rowx_cfg(cfg, N2, &c, h->il2d_rxS, c2r);
 #define ROWX_ARM(LM, ENG) do { if (na < NARMS) { \
@@ -835,7 +858,12 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         /* THE GATE'S REFERENCE: the tier's own row route over the plane (every
          * arm is gated against it below; at T > 1 it is the whole transform) */
         memset(ref, 0, (ON + 8) * sizeof(double));
-        if (c2r)
+        if (ip)
+        {   /* in place: the route on a copy of the input plane */
+            memcpy(ref, seed, (RN + 8) * sizeof(double));
+            cand[0].a = cand[0].z = ref;
+        }
+        else if (c2r)
             cand[0].a = ref;
         else
             cand[0].z = ref;
@@ -845,7 +873,9 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         /* WHICH DOOR'S ENGINES RACE is the policy's law of N2's parity
          * (vfft_policy_il2d_rows_even_door / _odd_door, planning/policy_il.h);
          * the mono's band is the engine's own */
-        if (N1 >= 2 && vfft_policy_il2d_rows_even_door(N2) && (c2r ? vfft_il2d_rows_bwd_fn(N2) : vfft_il2d_rows_fn(N2)))
+        /* the rows kernel: OUT OF PLACE ONLY (real_inplace_design.md: __restrict__ planes, the
+         * lone last row re-run) -- never an arm of an in-place race */
+        if (N1 >= 2 && !ip && vfft_policy_il2d_rows_even_door(N2) && (c2r ? vfft_il2d_rows_bwd_fn(N2) : vfft_il2d_rows_fn(N2)))
             ROWX_ARM(c2r ? vfft_il2d_rows_bwd_fn(N2) : vfft_il2d_rows_fn(N2), NULL);
         if (vfft_policy_il2d_rows_odd_door(N2))
         {   /* ODD N2 (2026-10-07): the odd door's engines in the row role -- the real
@@ -889,6 +919,8 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             vfft_aligned_free(rb);
             vfft_aligned_free(rr);
             vfft_aligned_free(rt);
+            if (ip)
+                memcpy(a, seed, (RN + 8) * sizeof(double));   /* the route's run transformed the plane */
         }
         {
             /* the even door's engines (zr2c, the pairs, ZTT-r) are candidates at an
@@ -936,7 +968,10 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             for (i = 1; i < na; i++)
             {
                 double e;
-                memset(out, 0, ON * sizeof(double));
+                if (ip)
+                    memcpy(a, seed, (RN + 8) * sizeof(double));
+                else
+                    memset(out, 0, ON * sizeof(double));
                 _il2d_rowx_arm_run(&cand[i]);
                 e = _zrpr_relerr(out, ref, ON);
                 if (e < 1e-10)
@@ -1000,10 +1035,16 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
             if (reps < 1) reps = 1;
             if (reps > 4096) reps = 4096;
+            if (ip && reps > 32) reps = 32;   /* in place the plane grows a factor N2 per pass: a sample stays finite */
             {   /* 9 rounds alternated, median; threaded arms (T > 1) under the
                  * threaded protocol instead: min of 3, two untimed passes per
                  * arm first, no pacing (a paced pool parks its workers) */
                 vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 1, NULL, NULL, 1 };
+                if (ip)
+                {   /* the one plane, re-laid before every sample */
+                    proto.reset = _il2d_ip_reset;
+                    proto.reset_ctx = &rs;
+                }
                 if (h->nthreads > 1)
                 {
                     proto.rounds = 3; proto.agg = VFFT_RACE_MIN; proto.alternate = 0; proto.warm = 2; proto.pace = 0;
@@ -1052,7 +1093,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             _il2d_plan_stk_str(h->il2d_rx_stk, sb, sizeof sb);
             _il2d_real_plan_bank(h, W, cfg, N1, N2, ord, T, tk_rx, names[best / 4], tk_rxs, sb, c2r);
         }
-        vfft_aligned_free(a); vfft_aligned_free(z); vfft_aligned_free(ref);
+        vfft_aligned_free(a); if (!ip) vfft_aligned_free(z); vfft_aligned_free(ref); vfft_aligned_free(seed);
     }
 }
 static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
@@ -1488,9 +1529,9 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
         return;
     if (!cfg->recalibrate)
     {   /* 2. the banked verdict */
-        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_cx);
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_cx, h->il2d_ip);
         if (tok && _il2d_colx_form_set(h, tok, strlen(tok), fname, nf, lname, nl, c2r) &&
-            _il2d_colx_stk_set(h, vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_cxs)))
+            _il2d_colx_stk_set(h, vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_cxs, h->il2d_ip)))
         {
             h->il2d_cx_on = 1;
             return;
@@ -1865,14 +1906,14 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
         return;
     if (!cfg->recalibrate)
     {   /* 2. the banked verdict */
-        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxd_c2r");
+        const char *tok = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxd_c2r", h->il2d_ip);
         if (tok)
         {
             if (!strcmp(tok, "off"))
                 return; /* the scratch form won this cell's race */
             if (_il2d_cxd_form_set(h, tok, strlen(tok), one_stage, lname, nl))
             {
-                h->il2d_cxd_stk = _il2d_plan_stk_parse(vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxds_c2r"));
+                h->il2d_cxd_stk = _il2d_plan_stk_parse(vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, "cxds_c2r", h->il2d_ip));
                 h->il2d_cxd_on = 1;
                 return;
             }
