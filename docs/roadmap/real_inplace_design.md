@@ -6,8 +6,9 @@
 owner. BUILT 2026-10-08: 2D r2c in place through door 1 (§1), one thread, gated by
 `src/tools/gates/il2d_real_ip_gate.c` (vs FFTW in place, replay, the door's refusal,
 the store reloaded from disk; 71 checks); 3D r2c and c2r in place the same day (§2,
-`il3d_real_ip_gate.c`, 100 checks). Door 2, the 2D c2r twin, the pay-once and band
-c2r arms in place, and the threaded forms are the next pieces. In place is a feature the library provides whatever it
+`il3d_real_ip_gate.c`, 100 checks), the pay-once c2r arm in place and door 2 for 2D r2c the
+same evening. Rank 3's door 2, the 2D c2r twin and the threaded forms are the next pieces;
+the band is not an in-place arm. In place is a feature the library provides whatever it
 measures (owner, 2026-10-08): the race decides how it is served, never whether.
 The 1D in-place real contract (`vfft.c`, the zr2c route and the odd door) is the
 rank-1 case of the same layout and stays as it is.*
@@ -38,6 +39,19 @@ C2R (an in-place C2R has no input to preserve). One transform at rank 3; rank 2'
 
 Door 2 is the fast path and costs nothing at execute: the alias of §3 never
 exists. Door 1 is served by the raced forms of §3.
+
+Door 2 BUILT 2026-10-08 (2D r2c): `vfft_policy_il2d_ip_pitch(hp1)` names hp1 + 8
+where 16·hp1 bytes is 16 bytes past or before a 4 KB multiple, hp1 otherwise;
+`_vfft_create_outer` allocates the plane after the inner create, zeroed, and
+`vfft_plan_planes` / `vfft_plan_stride` hand it back; the column pass runs over
+the padded width (the plan's `rn` is its pitch; 8 pad columns of zeros, the
+fused walk's staging zeroed so they stay so). A plan off hp1 is the cell's
+PITCH TWIN (`il2d_ip = 2`): it races its own pitch-sensitive verdicts, banked
+as the `_p` token set on the cell's `pl=ip` row (`chain_p forms_p wl_p cx_p
+cxs_p tf_p`; the skewed plane is never offered to it), while `rx`/`rxs` and
+the child recipes, pitch-blind, are shared with door 1 (owner: "its own
+verdicts", 2026-10-08). Where the policy keeps hp1 the plan IS door 1. Rank 3
+takes door 2 with its own piece.
 
 ## 2. The walks in place
 
@@ -136,6 +150,13 @@ in place on its own rows; the column and axis-0 partitions as they are.
   buffers and the child arm only, had been 0.56–0.76 where the plane
   buffers left L2; the backward walk recovered it (8×128×2048 0.56 → 0.81,
   16×64×1024 0.76 → 0.96, 32×8×1000 0.75 → 0.97).
+  Door 2 (2D r2c, the same 16 cells, the plan's own plane): where the policy
+  leaves the aliasing pitch it pays — 16×1024 1.22 over door 1 (0.99 → 1.21
+  against FFTW in place), 1024×1024 1.20 (1.06 → 1.27), 512×512 1.07 (1.05 →
+  1.10) — and 32×1024 is flat (the alias is mild at N1 = 32); 2048×2048 and
+  256×1024 came out 0.95–0.96 of door 1 (another chain raced at 2048²; the
+  eight pad columns' work is 1–2%). Where the policy keeps hp1 the plan is
+  door 1, and the numbers agree within noise.
 - **Unchanged:** the shuffle count. The shuffles are the kernels' lane-order
   conversions and the twiddle swap (the fold's 20 on port 5, the IL boundary
   stages); placement changes addresses, not lane order.
