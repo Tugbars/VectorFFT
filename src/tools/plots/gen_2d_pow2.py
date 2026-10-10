@@ -1,24 +1,32 @@
-"""VectorFFT 2D c2c pow2 gauntlet vs MKL, drawn as an N1 x N2 speedup matrix.
+"""VectorFFT 2D c2c pow2 gauntlet vs MKL (or another comparator), drawn as an N1 x N2 speedup matrix.
 
 Diverging blue (faster) / red (slower), five steps per arm binned symmetrically in ratio;
 Computer Modern throughout, text outlined to paths in the SVG.
 
-usage:  python3 gen_2d_pow2.py <gauntlet_report.txt> [output_prefix]
+usage:  python3 gen_2d_pow2.py <gauntlet_report.txt> [output_prefix] [--cmp NAME]
         -> <output_prefix>.svg and <output_prefix>.png  (default prefix: vectorfft-2d-pow2)
+        --cmp: the comparator's name on the legend and the caption (default MKL)
 
 Reads the "every shape" table of the gauntlet report and plots the x column (the report's
 worse-of-two-flips speedup) of every benched plane, raced or replayed from wisdom, so a run
 needs no --calibrate. Needs only matplotlib, which ships the cmr10 fonts."""
 import re, math, sys
+from collections import Counter
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-if len(sys.argv) < 2:
+argv = sys.argv[1:]
+CMP = "MKL"
+if "--cmp" in argv:
+    i = argv.index("--cmp")
+    CMP = argv[i + 1]
+    del argv[i:i + 2]
+if not argv:
     sys.exit(__doc__)
-SRC = sys.argv[1]
-OUT = sys.argv[2] if len(sys.argv) > 2 else "vectorfft-2d-pow2"
+SRC = argv[0]
+OUT = argv[1] if len(argv) > 1 else "vectorfft-2d-pow2"
 rows = {}
 for l in open(SRC):
     m = re.match(r"\s+(\d+)x(\d+)\s+\S+\s+(\S+)\s+(?:raced|replayed)\s+(\d+)\s+(\d+)\s+([\d.]+)", l)   # a replayed plane is a measured cell too: no --calibrate needed
@@ -85,13 +93,28 @@ for k in K:
 ax.text(7, -0.35, "$N_2$", ha="center", va="bottom", fontsize=13)
 ax.text(-0.95, 3.5, "$N_1$", ha="right", va="center", fontsize=13)
 
-# predominant-route brackets (exact regions are the heavy rules)
+# predominant-route brackets, from the data (the exact regions are the heavy rules): across the
+# top, runs of N2 columns whose planes mostly use one route; down the left, the same for N1 rows
 def hbracket(j0, j1, y, label):
     ax.plot([j0 - .42, j0 - .42, j1 + .42, j1 + .42], [y + .12, y, y, y + .12], color="black", lw=0.7, clip_on=False)
     ax.text((j0 + j1) / 2, y - .1, label, ha="center", va="bottom", fontsize=9.5, fontstyle="italic")
-hbracket(1, 3, -0.95, "chain + rb"); hbracket(4, 6, -0.95, "chain + rb2"); hbracket(7, 13, -0.95, "chain")
-ax.plot([-1.55, -1.67, -1.67, -1.55], [6.58, 6.58, 13.42, 13.42], color="black", lw=0.7, clip_on=False)
-ax.text(-1.85, 10, "turn", ha="center", va="center", rotation=90, fontsize=9.5, fontstyle="italic")
+def vbracket(i0, i1, x, label):
+    ax.plot([x + .12, x, x, x + .12], [i0 - .42, i0 - .42, i1 + .42, i1 + .42], color="black", lw=0.7, clip_on=False)
+    ax.text(x - .18, (i0 + i1) / 2, label, ha="center", va="center", rotation=90, fontsize=9.5, fontstyle="italic")
+def route_runs(axis):                  # axis 1: by column (N2), 0: by row (N1)
+    out = []
+    for k in K:
+        c = Counter(r for (i, j), (r, x) in rows.items() if (j if axis == 1 else i) == k)
+        top = c.most_common(1)[0][0] if c else None
+        if out and out[-1][2] == top:
+            out[-1][1] = k
+        else:
+            out.append([k, k, top])
+    return [g for g in out if g[2]]
+for j0, j1, r in route_runs(1):
+    hbracket(j0, j1, -0.95, r.replace("+", " + "))
+for i0, i1, r in route_runs(0):
+    vbracket(i0, i1, -1.67, r.replace("+", " + "))
 
 # legend: one symmetric strip, red arm left, blue arm right, edges labelled in the printed ratio
 lg = fig.add_axes([0.13, 0.095, 0.80, 0.03]); lg.axis("off"); lg.set_xlim(0, 100); lg.set_ylim(0, 1)
@@ -105,8 +128,9 @@ for n, t in enumerate(labels, 1):
     lg.text(n * W, -0.3, t, ha="center", va="top", fontsize=8.2)
 lg.text(-0.8, 0.5, "slower", ha="right", va="center", fontsize=8.8, fontstyle="italic")
 lg.text(10 * W + 0.8, 0.5, "faster", ha="left", va="center", fontsize=8.8)
-lg.text(0, 1.45, "speedup over MKL (worse of two flips)", fontsize=9, va="bottom")
+lg.text(0, 1.45, f"speedup over {CMP} (worse of two flips)", fontsize=9, va="bottom")
 lg.plot([62, 66], [0.5, 0.5], color="black", lw=2); lg.text(67, 0.5, "route change", va="center", fontsize=9)
+lg.text(62, -0.3, "brackets: the route most planes\nin those columns / rows use", va="top", fontsize=8.2, fontstyle="italic")
 
 gm = lambda v: math.exp(sum(map(math.log, v)) / len(v))
 bands = [("$\\leq 256$", 0, 256), ("$257$ - $4096$", 257, 4096), ("$> 4096$", 4097, 1 << 22)]
@@ -115,7 +139,7 @@ for lab, lo, hi in bands:
     v = [x for (i, j), (r, x) in rows.items() if lo <= 2 ** (i + j) <= hi]
     parts.append(f"{lab} pts: {sum(t >= 1 for t in v)}/{len(v)} won, gmean {gm(v):.2f}")
 fig.text(0.13, 0.035, "     ".join(parts), fontsize=9.2)
-fig.text(0.13, 0.008, "2D c2c, interleaved, natural order, out of place, K = 1, against MKL DFTI 2D (out of place)", fontsize=9.5)
+fig.text(0.13, 0.008, f"2D c2c, interleaved, natural order, out of place, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 2D (out of place)", fontsize=9.5)
 
 fig.savefig(f"{OUT}.svg")
 fig.savefig(f"{OUT}.png", dpi=170)

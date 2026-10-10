@@ -11,7 +11,9 @@
  * (2026-10-10): N reals in, the N/2+1 CCE bins out (KFR's CCs format, the
  * layout our r2c writes), out of place, forward; KFR's real DFT takes an
  * even N only. The 1D c2r cell (2026-10-10): the same real plan backward,
- * the N/2+1 CCE bins in, N reals out, unnormalized. */
+ * the N/2+1 CCE bins in, N reals out, unnormalized. The 2D c2c cell
+ * (2026-10-10): one N1 x N2 plane, row-major (N2 contiguous), forward, out
+ * of place. */
 #ifndef VFFT_GAUNTLET_KFR_ARM_H
 #define VFFT_GAUNTLET_KFR_ARM_H
 
@@ -30,6 +32,9 @@ void   kfr_c2c_forward(const void *plan, const double *in, double *out, unsigned
 /* forward, in place on inout (2N doubles) */
 void   kfr_c2c_forward_inplace(const void *plan, double *inout, unsigned char *temp);
 void   kfr_c2c_destroy(void *plan);
+/* the 2D c2c cell: a plan for an N1 x N2 plane, row-major (N2 contiguous); KFR's 2D plan
+ * is the same plan type, so kfr_c2c_temp_size / kfr_c2c_forward / kfr_c2c_destroy serve it */
+void  *kfr_c2c2d_create(int N1, int N2);
 /* the 1D r2c cell: a plan for an even N (NULL for an odd N: KFR's real DFT is even-only) */
 void  *kfr_r2c_create(int N);
 size_t kfr_r2c_temp_size(const void *plan);

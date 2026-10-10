@@ -1805,6 +1805,90 @@ static double k2z_time_mkl(int N1, int N2, int N3, const double *z0, size_t tota
     return best;
 }
 #endif
+#ifdef VFFT_HAS_KFR
+/* the KFR twin of k2z_time_mkl's one-thread path (2026-10-10): KFR's 2D plan,
+ * the same windows, trials, reps and pacing; the 2D cell only (main refuses
+ * --cmp kfr with --mt and with the 3D cell) */
+static double k2z_time_kfr(int N1, int N2, const double *z0, size_t total)
+{
+    void *p = kfr_c2c2d_create(N1, N2);
+    if (!p)
+        return 0;
+    size_t tsz = kfr_c2c_temp_size(p);
+    unsigned char *temp = tsz ? (unsigned char *)alloc_d((tsz + 7) / 8) : NULL;
+    double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
+    memcpy(zi, z0, 2 * total * sizeof(double));
+    for (int w = 0; w < 10; w++)
+        kfr_c2c_forward(p, zi, zo, temp);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int win = 0; win < 2; win++)
+    {
+        if (win)
+        {
+            const double tw0 = vfft_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                kfr_c2c_forward(p, zi, zo, temp);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_now_ns();
+            for (int i = 0; i < reps; i++)
+                kfr_c2c_forward(p, zi, zo, temp);
+            double ns = (vfft_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
+    }
+    free_d(zi);
+    free_d(zo);
+    if (temp) free_d((double *)temp);
+    kfr_c2c_destroy(p);
+    return best;
+}
+
+/* the cross-engine check against KFR's 2D spectrum: max |S - KFR| / max |KFR|,
+ * or -1 when KFR refuses the shape */
+static double k2z_kfr_xerr(int N1, int N2, const double *z0, const double *S, size_t total)
+{
+    void *p = kfr_c2c2d_create(N1, N2);
+    if (!p)
+        return -1;
+    size_t tsz = kfr_c2c_temp_size(p);
+    unsigned char *temp = tsz ? (unsigned char *)alloc_d((tsz + 7) / 8) : NULL;
+    double *zk = alloc_d(2 * total);
+    kfr_c2c_forward(p, z0, zk, temp);
+    double xe = 0.0, xm = 0.0;
+    for (size_t i = 0; i < 2 * total; i++)
+    {
+        double e = fabs(S[i] - zk[i]), m = fabs(zk[i]);
+        if (e > xe) xe = e;
+        if (m > xm) xm = m;
+    }
+    free_d(zk);
+    if (temp) free_d((double *)temp);
+    kfr_c2c_destroy(p);
+    return xm > 0 ? xe / xm : xe;
+}
+#endif
+/* the 2D/3D cell's comparator: MKL, or KFR's 2D plan under --cmp kfr (2026-10-10) */
+static double k2z_time_cmp(int N1, int N2, int N3, const double *z0, size_t total)
+{
+#ifdef VFFT_HAS_KFR
+    if (g_cmp_kfr)
+        return k2z_time_kfr(N1, N2, z0, total);
+#endif
+#ifdef VFFT_HAS_MKL
+    return k2z_time_mkl(N1, N2, N3, z0, total);
+#else
+    (void)N1; (void)N2; (void)N3; (void)z0; (void)total;
+    return 0;
+#endif
+}
 
 static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int flip)
 {   /* N3 = 0: the 2D cell (N2 rides the K argument); N3 > 0: the 3D cell,
@@ -1870,6 +1954,16 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
         if (m > maxmag) maxmag = m;
     }
     double rel = maxmag > 0 ? maxerr / maxmag : maxerr;
+#ifdef VFFT_HAS_KFR
+    if (g_cmp_kfr)
+    {   /* the comparator's spectrum: KFR's 2D plan (2026-10-10); the roundtrip
+         * error stays when KFR refuses the shape */
+        double xr = k2z_kfr_xerr(N1, N2, z0, S, total);
+        if (xr >= 0)
+            rel = xr;
+    }
+    else
+#endif
 #ifdef VFFT_HAS_MKL
     {   /* the correctness column is the CROSS-ENGINE elementwise compare:
          * both engines natural, same input, same spectrum (as --k1nat) */
@@ -1908,7 +2002,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     if (flip)
     {
         if (T > 1) vfft_set_num_threads(1);
-        mns = k2z_time_mkl(N1, N2, N3, z0, total);
+        mns = k2z_time_cmp(N1, N2, N3, z0, total);
         cachebust();
         pace(cool_ms);
         if (T > 1) vfft_set_num_threads(T);
@@ -1929,7 +2023,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
         cachebust();
         pace(cool_ms);
         if (T > 1) vfft_set_num_threads(1);
-        mns = k2z_time_mkl(N1, N2, N3, z0, total);
+        mns = k2z_time_cmp(N1, N2, N3, z0, total);
     }
 #else
     (void)cool_ms;
@@ -5748,9 +5842,9 @@ int main(int argc, char **argv)
     }
     g_oop_mt = (oop && mt);
 #ifdef VFFT_HAS_KFR
-    if (g_cmp_kfr && (mt || twod || il2d || il3d || real2d || r2c || g_k2real || g_k3real || g_real_ip))
-    {   /* the 1D c2c cell and, since 2026-10-10, the 1D real cells (--realfwd / --realbwd; run_real_cell admits an even N, K = 1) */
-        fprintf(stderr, "--cmp kfr: the KFR arm is the 1D c2c cell and the 1D real cells (--realfwd / --realbwd), one thread\n");
+    if (g_cmp_kfr && (mt || twod || il2d || il3d || real2d || r2c || g_k2real || g_k3real || g_real_ip || g_k3nat))
+    {   /* the 1D c2c cell and, since 2026-10-10, the 1D real cells (--realfwd / --realbwd; run_real_cell admits an even N, K = 1) and the 2D c2c cell (--2dilnat) */
+        fprintf(stderr, "--cmp kfr: the KFR arm is the 1D c2c cell, the 2D c2c cell (--2dilnat) and the 1D real cells (--realfwd / --realbwd), one thread\n");
         return 2;
     }
 #endif

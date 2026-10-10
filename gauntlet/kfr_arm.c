@@ -38,6 +38,12 @@ void kfr_c2c_destroy(void *plan)
         kfr_dft_delete_plan_f64((KFR_DFT_PLAN_F64 *)plan);
 }
 
+/* the 2D c2c cell: KFR's 2D plan, row-major, the same plan type as the 1D one */
+void *kfr_c2c2d_create(int N1, int N2)
+{
+    return (N1 < 1 || N2 < 1) ? NULL : (void *)kfr_dft_create_2d_plan_f64((size_t)N1, (size_t)N2);
+}
+
 /* the 1D r2c cell: KFR's real plan in the CCs format (N/2+1 complex out, the CCE layout) */
 void *kfr_r2c_create(int N)
 {
