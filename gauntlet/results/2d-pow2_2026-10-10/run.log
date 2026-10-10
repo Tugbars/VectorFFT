@@ -1,0 +1,19 @@
+2026-10-10 12:19:22 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-10-10 12:19:22 run: 159 cells, contract 2D out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-10 12:19:22 calibrate: 159 cells (0 already done)
+2026-10-10 12:24:58   calibrated 25/159 (4x4096), 336 s elapsed
+2026-10-10 12:30:52   calibrated 50/159 (16x2048), 690 s elapsed
+2026-10-10 12:37:23   calibrated 75/159 (64x1024), 1082 s elapsed
+2026-10-10 12:42:29   calibrated 100/159 (256x512), 1387 s elapsed
+2026-10-10 12:47:28   calibrated 125/159 (1024x256), 1686 s elapsed
+2026-10-10 12:53:44   calibrated 150/159 (4096x1024), 2062 s elapsed
+2026-10-10 12:57:59   calibrated 159/159 (8192x512), 2317 s elapsed
+2026-10-10 12:57:59 bench: 159 cells (0 already benched, 0 not banked -> not benched)
+2026-10-10 12:58:41   benched 25/159 (4x4096), 40 s elapsed
+2026-10-10 12:59:21   benched 50/159 (16x2048), 81 s elapsed
+2026-10-10 13:00:01   benched 75/159 (64x1024), 120 s elapsed
+2026-10-10 13:00:45   benched 100/159 (256x512), 164 s elapsed
+2026-10-10 13:01:44   benched 125/159 (1024x256), 224 s elapsed
+2026-10-10 13:03:09   benched 150/159 (4096x1024), 308 s elapsed
+2026-10-10 13:03:41   benched 159/159 (8192x512), 341 s elapsed
+2026-10-10 13:03:43 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d-pow2_2026-10-10\report_2d.md
