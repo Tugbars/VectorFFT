@@ -628,7 +628,7 @@ def main():
     ap.add_argument("--threads", default="1")
     ap.add_argument("--inplace", action="store_true")
     ap.add_argument("--owned", action="store_true", help="door 2 (2026-10-08): the plan's own plane at the pitch it chooses (owned_buffers = 1), in place; the 2D r2c contract; its own csv suffix _ipo")
-    ap.add_argument("--cmp", choices=["mkl", "kfr", "fftw"], default="mkl", help="the comparator: mkl (default), kfr (a bench built with build.py --kfr; 1D c2c, one thread) or fftw (bound at runtime from vcpkg's fftw3.dll or $VFFT_FFTW_DLL; FFTW_MEASURE; the 1D c2c and the real cells, one thread); its own csv suffix")
+    ap.add_argument("--cmp", choices=["mkl", "kfr", "fftw"], default="mkl", help="the comparator: mkl (default), kfr (a bench built with build.py --kfr; 1D c2c, and 1D r2c / c2r at an even N, one thread) or fftw (bound at runtime from vcpkg's fftw3.dll or $VFFT_FFTW_DLL; FFTW_MEASURE; the 1D c2c and the real cells, one thread); its own csv suffix")
     ap.add_argument("--real", choices=["r2c", "c2r"], help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells, 2D shapes or 3D cubes (2026-10-07); its own csv suffix _r2c / _c2r")
     ap.add_argument("--k", type=int, default=1, help="the batch count of the 1D real cell: K transform-contiguous rows (real rows at pitch N, CCE rows at pitch N+2); suffix _k<K>")
     ap.add_argument("--name", help="run directory name under gauntlet/results/ (default: group_date)")
@@ -658,8 +658,8 @@ def main():
             if "x" in first:
                 dims = first.count("x") + 1
     run = Run(args, dims)
-    if run.cmp == "kfr" and (dims != 1 or run.threads > 1 or run.real):
-        raise SystemExit("--cmp kfr: the KFR arm is the 1D c2c cell at one thread only")
+    if run.cmp == "kfr" and (dims != 1 or run.threads > 1 or run.k > 1 or run.ip):
+        raise SystemExit("--cmp kfr: the KFR arm serves the 1D c2c cell and the 1D r2c / c2r cells (an even N: KFR's real DFT is even-only), K=1, out of place, one thread")
     if run.cmp == "fftw" and (run.threads > 1 or (dims == 3 and not run.real) or (run.ip and not run.real)):
         raise SystemExit("--cmp fftw: the FFTW arm serves the 1D c2c cell and the 1D/2D/3D real cells, out of place, one thread")
     if run.real and run.ip and dims not in (2, 3):

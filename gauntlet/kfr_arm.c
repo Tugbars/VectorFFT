@@ -38,6 +38,33 @@ void kfr_c2c_destroy(void *plan)
         kfr_dft_delete_plan_f64((KFR_DFT_PLAN_F64 *)plan);
 }
 
+/* the 1D r2c cell: KFR's real plan in the CCs format (N/2+1 complex out, the CCE layout) */
+void *kfr_r2c_create(int N)
+{
+    return (N < 2 || (N & 1)) ? NULL : (void *)kfr_dft_real_create_plan_f64((size_t)N, CCs);
+}
+
+size_t kfr_r2c_temp_size(const void *plan)
+{
+    return plan ? kfr_dft_real_get_temp_size_f64((KFR_DFT_REAL_PLAN_F64 *)plan) : 0;
+}
+
+void kfr_r2c_forward(const void *plan, const double *in, double *out, unsigned char *temp)
+{
+    kfr_dft_real_execute_f64((KFR_DFT_REAL_PLAN_F64 *)plan, (kfr_c64 *)out, (const kfr_f64 *)in, temp);
+}
+
+void kfr_c2r_backward(const void *plan, const double *in, double *out, unsigned char *temp)
+{
+    kfr_dft_real_execute_inverse_f64((KFR_DFT_REAL_PLAN_F64 *)plan, (kfr_f64 *)out, (const kfr_c64 *)in, temp);
+}
+
+void kfr_r2c_destroy(void *plan)
+{
+    if (plan)
+        kfr_dft_real_delete_plan_f64((KFR_DFT_REAL_PLAN_F64 *)plan);
+}
+
 const char *kfr_arm_version(void)
 {
     return kfr_version_string();
