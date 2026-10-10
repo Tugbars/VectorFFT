@@ -1,0 +1,7 @@
+2026-10-10 15:05:43 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-10-10 15:05:43 run: 1 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-10 15:05:43 calibrate: 1 cells (0 already done)
+2026-10-10 15:05:46   calibrated 1/1 (64x64x64), 3 s elapsed
+2026-10-10 15:05:46 bench: 1 cells (0 already benched, 0 not banked -> not benched)
+2026-10-10 15:05:49   benched 1/1 (64x64x64), 2 s elapsed
+2026-10-10 15:05:51 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\kfr_smoke_3d_64\report_3d_kfr.md

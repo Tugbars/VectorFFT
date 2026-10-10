@@ -1,0 +1,23 @@
+2026-10-10 15:09:11 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-10-10 15:09:11 run: 1288 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-10 15:09:11 calibrate: 1288 cells (0 already done)
+2026-10-10 15:12:29   calibrated 25/1288 (2x4x4096), 198 s elapsed
+2026-10-10 15:16:52   calibrated 50/1288 (2x16x2048), 461 s elapsed
+2026-10-10 15:22:51   calibrated 75/1288 (2x64x1024), 820 s elapsed
+2026-10-10 15:27:12   calibrated 100/1288 (2x256x512), 1081 s elapsed
+2026-10-10 15:32:10   calibrated 125/1288 (2x1024x512), 1380 s elapsed
+2026-10-10 15:40:18   calibrated 150/1288 (2x8192x16), 1868 s elapsed
+2026-10-10 15:44:51   calibrated 175/1288 (4x4x256), 2140 s elapsed
+2026-10-10 15:48:33   calibrated 200/1288 (4x16x128), 2363 s elapsed
+2026-10-10 15:55:03   calibrated 225/1288 (4x64x64), 2753 s elapsed
+2026-10-10 15:59:48   calibrated 250/1288 (4x256x32), 3037 s elapsed
+2026-10-10 16:04:04   calibrated 275/1288 (4x1024x128), 3294 s elapsed
+2026-10-10 16:12:19   calibrated 300/1288 (4x8192x32), 3788 s elapsed
+2026-10-10 16:16:05   calibrated 325/1288 (8x4x1024), 4014 s elapsed
+2026-10-10 16:20:26   calibrated 350/1288 (8x16x512), 4276 s elapsed
+2026-10-10 16:26:33   calibrated 375/1288 (8x64x256), 4642 s elapsed
+2026-10-10 16:30:58   calibrated 400/1288 (8x256x256), 4907 s elapsed
+2026-10-10 16:34:58   calibrated 425/1288 (8x2048x8), 5147 s elapsed
+2026-10-10 16:42:36   calibrated 450/1288 (16x2x128), 5605 s elapsed
+2026-10-10 16:47:18   calibrated 475/1288 (16x8x64), 5887 s elapsed
+2026-10-10 16:52:40   calibrated 500/1288 (16x32x32), 6209 s elapsed

@@ -4,13 +4,14 @@ VectorFFT against [KFR](https://www.kfr.dev/), transform by transform. Each sect
 contract: a throughput plot, a short reading of it, and the speedups by length band and
 by family. Every run is a [gauntlet](../../gauntlet/) record
 under [`gauntlet/results/`](../../gauntlet/results/) (csv, calibration log, the wisdom it
-used), and the plots are drawn from those csv files by
-[`src/tools/plots/gen_gflops.py`](../../src/tools/plots/gen_gflops.py).
+used). The 1D plots are drawn from those csv files by
+[`src/tools/plots/gen_gflops.py`](../../src/tools/plots/gen_gflops.py), the 2D matrix from
+the run's report by [`src/tools/plots/gen_2d_pow2.py`](../../src/tools/plots/gen_2d_pow2.py).
 
 > **Platform:** Intel Core i9-14900KF (P-core, AVX2), DDR5, GCC 15.2, single thread  
 > **Competitor:** KFR 7.1.0, its official Windows release through its C API (built by KFR, AVX2 dispatch)  
-> **Method:** one process per length; both engines timed in two arms with the engine
-> order flipped; a control length re-timed every 100 lengths; every speedup is KFR's
+> **Method:** one process per cell (a length or a plane); both engines timed in two arms
+> with the engine order flipped; a control cell re-timed every 100 cells; every speedup is KFR's
 > time over VectorFFT's in the **worse** of the two arms
 
 ---
@@ -112,3 +113,27 @@ output was checked against it before each length was timed; the control length
 | Powers of two | 22 | 1.22x | 77% |
 | Largest prime factor ≤ 47 | 546 | 2.44x | 100% |
 | Largest prime factor ≥ 53 | 487 | 0.97x | 42% |
+
+---
+
+## 2D c2c, every power-of-two plane up to 4M points
+
+> **Contract:** 2D complex-to-complex FP64, interleaved, natural order, out of place, K = 1; KFR's 2D plan  
+> **Cells:** every plane N1 x N2 with each side a power of two from 2 to 8,192 and at most 2^22 points — 159 planes  
+> **Record:** [`kfr_2d_pow2`](../../gauntlet/results/kfr_2d_pow2/) (2026-10-10)
+
+![2D speedup matrix, VectorFFT vs KFR, every 2^a x 2^b plane up to 4M points](../../src/tools/plots/vectorfft-kfr-2d-c2c.svg)
+
+One cell per plane, the speedup over KFR in the worse of the two engine orders; a heavy
+rule marks where the route changes, and the brackets name the route most planes in those
+columns or rows use. VectorFFT is ahead at all 159 planes, median 2.49x. KFR comes
+closest on the square planes from 128x128 to 1024x1024 (1.03-1.16x); the thin planes,
+with a side of 2 to 8, run 3 to 19 times faster. Every output agrees with KFR's to 3.0e-15.
+
+| Plane size | Cells | Median speedup | At or above parity | Best |
+|---|---|---|---|---|
+| up to 256 points | 28 | 9.68x | 100% | 19.73x (16x2) |
+| 257..4,096 | 38 | 3.41x | 100% | 17.15x (2x256) |
+| 4,097..65,536 | 48 | 2.42x | 100% | 9.53x (2x4096) |
+| 65,537..4M | 45 | 1.73x | 100% | 2.67x (16x8192) |
+| **all, 159 planes** | **159** | **2.49x** | **100%** | 19.73x (16x2) |
