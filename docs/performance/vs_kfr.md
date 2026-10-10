@@ -76,3 +76,39 @@ length (N = 4,096) read 1.20-1.21x throughout.
 | Powers of two | 7 | 1.10x | 86% |
 | Largest prime factor ≤ 47 | 838 | 2.45x | 100% |
 | Largest prime factor ≥ 53 | 1,172 | 1.02x | 69% |
+
+---
+
+## 1D c2r, the even lengths with a c2r plan in wisdom (N from 4 to 8,388,608)
+
+> **Contract:** complex-to-real FP64, interleaved CCE input (N/2 + 1 bins), N reals out, unnormalized, out of place, K = 1; even N only, as r2c  
+> **Cells:** every even length that has a c2r plan in the shipped wisdom — 1,055 transforms: 30 below 64, 993 of the 993 even lengths from 64 to 2,048, 21 from 2,050 to 4,096, and the powers of two from 8,192 to 2^23  
+> **Record:** [`kfr_c2r_even_banked`](../../gauntlet/results/kfr_c2r_even_banked/) (2026-10-10)
+
+![Throughput, VectorFFT vs KFR, 1D c2r, the even lengths from 4 to 8388608 with a c2r plan in wisdom](../../src/tools/plots/vectorfft-kfr-c2r.svg)
+
+The two real directions read the same: on the even lengths from 64 to 4,096 that both
+runs cover, c2r's median speedup is 1.70x and r2c's 1.66x. Lengths whose largest prime
+factor is at most 47 run 2.44x faster than KFR at the median, every one of them ahead;
+with a factor of 53 or more KFR is slightly ahead at the median (0.97x) and at more than
+half of those lengths. Among the powers of two, VectorFFT leads from 8,192 to 2^19
+(1.18-1.44x), the two are level at 256 and 512, and KFR leads at 2^20, 2^21 and 2^22
+(0.84-0.95x). Every output agrees with N times the input to 5.8e-15, and KFR's own c2r
+output was checked against it before each length was timed; the control length
+(N = 4,096) read 1.15-1.16x throughout.
+
+| Lengths | Cells | Median speedup | At or above parity | Best |
+|---|---|---|---|---|
+| 4..62 | 30 | 1.61x | 100% | 4.55x (N=48) |
+| 64..256 | 97 | 1.79x | 99% | 4.16x (N=176) |
+| 257..1,024 | 384 | 1.94x | 82% | 4.26x (N=352) |
+| 1,025..2,048 | 512 | 1.34x | 58% | 4.09x (N=1536) |
+| 2,050..4,096 | 21 | 1.89x | 100% | 3.95x (N=2304) |
+| 8,192..8,388,608 | 11 | 1.20x | 73% | 1.44x (N=32768) |
+| **all** | **1,055** | **1.67x** | **73%** | 4.55x (N=48) |
+
+| Family | Cells | Median speedup | At or above parity |
+|---|---|---|---|
+| Powers of two | 22 | 1.22x | 77% |
+| Largest prime factor ≤ 47 | 546 | 2.44x | 100% |
+| Largest prime factor ≥ 53 | 487 | 0.97x | 42% |
