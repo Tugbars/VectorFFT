@@ -44,6 +44,12 @@ void *kfr_c2c2d_create(int N1, int N2)
     return (N1 < 1 || N2 < 1) ? NULL : (void *)kfr_dft_create_2d_plan_f64((size_t)N1, (size_t)N2);
 }
 
+/* the 3D c2c cell: KFR's 3D plan, row-major, the same plan type */
+void *kfr_c2c3d_create(int N1, int N2, int N3)
+{
+    return (N1 < 1 || N2 < 1 || N3 < 1) ? NULL : (void *)kfr_dft_create_3d_plan_f64((size_t)N1, (size_t)N2, (size_t)N3);
+}
+
 /* the 1D r2c cell: KFR's real plan in the CCs format (N/2+1 complex out, the CCE layout) */
 void *kfr_r2c_create(int N)
 {
