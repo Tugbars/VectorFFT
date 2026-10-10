@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Throughput in GFLOPS, VectorFFT vs MKL, from the gauntlet CSV.
 
-    python3 gen_gflops.py sweep.csv [more.csv ...] [--out name.svg] [--logy]
+    python3 gen_gflops.py sweep.csv [more.csv ...] [--out name.svg] [--logy] [--cmp NAME]
 
 Input rows:  N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
+
+--cmp names the comparator the mkl_* columns hold (default MKL; KFR for a
+--cmp kfr gauntlet run). The transform comes from the plan column: z:r2c is
+the real cell, whose GFLOPS count is 2.5 N K log2(N).
 
 Several CSVs concatenate into one series: the 2..2048 and the 2049..4096
 gauntlets together make the full 2..4096 graph. vfft_gflops is read directly;
@@ -27,7 +31,8 @@ CMR, CMB = FD + "cmr10.ttf", FD + "cmb10.ttf"
 args = sys.argv[1:]
 out = args[args.index("--out") + 1] if "--out" in args else "vectorfft-gflops.svg"
 LOGY = "--logy" in args
-files = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] != "--out")]
+CMP = args[args.index("--cmp") + 1] if "--cmp" in args else "MKL"
+files = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] not in ("--out", "--cmp"))]
 if not files: sys.exit(__doc__)
 
 rows = []
@@ -173,13 +178,14 @@ r0 = rows[0]
 lay = "interleaved" if r0[2].startswith("z") else "split"
 ordr = "natural" if r0[3].startswith("nat") else "scrambled"
 plc = "out-of-place" if r0[3].endswith("oop") else "in-place"
-tw = put(f"FP64 1D c2c, {lay}, {ordr} order, {plc}, K = {r0[1]}", 18, x=X0 + 16, baseline=Y0 + 30, fname=CMB)
+xform = "r2c" if r0[2].endswith("r2c") else "c2c"
+tw = put(f"FP64 1D {xform}, {lay}, {ordr} order, {plc}, K = {r0[1]}", 18, x=X0 + 16, baseline=Y0 + 30, fname=CMB)
 E.append(f'<rect x="{X0+4}" y="{Y0+2}" width="{tw+24}" height="40" fill="{PAPER}" stroke="{INK}" stroke-width="2"/>')
 
 lx, ly = X0 + 30, Y0 + 60
 E.append(f'<rect x="{lx-12}" y="{ly-6}" width="186" height="64" fill="{PAPER}" stroke="{INK}" stroke-width="2"/>')
 line(lx - 4, ly + 12, lx + 16, ly + 12, 2.4, col=VF); dot(lx + 6, ly + 12, 4.6, VF); put("VectorFFT", 16, x=lx + 22, baseline=ly + 17, fname=CMR)
-line(lx - 4, ly + 38, lx + 16, ly + 38, 2.4, col=MK); dot(lx + 6, ly + 38, 4.6, MK); put("MKL", 16, x=lx + 22, baseline=ly + 43, fname=CMR)
+line(lx - 4, ly + 38, lx + 16, ly + 38, 2.4, col=MK); dot(lx + 6, ly + 38, 4.6, MK); put(CMP, 16, x=lx + 22, baseline=ly + 43, fname=CMR)
 
 # the speedup per cell is the gauntlet's: MKL time over ours, the WORSE of the
 # two engine orders; the GFLOPS summary is over the POWERS OF TWO in the
@@ -187,14 +193,14 @@ line(lx - 4, ly + 38, lx + 16, ly + 38, 2.4, col=MK); dot(lx + 6, ly + 38, 4.6, 
 worst = {n: min(r) for n, r in byR.items()}
 med_all = statistics.median(worst.values())
 p2 = [p for p in pts if p[0] & (p[0] - 1) == 0]
-cap1 = (f"GFLOPS = 5 N K log2(N) flops over wall time, the same count for both engines; {len(pts):,} sizes, N = {nmin:,}..{nmax:,}, "
+cap1 = (f"GFLOPS = {'2.5' if xform == 'r2c' else '5'} N K log2(N) flops over wall time, the same count for both engines; {len(pts):,} sizes, N = {nmin:,}..{nmax:,}, "
         f"each the median of two order-flipped arms, joined in N.")
-cap2 = f"Median speedup over all sizes x{med_all:.2f} (MKL time over VectorFFT time, the worse of the two orders)."
+cap2 = f"Median speedup over all sizes x{med_all:.2f} ({CMP} time over VectorFFT time, the worse of the two orders)."
 if p2:
     mv = statistics.median(v for _, v, _ in p2); mm = statistics.median(m for _, _, m in p2)
     mp = statistics.median(worst[n] for n, _, _ in p2)
     pk = max(p2, key=lambda t: t[1])
-    cap2 += (f" Pure powers of two ({len(p2)} cells, {p2[0][0]:,}..{p2[-1][0]:,}): VectorFFT {mv:.1f} vs MKL {mm:.1f} GFLOPS median, "
+    cap2 += (f" Pure powers of two ({len(p2)} cells, {p2[0][0]:,}..{p2[-1][0]:,}): VectorFFT {mv:.1f} vs {CMP} {mm:.1f} GFLOPS median, "
              f"x{mp:.2f}; peak {pk[1]:.0f} GFLOPS at N = {pk[0]:,}.")
 else:
     mv = mm = mp = float("nan")
@@ -203,10 +209,10 @@ for cap, base in ((cap1, H - 42), (cap2, H - 20)):
     while cs > 9 and mpath(cap, cs, CMR)[2] - mpath(cap, cs, CMR)[1] > W - 60: cs -= 0.5
     put(cap, cs, cx=W / 2, baseline=base, fname=CMR)
 
-svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" role="img" aria-label="Throughput in GFLOPS of VectorFFT and MKL per transform length">
+svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" role="img" aria-label="Throughput in GFLOPS of VectorFFT and {CMP} per transform length">
 <rect width="{W}" height="{H}" fill="{PAPER}"/>
 {"".join(E)}
 {"".join(L)}
 </svg>'''
 open(out, "w").write(svg)
-print("ok", out, len(pts), "sizes", f"N = {nmin}..{nmax}", f"median speedup x{med_all:.2f}; pow2 ({len(p2)} cells) VF {mv:.1f}, MKL {mm:.1f} GFLOPS, x{mp:.2f}")
+print("ok", out, len(pts), "sizes", f"N = {nmin}..{nmax}", f"median speedup x{med_all:.2f}; pow2 ({len(p2)} cells) VF {mv:.1f}, {CMP} {mm:.1f} GFLOPS, x{mp:.2f}")

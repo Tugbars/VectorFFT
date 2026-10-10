@@ -1332,6 +1332,29 @@ static DFTI_DESCRIPTOR_HANDLE real_mk_desc(const real_geo_t *g, int c2r, int ip)
 static int real_ref_spectrum(const real_geo_t *g, const double *x, double *ref)
 {
     const size_t rn = g->K * g->rp + 2, cn = g->K * g->cp;
+#ifdef VFFT_HAS_KFR
+    if (g_cmp_kfr)
+    {   /* --cmp kfr (2026-10-10): KFR's own r2c spectrum, the 1D K=1 cell (run_real_cell admits no other) */
+        void *p = kfr_r2c_create(g->N1);
+        size_t tsz;
+        unsigned char *temp;
+        double *xi, *zo;
+        if (!p)
+            return 0;
+        tsz = kfr_r2c_temp_size(p);
+        temp = tsz ? (unsigned char *)alloc_d((tsz + 7) / 8) : NULL;
+        xi = alloc_d(rn);
+        zo = alloc_d(cn);
+        memcpy(xi, x, rn * sizeof(double));
+        kfr_r2c_forward(p, xi, zo, temp);
+        memcpy(ref, zo, cn * sizeof(double));
+        free_d(xi);
+        free_d(zo);
+        if (temp) free_d((double *)temp);
+        kfr_r2c_destroy(p);
+        return 1;
+    }
+#endif
     if (g_cmp_fftw)
     {
         if (!fftw_arm_bind())
@@ -1372,11 +1395,66 @@ static int real_ref_spectrum(const real_geo_t *g, const double *x, double *ref)
 /* the comparator's timed arm: its own plan, built and destroyed outside the
  * timed windows; the input seeded once (a dense transform is data-oblivious
  * after FFTW's c2r has consumed it) */
+#ifdef VFFT_HAS_KFR
+typedef struct { void *p; const double *in; double *out; unsigned char *temp; int c2r; } real_kfr_t;
+static void real_kfr_body(void *v)
+{
+    real_kfr_t *c = (real_kfr_t *)v;
+    if (c->c2r)
+        kfr_c2r_backward(c->p, c->in, c->out, c->temp);
+    else
+        kfr_r2c_forward(c->p, c->in, c->out, c->temp);
+}
+#endif
 static double real_time_cmp(const real_geo_t *g, int c2r, const double *x, const double *ref)
 {
     const size_t rn = g->K * g->rp + 2, cn = g->K * g->cp, tot = g->pts / 2;
     /* --realip: x is the padded plane and the arm's one plane holds it (a == b) */
     const size_t an = g_real_ip ? cn : (c2r ? cn : rn), bn = c2r ? rn : cn;
+#ifdef VFFT_HAS_KFR
+    if (g_cmp_kfr)
+    {   /* --cmp kfr (2026-10-10): KFR's real plan, built and destroyed outside the timed windows;
+         * r2c from the reals, c2r (the same plan backward) from the CCE spectrum */
+        real_kfr_t c;
+        size_t tsz;
+        double ns;
+        c.p = kfr_r2c_create(g->N1);
+        if (!c.p)
+            return 0;
+        c.c2r = c2r;
+        tsz = kfr_r2c_temp_size(c.p);
+        c.temp = tsz ? (unsigned char *)alloc_d((tsz + 7) / 8) : NULL;
+        {
+            double *xi = alloc_d(c2r ? cn : rn);
+            memcpy(xi, c2r ? ref : x, (c2r ? cn : rn) * sizeof(double));
+            c.in = xi;
+            c.out = alloc_d(c2r ? rn : cn);
+            if (c2r)
+            {   /* the comparator does the transform it claims: once, before timing, KFR's c2r of the
+                 * spectrum against N x (unnormalized, as ours) */
+                double w = 0, m = 0;
+                size_t i;
+                real_kfr_body(&c);
+                for (i = 0; i < (size_t)g->N1; i++)
+                {
+                    const double d = fabs(c.out[i] - (double)g->N1 * x[i]), q = fabs(x[i]);
+                    if (d > w) w = d;
+                    if (q > m) m = q;
+                }
+                if (!(m > 0 && w / ((double)g->N1 * m) < 1e-10))
+                    printf("         KFR c2r N=%d: its output disagrees with N x (rel %.2e) -- the timing stands, the comparator is suspect\n",
+                           g->N1, m > 0 ? w / ((double)g->N1 * m) : w);
+                memcpy(xi, ref, cn * sizeof(double));
+            }
+            ns = real_time_body(real_kfr_body, &c, tot);
+            free_d(xi);
+        }
+        free_d(c.out);
+        if (c.temp) free_d((double *)c.temp);
+        kfr_r2c_destroy(c.p);
+        return ns;
+    }
+#endif
     if (g_cmp_fftw)
     {
         if (!fftw_arm_bind())
@@ -1433,6 +1511,13 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         printf("%-8s %-16s   SKIP (in place: the 2D and 3D cells)\n", shape, plan_s);
         return;
     }
+#ifdef VFFT_HAS_KFR
+    if (g_cmp_kfr && (g->nd != 1 || g->K != 1 || g_real_ip || (g->N1 & 1)))
+    {   /* --cmp kfr (2026-10-10): the 1D r2c and c2r cells, K = 1, out of place, an even N (KFR's real DFT is even-only) */
+        printf("%-8s %-16s   SKIP (--cmp kfr: the 1D real cell at an even N, K=1, out of place)\n", shape, plan_s);
+        return;
+    }
+#endif
     if (!g_k1noop_mt) bench_pin_one_thread();   /* --mt: the threaded cell's two-team protocol (main) */
     vfft_wisdom *W = k1z_bundle();
     if (!W)
@@ -5663,9 +5748,9 @@ int main(int argc, char **argv)
     }
     g_oop_mt = (oop && mt);
 #ifdef VFFT_HAS_KFR
-    if (g_cmp_kfr && (mt || twod || il2d || il3d || real2d || r2c || g_real))
-    {
-        fprintf(stderr, "--cmp kfr: the KFR arm is the 1D c2c cell at one thread only\n");
+    if (g_cmp_kfr && (mt || twod || il2d || il3d || real2d || r2c || g_k2real || g_k3real || g_real_ip))
+    {   /* the 1D c2c cell and, since 2026-10-10, the 1D real cells (--realfwd / --realbwd; run_real_cell admits an even N, K = 1) */
+        fprintf(stderr, "--cmp kfr: the KFR arm is the 1D c2c cell and the 1D real cells (--realfwd / --realbwd), one thread\n");
         return 2;
     }
 #endif
