@@ -7,7 +7,8 @@ usage:  python3 gen_2d_pow2.py <gauntlet_report.txt> [output_prefix]
         -> <output_prefix>.svg and <output_prefix>.png  (default prefix: vectorfft-2d-pow2)
 
 Reads the "every shape" table of the gauntlet report and plots the x column (the report's
-worse-of-two-flips speedup). Needs only matplotlib, which ships the cmr10 fonts."""
+worse-of-two-flips speedup) of every benched plane, raced or replayed from wisdom, so a run
+needs no --calibrate. Needs only matplotlib, which ships the cmr10 fonts."""
 import re, math, sys
 import matplotlib
 matplotlib.use("Agg")
@@ -20,7 +21,7 @@ SRC = sys.argv[1]
 OUT = sys.argv[2] if len(sys.argv) > 2 else "vectorfft-2d-pow2"
 rows = {}
 for l in open(SRC):
-    m = re.match(r"\s+(\d+)x(\d+)\s+\S+\s+(\S+)\s+raced\s+(\d+)\s+(\d+)\s+([\d.]+)", l)
+    m = re.match(r"\s+(\d+)x(\d+)\s+\S+\s+(\S+)\s+(?:raced|replayed)\s+(\d+)\s+(\d+)\s+([\d.]+)", l)   # a replayed plane is a measured cell too: no --calibrate needed
     if m:
         a, b, r, o, c, x = m.groups()
         rows[(int(math.log2(int(a))), int(math.log2(int(b))))] = (r, float(x))
