@@ -182,10 +182,17 @@ struct vfft_plan_s
      * binds the engine's entry here (_vfft_k1_bind_exec) and vfft_execute
      * calls it right after the signature check: no route switch, no engine
      * probing, no placement or layout branch per call. Returns 0 when
-     * served; nonzero = fall through to the general dispatch (the il2p
-     * backward's unresolvable arm keeps its convert-or-warn path there).
+     * served; nonzero = fall through to the general dispatch (the 2D real
+     * forms on an aliased call, which the general path names).
      * NULL = the general dispatch (batches, 2D/3D, the cascade, split). */
     int (*k1_exec)(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);
+    /* THE LEAN DOOR'S EXECUTOR, per direction (2026-10-11): set when the bound
+     * executor never declines -- every 1D c2c and 1D real executor -- to
+     * k1_exec itself, or to its per-direction form (mono: the kernel call
+     * alone, no direction branch). vfft_execute jumps into it after the fast
+     * path's compares and keeps no frame of its own. NULL = the full door
+     * (the 2D real forms, which can decline). */
+    int (*k1_go[2])(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);
     /* TRANSFORM-CONTIGUOUS batch (config.batch_geom, 1D C2C interleaved,
      * K>1): this handle is a thin WRAPPER — `tcb` is a fully-built K=1
      * handle and execute simply runs it K times at 2*N-double strides.

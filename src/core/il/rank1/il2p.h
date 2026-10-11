@@ -1369,6 +1369,12 @@ static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
     if (vfft_il2p_execute_bwd_t2t(p, zin, zout) == 0) return 0;
     return vfft_il2p_execute_bwd_fdiag(p, zin, zout);
 }
+/* 1 when vfft_il2p_execute_bwd resolves on this plan (one of its two arms has
+ * its kernels), so it never returns -1 */
+static inline int vfft_il2p_bwd_resolves(const vfft_il2p_plan_t *p)
+{
+    return (p->t2t_b && p->n1_b_r2) || p->n1_b;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
  * il3p — the 3-STAGE pure-IL chain: N = R2 · A · B (R1 = A·B)
