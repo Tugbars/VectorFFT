@@ -179,7 +179,8 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
 
 /* ── THE PRIME CELL'S INNER, RACED ──
  * A prime N is a convolution done with an FFT of length M (Rader: N - 1;
- * Bluestein: the next power of two >= 2N - 1). The prime cell RACES its
+ * Bluestein: any even M >= 2N - 1 -- the next power of two and the smallest
+ * smooth sizes, vfft_policy_ilprime_blue_m). The prime cell RACES its
  * inner rather than borrowing M's own verdict (M standalone is not M inside
  * a convolution, and racing M's cell nested inside N's create is what
  * _k1_il_dp_busy forbids): every buildable (method, inner) pair, built
@@ -329,6 +330,16 @@ static int _ilprime_inner_cands(int M, _ilprime_inner_desc_t *out, int max)
     return n;
 }
 
+/* the length an inner descriptor transforms: the product of its shape (Bluestein's M, which the
+ * banked shape carries, so a row replays at the size it was raced at) */
+static int _ilprime_desc_len(const _ilprime_inner_desc_t *d)
+{
+    int q, m = 1;
+    if (d->kind == 1) return d->R1 * d->R2;
+    if (d->kind == 2) return d->cR2 * d->cA * d->cB;
+    for (q = 0; q < d->ztn; q++) m *= d->zt[q];
+    return d->ztn ? m : 0;
+}
 /* build the prime plan for one (method, inner); a descriptor that cannot
  * build discards the plan the structural fallback would have served */
 static vfft_ilprime_plan_t *_ilprime_build_with(int N, int rader, _ilprime_inner_desc_t *d)
@@ -336,7 +347,7 @@ static vfft_ilprime_plan_t *_ilprime_build_with(int N, int rader, _ilprime_inner
     vfft_ilprime_plan_t *p;
     _ilprime_inner_provider = _ilprime_inner_from_desc;
     _ilprime_inner_provider_ctx = d;
-    p = rader ? _ilprime_create_rader(N) : _ilprime_create_bluestein(N);
+    p = rader ? _ilprime_create_rader(N) : _ilprime_create_bluestein_m(N, _ilprime_desc_len(d));
     _ilprime_inner_provider = 0;
     _ilprime_inner_provider_ctx = 0;
     if (p && d->failed) { vfft_ilprime_destroy(p); p = 0; }
@@ -355,7 +366,7 @@ static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, double *zi, 
     _ilprime_iarm_t ctx[VFFT_RACE_MAX_ARMS];
     vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
     double ns[VFFT_RACE_MAX_ARMS];
-    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 1, NULL, NULL, 1 };   /* min-of-3, alternated, one warm pass */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+    vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 1, NULL, NULL, 1 };   /* min-of-3, alternated, one warm pass */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
     int a, w = 0;
     if (np <= 1) return 0;
     for (a = 0; a < np; a++)
@@ -364,6 +375,18 @@ static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, double *zi, 
         arms[a].name = plans[a]->method == 1 ? "rader" : "bluestein";
         arms[a].run = _ilprime_iarm_run;
         arms[a].ctx = &ctx[a];
+    }
+    {   /* THE SAMPLE'S REPS: vfft_now_ns reads a 100 ns counter on Windows, so one call of a short
+         * convolution (0.5-5 us) is a few ticks; a sample is ~0.3 ms of executes from one timed call,
+         * as the 2D races size theirs (_il2d_race_reps). The arms run zi -> zo: zi never changes. */
+        double t0, est;
+        _ilprime_iarm_run(&ctx[0]);
+        t0 = vfft_now_ns();
+        _ilprime_iarm_run(&ctx[0]);
+        est = vfft_now_ns() - t0;
+        proto.reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
+        if (proto.reps > 4096) proto.reps = 4096;
+        if (proto.reps < 1) proto.reps = 1;
     }
     vfft_race_run(&proto, arms, np, ns);
     for (a = 1; a < np; a++)
@@ -440,16 +463,19 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
             if (rader && !vfft_is_prime(N)) continue;
             if (pin_m && pin_m != (rader ? 1 : 2)) continue;   /* the env pin: that method's pool only */
             static _ilprime_inner_desc_t pool[_ILPR_MAX_CANDS];   /* off the stack */
-            int M, n, q;
+            int Ms[1 + VFFT_POLICY_ILPRIME_SMOOTH_M], nM, k, n, q;
             /* The banked method is NOT a filter here: reaching this point
              * means the row could not be replayed, so its method is a
              * preference, not a measurement of what this build can do.
              * A verdict that cannot be built is a miss; a miss races. */
-            if (rader) M = N - 1;
-            else { M = 16; while (M < 2 * N - 1) M <<= 1; }
-            n = _ilprime_inner_cands(M, pool, _ILPR_MAX_CANDS - nc);
-            ncm[mi] = n;   /* this method's pool: zero means it never raced */
-            for (q = 0; q < n; q++) { cands[nc].rader = rader; cands[nc].d = pool[q]; nc++; }
+            if (rader) { Ms[0] = N - 1; nM = 1; }
+            else nM = vfft_policy_ilprime_blue_m(N, Ms, 1 + VFFT_POLICY_ILPRIME_SMOOTH_M);   /* the pow2 and the smallest smooth sizes */
+            for (k = 0; k < nM; k++)
+            {
+                n = _ilprime_inner_cands(Ms[k], pool, _ILPR_MAX_CANDS - nc);
+                ncm[mi] += n;   /* this method's pool: zero means it never raced */
+                for (q = 0; q < n; q++) { cands[nc].rader = rader; cands[nc].d = pool[q]; nc++; }
+            }
         }
         if (nc == 0)
             return 0;   /* nothing to build: nothing to serve, nothing to fall back to */

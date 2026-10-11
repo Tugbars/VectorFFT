@@ -1,0 +1,20 @@
+2026-10-11 15:55:02 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-10-11 15:55:02 run: 583 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-11 15:55:02 calibrate: 583 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-10-11 15:55:32   calibrated 25/583 (293), 29 s elapsed
+2026-10-11 15:56:00   calibrated 50/583 (381), 58 s elapsed
+2026-10-11 15:56:28   calibrated 75/583 (461), 85 s elapsed
+2026-10-11 15:56:59   calibrated 100/583 (536), 116 s elapsed
+2026-10-11 15:57:37   calibrated 125/583 (596), 154 s elapsed
+2026-10-11 15:58:15   calibrated 150/583 (654), 192 s elapsed
+2026-10-11 15:58:52   calibrated 175/583 (718), 229 s elapsed
+2026-10-11 15:59:29   calibrated 200/583 (773), 267 s elapsed
+2026-10-11 16:00:06   calibrated 225/583 (831), 304 s elapsed
+2026-10-11 16:00:44   calibrated 250/583 (892), 341 s elapsed
+2026-10-11 16:01:21   calibrated 275/583 (942), 378 s elapsed
+2026-10-11 16:01:58   calibrated 300/583 (1002), 416 s elapsed
+2026-10-11 16:02:45   calibrated 325/583 (1097), 462 s elapsed
+2026-10-11 16:03:30   calibrated 350/583 (1342), 507 s elapsed
+2026-10-11 16:04:18   calibrated 375/583 (1651), 556 s elapsed
+2026-10-11 16:05:06   calibrated 400/583 (2124), 604 s elapsed
+2026-10-11 16:05:58   calibrated 425/583 (2279), 656 s elapsed

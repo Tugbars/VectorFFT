@@ -121,6 +121,35 @@ static inline int vfft_policy_prime_cell(int N)
     return m > 1; /* what is left is a product of primes past the chain radices */
 }
 
+/* THE BLUESTEIN INNER SIZES the prime cell races: the next power of two at or past 2N - 1, and
+ * the VFFT_POLICY_ILPRIME_SMOOTH_M smallest EVEN 7-smooth sizes between 2N - 1 and it. The
+ * convolution needs only M >= 2N - 1, and the power of two can cost up to twice the inner work
+ * of the smallest smooth size (N = 530: 2048 against 1120; 2135: 8192 against 4320). Even: the
+ * packed pointwise multiply runs in pairs. The pool, never the pick: every size's inners race on
+ * the whole convolution (k1_commit.h). Returns the count, the power of two first. */
+#define VFFT_POLICY_ILPRIME_SMOOTH_M 3
+static inline int vfft_policy_ilprime_blue_m(int N, int *out, int max)
+{
+    int n = 0, pow2 = 16, m;
+    while (pow2 < 2 * N - 1)
+        pow2 <<= 1;
+    if (n < max)
+        out[n++] = pow2;
+    for (m = 2 * N - 1; m < pow2 && n < max && n < 1 + VFFT_POLICY_ILPRIME_SMOOTH_M; m++)
+    {
+        int r = m;
+        if (m & 1)
+            continue;
+        while (r % 2 == 0) r /= 2;
+        while (r % 3 == 0) r /= 3;
+        while (r % 5 == 0) r /= 5;
+        while (r % 7 == 0) r /= 7;
+        if (r == 1)
+            out[n++] = m;
+    }
+    return n;
+}
+
 typedef enum
 {
     VFFT_FAM_MONO = 0, /* the solo kernels (one call, every registry form) */
