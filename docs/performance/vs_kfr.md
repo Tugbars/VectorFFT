@@ -6,11 +6,12 @@ by family. Every run is a [gauntlet](../../gauntlet/) record
 under [`gauntlet/results/`](../../gauntlet/results/) (csv, calibration log, the wisdom it
 used). The 1D plots are drawn from those csv files by
 [`src/tools/plots/gen_gflops.py`](../../src/tools/plots/gen_gflops.py), the 2D matrix from
-the run's report by [`src/tools/plots/gen_2d_pow2.py`](../../src/tools/plots/gen_2d_pow2.py).
+the run's report by [`src/tools/plots/gen_2d_pow2.py`](../../src/tools/plots/gen_2d_pow2.py),
+the 3D matrices from the csv by [`src/tools/plots/gen_3d_pow2.py`](../../src/tools/plots/gen_3d_pow2.py).
 
 > **Platform:** Intel Core i9-14900KF (P-core, AVX2), DDR5, GCC 15.2, single thread  
 > **Competitor:** KFR 7.1.0, its official Windows release through its C API (built by KFR, AVX2 dispatch)  
-> **Method:** one process per cell (a length or a plane); both engines timed in two arms
+> **Method:** one process per cell (a length, a plane or a volume); both engines timed in two arms
 > with the engine order flipped; a control cell re-timed every 100 cells; every speedup is KFR's
 > time over VectorFFT's in the **worse** of the two arms
 
@@ -137,3 +138,28 @@ with a side of 2 to 8, run 3 to 19 times faster. Every output agrees with KFR's 
 | 4,097..65,536 | 48 | 2.42x | 100% | 9.53x (2x4096) |
 | 65,537..4M | 45 | 1.73x | 100% | 2.67x (16x8192) |
 | **all, 159 planes** | **159** | **2.49x** | **100%** | 19.73x (16x2) |
+
+---
+
+## 3D c2c, every power-of-two volume up to 4M points
+
+> **Contract:** 3D complex-to-complex FP64, interleaved, natural order, out of place, K = 1; KFR's 3D plan  
+> **Cells:** every volume N1 x N2 x N3 with each side a power of two from 2 to 8,192 and at most 2^22 points — 1,288 volumes  
+> **Record:** [`kfr_3d_pow2`](../../gauntlet/results/kfr_3d_pow2/) (2026-10-11)
+
+![3D speedup matrices, VectorFFT vs KFR, one N2 x N3 matrix per N1](../../src/tools/plots/vectorfft-kfr-3d-c2c.svg)
+
+One matrix per N1; each cell is the speedup over KFR in the worse of the two engine orders,
+and a cell slower than KFR would be outlined. VectorFFT is ahead at all 1,288 volumes,
+median 3.15x, and at 2x or more on most of them. KFR comes closest on the cubes from
+16 x 16 x 16 to 128 x 128 x 128 (1.51-1.86x); volumes with two small sides run 10 to 19
+times faster. Every output agrees with KFR's to 7.7e-15, and the control volume
+(64 x 64 x 64) read 1.57-1.73x throughout.
+
+| Volume | Cells | Median speedup | At or above parity | Best |
+|---|---|---|---|---|
+| up to 4,096 points | 220 | 5.90x | 100% | 19.09x (2x2x128) |
+| 4,097..65,536 | 337 | 3.64x | 100% | 10.02x (2x2x2048) |
+| 65,537..1M | 478 | 2.66x | 100% | 6.24x (2x8x8192) |
+| 1M..4M | 253 | 2.62x | 100% | 4.86x (256x2x8192) |
+| **all, 1,288 volumes** | **1,288** | **3.15x** | **100%** | 19.09x (2x2x128) |

@@ -1,12 +1,13 @@
-"""VectorFFT 3D c2c pow2 gauntlet vs MKL, drawn as small multiples: one N2 x N3 matrix per N1.
+"""VectorFFT 3D c2c pow2 gauntlet vs MKL (or another comparator), drawn as small multiples: one N2 x N3 matrix per N1.
 
 Same encoding as the 2D figure (gen_2d_pow2.py): diverging blue (faster) / red (slower),
 five steps per arm, binned symmetrically in ratio. With 1288 cells there is no room for
 per-cell numbers, so cells slower than MKL also get a black outline - the sign of a cell
 never rides on hue alone. Computer Modern throughout, text outlined to paths in the SVG.
 
-usage:  python3 gen_3d_pow2.py <gauntlet_3d.csv> [output_prefix]
+usage:  python3 gen_3d_pow2.py <gauntlet_3d.csv> [output_prefix] [--cmp NAME]
         -> <output_prefix>.svg and <output_prefix>.png  (default prefix: vectorfft-3d-pow2)
+        --cmp: the comparator's name on the legend and the caption (default MKL)
 
 Reads the per-flip CSV (N1,N2,N3,...,ratio_vs_mkl,...,flip) and scores each cell by the
 worse of its flips, the same convention as the 2D report. Needs only matplotlib."""
@@ -17,10 +18,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-if len(sys.argv) < 2:
+argv = sys.argv[1:]
+CMP = "MKL"
+if "--cmp" in argv:
+    i = argv.index("--cmp")
+    CMP = argv[i + 1]
+    del argv[i:i + 2]
+if not argv:
     sys.exit(__doc__)
-SRC = sys.argv[1]
-OUT = sys.argv[2] if len(sys.argv) > 2 else "vectorfft-3d-pow2"
+SRC = argv[0]
+OUT = argv[1] if len(argv) > 1 else "vectorfft-3d-pow2"
 
 lg2 = lambda n: int(round(math.log2(int(n))))
 x = {}
@@ -114,9 +121,9 @@ for n, t in enumerate(["0.5", "0.67", "0.8", "0.91", "1", "1.1", "1.25", "1.5", 
     lg.text(n * SW, -0.3, t, ha="center", va="top", fontsize=8.2)
 lg.text(-0.8, 0.5, "slower", ha="right", va="center", fontsize=8.8, fontstyle="italic")
 lg.text(10 * SW + 0.8, 0.5, "faster", ha="left", va="center", fontsize=8.8)
-lg.text(0, 1.45, "speedup over MKL (worse of two flips)", fontsize=9, va="bottom")
+lg.text(0, 1.45, f"speedup over {CMP} (worse of two flips)", fontsize=9, va="bottom")
 lg.add_patch(Rectangle((62, 0.05), 3.6, 0.9, facecolor=RED[1], edgecolor="black", lw=0.9))
-lg.text(66.8, 0.5, "slower than MKL", va="center", fontsize=9)
+lg.text(66.8, 0.5, f"slower than {CMP}", va="center", fontsize=9)
 
 # band summary by transform volume, as a small table under the legend
 gm = lambda v: math.exp(sum(map(math.log, v)) / len(v))
@@ -131,7 +138,7 @@ for n, (lo, hi) in enumerate(bands):
     fig.text(cx, 0.052, f"$2^{{{lo}}}$ - $2^{{{hi}}}$", fontsize=8.8, ha="center")
     fig.text(cx, 0.030, f"{sum(t >= 1 for t in v)}/{len(v)}", fontsize=8.8, ha="center")
     fig.text(cx, 0.008, f"{gm(v):.2f}", fontsize=8.8, ha="center")
-fig.text(0.13, 0.965, f"3D c2c, interleaved, natural order, out of place, K = 1, against MKL DFTI 3D:  "
+fig.text(0.13, 0.965, f"3D c2c, interleaved, natural order, out of place, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 3D:  "
                       f"{sum(t >= 1 for t in x.values())}/{len(x)} cells won, all volumes up to $2^{{{CAP}}}$ points",
          fontsize=9.2)
 
