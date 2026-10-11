@@ -75,10 +75,25 @@ static int _k1x_mono(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
     (dir == VFFT_FORWARD ? h->k1_mono_ilf : h->k1_mono_ilb)(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
     return 0;
 }
+/* mono per direction, the lean door's entries (k1_go): the kernel call alone */
+static int _k1x_mono_f(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    h->k1_mono_ilf(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
+    return 0;
+}
+static int _k1x_mono_b(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    (void)dir;
+    h->k1_mono_ilb(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
+    return 0;
+}
+/* bound only when the backward resolves (vfft_il2p_bwd_resolves, at the binder): never declines */
 static int _k1x_il2p(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
-    if (dir == VFFT_FORWARD) { vfft_il2p_execute_fwd(h->k1il2p, zin, zout); return 0; }
-    return vfft_il2p_execute_bwd(h->k1il2p, zin, zout);   /* nonzero: the general path decides */
+    if (dir == VFFT_FORWARD) vfft_il2p_execute_fwd(h->k1il2p, zin, zout);
+    else (void)vfft_il2p_execute_bwd(h->k1il2p, zin, zout);
+    return 0;
 }
 static int _k1x_il3p(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
@@ -144,7 +159,10 @@ static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
  * INTERLEAVED, no wrapper (tcb / plane queue / odd-real bridge / rank-N),
  * not the cascade (its dispatcher carries the MT arm). Out of place the
  * route is the committed k1_il_route (route truthfulness at create); in
- * place the engine pointer, in the dispatch's own order. NULL plans pass. */
+ * place the engine pointer, in the dispatch's own order. The pair binds only
+ * when its backward resolves (a build without those kernels leaves the plan to
+ * the general path, both directions), so no c2c executor declines and every
+ * one takes the lean door (_k1_bind_go). NULL plans pass. */
 /* THE BOUND 1D REAL DISPATCH (2026-09-30): a 1D, K == 1, INTERLEAVED real
  * plan without a wrapper (tcb / plane queue / rank-N) -- the odd-real bridge
  * included -- executes through the real bridge in one indirect call, the
@@ -220,38 +238,52 @@ static int _k1x_zr2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
     _exec_zr2c(h, zin, zout);
     return 0;
 }
+/* THE LEAN DOOR'S ENTRIES (2026-10-11): the bound executor never declines, so
+ * vfft_execute may jump into it (k1_go, per direction). Every 1D c2c and 1D
+ * real executor qualifies; mono gets its per-direction forms. The 2D real
+ * forms decline an aliased call and are never passed here. */
+static vfft_plan _k1_bind_go(struct vfft_plan_s *h)
+{
+    h->k1_go[VFFT_FORWARD] = h->k1_exec == _k1x_mono ? _k1x_mono_f : h->k1_exec;
+    h->k1_go[VFFT_BACKWARD] = h->k1_exec == _k1x_mono ? _k1x_mono_b : h->k1_exec;
+    return (vfft_plan)h;
+}
 static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
     if (!h) return hp;
     h->k1_exec = NULL;
+    h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = NULL;
     if (h->transform != VFFT_R2C && h->transform != VFFT_C2R) return hp;
     if (h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
     if (h->zrm)
     {
         h->k1_exec = _k1x_zrm;
-        return hp;
+        return _k1_bind_go(h);
     }
     if (h->zrb && h->K == 1 && !h->zrb->mt)
     {   /* one row, serial: the engine's execute itself (a lane-major batch, and a
          * threaded form, go through the bridge, which arms the pool) */
         h->k1_exec = h->transform == VFFT_R2C ? _k1x_zrb_fwd : _k1x_zrb_bwd;
-        return hp;
+        return _k1_bind_go(h);
     }
     if (h->zrf && !h->zrf->mt)
     {   /* serial: the engine's execute itself (a threaded form goes through the bridge, which arms the pool) */
         h->k1_exec = h->transform == VFFT_R2C ? _k1x_zrf_fwd : _k1x_zrf_bwd;
-        return hp;
+        return _k1_bind_go(h);
     }
     if (!h->pq_inner && !h->tcb && h->N2 == 0 && h->K == 1)
     {   /* the bridge's own order */
-        if (h->zfsr) { h->k1_exec = _k1x_zfsr; return hp; }
-        if (h->zttr) { h->k1_exec = _k1x_zttr; return hp; }
-        if (h->zrp) { h->k1_exec = _k1x_zrp; return hp; }
-        if (h->zr2c_kid) { h->k1_exec = _k1x_zr2c; return hp; }
+        if (h->zfsr) { h->k1_exec = _k1x_zfsr; return _k1_bind_go(h); }
+        if (h->zttr) { h->k1_exec = _k1x_zttr; return _k1_bind_go(h); }
+        if (h->zrp) { h->k1_exec = _k1x_zrp; return _k1_bind_go(h); }
+        if (h->zr2c_kid) { h->k1_exec = _k1x_zr2c; return _k1_bind_go(h); }
     }
     if (!h->pq_inner && !h->tcb && h->N2 == 0)
+    {
         h->k1_exec = _k1x_real;
+        return _k1_bind_go(h);
+    }
     return hp;
 }
 
@@ -397,6 +429,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
     if (!h) return hp;
     h->k1_exec = NULL;
+    h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = NULL;   /* the 2D real forms below decline: the full door */
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         h->layout == (int)VFFT_LAYOUT_INTERLEAVED && h->N2 > 0 && h->il2d_row &&
         !h->pq_inner && !h->tcb && !h->ilnd && !h->ilndr &&
@@ -423,7 +456,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         switch (h->k1_il_route)
         {
         case VFFT_K1_IL_MONO:    if (h->k1_mono_ilf && h->k1_mono_ilb) h->k1_exec = _k1x_mono; break;
-        case VFFT_K1_IL_2P_PURE: if (h->k1il2p) h->k1_exec = _k1x_il2p; break;
+        case VFFT_K1_IL_2P_PURE: if (h->k1il2p && vfft_il2p_bwd_resolves(h->k1il2p)) h->k1_exec = _k1x_il2p; break;
         case VFFT_K1_IL_CHAIN3:  if (h->k1il3p) h->k1_exec = _k1x_il3p; break;
         case VFFT_K1_IL_FLAT:    if (h->k1ilfd) h->k1_exec = _k1x_ilfd; break;
         case VFFT_K1_IL_ZTT:     if (h->k1ztt)  h->k1_exec = _k1x_ztt;  break;
@@ -431,17 +464,17 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         case VFFT_K1_IL_PRIME:   if (h->k1ilpr) h->k1_exec = _k1x_ilpr; break;
         default: break;
         }
-        return hp;
+        return _k1_bind_go(h);
     }
     if (h->placement != VFFT_INPLACE) return hp;
     if (h->k1_mono_ilf && h->k1_mono_ilb) h->k1_exec = _k1x_mono;
-    else if (h->k1il2p) h->k1_exec = _k1x_il2p;
+    else if (h->k1il2p) { if (vfft_il2p_bwd_resolves(h->k1il2p)) h->k1_exec = _k1x_il2p; }
     else if (h->k1il3p) h->k1_exec = _k1x_il3p;
     else if (h->k1ilfd) h->k1_exec = _k1x_ilfd;
     else if (h->k1ztt) h->k1_exec = _k1x_ztt;
     else if (h->k1fs) h->k1_exec = _k1x_fs;
     else if (h->k1ilpr) h->k1_exec = _k1x_ilpr;
-    return hp;
+    return _k1_bind_go(h);
 }
 
 static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
