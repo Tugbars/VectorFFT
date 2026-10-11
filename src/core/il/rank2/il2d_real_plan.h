@@ -242,30 +242,47 @@ static void _il2d_rows_bwd_set(struct vfft_plan_s *h, const double *src, size_t 
 
 /* THE STACK-ALIGNING ENTRY (zttr.h's): rsp set to the chosen residue mod 64
  * before the call, so every frame under the row pass sits at one state
- * whatever the caller's stack. Win64 call: args in rcx, rdx, r8; 32 B of
- * shadow space; r12 callee-saved. The first argument is the callee's own
- * context: the plan (a pass), or a stage of it (the column plan's per-kernel
- * entries). The Win64 ABI under GCC-style inline asm only, as zttr.h's;
- * elsewhere the pass is entered directly and the stack state binds nothing. */
+ * whatever the caller's stack: the callee is called at (rsp & -64) - (32 +
+ * 16 stk). The first argument is the callee's own context: the plan (a pass),
+ * or a stage of it (the column plan's per-kernel entries). The Win64 ABI under
+ * GCC-style asm only, as zttr.h's; elsewhere the pass is entered directly and
+ * the stack state binds nothing.
+ *
+ * An out-of-line stub called as an ordinary function, so the compiler applies
+ * the Win64 rules at the call itself: every callee keeps xmm6-15's low halves,
+ * and ymm6-15's upper halves and the volatile set are taken as lost. An inline
+ * form has to declare all sixteen vector registers clobbered (the upper halves
+ * cannot be named apart), which made every function holding it save and
+ * restore xmm6-15 on each call: 4x4 r2c 11.4 ns at the door against 8.9 for
+ * its two kernels (measured 2026-10-11). Win64 arguments: h, s, d in rcx, rdx,
+ * r8, passed on to fn unchanged; fn in r9; the offset 32 + 16 stk fifth, at
+ * [rsp + 40] on entry and [r12 + 48] after the push of r12 (callee-saved). The
+ * offset is 64-bit (long long: a Win64 long is 32-bit, and its stack slot's upper
+ * half is not written). noipa (GCC): the parameters look unused to the compiler,
+ * and no interprocedural pass may change how they are passed. */
 typedef void (*_il2d_rowx_fn)(const void *, const double *, double *);
 #if defined(_WIN64) && defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+#if defined(__clang__)
+__attribute__((naked, noinline))
+#else
+__attribute__((naked, noinline, noipa))
+#endif
+static void _il2d_rowx_stub(const void *h, const double *s, double *d, _il2d_rowx_fn fn, long long ad)
+{
+    __asm__ volatile(
+        "pushq %r12\n\t"
+        "movq %rsp, %r12\n\t"
+        "movq 48(%r12), %rax\n\t"
+        "andq $-64, %rsp\n\t"
+        "subq %rax, %rsp\n\t"
+        "callq *%r9\n\t"
+        "movq %r12, %rsp\n\t"
+        "popq %r12\n\t"
+        "retq\n\t");
+}
 static inline void _il2d_rowx_call(_il2d_rowx_fn fn, const void *h, const double *s, double *d, int stk)
 {
-    register const void *a0 __asm__("rcx") = h;
-    register const double *a1 __asm__("rdx") = s;
-    register double *a2 __asm__("r8") = d;
-    register _il2d_rowx_fn f __asm__("r10") = fn;
-    register long ad __asm__("r11") = 32 + 16 * (long)(stk & 3);
-    __asm__ volatile(
-        "movq %%rsp, %%r12\n\t"
-        "andq $-64, %%rsp\n\t"
-        "subq %%r11, %%rsp\n\t"
-        "call *%%r10\n\t"
-        "movq %%r12, %%rsp\n\t"
-        : "+r"(a0), "+r"(a1), "+r"(a2), "+r"(f), "+r"(ad)
-        :
-        : "rax", "r9", "r12", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
-          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "memory", "cc");
+    _il2d_rowx_stub(h, s, d, fn, 32 + 16 * (long long)(stk & 3));
 }
 #else
 static inline void _il2d_rowx_call(_il2d_rowx_fn fn, const void *h, const double *s, double *d, int stk)

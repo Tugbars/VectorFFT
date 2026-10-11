@@ -341,10 +341,9 @@ static int _k2x_il2d_c2r_d2k(struct vfft_plan_s *h, vfft_dir_t dir, const double
  * through the aligned entry into the body its race timed (_il2d_rowx_body, _il2d_colx_body
  * and their c2r twins, _il2d_cxd_body), so the kernel's frame lands where the race measured
  * it; a pass at `any` calls its kernel directly, as the forms above do. The calls are the
- * ones the general path makes: bitwise. Kept apart from the forms above because the aligned
- * entry clobbers the callee-saved vector registers, which a function holding it saves on
- * every call. Measured before (2026-10-11, the layers of the general path): 4x4 r2c 16.4 ns
- * against 9.1 for its two kernels, 2x4 c2r 15.6 against 6.3. */
+ * ones the general path makes: bitwise. The forms above stay two direct calls with no state
+ * test. Measured 2026-10-11: 4x4 r2c 16.4 ns through the general path's layers, 10.4 here,
+ * 8.9 for its two kernels alone; 2x4 c2r 15.4, 8.2, 6.2. */
 static int _k2x_il2d_r2c_2ks(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
     const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
