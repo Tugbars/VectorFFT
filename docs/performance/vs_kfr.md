@@ -13,7 +13,9 @@ the 3D matrices from the csv by [`src/tools/plots/gen_3d_pow2.py`](../../src/too
 > **Competitor:** KFR 7.1.0, its official Windows release through its C API (built by KFR, AVX2 dispatch)  
 > **Method:** one process per cell (a length, a plane or a volume); both engines timed in two arms
 > with the engine order flipped; a control cell re-timed every 100 cells; every speedup is KFR's
-> time over VectorFFT's in the **worse** of the two arms
+> time over VectorFFT's in the **worse** of the two arms  
+> **Not compared:** 2D and 3D real transforms (r2c, c2r); KFR's C API offers its multidimensional
+> real plans in single precision only, so there is no FP64 2D or 3D real transform of KFR's to time
 
 ---
 

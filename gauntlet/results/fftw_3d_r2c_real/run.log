@@ -1,0 +1,33 @@
+2026-10-11 11:33:50 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-10-11 11:33:50 run: 328 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-11 11:33:50 calibrate: 328 cells (0 already done)
+2026-10-11 11:33:56   calibrated 25/328 (4x32x32), 6 s elapsed
+2026-10-11 11:34:02   calibrated 50/328 (8x4x4), 12 s elapsed
+2026-10-11 11:34:08   calibrated 75/328 (8x32x64), 18 s elapsed
+2026-10-11 11:34:14   calibrated 100/328 (16x4x8), 24 s elapsed
+2026-10-11 11:34:20   calibrated 125/328 (16x32x128), 30 s elapsed
+2026-10-11 11:34:26   calibrated 150/328 (32x4x16), 36 s elapsed
+2026-10-11 11:34:32   calibrated 175/328 (32x32x256), 42 s elapsed
+2026-10-11 11:34:38   calibrated 200/328 (64x4x64), 48 s elapsed
+2026-10-11 11:34:44   calibrated 225/328 (64x64x8), 54 s elapsed
+2026-10-11 11:34:50   calibrated 250/328 (128x8x8), 60 s elapsed
+2026-10-11 11:34:56   calibrated 275/328 (128x64x128), 66 s elapsed
+2026-10-11 11:35:02   calibrated 300/328 (256x16x8), 72 s elapsed
+2026-10-11 11:35:08   calibrated 325/328 (36x20x28), 78 s elapsed
+2026-10-11 11:35:09   calibrated 328/328 (16x64x63), 79 s elapsed
+2026-10-11 11:35:09 bench: 328 cells (0 already benched, 0 not banked -> not benched)
+2026-10-11 11:35:54   benched 25/328 (4x32x32), 44 s elapsed
+2026-10-11 11:36:40   benched 50/328 (8x4x4), 89 s elapsed
+2026-10-11 11:37:23   benched 75/328 (8x32x64), 133 s elapsed
+2026-10-11 11:38:10   benched 100/328 (16x4x8), 180 s elapsed
+2026-10-11 11:38:54   benched 125/328 (16x32x128), 223 s elapsed
+2026-10-11 11:39:40   benched 150/328 (32x4x16), 270 s elapsed
+2026-10-11 11:40:25   benched 175/328 (32x32x256), 314 s elapsed
+2026-10-11 11:41:15   benched 200/328 (64x4x64), 364 s elapsed
+2026-10-11 11:42:01   benched 225/328 (64x64x8), 410 s elapsed
+2026-10-11 11:42:50   benched 250/328 (128x8x8), 460 s elapsed
+2026-10-11 11:43:40   benched 275/328 (128x64x128), 510 s elapsed
+2026-10-11 11:44:32   benched 300/328 (256x16x8), 562 s elapsed
+2026-10-11 11:45:24   benched 325/328 (36x20x28), 614 s elapsed
+2026-10-11 11:45:30   benched 328/328 (16x64x63), 620 s elapsed
+2026-10-11 11:45:32 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\fftw_3d_r2c_real\report_3d_r2c_fftw.md
