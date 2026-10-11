@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Throughput in GFLOPS, VectorFFT vs MKL, from the gauntlet CSV.
 
-    python3 gen_gflops.py sweep.csv [more.csv ...] [--out name.svg] [--logy] [--cmp NAME]
+    python3 gen_gflops.py sweep.csv [more.csv ...] [--out name.svg] [--logy] [--cmp NAME] [--replace]
 
 Input rows:  N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
 
@@ -10,7 +10,9 @@ Input rows:  N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,
 z:c2r are the real cells, whose GFLOPS count is 2.5 N K log2(N).
 
 Several CSVs concatenate into one series: the 2..2048 and the 2049..4096
-gauntlets together make the full 2..4096 graph. vfft_gflops is read directly;
+gauntlets together make the full 2..4096 graph. --replace: a size in a later
+file replaces every earlier file's rows for that size (a re-timed subset drawn
+over a full sweep). vfft_gflops is read directly;
 MKL's follows from the same operation count: mkl_gflops = vfft_gflops *
 vfft_ns / mkl_ns. Each size is the median over the order-flipped arms; the
 sizes are joined in N, one connected line per engine, with a dot per size
@@ -35,16 +37,22 @@ CMP = args[args.index("--cmp") + 1] if "--cmp" in args else "MKL"
 files = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] not in ("--out", "--cmp"))]
 if not files: sys.exit(__doc__)
 
+REPLACE = "--replace" in args
 rows = []
 for path in files:
+    cur = []
     with open(path) as f:
         for raw in f:
             p = raw.strip().split(",")
             if len(p) < 11 or p[0] == "N": continue
             try:
-                rows.append((int(p[0]), int(p[1]), p[2], p[3], float(p[4]), float(p[5]), float(p[6]), float(p[7])))
+                cur.append((int(p[0]), int(p[1]), p[2], p[3], float(p[4]), float(p[5]), float(p[6]), float(p[7])))
             except ValueError:
                 continue
+    if REPLACE:
+        seen = {r[0] for r in cur}
+        rows = [r for r in rows if r[0] not in seen]
+    rows.extend(cur)
 
 byN = defaultdict(lambda: ([], []))
 byR = defaultdict(list)                            # ratio_vs_mkl per arm

@@ -23,32 +23,34 @@ the 3D matrices from the csv by [`src/tools/plots/gen_3d_pow2.py`](../../src/too
 
 > **Contract:** complex-to-complex FP64, interleaved, natural order, out of place, K = 1  
 > **Cells:** every length N from 64 to 4,096 — 4,033 transforms, no size skipped  
-> **Record:** [`kfr_c2c_64_4096`](../../gauntlet/results/kfr_c2c_64_4096/) (2026-10-10)
+> **Record:** [`kfr_c2c_64_4096`](../../gauntlet/results/kfr_c2c_64_4096/) (2026-10-10); its 583 lengths below parity raced again and re-timed in [`rb_kfr_c2c_prime_rerace`](../../gauntlet/results/rb_kfr_c2c_prime_rerace/) (2026-10-11), whose numbers the plot and the tables use for those lengths
 
 ![Throughput, VectorFFT vs KFR, 1D c2c, every N from 64 to 4096](../../src/tools/plots/vectorfft-kfr-c2c.svg)
 
 One line per engine, one point per length (log scale: equal speed ratios are equal
 vertical gaps). The split is by the largest prime factor of N. Lengths built from primes
-up to 47 run 2.5x faster than KFR at the median and never below it; from 53 up the lead
-narrows to about 1.06x and KFR is ahead at about one length in five, most often when N
-carries a factor of 53, 59 or 61 (worst cell 2,135 = 5·7·61 at 0.51x); nearly every
-length where KFR is ahead is served by VectorFFT's prime-size route. Every output agrees with KFR's to 3.8e-15; the
-control length (N = 4,096) read 1.32-1.35x at every one of its 42 points.
+up to 47 run 2.5x faster than KFR at the median, all but one of them at or above it. A
+length with a prime factor of 53 or more is served by VectorFFT's prime-size route, a
+Rader or Bluestein convolution whose inner size is raced among the power of two and the
+smallest smooth sizes; there the lead is 1.07x at the median and KFR is ahead at one
+length in eleven (238 of 2,703), spread across the factors (worst cell 683, a prime, at
+0.53x). Every output agrees with KFR's to 3.8e-15; the control length (N = 4,096) read
+1.32-1.35x at every one of its 42 points in the first run and 1.31-1.34x in the re-timing.
 
 | Lengths | Cells | Median speedup | At or above parity | Best |
 |---|---|---|---|---|
-| 64..256 | 193 | 2.17x | 91% | 6.03x (N=96) |
-| 257..1,024 | 768 | 1.44x | 62% | 4.88x (N=384) |
-| 1,025..2,048 | 1,024 | 1.04x | 92% | 4.04x (N=1312) |
-| 2,049..4,096 | 2,048 | 1.08x | 90% | 4.48x (N=3072) |
-| **all, 64..4,096** | **4,033** | **1.09x** | **86%** | 6.03x (N=96) |
+| 64..256 | 193 | 2.17x | 94% | 6.03x (N=96) |
+| 257..1,024 | 768 | 1.48x | 74% | 4.88x (N=384) |
+| 1,025..2,048 | 1,024 | 1.11x | 99% | 4.04x (N=1312) |
+| 2,049..4,096 | 2,048 | 1.10x | 99% | 4.48x (N=3072) |
+| **all, 64..4,096** | **4,033** | **1.15x** | **94%** | 6.03x (N=96) |
 
 | Family | Cells | Median speedup | At or above parity |
 |---|---|---|---|
 | Powers of two | 7 | 1.12x | 100% |
-| Primes | 546 | 1.06x | 79% |
+| Primes | 546 | 1.08x | 90% |
 | Composites, largest prime factor ≤ 47 | 1,323 | 2.49x | 100% |
-| Composites, largest prime factor ≥ 53 | 2,157 | 1.06x | 78% |
+| Composites, largest prime factor ≥ 53 | 2,157 | 1.07x | 92% |
 
 ---
 
