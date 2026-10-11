@@ -1,4 +1,4 @@
-"""VectorFFT 3D c2c pow2 gauntlet vs MKL (or another comparator), drawn as small multiples: one N2 x N3 matrix per N1.
+"""VectorFFT 3D pow2 gauntlet (c2c, r2c or c2r) vs MKL (or another comparator), drawn as small multiples: one N2 x N3 matrix per N1.
 
 Same encoding as the 2D figure (gen_2d_pow2.py): diverging blue (faster) / red (slower),
 five steps per arm, binned symmetrically in ratio. With 1288 cells there is no room for
@@ -10,7 +10,10 @@ usage:  python3 gen_3d_pow2.py <gauntlet_3d.csv> [output_prefix] [--cmp NAME]
         --cmp: the comparator's name on the legend and the caption (default MKL)
 
 Reads the per-flip CSV (N1,N2,N3,...,ratio_vs_mkl,...,flip) and scores each cell by the
-worse of its flips, the same convention as the 2D report. Needs only matplotlib."""
+worse of its flips, the same convention as the 2D report. The grid is the data's: the axis
+range, the panels (one per N1 present) and the ticks follow the power-of-two volumes in the
+CSV; a volume with a side that is not a power of two is not drawn (counted in the caption).
+The transform comes from the plan column. Needs only matplotlib."""
 import csv, math, sys
 from collections import defaultdict
 import matplotlib
@@ -30,14 +33,24 @@ SRC = argv[0]
 OUT = argv[1] if len(argv) > 1 else "vectorfft-3d-pow2"
 
 lg2 = lambda n: int(round(math.log2(int(n))))
+pow2 = lambda n: int(n) > 0 and int(n) & (int(n) - 1) == 0
 x = {}
+odd = set()
+XF = "c2c"
 for r in csv.DictReader(open(SRC)):
+    XF = "r2c" if "r2c" in r["plan"] else "c2r" if "c2r" in r["plan"] else "c2c"
+    if not (pow2(r["N1"]) and pow2(r["N2"]) and pow2(r["N3"])):
+        odd.add((r["N1"], r["N2"], r["N3"]))   # a side not a power of two: no cell on the log2 grid
+        continue
     k = (lg2(r["N1"]), lg2(r["N2"]), lg2(r["N3"]))
     x[k] = min(x.get(k, math.inf), float(r["ratio_vs_mkl"]))
 if not x:
     sys.exit(f"no cells parsed from {SRC}")
 CAP = max(i + j + k for i, j, k in x)                  # log2 of the largest volume run
-print(f"{len(x)} cells parsed from {SRC}; volume cap 2^{CAP}")
+LO = min(min(c) for c in x)                            # the grid's smallest and largest side (log2)
+HI = max(max(c) for c in x)
+print(f"{len(x)} cells parsed from {SRC}; volume cap 2^{CAP}; sides 2^{LO}..2^{HI}"
+      + (f"; {len(odd)} non-power-of-two volume(s) not drawn" if odd else ""))
 
 plt.rcParams.update({
     "font.family": "serif", "font.serif": ["cmr10"], "mathtext.fontset": "cm",
@@ -54,12 +67,17 @@ def step(v):
 def fill(v):
     return (BLUE if v >= 1 else RED)[step(v)]
 
-# panel layout, in cell units: three rows, panels shrink once the volume cap bites
-N = 13                                                  # log2 N from 1 (2) to 13 (8192)
-side = lambda i: min(N, CAP - i - 1)                    # rows/cols present in the N1 = 2^i panel
-ROWS = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12, 13]]
+# panel layout, in cell units: rows of four panels, panels shrink once the volume cap bites
+N = HI - LO + 1                                         # sides per axis (13 on the 2..8192 grid)
+side = lambda i: min(N, CAP - i - 2 * LO + 1)           # rows/cols present in the N1 = 2^i panel
+PAN = sorted({i for i, j, k in x})
+ROWS = [PAN[q:q + 4] for q in range(0, len(PAN), 4)]
+if len(ROWS) > 1 and len(ROWS[-1]) == 1:                # a lone last panel joins the row above
+    ROWS[-2] += ROWS.pop()
 GX, GY = 3.2, 4.2                                       # gaps between panels (room for ticks, titles)
-TICKS = {1: "2", 5: "32", 9: "512", 13: "8192"}
+TSTEP = 4 if N > 8 else 2
+TICKS = {t: f"{2**t}" for t in range(LO, HI + 1, TSTEP)}
+F = N / 13.0                                            # the axis-name marks scale with the panel
 
 fig = plt.figure(figsize=(9.4, 9.0))
 ax = fig.add_axes([0.02, 0.17, 0.96, 0.77])
@@ -78,38 +96,38 @@ for i, (ox, oy) in origins.items():
     cells = [(j, k) for (a, j, k) in x if a == i]
     for j, k in cells:
         v = x[(i, j, k)]
-        px, py = ox + k - 1, oy + j - 1
+        px, py = ox + k - LO, oy + j - LO
         ax.add_patch(Rectangle((px, py), 1, 1, facecolor=fill(v), edgecolor="white", lw=0.35))
     for j, k in cells:                                  # outlines last, so no neighbour paints over them
         v = x[(i, j, k)]
         if v < 1:
-            ax.add_patch(Rectangle((ox + k - 1 + .06, oy + j - 1 + .06), .88, .88,
+            ax.add_patch(Rectangle((ox + k - LO + .06, oy + j - LO + .06), .88, .88,
                                    fill=False, edgecolor="black", lw=0.9))
     # staircase edge of the measured domain
     for j, k in cells:
-        px, py = ox + k - 1, oy + j - 1
+        px, py = ox + k - LO, oy + j - LO
         if (i, j, k + 1) not in x: ax.plot([px + 1, px + 1], [py, py + 1], color="black", lw=0.5)
         if (i, j + 1, k) not in x: ax.plot([px, px + 1], [py + 1, py + 1], color="black", lw=0.5)
-        if k == 1: ax.plot([px, px], [py, py + 1], color="black", lw=0.5)
-        if j == 1: ax.plot([px, px + 1], [py, py], color="black", lw=0.5)
+        if k == LO: ax.plot([px, px], [py, py + 1], color="black", lw=0.5)
+        if j == LO: ax.plot([px, px + 1], [py, py], color="black", lw=0.5)
     s = side(i)
     ax.text(ox + s / 2, oy - 1.55, f"$N_1 = {2**i}$", ha="center", va="bottom", fontsize=10)
     for t, lab in TICKS.items():
-        if t <= s:
-            ax.text(ox + t - .5, oy - .25, lab, ha="center", va="bottom", fontsize=6.3, color="0.25")
-            ax.text(ox - .3, oy + t - .5, lab, ha="right", va="center", fontsize=6.3, color="0.25")
+        if t - LO + 1 <= s:
+            ax.text(ox + t - LO + .5, oy - .25, lab, ha="center", va="bottom", fontsize=6.3, color="0.25")
+            ax.text(ox - .3, oy + t - LO + .5, lab, ha="right", va="center", fontsize=6.3, color="0.25")
 
 # axis names once, on the first panel
-ox, oy = origins[1]
-ax.annotate("", xy=(ox + 9.5, oy - 3.35), xytext=(ox + 3.5, oy - 3.35),
+ox, oy = origins[PAN[0]]
+ax.annotate("", xy=(ox + 9.5 * F, oy - 3.35), xytext=(ox + 3.5 * F, oy - 3.35),
             arrowprops=dict(arrowstyle="->", lw=0.6, color="0.25"))
-ax.text(ox + 2.9, oy - 3.35, "$N_3$", ha="right", va="center", fontsize=9, color="0.25")
+ax.text(ox + 2.9 * F, oy - 3.35, "$N_3$", ha="right", va="center", fontsize=9, color="0.25")
 
 W = max(o[0] + side(i) for i, o in origins.items())
 H = max(o[1] + side(i) for i, o in origins.items())
 ax.set_xlim(-2.6, W + .3); ax.set_ylim(H + .5, -4.0)
-ax.text(-2.4, origins[1][1] + 9.5, "$N_2$", ha="center", va="center", fontsize=9, color="0.25")
-ax.annotate("", xy=(-2.4, origins[1][1] + 12.8), xytext=(-2.4, origins[1][1] + 10.4),
+ax.text(-2.4, origins[PAN[0]][1] + 9.5 * F, "$N_2$", ha="center", va="center", fontsize=9, color="0.25")
+ax.annotate("", xy=(-2.4, origins[PAN[0]][1] + 12.8 * F), xytext=(-2.4, origins[PAN[0]][1] + 10.4 * F),
             arrowprops=dict(arrowstyle="->", lw=0.6, color="0.25"))
 
 # legend: the 2D strip, plus the outline mark
@@ -127,7 +145,9 @@ lg.text(66.8, 0.5, f"slower than {CMP}", va="center", fontsize=9)
 
 # band summary by transform volume, as a small table under the legend
 gm = lambda v: math.exp(sum(map(math.log, v)) / len(v))
-bands = [(3, 8), (9, 12), (13, 16), (17, 19), (20, CAP)]
+MINP = min(i + j + k for i, j, k in x)
+bands = [(max(lo, MINP), hi) for lo, hi in [(3, 8), (9, 12), (13, 16), (17, 19), (20, CAP)]
+         if any(max(lo, MINP) <= i + j + k <= hi for i, j, k in x)]   # the bands the data reaches
 tx0, tdx = 0.29, 0.135
 fig.text(0.13, 0.052, "points", fontsize=8.8, color="0.3")
 fig.text(0.13, 0.030, "won", fontsize=8.8, color="0.3")
@@ -138,8 +158,9 @@ for n, (lo, hi) in enumerate(bands):
     fig.text(cx, 0.052, f"$2^{{{lo}}}$ - $2^{{{hi}}}$", fontsize=8.8, ha="center")
     fig.text(cx, 0.030, f"{sum(t >= 1 for t in v)}/{len(v)}", fontsize=8.8, ha="center")
     fig.text(cx, 0.008, f"{gm(v):.2f}", fontsize=8.8, ha="center")
-fig.text(0.13, 0.965, f"3D c2c, interleaved, natural order, out of place, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 3D:  "
-                      f"{sum(t >= 1 for t in x.values())}/{len(x)} cells won, all volumes up to $2^{{{CAP}}}$ points",
+fig.text(0.13, 0.965, f"3D {XF}, interleaved, natural order, out of place, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 3D:  "
+                      f"{sum(t >= 1 for t in x.values())}/{len(x)} cells won, all volumes up to $2^{{{CAP}}}$ points"
+                      + (f" ({len(odd)} non-power-of-two not drawn)" if odd else ""),
          fontsize=9.2)
 
 fig.savefig(f"{OUT}.svg")

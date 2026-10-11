@@ -1,4 +1,5 @@
-"""VectorFFT 2D c2c pow2 gauntlet vs MKL (or another comparator), drawn as an N1 x N2 speedup matrix.
+"""VectorFFT 2D pow2 gauntlet (c2c, r2c or c2r; the report's contract line names it) vs MKL (or another
+comparator), drawn as an N1 x N2 speedup matrix.
 
 Diverging blue (faster) / red (slower), five steps per arm binned symmetrically in ratio;
 Computer Modern throughout, text outlined to paths in the SVG.
@@ -28,7 +29,11 @@ if not argv:
 SRC = argv[0]
 OUT = argv[1] if len(argv) > 1 else "vectorfft-2d-pow2"
 rows = {}
+XF = "c2c"
 for l in open(SRC):
+    mx = re.search(r"contract: 2D (c2c|r2c|c2r)", l)
+    if mx:
+        XF = mx.group(1)
     m = re.match(r"\s+(\d+)x(\d+)\s+\S+\s+(\S+)\s+(?:raced|replayed)\s+(\d+)\s+(\d+)\s+([\d.]+)", l)   # a replayed plane is a measured cell too: no --calibrate needed
     if m:
         a, b, r, o, c, x = m.groups()
@@ -139,7 +144,7 @@ for lab, lo, hi in bands:
     v = [x for (i, j), (r, x) in rows.items() if lo <= 2 ** (i + j) <= hi]
     parts.append(f"{lab} pts: {sum(t >= 1 for t in v)}/{len(v)} won, gmean {gm(v):.2f}")
 fig.text(0.13, 0.035, "     ".join(parts), fontsize=9.2)
-fig.text(0.13, 0.008, f"2D c2c, interleaved, natural order, out of place, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 2D (out of place)", fontsize=9.5)
+fig.text(0.13, 0.008, f"2D {XF}, interleaved, natural order, out of place, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 2D (out of place)", fontsize=9.5)
 
 fig.savefig(f"{OUT}.svg")
 fig.savefig(f"{OUT}.png", dpi=170)
