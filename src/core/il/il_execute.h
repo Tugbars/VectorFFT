@@ -336,6 +336,63 @@ static int _k2x_il2d_c2r_d2k(struct vfft_plan_s *h, vfft_dir_t dir, const double
     h->il2d_rx_lm(zin, NULL, zout, NULL, NULL, NULL, hp1, 0, rn2, 0, (size_t)h->N);
     return 0;
 }
+/* THE TWO KERNELS AT THEIR RACED STACK STATES (2026-10-11): the same two kernels where a
+ * pass's race bound a fixed state (rxs / cxs / cxds 0..3, not any). That pass is entered
+ * through the aligned entry into the body its race timed (_il2d_rowx_body, _il2d_colx_body
+ * and their c2r twins, _il2d_cxd_body), so the kernel's frame lands where the race measured
+ * it; a pass at `any` calls its kernel directly, as the forms above do. The calls are the
+ * ones the general path makes: bitwise. Kept apart from the forms above because the aligned
+ * entry clobbers the callee-saved vector registers, which a function holding it saves on
+ * every call. Measured before (2026-10-11, the layers of the general path): 4x4 r2c 16.4 ns
+ * against 9.1 for its two kernels, 2x4 c2r 15.6 against 6.3. */
+static int _k2x_il2d_r2c_2ks(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
+    (void)dir;
+    if (zin == (const double *)zout)
+        return 1;
+    if (h->il2d_rx_stk < 0)
+        h->il2d_rx_lm(zin, NULL, zout, NULL, NULL, NULL, rn2, 0, hp1, 0, (size_t)h->N);
+    else
+        _il2d_rowx_call(_il2d_rowx_body, h, zin, zout, h->il2d_rx_stk);
+    if (h->il2d_cx_stk < 0)
+        h->il2d_cx_leaf(zout, NULL, zout, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
+    else
+        _il2d_rowx_call(_il2d_colx_body, h, zout, zout, h->il2d_cx_stk);
+    return 0;
+}
+static int _k2x_il2d_c2r_2ks(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
+    (void)dir;
+    if (zin == (const double *)zout)
+        return 1;
+    if (h->il2d_cx_stk < 0)
+        h->il2d_cx_leaf(zin, NULL, h->il2d_rscr, NULL, NULL, NULL, hp1, 0, h->il2d_rscr_P, 0, hp1);
+    else
+        _il2d_rowx_call(_il2d_colx_body_bwd, h, zin, h->il2d_rscr, h->il2d_cx_stk);
+    if (h->il2d_rx_stk < 0)
+        h->il2d_rx_lm(h->il2d_rscr, NULL, zout, NULL, NULL, NULL, h->il2d_rscr_P, 0, rn2, 0, (size_t)h->N);
+    else
+        _il2d_rowx_call(_il2d_rowx_body_bwd, h, h->il2d_rscr, zout, h->il2d_rx_stk);
+    return 0;
+}
+static int _k2x_il2d_c2r_d2ks(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
+    (void)dir;
+    if (zin == (const double *)zout)
+        return 1;
+    if (h->il2d_cxd_stk < 0)
+        h->il2d_cxd_leaf(zin, NULL, (double *)zin, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
+    else
+        _il2d_rowx_call(_il2d_cxd_body, h, zin, (double *)zin, h->il2d_cxd_stk);
+    if (h->il2d_rx_stk < 0)
+        h->il2d_rx_lm(zin, NULL, zout, NULL, NULL, NULL, hp1, 0, rn2, 0, (size_t)h->N);
+    else
+        _il2d_rowx_call(_il2d_rowx_body_bwd, h, zin, zout, h->il2d_rx_stk);
+    return 0;
+}
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
@@ -346,16 +403,17 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         !h->pq_inner && !h->tcb && !h->ilnd && !h->ilndr &&
         h->nthreads <= 1 && !h->il2d_col.colmt && !h->il2d_rax_on && !h->il2d_tf_on && !h->il2d_rcsk_on)   /* the real axis on N1, the fused walk and the skewed plane take the general path */
     {
+        const int any2 = h->il2d_rx_stk < 0 && h->il2d_cx_stk < 0;   /* both passes stack-insensitive */
         h->k1_exec = h->transform == VFFT_R2C ? _k2x_il2d_r2c : _k2x_il2d_c2r;
-        if (h->transform == VFFT_R2C && h->il2d_rx_on && h->il2d_rx_lm && h->il2d_rx_stk < 0 &&
-            h->il2d_cx_on && h->il2d_cx_leaf && !h->il2d_cx_perk && h->il2d_cx_stk < 0)
-            h->k1_exec = _k2x_il2d_r2c_2k;
-        if (h->transform == VFFT_C2R && h->il2d_rx_on && h->il2d_rx_lm && h->il2d_rx_stk < 0 &&
-            h->il2d_cx_on && h->il2d_cx_leaf && !h->il2d_cx_perk && h->il2d_cx_stk < 0)
-            h->k1_exec = _k2x_il2d_c2r_2k;
+        if (h->transform == VFFT_R2C && h->il2d_rx_on && h->il2d_rx_lm &&
+            h->il2d_cx_on && h->il2d_cx_leaf && !h->il2d_cx_perk)
+            h->k1_exec = any2 ? _k2x_il2d_r2c_2k : _k2x_il2d_r2c_2ks;
+        if (h->transform == VFFT_C2R && h->il2d_rx_on && h->il2d_rx_lm &&
+            h->il2d_cx_on && h->il2d_cx_leaf && !h->il2d_cx_perk)
+            h->k1_exec = any2 ? _k2x_il2d_c2r_2k : _k2x_il2d_c2r_2ks;
         if (h->transform == VFFT_C2R && h->il2d_cxd_on && h->il2d_cxd_leaf)
-            h->k1_exec = (h->il2d_rx_on && h->il2d_rx_lm && h->il2d_rx_stk < 0 && h->il2d_cxd_stk < 0)
-                             ? _k2x_il2d_c2r_d2k : _k2x_il2d_c2r_d;
+            h->k1_exec = !(h->il2d_rx_on && h->il2d_rx_lm) ? _k2x_il2d_c2r_d
+                       : (h->il2d_rx_stk < 0 && h->il2d_cxd_stk < 0) ? _k2x_il2d_c2r_d2k : _k2x_il2d_c2r_d2ks;
         return hp;
     }
     if (h->transform != VFFT_C2C || h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
