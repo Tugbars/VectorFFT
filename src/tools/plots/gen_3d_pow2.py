@@ -73,7 +73,8 @@ side = lambda i: min(N, CAP - i - 2 * LO + 1)           # rows/cols present in t
 PAN = sorted({i for i, j, k in x})
 ROWS = [PAN[q:q + 4] for q in range(0, len(PAN), 4)]
 if len(ROWS) > 1 and len(ROWS[-1]) == 1:                # a lone last panel joins the row above
-    ROWS[-2] += ROWS.pop()
+    last = ROWS.pop()
+    ROWS[-1] += last
 GX, GY = 3.2, 4.2                                       # gaps between panels (room for ticks, titles)
 TSTEP = 4 if N > 8 else 2
 TICKS = {t: f"{2**t}" for t in range(LO, HI + 1, TSTEP)}
@@ -82,6 +83,7 @@ F = N / 13.0                                            # the axis-name marks sc
 fig = plt.figure(figsize=(9.4, 9.0))
 ax = fig.add_axes([0.02, 0.17, 0.96, 0.77])
 ax.set_aspect("equal"); ax.axis("off")
+ax.set_anchor("N")                                      # a grid shorter than the box sits under the title
 
 origins = {}
 y0 = 0.0
@@ -155,13 +157,14 @@ fig.text(0.13, 0.008, "gmean", fontsize=8.8, color="0.3")
 for n, (lo, hi) in enumerate(bands):
     v = [t for (i, j, k), t in x.items() if lo <= i + j + k <= hi]
     cx = tx0 + n * tdx
-    fig.text(cx, 0.052, f"$2^{{{lo}}}$ - $2^{{{hi}}}$", fontsize=8.8, ha="center")
+    fig.text(cx, 0.052, f"$2^{{{lo}}}$ - $2^{{{hi}}}$" if hi > lo else f"$2^{{{lo}}}$", fontsize=8.8, ha="center")
     fig.text(cx, 0.030, f"{sum(t >= 1 for t in v)}/{len(v)}", fontsize=8.8, ha="center")
     fig.text(cx, 0.008, f"{gm(v):.2f}", fontsize=8.8, ha="center")
 fig.text(0.13, 0.965, f"3D {XF}, interleaved, natural order, out of place, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 3D:  "
-                      f"{sum(t >= 1 for t in x.values())}/{len(x)} cells won, all volumes up to $2^{{{CAP}}}$ points"
-                      + (f" ({len(odd)} non-power-of-two not drawn)" if odd else ""),
+                      f"{sum(t >= 1 for t in x.values())}/{len(x)} cells won, all volumes up to $2^{{{CAP}}}$ points",
          fontsize=9.2)
+if odd:
+    fig.text(0.13, 0.945, f"{len(odd)} volume(s) with a side that is not a power of two: not drawn", fontsize=8.6, color="0.3")
 
 fig.savefig(f"{OUT}.svg")
 fig.savefig(f"{OUT}.png", dpi=170)
