@@ -12,8 +12,9 @@
  *   - both directions ride the same tables (conjugated twins), because
  *     every inner serves both directions.
  *
- * METHOD: Rader (convolution length N-1) and Bluestein (M = next pow2 >=
- * 2N-1), each with every inner of its pool, are RACED at create and the
+ * METHOD: Rader (convolution length N-1) and Bluestein (M >= 2N-1: the
+ * next pow2 and the smallest smooth sizes), each with every inner of its
+ * pool, are RACED at create and the
  * verdict banks (k1_commit.h: _ilprime_create_banked). The band is whatever
  * the inner can build.
  *
@@ -146,7 +147,7 @@ static inline void _ilprime_inner_bwd(const _ilprime_inner_t *in,
     else        vfft_il3p_execute_bwd(in->p3, zi, zo);
 }
 
-/* packed complex a[i] *= b[i], i in [0, cnt) — cnt EVEN (M pow2 / N-1 even) */
+/* packed complex a[i] *= b[i], i in [0, cnt) — cnt EVEN (Bluestein's M even by construction / N-1 even) */
 static inline void _ilprime_cmul_vec(double *a, const double *b, size_t cnt)
 {
 #if defined(__AVX2__)
@@ -214,16 +215,17 @@ static inline double *_ilprime_alloc(size_t doubles)
     return (double *)vfft_aligned_alloc(doubles * sizeof(double));
 }
 
-/* Bluestein plan: M = next pow2 >= max(16, 2N-1) (16 = il2p's floor pair
- * 4x4). VALID FOR ANY N (the chirp uses n^2 mod 2N in integer arithmetic
- * — nothing here assumes primality); the band is whatever the inner can
- * construct (no cap of our own). M is a FREE parameter: next pow2 here,
- * though the split engine's bluestein_wisdom shows a smooth non-pow2 M can
- * win. */
-static inline vfft_ilprime_plan_t *_ilprime_create_bluestein(int N)
+/* Bluestein plan at convolution size M: any EVEN M >= 2N-1 (the packed
+ * pointwise multiply runs in pairs). VALID FOR ANY N (the chirp uses n^2
+ * mod 2N in integer arithmetic — nothing here assumes primality); the band
+ * is whatever the inner can construct (no cap of our own). M is a FREE
+ * parameter: the prime cell races the power of two and the smallest smooth
+ * sizes (vfft_policy_ilprime_blue_m); _ilprime_create_bluestein takes the
+ * next pow2 >= max(16, 2N-1) (16 = il2p's floor pair 4x4). */
+static inline vfft_ilprime_plan_t *_ilprime_create_bluestein_m(int N, int M)
 {
-    int M = 16;
-    while (M < 2 * N - 1) M <<= 1;
+    if (M < 2 * N - 1 || (M & 1))
+        return 0;
 
     vfft_ilprime_plan_t *p = (vfft_ilprime_plan_t *)calloc(1, sizeof(*p));
     if (!p) return 0;
@@ -262,6 +264,12 @@ static inline vfft_ilprime_plan_t *_ilprime_create_bluestein(int N)
         for (int i = 0; i < 2 * M; i++) kern[i] = p->zb[i] * inv;
     }
     return p;
+}
+static inline vfft_ilprime_plan_t *_ilprime_create_bluestein(int N)
+{
+    int M = 16;
+    while (M < 2 * N - 1) M <<= 1;
+    return _ilprime_create_bluestein_m(N, M);
 }
 
 /* Rader plan: inner size N-1. NULL when the inner cannot be built — the
