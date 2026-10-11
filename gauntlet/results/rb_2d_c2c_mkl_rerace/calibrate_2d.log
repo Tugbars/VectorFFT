@@ -1,0 +1,10 @@
+16x16      banked      4887ms raced     2p
+16x64      banked      8494ms raced     2p
+16x128     banked     11563ms raced     2p
+32x16      banked      6344ms raced     2p
+32x32      banked      9187ms raced     2p
+32x64      banked      9809ms raced     2p
+64x32      banked      9246ms raced     2p
+64x128     banked     11303ms raced     2p
+128x16     banked      8026ms raced     2p
+256x8192   banked     32957ms raced     ztt
