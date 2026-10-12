@@ -16,7 +16,25 @@ The wisdom system (persistence, profiles, machine identity, the door fixes) belo
 1. **Non-power-of-two N above 262144 refuses** (e.g. 759375). The K=1 planner races
    odd-factored N only up to `VFFT_K1_IL_PLAN_ODD_MAX_N` (`il/planning/policy_il.h:49`),
    ZTURN-T stops at `VFFT_ZTT_MAX_N` (`il/rank1/ztt.h:121`), and the four-step is power of
-   two only. Owner, 10-03: "Let's tackle this." No plan written yet. **OPEN**
+   two only. The field trial (10-09) measured the refusal at 531441, 759375, 786432,
+   1000000, 1049760, 3145728, 12582912 and 16777215, immediate, from `vfft_policy_races`
+   (`policy_il.h:256-264`). The same build serves R2C 2000000, 2099520, 1572864 and
+   3145728 by building c2c(1000000), c2c(1049760), c2c(786432) and c2c(1572864) as the
+   half-length child through the DP builder (`il/real/zr2c_build.h:38`), which the door's
+   gate does not cover; those children are correct against scipy. So the c2c door refuses
+   lengths the library already runs as a child. Owner, 10-03: "Let's tackle this." Owner,
+   10-12: these sizes are to be supported, and the door inconsistency is addressed with
+   them; the size promise is "what MKL and FFTW serve", any N and any K bounded by memory
+   and the integer types, with no upper cap (the trial's 2^24 was its test budget, and
+   nothing above it has been measured). The gap's lower edge is below 262144 for two
+   kinds of length (trial V17, owner 10-12: the same gap): 4 | N outside the ZTURN-T odd
+   band with no default 3-stage chain refuses from 16385 (`VFFT_K1_IL_PLAN_MAX_N`, the
+   scratch-plane budget; 131220 and 236196, and c2r 262440 builds c2c(131220) as its
+   child), and a prime factor above 47 refuses from 131073 (the prime cell's Bluestein
+   inner, 2N-1 rounded up, passes the 262144 inner ceiling). Lifting the ceiling must also
+   admit the new engines, and the four-step for power-of-two M, into the Bluestein inner
+   pool, which draws only chain-style inners today; that step is deliberate, not
+   automatic. No plan written yet. **OPEN**
 2. **The radix 37-47 kernels are weak on odd chains.** Planned beside item 1, as its own
    piece. **OPEN**
 3. **A missing backward row is served with default backward forms, without a race.**
@@ -56,9 +74,15 @@ The wisdom system (persistence, profiles, machine identity, the door fixes) belo
     and the 18 in-place zr2c rows are stale and race on create. Needs an in-place real
     contract in the gauntlet, then a run. Owner: "we should do it in future yes." **OPEN**
 13. **Non-power-of-two N of 262147 and above.** Smooth odd N are served: zrf rows reach
-    4782969. What refuses above 262144 has not been censused since the odd-real bridge was
-    deleted (10-03). The candidates are odd N with a prime factor above 47, and even N whose
-    N/2 child is a length item 1 refuses. Planned with item 1. **OPEN**
+    4782969. The field trial's census (10-09): even N refuses only when its N/2 child is
+    itself unbuildable (r2c 600002, whose child 300001 has a prime factor above 47), not
+    whenever N/2 is above 262144 (r2c 2000000, 2099520 and 1572864 are served through the
+    child path of item 1). Odd N with a prime factor above 47 refuses from 174765, not
+    262147, in both placements: the real Bluestein needs an inner of at least (3N-1)/2
+    (`il/real/zrb.h:59`) and no inner builds past 262144, so 174763 is served and 174765,
+    174767, 199999, 200005, 262139 and 262145 refuse. Planned with item 1, whose inner
+    ceiling is the same gate. Owner, 10-12: fill this gap; lifting the ceiling carries the
+    Bluestein band with it. **OPEN**
 14. **c2r at N=2 refuses:** no engine builds it. No ruling yet. **OPEN**
 15. **N=512 r2c picks zttr** (232 ns in its race), which benched 17% slower than zr2c did
     on 09-30. Unverified suspect: the stack-alignment lottery, since zr2c's child spills
@@ -99,4 +123,9 @@ The wisdom system (persistence, profiles, machine identity, the door fixes) belo
 
 2D/3D: 2D/3D rows read and write 1D wisdom (deferred, owner 10-01); an IL 2D plan with an
 explicit lane-major geometry and K>1 is served contiguous; prime N1 refuses on the IL 2D
-tier; the column chains' R16/32/64 spill test; the 2D heats' sample definition.
+tier; the column chains' R16/32/64 spill test; the 2D heats' sample definition; a 2D/3D
+cell whose last axis is a length item 1 or 13 refuses (16x131101, 32x262202, 64x200003,
+4x4x236196) refuses only after 4-167 s of racing, and names the row child ("in-place C2C
+N=131101" for an out-of-place request, a "transform-contiguous batch" at K=1) instead of
+the request: until items 1 and 13 are filled, a guard at create entry refuses the row
+length before any race and names the request (owner 10-12: a bug, not a gap).
