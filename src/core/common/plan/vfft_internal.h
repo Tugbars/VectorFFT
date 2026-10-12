@@ -183,7 +183,7 @@ struct vfft_plan_s
      * calls it right after the signature check: no route switch, no engine
      * probing, no placement or layout branch per call. Returns 0 when
      * served; nonzero = fall through to the general dispatch (the 2D real
-     * forms on an aliased call, which the general path names).
+     * forms, on an aliased call of an out-of-place plan).
      * NULL = the general dispatch (batches, 2D/3D, the cascade, split). */
     int (*k1_exec)(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);
     /* THE LEAN DOOR'S EXECUTOR, per direction (2026-10-11): set when the bound

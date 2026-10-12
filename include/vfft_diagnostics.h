@@ -58,6 +58,11 @@ extern "C"
    * threaded column passes actually ran. Zero after an execute means the
    * column pass was serial (too few independent units, or no pool). */
   long vfft_il2d_col_mt_passes(void);
+  /* the native IL 2D real ROW pass (the row plan's threaded walk, at K = 1
+   * and in a batch alike): how many threaded row passes actually ran. A 2D
+   * real plan can thread its rows while its column pass stays serial, so
+   * read both counters before calling such a plan serial. */
+  long vfft_il2d_row_mt_passes(void);
   /* the rank-N INTERLEAVED c2c tier (3D IL): threaded executes (band or
    * plane arm engaged); serial serves leave it unchanged. */
   long vfft_ilnd_mt_passes(void);

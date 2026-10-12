@@ -290,8 +290,9 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
 /* THE FULL DOOR: the calls the fast path (vfft_execute, below) does not
  * finish -- no bound executor, a failed compare, an executor's decline --
  * through the general signature walk (a transform-name lookup, then the
- * real, C2R and C2C branches), which says why. Out of line, so the fast path
- * keeps no frame of its own. */
+ * real, C2R and C2C branches), which refuses a bad call and says why, and
+ * the general dispatch for the rest. Out of line, so the fast path keeps no
+ * frame of its own. */
 static __attribute__((noinline)) void _vfft_execute_full(vfft_plan h, vfft_dir_t dir,
                                                          double *sre, double *sim, double *dre, double *dim)
 {

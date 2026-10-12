@@ -312,15 +312,23 @@ extern "C"
    *   real-to-real (real)        real_in    NULL     real_out   NULL
    *
    * In-place C2C: dre == sre (and dim == sim), or dre and dim NULL. In-place
-   * R2C/C2R (1D, even N, INTERLEAVED, K == 1 or transform-contiguous): ONE
-   * plane of 2 (N/2 + 1) doubles holds the N reals and then the N/2 + 1
-   * bins; dre == sre is required and a distinct dre is refused. In-place 2D
+   * R2C/C2R (1D, even or odd N, INTERLEAVED, K == 1 or transform-contiguous):
+   * ONE plane of 2 (N/2 + 1) doubles holds the N reals and then the N/2 + 1
+   * bins (integer division: at odd N the plane is N + 1 doubles, the N reals
+   * and then the (N + 1)/2 bins); dre == sre is required and a distinct dre
+   * is refused. In-place 2D
    * R2C and C2R (INTERLEAVED, howmany == 1, any nthreads): one plane of N1 rows, each
    * row 2 (N2/2 + 1) doubles holding its N2 reals and then its N2/2 + 1
    * bins (the in-place layout of FFTW and MKL); dre == sre is required and
    * a distinct dre is refused, as in 1D. In-place 3D R2C and C2R (the same
    * contract: one volume of N1 N2 rows, each 2 (N3/2 + 1) doubles). A C2R in
-   * place, at either rank, overwrites its spectrum by nature.
+   * place, at either rank, overwrites its spectrum by nature. A 2D or 3D
+   * in-place real plan created with config.owned_buffers = 1 walks its rows
+   * at vfft_plan_stride() doubles, the pitch the plan chose, which can exceed
+   * 2 (N2/2 + 1) (it does where 512 divides the last axis): it accepts its own
+   * plane or any buffer laid out at that stride, and a buffer laid out at the
+   * formula pitch is undefined behaviour where the two differ, since execute
+   * cannot see a buffer's layout. Read the stride, never compute it.
    * Element addressing follows config.batch_geom. Pure: no allocation, no
    * measurement. Safe to call concurrently on different plans.
    *
@@ -397,12 +405,15 @@ extern "C"
    * arithmetic checked: the in-place real plane of 2 (N/2 + 1) doubles, the
    * spectrum of a real transform, the K transforms or planes of a batch. A
    * SPLIT plan created with config.owned_buffers = 1 gets its planes at the
-   * plan's measured stride (vfft_plan_stride()) with the pad lanes zeroed;
-   * every other plan gets the tight planes of its data contract. The data
-   * is uninitialised. A plan may hand out any number of sets, and a set stays
-   * valid after vfft_destroy(p). Refused (printed): a SPLIT plan of rank 2 or
-   * more, and an INTERLEAVED real batch in its lane-major geometry that runs
-   * on the split engines.
+   * plan's measured stride (vfft_plan_stride()) with the pad lanes zeroed; an
+   * in-place 2D real plan gets its plane at the row pitch the plan walks
+   * (vfft_plan_stride(): the plan's own pitch under config.owned_buffers = 1,
+   * else 2 (N2/2 + 1)); every other plan gets the tight planes of its data
+   * contract. The data is uninitialised. A plan may hand out any number of
+   * sets, and a set stays valid after vfft_destroy(p). Refused (printed): a
+   * SPLIT plan of rank 2 or more, a SPLIT real plan in place, an INTERLEAVED
+   * real plan of rank 3 (no sized set yet), and an INTERLEAVED real batch in
+   * its lane-major geometry that runs on the split engines.
    *
    * @param p A plan from vfft_create().
    * @param sre,sim,dre,dim Out-params in vfft_execute()'s roles: unused roles
