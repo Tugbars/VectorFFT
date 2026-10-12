@@ -241,11 +241,16 @@ static int _k1x_zr2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
 /* THE LEAN DOOR'S ENTRIES (2026-10-11): the bound executor never declines, so
  * vfft_execute may jump into it (k1_go, per direction). Every 1D c2c and 1D
  * real executor qualifies; mono gets its per-direction forms. The 2D real
- * forms decline an aliased call and are never passed here. */
+ * forms decline an aliased call and are never passed here. A real plan has
+ * ONE direction (R2C forward, C2R backward): its other entry stays NULL, so a
+ * call in the wrong direction leaves the lean door and is refused, with the
+ * reason, by the full door's signature walk. */
 static vfft_plan _k1_bind_go(struct vfft_plan_s *h)
 {
-    h->k1_go[VFFT_FORWARD] = h->k1_exec == _k1x_mono ? _k1x_mono_f : h->k1_exec;
-    h->k1_go[VFFT_BACKWARD] = h->k1_exec == _k1x_mono ? _k1x_mono_b : h->k1_exec;
+    h->k1_go[VFFT_FORWARD] = h->transform == VFFT_C2R ? NULL
+                           : h->k1_exec == _k1x_mono ? _k1x_mono_f : h->k1_exec;
+    h->k1_go[VFFT_BACKWARD] = h->transform == VFFT_R2C ? NULL
+                            : h->k1_exec == _k1x_mono ? _k1x_mono_b : h->k1_exec;
     return (vfft_plan)h;
 }
 static vfft_plan _vfft_real_bind_exec(vfft_plan hp)

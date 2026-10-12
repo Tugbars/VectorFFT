@@ -2150,8 +2150,13 @@ let zil_pure_cells : (string * string list) list =
   ; ( "radix64_z_r2z_bwd_avx2.c"
     , [ "64"; "--cil-r2z"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
     (* the real MONO rn1 (c2c_il.ml, 2026-09-30): the whole small real
-       transform as one n1 body, fwd (r2c) + bwd (c2r), the n1 radices to 64;
+       transform as one n1 body, fwd (r2c) + bwd (c2r), the n1 radices 2 to
+       64 (2: the N = 2 real cell, the smallest the contract promises);
        zil/avx2/real/mono *)
+  ; ( "radix2_z_rn1_avx2.c"
+    , [ "2"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix2_z_rn1_bwd_avx2.c"
+    , [ "2"; "--cil-rn1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix3_z_rn1_avx2.c"
     , [ "3"; "--cil-rn1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix3_z_rn1_bwd_avx2.c"

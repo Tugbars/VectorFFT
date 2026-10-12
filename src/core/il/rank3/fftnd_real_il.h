@@ -1040,6 +1040,15 @@ static void _ilndr_mt_arm_run(void *v)
 }
 
 /* ═══ create ═══════════════════════════════════════════════════════════ */
+/* every NULL of the tier names its reason (vfft.h: create "returns NULL after
+ * printing the reason"); the out-of-memory exits say what failed to allocate */
+static vfft_plan _ilndr_oom(vfft_ilndr_t *d, const vfft_config_t *cfg, const char *what)
+{
+    _vfft_warn("vfft_create: 3D INTERLEAVED %s %dx%dx%d: out of memory (%s)",
+               _vfft_tname(cfg->transform), cfg->n[0], cfg->n[1], cfg->n[2], what);
+    if (d) vfft_ilndr_destroy(d);
+    return NULL;
+}
 static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vfft_wisdom_s *W, size_t K)
 {
     const int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
@@ -1068,7 +1077,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     }
     d = (vfft_ilndr_t *)calloc(1, sizeof *d);
     if (!d)
-        return NULL;
+        return _ilndr_oom(NULL, cfg, "the tier descriptor");
     d->N[0] = N1; d->N[1] = N2; d->N[2] = N3;
     d->hpn = N3 / 2 + 1;
     /* door 2 (owned_buffers = 1, real_inplace_design.md §1): the rows at the pitch the policy names;
@@ -1097,10 +1106,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     /* ── the plane child: its store from the row's plane_ recipe, else from the 2D shard ── */
     d->childS = vfft_child_store_for(usable_w ? &W->vw2 : NULL, &pk, "plane_");
     if (!d->childS)
-    {
-        vfft_ilndr_destroy(d);
-        return NULL;
-    }
+        return _ilndr_oom(d, cfg, "the plane child's store");
     if (usable_w && d->childS->vw2.nrec == 0)
         _ilndr_borrow_2d(W, d->childS, N2, N3, nthr, (ip && !c2r) ? (ip2 ? 2 : 1) : 0);
     {
@@ -1123,6 +1129,9 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         cc.wisdom_write = 0;
         cc.recalibrate = cfg->recalibrate;
         c = (struct vfft_plan_s *)vfft_create(&cc);
+        _il2d_blu_ctx.W = W;     /* a nested create sets the context to its own store (il2d_real_axis.h):
+                                  * the axis builds below bank their Bluestein verdicts on THIS cell's row */
+        _il2d_blu_ctx.cfg = cfg;
         if (!c)
         {
             _vfft_warn("vfft_create: 3D INTERLEAVED %s %dx%dx%d: no 2D real plane plan at %dx%d",
@@ -1140,26 +1149,25 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         vfft_ilndr_destroy(d);
         return NULL;
     }
-    d->nat0 = _ilndr_nat_perm(d->ax0.R, d->ax0.nst, N1);
-    if (c2r && d->nat0)
-        d->neg0 = _ilndr_neg_of(d->nat0, N1);
-    if (c2r && ip && d->neg0 && !(d->pos0 = _ilndr_inv_of(d->neg0, N1)))
-    {
-        vfft_ilndr_destroy(d);
-        return NULL;
-    }
-    if (c2r && ip && (!(d->vis = (char *)malloc((size_t)N1)) || !_ilndr_cycles(d)))
-    {   /* the cycles of the planes' positions, for the serial walk and the workers' deal */
-        vfft_ilndr_destroy(d);
-        return NULL;
-    }
+    /* the natural permutation exists for a plain chain only: a Bluestein or
+     * turned axis 0 has no stage radices to derive it from (strips_ok below
+     * excludes those axes; the twin at ax0n serves r2c, c2r refuses) */
+    d->nat0 = (d->ax0.blu || d->ax0.tpc) ? NULL : _ilndr_nat_perm(d->ax0.R, d->ax0.nst, N1);
     strips_ok = !d->ax0.blu && !d->ax0.tpc && d->nat0 != NULL;
     if (c2r && !strips_ok)
-    {   /* c2r composes the forward chain's stages: a Bluestein or turned axis 0 has none */
+    {   /* c2r composes the forward chain's stages: a Bluestein or turned axis 0 has none
+         * (refused before the in-place cycles below, which walk the permutation) */
         _vfft_warn("vfft_create: 3D INTERLEAVED c2r %dx%dx%d: axis 0 has no plain chain (a prime N1 is the tier's next phase)", N1, N2, N3);
         vfft_ilndr_destroy(d);
         return NULL;
     }
+    if (c2r)
+        d->neg0 = _ilndr_neg_of(d->nat0, N1);
+    if (c2r && ip && d->neg0 && !(d->pos0 = _ilndr_inv_of(d->neg0, N1)))
+        return _ilndr_oom(d, cfg, "the axis-0 position permutation");
+    if (c2r && ip && (!(d->vis = (char *)malloc((size_t)N1)) || !_ilndr_cycles(d)))
+        /* the cycles of the planes' positions, for the serial walk and the workers' deal */
+        return _ilndr_oom(d, cfg, "the in-place cycle tables");
     /* r2c: the in-place natural twin: the natural pass at two stages or more (a cube-sized pre-leaf
      * scratch), or a Bluestein axis; a one-stage chain is natural-native in place as it is */
     if (!c2r && (d->ax0.blu || d->ax0.tpc || d->ax0.nst >= 2))
@@ -1171,6 +1179,9 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
             d->ax0n_on = 1;
         else if (!strips_ok)
         {
+            _vfft_warn("vfft_create: 3D INTERLEAVED r2c %dx%dx%d: axis 0 has neither a plain chain "
+                       "for the strips nor a natural twin (a Bluestein or turned axis whose natural "
+                       "column plan could not be built); unsupported", N1, N2, N3);
             vfft_ilndr_destroy(d);
             return NULL;
         }
@@ -1204,7 +1215,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         d->V = (double *)vfft_aligned_alloc((2 * (size_t)N1 * d->plane + 8) * sizeof(double));
         if (!d->V)
         {
-            if (c2r) { vfft_ilndr_destroy(d); return NULL; }
+            if (c2r) return _ilndr_oom(d, cfg, "the private volume");
             payonce_ok = 0;
         }
         else
@@ -1232,10 +1243,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         if (ip2)
             d->pbuf[1] = (double *)vfft_aligned_alloc((2 * (size_t)N2 * (size_t)d->hpn + 8) * sizeof(double));
         if (!d->pbuf[0] || !d->pbuf[2] || (ip2 && !d->pbuf[1]))
-        {
-            vfft_ilndr_destroy(d);
-            return NULL;
-        }
+            return _ilndr_oom(d, cfg, "the plane buffers");
     }
     /* ── the verdict: pin > banked > the race of (structure x form) ── */
     pinned = (apin && apin[0]) || (fpin && fpin[0]) || (bpin && bpin[0]);
@@ -1279,8 +1287,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         if (!in || !out || (ip && !seed))
         {
             vfft_aligned_free(in); if (!ip) vfft_aligned_free(out); vfft_aligned_free(seed);
-            vfft_ilndr_destroy(d);
-            return NULL;
+            return _ilndr_oom(d, cfg, "the race's scratch volumes");
         }
         {
             unsigned sd = 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 10) ^ ((unsigned)N3 << 20);
@@ -1328,6 +1335,8 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         if (na == 0)
         {
             vfft_aligned_free(in); if (!ip) vfft_aligned_free(out); vfft_aligned_free(seed);
+            _vfft_warn("vfft_create: 3D INTERLEAVED %s %dx%dx%d: no structure arm could be built "
+                       "(child, pay-once, band); unsupported", _vfft_tname(cfg->transform), N1, N2, N3);
             vfft_ilndr_destroy(d);
             return NULL;
         }
@@ -1623,10 +1632,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     /* ── the handle ── */
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     if (!h)
-    {
-        vfft_ilndr_destroy(d);
-        return NULL;
-    }
+        return _ilndr_oom(d, cfg, "the plan handle");
     h->transform = cfg->transform;
     h->placement = cfg->placement;
     h->layout = (int)cfg->layout;

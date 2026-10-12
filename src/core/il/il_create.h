@@ -25,11 +25,49 @@
 #include "il/rank1/c2c_ip_create_il.h"
 #include "il/rank1/c2c_oop_create_il.h"
 
+/* the row law for a REAL rank-2/3 request: an odd last axis is served by c2c
+ * rows (the odd-N2 row child), so the c2c row law applies; an even one by
+ * the 1D real row child, whose zr2c composite needs c2c(N/2), refused for
+ * certain when N/2 is a prime cell past the inner ceiling. NULL when the
+ * rows may be served. */
+static const char *_il_real_row_refused(int N)
+{
+    if (N < 2)
+        return "a real length below 2";
+    if (N & 1)
+        return vfft_policy_c2c_row_refused(N);
+    if (vfft_policy_prime_cell_unservable(N / 2))
+        return "an even length whose composite half has a prime factor above 47 and a Bluestein inner past the 262144 ceiling";
+    return NULL;
+}
+
 static vfft_plan _vfft_il_create(const vfft_config_t *cfg,
                                  struct vfft_wisdom_s *W,
                                  int N,
                                  size_t K)
 {
+    /* THE ROW GUARD (2026-10-12): a rank-2/3 request whose last axis is a
+     * length the 1D doors refuse for want of an engine refuses here, at
+     * once and in the request's own name, before any axis races. */
+    if (cfg->dims == 2 || cfg->dims == 3)
+    {
+        const int Nr = cfg->n[cfg->dims - 1];
+        const char *why = cfg->transform == VFFT_C2C ? vfft_policy_c2c_row_refused(Nr)
+                        : _il_real_row_refused(Nr);
+        if (why)
+        {
+            char shape[48];
+            if (cfg->dims == 3)
+                snprintf(shape, sizeof shape, "%dx%dx%d", cfg->n[0], cfg->n[1], cfg->n[2]);
+            else
+                snprintf(shape, sizeof shape, "%dx%d", cfg->n[0], cfg->n[1]);
+            _vfft_warn("vfft_create: %dD INTERLEAVED %s %s (K=%zu): its rows at the last axis N=%d "
+                       "have no 1D %sengine: %s; unsupported",
+                       cfg->dims, _vfft_tname(cfg->transform), shape, K, Nr,
+                       cfg->transform == VFFT_C2C ? "" : "real ", why);
+            return NULL;
+        }
+    }
     if (cfg->dims == 3 || cfg->dims == 4)
         return _vfft_create_rank34_il(cfg, W, K);
     if (cfg->dims == 2)

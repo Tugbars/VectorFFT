@@ -2,7 +2,9 @@
  *
  * A user-fixable contract violation is refused with one actionable line on
  * stderr, never a bare NULL and never a silent reinterpretation at execute.
- * Internal build and OOM failures return NULL quietly.
+ * vfft_create returns NULL only after printing the reason (vfft.h), so a
+ * create door that gets NULL from a quiet engine builder (the bake-offs call
+ * those too) prints the reason itself, once.
  *
  * Depends only on <stdarg.h>, <stdio.h> and the public transform enum, so
  * any module header can refuse without depending on vfft.c.

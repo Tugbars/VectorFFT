@@ -253,10 +253,14 @@ static void _exec_zrbl(struct vfft_plan_s *h, const double *sre, double *dre)
         vfft_zrbl_execute_bwd(h->zrbl, sre, dre);
 }
 
-/* the real Bluestein's cells: odd N past the mono's (64) with no flat DIT chain */
+/* the real Bluestein's cells: odd N past the mono's (64) with no flat DIT
+ * chain, whose inner (M >= (3N-1)/2, zrb.h) the inner pool can hold: past the
+ * pool's ceiling no inner builds, so the door refuses at once instead of
+ * after a search that cannot succeed */
 static int _zrb_ok(int N)
 {
-    return (N & 1) && N > VFFT_ZRM_MAX_N && !_zrf_has_chain(N);
+    return (N & 1) && N > VFFT_ZRM_MAX_N && !_zrf_has_chain(N) &&
+           (3L * N - 1) / 2 <= (long)VFFT_ZTT_MAX_N;
 }
 
 /* VFFT_ZRF at create: 1 = pinned at the chain "9.9.5" (then "/t" = the split

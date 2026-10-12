@@ -492,6 +492,11 @@ static int *_il2d_nat_perm(const int *Rs, int nst, int N1)
     }
     for (s2 = 0; s2 < nst; s2++)
     {
+        if (Rs[s2] <= 0)
+        {   /* no stage radix (a Bluestein or turned axis carries none): no permutation */
+            free(perm);
+            return NULL;
+        }
         D[s2] = L / Rs[s2];
         W[s2] = w;
         w *= Rs[s2];

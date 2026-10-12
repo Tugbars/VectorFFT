@@ -268,12 +268,14 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
  * its worker count by its OWN plan-time snapshot (below). */
 static void _vfft_pool_arm(int n)
 {
-    if (n > thread_pool_size())
+    /* the workers a create's races or a plan need, alive and counted as
+     * needed (threads.h); the calling thread is never pinned by the pool
+     * (vfft.h: the thread is given back as it was), and a live plan's
+     * workers are kept by thread_pool_plan_retain at the front door */
+    if (n > 1)
     {
-        _vfs_proc_set_read(); /* Linux: the set this process may run on, before the caller's is narrowed */
-        thread_pool_resize(n);
-        vfft_pin_thread(0); /* pool pins workers 1..n-1; caller = 0 */
-        _vfs_rehome(0);     /* inside a race scope: its guard follows, and this pin stays */
+        _vfs_proc_set_read(); /* Linux: the set this process may run on, before the workers pin */
+        thread_pool_ensure(n);
     }
 }
 
@@ -283,10 +285,9 @@ static void _vfft_pool_arm(int n)
  * keeps the historical "inherit the pool" behaviour exactly. */
 static int _vfft_plan_threads(const vfft_config_t *cfg)
 {
-    const int pool = thread_pool_size();
-    if (cfg && cfg->nthreads > 0 && cfg->nthreads < pool)
-        return cfg->nthreads;
-    return pool;
+    if (cfg && cfg->nthreads > 0)
+        return cfg->nthreads; /* the request's own count, bounded at the front door; its workers are ensured there */
+    return thread_pool_setting(); /* 0 = the setting for creates (vfft_set_num_threads) */
 }
 
 #include "vfft_internal.h"             /* the three private structs (migration step 15) */
@@ -356,6 +357,16 @@ static const char *_vfft_build_id(void)
 static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
 {
     const char *d = (dir && dir[0]) ? dir : ".";
+    W->dir_too_long = 0;
+    if (strlen(d) >= sizeof W->dir)
+    {   /* never cut silently: the store opens in memory, read-only, and says so */
+        _vfft_warn("vfft_wisdom_load: the wisdom directory path is %zu characters, over the %zu the "
+                   "store holds; it is not used: the library's own store serves READ-ONLY and the "
+                   "winners are kept for this process",
+                   strlen(d), sizeof W->dir - 1);
+        W->dir_too_long = 1;
+        d = ".";
+    }
     /* THE FROZEN BUNDLE HAS ITS OWN HOME (2026-09-24): the wisdom2 store
      * lives in src/wisdom/, the frozen files (spike_wisdom.txt, the dune
      * build input of plan_executors.h; bluestein_wisdom.txt; c2r_path.txt)
@@ -369,7 +380,13 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
     const char *f = d;
 #endif
     snprintf(W->path_c2c, sizeof W->path_c2c, "%s/spike_wisdom.txt", f);
-    snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", f);
+    /* the Bluestein table is SEEDED from the frozen bundle and SAVED to the
+     * store (the frozen bundle is build input, never written by a create):
+     * the store's path is settled once wisdom2 has resolved the store
+     * directory (_bundle_load); until then it is the bundle's directory,
+     * which a build with no store of its own keeps, as before */
+    snprintf(W->path_bluestein_seed, sizeof W->path_bluestein_seed, "%s/bluestein_wisdom.txt", f);
+    snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", d);
     snprintf(W->path_c2r_path, sizeof W->path_c2r_path, "%s/c2r_path.txt", f);
     snprintf(W->dir, sizeof W->dir, "%s", d);
 }
@@ -380,7 +397,7 @@ static void _bundle_load(struct vfft_wisdom_s *W)
      * pure in-process scratch for the greedy creator's extraction (wave 3:
      * 3D is born in wisdom2). memset(0) from calloc/init is its state. */
     bluestein_wisdom_init(&W->bluestein);
-    bluestein_wisdom_load(&W->bluestein, W->path_bluestein);
+    bluestein_wisdom_load(&W->bluestein, W->path_bluestein_seed); /* the frozen seed */
     vfft_c2r_path_load(W->path_c2r_path); /* c2r NATURAL/STRIDE per-cell path table */
     /* wisdom2 (the live store). A bank always lands in memory, and a
      * create's winner is saved before the create returns (owner,
@@ -425,8 +442,17 @@ static void _bundle_load(struct vfft_wisdom_s *W)
 #else
             (void)env;
 #endif
-            vw2_open(&W->vw2, open_dir, 1);
+            if (W->dir_too_long)
+                vw2_open(&W->vw2, NULL, 0); /* in memory, read-only: the path named could not be held */
+            else
+                vw2_open(&W->vw2, open_dir, 1);
             vw2_set_build(&W->vw2, _vfft_build_id()); /* every row banked here carries bld= */
+            if (W->vw2.dir[0])
+            {   /* the Bluestein cells calibrated on this machine live in the
+                 * store beside the wisdom2 shards; the frozen seed stays read-only */
+                snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", W->vw2.dir);
+                bluestein_wisdom_merge(&W->bluestein, W->path_bluestein);
+            }
 
             /* THE STAMP. An unstamped store becomes this CPU's (in memory now,
              * on disk at the first save). A stamp from before the identity
@@ -629,17 +655,17 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
         vfft_r2c_plan_destroy(ps);
         return pr;
     }
-    {
-        int T = thread_pool_size();
-        thread_pool_resize(1);
+    {   /* the arms are timed serially: the serial scope, on this thread only,
+         * instead of a resize of the pool under every other plan */
+        thread_pool_serial_enter();
         if (_r2c_race_arms(pr, ps, N, K,
                            _vw2_lay_of(cfg) == VW2_LAY_IL, &nr, &ns) != 0)
         {
-            thread_pool_resize(T);
+            thread_pool_serial_leave();
             vfft_r2c_plan_destroy(pr);
             return ps; /* OOM in the racer: serve, do not bank a guess */
         }
-        thread_pool_resize(T);
+        thread_pool_serial_leave();
     }
     /* Hysteresis toward stride: pick rfft only if clearly faster (>3%). Stride is the
      * structural high-K winner and the only path that threads, so on a near-tie (where
@@ -707,17 +733,16 @@ static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
         return ps;
     if (!ps)
         return pn;
-    {
-        int T = thread_pool_size();
-        thread_pool_resize(1);
+    {   /* timed serially in the serial scope (as the r2c race above) */
+        thread_pool_serial_enter();
         if (_c2r_race_arms(pn, ps, N, K,
                            _vw2_lay_of(cfg) == VW2_LAY_IL, &nn, &ns) != 0)
         {
-            thread_pool_resize(T);
+            thread_pool_serial_leave();
             vfft_c2r_disp_destroy(pn);
             return ps; /* OOM in the racer: serve, do not bank a guess */
         }
-        thread_pool_resize(T);
+        thread_pool_serial_leave();
     }
     pick_nat = (nn < ns * 0.97);
     if (getenv("VFFT_BAKEOFF_DBG"))
@@ -1374,7 +1399,9 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
          * (ZTURN-T's, the flat DIT's) slabs the pool, and the four-step's 2D
          * child threads on it at T > 1 (no serial form to fall to). */
         return (g->k1il2p || g->k1il3p || (g->k1ilfd && g->k1ilfd->mt == 0) ||
-                (g->k1ztt && g->k1ztt->mt == 0) || (g->k1fs && g->nthreads <= 1))
+                (g->k1ztt && g->k1ztt->mt == 0) || (g->k1fs && g->nthreads <= 1) ||
+                (g->k1_mono_ilf && g->k1_mono_ilb) ||            /* the mono: one pure kernel, alias-safe in place */
+                (g->k1ilpr && g->k1ilpr->mt == 0))               /* the prime cell's serial form: plan-owned planes, pool-free */
                    ? 1
                    : 0;
     if (!g->k1_on)
@@ -1905,6 +1932,21 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                    "vfft_plan_planes() to fill the execute arguments");
         return NULL;
     }
+    /* THE THREAD COUNT'S BOUND: a worker beyond this machine's logical CPUs
+     * has no core to run on and no measured form (the pool pins one worker
+     * per core), and the pool dispatches at most THREAD_POOL_MAX_DISPATCH
+     * workers; a count past either is refused, never clamped. */
+    if (cfg->nthreads < 0 || cfg->nthreads > _thread_pool_ncpu() ||
+        cfg->nthreads > THREAD_POOL_MAX_DISPATCH)
+    {
+        _vfft_warn("vfft_create: nthreads=%d is outside the pool's range: 0 (the pool's "
+                   "current size) or 1..%d (this machine's %d logical CPUs, at most %d "
+                   "dispatched workers)",
+                   cfg->nthreads,
+                   _thread_pool_ncpu() < THREAD_POOL_MAX_DISPATCH ? _thread_pool_ncpu() : THREAD_POOL_MAX_DISPATCH,
+                   _thread_pool_ncpu(), THREAD_POOL_MAX_DISPATCH);
+        return NULL;
+    }
     /* TRANSFORM-CONTIGUOUS BATCH: one K=1 handle through this same front door, run K times at the per-transform block
      * strides derived below. Gate: 1D INTERLEAVED K>1; C2C on DEFAULT-or-explicit, real on the EXPLICIT flag only.
      * See docs/design/vfft_front_door.md. */
@@ -1930,6 +1972,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                            N);
                 return NULL;
             }
+            c1.recalibrate = 0; /* the clones below replay what the primary just raced and
+                                 * banked (fft2d_create_il.h's law for its clones): a clone
+                                 * carrying the flag would re-race and re-save the cell T times */
             struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
             if (!h)
             {
@@ -2073,6 +2118,23 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                    "supported for layout=SPLIT (split batches are lane-major: element e "
                    "of transform t at plane[e*K + t]) — use VFFT_LAYOUT_INTERLEAVED for a "
                    "transform-contiguous batch, or VFFT_BATCH_DEFAULT/LANE_MAJOR here");
+        return NULL;
+    }
+    /* An INTERLEAVED batch of rank 2 or more has exactly one geometry:
+     * contiguous planes, plane t at z + t * (the plane's doubles), which is
+     * what DEFAULT means there (the plane queue, il/rank2/fft2d_create_il.h,
+     * and the rank-N tiers address nothing else). An EXPLICIT lane-major
+     * request is refused here, by the same rule: no combination quietly means
+     * something other than what it says. */
+    if (cfg->batch_geom == VFFT_BATCH_LANE_MAJOR &&
+        cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->dims >= 2 && K > 1)
+    {
+        _vfft_warn("vfft_create: batch_geom=VFFT_BATCH_LANE_MAJOR is not supported for an "
+                   "INTERLEAVED plan of rank %d (its batches are contiguous planes: plane t "
+                   "at z + t * plane_doubles) — use VFFT_BATCH_DEFAULT or "
+                   "VFFT_BATCH_TRANSFORM_CONTIGUOUS and lay the %d planes out one after "
+                   "another",
+                   cfg->dims, (int)K);
         return NULL;
     }
     /* In-place real FFT: SUPPORTED for the 1D INTERLEAVED-CCE zr2c route
@@ -2312,6 +2374,9 @@ static vfft_plan _vfft_create_outer(const vfft_config_t *cfg)
         h->own_plane = (double *)vfft_aligned_alloc(rows * pitch * sizeof(double));
         if (!h->own_plane)
         {
+            _vfft_warn("vfft_create: out of memory allocating the plan's own in-place real plane "
+                       "(%zu rows x %zu doubles, config.owned_buffers = 1)",
+                       rows, pitch);
             vfft_destroy(h);
             return NULL;
         }
@@ -2337,22 +2402,62 @@ static vfft_plan _vfft_create_outer(const vfft_config_t *cfg)
  * turned saving off. A nested create keeps the flag its parent passed.
  * _vfft_create_depth (common/support/race_scope.h) counts the nesting; the
  * race scope a clock read entered on the way is left here, on every path. */
+/* ONE CREATE AT A TIME (2026-10-12): the K=1 planner's context, the prime
+ * arm, the four-step map and the 2D Bluestein context are process statics
+ * ("one create at a time" by their own comment), and two races at once would
+ * corrupt each other's timings; so creates on two threads take turns here.
+ * Recursive: creates nest (a tier's row child). Execute never takes it; the
+ * pool lock (threads.h) is taken inside it, never the other way round. */
+#ifdef _WIN32
+static CRITICAL_SECTION _vfft_create_cs;
+static volatile LONG _vfft_create_cs_init = 0;
+static void _vfft_create_lock(void)
+{
+    if (_vfft_create_cs_init != 2)
+    {
+        if (InterlockedCompareExchange(&_vfft_create_cs_init, 1, 0) == 0)
+        {
+            InitializeCriticalSection(&_vfft_create_cs);
+            InterlockedExchange(&_vfft_create_cs_init, 2);
+        }
+        else
+            while (_vfft_create_cs_init != 2) _mm_pause();
+    }
+    EnterCriticalSection(&_vfft_create_cs);
+}
+static void _vfft_create_unlock(void) { LeaveCriticalSection(&_vfft_create_cs); }
+#elif defined(__linux__)
+static pthread_mutex_t _vfft_create_cs = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+static void _vfft_create_lock(void) { pthread_mutex_lock(&_vfft_create_cs); }
+static void _vfft_create_unlock(void) { pthread_mutex_unlock(&_vfft_create_cs); }
+#else
+static void _vfft_create_lock(void) {}
+static void _vfft_create_unlock(void) {}
+#endif
+
 vfft_plan vfft_create(const vfft_config_t *cfg)
 {
     vfft_config_t c;
     vfft_plan h;
+    unsigned int csr;
     if (!cfg)
     {
         _vfft_warn("vfft_create: NULL config");
         return NULL;
     }
     c = *cfg;
+    _vfft_create_lock();
+    csr = _mm_getcsr(); /* the caller's FP mode, given back below (the races run FTZ|DAZ) */
     if (_vfft_create_depth == 0)
         c.wisdom_write = _vfft_save_enabled();
     _vfft_create_depth++;
     h = _vfft_create_outer(&c);
     if (--_vfft_create_depth == 0)
         _vfft_scope_create_done();
+    if (h)
+        thread_pool_plan_retain(((struct vfft_plan_s *)h)->nthreads); /* its workers stay until vfft_destroy */
+    _mm_setcsr(csr);
+    _vfft_create_unlock();
     return h;
 }
 
@@ -2598,14 +2703,18 @@ size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n)
 /* ── global control ── */
 void vfft_set_num_threads(int n)
 {
-    _vfs_proc_set_read(); /* Linux: the set this process may run on, before the caller's is narrowed */
-    thread_pool_resize(n);
-    if (n > 1)
-    {
-        vfft_pin_thread(0); /* pool pins workers to 1..n-1; caller=0 */
-        _vfs_rehome(0);     /* inside a measurement scope: its guard follows, and this pin stays */
+    if (n > _thread_pool_ncpu() || n > THREAD_POOL_MAX_DISPATCH)
+    {   /* the same bound as config.nthreads at create: refused, the pool untouched */
+        _vfft_warn("vfft_set_num_threads: %d is past the pool's range (this machine's %d logical "
+                   "CPUs, at most %d dispatched workers); the pool stays at %d",
+                   n, _thread_pool_ncpu(), THREAD_POOL_MAX_DISPATCH, thread_pool_size());
+        return;
     }
+    _vfs_proc_set_read(); /* Linux: the set this process may run on, before the workers pin */
+    thread_pool_resize(n); /* the setting for future creates; a live plan's workers stay (threads.h) */
 }
+void vfft_set_thread_block_ms(double ms) { thread_pool_set_block_ms(ms); }
+double vfft_get_thread_block_ms(void) { return thread_pool_block_ms(); }
 int vfft_plan_tc_workers(vfft_plan p)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
@@ -2620,7 +2729,7 @@ int vfft_plan_tc_workers(vfft_plan p)
         return -1; /* not a transform-contiguous wrapper handle */
     return h->tcbw_n;
 }
-int vfft_get_num_threads(void) { return thread_pool_size(); }
+int vfft_get_num_threads(void) { return thread_pool_setting(); }
 const char *vfft_isa(void) { return VFFT_ISA_NAME; }
 /* the committed K=1 interleaved ROUTE, by name (2026-09-19). A bench asks
  * the library which engine served a length instead of grepping the store for

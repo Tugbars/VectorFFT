@@ -148,4 +148,19 @@ static int bluestein_wisdom_load(bluestein_wisdom_t *bw, const char *path)
     return loaded;
 }
 
+/* Merge a file into a loaded table: every entry read is added (a cell already
+ * present takes the file's verdict). Returns the entries read, or -1 when
+ * the file does not open. The store's table over the frozen seed. */
+static int bluestein_wisdom_merge(bluestein_wisdom_t *bw, const char *path)
+{
+    bluestein_wisdom_t tmp;
+    int n, i;
+    bluestein_wisdom_init(&tmp);
+    n = bluestein_wisdom_load(&tmp, path);
+    for (i = 0; i < tmp.count; i++)
+        bluestein_wisdom_add(bw, tmp.entries[i].N, tmp.entries[i].K,
+                             tmp.entries[i].M, tmp.entries[i].B, tmp.entries[i].best_ns);
+    return n;
+}
+
 #endif /* STRIDE_BLUESTEIN_WISDOM_H */

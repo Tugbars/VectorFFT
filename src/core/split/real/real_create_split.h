@@ -107,7 +107,24 @@ static struct vfft_plan_s *_vfft_create_real_split(const vfft_config_t *cfg,
                               cfg->rigor != VFFT_MEASURE && (N % 2) == 0 &&
                                   bK > 1 && bK <= 64);
         if (!rp)
+        {   /* every NULL of vfft_create names its reason (vfft.h: "returns
+             * NULL after printing the reason"); the dispatcher itself stays
+             * quiet because the bake-offs call it too */
+            if (N < 2)
+                _vfft_warn("vfft_create: %s R2C N=%d (K=%zu): a real transform needs N >= 2; "
+                           "unsupported",
+                           cfg->layout == VFFT_LAYOUT_INTERLEAVED ? "lane-major" : "split", N, K);
+            else
+                _vfft_warn("vfft_create: %s R2C N=%d (K=%zu): no split real engine builds this "
+                           "cell: the rfft path has no runnable factorization of N (its codelets "
+                           "take radix-smooth lengths), and the stride path %s; unsupported",
+                           cfg->layout == VFFT_LAYOUT_INTERLEAVED ? "lane-major" : "split", N, K,
+                           cfg->layout == VFFT_LAYOUT_INTERLEAVED
+                               ? "writes the split spectrum only, never the packed CCE spectrum "
+                                 "a lane-major batch takes"
+                               : "built no inner c2c at N/2");
             return NULL;
+        }
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
@@ -188,7 +205,20 @@ static struct vfft_plan_s *_vfft_create_real_split(const vfft_config_t *cfg,
                               cfg->rigor != VFFT_MEASURE && bK > 1 &&
                                   bK <= 128);
         if (!cd)
+        {   /* as at the r2c site: the reason is printed here, once per create */
+            if (N < 2)
+                _vfft_warn("vfft_create: %s C2R N=%d (K=%zu): a real transform needs N >= 2; "
+                           "unsupported",
+                           cfg->layout == VFFT_LAYOUT_INTERLEAVED ? "lane-major" : "split", N, K);
+            else
+                _vfft_warn("vfft_create: %s C2R N=%d (K=%zu): no split real engine builds this "
+                           "cell: no runnable c2r factorization of N (its codelets take "
+                           "radix-smooth lengths, and the natural form needs a stage-0 "
+                           "split-input initiator for the first radix), and the stride path "
+                           "built no inner c2c at N/2; unsupported",
+                           cfg->layout == VFFT_LAYOUT_INTERLEAVED ? "lane-major" : "split", N, K);
             return NULL;
+        }
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {

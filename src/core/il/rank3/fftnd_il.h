@@ -1398,6 +1398,15 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
 }
 
 /* ── the create: rank-3 interleaved c2c, either placement, every order ── */
+/* every NULL of the tier names its reason (vfft.h: create "returns NULL after
+ * printing the reason"); the out-of-memory exits say what failed to allocate */
+static vfft_plan _ilnd_oom(vfft_ilnd_t *d, const vfft_config_t *cfg, const char *what)
+{
+    _vfft_warn("vfft_create: 3D INTERLEAVED C2C %dx%dx%d: out of memory (%s)",
+               cfg->n[0], cfg->n[1], cfg->n[2], what);
+    if (d) vfft_ilnd_destroy(d);
+    return NULL;
+}
 static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                                        struct vfft_wisdom_s *W,
                                        size_t K)
@@ -1442,7 +1451,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     }
     d = (vfft_ilnd_t *)calloc(1, sizeof *d);
     if (!d)
-        return NULL;
+        return _ilnd_oom(NULL, cfg, "the tier descriptor");
     d->rank = 3;
     d->N[0] = N1; d->N[1] = N2; d->N[2] = N3;
     d->plane = (size_t)N2 * (size_t)N3;
@@ -1471,10 +1480,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         return NULL;
     }
     if (nat && !_ilnd_nat_build(d))
-    {
-        vfft_ilnd_destroy(d);
-        return NULL;
-    }
+        return _ilnd_oom(d, cfg, "the natural-order permutation tables");
     /* the STRUCTURE candidates: env pin (never banks) > banked s= > both */
     if (pin && (atoi(pin) == 1 || atoi(pin) == 2))
     {
@@ -1629,8 +1635,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         {
             if (zo && zo != z) vfft_aligned_free(zo);
             if (z) vfft_aligned_free(z);
-            vfft_ilnd_destroy(d);
-            return NULL;
+            return _ilnd_oom(d, cfg, "the race's scratch volumes");
         }
         {
             size_t i;
@@ -1905,10 +1910,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     if (!h)
-    {
-        vfft_ilnd_destroy(d);
-        return NULL;
-    }
+        return _ilnd_oom(d, cfg, "the plan handle");
     h->transform = VFFT_C2C;
     h->placement = cfg->placement;
     h->layout = (int)cfg->layout;
