@@ -287,6 +287,32 @@ OOP column — but it has not been re-measured, and is not quoted as if it had.
    4194304  four-step 2048.2048            18851825   24110238   1.28 |    6328113    6966025   1.10  threaded, four-step split 4096
 ```
 
+### K=1 INTERLEAVED — HIGH N: non-power-of-two N above 262144 vs MKL, T=1 (2026-10-12)
+
+The four-step's non-power-of-two band (`docs/design/k1_fourstep_design.md`,
+"The non-power-of-two band"): a split with both sides in [64, 16384] raced
+against the flat DIT. Canonical bench `--k1noop` (natural order, out of place,
+one thread), pinned core 2 + HIGH with the sibling guard, pace 300 ms, cool
+300 ms, both flip orders (the two numbers per column), medians, the scratch
+store's verdicts. MKL = DFTI, one thread. rt_err = the cross-engine error of
+the forward against MKL's.
+
+```
+         N  factors         verdict on the row       ours ns (flip 0 / 1)    MKL ns (flip 0 / 1)         x       rt_err
+   1000000  2^6 5^6         four-step 1250.800        3428512 /  3445400     6818625 /  7122962   1.99-2.07   7.1e-16
+    759375  3^5 5^5         four-step 1875.405        2555750 /  2628937     5098550 /  5294288   2.00-2.01   7.8e-16
+    531441  3^12            four-step 6561.81         1738125 /  1739450     2698588 /  2673762   1.54-1.55   9.4e-16
+   1049760  2^5 3^8 5       four-step 972.1080        3427613 /  3470875     7575212 /  7744525   2.21-2.23   7.6e-16
+    786432  2^18 3          four-step 3072.256        2320450 /  2283488     5297025 /  5287550   2.28-2.32   5.6e-16
+   3145728  2^20 3          four-step 3072.1024      13380550 / 13784050    51902300 / 54734625   3.88-3.97   1.0e-15
+```
+
+Every cell wins at both flip orders. In place at 1000000 the race banked the
+flat DIT (10.8 ms unpinned in the verification sweep, the four-step's natural
+class in place pays a plane copy). Cold creates: 3 to 13 minutes per cell, 35
+at 3145728 (the flat search over hundreds of chain orderings and eight 2D
+children); a warm create replays from the store.
+
 ### K=1 INTERLEAVED — PRIME N, the prime cell's own raced method and inner (2026-09-19)
 
 ```

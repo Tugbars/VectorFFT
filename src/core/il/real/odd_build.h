@@ -447,8 +447,8 @@ static int _zrb_try(const vfft_config_t *cfg, int N, int M, _ilprime_inner_desc_
         vfft_destroy((vfft_plan)h);
     return 1;
 }
-static int _zrb_sweep(const vfft_config_t *cfg, int N, const double *a, const double *ref, double *b,
-                      const double *s0, size_t xs, size_t nchk, struct vfft_plan_s *out[2])
+static int _zrb_sweep(const vfft_config_t *cfg, int N, const struct vfft_wisdom_s *W, const double *a,
+                      const double *ref, double *b, const double *s0, size_t xs, size_t nchk, struct vfft_plan_s *out[2])
 {
     static _ilprime_inner_desc_t pool[_ILPR_MAX_CANDS];   /* off the stack */
     int Ms[VFFT_ZRB_MAX_M + 2];
@@ -468,7 +468,7 @@ static int _zrb_sweep(const vfft_config_t *cfg, int N, const double *a, const do
             {
                 pcfg = *cfg; pcfg.wisdom = (vfft_wisdom *)pS; pcfg.wisdom_write = 0; pcfg.recalibrate = 0;
             }
-            if (pS) _k1_il_fs_warm(pS, &pcfg, Ms[m]);
+            if (pS) _k1_il_fs_warm(pS, W, &pcfg, Ms[m]);
             for (int c = 0; c < nc; c++)
                 if (pool[c].kind == 4) pool[c].S = pS;
         }
@@ -570,7 +570,7 @@ static struct vfft_plan_s *_real_il_odd_race(const vfft_config_t *cfg, int N, st
     if (blue_ok)
     {
         struct vfft_plan_s *hb[2] = { NULL, NULL };
-        if (_zrb_sweep(cfg, N, a, ref, b, s0, xs, nchk, hb) > 0)
+        if (_zrb_sweep(cfg, N, W, a, ref, b, s0, xs, nchk, hb) > 0)
         {
             arm[narm++] = hb[0];
             if (hb[1]) arm[narm++] = hb[1];

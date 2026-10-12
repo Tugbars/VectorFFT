@@ -942,7 +942,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                         ROWX_ARM(NULL, ho[1]);
                 }
                 ho[0] = ho[1] = NULL;
-                if (_zrb_ok(N2) && _zrb_sweep(&c, N2, rb, rr, rt, rb, xs, nchk, ho) > 0)
+                if (_zrb_ok(N2) && _zrb_sweep(&c, N2, W, rb, rr, rt, rb, xs, nchk, ho) > 0)
                 {
                     ROWX_ARM(NULL, ho[0]);
                     if (ho[1])

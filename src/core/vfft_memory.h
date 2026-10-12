@@ -147,6 +147,13 @@ static int _vm_geometry(const struct vfft_plan_s *h, _vm_geom_t *g)
                 goto overflow;
         }
         else
+        { /* 3D real: N1 N2 rows of N3 reals against N1 N2 rows of N3/2+1 bins; in
+           * place the plan's pitch (door 2 may sit past N3/2+1), as the 2D plane */
+            const size_t h3 = h->ilndr ? (size_t)h->ilndr->hp3 : (size_t)(h->N3 / 2 + 1);
+            size_t rows;
+            if (!_vm_mul(&rows, N, (size_t)h->N2) || !_vm_mul(&a, rows, (size_t)h->N3) ||
+                !_vm_mul(&a, a, K) || !_vm_mul(&b, rows, h3) || !_vm_mul(&b, b, K) || !_vm_mul(&b, b, 2))
+                goto overflow;
         }
         if (h->transform == VFFT_C2R)
         { /* the spectrum is the source */

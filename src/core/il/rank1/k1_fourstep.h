@@ -242,6 +242,86 @@ static void _k1fs_child_rows(const struct vfft_wisdom_s *S, int N1, int N2, int 
     *rrow = vw2_lookup(&S->vw2, &b);
     *rbwd = vw2_lookup(&S->vw2, &c);
 }
+/* THE BORROWED ROW CELLS (owner, 2026-10-12, VFFT_HIGHN_PLAN=borrow): every
+ * K=1 interleaved c2c row at N2 at one thread in W (the in-place natural
+ * cell the child's row plan replays, its backward twin; the others ride
+ * along) copied into the private store S as seeds. W is only read: the
+ * 1D rows are never written by a four-step. Returns the rows copied. */
+static int _k1fs_seed(struct vfft_wisdom_s *S, const vw2_key_t *k, const vw2_rec_t *src);
+static int _k1fs_borrow_rows(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, int N2)
+{
+    int i, n = 0;
+    if (!S || !W)
+        return 0;
+    for (i = 0; i < W->vw2.nrec; i++)
+    {
+        const vw2_rec_t *r = &W->vw2.rec[i];
+        if (r->key.t != VW2_T_C2C || r->key.rank != 1 || r->key.n[0] != N2 || r->key.lay != VW2_LAY_IL ||
+            r->key.nthreads != 0 || r->key.role != VW2_ROLE_COMP || vw2__is_seed(r))
+            continue;
+        if (_k1fs_seed(S, &r->key, r) == 0)
+            n++;
+    }
+    if (n)
+        vw2_disown(&S->vw2);   /* seeded, not raced */
+    return n;
+}
+/* THE CHILD'S ROW RECIPE: the 2D child at (N1, N2, T) replays its row plan
+ * from its own row's rp_ tokens (wisdom2_child.h) -- and a nested K=1 race
+ * is refused while the planner's race holds, so a child whose row carries
+ * no recipe runs a default row plan. Before the child is created, its row
+ * in S (created bare when absent: the chain race fills it) takes the rp_
+ * recipe from S's own rows at N2 (borrowed or raced by the warm), or from
+ * the one-thread child's row when only that carries one (the threaded
+ * split race). A row that already carries rp_ keeps it. */
+static void _k1fs_seed_child_rp(struct vfft_wisdom_s *S, int N1, int N2, int ip, int T)
+{
+    vw2_key_t k2d, krow, kbwd, k1;
+    struct vfft_wisdom_s *tmp;
+    const vw2_rec_t *row;
+    int i, n = 0;
+    if (!S || !_k1fs_child_keys(N1, N2, ip, T, &k2d, &krow, &kbwd))
+        return;
+    row = vw2_lookup(&S->vw2, &k2d);
+    if (row && vfft_child_row_has(row, "rp_"))
+        return;
+    tmp = _k1fs_store_new();
+    if (!tmp)
+        return;
+    for (i = 0; i < S->vw2.nrec; i++)
+    {
+        const vw2_rec_t *r = &S->vw2.rec[i];
+        if (r->key.t != VW2_T_C2C || r->key.rank != 1 || r->key.n[0] != N2 || r->key.lay != VW2_LAY_IL ||
+            r->key.nthreads != 0)
+            continue;
+        if (_k1fs_seed(tmp, &r->key, r) == 0)
+            n++;
+    }
+    if (n == 0 && T > 1 && _k1fs_child_keys(N1, N2, ip, 1, &k1, &krow, &kbwd))
+    {   /* the one-thread child's row: its rp_ recipe is the row plan's */
+        const vw2_rec_t *r1 = vw2_lookup(&S->vw2, &k1);
+        if (r1 && vfft_child_row_has(r1, "rp_"))
+        {
+            vfft_wisdom_free((vfft_wisdom *)tmp);
+            tmp = vfft_child_store_from_row(r1, "rp_");
+            n = tmp ? tmp->vw2.nrec : 0;
+        }
+    }
+    if (n > 0 && tmp)
+    {
+        vw2_disown(&tmp->vw2);
+        if (!row)
+        {
+            vw2_rec_t r;
+            memset(&r, 0, sizeof r);
+            r.key = k2d;
+            if (vw2_bank(&S->vw2, &r) != VW2_OK)
+                vw2_rec_free(&r);
+        }
+        (void)vfft_child_row_update(&S->vw2, &k2d, "rp_", tmp);
+    }
+    vfft_wisdom_free((vfft_wisdom *)tmp);
+}
 /* one row into a private store under its key (its payload; the seed is the
  * row as the composite banked it) */
 static int _k1fs_seed(struct vfft_wisdom_s *S, const vw2_key_t *k, const vw2_rec_t *src)
