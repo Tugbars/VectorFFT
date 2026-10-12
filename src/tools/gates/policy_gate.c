@@ -60,8 +60,8 @@ static long _ref_race_max_n(int N)
 {
     const int pow2 = (N & (N - 1)) == 0;
     const int oddband = vfft_ztt_odd_band(N);
-    return (long)(pow2 ? VFFT_K1FS_MAX_N : oddband ? VFFT_ZTT_MAX_N
-                       : ((N & 3) ? REF_K1_IL_PLAN_ODD_MAX_N : REF_K1_IL_PLAN_MAX_N));
+    return (long)((pow2 || vfft_k1fs_band(N)) ? VFFT_K1FS_MAX_N : oddband ? VFFT_ZTT_MAX_N   /* 2026-10-12: the non-pow2 four-step band races to the same ceiling */
+                       : REF_K1_IL_PLAN_ODD_MAX_N);   /* 2026-10-12 (V17): the factor-of-4 cells race to the flat's ceiling too */
 }
 
 
@@ -139,6 +139,14 @@ static int _ref_pool_natural(int N, int with_flat, vfft_fam_t *out, int max)
         if (vfft_k1fs_band(N))   REF_PUSH(VFFT_FAM_FS);
         return n;
     }
+    if (!pow2 && vfft_k1fs_band(N))
+    {   /* 2026-10-12 (field trial item 1): the non-pow2 upper band -- the four-step's
+         * splits against the flat DIT, the prime cell where no chain carries N */
+        REF_PUSH(VFFT_FAM_FS);
+        REF_PUSH(VFFT_FAM_FLAT);
+        if (_ref_prime_cell(N)) REF_PUSH(VFFT_FAM_PRIME);
+        return n;
+    }
     if (vfft_ztt_odd_band(N)) REF_PUSH(VFFT_FAM_ZTT_ODD);
     REF_PUSH(VFFT_FAM_MONO);
     REF_PUSH(VFFT_FAM_PAIR);
@@ -157,6 +165,12 @@ static int _ref_pool(int N, int ord, vfft_fam_t *out, int max)
     if (vfft_ztt_band(N))          { REF_PUSH(VFFT_FAM_ZTT);     return n; }
     if (pow2 && vfft_k1fs_band(N)) { REF_PUSH(VFFT_FAM_FS);      return n; }
     if (vfft_ztt_odd_band(N))      { REF_PUSH(VFFT_FAM_ZTT_ODD); return n; }
+    if (!pow2 && vfft_k1fs_band(N))
+    {   /* 2026-10-12: the non-pow2 upper band's scrambled writers */
+        REF_PUSH(VFFT_FAM_FS); REF_PUSH(VFFT_FAM_FLAT);
+        if (_ref_prime_cell(N)) REF_PUSH(VFFT_FAM_PRIME);
+        return n;
+    }
     {   /* 2026-09-22: no longer fenced to N < 2048 or no factor of 4 */
         n = _ref_pool_natural(N, 0, out, max);
         if (!pow2) { if (n < max) out[n] = VFFT_FAM_FLAT; n++; }

@@ -1359,7 +1359,7 @@ static void _il_dp_enumerate_fs(int N, vfft_il_cand_sink_t *s, int scr)
         c.R2 = n2[i];
         c.il_scr = scr;
         _il_dp_push(s, &c);
-        if (!scr && _k1fs_sb_admit(N))
+        if (!scr && _k1fs_sb_admit(N, n2[i]))
         {   /* the SUPER-BAND form (il2d_large_plane_design.md §3), where the
              * plane outgrows L3: form 1 with the residency sub-ladder of
              * chains; il_zt carries the chain */

@@ -89,6 +89,9 @@ typedef struct vfft_ilndr_s {
     vfft_ilcol_t ax0;             /* axis 0: the plain chain (chain= blu= forms=) */
     vfft_ilcol_t ax0n;            /* r2c axis 0 natural in place (ax0n_on): the natural pass at nst >= 2 or a Bluestein axis */
     int ax0n_on;
+    int ax0bwd;                   /* c2r (phase 4a, 2026-10-12): axis 0 by the column plan's own BACKWARD pass -- a
+                                   * Bluestein or turned axis has no stages to compose forward, and its backward lands
+                                   * the planes in natural order (neg0 = pos0 = the identity); the child arm alone */
     vfft_ilcol_t ax1;             /* pay-once: axis 1 plain per plane (chain1=); ax1_on */
     int ax1_on;
     int *nat0, *nat1;             /* scr row -> natural row (the identity for a one-stage chain) */
@@ -578,7 +581,9 @@ static void _ilndr_execute_c2r(const vfft_ilndr_t *d, const double *z, double *y
         if (d->prof) _ilndr_prof_print(d);
         return;
     }
-    if (d->nf == 2)
+    if (d->ax0bwd)
+        _il2d_col_exec(a, z, V, 1);   /* the Bluestein / turned axis: its own backward pass, natural out */
+    else if (d->nf == 2)
         _ilndr_axis0_strips(d, z, V, NULL);
     else
         _il2d_col_stages(z, V, d->N[0], d->plane, 0, a->nst, a->R, a->L, a->f, a->tf, 0);
@@ -735,7 +740,10 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
         {
             if (d->ip && !_ilndr_pieces_deal(d, Tp))
                 return 0;   /* more pieces than buffers: serial -- decided before any phase touches the volume */
-            _ilndr_mt_phase(d, in, V, NULL, 2, arm, nf, P, Ts);
+            if (d->ax0bwd)
+                _il2d_col_exec(&d->ax0, in, V, 1);   /* the Bluestein / turned axis's backward pass, on the caller (phase 4a: not cut yet) */
+            else
+                _ilndr_mt_phase(d, in, V, NULL, 2, arm, nf, P, Ts);
             if (d->ip)
             {   /* the planes by PIECES of the walk sequence: the copies, the barrier, the walk */
                 _ilndr_mt_phase(d, V, V, NULL, 7, arm, nf, (size_t)d->npc, Tp);
@@ -1154,14 +1162,25 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
      * excludes those axes; the twin at ax0n serves r2c, c2r refuses) */
     d->nat0 = (d->ax0.blu || d->ax0.tpc) ? NULL : _ilndr_nat_perm(d->ax0.R, d->ax0.nst, N1);
     strips_ok = !d->ax0.blu && !d->ax0.tpc && d->nat0 != NULL;
-    if (c2r && !strips_ok)
-    {   /* c2r composes the forward chain's stages: a Bluestein or turned axis 0 has none
-         * (refused before the in-place cycles below, which walk the permutation) */
-        _vfft_warn("vfft_create: 3D INTERLEAVED c2r %dx%dx%d: axis 0 has no plain chain (a prime N1 is the tier's next phase)", N1, N2, N3);
+    if (c2r && (d->ax0.blu || d->ax0.tpc))
+    {   /* PHASE 4a (2026-10-12): a Bluestein or turned axis 0 has no stages to compose
+         * forward, so c2r runs the column plan's own BACKWARD pass (natural by construction)
+         * and the planes sit at their real positions: both permutations the identity */
+        int j;
+        d->ax0bwd = 1;
+        d->nat0 = (int *)malloc((size_t)N1 * sizeof(int));
+        d->neg0 = (int *)malloc((size_t)N1 * sizeof(int));
+        if (!d->nat0 || !d->neg0)
+            return _ilndr_oom(d, cfg, "the axis-0 permutations");
+        for (j = 0; j < N1; j++) { d->nat0[j] = j; d->neg0[j] = j; }
+    }
+    else if (c2r && !strips_ok)
+    {   /* a plain chain whose permutation did not derive (the create refuses loudly, never serves a guess) */
+        _vfft_warn("vfft_create: 3D INTERLEAVED c2r %dx%dx%d: axis 0's natural permutation could not be derived; unsupported", N1, N2, N3);
         vfft_ilndr_destroy(d);
         return NULL;
     }
-    if (c2r)
+    if (c2r && !d->ax0bwd)
         d->neg0 = _ilndr_neg_of(d->nat0, N1);
     if (c2r && ip && d->neg0 && !(d->pos0 = _ilndr_inv_of(d->neg0, N1)))
         return _ilndr_oom(d, cfg, "the axis-0 position permutation");
@@ -1257,7 +1276,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         if (c2r && arm == 3) wl = vw2_ilnd_int_lookup(&W->vw2, &key0, tk_wl);
     }
     if (arm == 2 && !payonce_ok) arm = 0;
-    if (arm == 3 && (!c2r || ip)) arm = 0;   /* the band lands its planes out of place: not an in-place arm yet */
+    if (arm == 3 && (!c2r || ip || d->ax0bwd)) arm = 0;   /* the band lands its planes out of place: not an in-place arm yet; a backward axis 0 has no stages to band */
     if (nf == 2 && !strips_ok) nf = 0;
     if (arm == 3)
     {   /* the band's cut from its width: the stage whose sub-length is wl; a band pin without a
@@ -1320,7 +1339,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         if (strips_ok) _ILNDR_ARM(1, 2, 0, 0, "child/strips");
         if (payonce_ok) _ILNDR_ARM(2, 1, 0, 0, c2r ? "payonce/inplace" : "payonce/leafoop");
         if (payonce_ok && strips_ok) _ILNDR_ARM(2, 2, 0, 0, "payonce/strips");
-        if (c2r && !ip)
+        if (c2r && !ip && !d->ax0bwd)
         {   /* the band at every legal cut: stages s >= cut act within L[cut] planes */
             int s;
             for (s = 1; s < d->ax0.nst; s++)

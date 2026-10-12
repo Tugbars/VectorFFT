@@ -411,14 +411,14 @@ extern "C"
    * spectrum of a real transform, the K transforms or planes of a batch. A
    * SPLIT plan created with config.owned_buffers = 1 gets its planes at the
    * plan's measured stride (vfft_plan_stride()) with the pad lanes zeroed; an
-   * in-place 2D real plan gets its plane at the row pitch the plan walks
-   * (vfft_plan_stride(): the plan's own pitch under config.owned_buffers = 1,
-   * else 2 (N2/2 + 1)); every other plan gets the tight planes of its data
-   * contract. The data is uninitialised. A plan may hand out any number of
-   * sets, and a set stays valid after vfft_destroy(p). Refused (printed): a
-   * SPLIT plan of rank 2 or more, a SPLIT real plan in place, an INTERLEAVED
-   * real plan of rank 3 (no sized set yet), and an INTERLEAVED real batch in
-   * its lane-major geometry that runs on the split engines.
+   * in-place 2D or 3D real plan gets its plane or volume at the row pitch the
+   * plan walks (vfft_plan_stride(): the plan's own pitch under
+   * config.owned_buffers = 1, else 2 (N_last/2 + 1)); every other plan gets
+   * the tight planes of its data contract. The data is uninitialised. A plan
+   * may hand out any number of sets, and a set stays valid after
+   * vfft_destroy(p). Refused (printed): a SPLIT plan of rank 2 or more, a
+   * SPLIT real plan in place, and an INTERLEAVED real batch in its lane-major
+   * geometry that runs on the split engines.
    *
    * @param p A plan from vfft_create().
    * @param sre,sim,dre,dim Out-params in vfft_execute()'s roles: unused roles

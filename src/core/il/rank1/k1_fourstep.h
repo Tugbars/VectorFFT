@@ -63,6 +63,7 @@ static int _il2d_resolve(const int *Rs, int m, vfft_il2p_fn *ff, vfft_il2p_fn *f
 static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls, double **tf, double **tb);
 static long _il2d_chain_prod(const int *Rs, int m);
 static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8], int *lens, int *n, int *dropped);
+static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8], int *lens, int *n, int *dropped);
 
 #include "k1_fourstep_band.h"  /* the band + the side ladder (bench-visible) */
 
@@ -79,25 +80,82 @@ static int _k1fs_pin(int N, int *n1, int *n2)
     return 1;
 }
 
-/* the splits (N1, N2) with N1 * N2 = N, both sides in the ladder; returns
- * the count (<= max) */
+/* a column side the 2D tier can chain: at least one composition over the
+ * tier's own radix pool (il2d_cols.h), depth <= 4 -- the tier's enumerator
+ * itself, never a second copy of its pool */
+static int _k1fs_col_chainable(int N1)
+{
+    static int cand[VFFT_IL2D_POOL_MAX][8];   /* planning side, one create at a time */
+    static int cl[VFFT_IL2D_POOL_MAX];
+    int cur[8], n = 0, dropped = 0;
+    _il2d_enum_rec_body(N1, 0, cur, cand, cl, &n, &dropped);
+    return n > 0 || dropped > 0;
+}
+/* a row side the K=1 door serves as a 1D cell: its race budget admits it
+ * (vfft_policy_races) and no prime factor past the chain radices -- a
+ * Bluestein row inside a chain is not an arm of the four-step; that N is
+ * the prime family's on the whole length (policy_il.h) */
+static int _k1fs_row_servable(int N2)
+{
+    vfft_cell_t c;
+    if (N2 < 4 || vfft_policy_prime_cell(N2)) return 0;
+    memset(&c, 0, sizeof c);
+    c.N = N2; c.K = 1; c.rank = 1; c.T = 1;
+    c.layout = VW2_LAY_IL; c.ord = VW2_ORD_NAT;
+    return vfft_policy_races(&c);
+}
+/* the splits (N1, N2) with N1 * N2 = N; returns the count (<= max). A
+ * power of two: both sides in the pow2 ladder (VFFT_K1FS_SIDES). Any other
+ * N (2026-10-12, field trial item 1): every divisor pair with both sides in
+ * [VFFT_K1FS_SIDE_MIN, VFFT_K1FS_SIDE_MAX] whose column side chains and
+ * whose row side the door serves, the VFFT_K1FS_MAX_SPLITS most balanced
+ * (|ln N1 - ln N2| smallest) first -- the ladder is declared, not a silent
+ * cap: its length is the band's own constant. */
 static int vfft_k1fs_splits(int N, int *n1, int *n2, int max)
 {
     int i, j, n = 0;
-    for (i = 0; i < VFFT_K1FS_NSIDES && n < max; i++)
+    if ((N & (N - 1)) == 0)
     {
-        const int a = VFFT_K1FS_SIDES[i];
-        if (N % a) continue;
-        for (j = 0; j < VFFT_K1FS_NSIDES; j++)
-            if (VFFT_K1FS_SIDES[j] == N / a)
-            {
-                n1[n] = a;
-                n2[n] = N / a;
-                n++;
-                break;
-            }
+        for (i = 0; i < VFFT_K1FS_NSIDES && n < max; i++)
+        {
+            const int a = VFFT_K1FS_SIDES[i];
+            if (N % a) continue;
+            for (j = 0; j < VFFT_K1FS_NSIDES; j++)
+                if (VFFT_K1FS_SIDES[j] == N / a)
+                {
+                    n1[n] = a;
+                    n2[n] = N / a;
+                    n++;
+                    break;
+                }
+        }
+        return n;
     }
-    return n;
+    {
+        enum { CAP = 64 };
+        int a[CAP], b[CAP], k = 0, d, cap = max < VFFT_K1FS_MAX_SPLITS ? max : VFFT_K1FS_MAX_SPLITS;
+        double bal[CAP];
+        if (N < VFFT_K1FS_MIN_N || N > VFFT_K1FS_MAX_N) return 0;
+        for (d = VFFT_K1FS_SIDE_MIN; d <= VFFT_K1FS_SIDE_MAX && k < CAP; d++)
+        {
+            const int e = N / d;
+            if (N % d || e < VFFT_K1FS_SIDE_MIN || e > VFFT_K1FS_SIDE_MAX) continue;
+            if (!_k1fs_col_chainable(d) || !_k1fs_row_servable(e)) continue;
+            a[k] = d; b[k] = e;
+            bal[k] = fabs(log((double)d) - log((double)e));
+            k++;
+        }
+        while (n < cap && n < k)
+        {   /* the most balanced next (selection by balance, ties by the smaller column side) */
+            int best = -1;
+            for (i = 0; i < k; i++)
+                if (a[i] > 0 && (best < 0 || bal[i] < bal[best] || (bal[i] == bal[best] && a[i] < a[best])))
+                    best = i;
+            n1[n] = a[best]; n2[n] = b[best]; n++;
+            a[best] = 0;
+        }
+        return n;
+    }
 }
 
 typedef struct vfft_k1fs_s
@@ -242,9 +300,10 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
 {
     vfft_k1fs_plan_t *p;
     vfft_config_t rc;
-    int nst, B, q, a, b;
+    int nst, B, na, q, a, b;
     size_t rec;
     if (N != N1 * N2 || !vfft_k1fs_band(N) || N1 < 4 || N2 < 4) return NULL;
+    if (!scr && form == 1 && (N2 % 16)) return NULL;   /* the super-band's run store walks 16-wide k2 blocks */
     p = (vfft_k1fs_plan_t *)calloc(1, sizeof *p);
     if (!p) return NULL;
     p->N = N; p->N1 = N1; p->N2 = N2; p->scr = scr; p->inplace = inplace;
@@ -324,18 +383,21 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
         if (!p->sbscr) { vfft_k1fs_destroy(p); return NULL; }
     }
     for (q = 0; q < N1; q++) p->p_of_k1[p->k1_of_p[q]] = q;
-    /* the twiddle records: B = the largest power of two with B*B <= N2 */
+    /* the twiddle records: B = the largest power of two with B*B <= N2;
+     * na = ceil(N2 / B) coarse entries (the last one partial at a row
+     * length B does not divide: the apply, _il2d_fs_twiddle, clips it) */
     B = 1;
     while ((B << 1) * (B << 1) <= N2) B <<= 1;
     p->B = B;
-    rec = 2 * ((size_t)N2 / (size_t)B + (size_t)B);
+    na = (N2 + B - 1) / B;
+    rec = 2 * ((size_t)na + (size_t)B);
     p->tw = (double *)vfft_aligned_alloc((size_t)N1 * rec * sizeof(double));
     if (!p->tw) { vfft_k1fs_destroy(p); return NULL; }
     for (q = 0; q < N1; q++)
     {
         const long k1 = p->k1_of_p[q];
-        double *C = p->tw + (size_t)q * rec, *F = C + 2 * ((size_t)N2 / (size_t)B);
-        for (a = 0; a < N2 / B; a++)
+        double *C = p->tw + (size_t)q * rec, *F = C + 2 * (size_t)na;
+        for (a = 0; a < na; a++)
         {   /* W_N^(k1 * a * B) = cos/sin(-2*pi*e/N): tw_exact.h folds e/N in
              * integers and rounds once, so the record is the correctly
              * rounded twiddle and mirror indices share one double */
@@ -515,18 +577,46 @@ static int _k1fs_row_put_child(vw2_store_t *st, const vw2_rec_t *row, const stru
  * a k1 range, so the pool cuts the blocks across the workers: disjoint
  * spans in both directions, the output bitwise the serial walk. Runs on
  * the caller thread only, before or after the 2D child — never from a
- * worker (the pool's nesting law). */
+ * worker (the pool's nesting law). A non-pow2 side (2026-10-12) leaves
+ * tail blocks of fewer than 16 rows or columns: those go element by
+ * element (_k1fs_transpose_tail); and the streaming store needs the
+ * destination's row pitch 32-B aligned, so it is used only at an even
+ * row length (N1 forward, N2 backward). */
 #define VFFT_K1FS_TB 16
+static void _k1fs_transpose_tail(const vfft_k1fs_plan_t *p, const double *src, double *dst,
+                                 int bwd, int k1b, int k2b, int h, int w)
+{
+    const int N1 = p->N1, N2 = p->N2;
+    int i, j;
+    for (j = 0; j < h; j++)
+    {
+        const size_t pr = (size_t)p->p_of_k1[k1b + j] * (size_t)N2;
+        for (i = 0; i < w; i++)
+        {
+            const size_t pl = 2 * (pr + (size_t)(k2b + i));
+            const size_t ot = 2 * ((size_t)(k2b + i) * (size_t)N1 + (size_t)(k1b + j));
+            if (!bwd) { dst[ot] = src[pl]; dst[ot + 1] = src[pl + 1]; }
+            else      { dst[pl] = src[ot]; dst[pl + 1] = src[ot + 1]; }
+        }
+    }
+}
 static void _k1fs_transpose_range(const vfft_k1fs_plan_t *p, const double *src, double *dst,
                                   int bwd, int k1lo, int k1hi)
 {
     const int N1 = p->N1, N2 = p->N2;
-    const int stream = (((uintptr_t)dst & 31) == 0);
+    const int stream = (((uintptr_t)dst & 31) == 0) && (((bwd ? N2 : N1) & 1) == 0);
     __attribute__((aligned(64))) double buf[VFFT_K1FS_TB * VFFT_K1FS_TB * 2];
     int k1b, k2b, i, j, q;
     for (k1b = k1lo; k1b < k1hi; k1b += VFFT_K1FS_TB)
         for (k2b = 0; k2b < N2; k2b += VFFT_K1FS_TB)
         {
+            const int h = (k1hi - k1b < VFFT_K1FS_TB) ? k1hi - k1b : VFFT_K1FS_TB;
+            const int w = (N2 - k2b < VFFT_K1FS_TB) ? N2 - k2b : VFFT_K1FS_TB;
+            if (h < VFFT_K1FS_TB || w < VFFT_K1FS_TB)
+            {
+                _k1fs_transpose_tail(p, src, dst, bwd, k1b, k2b, h, w);
+                continue;
+            }
             if (!bwd)
             {   /* plane rows p(k1) in, output rows k2 out (k1 contiguous) */
                 for (j = 0; j < VFFT_K1FS_TB; j += 2)
@@ -593,7 +683,8 @@ static void _k1fs_transpose(const vfft_k1fs_plan_t *p, const double *src, double
         _k1fs_transpose_range(p, src, dst, bwd, 0, p->N1);
         return;
     }
-    {   /* the k1 blocks cut evenly at block multiples across T slots */
+    {   /* the k1 blocks cut evenly at block multiples across T slots; the
+         * tail rows of a non-pow2 N1 ride with the last slot */
         _k1fs_tp_arg_t a[THREAD_POOL_MAX_DISPATCH];
         const int nb = p->N1 / VFFT_K1FS_TB;
         int t;
@@ -601,7 +692,7 @@ static void _k1fs_transpose(const vfft_k1fs_plan_t *p, const double *src, double
         {
             a[t].p = p; a[t].src = src; a[t].dst = dst; a[t].bwd = bwd;
             a[t].k1lo = (int)((long)nb * t / T) * VFFT_K1FS_TB;
-            a[t].k1hi = (int)((long)nb * (t + 1) / T) * VFFT_K1FS_TB;
+            a[t].k1hi = (t == T - 1) ? p->N1 : (int)((long)nb * (t + 1) / T) * VFFT_K1FS_TB;
         }
         thread_pool_run(T, _k1fs_tp_tramp, a, sizeof a[0]);
     }
@@ -772,10 +863,11 @@ static void _k1fs_sb_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const do
 }
 /* the super-band form is an arm only where the plane outgrows the
  * last-level cache — the hardware's L3, read from the CPU, never a baked
- * constant; an L3-less part admits it everywhere */
-static int _k1fs_sb_admit(int N)
+ * constant; an L3-less part admits it everywhere -- and only at a row
+ * length its run store walks (16-wide k2 blocks: N2 a multiple of 16) */
+static int _k1fs_sb_admit(int N, int N2)
 {
-    return vfft_policy_exceeds_l3((long)N * 16L);
+    return (N2 % 16) == 0 && vfft_policy_exceeds_l3((long)N * 16L);
 }
 /* the super-band chains of N1 for a race: the tier's enumeration with R_0
  * and the last radix admitted by the run law and the block law; `tight`

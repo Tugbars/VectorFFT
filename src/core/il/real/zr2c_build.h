@@ -75,6 +75,8 @@ typedef struct
 {
     int m;                       /* 1 rader, 2 bluestein */
     _ilprime_inner_desc_t d;     /* the inner */
+    char fs[512];                /* a four-step inner (kind 4, 2026-10-12): its child's rows as fs_ tokens, space-joined
+                                  * (the row's; empty = none: the child races at the build and says so) */
 } _zr2c_prime_t;
 
 struct vfft_zr2c_kid_s
@@ -261,6 +263,13 @@ static void _zr2c_child_of_kid(vw2_zr2c_child_t *o, const struct vfft_zr2c_kid_s
     _ilprime_desc_str(&k->pr.d, o->pin, sizeof o->pin, o->psh, sizeof o->psh);
     o->ptw = k->pr.d.tw;
     o->pmt = k->ilp ? k->ilp->mt : 0;   /* its threaded arm, on a threaded plan's row */
+    if (k->pr.d.kind == 4)
+    {   /* the four-step inner's child: its rows ride on the composite's row as fs_ tokens (the FS route's spelling) */
+        if (k->ilp && k->ilp->inner.fs && k->ilp->inner.fs->own)
+            (void)_zr2c_fs_str(o->fs, sizeof o->fs, k->ilp->inner.fs->own, k->pr.d.R1, k->pr.d.R2, 0);
+        else if (k->pr.fs[0])
+            snprintf(o->fs, sizeof o->fs, "%s", k->pr.fs);
+    }
 }
 /* the row's prime cell; 0 when a PRIME recipe's inner does not parse */
 static int _zr2c_prime_of_child(_zr2c_prime_t *pr, const vw2_zr2c_child_t *o)
@@ -271,6 +280,8 @@ static int _zr2c_prime_of_child(_zr2c_prime_t *pr, const vw2_zr2c_child_t *o)
     if ((o->pm != 1 && o->pm != 2) || !_ilprime_desc_parse(&pr->d, o->pin, o->psh, o->ptw))
         return 0;
     pr->m = o->pm;
+    if (pr->d.kind == 4 && o->fs[0])
+        snprintf(pr->fs, sizeof pr->fs, "%s", o->fs);
     return 1;
 }
 
@@ -303,7 +314,14 @@ static struct vfft_zr2c_kid_s *_zr2c_kid_build(const vfft_config_t *cfg, int n, 
         if (pr && pr->m)
         {
             d = pr->d;
+            if (d.kind == 4 && pr->fs[0])
+                d.seed = _zr2c_fs_store(pr->fs, d.R1, d.R2, 0);   /* the inner's child from the row; the plan takes the store */
             k->ilp = _ilprime_build_with(n, pr->m == 1, &d);
+            if (d.seed)
+                vfft_wisdom_free((vfft_wisdom *)d.seed);   /* not taken: the build failed */
+            if (k->ilp && d.kind == 4 && d.grew)
+                fprintf(stderr, "vfft: the real composite's prime child at N=%d: its four-step inner's child did not replay -- "
+                                "it raced in the plan's private store\n", n);
         }
         if (!k->ilp)
         {

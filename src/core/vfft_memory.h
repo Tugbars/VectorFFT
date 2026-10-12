@@ -147,10 +147,6 @@ static int _vm_geometry(const struct vfft_plan_s *h, _vm_geom_t *g)
                 goto overflow;
         }
         else
-        {
-            _vfft_warn("vfft_plan_alloc: an interleaved real plan of rank 3 or more has no "
-                       "sized set");
-            return 0;
         }
         if (h->transform == VFFT_C2R)
         { /* the spectrum is the source */
