@@ -42,27 +42,33 @@
  * ("may this N race at all?") and that question is policy. The engines'
  * own bands (vfft_ztt_band, vfft_k1fs_band) stay with their engines. */
 #ifndef VFFT_K1_IL_PLAN_MAX_N
-#define VFFT_K1_IL_PLAN_MAX_N 16384 /* odd N above 2048 race here; 4 scratch \
-                                     * planes of this size is the budget */
+#define VFFT_K1_IL_PLAN_MAX_N 16384 /* the planner's INITIAL scratch planes (4 of \
+                                     * this size); a larger cell grows them */
 #endif
 #ifndef VFFT_K1_IL_PLAN_ODD_MAX_N
-#define VFFT_K1_IL_PLAN_ODD_MAX_N 262144 /* the flat DIT's cells (no factor of 4) \
-                                          * race to the odd band's ceiling */
+#define VFFT_K1_IL_PLAN_ODD_MAX_N 262144 /* the flat DIT's cells race to the odd \
+                                          * band's ceiling: every non-pow2 N outside \
+                                          * the odd band and the four-step's band \
+                                          * (2026-10-12: the factor-of-4 cells too -- \
+                                          * field trial V17; the flat's pool holds 4, \
+                                          * 8 and 16, the 16384 cap was the planes') */
 #endif
 
 /* The largest N the K=1 interleaved planner races for this N's band:
- * pow2 -> the four-step's ceiling; 2^a*odd in ZTURN-T's odd band -> that
- * band's; an odd-factored N with no factor of 4 -> the flat DIT's; else
- * the scratch-plane budget. */
+ * pow2 -> the four-step's ceiling; any N in the four-step's non-pow2 band
+ * (a split in its side range, 2026-10-12) -> the same ceiling; 2^a*odd in
+ * ZTURN-T's odd band -> that band's; every other N -> the flat DIT's
+ * ceiling (the odd band's, since 2026-10-12 for the factor-of-4 cells as
+ * well). */
 static inline long vfft_policy_race_max_n(int N)
 {
     const int pow2 = (N & (N - 1)) == 0;
     const int oddband = vfft_ztt_odd_band(N);
-    if (pow2)
+    if (pow2 || vfft_k1fs_band(N))
         return (long)VFFT_K1FS_MAX_N;
     if (oddband)
         return (long)VFFT_ZTT_MAX_N;
-    return (N & 3) ? (long)VFFT_K1_IL_PLAN_ODD_MAX_N : (long)VFFT_K1_IL_PLAN_MAX_N;
+    return (long)VFFT_K1_IL_PLAN_ODD_MAX_N;
 }
 
 #include "common/policy/policy_order.h" /* L4 order law + the cell (layout-neutral) */
@@ -82,6 +88,9 @@ static inline long vfft_policy_race_max_n(int N)
  *   2^a*odd band   ZTURN-T odd + mono/pair/chain3   ZTURN-T odd alone
  *   other N < 2048 mono + pair + chain3 + flat      the same + flat's scr class
  *   or (N & 3)
+ *   non-pow2 in    FOUR-STEP + flat (+ prime where   the same (both are
+ *   (2^18, 2^24]   a factor past 47 leaves no chain) scrambled writers)
+ *   with a split
  *   other N        nothing — the cell REFUSES       nothing
  *
  * Behind it: the pairs lost every pow2 cell at 2048 and above, so they are
@@ -134,11 +143,14 @@ static inline int vfft_policy_is_prime(int N)
 
 /* A COMPOSITE prime cell past the inner pool's ceiling: only the Bluestein
  * method serves a prime cell that is not itself prime (Rader is prime-only),
- * and its inner, 2N - 1 rounded up to the pool, cannot be built past
- * VFFT_ZTT_MAX_N. No engine, no race: the door refuses at once. */
+ * and its inner, 2N - 1 rounded up to the pool, cannot be built past the
+ * four-step's reach (VFFT_K1FS_MAX_N, since 2026-10-12: the four-step is an
+ * inner; ZTURN-T's ceiling before). No engine, no race: the door refuses at
+ * once. */
+#define VFFT_POLICY_INNER_MAX_N VFFT_K1FS_MAX_N
 static inline int vfft_policy_prime_cell_unservable(int N)
 {
-    return vfft_policy_prime_cell(N) && !vfft_policy_is_prime(N) && 2L * N - 1 > (long)VFFT_ZTT_MAX_N;
+    return vfft_policy_prime_cell(N) && !vfft_policy_is_prime(N) && 2L * N - 1 > (long)VFFT_POLICY_INNER_MAX_N;
 }
 
 /* THE BLUESTEIN INNER SIZES the prime cell races: the next power of two at or past 2N - 1, and
@@ -222,6 +234,16 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
             VFFT__POOL_PUSH(VFFT_FAM_ZTT_ODD);
             return n;
         }
+        if (!pow2 && vfft_k1fs_band(N))
+        {   /* the non-pow2 upper band (2026-10-12): the four-step's scrambled
+             * class against the flat DIT's, both scrambled writers; the prime
+             * family where a factor past the chain radices leaves no chain */
+            VFFT__POOL_PUSH(VFFT_FAM_FS);
+            VFFT__POOL_PUSH(VFFT_FAM_FLAT);
+            if (vfft_policy_prime_cell(N))
+                VFFT__POOL_PUSH(VFFT_FAM_PRIME);
+            return n;
+        }
         if (!pow2 || N < 2048) /* a pow2 above the four-step's band has no scrambled writer: empty */
         {                      /* outside the bands every engine that legally answers a scrambled
                                 * request competes: the natural writers (identity is a legal
@@ -245,6 +267,16 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
             VFFT__POOL_PUSH(VFFT_FAM_ZTT);
         if (vfft_k1fs_band(N))
             VFFT__POOL_PUSH(VFFT_FAM_FS);
+        return n;
+    }
+    if (!pow2 && vfft_k1fs_band(N))
+    {   /* the non-pow2 upper band (2026-10-12, field trial item 1): the
+         * four-step's splits against the flat DIT; the prime family where
+         * a factor past the chain radices leaves no chain */
+        VFFT__POOL_PUSH(VFFT_FAM_FS);
+        VFFT__POOL_PUSH(VFFT_FAM_FLAT);
+        if (vfft_policy_prime_cell(N))
+            VFFT__POOL_PUSH(VFFT_FAM_PRIME);
         return n;
     }
     /* the competition band and everything below/beside it */
@@ -307,22 +339,23 @@ static inline int vfft_policy_races(const vfft_cell_t *c)
     const int oddband = vfft_ztt_odd_band(N);
     if (vfft_policy_prime_cell_unservable(N))
         return 0; /* nothing could win: no race (the door refuses, naming the ceiling) */
-    if (pow2)
+    if (pow2 || vfft_k1fs_band(N))
         return (long)N <= (long)VFFT_K1FS_MAX_N;
     if (oddband)
         return (long)N <= (long)VFFT_ZTT_MAX_N;
-    return (long)N <= (long)((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N);
+    return (long)N <= (long)VFFT_K1_IL_PLAN_ODD_MAX_N;
 }
 
 /* THE ROW LAW OF A RANK-2/3 REQUEST (2026-10-12). A 2D or 3D plan's rows
  * are 1D c2c cells at the request's last axis (the real tiers' odd rows
  * included), and the K=1 door refuses two kinds of length for want of an
  * engine, with certainty: a non-power-of-two N above the odd band's ceiling
- * (VFFT_K1_IL_PLAN_ODD_MAX_N: no chain races there, ZTURN-T stops there and
- * the four-step is power of two only), and a COMPOSITE prime cell (a prime
+ * (VFFT_K1_IL_PLAN_ODD_MAX_N: no chain races there, ZTURN-T stops there) and
+ * outside the four-step's band (no split in its side range, or past 2^24),
+ * and a COMPOSITE prime cell (a prime
  * factor above 47, so only the Bluestein method serves it; Rader is prime-
  * only) whose Bluestein inner, 2N - 1 rounded up to the pool, passes the
- * inner pool's ceiling (VFFT_ZTT_MAX_N). The rank-2/3 doors ask this BEFORE
+ * inner pool's ceiling (VFFT_POLICY_INNER_MAX_N). The rank-2/3 doors ask this BEFORE
  * racing their other axes, so such a request refuses at once and in its own
  * name, not after minutes in the row child's. Nothing the door may still
  * serve (a default chain, a raced chain, the prime cell within its inner,
@@ -331,10 +364,12 @@ static inline const char *vfft_policy_c2c_row_refused(int N)
 {
     if (N < 2048 || (N & (N - 1)) == 0)
         return NULL;
-    if ((long)N > (long)VFFT_K1_IL_PLAN_ODD_MAX_N)
-        return "a non-power-of-two length above 262144 (no engine is built there)";
+    if ((long)N > (long)VFFT_K1_IL_PLAN_ODD_MAX_N && !vfft_k1fs_band(N))
+        return (long)N > (long)VFFT_K1FS_MAX_N
+                   ? "a non-power-of-two length above 16777216 (past the four-step's reach)"
+                   : "a non-power-of-two length above 262144 with no four-step split (no divisor pair with both sides in 64..16384)";
     if (vfft_policy_prime_cell_unservable(N))
-        return "a composite length with a prime factor above 47 whose Bluestein inner (2N-1) passes the 262144 inner ceiling";
+        return "a composite length with a prime factor above 47 whose Bluestein inner (2N-1) passes the 16777216 inner ceiling";
     return NULL;
 }
 

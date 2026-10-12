@@ -13,28 +13,24 @@ The wisdom system (persistence, profiles, machine identity, the door fixes) belo
 
 ## 1. 1D c2c, interleaved
 
-1. **Non-power-of-two N above 262144 refuses** (e.g. 759375). The K=1 planner races
-   odd-factored N only up to `VFFT_K1_IL_PLAN_ODD_MAX_N` (`il/planning/policy_il.h:49`),
-   ZTURN-T stops at `VFFT_ZTT_MAX_N` (`il/rank1/ztt.h:121`), and the four-step is power of
-   two only. The field trial (10-09) measured the refusal at 531441, 759375, 786432,
-   1000000, 1049760, 3145728, 12582912 and 16777215, immediate, from `vfft_policy_races`
-   (`policy_il.h:256-264`). The same build serves R2C 2000000, 2099520, 1572864 and
-   3145728 by building c2c(1000000), c2c(1049760), c2c(786432) and c2c(1572864) as the
-   half-length child through the DP builder (`il/real/zr2c_build.h:38`), which the door's
-   gate does not cover; those children are correct against scipy. So the c2c door refuses
-   lengths the library already runs as a child. Owner, 10-03: "Let's tackle this." Owner,
-   10-12: these sizes are to be supported, and the door inconsistency is addressed with
-   them; the size promise is "what MKL and FFTW serve", any N and any K bounded by memory
-   and the integer types, with no upper cap (the trial's 2^24 was its test budget, and
-   nothing above it has been measured). The gap's lower edge is below 262144 for two
-   kinds of length (trial V17, owner 10-12: the same gap): 4 | N outside the ZTURN-T odd
-   band with no default 3-stage chain refuses from 16385 (`VFFT_K1_IL_PLAN_MAX_N`, the
-   scratch-plane budget; 131220 and 236196, and c2r 262440 builds c2c(131220) as its
-   child), and a prime factor above 47 refuses from 131073 (the prime cell's Bluestein
-   inner, 2N-1 rounded up, passes the 262144 inner ceiling). Lifting the ceiling must also
-   admit the new engines, and the four-step for power-of-two M, into the Bluestein inner
-   pool, which draws only chain-style inners today; that step is deliberate, not
-   automatic. No plan written yet. **OPEN**
+1. **Non-power-of-two N above 262144: SERVED (built 2026-10-12, field trial item 1).** The K=1
+   four-step admits every N in (262144, 2^24] with a divisor pair whose sides lie in [64, 16384]
+   (`il/rank1/k1_fourstep_band.h`; `docs/design/k1_fourstep_design.md`, "The non-power-of-two
+   band"): the eight most balanced splits whose column side the 2D tier chains and whose row side
+   the K=1 door serves race against the flat DIT (and the prime cell where a factor past 47 leaves
+   no chain), in both order classes; the transposes take tail blocks, the twiddle records
+   ceil(N2/B) entries. Verified on the scratch store (1D c2c, T=1): 1000000 oop (fs 1250x800,
+   11.3 ms) and in place (the flat chain won, 10.8 ms), 759375 (fs 1875x405, 9.9 ms), 531441
+   (fs 6561x81, 2.9 ms), 1049760 (fs 972x1080, 4.9 ms), 786432 (fs 3072x256, 3.9 ms), 3145728
+   (fs 3072x1024, 16.4 ms), 1000000 scrambled (fs); every forward within 1.2e-15 of FFTW and
+   MKL, every roundtrip within 1.6e-15, no unwritten output, no canary touched. Cold creates
+   take 3 to 13 minutes and 35 minutes at 3145728 (the flat search over hundreds of orderings
+   and eight 2D children per cell); a warm create still re-races the child (V26 below, the
+   owner's deferred item). The same change lets the factor-of-4 cells in (16384, 262144]
+   outside ZTURN-T's odd band race to the flat DIT's ceiling (trial V17: the 16384 cap was the
+   planner's initial scratch planes). The size promise above 2^24 stays open: the ladder's reach
+   ends at 4096 x 4096 (pow2) and 16384 x 16384 (non-pow2 sides), nothing above has an engine.
+   **BUILT, vs-MKL race pending**
 2. **The radix 37-47 kernels are weak on odd chains.** Planned beside item 1, as its own
    piece. **OPEN**
 3. **A missing backward row is served with default backward forms, without a race.**

@@ -54,6 +54,14 @@
  * forward's output order and the bwd consumes it back (the
  * matched-roundtrip law). ZTURN-T is guarded on VFFT_ZTT_H: a TU without
  * ztt.h keeps the il2p/il3p rule and its 4096 ceiling. ─────────────────── */
+/* the K=1 FOUR-STEP (il/rank1/k1_fourstep.h, included after this header in
+ * the one-TU build): the inner past ZTURN-T's ceiling (2026-10-12, field
+ * trial items 1/13) -- its SCRAMBLED class out of place at one thread is a
+ * matched fwd/bwd pair like ZTURN-T's */
+struct vfft_k1fs_s;
+static void vfft_k1fs_destroy(struct vfft_k1fs_s *p);
+static inline void vfft_k1fs_execute_fwd(const struct vfft_k1fs_s *p, const double *zin, double *zout);
+static inline void vfft_k1fs_execute_bwd(const struct vfft_k1fs_s *p, const double *zin, double *zout);
 typedef struct {
     vfft_il2p_plan_t *p2;
     vfft_il3p_plan_t *p3;
@@ -63,6 +71,8 @@ typedef struct {
                              * too, so the convolution's pointwise multiply runs in
                              * natural order */
 #endif
+    struct vfft_k1fs_s *fs; /* the four-step at M (scrambled, out of place, one thread):
+                             * the lengths past ZTURN-T's ceiling, 2026-10-12 */
 } _ilprime_inner_t;
 
 /* INNER PROVIDER: the banked wrapper installs a function that
@@ -76,7 +86,7 @@ static void *_ilprime_inner_provider_ctx = 0;
 
 static inline int _ilprime_inner_make(int M, _ilprime_inner_t *in)
 {
-    in->p2 = 0; in->p3 = 0;
+    in->p2 = 0; in->p3 = 0; in->fs = 0;
 #ifdef VFFT_ZTURN_H
     in->pz = 0;
 #endif
@@ -123,6 +133,8 @@ static inline void _ilprime_inner_free(_ilprime_inner_t *in)
     vfft_il2p_destroy(in->p2);
     vfft_il3p_destroy(in->p3);
     in->p2 = 0; in->p3 = 0;
+    if (in->fs) vfft_k1fs_destroy(in->fs);
+    in->fs = 0;
 #ifdef VFFT_ZTT_H
     if (in->pt) vfft_ztt_destroy(in->pt);
     in->pt = 0;
@@ -131,6 +143,7 @@ static inline void _ilprime_inner_free(_ilprime_inner_t *in)
 static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
                                       const double *zi, double *zo)
 {
+    if (in->fs) { vfft_k1fs_execute_fwd(in->fs, zi, zo); return; }   /* za -> zb, distinct */
 #ifdef VFFT_ZTT_H
     if (in->pt) { vfft_ztt_execute_fwd(in->pt, zi, zo); return; }   /* za -> zb, distinct */
 #endif
@@ -140,6 +153,7 @@ static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
 static inline void _ilprime_inner_bwd(const _ilprime_inner_t *in,
                                       const double *zi, double *zo)
 {
+    if (in->fs) { vfft_k1fs_execute_bwd(in->fs, zi, zo); return; }
 #ifdef VFFT_ZTT_H
     if (in->pt) { vfft_ztt_execute_bwd(in->pt, zi, zo); return; }
 #endif

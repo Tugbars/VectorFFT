@@ -260,7 +260,7 @@ static void _exec_zrbl(struct vfft_plan_s *h, const double *sre, double *dre)
 static int _zrb_ok(int N)
 {
     return (N & 1) && N > VFFT_ZRM_MAX_N && !_zrf_has_chain(N) &&
-           (3L * N - 1) / 2 <= (long)VFFT_ZTT_MAX_N;
+           (3L * N - 1) / 2 <= (long)VFFT_POLICY_INNER_MAX_N;   /* the four-step's reach since 2026-10-12 */
 }
 
 /* VFFT_ZRF at create: 1 = pinned at the chain "9.9.5" (then "/t" = the split

@@ -456,8 +456,8 @@ static inline int vw2_real_il_bank_zr2c(vw2_store_t *s, int realN, int is_c2r, i
         snprintf(b, sizeof b, "%d", ch->ptw); VW2__ZS("il_prime_tw", b);
         if (ch->pmt > 0) { snprintf(b, sizeof b, "%d", ch->pmt); VW2__ZS("il_mt", b); }
     }
-    if (ch->route == VFFT_K1_IL_FS)
-    {   /* the four-step's child: no rows, no recipe */
+    if (ch->route == VFFT_K1_IL_FS || (ch->route == VFFT_K1_IL_PRIME && ch->fs[0]))
+    {   /* the four-step's child: no rows, no recipe (a prime child's four-step inner carries its rows the same way) */
         char fb[sizeof ch->fs], *sp = fb, *t;
         if (!ch->fs[0]) goto bad;
         memcpy(fb, ch->fs, sizeof fb);
@@ -537,8 +537,9 @@ static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int i
         ch->ptw = vw2__oop_geti(r, "il_prime_tw", 0);
         ch->pmt = vw2__oop_geti(r, "il_mt", 0);
     }
-    if (ch->route == VFFT_K1_IL_FS)
-    {   /* a four-step child without its own child's rows is no recipe */
+    if (ch->route == VFFT_K1_IL_FS || ch->route == VFFT_K1_IL_PRIME)
+    {   /* a four-step child without its own child's rows is no recipe; a prime child's
+         * four-step inner may carry its rows the same way (absent: the inner's child races) */
         size_t off = 0;
         int i;
         for (i = 0; i < r->ntok; i++)
@@ -549,7 +550,7 @@ static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int i
             if (w < 0 || (size_t)w >= sizeof ch->fs - off) return 0;
             off += (size_t)w;
         }
-        if (!off) return 0;
+        if (!off && ch->route == VFFT_K1_IL_FS) return 0;
     }
     /* the recipe's own shape: a route without its payload is no recipe */
     if ((ch->route == VFFT_K1_IL_2P_PURE || ch->route == VFFT_K1_IL_FS) && !(ch->R1 > 0 && ch->R2 > 0)) return 0;

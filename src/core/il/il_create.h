@@ -37,7 +37,7 @@ static const char *_il_real_row_refused(int N)
     if (N & 1)
         return vfft_policy_c2c_row_refused(N);
     if (vfft_policy_prime_cell_unservable(N / 2))
-        return "an even length whose composite half has a prime factor above 47 and a Bluestein inner past the 262144 ceiling";
+        return "an even length whose composite half has a prime factor above 47 and a Bluestein inner past the 16777216 inner ceiling";
     return NULL;
 }
 

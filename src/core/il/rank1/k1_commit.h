@@ -188,20 +188,32 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
  * touched), timed on the WHOLE convolution, the winner banked on the prime
  * cell's OWN row and replayed from there. */
 typedef struct {
-    int kind;                       /* 1 = il2p pair, 2 = il3p chain, 3 = ZTURN-T */
-    int R1, R2;                     /* 1 */
+    int kind;                       /* 1 = il2p pair, 2 = il3p chain, 3 = ZTURN-T, 4 = the four-step at M (2026-10-12) */
+    int R1, R2;                     /* 1; 4: the split N1 x N2 */
     int cR2, cA, cB;                /* 2 */
     int zt[VFFT_ZTT_MAX_NF], ztn;   /* 3: the chain */
     int tw;                         /* 3: the tile, 0 = untiled */
     int failed;                     /* THIS descriptor could not build: the create's
                                      * structural fallback then served, and the plan
                                      * must be discarded -- never a silent substitute */
+    /* kind 4, THE FOUR-STEP INNER (field trial items 1/13): its 2D child is
+     * a raced plan of its own (k1_fourstep.h, THE CHILD'S OWN STORE). In the
+     * race every candidate's child builds on ONE private store (S, the K=1
+     * race's own recipe: the row cells warmed into it first); the winner's
+     * child rides on the cell's row under fs_ and a replay seeds a private
+     * store from that row (row). An own build with neither (grew) raced the
+     * child in the plan's private store and says so. */
+    const vw2_rec_t *row;           /* 4: the banked row carrying the child's fs_ tokens, or NULL */
+    struct vfft_wisdom_s *S;        /* 4: the race's private store, or NULL (an own store) */
+    struct vfft_wisdom_s *seed;     /* 4: a seeded private store the plan takes over (a composite's replay); consumed */
+    int grew;                       /* 4: the child did not replay from `row` / `seed` */
 } _ilprime_inner_desc_t;
 
 static void _ilprime_desc_str(const _ilprime_inner_desc_t *d, char *kind, size_t ksz, char *shape, size_t ssz)
 {
     if (d->kind == 1) { snprintf(kind, ksz, "2p"); snprintf(shape, ssz, "%d.%d", d->R1, d->R2); }
     else if (d->kind == 2) { snprintf(kind, ksz, "3p"); snprintf(shape, ssz, "%d.%d.%d", d->cR2, d->cA, d->cB); }
+    else if (d->kind == 4) { snprintf(kind, ksz, "fs"); snprintf(shape, ssz, "%d.%d", d->R1, d->R2); }
     else
     {
         int q, off = 0;
@@ -218,6 +230,8 @@ static int _ilprime_desc_parse(_ilprime_inner_desc_t *d, const char *kind, const
         return sscanf(shape, "%d.%d", &d->R1, &d->R2) == 2 && (d->kind = 1);
     if (!strcmp(kind, "3p"))
         return sscanf(shape, "%d.%d.%d", &d->cR2, &d->cA, &d->cB) == 3 && (d->kind = 2);
+    if (!strcmp(kind, "fs"))
+        return sscanf(shape, "%d.%d", &d->R1, &d->R2) == 2 && d->R1 >= 4 && d->R2 >= 4 && (d->kind = 4);
     if (!strcmp(kind, "ztt"))
     {
         const char *p = shape;
@@ -236,12 +250,55 @@ static int _ilprime_desc_parse(_ilprime_inner_desc_t *d, const char *kind, const
     return 0;
 }
 
+/* THE FOUR-STEP INNER at M (kind 4): the SCRAMBLED class, out of place, one
+ * thread, form 0, on the race's shared private store (d->S: the plan does
+ * not own it) or on an own store seeded from the banked row's fs_ tokens
+ * (_k1fs_build_own; with no row, or stale tokens, the child races there and
+ * d->grew says so). The request the child sees is the inner's own: c2c,
+ * MEASURE, nothing persisted. */
+static vfft_k1fs_plan_t *_ilprime_fs_inner_build(int M, _ilprime_inner_desc_t *d)
+{
+    vfft_config_t cc;
+    int grew = 0;
+    vfft_k1fs_plan_t *p;
+    if ((long)d->R1 * (long)d->R2 != (long)M)
+        return NULL;
+    memset(&cc, 0, sizeof cc);
+    cc.transform = VFFT_C2C; cc.placement = VFFT_OUTOFPLACE; cc.rigor = VFFT_MEASURE;
+    cc.dims = 1; cc.n[0] = M; cc.howmany = 1; cc.order = VFFT_ORDER_SCRAMBLED;
+    cc.layout = VFFT_LAYOUT_INTERLEAVED; cc.nthreads = 1;
+    if (d->S)
+    {
+        cc.wisdom = (vfft_wisdom *)d->S;
+        return vfft_k1fs_create(M, d->R1, d->R2, 1, d->S, &cc, 0, 1, 0, NULL, 0);
+    }
+    if (d->seed)
+    {   /* a composite's replay (zr2c): the child's rows seeded by the caller; the plan owns the store from here */
+        cc.wisdom = (vfft_wisdom *)d->seed;
+        p = vfft_k1fs_create(M, d->R1, d->R2, 1, d->seed, &cc, 0, 1, 0, NULL, 0);
+        if (p)
+        {
+            p->own = d->seed;
+            d->grew = vfft_child_store_raced(d->seed);
+            d->seed = NULL;
+        }
+        return p;
+    }
+    p = _k1fs_build_own(M, d->R1, d->R2, 1, &cc, 0, 1, 0, NULL, 0, d->row, &grew);
+    d->grew = (p != NULL) && (grew || !d->row);
+    return p;
+}
 /* the provider: exactly ONE inner, from a descriptor -- never a guess */
 static int _ilprime_inner_from_desc(int M, _ilprime_inner_t *in, void *v)
 {
     _ilprime_inner_desc_t *d = (_ilprime_inner_desc_t *)v;
     d->failed = 0;
-    if (d->kind == 1)
+    if (d->kind == 4)
+    {
+        in->fs = _ilprime_fs_inner_build(M, d);
+        if (in->fs) return 1;
+    }
+    else if (d->kind == 1)
     {
         in->p2 = vfft_il2p_create(M, d->R1, d->R2);
         if (in->p2) return 1;
@@ -325,6 +382,17 @@ static int _ilprime_inner_cands(int M, _ilprime_inner_desc_t *out, int max)
         dropped += sink.dropped;   /* the planner's own cap, reported here too */
     }
 #endif
+    if (vfft_k1fs_band(M))
+    {   /* THE FOUR-STEP's splits at M (2026-10-12): the lengths past ZTURN-T's
+         * ceiling, pow2 and not -- the engine's own ladder, each split an arm */
+        int n1[8], n2[8], ns = vfft_k1fs_splits(M, n1, n2, 8), i;
+        for (i = 0; i < ns; i++)
+        {
+            if (n >= max) { dropped++; continue; }
+            memset(&out[n], 0, sizeof out[n]);
+            out[n].kind = 4; out[n].R1 = n1[i]; out[n].R2 = n2[i]; n++;
+        }
+    }
     if (dropped)   /* the no-silent-caps law */
         _vfft_warn("ilprime inner pool capped at %d (%d candidate(s) dropped) at M=%d", max, dropped, M);
     return n;
@@ -335,7 +403,7 @@ static int _ilprime_inner_cands(int M, _ilprime_inner_desc_t *out, int max)
 static int _ilprime_desc_len(const _ilprime_inner_desc_t *d)
 {
     int q, m = 1;
-    if (d->kind == 1) return d->R1 * d->R2;
+    if (d->kind == 1 || d->kind == 4) return d->R1 * d->R2;   /* the pair, the four-step's split */
     if (d->kind == 2) return d->cR2 * d->cA * d->cB;
     for (q = 0; q < d->ztn; q++) m *= d->zt[q];
     return d->ztn ? m : 0;
@@ -403,6 +471,7 @@ static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, double *zi, 
 #define _ILPR_MAX_CANDS 480
 #define _ILPR_HEAT      16
 typedef struct { int rader; _ilprime_inner_desc_t d; } _ilprime_cand_t;
+static void _k1_il_fs_warm(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N);   /* below: the four-step's row cells into a store */
 
 /* the prime cell, banked: replay its OWN verdict (method + inner), else
  * race every buildable (method, inner) pair on the whole convolution and
@@ -434,12 +503,25 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
             _ilprime_inner_desc_t d;
             if (_ilprime_desc_parse(&d, kind, shape, tw))
             {
-                vfft_ilprime_plan_t *p = _ilprime_build_with(N, hint == 1, &d);
+                vfft_ilprime_plan_t *p;
+                vw2_key_t pk;
+                vw2__prime_method_key(N, &pk);
+                d.row = vw2_lookup(&W->vw2, &pk);   /* a four-step inner's child replays from this row's fs_ tokens */
+                p = _ilprime_build_with(N, hint == 1, &d);
                 if (p)
                 {
+                    if (d.kind == 4 && d.grew && p->inner.fs && p->inner.fs->own)
+                    {   /* the child did not replay: it raced in the plan's private store; the row takes it now */
+                        const vw2_rec_t *r = vw2_lookup(&W->vw2, &pk);
+                        fprintf(stderr, "vfft: the prime cell's four-step inner at N=%d (M=%d, %dx%d) did not replay -- "
+                                        "its child raced in the plan's private store\n", N, p->M, d.R1, d.R2);
+                        if (r && _k1fs_row_put_child(&W->vw2, r, p->inner.fs->own, d.R1, d.R2, 0, 1) == VW2_OK)
+                            _vw2_persist(W, cfg);
+                    }
                     if (getenv("VFFT_ILPR_LOG"))
                         fprintf(stderr, "[ilprime] N=%d: replay %s inner %s %s tw=%d src=wisdom\n",
                                 N, hint == 1 ? "RADER" : "BLUESTEIN", kind, shape, tw);
+                    d.row = NULL;
                     if (won) *won = d;
                     return p;
                 }
@@ -451,9 +533,11 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         static _ilprime_cand_t cands[_ILPR_MAX_CANDS];   /* off the stack */
         vfft_ilprime_plan_t *fin[_ILPR_MAX_CANDS / _ILPR_HEAT + 1];
         int fin_ci[_ILPR_MAX_CANDS / _ILPR_HEAT + 1];
-        int nc = 0, nfin = 0, mi, h, w, wci, nbuilt = 0;
+        int nc = 0, nfin = 0, mi, h, w, wci, nbuilt = 0, hs = _ILPR_HEAT;
         int ncm[2] = { 0, 0 }, builtm[2] = { 0, 0 };   /* [0] = rader, [1] = bluestein */
         double *zi, *zo;
+        struct vfft_wisdom_s *pS = NULL;   /* the four-step inners' race store */
+        vfft_config_t pcfg;
         for (mi = 0; mi < 2; mi++)
         {
             const int rader = (mi == 0);
@@ -479,16 +563,53 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         }
         if (nc == 0)
             return 0;   /* nothing to build: nothing to serve, nothing to fall back to */
+        {   /* THE FOUR-STEP INNERS' CHILDREN race on ONE private store (the K=1
+             * race's own recipe, k1_fourstep.h): the row cells at every split's
+             * N2 warmed into it first, each candidate's 2D child raced there
+             * once; the winner's child is banked on the prime row below. The
+             * heat's size follows the plans' memory: a four-step inner at M
+             * holds ~64 B per point (the convolution's four M-vectors and the
+             * child's tables), a heat at most ~1 GB. */
+            long maxM = 0;
+            int q;
+            for (q = 0; q < nc; q++)
+                if (cands[q].d.kind == 4)
+                {
+                    const long m = (long)cands[q].d.R1 * (long)cands[q].d.R2;
+                    int seen = 0, j;
+                    if (m > maxM) maxM = m;
+                    if (!pS && (pS = _k1fs_store_new()) != NULL)
+                    {
+                        pcfg = *cfg; pcfg.wisdom = (vfft_wisdom *)pS; pcfg.wisdom_write = 0; pcfg.recalibrate = 0;
+                    }
+                    for (j = 0; j < q; j++)
+                        if (cands[j].d.kind == 4 && (long)cands[j].d.R1 * (long)cands[j].d.R2 == m) seen = 1;
+                    if (pS && !seen) _k1_il_fs_warm(pS, &pcfg, (int)m);
+                    cands[q].d.S = pS;
+                }
+            if (maxM > 0)
+            {
+                hs = (int)((1L << 30) / (64L * maxM));
+                if (hs < 2) hs = 2;
+                if (hs > _ILPR_HEAT) hs = _ILPR_HEAT;
+            }
+        }
         zi = _ilprime_alloc((size_t)2 * N);
         zo = _ilprime_alloc((size_t)2 * N);
-        if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); return 0; }
+        if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); vfft_wisdom_free((vfft_wisdom *)pS); return 0; }
         for (h = 0; h < 2 * N; h++) zi[h] = 1.0 + 1e-6 * (double)(h & 255);
         /* HEATS */
-        for (h = 0; h < nc; h += _ILPR_HEAT)
+        for (h = 0; h < nc; h += hs)
         {
             vfft_ilprime_plan_t *plans[_ILPR_HEAT];
             int ci[_ILPR_HEAT], np = 0, q, a;
-            for (q = h; q < nc && q < h + _ILPR_HEAT; q++)
+            if (nfin >= (int)(sizeof fin / sizeof fin[0]))
+            {   /* more heats than the final holds (the no-silent-caps law) */
+                _vfft_warn("ilprime N=%d: %d candidate(s) past heat %d not raced (the final holds %d heat winners)",
+                           N, nc - h, h / hs, (int)(sizeof fin / sizeof fin[0]));
+                break;
+            }
+            for (q = h; q < nc && q < h + hs; q++)
             {
                 vfft_ilprime_plan_t *p = _ilprime_build_with(N, cands[q].rader, &cands[q].d);
                 if (!p) continue;
@@ -502,13 +623,16 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                 if (a != w) vfft_ilprime_destroy(plans[a]);
             fin[nfin] = plans[w]; fin_ci[nfin] = ci[w]; nfin++;
         }
-        if (nfin == 0) { vfft_aligned_free(zi); vfft_aligned_free(zo); return 0; }
+        if (nfin == 0) { vfft_aligned_free(zi); vfft_aligned_free(zo); vfft_wisdom_free((vfft_wisdom *)pS); return 0; }
         /* THE FINAL */
         w = _ilprime_race_plans(fin, nfin, zi, zo);
         vfft_aligned_free(zi); vfft_aligned_free(zo);
         for (h = 0; h < nfin; h++)
             if (h != w) vfft_ilprime_destroy(fin[h]);
         wci = fin_ci[w];
+        for (h = 0; h < nc; h++) { cands[h].d.S = NULL; cands[h].d.row = NULL; }   /* the race's store dies here: no descriptor keeps it */
+        if (cands[wci].d.kind == 4 && pS && fin[w]->inner.fs && !fin[w]->inner.fs->own && !bank)
+            fin[w]->inner.fs->own = _k1fs_store_dup(pS);   /* unbanked (the store off, a pin, a composite's in-role race): the plan keeps its child's store */
         {
             char kind[8], shape[64];
             _ilprime_desc_str(&cands[wci].d, kind, sizeof kind, shape, sizeof shape);
@@ -530,8 +654,20 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                         bank ? "banked" : "not banked");
             if (bank && vw2_prime_method_bank(&W->vw2, N, fin[w]->method == 1 ? 1 : 2,
                                               kind, shape, cands[wci].d.tw) == VW2_OK)
+            {
+                if (cands[wci].d.kind == 4 && pS)
+                {   /* the four-step inner's child onto the prime row (fs_ tokens): a replay seeds it from there */
+                    vw2_key_t pk;
+                    const vw2_rec_t *r;
+                    vw2__prime_method_key(N, &pk);
+                    r = vw2_lookup(&W->vw2, &pk);
+                    if (!r || _k1fs_row_put_child(&W->vw2, r, pS, cands[wci].d.R1, cands[wci].d.R2, 0, 1) != VW2_OK)
+                        fprintf(stderr, "vfft: the prime cell's four-step child at N=%d NOT banked -- the inner's child will race again\n", N);
+                }
                 _vw2_persist(W, cfg);
+            }
         }
+        vfft_wisdom_free((vfft_wisdom *)pS);
         if (won) *won = cands[wci].d;
         return fin[w];
     }
@@ -544,7 +680,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
  * it: the K=1 race below and the zr2c child's race in the real role. */
 static void _k1_il_fs_warm(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
 {
-    if ((N & (N - 1)) == 0 && vfft_k1fs_band(N))
+    if (vfft_k1fs_band(N))
     {
         int n1[8], n2[8], ns = vfft_k1fs_splits(N, n1, n2, 8), i, j;
         for (i = 0; i < ns; i++)
@@ -1408,7 +1544,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
                 arms[na].name = names[na]; arms[na].run = _k1fs_mt_arm_run; arms[na].ctx = &cx[na];
                 na++;
             }
-            if (p->scr || !_k1fs_sb_admit(N)) continue;
+            if (p->scr || !_k1fs_sb_admit(N, n2[i])) continue;
             nch = _k1fs_sb_chains(n1[i], ch, cl, 24, 1);
             for (c = 0; c < nch && na < VFFT_RACE_MAX_ARMS; c++)
             {

@@ -455,11 +455,23 @@ static int _zrb_sweep(const vfft_config_t *cfg, int N, const double *a, const do
     const int nm = _zrb_m_cands(N, Ms);
     double bns[2] = { 1e300, 1e300 };
     int built = 0;
+    struct vfft_wisdom_s *pS = NULL;   /* the four-step inners' race store (k1_commit.h, the prime cell's recipe) */
+    vfft_config_t pcfg;
     out[0] = out[1] = NULL;
     for (int m = 0; m < nm; m++)
     {
         const int nc = _ilprime_inner_cands(Ms[m], pool, _ILPR_MAX_CANDS);
         int nb = 0;
+        if (vfft_k1fs_band(Ms[m]))
+        {   /* the four-step's splits at this M: their children on ONE private store, the row cells warmed into it first */
+            if (!pS && (pS = _k1fs_store_new()) != NULL)
+            {
+                pcfg = *cfg; pcfg.wisdom = (vfft_wisdom *)pS; pcfg.wisdom_write = 0; pcfg.recalibrate = 0;
+            }
+            if (pS) _k1_il_fs_warm(pS, &pcfg, Ms[m]);
+            for (int c = 0; c < nc; c++)
+                if (pool[c].kind == 4) pool[c].S = pS;
+        }
         for (int c = 0; c < nc; c++)
             nb += _zrb_try(cfg, N, Ms[m], &pool[c], 0, a, ref, b, s0, xs, nchk, out, bns);
         built += nb;
@@ -475,9 +487,13 @@ static int _zrb_sweep(const vfft_config_t *cfg, int N, const double *a, const do
             if (out[i] && _ilprime_desc_parse(&sd[ns2], out[i]->zrb->ikind, out[i]->zrb->ishape, out[i]->zrb->itw))
                 sM[ns2++] = out[i]->zrb->M;
         for (int i = 0; i < ns2; i++)
-            for (int mt = 1; mt <= 2; mt++)
+            for (int mt = 1; mt <= 2 && sd[i].kind != 4; mt++)   /* the threaded forms are ZTURN-T's: a four-step inner has none */
                 _zrb_try(cfg, N, sM[i], &sd[i], mt, a, ref, b, s0, xs, nchk, out, bns);
     }
+    for (int i = 0; i < 2; i++)
+        if (out[i] && out[i]->zrb->inner.fs && !out[i]->zrb->inner.fs->own && pS)
+            out[i]->zrb->inner.fs->own = _k1fs_store_dup(pS);   /* the winner's child rides to the real row from its own copy; the race's store dies here */
+    vfft_wisdom_free((vfft_wisdom *)pS);
     return (out[0] != NULL) + (out[1] != NULL);
 }
 
@@ -624,7 +640,20 @@ static struct vfft_plan_s *_real_il_odd_race(const vfft_config_t *cfg, int N, st
                                                           hw->zrb->itw, hw->zrb->mt, ns[win])
                                    : vw2_real_il_bank_zrm(&W->vw2, N, c2r, ip, Tk, ns[win]);
             if (rc == VW2_OK)
+            {
+                if (hw->zrb && hw->zrb->inner.fs && hw->zrb->inner.fs->own)
+                {   /* the four-step inner's child onto the real row (fs_ tokens): a replay seeds it from there */
+                    vw2_key_t rk;
+                    const vw2_rec_t *rr;
+                    vw2_real_il_key(&rk, N, c2r, ip, Tk);
+                    rk.q = 1;
+                    rr = vw2_lookup(&W->vw2, &rk);
+                    if (!rr || _k1fs_row_put_child(&W->vw2, rr, hw->zrb->inner.fs->own, hw->zrb->inner.fs->N1,
+                                                   hw->zrb->inner.fs->N2, 0, 1) != VW2_OK)
+                        fprintf(stderr, "vfft: the real Bluestein's four-step child at N=%d NOT banked -- its inner's child will race again\n", N);
+                }
                 _vw2_persist(W, cfg);
+            }
             else
                 fprintf(stderr, "vfft: real engine verdict NOT banked at odd N=%d (rc=%d) -- the cell will re-race\n", N, rc);
         }
@@ -698,9 +727,22 @@ static struct vfft_plan_s *_real_il_odd_build(const vfft_config_t *cfg, int N, s
             if (vw2_real_il_lookup_zrb(&W->vw2, N, c2r, ip, Tk, &M, kind, sizeof kind, shape, sizeof shape, &tw, &bmt) &&
                 _ilprime_desc_parse(&bd, kind, shape, tw))
             {
-                struct vfft_plan_s *hb = _zrb_build_plan(cfg, N, M, &bd);
+                struct vfft_plan_s *hb;
+                vw2_key_t rk;
+                vw2_real_il_key(&rk, N, c2r, ip, Tk);
+                rk.q = 1;
+                bd.row = vw2_lookup(&W->vw2, &rk);   /* a four-step inner's child replays from this row's fs_ tokens */
+                hb = _zrb_build_plan(cfg, N, M, &bd);
                 if (hb)
                 {
+                    if (bd.kind == 4 && bd.grew && hb->zrb->inner.fs && hb->zrb->inner.fs->own)
+                    {   /* the child did not replay: it raced in the plan's private store; the row takes it now */
+                        const vw2_rec_t *rr = vw2_lookup(&W->vw2, &rk);
+                        fprintf(stderr, "vfft: the real Bluestein's four-step inner at N=%d (M=%d, %dx%d) did not replay -- "
+                                        "its child raced in the plan's private store\n", N, M, bd.R1, bd.R2);
+                        if (rr && _k1fs_row_put_child(&W->vw2, rr, hb->zrb->inner.fs->own, bd.R1, bd.R2, 0, 1) == VW2_OK)
+                            _vw2_persist(W, cfg);
+                    }
                     if (bmt) vfft_zrb_mt_bind(hb->zrb, hb->nthreads, bmt); /* the banked threaded arm, at the row's T */
                     return hb;
                 }

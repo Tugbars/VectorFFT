@@ -86,14 +86,15 @@ extern long _vfft_il2d_row_mt_count;   /* the 2D real ROW plan's threaded passes
  * multiply is small against the row transform. */
 static void _il2d_fs_twiddle(double *row, const double *rec, int B, size_t n2, int conj)
 {
-    const size_t na = n2 / (size_t)B;
+    const size_t na = (n2 + (size_t)B - 1) / (size_t)B;   /* ceil: a non-pow2 row's last coarse entry is partial */
     const double *C = rec, *F = rec + 2 * na;
     size_t a, b;
     for (a = 0; a < na; a++)
     {
         const double cr = C[2 * a], ci = conj ? -C[2 * a + 1] : C[2 * a + 1];
         double *r = row + 2 * a * (size_t)B;
-        for (b = 0; b < (size_t)B; b++)
+        const size_t bl = (n2 - a * (size_t)B < (size_t)B) ? n2 - a * (size_t)B : (size_t)B;
+        for (b = 0; b < bl; b++)
         {
             const double fr = F[2 * b], fi = conj ? -F[2 * b + 1] : F[2 * b + 1];
             const double wr = cr * fr - ci * fi, wi = cr * fi + ci * fr;
@@ -105,7 +106,7 @@ static void _il2d_fs_twiddle(double *row, const double *rec, int B, size_t n2, i
 }
 static const double *_il2d_fs_rec(const struct vfft_plan_s *h, size_t rn, size_t p)
 {
-    return h->il2d_fs_tw ? h->il2d_fs_tw + p * 2 * (rn / (size_t)h->il2d_fs_B + (size_t)h->il2d_fs_B) : NULL;
+    return h->il2d_fs_tw ? h->il2d_fs_tw + p * 2 * ((rn + (size_t)h->il2d_fs_B - 1) / (size_t)h->il2d_fs_B + (size_t)h->il2d_fs_B) : NULL;
 }
 
 /* one row of the row pass through the in-place row child (route 0, one

@@ -306,7 +306,7 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
              * method serves it (Rader is prime-only) and no inner of 2N-1 builds, so the
              * search that would end in this refusal is not started (it took 15-65 s) */
             _vfft_warn("vfft_create: C2C N=%d: a prime factor above 47 and a Bluestein inner (2N-1 = %ld) past "
-                       "the inner pool's ceiling (%d); no engine serves it", N, 2L * N - 1, VFFT_ZTT_MAX_N);
+                       "the inner pool's ceiling (%d); no engine serves it", N, 2L * N - 1, VFFT_POLICY_INNER_MAX_N);
             ilpr = NULL;
         }
         else

@@ -21,8 +21,10 @@ ladder's reach: both sides of a split come from {256, 512, 1024, 2048, 4096},
 so 4096 × 4096 = 2^24 is the largest N the engine can build; a larger N needs
 a longer side (a row length ZTURN-T serves, or a longer column chain).
 262144 stays ZTURN-T's cell unless the four-step beats it in the cell's own
-race. The 2^a·odd cells above 262144 are not in this design (the 2D child
-can hold odd axes, so they are a later admission, not a new engine).
+race. Since 2026-10-12 the engine also serves every other N in (262144, 2^24]
+that has a split in its side range (the section "The non-power-of-two band"
+below): the 2D child could always hold odd axes; what was power of two only
+was the ladder, the transposes and the twiddle records around it.
 
 ## The engine: N = N1 × N2 on the 2D interleaved tier
 
@@ -145,3 +147,54 @@ replay rebuilds the banked split when it differs from the serial row's.
 `VFFT_K1_FS=N1xN2` pins a split for a probe (never banks, skips the per-T
 race). No fallback: a cell whose splits all refuse (a missing row
 plan) refuses.
+
+## The non-power-of-two band (2026-10-12)
+
+Field trial item 1 (owner, 2026-10-12: these sizes are to be supported). What
+changed, in the order the engine meets it:
+
+- **The band.** `vfft_k1fs_band` admits every N in (262144, 2^24] that has a
+  divisor pair with both sides in [64, 16384] (`VFFT_K1FS_SIDE_MIN`,
+  `VFFT_K1FS_SIDE_MAX`, `k1_fourstep_band.h`); the power-of-two ladder is
+  unchanged. The band asks only the divisor question, so the benches keep
+  admitting it from the band header alone.
+- **The ladder.** At a non-pow2 N, `vfft_k1fs_splits` takes every divisor pair
+  in the side range whose column side has a chain in the 2D tier's own pool
+  (`_il2d_enum_rec_body`, depth <= 4: the tier's enumerator, never a second
+  copy of its radix list) and whose row side is a K=1 cell the door serves
+  (`vfft_policy_races` at N2, and no prime factor past the chain radices: a
+  Bluestein row inside a chain is not an arm of the four-step, that N is the
+  prime family's on the whole length), and keeps the `VFFT_K1FS_MAX_SPLITS`
+  = 8 most balanced (|ln N1 - ln N2| smallest, ties to the smaller column
+  side). The ladder's length is a declared constant of the band, not a
+  silent cap.
+- **The twiddle records** carry ceil(N2 / B) coarse entries, the last one
+  partial where B does not divide N2, and the apply clips it
+  (`_il2d_fs_twiddle`, `_il2d_fs_rec`, `il2d_tier.h`).
+- **The transposes** walk 16 x 16 blocks where they fit and the tail blocks
+  of a side that is not a multiple of 16 element by element
+  (`_k1fs_transpose_tail`); the streaming store needs the destination's row
+  pitch 32-B aligned, so it serves only an even row length (N1 forward, N2
+  backward). The pool's cut hands the tail rows to the last slot.
+- **The super-band form** is an arm only at a row length that is a multiple
+  of 16 (`_k1fs_sb_admit(N, N2)`: its run store and run load walk 16-wide k2
+  blocks).
+- **Policy** (`policy_il.h`). The band map gains a row: a non-pow2 N in the
+  band races the FOUR-STEP against the FLAT DIT in both order classes (both
+  are scrambled writers), and the PRIME family where a factor past 47 leaves
+  no chain. `vfft_policy_race_max_n` and `vfft_policy_races` admit the band
+  to 2^24; the rank-2/3 row law (`vfft_policy_c2c_row_refused`) names a
+  certain refusal only outside the band. In the same change the factor-of-4
+  cells between 16385 and 262144 outside ZTURN-T's odd band race to the
+  flat DIT's ceiling like the odd ones (field trial V17: the 16384 cap was
+  the planner's initial scratch planes, which grow on demand, and the flat's
+  pool holds 4, 8 and 16).
+- **The real four-step** (`zfsr.h`) stays power of two: its fold sweep walks
+  16 x 16 blocks and their mirrors. An even real N whose half is a non-pow2
+  cell of this band is the zr2c route's, whose c2c child comes through this
+  engine.
+
+The race banks what it always banked (`il_route=fs il_R1=N1 il_R2=N2` with
+the child's `fs_*` tokens on the one-thread row, `il_mt=N1` on a threaded
+row). What the trial's cells measured after the change is in
+`docs/performance/` (the vs-MKL table of the gap-fill work).

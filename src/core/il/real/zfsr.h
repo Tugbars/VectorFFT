@@ -80,10 +80,12 @@ static void vfft_zfsr_destroy(vfft_zfsr_plan_t *p)
     free(p);
 }
 
-/* does N have a real four-step at all: N/2 in the c2c four-step's band */
+/* does N have a real four-step at all: N/2 a power of two in the c2c
+ * four-step's band (the fold sweep walks 16 x 16 blocks and their mirrors:
+ * the c2c engine's non-pow2 splits, 2026-10-12, are not admitted here) */
 static inline int vfft_zfsr_band(int N)
 {
-    return N >= 4 && (N & 1) == 0 && vfft_k1fs_band(N / 2);
+    return N >= 4 && (N & 1) == 0 && ((N / 2) & (N / 2 - 1)) == 0 && vfft_k1fs_band(N / 2);
 }
 
 /* S = the child's private store, empty (the child races into it) or seeded
