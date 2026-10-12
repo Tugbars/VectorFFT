@@ -150,7 +150,12 @@ extern "C"
    * Wisdom is kept per CPU: the library's store is a root of folders, each
    * stamped with the identity of the CPU that raced its rows, and a process
    * uses the folder stamped with its own; the environment variable
-   * VFFT_WISDOM_DIR names one directory as the store instead. */
+   * VFFT_WISDOM_DIR names one directory as the store instead.
+   * A 1D plan above 262144 (the four-step) carries a 2D child whose row plan
+   * is a 1D cell at the split's row length: VFFT_HIGHN_PLAN=borrow (the
+   * default) lets that child take the store's banked verdict at that length,
+   * read only, and race only what the store lacks; VFFT_HIGHN_PLAN=scratch
+   * races every row cell for the plan's own use. Read at create. */
 
   /* ── the configuration ────────────────────────────────────────────────── */
 

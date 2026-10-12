@@ -412,6 +412,10 @@ static int _zr2c_dp_ready = 0;
  * (its method and inner) when the winner is PRIME, zero otherwise; `fs_out`
  * the race's private store when the winner is a four-step (its child's rows
  * are in it), NULL otherwise. */
+/* the real request's store, for the child's four-step candidates to borrow their row cells
+ * from (VFFT_HIGHN_PLAN=borrow, policy_il.h; read only): set by _zr2c_build for the race
+ * below it -- planning side, one create at a time */
+static const struct vfft_wisdom_s *_zr2c_race_W = NULL;
 static double _zr2c_kid_race(const vfft_config_t *cfg, int N, int route, vfft_il_cand_t *best,
                              _zr2c_prime_t *pr, struct vfft_wisdom_s **fs_out)
 {
@@ -468,7 +472,7 @@ static double _zr2c_kid_race(const vfft_config_t *cfg, int N, int route, vfft_il
         _k1pr_ctx.N = _k1pr_ctx.plan ? n : 0;
         pr->m = _k1pr_ctx.plan ? (_k1pr_ctx.plan->method == 1 ? 1 : 2) : 0;
     }
-    _k1_il_fs_warm(S, &cs, n);
+    _k1_il_fs_warm(S, _zr2c_race_W, &cs, n);
     _k1fs_ctx.W = S;
     _k1fs_ctx.cfg = &cs;
     _k1_il_dp_busy = 1;
@@ -700,6 +704,7 @@ static void _zr2c_arm_run(void *v)
 static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
                                        struct vfft_wisdom_s *W)
 {
+    _zr2c_race_W = (W && !W->vw2_off_oop) ? W : NULL;   /* the child's four-step candidates borrow from here */
     /* 1. env — the racing hook. Beats wisdom, never banks. */
     {
         const char *e = getenv("VFFT_ZR2C_ROUTE");

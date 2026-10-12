@@ -34,6 +34,7 @@
  * does the same); the guard makes it a no-op in the one-TU build, where
  * cpu_cache.h is already in scope, and lets policy_gate.c compile this
  * module on its own. */
+#include <stdlib.h>
 #include "cpu_cache.h"
 
 /* ── L9. the race CEILINGS ──────────────────────────────────────────────
@@ -72,6 +73,20 @@ static inline long vfft_policy_race_max_n(int N)
 }
 
 #include "common/policy/policy_order.h" /* L4 order law + the cell (layout-neutral) */
+
+/* THE HIGH-N PLAN'S ROW CELLS (owner, 2026-10-12). A four-step above 262144
+ * carries a 2D child whose row plan is a 1D cell at N2. VFFT_HIGHN_PLAN=borrow
+ * (the default) lets the child take the store's banked 1D verdicts at N2 --
+ * READ ONLY: a four-step never writes a 1D row, so the raced 2048 x 4096 can
+ * never overwrite the 2048 and 4096 cells -- and races only the rows the
+ * store lacks, into the plan's private store. VFFT_HIGHN_PLAN=scratch races
+ * every row cell into the private store as the four-step's own, the
+ * in-role form. Read at create, never at execute. */
+static inline int vfft_policy_highn_borrow(void)
+{
+    const char *e = getenv("VFFT_HIGHN_PLAN");
+    return !(e && (e[0] == 's' || e[0] == 'S'));
+}
 
 /* ── L1 + L2. the BAND MAP: which engine families race in a cell ────────
  *

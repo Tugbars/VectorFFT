@@ -471,7 +471,7 @@ static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, double *zi, 
 #define _ILPR_MAX_CANDS 480
 #define _ILPR_HEAT      16
 typedef struct { int rader; _ilprime_inner_desc_t d; } _ilprime_cand_t;
-static void _k1_il_fs_warm(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N);   /* below: the four-step's row cells into a store */
+static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N);   /* below: the four-step's row cells into a store */
 
 /* the prime cell, banked: replay its OWN verdict (method + inner), else
  * race every buildable (method, inner) pair on the whole convolution and
@@ -584,7 +584,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                     }
                     for (j = 0; j < q; j++)
                         if (cands[j].d.kind == 4 && (long)cands[j].d.R1 * (long)cands[j].d.R2 == m) seen = 1;
-                    if (pS && !seen) _k1_il_fs_warm(pS, &pcfg, (int)m);
+                    if (pS && !seen) _k1_il_fs_warm(pS, W, &pcfg, (int)m);
                     cands[q].d.S = pS;
                 }
             if (maxM > 0)
@@ -673,21 +673,34 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
     }
 }
 
-/* the four-step's row cells, warmed BEFORE a race that holds the planner
- * (created and destroyed once: a cold one races and banks its own row), so
- * the four-step's candidates find them banked -- a nested race refuses
- * (_k1_il_dp_busy). Every race whose pool can hold the four-step at N calls
- * it: the K=1 race below and the zr2c child's race in the real role. */
-static void _k1_il_fs_warm(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
+/* the four-step's row cells into the race's private store S BEFORE a race
+ * that holds the planner (a nested race refuses, _k1_il_dp_busy): under
+ * VFFT_HIGHN_PLAN=borrow (policy_il.h) the store W's banked 1D rows at each
+ * split's N2, read only; a row W lacks, and every row under =scratch, races
+ * as a plain 1D cell into S. Then every split's child row in S takes its
+ * rp_ recipe from those rows (_k1fs_seed_child_rp), so the candidates'
+ * row plans replay instead of running the door's default. Every race whose
+ * pool can hold the four-step at N calls it: the K=1 race below, the prime
+ * cell's inner race and the real Bluestein's. */
+static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
 {
     if (vfft_k1fs_band(N))
     {
         int n1[8], n2[8], ns = vfft_k1fs_splits(N, n1, n2, 8), i, j;
+        int have[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+        const int borrow = vfft_policy_highn_borrow();
+        if (borrow && W)
+            for (i = 0; i < ns; i++)
+            {
+                int seen = 0;
+                for (j = 0; j < i; j++) if (n2[j] == n2[i]) { seen = 1; have[i] = have[j]; }
+                if (!seen) have[i] = _k1fs_borrow_rows(S, W, n2[i]) > 0;
+            }
         for (i = 0; i < ns; i++)
         {
             int seen = 0;
             for (j = 0; j < i; j++) if (n2[j] == n2[i]) seen = 1;
-            if (seen) continue;
+            if (seen || have[i]) continue;
             {
                 vfft_config_t rc;
                 vfft_plan rp;
@@ -695,11 +708,16 @@ static void _k1_il_fs_warm(struct vfft_wisdom_s *W, const vfft_config_t *cfg, in
                 rc.transform = VFFT_C2C; rc.placement = VFFT_INPLACE; rc.rigor = cfg->rigor;
                 rc.dims = 1; rc.n[0] = n2[i]; rc.howmany = 1; rc.order = VFFT_ORDER_NATURAL;
                 rc.layout = VFFT_LAYOUT_INTERLEAVED; rc.nthreads = 1;
-                rc.wisdom = (vfft_wisdom *)W; rc.wisdom_write = cfg->wisdom_write;
+                rc.wisdom = (vfft_wisdom *)S; rc.wisdom_write = cfg->wisdom_write;
                 rp = vfft_create(&rc);
                 if (rp) vfft_destroy(rp);
             }
         }
+        for (i = 0; i < ns; i++)
+            _k1fs_seed_child_rp(S, n1[i], n2[i], 0, 1);
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[k1fs] N=%d: %d split(s); row cells %s\n", N, ns,
+                    borrow && W ? "borrowed where banked (VFFT_HIGHN_PLAN=borrow)" : "raced from scratch");
     }
 }
 
@@ -749,7 +767,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     fscfg.wisdom = (vfft_wisdom *)fsS;
     fscfg.wisdom_write = 0;
     fscfg.recalibrate = 0;
-    _k1_il_fs_warm(fsS, &fscfg, N);
+    _k1_il_fs_warm(fsS, W, &fscfg, N);
     /* the PRIME arm: the prime cell built ONCE here -- a cold
      * cell races its inner pool and banks the prime shard's row -- and lent
      * to the race through _k1pr_ctx (dp_planner_il.h), at the lengths the
@@ -1530,6 +1548,12 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         mcfg.wisdom_write = 0;
         mcfg.recalibrate = 0;
         for (k = 0; k < 2 * (size_t)N; k++) zi[k] = 1.0 + 1e-6 * (double)(k & 1023);
+        for (i = 0; i < ns; i++)
+        {   /* the candidates' row recipes at T: the store's 1D rows at N2 (borrow), else the
+             * one-thread child's rp_ (the served plan's); a row without either runs the door's default */
+            if (vfft_policy_highn_borrow() && W) _k1fs_borrow_rows(mS, W, n2[i]);
+            _k1fs_seed_child_rp(mS, n1[i], n2[i], ip, T);
+        }
         _vfft_pool_arm(T);
         for (i = 0; i < ns && na < VFFT_RACE_MAX_ARMS; i++)
         {
