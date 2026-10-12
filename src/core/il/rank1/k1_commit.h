@@ -643,7 +643,8 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     if (cfg->rigor != VFFT_MEASURE)
         vfft_il_dp_set_patient(&_k1_il_dp_ctx);
     else
-        _k1_il_dp_ctx.beam = VFFT_IL_DP_BEAM_MEASURE;
+        vfft_il_dp_set_measure(&_k1_il_dp_ctx); /* every rigor field of the shared context, each create (a PATIENT
+                                                 * create before this one must not leak into it) */
     if (getenv("VFFT_NAT_LOG"))
         fprintf(stderr, "[k1plan] N=%d: IL plan race (solos, pairs x forms, ZTURN-T "
                         "chains x widths, chain3 x forms, bwd forms) — a cold cell "

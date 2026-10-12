@@ -1520,7 +1520,17 @@ static inline int vw2__emit_header(FILE *f, const vw2_store_t *s)
 static inline int vw2__replace_file(const char *tmp, const char *path)
 {
 #if defined(_WIN32)
-    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) return VW2_EIO;
+    /* a reader (this process's or another's) holding the shard open blocks
+     * the replace with a sharing violation for as long as it reads; such
+     * holds last milliseconds to a few seconds, so retry for up to ~3 s
+     * before the caller gives the save up */
+    int tries = 0;
+    while (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const DWORD e = GetLastError();
+        if ((e != ERROR_SHARING_VIOLATION && e != ERROR_ACCESS_DENIED && e != ERROR_LOCK_VIOLATION) || ++tries > 60)
+            return VW2_EIO;
+        Sleep(50);
+    }
 #else
     if (rename(tmp, path) != 0) return VW2_EIO;
 #endif

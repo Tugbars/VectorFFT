@@ -121,6 +121,26 @@ static inline int vfft_policy_prime_cell(int N)
     return m > 1; /* what is left is a product of primes past the chain radices */
 }
 
+/* is N prime? (trial division; N <= 2^24 is at most 4096 steps, once per create) */
+static inline int vfft_policy_is_prime(int N)
+{
+    int d;
+    if (N < 2) return 0;
+    if (N % 2 == 0) return N == 2;
+    for (d = 3; (long)d * d <= N; d += 2)
+        if (N % d == 0) return 0;
+    return 1;
+}
+
+/* A COMPOSITE prime cell past the inner pool's ceiling: only the Bluestein
+ * method serves a prime cell that is not itself prime (Rader is prime-only),
+ * and its inner, 2N - 1 rounded up to the pool, cannot be built past
+ * VFFT_ZTT_MAX_N. No engine, no race: the door refuses at once. */
+static inline int vfft_policy_prime_cell_unservable(int N)
+{
+    return vfft_policy_prime_cell(N) && !vfft_policy_is_prime(N) && 2L * N - 1 > (long)VFFT_ZTT_MAX_N;
+}
+
 /* THE BLUESTEIN INNER SIZES the prime cell races: the next power of two at or past 2N - 1, and
  * the VFFT_POLICY_ILPRIME_SMOOTH_M smallest EVEN 7-smooth sizes between 2N - 1 and it. The
  * convolution needs only M >= 2N - 1, and the power of two can cost up to twice the inner work
@@ -285,11 +305,37 @@ static inline int vfft_policy_races(const vfft_cell_t *c)
     const int N = c->N;
     const int pow2 = (N & (N - 1)) == 0;
     const int oddband = vfft_ztt_odd_band(N);
+    if (vfft_policy_prime_cell_unservable(N))
+        return 0; /* nothing could win: no race (the door refuses, naming the ceiling) */
     if (pow2)
         return (long)N <= (long)VFFT_K1FS_MAX_N;
     if (oddband)
         return (long)N <= (long)VFFT_ZTT_MAX_N;
     return (long)N <= (long)((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N);
+}
+
+/* THE ROW LAW OF A RANK-2/3 REQUEST (2026-10-12). A 2D or 3D plan's rows
+ * are 1D c2c cells at the request's last axis (the real tiers' odd rows
+ * included), and the K=1 door refuses two kinds of length for want of an
+ * engine, with certainty: a non-power-of-two N above the odd band's ceiling
+ * (VFFT_K1_IL_PLAN_ODD_MAX_N: no chain races there, ZTURN-T stops there and
+ * the four-step is power of two only), and a COMPOSITE prime cell (a prime
+ * factor above 47, so only the Bluestein method serves it; Rader is prime-
+ * only) whose Bluestein inner, 2N - 1 rounded up to the pool, passes the
+ * inner pool's ceiling (VFFT_ZTT_MAX_N). The rank-2/3 doors ask this BEFORE
+ * racing their other axes, so such a request refuses at once and in its own
+ * name, not after minutes in the row child's. Nothing the door may still
+ * serve (a default chain, a raced chain, the prime cell within its inner,
+ * Rader at a prime N) is named here. Returns the reason, or NULL. */
+static inline const char *vfft_policy_c2c_row_refused(int N)
+{
+    if (N < 2048 || (N & (N - 1)) == 0)
+        return NULL;
+    if ((long)N > (long)VFFT_K1_IL_PLAN_ODD_MAX_N)
+        return "a non-power-of-two length above 262144 (no engine is built there)";
+    if (vfft_policy_prime_cell_unservable(N))
+        return "a composite length with a prime factor above 47 whose Bluestein inner (2N-1) passes the 262144 inner ceiling";
+    return NULL;
 }
 
 /* does this family race in this cell? (the single-family spelling of the

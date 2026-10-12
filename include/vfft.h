@@ -204,9 +204,13 @@ extern "C"
                          howmany > 1; the geometries coincide at K == 1).
                          VFFT_BATCH_DEFAULT (0) is the layout's own:
                          transform-contiguous for INTERLEAVED C2C, lane-major
-                         for SPLIT and for INTERLEAVED R2C/C2R. The explicit
-                         values state the other geometry; transform-contiguous
-                         on SPLIT is refused. Definitions below. */
+                         for SPLIT and for 1D INTERLEAVED R2C/C2R. An
+                         INTERLEAVED batch of rank 2 or more is contiguous
+                         planes (plane t at z + t * plane_doubles) under
+                         DEFAULT and TRANSFORM_CONTIGUOUS alike, and lane-major
+                         is refused there. The explicit values state the other
+                         geometry; transform-contiguous on SPLIT is refused.
+                         Definitions below. */
 
     vfft_wisdom *wisdom; /**< NULL = the library's store; else this table */
     int recalibrate;     /**< 1 = re-measure this cell even on a hit */
@@ -262,7 +266,8 @@ extern "C"
    *    or reinterpreted to make it fit.
    * -# Resolve the plan from wisdom. A hit serves the banked verdict. A miss
    *    (or config.recalibrate) races the cell's candidates on scratch data at
-   *    config.rigor, a pause of milliseconds to seconds, banks the winner and
+   *    config.rigor, a pause of milliseconds at a small cell and of minutes at
+   *    the largest (the races pace their benchmarks), banks the winner and
    *    saves it to the store before create returns. A store that cannot be
    *    written keeps the winner for the process and says so once. The races
    *    run inside the measurement scope (vfft_measure_config_t): the calling
@@ -497,20 +502,32 @@ extern "C"
   /* ── the worker pool and the build ────────────────────────────────────── */
 
   /**
-   * @brief Size the shared worker pool.
+   * @brief Set the thread count for the plans created afterwards.
    *
-   * Process-global and sticky: plans created afterwards draw their workers
-   * from it (config.nthreads snapshots the count per plan).
+   * Process-global: a plan created with config.nthreads = 0 snapshots this
+   * count. A live plan keeps the workers it was created with, so the call
+   * never takes a worker from one: lowering the count parks the workers no
+   * live plan needs and stops them once no plan needs any. The workers are
+   * pinned to the cores after the caller's; the calling thread is not
+   * pinned. Safe to call at any time, beside creates and executes.
    *
-   * @param n The worker count; n <= 1 is single-threaded.
-   * @warning For n > 1 the calling thread is pinned to core 0 and the workers
-   *          to the following cores. Set your own affinity after this call.
-   * @warning Not safe against concurrent plan creation or execution: size the
-   *          pool once, during setup.
+   * @param n The thread count; n <= 1 is single-threaded; above this
+   *          machine's logical CPUs (or 64) it is refused with a printed line.
    */
   void vfft_set_num_threads(int n);
-  /** @brief The configured pool size, as the last vfft_set_num_threads() set it. */
+  /** @brief The thread count the next create snapshots, as the last vfft_set_num_threads() set it. */
   int vfft_get_num_threads(void);
+  /**
+   * @brief How long an idle worker spins before it parks, in milliseconds.
+   *
+   * Inside a burst of executes the workers answer a dispatch in ~10 ns; a
+   * worker idle for longer than this parks on an event and the first
+   * execute after the pause pays one wake (~5 us). Workers no live plan needs
+   * park at once. The default is 200 ms, or VFFT_THREAD_BLOCK_MS when set in
+   * the environment; a threaded measurement should state the value in force.
+   */
+  void vfft_set_thread_block_ms(double ms);
+  double vfft_get_thread_block_ms(void);
 
   /**
    * @brief The route a plan committed to.

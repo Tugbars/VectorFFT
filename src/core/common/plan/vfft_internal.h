@@ -68,7 +68,8 @@ struct vfft_wisdom_s
     vfft_fft2d_r2c_wisdom_t fft2d_r2c;
     vfft_fft2d_r2c_wisdom_t fft2d_c2r; /* shared struct, c2r-tuned plans */
     vfft_fft3d_wisdom_t fft3d_c2c;     /* dedicated 3D table (B + a_block + 3 axis chains) */
-    char path_bluestein[640];          /* bluestein_wisdom.txt */
+    char path_bluestein[640];          /* the STORE's bluestein_wisdom.txt: where a calibrated cell is saved */
+    char path_bluestein_seed[640];     /* the frozen bundle's bluestein_wisdom.txt: read once, never written */
     bluestein_wisdom_t bluestein;      /* prime-N (M,B) for Bluestein cells (Rader needs none) */
     /* 1D c2r NATURAL-vs-STRIDE path decision (c2r_path.txt; "N K path", 0=natural,
      * 1=stride). Loaded into the file-static _vfft_c2r_paths table (c2r_dispatch.h)
@@ -89,6 +90,7 @@ struct vfft_wisdom_s
                           wisdom2) */
     int vw2_off_stride;/* kill switch: stride/spike reads fall back */
     char dir[512];     /* the bundle's directory (wisdom2 opens from it) */
+    int dir_too_long;  /* the directory named did not fit dir[]: the store is in memory, read-only */
 };
 
 struct vfft_zr2c_kid_s;   /* the zr2c child (il/real/zr2c_build.h) */

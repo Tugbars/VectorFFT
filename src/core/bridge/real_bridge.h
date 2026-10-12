@@ -462,6 +462,21 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
         return h ? _real_finish(h) : NULL;
     }
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && !ob && (N & 1))
+    {
+        /* an odd cell no IL real engine admits (the mono to 64, the flat chain,
+         * the real Bluestein within its inner ceiling (3N-1)/2 <= 262144):
+         * refused here in the request's name; the split routes below are the
+         * lane-major batch's crossing, never an interleaved K=1 cell's */
+        _vfft_warn("vfft_create: %s odd N=%d %s: no IL real engine serves this cell (no mono "
+                   "kernel at N, no flat chain, and the real Bluestein's inner (3N-1)/2 = %ld "
+                   "passes the %d inner ceiling); unsupported",
+                   _vfft_tname(cfg->transform), N,
+                   cfg->placement == VFFT_INPLACE ? "in place" : "out of place",
+                   (3L * N - 1) / 2, VFFT_ZTT_MAX_N);
+        return NULL;
+    }
+    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
         cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && !ob && (N % 2) == 0)
     {
         /* an even cell: the interleaved tier's door (zr2c, the pair, ZTT-r,

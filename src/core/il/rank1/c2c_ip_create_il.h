@@ -183,6 +183,8 @@ static vfft_plan _c2c_ip_finish_il(struct vfft_plan_s *h,
                                    struct vfft_wisdom_s *W,
                                    const vfft_config_t *cfg, int N)
 {
+    if (h->k1ilfd && h->K == 1 && h->nthreads > 1)
+        _ilfd_mt_replay_or_race(h, W, cfg, N); /* the flat DIT's threaded arm, in place: its own per-T row (vfft.h: the threaded form is served at the plan's count) */
     if (h->k1ztt && h->K == 1 && h->nthreads > 1)
         _ztt_mt_replay_or_race(h, W, cfg, N);  /* ZTURN-T's threaded arm, in place: its own per-T pair */
     if (h->k1ilpr && h->K == 1 && h->nthreads > 1)

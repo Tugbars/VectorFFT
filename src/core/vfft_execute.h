@@ -329,17 +329,42 @@ static __attribute__((noinline)) void _vfft_execute_full(vfft_plan h, vfft_dir_t
 }
 
 /* A BOUND EXECUTOR THAT CAN DECLINE (the 2D real forms: an aliased call of an
- * out-of-place plan): tried first, the full door on a decline. */
+ * out-of-place plan): tried first, the full door on a decline. A real plan's
+ * executor is its one direction's math and never reads dir, so a call in the
+ * other direction is not tried: the full door refuses it and says why. */
 static __attribute__((noinline)) void _vfft_execute_try(vfft_plan h, vfft_dir_t dir,
                                                         double *sre, double *sim, double *dre, double *dim)
 {
-    if (h->k1_exec(h, dir, sre, dre) == 0)
+    const int wrong_dir = (h->transform == VFFT_R2C && dir != VFFT_FORWARD) ||
+                          (h->transform == VFFT_C2R && dir != VFFT_BACKWARD);
+    if (!wrong_dir && h->k1_exec(h, dir, sre, dre) == 0)
         return;
     _vfft_execute_full(h, dir, sre, sim, dre, dim);
 }
 
+static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
+                                      double *sre, double *sim, double *dre, double *dim);
+/* THE FP MODE OF AN EXECUTE (2026-10-12): the kernels run FTZ|DAZ, the
+ * workers keep it for life, and the calling thread's slot runs in the same
+ * mode: a caller whose MXCSR lacks the bits gets them for the call and its
+ * mode back after (two ldmxcsr, +3.2 ns measured); a caller that has them,
+ * as vfft_env_init leaves it, pays one stmxcsr and a test (nothing
+ * measurable) and enters the door below with no frame of its own. */
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim)
+{
+    const unsigned int csr = _mm_getcsr();
+    if ((csr & 0x8040u) != 0x8040u)
+    {
+        _mm_setcsr(csr | 0x8040u);
+        _vfft_execute_door(h, dir, sre, sim, dre, dim);
+        _mm_setcsr(csr);
+        return;
+    }
+    _vfft_execute_door(h, dir, sre, sim, dre, dim);
+}
+static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
+                                      double *sre, double *sim, double *dre, double *dim)
 {
     /* THE BOUND K=1 FAST PATH (2026-09-21). A plan that carries a bound
      * executor (k1_exec, set at create) can be wrong in exactly four ways at
@@ -379,6 +404,7 @@ void vfft_destroy(vfft_plan h)
 {
     if (h)
     {
+        thread_pool_plan_release(h->nthreads); /* paired with the retain in vfft_create; a child or clone releases its own */
         if (h->pq_inner)
         { /* plane-queue wrapper: the inner + clones own everything */
             int t;
