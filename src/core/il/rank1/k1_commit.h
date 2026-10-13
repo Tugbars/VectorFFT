@@ -987,6 +987,16 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                 vfft_ilfd_destroy(fp);
                 fp = NULL;
             }
+            if (fp && ke->il_rd_n > 0 && fp->has_rd)
+            {   /* the Rader stage's banked inner and width */
+                int rs = 0;
+                if (!vfft_ilrd_get_inner(fp, &rs, NULL, NULL, NULL) ||
+                    !vfft_ilrd_set_inner(fp, rs, ke->il_rd, ke->il_rd_n, (size_t)(ke->il_rdw > 0 ? ke->il_rdw : 0)))
+                {
+                    vfft_ilfd_destroy(fp);
+                    fp = NULL;
+                }
+            }
         }
         if (fp)
         {

@@ -45,7 +45,8 @@
 long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h */
 long vfft_ilfd_race_short_samples(void); /* the race-clock PROPERTY: 0 = every verdict above the tick */
 
-static const int NS[] = { 405, 1215, 4095, 6561, 19683, 59049, 98415, 177147 };   /* 177147: above the L2 edge, the tile axis's cell */
+static const int NS[] = { 405, 1215, 4095, 6561, 19683, 59049, 98415, 177147,   /* 177147: above the L2 edge, the tile axis's cell */
+                          524, 2101, 2276, 2118 };   /* a prime factor above the pool: the Rader leaf (131, 191; 569 with a nested 71; 353 after the lone 2) */
 
 static double now_ms(void)
 {

@@ -208,6 +208,7 @@ static inline int vfft_ilfd_race_tw(vfft_ilfd_plan_t *p, const double *zin, doub
     vfft_race_arm_t arms[VFFT_ILFD_MAX_K + 1];
     double ns[VFFT_ILFD_MAX_K + 1];
     int cand[VFFT_ILFD_MAX_K + 1], n, i, best, reps;
+    if (p->has_rd) { vfft_ilfd_apply_tw(p, 0); return 0; }   /* no tile axis on a Rader chain */
     n = vfft_ilfd_tw_candidates(p, cache_bytes, cand, VFFT_ILFD_MAX_K + 1);
     if (n <= 1) { vfft_ilfd_apply_tw(p, 0); return 0; }
     vfft_ilfd_apply_tw(p, 0);

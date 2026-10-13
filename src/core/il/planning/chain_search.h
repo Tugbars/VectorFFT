@@ -65,6 +65,9 @@ typedef struct
     const int *pool;           /* the engine's radices */
     int npool;
     int lead2;                 /* 1 = a lone factor 2 may lead as the fixed leaf (N = 2 mod 4) */
+    int leadp;                 /* a prime above the pool that takes the first stage (the Rader
+                                * leaf, il_rader_stage.h): fixed, after the lone 2 where one
+                                * leads; 0 = none. The sets are of N / leadp over the pool. */
     vfft_chain_heat_fn heat;
     void *hctx;
     size_t budget;             /* a heat's plans together, at most (bytes) ... */
@@ -216,12 +219,30 @@ static int vfft_chain_search(const vfft_chain_engine_t *e, int N, vfft_chain_t *
     for (i = 1; i < e->npool; i++)   /* the pool small to large: a set's stages come out sorted */
         for (int j = i; j > 0 && ord[j] < ord[j - 1]; j--) { const int t = ord[j]; ord[j] = ord[j - 1]; ord[j - 1] = t; }
     memset(cur, 0, sizeof cur);
-    if (e->lead2 && (N & 1) == 0 && ((N >> 1) & 1))
-    {   /* the lone factor 2: the leaf */
-        cur[0] = 2;
-        _vfft_chain_sets_rec(e, N >> 1, 0, 1, cur, 1, ord, sets, &ns, &over);
+    if (e->leadp > 1 && N % e->leadp == 0)
+    {   /* the Rader leaf's prime: the fixed first stage (after the lone 2 where one leads:
+         * then the prime is the fixed second stage, the Rader stage with pre-twiddles) */
+        const int M = N / e->leadp;
+        if (e->lead2 && (M & 1) == 0 && ((M >> 1) & 1))
+        {
+            cur[0] = 2; cur[1] = e->leadp;
+            _vfft_chain_sets_rec(e, M >> 1, 0, 2, cur, 2, ord, sets, &ns, &over);
+        }
+        else
+        {
+            cur[0] = e->leadp;
+            _vfft_chain_sets_rec(e, M, 0, 1, cur, 1, ord, sets, &ns, &over);
+        }
     }
-    _vfft_chain_sets_rec(e, N, 0, 0, cur, 0, ord, sets, &ns, &over);
+    else
+    {
+        if (e->lead2 && (N & 1) == 0 && ((N >> 1) & 1))
+        {   /* the lone factor 2: the leaf */
+            cur[0] = 2;
+            _vfft_chain_sets_rec(e, N >> 1, 0, 1, cur, 1, ord, sets, &ns, &over);
+        }
+        _vfft_chain_sets_rec(e, N, 0, 0, cur, 0, ord, sets, &ns, &over);
+    }
     free(ord);
     if (over)
         fprintf(stderr, "%s N=%d: chain radix-set storage (%d) exceeded, %d set(s) not raced\n",
