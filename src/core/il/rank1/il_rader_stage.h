@@ -66,7 +66,12 @@ typedef struct vfft_ilrd_s {
     size_t nstride;        /* last: the output leg stride N/p */
     int *gpow, *ginvpow;   /* g^q and g^-q mod p, q in [0, p-1) */
     double *omf, *omb;     /* the comb-order kernels at p-1 (fwd / bwd), 1/(p-1) baked */
-    double *twf, *twb;     /* s >= 1: per block, p complex pre-twiddles (fwd / conj); NULL at a leaf */
+    double *twf, *twb;     /* the stage's twiddles (fwd / conj), p complex per set; NULL at a leaf */
+    int twmode;            /* 0 none; 1 the flat chain's PRE-twiddle per block (set b = block b);
+                            * 2 the DIF column chain's stage-0 twiddle per column group of twrun
+                            *   columns (set d = c / twrun): POST on the forward, PRE-conj on the
+                            *   reverse (the nested leaf inside an inner chain) */
+    size_t twrun;
     /* the inner chain at p-1 */
     int nst, Rs[VFFT_ILRD_MAX_NST], Ls[VFFT_ILRD_MAX_NST];
     vfft_il2p_fn ff[VFFT_ILRD_MAX_NST], fb[VFFT_ILRD_MAX_NST];
@@ -223,23 +228,32 @@ static void _ilrd_window(const vfft_ilrd_t *rd, const double *src, double *dst,
     const int *gat = bwd ? rd->ginvpow : rd->gpow, *sct = bwd ? rd->gpow : rd->ginvpow;
     const double *om = bwd ? rd->omb : rd->omf, *tw = bwd ? rd->twb : rd->twf;
     const size_t D = rd->D, L = rd->L, W = rd->W, w = c1 - c0;
+    /* a run = columns of one block, and of one twiddle set where the set is a
+     * column group (mode 2); gi = the set's twiddles for this run, or NULL */
+    const size_t grp = (rd->twmode == 2 && rd->twrun) ? rd->twrun : 0;
+    const int pre = (rd->twmode == 1) || (rd->twmode == 2 && bwd);   /* twiddle on the way in */
+    const int post = (rd->twmode == 2 && !bwd);                        /* twiddle on the way out */
     double *sc = rd->scr[slot], *x0 = sc + 2 * (size_t)M * W, *dc = x0 + 2 * W;
     size_t k;
     int q;
     if (c1 <= c0) return;
-    /* gather, per block run of the window */
+#define _ILRD_RUN(k, b, cb) \
+    const size_t b = (k) / D; \
+    size_t cb = ((b + 1) * D < c1) ? (b + 1) * D : c1; \
+    if (grp) { const size_t ge = ((k) / grp + 1) * grp; if (ge < cb) cb = ge; }
+    /* gather, per run of the window */
     for (k = c0; k < c1;) {
-        const size_t b = k / D, cb = ((b + 1) * D < c1) ? (b + 1) * D : c1;
+        _ILRD_RUN(k, b, cb)
         const size_t n = cb - k, c = k - b * D, o = k - c0;
         const double *blk = src + 2 * (b * L + c);
-        const double *tb = tw ? tw + 2 * (size_t)p * b : 0;
+        const double *gi = !tw ? 0 : rd->twmode == 1 ? tw + 2 * (size_t)p * b : tw + 2 * (size_t)p * (k / grp);
         memcpy(x0 + 2 * o, blk, 2 * n * sizeof(double));
         memcpy(dc + 2 * o, blk, 2 * n * sizeof(double));
         for (q = 0; q < M; q++) {
             const int l = gat[q];
             const double *row = blk + 2 * (size_t)l * D;
             double *d = sc + 2 * ((size_t)q * W + o);
-            if (tb) _il2d_row_cmul(d, row, tb[2 * l], tb[2 * l + 1], n);
+            if (pre && gi) _il2d_row_cmul(d, row, gi[2 * l], gi[2 * l + 1], n);
             else memcpy(d, row, 2 * n * sizeof(double));
             _ilrd_row_add(dc + 2 * o, d, n);
         }
@@ -251,15 +265,42 @@ static void _ilrd_window(const vfft_ilrd_t *rd, const double *src, double *dst,
     _ilrd_inner_run(rd, sc, W, w, 1, slot);
     /* scatter */
     for (k = c0; k < c1;) {
-        const size_t b = k / D, cb = ((b + 1) * D < c1) ? (b + 1) * D : c1;
+        _ILRD_RUN(k, b, cb)
         const size_t n = cb - k, c = k - b * D, o = k - c0;
         double *ob = rd->last ? dst + 2 * (rd->natbase[b] + c) : dst + 2 * (b * L + c);
         const size_t os = rd->last ? rd->nstride : D;
+        const double *gi = (post && tw) ? tw + 2 * (size_t)p * (k / grp) : 0;
         memcpy(ob, dc + 2 * o, 2 * n * sizeof(double));
-        for (q = 0; q < M; q++)
-            _ilrd_row_sum(ob + 2 * (size_t)sct[q] * os, x0 + 2 * o, sc + 2 * ((size_t)q * W + o), n);
+        for (q = 0; q < M; q++) {
+            double *orow = ob + 2 * (size_t)sct[q] * os;
+            _ilrd_row_sum(orow, x0 + 2 * o, sc + 2 * ((size_t)q * W + o), n);
+            if (gi) _il2d_row_cmul(orow, orow, gi[2 * sct[q]], gi[2 * sct[q] + 1], n);
+        }
         k = cb;
     }
+#undef _ILRD_RUN
+}
+
+/* the DIF column chain's stage-0 twiddles for a nested leaf: set d (the column
+ * group d = c / twrun, d in [0, Dp)), leg l: w_span^(l d), fwd (c, -s) / conj */
+static int _ilrd_dif_tw(vfft_ilrd_t *rd, int span, size_t Dp, size_t twrun)
+{
+    size_t d;
+    int l;
+    const size_t P = (size_t)rd->p;
+    rd->twf = (double *)vfft_aligned_alloc(2 * Dp * P * sizeof(double));
+    rd->twb = (double *)vfft_aligned_alloc(2 * Dp * P * sizeof(double));
+    if (!rd->twf || !rd->twb) return 0;
+    for (d = 0; d < Dp; d++)
+        for (l = 0; l < rd->p; l++) {
+            double c, sn;
+            vfft_cs2pi_exact((long long)(((size_t)l * d) % (size_t)span), (long long)span, &c, &sn);
+            rd->twf[2 * (d * P + (size_t)l)] = c;  rd->twf[2 * (d * P + (size_t)l) + 1] = -sn;
+            rd->twb[2 * (d * P + (size_t)l)] = c;  rd->twb[2 * (d * P + (size_t)l) + 1] = sn;
+        }
+    rd->twmode = 2;
+    rd->twrun = twrun;
+    return 1;
 }
 
 /* ── create ──────────────────────────────────────────────────────────── */
@@ -277,6 +318,8 @@ static int _ilrd_build_inner(vfft_ilrd_t *rd, int depth)
          * (M/nestp) * W, that many columns, one block, no twiddles */
         rd->nest = _ilrd_create(nestp, (size_t)(M / nestp) * rd->W, (size_t)M * rd->W, 1, depth + 1);
         if (!rd->nest) return 0;
+        /* stage 0 of a DIF column chain carries the span's twiddles on its outputs */
+        if (!_ilrd_dif_tw(rd->nest, M, (size_t)(M / nestp), rd->W)) return 0;
         if (rd->nst > 1 && !_il2d_resolve(rd->Rs + 1, rd->nst - 1, rd->ff + 1, rd->fb + 1)) return 0;
         rd->ff[0] = rd->fb[0] = 0;
     } else if (!_il2d_resolve(rd->Rs, rd->nst, rd->ff, rd->fb)) return 0;
@@ -315,10 +358,21 @@ static vfft_ilrd_t *_ilrd_create(int pr, size_t D, size_t L, size_t nb, int dept
         }
     }
     if (!_ilrd_build_inner(rd, depth) || !_ilrd_slot(rd, 0)) { _ilrd_free(rd); return 0; }
-    {   /* the kernels: the forward chain of w^(perm[m]) in comb order, scaled */
+    {   /* the kernels: the forward chain of w^(perm[m]) in comb order, scaled. The
+         * sequence is one column (row stride 1): a nested leaf is run through a
+         * twin built for that width (the same chain, the same values, its own
+         * scratch), since the serving nest's geometry is the window's. */
         double *za = (double *)vfft_aligned_alloc(2 * (size_t)M * sizeof(double));
+        vfft_ilrd_t *serving = rd->nest, *one = 0;
         int d, m;
         if (!za) { _ilrd_free(rd); return 0; }
+        if (serving) {
+            one = _ilrd_create(serving->p, (size_t)(M / serving->p), (size_t)M, 1, depth + 1);
+            if (!one || !_ilrd_dif_tw(one, M, (size_t)(M / serving->p), 1)) {
+                _ilrd_free(one); vfft_aligned_free(za); _ilrd_free(rd); return 0;
+            }
+            rd->nest = one;
+        }
         for (d = 0; d < 2; d++) {
             const int *perm = d ? rd->gpow : rd->ginvpow;
             const double sign = d ? 1.0 : -1.0, inv = 1.0 / (double)M;
@@ -328,13 +382,11 @@ static vfft_ilrd_t *_ilrd_create(int pr, size_t D, size_t L, size_t nb, int dept
                 vfft_cs2pi_exact((long long)perm[m], (long long)pr, &c, &sn);
                 za[2 * m] = c; za[2 * m + 1] = sign * sn;
             }
-            if (rd->nest) {
-                /* the nested leaf sees the plane at width 1: run it as the chain does */
-                _ilrd_inner_run(rd, za, 1, 1, 0, 0);
-            } else
-                _ilrd_inner_run(rd, za, 1, 1, 0, 0);
+            _ilrd_inner_run(rd, za, 1, 1, 0, 0);
             for (m = 0; m < 2 * M; m++) om[m] = za[m] * inv;
         }
+        rd->nest = serving;
+        if (one) _ilrd_free(one);
         vfft_aligned_free(za);
     }
     return rd;
@@ -353,6 +405,7 @@ static int _ilrd_build_hook_fn(vfft_ilfd_plan_t *p, int s)
         rd->twf = (double *)vfft_aligned_alloc(2 * nb * (size_t)p->R[s] * sizeof(double));
         rd->twb = (double *)vfft_aligned_alloc(2 * nb * (size_t)p->R[s] * sizeof(double));
         if (!rd->twf || !rd->twb) { _ilrd_free(rd); return 0; }
+        rd->twmode = 1;
         for (b = 0; b < nb; b++) {
             const size_t Q = _ilfd_block_Q(p, s, b);
             for (l = 0; l < p->R[s]; l++) {
@@ -424,6 +477,17 @@ void vfft_tool_ilfd_exec(void *plan, const double *zin, double *zout, int bwd)
     else vfft_ilfd_execute_fwd((vfft_ilfd_plan_t *)plan, zin, zout);
 }
 void vfft_tool_ilfd_destroy(void *plan) { vfft_ilfd_destroy((vfft_ilfd_plan_t *)plan); }
+/* the chain threaded over T workers (the BLOCKS form, every stage by units):
+ * 1 = ran threaded, 0 = declined (the caller runs serial) */
+int vfft_tool_ilfd_exec_mt(void *plan, const double *zin, double *zout, int bwd, int T)
+{
+    vfft_ilfd_plan_t *p = (vfft_ilfd_plan_t *)plan;
+    if (T < 2) return 0;
+    thread_pool_ensure(T);
+    p->mt = 1; p->mt_t = T;
+    if (!vfft_ilfd_mt_bind(p, T)) return 0;
+    return vfft_ilfd_execute_mt(p, zin, zout, bwd);
+}
 /* the chain's Rader stages, described: "s0:p=191 W=20 inner=19.10" per stage */
 int vfft_tool_ilfd_rd_desc(const void *plan, char *buf, size_t sz)
 {
