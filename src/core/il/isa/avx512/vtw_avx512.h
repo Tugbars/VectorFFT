@@ -188,6 +188,53 @@ static inline void vfft_vtw512_step_fill(double *tw, size_t G, size_t W, size_t 
     }
 }
 
+/* ── the flat DIT's gen2 BASES: nb records per pair set and per group ─────
+ * (vfft_il2p_gen2_bases: the radix's base powers b[0..nb)). T1: pair set g
+ * holds nb records, record t = w^(b[t]*(W*jj mod L)) over the set's 4
+ * columns jj; T2: group g holds nb records, record t = w^(b[t]*Q_g). The
+ * record stride is what the kernel reads: nb*16 doubles per pair set and
+ * per group. */
+static inline size_t vfft_vtw512_step_bases_doubles(size_t G, int nb)
+{
+    return vfft_vtw512_groups(G) * (size_t)nb * VFFT_VTW512_REC;
+}
+static inline void vfft_vtw512_step_fill_bases(double *tw, size_t G, size_t W, size_t L,
+                                               const int *b, int nb, int conj)
+{
+    const size_t ng = vfft_vtw512_groups(G);
+    size_t g;
+    int t, j;
+    for (g = 0; g < ng; g++)
+        for (t = 0; t < nb; t++) {
+            double *rec = tw + (g * (size_t)nb + (size_t)t) * VFFT_VTW512_REC;
+            for (j = 0; j < VFFT_VTW512_PER; j++) {
+                const size_t jj = VFFT_VTW512_PER * g + (size_t)j;
+                double c, tt;
+                _vtw512_w((long long)(((unsigned long long)b[t] * ((W * jj) % L)) % L), (long long)L, conj, &c, &tt);
+                vfft_vtw512_pair_put(rec, j, c, tt);
+            }
+        }
+}
+static inline size_t vfft_vtw512_group_bases_doubles(size_t ngrp, int nb)
+{
+    return ngrp * (size_t)nb * VFFT_VTW512_REC;
+}
+static inline void vfft_vtw512_group_bases_bcast(double *tw, size_t ngrp, size_t L,
+                                                 vfft_vtw512_q_fn q, const void *ctx,
+                                                 const int *b, int nb, int conj)
+{
+    size_t g;
+    int t;
+    for (g = 0; g < ngrp; g++) {
+        const size_t Q = q ? q(ctx, g) : g;
+        for (t = 0; t < nb; t++) {
+            double c, tt;
+            _vtw512_w((long long)(((unsigned long long)b[t] * (Q % L)) % L), (long long)L, conj, &c, &tt);
+            vfft_vtw512_bcast(tw + (g * (size_t)nb + (size_t)t) * VFFT_VTW512_REC, c, tt);
+        }
+    }
+}
+
 /* ── the flat DIT's t2cs: columns = the G blocks of a group ───────────────
  * Per group g: ceil(G/4) pair records per leg, slot j of record pp = block
  * b2 = g*G + 4*pp + j (Q = q(b2), 0 past the last block);

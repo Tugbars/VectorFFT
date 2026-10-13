@@ -185,7 +185,7 @@ static inline int _zrf_range_rec(const vfft_ilfd_plan_t *p, int s, size_t h, con
             else
             {
                 const size_t gpt = bpt / c->count;
-                c->Gs = h * gpt; c->in_tstep = w; c->a1_tstep = gpt * c->count; c->t2_tstep = gpt * VFFT_IL_TWREC;
+                c->Gs = h * gpt; c->in_tstep = w; c->a1_tstep = gpt * c->count; c->t2_tstep = gpt * (size_t)p->t2nb[s] * VFFT_IL_TWREC;
             }
         }
         else if (c->in_sel == _ILFD_NUL) { c->Gs = h * bpt; c->out_tstep = w; c->tw_tstep = bpt * recs; }     /* msz */
@@ -265,16 +265,22 @@ static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int n
         if (fd->tail[1] && !fd->msz[1])
         {   /* the group base of block 1 at stage 1: w^Q with Q = 1, modulus Nj / D_1 */
             const size_t L = Nj / fd->D[1];
+            const int nb = fd->t2nb[1];
+            int b[VFFT_IL_GEN2_MAX_BASES], t, lane;
             double c, sn;
-            int lane;
-            lv->t2 = (double *)vfft_aligned_alloc(16 * sizeof(double));
+            (void)vfft_il2p_gen2_bases(fd->R[1], b);
+            lv->t2 = (double *)vfft_aligned_alloc((size_t)nb * 16 * sizeof(double));
             if (!lv->t2) { vfft_zrf_destroy(p); return 0; }
-            vfft_cs2pi_exact(1, (long long)L, &c, &sn);
-            sn = -sn;
-            for (lane = 0; lane < 4; lane++)
-            {
-                lv->t2[lane] = c; lv->t2[4 + lane] = (lane & 1) ? sn : -sn;
-                lv->t2[8 + lane] = c; lv->t2[12 + lane] = (lane & 1) ? -sn : sn; /* bwd: conj */
+            for (t = 0; t < nb; t++)
+            {   /* base t: w^(b[t]*1); the forward records first, the conjugates after them */
+                double *rf = lv->t2 + t * 8, *rb = lv->t2 + (nb + t) * 8;
+                vfft_cs2pi_exact((long long)((size_t)b[t] % L), (long long)L, &c, &sn);
+                sn = -sn;
+                for (lane = 0; lane < 4; lane++)
+                {
+                    rf[lane] = c; rf[4 + lane] = (lane & 1) ? sn : -sn;
+                    rb[lane] = c; rb[4 + lane] = (lane & 1) ? -sn : sn; /* bwd: conj */
+                }
             }
         }
         lv->tw = fd->tw > 0 ? (size_t)fd->tw : 0;
@@ -286,7 +292,7 @@ static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int n
             *ct = fd->ct[Kj - 1 - s];
             if (lv->tw && s >= fd->tcut) { _zrf_rebase_rec(cf); _zrf_rebase_rec(ct); continue; } /* the c2c plan's tile records */
             if (!_zrf_range_rec(fd, s, (size_t)lv->h, lv->t2, cf) ||
-                !_zrf_range_rec(fd, s, (size_t)lv->h, lv->t2 ? lv->t2 + 8 : 0, ct))
+                !_zrf_range_rec(fd, s, (size_t)lv->h, lv->t2 ? lv->t2 + 8 * fd->t2nb[1] : 0, ct))
             { vfft_zrf_destroy(p); return 0; }
         }
         {   /* THE HERMITIAN LAST STAGE: the group-loop tail's records, their spectrum side

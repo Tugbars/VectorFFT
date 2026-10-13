@@ -182,6 +182,13 @@ type ctx =
        per-call T2 broadcast record (tw_im, hoisted), and every higher leg
        is derived in-kernel by the PowW1 squaring tree on records. No
        N-sized table: the flat chain's tail stages read ~2*sqrt(N). *)
+  ; tw_gen2_pol : string
+    (* which legs the gen2 stream carries as BASES (a T1_b x T2_b record
+       pair each) and how the rest derive (cx_render.ml gen2_pol_bases):
+       "" = the radix's own policy (cx_render.ml gen2_default_policy, the
+       per-radix race of 2026-10-13); "chain" = W^1 alone, the former
+       squaring tree; "log3" / "log2" / "sqrt" / "full" load more
+       bases. Set by VFFT_CX_GEN2POL; a forced policy tags the symbol. *)
   ; colstride : bool
     (* t2cs (2026-09-04): the COLUMN-STRIDE form of t2 — a "column" is one
        BLOCK of the flat mixed-radix chain's short-run tail (D < vw): lane j
@@ -203,6 +210,10 @@ let make_ctx ~tw_group ~tw_log3 ~tw_pre ~tw_gen2 ~colstride ~st_turn ~st_turn_gs
   ; tw_group
   ; tw_pre
   ; tw_gen2
+  ; tw_gen2_pol =
+      (match Sys.getenv_opt "VFFT_CX_GEN2POL" with
+       | Some s when s <> "" -> s
+       | _ -> "")
   ; colstride
   ; st_turn
   ; st_turn_gs
