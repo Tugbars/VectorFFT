@@ -73,6 +73,9 @@ typedef struct {
 #endif
     struct vfft_k1fs_s *fs; /* the four-step at M (scrambled, out of place, one thread):
                              * the lengths past ZTURN-T's ceiling, 2026-10-12 */
+    vfft_ilfd_plan_t *fd;   /* the flat DIT at M, natural class, both directions (2026-10-13):
+                             * a Rader inner at N-1 whose factor above the pool is a Rader
+                             * stage of its own (il_rader_stage.h) */
 } _ilprime_inner_t;
 
 /* INNER PROVIDER: the banked wrapper installs a function that
@@ -135,6 +138,8 @@ static inline void _ilprime_inner_free(_ilprime_inner_t *in)
     in->p2 = 0; in->p3 = 0;
     if (in->fs) vfft_k1fs_destroy(in->fs);
     in->fs = 0;
+    if (in->fd) vfft_ilfd_destroy(in->fd);
+    in->fd = 0;
 #ifdef VFFT_ZTT_H
     if (in->pt) vfft_ztt_destroy(in->pt);
     in->pt = 0;
@@ -144,6 +149,7 @@ static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
                                       const double *zi, double *zo)
 {
     if (in->fs) { vfft_k1fs_execute_fwd(in->fs, zi, zo); return; }   /* za -> zb, distinct */
+    if (in->fd) { vfft_ilfd_execute_fwd(in->fd, zi, zo); return; }   /* za -> zb, distinct */
 #ifdef VFFT_ZTT_H
     if (in->pt) { vfft_ztt_execute_fwd(in->pt, zi, zo); return; }   /* za -> zb, distinct */
 #endif
@@ -154,6 +160,7 @@ static inline void _ilprime_inner_bwd(const _ilprime_inner_t *in,
                                       const double *zi, double *zo)
 {
     if (in->fs) { vfft_k1fs_execute_bwd(in->fs, zi, zo); return; }
+    if (in->fd) { vfft_ilfd_execute_bwd(in->fd, zi, zo); return; }
 #ifdef VFFT_ZTT_H
     if (in->pt) { vfft_ztt_execute_bwd(in->pt, zi, zo); return; }
 #endif

@@ -8,7 +8,9 @@ with the owner the same day: this complex leaf first, then the real odd-prime me
 [`1d_c2c_and_real_open_work.md`](1d_c2c_and_real_open_work.md). PHASE 1 BUILT
 2026-10-13: the engine (`il/rank1/il_rader_stage.h`, position-general, the nested inner,
 the threaded column split) behind the flat DIT's hooks and the tool door, verified by the
-probe (§7, §9); the planner admission (phase 2) is next.*
+probe (§7, §9). PHASE 2 BUILT 2026-10-13: the planner admits leaf chains, races the
+inner chain and width in role and banks them, the prime cell's inner pool offers the
+flat chain with a Rader stage; the class sweep (phase 3) waits for a quiet machine.*
 
 ## 1. The gap and the contract
 
@@ -219,7 +221,65 @@ Answered by the owner 2026-10-13 and by the phase-1 race (§9):
    `il_flatdit.h` declares and `il_rader_stage.h` defines; the tool door
    (`vfft_tool_ilfd_chain` / `_exec` / `_exec_mt` / `_destroy` / `_rd_desc`) and the
    probe `docs/research/field_trial/gapfill/work/rader_probe.c`.
-2. The planner: the leaf candidates in the flat heats, the inner raced in role and
-   banked with the owner's tokens, the policy and the policy gate, the flat gate's cells.
+2. BUILT 2026-10-13. The chain search takes a fixed leading prime (`leadp`, after the
+   lone 2 where one leads: then the prime is the fixed second stage, a Rader stage with
+   pre-twiddles, the only flat form of a 2 x odd x p length); the flat search sets it for
+   a length with exactly one prime factor above the pool; the bench races the inner chain
+   (every column chain of p-1 in the two orders, a nested prime fixed first, at most ten)
+   and then the width around the winner's, every arm a live engine swapped into the stage;
+   the verdict rides on the K=1 row as `il_rd=` and `il_rdw=` and replays through the
+   commit; no tile axis on such a chain; the flat gate holds 524, 2101, 2276 and 2118.
+   The policy needed no change: the flat family was admitted at every non-pow2 length
+   already, it simply had no chain. The prime cell's inner pool gained the kind `fd`: the
+   flat chains of N minus 1 with that length's own prime above the pool as a Rader
+   stage, so 4099 (4098 = 2 . 683 . 3) and 2131 (2130 = 2 . 71 . 15) race Rader again;
+   in the first (noisy) cold creates both lost to their Bluestein inners, the 2 x odd
+   shape leaving the Rader stage two columns wide. Verified: cold creates through the
+   front door at 2101 (`il_flat=191.11 il_rd=19.10 il_rdw=10`, 1.9e-16), 2118
+   (`2.353.3`, inner `4.4.22`), 2276 (raced, the prime cell won that run), each replaying
+   bitwise from its row.
 3. The class sweep against FFTW, once; the results page.
 4. The real odd-prime method (§8); then the real leaf.
+
+## 12. Phase 2 as built (2026-10-13)
+
+Phase 2 is built and verified. The flat gate passes with the four new cells through the
+front door, which covers the forward against an independent DFT, the backward roundtrip,
+in place, the banked verdict replaying bitwise, and the threaded form equal to serial at
+T = 8. The policy gate passes its 182,859,624 checks after the change.
+
+**What the planner does now.**
+
+- The chain search takes a fixed leading prime, so a length with exactly one prime
+  factor above 47 gets its leaf chain among the flat candidates; a lone factor 2 keeps
+  the leaf and the prime becomes the fixed second stage, the only flat form a
+  2 x odd x p length has.
+- The bench races the inner chain of p minus 1 in role on the whole forward, every
+  column chain in both orders with a nested prime fixed first, then the window width
+  around the winner's. The verdict banks on the K=1 row as `il_rd=` and `il_rdw=` and
+  replays through the commit. The tile axis is off for such chains.
+- The prime cell's inner pool gained the flat chain with a Rader stage as an inner kind
+  (`fd`), so a prime whose N minus 1 has a factor above 47 offers Rader again: 4099 raced
+  one such inner, 2131 three.
+- No policy change was needed: the flat family was already admitted at every
+  non-power-of-two length, it simply had no chain.
+
+**Cold creates through the front door**, in a fresh scratch store: 2101 banks
+`il_flat=191.11 il_forms=n il_rd=19.10 il_rdw=10` at 1.9e-16 and replays in no time,
+2118 banks `2.353.3` with its inner `4.4.22`, 2276 raced its nested chain and the prime
+cell won that run, and 4099 and 2131 both kept Bluestein. Those last verdicts came from a
+noisy machine and the 2 x odd shape leaves the Rader stage two columns wide, so they are
+not final.
+
+**Two bugs found and fixed on the way.** A division inside a dead ternary branch that the
+compiler evaluated anyway, and the plan's call records still naming a freed engine after
+the inner race installed its winner.
+
+**The re-race on a quiet machine (the same day).** 4099 and 2131 keep Bluestein: their
+Rader inners, the lone 2 then a Rader stage two columns wide, lose to the ZTURN-T inners
+at 8192 and 4096. 2276 keeps the prime cell at 13.2 us against the nested leaf's 14.5 us.
+The race protects those cells; the leaf serves where it wins.
+
+**Open.** Phase 3, the class sweep against FFTW (every composite to 4,096 with a prime
+factor above 47, 2,157 lengths, `rader_class_fftw_20261013`). The build script gained a
+`VFFT_DEBUG_SYMS=1` switch for line numbers under a debugger.

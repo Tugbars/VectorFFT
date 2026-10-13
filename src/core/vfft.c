@@ -38,8 +38,8 @@
 #include "ztt.h"                                  /* ZTURN-T: the run-contiguous DIT, 16..16384 (2026-09-09); before il_prime.h: the prime inner's ZTURN-T branch is #ifdef VFFT_ZTT_H */
 #include "zttr.h"                                 /* ZTT-r (il/real/zttr.h): the real fold fused into the ZTT; its plan type, before vfft_internal.h */
 #include "zrm.h"                                  /* the real mono (il/real/zrm.h): one rn1 kernel = the whole small real transform; its resolver */
+#include "il_flatdit.h"                           /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05); before il_prime.h: a Rader inner may be a flat chain (2026-10-13) */
 #include "il_prime.h"                             /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
-#include "il_flatdit.h"                           /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
 #include "zrf.h"                                  /* the real flat DIT (il/real/zrf.h): odd-N r2c/c2r on the flat DIT's stages (2026-09-30) */
 #include "il/real/zrb.h"                          /* the real Bluestein (il/real/zrb.h): odd N without a chain as a chirp-z convolution at (3N-1)/2 (2026-10-01) */
 #include "il_flatdit_mt.h"                        /* its intra-transform threading (2026-09-07)         */

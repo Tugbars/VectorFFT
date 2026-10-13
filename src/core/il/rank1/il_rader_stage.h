@@ -595,6 +595,7 @@ static double vfft_ilrd_race(vfft_ilfd_plan_t *p, int s, const double *zin, doub
     for (i = 0; i < na; i++) if (cx[i].rd != win) _ilrd_free(cx[i].rd);
     _ilrd_free(cur);
     p->rd[s] = win;
+    vfft_ilfd_bind(p);   /* the call records named the freed engine until now */
     /* the widths around the winner's: half, double, quadruple, the column space */
     {
         const size_t ncol = win->ncol;
