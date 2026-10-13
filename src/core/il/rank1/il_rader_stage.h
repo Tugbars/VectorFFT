@@ -246,7 +246,9 @@ static void _ilrd_window(const vfft_ilrd_t *rd, const double *src, double *dst,
         _ILRD_RUN(k, b, cb)
         const size_t n = cb - k, c = k - b * D, o = k - c0;
         const double *blk = src + 2 * (b * L + c);
-        const double *gi = !tw ? 0 : rd->twmode == 1 ? tw + 2 * (size_t)p * b : tw + 2 * (size_t)p * (k / grp);
+        const double *gi = 0;
+        if (tw && rd->twmode == 1) gi = tw + 2 * (size_t)p * b;
+        else if (tw && grp) gi = tw + 2 * (size_t)p * (k / grp);
         memcpy(x0 + 2 * o, blk, 2 * n * sizeof(double));
         memcpy(dc + 2 * o, blk, 2 * n * sizeof(double));
         for (q = 0; q < M; q++) {
@@ -269,7 +271,8 @@ static void _ilrd_window(const vfft_ilrd_t *rd, const double *src, double *dst,
         const size_t n = cb - k, c = k - b * D, o = k - c0;
         double *ob = rd->last ? dst + 2 * (rd->natbase[b] + c) : dst + 2 * (b * L + c);
         const size_t os = rd->last ? rd->nstride : D;
-        const double *gi = (post && tw) ? tw + 2 * (size_t)p * (k / grp) : 0;
+        const double *gi = 0;
+        if (post && tw && grp) gi = tw + 2 * (size_t)p * (k / grp);
         memcpy(ob, dc + 2 * o, 2 * n * sizeof(double));
         for (q = 0; q < M; q++) {
             double *orow = ob + 2 * (size_t)sct[q] * os;
@@ -543,6 +546,12 @@ static vfft_ilrd_t *_ilrd_arm_engine(vfft_ilfd_plan_t *p, int s, const int *Rs, 
     if (!_ilrd_build_stage(p, s, Rs, nst, W)) { p->rd[s] = keep; return 0; }
     rd = (vfft_ilrd_t *)p->rd[s];
     p->rd[s] = keep;
+    if (_ilfd_race_log()) {
+        int i;
+        fprintf(stderr, "[k1fd-race] N=%d rader s%d arm: p=%d D=%zu L=%zu nb=%zu ncol=%zu W=%zu nst=%d Ls=", p->N, s, rd->p, rd->D, rd->L, rd->nb, rd->ncol, rd->W, rd->nst);
+        for (i = 0; i < rd->nst; i++) fprintf(stderr, "%s%d", i ? "." : "", rd->Ls[i]);
+        fprintf(stderr, " twmode=%d twrun=%zu last=%d\n", rd->twmode, rd->twrun, rd->last);
+    }
     return rd;
 }
 /* the race: inner chains, then widths; the plan leaves bound to the best.
@@ -591,6 +600,7 @@ static double vfft_ilrd_race(vfft_ilfd_plan_t *p, int s, const double *zin, doub
         const size_t ncol = win->ncol;
         int nw = 0, k;
         wc[nw++] = W_w / 2; wc[nw++] = W_w * 2; wc[nw++] = W_w * 4; wc[nw++] = ncol & ~(size_t)1;
+        if (_ilfd_race_log()) fprintf(stderr, "[k1fd-race] N=%d rader s%d width arms: W=%zu ncol=%zu\n", p->N, s, W_w, ncol);
         na = 0;
         cx[na].p = p; cx[na].s = s; cx[na].rd = win; cx[na].zin = zin; cx[na].zout = zout;
         snprintf(cx[na].name, sizeof cx[na].name, "W%zu", W_w);
@@ -694,6 +704,15 @@ void vfft_tool_ilfd_exec(void *plan, const double *zin, double *zout, int bwd)
     else vfft_ilfd_execute_fwd((vfft_ilfd_plan_t *)plan, zin, zout);
 }
 void vfft_tool_ilfd_destroy(void *plan) { vfft_ilfd_destroy((vfft_ilfd_plan_t *)plan); }
+/* the Rader stage's inner race in role on this chain (the planner's bench step);
+ * returns the best arm's ns, 1e18 = no Rader stage */
+double vfft_tool_ilfd_race_inner(void *plan, const double *zin, double *zout)
+{
+    vfft_ilfd_plan_t *p = (vfft_ilfd_plan_t *)plan;
+    int s = 0;
+    if (!vfft_ilrd_get_inner(p, &s, NULL, NULL, NULL)) return 1e18;
+    return vfft_ilrd_race(p, s, zin, zout, 0);
+}
 /* the chain threaded over T workers (the BLOCKS form, every stage by units):
  * 1 = ran threaded, 0 = declined (the caller runs serial) */
 int vfft_tool_ilfd_exec_mt(void *plan, const double *zin, double *zout, int bwd, int T)
