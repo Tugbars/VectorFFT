@@ -622,6 +622,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
                               '-Wno-unused-function')]
     if os.environ.get('VFFT_ASAN'):
         flags += ['-fsanitize=address', '-g', '-fno-omit-frame-pointer']
+    if os.environ.get('VFFT_DEBUG_SYMS'):   # line numbers for a debugger, the optimization untouched
+        flags += ['-g']
     if mkl:
         # LP64 (mkl_rt), NOT ILP64: ILP64's 8-byte MKL_LONG corrupts the DFTI
         # strides array -> "Inconsistent configuration parameters" at DftiCommit.
