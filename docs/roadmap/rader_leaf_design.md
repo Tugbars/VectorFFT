@@ -280,6 +280,15 @@ Rader inners, the lone 2 then a Rader stage two columns wide, lose to the ZTURN-
 at 8192 and 4096. 2276 keeps the prime cell at 13.2 us against the nested leaf's 14.5 us.
 The race protects those cells; the leaf serves where it wins.
 
-**Open.** Phase 3, the class sweep against FFTW (every composite to 4,096 with a prime
-factor above 47, 2,157 lengths, `rader_class_fftw_20261013`). The build script gained a
+**Phase 3, the class sweep against FFTW** (every composite to 4,096 with a prime factor
+above 47, 2,157 lengths, `rader_class_fftw_20261013`, every cell re-raced cold: the
+gauntlet seeds its store from the shipped wisdom, so without the re-race flag a cell
+replays its old verdict and the leaf never races). The first 1,562 lengths, 106 to 3149,
+against the September record on the same lengths: the class geomean 1.075x to 1.775x,
+lengths below parity 663 to 24, below 0.8x 213 to 2; 1,020 lengths took the flat route
+(their geomean 1.06x to 2.05x) and 542 stayed on the prime cell (1.22x). The ten worst
+lengths before, 0.57x to 0.63x, now read 1.04x to 2.33x. Forty-four lengths lost more
+than a tenth, most of them prime cells whose cold re-race picked a slower inner, a few
+leaf chains at cofactor 3 (1893 = 3 x 631: 1.24x to 0.76x), where the Rader stage has
+three columns. The remaining 595 lengths follow. The build script gained a
 `VFFT_DEBUG_SYMS=1` switch for line numbers under a debugger.
