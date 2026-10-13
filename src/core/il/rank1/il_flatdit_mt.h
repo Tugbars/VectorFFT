@@ -64,6 +64,10 @@ static inline void _ilfd_unit_rec(const vfft_ilfd_plan_t *p, int s, int leaf,
     const size_t recs = s > 0 ? (size_t)(p->R[s] - 1) * VFFT_IL_TWREC : 0;
     *dst = *src;
     dst->in_tstep = dst->out_tstep = dst->tw_tstep = dst->t2_tstep = dst->a1_tstep = dst->g_tstep = 0;
+    if (src->op == _ILFD_RD) {           /* the Rader stage: its columns, the engine steps itself */
+        *nunits = src->count; *cnt = 0;
+        return;
+    }
     if (leaf) {                          /* columns: in/out advance one complex */
         dst->in_tstep = dst->out_tstep = 2;
         *nunits = src->count; *cnt = 0;
@@ -132,6 +136,7 @@ static inline void _ilfd_mt_chunk_list(const vfft_ilfd_plan_t *p, int T, int tra
             case 3: r->c.ngrp = hi - lo; break;
             default: r->c.nb = hi - lo; break;
             }
+            if (unit.op == _ILFD_RD) r->c.rdslot = w;            /* the worker's scratch slot */
             if (unit.op == _ILFD_ONE && unit.a1 && unit.a3) {   /* the group ORDER steps */
                 r->c.a3 = (double *)((const size_t *)unit.a3 + lo);
                 r->t = 0;
@@ -156,6 +161,7 @@ static inline int vfft_ilfd_mt_bind(vfft_ilfd_plan_t *p, int T)
     b = (_ilfd_mt_bind_t *)malloc(sizeof *b + 3 * nrec * sizeof(_ilfd_mt_rec_t));
     if (!b) return 0;
     b->T = T; b->K = p->K;
+    if (p->has_rd && (!_ilfd_rd_mt_hook || !_ilfd_rd_mt_hook(p, T))) { free(b); return 0; }   /* the workers' scratch */
     b->f = (_ilfd_mt_rec_t *)(b + 1);
     b->b = b->f + nrec;
     b->tr = b->b + nrec;

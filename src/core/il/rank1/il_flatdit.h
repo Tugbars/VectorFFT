@@ -41,8 +41,10 @@
 enum { _ILFD_ONE = 0,   /* one kernel call: the leaf, msz, t2csgn, t2cp (its in-kernel
                          * block loop: OGs = blocks, Gs = the block pitch R*D) */
        _ILFD_COL = 1,   /* the t2csg per-column tail form 't': ngrp x D calls */
-       _ILFD_BLK = 2 }; /* t2cp per block, redirected (a natural last stage without a
+       _ILFD_BLK = 2,   /* t2cp per block, redirected (a natural last stage without a
                          * tail form — no POOL radix lacks one) */
+       _ILFD_RD = 3 };  /* a RADER STAGE (il_rader_stage.h): a prime radix above the pool,
+                         * the engine over the column range [t, t + count) */
 enum { _ILFD_STG = 0, _ILFD_ZIN = 1, _ILFD_ZOUT = 2, _ILFD_NUL = 3 };  /* in_sel / out_sel */
 typedef struct {
     vfft_il2p_fn fn;
@@ -60,6 +62,8 @@ typedef struct {
      * double*, both 8 bytes, so its step is in entries). COL: g_tstep = the
      * tile's first group. All zero = the record runs once, whole plane. */
     size_t in_tstep, out_tstep, tw_tstep, t2_tstep, a1_tstep, g_tstep;
+    void *rd;                     /* _ILFD_RD: the stage's engine (vfft_ilrd_t) */
+    int rdir, rdslot;             /* _ILFD_RD: 0 fwd / 1 bwd; the scratch slot (the MT worker) */
 } vfft_ilfd_call_t;
 
 typedef struct {
@@ -142,7 +146,22 @@ typedef struct {
      * records bound for mt_t workers (one allocation), NULL = unbound. */
     int mt, mt_t, mt_tw;
     void *mtb;
+    /* RADER STAGES (il_rader_stage.h): rd[s] non-NULL = stage s is a prime radix
+     * above the pool served by the Rader engine; has_rd = any. Such a chain has
+     * no transposed pipeline (scr_ok = 0) and no tile axis. */
+    void *rd[VFFT_ILFD_MAX_K];
+    int has_rd;
 } vfft_ilfd_plan_t;
+
+/* the engine's hooks: tentative here, defined by il_rader_stage.h when it is
+ * included after this header; a translation unit without it builds no Rader
+ * stage (the create fails as before where a kernel is missing) */
+static int (*_ilfd_rd_build_hook)(vfft_ilfd_plan_t *, int);
+static void (*_ilfd_rd_last_hook)(vfft_ilfd_plan_t *, int);
+static void (*_ilfd_rd_free_hook)(void *);
+static void (*_ilfd_rd_run_hook)(const vfft_ilfd_plan_t *, const vfft_ilfd_call_t *, size_t, size_t,
+                                 const double *, double *);
+static int (*_ilfd_rd_mt_hook)(vfft_ilfd_plan_t *, int);
 
 static inline void vfft_ilfd_bind(vfft_ilfd_plan_t *p);
 
@@ -159,6 +178,7 @@ static inline void vfft_ilfd_destroy(vfft_ilfd_plan_t *p)
     free(p->natbase);
     vfft_aligned_free(p->stg);
     free(p->mtb);
+    for (s = 0; s < VFFT_ILFD_MAX_K; s++) if (p->rd[s] && _ilfd_rd_free_hook) _ilfd_rd_free_hook(p->rd[s]);
     free(p);
 }
 
@@ -196,11 +216,6 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
     if (!p) return 0;
     p->N = N; p->K = K;
     for (s = 0; s < K; s++) p->R[s] = R[s];
-    {   /* the plain leaf: n1c (natural in/out, alias-tolerant), both directions */
-        p->lf = vfft_il2p_n1c_fn(R[0], 0);
-        p->lb = vfft_il2p_n1c_fn(R[0], 1);
-        if (!p->lf || !p->lb) { vfft_ilfd_destroy(p); return 0; }
-    }
     p->bwd_ok = 1;
     p->scr_ok = 1;
     D = (size_t)N;
@@ -208,6 +223,15 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
         D /= (size_t)R[s];
         p->D[s] = D;
         p->nblk[s] = (size_t)N / ((size_t)R[s] * D);
+        if (s == 0) {   /* the plain leaf: n1c (natural in/out, alias-tolerant), both directions —
+                         * or, for a prime radix above the pool, the Rader stage */
+            p->lf = vfft_il2p_n1c_fn(R[0], 0);
+            p->lb = vfft_il2p_n1c_fn(R[0], 1);
+            if (!p->lf || !p->lb) {
+                p->lf = p->lb = 0;
+                if (!_ilfd_rd_build_hook || !_ilfd_rd_build_hook(p, 0)) { vfft_ilfd_destroy(p); return 0; }
+            }
+        }
         if (s >= 1) {
             const size_t nb = p->nblk[s];
             /* the twiddle modulus is the product of the radices processed so
@@ -355,7 +379,12 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 p->f[s] = vfft_il2p_t2cp_fn(R[s]);
                 p->fb[s] = vfft_il2p_t2c_fn(R[s], 1);   /* t2c bwd = PRE-twiddle conj + IDFT */
                 p->fbt[s] = vfft_il2p_t2cp_bwd_fn(R[s]); /* t2cp's transpose: IDFT + POST conj */
-                if (!p->f[s] || !p->fb[s]) { vfft_ilfd_destroy(p); return 0; }
+                if (!p->f[s] || !p->fb[s]) {
+                    /* no kernel pair: a prime radix above the pool is the Rader stage */
+                    p->f[s] = p->fb[s] = p->fbt[s] = 0;
+                    if (!_ilfd_rd_build_hook || !_ilfd_rd_build_hook(p, s)) { vfft_ilfd_destroy(p); return 0; }
+                    continue;
+                }
                 if (!p->fbt[s]) p->scr_ok = 0;
 #if VFFT_IL_VW == 8
                 {
@@ -454,6 +483,8 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
     }
     p->stg = (double *)vfft_aligned_alloc(2u * (size_t)N * sizeof(double));
     if (!p->stg) { vfft_ilfd_destroy(p); return 0; }
+    if (p->has_rd && _ilfd_rd_last_hook)
+        for (s = 0; s < K; s++) if (p->rd[s]) _ilfd_rd_last_hook(p, s);
     vfft_ilfd_bind(p);
     return p;
 }
@@ -498,6 +529,12 @@ static inline void _ilfd_bind_stage_dir(const vfft_ilfd_plan_t *p, int s, int bw
     const double *tz = bwd ? p->tzb[s] : p->tz[s];
     const int last = (s == p->K - 1);
     memset(c, 0, sizeof *c);
+    if (p->rd[s]) {   /* the Rader stage: the engine over its column space */
+        c->op = _ILFD_RD; c->rd = p->rd[s]; c->rdir = bwd;
+        c->in_sel = s ? _ILFD_STG : _ILFD_ZIN; c->out_sel = last ? _ILFD_ZOUT : _ILFD_STG;
+        c->count = (size_t)p->N / (size_t)p->R[s]; c->D = p->D[s]; c->L = (size_t)p->R[s] * p->D[s]; c->nb = p->nblk[s];
+        return;
+    }
     if (s == 0) {   /* the leaf: zin -> the plane, one call */
         c->op = _ILFD_ONE; c->fn = lf; c->in_sel = _ILFD_ZIN; c->out_sel = _ILFD_STG;
         c->Ls = c->OLs = c->count = p->D[0];
@@ -575,6 +612,11 @@ static inline void _ilfd_bind_stage_T(const vfft_ilfd_plan_t *p, int s, vfft_ilf
     const size_t D = p->D[s], L = (size_t)p->R[s] * D, nb = p->nblk[s];
     const int last = (s == p->K - 1);
     memset(c, 0, sizeof *c);
+    if (p->rd[s]) {   /* no transposed pipeline for a Rader chain (scr_ok = 0): a dead record */
+        c->op = _ILFD_RD; c->rd = p->rd[s]; c->rdir = 1; c->in_sel = _ILFD_STG; c->out_sel = _ILFD_STG;
+        c->count = 0;
+        return;
+    }
     c->in_sel = last ? _ILFD_ZIN : _ILFD_STG; c->out_sel = _ILFD_STG;
     c->D = D; c->L = L; c->nb = nb;
     if (p->msz[s]) {            /* never the last stage; in place */
@@ -611,6 +653,10 @@ static inline void _ilfd_call(const vfft_ilfd_plan_t *p, const vfft_ilfd_call_t 
     tw = c->tw ? c->tw + t * c->tw_tstep : 0;
     t2 = c->t2 ? c->t2 + t * c->t2_tstep : 0;
     a1 = c->a1 ? c->a1 + t * c->a1_tstep : 0;
+    if (c->op == _ILFD_RD) {                        /* the Rader engine: columns [t, t + count) */
+        if (c->count) _ilfd_rd_run_hook(p, c, t, t + c->count, zin, zout);
+        return;
+    }
     if (c->op == _ILFD_ONE) {
         c->fn(in, a1, out, c->a3, tw, t2, c->Ls, c->Gs, c->OLs, c->OGs, c->count);
     } else if (c->op == _ILFD_COL) {
@@ -683,7 +729,7 @@ static inline void _ilfd_bind_tiles(vfft_ilfd_plan_t *p)
 {
     int s, cut = -1;
     p->tcut = 0; p->ntile = 1; p->tlo = 0; p->thi = 0;
-    if (p->tw <= 0) { p->tw = 0; return; }
+    if (p->tw <= 0 || p->has_rd) { p->tw = 0; return; }
     for (s = 1; s <= p->K - 2; s++)
         if (!p->tail[s] && (long)p->R[s] * (long)p->D[s] == (long)p->tw) { cut = s; break; }
     if (cut < 0) { p->tw = 0; return; }

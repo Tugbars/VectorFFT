@@ -47,8 +47,12 @@ The wisdom system (persistence, profiles, machine identity, the door fixes) belo
    reason. The candidate form is the four-step's 2D view at N = N1 x N2 with the prime part on
    the column axis, where the 2D tier already races the column Bluestein and the turned
    per-column prime cell (Rader at a prime column), and the smooth part as rows, admitted
-   below 262144 for prime cells only; the same inner then serves Rader at a prime N. Not
-   designed, not started. **OPEN**
+   below 262144 for prime cells only; the same inner then serves Rader at a prime N.
+   DESIGNED 2026-10-13, [`rader_leaf_design.md`](rader_leaf_design.md): not that form but
+   the RADER LEAF, the prime as stage 0 of the flat chain, a vectorized Rader convolution
+   over the stage's columns on the 2D tier's column pass (no turn, no per-column call, one
+   pass over the data); the order agreed with the owner: the complex leaf, then the real
+   odd-prime method, then the real leaf. Not started. **DESIGNED**
 3. **A missing backward row is served with default backward forms, without a race.**
    Correct, not optimal. Designed: an `ord`-keyed backward sibling row, raced when the
    sibling is missing. Owner, 10-03: "wait before you proceed." **HELD**
