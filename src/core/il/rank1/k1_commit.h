@@ -188,8 +188,10 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
  * touched), timed on the WHOLE convolution, the winner banked on the prime
  * cell's OWN row and replayed from there. */
 typedef struct {
-    int kind;                       /* 1 = il2p pair, 2 = il3p chain, 3 = ZTURN-T, 4 = the four-step at M (2026-10-12) */
+    int kind;                       /* 1 = il2p pair, 2 = il3p chain, 3 = ZTURN-T, 4 = the four-step at M (2026-10-12),
+                                     * 5 = the flat DIT at M with a Rader stage (2026-10-13) */
     int R1, R2;                     /* 1; 4: the split N1 x N2 */
+    int fl[VFFT_ILFD_MAX_K], fln;   /* 5: the flat chain, its prime above the pool a Rader stage */
     int cR2, cA, cB;                /* 2 */
     int zt[VFFT_ZTT_MAX_NF], ztn;   /* 3: the chain */
     int tw;                         /* 3: the tile, 0 = untiled */
@@ -214,6 +216,14 @@ static void _ilprime_desc_str(const _ilprime_inner_desc_t *d, char *kind, size_t
     if (d->kind == 1) { snprintf(kind, ksz, "2p"); snprintf(shape, ssz, "%d.%d", d->R1, d->R2); }
     else if (d->kind == 2) { snprintf(kind, ksz, "3p"); snprintf(shape, ssz, "%d.%d.%d", d->cR2, d->cA, d->cB); }
     else if (d->kind == 4) { snprintf(kind, ksz, "fs"); snprintf(shape, ssz, "%d.%d", d->R1, d->R2); }
+    else if (d->kind == 5)
+    {
+        int q, off = 0;
+        snprintf(kind, ksz, "fd");
+        shape[0] = 0;
+        for (q = 0; q < d->fln && off < (int)ssz - 4; q++)
+            off += snprintf(shape + off, ssz - (size_t)off, "%s%d", q ? "." : "", d->fl[q]);
+    }
     else
     {
         int q, off = 0;
@@ -232,6 +242,20 @@ static int _ilprime_desc_parse(_ilprime_inner_desc_t *d, const char *kind, const
         return sscanf(shape, "%d.%d.%d", &d->cR2, &d->cA, &d->cB) == 3 && (d->kind = 2);
     if (!strcmp(kind, "fs"))
         return sscanf(shape, "%d.%d", &d->R1, &d->R2) == 2 && d->R1 >= 4 && d->R2 >= 4 && (d->kind = 4);
+    if (!strcmp(kind, "fd"))
+    {
+        const char *p = shape;
+        while (*p && d->fln < VFFT_ILFD_MAX_K)
+        {
+            char *end;
+            long r = strtol(p, &end, 10);
+            if (end == p || r < 2) return 0;
+            d->fl[d->fln++] = (int)r;
+            p = (*end == '.') ? end + 1 : end;
+            if (*end != '.' && *end != '\0') return 0;
+        }
+        return d->fln >= 2 && (d->kind = 5);
+    }
     if (!strcmp(kind, "ztt"))
     {
         const char *p = shape;
@@ -298,6 +322,13 @@ static int _ilprime_inner_from_desc(int M, _ilprime_inner_t *in, void *v)
         in->fs = _ilprime_fs_inner_build(M, d);
         if (in->fs) return 1;
     }
+    else if (d->kind == 5)
+    {   /* the flat chain at M, natural class, both directions; the Rader stage's own
+         * inner is the engine's pick (il_rader_stage.h) */
+        vfft_ilfd_plan_t *fp = vfft_ilfd_create_chain(M, d->fl, d->fln);
+        if (fp && !fp->bwd_ok) { vfft_ilfd_destroy(fp); fp = NULL; }
+        if (fp) { in->fd = fp; return 1; }
+    }
     else if (d->kind == 1)
     {
         in->p2 = vfft_il2p_create(M, d->R1, d->R2);
@@ -326,6 +357,58 @@ static int _ilprime_inner_from_desc(int M, _ilprime_inner_t *in, void *v)
  * planner's own ZTURN-T pool (_il_dp_enumerate_ztt_ord), scrambled class:
  * the convolution is a matched roundtrip in any order. A pool, not a rule:
  * nothing in it is a default. */
+/* THE FLAT CHAINS WITH A RADER STAGE at M (2026-10-13): where M carries exactly
+ * one prime factor above the chain pool, every radix set of M over the flat
+ * pool with that prime fixed first (after the lone 2 where one leads: then it
+ * is the second, a Rader stage with pre-twiddles), each set in the chain
+ * search's two orders. This is what a Rader inner at N - 1 = 2 . 3 . 683 is. */
+static int _ilprime_fd_chains(int M, _ilprime_inner_desc_t *out, int max)
+{
+    vfft_chain_engine_t e;
+    vfft_chain_t *sets;
+    int cur[VFFT_CHAIN_MAX_K], ord[32], ns = 0, over = 0, i, j, n = 0, big = 0, nbig = 0, m = M, q = 2, np;
+    while ((long)q * q <= m) { if (m % q == 0) { if (q > VFFT_ILRD_POOL_MAX) { big = q; nbig++; } while (m % q == 0) m /= q; } q++; }
+    if (m > VFFT_ILRD_POOL_MAX) { big = m; nbig++; }
+    if (nbig != 1 || (M / big) % big == 0 || max <= 0) return 0;
+    memset(&e, 0, sizeof e);
+    e.pool = _il_dp_flat_pool;
+    np = (int)(sizeof _il_dp_flat_pool / sizeof _il_dp_flat_pool[0]);
+    e.npool = np;
+    for (i = 0; i < np; i++) ord[i] = e.pool[i];
+    for (i = 1; i < np; i++)
+        for (j = i; j > 0 && ord[j] < ord[j - 1]; j--) { const int t = ord[j]; ord[j] = ord[j - 1]; ord[j - 1] = t; }
+    sets = (vfft_chain_t *)malloc(sizeof(vfft_chain_t) * VFFT_CHAIN_SETS_MAX);
+    if (!sets) return 0;
+    memset(cur, 0, sizeof cur);
+    {
+        const int Mr = M / big;
+        if ((Mr & 1) == 0 && ((Mr >> 1) & 1))
+        {
+            cur[0] = 2; cur[1] = big;
+            _vfft_chain_sets_rec(&e, Mr >> 1, 0, 2, cur, 2, ord, sets, &ns, &over);
+        }
+        else
+        {
+            cur[0] = big;
+            _vfft_chain_sets_rec(&e, Mr, 0, 1, cur, 1, ord, sets, &ns, &over);
+        }
+    }
+    for (i = 0; i < ns && n < max; i++)
+    {
+        vfft_chain_t c = sets[i];
+        vfft_chain_sortval(&c);
+        memset(&out[n], 0, sizeof out[n]);
+        out[n].kind = 5; memcpy(out[n].fl, c.R, sizeof(int) * (size_t)c.n); out[n].fln = c.n; n++;
+        if (n < max && vfft_chain_second_first(&c))
+        {
+            memset(&out[n], 0, sizeof out[n]);
+            out[n].kind = 5; memcpy(out[n].fl, c.R, sizeof(int) * (size_t)c.n); out[n].fln = c.n; n++;
+        }
+    }
+    free(sets);
+    return n;
+}
+
 static int _ilprime_inner_cands(int M, _ilprime_inner_desc_t *out, int max)
 {
     int n = 0, dropped = 0;
@@ -382,6 +465,7 @@ static int _ilprime_inner_cands(int M, _ilprime_inner_desc_t *out, int max)
         dropped += sink.dropped;   /* the planner's own cap, reported here too */
     }
 #endif
+    n += _ilprime_fd_chains(M, out + n, max - n);   /* the flat chains with a Rader stage (2026-10-13) */
     if (vfft_k1fs_band(M))
     {   /* THE FOUR-STEP's splits at M (2026-10-12): the lengths past ZTURN-T's
          * ceiling, pow2 and not -- the engine's own ladder, each split an arm */
@@ -405,6 +489,7 @@ static int _ilprime_desc_len(const _ilprime_inner_desc_t *d)
     int q, m = 1;
     if (d->kind == 1 || d->kind == 4) return d->R1 * d->R2;   /* the pair, the four-step's split */
     if (d->kind == 2) return d->cR2 * d->cA * d->cB;
+    if (d->kind == 5) { for (q = 0; q < d->fln; q++) m *= d->fl[q]; return d->fln ? m : 0; }
     for (q = 0; q < d->ztn; q++) m *= d->zt[q];
     return d->ztn ? m : 0;
 }
