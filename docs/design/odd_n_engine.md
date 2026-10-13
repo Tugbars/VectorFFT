@@ -258,12 +258,17 @@ constant W = R₀·…·R_{s−2} (§2.4), and their twiddles factor as
 
     w_{Mₛ}^(l·Q_b) = w_{Mₛ}^(l·Q_hi) · w_{Mₛ}^(l·c·W),   b = (hi, c), c = q_{s−1}
 
-so one broadcast record per group (T2 = w^(Q_hi)) and one small table
-per column pair (T1[c] = w^(c·W)) let the kernel form W¹ = T1·T2 for a
-column pair and derive the higher legs by squaring in registers. That
-is the generated twiddle stream (`--cil-t2csg`, "gen2"): the driver
-hands the kernel two tables of a few hundred doubles instead of a
-per-block stream.
+so a few broadcast records per group (T2_b = w^(b·Q_hi)) and a small
+table per column pair (T1_b[c] = w^(b·c·W)) let the kernel form the
+BASE legs W^b = T1_b·T2_b of a column pair and derive the other legs as
+products of a few bases. That is the generated twiddle stream
+(`--cil-t2csg`, "gen2"): the driver hands the kernel two tables of a
+few hundred doubles instead of a per-block stream. Which powers b a
+radix carries — log3 (1, 3, 9, ...) or log2 (1, 2, 4, ...) — is the
+radix's twiddle policy, raced per radix and fixed as twins in
+`cx_render.ml` (`gen2_default_policy`) and `il2p.h`
+(`vfft_il2p_gen2_bases`); `docs/design/exact_trig_constants.md` §6.1
+holds the table and the race.
 
 `radix{Rₛ}_z_t2csg_fwd_avx2` (and `_bwd`) processes one group per call:
 

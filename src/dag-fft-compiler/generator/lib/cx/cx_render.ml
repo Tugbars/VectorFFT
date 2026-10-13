@@ -608,16 +608,235 @@ let gen2_plan (radix : int) : (int * (int * int)) list =
   List.rev !out
 ;;
 
+(* ── gen2 TWIDDLE POLICIES (2026-10-13) ─────────────────────────────────
+ * Which legs are BASES — each a once-rounded T1_b x T2_b record pair, b the
+ * base power — and how the other legs derive from them. "chain" is the
+ * shipped tree above: W^1 alone, so leg j inherits j times the error of
+ * W^1 whatever the tree. The others load more bases so a leg is a product
+ * of at most a few of them:
+ *   log3  bases min(3^i, R-1): leg j = W^x . W^(j-x) or conj(W^(x-j)) . W^x
+ *   log2  bases 2^i: leg j = W^x . W^(j-x), x the highest pow2 below j
+ *   sqrt  bases 1..k-1 and k, 2k, ... (k*k >= R-1): one product per leg
+ *   full  every leg a base, nothing derived
+ *   four3 exactly four log3 bases at every radix (raced 2026-10-13: never
+ *         better than the per-radix table, 6-16% slower at the large primes)
+ * Selected by VFFT_CX_GEN2POL (cx_ir.ml); the symbol carries the tag. *)
+let int_pow (m : int) (e : int) : int =
+  let rec go r e = if e = 0 then r else go (r * m) (e - 1) in
+  go 1 e
+;;
+
+let gen2_pol_bases (pol : string) (radix : int) : int list =
+  match pol with
+  | "chain" -> [ 1 ]
+  | "log3" ->
+    let rec terms i pi s = if s >= radix - 1 then i else terms (i + 1) (3 * pi) (s + pi) in
+    let n = terms 0 1 0 in
+    List.init n (fun i -> min (int_pow 3 i) (radix - 1))
+  | "log2" ->
+    let rec go p acc = if p > radix - 1 then List.rev acc else go (p * 2) (p :: acc) in
+    go 1 []
+  | "sqrt" ->
+    let k =
+      let rec go k = if k * k >= radix - 1 then k else go (k + 1) in
+      go 1
+    in
+    let low = List.init (min (k - 1) (radix - 1)) (fun i -> i + 1) in
+    let rec high j acc = if j > radix - 1 then List.rev acc else high (j + k) (j :: acc) in
+    low @ high k []
+  | "full" -> List.init (radix - 1) (fun i -> i + 1)
+  | "four3" ->
+    (* exactly four log3 bases, the last capped at R-1 (a fixed record count) *)
+    let rec go t acc =
+      if t >= 4
+      then List.rev acc
+      else (
+        let p = int_pow 3 t in
+        if p >= radix - 1 then List.rev ((radix - 1) :: acc) else go (t + 1) (p :: acc))
+    in
+    go 0 []
+  | _ -> failwith ("cx_render: unknown gen2 policy " ^ pol)
+;;
+
+let gen2_nbase (pol : string) (radix : int) : int = List.length (gen2_pol_bases pol radix)
+
+(* The policy a radix SHIPS with: raced per radix on 2026-10-13 (every flat
+   radix as the last stage of an L2-resident chain, two group sizes, the four
+   accurate policies against the chain; docs/design/exact_trig_constants.md).
+   log3 won at every radix up to 15 and at 17, 21, 25, 37; log2 at 16 and at
+   the larger primes. TWIN of il2p.h vfft_il2p_gen2_bases, which fills the
+   records the kernels read: the two tables must agree, base for base. *)
+let gen2_default_policy (radix : int) : string =
+  match radix with
+  | 16 | 19 | 23 | 27 | 29 | 31 | 41 | 43 | 47 -> "log2"
+  | _ -> "log3"
+;;
+
+(* the derivations in dependency order: (j, (a, b, conj)) reads
+   W^j = (if conj then conj (W^a) else W^a) . W^b, a and b already formed. *)
+let gen2_pol_plan (pol : string) (radix : int) : (int * (int * int * bool)) list =
+  let bases = gen2_pol_bases pol radix in
+  let formed = Hashtbl.create 64 in
+  List.iter (fun b -> Hashtbl.replace formed b ()) bases;
+  let out = ref [] in
+  let add j a b cj =
+    Hashtbl.replace formed j ();
+    out := (j, (a, b, cj)) :: !out
+  in
+  (match pol with
+   | "chain" -> List.iter (fun (j, (p, q)) -> add j p q false) (gen2_plan radix)
+   | "log3" ->
+     let rec form i =
+       if i = 0 || Hashtbl.mem formed i
+       then ()
+       else (
+         let x =
+           let rec go x = if x >= i then x else go (x * 3) in
+           go 1
+         in
+         if i + i >= x
+         then (
+           let x = min x (radix - 1) in
+           form (x - i);
+           form x;
+           add i (x - i) x true)
+         else (
+           let x =
+             let rec go x = if x * 3 <= i then go (x * 3) else x in
+             go 1
+           in
+           form (i - x);
+           form x;
+           add i (i - x) x false))
+     in
+     for j = 1 to radix - 1 do
+       form j
+     done
+   | "log2" ->
+     let rec form i =
+       if Hashtbl.mem formed i
+       then ()
+       else (
+         let x =
+           let rec go x = if x * 2 < i then go (x * 2) else x in
+           go 1
+         in
+         form x;
+         form (i - x);
+         add i x (i - x) false)
+     in
+     for j = 1 to radix - 1 do
+       form j
+     done
+   | "sqrt" ->
+     let k =
+       let rec go k = if k * k >= radix - 1 then k else go (k + 1) in
+       go 1
+     in
+     for j = 1 to radix - 1 do
+       if not (Hashtbl.mem formed j) then add j (j / k * k) (j mod k) false
+     done
+   | "full" -> ()
+   | "four3" ->
+     (* the pow3 split where the split's base exists, else the largest base below the leg *)
+     let is_base i = List.mem i bases in
+     let rec form i =
+       if i = 0 || Hashtbl.mem formed i
+       then ()
+       else (
+         let x =
+           let rec go x = if x >= i then x else go (x * 3) in
+           go 1
+         in
+         if i + i >= x && is_base x
+         then (
+           form (x - i);
+           form x;
+           add i (x - i) x true)
+         else (
+           let lb = List.fold_left (fun m b -> if b <= i && b > m then b else m) 0 bases in
+           form (i - lb);
+           form lb;
+           add i (i - lb) lb false))
+     in
+     for j = 1 to radix - 1 do
+       form j
+     done
+   | _ -> failwith ("cx_render: unknown gen2 policy " ^ pol));
+  List.rev !out
+;;
+
+(* the prologue of a policy other than "chain": base t loads its T1 record at
+   the cursor (slot t) and forms W^b = T1_t x T2_t against the hoisted
+   _wgc{t}/_wgs{t} record; then the derived legs, folded format preserved. *)
+let emit_gen2_pol_prologue
+      ~(mode : Isa.ls_mode)
+      ~(vw : int)
+      ~(msuf : string)
+      (buf : Buffer.t)
+      (isa : Isa.t)
+      (radix : int)
+      (pol : string)
+  : unit
+  =
+  let nm j = Printf.sprintf "_wc%d%s" j msuf, Printf.sprintf "_ws%d%s" j msuf in
+  let bases = gen2_pol_bases pol radix in
+  List.iteri
+    (fun t b ->
+       let tc = Printf.sprintf "_t1c%d%s" t msuf
+       and ts = Printf.sprintf "_t1s%d%s" t msuf
+       and gc = Printf.sprintf "_wgc%d%s" t msuf
+       and gs = Printf.sprintf "_wgs%d%s" t msuf in
+       let cb, sb = nm b in
+       let off = t * 2 * vw in
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        %s\n        %s\n        %s\n        %s\n"
+            (Isa.const_decl isa tc (Isa.loadu_pd ~mode isa (addr_str (ATw off))))
+            (Isa.const_decl isa ts (Isa.loadu_pd ~mode isa (addr_str (ATw (off + vw)))))
+            (Isa.const_decl isa cb (Isa.fnmadd_pd isa ts gs (Isa.mul_pd isa tc gc)))
+            (Isa.const_decl isa sb (Isa.fmadd_pd isa tc gs (Isa.mul_pd isa ts gc)))))
+    bases;
+  List.iter
+    (fun (j, (a, b, cj)) ->
+       let cjn, sjn = nm j
+       and ca, sa = nm a
+       and cb, sb = nm b in
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        %s\n        %s\n"
+            (if cj
+             then Isa.const_decl isa cjn (Isa.fmadd_pd isa sa sb (Isa.mul_pd isa ca cb))
+             else Isa.const_decl isa cjn (Isa.fnmadd_pd isa sa sb (Isa.mul_pd isa ca cb)))
+            (if cj
+             then Isa.const_decl isa sjn (Isa.fnmadd_pd isa sa cb (Isa.mul_pd isa ca sb))
+             else Isa.const_decl isa sjn (Isa.fmadd_pd isa ca sb (Isa.mul_pd isa sa cb)))))
+    (gen2_pol_plan pol radix);
+  Buffer.add_string
+    buf
+    (Printf.sprintf
+       "        /* gen2/%s: %d bases = T1[pair] x T2, %d legs derived */\n"
+       pol
+       (List.length bases)
+       (radix - 1 - List.length bases))
+;;
+
 let emit_gen2_prologue
       ?(mode = Isa.LS_vector)
       ?(tw_vw = 0)
       ?(msuf = "")
+      ?(pol = "chain")
       (buf : Buffer.t)
       (isa : Isa.t)
       (radix : int)
   : unit
   =
   let vw = if tw_vw = 0 then isa.Isa.vec_width else tw_vw in
+  if pol <> "chain"
+  then emit_gen2_pol_prologue ~mode ~vw ~msuf buf isa radix pol
+  else (
   let nm j = Printf.sprintf "_wc%d%s" j msuf, Printf.sprintf "_ws%d%s" j msuf in
   let c1, s1 = nm 1 in
   let tc = Printf.sprintf "_t1c%s" msuf
@@ -651,7 +870,7 @@ let emit_gen2_prologue
   Buffer.add_string
     buf
     (Printf.sprintf "        /* gen2: W^1 = T1[pair] x T2, %d legs derived */
-" (radix - 2))
+" (radix - 2)))
 ;;
 
 (* ── GROUP twiddle prologue (t2c) ────────────────────────────────────────

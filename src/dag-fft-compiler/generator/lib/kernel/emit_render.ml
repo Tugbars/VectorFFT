@@ -1480,6 +1480,7 @@ let provenance_env_overrides () : string =
     ; "VFFT_CX_W32TG"
     ; "VFFT_CX_WING"
     ; "VFFT_CX_ROTFMA"
+    ; "VFFT_CX_GEN2POL"
     ; "VFFT_TAIL512"
     ; "VFFT_TAIL256"
     ; "VFFT_CX_ODDROLL"

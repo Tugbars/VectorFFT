@@ -400,6 +400,32 @@ let emit
   let vw = isa.Isa.vec_width in
   if vw mod 2 <> 0 then failwith "codelet_cil: interleaved needs an even vec_width";
   let per = vw / 2 in
+  (* gen2: the base records per pair (T1) and per group (T2) — 1 for the
+     shipped "chain" policy, more under VFFT_CX_GEN2POL (cx_render.ml). *)
+  let g2pol = if ctx.tw_gen2_pol = "" then gen2_default_policy radix else ctx.tw_gen2_pol in
+  let nb2 = if ctx.tw_gen2 then gen2_nbase g2pol radix else 1 in
+  let gen2_t2_decls (nisa : Isa.t) (suf : string) : string =
+    if g2pol = "chain"
+    then
+      Printf.sprintf
+        "    %s\n    %s\n"
+        (Isa.const_decl nisa ("_wgc" ^ suf) (Isa.loadu_pd nisa "tw_im[0]"))
+        (Isa.const_decl nisa ("_wgs" ^ suf) (Isa.loadu_pd nisa (Printf.sprintf "tw_im[%d]" vw)))
+    else
+      String.concat
+        ""
+        (List.init nb2 (fun t ->
+           Printf.sprintf
+             "    %s\n    %s\n"
+             (Isa.const_decl
+                nisa
+                (Printf.sprintf "_wgc%d%s" t suf)
+                (Isa.loadu_pd nisa (Printf.sprintf "tw_im[%d]" (t * 2 * vw))))
+             (Isa.const_decl
+                nisa
+                (Printf.sprintf "_wgs%d%s" t suf)
+                (Isa.loadu_pd nisa (Printf.sprintf "tw_im[%d]" ((t * 2 * vw) + vw))))))
+  in
   (* complex per vector *)
   if (kind = N1T || ctx.st_turn) && (per < 2 || per land (per - 1) <> 0)
   then
@@ -1555,12 +1581,12 @@ let emit
         (Printf.sprintf
            "        const double *twp = tw_re + (k / %d) * (size_t)%d%s;\n"
            per
-           (if ctx.tw_gen2 then 2 * vw else (radix - 1) * 2 * vw)
+           (if ctx.tw_gen2 then nb2 * 2 * vw else (radix - 1) * 2 * vw)
            (if lane_off then Printf.sprintf " + 2 * (k %% %d)" per else ""));
     if kind = T2 && ctx.tw_log3
     then emit_log3_prologue ~mode ~tw_vw:vw ~msuf body_n nisa radix;
     if kind = T2 && ctx.tw_gen2
-    then emit_gen2_prologue ~mode ~tw_vw:vw ~msuf body_n nisa radix;
+    then emit_gen2_prologue ~mode ~tw_vw:vw ~msuf ~pol:g2pol body_n nisa radix;
     if kind = T2C && msuf <> "" then emit_group_prologue ~tw_vw:vw ~msuf body_n nisa radix
   in
   (* the BLOCKED remainder pass: the bulk loop's own blocked construction
@@ -1899,6 +1925,7 @@ let emit
              ^ (if ctx.colstride then "cs" else "")
              ^ (if ctx.tw_gen2 then "g" else "")
              ^ (if transposed then "t" else "")
+             ^ (if ctx.tw_gen2 && ctx.tw_gen2_pol <> "" then "_" ^ ctx.tw_gen2_pol else "")
              ^ (if ctx.st_turn then "t" else "")
              ^ (if ctx.st_turn_gs then "g" else "")
              ^ (if rowloop then "r" else "")
@@ -1971,13 +1998,7 @@ let emit
        it had no tail to resume. *)
     (Printf.sprintf
        "%s    size_t k = 0;\n    for (; k + %d <= %s; k += %d) {\n"
-       (if kind = T2 && ctx.tw_gen2
-        then
-          Printf.sprintf
-            "    %s\n    %s\n"
-            (Isa.const_decl isa "_wgc" (Isa.loadu_pd isa "tw_im[0]"))
-            (Isa.const_decl isa "_wgs" (Isa.loadu_pd isa (Printf.sprintf "tw_im[%d]" vw)))
-        else "")
+       (if kind = T2 && ctx.tw_gen2 then gen2_t2_decls isa "" else "")
        per
        (if rowloop then "cnt_" else "count")
        per);
@@ -1989,13 +2010,13 @@ let emit
       (Printf.sprintf
          "        const double *twp = tw_re + (k / %d) * (size_t)%d;\n"
          per
-         (if ctx.tw_gen2 then 2 * vw else (radix - 1) * 2 * vw));
+         (if ctx.tw_gen2 then nb2 * 2 * vw else (radix - 1) * 2 * vw));
   (* LOG3 binds every leg's record up front — loaded for power-of-two legs,
      derived for the rest — so the butterflies below reference names instead
      of the table. Loop-invariant per column-group, hence off the data
      critical path. *)
   if kind = T2 && ctx.tw_log3 then emit_log3_prologue buf isa radix;
-  if kind = T2 && ctx.tw_gen2 then emit_gen2_prologue buf isa radix;
+  if kind = T2 && ctx.tw_gen2 then emit_gen2_prologue ~pol:g2pol buf isa radix;
   (* Blocked carries its own per-pass loads and stores; the monolithic form
      needs the leg load edge here — UNLESS lazy-load materialisation is on
      (VFFT_CX_LAZYLOAD=1), in which case each load is emitted just before its
@@ -2107,11 +2128,7 @@ let emit
        Buffer.add_buffer buf body_n;
        Buffer.add_string buf "    }\n"
      | "blk_narrow" ->
-       if kind = T2 && ctx.tw_gen2 then
-         Buffer.add_string buf
-           (Printf.sprintf "    %s\n    %s\n"
-              (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
-              (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
+       if kind = T2 && ctx.tw_gen2 then Buffer.add_string buf (gen2_t2_decls Isa.sse2 "_n");
        Buffer.add_string buf
          (Printf.sprintf "    if (k < %s) {  /* %s at VEX-128, one complex */\n" cnt
             (if odd_blocked then "the odd blocked passes" else "the lone column: the blocked passes"));
@@ -2139,11 +2156,7 @@ let emit
        Buffer.add_buffer buf body_n;
        Buffer.add_string buf "    }\n"
      | "hyb2" ->
-       if kind = T2 && ctx.tw_gen2 then
-         Buffer.add_string buf
-           (Printf.sprintf "    %s\n    %s\n"
-              (Isa.const_decl Isa.avx2 "_wgc_y" (Isa.loadu_pd Isa.avx2 "tw_im[0]"))
-              (Isa.const_decl Isa.avx2 "_wgs_y" (Isa.loadu_pd Isa.avx2 (Printf.sprintf "tw_im[%d]" vw))));
+       if kind = T2 && ctx.tw_gen2 then Buffer.add_string buf (gen2_t2_decls Isa.avx2 "_y");
        Buffer.add_string buf
          (Printf.sprintf "    if (k < %s) {  /* hyb2: rem<=2 -> k-masked ymm pass; rem==3 -> k-masked zmm pass */\n        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(%s - k))) - 1u);\n        if (%s - k <= 2) {\n" cnt cnt cnt);
        Buffer.add_buffer buf body_y;
@@ -2156,12 +2169,7 @@ let emit
        Buffer.add_string buf "    }\n"
      | "ladder" | "ladder_m3" ->
        if kind = T2 && ctx.tw_gen2 then
-         Buffer.add_string buf
-           (Printf.sprintf "    %s\n    %s\n    %s\n    %s\n"
-              (Isa.const_decl Isa.avx2 "_wgc_y" (Isa.loadu_pd Isa.avx2 "tw_im[0]"))
-              (Isa.const_decl Isa.avx2 "_wgs_y" (Isa.loadu_pd Isa.avx2 (Printf.sprintf "tw_im[%d]" vw)))
-              (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
-              (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
+         Buffer.add_string buf (gen2_t2_decls Isa.avx2 "_y" ^ gen2_t2_decls Isa.sse2 "_n");
        if tail_policy = "ladder_m3" then (
          Buffer.add_string buf
            (Printf.sprintf "    if (%s - k == %d) {  /* 3 leftover complex: ONE k-masked zmm pass (policy.h L10) */\n        const __mmask8 _tm = (__mmask8)((1u << (2u * (unsigned)(%s - k))) - 1u);\n" cnt (per - 1) cnt);
@@ -2175,11 +2183,7 @@ let emit
        Buffer.add_string buf "    }\n"
      | _ ->
        Buffer.add_string buf "    /* odd-count tail: same DAG at VEX-128, one complex per iteration */\n";
-       if kind = T2 && ctx.tw_gen2 then
-         Buffer.add_string buf
-           (Printf.sprintf "    %s\n    %s\n"
-              (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
-              (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
+       if kind = T2 && ctx.tw_gen2 then Buffer.add_string buf (gen2_t2_decls Isa.sse2 "_n");
        Buffer.add_string buf (Printf.sprintf "    for (; k < %s; ++k) {\n" cnt);
        Buffer.add_buffer buf body_n;
        Buffer.add_string buf "    }\n"));
@@ -2212,10 +2216,11 @@ let emit
          ~alias_tolerant:true
          ~symbol:
            (Printf.sprintf
-              "radix%d_z_t2csg%s%s_%s_%s"
+              "radix%d_z_t2csg%s%s%s_%s_%s"
               radix
               (if herm then "h" else "n")
               (if transposed then "t" else "")
+              (if ctx.tw_gen2_pol <> "" then "_" ^ ctx.tw_gen2_pol else "")
               (if dir = Fwd then "fwd" else "bwd")
               isa.Isa.name)
          ~target_attr:(Isa.cx_target_attr isa)
@@ -2239,7 +2244,7 @@ let emit
             }\n"
            radix
            radix
-           (2 * vw)
+           (nb2 * 2 * vw)
            radix)
     else if herm
     then
@@ -2259,7 +2264,7 @@ let emit
             }\n"
            radix
            radix
-           (2 * vw)
+           (nb2 * 2 * vw)
            radix)
     else
     Buffer.add_string
@@ -2283,7 +2288,7 @@ let emit
           }\n"
          radix
          radix
-         (2 * vw)
+         (nb2 * 2 * vw)
          radix));
   Buffer.contents buf
 ;;

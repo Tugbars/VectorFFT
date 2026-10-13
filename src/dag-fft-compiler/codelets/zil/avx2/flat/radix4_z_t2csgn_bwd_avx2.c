@@ -32,20 +32,24 @@ static __attribute__((always_inline)) inline void _t2csgn4_body(
     size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
 {
     (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OGs;
-    const __m256d _wgc = _mm256_loadu_pd(&tw_im[0]);
-    const __m256d _wgs = _mm256_loadu_pd(&tw_im[4]);
+    const __m256d _wgc0 = _mm256_loadu_pd(&tw_im[0]);
+    const __m256d _wgs0 = _mm256_loadu_pd(&tw_im[4]);
+    const __m256d _wgc1 = _mm256_loadu_pd(&tw_im[8]);
+    const __m256d _wgs1 = _mm256_loadu_pd(&tw_im[12]);
     size_t k = 0;
     for (; k + 2 <= count; k += 2) {
-        const double *twp = tw_re + (k / 2) * (size_t)8;
-        const __m256d _t1c = _mm256_loadu_pd(&twp[0]);
-        const __m256d _t1s = _mm256_loadu_pd(&twp[4]);
-        const __m256d _wc1 = _mm256_fnmadd_pd(_t1s, _wgs, _mm256_mul_pd(_t1c, _wgc));
-        const __m256d _ws1 = _mm256_fmadd_pd(_t1c, _wgs, _mm256_mul_pd(_t1s, _wgc));
-        const __m256d _wc2 = _mm256_fnmadd_pd(_ws1, _ws1, _mm256_mul_pd(_wc1, _wc1));
-        const __m256d _ws2 = _mm256_fmadd_pd(_wc1, _ws1, _mm256_mul_pd(_ws1, _wc1));
-        const __m256d _wc3 = _mm256_fnmadd_pd(_ws2, _ws1, _mm256_mul_pd(_wc2, _wc1));
-        const __m256d _ws3 = _mm256_fmadd_pd(_wc2, _ws1, _mm256_mul_pd(_ws2, _wc1));
-        /* gen2: W^1 = T1[pair] x T2, 2 legs derived */
+        const double *twp = tw_re + (k / 2) * (size_t)16;
+        const __m256d _t1c0 = _mm256_loadu_pd(&twp[0]);
+        const __m256d _t1s0 = _mm256_loadu_pd(&twp[4]);
+        const __m256d _wc1 = _mm256_fnmadd_pd(_t1s0, _wgs0, _mm256_mul_pd(_t1c0, _wgc0));
+        const __m256d _ws1 = _mm256_fmadd_pd(_t1c0, _wgs0, _mm256_mul_pd(_t1s0, _wgc0));
+        const __m256d _t1c1 = _mm256_loadu_pd(&twp[8]);
+        const __m256d _t1s1 = _mm256_loadu_pd(&twp[12]);
+        const __m256d _wc3 = _mm256_fnmadd_pd(_t1s1, _wgs1, _mm256_mul_pd(_t1c1, _wgc1));
+        const __m256d _ws3 = _mm256_fmadd_pd(_t1c1, _wgs1, _mm256_mul_pd(_t1s1, _wgc1));
+        const __m256d _wc2 = _mm256_fmadd_pd(_ws1, _ws3, _mm256_mul_pd(_wc1, _wc3));
+        const __m256d _ws2 = _mm256_fnmadd_pd(_ws1, _wc3, _mm256_mul_pd(_wc1, _ws3));
+        /* gen2/log3: 2 bases = T1[pair] x T2, 1 legs derived */
         const __m256d z0 = _mm256_loadu2_m128d(&zin[2*((size_t)0*Ls + ((size_t)k + 1)*Gs)], &zin[2*((size_t)0*Ls + (size_t)k*Gs)]);
         const __m256d z1 = _mm256_loadu2_m128d(&zin[2*((size_t)1*Ls + ((size_t)k + 1)*Gs)], &zin[2*((size_t)1*Ls + (size_t)k*Gs)]);
         const __m256d z3 = _mm256_loadu2_m128d(&zin[2*((size_t)2*Ls + ((size_t)k + 1)*Gs)], &zin[2*((size_t)2*Ls + (size_t)k*Gs)]);
@@ -68,19 +72,23 @@ static __attribute__((always_inline)) inline void _t2csgn4_body(
         _mm256_storeu2_m128d(&zout[2*((size_t)3*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)3*OLs + (size_t)k*OGs)], z14);
     }
     /* odd-count tail: same DAG at VEX-128, one complex per iteration */
-    const __m128d _wgc_n = _mm_loadu_pd(&tw_im[0]);
-    const __m128d _wgs_n = _mm_loadu_pd(&tw_im[4]);
+    const __m128d _wgc0_n = _mm_loadu_pd(&tw_im[0]);
+    const __m128d _wgs0_n = _mm_loadu_pd(&tw_im[4]);
+    const __m128d _wgc1_n = _mm_loadu_pd(&tw_im[8]);
+    const __m128d _wgs1_n = _mm_loadu_pd(&tw_im[12]);
     for (; k < count; ++k) {
-        const double *twp = tw_re + (k / 2) * (size_t)8;
-        const __m128d _t1c_n = _mm_loadu_pd(&twp[0]);
-        const __m128d _t1s_n = _mm_loadu_pd(&twp[4]);
-        const __m128d _wc1_n = _mm_fnmadd_pd(_t1s_n, _wgs_n, _mm_mul_pd(_t1c_n, _wgc_n));
-        const __m128d _ws1_n = _mm_fmadd_pd(_t1c_n, _wgs_n, _mm_mul_pd(_t1s_n, _wgc_n));
-        const __m128d _wc2_n = _mm_fnmadd_pd(_ws1_n, _ws1_n, _mm_mul_pd(_wc1_n, _wc1_n));
-        const __m128d _ws2_n = _mm_fmadd_pd(_wc1_n, _ws1_n, _mm_mul_pd(_ws1_n, _wc1_n));
-        const __m128d _wc3_n = _mm_fnmadd_pd(_ws2_n, _ws1_n, _mm_mul_pd(_wc2_n, _wc1_n));
-        const __m128d _ws3_n = _mm_fmadd_pd(_wc2_n, _ws1_n, _mm_mul_pd(_ws2_n, _wc1_n));
-        /* gen2: W^1 = T1[pair] x T2, 2 legs derived */
+        const double *twp = tw_re + (k / 2) * (size_t)16;
+        const __m128d _t1c0_n = _mm_loadu_pd(&twp[0]);
+        const __m128d _t1s0_n = _mm_loadu_pd(&twp[4]);
+        const __m128d _wc1_n = _mm_fnmadd_pd(_t1s0_n, _wgs0_n, _mm_mul_pd(_t1c0_n, _wgc0_n));
+        const __m128d _ws1_n = _mm_fmadd_pd(_t1c0_n, _wgs0_n, _mm_mul_pd(_t1s0_n, _wgc0_n));
+        const __m128d _t1c1_n = _mm_loadu_pd(&twp[8]);
+        const __m128d _t1s1_n = _mm_loadu_pd(&twp[12]);
+        const __m128d _wc3_n = _mm_fnmadd_pd(_t1s1_n, _wgs1_n, _mm_mul_pd(_t1c1_n, _wgc1_n));
+        const __m128d _ws3_n = _mm_fmadd_pd(_t1c1_n, _wgs1_n, _mm_mul_pd(_t1s1_n, _wgc1_n));
+        const __m128d _wc2_n = _mm_fmadd_pd(_ws1_n, _ws3_n, _mm_mul_pd(_wc1_n, _wc3_n));
+        const __m128d _ws2_n = _mm_fnmadd_pd(_ws1_n, _wc3_n, _mm_mul_pd(_wc1_n, _ws3_n));
+        /* gen2/log3: 2 bases = T1[pair] x T2, 1 legs derived */
         const __m128d z0 = _mm_loadu_pd(&zin[2*((size_t)0*Ls + (size_t)k*Gs)]);
         const __m128d z1 = _mm_loadu_pd(&zin[2*((size_t)1*Ls + (size_t)k*Gs)]);
         const __m128d z3 = _mm_loadu_pd(&zin[2*((size_t)2*Ls + (size_t)k*Gs)]);
@@ -121,6 +129,6 @@ void radix4_z_t2csgn_bwd_avx2(
         for (size_t c = 0; c < Ls; c++)
             _t2csgn4_body(zin + 2 * (g * count * 4 * Ls + c), 0,
                            zout + 2 * (obase[g * count] + c), 0,
-                           tw_re, tw_im + 8 * g, Ls, 4 * Ls, OLs, OGs, count);
+                           tw_re, tw_im + 16 * g, Ls, 4 * Ls, OLs, OGs, count);
     }
 }

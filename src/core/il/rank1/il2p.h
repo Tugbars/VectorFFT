@@ -320,10 +320,11 @@ static inline vfft_il2p_fn vfft_il2p_t2csgn_fn(int R)
 }
 
 /* t2csg — t2cs with the GENERATED twiddle stream (gen2): the
- * kernel forms W^1 per column pair as T1[pair] (tw_re, the cursor: one
- * VTW2 pair record per pair) times T2 (tw_im: ONE broadcast record per
- * call, hoisted) and derives every higher leg in-kernel. The driver hands
- * it ~2*sqrt(N)-sized tables instead of an N-sized stream. fwd only. */
+ * kernel forms its BASE legs per column pair as T1[pair] (tw_re, the
+ * cursor: nb VTW2 pair records per pair) times T2 (tw_im: nb broadcast
+ * records per call, hoisted) and derives every other leg in-kernel from
+ * the bases (vfft_il2p_gen2_bases below). The driver hands it
+ * ~2*nb*sqrt(N)-sized tables instead of an N-sized stream. fwd only. */
 static inline vfft_il2p_fn vfft_il2p_t2csg_fn(int R)
 {
     switch (R) {
@@ -333,6 +334,44 @@ static inline vfft_il2p_fn vfft_il2p_t2csg_fn(int R)
 #undef C
 #endif
     default: return 0;
+    }
+}
+
+/* ── the gen2 twiddle POLICY per radix (2026-10-13) ───────────────────────
+ * A t2csg kind's T1 (per pair) and T2 (per group) carry nb BASE records,
+ * base t the power b[t]: the kernel forms W^(b[t]) = T1_t x T2_t, two
+ * once-rounded records, and derives the other legs as products of a few
+ * bases — no leg inherits a long chain's error (one base, W^1, squared up
+ * the ladder, gave leg j a j-fold error: 2-2.7x at a large last radix).
+ * Which bases a radix carries was RACED per radix (every flat radix as the
+ * last stage of an L2-resident chain, two group sizes, four accurate
+ * policies against the former chain) and is fixed here and in the
+ * generator (cx_render.ml gen2_default_policy / gen2_pol_bases):
+ *   log3  bases min(3^i, R-1)   — every radix up to 15, and 17, 21, 25, 37
+ *   log2  bases 2^i             — 16 and the larger primes
+ * The two tables are TWINS and must agree base for base: a drift misreads
+ * the stream, and the flat gate's forward check fails. Returns nb, fills
+ * b[] ascending. */
+#define VFFT_IL_GEN2_MAX_BASES 8
+static inline int vfft_il2p_gen2_bases(int R, int *b)
+{
+    int n = 0;
+    switch (R) {
+    case 16: case 19: case 23: case 27: case 29: case 31: case 41: case 43: case 47: {   /* log2 */
+        int p;
+        for (p = 1; p <= R - 1; p *= 2) b[n++] = p;
+        return n;
+    }
+    default: {                                                                            /* log3 */
+        int i = 0, pi = 1, sum = 0, t;
+        while (sum < R - 1) { i++; sum += pi; pi *= 3; }
+        for (t = 0; t < i; t++) {
+            int p = 1, e;
+            for (e = 0; e < t; e++) p *= 3;
+            b[n++] = p < R - 1 ? p : R - 1;
+        }
+        return n;
+    }
     }
 }
 

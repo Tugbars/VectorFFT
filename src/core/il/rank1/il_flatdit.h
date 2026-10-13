@@ -71,10 +71,13 @@ typedef struct {
     vfft_il2p_fn f[VFFT_ILFD_MAX_K];  /* t2cp fwd (pre-twiddle, per-digit records) */
     vfft_il2p_fn fcs[VFFT_ILFD_MAX_K];/* t2cs / t2csg fwd for the TAIL stages (D <= VFFT_ILFD_TAIL_D) */
     int tail[VFFT_ILFD_MAX_K];        /* 1 = t2cs (per-pair stream), 2 = t2csg (generated) */
-    double *t2g[VFFT_ILFD_MAX_K];     /* gen2: per-group broadcast records (T2), 8 doubles each */
+    double *t2g[VFFT_ILFD_MAX_K];     /* gen2: per-group broadcast records (T2), t2nb[s] per group */
     vfft_il2p_fn fgl[VFFT_ILFD_MAX_K];/* t2csgn fwd: the LAST stage's group loop in-kernel (non-null = available) */
     int gl[VFFT_ILFD_MAX_K];          /* 1 = run the last stage on t2csgn (default when available;
                                        * VFFT_ILFD_NO_GL=1 at create turns it off; A/B flips it) */
+    int t2nb[VFFT_ILFD_MAX_K];        /* gen2: BASE records per pair (T1) and per group (T2) at a
+                                       * tail stage = vfft_il2p_gen2_bases(R[s]) (il2p.h, the
+                                       * radix's twiddle policy); the T2 strides scale by it */
     size_t *ipb[VFFT_ILFD_MAX_K];     /* in-place tail stages (s < K-1) on t2csgn: the group base
                                        * table (entry g*G = g*G*L, complex units), block order */
     size_t *gorder;                   /* last stage: the groups in ascending natural-base order
@@ -260,16 +263,20 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 else if (vfft_il2p_t2cs_fn(R[s])) p->tail[s] = 1;
             }
             if (p->tail[s] == 2) {
-                /* t2csg: the stream is GENERATED. T1 (tw_re, per stage): one
-                 * VTW2 pair record per block pair of a group — lane j =
-                 * w_L^(W*(2pp+j)), the group-internal step (Q steps by W
-                 * from block to block). T2 (tw_im, per group): the group's
-                 * base w_L^(Q(g*G)) as one broadcast record. The kernel
-                 * forms W^1 = T1 x T2 and derives legs 2..R-1 itself. */
+                /* t2csg: the stream is GENERATED. T1 (tw_re, per stage): per
+                 * block pair of a group, nbase VTW2 pair records — record t,
+                 * lane j = w_L^(b[t]*W*(2pp+j)), the group-internal step (Q
+                 * steps by W from block to block) raised to the base power.
+                 * T2 (tw_im, per group): the group's base w_L^(b[t]*Q(g*G)),
+                 * nbase broadcast records. The kernel forms W^(b[t]) =
+                 * T1_t x T2_t and derives the other legs from the bases
+                 * (vfft_il2p_gen2_bases: the radix's twiddle policy). */
                 const size_t G = (size_t)R[s - 1], ngrp = nb / G, npair = (G + 1) / 2;
                 size_t g, pp, W = 1;
-                int j;
+                int j, t, b[VFFT_IL_GEN2_MAX_BASES];
+                const int nbase = vfft_il2p_gen2_bases(R[s], b);
                 for (j = 0; j < s - 1; j++) W *= (size_t)R[j];
+                p->t2nb[s] = nbase;
                 p->fcs[s] = vfft_il2p_t2csg_fn(R[s]);
                 p->fgl[s] = vfft_il2p_t2csgn_fn(R[s]);
                 p->gl[s] = (p->fgl[s] != 0) && !getenv("VFFT_ILFD_NO_GL");
@@ -293,44 +300,51 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 {
                     const _ilfd_q512_t q512 = { p, s, G };
                     (void)npair; (void)pp;
-                    tf = (double *)vfft_aligned_alloc(vfft_vtw512_step_doubles(G) * sizeof(double));
-                    p->tfb[s] = (double *)vfft_aligned_alloc(vfft_vtw512_step_doubles(G) * sizeof(double));
-                    p->t2g[s] = (double *)vfft_aligned_alloc(vfft_vtw512_blocks_doubles(ngrp, 2) * sizeof(double));
-                    p->t2gb[s] = (double *)vfft_aligned_alloc(vfft_vtw512_blocks_doubles(ngrp, 2) * sizeof(double));
+                    tf = (double *)vfft_aligned_alloc(vfft_vtw512_step_bases_doubles(G, nbase) * sizeof(double));
+                    p->tfb[s] = (double *)vfft_aligned_alloc(vfft_vtw512_step_bases_doubles(G, nbase) * sizeof(double));
+                    p->t2g[s] = (double *)vfft_aligned_alloc(vfft_vtw512_group_bases_doubles(ngrp, nbase) * sizeof(double));
+                    p->t2gb[s] = (double *)vfft_aligned_alloc(vfft_vtw512_group_bases_doubles(ngrp, nbase) * sizeof(double));
                     if (!tf || !p->tfb[s] || !p->t2g[s] || !p->t2gb[s]) { vfft_aligned_free(tf); vfft_ilfd_destroy(p); return 0; }
-                    vfft_vtw512_step_fill(tf, G, W, L, 0);
-                    vfft_vtw512_step_fill(p->tfb[s], G, W, L, 1);          /* bwd: conj */
-                    vfft_vtw512_blocks_bcast(p->t2g[s], ngrp, 2, L, _ilfd_q512, &q512, 0);
-                    vfft_vtw512_blocks_bcast(p->t2gb[s], ngrp, 2, L, _ilfd_q512, &q512, 1);
+                    vfft_vtw512_step_fill_bases(tf, G, W, L, b, nbase, 0);
+                    vfft_vtw512_step_fill_bases(p->tfb[s], G, W, L, b, nbase, 1);          /* bwd: conj */
+                    vfft_vtw512_group_bases_bcast(p->t2g[s], ngrp, L, _ilfd_q512, &q512, b, nbase, 0);
+                    vfft_vtw512_group_bases_bcast(p->t2gb[s], ngrp, L, _ilfd_q512, &q512, b, nbase, 1);
                 }
 #else
-                tf = (double *)vfft_aligned_alloc(npair * 8 * sizeof(double));
-                p->tfb[s] = (double *)vfft_aligned_alloc(npair * 8 * sizeof(double));
-                p->t2g[s] = (double *)vfft_aligned_alloc(ngrp * 8 * sizeof(double));
-                p->t2gb[s] = (double *)vfft_aligned_alloc(ngrp * 8 * sizeof(double));
+                tf = (double *)vfft_aligned_alloc(npair * (size_t)nbase * 8 * sizeof(double));
+                p->tfb[s] = (double *)vfft_aligned_alloc(npair * (size_t)nbase * 8 * sizeof(double));
+                p->t2g[s] = (double *)vfft_aligned_alloc(ngrp * (size_t)nbase * 8 * sizeof(double));
+                p->t2gb[s] = (double *)vfft_aligned_alloc(ngrp * (size_t)nbase * 8 * sizeof(double));
                 if (!tf || !p->tfb[s] || !p->t2g[s] || !p->t2gb[s]) { vfft_aligned_free(tf); vfft_ilfd_destroy(p); return 0; }
-                for (pp = 0; pp < npair; pp++) {
-                    double *rf = tf + pp * 8, *rb = p->tfb[s] + pp * 8;
-                    for (j = 0; j < 2; j++) {
-                        const size_t jj = 2 * pp + (size_t)j;
-                        double c, sn;   /* a = -2*pi*p/L: sin(a) = -sn */
-                        vfft_cs2pi_exact((long long)((W * jj) % L), (long long)L, &c, &sn);
-                        sn = -sn;
-                        rf[2 * j] = c; rf[2 * j + 1] = c;
-                        rf[4 + 2 * j] = -sn; rf[4 + 2 * j + 1] = sn;
-                        rb[2 * j] = c; rb[2 * j + 1] = c;
-                        rb[4 + 2 * j] = sn; rb[4 + 2 * j + 1] = -sn;     /* bwd: conj */
+                for (pp = 0; pp < npair; pp++)
+                    for (t = 0; t < nbase; t++) {
+                        double *rf = tf + (pp * (size_t)nbase + (size_t)t) * 8;
+                        double *rb = p->tfb[s] + (pp * (size_t)nbase + (size_t)t) * 8;
+                        for (j = 0; j < 2; j++) {
+                            const size_t jj = 2 * pp + (size_t)j;
+                            const unsigned long long idx = ((unsigned long long)b[t] * (unsigned long long)((W * jj) % L)) % L;
+                            double c, sn;   /* a = -2*pi*p/L: sin(a) = -sn */
+                            vfft_cs2pi_exact((long long)idx, (long long)L, &c, &sn);
+                            sn = -sn;
+                            rf[2 * j] = c; rf[2 * j + 1] = c;
+                            rf[4 + 2 * j] = -sn; rf[4 + 2 * j + 1] = sn;
+                            rb[2 * j] = c; rb[2 * j + 1] = c;
+                            rb[4 + 2 * j] = sn; rb[4 + 2 * j + 1] = -sn;     /* bwd: conj */
+                        }
                     }
-                }
                 for (g = 0; g < ngrp; g++) {
                     const size_t Q = _ilfd_block_Q(p, s, g * G);
-                    double c, sn;   /* a = -2*pi*p/L: sin(a) = -sn */
-                    vfft_cs2pi_exact((long long)(Q % L), (long long)L, &c, &sn);
-                    sn = -sn;
-                    double *rg = p->t2g[s] + g * 8, *rgb = p->t2gb[s] + g * 8;
-                    for (lane = 0; lane < 4; lane++) {
-                        rg[lane] = c; rg[4 + lane] = (lane & 1) ? sn : -sn;
-                        rgb[lane] = c; rgb[4 + lane] = (lane & 1) ? -sn : sn;   /* bwd: conj */
+                    for (t = 0; t < nbase; t++) {
+                        const unsigned long long idx = ((unsigned long long)b[t] * (unsigned long long)(Q % L)) % L;
+                        double c, sn;   /* a = -2*pi*p/L: sin(a) = -sn */
+                        double *rg = p->t2g[s] + (g * (size_t)nbase + (size_t)t) * 8;
+                        double *rgb = p->t2gb[s] + (g * (size_t)nbase + (size_t)t) * 8;
+                        vfft_cs2pi_exact((long long)idx, (long long)L, &c, &sn);
+                        sn = -sn;
+                        for (lane = 0; lane < 4; lane++) {
+                            rg[lane] = c; rg[4 + lane] = (lane & 1) ? sn : -sn;
+                            rgb[lane] = c; rgb[4 + lane] = (lane & 1) ? -sn : sn;   /* bwd: conj */
+                        }
                     }
                 }
 #endif
@@ -536,7 +550,7 @@ static inline void _ilfd_bind_stage_dir(const vfft_ilfd_plan_t *p, int s, int bw
              * gen1 table advances per group, the gen2 T2 record does */
             c->op = _ILFD_COL; c->fn = fcs; c->Gs = L;
             c->tw = tf; c->tw_step = gen2 ? 0 : recs_grp * VFFT_IL_TWREC;
-            c->t2 = gen2 ? t2g : 0; c->t2_step = gen2 ? VFFT_IL_TWREC : 0;
+            c->t2 = gen2 ? t2g : 0; c->t2_step = gen2 ? (size_t)p->t2nb[s] * VFFT_IL_TWREC : 0;
             if (last && !p->scr) { c->obase = p->natbase; c->OLs = nstride; c->OGs = W; }
             else { c->OLs = D; c->OGs = L; }      /* in place / the scrambled comb */
             return;
@@ -576,7 +590,7 @@ static inline void _ilfd_bind_stage_T(const vfft_ilfd_plan_t *p, int s, vfft_ilf
             c->op = _ILFD_ONE; c->fn = p->fglbt[s]; c->a1 = (const double *)p->ipb[s]; c->Gs = ngrp;
             return;
         }
-        c->op = _ILFD_COL; c->fn = p->fcsbt[s]; c->Gs = L; c->t2_step = VFFT_IL_TWREC;
+        c->op = _ILFD_COL; c->fn = p->fcsbt[s]; c->Gs = L; c->t2_step = (size_t)p->t2nb[s] * VFFT_IL_TWREC;
         return;
     }
     c->op = _ILFD_ONE; c->fn = p->fbt[s]; c->tw = p->tfb[s];
@@ -649,7 +663,7 @@ static inline void _ilfd_tile_rec(const vfft_ilfd_plan_t *p, int s, vfft_ilfd_ca
                                        * tile, the table pointer and the T2 records shift */
             const size_t gpt = bpt / c->count;          /* count = G blocks per group */
             c->Gs = gpt; c->in_tstep = 2 * (size_t)p->tw;
-            c->a1_tstep = gpt * c->count; c->t2_tstep = gpt * VFFT_IL_TWREC;
+            c->a1_tstep = gpt * c->count; c->t2_tstep = gpt * (size_t)p->t2nb[s] * VFFT_IL_TWREC;
         } else if (c->in_sel == _ILFD_NUL) {            /* msz: Gs = blocks, in place */
             c->Gs = bpt; c->out_tstep = 2 * (size_t)p->tw; c->tw_tstep = bpt * recs;
         } else {                                        /* t2cp: OGs = blocks, Gs = the pitch */
