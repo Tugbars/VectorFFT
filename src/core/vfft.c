@@ -1157,6 +1157,7 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
                                           * table builders (migration step 6b) */
 #include "il/real/zrb_lanes.h"  /* the lane Bluestein: the real batch's lane-major geometry on the column pass (2026-10-01) */
 
+#include "il/rank1/il_rader_stage.h" /* the RADER STAGE of the flat chain: a prime radix above the pool (2026-10-13); after il2d_cols.h (its column machinery) */
 #include "il/rank2/il2d_tier.h" /* IL 2D real/c2c tier: passes, MT,
                                          * and the four racers (step 17) */
 
