@@ -32,6 +32,10 @@ typedef struct {
     int    il_fl_n;
     char   il_flf[24];                    /* its per-stage form letters (il_forms=) */
     int    il_tw;                         /* the raced tile (flat DIT, ZTURN-T); 0 = untiled */
+    int    il_rd[8];                      /* the flat DIT's Rader stage: its raced inner chain
+                                           * (il_rd=, a radix above the pool = a nested leaf) */
+    int    il_rd_n;
+    int    il_rdw;                        /* and its window width (il_rdw=); 0 = default */
     int    il_zt[7];                      /* ZTURN-T's chain (il_ztt=) */
     int    il_zt_n;
     int    place_ip;                      /* the place=ip cell's own row */
@@ -162,6 +166,12 @@ static inline int vw2_oop_lookup_k1_il_cell(const vw2_store_t *s, int N, int wan
                 if (nfl >= 2) { memcpy(e->il_fl, fl, sizeof(int) * (size_t)nfl); e->il_fl_n = nfl; }
                 if (ff) { strncpy(e->il_flf, ff, sizeof e->il_flf - 1); e->il_flf[sizeof e->il_flf - 1] = 0; }
                 e->il_tw = vw2__oop_geti(ri, "il_tw", 0);
+                {   /* the Rader stage's inner chain and width */
+                    int rd[8];
+                    const int nrd = vw2__oop_split_ints(vw2_rec_get(ri, "il_rd"), rd, 8);
+                    if (nrd >= 1) { memcpy(e->il_rd, rd, sizeof(int) * (size_t)nrd); e->il_rd_n = nrd; }
+                    e->il_rdw = vw2__oop_geti(ri, "il_rdw", 0);
+                }
             }
             {                                  /* ZTURN-T payload */
                 int zt[7];
@@ -448,6 +458,17 @@ static inline int vw2_oop_rec_k1_il(vw2_rec_t *r,
         VW2__OB_SET(1, "il_flat", flb);
         if (e->il_flf[0]) VW2__OB_SET(1, "il_forms", e->il_flf);
         if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }
+        if (e->il_rd_n > 0) {   /* the Rader stage's raced inner and width */
+            char rdb[48], rwb[16];
+            size_t off2 = 0;
+            for (i = 0; i < e->il_rd_n; i++) {
+                int rr = snprintf(rdb + off2, sizeof rdb - off2, "%s%d", i ? "." : "", e->il_rd[i]);
+                if (rr < 0 || (size_t)rr >= sizeof rdb - off2) break;
+                off2 += (size_t)rr;
+            }
+            VW2__OB_SET(1, "il_rd", rdb);
+            if (e->il_rdw > 0) { snprintf(rwb, sizeof rwb, "%d", e->il_rdw); VW2__OB_SET(1, "il_rdw", rwb); }
+        }
     }
     if (e->k1_il_route == VFFT_K1_IL_ZTT && e->il_zt_n >= 2) {
         char ztb[48];              /* ZTURN-T: the chain IS the verdict */

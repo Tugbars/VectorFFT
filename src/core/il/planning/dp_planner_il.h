@@ -149,6 +149,10 @@ typedef struct
                                               * empty = unraced yet             */
     int    il_tw;                            /* FLAT + ZTT: the raced tile width in
                                               * complexes (il_tw=), 0 = untiled */
+    int    il_rd[8];                         /* FLAT with a Rader stage: the raced inner
+                                              * chain at p-1 (il_rd=), il_rd_n stages, and
+                                              * the window width (il_rdw=); 0 = unraced */
+    int    il_rd_n, il_rdw;
     int    il_zt[7];                         /* ZTT only: the chain (a registry
                                               * cell; the chain IS the plan)    */
     int    il_zt_n;                          /* ZTT only: stages, else 0         */
@@ -416,6 +420,13 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b, int i
             (c->il_flf[0] && !vfft_ilfd_apply_forms(b->ifd, c->il_flf)) ||
             (c->il_tw > 0 && !vfft_ilfd_apply_tw(b->ifd, c->il_tw)))
         { vfft_ilfd_destroy(b->ifd); b->ifd = NULL; return -1; }
+        if (c->il_rd_n > 0 && b->ifd->has_rd)
+        {   /* the Rader stage's banked inner and width replay as written */
+            int rs = 0;
+            if (!vfft_ilrd_get_inner(b->ifd, &rs, NULL, NULL, NULL) ||
+                !vfft_ilrd_set_inner(b->ifd, rs, c->il_rd, c->il_rd_n, (size_t)(c->il_rdw > 0 ? c->il_rdw : 0)))
+            { vfft_ilfd_destroy(b->ifd); b->ifd = NULL; return -1; }
+        }
         return 0;
     }
     if (c->route == VFFT_K1_IL_ZTT)
@@ -923,6 +934,16 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
          * tile that fits L2 gates nothing), L2 above. */
         c->il_tw = vfft_ilfd_race_tw(b.ifd, ctx->z_in, ctx->z_out,
                                      N < 2048 ? vfft_cpu_l1d_bytes() : vfft_cpu_l2_bytes(), 0);
+        if (b.ifd->has_rd)
+        {   /* the Rader stage's inner chain and width, raced in role on the
+             * whole forward; the verdict rides in the candidate (il_rd=, il_rdw=) */
+            int rs = 0;
+            if (vfft_ilrd_get_inner(b.ifd, &rs, NULL, NULL, NULL))
+            {
+                (void)vfft_ilrd_race(b.ifd, rs, ctx->z_in, ctx->z_out, 0);
+                (void)vfft_ilrd_get_inner(b.ifd, &rs, c->il_rd, &c->il_rd_n, &c->il_rdw);
+            }
+        }
     }
 
     /* warmup */
@@ -1320,6 +1341,17 @@ static int _il_dp_flat_search(vfft_il_dp_context_t *ctx, int N, int scr, vfft_il
     e.pool = _il_dp_flat_pool;
     e.npool = (int)(sizeof _il_dp_flat_pool / sizeof _il_dp_flat_pool[0]);
     e.lead2 = 1;
+    e.leadp = 0;
+    {   /* a prime factor above the pool takes the leaf (il_rader_stage.h);
+         * two such factors have no leaf chain (the second would be a mid stage:
+         * raced 2026-10-13, slower than the prime cell) */
+        int m = N, q = 2, big = 0, nbig = 0;
+        while ((long)q * q <= m) { if (m % q == 0) { if (q > VFFT_ILRD_POOL_MAX) { big = q; nbig++; } while (m % q == 0) m /= q; } q++; }
+        if (m > VFFT_ILRD_POOL_MAX) { big = m; nbig++; }
+        if (nbig == 1 && (N / big) % big != 0) e.leadp = big;
+        else if (nbig >= 1) return 0;
+        if (scr && e.leadp) return 0;   /* no transposed Rader stage: the natural class alone */
+    }
     e.heat = _il_dp_flat_heat;
     e.hctx = &hc;
     e.budget = VFFT_IL_DP_FLAT_HEAT_BYTES;
@@ -2195,6 +2227,9 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
                 e.il_fl_n = nat->il_fl_n;
                 memcpy(e.il_flf, nat->il_flf, sizeof e.il_flf);
                 e.il_tw = nat->il_tw;
+                memcpy(e.il_rd, nat->il_rd, sizeof e.il_rd);
+                e.il_rd_n = nat->il_rd_n;
+                e.il_rdw = nat->il_rdw;
             }
             if (nat->route == VFFT_K1_IL_ZTT)
             {                          /* ZTURN-T: the chain + its raced tile ARE the verdict */
@@ -2279,6 +2314,9 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N, int inplace,
             e.il_fl_n = scr->il_fl_n;
             memcpy(e.il_flf, scr->il_flf, sizeof e.il_flf);
             e.il_tw = scr->il_tw;
+            memcpy(e.il_rd, scr->il_rd, sizeof e.il_rd);
+            e.il_rd_n = scr->il_rd_n;
+            e.il_rdw = scr->il_rdw;
         }
         if (scr->route == VFFT_K1_IL_ZTT)
         {

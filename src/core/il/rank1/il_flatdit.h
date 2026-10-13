@@ -904,6 +904,7 @@ static inline int vfft_ilfd_apply_tw(vfft_ilfd_plan_t *p, int w)
 {
     int s;
     if (w <= 0) { p->tw = 0; vfft_ilfd_bind(p); return 1; }
+    if (p->has_rd) return 0;   /* a Rader chain has no tile axis */
     for (s = 1; s <= p->K - 2; s++)
         if (!p->tail[s] && (long)p->R[s] * (long)p->D[s] == (long)w) {
             p->tw = w;
