@@ -608,7 +608,7 @@ static void _ilndr_mt_tramp(void *v)
     const vfft_ilndr_t *d = a->d;
     const vfft_ilcol_t *c = &d->ax0;
     struct vfft_plan_s *cf = a->tid > 0 ? d->cw[a->tid - 1] : (d->c2r ? d->cb : d->cf);
-    double *sscr = a->tid > 0 ? d->sscrw[a->tid - 1] : d->sscr;
+    double *sscr = a->tid > 0 ? (d->sscrw ? d->sscrw[a->tid - 1] : NULL) : d->sscr;   /* no strips (a Bluestein / turned axis 0): none */
     const size_t hp3 = (size_t)d->hp3;
     switch (a->mode)
     {
@@ -1473,7 +1473,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
                 if (row_has)
                 {
                     mt_v = bm;
-                    if (bs == 1 || bs == 2 || (c2r && bs == 3)) mts_v = bs;
+                    if (bs == 1 || bs == 2 || (c2r && bs == 3 && !d->ax0bwd)) mts_v = bs;   /* no band on a backward axis 0 */
                     if (bf == 1 || bf == 2) mtf_v = bf;
                     if (mts_v == 3)
                     {
@@ -1567,7 +1567,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
                             if (!(st == 1 && !c2r && d->ax0n_on))
                                 _ILNDR_MTARM(2, st, 1, 0, 0, pt, st == 1 ? "plane/child" : "plane/payonce");
                         }
-                        if (c2r && !ip)
+                        if (c2r && !ip && !d->ax0bwd)   /* a Bluestein / turned axis 0 has no stages to band (phase 4a) */
                         {
                             int s2;
                             for (s2 = 1; s2 < d->ax0.nst; s2++)

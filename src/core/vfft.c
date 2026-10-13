@@ -2439,7 +2439,6 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
 {
     vfft_config_t c;
     vfft_plan h;
-    unsigned int csr;
     if (!cfg)
     {
         _vfft_warn("vfft_create: NULL config");
@@ -2447,7 +2446,9 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     }
     c = *cfg;
     _vfft_create_lock();
-    csr = _mm_getcsr(); /* the caller's FP mode, given back below (the races run FTZ|DAZ) */
+    /* THE FP MODE (owner, 2026-10-13): the create enables FTZ|DAZ on the calling thread (vfft_env_init)
+     * and LEAVES it so -- the kernels run in that mode, the workers keep it for life, and execute does
+     * nothing about MXCSR (nothing of this leaks into the execute phase); vfft.h states it */
     if (_vfft_create_depth == 0)
         c.wisdom_write = _vfft_save_enabled();
     _vfft_create_depth++;
@@ -2455,8 +2456,29 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     if (--_vfft_create_depth == 0)
         _vfft_scope_create_done();
     if (h)
-        thread_pool_plan_retain(((struct vfft_plan_s *)h)->nthreads); /* its workers stay until vfft_destroy */
-    _mm_setcsr(csr);
+    {
+        struct vfft_plan_s *hp = (struct vfft_plan_s *)h;
+        thread_pool_plan_retain(hp->nthreads); /* its workers stay until vfft_destroy */
+        if (hp->layout == (int)VFFT_LAYOUT_INTERLEAVED && hp->placement != VFFT_INPLACE &&
+            (hp->transform == VFFT_R2C || hp->transform == VFFT_C2R) && !hp->alias_scr)
+        {   /* the alias copy buffer (V11): the input's size -- K x the real cube for r2c, K x the CCE
+             * cube for c2r (the last axis N/2 + 1 bins, interleaved) */
+            const size_t n1 = (size_t)hp->N, n2 = hp->N2 > 0 ? (size_t)hp->N2 : 1, n3 = hp->N3 > 0 ? (size_t)hp->N3 : 1;
+            const size_t last = hp->N3 > 0 ? n3 : hp->N2 > 0 ? n2 : n1;
+            const size_t lead = (hp->N3 > 0 ? n1 * n2 : hp->N2 > 0 ? n1 : 1);
+            const size_t per = hp->transform == VFFT_R2C ? lead * last : lead * 2 * (last / 2 + 1);
+            const size_t K = hp->K > 0 ? hp->K : 1;
+            hp->alias_doubles = per * K;
+            hp->alias_scr = (double *)vfft_aligned_alloc(hp->alias_doubles * sizeof(double));
+            if (!hp->alias_scr)
+            {
+                _vfft_warn("vfft_create: %s out of place: the one-buffer copy (%zu doubles) could not be allocated",
+                           _vfft_tname(hp->transform), hp->alias_doubles);
+                vfft_destroy(h);
+                h = NULL;
+            }
+        }
+    }
     _vfft_create_unlock();
     return h;
 }

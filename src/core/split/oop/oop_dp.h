@@ -143,7 +143,8 @@ static inline void vfft_oop_plan_create_champions(
     vfft_aligned_free(sr); vfft_aligned_free(si); vfft_aligned_free(dr); vfft_aligned_free(di);
 }
 
-/* The DEFAULT (order-agnostic) 2-axis joint chooser (CALIBRATION-TIME), thin over champions():
+/* The 2-axis joint chooser (CALIBRATION-TIME), thin over champions() -- the faster of both kinds
+ * by ns, which the door serves for SCRAMBLED only (DEFAULT is natural since 2026-10-13, V31):
  *   Axis 2 (factorization within a kind): the native champion is the TUNER's best of {LEAF, all
  *   unmasked BAILEY2 pairs}; the MODEB champion is the DP planner's best decomposition.
  *   Axis 1 (kind): keep the faster.

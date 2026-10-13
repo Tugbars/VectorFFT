@@ -111,6 +111,11 @@ struct vfft_plan_s
     int N4; /* 4D fourth dim (0 = rank<4)  — §6a62 */
     size_t K;
     int nthreads;
+    double *alias_scr;      /* an OUT-OF-PLACE interleaved real plan called with one buffer (dre == sre,
+                             * field trial V11; owner 2026-10-13: served, as in place) computes from a copy
+                             * of its input made here: the input's size, allocated at create (execute
+                             * allocates nothing), freed with the plan */
+    size_t alias_doubles;
     stride_plan_t *cplan;   /* c2c in-place (owned)      */
     vfft_oop_plan_t *oplan; /* c2c out-of-place (owned)  */
     /* K=1 engine (row_major_engine.md §13; c2c OOP, howmany==1, natural).

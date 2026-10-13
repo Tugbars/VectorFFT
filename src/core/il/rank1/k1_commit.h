@@ -677,9 +677,9 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
  * that holds the planner (a nested race refuses, _k1_il_dp_busy): under
  * VFFT_HIGHN_PLAN=borrow (policy_il.h) the store W's banked 1D rows at each
  * split's N2, read only; a row W lacks, and every row under =scratch, races
- * as a plain 1D cell into S. Then every split's child row in S takes its
- * rp_ recipe from those rows (_k1fs_seed_child_rp), so the candidates'
- * row plans replay instead of running the door's default. Every race whose
+ * as a plain 1D cell into S. The candidates' 2D children take their row
+ * plans from those rows (_k1fs_child_row_store, k1_fourstep.h), so they
+ * replay instead of running the door's default. Every race whose
  * pool can hold the four-step at N calls it: the K=1 race below, the prime
  * cell's inner race and the real Bluestein's. */
 static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
@@ -691,10 +691,13 @@ static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *
         const int borrow = vfft_policy_highn_borrow();
         if (borrow && W)
             for (i = 0; i < ns; i++)
-            {
+            {   /* borrowed: the row the child's row plan replays (in place, natural, one thread) must be among them */
+                vw2_key_t k2d, krow, kbwd;
                 int seen = 0;
                 for (j = 0; j < i; j++) if (n2[j] == n2[i]) { seen = 1; have[i] = have[j]; }
-                if (!seen) have[i] = _k1fs_borrow_rows(S, W, n2[i]) > 0;
+                if (seen) continue;
+                _k1fs_borrow_rows(S, W, n2[i]);
+                have[i] = _k1fs_child_keys(n1[i], n2[i], 0, 1, &k2d, &krow, &kbwd) && vw2_lookup(&S->vw2, &krow) != NULL;
             }
         for (i = 0; i < ns; i++)
         {
@@ -713,8 +716,6 @@ static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *
                 if (rp) vfft_destroy(rp);
             }
         }
-        for (i = 0; i < ns; i++)
-            _k1fs_seed_child_rp(S, n1[i], n2[i], 0, 1);
         if (getenv("VFFT_NAT_LOG"))
             fprintf(stderr, "[k1fs] N=%d: %d split(s); row cells %s\n", N, ns,
                     borrow && W ? "borrowed where banked (VFFT_HIGHN_PLAN=borrow)" : "raced from scratch");
@@ -1549,10 +1550,9 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         mcfg.recalibrate = 0;
         for (k = 0; k < 2 * (size_t)N; k++) zi[k] = 1.0 + 1e-6 * (double)(k & 1023);
         for (i = 0; i < ns; i++)
-        {   /* the candidates' row recipes at T: the store's 1D rows at N2 (borrow), else the
-             * one-thread child's rp_ (the served plan's); a row without either runs the door's default */
+        {   /* the candidates' row cells at T: the store's 1D rows at N2 (borrow); else the
+             * one-thread child's rp_ recipe in mS serves them (_k1fs_child_row_store) */
             if (vfft_policy_highn_borrow() && W) _k1fs_borrow_rows(mS, W, n2[i]);
-            _k1fs_seed_child_rp(mS, n1[i], n2[i], ip, T);
         }
         _vfft_pool_arm(T);
         for (i = 0; i < ns && na < VFFT_RACE_MAX_ARMS; i++)

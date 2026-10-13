@@ -305,13 +305,32 @@ the forward against MKL's.
    1049760  2^5 3^8 5       four-step 972.1080        3427613 /  3470875     7575212 /  7744525   2.21-2.23   7.6e-16
     786432  2^18 3          four-step 3072.256        2320450 /  2283488     5297025 /  5287550   2.28-2.32   5.6e-16
    3145728  2^20 3          four-step 3072.1024      13380550 / 13784050    51902300 / 54734625   3.88-3.97   1.0e-15
+  12582912  2^22 3          four-step 6144.2048      62865662 / 63094863   238791787 / 238609913  3.78-3.80   1.6e-15
 ```
 
-Every cell wins at both flip orders. In place at 1000000 the race banked the
+At eight threads (`--mt --k1noop`, VFFT_MT=8, MKL at T=8, the pool's block
+time the default 200 ms, the bench's caller on core 0), the split raced at T
+in the bench process:
+
+```
+         N  verdict at T=8                          ours ns (flip 0 / 1)    MKL ns (flip 0 / 1)         x
+   1000000  four-step 1000.1000, threaded columns    622662 /   588162       919613 /   949112   1.48-1.61
+   3145728  four-step 1536.2048, threaded columns   3861950 /  3825100      4749900 /  4833225   1.23-1.26
+  12582912  four-step 8192.1536, super-band 8.64.16 24986988 / 26217288     25976263 / 26224363   1.00-1.04
+```
+
+A first pass of these races, with the bench's caller pinned to logical CPU 2
+(the core the pool's worker 1 is pinned to), banked serial column passes for
+the children (the threaded arms ran 2-3x slower than serial with the caller
+and a worker sharing one core) and lost at 1000000 (0.26-0.32x). The pool
+places its workers on logical CPUs 2, 4, 6 ... on the assumption that the
+caller runs on core 0; a caller pinned onto a worker's core collides with it.
+
+Every one-thread cell wins at both flip orders. In place at 1000000 the race banked the
 flat DIT (10.8 ms unpinned in the verification sweep, the four-step's natural
 class in place pays a plane copy). Cold creates: 3 to 13 minutes per cell, 35
-at 3145728 (the flat search over hundreds of chain orderings and eight 2D
-children); a warm create replays from the store.
+at 3145728 and 56 at 12582912 (the flat search over hundreds of chain
+orderings and eight 2D children); a warm create replays from the store.
 
 ### K=1 INTERLEAVED — PRIME N, the prime cell's own raced method and inner (2026-09-19)
 
