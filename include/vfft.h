@@ -277,7 +277,13 @@ extern "C"
    *    written keeps the winner for the process and says so once. The races
    *    run inside the measurement scope (vfft_measure_config_t): the calling
    *    thread is pinned to a P-core and raised for their duration, and is
-   *    given back as it was.
+   *    given back as it was -- except its floating-point mode: a create
+   *    enables flush-to-zero and denormals-are-zero (MXCSR bits 15 and 6) on
+   *    the calling thread and leaves them enabled, the mode every kernel and
+   *    every worker thread runs in; execute never touches MXCSR. A caller
+   *    whose own arithmetic needs subnormal values restores its MXCSR after
+   *    the create, and then its own thread's part of a threaded execute runs
+   *    in a different mode from the workers'.
    * -# Build the plan: the kernels are bound, the twiddle tables computed,
    *    and everything the plan runs on allocated by the plan itself: the
    *    scratch and staging planes, 64-byte aligned; the tables; the child
@@ -339,8 +345,14 @@ extern "C"
    * plane or any buffer laid out at that stride, and a buffer laid out at the
    * formula pitch is undefined behaviour where the two differ, since execute
    * cannot see a buffer's layout. Read the stride, never compute it.
-   * Element addressing follows config.batch_geom. Pure: no allocation, no
-   * measurement. Safe to call concurrently on different plans.
+   * An OUT-OF-PLACE INTERLEAVED R2C or C2R plan called with one buffer
+   * (dre == sre) is served: the plan copies the input into a buffer of the
+   * input's size that it allocated at create and transforms from the copy
+   * into the caller's buffer, which must therefore hold the larger of the
+   * input and the output (N + 2 doubles at an even N in 1D). Out-of-place
+   * C2C takes dre == sre as it is. Element addressing follows
+   * config.batch_geom. Pure: no allocation, no measurement. Safe to call
+   * concurrently on different plans.
    *
    * An out-of-place transform preserves its input unless the request permitted
    * otherwise (config.destroy_input): a plan that uses the permission leaves

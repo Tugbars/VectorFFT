@@ -189,6 +189,17 @@ changed, in the order the engine meets it:
   flat DIT's ceiling like the odd ones (field trial V17: the 16384 cap was
   the planner's initial scratch planes, which grow on demand, and the flat's
   pool holds 4, 8 and 16).
+- **The row cells** (2026-10-13, owner). The 2D child's row plan at N2 is a
+  1D cell. `VFFT_HIGHN_PLAN=borrow` (the default) copies the caller's
+  store's banked K=1 interleaved rows at each split's N2 into the race's
+  private store, read only (a four-step never writes a 1D row, so a raced
+  2048 x 4096 cannot overwrite the 2048 and 4096 cells), and races only the
+  row cells the store lacks; `=scratch` races them all for the plan's own
+  use. The rows reach the child through a create-scoped row source
+  (`_k1fs_rowsrc`, set in `vfft_k1fs_create` around the 2D create, read by
+  `fft2d_create_il.h` when the child's row carries no `rp_` recipe), and the
+  2D create puts the recipe on its row, so the winner's `fs_` tokens carry
+  it and a replay builds the child without racing.
 - **The real four-step** (`zfsr.h`) stays power of two: its fold sweep walks
   16 x 16 blocks and their mirrors. An even real N whose half is a non-pow2
   cell of this band is the zr2c route's, whose c2c child comes through this

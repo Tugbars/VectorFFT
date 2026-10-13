@@ -531,12 +531,9 @@ int main(void)
     {
         long bad_t = 0, bad_e = 0, bad_l2 = 0, bad_l3 = 0;
         int bt, rt, m;
-        for (bt = -2; bt <= 64; bt++)
-            for (rt = -2; rt <= 64; rt++)
-                if ((vfft_policy_replays_at_T(bt, rt) != 0) != (_ref_replays_at_T(bt, rt) != 0))
-                    bad_t++;
-        CHECK(bad_t == 0, "L3 per-T fence: %ld of %d pairs differ", bad_t, 67 * 67);
-        nchk += 67 * 67;
+        /* L3's per-T fence left the module with the per-T rows (a1582c04, 2026-09-25: a plan's thread
+         * count is a key axis, so no replay-at-T law remains to compare); nothing to check here */
+        (void)bt; (void)rt; (void)bad_t;
 
         /* L6, every one of the 2^7 presence combinations, against all THREE
          * doors' spellings -- including the refusal, which is the negation */

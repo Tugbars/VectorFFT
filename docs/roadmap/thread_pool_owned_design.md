@@ -4,7 +4,7 @@
 field trial's repros: two creates on two threads 12 rounds clean, two threaded executes 0 bad of 200 x 6
 pairings, a create under an execute 0 bad and no hang, the caller's affinity and MXCSR unchanged after a
 create, 0.00 CPU-s per idle second once no plan lives; gates il_solo, vfft_tcbatch, il2d_real_ip, k1_pow2
-pass); the FTZ\|DAZ choice of §4 open ·
+pass); FTZ\|DAZ decided 2026-10-13 (§2.6-2.7) ·
 **Closes:** field trial V04, V06, L4 (concurrency), V08, V09 (pool side effects), V07 (FTZ|DAZ) ·
 **Scope:** `common/support/threads.h` (the pool, already the one owner of dispatch since 2026-09-01),
 the front door's pool calls in `vfft.c`, the K=1 planner's context in `il/rank1/k1_commit.h`.
@@ -46,13 +46,13 @@ the front door's pool calls in `vfft.c`, the K=1 planner's context in `il/rank1/
    no threaded plan is live the block time is zero: the workers park at once. The block time is a
    process setting (`vfft_set_thread_block_ms`, default 200 ms, `VFFT_THREAD_BLOCK_MS` read once when
    the pool starts) and a first-class condition of every threaded measurement.
-6. **The caller's thread is returned as it was.** The pool no longer pins the caller to CPU 0; the
-   measurement scope's own P-core pin during races is restored at the scope's end as before. The
-   create saves the caller's MXCSR at entry and restores it at exit. Workers keep FTZ|DAZ for life.
-7. **FTZ|DAZ per execute.** The calling thread's slice of a threaded execute runs in the workers'
-   mode: execute reads MXCSR, sets FTZ|DAZ for the call when the caller's mode lacks it, and restores
-   it afterwards. The read is ~1 ns; the set and restore cost only callers whose mode lacks FTZ|DAZ
-   (see §4 for the cost and the open question).
+6. **The caller's thread is returned as it was, except its FP mode.** The pool no longer pins the
+   caller to CPU 0; the measurement scope's own P-core pin during races is restored at the scope's
+   end as before. The create enables FTZ|DAZ on the calling thread and leaves it so (owner,
+   2026-10-13); workers keep FTZ|DAZ for life.
+7. **Nothing about MXCSR at execute.** Execute is the door and no more (owner, 2026-10-13: "we
+   should not leak such calls to the execution phase"); vfft.h states the mode a create leaves and
+   what a caller that needs subnormals must do.
 8. **One create at a time.** A recursive create lock around `_vfft_create_outer`: two creates on two
    threads serialize (the K=1 planner's context, the prime arm, the four-step map and the 2D
    Bluestein context are process statics, "one create at a time" by their own comment; and two
@@ -75,16 +75,12 @@ the front door's pool calls in `vfft.c`, the K=1 planner's context in `il/rank1/
   never take it. Measured against the threaded cells before and after (same run, pinned, paced).
 - Workers parked by the block time pay one event wake on the first execute after a pause. That is
   the regime the measurement memory names: report the block time with every threaded number.
-- **FTZ\|DAZ per execute (owner's ruling: restore after create, set per execute).** Measured on this
-  machine (i9-14900KF, pinned, `mxcsr_probe`, 7 x 2e7 iterations, best): reading MXCSR and testing the
-  two bits costs nothing measurable (+0.0 ns) when they are set; setting and restoring them around a
-  call costs +3.2 ns (two `ldmxcsr`). A small-N execute is 4.6-6 ns through the lean door, so a
-  caller whose mode lacks the bits pays about +60% per call. The door therefore applies the
-  conditional form (set and restore only when the mode lacks the bits). Open for the owner: whether
-  a create should keep leaving FTZ\|DAZ set on the caller (today's behaviour, to be stated in the
-  header), so the common caller never pays, with the per-execute check as the safety net for one who
-  changed the mode; or restore it after the create, as ruled, and accept +3.2 ns on every execute of
-  a caller that does not set the bits itself.
+- **FTZ\|DAZ (decided 2026-10-13).** Measured on this machine (i9-14900KF, pinned, `mxcsr_probe`,
+  7 x 2e7 iterations, best): reading MXCSR and testing the two bits costs nothing measurable when
+  they are set; setting and restoring them around a call costs +3.2 ns (two `ldmxcsr`), about +60%
+  of a small-N execute. The ruling: the create sets the bits and leaves them, execute does nothing
+  (no MXCSR work leaks into the execute phase), and the header states the mode and the caller's
+  duty if it needs subnormals.
 - The caller unpinned: the workers stay pinned to cores 1..T-1 and the caller's slot 0 runs where
   the OS puts it. If a threaded cell measures slower than with the old CPU-0 pin, the owner decides
   between the header's promise and the pin.

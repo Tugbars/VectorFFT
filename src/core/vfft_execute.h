@@ -116,10 +116,9 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
          * i.e. a MEASURED wisdom verdict -- decided whether the result was
          * right. Refuse it here instead, mirroring the split-C2C rule.
          *
-         * The OOP-aliased case (dre == sre on an OUT-OF-PLACE plan) is
-         * deliberately NOT refused: it currently works on both routes and on
-         * c2r, and turning working behaviour into an error is a separate
-         * decision from closing a miscomputation. */
+         * The OOP-aliased case (dre == sre on an OUT-OF-PLACE plan) is not
+         * refused: the full door serves it from a copy of the input (field
+         * trial V11: the engines are not alias-safe; owner 2026-10-13). */
         if (h->placement == VFFT_INPLACE && dre != sre)
         {
             _vfft_warn("vfft_execute: this %s plan is IN-PLACE (one padded CCE plane of "
@@ -176,10 +175,9 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
          * i.e. a MEASURED wisdom verdict -- decided whether the result was
          * right. Refuse it here instead, mirroring the split-C2C rule.
          *
-         * The OOP-aliased case (dre == sre on an OUT-OF-PLACE plan) is
-         * deliberately NOT refused: it currently works on both routes and on
-         * c2r, and turning working behaviour into an error is a separate
-         * decision from closing a miscomputation. */
+         * The OOP-aliased case (dre == sre on an OUT-OF-PLACE plan) is not
+         * refused: the full door serves it from a copy of the input (field
+         * trial V11: the engines are not alias-safe; owner 2026-10-13). */
         if (h->placement == VFFT_INPLACE && dre != sre)
         {
             _vfft_warn("vfft_execute: this %s plan is IN-PLACE (one padded CCE plane of "
@@ -311,6 +309,14 @@ static __attribute__((noinline)) void _vfft_execute_full(vfft_plan h, vfft_dir_t
     }
     if (_vfft_sig_bad(h, dir, sre, sim, dre, dim))
         return;
+    if (h->alias_scr && dre == sre)
+    {   /* THE ALIASED OUT-OF-PLACE REAL CALL (field trial V11; owner 2026-10-13: served, as in place):
+         * the engines read their input while they write the output, so the input is copied aside into
+         * the plan's own buffer (allocated at create, the input's size) and the transform runs from the
+         * copy into the caller's buffer, which must hold the larger of the input and the output */
+        memcpy(h->alias_scr, sre, h->alias_doubles * sizeof(double));
+        sre = h->alias_scr;
+    }
     if (h->k1_exec && h->k1_exec(h, dir, sre, dre ? dre : sre) == 0)
         return; /* THE BOUND K=1 IL DISPATCH: one indirect call, bound at create (after a decline it declines again) */
     /* 1D real: the one place the layouts still meet (bridge/, owner
@@ -344,23 +350,12 @@ static __attribute__((noinline)) void _vfft_execute_try(vfft_plan h, vfft_dir_t 
 
 static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
                                       double *sre, double *sim, double *dre, double *dim);
-/* THE FP MODE OF AN EXECUTE (2026-10-12): the kernels run FTZ|DAZ, the
- * workers keep it for life, and the calling thread's slot runs in the same
- * mode: a caller whose MXCSR lacks the bits gets them for the call and its
- * mode back after (two ldmxcsr, +3.2 ns measured); a caller that has them,
- * as vfft_env_init leaves it, pays one stmxcsr and a test (nothing
- * measurable) and enters the door below with no frame of its own. */
+/* THE FP MODE (owner, 2026-10-13): the kernels run FTZ|DAZ; the create set
+ * it on the calling thread and left it so, the workers keep it for life, and
+ * nothing about MXCSR happens here -- execute is the door and no more. */
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim)
 {
-    const unsigned int csr = _mm_getcsr();
-    if ((csr & 0x8040u) != 0x8040u)
-    {
-        _mm_setcsr(csr | 0x8040u);
-        _vfft_execute_door(h, dir, sre, sim, dre, dim);
-        _mm_setcsr(csr);
-        return;
-    }
     _vfft_execute_door(h, dir, sre, sim, dre, dim);
 }
 static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
@@ -379,9 +374,12 @@ static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
      * caller: 0.5-0.7 ns off a small 1D call (N = 8: c2c 6.1 -> 5.4 ns, r2c
      * 5.2 -> 4.6; measured 2026-10-11 against the door before it, same run).
      * One that can decline goes through _vfft_execute_try. Any failed
-     * compare goes to the full door, which says why. */
+     * compare goes to the full door, which says why. An OUT-OF-PLACE real
+     * plan called with one buffer (dre == sre) is the full door's: it is
+     * served from a copy of the input (V11, below); a c2c plan's executors
+     * take an aliased call as they are. */
     if (h && (unsigned)dir <= (unsigned)VFFT_BACKWARD && sre && dre && !sim && !dim &&
-        (h->placement != VFFT_INPLACE || dre == sre))
+        (h->placement == VFFT_INPLACE ? dre == sre : (dre != sre || h->transform == VFFT_C2C)))
     {
         if (h->k1_go[dir])
         {
@@ -405,6 +403,8 @@ void vfft_destroy(vfft_plan h)
     if (h)
     {
         thread_pool_plan_release(h->nthreads); /* paired with the retain in vfft_create; a child or clone releases its own */
+        vfft_aligned_free(h->alias_scr);       /* the aliased out-of-place real call's copy buffer (V11) */
+        h->alias_scr = NULL;
         if (h->pq_inner)
         { /* plane-queue wrapper: the inner + clones own everything */
             int t;

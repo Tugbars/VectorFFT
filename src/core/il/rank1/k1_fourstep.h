@@ -248,6 +248,7 @@ static void _k1fs_child_rows(const struct vfft_wisdom_s *S, int N1, int N2, int 
  * along) copied into the private store S as seeds. W is only read: the
  * 1D rows are never written by a four-step. Returns the rows copied. */
 static int _k1fs_seed(struct vfft_wisdom_s *S, const vw2_key_t *k, const vw2_rec_t *src);
+static struct vfft_wisdom_s *_k1fs_store_new(void);
 static int _k1fs_borrow_rows(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, int N2)
 {
     int i, n = 0;
@@ -266,61 +267,61 @@ static int _k1fs_borrow_rows(struct vfft_wisdom_s *S, const struct vfft_wisdom_s
         vw2_disown(&S->vw2);   /* seeded, not raced */
     return n;
 }
-/* THE CHILD'S ROW RECIPE: the 2D child at (N1, N2, T) replays its row plan
- * from its own row's rp_ tokens (wisdom2_child.h) -- and a nested K=1 race
- * is refused while the planner's race holds, so a child whose row carries
- * no recipe runs a default row plan. Before the child is created, its row
- * in S (created bare when absent: the chain race fills it) takes the rp_
- * recipe from S's own rows at N2 (borrowed or raced by the warm), or from
- * the one-thread child's row when only that carries one (the threaded
- * split race). A row that already carries rp_ keeps it. */
-static void _k1fs_seed_child_rp(struct vfft_wisdom_s *S, int N1, int N2, int ip, int T)
+/* THE CHILD'S ROW CELLS (2026-10-13). The 2D child's row plan replays from
+ * its row's rp_ recipe (wisdom2_child.h); a child whose row carries none --
+ * every candidate of a race: its chain race banks the row afresh -- would
+ * run the door's default row plan under the planner's race (a nested race
+ * refuses) and race the row cell again at its replay. So around the child's
+ * create the four-step names its store as the ROW SOURCE, and the 2D create
+ * (fft2d_create_il.h) seeds a row child whose recipe is empty from it: the
+ * K=1 interleaved rows at N2 at one thread in that store (borrowed from the
+ * caller's store under VFFT_HIGHN_PLAN=borrow, or raced into it by the
+ * warm), else the rp_ recipe of a 2D row at (N1, N2) in it (the threaded
+ * split race's store carries the one-thread child's). The 2D create puts
+ * the recipe on its row at its end, so the winner's fs_ tokens carry it. */
+static const struct vfft_wisdom_s *_k1fs_rowsrc = NULL;
+static int _k1fs_rowsrc_n1 = 0, _k1fs_rowsrc_n2 = 0;
+static struct vfft_wisdom_s *_k1fs_child_row_store(int N1, int N2)
 {
-    vw2_key_t k2d, krow, kbwd, k1;
-    struct vfft_wisdom_s *tmp;
-    const vw2_rec_t *row;
+    const struct vfft_wisdom_s *W = _k1fs_rowsrc;
+    struct vfft_wisdom_s *S;
     int i, n = 0;
-    if (!S || !_k1fs_child_keys(N1, N2, ip, T, &k2d, &krow, &kbwd))
-        return;
-    row = vw2_lookup(&S->vw2, &k2d);
-    if (row && vfft_child_row_has(row, "rp_"))
-        return;
-    tmp = _k1fs_store_new();
-    if (!tmp)
-        return;
-    for (i = 0; i < S->vw2.nrec; i++)
+    if (!W || N1 != _k1fs_rowsrc_n1 || N2 != _k1fs_rowsrc_n2)
+        return NULL;
+    S = _k1fs_store_new();
+    if (!S)
+        return NULL;
+    for (i = 0; i < W->vw2.nrec; i++)
     {
-        const vw2_rec_t *r = &S->vw2.rec[i];
+        const vw2_rec_t *r = &W->vw2.rec[i];
         if (r->key.t != VW2_T_C2C || r->key.rank != 1 || r->key.n[0] != N2 || r->key.lay != VW2_LAY_IL ||
             r->key.nthreads != 0)
             continue;
-        if (_k1fs_seed(tmp, &r->key, r) == 0)
+        if (_k1fs_seed(S, &r->key, r) == 0)
             n++;
     }
-    if (n == 0 && T > 1 && _k1fs_child_keys(N1, N2, ip, 1, &k1, &krow, &kbwd))
-    {   /* the one-thread child's row: its rp_ recipe is the row plan's */
-        const vw2_rec_t *r1 = vw2_lookup(&S->vw2, &k1);
-        if (r1 && vfft_child_row_has(r1, "rp_"))
+    if (n == 0)
+    {   /* a 2D row at (N1, N2) in the source carrying its row plan's recipe */
+        vfft_wisdom_free((vfft_wisdom *)S);
+        S = NULL;
+        for (i = 0; i < W->vw2.nrec && !S; i++)
         {
-            vfft_wisdom_free((vfft_wisdom *)tmp);
-            tmp = vfft_child_store_from_row(r1, "rp_");
-            n = tmp ? tmp->vw2.nrec : 0;
+            const vw2_rec_t *r = &W->vw2.rec[i];
+            if (r->key.t == VW2_T_C2C && r->key.rank == 2 && r->key.n[0] == N1 && r->key.n[1] == N2 &&
+                r->key.lay == VW2_LAY_IL && vfft_child_row_has(r, "rp_"))
+            {
+                S = vfft_child_store_from_row(r, "rp_");
+                if (S && S->vw2.nrec == 0)
+                {
+                    vfft_wisdom_free((vfft_wisdom *)S);
+                    S = NULL;
+                }
+            }
         }
+        return S;
     }
-    if (n > 0 && tmp)
-    {
-        vw2_disown(&tmp->vw2);
-        if (!row)
-        {
-            vw2_rec_t r;
-            memset(&r, 0, sizeof r);
-            r.key = k2d;
-            if (vw2_bank(&S->vw2, &r) != VW2_OK)
-                vw2_rec_free(&r);
-        }
-        (void)vfft_child_row_update(&S->vw2, &k2d, "rp_", tmp);
-    }
-    vfft_wisdom_free((vfft_wisdom *)tmp);
+    vw2_disown(&S->vw2);   /* seeded, not raced */
+    return S;
 }
 /* one row into a private store under its key (its payload; the seed is the
  * row as the composite banked it) */
@@ -402,7 +403,13 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     rc.wisdom = (vfft_wisdom *)W;
     rc.wisdom_write = cfg ? cfg->wisdom_write : 0;
     rc.recalibrate = cfg ? cfg->recalibrate : 0;
-    p->c2d = (struct vfft_plan_s *)vfft_create(&rc);
+    {   /* the child's row cells come from this store (_k1fs_child_row_store) */
+        const struct vfft_wisdom_s *ps = _k1fs_rowsrc;
+        const int pn1 = _k1fs_rowsrc_n1, pn2 = _k1fs_rowsrc_n2;
+        _k1fs_rowsrc = W; _k1fs_rowsrc_n1 = N1; _k1fs_rowsrc_n2 = N2;
+        p->c2d = (struct vfft_plan_s *)vfft_create(&rc);
+        _k1fs_rowsrc = ps; _k1fs_rowsrc_n1 = pn1; _k1fs_rowsrc_n2 = pn2;
+    }
     if (!p->c2d || !p->c2d->il2d_row || p->c2d->il2d_col.nat || p->c2d->il2d_col.blu)
     {   /* the child must be the native tier with the scrambled column chain */
         vfft_k1fs_destroy(p);

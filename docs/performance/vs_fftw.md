@@ -1,18 +1,58 @@
 # VectorFFT vs FFTW
 
-VectorFFT against [FFTW](https://www.fftw.org/), the real-input transforms in 2D and 3D. Each
-section is one contract: a speedup matrix, a short reading of it, and the speedups by size band.
-Every run is a [gauntlet](../../gauntlet/) record under
-[`gauntlet/results/`](../../gauntlet/results/) (csv, calibration log, the wisdom it used, FFTW's
-own wisdom). The 2D matrix is drawn from the run's report by
-[`src/tools/plots/gen_2d_pow2.py`](../../src/tools/plots/gen_2d_pow2.py), the 3D matrices from the
-csv by [`src/tools/plots/gen_3d_pow2.py`](../../src/tools/plots/gen_3d_pow2.py).
+VectorFFT against [FFTW](https://www.fftw.org/): the 1D complex transform at every length to
+4,096, and the real-input transforms in 2D and 3D. Each section is one contract: a plot, a short
+reading of it, and the speedups by size band. Every run is a [gauntlet](../../gauntlet/) record
+under [`gauntlet/results/`](../../gauntlet/results/) (csv, calibration log, the wisdom it used,
+FFTW's own wisdom). The 1D plot is drawn from the run's csv by
+[`src/tools/plots/gen_gflops.py`](../../src/tools/plots/gen_gflops.py), the 2D matrix from the
+run's report by [`src/tools/plots/gen_2d_pow2.py`](../../src/tools/plots/gen_2d_pow2.py), the 3D
+matrices from the csv by [`src/tools/plots/gen_3d_pow2.py`](../../src/tools/plots/gen_3d_pow2.py).
 
 > **Platform:** Intel Core i9-14900KF (P-core, AVX2), DDR5, GCC 15.2, single thread  
 > **Competitor:** FFTW 3.3.10, the vcpkg build with its AVX and AVX2 code paths; plans made with FFTW_MEASURE, each run keeping its own FFTW wisdom  
-> **Method:** one process per cell (a plane or a volume); both engines timed in two arms with the
+> **Method:** one process per cell (a length, a plane or a volume); both engines timed in two arms with the
 > engine order flipped; a control cell re-timed every 100 cells; every speedup is FFTW's time over
 > VectorFFT's in the **worse** of the two arms
+
+---
+
+## 1D c2c, every N from 2 to 4,096
+
+> **Contract:** complex-to-complex FP64, interleaved, natural order, out of place, K = 1  
+> **Cells:** every length N from 2 to 4,096: 4,095 transforms, no size skipped  
+> **Record:** [`c2c_1d_2_4096_fftw_20261013`](../../gauntlet/results/c2c_1d_2_4096_fftw_20261013/) (2026-10-13), every length's plan replayed from a scratch copy of the shipped wisdom; the 309 lengths missing from it raced at create in the run's own store
+
+![Throughput, VectorFFT vs FFTW, 1D c2c, every N from 2 to 4096](../../src/tools/plots/vectorfft-fftw-c2c.svg)
+
+One line per engine, one point per length (log scale: equal speed ratios are equal vertical
+gaps). VectorFFT is ahead in both engine orders at 2,994 of the 4,095 lengths, median 1.24x,
+geomean 1.35x; FFTW leads in both orders at 946, and at the other 155 only one of the two orders
+came out slower. The split is by the largest prime factor of N. Composites built from primes up
+to 47 run 2.15x faster than FFTW at the median. A length with a prime factor of 53 or more, 2,706
+of them with the primes, is served by VectorFFT's prime-size route, a Rader or Bluestein
+convolution on the whole length; there the median is 1.15x and FFTW leads in both orders at 754
+(worst 2101 = 11 x 191 at 0.41x, 2118 = 2 x 3 x 353 at 0.46x). Below 17 FFTW's codelets lead at 12
+of the 15 lengths (0.58x at 12 to 0.87x at 7). The powers of two sit at 1.05x, from 0.81x at 8 to
+1.37x at 4,096. Every output agrees with FFTW's to 3.7e-15; the control length (N = 4,096) read
+1.36-1.44x at 80 of its 84 points, and 0.83-1.30x at the four where VectorFFT's own time rose from
+3.6 to as much as 5.9 us mid-run.
+
+| Lengths | Cells | Median speedup | At or above parity | Best |
+|---|---|---|---|---|
+| 2..64 | 63 | 1.12x | 65% | 3.34x (N=61) |
+| 65..256 | 192 | 1.60x | 86% | 4.55x (N=172) |
+| 257..1,024 | 768 | 1.32x | 80% | 4.69x (N=779) |
+| 1,025..2,048 | 1,024 | 1.23x | 74% | 4.50x (N=2021) |
+| 2,049..4,096 | 2,048 | 1.19x | 69% | 4.38x (N=2209) |
+| **all, 2..4,096** | **4,095** | **1.24x** | **73%** | 4.69x (N=779) |
+
+| Family | Cells | Median speedup | At or above parity |
+|---|---|---|---|
+| Powers of two | 12 | 1.05x | 75% |
+| Primes (3..4,093) | 563 | 1.33x | 84% |
+| Composites, largest prime factor ≤ 47 | 1,363 | 2.15x | 83% |
+| Composites, largest prime factor ≥ 53 | 2,157 | 1.12x | 64% |
 
 ---
 

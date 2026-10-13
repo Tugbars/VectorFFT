@@ -23,16 +23,32 @@ The wisdom system (persistence, profiles, machine identity, the door fixes) belo
    11.3 ms) and in place (the flat chain won, 10.8 ms), 759375 (fs 1875x405, 9.9 ms), 531441
    (fs 6561x81, 2.9 ms), 1049760 (fs 972x1080, 4.9 ms), 786432 (fs 3072x256, 3.9 ms), 3145728
    (fs 3072x1024, 16.4 ms), 1000000 scrambled (fs); every forward within 1.2e-15 of FFTW and
-   MKL, every roundtrip within 1.6e-15, no unwritten output, no canary touched. Cold creates
-   take 3 to 13 minutes and 35 minutes at 3145728 (the flat search over hundreds of orderings
-   and eight 2D children per cell); a warm create still re-races the child (V26 below, the
-   owner's deferred item). The same change lets the factor-of-4 cells in (16384, 262144]
+   MKL, every roundtrip within 1.6e-15, no unwritten output, no canary touched. vs MKL at one
+   thread (docs/performance/v1_0_results.md, "HIGH N"): 1.54x to 3.97x out of place, 1.49x to
+   1.93x in place; at T=8 3145728 wins 1.33x, 12582912 ties, 1000000 loses 0.30x (its threaded
+   2D child's column pass is serial). Cold creates take 3 to 13 minutes, 35 at 3145728 and 56
+   at 12582912 (the flat search over hundreds of orderings and eight 2D children per cell).
+   The four-step's row cells at each split's N2 come from the store's banked 1D rows, read only
+   (`VFFT_HIGHN_PLAN=borrow`, the default; `=scratch` races them for the plan's own use), and
+   reach the 2D child through a create-scoped row source; before 2026-10-13 the warmed rows
+   never reached the child, so every replay raced the row cell again (V26's mechanism). The same change lets the factor-of-4 cells in (16384, 262144]
    outside ZTURN-T's odd band race to the flat DIT's ceiling (trial V17: the 16384 cap was the
    planner's initial scratch planes). The size promise above 2^24 stays open: the ladder's reach
    ends at 4096 x 4096 (pow2) and 16384 x 16384 (non-pow2 sides), nothing above has an engine.
-   **BUILT, vs-MKL race pending**
+   **BUILT**
 2. **The radix 37-47 kernels are weak on odd chains.** Planned beside item 1, as its own
    piece. **OPEN**
+2b. **A prime factor above 47 inside a composite length has no stage-level engine** (owner,
+   2026-10-13: "clearly a missing gap", c2c first, then r2c/c2r). Rader serves a whole prime N
+   only, and a composite with such a factor (2,157 of the 4,095 lengths to 4,096; 2101 = 11 x 191,
+   2118 = 2 x 3 x 353, 1149 = 3 x 383) runs Bluestein on the whole length: 0.41x to 0.6x against
+   FFTW, which runs the prime part as a Rader or generic leaf under a small-radix stage. A prime
+   N whose N-1 is not chain-smooth (2131: 2130 = 2 x 3 x 5 x 71) loses Rader for the same
+   reason. The candidate form is the four-step's 2D view at N = N1 x N2 with the prime part on
+   the column axis, where the 2D tier already races the column Bluestein and the turned
+   per-column prime cell (Rader at a prime column), and the smooth part as rows, admitted
+   below 262144 for prime cells only; the same inner then serves Rader at a prime N. Not
+   designed, not started. **OPEN**
 3. **A missing backward row is served with default backward forms, without a race.**
    Correct, not optimal. Designed: an `ord`-keyed backward sibling row, raced when the
    sibling is missing. Owner, 10-03: "wait before you proceed." **HELD**
@@ -56,6 +72,12 @@ The wisdom system (persistence, profiles, machine identity, the door fixes) belo
 9. **The out-of-place K=1 door never races.** It serves a structural default and banks
    nothing (`split/rank1/c2c_oop_create_split.h`; wisdom report §2 item 8 and D10, which
    recommends documenting it now and leaving the race to this roadmap). **OPEN**
+9b. **DEFAULT order at K=1 is natural (built 2026-10-13, field trial V31).** The in-place
+   door's natural block runs for DEFAULT as for NATURAL (bins natural to 2e-16 at 16..4096,
+   360 and 1000), and the out-of-place door maps DEFAULT to NATURAL: where the cell has no
+   natural champion (K=1 at 1000 and 360, where only the scrambled kind exists) it refuses
+   with the reason and names SCRAMBLED, instead of serving the permuted spectrum under
+   DEFAULT. The out-of-place natural champion at K=1 is item 9's race. **BUILT**
 
 ## 3. 1D real
 
@@ -69,16 +91,15 @@ The wisdom system (persistence, profiles, machine identity, the door fixes) belo
 12. **In place is never calibrated.** The gauntlet's real contract is out of place only,
     and the 18 in-place zr2c rows are stale and race on create. Needs an in-place real
     contract in the gauntlet, then a run. Owner: "we should do it in future yes." **OPEN**
-13. **Non-power-of-two N of 262147 and above.** Smooth odd N are served: zrf rows reach
-    4782969. The field trial's census (10-09): even N refuses only when its N/2 child is
-    itself unbuildable (r2c 600002, whose child 300001 has a prime factor above 47), not
-    whenever N/2 is above 262144 (r2c 2000000, 2099520 and 1572864 are served through the
-    child path of item 1). Odd N with a prime factor above 47 refuses from 174765, not
-    262147, in both placements: the real Bluestein needs an inner of at least (3N-1)/2
-    (`il/real/zrb.h:59`) and no inner builds past 262144, so 174763 is served and 174765,
-    174767, 199999, 200005, 262139 and 262145 refuse. Planned with item 1, whose inner
-    ceiling is the same gate. Owner, 10-12: fill this gap; lifting the ceiling carries the
-    Bluestein band with it. **OPEN**
+13. **Real N past the old inner ceiling: SERVED (built 2026-10-12).** The prime cell and the
+    real Bluestein take the four-step as an inner (kind `fs`, its split as the shape), so the
+    inner ceiling is the four-step's reach, 2^24 (`VFFT_POLICY_INNER_MAX_N`): odd real N with a
+    prime factor above 47 is served to (3N-1)/2 <= 2^24, an even N whose half is such a cell
+    through the zr2c child, and a composite c2c prime cell to 2N-1 <= 2^24. Verified on the
+    scratch store against FFTW and MKL (within 1.3e-15): r2c 174767, 200005, 262202, c2r 174767,
+    c2c 131101, 131073, 200005. vs MKL at one thread (canonical bench, both flip orders): r2c
+    174767 2.24-2.25x, 200005 2.02-2.04x, 262202 2.24-2.25x, c2r 174767 2.24-2.28x; c2c 131101
+    2.34-2.42x, 131073 2.25-2.27x, 200005 1.44-1.46x. **BUILT**
 14. **c2r at N=2 refuses:** no engine builds it. No ruling yet. **OPEN**
 15. **N=512 r2c picks zttr** (232 ns in its race), which benched 17% slower than zr2c did
     on 09-30. Unverified suspect: the stack-alignment lottery, since zr2c's child spills

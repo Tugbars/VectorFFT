@@ -216,7 +216,9 @@ static vfft_plan _vfft_create_c2c_oop_split(const vfft_config_t *cfg,
         padded = 1;
     }
     vfft_oop_plan_t *op = NULL;
-    int ord = cfg->order; /* 0=DEFAULT 1=NATURAL(LEAF/BAILEY2) 2=SCRAMBLED(MODEB) */
+    /* 1=NATURAL(LEAF/BAILEY2) 2=SCRAMBLED(MODEB); DEFAULT is natural (vfft.h; field trial V31,
+     * owner 2026-10-13: the faster-of-both pick served a permuted spectrum under DEFAULT) */
+    const int ord = cfg->order == VFFT_ORDER_SCRAMBLED ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
     /* Order-aware lookup: the cell can hold BOTH a natural and a MODEB champion as separate
      * (N,K,kind-class) entries, so the requested order is served straight from wisdom. */
     vfft_oop_sp_entry_t eb;
@@ -301,9 +303,9 @@ static vfft_plan _vfft_create_c2c_oop_split(const vfft_config_t *cfg,
     {
         if (ord == VFFT_ORDER_NATURAL)
             _vfft_warn("vfft_create: no natural-order out-of-place C2C champion for "
-                       "N=%d K=%zu (the natural kinds are gated on this cell) — use "
-                       "order=DEFAULT/SCRAMBLED, or calibrate a natural champion into "
-                       "the wisdom",
+                       "N=%d K=%zu (the natural kinds are gated on this cell; DEFAULT is "
+                       "natural) — use order=SCRAMBLED, the engine's own order, or "
+                       "calibrate a natural champion into the wisdom",
                        N, bK);
         else if (ob)
             _vfft_warn("vfft_create: no out-of-place C2C champion for the padded cell "

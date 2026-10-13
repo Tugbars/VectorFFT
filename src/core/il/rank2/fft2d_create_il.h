@@ -265,6 +265,15 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 const vw2_ilcol_key_t ck2 = { 2, N1, N2, 0, il2d_ord, 0, 0, il2d_T };
                 vw2__ilcol_key(&ck2, &il2d_pk);
                 il2d_rowS = vfft_child_store_for(&W->vw2, &il2d_pk, "rp_");
+                if (il2d_rowS && il2d_rowS->vw2.nrec == 0)
+                {   /* a four-step's child (k1_fourstep.h): its row cells from the four-step's store */
+                    struct vfft_wisdom_s *fsr = _k1fs_child_row_store(N1, N2);
+                    if (fsr)
+                    {
+                        vfft_child_store_free(il2d_rowS);
+                        il2d_rowS = fsr;
+                    }
+                }
             }
             rc.wisdom = (vfft_wisdom *)il2d_rowS;
             rc.wisdom_write = 0;

@@ -282,9 +282,10 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
         }
 #endif
         /* ── VFFT_ORDER_NATURAL on the split stride engine: FREE, PURE_CYCLE, PSWAP (with
-         * injected chains) or SCR, raced on a miss and banked as the @nat verdict. Any
-         * other order skips this block. */
-        if (cfg->order == VFFT_ORDER_NATURAL)
+         * injected chains) or SCR, raced on a miss and banked as the @nat verdict. DEFAULT
+         * is natural (vfft.h; field trial V31, owner 2026-10-13); SCRAMBLED alone skips
+         * this block. */
+        if (cfg->order == VFFT_ORDER_NATURAL || cfg->order == VFFT_ORDER_DEFAULT)
         {
             vfft_proto_nat_entry_t neb;
             const vfft_proto_nat_entry_t *ne =
