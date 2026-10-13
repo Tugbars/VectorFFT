@@ -290,5 +290,11 @@ lengths below parity 663 to 24, below 0.8x 213 to 2; 1,020 lengths took the flat
 lengths before, 0.57x to 0.63x, now read 1.04x to 2.33x. Forty-four lengths lost more
 than a tenth, most of them prime cells whose cold re-race picked a slower inner, a few
 leaf chains at cofactor 3 (1893 = 3 x 631: 1.24x to 0.76x), where the Rader stage has
-three columns. The remaining 595 lengths follow. The build script gained a
+three columns. The full class, all 2,157 lengths against the September record: the class geomean 1.146x
+to 1.790x, below parity 684 to 24, below 0.8x 213 to 2; 1,412 lengths on the leaf chain
+(1.13x to 2.06x as a group), 745 on the prime cell (1.17x). On the page's rule (the
+slower of the two engine orders per length) the class reads 1.64x at the median with 98
+percent at or above parity, and the whole 2 to 4,096 sweep 1.63x median, 91 percent, from
+1.24x and 73 percent. The record is `gauntlet/results/rader_class_fftw_20261013`
+(`compare_vs_sept.txt`), the page `docs/performance/vs_fftw.md`. The build script gained a
 `VFFT_DEBUG_SYMS=1` switch for line numbers under a debugger.
