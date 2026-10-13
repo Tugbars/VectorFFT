@@ -1,8 +1,8 @@
 # gauntlet report
 
-run: `rader_class_fftw_20261013`  contract file suffix: `_fftw`  cells: 1562 listed, 1562 benched, comparator: FFTW
+run: `rader_class_fftw_20261013`  contract file suffix: `_fftw`  cells: 2157 listed, 2157 benched, comparator: FFTW
 
-control cell: 34 readings, 1.316..1.475 (a run is internally comparable when the first and the last agree)
+control cell: 48 readings, 0.847..1.475 (a run is internally comparable when the first and the last agree)
 
 
 ## every cell
@@ -1571,15 +1571,610 @@ control cell: 34 readings, 1.316..1.475 (a run is internally comparable when the
       3164  2^2.7.113        flat     raced           8990      28618    3.16  6.4e-16  
       3165  3.5.211          flat     raced          11876      22410    1.88  7.7e-16  
       3166  2.1583           prime    raced          18015      23709    1.30  5.8e-16  bluestein
+      3170  2.5.317          prime    raced          18154      19183    1.05  5.5e-16  bluestein
+      3171  3.7.151          flat     raced          12219      20493    1.57  7.7e-16  
+      3172  2^2.13.61        flat     raced           9467      28691    3.00  6.6e-16  
+      3173  19.167           prime    raced          18013      30968    1.71  5.9e-16  bluestein
+      3175  5^2.127          flat     raced          11841      18531    1.49  9.0e-16  
+      3176  2^3.397          flat     raced           9614      23022    2.34  7.2e-16  
+      3177  3^2.353          flat     raced          12205      22354    1.80  6.8e-16  
+      3178  2.7.227          prime    raced          18098      22161    1.07  7.1e-16  bluestein
+      3180  2^2.3.5.53       flat     raced           8362      24860    2.97  8.9e-16  
+      3183  3.1061           prime    raced          18170      26898    1.46  6.8e-16  bluestein
+      3184  2^4.199          flat     raced          10793      20218    1.85  6.4e-16  
+      3186  2.3^3.59         flat     raced          13693      26804    1.82  7.9e-16  
+      3188  2^2.797          prime    raced          18112      24033    1.27  6.5e-16  bluestein
+      3189  3.1063           prime    raced          17972      26573    1.48  7.6e-16  bluestein
+      3193  31.103           flat     raced          11202      35986    3.08  1.0e-15  
+      3194  2.1597           prime    raced          18030      24057    1.32  6.3e-16  bluestein
+      3195  3^2.5.71         flat     raced           8969      23573    2.61  7.1e-16  
+      3197  23.139           flat     raced          12216      37423    3.04  8.6e-16  
+      3199  7.457            flat     raced          15504      23557    1.48  8.6e-16  
+      3201  3.11.97          flat     raced          10508      24722    2.33  7.5e-16  
+      3202  2.1601           prime    raced          21935      28598    0.95  6.0e-16  flips differ 1.39x bluestein
+      3204  2^2.3^2.89       flat     raced           8806      27929    3.14  7.2e-16  
+      3205  5.641            flat     raced          15820      25738    1.61  7.0e-16  
+      3206  2.7.229          flat     raced          14515      22357    1.52  7.6e-16  
+      3207  3.1069           prime    raced          21622      26420    1.02  7.7e-16  bluestein
+      3208  2^3.401          flat     raced          12556      24650    1.79  8.9e-16  
+      3210  2.3.5.107        flat     raced          18233      22840    1.24  1.1e-15  
+      3212  2^2.11.73        flat     raced           8989      24841    2.75  8.5e-16  
+      3214  2.1607           prime    raced          21285      28369    1.31  8.0e-16  bluestein
+      3215  5.643            prime    raced          22005      25720    1.15  8.4e-16  bluestein
+      3216  2^4.3.67         flat     raced           8248      29653    3.58  8.1e-16  
+      3218  2.1609           prime    raced          21465      28449    1.31  5.5e-16  bluestein
+      3222  2.3^2.179        flat     raced          20093      22029    1.09  7.1e-16  
+      3223  11.293           prime    raced          21325      23452    1.04  8.1e-16  bluestein
+      3226  2.1613           prime    raced          21709      28683    1.04  6.4e-16  flips differ 1.26x bluestein
+      3227  7.461            flat     raced          15909      23388    1.35  9.7e-16  
+      3228  2^2.3.269        flat     raced          17736      24347    1.34  9.8e-16  
+      3231  3^2.359          prime    raced          21754      22359    1.03  7.0e-16  bluestein
+      3232  2^5.101          flat     raced          11299      23680    1.70  7.9e-16  
+      3233  53.61            prime    raced          21993      49679    2.15  6.1e-16  bluestein
+      3235  5.647            prime    raced          21899      25638    1.15  9.8e-16  bluestein
+      3236  2^2.809          prime    raced          21269      27113    1.18  8.1e-16  bluestein
+      3237  3.13.83          flat     raced          15564      24338    1.55  8.1e-16  
+      3238  2.1619           prime    raced          21899      28021    1.27  7.4e-16  bluestein
+      3239  41.79            flat     raced          11528      37861    3.23  9.5e-16  
+      3241  7.463            flat     raced          15372      23511    1.47  8.8e-16  
+      3242  2.1621           prime    raced          21369      34026    1.49  6.7e-16  bluestein
+      3244  2^2.811          flat     raced          17932      27080    1.49  9.0e-16  
+      3245  5.11.59          flat     raced          13070      22219    1.70  8.6e-16  
+      3246  2.3.541          flat     raced          19731      31176    1.57  7.1e-16  
+      3247  17.191           flat     raced          11919      26902    2.21  6.8e-16  
+      3252  2^2.3.271        flat     raced          12313      23875    1.92  9.2e-16  
+      3254  2.1627           prime    raced          21721      34199    1.56  6.6e-16  bluestein
+      3258  2.3^2.181        flat     raced          12375      27347    2.20  7.1e-16  
+      3260  2^2.5.163        flat     raced          11855      24040    2.02  8.4e-16  
+      3261  3.1087           prime    raced          21837      35017    1.60  9.5e-16  bluestein
+      3262  2.7.233          flat     raced          16057      22145    1.09  7.3e-16  flips differ 1.27x
+      3263  13.251           flat     raced          13404      20398    1.51  1.1e-15  
+      3265  5.653            prime    raced          22210      27895    1.24  6.7e-16  bluestein
+      3266  2.23.71          flat     raced          10409      32441    2.97  7.5e-16  
+      3269  7.467            prime    raced          22049      23533    1.04  5.2e-16  bluestein
+      3270  2.3.5.109        flat     raced          14287      28875    1.91  8.5e-16  
+      3272  2^3.409          flat     raced          11574      24901    2.06  1.1e-15  
+      3273  3.1091           prime    raced          21869      35114    1.59  6.9e-16  bluestein
+      3274  2.1637           prime    raced          22223      34236    1.48  8.5e-16  bluestein
+      3275  5^2.131          flat     raced          10277      23937    2.32  8.2e-16  
+      3277  29.113           flat     raced          10584      40069    3.77  6.1e-16  
+      3278  2.11.149         flat     raced          14559      24155    1.66  7.7e-16  
+      3279  3.1093           prime    raced          21291      35138    1.63  1.0e-15  bluestein
+      3281  17.193           flat     raced          11614      29915    2.49  7.7e-16  
+      3282  2.3.547          flat     raced          19416      31263    1.60  1.3e-15  
+      3283  7^2.67           flat     raced           9696      31228    3.21  8.6e-16  
+      3284  2^2.821          flat     raced          17755      26769    1.47  8.5e-16  
+      3285  3^2.5.73         flat     raced           9151      24857    2.71  8.1e-16  
+      3286  2.31.53          flat     raced          11729      39316    3.35  6.6e-16  
+      3287  19.173           flat     raced          14914      31327    2.10  8.6e-16  
+      3288  2^3.3.137        flat     raced          10741      22986    2.12  6.5e-16  
+      3291  3.1097           prime    raced          21537      29949    1.29  8.0e-16  bluestein
+      3292  2^2.823          flat     raced          24055      26808    1.11  1.2e-15  
+      3293  37.89            flat     raced          10490      37713    3.58  8.3e-16  
+      3294  2.3^3.61         flat     raced          11710      29297    2.47  7.0e-16  
+      3295  5.659            prime    raced          21523      28082    1.28  8.4e-16  bluestein
+      3296  2^5.103          flat     raced          10946      24181    2.17  8.4e-16  
+      3297  3.7.157          flat     raced          11747      20161    1.64  1.0e-15  
+      3298  2.17.97          flat     raced          10775      30019    2.71  7.5e-16  
+      3302  2.13.127         flat     raced          13888      20158    1.44  9.2e-16  
+      3303  3^2.367          prime    raced          21920      26478    1.06  7.0e-16  bluestein
+      3304  2^3.7.59         flat     raced          12207      28403    2.27  5.8e-16  
+      3305  5.661            flat     raced          17054      27996    1.63  7.6e-16  
+      3308  2^2.827          prime    raced          22656      26731    1.17  6.4e-16  bluestein
+      3309  3.1103           prime    raced          22079      29905    0.95  5.6e-16  flips differ 1.42x bluestein
+      3310  2.5.331          flat     raced          15141      28352    1.82  7.3e-16  
+      3314  2.1657           prime    raced          21428      34109    1.29  8.0e-16  bluestein
+      3316  2^2.829          flat     raced          14782      26994    1.79  8.4e-16  
+      3317  31.107           prime    raced          21512      36241    1.65  6.4e-16  bluestein
+      3318  2.3.7.79         flat     raced          11886      21447    1.78  8.8e-16  
+      3320  2^3.5.83         flat     raced          14542      23974    1.63  7.9e-16  
+      3322  2.11.151         flat     raced          13736      21868    1.59  8.0e-16  
+      3324  2^2.3.277        flat     raced          12519      24262    1.92  8.5e-16  
+      3326  2.1663           prime    raced          21800      34177    1.42  8.5e-16  bluestein
+      3327  3.1109           prime    raced          21291      29980    1.36  8.2e-16  bluestein
+      3333  3.11.101         flat     raced          12989      25297    1.91  9.2e-16  
+      3334  2.1667           prime    raced          21870      34196    1.56  7.8e-16  bluestein
+      3336  2^3.3.139        flat     raced          12060      29576    2.40  8.7e-16  
+      3337  47.71            flat     raced          11518      42707    3.62  7.6e-16  
+      3338  2.1669           prime    raced          21957      34097    1.55  7.4e-16  bluestein
+      3339  3^2.7.53         flat     raced           9547      27505    2.83  7.1e-16  
+      3340  2^2.5.167        prime    raced          23020      33040    1.24  7.4e-16  bluestein
+      3341  13.257           flat     raced          12148      28076    2.18  6.8e-16  
+      3342  2.3.557          prime    raced          21578      31073    1.42  6.8e-16  bluestein
+      3345  3.5.223          flat     raced          15315      24361    1.55  7.9e-16  
+      3346  2.7.239          flat     raced          14030      22503    1.57  8.7e-16  
+      3349  17.197           flat     raced          10943      30053    2.67  6.8e-16  
+      3350  2.5^2.67         flat     raced          11084      31591    2.80  6.0e-16  
+      3351  3.1117           prime    raced          22589      29959    1.32  7.0e-16  bluestein
+      3352  2^3.419          flat     raced          12340      24832    1.90  7.8e-16  
+      3353  7.479            prime    raced          21523      23558    1.07  4.4e-16  bluestein
+      3355  5.11.61          flat     raced          10137      30235    2.98  6.8e-16  
+      3356  2^2.839          prime    raced          22597      27705    1.21  5.9e-16  bluestein
+      3357  3^2.373          flat     raced          17221      26623    1.53  9.2e-16  
+      3358  2.23.73          flat     raced          11404      34176    2.98  7.3e-16  
+      3363  3.19.59          flat     raced          14416      31383    2.16  6.6e-16  
+      3365  5.673            flat     raced          18166      27985    1.51  8.0e-16  
+      3368  2^3.421          flat     raced          12325      24837    1.73  9.6e-16  
+      3369  3.1123           prime    raced          21904      30342    1.38  5.9e-16  bluestein
+      3370  2.5.337          flat     raced          15161      28359    1.85  7.5e-16  
+      3372  2^2.3.281        flat     raced          10364      24364    2.33  6.4e-16  
+      3374  2.7.241          flat     raced          13858      28899    1.76  6.8e-16  
+      3376  2^4.211          flat     raced          11061      24061    2.12  8.9e-16  
+      3377  11.307           flat     raced          15259      30367    1.45  1.1e-15  flips differ 1.38x
+      3378  2.3.563          prime    raced          20898      32781    1.52  7.1e-16  bluestein
+      3379  31.109           flat     raced          14695      43400    2.79  8.2e-16  
+      3382  2.19.89          flat     raced          11941      32116    2.56  7.5e-16  
+      3383  17.199           flat     raced          12753      30352    2.31  9.6e-16  
+      3385  5.677            flat     raced          17818      26970    1.49  1.3e-15  
+      3386  2.1693           prime    raced          20861      28888    1.30  6.7e-16  bluestein
+      3387  3.1129           prime    raced          21191      26239    1.20  7.4e-16  bluestein
+      3390  2.3.5.113        flat     raced          11985      28830    2.37  6.1e-16  
+      3392  2^6.53           flat     raced           8776      27710    3.15  7.6e-16  
+      3394  2.1697           prime    raced          20647      27899    1.35  7.9e-16  bluestein
+      3395  5.7.97           flat     raced          10817      25244    2.25  6.6e-16  
+      3396  2^2.3.283        flat     raced          16147      24222    1.47  7.3e-16  
+      3397  43.79            flat     raced          12213      40144    3.28  9.3e-16  
+      3398  2.1699           prime    raced          20953      28312    1.32  7.9e-16  bluestein
+      3399  3.11.103         flat     raced          12005      25828    2.09  8.8e-16  
+      3401  19.179           prime    raced          21132      31826    1.50  6.8e-16  bluestein
+      3403  41.83            flat     raced          17191      41984    2.40  6.6e-16  
+      3405  3.5.227          prime    raced          20727      23964    1.15  6.9e-16  bluestein
+      3406  2.13.131         flat     raced          12064      26294    2.08  1.1e-15  
+      3408  2^4.3.71         flat     raced           8655      23154    2.66  6.4e-16  
+      3409  7.487            flat     raced          18838      25667    1.34  8.3e-16  
+      3411  3^2.379          flat     raced          15689      22166    1.39  8.6e-16  
+      3412  2^2.853          flat     raced          22385      27457    1.21  1.0e-15  
+      3414  2.3.569          prime    raced          20722      24823    1.20  6.9e-16  bluestein
+      3415  5.683            prime    raced          21156      27017    1.22  7.6e-16  bluestein
+      3416  2^3.7.61         flat     raced           9745      30152    2.68  6.5e-16  
+      3417  3.17.67          flat     raced          10910      39637    3.60  9.3e-16  
+      3418  2.1709           prime    raced          20611      28769    1.26  7.1e-16  bluestein
+      3419  13.263           prime    raced          21218      27569    1.16  7.1e-16  bluestein
+      3421  11.311           flat     raced          15119      30814    1.99  8.0e-16  
+      3422  2.29.59          flat     raced          15495      35263    2.18  8.6e-16  
+      3423  3.7.163          flat     raced          14097      25652    1.81  8.7e-16  
+      3424  2^5.107          flat     raced          19925      24735    1.19  1.2e-15  
+      3425  5^2.137          flat     raced          11211      26067    2.19  8.3e-16  
+      3426  2.3.571          flat     raced          21519      24850    1.12  9.2e-16  
+      3427  23.149           flat     raced          14443      35009    2.41  7.7e-16  
+      3428  2^2.857          prime    raced          20899      27475    1.30  6.4e-16  bluestein
+      3429  3^3.127          flat     raced          12943      21324    1.64  1.1e-15  
+      3431  47.73            flat     raced          11473      45932    3.94  6.4e-16  
+      3434  2.17.101         flat     raced          14767      33351    2.17  8.9e-16  
+      3435  3.5.229          flat     raced          13437      23896    1.74  7.5e-16  
+      3436  2^2.859          flat     raced          14027      27232    1.86  1.2e-15  
+      3437  7.491            flat     raced          14335      25976    1.70  7.6e-16  
+      3438  2.3^2.191        flat     raced          13737      20621    1.48  8.9e-16  
+      3439  19.181           flat     raced          12264      37599    2.82  8.1e-16  
+      3442  2.1721           prime    raced          20929      29034    1.37  6.5e-16  bluestein
+      3443  11.313           flat     raced          13042      30647    2.08  8.2e-16  
+      3445  5.13.53          flat     raced          10127      28012    2.69  7.9e-16  
+      3446  2.1723           prime    raced          20704      28060    1.31  7.9e-16  bluestein
+      3447  3^2.383          prime    raced          20841      22518    1.02  5.7e-16  bluestein
+      3448  2^3.431          flat     raced          15679      25116    1.54  7.0e-16  
+      3452  2^2.863          prime    raced          20837      27012    1.28  7.1e-16  bluestein
+      3453  3.1151           prime    raced          20723      26632    1.28  8.6e-16  bluestein
+      3454  2.11.157         flat     raced          13448      22260    1.64  7.6e-16  
+      3455  5.691            flat     raced          23324      26985    1.16  7.8e-16  
+      3459  3.1153           prime    raced          20133      28052    1.39  6.4e-16  bluestein
+      3460  2^2.5.173        flat     raced          14010      24364    1.71  6.7e-16  
+      3462  2.3.577          flat     raced          18454      31724    1.47  7.6e-16  
+      3464  2^3.433          flat     raced          14254      27361    1.69  7.4e-16  
+      3466  2.1733           prime    raced          20474      30088    1.46  6.5e-16  bluestein
+      3470  2.5.347          prime    raced          20222      24468    1.20  6.9e-16  bluestein
+      3471  3.13.89          flat     raced          10888      24755    2.26  6.6e-16  
+      3473  23.151           flat     raced          13737      32614    2.35  8.2e-16  
+      3474  2.3^2.193        flat     raced          12683      22147    1.67  7.6e-16  
+      3475  5^2.139          flat     raced          12889      23867    1.80  8.5e-16  
+      3476  2^2.11.79        flat     raced          11055      23411    2.11  9.7e-16  
+      3477  3.19.61          flat     raced          11419      39640    3.31  6.3e-16  
+      3479  7^2.71           flat     raced           9836      25954    2.60  6.9e-16  
+      3481  59^2             prime    raced          20269      41441    1.82  6.7e-16  bluestein
+      3482  2.1741           prime    raced          20201      30269    1.35  5.9e-16  bluestein
+      3484  2^2.13.67        flat     raced          10418      28574    2.72  8.9e-16  
+      3486  2.3.7.83         flat     raced          17751      25686    1.44  7.1e-16  
+      3487  11.317           prime    raced          20267      22486    1.10  6.0e-16  bluestein
+      3488  2^5.109          flat     raced          14941      30850    1.95  7.7e-16  
+      3489  3.1163           prime    raced          20230      28211    1.16  6.1e-16  bluestein
+      3490  2.5.349          flat     raced          18215      24699    1.35  7.9e-16  
+      3492  2^2.3^2.97       flat     raced           9833      25504    2.52  5.9e-16  
+      3493  7.499            prime    raced          20251      25439    1.25  5.6e-16  bluestein
+      3494  2.1747           prime    raced          20360      30024    1.47  6.4e-16  bluestein
+      3495  3.5.233          flat     raced          14677      23848    1.42  7.1e-16  
+      3497  13.269           prime    raced          20243      27902    1.37  9.2e-16  bluestein
+      3498  2.3.11.53        flat     raced          11758      28121    2.39  6.6e-16  
+      3501  3^2.389          prime    raced          20245      25215    1.23  6.4e-16  bluestein
+      3502  2.17.103         flat     raced          13197      33643    2.50  1.1e-15  
+      3503  31.113           flat     raced          11135      44129    3.94  6.2e-16  
+      3504  2^4.3.73         flat     raced           8797      26247    2.95  8.4e-16  
+      3505  5.701            flat     raced          20056      26536    1.29  8.0e-16  
+      3506  2.1753           prime    raced          20370      29976    1.46  6.0e-16  bluestein
+      3507  3.7.167          prime    raced          20235      25463    1.24  6.3e-16  bluestein
+      3508  2^2.877          prime    raced          20229      29045    1.43  6.8e-16  bluestein
+      3512  2^3.439          prime    raced          20177      27519    1.35  6.9e-16  bluestein
+      3513  3.1171           prime    raced          20247      28367    1.40  7.2e-16  bluestein
+      3514  2.7.251          flat     raced          15585      21125    1.34  9.5e-16  
+      3516  2^2.3.293        flat     raced          18755      24522    1.30  1.3e-15  
+      3518  2.1759           prime    raced          20258      30095    1.48  5.7e-16  bluestein
+      3521  7.503            prime    raced          20487      22220    0.70  5.6e-16  flips differ 1.58x bluestein
+      3522  2.3.587          prime    raced          20456      27147    1.31  7.1e-16  bluestein
+      3523  13.271           flat     raced          14588      27422    1.80  1.2e-15  
+      3524  2^2.881          flat     raced          13671      29286    2.09  7.5e-16  
+      3530  2.5.353          flat     raced          14763      24935    1.67  7.2e-16  
+      3531  3.11.107         prime    raced          20301      26042    1.27  6.7e-16  bluestein
+      3532  2^2.883          flat     raced          19646      29198    1.46  1.1e-15  
+      3535  5.7.101          flat     raced          14463      26410    1.80  8.5e-16  
+      3537  3^3.131          flat     raced          11892      26207    2.20  8.8e-16  
+      3538  2.29.61          flat     raced          12446      44071    3.53  7.0e-16  
+      3540  2^2.3.5.59       flat     raced          13143      28815    2.18  5.8e-16  
+      3543  3.1181           prime    raced          20290      28162    1.32  5.6e-16  bluestein
+      3544  2^3.443          flat     raced          14452      27366    1.86  1.2e-15  
+      3545  5.709            prime    raced          20178      26745    1.31  7.9e-16  bluestein
+      3546  2.3^2.197        flat     raced          12491      22187    1.74  6.3e-16  
+      3548  2^2.887          prime    raced          20709      29202    1.41  6.0e-16  bluestein
+      3550  2.5^2.71         flat     raced          11666      24622    2.09  6.5e-16  
+      3551  53.67            prime    raced          20235      57175    2.78  4.9e-16  bluestein
+      3554  2.1777           prime    raced          20270      29973    1.32  6.4e-16  bluestein
+      3555  3^2.5.79         flat     raced          10836      23400    2.13  8.6e-16  
+      3556  2^2.7.127        flat     raced          11747      20411    1.56  7.1e-16  
+      3558  2.3.593          flat     raced          21739      27708    1.26  8.0e-16  
+      3560  2^3.5.89         flat     raced           9606      24077    2.47  9.2e-16  
+      3561  3.1187           prime    raced          20329      28116    1.36  6.2e-16  bluestein
+      3562  2.13.137         flat     raced          12608      25990    1.94  7.4e-16  
+      3563  7.509            prime    raced          20294      21762    1.05  6.6e-16  bluestein
+      3566  2.1783           prime    raced          20273      30205    1.48  5.5e-16  bluestein
+      3568  2^4.223          flat     raced          14433      26143    1.72  6.6e-16  
+      3569  43.83            flat     raced          18173      45119    2.37  8.5e-16  
+      3573  3^2.397          flat     raced          13893      25291    1.81  7.8e-16  
+      3574  2.1787           prime    raced          20407      30019    1.34  6.9e-16  bluestein
+      3576  2^3.3.149        flat     raced          14467      26406    1.81  8.6e-16  
+      3577  7^2.73           flat     raced          10241      27852    2.70  7.6e-16  
+      3578  2.1789           prime    raced          20272      30320    1.48  6.7e-16  bluestein
+      3579  3.1193           prime    raced          20180      28229    1.39  7.4e-16  bluestein
+      3580  2^2.5.179        flat     raced          19592      24536    1.16  8.5e-16  
+      3582  2.3^2.199        flat     raced          15140      22354    1.42  8.3e-16  
+      3585  3.5.239          flat     raced          13461      24133    1.78  7.9e-16  
+      3586  2.11.163         flat     raced          15260      27950    1.82  7.3e-16  
+      3587  17.211           flat     raced          13378      33515    2.38  8.5e-16  
+      3589  37.97            flat     raced          12093      43096    3.52  9.0e-16  
+      3590  2.5.359          prime    raced          21676      24670    1.11  5.0e-16  bluestein
+      3592  2^3.449          flat     raced          11905      27323    2.26  6.5e-16  
+      3594  2.3.599          prime    raced          21606      27136    1.23  6.5e-16  bluestein
+      3595  5.719            prime    raced          21652      26297    0.98  5.8e-16  bluestein
+      3597  3.11.109         flat     raced          14772      32922    2.21  8.1e-16  
+      3598  2.7.257          flat     raced          15011      28588    1.87  6.7e-16  
+      3599  59.61            prime    raced          21608      50597    2.30  5.9e-16  bluestein
+      3601  13.277           flat     raced          15633      27792    1.76  9.6e-16  
+      3602  2.1801           prime    raced          21720      38771    1.74  7.2e-16  bluestein
+      3603  3.1201           prime    raced          22706      32769    1.43  7.5e-16  bluestein
+      3604  2^2.17.53        flat     raced          10569      36097    3.37  9.3e-16  
+      3605  5.7.103          flat     raced          11924      27390    2.28  9.0e-16  
+      3606  2.3.601          flat     raced          21851      34296    1.56  7.5e-16  
+      3609  3^2.401          flat     raced          16212      27758    1.65  7.9e-16  
+      3611  23.157           flat     raced          12795      34150    2.67  8.1e-16  
+      3614  2.13.139         flat     raced          14969      26481    1.72  8.7e-16  
+      3615  3.5.241          flat     raced          12463      30673    2.40  9.2e-16  
+      3616  2^5.113          flat     raced          10242      33400    3.20  6.4e-16  
+      3618  2.3^3.67         flat     raced          12096      28638    2.29  6.1e-16  
+      3620  2^2.5.181        flat     raced          11345      30385    2.66  6.2e-16  
+      3621  3.17.71          flat     raced          11235      34214    2.99  6.4e-16  
+      3622  2.1811           prime    raced          22222      38344    1.23  8.0e-16  flips differ 1.40x bluestein
+      3624  2^3.3.151        flat     raced          13529      23059    1.68  8.6e-16  
+      3628  2^2.907          prime    raced          22065      36097    1.62  6.5e-16  bluestein
+      3629  19.191           flat     raced          13633      30864    2.22  6.6e-16  
+      3632  2^4.227          flat     raced          20851      25545    1.22  6.6e-16  
+      3633  3.7.173          flat     raced          16388      25772    1.51  8.7e-16  
+      3634  2.23.79          flat     raced          12327      34550    2.70  8.5e-16  
+      3635  5.727            flat     raced          19640      34082    1.73  7.2e-16  
+      3636  2^2.3^2.101      flat     raced          12718      26832    2.08  9.1e-16  
+      3638  2.17.107         flat     raced          21726      34176    1.55  1.1e-15  
+      3639  3.1213           prime    raced          22109      32748    1.47  5.4e-16  bluestein
+      3641  11.331           flat     raced          13763      32374    2.34  8.6e-16  
+      3642  2.3.607          prime    raced          21797      33952    1.54  6.5e-16  bluestein
+      3644  2^2.911          flat     raced          14421      35865    2.46  8.4e-16  
+      3646  2.1823           prime    raced          21899      38888    1.75  7.3e-16  bluestein
+      3647  7.521            flat     raced          15893      29220    1.83  9.8e-16  
+      3649  41.89            flat     raced          12352      43657    3.25  8.4e-16  
+      3650  2.5^2.73         flat     raced          11215      25878    2.30  7.3e-16  
+      3651  3.1217           prime    raced          21665      32372    1.46  5.9e-16  bluestein
+      3652  2^2.11.83        flat     raced          16709      27886    1.65  6.3e-16  
+      3653  13.281           flat     raced          12737      27578    2.11  8.5e-16  
+      3656  2^3.457          flat     raced          13659      26994    1.94  8.8e-16  
+      3657  3.23.53          flat     raced          12819      40098    3.11  8.9e-16  
+      3658  2.31.59          flat     raced          16356      39699    2.36  8.6e-16  
+      3660  2^2.3.5.61       flat     raced          10035      31265    3.11  5.9e-16  
+      3661  7.523            flat     raced          21518      29390    1.36  8.8e-16  
+      3662  2.1831           prime    raced          22466      35697    1.57  6.5e-16  bluestein
+      3664  2^4.229          flat     raced          12486      25445    1.97  8.8e-16  
+      3665  5.733            prime    raced          21734      31250    1.22  5.7e-16  bluestein
+      3667  19.193           flat     raced          13066      34131    2.57  7.5e-16  
+      3668  2^2.7.131        flat     raced          10402      26750    2.53  8.0e-16  
+      3669  3.1223           prime    raced          21560      33995    1.52  5.6e-16  bluestein
+      3670  2.5.367          prime    raced          28123      38025    1.12  6.5e-16  bluestein
+      3674  2.11.167         prime    raced          22690      28445    1.23  6.3e-16  bluestein
+      3676  2^2.919          flat     raced          21052      35919    1.70  1.0e-15  
+      3678  2.3.613          flat     raced          20784      31206    1.46  1.0e-15  
+      3679  13.283           flat     raced          19961      27736    1.37  1.0e-15  
+      3681  3^2.409          flat     raced          16489      28567    1.72  8.9e-16  
+      3682  2.7.263          flat     raced          25476      29539    1.15  1.3e-15  
+      3683  29.127           flat     raced          14141      34568    2.38  9.3e-16  
+      3684  2^2.3.307        flat     raced          14085      32373    2.28  8.9e-16  
+      3685  5.11.67          flat     raced          11148      30028    2.68  7.1e-16  
+      3686  2.19.97          flat     raced          13470      37719    2.69  8.0e-16  
+      3687  3.1229           prime    raced          22192      32414    1.45  6.1e-16  bluestein
+      3688  2^3.461          flat     raced          13778      26650    1.90  7.4e-16  
+      3692  2^2.13.71        flat     raced          10748      26637    2.42  6.0e-16  
+      3693  3.1231           prime    raced          21909      32573    1.47  6.3e-16  bluestein
+      3694  2.1847           prime    raced          21711      35554    1.62  6.8e-16  bluestein
+      3695  5.739            prime    raced          22172      31200    1.40  6.4e-16  bluestein
+      3699  3^3.137          flat     raced          13201      26446    1.97  8.9e-16  
+      3702  2.3.617          flat     raced          19736      31996    1.60  7.8e-16  
+      3704  2^3.463          flat     raced          14402      26762    1.75  7.8e-16  
+      3706  2.17.109         flat     raced          14915      41768    2.44  7.0e-16  
+      3707  11.337           flat     raced          14430      32562    1.94  8.2e-16  
+      3708  2^2.3^2.103      flat     raced          11475      26439    2.29  9.5e-16  
+      3710  2.5.7.53         flat     raced          12898      29530    2.27  7.1e-16  
+      3711  3.1237           prime    raced          22735      32467    1.37  6.3e-16  bluestein
+      3713  47.79            flat     raced          13381      45879    3.31  8.3e-16  
+      3714  2.3.619          prime    raced          21808      31455    1.40  6.4e-16  bluestein
+      3715  5.743            prime    raced          22214      31372    1.38  6.5e-16  bluestein
+      3716  2^2.929          flat     raced          19129      35914    1.72  8.3e-16  
+      3717  3^2.7.59         flat     raced          14938      26344    1.31  7.6e-16  flips differ 1.37x
+      3721  61^2             prime    raced          23154      60812    2.11  5.0e-16  bluestein
+      3722  2.1861           prime    raced          22245      36580    1.59  7.0e-16  bluestein
+      3723  3.17.73          flat     raced          11450      35520    3.06  7.7e-16  
+      3725  5^2.149          flat     raced          15875      27894    1.74  7.5e-16  
+      3728  2^4.233          flat     raced          13911      25666    1.82  7.6e-16  
+      3729  3.11.113         flat     raced          11983      33384    2.78  5.7e-16  
+      3730  2.5.373          flat     raced          19556      29541    1.50  9.7e-16  
+      3732  2^2.3.311        flat     raced          15067      32650    2.15  1.0e-15  
+      3734  2.1867           prime    raced          21647      34988    1.43  6.8e-16  bluestein
+      3735  3^2.5.83         flat     raced          17117      28247    1.61  8.4e-16  
+      3736  2^3.467          prime    raced          22217      26817    1.17  5.9e-16  bluestein
+      3737  37.101           flat     raced          15172      44522    2.90  9.8e-16  
+      3738  2.3.7.89         flat     raced          12301      26114    2.06  8.1e-16  
+      3742  2.1871           prime    raced          22276      36664    1.62  6.0e-16  bluestein
+      3743  19.197           flat     raced          12406      34644    2.58  5.8e-16  
+      3745  5.7.107          prime    raced          21804      26634    1.19  6.0e-16  bluestein
+      3746  2.1873           prime    raced          22353      36499    1.35  7.2e-16  bluestein
+      3747  3.1249           prime    raced          22447      35677    0.95  5.5e-16  flips differ 1.81x bluestein
+      3748  2^2.937          flat     raced          14850      46802    2.94  1.0e-15  
+      3749  23.163           flat     raced          15559      39222    2.50  8.5e-16  
+      3752  2^3.7.67         flat     raced          10485      29525    2.23  7.0e-16  flips differ 1.27x
+      3753  3^3.139          flat     raced          14845      26151    1.74  8.1e-16  
+      3754  2.1877           prime    raced          22228      30052    1.14  5.9e-16  bluestein
+      3755  5.751            flat     raced          26042      27218    1.04  7.5e-16  
+      3756  2^2.3.313        flat     raced          12520      32403    2.55  9.3e-16  
+      3758  2.1879           prime    raced          21916      29962    1.35  6.5e-16  bluestein
+      3759  3.7.179          prime    raced          22478      26069    1.14  7.2e-16  bluestein
+      3763  53.71            prime    raced          22083      51168    2.29  7.0e-16  bluestein
+      3764  2^2.941          flat     raced          21398      29238    1.34  7.1e-16  
+      3765  3.5.251          flat     raced          15117      22803    1.49  7.3e-16  
+      3766  2.7.269          prime    raced          23375      29153    1.07  6.0e-16  bluestein
+      3768  2^3.3.157        flat     raced          12719      25029    1.97  9.6e-16  
+      3771  3^2.419          flat     raced          17062      28767    1.63  9.5e-16  
+      3775  5^2.151          flat     raced          14553      25286    1.67  9.7e-16  
+      3776  2^6.59           flat     raced          14306      25445    1.60  7.2e-16  
+      3777  3.1259           prime    raced          22900      29474    1.26  5.6e-16  bluestein
+      3778  2.1889           prime    raced          22215      29861    1.33  5.8e-16  bluestein
+      3781  19.199           flat     raced          14195      34812    2.44  7.5e-16  
+      3782  2.31.61          flat     raced          13730      49457    3.57  6.4e-16  
+      3783  3.13.97          flat     raced          12445      29155    2.27  7.2e-16  
+      3785  5.757            flat     raced          22477      27358    1.16  9.6e-16  
+      3786  2.3.631          flat     raced          23985      25423    1.05  7.9e-16  
+      3787  7.541            flat     raced          19633      36501    1.85  8.5e-16  
+      3788  2^2.947          flat     raced          21136      28957    1.37  8.9e-16  
+      3789  3^2.421          flat     raced          16931      28391    1.65  8.0e-16  
+      3790  2.5.379          flat     raced          19346      24517    1.26  7.4e-16  
+      3791  17.223           flat     raced          17721      36301    2.05  8.2e-16  
+      3792  2^4.3.79         flat     raced          10521      25790    2.43  8.5e-16  
+      3794  2.7.271          flat     raced          17403      29132    1.64  9.3e-16  
+      3796  2^2.13.73        flat     raced          10890      29566    2.71  7.6e-16  
+      3798  2.3^2.211        flat     raced          15736      26876    1.70  7.8e-16  
+      3799  29.131           flat     raced          12886      41526    3.21  1.2e-15  
+      3801  3.7.181          flat     raced          14377      32124    2.17  7.3e-16  
+      3802  2.1901           prime    raced          22350      29646    1.29  5.8e-16  bluestein
+      3804  2^2.3.317        flat     raced          22514      23518    1.04  1.4e-15  
+      3805  5.761            flat     raced          21221      27227    1.17  6.6e-16  
+      3806  2.11.173         flat     raced          18607      28159    1.50  7.5e-16  
+      3809  13.293           prime    raced          22220      27855    1.25  5.7e-16  bluestein
+      3810  2.3.5.127        flat     raced          14938      21957    1.46  9.0e-16  
+      3811  37.103           flat     raced          14095      45082    3.19  9.9e-16  
+      3812  2^2.953          flat     raced          16346      28932    1.74  9.1e-16  
+      3814  2.1907           prime    raced          22249      29676    1.32  5.9e-16  bluestein
+      3815  5.7.109          flat     raced          14473      33856    1.82  7.2e-16  flips differ 1.29x
+      3816  2^3.3^2.53       flat     raced          10724      29768    2.76  8.2e-16  
+      3817  11.347           prime    raced          22255      28294    1.23  6.2e-16  bluestein
+      3818  2.23.83          flat     raced          18609      39324    2.11  7.7e-16  
+      3819  3.19.67          flat     raced          12417      40021    3.21  8.2e-16  
+      3820  2^2.5.191        flat     raced          12386      22734    1.55  8.3e-16  
+      3824  2^4.239          flat     raced          13557      25909    1.85  7.9e-16  
+      3826  2.1913           prime    raced          22546      30214    1.31  7.9e-16  bluestein
+      3827  43.89            flat     raced          13117      46774    3.51  8.5e-16  
+      3829  7.547            flat     raced          19126      36317    1.87  9.8e-16  
+      3830  2.5.383          prime    raced          21755      24456    1.10  6.5e-16  bluestein
+      3831  3.1277           prime    raced          22283      29457    1.28  6.6e-16  bluestein
+      3832  2^3.479          prime    raced          21660      26793    1.21  5.7e-16  bluestein
+      3834  2.3^3.71         flat     raced          13549      28057    2.02  6.9e-16  
+      3835  5.13.59          flat     raced          16260      26605    1.62  8.3e-16  
+      3836  2^2.7.137        flat     raced          11713      26931    2.02  7.9e-16  
+      3837  3.1279           prime    raced          21702      29847    1.33  6.4e-16  bluestein
+      3838  2.19.101         flat     raced          17994      37891    1.99  8.3e-16  
+      3839  11.349           flat     raced          18349      28441    1.55  8.2e-16  
+      3841  23.167           prime    raced          22673      39233    1.69  5.9e-16  bluestein
+      3842  2.17.113         flat     raced          12169      42201    3.42  6.9e-16  
+      3843  3^2.7.61         flat     raced          11448      34361    2.97  6.3e-16  
+      3845  5.769            flat     raced          19332      28789    1.42  8.4e-16  
+      3846  2.3.641          flat     raced          20851      34881    1.49  8.9e-16  
+      3849  3.1283           prime    raced          21653      35359    1.54  5.7e-16  bluestein
+      3852  2^2.3^2.107      flat     raced          20773      26678    1.27  1.2e-15  
+      3855  3.5.257          flat     raced          13810      32532    2.33  7.2e-16  
+      3856  2^4.241          flat     raced          11484      32349    2.63  8.2e-16  
+      3858  2.3.643          prime    raced          21779      31537    1.43  6.2e-16  bluestein
+      3859  17.227           prime    raced          22675      35924    1.54  4.7e-16  bluestein
+      3860  2^2.5.193        flat     raced          11629      26560    2.23  6.4e-16  
+      3862  2.1931           prime    raced          21747      35491    1.31  8.6e-16  bluestein
+      3865  5.773            prime    raced          22101      29208    1.31  6.4e-16  bluestein
+      3866  2.1933           prime    raced          22189      35352    1.58  6.4e-16  bluestein
+      3867  3.1289           prime    raced          21835      33654    1.52  7.7e-16  bluestein
+      3868  2^2.967          flat     raced          21840      33882    1.51  1.2e-15  
+      3869  53.73            prime    raced          22418      54582    2.35  7.3e-16  bluestein
+      3871  7^2.79           flat     raced          11839      26975    2.25  9.3e-16  
+      3873  3.1291           prime    raced          26347      33675    1.01  6.4e-16  flips differ 1.27x bluestein
+      3874  2.13.149         flat     raced          17166      30446    1.72  7.7e-16  
+      3878  2.7.277          flat     raced          18136      28672    1.52  8.2e-16  
+      3879  3^2.431          flat     raced          21195      28712    1.35  8.7e-16  
+      3880  2^3.5.97         flat     raced          11179      29076    2.56  5.7e-16  
+      3882  2.3.647          prime    raced          21697      31147    1.41  6.8e-16  bluestein
+      3883  11.353           flat     raced          14190      28527    1.87  6.9e-16  
+      3884  2^2.971          prime    raced          22232      34093    1.51  8.2e-16  bluestein
+      3886  2.29.67          flat     raced          15231      45366    2.96  8.7e-16  
+      3890  2.5.389          prime    raced          22344      27801    1.24  4.9e-16  bluestein
+      3891  3.1297           prime    raced          22327      34594    1.51  7.3e-16  bluestein
+      3892  2^2.7.139        flat     raced          13567      34137    2.48  1.1e-15  
+      3893  17.229           flat     raced          15967      36030    2.17  7.5e-16  
+      3894  2.3.11.59        flat     raced          18171      26694    1.41  6.8e-16  
+      3896  2^3.487          flat     raced          16855      29208    1.70  1.0e-15  
+      3897  3^2.433          flat     raced          18385      31213    1.69  7.6e-16  
+      3898  2.1949           prime    raced          21894      31826    1.44  6.7e-16  bluestein
+      3899  7.557            prime    raced          21752      36546    1.67  7.1e-16  bluestein
+      3901  47.83            flat     raced          20339      51118    2.50  7.3e-16  
+      3902  2.1951           prime    raced          22930      36444    1.40  6.4e-16  bluestein
+      3903  3.1301           prime    raced          21862      35869    1.60  6.7e-16  bluestein
+      3904  2^6.61           flat     raced          10670      34265    3.21  4.2e-16  
+      3905  5.11.71          flat     raced          11490      28420    2.46  6.6e-16  
+      3908  2^2.977          prime    raced          22697      30731    1.34  7.6e-16  bluestein
+      3909  3.1303           prime    raced          22354      34799    1.53  6.3e-16  bluestein
+      3912  2^3.3.163        flat     raced          15335      29337    1.88  9.7e-16  
+      3914  2.19.103         flat     raced          17561      38306    1.98  9.3e-16  
+      3916  2^2.11.89        flat     raced          11724      28602    2.39  7.2e-16  
+      3918  2.3.653          prime    raced          21696      33689    1.50  6.7e-16  bluestein
+      3921  3.1307           prime    raced          22287      34757    1.56  5.7e-16  bluestein
+      3922  2.37.53          flat     raced          13706      50001    3.60  8.1e-16  
+      3924  2^2.3^2.109      flat     raced          14404      34680    2.08  8.7e-16  
+      3925  5^2.157          flat     raced          13371      24245    1.75  8.5e-16  
+      3926  2.13.151         flat     raced          16522      26213    1.58  9.1e-16  
+      3928  2^3.491          flat     raced          12231      28891    2.31  6.0e-16  
+      3930  2.3.5.131        flat     raced          13389      28819    2.12  9.2e-16  
+      3932  2^2.983          prime    raced          22215      30575    1.36  5.2e-16  bluestein
+      3934  2.7.281          flat     raced          16165      28903    1.76  5.9e-16  
+      3935  5.787            prime    raced          22920      31463    1.32  5.4e-16  bluestein
+      3937  31.127           flat     raced          15176      38812    2.55  8.8e-16  
+      3938  2.11.179         prime    raced          22161      28486    1.09  5.8e-16  bluestein
+      3939  3.13.101         flat     raced          15562      30397    1.87  7.9e-16  
+      3940  2^2.5.197        flat     raced          11765      25002    2.10  6.3e-16  
+      3941  7.563            prime    raced          22956      36834    1.59  6.2e-16  bluestein
+      3942  2.3^3.73         flat     raced          13350      29792    2.22  6.7e-16  
+      3945  3.5.263          prime    raced          21971      31105    1.39  5.6e-16  bluestein
+      3946  2.1973           prime    raced          21741      32043    1.45  6.5e-16  bluestein
+      3949  11.359           prime    raced          22170      29107    1.29  6.0e-16  bluestein
+      3950  2.5^2.79         flat     raced          13623      25485    1.77  9.9e-16  
+      3951  3^2.439          prime    raced          22841      31679    1.36  6.8e-16  bluestein
+      3953  59.67            prime    raced          32483      60235    1.75  5.9e-16  bluestein
+      3954  2.3.659          prime    raced          21868      33459    1.52  5.9e-16  bluestein
+      3955  5.7.113          flat     raced          11671      34240    2.86  6.0e-16  
+      3957  3.1319           prime    raced          22361      34750    1.52  5.8e-16  bluestein
+      3958  2.1979           prime    raced          21945      31889    1.31  7.0e-16  bluestein
+      3959  37.107           prime    raced          22151      45910    2.06  5.8e-16  bluestein
+      3961  17.233           flat     raced          19642      36088    1.66  7.7e-16  
+      3962  2.7.283          flat     raced          22047      28788    1.30  9.7e-16  
+      3963  3.1321           prime    raced          21740      34721    1.56  6.0e-16  bluestein
+      3964  2^2.991          flat     raced          16291      30780    1.86  8.6e-16  
+      3965  5.13.61          flat     raced          12595      36124    2.77  6.5e-16  
+      3966  2.3.661          flat     raced          22112      33514    1.51  7.8e-16  
+      3970  2.5.397          flat     raced          16753      28037    1.66  8.1e-16  
+      3972  2^2.3.331        flat     raced          13882      34256    2.40  7.2e-16  
+      3973  29.137           flat     raced          14076      42167    2.87  8.4e-16  
+      3974  2.1987           prime    raced          22989      32049    1.37  5.8e-16  bluestein
+      3975  3.5^2.53         flat     raced          11421      31870    2.78  6.7e-16  
+      3976  2^3.7.71         flat     raced          10898      27408    2.43  6.1e-16  
+      3977  41.97            flat     raced          13949      49586    3.31  7.2e-16  
+      3979  23.173           flat     raced          18020      39825    2.20  7.6e-16  
+      3980  2^2.5.199        flat     raced          12918      25063    1.93  8.1e-16  
+      3981  3.1327           prime    raced          22967      34825    1.50  6.4e-16  bluestein
+      3982  2.11.181         flat     raced          15463      34882    2.18  8.1e-16  
+      3983  7.569            prime    raced          21927      30371    1.36  6.5e-16  bluestein
+      3984  2^4.3.83         flat     raced          16983      29055    1.71  8.1e-16  
+      3985  5.797            prime    raced          21785      29140    1.33  5.7e-16  bluestein
+      3986  2.1993           prime    raced          22766      32331    1.38  5.6e-16  bluestein
+      3987  3^2.443          flat     raced          18636      31362    1.64  1.2e-15  
+      3988  2^2.997          prime    raced          22872      30423    1.28  6.8e-16  bluestein
+      3991  13.307           flat     raced          17564      38511    2.17  1.0e-15  
+      3992  2^3.499          prime    raced          22324      29076    1.30  7.0e-16  bluestein
+      3994  2.1997           prime    raced          21996      32010    1.45  5.1e-16  bluestein
+      3997  7.571            flat     raced          22255      29455    1.32  8.2e-16  
+      3998  2.1999           prime    raced          21787      32339    1.48  4.8e-16  bluestein
+      4005  3^2.5.89         flat     raced          11757      28019    1.91  8.8e-16  
+      4006  2.2003           prime    raced          21760      37423    1.71  5.7e-16  bluestein
+      4008  2^3.3.167        prime    raced          22005      29354    1.31  5.8e-16  bluestein
+      4009  19.211           flat     raced          15962      38306    2.38  9.7e-16  
+      4010  2.5.401          flat     raced          20431      30515    1.40  7.3e-16  
+      4011  3.7.191          flat     raced          14821      24030    1.55  9.2e-16  
+      4012  2^2.17.59        flat     raced          16535      35775    2.11  8.0e-16  
+      4014  2.3^2.223        flat     raced          19603      28969    1.47  8.8e-16  
+      4015  5.11.73          flat     raced          11478      30007    2.50  7.1e-16  
+      4016  2^4.251          flat     raced          14152      24144    1.69  8.5e-16  
+      4017  3.13.103         flat     raced          14488      30445    1.89  1.2e-15  
+      4020  2^2.3.5.67       flat     raced          10934      31220    2.84  7.2e-16  
+      4022  2.2011           prime    raced          23033      37452    1.62  6.6e-16  bluestein
+      4023  3^3.149          flat     raced          17382      28866    1.64  7.5e-16  
+      4024  2^3.503          prime    raced          22344      25151    0.87  5.6e-16  flips differ 1.29x bluestein
+      4026  2.3.11.61        flat     raced          14162      36399    2.55  6.5e-16  
+      4028  2^2.19.53        flat     raced          12600      41105    3.06  8.6e-16  
+      4029  3.17.79          flat     raced          13910      36636    2.58  9.1e-16  
+      4031  29.139           flat     raced          16190      42799    2.62  1.0e-15  
+      4033  37.109           flat     raced          17126      55055    2.84  9.1e-16  
+      4034  2.2017           prime    raced          21899      37561    1.69  6.5e-16  bluestein
+      4035  3.5.269          prime    raced          21958      30953    1.19  6.9e-16  bluestein
+      4036  2^2.1009         flat     raced          18774      40567    2.13  8.3e-16  
+      4037  11.367           prime    raced          22992      33745    1.46  7.4e-16  bluestein
+      4038  2.3.673          flat     raced          23781      33790    1.39  8.7e-16  
+      4039  7.577            flat     raced          17668      31736    1.58  8.8e-16  
+      4040  2^3.5.101        flat     raced          14036      29923    2.09  8.9e-16  
+      4041  3^2.449          flat     raced          16465      31416    1.89  7.7e-16  
+      4043  13.311           flat     raced          17751      38444    2.09  8.2e-16  
+      4044  2^2.3.337        flat     raced          14141      34352    2.37  9.7e-16  
+      4045  5.809            prime    raced          23178      34178    1.46  7.3e-16  bluestein
+      4047  3.19.71          flat     raced          13422      38710    2.88  7.3e-16  
+      4052  2^2.1013         flat     raced          19904      40386    2.01  9.7e-16  
+      4053  3.7.193          flat     raced          14731      26341    1.78  7.0e-16  
+      4054  2.2027           prime    raced          23069      32558    1.21  7.9e-16  flips differ 1.28x bluestein
+      4055  5.811            flat     raced          28499      33411    1.13  7.5e-16  
+      4058  2.2029           prime    raced          21811      29100    1.30  7.3e-16  bluestein
+      4061  31.131           flat     raced          13967      46004    3.27  1.0e-15  
+      4062  2.3.677          prime    raced          22329      32667    1.46  6.7e-16  bluestein
+      4063  17.239           flat     raced          15228      36392    2.33  8.3e-16  
+      4064  2^5.127          flat     raced          14188      24592    1.71  8.1e-16  
+      4065  3.5.271          flat     raced          17023      30918    1.81  9.1e-16  
+      4066  2.19.107         prime    raced          21699      39178    1.76  7.1e-16  bluestein
+      4067  7^2.83           flat     raced          19254      38746    1.98  6.9e-16  
+      4068  2^2.3^2.113      flat     raced          11476      34683    2.77  5.5e-16  
+      4069  13.313           flat     raced          15172      36370    2.39  9.9e-16  
+      4071  3.23.59          flat     raced          19024      39347    2.06  6.7e-16  
+      4072  2^3.509          prime    raced          22996      25521    1.06  6.4e-16  bluestein
+      4074  2.3.7.97         flat     raced          15217      30647    1.99  8.1e-16  
+      4075  5^2.163          flat     raced          16196      30383    1.85  6.9e-16  
+      4076  2^2.1019         prime    raced          23003      26763    1.16  6.2e-16  bluestein
+      4077  3^3.151          flat     raced          16521      26715    1.57  8.2e-16  
+      4078  2.2039           prime    raced          22368      29916    1.29  5.7e-16  bluestein
+      4081  7.11.53          flat     raced          12135      33061    2.66  7.8e-16  
+      4082  2.13.157         flat     raced          15535      27393    1.73  9.5e-16  
+      4083  3.1361           prime    raced          22457      34481    1.52  6.1e-16  bluestein
+      4084  2^2.1021         flat     raced          18240      26655    1.41  8.0e-16  
+      4086  2.3^2.227        prime    raced          22695      29225    1.25  5.5e-16  bluestein
+      4087  61.67            prime    raced          22912      68899    2.95  5.6e-16  bluestein
+      4088  2^3.7.73         flat     raced          10863      31045    2.85  7.7e-16  
+      4090  2.5.409          flat     raced          19256      31222    1.60  9.8e-16  
+      4094  2.23.89          flat     raced          14513      40610    2.77  8.5e-16  
 ```
 
 
 ## by route (worse of the two flips)
 ```
  route    cells   <0.8   <1.0    p10    med    p90   gmean
- flat      1020      1     10   1.34   1.98   3.08    1.99
- prime      542      2     25   1.09   1.29   1.62    1.31
- ALL       1562      3     35   1.16   1.63   2.82    1.72
+ flat      1412      1     10   1.36   1.99   3.06    2.00
+ prime      745      3     31   1.09   1.31   1.62    1.32
+ ALL       2157      4     41   1.17   1.64   2.81    1.73
 ```
 
 
@@ -1589,19 +2184,19 @@ control cell: 34 readings, 1.316..1.475 (a run is internally comparable when the
  32..127                3   1.68      0      0
  128..511             105   1.60      0      0
  512..2047            770   1.59     25      1
- 2048..3166           684   1.67     10      2
+ 2048..4094          1279   1.67     16      3
 ```
 
 
 ## by family
 ```
  family                                       cells median   <1.0  gmean
- flat                                          1020   1.98     10   1.99
- composite with a prime >= 53 (prime cell)      542   1.29     25   1.31
+ flat                                          1412   1.99     10   2.00
+ composite with a prime >= 53 (prime cell)      745   1.31     31   1.32
 ```
 
 
-flip agreement: our two readings more than 25% apart at 15 of 1562 cells.
+flip agreement: our two readings more than 25% apart at 29 of 2157 cells.
 
-worst 10: 2429 (prime 0.66), 1893 (flat 0.73), 2428 (prime 0.73), 753 (flat 0.81), 597 (flat 0.81), 2421 (flat 0.81), 579 (flat 0.83), 586 (prime 0.83), 694 (prime 0.85), 2319 (prime 0.87)
+worst 10: 2429 (prime 0.66), 3521 (prime 0.70), 1893 (flat 0.73), 2428 (prime 0.73), 753 (flat 0.81), 597 (flat 0.81), 2421 (flat 0.81), 579 (flat 0.83), 586 (prime 0.83), 694 (prime 0.85)
 best 5: 3149 (flat 4.40), 2479 (flat 4.30), 2747 (flat 4.27), 1943 (flat 4.21), 2077 (flat 4.19)

@@ -21,38 +21,40 @@ matrices from the csv by [`src/tools/plots/gen_3d_pow2.py`](../../src/tools/plot
 
 > **Contract:** complex-to-complex FP64, interleaved, natural order, out of place, K = 1  
 > **Cells:** every length N from 2 to 4,096: 4,095 transforms, no size skipped  
-> **Record:** [`c2c_1d_2_4096_fftw_20261013`](../../gauntlet/results/c2c_1d_2_4096_fftw_20261013/) (2026-10-13), every length's plan replayed from a scratch copy of the shipped wisdom; the 309 lengths missing from it raced at create in the run's own store
+> **Record:** [`c2c_1d_2_4096_fftw_20261013`](../../gauntlet/results/c2c_1d_2_4096_fftw_20261013/) (2026-10-13), every length's plan replayed from a scratch copy of the shipped wisdom, the 309 lengths missing from it raced at create in the run's own store; and [`rader_class_fftw_20261013`](../../gauntlet/results/rader_class_fftw_20261013/) (2026-10-13/14), the 2,157 composites with a prime factor of 53 or more re-raced cold after the Rader leaf, every plan raced at create with the leaf chain among the arms, drawn over the first record
 
 ![Throughput, VectorFFT vs FFTW, 1D c2c, every N from 2 to 4096](../../src/tools/plots/vectorfft-fftw-c2c.svg)
 
 One line per engine, one point per length (log scale: equal speed ratios are equal vertical
-gaps). VectorFFT is ahead in both engine orders at 2,994 of the 4,095 lengths, median 1.24x,
-geomean 1.35x; FFTW leads in both orders at 946, and at the other 155 only one of the two orders
+gaps). VectorFFT is ahead in both engine orders at 3,734 of the 4,095 lengths, median 1.63x,
+geomean 1.71x; FFTW leads in both orders at 286, and at the other 75 only one of the two orders
 came out slower. The split is by the largest prime factor of N. Composites built from primes up
-to 47 run 2.15x faster than FFTW at the median. A length with a prime factor of 53 or more, 2,706
-of them with the primes, is served by VectorFFT's prime-size route, a Rader or Bluestein
-convolution on the whole length; there the median is 1.15x and FFTW leads in both orders at 754
-(worst 2101 = 11 x 191 at 0.41x, 2118 = 2 x 3 x 353 at 0.46x). Below 17 FFTW's codelets lead at 12
-of the 15 lengths (0.58x at 12 to 0.87x at 7). The powers of two sit at 1.05x, from 0.81x at 8 to
-1.37x at 4,096. Every output agrees with FFTW's to 3.7e-15; the control length (N = 4,096) read
-1.36-1.44x at 80 of its 84 points, and 0.83-1.30x at the four where VectorFFT's own time rose from
-3.6 to as much as 5.9 us mid-run.
+to 47 run 2.15x faster than FFTW at the median. A composite with a prime factor of 53 or more,
+2,157 lengths, runs that prime as a Rader stage of the flat chain where the race chose it, 1,412
+lengths at a median of 1.99x, and as a prime-size convolution on the whole length at the other
+745, median 1.31x: the class reads 1.64x at the median and FFTW leads in both orders at 24 of
+its lengths (2429 = 7 x 347 at 0.66x, 3521 = 7 x 503 at 0.70x). Before the Rader leaf, in the
+September record, the same class read 1.12x with FFTW ahead at 754 lengths and 2101 = 11 x 191
+at 0.41x. The 563 primes sit at 1.33x. Below 17 FFTW's codelets lead at 12 of the 15 lengths
+(0.58x at 12 to 0.87x at 7). The powers of two sit at 1.05x at the median, 1.37x at 4,096. Every
+output agrees with FFTW's to 3.7e-15 in the September record and to 1.4e-15 in the class
+re-race.
 
 | Lengths | Cells | Median speedup | At or above parity | Best |
 |---|---|---|---|---|
 | 2..64 | 63 | 1.12x | 65% | 3.34x (N=61) |
-| 65..256 | 192 | 1.60x | 86% | 4.55x (N=172) |
-| 257..1,024 | 768 | 1.32x | 80% | 4.69x (N=779) |
-| 1,025..2,048 | 1,024 | 1.23x | 74% | 4.50x (N=2021) |
-| 2,049..4,096 | 2,048 | 1.19x | 69% | 4.38x (N=2209) |
-| **all, 2..4,096** | **4,095** | **1.24x** | **73%** | 4.69x (N=779) |
+| 65..256 | 192 | 1.68x | 88% | 4.55x (N=172) |
+| 257..1,024 | 768 | 1.61x | 89% | 4.69x (N=779) |
+| 1,025..2,048 | 1,024 | 1.63x | 92% | 4.50x (N=2021) |
+| 2,049..4,096 | 2,048 | 1.64x | 93% | 4.40x (N=3149) |
+| **all, 2..4,096** | **4,095** | **1.63x** | **91%** | 4.69x (N=779) |
 
 | Family | Cells | Median speedup | At or above parity |
 |---|---|---|---|
 | Powers of two | 12 | 1.05x | 75% |
 | Primes (3..4,093) | 563 | 1.33x | 84% |
 | Composites, largest prime factor ≤ 47 | 1,363 | 2.15x | 83% |
-| Composites, largest prime factor ≥ 53 | 2,157 | 1.12x | 64% |
+| Composites, largest prime factor ≥ 53 | 2,157 | 1.64x | 98% |
 
 ---
 

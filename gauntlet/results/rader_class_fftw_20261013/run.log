@@ -151,3 +151,34 @@
 2026-10-14 00:15:32   calibrated 450/595 (3873), 1581 s elapsed
 2026-10-14 00:16:54   calibrated 475/595 (3912), 1663 s elapsed
 2026-10-14 00:18:17   calibrated 500/595 (3953), 1746 s elapsed
+2026-10-14 00:19:42   calibrated 525/595 (3985), 1831 s elapsed
+2026-10-14 00:21:11   calibrated 550/595 (4028), 1920 s elapsed
+2026-10-14 00:22:29   calibrated 575/595 (4065), 1999 s elapsed
+2026-10-14 00:23:31   calibrated 595/595 (4094), 2060 s elapsed
+2026-10-14 00:24:02 bench: 2157 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-14 00:24:02 bench: 595 cells (1562 already benched, 0 not banked -> not benched)
+2026-10-14 00:25:00   benched 25/595 (3207), 56 s elapsed
+2026-10-14 00:25:58   benched 50/595 (3246), 114 s elapsed
+2026-10-14 00:26:54   benched 75/595 (3286), 170 s elapsed
+2026-10-14 00:27:51   benched 100/595 (3326), 227 s elapsed
+2026-10-14 00:28:47   benched 125/595 (3369), 283 s elapsed
+2026-10-14 00:29:44   benched 150/595 (3408), 340 s elapsed
+2026-10-14 00:30:39   benched 175/595 (3439), 395 s elapsed
+2026-10-14 00:31:38   benched 200/595 (3482), 454 s elapsed
+2026-10-14 00:32:34   benched 225/595 (3518), 510 s elapsed
+2026-10-14 00:33:29   benched 250/595 (3562), 565 s elapsed
+2026-10-14 00:34:25   benched 275/595 (3602), 621 s elapsed
+2026-10-14 00:35:25   benched 300/595 (3642), 681 s elapsed
+2026-10-14 00:36:21   benched 325/595 (3681), 737 s elapsed
+2026-10-14 00:37:20   benched 350/595 (3721), 796 s elapsed
+2026-10-14 00:38:18   benched 375/595 (3758), 854 s elapsed
+2026-10-14 00:39:16   benched 400/595 (3798), 912 s elapsed
+2026-10-14 00:40:17   benched 425/595 (3834), 973 s elapsed
+2026-10-14 00:41:15   benched 450/595 (3873), 1031 s elapsed
+2026-10-14 00:42:13   benched 475/595 (3912), 1089 s elapsed
+2026-10-14 00:43:33   benched 500/595 (3953), 1169 s elapsed
+2026-10-14 00:44:29   benched 525/595 (3985), 1225 s elapsed
+2026-10-14 00:45:27   benched 550/595 (4028), 1283 s elapsed
+2026-10-14 00:46:25   benched 575/595 (4065), 1341 s elapsed
+2026-10-14 00:47:18   benched 595/595 (4094), 1394 s elapsed
+2026-10-14 00:47:19 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rader_class_fftw_20261013\report_fftw.md
