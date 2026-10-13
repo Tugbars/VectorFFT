@@ -296,5 +296,12 @@ to 1.790x, below parity 684 to 24, below 0.8x 213 to 2; 1,412 lengths on the lea
 slower of the two engine orders per length) the class reads 1.64x at the median with 98
 percent at or above parity, and the whole 2 to 4,096 sweep 1.63x median, 91 percent, from
 1.24x and 73 percent. The record is `gauntlet/results/rader_class_fftw_20261013`
-(`compare_vs_sept.txt`), the page `docs/performance/vs_fftw.md`. The build script gained a
+(`compare_vs_sept.txt`), the page `docs/performance/vs_fftw.md`. The accuracy sweep of
+every length 2 to 4,096 after the admission (`gauntlet/results/accuracy_c2c_20261014`,
+4,095 lengths against the long-double reference): VectorFFT's l2 error reads 4.7e-16 at the
+median and 1.3e-15 at worst, MKL's 4.0e-16 and 6.1e-16. The 17 lengths above 1e-15 are all
+leaf chains whose prime carries a nested inner leaf (107 with 53 inside 106, 263 with 131,
+269 with 67, 317 with 79, 823 with 137): two Rader levels cost two to three times the median
+error, a declared side effect of the speed race, which gates accuracy only at the
+planner's tolerance. The build script gained a
 `VFFT_DEBUG_SYMS=1` switch for line numbers under a debugger.
