@@ -5,7 +5,10 @@ p above the flat DIT's kernel pool, served at stage 0 of the flat chain as a vec
 Rader convolution over the stage's columns. DESIGN 2026-10-13, the order of work agreed
 with the owner the same day: this complex leaf first, then the real odd-prime method
 (§8), then the real leaf (§8). Roadmap item 2b of
-[`1d_c2c_and_real_open_work.md`](1d_c2c_and_real_open_work.md). Not built.*
+[`1d_c2c_and_real_open_work.md`](1d_c2c_and_real_open_work.md). PHASE 1 BUILT
+2026-10-13: the engine (`il/rank1/il_rader_stage.h`, position-general, the nested inner,
+the threaded column split) behind the flat DIT's hooks and the tool door, verified by the
+probe (§7, §9); the planner admission (phase 2) is next.*
 
 ## 1. The gap and the contract
 
@@ -89,9 +92,12 @@ times the whole forward with each candidate inner chain as a heat, the way the 2
 on the K=1 row beside the flat chain (§6); no 2D row is read or written by a 1D plan.
 
 A p whose p minus 1 has its own prime factor above 47 is the recursion case (107, 167,
-263, ...). The first build declines it: the chain is not buildable, the arm drops out of
-the race, the prime cell keeps serving. A second level, the inner's own Rader leaf, is
-the owner's call (§10).
+263, ...): that prime takes stage 0 of the inner chain as a nested leaf over the scratch
+plane, one level (its own inner must chain from the pool). The inner column chain is a
+DIF, so its stage 0 carries the span's twiddles on its outputs: the nested leaf multiplies
+its output rows by w_(p-1)^(l d) on the forward pass and its gathered rows by the
+conjugates on the reverse pass (the engine's second twiddle mode; the flat chain's own
+mid stages use the first, the pre-twiddle per block). Raced per the owner (§9).
 
 ## 5. Directions and order classes
 
@@ -156,33 +162,63 @@ the owner's call (§10).
 - The real odd composite with a factor above 47 needs the real flat DIT's leaf (`r1c`)
   replaced by a real Rader leaf. Third.
 
-## 9. Expected outcome
+## 9. Phase 1 measured (the engine alone: the pool's greedy inner, a fixed width)
 
-The class's floor moves from 0.41x to above parity where the leaf serves: the leaf plus
-the smooth stages cost about one pass over N against the whole-N Bluestein's several
-over 2N or more. The geomean of the class (1.12x) should move toward the smooth
-composites' 2.15x only where the cofactor is large enough to carry several stages;
-cofactors 2 and 3 are already fine because N is small. The exact numbers come from the
-race, not from here.
+The probe (`rader_probe.c`) builds the chain through the tool door and races the whole
+forward against the front door's plan at the same N (the prime cell, Bluestein on the
+whole length), pinned, 15 alternating rounds; the chain's time over the door's:
+
+| N | chain | leaf first | prime last | inner |
+|---|---|---|---|---|
+| 524 = 4 x 131 | 131.4 / 4.131 | 0.34 | 0.79 | 13.10 |
+| 1233 = 9 x 137 | 137.9 / 9.137 | 0.43 | 0.90 | 8.17 |
+| 2101 = 11 x 191 | 191.11 / 11.191 | 0.36 | 0.74 | 19.10 |
+| 2575 = 25 x 103 | 103.25 / 25.103 | 0.41 | 1.00 | 17.6 |
+| 2073 = 3 x 691 | 691.3 / 3.691 | 0.88 | 1.10 | 23.15.2, three columns |
+| 2276 = 4 x 569 | 569.4 / 4.569 | 0.67 | 1.16 | 71 nested over 8; 7.10 |
+| 1177 = 11 x 107 | 107.11 | 1.02 | | 53 nested over 2; 4.13 |
+| 428 = 4 x 107 | 107.4 / 4.107 | 1.16 | 1.98 | 53 nested over 2; 4.13 |
+| 1149 = 3 x 383 | 383.3 / 3.383 | 1.95 | 2.21 | 191 nested over 2; 19.10 |
+| 3127 = 53 x 59 | 53.59 / 59.53 | 1.30 | 1.29 | two Rader stages |
+| 2809 = 53 x 53 | 53.53 | 1.01 | | two Rader stages |
+
+Every chain reads 1.8e-16 to 3.1e-16 against the long-double reference, roundtrips at
+1.6e-15 to 3.2e-15, in place bitwise equal to out of place, and threaded (T = 4) bitwise
+equal to serial, nested chains included.
+
+The owner's two races, answered:
+- Placement: the leaf wins at every cell, by 1.9 to 2.4x over the prime-last placement;
+  with two primes above the pool, two Rader stages lose to the whole-N Bluestein (1.30 and
+  1.01). Phase 2 admits leaf chains only; the engine stays position-general, no candidate
+  names a mid or last Rader stage.
+- Recursion: the nested inner wins at 2276 (0.67), ties at 1177 and loses at 428 and 1149,
+  where the leaf has two to four columns to vectorize over. It stays a raced arm: the race
+  protects a cell, and it pays where the leaf is wide.
+
+The cofactor sets the leaf's width: at 2073 the three columns run two lanes wide. The
+width and the inner chain are forms the phase-2 race decides.
 
 ## 10. Decisions
 
 Agreed 2026-10-13: form B (the leaf in the flat chain) over the four-step's 2D view;
 the order complex leaf, real odd-prime method, real leaf.
 
-Open, the owner's:
-1. Leaf only (this design), or also a mid-chain Rader stage with pre-twiddles for a
-   length with two prime factors above 47. Below 2^20 such lengths are rare (p q with
-   both above 47 and the cofactor smooth); the leaf covers every length with one.
-2. The recursion when p minus 1 has its own factor above 47: decline (this design), or
-   one level of the inner's own leaf.
-3. The names of the K=1 row tokens that carry the inner chain's verdict.
+Answered by the owner 2026-10-13 and by the phase-1 race (§9):
+1. The mid-chain placement was built and raced: it never beats the leaf, and two Rader
+   stages lose to Bluestein. The planner admits the leaf only.
+2. The one-level recursion was built and raced: a raced arm, kept.
+3. The token names are the implementer's: the inner chain banks on the K=1 row as
+   `il_rd=` (its radices, dotted, an `n` after a nested prime), `il_rdf=` (its forms) and
+   `il_rdw=` (the window width).
 
 ## 11. Phases
 
-1. The engine: the leaf's create (permutations, kernel, the inner chain resolved from a
-   given radix list and forms, scratch) and execute (both directions, column windows,
-   the MT column split), behind `vfft_ilfd_create_chain`; the probe of §7.
+1. BUILT 2026-10-13. The engine: the stage's create (permutations, kernel, the inner
+   chain, the nested leaf, scratch per worker) and execute (both directions, column
+   windows, the MT column split), behind `vfft_ilfd_create_chain` through the hooks
+   `il_flatdit.h` declares and `il_rader_stage.h` defines; the tool door
+   (`vfft_tool_ilfd_chain` / `_exec` / `_exec_mt` / `_destroy` / `_rd_desc`) and the
+   probe `docs/research/field_trial/gapfill/work/rader_probe.c`.
 2. The planner: the leaf candidates in the flat heats, the inner raced in role and
    banked with the owner's tokens, the policy and the policy gate, the flat gate's cells.
 3. The class sweep against FFTW, once; the results page.
