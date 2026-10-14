@@ -447,7 +447,11 @@ and c2r tiers all engage a threaded pass at T = 8, agree with their serial plans
 real engine creates its complex child single-threaded (`_zr2c_kid_cfg`), so the leaf's
 threaded form never runs inside a 1D real plan, and the fold's own threaded arm lost
 the race at 134144. A gap, reported, not filled; the gate prints it and does not fail
-on it.
+on it. Against MKL at eight threads on both sides (the results page): the column cells
+hold 2.3x to 4.9x (2D c2c 4.8x, 4.9x, 2.4x, 2.5x; 2D real 2.3x to 4.4x; 3D real 2.1x to
+3.7x), the 1D complex cells 1.5x to 2.1x, and the 1D real cells lose at 0.43x to 0.68x
+for the reason above. The 3D c2c cells could not be measured threaded in the bench's
+protocol (every arm at a spread of 30 to 1100 percent, the memcpy control included).
 
 **Piece B, the real odd prime (1D r2c / c2r at a prime N > 47).** Rader on real input:
 with h = (N-1)/2 and g^h = -1 mod N, the kernel splits as omega_q = u_q + i v_q with u

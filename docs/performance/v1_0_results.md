@@ -760,6 +760,59 @@ ones or a few percent above them (the raced inner and width): the 2D c2c cells 6
 524x16x16 at 5.5x, is the first engine order's run alone (the second order read 6.1x,
 the pinned run 6.3x): the run's spread, not a different pick.
 
+**Eight threads, both sides (the same day).** The planner's own pick at T = 8 against
+MKL at eight threads, the bench's threaded protocol (two-team hygiene per sample, no
+pace inside a sample, nine rounds), every cell cold on a fresh scratch store, the cells
+large enough for the threaded forms to pay; the threaded passes per timed execute are
+the library's own engagement count. The record:
+`docs/research/field_trial/gapfill/race_rader_mt/`.
+
+```
+ cell             ours ns     MKL ns  ratio   route               error
+ 1D c2c (the flat chain's threaded form)
+ 33616              37,841     54,853   1.45   flat                7.7e-16
+ 67072              55,448    117,145   2.11   flat                9.0e-16
+ 134464            109,271    196,793   1.80   flat                8.3e-16
+ 1D r2c / c2r (the leaf in the zr2c child; no threaded pass, see below)
+ r2c 16768          27,415     18,595   0.68   -                   7.6e-16
+ c2r 16768          28,868     19,400   0.67   -                   1.9e-15
+ r2c 67072         138,134     65,107   0.47   -                   8.7e-16
+ c2r 67072         126,439     66,488   0.53   -                   2.0e-15
+ r2c 134144        263,762    113,821   0.43   -                   8.4e-16
+ c2r 134144        305,772    140,569   0.46   -                   2.2e-15
+ 2D c2c, natural, out of place
+ 1048x256          153,250    738,613   4.82   chain               8.7e-16
+ 524x512           149,663    726,125   4.85   chain               9.1e-16
+ 131x1024           65,936    159,193   2.41   chain               9.8e-16
+ 2101x64           103,157    261,264   2.53   chain+rb            8.3e-16
+ 2D r2c / c2r, natural, out of place
+ r2c 1048x256      111,636    470,714   4.22   chain               8.1e-16
+ c2r 1048x256       88,536    390,564   4.41   chain               2.2e-15
+ r2c 524x512       111,329    416,229   3.74   chain               7.7e-16
+ c2r 524x512        86,043    375,443   4.36   chain               2.3e-15
+ r2c 131x1024       42,590     97,200   2.28   chain               8.9e-16
+ c2r 131x1024       36,593     89,448   2.44   chain               2.2e-15
+ r2c 2101x64        91,993    268,741   2.92   chain               7.8e-16
+ c2r 2101x64        65,897    156,862   2.38   chain               2.1e-15
+ 3D r2c / c2r, natural, out of place
+ r2c 131x32x32      48,997    100,910   2.06   plane+child         7.1e-16
+ c2r 131x32x32      39,734     99,293   2.50   plane+child         2.0e-15
+ r2c 524x16x16      80,217    281,562   3.51   plane+child+strips  8.3e-16
+ c2r 524x16x16      59,345    219,328   3.70   plane+band          2.1e-15
+ r2c 131x131x8      92,976    222,948   2.40   plane+child         1.1e-15
+ c2r 131x131x8      91,459    214,238   2.34   plane+child+strips  3.0e-15
+```
+
+Threaded, the column cells hold 2.3x to 4.9x and the 1D complex cells 1.5x to 2.1x.
+The 1D real cells lose at eight threads, 0.43x to 0.68x: the even-length real engine
+creates its complex child single-threaded, so the leaf's threaded form never runs
+inside a 1D real plan, and the fold's own threaded arm lost its race at these lengths;
+MKL threads its real transform. A gap, reported (the Rader regression prints it). The
+3D c2c cells at eight threads are not quoted: in this protocol every arm, the memcpy
+control included, read a spread of 30 to 1100 percent, and MKL's threaded 3D path ran
+two to four times slower than its serial one; the one-thread numbers above stand for
+them.
+
 ## 3. vs MKL — 1D R2C / C2R
 
 ### K=1 INTERLEAVED r2c and c2r — every N from 2 to 2048 vs MKL, the gauntlet (2026-09-30)
