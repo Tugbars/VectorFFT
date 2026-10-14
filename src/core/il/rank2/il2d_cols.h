@@ -58,6 +58,28 @@
 static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
                               double **tf, double **tb);
 
+/* ── the RADER STAGE at stage 0 of a column chain (il_rader_stage.h) ─────
+ * A first radix at or above VFFT_IL2D_RADER_MIN is a prime above the kernel
+ * pool, served by the Rader engine over the plane's columns: f[0] = b[0] =
+ * NULL, tf[0] / tb[0] = the engine's direction tags. The walkers reach it
+ * through these hooks, tentative here and installed by il_rader_stage.h (a
+ * translation unit without it builds no such chain: the resolver refuses). */
+#define VFFT_IL2D_RADER_MIN 48
+/* a Rader radix: odd and above the pool (64 is a kernel radix; every prime above 47 is odd) */
+#define VFFT_IL2D_RADER_RADIX(R) ((R) >= VFFT_IL2D_RADER_MIN && ((R) & 1))
+/* run stage 0 over digits [d0, d0 + nd) and lanes [sk, sk + w) of src (row
+ * pitch spitch) into lanes [dk, dk + w) of dst (row pitch dpitch): digit d's
+ * p rows are l * D0 + d; the direction is the tag's */
+static void (*_il2d_rd0_hook)(const void *tab, const double *src, size_t spitch, double *dst,
+                              size_t dpitch, size_t sk, size_t dk, size_t w, size_t d0, size_t nd);
+static int (*_il2d_rd0_ok_hook)(int p);      /* p is a prime the engine serves (p - 1 chains) */
+static void (*_il2d_rd0_free_hook)(void *rd);
+/* a direction tag for a table set whose stage 0 is the prime p at N1: a small block
+ * (vfft_aligned_alloc) naming the engine the column build attached for this (p, N1),
+ * freed with the set's tables like any table; NULL = no engine attached (the set does
+ * not build) */
+static void *(*_il2d_rd0_tag_hook)(int N1, int p, int bwd);
+
 static long _il2d_chain_prod(const int *Rs, int m)
 {
     long p = 1;
@@ -75,6 +97,13 @@ static int _il2d_resolve(const int *Rs, int m, vfft_il2p_fn *ff,
     for (s = 0; s < m; s++)
     {
         const int last = (s == m - 1);
+        if (s == 0 && VFFT_IL2D_RADER_RADIX(Rs[0]))
+        {   /* the Rader stage: no kernel; the builder attaches the engine */
+            if (!_il2d_rd0_ok_hook || !_il2d_rd0_ok_hook(Rs[0]))
+                return 0;
+            ff[0] = fb[0] = NULL;
+            continue;
+        }
         ff[s] = last ? vfft_il2p_n1c_fn(Rs[s], 0) : vfft_il2p_t2c_fn(Rs[s], 0);
         fb[s] = last ? vfft_il2p_n1c_fn(Rs[s], 1) : vfft_il2p_t2c_fn(Rs[s], 1);
         if (!ff[s] || !fb[s])
@@ -181,7 +210,31 @@ static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
 static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
                            int *lens, int *n, int *dropped)
 {
-    _il2d_enum_rec_body(L, depth, cur, out, lens, n, dropped);
+    /* THE LEAF CANDIDATES (docs/roadmap/rader_leaf_design.md section 13): an N1 whose
+     * part above the pool is one prime p (planning/policy_il.h) takes p as stage 0, the
+     * Rader stage, with the pool's compositions of N1 / p after it (the chain [p] alone
+     * at a prime N1) -- when the engine builds p (the hook). No other chain exists for
+     * such an N1 (the pool carries no p), so these ARE its pool. */
+    const int rp = depth == 0 ? vfft_policy_il2d_rader_prime(L) : 0;
+    if (rp && _il2d_rd0_ok_hook && _il2d_rd0_ok_hook(rp))
+    {
+        cur[0] = rp;
+        if (L == rp)
+        {
+            if (*n < VFFT_IL2D_POOL_MAX)
+            {
+                memcpy(out[*n], cur, 8 * sizeof(int));
+                lens[*n] = 1;
+                (*n)++;
+            }
+            else
+                (*dropped)++;
+        }
+        else
+            _il2d_enum_rec_body(L / rp, 1, cur, out, lens, n, dropped);
+    }
+    else
+        _il2d_enum_rec_body(L, depth, cur, out, lens, n, dropped);
     if (depth == 0 && *dropped)
         _vfft_warn("il2d chain pool storage (%d) exceeded (%d candidate(s) dropped) "
                    "at N1=%d -- the race saw a truncated pool",
@@ -212,6 +265,11 @@ static void _il2d_col_stages2(const double *src, double *dst, int nrows,
         const int R = Rst[s], D = Lst[s] / R;
         const double *s0 = (si == s_lo) ? src : dst;
         int b;
+        if (s == 0 && !fns[0])
+        {   /* the Rader stage over the plane's lanes */
+            _il2d_rd0_hook((const void *)tabs[0], s0, pitch, dst, pitch, 0, 0, cnt, 0, (size_t)D);
+            continue;
+        }
         for (b = 0; b < nrows / Lst[s]; b++)
         {
             const size_t off = 2 * (size_t)b * Lst[s] * pitch;
@@ -372,6 +430,11 @@ static void _il2d_col_pass_range(const double *src, double *dst, int N1,
         const int R = Rst[s], D = Lst[s] / R;
         const double *s0 = (si == 0) ? src : dst;
         int b;
+        if (s == 0 && !fns[0])
+        {   /* the Rader stage over lanes [k_lo, k_hi) */
+            _il2d_rd0_hook((const void *)tabs[0], s0, rn, dst, rn, k_lo, k_lo, w, 0, (size_t)D);
+            continue;
+        }
         for (b = 0; b < N1 / Lst[s]; b++)
         {
             const size_t off = 2 * ((size_t)b * Lst[s] * rn + k_lo);
@@ -403,6 +466,11 @@ static void _il2d_col_pass(const double *src, double *dst, int N1,
             const int R = Rst[s], D = Lst[s] / R;
             const double *s0 = (si == 0) ? src : dst;
             int b;
+            if (s == 0 && !fns[0])
+            {   /* the Rader stage over the tile's lanes */
+                _il2d_rd0_hook((const void *)tabs[0], s0, rn, dst, rn, k0, k0, w, 0, (size_t)D);
+                continue;
+            }
             for (b = 0; b < N1 / Lst[s]; b++)
             {
                 const size_t off = 2 * ((size_t)b * Lst[s] * rn + k0);
@@ -557,6 +625,11 @@ static void _il2d_col_pass_nat(const double *src, double *dst, int N1,
         {
             const int R = Rst[s], D = Lst[s] / R;
             const double *s0 = (s == 0) ? src : scr;
+            if (s == 0 && !fns[0])
+            {   /* the Rader stage: src -> scr over the whole plane */
+                _il2d_rd0_hook((const void *)tabs[0], s0, rn, scr, rn, 0, 0, rn, 0, (size_t)D);
+                continue;
+            }
             for (b = 0; b < N1 / Lst[s]; b++)
             {
                 const size_t off = 2 * (size_t)b * Lst[s] * rn;
@@ -576,6 +649,11 @@ static void _il2d_col_pass_nat(const double *src, double *dst, int N1,
         {
             const int R = Rst[s], D = Lst[s] / R;
             double *out = (s == 0) ? dst : scr;
+            if (s == 0 && !fns[0])
+            {   /* the Rader stage, backward: scr -> dst */
+                _il2d_rd0_hook((const void *)tabs[0], scr, rn, out, rn, 0, 0, rn, 0, (size_t)D);
+                continue;
+            }
             for (b = 0; b < N1 / Lst[s]; b++)
             {
                 const size_t off = 2 * (size_t)b * Lst[s] * rn;
@@ -613,6 +691,11 @@ static void _il2d_col_pass_nat_range(const double *src, double *dst,
         {
             const int R = Rst[s], D = Lst[s] / R;
             const double *s0 = (s == 0) ? src : scr;
+            if (s == 0 && !fns[0])
+            {   /* the Rader stage over the strip's lanes */
+                _il2d_rd0_hook((const void *)tabs[0], s0, rn, scr, rn, k_lo, k_lo, w, 0, (size_t)D);
+                continue;
+            }
             for (b = 0; b < N1 / Lst[s]; b++)
             {
                 const size_t off = 2 * ((size_t)b * Lst[s] * rn + k_lo);
@@ -641,6 +724,11 @@ static void _il2d_col_pass_nat_range(const double *src, double *dst,
         {
             const int R = Rst[s], D = Lst[s] / R;
             double *out = (s == 0) ? dst : scr;
+            if (s == 0 && !fns[0])
+            {   /* the Rader stage, backward, over the strip's lanes */
+                _il2d_rd0_hook((const void *)tabs[0], scr, rn, out, rn, k_lo, k_lo, w, 0, (size_t)D);
+                continue;
+            }
             for (b = 0; b < N1 / Lst[s]; b++)
             {
                 const size_t off = 2 * ((size_t)b * Lst[s] * rn + k_lo);
@@ -677,6 +765,9 @@ static void _il2d_col_pass_nat_strip(const double *src, double *dst, int N1,
         return;
     if (!reverse)
     {
+        if (!fns[0])   /* the Rader stage: the plane's lanes [k, k + w) into the dense strip */
+            _il2d_rd0_hook((const void *)tabs[0], src, rn, scr, w, k, 0, w, 0, (size_t)D0);
+        else
         for (b = 0; b < N1 / Lst[0]; b++)
             for (d = 0; d < D0; d++)
             {
@@ -716,6 +807,9 @@ static void _il2d_col_pass_nat_strip(const double *src, double *dst, int N1,
                        (size_t)D * w, w, (size_t)D * w, (size_t)D, w);
             }
         }
+        if (!fns[0])   /* the Rader stage, backward: the dense strip to the plane's lanes */
+            _il2d_rd0_hook((const void *)tabs[0], scr, w, dst, rn, 0, k, w, 0, (size_t)D0);
+        else
         for (b = 0; b < N1 / Lst[0]; b++)
             for (d = 0; d < D0; d++)
             {
@@ -770,6 +864,11 @@ static void _il2d_col_pass_nat_tile(const double *src, double *dst, int N1,
     for (s = 0; s < nst - 1; s++)
     {
         const int R = Rst[s], D = Lst[s] / R;
+        if (s == 0 && !fns[0])
+        {   /* the Rader stage in place on the dense tile */
+            _il2d_rd0_hook((const void *)tabs[0], scr, w, scr, w, 0, 0, w, 0, (size_t)D);
+            continue;
+        }
         for (b = 0; b < N1 / Lst[s]; b++)
         {
             const size_t off = 2 * (size_t)b * Lst[s] * w;
@@ -943,6 +1042,24 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
         Ls[s] = L;
         tf[s] = NULL;
         tb[s] = NULL;
+        if (s == 0 && VFFT_IL2D_RADER_RADIX(R))
+        {   /* the Rader stage carries its own twiddles: the slots take the engine's
+             * direction tags, this set's own blocks, where a column build is on
+             * (its engine context); outside one (the 1D engine's nested inner
+             * chain, a column engine's own inner) the stage runs through its
+             * nest and the slots stay NULL */
+            tf[s] = _il2d_rd0_tag_hook ? (double *)_il2d_rd0_tag_hook(N1, R, 0) : NULL;
+            tb[s] = _il2d_rd0_tag_hook ? (double *)_il2d_rd0_tag_hook(N1, R, 1) : NULL;
+            if ((tf[s] != NULL) != (tb[s] != NULL))
+            {
+                vfft_aligned_free(tf[s]);
+                vfft_aligned_free(tb[s]);
+                tf[s] = tb[s] = NULL;
+                return -1;
+            }
+            L /= R;
+            continue;
+        }
         if (D > 1) /* the n1c leaf carries no table */
         {
 #if VFFT_IL_VW == 8

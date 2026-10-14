@@ -232,6 +232,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     double *il2d_bluscr = NULL;
     int il2d_tpc = 0;                     /* the turned prime pass */
     struct vfft_plan_s *il2d_tpcplan = NULL;
+    void *il2d_rd0 = NULL;                /* the Rader stage at stage 0 (il2d_col.h rd0) */
     double *il2d_tpcscr = NULL;
     int il2d_bcmt = -1, il2d_bcmtt = -1; /* banked column-MT verdict
                                           * and the T it was raced at */
@@ -273,6 +274,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             il2d_tpcplan = col.tpcplan;
             il2d_tpcscr = col.tpcscr;
             il2d_tpcS = col.tpcS;
+            il2d_rd0 = col.rd0;
             il2d_nat = col.nat;
             il2d_natperm = col.natperm;
             il2d_natscr = col.natscr;
@@ -647,6 +649,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 il2d_nat = col.nat;
                 il2d_natperm = col.natperm;
                 il2d_natscr = col.natscr;
+                il2d_rd0 = col.rd0;
                 /* the per-direction verdicts (wl cmt cmtt): from the
                  * row, this direction's tokens, never under recalibrate;
                  * -1 = unraced, and the wl race below fills it in */
@@ -825,6 +828,11 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
         {
             /* tables built for a cell that then refused */
             int s2;
+            if (il2d_rd0)
+            {   /* the Rader stage's engine (its tags go with the tables below) */
+                if (_il2d_rd0_free_hook) _il2d_rd0_free_hook(il2d_rd0);
+                il2d_rd0 = NULL;
+            }
             for (s2 = 0; s2 < il2d_nst; s2++)
             {
                 vfft_aligned_free(il2d_tf[s2]);
@@ -924,6 +932,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     h->il2d_col.tpcplan = il2d_tpcplan;
     h->il2d_col.tpcscr = il2d_tpcscr;
     h->il2d_col.tpcS = il2d_tpcS;
+    h->il2d_col.rd0 = il2d_rd0;
     memcpy(h->il2d_col.R, il2d_R, sizeof il2d_R);
     memcpy(h->il2d_col.L, il2d_L, sizeof il2d_L);
     memcpy(h->il2d_col.f, il2d_f, sizeof il2d_f);

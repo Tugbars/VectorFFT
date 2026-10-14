@@ -64,8 +64,11 @@ static inline void _ilfd_unit_rec(const vfft_ilfd_plan_t *p, int s, int leaf,
     const size_t recs = s > 0 ? (size_t)(p->R[s] - 1) * VFFT_IL_TWREC : 0;
     *dst = *src;
     dst->in_tstep = dst->out_tstep = dst->tw_tstep = dst->t2_tstep = dst->a1_tstep = dst->g_tstep = 0;
-    if (src->op == _ILFD_RD) {           /* the Rader stage: its columns, the engine steps itself */
-        *nunits = src->count; *cnt = 0;
+    if (src->op == _ILFD_RD) {           /* the Rader stage: its WINDOWS (W columns each), so a
+                                          * worker's range is whole windows and the threaded
+                                          * form is bitwise the serial one; the engine steps itself */
+        const size_t W = _ilfd_rd_width_hook ? _ilfd_rd_width_hook(src->rd) : 1;
+        *nunits = (src->count + W - 1) / W; *cnt = 0;
         return;
     }
     if (leaf) {                          /* columns: in/out advance one complex */
@@ -136,7 +139,14 @@ static inline void _ilfd_mt_chunk_list(const vfft_ilfd_plan_t *p, int T, int tra
             case 3: r->c.ngrp = hi - lo; break;
             default: r->c.nb = hi - lo; break;
             }
-            if (unit.op == _ILFD_RD) r->c.rdslot = w;            /* the worker's scratch slot */
+            if (unit.op == _ILFD_RD) {                           /* the worker's scratch slot; its range in columns */
+                const size_t W = _ilfd_rd_width_hook ? _ilfd_rd_width_hook(unit.rd) : 1;
+                const size_t c0 = lo * W, c1 = (hi * W < unit.count) ? hi * W : unit.count;
+                r->c.rdslot = w;
+                r->t = c0;
+                r->c.count = c1 > c0 ? c1 - c0 : 0;
+                r->on = (c1 > c0);
+            }
             if (unit.op == _ILFD_ONE && unit.a1 && unit.a3) {   /* the group ORDER steps */
                 r->c.a3 = (double *)((const size_t *)unit.a3 + lo);
                 r->t = 0;

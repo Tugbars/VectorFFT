@@ -305,3 +305,163 @@ leaf chains whose prime carries a nested inner leaf (107 with 53 inside 106, 263
 error, a declared side effect of the speed race, which gates accuracy only at the
 planner's tolerance. The build script gained a
 `VFFT_DEBUG_SYMS=1` switch for line numbers under a debugger.
+
+## 13. The spread: every interleaved feature (owner, 2026-10-14)
+
+The leaf is one engine with one home, the 1D c2c flat chain, and the composites inherit
+it wherever they plan a 1D c2c child in role. Where a prime factor above 47 stands today,
+per interleaved feature:
+
+| feature | a prime p > 47 in the length goes to | after the spread |
+|---|---|---|
+| 1D c2c, K = 1 and its batches (TC, plane queue: clones of the K=1 plan) | the leaf (§2-§12) | done |
+| 1D r2c / c2r, even N | the zr2c child at N/2: the leaf through the child | done |
+| 1D r2c / c2r, odd prime N | the real Bluestein `zrb` at M >= (3N-1)/2 | piece B |
+| 1D r2c / c2r, odd composite N = p . m | `zrb` (the real flat DIT `zrf` has no leaf at p) | piece C |
+| 2D / 3D c2c and real, the last axis | the row plan: a 1D cell (the odd-N2 row child is c2c; the even row engine's zr2c child) | done |
+| 2D c2c and real, axis N1; 3D c2c and real, axes N1 and N2 | the column-axis Bluestein (`blu`, an M >= 2N-1 chain over the lanes) or the turned prime pass (`tpc`, a prime N through the 1D route per lane) | piece A |
+
+**Piece A, the Rader stage in the column chain (2D and 3D, c2c and real at once).** The
+engine is already the column pass's geometry: block b of span L, legs at stride D, the
+columns contiguous, and its twiddle mode 2 is exactly a DIF column chain's stage 0 (the
+nested inner leaf runs there today, §4). So the column pass admits a prime p above the
+pool as stage 0 of its chain with the engine at D = D_s . rn, L = N1 . rn, nb = 1, the
+stage-0 tables replaced by `_ilrd_dif_tw(span N1, Dp = N1/p, twrun = rn)`, and every walker
+that runs stage 0 (`_il2d_col_pass_range`, `_il2d_col_pass`, the natural and strip and
+tile walkers, the banded prefix) runs the engine's windows over its lane range instead of
+the kernel: a lane range [k0, k1) of the plane is the engine's runs [d . rn + k0, d . rn +
+k1) per digit d, which the engine's own run splitting already handles. One descriptor
+field (`rd0` on `vfft_ilcol_t`) carries the engine; `_il2d_resolve` admits p at stage 0
+when p - 1 chains from the column pool; the enumerator offers the leaf candidates (p
+first, the chains of N1/p after it) for an N1 with exactly one prime factor above the
+pool; the race takes them as ordinary chains against Bluestein and the turned pass. The
+Rader stage's own forms are its inner chain and window width, raced in role on the column
+pass the way the flat's `vfft_ilrd_race` races them on the whole forward, and banked on
+the column row as new tokens (axis-suffixed at rank 3 like every column token: `rd=`
+`rdw=` at axis 0, `rd1=` `rdw1=` at axis 1 are the proposed names; the owner names
+tokens). Threads: the strips arm hands each worker a lane range, the block arm a digit
+range, and both are runs of the engine's column space with the worker's scratch slot; no
+arm needs a form it does not have. The 3D tiers build their axes through the same
+`_il2d_col_build` and run them through the same walkers, so they inherit piece A with no
+code of their own; the 3D real tier's axis 0 drops its "a Bluestein axis has no plain
+chain" restriction where the Rader chain serves (the chain is plain: the natural
+permutation derives as for any chain).
+
+Phase A1, BUILT 2026-10-14, no wisdom change: the engine on the descriptor (`rd0`), the
+seven walkers switching on a NULL stage-0 kernel and taking the engine from the stage-0
+table slot (a direction tag, a block of the table set, so a race's own table set names the
+engine the build attached through `_ilrd_col0_ctx` and frees its tags with its tables),
+the resolver and the table builder, the digit-split trampoline, the pool's per-thread slot
+(`thread_pool_self_slot`: the caller 0, worker i at i + 1) for the engine's scratch, and
+the three whole-plan forms that read the stage-0 kernel directly declining such a chain.
+Reached through the `VFFT_IL2D_CHAIN=p.R1...` pin. The probe
+(`docs/research/field_trial/gapfill/work/rader_col_probe.c`): every cell passes the naive
+DFT in natural order at 1e-14, the scrambled and the natural roundtrips at 2e-15, in place
+bitwise against out of place, at T = 8 with the column MT engaged, the real pair, and the
+3D cube; against the route the library serves today, raced on its own scratch store:
+
+| cell | pinned chain | today's route | time today / Rader |
+|---|---|---|---|
+| c2c 524x64 | 131.4 | turned prime pass | 1.66 |
+| c2c 262x64 | 131.2 | turned prime pass | 2.46 |
+| c2c 131x256 | 131 | turned prime pass | 1.80 |
+| c2c 1048x32 | 131.8 | turned prime pass | 1.44 |
+| c2c 2101x16 | 191.11 | turned prime pass | 1.48 |
+| r2c 524x64 | 131.4 | column Bluestein | 2.82 |
+| r2c 131x256 | 131 | column Bluestein | 2.73 |
+| c2c 524x8x8 | 131.4 (axis 0) | turned prime pass | 1.68 |
+
+Two library defects came out on the way and are fixed with it: GCC on Windows ignores
+`__declspec(thread)` (a warning), so the pool's serial-scope depth was one static shared by
+every thread until this day (`threads.h` uses `__thread` except under MSVC now), and
+`vfft_destroy` frees the 2D column tables by hand rather than through `_il2d_col_free`.
+
+**The regression is `src/tools/gates/rader_gate.c`** (owner, 2026-10-14: a check of the
+Rader stage's own touch points, run after every Rader change instead of the old gates;
+`run_gates.py --only rader_gate`, a cold scratch dir, about two minutes): the leaf through
+the tool door (forward, backward, in place, threaded bitwise, the nested inner, the inner
+race's winner), the column stage through the pin for 2D c2c and real (natural, both
+roundtrips, in place, both threaded arms engaged, the banded walk bitwise, the pair, the
+in-place real plane, a prime alone, p minus 1 a power of two, nested inners, the half-store
+leaf forms), the 3D tiers, a create / execute / destroy loop, and the planner's own pick
+with its replay at one leaf cell. Its first runs settled three more rules: the flat
+threaded form's unit for a Rader stage is a whole window (a column unit cut windows and
+moved the bits by 1e-16), the real 3D tier's pay-once form declines a one-stage Rader chain
+(it calls the leaf kernel directly), and a Rader radix is odd and above the pool (64 is a
+kernel radix). One gap it reports and does not fill: a one-stage column at the c2c tier,
+the prime alone, has no threaded column form there (its walks split by digit or need two
+stages); the real tier's strips arm threads it.
+
+**Against MKL (2026-10-14, the record `docs/performance/v1_0_results.md`, the Rader column
+section; every cell raced cold on a fresh scratch store, the canonical bench's protocol).**
+The column stage, pinned, against the route MKL runs: 2D c2c 3.2x to 6.7x at a wide prime
+(131 or 191 over 4 to 8 digits), 1.2x at 53 alone; 3D c2c 2.9x to 6.2x, 1.3x at a nested 107;
+2D r2c and c2r 2.9x to 6.0x, 1.3x to 1.5x at 53 alone; 3D r2c and c2r 2.2x to 6.6x. The 1D
+real cells through the planner, the leaf in the zr2c child: 2.5x to 6.3x at a plain leaf,
+1.7x at a nested one (4552, 2354). The pattern is the 1D class sweep's: the win is the width
+the prime is vectorized over, and a nested inner or a two-column leaf gives half of it.
+
+Phase A2, BUILT 2026-10-14, the planner's side. The law is `vfft_policy_il2d_rader_prime`
+(`planning/policy_il.h`): a column length whose part above the chain radices is one prime p,
+once, with p - 1 within the radices or one prime above them (once) whose predecessor is,
+takes p as stage 0; the policy gate mirrors it over N = 2..2^23 by a Miller-Rabin spelling.
+The chain enumerator (`il2d_cols.h`) offers the leaf candidates for such an N1 when the
+engine builds p: p first, the pool's compositions of N1 / p after it, the chain [p] alone
+at a prime N1 (no other chain exists there: these are its pool). The column build attaches
+the engine for the race's prime before the chain race (every arm's table set names it),
+then after the natural permutation and before the N-arm race builds the descriptor's
+tables once and RACES THE ENGINE on the pass the cell serves (the N-arm harness, serial at
+every thread count): the inner chains of p - 1 (`_ilrd_enum_inners`, a nested prime fixed
+first, two orders) at the default width, then the widths around the winner's (half, double,
+quadruple, the column space), every arm a live engine swapped into the stage's tags; the
+winner stays attached and banks as `rd=` (the inner radices dotted) and `rdw=` (the width)
+on the column row, the owner's token names (2026-10-14), axis-suffixed at rank 3 and `_p`
+at door 2 like every column token; the attach replays them (never under recalibrate) and
+takes the default when a banked recipe no longer builds. At a prime N1 the N-arm race
+times the chain [p] against Bluestein as any odd chain, and when the chain wins the turned
+pass is the third arm (timed as `_il2d_tpc_race` times it); a turned win banks `blu=M
+tpc=1` and the cell is the turned cell it was. A pinned chain (`VFFT_IL2D_CHAIN`) races
+the engine too but has no row at race time (the axis race creates it): its verdict lands
+at the cell's next create. The inner enumerator's miss at p - 1 = q * 2 (a nested prime
+then a lone closing radix: 107, 1177) is fixed with it: the flat leaf races there now too.
+The gate's section A2 creates three cells cold with no pin (c2c 1048x16 and 131x32, r2c
+1048x16): the pick is the Rader chain (or the turned pass at the prime), the rows carry
+both tokens, the replay is bitwise. Phase A3: the class sweep of 2D cells with such an N1
+against FFTW, once.
+
+**Piece B, the real odd prime (1D r2c / c2r at a prime N > 47).** Rader on real input:
+with h = (N-1)/2 and g^h = -1 mod N, the kernel splits as omega_q = u_q + i v_q with u
+h-periodic and v h-antiperiodic over q, so the length-(N-1) convolution of the real
+gathered sequence a is two real convolutions of length h, a cyclic one of the folded
+a_q + a_{q+h} with u and a negacyclic one of a_q - a_{q+h} with v, and X_k for k <= h
+(the half spectrum the r2c owes) is their sum at q = 0..h-1. Each is a real transform
+pair at h (r2c, the pointwise product, c2r; the negacyclic one through the odd-index
+twist), served by the real door's own engines at h raced in role, the way the prime
+cell's inner pool serves Bluestein. The plain form (one r2c and two c2r at N - 1 over the
+unfolded a) is the first correct build and the folded form the raced target. A second
+arm beside `zrb` in the odd builder's sweep (`odd_build.h`), gated against the same
+reference, banked as a new engine on the real row (`eng=zrr`, the proposed name). The
+c2r is the backward of the same stage (the conjugate kernel, the permutations swapped)
+with its half-spectrum input unfolded by the Hermitian symmetry on the gather.
+
+**Piece C, the real Rader leaf (1D r2c / c2r at an odd composite N = p . m, p > 47).**
+The real flat DIT's level puts a real leaf `r1c` over D0 columns: digit 0 real (down a
+level), digits 1..h complex blocks. A Rader leaf at radix p is piece B's structure over
+columns: the same two real convolutions of length h, vectorized across the D0 lanes
+through the real axis's pack trick (two real rows as one complex row, the complex column
+chain of length h/2 or h, the fold), their DC row to the real plane and rows 1..h to the
+complex blocks. The engine is piece A's with real rows and the fold; it enters `zrf` as
+the leaf of a level whose radix is above the pool, raced in the flat DIT's own sweep
+(`_zrf_try`) beside the other chains, banked on the real row with the inner tokens of
+piece A. `_zrf_has_chain` admits p as a leaf radix when p - 1 (or h) chains.
+
+**Order.** A, then B, then C: A is the engine's own geometry and unlocks four tiers at
+once; B and C share the real-convolution core, and C's engine is A's with real rows. The
+design's earlier order (B, C, then the columns) is superseded by this section.
+
+**Decisions open (asked 2026-10-14).** (1) The token names: `rd=` and `rdw=` on the
+column row (suffixed by axis at rank 3) for piece A, `eng=zrr` for piece B. (2) Whether
+piece B's first build may ship the plain form (three real transforms at N - 1) with the
+folded form as a later raced arm, or must land folded. (3) Whether the two-level leaf
+stays admitted (the accuracy note of §12: the 17 lengths above 1e-15 are all nested) or
+the planner admits one level only; the same rule would apply at the column pass.

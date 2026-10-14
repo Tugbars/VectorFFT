@@ -178,6 +178,10 @@ ARGSTYLE = {
     # the four-step (2026-09-15): a bare scratch dir, SEEDED so the upper-band
     # cells replay their banked verdicts instead of racing 2^19..2^21 cold
     "k1_fourstep_gate":        ("bare", True),
+    # THE RADER REGRESSION (owner 2026-10-14): every chain pinned (the tool door by its radices, the
+    # front door by VFFT_IL2D_CHAIN), a COLD scratch dir, ~1-2 min; run after every Rader change
+    # instead of the old gates
+    "rader_gate":              ("flag", False),
     "il2d_real_gate":          ("bare", True),
     "il2d_real_ip_gate":       ("bare", False),   # COLD: the in-place 2D r2c cells race their own pl=ip rows, vs FFTW in place (2026-10-08)
     "il3d_real_ip_gate":       ("bare", False),   # COLD: the in-place 3D r2c/c2r cells, vs FFTW in place / N x (2026-10-08)
@@ -255,6 +259,11 @@ def run(name, workdir):
                            capture_output=True)
         return False, "TIMEOUT after %ds (tree killed)" % budget
     out = (r.stdout or "") + (r.stderr or "")
+    if "--keep" in sys.argv:
+        # the gate's whole output beside its kept scratch dir: a FAIL line names the check,
+        # the verdict line below does not (2026-10-14)
+        with open(scratch + ".out", "w", encoding="utf-8", errors="replace") as f:
+            f.write(out)
     lines = [l.strip() for l in out.splitlines() if l.strip()]
     # prefer the gate's own verdict line over whatever happened to print last
     # (the wisdom store banner is written to stderr AFTER the verdict)

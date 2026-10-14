@@ -156,6 +156,43 @@ static inline int vfft_policy_is_prime(int N)
     return 1;
 }
 
+/* THE COLUMN RADER STAGE's admission (docs/roadmap/rader_leaf_design.md section 13,
+ * 2026-10-14): a column length N1 whose part above the chain radices is ONE prime p
+ * (p once; p^2 or p * q has no stage) takes p as stage 0 of its column chain, the Rader
+ * engine over the lanes with the pool's compositions of N1 / p after it (the chain [p]
+ * alone at a prime N1), when p - 1 is itself a column chain: every prime factor of p - 1
+ * within the chain radices, or one prime q above them (once) whose q - 1 is within them
+ * (the nested leaf, one level). Returns p, or 0 (such an N1 is the column Bluestein's as
+ * before). The engine's build has the last word on a kernel's existence (il2d_cols.h asks
+ * it); this is the arithmetic law, mirrored by the policy gate.
+ * N1's 47-rough part: trial division by the chain primes, then the rough part's primality
+ * by odd trial division from 53 (at most sqrt(N1) / 2 steps, once per create). */
+static inline int vfft_policy_rough47(int n)
+{
+    int q;
+    for (q = 2; q <= VFFT_POLICY_CHAIN_MAX_PRIME; q++)
+        while (n % q == 0) n /= q;
+    return n;
+}
+static inline int vfft_policy_rough47_is_prime(int r)
+{   /* r > 1 is 47-rough: prime unless an odd q >= 53 with q * q <= r divides it */
+    int q;
+    for (q = 53; (long)q * q <= r; q += 2)
+        if (r % q == 0) return 0;
+    return 1;
+}
+static inline int vfft_policy_il2d_rader_prime(int N1)
+{
+    int p, r;
+    if (N1 < 2) return 0;
+    p = vfft_policy_rough47(N1);
+    if (p == 1 || !vfft_policy_rough47_is_prime(p)) return 0;
+    r = vfft_policy_rough47(p - 1);
+    if (r == 1) return p;                       /* the inner chain within the pool */
+    if (!vfft_policy_rough47_is_prime(r)) return 0;
+    return vfft_policy_rough47(r - 1) == 1 ? p : 0;   /* one nested leaf */
+}
+
 /* A COMPOSITE prime cell past the inner pool's ceiling: only the Bluestein
  * method serves a prime cell that is not itself prime (Rader is prime-only),
  * and its inner, 2N - 1 rounded up to the pool, cannot be built past the

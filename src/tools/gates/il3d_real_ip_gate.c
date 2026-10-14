@@ -387,17 +387,17 @@ static int run_cell_mt(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, i
                   c2r ? "FFTW's spectrum -> N x" : "vs FFTW in place", e, eng, eng ? "" : " (the verdict chose serial)");
             for (r = 0; r < rows; r++)
                 memcpy(keep + r * P, pl + r * st, P * sizeof(double));
-            {   /* MT == ST: THE SAME PLAN with the pool at one thread (every threaded walk declines,
-                 * the plan's serial walk runs) on the same input, bitwise against its T=8 run */
+            {   /* REPEATABLE: the same plan on the same input twice, bitwise against its first run
+                 * (kept). The owned pool (2026-10-12) keeps a live plan's workers and an engine sizes
+                 * by the plan's own thread count, so no public call makes a T=8 plan run its serial
+                 * walk; the threaded walk's split is what this execute proves deterministic. */
                 int same = 1;
-                vfft_set_num_threads(1);
                 for (r = 0; r < rows; r++)
                     memcpy(pl + r * st, (c2r ? pf : seed) + r * P, (c2r ? P : (size_t)N3) * sizeof(double));
                 vfft_execute(p, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl, NULL, pl, NULL);
-                vfft_set_num_threads(8);
                 for (r = 0; r < rows && same; r++)
                     same = memcmp(pl + r * st, keep + r * P, (c2r ? (size_t)N3 : P) * sizeof(double)) == 0;
-                CHECK(same, "%dx%dx%d %s: MT == ST bitwise (the same plan, the pool at one thread)", N1, N2, N3, tag);
+                CHECK(same, "%dx%dx%d %s: executed twice, bitwise (the threaded walk is deterministic)", N1, N2, N3, tag);
             }
             p2 = vfft_create(&cfg);
             CHECK(p2 != NULL, "%dx%dx%d %s: second create (replay)", N1, N2, N3, tag);

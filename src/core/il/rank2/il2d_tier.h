@@ -545,6 +545,11 @@ static void _il2d_dmt_tramp(void *v)
     _il2d_dmt_arg *a = (_il2d_dmt_arg *)v;
     const int D = a->L / a->R;
     int b;
+    if (!a->fn)
+    {   /* the Rader stage: this worker's digits through the engine (its tag is the table) */
+        _il2d_rd0_hook((const void *)a->tab, a->src, a->pitch, a->dst, a->pitch, 0, 0, a->cnt, a->d0, a->nd);
+        return;
+    }
     for (b = 0; b < a->nrows / a->L; b++)
     {
         const size_t off =
@@ -2971,6 +2976,13 @@ static int _il2d_real_sscr_build(vfft_ilcol_t *c, int N1, size_t rn, int T)
 static void _il2d_col_free(vfft_ilcol_t *c)
 {
     int s;
+    if (c->rd0)
+    {   /* the Rader stage's engine; its tags in the stage-0 slots are this set's blocks,
+         * freed with the tables below */
+        _ilrd_col0_ctx_clear(c->rd0);
+        if (_il2d_rd0_free_hook) _il2d_rd0_free_hook(c->rd0);
+        c->rd0 = NULL;
+    }
     for (s = 0; s < c->nst && s < 8; s++)
     {
         vfft_aligned_free(c->tf[s]);
@@ -2987,6 +2999,196 @@ static void _il2d_col_free(vfft_ilcol_t *c)
     vfft_aligned_free(c->bandscr);
     _il2d_tpc_drop(c);
     memset(c, 0, sizeof *c);
+}
+
+/* THE RADER STAGE on a column descriptor whose chain starts with a prime above
+ * the pool (R[0] >= VFFT_IL2D_RADER_MIN, docs/roadmap/rader_leaf_design.md
+ * section 13): the engine is built once the chain is settled and BEFORE any
+ * table set for it (the descriptor's, the races'): every such set names it
+ * through the tag blocks _il2d_build_tables takes from the build's engine
+ * context. T scratch slots. 1 = ok (or no such stage), 0 = it could not be
+ * built. */
+static int _il2d_col_rd0_attach(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                                const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int p, int N, size_t rn, int T,
+                                int *replayed)
+{
+    int req[8], nreq = 0, Wr = 0;
+    char rd[64] = "", rdw[16] = "";
+    if (replayed) *replayed = 0;
+    if (!VFFT_IL2D_RADER_RADIX(p) || c->rd0)
+        return 1;
+    /* the row's own verdict for the stage (rd= / rdw=, the owner's tokens, 2026-10-14):
+     * never under recalibrate, never without the chain's row */
+    if (W && !W->vw2_off_2d && !cfg->recalibrate &&
+        vw2_ilcol_forms_lookup_base(&W->vw2, key, "rd", rd, sizeof rd))
+    {
+        const char *q = rd;
+        long prod = 1;
+        while (*q && nreq < 8)
+        {
+            char *e;
+            const long r = strtol(q, &e, 10);
+            if (e == q || r < 2) { nreq = 0; break; }
+            req[nreq++] = (int)r;
+            prod *= r;
+            if (*e == '.') q = e + 1;
+            else if (*e == '\0') q = e;
+            else { nreq = 0; break; }
+        }
+        if (nreq && prod != p - 1) nreq = 0;
+        if (nreq && vw2_ilcol_forms_lookup_base(&W->vw2, key, "rdw", rdw, sizeof rdw))
+            Wr = atoi(rdw);
+    }
+    c->rd0 = _ilrd_col0_build(p, N, rn, T < 1 ? 1 : T, nreq ? req : NULL, nreq, Wr > 0 ? (size_t)Wr : 0);
+    if (!c->rd0 && nreq)
+    {   /* a banked recipe that no longer builds: the default, and the race re-banks */
+        nreq = 0;
+        c->rd0 = _ilrd_col0_build(p, N, rn, T < 1 ? 1 : T, NULL, 0, 0);
+    }
+    if (!c->rd0)
+        return 0;
+    if (replayed) *replayed = nreq > 0;
+    if (getenv("VFFT_IL2D_LOG"))
+    {
+        char d[64]; int w = 0;
+        _ilrd_col0_desc(c->rd0, d, sizeof d, &w);
+        fprintf(stderr, "[il2d] rader %dx%d: stage 0 p=%d inner %s W=%d %s\n", N, (int)rn, p, d, w,
+                nreq ? "src=wisdom" : "(the default; the race follows)");
+    }
+    _ilrd_col0_ctx_set(c->rd0, N);
+    return 1;
+}
+
+/* THE COLUMN ENGINE'S RACE (section 13, phase A2): the inner chain of p - 1 and the
+ * window width, every arm a live engine swapped into the stage's tags, timed on the
+ * column pass the cell serves (the N-arm harness: the natural pass with the leaf
+ * redirection, or the plain pass); the winner stays attached and banks as rd= / rdw= on
+ * the column row. Once per cell: a row with rd= replays through the attach. Serial
+ * timing at every T (the engine's inner is a per-column choice). */
+/* the engine's verdict on the column row (rd= / rdw=); nothing without the row (a pinned
+ * chain's row is created after the build: the cell's next create banks) */
+static void _il2d_col_rd0_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                               const vw2_ilcol_key_t *key, const void *rd0, int N, size_t rn, const char *how)
+{
+    char d[64], wb[16];
+    int w = 0, b1;
+    if (!W || W->vw2_off_2d || !_ilrd_col0_desc(rd0, d, sizeof d, &w)) return;
+    snprintf(wb, sizeof wb, "%d", w);
+    b1 = vw2_ilcol_forms_bank_base(&W->vw2, key, "rd", d);
+    if (b1 && vw2_ilcol_forms_bank_base(&W->vw2, key, "rdw", wb))
+        _vw2_persist(W, cfg);
+    if (getenv("VFFT_IL2D_LOG"))
+        fprintf(stderr, "[il2d] rader %dx%d: %s -> inner %s W=%d, %s\n", N, (int)rn, how, d, w,
+                b1 ? "banked" : "not banked (no chain row)");
+}
+typedef struct { _il2d_n1arm_ctx_t *h; vfft_ilrd_t *rd; char name[40]; } _il2d_rd0_arm_t;
+static void _il2d_rd0_arm_run(void *v)
+{
+    _il2d_rd0_arm_t *a = (_il2d_rd0_arm_t *)v;
+    ((_ilrd_ctab_t *)a->h->tf[0])->rd = a->rd;
+    _il2d_n1arm_chain(a->h);
+}
+static void _il2d_col_rd0_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                               const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int N, size_t rn, int T)
+{
+    vfft_ilrd_t *cur = (vfft_ilrd_t *)c->rd0, *win;
+    _ilrd_inner_t cand[VFFT_ILRD_MAX_INNERS];
+    _il2d_rd0_arm_t cx[VFFT_ILRD_MAX_INNERS + 4];
+    vfft_race_arm_t arms[VFFT_ILRD_MAX_INNERS + 4];
+    double ns[VFFT_ILRD_MAX_INNERS + 4];
+    _il2d_n1arm_ctx_t h;
+    _il2d_ip_reset_t rs;
+    vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, _il2d_ip_reset, &rs, 1 }; /* min-of-3, the plane re-laid before every sample */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
+    const size_t scn = 2 * (size_t)N * rn;
+    double *sc, *scs;
+    int n, na = 0, i, best, nst_w, Rs_w[VFFT_ILRD_MAX_NST];
+    size_t W_w, wc[4];
+    const int p = cur ? cur->p : 0;
+    if (!cur || !c->tf[0] || !c->tb[0] || c->blu)
+        return;
+    sc = (double *)vfft_aligned_alloc(scn * sizeof(double));
+    scs = (double *)vfft_aligned_alloc(scn * sizeof(double));
+    if (!sc || !scs) { vfft_aligned_free(sc); vfft_aligned_free(scs); return; }
+    for (i = 0; i < (int)scn; i++) sc[i] = 1.0 + 1e-6 * (double)(i & 511);
+    memcpy(scs, sc, scn * sizeof(double));
+    memset(&h, 0, sizeof h);
+    h.sc = sc; h.N1 = N; h.N2 = rn; h.nst = c->nst; h.R = c->R; h.L = c->L; h.f = c->f; h.tf = c->tf;
+    h.nat = c->nat; h.perm = c->natperm; h.nscr = c->natscr;
+    rs.p = sc; rs.seed = scs; rs.n = scn;
+    n = _ilrd_enum_inners(p - 1, cand, VFFT_ILRD_MAX_INNERS);
+    for (i = 0; i < n; i++)
+    {   /* the inner chains at the default width; the incumbent's own is among them */
+        vfft_ilrd_t *rd = (vfft_ilrd_t *)_ilrd_col0_build(p, N, rn, T < 1 ? 1 : T, cand[i].Rs, cand[i].nst, 0);
+        int j, off = 0;
+        if (!rd) continue;
+        cx[na].h = &h; cx[na].rd = rd;
+        cx[na].name[0] = '\0';
+        for (j = 0; j < cand[i].nst && off < (int)sizeof cx[na].name - 6; j++)
+            off += snprintf(cx[na].name + off, sizeof cx[na].name - (size_t)off, "%s%d", j ? "." : "", cand[i].Rs[j]);
+        arms[na].name = cx[na].name; arms[na].run = _il2d_rd0_arm_run; arms[na].ctx = &cx[na];
+        na++;
+    }
+    if (na == 0)
+    {   /* no candidate built: the default serves, its verdict banked so the row replays */
+        vfft_aligned_free(sc); vfft_aligned_free(scs);
+        _il2d_col_rd0_bank(W, cfg, key, cur, N, rn, "no inner candidate; the default");
+        return;
+    }
+    ((_ilrd_ctab_t *)c->tf[0])->rd = cx[0].rd;
+    proto.reps = _il2d_race_reps(_il2d_n1arm_chain, &h, (double)N);
+    best = vfft_race_run(&proto, arms, na, ns);
+    if (best < 0) best = 0;
+    if (getenv("VFFT_IL2D_LOG"))
+    {
+        fprintf(stderr, "[il2d] rader %dx%d p=%d inner race (reps=%d):", N, (int)rn, p, proto.reps);
+        for (i = 0; i < na; i++) fprintf(stderr, " %s=%.0f", cx[i].name, ns[i]);
+        fprintf(stderr, " -> %s\n", cx[best].name);
+    }
+    win = cx[best].rd;
+    memcpy(Rs_w, win->Rs, sizeof Rs_w); nst_w = win->nst; W_w = win->W;
+    for (i = 0; i < na; i++) if (cx[i].rd != win) _ilrd_free(cx[i].rd);
+    /* the widths around the winner's: half, double, quadruple, the column space */
+    na = 0;
+    cx[na].h = &h; cx[na].rd = win;
+    snprintf(cx[na].name, sizeof cx[na].name, "W%zu", W_w);
+    arms[na].name = cx[na].name; arms[na].run = _il2d_rd0_arm_run; arms[na].ctx = &cx[na]; na++;
+    wc[0] = W_w / 2; wc[1] = W_w * 2; wc[2] = W_w * 4; wc[3] = win->ncol & ~(size_t)1;
+    for (i = 0; i < 4; i++)
+    {
+        vfft_ilrd_t *rd;
+        int dup = 0, j;
+        if (wc[i] < VFFT_ILRD_W_MIN || wc[i] > win->ncol || wc[i] == W_w) continue;
+        for (j = 1; j < na; j++) if (cx[j].rd->W == wc[i]) dup = 1;
+        if (dup) continue;
+        rd = (vfft_ilrd_t *)_ilrd_col0_build(p, N, rn, T < 1 ? 1 : T, Rs_w, nst_w, wc[i]);
+        if (!rd || rd->W == W_w) { if (rd) _ilrd_free(rd); continue; }
+        cx[na].h = &h; cx[na].rd = rd;
+        snprintf(cx[na].name, sizeof cx[na].name, "W%zu", rd->W);
+        arms[na].name = cx[na].name; arms[na].run = _il2d_rd0_arm_run; arms[na].ctx = &cx[na]; na++;
+    }
+    if (na > 1)
+    {
+        best = vfft_race_run(&proto, arms, na, ns);
+        if (best < 0) best = 0;
+        if (getenv("VFFT_IL2D_LOG"))
+        {
+            fprintf(stderr, "[il2d] rader %dx%d p=%d width race:", N, (int)rn, p);
+            for (i = 0; i < na; i++) fprintf(stderr, " %s=%.0f", cx[i].name, ns[i]);
+            fprintf(stderr, " -> %s\n", cx[best].name);
+        }
+        for (i = 0; i < na; i++) if (i != best) _ilrd_free(cx[i].rd);
+        win = cx[best].rd;
+    }
+    vfft_aligned_free(sc);
+    vfft_aligned_free(scs);
+    /* the winner is the stage's engine: the tags, the descriptor, the context; the incumbent goes */
+    ((_ilrd_ctab_t *)c->tf[0])->rd = win;
+    ((_ilrd_ctab_t *)c->tb[0])->rd = win;
+    _ilrd_col0_ctx_clear(cur);
+    if (cur != win) _ilrd_free(cur);
+    c->rd0 = win;
+    _ilrd_col0_ctx_set(win, N);
+    _il2d_col_rd0_bank(W, cfg, key, win, N, rn, "raced");
 }
 
 /* the forms axis by the column row's key (rank/axis-general twin of
@@ -3223,6 +3425,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     int il2d_bwl = -1, il2d_btf = -1, il2d_bro = -1;
     int il2d_bcmt = -1, il2d_bcmtt = -1, il2d_bblu = -1;
     int il2d_tbl_done = 0;
+    int il2d_rd_replayed = 0;   /* the Rader stage's inner and width came from the row (no race) */
     _il2d_blu_ctx.N2 = (int)rn;   /* the Bluestein inner's chain provider: this axis's row length */
     _il2d_blu_ctx.key = key;      /* ... and the row its verdict belongs on */
     _il2d_blu_ctx.rep_R = NULL;
@@ -3260,6 +3463,15 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             /* ncand >= 1, not > 1: one arm is still a race -- it is timed
              * and it banks, so the cell gets a row for its forms and widths
              * to hang off. */
+            if (ncand >= 1 && VFFT_IL2D_RADER_RADIX(cand[0][0]) &&
+                !_il2d_col_rd0_attach(W, cfg, key, c, cand[0][0], N, rn, key->nthreads, NULL))
+            {   /* every candidate is a leaf chain at this one prime (the enumerator's law):
+                 * the engine before the race, so every arm's table set names it */
+                _vfft_warn("vfft_create: IL column pass %dx%d - the Rader stage at %d could not be "
+                           "built; unsupported", N, (int)rn, cand[0][0]);
+                _il2d_col_free(c);
+                return 0;
+            }
             if (ncand >= 1)
             {
                 double bns = 0;
@@ -3294,7 +3506,21 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             }
             /* no greedy fallback: a race with no buildable arm has no
              * chain, and !chain_ok below is Bluestein or a refusal */
+            if (!chain_ok && c->rd0)
+            {   /* the race's engine goes with the chain it had no winner for */
+                _ilrd_col0_ctx_clear(c->rd0);
+                if (_il2d_rd0_free_hook) _il2d_rd0_free_hook(c->rd0);
+                c->rd0 = NULL;
+            }
         }
+    }
+    if (chain_ok && il2d_bblu <= 0 && c->nst >= 1 && VFFT_IL2D_RADER_RADIX(c->R[0]) &&
+        !_il2d_col_rd0_attach(W, cfg, key, c, c->R[0], N, rn, key->nthreads, &il2d_rd_replayed))
+    {   /* the Rader stage's engine, before any table set for this chain */
+        _vfft_warn("vfft_create: IL column pass %dx%d - the Rader stage at %d could not be "
+                   "built; unsupported", N, (int)rn, c->R[0]);
+        _il2d_col_free(c);
+        return 0;
     }
     if (chain_ok && il2d_bblu <= 0)
     {   /* per-stage kernel forms; a banked Bluestein cell's inner forms
@@ -3356,6 +3582,22 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             { _il2d_col_free(c); return 0; }
         }
         c->nat = 1;
+    }
+    if (chain_ok && !c->blu && il2d_bblu <= 0 && c->rd0 && !il2d_rd_replayed)
+    {   /* THE COLUMN ENGINE'S RACE: its inner chain and width on the pass the cell serves,
+         * before the N-arm race times the chain with it. The descriptor's tables (the tags)
+         * first; the shared build below is skipped by il2d_tbl_done. */
+        if (!il2d_tbl_done)
+        {
+            if (_il2d_build_tables(N, c->nst, c->R, c->L, c->tf, c->tb))
+            {
+                _vfft_warn("vfft_create: IL column pass %dx%d - stage tables failed; unsupported", N, (int)rn);
+                _il2d_col_free(c);
+                return 0;
+            }
+            il2d_tbl_done = 1;
+        }
+        _il2d_col_rd0_race(W, cfg, key, c, N, rn, key->nthreads);
     }
     if (chain_ok && !c->blu && !getenv("VFFT_IL2D_CHAIN"))
     {
@@ -3460,8 +3702,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             hasodd = 0;                /* the chain won: no race */
         }
         if (hasodd && (!be || atoi(be) == 1) &&
-            !_il2d_build_tables(N, c->nst, c->R, c->L,
-                                c->tf, c->tb))
+            (il2d_tbl_done || !_il2d_build_tables(N, c->nst, c->R, c->L,
+                                                  c->tf, c->tb)))
         {
             il2d_tbl_done = 1;
             int bR[8], bL[8], bnst = 0, M2;
@@ -3518,6 +3760,50 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                             N, (int)rn, c->nat ? "nat" : "scr",
                             tc, tbu,
                             use_blu ? "BLUESTEIN" : "chain");
+                if (!use_blu && !be && c->nst == 1 && VFFT_IL2D_RADER_RADIX(c->R[0]) && c->rd0 &&
+                    !key->real && key->axis == 0 && !getenv("VFFT_IL2D_TPC"))
+                {   /* a prime N1: the Rader chain beat Bluestein; the TURNED pass (the 1D prime
+                     * plan per lane, _il2d_tpc_race's arm) is the third, timed as that race times
+                     * it; when it wins the cell is the turned Bluestein-marked cell (blu = M, tpc = 1) */
+                    double *tz = (double *)vfft_aligned_alloc(2 * (size_t)N * rn * sizeof(double));
+                    double *tzo = (double *)vfft_aligned_alloc(2 * (size_t)N * rn * sizeof(double));
+                    if (tz && tzo && _il2d_tpc_build(W, cfg, key, c, N, rn))
+                    {
+                        _il2d_n1arm_ctx_t rc2 = {
+                            tz, N, rn, c->nst, c->R,
+                            c->L, c->f, c->tf, M2, bnst, bR,
+                            bL, bf, bb, btf, btb, bchf, bkf, bscr,
+                            c->nat, c->natperm, c->natscr };
+                        double tch = 1e300, ttp = 1e300;
+                        int r3;
+                        for (i3 = 0; i3 < 2 * (size_t)N * rn; i3++)
+                            tz[i3] = 1.0 + 1e-6 * (double)(i3 & 511);
+                        _il2d_n1arm_chain(&rc2);
+                        _il2d_tpc_cols_range(c, tz, tzo, rn, 0, rn, 0);
+                        for (r3 = 0; r3 < 3; r3++)
+                        {
+                            const double t0 = vfft_now_ns();
+                            double t1, t2;
+                            _il2d_n1arm_chain(&rc2);
+                            t1 = vfft_now_ns();
+                            _il2d_tpc_cols_range(c, tz, tzo, rn, 0, rn, 0);
+                            t2 = vfft_now_ns();
+                            if (t1 - t0 < tch) tch = t1 - t0;
+                            if (t2 - t1 < ttp) ttp = t2 - t1;
+                        }
+                        if (getenv("VFFT_IL2D_LOG"))
+                            fprintf(stderr, "[il2d] tpc vs the Rader chain at %dx%d: chain %.0f us, turned %.0f us -> %s\n",
+                                    N, (int)rn, tch / 1e3, ttp / 1e3, ttp < tch ? "TURNED" : "rader chain");
+                        if (ttp < tch)
+                            use_blu = 2;   /* the turned pass serves: the Bluestein marker, tpc = 1 */
+                        else
+                            _il2d_tpc_drop(c);
+                    }
+                    else
+                        _il2d_tpc_drop(c);
+                    vfft_aligned_free(tz);
+                    vfft_aligned_free(tzo);
+                }
                 if (!be)
                 {   /* bank the verdict with the chain that SERVES */
                     vw2_ilcol_chain_bank(&W->vw2, key,
@@ -3525,10 +3811,18 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                          use_blu ? bnst : c->nst,
                                          -1, -1, -1, -1, -1,
                                          use_blu ? M2 : 0, 0.0);
+                    if (use_blu == 2)
+                        vw2_ilcol_tok_seti(&W->vw2, key, "tpc", 1);
                     _vw2_persist(W, cfg);
                 }
                 if (use_blu)
                 {
+                    if (c->rd0)
+                    {   /* the N chain's Rader stage goes with its chain (its tags with the tables) */
+                        _ilrd_col0_ctx_clear(c->rd0);
+                        if (_il2d_rd0_free_hook) _il2d_rd0_free_hook(c->rd0);
+                        c->rd0 = NULL;
+                    }
                     for (s3 = 0; s3 < c->nst; s3++)
                     {
                         vfft_aligned_free(c->tf[s3]);
@@ -3554,6 +3848,11 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                         c->natperm = NULL;
                         c->natscr = NULL;
                         c->nat = 0;
+                    }
+                    if (use_blu == 2)
+                    {   /* the turned pass won against the Rader chain: it serves, the Bluestein tables go */
+                        c->tpc = 1;
+                        _il2d_blu_drop_tables(c);
                     }
                 }
                 else
@@ -3592,6 +3891,14 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         _il2d_col_free(c);
         return 0;
     }
+    if (!c->blu && c->nst >= 1 && VFFT_IL2D_RADER_RADIX(c->R[0]) && (!c->rd0 || !c->tf[0] || !c->tb[0]))
+    {   /* the chain's Rader stage must have its engine and the descriptor's tags */
+        _vfft_warn("vfft_create: IL column pass %dx%d - the Rader stage at %d has no engine on the plan; unsupported",
+                   N, (int)rn, c->R[0]);
+        _il2d_col_free(c);
+        return 0;
+    }
+    _ilrd_col0_ctx_clear(c->rd0);   /* the build is over: no later table set borrows this engine */
     c->N = N;
     c->rn = rn;
     *bwl = il2d_bwl; *btf = il2d_btf; *bro = il2d_bro;

@@ -1943,7 +1943,7 @@ static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom
     enum { MAXC = 1 + VFFT_IL2P_COL_MAXLEAF };   /* plain, the leaves */
     const size_t hp1 = (size_t)N2 / 2 + 1, RN = (size_t)N1 * (size_t)N2, CN = 2 * (size_t)N1 * h->il2d_col.rn;
     const vfft_ilcol_t *col = &h->il2d_col;
-    const int one_stage = col->nst == 1 && !col->nat && !col->blu && !col->tpc && (col->wl == 0 || col->wl == col->N) &&
+    const int one_stage = col->nst == 1 && col->b[0] && !col->nat && !col->blu && !col->tpc && (col->wl == 0 || col->wl == col->N) &&
                           col->L[0] == col->N && col->b[0] != NULL;
     const char *lname[VFFT_IL2P_COL_MAXLEAF];
     const char *log = getenv("VFFT_IL2D_LOG");

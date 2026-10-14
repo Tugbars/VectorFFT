@@ -30,7 +30,7 @@
 static int _il2d_onek_pass(const struct vfft_plan_s *h)
 {
     const vfft_ilcol_t *c = &h->il2d_col;
-    return h->il2d_cx_leaf != NULL || (c->nst == 1 && !c->nat && !c->blu && !c->tpc);
+    return h->il2d_cx_leaf != NULL || (c->nst == 1 && c->f[0] && !c->nat && !c->blu && !c->tpc);   /* a Rader stage is no kernel */
 }
 
 /* ═══ cxp: the c2r column-inverse plane's pitch ═══════════════════════ */

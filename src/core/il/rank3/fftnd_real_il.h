@@ -1206,7 +1206,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         }
     }
     /* ── the pay-once pieces: axis 1's plain chain per plane (chain1=, direction-shared) ── */
-    payonce_ok = strips_ok;
+    payonce_ok = strips_ok && d->ax0.f[d->ax0.nst - 1] != NULL;   /* the pay-once leaf is a kernel call: a one-stage Rader chain has none */
     if (payonce_ok)
     {
         forms1[0] = 0;
