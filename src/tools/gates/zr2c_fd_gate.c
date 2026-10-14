@@ -5,9 +5,10 @@
  *   - R2C fwd + C2R bwd, INTERLEAVED CCE, OOP and IN-PLACE, both routes
  *     (VFFT_ZR2C_ROUTE=0 OOP-IL child / =1 NAT-IP cascade child), K=1,
  *     N in {512, 2048, 4096}.
- *   - REGRESSION smokes for paths the new branch must NOT disturb:
- *     K=4 interleaved r2c (split-interior CCE path) and odd-N (510)
- *     interleaved r2c OOP.
+ *   - REGRESSION smokes: the lane-major K=4 interleaved r2c is REFUSED at
+ *     create (owner 2026-10-14, field trial V02: the split engines that
+ *     served it staged every slab through one scratch), and the odd-N (510)
+ *     interleaved r2c OOP is served by the zr2c branch.
  *   - The in-place plane contract: 2*(N/2+1) doubles, MKL convention.
  *
  * Wisdom: argv[1] = wisdom DIR (default ../../src/dag-fft-compiler/generator/
@@ -200,23 +201,14 @@ static void run_regressions(void)
         cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = g_W;
         cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
         vfft_plan p = vfft_create(&cfg);
-        if (!p) judge("REGRESSION r2c K=4 (old path)", N, -1, 1);
-        else {
-            vfft_execute(p, VFFT_FORWARD, x, NULL, X, NULL);
-            /* lane-batched split-engine geometry: element e of lane t at
-             * [e*K + t]; the CCE plane mirrors it. Gate lane 1. */
-            double xt[512];
-            for (int e = 0; e < N; e++) xt[e] = x[(size_t)e*K + 1];
-            naive_real_dft(xt, N, Xr, Xi);
-            double w = 0, xm = 0;
-            for (int f = 0; f <= half; f++){
-                double a = fabs(Xr[f]) + fabs(Xi[f]); if (a > xm) xm = a;
-                double dr = fabs(X[2*((size_t)f*K + 1)]     - Xr[f]);
-                double di = fabs(X[2*((size_t)f*K + 1) + 1] - Xi[f]);
-                if (dr > w) w = dr; if (di > w) w = di; }
-            judge("REGRESSION r2c K=4 (old path)", N, w/xm, 1e-9);
-            vfft_destroy(p);
-        }
+        /* the lane-major interleaved real batch is REFUSED at create (owner
+         * 2026-10-14, field trial V02; vfft.h batch_geom): the refusal is the
+         * contract until the native engine exists. A plan here would be the
+         * split-staged path serving the lane-major geometry again. */
+        printf("  %-38s N=%-6d %s\n", "REGRESSION r2c K=4 lane-major", N,
+               p ? "SERVED    *** FAIL -- refused by ruling (V02) ***" : "refused   OK");
+        if (p) { g_fail = 1; vfft_destroy(p); }
+        (void)half;
         free(x); free(X); free(Xr); free(Xi);
     }
     /* N=510: EVEN non-pow2 -> the zr2c branch legitimately serves it
@@ -271,11 +263,13 @@ static void run_regressions(void)
  *            with fwd -- it exercises the other stride pair.
  *   in-place ONE padded plane per transform, dre == sre. New capability:
  *            before this the in-place real contract was K==1 only.
- *   MT==ST   BITWISE. The wrapper's MT runs each worker on its own plan
- *            CLONE, so a clone that resolved to a different kernel would give
- *            a numerically fine but bit-different batch. Bitwise is the only
- *            assertion that catches that, and it is the same rule the C2C
- *            wrapper is held to.
+ *   MT vs ST the T=4 batch is its own measured plan: the thread count is a
+ *            wisdom key axis (2026-09-25), so its K=1 inner may take another
+ *            engine than the T=1 inner's, and the two batches agree to
+ *            rounding (1e-12), bitwise only when the two rows name one engine.
+ *            The clones themselves are verified output-equivalent at create
+ *            (_tc_clone_equiv); the MT batch is also judged against the naive
+ *            DFT on its own.
  */
 static int g_tc_workers = -1;   /* worker count of the LAST plan built */
 
@@ -358,12 +352,25 @@ static void run_tc_batch(void)
                           : "*** FAIL -- serial; the MT==ST check below is vacuous ***");
             if (nw <= 0) g_fail = 1;
         }
-        if (a[0] < 0 || b[0] < 0) judge("TC batch r2c K=4 MT==ST", N, -1, 1);
+        judge("TC batch r2c K=4 MT fwd (vs naive)", N, b[0], 1e-9);
+        if (a[0] < 0 || b[0] < 0) judge("TC batch r2c K=4 MT vs ST", N, -1, 1);
         else {
-            int same = (memcmp(a+1, b+1, 8*2*nb*K) == 0);
-            printf("  %-38s N=%-6d %-9s %s\n", "TC batch r2c K=4 MT==ST (bitwise)",
-                   N, same ? "identical" : "DIFFERS", same ? "OK" : "*** FAIL ***");
-            if (!same) g_fail = 1;
+            /* to rounding: the T=4 row and the T=1 row are two measured plans
+             * (the thread count is a wisdom key axis); bitwise when they name
+             * one engine */
+            const int same = (memcmp(a+1, b+1, 8*2*nb*K) == 0);
+            double w = 0, m = 0, rel;
+            size_t j;
+            for (j = 0; j < 2*nb*K; j++) {
+                const double d = fabs(a[1+j] - b[1+j]);
+                if (d > w) w = d;
+                if (fabs(a[1+j]) > m) m = fabs(a[1+j]);
+            }
+            rel = m > 0 ? w/m : w;
+            printf("  %-38s N=%-6d %-9s rel %.1e %s\n", "TC batch r2c K=4 MT vs ST",
+                   N, same ? "identical" : "rounding", rel,
+                   (same || rel < 1e-12) ? "OK" : "*** FAIL ***");
+            if (!(same || rel < 1e-12)) g_fail = 1;
         }
         free(a); free(b);
 

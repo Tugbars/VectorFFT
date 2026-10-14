@@ -647,6 +647,72 @@ non-temporal store rate of about 90. A fused slab form (first and second axis pe
 cache-resident strip of lanes) was prototyped and refuted: at 4 to 8 lanes the narrow
 column passes cost more than the residency saves.
 
+### 2D and 3D, a prime above 47 on a column axis — the RADER COLUMN STAGE vs MKL, with the 1D real leaf (2026-10-14)
+
+The Rader stage at stage 0 of a column chain (`docs/roadmap/rader_leaf_design.md`
+section 13, phase A1): a prime above the kernel pool served as a vectorized Rader
+convolution over the plane's lanes, the inner chain of p-1 from the column pool. The
+column chain is PINNED here (`VFFT_IL2D_CHAIN`): phase A1 gives the planner no Rader
+candidates yet, so the cell's other verdicts race and the chain is named. The 1D real
+cells run through the planner as it stands: the leaf in the zr2c child at N/2. Every
+cell raced COLD on a fresh scratch store (nothing replays the shipped wisdom); the
+canonical bench, one isolated cell per process, pinned core 2 at HIGH priority, pace
+and cool 300 ms, both engine orders; the row shows the order with the LOWER ratio. MKL
+3D c2c is its interleaved path (its split-layout path lands within 1-10% of it). The
+record: `docs/research/field_trial/gapfill/race_rader/` (CSV per group, `race.log`).
+
+```
+ cell        chain       ours ns     MKL ns  ratio   route      error
+ 2D c2c, natural, out of place (the column chain pinned)
+ 524x64      131.4        98,597    662,036   6.71   chain+rb2  7.1e-16
+ 262x128     131.2       101,869    652,853   6.41   chain      1.3e-15
+ 1048x64     131.8       217,286  1,334,403   6.14   chain+rb2  8.5e-16
+ 2101x16     191.11      120,776    388,392   3.22   chain+rb2  8.9e-16
+ 131x256     131          90,119    283,354   3.14   chain      8.2e-16
+ 53x512      53           66,059     74,622   1.13   chain      1.4e-15
+ 3D c2c, natural, out of place (axis 0 pinned; MKL's interleaved path, its split path within 1-10%)
+ 524x16x16   131.4       446,157  2,741,743   6.15   natural    1.2e-15
+ 131x131x4   131         368,141  1,150,097   3.12   natural    1.8e-15
+ 53x53x16    53          171,952    490,336   2.85   natural    1.3e-15
+ 107x107x8   107         877,171  1,148,671   1.31   natural    1.8e-15
+ 1D r2c / c2r (the planner's own pick: the leaf through the zr2c child)
+ r2c 1048                  1,818      9,974   5.49   -          6.6e-16
+ c2r 1048                  1,818      9,764   5.37   -          1.6e-15
+ r2c 2096                  3,271     20,110   6.15   -          8.7e-16
+ c2r 2096                  3,284     19,685   5.99   -          1.8e-15
+ r2c 4202                  8,740     23,248   2.66   -          7.9e-16
+ c2r 4202                  8,825     23,656   2.68   -          1.8e-15
+ r2c 262                     408      1,006   2.46   -          6.4e-16
+ c2r 262                     390      1,029   2.64   -          1.3e-15
+ r2c 4552                 13,526     23,348   1.73   -          6.9e-16
+ c2r 4552                 13,791     23,875   1.73   -          1.6e-15
+ r2c 2354                  7,151     12,053   1.69   -          5.6e-16
+ c2r 2354                  7,393     12,267   1.66   -          1.4e-15
+ 2D r2c / c2r, natural, out of place (the column chain pinned)
+ r2c 524x64  131.4        59,726    351,025   5.88   chain      8.0e-16
+ c2r 524x64  131.4        58,127    344,796   5.93   chain      1.9e-15
+ r2c 1048x32 131.8        71,953    366,653   5.10   chain      8.9e-16
+ c2r 1048x32 131.8        60,771    360,746   5.94   chain      1.8e-15
+ r2c 131x256 131          51,269    154,128   3.01   chain      1.0e-15
+ c2r 131x256 131          50,251    158,955   3.16   chain      2.0e-15
+ r2c 2101x16 191.11       79,988    233,712   2.92   chain      8.2e-16
+ c2r 2101x16 191.11       76,338    236,803   3.10   chain      2.2e-15
+ r2c 53x512  53           36,546     47,303   1.29   chain      1.4e-15
+ c2r 53x512  53           35,145     52,678   1.50   chain      2.9e-15
+ 3D r2c / c2r, natural, out of place (axis 0 pinned)
+ r2c 524x16x16 131.4       251,445  1,580,393   6.29   child      8.3e-16
+ c2r 524x16x16 131.4       236,631  1,555,517   6.57   band       2.1e-15
+ r2c 53x53x16 53          121,198    307,807   2.54   child      1.2e-15
+ c2r 53x53x16 53          127,057    321,678   2.53   child      3.0e-15
+ r2c 131x131x4 131         430,969    949,383   2.20   child      1.2e-15
+ c2r 131x131x4 131         425,422    948,224   2.23   child      2.7e-15
+```
+
+The win is the width the prime is vectorized over: 131 or 191 over four to eight
+digits reads 3x to 7x in every rank and transform, 53 alone over the lanes 1.1x to
+1.5x, and a nested inner leaf (107, the 4552 and 2354 real cells) 1.3x to 1.7x, the
+1D class sweep's pattern. Accuracy 6e-16 to 3e-15 at every cell.
+
 ## 3. vs MKL — 1D R2C / C2R
 
 ### K=1 INTERLEAVED r2c and c2r — every N from 2 to 2048 vs MKL, the gauntlet (2026-09-30)

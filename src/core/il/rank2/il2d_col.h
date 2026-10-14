@@ -27,6 +27,11 @@ typedef struct {
     int R[8], L[8];
     vfft_il2p_fn f[8], b[8];
     double *tf[8], *tb[8];
+    /* a RADER STAGE at stage 0 (il_rader_stage.h; docs/roadmap/rader_leaf_design.md
+     * section 13): R[0] a prime above the kernel pool, f[0] = b[0] = NULL, and tf[0] /
+     * tb[0] the engine's two direction tags, so every walker finds the engine in the
+     * stage-0 table slot and runs it through _il2d_rd0_hook; rd0 owns it */
+    void *rd0;
     int wc;                   /* column-tile width (complex); 0 = full rn (untiled) */
     /* the BANDED walk: wl = band width in
      * ROWS (0 = unbanded); cut = DERIVED from wl (the first stage with

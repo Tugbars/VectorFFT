@@ -1,14 +1,12 @@
-/* il2d_real_gate.c — M1 gate for the native IL 2D REAL tier
- * (docs/roadmap/fft2d_real_il_design.md; driver in vfft.c, env-gated
- * VFFT_IL2D_REAL=1 for M1).
+/* il2d_real_gate.c — gate for the native IL 2D REAL tier
+ * (docs/design/il2d_real_mt.md, docs/roadmap/fft2d_real_il_design.md).
  *
- * FWD (r2c): elementwise vs a naive separable real DFT through the
- * chain's row map — N1 digit-reversed at nst>1, so the mapped compare is
- * SELF-PROVING on engagement there (the §6a30 veneer serves natural-N1
- * CCE and can never pass it). A cell where the NATURAL compare passes
- * instead is the designed fall-through (veneer served) and reports SKIP,
- * not FAIL. nst==1 cells cannot distinguish by order — their engagement
- * proof is the [il2d-real] stderr log (runner counts lines).
+ * FWD (r2c): elementwise vs a naive separable real DFT in NATURAL order:
+ * VFFT_ORDER_DEFAULT is NATURAL for INTERLEAVED at every rank (the order
+ * law, policy_order.h, 2026-09-27), so a plan that delivers a digit-reversed
+ * n1 FAILS (before that law the tier served the scrambled comb under
+ * DEFAULT and this gate compared through the chain's row map). Engagement
+ * is the [il2d-real] stderr log ("native r2c N1xN2 nst=k engaged").
  *
  * BWD (c2r): the PAIR contract — the c2r plan consumes the r2c pair's
  * own fwd output (the comb) and must return N1*N2*x elementwise; fwd is
@@ -19,11 +17,15 @@
  * Cells cover BOTH hp1 parities (§2.1: hp1 = N2/2+1 is odd iff 4|N2,
  * even at N2 == 2 mod 4) — the first-ever odd-count n1c/t2c coverage.
  *
- * SECOND PASS: the ROWSPLIT row route (VFFT_IL2D_ROWSPLIT=W — "il at
- * the boundary, split inside", the cascade pattern) over the W-legal
- * subset (W%8, W|N1, N2%4): identical checks, identical tolerances.
+ * MT: the T=8 plan is its own measured plan (the thread count is a wisdom
+ * key axis; its row engine and column verdicts are raced at T, 2026-10-08),
+ * so it is judged against the naive DFT and the pair contract, never
+ * bitwise against the T=1 plan; its engagement is the public counters of
+ * the passes the tier threads (vfft_il2d_col_mt_passes,
+ * vfft_il2d_row_mt_passes), with the column MT pinned on so a serial
+ * verdict cannot make the check vacuous.
  *
- * Build: python build.py --src benches/il2d_real_gate.c --vfft --compile
+ * Build: python gauntlet/build.py --src src/tools/gates/il2d_real_gate.c --vfft --compile
  * Run  : il2d_real_gate.exe <SCRATCH wisdir>
  */
 #include <stdio.h>
@@ -72,12 +74,11 @@ static void naive_cols(const double *in, double *out, int N1, int hp1)
         }
 }
 
-/* the gate's OWN chain generator (largest-first over the pow2 radices), fed
- * to the library through the VFFT_IL2D_CHAIN pin so the map below is the
- * binding. It once mirrored a library greedy builder; that builder is gone
- * (2026-09-17, the library races instead) and this stays as the pin source.
- * + the DIF output map:
- * the FIRST stage's digit is the MOST significant position digit. */
+/* the gate's OWN chain guess (largest-first over the pow2 radices): the
+ * stage count labels the cell, and the DIF output map below names a
+ * digit-reversed n1 in a FAIL line. The library's chain is its own (raced
+ * and banked; never pinned here, since 2026-10-14: a pinned chain banked
+ * its forms beside the row's own chain and the two re-raced each other). */
 static int chain_of(int N1, int *Rs)
 {
     static const int POOL[] = { 64, 32, 16, 8, 4 };
@@ -126,18 +127,6 @@ static int run_cell(vfft_wisdom *W, int N1, int N2, const char *tag,
     }
     nf = chain_of(N1, Rs);
     if (nf == 0) { Rs[0] = N1; nf = 1; }
-    {
-        char cb[80];
-        int s_, o_ = snprintf(cb, sizeof cb, "VFFT_IL2D_CHAIN=");
-        for (s_ = 0; s_ < nf; s_++)
-            o_ += snprintf(cb + o_, sizeof cb - o_, "%s%d",
-                           s_ ? "." : "", Rs[s_]);
-#ifdef _WIN32
-        _putenv(cb);
-#else
-        putenv(strdup(cb));
-#endif
-    }
     for (i = 0; i < RN; i++)
         x[i] = (double)rand() / RAND_MAX - 0.5;
     fprintf(stderr, "[gate] %s cell %dx%d (hp1=%d %s, nst=%d)...\n",
@@ -188,23 +177,21 @@ static int run_cell(vfft_wisdom *W, int N1, int N2, const char *tag,
         }
         relm = em / (mag > 0 ? mag : 1.0);
         reln = en / (mag > 0 ? mag : 1.0);
-        if (relm < 1e-10) {
+        /* DEFAULT = NATURAL (the order law): the natural compare is the
+         * verdict; a digit-reversed n1 is a wrong order, not a skip */
+        if (reln < 1e-10) {
             engaged = 1;
-            printf("  %s %4dx%-3d r2c fwd rel %.2e  PASS%s\n", tag, N1,
-                   N2, relm, nf > 1 ? " (engagement self-proven)" : "");
-        } else if (nf > 1 && reln < 1e-10) {
-            printf("  %s %4dx%-3d r2c SKIP (tier fell through — veneer "
-                   "served natural)\n", tag, N1, N2);
-            (*skips)++;
-        } else if (nf == 1 && reln < 1e-10) {
-            engaged = 1;
-            printf("  %s %4dx%-3d r2c fwd rel %.2e  PASS (order-blind "
-                   "cell — see [il2d-real] log)\n", tag, N1, N2, reln);
+            printf("  %s %4dx%-3d r2c fwd rel %.2e  PASS\n", tag, N1, N2, reln);
+        } else if (nf > 1 && relm < 1e-10) {
+            printf("  %s %4dx%-3d r2c DEFAULT delivered a digit-reversed n1 "
+                   "(natural rel %.2e) *** FAIL ***\n", tag, N1, N2, reln);
+            fails++;
         } else {
-            printf("  %s %4dx%-3d r2c fwd rel %.2e (natural %.2e) "
-                   "*** FAIL ***\n", tag, N1, N2, relm, reln);
+            printf("  %s %4dx%-3d r2c fwd rel %.2e "
+                   "*** FAIL ***\n", tag, N1, N2, reln);
             fails++;
         }
+        (void)skips;
     }
     /* ── BWD ── */
     if (engaged) {
@@ -243,9 +230,8 @@ static int run_cell(vfft_wisdom *W, int N1, int N2, const char *tag,
                    "*** FAIL ***\n", tag, N1, N2);
             fails++;
         }
-        printf("  %s %4dx%-3d c2r pair rt %.2e  %s%s\n", tag, N1, N2, rt,
-               rt < 1e-10 ? "PASS" : "*** FAIL ***",
-               nf > 1 ? " (engagement self-proven)" : "");
+        printf("  %s %4dx%-3d c2r pair rt %.2e  %s\n", tag, N1, N2, rt,
+               rt < 1e-10 ? "PASS" : "*** FAIL ***");
         if (rt >= 1e-10) fails++;
     }
 done:
@@ -261,61 +247,32 @@ int main(int argc, char **argv)
         { 128, 8 },  { 128, 64 }, { 256, 16 }, { 256, 10 }, { 512, 32 },
         { 1024, 16 }, { 1024, 18 }, { 4096, 8 },
     };
-    /* ROWSPLIT subset: W=64 needs N1%64==0 && N2%4==0 (plus one W=32
-     * arm at a mid cell for the width axis). */
-    static const int RS64[][2] = {
-        { 128, 8 }, { 128, 64 }, { 256, 16 }, { 512, 32 },
-        { 1024, 16 }, { 4096, 8 },
-    };
-    static const int RS32[][2] = { { 64, 64 }, { 256, 16 } };
     const char *wisdir = argc > 1 ? argv[1] : ".";
     int fails = 0, skips = 0, ci;
     vfft_wisdom *W;
 #ifdef _WIN32
-    _putenv("VFFT_IL2D_REAL=1");
     _putenv("VFFT_IL2D_LOG=1");
     /* the row door's batch THREADING verdict is raced per cell (serial vs slabs,
      * measurement_arms B5); a correctness gate wants its MT arms threaded, so
      * pin it (VFFT_TCMT: an env pin never replays and never banks). */
     _putenv("VFFT_TCMT=1");
 #else
-    putenv("VFFT_IL2D_REAL=1");
     putenv("VFFT_IL2D_LOG=1");
+    putenv("VFFT_TCMT=1");
 #endif
     setvbuf(stdout, NULL, _IONBF, 0);
     W = vfft_wisdom_load(wisdir);
-    printf("=== il2d REAL M1 gate (native tier + rowsplit route, "
-           "elementwise vs naive + pair contract, wisdom=%s %s) ===\n",
+    printf("=== il2d REAL gate (native tier, elementwise vs naive in natural "
+           "order + pair contract, wisdom=%s %s) ===\n",
            wisdir, W ? "loaded" : "MISSING");
     srand(20260826);
     for (ci = 0; ci < (int)(sizeof CELLS / sizeof CELLS[0]); ci++)
         fails += run_cell(W, CELLS[ci][0], CELLS[ci][1], "dflt", &skips);
-#ifdef _WIN32
-    _putenv("VFFT_IL2D_ROWSPLIT=64");
-#else
-    putenv("VFFT_IL2D_ROWSPLIT=64");
-#endif
-    for (ci = 0; ci < (int)(sizeof RS64 / sizeof RS64[0]); ci++)
-        fails += run_cell(W, RS64[ci][0], RS64[ci][1], "rs64", &skips);
-#ifdef _WIN32
-    _putenv("VFFT_IL2D_ROWSPLIT=32");
-#else
-    putenv("VFFT_IL2D_ROWSPLIT=32");
-#endif
-    for (ci = 0; ci < (int)(sizeof RS32 / sizeof RS32[0]); ci++)
-        fails += run_cell(W, RS32[ci][0], RS32[ci][1], "rs32", &skips);
     /* ── row-route race/replay (the c2c M3 gate pattern): env silent,
      * FRESH cells (not in the battery, so the first create genuinely
      * RACES the route and banks chain+rw in memory); the second create
      * must SERVE the verdict — proven by bitwise-equal fwd outputs —
      * and the pair roundtrip closes bwd on the raced route. */
-#ifdef _WIN32
-    _putenv("VFFT_IL2D_ROWSPLIT=");
-    _putenv("VFFT_IL2D_CHAIN=");
-#else
-    unsetenv("VFFT_IL2D_ROWSPLIT");
-    unsetenv("VFFT_IL2D_CHAIN");
-#endif
     {
         static const int RC[][2] = { { 4096, 16 }, { 512, 16 } };
         int rc_;
@@ -380,13 +337,8 @@ int main(int argc, char **argv)
     }
     /* ── the banded column walk's F0 law: banding is pure column loop
      * interchange (rows OUTSIDE per §2.5) — banded output must be
-     * BITWISE identical to unbanded, both directions. Chains greedy
-     * (deterministic) in both arms; rowsplit pinned off to isolate wl. */
-#ifdef _WIN32
-    _putenv("VFFT_IL2D_ROWSPLIT=0");
-#else
-    putenv("VFFT_IL2D_ROWSPLIT=0");
-#endif
+     * BITWISE identical to unbanded, both directions. The same banked
+     * chain serves both arms. */
     {
         static const int FC[][3] = { { 1024, 16, 16 }, { 512, 32, 64 } };
         int fc_;
@@ -472,26 +424,23 @@ int main(int argc, char **argv)
             free(x); free(za); free(zb); free(xa); free(xb);
         }
     }
-    /* ── MT INC-1: the ROW DOOR threads. Two independent engagement
-     * gates (clones BUILT and work DISPATCHED — both have failed
-     * silently in this library before, producing a perfect all-1.00x
-     * table that never threaded), then MT == ST BITWISE. The ST arm is
-     * a plan created with nthreads=1: same route, same chain, no clone
-     * set — _tc_clone_equiv already guarantees clones are output-
-     * equivalent, so any difference here is a threading bug. */
-    /* Pin the PER-ROW door: INC-1 threads THAT route. (A cell whose race
-     * picks ROWSPLIT runs the band loop instead and would show workers>0
-     * with dispatches==0 — real, and exactly what this gate is for, but
-     * not what INC-1 changes; rowsplit band MT is refused by design.)
-     * N2 >= 32 also keeps the row child's zr2c inner on a native IL c2c
-     * — at N2=16 the inner is the convert-served c2c(8), which
-     * _tc_inner_mt_safe rightly refuses to clone. */
+    /* ── MT: the T=8 plan. It is its own measured plan (the thread count
+     * is a wisdom key axis: its row engine, column verdict and widths are
+     * raced at T, docs/design/il2d_real_mt.md), so it is judged against
+     * the naive DFT in natural order and the pair contract, never bitwise
+     * against a T=1 plan. Engagement = the tier's own counters: the
+     * threaded column pass (vfft_il2d_col_mt_passes) and the threaded row
+     * pass (vfft_il2d_row_mt_passes); the column MT is pinned ON
+     * (VFFT_IL2D_NO_COLMT=0) so a serial verdict cannot make the check
+     * vacuous, and the pin is lifted after. The TC batch wrapper's
+     * dispatch counter does not move for a 2D real plan: the tier threads
+     * its passes itself. */
 #ifdef _WIN32
-    _putenv("VFFT_IL2D_ROWSPLIT=0");
     _putenv("VFFT_IL2D_CHAIN=");
+    _putenv("VFFT_IL2D_NO_COLMT=0");
 #else
-    putenv("VFFT_IL2D_ROWSPLIT=0");
     unsetenv("VFFT_IL2D_CHAIN");
+    putenv("VFFT_IL2D_NO_COLMT=0");
 #endif
     {
         static const int MC[][2] = { { 512, 32 }, { 128, 64 } };
@@ -501,17 +450,19 @@ int main(int argc, char **argv)
             const int N1 = MC[mi][0], N2 = MC[mi][1];
             const int hp1 = N2 / 2 + 1;
             const size_t RN = (size_t)N1 * N2, CN = (size_t)N1 * hp1;
-            double *x = malloc(RN * 8), *zs = malloc(2 * CN * 8);
-            double *zm = malloc(2 * CN * 8);
-            double *xs = malloc(RN * 8), *xm = malloc(RN * 8);
+            double *x = malloc(RN * 8), *zm = malloc(2 * CN * 8);
+            double *zc = malloc(2 * CN * 8), *xm = malloc(RN * 8);
+            double *t1 = malloc(2 * CN * 8), *ref = malloc(2 * CN * 8);
             vfft_config_t cfg;
-            vfft_plan fs, fm, cs, cm;
-            int workers;
-            long d0, d1, cmt0, cmt1;
+            vfft_plan fm, cm;
+            long cmt0, cmt1, rmt0, rmt1;
+            double em = 0, mag = 0, rt = 0;
             size_t i;
-            if (!x || !zs || !zm || !xs || !xm) { printf("OOM\n"); return 2; }
+            if (!x || !zm || !zc || !xm || !t1 || !ref) { printf("OOM\n"); return 2; }
             for (i = 0; i < RN; i++)
                 x[i] = (double)rand() / RAND_MAX - 0.5;
+            naive_rows_r2c(x, t1, N1, N2);
+            naive_cols(t1, ref, N1, hp1);
             memset(&cfg, 0, sizeof cfg);
             cfg.transform = VFFT_R2C;
             cfg.placement = VFFT_OUTOFPLACE;
@@ -521,72 +472,76 @@ int main(int argc, char **argv)
             cfg.order = VFFT_ORDER_DEFAULT;
             cfg.layout = VFFT_LAYOUT_INTERLEAVED;
             cfg.wisdom = W; cfg.wisdom_write = 0;
-            cfg.nthreads = 1;
-            fs = vfft_create(&cfg);
-            cfg.transform = VFFT_C2R;
-            cs = vfft_create(&cfg);
             cfg.nthreads = 8;
-            cfg.transform = VFFT_R2C;
             fm = vfft_create(&cfg);
             cfg.transform = VFFT_C2R;
             cm = vfft_create(&cfg);
-            if (!fs || !fm || !cs || !cm) {
+            if (!fm || !cm) {
                 printf("  MT %4dx%-3d create FAIL\n", N1, N2);
                 fails++;
                 continue;
             }
-            /* engagement gate 1: clones BUILT on the threaded plan */
-            workers = vfft_plan_tc_workers(fm);
-            if (workers <= 0) {
-                printf("  MT %4dx%-3d NOT ENGAGED (row-door workers=%d) "
-                       "*** FAIL ***\n", N1, N2, workers);
-                fails++;
-            }
-            /* engagement gate 2: work actually DISPATCHED (rows), plus
-             * the INC-3 column-pass engagement counter */
-            d0 = vfft_tc_mt_dispatches();
             cmt0 = vfft_il2d_col_mt_passes();
+            rmt0 = vfft_il2d_row_mt_passes();
             vfft_execute(fm, VFFT_FORWARD, x, NULL, zm, NULL);
-            d1 = vfft_tc_mt_dispatches();
             cmt1 = vfft_il2d_col_mt_passes();
-            vfft_execute(fs, VFFT_FORWARD, x, NULL, zs, NULL);
-            if (d1 == d0) {
-                printf("  MT %4dx%-3d r2c DISPATCHED NOTHING (under the "
-                       "engage floor) *** FAIL ***\n", N1, N2);
+            rmt1 = vfft_il2d_row_mt_passes();
+            for (i = 0; i < 2 * CN; i++) {
+                const double d = fabs(zm[i] - ref[i]);
+                if (d > em) em = d;
+                if (fabs(ref[i]) > mag) mag = fabs(ref[i]);
+            }
+            em /= (mag > 0 ? mag : 1.0);
+            if (cmt1 == cmt0 && rmt1 == rmt0) {
+                printf("  MT %4dx%-3d r2c NOT ENGAGED (no threaded column or "
+                       "row pass moved) *** FAIL ***\n", N1, N2);
                 fails++;
             }
-            if (memcmp(zs, zm, 2 * CN * 8) != 0) {
-                printf("  MT %4dx%-3d r2c MT != ST *** FAIL ***\n",
-                       N1, N2);
+            if (em >= 1e-10) {
+                printf("  MT %4dx%-3d r2c fwd rel %.2e *** FAIL ***\n",
+                       N1, N2, em);
                 fails++;
             } else {
-                printf("  MT %4dx%-3d r2c workers=%d dispatches=%ld "
-                       "colmt=%ld  MT==ST BITWISE  PASS\n",
-                       N1, N2, workers, d1 - d0, cmt1 - cmt0);
+                printf("  MT %4dx%-3d r2c fwd rel %.2e  colmt=%ld rowmt=%ld  "
+                       "PASS\n", N1, N2, em, cmt1 - cmt0, rmt1 - rmt0);
             }
-            d0 = vfft_tc_mt_dispatches();
+            memcpy(zc, zm, 2 * CN * 8);
+            cmt0 = vfft_il2d_col_mt_passes();
+            rmt0 = vfft_il2d_row_mt_passes();
             vfft_execute(cm, VFFT_BACKWARD, zm, NULL, xm, NULL);
-            d1 = vfft_tc_mt_dispatches();
-            vfft_execute(cs, VFFT_BACKWARD, zm, NULL, xs, NULL);
-            if (d1 == d0) {
-                printf("  MT %4dx%-3d c2r DISPATCHED NOTHING "
+            cmt1 = vfft_il2d_col_mt_passes();
+            rmt1 = vfft_il2d_row_mt_passes();
+            for (i = 0; i < RN; i++) {
+                const double d = fabs(xm[i] / ((double)N1 * N2) - x[i]);
+                if (d > rt) rt = d;
+            }
+            if (memcmp(zm, zc, 2 * CN * 8) != 0) {
+                printf("  MT %4dx%-3d c2r INPUT DESTROYED (§2.6 contract) "
                        "*** FAIL ***\n", N1, N2);
                 fails++;
             }
-            if (memcmp(xs, xm, RN * 8) != 0) {
-                printf("  MT %4dx%-3d c2r MT != ST *** FAIL ***\n",
-                       N1, N2);
+            if (cmt1 == cmt0 && rmt1 == rmt0) {
+                printf("  MT %4dx%-3d c2r NOT ENGAGED (no threaded column or "
+                       "row pass moved) *** FAIL ***\n", N1, N2);
+                fails++;
+            }
+            if (rt >= 1e-10) {
+                printf("  MT %4dx%-3d c2r pair rt %.2e *** FAIL ***\n",
+                       N1, N2, rt);
                 fails++;
             } else {
-                printf("  MT %4dx%-3d c2r workers=%d dispatches=%ld  "
-                       "MT==ST BITWISE  PASS\n",
-                       N1, N2, vfft_plan_tc_workers(cm), d1 - d0);
+                printf("  MT %4dx%-3d c2r pair rt %.2e  colmt=%ld rowmt=%ld  "
+                       "PASS\n", N1, N2, rt, cmt1 - cmt0, rmt1 - rmt0);
             }
-            vfft_destroy(fs); vfft_destroy(fm);
-            vfft_destroy(cs); vfft_destroy(cm);
-            free(x); free(zs); free(zm); free(xs); free(xm);
+            vfft_destroy(fm); vfft_destroy(cm);
+            free(x); free(zm); free(zc); free(xm); free(t1); free(ref);
         }
         vfft_set_num_threads(1);
+#ifdef _WIN32
+        _putenv("VFFT_IL2D_NO_COLMT=");
+#else
+        unsetenv("VFFT_IL2D_NO_COLMT");
+#endif
     }
     /* ── INC-3b: the BANDED path with the columns FORCED threaded, so
      * the digit-split prefix AND the band arm are deterministically

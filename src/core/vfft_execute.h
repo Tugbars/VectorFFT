@@ -480,6 +480,12 @@ void vfft_destroy(vfft_plan h)
             _il2d_rax_free(h);                  /* the real axis on N1: its planes, chain, batch and stores */
             _il2d_tf_free(h);                   /* the fused walk's staging */
             _il2d_rcsk_free(h);                 /* the skewed plane */
+            if (h->il2d_col.rd0)
+            {   /* the Rader stage's engine; its tags in the stage-0 slots go with the tables */
+                if (_il2d_rd0_free_hook)
+                    _il2d_rd0_free_hook(h->il2d_col.rd0);
+                h->il2d_col.rd0 = NULL;
+            }
             for (s2 = 0; s2 < h->il2d_col.nst; s2++)
             {
                 vfft_aligned_free(h->il2d_col.tf[s2]);

@@ -113,6 +113,53 @@ static int _ref_isprime(int n)
     for (d = 2; d * d <= n; d++) if (n % d == 0) return 0;
     return 1;
 }
+/* the column Rader stage's prime (vfft_policy_il2d_rader_prime), spelled independently:
+ * the chain primes listed and divided out, the rest tested by deterministic Miller-Rabin
+ * (bases 2, 3, 5, 7 decide every n below 3.2e9) */
+static unsigned long long _ref_powmod(unsigned long long a, unsigned long long e, unsigned long long m)
+{
+    unsigned long long r = 1;
+    a %= m;
+    while (e) { if (e & 1) r = r * a % m; a = a * a % m; e >>= 1; }
+    return r;
+}
+static int _ref_mr_prime(unsigned n)
+{
+    static const unsigned bases[4] = { 2, 3, 5, 7 };
+    unsigned d, s = 0;
+    int b;
+    if (n < 2) return 0;
+    for (b = 0; b < 4; b++) { if (n == bases[b]) return 1; if (n % bases[b] == 0) return 0; }
+    d = n - 1;
+    while (!(d & 1)) { d >>= 1; s++; }
+    for (b = 0; b < 4; b++)
+    {
+        unsigned long long x = _ref_powmod(bases[b], d, n);
+        unsigned r;
+        if (x == 1 || x == n - 1) continue;
+        for (r = 1; r < s; r++) { x = x * x % n; if (x == n - 1) break; }
+        if (r == s) return 0;
+    }
+    return 1;
+}
+static int _ref_strip_chain_primes(int n)
+{
+    static const int cp[15] = { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47 };
+    int i;
+    for (i = 0; i < 15; i++) while (n % cp[i] == 0) n /= cp[i];
+    return n;
+}
+static int _ref_rader_prime(int N)
+{
+    int p, r;
+    if (N < 2) return 0;
+    p = _ref_strip_chain_primes(N);
+    if (p == 1 || !_ref_mr_prime((unsigned)p)) return 0;
+    r = _ref_strip_chain_primes(p - 1);
+    if (r == 1) return p;
+    if (!_ref_mr_prime((unsigned)r)) return 0;
+    return _ref_strip_chain_primes(r - 1) == 1 ? p : 0;
+}
 static int _ref_reg_max_prime(void)
 {
     int m = 0;
@@ -436,7 +483,7 @@ int main(void)
         /* L1/L2: the BAND MAP equals the two pools it replaces, for every N
          * and both order classes — as SETS of admitted families. */
         {
-            long bad_pool = 0, bad_reg = 0, bad_races = 0, bad_wb = 0, bad_bench = 0;
+            long bad_pool = 0, bad_reg = 0, bad_races = 0, bad_wb = 0, bad_bench = 0, bad_rader = 0;
             for (n = 2; n <= NMAX; n++)
             {
                 const int Nx = (int)n;
@@ -449,6 +496,13 @@ int main(void)
                     if (!bad_reg) printf("  *** FAIL: ztt band != registry at N=%d (band %d, registry %d)\n",
                                          Nx, vfft_ztt_band(Nx), _ref_ztt_registry_has(Nx));
                     bad_reg++;
+                }
+                if (vfft_policy_il2d_rader_prime(Nx) != _ref_rader_prime(Nx))
+                {   /* the column Rader stage's prime (section 13): the policy vs its Miller-Rabin twin */
+                    if (!bad_rader)
+                        printf("  *** FAIL: first column-Rader-prime disagreement at N=%d: policy %d != ref %d\n",
+                               Nx, vfft_policy_il2d_rader_prime(Nx), _ref_rader_prime(Nx));
+                    bad_rader++;
                 }
                 {   /* L1/L9: "may this cell race at all?" — one question now */
                     vfft_cell_t rc2;
@@ -510,14 +564,16 @@ int main(void)
                     }
                 }
             }
-            if (bad_pool || bad_reg || bad_races || bad_wb || bad_bench) g_fail++;
+            if (bad_pool || bad_reg || bad_races || bad_wb || bad_bench || bad_rader) g_fail++;
             printf("exhaustive N=2..%d: band map vs the two pools %s (%ld differ), "
                    "ztt band==registry %s, race gate %s\n", NMAX,
                    bad_pool ? "DIFFERS" : "equal", bad_pool, bad_reg ? "DIFFERS" : "equal",
                    bad_races ? "DIFFERS" : "equal");
-            printf("exhaustive N=2..%d: scrambled writer band %s, the bench's admission %s\n",
-                   NMAX, bad_wb ? "DIFFERS" : "equal", bad_bench ? "DIFFERS" : "equal");
-            nchk += (NMAX - 1) * 6;
+            printf("exhaustive N=2..%d: scrambled writer band %s, the bench's admission %s, "
+                   "the column Rader prime %s (%ld differ)\n",
+                   NMAX, bad_wb ? "DIFFERS" : "equal", bad_bench ? "DIFFERS" : "equal",
+                   bad_rader ? "DIFFERS" : "equal", bad_rader);
+            nchk += (NMAX - 1) * 7;
         }
         if (bad_ceil || bad_ip || bad_oop || bad_rankn) g_fail++;
         printf("exhaustive N=2..%d x 3 orders: ceiling %s, rank1-ip %s, rank1-oop %s, rankN %s\n",

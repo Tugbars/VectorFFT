@@ -124,11 +124,22 @@ static inline void thread_pool_set_block_ms(double ms) {
 
 /* the serial scope, per thread: inside it this thread's dispatches run on
  * the caller alone (a race timing its serial arms), no worker touched */
-#ifdef _WIN32
+/* __thread on GCC and clang, Windows included: GCC on Windows IGNORES
+ * __declspec(thread) (a -Wattributes warning, the variable a plain static
+ * shared by every thread), which is what the serial depth was until
+ * 2026-10-14 -- found when the Rader column stage indexed its scratch by the
+ * slot and the caller read a worker's. __declspec(thread) is MSVC's only. */
+#if defined(_MSC_VER)
 static __declspec(thread) int _thread_pool_serial_depth = 0;
+static __declspec(thread) int _thread_pool_self_slot = 0;
 #else
 static __thread int _thread_pool_serial_depth = 0;
+static __thread int _thread_pool_self_slot = 0;
 #endif
+/* the calling thread's slot in a fork-join: 0 = the caller (and any thread that is not a
+ * pool worker), i + 1 = pool worker i. What an engine with per-thread scratch indexes by,
+ * so no walker carries a worker index (il_rader_stage.h's column stage). */
+static inline int thread_pool_self_slot(void) { return _thread_pool_self_slot; }
 static inline void thread_pool_serial_enter(void) { _thread_pool_serial_depth++; }
 static inline void thread_pool_serial_leave(void) { if (_thread_pool_serial_depth > 0) _thread_pool_serial_depth--; }
 
@@ -225,6 +236,7 @@ static inline void _thread_pool_wake(_thread_pool_worker_t *w) {
  * this worker, execute, mark done. */
 static void _thread_pool_worker_body(_thread_pool_worker_t *w) {
     _thread_pool_pin_to_core(w->core_id);
+    _thread_pool_self_slot = w->index + 1;
     /* MXCSR is per-thread: set FTZ (bit 15) | DAZ (bit 6) here, as
      * vfft_env_init() does for the caller. Inlined to keep threads.h
      * independent of env.h. */

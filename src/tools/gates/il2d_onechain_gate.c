@@ -11,7 +11,8 @@
  *
  * For each such N1 (x N2 = 64), both order classes, cold scratch store:
  *   - the COLD create logs exactly one "[il2d] chain race N1x64 (ord): 1
- *     arm(s)" line: the race RAN, with one arm;
+ *     chain(s), ..." line: the race RAN, with one chain (its forms and widths
+ *     are the arms the line goes on to count);
  *   - natural: the forward matches a naive 2D DFT;
  *   - the WARM create logs NO chain race (a row served it) and its forward
  *     is BITWISE the cold one.
@@ -117,7 +118,7 @@ int main(int argc, char **argv)
             for (q = 0; q < 2 * PN; q++) x[q] = (double)((q * 2654435761u) % 1000) / 1000.0 - 0.5;
 
             /* the needle: this cell's own race line, this order class */
-            snprintf(needle, sizeof needle, "chain race %dx%d (%s): 1 arm(s)", N1, N2, scr ? "scr" : "nat");
+            snprintf(needle, sizeof needle, "chain race %dx%d (%s): 1 chain(s),", N1, N2, scr ? "scr" : "nat");
 
             /* COLD: the race must run, with one arm */
             (void)tap_count(needle);
@@ -125,7 +126,7 @@ int main(int argc, char **argv)
             raced = tap_count(needle);
             CHECK(p != NULL, "%dx%d %s: create refused", N1, N2, cls);
             if (!p) { vfft_wisdom_free(W); free(x); free(y); free(y2); free(ref); continue; }
-            CHECK(raced == 1, "%dx%d %s: cold create raced %d time(s), expected 1 (one arm is still a race)", N1, N2, cls, raced);
+            CHECK(raced == 1, "%dx%d %s: cold create raced %d time(s), expected 1 (one chain is still a race)", N1, N2, cls, raced);
             vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
             vfft_destroy(p);
             if (!scr)

@@ -162,6 +162,7 @@ static void (*_ilfd_rd_free_hook)(void *);
 static void (*_ilfd_rd_run_hook)(const vfft_ilfd_plan_t *, const vfft_ilfd_call_t *, size_t, size_t,
                                  const double *, double *);
 static int (*_ilfd_rd_mt_hook)(vfft_ilfd_plan_t *, int);
+static size_t (*_ilfd_rd_width_hook)(const void *);   /* the stage's window width: the threaded unit */
 
 static inline void vfft_ilfd_bind(vfft_ilfd_plan_t *p);
 

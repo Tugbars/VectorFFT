@@ -44,7 +44,7 @@ static int _il2d_tf_admits(const struct vfft_plan_s *h, const vfft_config_t *cfg
     const vfft_ilcol_t *c = &h->il2d_col;
     if (h->transform == VFFT_C2R && (h->il2d_cxd_on || !h->il2d_rscr))
         return 0;   /* the destroying form is its own walk; the standard c2r arm needs its plane */
-    return h->il2d_row && !h->il2d_rax_on && !h->il2d_cx_leaf && c->nat && c->nst >= 2 && !c->blu && !c->tpc &&
+    return h->il2d_row && !h->il2d_rax_on && !h->il2d_cx_leaf && c->nat && c->nst >= 2 && c->f[0] && !c->blu && !c->tpc &&   /* stage 0 a kernel, not the Rader engine */
            c->wl == 0 && c->natscr && c->natperm && vfft_policy_il2d_tfuse_ok(cfg, h->nthreads);
 }
 
