@@ -557,6 +557,111 @@ static void planner_tokens(const char *dir, const char *cell)
     printf("A2 tokens on the %s rows: %d rows, rd= %d, rdw= %d\n", cell, rows, rd, rdw);
 }
 
+/* ── M: the planner's own pick at T = 8, every tier (owner 2026-10-14: 'test MT of every new
+ * rader too'). A cold T = 8 create runs the T = 8 races (its row is its own key); the forward
+ * is judged against the reference and the engagement counters must move (an MT result without
+ * an engagement proof is vacuous); the replay at T = 8 is bitwise. The cells are large enough
+ * for the threaded forms to pay: a prime of 131 or 191 on the Rader axis, 2^17..2^18 points. */
+static long moved_all(void)
+{   /* every threaded pass the library counts: the rank-N tiers, the flat chain, the real engines */
+    return moved() + vfft_ilfd_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_zttr_mt_passes() +
+           vfft_zrf_mt_passes() + vfft_zrb_mt_passes() + vfft_ilpr_mt_passes() + vfft_pq_mt_passes();
+}
+/* the half-spectrum error of a real forward against the naive full spectrum, the last axis halved */
+static double half_err(const double *y, const double *rre, const double *rim, size_t rows, int Nl)
+{
+    const int hpl = Nl / 2 + 1;
+    double e = 0, m = 0;
+    size_t i;
+    for (i = 0; i < rows * (size_t)hpl; i++)
+    {
+        const size_t row = i / (size_t)hpl, col = i % (size_t)hpl, j = row * (size_t)Nl + col;
+        const double a = fabs(rre[j]) + fabs(rim[j]), d = fabs(y[2 * i] - rre[j]) + fabs(y[2 * i + 1] - rim[j]);
+        if (a > m) m = a;
+        if (d > e) e = d;
+    }
+    return m > 0 ? e / m : e;
+}
+static void mt_cell(vfft_transform_t tr, int nd, const int *n, int naive)
+{
+    const int real = (tr != VFFT_C2C), Nl = n[nd - 1], hpl = Nl / 2 + 1;
+    size_t tot = 1, rows = 1, outn, i;
+    int d;
+    char cell[48];
+    double *x, *y, *y2, *y1, *xr, *rre = NULL, *rim = NULL, *re = NULL, *im = NULL;
+    vfft_plan p8, p8b, p1;
+    long m0;
+    for (d = 0; d < nd; d++) tot *= (size_t)n[d];
+    for (d = 0; d < nd - 1; d++) rows *= (size_t)n[d];
+    outn = real ? 2 * rows * (size_t)hpl : 2 * tot;
+    snprintf(cell, sizeof cell, nd == 1 ? "%d" : nd == 2 ? "%dx%d" : "%dx%dx%d", n[0], n[1], n[2]);
+    x = (double *)vfft_malloc((real ? tot : 2 * tot) * 8); y = (double *)vfft_malloc(outn * 8); y2 = (double *)vfft_malloc(outn * 8);
+    y1 = (double *)vfft_malloc(outn * 8); xr = (double *)vfft_malloc((real ? tot : 2 * tot) * 8);
+    fill(x, real ? tot : 2 * tot, (unsigned)(n[0] * 7 + nd));
+    if (naive)
+    {
+        rre = (double *)malloc(tot * 8); rim = (double *)malloc(tot * 8); re = (double *)malloc(tot * 8); im = (double *)calloc(tot, 8);
+        if (real) dft_nd(x, im, rre, rim, n, nd);
+        else { for (i = 0; i < tot; i++) { re[i] = x[2 * i]; im[i] = x[2 * i + 1]; } dft_nd(re, im, rre, rim, n, nd); }
+    }
+    env_set("VFFT_IL2D_CHAIN", NULL);
+    /* the serial plan first (its own row): the reference where the naive DFT is not affordable */
+    p1 = mk(tr, nd, n, 0, VFFT_ORDER_DEFAULT, 1);
+    CHECK(p1 != NULL, "M %s %s: T=1 create refused", real ? "r2c" : "c2c", cell);
+    if (p1) { vfft_execute(p1, VFFT_FORWARD, x, NULL, y1, NULL); vfft_destroy(p1); }
+    vfft_set_num_threads(8);
+    p8 = mk(tr, nd, n, 0, VFFT_ORDER_DEFAULT, 8);   /* cold at T = 8: the T = 8 races, the planner's pick */
+    CHECK(p8 != NULL, "M %s %s: T=8 create refused", real ? "r2c" : "c2c", cell);
+    if (!p8) goto done;
+    m0 = moved_all();
+    vfft_execute(p8, VFFT_FORWARD, x, NULL, y, NULL);
+    printf("M %s %-12s T=8 cold: route %-10s threaded passes %ld\n", real ? "r2c" : "c2c", cell, vfft_plan_route(p8), moved_all() - m0);
+    CHECK(moved_all() != m0, "M %s %s: T=8 did not engage a threaded pass", real ? "r2c" : "c2c", cell);
+    if (naive)
+    {
+        const double err = real ? half_err(y, rre, rim, rows, Nl) : relz(y, rre, rim, tot);
+        CHECK(err < 1e-10, "M %s %s: T=8 fwd vs naive %.2e", real ? "r2c" : "c2c", cell, err);
+    }
+    if (p1)
+    {   /* against the serial plan's result (a different form's rounding: 1e-12 relative) */
+        double e = 0, m = 0;
+        for (i = 0; i < outn; i++) { const double a = fabs(y1[i]), dd = fabs(y[i] - y1[i]); if (a > m) m = a; if (dd > e) e = dd; }
+        CHECK(e / m < 1e-12, "M %s %s: T=8 vs T=1 %.2e", real ? "r2c" : "c2c", cell, e / m);
+    }
+    if (real)
+    {   /* the c2r pair at T = 8: the roundtrip */
+        vfft_plan pc = mk(VFFT_C2R, nd, n, 0, VFFT_ORDER_DEFAULT, 8);
+        CHECK(pc != NULL, "M c2r %s: T=8 create refused", cell);
+        if (pc)
+        {
+            memcpy(y2, y, outn * 8);
+            m0 = moved_all();
+            vfft_execute(pc, VFFT_BACKWARD, y2, NULL, xr, NULL);
+            printf("M c2r %-12s T=8 cold: route %-10s threaded passes %ld\n", cell, vfft_plan_route(pc), moved_all() - m0);
+            CHECK(moved_all() != m0, "M c2r %s: T=8 did not engage a threaded pass", cell);
+            CHECK(relrt(xr, x, tot, (double)tot) < 1e-10, "M c2r %s: T=8 pair roundtrip %.2e", cell, relrt(xr, x, tot, (double)tot));
+            vfft_destroy(pc);
+        }
+    }
+    else
+    {
+        vfft_execute(p8, VFFT_BACKWARD, y, NULL, xr, NULL);
+        CHECK(relrt(xr, x, 2 * tot, (double)tot) < 1e-10, "M c2c %s: T=8 bwd roundtrip %.2e", cell, relrt(xr, x, 2 * tot, (double)tot));
+    }
+    p8b = mk(tr, nd, n, 0, VFFT_ORDER_DEFAULT, 8);   /* the replay at T = 8 */
+    CHECK(p8b != NULL, "M %s %s: T=8 replay create refused", real ? "r2c" : "c2c", cell);
+    if (p8b)
+    {
+        vfft_execute(p8b, VFFT_FORWARD, x, NULL, y2, NULL);
+        CHECK(memcmp(y, y2, outn * 8) == 0, "M %s %s: T=8 replay != cold (bitwise)", real ? "r2c" : "c2c", cell);
+        vfft_destroy(p8b);
+    }
+    vfft_destroy(p8);
+done:
+    vfft_set_num_threads(1);
+    vfft_free(x); vfft_free(y); vfft_free(y2); vfft_free(y1); vfft_free(xr); free(rre); free(rim); free(re); free(im);
+}
+
 /* ── D: the lifecycle ─────────────────────────────────────────────────────── */
 static void lifecycle(void)
 {
@@ -635,7 +740,7 @@ int main(int argc, char **argv)
     setvbuf(stdout, NULL, _IONBF, 0);
     g_W = vfft_wisdom_load(dir);
     env_set("VFFT_TCMT", NULL);
-    printf("RADER GATE: the Rader stage's touch points (leaf, column stage, 3D, lifecycle, planner), store %s\n", dir);
+    printf("RADER GATE: the Rader stage's touch points (leaf, column stage, 3D, planner, T=8 every tier, lifecycle), store %s\n", dir);
     /* L */
     leaf_cell(524, "131.4", 1);
     leaf_cell(2101, "191.11", 0);
@@ -668,6 +773,18 @@ int main(int argc, char **argv)
         ch &= planner_col(VFFT_R2C, 1048, 16);
         if (ch) planner_tokens(dir, "1048x16");
         if (planner_col(VFFT_C2C, 131, 32)) planner_tokens(dir, "131x32");
+    }
+    /* M: the planner's pick at T = 8, every tier the stage reaches */
+    {
+        const int c1[1] = { 191 * 11 * 64 }, r1[1] = { 2 * 131 * 512 };   /* 134464: 191 then 11, 64; 134144: the child at 67072 = 131 * 512 */
+        const int c2[2] = { 1048, 256 }, r2[2] = { 1048, 256 };            /* 131.8 on the column axis */
+        const int c3[3] = { 131, 32, 32 }, r3[3] = { 131, 32, 32 };         /* 131 alone on axis 0 */
+        mt_cell(VFFT_C2C, 1, c1, 0);
+        mt_cell(VFFT_R2C, 1, r1, 0);
+        mt_cell(VFFT_C2C, 2, c2, 1);
+        mt_cell(VFFT_R2C, 2, r2, 1);
+        mt_cell(VFFT_C2C, 3, c3, 1);
+        mt_cell(VFFT_R2C, 3, r3, 1);
     }
     /* D */
     lifecycle();
