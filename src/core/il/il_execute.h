@@ -429,12 +429,19 @@ static int _k2x_il2d_c2r_d2ks(struct vfft_plan_s *h, vfft_dir_t dir, const doubl
         _il2d_rowx_call(_il2d_rowx_body_bwd, h, zin, zout, h->il2d_rx_stk);
     return 0;
 }
+static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);   /* il/rank1/lm_batch_il.h */
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
     if (!h) return hp;
     h->k1_exec = NULL;
     h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = NULL;   /* the 2D real forms below decline: the full door */
+    if (h->lm)
+    {   /* the lane-major batch: the column pass, both directions, never declining */
+        h->k1_exec = _lm_exec;
+        h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = _lm_exec;
+        return hp;
+    }
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
         h->layout == (int)VFFT_LAYOUT_INTERLEAVED && h->N2 > 0 && h->il2d_row &&
         !h->pq_inner && !h->tcb && !h->ilnd && !h->ilndr &&

@@ -405,6 +405,12 @@ void vfft_destroy(vfft_plan h)
         thread_pool_plan_release(h->nthreads); /* paired with the retain in vfft_create; a child or clone releases its own */
         vfft_aligned_free(h->alias_scr);       /* the aliased out-of-place real call's copy buffer (V11) */
         h->alias_scr = NULL;
+        if (h->lm)
+        {   /* the lane-major batch: its column pass is everything it owns */
+            _il2d_col_free(&h->il2d_col);
+            free(h);
+            return;
+        }
         if (h->pq_inner)
         { /* plane-queue wrapper: the inner + clones own everything */
             int t;
