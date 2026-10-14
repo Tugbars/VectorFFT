@@ -713,6 +713,53 @@ digits reads 3x to 7x in every rank and transform, 53 alone over the lanes 1.1x 
 1.5x, and a nested inner leaf (107, the 4552 and 2354 real cells) 1.3x to 1.7x, the
 1D class sweep's pattern. Accuracy 6e-16 to 3e-15 at every cell.
 
+**The planner's own pick (phase A2, the same day).** The same cells with NO pin: the
+planner enumerates the Rader chain, races the engine's inner chain and window width on
+the column pass, races the chain against Bluestein (and the turned pass at a prime
+column), banks the verdict on the row and replays it. Every cell raced cold on a fresh
+scratch store again, the same protocol. The record:
+`docs/research/field_trial/gapfill/race_rader_a2/`.
+
+```
+ cell            ours ns     MKL ns  ratio   route      error
+ 2D c2c, natural, out of place
+ 524x64           96,676    662,320   6.85   chain+rb2  7.1e-16
+ 262x128          98,066    655,103   6.68   chain+rb2  1.3e-15
+ 1048x64         213,917  1,336,941   6.25   chain      8.4e-16
+ 2101x16         120,854    390,547   3.23   chain+rb2  8.9e-16
+ 131x256          85,414    283,253   3.32   chain      8.2e-16
+ 53x512           70,585     74,647   1.06   chain      1.3e-15
+ 3D c2c, natural, out of place (MKL's interleaved path)
+ 524x16x16       445,364  2,740,500   6.15   natural    1.2e-15
+ 131x131x4       362,003  1,150,086   3.18   natural    1.8e-15
+ 53x53x16        171,166    490,836   2.87   natural    1.3e-15
+ 107x107x8       889,224  1,148,357   1.29   natural    2.0e-15
+ 2D r2c / c2r, natural, out of place
+ r2c 524x64       57,953    351,286   6.06   chain      8.0e-16
+ c2r 524x64       57,362    345,155   6.02   chain      1.9e-15
+ r2c 1048x32      68,402    366,929   5.36   chain      8.9e-16
+ c2r 1048x32      57,276    360,170   6.29   chain      1.8e-15
+ r2c 131x256      49,446    154,519   3.12   chain      1.0e-15
+ c2r 131x256      48,525    158,887   3.27   chain      2.0e-15
+ r2c 2101x16      78,198    233,116   2.98   chain      8.2e-16
+ c2r 2101x16      72,365    236,710   3.27   chain      2.2e-15
+ r2c 53x512       38,944     47,324   1.22   chain      1.4e-15
+ c2r 53x512       34,869     52,416   1.50   chain      3.1e-15
+ 3D r2c / c2r, natural, out of place
+ r2c 524x16x16   298,231  1,632,931   5.47   child      8.3e-16
+ c2r 524x16x16   264,028  1,561,338   5.91   band       2.1e-15
+ r2c 53x53x16    123,264    308,135   2.50   child      1.2e-15
+ c2r 53x53x16    121,437    320,082   2.64   child      3.0e-15
+ r2c 131x131x4   418,040    950,048   2.27   child      1.2e-15
+ c2r 131x131x4   420,941    948,602   2.25   child      2.7e-15
+```
+
+The planner's pick is the Rader chain at every cell, and its numbers sit on the pinned
+ones or a few percent above them (the raced inner and width): the 2D c2c cells 6.9x,
+6.7x, 6.3x, 3.2x, 3.3x and 1.1x. The one cell below its pinned number, 3D r2c
+524x16x16 at 5.5x, is the first engine order's run alone (the second order read 6.1x,
+the pinned run 6.3x): the run's spread, not a different pick.
+
 ## 3. vs MKL — 1D R2C / C2R
 
 ### K=1 INTERLEAVED r2c and c2r — every N from 2 to 2048 vs MKL, the gauntlet (2026-09-30)

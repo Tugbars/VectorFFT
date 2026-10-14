@@ -426,8 +426,28 @@ at the cell's next create. The inner enumerator's miss at p - 1 = q * 2 (a neste
 then a lone closing radix: 107, 1177) is fixed with it: the flat leaf races there now too.
 The gate's section A2 creates three cells cold with no pin (c2c 1048x16 and 131x32, r2c
 1048x16): the pick is the Rader chain (or the turned pass at the prime), the rows carry
-both tokens, the replay is bitwise. Phase A3: the class sweep of 2D cells with such an N1
-against FFTW, once.
+both tokens, the replay is bitwise. Against MKL with no pin (the results page, the same
+cells and protocol as the pinned run): the planner picks the Rader chain at every cell
+and lands on the pinned numbers or a few percent above them (2D c2c 6.9x, 6.7x, 6.3x,
+3.2x, 3.3x, 1.1x; 3D c2c 6.2x to 1.3x; 2D real 6.3x to 1.2x; 3D real 5.5x to 2.3x).
+The engine's raced verdicts: 131 takes the inner 13.10 at widths 32 to 120 by cell, 191
+takes 19.10 at 44, 107 takes the nested 53.2, 353 takes 32.11. Phase A3: the class
+sweep of 2D cells with such an N1 against FFTW, once.
+
+The threaded forms (owner, 2026-10-14: "test MT of every new rader too"): the gate's
+section M creates, cold at T = 8 with no pin, one cell per tier the stage reaches (1D
+c2c 134464 = 191·11·64; 1D r2c and c2r 134144, the child at 67072 = 131·512; 2D c2c and
+real 1048x256; 3D c2c and real 131x32x32), judges the forward against the reference (the
+naive DFT at the 2D and 3D cells, the T = 1 plan's result at the 1D cells), requires the
+library's engagement counters to move (a threaded result without that proof is vacuous),
+runs the backward or the c2r pair, and replays at T = 8 bitwise. Its first run (338
+checks): the 1D c2c flat chain, the 2D c2c, r2c and c2r column passes and the 3D c2c, r2c
+and c2r tiers all engage a threaded pass at T = 8, agree with their serial plans to
+1e-12 and replay bitwise. The 1D real cells run with no threaded pass: the even-length
+real engine creates its complex child single-threaded (`_zr2c_kid_cfg`), so the leaf's
+threaded form never runs inside a 1D real plan, and the fold's own threaded arm lost
+the race at 134144. A gap, reported, not filled; the gate prints it and does not fail
+on it.
 
 **Piece B, the real odd prime (1D r2c / c2r at a prime N > 47).** Rader on real input:
 with h = (N-1)/2 and g^h = -1 mod N, the kernel splits as omega_q = u_q + i v_q with u
