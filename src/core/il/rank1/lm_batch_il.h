@@ -288,8 +288,11 @@ static vfft_plan _vfft_create_lm_il(const vfft_config_t *cfg, struct vfft_wisdom
  *           A[k] = E + w^k O, A[M-k] = conj(E - w^k O), w = e^{-2 pi i / N}:
  *           the M + 1 rows of K bins, natural, straight into the caller's spectrum.
  * The chain threads through the column MT forms under the cell's verdict; the pack and
- * the fold split by lane ranges across the workers whenever that form serves. Out of
- * place (the in-place plane is the design's step 5). The c2r twin is its own piece. */
+ * the fold split by lane ranges across the workers whenever that form serves. Both
+ * placements: in place the buffer is (N + 2) K doubles, the N K reals first and the bins
+ * over them, and nothing else changes, since the pack copies the whole input into W before
+ * the fold writes a bin and the c2r unfold consumes every bin before the unpack writes a
+ * real (each phase a whole dispatch). The c2r twin is its own piece. */
 static void _lmr_pack(const double *x, double *W, size_t M, size_t K, size_t k0, size_t k1)
 {
     size_t m, n;
@@ -520,9 +523,9 @@ static vfft_plan _vfft_create_lmr_il(const vfft_config_t *cfg, struct vfft_wisdo
     if (!vfft_policy_batch_lane_major(cfg))
     {
         _vfft_warn("vfft_create: the lane-major interleaved real batch serves R2C and C2R at an even N >= 4 and "
-                   "howmany >= 2, out of place (got %s N=%d howmany=%zu %s); an odd N has no real column engine, "
-                   "the in-place plane is not built yet -- name batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS for those",
-                   _vfft_tname(cfg->transform), N, K, cfg->placement == VFFT_INPLACE ? "in place" : "out of place");
+                   "howmany >= 2, in either placement (got %s N=%d howmany=%zu); an odd N has no real column "
+                   "engine -- name batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS for it",
+                   _vfft_tname(cfg->transform), N, K);
         return NULL;
     }
     memset(&ck, 0, sizeof ck);

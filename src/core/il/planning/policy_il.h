@@ -194,12 +194,13 @@ static inline int vfft_policy_batch_lane_major(const vfft_config_t *cfg)
         return 0;
     if (cfg->transform == VFFT_C2C)
         return cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->n[0] >= 2;
-    /* the real batch (steps 2 and 3): r2c and c2r at an even N >= 4, out of place, on the DEFAULT
-     * geometry (the header's promise: a real interleaved batch's DEFAULT is lane-major) or the
-     * explicit one; an odd N has no real column engine; the in-place plane is a later step */
+    /* the real batch (steps 2, 3 and 5): r2c and c2r at an even N >= 4, both placements (in place:
+     * one buffer of (N + 2) K doubles, the reals first, the bins over them), on the DEFAULT geometry
+     * (the header's promise: a real interleaved batch's DEFAULT is lane-major) or the explicit one;
+     * an odd N has no real column engine */
     if (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R)
         return (cfg->batch_geom == VFFT_BATCH_LANE_MAJOR || cfg->batch_geom == VFFT_BATCH_DEFAULT) &&
-               cfg->placement == VFFT_OUTOFPLACE && cfg->n[0] >= 4 && (cfg->n[0] % 2) == 0;
+               cfg->n[0] >= 4 && (cfg->n[0] % 2) == 0;
     return 0;
 }
 

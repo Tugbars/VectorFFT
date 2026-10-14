@@ -287,6 +287,18 @@ static void cell_r2c(int N, int K, int small, int T)
         CHECK(memcmp(y, y2, ZN * 8) == 0, "lm r2c %dx%d T=%d: replay != cold (bitwise)", N, K, T);
         vfft_destroy(p2);
     }
+    p2 = mk(VFFT_R2C, 1, n1, (size_t)K, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_DEFAULT, T);   /* step 5: in place, one (N + 2) K plane */
+    CHECK(p2 != NULL, "lm r2c %dx%d T=%d: in-place create refused", N, K, T);
+    if (p2)
+    {
+        double *pl = (double *)vfft_malloc(ZN * 8);
+        memset(pl, 0, ZN * 8);
+        memcpy(pl, x, XN * 8);   /* the reals first, the rest of the plane untouched by the input */
+        vfft_execute(p2, VFFT_FORWARD, pl, NULL, pl, NULL);
+        CHECK(memcmp(pl, y, ZN * 8) == 0, "lm r2c %dx%d T=%d: in place != out of place (bitwise)", N, K, T);
+        vfft_free(pl);
+        vfft_destroy(p2);
+    }
     vfft_destroy(p);
 done:
     if (T > 1) vfft_set_num_threads(1);
@@ -342,6 +354,17 @@ static void cell_c2r(int N, int K, int T)
         CHECK(memcmp(y, y2, XN * 8) == 0, "lm c2r %dx%d T=%d: replay != cold (bitwise)", N, K, T);
         vfft_destroy(p2);
     }
+    p2 = mk(VFFT_C2R, 1, n1, (size_t)K, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_DEFAULT, T);   /* step 5: in place, the bins in, the reals out */
+    CHECK(p2 != NULL, "lm c2r %dx%d T=%d: in-place create refused", N, K, T);
+    if (p2)
+    {
+        double *pl = (double *)vfft_malloc(ZN * 8);
+        memcpy(pl, z, ZN * 8);
+        vfft_execute(p2, VFFT_BACKWARD, pl, NULL, pl, NULL);
+        CHECK(memcmp(pl, y, XN * 8) == 0, "lm c2r %dx%d T=%d: in place != out of place (bitwise)", N, K, T);
+        vfft_free(pl);
+        vfft_destroy(p2);
+    }
     vfft_destroy(p);
 done:
     if (T > 1) vfft_set_num_threads(1);
@@ -359,8 +382,8 @@ static void refusals(void)
     p = mk(VFFT_R2C, 1, nodd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
     CHECK(p == NULL, "R: a lane-major r2c batch at an odd N is served (no real column engine)");
     if (p) vfft_destroy(p);
-    p = mk(VFFT_R2C, 1, n1, 4, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_DEFAULT, 1);
-    CHECK(p == NULL, "R: a lane-major r2c batch in place is served before its piece");
+    p = mk(VFFT_R2C, 1, nodd, 4, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_DEFAULT, 1);
+    CHECK(p == NULL, "R: a lane-major r2c batch in place at an odd N is served (no real column engine)");
     if (p) vfft_destroy(p);
     p = mk(VFFT_C2C, 2, n2, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
     CHECK(p == NULL, "R: a rank-2 lane-major request is served");
@@ -368,7 +391,7 @@ static void refusals(void)
     p = mk(VFFT_C2C, 1, n1, 1, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
     CHECK(p != NULL, "R: K=1 with the lane-major flag refused (it is the ordinary plan)");
     if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") != 0, "R: K=1 took the batch door"); vfft_destroy(p); }
-    printf("R refusals: odd-N r2c and c2r, in-place r2c, rank-2 lane-major refused; K=1 ordinary\n");
+    printf("R refusals: odd-N r2c and c2r in both placements, rank-2 lane-major refused; K=1 ordinary\n");
 }
 
 int main(int argc, char **argv)
