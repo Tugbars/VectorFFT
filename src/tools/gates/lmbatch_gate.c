@@ -273,8 +273,10 @@ static void cell_r2c(int N, int K, int small, int T)
     if (!p) goto done;
     if (T > 1) m0 = moved();
     vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
-    printf("%s lm r2c %5dx%-4d T=%d cold: route %-8s fwd vs lanes %.1e%s%ld\n", T > 1 ? "M" : "C", N, K, T, vfft_plan_route(p),
-           relc(y, ref, (size_t)hp1 * K), T > 1 ? " threaded passes " : "", T > 1 ? moved() - m0 : 0L);
+    printf("%s lm r2c %5dx%-4d T=%d cold: route %-8s fwd vs lanes %.1e", T > 1 ? "M" : "C", N, K, T, vfft_plan_route(p),
+           relc(y, ref, (size_t)hp1 * K));
+    if (T > 1) printf(" threaded passes %ld", moved() - m0);
+    printf("\n");
     CHECK(relc(y, ref, (size_t)hp1 * K) < 1e-10, "lm r2c %dx%d T=%d: fwd vs the K=1 lanes %.2e", N, K, T, relc(y, ref, (size_t)hp1 * K));
     if (T > 1) CHECK(moved() != m0, "lm r2c %dx%d: T=%d did not engage a threaded pass", N, K, T);
     p2 = mk(VFFT_R2C, 1, n1, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, T);   /* the replay, by the explicit flag */
@@ -291,13 +293,68 @@ done:
     vfft_free(x); vfft_free(y); vfft_free(y2); vfft_free(ref);
 }
 
+/* ── R3: the c2r twin (the design's step 3) ──────────────────────────────── */
+/* the reference: lane t of the lane-major bins through its own K = 1 c2r plan (N x, unnormalized) */
+static void ref_lanes_c2r(const double *z, double *ref, int N, int K)
+{
+    const int n1[1] = { N }, hp1 = N / 2 + 1;
+    double *a = (double *)vfft_malloc(2 * (size_t)hp1 * 8), *b = (double *)vfft_malloc((size_t)N * 8);
+    vfft_plan p = mk(VFFT_C2R, 1, n1, 1, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_DEFAULT, 1);
+    int t, e;
+    CHECK(p != NULL, "reference K=1 c2r plan at N=%d refused", N);
+    for (t = 0; t < K; t++)
+    {
+        for (e = 0; e < hp1; e++) { a[2 * e] = z[2 * ((size_t)e * K + t)]; a[2 * e + 1] = z[2 * ((size_t)e * K + t) + 1]; }
+        if (p) vfft_execute(p, VFFT_BACKWARD, a, NULL, b, NULL);
+        for (e = 0; e < N; e++) ref[(size_t)e * K + t] = b[e];
+    }
+    if (p) vfft_destroy(p);
+    vfft_free(a); vfft_free(b);
+}
+static void cell_c2r(int N, int K, int T)
+{
+    const int n1[1] = { N }, hp1 = N / 2 + 1;
+    const size_t XN = (size_t)N * (size_t)K, ZN = 2 * (size_t)hp1 * (size_t)K;
+    double *x = (double *)vfft_malloc(XN * 8), *z = (double *)vfft_malloc(ZN * 8), *y = (double *)vfft_malloc(XN * 8), *y2 = (double *)vfft_malloc(XN * 8), *ref = (double *)vfft_malloc(XN * 8);
+    vfft_plan p, p2;
+    long m0 = 0;
+    fill(x, XN, (unsigned)(N * 23 + K + T));
+    ref_lanes_r2c(x, z, N, K);       /* the bins, lane-major, from K separate r2c plans */
+    ref_lanes_c2r(z, ref, N, K);     /* and back through K separate c2r plans: N x */
+    if (T > 1) vfft_set_num_threads(T);
+    p = mk(VFFT_C2R, 1, n1, (size_t)K, T > 1 ? VFFT_BATCH_LANE_MAJOR : VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_DEFAULT, T);
+    CHECK(p != NULL, "lm c2r %dx%d T=%d: create refused", N, K, T);
+    if (!p) goto done;
+    if (T > 1) m0 = moved();
+    vfft_execute(p, VFFT_BACKWARD, z, NULL, y, NULL);
+    printf("%s lm c2r %5dx%-4d T=%d cold: route %-8s bwd vs lanes %.1e, pair roundtrip %.1e", T > 1 ? "M" : "C", N, K, T,
+           vfft_plan_route(p), relrt(y, ref, XN, 1.0), relrt(y, x, XN, (double)N));
+    if (T > 1) printf(" threaded passes %ld", moved() - m0);
+    printf("\n");
+    CHECK(relrt(y, ref, XN, 1.0) < 1e-10, "lm c2r %dx%d T=%d: bwd vs the K=1 lanes %.2e", N, K, T, relrt(y, ref, XN, 1.0));
+    CHECK(relrt(y, x, XN, (double)N) < 1e-10, "lm c2r %dx%d T=%d: the pair roundtrip %.2e", N, K, T, relrt(y, x, XN, (double)N));
+    if (T > 1) CHECK(moved() != m0, "lm c2r %dx%d: T=%d did not engage a threaded pass", N, K, T);
+    p2 = mk(VFFT_C2R, 1, n1, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, T);
+    CHECK(p2 != NULL, "lm c2r %dx%d T=%d: replay create refused", N, K, T);
+    if (p2)
+    {
+        vfft_execute(p2, VFFT_BACKWARD, z, NULL, y2, NULL);
+        CHECK(memcmp(y, y2, XN * 8) == 0, "lm c2r %dx%d T=%d: replay != cold (bitwise)", N, K, T);
+        vfft_destroy(p2);
+    }
+    vfft_destroy(p);
+done:
+    if (T > 1) vfft_set_num_threads(1);
+    vfft_free(x); vfft_free(z); vfft_free(y); vfft_free(y2); vfft_free(ref);
+}
+
 /* ── R: the refusals, and K = 1 ──────────────────────────────────────────── */
 static void refusals(void)
 {
     const int n1[1] = { 64 }, n2[2] = { 64, 16 }, nodd[1] = { 45 };
     vfft_plan p;
-    p = mk(VFFT_C2R, 1, n1, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
-    CHECK(p == NULL, "R: the lane-major c2r batch is served before its piece");
+    p = mk(VFFT_C2R, 1, nodd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
+    CHECK(p == NULL, "R: a lane-major c2r batch at an odd N is served (no real column engine)");
     if (p) vfft_destroy(p);
     p = mk(VFFT_R2C, 1, nodd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
     CHECK(p == NULL, "R: a lane-major r2c batch at an odd N is served (no real column engine)");
@@ -311,7 +368,7 @@ static void refusals(void)
     p = mk(VFFT_C2C, 1, n1, 1, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
     CHECK(p != NULL, "R: K=1 with the lane-major flag refused (it is the ordinary plan)");
     if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") != 0, "R: K=1 took the batch door"); vfft_destroy(p); }
-    printf("R refusals: c2r lane-major, odd-N r2c, in-place r2c, rank-2 lane-major refused; K=1 ordinary\n");
+    printf("R refusals: odd-N r2c and c2r, in-place r2c, rank-2 lane-major refused; K=1 ordinary\n");
 }
 
 int main(int argc, char **argv)
@@ -323,7 +380,7 @@ int main(int argc, char **argv)
     if (!dir) { printf("usage: lmbatch_gate --wisdir <cold scratch dir>\n"); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     g_W = vfft_wisdom_load(dir);
-    printf("LANE-MAJOR BATCH GATE: c2c and r2c on the column pass, store %s\n", dir);
+    printf("LANE-MAJOR BATCH GATE: c2c, r2c and c2r on the column pass, store %s\n", dir);
     /* C: small lengths against the naive DFT too; a prime, a Rader leaf, a smooth length, an odd length, a prime alone */
     cell(16, 8, 1);
     cell(45, 8, 1);
@@ -348,6 +405,17 @@ int main(int argc, char **argv)
     cell_r2c(2096, 256, 0, 8);
     cell_r2c(262, 1024, 0, 8);
     cell_r2c(512, 512, 0, 8);
+    /* R3: the c2r twin: the same cells, against K separate c2r plans and the pair roundtrip */
+    cell_c2r(16, 8, 1);
+    cell_c2r(64, 64, 1);
+    cell_c2r(262, 16, 1);
+    cell_c2r(1048, 64, 1);
+    cell_c2r(2096, 16, 1);
+    cell_c2r(256, 3, 1);
+    cell_c2r(4096, 2, 1);
+    cell_c2r(2096, 256, 8);
+    cell_c2r(262, 1024, 8);
+    cell_c2r(512, 512, 8);
     /* R */
     refusals();
     printf("%d checks, %d failed\n%s\n", g_checks, g_fail, g_fail ? "*** LANE-MAJOR BATCH GATE FAILED ***" : "LANE-MAJOR BATCH GATE ALL PASS");

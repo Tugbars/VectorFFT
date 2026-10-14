@@ -369,16 +369,106 @@ static void _lmr_fold(const double *W, double *A, size_t M, size_t K, const int 
         }
     }
 }
-/* the lane-range dispatch of the pack and the fold (phase 0 / 1) across the workers */
+/* ── THE C2R TWIN (the design's step 3): z[2 (f K + t)] (the N / 2 + 1 bins) -> x[e K + t],
+ * unnormalized (N x, as every backward in the tree), the fold and the pack inverted:
+ *   UNFOLD  per lane, the halves of the fold dropped (that factor 2 and the unnormalized
+ *           M-point backward make the N): Z[0] = (A[0] + A[M]) + i (A[0] - A[M]), and for
+ *           k = 1..M/2  E = A[k] + conj A[M-k], O = conj(w^k) (A[k] - conj A[M-k]),
+ *           Z[k] = E + i O, Z[M-k] = conj(E - i O), written at the pass row the backward
+ *           chain reads row k from (the chain's comb);
+ *   COLUMNS the backward column chain at M down every lane of W, in place;
+ *   UNPACK  x[2 m][k] = Re W[m][k], x[2 m + 1][k] = Im W[m][k]. */
+static void _lmc_unfold(const double *A, double *W, size_t M, size_t K, const int *perm, const double *tw,
+                        size_t k0, size_t k1)
+{
+    double *Z0 = W + 2 * (perm ? (size_t)perm[0] : 0) * K;
+    const double *A0 = A, *AM = A + 2 * M * K;
+    size_t k, n;
+    for (n = k0; n < k1; n++)
+    {
+        const double a0 = A0[2 * n], am = AM[2 * n];
+        Z0[2 * n] = a0 + am;
+        Z0[2 * n + 1] = a0 - am;
+    }
+    for (k = 1; 2 * k <= M; k++)
+    {
+        const size_t rk = perm ? (size_t)perm[k] : k, rm = perm ? (size_t)perm[M - k] : M - k;
+        const double *Ak = A + 2 * k * K, *Am = A + 2 * (M - k) * K;
+        double *Zk = W + 2 * rk * K, *Zm = W + 2 * rm * K;
+        const double wr = tw[2 * k], wi = -tw[2 * k + 1];   /* conj(w^k) */
+        const int mirror = (2 * k < M);
+        n = k0;
+#if defined(__AVX2__)
+        {
+            const __m256d cj = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
+            const __m256d vwr = _mm256_set1_pd(wr), vwi = _mm256_setr_pd(-wi, wi, -wi, wi);
+            for (; n + 2 <= k1; n += 2)
+            {
+                const __m256d P = _mm256_loadu_pd(Ak + 2 * n), Q = _mm256_xor_pd(_mm256_loadu_pd(Am + 2 * n), cj);
+                const __m256d E = _mm256_add_pd(P, Q), D = _mm256_sub_pd(P, Q);
+                const __m256d O = _mm256_fmadd_pd(D, vwr, _mm256_mul_pd(_mm256_permute_pd(D, 0x5), vwi));   /* conj(w^k) D */
+                const __m256d iO = _mm256_xor_pd(_mm256_permute_pd(O, 0x5), _mm256_setr_pd(-0.0, 0.0, -0.0, 0.0)); /* i O */
+                _mm256_storeu_pd(Zk + 2 * n, _mm256_add_pd(E, iO));
+                if (mirror)
+                    _mm256_storeu_pd(Zm + 2 * n, _mm256_xor_pd(_mm256_sub_pd(E, iO), cj));
+            }
+        }
+#endif
+        for (; n < k1; n++)
+        {
+            const double pr = Ak[2 * n], pi = Ak[2 * n + 1], qr = Am[2 * n], qi = -Am[2 * n + 1];
+            const double er = pr + qr, ei = pi + qi, dr = pr - qr, di = pi - qi;
+            const double orr = dr * wr - di * wi, oi = dr * wi + di * wr;   /* conj(w^k) D */
+            const double ior = -oi, ioi = orr;                               /* i O */
+            Zk[2 * n] = er + ior;
+            Zk[2 * n + 1] = ei + ioi;
+            if (mirror)
+            {
+                Zm[2 * n] = er - ior;
+                Zm[2 * n + 1] = -(ei - ioi);
+            }
+        }
+    }
+}
+static void _lmc_unpack(const double *W, double *x, size_t M, size_t K, size_t k0, size_t k1)
+{
+    size_t m, n;
+    for (m = 0; m < M; m++)
+    {
+        const double *w = W + 2 * (m * K + k0);
+        double *a = x + 2 * m * K + k0, *b = a + K;
+        const size_t w1 = k1 - k0;
+        n = 0;
+#if defined(__AVX2__)
+        for (; n + 4 <= w1; n += 4)
+        {
+            const __m256d w0 = _mm256_loadu_pd(w + 2 * n), w1v = _mm256_loadu_pd(w + 2 * n + 4);
+            const __m256d lo = _mm256_permute2f128_pd(w0, w1v, 0x20), hi = _mm256_permute2f128_pd(w0, w1v, 0x31);
+            _mm256_storeu_pd(a + n, _mm256_unpacklo_pd(lo, hi));
+            _mm256_storeu_pd(b + n, _mm256_unpackhi_pd(lo, hi));
+        }
+#endif
+        for (; n < w1; n++)
+        {
+            a[n] = w[2 * n];
+            b[n] = w[2 * n + 1];
+        }
+    }
+}
+/* the lane-range dispatch of the elementwise passes across the workers: phase 0 pack, 1 fold
+ * (r2c), 2 unfold, 3 unpack (c2r) */
 typedef struct { struct vfft_plan_s *h; const double *x; double *z; size_t k0, k1; int phase; } _lmr_arg_t;
 static void _lmr_tramp(void *v)
 {
     _lmr_arg_t *a = (_lmr_arg_t *)v;
     struct vfft_plan_s *h = a->h;
-    if (a->phase == 0)
-        _lmr_pack(a->x, h->lm_W, (size_t)h->lm_M, h->K, a->k0, a->k1);
-    else
-        _lmr_fold(h->lm_W, a->z, (size_t)h->lm_M, h->K, h->lm_perm, h->lm_tw, a->k0, a->k1);
+    switch (a->phase)
+    {
+    case 0: _lmr_pack(a->x, h->lm_W, (size_t)h->lm_M, h->K, a->k0, a->k1); break;
+    case 1: _lmr_fold(h->lm_W, a->z, (size_t)h->lm_M, h->K, h->lm_perm, h->lm_tw, a->k0, a->k1); break;
+    case 2: _lmc_unfold(a->x, h->lm_W, (size_t)h->lm_M, h->K, h->lm_perm, h->lm_tw, a->k0, a->k1); break;
+    default: _lmc_unpack(h->lm_W, a->z, (size_t)h->lm_M, h->K, a->k0, a->k1); break;
+    }
 }
 static void _lmr_ranges(struct vfft_plan_s *h, const double *x, double *z, int phase)
 {
@@ -409,9 +499,19 @@ static int _lmr_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, d
     _lmr_ranges(h, xin, zout, 1);
     return 0;
 }
+static int _lmc_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *xout)
+{
+    (void)dir;   /* a c2r plan is backward-only */
+    _lmr_ranges(h, zin, xout, 2);
+    _lm_cols(h, h->lm_W, h->lm_W, 1);
+    _lmr_ranges(h, zin, xout, 3);
+    return 0;
+}
+/* the real batch's create, r2c or c2r by the request (the same chain at M on the shared real row,
+ * the direction's own executor) */
 static vfft_plan _vfft_create_lmr_il(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N, size_t K)
 {
-    const int T = _vfft_plan_threads(cfg), M = N / 2;
+    const int T = _vfft_plan_threads(cfg), M = N / 2, c2r = cfg->transform == VFFT_C2R;
     vw2_ilcol_key_t ck;
     vfft_ilcol_t col;
     char forms[64];
@@ -419,9 +519,9 @@ static vfft_plan _vfft_create_lmr_il(const vfft_config_t *cfg, struct vfft_wisdo
     struct vfft_plan_s *h;
     if (!vfft_policy_batch_lane_major(cfg))
     {
-        _vfft_warn("vfft_create: the lane-major interleaved real batch serves R2C at an even N >= 4 and howmany >= 2, "
-                   "out of place (got %s N=%d howmany=%zu %s); an odd N has no real column engine, and the C2R "
-                   "twin is not served yet -- name batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS for those",
+        _vfft_warn("vfft_create: the lane-major interleaved real batch serves R2C and C2R at an even N >= 4 and "
+                   "howmany >= 2, out of place (got %s N=%d howmany=%zu %s); an odd N has no real column engine, "
+                   "the in-place plane is not built yet -- name batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS for those",
                    _vfft_tname(cfg->transform), N, K, cfg->placement == VFFT_INPLACE ? "in place" : "out of place");
         return NULL;
     }
@@ -446,7 +546,7 @@ static vfft_plan _vfft_create_lmr_il(const vfft_config_t *cfg, struct vfft_wisdo
         _il2d_col_free(&col);
         return NULL;
     }
-    h->transform = VFFT_R2C;
+    h->transform = c2r ? VFFT_C2R : VFFT_R2C;
     h->placement = cfg->placement;
     h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
     h->N = N;
@@ -495,9 +595,9 @@ static vfft_plan _vfft_create_lmr_il(const vfft_config_t *cfg, struct vfft_wisdo
         h->lm_tw[2 * k + 1] = -s;
     }
     _lm_race(h, W, cfg, &ck, bcmt);
-    h->k1_exec = _lmr_exec;
-    h->k1_go[VFFT_FORWARD] = _lmr_exec;   /* the lean door: forward only (the door refuses a backward call) */
-    h->k1_go[VFFT_BACKWARD] = NULL;
+    h->k1_exec = c2r ? _lmc_exec : _lmr_exec;   /* the lean door: the direction's own executor, the other refused by the door */
+    h->k1_go[VFFT_FORWARD] = c2r ? NULL : _lmr_exec;
+    h->k1_go[VFFT_BACKWARD] = c2r ? _lmc_exec : NULL;
     (void)bcmtt; (void)bwl; (void)btf; (void)bro; (void)bblu;
     return (vfft_plan)h;
 }

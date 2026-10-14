@@ -1964,8 +1964,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                    "2*(N/2+1) doubles of CCE bins each) or use VFFT_LAYOUT_SPLIT for the lane-major geometry",
                    _vfft_tname(cfg->transform), N, (int)K,
                    cfg->batch_geom == VFFT_BATCH_DEFAULT ? "DEFAULT" : "LANE_MAJOR",
-                   cfg->transform == VFFT_C2R ? "the C2R twin is not built yet"
-                   : (N % 2) ? "an odd N has no real column engine"
+                   (N % 2) ? "an odd N has no real column engine"
                    : cfg->placement == VFFT_INPLACE ? "the in-place real plane is not built yet" : "N below 4",
                    (int)K);
         return NULL;
@@ -2251,9 +2250,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
     /* 1D real: the one place the layouts still meet (bridge/real_bridge.h,
      * owner decision D1 — temporary until the IL real engine lands). Every
      * transform/rank below is served by ONE side, chosen here, once. */
-    if (cfg->dims < 2 && cfg->transform == VFFT_R2C && K > 1 && !ob &&
+    if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 && !ob &&
         cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->batch_geom != VFFT_BATCH_TRANSFORM_CONTIGUOUS)
-        return _vfft_create_lmr_il(cfg, W, N, K);   /* the LANE-MAJOR real batch (lm_batch_il.h): the policy admitted it above */
+        return _vfft_create_lmr_il(cfg, W, N, K);   /* the LANE-MAJOR real batch, r2c or c2r (lm_batch_il.h): the policy admitted it above */
     if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R))
         return _vfft_create_real(cfg, ob, W, reg, N, K);
     /* ── THE LAYOUT FORK ── */
