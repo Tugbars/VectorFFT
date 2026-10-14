@@ -649,7 +649,11 @@ planner's whole pool for N/2 races **in the real role** (each candidate timed wi
 at the route's placement, in the one direction the plan runs), and the winner's recipe is
 banked on the real row in the c2c K=1 record's vocabulary (`il_route`, `il_pair`, ... plus
 `il_bkv`, the backward forms). Replay builds the child from that recipe; a zr2c create reads
-and writes no c2c row, and a recalibrate re-races the child in role and nothing in c2c.
+and writes no c2c row, and a recalibrate re-races the child in role and nothing in c2c. A
+prime child's four-step inner carries its own child (the inner's rows, `fs_` tokens on the
+real row): the recipe takes them at the race, while the raced plan is alive, so the rebuild
+from the recipe replays that child on the cold create too (2026-10-14; field trial V26 —
+before, the rebuild raced it a second time and said it "did not replay").
 
 **The `zr2c` composite route** picks between `child_oop_il` (an out-of-place child plus a
 fold into a separate plane) and `child_nat_ip` (an in-place child).

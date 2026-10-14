@@ -475,10 +475,13 @@ design:
   The caller participates on clone slot 0, never on the primary, for
   the same reason.
 
-Clones are wisdom-served from the verdicts the primary's creation just
-banked, and each is **bitwise-verified against the primary on a probe
-plane at create**; any mismatch tears the clone set down and the loop
-serves. Loop-vs-queue is itself a **raced verdict** at create, per the
+Clones are wisdom-served from the T=1 row (the primary reads its own
+row at T, so the two plans may round differently), and at create every
+clone is **verified on a probe plane: bitwise against the first clone,
+within 1e-10 of the primary** (2026-10-14; field trial V18 — the earlier
+bitwise match against the primary failed whenever the two rows differed
+and the queue never engaged); any mismatch tears the clone set down and
+the loop serves. Loop-vs-queue is itself a **raced verdict** at create, per the
 methodology of §5 — there is no plane-count threshold written anywhere.
 
 ### 8.2 Results

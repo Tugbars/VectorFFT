@@ -35,8 +35,8 @@ benches include it). The open items below are still open.
 
 1. **`vfft_measure_configure()`, `vfft_measure_config_t` and its enums.** These have
    a user case. They are the only way for an application to stop a racing
-   `vfft_create` from pinning its thread (the pool's pin of the caller to logical CPU 0
-   stays), raising its priority, or waiting up to 60 s for another process's
+   `vfft_create` from pinning its thread for the races (the pool pins no caller),
+   raising its priority, or waiting up to 60 s for another process's
    measurement. The owner's 10-04 design made the scope public for that reason (design
    step 3, `wisdom_system.md`). The question is whether it stays in `vfft.h` beside
    `vfft_create`, with one line in `vfft_create`'s documentation pointing to it, or

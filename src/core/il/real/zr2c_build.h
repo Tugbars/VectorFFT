@@ -471,6 +471,16 @@ static double _zr2c_kid_race(const vfft_config_t *cfg, int N, int route, vfft_il
         _k1pr_ctx.plan = _ilprime_create_banked(NULL, &c2, n, &pr->d);
         _k1pr_ctx.N = _k1pr_ctx.plan ? n : 0;
         pr->m = _k1pr_ctx.plan ? (_k1pr_ctx.plan->method == 1 ? 1 : 2) : 0;
+        /* a four-step inner's child, raced on the cell's own private store,
+         * into the recipe now while the raced plan is alive: the rebuild from
+         * the recipe seeds its store from these tokens and the child replays.
+         * Before 2026-10-14 (field trial V26) the recipe carried the inner's
+         * shape only, so the rebuild raced the child a second time and said
+         * it "did not replay"; the row banked the rebuilt child's tokens, so
+         * only the cold create paid. No 1D row is read or written: the real
+         * row carries its child's recipe (owner, 2026-10-14). */
+        if (_k1pr_ctx.plan && pr->d.kind == 4 && _k1pr_ctx.plan->inner.fs && _k1pr_ctx.plan->inner.fs->own)
+            (void)_zr2c_fs_str(pr->fs, sizeof pr->fs, _k1pr_ctx.plan->inner.fs->own, pr->d.R1, pr->d.R2, 0);
     }
     _k1_il_fs_warm(S, _zr2c_race_W, &cs, n);
     _k1fs_ctx.W = S;
