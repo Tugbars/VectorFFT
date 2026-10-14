@@ -23,6 +23,33 @@ engaged (the strips with their tile at the wide planes, the blocks at 1048x256) 
 replayed bitwise; the refusals named. At a prime N with two lanes the turned pass wins
 the race and the row carries its child recipe (`tpc_*`), as on a 2D row.
 
+First measurement (2026-10-14, `gapfill/work/lm_vs_mkl_probe.c`: one thread, core 2 at
+HIGH priority, 15 rounds alternated, 200 ms pace, the min over rounds; MKL's lane-major
+batch is its descriptor with NUMBER_OF_TRANSFORMS = K, distance 1, strides K; the two
+contiguous arms run the same transforms in the other layout, as a reference):
+
+```
+   N      K   ours-lm ns   mkl-lm ns  ratio   mkl-tc ns  ours-tc ns   err vs mkl
+   131   1024     305,200   1,082,400   3.55     979,500     406,100   8.3e-16
+   524    256     399,900   2,632,800   6.58   2,557,600     494,000   5.8e-16
+  1048     64     181,800   1,300,500   7.15   1,270,800     189,800   7.7e-16
+  2101     64     500,800   1,580,600   3.16   1,423,400     523,600   7.7e-16
+    53   1024      87,300     111,400   1.28     439,375     139,075   1.3e-15
+   256    256      84,000      99,700   1.19      68,100      81,300   2.4e-16
+    64   1024      72,050      90,950   1.26      38,200      44,650   2.2e-16
+    16   4096      60,125      63,025   1.05      28,300      36,200   2.4e-16
+```
+
+Where the length carries a prime above the pool the lane-major batch is 3.2x to 7.2x
+MKL's lane-major batch and 1.0x to 1.3x our own contiguous one; MKL does not exploit
+the lanes (its lane-major and contiguous times are equal there). At a smooth length the
+lane-major batch is 1.05x to 1.26x MKL's lane-major batch but slower than both
+contiguous forms, ours by 1.0x to 1.7x: the column pass at a short smooth N over
+thousands of lanes is not where it wins, and the contract says the caller brings the
+layout, so the max-performance mode will name contiguous there. Our lane-major
+spreads read 18 to 53 percent against MKL's 2 to 27: the min is quoted, and the bench
+mode of step 4 is the canonical measurement.
+
 ## 1. The request and the data contract
 
 A 1D interleaved batch of K >= 2 transforms in the LANE-MAJOR geometry
