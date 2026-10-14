@@ -1,7 +1,8 @@
 # Lane-major 1D batches on the column pass (c2c, r2c, c2r)
 
-**Status (2026-10-14): steps 1 to 3 BUILT (the door, c2c, r2c and c2r at an even N out
-of place); steps 4 to 6 not started.**
+**Status (2026-10-15): steps 1 to 4 BUILT (the door, c2c, r2c and c2r at an even N, the
+bench mode and the race against MKL) and the in-place real batch of step 5; the real odd
+column engine waits for piece C of the Rader spread.**
 Owner: "we will build lane major everywhere; the library is almost done, so it may
 start now. 1D C2C / R2C / C2R all will have lane major with one bold stroke." This
 document is the design to build against; it supersedes slice 2 of
@@ -48,6 +49,25 @@ pack's inverse. The gate's c2r section: the seven cells against K separate K = 1
 plans (1e-16 to 2.5e-15) and the pair roundtrip to N x; T = 8 at the three wide planes
 engaged, bitwise on replay. 246 checks. The odd N and the in-place plane remain the
 named refusals.
+
+Step 4 as built (2026-10-15): the canonical bench's modes `--lmc2c` (the old `--kzb`),
+`--lmr2c` and `--lmc2r` in `gauntlet/bench_1d_vs_mkl.c`, each with `--mt`. A cell times
+four arms: ours lane-major; the loop over K one-thread K = 1 plans on contiguous data;
+MKL on our lane-major layout (`NUMBER_OF_TRANSFORMS = K`, distance 1, strides K; the real
+descriptors CCE, the backward taking the bins' distance as its input); MKL on its
+contiguous layout. The row carries the route and, threaded, the engagement count. The
+race over 24 one-thread and 12 eight-thread cells is the results page's section
+"Lane-major batches" (`docs/performance/v1_0_results.md`): one thread ahead of MKL's
+lane-major batch at every cell, 2.9x to 7.3x where the length carries 131 or 191;
+eight threads 2.3x to 5.9x there, behind MKL at the power-of-two cells (0.92x c2c
+256x512, 0.56x r2c and 0.40x c2r at 512x512).
+
+Step 5 as built (2026-10-15), the in-place real batch: one buffer of (N + 2) K doubles,
+the N K reals first and the (N/2 + 1) K bins over them. The passes do not change: the
+pack copies the whole input into W before the fold writes a bin, and the c2r unfold
+consumes every bin before the unpack writes a real (each phase a whole dispatch). The
+policy admits both placements; the gate checks in place bitwise against out of place in
+both directions at one and eight threads (286 checks). The odd N stays the named refusal.
 
 First measurement (2026-10-14, `gapfill/work/lm_vs_mkl_probe.c`: one thread, core 2 at
 HIGH priority, 15 rounds alternated, 200 ms pace, the min over rounds; MKL's lane-major
@@ -104,8 +124,8 @@ lane-major batch is 1.05x to 1.26x MKL's lane-major batch but slower than both
 contiguous forms, ours by 1.0x to 1.7x: the column pass at a short smooth N over
 thousands of lanes is not where it wins, and the contract says the caller brings the
 layout, so the max-performance mode will name contiguous there. Our lane-major
-spreads read 18 to 53 percent against MKL's 2 to 27: the min is quoted, and the bench
-mode of step 4 is the canonical measurement.
+spreads read 18 to 53 percent against MKL's 2 to 27: the min is quoted. The canonical
+measurement is step 4's race on the results page.
 
 ## 1. The request and the data contract
 
