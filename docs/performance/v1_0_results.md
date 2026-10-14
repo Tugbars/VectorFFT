@@ -109,6 +109,80 @@ supersedes the same day's run on the earlier kernels (529 1.77×, 989 3.27×, 18
 MKL's batched call costs 0.93–1.00× its three K=1 calls (the batch saves the most at
 N ≤ 121).
 
+### Lane-major batches — 1D c2c, r2c and c2r vs MKL's lane-major batch, T=1 and T=8 (2026-10-15)
+
+K transforms sample-major (element e of transform t at `e·K + t`, the lane-major
+geometry, `VFFT_BATCH_LANE_MAJOR`; the default for a real batch), out of place, natural
+order. Ours is the column pass down the K lanes (`docs/roadmap/lane_major_batch_design.md`);
+r2c and c2r run it at N/2 between the pack and the fold. MKL's lane-major batch is its
+descriptor with `NUMBER_OF_TRANSFORMS = K`, distance 1 and strides K (the real ones DFTI
+REAL with CCE storage). The verdict is `MKL lm / ours lm`. Two reference arms run the same
+transforms contiguous (transform t at `t·N`): MKL with distance N, and ours as a loop over
+K one-thread K = 1 plans. Canonical bench `gauntlet/bench_1d_vs_mkl.c --lmc2c / --lmr2c /
+--lmc2r` (`--mt` for T=8, both sides at 8 threads): one cell per process, core 2 pinned at
+HIGH, pace 300 ms, cool 300 ms, both engine orders (the table keeps the order with the
+lower ratio), every cell raced cold on a fresh scratch store. ns per batch.
+
+```
+      N     K  ours lm ns   MKL lm ns  ratio  MKL contig  ours contig   error
+ c2c, one thread
+    131  1024     306,043   1,082,000   3.54     972,893     394,900   9.6e-16
+    524   256     375,250   2,623,257   6.99   2,546,521     455,179   7.4e-16
+   1048    64     179,131   1,306,959   7.30   1,264,386     193,903   8.4e-16
+   2101    64     426,229   1,544,821   3.62   1,419,214     524,657   8.1e-16
+     53  1024      88,775     112,019   1.26     444,906     136,942   1.3e-15
+    256   256      69,333      91,773   1.32      41,380      46,223   2.9e-16
+     64  1024      56,673      91,237   1.61      37,760      38,277   2.4e-16
+     16  4096      69,623      73,910   1.06      31,190      37,637   3.0e-16
+ r2c, one thread
+    262  1024     420,912   1,217,863   2.89   1,026,875     427,625   1.3e-15
+   1048   256     455,187   2,722,650   5.98   2,619,038     500,600   8.0e-16
+   2096    64     240,593   1,351,307   5.62   1,296,150     217,250   8.1e-16
+   4202    64     520,900   1,773,613   3.40   1,470,575     562,787   7.9e-16
+    106  1024     127,372     518,500   4.07     460,472     162,522   6.8e-16
+    512   512     231,962     308,713   1.33     176,325     159,287   2.6e-16
+    128  1024      80,353      95,407   1.19      64,300      59,200   2.9e-16
+     32  4096      71,680      74,387   1.04      69,580      67,553   1.7e-16
+ c2r, one thread
+    262  1024     441,512   1,640,063   3.71   1,065,575     429,188   2.0e-15
+   1048   256     459,000   2,668,525   5.81   2,517,150     511,025   2.0e-15
+   2096    64     210,079   1,325,136   6.31   1,263,164     224,707   1.8e-15
+   4202    64     554,325   2,050,863   3.70   1,524,663     573,663   1.9e-15
+    106  1024     133,222     691,794   5.19     460,972     156,922   1.9e-15
+    512   512     223,112     315,313   1.41     141,138     139,700   7.8e-16
+    128  1024      84,393     100,360   1.19      59,173      55,640   5.6e-16
+     32  4096      81,167      81,260   1.00      75,747      63,667   4.4e-16
+ c2c, eight threads both sides
+   1048   256     151,200     691,400   4.57     651,400     919,788   7.8e-16
+    524   512     113,763     675,950   5.94     648,150   1,007,338   8.9e-16
+    131  1024      41,150     134,379   3.27     122,893     439,750   9.6e-16
+    256   512      31,707      29,013   0.92      10,673     189,353   2.7e-16
+ r2c, eight threads both sides
+   2096   256     251,713     727,150   2.89     699,213   1,056,663   8.4e-16
+    262  1024      68,975     155,850   2.26     129,237     426,450   1.3e-15
+   1048   512     200,325     713,313   3.56     669,225   1,090,825   9.5e-16
+    512   512      75,950      42,450   0.56      21,450     156,963   2.6e-16
+ c2r, eight threads both sides
+   2096   256     255,975     699,725   2.73     639,450   1,065,225   2.4e-15
+    262  1024      88,675     208,825   2.35     134,800     436,600   2.0e-15
+   1048   512     212,438     677,750   3.19     631,075   1,035,425   2.2e-15
+    512   512      97,112      38,425   0.40      17,487     149,225   7.8e-16
+```
+
+"error" is our lane-major output against MKL's, relative. "ours contig" is the loop of
+one-thread plans in both tables. Every T=8 row is engaged (the threaded column passes
+counted in the timed executes).
+
+- **One thread:** ahead of MKL's lane-major batch at all 24 cells. Where the length (or
+  its half, for the real transforms) carries 131 or 191, 2.9× to 7.3×; MKL's contiguous
+  batch is 2.4× to 7.1× behind ours there too. At N = 53 c2c 1.26×; the real cells at 106
+  4.1× and 5.2×.
+- **Smooth lengths, one thread:** 1.0× to 1.6× over MKL's lane-major batch, but the
+  contiguous layout is faster for both libraries (256×256 c2c: MKL contiguous 41 µs, ours
+  contiguous 46 µs, ours lane-major 69 µs).
+- **Eight threads:** 2.3× to 5.9× where the length carries 131. Behind MKL at the power-of-two
+  cells: 256×512 c2c 0.92×, 512×512 r2c 0.56×, 512×512 c2r 0.40×.
+
 ### Natural order — in-place (single-thread)
 
 ```
