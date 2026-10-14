@@ -40,7 +40,8 @@ int main(int argc, char **argv) {
         { "1D c2c IP IL 4096 NATURAL",            1, VFFT_C2C, IP,  IL, NAT, 1, 4096, 0, 0, 0, 1, 0 },
         { "1D c2c IP IL K=4 (default geometry)",  1, VFFT_C2C, IP,  IL, DEF, 1, 256, 0, 0, 0, 4, 0 },
         { "1D c2c OOP IL K=4 TRANSFORM_CONTIG",   1, VFFT_C2C, OOP, IL, DEF, 1, 256, 0, 0, 0, 4, TC },
-        { "1D c2c OOP IL K=4 LANE_MAJOR",         0, VFFT_C2C, OOP, IL, DEF, 1, 256, 0, 0, 0, 4, LM },
+        { "1D c2c OOP IL K=4 LANE_MAJOR",         1, VFFT_C2C, OOP, IL, DEF, 1, 256, 0, 0, 0, 4, LM },   /* the column pass (2026-10-14) */
+        { "1D c2c IP IL K=4 LANE_MAJOR",          1, VFFT_C2C, IP,  IL, DEF, 1, 256, 0, 0, 0, 4, LM },
         /* ── 1D C2C: SPLIT — prime in place only, no TC geometry ── */
         { "1D c2c IP SPLIT prime 127",            1, VFFT_C2C, IP,  SP, DEF, 1, 127, 0, 0, 0, 1, 0 },
         { "1D c2c OOP SPLIT prime 127",           0, VFFT_C2C, OOP, SP, DEF, 1, 127, 0, 0, 0, 1, 0 },

@@ -1345,6 +1345,7 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
 }
 
 #include "split/split_create.h" /* the SPLIT create: the split side of the one fork */
+#include "il/rank1/lm_batch_il.h" /* the LANE-MAJOR 1D batch on the column pass (2026-10-14); after the 2D tier, before the door */
 #include "il/il_create.h"       /* the INTERLEAVED create: the IL side of the one fork */
 #include "bridge/real_bridge.h" /* 1D real: where the layouts still meet (D1, temporary) */
 #include "vfft_batch.h"         /* owned-batch allocator (step 28) */
@@ -2792,6 +2793,8 @@ const char *vfft_plan_route(vfft_plan p)
         return a == 3 ? "plane+band" : a == 2 ? (f == 2 ? "plane+payonce+strips" : "plane+payonce")
                                               : (f == 2 ? "plane+child+strips" : "plane+child");
     }
+    if (h->lm)
+        return h->il2d_col.blu ? (h->il2d_col.tpc ? "lm+tpc" : "lm+blu") : "lm";   /* the lane-major batch on the column pass */
     if (h->N2 > 0 && h->N3 == 0 && h->il2d_col.nst > 0)
     { /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the
        * batched rows, +rb2 = the batched two-pass rows; turn = the whole

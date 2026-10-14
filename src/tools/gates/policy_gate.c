@@ -149,6 +149,16 @@ static int _ref_strip_chain_primes(int n)
     for (i = 0; i < 15; i++) while (n % cp[i] == 0) n /= cp[i];
     return n;
 }
+/* the lane-major batch's admission (vfft_policy_batch_lane_major), spelled as the request table */
+static int _ref_lane_major(int transform, int layout, int dims, int howmany, int geom, int N)
+{
+    if (transform != VFFT_C2C) return 0;
+    if (layout != VFFT_LAYOUT_INTERLEAVED) return 0;
+    if (dims > 1) return 0;
+    if (howmany < 2) return 0;
+    if (geom != VFFT_BATCH_LANE_MAJOR) return 0;
+    return N >= 2;
+}
 static int _ref_rader_prime(int N)
 {
     int p, r;
@@ -580,6 +590,30 @@ int main(void)
                NMAX, bad_ceil ? "DIFFERS" : "equal", bad_ip ? "DIFFERS" : "equal",
                bad_oop ? "DIFFERS" : "equal", bad_rankn ? "DIFFERS" : "equal");
         nchk += (NMAX - 1) * 4;
+    }
+    {   /* the lane-major batch's admission over the request table: transform x layout x dims x K x geometry x N */
+        static const int TR[3] = { VFFT_C2C, VFFT_R2C, VFFT_C2R }, LY[2] = { VFFT_LAYOUT_INTERLEAVED, VFFT_LAYOUT_SPLIT };
+        static const int KS[4] = { 1, 2, 4, 64 }, GM[3] = { VFFT_BATCH_DEFAULT, VFFT_BATCH_TRANSFORM_CONTIGUOUS, VFFT_BATCH_LANE_MAJOR };
+        static const int NS[4] = { 1, 2, 131, 4096 };
+        int it, il, idm, ik, ig, in, bad_lm = 0, n_lm = 0;
+        for (it = 0; it < 3; it++) for (il = 0; il < 2; il++) for (idm = 1; idm <= 2; idm++)
+            for (ik = 0; ik < 4; ik++) for (ig = 0; ig < 3; ig++) for (in = 0; in < 4; in++)
+            {
+                vfft_config_t c;
+                memset(&c, 0, sizeof c);
+                c.transform = (vfft_transform_t)TR[it]; c.layout = (vfft_layout_t)LY[il]; c.dims = idm;
+                c.n[0] = NS[in]; c.n[1] = 16; c.howmany = (size_t)KS[ik]; c.batch_geom = GM[ig];
+                if ((vfft_policy_batch_lane_major(&c) != 0) != (_ref_lane_major(TR[it], LY[il], idm, KS[ik], GM[ig], NS[in]) != 0))
+                {
+                    if (!bad_lm) printf("  *** FAIL: lane-major admission disagrees at t=%d lay=%d dims=%d K=%d geom=%d N=%d\n",
+                                        TR[it], LY[il], idm, KS[ik], GM[ig], NS[in]);
+                    bad_lm++;
+                }
+                n_lm++;
+            }
+        if (bad_lm) g_fail++;
+        printf("lane-major batch admission over %d requests: %s\n", n_lm, bad_lm ? "DIFFERS" : "equal");
+        nchk += n_lm;
     }
     /* ── steps 4-6: the three narrowed laws ─────────────────────────────
      * L3, exhaustive over every (banked, requested) pair a plan can carry,

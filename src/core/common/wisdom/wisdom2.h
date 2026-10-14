@@ -110,7 +110,11 @@ typedef enum { VW2_ROLE_NONE = 0, VW2_ROLE_COMP = 1 } vw2_role_t;
  * request builder (memset-safe by construction). Matches by EQUALITY in
  * vw2_key_serves; the pre-1.2 fallback lives in vw2_lookup as a second
  * resolution phase, NOT as a serves wildcard — see vw2_lookup. */
-typedef enum { VW2_LAY_ANY = 0, VW2_LAY_SPLIT = 1, VW2_LAY_IL = 2 } vw2_lay_t;
+typedef enum { VW2_LAY_ANY = 0, VW2_LAY_SPLIT = 1, VW2_LAY_IL = 2,
+               VW2_LAY_LM = 3 /* the interleaved LANE-MAJOR batch (q = K transforms, element e of
+                               * transform t at z[2 (e K + t)]): its own cell beside the
+                               * transform-contiguous q = K row (docs/roadmap/lane_major_batch_design.md) */
+} vw2_lay_t;
 
 /* src= merge rank (README §3.4/§4.2). Absent src = race (a fresh bank).
  * An UNKNOWN src value ranks LOWEST (refuse-don't-guess: a future source
@@ -627,6 +631,7 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
             } else if (!strcmp(tok, "lay")) {
                 if      (!strcmp(v, "split")) k->lay = VW2_LAY_SPLIT;
                 else if (!strcmp(v, "il"))    k->lay = VW2_LAY_IL;
+                else if (!strcmp(v, "lm"))    k->lay = VW2_LAY_LM;
                 else return 0;  /* future lay values: opaque carry           */
             } else if (!strcmp(tok, "nthreads")) {
                 char *end;
@@ -658,7 +663,7 @@ static inline void vw2__key_format(const vw2_key_t *k, char *out, size_t cap)
     if (k->role != VW2_ROLE_NONE)
         VW2__CAT(" role=comp");
     if (k->lay != VW2_LAY_ANY)
-        VW2__CAT(" lay=%s", k->lay == VW2_LAY_SPLIT ? "split" : "il");
+        VW2__CAT(" lay=%s", k->lay == VW2_LAY_SPLIT ? "split" : k->lay == VW2_LAY_LM ? "lm" : "il");
     if (k->nthreads > 1)
         VW2__CAT(" nthreads=%d", (int)k->nthreads);
 #undef VW2__CAT

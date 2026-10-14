@@ -92,6 +92,8 @@ static vfft_plan _vfft_il_create(const vfft_config_t *cfg,
          * thread; docs/roadmap/real_inplace_design.md) */
         return _vfft_create_2d_il(cfg, W, K);
     }
+    if (K > 1 && cfg->transform == VFFT_C2C && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
+        return _vfft_create_lm_il(cfg, W, N, K);   /* the LANE-MAJOR batch: the column pass (lm_batch_il.h) */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE)
         return _c2c_ip_create_il(cfg, W, N, K);   /* config.batch + IL is refused before the fork */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_OUTOFPLACE)

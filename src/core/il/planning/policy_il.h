@@ -181,6 +181,19 @@ static inline int vfft_policy_rough47_is_prime(int r)
         if (r % q == 0) return 0;
     return 1;
 }
+/* THE LANE-MAJOR 1D BATCH (docs/roadmap/lane_major_batch_design.md, 2026-10-14): K >= 2
+ * transforms of length N, element e of transform t at z[2 (e K + t)], served by the column
+ * pass with no row pass (il/rank1/lm_batch_il.h). Admitted: a 1D interleaved C2C request of
+ * howmany >= 2 at N >= 2 that names the geometry (VFFT_BATCH_LANE_MAJOR; DEFAULT stays
+ * transform-contiguous for c2c). The real batches are the design's next pieces: refused
+ * here until they serve. The geometries never race each other in a create (the owner's
+ * rule): a lane-major request is served lane-major or refused with its reason. */
+static inline int vfft_policy_batch_lane_major(const vfft_config_t *cfg)
+{
+    return cfg && cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->howmany >= 2 &&
+           cfg->transform == VFFT_C2C && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->n[0] >= 2;
+}
+
 static inline int vfft_policy_il2d_rader_prime(int N1)
 {
     int p, r;

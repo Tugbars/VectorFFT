@@ -210,6 +210,10 @@ struct vfft_plan_s
      * machinery, no layout conversion, and inherits every K=1 improvement
      * for free. */
     struct vfft_plan_s *tcb;
+    /* THE LANE-MAJOR 1D BATCH (il/rank1/lm_batch_il.h, 2026-10-14): K transforms of N as
+     * one column plane; il2d_col below is its pass, N2 stays 0, K = howmany; the bound
+     * executor runs the column pass both directions; destroy frees the descriptor whole */
+    int lm;
     /* TC MT (split's per-lane trick, one level up: per-TRANSFORM). The K=1
      * IL engines are NOT reentrant — il2p/il3p own `mid` scratch, zturn owns
      * its sectioned `plane` — so worker t runs its slab of transforms on its
