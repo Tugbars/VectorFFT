@@ -230,12 +230,13 @@ extern "C"
                          howmany > 1; the geometries coincide at K == 1).
                          VFFT_BATCH_DEFAULT (0) is the layout's own:
                          transform-contiguous for INTERLEAVED C2C, lane-major
-                         for SPLIT. A 1D INTERLEAVED R2C/C2R batch is served
-                         transform-contiguous only, named by
-                         VFFT_BATCH_TRANSFORM_CONTIGUOUS: its DEFAULT, the
-                         lane-major geometry, is refused with the reason
-                         printed until the native engine exists. An
-                         INTERLEAVED batch of rank 2 or more is contiguous
+                         for INTERLEAVED R2C/C2R and for SPLIT. The 1D
+                         INTERLEAVED lane-major batch is served for C2C (both
+                         placements, both orders) and for R2C/C2R at an even
+                         N >= 4 out of place; a lane-major real batch at an
+                         odd N or in place is refused with the reason
+                         printed (VFFT_BATCH_TRANSFORM_CONTIGUOUS serves
+                         those). An INTERLEAVED batch of rank 2 or more is contiguous
                          planes (plane t at z + t * plane_doubles) under
                          DEFAULT and TRANSFORM_CONTIGUOUS alike, and lane-major
                          is refused there; a SPLIT batch of rank 2 or more is
@@ -601,9 +602,11 @@ extern "C"
    *         column route "chain", "csk", "blu", "tpc" or "turn", with "+rb"
    *         or "+rb2" for batched rows) and 3D real (the structure "child",
    *         "payonce" or "band", "+strips" where strips run, "plane+" where
-   *         it threads); "-" for a plan with no single route name (split
-   *         layout, batches, 1D interleaved real, 3D interleaved C2C) and
-   *         for NULL. Static storage.
+   *         it threads); the 1D interleaved lane-major batch, C2C or real
+   *         ("lm", or "lm+blu" / "lm+tpc" at a prime length); "-" for a plan
+   *         with no single route name (split layout, transform-contiguous
+   *         batches, 1D interleaved real, 3D interleaved C2C) and for NULL.
+   *         Static storage.
    */
   const char *vfft_plan_route(vfft_plan p);
 
