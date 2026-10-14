@@ -406,8 +406,11 @@ void vfft_destroy(vfft_plan h)
         vfft_aligned_free(h->alias_scr);       /* the aliased out-of-place real call's copy buffer (V11) */
         h->alias_scr = NULL;
         if (h->lm)
-        {   /* the lane-major batch: its column pass is everything it owns */
+        {   /* the lane-major batch: its column pass, and the real batch's packed plane, permutation and twiddles */
             _il2d_col_free(&h->il2d_col);
+            vfft_aligned_free(h->lm_W);
+            vfft_aligned_free(h->lm_tw);
+            free(h->lm_perm);
             free(h);
             return;
         }
