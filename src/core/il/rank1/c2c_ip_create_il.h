@@ -28,9 +28,9 @@
  * served here (one contract per request), and no mode row of the split
  * library is read. With one legal arm the race serves and banks it; with none
  * the create REFUSES — there is nothing to fall back to, by design.
- * Lane-major K>1 interleaved (only an explicit VFFT_BATCH_LANE_MAJOR reaches
- * here; DEFAULT geometry is the transform-contiguous wrapper) is refused: it
- * lost to transform-contiguous at every measured cell. */
+ * A K>1 batch never reaches here: the lane-major geometry has its own door
+ * (il/rank1/lm_batch_il.h, the column pass, 2026-10-14) and DEFAULT is the
+ * transform-contiguous wrapper. */
 /* DEFAULT = NATURAL: the classification is planning/policy.h's (L4). */
 static inline int _ip_order_is_nat(const vfft_config_t *cfg, int N)
 {
@@ -58,11 +58,10 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     int have_k1 = 0, mode = VFFT_NAT_UNSET;
     vfft_config_t rcfg;                     /* the recalibrating config of a re-raced cell */
     if (K > 1)
-    {
-        _vfft_warn("vfft_create: in-place C2C N=%d howmany=%zu with layout=INTERLEAVED and "
-                   "batch_geom=LANE_MAJOR has no interleaved engine (lane-major lost to "
-                   "transform-contiguous at every measured cell, 2026-09-03); use "
-                   "VFFT_BATCH_DEFAULT / VFFT_BATCH_TRANSFORM_CONTIGUOUS",
+    {   /* unreachable since 2026-10-14: a lane-major batch takes its own door before this one
+         * (il/il_create.h -> il/rank1/lm_batch_il.h) and DEFAULT is the transform-contiguous wrapper */
+        _vfft_warn("vfft_create: in-place C2C N=%d howmany=%zu with layout=INTERLEAVED: a batch "
+                   "reaches the lane-major door or the transform-contiguous wrapper, never this door",
                    N, K);
         return NULL;
     }

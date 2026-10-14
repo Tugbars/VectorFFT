@@ -443,15 +443,14 @@ static vfft_plan _vfft_create_c2c_oop_il(const vfft_config_t *cfg,
     }
     /* No split champion behind a convert for an interleaved caller.
      * K=1 arrives here only when the IL route selection above found
-     * no engine; K>1 is the explicit lane-major batch (DEFAULT
-     * geometry is the transform-contiguous wrapper), which lost to
-     * transform-contiguous at every measured cell. */
+     * no engine. K>1 does not arrive here: the lane-major batch has its
+     * own door (il/rank1/lm_batch_il.h, 2026-10-14) and the DEFAULT
+     * geometry is the transform-contiguous wrapper. */
     _vfft_warn("vfft_create: out-of-place C2C N=%d howmany=%zu with "
                "layout=INTERLEAVED has no interleaved engine (%s); nothing to "
                "fall back to by design",
                N, K,
-               K > 1 ? "lane-major batches are not an IL route - use "
-                        "VFFT_BATCH_DEFAULT / TRANSFORM_CONTIGUOUS"
+               K > 1 ? "a batch reaches the lane-major door or the transform-contiguous wrapper, never here"
                       : "no mono/pair/chain3/prime kernel serves this N");
     return NULL;
 }

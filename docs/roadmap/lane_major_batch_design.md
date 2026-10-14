@@ -1,10 +1,27 @@
 # Lane-major 1D batches on the column pass (c2c, r2c, c2r)
 
-**Status (2026-10-14): designed, not started.** Owner: "we will build lane major
-everywhere; the library is almost done, so it may start now. 1D C2C / R2C / C2R all
-will have lane major with one bold stroke." This document is the design to build
-against; it supersedes slice 2 of `il_real_lane_major_batch.md` (2026-10-03) and
-leaves its slice 1 (the real leaf over lanes at N <= 64) as a possible later arm.
+**Status (2026-10-14): step 1 BUILT (the door and c2c); steps 2 to 5 not started.**
+Owner: "we will build lane major everywhere; the library is almost done, so it may
+start now. 1D C2C / R2C / C2R all will have lane major with one bold stroke." This
+document is the design to build against; it supersedes slice 2 of
+`il_real_lane_major_batch.md` (2026-10-03) and leaves its slice 1 (the real leaf over
+lanes at N <= 64) as a possible later arm. The owner's ruling of the same day: the two
+geometries are a contract in an ordinary create and race only in the max-performance
+planning mode, later; no stride feature.
+
+Step 1 as built: `il/rank1/lm_batch_il.h` (the door, the bound executor, the cell's
+race of the serial lane tile and the threaded form), the create branch in
+`il/il_create.h`, the lean-door binding, the plan flag `lm`, the destroy and the route
+name (`lm`, `lm+blu`, `lm+tpc`), the law `vfft_policy_batch_lane_major` with its
+policy-gate mirror over the request table, the API matrix rows, and the row: the 1D
+cell at `q = K` on the layout axis value `lay=lm` (placeholder name, the owner's to
+confirm), carrying the column tokens; the chain bank's new-record path keys it the same
+way. The regression `src/tools/gates/lmbatch_gate.c` (115 checks, cold): eight cells
+from 16x8 to 1031x2 against K separate K = 1 plans and the naive DFT, the scrambled
+roundtrip, in place, the replay bitwise; T = 8 at 1048x256, 131x1024 and 256x512
+engaged (the strips with their tile at the wide planes, the blocks at 1048x256) and
+replayed bitwise; the refusals named. At a prime N with two lanes the turned pass wins
+the race and the row carries its child recipe (`tpc_*`), as on a 2D row.
 
 ## 1. The request and the data contract
 
