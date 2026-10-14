@@ -1,6 +1,7 @@
 # Lane-major 1D batches on the column pass (c2c, r2c, c2r)
 
-**Status (2026-10-14): step 1 BUILT (the door and c2c); steps 2 to 5 not started.**
+**Status (2026-10-14): steps 1 and 2 BUILT (the door, c2c, and r2c at an even N out of
+place); steps 3 to 6 not started.**
 Owner: "we will build lane major everywhere; the library is almost done, so it may
 start now. 1D C2C / R2C / C2R all will have lane major with one bold stroke." This
 document is the design to build against; it supersedes slice 2 of
@@ -23,6 +24,19 @@ engaged (the strips with their tile at the wide planes, the blocks at 1048x256) 
 replayed bitwise; the refusals named. At a prime N with two lanes the turned pass wins
 the race and the row carries its child recipe (`tpc_*`), as on a 2D row.
 
+Step 2 as built (the same day): `_vfft_create_lmr_il` in `lm_batch_il.h`, the plan's
+`lm_M`, `lm_W`, `lm_perm`, `lm_tw`; the column chain at M = N / 2 built by the column
+builder at (M, K) on the real batch's own row (`t=r2c n=N q=K ... lay=lm`, the chain
+tokens of the M-chain), its own race of the lane tile and the threaded form; the pack
+and the fold as lane-range passes (`_lmr_pack`, `_lmr_fold`: the real-axis form's
+kernels with a lane range) dispatched across the workers whenever the chain's threaded
+form serves; the executor bound forward-only. The policy admits r2c at an even N >= 4,
+out of place, on the DEFAULT or the explicit lane-major geometry; the front door's
+refusal names the three cases left (c2r, an odd N, the in-place plane). The gate's real
+section: seven cells from 16x8 to 4096x2 against K separate K = 1 real plans and the
+naive DFT (1e-16 to 4e-16), the replay bitwise; T = 8 at 2096x256, 262x1024 and 512x512
+engaged and bitwise on replay; the refusals named. 173 checks.
+
 First measurement (2026-10-14, `gapfill/work/lm_vs_mkl_probe.c`: one thread, core 2 at
 HIGH priority, 15 rounds alternated, 200 ms pace, the min over rounds; MKL's lane-major
 batch is its descriptor with NUMBER_OF_TRANSFORMS = K, distance 1, strides K; the two
@@ -40,8 +54,24 @@ contiguous arms run the same transforms in the other layout, as a reference):
     16   4096      60,125      63,025   1.05      28,300      36,200   2.4e-16
 ```
 
+The real batch the same way (`gapfill/work/lmr_vs_mkl_probe.c`: MKL's DFTI REAL with
+CCE storage, NUMBER_OF_TRANSFORMS = K, distance 1, strides K in and out):
+
+```
+   N      K   ours-lm ns   mkl-lm ns  ratio   mkl-tc ns  ours-tc ns   err vs mkl
+   262   1024     468,100   1,217,500   2.60   1,029,900     430,100   8.5e-16
+  1048    256     508,900   2,728,100   5.36   2,613,000     629,500   7.4e-16
+  2096     64     225,000   1,338,800   5.95   1,287,900     212,500   8.1e-16
+  4202     64     561,300   1,818,500   3.24   1,492,800     605,300   7.4e-16
+   106   1024     134,900     513,700   3.81     456,100     163,900   6.0e-16
+   512    512     261,500     303,400   1.16     198,700     200,900   2.8e-16
+   128   1024      86,500      94,233   1.09      68,800      63,267   4.3e-16
+    32   4096      73,160      75,080   1.03      70,480      73,440   1.9e-16
+```
+
 Where the length carries a prime above the pool the lane-major batch is 3.2x to 7.2x
-MKL's lane-major batch and 1.0x to 1.3x our own contiguous one; MKL does not exploit
+MKL's lane-major batch (the real batch 2.6x to 6.0x, the prime in its half length) and
+1.0x to 1.3x our own contiguous one; MKL does not exploit
 the lanes (its lane-major and contiguous times are equal there). At a smooth length the
 lane-major batch is 1.05x to 1.26x MKL's lane-major batch but slower than both
 contiguous forms, ours by 1.0x to 1.7x: the column pass at a short smooth N over

@@ -5320,3 +5320,4 @@
 @cell t=r2c n=4090 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=prime il_prime=bluestein il_prime_in=ztt il_prime_sh=8.8.4.4.4 il_prime_tw=1024 il_kv=0 il_bkv=0 | ran=1 src=race ns=11019.2 metric=fwd1 units=ns date=2026-10-10 bld=0.1.0-e7ef23cf-dirty
 @cell t=r2c n=4092 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=chain3 il_pair=341.6 il_chain=6.31.11 il_kv=0 il_bkv=0 | ran=1 src=race ns=4413.6 metric=fwd1 units=ns date=2026-10-10 bld=0.1.0-e7ef23cf-dirty
 @cell t=r2c n=4094 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip il_route=prime il_prime=bluestein il_prime_in=ztt il_prime_sh=8.8.4.4.4 il_prime_tw=1024 il_kv=0 il_bkv=0 | ran=1 src=race ns=11246.2 metric=fwd1 units=ns date=2026-10-10 bld=0.1.0-e7ef23cf-dirty
+@cell t=r2c n=64 q=4 ord=nat place=oop lay=lm | chain=32 forms=b84 sw=0 | ran=1 ns=49.5 metric=fwd1 units=ns src=race date=2026-10-14 bld=0.1.0-051df35f
