@@ -300,8 +300,10 @@ static int _thread_pool_caller_slot(int stride) {
 #ifdef _WIN32
     cpu = (int)GetCurrentProcessorNumber();
 #elif defined(__linux__)
-    cpu = sched_getcpu();
-    if (cpu < 0) cpu = 0;
+    {   /* by number, as cpu_cache.h makes its affinity calls: no _GNU_SOURCE ordering to get wrong */
+        unsigned c = 0;
+        if (syscall(SYS_getcpu, &c, NULL, NULL) == 0) cpu = (int)c;
+    }
 #endif
     return stride > 0 ? cpu / stride : cpu;
 }
