@@ -298,10 +298,13 @@ is not expressible there at any price. That is a structural property of the rout
 implementation gap.
 
 Real transforms enter the wrapper on an **explicit** `batch_geom` only. `INTERLEAVED` DEFAULT
-means transform-contiguous for C2C; for R2C and C2R, DEFAULT means lane-major — the geometry
-`r2c_dispatch.h` addresses and the front-door gates assert. Changing that is a public contract
-change, decided by a measured race
-([vfft.c:3298-3307](../../src/core/vfft.c#L3298-L3307)).
+means transform-contiguous for C2C. A 1D INTERLEAVED R2C or C2R batch is served
+transform-contiguous only, named by `VFFT_BATCH_TRANSFORM_CONTIGUOUS`: its DEFAULT, the
+lane-major geometry, is **refused at create with the reason printed** (owner, 2026-10-14; field
+trial V02 — the split real engines that served it staged every slab through one scratch and
+threaded by the live pool's size, a silent misread once the pool was above one). The refusal
+stands until the native interleaved real batch engine exists; the lane-major geometry is
+`VFFT_LAYOUT_SPLIT`'s.
 
 A padded batch descriptor combined with `layout=INTERLEAVED` is rejected at create: the padded
 planes are split, so the combination has no meaning.

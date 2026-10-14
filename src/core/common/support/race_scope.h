@@ -472,8 +472,13 @@ static int _vfs_pin_pick(void)
     if (_vfs_cfg.pin == 1) return -1;                        /* the pin is turned off */
     if (_vfs_cfg.pin == 2)
         return (_vfs_allowed(_vfs_cfg.pin_core) && _vfs_pin_to(_vfs_cfg.pin_core)) ? _vfs_cfg.pin_core : -1;
-    if (thread_pool_size() > 1 && _vfs_is_pcore(0) && _vfs_allowed(0) && _vfs_pin_to(0))
-        return 0;                                            /* the pool's layout: its caller's core */
+    {   /* the pool's layout: the core it left to its caller (threads.h); a
+         * worker holds every other physical core, so this is the one core
+         * a race can run on without sharing it with a worker */
+        const int c0 = thread_pool_caller_cpu();
+        if (c0 >= 0 && _vfs_is_pcore(c0) && _vfs_allowed(c0) && _vfs_pin_to(c0))
+            return c0;
+    }
     /* the second P-core, then the rest in order, the first one last; each
      * core's first logical CPU, then (a mask that allows only siblings) its
      * other one */

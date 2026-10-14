@@ -281,32 +281,68 @@ static int _thread_pool_ncpu(void) {
 #endif
 }
 /* Pin stride: the physical-core slots are the logical cores 0, stride,
- * 2*stride, ...; the slot the CALLER runs on when the pool starts is
- * reserved to it, and worker i takes the i-th of the others (the caller on
- * core 0, the common case: worker i -> (i+1)*stride, as before; a caller
- * pinned to logical 2 keeps its core and the workers take 0, 4, 6, ...).
- * Before 2026-10-14 the caller was assumed on core 0, and a caller pinned
- * to another even core shared it with a worker: threaded plans ran 2-3x
- * slower than serial there and the create races banked serial verdicts.
+ * 2*stride, ...; one slot is the CALLER's and worker i takes the i-th of
+ * the others. The caller's slot is fixed when the pool first starts and
+ * never moves: the core a calling thread pinned to ONE logical CPU holds
+ * (a bench's or an application's own pin: the thread stays there), else
+ * slot 0 (an unpinned caller runs where the OS puts it; the measurement
+ * scope pins it to this core for the races, race_scope.h, and every
+ * execute runs the caller's slot inline wherever it is). The common case,
+ * the caller on core 0: worker i -> (i+1)*stride, as before; a caller
+ * pinned to logical 2: workers on 0, 4, 6, ... Before 2026-10-14 the
+ * caller was assumed on core 0, and a caller pinned to another even core
+ * shared it with a worker: threaded plans ran 2-3x slower than serial
+ * there and the create races banked serial verdicts.
  * The stride is the detected SMT width (CPUID leaf 0xB level 0), so on an
  * SMT part (14900KF: logical 0-15 = 8 P-cores x 2 HT) the workers land on
  * distinct physical cores; packing HT siblings runs MT ~2x slower. A worker
  * whose target is past the last logical core runs unpinned (core_id = -1).
  * Unknown SMT width (0) assumes 2; VFFT_PIN_STRIDE overrides. */
-/* the physical-core slot the calling thread runs on now (a pinned caller:
- * its core; an unpinned one: where it happens to be) */
-static int _thread_pool_caller_slot(int stride) {
-    int cpu = 0;
+static int _thread_pool_reserved_slot = -1;   /* the caller's slot, fixed at the first growth */
+static int _thread_pool_reserved_cpu = -1;    /* its first logical CPU; -1 while no worker runs */
+
+/* the calling thread's logical CPU when its affinity is ONE CPU, else -1 */
+static int _thread_pool_caller_pinned_cpu(void) {
 #ifdef _WIN32
-    cpu = (int)GetCurrentProcessorNumber();
+    /* no getter: set the process's mask, which returns the thread's, and put it back (race_scope.h's idiom) */
+    DWORD_PTR pm = 0, sm = 0, old;
+    int c = 0;
+    if (!GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm) || !pm) return -1;
+    old = SetThreadAffinityMask(GetCurrentThread(), pm);
+    if (!old) return -1;
+    SetThreadAffinityMask(GetCurrentThread(), old);
+    if (old & (old - 1)) return -1;   /* more than one CPU */
+    while (!((old >> c) & 1)) c++;
+    return c;
 #elif defined(__linux__)
     {   /* by number, as cpu_cache.h makes its affinity calls: no _GNU_SOURCE ordering to get wrong */
-        unsigned c = 0;
-        if (syscall(SYS_getcpu, &c, NULL, NULL) == 0) cpu = (int)c;
+        unsigned long m[16];
+        const int bits = (int)(8 * sizeof(unsigned long));
+        const long nb = syscall(SYS_sched_getaffinity, 0, sizeof m, m);
+        int c, one = -1;
+        if (nb <= 0) return -1;
+        for (c = 0; c < (int)(8 * nb) && c < (int)(8 * sizeof m); c++)
+            if ((m[c / bits] >> (c % bits)) & 1ul) {
+                if (one >= 0) return -1;   /* a second CPU: not pinned to one */
+                one = c;
+            }
+        return one;
     }
+#else
+    return -1;
 #endif
+}
+/* the caller's slot: a thread pinned to one CPU keeps its core; else slot 0 */
+static int _thread_pool_caller_slot(int stride) {
+    const int cpu = _thread_pool_caller_pinned_cpu();
+    if (cpu < 0) return 0;
     return stride > 0 ? cpu / stride : cpu;
 }
+/** The first logical CPU of the core the pool left to its caller, -1 while
+ * no worker has started: where the measurement scope pins the racing thread
+ * once the pool exists (race_scope.h), so the races never share a core with
+ * a worker. */
+static inline int thread_pool_caller_cpu(void) { return _thread_pool_reserved_cpu; }
 static int _thread_pool_pin_stride(void) {
     const char *e = getenv("VFFT_PIN_STRIDE");
     int s;
@@ -355,6 +391,7 @@ static void _thread_pool_destroy(void) {
 #endif
     }
     _thread_pool_nworkers = 0;
+    _thread_pool_reserved_slot = _thread_pool_reserved_cpu = -1;   /* a fresh pool reads its caller again */
 }
 
 /* the workers something needs: the largest live count's workers; spares park */
@@ -375,9 +412,12 @@ static void thread_pool_ensure(int n) {
     _thread_pool_lock();
     if (n - 1 > _thread_pool_nworkers) {
         const int stride = _thread_pool_pin_stride(), ncpu = _thread_pool_ncpu();
-        const int reserved = _thread_pool_caller_slot(stride);
+        if (_thread_pool_reserved_slot < 0) {   /* the first growth fixes the layout for the pool's life */
+            _thread_pool_reserved_slot = _thread_pool_caller_slot(stride);
+            _thread_pool_reserved_cpu = _thread_pool_reserved_slot * stride;
+        }
         for (int i = _thread_pool_nworkers; i < n - 1; i++)
-            _thread_pool_start(i, stride, ncpu, reserved);
+            _thread_pool_start(i, stride, ncpu, _thread_pool_reserved_slot);
         _thread_pool_nworkers = n - 1;
     }
     if (n - 1 > _thread_pool_needed)

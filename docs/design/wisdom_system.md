@@ -108,10 +108,10 @@ entered at the first clock read inside a create and left when the outermost
 | part | rule |
 | --- | --- |
 | **measurement lock** | One lock for the machine, so two processes (or two threads) never race at once: a named mutex on Windows, a locked file in `/tmp` on Linux, both released by the OS when the holder dies. A hit takes none. The wait is bounded (60 s by default); after it the race runs anyway and its winner is served, not saved. |
-| **pin** | The racing thread is pinned to the caller's own core in the library's layout: the second P-core (logical CPU 2 on a hyperthreaded part) when the process has no workers, logical CPU 0 when it has (worker 1 spins on the second P-core, `common/support/threads.h:176`). Only a P-core the process is allowed is taken; the others are walked in order. P-cores, E-cores and siblings are read from the OS (`common/support/cpu_topology.h`), on Intel and AMD alike. A thread that ends on no P-core races where it is, and the winner is served, not saved. |
+| **pin** | The racing thread is pinned to the caller's own core in the library's layout: the core the pool left to its caller once the pool exists (`thread_pool_caller_cpu()`, `common/support/threads.h`: core 0, or the core a calling thread pinned to one logical CPU held when the pool first started), the second P-core (logical CPU 2 on a hyperthreaded part) before that. Only a P-core the process is allowed is taken; the others are walked in order. P-cores, E-cores and siblings are read from the OS (`common/support/cpu_topology.h`), on Intel and AMD alike. A thread that ends on no P-core races where it is, and the winner is served, not saved. |
 | **sibling guard** | A guard thread holds the pinned core's hyperthread sibling for the race, so the OS cannot park another thread there (1.1-1.5x slower without it). It waits with TPAUSE (Intel) or MWAITX (AMD), which cost the racing thread nothing; a part with neither races unguarded. No guard goes to a CPU outside the set the process is confined to. |
 | **priority** | The racing thread's priority is raised for the race. Best effort: where it cannot be raised (Linux without `CAP_SYS_NICE`), the winner is still saved. |
-| **restore** | The guard ends, and affinity and priority return to what they were, except that a caller pinned to logical CPU 0 by a pool created during this create stays there, as today. |
+| **restore** | The guard ends, and affinity and priority return to what they were; the pool never pins the caller. |
 
 - The same scope is public in `vfft.h`: `vfft_measure_configure()` sets it up (pin,
   guard, priority, the lock wait), `vfft_measure_begin()` and `vfft_measure_end()` put
@@ -121,7 +121,12 @@ entered at the first clock read inside a create and left when the outermost
   pin or guard code: `gauntlet/bench_scope.h` maps its switches onto these calls.
 - Not covered: the application's own threads on the race core, and other software's
   load. That is the user's responsibility.
-- Threaded plans keep today's layout: the caller on core 0, workers on cores 2, 4, ...
+- Threaded plans: the pool leaves one physical core to its caller, fixed when the pool first
+  starts: the core a calling thread pinned to one logical CPU holds, else core 0; the workers
+  take the other cores in order (the caller on core 0: workers on 2, 4, ...; a caller pinned
+  to logical 2 keeps its core and the workers take 0, 4, 6, ...), and the races pin the
+  caller to that core. Before 2026-10-14 the caller was assumed on core 0 and a caller pinned
+  elsewhere shared its core with a worker.
 
 ## 6. Saving
 
@@ -252,5 +257,5 @@ owner's review.
   looked for; its rows were raced with the 48 KiB constant and are re-raced there.
 - **A virtual machine is its own CPU.** WSL on the 14900KF presents 16 P-cores and no
   E-cores, so the library gives it a folder of its own.
-- **Not ruled:** threaded plans leave the caller pinned to core 0 permanently
-  (`vfft.c:238-244`), documented only at `vfft_set_num_threads`.
+- Threaded plans never pin the caller (the owned pool, 2026-10-12); the races pin it for
+  their duration and give it back.

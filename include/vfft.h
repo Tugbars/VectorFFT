@@ -43,6 +43,13 @@ extern "C"
    *   backward the conjugate sum, roundtrip scale N.
    * - VFFT_R2C: real input, the conjugate-even half-spectrum X[0..N/2] out.
    * - VFFT_C2R: the half-spectrum in, real output; backward of R2C, scale N.
+   *   The input is read as the half of a conjugate-even spectrum: the
+   *   imaginary parts of bins 0 and N/2 (even N) are outside the contract,
+   *   and an input that is not such a half spectrum has no defined result.
+   *
+   * At rank 2 and above the data is row-major, the last axis contiguous,
+   * and the real transforms halve the last axis: an N1 x N2 (x N3) real
+   * plane against N1 x (N2/2 + 1) (or N1 x N2 x (N3/2 + 1)) bins.
    *
    * Real-to-real transforms, 1D only, N bins out of N reals, the standard
    * unnormalized definitions (the factor 2 on the sum):
@@ -108,12 +115,14 @@ extern "C"
   /**
    * @brief How thoroughly a wisdom miss (or a recalibrating create) is
    *        measured. A hit ignores it. Every tier measures; none estimates.
+   *        EXHAUSTIVE is the full factorization search of the 1D SPLIT C2C
+   *        planner; the interleaved planners treat it as PATIENT.
    */
   typedef enum
   {
     VFFT_MEASURE,   /**< coarse sweep */
     VFFT_PATIENT,   /**< wide sweep */
-    VFFT_EXHAUSTIVE /**< full sweep */
+    VFFT_EXHAUSTIVE /**< full sweep (1D SPLIT C2C); PATIENT elsewhere */
   } vfft_rigor_t;
 
   /** @brief The direction. Backward is the unnormalized inverse. */
@@ -130,10 +139,14 @@ extern "C"
   /**
    * @brief Load a caller-owned wisdom table.
    * @param path A wisdom store directory; NULL loads the library's own store.
-   * @return The table, or NULL when the store cannot be read. The caller
-   *         frees it with vfft_wisdom_free(); a plan never frees the table it
-   *         was given, and config.wisdom == NULL makes a plan use the
-   *         library's store instead of any table.
+   * @return The table; NULL only when memory runs out. A store that does not
+   *         exist yet loads as an empty table, and its first save says so,
+   *         once, if the directory cannot be written; a path of 512
+   *         characters or more is refused with a printed line and the table
+   *         serves the library's own store read-only. The caller frees it
+   *         with vfft_wisdom_free(); a plan never frees the table it was
+   *         given, and config.wisdom == NULL makes a plan use the library's
+   *         store instead of any table.
    */
   vfft_wisdom *vfft_wisdom_load(const char *path);
   /**
@@ -160,9 +173,11 @@ extern "C"
   /* ── the configuration ────────────────────────────────────────────────── */
 
   /**
-   * @brief The data contract vfft_create() commits to. A zeroed struct is a
-   *        1D split-layout C2C of size n[0], one transform, one thread,
-   *        natural order, the library's wisdom.
+   * @brief The data contract vfft_create() commits to. A zeroed struct with
+   *        n[0] and howmany set is a 1D in-place split-layout C2C of n[0]
+   *        points, natural order, the library's wisdom, at the thread
+   *        setting (one thread until vfft_set_num_threads() raises it);
+   *        howmany = 0 is refused, so a batch count of 1 is written out.
    */
   typedef struct
   {
@@ -170,7 +185,9 @@ extern "C"
     vfft_placement_t placement;
     vfft_rigor_t rigor; /**< the sweep on a miss or recalibrate; a hit ignores it */
 
-    int dims;          /**< 1 (default), 2, 3 or 4 */
+    int dims;          /**< 1 (default), 2, 3 or 4; INTERLEAVED serves rank 1 to 3,
+                            rank 4 is SPLIT (C2C, and out-of-place R2C/C2R with an
+                            even last axis) */
     int n[4];          /**< n[0] = N (1D); {N1, N2}; {N1, N2, N3}; {N1, N2, N3, N4}.
                             dims 3 and 4 take howmany == 1. */
     size_t howmany;    /**< K, the batch count; where the K transforms sit is
@@ -184,24 +201,28 @@ extern "C"
                             same plane in both roles); refused otherwise. 0
                             (default) = the caller's own tight planes. */
 
-    int nthreads; /**< the plan's thread count, taken at create; 0 = the pool's
-                       current size. Every threaded decision is measured and
-                       served at this count. */
+    int nthreads; /**< the plan's thread count, the calling thread included
+                       (n - 1 workers), taken at create; 0 = the setting
+                       vfft_set_num_threads() made. Negative, or above this
+                       machine's logical CPUs or 64, is refused. Every threaded
+                       decision is measured and served at this count. */
 
-    int order; /**< the output-order contract of 1D and 2D C2C (and the row
-                    order of 2D INTERLEAVED R2C/C2R; their bins are always
-                    natural). The order is a contract: NATURAL delivers
-                    natural bins, SCRAMBLED delivers the engine's order.
-                    VFFT_ORDER_DEFAULT (0) is the layout's own: NATURAL for
-                    INTERLEAVED at every rank; for SPLIT, NATURAL at 1D and
-                    SCRAMBLED at 2D and above (the split tiers are built
-                    around the scrambled comb). VFFT_ORDER_SCRAMBLED: the engine's own
-                    permutation of the bins, decodable only by the matched
-                    roundtrip through the same plan; no call reports it, and
-                    a cell with no scrambled writer refuses at create. 1D real
-                    and real-to-real transforms are natural by nature and
-                    refuse an order; 3D and 4D SPLIT take DEFAULT or
-                    SCRAMBLED. */
+    int order; /**< the output-order contract. NATURAL delivers natural bins;
+                    VFFT_ORDER_SCRAMBLED the engine's own permutation of the
+                    bins, decodable only by the matched roundtrip through the
+                    same plan (no call reports it, and a cell with no
+                    scrambled writer refuses at create). VFFT_ORDER_DEFAULT
+                    (0) is the layout's own: NATURAL for INTERLEAVED at every
+                    rank; for SPLIT, NATURAL at 1D and SCRAMBLED at 2D and
+                    above (the split tiers are built around the scrambled
+                    comb). An explicit order is taken by C2C at every rank
+                    and both layouts (3D and 4D SPLIT: SCRAMBLED only beside
+                    DEFAULT; a padded SPLIT batch, config.owned_buffers, takes
+                    DEFAULT) and by 2D and 3D INTERLEAVED R2C/C2R: NATURAL,
+                    the order of the leading axes (the bins of the last axis
+                    are natural always). Every other request -- 1D real,
+                    real-to-real, SPLIT real at any rank -- takes DEFAULT,
+                    delivers natural bins, and refuses an explicit order. */
 
     vfft_layout_t layout; /**< committed at create; see vfft_layout_t */
 
@@ -217,7 +238,8 @@ extern "C"
                          INTERLEAVED batch of rank 2 or more is contiguous
                          planes (plane t at z + t * plane_doubles) under
                          DEFAULT and TRANSFORM_CONTIGUOUS alike, and lane-major
-                         is refused there. The explicit values state the other
+                         is refused there; a SPLIT batch of rank 2 or more is
+                         refused. The explicit values state the other
                          geometry; transform-contiguous on SPLIT is refused.
                          Definitions below. */
 
@@ -225,8 +247,10 @@ extern "C"
     int recalibrate;     /**< 1 = re-measure this cell even on a hit */
     int wisdom_write;    /**< retired, ignored: a create that races always
                               saves its winner to the store before it returns.
-                              The environment variable VFFT_WISDOM_WRITE=0
-                              turns saving off for a process. */
+                              The environment variable VFFT_WISDOM_WRITE set
+                              to exactly "0" turns saving off for a process
+                              (read once, at the first save); any other value
+                              leaves it on. */
     int destroy_input;   /**< 1 = the plan MAY overwrite the input buffer of an
                               out-of-place transform: a permission, not a
                               promise. A plan with a faster form that needs no
@@ -234,15 +258,18 @@ extern "C"
                               race, and the input then holds an intermediate
                               result after vfft_execute(); the output is the
                               same transform. 0 (default): the input is
-                              preserved. Used by the interleaved 2D C2R of one
-                              plane (howmany == 1), one thread, whose column
-                              pass is one kernel; ignored everywhere else. */
+                              preserved. Used by two plans: the interleaved 2D
+                              C2R of one plane (howmany == 1), one thread,
+                              whose column pass is one kernel, and the
+                              interleaved 3D C2R at any thread count, whose
+                              axis-0 pass then runs in the caller's volume;
+                              ignored everywhere else. */
   } vfft_config_t;
 
   /** @brief vfft_config_t.order */
   enum
   {
-    VFFT_ORDER_DEFAULT = 0,  /**< natural */
+    VFFT_ORDER_DEFAULT = 0,  /**< the layout's own: see vfft_config_t.order */
     VFFT_ORDER_NATURAL = 1,  /**< natural, said explicitly */
     VFFT_ORDER_SCRAMBLED = 2 /**< the engine's own permutation, roundtrip-decodable only */
   };
@@ -277,8 +304,11 @@ extern "C"
    *    (or config.recalibrate) races the cell's candidates on scratch data at
    *    config.rigor, a pause of milliseconds at a small cell and of minutes at
    *    the largest (the races pace their benchmarks), banks the winner and
-   *    saves it to the store before create returns. A store that cannot be
-   *    written keeps the winner for the process and says so once. The races
+   *    saves it to the store before create returns. A store whose directory
+   *    is missing or cannot be written keeps the winner for the process and
+   *    says so once; a save that fails while another process holds the
+   *    shard is retried for a few seconds and, failing that, reported each
+   *    time. The races
    *    run inside the measurement scope (vfft_measure_config_t): the calling
    *    thread is pinned to a P-core and raised for their duration, and is
    *    given back as it was -- except its floating-point mode: a create
@@ -309,7 +339,9 @@ extern "C"
    * slower than the planes the races measured. Inside a buffer, each batch
    * transform and batch plane starts where the data contract puts it; one
    * that starts off a cache line runs at a phase its route was not raced at.
-   * Not safe to call concurrently with vfft_set_num_threads().
+   * Safe to call concurrently with executes of other plans, with other
+   * creates (creates take turns on one lock) and with
+   * vfft_set_num_threads().
    *
    * @param config The contract; read during the call only.
    * @return The plan, or NULL with the reason printed.
@@ -320,7 +352,9 @@ extern "C"
    * @brief Run the plan in one direction.
    *
    * The pointer roles follow the plan's layout; a signature that does not
-   * match is refused (printed, nothing computed).
+   * match is refused (printed, nothing computed). An R2C plan runs
+   * VFFT_FORWARD only and a C2R plan VFFT_BACKWARD only; the other direction
+   * is refused the same way.
    *
    *   transform    layout        sre        sim      dre        dim
    *   C2C          SPLIT         in.re      in.im    out.re     out.im
@@ -331,12 +365,15 @@ extern "C"
    *   C2R          INTERLEAVED   z_spec     NULL     real_out   NULL
    *   real-to-real (real)        real_in    NULL     real_out   NULL
    *
-   * In-place C2C: dre == sre (and dim == sim), or dre and dim NULL. In-place
-   * R2C/C2R (1D, even or odd N, INTERLEAVED, K == 1 or transform-contiguous):
-   * ONE plane of 2 (N/2 + 1) doubles holds the N reals and then the N/2 + 1
-   * bins (integer division: at odd N the plane is N + 1 doubles, the N reals
-   * and then the (N + 1)/2 bins); dre == sre is required and a distinct dre
-   * is refused. In-place 2D
+   * In-place C2C: INTERLEAVED takes dre == sre (a NULL dre is refused);
+   * SPLIT takes dre == sre and dim == sim, or dre and dim both NULL (at
+   * rank 2 and above a distinct destination pair receives a copy of the
+   * result). In-place R2C/C2R (1D, even or odd N, INTERLEAVED, K == 1 or
+   * transform-contiguous): ONE plane of 2 (N/2 + 1) doubles holds the N
+   * reals and then the N/2 + 1 bins (integer division: at odd N the plane
+   * is N + 1 doubles, the N reals and then the (N + 1)/2 bins; a
+   * transform-contiguous batch is K such planes end to end); dre == sre is
+   * required and a distinct dre is refused. In-place 2D
    * R2C and C2R (INTERLEAVED, howmany == 1, any nthreads): one plane of N1 rows, each
    * row 2 (N2/2 + 1) doubles holding its N2 reals and then its N2/2 + 1
    * bins (the in-place layout of FFTW and MKL); dre == sre is required and
@@ -356,12 +393,14 @@ extern "C"
    * input and the output (N + 2 doubles at an even N in 1D). Out-of-place
    * C2C takes dre == sre as it is. Element addressing follows
    * config.batch_geom. Pure: no allocation, no measurement. Safe to call
-   * concurrently on different plans.
+   * concurrently on different plans; one plan runs one execute at a time
+   * (its scratch is one), so two threads share a plan only in turn.
    *
    * An out-of-place transform preserves its input unless the request permitted
    * otherwise (config.destroy_input): a plan that uses the permission leaves
    * an intermediate result in the input (the interleaved 2D C2R: z_spec holds
-   * the column-inverse plane).
+   * the column-inverse plane; the interleaved 3D C2R: z_spec holds the
+   * axis-0 inverse).
    *
    * @param p   A plan from vfft_create().
    * @param dir VFFT_FORWARD or the unnormalized inverse.
@@ -386,8 +425,9 @@ extern "C"
                         double **dre, double **dim);
   /**
    * @brief The stride to index the plan's planes with: element e of lane t
-   *        is at plane[e * stride + t]; for an in-place 2D real plan, row r
-   *        starts at plane[r * stride] (its N2 reals, then its N2/2 + 1 bins).
+   *        is at plane[e * stride + t]; for an in-place 2D or 3D real plan,
+   *        row r of its N1 (or N1 N2) rows starts at plane[r * stride] (its
+   *        last-axis reals, then the N_last/2 + 1 bins).
    * @return The stride; equals config.howmany for a plan that does not own
    *         its buffers; 0 for NULL. Read it, never compute it.
    */
@@ -437,9 +477,8 @@ extern "C"
    * config.owned_buffers = 1, else 2 (N_last/2 + 1)); every other plan gets
    * the tight planes of its data contract. The data is uninitialised. A plan
    * may hand out any number of sets, and a set stays valid after
-   * vfft_destroy(p). Refused (printed): a SPLIT plan of rank 2 or more, a
-   * SPLIT real plan in place, and an INTERLEAVED real batch in its lane-major
-   * geometry that runs on the split engines.
+   * vfft_destroy(p). Refused (printed): a SPLIT plan of rank 2 or more, and
+   * a SPLIT real plan in place.
    *
    * @param p A plan from vfft_create().
    * @param sre,sim,dre,dim Out-params in vfft_execute()'s roles: unused roles
@@ -459,16 +498,17 @@ extern "C"
 
   /**
    * @brief How the library sets a thread up for measuring. Zero is the
-   *        default of every field.
+   *        default of every field, and a value outside a field's enum is
+   *        the default too.
    *
    * vfft_create() measures (races) a cell's candidates whenever wisdom does
    * not serve it, and saves the winner. It runs every race inside one scope
    * and undoes it before it returns:
    * - a lock for the whole machine, so two measurements never run at once.
    *   The wait is bounded; past it the race runs anyway.
-   * - the measuring thread pinned to one P-core: the second one in a process
-   *   without workers, logical CPU 0 once the pool exists (see
-   *   vfft_set_num_threads()).
+   * - the measuring thread pinned to one P-core: the core the pool leaves
+   *   to its caller once the pool exists (see vfft_set_num_threads()), the
+   *   second P-core before that.
    * - a guard thread holding that core's hyperthread sibling, so nothing
    *   else is scheduled there. It waits with the processor's idle
    *   instruction (TPAUSE on Intel, MWAITX on AMD), which costs the measured
@@ -486,7 +526,7 @@ extern "C"
     int guard;        /**< VFFT_MEASURE_GUARD_DEFAULT, _OFF or _PAUSE */
     int priority;     /**< VFFT_MEASURE_PRIORITY_THREAD, _LEAVE or _PROCESS */
     int lock_wait_ms; /**< the longest wait for another measurement on the
-                           machine, in milliseconds; 0 = 60000 */
+                           machine, in milliseconds; 0 or negative = 60000 */
   } vfft_measure_config_t;
 
   /** @brief vfft_measure_config_t.pin */
@@ -528,15 +568,19 @@ extern "C"
    * Process-global: a plan created with config.nthreads = 0 snapshots this
    * count. A live plan keeps the workers it was created with, so the call
    * never takes a worker from one: lowering the count parks the workers no
-   * live plan needs and stops them once no plan needs any. The workers are
-   * pinned to the cores after the caller's; the calling thread is not
-   * pinned. Safe to call at any time, beside creates and executes.
+   * live plan needs and stops them once no plan needs any. n counts the
+   * calling thread: n - 1 workers, pinned one per physical core in
+   * logical-CPU order, skipping the core the pool leaves to its caller --
+   * core 0, or the core a calling thread pinned to one logical CPU holds
+   * when the pool first starts (a worker whose core lies past the last
+   * logical CPU runs unpinned). The calling thread is never pinned by the
+   * pool. Safe to call at any time, beside creates and executes.
    *
    * @param n The thread count; n <= 1 is single-threaded; above this
    *          machine's logical CPUs (or 64) it is refused with a printed line.
    */
   void vfft_set_num_threads(int n);
-  /** @brief The thread count the next create snapshots, as the last vfft_set_num_threads() set it. */
+  /** @brief The thread count the next create snapshots, as the last vfft_set_num_threads() set it (1 until then). */
   int vfft_get_num_threads(void);
   /**
    * @brief How long an idle worker spins before it parks, in milliseconds.
@@ -552,10 +596,14 @@ extern "C"
 
   /**
    * @brief The route a plan committed to.
-   * @return For a K=1 interleaved plan its route name ("mono", "2p",
-   *         "chain3", "prime", "flat", "ztt", "fs", or a 2D route); "-" for a
-   *         plan with no single route name (split layout, batches) and for
-   *         NULL. Static storage.
+   * @return The route name of a K=1 interleaved plan: 1D C2C ("mono", "2p",
+   *         "chain3", "prime", "flat", "ztt", "fs"), 2D C2C and real (the
+   *         column route "chain", "csk", "blu", "tpc" or "turn", with "+rb"
+   *         or "+rb2" for batched rows) and 3D real (the structure "child",
+   *         "payonce" or "band", "+strips" where strips run, "plane+" where
+   *         it threads); "-" for a plan with no single route name (split
+   *         layout, batches, 1D interleaved real, 3D interleaved C2C) and
+   *         for NULL. Static storage.
    */
   const char *vfft_plan_route(vfft_plan p);
 

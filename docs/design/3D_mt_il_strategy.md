@@ -153,9 +153,9 @@ threaded MKL in one process needs all of:
 
 | trap | what happens | the rule |
 |---|---|---|
-| (a) our spinners | the pool's workers spin forever; seven of them steal seven cores from any MKL arm | tear the library pool down before every MKL sample, through `vfft_set_num_threads(1)` |
+| (a) our spinners | the pool's workers spin for the block time (200 ms by default) after a dispatch, then park; seven of them steal seven cores from an MKL arm that follows within it | let the block time pass (or `vfft_set_thread_block_ms(0)`) before every MKL sample; `vfft_set_num_threads(1)` parks the workers no live plan needs |
 | (b) MKL's spinners | its OpenMP team spins `KMP_BLOCKTIME` (200 ms) after a compute | 300 ms of cool before our arm after an MKL arm |
-| (c) inherited affinity | the pool pins the caller to core 0 and Windows threads inherit the creator's mask, so an OpenMP team created after our first threaded create lands on one core (3D CCE 16³ at T=8: 34 ms instead of 3 µs) | create MKL's team before any vfft plan pins anything |
+| (c) inherited affinity | a race pins the caller for its duration and Windows threads inherit the creator's mask, so an OpenMP team created inside a caller's own measurement scope lands on one core (3D CCE 16³ at T=8: 34 ms instead of 3 µs) | create MKL's team outside any scope and before any threaded create |
 | (d) a second pool | a bench TU that includes `threads.h` owns its own copy of the pool state; its startup pool is seven idle spinners on the very cores the library's workers use | never touch the pool through `stride_*` from a TU that is not `vfft.c` |
 
 **Engagement.** A threaded plan that declines runs the serial walk and
