@@ -233,10 +233,9 @@ extern "C"
                          for INTERLEAVED R2C/C2R and for SPLIT. The 1D
                          INTERLEAVED lane-major batch is served for C2C (both
                          placements, both orders) and for R2C/C2R at an even
-                         N >= 4 out of place; a lane-major real batch at an
-                         odd N or in place is refused with the reason
-                         printed (VFFT_BATCH_TRANSFORM_CONTIGUOUS serves
-                         those). An INTERLEAVED batch of rank 2 or more is contiguous
+                         N >= 4 in both placements; a lane-major real batch
+                         at an odd N is refused with the reason printed
+                         (VFFT_BATCH_TRANSFORM_CONTIGUOUS serves it). An INTERLEAVED batch of rank 2 or more is contiguous
                          planes (plane t at z + t * plane_doubles) under
                          DEFAULT and TRANSFORM_CONTIGUOUS alike, and lane-major
                          is refused there; a SPLIT batch of rank 2 or more is
@@ -373,7 +372,9 @@ extern "C"
    * transform-contiguous): ONE plane of 2 (N/2 + 1) doubles holds the N
    * reals and then the N/2 + 1 bins (integer division: at odd N the plane
    * is N + 1 doubles, the N reals and then the (N + 1)/2 bins; a
-   * transform-contiguous batch is K such planes end to end); dre == sre is
+   * transform-contiguous batch is K such planes end to end; a lane-major
+   * batch at an even N is one buffer of (N + 2) K doubles, the reals at
+   * [e K + t] and the bins over them at [2 (f K + t)]); dre == sre is
    * required and a distinct dre is refused. In-place 2D
    * R2C and C2R (INTERLEAVED, howmany == 1, any nthreads): one plane of N1 rows, each
    * row 2 (N2/2 + 1) doubles holding its N2 reals and then its N2/2 + 1

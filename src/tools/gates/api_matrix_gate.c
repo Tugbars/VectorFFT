@@ -61,6 +61,8 @@ int main(int argc, char **argv) {
         { "1D r2c OOP IL 64 K=4 LANE_MAJOR",      1, VFFT_R2C, OOP, IL, DEF, 1, 64, 0, 0, 0, 4, LM },   /* the real batch, step 2 (2026-10-14) */
         { "1D r2c OOP IL 64 K=4 (DEFAULT=lm)",    1, VFFT_R2C, OOP, IL, DEF, 1, 64, 0, 0, 0, 4, 0 },
         { "1D r2c OOP IL 63 K=4 LANE_MAJOR",      0, VFFT_R2C, OOP, IL, DEF, 1, 63, 0, 0, 0, 4, LM },   /* odd N: no real column engine */
+        { "1D r2c IP IL 64 K=4 LANE_MAJOR",       1, VFFT_R2C, IP,  IL, DEF, 1, 64, 0, 0, 0, 4, LM },   /* step 5: one (N + 2) K plane (2026-10-15) */
+        { "1D c2r IP IL 64 K=4 LANE_MAJOR",       1, VFFT_C2R, IP,  IL, DEF, 1, 64, 0, 0, 0, 4, LM },
         { "1D r2c IP SPLIT 64",                   0, VFFT_R2C, IP,  SP, DEF, 1, 64, 0, 0, 0, 1, 0 },
         { "1D r2c OOP IL 64 order=NATURAL",       0, VFFT_R2C, OOP, IL, NAT, 1, 64, 0, 0, 0, 1, 0 },
         /* ── 2D INTERLEAVED: native tier, both transforms ── */

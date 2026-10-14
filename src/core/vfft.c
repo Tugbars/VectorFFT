@@ -1964,8 +1964,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                    "2*(N/2+1) doubles of CCE bins each) or use VFFT_LAYOUT_SPLIT for the lane-major geometry",
                    _vfft_tname(cfg->transform), N, (int)K,
                    cfg->batch_geom == VFFT_BATCH_DEFAULT ? "DEFAULT" : "LANE_MAJOR",
-                   (N % 2) ? "an odd N has no real column engine"
-                   : cfg->placement == VFFT_INPLACE ? "the in-place real plane is not built yet" : "N below 4",
+                   (N % 2) ? "an odd N has no real column engine" : "N below 4",
                    (int)K);
         return NULL;
     }
@@ -2170,11 +2169,13 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * real batch asked for by name (batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS)
      * is served as K INDEPENDENT in-place K=1 transforms, each on its own
      * padded 2*(N/2+1)-double plane -- the contract below, replicated, with
-     * the inner create passing this very test. What still refuses here is the
-     * shape that has no meaning: an in-place real batch in the LANE-MAJOR
-     * geometry, where the reals and the CCE bins of one transform are
-     * interleaved with every other transform's and no single-plane
-     * overwrite exists. Widening the test would have admitted that too. */
+     * the inner create passing this very test. The in-place real batch in the
+     * LANE-MAJOR geometry (2026-10-15) is the lane-major door's: one buffer
+     * of (N + 2) K doubles, the reals first and the bins over them, served
+     * because its pack copies the whole input into the plan's scratch plane
+     * before its fold writes a bin (and its unfold consumes every bin before
+     * its unpack writes a real). It is admitted by its own law below, never by
+     * widening the K == 1 test. */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
         cfg->placement == VFFT_INPLACE &&
         /* 🔴 dims <= 1, not dims == 1: 0 IS the documented spelling of 1D
@@ -2197,7 +2198,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * the law of admission is the policy's (both directions, every thread count) */
         !(cfg->dims == 2 && !ob && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg))) &&
         /* 3D R2C and C2R in place (the same layout per row; c2r destroys its input by nature) */
-        !(cfg->dims == 3 && !ob && vfft_policy_ilndr_ip_ok(cfg, cfg->howmany, _vfft_plan_threads(cfg))))
+        !(cfg->dims == 3 && !ob && vfft_policy_ilndr_ip_ok(cfg, cfg->howmany, _vfft_plan_threads(cfg))) &&
+        /* the 1D lane-major real batch in place (il/rank1/lm_batch_il.h, step 5) */
+        !(cfg->dims < 2 && !ob && cfg->howmany > 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+          cfg->batch_geom != VFFT_BATCH_TRANSFORM_CONTIGUOUS && vfft_policy_batch_lane_major(cfg)))
     {
         _vfft_warn("vfft_create: in-place %s is supported only for 1D "
                    "LAYOUT_INTERLEAVED (CCE), howmany==1 (the interleaved real "

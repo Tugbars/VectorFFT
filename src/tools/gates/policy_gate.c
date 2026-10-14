@@ -156,9 +156,9 @@ static int _ref_lane_major(int transform, int layout, int dims, int howmany, int
     if (dims > 1) return 0;
     if (howmany < 2) return 0;
     if (transform == VFFT_C2C) return geom == VFFT_BATCH_LANE_MAJOR && N >= 2;
+    (void)placement;   /* both placements since step 5 (2026-10-15) */
     if (transform == VFFT_R2C || transform == VFFT_C2R)
-        return (geom == VFFT_BATCH_LANE_MAJOR || geom == VFFT_BATCH_DEFAULT) && placement == VFFT_OUTOFPLACE &&
-               N >= 4 && N % 2 == 0;
+        return (geom == VFFT_BATCH_LANE_MAJOR || geom == VFFT_BATCH_DEFAULT) && N >= 4 && N % 2 == 0;
     return 0;
 }
 static int _ref_rader_prime(int N)
