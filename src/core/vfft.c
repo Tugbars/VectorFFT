@@ -1956,13 +1956,18 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * interleaved real batch is served transform-contiguous, named. */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims < 2 &&
         cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1 && !ob &&
-        cfg->batch_geom != VFFT_BATCH_TRANSFORM_CONTIGUOUS)
-    {
-        _vfft_warn("vfft_create: the lane-major interleaved %s batch (howmany=%d, batch_geom=%s) is not "
-                   "served -- name batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS (the %d transforms end to end, "
+        cfg->batch_geom != VFFT_BATCH_TRANSFORM_CONTIGUOUS && !vfft_policy_batch_lane_major(cfg))
+    {   /* the lane-major real batch serves r2c at an even N out of place (il/rank1/lm_batch_il.h, 2026-10-14);
+         * the rest of the real lane-major space is refused with its reason until its piece */
+        _vfft_warn("vfft_create: the lane-major interleaved %s batch (N=%d, howmany=%d, batch_geom=%s) is not "
+                   "served: %s -- name batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS (the %d transforms end to end, "
                    "2*(N/2+1) doubles of CCE bins each) or use VFFT_LAYOUT_SPLIT for the lane-major geometry",
-                   _vfft_tname(cfg->transform), (int)K,
-                   cfg->batch_geom == VFFT_BATCH_DEFAULT ? "DEFAULT" : "LANE_MAJOR", (int)K);
+                   _vfft_tname(cfg->transform), N, (int)K,
+                   cfg->batch_geom == VFFT_BATCH_DEFAULT ? "DEFAULT" : "LANE_MAJOR",
+                   cfg->transform == VFFT_C2R ? "the C2R twin is not built yet"
+                   : (N % 2) ? "an odd N has no real column engine"
+                   : cfg->placement == VFFT_INPLACE ? "the in-place real plane is not built yet" : "N below 4",
+                   (int)K);
         return NULL;
     }
     /* TRANSFORM-CONTIGUOUS BATCH: one K=1 handle through this same front door, run K times at the per-transform block
@@ -2246,6 +2251,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
     /* 1D real: the one place the layouts still meet (bridge/real_bridge.h,
      * owner decision D1 — temporary until the IL real engine lands). Every
      * transform/rank below is served by ONE side, chosen here, once. */
+    if (cfg->dims < 2 && cfg->transform == VFFT_R2C && K > 1 && !ob &&
+        cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->batch_geom != VFFT_BATCH_TRANSFORM_CONTIGUOUS)
+        return _vfft_create_lmr_il(cfg, W, N, K);   /* the LANE-MAJOR real batch (lm_batch_il.h): the policy admitted it above */
     if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R))
         return _vfft_create_real(cfg, ob, W, reg, N, K);
     /* ── THE LAYOUT FORK ── */
@@ -2794,7 +2802,7 @@ const char *vfft_plan_route(vfft_plan p)
                                               : (f == 2 ? "plane+child+strips" : "plane+child");
     }
     if (h->lm)
-        return h->il2d_col.blu ? (h->il2d_col.tpc ? "lm+tpc" : "lm+blu") : "lm";   /* the lane-major batch on the column pass */
+        return h->il2d_col.blu ? (h->il2d_col.tpc ? "lm+tpc" : "lm+blu") : "lm";   /* the lane-major batch on the column pass (c2c, or r2c: the chain at N / 2) */
     if (h->N2 > 0 && h->N3 == 0 && h->il2d_col.nst > 0)
     { /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the
        * batched rows, +rb2 = the batched two-pass rows; turn = the whole

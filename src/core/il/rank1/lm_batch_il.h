@@ -34,9 +34,9 @@
  * column-only serial execute; the plain chain pass with its lane tile) */
 static void _lm_cols(struct vfft_plan_s *h, const double *src, double *dst, int reverse)
 {
-    vfft_ilcol_t *c = &h->il2d_col;
+    vfft_ilcol_t *c = &h->il2d_col;   /* c->N is the chain's length: N for the c2c batch, N / 2 for the real one */
     if (h->nthreads > 1 && c->colmt &&
-        _il2d_cols_mt_desc(c, h->N, src, dst, reverse, h->nthreads, c->nat ? c->natstage : NULL, -1))
+        _il2d_cols_mt_desc(c, c->N, src, dst, reverse, h->nthreads, c->nat ? c->natstage : NULL, -1))
     {
         _vfft_il2d_col_mt_count++;   /* the engagement (vfft.h): the caller's duty, as the 2D tiers count theirs */
         return;
@@ -46,7 +46,7 @@ static void _lm_cols(struct vfft_plan_s *h, const double *src, double *dst, int 
         _il2d_col_exec_st(c, src, dst, reverse, c->natstage);
         return;
     }
-    _il2d_col_pass(src, dst, h->N, c->rn, c->wc > 0 ? (size_t)c->wc : 0, c->nst, c->R, c->L,
+    _il2d_col_pass(src, dst, c->N, c->rn, c->wc > 0 ? (size_t)c->wc : 0, c->nst, c->R, c->L,
                    reverse ? c->b : c->f, reverse ? c->tb : c->tf, reverse);
 }
 /* the bound executor (the lean door: it never declines) */
@@ -77,7 +77,7 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
                      const vw2_ilcol_key_t *key, int bcmt)
 {
     vfft_ilcol_t *c = &h->il2d_col;
-    const int N = h->N, K = (int)h->K, T = h->nthreads, ip = h->placement == VFFT_INPLACE;
+    const int N = c->N, K = (int)h->K, T = h->nthreads, ip = h->placement == VFFT_INPLACE && h->transform == VFFT_C2C;
     const int workers = T > 1 ? thread_pool_workers_for(T) : 1;
     const int usable = W && !W->vw2_off_2d && !cfg->recalibrate;
     const int plain = !c->nat && !c->blu && c->wl <= 0;   /* the lane tile is the plain chain pass's */
@@ -270,6 +270,234 @@ static vfft_plan _vfft_create_lm_il(const vfft_config_t *cfg, struct vfft_wisdom
         if (vfft_child_row_update(&W->vw2, &pk, "tpc_", h->il2d_col.tpcS))
             _vw2_persist(W, cfg);
     }
+    (void)bcmtt; (void)bwl; (void)btf; (void)bro; (void)bblu;
+    return (vfft_plan)h;
+}
+
+/* ── THE LANE-MAJOR REAL BATCH, r2c at an even N (the design's step 2) ─────
+ * x[e K + t] real (N rows of K) -> z[2 (f K + t)], f < N / 2 + 1, three passes, the
+ * real-axis form's own (il2d_real_axis.h) with its rows removed:
+ *   PACK    W[m][k] = x[2 m][k] + i x[2 m + 1][k], m < M = N / 2 (a copy: the two reals
+ *           of a packed sample sit K apart in lane-major data);
+ *   COLUMNS the c2c column chain at M down every lane of W, in place, the scrambled
+ *           class (the chain the column builder serves at (M, K), raced in this plan's
+ *           role on this plan's own row; a prime M takes the column Bluestein);
+ *   FOLD    per lane, the column spectrum read through the chain's permutation:
+ *           A[0] = Re Z[0] + Im Z[0], A[M] = Re Z[0] - Im Z[0], and for k = 1..M/2
+ *           E = (Z[k] + conj Z[M-k]) / 2, O = -i (Z[k] - conj Z[M-k]) / 2,
+ *           A[k] = E + w^k O, A[M-k] = conj(E - w^k O), w = e^{-2 pi i / N}:
+ *           the M + 1 rows of K bins, natural, straight into the caller's spectrum.
+ * The chain threads through the column MT forms under the cell's verdict; the pack and
+ * the fold split by lane ranges across the workers whenever that form serves. Out of
+ * place (the in-place plane is the design's step 5). The c2r twin is its own piece. */
+static void _lmr_pack(const double *x, double *W, size_t M, size_t K, size_t k0, size_t k1)
+{
+    size_t m, n;
+    for (m = 0; m < M; m++)
+    {
+        const double *a = x + 2 * m * K + k0, *b = a + K;
+        double *w = W + 2 * (m * K + k0);
+        const size_t w1 = k1 - k0;
+        n = 0;
+#if defined(__AVX2__)
+        for (; n + 4 <= w1; n += 4)
+        {
+            const __m256d va = _mm256_loadu_pd(a + n), vb = _mm256_loadu_pd(b + n);
+            const __m256d lo = _mm256_unpacklo_pd(va, vb), hi = _mm256_unpackhi_pd(va, vb);
+            _mm256_storeu_pd(w + 2 * n, _mm256_permute2f128_pd(lo, hi, 0x20));
+            _mm256_storeu_pd(w + 2 * n + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
+        }
+#endif
+        for (; n < w1; n++)
+        {
+            w[2 * n] = a[n];
+            w[2 * n + 1] = b[n];
+        }
+    }
+}
+static void _lmr_fold(const double *W, double *A, size_t M, size_t K, const int *perm, const double *tw,
+                      size_t k0, size_t k1)
+{
+    const double *Z0 = W + 2 * (perm ? (size_t)perm[0] : 0) * K;
+    double *A0 = A, *AM = A + 2 * M * K;
+    size_t k, n;
+    for (n = k0; n < k1; n++)
+    {
+        const double r = Z0[2 * n], i = Z0[2 * n + 1];
+        A0[2 * n] = r + i;
+        A0[2 * n + 1] = 0.0;
+        AM[2 * n] = r - i;
+        AM[2 * n + 1] = 0.0;
+    }
+    for (k = 1; 2 * k <= M; k++)
+    {
+        const size_t rk = perm ? (size_t)perm[k] : k, rm = perm ? (size_t)perm[M - k] : M - k;
+        const double *Pk = W + 2 * rk * K, *Pm = W + 2 * rm * K;
+        double *Ak = A + 2 * k * K, *Am = A + 2 * (M - k) * K;
+        const double wr = tw[2 * k], wi = tw[2 * k + 1];
+        const int mirror = (2 * k < M);
+        n = k0;
+#if defined(__AVX2__)
+        {
+            const __m256d cj = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0), half = _mm256_set1_pd(0.5);
+            const __m256d vwr = _mm256_set1_pd(wr), vwi = _mm256_setr_pd(-wi, wi, -wi, wi);
+            for (; n + 2 <= k1; n += 2)
+            {
+                const __m256d P = _mm256_loadu_pd(Pk + 2 * n), Q = _mm256_xor_pd(_mm256_loadu_pd(Pm + 2 * n), cj);
+                const __m256d E = _mm256_mul_pd(half, _mm256_add_pd(P, Q)), D = _mm256_mul_pd(half, _mm256_sub_pd(P, Q));
+                const __m256d O = _mm256_xor_pd(_mm256_permute_pd(D, 0x5), cj);                          /* -i D */
+                const __m256d T = _mm256_fmadd_pd(O, vwr, _mm256_mul_pd(_mm256_permute_pd(O, 0x5), vwi)); /* w^k O */
+                _mm256_storeu_pd(Ak + 2 * n, _mm256_add_pd(E, T));
+                if (mirror)
+                    _mm256_storeu_pd(Am + 2 * n, _mm256_xor_pd(_mm256_sub_pd(E, T), cj));
+            }
+        }
+#endif
+        for (; n < k1; n++)
+        {
+            const double pr = Pk[2 * n], pi = Pk[2 * n + 1], qr = Pm[2 * n], qi = -Pm[2 * n + 1];
+            const double er = 0.5 * (pr + qr), ei = 0.5 * (pi + qi), dr = 0.5 * (pr - qr), di = 0.5 * (pi - qi);
+            const double orr = di, oi = -dr;   /* -i D */
+            const double tr = orr * wr - oi * wi, ti = orr * wi + oi * wr;
+            Ak[2 * n] = er + tr;
+            Ak[2 * n + 1] = ei + ti;
+            if (mirror)
+            {
+                Am[2 * n] = er - tr;
+                Am[2 * n + 1] = -(ei - ti);
+            }
+        }
+    }
+}
+/* the lane-range dispatch of the pack and the fold (phase 0 / 1) across the workers */
+typedef struct { struct vfft_plan_s *h; const double *x; double *z; size_t k0, k1; int phase; } _lmr_arg_t;
+static void _lmr_tramp(void *v)
+{
+    _lmr_arg_t *a = (_lmr_arg_t *)v;
+    struct vfft_plan_s *h = a->h;
+    if (a->phase == 0)
+        _lmr_pack(a->x, h->lm_W, (size_t)h->lm_M, h->K, a->k0, a->k1);
+    else
+        _lmr_fold(h->lm_W, a->z, (size_t)h->lm_M, h->K, h->lm_perm, h->lm_tw, a->k0, a->k1);
+}
+static void _lmr_ranges(struct vfft_plan_s *h, const double *x, double *z, int phase)
+{
+    const int T = (h->nthreads > 1 && h->il2d_col.colmt) ? thread_pool_workers_for(h->nthreads) : 1;
+    const size_t K = h->K;
+    _lmr_arg_t a[THREAD_POOL_MAX_DISPATCH];
+    int t, Ts = T;
+    if (Ts > 1 && K < (size_t)(2 * Ts)) Ts = (int)(K / 2) > 1 ? (int)(K / 2) : 1;   /* at least two lanes a worker (a vector) */
+    if (Ts <= 1)
+    {
+        a[0].h = h; a[0].x = x; a[0].z = z; a[0].k0 = 0; a[0].k1 = K; a[0].phase = phase;
+        _lmr_tramp(&a[0]);
+        return;
+    }
+    for (t = 0; t < Ts; t++)
+    {
+        a[t].h = h; a[t].x = x; a[t].z = z; a[t].phase = phase;
+        a[t].k0 = (K * (size_t)t / (size_t)Ts) & ~(size_t)1;         /* even lane bounds: whole vectors */
+        a[t].k1 = t + 1 == Ts ? K : (K * (size_t)(t + 1) / (size_t)Ts) & ~(size_t)1;
+    }
+    thread_pool_run(Ts, _lmr_tramp, a, sizeof a[0]);
+}
+static int _lmr_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, double *zout)
+{
+    (void)dir;   /* an r2c plan is forward-only: the door refuses the other direction before this */
+    _lmr_ranges(h, xin, zout, 0);
+    _lm_cols(h, h->lm_W, h->lm_W, 0);
+    _lmr_ranges(h, xin, zout, 1);
+    return 0;
+}
+static vfft_plan _vfft_create_lmr_il(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N, size_t K)
+{
+    const int T = _vfft_plan_threads(cfg), M = N / 2;
+    vw2_ilcol_key_t ck;
+    vfft_ilcol_t col;
+    char forms[64];
+    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1, k;
+    struct vfft_plan_s *h;
+    if (!vfft_policy_batch_lane_major(cfg))
+    {
+        _vfft_warn("vfft_create: the lane-major interleaved real batch serves R2C at an even N >= 4 and howmany >= 2, "
+                   "out of place (got %s N=%d howmany=%zu %s); an odd N has no real column engine, and the C2R "
+                   "twin is not served yet -- name batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS for those",
+                   _vfft_tname(cfg->transform), N, K, cfg->placement == VFFT_INPLACE ? "in place" : "out of place");
+        return NULL;
+    }
+    memset(&ck, 0, sizeof ck);
+    ck.rank = 1; ck.n0 = N; ck.n1 = (int)K; ck.ord = VW2_ORD_NAT; ck.real = 1; ck.nthreads = T; ck.lm = 1;
+    _il2d_blu_ctx.W = W;
+    _il2d_blu_ctx.cfg = cfg;
+    _il2d_blu_ctx.N2 = (int)K;
+    _il2d_blu_chain_hook = _il2d_blu_m_chain;
+    memset(&col, 0, sizeof col);
+    forms[0] = 0;
+    if (!_il2d_col_build(W, cfg, &ck, M, K, /*nat_req=*/0, &col, forms, sizeof forms,
+                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
+    {
+        _vfft_warn("vfft_create: lane-major interleaved R2C batch N=%d x K=%zu: no column pass serves the packed "
+                   "length M=%d (the column builder refused); unsupported", N, K, M);
+        return NULL;
+    }
+    h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+    if (!h)
+    {
+        _il2d_col_free(&col);
+        return NULL;
+    }
+    h->transform = VFFT_R2C;
+    h->placement = cfg->placement;
+    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->N = N;
+    h->N2 = 0;
+    h->K = K;
+    h->nthreads = T;
+    h->lm = 1;
+    h->lm_M = M;
+    h->il2d_col = col;
+    h->il2d_col.N = M;
+    h->il2d_col.rn = K;
+    h->il2d_col.wl = 0;
+    h->il2d_col.cut = 0;
+    h->il2d_col.tfuse = 0;
+    h->il2d_col.wc = 0;
+    if (!h->il2d_col.blu && h->il2d_col.nst >= 2)
+    {   /* the scrambled pass's row order: the fold reads row k at the pass row that holds it */
+        int *np = _il2d_nat_perm(h->il2d_col.R, h->il2d_col.nst, M);
+        if (!np || !(h->lm_perm = (int *)malloc((size_t)M * sizeof(int))))
+        {
+            free(np);
+            _vfft_warn("vfft_create: lane-major interleaved R2C batch N=%d x K=%zu: the chain's permutation at M=%d "
+                       "does not derive; unsupported", N, K, M);
+            _il2d_col_free(&h->il2d_col);
+            free(h);
+            return NULL;
+        }
+        for (k = 0; k < M; k++)
+            h->lm_perm[np[k]] = k;
+        free(np);
+    }
+    h->lm_W = (double *)vfft_aligned_alloc((2 * (size_t)M * K + 8) * sizeof(double));
+    h->lm_tw = (double *)vfft_aligned_alloc(2 * ((size_t)M + 1) * sizeof(double));
+    if (!h->lm_W || !h->lm_tw)
+    {
+        vfft_aligned_free(h->lm_W); vfft_aligned_free(h->lm_tw); free(h->lm_perm);
+        _il2d_col_free(&h->il2d_col);
+        free(h);
+        return NULL;
+    }
+    for (k = 0; k <= M; k++)
+    {   /* w^k = e^{-2 pi i k / N}, once-rounded (common/math/tw_exact.h) */
+        double c, s;
+        vfft_cs2pi_exact((long long)k, (long long)N, &c, &s);
+        h->lm_tw[2 * k] = c;
+        h->lm_tw[2 * k + 1] = -s;
+    }
+    _lm_race(h, W, cfg, &ck, bcmt);
+    h->k1_exec = _lmr_exec;
+    h->k1_go[VFFT_FORWARD] = _lmr_exec;   /* the lean door: forward only (the door refuses a backward call) */
+    h->k1_go[VFFT_BACKWARD] = NULL;
     (void)bcmtt; (void)bwl; (void)btf; (void)bro; (void)bblu;
     return (vfft_plan)h;
 }

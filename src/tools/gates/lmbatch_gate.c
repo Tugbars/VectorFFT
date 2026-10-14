@@ -217,13 +217,93 @@ static void cell_mt(int N, int K)
     vfft_free(z); vfft_free(y); vfft_free(y1); vfft_free(y2);
 }
 
+/* ── R2: the real batch, r2c at an even N (the design's step 2) ───────────── */
+/* the reference: lane t of the lane-major real plane through its own K = 1 r2c plan */
+static void ref_lanes_r2c(const double *x, double *ref, int N, int K)
+{
+    const int n1[1] = { N }, hp1 = N / 2 + 1;
+    double *a = (double *)vfft_malloc((size_t)N * 8), *b = (double *)vfft_malloc(2 * (size_t)hp1 * 8);
+    vfft_plan p = mk(VFFT_R2C, 1, n1, 1, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_DEFAULT, 1);
+    int t, e;
+    CHECK(p != NULL, "reference K=1 r2c plan at N=%d refused", N);
+    for (t = 0; t < K; t++)
+    {
+        for (e = 0; e < N; e++) a[e] = x[(size_t)e * K + t];
+        if (p) vfft_execute(p, VFFT_FORWARD, a, NULL, b, NULL);
+        for (e = 0; e < hp1; e++) { ref[2 * ((size_t)e * K + t)] = b[2 * e]; ref[2 * ((size_t)e * K + t) + 1] = b[2 * e + 1]; }
+    }
+    if (p) vfft_destroy(p);
+    vfft_free(a); vfft_free(b);
+}
+static void cell_r2c(int N, int K, int small, int T)
+{
+    const int n1[1] = { N }, hp1 = N / 2 + 1;
+    const size_t XN = (size_t)N * (size_t)K, ZN = 2 * (size_t)hp1 * (size_t)K;
+    double *x = (double *)vfft_malloc(XN * 8), *y = (double *)vfft_malloc(ZN * 8), *y2 = (double *)vfft_malloc(ZN * 8), *ref = (double *)vfft_malloc(ZN * 8);
+    vfft_plan p, p2;
+    long m0 = 0;
+    fill(x, XN, (unsigned)(N * 17 + K + T));
+    ref_lanes_r2c(x, ref, N, K);
+    if (small)
+    {   /* the naive DFT of each lane's real data against the K = 1 reference's bins */
+        double *a = (double *)malloc(2 * (size_t)N * 8), *re = (double *)malloc((size_t)N * 8), *im = (double *)malloc((size_t)N * 8);
+        double worst = 0;
+        int t;
+        for (t = 0; t < K; t++)
+        {
+            int e;
+            double m = 0, d = 0;
+            for (e = 0; e < N; e++) { a[2 * e] = x[(size_t)e * K + t]; a[2 * e + 1] = 0.0; }
+            naive(a, re, im, N);
+            for (e = 0; e < hp1; e++)
+            {
+                const double aa = fabs(re[e]) + fabs(im[e]);
+                const double dd = fabs(ref[2 * ((size_t)e * K + t)] - re[e]) + fabs(ref[2 * ((size_t)e * K + t) + 1] - im[e]);
+                if (aa > m) m = aa;
+                if (dd > d) d = dd;
+            }
+            if (m > 0 && d / m > worst) worst = d / m;
+        }
+        CHECK(worst < 1e-10, "lm r2c %dx%d: the K=1 reference vs naive %.2e", N, K, worst);
+        free(a); free(re); free(im);
+    }
+    if (T > 1) vfft_set_num_threads(T);
+    p = mk(VFFT_R2C, 1, n1, (size_t)K, T > 1 ? VFFT_BATCH_LANE_MAJOR : VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_DEFAULT, T);   /* cold; DEFAULT = lane-major for a real batch */
+    CHECK(p != NULL, "lm r2c %dx%d T=%d: create refused", N, K, T);
+    if (!p) goto done;
+    if (T > 1) m0 = moved();
+    vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+    printf("%s lm r2c %5dx%-4d T=%d cold: route %-8s fwd vs lanes %.1e%s%ld\n", T > 1 ? "M" : "C", N, K, T, vfft_plan_route(p),
+           relc(y, ref, (size_t)hp1 * K), T > 1 ? " threaded passes " : "", T > 1 ? moved() - m0 : 0L);
+    CHECK(relc(y, ref, (size_t)hp1 * K) < 1e-10, "lm r2c %dx%d T=%d: fwd vs the K=1 lanes %.2e", N, K, T, relc(y, ref, (size_t)hp1 * K));
+    if (T > 1) CHECK(moved() != m0, "lm r2c %dx%d: T=%d did not engage a threaded pass", N, K, T);
+    p2 = mk(VFFT_R2C, 1, n1, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, T);   /* the replay, by the explicit flag */
+    CHECK(p2 != NULL, "lm r2c %dx%d T=%d: replay create refused", N, K, T);
+    if (p2)
+    {
+        vfft_execute(p2, VFFT_FORWARD, x, NULL, y2, NULL);
+        CHECK(memcmp(y, y2, ZN * 8) == 0, "lm r2c %dx%d T=%d: replay != cold (bitwise)", N, K, T);
+        vfft_destroy(p2);
+    }
+    vfft_destroy(p);
+done:
+    if (T > 1) vfft_set_num_threads(1);
+    vfft_free(x); vfft_free(y); vfft_free(y2); vfft_free(ref);
+}
+
 /* ── R: the refusals, and K = 1 ──────────────────────────────────────────── */
 static void refusals(void)
 {
-    const int n1[1] = { 64 }, n2[2] = { 64, 16 };
+    const int n1[1] = { 64 }, n2[2] = { 64, 16 }, nodd[1] = { 45 };
     vfft_plan p;
-    p = mk(VFFT_R2C, 1, n1, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
-    CHECK(p == NULL, "R: the lane-major real batch is served before its piece");
+    p = mk(VFFT_C2R, 1, n1, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
+    CHECK(p == NULL, "R: the lane-major c2r batch is served before its piece");
+    if (p) vfft_destroy(p);
+    p = mk(VFFT_R2C, 1, nodd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
+    CHECK(p == NULL, "R: a lane-major r2c batch at an odd N is served (no real column engine)");
+    if (p) vfft_destroy(p);
+    p = mk(VFFT_R2C, 1, n1, 4, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_DEFAULT, 1);
+    CHECK(p == NULL, "R: a lane-major r2c batch in place is served before its piece");
     if (p) vfft_destroy(p);
     p = mk(VFFT_C2C, 2, n2, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
     CHECK(p == NULL, "R: a rank-2 lane-major request is served");
@@ -231,7 +311,7 @@ static void refusals(void)
     p = mk(VFFT_C2C, 1, n1, 1, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_DEFAULT, 1);
     CHECK(p != NULL, "R: K=1 with the lane-major flag refused (it is the ordinary plan)");
     if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") != 0, "R: K=1 took the batch door"); vfft_destroy(p); }
-    printf("R refusals: real lane-major, rank-2 lane-major refused; K=1 ordinary\n");
+    printf("R refusals: c2r lane-major, odd-N r2c, in-place r2c, rank-2 lane-major refused; K=1 ordinary\n");
 }
 
 int main(int argc, char **argv)
@@ -243,7 +323,7 @@ int main(int argc, char **argv)
     if (!dir) { printf("usage: lmbatch_gate --wisdir <cold scratch dir>\n"); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     g_W = vfft_wisdom_load(dir);
-    printf("LANE-MAJOR BATCH GATE: c2c on the column pass, store %s\n", dir);
+    printf("LANE-MAJOR BATCH GATE: c2c and r2c on the column pass, store %s\n", dir);
     /* C: small lengths against the naive DFT too; a prime, a Rader leaf, a smooth length, an odd length, a prime alone */
     cell(16, 8, 1);
     cell(45, 8, 1);
@@ -257,6 +337,17 @@ int main(int argc, char **argv)
     cell_mt(1048, 256);
     cell_mt(131, 1024);
     cell_mt(256, 512);
+    /* R2: the real batch, r2c, even N: a small cell vs naive, a Rader M, a prime M (Bluestein), smooth, K = 3, wide */
+    cell_r2c(16, 8, 1, 1);
+    cell_r2c(64, 64, 1, 1);
+    cell_r2c(262, 16, 1, 1);
+    cell_r2c(1048, 64, 0, 1);
+    cell_r2c(2096, 16, 0, 1);
+    cell_r2c(256, 3, 0, 1);
+    cell_r2c(4096, 2, 0, 1);
+    cell_r2c(2096, 256, 0, 8);
+    cell_r2c(262, 1024, 0, 8);
+    cell_r2c(512, 512, 0, 8);
     /* R */
     refusals();
     printf("%d checks, %d failed\n%s\n", g_checks, g_fail, g_fail ? "*** LANE-MAJOR BATCH GATE FAILED ***" : "LANE-MAJOR BATCH GATE ALL PASS");

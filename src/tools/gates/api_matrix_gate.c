@@ -58,6 +58,9 @@ int main(int argc, char **argv) {
         /* the lane-major 1D interleaved real batch is refused (owner 2026-10-14, field trial V02) */
         { "1D r2c OOP IL 64 K=4 (default geometry)", 0, VFFT_R2C, OOP, IL, DEF, 1, 64, 0, 0, 0, 4, 0 },
         { "1D c2r OOP IL 64 K=4 LANE_MAJOR",      0, VFFT_C2R, OOP, IL, DEF, 1, 64, 0, 0, 0, 4, LM },
+        { "1D r2c OOP IL 64 K=4 LANE_MAJOR",      1, VFFT_R2C, OOP, IL, DEF, 1, 64, 0, 0, 0, 4, LM },   /* the real batch, step 2 (2026-10-14) */
+        { "1D r2c OOP IL 64 K=4 (DEFAULT=lm)",    1, VFFT_R2C, OOP, IL, DEF, 1, 64, 0, 0, 0, 4, 0 },
+        { "1D r2c OOP IL 63 K=4 LANE_MAJOR",      0, VFFT_R2C, OOP, IL, DEF, 1, 63, 0, 0, 0, 4, LM },   /* odd N: no real column engine */
         { "1D r2c IP SPLIT 64",                   0, VFFT_R2C, IP,  SP, DEF, 1, 64, 0, 0, 0, 1, 0 },
         { "1D r2c OOP IL 64 order=NATURAL",       0, VFFT_R2C, OOP, IL, NAT, 1, 64, 0, 0, 0, 1, 0 },
         /* ── 2D INTERLEAVED: native tier, both transforms ── */

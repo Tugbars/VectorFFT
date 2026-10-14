@@ -150,14 +150,16 @@ static int _ref_strip_chain_primes(int n)
     return n;
 }
 /* the lane-major batch's admission (vfft_policy_batch_lane_major), spelled as the request table */
-static int _ref_lane_major(int transform, int layout, int dims, int howmany, int geom, int N)
+static int _ref_lane_major(int transform, int layout, int dims, int howmany, int geom, int N, int placement)
 {
-    if (transform != VFFT_C2C) return 0;
     if (layout != VFFT_LAYOUT_INTERLEAVED) return 0;
     if (dims > 1) return 0;
     if (howmany < 2) return 0;
-    if (geom != VFFT_BATCH_LANE_MAJOR) return 0;
-    return N >= 2;
+    if (transform == VFFT_C2C) return geom == VFFT_BATCH_LANE_MAJOR && N >= 2;
+    if (transform == VFFT_R2C)
+        return (geom == VFFT_BATCH_LANE_MAJOR || geom == VFFT_BATCH_DEFAULT) && placement == VFFT_OUTOFPLACE &&
+               N >= 4 && N % 2 == 0;
+    return 0;
 }
 static int _ref_rader_prime(int N)
 {
@@ -594,19 +596,20 @@ int main(void)
     {   /* the lane-major batch's admission over the request table: transform x layout x dims x K x geometry x N */
         static const int TR[3] = { VFFT_C2C, VFFT_R2C, VFFT_C2R }, LY[2] = { VFFT_LAYOUT_INTERLEAVED, VFFT_LAYOUT_SPLIT };
         static const int KS[4] = { 1, 2, 4, 64 }, GM[3] = { VFFT_BATCH_DEFAULT, VFFT_BATCH_TRANSFORM_CONTIGUOUS, VFFT_BATCH_LANE_MAJOR };
-        static const int NS[4] = { 1, 2, 131, 4096 };
-        int it, il, idm, ik, ig, in, bad_lm = 0, n_lm = 0;
+        static const int NS[6] = { 1, 2, 4, 63, 131, 4096 }, PL[2] = { VFFT_OUTOFPLACE, VFFT_INPLACE };
+        int it, il, idm, ik, ig, in, ip, bad_lm = 0, n_lm = 0;
         for (it = 0; it < 3; it++) for (il = 0; il < 2; il++) for (idm = 1; idm <= 2; idm++)
-            for (ik = 0; ik < 4; ik++) for (ig = 0; ig < 3; ig++) for (in = 0; in < 4; in++)
+            for (ik = 0; ik < 4; ik++) for (ig = 0; ig < 3; ig++) for (in = 0; in < 6; in++) for (ip = 0; ip < 2; ip++)
             {
                 vfft_config_t c;
                 memset(&c, 0, sizeof c);
                 c.transform = (vfft_transform_t)TR[it]; c.layout = (vfft_layout_t)LY[il]; c.dims = idm;
+                c.placement = (vfft_placement_t)PL[ip];
                 c.n[0] = NS[in]; c.n[1] = 16; c.howmany = (size_t)KS[ik]; c.batch_geom = GM[ig];
-                if ((vfft_policy_batch_lane_major(&c) != 0) != (_ref_lane_major(TR[it], LY[il], idm, KS[ik], GM[ig], NS[in]) != 0))
+                if ((vfft_policy_batch_lane_major(&c) != 0) != (_ref_lane_major(TR[it], LY[il], idm, KS[ik], GM[ig], NS[in], PL[ip]) != 0))
                 {
-                    if (!bad_lm) printf("  *** FAIL: lane-major admission disagrees at t=%d lay=%d dims=%d K=%d geom=%d N=%d\n",
-                                        TR[it], LY[il], idm, KS[ik], GM[ig], NS[in]);
+                    if (!bad_lm) printf("  *** FAIL: lane-major admission disagrees at t=%d lay=%d dims=%d K=%d geom=%d N=%d pl=%d\n",
+                                        TR[it], LY[il], idm, KS[ik], GM[ig], NS[in], PL[ip]);
                     bad_lm++;
                 }
                 n_lm++;

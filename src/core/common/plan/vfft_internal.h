@@ -212,8 +212,14 @@ struct vfft_plan_s
     struct vfft_plan_s *tcb;
     /* THE LANE-MAJOR 1D BATCH (il/rank1/lm_batch_il.h, 2026-10-14): K transforms of N as
      * one column plane; il2d_col below is its pass, N2 stays 0, K = howmany; the bound
-     * executor runs the column pass both directions; destroy frees the descriptor whole */
+     * executor runs the column pass both directions; destroy frees the descriptor whole.
+     * The real batch (r2c, step 2): the chain at M = N / 2 in il2d_col, the packed plane
+     * lm_W (2 M K + 8 doubles), the chain's permutation lm_perm (NULL = natural), the
+     * fold's twiddles lm_tw (w^k, k = 0..M) */
     int lm;
+    int lm_M;
+    double *lm_W, *lm_tw;
+    int *lm_perm;
     /* TC MT (split's per-lane trick, one level up: per-TRANSFORM). The K=1
      * IL engines are NOT reentrant — il2p/il3p own `mid` scratch, zturn owns
      * its sectioned `plane` — so worker t runs its slab of transforms on its
