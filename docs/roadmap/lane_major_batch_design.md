@@ -1,7 +1,7 @@
 # Lane-major 1D batches on the column pass (c2c, r2c, c2r)
 
-**Status (2026-10-14): steps 1 and 2 BUILT (the door, c2c, and r2c at an even N out of
-place); steps 3 to 6 not started.**
+**Status (2026-10-14): steps 1 to 3 BUILT (the door, c2c, r2c and c2r at an even N out
+of place); steps 4 to 6 not started.**
 Owner: "we will build lane major everywhere; the library is almost done, so it may
 start now. 1D C2C / R2C / C2R all will have lane major with one bold stroke." This
 document is the design to build against; it supersedes slice 2 of
@@ -37,6 +37,18 @@ section: seven cells from 16x8 to 4096x2 against K separate K = 1 real plans and
 naive DFT (1e-16 to 4e-16), the replay bitwise; T = 8 at 2096x256, 262x1024 and 512x512
 engaged and bitwise on replay; the refusals named. 173 checks.
 
+Step 3 as built (the same day): the c2r twin in the same create (`_vfft_create_lmr_il`
+serves the request's direction on the shared real row), its own executor bound
+backward-only: UNFOLD per lane with the fold's halves dropped (that factor two and the
+unnormalized M-point backward make the N of the library's backward convention), `Z[0] =
+(A[0] + A[M]) + i (A[0] - A[M])`, `E = A[k] + conj A[M-k]`, `O = conj(w^k) (A[k] - conj
+A[M-k])`, `Z[k] = E + i O`, `Z[M-k] = conj(E - i O)`, written at the pass row the backward
+chain reads row k from; the backward column chain down the lanes in place; UNPACK, the
+pack's inverse. The gate's c2r section: the seven cells against K separate K = 1 c2r
+plans (1e-16 to 2.5e-15) and the pair roundtrip to N x; T = 8 at the three wide planes
+engaged, bitwise on replay. 246 checks. The odd N and the in-place plane remain the
+named refusals.
+
 First measurement (2026-10-14, `gapfill/work/lm_vs_mkl_probe.c`: one thread, core 2 at
 HIGH priority, 15 rounds alternated, 200 ms pace, the min over rounds; MKL's lane-major
 batch is its descriptor with NUMBER_OF_TRANSFORMS = K, distance 1, strides K; the two
@@ -69,8 +81,23 @@ CCE storage, NUMBER_OF_TRANSFORMS = K, distance 1, strides K in and out):
     32   4096      73,160      75,080   1.03      70,480      73,440   1.9e-16
 ```
 
+And the c2r twin (`gapfill/work/lmc_vs_mkl_probe.c`, the same descriptors backward,
+the bins made by MKL's own forward):
+
+```
+   N      K   ours-lm ns   mkl-lm ns  ratio   mkl-tc ns  ours-tc ns   err vs mkl
+   262   1024     498,500   1,808,200   3.63   1,136,100     481,200   2.3e-15
+  1048    256     581,800   3,000,100   5.16   2,711,600     547,000   2.0e-15
+  2096     64     241,700   1,394,000   5.77   1,327,400     223,400   2.0e-15
+  4202     64     584,300   2,181,800   3.73   1,595,600     592,500   2.2e-15
+   106   1024     149,200     687,400   4.61     462,600     168,300   1.9e-15
+   512    512     258,400     435,800   1.69     182,500     170,100   7.8e-16
+   128   1024      96,600     101,150   1.05      68,150      55,950   5.6e-16
+    32   4096      87,880      79,820   0.91      76,420      61,700   4.4e-16
+```
+
 Where the length carries a prime above the pool the lane-major batch is 3.2x to 7.2x
-MKL's lane-major batch (the real batch 2.6x to 6.0x, the prime in its half length) and
+MKL's lane-major batch (the real batches 2.6x to 6.0x, the prime in the half length) and
 1.0x to 1.3x our own contiguous one; MKL does not exploit
 the lanes (its lane-major and contiguous times are equal there). At a smooth length the
 lane-major batch is 1.05x to 1.26x MKL's lane-major batch but slower than both
