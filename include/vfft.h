@@ -209,7 +209,11 @@ extern "C"
                          howmany > 1; the geometries coincide at K == 1).
                          VFFT_BATCH_DEFAULT (0) is the layout's own:
                          transform-contiguous for INTERLEAVED C2C, lane-major
-                         for SPLIT and for 1D INTERLEAVED R2C/C2R. An
+                         for SPLIT. A 1D INTERLEAVED R2C/C2R batch is served
+                         transform-contiguous only, named by
+                         VFFT_BATCH_TRANSFORM_CONTIGUOUS: its DEFAULT, the
+                         lane-major geometry, is refused with the reason
+                         printed until the native engine exists. An
                          INTERLEAVED batch of rank 2 or more is contiguous
                          planes (plane t at z + t * plane_doubles) under
                          DEFAULT and TRANSFORM_CONTIGUOUS alike, and lane-major

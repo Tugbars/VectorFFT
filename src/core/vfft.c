@@ -1948,6 +1948,22 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                    _thread_pool_ncpu(), THREAD_POOL_MAX_DISPATCH);
         return NULL;
     }
+    /* THE LANE-MAJOR INTERLEAVED REAL BATCH IS REFUSED (owner, 2026-10-14; field trial V02): the
+     * split real engines that served it stage every slab through one scratch at the same lanes and
+     * thread by the live pool's size, a data race once the pool is above 1 -- a silent misread. The
+     * geometry is refused with its reason until the native interleaved batch engine exists; a 1D
+     * interleaved real batch is served transform-contiguous, named. */
+    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims < 2 &&
+        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1 && !ob &&
+        cfg->batch_geom != VFFT_BATCH_TRANSFORM_CONTIGUOUS)
+    {
+        _vfft_warn("vfft_create: the lane-major interleaved %s batch (howmany=%d, batch_geom=%s) is not "
+                   "served -- name batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS (the %d transforms end to end, "
+                   "2*(N/2+1) doubles of CCE bins each) or use VFFT_LAYOUT_SPLIT for the lane-major geometry",
+                   _vfft_tname(cfg->transform), (int)K,
+                   cfg->batch_geom == VFFT_BATCH_DEFAULT ? "DEFAULT" : "LANE_MAJOR", (int)K);
+        return NULL;
+    }
     /* TRANSFORM-CONTIGUOUS BATCH: one K=1 handle through this same front door, run K times at the per-transform block
      * strides derived below. Gate: 1D INTERLEAVED K>1; C2C on DEFAULT-or-explicit, real on the EXPLICIT flag only.
      * See docs/design/vfft_front_door.md. */

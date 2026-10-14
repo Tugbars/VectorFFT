@@ -280,13 +280,31 @@ static int _thread_pool_ncpu(void) {
     return 1;
 #endif
 }
-/* Pin stride: worker i -> logical core (i+1)*stride, the caller's own slot
- * is core 0's. The stride is the detected SMT width (CPUID leaf 0xB level
- * 0), so on an SMT part (14900KF: logical 0-15 = 8 P-cores x 2 HT) the
- * workers land on distinct physical cores (2,4,..,14); packing HT siblings
- * runs MT ~2x slower. A worker whose target is past the last logical core
- * runs unpinned (core_id = -1). Unknown SMT width (0) assumes 2;
- * VFFT_PIN_STRIDE overrides. */
+/* Pin stride: the physical-core slots are the logical cores 0, stride,
+ * 2*stride, ...; the slot the CALLER runs on when the pool starts is
+ * reserved to it, and worker i takes the i-th of the others (the caller on
+ * core 0, the common case: worker i -> (i+1)*stride, as before; a caller
+ * pinned to logical 2 keeps its core and the workers take 0, 4, 6, ...).
+ * Before 2026-10-14 the caller was assumed on core 0, and a caller pinned
+ * to another even core shared it with a worker: threaded plans ran 2-3x
+ * slower than serial there and the create races banked serial verdicts.
+ * The stride is the detected SMT width (CPUID leaf 0xB level 0), so on an
+ * SMT part (14900KF: logical 0-15 = 8 P-cores x 2 HT) the workers land on
+ * distinct physical cores; packing HT siblings runs MT ~2x slower. A worker
+ * whose target is past the last logical core runs unpinned (core_id = -1).
+ * Unknown SMT width (0) assumes 2; VFFT_PIN_STRIDE overrides. */
+/* the physical-core slot the calling thread runs on now (a pinned caller:
+ * its core; an unpinned one: where it happens to be) */
+static int _thread_pool_caller_slot(int stride) {
+    int cpu = 0;
+#ifdef _WIN32
+    cpu = (int)GetCurrentProcessorNumber();
+#elif defined(__linux__)
+    cpu = sched_getcpu();
+    if (cpu < 0) cpu = 0;
+#endif
+    return stride > 0 ? cpu / stride : cpu;
+}
 static int _thread_pool_pin_stride(void) {
     const char *e = getenv("VFFT_PIN_STRIDE");
     int s;
@@ -296,9 +314,10 @@ static int _thread_pool_pin_stride(void) {
 }
 
 /* start the worker of slot i (under the lock) */
-static void _thread_pool_start(int i, int stride, int ncpu) {
+static void _thread_pool_start(int i, int stride, int ncpu, int reserved) {
     _thread_pool_worker_t *w = &_thread_pool_slots[i];
-    const int cid = (i + 1) * stride;            /* P-core-aware: skip HT siblings on hybrid Intel */
+    const int slot = (i < reserved) ? i : i + 1;  /* the i-th slot that is not the caller's */
+    const int cid = slot * stride;                /* P-core-aware: skip HT siblings on hybrid Intel */
     w->done = 1;        /* no work pending initially */
     w->shutdown = 0;
     w->parked = 0;
@@ -354,8 +373,9 @@ static void thread_pool_ensure(int n) {
     _thread_pool_lock();
     if (n - 1 > _thread_pool_nworkers) {
         const int stride = _thread_pool_pin_stride(), ncpu = _thread_pool_ncpu();
+        const int reserved = _thread_pool_caller_slot(stride);
         for (int i = _thread_pool_nworkers; i < n - 1; i++)
-            _thread_pool_start(i, stride, ncpu);
+            _thread_pool_start(i, stride, ncpu, reserved);
         _thread_pool_nworkers = n - 1;
     }
     if (n - 1 > _thread_pool_needed)
