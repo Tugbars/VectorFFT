@@ -98,6 +98,15 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
             size_t i2;
             for (i2 = 0; i2 < h->pq_sdist; i2++)
                 ps[i2] = 1.0 + 1e-6 * (double)(i2 & 511);
+            /* THE PROBE (field trial V18, 2026-10-14): the clones replay
+             * the T=1 row and the primary its own T row -- two plans that
+             * may differ at the rounding level, so a bitwise match against
+             * the primary failed whenever the rows differed and the queue
+             * never engaged. What the queue needs is that every worker
+             * computes the SAME transform: the clones must agree bitwise
+             * among themselves (one plan, replayed), and with the primary
+             * to a tolerance that catches a broken clone, not a different
+             * rounding. */
             vfft_execute((vfft_plan)h->pq_inner, pd, ps, NULL,
                          p0, NULL);
             for (t = 0; t < T && ok; t++)
@@ -109,19 +118,40 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
                     ok = 0;
                     break;
                 }
-                vfft_execute((vfft_plan)h->pq_w[t], pd, ps,
-                             NULL, p1, NULL);
-                if (memcmp(p0, p1,
-                           h->pq_ddist * sizeof(double)) != 0)
-                    ok = 0;
+                if (t == 0)
+                {   /* the first clone: the reference for the others, and
+                     * within 1e-10 of the primary */
+                    double mx = 0.0, md = 0.0;
+                    size_t i3;
+                    vfft_execute((vfft_plan)h->pq_w[0], pd, ps,
+                                 NULL, p1, NULL);
+                    for (i3 = 0; i3 < h->pq_ddist; i3++)
+                    {
+                        const double a = p0[i3] < 0 ? -p0[i3] : p0[i3];
+                        const double d = p0[i3] - p1[i3];
+                        if (a > mx) mx = a;
+                        if ((d < 0 ? -d : d) > md) md = d < 0 ? -d : d;
+                    }
+                    if (!(md <= 1e-10 * (mx > 0 ? mx : 1.0)))
+                        ok = 0;
+                }
+                else
+                {
+                    vfft_execute((vfft_plan)h->pq_w[t], pd, ps,
+                                 NULL, p0, NULL);
+                    if (memcmp(p0, p1,
+                               h->pq_ddist * sizeof(double)) != 0)
+                        ok = 0;
+                }
             }
             if (ok)
                 h->pq_wn = T;
             else
             {
-                _vfft_warn("plane queue %dx%d: clone build/"
-                           "bitwise probe failed — queue "
-                           "declines, the serial loop serves",
+                _vfft_warn("plane queue %dx%d: a clone did not build, "
+                           "or the clones disagree (bitwise among "
+                           "themselves, 1e-10 against the primary) — "
+                           "queue declines, the serial loop serves",
                            N1q, N2q);
                 for (t = 0; t < T; t++)
                     if (h->pq_w[t])
