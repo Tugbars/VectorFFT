@@ -612,7 +612,8 @@ static void _il2d_cmt_body(const void *v, const double *src, double *dst)
          * [lo, hi) in sub-strips of msw (0 = the whole range) -- a natural chain through the worker's
          * dense strip scratch (pitch = the strip width: the chain in L2, the plane read once and
          * written once; the shared pre-leaf plane where the width exceeds the scratch), a scrambled
-         * or one-stage chain in place on the plane */
+         * chain through the same scratch where the plan built one (the lane-major batches,
+         * _lm_sscr_build), else a scrambled or one-stage chain in place on the plane */
         const size_t sw = c->msw > 0 ? (size_t)c->msw : a->hi - a->lo;
         const int dense = c->nat && c->natdense && c->natsscr && a->tid < c->nnatsscr;
         size_t k;
@@ -620,7 +621,13 @@ static void _il2d_cmt_body(const void *v, const double *src, double *dst)
         {
             const size_t w = (k + sw < a->hi) ? sw : a->hi - k;
             if (!c->nat)
-                _il2d_col_pass_range(src, dst, a->N1, hp1, k, k + w, c->nst, c->R, c->L, fns, tabs, a->reverse);
+            {
+                if (c->natdense && c->natsscr && a->tid < c->nnatsscr && w <= (size_t)c->natswcap)
+                    _il2d_col_pass_scr_strip(src, dst, a->N1, hp1, k, w, c->nst, c->R, c->L, fns, tabs, a->reverse,
+                                             c->natsscr[a->tid > 0 ? a->tid : 0]);
+                else
+                    _il2d_col_pass_range(src, dst, a->N1, hp1, k, k + w, c->nst, c->R, c->L, fns, tabs, a->reverse);
+            }
             else if (dense && w <= (size_t)c->natswcap)
                 _il2d_col_pass_nat_strip(src, dst, a->N1, hp1, k, w, c->nst, c->R, c->L, fns, tabs, a->reverse,
                                          c->natperm, c->natsscr[a->tid > 0 ? a->tid : 0]);

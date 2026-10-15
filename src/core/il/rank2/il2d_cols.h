@@ -448,6 +448,25 @@ static void _il2d_col_pass_range(const double *src, double *dst, int N1,
     }
 }
 
+/* the SCRAMBLED chain over one strip [k, k + w) through a strip-pitched scratch (the dense arm the
+ * natural chain has in _il2d_col_pass_nat_strip, for the scrambled class, 2026-10-15): the strip
+ * copied into scr (pitch w, in L2), the plain walker in place there, the strip copied back. The rows
+ * land where the in-place walk puts them and the kernels see the same values, so the output is
+ * bitwise the plane form's; the two copies are strip-sized. */
+static void _il2d_col_pass_scr_strip(const double *src, double *dst, int N1, size_t rn, size_t k, size_t w,
+                                     int nst, const int *Rst, const int *Lst, vfft_il2p_fn const *fns,
+                                     double *const *tabs, int reverse, double *scr)
+{
+    size_t r;
+    if (!w)
+        return;
+    for (r = 0; r < (size_t)N1; r++)
+        memcpy(scr + 2 * r * w, src + 2 * (r * rn + k), 2 * w * sizeof(double));
+    _il2d_col_pass_range(scr, scr, N1, w, 0, w, nst, Rst, Lst, fns, tabs, reverse);
+    for (r = 0; r < (size_t)N1; r++)
+        memcpy(dst + 2 * (r * rn + k), scr + 2 * r * w, 2 * w * sizeof(double));
+}
+
 static void _il2d_col_pass(const double *src, double *dst, int N1,
                            size_t rn, size_t wc, int nst, const int *Rst,
                            const int *Lst, vfft_il2p_fn const *fns,

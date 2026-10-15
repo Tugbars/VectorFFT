@@ -215,7 +215,8 @@ struct vfft_plan_s
      * one column plane; il2d_col below is its pass, N2 stays 0, K = howmany; the bound
      * executor runs the column pass both directions; destroy frees the descriptor whole.
      * The real batch (r2c, step 2): the chain at M = N / 2 in il2d_col, the packed plane
-     * lm_W (2 M K + 8 doubles), the chain's permutation lm_perm (NULL = natural), the
+     * lm_W (2 M K + 8 doubles: the three-phase form's plane; the fused strips run in the column
+     * descriptor's dense scratch), the chain's permutation lm_perm (NULL = natural), the
      * fold's twiddles lm_tw (w^k, k = 0..M) */
     int lm;
     int lm_M;
