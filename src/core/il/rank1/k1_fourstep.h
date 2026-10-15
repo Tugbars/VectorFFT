@@ -187,7 +187,7 @@ typedef struct vfft_k1fs_s
 
 /* the planner's race: the child's PRIVATE store + its config (set by
  * _k1_il_plan_race, and by zr2c's in-role race, for the race; NULL outside) */
-static struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; } _k1fs_ctx;
+static struct { struct vfft_wisdom_s *W; const vfft_cfg_t *cfg; } _k1fs_ctx;
 
 /* THE CHILD'S OWN STORE (owner, 2026-10-03; the c2c four-step 2026-10-04).
  * Whoever banks this four-step owns the child's verdict -- the c2c K=1 row
@@ -217,7 +217,7 @@ static int _k1fs_child_keys(int N1, int N2, int inplace, int T, vw2_key_t *k2d, 
 {
     char b[160];
     const int n = snprintf(b, sizeof b, "t=c2c n=%dx%d q=1 ord=%s place=oop lay=il", N1, N2,
-                           vfft_policy_k1fs_inner_order() == VFFT_ORDER_NATURAL ? "nat" : "scr");
+                           vfft_policy_k1fs_inner_order() == VFI_ORDER_NATURAL ? "nat" : "scr");
     (void)inplace;
     if (T > 1)
         snprintf(b + n, sizeof b - (size_t)n, " nthreads=%d", T);
@@ -302,7 +302,7 @@ static struct vfft_wisdom_s *_k1fs_child_row_store(int N1, int N2)
     }
     if (n == 0)
     {   /* a 2D row at (N1, N2) in the source carrying its row plan's recipe */
-        vfft_wisdom_free((vfft_wisdom *)S);
+        _vfft_wisdom_free((vfft_wisdom *)S);
         S = NULL;
         for (i = 0; i < W->vw2.nrec && !S; i++)
         {
@@ -313,7 +313,7 @@ static struct vfft_wisdom_s *_k1fs_child_row_store(int N1, int N2)
                 S = vfft_child_store_from_row(r, "rp_");
                 if (S && S->vw2.nrec == 0)
                 {
-                    vfft_wisdom_free((vfft_wisdom *)S);
+                    _vfft_wisdom_free((vfft_wisdom *)S);
                     S = NULL;
                 }
             }
@@ -354,7 +354,7 @@ static void vfft_k1fs_destroy(vfft_k1fs_plan_t *p)
         vfft_destroy((vfft_plan)p->c2d);
     }
     if (p->own)
-        vfft_wisdom_free((vfft_wisdom *)p->own);
+        _vfft_wisdom_free((vfft_wisdom *)p->own);
     vfft_aligned_free(p->tw);
     vfft_aligned_free(p->plane);
     free(p->k1_of_p);
@@ -376,11 +376,11 @@ static inline long vfft_k1fs_pos_of_bin(const vfft_k1fs_plan_t *p, long k)
 }
 
 static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
-                                          struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                                          struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                           int inplace, int nthreads, int form, const int *sbchain, int sbn)
 {
     vfft_k1fs_plan_t *p;
-    vfft_config_t rc;
+    vfft_cfg_t rc;
     int nst, B, na, q, a, b;
     size_t rec;
     if (N != N1 * N2 || !vfft_k1fs_band(N) || N1 < 4 || N2 < 4) return NULL;
@@ -398,7 +398,7 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     rc.n[1] = N2;
     rc.howmany = 1;
     rc.order = vfft_policy_k1fs_inner_order();   /* SCRAMBLED, the algorithm's own (policy_il.h) */
-    rc.layout = VFFT_LAYOUT_INTERLEAVED;
+    rc.layout = VFI_LAYOUT_IL;
     rc.nthreads = p->nthreads;
     rc.wisdom = (vfft_wisdom *)W;
     rc.wisdom_write = cfg ? cfg->wisdom_write : 0;
@@ -407,7 +407,7 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
         const struct vfft_wisdom_s *ps = _k1fs_rowsrc;
         const int pn1 = _k1fs_rowsrc_n1, pn2 = _k1fs_rowsrc_n2;
         _k1fs_rowsrc = W; _k1fs_rowsrc_n1 = N1; _k1fs_rowsrc_n2 = N2;
-        p->c2d = (struct vfft_plan_s *)vfft_create(&rc);
+        p->c2d = (struct vfft_plan_s *)_vfft_create_cfg(&rc);
         _k1fs_rowsrc = ps; _k1fs_rowsrc_n1 = pn1; _k1fs_rowsrc_n2 = pn2;
     }
     if (!p->c2d || !p->c2d->il2d_row || p->c2d->il2d_col.nat || p->c2d->il2d_col.blu)
@@ -552,7 +552,7 @@ static struct vfft_wisdom_s *_k1fs_store_from_row(const vw2_rec_t *r, int N1, in
     if (ok && (S = _k1fs_store_new()) != NULL &&
         (_k1fs_seed(S, &k2, &r2) || (rr.ntok > 0 && _k1fs_seed(S, &kr, &rr)) || (rb.ntok > 0 && _k1fs_seed(S, &kb, &rb))))
     {
-        vfft_wisdom_free((vfft_wisdom *)S);
+        _vfft_wisdom_free((vfft_wisdom *)S);
         S = NULL;
     }
     if (S)
@@ -573,7 +573,7 @@ static struct vfft_wisdom_s *_k1fs_store_dup(const struct vfft_wisdom_s *S)
     for (i = 0; i < S->vw2.nrec; i++)
         if (_k1fs_seed(D, &S->vw2.rec[i].key, &S->vw2.rec[i]))
         {
-            vfft_wisdom_free((vfft_wisdom *)D);
+            _vfft_wisdom_free((vfft_wisdom *)D);
             return NULL;
         }
     vw2_disown(&D->vw2);
@@ -585,11 +585,11 @@ static struct vfft_wisdom_s *_k1fs_store_dup(const struct vfft_wisdom_s *S)
  * 2D row completed its own children (wisdom2_child.h) -- is still the row's
  * split, built and correct, so it is returned with *grew = 1 for the caller
  * to re-bank the row. The plan owns the store; NULL = the split does not build. */
-static vfft_k1fs_plan_t *_k1fs_build_own(int N, int N1, int N2, int scr, const vfft_config_t *cfg, int ip, int T,
+static vfft_k1fs_plan_t *_k1fs_build_own(int N, int N1, int N2, int scr, const vfft_cfg_t *cfg, int ip, int T,
                                          int form, const int *sbc, int sbn, const vw2_rec_t *r, int *grew)
 {
     struct vfft_wisdom_s *S = r ? _k1fs_store_from_row(r, N1, N2, ip, T) : _k1fs_store_new();
-    vfft_config_t cc;
+    vfft_cfg_t cc;
     vfft_k1fs_plan_t *p;
     if (grew)
         *grew = 0;
@@ -609,7 +609,7 @@ static vfft_k1fs_plan_t *_k1fs_build_own(int N, int N1, int N2, int scr, const v
     p = vfft_k1fs_create(N, N1, N2, scr, S, &cc, ip, T, form, sbc, sbn);
     if (!p)
     {
-        vfft_wisdom_free((vfft_wisdom *)S);
+        _vfft_wisdom_free((vfft_wisdom *)S);
         return NULL;
     }
     p->own = S;
@@ -982,7 +982,7 @@ static void vfft_k1fs_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const d
     const size_t bytes = 2 * (size_t)p->N * sizeof(double);
     if (p->scr)
     {
-        vfft_execute((vfft_plan)p->c2d, dir, (double *)zin, NULL, zout, NULL);
+        _vfft_exec6((vfft_plan)p->c2d, dir, (double *)zin, NULL, zout, NULL);
         return;
     }
     if (p->form == 1)
@@ -994,12 +994,12 @@ static void vfft_k1fs_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const d
     {
         if (zin != zout)
         {
-            vfft_execute((vfft_plan)p->c2d, dir, (double *)zin, NULL, p->plane, NULL);
+            _vfft_exec6((vfft_plan)p->c2d, dir, (double *)zin, NULL, p->plane, NULL);
             _k1fs_transpose(p, p->plane, zout, 0);
         }
         else
         {
-            vfft_execute((vfft_plan)p->c2d, dir, zout, NULL, zout, NULL);
+            _vfft_exec6((vfft_plan)p->c2d, dir, zout, NULL, zout, NULL);
             _k1fs_transpose(p, zout, p->plane, 0);
             memcpy(zout, p->plane, bytes);
         }
@@ -1008,13 +1008,13 @@ static void vfft_k1fs_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const d
     if (zin != zout)
     {
         _k1fs_transpose(p, zin, p->plane, 1);
-        vfft_execute((vfft_plan)p->c2d, dir, p->plane, NULL, zout, NULL);
+        _vfft_exec6((vfft_plan)p->c2d, dir, p->plane, NULL, zout, NULL);
     }
     else
     {
         _k1fs_transpose(p, zout, p->plane, 1);
         memcpy(zout, p->plane, bytes);
-        vfft_execute((vfft_plan)p->c2d, dir, zout, NULL, zout, NULL);
+        _vfft_exec6((vfft_plan)p->c2d, dir, zout, NULL, zout, NULL);
     }
 }
 static inline void vfft_k1fs_execute_fwd(const vfft_k1fs_plan_t *p, const double *zin, double *zout)

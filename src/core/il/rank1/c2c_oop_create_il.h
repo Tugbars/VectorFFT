@@ -17,7 +17,7 @@
  * engines that have one. zt_mt is unused (callers pass 0). */
 static vfft_plan _c2c_oop_finish_il(struct vfft_plan_s *h, int zt_mt,
                                  struct vfft_wisdom_s *W,
-                                 const vfft_config_t *cfg, int N)
+                                 const vfft_cfg_t *cfg, int N)
 {
     (void)zt_mt;
     if (h->k1ilfd && h->K == 1 && h->nthreads > 1)
@@ -36,7 +36,7 @@ static vfft_plan _c2c_oop_finish_il(struct vfft_plan_s *h, int zt_mt,
  * does not have. Such a row is EMPTY (owner, 2026-10-04) and the caller races
  * the cell from scratch; what this call built from the default paths is not
  * the cell's plan. */
-static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
+static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_cfg_t *cfg,
                                                  struct vfft_wisdom_s *W,
                                                  int N, int *stale)
 {
@@ -61,12 +61,12 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
      * flat DIT's scrambled class) — DEFAULT and NATURAL the ord=nat
      * row (kin). Two cells, never compared. */
     const int scr_req = (vfft_policy_ord_k1(cfg, N, /*inplace=*/0) == VW2_ORD_SCR &&
-                         cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop);
+                         cfg->layout == VFI_LAYOUT_IL && !W->vw2_off_oop);
     const vfft_oop_il_entry_t *ki =
         scr_req ? (vw2_oop_lookup_k1_il_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : kin;
     /* the threaded plan's row (v1.3): the K=1 route is thread-independent,
      * so a miss at T > 1 takes the one-thread row's route as its own row */
-    if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop && !cfg->recalibrate &&
+    if (cfg->layout == VFI_LAYOUT_IL && !W->vw2_off_oop && !cfg->recalibrate &&
         _vfft_plan_threads(cfg) > 1 && !ki &&
         vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, 0, _vfft_plan_threads(cfg)))
     {
@@ -82,7 +82,7 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
      * pair default below is never the source of a served IL plan
      * (its form-less pair would differ from the planner's in bits).
      * _k1_il_plan_race carries the N gate (vfft_policy_races). */
-    if (cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+    if (cfg->layout == VFI_LAYOUT_IL &&
         !W->vw2_off_oop &&
         (cfg->recalibrate || !ki || !ki->il_kv_raced ||   /* a pair-only row (forms unraced) plans too */
          (ki->k1_il_route == VFFT_K1_IL_PRIME && !vfft_policy_prime_cell(N)) ||   /* a prime verdict where a chain carries N: stale, the chains race */
@@ -187,7 +187,7 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
      * from ki): it must reach this block, not the degrade below */
     if ((ilr == VFFT_K1_IL_NONE || ilr == VFFT_K1_IL_CHAIN3) && !il2p &&
         !getenv("VFFT_NO_IL2P") &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+        cfg->layout == VFI_LAYOUT_IL)
     {
         int cR2, cA, cB;
         /* the BANKED chain first (the planner races every legal
@@ -215,7 +215,7 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
      * race above is the only source of a flat plan (never a rule). */
     vfft_ilfd_plan_t *ilfd = NULL;
     if (ilr == VFFT_K1_IL_FLAT && !il2p && !il3p && !getenv("VFFT_NO_IL2P") &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_fl_n >= 2)
+        cfg->layout == VFI_LAYOUT_IL && ki && ki->il_fl_n >= 2)
     {
         if (scr_req)
             ilfd = vfft_ilfd_create_scr_of(N, ki->il_fl, ki->il_fl_n, ki->il_flf, ki->il_tw);
@@ -252,7 +252,7 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
      * one plan, one order, never mixed. */
     vfft_ztt_plan_t *ztt = NULL;
     if (ilr == VFFT_K1_IL_ZTT && !il2p && !il3p && !ilfd && !getenv("VFFT_NO_IL2P") &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_zt_n >= 2)
+        cfg->layout == VFI_LAYOUT_IL && ki && ki->il_zt_n >= 2)
     {
         ztt = vfft_ztt_create_chain_ord(N, ki->il_zt, ki->il_zt_n, scr_req);
         if (ztt && ki->il_tw > 0 && !vfft_ztt_set_tile(ztt, (size_t)ki->il_tw))
@@ -274,7 +274,7 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
      * thread count, the order class the row's */
     vfft_k1fs_plan_t *fs = NULL;
     if (ilr == VFFT_K1_IL_FS && !il2p && !il3p && !ilfd && !ztt && !getenv("VFFT_NO_IL2P") &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_R1 > 0 && ki->il_R2 > 0 &&
+        cfg->layout == VFI_LAYOUT_IL && ki && ki->il_R1 > 0 && ki->il_R2 > 0 &&
         (long)ki->il_R1 * (long)ki->il_R2 == (long)N)
         fs = _k1fs_replay(W, cfg, N, scr_req, 0, ki);
     if (ilr == VFFT_K1_IL_FS && !fs)
@@ -293,7 +293,7 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
         !il2p && !il3p && !ilfd && !ztt && !fs &&
         (N & (N - 1)) != 0 &&
         !getenv("VFFT_NO_IL2P") &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+        cfg->layout == VFI_LAYOUT_IL)
     {
         if (ilr == VFFT_K1_IL_PRIME && _k1pr_ctx.plan && _k1pr_ctx.N == N)
         {
@@ -354,8 +354,8 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
      * interleaved engine" refusal. IL handles are INTERLEAVED-committed
      * (k1_sp_route == -1), so the split dispatch never sees one. */
     if (vfft_policy_k1_engine_present(
-            /* mono   */ ilr == VFFT_K1_IL_MONO && cfg->layout == VFFT_LAYOUT_INTERLEAVED,
-            /* pair   */ il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED,
+            /* mono   */ ilr == VFFT_K1_IL_MONO && cfg->layout == VFI_LAYOUT_IL,
+            /* pair   */ il2p && cfg->layout == VFI_LAYOUT_IL,
             /* chain3 */ il3p != NULL, /* flat */ ilfd != NULL,
             /* ztt    */ ztt != NULL,  /* fs   */ fs != NULL,
             /* prime  */ ilpr != NULL))
@@ -407,7 +407,7 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_config_t *cfg,
     return NULL;
 }
 
-static vfft_plan _vfft_create_c2c_oop_il(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_c2c_oop_il(const vfft_cfg_t *cfg,
                                         struct vfft_wisdom_s *W,
                                         int N,
                                         size_t K)
@@ -421,7 +421,7 @@ static vfft_plan _vfft_create_c2c_oop_il(const vfft_config_t *cfg,
              * obsoleted ... should be re-raced and the winner has to be picked
              * from scratch"): one recalibrating create, whose winner replaces
              * the row */
-            vfft_config_t rc = *cfg;
+            vfft_cfg_t rc = *cfg;
             struct vfft_plan_s *h2;
             int stale2 = 0;
             rc.recalibrate = 1;

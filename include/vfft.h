@@ -1,26 +1,22 @@
 /**
  * @file vfft.h
- * @brief The VectorFFT public API.
+ * @brief The VectorFFT public API: eight functions.
  *
- * Three responsibilities:
- * - vfft_create() plans. A configuration names a data contract (transform,
- *   size, placement, layout, order, batch, threads); create commits it to one
- *   measured plan from wisdom, racing the candidates on a miss, and binds
- *   every kernel, table, buffer and thread decision at that moment.
- * - vfft_execute() runs the plan. Pure: no allocation, no measurement, no
- *   decision; the direction is the only parameter.
- * - The handlers configure: the wisdom store (load / save / free), the worker
- *   pool (set / get threads), the plan's own buffers and route
- *   (planes / stride / route), and memory at the alignment the plans were
- *   measured on (vfft_malloc / vfft_free, vfft_plan_alloc).
+ *   vfft_create         commit a configuration to one measured plan
+ *   vfft_execute        run an INTERLEAVED or a real-to-real plan
+ *   vfft_execute_split  run a SPLIT plan
+ *   vfft_destroy        free a plan
+ *   vfft_malloc         memory at the alignment the plans were measured on
+ *   vfft_free           release it
+ *   vfft_info           a plan's facts, or the library's
+ *   vfft_error          why the last create or execute on this thread was refused
  *
- * The one law: a cell is served natively or refused. vfft_create() returns
- * NULL after printing why; vfft_execute() refuses a pointer signature that
- * does not match the plan's layout and computes nothing. Nothing converts a
- * layout, reorders a spectrum or falls back silently.
- *
- * Results, the supported matrix and the design are in README.md and docs/;
- * the machine proof of the matrix is src/tools/gates/api_matrix_gate.c.
+ * A cell is served natively or refused: vfft_create() returns NULL and
+ * vfft_error() says why. Nothing converts a layout, reorders a spectrum or
+ * falls back silently. A create that misses wisdom measures the cell's
+ * candidates and saves the winner before it returns; execute is pure (no
+ * allocation, no measurement, no decision). Which cells are served is the
+ * front door's table: docs/design/vfft_front_door.md.
  */
 #ifndef VFFT_H
 #define VFFT_H
@@ -32,592 +28,226 @@ extern "C"
 {
 #endif
 
-  /* ── the axes of a configuration ──────────────────────────────────────── */
+  /* ── the axes of a configuration ─────────────────────────────────────── */
 
   /**
    * @brief The transform. Every backward direction is the unnormalized
-   *        inverse; a roundtrip returns the input times the stated scale.
+   *        inverse: a roundtrip returns the input times the stated scale.
    *
-   * Complex and real DFTs, over N points (per dimension):
-   * - VFFT_C2C: complex to complex, X[k] = sum x[n] e^(-2 pi i n k / N);
-   *   backward the conjugate sum, roundtrip scale N.
-   * - VFFT_R2C: real input, the conjugate-even half-spectrum X[0..N/2] out.
-   * - VFFT_C2R: the half-spectrum in, real output; backward of R2C, scale N.
-   *   The input is read as the half of a conjugate-even spectrum: the
-   *   imaginary parts of bins 0 and N/2 (even N) are outside the contract,
-   *   and an input that is not such a half spectrum has no defined result.
+   * - VFFT_C2C: X[k] = sum x[n] e^(-2 pi i n k / N); backward the conjugate
+   *   sum; scale N.
+   * - VFFT_R2C: real input, the half spectrum X[0..N/2] out (N/2 + 1 bins).
+   * - VFFT_C2R: the half spectrum in, real output; backward of R2C, scale N.
+   *   The imaginary parts of bin 0 and, at an even N, bin N/2 are outside the
+   *   contract.
+   * At rank 2 and above the data is row-major, the last axis contiguous, and
+   * the real transforms halve the last axis (N_last/2 + 1 bins).
    *
-   * At rank 2 and above the data is row-major, the last axis contiguous,
-   * and the real transforms halve the last axis: an N1 x N2 (x N3) real
-   * plane against N1 x (N2/2 + 1) (or N1 x N2 x (N3/2 + 1)) bins.
-   *
-   * Real-to-real transforms, 1D only, N bins out of N reals, the standard
-   * unnormalized definitions (the factor 2 on the sum):
+   * Real-to-real, 1D only, N reals in and out, unnormalized:
    * - VFFT_DCT1: Y[k] = x[0] + (-1)^k x[N-1] + 2 sum_{n=1..N-2} x[n] cos(pi n k / (N-1));
-   *   self-inverse, scale 2(N-1). Present, not yet validated.
-   * - VFFT_DCT2: Y[k] = 2 sum x[n] cos(pi k (2n+1) / 2N); its inverse is
-   *   DCT-III, scale 2N. Even N.
-   * - VFFT_DCT3: Y[k] = X[0] + 2 sum_{n>=1} X[n] cos(pi n (2k+1) / 2N); its
-   *   inverse is DCT-II, scale 2N. Even N.
-   * - VFFT_DCT4: Y[k] = 2 sum x[n] cos(pi (2k+1)(2n+1) / 4N); self-inverse,
+   *   self-inverse, scale 2(N-1).
+   * - VFFT_DCT2: Y[k] = 2 sum x[n] cos(pi k (2n+1) / 2N); inverse DCT-III, scale 2N. Even N.
+   * - VFFT_DCT3: Y[k] = X[0] + 2 sum_{n>=1} X[n] cos(pi n (2k+1) / 2N); inverse DCT-II,
    *   scale 2N. Even N.
-   * - VFFT_DST1: Y[k] = 2 sum x[n] sin(pi (n+1)(k+1) / (N+1)); self-inverse,
-   *   scale 2(N+1).
-   * - VFFT_DST2: Y[k] = 2 sum x[n] sin(pi (k+1)(2n+1) / 2N); its inverse is
-   *   DST-III, scale 2N. Even N.
+   * - VFFT_DCT4: Y[k] = 2 sum x[n] cos(pi (2k+1)(2n+1) / 4N); self-inverse, scale 2N. Even N.
+   * - VFFT_DST1: Y[k] = 2 sum x[n] sin(pi (n+1)(k+1) / (N+1)); self-inverse, scale 2(N+1).
+   * - VFFT_DST2: Y[k] = 2 sum x[n] sin(pi (k+1)(2n+1) / 2N); inverse DST-III, scale 2N. Even N.
    * - VFFT_DST3: Y[k] = (-1)^k X[N-1] + 2 sum_{n<=N-2} X[n] sin(pi (n+1)(2k+1) / 2N);
-   *   its inverse is DST-II, scale 2N. Even N.
-   * - VFFT_DHT: H[k] = sum x[n] (cos(2 pi n k / N) + sin(2 pi n k / N));
-   *   self-inverse, scale N.
-   *
-   * For a real-to-real plan VFFT_BACKWARD runs the inverse named above
-   * (DCT-III for a DCT-II plan, and so on); for the self-inverse ones the
-   * two directions coincide. Real-to-real transforms have no complex
-   * layout and no order axis; a request for either is refused.
+   *   inverse DST-II, scale 2N. Even N.
+   * - VFFT_DHT: H[k] = sum x[n] (cos(2 pi n k / N) + sin(2 pi n k / N)); self-inverse, scale N.
+   * VFFT_BACKWARD runs the inverse named above. Real-to-real plans take no
+   * layout, order or batch geometry: those fields are ignored for them.
    */
   typedef enum
   {
-    VFFT_C2C,  /**< complex to complex */
-    VFFT_R2C,  /**< real to the conjugate-even half-spectrum */
-    VFFT_C2R,  /**< the half-spectrum to real */
-    VFFT_DCT1, /**< DCT-I (REDFT00) */
-    VFFT_DCT2, /**< DCT-II (REDFT10) */
-    VFFT_DCT3, /**< DCT-III (REDFT01) */
-    VFFT_DCT4, /**< DCT-IV (REDFT11) */
-    VFFT_DST1, /**< DST-I (RODFT00) */
-    VFFT_DST2, /**< DST-II (RODFT10) */
-    VFFT_DST3, /**< DST-III (RODFT01) */
-    VFFT_DHT   /**< the discrete Hartley transform */
+    VFFT_C2C = 0,
+    VFFT_R2C,
+    VFFT_C2R,
+    VFFT_DCT1,
+    VFFT_DCT2,
+    VFFT_DCT3,
+    VFFT_DCT4,
+    VFFT_DST1,
+    VFFT_DST2,
+    VFFT_DST3,
+    VFFT_DHT
   } vfft_transform_t;
+
+  /** @brief How complex data is stored. */
+  typedef enum
+  {
+    VFFT_LAYOUT_INTERLEAVED = 0, /**< one array of adjacent (re, im) pairs: vfft_execute() */
+    VFFT_LAYOUT_SPLIT = 1        /**< separate re[] and im[] planes: vfft_execute_split() */
+  } vfft_layout_t;
 
   /** @brief Whether the output overwrites the input. */
   typedef enum
   {
-    VFFT_INPLACE,
-    VFFT_OUTOFPLACE
+    VFFT_PLACEMENT_OUT = 0, /**< separate input and output buffers */
+    VFFT_PLACEMENT_IN = 1   /**< one buffer: out == in */
   } vfft_placement_t;
 
+  /** @brief The order of the output bins. */
+  typedef enum
+  {
+    VFFT_ORDER_NATURAL = 0,  /**< bin k at position k */
+    VFFT_ORDER_SCRAMBLED = 1 /**< the engine's own permutation, faster where served;
+                                  decodable only by the backward of the same plan */
+  } vfft_order_t;
+
   /**
-   * @brief The complex-data layout, committed at create; vfft_execute()'s
-   *        pointer signature follows it.
+   * @brief Where the K transforms of a batch sit (howmany > 1; at K == 1
+   *        the geometries are the same addressing).
    *
-   * SPLIT (the zero default): separate re[] and im[] planes. INTERLEAVED:
-   * one z[] of adjacent (re, im) pairs; for R2C and C2R the spectrum side
-   * is the packed conjugate-even half-spectrum of N/2 + 1 pairs.
-   * Real-to-real transforms have no complex layout: INTERLEAVED is refused.
+   * - VFFT_BATCH_CONTIGUOUS: element e of transform t at z[2 (t N + e)], each
+   *   transform a block of its own, one after another.
+   * - VFFT_BATCH_LANE_MAJOR: element e of transform t at z[2 (e K + t)], the
+   *   transforms side by side, sample by sample. Real data: x[e K + t], bins
+   *   z[2 (f K + t)].
+   * - VFFT_BATCH_DEFAULT: contiguous for C2C, lane-major for R2C and C2R and
+   *   for every SPLIT batch (whose only geometry it is).
+   * A batch of rank 2 or more is contiguous planes.
    */
   typedef enum
   {
-    VFFT_LAYOUT_SPLIT = 0,
-    VFFT_LAYOUT_INTERLEAVED
-  } vfft_layout_t;
+    VFFT_BATCH_DEFAULT = 0,
+    VFFT_BATCH_CONTIGUOUS = 1,
+    VFFT_BATCH_LANE_MAJOR = 2
+  } vfft_batch_t;
 
-  /**
-   * @brief How thoroughly a wisdom miss (or a recalibrating create) is
-   *        measured. A hit ignores it. Every tier measures; none estimates.
-   *        EXHAUSTIVE is the full factorization search of the 1D SPLIT C2C
-   *        planner; the interleaved planners treat it as PATIENT.
-   */
+  /** @brief The direction. VFFT_BACKWARD is the unnormalized inverse. */
   typedef enum
   {
-    VFFT_MEASURE,   /**< coarse sweep */
-    VFFT_PATIENT,   /**< wide sweep */
-    VFFT_EXHAUSTIVE /**< full sweep (1D SPLIT C2C); PATIENT elsewhere */
-  } vfft_rigor_t;
-
-  /** @brief The direction. Backward is the unnormalized inverse. */
-  typedef enum
-  {
-    VFFT_FORWARD,
-    VFFT_BACKWARD
+    VFFT_FORWARD = 0,
+    VFFT_BACKWARD = 1
   } vfft_dir_t;
 
-  /* ── wisdom: the measured verdicts a plan is served from ─────────────── */
+  /** @brief vfft_config_t.flags: the planner's policy and the plan's permissions. */
+  enum
+  {
+    VFFT_FLAG_PATIENT = 1u << 0,       /**< a wider sweep on a wisdom miss */
+    VFFT_FLAG_EXHAUSTIVE = 1u << 1,    /**< the full sweep where a planner has one; PATIENT elsewhere */
+    VFFT_FLAG_RECALIBRATE = 1u << 2,   /**< measure this cell even on a wisdom hit, and save it */
+    VFFT_FLAG_DESTROY_INPUT = 1u << 3, /**< an out-of-place plan may overwrite its input */
+    VFFT_FLAG_OWN_PITCH = 1u << 4,     /**< the plan may choose its row pitch or lane stride;
+                                            the caller reads it with vfft_info() */
+    VFFT_FLAG_VERBOSE = 1u << 5        /**< print refusals and warnings to stderr as well */
+  };
 
-  typedef struct vfft_wisdom_s vfft_wisdom; /**< opaque */
-
-  /**
-   * @brief Load a caller-owned wisdom table.
-   * @param path A wisdom store directory; NULL loads the library's own store.
-   * @return The table; NULL only when memory runs out. A store that does not
-   *         exist yet loads as an empty table, and its first save says so,
-   *         once, if the directory cannot be written; a path of 512
-   *         characters or more is refused with a printed line and the table
-   *         serves the library's own store read-only. The caller frees it
-   *         with vfft_wisdom_free(); a plan never frees the table it was
-   *         given, and config.wisdom == NULL makes a plan use the library's
-   *         store instead of any table.
-   */
-  vfft_wisdom *vfft_wisdom_load(const char *path);
-  /**
-   * @brief Persist a table to a store directory.
-   * @return 0 on success.
-   */
-  int vfft_wisdom_save(const vfft_wisdom *w, const char *path);
-  /** @brief Free a table returned by vfft_wisdom_load(). NULL is accepted. */
-  void vfft_wisdom_free(vfft_wisdom *w);
-
-  /* Where the library's own store is and what stamps it -- this CPU's folder
-   * and identity, this build's id, the store report -- are facts for logs and
-   * tools: vfft_wisdom_folder / identity / build / report in vfft_diagnostics.h.
-   * Wisdom is kept per CPU: the library's store is a root of folders, each
-   * stamped with the identity of the CPU that raced its rows, and a process
-   * uses the folder stamped with its own; the environment variable
-   * VFFT_WISDOM_DIR names one directory as the store instead.
-   * A 1D plan above 262144 (the four-step) carries a 2D child whose row plan
-   * is a 1D cell at the split's row length: VFFT_HIGHN_PLAN=borrow (the
-   * default) lets that child take the store's banked verdict at that length,
-   * read only, and race only what the store lacks; VFFT_HIGHN_PLAN=scratch
-   * races every row cell for the plan's own use. Read at create. */
-
-  /* ── the configuration ────────────────────────────────────────────────── */
+  /* ── the configuration ──────────────────────────────────────────────── */
 
   /**
-   * @brief The data contract vfft_create() commits to. A zeroed struct with
-   *        n[0] and howmany set is a 1D in-place split-layout C2C of n[0]
-   *        points, natural order, the library's wisdom, at the thread
-   *        setting (one thread until vfft_set_num_threads() raises it);
-   *        howmany = 0 is refused, so a batch count of 1 is written out.
+   * @brief The data contract vfft_create() commits to.
+   *
+   * A zeroed struct with n[0] set is one 1D C2C transform of n[0] points,
+   * interleaved, out of place, natural order, one thread, served from the
+   * library's wisdom store.
    */
   typedef struct
   {
     vfft_transform_t transform;
+    int rank;                   /**< 0 or 1 = 1D; 2, 3 or 4 */
+    int n[4];                   /**< the extents; the last axis is contiguous */
+    size_t howmany;             /**< the batch count K; 0 or 1 = one transform */
+    vfft_layout_t layout;
     vfft_placement_t placement;
-    vfft_rigor_t rigor; /**< the sweep on a miss or recalibrate; a hit ignores it */
-
-    int dims;          /**< 1 (default), 2, 3 or 4; INTERLEAVED serves rank 1 to 3,
-                            rank 4 is SPLIT (C2C, and out-of-place R2C/C2R with an
-                            even last axis) */
-    int n[4];          /**< n[0] = N (1D); {N1, N2}; {N1, N2, N3}; {N1, N2, N3, N4}.
-                            dims 3 and 4 take howmany == 1. */
-    size_t howmany;    /**< K, the batch count; where the K transforms sit is
-                            batch_geom */
-    int owned_buffers; /**< 1 = create allocates the planes this plan needs, at a
-                            measured stride, zeroed, and destroy frees them; read
-                            them with vfft_plan_planes() and vfft_plan_stride().
-                            1D SPLIT batches, and the in-place 2D and 3D real
-                            plans (one padded plane or volume at the row pitch the
-                            plan chooses, vfft_plan_stride() doubles per row, the
-                            same plane in both roles); refused otherwise. 0
-                            (default) = the caller's own tight planes. */
-
-    int nthreads; /**< the plan's thread count, the calling thread included
-                       (n - 1 workers), taken at create; 0 = the setting
-                       vfft_set_num_threads() made. Negative, or above this
-                       machine's logical CPUs or 64, is refused. Every threaded
-                       decision is measured and served at this count. */
-
-    int order; /**< the output-order contract. NATURAL delivers natural bins;
-                    VFFT_ORDER_SCRAMBLED the engine's own permutation of the
-                    bins, decodable only by the matched roundtrip through the
-                    same plan (no call reports it, and a cell with no
-                    scrambled writer refuses at create). VFFT_ORDER_DEFAULT
-                    (0) is the layout's own: NATURAL for INTERLEAVED at every
-                    rank; for SPLIT, NATURAL at 1D and SCRAMBLED at 2D and
-                    above (the split tiers are built around the scrambled
-                    comb). An explicit order is taken by C2C at every rank
-                    and both layouts (3D and 4D SPLIT: SCRAMBLED only beside
-                    DEFAULT; a padded SPLIT batch, config.owned_buffers, takes
-                    DEFAULT) and by 2D and 3D INTERLEAVED R2C/C2R: NATURAL,
-                    the order of the leading axes (the bins of the last axis
-                    are natural always). Every other request -- 1D real,
-                    real-to-real, SPLIT real at any rank -- takes DEFAULT,
-                    delivers natural bins, and refuses an explicit order. */
-
-    vfft_layout_t layout; /**< committed at create; see vfft_layout_t */
-
-    int batch_geom; /**< where the K transforms of a batch sit (meaningful at
-                         howmany > 1; the geometries coincide at K == 1).
-                         VFFT_BATCH_DEFAULT (0) is the layout's own:
-                         transform-contiguous for INTERLEAVED C2C, lane-major
-                         for INTERLEAVED R2C/C2R and for SPLIT. The 1D
-                         INTERLEAVED lane-major batch is served for C2C (both
-                         placements, both orders) and for R2C/C2R at an even
-                         N >= 4 in both placements; a lane-major real batch
-                         at an odd N is refused with the reason printed
-                         (VFFT_BATCH_TRANSFORM_CONTIGUOUS serves it). An INTERLEAVED batch of rank 2 or more is contiguous
-                         planes (plane t at z + t * plane_doubles) under
-                         DEFAULT and TRANSFORM_CONTIGUOUS alike, and lane-major
-                         is refused there; a SPLIT batch of rank 2 or more is
-                         refused. The explicit values state the other
-                         geometry; transform-contiguous on SPLIT is refused.
-                         Definitions below. */
-
-    vfft_wisdom *wisdom; /**< NULL = the library's store; else this table */
-    int recalibrate;     /**< 1 = re-measure this cell even on a hit */
-    int wisdom_write;    /**< retired, ignored: a create that races always
-                              saves its winner to the store before it returns.
-                              The environment variable VFFT_WISDOM_WRITE set
-                              to exactly "0" turns saving off for a process
-                              (read once, at the first save); any other value
-                              leaves it on. */
-    int destroy_input;   /**< 1 = the plan MAY overwrite the input buffer of an
-                              out-of-place transform: a permission, not a
-                              promise. A plan with a faster form that needs no
-                              scratch plane uses it where that form won its
-                              race, and the input then holds an intermediate
-                              result after vfft_execute(); the output is the
-                              same transform. 0 (default): the input is
-                              preserved. Used by two plans: the interleaved 2D
-                              C2R of one plane (howmany == 1), one thread,
-                              whose column pass is one kernel, and the
-                              interleaved 3D C2R at any thread count, whose
-                              axis-0 pass then runs in the caller's volume;
-                              ignored everywhere else. */
+    vfft_order_t order;
+    vfft_batch_t batch;
+    int nthreads;               /**< the threads the plan runs on, the caller's included;
+                                     0 or 1 = one. Every threaded decision is measured
+                                     at this count. */
+    unsigned flags;             /**< VFFT_FLAG_* */
+    const char *wisdom_dir;     /**< a wisdom store directory; NULL = the library's own */
   } vfft_config_t;
 
-  /** @brief vfft_config_t.order */
-  enum
-  {
-    VFFT_ORDER_DEFAULT = 0,  /**< the layout's own: see vfft_config_t.order */
-    VFFT_ORDER_NATURAL = 1,  /**< natural, said explicitly */
-    VFFT_ORDER_SCRAMBLED = 2 /**< the engine's own permutation, roundtrip-decodable only */
-  };
-
-  /**
-   * @brief vfft_config_t.batch_geom.
-   *
-   * Transform-contiguous: transform t occupies z[2 t N .. 2 (t + 1) N), its
-   * elements adjacent (K independent transforms end to end). Lane-major:
-   * element e of transform t at plane[e K + t] in a split plane, at
-   * z[2 (e K + t)] interleaved.
-   */
-  enum
-  {
-    VFFT_BATCH_DEFAULT = 0,
-    VFFT_BATCH_TRANSFORM_CONTIGUOUS = 1,
-    VFFT_BATCH_LANE_MAJOR = 2
-  };
-
-  /* ── create, execute, destroy ─────────────────────────────────────────── */
+  /* ── create, execute, destroy ───────────────────────────────────────── */
 
   typedef struct vfft_plan_s *vfft_plan; /**< opaque, execute-ready */
 
   /**
-   * @brief Commit a configuration to one measured, execute-ready plan.
+   * @brief Commit a configuration to one measured plan.
    *
-   * Responsibilities, in order:
-   * -# Validate the contract. An unsupported cell or an invalid combination
-   *    returns NULL after printing the reason; nothing is converted, padded
-   *    or reinterpreted to make it fit.
-   * -# Resolve the plan from wisdom. A hit serves the banked verdict. A miss
-   *    (or config.recalibrate) races the cell's candidates on scratch data at
-   *    config.rigor, a pause of milliseconds at a small cell and of minutes at
-   *    the largest (the races pace their benchmarks), banks the winner and
-   *    saves it to the store before create returns. A store whose directory
-   *    is missing or cannot be written keeps the winner for the process and
-   *    says so once; a save that fails while another process holds the
-   *    shard is retried for a few seconds and, failing that, reported each
-   *    time. The races
-   *    run inside the measurement scope (vfft_measure_config_t): the calling
-   *    thread is pinned to a P-core and raised for their duration, and is
-   *    given back as it was -- except its floating-point mode: a create
-   *    enables flush-to-zero and denormals-are-zero (MXCSR bits 15 and 6) on
-   *    the calling thread and leaves them enabled, the mode every kernel and
-   *    every worker thread runs in; execute never touches MXCSR. A caller
-   *    whose own arithmetic needs subnormal values restores its MXCSR after
-   *    the create, and then its own thread's part of a threaded execute runs
-   *    in a different mode from the workers'.
-   * -# Build the plan: the kernels are bound, the twiddle tables computed,
-   *    and everything the plan runs on allocated by the plan itself: the
-   *    scratch and staging planes, 64-byte aligned; the tables; the child
-   *    plans of a multi-dimensional or batched transform and their
-   *    per-worker clones; and, with config.owned_buffers, the caller's
-   *    planes at a measured stride, aligned and zeroed.
-   * -# Bind the threads. config.nthreads is snapshotted and the threaded
-   *    form is measured and served at that count.
+   * Validates the contract, serves the cell's verdict from wisdom or measures
+   * its candidates on a miss (milliseconds at a small cell, minutes at the
+   * largest) and saves the winner, then builds the plan: kernels, tables,
+   * scratch and threads are bound here. The plan owns what it allocated.
+   * Creates take turns on one lock and may run beside executes. A create
+   * leaves flush-to-zero and denormals-are-zero enabled on the calling thread,
+   * the mode every kernel runs in.
    *
-   * The plan owns everything it allocated and vfft_destroy() frees it all.
-   * Create never reads or writes the caller's data. Any double-aligned buffer
-   * address computes the same values: the kernels use unaligned vector
-   * access. The measured speed holds for buffers whose base is aligned to
-   * vfft_alignment() bytes (read it at run time; the value belongs to the
-   * build), each buffer a separate allocation, as vfft_malloc() and
-   * vfft_plan_alloc() provide them; plain malloc() guarantees less. A SPLIT
-   * plan's planes are separate allocations too: carved back to back out of
-   * one block they can sit at one 4 KB offset, which can run measurably
-   * slower than the planes the races measured. Inside a buffer, each batch
-   * transform and batch plane starts where the data contract puts it; one
-   * that starts off a cache line runs at a phase its route was not raced at.
-   * Safe to call concurrently with executes of other plans, with other
-   * creates (creates take turns on one lock) and with
-   * vfft_set_num_threads().
-   *
-   * @param config The contract; read during the call only.
-   * @return The plan, or NULL with the reason printed.
+   * @return The plan, or NULL: vfft_error() says why.
    */
   vfft_plan vfft_create(const vfft_config_t *config);
 
   /**
-   * @brief Run the plan in one direction.
+   * @brief Run an INTERLEAVED plan, or a real-to-real plan.
    *
-   * The pointer roles follow the plan's layout; a signature that does not
-   * match is refused (printed, nothing computed). An R2C plan runs
-   * VFFT_FORWARD only and a C2R plan VFFT_BACKWARD only; the other direction
-   * is refused the same way.
-   *
-   *   transform    layout        sre        sim      dre        dim
-   *   C2C          SPLIT         in.re      in.im    out.re     out.im
-   *   C2C          INTERLEAVED   z_in       NULL     z_out      NULL
-   *   R2C          SPLIT         real_in    NULL     spec.re    spec.im
-   *   R2C          INTERLEAVED   real_in    NULL     z_spec     NULL
-   *   C2R          SPLIT         spec.re    spec.im  real_out   NULL
-   *   C2R          INTERLEAVED   z_spec     NULL     real_out   NULL
-   *   real-to-real (real)        real_in    NULL     real_out   NULL
-   *
-   * In-place C2C: INTERLEAVED takes dre == sre (a NULL dre is refused);
-   * SPLIT takes dre == sre and dim == sim, or dre and dim both NULL (at
-   * rank 2 and above a distinct destination pair receives a copy of the
-   * result). In-place R2C/C2R (1D, even or odd N, INTERLEAVED, K == 1 or
-   * transform-contiguous): ONE plane of 2 (N/2 + 1) doubles holds the N
-   * reals and then the N/2 + 1 bins (integer division: at odd N the plane
-   * is N + 1 doubles, the N reals and then the (N + 1)/2 bins; a
-   * transform-contiguous batch is K such planes end to end; a lane-major
-   * batch at an even N is one buffer of (N + 2) K doubles, the reals at
-   * [e K + t] and the bins over them at [2 (f K + t)]); dre == sre is
-   * required and a distinct dre is refused. In-place 2D
-   * R2C and C2R (INTERLEAVED, howmany == 1, any nthreads): one plane of N1 rows, each
-   * row 2 (N2/2 + 1) doubles holding its N2 reals and then its N2/2 + 1
-   * bins (the in-place layout of FFTW and MKL); dre == sre is required and
-   * a distinct dre is refused, as in 1D. In-place 3D R2C and C2R (the same
-   * contract: one volume of N1 N2 rows, each 2 (N3/2 + 1) doubles). A C2R in
-   * place, at either rank, overwrites its spectrum by nature. A 2D or 3D
-   * in-place real plan created with config.owned_buffers = 1 walks its rows
-   * at vfft_plan_stride() doubles, the pitch the plan chose, which can exceed
-   * 2 (N2/2 + 1) (it does where 512 divides the last axis): it accepts its own
-   * plane or any buffer laid out at that stride, and a buffer laid out at the
-   * formula pitch is undefined behaviour where the two differ, since execute
-   * cannot see a buffer's layout. Read the stride, never compute it.
-   * An OUT-OF-PLACE INTERLEAVED R2C or C2R plan called with one buffer
-   * (dre == sre) is served: the plan copies the input into a buffer of the
-   * input's size that it allocated at create and transforms from the copy
-   * into the caller's buffer, which must therefore hold the larger of the
-   * input and the output (N + 2 doubles at an even N in 1D). Out-of-place
-   * C2C takes dre == sre as it is. Element addressing follows
-   * config.batch_geom. Pure: no allocation, no measurement. Safe to call
-   * concurrently on different plans; one plan runs one execute at a time
-   * (its scratch is one), so two threads share a plan only in turn.
-   *
-   * An out-of-place transform preserves its input unless the request permitted
-   * otherwise (config.destroy_input): a plan that uses the permission leaves
-   * an intermediate result in the input (the interleaved 2D C2R: z_spec holds
-   * the column-inverse plane; the interleaved 3D C2R: z_spec holds the
-   * axis-0 inverse).
-   *
-   * @param p   A plan from vfft_create().
-   * @param dir VFFT_FORWARD or the unnormalized inverse.
+   * C2C: in and out are complex pairs. R2C: in is reals, out the half
+   * spectrum; VFFT_FORWARD only. C2R: in is the half spectrum, out reals;
+   * VFFT_BACKWARD only. Real-to-real: reals in and out. In place, out == in;
+   * an in-place real plane holds 2 (N/2 + 1) doubles per transform (a
+   * lane-major real batch: (N + 2) K doubles), the reals first and the bins
+   * over them, and vfft_info() gives its size. A SPLIT plan is refused here.
+   * Safe to call concurrently on different plans; a plan runs one execute at
+   * a time.
    */
-  void vfft_execute(vfft_plan p, vfft_dir_t dir,
-                    double *sre, double *sim, double *dre, double *dim);
+  void vfft_execute(vfft_plan p, vfft_dir_t dir, const void *in, void *out);
+
+  /**
+   * @brief Run a SPLIT plan: separate re and im planes.
+   *
+   * C2C: all four planes (in place: out_re == in_re, out_im == in_im). R2C:
+   * in_re holds the reals, in_im is NULL. C2R: out_re receives the reals,
+   * out_im is NULL. An INTERLEAVED plan is refused here.
+   */
+  void vfft_execute_split(vfft_plan p, vfft_dir_t dir,
+                          const double *in_re, const double *in_im,
+                          double *out_re, double *out_im);
 
   /** @brief Free a plan and everything it allocated. NULL is accepted. */
   void vfft_destroy(vfft_plan p);
 
-  /* ── the plan's own buffers (config.owned_buffers = 1) ───────────────── */
+  /* ── memory ─────────────────────────────────────────────────────────── */
 
   /**
-   * @brief The plan's planes in vfft_execute()'s argument roles.
-   * @param p A plan created with config.owned_buffers = 1; otherwise every
-   *          out-param is set to NULL.
-   * @param sre,sim,dre,dim Out-params; unused roles are set to NULL, and any
-   *          out-param may itself be NULL. The planes are owned by the plan:
-   *          never free them.
-   */
-  void vfft_plan_planes(vfft_plan p, double **sre, double **sim,
-                        double **dre, double **dim);
-  /**
-   * @brief The stride to index the plan's planes with: element e of lane t
-   *        is at plane[e * stride + t]; for an in-place 2D or 3D real plan,
-   *        row r of its N1 (or N1 N2) rows starts at plane[r * stride] (its
-   *        last-axis reals, then the N_last/2 + 1 bins).
-   * @return The stride; equals config.howmany for a plan that does not own
-   *         its buffers; 0 for NULL. Read it, never compute it.
-   */
-  size_t vfft_plan_stride(vfft_plan p);
-
-  /* ── memory at the alignment the plans were measured on ───────────────── */
-
-  /**
-   * @brief Allocate a buffer for vfft_execute().
-   *
-   * The block is aligned to vfft_alignment() bytes, the alignment every plan
-   * was measured on, and its size is rounded up to a multiple of it. The
-   * memory is uninitialised; 0 bytes gives a unique block. Release it with
-   * vfft_free() only, never free() or delete; a block allocated by one module
-   * that links the library may be released by any other. Compute sizes in
-   * size_t (2 * (size_t)N * sizeof(double)), or take the buffers from
-   * vfft_plan_alloc(), which sizes them with the arithmetic checked.
-   *
-   * @param bytes The size in bytes.
-   * @return The block; NULL when memory runs out, or with the reason printed
-   *         for a size whose rounding overflows.
+   * @brief Allocate a buffer at the alignment every plan was measured on
+   *        (vfft_info().alignment bytes). Uninitialised; release with
+   *        vfft_free() only. NULL when memory runs out.
    */
   void *vfft_malloc(size_t bytes);
   /** @brief Release a vfft_malloc() block. NULL is accepted. */
-  void vfft_free(void *p);
-  /**
-   * @brief The alignment in bytes of every vfft_malloc() block and of the
-   *        buffers every plan was measured on. A build-time fact: read it at
-   *        run time rather than writing the number down.
-   */
-  size_t vfft_alignment(void);
+  void vfft_free(void *ptr);
 
-  /** @brief One set of buffers sized for a plan (opaque). */
-  typedef struct vfft_buffers_s *vfft_buffers;
+  /* ── facts ──────────────────────────────────────────────────────────── */
 
-  /**
-   * @brief Allocate one set of the buffers vfft_execute(p, ...) takes, in the
-   *        plan's own geometry.
-   *
-   * Each role is its own vfft_malloc() block, sized by the plan with the
-   * arithmetic checked: the in-place real plane of 2 (N/2 + 1) doubles, the
-   * spectrum of a real transform, the K transforms or planes of a batch. A
-   * SPLIT plan created with config.owned_buffers = 1 gets its planes at the
-   * plan's measured stride (vfft_plan_stride()) with the pad lanes zeroed; an
-   * in-place 2D or 3D real plan gets its plane or volume at the row pitch the
-   * plan walks (vfft_plan_stride(): the plan's own pitch under
-   * config.owned_buffers = 1, else 2 (N_last/2 + 1)); every other plan gets
-   * the tight planes of its data contract. The data is uninitialised. A plan
-   * may hand out any number of sets, and a set stays valid after
-   * vfft_destroy(p). Refused (printed): a SPLIT plan of rank 2 or more, and
-   * a SPLIT real plan in place.
-   *
-   * @param p A plan from vfft_create().
-   * @param sre,sim,dre,dim Out-params in vfft_execute()'s roles: unused roles
-   *        are set to NULL, in place dre == sre (and dim == sim), and any
-   *        out-param may itself be NULL.
-   * @return The set, released with vfft_buffers_free() only, never by passing
-   *         one of its buffers to vfft_free() or free(); NULL (every out-param
-   *         NULL) when refused, with the reason printed, or when memory runs
-   *         out.
-   */
-  vfft_buffers vfft_plan_alloc(vfft_plan p, double **sre, double **sim,
-                               double **dre, double **dim);
-  /** @brief Release a vfft_plan_alloc() set and every buffer in it. NULL is accepted. */
-  void vfft_buffers_free(vfft_buffers b);
-
-  /* ── the measurement scope ────────────────────────────────────────────── */
-
-  /**
-   * @brief How the library sets a thread up for measuring. Zero is the
-   *        default of every field, and a value outside a field's enum is
-   *        the default too.
-   *
-   * vfft_create() measures (races) a cell's candidates whenever wisdom does
-   * not serve it, and saves the winner. It runs every race inside one scope
-   * and undoes it before it returns:
-   * - a lock for the whole machine, so two measurements never run at once.
-   *   The wait is bounded; past it the race runs anyway.
-   * - the measuring thread pinned to one P-core: the core the pool leaves
-   *   to its caller once the pool exists (see vfft_set_num_threads()), the
-   *   second P-core before that.
-   * - a guard thread holding that core's hyperthread sibling, so nothing
-   *   else is scheduled there. It waits with the processor's idle
-   *   instruction (TPAUSE on Intel, MWAITX on AMD), which costs the measured
-   *   thread nothing; a part with neither runs unguarded.
-   * - the measuring thread's priority raised, where the system allows it.
-   *
-   * A winner measured without the lock, or on a thread that is not pinned to
-   * a P-core, is served for the process and not saved. The application's own
-   * threads and the machine's other load are the caller's to keep quiet.
-   */
+  /** @brief What vfft_info() reports. */
   typedef struct
   {
-    int pin;          /**< VFFT_MEASURE_PIN_DEFAULT, _OFF or _CORE */
-    int pin_core;     /**< the logical CPU for VFFT_MEASURE_PIN_CORE */
-    int guard;        /**< VFFT_MEASURE_GUARD_DEFAULT, _OFF or _PAUSE */
-    int priority;     /**< VFFT_MEASURE_PRIORITY_THREAD, _LEAVE or _PROCESS */
-    int lock_wait_ms; /**< the longest wait for another measurement on the
-                           machine, in milliseconds; 0 or negative = 60000 */
-  } vfft_measure_config_t;
-
-  /** @brief vfft_measure_config_t.pin */
-  enum
-  {
-    VFFT_MEASURE_PIN_DEFAULT = 0, /**< the library's own core (see above) */
-    VFFT_MEASURE_PIN_OFF = 1,     /**< the thread is not moved; winners are served, not saved */
-    VFFT_MEASURE_PIN_CORE = 2     /**< logical CPU pin_core; winners are saved only when it is a P-core */
-  };
-  /** @brief vfft_measure_config_t.guard */
-  enum
-  {
-    VFFT_MEASURE_GUARD_DEFAULT = 0, /**< the processor's idle instruction, where it has one */
-    VFFT_MEASURE_GUARD_OFF = 1,
-    VFFT_MEASURE_GUARD_PAUSE = 2 /**< a PAUSE spinner: works on every part with hyperthreads, and
-                                      slows the measured thread about 12% (every candidate alike) */
-  };
-  /** @brief vfft_measure_config_t.priority */
-  enum
-  {
-    VFFT_MEASURE_PRIORITY_THREAD = 0, /**< raise the measuring thread */
-    VFFT_MEASURE_PRIORITY_LEAVE = 1,
-    VFFT_MEASURE_PRIORITY_PROCESS = 2 /**< raise the whole process */
-  };
-  /**
-   * @brief Set how this process measures: the scope of every later
-   *        vfft_create() race (and of vfft_measure_begin(), the scope as a
-   *        tool for timing your own code: vfft_diagnostics.h).
-   * @param config The settings; NULL restores the defaults. Call it during
-   *        setup, outside any scope.
-   */
-  void vfft_measure_configure(const vfft_measure_config_t *config);
-
-  /* ── the worker pool and the build ────────────────────────────────────── */
+    const char *version;  /**< "MAJOR.MINOR.PATCH" */
+    size_t alignment;     /**< bytes: vfft_malloc()'s, and the buffers the plans were measured on */
+    const char *route;    /**< the engine the plan committed to; "-" when it has no single name */
+    int nthreads;         /**< the threads the plan runs on */
+    size_t in_doubles;    /**< what execute reads, in doubles; per plane for a SPLIT plan */
+    size_t out_doubles;   /**< what execute writes, in doubles; per plane for a SPLIT plan */
+    size_t stride;        /**< a batch: element e of transform t at e * stride + t (complex
+                               elements interleaved, doubles in a split plane); an in-place
+                               rank-2 or rank-3 real plan: the doubles from one row to the
+                               next. The tight value unless VFFT_FLAG_OWN_PITCH let the plan
+                               choose; read it, never compute it. */
+  } vfft_info_t;
 
   /**
-   * @brief Set the thread count for the plans created afterwards.
-   *
-   * Process-global: a plan created with config.nthreads = 0 snapshots this
-   * count. A live plan keeps the workers it was created with, so the call
-   * never takes a worker from one: lowering the count parks the workers no
-   * live plan needs and stops them once no plan needs any. n counts the
-   * calling thread: n - 1 workers, pinned one per physical core in
-   * logical-CPU order, skipping the core the pool leaves to its caller --
-   * core 0, or the core a calling thread pinned to one logical CPU holds
-   * when the pool first starts (a worker whose core lies past the last
-   * logical CPU runs unpinned). The calling thread is never pinned by the
-   * pool. Safe to call at any time, beside creates and executes.
-   *
-   * @param n The thread count; n <= 1 is single-threaded; above this
-   *          machine's logical CPUs (or 64) it is refused with a printed line.
+   * @brief Fill a plan's facts; with p == NULL, the library's facts only.
+   * @return 0, or -1 when out is NULL.
    */
-  void vfft_set_num_threads(int n);
-  /** @brief The thread count the next create snapshots, as the last vfft_set_num_threads() set it (1 until then). */
-  int vfft_get_num_threads(void);
-  /**
-   * @brief How long an idle worker spins before it parks, in milliseconds.
-   *
-   * Inside a burst of executes the workers answer a dispatch in ~10 ns; a
-   * worker idle for longer than this parks on an event and the first
-   * execute after the pause pays one wake (~5 us). Workers no live plan needs
-   * park at once. The default is 200 ms, or VFFT_THREAD_BLOCK_MS when set in
-   * the environment; a threaded measurement should state the value in force.
-   */
-  void vfft_set_thread_block_ms(double ms);
-  double vfft_get_thread_block_ms(void);
+  int vfft_info(vfft_plan p, vfft_info_t *out);
 
   /**
-   * @brief The route a plan committed to.
-   * @return The route name of a K=1 interleaved plan: 1D C2C ("mono", "2p",
-   *         "chain3", "prime", "flat", "ztt", "fs"), 2D C2C and real (the
-   *         column route "chain", "csk", "blu", "tpc" or "turn", with "+rb"
-   *         or "+rb2" for batched rows) and 3D real (the structure "child",
-   *         "payonce" or "band", "+strips" where strips run, "plane+" where
-   *         it threads); the 1D interleaved lane-major batch, C2C or real
-   *         ("lm", or "lm+blu" / "lm+tpc" at a prime length); "-" for a plan
-   *         with no single route name (split layout, transform-contiguous
-   *         batches, 1D interleaved real, 3D interleaved C2C) and for NULL.
-   *         Static storage.
+   * @brief Why the last vfft_create() or vfft_execute() on this thread was
+   *        refused. Static storage, "" when nothing was refused since the
+   *        thread's last create.
    */
-  const char *vfft_plan_route(vfft_plan p);
-
-  /** @brief The library version, "MAJOR.MINOR.PATCH". Static storage. */
-  const char *vfft_version(void);
-
-  /* Not needed to compute a transform, so not here but in vfft_diagnostics.h
-   * (shipped beside this header): the threading diagnostics (engagement
-   * counters), the measurement scope as a tool for timing your own code
-   * (vfft_measure_begin/end/confine/describe), and vfft_isa(). */
+  const char *vfft_error(void);
 
 #ifdef __cplusplus
 }

@@ -169,7 +169,7 @@ static void _k1ord_reseed(void *v)
     memcpy(c->rz, c->r0, c->nb);
 }
 static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int il_kv, int *chain, int *form); /* below, with the threaded arm */
-static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                              int N, vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out,
                              vfft_ilfd_plan_t **ilfd_out,
@@ -282,15 +282,15 @@ static int _ilprime_desc_parse(_ilprime_inner_desc_t *d, const char *kind, const
  * MEASURE, nothing persisted. */
 static vfft_k1fs_plan_t *_ilprime_fs_inner_build(int M, _ilprime_inner_desc_t *d)
 {
-    vfft_config_t cc;
+    vfft_cfg_t cc;
     int grew = 0;
     vfft_k1fs_plan_t *p;
     if ((long)d->R1 * (long)d->R2 != (long)M)
         return NULL;
     memset(&cc, 0, sizeof cc);
     cc.transform = VFFT_C2C; cc.placement = VFFT_OUTOFPLACE; cc.rigor = VFFT_MEASURE;
-    cc.dims = 1; cc.n[0] = M; cc.howmany = 1; cc.order = VFFT_ORDER_SCRAMBLED;
-    cc.layout = VFFT_LAYOUT_INTERLEAVED; cc.nthreads = 1;
+    cc.dims = 1; cc.n[0] = M; cc.howmany = 1; cc.order = VFI_ORDER_SCRAMBLED;
+    cc.layout = VFI_LAYOUT_IL; cc.nthreads = 1;
     if (d->S)
     {
         cc.wisdom = (vfft_wisdom *)d->S;
@@ -556,7 +556,7 @@ static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, double *zi, 
 #define _ILPR_MAX_CANDS 480
 #define _ILPR_HEAT      16
 typedef struct { int rader; _ilprime_inner_desc_t d; } _ilprime_cand_t;
-static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N);   /* below: the four-step's row cells into a store */
+static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N);   /* below: the four-step's row cells into a store */
 
 /* the prime cell, banked: replay its OWN verdict (method + inner), else
  * race every buildable (method, inner) pair on the whole convolution and
@@ -567,7 +567,7 @@ static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *
  * descriptor, replayed or raced: a composite that banks the prime cell on
  * its own row (zr2c) records it from there. */
 static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
-                                                   const vfft_config_t *cfg,
+                                                   const vfft_cfg_t *cfg,
                                                    int N, _ilprime_inner_desc_t *won)
 {
     int hint = 0;
@@ -622,7 +622,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         int ncm[2] = { 0, 0 }, builtm[2] = { 0, 0 };   /* [0] = rader, [1] = bluestein */
         double *zi, *zo;
         struct vfft_wisdom_s *pS = NULL;   /* the four-step inners' race store */
-        vfft_config_t pcfg;
+        vfft_cfg_t pcfg;
         for (mi = 0; mi < 2; mi++)
         {
             const int rader = (mi == 0);
@@ -681,7 +681,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         }
         zi = _ilprime_alloc((size_t)2 * N);
         zo = _ilprime_alloc((size_t)2 * N);
-        if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); vfft_wisdom_free((vfft_wisdom *)pS); return 0; }
+        if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); _vfft_wisdom_free((vfft_wisdom *)pS); return 0; }
         for (h = 0; h < 2 * N; h++) zi[h] = 1.0 + 1e-6 * (double)(h & 255);
         /* HEATS */
         for (h = 0; h < nc; h += hs)
@@ -708,7 +708,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                 if (a != w) vfft_ilprime_destroy(plans[a]);
             fin[nfin] = plans[w]; fin_ci[nfin] = ci[w]; nfin++;
         }
-        if (nfin == 0) { vfft_aligned_free(zi); vfft_aligned_free(zo); vfft_wisdom_free((vfft_wisdom *)pS); return 0; }
+        if (nfin == 0) { vfft_aligned_free(zi); vfft_aligned_free(zo); _vfft_wisdom_free((vfft_wisdom *)pS); return 0; }
         /* THE FINAL */
         w = _ilprime_race_plans(fin, nfin, zi, zo);
         vfft_aligned_free(zi); vfft_aligned_free(zo);
@@ -752,7 +752,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                 _vw2_persist(W, cfg);
             }
         }
-        vfft_wisdom_free((vfft_wisdom *)pS);
+        _vfft_wisdom_free((vfft_wisdom *)pS);
         if (won) *won = cands[wci].d;
         return fin[w];
     }
@@ -767,7 +767,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
  * replay instead of running the door's default. Every race whose
  * pool can hold the four-step at N calls it: the K=1 race below, the prime
  * cell's inner race and the real Bluestein's. */
-static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
+static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N)
 {
     if (vfft_k1fs_band(N))
     {
@@ -790,14 +790,14 @@ static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *
             for (j = 0; j < i; j++) if (n2[j] == n2[i]) seen = 1;
             if (seen || have[i]) continue;
             {
-                vfft_config_t rc;
+                vfft_cfg_t rc;
                 vfft_plan rp;
                 memset(&rc, 0, sizeof rc);
                 rc.transform = VFFT_C2C; rc.placement = VFFT_INPLACE; rc.rigor = cfg->rigor;
-                rc.dims = 1; rc.n[0] = n2[i]; rc.howmany = 1; rc.order = VFFT_ORDER_NATURAL;
-                rc.layout = VFFT_LAYOUT_INTERLEAVED; rc.nthreads = 1;
+                rc.dims = 1; rc.n[0] = n2[i]; rc.howmany = 1; rc.order = VFI_ORDER_NATURAL;
+                rc.layout = VFI_LAYOUT_IL; rc.nthreads = 1;
                 rc.wisdom = (vfft_wisdom *)S; rc.wisdom_write = cfg->wisdom_write;
-                rp = vfft_create(&rc);
+                rp = _vfft_create_cfg(&rc);
                 if (rp) vfft_destroy(rp);
             }
         }
@@ -819,12 +819,12 @@ static vfft_il_dp_context_t _k1_il_dp_ctx;      /* planning side, one create at 
 static int _k1_il_dp_ctx_ready = 0;
 static int _k1_il_dp_busy = 0;                  /* a race in progress: nested calls refuse */
 /* the race CEILINGS live in planning/policy.h (L9) */
-static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
+static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N)
 {
     vfft_il_cand_t top;
     int lines;
     struct vfft_wisdom_s *fsS;   /* the four-step candidates' children race into it (k1_fourstep.h) */
-    vfft_config_t fscfg;
+    vfft_cfg_t fscfg;
     /* WISDOM OR RACE, never a fallback: a request names (N, layout, order,
      * placement); the door looks that cell up and on a miss RACES the
      * interleaved planner's pool, banks the winner and serves it. Which N
@@ -862,7 +862,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
      * race. The verdict's plan is handed to the candidate after the race; a
      * losing plan dies below. */
     _k1pr_release();
-    if (vfft_policy_prime_cell(N) && cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+    if (vfft_policy_prime_cell(N) && cfg->layout == VFI_LAYOUT_IL)
     {
         _k1pr_ctx.plan = _ilprime_create_banked(W, cfg, N, NULL);
         _k1pr_ctx.N = _k1pr_ctx.plan ? N : 0;
@@ -896,7 +896,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     _k1_il_dp_busy = 0;
     _k1fs_ctx.W = NULL;
     _k1fs_ctx.cfg = NULL;
-    vfft_wisdom_free((vfft_wisdom *)fsS);
+    _vfft_wisdom_free((vfft_wisdom *)fsS);
     if (lines > 0)
         _vw2_persist(W, cfg);
     if (_k1pr_ctx.plan)
@@ -910,16 +910,16 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     }
     if (getenv("VFFT_NAT_LOG") &&
         vfft_il_dp_rank(&_k1_il_dp_ctx, N,
-                        cfg->order == VFFT_ORDER_SCRAMBLED ? VFFT_IL_ORD_SCRAMBLED
+                        cfg->order == VFI_ORDER_SCRAMBLED ? VFFT_IL_ORD_SCRAMBLED
                                                            : VFFT_IL_ORD_NATURAL,
                         &top, 1) == 1)
         fprintf(stderr, "[k1plan] N=%d: ilp=%.0fns -> ILP (route %d, %d.%d, %d line(s) banked, %s cell)\n",
                 N, top.cost_ns, top.route, top.R1, top.R2, lines,
-                cfg->order == VFFT_ORDER_SCRAMBLED ? "ord=scr" : "ord=nat");
+                cfg->order == VFI_ORDER_SCRAMBLED ? "ord=scr" : "ord=nat");
     return lines;
 }
 
-static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N, int scr, int ip,
+static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int scr, int ip,
                                       const vfft_oop_il_entry_t *ke);
 static int _k1fs_row_stale(struct vfft_wisdom_s *W, int N, int scr, int ip, int T, const vfft_oop_il_entry_t *ke);
 /* ── the K=1 IL-engine candidate: the request's cell (order x placement),
@@ -937,7 +937,7 @@ static int _k1fs_row_stale(struct vfft_wisdom_s *W, int N, int scr, int ip, int 
  * pair/default path is not the cell's plan, and the door races the cell from
  * scratch (a recalibrating second call). 0 = built as the row says, or the
  * cell has no row. */
-static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                             int N,
                             vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out,
@@ -1288,7 +1288,7 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
  * il_tw= stays what a T=1 plan replays. */
 static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
                                     struct vfft_wisdom_s *W,
-                                    const vfft_config_t *cfg, int N)
+                                    const vfft_cfg_t *cfg, int N)
 {
     vfft_ilfd_plan_t *p = h->k1ilfd;
     const int T = h->nthreads;
@@ -1372,7 +1372,7 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
  * untouched: the arm sections the walk the row already names. */
 static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
                                    struct vfft_wisdom_s *W,
-                                   const vfft_config_t *cfg, int N)
+                                   const vfft_cfg_t *cfg, int N)
 {
     vfft_ztt_plan_t *p = h->k1ztt;
     const int T = h->nthreads;
@@ -1433,7 +1433,7 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
  * has no threaded form and banks il_mt=0. */
 static void _ilpr_mt_replay_or_race(struct vfft_plan_s *h,
                                     struct vfft_wisdom_s *W,
-                                    const vfft_config_t *cfg, int N)
+                                    const vfft_cfg_t *cfg, int N)
 {
     vfft_ilprime_plan_t *p = h->k1ilpr;
     const int T = h->nthreads;
@@ -1528,7 +1528,7 @@ static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int il_kv, int *chain, i
  * race; a pinned split) builds on an empty private store: the child races
  * into it. A banked child that did not replay is said loudly; the plan is
  * still the row's split. NULL = the split does not build. */
-static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N, int scr, int ip,
+static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int scr, int ip,
                                       const vfft_oop_il_entry_t *ke)
 {
     const int T = _vfft_plan_threads(cfg);
@@ -1576,7 +1576,7 @@ static int _k1fs_row_stale(struct vfft_wisdom_s *W, int N, int scr, int ip, int 
 }
 static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
                                     struct vfft_wisdom_s *W,
-                                    const vfft_config_t *cfg, int N)
+                                    const vfft_cfg_t *cfg, int N)
 {
     vfft_k1fs_plan_t *p = h->k1fs;
     const int T = h->nthreads;
@@ -1625,7 +1625,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         double *zi = (double *)vfft_aligned_alloc(nb);
         double *zo = (double *)vfft_aligned_alloc(nb);
         struct vfft_wisdom_s *mS = p->own ? _k1fs_store_dup(p->own) : _k1fs_store_new();
-        vfft_config_t mcfg = *cfg;
+        vfft_cfg_t mcfg = *cfg;
         vfft_k1fs_plan_t *cand[VFFT_RACE_MAX_ARMS];
         _k1fs_mt_ctx_t cx[VFFT_RACE_MAX_ARMS];
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
@@ -1637,7 +1637,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         if (!zi || !zo || !mS)
         {
             vfft_aligned_free(zi); vfft_aligned_free(zo);
-            vfft_wisdom_free((vfft_wisdom *)mS);
+            _vfft_wisdom_free((vfft_wisdom *)mS);
             return;
         }
         mcfg.wisdom = (vfft_wisdom *)mS;
@@ -1684,7 +1684,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
         if (na == 0)
         {
             vfft_aligned_free(zi); vfft_aligned_free(zo);
-            vfft_wisdom_free((vfft_wisdom *)mS);
+            _vfft_wisdom_free((vfft_wisdom *)mS);
             return;
         }
         {   /* reps from one timing of the serial verdict's plan at T */
@@ -1709,7 +1709,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
             h->k1fs->own = mS;
             mS = NULL;
         }
-        vfft_wisdom_free((vfft_wisdom *)mS);
+        _vfft_wisdom_free((vfft_wisdom *)mS);
         for (a = 0; a < na; a++) if (cand[a] && cand[a] != h->k1fs && cand[a] != p) vfft_k1fs_destroy(cand[a]);
         if (p != h->k1fs) vfft_k1fs_destroy(p);
         p = h->k1fs;
@@ -1746,7 +1746,7 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
  * fills the pair when served, 0 when the row is not a MONO verdict, -1 when
  * it is one and its kernel is missing (the row is empty); nothing is built
  * or left to free in either case. */
-static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                  int N, vfft_oop11_fn *ilf, vfft_oop11_fn *ilb)
 {
     vfft_oop_il_entry_t keb;

@@ -49,7 +49,7 @@
 
 /* the form's admission at this plan: the policy's law of the request
  * (planning/policy_il.h), and the standard walk present to race against */
-static int _il2d_rax_admits(const struct vfft_plan_s *h, const vfft_config_t *cfg)
+static int _il2d_rax_admits(const struct vfft_plan_s *h, const vfft_cfg_t *cfg)
 {
     return h->il2d_row && h->il2d_oddn2 && vfft_policy_il2d_raxis_ok(cfg, h->nthreads, h->N, h->N2);
 }
@@ -202,18 +202,18 @@ static void _il2d_rax_exec_fwd(struct vfft_plan_s *h, const double *x, double *z
     _il2d_rax_pack(x, h->il2d_rax_W, M, N2);
     _il2d_col_exec(&h->il2d_rax_col, h->il2d_rax_W, h->il2d_rax_W, /*reverse=*/0);
     _il2d_rax_fold(h->il2d_rax_W, h->il2d_rax_A, M, N2, h->il2d_rax_perm, h->il2d_rax_tw);
-    vfft_execute((vfft_plan)h->il2d_rax_row, VFFT_FORWARD, h->il2d_rax_A, NULL, h->il2d_rax_T, NULL);
+    _vfft_exec6((vfft_plan)h->il2d_rax_row, VFFT_FORWARD, h->il2d_rax_A, NULL, h->il2d_rax_T, NULL);
     _il2d_rax_out(h->il2d_rax_T, z, N1, N2, M, hp1);
 }
 
 /* ── the build: the two children in role, the planes, the twiddles ───── */
-static int _il2d_rax_build(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg, int ord, int T)
+static int _il2d_rax_build(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int ord, int T)
 {
     const int N1 = h->N, N2 = h->N2, M = N1 / 2;
     const size_t rn2 = (size_t)N2;
     const char *log = getenv("VFFT_IL2D_LOG");
     struct vfft_wisdom_s *const W0 = _il2d_blu_ctx.W;   /* the create in progress: restored after the children */
-    const vfft_config_t *const c0 = _il2d_blu_ctx.cfg;
+    const vfft_cfg_t *const c0 = _il2d_blu_ctx.cfg;
     vw2_ilcol_key_t pck;
     vw2_key_t pk;
     int k;
@@ -230,7 +230,7 @@ static int _il2d_rax_build(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
     {   /* 2. the column chain at M down the N2 columns, in role: the shared column
          * builder against the form's private store (rax_*), the scrambled class,
          * one thread; nothing of it is persisted from here (wisdom_write = 0) */
-        vfft_config_t cc = *cfg;
+        vfft_cfg_t cc = *cfg;
         vw2_ilcol_key_t ck;
         char forms[64];
         int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1, ok;
@@ -282,7 +282,7 @@ static int _il2d_rax_build(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
     }
     {   /* 4. the c2c(N2) batch over the M+1 folded rows, in role (raxr_*): transform-
          * contiguous, natural, out of place, one thread */
-        vfft_config_t rc;
+        vfft_cfg_t rc;
         memset(&rc, 0, sizeof rc);
         rc.transform = VFFT_C2C;
         rc.placement = VFFT_OUTOFPLACE;
@@ -290,14 +290,14 @@ static int _il2d_rax_build(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
         rc.dims = 1;
         rc.n[0] = N2;
         rc.howmany = (size_t)M + 1;
-        rc.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
-        rc.layout = VFFT_LAYOUT_INTERLEAVED;
-        rc.order = VFFT_ORDER_NATURAL;
+        rc.batch_geom = VFFT_BATCH_CONTIGUOUS;
+        rc.layout = VFI_LAYOUT_IL;
+        rc.order = VFI_ORDER_NATURAL;
         rc.nthreads = 1;
         rc.wisdom = (vfft_wisdom *)h->il2d_rax_rowS;
         rc.wisdom_write = 0;
         rc.recalibrate = cfg->recalibrate;
-        h->il2d_rax_row = (struct vfft_plan_s *)vfft_create(&rc);
+        h->il2d_rax_row = (struct vfft_plan_s *)_vfft_create_cfg(&rc);
         _il2d_blu_ctx.W = W0;   /* a nested create sets the context to its own store */
         _il2d_blu_ctx.cfg = c0;
         if (!h->il2d_rax_row)
@@ -324,7 +324,7 @@ static int _il2d_rax_build(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
 }
 
 /* the verdict onto the real row (the row is made when the cell has none yet) */
-static void _il2d_rax_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg, struct vfft_plan_s *h,
+static void _il2d_rax_bank(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, struct vfft_plan_s *h,
                            int N1, int N2, int ord, int T, const char *val)
 {
     if (!W || W->vw2_off_2d)
@@ -363,7 +363,7 @@ static void _il2d_rax_arm_rax(void *v)
 
 /* THE FORM'S PLAN: env pin, the banked raxis=, or the race. Runs after the
  * standard walk's row and column plans are bound (the race runs them). */
-static void _il2d_rax_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_rax_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                            int N1, int N2, int ord, int T)
 {
     const char *log = getenv("VFFT_IL2D_LOG"), *e = getenv("VFFT_IL2D_RAXIS");

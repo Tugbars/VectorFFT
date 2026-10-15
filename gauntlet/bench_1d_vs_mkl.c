@@ -563,14 +563,14 @@ static const char *k1z_dir(void)
  * door now serves the wisdom2 store in that directory, and this bench reads
  * its verdicts from the same store — so bundle and bench agree by
  * construction rather than by filename coincidence. */
-static vfft_wisdom *k1z_bundle(void)
+static const char *k1z_bundle(void)
 {
-    static vfft_wisdom *W = NULL;
+    static const char *W = NULL;
     static int tried = 0;
     if (tried || !g_k1z_wpath)
         return W;
     tried = 1;
-    W = vfft_wisdom_load(k1z_dir());
+    W = (k1z_dir());
     if (!W)
         fprintf(stderr, "k1z: vfft_wisdom_load(%s) failed — cells skipped\n", k1z_dir());
     return W;
@@ -587,8 +587,8 @@ static void k1z_window_gap(vfft_plan h, int dir, double *z0, double *S)
     const double tw0 = vfft_now_ns();
     pace(K1Z_WINDOW_IDLE_MS);
     do
-        g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
-                : vfft_execute(h, dir, z0, NULL, S, NULL);
+        g_k1zip ? vfft_execute(h, dir, S, S)
+                : vfft_execute(h, dir, z0, S);
     while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
 }
 
@@ -605,13 +605,13 @@ static double k1z_time_vfft_d(vfft_plan h, double *z0, double *S, size_t total,
          * clock (3D_mt_il_strategy.md, the transient rule) */
         const double tw = vfft_now_ns();
         do
-            vfft_execute(h, dir, z0, NULL, S, NULL);
+            vfft_execute(h, dir, z0, S);
         while (vfft_now_ns() - tw < 5e6);
     }
     else
         for (int w = 0; w < 10; w++)
-            g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
-                    : vfft_execute(h, dir, z0, NULL, S, NULL);
+            g_k1zip ? vfft_execute(h, dir, S, S)
+                    : vfft_execute(h, dir, z0, S);
     int reps = reps_for(total);
     double best = 1e18;
     /* TWO WINDOWS (2026-09-21): best-of-5, then again after k1z_window_gap().
@@ -631,8 +631,8 @@ static double k1z_time_vfft_d(vfft_plan h, double *z0, double *S, size_t total,
                 pace(g_trial_pace_ms);
             double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
-                g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
-                        : vfft_execute(h, dir, z0, NULL, S, NULL);
+                g_k1zip ? vfft_execute(h, dir, S, S)
+                        : vfft_execute(h, dir, z0, S);
             double ns = (vfft_now_ns() - t0) / reps;
             if (ns < best)
                 best = ns;
@@ -969,7 +969,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
          * never key-collide with the out-of-place ones. */
 
     if (!g_k1noop_mt) bench_pin_one_thread();   /* the one-thread protocol (once per process) */
-    vfft_wisdom *W = k1z_bundle();
+    const char *W = k1z_bundle();
     if (!W)
     {
         printf("%-8d %-16s   SKIP (front-door bundle unavailable)\n", N, plan_s);
@@ -978,15 +978,14 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = g_k1zip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = g_k1zip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = 1;
     cfg.order = g_k1nat ? VFFT_ORDER_NATURAL : VFFT_ORDER_SCRAMBLED;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED; /* k1z cells run the committed z contract */
     cfg.nthreads = g_k1noop_mt ? g_mt : 1;
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -1005,13 +1004,13 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     if (g_k1zip)
     {
         memcpy(rt, z0, 2 * total * sizeof(double));
-        vfft_execute(h, VFFT_FORWARD, rt, NULL, rt, NULL);
-        vfft_execute(h, VFFT_BACKWARD, rt, NULL, rt, NULL);
+        vfft_execute(h, VFFT_FORWARD, rt, rt);
+        vfft_execute(h, VFFT_BACKWARD, rt, rt);
     }
     else
     {
-        vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
-        vfft_execute(h, VFFT_BACKWARD, S, NULL, rt, NULL);
+        vfft_execute(h, VFFT_FORWARD, z0, S);
+        vfft_execute(h, VFFT_BACKWARD, S, rt);
     }
     double maxerr = 0.0, maxmag = 0.0, inv = 1.0 / (double)N;
     for (size_t i = 0; i < 2 * total; i++)
@@ -1039,9 +1038,9 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
             memcpy(zv, z0, 2 * total * sizeof(double));
             g_fx_arm.execute(p);
             if (g_k1zip)
-                vfft_execute(h, VFFT_FORWARD, zv, NULL, zv, NULL);
+                vfft_execute(h, VFFT_FORWARD, zv, zv);
             else
-                vfft_execute(h, VFFT_FORWARD, z0, NULL, zv, NULL);
+                vfft_execute(h, VFFT_FORWARD, z0, zv);
             double xe = 0.0, xm = 0.0;
             for (size_t i = 0; i < 2 * total; i++)
             {
@@ -1077,11 +1076,11 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
                 memcpy(zv, z0, 2 * total * sizeof(double));
                 DftiComputeForward(d, zm);
                 if (g_k1zip)
-                    vfft_execute(h, VFFT_FORWARD, zv, NULL, zv, NULL);
+                    vfft_execute(h, VFFT_FORWARD, zv, zv);
                 else
                 { /* --k1noop: OOP handle — aliased calls are not its
                    * contract; run z0 -> zv through the OOP signature. */
-                    vfft_execute(h, VFFT_FORWARD, z0, NULL, zv, NULL);
+                    vfft_execute(h, VFFT_FORWARD, z0, zv);
                 }
                 double xe = 0.0, xm = 0.0;
                 for (size_t i = 0; i < 2 * total; i++)
@@ -1110,11 +1109,9 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
      * active, which reproduces the old no-MKL behaviour (ns only, ratio 0). */
     if (flip)
     { /* comparator first */
-        if (g_k1noop_mt) vfft_set_num_threads(1);
         mns = k1z_time_cmp(N, z0, total);
         cachebust();
         pace(cool_ms);
-        if (g_k1noop_mt) vfft_set_num_threads(g_mt);
         {
             const long e0 = vfft_ilfd_mt_passes() + vfft_ztt_mt_passes();
             vns = k1z_time_vfft(h, z0, S, total);
@@ -1123,7 +1120,6 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     }
     else
     { /* vfft first */
-        if (g_k1noop_mt) vfft_set_num_threads(g_mt);
         {
             const long e0 = vfft_ilfd_mt_passes() + vfft_ztt_mt_passes();
             vns = k1z_time_vfft(h, z0, S, total);
@@ -1131,7 +1127,6 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
         }
         cachebust();
         pace(cool_ms);
-        if (g_k1noop_mt) vfft_set_num_threads(1);
         mns = k1z_time_cmp(N, z0, total);
     }
     /* --k1dir: same cell, backward, same process/buffers/discipline. bwd/fwd
@@ -1244,7 +1239,7 @@ typedef struct { vfft_plan h; int dir; double *src, *dst; } real_ours_t;
 static void real_ours_body(void *v)
 {
     real_ours_t *c = (real_ours_t *)v;
-    vfft_execute(c->h, c->dir, c->src, NULL, c->dst, NULL);
+    vfft_execute(c->h, c->dir, c->src, c->dst);
 }
 typedef struct { fftwx_plan p; } real_fx_t;
 static void real_fx_body(void *v) { g_fx_arm.execute(((real_fx_t *)v)->p); }
@@ -1519,7 +1514,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     }
 #endif
     if (!g_k1noop_mt) bench_pin_one_thread();   /* --mt: the threaded cell's two-team protocol (main) */
-    vfft_wisdom *W = k1z_bundle();
+    const char *W = k1z_bundle();
     if (!W)
     {
         printf("%-8s %-16s   SKIP (front-door bundle unavailable)\n", shape, plan_s);
@@ -1528,19 +1523,18 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = c2r ? VFFT_C2R : VFFT_R2C;
-    cfg.placement = g_real_ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;   /* --realip (2026-10-08) */
-    cfg.owned_buffers = g_real_own;   /* --realown: door 2, the plan's own plane at its pitch */
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = g->nd;
+    cfg.placement = g_real_ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;   /* --realip (2026-10-08) */
+    cfg.flags |= (g_real_own) ? VFFT_FLAG_OWN_PITCH : 0;   /* --realown: door 2, the plan's own plane at its pitch */
+    cfg.rank = g->nd;
     cfg.n[0] = g->N1;
     cfg.n[1] = g->nd >= 2 ? g->N2 : 0;
     cfg.n[2] = g->nd == 3 ? g->N3 : 0;
     cfg.howmany = g->K;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.batch_geom = g->K > 1 ? VFFT_BATCH_TRANSFORM_CONTIGUOUS : VFFT_BATCH_DEFAULT;
-    cfg.order = g->nd >= 2 ? VFFT_ORDER_NATURAL : VFFT_ORDER_DEFAULT;   /* a real spectrum is natural */
+    cfg.batch = g->K > 1 ? VFFT_BATCH_CONTIGUOUS : VFFT_BATCH_DEFAULT;
+    cfg.order = VFFT_ORDER_NATURAL;   /* a real spectrum is natural */
     cfg.nthreads = g_k1noop_mt ? g_mt : 1;   /* --mt: the plan's thread snapshot; the comparator gets the same T */
-    cfg.wisdom = W;   /* wisdom_write 0: a bench never banks */
+    cfg.wisdom_dir = W;   /* wisdom_write 0: a bench never banks */
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -1577,13 +1571,21 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     size_t own_P = 0, own_n = 0;
     if (g_real_own)
     {
-        vfft_plan_planes(h, &own, NULL, NULL, NULL);
-        own_P = vfft_plan_stride(h);
+        {   /* the plan's pitch and its plane's size (vfft_info); the plane is the caller's */
+            vfft_info_t inf;
+            if (vfft_info(h, &inf) == 0 && inf.in_doubles)
+            {
+                own_P = inf.stride;
+                own = alloc_d(inf.in_doubles);
+                memset(own, 0, inf.in_doubles * sizeof(double));
+            }
+        }
         if (!own || own_P < ip_P)
         {
-            printf("%-8s %-16s   door 2: no owned plane (pitch %zu)\n", shape, plan_s, own_P);
+            printf("%-8s %-16s   door 2: no plane at the plan's pitch (pitch %zu)\n", shape, plan_s, own_P);
             free_d(x); free_d(ref); free_d(o); free_d(src);
             if (xp) free_d(xp);
+            if (own) free_d(own);
             vfft_destroy(h);
             return;
         }
@@ -1604,7 +1606,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         const double *in0 = g_real_own ? xo : (c2r ? ref : xp);
         double *buf = g_real_own ? own : src;
         const size_t bn = g_real_own ? own_n : cn;
-        vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, buf, NULL, buf, NULL);
+        vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, buf, buf);
         if (memcmp(buf, in0, bn * sizeof(double)) != 0)   /* a refused execute leaves the input, and the poison */
         {
             if (g_real_own && c2r)
@@ -1622,13 +1624,14 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
         memcpy(buf, in0, bn * sizeof(double));   /* the timed arm starts from the input */
     }
     else
-        vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, NULL, o, NULL);
+        vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, src, o);
     if (o[0] == -1.0e300)
     {
         printf("%-8s %-16s   execute REFUSED\n", shape, plan_s);
         free_d(x); free_d(ref); free_d(o); free_d(src);
         if (xp) free_d(xp);
         if (xo) free_d(xo);
+        if (own) free_d(own);
         vfft_destroy(h);
         return;
     }
@@ -1670,11 +1673,9 @@ long vfft_il2d_row_mt_passes(void);   /* vfft.c: the 2D real row pass's threaded
 #define REAL_ENG() (vfft_ztt_mt_passes() + vfft_il2d_col_mt_passes() + vfft_ilfd_mt_passes() + vfft_zfsr_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_zttr_mt_passes() + vfft_zrf_mt_passes() + vfft_tc_mt_dispatches() + vfft_ilnd_mt_passes() + vfft_il2d_row_mt_passes())   /* + the rank-3 tiers' counter (the 3D real cell, 2026-10-07); + the 2D real row pass's (the in-place door route, 2026-10-08) */
     if (flip)
     { /* comparator first; --mt: the two-team protocol of the K=1 c2c cell (our pool down while the comparator runs) */
-        if (g_k1noop_mt) vfft_set_num_threads(1);
         mns = real_time_cmp(g, c2r, g_real_ip ? xp : x, ref);
         cachebust();
         pace(cool_ms);
-        if (g_k1noop_mt) vfft_set_num_threads(g_mt);
         {
             const long e0 = REAL_ENG();
             vns = real_time_body(real_ours_body, &oc, tot);
@@ -1683,7 +1684,6 @@ long vfft_il2d_row_mt_passes(void);   /* vfft.c: the 2D real row pass's threaded
     }
     else
     {
-        if (g_k1noop_mt) vfft_set_num_threads(g_mt);
         {
             const long e0 = REAL_ENG();
             vns = real_time_body(real_ours_body, &oc, tot);
@@ -1691,7 +1691,6 @@ long vfft_il2d_row_mt_passes(void);   /* vfft.c: the 2D real row pass's threaded
         }
         cachebust();
         pace(cool_ms);
-        if (g_k1noop_mt) vfft_set_num_threads(1);
         mns = real_time_cmp(g, c2r, g_real_ip ? xp : x, ref);
     }
 #undef REAL_ENG
@@ -1732,6 +1731,7 @@ long vfft_il2d_row_mt_passes(void);   /* vfft.c: the 2D real row pass's threaded
     free_d(x); free_d(ref); free_d(o); free_d(src);
     if (xp) free_d(xp);
     if (xo) free_d(xo);
+    if (own) free_d(own);
     vfft_destroy(h);
 }
 
@@ -1917,7 +1917,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
                                               * caller's pin and left this TU's pool unsized */
     if (T == 1)
         bench_pin_one_thread();   /* the one-thread protocol + the sibling guard */
-    vfft_wisdom *W = k1z_bundle();
+    const char *W = k1z_bundle();
     if (!W)
     {
         printf("%s %-8s   SKIP (front-door bundle unavailable)\n", shape, plan_s);
@@ -1926,9 +1926,8 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = nd;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = nd;
     cfg.n[0] = N1;
     cfg.n[1] = N2;
     cfg.n[2] = nd == 3 ? N3 : 0;
@@ -1936,7 +1935,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = T;
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -1950,8 +1949,8 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     for (size_t i = 0; i < 2 * total; i++)
         z0[i] = (double)rand() / RAND_MAX - 0.5;
     /* roundtrip gate through the API */
-    vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
-    vfft_execute(h, VFFT_BACKWARD, S, NULL, rt, NULL);
+    vfft_execute(h, VFFT_FORWARD, z0, S);
+    vfft_execute(h, VFFT_BACKWARD, S, rt);
     double maxerr = 0.0, maxmag = 0.0, inv = 1.0 / (double)total;
     for (size_t i = 0; i < 2 * total; i++)
     {
@@ -2007,11 +2006,9 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
 #ifdef VFFT_HAS_MKL
     if (flip)
     {
-        if (T > 1) vfft_set_num_threads(1);
         mns = k2z_time_cmp(N1, N2, N3, z0, total);
         cachebust();
         pace(cool_ms);
-        if (T > 1) vfft_set_num_threads(T);
         {
             const long e0 = K2Z_ENG();
             vns = k1z_time_vfft(h, z0, S, total);
@@ -2020,7 +2017,6 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     }
     else
     {
-        if (T > 1) vfft_set_num_threads(T);
         {
             const long e0 = K2Z_ENG();
             vns = k1z_time_vfft(h, z0, S, total);
@@ -2028,13 +2024,11 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
         }
         cachebust();
         pace(cool_ms);
-        if (T > 1) vfft_set_num_threads(1);
         mns = k2z_time_cmp(N1, N2, N3, z0, total);
     }
 #else
     (void)cool_ms;
     (void)flip;
-    if (T > 1) vfft_set_num_threads(T);
     {
         const long e0 = K2Z_ENG();
         vns = k1z_time_vfft(h, z0, S, total);
@@ -2209,8 +2203,7 @@ static double kzb_time_loop(vfft_plan h1, int N, int K, double *z0h,
     const size_t tn = 2 * (size_t)N;
     for (int w = 0; w < 10; w++)
         for (int k = 0; k < K; k++)
-            vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, NULL,
-                         S + (size_t)k * tn, NULL);
+            vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, S + (size_t)k * tn);
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -2220,8 +2213,7 @@ static double kzb_time_loop(vfft_plan h1, int N, int K, double *z0h,
         double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
             for (int k = 0; k < K; k++)
-                vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, NULL,
-                             S + (size_t)k * tn, NULL);
+                vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, S + (size_t)k * tn);
         double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
@@ -2237,7 +2229,7 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
     const int T = g_k1noop_mt ? g_mt : 1;
     if (T == 1)
         bench_pin_one_thread();   /* the one-thread protocol + the sibling guard */
-    vfft_wisdom *W = k1z_bundle();
+    const char *W = k1z_bundle();
     if (!W)
     {
         printf("%-8d K=%-3d   SKIP (front-door bundle unavailable)\n", N, K);
@@ -2246,9 +2238,9 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE; /* C1: the story starts OOP */
-    cfg.rigor = VFFT_MEASURE;        /* quick DP on the calibrate-on-miss */
-    cfg.dims = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT; /* C1: the story starts OOP */
+    /* quick DP on the calibrate-on-miss */
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = (size_t)K;
     cfg.order = VFFT_ORDER_NATURAL; /* MKL is natural; cross-engine gate */
@@ -2258,9 +2250,9 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
      * default geometry is transform-contiguous, so leaving this implicit
      * would silently turn the "vfft" column into a second loop arm and the
      * speedup would read 1.0x. */
-    cfg.batch_geom = VFFT_BATCH_LANE_MAJOR;
+    cfg.batch = VFFT_BATCH_LANE_MAJOR;
     cfg.nthreads = T;
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -2273,7 +2265,7 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
     vfft_config_t c1 = cfg;
     c1.howmany = 1;
     c1.nthreads = 1;
-    c1.batch_geom = VFFT_BATCH_DEFAULT;
+    c1.batch = VFFT_BATCH_DEFAULT;
     vfft_plan h1 = vfft_create(&c1);
 
     size_t total = (size_t)N * (size_t)K;
@@ -2302,7 +2294,7 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
         double *zm = alloc_d(2 * total), *zh = alloc_d(2 * total);
         if (kzb_mkl_ref(N, K, z0, total, 0, zm))
         {
-            vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+            vfft_execute(h, VFFT_FORWARD, z0, S);
             double xe = 0.0, xm = 0.0;
             for (size_t i = 0; i < 2 * total; i++)
             {
@@ -2342,8 +2334,7 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
                 {
                     const size_t tn = 2 * (size_t)N;
                     for (int k = 0; k < K; k++)
-                        vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn,
-                                     NULL, S + (size_t)k * tn, NULL);
+                        vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, S + (size_t)k * tn);
                     double le = 0.0, lm = 0.0;
                     for (size_t i = 0; i < 2 * total; i++)
                     {
@@ -2367,16 +2358,15 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
     /* the engagement proof at T > 1 (mt_results_need_engagement_proof): the column pass's MT counter
      * over the timed executes; the loop arm runs its K = 1 plans serially either way */
 #define KZB_OURS() do { \
-        if (T > 1) vfft_set_num_threads(T); \
+        \
         { const long e0 = vfft_il2d_col_mt_passes(); \
           vns = k1z_time_vfft(h, z0, S, total); \
           if (T > 1) g_cell_engaged = vfft_il2d_col_mt_passes() - e0; } \
-        if (h1) { vfft_set_num_threads(1); pace(g_trial_pace_ms); lns = kzb_time_loop(h1, N, K, z0h, S, total); } \
+        if (h1) { pace(g_trial_pace_ms); lns = kzb_time_loop(h1, N, K, z0h, S, total); } \
     } while (0)
 #ifdef VFFT_HAS_MKL
     if (flip)
     {
-        if (T > 1) vfft_set_num_threads(1);
         mns = kzb_time_mkl(N, K, z0, total, 0);
         pace(g_trial_pace_ms);
         hns = kzb_time_mkl(N, K, z0, total, 1);
@@ -2389,7 +2379,6 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
         KZB_OURS();
         cachebust();
         pace(cool_ms);
-        if (T > 1) vfft_set_num_threads(1);
         mns = kzb_time_mkl(N, K, z0, total, 0);
         pace(g_trial_pace_ms);
         hns = kzb_time_mkl(N, K, z0, total, 1);
@@ -2527,7 +2516,7 @@ static double kzbr_time_loop(vfft_plan h1, int N, int K, int c2r, double *in_h, 
     int reps = reps_for(total), w, k, t, i;
     double best = 1e18;
 #define KZBR_LOOP() do { for (k = 0; k < K; k++) \
-        vfft_execute(h1, dir, in_h + (size_t)k * (c2r ? cp : rp), NULL, out_h + (size_t)k * (c2r ? rp : cp), NULL); } while (0)
+        vfft_execute(h1, dir, in_h + (size_t)k * (c2r ? cp : rp), out_h + (size_t)k * (c2r ? rp : cp)); } while (0)
     for (w = 0; w < 10; w++)
         KZBR_LOOP();
     for (t = 0; t < 5; t++)
@@ -2553,7 +2542,7 @@ static void run_kzbr_cell(int N, int K, int c2r, FILE *out, int cool_ms, int fli
     const char *plan_s = c2r ? "z:lmc2r" : "z:lmr2c";
     const size_t XN = (size_t)N * (size_t)K, ZN = 2 * (size_t)hp1 * (size_t)K;   /* the reals, the bins (doubles) */
     const size_t nin = c2r ? ZN : XN, nout = c2r ? XN : ZN, total = XN;
-    vfft_wisdom *W;
+    const char *W;
     vfft_config_t cfg, c1;
     vfft_plan h, h1;
     double *in, *in_h, *S, *S_h, *zm, *zh;
@@ -2574,16 +2563,15 @@ static void run_kzbr_cell(int N, int K, int c2r, FILE *out, int cool_ms, int fli
     }
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = c2r ? VFFT_C2R : VFFT_R2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = (size_t)K;
-    cfg.order = VFFT_ORDER_DEFAULT;
+    cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.batch_geom = VFFT_BATCH_LANE_MAJOR;   /* the real batch's DEFAULT is lane-major too; said explicitly here */
+    cfg.batch = VFFT_BATCH_LANE_MAJOR;   /* the real batch's DEFAULT is lane-major too; said explicitly here */
     cfg.nthreads = T;
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     h = vfft_create(&cfg);
     if (!h)
     {
@@ -2593,7 +2581,7 @@ static void run_kzbr_cell(int N, int K, int c2r, FILE *out, int cool_ms, int fli
     c1 = cfg;
     c1.howmany = 1;
     c1.nthreads = 1;
-    c1.batch_geom = VFFT_BATCH_DEFAULT;
+    c1.batch = VFFT_BATCH_DEFAULT;
     h1 = vfft_create(&c1);
     in = alloc_d(nin + 16); in_h = alloc_d(nin + 16); S = alloc_d(nout + 16); S_h = alloc_d(nout + 16);
     zm = alloc_d(nout + 16); zh = alloc_d(nout + 16);
@@ -2624,7 +2612,7 @@ static void run_kzbr_cell(int N, int K, int c2r, FILE *out, int cool_ms, int fli
     if (kzbr_mkl_ref(N, K, c2r, in, 0, zm))
     {   /* ours vs MKL on the identical layout; the loop arm vs MKL's contiguous output */
         double xe = 0.0, xm = 0.0;
-        vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, in, NULL, S, NULL);
+        vfft_execute(h, c2r ? VFFT_BACKWARD : VFFT_FORWARD, in, S);
         for (i = 0; i < nout; i++)
         {
             const double d = fabs(S[i] - zm[i]), m = fabs(zm[i]);
@@ -2639,8 +2627,7 @@ static void run_kzbr_cell(int N, int K, int c2r, FILE *out, int cool_ms, int fli
                 const size_t rp = (size_t)N, cp = 2 * (size_t)hp1;
                 int k;
                 for (k = 0; k < K; k++)
-                    vfft_execute(h1, c2r ? VFFT_BACKWARD : VFFT_FORWARD, in_h + (size_t)k * (c2r ? cp : rp), NULL,
-                                 S_h + (size_t)k * (c2r ? rp : cp), NULL);
+                    vfft_execute(h1, c2r ? VFFT_BACKWARD : VFFT_FORWARD, in_h + (size_t)k * (c2r ? cp : rp), S_h + (size_t)k * (c2r ? rp : cp));
             }
             for (i = 0; i < nout; i++)
             {
@@ -2654,16 +2641,15 @@ static void run_kzbr_cell(int N, int K, int c2r, FILE *out, int cool_ms, int fli
 #endif
     g_cell_engaged = -1;
 #define KZBR_OURS() do { \
-        if (T > 1) vfft_set_num_threads(T); \
+        \
         { const long e0 = vfft_il2d_col_mt_passes(); \
           vns = k1z_time_vfft_d(h, in, S, total, c2r ? VFFT_BACKWARD : VFFT_FORWARD); \
           if (T > 1) g_cell_engaged = vfft_il2d_col_mt_passes() - e0; } \
-        if (h1) { vfft_set_num_threads(1); pace(g_trial_pace_ms); lns = kzbr_time_loop(h1, N, K, c2r, in_h, S_h, total); } \
+        if (h1) { pace(g_trial_pace_ms); lns = kzbr_time_loop(h1, N, K, c2r, in_h, S_h, total); } \
     } while (0)
 #ifdef VFFT_HAS_MKL
     if (flip)
     {
-        if (T > 1) vfft_set_num_threads(1);
         mns = kzbr_time_mkl(N, K, c2r, in, zm, total, 0);
         pace(g_trial_pace_ms);
         hns = kzbr_time_mkl(N, K, c2r, in_h, zh, total, 1);
@@ -2676,7 +2662,6 @@ static void run_kzbr_cell(int N, int K, int c2r, FILE *out, int cool_ms, int fli
         KZBR_OURS();
         cachebust();
         pace(cool_ms);
-        if (T > 1) vfft_set_num_threads(1);
         mns = kzbr_time_mkl(N, K, c2r, in, zm, total, 0);
         pace(g_trial_pace_ms);
         hns = kzbr_time_mkl(N, K, c2r, in_h, zh, total, 1);
@@ -2782,7 +2767,7 @@ static void ilmt_pin_pcores(void)
 static double ilmt_time_ours(vfft_plan h, double *z0, double *S, size_t total)
 {
     for (int w = 0; w < 10; w++)
-        vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+        vfft_execute(h, VFFT_FORWARD, z0, S);
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -2791,7 +2776,7 @@ static double ilmt_time_ours(vfft_plan h, double *z0, double *S, size_t total)
             pace(g_trial_pace_ms);
         double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+            vfft_execute(h, VFFT_FORWARD, z0, S);
         double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
@@ -2847,7 +2832,7 @@ static double ilmt_time_mkl(int N, int K, const double *z0, size_t total,
 
 static void run_ilmt_cell(int N, int K, FILE *out, int cool_ms, int flip)
 {
-    vfft_wisdom *W = k1z_bundle();
+    const char *W = k1z_bundle();
     if (!W)
     {
         printf("%-8d K=%-3d   SKIP (front-door bundle unavailable)\n", N, K);
@@ -2856,21 +2841,19 @@ static void run_ilmt_cell(int N, int K, FILE *out, int cool_ms, int flip)
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = (size_t)K;
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS; /* explicit: the axis
+    cfg.batch = VFFT_BATCH_CONTIGUOUS; /* explicit: the axis
                                                        * under test */
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     /* Create the MT handle FIRST (mt_c2c_gate discipline: an MT-first create
-     * is what exposed the 2026-07-06 lazily-built-shared-state race). Note
-     * each create calls vfft_set_num_threads(cfg.nthreads) internally, so the
-     * ST create below TEARS DOWN the pool — harmless, because the TC execute
-     * re-asserts h->nthreads before it fans out. */
+     * is what exposed the 2026-07-06 lazily-built-shared-state race). The ST
+     * create below leaves the pool as the MT create grew it: a create only
+     * grows the pool, and each plan runs at its own count. */
     cfg.nthreads = g_mt;
     vfft_plan hmt = vfft_create(&cfg);
     cfg.nthreads = 1;
@@ -2898,8 +2881,8 @@ static void run_ilmt_cell(int N, int K, FILE *out, int cool_ms, int flip)
         mkl_set_num_threads(1);
         if (kzb_mkl_ref(N, K, z0, total, 1, zh))
         {
-            vfft_execute(hmt, VFFT_FORWARD, z0, NULL, S, NULL);
-            vfft_execute(hst, VFFT_FORWARD, z0, NULL, Sst, NULL);
+            vfft_execute(hmt, VFFT_FORWARD, z0, S);
+            vfft_execute(hst, VFFT_FORWARD, z0, Sst);
             double xe = 0.0, xm = 0.0;
             for (size_t i = 0; i < 2 * total; i++)
             {
@@ -3318,7 +3301,7 @@ static double il2d__spread(const double *v, int n, double med)
  * the c2r mirror is the follow-up. ESTIMATE rigor: both doors serve the
  * same plan family, isolating the DOOR gap; calibrated-plan ratios are
  * a separate question. */
-static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
+static void run_2dreal_cell(int N1, int N2, int rounds, const char *W)
 {
     size_t RN = (size_t)N1 * N2, hp1 = (size_t)(N2 / 2 + 1);
     size_t CN = (size_t)N1 * hp1, i;
@@ -3336,10 +3319,10 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         x[i] = (double)rand() / RAND_MAX - 0.5;
     memset(&c, 0, sizeof c);
     c.transform = VFFT_R2C;
-    c.placement = VFFT_OUTOFPLACE;
-    c.rigor = VFFT_MEASURE; /* VFFT_ESTIMATE is a planned tier only */
-    c.dims = 2; c.n[0] = N1; c.n[1] = N2;
-    c.howmany = 1; c.nthreads = 1; c.wisdom = W;
+    c.placement = VFFT_PLACEMENT_OUT;
+    /* VFFT_ESTIMATE is a planned tier only */
+    c.rank = 2; c.n[0] = N1; c.n[1] = N2;
+    c.howmany = 1; c.nthreads = 1; c.wisdom_dir = W;
     c.layout = VFFT_LAYOUT_SPLIT;
     ps = vfft_create(&c);
     if (!ps)
@@ -3347,7 +3330,7 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         printf("  %4dx%-4d  split create FAIL\n", N1, N2);
         goto done;
     }
-    vfft_execute(ps, VFFT_FORWARD, x, NULL, ore, oim);
+    vfft_execute_split(ps, VFFT_FORWARD, x, NULL, ore, oim);
     /* ── O-nat: the native IL tier — THE interleaved serving since M3
      * (the z-veneer door is deleted; an interleaved create IS native or
      * refuses). Math gated by il2d_real_gate; validated here by the
@@ -3358,7 +3341,7 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
     c.layout = VFFT_LAYOUT_INTERLEAVED;
     pn = vfft_create(&c);
     if (pn)
-        vfft_execute(pn, VFFT_FORWARD, x, NULL, zn, NULL);
+        vfft_execute(pn, VFFT_FORWARD, x, zn);
     else
         printf("  %4dx%-4d  O-nat create REFUSED — arm dropped\n",
                N1, N2);
@@ -3394,13 +3377,13 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                 for (k = 0; k < reps; k++)
                 {
                     if (arm == 0)
-                        vfft_execute(ps, VFFT_FORWARD, x, NULL, ore, oim);
+                        vfft_execute_split(ps, VFFT_FORWARD, x, NULL, ore, oim);
                     else if (arm == 1 && mok)
                         DftiComputeForward(h, (void *)x, cce);
                     else if (arm == 2)
                         memcpy(ctl, x, RN * 8);
                     else if (arm == 3 && pn)
-                        vfft_execute(pn, VFFT_FORWARD, x, NULL, zn, NULL);
+                        vfft_execute(pn, VFFT_FORWARD, x, zn);
                 }
                 dt = (vfft_now_ns() - t0) / (double)reps;
                 if (arm == 0) ts[ns_++] = dt;
@@ -3450,7 +3433,7 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         /* correctness: the split door must invert to N1*N2*x */
         {
             double d = 0, sc2 = (double)N1 * N2;
-            vfft_execute(psc, VFFT_BACKWARD, ore, oim, xr, NULL);
+            vfft_execute_split(psc, VFFT_BACKWARD, ore, oim, xr, NULL);
             for (i = 0; i < RN; i++)
             {
                 double a2 = fabs(xr[i] / sc2 - x[i]);
@@ -3474,7 +3457,7 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
             if (pnc)
             {
                 double d3 = 0, sc3 = (double)N1 * N2;
-                vfft_execute(pnc, VFFT_BACKWARD, zn, NULL, xr, NULL);
+                vfft_execute(pnc, VFFT_BACKWARD, zn, xr);
                 for (i = 0; i < RN; i++)
                 {
                     double a3 = fabs(xr[i] / sc3 - x[i]);
@@ -3540,13 +3523,11 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                     for (k = 0; k < reps; k++)
                     {
                         if (arm == 0)
-                            vfft_execute(psc, VFFT_BACKWARD, ore, oim, xr,
-                                         NULL);
+                            vfft_execute_split(psc, VFFT_BACKWARD, ore, oim, xr, NULL);
                         else if (arm == 1 && mok2)
                             DftiComputeBackward(hb, cce2, xr);
                         else if (arm == 2 && pnc)
-                            vfft_execute(pnc, VFFT_BACKWARD, zn, NULL, xr,
-                                         NULL);
+                            vfft_execute(pnc, VFFT_BACKWARD, zn, xr);
                     }
                     dt = (vfft_now_ns() - t0) / (double)reps;
                     if (arm == 0) bs[bns++] = dt;
@@ -3583,7 +3564,7 @@ done:
     free_d(zn);
 }
 
-static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
+static void run_2dil_cell(int N1, int N2, int rounds, const char *W)
 {
     size_t T = (size_t)N1 * N2, i;
     double *sre = alloc_d(T), *simg = alloc_d(T);   /* O-split planes   */
@@ -3611,19 +3592,20 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         vfft_config_t cfg;
         memset(&cfg, 0, sizeof cfg);
         cfg.transform = VFFT_C2C;
-        cfg.placement = VFFT_INPLACE;
-        cfg.rigor = VFFT_MEASURE;
-        cfg.dims = 2;
+        cfg.placement = VFFT_PLACEMENT_IN;
+        cfg.rank = 2;
         cfg.n[0] = N1;
         cfg.n[1] = N2;
         cfg.howmany = 1;
-        cfg.order = VFFT_ORDER_DEFAULT;
+        cfg.order = VFFT_ORDER_NATURAL;
         cfg.nthreads = 1;
-        cfg.wisdom = W;
-        cfg.wisdom_write = 0; /* benches never mutate the store */
+        cfg.wisdom_dir = W;
+        /* benches never mutate the store */
         cfg.layout = VFFT_LAYOUT_SPLIT;
+        cfg.order = VFFT_ORDER_SCRAMBLED;   /* the split tier's own order (its old default) */
         hs = vfft_create(&cfg);
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+        cfg.order = VFFT_ORDER_NATURAL;     /* the interleaved tier's own */
         hi = vfft_create(&cfg);
         /* O-native: same caller contract, native tier opted in for THIS
          * create only. Engagement is verified below, not assumed. */
@@ -3655,8 +3637,8 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
     memcpy(sre, xr, T * 8);
     memcpy(simg, xi, T * 8);
     if (hs) {
-        vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg);
-        vfft_execute(hs, VFFT_BACKWARD, sre, simg, sre, simg);
+        vfft_execute_split(hs, VFFT_FORWARD, sre, simg, sre, simg);
+        vfft_execute_split(hs, VFFT_BACKWARD, sre, simg, sre, simg);
         rts = 0;
         for (i = 0; i < T; i++) {
             double a1 = fabs(sre[i] / (double)T - xr[i]);
@@ -3666,8 +3648,8 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         }
     }
     for (i = 0; i < T; i++) { z[2 * i] = xr[i]; z[2 * i + 1] = xi[i]; }
-    vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
-    vfft_execute(hi, VFFT_BACKWARD, z, NULL, z, NULL);
+    vfft_execute(hi, VFFT_FORWARD, z, z);
+    vfft_execute(hi, VFFT_BACKWARD, z, z);
     rti = 0;
     for (i = 0; i < T; i++) {
         double a1 = fabs(z[2 * i] / (double)T - xr[i]);
@@ -3681,9 +3663,9 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
     if (hn) {
         double dmax = 0.0;
         for (i = 0; i < T; i++) { zn[2 * i] = xr[i]; zn[2 * i + 1] = xi[i]; }
-        vfft_execute(hn, VFFT_FORWARD, zn, NULL, zn, NULL);
+        vfft_execute(hn, VFFT_FORWARD, zn, zn);
         for (i = 0; i < T; i++) { z[2 * i] = xr[i]; z[2 * i + 1] = xi[i]; }
-        vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
+        vfft_execute(hi, VFFT_FORWARD, z, z);
         for (i = 0; i < 2 * T; i++) {
             double d = fabs(zn[i] - z[i]);
             if (d > dmax) dmax = d;
@@ -3719,9 +3701,9 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                 t0 = vfft_now_ns();
                 for (k = 0; k < reps; k++) {
                     switch (a) {
-                    case 0: vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg); break;
-                    case 1: vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL); break;
-                    case 2: vfft_execute(hn, VFFT_FORWARD, zn, NULL, zn, NULL); break;
+                    case 0: vfft_execute_split(hs, VFFT_FORWARD, sre, simg, sre, simg); break;
+                    case 1: vfft_execute(hi, VFFT_FORWARD, z, z); break;
+                    case 2: vfft_execute(hn, VFFT_FORWARD, zn, zn); break;
                     case 3: DftiComputeForward(hMi, mz); break;
                     case 4: DftiComputeForward(hMs, xr, xi, mr, mi); break;
                     case 5: memcpy(cd, cs, 2 * T * 8); break;
@@ -3745,9 +3727,9 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
             t0 = vfft_now_ns();
             for (k = 0; k < reps; k++) {
                 switch (a) {
-                case 0: vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg); break;
-                case 1: vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL); break;
-                case 2: vfft_execute(hn, VFFT_FORWARD, zn, NULL, zn, NULL); break;
+                case 0: vfft_execute_split(hs, VFFT_FORWARD, sre, simg, sre, simg); break;
+                case 1: vfft_execute(hi, VFFT_FORWARD, z, z); break;
+                case 2: vfft_execute(hn, VFFT_FORWARD, zn, zn); break;
                 case 5: memcpy(cd, cs, 2 * T * 8); break;
                 }
             }
@@ -3853,7 +3835,7 @@ static void mkl3d_warm_team(int T)
     free_d(x); free_d(y);
 }
 #endif
-static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, int T)
+static void run_3dil_cell(int N1, int N2, int N3, int rounds, const char *W, int T)
 {
     size_t TN = (size_t)N1 * N2 * N3, i;
     double *xr = alloc_d(TN), *xi = alloc_d(TN);         /* M-split input   */
@@ -3885,18 +3867,16 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
         vfft_config_t cfg;
         memset(&cfg, 0, sizeof cfg);
         cfg.transform = VFFT_C2C;
-        cfg.placement = VFFT_OUTOFPLACE;
-        cfg.rigor = VFFT_MEASURE;
-        cfg.dims = 3;
+        cfg.placement = VFFT_PLACEMENT_OUT;
+        cfg.rank = 3;
         cfg.n[0] = N1;
         cfg.n[1] = N2;
         cfg.n[2] = N3;
         cfg.howmany = 1;
-        cfg.order = (getenv("VFFT_3DIL_ORDER") && !strcmp(getenv("VFFT_3DIL_ORDER"), "nat"))
-                        ? VFFT_ORDER_NATURAL : VFFT_ORDER_DEFAULT; /* natural: the like-for-like order (MKL's output is natural) */
+        cfg.order = VFFT_ORDER_NATURAL; /* natural: the like-for-like order (MKL's output is natural) */
         cfg.nthreads = T; /* --mt: the plan's thread snapshot; MKL gets the same T */
-        cfg.wisdom = W;
-        cfg.wisdom_write = 0; /* benches never mutate the store */
+        cfg.wisdom_dir = W;
+        /* benches never mutate the store */
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
         hn = vfft_create(&cfg);
     }
@@ -3905,8 +3885,8 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
             N1, N2, N3, hn ? "native" : "REFUSED", rounds);
     /* roundtrip pre-gate on fresh data (mo as the bwd scratch) */
     if (hn) {
-        vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL);
-        vfft_execute(hn, VFFT_BACKWARD, zo, NULL, mo, NULL);
+        vfft_execute(hn, VFFT_FORWARD, z, zo);
+        vfft_execute(hn, VFFT_BACKWARD, zo, mo);
         rtn = 0;
         for (i = 0; i < 2 * TN; i++) {
             double d = fabs(mo[i] / (double)TN - z[i]);
@@ -3954,7 +3934,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
                 const double tw = vfft_now_ns();
                 do {
                     switch (a) {
-                    case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); nexec++; break;
+                    case 0: vfft_execute(hn, VFFT_FORWARD, z, zo); nexec++; break;
 #ifdef VFFT_HAS_MKL
                     case 1: DftiComputeForward(hMi, mz, mo); break;
                     case 2: DftiComputeForward(hMs, xr, xi, mr, mi); break;
@@ -3964,24 +3944,16 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
                 } while (vfft_now_ns() - tw < 5e6);
             }
             if (T > 1) {
-                /* THREAD HYGIENE (the --ilmt traps): (a) the library's pool
-                 * workers spin forever, so every MKL arm is preceded by a
-                 * real teardown; (b) MKL's OpenMP team spins KMP_BLOCKTIME
-                 * (200 ms) after a compute, so our arm after an MKL arm
-                 * gets 300 ms of cool first. Pool rebuilt before ours,
-                 * outside the timed region. THROUGH THE PUBLIC API: this
-                 * TU includes threads.h and therefore owns a SECOND copy
-                 * of the pool state — thread_pool_resize here would
-                 * act on the bench's copy, not on the pool the plan runs
-                 * (trap (d), found 2026-09-07: the bench's own startup
-                 * pool = 7 idle spinners on the plan's worker cores,
-                 * every threaded arm in the process 100x slow). */
-                if (a == 1 || a == 2)
-                    vfft_set_num_threads(1);
-                else if (a == 0) {
-                    vfft_set_num_threads(T);
-                    if (prev_mkl) pace(300);
-                }
+                /* THREAD HYGIENE (the --ilmt traps): MKL's OpenMP team spins
+                 * KMP_BLOCKTIME (200 ms) after a compute, so our arm after an
+                 * MKL arm gets 300 ms of cool first, outside the timed region.
+                 * The library's pool is the plan's (config.nthreads): this TU
+                 * includes threads.h and therefore owns a SECOND copy of the
+                 * pool state, which it never sizes (trap (d), found 2026-09-07:
+                 * the bench's own startup pool = 7 idle spinners on the plan's
+                 * worker cores, every threaded arm in the process 100x slow). */
+                if (a == 0 && prev_mkl)
+                    pace(300);
                 prev_mkl = (a == 1 || a == 2);
                 /* UNTIMED warm-up of >= 5 ms per sample, both sides alike:
                  * the rebuilt pool's workers start up, MKL's parked team
@@ -3995,7 +3967,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
                     const double tw = vfft_now_ns();
                     do {
                         switch (a) {
-                        case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); nexec++; break;
+                        case 0: vfft_execute(hn, VFFT_FORWARD, z, zo); nexec++; break;
 #ifdef VFFT_HAS_MKL
                         case 1: DftiComputeForward(hMi, mz, mo); break;
                         case 2: DftiComputeForward(hMs, xr, xi, mr, mi); break;
@@ -4008,7 +3980,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
             t0 = vfft_now_ns();
             for (k = 0; k < reps; k++) {
                 switch (a) {
-                case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); nexec++; break;
+                case 0: vfft_execute(hn, VFFT_FORWARD, z, zo); nexec++; break;
 #ifdef VFFT_HAS_MKL
                 case 1: DftiComputeForward(hMi, mz, mo); break;
                 case 2: DftiComputeForward(hMs, xr, xi, mr, mi); break;
@@ -4598,7 +4570,7 @@ static const char *ZR_RT[3] = { "r0", "r1", "W " };
  * suspiciously fast timing. Gate-before-time catches it a second way.
  *
  * The parameter MUST be named `reps`: ZR2C_TIME captures it by name. */
-static void zr_fd_arm(zr_arm_t *a, int N, vfft_wisdom *W, int is_c2r, int ip,
+static void zr_fd_arm(zr_arm_t *a, int N, const char *W, int is_c2r, int ip,
                       int ri, const double *x, const double *bsrc,
                       int haveref, double *dst, int reps)
 {
@@ -4615,14 +4587,13 @@ static void zr_fd_arm(zr_arm_t *a, int N, vfft_wisdom *W, int is_c2r, int ip,
     zr_route_env(ri);                      /* create-time, outside all timing */
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = is_c2r ? VFFT_C2R : VFFT_R2C;
-    cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor     = VFFT_MEASURE;
-    cfg.dims      = 1;
+    cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank      = 1;
     cfg.n[0]      = N;                     /* the REAL N, not half */
     cfg.howmany   = 1;
     cfg.layout    = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads  = 1;
-    cfg.wisdom    = W;
+    cfg.wisdom_dir = W;
     /* cfg.order left 0: real spectra are natural by definition.
      * cfg.wisdom_write left 0: A BENCH NEVER BANKS. */
     p = vfft_create(&cfg);
@@ -4632,14 +4603,12 @@ static void zr_fd_arm(zr_arm_t *a, int N, vfft_wisdom *W, int is_c2r, int ip,
     /* ---- gate, one shot, BEFORE any timing ---- */
     if (ip) {
         memcpy(dst, src, 8 * xs);
-        vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD,
-                     dst, NULL, dst, NULL);
+        vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD, dst, dst);
         /* refusal shows as "never moved" */
         a->refused = (memcmp(dst, src, 8 * xs) == 0);
     } else {
         for (i = 0; i < xs; i++) dst[i] = -1.0e300;   /* poison */
-        vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD,
-                     (double *)src, NULL, dst, NULL);
+        vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD, (double *)src, dst);
         a->refused = (dst[0] == -1.0e300);
     }
     if (a->refused) { vfft_destroy(p); return; }
@@ -4672,11 +4641,9 @@ static void zr_fd_arm(zr_arm_t *a, int N, vfft_wisdom *W, int is_c2r, int ip,
         double t[5];
         if (ip) {
             memcpy(dst, src, 8 * xs);
-            ZR2C_TIME(t, vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD,
-                                      dst, NULL, dst, NULL));
+            ZR2C_TIME(t, vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD, dst, dst));
         } else {
-            ZR2C_TIME(t, vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD,
-                                      (double *)src, NULL, dst, NULL));
+            ZR2C_TIME(t, vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD, (double *)src, dst));
         }
         a->ns = _zr2c_med5(t);
     }
@@ -4690,7 +4657,7 @@ static void run_zr2c_fd_cell(int N, FILE *out, int cool_ms, int rot)
 {
     const size_t xs = (size_t)N + 2;
     const int half = N / 2;
-    vfft_wisdom *W = k1z_bundle();
+    const char *W = k1z_bundle();
     double *x, *dst[2][2];
     const double *bsrc = NULL;
     double *crefbuf = NULL;
@@ -4772,7 +4739,7 @@ static void run_zr2c_fd_cell(int N, FILE *out, int cool_ms, int rot)
 static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
 {
     const int half = N / 2, top = N / 4;
-    vfft_wisdom *W = k1z_bundle();
+    const char *W = k1z_bundle();
     if (!W)
     {
         printf("%-8d zr2c   SKIP (front-door bundle unavailable)\n", N);
@@ -4781,15 +4748,14 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
     cfg.n[0] = half;
     cfg.howmany = 1;
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1;
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -4854,7 +4820,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
 #endif
 
     /* ── gates, one shot per direction ── */
-    vfft_execute(h, VFFT_FORWARD, x, NULL, Zc, NULL);
+    vfft_execute(h, VFFT_FORWARD, x, Zc);
     _zr2c_fold_fwd(Zc, XC, aS, aC, N, 1, (size_t)N, (size_t)N + 2);
 #ifdef VFFT_HAS_MKL
     if (okF)
@@ -4872,7 +4838,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
 #endif
     {   /* ours c2r fed the reference spectrum: must return N*x */
         _zr2c_fold_bwd(bsrc, Zc, bS, bC, N, 1, (size_t)N + 2, (size_t)N);
-        vfft_execute(h, VFFT_BACKWARD, Zc, NULL, y, NULL);
+        vfft_execute(h, VFFT_BACKWARD, Zc, y);
         double gw = 0, gm = 0;
         for (int i = 0; i < N; i++)
         {
@@ -4913,12 +4879,12 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
     }
 #endif
     ZR2C_TIME(tf, {
-        vfft_execute(h, VFFT_FORWARD, x, NULL, Zc, NULL);
+        vfft_execute(h, VFFT_FORWARD, x, Zc);
         _zr2c_fold_fwd(Zc, XC, aS, aC, N, 1, (size_t)N, (size_t)N + 2);
     });
     ZR2C_TIME(tb, {
         _zr2c_fold_bwd(bsrc, Zc, bS, bC, N, 1, (size_t)N + 2, (size_t)N);
-        vfft_execute(h, VFFT_BACKWARD, Zc, NULL, y, NULL);
+        vfft_execute(h, VFFT_BACKWARD, Zc, y);
     });
     vfw = _zr2c_med5(tf); vbw = _zr2c_med5(tb);
 #ifdef VFFT_HAS_MKL
@@ -4953,15 +4919,14 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
                 vfft_config_t scf;
                 memset(&scf, 0, sizeof scf);
                 scf.transform = VFFT_C2C;
-                scf.placement = VFFT_OUTOFPLACE;
-                scf.rigor = VFFT_MEASURE;
-                scf.dims = 1;
+                scf.placement = VFFT_PLACEMENT_OUT;
+                scf.rank = 1;
                 scf.n[0] = half;
                 scf.howmany = 1;
                 scf.order = VFFT_ORDER_SCRAMBLED;
                 scf.layout = VFFT_LAYOUT_INTERLEAVED;
                 scf.nthreads = 1;
-                scf.wisdom = W;
+                scf.wisdom_dir = W;
                 vfft_plan hs = vfft_create(&scf);
                 int *ip = (int *)malloc(sizeof(int) * (size_t)half);
                 int *pm = (int *)malloc(sizeof(int) * (size_t)half);
@@ -4972,7 +4937,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
                     {
                         if (cv == 0) _zr2c_perm_dif(ch, nf, half, pm, ip);
                         else         _zr2c_perm_dit(ch, nf, half, pm, ip);
-                        vfft_execute(hs, VFFT_FORWARD, x, NULL, Zs, NULL);
+                        vfft_execute(hs, VFFT_FORWARD, x, Zs);
                         _zr2c_fold_fwd_perm(Zs, XC, aS, aC, ip, pm, N, 1,
                                             (size_t)N, (size_t)N + 2);
                         double w2 = 0, xm2 = 0;
@@ -4990,7 +4955,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
                     {
                         _zr2c_fold_bwd_perm(cref, Zs, bS, bC, ip, pm, N, 1,
                                             (size_t)N + 2, (size_t)N);
-                        vfft_execute(hs, VFFT_BACKWARD, Zs, NULL, y, NULL);
+                        vfft_execute(hs, VFFT_BACKWARD, Zs, y);
                         double gw = 0, gm2 = 0;
                         for (int i = 0; i < N; i++)
                         {
@@ -5004,14 +4969,14 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
                         {
                             double tcf[5], tcb[5];
                             ZR2C_TIME(tcf, {
-                                vfft_execute(hs, VFFT_FORWARD, x, NULL, Zs, NULL);
+                                vfft_execute(hs, VFFT_FORWARD, x, Zs);
                                 _zr2c_fold_fwd_perm(Zs, XC, aS, aC, ip, pm, N, 1,
                                                     (size_t)N, (size_t)N + 2);
                             });
                             ZR2C_TIME(tcb, {
                                 _zr2c_fold_bwd_perm(cref, Zs, bS, bC, ip, pm, N, 1,
                                                     (size_t)N + 2, (size_t)N);
-                                vfft_execute(hs, VFFT_BACKWARD, Zs, NULL, y, NULL);
+                                vfft_execute(hs, VFFT_BACKWARD, Zs, y);
                             });
                             cfw = _zr2c_med5(tcf);
                             cbw = _zr2c_med5(tcb);
@@ -5039,22 +5004,21 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
         vfft_config_t ncf;
         memset(&ncf, 0, sizeof ncf);
         ncf.transform = VFFT_C2C;
-        ncf.placement = VFFT_INPLACE;
-        ncf.rigor = VFFT_MEASURE;
-        ncf.dims = 1;
+        ncf.placement = VFFT_PLACEMENT_IN;
+        ncf.rank = 1;
         ncf.n[0] = half;
         ncf.howmany = 1;
         ncf.order = VFFT_ORDER_NATURAL;
         ncf.layout = VFFT_LAYOUT_INTERLEAVED;
         ncf.nthreads = 1;
-        ncf.wisdom = W;
+        ncf.wisdom_dir = W;
         vfft_plan hn = vfft_create(&ncf);
         if (hn)
         {
             natarm = 1;
             /* fwd gate */
             memcpy(XC, x, ((size_t)N + 2) * 8);
-            vfft_execute(hn, VFFT_FORWARD, XC, NULL, XC, NULL);
+            vfft_execute(hn, VFFT_FORWARD, XC, XC);
             _zr2c_fold_fwd(XC, XC, aS, aC, N, 1, (size_t)N + 2, (size_t)N + 2);
             {
                 double w2 = 0, xm2 = 0;
@@ -5070,7 +5034,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
             /* bwd gate */
             memcpy(XC, cref, ((size_t)N + 2) * 8);
             _zr2c_fold_bwd(XC, XC, bS, bC, N, 1, (size_t)N + 2, (size_t)N + 2);
-            vfft_execute(hn, VFFT_BACKWARD, XC, NULL, XC, NULL);
+            vfft_execute(hn, VFFT_BACKWARD, XC, XC);
             {
                 double gw = 0, gm2 = 0;
                 for (int i = 0; i < N; i++)
@@ -5087,13 +5051,13 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
                 double tnf[5], tnb[5];
                 memcpy(XC, x, ((size_t)N + 2) * 8);
                 ZR2C_TIME(tnf, {
-                    vfft_execute(hn, VFFT_FORWARD, XC, NULL, XC, NULL);
+                    vfft_execute(hn, VFFT_FORWARD, XC, XC);
                     _zr2c_fold_fwd(XC, XC, aS, aC, N, 1, (size_t)N + 2, (size_t)N + 2);
                 });
                 memcpy(XC, cref, ((size_t)N + 2) * 8);
                 ZR2C_TIME(tnb, {
                     _zr2c_fold_bwd(XC, XC, bS, bC, N, 1, (size_t)N + 2, (size_t)N + 2);
-                    vfft_execute(hn, VFFT_BACKWARD, XC, NULL, XC, NULL);
+                    vfft_execute(hn, VFFT_BACKWARD, XC, XC);
                 });
                 nfw = _zr2c_med5(tnf);
                 nbw = _zr2c_med5(tnb);
@@ -5480,18 +5444,18 @@ static void run_padr2c_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_p
  * nthreads=1 -- the house rule from _vfft_pool_arm, not an approximation. */
 
 static void cfg_2d(vfft_config_t *c, vfft_transform_t t, int placement, int N1, int N2,
-                   int nthreads, vfft_wisdom *W)
+                   int nthreads, const char *W)
 {
     memset(c, 0, sizeof *c);
     c->transform = t;
     c->placement = placement;
     c->layout    = VFFT_LAYOUT_SPLIT;
-    c->order     = VFFT_ORDER_DEFAULT;   /* scrambled: the §2 / §4 contract */
-    c->rigor     = VFFT_MEASURE;
-    c->dims = 2; c->n[0] = N1; c->n[1] = N2;
+    c->order     = t == VFFT_C2C ? VFFT_ORDER_SCRAMBLED   /* scrambled: the §2 / §4 contract */
+                                 : VFFT_ORDER_NATURAL;    /* a real spectrum is natural */
+    c->rank = 2; c->n[0] = N1; c->n[1] = N2;
     c->howmany = 1;
     c->nthreads = nthreads;
-    c->wisdom = W; c->wisdom_write = 0;  /* serving mode: never write the store */
+    c->wisdom_dir = W; /* serving mode: never write the store */
 }
 
 /* identical protocol to the retired stride_plan_t timers: 10 warmups, 5 trials
@@ -5499,7 +5463,7 @@ static void cfg_2d(vfft_config_t *c, vfft_transform_t t, int placement, int N1, 
 static double time_2d_fd(vfft_plan p, double *re, double *im, size_t T)
 {
     for (int w = 0; w < 10; w++)
-        vfft_execute(p, VFFT_FORWARD, re, im, re, im);
+        vfft_execute_split(p, VFFT_FORWARD, re, im, re, im);
     int reps = reps_for(T);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -5508,7 +5472,7 @@ static double time_2d_fd(vfft_plan p, double *re, double *im, size_t T)
             pace(g_trial_pace_ms);
         double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_execute(p, VFFT_FORWARD, re, im, re, im);
+            vfft_execute_split(p, VFFT_FORWARD, re, im, re, im);
         double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
@@ -5518,7 +5482,7 @@ static double time_2d_fd(vfft_plan p, double *re, double *im, size_t T)
 static double time_2dr2c_fd(vfft_plan p, double *x, double *o_re, double *o_im, size_t T)
 {
     for (int w = 0; w < 10; w++)
-        vfft_execute(p, VFFT_FORWARD, x, NULL, o_re, o_im);
+        vfft_execute_split(p, VFFT_FORWARD, x, NULL, o_re, o_im);
     int reps = reps_for(T);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -5527,7 +5491,7 @@ static double time_2dr2c_fd(vfft_plan p, double *x, double *o_re, double *o_im, 
             pace(g_trial_pace_ms);
         double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_execute(p, VFFT_FORWARD, x, NULL, o_re, o_im);
+            vfft_execute_split(p, VFFT_FORWARD, x, NULL, o_re, o_im);
         double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
@@ -5537,7 +5501,7 @@ static double time_2dr2c_fd(vfft_plan p, double *x, double *o_re, double *o_im, 
 static double time_2dc2r_fd(vfft_plan p, double *in_re, double *in_im, double *real_out, size_t T)
 {
     for (int w = 0; w < 10; w++)
-        vfft_execute(p, VFFT_BACKWARD, in_re, in_im, real_out, NULL);
+        vfft_execute_split(p, VFFT_BACKWARD, in_re, in_im, real_out, NULL);
     int reps = reps_for(T);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -5546,7 +5510,7 @@ static double time_2dc2r_fd(vfft_plan p, double *in_re, double *in_im, double *r
             pace(g_trial_pace_ms);
         double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_execute(p, VFFT_BACKWARD, in_re, in_im, real_out, NULL);
+            vfft_execute_split(p, VFFT_BACKWARD, in_re, in_im, real_out, NULL);
         double ns = (vfft_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
@@ -5554,12 +5518,12 @@ static double time_2dc2r_fd(vfft_plan p, double *in_re, double *in_im, double *r
     return best;
 }
 
-static void run_2d_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_ms, int flip)
+static void run_2d_cell(int N1, int N2, const char *W, FILE *out, int cool_ms, int flip)
 {
     size_t T = (size_t)N1 * N2;
     const char *c2c_src = "fd";
     vfft_config_t c;
-    cfg_2d(&c, VFFT_C2C, VFFT_INPLACE, N1, N2, g_2d_mt ? g_mt : 1, W);
+    cfg_2d(&c, VFFT_C2C, VFFT_PLACEMENT_IN, N1, N2, g_2d_mt ? g_mt : 1, W);
     vfft_plan p = vfft_create(&c);
     if (!p)
     {
@@ -5577,10 +5541,10 @@ static void run_2d_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_ms, 
     /* correctness: roundtrip fwd+bwd == N1*N2*x; stash fwd output for the order check */
     memcpy(re, xr, T * 8);
     memcpy(im, xi, T * 8);
-    vfft_execute(p, VFFT_FORWARD, re, im, re, im);
+    vfft_execute_split(p, VFFT_FORWARD, re, im, re, im);
     memcpy(fr, re, T * 8);
     memcpy(fi, im, T * 8);
-    vfft_execute(p, VFFT_BACKWARD, re, im, re, im);
+    vfft_execute_split(p, VFFT_BACKWARD, re, im, re, im);
     double rt = 0, sc = (double)N1 * N2;
     for (size_t i = 0; i < T; i++)
     {
@@ -5596,13 +5560,13 @@ static void run_2d_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_ms, 
     if (g_2d_mt)
     {
         vfft_config_t c1;
-        cfg_2d(&c1, VFFT_C2C, VFFT_INPLACE, N1, N2, 1, W);
+        cfg_2d(&c1, VFFT_C2C, VFFT_PLACEMENT_IN, N1, N2, 1, W);
         vfft_plan p1 = vfft_create(&c1);
         if (p1)
         {
             memcpy(re, xr, T * 8);
             memcpy(im, xi, T * 8);
-            vfft_execute(p1, VFFT_FORWARD, re, im, re, im);
+            vfft_execute_split(p1, VFFT_FORWARD, re, im, re, im);
             double d = 0;
             for (size_t i = 0; i < T; i++)
             {
@@ -5695,12 +5659,12 @@ static void run_2d_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_ms, 
     vfft_destroy(p);
 }
 
-static void run_2dr2c_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_ms, int flip)
+static void run_2dr2c_cell(int N1, int N2, const char *W, FILE *out, int cool_ms, int flip)
 {
     size_t hp1 = (size_t)(N2 / 2 + 1);
     const char *src = "fd";
     vfft_config_t c;
-    cfg_2d(&c, VFFT_R2C, VFFT_OUTOFPLACE, N1, N2, g_2dr2c_mt ? g_mt : 1, W);
+    cfg_2d(&c, VFFT_R2C, VFFT_PLACEMENT_OUT, N1, N2, g_2dr2c_mt ? g_mt : 1, W);
     vfft_plan p = vfft_create(&c);
     if (!p)
     {
@@ -5709,7 +5673,7 @@ static void run_2dr2c_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_m
     }
     /* the roundtrip needs the inverse: a c2r plan of the same cell */
     vfft_config_t cb;
-    cfg_2d(&cb, VFFT_C2R, VFFT_OUTOFPLACE, N1, N2, 1, W);
+    cfg_2d(&cb, VFFT_C2R, VFFT_PLACEMENT_OUT, N1, N2, 1, W);
     vfft_plan pb = vfft_create(&cb);
 
     size_t RN = (size_t)N1 * N2, CN = (size_t)N1 * hp1;
@@ -5720,13 +5684,13 @@ static void run_2dr2c_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_m
         x[i] = (double)rand() / RAND_MAX - 0.5;
 
     /* correctness: roundtrip r2c+c2r == N1*N2*x; stash fwd output for the MT gate */
-    vfft_execute(p, VFFT_FORWARD, x, NULL, o_re, o_im);
+    vfft_execute_split(p, VFFT_FORWARD, x, NULL, o_re, o_im);
     memcpy(fr, o_re, CN * 8);
     memcpy(fi, o_im, CN * 8);
     double rt = 0, sc = (double)N1 * N2;
     if (pb)
     {
-        vfft_execute(pb, VFFT_BACKWARD, o_re, o_im, xr, NULL);
+        vfft_execute_split(pb, VFFT_BACKWARD, o_re, o_im, xr, NULL);
         for (size_t i = 0; i < RN; i++)
         {
             double a = fabs(xr[i] / sc - x[i]);
@@ -5741,11 +5705,11 @@ static void run_2dr2c_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_m
     if (g_2dr2c_mt)
     {
         vfft_config_t c1;
-        cfg_2d(&c1, VFFT_R2C, VFFT_OUTOFPLACE, N1, N2, 1, W);
+        cfg_2d(&c1, VFFT_R2C, VFFT_PLACEMENT_OUT, N1, N2, 1, W);
         vfft_plan p1 = vfft_create(&c1);
         if (p1)
         {
-            vfft_execute(p1, VFFT_FORWARD, x, NULL, o_re, o_im);
+            vfft_execute_split(p1, VFFT_FORWARD, x, NULL, o_re, o_im);
             double d = 0;
             for (size_t i = 0; i < CN; i++)
             {
@@ -5812,12 +5776,12 @@ static void run_2dr2c_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_m
     vfft_destroy(p);
 }
 
-static void run_2dc2r_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_ms, int flip)
+static void run_2dc2r_cell(int N1, int N2, const char *W, FILE *out, int cool_ms, int flip)
 {
     size_t hp1 = (size_t)(N2 / 2 + 1);
     const char *src = "fd";
     vfft_config_t c;
-    cfg_2d(&c, VFFT_C2R, VFFT_OUTOFPLACE, N1, N2, g_2dc2r_mt ? g_mt : 1, W);
+    cfg_2d(&c, VFFT_C2R, VFFT_PLACEMENT_OUT, N1, N2, g_2dc2r_mt ? g_mt : 1, W);
     vfft_plan p = vfft_create(&c);
     if (!p)
     {
@@ -5826,7 +5790,7 @@ static void run_2dc2r_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_m
     }
     /* the c2r INPUT (a half-spectrum) is produced by dag r2c of the same cell */
     vfft_config_t cf;
-    cfg_2d(&cf, VFFT_R2C, VFFT_OUTOFPLACE, N1, N2, 1, W);
+    cfg_2d(&cf, VFFT_R2C, VFFT_PLACEMENT_OUT, N1, N2, 1, W);
     vfft_plan pf = vfft_create(&cf);
     if (!pf)
     {
@@ -5841,8 +5805,8 @@ static void run_2dc2r_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_m
     for (size_t i = 0; i < RN; i++)
         x[i] = (double)rand() / RAND_MAX - 0.5;
     /* produce the half-spectrum (c2r input) via dag r2c; gate the roundtrip */
-    vfft_execute(pf, VFFT_FORWARD, x, NULL, o_re, o_im);
-    vfft_execute(p, VFFT_BACKWARD, o_re, o_im, xr, NULL);
+    vfft_execute_split(pf, VFFT_FORWARD, x, NULL, o_re, o_im);
+    vfft_execute_split(p, VFFT_BACKWARD, o_re, o_im, xr, NULL);
     double rt = 0, sc = (double)N1 * N2;
     for (size_t i = 0; i < RN; i++)
     {
@@ -5855,12 +5819,12 @@ static void run_2dc2r_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_m
     if (g_2dc2r_mt)
     {
         vfft_config_t c1;
-        cfg_2d(&c1, VFFT_C2R, VFFT_OUTOFPLACE, N1, N2, 1, W);
+        cfg_2d(&c1, VFFT_C2R, VFFT_PLACEMENT_OUT, N1, N2, 1, W);
         vfft_plan p1 = vfft_create(&c1);
         if (p1)
         {
             double *xr_st = alloc_d(RN);
-            vfft_execute(p1, VFFT_BACKWARD, o_re, o_im, xr_st, NULL);
+            vfft_execute_split(p1, VFFT_BACKWARD, o_re, o_im, xr_st, NULL);
             double d = 0;
             for (size_t i = 0; i < RN; i++)
             {
@@ -6261,7 +6225,7 @@ int main(int argc, char **argv)
         if (!g_k1noop_mt)             /* trap (d): the front-door MT mode must not own a
                                        * second pool in this TU (idle spinners on the
                                        * library workers' cores); the library's pool is
-                                       * driven through vfft_set_num_threads */
+                                       * the plans' own (config.nthreads) */
             thread_pool_resize(g_mt); /* size the worker pool for K-split */
 
 #ifdef VFFT_HAS_MKL
@@ -6312,13 +6276,13 @@ int main(int argc, char **argv)
     if (il2d)
     {
         const char *wd = getenv("VFFT_WISDOM_DIR");
-        vfft_wisdom *W;
+        const char *W;
         int rounds;
         const char *re_ = getenv("VFFT_2DIL_ROUNDS");
         rounds = (re_ && atoi(re_) > 0) ? atoi(re_) : 9;
         if (!wd) wd = ".";
         setvbuf(stdout, NULL, _IONBF, 0); /* live lines even when redirected */
-        W = vfft_wisdom_load(wd);
+        W = (wd);
 #ifdef VFFT_HAS_MKL
         mkl_set_num_threads(1);
 #endif
@@ -6369,7 +6333,6 @@ int main(int argc, char **argv)
                 pace(pace_ms);
             }
         }
-        if (W) vfft_wisdom_free(W);
         return 0;
     }
 
@@ -6377,19 +6340,19 @@ int main(int argc, char **argv)
     if (il3d)
     {
         const char *wd = getenv("VFFT_WISDOM_DIR");
-        vfft_wisdom *W;
+        const char *W;
         int rounds;
         const char *re_ = getenv("VFFT_3DIL_ROUNDS");
         rounds = (re_ && atoi(re_) > 0) ? atoi(re_) : 9;
         if (!wd) wd = ".";
         setvbuf(stdout, NULL, _IONBF, 0); /* live lines even when redirected */
-        W = vfft_wisdom_load(wd);
+        W = (wd);
         if (mt)
             ilmt_pin_pcores(); /* the 8 distinct P-cores for BOTH engines, before any OpenMP init */
         /* trap (d): the bench's startup pool is THIS TU's copy of the pool
          * state (threads.h is static inline) — 7 idle spinners pinned to
          * the very cores the library's workers use. Torn down here; the
-         * library's pool is driven through vfft_set_num_threads below. */
+         * library's pool is the plans' own (config.nthreads). */
         thread_pool_resize(1);
 #ifdef VFFT_HAS_MKL
         mkl_set_num_threads(mt ? g_mt : 1); /* like-for-like: MKL threads 3D at the same T */
@@ -6399,8 +6362,7 @@ int main(int argc, char **argv)
         printf("=== 3DIL: the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D (front door; "
                "wisdom=%s %s; rounds=%d, T=%d, core%d) ===\n",
                wd, W ? "loaded" : "MISSING", rounds, mt ? g_mt : 1, core);
-        printf("# order: %s\n", (getenv("VFFT_3DIL_ORDER") && !strcmp(getenv("VFFT_3DIL_ORDER"), "nat"))
-                                    ? "NATURAL (the like-for-like order: MKL's output is natural)" : "DEFAULT (scrambled)");
+        printf("# order: NATURAL (the like-for-like order: MKL's output is natural)\n");
         if (mt)
             printf("# threaded protocol (T=%d): two-team hygiene per sample (pool torn down before "
                    "MKL arms, MKL's team born before our pool pins), >= 5 ms untimed warm-up, "
@@ -6447,7 +6409,6 @@ int main(int argc, char **argv)
                     pace(pace_ms);
                 }
         }
-        if (W) vfft_wisdom_free(W);
         return 0;
     }
 
@@ -6455,13 +6416,13 @@ int main(int argc, char **argv)
     if (real2d)
     {
         const char *wd = getenv("VFFT_WISDOM_DIR");
-        vfft_wisdom *W;
+        const char *W;
         int rounds;
         const char *re_ = getenv("VFFT_2DIL_ROUNDS");
         rounds = (re_ && atoi(re_) > 0) ? atoi(re_) : 9;
         if (!wd) wd = ".";
         setvbuf(stdout, NULL, _IONBF, 0);
-        W = vfft_wisdom_load(wd);
+        W = (wd);
 #ifdef VFFT_HAS_MKL
         mkl_set_num_threads(1);
 #endif
@@ -6484,7 +6445,6 @@ int main(int argc, char **argv)
             for (ci = 0; ci < nc2; ci++)
                 run_2dreal_cell(cells[ci][0], cells[ci][1], rounds, W);
         }
-        if (W) vfft_wisdom_free(W);
         return 0;
     }
 
@@ -6498,7 +6458,7 @@ int main(int argc, char **argv)
          * wisdom2 store; the legacy per-family file this branch used to read was
          * retired in bfe3ade4 (2026-08-20), after which every run fell to the fallback. */
         g_k1z_wpath = wpath;
-        vfft_wisdom *W2 = k1z_bundle();
+        const char *W2 = k1z_bundle();
         printf("# 2D c2c wisdom: bundle at %s (front door; wisdom2 store)%s", k1z_dir(), W2 ? "" : "  LOAD FAILED");
         putchar(10);
         FILE *o2 = fopen(csv, "w");
@@ -6535,7 +6495,7 @@ int main(int argc, char **argv)
          * wisdom2 store; the legacy per-family file this branch used to read was
          * retired in bfe3ade4 (2026-08-20), after which every run fell to the fallback. */
         g_k1z_wpath = wpath;
-        vfft_wisdom *W2 = k1z_bundle();
+        const char *W2 = k1z_bundle();
         printf("# 2D r2c wisdom: bundle at %s (front door; wisdom2 store)%s", k1z_dir(), W2 ? "" : "  LOAD FAILED");
         putchar(10);
         FILE *o2 = fopen(csv, "w");
@@ -6570,7 +6530,7 @@ int main(int argc, char **argv)
          * wisdom2 store; the legacy per-family file this branch used to read was
          * retired in bfe3ade4 (2026-08-20), after which every run fell to the fallback. */
         g_k1z_wpath = wpath;
-        vfft_wisdom *W2 = k1z_bundle();
+        const char *W2 = k1z_bundle();
         printf("# 2D c2r wisdom: bundle at %s (front door; wisdom2 store)%s", k1z_dir(), W2 ? "" : "  LOAD FAILED");
         putchar(10);
         FILE *o2 = fopen(csv, "w");

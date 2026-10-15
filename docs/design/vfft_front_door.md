@@ -24,10 +24,50 @@ to know why a given request took the route it did.
 
 ## 1. The front door
 
+The public surface is eight functions (`include/vfft.h`). `vfft_create` reads the caller's
+`vfft_config_t` once, in `vfft_api.h`, and translates it into the request the engines read
+(`vfft_cfg_t`, `common/plan/vfft_cfg.h`); nothing below that file sees the public struct. The
+translation:
+
+* a zeroed configuration is INTERLEAVED, out of place, natural order, one thread;
+* NATURAL is the request's DEFAULT wherever the layout's own order is natural, and an explicit
+  NATURAL where it is the scrambled comb (SPLIT C2C at rank 2 and above); SPLIT at rank 3 and 4
+  serves the scrambled order only, so a natural request there is refused;
+* real-to-real transforms take no layout, order or batch geometry (SPLIT internally);
+* `nthreads` 0 or 1 is one thread; no process-wide thread setting exists;
+* the flags become the rigor, recalibrate, destroy-input and own-pitch fields of the request;
+* `wisdom_dir` names a store that is opened once per process and kept (section 2).
+
+Every refusal leaves its reason in the calling thread's record: `vfft_error()` returns it, and it
+is printed only under `VFFT_FLAG_VERBOSE` or the `VFFT_VERBOSE` environment variable. A served
+create leaves the record empty. `vfft_execute` runs INTERLEAVED and real-to-real plans (two
+pointers), `vfft_execute_split` runs SPLIT plans (four planes); each refuses the other layout.
+
 `vfft_create` dispatches by transform and, for each one, follows the same shape: resolve
 wisdom, calibrate on a miss at the requested rigor, build the plan, stamp the executor onto
 the handle. It serves C2C (in-place and out-of-place), R2C, C2R, DCT-I/II/III/IV, DST-I/II/III,
 DHT, and ranks 1 through 4.
+
+### What is served
+
+The table the rows of `src/tools/gates/api_matrix_gate.c` assert, one create per row. A refused
+cell returns no plan and names its reason in `vfft_error()`.
+
+| request | served | refused |
+|---|---|---|
+| 1D C2C, INTERLEAVED | any N, both placements, both orders; a batch contiguous (its default) or lane-major | |
+| 1D C2C, SPLIT | in place at any N | out of place at a prime N; a contiguous batch |
+| 1D R2C / C2R, INTERLEAVED | any N, both placements; a batch contiguous, or lane-major (its default) at an even N in either placement | lane-major at an odd N; the scrambled order |
+| 1D R2C / C2R, SPLIT | out of place at an even N | an odd N; in place |
+| 2D C2C, INTERLEAVED | any extents, both placements, both orders; howmany > 1 as contiguous planes | a lane-major batch |
+| 2D R2C / C2R, INTERLEAVED | any extents (a prime first or an odd last extent included), both placements; howmany > 1 | |
+| 2D C2C, SPLIT | both placements, scrambled, or natural where its reorder tape builds; howmany 1 | a batch |
+| 2D R2C / C2R, SPLIT | out of place where the split engines cover both axes | a prime column extent |
+| 3D C2C, INTERLEAVED | both placements, both orders, howmany 1 | a batch |
+| 3D R2C / C2R, INTERLEAVED | both placements, howmany 1 | |
+| 3D and 4D C2C, SPLIT | the scrambled order, howmany 1 | the natural order; a batch |
+| 4D, INTERLEAVED | | every request |
+| real-to-real (DCT, DST, DHT) | 1D, whatever the layout and order fields say | rank 2 and above |
 
 The shipping split engine is `plan_executors.h`, `twiddle.h`, `executor_generic.h` and
 `executor.h`. (A previous executor generation, `engine/stride_executor.h`, redefined the same
@@ -41,11 +81,13 @@ rfft factorization table, dedicated 2D c2c / 2D r2c / 2D c2r tables, the 3D tabl
 `(M,B)` table, the 1D c2r path table, and the wisdom2 store
 ([vfft.c:174-210](../../src/core/vfft.c#L174-L210)).
 
-`config.wisdom == NULL` selects a library-managed bundle rooted at `$VFFT_WISDOM_DIR`, or `.`
-when unset. **Banking is always in memory first**, so a verdict is coherent for the rest of the
-process. Writing it to disk is a separate decision gated by `config.wisdom_write`; a plan
-created without that flag reports on stderr that its verdict was held in memory only
-([vfft.c:2348-2362](../../src/core/vfft.c#L2348-L2362)).
+`config.wisdom_dir == NULL` selects the library's store, rooted at `$VFFT_WISDOM_DIR`, else at
+the build's default folder (this CPU's under `src/wisdom/`). A directory's store is opened once
+per process and kept, so creates that name the same directory share it. **Banking is always in
+memory first**, so a verdict is coherent for the rest of the process, and a create saves its
+winners to disk before it returns; `VFFT_WISDOM_WRITE=0` turns saving off for a process, for a
+test whose subject makes a save meaningless. A tool that must read the directory again (a gate
+proving a verdict reached the disk) calls `vfft_wisdom_reread` from `vfft_diagnostics.h`.
 
 Key axes, storage format and the merge law are `wisdom2`'s own subject — see
 [`src/core/wisdom2/README.md`](../../src/core/wisdom2/README.md). Two properties matter at this
@@ -65,12 +107,12 @@ destination on an in-place real plan is refused rather than served
 **Order** is a contract. `SCRAMBLED` promises *some* self-consistent permutation — a route's
 backward consumes its own forward's comb — not any particular one, so callers must never assume
 which permutation scrambled output carries, and the identity permutation qualifies
-([vfft.c:3231-3243](../../src/core/vfft.c#L3231-L3243)). Non-`DEFAULT` order on r2c/c2r/trig and
-on padded batches is rejected up front rather than served wrong.
+([vfft.c:3231-3243](../../src/core/vfft.c#L3231-L3243)). A scrambled order on r2c/c2r and on
+padded batches is rejected up front rather than served wrong; real-to-real plans have no order
+axis.
 
-The rank test is `dims <= 1`, not `dims == 1`: `0` is the documented spelling of 1D, and a
-zeroed config is the header's own quick-start shape
-([vfft.c:3474-3481](../../src/core/vfft.c#L3474-L3481)).
+The rank test is `dims <= 1`, not `dims == 1`: `rank = 0` in the public config is 1D, and a
+zeroed config is the header's own quick-start shape.
 
 ## 4. The precedence ladder
 
@@ -297,17 +339,14 @@ contiguous; lane-major places the two halves of a complex sample `K` apart, so t
 is not expressible there at any price. That is a structural property of the route, not an
 implementation gap.
 
-Real transforms enter the wrapper on an **explicit** `batch_geom` only. `INTERLEAVED` DEFAULT
-means transform-contiguous for C2C. A 1D INTERLEAVED R2C or C2R batch is served
-transform-contiguous only, named by `VFFT_BATCH_TRANSFORM_CONTIGUOUS`: its DEFAULT, the
-lane-major geometry, is **refused at create with the reason printed** (owner, 2026-10-14; field
-trial V02 — the split real engines that served it staged every slab through one scratch and
-threaded by the live pool's size, a silent misread once the pool was above one). The refusal
-stands until the native interleaved real batch engine exists; the lane-major geometry is
-`VFFT_LAYOUT_SPLIT`'s.
+Real transforms enter the wrapper on an **explicit** `VFFT_BATCH_CONTIGUOUS` only. The
+`INTERLEAVED` DEFAULT is transform-contiguous for C2C and lane-major for a real batch. The
+lane-major 1D batches (C2C, R2C, C2R) run on the column pass
+([`lane_major_batch_design.md`](../roadmap/lane_major_batch_design.md)); a real lane-major batch
+at an odd N has no real column engine and is refused with its reason.
 
-A padded batch descriptor combined with `layout=INTERLEAVED` is rejected at create: the padded
-planes are split, so the combination has no meaning.
+A padded batch (`VFFT_FLAG_OWN_PITCH` on a 1D batch) combined with `layout=INTERLEAVED` is
+rejected at create: the padded planes are split, so the combination has no meaning.
 
 ## 11. Threading
 
@@ -365,18 +404,19 @@ bit-identical to the scalar loops by construction.
 
 ## 13. Buffer ownership
 
-`vfft_create` is the only public door into plan creation. With `owned_buffers = 0` it passes
-through and allocates nothing beyond the plan. With `owned_buffers = 1` it builds the batch from
-**the same config** through `_own_batch_for`, so `vfft_destroy` frees the planes with the plan —
-and the batch-versus-handle cross-checks inside the inner create become invariants rather than
-reachable failure modes, because no public API hands a foreign batch to create.
+No plan owns a caller buffer. `vfft_info()` names what an execute reads and writes
+(`in_doubles`, `out_doubles`, per plane under SPLIT) and the `stride` the plan walks; the caller
+allocates with `vfft_malloc` and frees with `vfft_free`.
 
-Owned batches are 1D and split-layout only; every other combination is rejected loudly at that
-door. Callers read the planes back with `vfft_plan_planes` — already in `vfft_execute`'s argument
-roles — and the stride with `vfft_plan_stride`, never by computing it.
+`VFFT_FLAG_OWN_PITCH` lets the plan choose that stride, for two kinds. An in-place INTERLEAVED
+real plan of rank 2 or 3 takes the policy's row pitch, which leaves the aliasing pitch. A 1D
+SPLIT batch is built through `_own_batch_for` from **the same config**, so the
+batch-versus-handle cross-checks inside the inner create are invariants rather than reachable
+failure modes; the plan keeps the batch's geometry and frees it with the plan. Every other
+combination is refused at that door.
 
-Stride selection differs by kind. **Only 1D C2C in-place takes the measured tight-vs-padded
-verdict**; a lane-aligned `K` and a prime `N` return tight without racing. Every other owned
+Stride selection for a 1D SPLIT batch differs by kind. **Only 1D C2C in-place takes the measured tight-vs-padded
+verdict**; a lane-aligned `K` and a prime `N` return tight without racing. Every other padded
 batch pads unconditionally — C2C out-of-place at `roundup(K,8)` because the OOP kinds and the OOP
 wisdom reader both gate on `K % 8`, and the real and trig batches at `roundup(K,4)` because
 padding is their only full-SIMD path for a misaligned `K`. Allocation can pause **once** per
@@ -385,16 +425,19 @@ fails the roundtrip gate races again on its next allocation.
 
 ## 14. Refusals
 
-The door refuses rather than degrading, in every one of these cases:
+The door refuses rather than degrading, in every one of these cases, and names the reason in
+`vfft_error()`:
 
 | request | outcome |
 |---|---|
-| non-DEFAULT order on r2c/c2r/trig or a padded batch | rejected at create |
-| padded batch descriptor + `layout=INTERLEAVED` | rejected at create |
-| in-place real that cannot build zr2c | refused loudly — no out-of-place substitute |
-| distinct destination on an in-place real plan | refused at execute |
-| owned batch that is not 1D split-layout | rejected at the public door |
-| K=1 cell with no split route and no IL pair | no handle |
+| a scrambled order on r2c/c2r or a padded batch | refused at create |
+| a padded batch with `layout=INTERLEAVED` | refused at create |
+| the natural order on SPLIT C2C at rank 3 or 4 | refused at create |
+| `VFFT_FLAG_OWN_PITCH` outside its two kinds (section 13) | refused at create |
+| in-place real that cannot build zr2c | refused at create — no out-of-place substitute |
+| a K=1 cell with no split route and no IL pair | refused at create |
+| a distinct destination on an in-place real plan | refused at execute |
+| a SPLIT plan through `vfft_execute`, an INTERLEAVED one through `vfft_execute_split` | refused at execute |
 
 ## 15. What stays in `vfft.c`
 

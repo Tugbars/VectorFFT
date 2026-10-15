@@ -27,9 +27,14 @@
  * fix is the invariant the fix establishes: the plan's execute never uses more
  * scratch slots than the plan allocated, because both come from h->nthreads.
  *
- * PLATFORM-AGNOSTIC BY DESIGN. No core count is assumed: the "grown" pool is
- * whatever the host grants for T_REQ, read back through the public API; the
- * gate SKIPs (exit 0) if the host grants < 2, because then nothing can grow.
+ * THE POOL GROWS THROUGH A PLAN (no process-wide thread setting). Each cell
+ * creates its one-thread plan and executes it, then creates the same cell at
+ * nthreads = T_REQ and executes that: the pool is now T_REQ (vfft_pool_threads,
+ * the diagnostics header), and the one-thread plan runs again on the grown
+ * pool. The first cell's one-thread plan is created while the pool is 1; the
+ * second cell's while it is already grown: the same law from both sides.
+ * A host with fewer than T_REQ logical CPUs refuses the threaded create; the
+ * gate fails at setup then, printing the library's reason.
  *
  * THE CELLS reach the scratch path deterministically only from a SEEDED store:
  *   1D  n=1024 q=32 ord=nat place=ip banks mode=pcyc (cycle reorder — the
@@ -39,7 +44,8 @@
  *       whole-row reorder runs as N1 rows x K=N2 lanes through the same worker.
  * Registered ("bare", True) in run_gates.py so it receives a seeded scratch dir.
  *
- * Public API only. No timings. Exit 0 = PASS/SKIP, 1 = FAIL, 2 = setup.
+ * Public API and the diagnostics header only. No timings.
+ * Exit 0 = PASS, 1 = FAIL, 2 = setup.
  *
  * Build: python build.py --src benches/natorder_scratch_gate.c --vfft --compile
  * Run  : natorder_scratch_gate.exe <seeded-scratch-wisdom-dir>
@@ -49,6 +55,7 @@
 #include <string.h>
 
 #include "vfft.h"
+#include "vfft_diagnostics.h" /* vfft_pool_threads */
 
 #define T_REQ 4
 
@@ -71,37 +78,33 @@ static void verdict(const char *what, int ok)
     if (!ok) g_fail++;
 }
 
-/* Build a natural-order in-place split c2c plan of the given shape, execute it
- * forward once while the pool is 1, then grow the pool to `pool_grown` and
- * execute the SAME plan again on identical input. The two outputs must be
- * bitwise equal. A second plan created at the grown pool is the MT==ST control.
- * The [trace] lines exist to localize a crash: a corrupted heap surfaces at a
- * later free/create, not at the overrunning write. */
-static void run_cell(const char *name, int dims, int n0, int n1, size_t K,
-                     vfft_wisdom *W, int pool_grown)
+/* Build a natural-order in-place split c2c plan of the given shape at one
+ * thread and execute it forward once; create the same cell at `pool_grown`
+ * threads and execute it (the pool grows); execute the one-thread plan again
+ * on identical input. All three outputs must be bitwise equal. The [trace]
+ * lines exist to localize a crash: a corrupted heap surfaces at a later
+ * free/create, not at the overrunning write. */
+static void run_cell(const char *name, int rank, int n0, int n1, size_t K,
+                     const char *W, int pool_grown)
 {
     vfft_config_t c;
     vfft_plan p_small, p_big;
-    size_t tot = (size_t)n0 * (dims == 2 ? (size_t)n1 : K);
+    size_t tot = (size_t)n0 * (rank == 2 ? (size_t)n1 : K);
     double *re0, *im0, *reA, *imA, *reB, *imB, *reC, *imC;
-    int after;
 
-    printf("  [trace] %s: creating at pool=1\n", name);
+    printf("  [trace] %s: creating at nthreads=1 (pool %d)\n", name, vfft_pool_threads());
     memset(&c, 0, sizeof c);
     c.transform = VFFT_C2C;
-    c.placement = VFFT_INPLACE;
+    c.placement = VFFT_PLACEMENT_IN;
     c.layout    = VFFT_LAYOUT_SPLIT;
     c.order     = VFFT_ORDER_NATURAL;
-    c.rigor     = VFFT_MEASURE;
-    c.dims = dims; c.n[0] = n0; if (dims == 2) c.n[1] = n1;
-    c.howmany = (dims == 2) ? 1 : K;
-    c.nthreads = 0;               /* inherit the pool: snapshot == pool at create */
-    c.wisdom = W; c.wisdom_write = 0;
+    c.rank = rank; c.n[0] = n0; if (rank == 2) c.n[1] = n1;
+    c.howmany = (rank == 2) ? 1 : K;
+    c.nthreads = 1;               /* the plan's snapshot is 1, whatever the pool is */
+    c.wisdom_dir = W;
 
-    /* ── create while the pool is 1: the plan's snapshot is 1 ── */
-    vfft_set_num_threads(1);
     p_small = vfft_create(&c);
-    if (!p_small) { printf("  setup: %s create at pool=1 failed\n", name); g_fail++; return; }
+    if (!p_small) { printf("  setup: %s create at nthreads=1 failed: %s\n", name, vfft_error()); g_fail++; return; }
 
     re0 = (double *)malloc(tot * sizeof(double)); im0 = (double *)malloc(tot * sizeof(double));
     reA = (double *)malloc(tot * sizeof(double)); imA = (double *)malloc(tot * sizeof(double));
@@ -111,38 +114,38 @@ static void run_cell(const char *name, int dims, int n0, int n1, size_t K,
     { printf("  setup: alloc\n"); g_fail++; vfft_destroy(p_small); return; }
     fill(re0, im0, tot, 515u + (unsigned)n0 + (unsigned)K);
 
-    /* reference: execute at pool=1 (serial by construction) */
+    /* reference: the one-thread plan (serial by construction) */
     memcpy(reA, re0, tot * 8); memcpy(imA, im0, tot * 8);
-    vfft_execute(p_small, VFFT_FORWARD, reA, imA, reA, imA);
-    printf("  [trace] reference execute at pool=1 done\n");
+    vfft_execute_split(p_small, VFFT_FORWARD, reA, imA, reA, imA);
+    printf("  [trace] reference execute at nthreads=1 done\n");
 
-    /* ── grow the pool — the designed, grow-only behaviour ── */
-    vfft_set_num_threads(pool_grown);
-    after = vfft_get_num_threads();
-    printf("  %s: pool 1 -> %d after growth; re-executing the pool=1 plan\n", name, after);
-
-    /* the SAME plan, now with a bigger live pool than it was sized for */
-    memcpy(reB, re0, tot * 8); memcpy(imB, im0, tot * 8);
-    vfft_execute(p_small, VFFT_FORWARD, reB, imB, reB, imB);
-    printf("  [trace] execute-after-growth returned\n");
-    verdict("plan created at pool=1, executed after growth: output bitwise == reference",
-            memcmp(reA, reB, tot * 8) == 0 && memcmp(imA, imB, tot * 8) == 0);
-
-    /* control: a plan created AT the grown pool (snapshot == grown) — MT == ST */
-    printf("  [trace] creating the control plan at the grown pool\n");
+    /* ── grow the pool: the same cell at pool_grown threads, created and executed ── */
+    printf("  [trace] creating the threaded plan (nthreads=%d)\n", pool_grown);
+    c.nthreads = pool_grown;
     p_big = vfft_create(&c);
     if (p_big)
     {
         memcpy(reC, re0, tot * 8); memcpy(imC, im0, tot * 8);
-        vfft_execute(p_big, VFFT_FORWARD, reC, imC, reC, imC);
-        verdict("control: plan created at the grown pool: MT output bitwise == ST reference",
+        vfft_execute_split(p_big, VFFT_FORWARD, reC, imC, reC, imC);
+        verdict("control: the threaded plan's output bitwise == the one-thread reference",
                 memcmp(reA, reC, tot * 8) == 0 && memcmp(imA, imC, tot * 8) == 0);
+    }
+    else { printf("  setup: %s create at nthreads=%d failed: %s\n", name, pool_grown, vfft_error()); g_fail++; }
+    printf("  %s: pool %d after the threaded plan; re-executing the nthreads=1 plan\n", name, vfft_pool_threads());
+
+    /* the SAME one-thread plan, now with a bigger live pool than it was sized for */
+    memcpy(reB, re0, tot * 8); memcpy(imB, im0, tot * 8);
+    vfft_execute_split(p_small, VFFT_FORWARD, reB, imB, reB, imB);
+    printf("  [trace] execute-after-growth returned\n");
+    verdict("plan created at nthreads=1, executed on the grown pool: output bitwise == reference",
+            memcmp(reA, reB, tot * 8) == 0 && memcmp(imA, imB, tot * 8) == 0);
+
+    if (p_big)
+    {
         vfft_destroy(p_big);
         printf("  [trace] destroy(p_big) returned\n");
     }
-    else { printf("  setup: %s create at grown pool failed\n", name); g_fail++; }
-
-    printf("  [trace] destroying p_small (the plan sized at pool=1)\n");
+    printf("  [trace] destroying p_small (the plan sized at one thread)\n");
     vfft_destroy(p_small);
     printf("  [trace] destroy(p_small) returned; freeing buffers\n");
     free(re0); free(im0); free(reA); free(imA); free(reB); free(imB); free(reC); free(imC);
@@ -151,26 +154,16 @@ static void run_cell(const char *name, int dims, int n0, int n1, size_t K,
 
 int main(int argc, char **argv)
 {
-    const char *wisdir = argc > 1 ? argv[1] : ".";
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
-    int T;
+    const char *W = argc > 1 ? argv[1] : ".";
 
     setvbuf(stdout, NULL, _IONBF, 0);
-    printf("natorder_scratch_gate: wisdom dir %s%s\n", wisdir, W ? "" : "  (load failed - cells may re-race)");
+    printf("natorder_scratch_gate: wisdom dir %s; the pool grows to nthreads=%d through a plan\n", W, T_REQ);
 
-    vfft_set_num_threads(T_REQ);
-    T = vfft_get_num_threads();
-    if (T < 2)
-    {
-        printf("  SKIP: host granted %d worker(s); the pool cannot grow here\n", T);
-        return 0;
-    }
-    printf("  host grants %d workers for T_REQ=%d; that is the 'grown' pool\n", T, T_REQ);
+    run_cell("1D c2c ip split NATURAL n=1024 K=32 (pcyc)", 1, 1024, 0, 32, W, T_REQ);
+    run_cell("2D c2c ip split NATURAL 256x256",          2,  256, 256, 1, W, T_REQ);
 
-    run_cell("1D c2c ip split NATURAL n=1024 K=32 (pcyc)", 1, 1024, 0, 32, W, T);
-    run_cell("2D c2c ip split NATURAL 256x256",          2,  256, 256, 1, W, T);
-
-    if (W) vfft_wisdom_free(W);
+    if (vfft_pool_threads() < 2)
+        printf("  note: the pool never grew (%d): the grown-pool half of the law was not exercised\n", vfft_pool_threads());
     if (g_fail) { printf("=== *** FAIL *** === (%d)\n", g_fail); return 1; }
     printf("=== ALL PASS === (scratch sized and indexed by the plan's own snapshot)\n");
     return 0;

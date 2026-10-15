@@ -41,7 +41,7 @@ static const char *_il_real_row_refused(int N)
     return NULL;
 }
 
-static vfft_plan _vfft_il_create(const vfft_config_t *cfg,
+static vfft_plan _vfft_il_create(const vfft_cfg_t *cfg,
                                  struct vfft_wisdom_s *W,
                                  int N,
                                  size_t K)

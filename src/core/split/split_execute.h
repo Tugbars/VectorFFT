@@ -99,7 +99,7 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
         }
         else if (h->transform == VFFT_R2C)
         {
-            if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+            if (h->layout == (int)VFI_LAYOUT_IL)
                 /* OWNER LAW (M3, 2026-08-26): the §6a30 z-veneer no
                  * longer serves IL callers — an IL real 2D plan is
                  * native (il2d_row) or was refused at create. */
@@ -110,7 +110,7 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
         }
         else if (h->transform == VFFT_C2R)
         {
-            if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+            if (h->layout == (int)VFI_LAYOUT_IL)
                 _vfft_warn("vfft_execute: IL 2D c2r plan without the "
                            "native tier — create/execute wiring bug");
             else

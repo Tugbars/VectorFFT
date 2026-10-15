@@ -83,16 +83,16 @@ static double relerr(const double *a, const double *b, int N, double scale)
     }
     return m > 0 ? e / m : e;
 }
-static vfft_plan mk_t(vfft_wisdom *W, int N, int ip, int order, int T)
+static vfft_plan mk_t(const char *W, int N, int ip, int order, int T)
 {
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.order = order; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.nthreads = T; cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
-static vfft_plan mk(vfft_wisdom *W, int N, int ip, int order) { return mk_t(W, N, ip, order, 1); }
+static vfft_plan mk(const char *W, int N, int ip, int order) { return mk_t(W, N, ip, order, 1); }
 
 /* the cell's served ROUTE read back from the scratch store's K=1 row of the
  * given order cell: the kind-3 IL token (il_route=) or the kind-4 cascade
@@ -152,7 +152,7 @@ static void route_of_store(const char *wisdir, int N, const char *ord, char *out
 typedef struct { double fwd, rt, ip, iprt; int replay, mt_bit, mt_ok; long mt_eng; double mt_rt, mt_err, t_race, t_replay; int ok; } cell_t;
 
 /* one order class of one cell: OOP fwd/bwd, IP fwd/bwd, replay, T=8 */
-static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, double *y_ref, int check_dft)
+static cell_t run_class(const char *W, int N, int order, const double *x, double *y_ref, int check_dft)
 {
     cell_t c; memset(&c, 0, sizeof c); c.fwd = c.rt = c.ip = c.iprt = c.mt_rt = c.mt_err = 1;
     double *y = calloc(2 * (size_t)N, 8), *r = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8), *y2 = calloc(2 * (size_t)N, 8);
@@ -162,8 +162,8 @@ static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, doubl
     if (ho)
     {
         vfft_plan ho2, hi;
-        vfft_execute(ho, VFFT_FORWARD, (double *)x, NULL, y, NULL);
-        vfft_execute(ho, VFFT_BACKWARD, y, NULL, r, NULL);
+        vfft_execute(ho, VFFT_FORWARD, (double *)x, y);
+        vfft_execute(ho, VFFT_BACKWARD, y, r);
         c.fwd = check_dft ? spot_err(x, y, N) : 0.0;
         c.rt = relerr(r, x, N, 1.0 / N);
         t0 = now_ms();
@@ -171,7 +171,7 @@ static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, doubl
         c.t_replay = now_ms() - t0;
         if (ho2)
         {
-            vfft_execute(ho2, VFFT_FORWARD, (double *)x, NULL, y2, NULL);
+            vfft_execute(ho2, VFFT_FORWARD, (double *)x, y2);
             c.replay = (memcmp(y, y2, 2 * (size_t)N * 8) == 0);
             vfft_destroy(ho2);
         }
@@ -179,9 +179,9 @@ static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, doubl
         if (hi)
         {
             memcpy(z, x, 2 * (size_t)N * 8);
-            vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
+            vfft_execute(hi, VFFT_FORWARD, z, z);
             c.ip = relerr(z, y, N, 1.0);
-            vfft_execute(hi, VFFT_BACKWARD, z, NULL, z, NULL);
+            vfft_execute(hi, VFFT_BACKWARD, z, z);
             c.iprt = relerr(z, x, N, 1.0 / N);
             vfft_destroy(hi);
         }
@@ -192,10 +192,10 @@ static cell_t run_class(vfft_wisdom *W, int N, int order, const double *x, doubl
             (void)e0;
             if (hm)
             {
-                vfft_execute(hm, VFFT_FORWARD, (double *)x, NULL, y2, NULL);
+                vfft_execute(hm, VFFT_FORWARD, (double *)x, y2);
                 c.mt_bit = (memcmp(y, y2, 2 * (size_t)N * 8) == 0);
                 c.mt_err = relerr(y2, y, N, 1.0);   /* a T-raced create may serve another engine */
-                vfft_execute(hm, VFFT_BACKWARD, y2, NULL, r, NULL);
+                vfft_execute(hm, VFFT_BACKWARD, y2, r);
                 c.mt_rt = relerr(r, x, N, 1.0 / N);
                 c.mt_eng = (vfft_ilfd_mt_passes() + vfft_ztt_mt_passes()) - e1;
                 c.mt_ok = (c.mt_bit || c.mt_err < 1e-11) && c.mt_rt < 1e-11;
@@ -216,7 +216,7 @@ int main(int argc, char **argv)
     for (int a = 1; a + 1 < argc; a++) if (!strcmp(argv[a], "--wisdir")) wisdir = argv[a + 1];
     if (!wisdir) { printf("usage: %s --wisdir <dir>\n", argv[0]); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
     if (!W) { printf("wisdom load FAILED\n"); return 2; }
     printf("=== K=1 IL c2c at POW2 N through the front door: OOP + IP, both directions, both order classes, replay bit-identical, T=8 bitwise ===\n");
     printf("%-5s | %-22s | %-8s %-8s | %-8s %-8s | %-7s %-7s | %s\n",

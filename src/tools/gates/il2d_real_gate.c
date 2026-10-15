@@ -111,7 +111,7 @@ static int row_pos(int k, int N1, const int *Rs, int nf)
 
 /* one full cell: fwd mapped-elementwise + c2r pair + §2.6 preservation.
  * Returns the fail count; *skips bumped on the designed fall-through. */
-static int run_cell(vfft_wisdom *W, int N1, int N2, const char *tag,
+static int run_cell(const char *W, int N1, int N2, const char *tag,
                     int *skips)
 {
     const int hp1 = N2 / 2 + 1;
@@ -140,17 +140,15 @@ static int run_cell(vfft_wisdom *W, int N1, int N2, const char *tag,
         double em = 0, en = 0, mag = 0, relm, reln;
         memset(&cfg, 0, sizeof cfg);
         cfg.transform = VFFT_R2C;
-        cfg.placement = VFFT_OUTOFPLACE;
-        cfg.rigor = VFFT_MEASURE;
-        cfg.dims = 2;
+        cfg.placement = VFFT_PLACEMENT_OUT;
+        cfg.rank = 2;
         cfg.n[0] = N1;
         cfg.n[1] = N2;
         cfg.howmany = 1;
-        cfg.order = VFFT_ORDER_DEFAULT;
+        cfg.order = VFFT_ORDER_NATURAL;
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
         cfg.nthreads = 1;
-        cfg.wisdom = W;
-        cfg.wisdom_write = 0;
+        cfg.wisdom_dir = W;
         h = vfft_create(&cfg);
         if (!h) {
             printf("  %s %4dx%-3d r2c create FAIL\n", tag, N1, N2);
@@ -158,7 +156,7 @@ static int run_cell(vfft_wisdom *W, int N1, int N2, const char *tag,
             goto done;
         }
         memset(z, 0, 2 * CN * 8);
-        vfft_execute(h, VFFT_FORWARD, x, NULL, z, NULL);
+        vfft_execute(h, VFFT_FORWARD, x, z);
         vfft_destroy(h);
         {
             int ki, kj;
@@ -200,17 +198,15 @@ static int run_cell(vfft_wisdom *W, int N1, int N2, const char *tag,
         double rt = 0;
         memset(&cfg, 0, sizeof cfg);
         cfg.transform = VFFT_C2R;
-        cfg.placement = VFFT_OUTOFPLACE;
-        cfg.rigor = VFFT_MEASURE;
-        cfg.dims = 2;
+        cfg.placement = VFFT_PLACEMENT_OUT;
+        cfg.rank = 2;
         cfg.n[0] = N1;
         cfg.n[1] = N2;
         cfg.howmany = 1;
-        cfg.order = VFFT_ORDER_DEFAULT;
+        cfg.order = VFFT_ORDER_NATURAL;
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
         cfg.nthreads = 1;
-        cfg.wisdom = W;
-        cfg.wisdom_write = 0;
+        cfg.wisdom_dir = W;
         h = vfft_create(&cfg);
         if (!h) {
             printf("  %s %4dx%-3d c2r create FAIL\n", tag, N1, N2);
@@ -219,7 +215,7 @@ static int run_cell(vfft_wisdom *W, int N1, int N2, const char *tag,
         }
         memcpy(zc, z, 2 * CN * 8);
         memset(xr, 0, RN * 8);
-        vfft_execute(h, VFFT_BACKWARD, z, NULL, xr, NULL);
+        vfft_execute(h, VFFT_BACKWARD, z, xr);
         vfft_destroy(h);
         for (i = 0; i < RN; i++) {
             const double d = fabs(xr[i] / ((double)N1 * N2) - x[i]);
@@ -249,7 +245,7 @@ int main(int argc, char **argv)
     };
     const char *wisdir = argc > 1 ? argv[1] : ".";
     int fails = 0, skips = 0, ci;
-    vfft_wisdom *W;
+    const char *W;
 #ifdef _WIN32
     _putenv("VFFT_IL2D_LOG=1");
     /* the row door's batch THREADING verdict is raced per cell (serial vs slabs,
@@ -261,7 +257,7 @@ int main(int argc, char **argv)
     putenv("VFFT_TCMT=1");
 #endif
     setvbuf(stdout, NULL, _IONBF, 0);
-    W = vfft_wisdom_load(wisdir);
+    W = (wisdir);
     printf("=== il2d REAL gate (native tier, elementwise vs naive in natural "
            "order + pair contract, wisdom=%s %s) ===\n",
            wisdir, W ? "loaded" : "MISSING");
@@ -291,17 +287,15 @@ int main(int argc, char **argv)
                 x[i] = (double)rand() / RAND_MAX - 0.5;
             memset(&cfg, 0, sizeof cfg);
             cfg.transform = VFFT_R2C;
-            cfg.placement = VFFT_OUTOFPLACE;
-            cfg.rigor = VFFT_MEASURE;
-            cfg.dims = 2;
+            cfg.placement = VFFT_PLACEMENT_OUT;
+            cfg.rank = 2;
             cfg.n[0] = N1;
             cfg.n[1] = N2;
             cfg.howmany = 1;
-            cfg.order = VFFT_ORDER_DEFAULT;
+            cfg.order = VFFT_ORDER_NATURAL;
             cfg.layout = VFFT_LAYOUT_INTERLEAVED;
             cfg.nthreads = 1;
-            cfg.wisdom = W;
-            cfg.wisdom_write = 0;
+            cfg.wisdom_dir = W;
             ha = vfft_create(&cfg); /* races + banks (memory) */
             hb = vfft_create(&cfg); /* must SERVE the banked verdict */
             cfg.transform = VFFT_C2R;
@@ -310,14 +304,14 @@ int main(int argc, char **argv)
                 printf("  race/replay %dx%d create FAIL\n", N1, N2);
                 fails++;
             } else {
-                vfft_execute(ha, VFFT_FORWARD, x, NULL, za, NULL);
-                vfft_execute(hb, VFFT_FORWARD, x, NULL, zb, NULL);
+                vfft_execute(ha, VFFT_FORWARD, x, za);
+                vfft_execute(hb, VFFT_FORWARD, x, zb);
                 if (memcmp(za, zb, 2 * CN * 8) != 0) {
                     printf("  race/replay %dx%d: serve != race winner "
                            "*** FAIL ***\n", N1, N2);
                     fails++;
                 } else {
-                    vfft_execute(hc, VFFT_BACKWARD, za, NULL, xr, NULL);
+                    vfft_execute(hc, VFFT_BACKWARD, za, xr);
                     for (i = 0; i < RN; i++) {
                         const double d =
                             fabs(xr[i] / ((double)N1 * N2) - x[i]);
@@ -358,17 +352,15 @@ int main(int argc, char **argv)
                 x[i] = (double)rand() / RAND_MAX - 0.5;
             memset(&cfg, 0, sizeof cfg);
             cfg.transform = VFFT_R2C;
-            cfg.placement = VFFT_OUTOFPLACE;
-            cfg.rigor = VFFT_MEASURE;
-            cfg.dims = 2;
+            cfg.placement = VFFT_PLACEMENT_OUT;
+            cfg.rank = 2;
             cfg.n[0] = N1;
             cfg.n[1] = N2;
             cfg.howmany = 1;
-            cfg.order = VFFT_ORDER_DEFAULT;
+            cfg.order = VFFT_ORDER_NATURAL;
             cfg.layout = VFFT_LAYOUT_INTERLEAVED;
             cfg.nthreads = 1;
-            cfg.wisdom = W;
-            cfg.wisdom_write = 0;
+            cfg.wisdom_dir = W;
 #ifdef _WIN32
             _putenv("VFFT_IL2D_WL=0");
 #else
@@ -397,16 +389,16 @@ int main(int argc, char **argv)
                 fails++;
             } else {
                 int ok = 1;
-                vfft_execute(hu, VFFT_FORWARD, x, NULL, za, NULL);
-                vfft_execute(hb2, VFFT_FORWARD, x, NULL, zb, NULL);
+                vfft_execute(hu, VFFT_FORWARD, x, za);
+                vfft_execute(hb2, VFFT_FORWARD, x, zb);
                 if (memcmp(za, zb, 2 * CN * 8) != 0) {
                     printf("  F0 wl=%d %dx%d r2c: banded != unbanded "
                            "*** FAIL ***\n", WL, N1, N2);
                     fails++;
                     ok = 0;
                 }
-                vfft_execute(cu, VFFT_BACKWARD, za, NULL, xa, NULL);
-                vfft_execute(cb, VFFT_BACKWARD, za, NULL, xb, NULL);
+                vfft_execute(cu, VFFT_BACKWARD, za, xa);
+                vfft_execute(cb, VFFT_BACKWARD, za, xb);
                 if (memcmp(xa, xb, RN * 8) != 0) {
                     printf("  F0 wl=%d %dx%d c2r: banded != unbanded "
                            "*** FAIL ***\n", WL, N1, N2);
@@ -445,7 +437,6 @@ int main(int argc, char **argv)
     {
         static const int MC[][2] = { { 512, 32 }, { 128, 64 } };
         int mi;
-        vfft_set_num_threads(8);
         for (mi = 0; mi < 2; mi++) {
             const int N1 = MC[mi][0], N2 = MC[mi][1];
             const int hp1 = N2 / 2 + 1;
@@ -465,13 +456,12 @@ int main(int argc, char **argv)
             naive_cols(t1, ref, N1, hp1);
             memset(&cfg, 0, sizeof cfg);
             cfg.transform = VFFT_R2C;
-            cfg.placement = VFFT_OUTOFPLACE;
-            cfg.rigor = VFFT_MEASURE;
-            cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2;
+            cfg.placement = VFFT_PLACEMENT_OUT;
+            cfg.rank = 2; cfg.n[0] = N1; cfg.n[1] = N2;
             cfg.howmany = 1;
-            cfg.order = VFFT_ORDER_DEFAULT;
+            cfg.order = VFFT_ORDER_NATURAL;
             cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-            cfg.wisdom = W; cfg.wisdom_write = 0;
+            cfg.wisdom_dir = W;
             cfg.nthreads = 8;
             fm = vfft_create(&cfg);
             cfg.transform = VFFT_C2R;
@@ -483,7 +473,7 @@ int main(int argc, char **argv)
             }
             cmt0 = vfft_il2d_col_mt_passes();
             rmt0 = vfft_il2d_row_mt_passes();
-            vfft_execute(fm, VFFT_FORWARD, x, NULL, zm, NULL);
+            vfft_execute(fm, VFFT_FORWARD, x, zm);
             cmt1 = vfft_il2d_col_mt_passes();
             rmt1 = vfft_il2d_row_mt_passes();
             for (i = 0; i < 2 * CN; i++) {
@@ -508,7 +498,7 @@ int main(int argc, char **argv)
             memcpy(zc, zm, 2 * CN * 8);
             cmt0 = vfft_il2d_col_mt_passes();
             rmt0 = vfft_il2d_row_mt_passes();
-            vfft_execute(cm, VFFT_BACKWARD, zm, NULL, xm, NULL);
+            vfft_execute(cm, VFFT_BACKWARD, zm, xm);
             cmt1 = vfft_il2d_col_mt_passes();
             rmt1 = vfft_il2d_row_mt_passes();
             for (i = 0; i < RN; i++) {
@@ -536,7 +526,6 @@ int main(int argc, char **argv)
             vfft_destroy(fm); vfft_destroy(cm);
             free(x); free(zm); free(zc); free(xm); free(t1); free(ref);
         }
-        vfft_set_num_threads(1);
 #ifdef _WIN32
         _putenv("VFFT_IL2D_NO_COLMT=");
 #else
@@ -557,7 +546,6 @@ int main(int argc, char **argv)
     {
         static const int BC[][2] = { { 1024, 16 } };
         int bi;
-        vfft_set_num_threads(8);
         for (bi = 0; bi < 1; bi++) {
             const int N1 = BC[bi][0], N2 = BC[bi][1];
             const int hp1 = N2 / 2 + 1;
@@ -574,13 +562,12 @@ int main(int argc, char **argv)
                 x[i] = (double)rand() / RAND_MAX - 0.5;
             memset(&cfg, 0, sizeof cfg);
             cfg.transform = VFFT_R2C;
-            cfg.placement = VFFT_OUTOFPLACE;
-            cfg.rigor = VFFT_MEASURE;
-            cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2;
+            cfg.placement = VFFT_PLACEMENT_OUT;
+            cfg.rank = 2; cfg.n[0] = N1; cfg.n[1] = N2;
             cfg.howmany = 1;
-            cfg.order = VFFT_ORDER_DEFAULT;
+            cfg.order = VFFT_ORDER_NATURAL;
             cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-            cfg.wisdom = W; cfg.wisdom_write = 0;
+            cfg.wisdom_dir = W;
 #ifdef _WIN32
             _putenv("VFFT_IL2D_WL=64");        /* force a band => cut>0 */
             _putenv("VFFT_IL2D_NO_COLMT=1");   /* columns SERIAL */
@@ -611,9 +598,9 @@ int main(int argc, char **argv)
                 continue;
             }
             c0 = vfft_il2d_col_mt_passes();
-            vfft_execute(fm, VFFT_FORWARD, x, NULL, zm, NULL);
+            vfft_execute(fm, VFFT_FORWARD, x, zm);
             c1 = vfft_il2d_col_mt_passes();
-            vfft_execute(fs, VFFT_FORWARD, x, NULL, zs, NULL);
+            vfft_execute(fs, VFFT_FORWARD, x, zs);
             if (c1 == c0) {
                 printf("  COLMT %4dx%-4d columns NEVER THREADED "
                        "*** FAIL ***\n", N1, N2);
@@ -628,8 +615,8 @@ int main(int argc, char **argv)
                        "threaded==serial BITWISE  PASS\n",
                        N1, N2, c1 - c0);
             }
-            vfft_execute(cm, VFFT_BACKWARD, zm, NULL, xm, NULL);
-            vfft_execute(cs, VFFT_BACKWARD, zm, NULL, xs, NULL);
+            vfft_execute(cm, VFFT_BACKWARD, zm, xm);
+            vfft_execute(cs, VFFT_BACKWARD, zm, xs);
             if (memcmp(xs, xm, RN * 8) != 0) {
                 printf("  COLMT %4dx%-4d c2r threaded != serial "
                        "*** FAIL ***\n", N1, N2);
@@ -642,9 +629,7 @@ int main(int argc, char **argv)
             vfft_destroy(cs); vfft_destroy(cm);
             free(x); free(zs); free(zm); free(xs); free(xm);
         }
-        vfft_set_num_threads(1);
     }
-    if (W) vfft_wisdom_free(W);
     printf("\n%s (%d fail, %d skip)\n",
            fails ? "*** FAIL ***" : "=== ALL PASS ===", fails, skips);
     return fails ? 1 : 0;

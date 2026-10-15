@@ -92,21 +92,20 @@ static int cmp_dbl(const void *a, const void *b)
     const double x = *(const double *)a, y = *(const double *)b;
     return x < y ? -1 : x > y ? 1 : 0;
 }
-static vfft_plan mk(vfft_wisdom *W, int N, int order /*0=nat 1=scr*/)
+static vfft_plan mk(const char *W, int N, int order /*0=nat 1=scr*/)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_INPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = VFFT_PLACEMENT_IN;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = 1;
     cfg.order = order ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1;
-    cfg.wisdom = W;
-    cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
+    cfg.wisdom_dir = W;
+    /* measurement gate: banks must persist */
     return vfft_create(&cfg);
 }
 
@@ -147,7 +146,7 @@ int main(int argc, char **argv)
     env_set("VFFT_NAT_LOG", "1");
     env_set("VFFT_NO_NAT_ILP", "");
     env_set("VFFT_NO_NAT_ZCASC", "");
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
     if (!W) { printf("vfft_wisdom_load FAILED\n"); return 2; }
 
     printf("\n=== Phase B: sub-2048 in-place IL tier, front door ===\n");
@@ -179,11 +178,11 @@ int main(int argc, char **argv)
         const int ilp_won = !zcasc_won && strstr(log, "-> ILP") != NULL;
         if (!hn) { printf("%-7d create FAILED\n", N); fails++; continue; }
         memcpy(a, x, 2 * (size_t)N * sizeof(double));
-        vfft_execute(hn, VFFT_FORWARD, a, NULL, a, NULL);
+        vfft_execute(hn, VFFT_FORWARD, a, a);
         memcpy(yn, a, 2 * (size_t)N * sizeof(double));
         const double ef = relerr(a, X, 2L * N);
         memcpy(a, X, 2 * (size_t)N * sizeof(double));
-        vfft_execute(hn, VFFT_BACKWARD, a, NULL, a, NULL);
+        vfft_execute(hn, VFFT_BACKWARD, a, a);
         double *nx = az((size_t)N);
         for (long j = 0; j < 2L * N; j++) nx[j] = (double)N * x[j];
         const double eb = relerr(a, nx, 2L * N);
@@ -199,7 +198,7 @@ int main(int argc, char **argv)
         if (hc)
         {
             memcpy(a, x, 2 * (size_t)N * sizeof(double));
-            vfft_execute(hc, VFFT_FORWARD, a, NULL, a, NULL);
+            vfft_execute(hc, VFFT_FORWARD, a, a);
             if (memcmp(a, yn, 2 * (size_t)N * sizeof(double)) != 0)
                 ok = 0; /* consume must reproduce measure bitwise */
             vfft_destroy(hc);
@@ -235,7 +234,7 @@ int main(int argc, char **argv)
                 const size_t nb = 2 * (size_t)N * sizeof(double);
                 double *ys = az((size_t)N);
                 memcpy(a, x, nb);
-                vfft_execute(hs, VFFT_FORWARD, a, NULL, a, NULL);
+                vfft_execute(hs, VFFT_FORWARD, a, a);
                 memcpy(ys, a, nb);
                 /* ORDER IS A CONTRACT (2026-09-15, design_contracts.md 8b): the
                  * scrambled cell's writer is a SCRAMBLED writer — at every pow2
@@ -276,7 +275,7 @@ int main(int argc, char **argv)
                     if (!(es < 1e-9))
                         ok = 0;
                 }
-                vfft_execute(hs, VFFT_BACKWARD, a, NULL, a, NULL);
+                vfft_execute(hs, VFFT_BACKWARD, a, a);
                 double *nx2 = az((size_t)N);
                 for (long j = 0; j < 2L * N; j++)
                     nx2[j] = (double)N * x[j];
@@ -295,7 +294,7 @@ int main(int argc, char **argv)
                     if (hs2)
                     {
                         memcpy(a, x, nb);
-                        vfft_execute(hs2, VFFT_FORWARD, a, NULL, a, NULL);
+                        vfft_execute(hs2, VFFT_FORWARD, a, a);
                         if (memcmp(a, ys, nb) != 0)
                         {
                             scrarm = "SCR-REPLAY-DIFF(!)";
@@ -328,16 +327,15 @@ int main(int argc, char **argv)
         vfft_config_t cfg;
         memset(&cfg, 0, sizeof cfg);
         cfg.transform = VFFT_C2C;
-        cfg.placement = VFFT_OUTOFPLACE;
-        cfg.rigor = VFFT_MEASURE;
-        cfg.dims = 1;
+        cfg.placement = VFFT_PLACEMENT_OUT;
+        cfg.rank = 1;
         cfg.n[0] = N;
         cfg.howmany = 1;
         cfg.order = VFFT_ORDER_SCRAMBLED;
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
         cfg.nthreads = 1;
-        cfg.wisdom = W;
-        cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
+        cfg.wisdom_dir = W;
+        /* measurement gate: banks must persist */
         vfft_plan ho = vfft_create(&cfg);
         if (ho) vfft_destroy(ho);
         (void)err_tap_read();
@@ -359,7 +357,6 @@ int main(int argc, char **argv)
         if (hn) vfft_destroy(hn);
     }
 
-    vfft_wisdom_free(W);
     printf("\n=== %s ===\n", fails ? "*** FAIL ***" : "ALL PASS");
     return fails ? 1 : 0;
 }

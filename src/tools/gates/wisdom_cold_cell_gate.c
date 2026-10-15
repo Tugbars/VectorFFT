@@ -141,7 +141,7 @@ int main(int argc, char **argv)
     for (int ip = 0; ip < 2; ip++)
         for (int scr = 0; scr < 2; scr++)
         {
-            vfft_wisdom *W = vfft_wisdom_load(wisdir);   /* a fresh load per cell, as an application would */
+            const char *W = (wisdir);   /* a fresh load per cell, as an application would */
             vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
             vfft_plan p;
             int raced;
@@ -150,22 +150,22 @@ int main(int argc, char **argv)
             const char *cell = ip ? (scr ? "in place, scrambled" : "in place, natural") : (scr ? "out of place, scrambled" : "out of place, natural");
             CHECK(W != NULL, "wisdom load");
             if (!W) continue;
-            cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-            cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
+            cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+            cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
             cfg.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-            cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
+            cfg.nthreads = 1; cfg.wisdom_dir = W;
             (void)tap_raced(N);
             p = vfft_create(&cfg);
             raced = tap_raced(N);
             total_raced += raced;
             CHECK(p != NULL, "%s: create refused", cell);
-            if (!p) { vfft_wisdom_free(W); continue; }
+            if (!p) { continue; }
             if (phase == 2) CHECK(raced == 0, "%s: a banked cell RACED again", cell);
-            if (ip) { memcpy(y, x, nb); vfft_execute(p, VFFT_FORWARD, y, NULL, y, NULL); }
-            else vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+            if (ip) { memcpy(y, x, nb); vfft_execute(p, VFFT_FORWARD, y, y); }
+            else vfft_execute(p, VFFT_FORWARD, x, y);
             if (!scr) { const double e = relerr(y, ref, N, 1.0); CHECK(e < 1e-12, "%s: forward vs DFT relerr %.2e", cell, e); }
-            if (ip) { memcpy(r, y, nb); vfft_execute(p, VFFT_BACKWARD, r, NULL, r, NULL); }
-            else vfft_execute(p, VFFT_BACKWARD, y, NULL, r, NULL);
+            if (ip) { memcpy(r, y, nb); vfft_execute(p, VFFT_BACKWARD, r, r); }
+            else vfft_execute(p, VFFT_BACKWARD, y, r);
             { const double e = relerr(r, x, N, (double)N); CHECK(e < 1e-12, "%s: roundtrip relerr %.2e", cell, e); }
             sprintf(path, "%s/cold_%d_%d_%d.bin", out, N, ip, scr);
             if (phase == 1)
@@ -182,7 +182,6 @@ int main(int argc, char **argv)
                 printf("  %-26s replayed (no race), forward %s the phase-1 output\n", cell, (f && memcmp(prev, y, nb) == 0) ? "BITWISE" : "DIFFERS from");
             }
             vfft_destroy(p);
-            vfft_wisdom_free(W);
         }
     if (phase == 1)
     {

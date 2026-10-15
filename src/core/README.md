@@ -60,12 +60,12 @@ Wisdom: the store is `src/wisdom/`, a root of per-CPU folders (`14900KF/`,
 the identity of the CPU that raced them. With no directory named, the library
 serves from and saves into the folder stamped with this CPU's identity
 (`common/support/cpu_identity.h`, `common/wisdom/wisdom2_folders.h`); nothing is
-taken from another CPU's folder. `VFFT_WISDOM_DIR` or an explicit
-`vfft_wisdom_load(dir)` names one directory as the store instead, unscanned
+taken from another CPU's folder. `VFFT_WISDOM_DIR` or a create's
+`config.wisdom_dir` names one directory as the store instead, unscanned
 (gates and benches use a scratch copy of this CPU's folder). The frozen
 bundle (`spike_wisdom.txt`, `bluestein_wisdom.txt`, `c2r_path.txt`) stays in
 `src/dag-fft-compiler/generator/generated/` and is read from there. Misses race
-at `config.rigor`, bank, and save the winner before create returns.
+at the rigor the config's flags name, bank, and save the winner before create returns.
 
 Runtime knobs (diagnostics/kill switches): `VFFT_NO_ZTURN` (fall back to the
 legacy zsplit cascade), `VFFT_FORCE_ZROUTE` (pin the K=1 cascade route),
@@ -170,4 +170,4 @@ about the library as a whole rather than about one transform family.
 |---|---|
 | `vfft_internal.h` | the three private structs — `vfft_plan_s`, `vfft_wisdom_s`, `vfft_batch_s`. Lifting these out of `vfft.c` is what let every later module header exist |
 | `vfft_execute.h` | **THE execute entry point — every transform, BOTH layouts**, plus the execute-side helpers and `vfft_destroy`. 🔴 `vfft_execute` has EXTERNAL linkage, so the body is guarded by `VFFT_EXECUTE_IMPL` and exactly one TU defines it |
-| `split/rank1/vfft_batch.h` (moved) | the owned-batch allocator behind `config.owned_buffers` / `config.batch`. Three descriptor shapes (c2c in-place, real, OOP 4-plane); a mismatched handle is refused, never reinterpreted |
+| `split/rank1/vfft_batch.h` (moved) | the padded-batch allocator behind `VFFT_FLAG_OWN_PITCH` on a 1D SPLIT batch. Three descriptor shapes (c2c in-place, real, OOP 4-plane); a mismatched handle is refused, never reinterpreted |

@@ -66,7 +66,7 @@ droppings, not wisdom — never migration inputs.
 
 ### 2.2 Directory and the write guard
 
-- One directory holds the store: an explicit `vfft_wisdom_load(dir)`, else
+- One directory holds the store: a create's `config.wisdom_dir`, else
   `$VFFT_WISDOM_DIR`, else the build's compiled default (`src/wisdom/`,
   `VFFT_WISDOM_DIR_DEFAULT`), else none: a build that knows no store keeps its
   winners in memory and never writes the current directory. The frozen bundle (`spike_wisdom.txt` and its companions) is not
@@ -75,8 +75,7 @@ droppings, not wisdom — never migration inputs.
 - **A winner is always kept and always saved** (owner, 2026-10-04). A bank
   is accepted in memory whatever the store's disk guard says; a create that
   races saves the rows it banked before it returns (`vw2_save_banked`, under
-  the store lock `wisdom2.lock`). `config.wisdom_write` is retired at the
-  front door; a create the library makes inside another one (a child, a
+  the store lock `wisdom2.lock`). A create the library makes inside another one (a child, a
   worker clone, a private store's plan) keeps the flag its parent passed, and
   a clone or a private store never saves. `VFFT_WISDOM_WRITE=0` turns saving
   off for a process. A store directory that cannot be written is said once

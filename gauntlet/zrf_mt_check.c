@@ -22,22 +22,22 @@
 long vfft_zrf_mt_passes(void);
 
 typedef struct { vfft_plan h; vfft_dir_t dir; double *in, *out; } arm_t;
-static void arm_run(void *v) { arm_t *a = (arm_t *)v; vfft_execute(a->h, a->dir, a->in, NULL, a->out, NULL); }
+static void arm_run(void *v) { arm_t *a = (arm_t *)v; vfft_execute(a->h, a->dir, a->in, a->out); }
 
-static vfft_plan mk(vfft_wisdom *W, int N, int c2r, int ip, int T)
+static vfft_plan mk(const char *W, int N, int c2r, int ip, int T)
 {
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
     cfg.transform = c2r ? VFFT_C2R : VFFT_R2C;
-    cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
-    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.order = VFFT_ORDER_DEFAULT;
-    cfg.rigor = VFFT_PATIENT; cfg.wisdom = W; cfg.nthreads = T;
+    cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.order = VFFT_ORDER_NATURAL;
+    cfg.flags |= VFFT_FLAG_PATIENT; cfg.wisdom_dir = W; cfg.nthreads = T;
     return vfft_create(&cfg);
 }
 static void run(vfft_plan h, vfft_dir_t dir, int ip, const double *in, double *out, double *b, size_t nin, size_t nout)
 {
-    if (ip) { memcpy(b, in, nin * sizeof(double)); vfft_execute(h, dir, b, NULL, b, NULL); memcpy(out, b, nout * sizeof(double)); }
-    else vfft_execute(h, dir, (double *)in, NULL, out, NULL);
+    if (ip) { memcpy(b, in, nin * sizeof(double)); vfft_execute(h, dir, b, b); memcpy(out, b, nout * sizeof(double)); }
+    else vfft_execute(h, dir, (double *)in, out);
 }
 
 int main(int argc, char **argv)
@@ -46,8 +46,7 @@ int main(int argc, char **argv)
     const int T = argc > 2 ? atoi(argv[2]) : 8;
     bench_pin_pcores();
     bench_scope(0, 1, VFFT_MEASURE_GUARD_OFF);   /* the threaded protocol: logical 0 at HIGH priority, the library's scope */
-    vfft_set_num_threads(T);
-    vfft_wisdom *W = vfft_wisdom_load(argv[1]);
+    const char *W = (argv[1]);
     /* cell, chain/t/w<tile> */
     static const struct { int N; const char *ct; } cells[] = {
         { 2025, "9.5.9.5/t/w64" }, { 6561, "9.9.9.9/t/w128" }, { 10125, "9.5.5.9.5/t/w256" }, { 16875, "9.3.5.5.5.5/t/w1024" },

@@ -36,22 +36,22 @@ static int g_fail = 0;
  * the odd cells for the split library's @scrmode mode row. The in-place cell
  * races its own arms now and reads no mode row, so the one K=1 law holds in
  * place too: DEFAULT = NATURAL at every N (design_contracts.md 3). */
-static int _ref_ip_order_is_nat(const vfft_config_t *cfg, int N)
+static int _ref_ip_order_is_nat(const vfft_cfg_t *cfg, int N)
 {
     (void)N;
-    return cfg->order != VFFT_ORDER_SCRAMBLED;
+    return cfg->order != VFI_ORDER_SCRAMBLED;
 }
 /* oop/k1_commit.h `scr_req` (rank 1, the K=1 engine row) */
-static int _ref_k1_scr_req(const vfft_config_t *cfg)
+static int _ref_k1_scr_req(const vfft_cfg_t *cfg)
 {
-    return (cfg->order == VFFT_ORDER_SCRAMBLED);
+    return (cfg->order == VFI_ORDER_SCRAMBLED);
 }
 /* transforms/fft2d/fft2d_create.h `il2d_ord`, il2d_tier.h x8, plane_queue.h */
-static int _ref_rankn_ord(const vfft_config_t *cfg)
+static int _ref_rankn_ord(const vfft_cfg_t *cfg)
 {   /* L4 since 2026-09-27: DEFAULT is the layout's (IL natural, split scrambled) */
-    if (cfg->order == VFFT_ORDER_SCRAMBLED) return VW2_ORD_SCR;
-    if (cfg->order == VFFT_ORDER_NATURAL) return VW2_ORD_NAT;
-    return (cfg->layout == VFFT_LAYOUT_INTERLEAVED) ? VW2_ORD_NAT : VW2_ORD_SCR;
+    if (cfg->order == VFI_ORDER_SCRAMBLED) return VW2_ORD_SCR;
+    if (cfg->order == VFI_ORDER_NATURAL) return VW2_ORD_NAT;
+    return (cfg->layout == VFI_LAYOUT_IL) ? VW2_ORD_NAT : VW2_ORD_SCR;
 }
 /* ── L9 reference, verbatim from oop/k1_commit.h's race gate ─────────── */
 #define REF_K1_IL_PLAN_MAX_N 16384
@@ -152,7 +152,7 @@ static int _ref_strip_chain_primes(int n)
 /* the lane-major batch's admission (vfft_policy_batch_lane_major), spelled as the request table */
 static int _ref_lane_major(int transform, int layout, int dims, int howmany, int geom, int N, int placement)
 {
-    if (layout != VFFT_LAYOUT_INTERLEAVED) return 0;
+    if (layout != VFI_LAYOUT_IL) return 0;
     if (dims > 1) return 0;
     if (howmany < 2) return 0;
     if (transform == VFFT_C2C) return geom == VFFT_BATCH_LANE_MAJOR && N >= 2;
@@ -364,7 +364,7 @@ int main(void)
         196608, 245760, 262144, 393216, 524288, 1048576, 2097152, 4194304,
         8388608, 999, 1001, 2187, 3125, 9973, 65537
     };
-    static const int ORDS[3] = { VFFT_ORDER_DEFAULT, VFFT_ORDER_NATURAL, VFFT_ORDER_SCRAMBLED };
+    static const int ORDS[3] = { VFI_ORDER_DEFAULT, VFI_ORDER_NATURAL, VFI_ORDER_SCRAMBLED };
     static const char *ONM[3] = { "DEFAULT", "NATURAL", "SCRAMBLED" };
     const int nn = (int)(sizeof NS / sizeof NS[0]);
     int i, o, nchk = 0;
@@ -408,10 +408,10 @@ int main(void)
         nchk++;
         for (o = 0; o < 3; o++)
         {
-            vfft_config_t cfg;
+            vfft_cfg_t cfg;
             memset(&cfg, 0, sizeof cfg);
             cfg.transform = VFFT_C2C; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
-            cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1;
+            cfg.layout = VFI_LAYOUT_IL; cfg.nthreads = 1;
             cfg.order = ORDS[o];
 
             /* L4, rank 1 in place: the in-place door's own mode row */
@@ -429,11 +429,11 @@ int main(void)
                   "N=%d ord=%s rankN: policy %d != site %d", N, ONM[o],
                   vfft_policy_ord_rankn(&cfg), _ref_rankn_ord(&cfg));
             /* the split layout: its DEFAULT is the scrambled comb (L4) */
-            cfg.layout = VFFT_LAYOUT_SPLIT;
+            cfg.layout = VFI_LAYOUT_SPLIT;
             CHECK(vfft_policy_ord_rankn(&cfg) == _ref_rankn_ord(&cfg),
                   "N=%d ord=%s rankN split: policy %d != site %d", N, ONM[o],
                   vfft_policy_ord_rankn(&cfg), _ref_rankn_ord(&cfg));
-            cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+            cfg.layout = VFI_LAYOUT_IL;
             nchk += 4;
 
             /* the CELL carries the same answers it was built from */
@@ -457,10 +457,10 @@ int main(void)
     {
         const int NMAX = 1 << 23;
         long bad_ceil = 0, bad_ip = 0, bad_oop = 0, bad_rankn = 0, n;
-        vfft_config_t cfg;
+        vfft_cfg_t cfg;
         memset(&cfg, 0, sizeof cfg);
         cfg.transform = VFFT_C2C; cfg.dims = 1; cfg.howmany = 1;
-        cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1;
+        cfg.layout = VFI_LAYOUT_IL; cfg.nthreads = 1;
         for (n = 2; n <= NMAX; n++)
         {
             const int Nx = (int)n;
@@ -594,14 +594,14 @@ int main(void)
         nchk += (NMAX - 1) * 4;
     }
     {   /* the lane-major batch's admission over the request table: transform x layout x dims x K x geometry x N */
-        static const int TR[3] = { VFFT_C2C, VFFT_R2C, VFFT_C2R }, LY[2] = { VFFT_LAYOUT_INTERLEAVED, VFFT_LAYOUT_SPLIT };
-        static const int KS[4] = { 1, 2, 4, 64 }, GM[3] = { VFFT_BATCH_DEFAULT, VFFT_BATCH_TRANSFORM_CONTIGUOUS, VFFT_BATCH_LANE_MAJOR };
+        static const int TR[3] = { VFFT_C2C, VFFT_R2C, VFFT_C2R }, LY[2] = { VFI_LAYOUT_IL, VFI_LAYOUT_SPLIT };
+        static const int KS[4] = { 1, 2, 4, 64 }, GM[3] = { VFFT_BATCH_DEFAULT, VFFT_BATCH_CONTIGUOUS, VFFT_BATCH_LANE_MAJOR };
         static const int NS[6] = { 1, 2, 4, 63, 131, 4096 }, PL[2] = { VFFT_OUTOFPLACE, VFFT_INPLACE };
         int it, il, idm, ik, ig, in, ip, bad_lm = 0, n_lm = 0;
         for (it = 0; it < 3; it++) for (il = 0; il < 2; il++) for (idm = 1; idm <= 2; idm++)
             for (ik = 0; ik < 4; ik++) for (ig = 0; ig < 3; ig++) for (in = 0; in < 6; in++) for (ip = 0; ip < 2; ip++)
             {
-                vfft_config_t c;
+                vfft_cfg_t c;
                 memset(&c, 0, sizeof c);
                 c.transform = (vfft_transform_t)TR[it]; c.layout = (vfft_layout_t)LY[il]; c.dims = idm;
                 c.placement = (vfft_placement_t)PL[ip];

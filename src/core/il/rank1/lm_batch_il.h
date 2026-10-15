@@ -73,7 +73,7 @@ static void _lm_arm_run(void *v)
     c->wc = a->wc;
     _lm_cols(a->h, a->z, a->zo, 0);
 }
-static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                      const vw2_ilcol_key_t *key, int bcmt)
 {
     vfft_ilcol_t *c = &h->il2d_col;
@@ -206,7 +206,7 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
 }
 
 /* ── THE DOOR: the lane-major 1D batch's create ─────────────────────────── */
-static vfft_plan _vfft_create_lm_il(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N, size_t K)
+static vfft_plan _vfft_create_lm_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W, int N, size_t K)
 {
     const int T = _vfft_plan_threads(cfg);
     const int ip = cfg->placement == VFFT_INPLACE;
@@ -220,8 +220,8 @@ static vfft_plan _vfft_create_lm_il(const vfft_config_t *cfg, struct vfft_wisdom
     if (!vfft_policy_batch_lane_major(cfg))
     {
         _vfft_warn("vfft_create: the lane-major interleaved batch serves 1D C2C at howmany >= 2 and N >= 2 "
-                   "(got %s N=%d howmany=%zu); the real batches are not served lane-major yet -- name "
-                   "batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS for them", _vfft_tname(cfg->transform), N, K);
+                   "(got %s N=%d howmany=%zu) -- name batch=VFFT_BATCH_CONTIGUOUS for it",
+                   _vfft_tname(cfg->transform), N, K);
         return NULL;
     }
     memset(&ck, 0, sizeof ck);
@@ -248,7 +248,7 @@ static vfft_plan _vfft_create_lm_il(const vfft_config_t *cfg, struct vfft_wisdom
     }
     h->transform = VFFT_C2C;
     h->placement = cfg->placement;
-    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->layout = (int)VFI_LAYOUT_IL;
     h->N = N;
     h->N2 = 0;
     h->K = K;
@@ -512,7 +512,7 @@ static int _lmc_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
 }
 /* the real batch's create, r2c or c2r by the request (the same chain at M on the shared real row,
  * the direction's own executor) */
-static vfft_plan _vfft_create_lmr_il(const vfft_config_t *cfg, struct vfft_wisdom_s *W, int N, size_t K)
+static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W, int N, size_t K)
 {
     const int T = _vfft_plan_threads(cfg), M = N / 2, c2r = cfg->transform == VFFT_C2R;
     vw2_ilcol_key_t ck;
@@ -524,7 +524,7 @@ static vfft_plan _vfft_create_lmr_il(const vfft_config_t *cfg, struct vfft_wisdo
     {
         _vfft_warn("vfft_create: the lane-major interleaved real batch serves R2C and C2R at an even N >= 4 and "
                    "howmany >= 2, in either placement (got %s N=%d howmany=%zu); an odd N has no real column "
-                   "engine -- name batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS for it",
+                   "engine -- name batch=VFFT_BATCH_CONTIGUOUS for it",
                    _vfft_tname(cfg->transform), N, K);
         return NULL;
     }
@@ -551,7 +551,7 @@ static vfft_plan _vfft_create_lmr_il(const vfft_config_t *cfg, struct vfft_wisdo
     }
     h->transform = c2r ? VFFT_C2R : VFFT_R2C;
     h->placement = cfg->placement;
-    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->layout = (int)VFI_LAYOUT_IL;
     h->N = N;
     h->N2 = 0;
     h->K = K;

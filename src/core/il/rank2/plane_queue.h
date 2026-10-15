@@ -76,7 +76,7 @@ static void _pq_tramp(void *v)
 #endif
         if ((size_t)p >= P)
             return;
-        vfft_execute((vfft_plan)a->plan, a->dir,
+        _vfft_exec6((vfft_plan)a->plan, a->dir,
                      a->src + (size_t)p * a->h->pq_sdist, NULL,
                      a->dst + (size_t)p * a->h->pq_ddist, NULL);
     }
@@ -114,7 +114,7 @@ static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
     {
         size_t p;
         for (p = 0; p < h->pq_n; p++)
-            vfft_execute((vfft_plan)h->pq_inner, dir,
+            _vfft_exec6((vfft_plan)h->pq_inner, dir,
                          sre + p * h->pq_sdist, NULL,
                          dre + p * h->pq_ddist, NULL);
     }
@@ -140,10 +140,10 @@ static void _pq_mt_arm_queue(void *v)
 }
 /* the primary plane's own row: the first key that resolves, in the order
  * the tiers bank them. NULL-safe: a miss means "nothing to ride". */
-static int _pq_row_key(const struct vfft_plan_s *h, const vfft_config_t *cfg,
+static int _pq_row_key(const struct vfft_plan_s *h, const vfft_cfg_t *cfg,
                        const vw2_store_t *st, vw2_key_t *k)
 {
-    const int il = (cfg->layout == (int)VFFT_LAYOUT_INTERLEAVED);
+    const int il = (cfg->layout == (int)VFI_LAYOUT_IL);
     const int real = (h->transform != VFFT_C2C);
     const int nat = (vfft_policy_ord_rankn(cfg) == VW2_ORD_NAT);
     int i;
@@ -189,7 +189,7 @@ static void _pq_mt_race(struct vfft_plan_s *h);
 /* replay-or-race: the verdict is valid for the (P, T) it was raced at */
 static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
                                   struct vfft_wisdom_s *W,
-                                  const vfft_config_t *cfg)
+                                  const vfft_cfg_t *cfg)
 {
     vw2_key_t k;
     const vw2_rec_t *r;

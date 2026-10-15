@@ -73,20 +73,19 @@ static double xr(void)
     return (double)(g_s >> 11) / (double)(1ull << 53) - 0.5;
 }
 
-static vfft_plan mk(vfft_wisdom *W, int N, int K, int natural, int nthreads)
+static vfft_plan mk(const char *W, int N, int K, int natural, int nthreads)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_INPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = VFFT_PLACEMENT_IN;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = (size_t)K;
-    cfg.order = natural ? VFFT_ORDER_NATURAL : VFFT_ORDER_DEFAULT;
+    cfg.order = natural ? VFFT_ORDER_NATURAL : VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_SPLIT;
     cfg.nthreads = nthreads;
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
 
@@ -127,7 +126,7 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++)
         if (!strcmp(argv[i], "--wisdir") && i + 1 < argc) wisdir = argv[++i];
     if (!wisdir) { printf("usage: %s --wisdir <SCRATCH dir>\n", argv[0]); return 2; }
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
     if (!W) { printf("vfft_wisdom_load FAILED\n"); return 2; }
 
     printf("\n=== MT in-place c2c gate (T=8 vs ST vs naive; MT-first; "
@@ -165,10 +164,10 @@ int main(int argc, char **argv)
             /* arm 1+2: fwd on both plans, same input */
             memcpy(mr, re0, tot * sizeof(double));
             memcpy(mi, im0, tot * sizeof(double));
-            vfft_execute(hm, VFFT_FORWARD, mr, mi, mr, mi);
+            vfft_execute_split(hm, VFFT_FORWARD, mr, mi, mr, mi);
             memcpy(sr, re0, tot * sizeof(double));
             memcpy(si, im0, tot * sizeof(double));
-            vfft_execute(hs, VFFT_FORWARD, sr, si, sr, si);
+            vfft_execute_split(hs, VFFT_FORWARD, sr, si, sr, si);
 
             /* arm 3: MT == ST, bitwise */
             const int eq = memcmp(mr, sr, tot * sizeof(double)) == 0 &&
@@ -206,7 +205,7 @@ int main(int argc, char **argv)
                 double *rr = ad(tot), *ri = ad(tot);
                 memcpy(rr, sr, tot * sizeof(double));
                 memcpy(ri, si, tot * sizeof(double));
-                vfft_execute(hs, VFFT_BACKWARD, rr, ri, rr, ri);
+                vfft_execute_split(hs, VFFT_BACKWARD, rr, ri, rr, ri);
                 double m = 0, e = 0;
                 const double inv = 1.0 / N;
                 for (size_t i = 0; i < tot; i++)
@@ -221,7 +220,7 @@ int main(int argc, char **argv)
             }
 
             /* arm 5: MT roundtrip on the MT plan (bwd also K-split) */
-            vfft_execute(hm, VFFT_BACKWARD, mr, mi, mr, mi);
+            vfft_execute_split(hm, VFFT_BACKWARD, mr, mi, mr, mi);
             double rte = 0.0;
             {
                 double m = 0, e = 0;
@@ -247,7 +246,6 @@ int main(int argc, char **argv)
             vfft_destroy(hs);
         }
 
-    vfft_wisdom_free(W);
     printf("\n=== %s ===\n", fails ? "*** FAIL ***" : "ALL PASS");
     return fails ? 1 : 0;
 }

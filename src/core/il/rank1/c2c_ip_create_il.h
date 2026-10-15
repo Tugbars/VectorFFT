@@ -32,7 +32,7 @@
  * (il/rank1/lm_batch_il.h, the column pass, 2026-10-14) and DEFAULT is the
  * transform-contiguous wrapper. */
 /* DEFAULT = NATURAL: the classification is planning/policy.h's (L4). */
-static inline int _ip_order_is_nat(const vfft_config_t *cfg, int N)
+static inline int _ip_order_is_nat(const vfft_cfg_t *cfg, int N)
 {
     return vfft_policy_ord_k1(cfg, N, /*inplace=*/1) == VW2_ORD_NAT;
 }
@@ -40,9 +40,9 @@ static inline int _ip_order_is_nat(const vfft_config_t *cfg, int N)
 
 static vfft_plan _c2c_ip_finish_il(struct vfft_plan_s *h,
                                    struct vfft_wisdom_s *W,
-                                   const vfft_config_t *cfg, int N);
+                                   const vfft_cfg_t *cfg, int N);
 
-static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
+static vfft_plan _c2c_ip_create_il(const vfft_cfg_t *cfg,
                                    struct vfft_wisdom_s *W,
                                    int N, size_t K)
 {
@@ -56,7 +56,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     vfft_oop11_fn mono_f = 0, mono_b = 0;   /* the alias-tolerant solo (MONO verdict) */
     vfft_ilprime_plan_t *ilp = NULL;
     int have_k1 = 0, mode = VFFT_NAT_UNSET;
-    vfft_config_t rcfg;                     /* the recalibrating config of a re-raced cell */
+    vfft_cfg_t rcfg;                     /* the recalibrating config of a re-raced cell */
     if (K > 1)
     {   /* unreachable since 2026-10-14: a lane-major batch takes its own door before this one
          * (il/il_create.h -> il/rank1/lm_batch_il.h) and DEFAULT is the transform-contiguous wrapper */
@@ -76,7 +76,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     h->nthreads = _vfft_plan_threads(cfg);
     if (getenv("VFFT_NAT_LOG"))
         fprintf(stderr, "[ipil] N=%d order=%s: IL create (no split baseline)\n",
-                N, nat ? "natural" : (cfg->order == VFFT_ORDER_SCRAMBLED ? "scrambled" : "default"));
+                N, nat ? "natural" : (cfg->order == VFI_ORDER_SCRAMBLED ? "scrambled" : "default"));
 
     /* 1. the in-place cell's verdict is its OWN kind-3 row, place=ip, read or
      *    raced (executed in place) and banked by the K=1 candidate below; the
@@ -180,7 +180,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
  * here. */
 static vfft_plan _c2c_ip_finish_il(struct vfft_plan_s *h,
                                    struct vfft_wisdom_s *W,
-                                   const vfft_config_t *cfg, int N)
+                                   const vfft_cfg_t *cfg, int N)
 {
     if (h->k1ilfd && h->K == 1 && h->nthreads > 1)
         _ilfd_mt_replay_or_race(h, W, cfg, N); /* the flat DIT's threaded arm, in place: its own per-T row (vfft.h: the threaded form is served at the plan's count) */

@@ -71,25 +71,69 @@ static double relerr_rows(const double *y, const double *x, size_t rows, int N3,
     return den > 0.0 ? sqrt(num / den) : sqrt(num);
 }
 
-static vfft_plan make(vfft_wisdom *W, int c2r, int N1, int N2, int N3)
+static vfft_plan make(const char *W, int c2r, int N1, int N2, int N3)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = c2r ? VFFT_C2R : VFFT_R2C;
-    cfg.placement = VFFT_INPLACE;
+    cfg.placement = VFFT_PLACEMENT_IN;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.dims = 3;
+    cfg.rank = 3;
     cfg.n[0] = N1;
     cfg.n[1] = N2;
     cfg.n[2] = N3;
     cfg.howmany = 1;
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.nthreads = 1;
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
 
-static int run_cell(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int N3)
+/* the plane at a door-2 plan's own pitch (VFFT_FLAG_OWN_PITCH): vfft_info names its size and
+ * pitch; the gate allocates it and frees it with its plan (destroy_own), as the plan did before */
+static struct
+{
+    vfft_plan p;
+    double *pl;
+} g_own[16];
+static double *own_plane(vfft_plan p, size_t *st)
+{
+    vfft_info_t inf;
+    double *pl;
+    int i;
+    *st = 0;
+    if (vfft_info(p, &inf) != 0 || inf.in_doubles == 0)
+        return NULL;
+    pl = (double *)vfft_malloc(inf.in_doubles * sizeof(double));
+    if (!pl)
+        return NULL;
+    memset(pl, 0, inf.in_doubles * sizeof(double));
+    for (i = 0; i < 16 && g_own[i].p; i++)
+        ;
+    if (i == 16)
+    {
+        vfft_free(pl);
+        return NULL;
+    }
+    g_own[i].p = p;
+    g_own[i].pl = pl;
+    *st = inf.stride;
+    return pl;
+}
+static void destroy_own(vfft_plan p)
+{
+    int i;
+    for (i = 0; i < 16; i++)
+        if (p && g_own[i].p == p)
+        {
+            vfft_free(g_own[i].pl);
+            g_own[i].p = NULL;
+            g_own[i].pl = NULL;
+        }
+    vfft_destroy(p);
+}
+
+static int run_cell(const char *W, const fftwx_api_t *api, int N1, int N2, int N3)
 {
     const int hp3 = N3 / 2 + 1;
     const size_t rows = (size_t)N1 * (size_t)N2, P = 2 * (size_t)hp3, CN = rows * P;
@@ -130,7 +174,7 @@ static int run_cell(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int 
     {
         double e;
         memcpy(a, seed, CN * sizeof(double));
-        vfft_execute(p, VFFT_FORWARD, a, NULL, a, NULL);
+        vfft_execute(p, VFFT_FORWARD, a, a);
         e = relerr(a, pf, CN);
         CHECK(e < 1e-11, "%dx%dx%d r2c: vs FFTW in place, rel %.2e", N1, N2, N3, e);
         p2 = make(W, 0, N1, N2, N3);
@@ -138,17 +182,17 @@ static int run_cell(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int 
         if (p2)
         {
             memcpy(b, seed, CN * sizeof(double));
-            vfft_execute(p2, VFFT_FORWARD, b, NULL, b, NULL);
+            vfft_execute(p2, VFFT_FORWARD, b, b);
             CHECK(memcmp(a, b, CN * sizeof(double)) == 0, "%dx%dx%d r2c: replay bitwise", N1, N2, N3);
-            vfft_destroy(p2);
+            destroy_own(p2);
         }
         memcpy(c, seed, CN * sizeof(double));
         memset(d, 0, CN * sizeof(double));
-        vfft_execute(p, VFFT_FORWARD, c, NULL, d, NULL);
+        vfft_execute(p, VFFT_FORWARD, c, d);
         for (i = 0, zero = 1; i < CN && zero; i++)
             zero = d[i] == 0.0;
         CHECK(zero && memcmp(c, seed, CN * sizeof(double)) == 0, "%dx%dx%d r2c: two volumes refused at the door, both untouched", N1, N2, N3);
-        vfft_destroy(p);
+        destroy_own(p);
     }
     /* ── c2r in place: FFTW's spectrum in, N x out ── */
     p = make(W, 1, N1, N2, N3);
@@ -157,7 +201,7 @@ static int run_cell(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int 
     {
         double e;
         memcpy(a, pf, CN * sizeof(double));
-        vfft_execute(p, VFFT_BACKWARD, a, NULL, a, NULL);
+        vfft_execute(p, VFFT_BACKWARD, a, a);
         e = relerr_rows(a, seed, rows, N3, P, scale);
         CHECK(e < 1e-11, "%dx%dx%d c2r: FFTW's spectrum in place -> N x, rel %.2e", N1, N2, N3, e);
         p2 = make(W, 1, N1, N2, N3);
@@ -165,17 +209,17 @@ static int run_cell(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int 
         if (p2)
         {
             memcpy(b, pf, CN * sizeof(double));
-            vfft_execute(p2, VFFT_BACKWARD, b, NULL, b, NULL);
+            vfft_execute(p2, VFFT_BACKWARD, b, b);
             CHECK(memcmp(a, b, CN * sizeof(double)) == 0, "%dx%dx%d c2r: replay bitwise", N1, N2, N3);
-            vfft_destroy(p2);
+            destroy_own(p2);
         }
         memcpy(c, pf, CN * sizeof(double));
         memset(d, 0, CN * sizeof(double));
-        vfft_execute(p, VFFT_BACKWARD, c, NULL, d, NULL);
+        vfft_execute(p, VFFT_BACKWARD, c, d);
         for (i = 0, zero = 1; i < CN && zero; i++)
             zero = d[i] == 0.0;
         CHECK(zero && memcmp(c, pf, CN * sizeof(double)) == 0, "%dx%dx%d c2r: two volumes refused at the door, both untouched", N1, N2, N3);
-        vfft_destroy(p);
+        destroy_own(p);
     }
     vfft_free(seed); vfft_free(a); vfft_free(b); vfft_free(c); vfft_free(d);
     api->ffree(pf);
@@ -185,7 +229,7 @@ static int run_cell(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int 
 /* DOOR 2 (owned_buffers = 1): the plan's own volume at the policy's pitch; r2c against FFTW's
  * in-place r2c_3d at FFTW's layout row by row, c2r from FFTW's spectrum laid at the plan's pitch
  * against N x; the replay bitwise; at 512 | N3 the pitch must have left the aliasing one */
-static int run_cell_own(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int N3)
+static int run_cell_own(const char *W, const fftwx_api_t *api, int N1, int N2, int N3)
 {
     const int hp3 = N3 / 2 + 1;
     const size_t rows = (size_t)N1 * (size_t)N2, P = 2 * (size_t)hp3, CN = rows * P;
@@ -223,23 +267,22 @@ static int run_cell_own(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, 
         size_t st = 0, st2 = 0, r, j;
         memset(&cfg, 0, sizeof cfg);
         cfg.transform = c2r ? VFFT_C2R : VFFT_R2C;
-        cfg.placement = VFFT_INPLACE;
+        cfg.placement = VFFT_PLACEMENT_IN;
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-        cfg.dims = 3;
+        cfg.rank = 3;
         cfg.n[0] = N1;
         cfg.n[1] = N2;
         cfg.n[2] = N3;
         cfg.howmany = 1;
         cfg.order = VFFT_ORDER_NATURAL;
         cfg.nthreads = 1;
-        cfg.owned_buffers = 1;
-        cfg.wisdom = W;
+        cfg.flags |= (1) ? VFFT_FLAG_OWN_PITCH : 0;
+        cfg.wisdom_dir = W;
         p = vfft_create(&cfg);
         CHECK(p != NULL, "%dx%dx%d %s: door-2 plan created%s%s", N1, N2, N3, tag, p ? " -- " : "", p ? vfft_plan_route(p) : "");
         if (!p)
             continue;
-        vfft_plan_planes(p, &pl, NULL, NULL, NULL);
-        st = vfft_plan_stride(p);
+        pl = own_plane(p, &st);
         CHECK(pl != NULL && st >= P, "%dx%dx%d %s: the plan's volume, row pitch %zu doubles (hp3 + %d pairs)", N1, N2, N3, tag, st, (int)(st / 2) - hp3);
         if (m == 16 || m == 4096 - 16)
             CHECK(st != P, "%dx%dx%d %s: the aliasing pitch left (16 hp3 = %zu mod 4096)", N1, N2, N3, tag, m);
@@ -250,7 +293,7 @@ static int run_cell_own(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, 
             double num = 0.0, den = 0.0, e;
             for (r = 0; r < rows; r++)
                 memcpy(pl + r * st, (c2r ? pf : seed) + r * P, (c2r ? P : (size_t)N3) * sizeof(double));
-            vfft_execute(p, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl, NULL, pl, NULL);
+            vfft_execute(p, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl, pl);
             if (c2r)
                 for (r = 0; r < rows; r++)
                     for (j = 0; j < (size_t)N3; j++)
@@ -276,23 +319,22 @@ static int run_cell_own(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, 
             if (p2)
             {
                 int same = 1;
-                vfft_plan_planes(p2, &pl2, NULL, NULL, NULL);
-                st2 = vfft_plan_stride(p2);
+                pl2 = own_plane(p2, &st2);
                 if (pl2 && st2 == st)
                 {
                     for (r = 0; r < rows; r++)
                         memcpy(pl2 + r * st, (c2r ? pf : seed) + r * P, (c2r ? P : (size_t)N3) * sizeof(double));
-                    vfft_execute(p2, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl2, NULL, pl2, NULL);
+                    vfft_execute(p2, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl2, pl2);
                     for (r = 0; r < rows && same; r++)
                         same = memcmp(pl2 + r * st, keep + r * P, (c2r ? (size_t)N3 : P) * sizeof(double)) == 0;
                 }
                 else
                     same = 0;
                 CHECK(same, "%dx%dx%d %s: replay bitwise, the same pitch", N1, N2, N3, tag);
-                vfft_destroy(p2);
+                destroy_own(p2);
             }
         }
-        vfft_destroy(p);
+        destroy_own(p);
     }
     vfft_free(seed);
     api->ffree(pf);
@@ -302,7 +344,7 @@ static int run_cell_own(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, 
 
 /* THE THREADED PLAN: nthreads = 8, both directions, both doors; the serial cells' checks and the
  * threaded executes that engaged (vfft_ilnd_mt_passes: the rank-3 tiers' counter) */
-static int run_cell_mt(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, int N3, int own)
+static int run_cell_mt(const char *W, const fftwx_api_t *api, int N1, int N2, int N3, int own)
 {
     const int hp3 = N3 / 2 + 1;
     const size_t rows = (size_t)N1 * (size_t)N2, P = 2 * (size_t)hp3, CN = rows * P;
@@ -342,25 +384,24 @@ static int run_cell_mt(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, i
         snprintf(tag, sizeof tag, "%s T=8%s", c2r ? "c2r" : "r2c", own ? " own" : "");
         memset(&cfg, 0, sizeof cfg);
         cfg.transform = c2r ? VFFT_C2R : VFFT_R2C;
-        cfg.placement = VFFT_INPLACE;
+        cfg.placement = VFFT_PLACEMENT_IN;
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-        cfg.dims = 3;
+        cfg.rank = 3;
         cfg.n[0] = N1;
         cfg.n[1] = N2;
         cfg.n[2] = N3;
         cfg.howmany = 1;
         cfg.order = VFFT_ORDER_NATURAL;
         cfg.nthreads = 8;
-        cfg.owned_buffers = own;
-        cfg.wisdom = W;
+        cfg.flags |= (own) ? VFFT_FLAG_OWN_PITCH : 0;
+        cfg.wisdom_dir = W;
         p = vfft_create(&cfg);
         CHECK(p != NULL, "%dx%dx%d %s: in-place plan created%s%s", N1, N2, N3, tag, p ? " -- " : "", p ? vfft_plan_route(p) : "");
         if (!p)
             continue;
         if (own)
         {
-            vfft_plan_planes(p, &pl, NULL, NULL, NULL);
-            st = vfft_plan_stride(p);
+            pl = own_plane(p, &st);
         }
         else
         {
@@ -373,7 +414,7 @@ static int run_cell_mt(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, i
             for (r = 0; r < rows; r++)
                 memcpy(pl + r * st, (c2r ? pf : seed) + r * P, (c2r ? P : (size_t)N3) * sizeof(double));
             e0 = vfft_ilnd_mt_passes();
-            vfft_execute(p, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl, NULL, pl, NULL);
+            vfft_execute(p, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl, pl);
             eng = vfft_ilnd_mt_passes() - e0;
             for (r = 0; r < rows; r++)
                 for (j = 0; j < (c2r ? (size_t)N3 : P); j++)
@@ -394,7 +435,7 @@ static int run_cell_mt(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, i
                 int same = 1;
                 for (r = 0; r < rows; r++)
                     memcpy(pl + r * st, (c2r ? pf : seed) + r * P, (c2r ? P : (size_t)N3) * sizeof(double));
-                vfft_execute(p, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl, NULL, pl, NULL);
+                vfft_execute(p, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl, pl);
                 for (r = 0; r < rows && same; r++)
                     same = memcmp(pl + r * st, keep + r * P, (c2r ? (size_t)N3 : P) * sizeof(double)) == 0;
                 CHECK(same, "%dx%dx%d %s: executed twice, bitwise (the threaded walk is deterministic)", N1, N2, N3, tag);
@@ -407,8 +448,7 @@ static int run_cell_mt(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, i
                 st2 = st;
                 if (own)
                 {
-                    vfft_plan_planes(p2, &pl2, NULL, NULL, NULL);
-                    st2 = vfft_plan_stride(p2);
+                    pl2 = own_plane(p2, &st2);
                 }
                 else
                     pl2 = a;
@@ -416,19 +456,19 @@ static int run_cell_mt(vfft_wisdom *W, const fftwx_api_t *api, int N1, int N2, i
                 {
                     for (r = 0; r < rows; r++)
                         memcpy(pl2 + r * st, (c2r ? pf : seed) + r * P, (c2r ? P : (size_t)N3) * sizeof(double));
-                    vfft_execute(p2, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl2, NULL, pl2, NULL);
+                    vfft_execute(p2, c2r ? VFFT_BACKWARD : VFFT_FORWARD, pl2, pl2);
                     for (r = 0; r < rows && same; r++)
                         same = memcmp(pl2 + r * st, keep + r * P, (c2r ? (size_t)N3 : P) * sizeof(double)) == 0;
                 }
                 else
                     same = 0;
                 CHECK(same, "%dx%dx%d %s: replay bitwise", N1, N2, N3, tag);
-                vfft_destroy(p2);
+                destroy_own(p2);
             }
         }
         else
             CHECK(0, "%dx%dx%d %s: the plan's volume", N1, N2, N3, tag);
-        vfft_destroy(p);
+        destroy_own(p);
     }
     vfft_free(seed); vfft_free(a);
     api->ffree(pf);
@@ -448,7 +488,7 @@ int main(int argc, char **argv)
     const char *wisdir = argc > 1 ? argv[1] : ".";
     fftwx_api_t api;
     char err[256];
-    vfft_wisdom *W;
+    const char *W;
     int ci;
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifdef _WIN32
@@ -461,20 +501,17 @@ int main(int argc, char **argv)
         printf("IP3GATE FAIL  FFTW bind: %s\n", err);
         return 1;
     }
-    W = vfft_wisdom_load(wisdir);
+    W = (wisdir);
     printf("=== il3d REAL IN-PLACE gate (r2c + c2r, one padded volume, vs FFTW in place / N x; wisdom=%s %s; FFTW %s) ===\n",
            wisdir, W ? "loaded" : "MISSING", api.version ? api.version : "?");
     for (ci = 0; ci < (int)(sizeof CELLS / sizeof CELLS[0]); ci++)
         run_cell(W, &api, CELLS[ci][0], CELLS[ci][1], CELLS[ci][2]);
     for (ci = 0; ci < (int)(sizeof OWN / sizeof OWN[0]); ci++)
         run_cell_own(W, &api, OWN[ci][0], OWN[ci][1], OWN[ci][2]);
-    vfft_set_num_threads(8);
     for (ci = 0; ci < (int)(sizeof MT / sizeof MT[0]); ci++)
         run_cell_mt(W, &api, MT[ci][0], MT[ci][1], MT[ci][2], 0);
     for (ci = 0; ci < (int)(sizeof MTO / sizeof MTO[0]); ci++)
         run_cell_mt(W, &api, MTO[ci][0], MTO[ci][1], MTO[ci][2], 1);
-    if (W)
-        vfft_wisdom_free(W);
     if (g_fail)
         printf("IL3D REAL IP GATE FAIL: %d of %d checks\n", g_fail, g_fail + g_pass);
     else

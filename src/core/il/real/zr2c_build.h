@@ -96,7 +96,7 @@ static void _zr2c_kid_destroy(struct vfft_zr2c_kid_s *k)
     _il_dp_free(&k->b);   /* never frees b.ilp: borrowed */
     if (k->ilp)
         vfft_ilprime_destroy(k->ilp);
-    vfft_wisdom_free((vfft_wisdom *)k->fsS);   /* after b: its four-step's 2D child is gone */
+    _vfft_wisdom_free((vfft_wisdom *)k->fsS);   /* after b: its four-step's 2D child is gone */
     free(k);
 }
 
@@ -111,7 +111,7 @@ static inline int _zr2c_kid_exec(const struct vfft_zr2c_kid_s *k, const double *
 /* the child's own c2c request: what its components (the prime cell, the
  * four-step's 2D child) are created against. It carries no store of the
  * library's: the components race in private stores. */
-static void _zr2c_kid_cfg(const vfft_config_t *cfg, int n, int inplace, vfft_config_t *c2)
+static void _zr2c_kid_cfg(const vfft_cfg_t *cfg, int n, int inplace, vfft_cfg_t *c2)
 {
     memset(c2, 0, sizeof *c2);
     c2->transform = VFFT_C2C;
@@ -120,8 +120,8 @@ static void _zr2c_kid_cfg(const vfft_config_t *cfg, int n, int inplace, vfft_con
     c2->dims = 1;
     c2->n[0] = n;
     c2->howmany = 1;
-    c2->order = VFFT_ORDER_NATURAL;
-    c2->layout = VFFT_LAYOUT_INTERLEAVED;
+    c2->order = VFI_ORDER_NATURAL;
+    c2->layout = VFI_LAYOUT_IL;
     c2->nthreads = 1;
 }
 
@@ -233,7 +233,7 @@ static struct vfft_wisdom_s *_zr2c_fs_store(const char *fs, int N1, int N2, int 
     if (ok && (S = _k1fs_store_new()) != NULL &&
         (_k1fs_seed(S, &k2, &r2) || (rr.ntok > 0 && _k1fs_seed(S, &kr, &rr)) || (rb.ntok > 0 && _k1fs_seed(S, &kb, &rb))))
     {
-        vfft_wisdom_free((vfft_wisdom *)S);
+        _vfft_wisdom_free((vfft_wisdom *)S);
         S = NULL;
     }
     if (S)
@@ -288,22 +288,22 @@ static int _zr2c_prime_of_child(_zr2c_prime_t *pr, const vw2_zr2c_child_t *o)
 /* build the child from its recipe (`pr`: its prime cell, route PRIME; `fsS`:
  * its four-step child's private store, route FS, taken whatever the
  * outcome); NULL when it no longer builds */
-static struct vfft_zr2c_kid_s *_zr2c_kid_build(const vfft_config_t *cfg, int n, int inplace,
+static struct vfft_zr2c_kid_s *_zr2c_kid_build(const vfft_cfg_t *cfg, int n, int inplace,
                                                const vfft_il_cand_t *c, const _zr2c_prime_t *pr,
                                                struct vfft_wisdom_s *fsS)
 {
-    vfft_config_t c2;
+    vfft_cfg_t c2;
     struct vfft_zr2c_kid_s *k = (struct vfft_zr2c_kid_s *)calloc(1, sizeof *k);
     int rc;
     if (!k)
     {
-        vfft_wisdom_free((vfft_wisdom *)fsS);
+        _vfft_wisdom_free((vfft_wisdom *)fsS);
         return NULL;
     }
     if (c->route == VFFT_K1_IL_FS)
         k->fsS = fsS;
     else
-        vfft_wisdom_free((vfft_wisdom *)fsS);   /* only route FS carries a store */
+        _vfft_wisdom_free((vfft_wisdom *)fsS);   /* only route FS carries a store */
     k->c = *c;
     k->n = n;
     k->inplace = inplace;
@@ -318,7 +318,7 @@ static struct vfft_zr2c_kid_s *_zr2c_kid_build(const vfft_config_t *cfg, int n, 
                 d.seed = _zr2c_fs_store(pr->fs, d.R1, d.R2, 0);   /* the inner's child from the row; the plan takes the store */
             k->ilp = _ilprime_build_with(n, pr->m == 1, &d);
             if (d.seed)
-                vfft_wisdom_free((vfft_wisdom *)d.seed);   /* not taken: the build failed */
+                _vfft_wisdom_free((vfft_wisdom *)d.seed);   /* not taken: the build failed */
             if (k->ilp && d.kind == 4 && d.grew)
                 fprintf(stderr, "vfft: the real composite's prime child at N=%d: its four-step inner's child did not replay -- "
                                 "it raced in the plan's private store\n", n);
@@ -337,8 +337,8 @@ static struct vfft_zr2c_kid_s *_zr2c_kid_build(const vfft_config_t *cfg, int n, 
          * a store that gained a row means the child raced -- its rows do not
          * serve this build */
         struct vfft_wisdom_s *sw = _k1fs_ctx.W;
-        const vfft_config_t *sc = _k1fs_ctx.cfg;
-        vfft_config_t cs = c2;
+        const vfft_cfg_t *sc = _k1fs_ctx.cfg;
+        vfft_cfg_t cs = c2;
         int n0;
         if (!k->fsS)
         {
@@ -416,11 +416,11 @@ static int _zr2c_dp_ready = 0;
  * from (VFFT_HIGHN_PLAN=borrow, policy_il.h; read only): set by _zr2c_build for the race
  * below it -- planning side, one create at a time */
 static const struct vfft_wisdom_s *_zr2c_race_W = NULL;
-static double _zr2c_kid_race(const vfft_config_t *cfg, int N, int route, vfft_il_cand_t *best,
+static double _zr2c_kid_race(const vfft_cfg_t *cfg, int N, int route, vfft_il_cand_t *best,
                              _zr2c_prime_t *pr, struct vfft_wisdom_s **fs_out)
 {
     const int n = N / 2, top = N / 4, c2r = cfg->transform == VFFT_C2R;
-    vfft_config_t c2, cs;
+    vfft_cfg_t c2, cs;
     _zr2c_role_t role;
     struct vfft_wisdom_s *S;
     double *aff, ns;
@@ -435,7 +435,7 @@ static double _zr2c_kid_race(const vfft_config_t *cfg, int N, int route, vfft_il
     {
         vfft_aligned_free(aff);
         vfft_aligned_free(role.scr);
-        vfft_wisdom_free((vfft_wisdom *)S);
+        _vfft_wisdom_free((vfft_wisdom *)S);
         return 1e18;
     }
     _zr2c_init_aff(N, aff, aff + (top + 1), aff + 2 * (top + 1), aff + 3 * (top + 1));
@@ -500,7 +500,7 @@ static double _zr2c_kid_race(const vfft_config_t *cfg, int N, int route, vfft_il
     if (ns < 1e17 && best->route == VFFT_K1_IL_FS)
         *fs_out = S;                 /* ... and its four-step child's rows only on route FS */
     else
-        vfft_wisdom_free((vfft_wisdom *)S);
+        _vfft_wisdom_free((vfft_wisdom *)S);
     if (getenv("VFFT_ZRACE_VERBOSE") && ns < 1e17)
         fprintf(stderr, "[zr2c] N=%d %s route %d child raced in role: route=%d %d.%d -> %.1f ns\n", N,
                 c2r ? "c2r" : "r2c", route, best->route, best->R1, best->R2, ns);
@@ -510,7 +510,7 @@ static double _zr2c_kid_race(const vfft_config_t *cfg, int N, int route, vfft_il
 /* the composite for one route, its child built from `child`, its prime cell
  * `pr` and its four-step child's private store `fsS` (taken; child NULL: the
  * child races in role first, banking nothing) */
-static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N, int route,
+static struct vfft_plan_s *_zr2c_build_route(const vfft_cfg_t *cfg, int N, int route,
                                              const vfft_il_cand_t *child, const _zr2c_prime_t *pr,
                                              struct vfft_wisdom_s *fsS)
 {
@@ -520,7 +520,7 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N, in
     struct vfft_zr2c_kid_s *kid;
     if (!child)
     {
-        vfft_wisdom_free((vfft_wisdom *)fsS);
+        _vfft_wisdom_free((vfft_wisdom *)fsS);
         if (_zr2c_kid_race(cfg, N, route, &raced, &rpr, &fsS) >= 1e17)
         {
             _vfft_warn("vfft_create: zr2c child c2c(%d) has no plan in the real role", half);
@@ -569,7 +569,7 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N, in
                    aff + 3 * (top + 1));
     h->transform = cfg->transform;
     h->placement = cfg->placement;
-    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->layout = (int)VFI_LAYOUT_IL;
     h->N = N;
     h->K = 1;
     h->nthreads = _vfft_plan_threads(cfg);
@@ -653,7 +653,7 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
  * thread count): the route, the fold's serving, the child's recipe. A prime
  * cell raced under the method pin (VFFT_ILPR_METHOD) is no race verdict and
  * is never banked, as on the prime row. */
-static int _zr2c_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N,
+static int _zr2c_bank(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N,
                       const struct vfft_plan_s *h, double ns)
 {
     vw2_zr2c_child_t ch;
@@ -671,7 +671,7 @@ static int _zr2c_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N,
  * predates the in-role child), a PRIME recipe without its prime cell, a FS
  * recipe without its four-step child's rows, or one whose recipe no longer
  * builds is a miss. */
-static struct vfft_plan_s *_zr2c_replay(const vfft_config_t *cfg, int N, struct vfft_wisdom_s *W)
+static struct vfft_plan_s *_zr2c_replay(const vfft_cfg_t *cfg, int N, struct vfft_wisdom_s *W)
 {
     int route, fmt;
     vw2_zr2c_child_t ch;
@@ -711,7 +711,7 @@ static void _zr2c_arm_run(void *v)
  * _exec_zr2c, the faster one taken. Banks
  * nothing: the door's engine race banks the cell's winner (zrp_build.h), zr2c
  * included. */
-static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
+static struct vfft_plan_s *_zr2c_build(const vfft_cfg_t *cfg, int N,
                                        struct vfft_wisdom_s *W)
 {
     _zr2c_race_W = (W && !W->vw2_off_oop) ? W : NULL;   /* the child's four-step candidates borrow from here */

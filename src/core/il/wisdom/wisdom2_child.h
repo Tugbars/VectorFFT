@@ -47,7 +47,7 @@ static struct vfft_wisdom_s *vfft_child_store_new(void)
 static void vfft_child_store_free(struct vfft_wisdom_s *S)
 {
     if (S)
-        vfft_wisdom_free((vfft_wisdom *)S);
+        _vfft_wisdom_free((vfft_wisdom *)S);
 }
 
 /* is `name` a child token under pre: <pre>k<i> (rest = NULL) or <pre><i>_<rest> */

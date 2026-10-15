@@ -95,8 +95,8 @@ static int _g2d_run(const char *wisdir, int transform, int order,
                     int N1, int N2, const double *in, double *out,
                     size_t out_doubles, double *rt, int wisdom_write)
 {
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
-    vfft_config_t cfg;
+    vfft_wisdom *W = _vfft_wisdom_load(wisdir);
+    vfft_cfg_t cfg;
     vfft_plan h;
     if (!W) return 0;
     memset(&cfg, 0, sizeof cfg);
@@ -106,20 +106,20 @@ static int _g2d_run(const char *wisdir, int transform, int order,
     cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2;
     cfg.howmany = 1;
     cfg.order = order;
-    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.layout = VFI_LAYOUT_IL;
     cfg.nthreads = 1;
     cfg.wisdom = W;
     cfg.wisdom_write = wisdom_write;
-    h = vfft_create(&cfg);
-    if (!h) { vfft_wisdom_free(W); return 0; }
+    h = _vfft_create_cfg(&cfg);
+    if (!h) { _vfft_wisdom_free(W); return 0; }
     memset(out, 0, out_doubles * sizeof(double));
-    vfft_execute(h, VFFT_FORWARD, (double *)in, NULL, out, NULL);
+    _vfft_exec6(h, VFFT_FORWARD, (double *)in, NULL, out, NULL);
     if (rt) {
         memset(rt, 0, out_doubles * sizeof(double));
-        vfft_execute(h, VFFT_BACKWARD, out, NULL, rt, NULL);
+        _vfft_exec6(h, VFFT_BACKWARD, out, NULL, rt, NULL);
     }
     vfft_destroy(h);
-    vfft_wisdom_free(W);
+    _vfft_wisdom_free(W);
     return 1;
 }
 
@@ -163,11 +163,11 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
     /* ── c2c cells, scrambled + natural, correctness vs naive ─────────── */
     {
         static const struct { int N1, N2, order; const char *tag; } CC[] = {
-            { 64, 64, VFFT_ORDER_SCRAMBLED, "c2c 64x64 scr" },
-            { 64, 16, VFFT_ORDER_SCRAMBLED, "c2c 64x16 scr" },
-            { 64, 64, VFFT_ORDER_NATURAL, "c2c 64x64 nat" },
-            { 128, 64, VFFT_ORDER_NATURAL, "c2c 128x64 nat" },
-            { 127, 100, VFFT_ORDER_NATURAL, "c2c 127x100 nat" }, /* PRIME N1: the
+            { 64, 64, VFI_ORDER_SCRAMBLED, "c2c 64x64 scr" },
+            { 64, 16, VFI_ORDER_SCRAMBLED, "c2c 64x16 scr" },
+            { 64, 64, VFI_ORDER_NATURAL, "c2c 64x64 nat" },
+            { 128, 64, VFI_ORDER_NATURAL, "c2c 128x64 nat" },
+            { 127, 100, VFI_ORDER_NATURAL, "c2c 127x100 nat" }, /* PRIME N1: the
                                               * column-axis Bluestein, replayed
                                               * from a blu= row — the naive-DFT
                                               * anchor is what catches a replay
@@ -184,7 +184,7 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
             for (j = 0; j < nd; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
             ok = _g2d_both_arms(wisdir, VFFT_C2C, CC[i].order, N1, N2, x, A, B, nd,
                                 NULL, NULL);
-            if (ok && CC[i].order == VFFT_ORDER_NATURAL) {
+            if (ok && CC[i].order == VFI_ORDER_NATURAL) {
                 /* natural output is IN ORDER: anchor to the naive DFT */
                 double m = 0, e = 0;
                 _g2d_naive(x, R, N1, N2);
@@ -234,7 +234,7 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
             size_t j;
             int ok;
             for (j = 0; j < nin; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
-            ok = _g2d_both_arms(wisdir, RC[i].t, VFFT_ORDER_DEFAULT, N1, N2,
+            ok = _g2d_both_arms(wisdir, RC[i].t, VFI_ORDER_DEFAULT, N1, N2,
                                 x, A, B, nout, NULL, NULL);
             if (ok && memcmp(A, B, ncmp * sizeof(double)) != 0) {
                 /* name the first divergent double — evidence for any
@@ -268,8 +268,8 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
         f = fopen(p3, "rb");
         if (f) { char l[512]; while (fgets(l, sizeof l, f)) if (l[0] == '@' && l[1] == 'c') had++; fclose(f); }
         {
-            vfft_wisdom *W = vfft_wisdom_load(wisdir);
-            vfft_config_t cfg;
+            vfft_wisdom *W = _vfft_wisdom_load(wisdir);
+            vfft_cfg_t cfg;
             vfft_plan h;
             if (!W) ok = 0;
             else {
@@ -277,17 +277,17 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
                 cfg.transform = VFFT_C2C; cfg.placement = VFFT_OUTOFPLACE;
                 cfg.rigor = VFFT_MEASURE; cfg.dims = 3;
                 cfg.n[0] = N; cfg.n[1] = N; cfg.n[2] = N;
-                cfg.howmany = 1; cfg.order = VFFT_ORDER_DEFAULT;
-                cfg.layout = VFFT_LAYOUT_SPLIT; cfg.nthreads = 1;   /* the split 3D create banks the record this leg tests */
+                cfg.howmany = 1; cfg.order = VFI_ORDER_DEFAULT;
+                cfg.layout = VFI_LAYOUT_SPLIT; cfg.nthreads = 1;   /* the split 3D create banks the record this leg tests */
                 cfg.wisdom = W;
                 cfg.wisdom_write = 1;        /* measurement mode: must persist */
-                h = vfft_create(&cfg);
+                h = _vfft_create_cfg(&cfg);
                 if (!h) ok = 0;
                 else {
-                    vfft_execute(h, VFFT_FORWARD, x, NULL, A, NULL);
+                    _vfft_exec6(h, VFFT_FORWARD, x, NULL, A, NULL);
                     vfft_destroy(h);
                 }
-                vfft_wisdom_free(W);
+                _vfft_wisdom_free(W);
             }
         }
         f = fopen(p3, "rb");
@@ -299,24 +299,24 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
         }
         if (ok) {
             /* second create, FRESH load: must re-serve the banked recipe */
-            vfft_wisdom *W = vfft_wisdom_load(wisdir);
-            vfft_config_t cfg;
+            vfft_wisdom *W = _vfft_wisdom_load(wisdir);
+            vfft_cfg_t cfg;
             vfft_plan h;
             memset(&cfg, 0, sizeof cfg);
             cfg.transform = VFFT_C2C; cfg.placement = VFFT_OUTOFPLACE;
             cfg.rigor = VFFT_MEASURE; cfg.dims = 3;
             cfg.n[0] = N; cfg.n[1] = N; cfg.n[2] = N;
-            cfg.howmany = 1; cfg.order = VFFT_ORDER_DEFAULT;
-            cfg.layout = VFFT_LAYOUT_SPLIT; cfg.nthreads = 1;   /* the same split create, re-served */
+            cfg.howmany = 1; cfg.order = VFI_ORDER_DEFAULT;
+            cfg.layout = VFI_LAYOUT_SPLIT; cfg.nthreads = 1;   /* the same split create, re-served */
             cfg.wisdom = W;
-            h = W ? vfft_create(&cfg) : NULL;
+            h = W ? _vfft_create_cfg(&cfg) : NULL;
             if (!h) ok = 0;
             else {
-                vfft_execute(h, VFFT_FORWARD, x, NULL, B, NULL);
+                _vfft_exec6(h, VFFT_FORWARD, x, NULL, B, NULL);
                 vfft_destroy(h);
                 if (memcmp(A, B, nd * sizeof(double)) != 0) ok = 0;
             }
-            if (W) vfft_wisdom_free(W);
+            if (W) _vfft_wisdom_free(W);
         }
         if (ok)
             printf("  3d %dx%dx%d      PASS (banked -> persisted -> re-served bitwise)\n", N, N, N);

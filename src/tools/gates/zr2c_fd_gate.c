@@ -51,7 +51,7 @@ static void judge(const char *what, int N, double err, double tol)
     if (!ok) g_fail = 1;
 }
 
-static vfft_wisdom *g_W;
+static const char *g_W;
 
 /* ── stderr tap (the k1z_inplace_gate / natural-front-gate pattern) ────────
  * The route race announces itself on stderr under VFFT_ZRACE_VERBOSE, so the
@@ -115,16 +115,16 @@ static void run_cell(int N, int route)
 
     /* ── R2C OOP ── */
     memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
-    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = g_W;
-    cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
+    cfg.transform = VFFT_R2C; cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom_dir = g_W;
+    /* measurement gate: banks must persist */
     vfft_plan p = vfft_create(&cfg);
     snprintf(lbl, sizeof lbl, "r2c OOP  route=%s", rt);
     if (!p) { judge(lbl, N, -1, 1); }
     else {
         memset(X, 0, 8*xs);
-        vfft_execute(p, VFFT_FORWARD, x, NULL, X, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, X);
         double w = 0;
         for (int f = 0; f <= half; f++){
             double dr = fabs(X[2*f]   - Xr[f]);
@@ -135,13 +135,13 @@ static void run_cell(int N, int route)
     }
 
     /* ── R2C IN-PLACE (one padded plane) ── */
-    cfg.placement = VFFT_INPLACE;
+    cfg.placement = VFFT_PLACEMENT_IN;
     p = vfft_create(&cfg);
     snprintf(lbl, sizeof lbl, "r2c IN-PLACE  route=%s", rt);
     if (!p) { judge(lbl, N, -1, 1); }
     else {
         memcpy(pl, x, 8*xs);
-        vfft_execute(p, VFFT_FORWARD, pl, NULL, pl, NULL);
+        vfft_execute(p, VFFT_FORWARD, pl, pl);
         double w = 0;
         for (int f = 0; f <= half; f++){
             double dr = fabs(pl[2*f]   - Xr[f]);
@@ -152,14 +152,14 @@ static void run_cell(int N, int route)
     }
 
     /* ── C2R OOP: naive spectrum in -> must return N*x ── */
-    cfg.transform = VFFT_C2R; cfg.placement = VFFT_OUTOFPLACE;
+    cfg.transform = VFFT_C2R; cfg.placement = VFFT_PLACEMENT_OUT;
     p = vfft_create(&cfg);
     snprintf(lbl, sizeof lbl, "c2r OOP  route=%s", rt);
     if (!p) { judge(lbl, N, -1, 1); }
     else {
         for (int f = 0; f <= half; f++){ X[2*f] = Xr[f]; X[2*f+1] = Xi[f]; }
         memset(y, 0, 8*xs);
-        vfft_execute(p, VFFT_BACKWARD, X, NULL, y, NULL);
+        vfft_execute(p, VFFT_BACKWARD, X, y);
         double w = 0;
         for (int i = 0; i < N; i++){
             double d = fabs(y[i] - (double)N * x[i]); if (d > w) w = d; }
@@ -168,13 +168,13 @@ static void run_cell(int N, int route)
     }
 
     /* ── C2R IN-PLACE ── */
-    cfg.placement = VFFT_INPLACE;
+    cfg.placement = VFFT_PLACEMENT_IN;
     p = vfft_create(&cfg);
     snprintf(lbl, sizeof lbl, "c2r IN-PLACE  route=%s", rt);
     if (!p) { judge(lbl, N, -1, 1); }
     else {
         for (int f = 0; f <= half; f++){ pl[2*f] = Xr[f]; pl[2*f+1] = Xi[f]; }
-        vfft_execute(p, VFFT_BACKWARD, pl, NULL, pl, NULL);
+        vfft_execute(p, VFFT_BACKWARD, pl, pl);
         double w = 0;
         for (int i = 0; i < N; i++){
             double d = fabs(pl[i] - (double)N * x[i]); if (d > w) w = d; }
@@ -196,10 +196,10 @@ static void run_regressions(void)
         double *Xr = malloc(8*(size_t)(half+1)), *Xi = malloc(8*(size_t)(half+1));
         for (size_t i = 0; i < (size_t)N*K; i++) x[i] = rnd();
         vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-        cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
-        cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = K;
-        cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = g_W;
-        cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
+        cfg.transform = VFFT_R2C; cfg.placement = VFFT_PLACEMENT_OUT;
+        cfg.rank = 1; cfg.n[0] = N; cfg.howmany = K;
+        cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom_dir = g_W;
+        /* measurement gate: banks must persist */
         vfft_plan p = vfft_create(&cfg);
         /* the lane-major interleaved real batch is REFUSED at create (owner
          * 2026-10-14, field trial V02; vfft.h batch_geom): the refusal is the
@@ -222,15 +222,15 @@ static void run_regressions(void)
         for (int i = 0; i < N; i++) x[i] = rnd();
         naive_real_dft(x, N, Xr, Xi);
         vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-        cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
-        cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
-        cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = g_W;
-        cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
+        cfg.transform = VFFT_R2C; cfg.placement = VFFT_PLACEMENT_OUT;
+        cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
+        cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom_dir = g_W;
+        /* measurement gate: banks must persist */
         vfft_plan p = vfft_create(&cfg);
         if (!p) judge("r2c non-pow2 510 (zr2c, half 255)", N, -1, 1);
         else {
             memset(X, 0, 8*((size_t)N+2));
-            vfft_execute(p, VFFT_FORWARD, x, NULL, X, NULL);
+            vfft_execute(p, VFFT_FORWARD, x, X);
             double w = 0, xm = 0;
             for (int f = 0; f <= half; f++){
                 double a = fabs(Xr[f]) + fabs(Xi[f]); if (a > xm) xm = a;
@@ -278,11 +278,11 @@ static void tc_batch_fwd(int N, size_t K, int nthreads, double *out)
     const size_t nb = (size_t)N/2 + 1;
     double *x = (double *)malloc(8*(size_t)N*K);
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = K;
+    cfg.transform = VFFT_R2C; cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = K;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
-    cfg.nthreads = nthreads; cfg.wisdom = g_W; cfg.wisdom_write = 1;
+    cfg.batch = VFFT_BATCH_CONTIGUOUS;
+    cfg.nthreads = nthreads; cfg.wisdom_dir = g_W;
     /* per-transform data: block t is seeded from a t-dependent stream, so a
      * stride bug cannot pass by aliasing the blocks together.
      *
@@ -298,7 +298,7 @@ static void tc_batch_fwd(int N, size_t K, int nthreads, double *out)
     if (!p) { free(x); out[0] = -1.0; return; }
     g_tc_workers = vfft_plan_tc_workers(p);   /* see the MT==ST check below */
     memset(out+1, 0, 8*2*nb*K);
-    vfft_execute(p, VFFT_FORWARD, x, NULL, out+1, NULL);
+    vfft_execute(p, VFFT_FORWARD, x, out+1);
     {
         double *Xr = (double *)malloc(8*nb), *Xi = (double *)malloc(8*nb);
         double w = 0, xm = 0;
@@ -382,19 +382,19 @@ static void run_tc_batch(void)
             vfft_config_t cf, cb; vfft_plan pf, pb;
             size_t j;
             memset(&cf, 0, sizeof cf);
-            cf.transform = VFFT_R2C; cf.placement = VFFT_OUTOFPLACE;
-            cf.rigor = VFFT_MEASURE; cf.dims = 1; cf.n[0] = N; cf.howmany = K;
+            cf.transform = VFFT_R2C; cf.placement = VFFT_PLACEMENT_OUT;
+            cf.rank = 1; cf.n[0] = N; cf.howmany = K;
             cf.layout = VFFT_LAYOUT_INTERLEAVED;
-            cf.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
-            cf.nthreads = 1; cf.wisdom = g_W; cf.wisdom_write = 1;
+            cf.batch = VFFT_BATCH_CONTIGUOUS;
+            cf.nthreads = 1; cf.wisdom_dir = g_W;
             cb = cf; cb.transform = VFFT_C2R;
             for (j = 0; j < (size_t)N*K; j++) x0[j] = rnd();
             pf = vfft_create(&cf); pb = vfft_create(&cb);
             if (!pf || !pb) judge("TC batch c2r K=4 roundtrip", N, -1, 1);
             else {
                 double w = 0, xm = 0;
-                vfft_execute(pf, VFFT_FORWARD,  x0, NULL, X, NULL);
-                vfft_execute(pb, VFFT_BACKWARD, X,  NULL, y, NULL);
+                vfft_execute(pf, VFFT_FORWARD, x0, X);
+                vfft_execute(pb, VFFT_BACKWARD, X, y);
                 for (j = 0; j < (size_t)N*K; j++) {
                     double d = fabs(y[j]/(double)N - x0[j]);
                     if (d > w) w = d;
@@ -416,11 +416,11 @@ static void run_tc_batch(void)
             vfft_config_t cfg; vfft_plan p;
             size_t t; int e;
             memset(&cfg, 0, sizeof cfg);
-            cfg.transform = VFFT_R2C; cfg.placement = VFFT_INPLACE;
-            cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = K;
+            cfg.transform = VFFT_R2C; cfg.placement = VFFT_PLACEMENT_IN;
+            cfg.rank = 1; cfg.n[0] = N; cfg.howmany = K;
             cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-            cfg.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
-            cfg.nthreads = 1; cfg.wisdom = g_W; cfg.wisdom_write = 1;
+            cfg.batch = VFFT_BATCH_CONTIGUOUS;
+            cfg.nthreads = 1; cfg.wisdom_dir = g_W;
             memset(z, 0, 8*2*nb*K);
             for (t = 0; t < K; t++)
                 for (e = 0; e < N; e++) {
@@ -433,7 +433,7 @@ static void run_tc_batch(void)
             else {
                 double w = 0, xm = 0;
                 size_t f;
-                vfft_execute(p, VFFT_FORWARD, z, NULL, z, NULL);
+                vfft_execute(p, VFFT_FORWARD, z, z);
                 for (t = 0; t < K; t++) {
                     naive_real_dft(ref + t*(size_t)N, N, Xr, Xi);
                     for (f = 0; f < nb; f++) {
@@ -473,7 +473,7 @@ static void run_cold_replay(int N)
     putenv(envW);                       /* wisdom decides, not the env hook */
     putenv(envV);
 
-    vfft_wisdom *W = vfft_wisdom_load("_zr2c_cold_gate_no_such_dir");
+    const char *W = ("_zr2c_cold_gate_no_such_dir");
     size_t xs = (size_t)N + 2;
     double *x = (double *)malloc(8 * xs);
     double *A = (double *)malloc(8 * xs);
@@ -484,18 +484,18 @@ static void run_cold_replay(int N)
 
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
-    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = W;
+    cfg.transform = VFFT_R2C; cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom_dir = W;
 
     (void)err_tap_read();               /* drop anything already buffered */
 
     vfft_plan p1 = vfft_create(&cfg);
-    if (p1) { vfft_execute(p1, VFFT_FORWARD, x, NULL, A, NULL); vfft_destroy(p1); }
+    if (p1) { vfft_execute(p1, VFFT_FORWARD, x, A); vfft_destroy(p1); }
     int raced1 = strstr(err_tap_read(), "route race") != NULL;
 
     vfft_plan p2 = vfft_create(&cfg);   /* SAME handle: the verdict is banked */
-    if (p2) { vfft_execute(p2, VFFT_FORWARD, x, NULL, B, NULL); vfft_destroy(p2); }
+    if (p2) { vfft_execute(p2, VFFT_FORWARD, x, B); vfft_destroy(p2); }
     int raced2 = strstr(err_tap_read(), "route race") != NULL;
 
     int same = (p1 && p2) &&
@@ -507,7 +507,6 @@ static void run_cold_replay(int N)
            (p1 && p2 && raced1 && !raced2 && same) ? "OK" : "*** FAIL ***");
     if (!(p1 && p2 && raced1 && !raced2 && same)) g_fail = 1;
 
-    if (W) vfft_wisdom_free(W);
     free(x); free(A); free(B);
 }
 
@@ -552,7 +551,7 @@ int main(int argc, char **argv)
                "— refusing to gate against empty wisdom\n");
         return 1;
     }
-    g_W = vfft_wisdom_load(wdir);
+    g_W = (wdir);
     printf("wisdom dir: %s\n\n", wdir);
     const int Ns[] = { 512, 2048, 4096 };
     for (size_t i = 0; i < sizeof Ns / sizeof Ns[0]; i++)
@@ -573,6 +572,5 @@ int main(int argc, char **argv)
     }
     printf("\n%s\n", g_fail ? "ZR2C FRONT-DOOR GATE: FAILURE"
                             : "ZR2C FRONT-DOOR GATE: ALL CORRECT");
-    if (g_W) vfft_wisdom_free(g_W);
     return g_fail;
 }

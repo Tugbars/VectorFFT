@@ -188,9 +188,9 @@ static inline int vfft_policy_rough47_is_prime(int r)
  * transform-contiguous for c2c). The real batches are the design's next pieces: refused
  * here until they serve. The geometries never race each other in a create (the owner's
  * rule): a lane-major request is served lane-major or refused with its reason. */
-static inline int vfft_policy_batch_lane_major(const vfft_config_t *cfg)
+static inline int vfft_policy_batch_lane_major(const vfft_cfg_t *cfg)
 {
-    if (!cfg || cfg->dims > 1 || cfg->layout != VFFT_LAYOUT_INTERLEAVED || cfg->howmany < 2)
+    if (!cfg || cfg->dims > 1 || cfg->layout != VFI_LAYOUT_IL || cfg->howmany < 2)
         return 0;
     if (cfg->transform == VFFT_C2C)
         return cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->n[0] >= 2;
@@ -532,7 +532,7 @@ static inline int vfft_policy_il2d_band_ok(int N, int nst, const int *L, int w)
  * in-place form against the scratch form (L1-sized planes go either way),
  * and the scratch form serves everywhere else, whatever the request
  * permits. */
-static inline int vfft_policy_il2d_c2r_destroy_ok(const vfft_config_t *cfg, int nthreads, int one_stage,
+static inline int vfft_policy_il2d_c2r_destroy_ok(const vfft_cfg_t *cfg, int nthreads, int one_stage,
                                                   int nleaf, int prime_col)
 {
     return cfg && (cfg->destroy_input || cfg->placement == VFFT_INPLACE) &&   /* in place: destroyed by nature */
@@ -577,12 +577,12 @@ static inline int vfft_policy_il2d_rows_odd_door(int N2)
  * __restrict__, and a lone last row re-runs the row before it): the forms
  * that land it on a private plane keep it; the standard walk's row pass in
  * place is an engine with an in-place form. */
-static inline int vfft_policy_il2d_ip_ok(const vfft_config_t *cfg, int nthreads)
+static inline int vfft_policy_il2d_ip_ok(const vfft_cfg_t *cfg, int nthreads)
 {
     (void)nthreads;   /* every thread count since 2026-10-08 night */
     return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 2 && cfg->howmany == 1 &&
-           cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_INPLACE &&
-           (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL);
+           cfg->layout == VFI_LAYOUT_IL && cfg->placement == VFFT_INPLACE &&
+           (cfg->order == VFI_ORDER_DEFAULT || cfg->order == VFI_ORDER_NATURAL);
 }
 /* DOOR 2, the plan's own plane (owned_buffers = 1): the CCE pitch the plan
  * names, in complex. The caller's layout (hp1) where it is harmless; hp1 + 8
@@ -613,9 +613,9 @@ static inline size_t vfft_policy_il2d_ip_pitch(size_t hp1)
  * the form lost at every even N2 measured (0.50-0.98,
  * docs/research/il2d_real_levers). The request's own plan only, never a
  * child's. */
-static inline int vfft_policy_il2d_raxis_ok(const vfft_config_t *cfg, int nthreads, int N1, int N2)
+static inline int vfft_policy_il2d_raxis_ok(const vfft_cfg_t *cfg, int nthreads, int N1, int N2)
 {
-    return cfg && cfg->transform == VFFT_R2C && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+    return cfg && cfg->transform == VFFT_R2C && cfg->layout == VFI_LAYOUT_IL &&
            cfg->placement == VFFT_OUTOFPLACE && nthreads <= 1 &&
            N1 >= 4 && (N1 & 1) == 0 && (N2 & 1) != 0;
 }
@@ -639,10 +639,10 @@ static inline int vfft_policy_il2d_raxis_ok(const vfft_config_t *cfg, int nthrea
  * staging and that digit's backward rows from it -- the column-inverse plane
  * never written. Each direction's verdict is its own (tf= / tf_c2r=). The
  * threaded form is its own piece. */
-static inline int vfft_policy_il2d_tfuse_ok(const vfft_config_t *cfg, int nthreads)
+static inline int vfft_policy_il2d_tfuse_ok(const vfft_cfg_t *cfg, int nthreads)
 {   /* both placements: the walk reads every row before its first write to the plane */
     return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-           cfg->layout == VFFT_LAYOUT_INTERLEAVED && nthreads <= 1;
+           cfg->layout == VFI_LAYOUT_IL && nthreads <= 1;
 }
 
 /* -- rank 2, real: THE PITCH FORMS (il2d_real_pitch.h) ----------------------
@@ -667,18 +667,18 @@ static inline int vfft_policy_il2d_tfuse_ok(const vfft_config_t *cfg, int nthrea
  * no size rule; one thread (the threaded passes keep hp1). The c2r plan's
  * destroying form and the fused walk have their own planes and are not
  * combined with these. */
-static inline int vfft_policy_il2d_cxp_ok(const vfft_config_t *cfg, int nthreads, int N2)
+static inline int vfft_policy_il2d_cxp_ok(const vfft_cfg_t *cfg, int nthreads, int N2)
 {   /* both placements: the column-inverse plane is a private landing */
-    return cfg && cfg->transform == VFFT_C2R && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+    return cfg && cfg->transform == VFFT_C2R && cfg->layout == VFI_LAYOUT_IL &&
            nthreads <= 1 && ((N2 / 2 + 1) & 1) != 0;
 }
 static inline size_t vfft_policy_il2d_cxp_pitch(size_t hp1)
 {
     return ((16 * (hp1 + 1)) % 4096 == 0) ? hp1 + 3 : hp1 + 1;
 }
-static inline int vfft_policy_il2d_rcsk_ok(const vfft_config_t *cfg, int nthreads)
+static inline int vfft_policy_il2d_rcsk_ok(const vfft_cfg_t *cfg, int nthreads)
 {   /* both placements: a private landing, the rows copied out onto the caller's plane */
-    return cfg && cfg->transform == VFFT_R2C && cfg->layout == VFFT_LAYOUT_INTERLEAVED && nthreads <= 1;
+    return cfg && cfg->transform == VFFT_R2C && cfg->layout == VFI_LAYOUT_IL && nthreads <= 1;
 }
 static inline size_t vfft_policy_il2d_rcsk_pitch(size_t hp1)
 {
@@ -706,11 +706,11 @@ static inline int vfft_policy_rankn_axis_nat(int rank, int axis, int ord)
  * caller contract), DEFAULT/NATURAL order (SCRAMBLED exists for no real
  * transform), every dim >= 2. The threaded forms are the next phase; a
  * threaded request is served by the serial walk until then. */
-static inline int vfft_policy_ilndr_ok(const vfft_config_t *cfg, size_t howmany)
+static inline int vfft_policy_ilndr_ok(const vfft_cfg_t *cfg, size_t howmany)
 {
     return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 3 && howmany == 1 &&
-           cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_OUTOFPLACE &&
-           (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL) &&
+           cfg->layout == VFI_LAYOUT_IL && cfg->placement == VFFT_OUTOFPLACE &&
+           (cfg->order == VFI_ORDER_DEFAULT || cfg->order == VFI_ORDER_NATURAL) &&
            cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
 }
 /* IN PLACE at rank 3 (docs/roadmap/real_inplace_design.md, 2026-10-08): one
@@ -720,12 +720,12 @@ static inline int vfft_policy_ilndr_ok(const vfft_config_t *cfg, size_t howmany)
  * positions to the workers), DEFAULT/NATURAL order, every dim >= 2. A c2r in
  * place destroys its input by nature: axis 0 runs in the caller's volume, and
  * the planes walk the cycles of their positions through the plan's buffers. */
-static inline int vfft_policy_ilndr_ip_ok(const vfft_config_t *cfg, size_t howmany, int nthreads)
+static inline int vfft_policy_ilndr_ip_ok(const vfft_cfg_t *cfg, size_t howmany, int nthreads)
 {
     (void)nthreads;   /* every thread count since 2026-10-08 night: the plane arm in place, the c2r planes by cycles */
     return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 3 && howmany == 1 &&
-           cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->placement == VFFT_INPLACE &&
-           (cfg->order == VFFT_ORDER_DEFAULT || cfg->order == VFFT_ORDER_NATURAL) &&
+           cfg->layout == VFI_LAYOUT_IL && cfg->placement == VFFT_INPLACE &&
+           (cfg->order == VFI_ORDER_DEFAULT || cfg->order == VFI_ORDER_NATURAL) &&
            cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
 }
 /* the strip form's default width: N1 x w complex within 256 KB (half of L2's
@@ -789,7 +789,7 @@ static inline int vfft_policy_ilnd_mt_serial_arm(long bytes)
  * caller's contract (L4), and a plan that borrowed it would change with it. */
 static inline int vfft_policy_k1fs_inner_order(void)
 {
-    return VFFT_ORDER_SCRAMBLED;
+    return VFI_ORDER_SCRAMBLED;
 }
 
 /* -- L3 (retired 2026-09-25). The per-thread-count fence lived here while a

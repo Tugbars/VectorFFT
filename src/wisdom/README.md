@@ -67,8 +67,8 @@ pinned by `.gitattributes`.
 
 ## How the library finds it
 
-`vfft_wisdom_load(dir)` opens the store directory it is given, as it is.
-`config.wisdom = NULL` means the library opens its own store:
+`config.wisdom_dir` names a store directory, opened as it is, once per process.
+`config.wisdom_dir = NULL` means the library opens its own store:
 
 1. `VFFT_WISDOM_DIR`, if set: that directory is the store, with no selection;
 2. otherwise this CPU's folder under the root the build compiled in as

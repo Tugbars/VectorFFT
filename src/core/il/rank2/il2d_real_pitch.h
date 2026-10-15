@@ -34,7 +34,7 @@ static int _il2d_onek_pass(const struct vfft_plan_s *h)
 }
 
 /* ═══ cxp: the c2r column-inverse plane's pitch ═══════════════════════ */
-static int _il2d_cxp_admits(const struct vfft_plan_s *h, const vfft_config_t *cfg)
+static int _il2d_cxp_admits(const struct vfft_plan_s *h, const vfft_cfg_t *cfg)
 {
     return h->transform == VFFT_C2R && h->il2d_row && h->il2d_rscr && !h->il2d_cxd_on && !h->il2d_tf_on &&
            h->il2d_ip != 2 &&   /* door 2's plane is already off the alias */
@@ -54,7 +54,7 @@ static void _il2d_cxp_arm_run(void *v)
     _il2d_real_cols(a->h, a->z, a->h->il2d_rscr, /*reverse=*/1);
     _il2d_real_rows_bwd(a->h, a->h->il2d_rscr, a->y);
 }
-static void _il2d_cxp_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg, struct vfft_plan_s *h,
+static void _il2d_cxp_bank(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, struct vfft_plan_s *h,
                            int N1, int N2, int ord, int T, const char *tk, const char *val)
 {
     if (!W || W->vw2_off_2d)
@@ -73,7 +73,7 @@ static void _il2d_cxp_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg, st
 }
 /* the race: the plane at hp1 against the policy's pitch, whole transform, both
  * through the plan's own passes; the loser leaves nothing (one field) */
-static void _il2d_cxp_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_cxp_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                            int N1, int N2, int ord, int T)
 {
     const size_t hp1 = (size_t)N2 / 2 + 1, Pc = vfft_policy_il2d_cxp_pitch(hp1);
@@ -171,7 +171,7 @@ static void _il2d_cxp_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
 }
 
 /* ═══ csk: the r2c one-kernel pass on a skewed private plane ══════════ */
-static int _il2d_rcsk_admits(const struct vfft_plan_s *h, const vfft_config_t *cfg)
+static int _il2d_rcsk_admits(const struct vfft_plan_s *h, const vfft_cfg_t *cfg)
 {
     return h->transform == VFFT_R2C && h->il2d_row && !h->il2d_rax_on && !h->il2d_tf_on && _il2d_onek_pass(h) &&
            h->il2d_ip != 2 &&   /* door 2's plane is already off the alias */
@@ -244,7 +244,7 @@ static void _il2d_rcsk_arm_skew(void *v)
     _il2d_rcsk_arm_t *a = (_il2d_rcsk_arm_t *)v;
     _il2d_rcsk_exec_fwd(a->h, a->x, a->z);
 }
-static void _il2d_rcsk_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_rcsk_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                             int N1, int N2, int ord, int T)
 {
     const char *log = getenv("VFFT_IL2D_LOG"), *e = getenv("VFFT_IL2D_RCSK");

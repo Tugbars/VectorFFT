@@ -62,13 +62,13 @@ static double relerr(const double *a, const double *b, int N, double scale)
     }
     return m > 0 ? e / m : e;
 }
-static vfft_plan mk(vfft_wisdom *W, int N, int ip)
+static vfft_plan mk(const char *W, int N, int ip)
 {
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
-    cfg.order = VFFT_ORDER_DEFAULT; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.order = VFFT_ORDER_NATURAL; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.nthreads = 1; cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
 /* the cell's banked ROUTE, read back from the scratch store's kind-3 row
@@ -105,7 +105,7 @@ int main(int argc, char **argv)
     for (int a = 1; a + 1 < argc; a++) if (!strcmp(argv[a], "--wisdir")) wisdir = argv[a + 1];
     if (!wisdir) { printf("usage: %s --wisdir <dir>\n", argv[0]); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
     if (!W) { printf("wisdom load FAILED\n"); return 2; }
     printf("=== MONO tier solo kernels: N in {2..64} x {oop, ip}, DEFAULT order ===\n");
     printf("%-4s | %-5s %-9s %-9s | %-9s %-9s | %s\n", "N", "route", "oop fwd", "oop rt", "ip fwd", "ip rt", "");
@@ -122,16 +122,16 @@ int main(int argc, char **argv)
         if (ho)
         {
             route = route_of_store(wisdir, N);
-            vfft_execute(ho, VFFT_FORWARD, x, NULL, y, NULL);
-            vfft_execute(ho, VFFT_BACKWARD, y, NULL, r, NULL);
+            vfft_execute(ho, VFFT_FORWARD, x, y);
+            vfft_execute(ho, VFFT_BACKWARD, y, r);
             eo = relerr(y, X, N, 1.0); ero = relerr(r, x, N, 1.0 / N);
         }
         if (hi)
         {
             memcpy(z, x, 2 * (size_t)N * 8);
-            vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
+            vfft_execute(hi, VFFT_FORWARD, z, z);
             ei = relerr(z, X, N, 1.0);
-            vfft_execute(hi, VFFT_BACKWARD, z, NULL, z, NULL);
+            vfft_execute(hi, VFFT_BACKWARD, z, z);
             eri = relerr(z, x, N, 1.0 / N);
         }
         /* mono_only: no pair or chain can serve, so the verdict is the solo

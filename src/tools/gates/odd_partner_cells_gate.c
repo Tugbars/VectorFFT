@@ -98,8 +98,8 @@ static void c2c_cell(int N, int pace_ms)
     naive_c2c(zin, N, ref);
 
     memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1;
 
     _putenv("VFFT_NO_ILBLK=");            /* blocked ALLOWED */
@@ -109,8 +109,8 @@ static void c2c_cell(int N, int pace_ms)
     _putenv("VFFT_NO_ILBLK=");
     if (!pb || !pm) { printf("  C2C N=%-5d create failed\n", N); goto done; }
 
-    vfft_execute(pb, VFFT_FORWARD, zin, NULL, zb, NULL);
-    vfft_execute(pm, VFFT_FORWARD, zin, NULL, zm, NULL);
+    vfft_execute(pb, VFFT_FORWARD, zin, zb);
+    vfft_execute(pm, VFFT_FORWARD, zin, zm);
     for (i = 0; i < 2*N; i++) {
         double d = fabs(zb[i] - ref[i]);
         if (d > w) w = d;
@@ -123,16 +123,16 @@ static void c2c_cell(int N, int pace_ms)
 
     reps = (int)(3000000.0 / (double)N); if (reps < 50) reps = 50; if (reps > 5000) reps = 5000;
     for (k = 0; k < 50; k++) {
-        vfft_execute(pb, VFFT_FORWARD, zin, NULL, zb, NULL);
-        vfft_execute(pm, VFFT_FORWARD, zin, NULL, zm, NULL);
+        vfft_execute(pb, VFFT_FORWARD, zin, zb);
+        vfft_execute(pm, VFFT_FORWARD, zin, zm);
     }
     for (k = 0; k < TRIALS; k++) {
         double t0 = now_ns();
-        for (r = 0; r < reps; r++) vfft_execute(pb, VFFT_FORWARD, zin, NULL, zb, NULL);
+        for (r = 0; r < reps; r++) vfft_execute(pb, VFFT_FORWARD, zin, zb);
         tb[k] = (now_ns()-t0)/reps;
         if (pace_ms) Sleep((DWORD)pace_ms);
         t0 = now_ns();
-        for (r = 0; r < reps; r++) vfft_execute(pm, VFFT_FORWARD, zin, NULL, zm, NULL);
+        for (r = 0; r < reps; r++) vfft_execute(pm, VFFT_FORWARD, zin, zm);
         tm[k] = (now_ns()-t0)/reps;
         if (pace_ms) Sleep((DWORD)pace_ms);
     }
@@ -163,8 +163,8 @@ static void r2c_cell(int N, int pace_ms)
     for (i = 0; i < N; i++) x[i] = rnd();
 
     memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.transform = VFFT_R2C; cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1;
 
     _putenv("VFFT_NO_ILBLK=");
@@ -174,8 +174,8 @@ static void r2c_cell(int N, int pace_ms)
     _putenv("VFFT_NO_ILBLK=");
     if (!pb || !pm) { printf("  R2C N=%-5d create failed\n", N); goto done; }
 
-    vfft_execute(pb, VFFT_FORWARD, x, NULL, ob, NULL);
-    vfft_execute(pm, VFFT_FORWARD, x, NULL, om, NULL);
+    vfft_execute(pb, VFFT_FORWARD, x, ob);
+    vfft_execute(pm, VFFT_FORWARD, x, om);
     /* the two arms must agree with EACH OTHER: same transform, different
      * kernel class, so this is the cheap correctness check at the real door */
     for (i = 0; i < (int)(2*nb); i++) {
@@ -190,16 +190,16 @@ static void r2c_cell(int N, int pace_ms)
 
     reps = (int)(3000000.0 / (double)N); if (reps < 50) reps = 50; if (reps > 5000) reps = 5000;
     for (k = 0; k < 50; k++) {
-        vfft_execute(pb, VFFT_FORWARD, x, NULL, ob, NULL);
-        vfft_execute(pm, VFFT_FORWARD, x, NULL, om, NULL);
+        vfft_execute(pb, VFFT_FORWARD, x, ob);
+        vfft_execute(pm, VFFT_FORWARD, x, om);
     }
     for (k = 0; k < TRIALS; k++) {
         double t0 = now_ns();
-        for (r = 0; r < reps; r++) vfft_execute(pb, VFFT_FORWARD, x, NULL, ob, NULL);
+        for (r = 0; r < reps; r++) vfft_execute(pb, VFFT_FORWARD, x, ob);
         tb[k] = (now_ns()-t0)/reps;
         if (pace_ms) Sleep((DWORD)pace_ms);
         t0 = now_ns();
-        for (r = 0; r < reps; r++) vfft_execute(pm, VFFT_FORWARD, x, NULL, om, NULL);
+        for (r = 0; r < reps; r++) vfft_execute(pm, VFFT_FORWARD, x, om);
         tm[k] = (now_ns()-t0)/reps;
         if (pace_ms) Sleep((DWORD)pace_ms);
     }

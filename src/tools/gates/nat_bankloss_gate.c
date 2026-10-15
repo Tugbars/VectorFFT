@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h" /* vfft_wisdom_reread */
 
 /* stderr tap (the k1z/nat_front pattern; taps live beside the gates, src/tools/gates) */
 static char g_errpath[1024];
@@ -58,31 +59,28 @@ static int run_cell(const char *wisdir, int N, int fails)
     int raced1 = 0, raced2 = 0, raced3 = 0;
     for (int pass = 0; pass < 3; pass++)
     {
-        vfft_wisdom *W = vfft_wisdom_load(wisdir);
+        const char *W = (wisdir);
+        vfft_wisdom_reread(wisdir); /* each pass reads what the last one saved */
         if (!W) { printf("%-7d wisdom load FAILED\n", N); return fails + 1; }
         memset(&cfg, 0, sizeof cfg);
         cfg.transform = VFFT_C2C;
-        cfg.placement = VFFT_INPLACE;
+        cfg.placement = VFFT_PLACEMENT_IN;
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
         cfg.order = VFFT_ORDER_NATURAL;
-        cfg.dims = 1;
+        cfg.rank = 1;
         cfg.n[0] = N;
         cfg.howmany = 1;
-        cfg.rigor = VFFT_MEASURE;
-        cfg.wisdom = W;
-        cfg.wisdom_write = 1; /* the marker must survive the save/load cycle */
-        cfg.recalibrate = (pass == 2);
+        cfg.wisdom_dir = W;
+        /* the marker must survive the save/load cycle */
+        cfg.flags |= ((pass == 2)) ? VFFT_FLAG_RECALIBRATE : 0;
         vfft_plan p = vfft_create(&cfg);
         log = err_tap_read();
         if (!p)
         {
             printf("%-7d pass %d create FAILED\n", N, pass);
-            vfft_wisdom_free(W);
             return fails + 1;
         }
-        vfft_destroy(p);
-        vfft_wisdom_save(W, wisdir); /* zr must round-trip through disk */
-        vfft_wisdom_free(W);
+        vfft_destroy(p); /* the create saved its verdict: the next pass reads it from disk */
         if (pass == 0) raced1 = tap_raced(log);
         if (pass == 1) raced2 = tap_raced(log);
         if (pass == 2) raced3 = tap_raced(log);
@@ -175,26 +173,24 @@ static int munge_4096(const char *wisdir, int with_zr)
 
 static int run_seeded(const char *wisdir, int with_zr, int expect_race, int fails)
 {
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
+    vfft_wisdom_reread(wisdir); /* the seeded files, not the process's kept store */
     vfft_config_t cfg;
     if (!W) { printf("seeded: wisdom load FAILED\n"); return fails + 1; }
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_INPLACE;
+    cfg.placement = VFFT_PLACEMENT_IN;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.order = VFFT_ORDER_NATURAL;
-    cfg.dims = 1;
+    cfg.rank = 1;
     cfg.n[0] = 4096;
     cfg.howmany = 1;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.wisdom = W;
-    cfg.wisdom_write = 1;
+    cfg.wisdom_dir = W;
     vfft_plan p = vfft_create(&cfg);
     const char *log = err_tap_read();
     int raced = tap_raced(log);
     int ok = p && (raced == expect_race);
     if (p) vfft_destroy(p);
-    vfft_wisdom_free(W);
     printf("4096    seeded-%-7s -> %-9s (expect %s) %s\n",
            with_zr ? "zcasc" : "ilp", raced ? "raced" : "silent",
            expect_race ? "raced" : "silent", ok ? "" : "  *** FAIL ***");

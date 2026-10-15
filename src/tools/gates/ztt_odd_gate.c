@@ -320,16 +320,16 @@ static int odd_pass(void)
 }
 
 /* ── pass 3: the front door on a scratch store ──────────────────────────── */
-static vfft_plan mk_door_t(vfft_wisdom *W, int N, int ip, int order, int T)
+static vfft_plan mk_door_t(const char *W, int N, int ip, int order, int T)
 {
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.order = order; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.nthreads = T; cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
-static vfft_plan mk_door(vfft_wisdom *W, int N, int ip, int order) { return mk_door_t(W, N, ip, order, 1); }
+static vfft_plan mk_door(const char *W, int N, int ip, int order) { return mk_door_t(W, N, ip, order, 1); }
 
 /* THE THREADED ARM through the front door (ztt_mt_design.md gates 2 and 4):
  * at 245760 (the band's ceiling neighbourhood, where the spike measured 7x),
@@ -344,7 +344,7 @@ static int frontdoor_mt_pass(const char *wisdir)
     const size_t nb = (size_t)2 * N * sizeof(double);
     int fails0 = g_fail;
     double *x = (double *)vfft_aligned_alloc(nb), *y1 = (double *)vfft_aligned_alloc(nb), *y8 = (double *)vfft_aligned_alloc(nb);
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
     printf("THE FRONT DOOR, THREADED (N=%d natural OOP, T=8)\n", N);
     CHECK(W != NULL, "wisdom load");
     if (W)
@@ -354,14 +354,14 @@ static int frontdoor_mt_pass(const char *wisdir)
         fill(x, N, 99u);
         h1 = mk_door_t(W, N, 0, VFFT_ORDER_NATURAL, 1);
         CHECK(h1 != NULL, "T=1 plan");
-        if (h1) { vfft_execute(h1, VFFT_FORWARD, x, NULL, y1, NULL); vfft_destroy(h1); }
+        if (h1) { vfft_execute(h1, VFFT_FORWARD, x, y1); vfft_destroy(h1); }
         e0 = vfft_ztt_mt_passes();
         h8 = mk_door_t(W, N, 0, VFFT_ORDER_NATURAL, 8);
         CHECK(h8 != NULL, "T=8 plan");
         if (h8)
         {
             const long e1 = vfft_ztt_mt_passes();   /* the create's own race executes are excluded */
-            vfft_execute(h8, VFFT_FORWARD, x, NULL, y8, NULL);
+            vfft_execute(h8, VFFT_FORWARD, x, y8);
             CHECK(memcmp(y1, y8, nb) == 0, "T=8 forward != T=1 forward");
             CHECK(vfft_ztt_mt_passes() > e1, "T=8 execute did not engage the threaded arm");
             printf("  T=8: %s, engaged %ld\n", memcmp(y1, y8, nb) == 0 ? "BITWISE the T=1 plan" : "DIFFERS", vfft_ztt_mt_passes() - e1);
@@ -378,7 +378,6 @@ static int frontdoor_mt_pass(const char *wisdir)
         printf("  T=4: %s\n", _vfft_create_race_count > races0 ? "re-raced (T mismatch)" : "REPLAYED(!)");
         if (h4) vfft_destroy(h4);
         (void)e0;
-        vfft_wisdom_free(W);
     }
     vfft_aligned_free(x); vfft_aligned_free(y1); vfft_aligned_free(y8);
     printf("  %d failures\n\n", g_fail - fails0);
@@ -445,7 +444,7 @@ static int frontdoor_pass(const char *wisdir)
         const size_t nb = (size_t)2 * N * sizeof(double);
         double *x = (double *)vfft_aligned_alloc(nb), *ref = (double *)vfft_aligned_alloc(nb);
         double *o = (double *)vfft_aligned_alloc(nb), *b = (double *)vfft_aligned_alloc(nb);
-        vfft_wisdom *W = vfft_wisdom_load(wisdir);
+        const char *W = (wisdir);
         CHECK(W != NULL, "N=%d: wisdom load", N);
         if (!W) continue;
         fill(x, N, (unsigned)N + 3u);
@@ -457,22 +456,21 @@ static int frontdoor_pass(const char *wisdir)
                 double e;
                 CHECK(p != NULL, "N=%d %s %s: no plan", N, ip ? "ip" : "oop", scr ? "scrambled" : "natural");
                 if (!p) continue;
-                if (ip) { memcpy(o, x, nb); vfft_execute(p, VFFT_FORWARD, o, NULL, o, NULL); }
-                else vfft_execute(p, VFFT_FORWARD, x, NULL, o, NULL);
+                if (ip) { memcpy(o, x, nb); vfft_execute(p, VFFT_FORWARD, o, o); }
+                else vfft_execute(p, VFFT_FORWARD, x, o);
                 if (!scr)
                 {
                     e = relerr(o, ref, N, 1.0);
                     CHECK(e < 1e-12, "N=%d %s natural door vs DFT: relerr %.3e", N, ip ? "ip" : "oop", e);
                 }
-                if (ip) { memcpy(b, o, nb); vfft_execute(p, VFFT_BACKWARD, b, NULL, b, NULL); }
-                else vfft_execute(p, VFFT_BACKWARD, o, NULL, b, NULL);
+                if (ip) { memcpy(b, o, nb); vfft_execute(p, VFFT_BACKWARD, b, b); }
+                else vfft_execute(p, VFFT_BACKWARD, o, b);
                 e = relerr(b, x, N, (double)N);
                 CHECK(e < 1e-12, "N=%d %s %s door roundtrip: relerr %.3e", N, ip ? "ip" : "oop", scr ? "scrambled" : "natural", e);
                 printf("  %-6d %-4s %-10s fwd %s, roundtrip %.2e\n", N, ip ? "ip" : "oop", scr ? "scrambled" : "natural",
                        scr ? "ok" : "exact", e);
                 vfft_destroy(p);
             }
-        vfft_wisdom_free(W);
         {
             /* the natural pool keeps the chain3 and pair arms beside ZTURN-T
              * until the band is banked and the losers sunset (ztt_odd_design.md),

@@ -224,7 +224,7 @@ int main(int argc, char **argv) {
     /* ── Init VFFT, load wisdom for MEASURE-grade plans ────────── */
     vfft_init();
     vfft_pin_thread(0);
-    vfft_set_num_threads(1);   /* Single-threaded — VTune profiles
+    /* Single-threaded — VTune profiles
                                   cleanest at T=1; threading artifacts
                                   obscure codelet behavior. */
 

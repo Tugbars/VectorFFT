@@ -13,7 +13,7 @@
 #ifndef VFFT_SPLIT_FFT2D_CREATE_SPLIT_H
 #define VFFT_SPLIT_FFT2D_CREATE_SPLIT_H
 
-static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_2d_split(const vfft_cfg_t *cfg,
                                       struct vfft_wisdom_s *W,
                                       const vfft_proto_registry_t *reg,
                                       size_t K)
@@ -26,7 +26,12 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
         /* _inner_c2c banks into the wisdom2 store; the guarded
          * _vw2_persist below covers disk. */
         if (!tp)
+        {   /* every refusal names its reason (vfft_error); _build_2d names the ones it knows */
+            if (!_vfft_err_buf[0])
+                _vfft_warn("vfft_create: SPLIT 2D %s %dx%d: no split stride plan covers these extents",
+                           _vfft_tname(cfg->transform), N1, N2);
             return NULL;
+        }
         /* _build_2d banked into the wisdom2 store's memory; disk
          * persistence is the guarded save, and only after a SUCCESSFUL
          * create. */
@@ -190,7 +195,7 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
     /* ORDER_NATURAL (2D c2c): build the two per-axis digit-reversal reorder tapes from the inner
      * plans' chains. SCRAMBLED/DEFAULT leave nat2d==0 (byte-identical scrambled path). Refuse
      * (free + NULL) if orientation detect fails on either multi-stage axis — no silent wrong order. */
-    if (cfg->transform == VFFT_C2C && cfg->order == VFFT_ORDER_NATURAL &&
+    if (cfg->transform == VFFT_C2C && cfg->order == VFI_ORDER_NATURAL &&
         !h->il2d_row) /* always true here: the native IL tier is il/rank2 */
     {
         stride_fft2d_data_t *d = (stride_fft2d_data_t *)tp->override_data;
@@ -204,7 +209,7 @@ static vfft_plan _vfft_create_2d_split(const vfft_config_t *cfg,
         {
             _vfft_warn("vfft_create: 2D %dx%d order=NATURAL — axis reorder-tape build "
                        "failed for this chain (orientation detect); the cell is "
-                       "unsupported in natural order, use DEFAULT/SCRAMBLED",
+                       "unsupported in natural order, ask VFFT_ORDER_SCRAMBLED",
                        N1, N2);
             vfft_destroy(h);
             return NULL;

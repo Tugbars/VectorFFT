@@ -42,6 +42,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h" /* vfft_wisdom_reread */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -101,21 +102,20 @@ static void fz(double *p)
 #endif
 }
 
-static vfft_plan mk(vfft_wisdom *W, int N, int inplace, int natural)
+static vfft_plan mk(const char *W, int N, int inplace, int natural)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = inplace ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = inplace ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = 1;
     cfg.order = natural ? VFFT_ORDER_NATURAL : VFFT_ORDER_SCRAMBLED;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1;
-    cfg.wisdom = W;
-    cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
+    cfg.wisdom_dir = W;
+    /* measurement gate: banks must persist */
     return vfft_create(&cfg);
 }
 
@@ -163,7 +163,7 @@ static double relerr(const double *a, const double *b, long n2)
 /* one cell: create natural in-place on W, gate both dirs vs naive refs.
  * expect_zcasc: 1 = the [natorder] tap must show a ZCASC pick (MEASURE) or
  * silence (CONSUME replay); 2 = CONSUME (silence REQUIRED); 0 = tape tier. */
-static int run_cell(vfft_wisdom *W, int N, const double *x, const double *X,
+static int run_cell(const char *W, int N, const double *x, const double *X,
                     int expect, const char *tag)
 {
     vfft_plan hn = mk(W, N, /*inplace*/ 1, /*natural*/ 1);
@@ -180,11 +180,11 @@ static int run_cell(vfft_wisdom *W, int N, const double *x, const double *X,
 
     double *a = az((size_t)N);
     memcpy(a, x, 2 * (size_t)N * sizeof(double));
-    vfft_execute(hn, VFFT_FORWARD, a, NULL, a, NULL);
+    vfft_execute(hn, VFFT_FORWARD, a, a);
     const double ef = relerr(a, X, 2L * N);
 
     memcpy(a, X, 2 * (size_t)N * sizeof(double));
-    vfft_execute(hn, VFFT_BACKWARD, a, NULL, a, NULL);
+    vfft_execute(hn, VFFT_BACKWARD, a, a);
     double *nx = az((size_t)N);
     for (long i = 0; i < 2L * N; i++) nx[i] = (double)N * x[i];
     const double eb = relerr(a, nx, 2L * N);
@@ -224,7 +224,7 @@ static int run_cell(vfft_wisdom *W, int N, const double *x, const double *X,
  *   4 = CONSUME, no race required, banked FREE serving the engine is legal
  *       (the measure/consume bitwise memcmp in main covers identity).
  * fwd_out (optional): receives the fwd spectrum bytes for that check. */
-static int run_cell_oop(vfft_wisdom *W, int N, const double *x,
+static int run_cell_oop(const char *W, int N, const double *x,
                         const double *X, int expect, const char *tag,
                         double *fwd_out)
 {
@@ -241,7 +241,7 @@ static int run_cell_oop(vfft_wisdom *W, int N, const double *x,
 
     double *s = az((size_t)N), *d = az((size_t)N);
     memcpy(s, x, 2 * (size_t)N * sizeof(double));
-    vfft_execute(hn, VFFT_FORWARD, s, NULL, d, NULL);
+    vfft_execute(hn, VFFT_FORWARD, s, d);
     const double ef = relerr(d, X, 2L * N);
     const int src_ok =
         memcmp(s, x, 2 * (size_t)N * sizeof(double)) == 0;
@@ -249,7 +249,7 @@ static int run_cell_oop(vfft_wisdom *W, int N, const double *x,
         memcpy(fwd_out, d, 2 * (size_t)N * sizeof(double));
 
     memcpy(s, X, 2 * (size_t)N * sizeof(double));
-    vfft_execute(hn, VFFT_BACKWARD, s, NULL, d, NULL);
+    vfft_execute(hn, VFFT_BACKWARD, s, d);
     double *nx = az((size_t)N);
     for (long i = 0; i < 2L * N; i++) nx[i] = (double)N * x[i];
     const double eb = relerr(d, nx, 2L * N);
@@ -283,7 +283,7 @@ int main(int argc, char **argv)
 
     env_set("VFFT_NAT_LOG", "1");
 
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
     if (!W) { printf("vfft_wisdom_load FAILED\n"); return 2; }
 
     printf("\n=== B5: order=NATURAL front door, K=1 IL in-place ===\n");
@@ -351,8 +351,8 @@ int main(int argc, char **argv)
      * must survive the save/load cycle (the saver now emits @natoop lines;
      * a parse regression would surface here as a RACED(!) consume). */
     {
-        vfft_wisdom_free(W);
-        W = vfft_wisdom_load(wisdir);
+        vfft_wisdom_reread(wisdir);
+        W = (wisdir);
         if (!W) { printf("wisdom RELOAD FAILED\n"); return 2; }
         const int N = 4096;
         srand(515 + N);
@@ -372,7 +372,6 @@ int main(int argc, char **argv)
         fz(X);
     }
 
-    vfft_wisdom_free(W);
     printf("\n=== %s ===\n", fails ? "*** FAIL ***" : "ALL PASS");
     return fails ? 1 : 0;
 }

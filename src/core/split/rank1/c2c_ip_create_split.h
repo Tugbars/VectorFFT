@@ -18,7 +18,7 @@
  * persistence behind config.wisdom_write. The order axis does not share a
  * cell with the scrambled one: a natural-order create can never perturb the
  * scrambled plan, and vice versa. */
-static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                          int N, size_t K, int mode, double ns,
                          const int *fac, const int *var, int nf, int use_dif)
 {
@@ -45,7 +45,7 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
  * running the proof). The gate is cheap for ST creates (skipped). */
 static vfft_plan _c2c_ip_finish_split(struct vfft_plan_s *h,
                                       struct vfft_wisdom_s *W,
-                                      const vfft_config_t *cfg, int N)
+                                      const vfft_cfg_t *cfg, int N)
 {
     (void)W;
     (void)cfg;
@@ -60,7 +60,7 @@ static vfft_plan _c2c_ip_finish_split(struct vfft_plan_s *h,
     return h;
 }
 
-static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_c2c_ip_split(const vfft_cfg_t *cfg,
                                            vfft_batch ob,
                                            struct vfft_wisdom_s *W,
                                            const vfft_proto_registry_t *reg,
@@ -206,7 +206,7 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
              * once, when absent, to build the base plan p (the PURE-floor + race seed). So the natural
              * floor rides the STABLE banked scrambled chain, not a noisy fresh re-measure. order=DEFAULT/
              * SCRAMBLED keeps the old recalibrate-overwrites semantics. */
-            int scr_recalib = cfg->recalibrate && cfg->order != VFFT_ORDER_NATURAL;
+            int scr_recalib = cfg->recalibrate && cfg->order != VFI_ORDER_NATURAL;
             /* store first; the in-memory table stays the process cache
              * auto_plan_dispatch walks below. */
             {
@@ -285,7 +285,7 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_config_t *cfg,
          * injected chains) or SCR, raced on a miss and banked as the @nat verdict. DEFAULT
          * is natural (vfft.h; field trial V31, owner 2026-10-13); SCRAMBLED alone skips
          * this block. */
-        if (cfg->order == VFFT_ORDER_NATURAL || cfg->order == VFFT_ORDER_DEFAULT)
+        if (cfg->order == VFI_ORDER_NATURAL || cfg->order == VFI_ORDER_DEFAULT)
         {
             vfft_proto_nat_entry_t neb;
             const vfft_proto_nat_entry_t *ne =

@@ -120,15 +120,15 @@ static double permerr(const double *a, const double *b, int N, const int *R, int
     }
     return m > 0 ? e / m : e;
 }
-static vfft_plan mk_t(vfft_wisdom *W, int N, int ip, int order, int T);
-static vfft_plan mk(vfft_wisdom *W, int N, int ip, int order) { return mk_t(W, N, ip, order, 1); }
-static vfft_plan mk_t(vfft_wisdom *W, int N, int ip, int order, int T)
+static vfft_plan mk_t(const char *W, int N, int ip, int order, int T);
+static vfft_plan mk(const char *W, int N, int ip, int order) { return mk_t(W, N, ip, order, 1); }
+static vfft_plan mk_t(const char *W, int N, int ip, int order, int T)
 {
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.order = order; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.nthreads = T; cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
 /* the cell's banked ROUTE (+ the flat chain and forms tokens) read back from
@@ -193,7 +193,7 @@ int main(int argc, char **argv)
     for (int a = 1; a + 1 < argc; a++) if (!strcmp(argv[a], "--wisdir")) wisdir = argv[a + 1];
     if (!wisdir) { printf("usage: %s --wisdir <dir>\n", argv[0]); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
     if (!W) { printf("wisdom load FAILED\n"); return 2; }
     printf("=== FLAT DIT front door: odd N, OOP + IP, both directions, both order classes, replay bit-identical ===\n");
     printf("%-6s | %-6s %-18s %-14s | %-8s %-8s | %-8s %-8s | %-7s %-7s | %s\n",
@@ -212,31 +212,31 @@ int main(int argc, char **argv)
         /* ── NATURAL pass (DEFAULT order) ── */
         {
             double t0 = now_ms();
-            vfft_plan ho = mk(W, N, 0, VFFT_ORDER_DEFAULT);
+            vfft_plan ho = mk(W, N, 0, VFFT_ORDER_NATURAL);
             t_race = now_ms() - t0;
             if (ho)
             {
                 vfft_plan ho2, hi;
                 route = route_of_store(wisdir, N, "nat", chain, sizeof chain, forms, sizeof forms);
-                vfft_execute(ho, VFFT_FORWARD, x, NULL, y, NULL);
-                vfft_execute(ho, VFFT_BACKWARD, y, NULL, r, NULL);
+                vfft_execute(ho, VFFT_FORWARD, x, y);
+                vfft_execute(ho, VFFT_BACKWARD, y, r);
                 eo = spot_err(x, y, N); ero = relerr(r, x, N, 1.0 / N);
                 t0 = now_ms();
-                ho2 = mk(W, N, 0, VFFT_ORDER_DEFAULT);
+                ho2 = mk(W, N, 0, VFFT_ORDER_NATURAL);
                 t_replay = now_ms() - t0;
                 if (ho2)
                 {
-                    vfft_execute(ho2, VFFT_FORWARD, x, NULL, y2, NULL);
+                    vfft_execute(ho2, VFFT_FORWARD, x, y2);
                     same = (memcmp(y, y2, 2 * (size_t)N * 8) == 0);
                     vfft_destroy(ho2);
                 }
-                hi = mk(W, N, 1, VFFT_ORDER_DEFAULT);
+                hi = mk(W, N, 1, VFFT_ORDER_NATURAL);
                 if (hi)
                 {
                     memcpy(z, x, 2 * (size_t)N * 8);
-                    vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
+                    vfft_execute(hi, VFFT_FORWARD, z, z);
                     ei = relerr(z, y, N, 1.0);
-                    vfft_execute(hi, VFFT_BACKWARD, z, NULL, z, NULL);
+                    vfft_execute(hi, VFFT_BACKWARD, z, z);
                     eri = relerr(z, x, N, 1.0 / N);
                     vfft_destroy(hi);
                 }
@@ -247,13 +247,13 @@ int main(int argc, char **argv)
         {
             const long e0 = vfft_ilfd_mt_passes();
             long e1;
-            vfft_plan hm = mk_t(W, N, 0, VFFT_ORDER_DEFAULT, 8);
+            vfft_plan hm = mk_t(W, N, 0, VFFT_ORDER_NATURAL, 8);
             e1 = vfft_ilfd_mt_passes();
             if (hm)
             {
-                vfft_execute(hm, VFFT_FORWARD, x, NULL, y2, NULL);
+                vfft_execute(hm, VFFT_FORWARD, x, y2);
                 mt_bit = (memcmp(y, y2, 2 * (size_t)N * 8) == 0);
-                vfft_execute(hm, VFFT_BACKWARD, y2, NULL, r, NULL);
+                vfft_execute(hm, VFFT_BACKWARD, y2, r);
                 mt_rt = relerr(r, x, N, 1.0 / N);
                 mt_eng = vfft_ilfd_mt_passes() - e1;
                 mt_ok = mt_bit && mt_rt < 1e-11;
@@ -283,8 +283,8 @@ int main(int argc, char **argv)
                 vfft_plan hs2, hsi;
                 sroute = route_of_store(wisdir, N, "scr", schain, sizeof schain, sforms, sizeof sforms);
                 Kc = schain[0] ? parse_chain(schain, Rc, 16) : 0;
-                vfft_execute(hs, VFFT_FORWARD, x, NULL, ys, NULL);
-                vfft_execute(hs, VFFT_BACKWARD, ys, NULL, rs, NULL);
+                vfft_execute(hs, VFFT_FORWARD, x, ys);
+                vfft_execute(hs, VFFT_BACKWARD, ys, rs);
                 ers = relerr(rs, x, N, 1.0 / N);
                 eid = permerr(ys, y, N, Rc, Kc, 0);                      /* natural engine served? */
                 eperm = Kc >= 2 ? permerr(ys, y, N, Rc, Kc, 1) : 1.0;    /* the scrambled class served? */
@@ -292,7 +292,7 @@ int main(int argc, char **argv)
                 hs2 = mk(W, N, 0, VFFT_ORDER_SCRAMBLED);
                 if (hs2)
                 {
-                    vfft_execute(hs2, VFFT_FORWARD, x, NULL, ys2, NULL);
+                    vfft_execute(hs2, VFFT_FORWARD, x, ys2);
                     ssame = (memcmp(ys, ys2, 2 * (size_t)N * 8) == 0);
                     vfft_destroy(hs2);
                 }
@@ -312,11 +312,11 @@ int main(int argc, char **argv)
                     (void)route_of_store_p(wisdir, N, "scr", "ip", ichain, sizeof ichain, iforms, sizeof iforms);
                     Kci = ichain[0] ? parse_chain(ichain, Ri, 16) : 0;
                     memcpy(z, x, 2 * (size_t)N * 8);
-                    vfft_execute(hsi, VFFT_FORWARD, z, NULL, z, NULL);
+                    vfft_execute(hsi, VFFT_FORWARD, z, z);
                     e_nat = permerr(z, y, N, Ri, Kci, 0);
                     e_dr = Kci >= 2 ? permerr(z, y, N, Ri, Kci, 1) : 1.0;
                     eis = e_dr < e_nat ? e_dr : e_nat;
-                    vfft_execute(hsi, VFFT_BACKWARD, z, NULL, z, NULL);
+                    vfft_execute(hsi, VFFT_BACKWARD, z, z);
                     eris = relerr(z, x, N, 1.0 / N);
                     vfft_destroy(hsi);
                 }
@@ -328,9 +328,9 @@ int main(int argc, char **argv)
                 const long e1 = vfft_ilfd_mt_passes();
                 if (hm)
                 {
-                    vfft_execute(hm, VFFT_FORWARD, x, NULL, ys2, NULL);
+                    vfft_execute(hm, VFFT_FORWARD, x, ys2);
                     smt_bit = (memcmp(ys, ys2, 2 * (size_t)N * 8) == 0);
-                    vfft_execute(hm, VFFT_BACKWARD, ys2, NULL, rs, NULL);
+                    vfft_execute(hm, VFFT_BACKWARD, ys2, rs);
                     smt_rt = relerr(rs, x, N, 1.0 / N);
                     smt_eng = vfft_ilfd_mt_passes() - e1;
                     smt_ok = smt_bit && smt_rt < 1e-11;

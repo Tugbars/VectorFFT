@@ -49,18 +49,18 @@ static int tap_grep(const char *needle, char *line_out, size_t cap)
     return n;
 }
 
-static vfft_plan mk(vfft_wisdom *W, int N1, int N2)
+static vfft_plan mk(const char *W, int N1, int N2)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_PATIENT;
-    cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.flags |= VFFT_FLAG_PATIENT;
+    cfg.rank = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.nthreads = 1;
-    cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
 
@@ -111,7 +111,7 @@ int main(int argc, char **argv)
         double *x = (double *)malloc(nb), *y = (double *)malloc(nb), *y2 = (double *)malloc(nb);
         double *ref = (double *)malloc(nb);
         char needle[64], race[4096] = "";
-        vfft_wisdom *W = vfft_wisdom_load(dir);
+        const char *W = (dir);
         vfft_plan p;
         int raced, arms = -1;
         size_t q;
@@ -123,10 +123,10 @@ int main(int argc, char **argv)
         p = mk(W, N1, N2);
         raced = tap_grep(needle, race, sizeof race);
         CHECK(p != NULL, "%dx%d: create refused", N1, N2);
-        if (!p) { vfft_wisdom_free(W); free(x); free(y); free(y2); free(ref); continue; }
+        if (!p) { free(x); free(y); free(y2); free(ref); continue; }
         CHECK(raced >= 1, "%dx%d: no column chain race on the cold create -- the pool offered nothing (Bluestein by absence)", N1, N2);
         if (raced) { const char *s = strstr(race, "): "); if (s) arms = atoi(s + 3); }
-        vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, y);
         vfft_destroy(p);
         dft2(x, ref, N1, N2);
         for (q = 0; q < 2 * PN; q++)
@@ -145,7 +145,7 @@ int main(int argc, char **argv)
             if (p)
             {
                 CHECK(raced2 == 0, "%dx%d: warm create RACED (%d) -- the cold verdict was not banked", N1, N2, raced2);
-                vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
+                vfft_execute(p, VFFT_FORWARD, x, y2);
                 CHECK(memcmp(y, y2, nb) == 0, "%dx%d: warm forward != cold forward (bitwise)", N1, N2);
                 vfft_destroy(p);
             }
@@ -156,7 +156,6 @@ int main(int argc, char **argv)
             printf("  %3dx%-4d %-6d %-9.1e %-12s %s\n", N1, N2, arms, scale > 0 ? worst / scale : 0.0,
                    (p && raced2 == 0) ? "replayed" : "RACED", race[0] ? race : "(no race line)");
         }
-        vfft_wisdom_free(W);
         free(x); free(y); free(y2); free(ref);
     }
     printf("\n=== %s il2d_colpool_gate: %d check(s) failed ===\n", g_fail ? "*** FAIL ***" : "ALL PASS", g_fail);

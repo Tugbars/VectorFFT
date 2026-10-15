@@ -29,25 +29,25 @@ C2R (an in-place C2R has no input to preserve). One transform at rank 3; rank 2'
 
 **The row pitch is plan input.** Two doors:
 
-1. **The caller's own buffer** (`owned_buffers = 0`, the default): the row pitch
+1. **The caller's own buffer** (the default): the row pitch
    is exactly `2·(N/2+1)` doubles. That pitch is the caller's and cannot move.
-2. **The plan's own plane** (`owned_buffers = 1`): create allocates ONE plane at
-   the pitch the policy names, zeroed; `vfft_plan_planes()` returns it in both
-   roles (`sre == dre`, the `im` roles NULL) and `vfft_plan_stride()` returns the
-   row pitch in doubles. The policy (`planning/policy_il.h`) names the smallest
+2. **The plan's own pitch** (`VFFT_FLAG_OWN_PITCH`): the plan takes the pitch the
+   policy names; `vfft_info()` returns it as `stride` (doubles) and the plane's size
+   as `in_doubles`, and the caller allocates that one plane (`vfft_malloc`) and
+   passes it in both roles. The policy (`planning/policy_il.h`) names the smallest
    pad past `2·(N/2+1)` at which no pass of the plan aliases itself: the CCE
    pitch where it is harmless, `hp1 + 8` pairs where `16·hp1` is 16 bytes past
    a 4 KB multiple (`512 | N2`), the staged scratch's own search otherwise
    (`fft2d_create_il.h`: every leg stride and the leaf stride non-zero mod
-   4096). `vfft.h`'s "1D and SPLIT only" on `owned_buffers` widens to this plan.
+   4096).
 
 Door 2 is the fast path and costs nothing at execute: the alias of §3 never
 exists. Door 1 is served by the raced forms of §3.
 
 Door 2 BUILT 2026-10-08 (2D r2c): `vfft_policy_il2d_ip_pitch(hp1)` names hp1 + 8
 where 16·hp1 bytes is 16 bytes past or before a 4 KB multiple, hp1 otherwise;
-`_vfft_create_outer` allocates the plane after the inner create, zeroed, and
-`vfft_plan_planes` / `vfft_plan_stride` hand it back; the column pass runs over
+`_vfft_create_outer` records the pitch after the inner create and `vfft_info()`
+hands it back; the column pass runs over
 the padded width (the plan's `rn` is its pitch; 8 pad columns of zeros, the
 fused walk's staging zeroed so they stay so). A plan off hp1 is the cell's
 PITCH TWIN (`il2d_ip = 2`): it races its own pitch-sensitive verdicts, banked
@@ -59,11 +59,11 @@ verdicts", 2026-10-08). Where the policy keeps hp1 the plan IS door 1.
 Rank 3's door 2 BUILT the same night: the policy on hp3 names the row pitch,
 and the plan's `hp3` IS that pitch (the plane and the virtual row follow; the
 pad columns are zeros); the r2c plane child is a door-2 rank-2 plan (a nested
-create takes the pitch and no plane — the front door allocates the volume for
-the caller's create only); the c2r child arm compacts a source plane to the
+create takes the pitch — the front door records it for the caller's create
+only); the c2r child arm compacts a source plane to the
 bin pitch for its out-of-place child, the pay-once arm needs nothing; the
 rank-3 row keeps its own `_p` set (`chain_p chain1_p s_p nf_p nsw_p`, the
-`_c2r` twins). `vfft_plan_stride()` is the row pitch at either rank.
+`_c2r` twins). `vfft_info().stride` is the row pitch at either rank.
 
 ## 2. The walks in place
 

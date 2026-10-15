@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h" /* vfft_wisdom_reread */
 
 static int g_fail = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { g_fail++; printf("  *** FAIL: "); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -77,20 +78,20 @@ static int cxcmp(const void *a, const void *b)
     if (p[1] < q[1]) return -1; if (p[1] > q[1]) return 1;
     return 0;
 }
-static vfft_plan mk(vfft_wisdom *W, int N, int scr, int ip, int T)
+static vfft_plan mk(const char *W, int N, int scr, int ip, int T)
 {
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.nthreads = T; cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
 static void run(vfft_plan p, int dir, int ip, const double *x, double *y, long N)
 {
     const size_t nb = (size_t)2 * N * sizeof(double);
-    if (ip) { memcpy(y, x, nb); vfft_execute(p, dir, y, NULL, y, NULL); }
-    else vfft_execute(p, dir, x, NULL, y, NULL);
+    if (ip) { memcpy(y, x, nb); vfft_execute(p, dir, y, y); }
+    else vfft_execute(p, dir, x, y);
 }
 
 int main(int argc, char **argv)
@@ -122,7 +123,7 @@ int main(int argc, char **argv)
         {
             double *y = scr ? yscr : ynat;
             const char *cls = scr ? "scrambled" : "natural";
-            vfft_wisdom *W = vfft_wisdom_load(wisdir);
+            const char *W = (wisdir);
             vfft_plan p, q, pm;
             int raced;
             CHECK(W != NULL, "wisdom load");
@@ -132,7 +133,7 @@ int main(int argc, char **argv)
             p = mk(W, N, scr, 0, 1);
             raced = tap_raced(N);
             CHECK(p != NULL, "N=%d %s oop: create refused", N, cls);
-            if (!p) { vfft_wisdom_free(W); continue; }
+            if (!p) { continue; }
             run(p, VFFT_FORWARD, 0, x, y, N);
             if (!scr)
             {
@@ -184,20 +185,17 @@ int main(int argc, char **argv)
                 CHECK(pm != NULL, "N=%d %s T=%d: create refused", N, cls, T);
                 if (pm)
                 {
-                    vfft_set_num_threads(1);
                     run(pm, VFFT_FORWARD, 0, x, r, N);
-                    vfft_set_num_threads(T);
                     run(pm, VFFT_FORWARD, 0, x, y2, N);
                     CHECK(memcmp(r, y2, nb) == 0, "N=%d %s T=%d: threaded != own serial (bitwise)", N, cls, T);
                     printf("  %s T=%d: %s\n", cls, T, memcmp(r, y2, nb) == 0 ? "bitwise own serial" : "NOT BITWISE");
                     vfft_destroy(pm);
-                    vfft_set_num_threads(1);
                 }
             }
             vfft_destroy(p);
-            vfft_wisdom_free(W);
             /* replay on the warm store: bitwise, no race */
-            W = vfft_wisdom_load(wisdir);
+            vfft_wisdom_reread(wisdir); /* from the files */
+            W = (wisdir);
             (void)tap_raced(N);
             p = mk(W, N, scr, 0, 1);
             raced = tap_raced(N);
@@ -210,7 +208,6 @@ int main(int argc, char **argv)
                 printf("  %s replay: %s, %s\n", cls, raced ? "RACED" : "no race", memcmp(y, y2, nb) == 0 ? "bitwise" : "NOT BITWISE");
                 vfft_destroy(p);
             }
-            vfft_wisdom_free(W);
         }
         free(x); free(ynat); free(yscr); free(y2); free(r); free(sn); free(ss);
     }

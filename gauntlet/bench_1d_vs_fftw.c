@@ -227,13 +227,13 @@ static const char *fftw_wis_path(void)
 }
 
 /* ------------------------------------------------------------- vfft bundle */
-static vfft_wisdom *bundle(void)
+static const char *bundle(void)
 {
-    static vfft_wisdom *W = NULL;
+    static const char *W = NULL;
     static int tried = 0;
     if (tried) return W;
     tried = 1;
-    W = vfft_wisdom_load(g_wisdir ? g_wisdir : ".");
+    W = (g_wisdir ? g_wisdir : ".");
     if (!W)
         fprintf(stderr, "vfft_wisdom_load(%s) failed — front-door cells will lack banked verdicts\n",
                 g_wisdir ? g_wisdir : ".");
@@ -277,16 +277,16 @@ static stat5_t time_vfft(vfft_plan h, double *z0, double *S, size_t total)
 {
     if (g_k1zip) memcpy(S, z0, 2 * total * sizeof(double));
     for (int w = 0; w < 10; w++)
-        g_k1zip ? vfft_execute(h, VFFT_FORWARD, S, NULL, S, NULL)
-                : vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+        g_k1zip ? vfft_execute(h, VFFT_FORWARD, S, S)
+                : vfft_execute(h, VFFT_FORWARD, z0, S);
     int reps = reps_for(total);
     for (int t = 0; t < 5; t++)
     {
         if (t) pace(g_trial_pace_ms);
         double t0 = vfft_now_ns();
         for (int i = 0; i < reps; i++)
-            g_k1zip ? vfft_execute(h, VFFT_FORWARD, S, NULL, S, NULL)
-                    : vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+            g_k1zip ? vfft_execute(h, VFFT_FORWARD, S, S)
+                    : vfft_execute(h, VFFT_FORWARD, z0, S);
         g_t5[t] = (vfft_now_ns() - t0) / reps;
     }
     return stat5(g_t5);
@@ -716,24 +716,23 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
     vfft_config_t c;
     memset(&c, 0, sizeof c);
     c.transform    = VFFT_R2C;
-    c.placement    = VFFT_OUTOFPLACE;       /* split spectrum: in-place is REFUSED */
-    c.dims         = 1;
+    c.placement    = VFFT_PLACEMENT_OUT;       /* split spectrum: in-place is REFUSED */
+    c.rank         = 1;
     c.n[0]         = N;
     c.howmany      = K;
     c.layout       = VFFT_LAYOUT_SPLIT;
-    c.order        = VFFT_ORDER_DEFAULT;    /* non-DEFAULT is REFUSED for R2C */
+    c.order        = VFFT_ORDER_NATURAL;    /* non-DEFAULT is REFUSED for R2C */
     c.nthreads     = 1;                     /* NOT 0 */
-    c.rigor        = VFFT_MEASURE;          /* == what production serves */
-    c.wisdom       = bundle();
-    c.wisdom_write = 0;                     /* A BENCH NEVER BANKS */
+    /* == what production serves */
+    c.wisdom_dir = bundle();
+    /* A BENCH NEVER BANKS */
 
     vfft_plan h_fd = NULL, h_rf = NULL, h_st = NULL, h_pat = NULL;
     r2c_route_env(NULL);  h_fd = vfft_create(&c);    /* production verdict */
     r2c_route_env("0");   h_rf = vfft_create(&c);    /* rfft   diagnostic  */
     r2c_route_env("1");   h_st = vfft_create(&c);    /* stride diagnostic  */
     r2c_route_env(NULL);
-    c.rigor = VFFT_PATIENT; h_pat = vfft_create(&c); /* what the RACE would pick */
-    c.rigor = VFFT_MEASURE;
+    c.flags |= VFFT_FLAG_PATIENT; h_pat = vfft_create(&c); /* what the RACE would pick */
     if (!h_fd)
     {
         printf("  N=%-6d K=%-5zu r2c vfft_create FAILED\n", N, K);
@@ -796,7 +795,7 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
     /* ---- gates: ELEMENTWISE vs naive for every arm (r2c output is natural) ---- */
     int lanes = r2c_lane_budget(N, K);
     double *hr = alloc_d((size_t)halfN + 1), *hi = alloc_d((size_t)halfN + 1);
-    vfft_execute(h_fd, VFFT_FORWARD, x, NULL, o_re, o_im);
+    vfft_execute_split(h_fd, VFFT_FORWARD, x, NULL, o_re, o_im);
     g_fx.execute(fil);
     g_fx.execute(fsp);
     double vgate = 0, gil = 0, gsp = 0;
@@ -823,12 +822,12 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
     free_d(hr); free_d(hi);
 
 #define TIME_FD(H, DST) do { if (H) {                                     \
-        for (int w = 0; w < 10; w++) vfft_execute(H, VFFT_FORWARD, x, NULL, o_re, o_im); \
+        for (int w = 0; w < 10; w++) vfft_execute_split(H, VFFT_FORWARD, x, NULL, o_re, o_im); \
         int reps = reps_for(total);                                       \
         for (int t = 0; t < 5; t++)                                       \
         { if (t) pace(g_trial_pace_ms);                                   \
           double tt = vfft_now_ns();                                \
-          for (int i = 0; i < reps; i++) vfft_execute(H, VFFT_FORWARD, x, NULL, o_re, o_im); \
+          for (int i = 0; i < reps; i++) vfft_execute_split(H, VFFT_FORWARD, x, NULL, o_re, o_im); \
           g_t5[t] = (vfft_now_ns() - tt) / reps; }                  \
         DST = stat5(g_t5); } } while (0)
 #define TIME_FFTW(PL, DST) do {                                           \
@@ -974,24 +973,22 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
     vfft_config_t c;
     memset(&c, 0, sizeof c);
     c.transform    = VFFT_C2R;
-    c.placement    = VFFT_OUTOFPLACE;
-    c.dims         = 1;
+    c.placement    = VFFT_PLACEMENT_OUT;
+    c.rank         = 1;
     c.n[0]         = N;
     c.howmany      = K;
     c.layout       = VFFT_LAYOUT_SPLIT;
-    c.order        = VFFT_ORDER_DEFAULT;
+    c.order        = VFFT_ORDER_NATURAL;
     c.nthreads     = 1;
-    c.rigor        = VFFT_MEASURE;
-    c.wisdom       = bundle();
-    c.wisdom_write = 0;                      /* 🔴 A BENCH NEVER BANKS */
+    c.wisdom_dir = bundle();
+    /* 🔴 A BENCH NEVER BANKS */
 
     vfft_plan h_fd = NULL, h_nat = NULL, h_spl = NULL, h_pat = NULL;
     c2r_route_env(NULL);  h_fd  = vfft_create(&c);   /* production verdict */
     c2r_route_env("0");   h_nat = vfft_create(&c);   /* NATURAL diagnostic */
     c2r_route_env("1");   h_spl = vfft_create(&c);   /* SPLIT   diagnostic */
     c2r_route_env(NULL);
-    c.rigor = VFFT_PATIENT; h_pat = vfft_create(&c); /* what the RACE would pick */
-    c.rigor = VFFT_MEASURE;
+    c.flags |= VFFT_FLAG_PATIENT; h_pat = vfft_create(&c); /* what the RACE would pick */
     if (!h_fd)
     {
         printf("  N=%-6d K=%-5zu c2r vfft_create FAILED\n", N, K);
@@ -1052,15 +1049,15 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
     {
         vfft_config_t f;
         memset(&f, 0, sizeof f);
-        f.transform = VFFT_R2C; f.placement = VFFT_OUTOFPLACE; f.dims = 1;
+        f.transform = VFFT_R2C; f.placement = VFFT_PLACEMENT_OUT; f.rank = 1;
         f.n[0] = N; f.howmany = K; f.layout = VFFT_LAYOUT_SPLIT;
-        f.order = VFFT_ORDER_DEFAULT; f.nthreads = 1; f.rigor = VFFT_MEASURE;
-        f.wisdom = bundle(); f.wisdom_write = 0;
+        f.order = VFFT_ORDER_NATURAL; f.nthreads = 1;
+        f.wisdom_dir = bundle();
         vfft_plan hf = vfft_create(&f);
         if (!hf)
         { printf("  N=%-6d K=%-5zu c2r: forward for the spectrum FAILED\n", N, K);
           goto cleanup; }
-        vfft_execute(hf, VFFT_FORWARD, x0, NULL, ire, iim);
+        vfft_execute_split(hf, VFFT_FORWARD, x0, NULL, ire, iim);
         vfft_destroy(hf);
     }
     double *y = alloc_d(total);
@@ -1070,7 +1067,7 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
         int lanes = r2c_lane_budget(N, K);
         double *ref = alloc_d((size_t)N);
         double vg = 0, gil = 0, gsp = 0;
-        vfft_execute(h_fd, VFFT_BACKWARD, ire, iim, y, NULL);
+        vfft_execute_split(h_fd, VFFT_BACKWARD, ire, iim, y, NULL);
         for (size_t t = 0; t < K; t++)
             for (int k = 0; k <= halfN; k++)
             { hcce[2 * (t * (size_t)(halfN + 1) + (size_t)k)]     = ire[(size_t)k * K + t];
@@ -1106,12 +1103,12 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
         stat5_t vs, is_, ss, nat, spl, pt, cs;
         nat.min = nat.med = spl.min = spl.med = pt.min = pt.med = 0;
 #define TIME_C2R_FD(H, DST) do { if (H) {                                 \
-        for (int w = 0; w < 10; w++) vfft_execute(H, VFFT_BACKWARD, ire, iim, y, NULL); \
+        for (int w = 0; w < 10; w++) vfft_execute_split(H, VFFT_BACKWARD, ire, iim, y, NULL); \
         int reps = reps_for(total);                                       \
         for (int t = 0; t < 5; t++)                                       \
         { if (t) pace(g_trial_pace_ms);                                   \
           double tt = vfft_now_ns();                                \
-          for (int i = 0; i < reps; i++) vfft_execute(H, VFFT_BACKWARD, ire, iim, y, NULL); \
+          for (int i = 0; i < reps; i++) vfft_execute_split(H, VFFT_BACKWARD, ire, iim, y, NULL); \
           g_t5[t] = (vfft_now_ns() - tt) / reps; }                  \
         DST = stat5(g_t5); } } while (0)
 #define TIME_C2R_FFTW(PL, DST) do {                                       \
@@ -1209,17 +1206,16 @@ static void run_oop_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform    = VFFT_C2C;
-    cfg.placement    = VFFT_OUTOFPLACE;
+    cfg.placement    = VFFT_PLACEMENT_OUT;
     cfg.layout       = VFFT_LAYOUT_SPLIT;
-    cfg.order        = VFFT_ORDER_DEFAULT;   /* == the old hand path's ord = 0 */
-    cfg.rigor        = VFFT_MEASURE;
-    cfg.dims         = 1;
+    cfg.order        = VFFT_ORDER_NATURAL;   /* == the old hand path's ord = 0 */
+    cfg.rank         = 1;
     cfg.n[0]         = N;
     cfg.howmany      = (int)K;
-    cfg.batch_geom   = VFFT_BATCH_DEFAULT;
+    cfg.batch   = VFFT_BATCH_DEFAULT;
     cfg.nthreads     = 1;
-    cfg.wisdom       = bundle();
-    cfg.wisdom_write = 0;                    /* 🔴 A BENCH NEVER BANKS */
+    cfg.wisdom_dir = bundle();
+    /* 🔴 A BENCH NEVER BANKS */
     vfft_plan h = vfft_create(&cfg);
     if (!h) { printf("  N=%-8d K=%-5zu OOP vfft_create FAILED\n", N, K); return; }
 
@@ -1275,14 +1271,14 @@ static void run_oop_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
      * lane budget) and fall back to the roundtrip when it is not, LABELLING which
      * gate actually applied. That is an observation about the output, never a
      * bench-side decision about the route. */
-    vfft_execute(h, VFFT_FORWARD, sr, si, dr, di);
+    vfft_execute_split(h, VFFT_FORWARD, sr, si, dr, di);
     int lanes = 0;
     double vgate = naive_gate_lanes(N, K, sr, si, dr, di, &lanes);
     const char *vgclass = "xnaive";
     if (vgate > 1e-9)
     {   /* scrambled (MODEB) — elementwise is structurally impossible, use roundtrip */
         double *er = alloc_d(total), *ei = alloc_d(total);
-        vfft_execute(h, VFFT_BACKWARD, dr, di, er, ei);
+        vfft_execute_split(h, VFFT_BACKWARD, dr, di, er, ei);
         double w = 0;
         for (size_t i = 0; i < total; i++)
         {
@@ -1302,12 +1298,12 @@ static void run_oop_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
     /* ---- timing: verdict pair flipped, then il, then control ---- */
     stat5_t vs, ms;
 #define OOP_TIME_VFFT() do {                                            \
-        for (int w = 0; w < 10; w++) vfft_execute(h, VFFT_FORWARD, sr, si, dr, di); \
+        for (int w = 0; w < 10; w++) vfft_execute_split(h, VFFT_FORWARD, sr, si, dr, di); \
         int reps = reps_for(total);                                     \
         for (int t = 0; t < 5; t++)                                     \
         { if (t) pace(g_trial_pace_ms);                                 \
           double tt = vfft_now_ns();                              \
-          for (int i = 0; i < reps; i++) vfft_execute(h, VFFT_FORWARD, sr, si, dr, di); \
+          for (int i = 0; i < reps; i++) vfft_execute_split(h, VFFT_FORWARD, sr, si, dr, di); \
           g_t5[t] = (vfft_now_ns() - tt) / reps; }                \
         vs = stat5(g_t5); } while (0)
     if (flip)
@@ -1398,15 +1394,14 @@ static void run_cell(int N, FILE *out, int cool_ms, int flip)
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = g_k1zip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = g_k1zip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = 1;
     cfg.order = g_k1nat ? VFFT_ORDER_NATURAL : VFFT_ORDER_SCRAMBLED;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1;
-    cfg.wisdom = bundle();
+    cfg.wisdom_dir = bundle();
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     { printf("%-8d %-7s vfft_create FAILED\n", N, mode); fftw_arm_free(&fa); return; }
@@ -1433,9 +1428,9 @@ static void run_cell(int N, FILE *out, int cool_ms, int flip)
         double *zv = alloc_d(2 * total);
         if (g_k1zip)
         { memcpy(zv, z0, 2 * total * sizeof(double));
-          vfft_execute(h, VFFT_FORWARD, zv, NULL, zv, NULL); }
+          vfft_execute(h, VFFT_FORWARD, zv, zv); }
         else
-            vfft_execute(h, VFFT_FORWARD, z0, NULL, zv, NULL);
+            vfft_execute(h, VFFT_FORWARD, z0, zv);
         vgate = maxrel_z(N, zv, xr, xi);   /* same naive anchor as FFTW */
         vgclass = "xnaive";
         free_d(zv);
@@ -1444,11 +1439,11 @@ static void run_cell(int N, FILE *out, int cool_ms, int flip)
     {
         if (g_k1zip)
         { memcpy(rt, z0, 2 * total * sizeof(double));
-          vfft_execute(h, VFFT_FORWARD, rt, NULL, rt, NULL);
-          vfft_execute(h, VFFT_BACKWARD, rt, NULL, rt, NULL); }
+          vfft_execute(h, VFFT_FORWARD, rt, rt);
+          vfft_execute(h, VFFT_BACKWARD, rt, rt); }
         else
-        { vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
-          vfft_execute(h, VFFT_BACKWARD, S, NULL, rt, NULL); }
+        { vfft_execute(h, VFFT_FORWARD, z0, S);
+          vfft_execute(h, VFFT_BACKWARD, S, rt); }
         double maxerr = 0.0, maxmag = 0.0, inv = 1.0 / (double)N;
         for (size_t i = 0; i < 2 * total; i++)
         {

@@ -73,7 +73,7 @@ static void vfft_zfsr_destroy(vfft_zfsr_plan_t *p)
 {
     if (!p) return;
     vfft_k1fs_destroy(p->fs);
-    vfft_wisdom_free((vfft_wisdom *)p->S);
+    _vfft_wisdom_free((vfft_wisdom *)p->S);
     vfft_aligned_free(p->plane);
     vfft_aligned_free(p->V);
     vfft_aligned_free(p->U);
@@ -91,22 +91,22 @@ static inline int vfft_zfsr_band(int N)
 /* S = the child's private store, empty (the child races into it) or seeded
  * (the child replays from it); the plan owns it from here, failure included */
 static vfft_zfsr_plan_t *vfft_zfsr_create(int N, int N1, int N2, struct vfft_wisdom_s *S,
-                                          const vfft_config_t *cfg, int nthreads)
+                                          const vfft_cfg_t *cfg, int nthreads)
 {
     vfft_zfsr_plan_t *p;
-    vfft_config_t cc;
+    vfft_cfg_t cc;
     const int M = N / 2;
     int k;
     if (!vfft_zfsr_band(N) || (long)N1 * (long)N2 != (long)M ||
         N1 % VFFT_ZFSR_TB || N2 % (2 * VFFT_ZFSR_TB))
     {
-        vfft_wisdom_free((vfft_wisdom *)S);
+        _vfft_wisdom_free((vfft_wisdom *)S);
         return NULL;
     }
     p = (vfft_zfsr_plan_t *)calloc(1, sizeof *p);
     if (!p)
     {
-        vfft_wisdom_free((vfft_wisdom *)S);
+        _vfft_wisdom_free((vfft_wisdom *)S);
         return NULL;
     }
     p->N = N; p->M = M; p->N1 = N1; p->N2 = N2;
