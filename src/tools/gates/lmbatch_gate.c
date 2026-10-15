@@ -378,9 +378,15 @@ static void refusals(void)
     p = mk(VFFT_R2C, 1, nodd, 4, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, 1);
     CHECK(p == NULL, "R: a lane-major r2c batch in place at an odd N is served (no real column engine)");
     if (p) vfft_destroy(p);
-    p = mk(VFFT_C2C, 2, n2, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
-    CHECK(p == NULL, "R: a rank-2 lane-major request is served");
-    if (p) vfft_destroy(p);
+    {   /* rank 2 c2c is served (step 6); the real 2D batch and rank 3 are refused with their reason */
+        const int n3[3] = { 16, 16, 16 };
+        p = mk(VFFT_R2C, 2, n2, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-2 lane-major r2c request is served");
+        if (p) vfft_destroy(p);
+        p = mk(VFFT_C2C, 3, n3, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-3 lane-major request is served");
+        if (p) vfft_destroy(p);
+    }
     p = mk(VFFT_C2C, 1, n1, 1, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
     CHECK(p != NULL, "R: K=1 with the lane-major flag refused (it is the ordinary plan)");
     if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") != 0, "R: K=1 took the batch door"); vfft_destroy(p); }

@@ -59,7 +59,7 @@ cell returns no plan and names its reason in `vfft_error()`.
 | 1D C2C, SPLIT | in place at any N | out of place at a prime N; a contiguous batch |
 | 1D R2C / C2R, INTERLEAVED | any N, both placements; a batch contiguous, or lane-major (its default) at an even N in either placement | lane-major at an odd N; the scrambled order |
 | 1D R2C / C2R, SPLIT | out of place at an even N | an odd N; in place |
-| 2D C2C, INTERLEAVED | any extents, both placements, both orders; howmany > 1 as contiguous planes | a lane-major batch |
+| 2D C2C, INTERLEAVED | any extents, both placements, both orders; howmany > 1 as contiguous planes, or lane-major (every axis a column pass) | |
 | 2D R2C / C2R, INTERLEAVED | any extents (a prime first or an odd last extent included), both placements; howmany > 1 | |
 | 2D C2C, SPLIT | both placements, scrambled, or natural where its reorder tape builds; howmany 1 | a batch |
 | 2D R2C / C2R, SPLIT | out of place where the split engines cover both axes | a prime column extent |

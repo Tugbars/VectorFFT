@@ -294,7 +294,30 @@ and T = 8, the cells above; its numbers go to `docs/performance/v1_0_results.md`
 5. The in-place real batch (the padded plane) and, with piece C, the real odd column
    engine.
 
-## 8. What this retires
+## 8. Rank 2 and 3 (step 6)
+
+A lane-major 2D batch is K planes of N1 x N2 side by side, element (r, c) of transform
+t at `z[2 ((r N2 + c) K + t)]`. Every axis is a column pass. The first axis is one column
+pass of N1 rows over N2 K lanes, the plane's full width: the 1D batch's descriptor
+(`il2d_col` at rn = N2 K), walker, race and dense scratch, unchanged. The last axis is N1
+blocks of the 1D lane-major batch at (N2, K): block r is the contiguous N2 K complexes of
+row r of the first axis, so the child is the 1D batch's own plan, in role on a private
+store (its recipe rides on this cell's row as `rp_*`), run per block in place on the
+plane after the first axis (`il/rank2/lm_batch2d_il.h`). The passes commute, so the
+backward runs the same order with the backward kernels. The first axis takes the cell's
+order class (natural, or the scrambled comb), the row child is natural, as the 2D tier's
+row child is. Threaded, the first axis runs its raced column forms and the blocks go to
+the workers, each on its own clone of the row child (a plan's scratch is not reentrant;
+a clone is accepted only when its chain, verdicts and kernels match the primary), the
+whole execute one threaded verdict (`cmt=`) raced with the column pass's arms. Both
+placements: the column pass moves src to dst in its first stage, the rows run in place.
+The row: the 2D cell at `q = K` on the `lay=lm` axis, the first axis's column tokens on
+it. K = 1 is the ordinary 2D plan (the geometry does not apply). The real 2D batch (the
+real batch's fused strips on the last axis, a complex column pass over (N2/2+1) K lanes
+on the first) and rank 3 (the first axis over N2 N3 K lanes, then N1 blocks of the rank-2
+batch, the same door recursively) are the next pieces.
+
+## 9. What this retires
 
 The two "lane-major lost to transform-contiguous at every measured cell" refusals
 (c2c_oop_create_il.h, c2c_ip_create_il.h) are a verdict on the split-convert path of
