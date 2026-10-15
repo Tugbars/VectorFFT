@@ -8,6 +8,7 @@
  * natively or refuses loudly, and includes only il/ and common/.
  *
  *   rank 3/4   il/rank3/fftnd_il.h        rank-3 c2c; the rest refused
+ *              il/rank3/lm_batch3d_il.h   the lane-major 3D c2c batch (K > 1, the geometry named)
  *   rank 2     il/rank2/fft2d_create_il.h native IL 2D; the plane queue for K>1
  *   c2c ip     il/rank1/c2c_ip_create_il.h
  *   c2c oop    il/rank1/c2c_oop_create_il.h
@@ -68,6 +69,8 @@ static vfft_plan _vfft_il_create(const vfft_cfg_t *cfg,
             return NULL;
         }
     }
+    if (cfg->dims == 3 && K > 1 && cfg->transform == VFFT_C2C && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
+        return _vfft_create_lm3d_il(cfg, W, K);   /* the LANE-MAJOR 3D batch (lm_batch3d_il.h) */
     if (cfg->dims == 3 || cfg->dims == 4)
         return _vfft_create_rank34_il(cfg, W, K);
     if (cfg->dims == 2)

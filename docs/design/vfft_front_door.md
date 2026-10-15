@@ -63,7 +63,7 @@ cell returns no plan and names its reason in `vfft_error()`.
 | 2D R2C / C2R, INTERLEAVED | any extents (a prime first or an odd last extent included), both placements; howmany > 1 as contiguous planes, or lane-major at an even last extent | a lane-major batch at an odd last extent |
 | 2D C2C, SPLIT | both placements, scrambled, or natural where its reorder tape builds; howmany 1 | a batch |
 | 2D R2C / C2R, SPLIT | out of place where the split engines cover both axes | a prime column extent |
-| 3D C2C, INTERLEAVED | both placements, both orders, howmany 1 | a batch |
+| 3D C2C, INTERLEAVED | both placements, both orders; howmany 1, or a lane-major batch (every axis a column pass) | a contiguous batch |
 | 3D R2C / C2R, INTERLEAVED | both placements, howmany 1 | |
 | 3D and 4D C2C, SPLIT | the scrambled order, howmany 1 | the natural order; a batch |
 | 4D, INTERLEAVED | | every request |

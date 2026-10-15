@@ -185,17 +185,21 @@ static inline int vfft_policy_rough47_is_prime(int r)
  * transforms of length N, element e of transform t at z[2 (e K + t)], served by the column
  * pass with no row pass (il/rank1/lm_batch_il.h). Admitted: a 1D interleaved C2C request of
  * howmany >= 2 at N >= 2 that names the geometry (VFFT_BATCH_LANE_MAJOR; DEFAULT stays
- * transform-contiguous for c2c), and the 2D interleaved C2C request the same way (step 6,
+ * transform-contiguous for c2c), and the 2D and 3D interleaved C2C requests the same way (step 6,
  * il/rank2/lm_batch2d_il.h: the first axis one column pass over the plane's width, the last
- * axis the 1D batch per block). The real 1D batches: below. The geometries never race each
+ * axis the 1D batch per block; il/rank3/lm_batch3d_il.h: the first axis over the volume's
+ * width, then the 2D batch per block). The real 1D batches: below. The geometries never race each
  * other in a create (the owner's rule): a lane-major request is served lane-major or refused
  * with its reason. */
 static inline int vfft_policy_batch_lane_major(const vfft_cfg_t *cfg)
 {
-    if (!cfg || cfg->dims > 2 || cfg->layout != VFI_LAYOUT_IL || cfg->howmany < 2)
+    if (!cfg || cfg->dims > 3 || cfg->layout != VFI_LAYOUT_IL || cfg->howmany < 2)
         return 0;
-    if (cfg->transform == VFFT_C2C)   /* rank 1, and rank 2 (step 6: every axis a column pass) */
-        return cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->n[0] >= 2 && (cfg->dims < 2 || cfg->n[1] >= 2);
+    if (cfg->transform == VFFT_C2C)   /* rank 1, and ranks 2 and 3 (step 6: every axis a column pass) */
+        return cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->n[0] >= 2 && (cfg->dims < 2 || cfg->n[1] >= 2) &&
+               (cfg->dims < 3 || cfg->n[2] >= 2);
+    if (cfg->dims == 3)
+        return 0;   /* a real 3D batch has no lane-major door */
     if (cfg->dims == 2)   /* the real 2D batch (step 6): the named geometry (DEFAULT stays contiguous planes at
                            * rank 2), N1 >= 2, an even N2 >= 4 (an odd N2 has no real column engine) */
         return (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
@@ -723,6 +727,16 @@ static inline int vfft_policy_rankn_axis_nat(int rank, int axis, int ord)
 {
     if (rank >= 3 && axis == 0)
         return 0;
+    return ord == VW2_ORD_NAT;
+}
+/* the LANE-MAJOR batches of rank 2 and 3 (il/rank2/lm_batch2d_il.h, il/rank3/lm_batch3d_il.h):
+ * every axis a column pass and no plane pass after it, so the first axis leaves the cell's
+ * class at every rank -- natural for a natural cell, the scrambled comb otherwise. The
+ * rank-N law above does not apply to them: its scrambled first axis is ordered by the
+ * tier's plane pass, which the batch never runs (gated: a natural 3D batch under that law
+ * is wrong by 1.4 at every smooth first axis). */
+static inline int vfft_policy_lm_axis_nat(int ord)
+{
     return ord == VW2_ORD_NAT;
 }
 

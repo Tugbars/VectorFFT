@@ -438,7 +438,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
     h->k1_exec = NULL;
     h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = NULL;   /* the 2D real forms below decline: the full door */
     if (h->lm)
-    {   /* the lane-major batch: the column pass (the 2D batch: its two axes), both directions, never declining */
+    {   /* the lane-major batch: the column pass (the 2D and 3D batches: their axes), both directions, never declining */
         h->k1_exec = h->N2 > 0 ? _lm2d_exec : _lm_exec;
         h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = h->k1_exec;
         return hp;

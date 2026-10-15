@@ -8,7 +8,7 @@
  *      the scrambled class's roundtrip; in place within 1e-12 of out of place (its own cell);
  *   M  T = 8: a threaded pass engaged (the engagement counter), within 1e-12 of the T = 1 plan, the
  *      replay bitwise;
- *   R  the refusals named: the real lane-major batch (until its piece), a rank-2 lane-major request;
+ *   R  the refusals named: the real lane-major batches at an odd length, a real rank-3 and any rank-4 lane-major request;
  *      K = 1 with the lane-major flag is the ordinary plan.
  * Cold scratch store: every cell races. Usage: lmbatch_gate --wisdir <dir> */
 #include <stdio.h>
@@ -378,33 +378,46 @@ static void refusals(void)
     p = mk(VFFT_R2C, 1, nodd, 4, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, 1);
     CHECK(p == NULL, "R: a lane-major r2c batch in place at an odd N is served (no real column engine)");
     if (p) vfft_destroy(p);
-    {   /* rank 2 is served (step 6); a real 2D batch at an odd N2 and rank 3 are refused with their reason */
-        const int n3[3] = { 16, 16, 16 }, n2odd[2] = { 64, 15 };
+    {   /* ranks 2 and 3 are served (step 6); a real 2D batch at an odd N2, a real 3D batch and rank 4 are refused
+         * with their reason */
+        const int n3[3] = { 16, 16, 16 }, n4[4] = { 8, 8, 8, 8 }, n2odd[2] = { 64, 15 };
         p = mk(VFFT_R2C, 2, n2odd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
         CHECK(p == NULL, "R: a rank-2 lane-major r2c batch at an odd N2 is served (no real column engine)");
         if (p) vfft_destroy(p);
-        p = mk(VFFT_C2C, 3, n3, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
-        CHECK(p == NULL, "R: a rank-3 lane-major request is served");
+        p = mk(VFFT_R2C, 3, n3, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-3 lane-major r2c batch is served (no real 3D door)");
+        if (p) vfft_destroy(p);
+        p = mk(VFFT_C2C, 4, n4, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-4 lane-major request is served");
         if (p) vfft_destroy(p);
     }
     p = mk(VFFT_C2C, 1, n1, 1, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
     CHECK(p != NULL, "R: K=1 with the lane-major flag refused (it is the ordinary plan)");
     if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") != 0, "R: K=1 took the batch door"); vfft_destroy(p); }
-    printf("R refusals: odd-N r2c and c2r in both placements, rank-2 lane-major refused; K=1 ordinary\n");
+    printf("R refusals: odd-N r2c and c2r in both placements, a real rank-3 and a rank-4 lane-major request; K=1 ordinary\n");
 }
 
-/* ── THE 2D LANE-MAJOR BATCH (step 6): K planes of N1 x N2 side by side, element (r, c) of transform t at
- * z[2 ((r N2 + c) K + t)]; lane t against its own K = 1 2D plan (natural, out of place), the roundtrip, the
- * replay bitwise, in place bitwise the out-of-place plan; T = 8 engaged ── */
-static void ref_lanes_2d(const double *z, double *ref, int N1, int N2, int K)
+/* ── THE 2D AND 3D LANE-MAJOR BATCHES (step 6): K planes of N1 x N2 (volumes of N1 x N2 x N3) side by side,
+ * element (r, c) of transform t at z[2 ((r N2 + c) K + t)] ((i, j, k) at z[2 ((i N2 N3 + j N3 + k) K + t)]);
+ * lane t against its own K = 1 plan of the rank (natural, out of place), the roundtrip, the replay bitwise,
+ * in place bitwise the out-of-place plan; T = 8 engaged ── */
+static void shape_of(char *buf, size_t sz, int nd, const int *n)
 {
-    const int n2[2] = { N1, N2 };
-    const size_t P = (size_t)N1 * N2;
-    double *a = (double *)vfft_malloc(2 * P * 8), *b = (double *)vfft_malloc(2 * P * 8);
-    vfft_plan p = mk(VFFT_C2C, 2, n2, 1, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_NATURAL, 1);
-    int t;
-    size_t e;
-    CHECK(p != NULL, "reference K=1 2D plan at %dx%d refused", N1, N2);
+    if (nd > 2) snprintf(buf, sz, "%dx%dx%d", n[0], n[1], n[2]);
+    else snprintf(buf, sz, "%dx%d", n[0], n[1]);
+}
+static void ref_lanes_nd(const double *z, double *ref, int nd, const int *n, int K)
+{
+    size_t P = 1, e;
+    int d, t;
+    double *a, *b;
+    vfft_plan p;
+    char shape[32];
+    for (d = 0; d < nd; d++) P *= (size_t)n[d];
+    shape_of(shape, sizeof shape, nd, n);
+    a = (double *)vfft_malloc(2 * P * 8); b = (double *)vfft_malloc(2 * P * 8);
+    p = mk(VFFT_C2C, nd, n, 1, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_NATURAL, 1);
+    CHECK(p != NULL, "reference K=1 %dD plan at %s refused", nd, shape);
     for (t = 0; t < K; t++)
     {
         for (e = 0; e < P; e++) { a[2 * e] = z[2 * (e * K + t)]; a[2 * e + 1] = z[2 * (e * K + t) + 1]; }
@@ -414,49 +427,56 @@ static void ref_lanes_2d(const double *z, double *ref, int N1, int N2, int K)
     if (p) vfft_destroy(p);
     vfft_free(a); vfft_free(b);
 }
-static void cell_lm2d(int N1, int N2, int K, int T)
+static void cell_lmnd(int nd, const int *n, int K, int T)
 {
-    const int n2[2] = { N1, N2 };
-    const size_t PN = (size_t)N1 * N2 * K;
-    double *z = (double *)vfft_malloc(2 * PN * 8), *y = (double *)vfft_malloc(2 * PN * 8), *y2 = (double *)vfft_malloc(2 * PN * 8);
-    double *ref = (double *)vfft_malloc(2 * PN * 8), *rt = (double *)vfft_malloc(2 * PN * 8);
+    size_t P = 1, PN;
+    int d;
+    double *z, *y, *y2, *ref, *rt;
     vfft_plan p, p2;
+    char shape[32];
     long m0 = moved();
-    fill(z, 2 * PN, (unsigned)(N1 * 31 + N2 * 7 + K + T));
-    ref_lanes_2d(z, ref, N1, N2, K);
-    p = mk(VFFT_C2C, 2, n2, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);
-    CHECK(p != NULL, "lm2d %dx%d x %d T=%d: create refused: %s", N1, N2, K, T, vfft_error());
+    for (d = 0; d < nd; d++) P *= (size_t)n[d];
+    PN = P * (size_t)K;
+    shape_of(shape, sizeof shape, nd, n);
+    z = (double *)vfft_malloc(2 * PN * 8); y = (double *)vfft_malloc(2 * PN * 8); y2 = (double *)vfft_malloc(2 * PN * 8);
+    ref = (double *)vfft_malloc(2 * PN * 8); rt = (double *)vfft_malloc(2 * PN * 8);
+    fill(z, 2 * PN, (unsigned)(n[0] * 31 + n[1] * 7 + (nd > 2 ? n[2] * 3 : 0) + K + T));
+    ref_lanes_nd(z, ref, nd, n, K);
+    p = mk(VFFT_C2C, nd, n, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);
+    CHECK(p != NULL, "lm%dd %s x %d T=%d: create refused: %s", nd, shape, K, T, vfft_error());
     if (!p) { vfft_free(z); vfft_free(y); vfft_free(y2); vfft_free(ref); vfft_free(rt); return; }
     vfft_execute(p, VFFT_FORWARD, z, y);
-    printf("%s lm2d %4dx%-4d x %-3d T=%d cold: route %-8s fwd vs lanes %.1e", T > 1 ? "M" : "C", N1, N2, K, T,
+    printf("%s lm%dd %-11s x %-3d T=%d cold: route %-8s fwd vs lanes %.1e", T > 1 ? "M" : "C", nd, shape, K, T,
            vfft_plan_route(p), relc(y, ref, PN));
-    CHECK(relc(y, ref, PN) < 1e-10, "lm2d %dx%d x %d T=%d: fwd vs the K=1 planes %.2e", N1, N2, K, T, relc(y, ref, PN));
-    if (T > 1) CHECK(moved() != m0, "lm2d %dx%d x %d: T=%d did not engage a threaded pass", N1, N2, K, T);
+    CHECK(relc(y, ref, PN) < 1e-10, "lm%dd %s x %d T=%d: fwd vs the K=1 plans %.2e", nd, shape, K, T, relc(y, ref, PN));
+    if (T > 1) CHECK(moved() != m0, "lm%dd %s x %d: T=%d did not engage a threaded pass", nd, shape, K, T);
     vfft_execute(p, VFFT_BACKWARD, y, rt);
-    CHECK(relrt(rt, z, PN, (double)N1 * (double)N2) < 1e-10, "lm2d %dx%d x %d T=%d: roundtrip %.2e", N1, N2, K, T,
-          relrt(rt, z, PN, (double)N1 * (double)N2));
-    printf(", roundtrip %.1e", relrt(rt, z, PN, (double)N1 * (double)N2));
-    p2 = mk(VFFT_C2C, 2, n2, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);
-    CHECK(p2 != NULL, "lm2d %dx%d x %d T=%d: replay create refused", N1, N2, K, T);
+    CHECK(relrt(rt, z, PN, (double)P) < 1e-10, "lm%dd %s x %d T=%d: roundtrip %.2e", nd, shape, K, T,
+          relrt(rt, z, PN, (double)P));
+    printf(", roundtrip %.1e", relrt(rt, z, PN, (double)P));
+    p2 = mk(VFFT_C2C, nd, n, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);
+    CHECK(p2 != NULL, "lm%dd %s x %d T=%d: replay create refused", nd, shape, K, T);
     if (p2)
     {
         vfft_execute(p2, VFFT_FORWARD, z, y2);
-        CHECK(memcmp(y, y2, 2 * PN * 8) == 0, "lm2d %dx%d x %d T=%d: replay != cold (bitwise)", N1, N2, K, T);
+        CHECK(memcmp(y, y2, 2 * PN * 8) == 0, "lm%dd %s x %d T=%d: replay != cold (bitwise)", nd, shape, K, T);
         vfft_destroy(p2);
     }
-    p2 = mk(VFFT_C2C, 2, n2, (size_t)K, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, T);
-    CHECK(p2 != NULL, "lm2d %dx%d x %d T=%d: in-place create refused", N1, N2, K, T);
+    p2 = mk(VFFT_C2C, nd, n, (size_t)K, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, T);
+    CHECK(p2 != NULL, "lm%dd %s x %d T=%d: in-place create refused", nd, shape, K, T);
     if (p2)
     {
         memcpy(y2, z, 2 * PN * 8);
         vfft_execute(p2, VFFT_FORWARD, y2, y2);
-        CHECK(memcmp(y, y2, 2 * PN * 8) == 0, "lm2d %dx%d x %d T=%d: in place != out of place (bitwise)", N1, N2, K, T);
+        CHECK(memcmp(y, y2, 2 * PN * 8) == 0, "lm%dd %s x %d T=%d: in place != out of place (bitwise)", nd, shape, K, T);
         vfft_destroy(p2);
     }
     printf("%s\n", T > 1 ? "  threaded passes 1" : "");
     vfft_destroy(p);
     vfft_free(z); vfft_free(y); vfft_free(y2); vfft_free(ref); vfft_free(rt);
 }
+static void cell_lm2d(int N1, int N2, int K, int T) { const int n[2] = { N1, N2 }; cell_lmnd(2, n, K, T); }
+static void cell_lm3d(int N1, int N2, int N3, int K, int T) { const int n[3] = { N1, N2, N3 }; cell_lmnd(3, n, K, T); }
 
 /* ── THE 2D LANE-MAJOR REAL BATCH: K real planes of N1 x N2 side by side, x[(r N2 + c) K + t], the spectrum
  * z[2 ((r H + f) K + t)], H = N2 / 2 + 1; lane t against its own K = 1 2D r2c plan (natural, out of place),
@@ -593,7 +613,7 @@ int main(int argc, char **argv)
     if (!dir) { printf("usage: lmbatch_gate --wisdir <cold scratch dir>\n"); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     g_W = (dir);
-    printf("LANE-MAJOR BATCH GATE: c2c, r2c and c2r on the column pass, the 2D c2c and real batches, store %s\n", dir);
+    printf("LANE-MAJOR BATCH GATE: c2c, r2c and c2r on the column pass, the 2D c2c and real batches, the 3D c2c batch, store %s\n", dir);
     /* C: small lengths against the naive DFT too; a prime, a Rader leaf, a smooth length, an odd length, a prime alone */
     cell(16, 8, 1);
     cell(45, 8, 1);
@@ -615,6 +635,13 @@ int main(int argc, char **argv)
     cell_lm2d(256, 32, 4, 1);
     cell_lm2d(256, 256, 8, 8);
     cell_lm2d(64, 1024, 8, 8);
+    /* the 3D batch: smooth and Rader first axes, both one-thread and threaded */
+    cell_lm3d(8, 8, 8, 8, 1);
+    cell_lm3d(16, 16, 16, 4, 1);
+    cell_lm3d(31, 8, 16, 8, 1);
+    cell_lm3d(16, 64, 8, 8, 1);
+    cell_lm3d(32, 64, 64, 4, 8);
+    cell_lm3d(64, 32, 32, 8, 8);
     /* the 2D real batch: both directions each cell, both placements */
     cell_lm2d_real(16, 8, 8, 1);
     cell_lm2d_real(64, 64, 4, 1);

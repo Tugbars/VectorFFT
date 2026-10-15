@@ -48,6 +48,8 @@ typedef struct {
     int lm;            /* 1 = the LANE-MAJOR 1D BATCH's cell (il/rank1/lm_batch_il.h): rank 1,
                         * n0 = N, n1 = K rendered as q = K on the lay=lm axis -- its own row
                         * beside the transform-contiguous q = K row; the column tokens plain */
+    int q;             /* the LANE-MAJOR 3D BATCH's K (il/rank3/lm_batch3d_il.h): rank 3, n0..n2 the
+                        * extents, the lanes rendered as q = K; ranks 1 and 2 carry K in n1 / n2 */
 } vw2_ilcol_key_t;
 
 static inline const char *vw2__ilcol_tok(const vw2_ilcol_key_t *k, const char *base,
@@ -66,8 +68,9 @@ static inline void vw2__ilcol_key(const vw2_ilcol_key_t *ck, vw2_key_t *k)
                 ck->n2, ck->ord, VW2_LAY_IL, ck->nthreads);
     if (ck->lm)
     {   /* the lane-major batches on their own layout axis: rank 1 = the 1D cell at q = K (n1 = K),
-         * rank 2 = the 2D cell at q = K (n2 = K) */
-        if (ck->rank == 2) { k->n[2] = 0; k->q = ck->n2; }
+         * rank 2 = the 2D cell at q = K (n2 = K), rank 3 = the 3D cell at q = K (q) */
+        if (ck->rank == 3) k->q = ck->q;
+        else if (ck->rank == 2) { k->n[2] = 0; k->q = ck->n2; }
         else { k->rank = 1; k->n[1] = 0; k->q = ck->n1; }
         k->lay = VW2_LAY_LM;
     }
@@ -243,8 +246,9 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
     vw2__2d_rec_key(r, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, ck->n1, ck->n2, ck->ord,
                     /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL, ck->nthreads);
     if (ck->lm)
-    {   /* the lane-major batches' rows (vw2__ilcol_key): rank 1 at q = K (n1), rank 2 at q = K (n2) */
-        if (ck->rank == 2) { r->key.n[2] = 0; r->key.q = ck->n2; }
+    {   /* the lane-major batches' rows (vw2__ilcol_key): rank 1 at q = K (n1), rank 2 at q = K (n2), rank 3 at q = K (q) */
+        if (ck->rank == 3) r->key.q = ck->q;
+        else if (ck->rank == 2) { r->key.n[2] = 0; r->key.q = ck->n2; }
         else { r->key.rank = 1; r->key.n[1] = 0; r->key.q = ck->n1; }
         r->key.lay = VW2_LAY_LM;
     }

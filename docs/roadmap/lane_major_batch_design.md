@@ -328,8 +328,14 @@ both passes run on the one padded plane, N1 blocks of (N2 + 2) K doubles. The ro
 real one at rank 2, `t=r2c n=N1xN2 q=K` on the `lay=lm` axis, direction-shared as the 1D
 real row is. The named geometry only: at rank 2 the DEFAULT stays contiguous planes.
 
-Rank 3, the first axis over N2 N3 K lanes and then N1 blocks of the rank-2 batch through
-the same door, is the next piece.
+Rank 3 (`il/rank3/lm_batch3d_il.h`) is the same door one rank up: K volumes of N1 x N2 x N3,
+element (i, j, k) of transform t at `z[2 ((i N2 N3 + j N3 + k) K + t)]`. The first axis is
+one column pass of N1 rows over N2 N3 K lanes, the volume's full width; then N1 blocks of
+the lane-major 2D batch at (N2, N3, K), the 2D batch's own plan as the child in role (its
+recipe, its row child's inside it, rides on this cell's row as `rp_*`), run per block in
+place through the 2D batch's block walker and executor. Threaded, the blocks go to the
+workers on clones of the 2D child, serial inside. The row: the 3D cell at `q = K` on the
+`lay=lm` axis. C2C only: a real 3D batch and any rank-4 batch stay contiguous planes.
 
 ## 9. What this retires
 
