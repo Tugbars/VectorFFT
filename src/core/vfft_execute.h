@@ -67,21 +67,21 @@
 static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
                          double *sim, double *dre, double *dim)
 {
-    const int il = (h->layout == (int)VFFT_LAYOUT_INTERLEAVED);
+    const int il = (h->layout == (int)VFI_LAYOUT_IL);
     const char *tn = _vfft_tname(h->transform);
     if (_VFFT_IS_TRIG(h->transform))
     {
         if (!sre || !dre)
         {
-            _vfft_warn("vfft_execute: %s needs sre=real_in and dre=real_out non-NULL "
-                       "(got sre=%s, dre=%s) — nothing executed",
+            _vfft_warn("vfft_execute: %s needs in=real_in and out=real_out non-NULL "
+                       "(got in=%s, out=%s) — nothing executed",
                        tn, sre ? "ok" : "NULL", dre ? "ok" : "NULL");
             return 1;
         }
         if (sim || dim)
         {
-            _vfft_warn("vfft_execute: %s is real->real (sre=real_in, dre=real_out); "
-                       "sim/dim must be NULL — nothing executed",
+            _vfft_warn("vfft_execute: %s is real->real (in=real_in, out=real_out); "
+                       "in_im/out_im must be NULL — nothing executed",
                        tn);
             return 1;
         }
@@ -98,13 +98,13 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
         }
         if (sim)
         {
-            _vfft_warn("vfft_execute: R2C takes real input in sre only; sim must be NULL "
+            _vfft_warn("vfft_execute: R2C takes its real input in `in` only; in_im must be NULL "
                        "— nothing executed");
             return 1;
         }
         if (!sre || !dre)
         {
-            _vfft_warn("vfft_execute: R2C needs sre=real_in and dre=%s non-NULL — "
+            _vfft_warn("vfft_execute: R2C needs in=real_in and out=%s non-NULL — "
                        "nothing executed",
                        il ? "z_CCE_out" : "spectrum re");
             return 1;
@@ -122,7 +122,7 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
         if (h->placement == VFFT_INPLACE && dre != sre)
         {
             _vfft_warn("vfft_execute: this %s plan is IN-PLACE (one padded CCE plane of "
-                       "2*(N/2+1) doubles) and must be called with dre == sre; got "
+                       "2*(N/2+1) doubles) and must be called with out == in; got "
                        "distinct pointers -- nothing executed",
                        tn);
             return 1;
@@ -130,18 +130,16 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
         if (il && dim)
         {
             _vfft_warn("vfft_execute: this R2C plan is committed to layout=INTERLEAVED "
-                       "(dre = packed CCE spectrum, dim=NULL) but got a non-NULL dim; for "
+                       "(out = packed CCE spectrum, out_im=NULL) but got a non-NULL out_im; for "
                        "split spectrum output create the plan with layout=VFFT_LAYOUT_SPLIT "
                        "— nothing executed");
             return 1;
         }
         if (!il && !dim)
         {
-            _vfft_warn("vfft_execute: this R2C plan is committed to layout=SPLIT "
-                       "(dre/dim = split spectrum planes) but dim is NULL. The old "
-                       "\"dim==NULL means CCE\" inference is REMOVED — create the plan with "
-                       "layout=VFFT_LAYOUT_INTERLEAVED for the packed z spectrum — nothing "
-                       "executed");
+            _vfft_warn("vfft_execute_split: this R2C plan is SPLIT (out_re, out_im = the "
+                       "spectrum planes) but out_im is NULL; an interleaved spectrum is a "
+                       "VFFT_LAYOUT_INTERLEAVED plan — nothing executed");
             return 1;
         }
         return 0;
@@ -157,13 +155,13 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
         }
         if (dim)
         {
-            _vfft_warn("vfft_execute: C2R writes real output to dre only; dim must be NULL "
+            _vfft_warn("vfft_execute: C2R writes its real output to `out` only; out_im must be NULL "
                        "— nothing executed");
             return 1;
         }
         if (!sre || !dre)
         {
-            _vfft_warn("vfft_execute: C2R needs sre=%s and dre=real_out non-NULL — "
+            _vfft_warn("vfft_execute: C2R needs in=%s and out=real_out non-NULL — "
                        "nothing executed",
                        il ? "z_CCE_in" : "spectrum re");
             return 1;
@@ -181,7 +179,7 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
         if (h->placement == VFFT_INPLACE && dre != sre)
         {
             _vfft_warn("vfft_execute: this %s plan is IN-PLACE (one padded CCE plane of "
-                       "2*(N/2+1) doubles) and must be called with dre == sre; got "
+                       "2*(N/2+1) doubles) and must be called with out == in; got "
                        "distinct pointers -- nothing executed",
                        tn);
             return 1;
@@ -189,18 +187,16 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
         if (il && sim)
         {
             _vfft_warn("vfft_execute: this C2R plan is committed to layout=INTERLEAVED "
-                       "(sre = packed CCE spectrum input, sim=NULL) but got a non-NULL sim; "
+                       "(in = packed CCE spectrum input, in_im=NULL) but got a non-NULL in_im; "
                        "for split spectrum input create the plan with layout=VFFT_LAYOUT_SPLIT "
                        "— nothing executed");
             return 1;
         }
         if (!il && !sim)
         {
-            _vfft_warn("vfft_execute: this C2R plan is committed to layout=SPLIT "
-                       "(sre/sim = split spectrum planes) but sim is NULL. The old "
-                       "\"sim==NULL means CCE\" inference is REMOVED — create the plan with "
-                       "layout=VFFT_LAYOUT_INTERLEAVED for the packed z spectrum — nothing "
-                       "executed");
+            _vfft_warn("vfft_execute_split: this C2R plan is SPLIT (in_re, in_im = the "
+                       "spectrum planes) but in_im is NULL; an interleaved spectrum is a "
+                       "VFFT_LAYOUT_INTERLEAVED plan — nothing executed");
             return 1;
         }
         return 0;
@@ -211,15 +207,15 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
         if (sim || dim)
         {
             _vfft_warn("vfft_execute: this C2C plan is committed to layout=INTERLEAVED "
-                       "(sre=z_in, dre=z_out, sim=dim=NULL) but got non-NULL sim/dim; for "
+                       "(in=z_in, out=z_out, in_im=out_im=NULL) but got non-NULL in_im/out_im; for "
                        "split re/im planes create the plan with layout=VFFT_LAYOUT_SPLIT — "
                        "nothing executed");
             return 1;
         }
         if (!sre || !dre)
         {
-            _vfft_warn("vfft_execute: INTERLEAVED C2C needs sre=z_in and dre=z_out non-NULL "
-                       "(dre may equal sre) — nothing executed");
+            _vfft_warn("vfft_execute: INTERLEAVED C2C needs in=z_in and out=z_out non-NULL "
+                       "(out may equal in) — nothing executed");
             return 1;
         }
         return 0;
@@ -227,13 +223,11 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
     if (!sre || !sim)
     {
         if (!sim && sre && !dim && dre)
-            _vfft_warn("vfft_execute: this C2C plan is committed to layout=SPLIT (sre/sim + "
-                       "dre/dim planes) but the call passed the interleaved-style signature "
-                       "(sim==dim==NULL). The old NULL-pointer layout inference is REMOVED — "
-                       "create the plan with layout=VFFT_LAYOUT_INTERLEAVED for z buffers — "
-                       "nothing executed");
+            _vfft_warn("vfft_execute_split: this C2C plan is SPLIT (in_re/in_im and out_re/out_im "
+                       "planes) but in_im and out_im are NULL; interleaved z buffers take a "
+                       "VFFT_LAYOUT_INTERLEAVED plan — nothing executed");
         else
-            _vfft_warn("vfft_execute: SPLIT C2C needs sre and sim non-NULL — nothing "
+            _vfft_warn("vfft_execute_split: SPLIT C2C needs in_re and in_im non-NULL — nothing "
                        "executed");
         return 1;
     }
@@ -242,8 +236,8 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
        * placements); a NULL dst pair means in-place-on-src. */
         if ((dre == NULL) != (dim == NULL))
         {
-            _vfft_warn("vfft_execute: 2D+ SPLIT C2C got a half-NULL destination pair "
-                       "(dre=%s, dim=%s) — pass both or neither — nothing executed",
+            _vfft_warn("vfft_execute_split: 2D+ SPLIT C2C got a half-NULL destination pair "
+                       "(out_re=%s, out_im=%s) — pass both or neither — nothing executed",
                        dre ? "ok" : "NULL", dim ? "ok" : "NULL");
             return 1;
         }
@@ -255,27 +249,26 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
        * leave the result in the source buffers. */
         if (!(((dre == NULL) && (dim == NULL)) || (dre == sre && dim == sim)))
         {
-            _vfft_warn("vfft_execute: in-place SPLIT C2C takes dre==sre && dim==sim (or "
-                       "dre=dim=NULL); a different destination is ignored by the in-place "
-                       "engine — for true out-of-place create with "
-                       "placement=VFFT_OUTOFPLACE — nothing executed");
+            _vfft_warn("vfft_execute_split: an in-place SPLIT C2C plan takes out_re == in_re "
+                       "and out_im == in_im (or both NULL); for out of place create the plan "
+                       "with placement=VFFT_PLACEMENT_OUT — nothing executed");
             return 1;
         }
         return 0;
     }
     if (!dre || !dim)
     {
-        _vfft_warn("vfft_execute: out-of-place SPLIT C2C needs dre and dim non-NULL — "
+        _vfft_warn("vfft_execute_split: out-of-place SPLIT C2C needs out_re and out_im non-NULL — "
                    "nothing executed");
         return 1;
     }
     if (dre == sre || dim == sim || dre == sim || dim == sre)
     {
-        _vfft_warn("vfft_execute: out-of-place SPLIT C2C requires destination planes "
+        _vfft_warn("vfft_execute_split: out-of-place SPLIT C2C requires destination planes "
                    "disjoint from the sources (got an aliased pointer) — the OOP kernels "
                    "stream the sources while writing the destination, so aliasing corrupts "
                    "the data; for in-place transforms create the plan with "
-                   "placement=VFFT_INPLACE — nothing executed");
+                   "placement=VFFT_PLACEMENT_IN — nothing executed");
         return 1;
     }
     return 0;
@@ -328,7 +321,7 @@ static __attribute__((noinline)) void _vfft_execute_full(vfft_plan h, vfft_dir_t
         return;
     }
     /* ── THE LAYOUT FORK: the committed layout picks one side, once ── */
-    if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+    if (h->layout == (int)VFI_LAYOUT_IL)
         _vfft_il_execute(h, dir, sre, sim, dre, dim);
     else
         _vfft_split_execute(h, dir, sre, sim, dre, dim);
@@ -353,8 +346,8 @@ static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
 /* THE FP MODE (owner, 2026-10-13): the kernels run FTZ|DAZ; the create set
  * it on the calling thread and left it so, the workers keep it for life, and
  * nothing about MXCSR happens here -- execute is the door and no more. */
-void vfft_execute(vfft_plan h, vfft_dir_t dir,
-                  double *sre, double *sim, double *dre, double *dim)
+static void _vfft_exec6(vfft_plan h, vfft_dir_t dir,
+                        double *sre, double *sim, double *dre, double *dim)
 {
     _vfft_execute_door(h, dir, sre, sim, dre, dim);
 }

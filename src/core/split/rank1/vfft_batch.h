@@ -170,7 +170,7 @@ static void _own_batch_free(vfft_batch b)
 /* Returns the stride to ALLOCATE at: K (tight won) or Kp (padded won). Wisdom
  * hit is instant; a miss races _calibrate_pad and banks only a nonzero verdict.
  * See docs/design/vfft_front_door.md. */
-static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
+static size_t _pad_stride_c2c(int N, size_t K, const vfft_cfg_t *cfg)
 {
     const size_t Kp = (K + (size_t)(_VFFT_PADVW - 1)) & ~(size_t)(_VFFT_PADVW - 1);
     if (Kp == K)
@@ -187,35 +187,35 @@ static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
                        /*already_measured=*/0, NULL, NULL);
 }
 
-static vfft_batch _own_batch_for(const vfft_config_t *cfg)
+static vfft_batch _own_batch_for(const vfft_cfg_t *cfg)
 {
     if (!cfg)
     {
-        _vfft_warn("vfft_create(owned_buffers): NULL config");
+        _vfft_warn("vfft_create (VFFT_FLAG_OWN_PITCH): NULL config");
         return NULL;
     }
     if ((int)cfg->transform < (int)VFFT_C2C || (int)cfg->transform > (int)VFFT_DHT)
     {
-        _vfft_warn("vfft_create(owned_buffers): invalid transform enum %d (valid: VFFT_C2C..VFFT_DHT)",
+        _vfft_warn("vfft_create (VFFT_FLAG_OWN_PITCH): invalid transform %d (valid: VFFT_C2C .. VFFT_DHT)",
                    (int)cfg->transform);
         return NULL;
     }
     if (cfg->dims > 1)
     {
-        _vfft_warn("vfft_create(owned_buffers): padded batches are 1D only (got dims=%d) — "
-                   "2D+ plans run tight buffers",
+        _vfft_warn("vfft_create (VFFT_FLAG_OWN_PITCH): the plan chooses a pitch for a 1D SPLIT batch "
+                   "and an in-place INTERLEAVED real plan of rank 2 or 3 only (got rank %d)",
                    cfg->dims);
         return NULL;
     }
-    if ((int)cfg->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+    if ((int)cfg->layout == (int)VFI_LAYOUT_IL)
     {
-        _vfft_warn("vfft_create(owned_buffers): padded batches are split-plane by construction — "
-                   "layout must be VFFT_LAYOUT_SPLIT");
+        _vfft_warn("vfft_create (VFFT_FLAG_OWN_PITCH): a 1D batch takes a chosen stride on "
+                   "VFFT_LAYOUT_SPLIT only (its padded planes are split by construction)");
         return NULL;
     }
     if (cfg->n[0] < 1 || cfg->howmany < 1)
     {
-        _vfft_warn("vfft_create(owned_buffers): need n[0] >= 1 and howmany >= 1 (got N=%d K=%zu)",
+        _vfft_warn("vfft_create (VFFT_FLAG_OWN_PITCH): need n[0] >= 1 and howmany >= 1 (got N=%d K=%zu)",
                    cfg->n[0], cfg->howmany);
         return NULL;
     }
@@ -234,7 +234,7 @@ static vfft_batch _own_batch_for(const vfft_config_t *cfg)
          _VFFT_IS_TRIG(cfg->transform)) &&
         (N % 2) != 0)
     {
-        _vfft_warn("vfft_create(owned_buffers): %s padding requires even N (real-FFT inner "
+        _vfft_warn("vfft_create (VFFT_FLAG_OWN_PITCH): %s padding requires even N (real-FFT inner "
                    "half-spectrum); got N=%d",
                    _vfft_tname(cfg->transform), N);
         return NULL;
@@ -253,7 +253,7 @@ static void _own_batch_planes(vfft_batch b, double **sre, double **sim,
 {
     double *s_re = NULL, *s_im = NULL, *d_re = NULL, *d_im = NULL;
     if (!b)
-        _vfft_warn("vfft_plan_planes: NULL batch handle — all planes set to NULL");
+        _vfft_warn("_own_batch_planes: NULL batch handle — all planes set to NULL");
     else if (b->oop)
     { /* c2c out-of-place: input planes -> src, output planes -> dst */
         s_re = b->re;
@@ -296,5 +296,17 @@ static void _own_batch_planes(vfft_batch b, double **sre, double **sim,
 }
 
 static size_t _own_batch_stride(vfft_batch b) { return b ? b->Kp : 0; }
+/* the planes go once the plan is built: the plan executes on the caller's planes at Kp (API v2) */
+static void _own_batch_drop_planes(vfft_batch b)
+{
+    if (!b)
+        return;
+    vfft_aligned_free(b->real);
+    vfft_aligned_free(b->re);
+    vfft_aligned_free(b->im);
+    vfft_aligned_free(b->ore);
+    vfft_aligned_free(b->oim);
+    b->real = b->re = b->im = b->ore = b->oim = NULL;
+}
 
 #endif /* VFFT_BATCH_H */

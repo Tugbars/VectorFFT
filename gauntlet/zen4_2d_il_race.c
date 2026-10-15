@@ -25,6 +25,7 @@
 #include <windows.h>
 #include "vfft.h"
 #include "vfft_diagnostics.h"   /* vfft_isa() lives here since 2026-10-07 */
+static const char *lib_version(void) { vfft_info_t i; vfft_info(NULL, &i); return i.version; }
 #include "ref_fftw.h"
 
 static double now_ns(void)
@@ -87,22 +88,22 @@ int main(int argc, char **argv)
 
     /* ---- ours: front door, PATIENT, races + banks the il2d axes on a miss - */
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = VFFT_INPLACE; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.order = VFFT_ORDER_DEFAULT; cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2;
-    cfg.howmany = 1; cfg.rigor = VFFT_PATIENT; cfg.nthreads = 1; cfg.wisdom_write = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = VFFT_PLACEMENT_IN; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.order = VFFT_ORDER_NATURAL; cfg.rank = 2; cfg.n[0] = N1; cfg.n[1] = N2;
+    cfg.howmany = 1; cfg.flags |= VFFT_FLAG_PATIENT; cfg.nthreads = 1;
     double *vz = _aligned_malloc(16 * T, 64), *v0 = _aligned_malloc(16 * T, 64);
     t0 = now_ns();
     vfft_plan vp = vfft_create(&cfg);
     double vplan_ms = (now_ns() - t0) / 1e6;
     if (!vp) { fprintf(stderr, "vfft_create REFUSED\n"); return 2; }
     fill(vz, T); memcpy(v0, vz, 16 * T);
-    vfft_execute(vp, VFFT_FORWARD, vz, NULL, vz, NULL);
-    vfft_execute(vp, VFFT_BACKWARD, vz, NULL, vz, NULL);
+    vfft_execute(vp, VFFT_FORWARD, vz, vz);
+    vfft_execute(vp, VFFT_BACKWARD, vz, vz);
     double vgate = rt_err(v0, vz, T);
 
     printf("zen4_2d_il_race  %dx%d K=1 c2c INTERLEAVED in-place  reps=%d x best-of-5  core=%d cool=%dms flip=%d\n"
            "  vfft %s isa=%s wisdom_dir=%s  (create %.0f ms)\n  %s  dll=%s  (plans %.0f ms, wisdom %s)\n",
-           N1, N2, reps_for(T), core, cool_ms, flip, vfft_version(), vfft_isa(),
+           N1, N2, reps_for(T), core, cool_ms, flip, lib_version(), vfft_isa(),
            getenv("VFFT_WISDOM_DIR") ? getenv("VFFT_WISDOM_DIR") : "(UNSET)", vplan_ms,
            fx.version, fx.dll_path, fplan_ms, wis ? (wis_loaded ? "loaded" : "cold") : "none");
 
@@ -111,9 +112,9 @@ int main(int argc, char **argv)
     double vns = 0, fns = 0, fons = 0;
     if (flip) {
         TIME(fns, fx.execute(fpi)); TIME(fons, fx.execute(fpo)); cachebust(); pace(cool_ms);
-        TIME(vns, vfft_execute(vp, VFFT_FORWARD, vz, NULL, vz, NULL));
+        TIME(vns, vfft_execute(vp, VFFT_FORWARD, vz, vz));
     } else {
-        TIME(vns, vfft_execute(vp, VFFT_FORWARD, vz, NULL, vz, NULL)); cachebust(); pace(cool_ms);
+        TIME(vns, vfft_execute(vp, VFFT_FORWARD, vz, vz)); cachebust(); pace(cool_ms);
         TIME(fns, fx.execute(fpi)); TIME(fons, fx.execute(fpo));
     }
     double gf = 5.0 * (double)T * log2((double)T);

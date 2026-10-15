@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"   /* vfft_plan_route (API v2) */
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
 #include <mkl_service.h>
@@ -118,7 +119,7 @@ static double time_door(vfft_plan h, const double *x, double *y, int N)
     for (;;)
     {   /* size reps so one trial is >= 1 ms */
         double t0 = now_ns();
-        for (long i = 0; i < reps; i++) vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
+        for (long i = 0; i < reps; i++) vfft_execute(h, VFFT_FORWARD, x, y);
         double t = now_ns() - t0;
         if (t >= 1e6) break;
         reps *= 2;
@@ -126,7 +127,7 @@ static double time_door(vfft_plan h, const double *x, double *y, int N)
     for (int trial = 0; trial < 5; trial++)
     {
         double t0 = now_ns();
-        for (long i = 0; i < reps; i++) vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
+        for (long i = 0; i < reps; i++) vfft_execute(h, VFFT_FORWARD, x, y);
         double t = (now_ns() - t0) / (double)reps;
         if (t < best) best = t;
     }
@@ -154,7 +155,7 @@ static int mkl_cell(int N, const double *x, double *y, double *r)
 }
 #endif
 
-static int probe(vfft_wisdom *W, int N)
+static int probe(const char *W, int N)
 {
     vfft_config_t cfg; vfft_plan h; double ef = 1, er = 1, el = 1; int ok;
     const size_t K = (size_t)g_k, tot = 2 * (size_t)N * K;
@@ -165,22 +166,22 @@ static int probe(vfft_wisdom *W, int N)
     for (size_t j = 0; j < tot; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
     naive_dft(x, X, N);
     memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = g_ip ? VFFT_INPLACE : VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = K; cfg.order = VFFT_ORDER_NATURAL;
-    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = g_ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = K; cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom_dir = W;
     h = vfft_create(&cfg);
     if (h && g_ip)
     {   /* in place: the forward on a copy of x, then the backward on that */
         memcpy(y, x, tot * sizeof(double));
-        vfft_execute(h, VFFT_FORWARD, y, NULL, y, NULL);
+        vfft_execute(h, VFFT_FORWARD, y, y);
         ef = relerr(y, X, N, 1.0); el = l2err(y, X, N, 1.0);
-        vfft_execute(h, VFFT_BACKWARD, y, NULL, y, NULL);
+        vfft_execute(h, VFFT_BACKWARD, y, y);
         er = rterr(y, x, N, 1.0 / N);
     }
     else if (h)
     {
-        vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
-        vfft_execute(h, VFFT_BACKWARD, y, NULL, r, NULL);
+        vfft_execute(h, VFFT_FORWARD, x, y);
+        vfft_execute(h, VFFT_BACKWARD, y, r);
         ef = relerr(y, X, N, 1.0); el = l2err(y, X, N, 1.0); er = rterr(r, x, N, 1.0 / N);
     }
     ok = h && ef < 1e-11 && er < 1e-11;
@@ -262,7 +263,7 @@ static int mkl_cell2(int N1, int N2, const double *x, double *y, double *r)
 }
 #endif
 
-static int probe2(vfft_wisdom *W, int N1, int N2)
+static int probe2(const char *W, int N1, int N2)
 {
     vfft_config_t cfg; vfft_plan h; double ef = 1, er = 1, el = 1; int ok;
     const int N = N1 * N2;
@@ -273,14 +274,14 @@ static int probe2(vfft_wisdom *W, int N1, int N2)
     for (size_t j = 0; j < tot; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
     naive_dft2(x, X, N1, N2);
     memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1; cfg.order = VFFT_ORDER_NATURAL;
-    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1; cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom_dir = W;
     h = vfft_create(&cfg);
     if (h)
     {
-        vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
-        vfft_execute(h, VFFT_BACKWARD, y, NULL, r, NULL);
+        vfft_execute(h, VFFT_FORWARD, x, y);
+        vfft_execute(h, VFFT_BACKWARD, y, r);
         ef = relerr(y, X, N, 1.0); el = l2err(y, X, N, 1.0); er = rterr(r, x, N, 1.0 / N);
     }
     ok = h && ef < 1e-11 && er < 1e-11;
@@ -365,7 +366,7 @@ static int mkl_cell3(int N1, int N2, int N3, const double *x, double *y, double 
 }
 #endif
 
-static int probe3(vfft_wisdom *W, int N1, int N2, int N3)
+static int probe3(const char *W, int N1, int N2, int N3)
 {
     vfft_config_t cfg; vfft_plan h; double ef = 1, er = 1, el = 1; int ok;
     const int N = N1 * N2 * N3;
@@ -376,14 +377,14 @@ static int probe3(vfft_wisdom *W, int N1, int N2, int N3)
     for (size_t j = 0; j < tot; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
     naive_dft3(x, X, N1, N2, N3);
     memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 3; cfg.n[0] = N1; cfg.n[1] = N2; cfg.n[2] = N3; cfg.howmany = 1; cfg.order = VFFT_ORDER_NATURAL;
-    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 3; cfg.n[0] = N1; cfg.n[1] = N2; cfg.n[2] = N3; cfg.howmany = 1; cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom_dir = W;
     h = vfft_create(&cfg);
     if (h)
     {
-        vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
-        vfft_execute(h, VFFT_BACKWARD, y, NULL, r, NULL);
+        vfft_execute(h, VFFT_FORWARD, x, y);
+        vfft_execute(h, VFFT_BACKWARD, y, r);
         ef = relerr(y, X, N, 1.0); el = l2err(y, X, N, 1.0); er = rterr(r, x, N, 1.0 / N);
     }
     ok = h && ef < 1e-11 && er < 1e-11;
@@ -437,7 +438,7 @@ int main(int argc, char **argv)
 #ifdef VFFT_HAS_MKL
     mkl_set_num_threads(1);
 #endif
-    vfft_wisdom *W = vfft_wisdom_load(argv[a0]);
+    const char *W = (argv[a0]);
     if (!W) { printf("wisdom load FAILED: %s\n", argv[a0]); return 2; }
     for (int a = a0 + 1; a < argc; a++)
     {

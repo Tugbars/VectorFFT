@@ -73,7 +73,7 @@ static int _vw2_t_of_trig(vfft_transform_t t)
 /* The trig-owned twin of _inner_c2c: same calibrate-on-miss contract, but
  * the verdict is keyed (owning transform, OUTER N, K). */
 static stride_plan_t *_inner_c2c_trig(struct vfft_wisdom_s *W,
-                                      const vfft_config_t *cfg,
+                                      const vfft_cfg_t *cfg,
                                       vfft_transform_t owner, int outerN,
                                       int innerN, size_t K, vfft_rigor_t rigor,
                                       const vfft_proto_registry_t *reg,
@@ -115,7 +115,7 @@ static inline void _trig_r2c_set_inner_jit(stride_plan_t *r, stride_plan_t *ic)
 /* Build the trig stride_plan_t. Owns its inner plans (freed via stride_plan_destroy).
  * The inner real-FFT (r2c) / complex-FFT (DCT-IV) rides the c2c wisdom (calibrate-on-
  * miss) AND, when JIT is compiled in, its inner c2c runs the JIT'd executor. */
-static stride_plan_t *_build_trig(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static stride_plan_t *_build_trig(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                   vfft_transform_t t, int N, size_t K, vfft_rigor_t rigor,
                                   const vfft_proto_registry_t *reg,
                                   vfft_proto_wisdom_t *cw, int recalib)
@@ -158,7 +158,7 @@ static stride_plan_t *_build_trig(struct vfft_wisdom_s *W, const vfft_config_t *
 
 /* ---- the create tier (slice) ---- */
 
-static vfft_plan _vfft_create_trig(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_trig(const vfft_cfg_t *cfg,
                                    vfft_batch ob,
                                    struct vfft_wisdom_s *W,
                                    const vfft_proto_registry_t *reg,

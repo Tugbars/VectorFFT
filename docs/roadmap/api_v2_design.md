@@ -1,6 +1,7 @@
 # The public API, version 2: few functions, fixed defaults
 
-**Status (2026-10-15): designed, not built.** Owner: "I want to have a very simple API with
+**Status (2026-10-15): built.** The eight functions in `include/vfft.h`, the translation in
+`src/core/vfft_api.h`, every tracked caller migrated (`src/tools/baseline` excepted). Owner: "I want to have a very simple API with
 few functions, if possible; we do not have to do things their way." The owner's rulings of
 the same day: the SPLIT layout gets its own execute call; a zeroed config means
 interleaved, out of place, natural; the default order is natural at every rank and layout
@@ -104,7 +105,7 @@ typedef struct {
     int         nthreads;       /* the count the plan serves at                          */
     size_t      in_doubles;     /* what execute reads, per plane under SPLIT             */
     size_t      out_doubles;    /* what execute writes, per plane under SPLIT            */
-    size_t      pitch;          /* doubles between rows (rank >= 2 in place) or lane     */
+    size_t      stride;         /* doubles between rows (rank >= 2 in place) or lane     */
                                 /* stride (a batch) the plan walks; the tight value      */
                                 /* unless VFFT_FLAG_OWN_PITCH let the plan choose        */
 } vfft_info_t;
@@ -117,8 +118,8 @@ buffer is owned by a plan and no second free function exists.
 
 | today | becomes |
 |---|---|
-| `vfft_wisdom_load`, `vfft_wisdom_save`, `vfft_wisdom_free`, `config.wisdom` | `config.wisdom_dir`; create already saves every winner before it returns |
-| `vfft_set_num_threads`, `vfft_get_num_threads` | `config.nthreads` alone |
+| `vfft_wisdom_load`, `vfft_wisdom_save`, `vfft_wisdom_free`, `config.wisdom` | `config.wisdom_dir`; create already saves every winner before it returns; a tool that must read a directory again calls the diagnostics header's `vfft_wisdom_reread` |
+| `vfft_set_num_threads`, `vfft_get_num_threads` | `config.nthreads` alone; the diagnostics header's `vfft_pool_threads` reports the pool's size to a tool |
 | `vfft_set_thread_block_ms`, `vfft_get_thread_block_ms` | `VFFT_THREAD_BLOCK_MS` |
 | `vfft_measure_configure` and its config | the diagnostics header (a tool's surface) |
 | `vfft_plan_planes`, `vfft_plan_stride`, `vfft_plan_alloc`, `vfft_buffers_free`, `config.owned_buffers` | `vfft_info` and `VFFT_FLAG_OWN_PITCH` |

@@ -28,7 +28,7 @@
 #ifndef VFFT_IL_REAL_CREATE_IL_H
 #define VFFT_IL_REAL_CREATE_IL_H
 
-static struct vfft_plan_s *_vfft_create_real_il(const vfft_config_t *cfg,
+static struct vfft_plan_s *_vfft_create_real_il(const vfft_cfg_t *cfg,
                                                 struct vfft_wisdom_s *W,
                                                 int N, int *refused)
 {
@@ -59,7 +59,7 @@ static struct vfft_plan_s *_vfft_create_real_il(const vfft_config_t *cfg,
     {
         _vfft_warn("vfft_create: in-place %s N=%d could not build the zr2c route "
                    "(the only in-place real path); no out-of-place fallback exists "
-                   "for an in-place plan -- use VFFT_OUTOFPLACE",
+                   "for an in-place plan -- use VFFT_PLACEMENT_OUT",
                    _vfft_tname(cfg->transform), N);
         *refused = 1;
     }

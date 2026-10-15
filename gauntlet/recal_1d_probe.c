@@ -89,7 +89,7 @@ int main(int argc, char **argv)
     const int T = argc > a0 + 3 ? atoi(argv[a0 + 3]) : 1;
     const int recal = argc > a0 + 4 ? atoi(argv[a0 + 4]) : 1;
     const int K = (nd == 1 && xform != VFFT_C2C && argc > a0 + 5) ? atoi(argv[a0 + 5]) : 1;
-    vfft_wisdom *W;
+    const char *W;
     vfft_config_t cfg; vfft_plan p;
     double t0, t1;
     /* THE ONE-THREAD PROTOCOL, the same as the bench's: the library's
@@ -107,26 +107,25 @@ int main(int argc, char **argv)
          * HIGH priority, no sibling guard, the pool sized before the create */
         bench_pin_pcores();
         bench_scope(0, 1, VFFT_MEASURE_GUARD_OFF);
-        vfft_set_num_threads(T);
     }
     else if (!getenv("VFFT_BENCH_PIN") || atoi(getenv("VFFT_BENCH_PIN")) != 0)
         bench_scope(-1, 1, bench_guard_mode());
     else
         bench_scope_lifted();
-    W = vfft_wisdom_load(dir);
+    W = (dir);
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = xform;
-    cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.owned_buffers = (ip == 2);   /* ip = 2: door 2, the plan's own plane at its pitch (real_inplace_design.md) */
-    cfg.rigor = VFFT_PATIENT;
-    cfg.dims = nd; cfg.n[0] = N; cfg.n[1] = nd > 1 ? N2 : 0; cfg.n[2] = nd > 2 ? N3 : 0;
+    cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.flags |= ((ip == 2)) ? VFFT_FLAG_OWN_PITCH : 0;   /* ip = 2: door 2, the plan's own plane at its pitch (real_inplace_design.md) */
+    cfg.flags |= VFFT_FLAG_PATIENT;
+    cfg.rank = nd; cfg.n[0] = N; cfg.n[1] = nd > 1 ? N2 : 0; cfg.n[2] = nd > 2 ? N3 : 0;
     cfg.howmany = K > 1 ? (size_t)K : 1;
-    cfg.batch_geom = K > 1 ? VFFT_BATCH_TRANSFORM_CONTIGUOUS : VFFT_BATCH_DEFAULT; /* the bench's real batch */
+    cfg.batch = K > 1 ? VFFT_BATCH_CONTIGUOUS : VFFT_BATCH_DEFAULT; /* the bench's real batch */
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.order = xform != VFFT_C2C ? VFFT_ORDER_DEFAULT   /* a real spectrum is natural */
+    cfg.order = xform != VFFT_C2C ? VFFT_ORDER_NATURAL   /* a real spectrum is natural */
               : scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
-    cfg.nthreads = T; cfg.wisdom = W; cfg.wisdom_write = 1;
-    cfg.recalibrate = recal;
+    cfg.nthreads = T; cfg.wisdom_dir = W;
+    cfg.flags |= (recal) ? VFFT_FLAG_RECALIBRATE : 0;
     t0 = now_ms();
     p = vfft_create(&cfg);
     t1 = now_ms();
@@ -143,6 +142,5 @@ int main(int argc, char **argv)
         printf("%sN=%d %s %s T=%d recalibrate=%d: %s (%.0f ms)\n", tn, N, scr ? "scr" : "nat",
                ip ? "ip" : "oop", T, recal, p ? "banked" : "REFUSED", t1 - t0);
     if (p) vfft_destroy(p);
-    vfft_wisdom_free(W);
     return p ? 0 : 1;
 }

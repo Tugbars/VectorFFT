@@ -19,6 +19,7 @@
 #include <math.h>
 #include <windows.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h" /* vfft_wisdom_reread */
 
 static char g_tap[600];
 static long g_tap_pos = 0;
@@ -97,18 +98,18 @@ static int poison_method(const char *dir, int N, const char *eng)
     return MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING) ? 1 : 0;
 }
 
-static vfft_plan mk(vfft_wisdom *W, int N, int recal)
+static vfft_plan mk(const char *W, int N, int recal)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_PATIENT;
-    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.flags |= VFFT_FLAG_PATIENT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.order = VFFT_ORDER_NATURAL;
-    cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
-    cfg.recalibrate = recal;
+    cfg.nthreads = 1; cfg.wisdom_dir = W;
+    cfg.flags |= (recal) ? VFFT_FLAG_RECALIBRATE : 0;
     return vfft_create(&cfg);
 }
 static double naive_err(int N, const double *x, const double *y)
@@ -149,13 +150,13 @@ int main(int argc, char **argv)
     static const int primes[] = { 2053, 2203, 2333, 3007, 4099, 65537 };
     const char *dir = ".";
     int i, fails = 0;
-    vfft_wisdom *W;
+    const char *W;
     for (i = 1; i + 1 < argc; i++)
         if (!strcmp(argv[i], "--wisdir")) dir = argv[++i];
     snprintf(g_tap, sizeof g_tap, "%s/ilprime_tap.txt", dir);
     if (!freopen(g_tap, "w", stderr)) { printf("cannot open tap\n"); return 2; }
     _putenv("VFFT_ILPR_LOG=1");
-    W = vfft_wisdom_load(dir);
+    W = (dir);
     if (!W) { printf("no wisdom handle\n"); return 2; }
     for (i = 0; i < (int)(sizeof primes / sizeof primes[0]); i++)
     {
@@ -173,7 +174,7 @@ int main(int argc, char **argv)
         if (!p) { printf("FAIL N=%d: cold create refused\n", N); fails++; free(x); free(y); free(y2); continue; }
         if (raced != 1) { printf("FAIL N=%d: cold create raced %d time(s), want 1\n", N, raced); ok = 0; }
         if (!row_has_inner(dir, N)) { printf("FAIL N=%d: prime row has no in= in_sh= tokens\n", N); ok = 0; }
-        vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, y);
         vfft_destroy(p);
         /* 2. correctness */
         if (N <= 4099)
@@ -186,7 +187,7 @@ int main(int argc, char **argv)
         raced = tap_count2("inner race", "replay", &replayed);
         if (!p) { printf("FAIL N=%d: warm create refused\n", N); fails++; free(x); free(y); free(y2); continue; }
         if (raced != 0 || replayed != 1) { printf("FAIL N=%d: warm create raced %d / replayed %d, want 0 / 1\n", N, raced, replayed); ok = 0; }
-        vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, y2);
         vfft_destroy(p);
         if (memcmp(y, y2, (size_t)2 * N * sizeof(double))) { printf("FAIL N=%d: warm output not bitwise the cold one\n", N); ok = 0; }
         /* 4. recalibrate reaches the prime cell */
@@ -219,7 +220,8 @@ int main(int argc, char **argv)
         }
         else
         {
-            vfft_wisdom *W2 = vfft_wisdom_load(dir);   /* re-read: the poison is on disk */
+            const char *W2 = dir;   /* re-read: the poison is on disk */
+            vfft_wisdom_reread(dir);
             vfft_plan p2 = W2 ? mk(W2, PN, 0) : NULL;
             if (!p2)
             {
@@ -237,10 +239,8 @@ int main(int argc, char **argv)
                 else
                     printf("PASS N=%d unbuildable-method poison: raced and re-banked\n", PN);
             }
-            if (W2) vfft_wisdom_free(W2);
         }
     }
-    vfft_wisdom_free(W);
     printf("%s ilprime_inner_gate: %d cell(s) failed\n", fails ? "FAIL" : "ALL PASS", fails);
     return fails ? 1 : 0;
 }

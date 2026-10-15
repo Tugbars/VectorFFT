@@ -73,18 +73,18 @@ static int row_of(const char *dir, int N1, int N2, int scr, char *out, size_t os
     fclose(f);
     return found;
 }
-static vfft_plan mk(vfft_wisdom *W, int N1, int N2, int scr, int recal)
+static vfft_plan mk(const char *W, int N1, int N2, int scr, int recal)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_PATIENT;        /* production rigor; MEASURE shuts race windows */
-    cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.flags |= VFFT_FLAG_PATIENT;        /* production rigor; MEASURE shuts race windows */
+    cfg.rank = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
-    cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
-    cfg.recalibrate = recal;
+    cfg.nthreads = 1; cfg.wisdom_dir = W;
+    cfg.flags |= (recal) ? VFFT_FLAG_RECALIBRATE : 0;
     return vfft_create(&cfg);
 }
 /* naive 2D DFT, forward sign, interleaved, row-major (n1, n2) */
@@ -122,14 +122,14 @@ int main(int argc, char **argv)
     const char *dir = ".";
     char owner_before[4096], owner_after[4096], cell_row[4096];
     int i, scr;
-    vfft_wisdom *W;
+    const char *W;
     double *x, *y, *y2;
     for (i = 1; i + 1 < argc; i++)
         if (!strcmp(argv[i], "--wisdir")) dir = argv[++i];
     snprintf(g_tap, sizeof g_tap, "%s/blurow_tap.txt", dir);
     if (!freopen(g_tap, "w", stderr)) { printf("cannot open tap\n"); return 2; }
     _putenv("VFFT_IL2D_LOG=1");
-    W = vfft_wisdom_load(dir);
+    W = (dir);
     if (!W) { printf("no wisdom handle\n"); return 2; }
     printf("2D BLU ROW GATE: the inner chain banks on the cell's row, not on (M, N2)\n");
 
@@ -160,7 +160,7 @@ int main(int argc, char **argv)
         CHECK(p != NULL, "%dx%d %s: create refused", N1, N2, cls);
         if (!p) continue;
         CHECK(raced == 1, "%dx%d %s: the inner raced %d time(s), expected 1", N1, N2, cls, raced);
-        vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, y);
         vfft_destroy(p);
 
         /* 3. THE WIPE TEST */
@@ -193,7 +193,7 @@ int main(int argc, char **argv)
         if (!p) continue;
         CHECK(raced == 0 && replayed == 1,
               "%dx%d %s: warm create raced %d / replayed %d, expected 0 / 1", N1, N2, cls, raced, replayed);
-        vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, y2);
         vfft_destroy(p);
         CHECK(!memcmp(y, y2, 2 * (size_t)N1 * N2 * sizeof(double)),
               "%dx%d %s: warm forward is not bitwise the cold one", N1, N2, cls);
@@ -213,7 +213,6 @@ int main(int argc, char **argv)
                N1, N2, cls);
     }
     free(x); free(y); free(y2);
-    vfft_wisdom_free(W);
     printf(g_fail ? "  === *** FAIL *** (%d) ===\n" : "  === ALL PASS ===\n", g_fail);
     return g_fail ? 1 : 0;
 }

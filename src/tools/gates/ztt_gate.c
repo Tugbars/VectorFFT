@@ -218,16 +218,16 @@ static int plain_pass(void)
 }
 
 /* ── the front door: cold race, banked route printed, ztt replay bitwise ── */
-static vfft_plan mk_ord(vfft_wisdom *W, int N, int ip, int order)
+static vfft_plan mk_ord(const char *W, int N, int ip, int order)
 {
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.order = order; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.nthreads = 1; cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.nthreads = 1; cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
-static vfft_plan mk(vfft_wisdom *W, int N, int ip) { return mk_ord(W, N, ip, VFFT_ORDER_NATURAL); }
+static vfft_plan mk(const char *W, int N, int ip) { return mk_ord(W, N, ip, VFFT_ORDER_NATURAL); }
 /* the banked ord=scr K=1 IL row of N (the scrambled pool's verdict): route
  * token, chain and tile — the store carries the OOP comp rows in
  * wisdom2_oop.txt and the in-place mode rows in wisdom2_scr.txt */
@@ -320,7 +320,7 @@ static int ip_door_is_zcasc(const char *wisdir, int N)
 static int frontdoor_pass(const char *wisdir)
 {
     int fails = 0;
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
     printf("\n=== FRONT DOOR (cold): K=1 OOP NATURAL at pow2 N; ztt cells replay BITWISE the direct engine ===\n");
     printf("%-6s %-22s %s\n", "N", "banked route", "verdict");
     for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
@@ -345,8 +345,8 @@ static int frontdoor_pass(const char *wisdir)
             if (p)
             {
                 fill(x, N, 99u + (unsigned)N);
-                vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
-                vfft_execute(h, VFFT_BACKWARD, y, NULL, r, NULL);
+                vfft_execute(h, VFFT_FORWARD, x, y);
+                vfft_execute(h, VFFT_BACKWARD, y, r);
                 vfft_ztt_execute_fwd(p, x, yd);
                 vfft_ztt_execute_bwd(p, y, rd);
                 const int fbit = memcmp(y, yd, 2 * (size_t)N * 8) == 0;
@@ -363,7 +363,7 @@ static int frontdoor_pass(const char *wisdir)
                     if (hi)
                     {
                         memcpy(z, x, 2 * (size_t)N * 8);
-                        vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
+                        vfft_execute(hi, VFFT_FORWARD, z, z);
                         ibit = memcmp(z, y, 2 * (size_t)N * 8) == 0;
                         vfft_destroy(hi);
                     }
@@ -416,8 +416,8 @@ static int frontdoor_pass(const char *wisdir)
             {
                 vfft_plan hi = mk_ord(W, N, 1, VFFT_ORDER_SCRAMBLED);
                 fill(x, N, 77u + (unsigned)N);
-                vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
-                vfft_execute(h, VFFT_BACKWARD, y, NULL, r, NULL);
+                vfft_execute(h, VFFT_FORWARD, x, y);
+                vfft_execute(h, VFFT_BACKWARD, y, r);
                 vfft_ztt_execute_fwd(p, x, yd);
                 vfft_ztt_execute_bwd(p, y, rd);
                 const int fbit = memcmp(y, yd, 2 * (size_t)N * 8) == 0;
@@ -426,7 +426,7 @@ static int frontdoor_pass(const char *wisdir)
                 if (hi)
                 {
                     memcpy(z, x, 2 * (size_t)N * 8);
-                    vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
+                    vfft_execute(hi, VFFT_FORWARD, z, z);
                     ibit = memcmp(z, y, 2 * (size_t)N * 8) == 0;
                     vfft_destroy(hi);
                 }
@@ -444,7 +444,6 @@ static int frontdoor_pass(const char *wisdir)
         }
         vfft_destroy(h);
     }
-    if (W) vfft_wisdom_free(W);
     return fails;
 }
 
@@ -481,7 +480,7 @@ static int seeded_pass(const char *wisdir)
         }
         fclose(f);
     }
-    vfft_wisdom *W = vfft_wisdom_load(dir);
+    const char *W = (dir);
     printf("\n=== SEEDED REPLAY: one il_route=ztt row per pow2 N; the front door must serve it BITWISE ===\n");
     printf("%-6s %-14s %s\n", "N", "seeded chain", "verdict");
     for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
@@ -500,12 +499,12 @@ static int seeded_pass(const char *wisdir)
         if (p && h && hi)
         {
             fill(x, N, 7u + (unsigned)N);
-            vfft_execute(h, VFFT_FORWARD, x, NULL, y, NULL);
-            vfft_execute(h, VFFT_BACKWARD, y, NULL, r, NULL);
+            vfft_execute(h, VFFT_FORWARD, x, y);
+            vfft_execute(h, VFFT_BACKWARD, y, r);
             vfft_ztt_execute_fwd(p, x, yd);
             vfft_ztt_execute_bwd(p, y, rd);
             memcpy(z, x, 2 * (size_t)N * 8);
-            vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
+            vfft_execute(hi, VFFT_FORWARD, z, z);
             fbit = memcmp(y, yd, 2 * (size_t)N * 8) == 0;
             bbit = memcmp(r, rd, 2 * (size_t)N * 8) == 0;
             ibit = memcmp(z, y, 2 * (size_t)N * 8) == 0;
@@ -527,7 +526,6 @@ static int seeded_pass(const char *wisdir)
         if (hi) vfft_destroy(hi);
         free(x); free(y); free(yd); free(r); free(rd); free(z);
     }
-    if (W) vfft_wisdom_free(W);
     return fails;
 }
 

@@ -48,6 +48,7 @@
 #define VFFT_INTERNAL_H
 
 #include "common/support/zalloc.h"   /* the one allocator: vfft_aligned_alloc / vfft_aligned_free */
+#include "common/plan/vfft_cfg.h"    /* the request the engines read (API v2) */
 
 /* ════════════════════════════════════════════════════════════════════════
  * OPAQUE TYPES
@@ -97,7 +98,7 @@ struct vfft_zr2c_kid_s;   /* the zr2c child (il/real/zr2c_build.h) */
 struct vfft_plan_s
 {
     vfft_transform_t transform;
-    vfft_placement_t placement;
+    int placement;
     /* Committed layout axis (vfft_layout_t, stamped at create). Execute
      * dispatches on THIS — never on the pointer signature (the historical
      * NULL-inference is removed); a signature that contradicts it is a loud

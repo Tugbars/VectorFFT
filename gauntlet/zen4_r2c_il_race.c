@@ -23,6 +23,7 @@
 #include <windows.h>
 #include "vfft.h"
 #include "vfft_diagnostics.h"   /* vfft_isa() lives here since 2026-10-07 */
+static const char *lib_version(void) { vfft_info_t i; vfft_info(NULL, &i); return i.version; }
 #include "ref_fftw.h"
 
 static double now_ns(void)
@@ -94,21 +95,21 @@ int main(int argc, char **argv)
 
     /* ---- ours: front door, PATIENT, banks on a miss ----------------------- */
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
-    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
-    cfg.rigor = VFFT_PATIENT; cfg.nthreads = 1; cfg.wisdom_write = 1;
+    cfg.transform = VFFT_R2C; cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.flags |= VFFT_FLAG_PATIENT; cfg.nthreads = 1;
     double *vx = _aligned_malloc(sizeof(double) * xs, 64), *vz = _aligned_malloc(sizeof(double) * xs, 64);
     t0 = now_ns();
     vfft_plan vp = vfft_create(&cfg);
     double vplan_ms = (now_ns() - t0) / 1e6;
     if (!vp) { fprintf(stderr, "vfft_create REFUSED\n"); return 2; }
     fill(vx, N);
-    vfft_execute(vp, VFFT_FORWARD, vx, NULL, vz, NULL);
+    vfft_execute(vp, VFFT_FORWARD, vx, vz);
     double vgate = gate(vx, vz, N);
 
     printf("zen4_r2c_il_race  N=%d K=1 r2c INTERLEAVED OOP  reps=%d x best-of-5  core=%d cool=%dms flip=%d\n"
            "  vfft %s isa=%s wisdom_dir=%s  (create %.0f ms)\n  %s  dll=%s  (plan %.0f ms, wisdom %s)\n",
-           N, reps_for(N), core, cool_ms, flip, vfft_version(), vfft_isa(),
+           N, reps_for(N), core, cool_ms, flip, lib_version(), vfft_isa(),
            getenv("VFFT_WISDOM_DIR") ? getenv("VFFT_WISDOM_DIR") : "(UNSET)", vplan_ms,
            fx.version, fx.dll_path, fplan_ms, wis ? (wis_loaded ? "loaded" : "cold") : "none");
 
@@ -125,9 +126,9 @@ int main(int argc, char **argv)
     double vns = 0, fns = 0;
     if (flip) {
         TIME(fns, fx.execute(fp)); cachebust(); pace(cool_ms);
-        TIME(vns, vfft_execute(vp, VFFT_FORWARD, vx, NULL, vz, NULL));
+        TIME(vns, vfft_execute(vp, VFFT_FORWARD, vx, vz));
     } else {
-        TIME(vns, vfft_execute(vp, VFFT_FORWARD, vx, NULL, vz, NULL)); cachebust(); pace(cool_ms);
+        TIME(vns, vfft_execute(vp, VFFT_FORWARD, vx, vz)); cachebust(); pace(cool_ms);
         TIME(fns, fx.execute(fp));
     }
     double gf = 2.5 * N * log2((double)N);            /* real-input op count, half of c2c */

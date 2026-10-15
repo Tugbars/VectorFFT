@@ -35,9 +35,9 @@ static int gate_cell(const vfft_oop_sp_entry_t *ke)
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor     = VFFT_MEASURE;      /* wisdom HIT: no calibration runs */
-    cfg.dims      = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    /* wisdom HIT: no calibration runs */
+    cfg.rank      = 1;
     cfg.n[0]      = N;
     cfg.howmany   = 1;
     cfg.order     = VFFT_ORDER_NATURAL;
@@ -78,7 +78,7 @@ static int gate_cell(const vfft_oop_sp_entry_t *ke)
         vfft_destroy(p);
         return 1;
     }
-    vfft_execute(p, VFFT_FORWARD, sre, sim, dre, dim);
+    vfft_execute_split(p, VFFT_FORWARD, sre, sim, dre, dim);
     double e = 0, m = 0;
     for (int n = 0; n < N; n++) {
         double d1 = fabs(dre[n] - Rr[n]), d2 = fabs(dim[n] - Ri[n]);

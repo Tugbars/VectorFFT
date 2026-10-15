@@ -179,7 +179,7 @@ static void _ilndr_planes_child_range(const vfft_ilndr_t *d, struct vfft_plan_s 
     const size_t rp = d->ip ? 2 * d->plane : (size_t)d->N[1] * (size_t)d->N[2];   /* in place: the padded plane is where its CCE plane lands */
     int q;
     for (q = q_lo; q < q_hi; q++)
-        vfft_execute((vfft_plan)cf, VFFT_FORWARD, (double *)(x + (size_t)q * rp), NULL,
+        _vfft_exec6((vfft_plan)cf, VFFT_FORWARD, (double *)(x + (size_t)q * rp), NULL,
                      dst + 2 * (size_t)q * d->plane, NULL);
 }
 static void _ilndr_planes_child(const vfft_ilndr_t *d, const double *x, double *dst)
@@ -370,7 +370,7 @@ static void _ilndr_c2r_planes_on(const vfft_ilndr_t *d, struct vfft_plan_s *cb, 
             _ilndr_rows_bwd_payonce(d, cb, pl, yp);
         }
         else
-            vfft_execute((vfft_plan)cb, VFFT_BACKWARD, pl, NULL, yp, NULL);
+            _vfft_exec6((vfft_plan)cb, VFFT_BACKWARD, pl, NULL, yp, NULL);
     }
 }
 static void _ilndr_c2r_planes(const vfft_ilndr_t *d, double *V, double *y, int q_lo, int q_hi)
@@ -404,7 +404,7 @@ static void _ilndr_c2r_plane_out_w(const vfft_ilndr_t *d, struct vfft_plan_s *cb
             memcpy(pb[1] + 2 * r * hpn, src + 2 * r * (size_t)d->hp3, 2 * hpn * sizeof(double));
         src = pb[1];
     }
-    vfft_execute((vfft_plan)cb, VFFT_BACKWARD, src, NULL, pb[2], NULL);
+    _vfft_exec6((vfft_plan)cb, VFFT_BACKWARD, src, NULL, pb[2], NULL);
     for (r = 0; r < (size_t)d->N[1]; r++)
         memcpy(dstplane + r * rp3, pb[2] + r * N3, N3 * sizeof(double));
 }
@@ -884,11 +884,11 @@ static void _ilndr_free_clones(vfft_ilndr_t *d)
 }
 /* T - 1 clones of the plane child on its own store (they replay its recipe, never bank), and the
  * workers' strip scratches; 0 = the structure cannot thread (every clone freed) */
-static int _ilndr_build_clones(vfft_ilndr_t *d, const vfft_config_t *cfg, int T)
+static int _ilndr_build_clones(vfft_ilndr_t *d, const vfft_cfg_t *cfg, int T)
 {
     const int n = (T > THREAD_POOL_MAX_DISPATCH ? THREAD_POOL_MAX_DISPATCH : T) - 1;
     struct vfft_plan_s *prim = d->c2r ? d->cb : d->cf;
-    vfft_config_t cc;
+    vfft_cfg_t cc;
     int t;
     if (n <= 0 || !prim || !d->childS)
         return 0;
@@ -903,8 +903,8 @@ static int _ilndr_build_clones(vfft_ilndr_t *d, const vfft_config_t *cfg, int T)
     cc.n[0] = d->N[1];
     cc.n[1] = d->N[2];
     cc.howmany = 1;
-    cc.order = VFFT_ORDER_NATURAL;
-    cc.layout = VFFT_LAYOUT_INTERLEAVED;
+    cc.order = VFI_ORDER_NATURAL;
+    cc.layout = VFI_LAYOUT_IL;
     cc.nthreads = 1;
     cc.wisdom = (vfft_wisdom *)d->childS;
     cc.wisdom_write = 0;
@@ -913,7 +913,7 @@ static int _ilndr_build_clones(vfft_ilndr_t *d, const vfft_config_t *cfg, int T)
         return 0;
     for (t = 0; t < n; t++)
     {
-        struct vfft_plan_s *c = (struct vfft_plan_s *)vfft_create(&cc);
+        struct vfft_plan_s *c = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
         d->cw[t] = c;
         if (!c || c->nthreads > 1 || !_ilndr_child_equiv(prim, c))
         {
@@ -1050,14 +1050,14 @@ static void _ilndr_mt_arm_run(void *v)
 /* ═══ create ═══════════════════════════════════════════════════════════ */
 /* every NULL of the tier names its reason (vfft.h: create "returns NULL after
  * printing the reason"); the out-of-memory exits say what failed to allocate */
-static vfft_plan _ilndr_oom(vfft_ilndr_t *d, const vfft_config_t *cfg, const char *what)
+static vfft_plan _ilndr_oom(vfft_ilndr_t *d, const vfft_cfg_t *cfg, const char *what)
 {
     _vfft_warn("vfft_create: 3D INTERLEAVED %s %dx%dx%d: out of memory (%s)",
                _vfft_tname(cfg->transform), cfg->n[0], cfg->n[1], cfg->n[2], what);
     if (d) vfft_ilndr_destroy(d);
     return NULL;
 }
-static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vfft_wisdom_s *W, size_t K)
+static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W, size_t K)
 {
     const int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
     const int c2r = (cfg->transform == VFFT_C2R);
@@ -1118,7 +1118,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
     if (usable_w && d->childS->vw2.nrec == 0)
         _ilndr_borrow_2d(W, d->childS, N2, N3, nthr, (ip && !c2r) ? (ip2 ? 2 : 1) : 0);
     {
-        vfft_config_t cc;
+        vfft_cfg_t cc;
         struct vfft_plan_s *c;
         memset(&cc, 0, sizeof cc);
         cc.transform = cfg->transform;
@@ -1130,13 +1130,13 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vff
         cc.n[0] = N2;
         cc.n[1] = N3;
         cc.howmany = 1;
-        cc.order = VFFT_ORDER_NATURAL;
-        cc.layout = VFFT_LAYOUT_INTERLEAVED;
+        cc.order = VFI_ORDER_NATURAL;
+        cc.layout = VFI_LAYOUT_IL;
         cc.nthreads = 1;
         cc.wisdom = (vfft_wisdom *)d->childS;
         cc.wisdom_write = 0;
         cc.recalibrate = cfg->recalibrate;
-        c = (struct vfft_plan_s *)vfft_create(&cc);
+        c = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
         _il2d_blu_ctx.W = W;     /* a nested create sets the context to its own store (il2d_real_axis.h):
                                   * the axis builds below bank their Bluestein verdicts on THIS cell's row */
         _il2d_blu_ctx.cfg = cfg;

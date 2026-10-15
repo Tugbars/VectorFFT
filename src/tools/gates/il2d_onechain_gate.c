@@ -48,18 +48,18 @@ static int tap_count(const char *needle)
     return n;
 }
 
-static vfft_plan mk(vfft_wisdom *W, int N1, int N2, int scr)
+static vfft_plan mk(const char *W, int N1, int N2, int scr)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_PATIENT;        /* production rigor; MEASURE shuts race windows */
-    cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.flags |= VFFT_FLAG_PATIENT;        /* production rigor; MEASURE shuts race windows */
+    cfg.rank = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
     cfg.nthreads = 1;
-    cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
 
@@ -111,7 +111,7 @@ int main(int argc, char **argv)
             double *x = (double *)malloc(nb), *y = (double *)malloc(nb), *y2 = (double *)malloc(nb);
             double *ref = (double *)malloc(nb);
             char needle[64];
-            vfft_wisdom *W = vfft_wisdom_load(dir);
+            const char *W = (dir);
             vfft_plan p;
             int raced;
             size_t q;
@@ -125,9 +125,9 @@ int main(int argc, char **argv)
             p = mk(W, N1, N2, scr);
             raced = tap_count(needle);
             CHECK(p != NULL, "%dx%d %s: create refused", N1, N2, cls);
-            if (!p) { vfft_wisdom_free(W); free(x); free(y); free(y2); free(ref); continue; }
+            if (!p) { free(x); free(y); free(y2); free(ref); continue; }
             CHECK(raced == 1, "%dx%d %s: cold create raced %d time(s), expected 1 (one chain is still a race)", N1, N2, cls, raced);
-            vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+            vfft_execute(p, VFFT_FORWARD, x, y);
             vfft_destroy(p);
             if (!scr)
             {
@@ -150,13 +150,12 @@ int main(int argc, char **argv)
             if (p)
             {
                 CHECK(raced == 0, "%dx%d %s: warm create RACED (%d) -- the cold verdict was not banked", N1, N2, cls, raced);
-                vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
+                vfft_execute(p, VFFT_FORWARD, x, y2);
                 CHECK(memcmp(y, y2, nb) == 0, "%dx%d %s: warm forward != cold forward (bitwise)", N1, N2, cls);
                 vfft_destroy(p);
             }
             printf("  %2dx%d %-9s cold: raced x%d, warm: %s, %s\n", N1, N2, cls, 1,
                    raced ? "RACED" : "replayed", (p && memcmp(y, y2, nb) == 0) ? "bitwise" : "NOT BITWISE");
-            vfft_wisdom_free(W);
             free(x); free(y); free(y2); free(ref);
         }
     }

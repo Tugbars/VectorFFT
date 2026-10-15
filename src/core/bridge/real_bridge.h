@@ -73,7 +73,7 @@ static vfft_plan _real_finish(struct vfft_plan_s *h)
  * the split rfft where it is radix-smooth (r2c) and refused otherwise: the
  * split library has no odd real engine of its own (owner 2026-10-03: refuse,
  * never the other library's). */
-static vfft_plan _vfft_create_real_routes(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_real_routes(const vfft_cfg_t *cfg,
                                           vfft_batch ob,
                                           struct vfft_wisdom_s *W,
                                           const vfft_proto_registry_t *reg,
@@ -85,7 +85,7 @@ static vfft_plan _vfft_create_real_routes(const vfft_config_t *cfg,
         _vfft_warn("vfft_create: %s R2C odd N=%d (K=%zu): no split real engine serves a "
                    "non-smooth odd length (the split rfft takes the radix-smooth odd "
                    "lengths only); unsupported",
-                   cfg->layout == VFFT_LAYOUT_INTERLEAVED ? "lane-major" : "split", N, K);
+                   cfg->layout == VFI_LAYOUT_IL ? "lane-major" : "split", N, K);
         return NULL;
     }
     return _real_finish(_vfft_create_real_split(cfg, ob, W, reg, N, K));
@@ -103,7 +103,7 @@ static vfft_plan _vfft_create_real_routes(const vfft_config_t *cfg,
  * (the library body, paced) and the winner is banked on the cell's q=K row.
  * VFFT_ZRBL=0 keeps it out; NULL = nothing built (the request goes where it
  * went). */
-static struct vfft_plan_s *_zrbl_build_plan(const vfft_config_t *cfg, int N, int K, int M,
+static struct vfft_plan_s *_zrbl_build_plan(const vfft_cfg_t *cfg, int N, int K, int M,
                                             const int *Rs, int nst, const char *forms, int wc)
 {
     vfft_zrbl_plan_t *zp = vfft_zrbl_create(N, K, M, Rs, nst, forms, wc);
@@ -118,7 +118,7 @@ static struct vfft_plan_s *_zrbl_build_plan(const vfft_config_t *cfg, int N, int
     }
     h->transform = cfg->transform;
     h->placement = VFFT_OUTOFPLACE;
-    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->layout = (int)VFI_LAYOUT_IL;
     h->N = N;
     h->K = K;
     h->nthreads = _vfft_plan_threads(cfg);
@@ -157,7 +157,7 @@ static int _zrbl_m_cands(int N, int *out)
     out[n++] = p2;
     return n;
 }
-static int _zrbl_try(const vfft_config_t *cfg, int N, int K, int M, const int *Rs, int nst, const char *forms, int wc,
+static int _zrbl_try(const vfft_cfg_t *cfg, int N, int K, int M, const int *Rs, int nst, const char *forms, int wc,
                      const double *a, const double *ref, double *b, size_t nout,
                      struct vfft_plan_s *out[2], double bns[2])
 {
@@ -208,7 +208,7 @@ static int _zrbl_try(const vfft_config_t *cfg, int N, int K, int M, const int *R
         vfft_destroy((vfft_plan)h);
     return 1;
 }
-static int _zrbl_sweep(const vfft_config_t *cfg, int N, int K, const double *a, const double *ref, double *b,
+static int _zrbl_sweep(const vfft_cfg_t *cfg, int N, int K, const double *a, const double *ref, double *b,
                        size_t nout, struct vfft_plan_s *out[2])
 {
     static const int wins[6] = { 2, 4, 8, 16, 32, 64 };
@@ -240,7 +240,7 @@ static int _zrbl_sweep(const vfft_config_t *cfg, int N, int K, const double *a, 
             _zrbl_try(cfg, N, K, sM[i], sR[i], sn[i], sf[i], wins[w], a, ref, b, nout, out, bns);
     return (out[0] != NULL) + (out[1] != NULL);
 }
-static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_wisdom_s *W,
+static vfft_plan _vfft_create_real_lanes(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W,
                                          const vfft_proto_registry_t *reg, int N, int K)
 {
     const int c2r = cfg->transform == VFFT_C2R;
@@ -251,7 +251,7 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
     struct vfft_plan_s *hz[2] = { NULL, NULL };
     double *a, *ref, *b, *ti, *to;
     int refbad = 0;
-    vfft_config_t c1;
+    vfft_cfg_t c1;
     if (e && e[0] == '0' && !e[1])
         return NULL;
     if (W && !W->vw2_off_oop && !cfg->recalibrate)
@@ -431,7 +431,7 @@ static vfft_plan _vfft_create_real_lanes(const vfft_config_t *cfg, struct vfft_w
     }
 }
 
-static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_real(const vfft_cfg_t *cfg,
                                    vfft_batch ob,
                                    struct vfft_wisdom_s *W,
                                    const vfft_proto_registry_t *reg,
@@ -439,7 +439,7 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
                                    size_t K)
 {
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1 && !ob && (N & 1) && N >= 3 &&
+        cfg->layout == VFI_LAYOUT_IL && K > 1 && !ob && (N & 1) && N >= 3 &&
         cfg->placement == VFFT_OUTOFPLACE &&
         (cfg->batch_geom == VFFT_BATCH_DEFAULT || cfg->batch_geom == VFFT_BATCH_LANE_MAJOR) &&
         _zrb_ok(N))
@@ -451,7 +451,7 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
             return h;
     }
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && !ob &&
+        cfg->layout == VFI_LAYOUT_IL && K == 1 && !ob &&
         _real_il_odd_admits(N, cfg->transform == VFFT_C2R))
     {
         /* an odd cell with an IL real engine (the mono, the flat DIT, the
@@ -462,7 +462,7 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
         return h ? _real_finish(h) : NULL;
     }
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && !ob && (N & 1))
+        cfg->layout == VFI_LAYOUT_IL && K == 1 && !ob && (N & 1))
     {
         /* an odd cell no IL real engine admits (the mono to 64, the flat chain,
          * the real Bluestein within its inner ceiling (3N-1)/2 <= VFFT_POLICY_INNER_MAX_N):
@@ -477,7 +477,7 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
         return NULL;
     }
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && !ob && (N % 2) == 0)
+        cfg->layout == VFI_LAYOUT_IL && K == 1 && !ob && (N % 2) == 0)
     {
         /* an even cell: the interleaved tier's door (zr2c, the pair, ZTT-r,
          * the four-step, the mono) serves it or refuses -- no fall-through to

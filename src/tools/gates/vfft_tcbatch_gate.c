@@ -66,22 +66,21 @@ static void fz(double *p)
 #endif
 }
 
-static vfft_plan mk(vfft_wisdom *W, int N, size_t K, int inplace, int tc)
+static vfft_plan mk(const char *W, int N, size_t K, int inplace, int tc)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = inplace ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = inplace ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = K;
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.batch_geom = tc ? VFFT_BATCH_TRANSFORM_CONTIGUOUS
+    cfg.batch = tc ? VFFT_BATCH_CONTIGUOUS
                         : VFFT_BATCH_LANE_MAJOR;
     cfg.nthreads = 1;
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
 
@@ -125,7 +124,7 @@ static double relerr(const double *a, const double *b, long n2)
     return m > 0 ? e / m : e;
 }
 
-static int run_cell(vfft_wisdom *W, int N, size_t K)
+static int run_cell(const char *W, int N, size_t K)
 {
     const size_t tn = 2 * (size_t)N;      /* doubles per transform */
     const size_t tot = (size_t)N * K;
@@ -142,10 +141,10 @@ static int run_cell(vfft_wisdom *W, int N, size_t K)
     /* ---- OOP ---- */
     vfft_plan h = mk(W, N, K, 0, 1);
     if (!h) { printf("%-6d K=%-2zu  create FAILED (OOP)\n", N, K); return 0; }
-    vfft_execute(h, VFFT_FORWARD, x, NULL, zv, NULL);
+    vfft_execute(h, VFFT_FORWARD, x, zv);
     double ef = relerr(zv, X, 2L * (long)tot);
 
-    vfft_execute(h, VFFT_BACKWARD, X, NULL, zr, NULL);
+    vfft_execute(h, VFFT_BACKWARD, X, zr);
     double *nx = az(tot);
     for (size_t i = 0; i < 2 * tot; i++) nx[i] = (double)N * x[i];
     double eb = relerr(zr, nx, 2L * (long)tot);
@@ -158,7 +157,7 @@ static int run_cell(vfft_wisdom *W, int N, size_t K)
     {
         double *zk = az(tot);
         for (size_t t = 0; t < K; t++)
-            vfft_execute(h1, VFFT_FORWARD, x + t * tn, NULL, zk + t * tn, NULL);
+            vfft_execute(h1, VFFT_FORWARD, x + t * tn, zk + t * tn);
         bitid = memcmp(zk, zv, 2 * tot * sizeof(double)) == 0;
         fz(zk);
         vfft_destroy(h1);
@@ -170,10 +169,10 @@ static int run_cell(vfft_wisdom *W, int N, size_t K)
     if (hip)
     {
         memcpy(zr, x, 2 * tot * sizeof(double));
-        vfft_execute(hip, VFFT_FORWARD, zr, NULL, zr, NULL);
+        vfft_execute(hip, VFFT_FORWARD, zr, zr);
         eip1 = relerr(zr, X, 2L * (long)tot);
         /* in-place BACKWARD on the aliased buffer must invert it */
-        vfft_execute(hip, VFFT_BACKWARD, zr, NULL, zr, NULL);
+        vfft_execute(hip, VFFT_BACKWARD, zr, zr);
         double *nx2 = az(tot);
         for (size_t i = 0; i < 2 * tot; i++) nx2[i] = (double)N * x[i];
         eip2 = relerr(zr, nx2, 2L * (long)tot);
@@ -204,7 +203,7 @@ static int run_cell(vfft_wisdom *W, int N, size_t K)
                 Xl[2 * ((size_t)n * K + t)]     = X[t * tn + 2 * n];
                 Xl[2 * ((size_t)n * K + t) + 1] = X[t * tn + 2 * n + 1];
             }
-        vfft_execute(hl, VFFT_FORWARD, xl, NULL, zl, NULL);
+        vfft_execute(hl, VFFT_FORWARD, xl, zl);
         lane_ok = relerr(zl, Xl, 2L * (long)tot) < 1e-9;
         fz(xl); fz(Xl); fz(zl);
         vfft_destroy(hl);
@@ -223,25 +222,24 @@ static int run_cell(vfft_wisdom *W, int N, size_t K)
 }
 
 /* arm 7: MT == ST bitwise. Same config as mk() plus an nthreads knob. */
-static vfft_plan mkt(vfft_wisdom *W, int N, size_t K, int inplace, int nth)
+static vfft_plan mkt(const char *W, int N, size_t K, int inplace, int nth)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = inplace ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = inplace ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = K;
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
+    cfg.batch = VFFT_BATCH_CONTIGUOUS;
     cfg.nthreads = nth;
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
 
-static int run_mt_cell(vfft_wisdom *W, int N, size_t K)
+static int run_mt_cell(const char *W, int N, size_t K)
 {
     const size_t tot = (size_t)N * K;
     double *x = az(tot), *zmt = az(tot), *zst = az(tot);
@@ -256,10 +254,10 @@ static int run_mt_cell(vfft_wisdom *W, int N, size_t K)
     int f_ok = 0, b_ok = 0;
     if (hmt && hst)
     {
-        vfft_execute(hmt, VFFT_FORWARD, x, NULL, zmt, NULL);
-        vfft_execute(hmt, VFFT_BACKWARD, zmt, NULL, bmt, NULL);
-        vfft_execute(hst, VFFT_FORWARD, x, NULL, zst, NULL);
-        vfft_execute(hst, VFFT_BACKWARD, zmt, NULL, bst, NULL);
+        vfft_execute(hmt, VFFT_FORWARD, x, zmt);
+        vfft_execute(hmt, VFFT_BACKWARD, zmt, bmt);
+        vfft_execute(hst, VFFT_FORWARD, x, zst);
+        vfft_execute(hst, VFFT_BACKWARD, zmt, bst);
         f_ok = memcmp(zmt, zst, 2 * tot * sizeof(double)) == 0;
         b_ok = memcmp(bmt, bst, 2 * tot * sizeof(double)) == 0;
     }
@@ -273,11 +271,11 @@ static int run_mt_cell(vfft_wisdom *W, int N, size_t K)
     if (pmt && pst)
     {
         memcpy(zmt, x, 2 * tot * sizeof(double));
-        vfft_execute(pmt, VFFT_FORWARD, zmt, NULL, zmt, NULL);
-        vfft_execute(pmt, VFFT_BACKWARD, zmt, NULL, zmt, NULL);
+        vfft_execute(pmt, VFFT_FORWARD, zmt, zmt);
+        vfft_execute(pmt, VFFT_BACKWARD, zmt, zmt);
         memcpy(zst, x, 2 * tot * sizeof(double));
-        vfft_execute(pst, VFFT_FORWARD, zst, NULL, zst, NULL);
-        vfft_execute(pst, VFFT_BACKWARD, zst, NULL, zst, NULL);
+        vfft_execute(pst, VFFT_FORWARD, zst, zst);
+        vfft_execute(pst, VFFT_BACKWARD, zst, zst);
         ip_ok = memcmp(zmt, zst, 2 * tot * sizeof(double)) == 0;
     }
     if (pmt) vfft_destroy(pmt);
@@ -298,7 +296,7 @@ static int run_mt_cell(vfft_wisdom *W, int N, size_t K)
  * TRANSFORM_CONTIGUOUS one — bitwise. This is the arm that would catch a
  * silent revert of the default, which is the failure mode that would
  * corrupt every caller's data without an error message. */
-static int run_default_geometry(vfft_wisdom *W, int N, size_t K)
+static int run_default_geometry(const char *W, int N, size_t K)
 {
     const size_t tot = (size_t)N * K;
     double *x = az(tot), *a = az(tot), *b = az(tot);
@@ -309,22 +307,21 @@ static int run_default_geometry(vfft_wisdom *W, int N, size_t K)
     vfft_config_t cfg; /* zeroed: batch_geom never touched */
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = K;
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1;
-    cfg.wisdom = W;
+    cfg.wisdom_dir = W;
     vfft_plan hd = vfft_create(&cfg);
     vfft_plan ht = mk(W, N, K, 0, 1); /* explicit TRANSFORM_CONTIGUOUS */
     int ok = 0;
     if (hd && ht)
     {
-        vfft_execute(hd, VFFT_FORWARD, x, NULL, a, NULL);
-        vfft_execute(ht, VFFT_FORWARD, x, NULL, b, NULL);
+        vfft_execute(hd, VFFT_FORWARD, x, a);
+        vfft_execute(ht, VFFT_FORWARD, x, b);
         ok = memcmp(a, b, 2 * tot * sizeof(double)) == 0;
     }
     printf("%-6d K=%-2zu  zeroed config == TRANSFORM_CONTIGUOUS: %s%s\n",
@@ -337,7 +334,7 @@ static int run_default_geometry(vfft_wisdom *W, int N, size_t K)
 
 /* K==1 must not wrap: a TC plan at K=1 must be bitwise identical to a plain
  * LANE_MAJOR K=1 plan (same addressing, so same route, same bytes). */
-static int run_k1_identity(vfft_wisdom *W, int N)
+static int run_k1_identity(const char *W, int N)
 {
     const size_t tot = (size_t)N;
     double *x = az(tot), *a = az(tot), *b = az(tot);
@@ -349,8 +346,8 @@ static int run_k1_identity(vfft_wisdom *W, int N)
     int ok = 0;
     if (h0 && h1)
     {
-        vfft_execute(h0, VFFT_FORWARD, x, NULL, a, NULL);
-        vfft_execute(h1, VFFT_FORWARD, x, NULL, b, NULL);
+        vfft_execute(h0, VFFT_FORWARD, x, a);
+        vfft_execute(h1, VFFT_FORWARD, x, b);
         ok = memcmp(a, b, 2 * tot * sizeof(double)) == 0;
     }
     printf("%-6d K=1    geometry-identity: %s%s\n", N,
@@ -368,7 +365,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--wisdir") && i + 1 < argc) wisdir = argv[++i];
     if (!wisdir) { printf("usage: %s --wisdir <SCRATCH dir>\n", argv[0]); return 2; }
 
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
     if (!W) { printf("vfft_wisdom_load FAILED\n"); return 2; }
 
     printf("\n=== transform-contiguous batch geometry, 1D C2C interleaved ===\n");
@@ -404,18 +401,17 @@ int main(int argc, char **argv)
         vfft_config_t sc;
         memset(&sc, 0, sizeof sc);
         sc.transform = VFFT_C2C;
-        sc.placement = VFFT_OUTOFPLACE;
-        sc.rigor = VFFT_MEASURE;
-        sc.dims = 1;
+        sc.placement = VFFT_PLACEMENT_OUT;
+        sc.rank = 1;
         sc.n[0] = 1024;
         sc.howmany = 4;
         sc.layout = VFFT_LAYOUT_SPLIT;
         sc.nthreads = 1;
-        sc.wisdom = W;
+        sc.wisdom_dir = W;
         vfft_plan sd = vfft_create(&sc);          /* DEFAULT -> lane-major, OK */
-        sc.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
+        sc.batch = VFFT_BATCH_CONTIGUOUS;
         vfft_plan sr = vfft_create(&sc);          /* must be refused */
-        sc.batch_geom = VFFT_BATCH_LANE_MAJOR;
+        sc.batch = VFFT_BATCH_LANE_MAJOR;
         vfft_plan sl = vfft_create(&sc);          /* explicit lane-major, OK */
         int ok = (sd != NULL) && (sr == NULL) && (sl != NULL);
         printf("split   K=4   default=%s  contiguous=%s  lane=%s%s\n",
@@ -431,7 +427,6 @@ int main(int argc, char **argv)
     if (!run_k1_identity(W, 1024)) fails++;
     if (!run_k1_identity(W, 256)) fails++;
 
-    vfft_wisdom_free(W);
     printf("\n=== %s ===\n", fails ? "*** FAIL ***" : "ALL PASS");
     return fails ? 1 : 0;
 }

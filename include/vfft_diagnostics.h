@@ -1,8 +1,7 @@
 /* vfft_diagnostics.h - did the threading actually happen?
  *
- * vfft.h is the transform contract: create, execute, destroy, and the wisdom
- * a plan is built from. Nothing here is needed to compute an FFT, so none of
- * it belongs in that contract. It is still SHIPPED rather than hidden,
+ * vfft.h is the transform contract: eight functions. Nothing here is needed
+ * to compute an FFT, so none of it belongs in that contract. It is still SHIPPED rather than hidden,
  * because the question it answers is not a test-only question -- anyone who
  * asks this library for 8 threads has the same reason to check they got them.
  *
@@ -101,11 +100,59 @@ extern "C"
    * vfft_measure_begin. A create served from wisdom leaves it unchanged. */
   long vfft_measure_scopes(void);
 
+  /* ── THE MEASUREMENT SCOPE'S SETTINGS (moved here from vfft.h with API v2, 2026-10-15) ──
+   * vfft_create() measures (races) a cell's candidates whenever wisdom does not serve it and
+   * saves the winner. It runs every race inside one scope and undoes it before it returns: a
+   * machine-wide lock (bounded wait; past it the race runs anyway), the measuring thread pinned
+   * to one P-core (the core the pool leaves to its caller once the pool exists, the second
+   * P-core before that), a guard thread holding that core's hyperthread sibling with the
+   * processor's idle instruction (TPAUSE on Intel, MWAITX on AMD; a part with neither runs
+   * unguarded), and the measuring thread's priority raised where the system allows it. A
+   * winner measured without the lock, or on a thread not pinned to a P-core, is served for the
+   * process and not saved. Zero is every field's default, and a value outside a field's enum
+   * is the default too. */
+  typedef struct
+  {
+    int pin;          /**< VFFT_MEASURE_PIN_DEFAULT, _OFF or _CORE */
+    int pin_core;     /**< the logical CPU for VFFT_MEASURE_PIN_CORE */
+    int guard;        /**< VFFT_MEASURE_GUARD_DEFAULT, _OFF or _PAUSE */
+    int priority;     /**< VFFT_MEASURE_PRIORITY_THREAD, _LEAVE or _PROCESS */
+    int lock_wait_ms; /**< the longest wait for another measurement, ms; 0 or negative = 60000 */
+  } vfft_measure_config_t;
+  enum
+  {
+    VFFT_MEASURE_PIN_DEFAULT = 0, /**< the library's own core (above) */
+    VFFT_MEASURE_PIN_OFF = 1,     /**< the thread is not moved; winners are served, not saved */
+    VFFT_MEASURE_PIN_CORE = 2     /**< logical CPU pin_core; winners are saved only on a P-core */
+  };
+  enum
+  {
+    VFFT_MEASURE_GUARD_DEFAULT = 0, /**< the processor's idle instruction, where it has one */
+    VFFT_MEASURE_GUARD_OFF = 1,
+    VFFT_MEASURE_GUARD_PAUSE = 2    /**< a PAUSE spinner: every part with hyperthreads; slows the
+                                         measured thread about 12% (every candidate alike) */
+  };
+  enum
+  {
+    VFFT_MEASURE_PRIORITY_THREAD = 0, /**< raise the measuring thread */
+    VFFT_MEASURE_PRIORITY_LEAVE = 1,
+    VFFT_MEASURE_PRIORITY_PROCESS = 2 /**< raise the whole process */
+  };
+  /** @brief Set how this process measures; NULL restores the defaults. Call during setup,
+   *         outside any scope. */
+  void vfft_measure_configure(const vfft_measure_config_t *config);
+
+  /** @brief The route a plan committed to, as vfft_info() reports it: a convenience for logs. */
+  static inline const char *vfft_plan_route(vfft_plan p)
+  {
+    vfft_info_t i;
+    return vfft_info(p, &i) == 0 ? i.route : "-";
+  }
+
   /* ── THE MEASUREMENT SCOPE AS A TOOL (moved here from vfft.h, 2026-10-07:
    * docs/design/public_header_surface.md). Timing your own code under the
    * scope vfft_create() races in is benchmarking, not computing a transform.
-   * vfft_measure_configure() stays in vfft.h: it changes what vfft_create()
-   * does to the process. ─────────────────────────────────────────────── */
+   * Its settings are vfft_measure_configure() above. ─────────────────────────────────────────────── */
 
   /** @brief What vfft_measure_begin() returns (0 = a clean scope). */
   enum
@@ -119,8 +166,8 @@ extern "C"
    *        caller times itself.
    *
    * The same scope vfft_create() uses for its races: the machine-wide lock,
-   * the pin, the sibling guard, the priority (vfft_measure_configure() in
-   * vfft.h sets them). A vfft_create() inside it adds nothing and leaves it
+   * the pin, the sibling guard, the priority (vfft_measure_configure() sets
+   * them). A vfft_create() inside it adds nothing and leaves it
    * in place. Calls nest; the scope ends at the matching outermost
    * vfft_measure_end(), on the same thread.
    *
@@ -158,7 +205,7 @@ extern "C"
   /**
    * @brief The SIMD level this build was compiled for (a fact for logs; the
    *        same fact is part of vfft_wisdom_identity(), and buffer alignment
-   *        comes from vfft_alignment() in vfft.h).
+   *        comes from vfft_info()).
    * @return "avx512", "avx2" or "scalar": a build-time fact, not runtime
    *         detection. Static storage.
    */
@@ -167,9 +214,8 @@ extern "C"
   /* ── THE WISDOM FACTS (moved here from vfft.h, 2026-10-07): where the
    * library's own store is, what stamps it, and its report. A plan needs
    * none of them; the gauntlet's tooling (recal_1d_probe --where / --report,
-   * wisdom_folder.py) and a log do. The table calls that let a caller choose
-   * a store in code (vfft_wisdom_load / save / free, config.wisdom) stay in
-   * vfft.h. ──────────────────────────────────────────────────────────── */
+   * wisdom_folder.py) and a log do. A plan chooses a store by directory
+   * (vfft_config_t.wisdom_dir). ──────────────────────────────────────────────────────────── */
 
   /**
    * @brief The directory of the library's own store: this CPU's folder.
@@ -208,7 +254,7 @@ extern "C"
    *
    * Rows are served whatever build raced them. The report shows which ones an
    * older build left, so they can be listed and re-raced
-   * (config.recalibrate = 1 on the cell).
+   * (VFFT_FLAG_RECALIBRATE on the cell).
    *
    * @param list_build NULL for the summary alone; a build id to add one line
    *        per row that build raced; "" for the rows saved before rows
@@ -218,6 +264,23 @@ extern "C"
    * @return The length of the whole report, as snprintf() counts it.
    */
   size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n);
+
+  /**
+   * @brief Read a wisdom directory again at the next create that names it.
+   *
+   * A create opens the store of config.wisdom_dir once per process and keeps it.
+   * A gate that proves a verdict reached the disk calls this first: the kept store
+   * of `dir` is closed and the next create naming `dir` reads the files. Plans
+   * already created keep working (each holds its own copies). Call it with no
+   * create in flight on another thread.
+   *
+   * @return 0, or -1 for a NULL dir.
+   */
+  int vfft_wisdom_reread(const char *dir);
+
+  /** @brief The thread pool's size now: its live workers plus the calling thread
+   *  (1 before any plan asked for more). The pool only grows; a gate asserts that. */
+  int vfft_pool_threads(void);
 
 #ifdef __cplusplus
 }

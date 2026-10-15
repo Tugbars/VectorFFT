@@ -92,21 +92,20 @@ static int dcmp(const void *a, const void *b)
     return x < y ? -1 : (x > y ? 1 : 0);
 }
 
-static vfft_plan mk(vfft_wisdom *W, int N, int scrambled)
+static vfft_plan mk(const char *W, int N, int scrambled)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = 1;
     cfg.order = scrambled ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1;
-    cfg.wisdom = W;
-    cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
+    cfg.wisdom_dir = W;
+    /* measurement gate: banks must persist */
     return vfft_create(&cfg);
 }
 
@@ -148,7 +147,7 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++)
         if (!strcmp(argv[i], "--wisdir") && i + 1 < argc) wisdir = argv[++i];
     if (!wisdir) { printf("usage: %s --wisdir <SCRATCH dir>\n", argv[0]); return 2; }
-    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    const char *W = (wisdir);
     if (!W) { printf("vfft_wisdom_load FAILED\n"); return 2; }
 
     printf("\n=== explicit-SCRAMBLED K=1 IL: a real permutation of the natural spectrum (the plain ZTURN-T) ===\n");
@@ -177,8 +176,8 @@ int main(int argc, char **argv)
          * not the identity bin for bin, and the same spectrum as a multiset
          * (sorted (re, im) pairs agree). ztt_gate holds the exact permutation
          * against the direct plain engine; this holds the contract. */
-        vfft_execute(hs, VFFT_FORWARD, x, NULL, ys, NULL);
-        vfft_execute(hn, VFFT_FORWARD, x, NULL, yn, NULL);
+        vfft_execute(hs, VFFT_FORWARD, x, ys);
+        vfft_execute(hn, VFFT_FORWARD, x, yn);
         const int ident = memcmp(ys, yn, 2 * (size_t)N * sizeof(double)) == 0 ||
                           relerr(ys, yn, 2L * N) < 1e-11;
         int eq;
@@ -211,7 +210,7 @@ int main(int argc, char **argv)
         const double ref = e / m;
 
         /* arm 3: matched roundtrip on the scrambled handle */
-        vfft_execute(hs, VFFT_BACKWARD, ys, NULL, rt, NULL);
+        vfft_execute(hs, VFFT_BACKWARD, ys, rt);
         double m3 = 0, e3 = 0;
         const double inv = 1.0 / N;
         for (long j = 0; j < 2L * N; j++)
@@ -231,22 +230,22 @@ int main(int argc, char **argv)
             {
                 t0 = now_ns();
                 for (int k = 0; k < reps; k++)
-                    vfft_execute(hn, VFFT_FORWARD, x, NULL, yn, NULL);
+                    vfft_execute(hn, VFFT_FORWARD, x, yn);
                 sn[r] = (now_ns() - t0) / reps;
                 t0 = now_ns();
                 for (int k = 0; k < reps; k++)
-                    vfft_execute(hs, VFFT_FORWARD, x, NULL, ys, NULL);
+                    vfft_execute(hs, VFFT_FORWARD, x, ys);
                 ss[r] = (now_ns() - t0) / reps;
             }
             else
             {
                 t0 = now_ns();
                 for (int k = 0; k < reps; k++)
-                    vfft_execute(hs, VFFT_FORWARD, x, NULL, ys, NULL);
+                    vfft_execute(hs, VFFT_FORWARD, x, ys);
                 ss[r] = (now_ns() - t0) / reps;
                 t0 = now_ns();
                 for (int k = 0; k < reps; k++)
-                    vfft_execute(hn, VFFT_FORWARD, x, NULL, yn, NULL);
+                    vfft_execute(hn, VFFT_FORWARD, x, yn);
                 sn[r] = (now_ns() - t0) / reps;
             }
             pace(100);
@@ -284,12 +283,12 @@ int main(int argc, char **argv)
                    *yn = az((size_t)N), *rt = az((size_t)N);
             for (long j = 0; j < 2L * N; j++)
                 x[j] = (double)rand() / RAND_MAX - 0.5;
-            vfft_execute(hs, VFFT_FORWARD, x, NULL, ys, NULL);
-            vfft_execute(hn, VFFT_FORWARD, x, NULL, yn, NULL);
+            vfft_execute(hs, VFFT_FORWARD, x, ys);
+            vfft_execute(hn, VFFT_FORWARD, x, yn);
             const int ident =
                 memcmp(ys, yn, 2 * (size_t)N * sizeof(double)) == 0 ||
                 relerr(ys, yn, 2L * N) < 1e-11;
-            vfft_execute(hs, VFFT_BACKWARD, ys, NULL, rt, NULL);
+            vfft_execute(hs, VFFT_BACKWARD, ys, rt);
             double m = 0, e = 0;
             const double inv = 1.0 / N;
             for (long j = 0; j < 2L * N; j++)
@@ -309,7 +308,6 @@ int main(int argc, char **argv)
         if (hn) vfft_destroy(hn);
     }
 
-    vfft_wisdom_free(W);
     printf("\n=== %s ===\n", fails ? "*** FAIL ***" : "ALL PASS");
     return fails ? 1 : 0;
 }

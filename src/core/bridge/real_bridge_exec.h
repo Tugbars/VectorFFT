@@ -71,7 +71,7 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
             return;
         }
         _vfft_pool_arm(h->nthreads);
-        if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+        if (h->layout == (int)VFI_LAYOUT_IL)
             vfft_r2c_execute_fwd_z(h->rplan, sre, dre); /* dre = packed CCE spectrum */
         else
             vfft_r2c_execute_fwd(h->rplan, sre, dre, dim); /* split out */
@@ -126,7 +126,7 @@ static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir,
             return;
         }
         _vfft_pool_arm(h->nthreads);
-        if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+        if (h->layout == (int)VFI_LAYOUT_IL)
             vfft_c2r_disp_execute_z(h->c2rdisp, sre, dre); /* sre = packed CCE spectrum in */
         else
             vfft_c2r_disp_execute(h->c2rdisp, sre, sim, dre);

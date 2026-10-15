@@ -173,6 +173,9 @@ ARGSTYLE = {
     "vfft_natural_front_gate": ("flag", False),
     "nat_bankloss_gate": ("flag", False),      # cold: the banked-loss law races on pass 1 by design
     "vfft_tcbatch_gate":       ("flag", True),
+    # SEEDED: its creates replay and bank on a scratch copy; with no dir they banked into the
+    # library's own store (5 shipped rows rewritten, 2026-10-14 and 2026-10-15)
+    "api_matrix_gate":         ("flag", True),
     # wants a dir containing oop_wisdom.txt -> needs real data, but a COPY
 
     # the four-step (2026-09-15): a bare scratch dir, SEEDED so the upper-band
@@ -251,8 +254,10 @@ def run(name, workdir):
     # to the next version; until then the constant is per gate, not global.
     budget = BUDGET_OVERRIDE.get(name, budget)
     try:
+        # VFFT_VERBOSE: the library prints each refusal (vfft_error()) as it did before API v2,
+        # so a gate's output carries the reasons
         r = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True,
-                           timeout=budget)
+                           timeout=budget, env=dict(os.environ, VFFT_VERBOSE="1"))
     except subprocess.TimeoutExpired:
         # subprocess.run kills only the direct child; a gate that spawned its own
         # children would leave them behind. Kill the whole tree.

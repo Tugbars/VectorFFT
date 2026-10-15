@@ -39,7 +39,7 @@
 #ifndef VFFT_IL2D_REAL_FUSE_H
 #define VFFT_IL2D_REAL_FUSE_H
 
-static int _il2d_tf_admits(const struct vfft_plan_s *h, const vfft_config_t *cfg)
+static int _il2d_tf_admits(const struct vfft_plan_s *h, const vfft_cfg_t *cfg)
 {
     const vfft_ilcol_t *c = &h->il2d_col;
     if (h->transform == VFFT_C2R && (h->il2d_cxd_on || !h->il2d_rscr))
@@ -140,7 +140,7 @@ static int _il2d_tf_build(struct vfft_plan_s *h)
     return h->il2d_tf_stg != NULL;
 }
 
-static void _il2d_tf_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg, struct vfft_plan_s *h,
+static void _il2d_tf_bank(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, struct vfft_plan_s *h,
                           int N1, int N2, int ord, int T, const char *tk, const char *val)
 {
     if (!W || W->vw2_off_2d)
@@ -191,7 +191,7 @@ static void _il2d_tf_arm_tf(void *v)
 /* THE FORM'S PLAN: env pin, the banked tf= (tf_c2r= for a c2r plan), or the
  * race. After the row and column plans (the standard walk's arm runs them)
  * and, for r2c, the real axis on N1. */
-static void _il2d_tf_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_tf_plan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                           int N1, int N2, int ord, int T)
 {
     const int c2r = h->transform == VFFT_C2R;

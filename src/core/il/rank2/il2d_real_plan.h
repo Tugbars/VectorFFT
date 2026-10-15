@@ -195,7 +195,7 @@ static void _il2d_rows_fwd_set(struct vfft_plan_s *h, const double *x, size_t d,
         for (j = 0; j < R0; j++)
         {
             _il2d_row_promote(x + (d + j * D0) * rp, b1, N2);
-            vfft_execute((vfft_plan)h->il2d_row, VFFT_FORWARD, b1, NULL, b2, NULL);
+            _vfft_exec6((vfft_plan)h->il2d_row, VFFT_FORWARD, b1, NULL, b2, NULL);
             memcpy(out + j * 2 * P, b2, 2 * hp1 * sizeof(double));
         }
         return;
@@ -228,7 +228,7 @@ static void _il2d_rows_bwd_set(struct vfft_plan_s *h, const double *src, size_t 
         for (j = 0; j < R0; j++)
         {
             _il2d_row_extend(src + j * 2 * P, b1, N2, hp1);
-            vfft_execute((vfft_plan)h->il2d_row, VFFT_BACKWARD, b1, NULL, b2, NULL);
+            _vfft_exec6((vfft_plan)h->il2d_row, VFFT_BACKWARD, b1, NULL, b2, NULL);
             _il2d_row_re(b2, y + (d + j * D0) * rp, N2);
         }
         return;
@@ -433,7 +433,7 @@ static void _il2d_rowx_bwd(struct vfft_plan_s *h, const double *zsrc, double *dr
 }
 
 /* the K = 1 request the per-row engines are built for, in the plan's direction */
-static void _il2d_rowx_cfg(const vfft_config_t *cfg, int N2, vfft_config_t *c, struct vfft_wisdom_s *S, int c2r)
+static void _il2d_rowx_cfg(const vfft_cfg_t *cfg, int N2, vfft_cfg_t *c, struct vfft_wisdom_s *S, int c2r)
 {
     memset(c, 0, sizeof *c);
     c->transform = c2r ? VFFT_C2R : VFFT_R2C;
@@ -442,7 +442,7 @@ static void _il2d_rowx_cfg(const vfft_config_t *cfg, int N2, vfft_config_t *c, s
     c->dims = 1;
     c->n[0] = N2;
     c->howmany = 1;
-    c->layout = VFFT_LAYOUT_INTERLEAVED;
+    c->layout = VFI_LAYOUT_IL;
     c->nthreads = 1;
     c->wisdom = (vfft_wisdom *)S;   /* the row engines' own store (wisdom2_child.h), never the library's */
     c->wisdom_write = 0;
@@ -487,7 +487,7 @@ static void _il2d_rowx_name(vfft_il2p_fn lm, const struct vfft_plan_s *e, char *
  * (the real row's rx_* tokens, wisdom2_child.h) when that banks this route,
  * else raced in the real role and banked there, so the recipe rides on the
  * 2D row. A 1D row is never read (owner, 2026-10-01). */
-static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_config_t *c, struct vfft_wisdom_s *S, int N2, int route)
+static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_cfg_t *c, struct vfft_wisdom_s *S, int N2, int route)
 {
     int r = 0, fmt = 0;
     vw2_zr2c_child_t ch;
@@ -511,10 +511,10 @@ static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_config_t *c, struct vfft_w
 }
 
 /* a token's engine: 1 = built (door: nothing to build), 0 = it does not build here */
-static int _il2d_rowx_build(const vfft_config_t *cfg, struct vfft_wisdom_s *S, int N1, int N2, const char *tok,
+static int _il2d_rowx_build(const vfft_cfg_t *cfg, struct vfft_wisdom_s *S, int N1, int N2, const char *tok,
                             vfft_il2p_fn *lm, struct vfft_plan_s **eng, int c2r)
 {
-    vfft_config_t c;
+    vfft_cfg_t c;
     *lm = NULL;
     *eng = NULL;
     if (!tok || !tok[0] || !strcmp(tok, "door"))
@@ -649,11 +649,11 @@ static void _il2d_rowx_clones_drop(struct vfft_plan_s **w, int n)
  * race): one plan instance per worker. Each clone's token is checked against
  * the primary's (route equivalence); on any failure none are kept and the
  * engine runs its rows serial. 1 = done (nothing to clone counts), 0 = failed. */
-static int _il2d_rowx_clones(const vfft_config_t *cfg, struct vfft_wisdom_s *S, int N1, int N2, const char *tok,
+static int _il2d_rowx_clones(const vfft_cfg_t *cfg, struct vfft_wisdom_s *S, int N1, int N2, const char *tok,
                              int T, int c2r, struct vfft_plan_s ***out, int *out_n)
 {
     const int n = (T > THREAD_POOL_MAX_DISPATCH ? THREAD_POOL_MAX_DISPATCH : T) - 1;
-    vfft_config_t c = *cfg;
+    vfft_cfg_t c = *cfg;
     struct vfft_plan_s **arr;
     int t;
     *out = NULL;
@@ -734,7 +734,7 @@ static void _il2d_rowx_arm_run(void *v)
 /* bank the verdict on the shared real IL row; the row is made when the cell
  * has none yet (the served chain, no row-axis tokens: fft2d_create_il.h's
  * forms bank does the same) */
-static void _il2d_real_plan_bank(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_real_plan_bank(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                  int N1, int N2, int ord, int T, const char *tok, const char *name,
                                  const char *stok, const char *sb, int c2r)
 {
@@ -760,7 +760,7 @@ static void _il2d_real_plan_bank(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
  * stage arrays are committed (it executes the row pass of h). One body for
  * the two directions: c2r = 1 is the backward pass's plan, with its own
  * tokens, env pin and engine store; the r2c path is the one that stood. */
-static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                    int N1, int N2, int ord, int T, int c2r)
 {
     enum { NARMS = VFFT_RACE_MAX_ARMS / 4 };
@@ -839,7 +839,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         char names[NARMS][48], xn[4 * NARMS][56];
         double ns[4 * NARMS];
         _il2d_rowx_arm_t cand[NARMS];
-        vfft_config_t c;
+        vfft_cfg_t c;
         int na = 0, best = 0, bd = 0, i, s;
         const size_t ON = c2r ? RN : CN;   /* the pass's output plane */
         /* T > 1: every arm runs the whole transform (the c2r reverse pass needs its plane) */
@@ -1166,14 +1166,14 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         vfft_aligned_free(a); if (!ipw) vfft_aligned_free(z); vfft_aligned_free(ref); vfft_aligned_free(seed);
     }
 }
-static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                int N1, int N2, int ord, int T)
 {
     _il2d_real_rowplan_dir(h, W, cfg, N1, N2, ord, T, 0);
 }
 /* the c2r twin: the backward row pass (the column-inverse plane's CCE rows ->
  * the real rows), in the row role, banked rx_c2r= / rxs_c2r= */
-static void _il2d_real_rowplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_real_rowplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                    int N1, int N2, int ord, int T)
 {
     _il2d_real_rowplan_dir(h, W, cfg, N1, N2, ord, T, 1);
@@ -1555,7 +1555,7 @@ static void _il2d_colx_arm_run(void *v)
 /* one body for the two directions: c2r = 1 races the reverse pass (its forms,
  * the backward leaves) out of place onto the plan's column-inverse plane, as
  * the pass serves; the r2c path is the one that stood */
-static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                     int N1, int N2, int ord, int T, int c2r)
 {
     const size_t hp1 = (size_t)N2 / 2 + 1, cp = h->il2d_col.rn, CN = 2 * (size_t)N1 * cp;   /* cp = the CCE plane's pitch */
@@ -1807,7 +1807,7 @@ static void _il2d_real_colplan_pick(struct vfft_plan_s *h, struct vfft_wisdom_s 
     }
 }
 
-static void _il2d_real_colplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_real_colplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                    int N1, int N2, int ord, int T, int c2r)
 {
     const vfft_ilcol_t *c = &h->il2d_col;
@@ -1820,13 +1820,13 @@ static void _il2d_real_colplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         (c->wl == 0 || c->wl == c->N) && c->L[0] == c->N && (c2r ? c->b[0] : c->f[0]))
         h->il2d_cx_leaf = c2r ? c->b[0] : c->f[0];
 }
-static void _il2d_real_colplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_real_colplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                int N1, int N2, int ord, int T)
 {
     _il2d_real_colplan_dir(h, W, cfg, N1, N2, ord, T, 0);
 }
 /* the c2r twin: the reverse column pass's form and states, banked cx_c2r= / cxs_c2r= */
-static void _il2d_real_colplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_real_colplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                    int N1, int N2, int ord, int T)
 {
     _il2d_real_colplan_dir(h, W, cfg, N1, N2, ord, T, 1);
@@ -1937,7 +1937,7 @@ static void _il2d_cxd_seed(void *v)
     }
 }
 
-static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_real_destroyplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                        int N1, int N2, int ord, int T)
 {
     enum { MAXC = 1 + VFFT_IL2P_COL_MAXLEAF };   /* plain, the leaves */

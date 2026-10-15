@@ -193,7 +193,7 @@
  *
  */
 
-static vfft_plan _vfft_split_create(const vfft_config_t *cfg,
+static vfft_plan _vfft_split_create(const vfft_cfg_t *cfg,
                                     vfft_batch ob,
                                     struct vfft_wisdom_s *W,
                                     const vfft_proto_registry_t *reg,
@@ -208,7 +208,7 @@ static vfft_plan _vfft_split_create(const vfft_config_t *cfg,
          * interleaved tier (il/rank2/fft2d_create_il.h) */
         if (K != 1)
         {
-            _vfft_warn("vfft_create: dims=2 howmany=%zu is served by "
+            _vfft_warn("vfft_create: rank 2 howmany=%zu is served by "
                        "the plane queue for INTERLEAVED C2C/R2C/C2R "
                        "only (got %s, layout=%d) — batch other 2D "
                        "plans sequentially",

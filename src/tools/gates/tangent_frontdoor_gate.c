@@ -29,11 +29,12 @@ static int one(int N)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
-    cfg.dims = 1;
+    cfg.rank = 1;
     cfg.n[0] = N;
     cfg.howmany = 1;
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.layout = VFFT_LAYOUT_SPLIT;   /* the split planes this gate feeds */
 
     vfft_plan p = vfft_create(&cfg);
     if (!p) { printf("  N=%-5d  vfft_create returned NULL\n", N); return 0; }
@@ -44,7 +45,7 @@ static int one(int N)
     double *dim = (double *)malloc((size_t)N*sizeof(double));
     for (int i = 0; i < N; i++) { sre[i] = rnd(); sim[i] = rnd(); }
 
-    vfft_execute(p, VFFT_FORWARD, sre, sim, dre, dim);
+    vfft_execute_split(p, VFFT_FORWARD, sre, sim, dre, dim);
 
     double worst = 0;
     for (int k = 0; k < N; k++) {

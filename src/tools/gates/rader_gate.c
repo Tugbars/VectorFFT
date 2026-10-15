@@ -44,7 +44,7 @@ double vfft_tool_ilfd_race_inner(void *plan, const double *zin, double *zout);
 
 static int g_fail = 0, g_checks = 0;
 #define CHECK(c, ...) do { g_checks++; if (!(c)) { g_fail++; printf("  *** FAIL: " __VA_ARGS__); printf("\n"); } } while (0)
-static vfft_wisdom *g_W;
+static const char *g_W;
 
 static void env_set(const char *name, const char *val)
 {
@@ -121,15 +121,14 @@ static vfft_plan mk(vfft_transform_t tr, int nd, const int *n, int ip, int order
     int d;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = tr;
-    cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
+    cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
-    cfg.rigor = VFFT_MEASURE;
-    cfg.dims = nd;
+    cfg.rank = nd;
     for (d = 0; d < nd; d++) cfg.n[d] = n[d];
     cfg.howmany = 1;
     cfg.order = order;
     cfg.nthreads = T;
-    cfg.wisdom = g_W;
+    cfg.wisdom_dir = g_W;
     return vfft_create(&cfg);
 }
 static long moved(void)
@@ -205,21 +204,21 @@ static void col_c2c(int N1, int N2, const char *pin, int banded)
     for (i = 0; i < tot; i++) { re[i] = x[2 * i]; im[i] = x[2 * i + 1]; }
     dft_nd(re, im, rre, rim, n, 2);
     env_set("VFFT_IL2D_CHAIN", pin);
-    p = mk(VFFT_C2C, 2, n, 0, VFFT_ORDER_DEFAULT, 1);
+    p = mk(VFFT_C2C, 2, n, 0, VFFT_ORDER_NATURAL, 1);
     CHECK(p != NULL, "c2c %dx%d: natural create refused", N1, N2);
     if (!p) { printf("\n"); goto done; }
     printf(" route %s\n", vfft_plan_route(p));
-    vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+    vfft_execute(p, VFFT_FORWARD, x, y);
     CHECK(relz(y, rre, rim, tot) < 1e-10, "c2c %dx%d: natural fwd vs naive %.2e", N1, N2, relz(y, rre, rim, tot));
-    vfft_execute(p, VFFT_BACKWARD, y, NULL, z, NULL);
+    vfft_execute(p, VFFT_BACKWARD, y, z);
     CHECK(relrt(z, x, nd, (double)tot) < 1e-10, "c2c %dx%d: natural bwd roundtrip %.2e", N1, N2, relrt(z, x, nd, (double)tot));
     vfft_destroy(p);
-    p = mk(VFFT_C2C, 2, n, 1, VFFT_ORDER_DEFAULT, 1);
+    p = mk(VFFT_C2C, 2, n, 1, VFFT_ORDER_NATURAL, 1);
     CHECK(p != NULL, "c2c %dx%d: in-place natural create refused", N1, N2);
     if (p)
     {   /* its own route may differ from the out-of-place plan's: the reference judges it */
         memcpy(z, x, nd * 8);
-        vfft_execute(p, VFFT_FORWARD, z, NULL, z, NULL);
+        vfft_execute(p, VFFT_FORWARD, z, z);
         CHECK(relz(z, rre, rim, tot) < 1e-10, "c2c %dx%d: in place (route %s) fwd vs naive %.2e", N1, N2, vfft_plan_route(p), relz(z, rre, rim, tot));
         vfft_destroy(p);
     }
@@ -227,8 +226,8 @@ static void col_c2c(int N1, int N2, const char *pin, int banded)
     CHECK(p != NULL, "c2c %dx%d: scrambled create refused", N1, N2);
     if (p)
     {
-        vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
-        vfft_execute(p, VFFT_BACKWARD, y2, NULL, z, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, y2);
+        vfft_execute(p, VFFT_BACKWARD, y2, z);
         CHECK(relrt(z, x, nd, (double)tot) < 1e-10, "c2c %dx%d: scrambled roundtrip %.2e", N1, N2, relrt(z, x, nd, (double)tot));
         vfft_destroy(p);
     }
@@ -239,14 +238,14 @@ static void col_c2c(int N1, int N2, const char *pin, int banded)
         char wl[16];
         snprintf(wl, sizeof wl, "%d", banded);
         env_set("VFFT_IL2D_WL", wl);
-        p = mk(VFFT_C2C, 2, n, 0, VFFT_ORDER_DEFAULT, 1);
+        p = mk(VFFT_C2C, 2, n, 0, VFFT_ORDER_NATURAL, 1);
         env_set("VFFT_IL2D_WL", NULL);
         CHECK(p != NULL, "c2c %dx%d: banded create refused", N1, N2);
         if (p)
         {
-            vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
+            vfft_execute(p, VFFT_FORWARD, x, y2);
             CHECK(relz(y2, rre, rim, tot) < 1e-10, "c2c %dx%d: banded wl=%d fwd vs naive %.2e", N1, N2, banded, relz(y2, rre, rim, tot));
-            vfft_execute(p, VFFT_BACKWARD, y, NULL, z, NULL);
+            vfft_execute(p, VFFT_BACKWARD, y, z);
             CHECK(relrt(z, x, nd, (double)tot) < 1e-10, "c2c %dx%d: banded bwd roundtrip %.2e", N1, N2, relrt(z, x, nd, (double)tot));
             vfft_destroy(p);
         }
@@ -255,32 +254,30 @@ static void col_c2c(int N1, int N2, const char *pin, int banded)
      * alone) has no threaded column form at the c2c tier today (the walks split by digit
      * or need two stages): its engagement is reported, not required. */
     env_set("VFFT_IL2D_NO_COLMT", "0");
-    vfft_set_num_threads(8);
     {
         int arm;
         const int onestage = (strchr(pin, '.') == NULL);
         for (arm = 1; arm >= 0; arm--)
         {
             env_set("VFFT_IL2D_MTARM", arm ? "1" : "0");
-            p = mk(VFFT_C2C, 2, n, 0, VFFT_ORDER_DEFAULT, 8);
+            p = mk(VFFT_C2C, 2, n, 0, VFFT_ORDER_NATURAL, 8);
             CHECK(p != NULL, "c2c %dx%d: T=8 %s create refused", N1, N2, arm ? "strips" : "blocks");
             if (p)
             {
                 m0 = moved();
-                vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
+                vfft_execute(p, VFFT_FORWARD, x, y2);
                 if (onestage && moved() == m0)
                     printf("  (T=8 %s: no threaded pass at a one-stage c2c column: serial)\n", arm ? "strips" : "blocks");
                 else
                     CHECK(moved() != m0, "c2c %dx%d: T=8 %s did not engage a threaded pass", N1, N2, arm ? "strips" : "blocks");
                 CHECK(relz(y2, rre, rim, tot) < 1e-10, "c2c %dx%d: T=8 %s fwd vs naive %.2e", N1, N2, arm ? "strips" : "blocks", relz(y2, rre, rim, tot));
-                vfft_execute(p, VFFT_BACKWARD, y2, NULL, z, NULL);
+                vfft_execute(p, VFFT_BACKWARD, y2, z);
                 CHECK(relrt(z, x, nd, (double)tot) < 1e-10, "c2c %dx%d: T=8 %s bwd roundtrip %.2e", N1, N2, arm ? "strips" : "blocks", relrt(z, x, nd, (double)tot));
                 vfft_destroy(p);
             }
         }
     }
     env_set("VFFT_IL2D_MTARM", NULL);
-    vfft_set_num_threads(1);
     env_set("VFFT_IL2D_NO_COLMT", NULL);
 done:
     env_set("VFFT_IL2D_CHAIN", NULL);
@@ -305,11 +302,11 @@ static void col_real(int N1, int N2, const char *pin)
     fill(x, tot, (unsigned)(N1 * 11 + N2));
     dft_nd(x, im, rre, rim, n, 2);
     env_set("VFFT_IL2D_CHAIN", pin);
-    p = mk(VFFT_R2C, 2, n, 0, VFFT_ORDER_DEFAULT, 1);
+    p = mk(VFFT_R2C, 2, n, 0, VFFT_ORDER_NATURAL, 1);
     CHECK(p != NULL, "r2c %dx%d: create refused", N1, N2);
     if (!p) { printf("\n"); goto done; }
     printf(" route %s\n", vfft_plan_route(p));
-    vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+    vfft_execute(p, VFFT_FORWARD, x, y);
 #define HALF_ERR(Y, E, M) do { (E) = 0; (M) = 0; for (i = 0; i < CN; i++) { \
         const size_t row = i / (size_t)hp1, col = i % (size_t)hp1, j = row * (size_t)N2 + col; \
         const double a = fabs(rre[j]) + fabs(rim[j]), d = fabs((Y)[2 * i] - rre[j]) + fabs((Y)[2 * i + 1] - rim[j]); \
@@ -317,32 +314,32 @@ static void col_real(int N1, int N2, const char *pin)
     HALF_ERR(y, e, m);
     CHECK(e / m < 1e-10, "r2c %dx%d: fwd vs naive %.2e", N1, N2, e / m);
     vfft_destroy(p);
-    p = mk(VFFT_C2R, 2, n, 0, VFFT_ORDER_DEFAULT, 1);
+    p = mk(VFFT_C2R, 2, n, 0, VFFT_ORDER_NATURAL, 1);
     CHECK(p != NULL, "c2r %dx%d: create refused", N1, N2);
     if (p)
     {
         memcpy(y2, y, 2 * CN * 8);
-        vfft_execute(p, VFFT_BACKWARD, y2, NULL, xr, NULL);
+        vfft_execute(p, VFFT_BACKWARD, y2, xr);
         CHECK(relrt(xr, x, tot, (double)tot) < 1e-10, "c2r %dx%d: pair roundtrip %.2e", N1, N2, relrt(xr, x, tot, (double)tot));
         vfft_destroy(p);
     }
     /* in place: the padded plane, N1 rows of 2 (N2/2 + 1) doubles; the whole-plan forms decline */
-    p = mk(VFFT_R2C, 2, n, 1, VFFT_ORDER_DEFAULT, 1);
+    p = mk(VFFT_R2C, 2, n, 1, VFFT_ORDER_NATURAL, 1);
     CHECK(p != NULL, "r2c %dx%d in place: create refused", N1, N2);
     if (p)
     {
         memset(pl, 0, PL * 8);
         for (r = 0; r < (size_t)N1; r++) memcpy(pl + r * 2 * hp1, x + r * N2, (size_t)N2 * 8);
-        vfft_execute(p, VFFT_FORWARD, pl, NULL, pl, NULL);
+        vfft_execute(p, VFFT_FORWARD, pl, pl);
         HALF_ERR(pl, e, m);   /* its own plan (the pl=ip rows): the reference, not the out-of-place bits */
         CHECK(e / m < 1e-10, "r2c %dx%d in place: fwd vs naive %.2e", N1, N2, e / m);
         vfft_destroy(p);
-        p = mk(VFFT_C2R, 2, n, 1, VFFT_ORDER_DEFAULT, 1);
+        p = mk(VFFT_C2R, 2, n, 1, VFFT_ORDER_NATURAL, 1);
         CHECK(p != NULL, "c2r %dx%d in place: create refused", N1, N2);
         if (p)
         {
             memcpy(pl, y, 2 * CN * 8);
-            vfft_execute(p, VFFT_BACKWARD, pl, NULL, pl, NULL);
+            vfft_execute(p, VFFT_BACKWARD, pl, pl);
             e = 0; m = 0;
             for (r = 0; r < (size_t)N1; r++)
                 for (i = 0; i < (size_t)N2; i++)
@@ -357,30 +354,28 @@ static void col_real(int N1, int N2, const char *pin)
     }
     /* threaded r2c and c2r, the column MT pinned on */
     env_set("VFFT_IL2D_NO_COLMT", "0");
-    vfft_set_num_threads(8);
-    p = mk(VFFT_R2C, 2, n, 0, VFFT_ORDER_DEFAULT, 8);
+    p = mk(VFFT_R2C, 2, n, 0, VFFT_ORDER_NATURAL, 8);
     CHECK(p != NULL, "r2c %dx%d: T=8 create refused", N1, N2);
     if (p)
     {
         m0 = moved();
-        vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, y2);
         CHECK(moved() != m0, "r2c %dx%d: T=8 did not engage a threaded pass", N1, N2);
         HALF_ERR(y2, e, m);
         CHECK(e / m < 1e-10, "r2c %dx%d: T=8 fwd vs naive %.2e", N1, N2, e / m);
         vfft_destroy(p);
     }
-    p = mk(VFFT_C2R, 2, n, 0, VFFT_ORDER_DEFAULT, 8);
+    p = mk(VFFT_C2R, 2, n, 0, VFFT_ORDER_NATURAL, 8);
     CHECK(p != NULL, "c2r %dx%d: T=8 create refused", N1, N2);
     if (p)
     {
         memcpy(y2, y, 2 * CN * 8);
         m0 = moved();
-        vfft_execute(p, VFFT_BACKWARD, y2, NULL, xr, NULL);
+        vfft_execute(p, VFFT_BACKWARD, y2, xr);
         CHECK(moved() != m0, "c2r %dx%d: T=8 did not engage a threaded pass", N1, N2);
         CHECK(relrt(xr, x, tot, (double)tot) < 1e-10, "c2r %dx%d: T=8 pair roundtrip %.2e", N1, N2, relrt(xr, x, tot, (double)tot));
         vfft_destroy(p);
     }
-    vfft_set_num_threads(1);
     env_set("VFFT_IL2D_NO_COLMT", NULL);
 #undef HALF_ERR
 done:
@@ -406,46 +401,44 @@ static void cube(int N1, int N2, int N3, const char *pin)
     for (i = 0; i < tot; i++) { re[i] = x[2 * i]; im[i] = x[2 * i + 1]; }
     dft_nd(re, im, rre, rim, n, 3);
     env_set("VFFT_IL2D_CHAIN", pin);
-    p = mk(VFFT_C2C, 3, n, 0, VFFT_ORDER_DEFAULT, 1);
+    p = mk(VFFT_C2C, 3, n, 0, VFFT_ORDER_NATURAL, 1);
     CHECK(p != NULL, "3D c2c %dx%dx%d: natural create refused", N1, N2, N3);
     if (!p) { printf("\n"); goto done; }
     printf(" route %s\n", vfft_plan_route(p));
-    vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+    vfft_execute(p, VFFT_FORWARD, x, y);
     CHECK(relz(y, rre, rim, tot) < 1e-10, "3D c2c %dx%dx%d: natural fwd vs naive %.2e", N1, N2, N3, relz(y, rre, rim, tot));
-    vfft_execute(p, VFFT_BACKWARD, y, NULL, z, NULL);
+    vfft_execute(p, VFFT_BACKWARD, y, z);
     CHECK(relrt(z, x, nd, (double)tot) < 1e-10, "3D c2c %dx%dx%d: natural bwd roundtrip %.2e", N1, N2, N3, relrt(z, x, nd, (double)tot));
     vfft_destroy(p);
     p = mk(VFFT_C2C, 3, n, 0, VFFT_ORDER_SCRAMBLED, 1);
     CHECK(p != NULL, "3D c2c %dx%dx%d: scrambled create refused", N1, N2, N3);
     if (p)
     {
-        vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
-        vfft_execute(p, VFFT_BACKWARD, y2, NULL, z, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, y2);
+        vfft_execute(p, VFFT_BACKWARD, y2, z);
         CHECK(relrt(z, x, nd, (double)tot) < 1e-10, "3D c2c %dx%dx%d: scrambled roundtrip %.2e", N1, N2, N3, relrt(z, x, nd, (double)tot));
         vfft_destroy(p);
     }
-    vfft_set_num_threads(8);
-    p = mk(VFFT_C2C, 3, n, 0, VFFT_ORDER_DEFAULT, 8);
+    p = mk(VFFT_C2C, 3, n, 0, VFFT_ORDER_NATURAL, 8);
     CHECK(p != NULL, "3D c2c %dx%dx%d: T=8 create refused", N1, N2, N3);
     if (p)
     {
         m0 = moved();
-        vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, y2);
         CHECK(moved() != m0, "3D c2c %dx%dx%d: T=8 did not engage a threaded pass", N1, N2, N3);
         CHECK(relz(y2, rre, rim, tot) < 1e-10, "3D c2c %dx%dx%d: T=8 fwd vs naive %.2e", N1, N2, N3, relz(y2, rre, rim, tot));
         vfft_destroy(p);
     }
-    vfft_set_num_threads(1);
     /* the real tier's cube: r2c vs the naive half spectrum (last axis halved), the c2r pair */
     {
         double *xx = (double *)vfft_malloc(tot * 8), *imz = (double *)calloc(tot, 8), *hy = (double *)vfft_malloc(2 * CN * 8);
         fill(xx, tot, (unsigned)(N1 * 17 + N2));
         dft_nd(xx, imz, rre, rim, n, 3);
-        p = mk(VFFT_R2C, 3, n, 0, VFFT_ORDER_DEFAULT, 1);
+        p = mk(VFFT_R2C, 3, n, 0, VFFT_ORDER_NATURAL, 1);
         CHECK(p != NULL, "3D r2c %dx%dx%d: create refused", N1, N2, N3);
         if (p)
         {
-            vfft_execute(p, VFFT_FORWARD, xx, NULL, hy, NULL);
+            vfft_execute(p, VFFT_FORWARD, xx, hy);
             e = 0; m = 0;
             for (i = 0; i < CN; i++)
             {
@@ -456,11 +449,11 @@ static void cube(int N1, int N2, int N3, const char *pin)
             }
             CHECK(e / m < 1e-10, "3D r2c %dx%dx%d: fwd vs naive %.2e", N1, N2, N3, e / m);
             vfft_destroy(p);
-            p = mk(VFFT_C2R, 3, n, 0, VFFT_ORDER_DEFAULT, 1);
+            p = mk(VFFT_C2R, 3, n, 0, VFFT_ORDER_NATURAL, 1);
             CHECK(p != NULL, "3D c2r %dx%dx%d: create refused", N1, N2, N3);
             if (p)
             {
-                vfft_execute(p, VFFT_BACKWARD, hy, NULL, xr, NULL);
+                vfft_execute(p, VFFT_BACKWARD, hy, xr);
                 CHECK(relrt(xr, xx, tot, (double)tot) < 1e-10, "3D c2r %dx%dx%d: pair roundtrip %.2e", N1, N2, N3, relrt(xr, xx, tot, (double)tot));
                 vfft_destroy(p);
             }
@@ -498,14 +491,14 @@ static int planner_col(vfft_transform_t tr, int N1, int N2)
     fill(x, real ? tot : 2 * tot, (unsigned)(N1 * 3 + N2));
     if (real) dft_nd(x, im, rre, rim, n, 2);
     else { for (i = 0; i < tot; i++) { re[i] = x[2 * i]; im[i] = x[2 * i + 1]; } dft_nd(re, im, rre, rim, n, 2); }
-    pl = mk(tr, 2, n, 0, VFFT_ORDER_DEFAULT, 1);   /* cold: the chain race over the leaf candidates, the engine's race, the N-arm race */
+    pl = mk(tr, 2, n, 0, VFFT_ORDER_NATURAL, 1);   /* cold: the chain race over the leaf candidates, the engine's race, the N-arm race */
     CHECK(pl != NULL, "planner %s %dx%d: create refused", kind, N1, N2);
     if (!pl) goto done;
     printf("A2 %s %5dx%-3d cold: route %s\n", kind, N1, N2, vfft_plan_route(pl));
     chain = route_is_chain(vfft_plan_route(pl));
     CHECK(chain || (prime && !strcmp(vfft_plan_route(pl), "tpc")),
           "planner %s %dx%d: the pick is %s, not the Rader chain", kind, N1, N2, vfft_plan_route(pl));
-    vfft_execute(pl, VFFT_FORWARD, x, NULL, y, NULL);
+    vfft_execute(pl, VFFT_FORWARD, x, y);
     if (real)
     {
         for (i = 0; i < (size_t)N1 * hp1; i++)
@@ -519,12 +512,12 @@ static int planner_col(vfft_transform_t tr, int N1, int N2)
     }
     else
         CHECK(relz(y, rre, rim, tot) < 1e-10, "planner c2c %dx%d: fwd vs naive %.2e", N1, N2, relz(y, rre, rim, tot));
-    pl2 = mk(tr, 2, n, 0, VFFT_ORDER_DEFAULT, 1);   /* the same table: the replay */
+    pl2 = mk(tr, 2, n, 0, VFFT_ORDER_NATURAL, 1);   /* the same table: the replay */
     CHECK(pl2 != NULL, "planner %s %dx%d: replay create refused", kind, N1, N2);
     if (pl2)
     {
         CHECK(!strcmp(vfft_plan_route(pl), vfft_plan_route(pl2)), "planner %s %dx%d: replay route %s != cold %s", kind, N1, N2, vfft_plan_route(pl2), vfft_plan_route(pl));
-        vfft_execute(pl2, VFFT_FORWARD, x, NULL, y2, NULL);
+        vfft_execute(pl2, VFFT_FORWARD, x, y2);
         CHECK(memcmp(y, y2, outn * 8) == 0, "planner %s %dx%d: replay != cold (bitwise)", kind, N1, N2);
         vfft_destroy(pl2);
     }
@@ -606,15 +599,14 @@ static void mt_cell(vfft_transform_t tr, int nd, const int *n, int naive)
     }
     env_set("VFFT_IL2D_CHAIN", NULL);
     /* the serial plan first (its own row): the reference where the naive DFT is not affordable */
-    p1 = mk(tr, nd, n, 0, VFFT_ORDER_DEFAULT, 1);
+    p1 = mk(tr, nd, n, 0, VFFT_ORDER_NATURAL, 1);
     CHECK(p1 != NULL, "M %s %s: T=1 create refused", real ? "r2c" : "c2c", cell);
-    if (p1) { vfft_execute(p1, VFFT_FORWARD, x, NULL, y1, NULL); vfft_destroy(p1); }
-    vfft_set_num_threads(8);
-    p8 = mk(tr, nd, n, 0, VFFT_ORDER_DEFAULT, 8);   /* cold at T = 8: the T = 8 races, the planner's pick */
+    if (p1) { vfft_execute(p1, VFFT_FORWARD, x, y1); vfft_destroy(p1); }
+    p8 = mk(tr, nd, n, 0, VFFT_ORDER_NATURAL, 8);   /* cold at T = 8: the T = 8 races, the planner's pick */
     CHECK(p8 != NULL, "M %s %s: T=8 create refused", real ? "r2c" : "c2c", cell);
     if (!p8) goto done;
     m0 = moved_all();
-    vfft_execute(p8, VFFT_FORWARD, x, NULL, y, NULL);
+    vfft_execute(p8, VFFT_FORWARD, x, y);
     printf("M %s %-12s T=8 cold: route %-10s threaded passes %ld\n", real ? "r2c" : "c2c", cell, vfft_plan_route(p8), moved_all() - m0);
     if (real && nd == 1 && moved_all() == m0)
         printf("  (gap, reported 2026-10-14: the even-length real engine creates its complex child single-threaded,\n"
@@ -634,13 +626,13 @@ static void mt_cell(vfft_transform_t tr, int nd, const int *n, int naive)
     }
     if (real)
     {   /* the c2r pair at T = 8: the roundtrip */
-        vfft_plan pc = mk(VFFT_C2R, nd, n, 0, VFFT_ORDER_DEFAULT, 8);
+        vfft_plan pc = mk(VFFT_C2R, nd, n, 0, VFFT_ORDER_NATURAL, 8);
         CHECK(pc != NULL, "M c2r %s: T=8 create refused", cell);
         if (pc)
         {
             memcpy(y2, y, outn * 8);
             m0 = moved_all();
-            vfft_execute(pc, VFFT_BACKWARD, y2, NULL, xr, NULL);
+            vfft_execute(pc, VFFT_BACKWARD, y2, xr);
             printf("M c2r %-12s T=8 cold: route %-10s threaded passes %ld\n", cell, vfft_plan_route(pc), moved_all() - m0);
             if (nd == 1 && moved_all() == m0)
                 printf("  (gap, reported 2026-10-14: the same single-threaded child on the c2r side)\n");
@@ -652,20 +644,19 @@ static void mt_cell(vfft_transform_t tr, int nd, const int *n, int naive)
     }
     else
     {
-        vfft_execute(p8, VFFT_BACKWARD, y, NULL, xr, NULL);
+        vfft_execute(p8, VFFT_BACKWARD, y, xr);
         CHECK(relrt(xr, x, 2 * tot, (double)tot) < 1e-10, "M c2c %s: T=8 bwd roundtrip %.2e", cell, relrt(xr, x, 2 * tot, (double)tot));
     }
-    p8b = mk(tr, nd, n, 0, VFFT_ORDER_DEFAULT, 8);   /* the replay at T = 8 */
+    p8b = mk(tr, nd, n, 0, VFFT_ORDER_NATURAL, 8);   /* the replay at T = 8 */
     CHECK(p8b != NULL, "M %s %s: T=8 replay create refused", real ? "r2c" : "c2c", cell);
     if (p8b)
     {
-        vfft_execute(p8b, VFFT_FORWARD, x, NULL, y2, NULL);
+        vfft_execute(p8b, VFFT_FORWARD, x, y2);
         CHECK(memcmp(y, y2, outn * 8) == 0, "M %s %s: T=8 replay != cold (bitwise)", real ? "r2c" : "c2c", cell);
         vfft_destroy(p8b);
     }
     vfft_destroy(p8);
 done:
-    vfft_set_num_threads(1);
     vfft_free(x); vfft_free(y); vfft_free(y2); vfft_free(y1); vfft_free(xr); free(rre); free(rim); free(re); free(im);
 }
 
@@ -682,10 +673,10 @@ static void lifecycle(void)
     for (k = 0; k < 40 && ok; k++)
     {   /* in place and out, one and eight threads: each plan is its own (the rows it banks can
          * move a later plan's route), so the results agree to rounding, not bitwise */
-        vfft_plan p = mk(VFFT_C2C, 2, n, k & 1, VFFT_ORDER_DEFAULT, (k % 4 == 3) ? 8 : 1);
+        vfft_plan p = mk(VFFT_C2C, 2, n, k & 1, VFFT_ORDER_NATURAL, (k % 4 == 3) ? 8 : 1);
         if (!p) { ok = 0; refused = 1; break; }
-        if (k & 1) { memcpy(y, x, nd * 8); vfft_execute(p, VFFT_FORWARD, y, NULL, y, NULL); }
-        else vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+        if (k & 1) { memcpy(y, x, nd * 8); vfft_execute(p, VFFT_FORWARD, y, y); }
+        else vfft_execute(p, VFFT_FORWARD, x, y);
         if (k == 0) memcpy(y0, y, nd * 8);
         else
         {
@@ -717,18 +708,18 @@ static void planner_pick(int N)
     fill(x, nd, 3);
     for (i = 0; i < (size_t)N; i++) { re[i] = x[2 * i]; im[i] = x[2 * i + 1]; }
     dft_nd(re, im, rre, rim, n1, 1);
-    p = mk(VFFT_C2C, 1, n1, 0, VFFT_ORDER_DEFAULT, 1);   /* cold: the flat race with the leaf among its arms */
+    p = mk(VFFT_C2C, 1, n1, 0, VFFT_ORDER_NATURAL, 1);   /* cold: the flat race with the leaf among its arms */
     CHECK(p != NULL, "planner 1D %d: create refused", N);
     if (p)
     {
         printf("P 1D %d cold: route %s\n", N, vfft_plan_route(p));
-        vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+        vfft_execute(p, VFFT_FORWARD, x, y);
         CHECK(relz(y, rre, rim, N) < 1e-10, "planner 1D %d: fwd vs naive %.2e", N, relz(y, rre, rim, N));
-        p2 = mk(VFFT_C2C, 1, n1, 0, VFFT_ORDER_DEFAULT, 1);   /* the same table: replay */
+        p2 = mk(VFFT_C2C, 1, n1, 0, VFFT_ORDER_NATURAL, 1);   /* the same table: replay */
         CHECK(p2 != NULL, "planner 1D %d: replay create refused", N);
         if (p2)
         {
-            vfft_execute(p2, VFFT_FORWARD, x, NULL, y2, NULL);
+            vfft_execute(p2, VFFT_FORWARD, x, y2);
             CHECK(memcmp(y, y2, nd * 8) == 0, "planner 1D %d: replay != cold (bitwise)", N);
             vfft_destroy(p2);
         }
@@ -745,7 +736,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[a], "--wisdir")) dir = argv[a + 1];
     if (!dir) { printf("usage: rader_gate --wisdir <cold scratch dir>\n"); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
-    g_W = vfft_wisdom_load(dir);
+    g_W = (dir);
     env_set("VFFT_TCMT", NULL);
     printf("RADER GATE: the Rader stage's touch points (leaf, column stage, 3D, planner, T=8 every tier, lifecycle), store %s\n", dir);
     /* L */
@@ -801,6 +792,5 @@ int main(int argc, char **argv)
     /* P */
     planner_pick(2101);
     printf("%d checks, %d failed\n%s\n", g_checks, g_fail, g_fail ? "*** RADER GATE FAILED ***" : "RADER GATE ALL PASS");
-    if (g_W) vfft_wisdom_free(g_W);
     return g_fail ? 1 : 0;
 }

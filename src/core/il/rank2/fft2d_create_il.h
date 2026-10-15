@@ -14,13 +14,13 @@
 
 /* howmany > 1: the plane queue (the dispatcher refused every layout and
  * transform it cannot express). */
-static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_2d_pq_il(const vfft_cfg_t *cfg,
                                       struct vfft_wisdom_s *W,
                                       size_t K)
 {
     const int N1q = cfg->n[0], N2q = cfg->n[1];
     const size_t hp1q = (size_t)N2q / 2 + 1;
-    vfft_config_t ic;
+    vfft_cfg_t ic;
     struct vfft_plan_s *h;
     ic = *cfg;
     ic.howmany = 1;
@@ -32,7 +32,7 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
     if (!h)
         return NULL;
     h->pq_inner =
-        (struct vfft_plan_s *)vfft_create(&ic); /* warns itself */
+        (struct vfft_plan_s *)_vfft_create_cfg(&ic); /* warns itself */
     if (!h->pq_inner)
     {
         free(h);
@@ -107,12 +107,12 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
              * among themselves (one plan, replayed), and with the primary
              * to a tolerance that catches a broken clone, not a different
              * rounding. */
-            vfft_execute((vfft_plan)h->pq_inner, pd, ps, NULL,
+            _vfft_exec6((vfft_plan)h->pq_inner, pd, ps, NULL,
                          p0, NULL);
             for (t = 0; t < T && ok; t++)
             {
                 h->pq_w[t] =
-                    (struct vfft_plan_s *)vfft_create(&ic);
+                    (struct vfft_plan_s *)_vfft_create_cfg(&ic);
                 if (!h->pq_w[t])
                 {
                     ok = 0;
@@ -123,7 +123,7 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
                      * within 1e-10 of the primary */
                     double mx = 0.0, md = 0.0;
                     size_t i3;
-                    vfft_execute((vfft_plan)h->pq_w[0], pd, ps,
+                    _vfft_exec6((vfft_plan)h->pq_w[0], pd, ps,
                                  NULL, p1, NULL);
                     for (i3 = 0; i3 < h->pq_ddist; i3++)
                     {
@@ -137,7 +137,7 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
                 }
                 else
                 {
-                    vfft_execute((vfft_plan)h->pq_w[t], pd, ps,
+                    _vfft_exec6((vfft_plan)h->pq_w[t], pd, ps,
                                  NULL, p0, NULL);
                     if (memcmp(p0, p1,
                                h->pq_ddist * sizeof(double)) != 0)
@@ -171,7 +171,7 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_config_t *cfg,
 }
 
 /* howmany == 1: the native IL 2D plan. */
-static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                                    struct vfft_wisdom_s *W,
                                    size_t K)
 {
@@ -240,7 +240,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
     vfft_il2p_fn il2d_f[8] = { 0 }, il2d_b[8] = { 0 };
     double *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
     if (cfg->transform == VFFT_C2C &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+        cfg->layout == VFI_LAYOUT_IL)
     {
         {   /* THE COLUMN-AXIS PASS BUILD: chain (env > banked > raced),
              * forms, Bluestein, the natural leaf
@@ -281,7 +281,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             il2d_tbl_done = 1;         /* the builder built the tables */
         }
         {
-            vfft_config_t rc;
+            vfft_cfg_t rc;
             memset(&rc, 0, sizeof rc);
             rc.transform = VFFT_C2C;
             rc.placement = VFFT_INPLACE;
@@ -289,8 +289,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.dims = 1;
             rc.n[0] = N2;
             rc.howmany = 1;
-            rc.order = VFFT_ORDER_NATURAL;
-            rc.layout = VFFT_LAYOUT_INTERLEAVED;
+            rc.order = VFI_ORDER_NATURAL;
+            rc.layout = VFI_LAYOUT_IL;
             rc.nthreads = 1;
             {   /* THE ROW PLAN IN ROLE (owner, 2026-10-02): its own store, seeded
                  * from this cell's row (rp_*); it never reads or writes a 1D row */
@@ -310,7 +310,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.wisdom = (vfft_wisdom *)il2d_rowS;
             rc.wisdom_write = 0;
             rc.recalibrate = cfg->recalibrate;
-            il2d_row = il2d_rowS ? (struct vfft_plan_s *)vfft_create(&rc) : NULL;
+            il2d_row = il2d_rowS ? (struct vfft_plan_s *)_vfft_create_cfg(&rc) : NULL;
             if (il2d_row && !il2d_blu && !il2d_tbl_done &&
                 _il2d_build_tables(N1, il2d_nst, il2d_R,
                                    il2d_L, il2d_tf, il2d_tb))
@@ -390,7 +390,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
              * banked turn=1; VFFT_IL2D_ROWOOP=4 pins it. */
             if (il2d_row && !il2d_blu && il2d_rowb_f && vfft_policy_rankn_axis_nat(2, 0, il2d_ord))
             {
-                vfft_config_t tc;
+                vfft_cfg_t tc;
                 memset(&tc, 0, sizeof tc);
                 tc.transform = VFFT_C2C;
                 tc.placement = VFFT_INPLACE;
@@ -398,14 +398,14 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 tc.dims = 1;
                 tc.n[0] = N1;
                 tc.howmany = 1;
-                tc.order = VFFT_ORDER_NATURAL;
-                tc.layout = VFFT_LAYOUT_INTERLEAVED;
+                tc.order = VFI_ORDER_NATURAL;
+                tc.layout = VFI_LAYOUT_IL;
                 tc.nthreads = 1;
                 il2d_turnS = vfft_child_store_for(&W->vw2, &il2d_pk, "turn_");   /* the turn plan in role (turn_*) */
                 tc.wisdom = (vfft_wisdom *)il2d_turnS;
                 tc.wisdom_write = 0;
                 tc.recalibrate = cfg->recalibrate;
-                il2d_turn_plan = il2d_turnS ? (struct vfft_plan_s *)vfft_create(&tc) : NULL;
+                il2d_turn_plan = il2d_turnS ? (struct vfft_plan_s *)_vfft_create_cfg(&tc) : NULL;
                 if (il2d_turn_plan)
                 {
                     il2d_turn_scr = (double *)vfft_aligned_alloc(2 * VFFT_IL2D_TURN_PITCH(N1) * (size_t)N2 * sizeof(double));
@@ -439,7 +439,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                 il2d_csk_scr = (double *)vfft_aligned_alloc(2 * (size_t)N1 * ((size_t)N2 + 8) * sizeof(double));
                 if (il2d_csk_scr)
                 {
-                    vfft_config_t oc;
+                    vfft_cfg_t oc;
                     memset(&oc, 0, sizeof oc);
                     oc.transform = VFFT_C2C;
                     oc.placement = VFFT_OUTOFPLACE;
@@ -447,14 +447,14 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
                     oc.dims = 1;
                     oc.n[0] = N2;
                     oc.howmany = 1;
-                    oc.order = VFFT_ORDER_NATURAL;
-                    oc.layout = VFFT_LAYOUT_INTERLEAVED;
+                    oc.order = VFI_ORDER_NATURAL;
+                    oc.layout = VFI_LAYOUT_IL;
                     oc.nthreads = 1;
                     il2d_cskS = vfft_child_store_for(&W->vw2, &il2d_pk, "csk_");   /* the skewed pass's row plan in role (csk_*) */
                     oc.wisdom = (vfft_wisdom *)il2d_cskS;
                     oc.wisdom_write = 0;
                     oc.recalibrate = cfg->recalibrate;
-                    il2d_csk_row = il2d_cskS ? (struct vfft_plan_s *)vfft_create(&oc) : NULL;
+                    il2d_csk_row = il2d_cskS ? (struct vfft_plan_s *)_vfft_create_cfg(&oc) : NULL;
                 }
                 if (il2d_csk_scr && !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_CSK") &&
                     vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "csk", 0) == 1)
@@ -594,7 +594,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
      * untouched. Inexpressible cells (chain/row failures) REFUSE
      * loudly. */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-        cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+        cfg->layout == VFI_LAYOUT_IL &&
         (cfg->placement == VFFT_OUTOFPLACE || vfft_policy_il2d_ip_ok(cfg, il2d_T)))
     {
         int rok = 1;
@@ -669,7 +669,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
              * bins must come out in order), OOP into the row pair
              * buffer. Serial — the row loop is plain (the odd rows
              * are not threaded). */
-            vfft_config_t rc;
+            vfft_cfg_t rc;
             memset(&rc, 0, sizeof rc);
             rc.transform = VFFT_C2C;
             rc.placement = VFFT_OUTOFPLACE;
@@ -677,8 +677,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.dims = 1;
             rc.n[0] = N2;
             rc.howmany = 1;
-            rc.order = VFFT_ORDER_NATURAL;
-            rc.layout = VFFT_LAYOUT_INTERLEAVED;
+            rc.order = VFI_ORDER_NATURAL;
+            rc.layout = VFI_LAYOUT_IL;
             rc.nthreads = 1;
             {   /* THE ROW CHILD IN ROLE: its own store, seeded from this cell's real row
                  * (rp_*, or rp_c2r_* for a c2r plan); it never reads or writes a 1D row */
@@ -689,7 +689,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.wisdom = (vfft_wisdom *)il2d_rowS;
             rc.wisdom_write = 0;
             rc.recalibrate = cfg->recalibrate;
-            il2d_row = il2d_rowS ? (struct vfft_plan_s *)vfft_create(&rc) : NULL;
+            il2d_row = il2d_rowS ? (struct vfft_plan_s *)_vfft_create_cfg(&rc) : NULL;
             if (il2d_row)
             {
                 il2d_orbuf = (double *)vfft_aligned_alloc(
@@ -726,7 +726,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
         }
         else if (rok)
         {
-            vfft_config_t rc;
+            vfft_cfg_t rc;
             memset(&rc, 0, sizeof rc);
             rc.transform = cfg->transform;
             rc.placement = cfg->placement;   /* in place: the K = 1 in-place real plan per row, each on its padded row */
@@ -734,8 +734,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.dims = 1;
             rc.n[0] = N2;
             rc.howmany = (size_t)N1;
-            rc.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
-            rc.layout = VFFT_LAYOUT_INTERLEAVED;
+            rc.batch_geom = VFFT_BATCH_CONTIGUOUS;
+            rc.layout = VFI_LAYOUT_IL;
             /* the row pass IS a transform-contiguous batch of N1 whole
              * rows — exactly the shape the TC clone MT threads (clones
              * gated by _tc_inner_mt_safe: the zr2c route is pool-free,
@@ -751,7 +751,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_config_t *cfg,
             rc.wisdom = (vfft_wisdom *)il2d_rowS;
             rc.wisdom_write = 0;
             rc.recalibrate = cfg->recalibrate;
-            il2d_row = il2d_rowS ? (struct vfft_plan_s *)vfft_create(&rc) : NULL;
+            il2d_row = il2d_rowS ? (struct vfft_plan_s *)_vfft_create_cfg(&rc) : NULL;
             /* PURITY GATE: the TC inner must be one of the interleaved
              * real engines — zr2c (the composite), the real pair, ZTT-r
              * or the real mono (il/real/zrp_build.h: the door's four

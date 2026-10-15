@@ -43,18 +43,18 @@ static int tap_count(const char *needle)
     return n;
 }
 
-static vfft_plan mk(vfft_wisdom *W, int N1, int N2, int N3, int scr)
+static vfft_plan mk(const char *W, int N1, int N2, int N3, int scr)
 {
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
-    cfg.rigor = VFFT_PATIENT;        /* production rigor; MEASURE shuts race windows */
-    cfg.dims = 3; cfg.n[0] = N1; cfg.n[1] = N2; cfg.n[2] = N3; cfg.howmany = 1;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.flags |= VFFT_FLAG_PATIENT;        /* production rigor; MEASURE shuts race windows */
+    cfg.rank = 3; cfg.n[0] = N1; cfg.n[1] = N2; cfg.n[2] = N3; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
     cfg.nthreads = 1;
-    cfg.wisdom = W; cfg.wisdom_write = 1;
+    cfg.wisdom_dir = W;
     return vfft_create(&cfg);
 }
 
@@ -111,7 +111,7 @@ int main(int argc, char **argv)
             const size_t PN = (size_t)N1 * N2 * N3, nb = 2 * PN * sizeof(double);
             double *x = (double *)malloc(nb), *y = (double *)malloc(nb), *y2 = (double *)malloc(nb), *ref = NULL;
             char needle_scr[64], needle_nat[64];
-            vfft_wisdom *W = vfft_wisdom_load(dir);
+            const char *W = (dir);
             vfft_plan p;
             int raced_scr, raced_nat, raced;
             size_t q;
@@ -125,12 +125,12 @@ int main(int argc, char **argv)
             raced_scr = tap_count(needle_scr);
             raced_nat = tap_count(needle_nat);
             CHECK(p != NULL, "%dx%dx%d %s: create refused", N1, N2, N3, cls);
-            if (!p) { vfft_wisdom_free(W); free(x); free(y); free(y2); continue; }
+            if (!p) { free(x); free(y); free(y2); continue; }
             CHECK(raced_nat == 0, "%dx%dx%d %s: axis 0 raced as (nat) -- timing a pass the tier never runs (the 2026-09-17 drift)", N1, N2, N3, cls);
             /* N1 = 23 has no chain over the pool and goes to Bluestein: no axis-0 chain race */
             if (N1 != 23)
                 CHECK(raced_scr == 1, "%dx%dx%d %s: axis 0 raced %d time(s), expected 1", N1, N2, N3, cls, raced_scr);
-            vfft_execute(p, VFFT_FORWARD, x, NULL, y, NULL);
+            vfft_execute(p, VFFT_FORWARD, x, y);
             vfft_destroy(p);
             if (!scr && dft)
             {
@@ -153,14 +153,13 @@ int main(int argc, char **argv)
             if (p)
             {
                 CHECK(raced == 0, "%dx%dx%d %s: warm create RACED (%d) -- a verdict was not banked", N1, N2, N3, cls, raced);
-                vfft_execute(p, VFFT_FORWARD, x, NULL, y2, NULL);
+                vfft_execute(p, VFFT_FORWARD, x, y2);
                 CHECK(memcmp(y, y2, nb) == 0, "%dx%dx%d %s: warm forward != cold forward (bitwise)", N1, N2, N3, cls);
                 vfft_destroy(p);
             }
             printf("  %2dx%2dx%2d %-9s cold: axis0 %s x%d%s, warm: %s, %s\n", N1, N2, N3, cls,
                    raced_nat ? "(NAT!)" : "(scr)", raced_scr, dft ? ", DFT ok" : "",
                    raced ? "RACED" : "replayed", (p && memcmp(y, y2, nb) == 0) ? "bitwise" : "NOT BITWISE");
-            vfft_wisdom_free(W);
             free(x); free(y); free(y2); free(ref);
         }
     }

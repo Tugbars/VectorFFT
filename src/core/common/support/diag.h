@@ -21,15 +21,39 @@
 
 #include "vfft.h"   /* the VFFT_* transform enum that _vfft_tname names */
 
+#include <stdlib.h>
+#include <string.h>
+#if defined(_MSC_VER)
+#define VFFT_TLS __declspec(thread)
+#else
+#define VFFT_TLS __thread
+#endif
+/* THE REFUSAL RECORD (API v2, 2026-10-15): every message lands in the calling thread's buffer,
+ * which vfft_error() returns; it is printed only under VFFT_FLAG_VERBOSE (the create in progress
+ * on this thread) or VFFT_VERBOSE set in the environment (the whole process). */
+static VFFT_TLS char _vfft_err_buf[512];
+static VFFT_TLS int _vfft_verbose_tls = 0;
+static int _vfft_verbose_env(void)
+{
+    static int v = -1;   /* read once; a race on the first read writes the same value */
+    if (v < 0)
+    {
+        const char *e = getenv("VFFT_VERBOSE");
+        v = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
+    }
+    return v;
+}
 static void _vfft_warn(const char *fmt, ...)
 {
     va_list ap;
-    fprintf(stderr, "vfft: ");
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vsnprintf(_vfft_err_buf, sizeof _vfft_err_buf, fmt, ap);
     va_end(ap);
-    fputc('\n', stderr);
-    fflush(stderr);
+    if (_vfft_verbose_tls || _vfft_verbose_env())
+    {
+        fprintf(stderr, "vfft: %s\n", _vfft_err_buf);
+        fflush(stderr);
+    }
 }
 
 static const char *_vfft_tname(int t)

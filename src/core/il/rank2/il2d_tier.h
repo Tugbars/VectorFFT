@@ -119,7 +119,7 @@ static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
     const double *tw = _il2d_fs_rec(h, rn, p);
     if (tw && dir == VFFT_FORWARD)
         _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 0);
-    vfft_execute(h->il2d_row, dir, row, NULL, row, NULL);
+    _vfft_exec6(h->il2d_row, dir, row, NULL, row, NULL);
     if (tw && dir != VFFT_FORWARD)
         _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 1);
 }
@@ -200,7 +200,7 @@ static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
         for (r = 0; r < (size_t)h->N; r++)
         {
             _il2d_row_promote(sre + r * rp, b1, rn2);
-            vfft_execute((vfft_plan)h->il2d_row, VFFT_FORWARD, b1, NULL,
+            _vfft_exec6((vfft_plan)h->il2d_row, VFFT_FORWARD, b1, NULL,
                          b2, NULL);
             memcpy(dre + r * cpd, b2, 2 * hp1 * sizeof(double));
         }
@@ -212,7 +212,7 @@ static void _il2d_real_rows_fwd_route(struct vfft_plan_s *h, const double *sre,
         _il2d_door_ip(h, sre, dre, 0, 0);
         return;
     }
-    vfft_execute(h->il2d_row, VFFT_FORWARD, (double *)sre, NULL, dre, NULL);
+    _vfft_exec6(h->il2d_row, VFFT_FORWARD, (double *)sre, NULL, dre, NULL);
 }
 
 /* the r2c row pass: the plan's own row plan when one is bound (the row
@@ -245,7 +245,7 @@ static void _il2d_real_rows_bwd_route(struct vfft_plan_s *h, const double *zsrc,
         for (r = 0; r < (size_t)h->N; r++)
         {
             _il2d_row_extend(zsrc + r * 2 * Pz, b1, rn2, hp1);
-            vfft_execute((vfft_plan)h->il2d_row, VFFT_BACKWARD, b1, NULL,
+            _vfft_exec6((vfft_plan)h->il2d_row, VFFT_BACKWARD, b1, NULL,
                          b2, NULL);
             _il2d_row_re(b2, dre + r * rp, rn2);
         }
@@ -259,7 +259,7 @@ static void _il2d_real_rows_bwd_route(struct vfft_plan_s *h, const double *zsrc,
         _il2d_door_ip(h, zsrc, dre, 1, Pz);
         return;
     }
-    vfft_execute(h->il2d_row, VFFT_BACKWARD, (double *)zsrc, NULL, dre, NULL);
+    _vfft_exec6(h->il2d_row, VFFT_BACKWARD, (double *)zsrc, NULL, dre, NULL);
 }
 
 /* the c2r row pass: the plan's own row plan when one is bound (the c2r row
@@ -366,7 +366,7 @@ static void _il2d_tpc_cols_range(const vfft_ilcol_t *c, const double *src, doubl
     size_t l;
     _il2d_tpc_turn_in(src, rn, N, c0, c1, S, P);
     for (l = c0; l < c1; l++)
-        vfft_execute((vfft_plan)c->tpcplan, rev ? VFFT_BACKWARD : VFFT_FORWARD,
+        _vfft_exec6((vfft_plan)c->tpcplan, rev ? VFFT_BACKWARD : VFFT_FORWARD,
                      S + 2 * l * P, NULL, S + 2 * l * P, NULL);
     _il2d_tpc_turn_out(S, P, dst, rn, N, c0, c1);
 }
@@ -853,7 +853,7 @@ static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid,
         const double *tw = _il2d_fs_rec(h, rn, p);
         if (tw && dir == VFFT_FORWARD)
             _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 0);
-        vfft_execute((vfft_plan)c, dir, row, NULL, row, NULL);
+        _vfft_exec6((vfft_plan)c, dir, row, NULL, row, NULL);
         if (tw && dir != VFFT_FORWARD)
             _il2d_fs_twiddle(row, tw, h->il2d_fs_B, rn, 1);
     }
@@ -1013,7 +1013,7 @@ static void _il2d_rows_exec2(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
          * (worker t > 0 runs its clone: the threaded skewed pass) */
         struct vfft_plan_s *rp = (tid > 0) ? h->il2d_cskw[tid - 1] : h->il2d_csk_row;
         for (i = 0; i < nrows; i++)
-            vfft_execute((vfft_plan)rp, dir, in + 2 * i * pin, NULL, base + 2 * i * pitch, NULL);
+            _vfft_exec6((vfft_plan)rp, dir, in + 2 * i * pin, NULL, base + 2 * i * pitch, NULL);
         return;
     }
     for (i = 0; i < nrows; i++)
@@ -1095,7 +1095,7 @@ static void _il2d_turn_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double 
     size_t c;
     (dir == VFFT_FORWARD ? h->il2d_rowb_f : h->il2d_rowb_b)(sre, NULL, T, NULL, NULL, NULL, 1, rn, P, 1, N1);
     for (c = 0; c < rn; c++)
-        vfft_execute((vfft_plan)h->il2d_turn_plan, dir, T + 2 * c * P, NULL, T + 2 * c * P, NULL);
+        _vfft_exec6((vfft_plan)h->il2d_turn_plan, dir, T + 2 * c * P, NULL, T + 2 * c * P, NULL);
     _il2d_turn_back(T, P, dre, N1, rn);
 }
 
@@ -1337,7 +1337,7 @@ static void _il2d_c2c_mt_tramp(void *v)
             const size_t P = VFFT_IL2D_TURN_PITCH((size_t)h->N);
             size_t c;
             for (c = a->lo; c < a->hi; c++)
-                vfft_execute((vfft_plan)tp, a->dir, h->il2d_turn_scr + 2 * c * P, NULL,
+                _vfft_exec6((vfft_plan)tp, a->dir, h->il2d_turn_scr + 2 * c * P, NULL,
                              h->il2d_turn_scr + 2 * c * P, NULL);
         }
         break;
@@ -1464,7 +1464,7 @@ static int _il2d_turn_exec_mt(struct vfft_plan_s *h, const double *sre, double *
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 9, rn, Tc);
     else
         for (c = 0; c < rn; c++)
-            vfft_execute((vfft_plan)h->il2d_turn_plan, dir, h->il2d_turn_scr + 2 * c * P, NULL,
+            _vfft_exec6((vfft_plan)h->il2d_turn_plan, dir, h->il2d_turn_scr + 2 * c * P, NULL,
                          h->il2d_turn_scr + 2 * c * P, NULL);
     if (Tr >= 2)
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 10, N1, T);
@@ -1818,7 +1818,7 @@ static void _il2d_arm_exec_st(void *v)
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
     c->h->il2d_col.colmt = 0;
     c->h->il2d_col.natst = 1;      /* the serial walk's form: staged */
-    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
+    _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
 static void _il2d_arm_exec_mt(void *v)
 {
@@ -1826,7 +1826,7 @@ static void _il2d_arm_exec_mt(void *v)
     c->h->il2d_col.colmt = 1;
     c->h->il2d_col.natarm = 0;
     c->h->il2d_col.natst = c->lst;
-    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
+    _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
 static void _il2d_arm_exec_mt_strip(void *v)
 {   /* natural cells only: the strip partition of the natural pass */
@@ -1835,7 +1835,7 @@ static void _il2d_arm_exec_mt_strip(void *v)
     c->h->il2d_col.natarm = 1;
     c->h->il2d_col.msw = 0;
     c->h->il2d_col.natst = c->lst;
-    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
+    _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
 static void _il2d_arm_exec_mt_tile(void *v)
 {   /* natural cells: the TILE partition */
@@ -1844,7 +1844,7 @@ static void _il2d_arm_exec_mt_tile(void *v)
     c->h->il2d_col.natarm = 2;
     c->h->il2d_col.msw = 0;
     c->h->il2d_col.natst = c->lst;
-    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
+    _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
 static void _il2d_arm_exec_mt_sw(void *v)
 {   /* every class: strips of c->sw columns (il2d_large_plane_design.md) */
@@ -1853,7 +1853,7 @@ static void _il2d_arm_exec_mt_sw(void *v)
     c->h->il2d_col.natarm = 1;
     c->h->il2d_col.msw = c->sw;
     c->h->il2d_col.natst = c->lst;
-    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
+    _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
 /* the strip-width ladder: N1 x sw x 16 B under L2 (the hardware fence),
  * sw a divisor of N2, and at T > 1 at least T sub-strips. 8 is on it
@@ -1877,7 +1877,7 @@ static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max)
 static void _il2d_arm_exec(void *v)
 {
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
-    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
+    _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
 }
 static void _il2d_arm_chain(void *v)
 {
@@ -2076,7 +2076,7 @@ static int _il2d_race_reps(void (*run)(void *), void *ctx, double grow)
  * thread, or no race). */
 static int _il2d_real_wlrace(struct vfft_plan_s *h,
                              struct vfft_wisdom_s *W,
-                             const vfft_config_t *cfg, int N1, int N2)
+                             const vfft_cfg_t *cfg, int N1, int N2)
 {
     const size_t CN = (size_t)N1 * h->il2d_col.rn;   /* the plane at the plan's pitch */
     const int isr = (h->transform == VFFT_R2C);
@@ -2193,7 +2193,7 @@ static void _il2d_nat_sscr_free(vfft_ilcol_t *c);
  * freed. */
 static void _il2d_real_colmt_race(struct vfft_plan_s *h,
                                   struct vfft_wisdom_s *W,
-                                  const vfft_config_t *cfg, int N1,
+                                  const vfft_cfg_t *cfg, int N1,
                                   int N2)
 {
     const size_t CN = 2 * (size_t)N1 * h->il2d_col.rn;   /* the CCE plane at the plan's pitch, doubles */
@@ -2331,7 +2331,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
  * row. Context = the create in progress (set at the 2D/3D create's entry). */
 static struct {
     struct vfft_wisdom_s *W;
-    const vfft_config_t *cfg;
+    const vfft_cfg_t *cfg;
     int N2;
     /* the column-axis Bluestein's INNER chain at M is the
      * cell's verdict and banks on THE CELL'S OWN row -- never on the
@@ -2351,14 +2351,14 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
                             size_t fsz, int half, int T, int nat);
 static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
-                                  const vfft_config_t *cfg,
+                                  const vfft_cfg_t *cfg,
                                   const vw2_ilcol_key_t *key, const char *base,
                                   int N, size_t rn,
                                   const int *Rs, int nst,
                                   vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                                   char *forms, size_t fsz, int T, int nat);
 static void _il2d_forms_serve(struct vfft_wisdom_s *W,
-                              const vfft_config_t *cfg, int is_real, int N1,
+                              const vfft_cfg_t *cfg, int is_real, int N1,
                               int N2, const int *Rs, int nst,
                               vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                               char *forms, size_t fsz, int ord);
@@ -2366,7 +2366,7 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
                              size_t fsz)
 {
     struct vfft_wisdom_s *W = _il2d_blu_ctx.W;
-    const vfft_config_t *cfg = _il2d_blu_ctx.cfg;
+    const vfft_cfg_t *cfg = _il2d_blu_ctx.cfg;
     const int N2 = _il2d_blu_ctx.N2;
     const vw2_ilcol_key_t *key = _il2d_blu_ctx.key;
     vfft_il2p_fn ff[8], fb[8];
@@ -2598,7 +2598,7 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
  * the per-stage race, banked on that row (wisdom off / no choice: the
  * construction-table defaults stand). ff/fb come in resolved (defaults). */
 static void _il2d_forms_serve(struct vfft_wisdom_s *W,
-                              const vfft_config_t *cfg, int is_real, int N1,
+                              const vfft_cfg_t *cfg, int is_real, int N1,
                               int N2, const int *Rs, int nst,
                               vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                               char *forms, size_t fsz, int ord)
@@ -3008,7 +3008,7 @@ static void _il2d_col_free(vfft_ilcol_t *c)
  * through the tag blocks _il2d_build_tables takes from the build's engine
  * context. T scratch slots. 1 = ok (or no such stage), 0 = it could not be
  * built. */
-static int _il2d_col_rd0_attach(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static int _il2d_col_rd0_attach(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                 const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int p, int N, size_t rn, int T,
                                 int *replayed)
 {
@@ -3067,7 +3067,7 @@ static int _il2d_col_rd0_attach(struct vfft_wisdom_s *W, const vfft_config_t *cf
  * timing at every T (the engine's inner is a per-column choice). */
 /* the engine's verdict on the column row (rd= / rdw=); nothing without the row (a pinned
  * chain's row is created after the build: the cell's next create banks) */
-static void _il2d_col_rd0_bank(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_col_rd0_bank(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                const vw2_ilcol_key_t *key, const void *rd0, int N, size_t rn, const char *how)
 {
     char d[64], wb[16];
@@ -3088,7 +3088,7 @@ static void _il2d_rd0_arm_run(void *v)
     ((_ilrd_ctab_t *)a->h->tf[0])->rd = a->rd;
     _il2d_n1arm_chain(a->h);
 }
-static void _il2d_col_rd0_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_col_rd0_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int N, size_t rn, int T)
 {
     vfft_ilrd_t *cur = (vfft_ilrd_t *)c->rd0, *win;
@@ -3194,7 +3194,7 @@ static void _il2d_col_rd0_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg
 /* the forms axis by the column row's key (rank/axis-general twin of
  * _il2d_forms_serve, which keys rank 2 axis 0) */
 static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
-                                  const vfft_config_t *cfg,
+                                  const vfft_cfg_t *cfg,
                                   const vw2_ilcol_key_t *key, const char *base,
                                   int N, size_t rn,
                                   const int *Rs, int nst,
@@ -3263,10 +3263,10 @@ static int _il2d_tpc_admits(const vw2_ilcol_key_t *key, const vfft_ilcol_t *c)
 {
     return c->blu > 0 && !key->real && key->axis == 0;
 }
-static int _il2d_tpc_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg, const vw2_ilcol_key_t *key,
+static int _il2d_tpc_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, const vw2_ilcol_key_t *key,
                            vfft_ilcol_t *c, int N, size_t rn)
 {
-    vfft_config_t tc;
+    vfft_cfg_t tc;
     c->N = N;   /* the builder's caller stamps it later; the pass reads it */
     if (!c->tpcS)
     {   /* the turned prime column plan in role: its own store, its recipe from the column row (tpc_*) */
@@ -3283,13 +3283,13 @@ static int _il2d_tpc_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg, co
     tc.dims = 1;
     tc.n[0] = c->N;
     tc.howmany = 1;
-    tc.order = VFFT_ORDER_NATURAL;
-    tc.layout = VFFT_LAYOUT_INTERLEAVED;
+    tc.order = VFI_ORDER_NATURAL;
+    tc.layout = VFI_LAYOUT_IL;
     tc.nthreads = 1;
     tc.wisdom = (vfft_wisdom *)c->tpcS;
     tc.wisdom_write = 0;
     tc.recalibrate = cfg->recalibrate;
-    c->tpcplan = (struct vfft_plan_s *)vfft_create(&tc);
+    c->tpcplan = (struct vfft_plan_s *)_vfft_create_cfg(&tc);
     if (!c->tpcplan)
         return 0;
     c->tpcscr = (double *)vfft_aligned_alloc(2 * VFFT_IL2D_TPC_PITCH(c->N) * rn * sizeof(double));
@@ -3322,7 +3322,7 @@ static void _il2d_blu_drop_tables(vfft_ilcol_t *c)
     vfft_aligned_free(c->bluscr);
     c->bluchf = c->bluchb = c->blukf = c->blukb = c->bluscr = NULL;
 }
-static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                            const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int N, size_t rn)
 {
     const char *pin = getenv("VFFT_IL2D_TPC");
@@ -3385,7 +3385,7 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     else
         _il2d_tpc_drop(c);
 }
-static void _il2d_tpc_replay(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static void _il2d_tpc_replay(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                              const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int N, size_t rn)
 {
     const char *pin = getenv("VFFT_IL2D_TPC");
@@ -3417,7 +3417,7 @@ static void _il2d_tpc_replay(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
  * The banked axis verdicts (band width, fusion, row route, column MT + its
  * T, the N1-arm verdict) come back through the out-parameters, -1 = unraced.
  * Returns 1; 0 = REFUSED (loud), the descriptor freed. */
-static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                            const vw2_ilcol_key_t *key, int N, size_t rn, int nat_req,
                            vfft_ilcol_t *c, char *forms, size_t fsz,
                            int *bwl, int *btf, int *bro, int *bcmt, int *bcmtt, int *bblu)
@@ -3950,7 +3950,7 @@ static void _il2d_arm_axis(void *v)
     }
     else
         h->il2d_col.colmt = 0;   /* the serial form (every arm at T = 1; the "+s" twins at T > 1) */
-    vfft_execute((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->zo, NULL);
+    _vfft_exec6((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->zo, NULL);
 }
 
 /* the axis race: time the FULL execute (column chain + rows) over the wl
@@ -3970,7 +3970,7 @@ static void _il2d_arm_axis(void *v)
  * the scrambled cell serving a natural measurement). Order cells are never
  * compared, never mixed. */
 static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
-                            const vfft_config_t *cfg, int N1, int N2)
+                            const vfft_cfg_t *cfg, int N1, int N2)
 {
     const size_t T = (size_t)N1 * N2;
     double *z = (double *)vfft_aligned_alloc(2 * T * sizeof(double));   /* aligned like every plane the door serves */
@@ -4206,7 +4206,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
 /* the children's recipes onto the cell's row (wisdom2_child.h): the ones
  * that raced in this create, and any the row did not carry yet; saved like
  * any winner. The 2D create's last act. */
-static void _il2d_children_put(struct vfft_wisdom_s *W, const vfft_config_t *cfg, struct vfft_plan_s *h,
+static void _il2d_children_put(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, struct vfft_plan_s *h,
                                int N1, int N2, int ord, int T)
 {
     vw2_ilcol_key_t ck;
@@ -4228,7 +4228,7 @@ static void _il2d_children_put(struct vfft_wisdom_s *W, const vfft_config_t *cfg
 /* the real door's twin: the row child (rp_*, or rp_c2r_* for a c2r plan:
  * the two directions' rows differ) and the row engines (rx_*, or rx_c2r_*:
  * each direction's row plan has its own) onto the real row. */
-static void _il2d_real_children_put(struct vfft_wisdom_s *W, const vfft_config_t *cfg, struct vfft_plan_s *h,
+static void _il2d_real_children_put(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, struct vfft_plan_s *h,
                                     int N1, int N2, int ord, int T)
 {
     vw2_ilcol_key_t ck;
@@ -4261,12 +4261,12 @@ static void _il2d_real_children_put(struct vfft_wisdom_s *W, const vfft_config_t
  * counter shows it — never a half-cloned dispatch. */
 static int _tc_clone_equiv(const struct vfft_plan_s *a,
                            const struct vfft_plan_s *b);
-static int _il2d_clone_set(const struct vfft_plan_s *prim, struct vfft_wisdom_s *S, const vfft_config_t *cfg,
+static int _il2d_clone_set(const struct vfft_plan_s *prim, struct vfft_wisdom_s *S, const vfft_cfg_t *cfg,
                            int N, int placement, int T,
                            struct vfft_plan_s ***out, int *out_n, const char *what)
 {
     const int n = (T > 64 ? 64 : T) - 1;
-    vfft_config_t rc;
+    vfft_cfg_t rc;
     struct vfft_plan_s **arr;
     int t;
     if (n <= 0 || *out || !prim || !S)
@@ -4278,8 +4278,8 @@ static int _il2d_clone_set(const struct vfft_plan_s *prim, struct vfft_wisdom_s 
     rc.dims = 1;
     rc.n[0] = N;
     rc.howmany = 1;
-    rc.order = VFFT_ORDER_NATURAL;
-    rc.layout = VFFT_LAYOUT_INTERLEAVED;
+    rc.order = VFI_ORDER_NATURAL;
+    rc.layout = VFI_LAYOUT_IL;
     rc.nthreads = 1;
     rc.wisdom = (vfft_wisdom *)S; /* the child's own store: a clone replays its recipe, never a 1D row */
     rc.wisdom_write = 0;
@@ -4288,7 +4288,7 @@ static int _il2d_clone_set(const struct vfft_plan_s *prim, struct vfft_wisdom_s 
         return 0;
     for (t = 0; t < n; t++)
     {
-        struct vfft_plan_s *c = (struct vfft_plan_s *)vfft_create(&rc);
+        struct vfft_plan_s *c = (struct vfft_plan_s *)_vfft_create_cfg(&rc);
         arr[t] = c;
         if (!c || !_tc_clone_equiv(prim, c) || c->tcb || c->tcbw)
         {
@@ -4311,7 +4311,7 @@ static int _il2d_clone_set(const struct vfft_plan_s *prim, struct vfft_wisdom_s 
  * pass's OOP row plan on route 0 (its batched routes run stateless kernels on
  * their own slots), else the chain walk's in-place row child */
 static void _il2d_c2c_build_clones(struct vfft_plan_s *h,
-                                   const vfft_config_t *cfg, int T)
+                                   const vfft_cfg_t *cfg, int T)
 {
     if (h->il2d_turn)
     {
@@ -4333,7 +4333,7 @@ static void _il2d_c2c_build_clones(struct vfft_plan_s *h,
  * an arm whose set is missing runs serial -- what execute would do, but not
  * the comparison the race is for. After the race the sets the banked route
  * does not run are dropped. */
-static void _il2d_c2c_build_clone_sets_all(struct vfft_plan_s *h, const vfft_config_t *cfg, int T)
+static void _il2d_c2c_build_clone_sets_all(struct vfft_plan_s *h, const vfft_cfg_t *cfg, int T)
 {
     _il2d_clone_set(h->il2d_row, h->il2d_rowS, cfg, h->N2, VFFT_INPLACE, T, &h->il2d_roww, &h->il2d_roww_n, "row");
     if (h->il2d_csk_row)
@@ -4383,7 +4383,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                         double *dre, vfft_dir_t dir, int T);
 static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
                               struct vfft_wisdom_s *W,
-                              const vfft_config_t *cfg, int N1, int N2)
+                              const vfft_cfg_t *cfg, int N1, int N2)
 {
     const size_t PN = (size_t)N1 * N2;
     /* aligned like every plane the door serves, and the cell's own placement

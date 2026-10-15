@@ -219,7 +219,7 @@ static void _ilnd_plane_t(const vfft_ilnd_t *d, int tid, vfft_dir_t dir,
     if (d->arm == 1)
     {
         struct vfft_plan_s *c = tid > 0 ? d->childw[tid - 1] : d->child;
-        vfft_execute((vfft_plan)c, dir, (double *)src, NULL, dst, NULL);
+        _vfft_exec6((vfft_plan)c, dir, (double *)src, NULL, dst, NULL);
     }
     else
     {
@@ -239,7 +239,7 @@ static void _ilnd_plane_t(const vfft_ilnd_t *d, int tid, vfft_dir_t dir,
         else
             _il2d_col_exec(ax1, src, dst, rev);
         for (r = 0; r < (size_t)d->N[1]; r++)
-            vfft_execute((vfft_plan)row, dir, dst + 2 * r * rn, NULL,
+            _vfft_exec6((vfft_plan)row, dir, dst + 2 * r * rn, NULL,
                          dst + 2 * r * rn, NULL);
     }
 }
@@ -851,7 +851,7 @@ static void vfft_ilnd_destroy(vfft_ilnd_t *d)
 
 /* build T-1 clones of one structure; clones read warm wisdom and never
  * bank. Returns the count built (0 = that structure cannot thread, loud). */
-static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, int arm)
+static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_cfg_t *cfg, int T, int arm)
 {
     const int n = (T > THREAD_POOL_MAX_DISPATCH ? THREAD_POOL_MAX_DISPATCH : T) - 1;
     int t;
@@ -859,7 +859,7 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
         return 0;
     if (arm == 1)
     {
-        vfft_config_t cc;
+        vfft_cfg_t cc;
         if (d->wn1 || !d->child)
             return d->wn1;
         memset(&cc, 0, sizeof cc);
@@ -871,7 +871,7 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
         cc.n[1] = d->N[2];
         cc.howmany = 1;
         cc.order = cfg->order;
-        cc.layout = VFFT_LAYOUT_INTERLEAVED;
+        cc.layout = VFI_LAYOUT_IL;
         cc.nthreads = 1;
         cc.wisdom = (vfft_wisdom *)d->childS;   /* the child's own store: a clone replays its recipe */
         cc.wisdom_write = 0;
@@ -882,7 +882,7 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
             return 0;
         for (t = 0; t < n; t++)
         {
-            struct vfft_plan_s *c = (struct vfft_plan_s *)vfft_create(&cc);
+            struct vfft_plan_s *c = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
             d->childw[t] = c;
             if (!c || !_ilnd_child_equiv(d->child, c) || c->nthreads > 1)
             {
@@ -900,7 +900,7 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
     }
     else
     {
-        vfft_config_t rc;
+        vfft_cfg_t rc;
         if (d->wn2 || !d->row)
             return d->wn2;
         memset(&rc, 0, sizeof rc);
@@ -910,8 +910,8 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
         rc.dims = 1;
         rc.n[0] = d->N[2];
         rc.howmany = 1;
-        rc.order = VFFT_ORDER_NATURAL;
-        rc.layout = VFFT_LAYOUT_INTERLEAVED;
+        rc.order = VFI_ORDER_NATURAL;
+        rc.layout = VFI_LAYOUT_IL;
         rc.nthreads = 1;
         rc.wisdom = (vfft_wisdom *)d->rowS;   /* the row plan's own store: a clone replays its recipe */
         rc.wisdom_write = 0;
@@ -926,7 +926,7 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
         }
         for (t = 0; t < n; t++)
         {
-            struct vfft_plan_s *c = (struct vfft_plan_s *)vfft_create(&rc);
+            struct vfft_plan_s *c = (struct vfft_plan_s *)_vfft_create_cfg(&rc);
             const size_t pl = (size_t)d->N[1] * (size_t)d->N[2];
             d->roww[t] = c;
             d->ax1w[t] = d->ax1;            /* shared read-only tables */
@@ -1157,10 +1157,10 @@ static int _ilnd_wl_pool(const vfft_ilcol_t *c, int *out, int max)
 }
 
 /* ── the arms' builders ─────────────────────────────────────────────── */
-static int _ilnd_build_child(vfft_ilnd_t *d, struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+static int _ilnd_build_child(vfft_ilnd_t *d, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                              const vw2_ilcol_key_t *key0)
 {
-    vfft_config_t cc;
+    vfft_cfg_t cc;
     if (d->child)
         return 1;
     if (!d->childS)
@@ -1180,20 +1180,20 @@ static int _ilnd_build_child(vfft_ilnd_t *d, struct vfft_wisdom_s *W, const vfft
     cc.n[1] = d->N[2];
     cc.howmany = 1;
     cc.order = cfg->order;
-    cc.layout = VFFT_LAYOUT_INTERLEAVED;
+    cc.layout = VFI_LAYOUT_IL;
     cc.nthreads = 1;
     cc.wisdom = (vfft_wisdom *)d->childS;
     cc.wisdom_write = 0;
     cc.recalibrate = cfg->recalibrate;
-    d->child = (struct vfft_plan_s *)vfft_create(&cc);
+    d->child = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
     return d->child != NULL;
 }
 
 static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
-                            const vfft_config_t *cfg, const vw2_ilcol_key_t *key0)
+                            const vfft_cfg_t *cfg, const vw2_ilcol_key_t *key0)
 {
     vw2_ilcol_key_t key1 = *key0;
-    vfft_config_t rc;
+    vfft_cfg_t rc;
     int bwl, btf, bro, bcmt, bcmtt, bblu;
     if (d->row)
         return 1;
@@ -1220,8 +1220,8 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
     rc.dims = 1;
     rc.n[0] = d->N[2];
     rc.howmany = 1;
-    rc.order = VFFT_ORDER_NATURAL;
-    rc.layout = VFFT_LAYOUT_INTERLEAVED;
+    rc.order = VFI_ORDER_NATURAL;
+    rc.layout = VFI_LAYOUT_IL;
     rc.nthreads = 1;
     rc.wisdom = (vfft_wisdom *)d->rowS;
     rc.wisdom_write = 0;
@@ -1229,7 +1229,7 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
                                           * recalibrate 3D IL create re-races the
                                           * parent but replays the flat child's
                                           * row */
-    d->row = (struct vfft_plan_s *)vfft_create(&rc);
+    d->row = (struct vfft_plan_s *)_vfft_create_cfg(&rc);
     if (!d->row)
     {
         _il2d_col_free(&d->ax1);
@@ -1400,14 +1400,14 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
 /* ── the create: rank-3 interleaved c2c, either placement, every order ── */
 /* every NULL of the tier names its reason (vfft.h: create "returns NULL after
  * printing the reason"); the out-of-memory exits say what failed to allocate */
-static vfft_plan _ilnd_oom(vfft_ilnd_t *d, const vfft_config_t *cfg, const char *what)
+static vfft_plan _ilnd_oom(vfft_ilnd_t *d, const vfft_cfg_t *cfg, const char *what)
 {
     _vfft_warn("vfft_create: 3D INTERLEAVED C2C %dx%dx%d: out of memory (%s)",
                cfg->n[0], cfg->n[1], cfg->n[2], what);
     if (d) vfft_ilnd_destroy(d);
     return NULL;
 }
-static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
                                        struct vfft_wisdom_s *W,
                                        size_t K)
 {
@@ -1941,8 +1941,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
  * here): rank-3 c2c is the native tier above; real rank >= 3 and rank 4 are
  * refused loudly. Layout separation phase 6: the interleaved peel of the
  * pre-separation _vfft_create_rank34, verbatim. */
-static vfft_plan _vfft_create_fftnd_real_il(const vfft_config_t *cfg, struct vfft_wisdom_s *W, size_t K); /* fftnd_real_il.h, included after this header */
-static vfft_plan _vfft_create_rank34_il(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W, size_t K); /* fftnd_real_il.h, included after this header */
+static vfft_plan _vfft_create_rank34_il(const vfft_cfg_t *cfg,
                                         struct vfft_wisdom_s *W,
                                         size_t K)
 {

@@ -130,7 +130,7 @@ measurement is step 4's race on the results page.
 ## 1. The request and the data contract
 
 A 1D interleaved batch of K >= 2 transforms in the LANE-MAJOR geometry
-(`vfft_config_t.batch_geom`, include/vfft.h): element e of transform t at
+(`vfft_config_t.batch`, include/vfft.h): element e of transform t at
 `z[2 (e K + t)]` for complex data, `x[e K + t]` for real samples, bin f of transform t
 at `z[2 (f K + t)]`, f < N/2 + 1. The plane is N rows of K complex (or K reals) at
 pitch K: exactly the 2D tier's column plane with N1 = N and N2 = K, and no row pass.

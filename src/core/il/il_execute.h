@@ -27,7 +27,7 @@
 static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, double *s, double *d)
 {
     if (!in->k1_exec || in->k1_exec(in, dir, s, d) != 0)
-        vfft_execute(in, dir, s, NULL, d, NULL);
+        _vfft_exec6(in, dir, s, NULL, d, NULL);
 }
 typedef struct
 {
@@ -260,7 +260,7 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
     h->k1_exec = NULL;
     h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = NULL;
     if (h->transform != VFFT_R2C && h->transform != VFFT_C2R) return hp;
-    if (h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
+    if (h->layout != (int)VFI_LAYOUT_IL) return hp;
     if (h->zrm)
     {
         h->k1_exec = _k1x_zrm;
@@ -443,7 +443,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         return hp;
     }
     if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
-        h->layout == (int)VFFT_LAYOUT_INTERLEAVED && h->N2 > 0 && h->il2d_row &&
+        h->layout == (int)VFI_LAYOUT_IL && h->N2 > 0 && h->il2d_row &&
         !h->pq_inner && !h->tcb && !h->ilnd && !h->ilndr &&
         h->nthreads <= 1 && !h->il2d_col.colmt && !h->il2d_rax_on && !h->il2d_tf_on && !h->il2d_rcsk_on)   /* the real axis on N1, the fused walk and the skewed plane take the general path */
     {
@@ -460,7 +460,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
                        : (h->il2d_rx_stk < 0 && h->il2d_cxd_stk < 0) ? _k2x_il2d_c2r_d2k : _k2x_il2d_c2r_d2ks;
         return hp;
     }
-    if (h->transform != VFFT_C2C || h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
+    if (h->transform != VFFT_C2C || h->layout != (int)VFI_LAYOUT_IL) return hp;
     if (h->K != 1 || h->N2 > 0 || h->tcb || h->pq_inner || h->ilnd) return hp;
     if (h->placement == VFFT_OUTOFPLACE)
     {

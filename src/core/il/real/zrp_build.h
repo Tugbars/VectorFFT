@@ -60,7 +60,7 @@
 #include "wisdom2_real_il.h"
 #include "common/support/race.h"
 
-static struct vfft_plan_s *_zrp_build_pair(const vfft_config_t *cfg, int N,
+static struct vfft_plan_s *_zrp_build_pair(const vfft_cfg_t *cfg, int N,
                                            int R1, int R2, int form)
 {
     vfft_zrp_plan_t *zp = vfft_zrp_create(N, R1, R2, form, cfg->placement == VFFT_INPLACE);
@@ -75,7 +75,7 @@ static struct vfft_plan_s *_zrp_build_pair(const vfft_config_t *cfg, int N,
     }
     h->transform = cfg->transform;
     h->placement = cfg->placement;
-    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->layout = (int)VFI_LAYOUT_IL;
     h->N = N;
     h->K = 1;
     h->nthreads = _vfft_plan_threads(cfg);
@@ -93,7 +93,7 @@ static void _exec_zrp(struct vfft_plan_s *h, const double *sre, double *dre)
 
 /* ZTT-r's handle: the chain, tile and stack state are plan input; an
  * in-place placement owns a scratch plane */
-static struct vfft_plan_s *_zttr_build_plan(const vfft_config_t *cfg, int N,
+static struct vfft_plan_s *_zttr_build_plan(const vfft_cfg_t *cfg, int N,
                                             const int *chain, int nf, size_t tile, int stk)
 {
     vfft_zttr_plan_t *zp = vfft_zttr_create(N, chain, nf, tile);
@@ -114,7 +114,7 @@ static struct vfft_plan_s *_zttr_build_plan(const vfft_config_t *cfg, int N,
     }
     h->transform = cfg->transform;
     h->placement = cfg->placement;
-    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->layout = (int)VFI_LAYOUT_IL;
     h->N = N;
     h->K = 1;
     h->nthreads = _vfft_plan_threads(cfg);
@@ -147,7 +147,7 @@ static void _exec_zttr(struct vfft_plan_s *h, const double *sre, double *dre)
 }
 
 /* the real mono's handle: the kernel IS the plan (nothing owned) */
-static struct vfft_plan_s *_zrm_build_plan(const vfft_config_t *cfg, int N)
+static struct vfft_plan_s *_zrm_build_plan(const vfft_cfg_t *cfg, int N)
 {
     vfft_oop11_fn fn = vfft_zrm_fn(N, cfg->transform == VFFT_C2R);
     struct vfft_plan_s *h;
@@ -158,7 +158,7 @@ static struct vfft_plan_s *_zrm_build_plan(const vfft_config_t *cfg, int N)
         return NULL;
     h->transform = cfg->transform;
     h->placement = cfg->placement;
-    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->layout = (int)VFI_LAYOUT_IL;
     h->N = N;
     h->K = 1;
     h->nthreads = _vfft_plan_threads(cfg);
@@ -182,7 +182,7 @@ static int _zrm_env(void)
 }
 
 /* the real flat DIT's handle: the chain, the split-body switch and the tile budget are plan input */
-static struct vfft_plan_s *_zrf_build_plan(const vfft_config_t *cfg, int N, const int *R, int K, int nomsz, int tile)
+static struct vfft_plan_s *_zrf_build_plan(const vfft_cfg_t *cfg, int N, const int *R, int K, int nomsz, int tile)
 {
     vfft_zrf_plan_t *zp = vfft_zrf_create(N, R, K, nomsz, tile);
     struct vfft_plan_s *h;
@@ -196,7 +196,7 @@ static struct vfft_plan_s *_zrf_build_plan(const vfft_config_t *cfg, int N, cons
     }
     h->transform = cfg->transform;
     h->placement = cfg->placement;
-    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->layout = (int)VFI_LAYOUT_IL;
     h->N = N;
     h->K = 1;
     h->nthreads = _vfft_plan_threads(cfg);
@@ -300,7 +300,7 @@ static int _zrf_env(int *R, int *K, int *nomsz, int *tile, int *mt)
  * is given (the real row's fs_*: the 2D row, which carries its row plan as
  * rp_*; older rows' fs_row_* and fs_row_bwd_* as well); a replay whose child
  * raced -- its store gained a row -- does not serve that row: NULL. */
-static struct vfft_plan_s *_zfsr_build_plan(const vfft_config_t *cfg, int N, int n1, int n2,
+static struct vfft_plan_s *_zfsr_build_plan(const vfft_cfg_t *cfg, int N, int n1, int n2,
                                             const vw2_rec_t *c2d, const vw2_rec_t *crow,
                                             const vw2_rec_t *cbwd)
 {
@@ -318,7 +318,7 @@ static struct vfft_plan_s *_zfsr_build_plan(const vfft_config_t *cfg, int N, int
             (crow && crow->ntok > 0 && _k1fs_seed(S, &kr, crow)) ||
             (cbwd && cbwd->ntok > 0 && _k1fs_seed(S, &kb, cbwd)))
         {
-            vfft_wisdom_free((vfft_wisdom *)S);
+            _vfft_wisdom_free((vfft_wisdom *)S);
             return NULL;
         }
         vw2_disown(&S->vw2);   /* seeded, not raced */
@@ -340,7 +340,7 @@ static struct vfft_plan_s *_zfsr_build_plan(const vfft_config_t *cfg, int N, int
     }
     h->transform = cfg->transform;
     h->placement = cfg->placement;
-    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->layout = (int)VFI_LAYOUT_IL;
     h->N = N;
     h->K = 1;
     h->nthreads = _vfft_plan_threads(cfg);
@@ -438,7 +438,7 @@ static double _zrpr_relerr(const double *a, const double *b, size_t n);
  * (best of five); the four fastest and the winner's other three stack
  * states become race arms. The finished handles are returned in hz[]. */
 #define VFFT_ZTTR_MAX_ARMS 8
-static int _zttr_sweep(const vfft_config_t *cfg, int N, const double *a, const double *ref,
+static int _zttr_sweep(const vfft_cfg_t *cfg, int N, const double *a, const double *ref,
                        double *b, const double *s0, size_t xs, size_t nchk,
                        struct vfft_plan_s *hz[VFFT_ZTTR_MAX_ARMS])
 {
@@ -515,7 +515,7 @@ static int _zttr_sweep(const vfft_config_t *cfg, int N, const double *a, const d
 /* the real four-step's sweep: every split of N/2, each gated against the
  * reference, then burst-timed (best of three); the fastest is returned as the
  * one race arm, the others destroyed. */
-static struct vfft_plan_s *_zfsr_sweep(const vfft_config_t *cfg, int N, struct vfft_wisdom_s *W,
+static struct vfft_plan_s *_zfsr_sweep(const vfft_cfg_t *cfg, int N, struct vfft_wisdom_s *W,
                                        const double *a, const double *ref, double *b,
                                        const double *s0, size_t xs, size_t nchk)
 {
@@ -734,7 +734,7 @@ static int _real_il_pair_band(int N)
  * engine out of the field) races without banking. out_zrp / out_zrm keep the
  * pairs / the mono out (VFFT_ZRP=0 / VFFT_ZRM=0); the four-step's own switch
  * (VFFT_ZFSR=0) is read here. */
-static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N, struct vfft_wisdom_s *W,
+static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vfft_wisdom_s *W,
                                          int bank, int out_zrp, int out_zrm)
 {
     const int c2r = cfg->transform == VFFT_C2R, ip = cfg->placement == VFFT_INPLACE;
@@ -959,7 +959,7 @@ static struct vfft_plan_s *_real_il_race(const vfft_config_t *cfg, int N, struct
  * with an engine out never banks (a verdict of a partial field is not the
  * cell's). A banked row naming an engine that no longer builds, or one kept
  * out, is a miss: the race. NULL = no engine builds at N. */
-static struct vfft_plan_s *_real_il_build(const vfft_config_t *cfg, int N,
+static struct vfft_plan_s *_real_il_build(const vfft_cfg_t *cfg, int N,
                                           struct vfft_wisdom_s *W)
 {
     const int c2r = cfg->transform == VFFT_C2R, ip = cfg->placement == VFFT_INPLACE;

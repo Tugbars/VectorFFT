@@ -40,7 +40,7 @@
 
 /* Rank-3/rank-4 SPLIT create. Returns the finished plan, or NULL after a loud
  * refusal (contract violation) or a quiet one (build/OOM failure). */
-static vfft_plan _vfft_create_rank34_split(const vfft_config_t *cfg,
+static vfft_plan _vfft_create_rank34_split(const vfft_cfg_t *cfg,
                     struct vfft_wisdom_s *W,
                     const vfft_proto_registry_t *reg,
                     size_t K)
@@ -84,11 +84,12 @@ static vfft_plan _vfft_create_rank34_split(const vfft_config_t *cfg,
             return h4;
         }
         if (cfg->transform != VFFT_C2C || K != 1 ||
-            (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_SCRAMBLED))
+            (cfg->order != VFI_ORDER_DEFAULT && cfg->order != VFI_ORDER_SCRAMBLED))
         {
-            _vfft_warn("vfft_create: 4D supports C2C (howmany==1, order DEFAULT/SCRAMBLED) "
-                       "and out-of-place R2C/C2R only (got %s, howmany=%zu, order=%d)",
-                       _vfft_tname(cfg->transform), K, cfg->order);
+            _vfft_warn("vfft_create: SPLIT 4D serves C2C (howmany 1, VFFT_ORDER_SCRAMBLED) "
+                       "and out-of-place R2C/C2R only (got %s, howmany=%zu, %s order)",
+                       _vfft_tname(cfg->transform), K,
+                       cfg->order == VFI_ORDER_SCRAMBLED ? "scrambled" : "natural");
             return NULL;
         }
         stride_plan_t *tp = stride_plan_nd(4, cfg->n, reg);
@@ -140,12 +141,13 @@ static vfft_plan _vfft_create_rank34_split(const vfft_config_t *cfg,
             return h3;
         }
         if (cfg->transform != VFFT_C2C || K != 1 ||
-            (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_SCRAMBLED))
+            (cfg->order != VFI_ORDER_DEFAULT && cfg->order != VFI_ORDER_SCRAMBLED))
         {
-            _vfft_warn("vfft_create: 3D supports C2C (howmany==1, order DEFAULT/SCRAMBLED) and "
+            _vfft_warn("vfft_create: SPLIT 3D serves C2C (howmany 1, VFFT_ORDER_SCRAMBLED) and "
                        "out-of-place R2C/C2R with an even last dim only (got %s, howmany=%zu, "
-                       "order=%d%s)",
-                       _vfft_tname(cfg->transform), K, cfg->order,
+                       "%s order%s)",
+                       _vfft_tname(cfg->transform), K,
+                       cfg->order == VFI_ORDER_SCRAMBLED ? "scrambled" : "natural",
                        (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R)
                            ? (cfg->n[2] % 2 ? ", odd n[2]" : ", in-place?")
                            : "");

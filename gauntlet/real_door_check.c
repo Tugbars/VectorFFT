@@ -16,6 +16,7 @@
 #include <math.h>
 #include <malloc.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"   /* vfft_plan_route (API v2) */
 #include "common/support/race.h"
 #include "common/support/race_timing.h"
 #ifdef _WIN32
@@ -34,23 +35,23 @@ static double maxrel(const double *a, const double *b, size_t n)
     return sc > 0 ? e / sc : e;
 }
 typedef struct { vfft_plan h; vfft_dir_t dir; double *in, *out; } arm_t;
-static void arm_run(void *v) { arm_t *a = (arm_t *)v; vfft_execute(a->h, a->dir, a->in, NULL, a->out, NULL); }
+static void arm_run(void *v) { arm_t *a = (arm_t *)v; vfft_execute(a->h, a->dir, a->in, a->out); }
 
-static vfft_plan mk(vfft_wisdom *W, int N, int c2r, int ip, int recal)
+static vfft_plan mk(const char *W, int N, int c2r, int ip, int recal)
 {
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
     cfg.transform = c2r ? VFFT_C2R : VFFT_R2C;
-    cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
-    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
-    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.order = VFFT_ORDER_DEFAULT;
-    cfg.rigor = VFFT_PATIENT; cfg.wisdom = W; cfg.nthreads = 1; cfg.recalibrate = recal;
+    cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.order = VFFT_ORDER_NATURAL;
+    cfg.flags |= VFFT_FLAG_PATIENT; cfg.wisdom_dir = W; cfg.nthreads = 1; cfg.flags |= (recal) ? VFFT_FLAG_RECALIBRATE : 0;
     return vfft_create(&cfg);
 }
 /* run a plan on `in`, the result into `out` (in place: through the buffer b) */
 static void run(vfft_plan h, vfft_dir_t dir, int ip, const double *in, double *out, double *b, size_t nin, size_t nout)
 {
-    if (ip) { memcpy(b, in, nin * sizeof(double)); vfft_execute(h, dir, b, NULL, b, NULL); memcpy(out, b, nout * sizeof(double)); }
-    else vfft_execute(h, dir, (double *)in, NULL, out, NULL);
+    if (ip) { memcpy(b, in, nin * sizeof(double)); vfft_execute(h, dir, b, b); memcpy(out, b, nout * sizeof(double)); }
+    else vfft_execute(h, dir, (double *)in, out);
 }
 
 int main(int argc, char **argv)
@@ -60,7 +61,7 @@ int main(int argc, char **argv)
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
 #endif
     if (argc < 2) { fprintf(stderr, "usage: real_door_check <scratch wisdom dir> [N]\n"); return 2; }
-    vfft_wisdom *W = vfft_wisdom_load(argv[1]);
+    const char *W = (argv[1]);
     const char *sel = argc > 2 ? argv[2] : "";
     const int only = atoi(sel);
     const int tiny_only = !strcmp(sel, "tiny"), big_only = !strcmp(sel, "big"), odd_only = !strcmp(sel, "odd"), prime_only = !strcmp(sel, "prime");

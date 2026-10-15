@@ -71,7 +71,7 @@ static void _odd_arm_run(void *v)
  * (best of five); it enters the two-slot podium or is destroyed. Returns 1
  * when it built (whatever became of it). s0 = the arm's input (b itself in
  * place). */
-static int _zrf_try(const vfft_config_t *cfg, int N, const int *R, int K, int nomsz, int tile, int mt,
+static int _zrf_try(const vfft_cfg_t *cfg, int N, const int *R, int K, int nomsz, int tile, int mt,
                     const double *a, const double *ref, double *b, const double *s0, size_t xs, size_t nchk,
                     struct vfft_plan_s *out[2], double bns[2], int *any_msz, int need_tiled)
 {
@@ -149,7 +149,7 @@ static int _zrf_try(const vfft_config_t *cfg, int N, const int *R, int K, int no
 #endif
 typedef struct
 {
-    const vfft_config_t *cfg;
+    const vfft_cfg_t *cfg;
     int N;
     const double *a, *ref, *s0;
     double *b;
@@ -230,7 +230,7 @@ static void _zrf_heat(void *hv, vfft_chain_t *f, const int *idx, int n, int fix,
 /* the chain pick's finalists x the split-body switch untiled; then the two
  * fastest at each tile budget (and, threaded, its two threaded arms). The two
  * fastest plans of all are returned as finished handles. */
-static int _zrf_chain_sweep(const vfft_config_t *cfg, int N, const double *a, const double *ref, double *b,
+static int _zrf_chain_sweep(const vfft_cfg_t *cfg, int N, const double *a, const double *ref, double *b,
                             const double *s0, size_t xs, size_t nchk, struct vfft_plan_s *out[2])
 {
     static const int budgets[] = { 64, 128, 256, 512, 1024, 2048 };
@@ -293,7 +293,7 @@ static int _zrf_chain_sweep(const vfft_config_t *cfg, int N, const double *a, co
 /* the real Bluestein's handle: the length and the inner descriptor are plan
  * input (the descriptor is the prime route's, il/rank1/k1_commit.h). A
  * descriptor that does not build is a miss, never the structural rule's plan. */
-static struct vfft_plan_s *_zrb_build_plan(const vfft_config_t *cfg, int N, int M, _ilprime_inner_desc_t *d)
+static struct vfft_plan_s *_zrb_build_plan(const vfft_cfg_t *cfg, int N, int M, _ilprime_inner_desc_t *d)
 {
     char kind[8], shape[64];
     vfft_zrb_plan_t *zp;
@@ -313,7 +313,7 @@ static struct vfft_plan_s *_zrb_build_plan(const vfft_config_t *cfg, int N, int 
     }
     h->transform = cfg->transform;
     h->placement = cfg->placement;
-    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->layout = (int)VFI_LAYOUT_IL;
     h->N = N;
     h->K = 1;
     h->nthreads = _vfft_plan_threads(cfg);
@@ -391,7 +391,7 @@ static int _zrb_m_cands(int N, int *out)
     out[n++] = p2;
     return n;
 }
-static int _zrb_try(const vfft_config_t *cfg, int N, int M, _ilprime_inner_desc_t *d, int mt,
+static int _zrb_try(const vfft_cfg_t *cfg, int N, int M, _ilprime_inner_desc_t *d, int mt,
                     const double *a, const double *ref, double *b, const double *s0, size_t xs, size_t nchk,
                     struct vfft_plan_s *out[2], double bns[2])
 {
@@ -447,7 +447,7 @@ static int _zrb_try(const vfft_config_t *cfg, int N, int M, _ilprime_inner_desc_
         vfft_destroy((vfft_plan)h);
     return 1;
 }
-static int _zrb_sweep(const vfft_config_t *cfg, int N, const struct vfft_wisdom_s *W, const double *a,
+static int _zrb_sweep(const vfft_cfg_t *cfg, int N, const struct vfft_wisdom_s *W, const double *a,
                       const double *ref, double *b, const double *s0, size_t xs, size_t nchk, struct vfft_plan_s *out[2])
 {
     static _ilprime_inner_desc_t pool[_ILPR_MAX_CANDS];   /* off the stack */
@@ -456,7 +456,7 @@ static int _zrb_sweep(const vfft_config_t *cfg, int N, const struct vfft_wisdom_
     double bns[2] = { 1e300, 1e300 };
     int built = 0;
     struct vfft_wisdom_s *pS = NULL;   /* the four-step inners' race store (k1_commit.h, the prime cell's recipe) */
-    vfft_config_t pcfg;
+    vfft_cfg_t pcfg;
     out[0] = out[1] = NULL;
     for (int m = 0; m < nm; m++)
     {
@@ -493,14 +493,14 @@ static int _zrb_sweep(const vfft_config_t *cfg, int N, const struct vfft_wisdom_
     for (int i = 0; i < 2; i++)
         if (out[i] && out[i]->zrb->inner.fs && !out[i]->zrb->inner.fs->own && pS)
             out[i]->zrb->inner.fs->own = _k1fs_store_dup(pS);   /* the winner's child rides to the real row from its own copy; the race's store dies here */
-    vfft_wisdom_free((vfft_wisdom *)pS);
+    _vfft_wisdom_free((vfft_wisdom *)pS);
     return (out[0] != NULL) + (out[1] != NULL);
 }
 
 /* THE ODD REAL RACE (header). Returns the serving handle bare (the caller
  * finishes it), or NULL when no gated arm was built. The verdict is banked
  * unless the store is off. */
-static struct vfft_plan_s *_real_il_odd_race(const vfft_config_t *cfg, int N, struct vfft_wisdom_s *W)
+static struct vfft_plan_s *_real_il_odd_race(const vfft_cfg_t *cfg, int N, struct vfft_wisdom_s *W)
 {
     const int c2r = cfg->transform == VFFT_C2R, ip = cfg->placement == VFFT_INPLACE;
     const int Tk = _vfft_plan_threads(cfg);   /* the verdict's thread key */
@@ -665,7 +665,7 @@ static struct vfft_plan_s *_real_il_odd_race(const vfft_config_t *cfg, int N, st
 
 /* The door's odd engine pick: env pin, the banked engine, or the race.
  * Returns the handle bare; NULL when nothing could be built. */
-static struct vfft_plan_s *_real_il_odd_build(const vfft_config_t *cfg, int N, struct vfft_wisdom_s *W)
+static struct vfft_plan_s *_real_il_odd_build(const vfft_cfg_t *cfg, int N, struct vfft_wisdom_s *W)
 {
     const int c2r = cfg->transform == VFFT_C2R, ip = cfg->placement == VFFT_INPLACE;
     const int Tk = _vfft_plan_threads(cfg);   /* the verdict's thread key */
