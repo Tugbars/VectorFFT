@@ -84,7 +84,10 @@ int main(int argc, char **argv) {
         { "2D r2c OOP IL odd N2 64x63",           1, VFFT_R2C, OOP, IL, NAT, 2, 64, 63, 0, 0, 1, 0 },
         { "2D r2c OOP IL 64x64 howmany=4",        1, VFFT_R2C, OOP, IL, NAT, 2, 64, 64, 0, 0, 4, 0 },
         { "2D r2c IP IL 256x64",                  1, VFFT_R2C, IP,  IL, NAT, 2, 256, 64, 0, 0, 1, 0 },
-        { "2D c2c OOP IL 64x64 K=4 LANE_MAJOR",   0, VFFT_C2C, OOP, IL, NAT, 2, 64, 64, 0, 0, 4, LM },  /* rank 2: contiguous planes only */
+        { "2D c2c OOP IL 64x64 K=4 LANE_MAJOR",   1, VFFT_C2C, OOP, IL, NAT, 2, 64, 64, 0, 0, 4, LM },  /* the 2D lane-major batch (step 6, 2026-10-15) */
+        { "2D c2c IP IL 64x64 K=4 LANE_MAJOR",    1, VFFT_C2C, IP,  IL, NAT, 2, 64, 64, 0, 0, 4, LM },
+        { "2D r2c OOP IL 64x64 K=4 LANE_MAJOR",   0, VFFT_R2C, OOP, IL, NAT, 2, 64, 64, 0, 0, 4, LM },  /* the real 2D batch: the next piece */
+        { "3D c2c OOP IL 16^3 K=4 LANE_MAJOR",    0, VFFT_C2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 4, LM },
         /* ── 2D SPLIT: natural and scrambled ── */
         { "2D c2c OOP SPLIT 256x64",              1, VFFT_C2C, OOP, SP, NAT, 2, 256, 64, 0, 0, 1, 0 },
         { "2D c2c OOP SPLIT 256x64 SCRAMBLED",    1, VFFT_C2C, OOP, SP, SCR, 2, 256, 64, 0, 0, 1, 0 },

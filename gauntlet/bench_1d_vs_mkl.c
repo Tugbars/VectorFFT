@@ -2086,6 +2086,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
  * only MEASURES (C1's contract).
  * ════════════════════════════════════════════════════════════════════════ */
 static int g_kzb = 0;
+static int g_lm2d = 0;   /* --lm2d: the lane-major 2D c2c batch cell (2026-10-15) */
 static int g_kzbr = 0;   /* --lmr2c = 1, --lmc2r = 2: the lane-major 1D REAL batch cells (2026-10-15), the
                           * same four arms as --kzb / --lmc2c over the real batch door (lm_batch_il.h) */
 
@@ -2406,6 +2407,293 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
             snprintf(eng, sizeof eng, ",%ld", g_cell_engaged);
         fprintf(out, "%d,%d,z:lm,lm-oop,%.0f,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.3e,%.3e,%s%s\n",
                 N, K, vns, lns, mns, hns, rmir, rhom, rloop, rel, lrel, vfft_plan_route(h), eng);
+        fflush(out);
+    }
+    free_d(z0);
+    free_d(z0h);
+    free_d(S);
+    if (h1)
+        vfft_destroy(h1);
+    vfft_destroy(h);
+}
+
+/* ── --lm2d (2026-10-15): the LANE-MAJOR 2D C2C BATCH cell, step 6 of the lane-major design
+ * (docs/roadmap/lane_major_batch_design.md): K planes of N1 x N2 side by side, element (r, c) of
+ * transform t at z[2 ((r N2 + c) K + t)]. The same four arms and protocol as --lmc2c: ours (the 2D
+ * batch door: the first axis a column pass over N2 K lanes, the last the 1D batch per block), the
+ * loop of K one-plane 2D plans on contiguous planes, MKL on our lane-major layout (DFTI 2D,
+ * NUMBER_OF_TRANSFORMS = K, distance 1, strides {0, N2 K, K}), MKL on contiguous planes (distance
+ * N1 N2); --mt both sides at T with the engagement counted. */
+#ifdef VFFT_HAS_MKL
+static DFTI_DESCRIPTOR_HANDLE lm2d_mkl_desc(int N1, int N2, int K, int home)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    MKL_LONG len[2] = { (MKL_LONG)N1, (MKL_LONG)N2 };
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 2, len) != DFTI_NO_ERROR)
+        return NULL;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    DftiSetValue(d, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+    if (home)
+    {   /* contiguous planes: plane t at complex offset t N1 N2 */
+        MKL_LONG st[3] = { 0, (MKL_LONG)N2, 1 };
+        DftiSetValue(d, DFTI_INPUT_DISTANCE, (MKL_LONG)N1 * N2);
+        DftiSetValue(d, DFTI_OUTPUT_DISTANCE, (MKL_LONG)N1 * N2);
+        DftiSetValue(d, DFTI_INPUT_STRIDES, st);
+        DftiSetValue(d, DFTI_OUTPUT_STRIDES, st);
+    }
+    else
+    {   /* OUR lane-major contract: element (r, c) of lane t at complex (r N2 + c) K + t */
+        MKL_LONG st[3] = { 0, (MKL_LONG)N2 * K, (MKL_LONG)K };
+        DftiSetValue(d, DFTI_INPUT_DISTANCE, (MKL_LONG)1);
+        DftiSetValue(d, DFTI_OUTPUT_DISTANCE, (MKL_LONG)1);
+        DftiSetValue(d, DFTI_INPUT_STRIDES, st);
+        DftiSetValue(d, DFTI_OUTPUT_STRIDES, st);
+    }
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
+    {
+        DftiFreeDescriptor(&d);
+        return NULL;
+    }
+    return d;
+}
+static int lm2d_mkl_ref(int N1, int N2, int K, const double *z0, size_t total, int home, double *zout)
+{
+    DFTI_DESCRIPTOR_HANDLE d = lm2d_mkl_desc(N1, N2, K, home);
+    double *zi;
+    if (!d)
+        return 0;
+    zi = alloc_d(2 * total);
+    memcpy(zi, z0, 2 * total * sizeof(double));
+    DftiComputeForward(d, zi, zout);
+    free_d(zi);
+    DftiFreeDescriptor(&d);
+    return 1;
+}
+static double lm2d_time_mkl(int N1, int N2, int K, const double *z0, size_t total, int home)
+{
+    DFTI_DESCRIPTOR_HANDLE d = lm2d_mkl_desc(N1, N2, K, home);
+    double *zi, *zo, best = 1e18;
+    int reps, win;
+    if (!d)
+        return 0;
+    zi = alloc_d(2 * total);
+    zo = alloc_d(2 * total);
+    memcpy(zi, z0, 2 * total * sizeof(double));
+    for (int w = 0; w < 10; w++)
+        DftiComputeForward(d, zi, zo);
+    reps = reps_for(total);
+    for (win = 0; win < 2; win++)
+    {   /* two windows, the shape of kzb_time_mkl: the same protocol for both engines */
+        if (win)
+        {
+            const double tw0 = vfft_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                DftiComputeForward(d, zi, zo);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            double t0;
+            if (t)
+                pace(g_trial_pace_ms);
+            t0 = vfft_now_ns();
+            for (int i = 0; i < reps; i++)
+                DftiComputeForward(d, zi, zo);
+            {
+                const double ns = (vfft_now_ns() - t0) / reps;
+                if (ns < best)
+                    best = ns;
+            }
+        }
+    }
+    free_d(zi);
+    free_d(zo);
+    DftiFreeDescriptor(&d);
+    return best;
+}
+#endif
+/* the loop arm: K sequential one-plane 2D plans over contiguous planes (plane t at t N1 N2 complexes) */
+static double lm2d_time_loop(vfft_plan h1, int N1, int N2, int K, double *z0h, double *S, size_t total)
+{
+    const size_t tn = 2 * (size_t)N1 * N2;
+    int reps;
+    double best = 1e18;
+    for (int w = 0; w < 10; w++)
+        for (int k = 0; k < K; k++)
+            vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, S + (size_t)k * tn);
+    reps = reps_for(total);
+    for (int t = 0; t < 5; t++)
+    {
+        double t0;
+        if (t)
+            pace(g_trial_pace_ms);
+        t0 = vfft_now_ns();
+        for (int i = 0; i < reps; i++)
+            for (int k = 0; k < K; k++)
+                vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, S + (size_t)k * tn);
+        {
+            const double ns = (vfft_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
+    }
+    return best;
+}
+static void run_lm2d_cell(int N1, int N2, int K, FILE *out, int cool_ms, int flip)
+{
+    const int T = g_k1noop_mt ? g_mt : 1;
+    const char *W;
+    vfft_config_t cfg, c1;
+    vfft_plan h, h1;
+    const size_t P = (size_t)N1 * N2, total = P * (size_t)K;
+    double *z0, *S, *z0h;
+    double rel = -1.0, lrel = -1.0;
+    double vns = 0, mns = 0, hns = 0, lns = 0, rmir, rhom, rloop;
+    char shape[32];
+    if (T == 1)
+        bench_pin_one_thread();   /* the one-thread protocol + the sibling guard */
+    W = k1z_bundle();
+    if (!W)
+    {
+        printf("%dx%d K=%-3d   SKIP (front-door bundle unavailable)\n", N1, N2, K);
+        return;
+    }
+    snprintf(shape, sizeof shape, "%dx%d", N1, N2);
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.rank = 2;
+    cfg.n[0] = N1;
+    cfg.n[1] = N2;
+    cfg.howmany = (size_t)K;
+    cfg.order = VFFT_ORDER_NATURAL;   /* MKL is natural; cross-engine gate */
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.batch = VFFT_BATCH_LANE_MAJOR;   /* explicit: the 2D batch door */
+    cfg.nthreads = T;
+    cfg.wisdom_dir = W;
+    h = vfft_create(&cfg);
+    if (!h)
+    {
+        printf("%-8s K=%-3d   vfft_create FAILED: %s\n", shape, K, vfft_error());
+        return;
+    }
+    c1 = cfg;   /* the one-plane 2D plan for the LOOP arm (the same front door, howmany = 1, one thread) */
+    c1.howmany = 1;
+    c1.nthreads = 1;
+    c1.batch = VFFT_BATCH_DEFAULT;
+    h1 = vfft_create(&c1);
+    z0 = alloc_d(2 * total);
+    S = alloc_d(2 * total);
+    srand(42 + N1 + N2 + K);
+    for (size_t i = 0; i < 2 * total; i++)
+        z0[i] = (double)rand() / RAND_MAX - 0.5;
+    /* the SAME logical batch on contiguous planes: plane k at k P */
+    z0h = alloc_d(2 * total);
+    for (int k = 0; k < K; k++)
+        for (size_t e = 0; e < P; e++)
+        {
+            const size_t im = 2 * (e * K + k), ih = 2 * ((size_t)k * P + e);
+            z0h[ih] = z0[im];
+            z0h[ih + 1] = z0[im + 1];
+        }
+#ifdef VFFT_HAS_MKL
+    {   /* the cross-engine gate vs the MIRROR arm (the same layout, both natural), MKL's home-vs-mirror
+         * self-check (re-indexed: guards the stride setup), and the LOOP arm vs MKL's home spectrum */
+        double *zm = alloc_d(2 * total), *zh = alloc_d(2 * total);
+        if (lm2d_mkl_ref(N1, N2, K, z0, total, 0, zm))
+        {
+            double xe = 0.0, xm = 0.0;
+            vfft_execute(h, VFFT_FORWARD, z0, S);
+            for (size_t i = 0; i < 2 * total; i++)
+            {
+                const double e = fabs(S[i] - zm[i]), m = fabs(zm[i]);
+                if (e > xe) xe = e;
+                if (m > xm) xm = m;
+            }
+            rel = xm > 0 ? xe / xm : xe;
+            if (lm2d_mkl_ref(N1, N2, K, z0h, total, 1, zh))
+            {
+                double se = 0.0, sm = 0.0;
+                for (int k = 0; k < K; k++)
+                    for (size_t e = 0; e < P; e++)
+                    {
+                        const size_t im = 2 * (e * K + k), ih = 2 * ((size_t)k * P + e);
+                        const double er = fabs(zm[im] - zh[ih]), ei = fabs(zm[im + 1] - zh[ih + 1]);
+                        const double d = er > ei ? er : ei, m = fabs(zh[ih]);
+                        if (d > se) se = d;
+                        if (m > sm) sm = m;
+                    }
+                if (sm > 0 && se / sm > 1e-10)
+                    fprintf(stderr, "lm2d: MKL mirror/home self-check DIFF %.2e at %s K=%d -- mirror strides suspect\n",
+                            se / sm, shape, K);
+                if (h1)
+                {
+                    const size_t tn = 2 * P;
+                    double le = 0.0, lm = 0.0;
+                    for (int k = 0; k < K; k++)
+                        vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, S + (size_t)k * tn);
+                    for (size_t i = 0; i < 2 * total; i++)
+                    {
+                        const double e = fabs(S[i] - zh[i]), m = fabs(zh[i]);
+                        if (e > le) le = e;
+                        if (m > lm) lm = m;
+                    }
+                    lrel = lm > 0 ? le / lm : le;
+                }
+            }
+        }
+        free_d(zm);
+        free_d(zh);
+    }
+#endif
+    g_cell_engaged = -1;
+#define LM2D_OURS() do { \
+        { const long e0 = vfft_il2d_col_mt_passes(); \
+          vns = k1z_time_vfft(h, z0, S, total); \
+          if (T > 1) g_cell_engaged = vfft_il2d_col_mt_passes() - e0; } \
+        if (h1) { pace(g_trial_pace_ms); lns = lm2d_time_loop(h1, N1, N2, K, z0h, S, total); } \
+    } while (0)
+#ifdef VFFT_HAS_MKL
+    if (flip)
+    {
+        mns = lm2d_time_mkl(N1, N2, K, z0, total, 0);
+        pace(g_trial_pace_ms);
+        hns = lm2d_time_mkl(N1, N2, K, z0, total, 1);
+        cachebust();
+        pace(cool_ms);
+        LM2D_OURS();
+    }
+    else
+    {
+        LM2D_OURS();
+        cachebust();
+        pace(cool_ms);
+        mns = lm2d_time_mkl(N1, N2, K, z0, total, 0);
+        pace(g_trial_pace_ms);
+        hns = lm2d_time_mkl(N1, N2, K, z0, total, 1);
+    }
+#else
+    (void)cool_ms;
+    (void)flip;
+    LM2D_OURS();
+#endif
+#undef LM2D_OURS
+    rmir = (vns > 0 && mns > 0) ? mns / vns : 0;
+    rhom = (vns > 0 && hns > 0) ? hns / vns : 0;
+    rloop = (lns > 0 && hns > 0) ? hns / lns : 0;
+    printf("%-9s %-4d %-8s %11.0f %11.0f %11.0f %11.0f %6.2fx %6.2fx %7.2fx %9.2e %9.2e  %s",
+           shape, K, "lm2d-oop", vns, lns, mns, hns, rmir, rhom, rloop, rel, lrel, vfft_plan_route(h));
+    if (T > 1)
+        printf("  T=%d engaged %ld%s", T, g_cell_engaged, g_cell_engaged == 0 ? " (SERIAL)" : "");
+    printf("\n");
+    if (out)
+    {
+        char eng[24] = "";
+        if (T > 1)
+            snprintf(eng, sizeof eng, ",%ld", g_cell_engaged);
+        fprintf(out, "%s,%d,z:lm2d,lm2d-oop,%.0f,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.3e,%.3e,%s%s\n",
+                shape, K, vns, lns, mns, hns, rmir, rhom, rloop, rel, lrel, vfft_plan_route(h), eng);
         fflush(out);
     }
     free_d(z0);
@@ -6052,6 +6340,8 @@ int main(int argc, char **argv)
             g_kzbr = 1;   /* the lane-major r2c batch cell (2026-10-15) */
         else if (strcmp(argv[1], "--lmc2r") == 0)
             g_kzbr = 2;   /* ... its c2r twin */
+        else if (strcmp(argv[1], "--lm2d") == 0)
+            g_lm2d = 1;   /* the lane-major 2D c2c batch cell (2026-10-15), the shape N1xN2 in the N argument */
         else if (strcmp(argv[1], "--cmp") == 0 && argc >= 3)
         {   /* the K=1 cell's comparator. kfr (2026-09-25) exists only in a
              * --kfr build; fftw (2026-09-28) needs no build flag -- it binds
@@ -6130,7 +6420,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "--cmp fftw: the FFTW arm is the 1D c2c K=1 cell only\n");
         return 2;
     }
-    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat || g_real || g_kzb || g_kzbr) && mt;   /* the lane-major batch cells thread too (2026-10-15) */   /* the 3D real cell threads too (2026-10-07); the 2D real cell since 2026-10-08 */   /* the 2D/3D cells share the
+    g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat || g_real || g_kzb || g_kzbr || g_lm2d) && mt;   /* the lane-major batch cells thread too (2026-10-15) */   /* the 3D real cell threads too (2026-10-07); the 2D real cell since 2026-10-08 */   /* the 2D/3D cells share the
                                                                           * threaded-cell discipline (2026-09-24) */
     if (g_k1noop_mt)
     {
@@ -6165,6 +6455,7 @@ int main(int argc, char **argv)
     const char *csv = (argc >= 3)         ? argv[2]
                       : g_ilmt            ? "vfft_perf_tuned_1d_ilmt.csv"
                       : g_kzb             ? "vfft_perf_tuned_1d_kzb.csv"
+                      : g_lm2d            ? "vfft_perf_tuned_lm2d.csv"
                       : g_kzbr            ? "vfft_perf_tuned_1d_lmreal.csv"
                       : g_zr2c            ? "vfft_perf_tuned_1d_zr2c.csv"
                       : (g_k1nat && !g_k1zip) ? "vfft_perf_tuned_1d_k1noop.csv"
@@ -6785,7 +7076,7 @@ int main(int argc, char **argv)
             fprintf(out, "N,K,path,threads,ours_mt_ns,ours_st_ns,mkl_mt_ns,mkl_st_ns,"
                          "ratio_vs_mkl_best,ratio_vs_mkl_mt,scale_ours,scale_mkl,"
                          "ctl_spread,xerr,mt_ne_st\n");
-        else if (g_kzb || g_kzbr)
+        else if (g_kzb || g_kzbr || g_lm2d)
             fprintf(out, "N,K,plan,path,vfft_ns,loop_ns,mkl_mirror_ns,mkl_home_ns,"
                          "ratio_mirror,ratio_home,ratio_loop_vs_home,xerr,loop_xerr,route%s\n", g_k1noop_mt ? ",engaged" : "");
         else if (g_zr2c)
@@ -6994,6 +7285,26 @@ int main(int argc, char **argv)
                g_kzbr == 2 ? "c2r" : "r2c", g_k1noop_mt ? "both sides threaded" : "one thread", pace_ms,
                "N", "K", "path", "vfft_ns", "loop_ns", "mkl_mir_ns", "mkl_home_ns", "r_mir", "r_home", "r_loop", "xerr", "loop_err");
         run_kzbr_cell(target_N, (int)target_K, g_kzbr == 2, out, cool_ms, flip);
+        if (out)
+            fclose(out);
+        fclose(f);
+        return 0;
+    }
+    if (g_lm2d)
+    {   /* the lane-major 2D c2c batch cell: the shape N1xN2 in the N argument, K in the K argument */
+        int n1 = 0, n2 = 0;
+        if (argc < 5 || sscanf(argv[4], "%dx%d", &n1, &n2) != 2 || target_K < 2)
+        {
+            printf("--lm2d needs the shape N1xN2 in the N argument and K >= 2\n");
+            return 2;
+        }
+        printf("=== dag vs MKL — 2D C2C LANE-MAJOR batch, OOP natural (%s; pace=%dms) ===\n"
+               "# vfft = the 2D batch door (every axis a column pass) | loop = K sequential one-plane 2D plans on contiguous planes\n"
+               "# mkl_mir = MKL 2D on OUR lane-major | mkl_home = MKL contiguous planes | r_loop = loop vs mkl_home\n"
+               "%-9s %-4s %-8s %11s %11s %11s %11s %7s %7s %8s %9s %9s\n",
+               g_k1noop_mt ? "both sides threaded" : "one thread", pace_ms,
+               "N1xN2", "K", "path", "vfft_ns", "loop_ns", "mkl_mir_ns", "mkl_home_ns", "r_mir", "r_home", "r_loop", "xerr", "loop_err");
+        run_lm2d_cell(n1, n2, (int)target_K, out, cool_ms, flip);
         if (out)
             fclose(out);
         fclose(f);
