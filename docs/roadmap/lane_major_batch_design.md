@@ -1,8 +1,14 @@
 # Lane-major 1D batches on the column pass (c2c, r2c, c2r)
 
 **Status (2026-10-15): steps 1 to 4 BUILT (the door, c2c, r2c and c2r at an even N, the
-bench mode and the race against MKL) and the in-place real batch of step 5; the real odd
-column engine waits for piece C of the Rader spread.**
+bench mode and the race against MKL), the in-place real batch of step 5, and the FUSED
+STRIPS for the real batches (section 3; the eight-thread power-of-two cells that lost:
+512x512 r2c from 0.56x to 1.42x of MKL's lane-major batch, c2r from 0.40x to 0.80x, the
+composite cells 1.4x to 1.7x faster than before; the results page), and the c2c batch's
+SERIAL DENSE TILES under the serial-form law (a Rader-stage chain walks the plane, a
+smooth chain races the tile widths alone: the tile won at the widest planes, 16x4096
+from 1.06x to 1.74x, tied in the middle and lost at the Rader cells). The real odd column engine waits for piece C of the
+Rader spread.**
 Owner: "we will build lane major everywhere; the library is almost done, so it may
 start now. 1D C2C / R2C / C2R all will have lane major with one bold stroke." This
 document is the design to build against; it supersedes slice 2 of
@@ -199,6 +205,37 @@ M), the backward column chain (the descriptor's own tables), UNPACK
 (`x[2 m][k] = Re W[m][k]`, `x[2 m + 1][k] = Im W[m][k]`), unnormalized like every
 backward in the tree.
 
+**The fused strips** are the form the plain chain class runs in (a Bluestein or turned
+axis at a prime M keeps the three passes over the plane). A strip of w lanes goes
+through a dense per-worker scratch of M x w complexes at pitch w, in L2: the pack from
+the caller's plane straight into the scratch, the chain in place in the scratch through
+the plain walker at pitch w (the same kernels, tables and values, so the output is
+bitwise the plane form's), the fold from the scratch into the caller's spectrum; c2r is
+the mirror. The plane is read once and written once, one dispatch serves the execute,
+and the plane W is never walked at its pitch: at a power-of-two K every row sits a power
+of two apart, so a sub-strip's rows share one cache-set group and every stage of a walk
+on the plane streams instead of running in cache (the chain scaled 2.0x at eight threads
+that way; the pitch, not the caller's buffers, was the cause). In place the bins of lane
+k sit where the reals of lanes 2 k and 2 k + 1 sit (a bin is two doubles, a real one), so
+a strip's fold would overwrite reals of strips not yet packed; the input is therefore
+consumed whole first, the pack (the unfold) over W as the three passes do it, and each
+strip then reads its lanes from W: one more pass over the plane than out of place. The
+serial form walks tiles of `sw` lanes the same way; the threaded form gives each worker
+its lane range, cut at eight lanes so no cache line is written by two workers, in
+sub-strips of `msw`. The scratch is the column descriptor's dense strip scratch, built
+for the scrambled chain as the natural chain builds its own; the same scratch lets a
+c2c batch's scrambled chain run its threaded blocks dense (the strip copied in, the
+walker at pitch w, the strip copied back). At one thread the c2c batch walks the same
+dense tiles, the natural strip with its leaf scatter or the scrambled strip, at the
+width the serial race banks (`sw`), under the serial-form law (`policy_il.h`): a chain
+with a Rader stage walks the plane and races no width, since the engine's cost hides the
+walk's aliasing and a tile's copies only add; a smooth chain races the tile widths alone,
+the walk no arm, a scrambled chain's widest tile below K; with no width at all (fewer
+than eight lanes) the walk serves. For the
+real batch `sw = 0` is the whole plane as one fused tile wherever the scratch holds it,
+so the three passes over W serve only a Bluestein or turned axis and a plane no tile of
+which fits L2.
+
 **An odd N** has no real column engine (the pack trick needs an even length; the odd
 real engines are row engines): the request is refused at create with the reason
 printed, a named gap, until the real odd column engine is built with piece C of the
@@ -207,10 +244,14 @@ Rader spread (`rader_leaf_design.md` section 13).
 ## 4. Threads
 
 The chain threads through the column MT forms at the plan's T (its own T row, raced as
-the column cells race theirs). The elementwise passes (pack, fold, unfold, unpack) split
-by lane ranges across the workers, the strips partition; they thread whenever the chain's
-threaded form serves and run serially otherwise. The engagement counters prove a
-threaded pass ran; a T > 1 result without that proof is vacuous (the project's rule).
+the column cells race theirs). In the fused strips each worker runs its lane range whole,
+the pack and the fold inside it; in the three passes over the plane the elementwise
+passes (pack, fold, unfold, unpack) split by lane ranges across the workers, the strips
+partition. They thread whenever the chain's threaded form serves and run serially
+otherwise. The engagement counters prove a threaded pass ran; a T > 1 result without that
+proof is vacuous (the project's rule). The race's arms for a real batch run the whole
+executor (the pack and the fold are part of what a width decides), on planes sized for
+the bins' extra row.
 
 ## 5. Wisdom
 

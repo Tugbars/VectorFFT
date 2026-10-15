@@ -204,6 +204,26 @@ static inline int vfft_policy_batch_lane_major(const vfft_cfg_t *cfg)
     return 0;
 }
 
+/* -- the lane-major c2c batch's SERIAL form (owner, 2026-10-15) ----------------
+ * A chain with a Rader stage (stage 0 the prime engine) walks the plane, no width
+ * race: the engine's cost hides the walk's cache aliasing and a dense tile's copies
+ * only add (raced: the walk won by a fifth at 131x1024 and 53x1024, tied at 524x256,
+ * 1048x64 and 2101x64). A smooth chain runs the DENSE TILES and the walk is no arm:
+ * the tile never lost to it (16x4096 by 16 to 64 percent, 64x1024 by 6, ties from
+ * 256x256 to 2101x64). The widths are the serial ladder's; a scrambled chain's widest
+ * tile stays below K, since the whole plane as one tile is the walk plus two copies,
+ * while a natural chain's may reach K (its whole-plane strip is the walk's own work).
+ * Where no width exists (fewer than eight lanes), the walk serves. The real batches
+ * are not under this law: their fused strips win at every chain, the Rader ones too. */
+static inline int vfft_policy_lm_serial_tiles(int rader_stage)
+{
+    return !rader_stage;
+}
+static inline int vfft_policy_lm_tile_ok(int w, int K, int nat)
+{
+    return w < K || nat;
+}
+
 static inline int vfft_policy_il2d_rader_prime(int N1)
 {
     int p, r;
