@@ -312,10 +312,22 @@ a clone is accepted only when its chain, verdicts and kernels match the primary)
 whole execute one threaded verdict (`cmt=`) raced with the column pass's arms. Both
 placements: the column pass moves src to dst in its first stage, the rows run in place.
 The row: the 2D cell at `q = K` on the `lay=lm` axis, the first axis's column tokens on
-it. K = 1 is the ordinary 2D plan (the geometry does not apply). The real 2D batch (the
-real batch's fused strips on the last axis, a complex column pass over (N2/2+1) K lanes
-on the first) and rank 3 (the first axis over N2 N3 K lanes, then N1 blocks of the rank-2
-batch, the same door recursively) are the next pieces.
+it. K = 1 is the ordinary 2D plan (the geometry does not apply).
+
+The real 2D batch (`il/rank2/lm_batch2dr_il.h`) is the same shape with the axes in the
+real order. r2c runs the last axis first: N1 blocks of the 1D real lane-major batch at
+(N2, K), the child in role with its fused strips, out of the caller's reals into the
+spectrum's row-blocks (in place: its (N2 + 2) K-double plane per block); then the first
+axis, one complex column pass of N1 rows over (N2/2 + 1) K lanes, in place on the
+spectrum, natural. c2r is the mirror: the backward column pass, then the blocks through
+the 1D c2r batch. Out of place the caller's spectrum must survive, so the column pass
+moves it into a scratch of the spectrum's size and the blocks read from there; in place
+both passes run on the one padded plane, N1 blocks of (N2 + 2) K doubles. The row is the
+real one at rank 2, `t=r2c n=N1xN2 q=K` on the `lay=lm` axis, direction-shared as the 1D
+real row is. The named geometry only: at rank 2 the DEFAULT stays contiguous planes.
+
+Rank 3, the first axis over N2 N3 K lanes and then N1 blocks of the rank-2 batch through
+the same door, is the next piece.
 
 ## 9. What this retires
 

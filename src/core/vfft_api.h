@@ -283,6 +283,8 @@ static size_t _vfft_api_stride(const struct vfft_plan_s *h)
     const int real = (h->transform == VFFT_R2C || h->transform == VFFT_C2R);
     if (h->own_pitch)
         return h->own_pitch;   /* door 2: the pitch the plan chose (VFFT_FLAG_OWN_PITCH) */
+    if (h->lm)
+        return h->K > 0 ? h->K : 1;   /* a lane-major batch at any rank: the lane stride */
     if (real && h->layout == VFI_LAYOUT_IL && h->placement == VFFT_INPLACE && h->N2 > 0)
     {
         if (h->N3 > 0)
