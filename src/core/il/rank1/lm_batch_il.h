@@ -135,7 +135,9 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
     const int usable = W && !W->vw2_off_2d && !cfg->recalibrate;
     const int plain = !c->nat && !c->blu && c->wl <= 0;   /* the lane tile is the plain chain pass's */
     const int strips_ok = !c->blu && !c->tpc && (!c->nat || c->nst >= 2);
-    const size_t PN = 2 * (size_t)N * (size_t)K;
+    /* the arms' planes: the chain's M x K for a c2c batch; a real batch's arm runs its executor, whose
+     * spectrum side is (M + 1) rows of K bins (2 K doubles more than the N K reals) */
+    const size_t PN = 2 * (size_t)N * (size_t)K + (h->transform != VFFT_C2C ? 2 * (size_t)K : 0);
     _lm_arm_t ac[14];
     vfft_race_arm_t arms[14];
     double ns[14], *z, *zo, *seed = NULL;
@@ -562,39 +564,51 @@ static void _lmr_ranges(struct vfft_plan_s *h, const double *x, double *z, int p
  * whole range), the ranges cut at 8 lanes so no cache line is written by two workers; serial: tiles
  * of wc. The plain chain class with a scratch wide enough (natswcap); a Bluestein or turned axis at
  * a prime M works over the plane, and the three-phase form below serves those and any width past
- * the scratch. In place stays safe: a strip's lanes are packed before any of its bins are written,
- * and no other lane is touched. */
-static void _lmr_strip(struct vfft_plan_s *h, const double *x, double *z, size_t k, size_t w, double *scr, int c2r)
+ * the scratch. IN PLACE the bins of lane k sit where the reals of lanes 2 k and 2 k + 1 sit (two
+ * doubles a bin, one a real), so a strip's fold would overwrite reals of strips not yet packed: the
+ * input is consumed whole first, the pack (the unfold) over the plane W as the three-phase form does
+ * it, and each strip then reads its lanes from W; one more pass over the plane than out of place. */
+static void _lmr_strip(struct vfft_plan_s *h, const double *x, double *z, size_t k, size_t w, double *scr, int c2r,
+                       int from_W)
 {
     const vfft_ilcol_t *c = &h->il2d_col;
     const size_t M = (size_t)h->lm_M, K = h->K;
+    size_t m;
+    if (from_W)
+    {   /* in place: the plane W holds the packed (unfolded) input, consumed whole before any output row */
+        for (m = 0; m < M; m++)
+            memcpy(scr + 2 * m * w, h->lm_W + 2 * (m * K + k), 2 * w * sizeof(double));
+    }
+    else if (!c2r)
+        _lmr_pack(x, K, scr, w, 0, M, k, k + w);
+    else
+        _lmc_unfold(x, K, scr, w, 0, M, h->lm_perm, h->lm_tw, k, k + w);
     if (!c2r)
     {
-        _lmr_pack(x, K, scr, w, 0, M, k, k + w);
         _il2d_col_pass_range(scr, scr, (int)M, w, 0, w, c->nst, c->R, c->L, c->f, c->tf, 0);
         _lmr_fold(scr, w, 0, z, M, K, h->lm_perm, h->lm_tw, k, k + w);
     }
     else
     {
-        _lmc_unfold(x, K, scr, w, 0, M, h->lm_perm, h->lm_tw, k, k + w);
         _il2d_col_pass_range(scr, scr, (int)M, w, 0, w, c->nst, c->R, c->L, c->b, c->tb, 1);
         _lmc_unpack(scr, w, 0, z, K, M, k, k + w);
     }
 }
-typedef struct { struct vfft_plan_s *h; const double *x; double *z; size_t lo, hi, sw; int tid, c2r; } _lmf_arg_t;
+typedef struct { struct vfft_plan_s *h; const double *x; double *z; size_t lo, hi, sw; int tid, c2r, from_W; } _lmf_arg_t;
 static void _lmf_tramp(void *v)
 {
     _lmf_arg_t *a = (_lmf_arg_t *)v;
     double *scr = a->h->il2d_col.natsscr[a->tid];
     size_t k;
     for (k = a->lo; k < a->hi; k += a->sw)
-        _lmr_strip(a->h, a->x, a->z, k, (k + a->sw < a->hi) ? a->sw : a->hi - k, scr, a->c2r);
+        _lmr_strip(a->h, a->x, a->z, k, (k + a->sw < a->hi) ? a->sw : a->hi - k, scr, a->c2r, a->from_W);
 }
 /* 1 = the fused strips served (a threaded run counted as an engagement), 0 = the three-phase form's turn */
 static int _lmr_fused(struct vfft_plan_s *h, const double *x, double *z, int c2r)
 {
     vfft_ilcol_t *c = &h->il2d_col;
     const size_t K = h->K, cap = (size_t)c->natswcap;
+    const int ip = h->placement == VFFT_INPLACE;   /* the input consumed whole into W first (below) */
     _lmf_arg_t a[THREAD_POOL_MAX_DISPATCH];
     int t, T;
     if (!c->natsscr || c->nnatsscr < 1 || c->nat || c->blu || c->tpc || c->wl > 0)
@@ -610,7 +624,7 @@ static int _lmr_fused(struct vfft_plan_s *h, const double *x, double *z, int c2r
             return 0;
         for (t = 0; t < T; t++)
         {
-            a[t].h = h; a[t].x = x; a[t].z = z; a[t].tid = t; a[t].c2r = c2r;
+            a[t].h = h; a[t].x = x; a[t].z = z; a[t].tid = t; a[t].c2r = c2r; a[t].from_W = ip;
             a[t].lo = (K * (size_t)t / (size_t)T) & ~(size_t)7;
             a[t].hi = t + 1 == T ? K : (K * (size_t)(t + 1) / (size_t)T) & ~(size_t)7;
             a[t].sw = msw ? msw : a[t].hi - a[t].lo;
@@ -618,13 +632,18 @@ static int _lmr_fused(struct vfft_plan_s *h, const double *x, double *z, int c2r
         }
         if (!ok)
             return 0;
+        if (ip)
+            _lmr_ranges(h, x, z, c2r ? 2 : 0);   /* the pack (the unfold) over the whole plane into W */
         thread_pool_run(T, _lmf_tramp, a, sizeof a[0]);
         _vfft_il2d_col_mt_count++;   /* the engagement (vfft_diagnostics.h): the caller's duty */
         return 1;
     }
     if (c->wc <= 0 || (size_t)c->wc > cap)
         return 0;
+    if (ip)
+        _lmr_ranges(h, x, z, c2r ? 2 : 0);
     a[0].h = h; a[0].x = x; a[0].z = z; a[0].lo = 0; a[0].hi = K; a[0].sw = (size_t)c->wc; a[0].tid = 0; a[0].c2r = c2r;
+    a[0].from_W = ip;
     _lmf_tramp(&a[0]);
     return 1;
 }
