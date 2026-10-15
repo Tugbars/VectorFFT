@@ -279,6 +279,61 @@ libraries at these lane counts. Eight threads: MKL's lane-major 2D batch does no
 eight-thread readings swung up to 3x between the two engine orders at 64x1024 (ours 547 and
 188 µs, MKL's contiguous planes 336 and 154), the machine's threaded noise.
 
+#### The 2D lane-major real batch (step 6, 2026-10-15)
+
+K real planes of N1 x N2 side by side, real (r, c) of transform t at `x[(r N2 + c) K + t]`; the
+half spectrum is H = N2/2 + 1 bins wide, bin (r, h) of transform t at `z[2 ((r H + h) K + t)]`.
+Ours is the 2D real batch door (`docs/roadmap/lane_major_batch_design.md`, section 8): the last
+axis the 1D real lane-major batch per row block (the fused strips), in role, then the first axis
+one complex column pass over H K lanes; C2R is the mirror (the column pass first, then the
+blocks) and out of place leaves the caller's bins untouched. MKL's lane-major 2D real batch is
+its REAL descriptor (CCE storage) with `NUMBER_OF_TRANSFORMS = K`, distance 1, the reals at
+strides {0, N2 K, K} and the bins at {0, H K, K}; the verdict is `MKL lm / ours lm`. The
+reference arms run the same transforms on contiguous planes: MKL with distance N1 N2 (bins
+N1 H), and ours as a loop over K one-plane 2D real plans. Canonical bench
+`gauntlet/bench_1d_vs_mkl.c --lm2dr2c` and `--lm2dc2r` (`--mt` for T=8, both sides at 8
+threads), the lane-major protocol as above, every cell raced cold on a fresh scratch store.
+ns per batch.
+
+```
+        N1xN2     K  ours lm ns   MKL lm ns  ratio  MKL contig  ours contig   error
+ R2C, one thread
+      256x256     4     287,825     287,000   1.00     304,212     264,963   4.2e-16
+        64x64    16      43,360      47,377   1.09      51,523      43,557   3.2e-16
+       131x16     8      25,326      83,718   3.31      86,423      32,113   8.2e-16
+       32x256     8      45,543      50,707   1.11      52,250      43,353   3.4e-16
+      1024x64     4     385,663     382,200   0.99     331,900     275,550   3.9e-16
+      128x128     8     111,427     106,687   0.96     111,953      98,207   3.6e-16
+ C2R, one thread
+      256x256     4     270,625     367,437   1.36     372,750     276,962   1.0e-15
+        64x64    16      47,430      57,567   1.21      63,347      43,220   7.8e-16
+       131x16     8      25,303      85,855   3.39      89,056      31,582   1.7e-15
+       32x256     8      47,380      60,240   1.27      73,500      42,203   7.8e-16
+      1024x64     4     340,063     407,287   1.20     408,525     265,975   9.4e-16
+      128x128     8     149,100     136,107   0.91     155,880      96,327   8.9e-16
+ R2C, eight threads both sides
+      256x256     8     117,925     398,712   3.38      73,250     622,750   3.4e-16
+      512x512     4     210,750   1,531,325   7.27     246,438   1,416,513   3.7e-16
+      64x1024     8     123,063     823,625   6.69      72,562     480,725   4.9e-16
+      131x256     8      94,662     684,537   7.23     161,963     439,075   9.2e-16
+ C2R, eight threads both sides
+      256x256     8     110,900     460,400   4.15      84,950     506,538   1.0e-15
+      512x512     4     194,650   2,049,387  10.53     267,050   1,332,225   1.1e-15
+      64x1024     8     126,163     464,625   3.68      79,900     442,025   1.2e-15
+      131x256     8      74,350     699,988   9.41     160,688     417,663   2.3e-15
+```
+
+"ours contig" is the loop of one-thread one-plane plans in both tables. Every T=8 row is
+engaged. One thread: R2C level with MKL's lane-major real batch at the smooth cells (0.96x to
+1.11x) and 3.3x at the prime first axis; C2R 1.2x to 1.4x at the smooth cells, 3.4x at the prime
+one, 0.91x at 128x128x8, the one cell behind. Our own contiguous loop is the faster of our two
+forms at the tall and the square smooth cells (1024x64x4 by 1.4x R2C and 1.3x C2R, 128x128x8 by
+1.1x and 1.5x), the strips' pack and fold and the column pass over H K lanes against the
+one-plane real plan. Eight threads: MKL's lane-major 2D real batch does not scale (0.4 to
+2.0 ms), so 3.4x to 7.3x R2C and 3.7x to 10.5x C2R against it; against MKL's contiguous planes
+0.6x to 1.7x R2C and 0.6x to 2.2x C2R, ahead at 512x512x4 and the prime first axis, behind at
+256x256x8 and 64x1024x8 where MKL's contiguous planes run in 73 to 85 us.
+
 ### Natural order — in-place (single-thread)
 
 ```
