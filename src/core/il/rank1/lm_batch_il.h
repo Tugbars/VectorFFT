@@ -134,6 +134,8 @@ static void _lm_sscr_settle(struct vfft_plan_s *h)
 static int _lmr_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, double *zout);   /* below */
 static int _lmc_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *xout);
 static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);  /* rank2/lm_batch2d_il.h */
+static int _lm2dr_exec_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, double *zout);   /* rank2/lm_batch2dr_il.h */
+static int _lm2dr_exec_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *xout);
 typedef struct { struct vfft_plan_s *h; double *z, *zo; int colmt, natarm, msw, wc, ok; char name[24]; } _lm_arm_t;
 static void _lm_arm_run(void *v)
 {   /* a real batch's arm runs its executor (the fused strips with the arm's knobs, or the three-phase
@@ -144,7 +146,14 @@ static void _lm_arm_run(void *v)
     c->natarm = a->natarm;
     c->msw = a->msw;
     c->wc = a->wc;
-    if (a->h->transform == VFFT_R2C)
+    if (a->h->N2 > 0 && a->h->transform != VFFT_C2C)
+    {   /* the 2D real batch: both axes, the blocks over the clones */
+        if (a->h->transform == VFFT_R2C)
+            _lm2dr_exec_r2c(a->h, VFFT_FORWARD, a->z, a->zo);
+        else
+            _lm2dr_exec_c2r(a->h, VFFT_BACKWARD, a->z, a->zo);
+    }
+    else if (a->h->transform == VFFT_R2C)
         _lmr_exec(a->h, VFFT_FORWARD, a->z, a->zo);
     else if (a->h->transform == VFFT_C2R)
         _lmc_exec(a->h, VFFT_BACKWARD, a->z, a->zo);

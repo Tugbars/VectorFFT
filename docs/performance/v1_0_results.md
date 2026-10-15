@@ -242,6 +242,43 @@ the walk serves. Every cell raced cold on a fresh scratch store.
      16  4096      40,780      71,070   1.74      27,333      37,187   3.0e-16   1.06
 ```
 
+#### The 2D lane-major batch (step 6, 2026-10-15)
+
+K planes of N1 x N2 side by side, element (r, c) of transform t at `z[2 ((r N2 + c) K + t)]`.
+Ours is the 2D batch door (`docs/roadmap/lane_major_batch_design.md`, section 8): the first axis
+one column pass over N2 K lanes, the last axis the 1D lane-major batch per block, in role.
+MKL's lane-major 2D batch is its 2D descriptor with `NUMBER_OF_TRANSFORMS = K`, distance 1 and
+strides {0, N2 K, K}; the verdict is `MKL lm / ours lm`. The reference arms run the same
+transforms on contiguous planes: MKL with distance N1 N2, and ours as a loop over K one-plane
+2D plans. Canonical bench `gauntlet/bench_1d_vs_mkl.c --lm2d` (`--mt` for T=8, both sides at 8
+threads), the lane-major protocol: one cell per process, core 2 pinned at HIGH, pace 300 ms,
+cool 300 ms, both engine orders (the table keeps the order with the lower ratio), every cell
+raced cold on a fresh scratch store. ns per batch.
+
+```
+        N1xN2     K  ours lm ns   MKL lm ns  ratio  MKL contig  ours contig   error
+ one thread
+      256x256     4     542,563     785,300   1.45     568,675     449,025   6.1e-16
+        64x64    16     109,073     111,910   1.03     114,743      91,373   3.3e-16
+       131x16     8      38,818     154,670   3.98     138,984      52,248   9.7e-16
+       32x256     8     129,633     142,450   1.10     124,983      86,627   4.9e-16
+      1024x64     4     583,800     902,650   1.55     716,862     470,913   5.8e-16
+      128x128     8     234,353     313,680   1.34     268,033     241,813   6.3e-16
+ eight threads both sides
+      256x256     8     164,175   1,445,512   8.80     138,325     948,900   9.9e-16
+      512x512     4     581,500   3,642,713   6.26     648,925   2,687,912   1.1e-15
+      64x1024     8     546,862   1,360,638   2.49     335,613   1,213,150   8.9e-16
+      131x256     8     157,025     887,287   5.65     288,862     897,300   8.9e-16
+```
+
+"ours contig" is the loop of one-thread one-plane plans in both tables. Every T=8 row is
+engaged. One thread: ahead of MKL's lane-major batch at every cell, 4.0x at the prime first
+axis; at the smooth cells 1.0x to 1.6x, where the contiguous layout is the faster one for both
+libraries at these lane counts. Eight threads: MKL's lane-major 2D batch does not scale (0.9 to
+3.6 ms), so 2.5x to 8.8x against it; against MKL's contiguous planes 0.6x to 1.8x. The
+eight-thread readings swung up to 3x between the two engine orders at 64x1024 (ours 547 and
+188 µs, MKL's contiguous planes 336 and 154), the machine's threaded noise.
+
 ### Natural order — in-place (single-thread)
 
 ```
