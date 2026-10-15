@@ -133,6 +133,7 @@ static void _lm_sscr_settle(struct vfft_plan_s *h)
 }
 static int _lmr_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, double *zout);   /* below */
 static int _lmc_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *xout);
+static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);  /* rank2/lm_batch2d_il.h */
 typedef struct { struct vfft_plan_s *h; double *z, *zo; int colmt, natarm, msw, wc, ok; char name[24]; } _lm_arm_t;
 static void _lm_arm_run(void *v)
 {   /* a real batch's arm runs its executor (the fused strips with the arm's knobs, or the three-phase
@@ -147,6 +148,8 @@ static void _lm_arm_run(void *v)
         _lmr_exec(a->h, VFFT_FORWARD, a->z, a->zo);
     else if (a->h->transform == VFFT_C2R)
         _lmc_exec(a->h, VFFT_BACKWARD, a->z, a->zo);
+    else if (a->h->N2 > 0)
+        _lm2d_exec(a->h, VFFT_FORWARD, a->z, a->zo);   /* the 2D batch: both axes, the rows over the clones */
     else
         _lm_cols(a->h, a->z, a->zo, 0);
 }
@@ -154,7 +157,8 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
                      const vw2_ilcol_key_t *key, int bcmt)
 {
     vfft_ilcol_t *c = &h->il2d_col;
-    const int N = c->N, K = (int)h->K, T = h->nthreads, ip = h->placement == VFFT_INPLACE && h->transform == VFFT_C2C;
+    /* the pass's rows and lanes: the descriptor's (a 2D batch's first axis runs N2 K lanes) */
+    const int N = c->N, K = (int)c->rn, T = h->nthreads, ip = h->placement == VFFT_INPLACE && h->transform == VFFT_C2C;
     const int workers = T > 1 ? thread_pool_workers_for(T) : 1;
     const int usable = W && !W->vw2_off_2d && !cfg->recalibrate;
     const int c2c = h->transform == VFFT_C2C;

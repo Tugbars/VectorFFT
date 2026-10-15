@@ -65,10 +65,10 @@ static inline void vw2__ilcol_key(const vw2_ilcol_key_t *ck, vw2_key_t *k)
     vw2__2d_key(k, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, ck->n1,
                 ck->n2, ck->ord, VW2_LAY_IL, ck->nthreads);
     if (ck->lm)
-    {   /* the lane-major 1D batch: the 1D cell at q = K on its own layout axis */
-        k->rank = 1;
-        k->n[1] = 0;
-        k->q = ck->n1;
+    {   /* the lane-major batches on their own layout axis: rank 1 = the 1D cell at q = K (n1 = K),
+         * rank 2 = the 2D cell at q = K (n2 = K) */
+        if (ck->rank == 2) { k->n[2] = 0; k->q = ck->n2; }
+        else { k->rank = 1; k->n[1] = 0; k->q = ck->n1; }
         k->lay = VW2_LAY_LM;
     }
     if (ck->ip)
@@ -243,10 +243,9 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
     vw2__2d_rec_key(r, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, ck->n1, ck->n2, ck->ord,
                     /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL, ck->nthreads);
     if (ck->lm)
-    {   /* the lane-major 1D batch's row: the 1D cell at q = K on its own layout axis (vw2__ilcol_key) */
-        r->key.rank = 1;
-        r->key.n[1] = 0;
-        r->key.q = ck->n1;
+    {   /* the lane-major batches' rows (vw2__ilcol_key): rank 1 at q = K (n1), rank 2 at q = K (n2) */
+        if (ck->rank == 2) { r->key.n[2] = 0; r->key.q = ck->n2; }
+        else { r->key.rank = 1; r->key.n[1] = 0; r->key.q = ck->n1; }
         r->key.lay = VW2_LAY_LM;
     }
     if (ck->ip)

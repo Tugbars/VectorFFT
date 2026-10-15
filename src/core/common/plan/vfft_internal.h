@@ -222,6 +222,10 @@ struct vfft_plan_s
     int lm_M;
     double *lm_W, *lm_tw;
     int *lm_perm;
+    struct vfft_plan_s *lm_row;    /* the 2D batch's row child: the 1D batch at (N2, K), in role on lm_rowS */
+    struct vfft_plan_s **lm_roww;  /* its clones for the threaded row blocks, lm_roww_n of them */
+    int lm_roww_n;
+    struct vfft_wisdom_s *lm_rowS;
     /* TC MT (split's per-lane trick, one level up: per-TRANSFORM). The K=1
      * IL engines are NOT reentrant — il2p/il3p own `mid` scratch, zturn owns
      * its sectioned `plane` — so worker t runs its slab of transforms on its

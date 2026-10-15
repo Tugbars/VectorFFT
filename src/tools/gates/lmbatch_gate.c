@@ -387,6 +387,71 @@ static void refusals(void)
     printf("R refusals: odd-N r2c and c2r in both placements, rank-2 lane-major refused; K=1 ordinary\n");
 }
 
+/* ── THE 2D LANE-MAJOR BATCH (step 6): K planes of N1 x N2 side by side, element (r, c) of transform t at
+ * z[2 ((r N2 + c) K + t)]; lane t against its own K = 1 2D plan (natural, out of place), the roundtrip, the
+ * replay bitwise, in place bitwise the out-of-place plan; T = 8 engaged ── */
+static void ref_lanes_2d(const double *z, double *ref, int N1, int N2, int K)
+{
+    const int n2[2] = { N1, N2 };
+    const size_t P = (size_t)N1 * N2;
+    double *a = (double *)vfft_malloc(2 * P * 8), *b = (double *)vfft_malloc(2 * P * 8);
+    vfft_plan p = mk(VFFT_C2C, 2, n2, 1, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_NATURAL, 1);
+    int t;
+    size_t e;
+    CHECK(p != NULL, "reference K=1 2D plan at %dx%d refused", N1, N2);
+    for (t = 0; t < K; t++)
+    {
+        for (e = 0; e < P; e++) { a[2 * e] = z[2 * (e * K + t)]; a[2 * e + 1] = z[2 * (e * K + t) + 1]; }
+        if (p) vfft_execute(p, VFFT_FORWARD, a, b);
+        for (e = 0; e < P; e++) { ref[2 * (e * K + t)] = b[2 * e]; ref[2 * (e * K + t) + 1] = b[2 * e + 1]; }
+    }
+    if (p) vfft_destroy(p);
+    vfft_free(a); vfft_free(b);
+}
+static void cell_lm2d(int N1, int N2, int K, int T)
+{
+    const int n2[2] = { N1, N2 };
+    const size_t PN = (size_t)N1 * N2 * K;
+    double *z = (double *)vfft_malloc(2 * PN * 8), *y = (double *)vfft_malloc(2 * PN * 8), *y2 = (double *)vfft_malloc(2 * PN * 8);
+    double *ref = (double *)vfft_malloc(2 * PN * 8), *rt = (double *)vfft_malloc(2 * PN * 8);
+    vfft_plan p, p2;
+    long m0 = moved();
+    fill(z, 2 * PN, (unsigned)(N1 * 31 + N2 * 7 + K + T));
+    ref_lanes_2d(z, ref, N1, N2, K);
+    p = mk(VFFT_C2C, 2, n2, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);
+    CHECK(p != NULL, "lm2d %dx%d x %d T=%d: create refused: %s", N1, N2, K, T, vfft_error());
+    if (!p) { vfft_free(z); vfft_free(y); vfft_free(y2); vfft_free(ref); vfft_free(rt); return; }
+    vfft_execute(p, VFFT_FORWARD, z, y);
+    printf("%s lm2d %4dx%-4d x %-3d T=%d cold: route %-8s fwd vs lanes %.1e", T > 1 ? "M" : "C", N1, N2, K, T,
+           vfft_plan_route(p), relc(y, ref, PN));
+    CHECK(relc(y, ref, PN) < 1e-10, "lm2d %dx%d x %d T=%d: fwd vs the K=1 planes %.2e", N1, N2, K, T, relc(y, ref, PN));
+    if (T > 1) CHECK(moved() != m0, "lm2d %dx%d x %d: T=%d did not engage a threaded pass", N1, N2, K, T);
+    vfft_execute(p, VFFT_BACKWARD, y, rt);
+    CHECK(relrt(rt, z, PN, (double)N1 * (double)N2) < 1e-10, "lm2d %dx%d x %d T=%d: roundtrip %.2e", N1, N2, K, T,
+          relrt(rt, z, PN, (double)N1 * (double)N2));
+    printf(", roundtrip %.1e", relrt(rt, z, PN, (double)N1 * (double)N2));
+    p2 = mk(VFFT_C2C, 2, n2, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);
+    CHECK(p2 != NULL, "lm2d %dx%d x %d T=%d: replay create refused", N1, N2, K, T);
+    if (p2)
+    {
+        vfft_execute(p2, VFFT_FORWARD, z, y2);
+        CHECK(memcmp(y, y2, 2 * PN * 8) == 0, "lm2d %dx%d x %d T=%d: replay != cold (bitwise)", N1, N2, K, T);
+        vfft_destroy(p2);
+    }
+    p2 = mk(VFFT_C2C, 2, n2, (size_t)K, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, T);
+    CHECK(p2 != NULL, "lm2d %dx%d x %d T=%d: in-place create refused", N1, N2, K, T);
+    if (p2)
+    {
+        memcpy(y2, z, 2 * PN * 8);
+        vfft_execute(p2, VFFT_FORWARD, y2, y2);
+        CHECK(memcmp(y, y2, 2 * PN * 8) == 0, "lm2d %dx%d x %d T=%d: in place != out of place (bitwise)", N1, N2, K, T);
+        vfft_destroy(p2);
+    }
+    printf("%s\n", T > 1 ? "  threaded passes 1" : "");
+    vfft_destroy(p);
+    vfft_free(z); vfft_free(y); vfft_free(y2); vfft_free(ref); vfft_free(rt);
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = NULL;
@@ -396,7 +461,7 @@ int main(int argc, char **argv)
     if (!dir) { printf("usage: lmbatch_gate --wisdir <cold scratch dir>\n"); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     g_W = (dir);
-    printf("LANE-MAJOR BATCH GATE: c2c, r2c and c2r on the column pass, store %s\n", dir);
+    printf("LANE-MAJOR BATCH GATE: c2c, r2c and c2r on the column pass, the 2D c2c batch, store %s\n", dir);
     /* C: small lengths against the naive DFT too; a prime, a Rader leaf, a smooth length, an odd length, a prime alone */
     cell(16, 8, 1);
     cell(45, 8, 1);
@@ -410,6 +475,14 @@ int main(int argc, char **argv)
     cell_mt(1048, 256);
     cell_mt(131, 1024);
     cell_mt(256, 512);
+    /* the 2D batch: smooth and Rader first axes, a tall and a wide plane, both one-thread and threaded */
+    cell_lm2d(16, 8, 8, 1);
+    cell_lm2d(64, 64, 4, 1);
+    cell_lm2d(131, 16, 8, 1);
+    cell_lm2d(32, 256, 8, 1);
+    cell_lm2d(256, 32, 4, 1);
+    cell_lm2d(256, 256, 8, 8);
+    cell_lm2d(64, 1024, 8, 8);
     /* R2: the real batch, r2c, even N: a small cell vs naive, a Rader M, a prime M (Bluestein), smooth, K = 3, wide */
     cell_r2c(16, 8, 1, 1);
     cell_r2c(64, 64, 1, 1);
