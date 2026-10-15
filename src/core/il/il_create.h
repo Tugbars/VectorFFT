@@ -85,6 +85,8 @@ static vfft_plan _vfft_il_create(const vfft_cfg_t *cfg,
          * an atomic plane counter (queue mode), loop-vs-queue RACED at
          * create. Contiguous planes only (the canonical dist for each
          * transform). IL trig is refused before the fork. */
+        if (K > 1 && cfg->transform == VFFT_C2C && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
+            return _vfft_create_lm2d_il(cfg, W, K);   /* the LANE-MAJOR 2D batch (lm_batch2d_il.h) */
         if (K != 1)
             return _vfft_create_2d_pq_il(cfg, W, K);
         /* IL c2c (any placement), IL real out of place, and IL real in

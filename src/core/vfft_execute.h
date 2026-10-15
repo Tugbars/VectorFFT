@@ -400,6 +400,12 @@ void vfft_destroy(vfft_plan h)
         h->alias_scr = NULL;
         if (h->lm)
         {   /* the lane-major batch: its column pass, and the real batch's packed plane, permutation and twiddles */
+            if (h->lm_row)
+            {   /* the 2D batch's row child, its clones and its store */
+                _lm2d_clones_drop(h);
+                vfft_destroy((vfft_plan)h->lm_row);
+                vfft_child_store_free(h->lm_rowS);
+            }
             _il2d_col_free(&h->il2d_col);
             vfft_aligned_free(h->lm_W);
             vfft_aligned_free(h->lm_tw);

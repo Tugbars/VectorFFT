@@ -185,15 +185,19 @@ static inline int vfft_policy_rough47_is_prime(int r)
  * transforms of length N, element e of transform t at z[2 (e K + t)], served by the column
  * pass with no row pass (il/rank1/lm_batch_il.h). Admitted: a 1D interleaved C2C request of
  * howmany >= 2 at N >= 2 that names the geometry (VFFT_BATCH_LANE_MAJOR; DEFAULT stays
- * transform-contiguous for c2c). The real batches are the design's next pieces: refused
- * here until they serve. The geometries never race each other in a create (the owner's
- * rule): a lane-major request is served lane-major or refused with its reason. */
+ * transform-contiguous for c2c), and the 2D interleaved C2C request the same way (step 6,
+ * il/rank2/lm_batch2d_il.h: the first axis one column pass over the plane's width, the last
+ * axis the 1D batch per block). The real 1D batches: below. The geometries never race each
+ * other in a create (the owner's rule): a lane-major request is served lane-major or refused
+ * with its reason. */
 static inline int vfft_policy_batch_lane_major(const vfft_cfg_t *cfg)
 {
-    if (!cfg || cfg->dims > 1 || cfg->layout != VFI_LAYOUT_IL || cfg->howmany < 2)
+    if (!cfg || cfg->dims > 2 || cfg->layout != VFI_LAYOUT_IL || cfg->howmany < 2)
         return 0;
-    if (cfg->transform == VFFT_C2C)
-        return cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->n[0] >= 2;
+    if (cfg->transform == VFFT_C2C)   /* rank 1, and rank 2 (step 6: every axis a column pass) */
+        return cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->n[0] >= 2 && (cfg->dims < 2 || cfg->n[1] >= 2);
+    if (cfg->dims >= 2)
+        return 0;   /* the real 2D batch is the design's next piece */
     /* the real batch (steps 2, 3 and 5): r2c and c2r at an even N >= 4, both placements (in place:
      * one buffer of (N + 2) K doubles, the reals first, the bins over them), on the DEFAULT geometry
      * (the header's promise: a real interleaved batch's DEFAULT is lane-major) or the explicit one;
