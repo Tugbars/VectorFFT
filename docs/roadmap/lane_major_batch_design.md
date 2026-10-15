@@ -7,8 +7,10 @@ STRIPS for the real batches (section 3; the eight-thread power-of-two cells that
 composite cells 1.4x to 1.7x faster than before; the results page), and the c2c batch's
 SERIAL DENSE TILES under the serial-form law (a Rader-stage chain walks the plane, a
 smooth chain races the tile widths alone: the tile won at the widest planes, 16x4096
-from 1.06x to 1.74x, tied in the middle and lost at the Rader cells). The real odd column engine waits for piece C of the
-Rader spread.**
+from 1.06x to 1.74x, tied in the middle and lost at the Rader cells), and step 6's rank 2
+(section 8: the 2D c2c batch and the 2D real batch through the 2D doors, raced against
+MKL's lane-major 2D batches on the results page; rank 3 open). The real odd column engine
+waits for piece C of the Rader spread.**
 Owner: "we will build lane major everywhere; the library is almost done, so it may
 start now. 1D C2C / R2C / C2R all will have lane major with one bold stroke." This
 document is the design to build against; it supersedes slice 2 of
