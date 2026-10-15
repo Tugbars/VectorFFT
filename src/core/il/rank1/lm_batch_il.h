@@ -41,6 +41,27 @@ static void _lm_cols(struct vfft_plan_s *h, const double *src, double *dst, int 
         _vfft_il2d_col_mt_count++;   /* the engagement (vfft.h): the caller's duty, as the 2D tiers count theirs */
         return;
     }
+    if (c->wc > 0 && c->natsscr && c->nnatsscr >= 1 && (size_t)c->wc <= (size_t)c->natswcap &&
+        !c->blu && !c->tpc && c->wl <= 0 && (!c->nat || c->nst >= 2))
+    {   /* THE SERIAL DENSE TILES (2026-10-15): each tile of wc lanes through the dense scratch, the
+         * natural strip (its leaf scatter included) or the scrambled strip -- the walk on the plane at
+         * its pitch aliases in cache at a power-of-two K; the race picks the width (sw=) */
+        const size_t K = c->rn, wc = (size_t)c->wc;
+        vfft_il2p_fn const *fns = reverse ? c->b : c->f;
+        double *const *tabs = reverse ? c->tb : c->tf;
+        size_t k;
+        for (k = 0; k < K; k += wc)
+        {
+            const size_t w = (k + wc < K) ? wc : K - k;
+            if (c->nat)
+                _il2d_col_pass_nat_strip(src, dst, c->N, K, k, w, c->nst, c->R, c->L, fns, tabs, reverse,
+                                         c->natperm, c->natsscr[0]);
+            else
+                _il2d_col_pass_scr_strip(src, dst, c->N, K, k, w, c->nst, c->R, c->L, fns, tabs, reverse,
+                                         c->natsscr[0]);
+        }
+        return;
+    }
     if (c->nat || c->blu || c->wl > 0)
     {
         _il2d_col_exec_st(c, src, dst, reverse, c->natstage);
@@ -64,8 +85,9 @@ static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, do
  * does not engage on this cell is out (the engagement counter says). ── */
 /* the lane-major batches' dense strip scratch (the descriptor's natsscr fields, freed with it): T blocks
  * (one at T = 1) of M x swcap complexes, swcap the widest ladder width at this T or a worker's whole
- * range where that fits L2. The real batch's fused strips (serial tiles and threaded sub-strips) and the
- * c2c batch's scrambled blocks run in it; the natural chain keeps its own builder (its leaf). */
+ * range where that fits L2, or the whole plane at one thread. The real batch's fused strips (serial tiles
+ * and threaded sub-strips), the c2c batch's serial dense tiles (both orders) and its scrambled blocks run
+ * in it; the natural chain's threaded blocks keep their own builder (its leaf). */
 static int _lm_sscr_build(vfft_ilcol_t *c, int M, int K, int T)
 {
     int lad[6], nl, k, swcap = 0, t;
@@ -77,6 +99,8 @@ static int _lm_sscr_build(vfft_ilcol_t *c, int M, int K, int T)
         if (lad[k] > swcap) swcap = lad[k];
     if (T > 1 && K / T >= 8 && vfft_policy_fits_l2((long)M * (K / T + 8) * 16) && K / T + 8 > swcap)
         swcap = K / T + 8;   /* a worker's whole range, its bounds cut at 8 lanes */
+    if (T <= 1 && K >= 2 && vfft_policy_fits_l2((long)M * K * 16) && K > swcap)
+        swcap = K;           /* the whole plane as one tile */
     if (swcap < 2)
         return 0;
     c->natsscr = (double **)calloc((size_t)Tb, sizeof *c->natsscr);
@@ -103,7 +127,7 @@ static void _lm_sscr_settle(struct vfft_plan_s *h)
 {
     vfft_ilcol_t *c = &h->il2d_col;
     const int real = h->transform != VFFT_C2C;
-    const int keep = c->colmt ? (real || c->natarm == 1) : (real && c->wc > 0);
+    const int keep = c->colmt ? (real || c->natarm == 1) : (real || c->wc > 0);
     if (!keep)
         _il2d_nat_sscr_free(c);
 }
@@ -133,7 +157,11 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
     const int N = c->N, K = (int)h->K, T = h->nthreads, ip = h->placement == VFFT_INPLACE && h->transform == VFFT_C2C;
     const int workers = T > 1 ? thread_pool_workers_for(T) : 1;
     const int usable = W && !W->vw2_off_2d && !cfg->recalibrate;
-    const int plain = !c->nat && !c->blu && c->wl <= 0;   /* the lane tile is the plain chain pass's */
+    const int c2c = h->transform == VFFT_C2C;
+    /* the serial width race: the real batch's fused tiles at every chain; the c2c batch's dense tiles
+     * under the serial-form law (policy_il.h: a Rader-stage chain walks the plane, no race) */
+    const int plain = !c->blu && !c->tpc && c->wl <= 0 && (!c->nat || c->nst >= 2) &&
+                      (!c2c || vfft_policy_lm_serial_tiles(c->rd0 != NULL));
     const int strips_ok = !c->blu && !c->tpc && (!c->nat || c->nst >= 2);
     /* the arms' planes: the chain's M x K for a c2c batch; a real batch's arm runs its executor, whose
      * spectrum side is (M + 1) rows of K bins (2 K doubles more than the N K reals) */
@@ -179,13 +207,16 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
         ac[na].msw = (SW_); ac[na].wc = (WC_); ac[na].ok = 1; \
         snprintf(ac[na].name, sizeof ac[na].name, "%s", NAME_); \
         arms[na].name = ac[na].name; arms[na].run = _lm_arm_run; arms[na].ctx = &ac[na]; na++; } while (0)
-    _LM_ARM("serial", 0, 0, 0, bsw >= 0 ? bsw : 0);
+    if (!(c2c && need_sw))   /* a c2c batch racing its tile widths has no walk arm (the law) */
+        _LM_ARM("serial", 0, 0, 0, bsw >= 0 ? bsw : 0);
     if (need_sw)
     {   /* the serial lane tiles: the ladder's widths that divide K and keep a tile in L2 */
         nl = _il2d_sw_ladder(N, K, 1, lad, 6);
         for (i = 0; i < nl && na < 14; i++)
         {
             char nm[24];
+            if (c2c && !vfft_policy_lm_tile_ok(lad[i], K, c->nat))
+                continue;
             snprintf(nm, sizeof nm, "sw%d", lad[i]);
             _LM_ARM(nm, 0, 0, 0, lad[i]);
         }
@@ -215,7 +246,10 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
                 ac[i].ok = _vfft_il2d_col_mt_count != e0;
             }
     }
+    if (na == 0)   /* no width for this K and nothing threaded: the walk, banked as sw = 0 */
+        _LM_ARM("walk", 0, 0, 0, 0);
 #undef _LM_ARM
+    if (na > 1)
     {
         vfft_race_proto_t proto = need_mt
             ? (vfft_race_proto_t){ 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }   /* threaded arms: two untimed passes first, never paused */
@@ -318,6 +352,8 @@ static vfft_plan _vfft_create_lm_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s 
     h->il2d_col.cut = 0;
     h->il2d_col.tfuse = 0;
     h->il2d_col.wc = 0;
+    if (T <= 1 && !h->il2d_col.blu && !h->il2d_col.tpc)
+        (void)_lm_sscr_build(&h->il2d_col, N, (int)K, 1);   /* the serial dense tiles' scratch, raced below */
     _lm_race(h, W, cfg, &ck, bcmt);
     if (W && !W->vw2_off_2d && h->il2d_col.tpcS)
     {   /* the turned prime pass's child recipe onto the cell's row (the 2D create's last act;
@@ -638,14 +674,19 @@ static int _lmr_fused(struct vfft_plan_s *h, const double *x, double *z, int c2r
         _vfft_il2d_col_mt_count++;   /* the engagement (vfft_diagnostics.h): the caller's duty */
         return 1;
     }
-    if (c->wc <= 0 || (size_t)c->wc > cap)
-        return 0;
-    if (ip)
-        _lmr_ranges(h, x, z, c2r ? 2 : 0);
-    a[0].h = h; a[0].x = x; a[0].z = z; a[0].lo = 0; a[0].hi = K; a[0].sw = (size_t)c->wc; a[0].tid = 0; a[0].c2r = c2r;
-    a[0].from_W = ip;
-    _lmf_tramp(&a[0]);
-    return 1;
+    {   /* serial: tiles of wc; wc = 0 is the whole plane as one tile where the scratch holds it (the
+         * three-pass form's work with no plane W: its one strip packs everything before any bin is
+         * written, so in place needs no first pass); past the scratch the three-pass form serves */
+        const size_t wc = c->wc > 0 ? (size_t)c->wc : (K <= cap ? K : 0);
+        if (wc == 0 || wc > cap)
+            return 0;
+        if (ip && wc < K)
+            _lmr_ranges(h, x, z, c2r ? 2 : 0);
+        a[0].h = h; a[0].x = x; a[0].z = z; a[0].lo = 0; a[0].hi = K; a[0].sw = wc; a[0].tid = 0; a[0].c2r = c2r;
+        a[0].from_W = ip && wc < K;
+        _lmf_tramp(&a[0]);
+        return 1;
+    }
 }
 static int _lmr_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, double *zout)
 {

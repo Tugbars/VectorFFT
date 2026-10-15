@@ -183,6 +183,65 @@ counted in the timed executes).
 - **Eight threads:** 2.3× to 5.9× where the length carries 131. Behind MKL at the power-of-two
   cells: 256×512 c2c 0.92×, 512×512 r2c 0.56×, 512×512 c2r 0.40×.
 
+#### The real batches on the fused strips (2026-10-15)
+
+The same bench and protocol, the real batches after the fused strips landed: each strip
+of lanes is packed into a dense per-worker scratch, runs the chain there and is folded
+out, one dispatch per execute (`docs/roadmap/lane_major_batch_design.md`, section 3). The
+eight-thread cells that lost were the power-of-two ones, where the chain walked the
+scratch plane at a pitch that aliases in cache; the composite cells carry a Rader stage
+and were compute-bound. Every cell raced cold on a fresh scratch store.
+
+```
+      N     K  ours lm ns   MKL lm ns  ratio  MKL contig  ours contig   error   before
+ r2c, one thread
+    512   512     199,175     299,863   1.51     175,025     146,312   2.6e-16   1.33
+    128  1024      68,947      95,147   1.38      63,867      57,160   2.9e-16   1.19
+     32  4096      54,673      74,833   1.37      69,633      67,513   1.7e-16   1.04
+ c2r, one thread
+    512   512     203,213     301,250   1.48     142,288     126,575   7.8e-16   1.41
+    128  1024      81,053     100,420   1.24      59,713      54,160   5.6e-16   1.19
+     32  4096      64,440      79,793   1.24      75,640      62,673   4.4e-16   1.00
+ r2c, eight threads both sides
+    512   512      32,038      45,400   1.42      19,812     162,313   2.6e-16   0.56
+   2096   256     154,625     689,162   4.46     650,762     989,725   8.4e-16   2.89
+    262  1024      53,325     150,850   2.83     129,150     462,613   1.3e-15   2.26
+   1048   512     136,650     700,725   5.13     685,600   1,033,138   9.5e-16   3.56
+ c2r, eight threads both sides
+    512   512      50,050      40,138   0.80      17,538     127,975   7.8e-16   0.40
+   2096   256     180,550     708,350   3.92     658,762     938,825   2.4e-15   2.73
+    262  1024      67,675     243,100   3.59     151,563     467,137   2.0e-15   2.35
+   1048   512     149,425     681,575   4.56     625,425   1,040,400   2.2e-15   3.19
+```
+
+"before" is the ratio of the run above, on the three-pass form. At eight threads
+512x512 r2c went from 76 µs to 32 µs and every composite cell gained; c2r 512x512 went
+from 97 µs to 50 µs and stays behind MKL's lane-major batch there. One thread gains 1.0x
+to 1.3x of its own time.
+
+#### The c2c batch's serial dense tiles (2026-10-15)
+
+The one-thread c2c cells of the run above, after the serial dense tiles landed: the c2c
+batch's chain through the same per-worker scratch at one thread, the natural strip with
+its leaf scatter or the scrambled strip, at the width the serial race banks; the walk on
+the plane stays an arm of that race. The race's own arm times decided each cell: the
+tile won at the widest planes (16x4096 by 16 to 64 percent, 64x1024 by 6), tied from
+256x256 to 2101x64, and lost by 20 percent at the Rader cells (131x1024, 53x1024), where
+the walk serves. Every cell raced cold on a fresh scratch store.
+
+```
+      N     K  ours lm ns   MKL lm ns  ratio  MKL contig  ours contig   error   before
+ c2c, one thread
+    131  1024     302,371   1,079,650   3.57     976,657     400,800   9.6e-16   3.54
+    524   256     373,486   2,613,979   7.00   2,545,650     465,214   7.4e-16   6.99
+   1048    64     172,093   1,305,959   7.59   1,262,759     188,072   8.4e-16   7.30
+   2101    64     412,243   1,533,029   3.72   1,414,714     504,686   8.1e-16   3.62
+     53  1024      88,464     111,983   1.27     444,483     134,356   1.3e-15   1.26
+    256   256      68,247      90,137   1.32      41,040      46,703   2.9e-16   1.32
+     64  1024      52,387      92,357   1.76      34,657      36,747   2.4e-16   1.61
+     16  4096      40,780      71,070   1.74      27,333      37,187   3.0e-16   1.06
+```
+
 ### Natural order — in-place (single-thread)
 
 ```
