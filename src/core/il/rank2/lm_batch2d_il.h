@@ -12,8 +12,9 @@
  * through its raced column forms, the blocks over the workers, each on its own clone of the
  * row child (a plan's scratch is not reentrant), the whole execute one threaded verdict
  * (cmt=) raced with the column pass's arms. Both placements: the column pass moves src -> dst
- * in its first stage, the rows run in place on dst. Included after lm_batch_il.h (the 1D
- * batch and the race) and before the door. */
+ * in its first stage, the rows run in place on dst. The 3D batch (rank3/lm_batch3d_il.h) runs
+ * through the same walker and executor: its blocks are N2 N3 K complexes, its child this 2D
+ * batch. Included after lm_batch_il.h (the 1D batch and the race) and before the door. */
 #ifndef VFFT_IL_LM_BATCH2D_IL_H
 #define VFFT_IL_LM_BATCH2D_IL_H
 
@@ -25,7 +26,7 @@ static void _lm2d_rows_tramp(void *v)
     _lm2d_rows_arg_t *a = (_lm2d_rows_arg_t *)v;
     struct vfft_plan_s *h = a->h;
     struct vfft_plan_s *rp = a->tid > 0 ? h->lm_roww[a->tid - 1] : h->lm_row;
-    const size_t blk = 2 * (size_t)h->N2 * h->K;
+    const size_t blk = 2 * (size_t)h->N2 * (size_t)(h->N3 > 0 ? h->N3 : 1) * h->K;   /* the 3D batch's block: N2 N3 K */
     size_t r;
     for (r = a->lo; r < a->hi; r++)
         _vfft_exec6((vfft_plan)rp, a->dir, a->z + r * blk, NULL, a->z + r * blk, NULL);
@@ -54,8 +55,8 @@ static void _lm2d_rows(struct vfft_plan_s *h, double *z, vfft_dir_t dir)
     }
     thread_pool_run(T, _lm2d_rows_tramp, a, sizeof a[0]);
 }
-/* the executor (the lean door binds it: never declining): the first axis over the plane, the
- * row blocks in place on the result */
+/* the executor (the lean door binds it: never declining): the first axis over the plane (the
+ * volume), the blocks in place on the result */
 static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
     _lm_cols(h, zin, zout, dir == VFFT_BACKWARD);
@@ -63,7 +64,7 @@ static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, 
     return 0;
 }
 
-/* the row child's clones, T - 1 of them from its store (they replay what the primary banked),
+/* the child's clones (the 2D batch's row child, the 3D batch's 2D child), T - 1 of them from its store (they replay what the primary banked),
  * each structurally equivalent to the primary (_tc_clone_equiv's lane-major branch); any failure
  * drops the set and the rows stay serial */
 static void _lm2d_clones_drop(struct vfft_plan_s *h)
@@ -92,8 +93,12 @@ static int _lm2d_clones_build(struct vfft_plan_s *h, const vfft_cfg_t *rc, int T
         h->lm_roww_n = t + 1;
         if (!c || !_tc_clone_equiv(h->lm_row, c))
         {
-            _vfft_warn("lane-major 2D batch %dx%d x %zu: row clone %d %s; the rows stay serial",
-                       h->N, h->N2, h->K, t, c ? "differs from the primary" : "failed to create");
+            if (h->N3 > 0)
+                _vfft_warn("lane-major 3D batch %dx%dx%d x %zu: child clone %d %s; the blocks stay serial",
+                           h->N, h->N2, h->N3, h->K, t, c ? "differs from the primary" : "failed to create");
+            else
+                _vfft_warn("lane-major 2D batch %dx%d x %zu: row clone %d %s; the rows stay serial",
+                           h->N, h->N2, h->K, t, c ? "differs from the primary" : "failed to create");
             _lm2d_clones_drop(h);
             return 0;
         }
@@ -130,7 +135,7 @@ static vfft_plan _vfft_create_lm2d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_
     _il2d_blu_chain_hook = _il2d_blu_m_chain;
     memset(&col, 0, sizeof col);
     forms[0] = 0;
-    if (!_il2d_col_build(W, cfg, &ck, N1, lanes, vfft_policy_rankn_axis_nat(2, 0, ord), &col, forms, sizeof forms,
+    if (!_il2d_col_build(W, cfg, &ck, N1, lanes, vfft_policy_lm_axis_nat(ord), &col, forms, sizeof forms,
                          &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
     {
         _vfft_warn("vfft_create: lane-major interleaved 2D batch %dx%d x %zu: no column pass serves the first axis "

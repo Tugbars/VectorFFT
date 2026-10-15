@@ -108,7 +108,9 @@ extern "C"
    *   for every SPLIT batch (whose only geometry it is).
    * A batch of rank 2 is contiguous planes by default, or lane-major when named
    * (C2C; R2C and C2R at an even last extent): element (r, c) of transform t at
-   * z[2 ((r N2 + c) K + t)]. A batch of rank 3 or more is contiguous planes.
+   * z[2 ((r N2 + c) K + t)]. A C2C batch of rank 3 is lane-major when named,
+   * element (i, j, k) of transform t at z[2 ((i N2 N3 + j N3 + k) K + t)]; a real
+   * batch of rank 3, and any batch of rank 4, is contiguous planes.
    */
   typedef enum
   {

@@ -1366,6 +1366,7 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_cfg_t *cfg,
 #include "il/rank1/lm_batch_il.h" /* the LANE-MAJOR 1D batch on the column pass (2026-10-14); after the 2D tier, before the door */
 #include "il/rank2/lm_batch2d_il.h" /* the LANE-MAJOR 2D batch: the first axis a column pass, the last the 1D batch per block (2026-10-15) */
 #include "il/rank2/lm_batch2dr_il.h" /* its real twin, r2c and c2r: the 1D real batch per block, a complex column pass over the spectrum */
+#include "il/rank3/lm_batch3d_il.h" /* the LANE-MAJOR 3D batch: the first axis a column pass over the volume's width, the 2D batch per block (2026-10-15) */
 #include "il/il_create.h"       /* the INTERLEAVED create: the IL side of the one fork */
 #include "bridge/real_bridge.h" /* 1D real: where the layouts still meet (D1, temporary) */
 #include "vfft_batch.h"         /* owned-batch allocator (step 28) */
@@ -1684,9 +1685,9 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
         TC_NEQ("lane-major batch");
     if (a->lm)
     {   /* the lane-major batch: the extents, the column descriptor's chain and class, its raced knobs
-         * and the kernels by identity (a 2D batch's row child is compared through its own plan) */
+         * and the kernels by identity (a 2D or 3D batch's child is compared through its own plan) */
         const vfft_ilcol_t *x = &a->il2d_col, *y = &b->il2d_col;
-        if (a->N != b->N || a->N2 != b->N2 || a->K != b->K || x->nst != y->nst ||
+        if (a->N != b->N || a->N2 != b->N2 || a->N3 != b->N3 || a->K != b->K || x->nst != y->nst ||
             memcmp(x->R, y->R, sizeof(int) * (size_t)(x->nst > 0 ? x->nst : 0)) ||
             x->nat != y->nat || x->blu != y->blu || x->tpc != y->tpc || x->wc != y->wc ||
             x->colmt != y->colmt || x->natarm != y->natarm || x->msw != y->msw ||
@@ -2174,20 +2175,21 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
                    "transform-contiguous batch, or VFFT_BATCH_DEFAULT/LANE_MAJOR here");
         return NULL;
     }
-    /* An INTERLEAVED batch of rank 3 or more has exactly one geometry:
+    /* An INTERLEAVED batch of rank 4, and a real one of rank 3, has exactly one geometry:
      * contiguous planes, plane t at z + t * (the plane's doubles), which is
      * what DEFAULT means there (the plane queue, il/rank2/fft2d_create_il.h,
      * and the rank-N tiers address nothing else). An EXPLICIT lane-major
      * request is refused here, by the same rule: no combination quietly means
      * something other than what it says. */
-    if (cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->layout == VFI_LAYOUT_IL && K > 1 && cfg->dims >= 3)
+    if (cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->layout == VFI_LAYOUT_IL && K > 1 &&
+        (cfg->dims >= 4 || (cfg->dims == 3 && cfg->transform != VFFT_C2C)))
     {
         _vfft_warn("vfft_create: batch=VFFT_BATCH_LANE_MAJOR is not supported for an "
-                   "INTERLEAVED plan of rank %d (its batches are contiguous planes: plane t "
+                   "INTERLEAVED %s plan of rank %d (its batches are contiguous planes: plane t "
                    "at z + t * plane_doubles) — use VFFT_BATCH_DEFAULT or "
                    "VFFT_BATCH_CONTIGUOUS and lay the %d planes out one after "
                    "another",
-                   cfg->dims, (int)K);
+                   _vfft_tname(cfg->transform), cfg->dims, (int)K);
         return NULL;
     }
     /* In-place real FFT: SUPPORTED for the 1D INTERLEAVED-CCE zr2c route
