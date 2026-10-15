@@ -64,7 +64,9 @@ typedef struct {
                                * NULL = the leaf stores at its natural stride */
     double **natsscr;         /* the threaded strips' DENSE per-worker scratch:
                                * nnatsscr blocks of N x natswcap complexes, pitch = the strip
-                               * width (the 3D tier's strip form, _il2d_col_pass_nat_strip) */
+                               * width (the 3D tier's strip form, _il2d_col_pass_nat_strip); the
+                               * lane-major batches build it for the scrambled chain too (_lm_sscr_build:
+                               * the real batch's fused strips, the c2c batch's blocks) */
     int nnatsscr, natswcap;
     int natdense;             /* the dense strip form is on (bound at build: VFFT_IL2D_DENSE=0 keeps the shared scratch; no getenv on the execute path) */
     /* column-axis BLUESTEIN: chirp convolution at M = next pow2 >= 2N-1 over

@@ -62,16 +62,69 @@ static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, do
  * chain bank, mtarm= / msw= beside them). Every arm runs the plan's own pass
  * (_lm_cols) with the arm's knobs on the descriptor; a threaded arm whose pass
  * does not engage on this cell is out (the engagement counter says). ── */
+/* the lane-major batches' dense strip scratch (the descriptor's natsscr fields, freed with it): T blocks
+ * (one at T = 1) of M x swcap complexes, swcap the widest ladder width at this T or a worker's whole
+ * range where that fits L2. The real batch's fused strips (serial tiles and threaded sub-strips) and the
+ * c2c batch's scrambled blocks run in it; the natural chain keeps its own builder (its leaf). */
+static int _lm_sscr_build(vfft_ilcol_t *c, int M, int K, int T)
+{
+    int lad[6], nl, k, swcap = 0, t;
+    const int Tb = T > 1 ? T : 1;
+    if (c->natsscr || c->blu || c->tpc)
+        return c->natsscr != NULL;
+    nl = _il2d_sw_ladder(M, K, T, lad, 6);
+    for (k = 0; k < nl; k++)
+        if (lad[k] > swcap) swcap = lad[k];
+    if (T > 1 && K / T >= 8 && vfft_policy_fits_l2((long)M * (K / T + 8) * 16) && K / T + 8 > swcap)
+        swcap = K / T + 8;   /* a worker's whole range, its bounds cut at 8 lanes */
+    if (swcap < 2)
+        return 0;
+    c->natsscr = (double **)calloc((size_t)Tb, sizeof *c->natsscr);
+    if (!c->natsscr)
+        return 0;
+    for (t = 0; t < Tb; t++)
+    {
+        c->natsscr[t] = (double *)vfft_aligned_alloc((2 * (size_t)M * (size_t)swcap + 8) * sizeof(double));
+        if (!c->natsscr[t])
+        {
+            c->nnatsscr = t;
+            _il2d_nat_sscr_free(c);
+            return 0;
+        }
+    }
+    c->nnatsscr = Tb;
+    c->natswcap = swcap;
+    c->natdense = 1;
+    return 1;
+}
+/* the scratch stays when a verdict runs in it: a real batch's fused strips (any threaded verdict, or a
+ * serial tile), a c2c batch's blocks; freed otherwise */
+static void _lm_sscr_settle(struct vfft_plan_s *h)
+{
+    vfft_ilcol_t *c = &h->il2d_col;
+    const int real = h->transform != VFFT_C2C;
+    const int keep = c->colmt ? (real || c->natarm == 1) : (real && c->wc > 0);
+    if (!keep)
+        _il2d_nat_sscr_free(c);
+}
+static int _lmr_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, double *zout);   /* below */
+static int _lmc_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *xout);
 typedef struct { struct vfft_plan_s *h; double *z, *zo; int colmt, natarm, msw, wc, ok; char name[24]; } _lm_arm_t;
 static void _lm_arm_run(void *v)
-{
+{   /* a real batch's arm runs its executor (the fused strips with the arm's knobs, or the three-phase
+     * form): the pack and the fold are part of what the knob decides; a c2c batch's arm is the pass */
     _lm_arm_t *a = (_lm_arm_t *)v;
     vfft_ilcol_t *c = &a->h->il2d_col;
     c->colmt = a->colmt;
     c->natarm = a->natarm;
     c->msw = a->msw;
     c->wc = a->wc;
-    _lm_cols(a->h, a->z, a->zo, 0);
+    if (a->h->transform == VFFT_R2C)
+        _lmr_exec(a->h, VFFT_FORWARD, a->z, a->zo);
+    else if (a->h->transform == VFFT_C2R)
+        _lmc_exec(a->h, VFFT_BACKWARD, a->z, a->zo);
+    else
+        _lm_cols(a->h, a->z, a->zo, 0);
 }
 static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                      const vw2_ilcol_key_t *key, int bcmt)
@@ -100,11 +153,14 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
         c->colmt = bcmt > 0;
         c->natarm = c->colmt ? vw2_ilcol_tok_geti(&W->vw2, key, "mtarm", 0) : 0;
         c->msw = c->colmt ? vw2_ilcol_tok_geti(&W->vw2, key, "msw", 0) : 0;
-        if (c->colmt && c->natarm == 1 && c->nat)
-            (void)_il2d_nat_sscr_build(c, N, K, workers);
+        if (c->colmt && c->natarm == 1)
+            (void)(c->nat ? _il2d_nat_sscr_build(c, N, K, workers) : _lm_sscr_build(c, N, K, workers));
     }
     if (!need_sw && !need_mt)
+    {
+        _lm_sscr_settle(h);
         return;
+    }
     z = (double *)vfft_aligned_alloc((PN + 8) * sizeof(double));
     zo = ip ? z : (double *)vfft_aligned_alloc((PN + 8) * sizeof(double));
     if (ip) seed = (double *)vfft_aligned_alloc((PN + 8) * sizeof(double));
@@ -137,9 +193,9 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
         _LM_ARM("threaded", 1, 0, 0, 0);
         if (strips_ok)
         {
-            if (c->nat)
-                (void)_il2d_nat_sscr_build(c, N, K, workers);
-            _LM_ARM("strips", 1, 1, 0, 0);
+            (void)(c->nat ? _il2d_nat_sscr_build(c, N, K, workers) : _lm_sscr_build(c, N, K, workers));
+            if (h->transform == VFFT_C2C)   /* a real batch's whole-range strips are the threaded arm */
+                _LM_ARM("strips", 1, 1, 0, 0);
             nl = _il2d_sw_ladder(N, K, T, lad, 6);
             for (i = 0; i < nl && na < 14; i++)
             {
@@ -182,8 +238,7 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
     c->colmt = ac[best].colmt;
     c->natarm = ac[best].natarm;
     c->msw = ac[best].msw;
-    if (c->natarm != 1 || !c->nat || !c->colmt)
-        _il2d_nat_sscr_free(c);   /* the dense scratch serves the strips alone */
+    _lm_sscr_settle(h);   /* the dense scratch stays for the verdicts that run in it */
     if (getenv("VFFT_IL2D_LOG"))
     {
         fprintf(stderr, "[lm] %d x %d T=%d %s:", N, K, T, ip ? "ip" : "oop");
@@ -292,14 +347,16 @@ static vfft_plan _vfft_create_lm_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s 
  * placements: in place the buffer is (N + 2) K doubles, the N K reals first and the bins
  * over them, and nothing else changes, since the pack copies the whole input into W before
  * the fold writes a bin and the c2r unfold consumes every bin before the unpack writes a
- * real (each phase a whole dispatch). The c2r twin is its own piece. */
-static void _lmr_pack(const double *x, double *W, size_t M, size_t K, size_t k0, size_t k1)
+ * real (each phase a whole dispatch). The c2r twin is its own piece. The three phases over the plane
+ * are the form for a prime M (the Bluestein and turned axes) and for a width past the scratch; the
+ * plain chain runs the FUSED STRIPS below (the dense strip arm with the pack and the fold around it). */
+static void _lmr_pack(const double *x, size_t K, double *W, size_t Wp, size_t wk, size_t M, size_t k0, size_t k1)
 {
     size_t m, n;
     for (m = 0; m < M; m++)
     {
         const double *a = x + 2 * m * K + k0, *b = a + K;
-        double *w = W + 2 * (m * K + k0);
+        double *w = W + 2 * (m * Wp + wk);
         const size_t w1 = k1 - k0;
         n = 0;
 #if defined(__AVX2__)
@@ -318,15 +375,15 @@ static void _lmr_pack(const double *x, double *W, size_t M, size_t K, size_t k0,
         }
     }
 }
-static void _lmr_fold(const double *W, double *A, size_t M, size_t K, const int *perm, const double *tw,
-                      size_t k0, size_t k1)
+static void _lmr_fold(const double *W, size_t Wp, size_t wk, double *A, size_t M, size_t K, const int *perm,
+                      const double *tw, size_t k0, size_t k1)
 {
-    const double *Z0 = W + 2 * (perm ? (size_t)perm[0] : 0) * K;
+    const double *Z0 = W + 2 * ((perm ? (size_t)perm[0] : 0) * Wp + wk);
     double *A0 = A, *AM = A + 2 * M * K;
     size_t k, n;
     for (n = k0; n < k1; n++)
     {
-        const double r = Z0[2 * n], i = Z0[2 * n + 1];
+        const double r = Z0[2 * (n - k0)], i = Z0[2 * (n - k0) + 1];
         A0[2 * n] = r + i;
         A0[2 * n + 1] = 0.0;
         AM[2 * n] = r - i;
@@ -335,7 +392,7 @@ static void _lmr_fold(const double *W, double *A, size_t M, size_t K, const int 
     for (k = 1; 2 * k <= M; k++)
     {
         const size_t rk = perm ? (size_t)perm[k] : k, rm = perm ? (size_t)perm[M - k] : M - k;
-        const double *Pk = W + 2 * rk * K, *Pm = W + 2 * rm * K;
+        const double *Pk = W + 2 * (rk * Wp + wk), *Pm = W + 2 * (rm * Wp + wk);
         double *Ak = A + 2 * k * K, *Am = A + 2 * (M - k) * K;
         const double wr = tw[2 * k], wi = tw[2 * k + 1];
         const int mirror = (2 * k < M);
@@ -346,7 +403,7 @@ static void _lmr_fold(const double *W, double *A, size_t M, size_t K, const int 
             const __m256d vwr = _mm256_set1_pd(wr), vwi = _mm256_setr_pd(-wi, wi, -wi, wi);
             for (; n + 2 <= k1; n += 2)
             {
-                const __m256d P = _mm256_loadu_pd(Pk + 2 * n), Q = _mm256_xor_pd(_mm256_loadu_pd(Pm + 2 * n), cj);
+                const __m256d P = _mm256_loadu_pd(Pk + 2 * (n - k0)), Q = _mm256_xor_pd(_mm256_loadu_pd(Pm + 2 * (n - k0)), cj);
                 const __m256d E = _mm256_mul_pd(half, _mm256_add_pd(P, Q)), D = _mm256_mul_pd(half, _mm256_sub_pd(P, Q));
                 const __m256d O = _mm256_xor_pd(_mm256_permute_pd(D, 0x5), cj);                          /* -i D */
                 const __m256d T = _mm256_fmadd_pd(O, vwr, _mm256_mul_pd(_mm256_permute_pd(O, 0x5), vwi)); /* w^k O */
@@ -358,7 +415,7 @@ static void _lmr_fold(const double *W, double *A, size_t M, size_t K, const int 
 #endif
         for (; n < k1; n++)
         {
-            const double pr = Pk[2 * n], pi = Pk[2 * n + 1], qr = Pm[2 * n], qi = -Pm[2 * n + 1];
+            const double pr = Pk[2 * (n - k0)], pi = Pk[2 * (n - k0) + 1], qr = Pm[2 * (n - k0)], qi = -Pm[2 * (n - k0) + 1];
             const double er = 0.5 * (pr + qr), ei = 0.5 * (pi + qi), dr = 0.5 * (pr - qr), di = 0.5 * (pi - qi);
             const double orr = di, oi = -dr;   /* -i D */
             const double tr = orr * wr - oi * wi, ti = orr * wi + oi * wr;
@@ -381,23 +438,23 @@ static void _lmr_fold(const double *W, double *A, size_t M, size_t K, const int 
  *           chain reads row k from (the chain's comb);
  *   COLUMNS the backward column chain at M down every lane of W, in place;
  *   UNPACK  x[2 m][k] = Re W[m][k], x[2 m + 1][k] = Im W[m][k]. */
-static void _lmc_unfold(const double *A, double *W, size_t M, size_t K, const int *perm, const double *tw,
-                        size_t k0, size_t k1)
+static void _lmc_unfold(const double *A, size_t K, double *W, size_t Wp, size_t wk, size_t M, const int *perm,
+                        const double *tw, size_t k0, size_t k1)
 {
-    double *Z0 = W + 2 * (perm ? (size_t)perm[0] : 0) * K;
+    double *Z0 = W + 2 * ((perm ? (size_t)perm[0] : 0) * Wp + wk);
     const double *A0 = A, *AM = A + 2 * M * K;
     size_t k, n;
     for (n = k0; n < k1; n++)
     {
         const double a0 = A0[2 * n], am = AM[2 * n];
-        Z0[2 * n] = a0 + am;
-        Z0[2 * n + 1] = a0 - am;
+        Z0[2 * (n - k0)] = a0 + am;
+        Z0[2 * (n - k0) + 1] = a0 - am;
     }
     for (k = 1; 2 * k <= M; k++)
     {
         const size_t rk = perm ? (size_t)perm[k] : k, rm = perm ? (size_t)perm[M - k] : M - k;
         const double *Ak = A + 2 * k * K, *Am = A + 2 * (M - k) * K;
-        double *Zk = W + 2 * rk * K, *Zm = W + 2 * rm * K;
+        double *Zk = W + 2 * (rk * Wp + wk), *Zm = W + 2 * (rm * Wp + wk);
         const double wr = tw[2 * k], wi = -tw[2 * k + 1];   /* conj(w^k) */
         const int mirror = (2 * k < M);
         n = k0;
@@ -411,9 +468,9 @@ static void _lmc_unfold(const double *A, double *W, size_t M, size_t K, const in
                 const __m256d E = _mm256_add_pd(P, Q), D = _mm256_sub_pd(P, Q);
                 const __m256d O = _mm256_fmadd_pd(D, vwr, _mm256_mul_pd(_mm256_permute_pd(D, 0x5), vwi));   /* conj(w^k) D */
                 const __m256d iO = _mm256_xor_pd(_mm256_permute_pd(O, 0x5), _mm256_setr_pd(-0.0, 0.0, -0.0, 0.0)); /* i O */
-                _mm256_storeu_pd(Zk + 2 * n, _mm256_add_pd(E, iO));
+                _mm256_storeu_pd(Zk + 2 * (n - k0), _mm256_add_pd(E, iO));
                 if (mirror)
-                    _mm256_storeu_pd(Zm + 2 * n, _mm256_xor_pd(_mm256_sub_pd(E, iO), cj));
+                    _mm256_storeu_pd(Zm + 2 * (n - k0), _mm256_xor_pd(_mm256_sub_pd(E, iO), cj));
             }
         }
 #endif
@@ -423,22 +480,22 @@ static void _lmc_unfold(const double *A, double *W, size_t M, size_t K, const in
             const double er = pr + qr, ei = pi + qi, dr = pr - qr, di = pi - qi;
             const double orr = dr * wr - di * wi, oi = dr * wi + di * wr;   /* conj(w^k) D */
             const double ior = -oi, ioi = orr;                               /* i O */
-            Zk[2 * n] = er + ior;
-            Zk[2 * n + 1] = ei + ioi;
+            Zk[2 * (n - k0)] = er + ior;
+            Zk[2 * (n - k0) + 1] = ei + ioi;
             if (mirror)
             {
-                Zm[2 * n] = er - ior;
-                Zm[2 * n + 1] = -(ei - ioi);
+                Zm[2 * (n - k0)] = er - ior;
+                Zm[2 * (n - k0) + 1] = -(ei - ioi);
             }
         }
     }
 }
-static void _lmc_unpack(const double *W, double *x, size_t M, size_t K, size_t k0, size_t k1)
+static void _lmc_unpack(const double *W, size_t Wp, size_t wk, double *x, size_t K, size_t M, size_t k0, size_t k1)
 {
     size_t m, n;
     for (m = 0; m < M; m++)
     {
-        const double *w = W + 2 * (m * K + k0);
+        const double *w = W + 2 * (m * Wp + wk);
         double *a = x + 2 * m * K + k0, *b = a + K;
         const size_t w1 = k1 - k0;
         n = 0;
@@ -467,10 +524,10 @@ static void _lmr_tramp(void *v)
     struct vfft_plan_s *h = a->h;
     switch (a->phase)
     {
-    case 0: _lmr_pack(a->x, h->lm_W, (size_t)h->lm_M, h->K, a->k0, a->k1); break;
-    case 1: _lmr_fold(h->lm_W, a->z, (size_t)h->lm_M, h->K, h->lm_perm, h->lm_tw, a->k0, a->k1); break;
-    case 2: _lmc_unfold(a->x, h->lm_W, (size_t)h->lm_M, h->K, h->lm_perm, h->lm_tw, a->k0, a->k1); break;
-    default: _lmc_unpack(h->lm_W, a->z, (size_t)h->lm_M, h->K, a->k0, a->k1); break;
+    case 0: _lmr_pack(a->x, h->K, h->lm_W, h->K, a->k0, (size_t)h->lm_M, a->k0, a->k1); break;
+    case 1: _lmr_fold(h->lm_W, h->K, a->k0, a->z, (size_t)h->lm_M, h->K, h->lm_perm, h->lm_tw, a->k0, a->k1); break;
+    case 2: _lmc_unfold(a->x, h->K, h->lm_W, h->K, a->k0, (size_t)h->lm_M, h->lm_perm, h->lm_tw, a->k0, a->k1); break;
+    default: _lmc_unpack(h->lm_W, h->K, a->k0, a->z, h->K, (size_t)h->lm_M, a->k0, a->k1); break;
     }
 }
 static void _lmr_ranges(struct vfft_plan_s *h, const double *x, double *z, int phase)
@@ -494,9 +551,88 @@ static void _lmr_ranges(struct vfft_plan_s *h, const double *x, double *z, int p
     }
     thread_pool_run(Ts, _lmr_tramp, a, sizeof a[0]);
 }
+/* ── THE FUSED STRIPS (the dense strip arm with the pack and the fold around it, 2026-10-15): a
+ * strip of w lanes [k, k + w) goes through a dense scratch of M x w complexes (pitch w, in L2): the
+ * pack from the caller's plane into the scratch, the chain in place in the scratch (the plain walker
+ * at pitch w: the same kernels, tables and values, so the output is bitwise the plane form's), the
+ * fold from the scratch into the caller's spectrum; c2r the mirror. The plane W is never walked at
+ * its pitch (at a power-of-two K every row sits a power of two apart, so a sub-strip's rows share
+ * one cache set group and every stage streams), the plane is read once and written once, and one
+ * dispatch serves the execute. Threaded: each worker's lane range in sub-strips of msw (0 = the
+ * whole range), the ranges cut at 8 lanes so no cache line is written by two workers; serial: tiles
+ * of wc. The plain chain class with a scratch wide enough (natswcap); a Bluestein or turned axis at
+ * a prime M works over the plane, and the three-phase form below serves those and any width past
+ * the scratch. In place stays safe: a strip's lanes are packed before any of its bins are written,
+ * and no other lane is touched. */
+static void _lmr_strip(struct vfft_plan_s *h, const double *x, double *z, size_t k, size_t w, double *scr, int c2r)
+{
+    const vfft_ilcol_t *c = &h->il2d_col;
+    const size_t M = (size_t)h->lm_M, K = h->K;
+    if (!c2r)
+    {
+        _lmr_pack(x, K, scr, w, 0, M, k, k + w);
+        _il2d_col_pass_range(scr, scr, (int)M, w, 0, w, c->nst, c->R, c->L, c->f, c->tf, 0);
+        _lmr_fold(scr, w, 0, z, M, K, h->lm_perm, h->lm_tw, k, k + w);
+    }
+    else
+    {
+        _lmc_unfold(x, K, scr, w, 0, M, h->lm_perm, h->lm_tw, k, k + w);
+        _il2d_col_pass_range(scr, scr, (int)M, w, 0, w, c->nst, c->R, c->L, c->b, c->tb, 1);
+        _lmc_unpack(scr, w, 0, z, K, M, k, k + w);
+    }
+}
+typedef struct { struct vfft_plan_s *h; const double *x; double *z; size_t lo, hi, sw; int tid, c2r; } _lmf_arg_t;
+static void _lmf_tramp(void *v)
+{
+    _lmf_arg_t *a = (_lmf_arg_t *)v;
+    double *scr = a->h->il2d_col.natsscr[a->tid];
+    size_t k;
+    for (k = a->lo; k < a->hi; k += a->sw)
+        _lmr_strip(a->h, a->x, a->z, k, (k + a->sw < a->hi) ? a->sw : a->hi - k, scr, a->c2r);
+}
+/* 1 = the fused strips served (a threaded run counted as an engagement), 0 = the three-phase form's turn */
+static int _lmr_fused(struct vfft_plan_s *h, const double *x, double *z, int c2r)
+{
+    vfft_ilcol_t *c = &h->il2d_col;
+    const size_t K = h->K, cap = (size_t)c->natswcap;
+    _lmf_arg_t a[THREAD_POOL_MAX_DISPATCH];
+    int t, T;
+    if (!c->natsscr || c->nnatsscr < 1 || c->nat || c->blu || c->tpc || c->wl > 0)
+        return 0;
+    if (h->nthreads > 1 && c->colmt)
+    {
+        const size_t msw = c->msw > 0 ? (size_t)c->msw : 0;
+        int ok = msw <= cap;
+        T = thread_pool_workers_for(h->nthreads);
+        if (T > c->nnatsscr) T = c->nnatsscr;
+        if (K / 8 < (size_t)T) T = (int)(K / 8);   /* eight lanes a worker at least: whole cache lines */
+        if (T < 2)
+            return 0;
+        for (t = 0; t < T; t++)
+        {
+            a[t].h = h; a[t].x = x; a[t].z = z; a[t].tid = t; a[t].c2r = c2r;
+            a[t].lo = (K * (size_t)t / (size_t)T) & ~(size_t)7;
+            a[t].hi = t + 1 == T ? K : (K * (size_t)(t + 1) / (size_t)T) & ~(size_t)7;
+            a[t].sw = msw ? msw : a[t].hi - a[t].lo;
+            if (a[t].sw > cap || a[t].hi <= a[t].lo) ok = 0;
+        }
+        if (!ok)
+            return 0;
+        thread_pool_run(T, _lmf_tramp, a, sizeof a[0]);
+        _vfft_il2d_col_mt_count++;   /* the engagement (vfft_diagnostics.h): the caller's duty */
+        return 1;
+    }
+    if (c->wc <= 0 || (size_t)c->wc > cap)
+        return 0;
+    a[0].h = h; a[0].x = x; a[0].z = z; a[0].lo = 0; a[0].hi = K; a[0].sw = (size_t)c->wc; a[0].tid = 0; a[0].c2r = c2r;
+    _lmf_tramp(&a[0]);
+    return 1;
+}
 static int _lmr_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, double *zout)
 {
     (void)dir;   /* an r2c plan is forward-only: the door refuses the other direction before this */
+    if (_lmr_fused(h, xin, zout, 0))
+        return 0;
     _lmr_ranges(h, xin, zout, 0);
     _lm_cols(h, h->lm_W, h->lm_W, 0);
     _lmr_ranges(h, xin, zout, 1);
@@ -505,6 +641,8 @@ static int _lmr_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, d
 static int _lmc_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *xout)
 {
     (void)dir;   /* a c2r plan is backward-only */
+    if (_lmr_fused(h, zin, xout, 1))
+        return 0;
     _lmr_ranges(h, zin, xout, 2);
     _lm_cols(h, h->lm_W, h->lm_W, 1);
     _lmr_ranges(h, zin, xout, 3);
@@ -597,6 +735,8 @@ static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s
         h->lm_tw[2 * k] = c;
         h->lm_tw[2 * k + 1] = -s;
     }
+    if (!h->il2d_col.blu && !h->il2d_col.tpc)
+        (void)_lm_sscr_build(&h->il2d_col, M, (int)K, T);   /* the fused strips' scratch, raced below */
     _lm_race(h, W, cfg, &ck, bcmt);
     h->k1_exec = c2r ? _lmc_exec : _lmr_exec;   /* the lean door: the direction's own executor, the other refused by the door */
     h->k1_go[VFFT_FORWARD] = c2r ? NULL : _lmr_exec;
