@@ -100,15 +100,7 @@ worse of the two engine orders, and a cell slower than MKL is outlined. The reco
 
 ![Precision, VectorFFT vs MKL, every N from 2 to 4096](src/tools/plots/vectorfft-precision.svg)
 
-Every length above 10e-16 is on the flat DIT route, a chain of two large odd
-radices (2x29x47, 3x29x43, 2x41x43). A tail stage of that route derives most
-of its twiddle legs from one loaded record instead of loading up to
-forty-six, and the derived legs carry the loaded value's rounding times their
-distance from it. That is what makes these lengths fast: the 33 above 10e-16
-run at 2.2x MKL's speed at the median and none below 1.2x, the flat route as
-a whole at 1.7x. The library makes that trade once, for speed, and offers no
-accuracy modes. A build configuration that takes the loaded form instead may
-be added later.
+Measured with one-level Rader.
 
 ---
 
