@@ -186,6 +186,7 @@ ARGSTYLE = {
     # instead of the old gates
     "rader_gate":              ("flag", False),
     "lmbatch_gate":            ("flag", False),   # the lane-major 1D batch's own regression (2026-10-14): cold, --wisdir
+    "dfti_shim_gate":          ("flag", False),   # the DFTI interface (src/shims/dfti, 2026-10-16): cold, --wisdir (it points VFFT_WISDOM_DIR there)
     "il2d_real_gate":          ("bare", True),
     "il2d_real_ip_gate":       ("bare", False),   # COLD: the in-place 2D r2c cells race their own pl=ip rows, vs FFTW in place (2026-10-08)
     "il3d_real_ip_gate":       ("bare", False),   # COLD: the in-place 3D r2c/c2r cells, vs FFTW in place / N x (2026-10-08)
