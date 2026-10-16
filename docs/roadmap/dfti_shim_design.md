@@ -1,6 +1,6 @@
 # The DFTI interface: MKL programs on VectorFFT
 
-**Status (2026-10-16): designed, not built.**
+**Status (2026-10-16): built; its gate is `src/tools/gates/dfti_shim_gate.c`.**
 
 A program written for Intel MKL's DFTI interface (`DftiCreateDescriptor`, `DftiSetValue`,
 `DftiCommitDescriptor`, `DftiComputeForward`, ...) runs on VectorFFT by building against this
@@ -205,7 +205,7 @@ gains fused scaling, scaled final writers bound at plan time, after the release.
 - `src/shims/dfti/vfft_dfti.c`: the implementation. It includes `vfft.h` and nothing from
   `src/core`.
 - `src/tools/gates/dfti_shim_gate.c`: the gate. It checks every form of section 3 in both
-  directions against direct `vfft.h` plans and a naive DFT at small sizes. It also covers:
+  directions against a naive DFT. It also covers:
   - scales;
   - the statuses: an uncommitted compute 2, a NULL handle 5, the NULL-handle `VERSION`
     query 0, refusals 6 and 3;
@@ -213,8 +213,8 @@ gains fused scaling, scaled final writers bound at plan time, after the release.
   - a recommit with an unchanged configuration keeping its plans;
   - one descriptor computed from eight threads, with `NUMBER_OF_USER_THREADS` set to 8
     and left at 1.
-- The differential check against MKL: one program linking the interface and MKL together,
-  possible because no symbol collides, comparing every form. It runs locally and does not ship.
-- Intel's DFTI examples: built against the interface's header, each verifies its own result.
-  They run locally only, since they are Intel's copyright.
+- Intel's DFTI examples (MKL's installed examples, run locally only, since they are Intel's
+  copyright): each builds against the interface's header beside MKL's service header and
+  verifies its own result. The double-precision ones pass, except a contiguous batch of 3D
+  transforms, which the library does not serve.
 
