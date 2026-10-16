@@ -101,6 +101,7 @@ fields instead of ints.
 typedef struct {
     const char *version;        /* "MAJOR.MINOR.PATCH"                                   */
     size_t      alignment;      /* bytes: vfft_malloc's, the buffers the races measured  */
+    int         cores;          /* the machine's performance cores (P-cores if hybrid)   */
     const char *route;          /* the plan's route name, "-" when it has none           */
     int         nthreads;       /* the count the plan serves at                          */
     size_t      in_doubles;     /* what execute reads, per plane under SPLIT             */

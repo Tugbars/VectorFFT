@@ -334,6 +334,45 @@ one-plane real plan. Eight threads: MKL's lane-major 2D real batch does not scal
 0.6x to 1.7x R2C and 0.6x to 2.2x C2R, ahead at 512x512x4 and the prime first axis, behind at
 256x256x8 and 64x1024x8 where MKL's contiguous planes run in 73 to 85 us.
 
+#### The 3D lane-major batch (step 6, 2026-10-15)
+
+K volumes of N1 x N2 x N3 side by side, element (i, j, k) of transform t at
+`z[2 ((i N2 N3 + j N3 + k) K + t)]`. Ours is the 2D batch door one rank up
+(`docs/roadmap/lane_major_batch_design.md`, section 8): the first axis one column pass over
+N2 N3 K lanes, then N1 blocks of the lane-major 2D batch at (N2, N3, K) as the child in role.
+MKL's lane-major 3D batch is its 3D descriptor with `NUMBER_OF_TRANSFORMS = K`, distance 1 and
+strides {0, N2 N3 K, N3 K, K}; the verdict is `MKL lm / ours lm`. The reference arms run the
+same transforms on contiguous volumes: MKL with distance N1 N2 N3, and ours as a loop over K
+one-volume 3D plans (the 3D interleaved tier serves one transform per plan). Canonical bench
+`gauntlet/bench_1d_vs_mkl.c --lm3d` (`--mt` for T=8, both sides at 8 threads), the lane-major
+protocol as above, every cell raced cold on a fresh scratch store. ns per batch.
+
+```
+     N1xN2xN3     K  ours lm ns   MKL lm ns  ratio  MKL contig  ours contig   error
+ one thread
+     32x32x32     4     291,920     929,620   3.19     263,280     203,560   4.8e-16
+     16x16x64     8     291,320   1,195,953   4.11     222,527     208,847   4.0e-16
+     31x16x16     8     157,500     460,042   2.92     320,390     170,823   6.5e-16
+     64x16x16     4     116,927     427,013   3.65     115,523      91,733   3.1e-16
+      8x64x64     8     579,688   2,452,263   4.23     568,413     493,625   6.5e-16
+     24x24x24     4      92,128     342,142   3.71     145,192      78,711   4.5e-16
+ eight threads both sides
+     64x64x64     4     466,787   1,596,100   3.42     459,375   2,496,888   1.2e-15
+    32x128x64     4     414,400   1,473,363   3.56     441,850   2,622,838   1.0e-15
+    131x32x32     8     555,462   3,097,837   5.58   1,216,988   3,862,950   8.3e-16
+    16x64x256     4     407,562   1,248,350   3.06     436,150   2,561,263   1.2e-15
+```
+
+"ours contig" is the loop of one-thread one-volume plans in both tables. Every T=8 row is
+engaged. One thread: 2.9x to 4.2x ahead of MKL's lane-major 3D batch at every cell; against
+MKL's contiguous volumes 0.8x to 1.0x at the smooth cells, 1.6x at 24x24x24 and 2.0x at the
+prime first axis. Our own one-volume loop is the faster of our two forms at every smooth
+one-thread cell (by 1.2x to 1.4x): the batch runs three column passes with the 2D child's
+pack and tiles against the one-volume plan's fused walk, and only the prime first axis turns
+that around. Eight threads: MKL's lane-major 3D batch does not scale (1.2 to 3.1 ms), so 3.1x
+to 5.6x against it; MKL's contiguous batch threads well, and against it the lane-major batch
+is level at the smooth cells (0.98x to 1.19x) and 2.2x at the prime first axis.
+
 ### Natural order — in-place (single-thread)
 
 ```

@@ -303,6 +303,7 @@ int vfft_info(vfft_plan p, vfft_info_t *out)
     memset(out, 0, sizeof *out);
     out->version = VFFT_VERSION_STRING;
     out->alignment = (size_t)VFFT_ALIGNMENT;
+    out->cores = vfft_topology()->n_p > 0 ? vfft_topology()->n_p : 1;   /* cpu_topology.h: the P-cores, every core when not hybrid */
     out->route = "-";
     if (!h)
         return 0;
