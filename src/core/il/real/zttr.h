@@ -56,6 +56,7 @@
 #include <string.h>
 #include <math.h>
 #include <immintrin.h>
+#include "common/math/tw_exact.h"   /* once-rounded cos/sin(2*pi*f/N) for the fold tables */
 
 #include "ztt.h"
 #include "common/math/pi.h"
@@ -186,11 +187,16 @@ static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf
     p->bS = (double *)vfft_aligned_alloc(4u * (size_t)M * sizeof(double));
     if (!p->bS) { vfft_zttr_destroy(p); return NULL; }
     p->bC = p->bS + 2 * (size_t)M;
+    /* cos/sin(2 pi f / N) once for the three tables below, rounded once (tw_exact.h); the quads of the last
+     * table reach f0 + 3, so the table runs to the next multiple of four */
+    const long Mc = (M + 3) / 4 * 4;
+    double *tc = (double *)malloc(2 * (size_t)Mc * sizeof(double)), *ts = tc ? tc + Mc : NULL;
+    if (!tc) { vfft_zttr_destroy(p); return NULL; }
+    vfft_cs2pi_table(N, Mc, tc, ts);
     for (long n = 0; n < M; n++)
     {
-        const double th = 2.0 * VFFT_PI * (double)n / (double)N;
-        p->bS[2 * n] = p->bS[2 * n + 1] = sin(th);
-        p->bC[2 * n] = p->bC[2 * n + 1] = -cos(th);
+        p->bS[2 * n] = p->bS[2 * n + 1] = ts[n];
+        p->bC[2 * n] = p->bC[2 * n + 1] = -tc[n];
     }
     for (long q = 0; q < nq; q++)
     {
@@ -207,9 +213,8 @@ static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf
     }
     for (long f = 0; f < M; f++)
     {
-        const double th = 2.0 * VFFT_PI * (double)f / (double)N;
-        p->affS3[f] = 0.5 - 0.5 * sin(th);
-        p->affC3[f] = 0.5 * cos(th);
+        p->affS3[f] = 0.5 - 0.5 * ts[f];
+        p->affC3[f] = 0.5 * tc[f];
     }
     /* S~(f), C~(f) at f = rL + k + 3 - i for lane i: the table holds each
      * quad's four values in that order */
@@ -217,10 +222,10 @@ static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf
         for (int i = 0; i < 4; i++)
         {
             const long f = f0 + 3 - i;
-            const double th = 2.0 * VFFT_PI * (double)f / (double)N;
-            p->affS[f0 + i] = 0.5 - 0.5 * sin(th);
-            p->affC[f0 + i] = 0.5 * cos(th);
+            p->affS[f0 + i] = 0.5 - 0.5 * ts[f];
+            p->affC[f0 + i] = 0.5 * tc[f];
         }
+    free(tc);
     return p;
 }
 

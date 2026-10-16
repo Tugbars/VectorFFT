@@ -61,6 +61,7 @@
 #endif
 
 #include "common/math/pi.h"
+#include "common/math/tw_exact.h"   /* once-rounded cos/sin(2*pi*f/N) for the fold tables */
 #include "common/support/threads.h"   /* the pool: the threaded fold */
 
 /* Defined in vfft.c with external linkage (the engagement counters' rule). */
@@ -80,10 +81,14 @@ static void _zr2c_init_aff(int N, double *affS, double *affC,
                            double *bwdS, double *bwdC)
 {
     int top = N / 4;
+    double *tc = (double *)malloc(2 * (size_t)(top + 1) * sizeof(double)), *ts = tc ? tc + top + 1 : NULL;
+    if (tc)
+        vfft_cs2pi_table(N, top + 1, tc, ts);   /* cos/sin(2 pi f / N), rounded once, the first octant evaluated */
     for (int f = 0; f <= top; f++)
     {
-        double th = 2.0 * VFFT_PI * (double)f / (double)N;
-        double sn = sin(th), cs = cos(th);
+        double sn, cs;
+        if (tc) { cs = tc[f]; sn = ts[f]; }
+        else vfft_cs2pi_exact(f, N, &cs, &sn);
         affS[f] = 0.5 - 0.5 * sn;   /* forward: the affine encoding */
         affC[f] = 0.5 * cs;
         /* 🔴 bwdC holds -cos, the CONJUGATED coefficient. The backward
@@ -94,6 +99,7 @@ static void _zr2c_init_aff(int N, double *affS, double *affC,
         bwdS[f] = sn;               /* backward: raw sin          */
         bwdC[f] = -cs;              /* backward: -cos == conj(w)  */
     }
+    free(tc);
 }
 
 /* the pairs f0 <= f < f1 (and their mirrors half - f) of one transform: the
