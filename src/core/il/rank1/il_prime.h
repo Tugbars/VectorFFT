@@ -40,6 +40,7 @@
 #include "common/math/numtheory.h"  /* vfft_is_prime, vfft_powmod, vfft_primitive_root */
 
 #include "tw_exact.h"   /* once-rounded cos/sin(2*pi*p/n) for the create-time tables */
+#include "dft_ld.h"     /* the Rader kernel in extended precision */
 #include "il2p.h"
 #include "common/support/race_timing.h" /* vfft_now_ns: the one monotonic clock */
 
@@ -352,6 +353,17 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
         _ilprime_inner_fwd(&p->inner, p->za, p->zb);
         double inv = 1.0 / (double)nm1;
         for (int i = 0; i < 2 * nm1; i++) om[i] = p->zb[i] * inv;
+    }
+    if (nm1 <= (1 << 22) && getenv("VFFT_RD_EXACT_KERNEL"))
+    {   /* (b), under test: the kernels in extended precision (dft_ld.h), in the inner's own order */
+        int *pos = (int *)malloc((size_t)nm1 * sizeof(int));
+        vfft_rader_label(nm1, p->za);
+        _ilprime_inner_fwd(&p->inner, p->za, p->zb);
+        if (pos && vfft_rader_positions(nm1, p->zb, pos))
+            (void)vfft_rader_kernels_ld(nm1, p->gpow, N, pos, p->omf, p->omb);   /* both from one DFT */
+        else
+            fprintf(stderr, "[rd-exact] prime %d: the inner's order did not read back; the double kernel stays\n", N);
+        free(pos);
     }
     return p;
 }

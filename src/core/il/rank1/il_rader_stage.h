@@ -50,6 +50,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "numtheory.h"   /* vfft_is_prime, vfft_powmod, vfft_primitive_root */
+#include "dft_ld.h"      /* the Rader kernel in extended precision */
 
 #define VFFT_ILRD_POOL_MAX 47     /* the flat kernel pool's largest radix: above it, Rader */
 #define VFFT_ILRD_MAX_NST 8
@@ -355,6 +356,7 @@ static int _ilrd_build_inner(vfft_ilrd_t *rd, int depth, const int *req, int nre
     } else if (!_ilrd_pick_chain(M, rd->Rs, &rd->nst, &nestp)) return 0;
     if (nestp) {
         if (depth >= 1) return 0;   /* one level */
+        if (getenv("VFFT_RD_ONE_LEVEL")) return 0;   /* the test of 2026-10-17: no second Rader level */
         /* stage 0 = the nested leaf over the scratch plane: legs at stride
          * (M/nestp) * W, that many columns, one block, no twiddles */
         rd->nest = _ilrd_create(nestp, (size_t)(M / nestp) * rd->W, (size_t)M * rd->W, 1, depth + 1, 0, 0, 0);
@@ -437,6 +439,17 @@ static vfft_ilrd_t *_ilrd_create(int pr, size_t D, size_t L, size_t nb, int dept
             }
             _ilrd_inner_run(rd, za, 1, 1, 0, 0);
             for (m = 0; m < 2 * M; m++) om[m] = za[m] * inv;
+        }
+        if (M <= (1 << 22) && getenv("VFFT_RD_EXACT_KERNEL"))
+        {   /* (b), under test: the kernels in extended precision (dft_ld.h), in the chain's comb order */
+            int *pos = (int *)malloc((size_t)M * sizeof(int));
+            vfft_rader_label(M, za);
+            _ilrd_inner_run(rd, za, 1, 1, 0, 0);
+            if (pos && vfft_rader_positions(M, za, pos))
+                (void)vfft_rader_kernels_ld(M, rd->gpow, pr, pos, rd->omf, rd->omb);   /* both from one DFT */
+            else
+                fprintf(stderr, "[rd-exact] leaf %d: the chain's order did not read back; the double kernel stays\n", pr);
+            free(pos);
         }
         rd->nest = serving;
         if (one) _ilrd_free(one);

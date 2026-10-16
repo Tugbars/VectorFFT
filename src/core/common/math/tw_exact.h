@@ -49,6 +49,7 @@
 #include "common/math/pi.h"
 
 #include <math.h>
+#include <stdlib.h>
 
 static inline void vfft_cs2pi_exact(long long p, long long n, double *c, double *s)
 {
@@ -68,6 +69,72 @@ static inline void vfft_cs2pi_exact(long long p, long long n, double *c, double 
     cv = (double)cosl(th);
     sv = (double)sinl(th);
     if (swap) { const double tmp = cv; cv = sv; sv = tmp; }
+    if (flip_c) cv = -cv;
+    if (flip_s) sv = -sv;
+    *c = cv;
+    *s = sv;
+}
+
+/* the table c[f] = cos(2*pi*f/n), s[f] = sin(2*pi*f/n), f in [0, count): each entry bit for bit what
+ * vfft_cs2pi_exact(f, n) gives, for the price of the first octant. The fold maps f to t = 8f folded into
+ * [0, n] with a swap and two flips; where t lands on a multiple of 8 (every f when 4 divides n) the entry is
+ * the unfolded value at f' = t/8 <= n/8 with the same swap and flips, so only f' in [0, n/8] is evaluated;
+ * the other entries (n = 2 mod 4) are evaluated directly. For the create-time tables of many entries. */
+static inline void vfft_cs2pi_table(long long n, long long count, double *c, double *s)
+{
+    const long long nb = n / 8 + 1;
+    double *bc = (double *)malloc(2 * (size_t)nb * sizeof(double)), *bs = bc ? bc + nb : NULL;
+    long long f;
+    if (!bc)
+    {
+        for (f = 0; f < count; f++)
+            vfft_cs2pi_exact(f, n, &c[f], &s[f]);
+        return;
+    }
+    for (f = 0; f < nb; f++)
+        vfft_cs2pi_exact(f, n, &bc[f], &bs[f]); /* t = 8f <= n: no fold */
+    for (f = 0; f < count; f++)
+    {
+        long long t = 8 * (f % n);
+        int flip_s = 0, flip_c = 0, swap = 0;
+        double cv, sv;
+        if (t > 4 * n) { t = 8 * n - t; flip_s = 1; }
+        if (t > 2 * n) { t = 4 * n - t; flip_c = 1; }
+        if (t > n)     { t = 2 * n - t; swap = 1; }
+        if (t % 8 != 0)
+        {
+            vfft_cs2pi_exact(f, n, &c[f], &s[f]);
+            continue;
+        }
+        cv = bc[t / 8];
+        sv = bs[t / 8];
+        if (swap) { const double tmp = cv; cv = sv; sv = tmp; }
+        if (flip_c) cv = -cv;
+        if (flip_s) sv = -sv;
+        c[f] = cv;
+        s[f] = sv;
+    }
+    free(bc);
+}
+
+/* the same fold, the value kept in long double: for create-time sums that must not round per term */
+static inline void vfft_cs2pi_ld(long long p, long long n, long double *c, long double *s)
+{
+    long long t;
+    int flip_s = 0, flip_c = 0, swap = 0;
+    long double th, cv, sv;
+
+    p %= n;
+    if (p < 0) p += n;
+    t = 8 * p;
+    if (t > 4 * n) { t = 8 * n - t; flip_s = 1; }
+    if (t > 2 * n) { t = 4 * n - t; flip_c = 1; }
+    if (t > n)     { t = 2 * n - t; swap = 1; }
+
+    th = VFFT_PI_L * (long double)t / (4.0L * (long double)n);
+    cv = cosl(th);
+    sv = sinl(th);
+    if (swap) { const long double tmp = cv; cv = sv; sv = tmp; }
     if (flip_c) cv = -cv;
     if (flip_s) sv = -sv;
     *c = cv;

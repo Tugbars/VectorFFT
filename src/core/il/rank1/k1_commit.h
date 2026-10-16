@@ -465,7 +465,8 @@ static int _ilprime_inner_cands(int M, _ilprime_inner_desc_t *out, int max)
         dropped += sink.dropped;   /* the planner's own cap, reported here too */
     }
 #endif
-    n += _ilprime_fd_chains(M, out + n, max - n);   /* the flat chains with a Rader stage (2026-10-13) */
+    if (!getenv("VFFT_RD_ONE_LEVEL"))   /* the test of 2026-10-17: no second Rader level under the prime cell */
+        n += _ilprime_fd_chains(M, out + n, max - n);   /* the flat chains with a Rader stage (2026-10-13) */
     if (vfft_k1fs_band(M))
     {   /* THE FOUR-STEP's splits at M (2026-10-12): the lengths past ZTURN-T's
          * ceiling, pow2 and not -- the engine's own ladder, each split an arm */
