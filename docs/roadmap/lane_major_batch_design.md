@@ -7,10 +7,11 @@ STRIPS for the real batches (section 3; the eight-thread power-of-two cells that
 composite cells 1.4x to 1.7x faster than before; the results page), and the c2c batch's
 SERIAL DENSE TILES under the serial-form law (a Rader-stage chain walks the plane, a
 smooth chain races the tile widths alone: the tile won at the widest planes, 16x4096
-from 1.06x to 1.74x, tied in the middle and lost at the Rader cells), and step 6's rank 2
-(section 8: the 2D c2c batch and the 2D real batch through the 2D doors, raced against
-MKL's lane-major 2D batches on the results page; rank 3 open). The real odd column engine
-waits for piece C of the Rader spread.**
+from 1.06x to 1.74x, tied in the middle and lost at the Rader cells), and step 6's ranks 2
+and 3 (section 8: the 2D c2c batch, the 2D real batch and the 3D c2c batch through their
+doors, raced against MKL's lane-major batches on the results page; a real 3D batch and rank
+4 stay contiguous planes). The real odd column engine waits for piece C of the Rader
+spread.**
 Owner: "we will build lane major everywhere; the library is almost done, so it may
 start now. 1D C2C / R2C / C2R all will have lane major with one bold stroke." This
 document is the design to build against; it supersedes slice 2 of
@@ -336,6 +337,24 @@ recipe, its row child's inside it, rides on this cell's row as `rp_*`), run per 
 place through the 2D batch's block walker and executor. Threaded, the blocks go to the
 workers on clones of the 2D child, serial inside. The row: the 3D cell at `q = K` on the
 `lay=lm` axis. C2C only: a real 3D batch and any rank-4 batch stay contiguous planes.
+
+**The batches' cost at small volumes (measured 2026-10-15, 32x32x32 x 4, one thread).** The
+3D batch takes 300 us where the loop of four one-volume plans takes 204: the first axis, one
+natural column pass over the whole 2 MB plane, 124 us; then 32 blocks of the 2D child at
+4.7 us each (its column pass over the 64 KB block 3.1 us, its 32 one-row children 1.6 us,
+49 ns each -- the bare pass costs 50 ns, so the nested doors add nothing). The one-volume
+plan runs its first axis scrambled over a 512 KB plane in 17.6 us and its 32 planes through
+the 2D tier at 0.72 us each. The difference is the layout's: lane-major interleaves the K
+volumes at the sample level, so every pass works on K times the data of a one-volume pass
+(the first axis in L3 where the loop's is in L2, the child's columns on an L2 block where
+the 2D tier has an L1 plane), and the first axis must leave natural order, since no plane
+pass follows it, where the one-volume plan runs it scrambled and orders in its plane pass.
+The same regime step is why the 2D real batch trails our loop at 1024x64 x 4. Where a volume
+is L3-sized on its own (the eight-thread cells) the step is gone and the batch is level with
+MKL's contiguous batch. Not built: a scrambled first axis into a private plane of the batch's
+size with each 2D child run out of place from it into its block's natural position (no pass
+added, the footprint doubled, part of the first axis's 124 us back); per-volume locality
+has no lever, since a de-interleave costs more than the gap.
 
 ## 9. What this retires
 

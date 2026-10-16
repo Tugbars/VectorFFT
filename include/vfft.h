@@ -230,6 +230,8 @@ extern "C"
   {
     const char *version;  /**< "MAJOR.MINOR.PATCH" */
     size_t alignment;     /**< bytes: vfft_malloc()'s, and the buffers the plans were measured on */
+    int cores;            /**< this machine's performance cores: a hybrid CPU's P-cores, every
+                               physical core otherwise; the nthreads that runs a plan on all of them */
     const char *route;    /**< the engine the plan committed to; "-" when it has no single name */
     int nthreads;         /**< the threads the plan runs on */
     size_t in_doubles;    /**< what execute reads, in doubles; per plane for a SPLIT plan */
