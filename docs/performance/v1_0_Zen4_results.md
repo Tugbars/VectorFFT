@@ -42,7 +42,7 @@ The trailing digits are the committed factorization — `2p 16.64` is the pair,
 
 ## 1. 1D C2C — power of two, 2 … 2²³
 
-`gauntlet/results/zen4_pow2_fftw_2026-09-28/` · every cell re-raced on this host
+Every cell re-raced on this host.
 
 ```
  N          route    ours ns     FFTW ns   ratio
@@ -103,8 +103,7 @@ at 2048–262144, `fs` from 524288 up.
 
 ## 2. 1D C2C — mixed radix, 3ⁿ, 5ⁿ
 
-`build_tuned/results/gauntlet_zen4_fftw/` · 2026-09-21 · primes excluded by
-decision
+2026-09-21 · primes excluded by decision
 
 ```
  N      route             ours ns   FFTW ns   ratio
@@ -317,7 +316,6 @@ Zen 4 has AVX-512 (`avx512f`/`vl`/`bw`/`dq` all present) on double-pumped
 from width. Built with `VFFT_ISA=avx512` (which lifts build.py's
 `-mno-avx512f` clamp), 1299 codelets against avx2's 1588. Comparator is FFTW's
 own **AVX-512** build, `fftw/avx512/bin/libfftw3-3.dll`. Full recalibration.
-Source: `gauntlet/results/zen4_pow2_avx512_2026-10-02/`.
 
 **Reported from N ≥ 128.** Everything below is excluded as not measuring the
 ISA: 2–8 are call-overhead dominated, and 16/32 are blocked by a registry

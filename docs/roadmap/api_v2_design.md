@@ -83,17 +83,17 @@ The flags:
 
 | flag | replaces | meaning |
 |---|---|---|
-| `VFFT_FLAG_PATIENT` | `rigor = VFFT_PATIENT` | the wide sweep on a miss |
-| `VFFT_FLAG_EXHAUSTIVE` | `rigor = VFFT_EXHAUSTIVE` | the full sweep where a planner has one |
-| `VFFT_FLAG_RECALIBRATE` | `recalibrate = 1` | race this cell even on a hit |
+| `VFFT_FLAG_PATIENT` | `rigor = VFFT_PATIENT` | the default, flagged or not: every create plans PATIENT (the wide sweep on a miss) |
+| `VFFT_FLAG_EXHAUSTIVE` | `rigor = VFFT_EXHAUSTIVE` | not served: the create is refused |
+| `VFFT_FLAG_RECALIBRATE` | `recalibrate = 1` | race this cell again, even on a hit or after this process raced it |
 | `VFFT_FLAG_DESTROY_INPUT` | `destroy_input = 1` | the plan may overwrite an out-of-place input |
 | `VFFT_FLAG_OWN_PITCH` | `owned_buffers = 1` | the plan may choose its row pitch or lane stride; the caller reads it from `vfft_info` and lays the data at it |
 | `VFFT_FLAG_VERBOSE` | the printed refusal | print the refusal as well as recording it |
 
 The enums are typed and prefixed: the placement values become `VFFT_PLACEMENT_OUT` and
-`VFFT_PLACEMENT_IN`, the rigor enum disappears into the flags (which also ends the
-`VFFT_MEASURE` / `VFFT_MEASURE_PIN_*` collision), and `order` and `batch` become typed
-fields instead of ints.
+`VFFT_PLACEMENT_IN`, the rigor enum leaves the public surface (which also ends the
+`VFFT_MEASURE` / `VFFT_MEASURE_PIN_*` collision; every create plans PATIENT), and `order`
+and `batch` become typed fields instead of ints.
 
 ## 3. The plan's facts
 
@@ -125,7 +125,8 @@ buffer is owned by a plan and no second free function exists.
 | `vfft_measure_configure` and its config | the diagnostics header (a tool's surface) |
 | `vfft_plan_planes`, `vfft_plan_stride`, `vfft_plan_alloc`, `vfft_buffers_free`, `config.owned_buffers` | `vfft_info` and `VFFT_FLAG_OWN_PITCH` |
 | `vfft_plan_route`, `vfft_version`, `vfft_alignment` | fields of `vfft_info` |
-| `config.rigor`, `config.recalibrate`, `config.destroy_input` | flags |
+| `config.rigor` | every create plans PATIENT; `VFFT_FLAG_EXHAUSTIVE` is refused |
+| `config.recalibrate`, `config.destroy_input` | flags |
 | `config.wisdom_write` (retired) | gone |
 | `config.dims` | `config.rank` |
 | the printed refusal | `vfft_error`, printed under `VFFT_FLAG_VERBOSE` |
