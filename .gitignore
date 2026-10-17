@@ -82,6 +82,9 @@ src/dag-fft-compiler/MKLBench/_smoke.txt
 /how-to-use/examples/gradient3d
 /how-to-use/examples/poisson3d
 /how-to-use/examples/wavepacket3d
+# the user guide's sources (chapters, listings, figures, the build) stay local; the
+# repository tracks what users read: the built guide, the examples and the README
+/how-to-use/source/
 
 # Generated wisdom files are committed — single source of truth, one folder,
 # visible to everyone (spike/rfft/c2r/bluestein/oop). Keep all wisdoms here.
