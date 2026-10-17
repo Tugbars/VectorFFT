@@ -129,9 +129,11 @@ extern "C"
   /** @brief vfft_config_t.flags: the planner's policy and the plan's permissions. */
   enum
   {
-    VFFT_FLAG_PATIENT = 1u << 0,       /**< a wider sweep on a wisdom miss */
-    VFFT_FLAG_EXHAUSTIVE = 1u << 1,    /**< the full sweep where a planner has one; PATIENT elsewhere */
-    VFFT_FLAG_RECALIBRATE = 1u << 2,   /**< measure this cell even on a wisdom hit, and save it */
+    VFFT_FLAG_PATIENT = 1u << 0,       /**< names the default: every create plans PATIENT
+                                            (the wide sweep on a wisdom miss) */
+    VFFT_FLAG_EXHAUSTIVE = 1u << 1,    /**< not served: vfft_create() refuses it */
+    VFFT_FLAG_RECALIBRATE = 1u << 2,   /**< measure this cell again, even on a wisdom hit or
+                                            after this process measured it, and save the winner */
     VFFT_FLAG_DESTROY_INPUT = 1u << 3, /**< an out-of-place plan may overwrite its input */
     VFFT_FLAG_OWN_PITCH = 1u << 4,     /**< the plan may choose its row pitch or lane stride;
                                             the caller reads it with vfft_info() */

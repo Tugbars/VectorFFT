@@ -16,7 +16,9 @@
  *   - the batch values are the library's own (DEFAULT: contiguous for INTERLEAVED C2C, lane-major
  *     for real and for SPLIT);
  *   - nthreads 0 or 1 is one thread (no process-wide setting);
- *   - flags become rigor, recalibrate, destroy_input and owned_buffers;
+ *   - every create plans PATIENT (ruled 2026-10-17): VFFT_FLAG_PATIENT names that default and
+ *     VFFT_FLAG_EXHAUSTIVE is refused;
+ *   - the other flags become recalibrate, destroy_input and owned_buffers;
  *   - wisdom_dir becomes the store for that directory, loaded once per process and kept
  *     (a create saves its winners into it before returning).
  *
@@ -127,6 +129,11 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
         _vfft_warn("vfft_create: unknown flag bits 0x%x", p->flags & ~known);
         return 0;
     }
+    if (p->flags & VFFT_FLAG_EXHAUSTIVE)
+    {
+        _vfft_warn("vfft_create: VFFT_FLAG_EXHAUSTIVE is not served (every create plans PATIENT; drop the flag)");
+        return 0;
+    }
     if (p->rank < 0 || p->rank > 4)
     {
         _vfft_warn("vfft_create: rank %d out of range (0 or 1 is 1D; 2, 3, 4)", p->rank);
@@ -155,9 +162,7 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
         c->order = VFI_ORDER_DEFAULT;          /* natural is the layout's own */
     c->batch_geom = trig ? VFFT_BATCH_DEFAULT : (int)p->batch;
     c->nthreads = p->nthreads > 1 ? p->nthreads : 1;
-    c->rigor = (p->flags & VFFT_FLAG_EXHAUSTIVE) ? VFFT_EXHAUSTIVE
-             : (p->flags & VFFT_FLAG_PATIENT)    ? VFFT_PATIENT
-                                                 : VFFT_MEASURE;
+    c->rigor = VFFT_PATIENT;               /* every create, VFFT_FLAG_PATIENT or not */
     c->recalibrate = (p->flags & VFFT_FLAG_RECALIBRATE) != 0;
     c->destroy_input = (p->flags & VFFT_FLAG_DESTROY_INPUT) != 0;
     c->owned_buffers = (p->flags & VFFT_FLAG_OWN_PITCH) != 0;
