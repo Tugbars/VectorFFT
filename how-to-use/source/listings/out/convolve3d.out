@@ -1,0 +1,1 @@
+convolve3d 56^3 * 9^3 on 64^3: max |y - direct| = 2.13e-14, max |y| = 37.7, ratio 5.66e-16, tolerance 1e-12: PASS

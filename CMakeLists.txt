@@ -1,35 +1,57 @@
 # ============================================================================
-# VectorFFT — dag-fft-compiler build (CMake mirror of gauntlet/build.py)
+# VectorFFT — the library, the examples and the gauntlet
 #
-# Builds the library's codelet corpus and the gauntlet's tools (gauntlet/) against the dag runtime:
-#   - the dag SIMD codelets (codelets/{inplace,rfft,c2r,oop}/<isa>/*.c) -> a
-#     static lib (the only .c the header-only core needs linked in),
-#   - the header-only core in src/core/ (bare cross-includes -> recursive -I walk),
-#   - Intel MKL for the vs-MKL comparison (OPTIONAL since 2026-09-22).
+#   - VectorFFT::vfft  : the library, ONE static archive (libvfft.a): the dag SIMD
+#     codelets (codelets/<family>/<isa>/*.c, an OBJECT library compiled once) plus
+#     the header-only core (src/core/, bare cross-includes -> recursive -I walk)
+#     compiled through its one .c, src/core/vfft.c. Consumers get include/ only.
+#   - how-to-use/examples/ (VFFT_BUILD_EXAMPLES) and the gauntlet's tools, gauntlet/
+#     (VFFT_BUILD_GAUNTLET), with Intel MKL as the gauntlet's OPTIONAL comparator.
+#   Built as a subproject (add_subdirectory, FetchContent) it is the library alone:
+#   no gauntlet, no examples, no MKL search, no install rules, no build type set.
+#   The DFTI interface (src/shims/dfti/) ships as two source files: a program
+#   compiles vfft_dfti.c with its own files and puts src/shims/dfti/ ahead of
+#   MKL's include folder (src/shims/dfti/mkl_dfti.h).
 #
-# The gauntlet's binaries are the only executables wired (gauntlet/CMakeLists.txt).
-#
-# Toolchains: GCC/Clang and Intel ICX (IntelLLVM), on both Linux and Windows.
-#   GNU-style front end (gcc, clang, icx gcc-driver)  -> LP64, link mkl_rt.
-#   MSVC-style front end (cl, clang-cl, icx-cl)        -> ILP64, three MKL libs.
-#
-# Configure examples:
-#   GCC/mingw  : cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=gcc
-#   ICX        : cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=icx
-#   (on Windows + ICX, configure from an oneAPI command prompt so LIB is set)
+# Configure, build, install (how-to-use/):
+#   cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_INSTALL_PREFIX=<prefix> -DVFFT_BUILD_GAUNTLET=OFF
 #   cmake --build build
-# Run (Windows): put MKL's bin (mkl_rt*.dll / the three dlls) and, for mingw,
-#   libwinpthread-1.dll on PATH, then ./build/bench_1d_vs_mkl[.exe] [--mt|--oop].
+#   cmake --install build
+#   (-DVFFT_NATIVE=OFF for programs that run on other machines: -march=native is the default)
+# The gauntlet: cmake --build build --target vfft-gauntlet (gauntlet/README.md).
+# Run (Windows): for mingw, put libwinpthread-1.dll on PATH (or link with -static);
+#   for the gauntlet's MKL arm, MKL's bin (mkl_rt*.dll) as well.
 #
-# ISA override: -DVFFT_ISA=avx2|avx512  (default avx2).
-# The previous (retired) production-lib root CMake is preserved as CMakeLists.old.txt.
+# Toolchains: GCC and Clang (GNU-style front ends; icx in its gcc driver mode too).
+#   The MSVC-style branch below is kept for the gauntlet; MSVC is not supported.
+# ISA override: -DVFFT_ISA=avx2|avx512|auto (default avx2). -DVFFT_NATIVE=ON|OFF.
 # ============================================================================
 cmake_minimum_required(VERSION 3.16)
+# A parent's ORDINARY variable (set(VFFT_WISDOM ...) before add_subdirectory) is
+# honoured on the first configure too: without CMP0126 NEW, set(CACHE) below would
+# drop it until the second. CMake 3.21+ knows the policy; older ones keep the old way.
+if(POLICY CMP0126)
+    cmake_policy(SET CMP0126 NEW)
+endif()
 project(VectorFFT_dag VERSION 2.0.0 LANGUAGES C)
 
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+# ── Top level or a subproject (PROJECT_IS_TOP_LEVEL needs CMake 3.21) ────────
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    set(VFFT_IS_TOP_LEVEL ON)
+else()
+    set(VFFT_IS_TOP_LEVEL OFF)
+endif()
+option(VFFT_BUILD_GAUNTLET "Build the gauntlet's tools (gauntlet/), MKL discovery included" ${VFFT_IS_TOP_LEVEL})
+option(VFFT_BUILD_EXAMPLES "Build the examples (how-to-use/examples/)" ${VFFT_IS_TOP_LEVEL})
+option(VFFT_INSTALL        "Install rules, the CMake package and the pkg-config file" ${VFFT_IS_TOP_LEVEL})
+option(VFFT_NATIVE         "Compile for this machine's CPU (-march=native): the binaries may not run on another" ON)
+
+# A subproject never sets its parent's (cache-wide) build type.
+if(VFFT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
+
+include(GNUInstallDirs)
 
 set(VFFT_ISA "avx2" CACHE STRING "Codelet ISA (avx2/avx512/auto)")
 
@@ -43,11 +65,38 @@ if(CMAKE_C_COMPILER_ID STREQUAL "IntelLLVM" OR CMAKE_C_COMPILER_ID STREQUAL "Int
 endif()
 
 # ── Tree layout (mirrors build.py's DAG/DAG_CORE/DAG_GEN) ───────────────────
-set(DAG          "${CMAKE_SOURCE_DIR}/src/dag-fft-compiler")
-set(DAG_CORE     "${CMAKE_SOURCE_DIR}/src/core")
+# PROJECT_SOURCE_DIR, never CMAKE_SOURCE_DIR: under add_subdirectory/FetchContent
+# CMAKE_SOURCE_DIR is the consumer's tree.
+set(DAG          "${PROJECT_SOURCE_DIR}/src/dag-fft-compiler")
+set(DAG_CORE     "${PROJECT_SOURCE_DIR}/src/core")
 set(DAG_GEN      "${DAG}/generator/generated")
-set(VFFT_WISDOM  "${CMAKE_SOURCE_DIR}/src/wisdom" CACHE PATH
-    "The root of the wisdom store: one folder per CPU. With no directory named and no VFFT_WISDOM_DIR the library serves from and saves into this CPU's folder under it")
+set(VFFT_WISDOM  "${PROJECT_SOURCE_DIR}/src/wisdom" CACHE PATH
+    "The build tree's wisdom store root, one folder per CPU: the gauntlet's tools serve from and save into this CPU's folder under it, and so does VectorFFT::vfft when VFFT_INSTALL is OFF (an installed library uses its installed store)")
+if(VFFT_WISDOM STREQUAL "")
+    message(FATAL_ERROR "VFFT_WISDOM is empty: name a directory. An empty root would compile the current drive's root as the store.")
+endif()
+# Forward slashes: the path becomes a C string, where a backslash starts an escape
+# (a :STRING value or a parent's variable keeps its backslashes; a PATH value does not).
+file(TO_CMAKE_PATH "${VFFT_WISDOM}" VFFT_WISDOM)
+
+# A path compiled into a library as a C string (VFFT_WISDOM_DIR_DEFAULT,
+# VFFT_FROZEN_WISDOM_DIR) is opened as it stands: it must be absolute, or each
+# program would resolve it against its own working directory. On Windows the store
+# is opened with the ANSI file calls, which do not find a path outside ASCII.
+function(vfft_check_compiled_path _path)
+    if(NOT IS_ABSOLUTE "${_path}")
+        message(FATAL_ERROR "'${_path}' would be compiled into the library as a store or bundle directory, and it is "
+                            "not absolute: every program would resolve it against its own working directory. Name an "
+                            "absolute directory (VFFT_WISDOM, CMAKE_INSTALL_PREFIX).")
+    endif()
+    if(WIN32 AND _path MATCHES "[^ -~]")
+        message(WARNING "'${_path}' (compiled into the library as a store or bundle directory) holds a character "
+                        "outside ASCII: the library opens it with the Windows ANSI file calls, which do not find it, "
+                        "so its programs neither read nor save wisdom there. Use an ASCII path.")
+    endif()
+endfunction()
+
+# The gauntlet's store and frozen bundle: the clone's, as build.py compiles them.
 # The frozen bundle (spike_wisdom.txt, bluestein_wisdom.txt, c2r_path.txt) stays
 # in generator/generated/ and is read from there whatever store is given.
 set(VFFT_WISDOM_DEFS
@@ -57,29 +106,31 @@ set(VFFT_WISDOM_DEFS
 # the last commit that touched the library's sources, -dirty when they carry
 # uncommitted changes. Read at CONFIGURE time; without git the library stamps
 # its version alone.
+set(VFFT_STAMP_DEFS)
 find_package(Git QUIET)
 if(GIT_FOUND)
     execute_process(COMMAND "${GIT_EXECUTABLE}" log -1 --format=%h --abbrev=8 -- src/core include
-                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" OUTPUT_VARIABLE VFFT_BUILD_COMMIT
+                    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" OUTPUT_VARIABLE VFFT_BUILD_COMMIT
                     OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     execute_process(COMMAND "${GIT_EXECUTABLE}" status --porcelain -- src/core include
-                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" OUTPUT_VARIABLE VFFT_BUILD_DIRTY
+                    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" OUTPUT_VARIABLE VFFT_BUILD_DIRTY
                     OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     if(VFFT_BUILD_COMMIT)
         if(VFFT_BUILD_DIRTY)
             string(APPEND VFFT_BUILD_COMMIT "-dirty")
         endif()
-        list(APPEND VFFT_WISDOM_DEFS "VFFT_BUILD_COMMIT=\"${VFFT_BUILD_COMMIT}\"")
+        list(APPEND VFFT_STAMP_DEFS "VFFT_BUILD_COMMIT=\"${VFFT_BUILD_COMMIT}\"")
     endif()
 endif()
+list(APPEND VFFT_WISDOM_DEFS ${VFFT_STAMP_DEFS})
 set(DAG_JIT      "${DAG}/jit")
 set(DAG_CODELETS "${DAG}/codelets")
 
 # Resolve VFFT_ISA to a CONCRETE codelet ISA. Codelets are pre-generated per ISA
 # (codelets/*/avx2, codelets/*/avx512) — there is no "auto" tree.
 #   - explicit avx2 / avx512  -> trust the user.
-#   - auto (the default, and what the CMake Tools extension may hold cached from the
-#     old root CMake) -> DETECT the host: pick avx512 only if the avx512 codelets
+#   - auto (what the CMake Tools extension may hold cached from the old root
+#     CMake) -> DETECT the host: pick avx512 only if the avx512 codelets
 #     exist AND this CPU actually runs AVX-512 (try_run compiles an _mm512 op and
 #     executes it — it SIGILLs / returns non-zero on a non-AVX-512 CPU). Else avx2.
 if(VFFT_ISA STREQUAL "avx2" OR VFFT_ISA STREQUAL "avx512")
@@ -94,8 +145,8 @@ elseif(VFFT_ISA STREQUAL "auto")
             set(_av512_flag "-mavx512f -mavx512dq -mfma")
         endif()
         try_run(_av512_run _av512_compile
-            "${CMAKE_BINARY_DIR}/_avx512_probe"
-            "${CMAKE_SOURCE_DIR}/cmake/check_avx512.c"
+            "${PROJECT_BINARY_DIR}/_avx512_probe"
+            "${PROJECT_SOURCE_DIR}/cmake/check_avx512.c"
             CMAKE_FLAGS "-DCMAKE_C_FLAGS=${_av512_flag}")
         if(_av512_compile AND _av512_run EQUAL 0)
             set(VFFT_ISA "avx512")
@@ -111,6 +162,7 @@ endif()
 # Core headers cross-include BARE (#include "executor.h"), so every dir that
 # holds a header must be on the -I path. Collect them from the header tree so a
 # future core reorg needs no edit (same intent as build.py build_includes()).
+# PRIVATE to the library: no consumer ever sees these directories.
 file(GLOB_RECURSE _core_headers "${DAG_CORE}/*.h")
 set(_core_inc_dirs "${DAG_CORE}")
 foreach(_h ${_core_headers})
@@ -120,7 +172,7 @@ endforeach()
 list(REMOVE_DUPLICATES _core_inc_dirs)
 
 set(VFFT_INCLUDE_DIRS
-    "${CMAKE_SOURCE_DIR}/include"
+    "${PROJECT_SOURCE_DIR}/include"
     "${DAG}" "${DAG_GEN}" "${DAG_JIT}"
     ${_core_inc_dirs})
 
@@ -135,55 +187,57 @@ if(VFFT_IS_ICX)
     endforeach()
 endif()
 
-# ── MKL discovery ───────────────────────────────────────────────────────────
-set(_mkl_inc_hints
-    "$ENV{MKLROOT}/include"
-    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/include"
-    "C:/Program Files/Intel/oneAPI/mkl/latest/include"
-    "/opt/intel/oneapi/mkl/latest/include")
-set(_mkl_lib_hints
-    "$ENV{MKLROOT}/lib" "$ENV{MKLROOT}/lib/intel64"
-    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib"
-    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/intel64"
-    "C:/Program Files/Intel/oneAPI/mkl/latest/lib"
-    "C:/Program Files/Intel/oneAPI/mkl/latest/lib/intel64"
-    "/opt/intel/oneapi/mkl/latest/lib" "/opt/intel/oneapi/mkl/latest/lib/intel64")
+# ── MKL discovery: the gauntlet's comparator only (the library has no MKL code) ─
+if(VFFT_BUILD_GAUNTLET)
+    set(_mkl_inc_hints
+        "$ENV{MKLROOT}/include"
+        "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/include"
+        "C:/Program Files/Intel/oneAPI/mkl/latest/include"
+        "/opt/intel/oneapi/mkl/latest/include")
+    set(_mkl_lib_hints
+        "$ENV{MKLROOT}/lib" "$ENV{MKLROOT}/lib/intel64"
+        "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib"
+        "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/intel64"
+        "C:/Program Files/Intel/oneAPI/mkl/latest/lib"
+        "C:/Program Files/Intel/oneAPI/mkl/latest/lib/intel64"
+        "/opt/intel/oneapi/mkl/latest/lib" "/opt/intel/oneapi/mkl/latest/lib/intel64")
 
-find_path(MKL_INCLUDE_DIR mkl_dfti.h HINTS ${_mkl_inc_hints})
-# MKL is OPTIONAL since 2026-09-22 (the gauntlet is usable without a comparator:
-# absolute numbers + correctness). VFFT_MKL_FOUND gates every MKL use below.
-set(VFFT_MKL_FOUND FALSE)
-set(VFFT_MKL_LIBS)
-set(VFFT_MKL_DEFS)
-if(NOT MKL_INCLUDE_DIR)
-    message(WARNING "MKL not found (mkl_dfti.h): building WITHOUT the MKL comparator. Set MKLROOT or install Intel oneAPI MKL for the vs-MKL columns.")
-elseif(VFFT_MSVC_STYLE)
-    find_library(MKL_ILP64 NAMES mkl_intel_ilp64 HINTS ${_mkl_lib_hints})
-    find_library(MKL_SEQ   NAMES mkl_sequential  HINTS ${_mkl_lib_hints})
-    find_library(MKL_CORE  NAMES mkl_core        HINTS ${_mkl_lib_hints})
-    if(NOT MKL_ILP64 OR NOT MKL_SEQ OR NOT MKL_CORE)
-        message(WARNING "MKL ILP64 libs not found (mkl_intel_ilp64/mkl_sequential/mkl_core): building WITHOUT the MKL comparator.")
+    find_path(MKL_INCLUDE_DIR mkl_dfti.h HINTS ${_mkl_inc_hints})
+    # MKL is OPTIONAL since 2026-09-22 (the gauntlet is usable without a comparator:
+    # absolute numbers + correctness). VFFT_MKL_FOUND gates every MKL use below.
+    set(VFFT_MKL_FOUND FALSE)
+    set(VFFT_MKL_LIBS)
+    set(VFFT_MKL_DEFS)
+    if(NOT MKL_INCLUDE_DIR)
+        message(WARNING "MKL not found (mkl_dfti.h): building the gauntlet WITHOUT the MKL comparator. Set MKLROOT or install Intel oneAPI MKL for the vs-MKL columns.")
+    elseif(VFFT_MSVC_STYLE)
+        find_library(MKL_ILP64 NAMES mkl_intel_ilp64 HINTS ${_mkl_lib_hints})
+        find_library(MKL_SEQ   NAMES mkl_sequential  HINTS ${_mkl_lib_hints})
+        find_library(MKL_CORE  NAMES mkl_core        HINTS ${_mkl_lib_hints})
+        if(NOT MKL_ILP64 OR NOT MKL_SEQ OR NOT MKL_CORE)
+            message(WARNING "MKL ILP64 libs not found (mkl_intel_ilp64/mkl_sequential/mkl_core): building WITHOUT the MKL comparator.")
+        else()
+            set(VFFT_MKL_FOUND TRUE)
+            set(VFFT_MKL_LIBS ${MKL_ILP64} ${MKL_SEQ} ${MKL_CORE})
+            set(VFFT_MKL_DEFS VFFT_HAS_MKL MKL_ILP64)
+        endif()
     else()
-        set(VFFT_MKL_FOUND TRUE)
-        set(VFFT_MKL_LIBS ${MKL_ILP64} ${MKL_SEQ} ${MKL_CORE})
-        set(VFFT_MKL_DEFS VFFT_HAS_MKL MKL_ILP64)
+        find_library(MKL_RT NAMES mkl_rt mkl_rt.2 libmkl_rt HINTS ${_mkl_lib_hints})
+        if(NOT MKL_RT)
+            message(WARNING "MKL LP64 lib not found (mkl_rt): building WITHOUT the MKL comparator.")
+        else()
+            set(VFFT_MKL_FOUND TRUE)
+            set(VFFT_MKL_LIBS ${MKL_RT})
+            set(VFFT_MKL_DEFS VFFT_HAS_MKL)
+        endif()
     endif()
-else()
-    find_library(MKL_RT NAMES mkl_rt mkl_rt.2 libmkl_rt HINTS ${_mkl_lib_hints})
-    if(NOT MKL_RT)
-        message(WARNING "MKL LP64 lib not found (mkl_rt): building WITHOUT the MKL comparator.")
-    else()
-        set(VFFT_MKL_FOUND TRUE)
-        set(VFFT_MKL_LIBS ${MKL_RT})
-        set(VFFT_MKL_DEFS VFFT_HAS_MKL)
+    if(VFFT_MKL_FOUND)
+        message(STATUS "MKL include: ${MKL_INCLUDE_DIR}")
+        message(STATUS "MKL libs:    ${VFFT_MKL_LIBS}")
     endif()
 endif()
-if(VFFT_MKL_FOUND)
-    message(STATUS "MKL include: ${MKL_INCLUDE_DIR}")
-    message(STATUS "MKL libs:    ${VFFT_MKL_LIBS}")
-endif()
 
-# ── Per-front-end compile flags ─────────────────────────────────────────────
+# ── Per-front-end compile flags (PRIVATE to the library and the gauntlet) ───
 if(VFFT_MSVC_STYLE)
     if(VFFT_ISA STREQUAL "avx512")
         set(_arch /arch:AVX512)
@@ -205,18 +259,24 @@ else()
     # and the avx2 codelets themselves would be compiled with EVEX encodings
     # and ymm16-31: not an AVX2 binary, and not the 16-register code the avx2
     # kernels were scheduled for. The selected ISA is the source of truth; it
-    # must follow -march=native to override it. Native tuning is kept.
+    # must follow -march=native to override it. Native tuning is kept. The clamp
+    # stays without VFFT_NATIVE: a parent project's -march=native (CMAKE_C_FLAGS,
+    # add_compile_options) comes before these options on the command line.
     set(_isa_clamp)
     if(NOT VFFT_ISA STREQUAL "avx512")
         set(_isa_clamp -mno-avx512f)
     endif()
-    set(VFFT_C_FLAGS -O3 ${_arch} -march=native ${_isa_clamp} -fpermissive
+    set(_native)
+    if(VFFT_NATIVE)
+        set(_native -march=native)
+    endif()
+    set(VFFT_C_FLAGS -O3 ${_arch} ${_native} ${_isa_clamp} -fpermissive
         -Wno-overflow -Wno-implicit-function-declaration -Wno-unused-function
         -Wno-unknown-argument -Wno-incompatible-pointer-types -Wno-deprecated-declarations)
-    set(VFFT_CODE_FLAGS -O3 ${_arch} -march=native ${_isa_clamp} -fpermissive -w)
+    set(VFFT_CODE_FLAGS -O3 ${_arch} ${_native} ${_isa_clamp} -fpermissive -w)
 endif()
 
-# ── Codelet static lib (inplace=c2c, rfft/c2r=real-FFT, oop=LEAF/BAILEY2,
+# ── Codelet families (inplace=c2c, rfft/c2r=real-FFT, oop=LEAF/BAILEY2,
 #     strided=6a35-45 row engines, zil=interleaved-complex (pure IL + the
 #     N>=2048 boundary-split cascade), trig=DCT/DST) ──
 # NOTE `il` below is RETIRED (its derived population was deleted 2026-07-24;
@@ -334,26 +394,164 @@ message(STATUS "  (must equal gauntlet/build.py's '[codelets] cached lib (N code
 message(STATUS "   the two build systems share one corpus -- a mismatch is a real defect)")
 message(STATUS "  runtime source:  ${DAG_CORE}/vfft.c  (the ONE non-header .c in the core)")
 
-add_library(dagcodelets STATIC ${VFFT_CODELET_SRCS})
+# ── The codelet corpus: an OBJECT library, compiled ONCE and archived into
+#    VectorFFT::vfft (below) and the gauntlet's vfft_core alike ──
+add_library(dagcodelets OBJECT ${VFFT_CODELET_SRCS})
 target_include_directories(dagcodelets PRIVATE ${VFFT_INCLUDE_DIRS})
 target_compile_options(dagcodelets PRIVATE ${VFFT_CODE_FLAGS})
 
-# ── The benchmark (the ONLY driver wired) ───────────────────────────────────
-# src/core/vfft.c is the unified public API (vfft_create/execute/destroy/
-# wisdom_load). The core is otherwise header-only, so this is the ONE runtime
-# .c that must be compiled in; without it the bench fails to link with
-# undefined vfft_* symbols. build.py does the same behind its --vfft flag
-# (the retired src/vfft.c this replaced is what the orphaned src/CMakeLists.txt
-# still names).
-# The bench and the tools that drive it live in gauntlet/ (2026-09-22): the
-# user-facing measurement path (calibrate / bench / report / merge), see
-# gauntlet/README.md. build_tuned/ was retired 2026-10-07; the gates live in src/tools/gates/.
-add_subdirectory(gauntlet)
+find_package(Threads REQUIRED)
+
+# ── THE LIBRARY: VectorFFT::vfft = libvfft.a (src/core/vfft.c + every codelet) ─
+# Its store root and frozen bundle are compiled in (src/core/vfft.c reads them):
+#   installed (VFFT_INSTALL=ON): <prefix>/<datadir>/vectorfft/{wisdom,frozen},
+#     the absolute path of the prefix configured now (the install refuses another);
+#   build tree (VFFT_INSTALL=OFF): VFFT_WISDOM and the clone's generator/generated.
+# Everything but include/ is PRIVATE: no ISA flag, no internal directory, no path
+# reaches a consumer.
+if(VFFT_INSTALL)
+    file(TO_CMAKE_PATH "${CMAKE_INSTALL_FULL_DATADIR}/vectorfft" VFFT_LIB_DATA_DIR)
+    set(VFFT_LIB_STORE    "${VFFT_LIB_DATA_DIR}/wisdom")
+    set(VFFT_LIB_FROZEN   "${VFFT_LIB_DATA_DIR}/frozen")
+else()
+    set(VFFT_LIB_DATA_DIR "")
+    set(VFFT_LIB_STORE    "${VFFT_WISDOM}")
+    set(VFFT_LIB_FROZEN   "${DAG_GEN}")
+endif()
+set(_vfft_compiled "${VFFT_LIB_STORE}" "${VFFT_LIB_FROZEN}")
+if(VFFT_BUILD_GAUNTLET)
+    list(APPEND _vfft_compiled "${VFFT_WISDOM}" "${DAG_GEN}")   # vfft_core's (VFFT_WISDOM_DEFS)
+endif()
+list(REMOVE_DUPLICATES _vfft_compiled)
+foreach(_p IN LISTS _vfft_compiled)
+    vfft_check_compiled_path("${_p}")
+endforeach()
+
+# An installed store inside this source tree would be written by every program
+# that uses the installed library. Configure and build go on (the gauntlet is
+# untouched); the install refuses such a prefix (its first rule, below).
+set(VFFT_PREFIX_IN_SOURCE FALSE)
+if(VFFT_INSTALL)
+    file(RELATIVE_PATH _vfft_rel "${PROJECT_SOURCE_DIR}" "${VFFT_LIB_DATA_DIR}")
+    if(NOT IS_ABSOLUTE "${_vfft_rel}" AND NOT _vfft_rel MATCHES "^[.][.]")
+        set(VFFT_PREFIX_IN_SOURCE TRUE)
+        message(WARNING "CMAKE_INSTALL_PREFIX (${CMAKE_INSTALL_PREFIX}) lies inside the VectorFFT source tree "
+                        "(${PROJECT_SOURCE_DIR}): every program using the installed library would save wisdom under "
+                        "${VFFT_LIB_STORE}, so cmake --install refuses this prefix. The build goes on. To install, "
+                        "configure with a prefix outside the source tree.")
+    endif()
+endif()
+
+add_library(vectorfft_vfft STATIC "${DAG_CORE}/vfft.c" $<TARGET_OBJECTS:dagcodelets>)
+add_library(VectorFFT::vfft ALIAS vectorfft_vfft)
+# a target name of its own (a consumer may own a target called vfft); the file is
+# libvfft.a and the exported name VectorFFT::vfft
+set_target_properties(vectorfft_vfft PROPERTIES OUTPUT_NAME vfft EXPORT_NAME vfft)
+target_include_directories(vectorfft_vfft
+    PUBLIC  "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+            "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+    PRIVATE ${VFFT_INCLUDE_DIRS})
+target_compile_options(vectorfft_vfft PRIVATE ${VFFT_C_FLAGS})
+target_compile_definitions(vectorfft_vfft PRIVATE ${VFFT_STAMP_DEFS} _CRT_SECURE_NO_WARNINGS
+    "VFFT_WISDOM_DIR_DEFAULT=\"${VFFT_LIB_STORE}\""
+    "VFFT_FROZEN_WISDOM_DIR=\"${VFFT_LIB_FROZEN}\"")
+target_link_libraries(vectorfft_vfft PRIVATE Threads::Threads)   # a static archive exports these as $<LINK_ONLY:>
+if(NOT VFFT_MSVC_STYLE)
+    target_link_libraries(vectorfft_vfft PRIVATE m)
+endif()
+# A parent project's flags reach these targets as well (CMAKE_C_FLAGS,
+# add_compile_options, CMAKE_COMPILE_WARNING_AS_ERROR): its -Werror would stop
+# vfft.c on three default warnings, its -ffast-math would change the library's
+# rounding. Both are undone after them. Nothing here applies at the top level.
+if(NOT VFFT_IS_TOP_LEVEL AND NOT VFFT_MSVC_STYLE)
+    target_compile_options(vectorfft_vfft PRIVATE -Wno-error -fno-fast-math)
+    target_compile_options(dagcodelets PRIVATE -fno-fast-math)
+    set_target_properties(vectorfft_vfft PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
+endif()
+
+# ── Install: the archive, the headers, the package, pkg-config, the store ────
+# Before every add_subdirectory below: under CMP0082 a subdirectory's install
+# rules run where it is added, and the guards must run first.
+if(VFFT_INSTALL)
+    # FIRST RULES: libvfft.a carries this prefix's data path (VFFT_LIB_STORE). A
+    # prefix inside the source tree is refused, and so is an install to another
+    # prefix (cmake --install --prefix), which would leave that path empty. DESTDIR
+    # staging keeps the prefix and passes.
+    if(VFFT_PREFIX_IN_SOURCE)
+        install(CODE "message(FATAL_ERROR \"VectorFFT was configured for the prefix ${CMAKE_INSTALL_PREFIX}, inside its source tree ${PROJECT_SOURCE_DIR}: every program using the installed library would save wisdom under ${VFFT_LIB_STORE}. Reconfigure with a prefix outside the source tree, then install.\")")
+    endif()
+    install(CODE "
+      get_filename_component(_vfft_to   \"\${CMAKE_INSTALL_PREFIX}\" ABSOLUTE)
+      get_filename_component(_vfft_conf \"${CMAKE_INSTALL_PREFIX}\" ABSOLUTE)
+      if(WIN32)
+        string(TOLOWER \"\${_vfft_to}\" _vfft_to)
+        string(TOLOWER \"\${_vfft_conf}\" _vfft_conf)
+      endif()
+      if(NOT _vfft_to STREQUAL _vfft_conf)
+        message(FATAL_ERROR \"VectorFFT was configured for the prefix ${CMAKE_INSTALL_PREFIX}: its library opens its wisdom store under ${VFFT_LIB_STORE}. Installing it to \${CMAKE_INSTALL_PREFIX} would leave that path empty. Reconfigure with -DCMAKE_INSTALL_PREFIX=\${CMAKE_INSTALL_PREFIX}, then install.\")
+      endif()")
+
+    set(VFFT_CMAKE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/VectorFFT")
+    set(VFFT_DATA_DIR  "${CMAKE_INSTALL_DATADIR}/vectorfft")   # relative: VectorFFT_DATA_DIR follows the files
+
+    install(TARGETS vectorfft_vfft EXPORT VectorFFTTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    install(FILES "${PROJECT_SOURCE_DIR}/include/vfft.h" "${PROJECT_SOURCE_DIR}/include/vfft_diagnostics.h"
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+    # pkg-config: the prefix relative to the .pc file's own folder; the system
+    # libraries go in Libs, as the library is a static archive only
+    file(RELATIVE_PATH VFFT_PC_RELPREFIX "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
+    string(REGEX REPLACE "/$" "" VFFT_PC_RELPREFIX "${VFFT_PC_RELPREFIX}")
+    string(STRIP "${CMAKE_THREAD_LIBS_INIT} -lm" VFFT_PC_SYSLIBS)
+    configure_file("${PROJECT_SOURCE_DIR}/cmake/vectorfft.pc.in" "${PROJECT_BINARY_DIR}/vectorfft.pc" @ONLY)
+    install(FILES "${PROJECT_BINARY_DIR}/vectorfft.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
+    install(EXPORT VectorFFTTargets NAMESPACE VectorFFT:: DESTINATION ${VFFT_CMAKE_DIR})
+    include(CMakePackageConfigHelpers)
+    configure_package_config_file("${PROJECT_SOURCE_DIR}/cmake/VectorFFTConfig.cmake.in"
+        "${PROJECT_BINARY_DIR}/VectorFFTConfig.cmake"
+        INSTALL_DESTINATION ${VFFT_CMAKE_DIR}
+        PATH_VARS VFFT_DATA_DIR)
+    # PROJECT_VERSION, as cmake/vectorfft.pc.in reports it today; the release's
+    # number for the package files is the owner's call
+    write_basic_package_version_file("${PROJECT_BINARY_DIR}/VectorFFTConfigVersion.cmake"
+        VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
+    install(FILES "${PROJECT_BINARY_DIR}/VectorFFTConfig.cmake" "${PROJECT_BINARY_DIR}/VectorFFTConfigVersion.cmake"
+            DESTINATION ${VFFT_CMAKE_DIR})
+
+    # runtime data: the shipped store (the live shards of every CPU folder, new/
+    # included; no backup, no lock, no README) and the frozen bundle, the three
+    # files src/core/vfft.c reads from it (c2r_path.txt when it exists)
+    install(DIRECTORY "${PROJECT_SOURCE_DIR}/src/wisdom/" DESTINATION ${VFFT_DATA_DIR}/wisdom
+            FILES_MATCHING PATTERN "wisdom2_*.txt")
+    install(FILES "${DAG_GEN}/spike_wisdom.txt" "${DAG_GEN}/bluestein_wisdom.txt"
+            DESTINATION ${VFFT_DATA_DIR}/frozen)
+    install(FILES "${DAG_GEN}/c2r_path.txt" DESTINATION ${VFFT_DATA_DIR}/frozen OPTIONAL)
+endif()
+
+# ── The gauntlet's tools (the test tool; top-level builds) ───────────────────
+# They live in gauntlet/ (2026-09-22): the user-facing measurement path
+# (calibrate / bench / report / merge), see gauntlet/README.md. Their library,
+# vfft_core, is the gauntlet's own: the clone's store, the internal include walk
+# PUBLIC for the two tools that compile engine internals; never installed.
+# build_tuned/ was retired 2026-10-07; the gates live in src/tools/gates/.
+if(VFFT_BUILD_GAUNTLET)
+    add_subdirectory(gauntlet)
+endif()
+
+# ── The examples of the guide ────────────────────────────────────────────────
+if(VFFT_BUILD_EXAMPLES)
+    add_subdirectory(how-to-use/examples)
+endif()
 
 message(STATUS "")
-message(STATUS "  VectorFFT (dag) — library + gauntlet")
+message(STATUS "  VectorFFT (dag) — library + examples + gauntlet")
 message(STATUS "  Build:    ${CMAKE_BUILD_TYPE}   Compiler: ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
 message(STATUS "  Front-end: ${CMAKE_C_COMPILER} (MSVC-style=${VFFT_MSVC_STYLE}, ICX=${VFFT_IS_ICX})")
-message(STATUS "  ISA:      ${VFFT_ISA}   codelets: ${_ncodelets}")
-message(STATUS "  Run:      cmake --build <build> --target vfft-gauntlet, then python gauntlet/gauntlet.py run --group pow2 --bin-dir <build>/gauntlet")
+message(STATUS "  ISA:      ${VFFT_ISA}   native: ${VFFT_NATIVE}   codelets: ${_ncodelets}")
+message(STATUS "  Store:    ${VFFT_LIB_STORE}   (VectorFFT::vfft's compiled root)")
+message(STATUS "  Parts:    examples=${VFFT_BUILD_EXAMPLES} gauntlet=${VFFT_BUILD_GAUNTLET} install=${VFFT_INSTALL}")
+if(VFFT_BUILD_GAUNTLET)
+    message(STATUS "  Gauntlet: cmake --build <build> --target vfft-gauntlet, then python gauntlet/gauntlet.py run --group pow2 --bin-dir <build>/gauntlet")
+endif()
 message(STATUS "")

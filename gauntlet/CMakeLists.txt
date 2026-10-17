@@ -1,8 +1,9 @@
 # ============================================================================
 # gauntlet/CMakeLists.txt — the gauntlet's binaries, wired by the root
-# CMakeLists.txt (add_subdirectory(gauntlet)). Mirrors build.py's --vfft path:
-# each tool is its own driver TU + src/core/vfft.c, compiled with the root's
-# VFFT_C_FLAGS and linked against the root's dagcodelets library.
+# CMakeLists.txt (add_subdirectory(gauntlet), VFFT_BUILD_GAUNTLET). Mirrors
+# build.py's --vfft path: each tool is its own driver TU + src/core/vfft.c,
+# compiled with the root's VFFT_C_FLAGS and archived with the root's
+# dagcodelets objects.
 #
 #   cmake --build <build> --target vfft-gauntlet
 #   python gauntlet/gauntlet.py run --cells 2..64 --bin-dir <build>/gauntlet
@@ -21,12 +22,14 @@
 
 # vfft.c is the ONE runtime .c of the header-only core. Its only build-time
 # switch is VFFT_USE_JIT (build.py --jit), which this build does not set, so
-# every tool shares one compiled copy.
-add_library(vfft_core STATIC "${DAG_CORE}/vfft.c")
+# every tool shares one compiled copy. vfft_core is the gauntlet's own
+# library, never installed: the clone's store (VFFT_WISDOM_DEFS) and the
+# internal include walk PUBLIC, which the bench tools need; the user's
+# library is VectorFFT::vfft.
+add_library(vfft_core STATIC "${DAG_CORE}/vfft.c" $<TARGET_OBJECTS:dagcodelets>)
 target_include_directories(vfft_core PUBLIC ${VFFT_INCLUDE_DIRS})
 target_compile_options(vfft_core PRIVATE ${VFFT_C_FLAGS})
 target_compile_definitions(vfft_core PUBLIC ${VFFT_WISDOM_DEFS} _CRT_SECURE_NO_WARNINGS)
-target_link_libraries(vfft_core PUBLIC dagcodelets)
 if(NOT VFFT_MSVC_STYLE)
     find_package(Threads REQUIRED)
     target_link_libraries(vfft_core PUBLIC Threads::Threads m ${CMAKE_DL_LIBS})

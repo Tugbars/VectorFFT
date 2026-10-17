@@ -1,0 +1,242 @@
+/* VectorFFT User Guide. Look: the site (src/tools/website/vectorfft-site.html): Computer Modern
+   on white, ink #101010, one muted grey, one hairline grey, square ink boxes; no tints, shadows,
+   rounded corners or sans faces. Apparatus: Oppenheim & Schafer: hanging section numbers,
+   numbered equations, "Figure 1.1" captions, tables ruled above and below. Light only, like the
+   site. Every number on the page is text written by build.py. */
+:root{
+  --paper:#fff; --ink:#101010; --muted:#6a6a6a; --rule:#dcdcdc;   /* the site's tokens */
+  --link-rule:#8a8a8a;                                            /* in-text links, 3.45:1 */
+  --serif:'CMU Serif',Georgia,'Times New Roman',serif;
+  --mono:'CMU Typewriter Text',Consolas,'DejaVu Sans Mono',Menlo,monospace;
+  --measure:36rem;   /* figures are drawn for this column: 1 unit = 1 pt in print */
+  --hang:5.9rem;     /* section numbers hang this far left of the text: in print 21.9 mm, inside the 22 mm pad */
+}
+*{box-sizing:border-box}
+html{font-size:112.5%;font-synthesis:none}   /* no faked bold or italic: Chromium prints them as Type 3 */
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif);font-size:1rem;
+  line-height:1.5;-webkit-font-smoothing:antialiased;font-kerning:normal}
+main{max-width:calc(var(--measure) + 2.5rem);margin:0 auto;padding:2.6rem 1.25rem 4rem}
+@media (max-width:640px){main{padding:1.4rem 1rem 3rem}}
+
+/* text: ragged right, paragraph indents as in a book */
+p{margin:0;text-wrap:pretty}
+.chapter p + p,.front p + p,.note p + p,.warning p + p{text-indent:1.5em}
+ul,ol{margin:.6rem 0;padding-left:1.6em}
+li{margin:.2em 0}
+li > p + p{text-indent:0;margin-top:.3em}
+em{font-style:italic}
+strong{font-weight:700}
+a{color:inherit;text-decoration:underline;text-decoration-color:var(--link-rule);
+  text-decoration-thickness:1px;text-underline-offset:.2em}
+a:hover{text-decoration-color:var(--ink)}
+a.ref{text-decoration:none;border-bottom:1px solid var(--link-rule)}
+span.ref-ext{border-bottom:1px dotted var(--link-rule)}   /* a chapter build: the target is in another chapter */
+span.ref-missing{color:var(--muted);font-family:var(--mono)}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+code{font-family:var(--mono);font-size:1em;hyphens:none}
+.nw{white-space:nowrap}
+
+/* title block: the site's wordmark, centred; only the title, parts and chapter openers are centred */
+.titleblock{text-align:center;margin:0 0 2.6rem;padding-bottom:1.6rem;border-bottom:1px solid var(--rule)}
+.titleblock p{margin:0;text-indent:0}
+.wordmark{font-weight:700;font-size:2.5rem;line-height:1.1;letter-spacing:.005em}
+.booktitle{font-size:1.3rem;margin-top:.25rem !important}
+.edition{font-size:.86rem;color:var(--muted);margin-top:.9rem !important}
+.colophon{font-size:.8rem;line-height:1.4;color:var(--muted)}
+.titleblock .colophon{display:none}
+
+/* parts, chapters, front matter */
+h1,h2,h3,h4{font-weight:700;line-height:1.25}
+.part{margin:4.2rem 0 0;padding-top:1.4rem;border-top:1px solid var(--ink);text-align:center}
+.part-title{font-size:1.45rem;margin:0}
+.part-title .num{font-weight:400;margin-right:.3em}   /* one line: a line break would drop the space
+   from the PDF bookmark ("Part ISample") */
+.chapter,.front{margin-top:3.6rem}
+.chapter-title,.front-title{font-size:1.6rem;text-align:center;margin:0 0 2rem}
+/* Chrome 155 doubles the PDF bookmark of a heading that opens a page after a forced break when
+   its first glyphs are bold CMU ("NotationNotation"): every opener starts in the regular weight
+   (the numeral of a chapter, "Part I" of a part, the whole title of a front matter section) */
+.chapter-title .num{font-size:1.45em;font-weight:400;margin-right:.35em}
+.front-title{font-weight:400}
+/* x.y heads: the number stays in the flow (an absolutely placed one drops out of the PDF
+   bookmark) and hangs by a negative indent; .383em is the width of the bold space after it */
+h3{font-size:1.12rem;margin:2.3rem 0 .8rem;text-indent:calc(-1 * var(--hang))}
+h3 .num{display:inline-block;width:calc(var(--hang) - .383em);text-indent:0}
+h4{font-size:1rem;margin:1.7rem 0 .6rem;text-indent:calc(-1 * var(--hang))}
+h4 .num{display:inline-block;width:calc(var(--hang) - .383em);text-indent:0}
+.front h3,.front h4{text-indent:0}
+@media screen and (max-width:900px){
+  h3,h4{text-indent:0} h3 .num,h4 .num{width:auto;margin-right:.6em}
+}
+
+/* numbered display equations: lead label left, number right, the math centred on the measure */
+.eq{display:grid;grid-template-columns:3.3em minmax(0,1fr) 3.3em;align-items:center;margin:.85rem 0}
+.eq.has-lead{grid-template-columns:5em minmax(0,1fr) 5em}
+.eq .lead{grid-column:1;grid-row:1;white-space:nowrap}
+.eq .math{grid-column:2;grid-row:1;text-align:center;overflow-x:auto;overflow-y:hidden}
+.eq .no{grid-column:3;grid-row:1;text-align:right;white-space:nowrap}
+.katex{font-size:1em;white-space:nowrap}
+.katex-display{margin:0}
+.eq .parts{display:flex;flex-wrap:wrap;justify-content:center;align-items:baseline;column-gap:2em;row-gap:.35em}
+.eq .narrow{display:none}
+@media screen and (max-width:640px){
+  .eq,.eq.has-lead{grid-template-columns:minmax(0,1fr) auto}
+  .eq .lead{grid-column:1 / -1;grid-row:1}
+  .eq .math{grid-column:1;grid-row:2}
+  .eq .no{grid-column:2;grid-row:2;padding-left:.6em}
+  .eq .math > .wide{display:none}
+  .eq .math > .narrow{display:block}
+}
+/* a box that scrolls sideways shows a muted 2px rule at each edge that hides more of it */
+.eq .math,figure .frame,.table,pre.code,pre.output{background:
+  linear-gradient(var(--paper),var(--paper)) left center / 4px 100% no-repeat local,
+  linear-gradient(var(--paper),var(--paper)) right center / 4px 100% no-repeat local,
+  linear-gradient(var(--muted),var(--muted)) left center / 2px 100% no-repeat scroll,
+  linear-gradient(var(--muted),var(--muted)) right center / 2px 100% no-repeat scroll;
+  background-color:var(--paper)}
+
+/* listings: monochrome, comments muted and upright; hairline rules like the site's hr */
+.listing{margin:1.1rem 0}
+.listing .file{font-family:var(--mono);font-size:.78rem;line-height:1.3;color:var(--muted);margin:0 0 .25rem;text-indent:0}
+pre.code{font-family:var(--mono);font-size:.84rem;line-height:1.42;margin:0;
+  padding:.6rem 0 .6rem 1.1rem;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);
+  overflow-x:auto;white-space:pre;tab-size:4}
+pre.code code{font-size:inherit}
+pre.code .c,pre.code .elide{color:var(--muted)}
+/* what a program printed: the same face, a grey rule at the left instead of above and below */
+pre.output{font-family:var(--mono);font-size:.84rem;line-height:1.42;margin:1rem 0;
+  padding:.35rem 0 .35rem 1rem;border-left:2px solid var(--rule);overflow-x:auto;white-space:pre}
+pre.output code{font-size:inherit}
+
+/* steps of a procedure */
+ol.steps{list-style:none;padding-left:0;margin:.7rem 0 .9rem}
+ol.steps > li{padding-left:3.7em;text-indent:-3.7em;margin:.3rem 0}
+ol.steps > li > .label{display:inline-block;width:3.7em;text-indent:0;font-weight:700}
+
+/* figures: drawn at the column width; caption below, "Figure 1.1" in bold, left aligned */
+figure{margin:1.5rem 0}
+figure .frame{overflow-x:auto}
+figure .frame > img{display:block;width:100%;height:auto}
+@media screen and (max-width:640px){
+  figure .frame > img{min-width:36rem}
+  figure .frame{display:flex}
+  figure .frame::after{content:"";flex:0 0 2px;position:sticky;right:0;background:var(--muted)}
+}
+figcaption{font-size:.9rem;line-height:1.45;margin-top:.55rem;text-align:left}
+figcaption .label,caption .label{font-weight:700;margin-right:.55em}
+
+/* tables: caption above, rules above and below the head and at the foot, no verticals */
+.table{margin:1.4rem 0;overflow-x:auto}
+table{border-collapse:collapse;width:100%;border-top:1.2px solid var(--ink);border-bottom:1.2px solid var(--ink)}
+caption{caption-side:top;text-align:left;font-size:.9rem;line-height:1.45;padding-bottom:.45rem}
+th,td{padding:.22rem .7rem .22rem 0;vertical-align:baseline;text-align:left;font-size:.88rem;line-height:1.35}
+th:last-child,td:last-child{padding-right:0}
+thead th{border-bottom:.8px solid var(--ink);font-weight:700}
+td code,th code{font-size:1em}
+
+/* API block: the signature verbatim from include/vfft.h, then the parameters */
+.api{margin:1.3rem 0;border-top:1.2px solid var(--ink);border-bottom:1px solid var(--rule);padding:.55rem 0 .5rem}
+.api .sig{font-family:var(--mono);font-size:.9rem;line-height:1.4;margin:0 0 .15rem;
+  padding-left:4ch;text-indent:-4ch;white-space:pre-wrap}
+.api .sig b{font-weight:700}
+.api dl{margin:.55rem 0 0;display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:1.1rem;row-gap:.25rem}
+.api dt{font-size:.94rem}
+.api dd{margin:0;font-size:.94rem}
+.api dd p{margin:0}
+.api > p{margin-top:.4rem}
+
+/* note and warning: square ink boxes */
+.note,.warning{margin:1.3rem 0;padding:.6rem .9rem;border:1px solid var(--ink)}
+.warning{border-width:2px}
+.note p,.warning p{margin:0}
+.note .label,.warning .label{font-weight:700;margin-right:.35em}
+
+/* a chapter not yet written (a --draft build) */
+.placeholder{color:var(--muted);text-align:center;font-style:italic;margin:0 0 1rem}
+
+/* the contents: a sidebar on wide screens, a <details> above the text otherwise */
+nav.toc{font-size:.86rem;line-height:1.4}
+nav.toc ol{list-style:none;margin:0;padding:0}
+nav.toc ol ol{padding-left:1.9em}
+nav.toc li{margin:.25em 0}
+nav.toc li.part-label{margin:1em 0 .35em;color:var(--ink);font-weight:700}
+nav.toc a{display:flex;gap:.45em;color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+nav.toc .num{flex:none;min-width:1.9em}
+nav.toc summary{cursor:pointer;color:var(--ink);font-weight:700}
+@media (min-width:1200px){
+  body.guide{display:grid;grid-template-columns:17rem minmax(0,1fr)}
+  nav.toc{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+    padding:2.6rem 1rem 2rem 1.25rem;border-right:1px solid var(--rule)}
+  nav.toc details::details-content{content-visibility:visible}
+  nav.toc summary{list-style:none;pointer-events:none;margin-bottom:.8rem}
+  nav.toc summary::-webkit-details-marker{display:none}
+}
+@media (max-width:1199px){nav.toc{padding:.8rem 1.25rem;border-bottom:1px solid var(--rule)}}
+footer{margin-top:4.5rem;padding-top:1.1rem;border-top:1px solid var(--rule);text-align:center;color:var(--muted);font-size:.86rem}
+footer a{font-family:var(--mono);color:var(--ink);text-decoration:none;border-bottom:1px solid #b5b5b5;padding-bottom:1px}
+footer .colophon{max-width:34rem;margin:.6rem auto 0}
+
+/* the print contents (print edition only) */
+.contents{display:none}
+
+/* the print edition: the same pages on A4. The text frame is 140 mm, so figures print at
+   1 unit = 1 pt. Chromium clips whatever reaches into a page margin, so the page area starts
+   22 mm further left and main is padded by the same 22 mm: the section numbers hang into it.
+   build.py adds one named page per chapter, for its running head. */
+@page{size:A4;margin:18mm 35mm 20mm 13mm;
+  @top-left{font-family:var(--serif);font-style:italic;font-size:8.5pt;color:var(--muted);vertical-align:bottom;padding-bottom:4mm;padding-left:22mm}
+  @top-right{content:counter(page);font-family:var(--serif);font-size:8.5pt;color:var(--ink);vertical-align:bottom;padding-bottom:4mm}}
+@page title{@top-left{content:none}@top-right{content:none}}
+@page part{@top-left{content:none}@top-right{content:none}}
+@media print{
+  html{font-size:10.5pt}
+  body{line-height:1.26}
+  body.guide{display:block}
+  nav.toc,footer{display:none}
+  main{max-width:none;padding:0 0 0 22mm}
+  .titleblock{page:title;border-bottom:0;margin:0;padding:62mm 0 0;break-after:page}
+  .titleblock .colophon{display:block;text-align:left;margin-top:110mm !important;font-size:8pt;font-style:italic}
+  /* (italic here also loads the italic face before Chrome lays out the running heads, which use it) */
+  .wordmark{font-size:30pt} .booktitle{font-size:16pt} .edition{font-size:10.5pt}
+  .contents{display:block;page:contents;break-before:page;break-after:page}
+  .contents .contents-head{font-size:16pt;font-weight:700;text-align:center;margin:0 0 1.2rem}
+  .contents ol{list-style:none;margin:0;padding:0}
+  .contents li{margin:0;break-inside:avoid}
+  .contents a{display:flex;align-items:baseline;text-decoration:none;color:var(--ink)}
+  .contents .n{flex:none;width:3.4em}
+  .contents .t{flex:1 1 auto}
+  .contents .pg{flex:none;width:2.6em;text-align:right}   /* a fixed slot: pass 2 cannot reflow */
+  .contents li.c-part{margin-top:.9rem;font-weight:700}
+  .contents li.c-part .n{width:4.6em}
+  .contents li.c-chap{margin-top:.45rem;font-weight:700}
+  .contents li.c-front{margin-top:.45rem}
+  .contents li.c-sec{font-size:.95em}
+  .contents li.c-sec a{padding-left:3.4em}
+  .part{page:part;break-before:page;break-after:page;border-top:0;margin:0;padding-top:70mm}
+  .part-title{font-size:20pt}
+  .chapter,.front{break-before:page;margin-top:0}
+  .chapter-title,.front-title{font-size:16pt;margin-bottom:1.1rem}
+  h3{font-size:11.5pt;margin:1.25rem 0 .5rem}
+  h4{font-size:10.5pt;margin:1rem 0 .4rem}
+  h1,h2,h3,h4{white-space:pre-wrap}   /* a heading that wraps keeps the space at the wrap in its
+                                         PDF bookmark ("three dimensions", not "threedimensions") */
+  .eq{margin:.45rem 0}
+  figure{margin:.9rem 0} .table,.api,.note,.warning{margin:.9rem 0}
+  ol.steps{margin:.5rem 0 .6rem} ol.steps > li{margin:.15rem 0}
+  .listing{margin:.7rem 0}
+  pre.code{font-size:9pt;line-height:1.27;padding:.4rem 0 .4rem 1em;overflow:visible;
+    white-space:pre-wrap;overflow-wrap:anywhere}          /* never clipped: a long line wraps */
+  pre.output{font-size:9pt;line-height:1.27;margin:.7rem 0;overflow:visible;white-space:pre-wrap;overflow-wrap:anywhere}
+  th,td{font-size:8.9pt;padding-top:.15rem;padding-bottom:.15rem}
+  h1,h2,h3,h4,caption,.listing .file{break-after:avoid}
+  figure,.eq,.note,.warning,.api,.table,tr,ol.steps > li{break-inside:avoid}
+  p,li{orphans:3;widows:3}
+  pre.code,pre.output{orphans:4;widows:4}
+  a,a.ref{text-decoration:none;border-bottom:0}
+  span.ref-ext{border-bottom:0}
+  figure .frame,.eq .math,.table{overflow:visible}
+  .eq .math,figure .frame,.table,pre.code,pre.output{background:none}
+  figure .frame > img{max-height:200mm;min-width:0 !important;object-fit:contain}
+  .katex .katex-mathml{display:none}
+}

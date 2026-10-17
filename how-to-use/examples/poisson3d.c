@@ -35,14 +35,24 @@
  *
  * so the computed phi[n1,n2,n3] must equal phi_e(n1 h, n2 h, n3 h) to rounding.
  *
- * Build from the repository root (the program lands beside this file), then run it:
+ * Build it against an installed VectorFFT (how-to-use/ is the guide), with CMake:
  *
- *     python gauntlet/build.py --src examples/poisson3d.c --vfft --compile
- *     examples/poisson3d.exe        (examples/poisson3d on Linux)
+ *     cmake -S how-to-use/examples -B build-examples -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_PREFIX_PATH=<prefix>
+ *     cmake --build build-examples
  *
- * A create that misses wisdom measures the cell's candidates once and saves the winner before
- * it returns; later runs are served from the store. VFFT_WISDOM_DIR=<dir> makes <dir> the
- * store instead of the library's own.
+ * or with one compiler line, the compiler that built the library (MinGW: add -static, or
+ * ship libwinpthread-1.dll beside the program; Linux: add -pthread):
+ *
+ *     gcc -O2 poisson3d.c -I<prefix>/include -L<prefix>/lib -lvfft -lm -o poisson3d
+ *
+ * Run it with a store of its own, an existing directory (PowerShell: $env:VFFT_WISDOM_DIR="<dir>"):
+ *
+ *     VFFT_WISDOM_DIR=<dir> ./poisson3d
+ *
+ * A create that misses wisdom measures the cell's candidates once and saves the winner in that
+ * store before it returns; later runs are served from it. In the repository the root CMake build
+ * compiles it as well, and python gauntlet/build.py --src how-to-use/examples/poisson3d.c --vfft
+ * --compile builds it beside this file.
  */
 #include <math.h>
 #include <stdio.h>

@@ -41,14 +41,24 @@
  * j kappa is odd, a flipped transform sign negates each derivative, and a wrong pitch
  * scrambles them.
  *
- * Build from the repository root (the program lands beside this file), then run it:
+ * Build it against an installed VectorFFT (how-to-use/ is the guide), with CMake:
  *
- *     python gauntlet/build.py --src examples/gradient3d.c --vfft --compile
- *     examples/gradient3d.exe        (examples/gradient3d on Linux)
+ *     cmake -S how-to-use/examples -B build-examples -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_PREFIX_PATH=<prefix>
+ *     cmake --build build-examples
  *
- * A create that misses wisdom measures the cell's candidates once and saves the winner before
- * it returns; later runs are served from the store. VFFT_WISDOM_DIR=<dir> makes <dir> the
- * store instead of the library's own.
+ * or with one compiler line, the compiler that built the library (MinGW: add -static, or
+ * ship libwinpthread-1.dll beside the program; Linux: add -pthread):
+ *
+ *     gcc -O2 gradient3d.c -I<prefix>/include -L<prefix>/lib -lvfft -lm -o gradient3d
+ *
+ * Run it with a store of its own, an existing directory (PowerShell: $env:VFFT_WISDOM_DIR="<dir>"):
+ *
+ *     VFFT_WISDOM_DIR=<dir> ./gradient3d
+ *
+ * A create that misses wisdom measures the cell's candidates once and saves the winner in that
+ * store before it returns; later runs are served from it. In the repository the root CMake build
+ * compiles it as well, and python gauntlet/build.py --src how-to-use/examples/gradient3d.c --vfft
+ * --compile builds it beside this file.
  */
 #include <math.h>
 #include <stdio.h>

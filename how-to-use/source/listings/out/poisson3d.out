@@ -1,0 +1,2 @@
+poisson3d: mean of f = F[0,0,0]/(N1 N2 N3) = -1.6e-18 (a periodic phi needs 0)
+poisson3d 128x128x64: max |phi[n] - phi_e(nh)| = 3.75e-15, tolerance 1e-12: PASS

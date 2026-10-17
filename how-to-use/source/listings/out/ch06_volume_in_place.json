@@ -1,0 +1,10 @@
+{
+ "source": "ch06_volume_in_place.c",
+ "source_sha256": "ac37352d553edd8cf5c6b3bb6b56d16a98fbfeff0d026827bca6e8606191c528",
+ "exit": 0,
+ "args": [],
+ "env": {},
+ "store": "a fresh copy of src/wisdom/14900KF, VFFT_WISDOM_DIR=wisdom",
+ "store_records_loaded": 22425,
+ "measured_and_saved": false
+}

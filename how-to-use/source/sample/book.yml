@@ -1,0 +1,15 @@
+# The sample book: one chapter that uses every construct of STYLE.md once. It proves the
+# toolchain and shows a writer each construct at work; it is not part of the guide.
+#   py -3.13 -E -B tools/build.py --book sample/book.yml --out-dir <a folder outside the repository>
+title: VectorFFT User Guide
+wordmark: VectorFFT
+subtitle: User Guide
+edition: v0.6 beta
+date: October 2026
+repository: https://github.com/Tugbars/VectorFFT
+output: VectorFFT-Guide-sample
+chapters: .
+parts:
+  - title: Sample
+    chapters:
+      - {file: sample.md, key: sample, title: A sample chapter}

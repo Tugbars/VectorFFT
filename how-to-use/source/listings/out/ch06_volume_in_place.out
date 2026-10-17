@@ -1,0 +1,5 @@
+3D VFFT_C2C in place, 8 x 16 x 32 points: one buffer of 8192 doubles
+frequency (3, -5, 7) is bin [3, 11, 7], element 1895: Re X = 4096.000
+spectrum: max |X/(N1 N2 N3) - expected| = 5.4e-16
+roundtrip: max |y/(N1 N2 N3) - x| = 7.2e-16
+tolerance 1e-12: PASS

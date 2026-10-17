@@ -1,0 +1,2 @@
+[wisdom2] wisdom: 22425 record(s) loaded, writable
+[wisdom2] bank refused: wildcard key without from= (wildcards are migration-vintage only)
