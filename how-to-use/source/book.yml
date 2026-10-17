@@ -1,0 +1,51 @@
+# The VectorFFT User Guide: what is in the book, in order. build.py numbers the chapters by
+# their place here (1 to 19, appendices A and B); a chapter file never states its own number.
+# A file name starts with its key (fm1, ch07, appA), and every label in the file starts with
+# that key in lower case (ch07-..., appa-...). The titles are the plan's; a chapter's # title
+# repeats its title here.
+title: VectorFFT User Guide
+wordmark: VectorFFT
+subtitle: User Guide
+edition: v0.6 beta
+date: October 2026
+repository: https://github.com/Tugbars/VectorFFT
+output: VectorFFT-Guide
+chapters: chapters
+
+front:
+  - {file: fm1_using-this-guide.md, title: "How to use this guide"}
+  - {file: fm2_notation.md, title: "Notation"}
+
+parts:
+  - title: Getting started
+    chapters:
+      - {file: ch01_building.md, title: "Building and installing VectorFFT"}
+      - {file: ch02_first-transform.md, title: "Your first transform"}
+  - title: Using the API
+    chapters:
+      - {file: ch03_describing.md, title: "Describing a transform"}
+      - {file: ch04_plans.md, title: "Plans: create, execute, destroy"}
+      - {file: ch05_buffers.md, title: "Buffers and placement"}
+      - {file: ch06_complex.md, title: "Complex transforms in one, two and three dimensions"}
+      - {file: ch07_real.md, title: "Real transforms"}
+      - {file: ch08_batches.md, title: "Batches"}
+      - {file: ch09_threads.md, title: "Threads"}
+      - {file: ch10_wisdom.md, title: "Planning and wisdom"}
+      - {file: ch11_errors.md, title: "Errors and messages"}
+  - title: Worked examples
+    chapters:
+      - {file: ch12_poisson.md, title: "Solving a periodic Poisson equation"}
+      - {file: ch13_convolution.md, title: "Linear convolution of 3D data"}
+      - {file: ch14_derivatives.md, title: "Spectral derivatives in place"}
+      - {file: ch15_wavepacket.md, title: "Propagating a wave packet"}
+  - title: Moving a DFTI program
+    chapters:
+      - {file: ch16_dfti-switch.md, title: "Switching a DFTI program to VectorFFT"}
+      - {file: ch17_dfti-support.md, title: "What the DFTI interface supports"}
+  - title: Reference
+    chapters:
+      - {file: ch18_vfft-h.md, title: "vfft.h reference"}
+      - {file: ch19_environment.md, title: "Environment variables"}
+    appendices:
+      - {file: appA_windows.md, title: "Notes for Windows and MinGW"}
+      - {file: appB_troubleshooting.md, title: "Troubleshooting"}

@@ -1,0 +1,10 @@
+{
+ "source": "wavepacket3d.c",
+ "source_sha256": "0cc876390b14a53c6b7ea9855c5f7436f44e2ad109e18369b8a864a9dc6aa2e4",
+ "exit": 0,
+ "args": [],
+ "env": {},
+ "store": "a fresh copy of src/wisdom/14900KF, VFFT_WISDOM_DIR=wisdom",
+ "store_records_loaded": 22425,
+ "measured_and_saved": false
+}

@@ -1,0 +1,3 @@
+# what tools/build.py writes beside the sources: chapter builds, the print edition, checks
+_build/
+__pycache__/

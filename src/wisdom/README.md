@@ -75,6 +75,9 @@ pinned by `.gitattributes`.
    `VFFT_WISDOM_DIR_DEFAULT`, which is this folder for an in-tree build;
 3. otherwise no store: winners are kept in memory for the process.
 
+An installed library (`cmake --install`) compiles in its own root instead,
+`<prefix>/share/vectorfft/wisdom`, a copy of this folder's shards.
+
 A create that races saves its winner before it returns, under the store lock
 (`wisdom2.lock`). `VFFT_WISDOM_WRITE=0` turns saving off for a process. A
 directory named by the caller that was raced on another CPU is served as it is,

@@ -1,0 +1,5 @@
+bin 5 holds frequency +5: Re X[5] = 64.000
+bin 61 holds frequency -3: Re X[61] = 32.000
+spectrum: max |X[k] - expected| = 4.3e-14
+roundtrip: max |y[n]/N - x[n]| = 4.4e-16
+tolerance 1e-12: PASS

@@ -1,0 +1,1 @@
+wavepacket3d 64^3 C2C in place, t = 1: max |y[n] - psi_t(nL/N)| = 2.95e-14, energy change 2.2e-14, tolerance 1e-12: PASS

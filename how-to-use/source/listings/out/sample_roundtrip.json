@@ -1,0 +1,10 @@
+{
+ "source": "sample_roundtrip.c",
+ "source_sha256": "d998dabaa3a8e084157a139f5ce5730c6c009cbfbac903b42806474be0faee7d",
+ "exit": 0,
+ "args": [],
+ "env": {},
+ "store": "a fresh copy of src/wisdom/14900KF, VFFT_WISDOM_DIR=wisdom",
+ "store_records_loaded": 22425,
+ "measured_and_saved": false
+}
