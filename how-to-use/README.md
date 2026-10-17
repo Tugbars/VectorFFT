@@ -41,22 +41,23 @@ cmake -S how-to-use/examples -B build-examples -G Ninja -DCMAKE_C_COMPILER=gcc -
 cmake --build build-examples
 ```
 
-Run each one with a store of its own: an existing directory where the library keeps the wisdom
-it measures.
+Run each one from the build folder:
 
 ```sh
 cd build-examples
-mkdir -p wisdom
-VFFT_WISDOM_DIR=wisdom ./poisson3d
+./poisson3d
 ```
 
-In PowerShell, set the variable first, `$env:VFFT_WISDOM_DIR = "wisdom"`, then run
-`.\poisson3d.exe`. Each example checks its own result, and its last line ends in `PASS`. On its
-first run with a new store, an example measures each configuration it creates: seconds, up to
-about a minute for some configurations. Later runs with the same store are served from it at
-once. On Windows, a program built with MinGW-w64 needs `libwinpthread-1.dll`, from the
-compiler's `bin` folder, on `PATH` or beside it, unless it is linked with `-static` (Appendix A
-of the guide).
+In PowerShell, run `.\poisson3d.exe`. Each example checks its own result, and its last line ends
+in `PASS`. The library keeps the wisdom it measures in its wisdom folder,
+`<prefix>/share/vectorfft/wisdom/`, which holds one folder for each CPU, and it picks the folder
+of your CPU by itself. On a CPU without shipped wisdom, the first run of an example measures
+each configuration it creates, for seconds, up to about a minute for some configurations, and
+saves the winners there; later runs are served at once. Saving needs a `<prefix>` you can
+write: under a prefix only an administrator can write, nothing is saved and every run measures
+again (Chapter 10 of the guide). On Windows, a program built with MinGW-w64 needs
+`libwinpthread-1.dll`, from the compiler's `bin` folder, on `PATH` or beside it, unless it is
+linked with `-static` (Appendix A of the guide).
 
 ## Rebuild the guide
 
@@ -70,7 +71,8 @@ py -3.13 -E -B tools/listings.py --prefix <prefix>
 py -3.13 -E -B tools/build.py
 ```
 
-The first runs every program of the guide on a fresh copy of the store and keeps what it
-printed; the second builds `VectorFFT-Guide.html` and `VectorFFT-Guide.pdf` in this folder and
+The first runs every program of the guide on a fresh copy of the shipped wisdom of one CPU
+(`src/wisdom/14900KF`), so the wisdom folder stays as it is, and keeps what each printed; the
+second builds `VectorFFT-Guide.html` and `VectorFFT-Guide.pdf` in this folder and
 checks them. `source/README.md` lists the tools the build needs, and `source/STYLE.md` gives
 the rules every chapter follows.

@@ -26,7 +26,7 @@ The program below creates a plan for $N = 64$, runs Eq. {eq}`sample-eq-forward` 
 :::{listing} sample_roundtrip.c
 :::
 
-Run with a store of its own, it prints one line, {output}`sample_roundtrip`. The same output as a block, the form for anything longer than one line:
+It prints one line, {output}`sample_roundtrip`. The same output as a block, the form for anything longer than one line:
 
 :::{output} sample_roundtrip
 :::
@@ -90,10 +90,9 @@ To build and run the listings of the guide yourself:
 :::{steps}
 1. Install VectorFFT, and note the folder you installed it to, `<prefix>`.
 2. Configure the listings against it: `cmake -S listings -B build -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_PREFIX_PATH=<prefix>`.
-3. Build them with `cmake --build build`, and run one with a store of its own:
+3. Build them with `cmake --build build`, and run one:
 :::
 
 ```sh
-mkdir wisdom
-VFFT_WISDOM_DIR=wisdom ./build/sample_roundtrip
+./build/sample_roundtrip
 ```
