@@ -54,7 +54,7 @@ static vfft_plan mk(const char *W, int N1, int N2, int scr)
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
     cfg.placement = VFFT_PLACEMENT_OUT;
-    cfg.flags |= VFFT_FLAG_PATIENT;        /* production rigor; MEASURE shuts race windows */
+    cfg.flags |= VFFT_FLAG_PATIENT;        /* names the default: every create plans PATIENT */
     cfg.rank = 2; cfg.n[0] = N1; cfg.n[1] = N2; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;

@@ -123,8 +123,8 @@ not a served form: 6, with a line naming the packed strides.
 **A recommit keeps the plans** when the translated configurations equal the committed ones. A
 program that sets a value and recommits per call pays nothing more.
 
-**Cost.** A commit that misses wisdom measures the cell's candidates (milliseconds at a small
-cell, seconds at a large one) and saves the winner. Every later commit of the cell on the
+**Cost.** A commit that misses wisdom measures the cell's candidates (seconds at a small cell,
+minutes at the largest) and saves the winner. Every later commit of the cell on the
 machine replays it. Like `vfft_create`, the commit leaves flush-to-zero and
 denormals-are-zero on in the committing thread's floating-point mode.
 
@@ -180,7 +180,7 @@ gains fused scaling, scaled final writers bound at plan time, after the release.
 
 - A compute in a direction the committed strides do not fit returns 3. MKL returns 0 with
   wrong output.
-- A first commit of a cell on a machine measures, from milliseconds to seconds. MKL's commit
+- A first commit of a cell on a machine measures, from seconds to minutes. MKL's commit
   is analytic.
 - A scale other than 1 costs one pass over the output.
 - `BACKWARD_SCRAMBLED` prints that natural order is served. MKL serves natural order silently.

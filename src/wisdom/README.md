@@ -4,8 +4,8 @@ This folder is what the library plans from. Every plan VectorFFT executes was
 chosen by a race on a real machine, and the winner is kept here as a record:
 the engine, the chain of radices, the tile, the row route, the thread split.
 A `vfft_create` that finds its cell here builds the banked plan and never
-measures; a create that misses races the candidates at `config.rigor`, banks
-the winner, saves it here, and serves it.
+measures; a create that misses races the candidates (every create plans
+PATIENT), banks the winner, saves it here, and serves it.
 
 These files are **measured, not generated**. Nothing in the build produces
 them, nothing can rebuild them, and a deleted row costs the race that made it.
@@ -102,7 +102,7 @@ library reads them from there whatever store directory it is given
   folder: a row with the same key replaces the shipped one, a new row is added,
   rows the run did not race are kept. The merge writes a backup beside each shard.
 - **Re-measure, don't edit.** A verdict that looks wrong is re-raced
-  (a gauntlet run of the cell, or `config.recalibrate = 1` on it); the file
-  is never hand-edited, regenerated, or trimmed to tidy it.
+  (a gauntlet run of the cell, or a create of it with `VFFT_FLAG_RECALIBRATE`);
+  the file is never hand-edited, regenerated, or trimmed to tidy it.
 - **Add a CPU, not a file.** Another machine's rows go in that machine's folder
   with the same six shards, never in new file names.

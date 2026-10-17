@@ -143,7 +143,7 @@ exhaustive over variants *given* a chain shortlist chosen at one fixed variant.
 
 ```
 STATUS     RACED
-WHEN       create (VFFT_MEASURE) / offline
+WHEN       create (VFFT_PATIENT, every public create) / offline
 ARMS       every factorization multiset x every unique permutation, each built and
            timed whole-plan at the caller's K
 GATES      S1.2, S1.3 (both search *within* a chosen chain)
@@ -200,6 +200,8 @@ FP         padded=
 STATUS     RACED, rigor=VFFT_EXHAUSTIVE only
 ARMS       every coverable multiset, every unique permutation, a T1S pre-screen,
            then the full 3^(nf-1) variant cartesian per surviving ordering
+CALLER     none: every public create plans VFFT_PATIENT, and vfft_create refuses
+           VFFT_FLAG_EXHAUSTIVE
 ```
 
 ### S2. SPLIT out-of-place

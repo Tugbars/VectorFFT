@@ -174,7 +174,7 @@ extern "C"
    * @brief Commit a configuration to one measured plan.
    *
    * Validates the contract, serves the cell's verdict from wisdom or measures
-   * its candidates on a miss (milliseconds at a small cell, minutes at the
+   * its candidates on a miss (seconds at a small cell, minutes at the
    * largest) and saves the winner, then builds the plan: kernels, tables,
    * scratch and threads are bound here. The plan owns what it allocated.
    * Creates take turns on one lock and may run beside executes. A create

@@ -44,8 +44,8 @@ One create/execute/destroy surface over **four axes** committed at create time:
 `placement` (in-place / out-of-place) ×
 `layout` (SPLIT re/im planes / INTERLEAVED z, MKL DFTI_COMPLEX_STORAGE analog) ×
 `order` (DEFAULT / NATURAL / SCRAMBLED, 1D/2D C2C). Plus `dims` 1..4,
-`howmany` (K lanes), the opt-in padded-batch handle (`vfft_alloc_batch_for` →
-`vfft_batch_planes` → `vfft_batch_stride` → `vfft_free_batch`), and rigor.
+`howmany` (K lanes) and the opt-in padded-batch handle (`vfft_alloc_batch_for` →
+`vfft_batch_planes` → `vfft_batch_stride` → `vfft_free_batch`).
 
 Contract: every unsupported or invalid cell is **refused at create with an
 actionable stderr message**; `vfft_execute` validates the pointer signature
@@ -64,8 +64,9 @@ taken from another CPU's folder. `VFFT_WISDOM_DIR` or a create's
 `config.wisdom_dir` names one directory as the store instead, unscanned
 (gates and benches use a scratch copy of this CPU's folder). The frozen
 bundle (`spike_wisdom.txt`, `bluestein_wisdom.txt`, `c2r_path.txt`) stays in
-`src/dag-fft-compiler/generator/generated/` and is read from there. Misses race
-at the rigor the config's flags name, bank, and save the winner before create returns.
+`src/dag-fft-compiler/generator/generated/` and is read from there. Every create
+plans PATIENT (`VFFT_FLAG_EXHAUSTIVE` is refused): a miss races, banks, and saves
+the winner before create returns.
 
 Runtime knobs (diagnostics/kill switches): `VFFT_NO_ZTURN` (fall back to the
 legacy zsplit cascade), `VFFT_FORCE_ZROUTE` (pin the K=1 cascade route),
