@@ -708,11 +708,9 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
      *       The front door calibrates rfft on miss at vfft.c:5542-5556 and that path is
      *       NOT rigor-gated, so simply calling vfft_create fixes it. This correction is
      *       therefore mostly DELETION.
-     * rigor = VFFT_MEASURE is deliberate and is WHAT PRODUCTION SERVES: may_race is
-     * (rigor != MEASURE) at vfft.c:5566, so MEASURE takes the banked verdict or the
-     * threshold, exactly what a real caller gets. VFFT_PATIENT opens the route race but
-     * appears nowhere in the tree outside its enum, so a PATIENT verdict column would
-     * measure a configuration nothing ships; it is carried below as a DIAGNOSTIC. */
+     * Every create plans PATIENT, so this plan IS WHAT PRODUCTION SERVES: the banked
+     * route verdict, else the route race inside its window (N even, 1 < K <= 64),
+     * which banks its winner, else the decouple_min_k threshold. */
     vfft_config_t c;
     memset(&c, 0, sizeof c);
     c.transform    = VFFT_R2C;
@@ -725,20 +723,17 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
     c.nthreads     = 1;                     /* NOT 0 */
     /* == what production serves */
     c.wisdom_dir = bundle();
-    /* A BENCH NEVER BANKS */
 
-    vfft_plan h_fd = NULL, h_rf = NULL, h_st = NULL, h_pat = NULL;
+    vfft_plan h_fd = NULL, h_rf = NULL, h_st = NULL;
     r2c_route_env(NULL);  h_fd = vfft_create(&c);    /* production verdict */
     r2c_route_env("0");   h_rf = vfft_create(&c);    /* rfft   diagnostic  */
     r2c_route_env("1");   h_st = vfft_create(&c);    /* stride diagnostic  */
     r2c_route_env(NULL);
-    c.flags |= VFFT_FLAG_PATIENT; h_pat = vfft_create(&c); /* what the RACE would pick */
     if (!h_fd)
     {
         printf("  N=%-6d K=%-5zu r2c vfft_create FAILED\n", N, K);
         if (h_rf) vfft_destroy(h_rf);
         if (h_st) vfft_destroy(h_st);
-        if (h_pat) vfft_destroy(h_pat);
         return;
     }
 
@@ -776,7 +771,6 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
         vfft_destroy(h_fd);
         if (h_rf) vfft_destroy(h_rf);
         if (h_st) vfft_destroy(h_st);
-        if (h_pat) vfft_destroy(h_pat);
         return;
     }
     uint64_t il_id = fftwx_plan_id(&g_fx, fil);
@@ -845,11 +839,10 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
     if (flip) { TIME_FFTW(fil, is_); cachebust(); pace(cool_ms); TIME_FD(h_fd, vs); }
     else      { TIME_FD(h_fd, vs); cachebust(); pace(cool_ms); TIME_FFTW(fil, is_); }
     stat5_t ss;  cachebust(); pace(cool_ms); TIME_FFTW(fsp, ss);
-    stat5_t rf, st, pt;
-    rf.min = rf.med = st.min = st.med = pt.min = pt.med = 0;
+    stat5_t rf, st;
+    rf.min = rf.med = st.min = st.med = 0;
     cachebust(); pace(cool_ms); TIME_FD(h_rf, rf);
     cachebust(); pace(cool_ms); TIME_FD(h_st, st);
-    cachebust(); pace(cool_ms); TIME_FD(h_pat, pt);
 #undef TIME_FD
 #undef TIME_FFTW
     cachebust(); pace(cool_ms);
@@ -875,16 +868,16 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
     const char *faster = (rf.med > 0 && st.med > 0)
                        ? (rf.med <= st.med ? "rfft" : "stride") : "?";
     int bad = (vgate > 1e-9 || gil > 1e-9 || gsp > 1e-9);
-    printf("  N=%-6d K=%-5zu fd=%9.0f/%9.0f[~%-6s] rfft=%9.0f stride=%9.0f pat=%9.0f | "
+    printf("  N=%-6d K=%-5zu fd=%9.0f/%9.0f[~%-6s] rfft=%9.0f stride=%9.0f | "
            "fil=%9.0f fsplit=%9.0f ctrl=%7.0f | r_il=%5.2f r_split=%5.2f | faster=%-6s | "
            "g v=%.1e il=%.1e sp=%.1e (%dL) plan=%.0f/%.0fms%s\n",
-           N, K, vs.min, vs.med, served, rf.med, st.med, pt.med,
+           N, K, vs.min, vs.med, served, rf.med, st.med,
            is_.med, ss.med, cs.min, r_il, r_split, faster,
            vgate, gil, gsp, lanes, il_ms, sp_ms, bad ? "  *** GATE BAD ***" : "");
     if (out)
-        fprintf(out, "r2c,%d,%zu,frontdoor,%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,"
+        fprintf(out, "r2c,%d,%zu,frontdoor,%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,"
                      "%.4f,%.4f,%.3e,naive,%.3e,naive%d,%.1f,%.1f,%016llx,il,%s,%d,%d\n",
-                N, K, served, vs.min, vs.med, rf.med, st.med, pt.med,
+                N, K, served, vs.min, vs.med, rf.med, st.med,
                 is_.min, is_.med, ss.med, cs.min, r_il, r_split,
                 vgate, gil, lanes, il_ms, sp_ms, (unsigned long long)il_id,
                 faster, flip, reps_for(total));
@@ -896,7 +889,6 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
     vfft_destroy(h_fd);
     if (h_rf) vfft_destroy(h_rf);
     if (h_st) vfft_destroy(h_st);
-    if (h_pat) vfft_destroy(h_pat);
 }
 
 /* ---------------------------------------------------------- the c2r cell
@@ -965,11 +957,11 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
     const size_t total = (size_t)N * K, insz = (size_t)(halfN + 1) * K;
 
     /* ---- vfft: THE FRONT DOOR (same law as --r2c; twin at vfft.c:1246-1315) ----
-     * rigor = VFFT_MEASURE == what production serves (may_race is rigor != MEASURE
-     * at :5664; the c2r window is bK <= 128, wider than r2c's 64). The two arms are
+     * Every create plans PATIENT, so this plan == what production serves: the banked
+     * route verdict, else the route race inside its window (1 < K <= 128, wider than
+     * r2c's 64), which banks its winner, else the structural default. The two arms are
      * NATURAL and SPLIT — PACKED never races and is unreachable from the public
-     * path (c2r_dispatch.h:210). PATIENT is carried as the "what the race would
-     * pick" diagnostic, never as the verdict. */
+     * path (c2r_dispatch.h:210). */
     vfft_config_t c;
     memset(&c, 0, sizeof c);
     c.transform    = VFFT_C2R;
@@ -981,20 +973,17 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
     c.order        = VFFT_ORDER_NATURAL;
     c.nthreads     = 1;
     c.wisdom_dir = bundle();
-    /* 🔴 A BENCH NEVER BANKS */
 
-    vfft_plan h_fd = NULL, h_nat = NULL, h_spl = NULL, h_pat = NULL;
+    vfft_plan h_fd = NULL, h_nat = NULL, h_spl = NULL;
     c2r_route_env(NULL);  h_fd  = vfft_create(&c);   /* production verdict */
     c2r_route_env("0");   h_nat = vfft_create(&c);   /* NATURAL diagnostic */
     c2r_route_env("1");   h_spl = vfft_create(&c);   /* SPLIT   diagnostic */
     c2r_route_env(NULL);
-    c.flags |= VFFT_FLAG_PATIENT; h_pat = vfft_create(&c); /* what the RACE would pick */
     if (!h_fd)
     {
         printf("  N=%-6d K=%-5zu c2r vfft_create FAILED\n", N, K);
         if (h_nat) vfft_destroy(h_nat);
         if (h_spl) vfft_destroy(h_spl);
-        if (h_pat) vfft_destroy(h_pat);
         return;
     }
 
@@ -1032,7 +1021,6 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
         vfft_destroy(h_fd);
         if (h_nat) vfft_destroy(h_nat);
         if (h_spl) vfft_destroy(h_spl);
-        if (h_pat) vfft_destroy(h_pat);
         return;
     }
     uint64_t il_id = fftwx_plan_id(&g_fx, fil);
@@ -1100,8 +1088,8 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
                       (memcmp(sp.im, iim, insz * sizeof(double)) != 0);
 
         /* ---- timing ---- */
-        stat5_t vs, is_, ss, nat, spl, pt, cs;
-        nat.min = nat.med = spl.min = spl.med = pt.min = pt.med = 0;
+        stat5_t vs, is_, ss, nat, spl, cs;
+        nat.min = nat.med = spl.min = spl.med = 0;
 #define TIME_C2R_FD(H, DST) do { if (H) {                                 \
         for (int w = 0; w < 10; w++) vfft_execute_split(H, VFFT_BACKWARD, ire, iim, y, NULL); \
         int reps = reps_for(total);                                       \
@@ -1125,7 +1113,6 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
         cachebust(); pace(cool_ms); TIME_C2R_FFTW(fsp, ss);
         cachebust(); pace(cool_ms); TIME_C2R_FD(h_nat, nat);
         cachebust(); pace(cool_ms); TIME_C2R_FD(h_spl, spl);
-        cachebust(); pace(cool_ms); TIME_C2R_FD(h_pat, pt);
 #undef TIME_C2R_FD
 #undef TIME_C2R_FFTW
         cachebust(); pace(cool_ms);
@@ -1148,17 +1135,17 @@ static void run_c2r_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
         const char *faster = (nat.med > 0 && spl.med > 0)
                            ? (nat.med <= spl.med ? "natural" : "split") : "?";
         int bad = (vg > 1e-9 || gil > 1e-9 || gsp > 1e-9 || il_clob);
-        printf("  N=%-6d K=%-5zu fd=%9.0f/%9.0f[~%-7s] nat=%9.0f split=%9.0f pat=%9.0f | "
+        printf("  N=%-6d K=%-5zu fd=%9.0f/%9.0f[~%-7s] nat=%9.0f split=%9.0f | "
                "fil=%9.0f fsplit=%9.0f ctrl=%7.0f | r_il=%5.2f r_split=%5.2f | faster=%-7s | "
                "g v=%.1e il=%.1e sp=%.1e (%dL) preserve=%s plan=%.0f/%.0fms%s\n",
-               N, K, vs.min, vs.med, served, nat.med, spl.med, pt.med,
+               N, K, vs.min, vs.med, served, nat.med, spl.med,
                is_.med, ss.med, cs.min, r_il, r_split, faster,
                vg, gil, gsp, lanes, il_clob ? "CLOBBERED" : "ok", il_ms, sp_ms,
                bad ? "  *** GATE BAD ***" : "");
         if (out)
-            fprintf(out, "c2r,%d,%zu,frontdoor,%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,"
+            fprintf(out, "c2r,%d,%zu,frontdoor,%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,"
                          "%.4f,%.4f,%.3e,naive,%.3e,naive%d,%s,%.1f,%.1f,%016llx,il,%s,%d,%d\n",
-                    N, K, served, vs.min, vs.med, nat.med, spl.med, pt.med,
+                    N, K, served, vs.min, vs.med, nat.med, spl.med,
                     is_.min, is_.med, ss.med, cs.min, r_il, r_split,
                     vg, gil, lanes, il_clob ? "CLOBBERED" : "ok",
                     il_ms, sp_ms, (unsigned long long)il_id, faster, flip, reps_for(total));
@@ -1173,7 +1160,6 @@ cleanup:
     vfft_destroy(h_fd);
     if (h_nat) vfft_destroy(h_nat);
     if (h_spl) vfft_destroy(h_spl);
-    if (h_pat) vfft_destroy(h_pat);
 }
 
 /* ------------------------------------------------------- the OOP K-cell
@@ -1215,7 +1201,6 @@ static void run_oop_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
     cfg.batch   = VFFT_BATCH_DEFAULT;
     cfg.nthreads     = 1;
     cfg.wisdom_dir = bundle();
-    /* 🔴 A BENCH NEVER BANKS */
     vfft_plan h = vfft_create(&cfg);
     if (!h) { printf("  N=%-8d K=%-5zu OOP vfft_create FAILED\n", N, K); return; }
 
@@ -1566,12 +1551,13 @@ int main(int argc, char **argv)
         FILE *o2 = fopen(csv_path ? csv_path : "vfft_vs_fftw_c2r.csv", "w");
         if (o2)
             fprintf(o2, "mode,N,K,vfft_src,served_like,vns_min,vns_med,nat_med,split_med,"
-                        "patient_med,fil_min,fil_med,fsplit_med,ctrl_min,ratio_il,ratio_split,"
+                        "fil_min,fil_med,fsplit_med,ctrl_min,ratio_il,ratio_split,"
                         "vgate,vgate_class,fgate,fgate_class,preserve,il_plan_ms,split_plan_ms,"
                         "il_plan_id,verdict_arm,faster_arm,flip,reps\n");
         printf("=== vfft vs FFTW — 1D C2R bwd (SPLIT path; c2r IL is owned elsewhere) ===\n"
-               "  vfft = THE FRONT DOOR at rigor=MEASURE; nat/split via VFFT_C2R_ROUTE;\n"
-               "  pat = rigor=PATIENT (what the race would pick; c2r window is K<=128).\n"
+               "  vfft = THE FRONT DOOR (what production serves): every create plans PATIENT,\n"
+               "  so a store miss races the route inside the c2r window (1<K<=128).\n"
+               "  nat/split = the library's own arms via VFFT_C2R_ROUTE.\n"
                "  BOTH FFTW arms use PRESERVE_INPUT: our c2r preserves its input, FFTW's\n"
                "  destroys by default — without it the arm is unfair AND rounds>=2 are garbage.\n"
                "  HOME regime: verdict = fil (CCE half-spectrum in), fsplit = diagnostic.\n");
@@ -1606,13 +1592,14 @@ int main(int argc, char **argv)
         FILE *o2 = fopen(csv_path ? csv_path : "vfft_vs_fftw_r2c.csv", "w");
         if (o2)
             fprintf(o2, "mode,N,K,vfft_src,served_like,vns_min,vns_med,rfft_med,stride_med,"
-                        "patient_med,fil_min,fil_med,fsplit_med,ctrl_min,ratio_il,ratio_split,"
+                        "fil_min,fil_med,fsplit_med,ctrl_min,ratio_il,ratio_split,"
                         "vgate,vgate_class,fgate,fgate_class,il_plan_ms,split_plan_ms,"
                         "il_plan_id,verdict_arm,faster_arm,flip,reps\n");
         printf("=== vfft vs FFTW — 1D R2C fwd ===\n"
-               "  vfft = THE FRONT DOOR at rigor=MEASURE (what production serves).\n"
-               "  rfft/stride = the library's own arms via VFFT_R2C_ROUTE; pat = rigor=PATIENT\n"
-               "  (what the route RACE would pick). All four are library decisions, not the bench's.\n"
+               "  vfft = THE FRONT DOOR (what production serves): every create plans PATIENT,\n"
+               "  so a store miss races the route inside the r2c window (N even, 1<K<=64).\n"
+               "  rfft/stride = the library's own arms via VFFT_R2C_ROUTE. All three are library\n"
+               "  decisions, not the bench's.\n"
                "  HOME regime: verdict = fil (FFTW CCE home, adapter UNTIMED, mirrors MKL's deal);\n"
                "  fsplit = FFTW forced into our lane-major split = diagnostic.\n");
         if (N > 0)

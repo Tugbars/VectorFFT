@@ -145,6 +145,9 @@ report, the ISA); it is not part of what a user learns.
 - The process-wide thread setting is gone: a plan that does not set `nthreads` runs on one
   thread.
 - Refusals are no longer printed unless asked.
+- A zeroed configuration planned MEASURE; every create plans PATIENT, the wider sweep, so a
+  create that misses wisdom measures longer. `VFFT_FLAG_PATIENT` names that default; the
+  exhaustive sweep is not served and `VFFT_FLAG_EXHAUSTIVE` is refused.
 
 ## 6. The build
 

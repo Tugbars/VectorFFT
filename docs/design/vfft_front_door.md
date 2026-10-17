@@ -35,7 +35,9 @@ translation:
   serves the scrambled order only, so a natural request there is refused;
 * real-to-real transforms take no layout, order or batch geometry (SPLIT internally);
 * `nthreads` 0 or 1 is one thread; no process-wide thread setting exists;
-* the flags become the rigor, recalibrate, destroy-input and own-pitch fields of the request;
+* every create plans PATIENT: `VFFT_FLAG_PATIENT` names that default and `VFFT_FLAG_EXHAUSTIVE`
+  is refused (section 5);
+* the other flags become the recalibrate, destroy-input and own-pitch fields of the request;
 * `wisdom_dir` names a store that is opened once per process and kept (section 2).
 
 Every refusal leaves its reason in the calling thread's record: `vfft_error()` returns it, and it
@@ -44,7 +46,7 @@ create leaves the record empty. `vfft_execute` runs INTERLEAVED and real-to-real
 pointers), `vfft_execute_split` runs SPLIT plans (four planes); each refuses the other layout.
 
 `vfft_create` dispatches by transform and, for each one, follows the same shape: resolve
-wisdom, calibrate on a miss at the requested rigor, build the plan, stamp the executor onto
+wisdom, calibrate on a miss at PATIENT, build the plan, stamp the executor onto
 the handle. It serves C2C (in-place and out-of-place), R2C, C2R, DCT-I/II/III/IV, DST-I/II/III,
 DHT, and ranks 1 through 4.
 
@@ -138,15 +140,21 @@ Hooks are declared as data in `wisdom2.h`'s env-law table, not applied by that m
 
 ## 5. Calibration, and the house race protocol
 
-Rigor selects a **planner entry point**, not a cost model — the library has no cost-model tier.
+Every public create plans PATIENT: the translation sets the request's rigor to `VFFT_PATIENT`
+whether or not `VFFT_FLAG_PATIENT` is set ([vfft_api.h:165](../../src/core/vfft_api.h#L165)) and
+refuses `VFFT_FLAG_EXHAUSTIVE` ([vfft_api.h:132-136](../../src/core/vfft_api.h#L132-L136)). The
+rigor enum belongs to the internal request (`common/plan/vfft_cfg.h`). Rigor selects a **planner
+entry point**, not a cost model — the library has no cost-model tier.
 
-| rigor | entry point | search |
-|---|---|---|
-| `MEASURE` | `vfft_proto_dp_plan_measure` | coarse beam over factorizations, then a per-stage variant refine |
-| `PATIENT` | same, with `vfft_proto_dp_set_patient` | wider beam; top-K re-measured rather than believed from the sub-plan cache |
-| `EXHAUSTIVE` | `vfft_proto_exhaustive_search` | every valid multiset of N, every unique permutation, full per-stage variant cartesian behind a pre-screen; DIT-only, degrades to patient DP when it cannot cover N |
+| rigor | planned by | entry point | search |
+|---|---|---|---|
+| `MEASURE` | a child create that sets it itself | `vfft_proto_dp_plan_measure` | coarse beam over factorizations, then a per-stage variant refine |
+| `PATIENT` | every public create | same, with `vfft_proto_dp_set_patient` | wider beam; top-K re-measured rather than believed from the sub-plan cache |
+| `EXHAUSTIVE` | no create | `vfft_proto_exhaustive_search` | every valid multiset of N, every unique permutation, full per-stage variant cartesian behind a pre-screen; DIT-only, degrades to patient DP when it cannot cover N |
 
 First create pays the search; the banked entry is replayed by every later create.
+`VFFT_FLAG_RECALIBRATE` pays it again even on a hit, and even for a cell this process has already
+searched: PATIENT re-measures what the planner's cache remembers rather than believing it.
 
 **Every in-process race shares one shape**, and it is stated here once rather than at each site
 (the executable form of the ARMS x PROTOCOL half is `src/core/support/race.h`; each site keeps its
@@ -430,6 +438,7 @@ The door refuses rather than degrading, in every one of these cases, and names t
 
 | request | outcome |
 |---|---|
+| `VFFT_FLAG_EXHAUSTIVE` in the flags | refused at create — `vfft_create: VFFT_FLAG_EXHAUSTIVE is not served (every create plans PATIENT; drop the flag)` |
 | a scrambled order on r2c/c2r or a padded batch | refused at create |
 | a padded batch with `layout=INTERLEAVED` | refused at create |
 | the natural order on SPLIT C2C at rank 3 or 4 | refused at create |
