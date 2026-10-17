@@ -1,4 +1,6 @@
-<img width="1568" height="649" alt="preview (1)" src="https://github.com/user-attachments/assets/511964c1-6402-43db-927b-98f0be4f81c9" />
+<img width="3200" height="1268" alt="image" src="https://github.com/user-attachments/assets/4766b823-5d19-4238-b244-67164971969c" />
+
+
 
 **VectorFFT** is a double-precision FFT library in C for x86 with AVX2 and
 AVX-512, built for workloads that run many transforms of modest length. It serves
