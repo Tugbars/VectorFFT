@@ -19,6 +19,9 @@ older than the script or this file, and the script writes figures/<chapter key>_
     f.save()
 
 Coordinates: x to the right, y downwards, both in pt from the top-left corner of the plate.
+The saved figure keeps the full width W and is cropped to the drawing: PAD pt above its topmost
+and below its lowest ink, so the space between a figure and the text is the same everywhere;
+height only sizes the plate of a figure that draws nothing.
 Text: s is words in cmr10 with $...$ for math (font="rm"), or code in cmtt10 (font="tt");
 y is the baseline; anchor "l", "c" or "r" places x at the left, centre or right of the ink.
 Run with Python 3.13 and matplotlib (py -3.13 -E figures/<name>.py).
@@ -40,6 +43,7 @@ TEXT = 8.0                                   # pt: lettering
 LINE = 0.6                                   # pt: cell borders, leaders
 THIN = 0.4                                   # pt: hatching, ticks
 DART_L, DART_W = 5.0, 3.0                    # pt: the filled dart of an arrow
+PAD = 6.0                                    # pt: the plate above and below the drawing
 _TTF = os.path.join(matplotlib.get_data_path(), "fonts", "ttf")
 _FONTS = {"rm": FontProperties(fname=os.path.join(_TTF, "cmr10.ttf")),
           "tt": FontProperties(fname=os.path.join(_TTF, "cmtt10.ttf"))}
@@ -56,6 +60,12 @@ class Figure:
         self.w, self.h = width, height
         self.items = []
         self.defs = {}
+        self.top = self.bottom = None           # the drawing's extent in y, for the crop
+
+    def _ink(self, y0, y1):
+        lo, hi = min(y0, y1), max(y0, y1)
+        self.top = lo if self.top is None else min(self.top, lo)
+        self.bottom = hi if self.bottom is None else max(self.bottom, hi)
 
     # ── primitives ──────────────────────────────────────────────────────────────────────────
     def text(self, s, x, y, size=TEXT, anchor="c", color=INK, font="rm"):
@@ -70,6 +80,7 @@ class Figure:
         if not len(v):
             return x, x
         x0, x1 = v[:, 0].min(), v[:, 0].max()
+        self._ink(y - v[:, 1].max(), y - v[:, 1].min())
         tx = {"c": x - (x0 + x1) / 2, "l": x - x0, "r": x - x1}[anchor]
         d, i = [], 0
         while i < len(codes):
@@ -96,12 +107,14 @@ class Figure:
 
     def line(self, x1, y1, x2, y2, lw=LINE, color=INK, dash=None):
         da = ' stroke-dasharray="%s"' % " ".join(_fmt(t) for t in dash) if dash else ""
+        self._ink(min(y1, y2) - lw / 2, max(y1, y2) + lw / 2)
         self.items.append('<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="%s"%s/>'
                           % (_fmt(x1), _fmt(y1), _fmt(x2), _fmt(y2), color, _fmt(lw), da))
 
     def rect(self, x, y, w, h, fill=None, stroke=INK, lw=LINE, hatch=False, dash=None):
         """fill: None (paper), "rule" (the light grey) or a colour. hatch: thin diagonal lines."""
         f = {None: PAPER, "rule": RULE, "muted": MUTED}.get(fill, fill)
+        self._ink(y - (lw / 2 if stroke else 0), y + h + (lw / 2 if stroke else 0))
         self.items.append('<rect x="%s" y="%s" width="%s" height="%s" fill="%s"/>'
                           % (_fmt(x), _fmt(y), _fmt(w), _fmt(h), f))
         if hatch:
@@ -119,6 +132,7 @@ class Figure:
         """A line from (x1, y1) with a filled dart at (x2, y2)."""
         ang = math.atan2(y2 - y1, x2 - x1)
         bx, by = x2 - DART_L * 0.72 * math.cos(ang), y2 - DART_L * 0.72 * math.sin(ang)
+        self._ink(y2 - DART_L, y2 + DART_L)
         self.line(x1, y1, bx, by, lw, color)
         self.items.append('<path transform="translate(%s %s) rotate(%s)" fill="%s" d="M0 0 L%s %s L%s 0 L%s %s Z"/>'
                           % (_fmt(x2), _fmt(y2), _fmt(math.degrees(ang)), color, _fmt(-DART_L),
@@ -135,6 +149,7 @@ class Figure:
             a=_fmt(x1), b=_fmt(x1 + q), c=_fmt(xm - q), m=_fmt(xm), e=_fmt(xm + q), f=_fmt(x2 - q),
             g=_fmt(x2), y0=_fmt(y), y1=_fmt(y + s * q), y2=_fmt(y + s * depth))
         self.items.append('<path d="%s" fill="none" stroke="%s" stroke-width="%s"/>' % (d, color, _fmt(LINE)))
+        self._ink(y - LINE / 2, y + s * depth + s * LINE / 2)
         if label:
             ly = y + s * depth + (TEXT + 2.5 if below else -3.0)
             self.text(label, xm, ly, color=color, font=font)
@@ -178,10 +193,11 @@ class Figure:
             caller = Path(inspect.stack()[1].filename).resolve()
             path = caller.with_suffix(".svg")
         defs = "<defs>%s</defs>\n" % "".join(self.defs.values()) if self.defs else ""
-        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %s %s" width="%spt" height="%spt">\n'
-               '%s<rect width="%s" height="%s" fill="%s"/>\n%s\n</svg>\n'
-               % (_fmt(self.w), _fmt(self.h), _fmt(self.w), _fmt(self.h), defs, _fmt(self.w), _fmt(self.h),
-                  PAPER, "\n".join(self.items)))
+        top, h = (0.0, self.h) if self.top is None else (self.top - PAD, self.bottom - self.top + 2 * PAD)
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 %s %s %s" width="%spt" height="%spt">\n'
+               '%s<rect y="%s" width="%s" height="%s" fill="%s"/>\n%s\n</svg>\n'
+               % (_fmt(top), _fmt(self.w), _fmt(h), _fmt(self.w), _fmt(h), defs, _fmt(top), _fmt(self.w),
+                  _fmt(h), PAPER, "\n".join(self.items)))
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(svg)
         return path

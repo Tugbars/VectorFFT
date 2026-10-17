@@ -69,12 +69,19 @@ another chapter's files; report what you need instead.
 - **Scope.** The native API (`vfft.h`), the DFTI interface (`src/shims/dfti/`), the four 3D
   examples. Never in a task chapter: `VFFT_LAYOUT_SPLIT`, `vfft_execute_split()`, `VFFT_DCT1`
   to `VFFT_DHT`, rank 4, `VFFT_FLAG_EXHAUSTIVE`, `vfft_diagnostics.h`. Chapter 18 lists them
-  once, as not part of this release.
+  once, as not part of this release; Table 1.2 also names the installed `vfft_diagnostics.h`,
+  as not part of this release.
 - **Planning.** Every create plans PATIENT: `VFFT_FLAG_PATIENT` names the default,
   `VFFT_FLAG_EXHAUSTIVE` is refused, `VFFT_FLAG_RECALIBRATE` measures again. A create that
   misses wisdom measures for seconds, up to about a minute for some configurations, and saves
-  the winner; later creates are served at once. Recommend that an application names a store
-  it owns: `wisdom_dir` in the configuration, or `VFFT_WISDOM_DIR`, an existing directory.
+  the winner; later creates are served at once.
+- **Wisdom folder.** The library comes with its own wisdom folder, one folder per CPU
+  (`src/wisdom/`; `<prefix>/share/vectorfft/wisdom/` installed), and with no store named it
+  picks the folder of this CPU by itself, serves from it and saves into it. A program is run
+  with no setup: never tell the reader to create an empty directory or to set
+  `VFFT_WISDOM_DIR` in order to run a program. Naming a store (`wisdom_dir`,
+  `VFFT_WISDOM_DIR`) is a special case that Chapter 10 explains once
+  (`ch10-sec-own-store`); other chapters say it in one sentence and refer there.
 - **Version.** Write "v0.6 beta". No listing prints `vfft_info().version`.
 - **Building.** The route is the library target: CMake `find_package(VectorFFT)`,
   `add_subdirectory`, `FetchContent`, or one compiler line against an installed package.
@@ -200,11 +207,13 @@ f.text("in_doubles", 200, 20, font="tt")               # code names: typewriter
 f.save()                                               # writes figures/<this script>.svg
 ```
 
-`style.py` also has `line`, `rect` (with `hatch=True`), `arrow`, `grid`. Figures show only
-what a user reads or does: array layouts, which bin is which frequency, padded rows, batch
-layouts. Colour never carries meaning alone: a grey cell also carries a word or a hatch.
-`figures/sample_half_spectrum.py` is a complete script. The build runs a script when its SVG
-is missing or older than the script or `style.py`.
+`f.save()` keeps the full width and crops the figure to what it draws, 6 pt above and below,
+so every figure sits at the same distance from the text; `height` only sizes a figure that
+draws nothing. `style.py` also has `line`, `rect` (with `hatch=True`), `arrow`, `grid`.
+Figures show only what a user reads or does: array layouts, which bin is which frequency,
+padded rows, batch layouts. Colour never carries meaning alone: a grey cell also carries a
+word or a hatch. `figures/sample_half_spectrum.py` is a complete script. The build runs a
+script when its SVG is missing or older than the script or `style.py`.
 
 ## 7. Code
 
@@ -217,6 +226,8 @@ cmake --build build
 ````
 
 The languages are `sh` (Git Bash or Linux), `powershell`, `cmake`, `text`, `ini`, `json`.
+A `text` block is what a program printed, quoted by hand (the store line with its
+placeholder, Section 10.2): the page shows it as an output, never as code to type.
 C is never typed into a chapter: it comes from a listing or an excerpt of an example. Lines
 stay within 80 columns (the build warns; the PDF wraps longer ones). Indented code blocks
 and raw HTML are not used.
@@ -263,8 +274,8 @@ The C style is the examples' style, and the harness compiles with
   `if (d > err || isnan(d)) err = d;` then `pass = err <= TOL;`;
 - a last line that ends in `PASS` or `FAIL`, and `return pass ? 0 : 1;`;
 - no timings, addresses, paths, user names or `vfft_info().version` in the output;
-- a program that names its store in the configuration names `"wisdom"`
-  (`cfg.wisdom_dir = "wisdom";`): the harness puts the fresh copy of the store there.
+- no `wisdom_dir`: a listing uses the library's wisdom folder, as a reader's program does (the
+  harness runs it on a fresh copy, section 9); naming a store is Section 10.3's, in words.
 
 A point about C++ is made by a `.cpp` listing (C++11, `vfft_config_t cfg = {};`, the
 `vfft_malloc()` result cast).
@@ -284,18 +295,22 @@ It prints {output}`ch07_r2c_in_place`.
 
 The block quotes standard output (or standard error) verbatim; the inline form is for an
 output of one line. Quote standard error only where what the library prints is the subject
-(Chapters 10 and 11, Appendix B). The build fails when a listing changed after its last
-harness run.
+(Chapters 10 and 11, Appendix B). Standard error holds the store line, which names the
+harness's copy of the store, not the reader's: where you show it, write the lines in a `text`
+block, copied from the `.err` file, with the store line as `[wisdom2] <the folder of this
+CPU>: <n> record(s) loaded, writable` (Section 10.2 explains it). The build fails when a
+listing changed after its last harness run.
 
 ### Excerpts of the examples
 
 The worked examples (Chapters 12 to 15) quote `how-to-use/examples/*.c` in place. Copy the
-lines exactly, indentation included; a line of three dots leaves lines out:
+lines exactly, indentation included; a line of three dots, indented as the line after it,
+leaves lines out:
 
 ````text
 ```c excerpt=poisson3d.c
         vfft_execute(r2c, VFFT_FORWARD, f, F);
-...
+        ...
         vfft_execute(c2r, VFFT_BACKWARD, F, phi);
 ```
 ````
@@ -342,7 +357,8 @@ The terms, in the header's words; use each with this meaning only:
 | create | the call `vfft_create()`: it checks the configuration, serves it from wisdom or measures it on a miss and saves the winner, then builds the plan |
 | execute | the call `vfft_execute()`: it runs a plan on your buffers, and allocates, measures and decides nothing |
 | wisdom | the record of the plan that won when a configuration was measured |
-| store | the directory that holds wisdom: the library's own, or the one `wisdom_dir` or `VFFT_WISDOM_DIR` names |
+| wisdom folder | the folder of wisdom that comes with the library, with one folder in it for each CPU: `src/wisdom/` in the sources, `<prefix>/share/vectorfft/wisdom/` once installed |
+| store | the directory a create reads wisdom from and saves winners into: the folder of this CPU in the library's wisdom folder, or a directory that `wisdom_dir` or `VFFT_WISDOM_DIR` names |
 | miss | a create whose configuration has no wisdom in the store: it measures, then saves the winner |
 | refusal | a configuration or call the library does not serve: `vfft_create()` returns `NULL`, and `vfft_error()` says why; nothing is converted and nothing falls back |
 | natural order | `VFFT_ORDER_NATURAL`, the default: bin $k$ at position $k$ |

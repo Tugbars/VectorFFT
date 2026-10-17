@@ -65,6 +65,7 @@ h3 .num{display:inline-block;width:calc(var(--hang) - .383em);text-indent:0}
 h4{font-size:1rem;margin:1.7rem 0 .6rem;text-indent:calc(-1 * var(--hang))}
 h4 .num{display:inline-block;width:calc(var(--hang) - .383em);text-indent:0}
 .front h3,.front h4{text-indent:0}
+.chapter-title,.front-title,.part-title,h3,h4{text-wrap:balance}   /* no one-word last line */
 @media screen and (max-width:900px){
   h3,h4{text-indent:0} h3 .num,h4 .num{width:auto;margin-right:.6em}
 }
@@ -88,12 +89,15 @@ h4 .num{display:inline-block;width:calc(var(--hang) - .383em);text-indent:0}
   .eq .math > .narrow{display:block}
 }
 /* a box that scrolls sideways shows a muted 2px rule at each edge that hides more of it */
-.eq .math,figure .frame,.table,pre.code,pre.output{background:
+.eq .math,figure .frame,.table,pre.code,pre.output,pre.quote{background:
   linear-gradient(var(--paper),var(--paper)) left center / 4px 100% no-repeat local,
   linear-gradient(var(--paper),var(--paper)) right center / 4px 100% no-repeat local,
   linear-gradient(var(--muted),var(--muted)) left center / 2px 100% no-repeat scroll,
   linear-gradient(var(--muted),var(--muted)) right center / 2px 100% no-repeat scroll;
   background-color:var(--paper)}
+/* KaTeX's hidden MathML copy is placed absolutely: keep it inside the box that scrolls, so a
+   formula in a scrolled table cell does not widen the page on a phone */
+.eq .math,figure .frame,.table,pre.code,pre.output,pre.quote{position:relative}
 
 /* listings: monochrome, comments muted and upright; hairline rules like the site's hr */
 .listing{margin:1.1rem 0}
@@ -103,10 +107,18 @@ pre.code{font-family:var(--mono);font-size:.84rem;line-height:1.42;margin:0;
   overflow-x:auto;white-space:pre;tab-size:4}
 pre.code code{font-size:inherit}
 pre.code .c,pre.code .elide{color:var(--muted)}
-/* what a program printed: the same face, a grey rule at the left instead of above and below */
-pre.output{font-family:var(--mono);font-size:.84rem;line-height:1.42;margin:1rem 0;
+/* what a program printed, and a quote of it (a ```text block): the same face, a grey rule at
+   the left instead of above and below */
+pre.output,pre.quote{font-family:var(--mono);font-size:.84rem;line-height:1.42;margin:1rem 0;
   padding:.35rem 0 .35rem 1rem;border-left:2px solid var(--rule);overflow-x:auto;white-space:pre}
-pre.output code{font-size:inherit}
+pre.output code,pre.quote code{font-size:inherit}
+/* one span per line (build.py, --i its indentation): where a line wraps, on a wide screen and in
+   print, the rest hangs under the line's own start, 4 columns further in */
+pre .ln{display:block}
+@media screen and (min-width:641px){
+  pre.code,pre.output,pre.quote{white-space:pre-wrap;overflow-wrap:anywhere}
+  pre .ln{padding-left:calc((var(--i) + 4) * 1ch);text-indent:calc(-1 * (var(--i) + 4) * 1ch)}
+}
 
 /* steps of a procedure */
 ol.steps{list-style:none;padding-left:0;margin:.7rem 0 .9rem}
@@ -123,6 +135,7 @@ figure .frame > img{display:block;width:100%;height:auto}
   figure .frame::after{content:"";flex:0 0 2px;position:sticky;right:0;background:var(--muted)}
 }
 figcaption{font-size:.9rem;line-height:1.45;margin-top:.55rem;text-align:left}
+figcaption,caption{text-wrap:pretty}
 figcaption .label,caption .label{font-weight:700;margin-right:.55em}
 
 /* tables: caption above, rules above and below the head and at the foot, no verticals */
@@ -133,6 +146,10 @@ th,td{padding:.22rem .7rem .22rem 0;vertical-align:baseline;text-align:left;font
 th:last-child,td:last-child{padding-right:0}
 thead th{border-bottom:.8px solid var(--ink);font-weight:700}
 td code,th code{font-size:1em}
+@media screen{th code.nw,td code.nw{white-space:normal}}   /* breaks after "_": build.py adds <wbr> */
+@media screen and (max-width:640px){
+  .table caption{position:sticky;left:0;max-width:calc(100vw - 2rem)}   /* in view while the table scrolls */
+}
 
 /* API block: the signature verbatim from include/vfft.h, then the parameters */
 .api{margin:1.3rem 0;border-top:1.2px solid var(--ink);border-bottom:1px solid var(--rule);padding:.55rem 0 .5rem}
@@ -144,6 +161,8 @@ td code,th code{font-size:1em}
 .api dd{margin:0;font-size:.94rem}
 .api dd p{margin:0}
 .api > p{margin-top:.4rem}
+.api .sig + p{text-indent:0}
+.api .sig + .sig{text-indent:-4ch}
 
 /* note and warning: square ink boxes */
 .note,.warning{margin:1.3rem 0;padding:.6rem .9rem;border:1px solid var(--ink)}
@@ -160,9 +179,10 @@ nav.toc ol{list-style:none;margin:0;padding:0}
 nav.toc ol ol{padding-left:1.9em}
 nav.toc li{margin:.25em 0}
 nav.toc li.part-label{margin:1em 0 .35em;color:var(--ink);font-weight:700}
-nav.toc a{display:flex;gap:.45em;color:var(--muted);text-decoration:none}
+nav.toc a{display:block;padding-left:2.2em;text-indent:-2.2em;color:var(--muted);text-decoration:none}
 nav.toc a:hover{color:var(--ink)}
-nav.toc .num{flex:none;min-width:1.9em}
+nav.toc li.part-label > a,nav.toc details > ol > li > a{color:var(--ink)}   /* sections stay muted */
+nav.toc .num{display:inline-block;min-width:1.9em;text-indent:0}
 nav.toc summary{cursor:pointer;color:var(--ink);font-weight:700}
 @media (min-width:1200px){
   body.guide{display:grid;grid-template-columns:17rem minmax(0,1fr)}
@@ -185,7 +205,8 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
    22 mm further left and main is padded by the same 22 mm: the section numbers hang into it.
    build.py adds one named page per chapter, for its running head. */
 @page{size:A4;margin:18mm 35mm 20mm 13mm;
-  @top-left{font-family:var(--serif);font-style:italic;font-size:8.5pt;color:var(--muted);vertical-align:bottom;padding-bottom:4mm;padding-left:22mm}
+  @top-left{font-family:var(--serif);font-style:italic;font-size:8.5pt;color:var(--muted);vertical-align:bottom;padding-bottom:4mm;padding-left:22mm;
+    letter-spacing:.02em}   /* spacing keeps Chrome from joining the ff of "vfft.h" */
   @top-right{content:counter(page);font-family:var(--serif);font-size:8.5pt;color:var(--ink);vertical-align:bottom;padding-bottom:4mm}}
 @page title{@top-left{content:none}@top-right{content:none}}
 @page part{@top-left{content:none}@top-right{content:none}}
@@ -212,7 +233,7 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
   .contents li.c-chap{margin-top:.45rem;font-weight:700}
   .contents li.c-front{margin-top:.45rem}
   .contents li.c-sec{font-size:.95em}
-  .contents li.c-sec a{padding-left:3.4em}
+  .contents li.c-sec a{padding-left:3.58em}            /* 3.4em of the chapter rows, at .95em */
   .part{page:part;break-before:page;break-after:page;border-top:0;margin:0;padding-top:70mm}
   .part-title{font-size:20pt}
   .chapter,.front{break-before:page;margin-top:0}
@@ -227,16 +248,34 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
   .listing{margin:.7rem 0}
   pre.code{font-size:9pt;line-height:1.27;padding:.4rem 0 .4rem 1em;overflow:visible;
     white-space:pre-wrap;overflow-wrap:anywhere}          /* never clipped: a long line wraps */
-  pre.output{font-size:9pt;line-height:1.27;margin:.7rem 0;overflow:visible;white-space:pre-wrap;overflow-wrap:anywhere}
+  pre.output,pre.quote{font-size:9pt;line-height:1.27;margin:.7rem 0;overflow:visible;white-space:pre-wrap;overflow-wrap:anywhere}
   th,td{font-size:8.9pt;padding-top:.15rem;padding-bottom:.15rem}
+  th wbr,td wbr{display:none}   /* an identifier breaks after "_" on screen only */
   h1,h2,h3,h4,caption,.listing .file{break-after:avoid}
-  figure,.eq,.note,.warning,.api,.table,tr,ol.steps > li{break-inside:avoid}
+  figure,.eq,.note,.warning,.table,tr,ol.steps > li{break-inside:avoid}
   p,li{orphans:3;widows:3}
-  pre.code,pre.output{orphans:4;widows:4}
+  pre.code,pre.output,pre.quote{orphans:4;widows:4}
+  pre.output,pre.quote{break-inside:avoid}
+  /* a lead-in stays with what it introduces */
+  p:has(+ .listing),p:has(+ pre.output),p:has(+ pre.quote),p:has(+ ul),p:has(+ ol),p:has(+ .eq){break-after:avoid}
+  /* a code block of 15 lines or fewer is never split; a longer one breaks between statements,
+     with 4 lines or more before the break and 3 or more after it */
+  .listing.short{break-inside:avoid}
+  pre .ln{padding-left:calc((var(--i) + 4) * 1ch);text-indent:calc(-1 * (var(--i) + 4) * 1ch);break-inside:avoid}
+  pre .ln:is(.cont,:nth-child(-n+3)):not(:last-child){break-after:avoid}
+  pre .ln:nth-last-child(-n+3):not(:first-child){break-before:avoid}
+  /* a long table (build.py: class long) and an API entry may break between rows; the head of a
+     table repeats on the next page */
+  .table.long{break-inside:auto}
+  tbody > tr:nth-child(-n+2),tbody > tr:last-child{break-before:avoid}
+  .api .sig,.api dl{break-inside:avoid}
+  .api dl{break-before:avoid}
+  /* inline math keeps the line spacing of the text around it */
+  p .katex .base,li .katex .base{margin-block:-.12em}
   a,a.ref{text-decoration:none;border-bottom:0}
   span.ref-ext{border-bottom:0}
   figure .frame,.eq .math,.table{overflow:visible}
-  .eq .math,figure .frame,.table,pre.code,pre.output{background:none}
+  .eq .math,figure .frame,.table,pre.code,pre.output,pre.quote{background:none}
   figure .frame > img{max-height:200mm;min-width:0 !important;object-fit:contain}
   .katex .katex-mathml{display:none}
 }

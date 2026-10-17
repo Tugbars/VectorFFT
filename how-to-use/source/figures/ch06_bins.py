@@ -15,8 +15,8 @@ f.text("$\\pm N/2$", mid + w / 2, y0 - 12)
 f.brace(mid + w + 1, right - 1, y0 - 4, "frequency $k - N$", below=False)
 # the rows under the cells: the bin, then the frequency it holds
 ky, fy = y0 + h + 14.0, y0 + h + 33.0
-f.text("bin $k$", x0 - 10, ky, anchor="r")
-f.text("frequency", x0 - 10, fy, anchor="r")
+f.text("bin $k$", x0 - 10, ky, anchor="r", color=style.MUTED)
+f.text("frequency", x0 - 10, fy, anchor="r", color=style.MUTED)
 freq = ["$%d$" % k for k in range(N // 2)] + ["$\\pm 4$"] + ["$%d$" % (k - N) for k in range(N // 2 + 1, N)]
 for k, cx in enumerate(xs):
     f.text("$%d$" % k, cx, ky)

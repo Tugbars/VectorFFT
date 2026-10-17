@@ -67,6 +67,11 @@ DIRECTIVE_OPTIONS = {"figure": {"name", "alt"}, "table": {"name"}, "note": set()
                      "steps": set(), "listing": {"region"}, "output": {"stream"}, "api": set()}
 CODE_LANGS = {"sh", "cmake", "powershell", "text", "ini", "json"}   # shown as written
 MAX_COLUMNS = 80
+SHORT_LINES = 15            # a code block of this many lines or fewer is never split across pages
+LONG_TABLE_ROWS = 8         # a table of this many body rows, or of more text, may break between rows
+LONG_TABLE_CHARS = 1000
+RE_TABLE_ID = re.compile(r'<code class="nw">([A-Za-z0-9_]{20,})</code>')   # may break after "_"
+CONT = (",", "(", "\\", "&&", "||", "+", "=", "?")   # a code line ending so goes on in the next
 
 
 class BuildError(Exception):
@@ -388,12 +393,42 @@ def verify_excerpt(ctx, fname, text):
     return ranges
 
 
+def line_spans(body):
+    """One <span class="ln"> per line of a code or output block, the newline kept inside it, so the
+    text is unchanged: --i is the line's indentation, under which a wrapped line hangs, and "cont"
+    marks a code line whose statement goes on in the next (the print keeps the two together). A
+    comment that runs over several lines is closed and reopened at each newline."""
+    body = re.sub(r'<span class="c">(.*?)</span>',
+                  lambda m: '<span class="c">' + m.group(1).replace("\n", '</span>\n<span class="c">') + "</span>",
+                  body, flags=re.S)
+    lines = body.split("\n")
+    out = []
+    for k, ln in enumerate(lines):
+        text = html.unescape(re.sub(r"<[^>]+>", "", ln))
+        ind = len(text) - len(text.lstrip(" "))
+        plain = text.rstrip()
+        cont = plain.endswith(CONT) and not plain.lstrip().startswith(("/*", "*", "//"))
+        out.append('<span class="ln{}" style="--i:{}">{}{}</span>'.format(
+            " cont" if cont else "", ind, ln, "\n" if k < len(lines) - 1 else ""))
+    return "".join(out)
+
+
 def code_block(label_html, text, lang, elide=False):
     body = highlight(text + "\n", lang) if lang else html.escape(text, quote=False)
     if elide:
         body = re.sub(r"(?m)^(\s*)\.\.\.$", r'\1<span class="elide">...</span>', body)
     head = '<p class="file">{}</p>'.format(label_html) if label_html else ""
-    return '<div class="listing">{}<pre class="code"><code>{}</code></pre></div>\n'.format(head, body)
+    cls = "listing short" if text.count("\n") < SHORT_LINES else "listing"
+    return '<div class="{}">{}<pre class="code"><code>{}</code></pre></div>\n'.format(cls, head, line_spans(body))
+
+
+def table_cell_breaks(tab):
+    """An identifier of 20 characters or more in a table cell may break after each "_" (on screen)."""
+    def cell(m):
+        inner = RE_TABLE_ID.sub(lambda c: '<code class="nw">' + c.group(1).replace("_", "_<wbr>") + "</code>",
+                                m.group(3))
+        return "<{0}{1}>{2}</{0}>".format(m.group(1), m.group(2), inner)
+    return re.sub(r"<(t[hd])((?:\s[^>]*)?)>(.*?)</\1>", cell, tab, flags=re.S)
 
 
 def make_md(book):
@@ -569,7 +604,10 @@ def make_md(book):
         for n, l in enumerate(text.split("\n")):
             if len(l) > MAX_COLUMNS:
                 b.warn("%s: a %s line is %d columns (the PDF wraps it)" % (c.where(), lang, len(l)))
-        return code_block("", text, None if lang in ("text", "json", "ini") else
+        if lang == "text":
+            # what a program printed, quoted by hand: shown as an output, not as code to type
+            return '<pre class="quote"><code>{}</code></pre>\n'.format(line_spans(html.escape(text, quote=False)))
+        return code_block("", text, None if lang in ("json", "ini") else
                           {"sh": "bash"}.get(lang, lang))
 
     def r_colon_fence(self, tokens, idx, options, env):
@@ -599,9 +637,12 @@ def make_md(book):
             tab = nested_render(env, body)
             if tab.count("<table>") != 1 or not tab.lstrip().startswith("<table>"):
                 c.fail("a {table} holds one pipe table and nothing else")
+            rows = len(re.findall(r"<tr>", tab.split("<tbody>", 1)[1])) if "<tbody>" in tab else 0
+            long_table = rows >= LONG_TABLE_ROWS or len(re.sub(r"<[^>]+>", "", tab)) > LONG_TABLE_CHARS
+            tab = table_cell_breaks(tab)
             tab = tab.replace("<table>", '<table><caption><span class="label">Table {}</span> {}</caption>'
                               .format(num, nested_render(env, arg, inline=True)), 1)
-            return '<div class="table" id="{}">{}</div>\n'.format(label, tab)
+            return '<div class="{}" id="{}">{}</div>\n'.format("table long" if long_table else "table", label, tab)
         if name in ("note", "warning"):
             if arg or not body:
                 c.fail("{%s} takes its text in the body" % name)
@@ -651,7 +692,7 @@ def make_md(book):
                     b.warn("%s: %s.%s line %d is %d columns (the PDF wraps it)"
                            % (c.where(), arg, "out" if stream == "stdout" else "err", n + 1, len(l)))
             b.outputs.append({"name": arg, "stream": stream, "where": c.where(), "text": text})
-            return '<pre class="output"><code>{}</code></pre>\n'.format(html.escape(text, quote=False))
+            return '<pre class="output"><code>{}</code></pre>\n'.format(line_spans(html.escape(text, quote=False)))
         if name == "api":
             return api_block(c, env, body, nested_render)
         c.fail("unhandled directive %s" % name)
