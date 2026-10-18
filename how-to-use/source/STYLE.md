@@ -194,7 +194,8 @@ Returns the plan, or `NULL`; `vfft_error()` says why.
 ```
 
 Figure scripts use `figures/style.py` (the site's ink #101010, muted #6a6a6a, rule #dcdcdc,
-on white; 140 mm wide, 8 pt lettering, every glyph outlined in Computer Modern):
+on white, and the two accents of the Colour section; 140 mm wide, 8 pt lettering, every glyph
+outlined in Computer Modern):
 
 ```text
 import style
@@ -211,9 +212,27 @@ f.save()                                               # writes figures/<this sc
 so every figure sits at the same distance from the text; `height` only sizes a figure that
 draws nothing. `style.py` also has `line`, `rect` (with `hatch=True`), `arrow`, `grid`.
 Figures show only what a user reads or does: array layouts, which bin is which frequency,
-padded rows, batch layouts. Colour never carries meaning alone: a grey cell also carries a
-word or a hatch. `figures/sample_half_spectrum.py` is a complete script. The build runs a
-script when its SVG is missing or older than the script or `style.py`.
+padded rows, batch layouts. Colour follows the Colour section. `figures/sample_half_spectrum.py`
+is a complete script. The build runs a script when its SVG is missing or older than the script
+or `style.py`.
+
+### Colour
+
+The book has two accent colours, each with one meaning everywhere, in `style.py` as `BLUE`
+#2457c5 with its tint `BLUE_T` and `RED` #c8322b with its tint `RED_T`:
+
+- **Blue is yours: the input, before.** The samples you supply, the input buffer, the real
+  part, the forward direction, a create served from wisdom.
+- **Red is the library's: the output, after.** The bins it writes, the output buffer, the
+  imaginary part, the backward direction, a miss that measures.
+
+Grey (`"rule"`) stays for what is not read, padding and what is not stored; ink draws the
+structure. A tint fills a cell; the full colour strokes it (`strokes=`) and letters the labels
+outside cells: a brace's words, a row's name. Lettering inside a tinted cell stays ink. Colour
+never carries meaning alone: a coloured cell also carries a word, a glyph or a hatch, so a
+greyscale print loses nothing. The notices carry the same rules: a `{note}` has a blue border
+and label word, a `{warning}` a red one, and their text stays ink. Nothing else on a page is
+coloured.
 
 ## 7. Code
 

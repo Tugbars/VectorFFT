@@ -158,6 +158,30 @@ def _role(state, silent):
     return True
 
 
+# The {status} role: {status}`served`, {status}`difference`, {status}`refused` show a glyph (a full,
+# a half and an empty circle, so greyscale print and colour-blind readers lose nothing) and the
+# word beside it. The glyph is inline SVG, not a font glyph: the CMU faces lack the characters, and
+# the PDF check refuses a fallback font. build.py renders it; tools/guide.css (its last block)
+# colours it.
+STATUS = {
+    "served": ("served", '<circle cx="5" cy="5" r="4" fill="currentColor"/>'),
+    "difference": ("served with a difference",
+                   '<circle cx="5" cy="5" r="3.7" fill="none" stroke="currentColor" stroke-width=".6"/>'
+                   '<path d="M5 1.3A3.7 3.7 0 0 0 5 8.7Z" fill="currentColor"/>'),
+    "refused": ("refused",
+                '<circle cx="5" cy="5" r="3.7" fill="none" stroke="currentColor" stroke-width=".6"/>'),
+}
+
+
+def status_html(name):
+    """The HTML of {status}`name`, or None when the role has no such name."""
+    if name not in STATUS:
+        return None
+    word, shape = STATUS[name]
+    return ('<span class="status status-{0}"><svg class="glyph" viewBox="0 0 10 10" aria-hidden="true" '
+            'focusable="false">{1}</svg>{2}</span>'.format(name, shape, word))
+
+
 def dialect(md):
     """Install the rules on a MarkdownIt instance."""
     alt = {"alt": ["paragraph", "reference", "blockquote", "list"]}

@@ -2175,21 +2175,23 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
                    "transform-contiguous batch, or VFFT_BATCH_DEFAULT/LANE_MAJOR here");
         return NULL;
     }
-    /* An INTERLEAVED batch of rank 4, and a real one of rank 3, has exactly one geometry:
-     * contiguous planes, plane t at z + t * (the plane's doubles), which is
-     * what DEFAULT means there (the plane queue, il/rank2/fft2d_create_il.h,
-     * and the rank-N tiers address nothing else). An EXPLICIT lane-major
-     * request is refused here, by the same rule: no combination quietly means
-     * something other than what it says. */
+    /* A real INTERLEAVED batch of rank 3 has one geometry today: contiguous
+     * volumes, volume t at x + t * (the volume's doubles), which is what
+     * DEFAULT means there (the volume queue, il/rank2/plane_queue.h one rank
+     * up, 2026-10-18; its lane-major door is not built). An EXPLICIT lane-major
+     * request is refused here with the geometry that serves: no combination
+     * quietly means something other than what it says. (A rank-4 interleaved
+     * request is refused in every geometry by the rank-3/4 tier's own text.) */
     if (cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->layout == VFI_LAYOUT_IL && K > 1 &&
-        (cfg->dims >= 4 || (cfg->dims == 3 && cfg->transform != VFFT_C2C)))
+        cfg->dims == 3 && cfg->transform != VFFT_C2C)
     {
-        _vfft_warn("vfft_create: batch=VFFT_BATCH_LANE_MAJOR is not supported for an "
-                   "INTERLEAVED %s plan of rank %d (its batches are contiguous planes: plane t "
-                   "at z + t * plane_doubles) — use VFFT_BATCH_DEFAULT or "
-                   "VFFT_BATCH_CONTIGUOUS and lay the %d planes out one after "
-                   "another",
-                   _vfft_tname(cfg->transform), cfg->dims, (int)K);
+        _vfft_warn("vfft_create: batch=VFFT_BATCH_LANE_MAJOR is not served for an INTERLEAVED %s "
+                   "plan of rank 3 (no lane-major real 3D door yet) — lay the %d volumes out one "
+                   "after another (VFFT_BATCH_DEFAULT or VFFT_BATCH_CONTIGUOUS): volume t at "
+                   "x + t*N1*N2*N3 reals and its bins at z + t*2*N1*N2*(N3/2+1) doubles out of "
+                   "place; in place one buffer of the %d volumes, every row padded to "
+                   "2*(N3/2+1) doubles",
+                   _vfft_tname(cfg->transform), (int)K, (int)K);
         return NULL;
     }
     /* In-place real FFT: SUPPORTED for the 1D INTERLEAVED-CCE zr2c route
@@ -2233,6 +2235,11 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
         !(cfg->dims == 2 && !ob && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg))) &&
         /* 3D R2C and C2R in place (the same layout per row; c2r destroys its input by nature) */
         !(cfg->dims == 3 && !ob && vfft_policy_ilndr_ip_ok(cfg, cfg->howmany, _vfft_plan_threads(cfg))) &&
+        /* the contiguous batches in place (the plane queue and the volume queue, 2026-10-18): K padded
+         * planes or volumes one after another, each the in-place K = 1 contract; their own laws, never a
+         * widening of the two K = 1 tests above (door 2 reads the tier's handle through those) */
+        !(cfg->dims == 2 && !ob && vfft_policy_il2d_ip_batch_ok(cfg)) &&
+        !(cfg->dims == 3 && !ob && vfft_policy_ilndr_batch_ok(cfg, cfg->howmany)) &&
         /* the 1D lane-major real batch in place (il/rank1/lm_batch_il.h, step 5) */
         !(cfg->dims < 2 && !ob && cfg->howmany > 1 && cfg->layout == VFI_LAYOUT_IL &&
           cfg->batch_geom != VFFT_BATCH_CONTIGUOUS && vfft_policy_batch_lane_major(cfg)) &&
@@ -2242,10 +2249,11 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
     {
         _vfft_warn("vfft_create: in-place %s is served INTERLEAVED only: 1D one transform "
                    "(a 2*(N/2+1)-double plane, N+1 at odd N), a 1D batch with "
-                   "batch=VFFT_BATCH_CONTIGUOUS (that plane per transform, end to end) or "
-                   "lane-major at an even N (one (N+2)*howmany-double plane), 2D or 3D with "
-                   "howmany 1 (every row padded to 2*(N_last/2+1) doubles) — use "
-                   "VFFT_PLACEMENT_OUT otherwise",
+                   "batch=VFFT_BATCH_CONTIGUOUS (that plane per transform) or lane-major at an "
+                   "even N (one (N+2)*howmany-double plane), 2D and 3D at any howmany as "
+                   "contiguous planes or volumes (every row padded to 2*(N_last/2+1) doubles, "
+                   "one after another, natural order), a 2D lane-major batch at an even N2 "
+                   "(N1 blocks of (N2+2)*howmany doubles) — use VFFT_PLACEMENT_OUT otherwise",
                    _vfft_tname(cfg->transform));
         return NULL;
     }

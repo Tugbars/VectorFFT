@@ -1437,10 +1437,12 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
      * checks it). */
     if (cfg->transform != VFFT_C2C || cfg->dims != 3 || K != 1)
     {
-        _vfft_warn("vfft_create: 3D INTERLEAVED serves C2C, howmany==1, either placement, "
-                   "every order today (got %s, howmany=%zu); real and rank 4 are the tier's "
-                   "next phases",
-                   _vfft_tname(cfg->transform), K);
+        _vfft_warn("vfft_create: 3D INTERLEAVED serves C2C one volume per plan, either placement, "
+                   "every order (a batch of howmany >= 2 as contiguous volumes, VFFT_BATCH_DEFAULT or "
+                   "VFFT_BATCH_CONTIGUOUS, runs through the volume queue over this plan; lane-major "
+                   "when named through its own door), every dim >= 2 (got %s, howmany=%zu, %dx%dx%d); "
+                   "real has its own tier, rank 4 is the tier's next phase",
+                   _vfft_tname(cfg->transform), K, N1, N2, N3);
         return NULL;
     }
     if (N1 < 2 || N2 < 2 || N3 < 2)
@@ -1469,6 +1471,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
      * (SCRAMBLED spells the scrambled serving; NATURAL and, interleaved,
      * DEFAULT are the natural cell: policy.h L4). The axis-0 PASS is the scrambled class in both: the natural
      * class orders planes in its plane pass, never in the column pass. */
+    memset(&key0, 0, sizeof key0);   /* every field the key grew since (ip, lm, q): a key off the stack banked
+                                      * the cell as lay=lm q=<garbage> place=ip and never found it again (2026-10-19) */
     key0.rank = 3; key0.n0 = N1; key0.n1 = N2; key0.n2 = N3;
     key0.ord = nat ? VW2_ORD_NAT : VW2_ORD_SCR; key0.axis = 0; key0.real = 0;
     key0.nthreads = nthr;   /* the plan's own row (v1.3) */

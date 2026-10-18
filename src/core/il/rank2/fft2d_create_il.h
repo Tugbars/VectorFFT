@@ -1,7 +1,10 @@
 /* fft2d_create_il.h — the rank-2 CREATE, interleaved tier.
  *
  * The native IL 2D serving (lay=il): the c2c tier (any placement) and the
- * real tier (out of place), plus the PLANE QUEUE that serves howmany > 1.
+ * real tier (out of place), plus the PLANE QUEUE that serves howmany > 1 —
+ * and, since 2026-10-18, the same queue one rank up: the VOLUME QUEUE, a
+ * contiguous rank-3 batch over the single-volume rank-3 plan (il_create.h
+ * sends it here; the batch laws are policy_il.h's).
  * Split is not a fallback of IL: every cell here serves natively or refuses
  * loudly. The IL create (il/il_create.h) chooses the
  * tier; the passes, MT and racers live in il/rank2/il2d_tier.h.
@@ -12,16 +15,64 @@
 #ifndef VFFT_IL_FFT2D_CREATE_IL_H
 #define VFFT_IL_FFT2D_CREATE_IL_H
 
-/* howmany > 1: the plane queue (the dispatcher refused every layout and
- * transform it cannot express). */
-static vfft_plan _vfft_create_2d_pq_il(const vfft_cfg_t *cfg,
-                                      struct vfft_wisdom_s *W,
-                                      size_t K)
+/* one instance over the probe seed: out of place seed -> buf; in place buf
+ * re-laid from the seed and run in == out, as the queue runs it (an in-place
+ * real plan refuses a distinct destination at the execute door, 2026-10-18) */
+static void _pq_probe_run(struct vfft_plan_s *p, vfft_dir_t dir, int ip,
+                          const double *seed, double *buf, size_t sn)
 {
-    const int N1q = cfg->n[0], N2q = cfg->n[1];
-    const size_t hp1q = (size_t)N2q / 2 + 1;
+    if (ip)
+    {
+        memcpy(buf, seed, sn * sizeof(double));
+        _vfft_exec6((vfft_plan)p, dir, buf, NULL, buf, NULL);
+    }
+    else
+        _vfft_exec6((vfft_plan)p, dir, (double *)seed, NULL, buf, NULL);
+}
+/* the probe's compare over its region -- rows of cols doubles at pitch (one row
+ * of the whole block, or an in-place c2r's real columns: the pad after a row's
+ * reals is nobody's contract, and two plans leave it differently): the largest
+ * magnitude, the largest difference, and whether the region is bitwise */
+static void _pq_probe_cmp(const double *a, const double *b, size_t rows, size_t pitch,
+                          size_t cols, double *mx, double *md, int *same)
+{
+    size_t r, i;
+    *mx = 0.0; *md = 0.0; *same = 1;
+    for (r = 0; r < rows; r++)
+    {
+        const double *pa = a + r * pitch, *pb = b + r * pitch;
+        if (memcmp(pa, pb, cols * sizeof(double)) != 0) *same = 0;
+        for (i = 0; i < cols; i++)
+        {
+            const double m = pa[i] < 0 ? -pa[i] : pa[i];
+            const double d = pa[i] - pb[i];
+            if (m > *mx) *mx = m;
+            if ((d < 0 ? -d : d) > *md) *md = d < 0 ? -d : d;
+        }
+    }
+}
+
+/* howmany > 1: the PLANE QUEUE at rank 2 and, one rank up, the VOLUME QUEUE
+ * at rank 3 (2026-10-18): one primary K = 1 plan at the caller's T, run K
+ * times at the per-transform distances (the dispatcher refused every layout,
+ * geometry and transform it cannot express). */
+static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
+                                    struct vfft_wisdom_s *W,
+                                    size_t K)
+{
+    const int rank3 = (cfg->dims == 3);
+    const int N1q = cfg->n[0], N2q = cfg->n[1], N3q = rank3 ? cfg->n[2] : 0;
+    const size_t leadq = rank3 ? (size_t)N1q * (size_t)N2q : (size_t)N1q;   /* the extents before the last axis */
+    const size_t lastq = (size_t)(rank3 ? N3q : N2q);
+    const size_t hlq = lastq / 2 + 1;                                         /* the CCE row's bins */
+    const int ipq = (cfg->placement == VFFT_INPLACE);
+    char shape[40];
     vfft_cfg_t ic;
     struct vfft_plan_s *h;
+    if (rank3)
+        snprintf(shape, sizeof shape, "%dx%dx%d", N1q, N2q, N3q);
+    else
+        snprintf(shape, sizeof shape, "%dx%d", N1q, N2q);
     ic = *cfg;
     ic.howmany = 1;
     ic.destroy_input = 0;   /* the permission is the K = 1 plan's own (policy_il.h): the queue's
@@ -43,23 +94,33 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_cfg_t *cfg,
     h->layout = (int)cfg->layout;
     h->N = N1q;
     h->N2 = N2q;
+    h->N3 = N3q;
     h->K = K;
     h->nthreads = _vfft_plan_threads(cfg);
     h->pq_n = K;
+    /* the per-transform distances in doubles: a block of the transform's own
+     * size, one after another (the geometry contract of include/vfft.h) */
     if (cfg->transform == VFFT_C2C)
     {
-        h->pq_sdist = 2 * (size_t)N1q * N2q;
+        h->pq_sdist = 2 * leadq * lastq;
+        h->pq_ddist = h->pq_sdist;
+    }
+    else if (ipq)
+    {   /* in place (2026-10-18): one padded plane or volume per transform,
+         * every row 2 (N_last/2 + 1) doubles, the reals first and the bins
+         * over them -- the K = 1 in-place contract, K times */
+        h->pq_sdist = 2 * leadq * hlq;
         h->pq_ddist = h->pq_sdist;
     }
     else if (cfg->transform == VFFT_R2C)
     {
-        h->pq_sdist = (size_t)N1q * N2q;
-        h->pq_ddist = 2 * (size_t)N1q * hp1q;
+        h->pq_sdist = leadq * lastq;
+        h->pq_ddist = 2 * leadq * hlq;
     }
     else
     {
-        h->pq_sdist = 2 * (size_t)N1q * hp1q;
-        h->pq_ddist = (size_t)N1q * N2q;
+        h->pq_sdist = 2 * leadq * hlq;
+        h->pq_ddist = leadq * lastq;
     }
     /* queue clones: SERIAL instances (a queue worker must not
      * nest-dispatch), wisdom-served from the verdicts the
@@ -78,6 +139,12 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_cfg_t *cfg,
                                   : VFFT_FORWARD;
         double *ps, *p0, *p1;
         int t, ok = 1;
+        /* the probe's compare region: the whole block, or an in-place c2r's real
+         * columns (leadq rows of lastq reals at the padded pitch) */
+        const int c2r_ip = ipq && cfg->transform == VFFT_C2R;
+        const size_t prow = c2r_ip ? leadq : 1;
+        const size_t ppitch = c2r_ip ? 2 * hlq : h->pq_ddist;
+        const size_t pcols = c2r_ip ? lastq : h->pq_ddist;
         if ((size_t)T > K)
             T = (int)K;
         ic.nthreads = 1;
@@ -106,9 +173,9 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_cfg_t *cfg,
              * computes the SAME transform: the clones must agree bitwise
              * among themselves (one plan, replayed), and with the primary
              * to a tolerance that catches a broken clone, not a different
-             * rounding. */
-            _vfft_exec6((vfft_plan)h->pq_inner, pd, ps, NULL,
-                         p0, NULL);
+             * rounding. An in-place inner runs every instance on its own
+             * copy of the seed, in == out (_pq_probe_run). */
+            _pq_probe_run(h->pq_inner, pd, ipq, ps, p0, h->pq_sdist);
             for (t = 0; t < T && ok; t++)
             {
                 h->pq_w[t] =
@@ -121,26 +188,20 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_cfg_t *cfg,
                 if (t == 0)
                 {   /* the first clone: the reference for the others, and
                      * within 1e-10 of the primary */
-                    double mx = 0.0, md = 0.0;
-                    size_t i3;
-                    _vfft_exec6((vfft_plan)h->pq_w[0], pd, ps,
-                                 NULL, p1, NULL);
-                    for (i3 = 0; i3 < h->pq_ddist; i3++)
-                    {
-                        const double a = p0[i3] < 0 ? -p0[i3] : p0[i3];
-                        const double d = p0[i3] - p1[i3];
-                        if (a > mx) mx = a;
-                        if ((d < 0 ? -d : d) > md) md = d < 0 ? -d : d;
-                    }
+                    double mx, md;
+                    int same;
+                    _pq_probe_run(h->pq_w[0], pd, ipq, ps, p1, h->pq_sdist);
+                    _pq_probe_cmp(p0, p1, prow, ppitch, pcols, &mx, &md, &same);
                     if (!(md <= 1e-10 * (mx > 0 ? mx : 1.0)))
                         ok = 0;
                 }
                 else
                 {
-                    _vfft_exec6((vfft_plan)h->pq_w[t], pd, ps,
-                                 NULL, p0, NULL);
-                    if (memcmp(p0, p1,
-                               h->pq_ddist * sizeof(double)) != 0)
+                    double mx, md;
+                    int same;
+                    _pq_probe_run(h->pq_w[t], pd, ipq, ps, p0, h->pq_sdist);
+                    _pq_probe_cmp(p0, p1, prow, ppitch, pcols, &mx, &md, &same);
+                    if (!same)
                         ok = 0;
                 }
             }
@@ -148,11 +209,11 @@ static vfft_plan _vfft_create_2d_pq_il(const vfft_cfg_t *cfg,
                 h->pq_wn = T;
             else
             {
-                _vfft_warn("plane queue %dx%d: a clone did not build, "
+                _vfft_warn("%s queue %s: a clone did not build, "
                            "or the clones disagree (bitwise among "
                            "themselves, 1e-10 against the primary) — "
                            "queue declines, the serial loop serves",
-                           N1q, N2q);
+                           rank3 ? "volume" : "plane", shape);
                 for (t = 0; t < T; t++)
                     if (h->pq_w[t])
                         vfft_destroy(h->pq_w[t]);

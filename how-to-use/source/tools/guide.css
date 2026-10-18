@@ -1,10 +1,14 @@
 /* VectorFFT User Guide. Look: the site (src/tools/website/vectorfft-site.html): Computer Modern
-   on white, ink #101010, one muted grey, one hairline grey, square ink boxes; no tints, shadows,
-   rounded corners or sans faces. Apparatus: Oppenheim & Schafer: hanging section numbers,
+   on white, ink #101010, one muted grey, one hairline grey, square boxes; no shadows, rounded
+   corners or sans faces. Two accents with one meaning each (figures/style.py): blue #2457c5,
+   yours / input / before, and red #c8322b, the library's / output / after; they colour figures,
+   the chart, a note's rule and a warning's rule, and the status glyphs, nothing else.
+   Apparatus: Oppenheim & Schafer: hanging section numbers,
    numbered equations, "Figure 1.1" captions, tables ruled above and below. Light only, like the
    site. Every number on the page is text written by build.py. */
 :root{
   --paper:#fff; --ink:#101010; --muted:#6a6a6a; --rule:#dcdcdc;   /* the site's tokens */
+  --blue:#2457c5; --red:#c8322b;                                  /* the book's two accents */
   --link-rule:#8a8a8a;                                            /* in-text links, 3.45:1 */
   --serif:'CMU Serif',Georgia,'Times New Roman',serif;
   --mono:'CMU Typewriter Text',Consolas,'DejaVu Sans Mono',Menlo,monospace;
@@ -164,11 +168,14 @@ td code,th code{font-size:1em}
 .api .sig + p{text-indent:0}
 .api .sig + .sig{text-indent:-4ch}
 
-/* note and warning: square ink boxes */
-.note,.warning{margin:1.3rem 0;padding:.6rem .9rem;border:1px solid var(--ink)}
+/* note and warning: square boxes whose rule and label word carry the book's two colours
+   (figures/style.py): a note's are blue, a warning's red; the text stays ink */
+.note{--accent:var(--blue)}
+.warning{--accent:var(--red)}
+.note,.warning{margin:1.3rem 0;padding:.6rem .9rem;border:1px solid var(--accent)}
 .warning{border-width:2px}
 .note p,.warning p{margin:0}
-.note .label,.warning .label{font-weight:700;margin-right:.35em}
+.note .label,.warning .label{font-weight:700;margin-right:.35em;color:var(--accent)}
 
 /* a chapter not yet written (a --draft build) */
 .placeholder{color:var(--muted);text-align:center;font-style:italic;margin:0 0 1rem}
@@ -279,3 +286,10 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
   figure .frame > img{max-height:200mm;min-width:0 !important;object-fit:contain}
   .katex .katex-mathml{display:none}
 }
+
+/* the {status} role (tools/mdext.py): a drawn glyph and a word. The glyph alone takes the book's
+   two accents: blue #2457c5 for served, red #c8322b for refused; served with a difference stays ink */
+.status{white-space:nowrap}
+.status .glyph{display:inline-block;width:.7em;height:.7em;margin-right:.32em;vertical-align:-.02em;color:var(--ink)}
+.status-served .glyph{color:var(--blue)}
+.status-refused .glyph{color:var(--red)}

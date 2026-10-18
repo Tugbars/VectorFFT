@@ -9,6 +9,8 @@
  *
  *   rank 3/4   il/rank3/fftnd_il.h        rank-3 c2c; the rest refused
  *              il/rank3/lm_batch3d_il.h   the lane-major 3D c2c batch (K > 1, the geometry named)
+ *              il/rank2/fft2d_create_il.h the VOLUME QUEUE: a contiguous rank-3 batch, real or c2c,
+ *                                         over the single-volume plan (K > 1, 2026-10-18)
  *   rank 2     il/rank2/fft2d_create_il.h native IL 2D; the plane queue for K>1
  *   c2c ip     il/rank1/c2c_ip_create_il.h
  *   c2c oop    il/rank1/c2c_oop_create_il.h
@@ -71,6 +73,10 @@ static vfft_plan _vfft_il_create(const vfft_cfg_t *cfg,
     }
     if (cfg->dims == 3 && K > 1 && cfg->transform == VFFT_C2C && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
         return _vfft_create_lm3d_il(cfg, W, K);   /* the LANE-MAJOR 3D batch (lm_batch3d_il.h) */
+    if (cfg->dims == 3 && K > 1 && (vfft_policy_ilndr_batch_ok(cfg, K) || vfft_policy_ilnd_batch_ok(cfg, K)))
+        return _vfft_create_pq_il(cfg, W, K);     /* the VOLUME QUEUE (plane_queue.h one rank up, 2026-10-18): K contiguous
+                                                   * volumes, real or c2c, through the single-volume plan; the in-place real
+                                                   * batch was admitted at the front door by the same law */
     if (cfg->dims == 3 || cfg->dims == 4)
         return _vfft_create_rank34_il(cfg, W, K);
     if (cfg->dims == 2)
@@ -87,11 +93,13 @@ static vfft_plan _vfft_il_create(const vfft_cfg_t *cfg,
          * mode, keeps its intra-MT verdicts) + serial clones pulled by
          * an atomic plane counter (queue mode), loop-vs-queue RACED at
          * create. Contiguous planes only (the canonical dist for each
-         * transform). IL trig is refused before the fork. */
+         * transform; in place the padded plane per transform, the real
+         * batch admitted at the front door by vfft_policy_il2d_ip_batch_ok,
+         * 2026-10-18). IL trig is refused before the fork. */
         if (K > 1 && cfg->transform == VFFT_C2C && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
             return _vfft_create_lm2d_il(cfg, W, K);   /* the LANE-MAJOR 2D batch (lm_batch2d_il.h) */
         if (K != 1)
-            return _vfft_create_2d_pq_il(cfg, W, K);
+            return _vfft_create_pq_il(cfg, W, K);
         /* IL c2c (any placement), IL real out of place, and IL real in
          * place where the law admits it (vfft_policy_il2d_ip_ok: r2c, one
          * thread; docs/roadmap/real_inplace_design.md) */

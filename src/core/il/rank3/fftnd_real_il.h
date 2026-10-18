@@ -63,7 +63,10 @@
  * order, every dim >= 2 (odd N3 through the row plan's odd door; a prime N1
  * serves the child arm in place: a Bluestein axis has no plain chain). The
  * threaded forms are phase 3; a threaded request is served by the serial
- * walk until then. Everything else refuses loudly.
+ * walk until then. Everything else refuses loudly. A batch of howmany >= 2
+ * as contiguous volumes is the VOLUME QUEUE's (il/rank2/plane_queue.h one
+ * rank up, 2026-10-18): K of this plan's walks, one per volume, never a K
+ * inside the tier.
  *
  * POSITION IN vfft.c IS LOAD-BEARING: after fftnd_il.h (whose
  * _vfft_create_rank34_il dispatches here through a forward declaration) and
@@ -1077,9 +1080,11 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
     int payonce_ok, strips_ok, arm = 0, nf = 0, nsw = 0, wl = 0, cut = 0, raced = 0, pinned, ip2 = 0;
     if (!vfft_policy_ilndr_ok(cfg, K) && !vfft_policy_ilndr_ip_ok(cfg, K, nthr))
     {
-        _vfft_warn("vfft_create: 3D INTERLEAVED real serves R2C and C2R, howmany==1, out of place, "
-                   "or in place (one volume, every row padded to 2*(N3/2+1) doubles), "
-                   "DEFAULT/NATURAL order, every dim >= 2 (got %s, howmany=%zu, %dx%dx%d, %s)",
+        _vfft_warn("vfft_create: 3D INTERLEAVED real serves R2C and C2R one volume per plan (a batch of "
+                   "howmany >= 2 as contiguous volumes, VFFT_BATCH_DEFAULT or VFFT_BATCH_CONTIGUOUS, runs "
+                   "through the volume queue over this plan), out of place, or in place (every row padded "
+                   "to 2*(N3/2+1) doubles), DEFAULT/NATURAL order, every dim >= 2 (got %s, howmany=%zu, "
+                   "%dx%dx%d, %s)",
                    _vfft_tname(cfg->transform), K, N1, N2, N3, ip ? "in place" : "out of place");
         return NULL;
     }

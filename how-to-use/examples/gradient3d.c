@@ -49,7 +49,7 @@
  * or with one compiler line, the compiler that built the library (MinGW: add -static, or
  * ship libwinpthread-1.dll beside the program; Linux: add -pthread):
  *
- *     gcc -O2 gradient3d.c -I<prefix>/include -L<prefix>/lib -lvfft -lm -o gradient3d
+ *     gcc -O3 gradient3d.c -I<prefix>/include -L<prefix>/lib -lvfft -lm -o gradient3d
  *
  * Run it with a store of its own, an existing directory (PowerShell: $env:VFFT_WISDOM_DIR="<dir>"):
  *

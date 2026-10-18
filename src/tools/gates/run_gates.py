@@ -191,6 +191,7 @@ ARGSTYLE = {
     "il2d_real_gate":          ("bare", True),
     "il2d_real_ip_gate":       ("bare", False),   # COLD: the in-place 2D r2c cells race their own pl=ip rows, vs FFTW in place (2026-10-08)
     "il3d_real_ip_gate":       ("bare", False),   # COLD: the in-place 3D r2c/c2r cells, vs FFTW in place / N x (2026-10-08)
+    "il3d_real_batch_gate":    ("flag", False),   # COLD: the contiguous batches through the plane and volume queues (3D real r2c/c2r, the 2D real in place, the 3D c2c), vs K runs of the K=1 plan and the naive DFT (2026-10-18)
     "odd_partner_cells_gate":  ("bare", True),
     # decode real wisdom -> seeded copy
     "sp_ccol_decode_gate":     ("bare", True),

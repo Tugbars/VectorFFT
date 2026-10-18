@@ -570,7 +570,12 @@ def make_md(book):
             return ph("R", "|".join((name, arg, c.entry.key, c.where())))
         if name == "output":
             return ph("O", "|".join((arg, c.entry.key, c.where())))
-        c.fail("unknown role {%s}; the roles are {ref}, {numref}, {eq} and {output}" % name)
+        if name == "status":
+            out = mdext.status_html(arg)
+            if out is None:
+                c.fail("{status} takes served, difference or refused, not %r" % arg)
+            return out
+        c.fail("unknown role {%s}; the roles are {ref}, {numref}, {eq}, {output} and {status}" % name)
 
     def r_fence(self, tokens, idx, options, env):
         c, b = C(env), env["book"]

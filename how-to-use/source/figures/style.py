@@ -1,9 +1,15 @@
 """The guide's figure helper: usage figures (array layouts, which bin is which frequency, padded
 rows, batch layouts) as self-contained SVG in the site's palette.
 
-  ink #101010, muted #6a6a6a, rule #dcdcdc, on a white plate; thin rules; no tints beyond the
-  rule grey, no shadows, no rounded corners; colour never carries meaning alone (a grey cell
-  also carries a word or a hatch).
+  ink #101010, muted #6a6a6a, rule #dcdcdc, on a white plate; thin rules; no shadows, no rounded
+  corners. Two accents, each with one meaning through the whole book (owner, 2026-10-18):
+    BLUE  #2457c5 (tint BLUE_T)  = yours / input / before: the samples you supply, the input
+          buffer, the real part, the forward direction, a wisdom hit;
+    RED   #c8322b (tint RED_T)   = the library's / output / after: the bins it writes, the output
+          buffer, the imaginary part, the backward direction, a miss that measures.
+  Grey stays for not read / padding / not stored. A tint fills a cell, the full colour strokes
+  and letters it. Colour never carries meaning alone: a coloured cell also carries a word, a
+  glyph or a hatch, so greyscale print and colour-blind readers lose nothing.
 
 Drawn at print size: 1 unit = 1 pt. The full width W = 396.85 pt is the 140 mm text frame of the
 A4 edition, so lettering is 8 pt in print and about 13 px on a screen. Every glyph is outlined
@@ -39,6 +45,8 @@ matplotlib.rcParams.update({"mathtext.fontset": "cm", "svg.hashsalt": "vectorfft
 
 W = 396.85                                   # pt: the 140 mm text frame
 INK, MUTED, RULE, PAPER = "#101010", "#6a6a6a", "#dcdcdc", "#ffffff"
+BLUE, BLUE_T = "#2457c5", "#dbe4f7"           # yours / input / before; the tint fills a cell
+RED, RED_T = "#c8322b", "#f6dcda"             # the library's / output / after
 TEXT = 8.0                                   # pt: lettering
 LINE = 0.6                                   # pt: cell borders, leaders
 THIN = 0.4                                   # pt: hatching, ticks
@@ -156,15 +164,17 @@ class Figure:
 
     # ── composites ──────────────────────────────────────────────────────────────────────────
     def cells(self, x, y, n, w=30.0, h=18.0, labels=None, fills=None, hatches=None, index=None,
-              font="rm", label_color=None, dash=None):
+              font="rm", label_color=None, dash=None, strokes=None):
         """A row of n cells sharing their borders, top-left at (x, y). labels: the text in each
-        cell; fills: None, "rule", ... per cell; hatches: True per cell; index: the text under each
-        cell (an index). Returns the cells' centre x positions."""
+        cell; fills: None, "rule", BLUE_T, ... per cell; strokes: the border colour, one or one
+        per cell (a tinted cell is stroked in its colour); hatches: True per cell; index: the text
+        under each cell (an index). Returns the cells' centre x positions."""
         xs = []
         for i in range(n):
             cx = x + i * w
             fill = fills[i] if fills else None
-            self.rect(cx, y, w, h, fill=fill, hatch=bool(hatches and hatches[i]), dash=dash)
+            stroke = (strokes[i] if isinstance(strokes, (list, tuple)) else strokes) or INK
+            self.rect(cx, y, w, h, fill=fill, stroke=stroke, hatch=bool(hatches and hatches[i]), dash=dash)
             xs.append(cx + w / 2)
             if labels and labels[i]:
                 col = (label_color[i] if isinstance(label_color, (list, tuple)) else label_color) or INK

@@ -91,7 +91,17 @@ int main(int argc, char **argv) {
         { "2D r2c OOP IL 64x63 K=4 LANE_MAJOR",   0, VFFT_R2C, OOP, IL, NAT, 2, 64, 63, 0, 0, 4, LM },  /* an odd N2: no real column engine */
         { "3D c2c OOP IL 16^3 K=4 LANE_MAJOR",    1, VFFT_C2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 4, LM },  /* the 3D lane-major batch (step 6) */
         { "3D c2c IP IL 16^3 K=4 LANE_MAJOR",     1, VFFT_C2C, IP,  IL, NAT, 3, 16, 16, 16, 0, 4, LM },
-        { "3D r2c OOP IL 16^3 K=4 LANE_MAJOR",    0, VFFT_R2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 4, LM },  /* no real 3D door */
+        { "3D r2c OOP IL 16^3 K=4 LANE_MAJOR",    0, VFFT_R2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 4, LM },  /* no lane-major real 3D door; the refusal names the contiguous volumes */
+        /* ── the contiguous batches through the plane and volume queues (2026-10-18) ── */
+        { "2D r2c IP IL 64x64 howmany=4",         1, VFFT_R2C, IP,  IL, NAT, 2, 64, 64, 0, 0, 4, 0 },   /* the plane queue in place: K padded planes */
+        { "2D c2r IP IL 64x64 howmany=4 CONTIG",  1, VFFT_C2R, IP,  IL, NAT, 2, 64, 64, 0, 0, 4, TC },
+        { "3D r2c OOP IL 16^3 howmany=2",         1, VFFT_R2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 2, 0 },  /* the volume queue (the header's default geometry) */
+        { "3D r2c IP IL 16^3 howmany=2",          1, VFFT_R2C, IP,  IL, NAT, 3, 16, 16, 16, 0, 2, 0 },  /* in place: K padded volumes */
+        { "3D c2r OOP IL 16^3 howmany=2 CONTIG",  1, VFFT_C2R, OOP, IL, NAT, 3, 16, 16, 16, 0, 2, TC },
+        { "3D c2r IP IL 16^3 howmany=2 CONTIG",   1, VFFT_C2R, IP,  IL, NAT, 3, 16, 16, 16, 0, 2, TC },
+        { "3D r2c OOP IL odd 9x15x27 howmany=2",  1, VFFT_R2C, OOP, IL, NAT, 3, 9, 15, 27, 0, 2, 0 },   /* an odd N3 through the row plan's odd door */
+        { "3D r2c OOP IL 1x16x16 howmany=2",      0, VFFT_R2C, OOP, IL, NAT, 3, 1, 16, 16, 0, 2, 0 },   /* every dim >= 2 */
+        { "3D c2c IP IL 16^3 howmany=2 CONTIG",   1, VFFT_C2C, IP,  IL, NAT, 3, 16, 16, 16, 0, 2, TC },  /* the c2c volume queue, in place */
         /* ── 2D SPLIT: natural and scrambled ── */
         { "2D c2c OOP SPLIT 256x64",              1, VFFT_C2C, OOP, SP, NAT, 2, 256, 64, 0, 0, 1, 0 },
         { "2D c2c OOP SPLIT 256x64 SCRAMBLED",    1, VFFT_C2C, OOP, SP, SCR, 2, 256, 64, 0, 0, 1, 0 },
@@ -107,7 +117,7 @@ int main(int argc, char **argv) {
         { "3D c2c IP IL odd 9x15x27",             1, VFFT_C2C, IP,  IL, NAT, 3, 9, 15, 27, 0, 1, 0 },
         { "3D c2c IP IL odd 9x15x27 SCRAMBLED",   1, VFFT_C2C, IP,  IL, SCR, 3, 9, 15, 27, 0, 1, 0 },
         { "3D c2c IP IL 16^3",                    1, VFFT_C2C, IP,  IL, NAT, 3, 16, 16, 16, 0, 1, 0 },
-        { "3D c2c OOP IL 16^3 howmany=2",         0, VFFT_C2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 2, 0 },
+        { "3D c2c OOP IL 16^3 howmany=2",         1, VFFT_C2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 2, 0 },  /* contiguous volumes through the volume queue (2026-10-18) */
         { "3D r2c OOP IL 16^3",                   1, VFFT_R2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 1, 0 },
         { "3D r2c IP IL 16^3",                    1, VFFT_R2C, IP,  IL, NAT, 3, 16, 16, 16, 0, 1, 0 },
         { "3D c2c OOP SPLIT 16^3",                0, VFFT_C2C, OOP, SP, NAT, 3, 16, 16, 16, 0, 1, 0 },

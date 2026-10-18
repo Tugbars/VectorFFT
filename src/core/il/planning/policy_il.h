@@ -614,6 +614,24 @@ static inline int vfft_policy_il2d_ip_ok(const vfft_cfg_t *cfg, int nthreads)
            cfg->layout == VFI_LAYOUT_IL && cfg->placement == VFFT_INPLACE &&
            (cfg->order == VFI_ORDER_DEFAULT || cfg->order == VFI_ORDER_NATURAL);
 }
+/* THE CONTIGUOUS BATCH OF PLANES IN PLACE (the plane queue, il/rank2/plane_queue.h,
+ * 2026-10-18): K >= 2 padded planes one after another -- plane t at
+ * x + t N1 2 (N2/2 + 1) doubles, every row padded to 2 (N2/2 + 1) -- each the
+ * in-place plane above, run by the queue over the K = 1 in-place plan (the
+ * out-of-place batch of planes has been the queue's since its first day; the
+ * queue reads the K = 1 pl=ip row only and banks its loop-vs-queue verdict
+ * there). R2C and C2R, the DEFAULT geometry (a rank-2 batch is contiguous
+ * planes) or the explicit one, DEFAULT/NATURAL order. A law of its own, never
+ * a widening of the one above: door 2 (vfft.c, _vfft_create_outer) admits
+ * through il2d_ip_ok and reads the plan's pitch off the tier's handle, which
+ * the queue's wrapper has not. */
+static inline int vfft_policy_il2d_ip_batch_ok(const vfft_cfg_t *cfg)
+{
+    return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 2 && cfg->howmany >= 2 &&
+           cfg->layout == VFI_LAYOUT_IL && cfg->placement == VFFT_INPLACE &&
+           (cfg->batch_geom == VFFT_BATCH_DEFAULT || cfg->batch_geom == VFFT_BATCH_CONTIGUOUS) &&
+           (cfg->order == VFI_ORDER_DEFAULT || cfg->order == VFI_ORDER_NATURAL);
+}
 /* DOOR 2, the plan's own plane (owned_buffers = 1): the CCE pitch the plan
  * names, in complex. The caller's layout (hp1) where it is harmless; hp1 + 8
  * where 16 hp1 bytes is 16 bytes past or before a 4 KB multiple -- the pitch
@@ -745,7 +763,8 @@ static inline int vfft_policy_lm_axis_nat(int ord)
  * transform, OUT OF PLACE (the 2D real law: in place needs the padded-pitch
  * caller contract), DEFAULT/NATURAL order (SCRAMBLED exists for no real
  * transform), every dim >= 2. The threaded forms are the next phase; a
- * threaded request is served by the serial walk until then. */
+ * threaded request is served by the serial walk until then. One volume per
+ * plan: a batch is the volume queue's (vfft_policy_ilndr_batch_ok below). */
 static inline int vfft_policy_ilndr_ok(const vfft_cfg_t *cfg, size_t howmany)
 {
     return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 3 && howmany == 1 &&
@@ -759,13 +778,53 @@ static inline int vfft_policy_ilndr_ok(const vfft_cfg_t *cfg, size_t howmany)
  * place on the workers' clones; a threaded c2r deals the cycles of the planes'
  * positions to the workers), DEFAULT/NATURAL order, every dim >= 2. A c2r in
  * place destroys its input by nature: axis 0 runs in the caller's volume, and
- * the planes walk the cycles of their positions through the plan's buffers. */
+ * the planes walk the cycles of their positions through the plan's buffers.
+ * One volume per plan: a batch is the volume queue's (below). */
 static inline int vfft_policy_ilndr_ip_ok(const vfft_cfg_t *cfg, size_t howmany, int nthreads)
 {
     (void)nthreads;   /* every thread count since 2026-10-08 night: the plane arm in place, the c2r planes by cycles */
     return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 3 && howmany == 1 &&
            cfg->layout == VFI_LAYOUT_IL && cfg->placement == VFFT_INPLACE &&
            (cfg->order == VFI_ORDER_DEFAULT || cfg->order == VFI_ORDER_NATURAL) &&
+           cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
+}
+/* THE CONTIGUOUS BATCH OF VOLUMES (the VOLUME QUEUE: il/rank2/plane_queue.h one
+ * rank up, 2026-10-18): K >= 2 volumes one after another -- volume t at
+ * x + t N1 N2 N3 reals and its bins at z + t 2 N1 N2 (N3/2 + 1) doubles out of
+ * place; in place one buffer of K volumes, every row padded to 2 (N3/2 + 1)
+ * doubles -- each the single-volume contract above. R2C and C2R, either
+ * placement, on the DEFAULT geometry (the header's promise: a real batch of
+ * rank 3 is contiguous volumes) or the explicit one, DEFAULT/NATURAL order,
+ * every dim >= 2. Served by the queue over the K = 1 plan (the primary at the
+ * caller's T, serial clones for the queue arm), which reads the single-volume
+ * rows only -- place=oop or place=ip as the request is -- and banks its
+ * loop-vs-queue verdict there (pq= pqn=). A law of its own, never a widening
+ * of the two above: door 2 (vfft.c, _vfft_create_outer) admits through
+ * ilndr_ip_ok and reads the tier's descriptor off the plan, which the queue's
+ * wrapper has not. The lane-major geometry is not this law's: it is refused
+ * at the front door, with this geometry named, until its door exists. */
+static inline int vfft_policy_ilndr_batch_ok(const vfft_cfg_t *cfg, size_t howmany)
+{
+    return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 3 && howmany >= 2 &&
+           cfg->layout == VFI_LAYOUT_IL &&
+           (cfg->placement == VFFT_OUTOFPLACE || cfg->placement == VFFT_INPLACE) &&
+           (cfg->batch_geom == VFFT_BATCH_DEFAULT || cfg->batch_geom == VFFT_BATCH_CONTIGUOUS) &&
+           (cfg->order == VFI_ORDER_DEFAULT || cfg->order == VFI_ORDER_NATURAL) &&
+           cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
+}
+/* -- rank 3, C2C, the CONTIGUOUS BATCH (fftnd_il.h through the volume queue,
+ * 2026-10-18): K >= 2 volumes one after another, volume t at z + t 2 N1 N2 N3
+ * doubles, either placement (the single-volume plan serves both from its one
+ * placement-blind row), every order (the inner plan's class: natural by
+ * default), every dim >= 2, on the DEFAULT geometry (a C2C batch's DEFAULT is
+ * contiguous) or the explicit one; lane-major when named is the lane-major
+ * door's (vfft_policy_batch_lane_major). The tier itself stays one volume per
+ * plan. */
+static inline int vfft_policy_ilnd_batch_ok(const vfft_cfg_t *cfg, size_t howmany)
+{
+    return cfg && cfg->transform == VFFT_C2C && cfg->dims == 3 && howmany >= 2 &&
+           cfg->layout == VFI_LAYOUT_IL &&
+           (cfg->batch_geom == VFFT_BATCH_DEFAULT || cfg->batch_geom == VFFT_BATCH_CONTIGUOUS) &&
            cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
 }
 /* the strip form's default width: N1 x w complex within 256 KB (half of L2's

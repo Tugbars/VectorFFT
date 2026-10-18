@@ -1,4 +1,7 @@
-/* plane_queue.h - the 2D plane queue (howmany > 1).
+/* plane_queue.h - the 2D plane queue (howmany > 1), and one rank up the
+ * VOLUME QUEUE (2026-10-18): the same wrapper over the single-volume rank-3
+ * plan, K contiguous volumes at the per-volume distances. "Plane" below
+ * reads "volume" at rank 3.
  *
  * TWO MODES, RACED AT CREATE
  * --------------------------
@@ -9,6 +12,15 @@
  *   QUEUE   an atomic plane counter; worker t pulls whole planes onto its own
  *           SERIAL clone. Plane-per-worker, zero barriers, and no nested pool
  *           dispatch by construction.
+ *
+ * IN PLACE (2026-10-18)
+ * ---------------------
+ * An in-place inner (the real tiers' padded plane or volume, the c2c tiers'
+ * one buffer) is probed and raced in == out, as the queue runs it: an
+ * in-place real plan refuses a distinct destination at the execute door, so
+ * the probe runs every instance on its own copy of the seed, and the race's
+ * one buffer is re-laid from its seed before every timed sample (an in-place
+ * arm walks its own output).
  *
  * WHY THE CLONES MUST BE SERIAL
  * -----------------------------
@@ -31,14 +43,17 @@
  * pq=<0|1> pqn=<P> — the row is keyed by the plan's thread count, and the
  * plane count it was raced at is its validity condition (a P mismatch
  * re-races and re-banks). The row is whichever one the inner howmany=1 create banked
- * (IL c2c, IL real, or the split-tier row), found by lookup and merged
+ * (IL c2c, IL real, or the split-tier row; at rank 3 the single-volume row
+ * of the 3D shard; an in-place real cell its own place=ip row, as the real
+ * tiers key it), found by lookup and merged
  * into with vw2_update_field; a cold cell with no row banks nothing (loud
  * under VFFT_IL2D_LOG). Kill/force switch VFFT_PQ_NO_MT pins and never
  * replays or banks. Engagement counter: vfft_pq_mt_passes().
  *
  * INCLUSION CONTRACT
  * ------------------
- * Include after the engine prelude and after vfft_internal.h, as vfft.c does.
+ * Include after the engine prelude and after vfft_internal.h, as vfft.c does
+ * (and after il/rank2/il2d_tier.h: the in-place race's reset hook is its).
  */
 #ifndef VFFT_TRANSFORMS_FFT2D_PLANE_QUEUE_H
 #define VFFT_TRANSFORMS_FFT2D_PLANE_QUEUE_H
@@ -138,6 +153,15 @@ static void _pq_mt_arm_queue(void *v)
     c->h->pq_mt = 1;
     _pq_execute(c->h, c->dir, c->src, c->dst);
 }
+/* the cell's shape for the log lines: N1xN2 at rank 2, N1xN2xN3 at rank 3 */
+static const char *_pq_shape(const struct vfft_plan_s *h, char *b, size_t n)
+{
+    if (h->N3 > 0)
+        snprintf(b, n, "%dx%dx%d", h->N, h->N2, h->N3);
+    else
+        snprintf(b, n, "%dx%d", h->N, h->N2);
+    return b;
+}
 /* the primary plane's own row: the first key that resolves, in the order
  * the tiers bank them. NULL-safe: a miss means "nothing to ride". */
 static int _pq_row_key(const struct vfft_plan_s *h, const vfft_cfg_t *cfg,
@@ -146,6 +170,9 @@ static int _pq_row_key(const struct vfft_plan_s *h, const vfft_cfg_t *cfg,
     const int il = (cfg->layout == (int)VFI_LAYOUT_IL);
     const int real = (h->transform != VFFT_C2C);
     const int nat = (vfft_policy_ord_rankn(cfg) == VW2_ORD_NAT);
+    const int rank = (h->N3 > 0) ? 3 : 2;   /* the volume queue rides the single-volume row of the 3D shard (2026-10-18) */
+    const int ip = real && (h->placement == VFFT_INPLACE);   /* the in-place REAL cell's own row (pl=ip), as the 2D and
+                                                               * 3D real tiers key it; the c2c rows are placement-blind */
     int i;
     for (i = 0; i < 5; i++)
     {
@@ -159,22 +186,24 @@ static int _pq_row_key(const struct vfft_plan_s *h, const vfft_cfg_t *cfg,
          * consulted or written (a store that has only seen NATURAL requests
          * still finds its row, rather than re-racing on every create). */
         case 0: if (!il) continue;
-            vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, 2, h->N, h->N2, 0,
+            vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, rank, h->N, h->N2, h->N3,
                         VW2_ORD_SCR, VW2_LAY_IL, h->nthreads);
+            if (ip) k->pl = VW2_PL_IP;
             break;
         case 1: if (!il) continue;
-            vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, 2, h->N, h->N2, 0,
+            vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, rank, h->N, h->N2, h->N3,
                         VW2_ORD_NAT, VW2_LAY_IL, h->nthreads);
+            if (ip) k->pl = VW2_PL_IP;
             break;
         case 2:                               /* split c2c, this order */
             if (real) continue;
-            vw2__2d_key(k, VW2_T_C2C, 2, h->N, h->N2, 0,
+            vw2__2d_key(k, VW2_T_C2C, rank, h->N, h->N2, h->N3,
                         nat ? VW2_ORD_NAT : VW2_ORD_SCR, VW2_LAY_ANY, h->nthreads);
             break;
         case 3:                               /* split real (ord=nat rows) */
             if (!real) continue;
             vw2__2d_key(k, h->transform == VFFT_C2R ? VW2_T_C2R : VW2_T_R2C,
-                        2, h->N, h->N2, 0, VW2_ORD_NAT, VW2_LAY_ANY, h->nthreads);
+                        rank, h->N, h->N2, h->N3, VW2_ORD_NAT, VW2_LAY_ANY, h->nthreads);
             break;
         default:
             continue;
@@ -193,6 +222,7 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
 {
     vw2_key_t k;
     const vw2_rec_t *r;
+    char sb[40];
     const int have = (W && !getenv("VFFT_PQ_NO_MT") &&
                       _pq_row_key(h, cfg, &W->vw2, &k));
     if (have && !cfg->recalibrate && (r = vw2_lookup(&W->vw2, &k)) != NULL)
@@ -203,8 +233,8 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
         {
             h->pq_mt = atoi(v) ? 1 : 0;
             if (getenv("VFFT_IL2D_LOG"))
-                fprintf(stderr, "[pq] %dx%d P=%zu T=%d: replay %s src=wisdom\n",
-                        h->N, h->N2, h->pq_n, h->pq_wn,
+                fprintf(stderr, "[pq] %s P=%zu T=%d: replay %s src=wisdom\n",
+                        _pq_shape(h, sb, sizeof sb), h->pq_n, h->pq_wn,
                         h->pq_mt ? "QUEUE" : "loop");
             return;
         }
@@ -220,42 +250,49 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
         if (rc == VW2_OK)
             _vw2_persist(W, cfg);
         else if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[pq] %dx%d P=%zu T=%d: verdict NOT banked (the "
+            fprintf(stderr, "[pq] %s P=%zu T=%d: verdict NOT banked (the "
                             "primary row is a wildcard/migrated row: no "
                             "exact key to merge into)\n",
-                    h->N, h->N2, h->pq_n, h->pq_wn);
+                    _pq_shape(h, sb, sizeof sb), h->pq_n, h->pq_wn);
     }
     else if (getenv("VFFT_IL2D_LOG") && !getenv("VFFT_PQ_NO_MT"))
-        fprintf(stderr, "[pq] %dx%d P=%zu T=%d: no primary row to bank the "
-                        "verdict on\n", h->N, h->N2, h->pq_n, h->pq_wn);
+        fprintf(stderr, "[pq] %s P=%zu T=%d: no primary row to bank the "
+                        "verdict on\n", _pq_shape(h, sb, sizeof sb), h->pq_n, h->pq_wn);
 }
 
 static void _pq_mt_race(struct vfft_plan_s *h)
 {
     const size_t sb = h->pq_n * h->pq_sdist, db = h->pq_n * h->pq_ddist;
+    const int ip = (h->placement == VFFT_INPLACE);   /* in place (2026-10-18): one buffer, in == out, as the queue runs it */
     double *src = (double *)vfft_aligned_alloc(sb * sizeof(double));
-    double *dst = (double *)vfft_aligned_alloc(db * sizeof(double));
+    double *dst = ip ? src : (double *)vfft_aligned_alloc(db * sizeof(double));
+    double *seed = ip ? (double *)vfft_aligned_alloc(sb * sizeof(double)) : NULL;
     double tl = 1e300, tq = 1e300;
     const vfft_dir_t dir =
         (h->transform == VFFT_C2R) ? VFFT_BACKWARD : VFFT_FORWARD;
     int r;
     size_t i;
+    char shp[40];
     const char *ce = getenv("VFFT_PQ_NO_MT");
     if (ce)
     {
         h->pq_mt = (atoi(ce) == 0 && h->pq_wn > 0);
         vfft_aligned_free(src);
-        vfft_aligned_free(dst);
+        if (!ip) vfft_aligned_free(dst);
+        vfft_aligned_free(seed);
         return;
     }
-    if (!src || !dst || h->pq_wn <= 0)
+    if (!src || !dst || (ip && !seed) || h->pq_wn <= 0)
     {
         vfft_aligned_free(src);
-        vfft_aligned_free(dst);
+        if (!ip) vfft_aligned_free(dst);
+        vfft_aligned_free(seed);
         return; /* loop serves */
     }
     for (i = 0; i < sb; i++)
         src[i] = 1.0 + 1e-6 * (double)(i & 511);
+    if (ip)
+        memcpy(seed, src, sb * sizeof(double));
     h->pq_mt = 0;
     _pq_execute(h, dir, src, dst); /* warm the loop arm */
     h->pq_mt = 1;
@@ -264,21 +301,30 @@ static void _pq_mt_race(struct vfft_plan_s *h)
         _pq_mt_arm_t c = { h, dir, src, dst };
         const vfft_race_arm_t arms[2] = { { "loop", _pq_mt_arm_loop, &c },
                                           { "queue", _pq_mt_arm_queue, &c } };
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 0 }; /* min-of-3, A then B */ /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
+        vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 0 }; /* min-of-3, A then B */ /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
+        _il2d_ip_reset_t rs;
         double ns[2];
         (void)r;
+        if (ip)
+        {   /* the one buffer, re-laid from its seed before every timed sample: an in-place
+             * arm walks its own output (a repeated c2r in place grows by N1 N2 N3 a pass) */
+            rs.p = src; rs.seed = seed; rs.n = sb;
+            proto.reset = _il2d_ip_reset;
+            proto.reset_ctx = &rs;
+        }
         vfft_race_run(&proto, arms, 2, ns);
         tl = ns[0];
         tq = ns[1];
     }
     h->pq_mt = (tq < tl);
     if (getenv("VFFT_IL2D_LOG"))
-        fprintf(stderr, "[pq] race %dx%d P=%zu T=%d: loop=%.0f "
+        fprintf(stderr, "[pq] race %s P=%zu T=%d: loop=%.0f "
                         "queue=%.0f -> %s\n",
-                h->N, h->N2, h->pq_n, h->pq_wn, tl, tq,
+                _pq_shape(h, shp, sizeof shp), h->pq_n, h->pq_wn, tl, tq,
                 h->pq_mt ? "QUEUE" : "loop");
     vfft_aligned_free(src);
-    vfft_aligned_free(dst);
+    if (!ip) vfft_aligned_free(dst);
+    vfft_aligned_free(seed);
 }
 
 #endif /* VFFT_TRANSFORMS_FFT2D_PLANE_QUEUE_H */

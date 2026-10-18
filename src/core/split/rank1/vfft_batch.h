@@ -203,8 +203,11 @@ static vfft_batch _own_batch_for(const vfft_cfg_t *cfg)
     if (cfg->dims > 1)
     {
         _vfft_warn("vfft_create (VFFT_FLAG_OWN_PITCH): the plan chooses a pitch for a 1D SPLIT batch "
-                   "and an in-place INTERLEAVED real plan of rank 2 or 3 only (got rank %d)",
-                   cfg->dims);
+                   "and an in-place INTERLEAVED real plan of rank 2 or 3 with howmany 1 only (got rank %d, "
+                   "howmany %zu, %s %s) — a contiguous batch of rank 2 or 3, and any out-of-place plan, "
+                   "is served without the flag at the tight pitch 2*(N_last/2+1): drop the flag",
+                   cfg->dims, cfg->howmany, _vfft_tname(cfg->transform),
+                   cfg->placement == VFFT_INPLACE ? "in place" : "out of place");
         return NULL;
     }
     if ((int)cfg->layout == (int)VFI_LAYOUT_IL)

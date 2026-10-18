@@ -51,7 +51,7 @@
  * or with one compiler line, the compiler that built the library (MinGW: add -static, or
  * ship libwinpthread-1.dll beside the program; Linux: add -pthread):
  *
- *     gcc -O2 wavepacket3d.c -I<prefix>/include -L<prefix>/lib -lvfft -lm -o wavepacket3d
+ *     gcc -O3 wavepacket3d.c -I<prefix>/include -L<prefix>/lib -lvfft -lm -o wavepacket3d
  *
  * Run it with a store of its own, an existing directory (PowerShell: $env:VFFT_WISDOM_DIR="<dir>"):
  *

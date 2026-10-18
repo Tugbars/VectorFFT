@@ -50,7 +50,7 @@ The spectrum of a real sequence has $X[k] = X^*[N-k]$, so a `VFFT_R2C` plan stor
 
 :::{figure} sample_half_spectrum.svg
 :name: sample-fig-bins
-:alt: A row of eight cells. The first five hold X[0] to X[4] and are stored; the last three, shaded, hold the conjugates of X[3], X[2] and X[1] and are not stored. Under the cells, bins 0 to 7 and their frequencies: 0, 1, 2, 3, plus or minus 4, minus 3, minus 2, minus 1.
+:alt: A row of eight cells. The first five, blue, hold X[0] to X[4] and are stored; the last three, empty red outlines, hold the conjugates of X[3], X[2] and X[1] and are not stored. Under the cells, bins 0 to 7 and their frequencies: 0, 1, 2, 3, plus or minus 4, minus 3, minus 2, minus 1.
 The bins of the DFT of a real sequence of $N = 8$ samples. A `VFFT_R2C` plan stores bins $0$ to $N/2$. Bin $k \le N/2$ holds frequency $k$, and bin $k > N/2$ holds frequency $k - N$.
 :::
 
