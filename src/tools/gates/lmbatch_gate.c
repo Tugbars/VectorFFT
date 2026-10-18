@@ -8,9 +8,11 @@
  *      the scrambled class's roundtrip; in place within 1e-12 of out of place (its own cell);
  *   M  T = 8: a threaded pass engaged (the engagement counter), within 1e-12 of the T = 1 plan, the
  *      replay bitwise;
- *   R  the refusals named: the real lane-major batches at an odd length, a real rank-3 and any rank-4 lane-major request;
- *      K = 1 with the lane-major flag is the ordinary plan.
- * Cold scratch store: every cell races. Usage: lmbatch_gate --wisdir <dir> */
+ *   the 2D and 3D c2c batches, the 2D real batch (step 6), and the 3D REAL batch as two sections of its own
+ *   (SECTION 3DR2C, SECTION 3DC2R: pieces 3 and 4 of the rank-3 real batch design, 2026-10-19);
+ *   R  the refusals named: the real lane-major batches at an odd last extent (and a rank-3 one at N3 = 2, N1 = 1,
+ *      N2 = 1), any rank-4 lane-major request; K = 1 with the lane-major flag is the ordinary plan.
+ * Cold scratch store: every cell races. Usage: lmbatch_gate --wisdir <dir> [--section 3DR2C|3DC2R|R] */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,11 +21,36 @@
 #include "vfft_diagnostics.h"
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <time.h>
 #endif
 
 static int g_checks = 0, g_fail = 0;
 static const char *g_W = NULL;
 #define CHECK(c, ...) do { g_checks++; if (!(c)) { g_fail++; printf("  *** FAIL: " __VA_ARGS__); printf("\n"); } } while (0)
+
+static double now_s(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER f, c;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart / (double)f.QuadPart;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + 1e-9 * (double)ts.tv_nsec;
+#endif
+}
+/* the sections' tallies (the 3D real batch's two sections report on their own) */
+static int s_checks, s_fail;
+static double s_t0;
+static void sec_begin(void) { s_checks = g_checks; s_fail = g_fail; s_t0 = now_s(); }
+static void sec_end(const char *name)
+{
+    const int f = g_fail - s_fail;
+    printf("SECTION %-5s: %d checks, %d failed, %.0f s -> %s\n", name, g_checks - s_checks, f, now_s() - s_t0, f ? "FAIL" : "PASS");
+}
 
 static void fill(double *x, size_t n, unsigned seed)
 {
@@ -378,15 +405,33 @@ static void refusals(void)
     p = mk(VFFT_R2C, 1, nodd, 4, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, 1);
     CHECK(p == NULL, "R: a lane-major r2c batch in place at an odd N is served (no real column engine)");
     if (p) vfft_destroy(p);
-    {   /* ranks 2 and 3 are served (step 6); a real 2D batch at an odd N2, a real 3D batch and rank 4 are refused
-         * with their reason */
-        const int n3[3] = { 16, 16, 16 }, n4[4] = { 8, 8, 8, 8 }, n2odd[2] = { 64, 15 };
+    {   /* ranks 2 and 3 are served (step 6; the real 3D batch 2026-10-19); a real batch at an odd last extent, a real
+         * 3D batch at N3 = 2, N1 = 1 or N2 = 1, and rank 4 are refused with their reason (a non-empty vfft_error) */
+        const int n3[3] = { 4, 4, 4 }, n4[4] = { 8, 8, 8, 8 }, n2odd[2] = { 64, 15 };
+        const int n3odd[3] = { 16, 16, 15 }, n3two[3] = { 16, 16, 2 }, n3one[3] = { 1, 16, 16 }, n3one2[3] = { 16, 1, 16 };
         p = mk(VFFT_R2C, 2, n2odd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
         CHECK(p == NULL, "R: a rank-2 lane-major r2c batch at an odd N2 is served (no real column engine)");
         if (p) vfft_destroy(p);
-        p = mk(VFFT_R2C, 3, n3, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
-        CHECK(p == NULL, "R: a rank-3 lane-major r2c batch is served (no real 3D door)");
+        p = mk(VFFT_R2C, 3, n3odd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-3 lane-major r2c batch at an odd N3 is served (no real column engine)");
+        CHECK(vfft_error()[0] != 0, "R: the odd-N3 refusal gives no reason");
         if (p) vfft_destroy(p);
+        p = mk(VFFT_C2R, 3, n3odd, 4, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-3 lane-major c2r batch in place at an odd N3 is served (no real column engine)");
+        CHECK(vfft_error()[0] != 0, "R: the in-place odd-N3 refusal gives no reason");
+        if (p) vfft_destroy(p);
+        p = mk(VFFT_R2C, 3, n3two, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-3 lane-major r2c batch at N3 = 2 is served (the 1D real batch needs an even N >= 4)");
+        if (p) vfft_destroy(p);
+        p = mk(VFFT_R2C, 3, n3one, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-3 lane-major r2c batch at N1 = 1 is served");
+        if (p) vfft_destroy(p);
+        p = mk(VFFT_R2C, 3, n3one2, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-3 lane-major r2c batch at N2 = 1 is served");
+        if (p) vfft_destroy(p);
+        p = mk(VFFT_R2C, 3, n3, 2, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p != NULL, "R: a rank-3 lane-major r2c batch at 4x4x4 x 2 is refused: %s", vfft_error());
+        if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") == 0, "R: the rank-3 real batch did not take the lane-major door (route %s)", vfft_plan_route(p)); vfft_destroy(p); }
         p = mk(VFFT_C2C, 4, n4, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
         CHECK(p == NULL, "R: a rank-4 lane-major request is served");
         if (p) vfft_destroy(p);
@@ -394,7 +439,8 @@ static void refusals(void)
     p = mk(VFFT_C2C, 1, n1, 1, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
     CHECK(p != NULL, "R: K=1 with the lane-major flag refused (it is the ordinary plan)");
     if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") != 0, "R: K=1 took the batch door"); vfft_destroy(p); }
-    printf("R refusals: odd-N r2c and c2r in both placements, a real rank-3 and a rank-4 lane-major request; K=1 ordinary\n");
+    printf("R refusals: odd-N r2c and c2r in both placements, a real rank-2 batch at an odd N2, a real rank-3 batch at an odd N3 "
+           "(both placements), at N3=2, N1=1 and N2=1, a rank-4 lane-major request; the rank-3 real batch served; K=1 ordinary\n");
 }
 
 /* ── THE 2D AND 3D LANE-MAJOR BATCHES (step 6): K planes of N1 x N2 (volumes of N1 x N2 x N3) side by side,
@@ -604,16 +650,309 @@ done:
     vfft_free(x); vfft_free(refz); vfft_free(refx); vfft_free(y); vfft_free(y2); vfft_free(w); vfft_free(w2); vfft_free(zc); vfft_free(pl);
 }
 
+/* ── THE 3D LANE-MAJOR REAL BATCH (the rank-3 real batch design, pieces 3 and 4, 2026-10-19): K real volumes of
+ * N1 x N2 x N3 side by side, x[((i N2 + j) N3 + k) K + t], the spectrum z[2 (((i N2 + j) H + f) K + t)],
+ * H = N3 / 2 + 1; in place N1 N2 rows of (N3 + 2) K doubles, the reals first in each row, the bins over them.
+ *   3DR2C  lane t against its own K = 1 3D r2c plan (natural, out of place) within 1e-12, and at the smallest
+ *          cells the naive 3D DFT of each lane against that reference; the input intact; vfft_info's sizes and
+ *          stride; the replay bitwise; in place within 1e-12 of out of place (its own row, so its own verdicts);
+ *          T > 1 a threaded pass engaged; the banked rows: place=oop and place=ip separate, each carrying the
+ *          2D child's rp_* recipe; a prime first axis (53, 59) serves or refuses with its reason, never crashes;
+ *   3DC2R  the K = 1 r2c spectra in, against K separate K = 1 3D c2r plans and the pair roundtrip to P x; the
+ *          out-of-place c2r leaves its input untouched; the replay bitwise; in place within 1e-12 of out of
+ *          place at the padded pitch; T > 1 engaged; the c2r twin REPLAYS the r2c's row (its create enters no
+ *          measurement scope). ── */
+static void shape3(char *buf, size_t sz, const int *n) { snprintf(buf, sz, "%dx%dx%d", n[0], n[1], n[2]); }
+static void ref_lanes_3d_r2c(const double *x, double *ref, const int *n, int K)
+{
+    const int H = n[2] / 2 + 1;
+    const size_t P = (size_t)n[0] * n[1] * n[2], PH = (size_t)n[0] * n[1] * H;
+    double *a = (double *)vfft_malloc(P * 8), *b = (double *)vfft_malloc(2 * PH * 8);
+    vfft_plan p = mk(VFFT_R2C, 3, n, 1, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_NATURAL, 1);
+    int t;
+    size_t e;
+    CHECK(p != NULL, "reference K=1 3D r2c plan at %dx%dx%d refused: %s", n[0], n[1], n[2], vfft_error());
+    for (t = 0; t < K; t++)
+    {
+        for (e = 0; e < P; e++) a[e] = x[e * K + t];
+        if (p) vfft_execute(p, VFFT_FORWARD, a, b);
+        for (e = 0; e < PH; e++) { ref[2 * (e * K + t)] = b[2 * e]; ref[2 * (e * K + t) + 1] = b[2 * e + 1]; }
+    }
+    if (p) vfft_destroy(p);
+    vfft_free(a); vfft_free(b);
+}
+static void ref_lanes_3d_c2r(const double *z, double *ref, const int *n, int K)
+{
+    const int H = n[2] / 2 + 1;
+    const size_t P = (size_t)n[0] * n[1] * n[2], PH = (size_t)n[0] * n[1] * H;
+    double *a = (double *)vfft_malloc(2 * PH * 8), *b = (double *)vfft_malloc(P * 8);
+    vfft_plan p = mk(VFFT_C2R, 3, n, 1, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_NATURAL, 1);
+    int t;
+    size_t e;
+    CHECK(p != NULL, "reference K=1 3D c2r plan at %dx%dx%d refused: %s", n[0], n[1], n[2], vfft_error());
+    for (t = 0; t < K; t++)
+    {
+        for (e = 0; e < PH; e++) { a[2 * e] = z[2 * (e * K + t)]; a[2 * e + 1] = z[2 * (e * K + t) + 1]; }
+        if (p) vfft_execute(p, VFFT_BACKWARD, a, b);
+        for (e = 0; e < P; e++) ref[e * K + t] = b[e];
+    }
+    if (p) vfft_destroy(p);
+    vfft_free(a); vfft_free(b);
+}
+/* the naive 3D DFT of one real volume, the half spectrum: Z[a][b][f] = sum x[i][j][k] e^{-2 pi i (a i / N1 + b j / N2 + f k / N3)} */
+static void naive3d_r2c(const double *x, double *zr, double *zi, const int *n)
+{
+    const int N1 = n[0], N2 = n[1], N3 = n[2], H = N3 / 2 + 1;
+    int a, b, f, i, j, k;
+    for (a = 0; a < N1; a++)
+        for (b = 0; b < N2; b++)
+            for (f = 0; f < H; f++)
+            {
+                double sr = 0, si = 0;
+                for (i = 0; i < N1; i++)
+                    for (j = 0; j < N2; j++)
+                        for (k = 0; k < N3; k++)
+                        {
+                            const double ph = -2.0 * 3.14159265358979323846 *
+                                ((double)((a * i) % N1) / N1 + (double)((b * j) % N2) / N2 + (double)((f * k) % N3) / N3);
+                            const double v = x[((size_t)i * N2 + j) * N3 + k];
+                            sr += v * cos(ph);
+                            si += v * sin(ph);
+                        }
+                zr[((size_t)a * N2 + b) * H + f] = sr;
+                zi[((size_t)a * N2 + b) * H + f] = si;
+            }
+}
+/* the scratch store's 3D shard: 1 = the row whose key line starts with `key` carries `tok` */
+static int row_tok(const char *key, const char *tok)
+{
+    static char line[65536];
+    char path[1024];
+    FILE *f;
+    int found = 0;
+    snprintf(path, sizeof path, "%s/wisdom2_3d.txt", g_W);
+    f = fopen(path, "r");
+    if (!f) return 0;
+    while (fgets(line, sizeof line, f))
+        if (!strncmp(line, key, strlen(key)) && strstr(line, tok)) { found = 1; break; }
+    fclose(f);
+    return found;
+}
+static void lm3dr_key(char *buf, size_t sz, const int *n, int K, int ip, int T)
+{
+    if (T > 1) snprintf(buf, sz, "@cell t=r2c n=%dx%dx%d q=%d ord=nat place=%s lay=lm nthreads=%d |", n[0], n[1], n[2], K, ip ? "ip" : "oop", T);
+    else snprintf(buf, sz, "@cell t=r2c n=%dx%dx%d q=%d ord=nat place=%s lay=lm |", n[0], n[1], n[2], K, ip ? "ip" : "oop");
+}
+/* two padded volumes on their real columns only: the max relative difference, and bitwise or not */
+static double rel_rows(const double *a, const double *b, size_t rows, size_t rx, size_t pa, size_t pb, int *bitwise)
+{
+    double m = 0, e = 0;
+    size_t r, k;
+    *bitwise = 1;
+    for (r = 0; r < rows; r++)
+    {
+        if (memcmp(a + r * pa, b + r * pb, rx * 8) != 0) *bitwise = 0;
+        for (k = 0; k < rx; k++)
+        {
+            const double d = fabs(a[r * pa + k] - b[r * pb + k]);
+            if (fabs(b[r * pb + k]) > m) m = fabs(b[r * pb + k]);
+            if (d > e) e = d;
+        }
+    }
+    return m > 0 ? e / m : e;
+}
+static void cell_lm3d_r2c(int N1, int N2, int N3, int K, int T, int naive_too, int may_refuse)
+{
+    const int n3[3] = { N1, N2, N3 }, H = N3 / 2 + 1;
+    const size_t P = (size_t)N1 * N2 * N3, PH = (size_t)N1 * N2 * H, XN = P * K, ZN = 2 * PH * K;
+    const size_t rows = (size_t)N1 * N2, rx = (size_t)N3 * K, rp = (size_t)(N3 + 2) * K;   /* a row's reals, the padded row (= 2 H K) */
+    double *x = (double *)vfft_malloc(XN * 8), *xc = (double *)vfft_malloc(XN * 8), *refz = (double *)vfft_malloc(ZN * 8);
+    double *y = (double *)vfft_malloc(ZN * 8), *y2 = (double *)vfft_malloc(ZN * 8), *pl = (double *)vfft_malloc(ZN * 8);
+    vfft_plan p, p2;
+    vfft_info_t inf;
+    char shape[32], key[160];
+    long m0;
+    size_t r;
+    int bw;
+    double d;
+    shape3(shape, sizeof shape, n3);
+    fill(x, XN, (unsigned)(N1 * 13 + N2 * 29 + N3 * 3 + K + T));
+    memcpy(xc, x, XN * 8);
+    ref_lanes_3d_r2c(x, refz, n3, K);
+    if (naive_too)
+    {   /* the naive 3D DFT of each lane against the K = 1 reference */
+        double *a = (double *)malloc(P * 8), *zr = (double *)malloc(PH * 8), *zi = (double *)malloc(PH * 8);
+        double worst = 0;
+        int t;
+        size_t e;
+        for (t = 0; t < K; t++)
+        {
+            double m = 0, dd = 0;
+            for (e = 0; e < P; e++) a[e] = x[e * K + t];
+            naive3d_r2c(a, zr, zi, n3);
+            for (e = 0; e < PH; e++)
+            {
+                const double aa = fabs(zr[e]) + fabs(zi[e]);
+                const double de = fabs(refz[2 * (e * K + t)] - zr[e]) + fabs(refz[2 * (e * K + t) + 1] - zi[e]);
+                if (aa > m) m = aa;
+                if (de > dd) dd = de;
+            }
+            if (m > 0 && dd / m > worst) worst = dd / m;
+        }
+        CHECK(worst < 1e-10, "lm3d r2c %s x %d: the K=1 reference vs the naive 3D DFT %.2e", shape, K, worst);
+        free(a); free(zr); free(zi);
+    }
+    m0 = moved();
+    p = mk(VFFT_R2C, 3, n3, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);   /* cold: the first axis, the 2D child in role, the tile, the threaded arms */
+    if (!p && may_refuse)
+    {   /* a prime first axis: served, or refused with its reason -- never a crash */
+        CHECK(vfft_error()[0] != 0, "lm3d r2c %s x %d T=%d: refused with an empty reason", shape, K, T);
+        printf("C lm3d r2c %-10s x %-2d T=%d: refused: %.100s\n", shape, K, T, vfft_error());
+        goto done;
+    }
+    CHECK(p != NULL, "lm3d r2c %s x %d T=%d: create refused: %s", shape, K, T, vfft_error());
+    if (!p) goto done;
+    vfft_execute(p, VFFT_FORWARD, x, y);
+    printf("%s lm3d r2c %-10s x %-2d T=%d cold: route %-8s fwd vs lanes %.1e", T > 1 ? "M" : "C", shape, K, T, vfft_plan_route(p), relc(y, refz, PH * K));
+    CHECK(relc(y, refz, PH * K) < 1e-12, "lm3d r2c %s x %d T=%d: fwd vs the K=1 volumes %.2e", shape, K, T, relc(y, refz, PH * K));
+    CHECK(memcmp(x, xc, XN * 8) == 0, "lm3d r2c %s x %d T=%d: the out-of-place r2c changed its input", shape, K, T);
+    if (T > 1) CHECK(moved() != m0, "lm3d r2c %s x %d: T=%d did not engage a threaded pass", shape, K, T);
+    vfft_info(p, &inf);
+    CHECK(inf.in_doubles == XN && inf.out_doubles == ZN && inf.stride == (size_t)K && inf.nthreads == T,
+          "lm3d r2c %s x %d T=%d oop: vfft_info in=%zu out=%zu stride=%zu nthreads=%d (want %zu %zu %d %d)", shape, K, T,
+          inf.in_doubles, inf.out_doubles, inf.stride, inf.nthreads, XN, ZN, K, T);
+    lm3dr_key(key, sizeof key, n3, K, 0, T);
+    CHECK(row_tok(key, " rp_k1="), "lm3d r2c %s x %d T=%d: the banked oop row lacks the child's rp_* recipe (%s)", shape, K, T, key);
+    p2 = mk(VFFT_R2C, 3, n3, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);
+    CHECK(p2 != NULL, "lm3d r2c %s x %d T=%d: replay create refused", shape, K, T);
+    if (p2)
+    {
+        vfft_execute(p2, VFFT_FORWARD, x, y2);
+        CHECK(memcmp(y, y2, ZN * 8) == 0, "lm3d r2c %s x %d T=%d: replay != cold (bitwise)", shape, K, T);
+        vfft_destroy(p2);
+    }
+    p2 = mk(VFFT_R2C, 3, n3, (size_t)K, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, T);   /* in place: its own row (place=ip), cold */
+    CHECK(p2 != NULL, "lm3d r2c %s x %d T=%d: in-place create refused: %s", shape, K, T, vfft_error());
+    if (p2)
+    {   /* the padded volume: row r's reals at r (N3 + 2) K, the pad untouched; the bins come out over them, 2 H K a row */
+        memset(pl, 0, ZN * 8);
+        for (r = 0; r < rows; r++)
+            memcpy(pl + r * rp, x + r * rx, rx * 8);
+        vfft_execute(p2, VFFT_FORWARD, pl, pl);
+        d = rel_rows(pl, y, 1, ZN, ZN, ZN, &bw);
+        CHECK(d < 1e-12, "lm3d r2c %s x %d T=%d: in place vs out of place %.2e", shape, K, T, d);
+        printf(", in place %s", bw ? "bitwise" : "within 1e-12");
+        vfft_info(p2, &inf);
+        CHECK(inf.in_doubles == ZN && inf.out_doubles == ZN && inf.stride == (size_t)K,
+              "lm3d r2c %s x %d T=%d ip: vfft_info in=%zu out=%zu stride=%zu (want %zu %zu %d)", shape, K, T,
+              inf.in_doubles, inf.out_doubles, inf.stride, ZN, ZN, K);
+        lm3dr_key(key, sizeof key, n3, K, 1, T);
+        CHECK(row_tok(key, " rp_k1="), "lm3d r2c %s x %d T=%d: no place=ip row with the child's rp_* recipe (%s)", shape, K, T, key);
+        vfft_destroy(p2);
+    }
+    printf("%s\n", T > 1 ? "  threaded passes 1" : "");
+    vfft_destroy(p);
+done:
+    vfft_free(x); vfft_free(xc); vfft_free(refz); vfft_free(y); vfft_free(y2); vfft_free(pl);
+}
+static void cell_lm3d_c2r(int N1, int N2, int N3, int K, int T, int may_refuse)
+{
+    const int n3[3] = { N1, N2, N3 }, H = N3 / 2 + 1;
+    const size_t P = (size_t)N1 * N2 * N3, PH = (size_t)N1 * N2 * H, XN = P * K, ZN = 2 * PH * K;
+    const size_t rows = (size_t)N1 * N2, rx = (size_t)N3 * K, rp = (size_t)(N3 + 2) * K;
+    double *x = (double *)vfft_malloc(XN * 8), *refz = (double *)vfft_malloc(ZN * 8), *refx = (double *)vfft_malloc(XN * 8);
+    double *zc = (double *)vfft_malloc(ZN * 8), *w = (double *)vfft_malloc(XN * 8), *w2 = (double *)vfft_malloc(XN * 8), *pl = (double *)vfft_malloc(ZN * 8);
+    vfft_plan p, p2;
+    vfft_info_t inf;
+    char shape[32];
+    long m0, sc0;
+    int bw;
+    double d;
+    shape3(shape, sizeof shape, n3);
+    fill(x, XN, (unsigned)(N1 * 17 + N2 * 23 + N3 * 5 + K + T));
+    ref_lanes_3d_r2c(x, refz, n3, K);     /* the bins, lane-major, from K separate r2c volumes */
+    ref_lanes_3d_c2r(refz, refx, n3, K);  /* and back through K separate c2r volumes: P x */
+    /* the r2c twin first: the shared row (cold when this section runs alone, a replay after 3DR2C) */
+    p = mk(VFFT_R2C, 3, n3, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);
+    if (!p && may_refuse)
+    {
+        CHECK(vfft_error()[0] != 0, "lm3d c2r %s x %d T=%d: the r2c twin refused with an empty reason", shape, K, T);
+        printf("C lm3d c2r %-10s x %-2d T=%d: the twin refused: %.100s\n", shape, K, T, vfft_error());
+        goto done;
+    }
+    CHECK(p != NULL, "lm3d c2r %s x %d T=%d: the r2c twin's create refused: %s", shape, K, T, vfft_error());
+    if (p) vfft_destroy(p);
+    sc0 = vfft_measure_scopes();
+    p = mk(VFFT_C2R, 3, n3, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);
+    CHECK(p != NULL, "lm3d c2r %s x %d T=%d: create refused: %s", shape, K, T, vfft_error());
+    if (!p) goto done;
+    CHECK(vfft_measure_scopes() == sc0, "lm3d c2r %s x %d T=%d: the c2r twin raced (%ld scopes) instead of replaying the r2c row", shape, K, T,
+          vfft_measure_scopes() - sc0);
+    memcpy(zc, refz, ZN * 8);
+    m0 = moved();
+    vfft_execute(p, VFFT_BACKWARD, refz, w);
+    printf("%s lm3d c2r %-10s x %-2d T=%d twin: route %-8s bwd vs lanes %.1e, pair roundtrip %.1e", T > 1 ? "M" : "C", shape, K, T,
+           vfft_plan_route(p), relrt(w, refx, XN, 1.0), relrt(w, x, XN, (double)P));
+    CHECK(relrt(w, refx, XN, 1.0) < 1e-12, "lm3d c2r %s x %d T=%d: bwd vs the K=1 volumes %.2e", shape, K, T, relrt(w, refx, XN, 1.0));
+    CHECK(relrt(w, x, XN, (double)P) < 1e-12, "lm3d c2r %s x %d T=%d: the pair roundtrip %.2e", shape, K, T, relrt(w, x, XN, (double)P));
+    CHECK(memcmp(zc, refz, ZN * 8) == 0, "lm3d c2r %s x %d T=%d: the out-of-place c2r changed its input", shape, K, T);
+    if (T > 1) CHECK(moved() != m0, "lm3d c2r %s x %d: T=%d did not engage a threaded pass", shape, K, T);
+    vfft_info(p, &inf);
+    CHECK(inf.in_doubles == ZN && inf.out_doubles == XN && inf.stride == (size_t)K && inf.nthreads == T,
+          "lm3d c2r %s x %d T=%d oop: vfft_info in=%zu out=%zu stride=%zu nthreads=%d (want %zu %zu %d %d)", shape, K, T,
+          inf.in_doubles, inf.out_doubles, inf.stride, inf.nthreads, ZN, XN, K, T);
+    p2 = mk(VFFT_C2R, 3, n3, (size_t)K, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, T);
+    CHECK(p2 != NULL, "lm3d c2r %s x %d T=%d: replay create refused", shape, K, T);
+    if (p2)
+    {
+        vfft_execute(p2, VFFT_BACKWARD, refz, w2);
+        CHECK(memcmp(w, w2, XN * 8) == 0, "lm3d c2r %s x %d T=%d: replay != cold (bitwise)", shape, K, T);
+        vfft_destroy(p2);
+    }
+    /* in place: the r2c twin's own row (place=ip) first, then the c2r replays it; the bins in, the reals out at the padded pitch */
+    p2 = mk(VFFT_R2C, 3, n3, (size_t)K, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, T);
+    CHECK(p2 != NULL, "lm3d c2r %s x %d T=%d: the in-place r2c twin's create refused: %s", shape, K, T, vfft_error());
+    if (p2) vfft_destroy(p2);
+    sc0 = vfft_measure_scopes();
+    p2 = mk(VFFT_C2R, 3, n3, (size_t)K, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, T);
+    CHECK(p2 != NULL, "lm3d c2r %s x %d T=%d: in-place create refused: %s", shape, K, T, vfft_error());
+    if (p2)
+    {
+        CHECK(vfft_measure_scopes() == sc0, "lm3d c2r %s x %d T=%d: the in-place c2r twin raced (%ld scopes) instead of replaying", shape, K, T,
+              vfft_measure_scopes() - sc0);
+        memcpy(pl, refz, ZN * 8);
+        vfft_execute(p2, VFFT_BACKWARD, pl, pl);
+        d = rel_rows(pl, w, rows, rx, rp, rx, &bw);
+        CHECK(d < 1e-12, "lm3d c2r %s x %d T=%d: in place vs out of place %.2e", shape, K, T, d);
+        printf(", in place %s", bw ? "bitwise" : "within 1e-12");
+        vfft_info(p2, &inf);
+        CHECK(inf.in_doubles == ZN && inf.out_doubles == ZN && inf.stride == (size_t)K,
+              "lm3d c2r %s x %d T=%d ip: vfft_info in=%zu out=%zu stride=%zu (want %zu %zu %d)", shape, K, T,
+              inf.in_doubles, inf.out_doubles, inf.stride, ZN, ZN, K);
+        vfft_destroy(p2);
+    }
+    printf("%s\n", T > 1 ? "  threaded passes 1" : "");
+    vfft_destroy(p);
+done:
+    vfft_free(x); vfft_free(refz); vfft_free(refx); vfft_free(zc); vfft_free(w); vfft_free(w2); vfft_free(pl);
+}
+
 int main(int argc, char **argv)
 {
-    const char *dir = NULL;
+    const char *dir = NULL, *sec = NULL;
     int a;
     for (a = 1; a + 1 < argc; a++)
+    {
         if (!strcmp(argv[a], "--wisdir")) dir = argv[a + 1];
-    if (!dir) { printf("usage: lmbatch_gate --wisdir <cold scratch dir>\n"); return 2; }
+        if (!strcmp(argv[a], "--section")) sec = argv[a + 1];
+    }
+    if (!dir) { printf("usage: lmbatch_gate --wisdir <cold scratch dir> [--section 3DR2C|3DC2R|R]\n"); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     g_W = (dir);
-    printf("LANE-MAJOR BATCH GATE: c2c, r2c and c2r on the column pass, the 2D c2c and real batches, the 3D c2c batch, store %s\n", dir);
+    printf("LANE-MAJOR BATCH GATE: c2c, r2c and c2r on the column pass, the 2D c2c and real batches, the 3D c2c and real batches, store %s\n", dir);
+#define SEC(name) (!sec || !strcmp(sec, name))
+    if (!sec)
+    {
     /* C: small lengths against the naive DFT too; a prime, a Rader leaf, a smooth length, an odd length, a prime alone */
     cell(16, 8, 1);
     cell(45, 8, 1);
@@ -672,8 +1011,44 @@ int main(int argc, char **argv)
     cell_c2r(2096, 256, 8);
     cell_c2r(262, 1024, 8);
     cell_c2r(512, 512, 8);
+    }
+    if (SEC("3DR2C"))
+    {   /* the 3D real batch, r2c (piece 3): K in {2, 3, 4, 8}; the naive DFT at the four smallest; odd N1 and N2
+         * (3x5x16); a Rader leaf first axis (53) and a Rader first axis within the pool (59); T = 2 at two cells
+         * wide enough for the threaded forms, one T = 8 cell; both placements each */
+        sec_begin();
+        cell_lm3d_r2c(4, 6, 8, 2, 1, 1, 0);
+        cell_lm3d_r2c(5, 4, 8, 3, 1, 1, 0);
+        cell_lm3d_r2c(6, 4, 12, 4, 1, 1, 0);
+        cell_lm3d_r2c(8, 8, 8, 8, 1, 1, 0);
+        cell_lm3d_r2c(3, 5, 16, 3, 1, 0, 0);
+        cell_lm3d_r2c(53, 4, 8, 4, 1, 0, 1);
+        cell_lm3d_r2c(59, 4, 8, 2, 1, 0, 1);
+        cell_lm3d_r2c(32, 32, 32, 2, 2, 0, 0);
+        cell_lm3d_r2c(32, 32, 32, 4, 2, 0, 0);
+        cell_lm3d_r2c(32, 64, 64, 4, 8, 0, 0);
+        sec_end("3DR2C");
+    }
+    if (SEC("3DC2R"))
+    {   /* the c2r twin (piece 4): the same cells, against K separate c2r volumes and the pair roundtrip; the twin
+         * replays the r2c's row */
+        sec_begin();
+        cell_lm3d_c2r(4, 6, 8, 2, 1, 0);
+        cell_lm3d_c2r(5, 4, 8, 3, 1, 0);
+        cell_lm3d_c2r(6, 4, 12, 4, 1, 0);
+        cell_lm3d_c2r(8, 8, 8, 8, 1, 0);
+        cell_lm3d_c2r(3, 5, 16, 3, 1, 0);
+        cell_lm3d_c2r(53, 4, 8, 4, 1, 1);
+        cell_lm3d_c2r(59, 4, 8, 2, 1, 1);
+        cell_lm3d_c2r(32, 32, 32, 2, 2, 0);
+        cell_lm3d_c2r(32, 32, 32, 4, 2, 0);
+        cell_lm3d_c2r(32, 64, 64, 4, 8, 0);
+        sec_end("3DC2R");
+    }
     /* R */
-    refusals();
+    if (SEC("R"))
+        refusals();
+#undef SEC
     printf("%d checks, %d failed\n%s\n", g_checks, g_fail, g_fail ? "*** LANE-MAJOR BATCH GATE FAILED ***" : "LANE-MAJOR BATCH GATE ALL PASS");
     return g_fail ? 1 : 0;
 }

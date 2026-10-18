@@ -9,6 +9,8 @@
  *
  *   rank 3/4   il/rank3/fftnd_il.h        rank-3 c2c; the rest refused
  *              il/rank3/lm_batch3d_il.h   the lane-major 3D c2c batch (K > 1, the geometry named)
+ *              il/rank3/lm_batch3dr_il.h  the lane-major 3D REAL batch: dispatched in vfft.c BEFORE the
+ *                                         layout fork, beside the 2D real one (it binds its own executors)
  *              il/rank2/fft2d_create_il.h the VOLUME QUEUE: a contiguous rank-3 batch, real or c2c,
  *                                         over the single-volume plan (K > 1, 2026-10-18)
  *   rank 2     il/rank2/fft2d_create_il.h native IL 2D; the plane queue for K>1

@@ -94,11 +94,11 @@ static int _lm2d_clones_build(struct vfft_plan_s *h, const vfft_cfg_t *rc, int T
         if (!c || !_tc_clone_equiv(h->lm_row, c))
         {
             if (h->N3 > 0)
-                _vfft_warn("lane-major 3D batch %dx%dx%d x %zu: child clone %d %s; the blocks stay serial",
-                           h->N, h->N2, h->N3, h->K, t, c ? "differs from the primary" : "failed to create");
+                _vfft_warn("lane-major 3D %s batch %dx%dx%d x %zu: child clone %d %s; the blocks stay serial",
+                           _vfft_tname(h->transform), h->N, h->N2, h->N3, h->K, t, c ? "differs from the primary" : "failed to create");
             else
-                _vfft_warn("lane-major 2D batch %dx%d x %zu: row clone %d %s; the rows stay serial",
-                           h->N, h->N2, h->K, t, c ? "differs from the primary" : "failed to create");
+                _vfft_warn("lane-major 2D %s batch %dx%d x %zu: row clone %d %s; the rows stay serial",
+                           _vfft_tname(h->transform), h->N, h->N2, h->K, t, c ? "differs from the primary" : "failed to create");
             _lm2d_clones_drop(h);
             return 0;
         }

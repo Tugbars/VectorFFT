@@ -166,8 +166,12 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
                      const vw2_ilcol_key_t *key, int bcmt)
 {
     vfft_ilcol_t *c = &h->il2d_col;
-    /* the pass's rows and lanes: the descriptor's (a 2D batch's first axis runs N2 K lanes) */
-    const int N = c->N, K = (int)c->rn, T = h->nthreads, ip = h->placement == VFFT_INPLACE && h->transform == VFFT_C2C;
+    /* the pass's rows and lanes: the descriptor's (a 2D batch's first axis runs N2 K lanes). In place the
+     * arms run on one buffer re-laid from a seed: a c2c batch's pass, and a real batch of rank 2 or 3,
+     * whose blocks go through the child's door (an in-place plan takes one buffer there); the 1D real
+     * batch's executor is called directly and takes any pair, so it is timed on two */
+    const int N = c->N, K = (int)c->rn, T = h->nthreads;
+    const int ip = h->placement == VFFT_INPLACE && (h->transform == VFFT_C2C || h->N2 > 0);
     const int workers = T > 1 ? thread_pool_workers_for(T) : 1;
     const int usable = W && !W->vw2_off_2d && !cfg->recalibrate;
     const int c2c = h->transform == VFFT_C2C;

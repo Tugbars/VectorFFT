@@ -16,9 +16,10 @@
  *   Q3   (piece 2c) the 3D C2C contiguous batch: forward vs the naive DFT per volume and K runs of the K = 1
  *        plan, backward = N1 N2 N3 x, both placements (in place bitwise the out-of-place), the scrambled
  *        class's roundtrip, the replay bitwise;
- *   R    the refusals, each naming a served request: lane-major rank-3 real (the contiguous volumes named), a
- *        dim below 2, SCRAMBLED order on a real batch, VFFT_FLAG_OWN_PITCH on a batch; K = 1 with the
- *        CONTIGUOUS flag is the ordinary plan.
+ *   R    the refusals, each naming a served request: lane-major rank-3 real at an odd N3 (the contiguous volumes
+ *        named; at an even N3 the lane-major door serves it, il/rank3/lm_batch3dr_il.h), a dim below 2,
+ *        SCRAMBLED order on a real batch, VFFT_FLAG_OWN_PITCH on a batch; K = 1 with the CONTIGUOUS flag is
+ *        the ordinary plan.
  * Usage: il3d_real_batch_gate --wisdir <cold scratch dir> [--section R2C|C2R|Q2|Q3|R] */
 #include <stdio.h>
 #include <stdlib.h>
@@ -549,13 +550,19 @@ done:
 static void refusals(void)
 {
     const int n3[3] = { 16, 16, 16 }, n1a[3] = { 1, 16, 16 }, n1b[3] = { 16, 1, 16 }, n1c[3] = { 16, 16, 1 }, n4[4] = { 8, 8, 8, 8 };
+    const int n3odd[3] = { 16, 16, 15 };
     vfft_plan p;
+    /* the lane-major rank-3 real batch is the lane-major door's (il/rank3/lm_batch3dr_il.h, 2026-10-19); an odd N3
+     * has no real column engine there and the refusal names the contiguous volumes, which this queue serves */
     p = mk(VFFT_R2C, 3, n3, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1, 0);
-    CHECK(p == NULL, "R: a lane-major rank-3 r2c batch is served (no lane-major real 3D door)");
-    if (p) vfft_destroy(p); else CHECK(strstr(vfft_error(), "VFFT_BATCH_CONTIGUOUS") != NULL, "R: the lane-major refusal does not name the contiguous volumes: %s", vfft_error());
-    p = mk(VFFT_C2R, 3, n3, 4, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, 1, 0);
-    CHECK(p == NULL, "R: a lane-major rank-3 c2r batch in place is served");
-    if (p) vfft_destroy(p); else CHECK(strstr(vfft_error(), "in place one buffer") != NULL, "R: the lane-major refusal does not name the in-place volumes: %s", vfft_error());
+    CHECK(p != NULL, "R: a lane-major rank-3 r2c batch is refused (its door serves it): %s", vfft_error());
+    if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") == 0, "R: the lane-major rank-3 r2c batch did not take the lane-major door (route %s)", vfft_plan_route(p)); vfft_destroy(p); }
+    p = mk(VFFT_R2C, 3, n3odd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1, 0);
+    CHECK(p == NULL, "R: a lane-major rank-3 r2c batch at an odd N3 is served (no real column engine)");
+    if (p) vfft_destroy(p); else CHECK(strstr(vfft_error(), "VFFT_BATCH_CONTIGUOUS") != NULL, "R: the odd-N3 lane-major refusal does not name the contiguous volumes: %s", vfft_error());
+    p = mk(VFFT_C2R, 3, n3odd, 4, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, 1, 0);
+    CHECK(p == NULL, "R: a lane-major rank-3 c2r batch in place at an odd N3 is served");
+    if (p) vfft_destroy(p); else CHECK(strstr(vfft_error(), "contiguous planes or volumes") != NULL, "R: the in-place refusal does not name the contiguous volumes: %s", vfft_error());
     p = mk(VFFT_R2C, 3, n1a, 2, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_NATURAL, 1, 0);
     CHECK(p == NULL, "R: 1x16x16 K=2 r2c is served (every dim >= 2)");
     if (p) vfft_destroy(p);
@@ -583,7 +590,8 @@ static void refusals(void)
     p = mk(VFFT_R2C, 3, n3, 1, VFFT_BATCH_CONTIGUOUS, 0, VFFT_ORDER_NATURAL, 1, 0);
     CHECK(p != NULL, "R: K=1 with the CONTIGUOUS flag refused (it is the ordinary plan): %s", vfft_error());
     if (p) { CHECK(strcmp(vfft_plan_route(p), "-") != 0, "R: K=1 took the queue"); vfft_destroy(p); }
-    printf("R refusals: lane-major rank-3 real (both placements, the contiguous volumes named), a dim below 2 (real and c2c),\n"
+    printf("R refusals: lane-major rank-3 real at an odd N3 (both placements, the contiguous volumes named; served at an even N3),\n"
+           "            a dim below 2 (real and c2c),\n"
            "            SCRAMBLED on a real batch, OWN_PITCH on a batch, rank 4; K=1 with CONTIGUOUS ordinary\n");
 }
 

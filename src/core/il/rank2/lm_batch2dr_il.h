@@ -14,7 +14,9 @@
  * Threaded: the column pass through its raced forms, the blocks over the workers on clones of the
  * row child, one threaded verdict (cmt=) raced with the column pass's arms (the arms run the whole
  * executor). The row: t=r2c n=N1xN2 q=K on the lay=lm axis, direction-shared as the 1D real row is,
- * the first axis's column tokens on it. Included after lm_batch2d_il.h and before the door. */
+ * the first axis's column tokens on it. The 3D real batch (rank3/lm_batch3dr_il.h) runs through the
+ * same block walker and executors: its blocks are the planes of N2 (N3 + 2) K doubles, its child this
+ * 2D real batch. Included after lm_batch2d_il.h and before the door. */
 #ifndef VFFT_IL_LM_BATCH2DR_IL_H
 #define VFFT_IL_LM_BATCH2DR_IL_H
 
@@ -50,30 +52,33 @@ static void _lm2dr_rows(struct vfft_plan_s *h, const double *in, double *out, si
     else
         thread_pool_run(T, _lm2dr_rows_tramp, a, sizeof a[0]);
 }
-/* the executors (bound at create: a direction each, the other refused by the door) */
+/* the executors (bound at create: a direction each, the other refused by the door). The blocks are the
+ * child's: at rank 2 the 1D real batch's rows (L = N2 reals a lane, M = 1), at rank 3 (the 3D real batch,
+ * rank3/lm_batch3dr_il.h) the 2D real batch's planes (L = N3, M = N2 rows each) -- a real block M L K,
+ * its spectrum block M (L + 2) K (2 (L / 2 + 1) = L + 2 at an even L), the padded block the same */
 static int _lm2dr_exec_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, double *zout)
 {
-    const size_t K = h->K, N2 = (size_t)h->N2, H = N2 / 2 + 1;
+    const size_t K = h->K, L = (size_t)(h->N3 > 0 ? h->N3 : h->N2), M = (size_t)(h->N3 > 0 ? h->N2 : 1);
     const int ip = h->placement == VFFT_INPLACE;
     (void)dir;
-    _lm2dr_rows(h, xin, zout, ip ? (N2 + 2) * K : N2 * K, ip ? (N2 + 2) * K : 2 * H * K, VFFT_FORWARD);
+    _lm2dr_rows(h, xin, zout, M * (ip ? L + 2 : L) * K, M * (L + 2) * K, VFFT_FORWARD);
     _lm_cols(h, zout, zout, 0);   /* the first axis over the spectrum, in place */
     return 0;
 }
 static int _lm2dr_exec_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *xout)
 {
-    const size_t K = h->K, N2 = (size_t)h->N2, H = N2 / 2 + 1;
+    const size_t K = h->K, L = (size_t)(h->N3 > 0 ? h->N3 : h->N2), M = (size_t)(h->N3 > 0 ? h->N2 : 1);
     const int ip = h->placement == VFFT_INPLACE;
     (void)dir;
     if (ip)
     {
         _lm_cols(h, zin, xout, 1);   /* zin == xout: in place on the padded plane */
-        _lm2dr_rows(h, xout, xout, (N2 + 2) * K, (N2 + 2) * K, VFFT_BACKWARD);
+        _lm2dr_rows(h, xout, xout, M * (L + 2) * K, M * (L + 2) * K, VFFT_BACKWARD);
     }
     else
     {   /* the caller's spectrum survives: the backward column pass moves it into the scratch */
         _lm_cols(h, zin, h->lm_W, 1);
-        _lm2dr_rows(h, h->lm_W, xout, 2 * H * K, N2 * K, VFFT_BACKWARD);
+        _lm2dr_rows(h, h->lm_W, xout, M * (L + 2) * K, M * L * K, VFFT_BACKWARD);
     }
     return 0;
 }

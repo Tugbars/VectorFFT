@@ -188,9 +188,11 @@ static inline int vfft_policy_rough47_is_prime(int r)
  * transform-contiguous for c2c), and the 2D and 3D interleaved C2C requests the same way (step 6,
  * il/rank2/lm_batch2d_il.h: the first axis one column pass over the plane's width, the last
  * axis the 1D batch per block; il/rank3/lm_batch3d_il.h: the first axis over the volume's
- * width, then the 2D batch per block). The real 1D batches: below. The geometries never race each
- * other in a create (the owner's rule): a lane-major request is served lane-major or refused
- * with its reason. */
+ * width, then the 2D batch per block), and the real 2D and 3D requests the same way
+ * (il/rank2/lm_batch2dr_il.h: N1 blocks of the 1D real batch, then the first axis over the spectrum;
+ * il/rank3/lm_batch3dr_il.h: N1 blocks of the 2D real batch, then the first axis over N2 H K lanes).
+ * The real 1D batches: below. The geometries never race each other in a create (the owner's rule):
+ * a lane-major request is served lane-major or refused with its reason. */
 static inline int vfft_policy_batch_lane_major(const vfft_cfg_t *cfg)
 {
     if (!cfg || cfg->dims > 3 || cfg->layout != VFI_LAYOUT_IL || cfg->howmany < 2)
@@ -198,8 +200,13 @@ static inline int vfft_policy_batch_lane_major(const vfft_cfg_t *cfg)
     if (cfg->transform == VFFT_C2C)   /* rank 1, and ranks 2 and 3 (step 6: every axis a column pass) */
         return cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->n[0] >= 2 && (cfg->dims < 2 || cfg->n[1] >= 2) &&
                (cfg->dims < 3 || cfg->n[2] >= 2);
-    if (cfg->dims == 3)
-        return 0;   /* a real 3D batch has no lane-major door */
+    if (cfg->dims == 3)   /* the real 3D batch (il/rank3/lm_batch3dr_il.h, 2026-10-19): the named geometry (DEFAULT
+                           * stays contiguous volumes at rank 3: the volume queue's law below), N1 >= 2 (a column
+                           * pass of N1 rows: the c2c law's floor), and the 2D real child's own law at (N2, N3):
+                           * N2 >= 2, an even N3 >= 4 (an odd N3 has no real column engine) */
+        return (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+               cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->n[0] >= 2 && cfg->n[1] >= 2 &&
+               cfg->n[2] >= 4 && (cfg->n[2] % 2) == 0;
     if (cfg->dims == 2)   /* the real 2D batch (step 6): the named geometry (DEFAULT stays contiguous planes at
                            * rank 2), N1 >= 2, an even N2 >= 4 (an odd N2 has no real column engine) */
         return (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
@@ -801,8 +808,8 @@ static inline int vfft_policy_ilndr_ip_ok(const vfft_cfg_t *cfg, size_t howmany,
  * loop-vs-queue verdict there (pq= pqn=). A law of its own, never a widening
  * of the two above: door 2 (vfft.c, _vfft_create_outer) admits through
  * ilndr_ip_ok and reads the tier's descriptor off the plan, which the queue's
- * wrapper has not. The lane-major geometry is not this law's: it is refused
- * at the front door, with this geometry named, until its door exists. */
+ * wrapper has not. The lane-major geometry is not this law's: named, it is
+ * the lane-major door's (il/rank3/lm_batch3dr_il.h, vfft_policy_batch_lane_major). */
 static inline int vfft_policy_ilndr_batch_ok(const vfft_cfg_t *cfg, size_t howmany)
 {
     return cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 3 && howmany >= 2 &&
