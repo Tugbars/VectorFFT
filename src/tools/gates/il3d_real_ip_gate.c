@@ -10,6 +10,9 @@
  *   c2r  1  the pair contract: FFTW's r2c spectrum of a real volume, our in-place c2r on it,
  *           elementwise against N x (never a roundtrip through ourselves);
  *        2  REPLAY bitwise;  3  TWO VOLUMES refused.
+ *   stages (2026-10-19) the r2c STAGE-WISE threaded axis 0 (cmtf=3) pinned at T = 2, 4, 8, both placements,
+ *        bitwise the leaf-oop form on the same nthreads=T row (the form is its re-partition), every plan vs
+ *        FFTW; engaged at the pow2 cells, served or declined at the odd-ish ones, never wrong.
  *
  * Build: python gauntlet/build.py --src src/tools/gates/il3d_real_ip_gate.c --vfft --compile
  * Run  : il3d_real_ip_gate.exe <SCRATCH wisdir>      (bare; VFFT_FFTW_DLL overrides the DLL)
@@ -476,9 +479,160 @@ static int run_cell_mt(const char *W, const fftwx_api_t *api, int N1, int N2, in
     return g_fail != fails0;
 }
 
+/* THE STAGE-WISE AXIS 0 (fftnd_real_il.h nf = 3, 2026-10-19): the r2c threaded form pinned (VFFT_ILNDR_MT=2
+ * ARM=2 NF=3) at T = 2, 4, 8 in both placements. MT == ST bitwise is the tier's law, and the form is a
+ * re-partition of the pay-once walk, so its output must be bitwise the LEAF-OOP form's (MT=2 ARM=2 NF=1) on
+ * the SAME nthreads=T row -- created first, so the row's axis-0 chain, kernel forms and plane child are raced
+ * once and replayed by the stage-wise plan (a cold store races every nthreads row on its own: the one-thread
+ * walk may carry another chain or row engine, so it is the correctness reference here, not the bitwise one).
+ * Every plan is checked against FFTW; at the pow2 cells (a kernel chain of two stages) the form must engage
+ * (vfft_ilnd_mt_passes moves), at the odd-ish ones it serves or declines to the serial walk and is right
+ * either way; executed twice bitwise. The out-of-place CCE volume and the in-place padded volume share one
+ * layout (rows of 2 (N3/2 + 1) doubles), so FFTW's in-place spectrum is both placements' reference. */
+static void pin_form(const char *mt, const char *arm, const char *nf)
+{   /* the tier's pins (an empty value clears); pins never bank */
+    static char bm[32], ba[32], bn[32];
+    snprintf(bm, sizeof bm, "VFFT_ILNDR_MT=%s", mt);
+    snprintf(ba, sizeof ba, "VFFT_ILNDR_ARM=%s", arm);
+    snprintf(bn, sizeof bn, "VFFT_ILNDR_NF=%s", nf);
+#ifdef _WIN32
+    _putenv(bm); _putenv(ba); _putenv(bn);
+#else
+    if (*mt) setenv("VFFT_ILNDR_MT", mt, 1); else unsetenv("VFFT_ILNDR_MT");
+    if (*arm) setenv("VFFT_ILNDR_ARM", arm, 1); else unsetenv("VFFT_ILNDR_ARM");
+    if (*nf) setenv("VFFT_ILNDR_NF", nf, 1); else unsetenv("VFFT_ILNDR_NF");
+#endif
+}
+/* one r2c execute of p on the cell's input: in place on a copy of the padded seed, out of place from the tight cube */
+static long run_r2c(vfft_plan p, int ip, const double *seed, const double *x, double *dst, size_t CN)
+{
+    const long e0 = vfft_ilnd_mt_passes();
+    if (ip)
+    {
+        memcpy(dst, seed, CN * sizeof(double));
+        vfft_execute(p, VFFT_FORWARD, dst, dst);
+    }
+    else
+        vfft_execute(p, VFFT_FORWARD, (double *)x, dst);
+    return vfft_ilnd_mt_passes() - e0;
+}
+static int run_cell_stages(const char *W, const fftwx_api_t *api, int N1, int N2, int N3, int must_engage)
+{
+    static const int TS[3] = { 2, 4, 8 };
+    const int hp3 = N3 / 2 + 1;
+    const size_t rows = (size_t)N1 * (size_t)N2, P = 2 * (size_t)hp3, CN = rows * P, RN = rows * (size_t)N3;
+    double *seed = (double *)vfft_malloc(CN * sizeof(double));   /* the padded volume (in place) */
+    double *x = (double *)vfft_malloc(RN * sizeof(double));      /* the tight cube (out of place) */
+    double *ref = (double *)vfft_malloc(CN * sizeof(double));    /* the one-thread pay-once walk */
+    double *lo = (double *)vfft_malloc(CN * sizeof(double));     /* the leaf-oop form at T */
+    double *a = (double *)vfft_malloc(CN * sizeof(double));      /* the stage-wise form at T, twice */
+    double *a2 = (double *)vfft_malloc(CN * sizeof(double));
+    double *pf = (double *)api->fmalloc(CN * sizeof(double));
+    const int fails0 = g_fail;
+    fftwx_plan fp;
+    size_t r;
+    int ip, ti;
+    if (!seed || !x || !ref || !lo || !a || !a2 || !pf)
+    {
+        printf("IP3GATE FAIL  %dx%dx%d stages: out of memory\n", N1, N2, N3);
+        g_fail++;
+        return 1;
+    }
+    fill(seed, rows, N3, P, 0x9e3779b9u ^ (unsigned)N1 ^ ((unsigned)N2 << 10) ^ ((unsigned)N3 << 20));
+    for (r = 0; r < rows; r++)
+        memcpy(x + r * (size_t)N3, seed + r * P, (size_t)N3 * sizeof(double));
+    fp = api->plan_dft_r2c_3d(N1, N2, N3, pf, (fftwx_complex *)pf, FFTWX_MEASURE);
+    if (!fp)
+    {
+        printf("IP3GATE FAIL  %dx%dx%d stages: FFTW plan refused\n", N1, N2, N3);
+        g_fail++;
+        return 1;
+    }
+    memcpy(pf, seed, CN * sizeof(double));
+    api->execute(fp);
+    api->destroy_plan(fp);
+    for (ip = 0; ip < 2; ip++)
+    {
+        const char *pl = ip ? "ip" : "oop";
+        vfft_config_t cfg;
+        vfft_plan p;
+        double e;
+        memset(&cfg, 0, sizeof cfg);
+        cfg.transform = VFFT_R2C;
+        cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+        cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+        cfg.rank = 3;
+        cfg.n[0] = N1;
+        cfg.n[1] = N2;
+        cfg.n[2] = N3;
+        cfg.howmany = 1;
+        cfg.order = VFFT_ORDER_NATURAL;
+        cfg.wisdom_dir = W;
+        /* the walk the form re-partitions, at one thread, against FFTW */
+        cfg.nthreads = 1;
+        pin_form("", "2", "1");
+        p = vfft_create(&cfg);
+        pin_form("", "", "");
+        CHECK(p != NULL, "%dx%dx%d r2c %s stages: the serial pay-once plan (ARM=2 NF=1, T=1) created%s%s", N1, N2, N3, pl,
+              p ? " -- " : "", p ? vfft_plan_route(p) : "");
+        if (p)
+        {
+            run_r2c(p, ip, seed, x, ref, CN);
+            e = relerr(ref, pf, CN);
+            CHECK(e < 1e-11, "%dx%dx%d r2c %s stages: the serial pay-once walk vs FFTW, rel %.2e", N1, N2, N3, pl, e);
+            vfft_destroy(p);
+        }
+        for (ti = 0; ti < 3; ti++)
+        {
+            const int T = TS[ti];
+            long eng, englo;
+            cfg.nthreads = T;
+            /* the bitwise reference on this row: the leaf-oop form, created first */
+            pin_form("2", "2", "1");
+            p = vfft_create(&cfg);
+            pin_form("", "", "");
+            CHECK(p != NULL, "%dx%dx%d r2c %s stages T=%d: the leaf-oop plan (MT=2 ARM=2 NF=1) created%s%s", N1, N2, N3, pl, T,
+                  p ? " -- " : "", p ? vfft_plan_route(p) : "");
+            if (!p)
+                continue;
+            englo = run_r2c(p, ip, seed, x, lo, CN);
+            e = relerr(lo, pf, CN);
+            CHECK(e < 1e-11, "%dx%dx%d r2c %s stages T=%d: the leaf-oop form vs FFTW, rel %.2e (%ld threaded execute(s))", N1, N2, N3, pl, T, e, englo);
+            vfft_destroy(p);
+            /* the stage-wise form on the same row */
+            pin_form("2", "2", "3");
+            p = vfft_create(&cfg);
+            pin_form("", "", "");
+            CHECK(p != NULL, "%dx%dx%d r2c %s stages T=%d: the stage-wise plan (MT=2 ARM=2 NF=3) created%s%s", N1, N2, N3, pl, T,
+                  p ? " -- " : "", p ? vfft_plan_route(p) : "");
+            if (!p)
+                continue;
+            eng = run_r2c(p, ip, seed, x, a, CN);
+            e = relerr(a, pf, CN);
+            CHECK(e < 1e-11, "%dx%dx%d r2c %s stages T=%d: the stage-wise form vs FFTW, rel %.2e", N1, N2, N3, pl, T, e);
+            CHECK(memcmp(a, lo, CN * sizeof(double)) == 0, "%dx%dx%d r2c %s stages T=%d: bitwise the leaf-oop form on the same row (%s)",
+                  N1, N2, N3, pl, T, eng ? "the form engaged" : "declined: the serial walk served");
+            if (must_engage)
+                CHECK(eng > 0, "%dx%dx%d r2c %s stages T=%d: the form engaged (%ld threaded execute(s), route %s)", N1, N2, N3, pl, T,
+                      eng, vfft_plan_route(p));
+            else
+                CHECK(1, "%dx%dx%d r2c %s stages T=%d: %s (%ld threaded execute(s), route %s)", N1, N2, N3, pl, T,
+                      eng ? "served" : "declined", eng, vfft_plan_route(p));
+            memcpy(a2, a, CN * sizeof(double));
+            run_r2c(p, ip, seed, x, a, CN);
+            CHECK(memcmp(a, a2, CN * sizeof(double)) == 0, "%dx%dx%d r2c %s stages T=%d: executed twice, bitwise", N1, N2, N3, pl, T);
+            vfft_destroy(p);
+        }
+    }
+    vfft_free(seed); vfft_free(x); vfft_free(ref); vfft_free(lo); vfft_free(a); vfft_free(a2);
+    api->ffree(pf);
+    return g_fail != fails0;
+}
+
 int main(int argc, char **argv)
 {
     static const int MT[][3] = { { 64, 64, 64 }, { 128, 128, 128 }, { 16, 256, 256 }, { 8, 128, 2048 }, { 9, 16, 30 } };
+    static const int STG[][4] = { { 64, 64, 64, 1 }, { 32, 128, 64, 1 }, { 16, 16, 64, 1 }, { 24, 24, 24, 0 }, { 5, 4, 8, 0 } };
     static const int MTO[][3] = { { 16, 16, 512 }, { 8, 32, 1024 } };
     static const int OWN[][3] = { { 16, 16, 512 }, { 8, 32, 1024 }, { 16, 8, 2048 }, { 32, 32, 32 }, { 9, 16, 30 } };
     static const int CELLS[][3] = {
@@ -512,6 +666,8 @@ int main(int argc, char **argv)
         run_cell_mt(W, &api, MT[ci][0], MT[ci][1], MT[ci][2], 0);
     for (ci = 0; ci < (int)(sizeof MTO / sizeof MTO[0]); ci++)
         run_cell_mt(W, &api, MTO[ci][0], MTO[ci][1], MTO[ci][2], 1);
+    for (ci = 0; ci < (int)(sizeof STG / sizeof STG[0]); ci++)
+        run_cell_stages(W, &api, STG[ci][0], STG[ci][1], STG[ci][2], STG[ci][3]);
     if (g_fail)
         printf("IL3D REAL IP GATE FAIL: %d of %d checks\n", g_fail, g_fail + g_pass);
     else

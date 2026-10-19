@@ -2771,7 +2771,7 @@ static const char *_vfft_plan_route(vfft_plan p)
                                                                             : (f == 2 ? "child+strips" : "child");
         if (!mt)
             return s;
-        return a == 3 ? "plane+band" : a == 2 ? (f == 2 ? "plane+payonce+strips" : "plane+payonce")
+        return a == 3 ? "plane+band" : a == 2 ? (f == 3 ? "plane+payonce+stages" : f == 2 ? "plane+payonce+strips" : "plane+payonce")
                                               : (f == 2 ? "plane+child+strips" : "plane+child");
     }
     if (h->lm)

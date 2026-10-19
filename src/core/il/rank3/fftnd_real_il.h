@@ -36,13 +36,18 @@
  *   nf=2     axis 0 by DENSE COLUMN STRIPS (the c2c tier's strip form): N1 x
  *            nsw complex gathered into a strip scratch, the plain chain there,
  *            the rows scattered back (r2c to natural planes, the pay-once twin
- *            to natural row blocks too; c2r in chain order).
+ *            to natural row blocks too; c2r in chain order);
+ *   nf=3     THREADED ONLY (cmtf=3, 2026-10-19), r2c, the pay-once twin: axis
+ *            0 by STAGE and by BUTTERFLY GROUP -- one fork-join per stage of
+ *            the chain, each worker whole planes of the stage's groups, the
+ *            leaf's writes the leaf-oop's (_ilndr_axis0_stage_range); the
+ *            serial walk has no such form (a pin of 3 at one thread runs nf=1).
  * The arms run the whole transform on scratch at create (min of 3..15 paced
  * rounds, at least 48 timed executes per arm); the winner banks s= nf= nsw=
  * (r2c) or s_c2r= nf_c2r= nsw_c2r= wl_c2r= (c2r) on the rank-3 real row
  * beside axis 0's chain tokens (chain= blu= forms=) and the pay-once axis-1
  * chain (chain1=), both direction-shared; the loser's volume, scratch and
- * descriptors are freed. VFFT_ILNDR_ARM=1|2|3, VFFT_ILNDR_NF=1|2,
+ * descriptors are freed. VFFT_ILNDR_ARM=1|2|3, VFFT_ILNDR_NF=1|2|3,
  * VFFT_ILNDR_SW=w, VFFT_ILNDR_WL=w pin, never bank.
  *
  * C2R AND THE INPUT (owner 2026-10-07): the caller's CCE volume is preserved
@@ -137,13 +142,13 @@ typedef struct vfft_ilndr_s {
  * prints the same line from its verdict's structure and form (mts, mtf) with the pool's T and the
  * planes' and axis 0's teams; its band's phase 5 (the suffix and the band's planes on one worker)
  * counts as planes. */
-typedef struct { double planes, axis0; } _ilndr_prof_t;
+typedef struct { double planes, axis0, st[8]; } _ilndr_prof_t;   /* st: the stage-wise form's ns per stage */
 static _ilndr_prof_t _ilndr_prof;
 static void _ilndr_prof_line(const vfft_ilndr_t *d, int arm, int nf, const char *team)
 {
     fprintf(stderr, "[ilndr prof] %dx%dx%d %s %s/%s%s: planes %.0f ns, axis 0 %.0f ns (%.1f%% / %.1f%%)\n",
             d->N[0], d->N[1], d->N[2], d->c2r ? "c2r" : "r2c",
-            arm == 3 ? "band" : arm == 2 ? "payonce" : "child", nf == 2 ? "strips" : "inplace", team,
+            arm == 3 ? "band" : arm == 2 ? "payonce" : "child", nf == 3 ? "stages" : nf == 2 ? "strips" : "inplace", team,
             _ilndr_prof.planes, _ilndr_prof.axis0,
             100.0 * _ilndr_prof.planes / (_ilndr_prof.planes + _ilndr_prof.axis0 + 1e-9),
             100.0 * _ilndr_prof.axis0 / (_ilndr_prof.planes + _ilndr_prof.axis0 + 1e-9));
@@ -154,8 +159,15 @@ static void _ilndr_prof_print(const vfft_ilndr_t *d)
 }
 static void _ilndr_prof_print_mt(const vfft_ilndr_t *d, int T, int tpl, int tax)
 {
-    char team[48];
-    snprintf(team, sizeof team, " mt T=%d teams planes/axis0 %d/%d", T, tpl, tax);
+    char team[96];
+    int n = snprintf(team, sizeof team, " mt T=%d teams planes/axis0 %d/%d", T, tpl, tax);
+    if (d->mtf == 3)
+    {   /* the stage-wise form: axis 0's ns per stage (one fork-join each) */
+        int s;
+        n += snprintf(team + n, sizeof team - (size_t)n, " stages");
+        for (s = 0; s < d->ax0.nst && n < (int)sizeof team - 16; s++)
+            n += snprintf(team + n, sizeof team - (size_t)n, "%c%.0f", s ? '+' : ' ', _ilndr_prof.st[s]);
+    }
     _ilndr_prof_line(d, d->mts, d->mtf, team);
 }
 
@@ -304,6 +316,58 @@ static void _ilndr_axis0_leafoop_range(const vfft_ilndr_t *d, double *V, double 
 static void _ilndr_axis0_leafoop(const vfft_ilndr_t *d, double *V, double *z)
 {
     _ilndr_axis0_leafoop_range(d, V, z, 0, d->N[1]);
+}
+/* THE STAGE-WISE PASS (nf = 3, threaded r2c, 2026-10-19): the pay-once twin's axis 0 as the leaf-oop runs
+ * it, dealt by STAGE and by BUTTERFLY GROUP instead of by row block. Stage s couples the R[s] planes
+ * {b L[s] + d + j D} (j < R[s]) of block b and digit d: a GROUP, numbered g = b D + d. The row-block deal
+ * (nf = 1) cuts the virtual row into N2 blocks of hp3 columns, so a worker's pre-leaf stage reads hp3-column
+ * runs of EVERY plane at the plane stride -- the planes' output sitting MODIFIED in the other workers' L2s, a
+ * pattern the prefetchers do not cover (profiled 2026-10-19: ~8 us of r2c's 33-41 us axis 0 at 64^3 T=8
+ * against c2r's 20-24, whose column pass reads the caller's clean volume). Here a stage's N1/R groups x P
+ * lane-columns are ONE flat range cut evenly over the team, so a worker runs whole planes (R contiguous
+ * planes per group, long runs from each plane writer's cache) and only a boundary group is cut by lanes.
+ * The pre-leaf stages run in place on V one digit per kernel call (the kernel's digit walk entered at d:
+ * the base at plane b L + d, the table at digit d's R - 1 records -- the 2D tier's digit split,
+ * _il2d_dmt_tramp), the leaf V -> z with both permutations exactly as the leaf-oop writes them (planes
+ * g R + r -> nat0[g R] + r N1/R, row block b -> nat1[b]): the same values through the same kernels in the
+ * same lane order, so the output is bitwise the leaf-oop's and the serial walk's. One fork-join per stage.
+ * Not for a Rader stage (fns[0] NULL: the engine's scratch is the pool slot's, not a group's). */
+static void _ilndr_axis0_stage_range(const vfft_ilndr_t *d, double *V, double *z, int s, size_t lo, size_t hi)
+{
+    const vfft_ilcol_t *a = &d->ax0;
+    const size_t P = d->plane, hp3 = (size_t)d->hp3;
+    const int R = a->R[s], L = a->L[s], D = L / R, leaf = (s == a->nst - 1), G = d->N[0] / R;
+    const vfft_il2p_fn fn = a->f[s];
+    const double *tab = a->tf[s];
+    size_t u = lo;
+    while (u < hi)
+    {
+        const size_t g = u / P, l0 = u - g * P, l1 = (hi - g * P < P) ? hi - g * P : P;   /* group g, its lanes [l0, l1) */
+        const size_t dg = g % (size_t)D, row0 = (g / (size_t)D) * (size_t)L + dg;         /* block g / D, digit dg: the first plane */
+        if (!leaf)
+        {   /* in place on V: one digit of the stage's kernel walk */
+            double *p = V + 2 * (row0 * P + l0);
+            if (D == 1)
+                fn(p, NULL, p, NULL, NULL, NULL, P, 0, P, 0, l1 - l0);
+            else
+                fn(p, NULL, p, NULL, tab + dg * (size_t)(R - 1) * VFFT_IL_TWREC, NULL,
+                   (size_t)D * P, P, (size_t)D * P, 1, l1 - l0);
+        }
+        else
+        {   /* the leaf, V -> z with the leaf-oop's writes, per row block of the lane range */
+            const double *in = V + 2 * row0 * P;
+            double *out = z + 2 * (size_t)d->nat0[(int)g * R] * P;
+            size_t l = l0;
+            while (l < l1)
+            {
+                const size_t b = l / hp3, le = ((b + 1) * hp3 < l1) ? (b + 1) * hp3 : l1;
+                fn(in + 2 * l, NULL, out + 2 * ((size_t)d->nat1[b] * hp3 + (l - b * hp3)), NULL, NULL, NULL,
+                   P, 0, (size_t)G * P, 0, le - l);
+                l = le;
+            }
+        }
+        u = g * P + l1;
+    }
 }
 /* the child arm's axis 0 in place: the natural descriptor where one was built, else the plain
  * one-stage kernel (natural-native) */
@@ -614,11 +678,12 @@ static void _ilndr_execute_c2r(const vfft_ilndr_t *d, const double *z, double *y
 /* ═══ THE THREADED WALKS (phase 3): pure loop restrictions of the serial walks, so MT == ST bitwise.
  * r2c: workers take disjoint PLANE RANGES (the structure on their clone), then disjoint ROW-BLOCK
  * ranges of the virtual row for axis 0 (a block = hp3 columns, so the pay-once leaf's permuted writes
- * stay in rows nobody else writes); c2r: disjoint column ranges for axis 0's forward chain, then
+ * stay in rows nobody else writes) or, under the stage-wise form (nf = 3), one fork-join per stage over
+ * disjoint lane-column ranges of the stage's groups; c2r: disjoint column ranges for axis 0's forward chain, then
  * plane ranges; the c2r band arm: the prefix by column ranges, then disjoint BANDS (the suffix and
  * the band's planes on the worker's clone). Worker t > 0 runs the child's clone cw[t-1] and its
  * own strip scratch. ══════════════════════════════════════════════════════════════════════════ */
-typedef struct { const vfft_ilndr_t *d; const double *in; double *out; double *y; int mode, tid, nt, arm, nf; size_t lo, hi; } _ilndr_mt_arg;
+typedef struct { const vfft_ilndr_t *d; const double *in; double *out; double *y; int mode, tid, nt, arm, nf, st; size_t lo, hi; } _ilndr_mt_arg;
 static void _ilndr_mt_tramp(void *v)
 {
     _ilndr_mt_arg *a = (_ilndr_mt_arg *)v;
@@ -648,6 +713,9 @@ static void _ilndr_mt_tramp(void *v)
         else   /* the one-stage kernel in place by column range (the natural pass never threads) */
             _il2d_col_pass_range(a->out, a->out, d->N[0], d->plane, a->lo * hp3, a->hi * hp3,
                                  c->nst, c->R, c->L, c->f, c->tf, 0);
+        break;
+    case 8: /* r2c axis 0 by STAGE (nf = 3): stage st over the lane-columns [lo, hi) of its groups; in = V, out = z */
+        _ilndr_axis0_stage_range(d, (double *)a->in, a->out, a->st, a->lo, a->hi);
         break;
     case 2: /* c2r axis 0: the forward chain over the columns [lo, hi), z -> V (or in place) */
         if (a->nf == 2)
@@ -698,7 +766,25 @@ static void _ilndr_mt_phase(const vfft_ilndr_t *d, const double *in, double *out
     for (t = 0; t < T; t++)
     {
         a[t].d = d; a[t].in = in; a[t].out = out; a[t].y = y; a[t].mode = mode; a[t].tid = t; a[t].nt = T;
-        a[t].arm = arm; a[t].nf = nf;
+        a[t].arm = arm; a[t].nf = nf; a[t].st = 0;
+        a[t].lo = units * (size_t)t / (size_t)T;
+        a[t].hi = units * (size_t)(t + 1) / (size_t)T;
+    }
+    thread_pool_run(T, _ilndr_mt_tramp, a, sizeof a[0]);
+}
+/* one stage of the stage-wise pass (nf = 3) across T workers (the caller is tid 0): the stage's N1/R groups
+ * x P lane-columns as one flat range cut evenly, the team no wider than the range */
+static void _ilndr_mt_stage(const vfft_ilndr_t *d, double *V, double *z, int s, int T)
+{
+    _ilndr_mt_arg a[THREAD_POOL_MAX_DISPATCH];
+    const size_t units = (size_t)(d->N[0] / d->ax0.R[s]) * d->plane;
+    int t;
+    if ((size_t)T > units)
+        T = (int)units;
+    for (t = 0; t < T; t++)
+    {
+        a[t].d = d; a[t].in = V; a[t].out = z; a[t].y = NULL; a[t].mode = 8; a[t].tid = t; a[t].nt = T;
+        a[t].arm = 2; a[t].nf = 3; a[t].st = s;
         a[t].lo = units * (size_t)t / (size_t)T;
         a[t].hi = units * (size_t)(t + 1) / (size_t)T;
     }
@@ -735,11 +821,24 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
             return 0;   /* the natural pass through the cube scratch does not thread */
         if (arm == 2 && !d->V)
             return 0;
+        if (nf == 3 && (arm != 2 || d->ax0.nst < 2 || d->ax0.rd0))
+            return 0;   /* the stage-wise pass is the pay-once twin's, over a kernel chain of two stages or more */
         if (d->prof) t0 = vfft_now_ns();
         _ilndr_mt_phase(d, in, mid, NULL, 0, arm, nf, (size_t)d->N[0], Tp);
         if (d->prof) { t1 = vfft_now_ns(); _ilndr_prof.planes = t1 - t0; t0 = t1; }
-        _ilndr_mt_phase(d, mid, out, NULL, 1, arm, nf, N2, Tb);
-        if (d->prof) { _ilndr_prof.axis0 = vfft_now_ns() - t0; _ilndr_prof_print_mt(d, T, Tp, Tb); }
+        if (nf == 3)
+        {   /* one fork-join per stage, every stage over the whole team */
+            double ts = t0;
+            int s;
+            for (s = 0; s < d->ax0.nst; s++)
+            {
+                _ilndr_mt_stage(d, mid, out, s, T);
+                if (d->prof) { t1 = vfft_now_ns(); _ilndr_prof.st[s] = t1 - ts; ts = t1; }
+            }
+        }
+        else
+            _ilndr_mt_phase(d, mid, out, NULL, 1, arm, nf, N2, Tb);
+        if (d->prof) { _ilndr_prof.axis0 = vfft_now_ns() - t0; _ilndr_prof_print_mt(d, T, Tp, nf == 3 ? T : Tb); }
     }
     else
     {
@@ -809,7 +908,20 @@ static void _ilndr_group_phase(const vfft_ilndr_t *d, const double *in, double *
     _ilndr_mt_arg a;
     if (member >= Tt)
         return;
-    a.d = d; a.in = in; a.out = out; a.y = y; a.mode = mode; a.tid = member; a.nt = Tt; a.arm = arm; a.nf = nf;
+    a.d = d; a.in = in; a.out = out; a.y = y; a.mode = mode; a.tid = member; a.nt = Tt; a.arm = arm; a.nf = nf; a.st = 0;
+    a.lo = units * (size_t)member / (size_t)Tt;
+    a.hi = units * (size_t)(member + 1) / (size_t)Tt;
+    _ilndr_mt_tramp(&a);
+}
+/* this member's share of one stage of the stage-wise pass: the flat range cut as _ilndr_mt_stage cuts it */
+static void _ilndr_group_stage(const vfft_ilndr_t *d, double *V, double *z, int s, int G, int member)
+{
+    _ilndr_mt_arg a;
+    const size_t units = (size_t)(d->N[0] / d->ax0.R[s]) * d->plane;
+    const int Tt = (size_t)G > units ? (int)units : G;
+    if (member >= Tt)
+        return;
+    a.d = d; a.in = V; a.out = z; a.y = NULL; a.mode = 8; a.tid = member; a.nt = Tt; a.arm = 2; a.nf = 3; a.st = s;
     a.lo = units * (size_t)member / (size_t)Tt;
     a.hi = units * (size_t)(member + 1) / (size_t)Tt;
     _ilndr_mt_tramp(&a);
@@ -831,6 +943,8 @@ static int _ilndr_group_ok(const vfft_ilndr_t *d, int G)
     {
         if (d->mts == 1 && d->mtf == 1 && d->ax0n_on)
             return 0;
+        if (d->mtf == 3 && (d->mts != 2 || d->ax0.nst < 2))
+            return 0;   /* the stage-wise pass (its cooperative form below): the pay-once twin's, two stages or more */
         return d->mts != 2 || d->V != NULL;
     }
     if (d->ip)
@@ -851,7 +965,18 @@ static void _ilndr_execute_group(const vfft_ilndr_t *d, const double *in, double
         double *mid = arm == 2 ? d->V : out;
         _ilndr_group_phase(d, in, mid, NULL, 0, arm, nf, (size_t)d->N[0], Tp, member);
         _ilndr_group_sync(bar, &sense);
-        _ilndr_group_phase(d, mid, out, NULL, 1, arm, nf, N2, Tb, member);
+        if (nf == 3)
+        {   /* the stage-wise pass: a wait on the group's barrier between the stages, as the fork-joins above */
+            int s;
+            for (s = 0; s < d->ax0.nst; s++)
+            {
+                if (s)
+                    _ilndr_group_sync(bar, &sense);
+                _ilndr_group_stage(d, mid, out, s, G, member);
+            }
+        }
+        else
+            _ilndr_group_phase(d, mid, out, NULL, 1, arm, nf, N2, Tb, member);
     }
     else
     {
@@ -1199,7 +1324,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
     vw2_key_t pk;
     char forms0[64], forms1[64];
     int bwl, btf, bro, bcmt, bcmtt, bblu;
-    int payonce_ok, strips_ok, arm = 0, nf = 0, nsw = 0, wl = 0, cut = 0, raced = 0, pinned, ip2 = 0;
+    int payonce_ok, strips_ok, arm = 0, nf = 0, nsw = 0, wl = 0, cut = 0, raced = 0, pinned, ip2 = 0, nf3 = 0;
     if (!vfft_policy_ilndr_ok(cfg, K) && !vfft_policy_ilndr_ip_ok(cfg, K, nthr))
     {
         _vfft_warn("vfft_create: 3D INTERLEAVED real serves R2C and C2R one volume per plan (a batch of "
@@ -1395,6 +1520,11 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
     if (apin && apin[0]) arm = atoi(apin);
     if (fpin && fpin[0]) nf = atoi(fpin);
     if (bpin && bpin[0]) wl = atoi(bpin);
+    if (nf == 3)
+    {   /* VFFT_ILNDR_NF=3 names the THREADED stage-wise form (below); the serial walk has none: in place serves */
+        nf3 = 1;
+        nf = 1;
+    }
     if (!pinned && usable_w && !cfg->recalibrate)
     {
         arm = (c2r || ip2) ? vw2_ilnd_int_lookup(&W->vw2, &key0, tk_s) : vw2_ilnd_arm_lookup(&W->vw2, &key0);
@@ -1580,10 +1710,13 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
         snprintf(tkb_cmtp, sizeof tkb_cmtp, "%s%s", c2r ? "cmtp_c2r" : "cmtp", ip2 ? "_p" : "");
         snprintf(tkb_cmtt, sizeof tkb_cmtt, "%s%s", c2r ? "cmtt_c2r" : "cmtt", ip2 ? "_p" : "");
         const int mpinned = (mpin && mpin[0]) || (ppin && ppin[0]);
-        int mt_v = -1, mts_v = arm, mtf_v = nf, mtcut_v = cut, mtwl_v = wl, ptw_v = 0, mraced = 0;
+        int mt_v = -1, mts_v = arm, mtf_v = nf3 ? 3 : nf, mtcut_v = cut, mtwl_v = wl, ptw_v = 0, mraced = 0;
         /* the strips can thread wherever the serial strips could; the in-place forms thread except the
-         * natural pass; the pay-once needs its pieces; the band needs a legal cut */
+         * natural pass; the pay-once needs its pieces; the band needs a legal cut; the stage-wise pass
+         * (nf = 3, r2c) is the pay-once twin's over a plain kernel chain of two stages or more (at one
+         * stage it IS the leaf-oop deal) and no Rader stage (policy_il.h, the stage-wise note) */
         const int strips_mt = strips_ok && d->sscr != NULL;
+        const int stages_mt = !c2r && payonce_ok && d->ax0.nst >= 2 && !d->ax0.rd0;
         if (mpin && mpin[0])
         {
             mt_v = atoi(mpin) == 2 ? 2 : 0;
@@ -1600,7 +1733,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
                 {
                     mt_v = bm;
                     if (bs == 1 || bs == 2 || (c2r && bs == 3 && !d->ax0bwd)) mts_v = bs;   /* no band on a backward axis 0 */
-                    if (bf == 1 || bf == 2) mtf_v = bf;
+                    if (bf == 1 || bf == 2 || (bf == 3 && !c2r)) mtf_v = bf;   /* 3: the r2c stage-wise pass */
                     if (mts_v == 3)
                     {
                         int s2;
@@ -1617,6 +1750,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
         if (mt_v == 2)
         {   /* the banked / pinned threaded verdict: its clones, else serial */
             const int can = (mts_v == 2 && !payonce_ok) || (mtf_v == 2 && !strips_mt) ||
+                            (mtf_v == 3 && !(stages_mt && mts_v == 2)) ||
                             (mts_v == 1 && mtf_v == 1 && !c2r && d->ax0n_on) ? 0 : 1;
             if (!can || !_ilndr_build_clones(d, cfg, nthr))
             {
@@ -1692,6 +1826,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
                             if (strips_mt) _ILNDR_MTARM(2, st, 2, 0, 0, pt, st == 1 ? "plane/child/strips" : "plane/payonce/strips");
                             if (!(st == 1 && !c2r && d->ax0n_on))
                                 _ILNDR_MTARM(2, st, 1, 0, 0, pt, st == 1 ? "plane/child" : "plane/payonce");
+                            if (st == 2 && stages_mt) _ILNDR_MTARM(2, 2, 3, 0, 0, pt, "plane/payonce/stages");
                         }
                         if (c2r && !ip && !d->ax0bwd)   /* a Bluestein / turned axis 0 has no stages to band (phase 4a) */
                         {
@@ -1770,9 +1905,10 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
             free(d->neg1); d->neg1 = NULL;
         }
         if (log)
-            fprintf(stderr, "[ilndr] %dx%dx%d %s T=%d: %s%s\n", N1, N2, N3, c2r ? "c2r" : "r2c", nthr,
+            fprintf(stderr, "[ilndr] %dx%dx%d %s T=%d: %s%s%s\n", N1, N2, N3, c2r ? "c2r" : "r2c", nthr,
                     d->mt == 2 ? "plane arm" : "serial",
-                    d->mt == 2 ? (d->mts == 3 ? "/band" : d->mts == 2 ? "/payonce" : "/child") : "");
+                    d->mt == 2 ? (d->mts == 3 ? "/band" : d->mts == 2 ? "/payonce" : "/child") : "",
+                    d->mt == 2 ? (d->mtf == 3 ? "/stages" : d->mtf == 2 ? "/strips" : "") : "");
     }
     /* THE PROFILE HOOK, bound AFTER both races (2026-10-19): the hook prints a line per execute from
      * inside the walks, so a race run on a profiled plan timed the print inside every sample -- the

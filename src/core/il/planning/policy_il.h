@@ -899,6 +899,22 @@ static inline int vfft_policy_ilnd_mt_serial_arm(long bytes)
  * faster. At ONE thread both forms stay raced (nf=): there the cycle form
  * keeps the cubes that fit L3. */
 
+/* -- rank 3, REAL, threaded: the STAGE-WISE axis 0 (fftnd_real_il.h, nf = 3,
+ * cmtf=3, 2026-10-19) -----------------------------------------------------
+ * A note, not a helper: the admission is applied where the tier's threaded
+ * race builds its arms (`stages_mt`). The r2c pay-once twin's axis 0 dealt
+ * by STAGE and by BUTTERFLY GROUP (one fork-join per stage, every worker
+ * whole planes) instead of by row block, raced beside the leaf-oop and strips
+ * forms wherever the pay-once pieces exist over a plain kernel chain of TWO
+ * STAGES OR MORE (at one stage the deal is the leaf-oop's own) and no Rader
+ * stage (the engine's scratch is the pool slot's, not a group's). Never c2r:
+ * its axis 0 reads the caller's clean volume, and the penalty the form
+ * removes is r2c's alone -- its axis 0 reads the planes' output while it sits
+ * modified in the other workers' L2s, in a column-strided pattern the
+ * prefetchers do not cover (measured 2026-10-19 at 64^3 T=8: ~8 us of a
+ * 33-41 us axis 0 against c2r's 20-24). The same pass runs cooperatively
+ * inside the volume queue's groups arm (_ilndr_execute_group). */
+
 /* -- rank 1, the FOUR-STEP: its inner 2D plan is SCRAMBLED, whatever the
  * request asked ----------------------------------------------------------
  * The K=1 four-step (il/rank1/k1_fourstep.h) serves N = N1 x N2 through an

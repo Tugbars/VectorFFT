@@ -160,6 +160,22 @@ writes (and under the child arm a strip never splits a plane row).
 | r2c | workers take disjoint PLANE RANGES and run the per-plane structure (worker t > 0 on its CLONE) | workers take disjoint COLUMN STRIPS of the virtual plane and run the whole axis-0 chain in place (barrier-free: a column pass never mixes columns) |
 | c2r | the strips: axis 0 backward from the caller's volume into the scratch volume (or in place under `destroy_input`) | the plane ranges: the structure's backward from each scratch plane into the output |
 
+THE STAGE-WISE AXIS 0 (r2c, the pay-once twin, `cmtf=3`, 2026-10-19): phase B
+dealt by STAGE and by BUTTERFLY GROUP instead of by row block — one fork-join
+per stage of the axis-0 chain, each worker an even cut of the stage's N1/R
+groups × P lane-columns, so it runs whole planes (R contiguous planes per
+group, long runs from each plane writer's cache) where the row-block deal read
+hp3-column runs of every plane at the plane stride, the planes' output sitting
+MODIFIED in the other workers' L2s — a pattern the prefetchers do not cover
+(profiled 2026-10-19 at 64³ T=8: ~8 µs of r2c's 33-41 µs axis 0 against c2r's
+20-24). The pre-leaf stages run in place on the private volume one digit per
+kernel call (the 2D tier's digit split), the leaf writes `z` exactly as the
+leaf-oop form does: bitwise the serial walk. Raced beside the leaf-oop and
+strips forms wherever the pay-once pieces exist over a plain kernel chain of
+two stages or more and no Rader stage; its cooperative twin runs inside the
+volume queue's groups arm. `VFFT_ILNDR_NF=3` pins it (the serial walk has no
+such form: at one thread the pin runs nf=1).
+
 Arms raced at the plan's T, whole transform, on scratch, TOGETHER WITH THE
 STRUCTURE (the structure that wins at one thread is not the one that wins
 threaded): plane × {child, flat} × {full team, half team} plus serial on a
@@ -219,10 +235,10 @@ own token set on the one row):
 | tokens | owner | meaning |
 |---|---|---|
 | `chain= blu= forms=` | axis 0 | the column builder's spelling (the chain, the N-arm, the kernel forms), as the c2c rank-3 row spells them |
-| `nf= nsw=` / `nf_c2r= nsw_c2r=` | axis 0's execution form, per direction | 1 in place (the natural pass or the one-stage kernel; the pay-once twin: stages in place, the leaf out of place), 2 strips, with the strip width — the c2c rank-3 row's own names, the same meaning |
+| `nf= nsw=` / `nf_c2r= nsw_c2r=` | axis 0's execution form, per direction | 1 in place (the natural pass or the one-stage kernel; the pay-once twin: stages in place, the leaf out of place), 2 strips, with the strip width — the c2c rank-3 row's own names, the same meaning; threaded, `cmtf=3` (r2c only): the stage-wise pass, §7 |
 | `chain1=` | the pay-once arm's axis 1 | the plain per-plane chain, raced at the plane's size (cheap; the one race the flat arm owns) |
 | `s=` / `s_c2r=` | the structure race, per direction | 1 child, 2 pay-once, 3 band (c2r only; `wl_c2r=` its width in planes); the flat arm carries no other verdict: the child's `plane_*` recipe is its row engine's |
-| `cmt= cmts= cmtp=` (on the `nthreads=T` row) | the MT race | the c2c tier's spelling |
+| `cmt= cmts= cmtf= cmtp=` (on the `nthreads=T` row) | the MT race | the c2c tier's spelling (`cmtf=3` the stage-wise pass, r2c) |
 | `plane_*` | the child | the 2D real child's recipe in role (the child store; `il/wisdom/wisdom2_child.h`) |
 
 TOKEN SPELLING DECIDED 2026-10-07 (the table above): the 2D real row's
