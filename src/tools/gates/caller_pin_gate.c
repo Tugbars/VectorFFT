@@ -1,5 +1,6 @@
-/* caller_pin_gate.c — A THREADED EXECUTE PINS ITS CALLER TO THE POOL'S RESERVED CORE AND PUTS IT BACK
- * (src/core/vfft_execute.h, _vfft_exec6; the pool's layout: src/core/common/support/threads.h).
+/* caller_pin_gate.c — AN EXECUTE THAT FORKS PINS ITS CALLER TO THE POOL'S RESERVED CORE AND PUTS IT BACK;
+ * ONE THAT NEVER FORKS PAYS NOTHING (src/core/common/support/threads.h, thread_pool_caller_arm: the public
+ * entries arm the calling thread, the call's first fork-join pins it, the entry puts it back).
  *
  * The pool pins its workers, one per P-core, and leaves one P-core to its caller; the calling thread
  * runs a 1/T share of every phase, so a threaded execute ends at the caller's pace: on an E-core 2.2x
@@ -22,7 +23,11 @@
  *      after the execute and the output is the reference;
  *   S  the serial plan: its execute leaves the mask untouched, on the E-core and unpinned;
  *   W  two threads of the gate executing the two T=8 plans alternately, then at the same time: both
- *      outputs are the reference, both masks as they were.
+ *      outputs are the reference, both masks as they were;
+ *   M  plans created with T=8 whose raced verdict is serial (N = 64, a pair; N = 1024, ZTURN-T whose
+ *      threaded arm loses): no threaded pass is counted, and a call costs within 20 ns of the T=1
+ *      plan's, timed in alternating batches with the thread on the reserved core (pinning at the door
+ *      cost such a call ~115 ns, 2026-10-20).
  * The pin is built for Windows: elsewhere the gate passes with a note. Usage: caller_pin_gate --wisdir <cold scratch dir> */
 #include <stdio.h>
 #include <stdlib.h>
@@ -222,6 +227,50 @@ static void time_cell(cell_t *c, double *med, double *mn)
     *med = t[NTIME / 2];
     *mn = t[0];
 }
+/* M's plans: a small cell at T threads, and the per-call time of two plans in alternating batches */
+typedef struct { vfft_plan p; double *in, *out; int n; } small_t;
+static int make_small(small_t *s, int n, int T)
+{
+    vfft_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.rank = 1;
+    cfg.n[0] = n;
+    cfg.nthreads = T;
+    cfg.wisdom_dir = g_W;
+    s->n = n;
+    s->in = (double *)vfft_malloc(2 * (size_t)n * sizeof(double));
+    s->out = (double *)vfft_malloc(2 * (size_t)n * sizeof(double));
+    fill(s->in, 2 * (size_t)n, 777u);
+    s->p = vfft_create(&cfg);
+    return s->p != NULL;
+}
+static void free_small(small_t *s)
+{
+    if (s->p) vfft_destroy(s->p);
+    vfft_free(s->in);
+    vfft_free(s->out);
+}
+static double batch_ns(small_t *s, int calls)
+{
+    const double t0 = now_us();
+    int i;
+    for (i = 0; i < calls; i++) vfft_execute(s->p, VFFT_FORWARD, s->in, s->out);
+    return (now_us() - t0) * 1000.0 / calls;
+}
+static void time_pair(small_t *a, small_t *b, double *na, double *nb)
+{
+    enum { NS = 21 };
+    double ta[NS], tb[NS];
+    const int calls = a->n <= 64 ? 200000 : 20000;
+    int i;
+    batch_ns(a, calls); batch_ns(b, calls);
+    for (i = 0; i < NS; i++) { ta[i] = batch_ns(a, calls); tb[i] = batch_ns(b, calls); }
+    qsort(ta, NS, sizeof ta[0], cmpd);
+    qsort(tb, NS, sizeof tb[0], cmpd);
+    *na = ta[NS / 2];
+    *nb = tb[NS / 2];
+}
 static double max_err(const double *a, const double *b, size_t n, double *mag)
 {
     size_t i;
@@ -284,7 +333,7 @@ int main(int argc, char **argv)
     setvbuf(stdout, NULL, _IONBF, 0);
     topo();
     mref = my_mask();
-    printf("CALLER PIN GATE: a threaded execute pins its caller to the pool's reserved core; 1D C2C %d, store %s\n", CELL_N, g_W);
+    printf("CALLER PIN GATE: an execute that forks pins its caller to the pool's reserved core; 1D C2C %d, store %s\n", CELL_N, g_W);
     printf("  topology: %d logical CPUs; P:", g_ncpu);
     for (i = 0; i < g_ncpu; i++) if (g_pcore[i]) printf(" %d", i);
     printf("; E:");
@@ -460,6 +509,35 @@ int main(int argc, char **argv)
         CHECK(o.finished && err <= 1e-12 * mag, "W  at the same time: plan B against the reference, max error %.1e of %.1e", err, mag);
         CHECK(m1 == m0 && o.mask1 == o.mask0, "W  both masks as they were: this thread 0x%llx -> 0x%llx, the other 0x%llx -> 0x%llx",
               (unsigned long long)m0, (unsigned long long)m1, (unsigned long long)o.mask0, (unsigned long long)o.mask1);
+    }
+
+    /* M: plans created with T=8 whose raced verdict is serial never fork, so a call costs what the T=1
+     * plan's does: the entry arms the pin, and only a fork-join places it */
+    {
+        static const int MN[2] = { 64, 1024 };
+        int k;
+        pin_self(res);
+        for (k = 0; k < 2; k++)
+        {
+            small_t s1, s8;
+            double d1, d8;
+            long z0;
+            memset(&s1, 0, sizeof s1);
+            memset(&s8, 0, sizeof s8);
+            if (!make_small(&s1, MN[k], 1) || !make_small(&s8, MN[k], CELL_T))
+            {
+                CHECK(0, "M  N=%d: a plan was refused", MN[k]);
+                free_small(&s1); free_small(&s8);
+                continue;
+            }
+            z0 = vfft_ztt_mt_passes();
+            time_pair(&s1, &s8, &d1, &d8);
+            CHECK(vfft_ztt_mt_passes() == z0 && d8 <= d1 + 20.0,
+                  "M  N=%d created at T=8, route %s, served serially (%ld threaded passes): %.1f ns a call against %.1f at T=1 "
+                  "(limit +20 ns)", MN[k], vfft_plan_route(s8.p), vfft_ztt_mt_passes() - z0, d8, d1);
+            free_small(&s1); free_small(&s8);
+        }
+        SetThreadAffinityMask(GetCurrentThread(), mref);
     }
 
     vfft_free(ref);

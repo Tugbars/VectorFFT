@@ -175,6 +175,19 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
     return 1;
 }
 
+/* THE LEAN ENTRY OF A PLAN CREATED WITH MORE THAN ONE THREAD: the caller's pin armed around the
+ * bound executor (k1_go_mt), so the call's first fork-join places the calling thread and the
+ * thread is put back when the call returns (threads.h, thread_pool_caller_arm). An executor whose
+ * verdict is serial never forks: the call costs what the one-thread plan's does. */
+static int _vfft_k1_go_mt(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    const int armed = thread_pool_caller_arm();
+    const int r = h->k1_go_mt[dir](h, dir, zin, zout);
+    if (armed)
+        thread_pool_caller_release();
+    return r;
+}
+
 vfft_plan vfft_create(const vfft_config_t *config)
 {
     vfft_cfg_t c;
@@ -191,9 +204,13 @@ vfft_plan vfft_create(const vfft_config_t *config)
     if (_vfft_api_translate(config, &c))
     {
         h = _vfft_create_cfg(&c);
-        if (h && h->nthreads > 1)   /* no lean entry: a threaded plan's execute pins the calling thread
-                                     * around the door and puts it back (vfft_execute.h, _vfft_exec6) */
-            h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = NULL;
+        if (h && h->nthreads > 1)   /* the lean entry arms the caller's pin around the executor */
+            for (int d = VFFT_FORWARD; d <= VFFT_BACKWARD; d++)
+                if (h->k1_go[d])
+                {
+                    h->k1_go_mt[d] = h->k1_go[d];
+                    h->k1_go[d] = _vfft_k1_go_mt;
+                }
     }
     _vfft_create_unlock();
     if (h)
@@ -205,17 +222,20 @@ vfft_plan vfft_create(const vfft_config_t *config)
 /* ── execute: the lean door for INTERLEAVED and real-to-real plans; the split door ── */
 static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_dir_t dir, double *in, double *out)
 {
+    int armed;
     if (h && h->layout == VFI_LAYOUT_SPLIT && !_VFFT_IS_TRIG(h->transform))
     {
         _vfft_warn("vfft_execute: a SPLIT plan runs through vfft_execute_split(); nothing executed");
         return;
     }
+    armed = h && h->nthreads > 1 && thread_pool_caller_arm();   /* the caller's pin, at the first fork-join */
     _vfft_exec6(h, dir, in, NULL, out, NULL);
+    if (armed)
+        thread_pool_caller_release();
 }
 /* THE BOUND FAST PATH (the lean door, 2026-10-11): a plan with a never-declining executor per
  * direction is entered by a jump after four compares; everything else takes the full door. A
- * threaded plan carries no entry (vfft_create): it takes the full door, where the calling thread
- * is pinned to the pool's reserved core for the execute (vfft_execute.h, _vfft_exec6). */
+ * plan created with more than one thread is entered through _vfft_k1_go_mt (vfft_create). */
 void vfft_execute(vfft_plan h, vfft_dir_t dir, const void *in, void *out)
 {
     double *s = (double *)in, *d = (double *)out;
@@ -237,7 +257,12 @@ void vfft_execute_split(vfft_plan h, vfft_dir_t dir,
                    _VFFT_IS_TRIG(h->transform) ? "a real-to-real" : "an INTERLEAVED");
         return;
     }
-    _vfft_exec6(h, dir, (double *)in_re, (double *)in_im, out_re, out_im);
+    {
+        const int armed = h && h->nthreads > 1 && thread_pool_caller_arm();
+        _vfft_exec6(h, dir, (double *)in_re, (double *)in_im, out_re, out_im);
+        if (armed)
+            thread_pool_caller_release();
+    }
 }
 
 /* ── the plan's facts ── */

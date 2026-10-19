@@ -183,9 +183,10 @@ extern "C"
   /**
    * @brief Leave the scope: the guard ends, the thread's priority and
    *        affinity return to what they were, the lock is released. Nothing
-   *        of the scope's stays: the pool never pins its caller. (A threaded
-   *        plan's vfft_execute() pins the calling thread to the core the pool
-   *        left to it for that call and puts the thread's affinity back.)
+   *        of the scope's stays: the pool never pins its caller. (A
+   *        vfft_execute() call that runs on the plan's workers pins the
+   *        calling thread to the core the pool left to it, from its first
+   *        fork-join to the end of the call, and puts its affinity back.)
    */
   void vfft_measure_end(void);
 

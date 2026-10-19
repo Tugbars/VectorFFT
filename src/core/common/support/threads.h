@@ -136,6 +136,16 @@ static __declspec(thread) int _thread_pool_self_slot = 0;
 static __thread int _thread_pool_serial_depth = 0;
 static __thread int _thread_pool_self_slot = 0;
 #endif
+/* the calling thread's pin for one execute (thread_pool_caller_arm, below): 0 = not inside an execute of a
+ * plan created with more than one thread, 1 = inside one and not yet placed, 2 = its first fork-join placed
+ * it; and the affinity mask to put back (0 = the thread was not moved) */
+#if defined(_MSC_VER)
+static __declspec(thread) int _thread_pool_pin_state = 0;
+static __declspec(thread) unsigned long long _thread_pool_pin_old = 0;
+#else
+static __thread int _thread_pool_pin_state = 0;
+static __thread unsigned long long _thread_pool_pin_old = 0;
+#endif
 /* the calling thread's slot in a fork-join: 0 = the caller (and any thread that is not a
  * pool worker), i + 1 = pool worker i. What an engine with per-thread scratch indexes by,
  * so no walker carries a worker index (il_rader_stage.h's column stage). */
@@ -355,6 +365,55 @@ static int _thread_pool_caller_slot(int stride) {
  * once the pool exists (race_scope.h), so the races never share a core with
  * a worker. */
 static inline int thread_pool_caller_cpu(void) { return _thread_pool_reserved_cpu; }
+
+/* THE CALLER'S PIN. The pool pins its workers, one per P-core, and leaves one P-core to its caller,
+ * but the calling thread is the application's and runs where the OS puts it, while it runs a full
+ * 1/T share of every phase (slot 0 of thread_pool_run): every fork-join ends at its pace (64x64x64
+ * c2r T=8: 47 us pinned, 65 on a worker's hyperthread sibling, 111 on an E-core, 240-590 for a bursty
+ * caller; measured 2026-10-19, caller_probe). So the front door's execute of a plan created with more
+ * than one thread ARMS its calling thread (thread_pool_caller_arm), the first fork-join of that execute
+ * pins the thread to that core (_thread_pool_caller_place, from thread_pool_run), and the door puts the
+ * thread's affinity mask back when the execute returns (thread_pool_caller_release): ~1 us the pair, the
+ * move immediate, once per execute and only in an execute that forks. A plan whose raced verdict at its
+ * thread count is serial never forks and pays nothing (2 ns at N = 2, as at one thread; pinning at the
+ * door cost it ~115 ns a call, measured 2026-10-20). A thread whose own mask does not hold that core (an
+ * application's narrower pin, a pool worker) is left where it is; one already alone on it (the race
+ * scope, a bench) is not moved. No lock is taken here: the fork-join takes the pool's own after it, so a
+ * second thread executing a threaded plan waits there, placed on the same core for its own execute.
+ * Windows; elsewhere the caller runs where it is (sched_setaffinity is the later twin). */
+static inline int thread_pool_caller_arm(void)
+{   /* 1 = this call armed the thread and must release it; 0 = an outer execute holds it */
+    if (_thread_pool_pin_state)
+        return 0;
+    _thread_pool_pin_state = 1;
+    return 1;
+}
+static inline void _thread_pool_caller_place(void)
+{
+    _thread_pool_pin_state = 2;
+#ifdef _WIN32
+    {
+        const int cpu = _thread_pool_reserved_cpu;
+        GROUP_AFFINITY ga;
+        if (cpu < 0 || cpu >= (int)(8 * sizeof(DWORD_PTR)))
+            return;   /* no worker runs: no core is reserved */
+        if (!GetThreadGroupAffinity(GetCurrentThread(), &ga))
+            return;
+        if (!((ga.Mask >> cpu) & 1) || ga.Mask == ((KAFFINITY)1 << cpu))
+            return;   /* the core is not this thread's to take, or the thread is there alone already */
+        _thread_pool_pin_old = (unsigned long long)SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << cpu);
+    }
+#endif
+}
+static inline void thread_pool_caller_release(void)
+{
+#ifdef _WIN32
+    if (_thread_pool_pin_old)
+        SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)_thread_pool_pin_old);
+#endif
+    _thread_pool_pin_old = 0;
+    _thread_pool_pin_state = 0;
+}
 static int _thread_pool_pin_stride(void) {
     const char *e = getenv("VFFT_PIN_STRIDE");
     int s;
@@ -558,6 +617,8 @@ static inline void thread_pool_run(int T, void (*fn)(void *),
         fn(base);
         return;
     }
+    if (_thread_pool_pin_state == 1)
+        _thread_pool_caller_place();   /* the first fork-join of an armed execute: the caller's pin */
     _thread_pool_lock();
     for (int t = 1; t < T && t <= _thread_pool_nworkers; t++) {
         _thread_pool_dispatch(&_thread_pool_slots[nd], fn, base + (size_t)t * elem);

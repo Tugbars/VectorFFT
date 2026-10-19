@@ -344,75 +344,15 @@ static __attribute__((noinline)) void _vfft_execute_try(vfft_plan h, vfft_dir_t 
 static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
                                       double *sre, double *sim, double *dre, double *dim);
 
-/* THE CALLER'S CORE. The pool pins its workers, one per P-core, and leaves
- * one P-core to its caller (threads.h, thread_pool_caller_cpu), but the
- * calling thread runs where the OS puts it, and it runs a full 1/T share of
- * every phase (slot 0 of thread_pool_run), so every fork-join ends at the
- * caller's pace: on a worker's hyperthread sibling 1.3x the pinned time, on
- * an E-core 2.2x, and a bursty caller drifts between executes (64x64x64 c2r
- * T=8: 47 us pinned, 65, 111, 240-590; 1D c2c 262144 T=8: 99 / 150 / 208 us;
- * measured 2026-10-19, caller_probe). So a threaded plan's execute pins the
- * calling thread to that core for its duration and puts its affinity mask
- * back after -- ~1 us the pair, the move immediate -- on every path through
- * the door, a refused call included. A thread whose own mask does not hold
- * that core (an application's narrower pin, a pool worker) is left where it
- * is; one already pinned to it alone (the race scope, a bench) is not moved.
- * No lock is taken here: the fork-joins take the pool's own (thread_pool_run)
- * as before, so a second thread executing a threaded plan waits there, pinned
- * to the same core for its own execute's duration. Windows; elsewhere the
- * caller runs where it is (sched_setaffinity is the later twin). */
-typedef struct
-{
-#ifdef _WIN32
-    DWORD_PTR old;   /* the mask to put back; 0 = the thread was not moved */
-#else
-    int old;
-#endif
-} _vfft_caller_pin_t;
-static inline void _vfft_caller_pin(_vfft_caller_pin_t *p)
-{
-#ifdef _WIN32
-    const int cpu = thread_pool_caller_cpu();
-    GROUP_AFFINITY ga;
-    p->old = 0;
-    if (cpu < 0 || cpu >= (int)(8 * sizeof(DWORD_PTR)))
-        return;   /* no worker runs: no core is reserved */
-    if (!GetThreadGroupAffinity(GetCurrentThread(), &ga))
-        return;
-    if (!((ga.Mask >> cpu) & 1) || ga.Mask == ((KAFFINITY)1 << cpu))
-        return;   /* the core is not this thread's to take, or the thread is there alone already */
-    p->old = SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << cpu);
-#else
-    p->old = 0;   /* not built: the caller runs where it is */
-#endif
-}
-static inline void _vfft_caller_unpin(const _vfft_caller_pin_t *p)
-{
-#ifdef _WIN32
-    if (p->old)
-        SetThreadAffinityMask(GetCurrentThread(), p->old);
-#else
-    (void)p;
-#endif
-}
-
 /* THE FP MODE (owner, 2026-10-13): the kernels run FTZ|DAZ; the create set
  * it on the calling thread and left it so, the workers keep it for life, and
- * nothing about MXCSR happens here -- execute is the door and no more. A
- * threaded plan's execute is wrapped by the caller's pin (above): such a plan
- * has no lean entry (vfft_create), so every call of it comes through here. */
+ * nothing about MXCSR happens here -- execute is the door and no more. The
+ * caller's pin is the pool's, at the first fork-join of an execute the public
+ * entries arm (threads.h, thread_pool_caller_arm; vfft_api.h). */
 static void _vfft_exec6(vfft_plan h, vfft_dir_t dir,
                         double *sre, double *sim, double *dre, double *dim)
 {
-    _vfft_caller_pin_t pin;
-    if (!h || h->nthreads <= 1)
-    {
-        _vfft_execute_door(h, dir, sre, sim, dre, dim);
-        return;
-    }
-    _vfft_caller_pin(&pin);
     _vfft_execute_door(h, dir, sre, sim, dre, dim);
-    _vfft_caller_unpin(&pin);
 }
 static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
                                       double *sre, double *sim, double *dre, double *dim)
@@ -433,9 +373,7 @@ static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
      * compare goes to the full door, which says why. An OUT-OF-PLACE real
      * plan called with one buffer (dre == sre) is the full door's: it is
      * served from a copy of the input (V11, below); a c2c plan's executors
-     * take an aliased call as they are. A THREADED plan carries no lean
-     * entry (vfft_create): it comes through _vfft_exec6, which pins its
-     * caller around this door, and takes the k1_exec path below. */
+     * take an aliased call as they are. */
     if (h && (unsigned)dir <= (unsigned)VFFT_BACKWARD && sre && dre && !sim && !dim &&
         (h->placement == VFFT_INPLACE ? dre == sre : (dre != sre || h->transform == VFFT_C2C)))
     {

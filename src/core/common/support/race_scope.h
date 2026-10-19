@@ -50,9 +50,9 @@
  *
  * WHAT IS RESTORED. The thread's affinity and priority return to what they
  * were: the pool never pins its caller, so a create leaves the thread as it
- * found it. (A threaded plan's EXECUTE pins the calling thread to the core the
- * pool left to it for the execute's duration and puts it back: vfft_execute.h,
- * _vfft_exec6.)
+ * found it. (An EXECUTE that forks pins the calling thread to the core the pool
+ * left to it, from its first fork-join to the end of the call, and puts it back:
+ * threads.h, thread_pool_caller_arm.)
  *
  * NOT COVERED: the application's own threads on the race core, and other
  * software's load. Those are the user's to keep quiet.

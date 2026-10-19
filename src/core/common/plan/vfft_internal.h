@@ -216,8 +216,11 @@ struct vfft_plan_s
      * k1_exec itself, or to its per-direction form (mono: the kernel call
      * alone, no direction branch). vfft_execute jumps into it after the fast
      * path's compares and keeps no frame of its own. NULL = the full door
-     * (the 2D real forms, which can decline). */
+     * (the 2D real forms, which can decline). A plan created with more than
+     * one thread enters through _vfft_k1_go_mt, which arms the caller's pin
+     * around the executor kept in k1_go_mt (vfft_api.h, threads.h). */
     int (*k1_go[2])(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);
+    int (*k1_go_mt[2])(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);
     /* TRANSFORM-CONTIGUOUS batch (config.batch_geom, 1D C2C interleaved,
      * K>1): this handle is a thin WRAPPER — `tcb` is a fully-built K=1
      * handle and execute simply runs it K times at 2*N-double strides.

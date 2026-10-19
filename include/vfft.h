@@ -201,9 +201,11 @@ extern "C"
    * 3D real batch: N1 N2 rows of (N3 + 2) K doubles), the reals first and the
    * bins over them, and vfft_info() gives its size. A SPLIT plan is refused here.
    * Safe to call concurrently on different plans; a plan runs one execute at
-   * a time. A threaded plan's execute pins the calling thread to the core the
-   * pool left to it for the call and puts the thread's affinity back; a thread
-   * whose affinity does not hold that core stays where it is.
+   * a time. A call that runs on the plan's worker threads pins the calling
+   * thread to the core the pool left to it, from its first fork-join to the
+   * end of the call, and puts the thread's affinity back; a call the plan runs
+   * serially leaves the thread alone, and a thread whose affinity does not hold
+   * that core stays where it is.
    */
   void vfft_execute(vfft_plan p, vfft_dir_t dir, const void *in, void *out);
 

@@ -281,9 +281,10 @@ static void _vfft_pool_arm(int n)
 {
     /* the workers a create's races or a plan need, alive and counted as
      * needed (threads.h). The pool never pins the calling thread: a create
-     * gives it back as it found it (race_scope.h), and a threaded plan's
-     * execute pins it to the core the pool left to it for the execute's
-     * duration and puts it back (vfft_execute.h, _vfft_exec6). A live plan's
+     * gives it back as it found it (race_scope.h), and an execute that forks
+     * pins it to the core the pool left to it, from its first fork-join to
+     * the end of the call, and puts it back (threads.h,
+     * thread_pool_caller_arm). A live plan's
      * workers are kept by thread_pool_plan_retain at the front door. */
     if (n > 1)
     {
