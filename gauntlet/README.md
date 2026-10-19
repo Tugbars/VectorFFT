@@ -127,9 +127,11 @@ numbers and correctness. With both, the report says which library answered.
 - `build.py` -- the gcc build harness (`src/tools/gates/run_gates.py` builds the gates with it too)
 - `results/<run>/` -- cells.txt, store/, calibrate.log, gauntlet.csv, control.csv, verify.csv, gflops.csv, run.log, report.md
 - `kfr_arm.c/.h`, `ref_fftw.h`, `bench_scope.h` -- the KFR arm, the run-time FFTW binding, the gauntlet's switches (`VFFT_BENCH_GUARD`, `VFFT_PCORE_MASK`) onto the library's measurement scope (`vfft.h`: the pin, the SMT-sibling guard, the priority, the machine's measurement lock)
-- five checks that are not benches (kept because the gauntlet cannot reach what they cover): `rn1_gate.c` and `r1c_gate.c`
-  (the real mono and the real flat leaf at column counts the door never runs), `zttr_mt_check.c` and `zrf_mt_check.c`
-  (threaded output bitwise against the serial plan), `real_door_check.c` (the real door in place, which the gauntlet refuses)
+
+The library's gates (checks that are not benches: kernels against a naive DFT, threaded
+output bitwise against the serial plan, a door's pick against its incumbent) live in
+`src/tools/gates/` and run through `python src/tools/gates/run_gates.py --only <gate>`,
+which builds them with this folder's `build.py`.
 
 Only the runs a document under `docs/performance/` or `docs/roadmap/` names stay under
 `results/`; a run that fed no entry there is deleted once its number is recorded.

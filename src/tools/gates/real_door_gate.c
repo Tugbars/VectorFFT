@@ -1,4 +1,4 @@
-/* real_door_check.c -- the real door with ZTT-r, the real mono, the real
+/* real_door_gate.c -- the real door with ZTT-r, the real mono, the real
  * flat DIT and the real Bluestein wired in: at each N, both directions and
  * both placements, the door's pick (raced on a scratch store under
  * recalibrate=1, then REPLAYED from its bank) against the incumbent pinned
@@ -8,8 +8,8 @@
  * 1e-12), the roundtrip c2r(r2c(x)) = N x checked, the replay checked, then
  * the pick raced against the incumbent (the library body, 9 rounds, paced,
  * alternated).
- * Build: python gauntlet/build.py --compile --vfft --src gauntlet/real_door_check.c
- * Run:   real_door_check <scratch wisdom dir> [N | tiny | big | odd | prime]   (the store is WRITTEN) */
+ * Build: python gauntlet/build.py --compile --vfft --src src/tools/gates/real_door_gate.c
+ * Run:   real_door_gate <scratch wisdom dir> [N | tiny | big | odd | prime]   (the store is WRITTEN) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,7 +60,7 @@ int main(int argc, char **argv)
     SetThreadAffinityMask(GetCurrentThread(), 0x4);
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
 #endif
-    if (argc < 2) { fprintf(stderr, "usage: real_door_check <scratch wisdom dir> [N]\n"); return 2; }
+    if (argc < 2) { fprintf(stderr, "usage: real_door_gate <scratch wisdom dir> [N]\n"); return 2; }
     const char *W = (argv[1]);
     const char *sel = argc > 2 ? argv[2] : "";
     const int only = atoi(sel);

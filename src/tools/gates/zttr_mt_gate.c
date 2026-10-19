@@ -1,12 +1,12 @@
-/* zttr_mt_check.c -- ZTT-r's threaded arms against its serial run, through
+/* zttr_mt_gate.c -- ZTT-r's threaded arms against its serial run, through
  * the door: per N, direction and placement, the chain pinned by
  * VFFT_ZTTR=chain/tile/stk at one thread (the reference) and at T threads
  * with /1 (BLOCKS) and /2 (TILES): the outputs compared BITWISE (a threaded
  * walk is a loop restriction of the serial one), the engagement counter
  * checked, then the three arms and zr2c-with-a-threaded-fold timed unpaced
  * (threaded arms are never paused).
- * Build: python gauntlet/build.py --compile --vfft --src gauntlet/zttr_mt_check.c
- * Run:   zttr_mt_check <scratch wisdom dir> [T=8] */
+ * Build: python gauntlet/build.py --compile --vfft --src src/tools/gates/zttr_mt_gate.c
+ * Run:   zttr_mt_gate <scratch wisdom dir> [T=8] */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +15,7 @@
 #include "vfft.h"
 #include "common/support/race.h"
 #include "common/support/race_timing.h"
-#include "bench_scope.h"   /* the gauntlet's switches onto the library's measurement scope */
+#include "../../../gauntlet/bench_scope.h"   /* the gauntlet's switches onto the library's measurement scope */
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -42,7 +42,7 @@ static void run(vfft_plan h, vfft_dir_t dir, int ip, const double *in, double *o
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) { fprintf(stderr, "usage: zttr_mt_check <scratch wisdom dir> [T]\n"); return 2; }
+    if (argc < 2) { fprintf(stderr, "usage: zttr_mt_gate <scratch wisdom dir> [T]\n"); return 2; }
     const int T = argc > 2 ? atoi(argv[2]) : 8;
     bench_pin_pcores();
     bench_scope(0, 1, VFFT_MEASURE_GUARD_OFF);   /* the threaded protocol: logical 0 at HIGH priority, the library's scope */

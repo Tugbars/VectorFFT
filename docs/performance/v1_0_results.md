@@ -1342,7 +1342,7 @@ MKL does not thread the odd real transform (its eight-thread time is its one-thr
 at every cell). The threaded forms (`il/real/zrf_mt.h`) are two arms raced per cell: FIRST
 cuts the first level and runs the deeper levels on the caller beside its tiles; LEVELS cuts
 every level with a tile per worker in one balanced tiles dispatch. Both are bitwise the
-serial plan (gauntlet/zrf_mt_check.c). Above ~390625 the odd routes build no c2r plan at
+serial plan (src/tools/gates/zrf_mt_gate.c). Above ~390625 the odd routes build no c2r plan at
 all, so those cells are the flat DIT's alone, gated by the roundtrip through the r2c routes.
 
 ### K=1 INTERLEAVED r2c and c2r — odd N without a chain on the real Bluestein, the 682 cells 65..2047 and 12 large cells vs MKL (2026-10-01)
@@ -1595,7 +1595,7 @@ eight-thread time. Cells below 2^12 are serial verdicts on both sides and are le
 From 2^13 or 2^14 to 2^19 the serving is ZTT-r THREADED (il/real/zttr_mt.h): the ZTT's threaded
 walk with the Hermitian fold staying fused in the last forward stage and the first backward one,
 each taking a range of columns; the TILES arm (a tile's whole prefix on one thread) wins every
-threaded cell, and the threaded output is bitwise the serial run (gauntlet/zttr_mt_check.c).
+threaded cell, and the threaded output is bitwise the serial run (src/tools/gates/zttr_mt_gate.c).
 From 2^20 the real four-step serves with its order sweeps cut over the threads. The one cell
 below parity is c2r at 2^20 (0.96). Scaling is 1.3x at 2^14, 2.5x at 2^16 and 5.9x at 2^19:
 below 2^16 a transform of 10 to 25 us cannot pay for a fork-join per stage, and at 2^23 every

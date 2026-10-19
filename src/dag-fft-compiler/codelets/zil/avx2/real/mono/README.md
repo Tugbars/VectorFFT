@@ -29,7 +29,7 @@ winner in the real shard. Emitted by `generator/lib/gen/c2c_il.ml`
 --cil-form-tag` at 32, `--cil-blocked --cil-split3 4.4.4 --cil-form-tag` at 64)
 with the real address forms of
 `lib/cx/cx_ir.ml` / `cx_render.ml`; rows in `corpus.ml`. The kernel gate is
-`gauntlet/rn1_gate.c` (a naive real DFT, count 1 and 2, both directions).
+`src/tools/gates/rn1_gate.c` (a naive real DFT, count 1 and 2, both directions).
 
 Regeneration: through `gen_set` to a temporary root (`--root`), never in
 place; the folder a file lands in follows its kind (`Corpus.dir_of_file`),

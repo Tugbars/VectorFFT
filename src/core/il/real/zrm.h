@@ -20,7 +20,7 @@
  *
  * In place is legal: the kind is alias-tolerant (no __restrict__; every load
  * of a loop body precedes every store), so zin == zout reads the N reals and
- * writes the N+2 doubles over them (gated in gauntlet/rn1_gate.c).
+ * writes the N+2 doubles over them (gated in src/tools/gates/rn1_gate.c).
  *
  * The real door (il/real/zrp_build.h) races it at N <= VFFT_ZRM_MAX_N
  * against zr2c (even N) and, in bridge/real_bridge.h, against the odd-real

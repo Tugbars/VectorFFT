@@ -3,7 +3,7 @@
  *
  * Every cut is a loop restriction (same kernels, same tables, same
  * per-element order: the threaded output is bitwise the serial plan's,
- * gated in gauntlet/zrf_mt_check.c). The units of a level:
+ * gated in src/tools/gates/zrf_mt_gate.c). The units of a level:
  *   the leaf      by COLUMN ranges of whole vectors. A range's complex
  *                 digits land in their own columns of blocks 1..h; its real
  *                 digit-0 run cannot take the same pointer shift (one double

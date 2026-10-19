@@ -199,6 +199,12 @@ ARGSTYLE = {
     "zr2c_fd_gate":            ("bare", True),
     "pool_preserve_gate":      ("bare", True),   # SEEDED: the OOP natural race replays banked K=1 cells
     "natorder_scratch_gate":   ("bare", True),   # SEEDED: must REPLAY mode=pcyc (cycle reorder is the scratch-using path)
+    # the five checks that lived in gauntlet/ until 2026-10-19 (the real engines' own gates)
+    "rn1_gate":                ("none", False),  # the real mono kernels against a naive real DFT (no store: the kernels linked directly)
+    "r1c_gate":                ("none", False),  # the real flat leaf kernels against a naive digit transform (no store)
+    "zttr_mt_gate":            ("bare", False),  # COLD: ZTT-r's threaded arms bitwise against its serial run through the door, T=8
+    "zrf_mt_gate":             ("bare", False),  # COLD: the real flat DIT's threaded arms bitwise against its serial run, T=8
+    "real_door_gate":          ("bare", False),  # COLD: the real door's pick (raced, replayed) against the pinned incumbent at every real cell
 }
 
 TEXTUAL = {"sp_ccol_decode_gate"}       # #includes vfft.c; must NOT add --vfft

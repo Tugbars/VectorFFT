@@ -1467,7 +1467,7 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
  * threaded arm can win -- so a clone in the slab role runs the SERIAL form of
  * the same recipe. The threaded forms the real door binds are flags set on
  * the plan (no allocation; the serial run is bitwise the threaded one, gated
- * in gauntlet/zrf_mt_check.c and zttr_mt_check.c): zrf's arm, ZTT-r's arm,
+ * in src/tools/gates/zrf_mt_gate.c and zttr_mt_gate.c): zrf's arm, ZTT-r's arm,
  * zr2c's threaded fold, the convolutions' threaded forms (zrb's, a zr2c
  * prime child's, the c2c prime cell's: il_prime_mt.h, zrb_mt.h, bitwise the
  * serial run), and the c2c K=1 arms (ZTURN-T's, the flat DIT's; ztt_mt.h,

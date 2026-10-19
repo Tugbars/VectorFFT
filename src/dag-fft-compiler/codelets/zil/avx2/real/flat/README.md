@@ -32,7 +32,7 @@ Run by `src/core/il/real/zrf.h` under `eng=zrf`: the odd real race
 (`bridge/real_bridge.h`) sweeps the chains and banks the winner in the real
 shard. Emitted by `generator/lib/gen/real_il.ml` (`gen_radix R --cil-r1c
 [--cil-bwd]`) with the digit address forms of `lib/cx/cx_ir.ml` /
-`cx_render.ml`; rows in `corpus.ml`. The kernel gate is `gauntlet/r1c_gate.c`
+`cx_render.ml`; rows in `corpus.ml`. The kernel gate is `src/tools/gates/r1c_gate.c`
 (a naive digit transform, counts 1 to 15, both directions, the unused half
 of block 0 checked).
 
