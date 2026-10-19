@@ -1076,15 +1076,21 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     /* The FFTW arm's twin of the cross-engine gate below: both engines
      * natural, same input, same spectrum, so `rel` becomes an ELEMENTWISE
      * comparison rather than a roundtrip (which cannot gate ordering). Same
-     * reasoning and same overwrite as the MKL branch. */
+     * reasoning and same overwrite as the MKL branch. FFTW's plan here has the
+     * placement of the cell (in place under --k1zip, else out of place): the
+     * same problem the timed arm plans, so one MEASURE search serves both --
+     * a threaded 1D search is minutes long, and an in-place plan would be a
+     * second one. */
     if (g_cmp_fftw && g_k1nat && fftw_arm_threads(cfg.nthreads))
     {
         double *zf = alloc_d(2 * total), *zv = alloc_d(2 * total);
+        double *zo = g_k1zip ? zf : alloc_d(2 * total);
         fftwx_plan p = g_fx_arm.plan_dft_1d(N, (fftwx_complex *)zf,
-                                            (fftwx_complex *)zf,
+                                            (fftwx_complex *)zo,
                                             FFTWX_FORWARD, FFTWX_MEASURE);
         if (p)
         {
+            fftw_wis_export();
             memcpy(zf, z0, 2 * total * sizeof(double));   /* after planning */
             memcpy(zv, z0, 2 * total * sizeof(double));
             g_fx_arm.execute(p);
@@ -1095,7 +1101,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
             double xe = 0.0, xm = 0.0;
             for (size_t i = 0; i < 2 * total; i++)
             {
-                double e = fabs(zv[i] - zf[i]), m = fabs(zf[i]);
+                double e = fabs(zv[i] - zo[i]), m = fabs(zo[i]);
                 if (e > xe) xe = e;
                 if (m > xm) xm = m;
             }
@@ -1104,6 +1110,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
         }
         free_d(zf);
         free_d(zv);
+        if (!g_k1zip) free_d(zo);
     }
 #ifdef VFFT_HAS_MKL
     if (g_k1nat && !g_cmp_fftw)

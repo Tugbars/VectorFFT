@@ -8,13 +8,13 @@ pictures from your numbers:
 |---|---|---|
 | 1D throughput | the 1D complex transform at every length N from 2 to 4,096 (4,095 lengths), GFLOPS of both libraries | `vectorfft-<cmp>-gflops.svg` |
 | 2D speedup matrix | the 2D complex transform on every power-of-two plane up to 4M points (159 planes) | `vectorfft-<cmp>-2d-pow2.svg`, `.png` |
-| 2D at eight threads | the same 159 planes at eight threads, the comparator at eight threads too, beside the one-thread result | `vectorfft-<cmp>-2d-mt-forest.svg`, `.png` |
+| 2D threaded | the same 159 planes at T threads, the comparator at T threads too, beside the one-thread result; T = the physical cores of your machine's fastest core class | `vectorfft-<cmp>-2d-mt-forest.svg`, `.png` |
 | 3D speedup matrices | the 3D complex transform on every power-of-two volume up to 4M points (1,288 volumes) | `vectorfft-<cmp>-3d-pow2.svg`, `.png` |
 | Accuracy | the forward 1D transform at every N from 2 to 4,096 against a long-double reference, both libraries | `vectorfft-<cmp>-precision.svg` |
 
 `<cmp>` is `fftw` or `mkl`. The contract is the front page's: complex-to-complex, double
 precision, interleaved, natural order, out of place, one transform per call, one thread
-(eight for the third picture). The scripts drive the repository's own test tool, the
+(T threads for the third picture). The scripts drive the repository's own test tool, the
 gauntlet (`gauntlet/`, described in `gauntlet/README.md`), with the commands the front page
 names and `--cmp` added; they change none of its defaults. Everything they produce lands
 under `gauntlet/results/`. Nothing is written into the library's shipped wisdom
@@ -75,6 +75,19 @@ directory), so a problem is planned once per run.
   you give `--fftw-dll`. Leave out `--enable-avx512` / `-DENABLE_AVX512=ON` on a CPU
   without AVX-512.
 
+### If FFTW is not installed
+
+With `fftw` as the comparator, `run_suite.py` looks for the library before anything runs,
+in this order: `--fftw-dll`, the path `build_tools.py` recorded, the environment variable
+`VFFT_FFTW_DLL`, then the usual place (vcpkg's `fftw3.dll` on Windows, the distribution's
+`libfftw3.so.3` on Linux); it loads the first one found and reads its version. When none is
+found, or the file does not load, it stops with exit code 2 and says how to point at one
+and how to get one: on Windows `vcpkg install fftw3:x64-windows` (a serial AVX2 build), on
+Linux the distribution's package (`apt install libfftw3-3`), and for the threaded picture or
+AVX-512 the source build above. When the library has no threads API and the threaded set
+was asked for, it refuses that set up front, the same way. `build_tools.py` makes the same
+check of the library named with `--fftw-dll`. With `mkl` none of this runs.
+
 ## The two commands
 
 ### 1. Build the tools
@@ -112,10 +125,15 @@ One script per picture, and one for all five:
 ./benchmark_scripts/run_1d.sh fftw --yes           # the 1D picture
 ./benchmark_scripts/run_accuracy.sh fftw           # the accuracy picture (after run_1d.sh, or on its own)
 ./benchmark_scripts/run_2d.sh fftw --yes           # the 2D picture
-./benchmark_scripts/run_2d_mt8.sh fftw --yes       # the 2D picture at eight threads (needs the run of run_2d.sh)
+./benchmark_scripts/run_2d_mt.sh fftw --yes        # the 2D picture threaded (needs the run of run_2d.sh)
 ./benchmark_scripts/run_3d.sh fftw --yes           # the 3D picture
 ./benchmark_scripts/run_2d.sh mkl --yes            # the same against MKL
 ```
+
+The threaded picture runs at as many threads as your machine has physical cores in its
+fastest core class, read from the operating system and printed when the script starts: the
+front page's own picture used 8 threads on an Intel Core i9-14900KF with 8 P-cores; on a
+six-core Zen 4 the script uses 6. `--threads N` sets another count.
 
 The first argument is the comparator, `fftw` (the default when left out) or `mkl`; every
 further argument goes to `python benchmark_scripts/run_suite.py`, the script they all call
@@ -125,8 +143,8 @@ further argument goes to `python benchmark_scripts/run_suite.py`, the script the
 | Option | Meaning |
 |---|---|
 | `--cmp fftw` or `--cmp mkl` | the comparator (required; the shell scripts' first argument) |
-| `--sets 1d,accuracy,2d,2d-mt8,3d` | which sets to run (default all five; each `run_*.sh` names its own); they run in this order whatever order you list them |
-| `--threads N` | the thread count of the `2d-mt8` set (default 8) |
+| `--sets 1d,accuracy,2d,2d-mt,3d` | which sets to run (default all five; each `run_*.sh` names its own); they run in this order whatever order you list them |
+| `--threads N` | the thread count of the `2d-mt` set (default: the physical cores of the fastest core class) |
 | `--name-prefix NAME` | the run directories' prefix (default `<cmp>_<isa>_<date>`, e.g. `fftw_avx512_2026-10-19`) |
 | `--fftw-dll PATH` | the FFTW library, when it is not the one `build_tools.py` recorded |
 | `--yes` | answer the gauntlet's duration prompt in advance (a set estimated at more than 30 minutes asks) |
@@ -138,7 +156,7 @@ failure stops the suite with the failing command printed, and the finished sets 
 stopped gauntlet run resumes where it left off when the same command runs again
 (`gauntlet/README.md`), so running the same script again with the same `--name-prefix`
 continues it; the prefix defaults to the day's date, so a run continued on another day
-needs the prefix named. The `2d-mt8` set draws the threaded run beside the one-thread `2d`
+needs the prefix named. The `2d-mt` set draws the threaded run beside the one-thread `2d`
 run, so it needs the `2d` run of the same prefix: `run_2d.sh` first, or `run_all.sh`.
 
 ## What lands where
@@ -160,7 +178,7 @@ gauntlet/results/fftw_avx512_2026-10-19_1d/
     vectorfft-fftw-precision.svg
     SUMMARY.md                  the machine, the comparator and its version string, the commands, the pictures, the report
 gauntlet/results/fftw_avx512_2026-10-19_2d/        gauntlet_2d_fftw.csv, report_2d_fftw.md, vectorfft-fftw-2d-pow2.svg and .png, SUMMARY.md
-gauntlet/results/fftw_avx512_2026-10-19_2d_mt8/    gauntlet_2d_mt8_fftw.csv, report_2d_mt8_fftw.md, vectorfft-fftw-2d-mt-forest.svg and .png, SUMMARY.md
+gauntlet/results/fftw_avx512_2026-10-19_2d_mt6/    gauntlet_2d_mt6_fftw.csv, report_2d_mt6_fftw.md, vectorfft-fftw-2d-mt-forest.svg and .png, SUMMARY.md   (mt<T>: the thread count)
 gauntlet/results/fftw_avx512_2026-10-19_3d/        gauntlet_3d_fftw.csv, report_3d_fftw.md, vectorfft-fftw-3d-pow2.svg and .png, SUMMARY.md
 ```
 
@@ -181,7 +199,7 @@ is replayed from the shipped wisdom. By that model:
 | `1d` | 4,095 lengths | about 2.5 hours (calibrate 55 min, bench 100 min) |
 | `accuracy` | 4,095 lengths | a few minutes (no estimate is printed) |
 | `2d` | 159 planes | about 10 minutes |
-| `2d-mt8` | 159 planes | about 10 minutes |
+| `2d-mt` | 159 planes | about 10 minutes |
 | `3d` | 1,288 volumes | about 2.5 hours (calibrate 60 min, bench 90 min) |
 
 The 1D sweep and the 3D grid take hours each; the whole suite is most of a day. On a CPU
@@ -210,10 +228,15 @@ To measure the AVX-512 tree, build the tools with `--isa avx512` on a CPU that h
 against an FFTW built with its AVX-512 code paths (above); `build_tools.py` prints what the
 FFTW file was built with, and `SUMMARY.md` records both.
 
+On an AMD part such as Zen 4, the library reads the topology from the operating system
+(physical cores, SMT siblings, core classes) as it does on Intel: every core counts as a
+P-core, the thread pool pins one worker per physical core, and the measurement pins the
+caller to one core and holds its SMT sibling the same way as on Intel.
+
 ## Files
 
 - `build.sh` -- builds the tools: calls `build_tools.py` with its arguments
-- `run_all.sh`, `run_1d.sh`, `run_accuracy.sh`, `run_2d.sh`, `run_2d_mt8.sh`, `run_3d.sh` -- the benchmarks, all five or one picture each: the comparator first (`fftw`, the default, or `mkl`), then `run_suite.py`'s options
+- `run_all.sh`, `run_1d.sh`, `run_accuracy.sh`, `run_2d.sh`, `run_2d_mt.sh`, `run_3d.sh` -- the benchmarks, all five or one picture each: the comparator first (`fftw`, the default, or `mkl`), then `run_suite.py`'s options
 - `build_tools.py` -- builds the three tools through `gauntlet/build.py` and records `.config.json`
 - `run_suite.py` -- runs the sets through `gauntlet/gauntlet.py`, draws the pictures with `src/tools/plots/gen_gflops.py`, `gen_2d_pow2.py`, `gen_forest_2d_mt.py`, `gen_3d_pow2.py` and `gen_precision.py`, and writes `SUMMARY.md`
 - `.config.json` -- the record of the last build (per machine, not tracked)

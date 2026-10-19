@@ -9,21 +9,27 @@ Each set is one command of the gauntlet (gauntlet/gauntlet.py: the README's own 
 --cmp added), then the plot script of that picture (src/tools/plots/), drawn into the run
 directory, then a SUMMARY.md there:
 
-    1d        run --cells 2..4096              gauntlet/results/<prefix>_1d/      vectorfft-<cmp>-gflops.svg
-    accuracy  verify --cells 2..4096           the 1d run's directory             vectorfft-<cmp>-precision.svg
-    2d        run --group 2d-pow2              gauntlet/results/<prefix>_2d/      vectorfft-<cmp>-2d-pow2.svg + .png
-    2d-mt8    run --group 2d-pow2 --threads 8  gauntlet/results/<prefix>_2d_mt8/  vectorfft-<cmp>-2d-mt-forest.svg + .png (with the 2d run's csv)
-    3d        run --group 3d-pow2              gauntlet/results/<prefix>_3d/      vectorfft-<cmp>-3d-pow2.svg + .png
+    1d        run --cells 2..4096              gauntlet/results/<prefix>_1d/        vectorfft-<cmp>-gflops.svg
+    accuracy  verify --cells 2..4096           the 1d run's directory               vectorfft-<cmp>-precision.svg
+    2d        run --group 2d-pow2              gauntlet/results/<prefix>_2d/        vectorfft-<cmp>-2d-pow2.svg + .png
+    2d-mt     run --group 2d-pow2 --threads T  gauntlet/results/<prefix>_2d_mt<T>/  vectorfft-<cmp>-2d-mt-forest.svg + .png (with the 2d run's csv)
+    3d        run --group 3d-pow2              gauntlet/results/<prefix>_3d/        vectorfft-<cmp>-3d-pow2.svg + .png
+
+T, the thread count of the 2d-mt set, is the number of physical cores of this machine's
+fastest core class (read from the OS: 8 on an i9-14900KF with 8 P-cores, 6 on a six-core
+Zen 4), printed when the suite starts; --threads N overrides it.
 
 The sets run one after the other, in that order, the driver's output streaming through; the
 first failure stops the suite with the failing command printed. Nothing is merged into the
-library's shipped wisdom (src/wisdom/): a run keeps its verdicts in its own store.
+library's shipped wisdom (src/wisdom/): a run keeps its verdicts in its own store. With
+--cmp fftw the FFTW library is found, loaded and checked before anything runs (exit 2 with
+what to do when it is missing, or lacks the threads API the 2d-mt set needs).
 
     --cmp fftw|mkl       the comparator (required)
-    --sets a,b,...       the sets to run, of 1d, accuracy, 2d, 2d-mt8, 3d (default: all five)
-    --threads N          the thread count of the 2d-mt8 set (default 8)
+    --sets a,b,...       the sets to run, of 1d, accuracy, 2d, 2d-mt, 3d (default: all five)
+    --threads N          the thread count of the 2d-mt set (default: the physical cores of the fastest core class)
     --name-prefix NAME   the run directories' prefix (default <cmp>_<isa>_<date>, the ISA from build_tools.py's record)
-    --fftw-dll PATH      the FFTW shared library (default: the one build_tools.py recorded)
+    --fftw-dll PATH      the FFTW shared library (default: build_tools.py's record, then $VFFT_FFTW_DLL, then the usual place)
     --yes                do not stop for the driver's duration prompt
     --plots-only         draw the pictures and write the summaries from runs already finished; nothing runs
     --cells SPEC         replace every set's cell list, for a quick check (e.g. --cells 64,4096; 32x32,64x64 for 2d; 16x16x16 for 3d)
@@ -35,25 +41,81 @@ import glob
 import json
 import os
 import platform
+import struct
 import subprocess
 import sys
 
-from build_tools import CONFIG, GAUNTLET, ROOT, fftw_version_string, harness
+from build_tools import (CONFIG, GAUNTLET, ROOT, fftw_has_threads, fftw_load, fftw_missing, fftw_no_threads,
+                         fftw_version_of, harness, resolve_fftw)
 
 RESULTS = "gauntlet/results"             # relative to ROOT: every command runs from there
 DRIVER = "gauntlet/gauntlet.py"
 PLOTS = "src/tools/plots"
 EXE = ".exe" if os.name == "nt" else ""
 TOOLS = ("bench_1d_vs_mkl", "recal_1d_probe", "k1_fwd_ref_probe")
-SETS = ("1d", "accuracy", "2d", "2d-mt8", "3d")
+SETS = ("1d", "accuracy", "2d", "2d-mt", "3d")
 LABEL = {"fftw": "FFTW", "mkl": "MKL"}   # the comparator's name on a picture
 ABOUT = {
     "1d": "1D c2c, every length N from 2 to 4,096, throughput in GFLOPS.",
     "accuracy": "The forward 1D c2c transform, every N from 2 to 4,096, against a long-double reference.",
     "2d": "2D c2c, every power-of-two plane up to 4M points (159 planes), the speedup per plane.",
-    "2d-mt8": "The same 159 planes at %d threads, the comparator at %d threads too, beside the one-thread run.",
+    "2d-mt": "The same 159 planes at %d threads, the comparator at %d threads too, beside the one-thread run.",
     "3d": "3D c2c, every power-of-two volume up to 4M points (1,288 volumes), the speedup per volume.",
 }
+
+
+def physical_cores():
+    """the physical cores of this machine's fastest core class, from the OS. Windows:
+    GetLogicalProcessorInformationEx, one RelationProcessorCore record per core with its
+    EfficiencyClass (the highest class is the fastest: the P-cores of a hybrid Intel part,
+    every core of an AMD part). Linux: the distinct (physical id, core id) pairs of
+    /proc/cpuinfo, among the CPUs of /sys/devices/cpu_core/cpus when a hybrid kernel lists
+    them. Else the logical count."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            need = ctypes.c_ulong(0)
+            k32.GetLogicalProcessorInformationEx(0, None, ctypes.byref(need))       # RelationProcessorCore = 0
+            buf = ctypes.create_string_buffer(need.value)
+            if k32.GetLogicalProcessorInformationEx(0, buf, ctypes.byref(need)):
+                classes, off = {}, 0
+                while off < need.value:
+                    rel, size = struct.unpack_from("II", buf, off)                # Relationship, Size
+                    if rel == 0:
+                        eff = buf.raw[off + 9]                                    # PROCESSOR_RELATIONSHIP.EfficiencyClass
+                        classes[eff] = classes.get(eff, 0) + 1
+                    off += size
+                if classes:
+                    return classes[max(classes)]
+        except (OSError, AttributeError, struct.error):
+            pass
+    try:
+        allowed = None
+        if os.path.isfile("/sys/devices/cpu_core/cpus"):
+            allowed = set()
+            for part in open("/sys/devices/cpu_core/cpus").read().strip().split(","):
+                a, _, b = part.partition("-")
+                allowed.update(range(int(a), int(b or a) + 1))
+        cores, cpu, phys, core = set(), None, "0", None
+        for line in list(open("/proc/cpuinfo", encoding="utf-8", errors="replace")) + ["\n"]:
+            key, _, val = line.partition(":")
+            key, val = key.strip(), val.strip()
+            if key == "processor":
+                cpu, phys, core = int(val), "0", None
+            elif key == "physical id":
+                phys = val
+            elif key == "core id":
+                core = val
+            elif not line.strip() and cpu is not None:
+                if core is not None and (allowed is None or cpu in allowed):
+                    cores.add((phys, core))
+                cpu = None
+        if cores:
+            return len(cores)
+    except (OSError, ValueError):
+        pass
+    return os.cpu_count() or 1
 
 
 def suffix(dims, threads, cmp):
@@ -67,18 +129,18 @@ class Set:
     def __init__(self, name, cmp, prefix, threads, cells):
         self.name = name
         self.cmp = cmp
-        dims = {"1d": 1, "accuracy": 1, "2d": 2, "2d-mt8": 2, "3d": 3}[name]
-        self.threads = threads if name == "2d-mt8" else 1
+        dims = {"1d": 1, "accuracy": 1, "2d": 2, "2d-mt": 2, "3d": 3}[name]
+        self.threads = threads if name == "2d-mt" else 1
         self.sfx = suffix(dims, self.threads, cmp)
-        self.run = prefix + {"1d": "_1d", "accuracy": "_1d", "2d": "_2d", "2d-mt8": "_2d_mt%d" % self.threads, "3d": "_3d"}[name]
+        self.run = prefix + {"1d": "_1d", "accuracy": "_1d", "2d": "_2d", "2d-mt": "_2d_mt%d" % self.threads, "3d": "_3d"}[name]
         self.rel = RESULTS + "/" + self.run
         self.dir = os.path.join(ROOT, RESULTS, self.run)
         self.verb = "verify" if name == "accuracy" else "run"
         self.cells = cells
         self.cell_args = ["--cells", cells] if cells else {
             "1d": ["--cells", "2..4096"], "accuracy": ["--cells", "2..4096"],
-            "2d": ["--group", "2d-pow2"], "2d-mt8": ["--group", "2d-pow2"], "3d": ["--group", "3d-pow2"]}[name]
-        self.about = ABOUT[name] % (self.threads, self.threads) if name == "2d-mt8" else ABOUT[name]
+            "2d": ["--group", "2d-pow2"], "2d-mt": ["--group", "2d-pow2"], "3d": ["--group", "3d-pow2"]}[name]
+        self.about = ABOUT[name] % (self.threads, self.threads) if name == "2d-mt" else ABOUT[name]
         self.csv = self.rel + "/" + ("verify" if name == "accuracy" else "gauntlet") + self.sfx + ".csv"
         self.report = None if name == "accuracy" else self.rel + "/report" + self.sfx + ".md"
         self.one_thread_csv = None       # the forest's one-thread record (the 2d set's csv)
@@ -101,7 +163,7 @@ class Set:
             return [PLOTS + "/gen_precision.py", self.csv, "--out", base + "-precision.svg"], base + "-precision.svg"
         if self.name == "2d":
             return [PLOTS + "/gen_2d_pow2.py", self.report, base + "-2d-pow2", "--cmp", label], base + "-2d-pow2.svg + .png"
-        if self.name == "2d-mt8":
+        if self.name == "2d-mt":
             return [PLOTS + "/gen_forest_2d_mt.py", self.one_thread_csv, self.csv, base + "-2d-mt-forest", "--cmp", label], base + "-2d-mt-forest.svg + .png"
         return [PLOTS + "/gen_3d_pow2.py", self.csv, base + "-3d-pow2", "--cmp", label], base + "-3d-pow2.svg + .png"
 
@@ -157,12 +219,6 @@ def mkl_version():
     return "Intel MKL at %s" % root
 
 
-def fftw_has_threads(path):
-    """the threads API in the library itself (a build with --with-combined-threads exports fftw_plan_with_nthreads)"""
-    with open(path, "rb") as f:
-        return b"fftw_plan_with_nthreads" in f.read()
-
-
 # ── running and writing ────────────────────────────────────────────────────
 
 def shown(cmd):
@@ -203,9 +259,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cmp", choices=["fftw", "mkl"], required=True, help="the comparator")
     ap.add_argument("--sets", default=",".join(SETS), help="which sets, of %s (default all)" % ", ".join(SETS))
-    ap.add_argument("--threads", type=int, default=8, help="the thread count of the 2d-mt8 set (default 8)")
+    ap.add_argument("--threads", type=int, help="the thread count of the 2d-mt set (default: this machine's physical cores of its fastest core class)")
     ap.add_argument("--name-prefix", help="the run directories' prefix (default <cmp>_<isa>_<date>)")
-    ap.add_argument("--fftw-dll", help="the FFTW shared library (default: build_tools.py's record)")
+    ap.add_argument("--fftw-dll", help="the FFTW shared library (default: build_tools.py's record, then VFFT_FFTW_DLL, then the usual place)")
     ap.add_argument("--yes", action="store_true", help="pass the driver's --yes (no duration prompt)")
     ap.add_argument("--plots-only", action="store_true", help="draw from finished runs; nothing runs")
     ap.add_argument("--cells", help="replace every set's cell list, for a quick check")
@@ -221,17 +277,31 @@ def main():
     config = json.load(open(CONFIG, encoding="utf-8"))
     isa, cmp = config["isa"], args.cmp
     prefix = args.name_prefix or "%s_%s_%s" % (cmp, isa, datetime.date.today().strftime("%Y-%m-%d"))
+    threads = args.threads or physical_cores()
+    if "2d-mt" in names:
+        print("threads for the 2d-mt set: %d (%s)" % (threads, "--threads" if args.threads else "the physical cores of this machine's fastest core class"))
 
     env = os.environ.copy()
-    fftw_dll = args.fftw_dll or config.get("fftw_dll")
+    fftw_dll, fftw_lib = None, None
     if cmp == "fftw":
-        if not fftw_dll:
-            sys.exit("--cmp fftw needs the FFTW library: pass --fftw-dll, or give it to build_tools.py")
-        fftw_dll = os.path.abspath(fftw_dll)
-        if not os.path.isfile(fftw_dll):
-            sys.exit("FFTW library not found: %s" % fftw_dll)
-        env["VFFT_FFTW_DLL"] = fftw_dll
-        comparator = "FFTW %s (%s)" % (fftw_version_string(fftw_dll) or "version string not found", fftw_dll)
+        # the FFTW library is found, loaded and checked here, before any run: the bench
+        # never discovers a missing library cell by cell
+        fftw_dll, tried = resolve_fftw(args.fftw_dll, config.get("fftw_dll"))
+        if fftw_dll:
+            fftw_dll = os.path.abspath(fftw_dll) if os.path.dirname(fftw_dll) else fftw_dll
+            fftw_lib, why = fftw_load(fftw_dll)
+            if fftw_lib is None and not args.plots_only:
+                print("FFTW library %s could not be loaded: %s" % (fftw_dll, why), file=sys.stderr)
+                print(fftw_missing(tried), file=sys.stderr)
+                sys.exit(2)
+        elif not args.plots_only:
+            print(fftw_missing(tried), file=sys.stderr)
+            sys.exit(2)
+        if fftw_lib is not None:
+            env["VFFT_FFTW_DLL"] = fftw_dll
+            comparator = "FFTW %s (%s)" % (fftw_version_of(fftw_lib, fftw_dll), fftw_dll)
+        else:
+            comparator = "FFTW (the library was not found when the pictures were drawn)"
     else:
         if not config.get("mkl"):
             sys.exit("the tools were built without MKL (build_tools.py's record): build again with --mkl, or run --cmp fftw")
@@ -241,18 +311,18 @@ def main():
         missing = [t for t in TOOLS if not os.path.isfile(os.path.join(GAUNTLET, t + EXE))]
         if missing:
             sys.exit("missing %s in gauntlet/: run build_tools.py first" % ", ".join(missing))
-        if "2d-mt8" in names and cmp == "fftw" and not fftw_has_threads(fftw_dll):
-            sys.exit("the 2d-mt8 set needs an FFTW with the threads API in the same library (a build with "
-                     "--with-combined-threads, benchmark_scripts/README.md); %s has none" % fftw_dll)
+        if "2d-mt" in names and cmp == "fftw" and not fftw_has_threads(fftw_lib):
+            print(fftw_no_threads(fftw_dll), file=sys.stderr)
+            sys.exit(2)
 
-    plan = [Set(n, cmp, prefix, args.threads, args.cells) for n in names]
+    plan = [Set(n, cmp, prefix, threads, args.cells) for n in names]
     for s in plan:
-        if s.name == "2d-mt8":
-            one = Set("2d", cmp, prefix, args.threads, args.cells)
+        if s.name == "2d-mt":
+            one = Set("2d", cmp, prefix, threads, args.cells)
             s.one_thread_csv = one.csv
             if "2d" not in names and not os.path.isfile(os.path.join(ROOT, one.csv)):
-                sys.exit("the 2d-mt8 picture sets the threaded run beside the one-thread run, and %s does not exist: "
-                         "run --sets 2d first, or both together (--sets 2d,2d-mt8)" % one.csv)
+                sys.exit("the 2d-mt picture sets the threaded run beside the one-thread run, and %s does not exist: "
+                         "run --sets 2d first, or both together (--sets 2d,2d-mt)" % one.csv)
 
     commit = git_commit()
     machine = ["machine: %s, %s, %d logical CPUs" % (cpu_name(), platform.platform(), os.cpu_count() or 0),

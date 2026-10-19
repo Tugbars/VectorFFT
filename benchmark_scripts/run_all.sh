@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_all.sh -- all five pictures, one after the other: 1d, accuracy, 2d, 2d-mt8, 3d (most of a day).
+# run_all.sh -- all five pictures, one after the other: 1d, accuracy, 2d, 2d-mt, 3d (most of a day).
 #   ./benchmark_scripts/run_all.sh [fftw|mkl] [run_suite.py options, e.g. --yes --name-prefix NAME]
 # The comparator is the first argument (default fftw); every further argument goes to run_suite.py.
 set -euo pipefail
