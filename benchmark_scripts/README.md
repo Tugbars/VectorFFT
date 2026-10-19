@@ -33,9 +33,10 @@ under `gauntlet/results/`. Nothing is written into the library's shipped wisdom
 
 CMake is not needed for this path: the tools are built by `gauntlet/build.py` with the
 compiler alone. (The CMake target `vfft-gauntlet` builds the same binaries, see
-`gauntlet/README.md`; the scripts here expect the ones `build_tools.py` builds.) Run the
-commands from the repository's root, in a POSIX shell (Git Bash or MSYS2 on Windows) or in
-PowerShell.
+`gauntlet/README.md`; the scripts here expect the ones `build_tools.py` builds.) The shell
+scripts below run from bash (Git Bash or MSYS2 on Windows, bash on Linux) and from any
+directory; the Python scripts they call also run from PowerShell, from the repository's
+root.
 
 ## Which FFTW
 
@@ -79,8 +80,11 @@ directory), so a problem is planned once per run.
 ### 1. Build the tools
 
 ```sh
-python benchmark_scripts/build_tools.py --fftw-dll <path to the FFTW library>
+./benchmark_scripts/build.sh --fftw-dll <path to the FFTW library>
 ```
+
+`build.sh` calls `python benchmark_scripts/build_tools.py` with the same arguments
+(`python3` when that is a working Python, else `python`):
 
 | Option | Meaning |
 |---|---|
@@ -99,16 +103,29 @@ recorded in `benchmark_scripts/.config.json`, which `run_suite.py` reads; the fi
 machine and not tracked by git. Build again with the other `--isa` to switch trees: the
 record changes with it.
 
-### 2. Run the suite
+### 2. Run the benchmarks
+
+One script per picture, and one for all five:
 
 ```sh
-python benchmark_scripts/run_suite.py --cmp fftw --yes
+./benchmark_scripts/run_all.sh fftw --yes          # all five pictures, one after the other
+./benchmark_scripts/run_1d.sh fftw --yes           # the 1D picture
+./benchmark_scripts/run_accuracy.sh fftw           # the accuracy picture (after run_1d.sh, or on its own)
+./benchmark_scripts/run_2d.sh fftw --yes           # the 2D picture
+./benchmark_scripts/run_2d_mt8.sh fftw --yes       # the 2D picture at eight threads (needs the run of run_2d.sh)
+./benchmark_scripts/run_3d.sh fftw --yes           # the 3D picture
+./benchmark_scripts/run_2d.sh mkl --yes            # the same against MKL
 ```
+
+The first argument is the comparator, `fftw` (the default when left out) or `mkl`; every
+further argument goes to `python benchmark_scripts/run_suite.py`, the script they all call
+(`run_all.sh fftw --yes` is `run_suite.py --cmp fftw --yes`, `run_2d.sh mkl` is
+`run_suite.py --cmp mkl --sets 2d`). Its options:
 
 | Option | Meaning |
 |---|---|
-| `--cmp fftw` or `--cmp mkl` | the comparator (required) |
-| `--sets 1d,accuracy,2d,2d-mt8,3d` | which sets to run (default all five); they run in this order whatever order you list them |
+| `--cmp fftw` or `--cmp mkl` | the comparator (required; the shell scripts' first argument) |
+| `--sets 1d,accuracy,2d,2d-mt8,3d` | which sets to run (default all five; each `run_*.sh` names its own); they run in this order whatever order you list them |
 | `--threads N` | the thread count of the `2d-mt8` set (default 8) |
 | `--name-prefix NAME` | the run directories' prefix (default `<cmp>_<isa>_<date>`, e.g. `fftw_avx512_2026-10-19`) |
 | `--fftw-dll PATH` | the FFTW library, when it is not the one `build_tools.py` recorded |
@@ -119,9 +136,10 @@ Each set is one gauntlet command, then the plot script of that picture, drawn in
 directory, then the summary. The gauntlet's output streams through as it runs; the first
 failure stops the suite with the failing command printed, and the finished sets stay. A
 stopped gauntlet run resumes where it left off when the same command runs again
-(`gauntlet/README.md`), so running the suite again with the same `--name-prefix` continues
-it. The `2d-mt8` set draws the threaded run beside the one-thread `2d` run, so it needs the
-`2d` run: run both, or `2d` first.
+(`gauntlet/README.md`), so running the same script again with the same `--name-prefix`
+continues it; the prefix defaults to the day's date, so a run continued on another day
+needs the prefix named. The `2d-mt8` set draws the threaded run beside the one-thread `2d`
+run, so it needs the `2d` run of the same prefix: `run_2d.sh` first, or `run_all.sh`.
 
 ## What lands where
 
@@ -194,6 +212,8 @@ FFTW file was built with, and `SUMMARY.md` records both.
 
 ## Files
 
+- `build.sh` -- builds the tools: calls `build_tools.py` with its arguments
+- `run_all.sh`, `run_1d.sh`, `run_accuracy.sh`, `run_2d.sh`, `run_2d_mt8.sh`, `run_3d.sh` -- the benchmarks, all five or one picture each: the comparator first (`fftw`, the default, or `mkl`), then `run_suite.py`'s options
 - `build_tools.py` -- builds the three tools through `gauntlet/build.py` and records `.config.json`
 - `run_suite.py` -- runs the sets through `gauntlet/gauntlet.py`, draws the pictures with `src/tools/plots/gen_gflops.py`, `gen_2d_pow2.py`, `gen_forest_2d_mt.py`, `gen_3d_pow2.py` and `gen_precision.py`, and writes `SUMMARY.md`
 - `.config.json` -- the record of the last build (per machine, not tracked)
