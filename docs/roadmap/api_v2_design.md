@@ -26,8 +26,10 @@ The batch field says where the K transforms of a batch sit, and matters only whe
 | `VFFT_BATCH_LANE_MAJOR` | `z[2 (e K + t)]`: the transforms side by side, sample by sample |
 | `VFFT_BATCH_DEFAULT` (0) | contiguous for C2C, lane-major for R2C and C2R |
 
-A real batch's spectrum follows the same rule with N/2 + 1 bins in place of N. At rank 2
-and above a batch is contiguous planes; lane-major there is refused until it is built.
+A real batch's spectrum follows the same rule with N/2 + 1 bins in place of N. At rank 2 a
+batch is contiguous planes by default and at rank 3 contiguous volumes, every transform;
+lane-major is served when named (C2C at every extent >= 2; R2C and C2R at an even last
+extent >= 4, the leading extents >= 2). Rank 4 is not served.
 
 ## 1. The functions
 

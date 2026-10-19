@@ -98,9 +98,12 @@ In place, the output strides and distance are not read, as on MKL.
 | in place, rank 2 and 3 | padded: `{0, ..., 2H, 1}` | `{0, ..., H, 1}` | not read | padded rows |
 | contiguous batch, out of place | tight | packed | P / `n1...n(d-1) H` | `VFFT_BATCH_CONTIGUOUS` |
 | contiguous batch, in place, rank 1 | `{0, 1}` | `{0, 1}` | 2H / H | `VFFT_BATCH_CONTIGUOUS` |
+| contiguous batch, in place, rank 2 and 3 | padded: `{0, ..., 2H, 1}` | `{0, ..., H, 1}` | `n1...n(d-1) 2H` / `n1...n(d-1) H` | `VFFT_BATCH_CONTIGUOUS` |
 | lane-major batch, rank 1 | `{s0, K}` | `{s0, K}` | 1 / 1 | `VFFT_BATCH_LANE_MAJOR`, both placements |
 | lane-major batch, rank 2, out of place | `{s0, N2 K, K}` | `{s0, H K, K}` | 1 / 1 | `VFFT_BATCH_LANE_MAJOR` |
 | lane-major batch, rank 2, in place | `{0, 2H K, K}` | `{0, H K, K}` | 1 / 1 | `VFFT_BATCH_LANE_MAJOR` |
+| lane-major batch, rank 3, out of place | `{s0, N2 N3 K, N3 K, K}` | `{s0, N2 H K, H K, K}` | 1 / 1 | `VFFT_BATCH_LANE_MAJOR` |
+| lane-major batch, rank 3, in place | `{0, 2 N2 H K, 2H K, K}` | `{0, N2 H K, H K, K}` | 1 / 1 | `VFFT_BATCH_LANE_MAJOR` |
 
 Any other strides or distances return 6, with one printed line naming the served forms. Those
 include padded or arbitrary pitches, negative strides and overlapping data. Whether the

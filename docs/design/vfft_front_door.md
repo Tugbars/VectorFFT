@@ -62,11 +62,11 @@ cell returns no plan and names its reason in `vfft_error()`.
 | 1D R2C / C2R, INTERLEAVED | any N, both placements; a batch contiguous, or lane-major (its default) at an even N in either placement | lane-major at an odd N; the scrambled order |
 | 1D R2C / C2R, SPLIT | out of place at an even N | an odd N; in place |
 | 2D C2C, INTERLEAVED | any extents, both placements, both orders; howmany > 1 as contiguous planes, or lane-major (every axis a column pass) | |
-| 2D R2C / C2R, INTERLEAVED | any extents (a prime first or an odd last extent included), both placements; howmany > 1 as contiguous planes, or lane-major at an even last extent | a lane-major batch at an odd last extent |
+| 2D R2C / C2R, INTERLEAVED | any extents (a prime first or an odd last extent included), both placements; howmany > 1 as contiguous planes in either placement (in place: every row padded to 2(N2/2+1) doubles, the planes one after another), or lane-major at N1 >= 2 and an even N2 >= 4 (in place: N1 blocks of (N2 + 2) K doubles) | a lane-major batch at an odd last extent, or one below 4 |
 | 2D C2C, SPLIT | both placements, scrambled, or natural where its reorder tape builds; howmany 1 | a batch |
 | 2D R2C / C2R, SPLIT | out of place where the split engines cover both axes | a prime column extent |
-| 3D C2C, INTERLEAVED | both placements, both orders; howmany 1, or a lane-major batch (every axis a column pass) | a contiguous batch |
-| 3D R2C / C2R, INTERLEAVED | both placements, howmany 1 | |
+| 3D C2C, INTERLEAVED | both placements, both orders; howmany > 1 as contiguous volumes (its default: the volume queue over the one-volume plan), or lane-major (every axis a column pass) | a batch with an extent below 2 |
+| 3D R2C / C2R, INTERLEAVED | both placements, every extent >= 2; howmany > 1 as contiguous volumes (its default; in place every row padded to 2(N3/2+1) doubles, the volumes one after another), or lane-major at N1, N2 >= 2 and an even N3 >= 4 (in place: N1 N2 rows of (N3 + 2) K doubles) | a lane-major batch at an odd N3 or N3 < 4; an extent below 2 |
 | 3D and 4D C2C, SPLIT | the scrambled order, howmany 1 | the natural order; a batch |
 | 4D, INTERLEAVED | | every request |
 | real-to-real (DCT, DST, DHT) | 1D, whatever the layout and order fields say | rank 2 and above |
@@ -353,6 +353,17 @@ lane-major 1D batches (C2C, R2C, C2R) run on the column pass
 ([`lane_major_batch_design.md`](../roadmap/lane_major_batch_design.md)); a real lane-major batch
 at an odd N has no real column engine and is refused with its reason.
 
+At ranks 2 and 3 the DEFAULT is contiguous planes and contiguous volumes for every transform: the
+plane queue and the volume queue (`il/rank2/plane_queue.h`, `vfft_policy_il2d_ip_batch_ok`,
+`vfft_policy_ilndr_batch_ok`, `vfft_policy_ilnd_batch_ok`) run the cell's K = 1 plan over the K
+blocks in either placement (in place: K padded planes or volumes, every row 2(N_last/2+1) doubles,
+one after another) and bank their loop-versus-queue verdict (`pq= pqn=`) on that plan's row.
+Lane-major when named is each rank's own door (`il/rank2/lm_batch2d_il.h`, `lm_batch2dr_il.h`,
+`il/rank3/lm_batch3d_il.h`, `lm_batch3dr_il.h`; `vfft_policy_batch_lane_major`): C2C at every
+extent >= 2; R2C and C2R at an even last extent >= 4 with the leading extents >= 2 (in place: N1
+blocks of (N2 + 2) K doubles, N1 N2 rows of (N3 + 2) K doubles). Rank 4 is not served in any
+geometry.
+
 A padded batch (`VFFT_FLAG_OWN_PITCH` on a 1D batch) combined with `layout=INTERLEAVED` is
 rejected at create: the padded planes are split, so the combination has no meaning.
 
@@ -445,6 +456,11 @@ The door refuses rather than degrading, in every one of these cases, and names t
 | `VFFT_FLAG_OWN_PITCH` outside its two kinds (section 13) | refused at create |
 | in-place real that cannot build zr2c | refused at create — no out-of-place substitute |
 | a K=1 cell with no split route and no IL pair | refused at create |
+| a lane-major real batch of rank 3 outside its extents | refused at create — `vfft_create: the lane-major interleaved 3D real batch serves R2C and C2R at howmany >= 2, N1 >= 2, N2 >= 2 and an even N3 >= 4 (got %s %dx%dx%d howmany=%zu) -- an odd N3 has no real column engine; lay the %zu volumes out one after another (VFFT_BATCH_DEFAULT or VFFT_BATCH_CONTIGUOUS) for it` |
+| an in-place real request outside the served shapes | refused at create — `vfft_create: in-place %s is served INTERLEAVED only: 1D one transform (a 2*(N/2+1)-double plane, N+1 at odd N), a 1D batch with batch=VFFT_BATCH_CONTIGUOUS (that plane per transform) or lane-major at an even N (one (N+2)*howmany-double plane), 2D and 3D at any howmany as contiguous planes or volumes (every row padded to 2*(N_last/2+1) doubles, one after another, natural order), a 2D or 3D lane-major batch at an even last extent (rows of (N_last+2)*howmany doubles) — use VFFT_PLACEMENT_OUT otherwise` |
+| a 3D real request outside the tier's contract (an extent below 2, a scrambled order) | refused at create — `vfft_create: 3D INTERLEAVED real serves R2C and C2R one volume per plan (a batch of howmany >= 2 as contiguous volumes, VFFT_BATCH_DEFAULT or VFFT_BATCH_CONTIGUOUS, runs through the volume queue over this plan), out of place, or in place (every row padded to 2*(N3/2+1) doubles), DEFAULT/NATURAL order, every dim >= 2 (got %s, howmany=%zu, %dx%dx%d, %s)` |
+| a 3D C2C batch outside the queue's law (an extent below 2) | refused at create — `vfft_create: 3D INTERLEAVED serves C2C one volume per plan, either placement, every order (a batch of howmany >= 2 as contiguous volumes, VFFT_BATCH_DEFAULT or VFFT_BATCH_CONTIGUOUS, runs through the volume queue over this plan; lane-major when named through its own door), every dim >= 2 (got %s, howmany=%zu, %dx%dx%d); real has its own tier, rank 4 is the tier's next phase` |
+| a rank-4 INTERLEAVED request, in any geometry | refused at create — `vfft_create: %dD %s with layout=INTERLEAVED is not wired yet (the rank-3+ interleaved tier is a planned feature); use VFFT_LAYOUT_SPLIT` |
 | a distinct destination on an in-place real plan | refused at execute |
 | a SPLIT plan through `vfft_execute`, an INTERLEAVED one through `vfft_execute_split` | refused at execute |
 

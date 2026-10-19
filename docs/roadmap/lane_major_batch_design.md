@@ -8,10 +8,10 @@ composite cells 1.4x to 1.7x faster than before; the results page), and the c2c 
 SERIAL DENSE TILES under the serial-form law (a Rader-stage chain walks the plane, a
 smooth chain races the tile widths alone: the tile won at the widest planes, 16x4096
 from 1.06x to 1.74x, tied in the middle and lost at the Rader cells), and step 6's ranks 2
-and 3 (section 8: the 2D c2c batch, the 2D real batch and the 3D c2c batch through their
-doors, raced against MKL's lane-major batches on the results page; a real 3D batch and rank
-4 stay contiguous planes). The real odd column engine waits for piece C of the Rader
-spread.**
+and 3 (section 8: the 2D c2c batch, the 2D real batch, the 3D c2c batch and the 3D real
+batch through their doors, the first three raced against MKL's lane-major batches on the
+results page; rank 4 is not served in any geometry). The real odd column engine waits for
+piece C of the Rader spread.**
 Owner: "we will build lane major everywhere; the library is almost done, so it may
 start now. 1D C2C / R2C / C2R all will have lane major with one bold stroke." This
 document is the design to build against; it supersedes slice 2 of
@@ -272,9 +272,11 @@ transform-contiguous rows (their geometry is the layout's DEFAULT).
 ## 6. Policy and the gates
 
 `vfft_policy_batch_lane_major(cfg)` in planning/policy_il.h names the admitted
-requests (section 1), mirrored by the policy gate over the request space. The door
-refuses everything else with the reason printed (an odd N real batch; a rank-2 lane-major
-request, whose batches are contiguous planes).
+requests (section 1 at rank 1, section 8 at ranks 2 and 3), mirrored by the policy gate
+over the request space beside the three contiguous queue laws. The doors refuse everything
+else with the reason printed, naming the served request: a real batch at an odd last
+extent or one below 4, a rank-3 real batch with N1 or N2 below 2 (the contiguous volumes
+named), a c2c batch with an extent below 2, any rank-4 request.
 
 The workstream's own regression, `src/tools/gates/lmbatch_gate.c` (the owner's rule: a
 focused workstream gets its own regression, not the old gates): c2c at N in {16, 45,
@@ -282,7 +284,10 @@ focused workstream gets its own regression, not the old gates): c2c at N in {16,
 cells and against K separate K = 1 plans elsewhere, the scrambled roundtrip, in place
 bitwise against out of place, T = 8 engaged and within 1e-12 of T = 1, the replay
 bitwise; r2c and c2r at even N against K separate real plans and the naive DFT, the
-pair roundtrip, T = 8; the refusals named. The Rader regression's column sections cover
+pair roundtrip, T = 8; the 2D and 3D c2c batches and the 2D real batch; the 3D real batch
+as two sections of its own (3DR2C, 3DC2R: K in {2, 3, 4, 8}, odd N1 and N2, a Rader first
+axis, T = 2 and T = 8, both placements, against K separate one-volume plans and the naive
+DFT); the refusals named. The Rader regression's column sections cover
 the stage itself. The canonical bench gets a lane-major batch mode against MKL's
 strided batch descriptor (NUMBER_OF_TRANSFORMS = K, distance 1, stride K), one thread
 and T = 8, the cells above; its numbers go to `docs/performance/v1_0_results.md`.
@@ -336,7 +341,34 @@ the lane-major 2D batch at (N2, N3, K), the 2D batch's own plan as the child in 
 recipe, its row child's inside it, rides on this cell's row as `rp_*`), run per block in
 place through the 2D batch's block walker and executor. Threaded, the blocks go to the
 workers on clones of the 2D child, serial inside. The row: the 3D cell at `q = K` on the
-`lay=lm` axis. C2C only: a real 3D batch and any rank-4 batch stay contiguous planes.
+`lay=lm` axis.
+
+The real 3D batch (`il/rank3/lm_batch3dr_il.h`) is the 2D real batch one rank up, in the
+real order: K real volumes side by side, `x[((i N2 + j) N3 + k) K + t]`, the spectrum
+`z[2 (((i N2 + j) H + f) K + t)]`, H = N3/2 + 1. r2c runs the last axes first: N1 blocks of
+the lane-major 2D real batch at (N2, N3, K), the child in role on its private store (its
+own 1D real child nested inside), block i the contiguous N2 N3 K reals of plane i into the
+spectrum's plane block of 2 N2 H K doubles; then the first axis, one complex column pass of
+N1 rows over N2 H K lanes in place on the spectrum, natural. c2r is the mirror: the backward
+column pass over the spectrum, then the blocks through the 2D c2r batch; out of place the
+caller's spectrum survives through a scratch of its size. In place both passes run on one
+buffer of N1 N2 rows of (N3 + 2) K doubles, the reals first in each row and the bins over
+them. The executors are the 2D real batch's, rank-aware through their block sizes, so the
+race arm, the lean binding and the destroy serve unchanged; threaded as the 2D real batch
+(the first axis through its raced forms, the blocks over the workers on clones of the 2D
+child, one threaded verdict raced with the column pass's arms). The row: `t=r2c
+n=N1xN2xN3 q=K` on the `lay=lm` axis, direction-shared (the c2r twin replays the r2c's
+verdicts), and in place its own row (`place=ip`, the one-volume rank-3 real tier's
+spelling), unlike the placement-blind 1D and 2D real lane-major rows. Admitted at N1 >= 2,
+N2 >= 2 and an even N3 >= 4; an odd N3 has no real column engine and is refused naming the
+contiguous volumes. Its regression is `lmbatch_gate.c`'s sections 3DR2C and 3DC2R.
+
+The contiguous geometry at ranks 2 and 3 is not this door's: a rank-2 batch is contiguous
+planes by default and a rank-3 batch contiguous volumes, every transform, either placement,
+run by the plane queue and the volume queue (`il/rank2/plane_queue.h`) over the cell's K = 1
+plan (in place: K padded planes or volumes, every row 2 (N_last/2 + 1) doubles, one after
+another; the queue banks its loop-versus-queue verdict on the K = 1 plan's row, `place=oop`
+and `place=ip` apart for a real cell). Rank 4 is not served in any geometry.
 
 **The batches' cost at small volumes (measured 2026-10-15, 32x32x32 x 4, one thread).** The
 3D batch takes 300 us where the loop of four one-volume plans takes 204: the first axis, one
