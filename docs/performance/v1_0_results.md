@@ -599,32 +599,78 @@ OOP column — but it has not been re-measured, and is not quoted as if it had.
  245760    633,712 1,102,950     1.74×      615,938 1,112,100    1.81×   6e-16
 ```
 
-### K=1 INTERLEAVED — every power of two 2..2^22 vs MKL, T=1 and T=8 (2026-09-22)
+### K=1 INTERLEAVED — every power of two 64..2^23 vs MKL and FFTW, one thread (2026-10-20)
+
+> **Contract:** 1D complex-to-complex FP64, interleaved, natural order, out of place, K = 1, one thread  
+> **Competitors:** Intel oneMKL 2025.3 (sequential); FFTW 3.3.10, the repository's own build
+> ([`gauntlet/fftw/`](../../gauntlet/fftw/README.md)), FFTW_MEASURE, each run keeping its own FFTW wisdom  
+> **Records:** [`c2c_1d_pow2_mkl_20261020`](../../gauntlet/results/c2c_1d_pow2_mkl_20261020/) and
+> [`c2c_1d_pow2_fftw_20261020`](../../gauntlet/results/c2c_1d_pow2_fftw_20261020/); 1024 and 65536 re-timed in
+> [`c2c_1d_pow2_mkl_retime_20261020`](../../gauntlet/results/c2c_1d_pow2_mkl_retime_20261020/), 131072 in
+> [`c2c_1d_pow2_mkl_retime2_20261020`](../../gauntlet/results/c2c_1d_pow2_mkl_retime2_20261020/)
+
+The gauntlet's protocol: one process per length, both engine orders, the caller pinned with its
+SMT sibling held, a control cell at 4096 (vs MKL 1.07 to 1.09, vs FFTW 1.38 to 1.42). Every
+length's plan replayed from a scratch copy of the shipped wisdom, except the four-step lengths
+from 2^19 in the MKL run, raced at create in the run's store and replayed in the FFTW run. The ns
+columns are the median of the two engine orders; each x is the comparator's time over ours in
+the worse of the two orders.
 
 ```
-         N  serial verdict on the row       ours ns     MKL ns      x |   ours T=8    MKL T=8      x  T=8 verdict
-         2  mono                                  4         11   2.89 |          4         11   2.84  serial
-         4  mono                                  5         11   2.35 |          4         11   2.53  serial
-         8  mono                                  7         12   1.61 |          7         12   1.71  serial
-        16  ZTURN-T 4.4                          10         12   1.20 |         10         13   1.27  serial (the threaded arm lost)
-        32  pair 4.8                             17         16   0.97 |         17         17   1.00  serial
-        64  pair 4.16                            31         31   0.98 |         31         31   0.98  serial
-       128  pair 4.32                            66         69   1.03 |         66         68   1.04  serial
-       256  pair 16.16                          135        138   1.01 |        135        137   1.01  serial
-       512  pair 16.32                          314        293   0.94 |        297        291   0.98  serial
-      1024  ZTURN-T 4.8.8.4                     720        841   1.11 |        713        848   1.19  serial (the threaded arm lost)
-      2048  ZTURN-T 8.8.8.4 tile 1024          1620       2032   1.25 |       1652       2162   1.31  serial (the threaded arm lost)
-      4096  ZTURN-T 8.8.8.8 tile 2048          3593       3846   1.06 |       3679       3825   1.04  serial (the threaded arm lost)
-      8192  ZTURN-T 8.4.8.4.8 tile 1024        8048       8477   1.05 |       4783       8352   1.70  threaded, 3949 MT passes counted
-     16384  ZTURN-T 8.4.4.4.4.8 tile 2048      17189      19177   1.10 |      10804      14645   1.15  threaded, 1661 MT passes counted
-     32768  ZTURN-T 8.4.4.8.8.4 tile 2048      38546      36893   0.95 |      20289      21434   0.98  threaded, 1229 MT passes counted
-     65536  ZTURN-T 8.4.8.4.8.8 tile 1024      89247     109473   1.21 |      25213      42267   1.54  threaded, 487 MT passes counted
-    131072  ZTURN-T 8.4.4.4.4.8.8 tile 2048     222413     259253   1.17 |      51707      80993   1.49  threaded, 255 MT passes counted
-    262144  ZTURN-T 4.8.8.4.4.8.8 tile 2048     541912     710563   1.31 |     103363     185388   1.52  threaded, 220 MT passes counted
-    524288  four-step 512.1024              1374012    1484350   1.04 |     271150     363462   1.34  threaded, four-step split 2048
-   1048576  four-step 2048.512              3167088    4175437   1.28 |     578787     893788   1.54  threaded, four-step split 2048
-   2097152  four-step 512.4096              8241637   10632675   1.27 |    1726562    2589850   1.50  threaded, four-step split 2048
-   4194304  four-step 2048.2048            18851825   24110238   1.28 |    6328113    6966025   1.10  threaded, four-step split 4096
+         N  verdict on the row                ours ns     MKL ns      x    FFTW ns      x
+        64  pair 4.16                              30         31   1.03         30   0.70
+       128  pair 4.32                              67         68   0.98         59   0.92
+       256  pair 16.16                            134        137   1.02        124   0.92
+       512  pair 16.32                            296        296   0.99        274   0.92
+      1024  ZTURN-T 4.8.8.4                       725        840   1.14        740   1.03
+      2048  ZTURN-T 8.8.8.4 tile 1024            1602       2078   1.28       2068   1.14
+      4096  ZTURN-T 8.8.8.8 tile 2048            3564       3830   1.07       5069   1.41
+      8192  ZTURN-T 8.4.8.4.8 tile 1024          7985       8505   1.06      10630   1.33
+     16384  ZTURN-T 8.4.4.4.4.8 tile 2048       17756      18956   1.06      24557   1.14
+     32768  ZTURN-T 8.4.4.8.8.4 tile 2048       39467      38952   0.97      53627   1.14
+     65536  ZTURN-T 8.4.8.4.8.8 tile 1024       91020     114462   1.25     127420   1.42
+    131072  ZTURN-T 8.4.4.4.4.8.8 tile 2048     227753     301404   1.28     357180   1.45
+    262144  ZTURN-T 8.8.8.8.8.8 tile 1024      564824     723750   1.25     846775   1.39
+    524288  four-step 512.1024                1381756    1493375   1.05    2235737   1.57
+   1048576  four-step 4096.256                3313612    4216850   1.26    5483118   1.61
+   2097152  four-step 4096.512                8376982   11072068   1.31   12438868   1.46
+   4194304  four-step 4096.1024              19080575   26115262   1.35   29118806   1.44
+   8388608  four-step 4096.2048              43185869   59604500   1.37   62806894   1.48
+```
+
+Against MKL: median 1.11x, level or ahead at every length (0.97x at 32768, 0.98x at 128 and
+0.99x at 512 are within 3%), 1.25x to 1.37x from 65536 up. Against FFTW: behind at 64 to 512
+(0.70x to 0.92x, the pair route), ahead from 1024 up, 1.03x to 1.61x, median 1.36x. Every
+output agrees elementwise with the comparator's to 2.7e-15.
+
+### K=1 INTERLEAVED — every power of two 2..2^22 vs MKL, T=8 (2026-09-22)
+
+Both engines at eight threads; the verdict column says how the plan ran.
+
+```
+         N   ours T=8    MKL T=8      x  T=8 verdict
+         2          4         11   2.84  serial
+         4          4         11   2.53  serial
+         8          7         12   1.71  serial
+        16         10         13   1.27  serial (the threaded arm lost)
+        32         17         17   1.00  serial
+        64         31         31   0.98  serial
+       128         66         68   1.04  serial
+       256        135        137   1.01  serial
+       512        297        291   0.98  serial
+      1024        713        848   1.19  serial (the threaded arm lost)
+      2048       1652       2162   1.31  serial (the threaded arm lost)
+      4096       3679       3825   1.04  serial (the threaded arm lost)
+      8192       4783       8352   1.70  threaded, 3949 MT passes counted
+     16384      10804      14645   1.15  threaded, 1661 MT passes counted
+     32768      20289      21434   0.98  threaded, 1229 MT passes counted
+     65536      25213      42267   1.54  threaded, 487 MT passes counted
+    131072      51707      80993   1.49  threaded, 255 MT passes counted
+    262144     103363     185388   1.52  threaded, 220 MT passes counted
+    524288     271150     363462   1.34  threaded, four-step split 2048
+   1048576     578787     893788   1.54  threaded, four-step split 2048
+   2097152    1726562    2589850   1.50  threaded, four-step split 2048
+   4194304    6328113    6966025   1.10  threaded, four-step split 4096
 ```
 
 ### K=1 INTERLEAVED — HIGH N: non-power-of-two N above 262144 vs MKL, T=1 (2026-10-12)
