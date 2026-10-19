@@ -25,9 +25,10 @@
  *   W  two threads of the gate executing the two T=8 plans alternately, then at the same time: both
  *      outputs are the reference, both masks as they were;
  *   M  plans created with T=8 whose raced verdict is serial (N = 64, a pair; N = 1024, ZTURN-T whose
- *      threaded arm loses): no threaded pass is counted, and a call costs within 20 ns of the T=1
- *      plan's, timed in alternating batches with the thread on the reserved core (pinning at the door
- *      cost such a call ~115 ns, 2026-10-20).
+ *      threaded arm loses): no threaded pass is counted, and a call costs within 20 ns or 5% of the
+ *      T=1 plan's, whichever is larger (the two plans are raced apart and may differ by a form), timed
+ *      in alternating batches with the thread on the reserved core (pinning at the door cost such a
+ *      call ~115 ns, 2026-10-20).
  * The pin is built for Windows: elsewhere the gate passes with a note. Usage: caller_pin_gate --wisdir <cold scratch dir> */
 #include <stdio.h>
 #include <stdlib.h>
@@ -532,9 +533,12 @@ int main(int argc, char **argv)
             }
             z0 = vfft_ztt_mt_passes();
             time_pair(&s1, &s8, &d1, &d8);
-            CHECK(vfft_ztt_mt_passes() == z0 && d8 <= d1 + 20.0,
-                  "M  N=%d created at T=8, route %s, served serially (%ld threaded passes): %.1f ns a call against %.1f at T=1 "
-                  "(limit +20 ns)", MN[k], vfft_plan_route(s8.p), vfft_ztt_mt_passes() - z0, d8, d1);
+            {
+                const double lim = d1 * 0.05 > 20.0 ? d1 * 0.05 : 20.0;
+                CHECK(vfft_ztt_mt_passes() == z0 && d8 <= d1 + lim,
+                      "M  N=%d created at T=8, route %s, served serially (%ld threaded passes): %.1f ns a call against %.1f at T=1 "
+                      "(limit +%.0f ns)", MN[k], vfft_plan_route(s8.p), vfft_ztt_mt_passes() - z0, d8, d1, lim);
+            }
             free_small(&s1); free_small(&s8);
         }
         SetThreadAffinityMask(GetCurrentThread(), mref);
