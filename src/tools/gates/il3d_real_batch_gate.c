@@ -979,7 +979,10 @@ int main(int argc, char **argv)
         cell_grp(8, 8, 8, 3, 8, 1, 0, 0);
         cell_grp(16, 16, 16, 2, 8, 0, 1, 0);
         cell_grp(8, 8, 8, 2, 8, 1, 1, 1);
+        /* outside the law's pow2 domain (owner, 2026-10-19: the arm races at pow2 cells only): the set is never
+         * built, so a pinned arm cannot engage -- a Rader first axis, and a smooth non-pow2 extent */
         cell_grp(53, 8, 8, 2, 8, 0, 0, 1);
+        cell_grp(12, 8, 8, 2, 8, 0, 0, 1);
         /* above the serial arm's bound (policy_il.h, 512 KB): the one-volume plan threads at every G, so the
          * arm exists and the pinned engagement is unconditional here */
         cell_grp(64, 64, 32, 4, 8, 0, 0, 0);

@@ -826,9 +826,11 @@ static inline int vfft_policy_ilndr_batch_ok(const vfft_cfg_t *cfg, size_t howma
  * contiguous batch 190 us, where the one-volume plan runs 76.6 us at T = 8 against
  * 302-329 us at one thread (eight threads buy 4.0-4.3x): two threads per volume at
  * near-ideal halves beat eight threads at four volumes. The arm's domain: a contiguous
- * rank-3 real batch (ilndr_batch_ok) at 2 <= K <= T / 2, so G >= 2 (at G = 1 the arm IS
- * the queue: K serial instances on K workers), T >= 4; in place r2c as the tier serves
- * it, in place c2r not yet (the pieces walk is dealt per execute). The remainder
+ * rank-3 real batch (ilndr_batch_ok) with EVERY EXTENT A POWER OF TWO (the owner's rule:
+ * the arm races at pow2 cells only; a pow2 first axis also never carries a Rader
+ * column stage), at 2 <= K <= T / 2, so G >= 2 (at G = 1 the arm IS the queue: K serial
+ * instances on K workers), T >= 4; in place r2c as the tier serves it, in place c2r
+ * not yet (the pieces walk is dealt per execute). The remainder
  * T - K G idles: a batch takes as long as its slowest group, and uneven groups cannot
  * shorten it. Whether the G-thread plan can run as a group is the tier's
  * (_ilndr_group_ok: a threaded verdict at G, no Rader column stage), and the race
@@ -837,6 +839,8 @@ static inline int vfft_policy_pq_groups_ok(const vfft_cfg_t *cfg, size_t howmany
 {
     return vfft_policy_ilndr_batch_ok(cfg, howmany) && nthreads >= 4 && howmany >= 2 &&
            howmany <= (size_t)nthreads / 2 &&
+           (cfg->n[0] & (cfg->n[0] - 1)) == 0 && (cfg->n[1] & (cfg->n[1] - 1)) == 0 &&
+           (cfg->n[2] & (cfg->n[2] - 1)) == 0 &&
            !(cfg->transform == VFFT_C2R && cfg->placement == VFFT_INPLACE);
 }
 /* -- rank 3, C2C, the CONTIGUOUS BATCH (fftnd_il.h through the volume queue,

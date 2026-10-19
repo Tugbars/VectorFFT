@@ -1228,7 +1228,6 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
     snprintf(tkb_nsw, sizeof tkb_nsw, "%s%s", c2r ? "nsw_c2r" : "nsw", ip2 ? "_p" : "");
     snprintf(tkb_wl, sizeof tkb_wl, "wl_c2r%s", ip2 ? "_p" : "");
     d->mt_t = nthr;
-    d->prof = getenv("VFFT_ILNDR_PROF") != NULL;   /* bound once here: never read on the execute path */
     _il2d_blu_ctx.W = W;
     _il2d_blu_ctx.cfg = cfg;
     _il2d_blu_chain_hook = _il2d_blu_m_chain;
@@ -1775,6 +1774,11 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
                     d->mt == 2 ? "plane arm" : "serial",
                     d->mt == 2 ? (d->mts == 3 ? "/band" : d->mts == 2 ? "/payonce" : "/child") : "");
     }
+    /* THE PROFILE HOOK, bound AFTER both races (2026-10-19): the hook prints a line per execute from
+     * inside the walks, so a race run on a profiled plan timed the print inside every sample -- the
+     * threaded arms ~90 us high at 64x64x64 (46.9 us -> 112 us at T=8), the serial arms as much --
+     * and banked a verdict ranked by the print's noise. Bound once here: never read on the execute path. */
+    d->prof = getenv("VFFT_ILNDR_PROF") != NULL;
     /* ── the handle ── */
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     if (!h)

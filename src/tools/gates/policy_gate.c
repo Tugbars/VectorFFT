@@ -197,7 +197,9 @@ static int _ref_pq_groups(int transform, int layout, int dims, int howmany, int 
                           int placement, int T)
 {
     return _ref_ilndr_batch(transform, layout, dims, howmany, geom, order, n0, n1, n2) && T >= 4 &&
-           howmany >= 2 && 2 * howmany <= T && !(transform == VFFT_C2R && placement == VFFT_INPLACE);
+           howmany >= 2 && 2 * howmany <= T &&
+           (n0 & (n0 - 1)) == 0 && (n1 & (n1 - 1)) == 0 && (n2 & (n2 - 1)) == 0 &&   /* pow2 cells only (owner, 2026-10-19) */
+           !(transform == VFFT_C2R && placement == VFFT_INPLACE);
 }
 static int _ref_rader_prime(int N)
 {
