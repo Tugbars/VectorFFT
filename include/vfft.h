@@ -107,10 +107,13 @@ extern "C"
    * - VFFT_BATCH_DEFAULT: contiguous for C2C, lane-major for R2C and C2R and
    *   for every SPLIT batch (whose only geometry it is).
    * A batch of rank 2 is contiguous planes by default, or lane-major when named
-   * (C2C; R2C and C2R at an even last extent): element (r, c) of transform t at
-   * z[2 ((r N2 + c) K + t)]. A C2C batch of rank 3 is lane-major when named,
-   * element (i, j, k) of transform t at z[2 ((i N2 N3 + j N3 + k) K + t)]; a real
-   * batch of rank 3, and any batch of rank 4, is contiguous planes.
+   * (C2C; R2C and C2R at an even last extent >= 4): element (r, c) of transform t
+   * at z[2 ((r N2 + c) K + t)]. A batch of rank 3 is contiguous volumes by
+   * default, or lane-major when named (C2C; R2C and C2R at N1, N2 >= 2 and an
+   * even N3 >= 4): element (i, j, k) of transform t at
+   * z[2 ((i N2 N3 + j N3 + k) K + t)], real data x[(i N2 N3 + j N3 + k) K + t],
+   * bins z[2 ((i N2 H + j H + f) K + t)] with H = N3/2 + 1. A batch of rank 4 is
+   * not served.
    */
   typedef enum
   {
@@ -191,10 +194,12 @@ extern "C"
    * C2C: in and out are complex pairs. R2C: in is reals, out the half
    * spectrum; VFFT_FORWARD only. C2R: in is the half spectrum, out reals;
    * VFFT_BACKWARD only. Real-to-real: reals in and out. In place, out == in;
-   * an in-place real plane holds 2 (N/2 + 1) doubles per transform (a
-   * lane-major real batch: (N + 2) K doubles; a lane-major 2D real batch: N1 blocks
-   * of (N2 + 2) K doubles), the reals first and the bins
-   * over them, and vfft_info() gives its size. A SPLIT plan is refused here.
+   * an in-place real plane holds 2 (N/2 + 1) doubles per transform (2D and 3D:
+   * every row padded to 2 (N_last/2 + 1) doubles, a contiguous batch one such
+   * plane or volume after another; a lane-major real batch: (N + 2) K doubles;
+   * a lane-major 2D real batch: N1 blocks of (N2 + 2) K doubles; a lane-major
+   * 3D real batch: N1 N2 rows of (N3 + 2) K doubles), the reals first and the
+   * bins over them, and vfft_info() gives its size. A SPLIT plan is refused here.
    * Safe to call concurrently on different plans; a plan runs one execute at
    * a time.
    */

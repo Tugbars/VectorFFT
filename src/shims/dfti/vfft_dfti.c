@@ -575,30 +575,32 @@ static int vd_complex_forms(const struct DFTI_DESCRIPTOR *d, vd_form_t *f)
     return m;
 }
 
-/* real data: the reals on side r, the half spectrum (H = n_last / 2 + 1 bins a row) on side c */
+/* real data: the reals on side r, the half spectrum (H = n_last / 2 + 1 bins a row) on side c;
+ * L = n_1 ... n_(rank-1), the rows of one transform */
 static int vd_real_forms(const struct DFTI_DESCRIPTOR *d, vd_form_t *f)
 {
     const int r = d->rank, ip = d->placement == DFTI_INPLACE;
     const MKL_LONG K = d->howmany, H = d->n[r - 1] / 2 + 1;
-    MKL_LONG ec[VD_MAXRANK], ep[VD_MAXRANK], P = 1;
+    MKL_LONG ec[VD_MAXRANK], ep[VD_MAXRANK], P = 1, L;
     int k, m = 0;
     for (k = 0; k < r; k++)
     {
         ec[k] = ep[k] = d->n[k];
         P *= d->n[k];
     }
+    L = P / d->n[r - 1];
     ec[r - 1] = H;     /* the half spectrum's rows */
     ep[r - 1] = 2 * H; /* in place: the real rows padded to the spectrum's */
     memset(f, 0, 2 * sizeof *f);
     if (!ip)
-    {   /* tight reals, a packed spectrum; contiguous transforms; the lane-major batch at ranks 1 and 2 */
+    {   /* tight reals, a packed spectrum; contiguous transforms at any rank; the lane-major batch at ranks 1 to 3 */
         vd_rowmajor(d->n, r, 1, f[m].r);
         vd_rowmajor(ec, r, 1, f[m].c);
         f[m].rdist = K > 1 ? P : -1;
-        f[m].cdist = K > 1 ? P / d->n[r - 1] * H : -1;
+        f[m].cdist = K > 1 ? L * H : -1;
         f[m].batch = K > 1 ? VFFT_BATCH_CONTIGUOUS : VFFT_BATCH_DEFAULT;
         m++;
-        if (K > 1 && r <= 2)
+        if (K > 1 && r <= 3)
         {
             vd_rowmajor(d->n, r, K, f[m].r);
             vd_rowmajor(ec, r, K, f[m].c);
@@ -607,33 +609,26 @@ static int vd_real_forms(const struct DFTI_DESCRIPTOR *d, vd_form_t *f)
             m++;
         }
     }
-    else if (K == 1 || r == 1)
-    {   /* in place: one transform at any rank (padded rows above rank 1), or a rank-1 batch */
+    else
+    {   /* in place, the real rows padded to 2H: one transform at any rank; contiguous transforms at any rank,
+         * a padded plane or volume per transform one after another (distance 2 L H reals, L H bins) */
         vd_rowmajor(ep, r, 1, f[m].r);
         vd_rowmajor(ec, r, 1, f[m].c);
-        f[m].rdist = K > 1 ? 2 * H : -1;
-        f[m].cdist = K > 1 ? H : -1;
+        f[m].rdist = K > 1 ? 2 * L * H : -1;
+        f[m].cdist = K > 1 ? L * H : -1;
         f[m].s0zero = 1;
         f[m].batch = K > 1 ? VFFT_BATCH_CONTIGUOUS : VFFT_BATCH_DEFAULT;
         m++;
-        if (K > 1)
-        {
-            vd_rowmajor(d->n, 1, K, f[m].r);
-            vd_rowmajor(ec, 1, K, f[m].c);
+        if (K > 1 && r <= 3)
+        {   /* the lane-major batch at ranks 1 to 3, the padded strides times K: one plane of (N + 2) K doubles,
+             * N1 blocks of (N2 + 2) K, N1 N2 rows of (N3 + 2) K */
+            vd_rowmajor(ep, r, K, f[m].r);
+            vd_rowmajor(ec, r, K, f[m].c);
             f[m].rdist = f[m].cdist = 1;
             f[m].s0zero = 1;
             f[m].batch = VFFT_BATCH_LANE_MAJOR;
             m++;
         }
-    }
-    else if (r == 2)
-    {   /* in place, the rank-2 lane-major batch: N1 blocks of (N2 + 2) K doubles */
-        vd_rowmajor(ep, 2, K, f[m].r);
-        vd_rowmajor(ec, 2, K, f[m].c);
-        f[m].rdist = f[m].cdist = 1;
-        f[m].s0zero = 1;
-        f[m].batch = VFFT_BATCH_LANE_MAJOR;
-        m++;
     }
     return m;
 }
@@ -749,8 +744,9 @@ MKL_LONG vfft_dfti_commit(DFTI_DESCRIPTOR_HANDLE desc)
                    "which VectorFFT does not write)", r);
         else
             vd_say("DftiCommitDescriptor: %s rank %d, %lld transform(s), %s: the strides and distances are not a layout "
-                   "VectorFFT serves (tight strides for one transform or contiguous transforms; the lane-major batch, "
-                   "strides times the batch count and distance 1; real data in place also with padded rows; "
+                   "VectorFFT serves (tight strides for one transform or contiguous transforms; the lane-major batch "
+                   "at ranks 1 to 3, strides times the batch count and distance 1; real data in place the same forms "
+                   "on rows padded to 2(n/2+1), a contiguous batch at the padded transform's distance; "
                    "docs/roadmap/dfti_shim_design.md section 3)",
                    real ? "real" : "complex", r, (long long)d->howmany, ip ? "in place" : "out of place");
         return DFTI_UNIMPLEMENTED;

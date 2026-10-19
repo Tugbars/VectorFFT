@@ -5,7 +5,9 @@
  *      offsets, both directions (the backward scale's roundtrip; its recommit keeps the plans);
  *   R  real: rank 1 in both placements (both directions from one commit), ranks 2 and 3 with the
  *      strides swapped and recommitted between directions (the unfit direction refused with 3),
- *      contiguous and lane-major batches; the c2r judged on the exact spectrum;
+ *      contiguous and lane-major batches at ranks 1 to 3 in both placements (in place: padded planes or
+ *      volumes one after another; the lane-major rows padded to (n + 2) K); the c2r judged on the exact
+ *      spectrum;
  *   S  the statuses: an uncommitted compute 2, a NULL handle 5 and the NULL-handle VERSION query 0,
  *      single precision and split storage 6, the settings DFTI does not implement 3, a batch with no
  *      distance 3, a rank-2 real transform on the default strides (3 in place, 6 out of place), an
@@ -270,8 +272,8 @@ static void cell_r(int r, const MKL_LONG *n, int K, int lane, int ip, MKL_LONG t
     PC = P / n[r - 1] * H;
     rm(er, r, lane ? K : 1, 0, rs);
     rm(ec, r, lane ? K : 1, 0, cs);
-    rdist = lane ? 1 : ip ? 2 * H : P;
-    cdist = lane ? 1 : ip ? H : PC;
+    rdist = lane ? 1 : ip ? 2 * PC : P; /* contiguous in place: a padded plane or volume per transform */
+    cdist = lane ? 1 : PC;
     nr = span(r, n, rs, rdist, (size_t)K);
     nc = span(r, ec, cs, cdist, (size_t)K);
     nbuf = ip ? (nr > 2 * nc ? nr : 2 * nc) : nr;
@@ -602,10 +604,11 @@ int main(int argc, char **argv)
         cell_c(2, n168, 4, 1, 0, 0, 0, 1);     /* the 2D lane-major batch */
         cell_c(3, n888, 4, 1, 0, 0, 0, 1);     /* the 3D lane-major batch */
         cell_c(2, n1210, 3, 0, 0, 0, 0, 1);    /* a 2D contiguous batch */
+        cell_c(3, n888, 2, 0, 0, 0, 0, 1);     /* a 3D contiguous batch: the volume queue */
     }
     {   /* R: real */
         const MKL_LONG n64[1] = {64}, n63[1] = {63}, n6[1] = {6}, n16[1] = {16}, n54[2] = {5, 4}, n13x[3] = {13, 5, 4},
-                       n816[2] = {8, 16};
+                       n816[2] = {8, 16}, n468[3] = {4, 6, 8};
         cell_r(1, n64, 1, 0, 0, 1);
         cell_r(1, n63, 1, 0, 0, 1);            /* odd */
         cell_r(1, n64, 1, 0, 1, 1);            /* in place on DFTI's default strides */
@@ -619,6 +622,11 @@ int main(int argc, char **argv)
         cell_r(1, n64, 8, 1, 1, 1);
         cell_r(2, n816, 4, 1, 0, 1);           /* the 2D lane-major batch */
         cell_r(2, n816, 4, 1, 1, 1);
+        cell_r(2, n816, 4, 0, 1, 1);           /* a 2D contiguous batch in place: K padded planes (the plane queue) */
+        cell_r(3, n468, 3, 0, 0, 1);           /* 3D contiguous batches (the volume queue) */
+        cell_r(3, n468, 3, 0, 1, 1);           /*   in place: K padded volumes */
+        cell_r(3, n468, 3, 1, 0, 1);           /* the 3D lane-major batch */
+        cell_r(3, n468, 3, 1, 1, 1);           /*   in place: N1 N2 rows of (N3 + 2) K doubles */
     }
     statuses();
     shared(8);

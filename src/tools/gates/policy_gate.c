@@ -149,17 +149,47 @@ static int _ref_strip_chain_primes(int n)
     for (i = 0; i < 15; i++) while (n % cp[i] == 0) n /= cp[i];
     return n;
 }
-/* the lane-major batch's admission (vfft_policy_batch_lane_major), spelled as the request table */
-static int _ref_lane_major(int transform, int layout, int dims, int howmany, int geom, int N, int placement)
+/* the lane-major batch's admission (vfft_policy_batch_lane_major), spelled as the request table:
+ * interleaved, K >= 2, both placements at every rank (step 5, 2026-10-15; the 2D and 3D real doors
+ * in place). c2c: the geometry named, ranks 1 to 3, every extent >= 2. Real: rank 1 on DEFAULT or
+ * LANE_MAJOR at an even N >= 4; rank 2 named at N1 >= 2 and an even N2 >= 4; rank 3 named at
+ * N1, N2 >= 2 and an even N3 >= 4 (il/rank3/lm_batch3dr_il.h, 2026-10-19). */
+static int _ref_lane_major(int transform, int layout, int dims, int howmany, int geom, int n0, int n1, int n2, int placement)
 {
+    const int real = transform == VFFT_R2C || transform == VFFT_C2R;
+    (void)placement;
     if (layout != VFI_LAYOUT_IL) return 0;
-    if (dims > 1) return 0;
+    if (dims > 3) return 0;
     if (howmany < 2) return 0;
-    if (transform == VFFT_C2C) return geom == VFFT_BATCH_LANE_MAJOR && N >= 2;
-    (void)placement;   /* both placements since step 5 (2026-10-15) */
-    if (transform == VFFT_R2C || transform == VFFT_C2R)
-        return (geom == VFFT_BATCH_LANE_MAJOR || geom == VFFT_BATCH_DEFAULT) && N >= 4 && N % 2 == 0;
-    return 0;
+    if (transform == VFFT_C2C)
+        return geom == VFFT_BATCH_LANE_MAJOR && n0 >= 2 && (dims < 2 || n1 >= 2) && (dims < 3 || n2 >= 2);
+    if (!real) return 0;
+    if (dims == 3) return geom == VFFT_BATCH_LANE_MAJOR && n0 >= 2 && n1 >= 2 && n2 >= 4 && n2 % 2 == 0;
+    if (dims == 2) return geom == VFFT_BATCH_LANE_MAJOR && n0 >= 2 && n1 >= 4 && n1 % 2 == 0;
+    return (geom == VFFT_BATCH_LANE_MAJOR || geom == VFFT_BATCH_DEFAULT) && n0 >= 4 && n0 % 2 == 0;
+}
+/* the contiguous batches through the plane and volume queues (2026-10-18), spelled as the request table:
+ * interleaved, K >= 2, DEFAULT or CONTIGUOUS. The 2D real batch IN PLACE (vfft_policy_il2d_ip_batch_ok)
+ * and the 3D real batch in either placement (vfft_policy_ilndr_batch_ok), DEFAULT/NATURAL order; the
+ * 3D c2c batch in either placement and order (vfft_policy_ilnd_batch_ok); at rank 3 every extent >= 2. */
+static int _ref_il2d_ip_batch(int transform, int layout, int dims, int howmany, int geom, int placement, int order)
+{
+    const int real = transform == VFFT_R2C || transform == VFFT_C2R;
+    return real && dims == 2 && howmany >= 2 && layout == VFI_LAYOUT_IL && placement == VFFT_INPLACE &&
+           (geom == VFFT_BATCH_DEFAULT || geom == VFFT_BATCH_CONTIGUOUS) &&
+           (order == VFI_ORDER_DEFAULT || order == VFI_ORDER_NATURAL);
+}
+static int _ref_ilndr_batch(int transform, int layout, int dims, int howmany, int geom, int order, int n0, int n1, int n2)
+{
+    const int real = transform == VFFT_R2C || transform == VFFT_C2R;
+    return real && dims == 3 && howmany >= 2 && layout == VFI_LAYOUT_IL &&
+           (geom == VFFT_BATCH_DEFAULT || geom == VFFT_BATCH_CONTIGUOUS) &&
+           (order == VFI_ORDER_DEFAULT || order == VFI_ORDER_NATURAL) && n0 >= 2 && n1 >= 2 && n2 >= 2;
+}
+static int _ref_ilnd_batch(int transform, int layout, int dims, int howmany, int geom, int n0, int n1, int n2)
+{
+    return transform == VFFT_C2C && dims == 3 && howmany >= 2 && layout == VFI_LAYOUT_IL &&
+           (geom == VFFT_BATCH_DEFAULT || geom == VFFT_BATCH_CONTIGUOUS) && n0 >= 2 && n1 >= 2 && n2 >= 2;
 }
 static int _ref_rader_prime(int N)
 {
@@ -593,30 +623,48 @@ int main(void)
                bad_oop ? "DIFFERS" : "equal", bad_rankn ? "DIFFERS" : "equal");
         nchk += (NMAX - 1) * 4;
     }
-    {   /* the lane-major batch's admission over the request table: transform x layout x dims x K x geometry x N */
+    {   /* the batch laws over the request table: transform x layout x dims (1 to 3) x K x geometry x extents x
+         * placement x order -- the lane-major admission and the three contiguous queue admissions */
         static const int TR[3] = { VFFT_C2C, VFFT_R2C, VFFT_C2R }, LY[2] = { VFI_LAYOUT_IL, VFI_LAYOUT_SPLIT };
         static const int KS[4] = { 1, 2, 4, 64 }, GM[3] = { VFFT_BATCH_DEFAULT, VFFT_BATCH_CONTIGUOUS, VFFT_BATCH_LANE_MAJOR };
         static const int NS[6] = { 1, 2, 4, 63, 131, 4096 }, PL[2] = { VFFT_OUTOFPLACE, VFFT_INPLACE };
-        int it, il, idm, ik, ig, in, ip, bad_lm = 0, n_lm = 0;
-        for (it = 0; it < 3; it++) for (il = 0; il < 2; il++) for (idm = 1; idm <= 2; idm++)
-            for (ik = 0; ik < 4; ik++) for (ig = 0; ig < 3; ig++) for (in = 0; in < 6; in++) for (ip = 0; ip < 2; ip++)
+        static const int N1S[4] = { 1, 2, 15, 16 }, N2S[5] = { 1, 2, 4, 15, 16 };
+        static const int OR[3] = { VFI_ORDER_DEFAULT, VFI_ORDER_NATURAL, VFI_ORDER_SCRAMBLED };
+        int it, il, idm, ik, ig, in, i1, i2, ip, io, bad_lm = 0, bad_pq = 0, n_lm = 0;
+        for (it = 0; it < 3; it++) for (il = 0; il < 2; il++) for (idm = 1; idm <= 3; idm++)
+            for (ik = 0; ik < 4; ik++) for (ig = 0; ig < 3; ig++) for (in = 0; in < 6; in++)
+            for (i1 = 0; i1 < 4; i1++) for (i2 = 0; i2 < 5; i2++) for (ip = 0; ip < 2; ip++) for (io = 0; io < 3; io++)
             {
                 vfft_cfg_t c;
+                int pol, ref;
                 memset(&c, 0, sizeof c);
-                c.transform = (vfft_transform_t)TR[it]; c.layout = (vfft_layout_t)LY[il]; c.dims = idm;
-                c.placement = (vfft_placement_t)PL[ip];
-                c.n[0] = NS[in]; c.n[1] = 16; c.howmany = (size_t)KS[ik]; c.batch_geom = GM[ig];
-                if ((vfft_policy_batch_lane_major(&c) != 0) != (_ref_lane_major(TR[it], LY[il], idm, KS[ik], GM[ig], NS[in], PL[ip]) != 0))
+                c.transform = (vfft_transform_t)TR[it]; c.layout = LY[il]; c.dims = idm;
+                c.placement = PL[ip]; c.order = OR[io];
+                c.n[0] = NS[in]; c.n[1] = N1S[i1]; c.n[2] = N2S[i2]; c.howmany = (size_t)KS[ik]; c.batch_geom = GM[ig];
+                if ((vfft_policy_batch_lane_major(&c) != 0) !=
+                    (_ref_lane_major(TR[it], LY[il], idm, KS[ik], GM[ig], NS[in], N1S[i1], N2S[i2], PL[ip]) != 0))
                 {
-                    if (!bad_lm) printf("  *** FAIL: lane-major admission disagrees at t=%d lay=%d dims=%d K=%d geom=%d N=%d pl=%d\n",
-                                        TR[it], LY[il], idm, KS[ik], GM[ig], NS[in], PL[ip]);
+                    if (!bad_lm) printf("  *** FAIL: lane-major admission disagrees at t=%d lay=%d dims=%d K=%d geom=%d N=%dx%dx%d pl=%d ord=%d\n",
+                                        TR[it], LY[il], idm, KS[ik], GM[ig], NS[in], N1S[i1], N2S[i2], PL[ip], OR[io]);
                     bad_lm++;
+                }
+                pol = (vfft_policy_il2d_ip_batch_ok(&c) != 0) | ((vfft_policy_ilndr_batch_ok(&c, c.howmany) != 0) << 1) |
+                      ((vfft_policy_ilnd_batch_ok(&c, c.howmany) != 0) << 2);
+                ref = (_ref_il2d_ip_batch(TR[it], LY[il], idm, KS[ik], GM[ig], PL[ip], OR[io]) != 0) |
+                      ((_ref_ilndr_batch(TR[it], LY[il], idm, KS[ik], GM[ig], OR[io], NS[in], N1S[i1], N2S[i2]) != 0) << 1) |
+                      ((_ref_ilnd_batch(TR[it], LY[il], idm, KS[ik], GM[ig], NS[in], N1S[i1], N2S[i2]) != 0) << 2);
+                if (pol != ref)
+                {
+                    if (!bad_pq) printf("  *** FAIL: contiguous queue admission disagrees (%d vs %d) at t=%d lay=%d dims=%d K=%d geom=%d N=%dx%dx%d pl=%d ord=%d\n",
+                                        pol, ref, TR[it], LY[il], idm, KS[ik], GM[ig], NS[in], N1S[i1], N2S[i2], PL[ip], OR[io]);
+                    bad_pq++;
                 }
                 n_lm++;
             }
-        if (bad_lm) g_fail++;
-        printf("lane-major batch admission over %d requests: %s\n", n_lm, bad_lm ? "DIFFERS" : "equal");
-        nchk += n_lm;
+        if (bad_lm || bad_pq) g_fail++;
+        printf("batch admission over %d requests: lane-major %s, the plane and volume queues %s\n", n_lm,
+               bad_lm ? "DIFFERS" : "equal", bad_pq ? "DIFFER" : "equal");
+        nchk += 2 * n_lm;
     }
     /* ── steps 4-6: the three narrowed laws ─────────────────────────────
      * L3, exhaustive over every (banked, requested) pair a plan can carry,

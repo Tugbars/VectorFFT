@@ -2771,7 +2771,7 @@ static const char *_vfft_plan_route(vfft_plan p)
                                               : (f == 2 ? "plane+child+strips" : "plane+child");
     }
     if (h->lm)
-        return h->il2d_col.blu ? (h->il2d_col.tpc ? "lm+tpc" : "lm+blu") : "lm";   /* the lane-major batch on the column pass (c2c, or r2c: the chain at N / 2) */
+        return h->il2d_col.blu ? (h->il2d_col.tpc ? "lm+tpc" : "lm+blu") : "lm";   /* the lane-major batch on the column pass, c2c, r2c and c2r at ranks 1 to 3 (the 1D real batch's chain at N / 2; the 2D and 3D real batches' first axis over the spectrum) */
     if (h->N2 > 0 && h->N3 == 0 && h->il2d_col.nst > 0)
     { /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the
        * batched rows, +rb2 = the batched two-pass rows; turn = the whole
