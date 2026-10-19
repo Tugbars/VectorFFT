@@ -111,7 +111,7 @@ entered at the first clock read inside a create and left when the outermost
 | **pin** | The racing thread is pinned to the caller's own core in the library's layout: the core the pool left to its caller once the pool exists (`thread_pool_caller_cpu()`, `common/support/threads.h`: core 0, or the core a calling thread pinned to one logical CPU held when the pool first started), the second P-core (logical CPU 2 on a hyperthreaded part) before that. Only a P-core the process is allowed is taken; the others are walked in order. P-cores, E-cores and siblings are read from the OS (`common/support/cpu_topology.h`), on Intel and AMD alike. A thread that ends on no P-core races where it is, and the winner is served, not saved. |
 | **sibling guard** | A guard thread holds the pinned core's hyperthread sibling for the race, so the OS cannot park another thread there (1.1-1.5x slower without it). It waits with TPAUSE (Intel) or MWAITX (AMD), which cost the racing thread nothing; a part with neither races unguarded. No guard goes to a CPU outside the set the process is confined to. |
 | **priority** | The racing thread's priority is raised for the race. Best effort: where it cannot be raised (Linux without `CAP_SYS_NICE`), the winner is still saved. |
-| **restore** | The guard ends, and affinity and priority return to what they were; the pool never pins the caller. |
+| **restore** | The guard ends, and affinity and priority return to what they were; the pool never pins the caller, so a create leaves the thread as it found it. A threaded plan's execute pins the calling thread to the core the pool left to it for the execute's duration and puts its affinity back (`vfft_execute.h`, `_vfft_exec6`). |
 
 - The same scope is public in `vfft.h`: `vfft_measure_configure()` sets it up (pin,
   guard, priority, the lock wait), `vfft_measure_begin()` and `vfft_measure_end()` put
@@ -257,5 +257,9 @@ owner's review.
   looked for; its rows were raced with the 48 KiB constant and are re-raced there.
 - **A virtual machine is its own CPU.** WSL on the 14900KF presents 16 P-cores and no
   E-cores, so the library gives it a folder of its own.
-- Threaded plans never pin the caller (the owned pool, 2026-10-12); the races pin it for
-  their duration and give it back.
+- The pool never pins the caller; the races pin it for their duration and give it back, and a
+  threaded plan's execute pins it to the core the pool left to it (`thread_pool_caller_cpu()`)
+  for the execute's duration and gives it back: the caller runs a 1/T share of every phase,
+  so on an E-core or on a worker's hyperthread sibling every fork-join ends at its pace. A
+  thread whose own affinity does not hold that core (an application's narrower pin) stays
+  where it is. Windows; the Linux twin (`sched_setaffinity`) is not built.

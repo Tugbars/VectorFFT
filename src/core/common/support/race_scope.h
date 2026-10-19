@@ -49,9 +49,10 @@
  * and a create inside that scope enters nothing more.
  *
  * WHAT IS RESTORED. The thread's affinity and priority return to what they
- * were. One exception keeps the threaded layout: a create that brings the
- * pool up pins its caller to logical CPU 0 (vfft.c, _vfft_pool_arm); the
- * scope moves its guard to that core's sibling and leaves that pin in place.
+ * were: the pool never pins its caller, so a create leaves the thread as it
+ * found it. (A threaded plan's EXECUTE pins the calling thread to the core the
+ * pool left to it for the execute's duration and puts it back: vfft_execute.h,
+ * _vfft_exec6.)
  *
  * NOT COVERED: the application's own threads on the race core, and other
  * software's load. Those are the user's to keep quiet.
@@ -125,7 +126,6 @@ static _Thread_local struct
     int auto_on;      /* entered by a create's first clock read; left by the outermost create */
     int flags;        /* VFFT_SCOPE_CONTENDED | VFFT_SCOPE_UNPINNED */
     int core;         /* the pinned logical CPU, -1 = none */
-    int pool_pinned;  /* the pool pinned the caller during the scope: that pin stays */
     int prio_raised;  /* 1 = the thread, 2 = the process */
     int lock_state;   /* 1 held, 0 not obtained, -1 the system has none */
     _vfs_guard_t guard;
@@ -412,8 +412,8 @@ static void _vfs_restore_affinity(void)
 }
 /* THE SET THIS PROCESS MAY RUN ON. Windows keeps one (the process affinity
  * mask). Linux does not: a thread's own mask is all there is, a cgroup or
- * taskset confines through it, and the library itself narrows the caller's
- * (the pool pins it to logical CPU 0). So on Linux the set is read ONCE, from
+ * taskset confines through it, and the library itself narrows a thread's (the
+ * scope's pin of the racing thread, a worker's pin of itself). So on Linux the set is read ONCE, from
  * the first thread that reaches the library's pinning code, before anything is
  * pinned (here and in vfft.c's two pool sites); vfft_measure_confine replaces
  * it. */
@@ -559,7 +559,6 @@ static int _vfs_enter(void)
     if (_vfs.depth++ > 0)
         return _vfs.flags;
     _vfs.flags = 0;
-    _vfs.pool_pinned = 0;
     _vfft_scope_count++;
     _vfs_proc_set_read();
     _vfs.lock_state = _vfs_lock_take(wait_ms);
@@ -602,28 +601,10 @@ static void _vfs_leave(void)
         return;
     _vfs_guard_stop();
     _vfs_priority_restore();
-    if (!_vfs.pool_pinned)
-        _vfs_restore_affinity();          /* else: the pool's caller pin stays, as without a scope */
+    _vfs_restore_affinity();
     _vfs_lock_release();
     _vfs.core = -1;
     _vfs.flags = 0;
-}
-
-/* the pool pinned the caller to `core` inside a scope (vfft.c): the guard
- * moves to that core's sibling and the pin stays when the scope ends. A scope
- * that began UNPINNED stays so: its earlier races ran that way. */
-static void _vfs_rehome(int core)
-{
-    if (_vfs.depth <= 0)
-        return;
-    _vfs.pool_pinned = 1;
-    if (_vfs.core != core)
-    {
-        _vfs_guard_stop();
-        _vfs.core = core;
-        _vfs_guard_start(core);
-    }
-    _vfs_note();
 }
 
 /* a clock is about to be read: inside a create that has not entered the

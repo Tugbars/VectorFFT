@@ -280,9 +280,11 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
 static void _vfft_pool_arm(int n)
 {
     /* the workers a create's races or a plan need, alive and counted as
-     * needed (threads.h); the calling thread is never pinned by the pool
-     * (vfft.h: the thread is given back as it was), and a live plan's
-     * workers are kept by thread_pool_plan_retain at the front door */
+     * needed (threads.h). The pool never pins the calling thread: a create
+     * gives it back as it found it (race_scope.h), and a threaded plan's
+     * execute pins it to the core the pool left to it for the execute's
+     * duration and puts it back (vfft_execute.h, _vfft_exec6). A live plan's
+     * workers are kept by thread_pool_plan_retain at the front door. */
     if (n > 1)
     {
         _vfs_proc_set_read(); /* Linux: the set this process may run on, before the workers pin */

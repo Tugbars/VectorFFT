@@ -632,7 +632,9 @@ static int run_cell_stages(const char *W, const fftwx_api_t *api, int N1, int N2
 int main(int argc, char **argv)
 {
     static const int MT[][3] = { { 64, 64, 64 }, { 128, 128, 128 }, { 16, 256, 256 }, { 8, 128, 2048 }, { 9, 16, 30 } };
-    static const int STG[][4] = { { 64, 64, 64, 1 }, { 32, 128, 64, 1 }, { 16, 16, 64, 1 }, { 24, 24, 24, 0 }, { 5, 4, 8, 0 } };
+    /* the stage-wise cells: engaged where the cold chain race lands two stages (64 and 32 never win as one stage);
+     * 16x16x64 may race axis 0 to the one-stage [16] (it did, 2026-10-19), 24^3 and 5x4x8 serve or decline */
+    static const int STG[][4] = { { 64, 64, 64, 1 }, { 32, 128, 64, 1 }, { 16, 16, 64, 0 }, { 24, 24, 24, 0 }, { 5, 4, 8, 0 } };
     static const int MTO[][3] = { { 16, 16, 512 }, { 8, 32, 1024 } };
     static const int OWN[][3] = { { 16, 16, 512 }, { 8, 32, 1024 }, { 16, 8, 2048 }, { 32, 32, 32 }, { 9, 16, 30 } };
     static const int CELLS[][3] = {

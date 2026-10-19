@@ -189,7 +189,12 @@ vfft_plan vfft_create(const vfft_config_t *config)
     _vfft_verbose_tls = (config->flags & VFFT_FLAG_VERBOSE) != 0;
     _vfft_create_lock();   /* the store table is the lock's too (recursive: the create takes it again) */
     if (_vfft_api_translate(config, &c))
+    {
         h = _vfft_create_cfg(&c);
+        if (h && h->nthreads > 1)   /* no lean entry: a threaded plan's execute pins the calling thread
+                                     * around the door and puts it back (vfft_execute.h, _vfft_exec6) */
+            h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = NULL;
+    }
     _vfft_create_unlock();
     if (h)
         _vfft_err_buf[0] = '\0';
@@ -208,7 +213,9 @@ static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_d
     _vfft_exec6(h, dir, in, NULL, out, NULL);
 }
 /* THE BOUND FAST PATH (the lean door, 2026-10-11): a plan with a never-declining executor per
- * direction is entered by a jump after four compares; everything else takes the full door. */
+ * direction is entered by a jump after four compares; everything else takes the full door. A
+ * threaded plan carries no entry (vfft_create): it takes the full door, where the calling thread
+ * is pinned to the pool's reserved core for the execute (vfft_execute.h, _vfft_exec6). */
 void vfft_execute(vfft_plan h, vfft_dir_t dir, const void *in, void *out)
 {
     double *s = (double *)in, *d = (double *)out;
