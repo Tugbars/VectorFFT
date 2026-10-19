@@ -16,7 +16,11 @@
  * carries MKL's wrapper header at include/fftw/fftw3.h, so including "the"
  * fftw3.h is itself a trap.
  *
- * DLL resolution: $VFFT_FFTW_DLL if set, else the absolute vcpkg path. There is
+ * DLL resolution: $VFFT_FFTW_DLL if set, and then that DLL alone; else the
+ * repository's own FFTW, gauntlet/fftw/libfftw3-3.dll (its README: FFTW 3.3.10,
+ * SSE2/AVX/AVX2/AVX-512 chosen by FFTW at run time, combined threads), by the
+ * absolute path the build bakes in as VFFT_FFTW_BUNDLED_DLL (build.py and
+ * gauntlet/CMakeLists.txt, Windows); else the absolute vcpkg path. There is
  * deliberately NO bare "fftw3.dll" PATH-search fallback — PATH search is exactly
  * how a wrong DLL sneaks in.
  *
@@ -228,15 +232,27 @@ static const struct fftwx__sym fftwx__tab[] = {
  * itself as "FFTW 3.3.4 wrappers to Intel oneMKL". */
 static inline int fftwx_bind(fftwx_api_t *api, char *err, size_t errcap)
 {
-    const char *path = getenv("VFFT_FFTW_DLL");
-    if (!path || !*path) path = FFTWX_DEFAULT_DLL;
+    const char *path = getenv("VFFT_FFTW_DLL"), *cand[2];
+    int nc = 0, c;
+    if (path && *path)
+        cand[nc++] = path;                       /* named: that DLL and no other */
+    else
+    {
+#ifdef VFFT_FFTW_BUNDLED_DLL
+        cand[nc++] = VFFT_FFTW_BUNDLED_DLL;      /* the repository's own FFTW */
+#endif
+        cand[nc++] = FFTWX_DEFAULT_DLL;
+    }
     memset(api, 0, sizeof *api);
 
 #ifdef _WIN32
     {
-        HMODULE h = LoadLibraryA(path);
-        if (!h) { snprintf(err, errcap, "LoadLibraryA(\"%s\") failed, GetLastError=%lu",
-                           path, (unsigned long)GetLastError()); return 0; }
+        HMODULE h = NULL;
+        for (c = 0; c < nc && !h; c++)
+            h = LoadLibraryA(path = cand[c]);
+        if (!h) { snprintf(err, errcap, "LoadLibraryA failed for \"%s\"%s%s%s, GetLastError=%lu",
+                           cand[0], nc > 1 ? " and \"" : "", nc > 1 ? cand[1] : "", nc > 1 ? "\"" : "",
+                           (unsigned long)GetLastError()); return 0; }
         GetModuleFileNameA(h, api->dll_path, (DWORD)sizeof api->dll_path);
         for (size_t i = 0; i < sizeof fftwx__tab / sizeof fftwx__tab[0]; i++) {
             void *p = (void *)GetProcAddress(h, fftwx__tab[i].name);
@@ -250,7 +266,9 @@ static inline int fftwx_bind(fftwx_api_t *api, char *err, size_t errcap)
     }
 #else
     {
-        void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+        void *h = NULL;
+        for (c = 0; c < nc && !h; c++)
+            h = dlopen(path = cand[c], RTLD_NOW | RTLD_LOCAL);
         if (!h) { snprintf(err, errcap, "dlopen(\"%s\"): %s", path, dlerror()); return 0; }
         snprintf(api->dll_path, sizeof api->dll_path, "%s", path);
         for (size_t i = 0; i < sizeof fftwx__tab / sizeof fftwx__tab[0]; i++) {

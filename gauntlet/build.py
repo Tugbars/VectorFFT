@@ -551,6 +551,9 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
              # spike_wisdom.txt & co. are read from generated/ whatever the dir
              '-DVFFT_WISDOM_DIR_DEFAULT="%s"' % WISDOM.as_posix(),
              '-DVFFT_FROZEN_WISDOM_DIR="%s"' % DAG_GEN.as_posix(),
+             # the repository's own FFTW, the comparator's default (ref_fftw.h; Windows x64)
+             *(['-DVFFT_FFTW_BUNDLED_DLL="%s"' % (HERE / 'fftw' / 'libfftw3-3.dll').as_posix()]
+               if tc['is_windows'] else []),
              # ── ISA CLAMP. registry.h and a dozen dispatch sites (executor.h,
              # oop_leaf_registry.h, il_prime.h, …) key on __AVX512F__, while the
              # codelet LIBRARY is built per VFFT_ISA. On a CPU whose

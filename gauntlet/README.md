@@ -115,14 +115,16 @@ Either path builds the same binaries from the same sources.
 
 - The FFTW arm: `--cmp fftw` on the driver (`python gauntlet/gauntlet.py run
   --cells 2..4096 --cmp fftw`), no build flag. The bench binds FFTW at run time
-  (`ref_fftw.h`: `$VFFT_FFTW_DLL`, else vcpkg's `fftw3.dll`, by absolute path,
-  and refuses MKL's FFTW wrapper layer). It serves the 1D, 2D and 3D c2c cells
+  by absolute path (`ref_fftw.h`: `$VFFT_FFTW_DLL`, else the FFTW in
+  [`fftw/`](fftw/README.md) on Windows, else vcpkg's `fftw3.dll`) and refuses
+  MKL's FFTW wrapper layer. The FFTW in `fftw/` is 3.3.10 with SSE2 to AVX-512
+  and its threads API, so on Windows nothing needs installing. It serves the 1D, 2D and 3D c2c cells
   and the real cells (1D, 2D, 3D; in place too), out of place, FFTW_MEASURE, at
   one thread or `--threads T`; a threaded run needs an FFTW built with its
   threads API (`--enable-threads --with-combined-threads`, CMake
-  `ENABLE_THREADS` + `WITH_COMBINED_THREADS`), named in `VFFT_FFTW_DLL` -- the
-  vcpkg DLL has none, and the bench exits 2 rather than time a serial FFTW
-  against a threaded plan. FFTW's wisdom for the run lives in the run
+  `ENABLE_THREADS` + `WITH_COMBINED_THREADS`) -- the one in `fftw/` has it, the
+  vcpkg DLL has none, and with such a DLL the bench exits 2 rather than time a
+  serial FFTW against a threaded plan. FFTW's wisdom for the run lives in the run
   directory (`fftw.wis`), so one MEASURE verdict per problem serves every
   process of the run; results land in `gauntlet_fftw.csv` with the same
   columns (the comparator column is FFTW there), and `verify --cmp fftw`

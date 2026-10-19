@@ -6,8 +6,9 @@
  * P-core, the SMT-sibling guard, the priority, the machine's measurement lock), one csv row
  * with both times, the ratio and the correctness columns. MKL is optional at build time
  * (build.py --mkl; without it the row carries our numbers and the correctness checks). The
- * gauntlet's cells take other comparators: --cmp fftw (bound at run time from $VFFT_FFTW_DLL
- * or vcpkg's fftw3.dll, no build flag: the 1D/2D/3D c2c cells and the real cells, out of
+ * gauntlet's cells take other comparators: --cmp fftw (bound at run time from $VFFT_FFTW_DLL,
+ * else the repository's gauntlet/fftw/libfftw3-3.dll, else vcpkg's fftw3.dll, no build flag:
+ * the 1D/2D/3D c2c cells and the real cells, out of
  * place, at one thread or under --mt with an FFTW built with its threads API) and --cmp kfr
  * (a --kfr build; one thread).
  *

@@ -1,5 +1,0 @@
-library,N,l2_error,max_error,rt_error
-VectorFFT,64,1.401e-16,1.219e-16,3.385e-16
-MKL,64,1.405e-16,1.223e-16,3.385e-16
-VectorFFT,4096,2.256e-16,2.379e-16,7.772e-16
-MKL,4096,2.356e-16,2.664e-16,8.327e-16

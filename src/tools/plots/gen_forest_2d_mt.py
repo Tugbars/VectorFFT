@@ -1,14 +1,15 @@
-"""VectorFFT 2D c2c pow2 vs MKL: one thread against eight threads, as a compact forest plot.
+"""VectorFFT 2D c2c pow2 vs MKL: one thread against T threads (eight by default), as a compact forest plot.
 
 One row per plane-size class (the README's classes) and the whole grid; in each row the
-one-thread record (open marker) and the eight-thread record (filled marker), the marker at
+one-thread record (open marker) and the T-thread record (filled marker), the marker at
 the class median and the whisker from the 10th to the 90th percentile of the cells' speedups
 (worse of the two engine orders per cell, the convention of the 2D matrix figure). The
 comparator runs at the same thread count as the transform in both records.
 
-usage:  python3 gen_forest_2d_mt.py <one-thread gauntlet_2d.csv> <eight-thread gauntlet_2d_mt8.csv> [output_prefix] [--cmp NAME]
+usage:  python3 gen_forest_2d_mt.py <one-thread gauntlet_2d.csv> <T-thread gauntlet_2d_mt<T>.csv> [output_prefix] [--cmp NAME] [--threads T]
         -> <output_prefix>.svg and <output_prefix>.png  (default prefix: vectorfft-2d-mt-forest)
         --cmp: the comparator's name on the axis label and the legend (default MKL)
+        --threads: the threaded record's thread count, named in the legend (default 8)
 
 Needs only matplotlib, which ships the cmr10 fonts."""
 import csv, math, sys
@@ -23,6 +24,14 @@ if "--cmp" in argv:
     i = argv.index("--cmp")
     CMP = argv[i + 1]
     del argv[i:i + 2]
+T = 8
+if "--threads" in argv:
+    i = argv.index("--threads")
+    T = int(argv[i + 1])
+    del argv[i:i + 2]
+WORD = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine",
+        10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen", 16: "sixteen"}
+TW = WORD.get(T, str(T))
 if len(argv) < 2:
     sys.exit(__doc__)
 SRC1, SRC8 = argv[0], argv[1]
@@ -30,7 +39,7 @@ OUT = argv[2] if len(argv) > 2 else "vectorfft-2d-mt-forest"
 
 CLASSES = [("up to 256 points", 1, 256), ("257 to 4,096", 257, 4096),
            ("4,097 to 65,536", 4097, 65536), ("65,537 to 4M", 65537, 1 << 22),
-           ("all 159 planes", 1, 1 << 22)]
+           ("all planes", 1, 1 << 22)]
 
 
 def worse_of_flips(path):
@@ -56,9 +65,10 @@ def stats(cells, lo, hi):
 
 one, eight = worse_of_flips(SRC1), worse_of_flips(SRC8)
 rows = [(label, stats(one, lo, hi), stats(eight, lo, hi)) for label, lo, hi in CLASSES]
+rows[-1] = ("all %d planes" % rows[-1][1][0],) + rows[-1][1:]   # the grid's count, from the one-thread record
 for label, s1, s8 in rows:
-    print("%-18s  1 thread: n=%d p10 %.2f med %.2f p90 %.2f   8 threads: n=%d p10 %.2f med %.2f p90 %.2f"
-          % (label, *s1, *s8))
+    print("%-18s  1 thread: n=%d p10 %.2f med %.2f p90 %.2f   %d threads: n=%d p10 %.2f med %.2f p90 %.2f"
+          % (label, *s1, T, *s8))
 
 plt.rcParams.update({
     "font.family": "serif", "font.serif": ["cmr10"], "mathtext.fontset": "cm",
@@ -92,7 +102,7 @@ for i, (label, (n1, l1, m1, h1), (n8, l8, m8, h8)) in enumerate(rows):
 ax.text(12.6, nrow - 0.55, "median", va="bottom", ha="left", fontsize=9, fontstyle="italic", clip_on=False)
 ax.set_xlabel(f"speedup over {CMP}, worse of two orders per plane; marker median, whisker 10th to 90th percentile", fontsize=9)
 ax.plot([], [], marker="o", ms=6, mfc="white", mec=ONE, mew=1.1, color=ONE, lw=1.0, label=f"one thread, {CMP} at one thread")
-ax.plot([], [], marker="o", ms=6, mfc=EIGHT, mec=EIGHT, color=EIGHT, lw=1.0, label=f"eight threads, {CMP} at eight threads")
+ax.plot([], [], marker="o", ms=6, mfc=EIGHT, mec=EIGHT, color=EIGHT, lw=1.0, label=f"{TW} threads, {CMP} at {TW} threads")
 ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=9, frameon=False)
 fig.tight_layout()
 fig.savefig(OUT + ".svg", bbox_inches="tight")

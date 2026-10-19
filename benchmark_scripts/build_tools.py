@@ -13,7 +13,8 @@ ISA, whether MKL is built in, the FFTW library's path and its version string, th
 
     --isa avx2|avx512   the codelet tree to compile (VFFT_ISA for build.py; default avx2)
     --mkl / --no-mkl    build the MKL arm in; default: on when MKL is found (MKLROOT or the oneAPI default install)
-    --fftw-dll PATH     the FFTW shared library a --cmp fftw run binds at run time (VFFT_FFTW_DLL)
+    --fftw-dll PATH     an FFTW shared library of your own for --cmp fftw runs (VFFT_FFTW_DLL); without it a run uses
+                        the FFTW shipped with the repository on Windows (gauntlet/fftw/), the distribution's on Linux
     --cc NAME           the compiler (CC for build.py; default gcc, the known MinGW-w64 / MSYS2 locations searched on Windows)
 
 The CMake target vfft-gauntlet builds the same binaries (gauntlet/README.md); this script is
@@ -53,22 +54,28 @@ def fftw_version_string(path):
 
 # ── the FFTW library: found, loaded and checked before any run starts ──────
 
-def fftw_default():
-    """where FFTW usually is: vcpkg's library on Windows, the distribution's on Linux"""
+BUNDLED_FFTW = os.path.join(GAUNTLET, "fftw", "libfftw3-3.dll")   # the FFTW the repository ships for Windows x64
+
+
+def fftw_defaults():
+    """where FFTW is when nobody names it: on Windows the library the repository ships
+    (gauntlet/fftw/, FFTW 3.3.10 with the threads API and the AVX-512 code paths), then
+    vcpkg's; on Linux the distribution's"""
     if os.name == "nt":
-        return r"C:\vcpkg\installed\x64-windows\bin\fftw3.dll"
-    return ctypes.util.find_library("fftw3") or "libfftw3.so.3"
+        return (("the FFTW shipped with the repository", BUNDLED_FFTW),
+                ("the vcpkg install", r"C:\vcpkg\installed\x64-windows\bin\fftw3.dll"))
+    return (("the distribution's library", ctypes.util.find_library("fftw3") or "libfftw3.so.3"),)
 
 
 def resolve_fftw(given, recorded):
     """the FFTW library, the first that exists of: --fftw-dll, build_tools.py's record,
-    $VFFT_FFTW_DLL, the usual place. A bare library name (Linux: libfftw3.so.3) is left to
-    the loader. Returns (path or None, the candidates tried)."""
+    $VFFT_FFTW_DLL, then the defaults in order. A bare library name (Linux: libfftw3.so.3)
+    is left to the loader. Returns (path or None, the candidates tried)."""
     tried = []
     if given:                       # named on the command line: that one, or nothing
         return (given if not os.path.dirname(given) or os.path.isfile(given) else None), ["--fftw-dll: " + given]
     for what, p in (("benchmark_scripts/.config.json", recorded),
-                    ("VFFT_FFTW_DLL", os.environ.get("VFFT_FFTW_DLL")), ("the usual place", fftw_default())):
+                    ("VFFT_FFTW_DLL", os.environ.get("VFFT_FFTW_DLL"))) + fftw_defaults():
         if p:
             tried.append("%s: %s" % (what, p))
             if not os.path.dirname(p) or os.path.isfile(p):
@@ -109,15 +116,17 @@ def fftw_has_threads(lib):
 def fftw_missing(tried):
     return ("FFTW was not found. Tried " + "; ".join(tried) + ".\n"
             "Point at it with --fftw-dll <path> or VFFT_FFTW_DLL=<path>. To get one:\n"
-            "  Windows: vcpkg install fftw3:x64-windows (a serial AVX2 build; C:\\vcpkg\\installed\\x64-windows\\bin\\fftw3.dll)\n"
+            "  Windows: the repository ships it at gauntlet/fftw/libfftw3-3.dll (threads and AVX-512 included); a checkout without\n"
+            "           that file can use vcpkg install fftw3:x64-windows (a serial AVX2 build, C:\\vcpkg\\installed\\x64-windows\\bin\\fftw3.dll)\n"
             "  Linux:   the distribution's package, e.g. apt install libfftw3-3\n"
-            "  for the threaded picture or AVX-512: build FFTW 3.3.10 from source with the configure flags in benchmark_scripts/README.md")
+            "  for the threaded picture on Linux, or an FFTW of your own: build FFTW 3.3.10 from source with the configure flags in benchmark_scripts/README.md")
 
 
 def fftw_no_threads(path):
     return ("the threaded picture needs FFTW's threads API in the same library, and %s has none (no fftw_init_threads).\n"
-            "Build FFTW 3.3.10 with --enable-threads --with-combined-threads (CMake: -DENABLE_THREADS=ON -DWITH_COMBINED_THREADS=ON),\n"
-            "the configure flags in benchmark_scripts/README.md, and point at it with --fftw-dll; or leave the 2d-mt set out." % path)
+            "On Windows the FFTW shipped with the repository (gauntlet/fftw/libfftw3-3.dll) has it; elsewhere build FFTW 3.3.10 with\n"
+            "--enable-threads --with-combined-threads (CMake: -DENABLE_THREADS=ON -DWITH_COMBINED_THREADS=ON), the flags in\n"
+            "benchmark_scripts/README.md, and point at it with --fftw-dll; or leave the 2d-mt set out." % path)
 
 
 def harness():
@@ -134,7 +143,7 @@ def main():
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--mkl", dest="mkl", action="store_true", default=None, help="build the MKL arm in (default: when MKL is found)")
     g.add_argument("--no-mkl", dest="mkl", action="store_false", help="leave MKL out")
-    ap.add_argument("--fftw-dll", help="the FFTW shared library for --cmp fftw runs (recorded for run_suite.py)")
+    ap.add_argument("--fftw-dll", help="an FFTW shared library of your own for --cmp fftw runs (recorded for run_suite.py; default: the one shipped with the repository on Windows, the distribution's on Linux)")
     ap.add_argument("--cc", help="the compiler (default: gcc)")
     args = ap.parse_args()
 
@@ -150,7 +159,15 @@ def main():
         print("FFTW: %s (%s); threads API %s" % (fftw_version, fftw_dll,
               "present" if fftw_has_threads(lib) else "absent (the threaded picture needs it)"))
     else:
-        print("FFTW: no --fftw-dll given; run_suite.py --cmp fftw will need one (it looks in VFFT_FFTW_DLL and the usual place too)")
+        # nothing named: say what a --cmp fftw run will find on its own (not recorded, so a
+        # later checkout's bundled library is picked up fresh)
+        found, tried = resolve_fftw(None, None)
+        lib = fftw_load(found)[0] if found else None
+        if lib is not None:
+            print("FFTW: none named; a --cmp fftw run will use %s (%s; threads API %s)" % (
+                found, fftw_version_of(lib, found), "present" if fftw_has_threads(lib) else "absent"))
+        else:
+            print("FFTW: none named and none found (tried %s); run_suite.py --cmp fftw will need one" % "; ".join(tried))
 
     mkl = args.mkl
     if mkl is None:

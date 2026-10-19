@@ -29,7 +29,8 @@ what to do when it is missing, or lacks the threads API the 2d-mt set needs).
     --sets a,b,...       the sets to run, of 1d, accuracy, 2d, 2d-mt, 3d (default: all five)
     --threads N          the thread count of the 2d-mt set (default: the physical cores of the fastest core class)
     --name-prefix NAME   the run directories' prefix (default <cmp>_<isa>_<date>, the ISA from build_tools.py's record)
-    --fftw-dll PATH      the FFTW shared library (default: build_tools.py's record, then $VFFT_FFTW_DLL, then the usual place)
+    --fftw-dll PATH      an FFTW shared library of your own (default: build_tools.py's record, then $VFFT_FFTW_DLL, then
+                         the FFTW shipped with the repository on Windows (gauntlet/fftw/), vcpkg's, the distribution's on Linux)
     --yes                do not stop for the driver's duration prompt
     --plots-only         draw the pictures and write the summaries from runs already finished; nothing runs
     --cells SPEC         replace every set's cell list, for a quick check (e.g. --cells 64,4096; 32x32,64x64 for 2d; 16x16x16 for 3d)
@@ -164,7 +165,8 @@ class Set:
         if self.name == "2d":
             return [PLOTS + "/gen_2d_pow2.py", self.report, base + "-2d-pow2", "--cmp", label], base + "-2d-pow2.svg + .png"
         if self.name == "2d-mt":
-            return [PLOTS + "/gen_forest_2d_mt.py", self.one_thread_csv, self.csv, base + "-2d-mt-forest", "--cmp", label], base + "-2d-mt-forest.svg + .png"
+            return [PLOTS + "/gen_forest_2d_mt.py", self.one_thread_csv, self.csv, base + "-2d-mt-forest", "--cmp", label,
+                    "--threads", str(self.threads)], base + "-2d-mt-forest.svg + .png"
         return [PLOTS + "/gen_3d_pow2.py", self.csv, base + "-3d-pow2", "--cmp", label], base + "-3d-pow2.svg + .png"
 
 
@@ -231,12 +233,18 @@ def fail(cmd, rc):
 
 
 def run(cmd, env=None, capture=False):
-    """a command from the repository's root; the output streams through unless captured"""
+    """a command from the repository's root; the output streams through unless captured,
+    then (exit code, stdout, stderr) comes back"""
     full = [sys.executable] + cmd
     if capture:
         r = subprocess.run(full, cwd=ROOT, env=env, capture_output=True, text=True, errors="replace")
-        return r.returncode, r.stdout + r.stderr
-    return subprocess.run(full, cwd=ROOT, env=env).returncode, ""
+        return r.returncode, r.stdout, r.stderr
+    return subprocess.run(full, cwd=ROOT, env=env).returncode, "", ""
+
+
+def last_line(text):
+    lines = [l for l in text.strip().splitlines() if l.strip()]
+    return lines[-1] if lines else ""
 
 
 def write_summary(s, machine, lines):
@@ -261,7 +269,7 @@ def main():
     ap.add_argument("--sets", default=",".join(SETS), help="which sets, of %s (default all)" % ", ".join(SETS))
     ap.add_argument("--threads", type=int, help="the thread count of the 2d-mt set (default: this machine's physical cores of its fastest core class)")
     ap.add_argument("--name-prefix", help="the run directories' prefix (default <cmp>_<isa>_<date>)")
-    ap.add_argument("--fftw-dll", help="the FFTW shared library (default: build_tools.py's record, then VFFT_FFTW_DLL, then the usual place)")
+    ap.add_argument("--fftw-dll", help="an FFTW shared library of your own (default: build_tools.py's record, VFFT_FFTW_DLL, then the one shipped with the repository on Windows, the distribution's on Linux)")
     ap.add_argument("--yes", action="store_true", help="pass the driver's --yes (no duration prompt)")
     ap.add_argument("--plots-only", action="store_true", help="draw from finished runs; nothing runs")
     ap.add_argument("--cells", help="replace every set's cell list, for a quick check")
@@ -337,21 +345,22 @@ def main():
         cmd = s.command(args.yes)
         if not args.plots_only:
             if s.verb == "run":
-                rc, out = run(s.estimate_command(), capture=True)
-                print("the driver's estimate: " + out.strip().splitlines()[-1] if rc == 0 and out.strip() else "", flush=True)
+                rc, out, _ = run(s.estimate_command(), capture=True)
+                if rc == 0 and last_line(out):
+                    print("the driver's estimate: " + last_line(out), flush=True)
             print(shown(cmd), flush=True)
-            rc, _ = run(cmd, env=env)
+            rc, _, _ = run(cmd, env=env)
             if rc != 0:
                 fail(cmd, rc)
         plot_cmd, picture = s.plot()
         print(shown(plot_cmd), flush=True)
-        rc, out = run(plot_cmd, capture=True)
-        print(out.strip())
+        rc, out, err = run(plot_cmd, capture=True)
+        print((out + err).strip())
         if rc != 0:
             fail(plot_cmd, rc)
         lines = ["command: `%s`" % shown(cmd)] + (["cells: %s (a quick check, not the README's set)" % s.cells] if s.cells else [])
         lines += ["csv: %s" % s.csv] + (["report: %s" % s.report] if s.report else []) + (["one-thread csv: %s" % s.one_thread_csv] if s.one_thread_csv else [])
-        lines += ["picture: %s" % picture, "plot: `%s`" % shown(plot_cmd), "the plot script says: %s" % (out.strip().splitlines()[-1] if out.strip() else "")]
+        lines += ["picture: %s" % picture, "plot: `%s`" % shown(plot_cmd), "the plot script says: %s" % last_line(out)]
         if args.plots_only:
             lines.append("drawn again with --plots-only, %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
         print("summary: " + write_summary(s, machine, lines).replace(os.sep, "/"), flush=True)

@@ -27,7 +27,8 @@
  * backward of the same cell, out of place, natural order, FFTW_MEASURE with the
  * input copied in after planning, against the same reference -- at rank 1, 2
  * and 3 (fftw_plan_dft at the cell's rank). FFTW is bound at run time through
- * ref_fftw.h ($VFFT_FFTW_DLL, else vcpkg's fftw3.dll) and never loaded without
+ * ref_fftw.h ($VFFT_FFTW_DLL, else gauntlet/fftw/libfftw3-3.dll, else vcpkg's
+ * fftw3.dll) and never loaded without
  * the flag. The gauntlet's `verify --cmp fftw` passes it.
  *
  * Run:   k1_fwd_ref_probe.exe [--ip] [--fftw] [--csv FILE] <wisdir> N [N ...]   (N or a-b)

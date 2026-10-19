@@ -1,6 +1,6 @@
 # Benchmark scripts
 
-Two scripts that run the benchmarks of the repository's front page (`README.md`, "Benchmark
+Scripts that run the benchmarks of the repository's front page (`README.md`, "Benchmark
 Results") on your own machine, against FFTW or against Intel MKL, and draw the same five
 pictures from your numbers:
 
@@ -27,7 +27,7 @@ under `gauntlet/results/`. Nothing is written into the library's shipped wisdom
 | an x86-64 CPU with AVX2 and FMA | and AVX-512 for an AVX-512 build (`--isa avx512`, below) |
 | GCC or Clang | on Windows the MinGW-w64 build of GCC: the WinLibs UCRT build, or MSYS2's UCRT64 environment (`pacman -S mingw-w64-ucrt-x86_64-gcc`); Microsoft's compilers (`cl`, `clang-cl`) are not supported. The build looks in the usual MinGW-w64 and MSYS2 folders; `--cc` names another compiler |
 | Python 3 | with `matplotlib` for the pictures (`pip install matplotlib`) |
-| FFTW 3 as a shared library | for `--cmp fftw`: a `fftw3.dll` or `libfftw3.so`; which one, below |
+| FFTW 3 as a shared library | for `--cmp fftw`. On Windows it comes with the repository (`gauntlet/fftw/libfftw3-3.dll`); on Linux the distribution's `libfftw3`; see "Which FFTW" |
 | Intel oneMKL | optional, for `--cmp mkl`: an Intel oneAPI installation, found through `MKLROOT` or the default install path (`C:\Program Files (x86)\Intel\oneAPI\mkl\latest` on Windows) |
 | Git | to get the sources: `git clone https://github.com/Tugbars/VectorFFT.git` |
 
@@ -40,24 +40,24 @@ root.
 
 ## Which FFTW
 
-The bench loads the FFTW shared library at run time, from the path you name: the FFTW you
-measure is that file. When it binds, the bench reads FFTW's own version string, which names
-the SIMD code paths the library was built with, for example
-`fftw-3.3.10-sse2-avx-avx2-avx512`; `build_tools.py` prints the same string from the file,
-so you know what you compare against before anything runs. FFTW's plans are made with
-`FFTW_MEASURE`, and each run keeps its own FFTW wisdom file (`fftw.wis` in the run
-directory), so a problem is planned once per run.
+The bench loads the FFTW shared library at run time and calls it through that file: the
+FFTW you measure is the file that was loaded. When it binds, the bench reads FFTW's own
+version string, which names the SIMD code paths the library was built with, for example
+`fftw-3.3.10-sse2-avx-avx2-avx512`; `build_tools.py` and `SUMMARY.md` show the same string,
+so you know what you compared against. FFTW's plans are made with `FFTW_MEASURE`, and each
+run keeps its own FFTW wisdom file (`fftw.wis` in the run directory), so a problem is
+planned once per run.
 
-- A packaged FFTW serves the one-thread pictures. vcpkg's FFTW on Windows
-  (`C:\vcpkg\installed\x64-windows\bin\fftw3.dll`, `fftw-3.3.10-avx-avx2-avx2_128`) has no
-  threads API and no AVX-512 code paths. Linux packages often put the threads API in a
-  second library (`libfftw3_threads.so`), which the bench cannot use: it needs the threads
-  API in the one library it loads.
-- The eight-thread picture needs an FFTW with the threads API in the same library (FFTW's
-  "combined threads" build); without it the bench stops with a message, and `run_suite.py`
-  refuses that set before anything runs. A comparison on AVX-512 wants an FFTW built with
-  its AVX-512 code paths. For either, build FFTW 3.3.10 yourself from the source at
-  fftw.org, with configure (MSYS2, Linux):
+- **Windows:** FFTW comes with the repository, at `gauntlet/fftw/libfftw3-3.dll` (FFTW
+  3.3.10 with its SSE2, AVX, AVX2 and AVX-512 code paths, chosen at run time by FFTW's own
+  CPU check, and with the threads API in the same library; its licence and a README are
+  beside it). Nothing extra is needed for any of the five pictures, the threaded set and an
+  AVX-512 comparison on a Zen 4 included. The scripts use it unless you name another.
+- **Linux:** the distribution's `libfftw3` serves the one-thread pictures (`apt install
+  libfftw3-3`, or your distribution's equivalent). Distributions ship the threads API in a
+  separate `libfftw3_threads.so`, which the bench does not load: it needs the threads API in
+  the one library it loads. So the threaded set on Linux needs an FFTW built from the
+  source at fftw.org with the threads API combined in:
 
   ```sh
   ./configure --enable-shared --enable-sse2 --enable-avx --enable-avx2 --enable-avx512 --enable-threads --with-combined-threads
@@ -71,22 +71,24 @@ directory), so a problem is planned once per run.
   cmake --build fftw-build --config Release
   ```
 
-  The shared library the build leaves (a `.dll` on Windows, a `.so` on Linux) is the path
-  you give `--fftw-dll`. Leave out `--enable-avx512` / `-DENABLE_AVX512=ON` on a CPU
-  without AVX-512.
+  Leave out `--enable-avx512` / `-DENABLE_AVX512=ON` on a CPU without AVX-512.
+- **An FFTW of your own**, on either system: give its path (a `.dll` or `.so`) to
+  `build_tools.py --fftw-dll`, which records it for every run, or to `run_suite.py
+  --fftw-dll` for one run.
 
 ### If FFTW is not installed
 
 With `fftw` as the comparator, `run_suite.py` looks for the library before anything runs,
 in this order: `--fftw-dll`, the path `build_tools.py` recorded, the environment variable
-`VFFT_FFTW_DLL`, then the usual place (vcpkg's `fftw3.dll` on Windows, the distribution's
-`libfftw3.so.3` on Linux); it loads the first one found and reads its version. When none is
-found, or the file does not load, it stops with exit code 2 and says how to point at one
-and how to get one: on Windows `vcpkg install fftw3:x64-windows` (a serial AVX2 build), on
-Linux the distribution's package (`apt install libfftw3-3`), and for the threaded picture or
-AVX-512 the source build above. When the library has no threads API and the threaded set
-was asked for, it refuses that set up front, the same way. `build_tools.py` makes the same
-check of the library named with `--fftw-dll`. With `mkl` none of this runs.
+`VFFT_FFTW_DLL`, then on Windows the FFTW shipped with the repository and after it vcpkg's
+`fftw3.dll`, on Linux the distribution's `libfftw3.so.3`; it loads the first one found and
+reads its version. When none is found, or the file does not load, it stops with exit code 2
+and says how to point at one and how to get one: on Linux the distribution's package, on
+Windows a checkout with `gauntlet/fftw/` or `vcpkg install fftw3:x64-windows` (a serial
+AVX2 build), and the source build above. When the library has no threads API and the
+threaded set was asked for, it refuses that set up front, the same way. `build_tools.py`
+makes the same check of a library named with `--fftw-dll`, and without one prints which
+library a run will use. With `mkl` none of this runs.
 
 ## The two commands
 
