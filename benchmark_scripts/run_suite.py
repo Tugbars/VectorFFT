@@ -15,6 +15,11 @@ directory, then a SUMMARY.md there:
     2d-mt     run --group 2d-pow2 --threads T  gauntlet/results/<prefix>_2d_mt<T>/  vectorfft-<cmp>-2d-mt-forest.svg + .png (with the 2d run's csv)
     3d        run --group 3d-pow2              gauntlet/results/<prefix>_3d/        vectorfft-<cmp>-3d-pow2.svg + .png
 
+and the quick check, run only when named (--sets pow2), never part of the five:
+
+    pow2      run --group pow2                 gauntlet/results/<prefix>_pow2/      vectorfft-<cmp>-pow2-gflops.svg
+              (1D c2c at every power of two from 2 to 2^23, 23 lengths: minutes, not hours)
+
 T, the thread count of the 2d-mt set, is the number of physical cores of this machine's
 fastest core class (read from the OS: 8 on an i9-14900KF with 8 P-cores, 6 on a six-core
 Zen 4), printed when the suite starts; --threads N overrides it.
@@ -26,7 +31,7 @@ library's shipped wisdom (src/wisdom/): a run keeps its verdicts in its own stor
 what to do when it is missing, or lacks the threads API the 2d-mt set needs).
 
     --cmp fftw|mkl       the comparator (required)
-    --sets a,b,...       the sets to run, of 1d, accuracy, 2d, 2d-mt, 3d (default: all five)
+    --sets a,b,...       the sets to run, of 1d, accuracy, 2d, 2d-mt, 3d, pow2 (default: the five pictures)
     --threads N          the thread count of the 2d-mt set (default: the physical cores of the fastest core class)
     --name-prefix NAME   the run directories' prefix (default <cmp>_<isa>_<date>, the ISA from build_tools.py's record)
     --fftw-dll PATH      an FFTW shared library of your own (default: build_tools.py's record, then $VFFT_FFTW_DLL, then
@@ -54,7 +59,9 @@ DRIVER = "gauntlet/gauntlet.py"
 PLOTS = "src/tools/plots"
 EXE = ".exe" if os.name == "nt" else ""
 TOOLS = ("bench_1d_vs_mkl", "recal_1d_probe", "k1_fwd_ref_probe")
-SETS = ("1d", "accuracy", "2d", "2d-mt", "3d")
+SETS = ("1d", "accuracy", "2d", "2d-mt", "3d")   # the five pictures, the default
+QUICK = ("pow2",)                               # the quick check, only when named
+ALL_SETS = SETS + QUICK
 LABEL = {"fftw": "FFTW", "mkl": "MKL"}   # the comparator's name on a picture
 ABOUT = {
     "1d": "1D c2c, every length N from 2 to 4,096, throughput in GFLOPS.",
@@ -62,6 +69,7 @@ ABOUT = {
     "2d": "2D c2c, every power-of-two plane up to 4M points (159 planes), the speedup per plane.",
     "2d-mt": "The same 159 planes at %d threads, the comparator at %d threads too, beside the one-thread run.",
     "3d": "3D c2c, every power-of-two volume up to 4M points (1,288 volumes), the speedup per volume.",
+    "pow2": "1D c2c, every power of two from 2 to 2^23 (23 lengths), throughput in GFLOPS: the quick check.",
 }
 
 
@@ -130,17 +138,19 @@ class Set:
     def __init__(self, name, cmp, prefix, threads, cells):
         self.name = name
         self.cmp = cmp
-        dims = {"1d": 1, "accuracy": 1, "2d": 2, "2d-mt": 2, "3d": 3}[name]
+        dims = {"1d": 1, "accuracy": 1, "2d": 2, "2d-mt": 2, "3d": 3, "pow2": 1}[name]
         self.threads = threads if name == "2d-mt" else 1
         self.sfx = suffix(dims, self.threads, cmp)
-        self.run = prefix + {"1d": "_1d", "accuracy": "_1d", "2d": "_2d", "2d-mt": "_2d_mt%d" % self.threads, "3d": "_3d"}[name]
+        self.run = prefix + {"1d": "_1d", "accuracy": "_1d", "2d": "_2d", "2d-mt": "_2d_mt%d" % self.threads, "3d": "_3d",
+                             "pow2": "_pow2"}[name]
         self.rel = RESULTS + "/" + self.run
         self.dir = os.path.join(ROOT, RESULTS, self.run)
         self.verb = "verify" if name == "accuracy" else "run"
         self.cells = cells
         self.cell_args = ["--cells", cells] if cells else {
             "1d": ["--cells", "2..4096"], "accuracy": ["--cells", "2..4096"],
-            "2d": ["--group", "2d-pow2"], "2d-mt": ["--group", "2d-pow2"], "3d": ["--group", "3d-pow2"]}[name]
+            "2d": ["--group", "2d-pow2"], "2d-mt": ["--group", "2d-pow2"], "3d": ["--group", "3d-pow2"],
+            "pow2": ["--group", "pow2"]}[name]
         self.about = ABOUT[name] % (self.threads, self.threads) if name == "2d-mt" else ABOUT[name]
         self.csv = self.rel + "/" + ("verify" if name == "accuracy" else "gauntlet") + self.sfx + ".csv"
         self.report = None if name == "accuracy" else self.rel + "/report" + self.sfx + ".md"
@@ -160,6 +170,9 @@ class Set:
         base = self.rel + "/vectorfft-" + self.cmp
         if self.name == "1d":
             return [PLOTS + "/gen_gflops.py", self.csv, "--out", base + "-gflops.svg", "--cmp", label, "--logy"], base + "-gflops.svg"
+        if self.name == "pow2":
+            return ([PLOTS + "/gen_gflops.py", self.csv, "--out", base + "-pow2-gflops.svg", "--cmp", label, "--logy"],
+                    base + "-pow2-gflops.svg")
         if self.name == "accuracy":
             return [PLOTS + "/gen_precision.py", self.csv, "--out", base + "-precision.svg"], base + "-precision.svg"
         if self.name == "2d":
@@ -259,14 +272,15 @@ def write_summary(s, machine, lines):
     head = "# %s\n\nWritten by benchmark_scripts/run_suite.py, %s.\n\n%s\n\n" % (
         s.run, datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "\n".join("- " + l for l in machine))
     with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(head + "\n".join(sections[k] for k in SETS if k in sections))
+        f.write(head + "\n".join(sections[k] for k in ALL_SETS if k in sections))
     return path
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cmp", choices=["fftw", "mkl"], required=True, help="the comparator")
-    ap.add_argument("--sets", default=",".join(SETS), help="which sets, of %s (default all)" % ", ".join(SETS))
+    ap.add_argument("--sets", default=",".join(SETS),
+                    help="which sets, of %s (default the five pictures; pow2 is the quick check)" % ", ".join(ALL_SETS))
     ap.add_argument("--threads", type=int, help="the thread count of the 2d-mt set (default: this machine's physical cores of its fastest core class)")
     ap.add_argument("--name-prefix", help="the run directories' prefix (default <cmp>_<isa>_<date>)")
     ap.add_argument("--fftw-dll", help="an FFTW shared library of your own (default: build_tools.py's record, VFFT_FFTW_DLL, then the one shipped with the repository on Windows, the distribution's on Linux)")
@@ -276,10 +290,10 @@ def main():
     args = ap.parse_args()
 
     names = [n.strip() for n in args.sets.split(",") if n.strip()]
-    unknown = [n for n in names if n not in SETS]
+    unknown = [n for n in names if n not in ALL_SETS]
     if unknown:
-        sys.exit("unknown set %s: the sets are %s" % (", ".join(unknown), ", ".join(SETS)))
-    names = [n for n in SETS if n in names]
+        sys.exit("unknown set %s: the sets are %s" % (", ".join(unknown), ", ".join(ALL_SETS)))
+    names = [n for n in ALL_SETS if n in names]
     if not os.path.isfile(CONFIG):
         sys.exit("no %s: run build_tools.py first (benchmark_scripts/README.md)" % CONFIG)
     config = json.load(open(CONFIG, encoding="utf-8"))

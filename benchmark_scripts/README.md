@@ -20,6 +20,17 @@ names and `--cmp` added; they change none of its defaults. Everything they produ
 under `gauntlet/results/`. Nothing is written into the library's shipped wisdom
 (`src/wisdom/`) unless you run the gauntlet's `merge` verb yourself.
 
+**For a quick answer**, one command runs the 1D complex transform at every power of two from
+2 to 2^23 (23 lengths) against FFTW, in about five minutes, and draws its throughput as
+`vectorfft-fftw-pow2-gflops.svg`:
+
+```sh
+./benchmark_scripts/build.sh          # once
+./benchmark_scripts/run_pow2.sh       # FFTW; run_pow2.sh mkl for MKL
+```
+
+It is not one of the five pictures and the full runs never include it.
+
 ## What you need
 
 | You need | Notes |
@@ -43,7 +54,7 @@ root.
 The bench loads the FFTW shared library at run time and calls it through that file: the
 FFTW you measure is the file that was loaded. When it binds, the bench reads FFTW's own
 version string, which names the SIMD code paths the library was built with, for example
-`fftw-3.3.10-sse2-avx-avx2-avx512`; `build_tools.py` and `SUMMARY.md` show the same string,
+`fftw-3.3.10-sse2-avx-avx2-avx2_128-avx512`; `build_tools.py` and `SUMMARY.md` show the same string,
 so you know what you compared against. FFTW's plans are made with `FFTW_MEASURE`, and each
 run keeps its own FFTW wisdom file (`fftw.wis` in the run directory), so a problem is
 planned once per run.
@@ -95,7 +106,9 @@ library a run will use. With `mkl` none of this runs.
 ### 1. Build the tools
 
 ```sh
-./benchmark_scripts/build.sh --fftw-dll <path to the FFTW library>
+./benchmark_scripts/build.sh                    # Windows: the FFTW in gauntlet/fftw/ is used
+./benchmark_scripts/build.sh --isa avx512       # the AVX-512 tree, on a CPU with AVX-512
+./benchmark_scripts/build.sh --fftw-dll <path>  # Linux, or an FFTW of your own
 ```
 
 `build.sh` calls `python benchmark_scripts/build_tools.py` with the same arguments
@@ -123,6 +136,7 @@ record changes with it.
 One script per picture, and one for all five:
 
 ```sh
+./benchmark_scripts/run_pow2.sh fftw               # the quick check: 1D, every power of two to 2^23, minutes
 ./benchmark_scripts/run_all.sh fftw --yes          # all five pictures, one after the other
 ./benchmark_scripts/run_1d.sh fftw --yes           # the 1D picture
 ./benchmark_scripts/run_accuracy.sh fftw           # the accuracy picture (after run_1d.sh, or on its own)
@@ -145,7 +159,7 @@ further argument goes to `python benchmark_scripts/run_suite.py`, the script the
 | Option | Meaning |
 |---|---|
 | `--cmp fftw` or `--cmp mkl` | the comparator (required; the shell scripts' first argument) |
-| `--sets 1d,accuracy,2d,2d-mt,3d` | which sets to run (default all five; each `run_*.sh` names its own); they run in this order whatever order you list them |
+| `--sets 1d,accuracy,2d,2d-mt,3d` | which sets to run (default all five; each `run_*.sh` names its own); they run in this order whatever order you list them. `pow2`, the quick check, runs only when named |
 | `--threads N` | the thread count of the `2d-mt` set (default: the physical cores of the fastest core class) |
 | `--name-prefix NAME` | the run directories' prefix (default `<cmp>_<isa>_<date>`, e.g. `fftw_avx512_2026-10-19`) |
 | `--fftw-dll PATH` | the FFTW library, when it is not the one `build_tools.py` recorded |
@@ -182,6 +196,7 @@ gauntlet/results/fftw_avx512_2026-10-19_1d/
 gauntlet/results/fftw_avx512_2026-10-19_2d/        gauntlet_2d_fftw.csv, report_2d_fftw.md, vectorfft-fftw-2d-pow2.svg and .png, SUMMARY.md
 gauntlet/results/fftw_avx512_2026-10-19_2d_mt6/    gauntlet_2d_mt6_fftw.csv, report_2d_mt6_fftw.md, vectorfft-fftw-2d-mt-forest.svg and .png, SUMMARY.md   (mt<T>: the thread count)
 gauntlet/results/fftw_avx512_2026-10-19_3d/        gauntlet_3d_fftw.csv, report_3d_fftw.md, vectorfft-fftw-3d-pow2.svg and .png, SUMMARY.md
+gauntlet/results/fftw_avx512_2026-10-19_pow2/      gauntlet_fftw.csv, report_fftw.md, vectorfft-fftw-pow2-gflops.svg, SUMMARY.md   (the quick check)
 ```
 
 With `--cmp mkl` the files carry no `_fftw`: `gauntlet.csv`, `report.md`, `gauntlet_2d.csv`
@@ -203,6 +218,7 @@ is replayed from the shipped wisdom. By that model:
 | `2d` | 159 planes | about 10 minutes |
 | `2d-mt` | 159 planes | about 10 minutes |
 | `3d` | 1,288 volumes | about 2.5 hours (calibrate 60 min, bench 90 min) |
+| `pow2` (the quick check) | 23 lengths, 2 to 2^23 | about 5 minutes (calibrate 1 min, bench 3 min) |
 
 The 1D sweep and the 3D grid take hours each; the whole suite is most of a day. On a CPU
 the shipped wisdom has not seen, a cell is raced at create instead of replayed and
@@ -227,7 +243,8 @@ all complex-to-complex, are meaningful, while a real-transform cell may be refus
 release will ship both ISAs.
 
 To measure the AVX-512 tree, build the tools with `--isa avx512` on a CPU that has AVX-512,
-against an FFTW built with its AVX-512 code paths (above); `build_tools.py` prints what the
+against an FFTW with its AVX-512 code paths: on Windows the one in `gauntlet/fftw/`, on Linux
+a build from source (above); `build_tools.py` prints what the
 FFTW file was built with, and `SUMMARY.md` records both.
 
 On an AMD part such as Zen 4, the library reads the topology from the operating system
@@ -239,6 +256,7 @@ caller to one core and holds its SMT sibling the same way as on Intel.
 
 - `build.sh` -- builds the tools: calls `build_tools.py` with its arguments
 - `run_all.sh`, `run_1d.sh`, `run_accuracy.sh`, `run_2d.sh`, `run_2d_mt.sh`, `run_3d.sh` -- the benchmarks, all five or one picture each: the comparator first (`fftw`, the default, or `mkl`), then `run_suite.py`'s options
+- `run_pow2.sh` -- the quick check: 1D c2c at every power of two from 2 to 2^23, in minutes; the same arguments
 - `build_tools.py` -- builds the three tools through `gauntlet/build.py` and records `.config.json`
 - `run_suite.py` -- runs the sets through `gauntlet/gauntlet.py`, draws the pictures with `src/tools/plots/gen_gflops.py`, `gen_2d_pow2.py`, `gen_forest_2d_mt.py`, `gen_3d_pow2.py` and `gen_precision.py`, and writes `SUMMARY.md`
 - `.config.json` -- the record of the last build (per machine, not tracked)
