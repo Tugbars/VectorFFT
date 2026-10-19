@@ -153,8 +153,8 @@ Resolved 2026-09-21, and ruled: the planner is not a self-contained header
 (its four-step arm names the plan type and `_k1fs_ctx`, which need vfft.c's
 whole include order), so every TU that drives the planner directly is a
 LIBRARY TU: it `#include "vfft.c"` and is built WITHOUT `--vfft` -- the shape
-`sp_ccol_decode_gate` already had. `form_slot_gate`, `bwd_forms_race`,
-`calibrate_k1_il` and `il_dp_odd_probe` build that way now; the gate ran
+`sp_ccol_decode_gate` already had. `form_slot_gate`, `bwd_forms_race`
+and `il_dp_odd_probe` build that way now; the gate ran
 against today's resolvers (238 slots correct, 690 absent, 0 wrong). The
 owner ruled the gate NOT NECESSARY: it is not registered in `run_gates.py`
 and the sweep does not carry its 85 s build.

@@ -809,8 +809,8 @@ static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *
 }
 
 /* ── THE IL PLAN RACE AT CREATE ─────────────────────────────────────────────
- * A kind-3 MISS (or recalibrate) runs the IL dp planner — the same search
- * calibrate_k1_il runs offline: the solos, every legal pair x its kernel
+ * A kind-3 MISS (or recalibrate) runs the IL dp planner — the whole search:
+ * the solos, every legal pair x its kernel
  * forms, every legal 3-stage chain x forms, the flat / ZTURN-T / four-step /
  * prime arms, the order swap, the backward forms — and banks its verdicts
  * (the kind-3 lay=il row, the dir=bwd row) before the create replays them.

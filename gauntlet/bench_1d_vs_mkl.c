@@ -1,41 +1,41 @@
-/* bench_1d_vs_mkl.c — dag-fft-compiler (JIT static executors) vs Intel MKL, 1D C2C fwd.
+/* bench_1d_vs_mkl.c -- THE canonical bench against Intel MKL (gauntlet/README.md).
  *
- * RE-POINTED to the dag tree + JIT-compliant (2026-06-16). For each CALIBRATED
- * K=4 wisdom cell (the ones we worked on): build the plan from its
- * factors+variants+orientation, resolve it through vfft_proto_plan_jit_fwd()
- * — baked static executor if present, else JIT-compiled (gcc -shared, cached)
- * — gate on roundtrip accuracy, then time it head-to-head vs MKL.
+ * One cell per process: our plan through the library's front door on the wisdom directory
+ * given (a row there replays, a miss races and banks), MKL's DFTI descriptor for the same
+ * transform, both timed inside the library's measurement scope (bench_scope.h: the pin to a
+ * P-core, the SMT-sibling guard, the priority, the machine's measurement lock), one csv row
+ * with both times, the ratio and the correctness columns. MKL is optional at build time
+ * (build.py --mkl; without it the row carries our numbers and the correctness checks). The
+ * K=1 cell takes other comparators: --cmp fftw (bound at run time from $VFFT_FFTW_DLL) and
+ * --cmp kfr (a --kfr build).
  *
- * JIT compile happens at RESOLVE time (plan phase, before the timing loop), so
- * the timed path is a pure direct call — ZERO JIT overhead in the measurement.
- * Cells whose plan fails to resolve fall back to the generic executor (flagged).
+ * Protocol (docs/design/measurement_arms.md): a warm-up, then timing windows of best-of-5
+ * samples; cachebust and a cool-down between the two engines; the engine order set by the
+ * flip argument, alternated across processes so neither side always runs first; the
+ * threaded cells (--mt, T = $VFFT_MT, default 8) run both sides at T, never paced, and
+ * print the library's engagement counters so a serial fallback cannot pass as threaded.
  *
- * Ideas ported from the production bench: wisdom-driven cell selection (only
- * cells with an entry are benched), the fwd->bwd roundtrip gate, format_plan
- * (incl. [override]), GFLOPS. From MKLBench: cachebust between engines, pacing,
- * and the ISOLATED-RUN methodology — a single sequential run has cross-cell
- * cache/thermal carryover cachebust() can't clear, so run EACH CELL ISOLATED
- * (fresh process; run.ps1 does this) and trust only isolated numbers.
- *
- * Build: gauntlet/build.py --mkl --vfft (dag core + cached codelet lib +
- *   mkl_rt LP64 + src/core/vfft.c — the front door serves the K=1 kind-4
- *   SCRAMBLED-cascade cells, see run_k1z_cell).
- *   NOTE: LP64 (mkl_rt), NOT ILP64 — ILP64 corrupts the DFTI strides array
- *   ("Inconsistent configuration parameters" at DftiCommit).
- *
- * Usage: bench_1d_vs_mkl [wisdom] [csv] [pace_ms] [N] [K] [cool_ms] [flip] [core]
- *   --2dilnat : the 2D INTERLEAVED gauntlet cell (2026-09-23): one shape per process,
- *            N1 = the N argument, N2 = the K argument; OOP natural K=1 vs MKL DFTI 2D
- *            out of place, the K=1 natural cell's protocol, one csv row (N1,N2,...).
- *   --3dil : the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D (VFFT_3DIL_CELLS, VFFT_3DIL_ROUNDS);
- *            --3dil --mt = both sides at T (VFFT_MT, default 8), engagement printed per cell
- *   N=0      : legacy full in-process loop over K=BENCH_K wisdom cells (quick-look).
- *   N>0      : ISOLATED single cell (N,K) — fresh process per cell (run_bench.py),
- *              kills cross-cell carryover. K = target K (multi-K: 4/32/256...).
- *   cool_ms  : idle between the vfft and MKL measurements (+cachebust) — both start
- *              from a comparable baseline (fixes the fixed-order bias that favored us).
- *   flip     : 1 = measure MKL first (run_bench.py alternates per cell).
- *   core     : pin CPU core (-1 = no pin). env VFFT_TRIAL_PACE_MS = inter-trial idle.
+ * Usage: bench_1d_vs_mkl [mode flags] [wisdom] [csv] [pace_ms] [N] [K] [cool_ms] [flip] [core]
+ *   wisdom   a file inside the wisdom directory (names the directory)   csv  the row's file
+ *   pace_ms  the idle between trials        N  the cell; a shape N1xN2[xN3] for a rank-2/3 cell
+ *   K        the batch count (N2 where a mode says so)   cool_ms  the idle between the engines
+ *   flip     1 = MKL first                  core  the P-core to pin (-1 = none)
+ * Modes, leading flags in any order:
+ *   1D c2c    (no flag) the K=1 interleaved natural cell; --oop; --k1nat / --k1noop / --k1zip /
+ *             --k1dir the natural in-place and out-of-place forms; --mt threaded; --pad the padded
+ *             plan; --cmp mkl|fftw|kfr the comparator
+ *   1D real   --realfwd / --realbwd (r2c / c2r); --r2c, --c2r, --c2rcalib, --zr2c, --padr2c the
+ *             earlier real forms
+ *   2D / 3D   --2dilnat / --3dilnat the gauntlet's 2D and 3D c2c cells; --2drealnat / --3dreal the
+ *             real cells; --realip / --realown the real cell in place; --2d, --2dil, --3dil,
+ *             --2dreal, --2dr2c, --2dc2r the earlier forms
+ *   batches   --lmc2c / --lmr2c / --lmc2r the lane-major 1D batches; --lm2d / --lm3d the lane-major
+ *             2D / 3D c2c batches; --lm2dr2c / --lm2dc2r and --lm3dr2c / --lm3dc2r the 2D / 3D real
+ *             batches (the contiguous queue timed beside them); --ilmt the threaded
+ *             transform-contiguous batch
+ * Build: python gauntlet/build.py --compile --mkl --vfft, or the CMake target vfft-gauntlet.
+ *   MKL is linked LP64 through mkl_rt: ILP64 corrupts the DFTI strides array ("Inconsistent
+ *   configuration parameters" at DftiCommit).
  */
 #define _POSIX_C_SOURCE 200809L
 #define _GNU_SOURCE 1
@@ -3138,7 +3138,8 @@ static void run_lm3dr_cell(const int *n, int K, int c2r, FILE *out, int cool_ms,
     double *in, *in_h, *S, *S_h, *zm, *zh, *tmp;
     double rel = -1.0, qrel = -1.0, mself = -1.0, xrel = -1.0;
     double vns = 0, qns = 0, mns = 0, hns = 0, rmir, rhom, rq;
-    long eng_pq = -1, eng_plane = -1;
+    long eng_pq = -1, eng_plane = -1, eng_grp = -1;   /* the queue's three arms: queued dispatches, the one-volume
+                                                      * plan's threaded passes (loop), group executes (groups) */
     size_t i;
     char shape[32];
     if (T == 1)
@@ -3223,9 +3224,10 @@ static void run_lm3dr_cell(const int *n, int K, int c2r, FILE *out, int cool_ms,
           if (T > 1) g_cell_engaged = vfft_il2d_col_mt_passes() - e0; } \
         if (hq) { \
           const long p0 = vfft_pq_mt_passes(), i0 = vfft_ilnd_mt_passes(), c0 = vfft_il2d_col_mt_passes(); \
+          const long g0 = vfft_pq_grp_passes(); \
           pace(g_trial_pace_ms); \
           qns = k1z_time_vfft_d(hq, in_h, S_h, total, dir); \
-          if (T > 1) { eng_pq = vfft_pq_mt_passes() - p0; \
+          if (T > 1) { eng_pq = vfft_pq_mt_passes() - p0; eng_grp = vfft_pq_grp_passes() - g0; \
                        eng_plane = (vfft_ilnd_mt_passes() - i0) + (vfft_il2d_col_mt_passes() - c0); } } \
     } while (0)
 #ifdef VFFT_HAS_MKL
@@ -3260,14 +3262,14 @@ static void run_lm3dr_cell(const int *n, int K, int c2r, FILE *out, int cool_ms,
            shape, K, c2r ? "lm3dc2r" : "lm3dr2c", vns, qns, mns, hns, rmir, rhom, rq, rel, qrel, mself, xrel,
            vfft_plan_route(h), hq ? vfft_plan_route(hq) : "-");
     if (T > 1)
-        printf("  T=%d engaged %ld%s contig pq=%ld plane=%ld%s", T, g_cell_engaged, g_cell_engaged == 0 ? " (SERIAL)" : "",
-               eng_pq, eng_plane, (eng_pq == 0 && eng_plane == 0) ? " (SERIAL)" : "");
+        printf("  T=%d engaged %ld%s contig pq=%ld plane=%ld grp=%ld%s", T, g_cell_engaged, g_cell_engaged == 0 ? " (SERIAL)" : "",
+               eng_pq, eng_plane, eng_grp, (eng_pq == 0 && eng_plane == 0 && eng_grp == 0) ? " (SERIAL)" : "");
     printf("\n");
     if (out)
     {
-        char eng[48] = "";
+        char eng[64] = "";
         if (T > 1)
-            snprintf(eng, sizeof eng, ",%ld,%ld,%ld", g_cell_engaged, eng_pq, eng_plane);
+            snprintf(eng, sizeof eng, ",%ld,%ld,%ld,%ld", g_cell_engaged, eng_pq, eng_plane, eng_grp);
         fprintf(out, "%s,%d,%s,lm3dr-oop,%.0f,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.3e,%.3e,%s%s\n",
                 shape, K, plan_s, vns, qns, mns, hns, rmir, rhom, rq, rel, qrel, vfft_plan_route(h), eng);
         fflush(out);
@@ -7667,7 +7669,7 @@ int main(int argc, char **argv)
                              * second verdict ratio_contig = mkl_home / contig; threaded: both doors' engagement */
             fprintf(out, "N,K,plan,path,vfft_ns,contig_ns,mkl_mirror_ns,mkl_home_ns,"
                          "ratio_mirror,ratio_home,ratio_contig,xerr,contig_xerr,route%s\n",
-                    g_k1noop_mt ? ",engaged,engaged_pq,engaged_plane" : "");
+                    g_k1noop_mt ? ",engaged,engaged_pq,engaged_plane,engaged_grp" : "");
         else if (g_kzb || g_kzbr || g_lm2d || g_lm2dr)
             fprintf(out, "N,K,plan,path,vfft_ns,loop_ns,mkl_mirror_ns,mkl_home_ns,"
                          "ratio_mirror,ratio_home,ratio_loop_vs_home,xerr,loop_xerr,route%s\n", g_k1noop_mt ? ",engaged" : "");

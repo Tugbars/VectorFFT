@@ -48,10 +48,7 @@ the forward a row engine of the r2c plan's own row race (`rx=lm`), the
 backward the c2r plan's (`rx_c2r=lm`), each banked on the 2D real row.
 Emitted by `generator/lib/gen/real_il.ml` (`gen_radix N --cil-r2zr`,
 `--cil-bwd` for the backward) with the row address forms of
-`lib/cx/cx_ir.ml` / `cx_render.ml`; rows in `corpus.ml`. The kernel gate is
-`gauntlet/r2zr_gate.c` (a naive real DFT and its inverse; 2 to 64 rows,
-tight and padded pitches with guard values, the backward's input holding
-garbage in the DC and Nyquist imaginary parts).
+`lib/cx/cx_ir.ml` / `cx_render.ml`; rows in `corpus.ml`.
 
 Regeneration: through `gen_set` to a temporary root (`--root`), never in
 place; the folder a file lands in follows its kind (`Corpus.dir_of_file`),

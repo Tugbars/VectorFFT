@@ -405,8 +405,8 @@ result (the contiguous arm's against MKL's contiguous result is at the same leve
       8x64x64     8     213,937   1,300,713   6.08     207,200     367,225   1.77   3.6e-16
      24x24x24     4      54,589     247,044   4.53      66,258     107,306   1.62   5.5e-16
  R2C, eight threads both sides
-     64x64x64     4     256,512   1,604,425   6.25     285,900     189,413   0.66   4.5e-16
-    32x128x64     4     233,613   1,472,475   6.30     261,887     185,288   0.71   4.8e-16
+     64x64x64     4     237,287   1,542,150   6.50     183,213     191,288   1.04   4.5e-16
+    32x128x64     4     234,963   1,469,887   6.26     198,062     186,963   0.94   4.8e-16
     131x32x32     8     359,287   1,768,050   4.92     260,850     709,725   2.72   1.7e-15
     16x64x256     4     201,013   1,505,712   7.49     169,537     178,112   1.05   5.6e-16
 ```
@@ -428,11 +428,13 @@ result (the contiguous arm's against MKL's contiguous result is at the same leve
 ```
 
 "ours contig" is the volume queue at the row's thread count in both tables. Every T=8 row is
-engaged on both doors: the batch door's first-axis column pass ran threaded (R2C 83, 91, 104
+engaged on both doors: the batch door's first-axis column pass ran threaded (R2C 82, 107, 104
 and 104 threaded passes over the timed run at the four cells in table order, C2R 100, 107, 117
-and 104), and the queue served the smooth cells through its loop arm with the one-volume plan's
-own threaded passes (R2C 424, 392 and 432, C2R 536, 424 and 436) and the prime first axis
-through its queued arm (99 queued dispatches in each direction). One thread: R2C 3.5x to 6.1x
+and 104), and the queue served 64x64x64x4 and 32x128x64x4 R2C through its groups arm (four
+groups of two threads, one volume each: 153 and 103 group executes), the other smooth cells
+through its loop arm with the one-volume plan's own threaded passes (R2C 432, C2R 536, 424 and
+436) and the prime first axis through its queued arm (99 queued dispatches in each direction).
+One thread: R2C 3.5x to 6.1x
 ahead of MKL's lane-major 3D real batch at every cell, C2R 2.7x to 4.2x; the volume queue
 against MKL's contiguous volumes 1.0x at 32x32x32x4 and 1.5x to 1.9x at the other R2C cells,
 1.2x to 3.1x C2R. Our own volume queue is the faster of our two forms at the tall and the
@@ -442,9 +444,10 @@ and 1.2x ahead at 24x24x24x4 R2C. Against MKL's contiguous volumes the lane-majo
 runs 0.86x at 32x32x32x4 and 1.0x to 2.0x at the other R2C cells, 0.91x and 1.1x to 2.1x C2R.
 Eight threads: MKL's lane-major 3D real batch does not scale (1.0 to 1.8 ms), so 4.9x to 7.5x
 R2C and 3.7x to 5.9x C2R against it; MKL's contiguous batch threads well, and against it the
-volume queue is behind at 64x64x64x4 and 32x128x64x4 R2C (0.66x and 0.71x), level at
-16x64x256x4 (1.05x) and 2.7x at the prime first axis, C2R 1.1x to 1.3x at the smooth cells and
-3.4x at the prime one.
+volume queue is level at the smooth R2C cells (1.04x at 64x64x64x4, 0.94x at 32x128x64x4 and
+1.05x at 16x64x256x4; the first two rows re-raced on 2026-10-19 with the queue's groups arm and
+the one-volume tier's stage-wise axis 0 in place) and 2.7x at the prime first axis, C2R 1.1x to
+1.3x at the smooth cells and 3.4x at the prime one.
 
 ### Natural order — in-place (single-thread)
 

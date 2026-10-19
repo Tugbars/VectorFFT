@@ -152,9 +152,8 @@ banked as `il_route=?` because the table had 11 names and a `[10]` bound.
 
 ### L11. The bench and calibrator copies
 
-`gauntlet/bench_1d_vs_mkl.c` (the direct-cell admission),
-`calibrate_k1_il.c`, and the census/probe benches each re-derive "which
-cells exist" from L1's predicates.
+`gauntlet/bench_1d_vs_mkl.c` (the direct-cell admission) and the probe
+benches each re-derive "which cells exist" from L1's predicates.
 
 ## Contract
 
@@ -584,8 +583,7 @@ is where the audit's real return went.
 genuine copy was `bench_1d_vs_mkl.c`'s direct-cell admission, migrated in
 step 2. The three ZTURN-T gates reference `VFFT_ZTT_MAX_N` and
 `vfft_ztt_odd_band` — the engine's own band, which is the shared source the
-module itself calls — and `calibrate_k1_il.c` takes its cells from argv.
-Neither re-derives a law.
+module itself calls. They re-derive no law.
 
 ## The band map, validated from the outside (2026-09-18)
 

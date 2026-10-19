@@ -430,15 +430,14 @@ five shards stamped `@meta host=amd-f25m117`:
  wisdom2_real.txt       1   2026-09-03 (r2c 4096)
 ```
 
-Merging uses `gauntlet/merge_to_host.py`, never the gauntlet's own `--merge` —
-that one targets `src/wisdom/` root and would mix hosts. It lifts only
-`src=race` rows carrying the run's date, backs up each shard, and takes `@meta`
-from a sibling shard in the destination (taking it from the source would stamp
-this host's verdicts with the seed store's host — it did, once, and is fixed).
+Merging uses the gauntlet's own `merge` verb. The shipped store is a root of per-CPU
+folders, and the gauntlet seeds a run from and merges it into the folder of the CPU it
+runs on (`src/wisdom/Zen4/` here), never another CPU's: a row keyed the same replaces
+the shipped one, a new row is added, rows the run did not touch are kept, a backup is
+written beside each shard, and the destination keeps its own `@meta`.
 
 ```
-python gauntlet/merge_to_host.py --name <run> --host Zen4 --dry-run
-python gauntlet/merge_to_host.py --name <run> --host Zen4
+python gauntlet/gauntlet.py merge --name <run>
 ```
 
 ⚠️ Every shard records `l1d=49152` even here, because `VFFT_L1D_DISCOVER`

@@ -2173,8 +2173,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
  * TWO LIBRARIES: this emitter writes INTERLEAVED rows only. The split
  * verdict is banked by the split planner itself (dp_planner_split_oop.h,
  * vfft_sp_dp_emit_wisdom) on its own lay=split row; the two libraries never
- * meet in one call, one row or one calibrator (benches/calibrate_k1_il.c,
- * calibrate_k1_split.c).
+ * meet in one call, one row or one race.
  *
  * Returns the number of verdicts banked; the caller owns opening/saving the
  * store. */

@@ -18,12 +18,12 @@ python gauntlet/gauntlet.py run --group pow2 --inplace       # in place
 ## What a run does
 
 1. **calibrate** -- one create per cell through `vfft_create` on a scratch copy
-   of the shipped wisdom (`gauntlet/results/<run>/store/`). Every cell is
-   re-raced (`config.recalibrate = 1`) and its verdict banked there, so a run
+   of the shipped wisdom, this CPU's folder of it (`gauntlet/results/<run>/store/`).
+   A cell the copy covers replays its verdict; a miss races and banks there.
+   `--calibrate` re-races every cell (`config.recalibrate = 1`), so a run
    measures the library as it is now and never a verdict from an older build.
-   `--replay` serves the store's verdicts instead and races only the cells it
-   does not cover. The calibrate log records, per cell, whether it was
-   **raced**, **replayed** or **refused** (no engine serves it).
+   The calibrate log records, per cell, whether it was **raced**, **replayed**
+   or **refused** (no engine serves it).
 2. **bench** -- the verdict the calibrate stage banked, replayed: one process
    per cell, both engine orders, best-of-5 in two
    timing windows, cachebust and a cool-down between engines, the caller pinned
@@ -33,11 +33,11 @@ python gauntlet/gauntlet.py run --group pow2 --inplace       # in place
    checks the forward transform against a long-double reference).
 3. **report** -- `report.md` in the run directory: every cell with how it was
    served, then the tables by route, size and family.
-4. **merge** -- the run's verdicts into the library's shipped wisdom
-   (`src/wisdom/`), with backups: a row keyed the same replaces the shipped
-   one, a new row is added, rows the run did not touch are kept. Every run
-   writes to wisdom; `--no-merge` keeps the verdicts in the run's own store
-   (the `merge` verb merges a finished run later).
+4. **merge** -- with `--merge`, the run's verdicts into the library's shipped
+   wisdom, this CPU's folder of it (`src/wisdom/<folder>/`), with backups: a row
+   keyed the same replaces the shipped one, a new row is added, rows the run did
+   not touch are kept. Without it the verdicts stay in the run's own store (the
+   `merge` verb merges a finished run later).
 
 `gflops` turns a run into a GFLOPS list, VectorFFT beside MKL, one line per
 cell (`gflops.csv` in the run directory; 5 N log2 N per transform, the best of
@@ -124,12 +124,12 @@ numbers and correctness. With both, the report says which library answered.
 - `bench_1d_vs_fftw.c` -- the FFTW comparator
 - `recal_1d_probe.c` -- the calibrator (one front-door create; recalibrate re-races; `--2d N1 N2` for a shape)
 - `k1_fwd_ref_probe.c` -- the forward reference check and the precision record (`verify`)
-- `build.py` -- the gcc build harness (the gauntlet's copy)
+- `build.py` -- the gcc build harness (`src/tools/gates/run_gates.py` builds the gates with it too)
 - `results/<run>/` -- cells.txt, store/, calibrate.log, gauntlet.csv, control.csv, verify.csv, gflops.csv, run.log, report.md
 - `kfr_arm.c/.h`, `ref_fftw.h`, `bench_scope.h` -- the KFR arm, the run-time FFTW binding, the gauntlet's switches (`VFFT_BENCH_GUARD`, `VFFT_PCORE_MASK`) onto the library's measurement scope (`vfft.h`: the pin, the SMT-sibling guard, the priority, the machine's measurement lock)
 - five checks that are not benches (kept because the gauntlet cannot reach what they cover): `rn1_gate.c` and `r1c_gate.c`
   (the real mono and the real flat leaf at column counts the door never runs), `zttr_mt_check.c` and `zrf_mt_check.c`
   (threaded output bitwise against the serial plan), `real_door_check.c` (the real door in place, which the gauntlet refuses)
 
-Only the runs named in `docs/performance/v1_0_results.md` stay under `results/`; a run that
-fed no entry there is deleted once its number is recorded (2026-09-30).
+Only the runs a document under `docs/performance/` or `docs/roadmap/` names stay under
+`results/`; a run that fed no entry there is deleted once its number is recorded.

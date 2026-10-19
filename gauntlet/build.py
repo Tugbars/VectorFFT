@@ -1,30 +1,21 @@
-"""
-build.py — compile + run the new tuned core test program.
+"""build.py -- the gauntlet's gcc build harness (gauntlet/README.md).
 
-Stays completely separate from CMake. Mirrors the pattern used in
-src/vectorfft_tune/common/bench.py: detect compiler, set flags, compile,
-run.
-
-Include path order matters
---------------------------
-src/core/                          (new — 6 headers override production)
-src/stride-fft/core/               (production — supplies factorizer.h,
-                                    threads.h, env.h, prefetch.h, etc.)
-src/stride-fft/codelets/{isa}/     (production codelets — n1/aux variants)
-src/vectorfft_tune/generated/r{R}/ (per-host dispatchers + plan_wisdom)
-
-Anything resolvable in src/core/ shadows the production version, so the
-new planner.h, registry.h, executor.h, dp_planner.h, exhaustive.h get
-picked up. Everything else falls through to production.
+Compiles one driver source against the library: src/core/vfft.c (--vfft) and the cached
+codelet library (src/dag-fft-compiler/.obj/<isa>/libdagcodelets.a, rebuilt only where a
+codelet changed), with the comparators as options (--mkl, --fftw, --kfr). The binary lands
+beside its source, which is gauntlet.py's default --bin-dir. Separate from CMake on
+purpose: the CMake target vfft-gauntlet builds the same binaries from the same sources.
 
 Usage:
-    set CC=icx
-    python build.py            # compile + run
-    python build.py --compile  # compile only, don't run
+    python gauntlet/build.py --compile --mkl --vfft                            # the bench
+    python gauntlet/build.py --compile --vfft --src gauntlet/recal_1d_probe.c   # a tool
+    python gauntlet/build.py --compile --vfft --src src/tools/gates/<gate>.c    # a gate (run_gates.py calls this)
+Without --compile the binary runs after the build.
 
 Environment:
+    CC                the compiler (default gcc; the known mingw locations are searched)
     VFFT_BUILD_JOBS   compile parallelism (default: CPU count; 1 = serial)
-    VFFT_ISA          avx2 | avx512   VFFT_ASAN   build with AddressSanitizer
+    VFFT_ISA          avx2 | avx512      VFFT_ASAN   build with AddressSanitizer
 """
 from __future__ import annotations
 import argparse
@@ -40,13 +31,11 @@ from pathlib import Path
 HERE = Path(__file__).parent.resolve()
 ROOT = HERE.parent  # repo root: highSpeedFFT/
 
-# ── RE-POINTED to the dag-fft-compiler tree (2026-06-16) ──────────────
-# Production (src/core + src/vectorfft_tune) is being retired; this harness
-# now builds against dag-fft-compiler. KEY MODEL DIFFERENCE: production
-# header-INCLUDED its SIMD codelets via per-radix -I dirs; dag's codelets are
-# separately-compiled .c files (codelets/inplace/{isa}/*.c) that get LINKED in
-# — the generated registry_{isa}.h holds externs + the init that wires them.
-DAG          = ROOT / 'src' / 'dag-fft-compiler'   # the compiler (generator + generated + jit)
+# ── The trees ─────────────────────────────────────────────────────────
+# The codelets are separately compiled .c files (codelets/inplace/{isa}/*.c)
+# linked in; the generated registry_{isa}.h holds their externs and the init
+# that wires them.
+DAG          = ROOT / 'src' / 'dag-fft-compiler'   # the compiler (generator + generated)
 DAG_CORE     = ROOT / 'src' / 'core'               # the runtime library (moved out of the compiler)
 DAG_GEN      = DAG / 'generator' / 'generated'   # generated registry + the FROZEN wisdom bundle (spike_wisdom.txt)
 WISDOM       = ROOT / 'src' / 'wisdom'           # the wisdom2 store's ROOT: one folder per CPU, the library picks its own
@@ -239,8 +228,6 @@ def dag_codelet_lib(tc) -> str | None:
     recompile, across _jobs() processes: a clean build is ~45s and a
     one-codelet regen is ~1s.
 
-    The objdir path is deliberately unchanged -- dag_write_jit_rsp points the
-    JIT runtime at these same .o files.
     """
     srcs = [Path(s) for s in dag_codelet_srcs()]
     if not srcs:
@@ -265,8 +252,8 @@ def dag_codelet_lib(tc) -> str | None:
     # nothing (2026-09-27, layout separation).
     flags = cflags
 
-    # This objdir has a FIXED path (the JIT rsp points at it), so the flag key
-    # can't live in the path the way it does for the driver objects. Stamp it
+    # This objdir has a FIXED path (one codelet cache for every driver build), so
+    # the flag key can't live in the path the way it does for the driver objects. Stamp it
     # in a file instead and wipe on mismatch -- otherwise an ASAN or ISA change
     # would quietly relink objects built under the old flags.
     key = _flags_key([tc['cc']] + flags)
@@ -329,23 +316,6 @@ def dag_codelet_lib(tc) -> str | None:
     stamp.write_text(key, encoding='ascii')
     print(f'  [codelets] lib built ({len(objs)} objects)')
     return str(lib)
-
-
-def dag_write_jit_rsp():
-    """Point the JIT runtime's codelet response file (jit/generated/codelets.rsp,
-    its default VFFT_PROTO_JIT_CODELETS) at build.py's CACHED .obj objects — so the
-    --jit build config is fully self-contained in this script (no separate
-    jit/build_codelets.ps1 step). The JIT's runtime `gcc -shared` links these .o
-    into each emitted single-plan .dll."""
-    objdir = DAG / '.obj' / DAG_ISA
-    objs = sorted(objdir.glob('*.o'))
-    if not objs:
-        print('  [jit] no codelet objects to point at (run a build first)', file=sys.stderr)
-        return
-    rsp = DAG / 'jit' / 'generated' / 'codelets.rsp'
-    rsp.parent.mkdir(parents=True, exist_ok=True)
-    rsp.write_text('\n'.join(o.as_posix() for o in objs), encoding='ascii')
-    print(f'  [jit] codelets.rsp -> {len(objs)} cached objects')
 
 
 # Known-good Windows gcc locations, most-preferred first. The historical
@@ -512,7 +482,7 @@ def find_kfr():
     return None, None
 
 
-def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=None,
+def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
               split=False, kfr=False):
     mkl_inc, mkl_lib = (None, None)
     fftw_inc, fftw_lib, fftw_dll = (None, None, None)
@@ -632,8 +602,6 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
         flags += ['-DVFFT_HAS_FFTW', f'-I{fftw_inc}']
     if kfr:
         flags += ['-DVFFT_HAS_KFR', f'-I{kfr_inc}']
-    if jit:
-        flags = flags + ['-DVFFT_USE_JIT']   # bench resolves via vfft_proto_plan_jit_fwd
     base_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])]
     if kfr:
         base_srcs.append(str(HERE / 'kfr_arm.c'))     # the shim over KFR's C API
@@ -646,8 +614,6 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
     lib = dag_codelet_lib(tc)
     if lib:
         link_args.append(lib)
-    if jit:
-        dag_write_jit_rsp()                  # JIT runtime links build.py's cached .o
     if tc['is_windows'] and tc['is_icx']:
         link_args.append('-fuse-ld=lld')
     if mkl:
@@ -802,10 +768,8 @@ def main():
                     help='Source file to build (default: the gauntlet bench). The '
                          'gauntlet sources live beside this script in gauntlet/.')
     ap.add_argument('--mkl', action='store_true',
-                    help='Link Intel MKL (ILP64 sequential). Adds '
-                         '-DVFFT_HAS_MKL -DMKL_ILP64 and the three '
-                         'libs (mkl_intel_ilp64, mkl_sequential, mkl_core). '
-                         'Requires MKLROOT or oneAPI default install path.')
+                    help='Link Intel MKL (LP64 through mkl_rt). Adds -DVFFT_HAS_MKL. '
+                         'Requires MKLROOT or the oneAPI default install path.')
     ap.add_argument('--fftw', action='store_true',
                     help='Link FFTW3 (vcpkg double-precision). Adds '
                          '-DVFFT_HAS_FFTW and fftw3.lib.')
@@ -813,10 +777,6 @@ def main():
                     help='Add the KFR comparator arm (gauntlet/kfr_arm.c, over KFR\'s '
                          'C API). Needs KFR_ROOT pointing at a KFR release package '
                          '(or one in the usual places) and --mkl.')
-    ap.add_argument('--jit', action='store_true',
-                    help='JIT build config: defines VFFT_USE_JIT (bench resolves '
-                         'plans via vfft_proto_plan_jit_fwd) + points the JIT '
-                         'runtime at build.py-cached codelet objects. All in gauntlet/build.py.')
     ap.add_argument('--vfft', action='store_true',
                     help='Compile src/core/vfft.c alongside the source. Use this '
                          'when the source file uses the public vfft.h API '
@@ -825,7 +785,7 @@ def main():
 
     tc = detect_toolchain()
     print('-' * 60)
-    print(' Tuned core build harness')
+    print(' The gauntlet build harness')
     print('-' * 60)
     print(f' Compiler:  {tc["cc"]} ({"MSVC-style" if tc["is_msvc_style"] else "GCC-style"})')
     print(f' Source:    {args.src}')
@@ -849,7 +809,7 @@ def main():
         # MSVC compiles the whole corpus in one cl invocation (no cached lib on
         # that path), so it stays a single command.
         cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, kfr=args.kfr,
-                        jit=args.jit, extra_srcs=extra_srcs)
+                        extra_srcs=extra_srcs)
         result = subprocess.run(cmd, capture_output=True,
                                 text=True, encoding='utf-8', errors='replace',
                                 env=build_env(tc))
@@ -865,7 +825,7 @@ def main():
                 print(f'[compile] warnings:\n{head}')
     else:
         cflags, base_srcs, link_args = build_cmd(
-            tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, kfr=args.kfr, jit=args.jit,
+            tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, kfr=args.kfr,
             extra_srcs=extra_srcs, split=True)
         if not build_gcc(tc, out_bin, cflags, base_srcs, link_args):
             print(f'[compile] FAILED ({time.time()-t0:.1f}s)')
