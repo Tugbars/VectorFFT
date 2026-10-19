@@ -191,6 +191,14 @@ static int _ref_ilnd_batch(int transform, int layout, int dims, int howmany, int
     return transform == VFFT_C2C && dims == 3 && howmany >= 2 && layout == VFI_LAYOUT_IL &&
            (geom == VFFT_BATCH_DEFAULT || geom == VFFT_BATCH_CONTIGUOUS) && n0 >= 2 && n1 >= 2 && n2 >= 2;
 }
+/* the volume queue's GROUPS arm (vfft_policy_pq_groups_ok, 2026-10-19), spelled as the request table: a
+ * rank-3 real contiguous batch, 2 <= K <= T / 2 (G = T / K >= 2, so T >= 4), not in place c2r */
+static int _ref_pq_groups(int transform, int layout, int dims, int howmany, int geom, int order, int n0, int n1, int n2,
+                          int placement, int T)
+{
+    return _ref_ilndr_batch(transform, layout, dims, howmany, geom, order, n0, n1, n2) && T >= 4 &&
+           howmany >= 2 && 2 * howmany <= T && !(transform == VFFT_C2R && placement == VFFT_INPLACE);
+}
 static int _ref_rader_prime(int N)
 {
     int p, r;
@@ -630,7 +638,8 @@ int main(void)
         static const int NS[6] = { 1, 2, 4, 63, 131, 4096 }, PL[2] = { VFFT_OUTOFPLACE, VFFT_INPLACE };
         static const int N1S[4] = { 1, 2, 15, 16 }, N2S[5] = { 1, 2, 4, 15, 16 };
         static const int OR[3] = { VFI_ORDER_DEFAULT, VFI_ORDER_NATURAL, VFI_ORDER_SCRAMBLED };
-        int it, il, idm, ik, ig, in, i1, i2, ip, io, bad_lm = 0, bad_pq = 0, n_lm = 0;
+        static const int TS[6] = { 1, 2, 3, 4, 8, 128 };   /* the groups arm's law carries the thread count */
+        int it, il, idm, ik, ig, in, i1, i2, ip, io, iT, bad_lm = 0, bad_pq = 0, bad_grp = 0, n_lm = 0;
         for (it = 0; it < 3; it++) for (il = 0; il < 2; il++) for (idm = 1; idm <= 3; idm++)
             for (ik = 0; ik < 4; ik++) for (ig = 0; ig < 3; ig++) for (in = 0; in < 6; in++)
             for (i1 = 0; i1 < 4; i1++) for (i2 = 0; i2 < 5; i2++) for (ip = 0; ip < 2; ip++) for (io = 0; io < 3; io++)
@@ -659,12 +668,20 @@ int main(void)
                                         pol, ref, TR[it], LY[il], idm, KS[ik], GM[ig], NS[in], N1S[i1], N2S[i2], PL[ip], OR[io]);
                     bad_pq++;
                 }
+                for (iT = 0; iT < 6; iT++)   /* the groups arm's domain over the thread counts */
+                    if ((vfft_policy_pq_groups_ok(&c, c.howmany, TS[iT]) != 0) !=
+                        (_ref_pq_groups(TR[it], LY[il], idm, KS[ik], GM[ig], OR[io], NS[in], N1S[i1], N2S[i2], PL[ip], TS[iT]) != 0))
+                    {
+                        if (!bad_grp) printf("  *** FAIL: groups arm admission disagrees at t=%d lay=%d dims=%d K=%d geom=%d N=%dx%dx%d pl=%d ord=%d T=%d\n",
+                                             TR[it], LY[il], idm, KS[ik], GM[ig], NS[in], N1S[i1], N2S[i2], PL[ip], OR[io], TS[iT]);
+                        bad_grp++;
+                    }
                 n_lm++;
             }
-        if (bad_lm || bad_pq) g_fail++;
-        printf("batch admission over %d requests: lane-major %s, the plane and volume queues %s\n", n_lm,
-               bad_lm ? "DIFFERS" : "equal", bad_pq ? "DIFFER" : "equal");
-        nchk += 2 * n_lm;
+        if (bad_lm || bad_pq || bad_grp) g_fail++;
+        printf("batch admission over %d requests: lane-major %s, the plane and volume queues %s, the groups arm %s\n", n_lm,
+               bad_lm ? "DIFFERS" : "equal", bad_pq ? "DIFFER" : "equal", bad_grp ? "DIFFERS" : "equal");
+        nchk += 2 * n_lm + 6 * n_lm;
     }
     /* ── steps 4-6: the three narrowed laws ─────────────────────────────
      * L3, exhaustive over every (banked, requested) pair a plan can carry,

@@ -95,6 +95,15 @@ struct vfft_wisdom_s
 };
 
 struct vfft_zr2c_kid_s;   /* the zr2c child (il/real/zr2c_build.h) */
+/* the volume queue's GROUP BARRIER (il/rank2/plane_queue.h, 2026-10-19): the pool's
+ * sense-reversing spin barrier (threads.h) on two cache lines of its own, so the K
+ * groups' barriers never share a line (nor a line pair the spatial prefetcher
+ * fetches together); the array is allocated 64-byte aligned */
+typedef struct
+{
+    _thread_pool_barrier_t b;
+    char _pad[128 - sizeof(_thread_pool_barrier_t)];   /* separation only -- never read */
+} _vfft_grp_barrier_t;
 struct vfft_plan_s
 {
     vfft_transform_t transform;
@@ -146,7 +155,15 @@ struct vfft_plan_s
     int pq_wn;
     size_t pq_n;              /* plane count (howmany) */
     size_t pq_sdist, pq_ddist; /* plane strides, DOUBLES (contiguous) */
-    int pq_mt;                /* raced verdict: 1 = queue, 0 = loop */
+    int pq_mt;                /* raced verdict: 2 = groups, 1 = queue, 0 = loop */
+    /* the GROUPS arm (2026-10-19): pq_g[0..pq_gn) are clones at pq_G = T / K threads, one
+     * per volume, run all at once in ONE pool run -- slot s is group s / pq_G, member
+     * s % pq_G -- through the tier's cooperative execute, each fork-join of the threaded
+     * walk a wait on the group's own barrier pq_bar[g] (re-armed per execute). pq_gn = K
+     * when the set exists (built, probed), 0 = the arm absent from this plan. */
+    struct vfft_plan_s **pq_g;
+    int pq_gn, pq_G;
+    _vfft_grp_barrier_t *pq_bar;
     /* K=1 NATURAL interleaved z->z, PURE IL (il2p.h): n1t -> z scratch -> t2,
      * no split planes, BOTH directions (bwd = t2t then n1_bwd(R2), solved
      * 2026-07-29). THE IL 2-pass plan — the hybrid it displaced measured

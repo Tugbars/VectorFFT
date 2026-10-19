@@ -420,6 +420,10 @@ void vfft_destroy(vfft_plan h)
             for (t = 0; t < h->pq_wn; t++)
                 vfft_destroy((vfft_plan)h->pq_w[t]);
             free(h->pq_w);
+            for (t = 0; t < h->pq_gn; t++)   /* the groups arm's clones and barriers (2026-10-19) */
+                vfft_destroy((vfft_plan)h->pq_g[t]);
+            free(h->pq_g);
+            vfft_aligned_free(h->pq_bar);
             free(h);
             return;
         }

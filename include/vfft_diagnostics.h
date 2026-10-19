@@ -88,12 +88,16 @@ extern "C"
    * every verdict was decided above the clock's tick. */
   long vfft_ilfd_race_short_samples(void);
 
-  /* And for the 2D plane queue (dims=2, howmany>1): queued (plane-per-
-   * worker) executes actually run. Loop-vs-queue is raced at create
-   * (VFFT_PQ_NO_MT=1 kills, =0 forces); zero after an execute means the
-   * serial plane loop served (which still intra-MTs per the inner
-   * plan's own banked verdicts). */
+  /* And for the plane and volume queues (a contiguous batch, howmany>1):
+   * queued (plane-per-worker) executes actually run. Loop-vs-queue is
+   * raced at create (VFFT_PQ_NO_MT=1 kills, =0 pins the queue, =2 pins the
+   * groups); zero after an execute means the serial plane loop served
+   * (which still intra-MTs per the inner plan's own banked verdicts). */
   long vfft_pq_mt_passes(void);
+  /* The volume queue's GROUPS arm: executes that ran the K volumes as K
+   * groups of T / K threads at once (a rank-3 real batch at 2 <= K <= T/2,
+   * raced against the loop and the queue at create). */
+  long vfft_pq_grp_passes(void);
 
   /* Measurement scopes entered by this process (vfft.h, "the measurement
    * scope"): one per vfft_create that raced, one per outermost

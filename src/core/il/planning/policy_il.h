@@ -819,6 +819,26 @@ static inline int vfft_policy_ilndr_batch_ok(const vfft_cfg_t *cfg, size_t howma
            (cfg->order == VFI_ORDER_DEFAULT || cfg->order == VFI_ORDER_NATURAL) &&
            cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
 }
+/* -- the GROUPS arm of the volume queue (plane_queue.h, 2026-10-19): K groups of
+ * G = T / K threads, one volume each, all at once in one pool run, raced at create
+ * against the loop (the primary at T, K times) and the queue (K serial clones, T - K
+ * cores idle). Measured 64x64x64 x 4 at T = 8 R2C: loop 274 us, queue 353 us, MKL's
+ * contiguous batch 190 us, where the one-volume plan runs 76.6 us at T = 8 against
+ * 302-329 us at one thread (eight threads buy 4.0-4.3x): two threads per volume at
+ * near-ideal halves beat eight threads at four volumes. The arm's domain: a contiguous
+ * rank-3 real batch (ilndr_batch_ok) at 2 <= K <= T / 2, so G >= 2 (at G = 1 the arm IS
+ * the queue: K serial instances on K workers), T >= 4; in place r2c as the tier serves
+ * it, in place c2r not yet (the pieces walk is dealt per execute). The remainder
+ * T - K G idles: a batch takes as long as its slowest group, and uneven groups cannot
+ * shorten it. Whether the G-thread plan can run as a group is the tier's
+ * (_ilndr_group_ok: a threaded verdict at G, no Rader column stage), and the race
+ * decides, never this law. -- */
+static inline int vfft_policy_pq_groups_ok(const vfft_cfg_t *cfg, size_t howmany, int nthreads)
+{
+    return vfft_policy_ilndr_batch_ok(cfg, howmany) && nthreads >= 4 && howmany >= 2 &&
+           howmany <= (size_t)nthreads / 2 &&
+           !(cfg->transform == VFFT_C2R && cfg->placement == VFFT_INPLACE);
+}
 /* -- rank 3, C2C, the CONTIGUOUS BATCH (fftnd_il.h through the volume queue,
  * 2026-10-18): K >= 2 volumes one after another, volume t at z + t 2 N1 N2 N3
  * doubles, either placement (the single-volume plan serves both from its one

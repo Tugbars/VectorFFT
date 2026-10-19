@@ -52,6 +52,19 @@ static void _pq_probe_cmp(const double *a, const double *b, size_t rows, size_t 
     }
 }
 
+/* a clone set torn down: the plans destroyed, the array freed, the count zeroed */
+static void _pq_drop_clones(struct vfft_plan_s ***set, int *n)
+{
+    int t;
+    if (*set)
+        for (t = 0; t < *n; t++)
+            if ((*set)[t])
+                vfft_destroy((vfft_plan)(*set)[t]);
+    free(*set);
+    *set = NULL;
+    *n = 0;
+}
+
 /* howmany > 1: the PLANE QUEUE at rank 2 and, one rank up, the VOLUME QUEUE
  * at rank 3 (2026-10-18): one primary K = 1 plan at the caller's T, run K
  * times at the per-transform distances (the dispatcher refused every layout,
@@ -221,12 +234,91 @@ static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
                 h->pq_w = NULL;
                 h->pq_wn = 0;
             }
+            /* THE GROUPS ARM's clones (2026-10-19; policy_il.h, vfft_policy_pq_groups_ok): K
+             * instances at G = T / K threads, each the one-volume cell's plan at G -- it reads
+             * the cell's nthreads=G row (the first races a miss and the rest replay it
+             * in-process; the rows ride the primary's persist, wisdom_write = 0 as the serial
+             * clones'; under RECALIBRATE the first carries the flag and re-races its G row, the
+             * rest replay) -- and must run as a group (fftnd_real_il.h, _ilndr_group_ok). The
+             * same probe: the first within 1e-10 of the primary, the rest bitwise the first. A
+             * declined plan, a clone that did not build, or a failed probe = no set: the arm
+             * is absent from the race. */
+            if (h->pq_wn > 0 && rank3 && vfft_policy_pq_groups_ok(cfg, K, h->nthreads))
+            {
+                const int G = h->nthreads / (int)K;
+                int okg = 1, declined = 0, ng = 0;
+                h->pq_g = (struct vfft_plan_s **)calloc(K, sizeof *h->pq_g);
+                h->pq_bar = (_vfft_grp_barrier_t *)vfft_aligned_alloc(K * sizeof *h->pq_bar);
+                if (h->pq_g && h->pq_bar)
+                {
+                    ic.nthreads = G;
+                    _pq_probe_run(h->pq_inner, pd, ipq, ps, p0, h->pq_sdist);   /* the primary's output again */
+                    for (t = 0; t < (int)K && okg; t++)
+                    {
+                        double mx, md;
+                        int same;
+                        ic.recalibrate = (t == 0) ? cfg->recalibrate : 0;
+                        h->pq_g[t] = (struct vfft_plan_s *)_vfft_create_cfg(&ic);
+                        ng = t + 1;
+                        if (!h->pq_g[t])
+                        {
+                            okg = 0;
+                            break;
+                        }
+                        if (!_ilndr_group_ok(h->pq_g[t]->ilndr, G))
+                        {
+                            okg = 0;
+                            declined = 1;
+                            break;
+                        }
+                        _pq_probe_run(h->pq_g[t], pd, ipq, ps, t == 0 ? p1 : p0, h->pq_sdist);
+                        _pq_probe_cmp(p0, p1, prow, ppitch, pcols, &mx, &md, &same);
+                        if (t == 0 ? !(md <= 1e-10 * (mx > 0 ? mx : 1.0)) : !same)
+                            okg = 0;
+                    }
+                }
+                else
+                    okg = 0;
+                if (okg)
+                {
+                    h->pq_gn = (int)K;
+                    h->pq_G = G;
+                }
+                else
+                {
+                    if (declined)
+                    {
+                        if (getenv("VFFT_IL2D_LOG"))
+                            fprintf(stderr, "[pq] %s P=%zu T=%d: the plan at G=%d cannot run as a group "
+                                            "(serial verdict, a Rader column stage, or the in-place c2r walk): "
+                                            "groups arm absent\n", shape, K, h->nthreads, G);
+                    }
+                    else
+                        _vfft_warn("volume queue %s: a G=%d clone did not build, or the clones "
+                                   "disagree (bitwise among themselves, 1e-10 against the primary) "
+                                   "— the groups arm is absent, loop and queue race",
+                                   shape, G);
+                    _pq_drop_clones(&h->pq_g, &ng);
+                    vfft_aligned_free(h->pq_bar);
+                    h->pq_bar = NULL;
+                    h->pq_gn = 0;
+                }
+            }
         }
         vfft_aligned_free(ps);
         vfft_aligned_free(p0);
         vfft_aligned_free(p1);
         if (h->pq_wn > 0)
             _pq_mt_replay_or_race(h, W, cfg); /* banked per (P,T) */
+        /* the losing arms' clone sets go: the verdict is the plan's for life (2026-10-19) */
+        if (h->pq_mt != 1)
+            _pq_drop_clones(&h->pq_w, &h->pq_wn);
+        if (h->pq_mt != 2)
+        {
+            _pq_drop_clones(&h->pq_g, &h->pq_gn);
+            vfft_aligned_free(h->pq_bar);
+            h->pq_bar = NULL;
+        }
     }
     return h;
 }

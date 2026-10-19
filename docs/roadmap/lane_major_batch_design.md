@@ -368,7 +368,12 @@ planes by default and a rank-3 batch contiguous volumes, every transform, either
 run by the plane queue and the volume queue (`il/rank2/plane_queue.h`) over the cell's K = 1
 plan (in place: K padded planes or volumes, every row 2 (N_last/2 + 1) doubles, one after
 another; the queue banks its loop-versus-queue verdict on the K = 1 plan's row, `place=oop`
-and `place=ip` apart for a real cell). Rank 4 is not served in any geometry.
+and `place=ip` apart for a real cell). The volume queue races a third arm at a rank-3 real
+batch of 2 <= K <= T / 2 (the GROUPS arm, 2026-10-19): K groups of G = T / K threads, one
+volume each, all at once in one pool run, each group running the cell's G-thread plan through
+the tier's cooperative execute (its threaded walk with a group barrier in place of each
+fork-join); the verdict is `pq=2` on the same row, the G rows of the one-volume cell ride the
+primary's persist. Rank 4 is not served in any geometry.
 
 **The batches' cost at small volumes (measured 2026-10-15, 32x32x32 x 4, one thread).** The
 3D batch takes 300 us where the loop of four one-volume plans takes 204: the first axis, one

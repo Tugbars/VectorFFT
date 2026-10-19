@@ -2367,6 +2367,10 @@ static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir,
  * no nested pool dispatch by construction. */
 long _vfft_pq_mt_count = 0;
 long vfft_pq_mt_passes(void) { return _vfft_pq_mt_count; }
+/* the GROUPS arm's executes (K groups of T / K threads at once, 2026-10-19): the same
+ * rule, one definition in this TU, the public accessor beside it */
+long _vfft_pq_grp_count = 0;
+long vfft_pq_grp_passes(void) { return _vfft_pq_grp_count; }
 
 /* Cross-TU configuration hooks (see vfft.h). These exist so a caller outside
  * this translation unit writes THE LIBRARY's dispatch state rather than its

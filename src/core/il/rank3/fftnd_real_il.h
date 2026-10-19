@@ -783,6 +783,104 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
     _vfft_ilnd_mt_count++;   /* engagement: the c2c tier's counter, vfft_ilnd_mt_passes() */
     return 1;
 }
+/* ═══ THE COOPERATIVE EXECUTE (the volume queue's GROUPS arm, il/rank2/plane_queue.h, 2026-10-19): the
+ * threaded walk above run by G members that are ALREADY pool threads -- one group of the K the queue
+ * dispatches in one pool run -- so no member may ask the pool for anything. The same phase sequence as
+ * _ilndr_execute_mt at T = G, the same partition (_ilndr_mt_tramp's bodies over the same [lo, hi), so the
+ * output is bitwise the threaded walk's and the serial walk's), with each fork-join replaced by every
+ * member's wait on the group's barrier; a member beyond a phase's team holds nothing and waits. Whether
+ * the plan can run this way is decided ONCE at create (_ilndr_group_ok): inside the run no member can
+ * fall back alone. The profile hook and the c2c tier's counter are the fork-join's (one static each):
+ * the groups arm counts in the queue's own counter, vfft_pq_grp_passes(). ═══════════════════════════ */
+static void _ilndr_group_sync(_vfft_grp_barrier_t *bar, int *sense)
+{
+    _thread_pool_barrier_wait(&bar->b, *sense);
+    *sense = 1 - *sense;
+#if defined(_MSC_VER)
+    _ReadWriteBarrier();
+#else
+    __asm__ __volatile__("" ::: "memory");   /* the phase's loads stay behind the wait (x86 orders the rest) */
+#endif
+}
+/* this member's share of one phase: the units split as _ilndr_mt_phase splits them over the phase's team Tt */
+static void _ilndr_group_phase(const vfft_ilndr_t *d, const double *in, double *out, double *y, int mode, int arm, int nf,
+                               size_t units, int Tt, int member)
+{
+    _ilndr_mt_arg a;
+    if (member >= Tt)
+        return;
+    a.d = d; a.in = in; a.out = out; a.y = y; a.mode = mode; a.tid = member; a.nt = Tt; a.arm = arm; a.nf = nf;
+    a.lo = units * (size_t)member / (size_t)Tt;
+    a.hi = units * (size_t)(member + 1) / (size_t)Tt;
+    _ilndr_mt_tramp(&a);
+}
+/* whether the plan (created at G threads) can run as one group of G members: _ilndr_execute_mt's engage
+ * tests at T = G, and two the cooperative form cannot serve -- the in-place c2r walk (its pieces are dealt
+ * per execute by mutating the descriptor), and a column plan carrying a Rader stage (il_rader_stage.h
+ * indexes its scratch by the POOL slot and folds a slot past its count to 0: two members of one group
+ * would share it). A serial verdict at G (mt != 2) is the queue's case, not a group. */
+static int _ilndr_group_ok(const vfft_ilndr_t *d, int G)
+{
+    if (!d || G < 2 || d->mt != 2 || d->mt_t != G || d->ncw < G - 1)
+        return 0;
+    if (d->mtf == 2 && d->nsscrw < G - 1)
+        return 0;
+    if (d->ax0.rd0 || (d->mts == 2 && d->ax1_on && d->ax1.rd0))
+        return 0;
+    if (!d->c2r)
+    {
+        if (d->mts == 1 && d->mtf == 1 && d->ax0n_on)
+            return 0;
+        return d->mts != 2 || d->V != NULL;
+    }
+    if (d->ip)
+        return 0;
+    if (d->mts == 3)
+        return d->mtwl > 0 && d->N[0] / d->mtwl >= 2;
+    return 1;
+}
+static void _ilndr_execute_group(const vfft_ilndr_t *d, const double *in, double *out, int member, int G,
+                                 _vfft_grp_barrier_t *bar)
+{
+    const int arm = d->mts, nf = d->mtf;
+    const size_t N2 = (size_t)d->N[1], P = d->plane;
+    int sense = 0;
+    if (!d->c2r)
+    {
+        const int Tp = _ilndr_plane_team(d, G), Tb = N2 < (size_t)G ? (int)N2 : G;
+        double *mid = arm == 2 ? d->V : out;
+        _ilndr_group_phase(d, in, mid, NULL, 0, arm, nf, (size_t)d->N[0], Tp, member);
+        _ilndr_group_sync(bar, &sense);
+        _ilndr_group_phase(d, mid, out, NULL, 1, arm, nf, N2, Tb, member);
+    }
+    else
+    {
+        double *V = d->destroy ? (double *)in : d->V;
+        const int Ts = P < (size_t)G ? (int)P : G, Tp = _ilndr_plane_team(d, G);
+        if (arm == 3)
+        {
+            const int nb = d->N[0] / d->mtwl, Tb = nb < G ? nb : G;
+            if (d->mtcut > 0)
+            {
+                _ilndr_group_phase(d, in, V, NULL, 4, arm, nf, P, Ts, member);
+                _ilndr_group_sync(bar, &sense);
+            }
+            _ilndr_group_phase(d, in, V, out, 5, arm, nf, (size_t)nb, Tb, member);
+        }
+        else
+        {
+            if (d->ax0bwd)
+            {   /* the Bluestein / turned axis's backward pass: on member 0, as on the caller above */
+                if (member == 0)
+                    _il2d_col_exec(&d->ax0, in, V, 1);
+            }
+            else
+                _ilndr_group_phase(d, in, V, NULL, 2, arm, nf, P, Ts, member);
+            _ilndr_group_sync(bar, &sense);
+            _ilndr_group_phase(d, V, out, NULL, 3, arm, nf, (size_t)d->N[0], Tp, member);
+        }
+    }
+}
 static void vfft_ilndr_execute(const vfft_ilndr_t *d, vfft_dir_t dir, const double *sre, double *dre)
 {
     (void)dir;   /* the plan's direction is its transform's */

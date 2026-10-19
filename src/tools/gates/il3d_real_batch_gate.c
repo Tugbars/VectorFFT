@@ -11,6 +11,11 @@
  *   C2R  (piece 2) the twin backward: K separate K = 1 c2r plans and the pair roundtrip to N1 N2 N3 x as the
  *        references; out of place the caller's K spectra intact; in place the input destroyed by nature
  *        (documented, not checked); the same replay, door, info and thread checks;
+ *   GRP  the volume queue's GROUPS arm (2026-10-19): at T = 8, K groups of G = T / K threads, one volume each, all
+ *        at once (K = 2, 3, 4; r2c and c2r out of place, r2c in place): the row's verdict in {loop, queue, groups},
+ *        the arm pinned on (VFFT_PQ_NO_MT=2) engaging (vfft_pq_grp_passes moves, the queue's counter not) and
+ *        right within 1e-12 of K runs of the K = 1 plan, the replay with no new scope, RECALIBRATE measuring
+ *        again; the declines (in place c2r, a Rader axis 0) pinned on and NOT engaging, the result right;
  *   Q2   (piece 2b) the 2D contiguous REAL batch IN PLACE (the plane queue's new placement): K padded planes
  *        (N1 rows of 2 (N2/2 + 1) doubles each), r2c and c2r, the same checks one rank down;
  *   Q3   (piece 2c) the 3D C2C contiguous batch: forward vs the naive DFT per volume and K runs of the K = 1
@@ -24,7 +29,7 @@
  *        named; at an even N3 the lane-major door serves it, il/rank3/lm_batch3dr_il.h), a dim below 2,
  *        SCRAMBLED order on a real batch, VFFT_FLAG_OWN_PITCH on a batch; K = 1 with the CONTIGUOUS flag is
  *        the ordinary plan.
- * Usage: il3d_real_batch_gate --wisdir <cold scratch dir> [--section PQ|R2C|C2R|Q2|Q3|R] */
+ * Usage: il3d_real_batch_gate --wisdir <cold scratch dir> [--section PQ|R2C|C2R|GRP|Q2|Q3|R] */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -432,6 +437,168 @@ done:
 static void cell_r3(int N1, int N2, int N3, int K, int T, int c2r, int naive, int force) { const int n[3] = { N1, N2, N3 }; cell_real(3, n, K, T, c2r, naive, force); }
 static void cell_r2(int N1, int N2, int K, int T, int c2r, int naive, int force) { const int n[2] = { N1, N2 }; cell_real(2, n, K, T, c2r, naive, force); }
 
+/* ── GRP: the GROUPS arm of the volume queue (2026-10-19): K groups of G = T / K threads, one volume each, all
+ * at once in one pool run (il/rank2/plane_queue.h; the tier's cooperative execute, fftnd_real_il.h). The arm
+ * is raced against the loop and the queue at create and its verdict is the race's, so the row's pq value is
+ * asserted in {0, 1, 2}; what the gate pins is the arm itself: forced on (VFFT_PQ_NO_MT=2) it must engage
+ * (vfft_pq_grp_passes moves, vfft_pq_mt_passes does not) and compute the K volumes within 1e-12 of K runs of
+ * the K = 1 plan. Also: the input intact, CONTIGUOUS == DEFAULT bitwise, the replay bitwise with no new
+ * measurement scope, RECALIBRATE on the batch create re-measuring (the first G clone re-races its G row) and
+ * still right. A cell the arm DECLINES (in place c2r: the pieces walk is dealt per execute; a Rader column
+ * stage on axis 0: the stage indexes its scratch by the pool slot) is asserted declined: forced on, the
+ * counter does not move, the loop or the queue serves, the result is right. ── */
+static int row_pq(int nd, const char *shape, int ip, int T, const char *tok, char *buf, size_t sz);   /* the PQ section's row readers, below */
+static int row_pq_declared(int nd, const char *shape, int ip, int T, int c2r);
+static int row_int(int nd, const char *shape, int ip, int T, const char *name);
+static int g_grp_engaged = 0;   /* the section's engagement proof: some cell's forced arm ran */
+static void force_groups(int on)
+{
+#ifdef _WIN32
+    _putenv(on ? "VFFT_PQ_NO_MT=2" : "VFFT_PQ_NO_MT=");
+#else
+    if (on) setenv("VFFT_PQ_NO_MT", "2", 1); else unsetenv("VFFT_PQ_NO_MT");
+#endif
+}
+static long grp_moved(long g0) { return vfft_pq_grp_passes() - g0; }
+static void cell_grp(int N1, int N2, int N3, int K, int T, int c2r, int ip, int decline)
+{
+    const int n[3] = { N1, N2, N3 }, nd = 3, last = N3, H = N3 / 2 + 1, G = T / K;
+    const size_t lead = (size_t)N1 * N2, P = lead * (size_t)last, PH = lead * (size_t)H;
+    const size_t xd = P, zd = 2 * PH, XN = xd * K, ZN = zd * K;
+    const vfft_transform_t tr = c2r ? VFFT_C2R : VFFT_R2C;
+    const vfft_dir_t dir = c2r ? VFFT_BACKWARD : VFFT_FORWARD;
+    const char *tag = c2r ? "c2r" : "r2c", *pl = ip ? "ip " : "oop";
+    char shape[32], toks[256];
+    double *x = (double *)vfft_malloc(XN * 8), *refz = (double *)vfft_malloc(ZN * 8), *refx = (double *)vfft_malloc(XN * 8);
+    double *seed = (double *)vfft_malloc(ZN * 8), *seedc = (double *)vfft_malloc(ZN * 8);   /* the in-place seed, its copy */
+    double *refp = (double *)vfft_malloc(ZN * 8);                                             /* K runs of the K = 1 in-place plan */
+    double *out = (double *)vfft_malloc(ZN * 8), *out2 = (double *)vfft_malloc(ZN * 8);
+    const double *src;
+    const double *ref;
+    size_t src_n, dst_n, t, r;
+    vfft_plan p, p2;
+    long g0, m0, s0;
+    double t0, tc, e;
+    int pv;
+    shape_of(shape, sizeof shape, nd, n);
+    fill(x, XN, (unsigned)(N1 * 13 + N2 * 29 + N3 * 7 + K + T + c2r + 101 * ip));
+    ref_k1(VFFT_R2C, nd, n, K, 0, VFFT_FORWARD, x, refz, xd, zd);
+    if (c2r) ref_k1(VFFT_C2R, nd, n, K, 0, VFFT_BACKWARD, refz, refx, zd, xd);
+    if (ip)
+    {   /* K padded blocks: the bins (c2r), or the reals at the padded pitch with the pad zero (r2c) */
+        if (c2r)
+            memcpy(seed, refz, ZN * 8);
+        else
+        {
+            memset(seed, 0, ZN * 8);
+            for (t = 0; t < (size_t)K; t++)
+                for (r = 0; r < lead; r++)
+                    memcpy(seed + t * zd + r * 2 * (size_t)H, x + t * xd + r * (size_t)last, (size_t)last * 8);
+        }
+        memcpy(seedc, seed, ZN * 8);
+        ref_k1(tr, nd, n, K, 1, dir, seed, refp, zd, zd);
+        src = seed; ref = refp; src_n = ZN; dst_n = ZN;
+    }
+    else
+    {
+        src = c2r ? refz : x; ref = c2r ? refx : refz; src_n = c2r ? ZN : XN; dst_n = c2r ? XN : ZN;
+        memcpy(seedc, src, src_n * 8);
+    }
+#define GRP_RUN(PLAN_, DST_) do { if (ip) { memcpy((DST_), seed, ZN * 8); vfft_execute((PLAN_), dir, (DST_), (DST_)); } \
+                                  else vfft_execute((PLAN_), dir, src, (DST_)); } while (0)
+#define GRP_ERR(DST_) ((ip && c2r) ? rel_pad2((DST_), ref, lead * K, last, 2 * (size_t)H) : rel((DST_), ref, dst_n))
+    /* the cold create: the primary at T, the serial clones, the G clones (their G row raced), the three-arm race */
+    s0 = vfft_measure_scopes();
+    t0 = now_s();
+    p = mk(tr, nd, n, (size_t)K, VFFT_BATCH_DEFAULT, ip, VFFT_ORDER_NATURAL, T, 0);
+    tc = now_s() - t0;
+    CHECK(p != NULL, "GRP %s %s x %d T=%d %s: create refused: %s", tag, shape, K, T, pl, vfft_error());
+    if (!p) goto done;
+    CHECK(vfft_measure_scopes() > s0, "GRP %s %s x %d T=%d %s: the cold batch create did not measure", tag, shape, K, T, pl);
+    g0 = vfft_pq_grp_passes(); m0 = vfft_pq_mt_passes();
+    GRP_RUN(p, out);
+    e = GRP_ERR(out);
+    CHECK(e < 1e-12, "GRP %s %s x %d T=%d %s: vs K runs of the K=1 plan %.2e", tag, shape, K, T, pl, e);
+    if (!ip) CHECK(memcmp(src, seedc, src_n * 8) == 0, "GRP %s %s x %d T=%d %s: the batch changed its input", tag, shape, K, T, pl);
+    pv = row_pq_declared(nd, shape, ip, T, c2r);
+    CHECK(pv >= 0 && pv <= 2, "GRP %s %s x %d T=%d %s: the row's %s value is %d (want 0, 1 or 2)", tag, shape, K, T, pl, c2r ? "pq_c2r" : "pq", pv);
+    CHECK(!decline || pv != 2, "GRP %s %s x %d T=%d %s: the row banked the groups arm (pq=2) at a cell the arm must decline", tag, shape, K, T, pl);
+    row_pq(nd, shape, ip, T, c2r ? " pq_c2r=" : " pq=", toks, sizeof toks);
+    printf("GRP %s %-9s x %-2d T=%d G=%d %s: route %-6s create %6.2fs vs K=1 %.1e%s, engaged grp=%ld pq=%ld, verdict %s (%s)\n",
+           tag, shape, K, T, G, pl, vfft_plan_route(p), tc, e, memcmp(out, ref, dst_n * 8) == 0 ? " (bitwise)" : "",
+           grp_moved(g0), pq_moved(m0), pv == 2 ? "GROUPS" : pv == 1 ? "queue" : pv == 0 ? "loop" : "none", toks);
+    p2 = mk(tr, nd, n, (size_t)K, VFFT_BATCH_CONTIGUOUS, ip, VFFT_ORDER_NATURAL, T, 0);   /* the geometry named */
+    CHECK(p2 != NULL, "GRP %s %s x %d T=%d %s: CONTIGUOUS named refused: %s", tag, shape, K, T, pl, vfft_error());
+    if (p2)
+    {
+        GRP_RUN(p2, out2);
+        CHECK(memcmp(out, out2, dst_n * 8) == 0, "GRP %s %s x %d T=%d %s: CONTIGUOUS != DEFAULT (bitwise)", tag, shape, K, T, pl);
+        vfft_destroy(p2);
+    }
+    s0 = vfft_measure_scopes();   /* the replay: bitwise, and no new measurement scope */
+    p2 = mk(tr, nd, n, (size_t)K, VFFT_BATCH_DEFAULT, ip, VFFT_ORDER_NATURAL, T, 0);
+    CHECK(p2 != NULL, "GRP %s %s x %d T=%d %s: replay create refused", tag, shape, K, T, pl);
+    if (p2)
+    {
+        CHECK(vfft_measure_scopes() == s0, "GRP %s %s x %d T=%d %s: the replay create measured (%ld new scopes)", tag, shape, K, T, pl, vfft_measure_scopes() - s0);
+        GRP_RUN(p2, out2);
+        CHECK(memcmp(out, out2, dst_n * 8) == 0, "GRP %s %s x %d T=%d %s: replay != cold (bitwise)", tag, shape, K, T, pl);
+        vfft_destroy(p2);
+    }
+    /* the arm pinned on: it must engage exactly when the arm exists -- the one-volume cell's nthreads=G row
+     * carries a THREADED verdict (cmt=2, cmt_c2r=2: a serial verdict at G is the queue's case, not a group)
+     * and nothing declines it (in place c2r, a Rader column stage) -- and be right either way */
+    {
+        const int cmt = row_int(nd, shape, ip, G, c2r ? "cmt_c2r" : "cmt");
+        const int expect = !decline && cmt == 2;
+        force_groups(1);
+        p2 = mk(tr, nd, n, (size_t)K, VFFT_BATCH_DEFAULT, ip, VFFT_ORDER_NATURAL, T, 0);
+        force_groups(0);
+        CHECK(p2 != NULL, "GRP %s %s x %d T=%d %s: forced-groups create refused", tag, shape, K, T, pl);
+        if (p2)
+        {
+            g0 = vfft_pq_grp_passes(); m0 = vfft_pq_mt_passes();
+            GRP_RUN(p2, out2);
+            if (expect)
+            {
+                CHECK(grp_moved(g0) > 0, "GRP %s %s x %d T=%d %s: the forced groups arm did not engage (the G=%d row threads, cmt=%d)", tag, shape, K, T, pl, G, cmt);
+                CHECK(pq_moved(m0) == 0, "GRP %s %s x %d T=%d %s: the queue counter moved (%ld) under the forced groups arm", tag, shape, K, T, pl, pq_moved(m0));
+            }
+            else
+                CHECK(grp_moved(g0) == 0, "GRP %s %s x %d T=%d %s: the forced groups arm engaged (%ld) where it must be absent (%s)", tag, shape, K, T, pl,
+                      grp_moved(g0), decline ? "a declined cell" : "a serial verdict at G");
+            if (grp_moved(g0) > 0) g_grp_engaged = 1;
+            e = GRP_ERR(out2);
+            CHECK(e < 1e-12, "GRP %s %s x %d T=%d %s: the forced groups arm vs K runs of the K=1 plan %.2e", tag, shape, K, T, pl, e);
+            printf("  FORCE groups %s %s x %d T=%d G=%d %s: engaged grp=%ld pq=%ld, vs K=1 %.1e (%s)\n", tag, shape, K, T, G, pl,
+                   grp_moved(g0), pq_moved(m0), e, decline ? "declined, as it must" : cmt == 2 ? "the G row threads: the arm must run" : "the G row is serial: no arm");
+            vfft_destroy(p2);
+        }
+    }
+    /* RECALIBRATE on the batch create: it measures again (the first G clone re-races its G row) and is right */
+    s0 = vfft_measure_scopes();
+    p2 = mk(tr, nd, n, (size_t)K, VFFT_BATCH_DEFAULT, ip, VFFT_ORDER_NATURAL, T, VFFT_FLAG_RECALIBRATE);
+    CHECK(p2 != NULL, "GRP %s %s x %d T=%d %s: RECALIBRATE create refused: %s", tag, shape, K, T, pl, vfft_error());
+    if (p2)
+    {
+        CHECK(vfft_measure_scopes() > s0, "GRP %s %s x %d T=%d %s: the RECALIBRATE create did not measure", tag, shape, K, T, pl);
+        GRP_RUN(p2, out2);
+        e = GRP_ERR(out2);
+        CHECK(e < 1e-12, "GRP %s %s x %d T=%d %s: after RECALIBRATE vs K runs of the K=1 plan %.2e", tag, shape, K, T, pl, e);
+        pv = row_pq_declared(nd, shape, ip, T, c2r);
+        CHECK(pv >= 0 && pv <= 2, "GRP %s %s x %d T=%d %s: after RECALIBRATE the row's value is %d", tag, shape, K, T, pl, pv);
+        printf("  RECAL  %s %s x %d T=%d %s: measured (%ld scopes), vs K=1 %.1e, verdict %s\n", tag, shape, K, T, pl,
+               vfft_measure_scopes() - s0, e, pv == 2 ? "GROUPS" : pv == 1 ? "queue" : pv == 0 ? "loop" : "none");
+        vfft_destroy(p2);
+    }
+    vfft_destroy(p);
+#undef GRP_RUN
+#undef GRP_ERR
+done:
+    vfft_free(x); vfft_free(refz); vfft_free(refx); vfft_free(seed); vfft_free(seedc); vfft_free(refp);
+    vfft_free(out); vfft_free(out2);
+}
+
 /* ── PQ: the queue's c2r twin (2026-10-19). A real cell's row is direction-shared (keyed t=r2c) and the queue
  * banks its loop-vs-queue verdict there: the r2c queue's as pq= pqn=, the c2r queue's as pq_c2r= pqn_c2r=. On
  * the one store the K = 1 cells of both directions are created first, at T and at one thread (the primary's
@@ -482,6 +649,48 @@ static int row_pq(int nd, const char *shape, int ip, int T, const char *tok, cha
     }
     fclose(f);
     return found;
+}
+/* the queue's banked verdict on the cell's row: the value of pq= (pq_c2r= for a c2r batch), -1 = none */
+static int row_pq_declared(int nd, const char *shape, int ip, int T, int c2r)
+{
+    char toks[256];
+    const char *key = c2r ? "pq_c2r=" : "pq=";
+    const char *p;
+    if (!row_pq(nd, shape, ip, T, c2r ? " pq_c2r=" : " pq=", toks, sizeof toks)) return -1;
+    for (p = toks; (p = strstr(p, key)) != NULL; p++)
+        if (p == toks || p[-1] == ' ') return atoi(p + strlen(key));
+    return -1;
+}
+/* the integer value of the payload token `name=` on the cell's t=r2c row at the placement and T; -1 = no row
+ * or no such token (the GRP section reads the one-volume cell's threaded verdict, cmt= / cmt_c2r=, at G) */
+static int row_int(int nd, const char *shape, int ip, int T, const char *name)
+{
+    static char line[65536];
+    char path[1024], head[96], nt[24], key[40];
+    FILE *f;
+    int val = -1;
+    snprintf(path, sizeof path, "%s/wisdom2_%dd.txt", g_W, nd);
+    snprintf(head, sizeof head, "@cell t=r2c n=%s q=1 ", shape);
+    snprintf(nt, sizeof nt, " nthreads=%d", T);
+    snprintf(key, sizeof key, " %s=", name);
+    f = fopen(path, "r");
+    if (!f) return -1;
+    while (fgets(line, sizeof line, f))
+    {
+        char *bar = strstr(line, " | ");
+        const char *m, *q, *end;
+        if (strncmp(line, head, strlen(head)) || !bar) continue;
+        *bar = 0;
+        m = strstr(line, nt);
+        if (!strstr(line, ip ? " place=ip" : " place=oop") || !strstr(line, " lay=il") || !m || m[strlen(nt)] != 0) continue;
+        *bar = ' ';
+        end = strstr(bar + 3, " | ");
+        q = strstr(bar + 2, key);
+        if (q && (!end || q < end)) val = atoi(q + strlen(key));
+        break;
+    }
+    fclose(f);
+    return val;
 }
 static void twin_real(int nd, const int *n, int K, int T)
 {
@@ -714,7 +923,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[a], "--wisdir")) dir = argv[a + 1];
         if (!strcmp(argv[a], "--section")) sec = argv[a + 1];
     }
-    if (!dir) { printf("usage: il3d_real_batch_gate --wisdir <cold scratch dir> [--section PQ|R2C|C2R|Q2|Q3|R]\n"); return 2; }
+    if (!dir) { printf("usage: il3d_real_batch_gate --wisdir <cold scratch dir> [--section PQ|R2C|C2R|GRP|Q2|Q3|R]\n"); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     g_W = dir;
     printf("CONTIGUOUS BATCH GATE (the plane and volume queues): 3D real r2c / c2r, the 2D real in place, the 3D c2c; store %s\n", dir);
@@ -755,6 +964,28 @@ int main(int argc, char **argv)
         cell_r3(16, 16, 16, 2, 2, 1, 0, 1);
         cell_r3(8, 8, 8, 8, 8, 1, 0, 1);
         sec_end("C2R");
+    }
+    if (SEC("GRP"))
+    {   /* the groups arm at T = 8: K = 2 (G = 4), K = 4 (G = 2), K = 3 (G = 2, two cores idle), r2c and c2r out
+         * of place; r2c in place; the declines: c2r in place (the pieces walk), a Rader column stage on axis 0 */
+        sec_begin();
+        cell_grp(8, 8, 8, 2, 8, 0, 0, 0);
+        cell_grp(8, 8, 8, 4, 8, 0, 0, 0);
+        cell_grp(16, 16, 16, 4, 8, 0, 0, 0);
+        cell_grp(8, 8, 8, 3, 8, 0, 0, 0);
+        cell_grp(8, 8, 8, 2, 8, 1, 0, 0);
+        cell_grp(8, 8, 8, 4, 8, 1, 0, 0);
+        cell_grp(16, 16, 16, 4, 8, 1, 0, 0);
+        cell_grp(8, 8, 8, 3, 8, 1, 0, 0);
+        cell_grp(16, 16, 16, 2, 8, 0, 1, 0);
+        cell_grp(8, 8, 8, 2, 8, 1, 1, 1);
+        cell_grp(53, 8, 8, 2, 8, 0, 0, 1);
+        /* above the serial arm's bound (policy_il.h, 512 KB): the one-volume plan threads at every G, so the
+         * arm exists and the pinned engagement is unconditional here */
+        cell_grp(64, 64, 32, 4, 8, 0, 0, 0);
+        cell_grp(64, 64, 32, 2, 8, 1, 0, 0);
+        CHECK(g_grp_engaged, "GRP: no cell engaged the groups arm (the engagement proof is missing)");
+        sec_end("GRP");
     }
     if (SEC("Q2"))
     {   /* the 2D real batch in place: even and odd N2, r2c then c2r, T = 1 and T = 2 */
