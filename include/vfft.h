@@ -107,8 +107,8 @@ extern "C"
    * - VFFT_BATCH_DEFAULT: contiguous for C2C, lane-major for R2C and C2R and
    *   for every SPLIT batch (whose only geometry it is).
    * A batch of rank 2 is contiguous planes by default, or lane-major when named
-   * (C2C; R2C and C2R at an even last extent >= 4): element (r, c) of transform t
-   * at z[2 ((r N2 + c) K + t)]. A batch of rank 3 is contiguous volumes by
+   * (C2C; R2C and C2R at N1 >= 2 and an even N2 >= 4): element (r, c) of
+   * transform t at z[2 ((r N2 + c) K + t)]. A batch of rank 3 is contiguous volumes by
    * default, or lane-major when named (C2C; R2C and C2R at N1, N2 >= 2 and an
    * even N3 >= 4): element (i, j, k) of transform t at
    * z[2 ((i N2 N3 + j N3 + k) K + t)], real data x[(i N2 N3 + j N3 + k) K + t],

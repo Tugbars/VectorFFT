@@ -218,6 +218,6 @@ gains fused scaling, scaled final writers bound at plan time, after the release.
     and left at 1.
 - Intel's DFTI examples (MKL's installed examples, run locally only, since they are Intel's
   copyright): each builds against the interface's header beside MKL's service header and
-  verifies its own result. The double-precision ones pass, except a contiguous batch of 3D
-  transforms, which the library does not serve.
+  verifies its own result. The double-precision ones pass, the contiguous in-place batch of
+  3D transforms (`config_number_of_transforms`, four 7x13x5) included.
 
