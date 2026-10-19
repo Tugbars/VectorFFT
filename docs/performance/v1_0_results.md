@@ -373,6 +373,79 @@ that around. Eight threads: MKL's lane-major 3D batch does not scale (1.2 to 3.1
 to 5.6x against it; MKL's contiguous batch threads well, and against it the lane-major batch
 is level at the smooth cells (0.98x to 1.19x) and 2.2x at the prime first axis.
 
+#### The 3D lane-major real batch (step 6, 2026-10-19)
+
+K real volumes of N1 x N2 x N3 side by side, real (i, j, k) of transform t at
+`x[((i N2 + j) N3 + k) K + t]`; the half spectrum is H = N3/2 + 1 bins wide, bin (i, j, f) of
+transform t at `z[2 (((i N2 + j) H + f) K + t)]`. Ours is the 3D real batch door
+(`docs/roadmap/lane_major_batch_design.md`, section 8): the last two axes N1 blocks of the
+lane-major 2D real batch at (N2, N3, K), the child in role, then the first axis one complex
+column pass over N2 H K lanes; C2R is the mirror (the column pass first, then the blocks) and
+out of place leaves the caller's bins untouched. MKL's lane-major 3D real batch is its REAL
+descriptor (CCE storage) with `NUMBER_OF_TRANSFORMS = K`, distance 1, the reals at strides
+{0, N2 N3 K, N3 K, K} and the bins at {0, N2 H K, H K, K}; the verdict is `MKL lm / ours lm`.
+The contiguous arms run the same transforms on contiguous volumes (volume t at t N1 N2 N3
+reals, its bins at t 2 N1 N2 H doubles): MKL with distance N1 N2 N3 (bins N1 N2 H), and ours
+through the volume queue, one plan at howmany = K on `VFFT_BATCH_CONTIGUOUS` (the served door,
+not a loop); the second verdict is `MKL contig / ours contig`. Canonical bench
+`gauntlet/bench_1d_vs_mkl.c --lm3dr2c` and `--lm3dc2r` (`--mt` for T=8, both sides at 8
+threads), the lane-major protocol as above, every cell raced cold on a fresh scratch store per
+group (the C2R groups on stores of their own, so their rows raced cold instead of replaying the
+R2C's). ns per batch; the error column is the lane-major door's against MKL's lane-major
+result (the contiguous arm's against MKL's contiguous result is at the same level, 3e-16 to
+2.6e-15).
+
+```
+     N1xN2xN3     K  ours lm ns   MKL lm ns  ratio ours contig  MKL contig  ratio     error
+ R2C, one thread
+     32x32x32     4     141,027     495,540   3.51     119,213     121,353   1.02   3.2e-16
+     16x16x64     8      91,507     517,533   5.66      91,673     141,133   1.54   3.9e-16
+     31x16x16     8     101,826     435,223   4.27     106,365     203,090   1.91   5.4e-16
+     64x16x16     4      85,230     313,913   3.68      46,263      88,037   1.90   3.7e-16
+      8x64x64     8     213,937   1,300,713   6.08     207,200     367,225   1.77   3.6e-16
+     24x24x24     4      54,589     247,044   4.53      66,258     107,306   1.62   5.5e-16
+ R2C, eight threads both sides
+     64x64x64     4     256,512   1,604,425   6.25     285,900     189,413   0.66   4.5e-16
+    32x128x64     4     233,613   1,472,475   6.30     261,887     185,288   0.71   4.8e-16
+    131x32x32     8     359,287   1,768,050   4.92     260,850     709,725   2.72   1.7e-15
+    16x64x256     4     201,013   1,505,712   7.49     169,537     178,112   1.05   5.6e-16
+```
+
+```
+     N1xN2xN3     K  ours lm ns   MKL lm ns  ratio ours contig  MKL contig  ratio     error
+ C2R, one thread
+     32x32x32     4     151,740     431,313   2.84     117,167     137,993   1.18   9.4e-16
+     16x16x64     8     126,027     511,147   4.06     110,467     145,760   1.32   8.9e-16
+     31x16x16     8      98,719     357,642   3.62      66,519     204,252   3.07   1.2e-15
+     64x16x16     4      79,840     217,880   2.73      51,247      89,850   1.75   8.9e-16
+      8x64x64     8     278,387   1,181,587   4.24     218,113     479,725   2.20   1.0e-15
+     24x24x24     4      61,853     205,978   3.33      56,925      93,961   1.65   1.4e-15
+ C2R, eight threads both sides
+     64x64x64     4     222,512   1,014,637   4.56     179,562     200,037   1.11   1.3e-15
+    32x128x64     4     203,712   1,104,088   5.42     189,938     242,712   1.28   1.4e-15
+    131x32x32     8     344,850   1,283,500   3.72     252,100     859,025   3.41   2.7e-15
+    16x64x256     4     216,925   1,287,763   5.94     159,263     205,913   1.29   1.2e-15
+```
+
+"ours contig" is the volume queue at the row's thread count in both tables. Every T=8 row is
+engaged on both doors: the batch door's first-axis column pass ran threaded (R2C 83, 91, 104
+and 104 threaded passes over the timed run at the four cells in table order, C2R 100, 107, 117
+and 104), and the queue served the smooth cells through its loop arm with the one-volume plan's
+own threaded passes (R2C 424, 392 and 432, C2R 536, 424 and 436) and the prime first axis
+through its queued arm (99 queued dispatches in each direction). One thread: R2C 3.5x to 6.1x
+ahead of MKL's lane-major 3D real batch at every cell, C2R 2.7x to 4.2x; the volume queue
+against MKL's contiguous volumes 1.0x at 32x32x32x4 and 1.5x to 1.9x at the other R2C cells,
+1.2x to 3.1x C2R. Our own volume queue is the faster of our two forms at the tall and the
+cubic cells (64x16x16x4 by 1.8x R2C and 1.6x C2R, 32x32x32x4 by 1.2x and 1.3x) and at every
+C2R cell; the lane-major door is level with it at 16x16x64x8, 31x16x16x8 and 8x64x64x8 R2C
+and 1.2x ahead at 24x24x24x4 R2C. Against MKL's contiguous volumes the lane-major door itself
+runs 0.86x at 32x32x32x4 and 1.0x to 2.0x at the other R2C cells, 0.91x and 1.1x to 2.1x C2R.
+Eight threads: MKL's lane-major 3D real batch does not scale (1.0 to 1.8 ms), so 4.9x to 7.5x
+R2C and 3.7x to 5.9x C2R against it; MKL's contiguous batch threads well, and against it the
+volume queue is behind at 64x64x64x4 and 32x128x64x4 R2C (0.66x and 0.71x), level at
+16x64x256x4 (1.05x) and 2.7x at the prime first axis, C2R 1.1x to 1.3x at the smooth cells and
+3.4x at the prime one.
+
 ### Natural order — in-place (single-thread)
 
 ```

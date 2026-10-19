@@ -9,9 +9,9 @@ SERIAL DENSE TILES under the serial-form law (a Rader-stage chain walks the plan
 smooth chain races the tile widths alone: the tile won at the widest planes, 16x4096
 from 1.06x to 1.74x, tied in the middle and lost at the Rader cells), and step 6's ranks 2
 and 3 (section 8: the 2D c2c batch, the 2D real batch, the 3D c2c batch and the 3D real
-batch through their doors, the first three raced against MKL's lane-major batches on the
-results page; rank 4 is not served in any geometry). The real odd column engine waits for
-piece C of the Rader spread.**
+batch through their doors, all four raced against MKL's lane-major batches on the results
+page, the 3D real batch in both geometries (2026-10-19); rank 4 is not served in any
+geometry). The real odd column engine waits for piece C of the Rader spread.**
 Owner: "we will build lane major everywhere; the library is almost done, so it may
 start now. 1D C2C / R2C / C2R all will have lane major with one bold stroke." This
 document is the design to build against; it supersedes slice 2 of
