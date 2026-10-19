@@ -31,6 +31,12 @@
  *
  * ⚠ sprint_plan strings are freed with free(), NEVER fftw_free() — mixing them
  * corrupts the heap at loop scale (settled empirically, campaign 2026-08-15).
+ *
+ * THE THREADS API IS AN OPTIONAL GROUP (2026-10-19): fftw_init_threads /
+ * fftw_plan_with_nthreads / fftw_cleanup_threads bind when the DLL exports
+ * them (a build with --enable-threads --with-combined-threads; vcpkg's
+ * fftw3.dll has none) and stay NULL otherwise -- a missing one never fails
+ * the bind; the caller that needs threads checks the pointers.
  */
 #ifndef VFFT_BENCH_REF_FFTW_H
 #define VFFT_BENCH_REF_FFTW_H
@@ -72,6 +78,7 @@ typedef struct { int n, is, os; } fftwx_iodim;   /* == fftw_iodim ABI */
 /* ------------------------------------------------------- function typedefs */
 typedef fftwx_plan (*fftwx_plan_dft_1d_f)(int, fftwx_complex *, fftwx_complex *, int, unsigned);
 typedef fftwx_plan (*fftwx_plan_dft_2d_f)(int, int, fftwx_complex *, fftwx_complex *, int, unsigned);
+typedef fftwx_plan (*fftwx_plan_dft_f)(int, const int *, fftwx_complex *, fftwx_complex *, int, unsigned);   /* any rank: the 2D and 3D c2c cells (2026-10-19) */
 typedef fftwx_plan (*fftwx_plan_many_dft_f)(int, const int *, int,
                                             fftwx_complex *, const int *, int, int,
                                             fftwx_complex *, const int *, int, int,
@@ -113,12 +120,16 @@ typedef int    (*fftwx_alignment_of_f)(double *);
 typedef void   (*fftwx_set_timelimit_f)(double);
 typedef double (*fftwx_cost_f)(const fftwx_plan);
 typedef void   (*fftwx_flops_f)(const fftwx_plan, double *, double *, double *);
+typedef int    (*fftwx_init_threads_f)(void);          /* the threads API (optional group) */
+typedef void   (*fftwx_plan_with_nthreads_f)(int);
+typedef void   (*fftwx_cleanup_threads_f)(void);
 
 /* ------------------------------------------------------------- the api set */
 typedef struct {
     /* plan */
     fftwx_plan_dft_1d_f              plan_dft_1d;
     fftwx_plan_dft_2d_f              plan_dft_2d;
+    fftwx_plan_dft_f                 plan_dft;
     fftwx_plan_many_dft_f            plan_many_dft;
     fftwx_plan_guru_split_dft_f      plan_guru_split_dft;
     fftwx_plan_dft_r2c_1d_f          plan_dft_r2c_1d;
@@ -152,17 +163,23 @@ typedef struct {
     fftwx_set_timelimit_f            set_timelimit;
     fftwx_cost_f                     cost;
     fftwx_flops_f                    flops;
+    /* threads (optional: NULL when the DLL exports no threads API) */
+    fftwx_init_threads_f             init_threads;
+    fftwx_plan_with_nthreads_f       plan_with_nthreads;
+    fftwx_cleanup_threads_f          cleanup_threads;
     /* identity */
     const char *version;             /* the exported fftw_version data symbol */
     char dll_path[512];              /* what was actually loaded */
 } fftwx_api_t;
 
 /* ------------------------------------------------------------ bind table */
-#define FFTWX__ENTRY(member, sym) { sym, offsetof(fftwx_api_t, member) }
-struct fftwx__sym { const char *name; size_t off; };
+#define FFTWX__ENTRY(member, sym)    { sym, offsetof(fftwx_api_t, member), 0 }
+#define FFTWX__OPTIONAL(member, sym) { sym, offsetof(fftwx_api_t, member), 1 }   /* absent: NULL, the bind holds */
+struct fftwx__sym { const char *name; size_t off; int optional; };
 static const struct fftwx__sym fftwx__tab[] = {
     FFTWX__ENTRY(plan_dft_1d,               "fftw_plan_dft_1d"),
     FFTWX__ENTRY(plan_dft_2d,               "fftw_plan_dft_2d"),
+    FFTWX__ENTRY(plan_dft,                  "fftw_plan_dft"),
     FFTWX__ENTRY(plan_many_dft,             "fftw_plan_many_dft"),
     FFTWX__ENTRY(plan_guru_split_dft,       "fftw_plan_guru_split_dft"),
     FFTWX__ENTRY(plan_dft_r2c_1d,           "fftw_plan_dft_r2c_1d"),
@@ -194,6 +211,9 @@ static const struct fftwx__sym fftwx__tab[] = {
     FFTWX__ENTRY(set_timelimit,             "fftw_set_timelimit"),
     FFTWX__ENTRY(cost,                      "fftw_cost"),
     FFTWX__ENTRY(flops,                     "fftw_flops"),
+    FFTWX__OPTIONAL(init_threads,           "fftw_init_threads"),
+    FFTWX__OPTIONAL(plan_with_nthreads,     "fftw_plan_with_nthreads"),
+    FFTWX__OPTIONAL(cleanup_threads,        "fftw_cleanup_threads"),
 };
 
 #ifdef _WIN32
@@ -220,8 +240,10 @@ static inline int fftwx_bind(fftwx_api_t *api, char *err, size_t errcap)
         GetModuleFileNameA(h, api->dll_path, (DWORD)sizeof api->dll_path);
         for (size_t i = 0; i < sizeof fftwx__tab / sizeof fftwx__tab[0]; i++) {
             void *p = (void *)GetProcAddress(h, fftwx__tab[i].name);
-            if (!p) { snprintf(err, errcap, "symbol '%s' missing in %s",
-                               fftwx__tab[i].name, api->dll_path); return 0; }
+            if (!p) {
+                if (fftwx__tab[i].optional) continue;   /* the memset above left it NULL */
+                snprintf(err, errcap, "symbol '%s' missing in %s",
+                         fftwx__tab[i].name, api->dll_path); return 0; }
             memcpy((char *)api + fftwx__tab[i].off, &p, sizeof p);
         }
         api->version = (const char *)(void *)GetProcAddress(h, "fftw_version");
@@ -233,8 +255,10 @@ static inline int fftwx_bind(fftwx_api_t *api, char *err, size_t errcap)
         snprintf(api->dll_path, sizeof api->dll_path, "%s", path);
         for (size_t i = 0; i < sizeof fftwx__tab / sizeof fftwx__tab[0]; i++) {
             void *p = dlsym(h, fftwx__tab[i].name);
-            if (!p) { snprintf(err, errcap, "symbol '%s' missing in %s",
-                               fftwx__tab[i].name, path); return 0; }
+            if (!p) {
+                if (fftwx__tab[i].optional) continue;
+                snprintf(err, errcap, "symbol '%s' missing in %s",
+                         fftwx__tab[i].name, path); return 0; }
             memcpy((char *)api + fftwx__tab[i].off, &p, sizeof p);
         }
         api->version = (const char *)dlsym(h, "fftw_version");

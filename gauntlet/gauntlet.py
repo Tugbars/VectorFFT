@@ -522,13 +522,15 @@ def stage_verify(run, cells):
     """the forward transform of every cell against a long-double reference, and
     the precision record verify<sfx>.csv in the run directory (library,N,
     l2_error,max_error,rt_error; MKL's rows too when the probe was built with
-    it) -- the input of src/tools/plots/gen_precision.py. Rewritten each run."""
+    it, FFTW's under --cmp fftw) -- the input of src/tools/plots/gen_precision.py.
+    Rewritten each run."""
     probe = run.exe("k1_fwd_ref_probe")
     vcsv = os.path.join(run.dir, "verify%s.csv" % run.sfx)
     if os.path.isfile(vcsv):
         os.remove(vcsv)
     twod = ["--%dd" % len(cells[0])] if cells and is2d(cells[0]) else []
-    args = [probe] + (["--ip"] if run.ip else []) + ["--csv", vcsv] + twod + [run.store] + [ckey(n) for n in cells]
+    fftw = ["--fftw"] if run.cmp == "fftw" else []   # FFTW's rows on the same input (2026-10-19)
+    args = [probe] + (["--ip"] if run.ip else []) + fftw + ["--csv", vcsv] + twod + [run.store] + [ckey(n) for n in cells]
     r = subprocess.run(args, capture_output=True, text=True, errors="replace", env=run.env())
     out = [l for l in (r.stdout + r.stderr).splitlines() if not l.startswith("[")]
     print("\n".join(out[-min(len(out), len(cells) + 3):]))
@@ -628,7 +630,7 @@ def main():
     ap.add_argument("--threads", default="1")
     ap.add_argument("--inplace", action="store_true")
     ap.add_argument("--owned", action="store_true", help="door 2 (2026-10-08): the plan's own plane at the pitch it chooses (owned_buffers = 1), in place; the 2D r2c contract; its own csv suffix _ipo")
-    ap.add_argument("--cmp", choices=["mkl", "kfr", "fftw"], default="mkl", help="the comparator: mkl (default), kfr (a bench built with build.py --kfr; 1D, 2D and 3D c2c, and 1D r2c / c2r at an even N, one thread) or fftw (bound at runtime from vcpkg's fftw3.dll or $VFFT_FFTW_DLL; FFTW_MEASURE; the 1D c2c and the real cells, one thread); its own csv suffix")
+    ap.add_argument("--cmp", choices=["mkl", "kfr", "fftw"], default="mkl", help="the comparator: mkl (default), kfr (a bench built with build.py --kfr; 1D, 2D and 3D c2c, and 1D r2c / c2r at an even N, one thread) or fftw (bound at runtime from vcpkg's fftw3.dll or $VFFT_FFTW_DLL; FFTW_MEASURE, its wisdom in the run's fftw.wis; the 1D/2D/3D c2c cells out of place and the real cells, at one thread or --threads T with an FFTW built with its threads API: --enable-threads --with-combined-threads, CMake ENABLE_THREADS + WITH_COMBINED_THREADS; verify writes FFTW's rows too); its own csv suffix")
     ap.add_argument("--real", choices=["r2c", "c2r"], help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells, 2D shapes or 3D cubes (2026-10-07); its own csv suffix _r2c / _c2r")
     ap.add_argument("--k", type=int, default=1, help="the batch count of the 1D real cell: K transform-contiguous rows (real rows at pitch N, CCE rows at pitch N+2); suffix _k<K>")
     ap.add_argument("--name", help="run directory name under gauntlet/results/ (default: group_date)")
@@ -660,8 +662,8 @@ def main():
     run = Run(args, dims)
     if run.cmp == "kfr" and ((dims >= 2 and run.real) or run.threads > 1 or run.k > 1 or run.ip):
         raise SystemExit("--cmp kfr: the KFR arm serves the 1D, 2D and 3D c2c cells and the 1D r2c / c2r cells (an even N: KFR's real DFT is even-only), K=1, out of place, one thread")
-    if run.cmp == "fftw" and (run.threads > 1 or (dims == 3 and not run.real) or (run.ip and not run.real)):
-        raise SystemExit("--cmp fftw: the FFTW arm serves the 1D c2c cell and the 1D/2D/3D real cells, out of place, one thread")
+    if run.cmp == "fftw" and run.ip and not run.real:
+        raise SystemExit("--cmp fftw: the FFTW arm serves the 1D/2D/3D c2c cells out of place and the real cells (in place too), at one thread or --threads T with a threads-enabled FFTW; in-place c2c is not served")
     if run.real and run.ip and dims not in (2, 3):
         raise SystemExit("--real --inplace / --owned: the in-place real contracts are the 2D and 3D cells (2026-10-08)")
     if run.k > 1 and (not run.real or dims != 1):

@@ -128,6 +128,8 @@ src/wisdom/**/wisdom2.lock
 
 # the KFR comparator DLL build.py --kfr copies beside the bench: the user's own KFR, GPLv2/commercial, never committed
 gauntlet/kfr_capi.dll
+# the benchmark scripts' record of what build_tools.py built (the ISA, MKL, the FFTW library's path): per machine, never tracked
+benchmark_scripts/.config.json
 
 # Prototype/harness scratch: local only, never tracked
 # ...except the AVX-512 tail-policy study's harness (owner, 2026-09-28): the

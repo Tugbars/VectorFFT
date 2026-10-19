@@ -23,7 +23,14 @@
  * a long-double twiddle table (index k*n mod N walked incrementally), so a
  * 4,095-cell sweep to N = 4096 runs in minutes.
  *
- * Run:   k1_fwd_ref_probe.exe [--ip] [--csv FILE] <wisdir> N [N ...]   (N or a-b)
+ * --fftw (2026-10-19): FFTW's rows too (`library` = FFTW), the forward and the
+ * backward of the same cell, out of place, natural order, FFTW_MEASURE with the
+ * input copied in after planning, against the same reference -- at rank 1, 2
+ * and 3 (fftw_plan_dft at the cell's rank). FFTW is bound at run time through
+ * ref_fftw.h ($VFFT_FFTW_DLL, else vcpkg's fftw3.dll) and never loaded without
+ * the flag. The gauntlet's `verify --cmp fftw` passes it.
+ *
+ * Run:   k1_fwd_ref_probe.exe [--ip] [--fftw] [--csv FILE] <wisdir> N [N ...]   (N or a-b)
  *        k1_fwd_ref_probe.exe [--csv FILE] --2d <wisdir> N1xN2 [N1xN2 ...]
  *        (2026-09-23: the 2D interleaved cell, OOP natural K=1, against a
  *        long-double 2D DFT -- row DFTs then column DFTs; csv N = "N1xN2")
@@ -35,6 +42,7 @@
 #include <string.h>
 #include "vfft.h"
 #include "vfft_diagnostics.h"   /* vfft_plan_route (API v2) */
+#include "ref_fftw.h"           /* --fftw: the runtime FFTW binding (gauntlet/ref_fftw.h) */
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
 #include <mkl_service.h>
@@ -139,6 +147,45 @@ static int g_k = 1;    /* --k K: a transform-contiguous BATCH of K transforms pe
                         * K>1 interleaved geometry); the reference gates transform 0 and the door
                         * timing is reported PER TRANSFORM */
 
+/* --fftw: FFTW's forward and backward of the same cell, out of place, natural
+ * order, FFTW_MEASURE: y = fwd(x), r = bwd(y), fftw_plan_dft at the cell's
+ * rank (n[0..rank-1] row-major, the probe's and MKL's layout). Both plans are
+ * made on empty planes and the input copied in after -- MEASURE scribbles its
+ * arrays. The DLL is bound on the first call (never without the flag). 0 when
+ * it did not bind or FFTW cannot plan the shape. */
+static int g_fftw = 0;
+static fftwx_api_t g_fx;
+static int g_fx_ok = -1;   /* -1 = not yet bound */
+static int fftw_cell(int rank, const int *n, const double *x, double *y, double *r)
+{
+    size_t tot = 2;
+    for (int i = 0; i < rank; i++) tot *= (size_t)n[i];
+    if (g_fx_ok < 0)
+    {
+        char err[512];
+        g_fx_ok = fftwx_bind(&g_fx, err, sizeof err) ? 1 : 0;
+        if (!g_fx_ok) fprintf(stderr, "--fftw: %s\n", err);
+        else printf("# fftw: %s (%s)\n", g_fx.version, g_fx.dll_path);
+    }
+    if (!g_fx_ok) return 0;
+    double *xi = g_fx.fmalloc(tot * sizeof(double)), *yo = g_fx.fmalloc(tot * sizeof(double)), *ro = g_fx.fmalloc(tot * sizeof(double));
+    fftwx_plan pf = g_fx.plan_dft(rank, n, (fftwx_complex *)xi, (fftwx_complex *)yo, FFTWX_FORWARD, FFTWX_MEASURE);
+    fftwx_plan pb = g_fx.plan_dft(rank, n, (fftwx_complex *)yo, (fftwx_complex *)ro, FFTWX_BACKWARD, FFTWX_MEASURE);
+    const int ok = pf && pb;
+    if (ok)
+    {
+        memcpy(xi, x, tot * sizeof(double));   /* after BOTH plans */
+        g_fx.execute(pf);
+        memcpy(y, yo, tot * sizeof(double));
+        g_fx.execute(pb);
+        memcpy(r, ro, tot * sizeof(double));
+    }
+    if (pf) g_fx.destroy_plan(pf);
+    if (pb) g_fx.destroy_plan(pb);
+    g_fx.ffree(xi); g_fx.ffree(yo); g_fx.ffree(ro);
+    return ok;
+}
+
 #ifdef VFFT_HAS_MKL
 /* MKL's forward and backward of the same cell, out of place, natural order:
  * y = fwd(x), r = bwd(y). 0 when the descriptor cannot be made. */
@@ -201,6 +248,17 @@ static int probe(const char *W, int N)
         free(my); free(mr);
     }
 #endif
+    if (g_fftw && g_csv && K == 1)
+    {   /* FFTW's rows (--fftw): the same input, the same reference, the same columns */
+        double *fy = calloc(tot, 8), *fr = calloc(tot, 8);
+        if (fftw_cell(1, &N, x, fy, fr))
+        {
+            double ff = relerr(fy, X, N, 1.0), fl = l2err(fy, X, N, 1.0), frt = rterr(fr, x, N, 1.0 / N);
+            printf("  fftw fwd %.2e", ff);
+            fprintf(g_csv, "FFTW,%d,%.3e,%.3e,%.3e\n", N, fl, ff, frt);
+        }
+        free(fy); free(fr);
+    }
     if (h && g_time && !g_ip)
         printf("  door %.1f ns%s", time_door(h, x, y, N) / (double)K, K > 1 ? " per transform" : "");
     printf("\n");
@@ -300,6 +358,18 @@ static int probe2(const char *W, int N1, int N2)
         free(my); free(mr);
     }
 #endif
+    if (g_fftw && g_csv)
+    {   /* FFTW's rows (--fftw): fftw_plan_dft at rank 2 on the same input and reference */
+        int n[2] = { N1, N2 };
+        double *fy = calloc(tot, 8), *fr = calloc(tot, 8);
+        if (fftw_cell(2, n, x, fy, fr))
+        {
+            double ff = relerr(fy, X, N, 1.0), fl = l2err(fy, X, N, 1.0), frt = rterr(fr, x, N, 1.0 / N);
+            printf("  fftw fwd %.2e", ff);
+            fprintf(g_csv, "FFTW,%dx%d,%.3e,%.3e,%.3e\n", N1, N2, fl, ff, frt);
+        }
+        free(fy); free(fr);
+    }
     printf("\n");
     if (h) vfft_destroy(h);
     free(x); free(X); free(y); free(r);
@@ -403,6 +473,18 @@ static int probe3(const char *W, int N1, int N2, int N3)
         free(my); free(mr);
     }
 #endif
+    if (g_fftw && g_csv)
+    {   /* FFTW's rows (--fftw): fftw_plan_dft at rank 3 on the same input and reference */
+        int n[3] = { N1, N2, N3 };
+        double *fy = calloc(tot, 8), *fr = calloc(tot, 8);
+        if (fftw_cell(3, n, x, fy, fr))
+        {
+            double ff = relerr(fy, X, N, 1.0), fl = l2err(fy, X, N, 1.0), frt = rterr(fr, x, N, 1.0 / N);
+            printf("  fftw fwd %.2e", ff);
+            fprintf(g_csv, "FFTW,%dx%dx%d,%.3e,%.3e,%.3e\n", N1, N2, N3, fl, ff, frt);
+        }
+        free(fy); free(fr);
+    }
     printf("\n");
     if (h) vfft_destroy(h);
     free(x); free(y); free(r); free(X);
@@ -416,6 +498,7 @@ int main(int argc, char **argv)
     while (argc > a0 && argv[a0][0] == '-')
     {
         if (!strcmp(argv[a0], "--ip")) g_ip = 1;
+        else if (!strcmp(argv[a0], "--fftw")) g_fftw = 1;   /* FFTW's rows in the precision record (2026-10-19) */
         else if (!strcmp(argv[a0], "--time")) g_time = 1;
         else if (!strcmp(argv[a0], "--k") && a0 + 1 < argc) { g_k = atoi(argv[a0 + 1]); a0++; }
         else if (!strcmp(argv[a0], "--csv") && a0 + 1 < argc) { csv = argv[a0 + 1]; a0++; }
@@ -424,7 +507,7 @@ int main(int argc, char **argv)
         else break;
         a0++;
     }
-    if (argc < a0 + 2) { printf("usage: %s [--ip] [--csv FILE] [--2d] <wisdir> N [N ...] (N or a-b; with --2d: N1xN2)\n", argv[0]); return 2; }
+    if (argc < a0 + 2) { printf("usage: %s [--ip] [--fftw] [--csv FILE] [--2d | --3d] <wisdir> N [N ...] (N or a-b; with --2d: N1xN2, --3d: N1xN2xN3)\n", argv[0]); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     if (csv)
     {

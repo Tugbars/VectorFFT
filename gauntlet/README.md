@@ -51,7 +51,7 @@ python gauntlet/gauntlet.py gflops --name gauntlet_pow2 --threads 8
 `verify` runs every cell's forward transform against a long-double scalar DFT
 of the same input and writes the precision record `verify.csv` in the run
 directory (`library,N,l2_error,max_error,rt_error`; with MKL built in, MKL's
-rows on the same input). The plots in `src/tools/plots/` read the run
+rows on the same input, and with `--cmp fftw` FFTW's). The plots in `src/tools/plots/` read the run
 directories: `gen_gflops.py` the bench csvs, `gen_precision.py` the verify csvs.
 
 ```
@@ -113,15 +113,31 @@ Either path builds the same binaries from the same sources.
   (the comparator column is KFR there). KFR is GPLv2 or commercial and is never shipped with this tree:
   the user supplies their own checkout, exactly as with MKL and FFTW.
 
-MKL and FFTW are optional at build time. Without MKL the bench reports absolute
-numbers and correctness. With both, the report says which library answered.
+- The FFTW arm: `--cmp fftw` on the driver (`python gauntlet/gauntlet.py run
+  --cells 2..4096 --cmp fftw`), no build flag. The bench binds FFTW at run time
+  (`ref_fftw.h`: `$VFFT_FFTW_DLL`, else vcpkg's `fftw3.dll`, by absolute path,
+  and refuses MKL's FFTW wrapper layer). It serves the 1D, 2D and 3D c2c cells
+  and the real cells (1D, 2D, 3D; in place too), out of place, FFTW_MEASURE, at
+  one thread or `--threads T`; a threaded run needs an FFTW built with its
+  threads API (`--enable-threads --with-combined-threads`, CMake
+  `ENABLE_THREADS` + `WITH_COMBINED_THREADS`), named in `VFFT_FFTW_DLL` -- the
+  vcpkg DLL has none, and the bench exits 2 rather than time a serial FFTW
+  against a threaded plan. FFTW's wisdom for the run lives in the run
+  directory (`fftw.wis`), so one MEASURE verdict per problem serves every
+  process of the run; results land in `gauntlet_fftw.csv` with the same
+  columns (the comparator column is FFTW there), and `verify --cmp fftw`
+  writes FFTW's rows into `verify_fftw.csv`.
+
+MKL is optional at build time; FFTW is bound at run time. Without MKL the bench
+reports absolute numbers and correctness (or FFTW's numbers under `--cmp fftw`).
+With a comparator, the report says which library answered.
 
 ## Files
 
 - `gauntlet.py` -- the driver (verbs: run, calibrate, bench, report, merge, cells, verify)
 - `gauntlet_report.py` -- the report
 - `bench_1d_vs_mkl.c` -- the canonical bench, every mode (K=1 interleaved, split layout, 2D, 3D, real, batches); `--2dilnat` is the 2D gauntlet cell
-- `bench_1d_vs_fftw.c` -- the FFTW comparator
+- `bench_1d_vs_fftw.c` -- a standalone FFTW bench; the gauntlet's FFTW comparator is the bench's `--cmp fftw` arm
 - `recal_1d_probe.c` -- the calibrator (one front-door create; recalibrate re-races; `--2d N1 N2` for a shape)
 - `k1_fwd_ref_probe.c` -- the forward reference check and the precision record (`verify`)
 - `build.py` -- the gcc build harness (`src/tools/gates/run_gates.py` builds the gates with it too)

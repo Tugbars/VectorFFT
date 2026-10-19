@@ -88,9 +88,11 @@ def line(x1, y1, x2, y2, wd=1.4, dash=None, col=INK):
     E.append(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{col}" stroke-width="{wd}" stroke-linecap="round"{d}/>')
 
 MARKERS = [("circle", True), ("square", True), ("diamond", False), ("tri", True), ("circle", False)]
-COLORS = {"VectorFFT": "#B4261E", "MKL": "#1F5FBF"}          # vermilion / blue
+SHAPES = {"VectorFFT": ("circle", True), "MKL": ("square", True), "FFTW": ("diamond", False)}   # a library's marker, whatever its order in the csv
+COLORS = {"VectorFFT": "#B4261E", "MKL": "#1F5FBF", "FFTW": "#2E7D32"}          # vermilion / blue / green
 FALLBACK = ["#B4261E", "#1F5FBF", "#2E7D32", "#6A1B9A", "#000000"]
 def color_of(i, name): return COLORS.get(name, FALLBACK[i % len(FALLBACK)])
+def shape_of(i, name): return SHAPES.get(name, MARKERS[i % len(MARKERS)])
 def marker(kind, filled, x, y, r, col=INK):
     fill = col if filled else PAPER
     INKc = col
@@ -148,7 +150,7 @@ def running_median(pts, bins=48):
     return out
 
 for i, name in enumerate(names):
-    kind, filled = MARKERS[i % len(MARKERS)]
+    kind, filled = shape_of(i, name)
     E.append('<g opacity="0.55">')
     for n, e in thin(data[name]):
         if XMIN <= n <= XMAX: marker(kind, filled, xr(n), yr(e), 2.1, color_of(i, name))
@@ -162,7 +164,7 @@ for i, name in enumerate(names):
 lx, ly = X0 + 22, Y0 + 14
 E.append(f'<rect x="{lx-12}" y="{ly-14}" width="190" height="{len(names)*26+16}" fill="{PAPER}" stroke="{INK}" stroke-width="1.2"/>')
 for i, name in enumerate(names):
-    kind, filled = MARKERS[i % len(MARKERS)]
+    kind, filled = shape_of(i, name)
     line(lx - 4, ly + i * 26 + 4, lx + 30, ly + i * 26 + 4, 2.6, col=color_of(i, name))
     marker(kind, filled, lx + 13, ly + i * 26 + 4, 4.2, color_of(i, name))
     put(name, 15, x=lx + 42, baseline=ly + i * 26 + 9, fname=CMR)

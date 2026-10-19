@@ -6,8 +6,10 @@
  * P-core, the SMT-sibling guard, the priority, the machine's measurement lock), one csv row
  * with both times, the ratio and the correctness columns. MKL is optional at build time
  * (build.py --mkl; without it the row carries our numbers and the correctness checks). The
- * K=1 cell takes other comparators: --cmp fftw (bound at run time from $VFFT_FFTW_DLL) and
- * --cmp kfr (a --kfr build).
+ * gauntlet's cells take other comparators: --cmp fftw (bound at run time from $VFFT_FFTW_DLL
+ * or vcpkg's fftw3.dll, no build flag: the 1D/2D/3D c2c cells and the real cells, out of
+ * place, at one thread or under --mt with an FFTW built with its threads API) and --cmp kfr
+ * (a --kfr build; one thread).
  *
  * Protocol (docs/design/measurement_arms.md): a warm-up, then timing windows of best-of-5
  * samples; cachebust and a cool-down between the two engines; the engine order set by the
@@ -150,6 +152,45 @@ static int fftw_arm_bind(void)
         }
     }
     return g_fx_arm_ok;
+}
+/* The arm at the cell's thread count (2026-10-19), called before every plan it
+ * builds: T > 1 needs the DLL's threads API (ref_fftw.h's optional group: a
+ * build with --enable-threads --with-combined-threads, or CMake ENABLE_THREADS
+ * + WITH_COMBINED_THREADS; vcpkg's fftw3.dll has none) -- fftw_init_threads
+ * once, then fftw_plan_with_nthreads(T), so FFTW plans and runs at the T our
+ * plan and MKL do. Returns 0, with the reason on stderr, when T > 1 and the
+ * DLL cannot thread: a threaded cell against a serial FFTW is not a
+ * comparison, and main exits 2 on it before any cell runs. */
+static int fftw_arm_threads(int T)
+{
+    static int inited = 0;
+    if (!fftw_arm_bind())
+        return 0;
+    if (T <= 1)
+    {
+        if (inited)
+            g_fx_arm.plan_with_nthreads(1);
+        return 1;
+    }
+    if (!g_fx_arm.init_threads || !g_fx_arm.plan_with_nthreads)
+    {
+        fprintf(stderr, "--cmp fftw --mt: %s exports no threads API (fftw_init_threads / fftw_plan_with_nthreads), "
+                        "so it cannot run the cell at T=%d; a threaded run needs an FFTW built with "
+                        "--enable-threads --with-combined-threads (CMake: ENABLE_THREADS + WITH_COMBINED_THREADS), "
+                        "named in $VFFT_FFTW_DLL\n", g_fx_arm.dll_path, T);
+        return 0;
+    }
+    if (!inited)
+    {
+        if (!g_fx_arm.init_threads())
+        {
+            fprintf(stderr, "--cmp fftw --mt: fftw_init_threads failed in %s\n", g_fx_arm.dll_path);
+            return 0;
+        }
+        inited = 1;
+    }
+    g_fx_arm.plan_with_nthreads(T);
+    return 1;
 }
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
@@ -769,10 +810,12 @@ static double k1z_time_cmp_mkl_or_kfr(int N, const double *z0, size_t total)
  * MKL arm's DFTI_INPLACE. A plan is built ONCE here and destroyed after, so no
  * planning cost is inside any timed window; FFTW_MEASURE matches the MKL arm's
  * "commit once, then time" shape and $VFFT_FFTW_WIS (imported by the caller)
- * makes it a wisdom replay. */
+ * makes it a wisdom replay. --mt: planned at T (fftw_arm_threads) and warmed
+ * >= 5 ms untimed as the MKL arm is -- FFTW's workers are spawned at the first
+ * threaded execute, under the P-core mask main set. */
 static double k1z_time_fftw(int N, const double *z0, size_t total)
 {
-    if (!fftw_arm_bind())
+    if (!fftw_arm_threads(g_k1noop_mt ? g_mt : 1))
         return 0;
     double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
     fftwx_plan p = g_k1zip
@@ -783,8 +826,16 @@ static double k1z_time_fftw(int N, const double *z0, size_t total)
     if (!p) { free_d(zi); free_d(zo); return 0; }
     fftw_wis_export();
     memcpy(zi, z0, 2 * total * sizeof(double));   /* AFTER planning: MEASURE scribbles */
-    for (int w = 0; w < 10; w++)
-        g_fx_arm.execute(p);
+    if (g_k1noop_mt)
+    {   /* >= 5 ms untimed: FFTW's team comes up and settles */
+        const double tw = vfft_now_ns();
+        do
+            g_fx_arm.execute(p);
+        while (vfft_now_ns() - tw < 5e6);
+    }
+    else
+        for (int w = 0; w < 10; w++)
+            g_fx_arm.execute(p);
     int reps = reps_for(total);
     double best = 1e18;
     for (int win = 0; win < 2; win++)
@@ -1026,7 +1077,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
      * natural, same input, same spectrum, so `rel` becomes an ELEMENTWISE
      * comparison rather than a roundtrip (which cannot gate ordering). Same
      * reasoning and same overwrite as the MKL branch. */
-    if (g_cmp_fftw && g_k1nat && fftw_arm_bind())
+    if (g_cmp_fftw && g_k1nat && fftw_arm_threads(cfg.nthreads))
     {
         double *zf = alloc_d(2 * total), *zv = alloc_d(2 * total);
         fftwx_plan p = g_fx_arm.plan_dft_1d(N, (fftwx_complex *)zf,
@@ -1244,11 +1295,13 @@ static void real_ours_body(void *v)
 typedef struct { fftwx_plan p; } real_fx_t;
 static void real_fx_body(void *v) { g_fx_arm.execute(((real_fx_t *)v)->p); }
 /* FFTW's plan for the geometry, over the caller's planes (planned BEFORE the
- * planes are filled: MEASURE scribbles) */
+ * planes are filled: MEASURE scribbles), at the cell's thread count */
 static fftwx_plan real_fx_plan(const real_geo_t *g, int c2r, double *a, double *b)
 {
     const int N = g->N1, K = (int)g->K;
     fftwx_plan p;
+    if (!fftw_arm_threads(g_k1noop_mt ? g_mt : 1))
+        return NULL;
     if (g->nd == 3)
         p = c2r ? g_fx_arm.plan_dft_c2r_3d(g->N1, g->N2, g->N3, (fftwx_complex *)a, b, FFTWX_MEASURE)
                 : g_fx_arm.plan_dft_r2c_3d(g->N1, g->N2, g->N3, a, (fftwx_complex *)b, FFTWX_MEASURE);
@@ -1740,9 +1793,10 @@ long vfft_il2d_row_mt_passes(void);   /* vfft.c: the 2D real row pass's threaded
  * cell's protocol (run_k1z_cell) on a dims=2 plan: pin + sibling guard, the
  * front door on the store (OOP, natural, interleaved, K=1, one thread),
  * roundtrip gate bwd(fwd(x)) == N1*N2*x, then the CROSS-ENGINE elementwise
- * check against MKL DFTI 2D (out of place, natural on both sides), then the
- * two timers with cachebust + cool between engines, best-of-5 in two windows,
- * the engine order per the driver's flip. GFLOPS = 5 T log2 T, T = N1*N2.
+ * check against the comparator's 2D plan (MKL DFTI 2D, or FFTW's under --cmp
+ * fftw; out of place, natural on both sides), then the two timers with
+ * cachebust + cool between engines, best-of-5 in two windows, the engine
+ * order per the driver's flip. GFLOPS = 5 T log2 T, T = N1*N2.
  * Row: N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
  * -- the 1D gauntlet's columns with (N1, N2) in place of (N, K), so the
  * row-replace key (first four fields + flip) and the driver's readers hold.
@@ -1881,9 +1935,106 @@ static double k2z_kfr_xerr(int N1, int N2, int N3, const double *z0, const doubl
     return xm > 0 ? xe / xm : xe;
 }
 #endif
-/* the 2D/3D cell's comparator: MKL, or KFR's 2D/3D plan under --cmp kfr (2026-10-10) */
+/* the FFTW twin of k2z_time_mkl (2026-10-19): fftw_plan_dft at rank 2 (N3 = 0)
+ * or 3, out of place, FFTWX_MEASURE, the plan built once outside the timed
+ * windows and $VFFT_FFTW_WIS re-exported after it; the input copied AFTER
+ * planning (MEASURE scribbles); the threaded cell's >= 5 ms untimed warm, then
+ * the same windows, trials, reps and pacing. --mt: planned at T
+ * (fftw_arm_threads), FFTW's workers spawned at the first threaded execute
+ * under the P-core mask main set. */
+static double k2z_time_fftw(int N1, int N2, int N3, const double *z0, size_t total)
+{
+    int n[3];
+    n[0] = N1;
+    n[1] = N2;
+    n[2] = N3;
+    if (!fftw_arm_threads(g_k1noop_mt ? g_mt : 1))
+        return 0;
+    double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
+    fftwx_plan p = g_fx_arm.plan_dft(N3 > 0 ? 3 : 2, n, (fftwx_complex *)zi, (fftwx_complex *)zo,
+                                     FFTWX_FORWARD, FFTWX_MEASURE);
+    if (!p) { free_d(zi); free_d(zo); return 0; }
+    fftw_wis_export();
+    memcpy(zi, z0, 2 * total * sizeof(double));   /* AFTER planning: MEASURE scribbles */
+    if (g_k1noop_mt)
+    {   /* >= 5 ms untimed: FFTW's team comes up and settles, as MKL's does */
+        const double tw = vfft_now_ns();
+        do
+            g_fx_arm.execute(p);
+        while (vfft_now_ns() - tw < 5e6);
+    }
+    else
+        for (int w = 0; w < 10; w++)
+            g_fx_arm.execute(p);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int win = 0; win < 2; win++)
+    {
+        if (win)
+        {
+            const double tw0 = vfft_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                g_fx_arm.execute(p);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_now_ns();
+            for (int i = 0; i < reps; i++)
+                g_fx_arm.execute(p);
+            double ns = (vfft_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
+    }
+    g_fx_arm.destroy_plan(p);
+    free_d(zi);
+    free_d(zo);
+    return best;
+}
+
+/* the cross-engine check against FFTW's 2D/3D spectrum: max |S - FFTW| / max |FFTW|,
+ * or -1 when the DLL did not bind or FFTW cannot plan the shape (planned on empty
+ * planes, the input copied after: MEASURE scribbles) */
+static double k2z_fftw_xerr(int N1, int N2, int N3, const double *z0, const double *S, size_t total)
+{
+    int n[3];
+    n[0] = N1;
+    n[1] = N2;
+    n[2] = N3;
+    if (!fftw_arm_threads(g_k1noop_mt ? g_mt : 1))
+        return -1;
+    double *zi = alloc_d(2 * total), *zf = alloc_d(2 * total);
+    fftwx_plan p = g_fx_arm.plan_dft(N3 > 0 ? 3 : 2, n, (fftwx_complex *)zi, (fftwx_complex *)zf,
+                                     FFTWX_FORWARD, FFTWX_MEASURE);
+    if (!p) { free_d(zi); free_d(zf); return -1; }
+    fftw_wis_export();
+    memcpy(zi, z0, 2 * total * sizeof(double));
+    g_fx_arm.execute(p);
+    double xe = 0.0, xm = 0.0;
+    for (size_t i = 0; i < 2 * total; i++)
+    {
+        double e = fabs(S[i] - zf[i]), m = fabs(zf[i]);
+        if (e > xe) xe = e;
+        if (m > xm) xm = m;
+    }
+    g_fx_arm.destroy_plan(p);
+    free_d(zi);
+    free_d(zf);
+    return xm > 0 ? xe / xm : xe;
+}
+
+/* THE 2D/3D cell's comparator entry: FFTW under --cmp fftw (no build flag, so
+ * a bench built without MKL has a comparator here too, as the K=1 cell's
+ * k1z_time_cmp does), KFR's 2D/3D plan under --cmp kfr (2026-10-10), else MKL.
+ * Returns 0 when none is active, which the caller reports as "no comparator". */
 static double k2z_time_cmp(int N1, int N2, int N3, const double *z0, size_t total)
 {
+    if (g_cmp_fftw)
+        return k2z_time_fftw(N1, N2, N3, z0, total);
 #ifdef VFFT_HAS_KFR
     if (g_cmp_kfr)
         return k2z_time_kfr(N1, N2, N3, z0, total);
@@ -1959,17 +2110,24 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
         if (m > maxmag) maxmag = m;
     }
     double rel = maxmag > 0 ? maxerr / maxmag : maxerr;
+    if (g_cmp_fftw)
+    {   /* the comparator's spectrum: FFTW's plan of the shape (2026-10-19); the
+         * roundtrip error stays when FFTW cannot plan it */
+        double xr = k2z_fftw_xerr(N1, N2, N3, z0, S, total);
+        if (xr >= 0)
+            rel = xr;
+    }
 #ifdef VFFT_HAS_KFR
-    if (g_cmp_kfr)
+    else if (g_cmp_kfr)
     {   /* the comparator's spectrum: KFR's 2D/3D plan (2026-10-10); the roundtrip
          * error stays when KFR refuses the shape */
         double xr = k2z_kfr_xerr(N1, N2, N3, z0, S, total);
         if (xr >= 0)
             rel = xr;
     }
-    else
 #endif
 #ifdef VFFT_HAS_MKL
+    else
     {   /* the correctness column is the CROSS-ENGINE elementwise compare:
          * both engines natural, same input, same spectrum (as --k1nat) */
         DFTI_DESCRIPTOR_HANDLE d = NULL;
@@ -2003,7 +2161,9 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
      * counter over the timed executes; a threaded plan whose counter did not
      * move ran SERIAL, and its row must say so */
 #define K2Z_ENG() ((nd == 3) ? vfft_ilnd_mt_passes() : vfft_il2d_col_mt_passes())
-#ifdef VFFT_HAS_MKL
+    /* the A/B runs in every build, as the K=1 cell's does: the FFTW arm binds
+     * at runtime, and k2z_time_cmp returns 0 when no comparator is active
+     * (ns only, ratio 0, as a no-MKL build reported before) */
     if (flip)
     {
         mns = k2z_time_cmp(N1, N2, N3, z0, total);
@@ -2026,15 +2186,6 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
         pace(cool_ms);
         mns = k2z_time_cmp(N1, N2, N3, z0, total);
     }
-#else
-    (void)cool_ms;
-    (void)flip;
-    {
-        const long e0 = K2Z_ENG();
-        vns = k1z_time_vfft(h, z0, S, total);
-        if (T > 1) g_cell_engaged = K2Z_ENG() - e0;
-    }
-#endif
 #undef K2Z_ENG
     double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
     double vgf = (vns > 0) ? 5.0 * (double)total * log2((double)total) / vns : 0;
@@ -6929,7 +7080,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[1], "--lm3dc2r") == 0)
             g_lm3dr = 2;  /* ... c2r */
         else if (strcmp(argv[1], "--cmp") == 0 && argc >= 3)
-        {   /* the K=1 cell's comparator. kfr (2026-09-25) exists only in a
+        {   /* the cell's comparator. kfr (2026-09-25) exists only in a
              * --kfr build; fftw (2026-09-28) needs no build flag -- it binds
              * at runtime from $VFFT_FFTW_DLL and is refused loudly there if
              * the library is absent or is MKL's wrapper layer. */
@@ -6998,12 +7149,14 @@ int main(int argc, char **argv)
         return 2;
     }
 #endif
-    /* the FFTW arm serves the same cell as KFR's: the K=1 1D c2c contract.
-     * The 2D/3D/real modes have their own comparator shapes and are not
-     * wired to it, so refuse rather than silently report a zero ratio. */
+    /* the FFTW arm serves the gauntlet's cells: the K=1 1D c2c cell, the 2D/3D
+     * c2c cells (--2dilnat / --3dilnat, 2026-10-19) and the real cells. The
+     * earlier forms have their own comparator shapes and are not wired to it,
+     * so refuse rather than silently report a zero ratio. */
     if (g_cmp_fftw && (twod || il2d || il3d || real2d || r2c || c2r1d))
     {
-        fprintf(stderr, "--cmp fftw: the FFTW arm is the 1D c2c K=1 cell only\n");
+        fprintf(stderr, "--cmp fftw: the FFTW arm serves the gauntlet's cells (--k1noop / --k1nat, --2dilnat / --3dilnat, "
+                        "--realfwd / --realbwd with --2drealnat / --3dreal), not the earlier 2D / real forms\n");
         return 2;
     }
     g_k1noop_mt = ((g_k1nat && !g_k1zip) || g_k2nat || g_k3nat || g_real || g_kzb || g_kzbr || g_lm2d || g_lm2dr || g_lm3dr) && mt;   /* the lane-major batch cells thread too (2026-10-15) */   /* the 3D real cell threads too (2026-10-07); the 2D real cell since 2026-10-08 */   /* the 2D/3D cells share the
@@ -7015,6 +7168,11 @@ int main(int argc, char **argv)
          * this thread is pinned to core 0 below (trap c: threads inherit
          * the creator's affinity). */
         ilmt_pin_pcores();
+        if (g_cmp_fftw && !fftw_arm_threads(g_mt))
+            return 2;   /* FFTW's team: the threads API bound and initialised here, under the
+                         * P-core mask and before the caller's pin; its workers are spawned at
+                         * the first threaded execute, inside each arm's untimed warm. A DLL
+                         * without the API cannot run the threaded cell: refused, not timed serial */
 #ifdef VFFT_HAS_MKL
         {
             DFTI_DESCRIPTOR_HANDLE d = NULL;
