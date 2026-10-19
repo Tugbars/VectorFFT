@@ -118,7 +118,8 @@ typedef struct vfft_ilndr_s {
     int npbw;
     double **pcb;                 /* the pieces' first-plane copies (npc_max planes) */
     int mt_t;                     /* the plan's thread snapshot */
-    int prof;                     /* VFFT_ILNDR_PROF, bound at create: per execute the planes' and axis 0's ns on stderr */
+    int prof;                     /* VFFT_ILNDR_PROF, bound at create: per execute the planes' and axis 0's ns on stderr
+                                   * (the threaded walk too: each phase's wall time around its fork-join, with the teams) */
     /* THE THREADED FORMS (phase 3, 2026-10-07): the plane arm transposed. mt = the verdict at the
      * plan's T (0 serial | 2 plane); mts/mtf/mtwl/mtcut = the structure, form and band the
      * threaded verdict runs with (they may differ from s=/nf=); ptw = the plane team's width
@@ -132,17 +133,30 @@ typedef struct vfft_ilndr_s {
 } vfft_ilndr_t;
 
 /* the profile: phase times accumulated by the walks, printed per execute (the c2c tier's
- * VFFT_ILND_PROF shape); the band arm's suffix stages count as axis 0 */
+ * VFFT_ILND_PROF shape); the serial band arm's suffix stages count as axis 0. The threaded walk
+ * prints the same line from its verdict's structure and form (mts, mtf) with the pool's T and the
+ * planes' and axis 0's teams; its band's phase 5 (the suffix and the band's planes on one worker)
+ * counts as planes. */
 typedef struct { double planes, axis0; } _ilndr_prof_t;
 static _ilndr_prof_t _ilndr_prof;
-static void _ilndr_prof_print(const vfft_ilndr_t *d)
+static void _ilndr_prof_line(const vfft_ilndr_t *d, int arm, int nf, const char *team)
 {
-    fprintf(stderr, "[ilndr prof] %dx%dx%d %s %s/%s: planes %.0f ns, axis 0 %.0f ns (%.1f%% / %.1f%%)\n",
+    fprintf(stderr, "[ilndr prof] %dx%dx%d %s %s/%s%s: planes %.0f ns, axis 0 %.0f ns (%.1f%% / %.1f%%)\n",
             d->N[0], d->N[1], d->N[2], d->c2r ? "c2r" : "r2c",
-            d->arm == 3 ? "band" : d->arm == 2 ? "payonce" : "child", d->nf == 2 ? "strips" : "inplace",
+            arm == 3 ? "band" : arm == 2 ? "payonce" : "child", nf == 2 ? "strips" : "inplace", team,
             _ilndr_prof.planes, _ilndr_prof.axis0,
             100.0 * _ilndr_prof.planes / (_ilndr_prof.planes + _ilndr_prof.axis0 + 1e-9),
             100.0 * _ilndr_prof.axis0 / (_ilndr_prof.planes + _ilndr_prof.axis0 + 1e-9));
+}
+static void _ilndr_prof_print(const vfft_ilndr_t *d)
+{
+    _ilndr_prof_line(d, d->arm, d->nf, "");
+}
+static void _ilndr_prof_print_mt(const vfft_ilndr_t *d, int T, int tpl, int tax)
+{
+    char team[48];
+    snprintf(team, sizeof team, " mt T=%d teams planes/axis0 %d/%d", T, tpl, tax);
+    _ilndr_prof_line(d, d->mts, d->mtf, team);
 }
 
 /* a chain's natural permutation; a one-stage chain is natural-native: the identity */
@@ -708,6 +722,7 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
     const int T = thread_pool_workers_for(d->mt_t);
     const int arm = d->mts, nf = d->mtf;
     const size_t N2 = (size_t)d->N[1], P = d->plane;
+    double t0 = 0.0, t1;   /* the profile's clock (d->prof): each phase's wall time around its fork-join */
     if (T < 2 || d->mt != 2 || d->ncw < T - 1)
         return 0;
     if (nf == 2 && d->nsscrw < T - 1)
@@ -720,8 +735,11 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
             return 0;   /* the natural pass through the cube scratch does not thread */
         if (arm == 2 && !d->V)
             return 0;
+        if (d->prof) t0 = vfft_now_ns();
         _ilndr_mt_phase(d, in, mid, NULL, 0, arm, nf, (size_t)d->N[0], Tp);
+        if (d->prof) { t1 = vfft_now_ns(); _ilndr_prof.planes = t1 - t0; t0 = t1; }
         _ilndr_mt_phase(d, mid, out, NULL, 1, arm, nf, N2, Tb);
+        if (d->prof) { _ilndr_prof.axis0 = vfft_now_ns() - t0; _ilndr_prof_print_mt(d, T, Tp, Tb); }
     }
     else
     {
@@ -735,18 +753,23 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
             const int Tb = nb < T ? nb : T;
             if (nb < 2)
                 return 0;
+            if (d->prof) { t0 = vfft_now_ns(); _ilndr_prof.axis0 = 0.0; }
             if (d->mtcut > 0)
                 _ilndr_mt_phase(d, in, V, NULL, 4, arm, nf, P, Ts);
+            if (d->prof) { t1 = vfft_now_ns(); _ilndr_prof.axis0 = t1 - t0; t0 = t1; }
             _ilndr_mt_phase(d, in, V, out, 5, arm, nf, (size_t)nb, Tb);
+            if (d->prof) { _ilndr_prof.planes = vfft_now_ns() - t0; _ilndr_prof_print_mt(d, T, Tb, Ts); }
         }
         else
         {
             if (d->ip && !_ilndr_pieces_deal(d, Tp))
                 return 0;   /* more pieces than buffers: serial -- decided before any phase touches the volume */
+            if (d->prof) t0 = vfft_now_ns();
             if (d->ax0bwd)
                 _il2d_col_exec(&d->ax0, in, V, 1);   /* the Bluestein / turned axis's backward pass, on the caller (phase 4a: not cut yet) */
             else
                 _ilndr_mt_phase(d, in, V, NULL, 2, arm, nf, P, Ts);
+            if (d->prof) { t1 = vfft_now_ns(); _ilndr_prof.axis0 = t1 - t0; t0 = t1; }
             if (d->ip)
             {   /* the planes by PIECES of the walk sequence: the copies, the barrier, the walk */
                 _ilndr_mt_phase(d, V, V, NULL, 7, arm, nf, (size_t)d->npc, Tp);
@@ -754,6 +777,7 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
             }
             else
                 _ilndr_mt_phase(d, V, out, NULL, 3, arm, nf, (size_t)d->N[0], Tp);
+            if (d->prof) { _ilndr_prof.planes = vfft_now_ns() - t0; _ilndr_prof_print_mt(d, T, Tp, d->ax0bwd ? 1 : Ts); }
         }
     }
     _vfft_ilnd_mt_count++;   /* engagement: the c2c tier's counter, vfft_ilnd_mt_passes() */

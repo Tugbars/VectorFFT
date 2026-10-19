@@ -363,6 +363,13 @@ store's memory → the guarded save persists it.
   builder's); rank-3 adds `ax0plan/ax0vars/ax0dif ax1plan/ax1vars/ax1dif`
   and reuses `row*` for the innermost pass, plus `ablock=` (LOCAL; absent
   = builder heuristic). Variant vocabulary: `flat/log3/t1s/buf`.
+- A contiguous batch (`howmany > 1`) through the plane or volume queue
+  (`il/rank2/plane_queue.h`) banks its loop-vs-queue verdict on the primary
+  K=1 plan's own row at the plan's thread count: `pq=0|1 pqn=<P>` (the
+  plane count it was raced at; a P mismatch re-races). A real cell's row is
+  direction-shared (keyed `t=r2c`), so the c2r queue's verdict has its own
+  names there, `pq_c2r= pqn_c2r=`, as the tiers' `cmt_c2r=` (2026-10-19);
+  `pq= pqn=` stay the r2c's and the c2c's.
 - `ns= metric=fwd1 units=ns` means one call of the KEYED transform (a
   `t=c2r` row's ns is a c2r call). 3D extraction banks are MEASURE-LESS
   (no ns token): the store serves the recipe; a measured verdict can

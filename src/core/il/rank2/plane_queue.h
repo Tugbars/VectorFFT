@@ -42,7 +42,10 @@
  * The loop-vs-queue verdict rides the PRIMARY plane's own wisdom row as
  * pq=<0|1> pqn=<P> — the row is keyed by the plan's thread count, and the
  * plane count it was raced at is its validity condition (a P mismatch
- * re-races and re-banks). The row is whichever one the inner howmany=1 create banked
+ * re-races and re-banks). A real cell's row is direction-shared (keyed
+ * t=r2c), so the c2r queue's verdict has its own names there, pq_c2r=
+ * pqn_c2r=, as the tiers' cmt_c2r= (2026-10-19): the two directions never
+ * replay or overwrite each other's. The row is whichever one the inner howmany=1 create banked
  * (IL c2c, IL real, or the split-tier row; at rank 3 the single-volume row
  * of the 3D shard; an in-place real cell its own place=ip row, as the real
  * tiers key it), found by lookup and merged
@@ -223,12 +226,16 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
     vw2_key_t k;
     const vw2_rec_t *r;
     char sb[40];
+    /* the pair by direction: a real cell's row is direction-shared (keyed t=r2c), so the
+     * c2r queue reads and banks pq_c2r= pqn_c2r= there, as the tiers' cmt_c2r= (2026-10-19) */
+    const int c2r = (h->transform == VFFT_C2R);
+    const char *tk_pq = c2r ? "pq_c2r" : "pq", *tk_pqn = c2r ? "pqn_c2r" : "pqn";
     const int have = (W && !getenv("VFFT_PQ_NO_MT") &&
                       _pq_row_key(h, cfg, &W->vw2, &k));
     if (have && !cfg->recalibrate && (r = vw2_lookup(&W->vw2, &k)) != NULL)
     {
-        const char *v = vw2_rec_get(r, "pq");
-        const char *vn = vw2_rec_get(r, "pqn");
+        const char *v = vw2_rec_get(r, tk_pq);
+        const char *vn = vw2_rec_get(r, tk_pqn);
         if (v && vn && (size_t)atol(vn) == h->pq_n)   /* the row is the plan's own T (v1.3) */
         {
             h->pq_mt = atoi(v) ? 1 : 0;
@@ -245,8 +252,8 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
         char b[24];
         int rc;
         snprintf(b, sizeof b, "%zu", h->pq_n);
-        rc = vw2_update_field(&W->vw2, &k, "pqn", b);
-        rc |= vw2_update_field(&W->vw2, &k, "pq", h->pq_mt ? "1" : "0");
+        rc = vw2_update_field(&W->vw2, &k, tk_pqn, b);
+        rc |= vw2_update_field(&W->vw2, &k, tk_pq, h->pq_mt ? "1" : "0");
         if (rc == VW2_OK)
             _vw2_persist(W, cfg);
         else if (getenv("VFFT_IL2D_LOG"))

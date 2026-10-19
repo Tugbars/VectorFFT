@@ -16,11 +16,15 @@
  *   Q3   (piece 2c) the 3D C2C contiguous batch: forward vs the naive DFT per volume and K runs of the K = 1
  *        plan, backward = N1 N2 N3 x, both placements (in place bitwise the out-of-place), the scrambled
  *        class's roundtrip, the replay bitwise;
+ *   PQ   the queue's c2r twin (2026-10-19): a real cell's row is direction-shared, so on the one store an r2c
+ *        batch create at T = 2 banks pq= pqn= on it, the c2r batch create of the same cell must MEASURE and bank
+ *        pq_c2r= pqn_c2r= beside them, and a second create of either direction replays (no new scope); rank 3
+ *        out of place and the 2D real in place; runs first, its cells cold;
  *   R    the refusals, each naming a served request: lane-major rank-3 real at an odd N3 (the contiguous volumes
  *        named; at an even N3 the lane-major door serves it, il/rank3/lm_batch3dr_il.h), a dim below 2,
  *        SCRAMBLED order on a real batch, VFFT_FLAG_OWN_PITCH on a batch; K = 1 with the CONTIGUOUS flag is
  *        the ordinary plan.
- * Usage: il3d_real_batch_gate --wisdir <cold scratch dir> [--section R2C|C2R|Q2|Q3|R] */
+ * Usage: il3d_real_batch_gate --wisdir <cold scratch dir> [--section PQ|R2C|C2R|Q2|Q3|R] */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -428,6 +432,112 @@ done:
 static void cell_r3(int N1, int N2, int N3, int K, int T, int c2r, int naive, int force) { const int n[3] = { N1, N2, N3 }; cell_real(3, n, K, T, c2r, naive, force); }
 static void cell_r2(int N1, int N2, int K, int T, int c2r, int naive, int force) { const int n[2] = { N1, N2 }; cell_real(2, n, K, T, c2r, naive, force); }
 
+/* ── PQ: the queue's c2r twin (2026-10-19). A real cell's row is direction-shared (keyed t=r2c) and the queue
+ * banks its loop-vs-queue verdict there: the r2c queue's as pq= pqn=, the c2r queue's as pq_c2r= pqn_c2r=. On
+ * the one store the K = 1 cells of both directions are created first, at T and at one thread (the primary's
+ * row and the clones'), so the queue is all a batch create has left to race; then the r2c batch create races
+ * and banks its pair, the c2r batch create of the same cell must MEASURE (vfft_measure_scopes moves) and bank
+ * its own pair beside the r2c's, and a second create of either direction replays (no new scope). Rank 3 out
+ * of place; rank 2 in place (the out-of-place plane queue is c2c/real alike). ── */
+/* the scratch store's rank-2 or rank-3 shard: the cell's t=r2c row at the placement and T; its pq-family
+ * tokens copied to buf (space-joined; empty = no such row or none); 1 = the row carries `tok` */
+static int row_pq(int nd, const char *shape, int ip, int T, const char *tok, char *buf, size_t sz)
+{
+    static char line[65536];
+    char path[1024], head[96], nt[24];
+    FILE *f;
+    int found = 0;
+    buf[0] = 0;
+    snprintf(path, sizeof path, "%s/wisdom2_%dd.txt", g_W, nd);
+    snprintf(head, sizeof head, "@cell t=r2c n=%s q=1 ", shape);
+    snprintf(nt, sizeof nt, " nthreads=%d", T);
+    f = fopen(path, "r");
+    if (!f) return 0;
+    while (fgets(line, sizeof line, f))
+    {
+        char *bar = strstr(line, " | ");
+        const char *m, *p, *end;
+        size_t o = 0;
+        if (strncmp(line, head, strlen(head)) || !bar) continue;
+        *bar = 0;   /* the key section alone: the placement, the layout, and T as its last token */
+        m = strstr(line, nt);
+        if (!strstr(line, ip ? " place=ip" : " place=oop") || !strstr(line, " lay=il") || !m || m[strlen(nt)] != 0) continue;
+        *bar = ' ';
+        p = bar + 3;
+        end = strstr(p, " | ");   /* the payload: up to the measure section */
+        if (!end) end = p + strlen(p);
+        while (p < end)
+        {
+            const char *q = p;
+            while (q < end && *q != ' ') q++;
+            if (q - p > 2 && !strncmp(p, "pq", 2) && o + (size_t)(q - p) + 2 < sz)
+            {
+                if (o) buf[o++] = ' ';
+                memcpy(buf + o, p, (size_t)(q - p)); o += (size_t)(q - p); buf[o] = 0;
+            }
+            p = q + 1;
+        }
+        found = strstr(bar, tok) != NULL;
+        break;
+    }
+    fclose(f);
+    return found;
+}
+static void twin_real(int nd, const int *n, int K, int T)
+{
+    const int ip = (nd == 2), Ts[2] = { 1, T };
+    const char *pl = ip ? "ip" : "oop";
+    char shape[32], toks[256];
+    vfft_plan p;
+    long s0;
+    int i, d;
+    shape_of(shape, sizeof shape, nd, n);
+    for (i = 0; i < 2; i++)
+        for (d = 0; d < 2; d++)
+        {
+            p = mk(d ? VFFT_C2R : VFFT_R2C, nd, n, 1, VFFT_BATCH_DEFAULT, ip, VFFT_ORDER_NATURAL, Ts[i], 0);
+            CHECK(p != NULL, "PQ %s %s T=%d %s: the K=1 cell refused: %s", d ? "c2r" : "r2c", shape, Ts[i], pl, vfft_error());
+            if (p) vfft_destroy(p);
+        }
+    /* the r2c batch: the queue raced, its pair banked, the c2r's absent */
+    s0 = vfft_measure_scopes();
+    p = mk(VFFT_R2C, nd, n, (size_t)K, VFFT_BATCH_CONTIGUOUS, ip, VFFT_ORDER_NATURAL, T, 0);
+    CHECK(p != NULL, "PQ r2c %s x %d T=%d %s: the batch create refused: %s", shape, K, T, pl, vfft_error());
+    if (p) vfft_destroy(p);
+    CHECK(vfft_measure_scopes() > s0, "PQ r2c %s x %d T=%d %s: the batch create did not measure (the queue did not race)", shape, K, T, pl);
+    CHECK(row_pq(nd, shape, ip, T, " pq=", toks, sizeof toks) && row_pq(nd, shape, ip, T, " pqn=", toks, sizeof toks),
+          "PQ r2c %s x %d T=%d %s: the row carries no pq= pqn= after the batch create (%s)", shape, K, T, pl, toks);
+    CHECK(!row_pq(nd, shape, ip, T, " pq_c2r=", toks, sizeof toks),
+          "PQ r2c %s x %d T=%d %s: the row carries pq_c2r= before any c2r batch create (%s)", shape, K, T, pl, toks);
+    printf("PQ %-9s x %-2d T=%d %-3s: after the r2c batch create the row carries   %s\n", shape, K, T, pl, toks);
+    /* the c2r batch of the same cell: its own pair, raced, beside the r2c's */
+    s0 = vfft_measure_scopes();
+    p = mk(VFFT_C2R, nd, n, (size_t)K, VFFT_BATCH_CONTIGUOUS, ip, VFFT_ORDER_NATURAL, T, 0);
+    CHECK(p != NULL, "PQ c2r %s x %d T=%d %s: the batch create refused: %s", shape, K, T, pl, vfft_error());
+    if (p) vfft_destroy(p);
+    CHECK(vfft_measure_scopes() > s0, "PQ c2r %s x %d T=%d %s: the batch create replayed the r2c queue's verdict (no scope) instead of racing its own",
+          shape, K, T, pl);
+    CHECK(row_pq(nd, shape, ip, T, " pq=", toks, sizeof toks) && row_pq(nd, shape, ip, T, " pqn=", toks, sizeof toks) &&
+          row_pq(nd, shape, ip, T, " pq_c2r=", toks, sizeof toks) && row_pq(nd, shape, ip, T, " pqn_c2r=", toks, sizeof toks),
+          "PQ c2r %s x %d T=%d %s: the row does not carry both pairs after the c2r batch create (%s)", shape, K, T, pl, toks);
+    printf("PQ %-9s x %-2d T=%d %-3s: after the c2r batch create the row carries   %s\n", shape, K, T, pl, toks);
+    /* a second create of either direction replays its own pair: no new scope */
+    s0 = vfft_measure_scopes();
+    p = mk(VFFT_C2R, nd, n, (size_t)K, VFFT_BATCH_CONTIGUOUS, ip, VFFT_ORDER_NATURAL, T, 0);
+    CHECK(p != NULL, "PQ c2r %s x %d T=%d %s: the second batch create refused: %s", shape, K, T, pl, vfft_error());
+    if (p) vfft_destroy(p);
+    CHECK(vfft_measure_scopes() == s0, "PQ c2r %s x %d T=%d %s: the second batch create raced (%ld scopes) instead of replaying pq_c2r=",
+          shape, K, T, pl, vfft_measure_scopes() - s0);
+    p = mk(VFFT_R2C, nd, n, (size_t)K, VFFT_BATCH_CONTIGUOUS, ip, VFFT_ORDER_NATURAL, T, 0);
+    CHECK(p != NULL, "PQ r2c %s x %d T=%d %s: the batch create after the c2r's refused: %s", shape, K, T, pl, vfft_error());
+    if (p) vfft_destroy(p);
+    CHECK(vfft_measure_scopes() == s0, "PQ r2c %s x %d T=%d %s: the batch create after the c2r's raced (%ld scopes): the c2r's bank displaced pq=",
+          shape, K, T, pl, vfft_measure_scopes() - s0);
+    printf("PQ %-9s x %-2d T=%d %-3s: the second c2r and r2c batch creates replayed (%ld new scopes)\n", shape, K, T, pl, vfft_measure_scopes() - s0);
+}
+static void twin_r3(int N1, int N2, int N3, int K, int T) { const int n[3] = { N1, N2, N3 }; twin_real(3, n, K, T); }
+static void twin_r2(int N1, int N2, int K, int T) { const int n[2] = { N1, N2 }; twin_real(2, n, K, T); }
+
 /* ── the 3D C2C contiguous batch: forward vs the naive DFT and K runs of the K = 1 plan, backward = N x,
  * both placements, the replay; scr = the scrambled class (its own backward decodes its forward: the
  * roundtrip alone) ── */
@@ -604,11 +714,18 @@ int main(int argc, char **argv)
         if (!strcmp(argv[a], "--wisdir")) dir = argv[a + 1];
         if (!strcmp(argv[a], "--section")) sec = argv[a + 1];
     }
-    if (!dir) { printf("usage: il3d_real_batch_gate --wisdir <cold scratch dir> [--section R2C|C2R|Q2|Q3|R]\n"); return 2; }
+    if (!dir) { printf("usage: il3d_real_batch_gate --wisdir <cold scratch dir> [--section PQ|R2C|C2R|Q2|Q3|R]\n"); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     g_W = dir;
     printf("CONTIGUOUS BATCH GATE (the plane and volume queues): 3D real r2c / c2r, the 2D real in place, the 3D c2c; store %s\n", dir);
 #define SEC(name) (!sec || !strcmp(sec, name))
+    if (SEC("PQ"))
+    {   /* first: its two cells must be cold (the sections below replay them) */
+        sec_begin();
+        twin_r3(8, 8, 8, 4, 2);
+        twin_r2(32, 32, 4, 2);
+        sec_end("PQ");
+    }
     if (SEC("R2C"))
     {   /* K in {2, 3, 4, 8}; an odd N3 (6x4x7, 9x15x27); T = 1, T = 2 (the queue forced at two cells), one T = 8 cell */
         sec_begin();

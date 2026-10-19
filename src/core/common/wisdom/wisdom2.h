@@ -934,7 +934,7 @@ static inline int vw2__migrate_nthreads(vw2_store_t *s)
     static const char *const MT[] = {
         "cmt", "cmts", "cmtf", "mtarm", "msw", "nls", "mtns",
         "cmt_c2r", "il_mt", "il_mt_tw", "il_mtsb", "il_mt_ip", "il_mtsb_ip",
-        "pq", "pqn", NULL };
+        "pq", "pqn", "pq_c2r", "pqn_c2r", NULL };
     /* the T tags: dropped everywhere */
     static const char *const TAG[] = { "cmtt", "cmtt_c2r", "axt", "axns", "il_mt_t", "il_mt_ip_t", "pqt", NULL };
     /* the 2D twins: renamed on the T row, dropped from the one-thread row */
