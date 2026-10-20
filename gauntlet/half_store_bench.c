@@ -11,29 +11,34 @@
  * rows in four start off a line boundary, so three of four plane stores split.
  *
  * THE ARMS, from the SHIPPED AVX-512 kernel source (no new generated file).
- * Compiled with -DHALF_STORE_ARM=<width> -DHALF_STORE_KERNEL="<kernel .c>"
- * -D<symbol>=half_store_st<width>_<symbol>, this file is one arm: it includes
- * the kernel's source with _mm512_storeu_pd redefined, under its own name.
+ * half_store_bench.sh copies each kernel's source into the bench's object
+ * folder with its plane stores -- the 512-bit stores into zout in the wide
+ * loop -- spelled HALF_STORE_PLANE, and proves kernel by kernel that these are,
+ * one for one by destination, the stores the AVX2 half twin splits, and that
+ * the 512-bit stores it leaves alone (into the stack scratch S[]) are, one for
+ * one, the ones the twin keeps whole; any difference stops the build. Compiled
+ * with -DHALF_STORE_ARM=<width> -DHALF_STORE_KERNEL="<the copy>"
+ * -D<symbol>=half_store_st<width>_<symbol>, this file is one arm: the copy,
+ * its plane stores at the arm's width, under its own name.
  *   st512  as shipped: one 512-bit store
  *   st256  two 256-bit halves (vmovupd ymm, vextractf64x4 to memory)
  *   st128  four 128-bit quarters (vmovupd xmm, vextractf64x2 to memory), the
  *          AVX2 twin's store width
- * The tail (the masked k-pass, the ymm and xmm ladder) keeps its stores, as
+ * The S[] stores stay whole, as the AVX2 twin keeps its S[] stores whole, and
+ * the tail (the masked k-pass, the ymm and xmm ladder) keeps its stores, as
  * the AVX2 twin keeps its VEX-128 tail. Compiled plainly, this file is the
  * bench; half_store_bench.sh builds both (gauntlet/build.py loaded as a
  * module, as src/tools/gates/twin_gate_build.py does), the arms at the codelet
- * library's flags.
+ * library's flags, and reads each arm's machine code back for its store widths.
  *
- * THE KERNELS (HALF_STORE_KERNELS): every forward column leaf with an AVX2
- * half twin whose every _mm512_storeu_pd is a plane store of the wide path,
- * the stores the AVX2 twin splits, and nothing else under that name: 13 of the
- * 32. Left out, because their wide path also stores a half-DFT spill into the
- * stack scratch S[] with _mm512_storeu_pd, which the AVX2 twin keeps whole:
- * the n1c leaves at radix 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 37,
- * 41, 43, 47 and the blocked n1cb48, n1cb84 (radix 32) and n1cb88 (radix 64).
- * At radix 3, 5, 6, 10 and 12 the AVX2 half twin carries an older arithmetic
- * body than its full twin; its stores are still exactly the wide plane
- * stores, which is the rule the arms here follow.
+ * THE KERNELS (HALF_STORE_KERNELS): the 32 forward column leaves with an AVX2
+ * half twin, n1c at radix 2 to 47 and the blocked n1cb48 and n1cb84 (radix 32)
+ * and n1cb88 (radix 64). From radix 9 up (not 10, 12, 14, 16, 22, 26) and in
+ * the blocked leaves the wide loop also stores half-DFT spills into S[]. At
+ * radix 3, 5, 6, 10 and 12 the AVX2 half twin carries an older arithmetic body
+ * than its full twin, and from radix 23 up its body runs in another order than
+ * the AVX-512 one; the stores it splits are still, by destination, the AVX-512
+ * kernel's plane stores, which is what the arms follow.
  *
  * CORRECTNESS FIRST. Before any timing, every arm of every kernel runs in
  * place on random input at an odd and an even pitch, at column counts that
@@ -45,58 +50,100 @@
  * TIMING. One sample is the leaf stage of the column pass as _il2d_col_pass
  * runs it (il2d_cols.h; _il2d_race_forms in il2d_tier.h times the whole pass
  * with it): N1/R calls, each over all hp1 columns of R rows, Ls = OLs = the
- * pitch, in place; the plane re-laid from its seed before every sample, as
- * the race does, and the sample sized to about 1 ms on st512 (one pass at
- * least; in place the values grow by up to R a pass, so R^reps stays finite).
- * A cell is a real 2D r2c shape N1 x N2 whose column leaf is radix R (N1 a
- * multiple of R); its arms are st512, st256 and st128 at the odd pitch hp1,
- * and the CONTROL, st512 at the even pitch hp1 + 1 over the same hp1 columns.
- * The default cells: leaves 4, 8, 16, 3, 5, 7; N2 = 64, 256, 1024, 4096
- * (hp1 = 33, 129, 513, 2049); N1 = R times the power of two that puts the
- * plane near 256 KiB (inside L2), 4 MiB (in L3) and 64 MiB (past it).
+ * pitch, in place, repeated to about 1 ms on st512. The plane is re-laid from
+ * the race's seed before the sample, as the race does, and again, untimed,
+ * every so many passes that the values stay finite (in place they grow by up
+ * to R a pass). A cell is a real 2D r2c shape N1 x N2 whose column leaf is
+ * radix R (N1 a multiple of R). Its arms, all timed in every round:
+ *   st512, st256, st128  at the odd pitch hp1
+ *   st512 again          st512 a second time at the odd pitch: an arm against
+ *                        itself, the noise of a ratio
+ *   st512 even           the CONTROL: st512 over the same hp1 columns at the
+ *                        even pitch hp1 rounded up to a multiple of 4 complex
+ *                        (64 bytes, so every row starts on a cache line and no
+ *                        plane store splits one; at hp1 + 1 every other row
+ *                        would still start 32 bytes into a line)
+ * The default cells, for the leaves r2, r4, r8, r16, r32b48, r32b84, r64b88,
+ * r5 and r9:
+ *   - the 2D real r2c cells where the 14900KF's forms race picked the
+ *     half-store leaf (BANKED), at their own N1 x N2;
+ *   - the plane-size sweep: N2 = 64, 512, 4096 (hp1 = 33, 257, 2049) and N1 =
+ *     R times the power of two that puts the plane near 256 KiB (inside L2),
+ *     4 MiB (in L3) and 64 MiB (past it).
  *
  * PROTOCOL (the one-thread protocol, bench_scope.h): the library's
  * measurement scope -- pinned to one physical core, its SMT sibling held, the
  * process at HIGH priority, the machine's measurement lock -- on Intel and on
  * AMD alike; the arms ALTERNATE within a round (forward, then backward the
- * next round); 25 rounds; 200 ms idle between rounds. Reported per cell and
- * arm: the median and the spread (min..max) of the rounds, and the ratio of
- * each split arm's median to st512's at the odd pitch.
+ * next round); 25 rounds; 200 ms idle between rounds, each idle followed by
+ * untimed samples of every arm, 5 ms at least, before the round's first timed
+ * sample (a core runs slow for the first milliseconds after a sleep:
+ * VFFT_RACE_PACE_MS, race.h). Reported per cell and arm: the median and the
+ * spread (min..max) of the rounds, and the ratio of each arm's median to
+ * st512's.
  *
- * Usage: half_store_bench [--check] [--quick] [--leaves 4,8,16,3,5,7 | all]
+ * Usage: half_store_bench [--check] [--quick] [--leaves r16,32,... | all]
  *                         [--rounds N] [--pace-ms M] [--core C] [--out DIR]
  *   --check   the correctness check alone (no timing): what Intel SDE can show
- *   --quick   one cell (radix 16, 64 x 64) and 2 rounds: the build and the run
+ *   --quick   one cell (r16, 64 x 64) and 2 rounds: the build and the run
  *             proven end to end, nothing measured
- *   --out     write DIR/table.txt (the table) and DIR/rows.csv (every sample)
+ *   --leaves  the leaves timed, by name (r32b48) or by radix (32: both radix-32
+ *             leaves); each with its BANKED cells and the sweep
+ *   --out     write DIR/table.md (the table) and DIR/rows.csv (every sample)
  * Exit 2 on a CPU without AVX-512 (checked before any AVX-512 instruction).
  * Build and run: ./gauntlet/half_store_bench.sh on an AVX-512 machine. Under
  * Intel SDE (sde -spr -- ./gauntlet/half_store_bench.exe --check) the check is
  * exact and the timings mean nothing.
  */
 
-/* radix, the kernel's file under codelets/zil/avx512/, its symbol */
-#define HALF_STORE_KERNELS(X)                                          \
-    X(2, "shared/col/radix2_z_n1c_avx512.c", radix2_z_n1c_fwd_avx512)    \
-    X(3, "shared/col/radix3_z_n1c_avx512.c", radix3_z_n1c_fwd_avx512)    \
-    X(4, "shared/col/radix4_z_n1c_avx512.c", radix4_z_n1c_fwd_avx512)    \
-    X(5, "shared/col/radix5_z_n1c_avx512.c", radix5_z_n1c_fwd_avx512)    \
-    X(6, "shared/col/radix6_z_n1c_avx512.c", radix6_z_n1c_fwd_avx512)    \
-    X(7, "shared/col/radix7_z_n1c_avx512.c", radix7_z_n1c_fwd_avx512)    \
-    X(8, "shared/col/radix8_z_n1c_avx512.c", radix8_z_n1c_fwd_avx512)    \
-    X(10, "shared/col/radix10_z_n1c_avx512.c", radix10_z_n1c_fwd_avx512) \
-    X(12, "shared/col/radix12_z_n1c_avx512.c", radix12_z_n1c_fwd_avx512) \
-    X(14, "shared/col/radix14_z_n1c_avx512.c", radix14_z_n1c_fwd_avx512) \
-    X(16, "shared/col/radix16_z_n1c_avx512.c", radix16_z_n1c_fwd_avx512) \
-    X(22, "shared/col/radix22_z_n1c_avx512.c", radix22_z_n1c_fwd_avx512) \
-    X(26, "shared/col/radix26_z_n1c_avx512.c", radix26_z_n1c_fwd_avx512)
+/* radix, the leaf's name, the kernel's file under codelets/zil/avx512/, its
+ * symbol, the AVX2 half twin's file under codelets/zil/avx2/ (read by
+ * half_store_bench.sh for the proof) */
+#define HALF_STORE_KERNELS(X)                                                                                           \
+    X(2, "r2", "shared/col/radix2_z_n1c_avx512.c", radix2_z_n1c_fwd_avx512, "shared/col/half/radix2_z_n1ch_avx2.c")     \
+    X(3, "r3", "shared/col/radix3_z_n1c_avx512.c", radix3_z_n1c_fwd_avx512, "shared/col/half/radix3_z_n1ch_avx2.c")     \
+    X(4, "r4", "shared/col/radix4_z_n1c_avx512.c", radix4_z_n1c_fwd_avx512, "shared/col/half/radix4_z_n1ch_avx2.c")     \
+    X(5, "r5", "shared/col/radix5_z_n1c_avx512.c", radix5_z_n1c_fwd_avx512, "shared/col/half/radix5_z_n1ch_avx2.c")     \
+    X(6, "r6", "shared/col/radix6_z_n1c_avx512.c", radix6_z_n1c_fwd_avx512, "shared/col/half/radix6_z_n1ch_avx2.c")     \
+    X(7, "r7", "shared/col/radix7_z_n1c_avx512.c", radix7_z_n1c_fwd_avx512, "shared/col/half/radix7_z_n1ch_avx2.c")     \
+    X(8, "r8", "shared/col/radix8_z_n1c_avx512.c", radix8_z_n1c_fwd_avx512, "shared/col/half/radix8_z_n1ch_avx2.c")     \
+    X(9, "r9", "shared/col/radix9_z_n1c_avx512.c", radix9_z_n1c_fwd_avx512, "shared/col/half/radix9_z_n1ch_avx2.c")     \
+    X(10, "r10", "shared/col/radix10_z_n1c_avx512.c", radix10_z_n1c_fwd_avx512, "shared/col/half/radix10_z_n1ch_avx2.c") \
+    X(11, "r11", "shared/col/radix11_z_n1c_avx512.c", radix11_z_n1c_fwd_avx512, "shared/col/half/radix11_z_n1ch_avx2.c") \
+    X(12, "r12", "shared/col/radix12_z_n1c_avx512.c", radix12_z_n1c_fwd_avx512, "shared/col/half/radix12_z_n1ch_avx2.c") \
+    X(13, "r13", "shared/col/radix13_z_n1c_avx512.c", radix13_z_n1c_fwd_avx512, "shared/col/half/radix13_z_n1ch_avx2.c") \
+    X(14, "r14", "shared/col/radix14_z_n1c_avx512.c", radix14_z_n1c_fwd_avx512, "shared/col/half/radix14_z_n1ch_avx2.c") \
+    X(15, "r15", "shared/col/radix15_z_n1c_avx512.c", radix15_z_n1c_fwd_avx512, "shared/col/half/radix15_z_n1ch_avx2.c") \
+    X(16, "r16", "shared/col/radix16_z_n1c_avx512.c", radix16_z_n1c_fwd_avx512, "shared/col/half/radix16_z_n1ch_avx2.c") \
+    X(17, "r17", "shared/col/radix17_z_n1c_avx512.c", radix17_z_n1c_fwd_avx512, "shared/col/half/radix17_z_n1ch_avx2.c") \
+    X(19, "r19", "shared/col/radix19_z_n1c_avx512.c", radix19_z_n1c_fwd_avx512, "shared/col/half/radix19_z_n1ch_avx2.c") \
+    X(21, "r21", "shared/col/radix21_z_n1c_avx512.c", radix21_z_n1c_fwd_avx512, "shared/col/half/radix21_z_n1ch_avx2.c") \
+    X(22, "r22", "shared/col/radix22_z_n1c_avx512.c", radix22_z_n1c_fwd_avx512, "shared/col/half/radix22_z_n1ch_avx2.c") \
+    X(23, "r23", "shared/col/radix23_z_n1c_avx512.c", radix23_z_n1c_fwd_avx512, "shared/col/half/radix23_z_n1ch_avx2.c") \
+    X(25, "r25", "shared/col/radix25_z_n1c_avx512.c", radix25_z_n1c_fwd_avx512, "shared/col/half/radix25_z_n1ch_avx2.c") \
+    X(26, "r26", "shared/col/radix26_z_n1c_avx512.c", radix26_z_n1c_fwd_avx512, "shared/col/half/radix26_z_n1ch_avx2.c") \
+    X(27, "r27", "shared/col/radix27_z_n1c_avx512.c", radix27_z_n1c_fwd_avx512, "shared/col/half/radix27_z_n1ch_avx2.c") \
+    X(29, "r29", "shared/col/radix29_z_n1c_avx512.c", radix29_z_n1c_fwd_avx512, "shared/col/half/radix29_z_n1ch_avx2.c") \
+    X(31, "r31", "shared/col/radix31_z_n1c_avx512.c", radix31_z_n1c_fwd_avx512, "shared/col/half/radix31_z_n1ch_avx2.c") \
+    X(32, "r32b48", "shared/col/blocked/radix32_z_n1cb48_avx512.c", radix32_z_n1cb48_fwd_avx512,                        \
+      "shared/col/half/radix32_z_n1cb48h_avx2.c")                                                                       \
+    X(32, "r32b84", "shared/col/blocked/radix32_z_n1cb84_avx512.c", radix32_z_n1cb84_fwd_avx512,                        \
+      "shared/col/half/radix32_z_n1cb84h_avx2.c")                                                                       \
+    X(37, "r37", "shared/col/radix37_z_n1c_avx512.c", radix37_z_n1c_fwd_avx512, "shared/col/half/radix37_z_n1ch_avx2.c") \
+    X(41, "r41", "shared/col/radix41_z_n1c_avx512.c", radix41_z_n1c_fwd_avx512, "shared/col/half/radix41_z_n1ch_avx2.c") \
+    X(43, "r43", "shared/col/radix43_z_n1c_avx512.c", radix43_z_n1c_fwd_avx512, "shared/col/half/radix43_z_n1ch_avx2.c") \
+    X(47, "r47", "shared/col/radix47_z_n1c_avx512.c", radix47_z_n1c_fwd_avx512, "shared/col/half/radix47_z_n1ch_avx2.c") \
+    X(64, "r64b88", "shared/col/blocked/radix64_z_n1cb88_avx512.c", radix64_z_n1cb88_fwd_avx512,                        \
+      "shared/col/half/radix64_z_n1cb88h_avx2.c")
 
 #ifdef HALF_STORE_ARM
-/* ── ONE ARM: the kernel's source, its plane stores at the arm's width ────── */
+/* ── ONE ARM: the kernel's copy, its plane stores at the arm's width ────────── */
 #include <immintrin.h>
 #include <stddef.h>
-#if HALF_STORE_ARM == 256
-#define _mm512_storeu_pd(p, v)                                         \
+#if HALF_STORE_ARM == 512
+#define HALF_STORE_PLANE(p, v) _mm512_storeu_pd((p), (v))
+#elif HALF_STORE_ARM == 256
+#define HALF_STORE_PLANE(p, v)                                         \
     do                                                                 \
     {                                                                  \
         double *const hs_p_ = (p);                                     \
@@ -105,17 +152,17 @@
         _mm256_storeu_pd(hs_p_ + 4, _mm512_extractf64x4_pd(hs_v_, 1)); \
     } while (0)
 #elif HALF_STORE_ARM == 128
-#define _mm512_storeu_pd(p, v)                                    \
-    do                                                            \
-    {                                                             \
-        double *const hs_p_ = (p);                                \
-        const __m512d hs_v_ = (v);                                \
-        _mm_storeu_pd(hs_p_, _mm512_castpd512_pd128(hs_v_));      \
+#define HALF_STORE_PLANE(p, v)                                      \
+    do                                                              \
+    {                                                               \
+        double *const hs_p_ = (p);                                  \
+        const __m512d hs_v_ = (v);                                  \
+        _mm_storeu_pd(hs_p_, _mm512_castpd512_pd128(hs_v_));        \
         _mm_storeu_pd(hs_p_ + 2, _mm512_extractf64x2_pd(hs_v_, 1)); \
         _mm_storeu_pd(hs_p_ + 4, _mm512_extractf64x2_pd(hs_v_, 2)); \
         _mm_storeu_pd(hs_p_ + 6, _mm512_extractf64x2_pd(hs_v_, 3)); \
     } while (0)
-#elif HALF_STORE_ARM != 512
+#else
 #error "HALF_STORE_ARM is 512, 256 or 128"
 #endif
 #include HALF_STORE_KERNEL
@@ -136,8 +183,8 @@
                   size_t, size_t, size_t, size_t, size_t
 typedef void (*leaf_fn)(LEAF_ARGS);
 
-#define DECLARE(R, file, sym)                   \
-    extern void sym(LEAF_ARGS);                 \
+#define DECLARE(R, name, file, sym, twin)          \
+    extern void sym(LEAF_ARGS);                    \
     extern void half_store_st512_##sym(LEAF_ARGS); \
     extern void half_store_st256_##sym(LEAF_ARGS); \
     extern void half_store_st128_##sym(LEAF_ARGS);
@@ -146,16 +193,42 @@ HALF_STORE_KERNELS(DECLARE)
 typedef struct
 {
     int R;
-    const char *file, *name;
+    const char *name, *file, *sym;
     leaf_fn lib;      /* the library's own kernel (the codelet library) */
     leaf_fn arm[3];   /* st512, st256, st128 */
 } kernel_t;
-#define ROW(R, file, sym) {R, file, #sym, sym, {half_store_st512_##sym, half_store_st256_##sym, half_store_st128_##sym}},
+#define ROW(R, name, file, sym, twin) \
+    {R, name, file, #sym, sym, {half_store_st512_##sym, half_store_st256_##sym, half_store_st128_##sym}},
 static const kernel_t KERNELS[] = {HALF_STORE_KERNELS(ROW)};
 #define NKERNELS ((int)(sizeof KERNELS / sizeof KERNELS[0]))
 
-enum { ST512, ST256, ST128, ST512_EVEN, NARMS };
-static const char *const ARM[NARMS] = {"st512", "st256", "st128", "st512_even"};
+/* the default leaves: the radices whose half-store leaf the 14900KF's race
+ * picked (2, 4, 16, 32, 64), radix 8, and two odd leaves (5; 9, whose wide
+ * loop also stores into S[]) */
+static const char *const DEFAULT_LEAVES[] = {"r2", "r4", "r8", "r16", "r32b48", "r32b84", "r64b88", "r5", "r9"};
+
+/* the 2D real r2c cells where the 14900KF's forms race picked the half-store
+ * leaf (src/wisdom/14900KF/wisdom2_2d.txt: the rows whose forms= ends in h,
+ * b84h or b88h), with the leaf it picked. Not here: the five rows with
+ * hp1 = N2/2 + 1 = 3 -- 4 x 4 (radix 4), 128 x 4 and 256 x 4 (r32b48),
+ * 2048 x 4 and 4096 x 4 (r64b88) -- where the AVX-512 leaf runs its masked
+ * 3-column pass alone: no 512-bit plane store, the three arms the same code. */
+static const struct
+{
+    const char *leaf;
+    int N1, N2;
+} BANKED[] = {
+    {"r2", 2, 16},      {"r2", 2, 32},      {"r2", 2, 128},     {"r2", 2, 1024},    {"r2", 2, 2048},
+    {"r4", 4, 16},      {"r4", 4, 4096},
+    {"r16", 16, 1024},  {"r16", 16, 2048},  {"r16", 16, 4096},  {"r16", 16, 8192},  {"r16", 512, 4096},
+    {"r16", 512, 8192},
+    {"r32b84", 32, 16}, {"r32b84", 32, 512}, {"r32b84", 128, 8},
+    {"r64b88", 64, 32}, {"r64b88", 64, 128}, {"r64b88", 64, 512}, {"r64b88", 64, 1024},
+};
+#define NBANKED ((int)(sizeof BANKED / sizeof BANKED[0]))
+
+enum { ST512, ST256, ST128, ST512_AGAIN, ST512_EVEN, NARMS };
+static const char *const ARM[NARMS] = {"st512", "st256", "st128", "st512_again", "st512_even"};
 
 static void pace(int ms)
 {
@@ -213,13 +286,13 @@ static void mismatch(const kernel_t *k, const char *what, size_t pitch, size_t c
     for (i = 0; i < n && !memcmp(got + i, want + i, sizeof(double)); i++)
         ;
     if (i < GUARD || i >= n - GUARD)
-        printf("half_store_bench: MISMATCH radix %d (%s): %s at pitch %zu, count %zu: guard double %zu "
-               "was written (%a)\n", k->R, k->name, what, pitch, count, i, got[i]);
+        printf("half_store_bench: MISMATCH %s (%s): %s at pitch %zu, count %zu: guard double %zu "
+               "was written (%a)\n", k->name, k->sym, what, pitch, count, i, got[i]);
     else
     {
         const size_t j = i - GUARD, row = j / (2 * pitch), col = (j % (2 * pitch)) / 2;
-        printf("half_store_bench: MISMATCH radix %d (%s): %s at pitch %zu, count %zu: row %zu, column %zu "
-               "(%s) holds %a where st512 holds %a\n", k->R, k->name, what, pitch, count, row, col,
+        printf("half_store_bench: MISMATCH %s (%s): %s at pitch %zu, count %zu: row %zu, column %zu "
+               "(%s) holds %a where st512 holds %a\n", k->name, k->sym, what, pitch, count, row, col,
                (j & 1) ? "im" : "re", got[i], want[i]);
     }
     exit(1);
@@ -277,7 +350,7 @@ static int check_all(void)
 typedef struct
 {
     const kernel_t *k;
-    int N1, N2;
+    int N1, N2, banked;
     size_t hp1;
 } cell_t;
 
@@ -293,15 +366,24 @@ static void leaf_pass(leaf_fn fn, double *z, int N1, int R, size_t pitch, size_t
     }
 }
 
-static double sample(leaf_fn fn, double *z, const double *seed, size_t n, const cell_t *c, size_t pitch, int reps)
+/* one sample, ns per leaf stage: reps stages, timed; the plane re-laid from
+ * its seed (_il2d_ip_reset) before every `chunk` of them, untimed */
+static double sample(leaf_fn fn, double *z, const double *seed, size_t n, const cell_t *c, size_t pitch, int reps,
+                     int chunk)
 {
-    double t0;
-    int i;
-    memcpy(z, seed, n * sizeof(double));   /* the plane re-laid before every sample (_il2d_ip_reset) */
-    t0 = vfft_now_ns();
-    for (i = 0; i < reps; i++)
-        leaf_pass(fn, z, c->N1, c->k->R, pitch, c->hp1);
-    return (vfft_now_ns() - t0) / reps;
+    double ns = 0.0, t0;
+    int done = 0, i, m;
+    while (done < reps)
+    {
+        m = reps - done < chunk ? reps - done : chunk;
+        memcpy(z, seed, n * sizeof(double));
+        t0 = vfft_now_ns();
+        for (i = 0; i < m; i++)
+            leaf_pass(fn, z, c->N1, c->k->R, pitch, c->hp1);
+        ns += vfft_now_ns() - t0;
+        done += m;
+    }
+    return ns / reps;
 }
 
 static int cmp_d(const void *a, const void *b)
@@ -332,21 +414,58 @@ static void plane_size(char *buf, size_t n, double bytes)
 {
     if (bytes >= 1048576.0)
         snprintf(buf, n, "%.1f MiB", bytes / 1048576.0);
-    else
+    else if (bytes >= 1024.0)
         snprintf(buf, n, "%.0f KiB", bytes / 1024.0);
+    else
+        snprintf(buf, n, "%.0f B", bytes);
+}
+
+/* ns, four digits that matter, no exponent */
+static void ns4(char *buf, size_t n, double v)
+{
+    snprintf(buf, n, v >= 1000.0 ? "%.0f" : v >= 100.0 ? "%.1f" : v >= 10.0 ? "%.2f" : "%.3f", v);
+}
+
+static int add_cell(cell_t *cells, int ncells, const kernel_t *k, int N1, int N2, int banked)
+{
+    int i;
+    for (i = 0; i < ncells; i++)
+        if (cells[i].k == k && cells[i].N1 == N1 && cells[i].N2 == N2)
+            return ncells;   /* a sweep cell that is a banked one is timed once, with the banked */
+    cells[ncells].k = k;
+    cells[ncells].N1 = N1;
+    cells[ncells].N2 = N2;
+    cells[ncells].hp1 = (size_t)N2 / 2 + 1;
+    cells[ncells].banked = banked;
+    return ncells + 1;
+}
+
+/* `s` is a leaf's name (r32b48), a radix (32: every leaf of that radix) or all */
+static int select_leaves(const char *s, int *sel)
+{
+    int ki, any = 0;
+    if (!strcmp(s, "all"))
+    {
+        for (ki = 0; ki < NKERNELS; ki++)
+            sel[ki] = 1;
+        return 1;
+    }
+    for (ki = 0; ki < NKERNELS; ki++)
+        if (!strcmp(s, KERNELS[ki].name) || (s[0] >= '0' && s[0] <= '9' && atoi(s) == KERNELS[ki].R))
+            sel[ki] = any = 1;
+    return any;
 }
 
 int main(int argc, char **argv)
 {
-    static const int DEFAULT_LEAVES[] = {4, 8, 16, 3, 5, 7};
-    static const int N2S[] = {64, 256, 1024, 4096};
+    static const int N2S[] = {64, 512, 4096};
     static const double PLANE_BYTES[] = {256.0 * 1024, 4.0 * 1048576, 64.0 * 1048576};
-    int leaves[NKERNELS + 1], nleaves = 0, check_only = 0, quick = 0, rounds = 25, pace_ms = 200, core = -1;
+    static cell_t cells[NKERNELS * 9 + NBANKED];
+    int sel[NKERNELS] = {0}, nsel = 0, check_only = 0, quick = 0, rounds = 25, pace_ms = 200, core = -1;
     const char *out = NULL;
-    cell_t cells[NKERNELS * 4 * 3];
-    int ncells = 0, ci, i, a;
+    int ncells = 0, ci, i, a, ki;
     FILE *ft = NULL, *fr = NULL;
-    char scope[320], line[1024];
+    char scope[320], line[2048];
     time_t now = time(NULL);
 
     __builtin_cpu_init();   /* first: this TU carries no AVX-512 code, the arms and the library do */
@@ -373,24 +492,22 @@ int main(int argc, char **argv)
             out = argv[++i];
         else if (!strcmp(argv[i], "--leaves") && i + 1 < argc)
         {
-            const char *s = argv[++i];
-            if (!strcmp(s, "all"))
-                for (nleaves = 0; nleaves < NKERNELS; nleaves++)
-                    leaves[nleaves] = KERNELS[nleaves].R;
-            else
-                while (*s && nleaves < NKERNELS)
+            char list[256], *s;
+            snprintf(list, sizeof list, "%s", argv[++i]);
+            for (s = strtok(list, ","); s; s = strtok(NULL, ","))
+                if (!select_leaves(s, sel))
                 {
-                    char *e;
-                    const long r = strtol(s, &e, 10);
-                    if (e == s)
-                        break;
-                    leaves[nleaves++] = (int)r;
-                    s = (*e == ',') ? e + 1 : e;
+                    fprintf(stderr, "half_store_bench: no leaf %s here (the leaves:", s);
+                    for (ki = 0; ki < NKERNELS; ki++)
+                        fprintf(stderr, " %s", KERNELS[ki].name);
+                    fprintf(stderr, ")\n");
+                    return 2;
                 }
+            nsel = 1;
         }
         else
         {
-            fprintf(stderr, "usage: half_store_bench [--check] [--quick] [--leaves 4,8,16,3,5,7 | all] "
+            fprintf(stderr, "usage: half_store_bench [--check] [--quick] [--leaves r16,32,... | all] "
                             "[--rounds N] [--pace-ms M] [--core C] [--out DIR]\n");
             return 2;
         }
@@ -407,45 +524,37 @@ int main(int argc, char **argv)
 
     if (quick)
     {   /* one cell, 2 rounds: proves the build and the run, measures nothing */
-        leaves[0] = 16;
-        nleaves = 1;
+        for (ki = 0; KERNELS[ki].R != 16; ki++)
+            ;
+        ncells = add_cell(cells, 0, &KERNELS[ki], 64, 64, 0);
         rounds = 2;
     }
-    else if (!nleaves)
-        for (; nleaves < (int)(sizeof DEFAULT_LEAVES / sizeof DEFAULT_LEAVES[0]); nleaves++)
-            leaves[nleaves] = DEFAULT_LEAVES[nleaves];
-    for (i = 0; i < nleaves; i++)
+    else
     {
-        const kernel_t *k = NULL;
-        int n2, pl;
-        for (a = 0; a < NKERNELS; a++)
-            if (KERNELS[a].R == leaves[i])
-                k = &KERNELS[a];
-        if (!k)
+        if (!nsel)
+            for (i = 0; i < (int)(sizeof DEFAULT_LEAVES / sizeof DEFAULT_LEAVES[0]); i++)
+                select_leaves(DEFAULT_LEAVES[i], sel);
+        for (i = 0; i < NBANKED; i++)
+            for (ki = 0; ki < NKERNELS; ki++)
+                if (sel[ki] && !strcmp(KERNELS[ki].name, BANKED[i].leaf))
+                    ncells = add_cell(cells, ncells, &KERNELS[ki], BANKED[i].N1, BANKED[i].N2, 1);
+        for (ki = 0; ki < NKERNELS; ki++)
         {
-            fprintf(stderr, "half_store_bench: no radix-%d leaf here (the kernels: 2 3 4 5 6 7 8 10 12 14 16 22 26)\n",
-                    leaves[i]);
-            return 2;
+            int n2, pl;
+            if (!sel[ki])
+                continue;
+            for (n2 = 0; n2 < (int)(sizeof N2S / sizeof N2S[0]); n2++)
+                for (pl = 0; pl < (int)(sizeof PLANE_BYTES / sizeof PLANE_BYTES[0]); pl++)
+                    ncells = add_cell(cells, ncells, &KERNELS[ki],
+                                      pick_n1(KERNELS[ki].R, (size_t)N2S[n2] / 2 + 1, PLANE_BYTES[pl]), N2S[n2], 0);
         }
-        for (n2 = 0; n2 < 4; n2++)
-            for (pl = 0; pl < 3; pl++)
-            {
-                cell_t *c = &cells[ncells];
-                if (quick && (n2 || pl))
-                    continue;
-                c->k = k;
-                c->N2 = N2S[n2];
-                c->hp1 = (size_t)c->N2 / 2 + 1;
-                c->N1 = quick ? 64 : pick_n1(k->R, c->hp1, PLANE_BYTES[pl]);
-                ncells++;
-            }
     }
 
     bench_scope(core, 1, bench_guard_mode());   /* pinned, sibling held, HIGH priority, the measurement lock */
     vfft_measure_describe(scope, sizeof scope);
     if (out)
     {
-        snprintf(line, sizeof line, "%s/table.txt", out);
+        snprintf(line, sizeof line, "%s/table.md", out);
         ft = fopen(line, "w");
         snprintf(line, sizeof line, "%s/rows.csv", out);
         fr = fopen(line, "w");
@@ -454,7 +563,8 @@ int main(int argc, char **argv)
             fprintf(stderr, "half_store_bench: cannot write into %s\n", out);
             return 1;
         }
-        fprintf(fr, "leaf,N1,N2,pitch,count,arm,round,position,reps,ns\n");
+        fprintf(ft, "```text\n");
+        fprintf(fr, "leaf,R,N1,N2,pitch,count,arm,round,position,reps,ns\n");
     }
     snprintf(line, sizeof line,
              "# half_store_bench %s: the AVX-512 forward column leaf, its plane stores as one 512-bit store (st512,\n"
@@ -465,14 +575,18 @@ int main(int argc, char **argv)
     if (ft)
         fprintf(ft, "%s# measurement scope: %s\n", line, scope);
     snprintf(line, sizeof line,
-             "# a time: one leaf stage of the 2D real r2c column pass (N1/R calls over all hp1 columns, in place),\n"
-             "#   us, median [min..max] of %d rounds; arms alternate within a round, %d ms idle between rounds\n"
-             "# st512/st256/st128 at the odd pitch hp1 = N2/2 + 1; st512_even: the control, st512 at pitch hp1 + 1\n"
-             "# ratios of medians: st256/st512, st128/st512 (below 1.00: the split arm is faster);\n"
-             "#   even/odd = st512_even/st512 (what the odd pitch costs the shipped leaf)\n"
-             "%-5s %-14s %5s %9s %5s  %-25s %-25s %-25s %-25s %7s %7s %7s\n",
-             rounds, pace_ms, "leaf", "N1 x N2", "pitch", "plane", "reps",
-             "st512", "st256", "st128", "st512_even", "256/512", "128/512", "even/odd");
+             "# a time: ns for one leaf stage of the 2D real r2c column pass (N1/R calls over all hp1 columns, in\n"
+             "#   place), median [min..max] of %d rounds; the arms alternate within a round; before every round\n"
+             "#   %d ms idle, then 5 ms at least of untimed samples\n"
+             "# st512, st256, st128 and st512 again (st512 timed a second time) at the odd pitch hp1 = N2/2 + 1;\n"
+             "#   st512 even: the control, st512 at the even pitch hp1 rounded up to a multiple of 4 complex\n"
+             "#   (64 bytes: every row starts on a cache line)\n"
+             "# ratios of medians to st512's: 256/512, 128/512 (below 1.000: the split arm is faster);\n"
+             "#   again/512 (st512 against itself: the noise of a ratio); even/512 (what the odd pitch costs\n"
+             "#   the shipped leaf)\n"
+             "%-7s %-12s %5s %9s %8s  %-28s %-28s %-28s %-28s %-28s %7s %7s %9s %8s\n",
+             rounds, pace_ms, "leaf", "N1 x N2", "pitch", "plane", "reps", "st512", "st256", "st128",
+             "st512 again", "st512 even", "256/512", "128/512", "again/512", "even/512");
     printf("%s", line);
     if (ft)
         fputs(line, ft);
@@ -482,66 +596,92 @@ int main(int argc, char **argv)
     {
         const cell_t *c = &cells[ci];
         const int R = c->k->R;
-        const size_t pitch[NARMS] = {c->hp1, c->hp1, c->hp1, c->hp1 + 1};
-        const size_t n_odd = 2 * (size_t)c->N1 * c->hp1, n_even = 2 * (size_t)c->N1 * (c->hp1 + 1);
+        const int chunk = (int)(290.0 / log10((double)R));   /* stages between re-lays: R^chunk under 1e290 */
+        const size_t pe = (c->hp1 + 3) & ~(size_t)3;          /* the control's pitch: a multiple of 64 bytes */
+        const size_t pitch[NARMS] = {c->hp1, c->hp1, c->hp1, c->hp1, pe};
+        const size_t n_odd = 2 * (size_t)c->N1 * c->hp1, n_even = 2 * (size_t)c->N1 * pe;
         double *z = alloc_d(n_odd), *seed = alloc_d(n_odd), *ze = alloc_d(n_even), *seede = alloc_d(n_even);
+        double *zb[NARMS], *sb[NARMS];
+        size_t nb[NARMS];
         leaf_fn fn[NARMS];
-        double ns[NARMS][1024], med[NARMS], lo[NARMS], hi[NARMS], est, t0, bytes;
-        int reps, cap, r, p;
-        char ps[32], cell[32];
+        double ns[NARMS][1024], med[NARMS], lo[NARMS], hi[NARMS], est = 0.0, t0;
+        int reps, r, p, m;
+        char ps[32], cell[32], col[NARMS][64], v[3][24];
         size_t q;
+        if (ci == 0 || c->banked != cells[ci - 1].banked)
+        {
+            snprintf(line, sizeof line, c->banked
+                     ? "# the cells where the 14900KF's 2D r2c forms race picked the half-store leaf\n"
+                     : "# the plane-size sweep: N1 x N2 near 256 KiB (inside L2), 4 MiB (in L3), 64 MiB (past it)\n");
+            printf("%s", line);
+            if (ft)
+                fputs(line, ft);
+        }
         for (q = 0; q < n_odd; q++)
             seed[q] = 1.0 + 1e-6 * (double)(q & 1023);   /* the race's seed (_il2d_race_forms) */
         for (q = 0; q < n_even; q++)
             seede[q] = 1.0 + 1e-6 * (double)(q & 1023);
-        fn[ST512] = c->k->arm[0];
+        fn[ST512] = fn[ST512_AGAIN] = fn[ST512_EVEN] = c->k->arm[0];
         fn[ST256] = c->k->arm[1];
         fn[ST128] = c->k->arm[2];
-        fn[ST512_EVEN] = c->k->arm[0];
+        for (a = 0; a < NARMS; a++)
+        {
+            zb[a] = a == ST512_EVEN ? ze : z;
+            sb[a] = a == ST512_EVEN ? seede : seed;
+            nb[a] = a == ST512_EVEN ? n_even : n_odd;
+        }
         /* warm every arm once, then size the sample on st512 (the incumbent, as the race sizes it) */
         for (a = 0; a < NARMS; a++)
-            sample(fn[a], a == ST512_EVEN ? ze : z, a == ST512_EVEN ? seede : seed,
-                   a == ST512_EVEN ? n_even : n_odd, c, pitch[a], 1);
-        memcpy(z, seed, n_odd * sizeof(double));
-        t0 = vfft_now_ns();
-        leaf_pass(fn[ST512], z, c->N1, R, c->hp1, c->hp1);
-        est = vfft_now_ns() - t0;
-        cap = (int)(290.0 / log10((double)R));   /* R^reps under 1e290 from a plane seeded near 1 */
-        reps = (int)ceil(1.0e6 / (est > 1.0 ? est : 1.0));
-        if (reps > cap)
-            reps = cap;
-        if (reps < 1)
-            reps = 1;
+            sample(fn[a], zb[a], sb[a], nb[a], c, pitch[a], 1, chunk);
+        for (m = 1; m <= (1 << 22); m *= 2)
+        {
+            est = sample(fn[ST512], z, seed, n_odd, c, c->hp1, m, chunk);
+            if (est * m >= 2.0e5)
+                break;
+        }
+        t0 = ceil(1.0e6 / (est > 0.5 ? est : 0.5));
+        reps = t0 > (double)(1 << 24) ? 1 << 24 : t0 < 1.0 ? 1 : (int)t0;
         for (r = 0; r < rounds; r++)
         {
             pace(pace_ms);   /* every round after the same idle, the first included */
+            t0 = vfft_now_ns();
+            do   /* the core wakes slow from the idle: untimed samples, in the round's order, 5 ms at least */
+                for (p = 0; p < NARMS; p++)
+                {
+                    a = (r & 1) ? NARMS - 1 - p : p;
+                    sample(fn[a], zb[a], sb[a], nb[a], c, pitch[a], reps, chunk);
+                }
+            while (vfft_now_ns() - t0 < 5.0e6);
             for (p = 0; p < NARMS; p++)
             {
                 a = (r & 1) ? NARMS - 1 - p : p;   /* forward, then backward: no arm always first */
-                ns[a][r] = sample(fn[a], a == ST512_EVEN ? ze : z, a == ST512_EVEN ? seede : seed,
-                                  a == ST512_EVEN ? n_even : n_odd, c, pitch[a], reps);
+                ns[a][r] = sample(fn[a], zb[a], sb[a], nb[a], c, pitch[a], reps, chunk);
                 if (fr)
-                    fprintf(fr, "%d,%d,%d,%zu,%zu,%s,%d,%d,%d,%.1f\n", R, c->N1, c->N2, pitch[a], c->hp1,
-                            ARM[a], r, p, reps, ns[a][r]);
+                    fprintf(fr, "%s,%d,%d,%d,%zu,%zu,%s,%d,%d,%d,%.3f\n", c->k->name, R, c->N1, c->N2, pitch[a],
+                            c->hp1, ARM[a], r, p, reps, ns[a][r]);
             }
         }
         for (a = 0; a < NARMS; a++)
-            med[a] = median(ns[a], rounds, &lo[a], &hi[a]);
-        bytes = (double)n_odd * sizeof(double);
-        plane_size(ps, sizeof ps, bytes);
-        snprintf(cell, sizeof cell, "%d x %d", c->N1, c->N2);
         {
-            char col[NARMS][40];
-            for (a = 0; a < NARMS; a++)
-                snprintf(col[a], sizeof col[a], "%.2f [%.2f..%.2f]", med[a] / 1e3, lo[a] / 1e3, hi[a] / 1e3);
-            snprintf(line, sizeof line, "r%-4d %-14s %5zu %9s %5d  %-25s %-25s %-25s %-25s %7.3f %7.3f %7.3f\n",
-                     R, cell, c->hp1, ps, reps, col[ST512], col[ST256], col[ST128], col[ST512_EVEN],
-                     med[ST256] / med[ST512], med[ST128] / med[ST512], med[ST512_EVEN] / med[ST512]);
+            med[a] = median(ns[a], rounds, &lo[a], &hi[a]);
+            ns4(v[0], sizeof v[0], med[a]);
+            ns4(v[1], sizeof v[1], lo[a]);
+            ns4(v[2], sizeof v[2], hi[a]);
+            snprintf(col[a], sizeof col[a], "%s [%s..%s]", v[0], v[1], v[2]);
         }
+        plane_size(ps, sizeof ps, (double)n_odd * sizeof(double));
+        snprintf(cell, sizeof cell, "%d x %d", c->N1, c->N2);
+        snprintf(line, sizeof line, "%-7s %-12s %5zu %9s %8d  %-28s %-28s %-28s %-28s %-28s %7.3f %7.3f %9.3f %8.3f\n",
+                 c->k->name, cell, c->hp1, ps, reps, col[ST512], col[ST256], col[ST128], col[ST512_AGAIN],
+                 col[ST512_EVEN], med[ST256] / med[ST512], med[ST128] / med[ST512], med[ST512_AGAIN] / med[ST512],
+                 med[ST512_EVEN] / med[ST512]);
         printf("%s", line);
         fflush(stdout);
         if (ft)
+        {
             fputs(line, ft);
+            fflush(ft);
+        }
         if (fr)
             fflush(fr);
         vfft_free(z);
@@ -550,7 +690,10 @@ int main(int argc, char **argv)
         vfft_free(seede);
     }
     if (ft)
+    {
+        fprintf(ft, "```\n");
         fclose(ft);
+    }
     if (fr)
         fclose(fr);
     printf("half_store_bench: %d cells, %d rounds%s\n", ncells, rounds, out ? "" : " (no --out: nothing written)");
