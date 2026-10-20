@@ -11,7 +11,12 @@ for each instruction set; the split layout has its AVX-512 kernels today, the
 interleaved layout's follow from the same compiler. You never pick an algorithm:
 a call names a contract, the planner races the engines that serve it on your
 machine, and the winner is kept as wisdom, so the first create measures and
-every later one replays. 
+every later one replays.
+
+**How to use it:** the user guide, [`how-to-use/VectorFFT-Guide.html`](how-to-use/VectorFFT-Guide.html)
+(also as [PDF](how-to-use/VectorFFT-Guide.pdf)), shows how to build and install the library, how to
+call it from C and C++, and how to move a program written for Intel MKL's DFTI interface to it,
+with worked 3D examples in [`how-to-use/examples/`](how-to-use/examples/).
 
 ---
 
@@ -135,7 +140,8 @@ Where the kernels come from: the DAG FFT compiler takes a DFT as an expression
 DAG and emits straight-line, register-allocated C per instruction set.
 
 The contracts in full: [`include/vfft.h`](include/vfft.h) (support matrix and
-buffer signatures) and [`docs/design/design_contracts.md`](docs/design/design_contracts.md).
+buffer signatures) and [`docs/design/design_contracts.md`](docs/design/design_contracts.md);
+every served configuration at work: the [user guide](how-to-use/VectorFFT-Guide.html).
 
 ---
 
