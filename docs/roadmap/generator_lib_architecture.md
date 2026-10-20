@@ -2235,10 +2235,5 @@ to the bench target, mirroring `build.py`'s `dag_codelet_srcs()` and its
 references, and the resulting binary runs at `xerr 4.1e-16 / gours 1.0e-15 /
 gmkl 7.2e-16` - identical error figures to the build.py-built binary.**
 
-⚠ **Open, owner's call: one ORPHANED CMake file.** `src/CMakeLists.txt` is
-unreachable - there is no `add_subdirectory` of it anywhere in the repo. It is
-a fossil of the retired v1.0 production lib: every path it names is GONE
-(`src/vfft.c`, `src/vectorfft_tune/generated/r*`,
-`src/vectorfft_tune/generated/dct8`, `src/stride-fft/codelets/scalar`). It
-costs nothing at build time but it is exactly the "attracts future work to the
-wrong files" hazard the pool-sunset policy names. Recommend deleting it.
+The root `CMakeLists.txt` is the one CMake entry point: `src/` holds no CMake
+file of its own.

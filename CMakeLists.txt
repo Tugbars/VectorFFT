@@ -26,7 +26,7 @@
 #   The MSVC-style branch below is kept for the gauntlet; MSVC is not supported.
 # ISA override: -DVFFT_ISA=avx2|avx512|auto (default avx2). -DVFFT_NATIVE=ON|OFF.
 # ============================================================================
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 # A parent's ORDINARY variable (set(VFFT_WISDOM ...) before add_subdirectory) is
 # honoured on the first configure too: without CMP0126 NEW, set(CACHE) below would
 # drop it until the second. CMake 3.21+ knows the policy; older ones keep the old way.
@@ -131,8 +131,8 @@ set(DAG_CODELETS "${DAG}/codelets")
 #   - explicit avx2 / avx512  -> trust the user.
 #   - auto (what the CMake Tools extension may hold cached from the old root
 #     CMake) -> DETECT the host: pick avx512 only if the avx512 codelets
-#     exist AND this CPU actually runs AVX-512 (try_run compiles an _mm512 op and
-#     executes it — it SIGILLs / returns non-zero on a non-AVX-512 CPU). Else avx2.
+#     exist AND this CPU actually runs AVX-512 (check_c_source_runs compiles an _mm512
+#     op and executes it — it SIGILLs / returns non-zero on a non-AVX-512 CPU). Else avx2.
 if(VFFT_ISA STREQUAL "avx2" OR VFFT_ISA STREQUAL "avx512")
     # explicit override — leave as-is
 elseif(VFFT_ISA STREQUAL "auto")
@@ -144,11 +144,20 @@ elseif(VFFT_ISA STREQUAL "auto")
         else()
             set(_av512_flag "-mavx512f -mavx512dq -mfma")
         endif()
-        try_run(_av512_run _av512_compile
-            "${PROJECT_BINARY_DIR}/_avx512_probe"
-            "${PROJECT_SOURCE_DIR}/cmake/check_avx512.c"
-            CMAKE_FLAGS "-DCMAKE_C_FLAGS=${_av512_flag}")
-        if(_av512_compile AND _av512_run EQUAL 0)
+        include(CheckCSourceRuns)
+        set(CMAKE_REQUIRED_FLAGS "${_av512_flag}")
+        check_c_source_runs([==[
+#include <immintrin.h>
+int main(void)
+{
+    volatile double in = 1.0;
+    double out[8];
+    _mm512_storeu_pd(out, _mm512_add_pd(_mm512_set1_pd(in), _mm512_set1_pd(in)));
+    return out[7] == 2.0 ? 0 : 1;
+}
+]==] VFFT_HOST_RUNS_AVX512)
+        unset(CMAKE_REQUIRED_FLAGS)
+        if(VFFT_HOST_RUNS_AVX512)
             set(VFFT_ISA "avx512")
         endif()
     endif()
@@ -503,16 +512,67 @@ if(VFFT_INSTALL)
     file(RELATIVE_PATH VFFT_PC_RELPREFIX "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
     string(REGEX REPLACE "/$" "" VFFT_PC_RELPREFIX "${VFFT_PC_RELPREFIX}")
     string(STRIP "${CMAKE_THREAD_LIBS_INIT} -lm" VFFT_PC_SYSLIBS)
-    configure_file("${PROJECT_SOURCE_DIR}/cmake/vectorfft.pc.in" "${PROJECT_BINARY_DIR}/vectorfft.pc" @ONLY)
+    file(CONFIGURE OUTPUT "${PROJECT_BINARY_DIR}/vectorfft.pc" @ONLY CONTENT [==[
+prefix=${pcfiledir}/@VFFT_PC_RELPREFIX@
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+datadir=${prefix}/@CMAKE_INSTALL_DATADIR@/vectorfft
+
+Name: VectorFFT
+Description: VectorFFT, an FFT library; built for the build machine's CPU unless configured with VFFT_NATIVE=OFF (then any CPU with AVX2 and FMA)
+Version: @PROJECT_VERSION@
+Cflags: -I${includedir}
+Libs: -L${libdir} -lvfft @VFFT_PC_SYSLIBS@
+]==])
     install(FILES "${PROJECT_BINARY_DIR}/vectorfft.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
     install(EXPORT VectorFFTTargets NAMESPACE VectorFFT:: DESTINATION ${VFFT_CMAKE_DIR})
     include(CMakePackageConfigHelpers)
-    configure_package_config_file("${PROJECT_SOURCE_DIR}/cmake/VectorFFTConfig.cmake.in"
+    # the package's template, written into the build tree for configure_package_config_file
+    file(WRITE "${PROJECT_BINARY_DIR}/VectorFFTConfig.cmake.in" [==[
+@PACKAGE_INIT@
+
+# VectorFFTConfig.cmake — the CMake package of VectorFFT
+#
+#   find_package(VectorFFT CONFIG REQUIRED)            VectorFFT::vfft  (#include <vfft.h>)
+#   target_link_libraries(app PRIVATE VectorFFT::vfft)
+#
+# VectorFFT::vfft is a static archive built for the CPU of the machine that built it
+# (-march=native) unless it was configured with VFFT_NATIVE=OFF, which builds it for
+# any CPU with AVX2 and FMA (AVX-512 for an avx512 build). VectorFFT_DATA_DIR is the
+# installed data: wisdom/ (the shipped store, one folder per CPU) and frozen/.
+
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)   # the static archive links Threads::Threads ($<LINK_ONLY:...>)
+
+include("${CMAKE_CURRENT_LIST_DIR}/VectorFFTTargets.cmake")
+
+set_and_check(VectorFFT_DATA_DIR "@PACKAGE_VFFT_DATA_DIR@")
+
+# The archive opens the store of the prefix it was configured for. Found under
+# another prefix (a moved install), it still opens that one.
+get_filename_component(_vfft_built_for "@VFFT_LIB_DATA_DIR@" ABSOLUTE)
+get_filename_component(_vfft_found_at "${VectorFFT_DATA_DIR}" ABSOLUTE)
+if(WIN32)
+    string(TOLOWER "${_vfft_built_for}" _vfft_built_for)
+    string(TOLOWER "${_vfft_found_at}" _vfft_found_at)
+endif()
+if(NOT _vfft_found_at STREQUAL _vfft_built_for)
+    message(WARNING "VectorFFT was installed for the prefix @CMAKE_INSTALL_PREFIX@ and found under "
+                    "${PACKAGE_PREFIX_DIR}: its library opens the wisdom store @VFFT_LIB_STORE@. Reinstall "
+                    "with -DCMAKE_INSTALL_PREFIX=${PACKAGE_PREFIX_DIR}, or name a store in the program "
+                    "(vfft_config_t.wisdom_dir) or with VFFT_WISDOM_DIR.")
+endif()
+
+set(VectorFFT_vfft_FOUND TRUE)
+check_required_components(VectorFFT)
+]==])
+    configure_package_config_file("${PROJECT_BINARY_DIR}/VectorFFTConfig.cmake.in"
         "${PROJECT_BINARY_DIR}/VectorFFTConfig.cmake"
         INSTALL_DESTINATION ${VFFT_CMAKE_DIR}
         PATH_VARS VFFT_DATA_DIR)
-    # PROJECT_VERSION, as cmake/vectorfft.pc.in reports it today; the release's
+    # PROJECT_VERSION, as the pkg-config file above reports it today; the release's
     # number for the package files is the owner's call
     write_basic_package_version_file("${PROJECT_BINARY_DIR}/VectorFFTConfigVersion.cmake"
         VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)

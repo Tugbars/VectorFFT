@@ -1,0 +1,6 @@
+2026-10-20 01:58:06 run: 4 cells, contract out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-20 01:58:06 calibrate: 4 cells (0 already done)
+2026-10-20 01:58:07   calibrated 4/4 (8192), 1 s elapsed
+2026-10-20 01:58:07 bench: 4 cells (0 already benched, 0 not banked -> not benched)
+2026-10-20 01:58:17   benched 4/4 (8192), 8 s elapsed
+2026-10-20 01:58:18 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\pow2_t8_after_lazy_pin_20261020\report_mt8.md
