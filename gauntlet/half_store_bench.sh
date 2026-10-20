@@ -4,7 +4,7 @@
 # quarters, at the 2D real r2c column pass's odd pitch (the question and the arms: the .c's header).
 # On an AVX-512 machine, from bash (Git Bash or MSYS2 on Windows), from any directory:
 #
-#   ./gauntlet/half_store_bench.sh            the run: correctness, then 100 cells x 25 rounds
+#   ./gauntlet/half_store_bench.sh            the run: correctness, then 99 cells x 25 rounds
 #   ./gauntlet/half_store_bench.sh --quick    one cell, 2 rounds: proves the build and the run
 #
 # Further arguments go to the bench (--leaves all, --rounds N, ...). Results land in
@@ -245,7 +245,7 @@ if not name:
         name = next((l.split(':', 1)[1] for l in open('/proc/cpuinfo', errors='replace') if l.startswith('model name')), '')
     except OSError:
         pass
-name = re.sub(r'\((?:R|TM|tm)\)|\bCPU\b|\bProcessor\b|@.*$', ' ', name)
+name = re.sub(r'\((?:R|TM|tm)\)|\bCPU\b|\bProcessor\b|@.*$|\s(?:w/|with)\s.*$', ' ', name)
 print(re.sub(r'[^A-Za-z0-9.-]+', '_', name).strip('_') or 'cpu')
 PY
 )

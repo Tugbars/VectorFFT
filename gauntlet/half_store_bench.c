@@ -32,13 +32,13 @@
  * library's flags, and reads each arm's machine code back for its store widths.
  *
  * THE KERNELS (HALF_STORE_KERNELS): the 32 forward column leaves with an AVX2
- * half twin, n1c at radix 2 to 47 and the blocked n1cb48 and n1cb84 (radix 32)
- * and n1cb88 (radix 64). From radix 9 up (not 10, 12, 14, 16, 22, 26) and in
+ * half twin, n1c at 29 radices from 2 to 47 and the blocked n1cb48 and n1cb84
+ * (radix 32) and n1cb88 (radix 64). In the odd leaves from radix 9 up and in
  * the blocked leaves the wide loop also stores half-DFT spills into S[]. At
  * radix 3, 5, 6, 10 and 12 the AVX2 half twin carries an older arithmetic body
- * than its full twin, and from radix 23 up its body runs in another order than
- * the AVX-512 one; the stores it splits are still, by destination, the AVX-512
- * kernel's plane stores, which is what the arms follow.
+ * than its full twin, and at the odd radices from 23 up its body runs in
+ * another order than the AVX-512 one; the stores it splits are still, by
+ * destination, the AVX-512 kernel's plane stores, which is what the arms follow.
  *
  * CORRECTNESS FIRST. Before any timing, every arm of every kernel runs in
  * place on random input at an odd and an even pitch, at column counts that
@@ -608,7 +608,7 @@ int main(int argc, char **argv)
         int reps, r, p, m;
         char ps[32], cell[32], col[NARMS][64], v[3][24];
         size_t q;
-        if (ci == 0 || c->banked != cells[ci - 1].banked)
+        if (!quick && (ci == 0 || c->banked != cells[ci - 1].banked))
         {
             snprintf(line, sizeof line, c->banked
                      ? "# the cells where the 14900KF's 2D r2c forms race picked the half-store leaf\n"
@@ -634,13 +634,13 @@ int main(int argc, char **argv)
         for (a = 0; a < NARMS; a++)
             sample(fn[a], zb[a], sb[a], nb[a], c, pitch[a], 1, chunk);
         for (m = 1; m <= (1 << 22); m *= 2)
-        {
+        {   /* a stage's time from at least 0.2 ms of stages */
             est = sample(fn[ST512], z, seed, n_odd, c, c->hp1, m, chunk);
             if (est * m >= 2.0e5)
                 break;
         }
-        t0 = ceil(1.0e6 / (est > 0.5 ? est : 0.5));
-        reps = t0 > (double)(1 << 24) ? 1 << 24 : t0 < 1.0 ? 1 : (int)t0;
+        est = ceil(1.0e6 / (est > 0.5 ? est : 0.5));   /* the stages in 1 ms */
+        reps = est > (double)(1 << 24) ? 1 << 24 : est < 1.0 ? 1 : (int)est;
         for (r = 0; r < rounds; r++)
         {
             pace(pace_ms);   /* every round after the same idle, the first included */
