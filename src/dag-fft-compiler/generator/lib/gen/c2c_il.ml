@@ -345,6 +345,12 @@ let emit
      whose load edge reads it (bwd). Cx_render.herm renders the edges. *)
   if herm && not (grouploop && ((dir = Fwd && not transposed) || (dir = Bwd && transposed)))
   then failwith "codelet_cil: --cil-t2csgh is the forward t2csgn, --cil-t2csght the backward t2csgnt, with the Hermitian edge";
+  (* the Hermitian edge renders at 256 and 128 bits (Cx_render.render_load /
+     render_store); a wider vector would take the plain column-stride edge,
+     the legs above R/2 stored (fwd) or loaded (bwd) past the half spectrum
+     with no mirror or conjugate *)
+  if herm && isa.Isa.vec_width > 4
+  then failwith "codelet_cil: --cil-t2csgh / --cil-t2csght render the Hermitian edge at 256 / 128 bits only";
   (* the in-kernel ROW LOOP (2026-09-23): the lane loop (wide + tail) wrapped in
      a loop over rows. The row-loop ABI on the frozen 11-arg signature: count =
      TOTAL lanes = rows x Ls; Ls = the leg stride = the lanes per row (the

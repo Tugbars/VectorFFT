@@ -439,8 +439,11 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
      * (±1-4%); the wing-class forms (cpl scheduler, blocked-tangent,
      * [c,tan] records) are the open tangent levers. */
     switch (R) {
-    case 16: return bwd ? VFFT_IL_SYM(radix16_z_t2cb44_bwd)
-                        : VFFT_IL_SYM(radix16_z_t2cb44_fwd);
+#ifdef VFFT_IL_T2CB44_PAIR_RADICES   /* r16: the blocked 4x4 body, where the registry lists it */
+#define C(R_) case R_: return bwd ? VFFT_IL_SYM(radix##R_##_z_t2cb44_bwd) : VFFT_IL_SYM(radix##R_##_z_t2cb44_fwd);
+    VFFT_IL_T2CB44_PAIR_RADICES(C)
+#undef C
+#endif
     case 32: return bwd ? VFFT_IL_SYM(radix32_z_t2cb48_bwd)
                         : VFFT_IL_SYM(radix32_z_t2cb48_fwd);
     case 64: return bwd ? VFFT_IL_SYM(radix64_z_t2cb88_bwd)
@@ -486,10 +489,22 @@ static inline int vfft_il2p_col_forms(int R, int half, const char **names /* [VF
     }
 #if defined(VFFT_IL_N1CH_FWD_RADICES)
     if (half)
-    {   /* the half-store twin of each leaf form that has one */
+    {   /* the half-store twin of each leaf form that has one: the registry's
+         * lists, empty at an ISA without the half-store kinds */
         switch (R) {
-        case 32: names[2] = "b48h"; names[3] = "b84h"; n = 4; break;
-        case 64: names[1] = "b88h"; n = 2; break;
+        case 32:
+#define C(R_) if (R == R_) names[n++] = "b48h";
+            VFFT_IL_N1CB48H_FWD_RADICES(C)
+#undef C
+#define C(R_) if (R == R_) names[n++] = "b84h";
+            VFFT_IL_N1CB84H_FWD_RADICES(C)
+#undef C
+            break;
+        case 64:
+#define C(R_) if (R == R_) names[n++] = "b88h";
+            VFFT_IL_N1CB88H_FWD_RADICES(C)
+#undef C
+            break;
         default:
         {
             int has = 0;
@@ -525,10 +540,17 @@ static inline vfft_il2p_fn vfft_il2p_n1c_form_fn(int R, const char *form,
     if (R == 64 && !strcmp(form, "b88"))
         return bwd ? VFFT_IL_SYM(radix64_z_n1cb88_bwd) : VFFT_IL_SYM(radix64_z_n1cb88_fwd);
 #if defined(VFFT_IL_N1CH_FWD_RADICES)
-    /* the forward half-store twins (bwd never reaches here: see the top) */
-    if (R == 32 && !strcmp(form, "b48h")) return VFFT_IL_SYM(radix32_z_n1cb48h_fwd);
-    if (R == 32 && !strcmp(form, "b84h")) return VFFT_IL_SYM(radix32_z_n1cb84h_fwd);
-    if (R == 64 && !strcmp(form, "b88h")) return VFFT_IL_SYM(radix64_z_n1cb88h_fwd);
+    /* the forward half-store twins (bwd never reaches here: see the top),
+     * each from its kind's list */
+#define C(R_) if (R == R_ && !strcmp(form, "b48h")) return VFFT_IL_SYM(radix##R_##_z_n1cb48h_fwd);
+    VFFT_IL_N1CB48H_FWD_RADICES(C)
+#undef C
+#define C(R_) if (R == R_ && !strcmp(form, "b84h")) return VFFT_IL_SYM(radix##R_##_z_n1cb84h_fwd);
+    VFFT_IL_N1CB84H_FWD_RADICES(C)
+#undef C
+#define C(R_) if (R == R_ && !strcmp(form, "b88h")) return VFFT_IL_SYM(radix##R_##_z_n1cb88h_fwd);
+    VFFT_IL_N1CB88H_FWD_RADICES(C)
+#undef C
     if (!strcmp(form, "h"))
         switch (R) {
 #define C(R_) case R_: return VFFT_IL_SYM(radix##R_##_z_n1ch_fwd);

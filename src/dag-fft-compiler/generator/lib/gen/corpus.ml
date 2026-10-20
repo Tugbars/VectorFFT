@@ -2601,8 +2601,9 @@ let strided_r2c_avx512_cells : (string * string list) list =
    PARAMETER: retarget the typed cell (isa/uarch fields of Codelet.t, then
    to_argv — so the round-trip law holds by construction) and rename the file
    suffix.  A cell the generator cannot emit at that width is DECLARED absent
-   (zil_isa_gap, one predicate shared with the emitters' refusals), never
-   silently dropped. *)
+   (zil_isa_gap restates each emitter refusal with its reason, which the
+   registry prints), never silently dropped: gen_set stops on any refusal
+   not declared there. *)
 let zil_isa_uarch = [ "avx2", "raptor_lake_avx2"; "avx512", "sapphire_rapids_avx512" ]
 let zil_isas = List.map fst zil_isa_uarch
 
@@ -2614,15 +2615,34 @@ let isa_vw (isa : string) : int =
 ;;
 
 let zil_isa_gap ~(isa : string) (c : Codelet.t) : string option =
-  (* the emitters' own width laws, stated once (cascade_z.ml repeats the
-     zsplit one as its refusal): the ZTURN-T lane lattices t0tp/tld write or
-     read R-runs as whole blocks, so R % VW == 0; everything else in the zil
-     family is width-generic since 2026-09-26 (corner-turn, column stride,
-     tail lane, k1 mono) *)
+  (* every zil cell the emitters refuse at this width, each with the refusal
+     it restates. ONE is a law: the ZTURN-T lane lattices t0tp/tld write or
+     read R-runs as whole blocks, so R % VW == 0 (cascade_z.ml refuses it).
+     The others are absent PENDING their wider edges, not by law; each
+     emitter renders the edge at 256 bits (and 128 for its narrow arms) only:
+       - the real mono rn1, rn1b48, rn1b444: the real-lane and Hermitian loads
+         and the real-lane store (cx_render.ml);
+       - the real pair r2z / t2h / t2m, the real flat leaf r1c and the real
+         rows r2zr (real_il.ml);
+       - the real flat DIT's Hermitian last stage t2csgh / t2csght
+         (c2c_il.ml; a wider vector would take the plain column-stride edge,
+         the legs above R/2 past the half spectrum with no mirror);
+       - the n1c column leaf's 128-bit half stores n1ch and n1cb48h / n1cb84h
+         / n1cb88h (c2c_il.ml, --cil-st128).
+     Every other zil kind is emitted at both widths. *)
   let vw = isa_vw isa in
+  let pending why = Some (Printf.sprintf "no %d-bit edge yet: %s" (64 * vw) why) in
   match c.Codelet.kind with
   | Codelet.Zsplit { k = Codelet.(T0tp | T0tpb | Tld | Tldb) } when c.Codelet.radix mod vw <> 0 ->
     Some (Printf.sprintf "codelet_zsplit: t0tp/tld radix %d is not a whole number of %d-lane blocks (law: R %% VW == 0)" c.Codelet.radix vw)
+  | Codelet.Cil { form = Codelet.Cil_rn1; _ } when vw > 4 ->
+    pending "cx_render renders the real mono's real-lane and Hermitian loads and real-lane store at 256 / 128 bits only"
+  | Codelet.Cil { form = Codelet.(Cil_r2z | Cil_t2h | Cil_t2m | Cil_r1c | Cil_r2zr); _ } when vw <> 4 ->
+    pending "real_il emits the real pair, real flat leaf and real rows kinds for the 256-bit ISA only"
+  | Codelet.Cil { herm = true; _ } when vw > 4 ->
+    pending "codelet_cil renders the Hermitian edge (--cil-t2csgh / --cil-t2csght) at 256 / 128 bits only"
+  | Codelet.Cil { st128 = true; _ } when vw <> 4 ->
+    pending "codelet_cil renders the half stores (--cil-st128) at 256 bits, the halves of a column pair"
   | _ -> None
 ;;
 

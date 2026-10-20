@@ -1,5 +1,5 @@
-/* r1c_gate.c -- the real flat leaf (radixR_z_r1c_{fwd,bwd}_avx2, the real
- * flat DIT's one kind) against a naive digit transform, at every odd radix
+/* r1c_gate.c -- the real flat leaf (radixR_z_r1c_{fwd,bwd} at the build's ISA,
+ * the real flat DIT's one kind) against a naive digit transform, at every odd radix
  * of the kind and at counts that reach the wide loop, the two-column step
  * and the lone last column (1, 2, 3, 4, 5, 7, 9, 15).
  *   fwd: R real legs (leg l of column k at zin[l*D + k]) -> digit 0 real at
@@ -8,34 +8,53 @@
  *   bwd: the digit runs -> R real legs, R times the input.
  * The second half of block 0 (doubles D..2D) is never written: checked.
  * The kernels link as their own objects (each file declares its own static
- * constants).
- * Build: gcc -O2 -mavx2 -mfma gauntlet/r1c_gate.c src/dag-fft-compiler/codelets/zil/avx2/real/flat/radix*_z_r1c*_avx2.c -o r1c_gate */
+ * constants). They are the build's ISA's (il_isa.h): each radix resolves
+ * through the registry's R1C list, and a radix the registry does not list is
+ * absent at that ISA: reported, not gated.
+ * Build: python gauntlet/build.py --compile --src src/tools/gates/r1c_gate.c (VFFT_ISA=avx512 for the avx512 kernels) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <malloc.h>
+#include "il_isa.h"   /* the IL registry at the build's ISA: the kernels' declarations and radix lists */
 
 typedef void (*fn11)(const double *, const double *, double *, double *, const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-#define RADICES(X) X(3) X(5) X(7) X(9) X(11) X(13) X(15) X(17) X(19) X(21) X(23) X(25) X(27) X(29) X(31) X(37) X(41) X(43) X(47)
-#define DECL(n) \
-    void radix##n##_z_r1c_fwd_avx2(const double *, const double *, double *, double *, const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
-    void radix##n##_z_r1c_bwd_avx2(const double *, const double *, double *, double *, const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-RADICES(DECL)
-#define ROW(n) { n, radix##n##_z_r1c_fwd_avx2, radix##n##_z_r1c_bwd_avx2 },
-static const struct { int R; fn11 fwd, bwd; } K[] = { RADICES(ROW) };
+static const int K[] = { 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 37, 41, 43, 47 };
+
+/* the kernel of radix R in one direction at the build's ISA, 0 when the registry lists none */
+static fn11 r1c_fn(int R, int bwd)
+{
+    switch (R)
+    {
+#ifdef VFFT_IL_R1C_PAIR_RADICES
+#define C(n) case n: return bwd ? VFFT_IL_SYM(radix##n##_z_r1c_bwd) : VFFT_IL_SYM(radix##n##_z_r1c_fwd);
+    VFFT_IL_R1C_PAIR_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
 
 int main(void)
 {
     static const int counts[] = { 1, 2, 3, 4, 5, 7, 9, 15 };
     const double PI = 3.14159265358979323846;
     const double GUARD = 12345.0;
-    int fails = 0;
+    const int nk = (int)(sizeof K / sizeof K[0]);
+    int fails = 0, nabsent = 0;
     unsigned seed = 0x5eedu;
-    for (int ki = 0; ki < (int)(sizeof K / sizeof K[0]); ki++)
+    for (int ki = 0; ki < nk; ki++)
     {
-        const int R = K[ki].R, h = R / 2;
+        const int R = K[ki], h = R / 2;
+        const fn11 fwd = r1c_fn(R, 0), bwd = r1c_fn(R, 1);
         double worst_f = 0, worst_b = 0;
+        if (!fwd || !bwd)
+        {
+            printf("R=%-2d absent at %s: not gated\n", R, VFFT_IL_ISA_NAME);
+            nabsent++;
+            continue;
+        }
         for (int ci = 0; ci < (int)(sizeof counts / sizeof counts[0]); ci++)
         {
             const size_t D = (size_t)counts[ci], N = (size_t)R * D, P = ((size_t)R + 1) * D;
@@ -43,7 +62,7 @@ int main(void)
             double *pl = (double *)_aligned_malloc((P + 8) * 8, 64);
             for (size_t i = 0; i < N; i++) { seed = seed * 1664525u + 1013904223u; x[i] = (double)(seed >> 8) / (double)(1u << 24) - 0.5; }
             for (size_t i = 0; i < P + 8; i++) pl[i] = GUARD;
-            K[ki].fwd(x, NULL, pl, NULL, NULL, NULL, D, 0, D, 0, D);
+            fwd(x, NULL, pl, NULL, NULL, NULL, D, 0, D, 0, D);
             for (size_t k = 0; k < D; k++)
                 for (int p = 0; p <= h; p++)
                 {
@@ -62,7 +81,7 @@ int main(void)
             for (size_t i = D; i < 2 * D; i++) if (pl[i] != GUARD) { printf("R=%d count=%zu: fwd wrote the unused half of block 0\n", R, D); fails++; break; }
             for (size_t i = P; i < P + 8; i++) if (pl[i] != GUARD) { printf("R=%d count=%zu: fwd wrote past the plane\n", R, D); fails++; break; }
             for (size_t i = 0; i < N + 8; i++) y[i] = GUARD;
-            K[ki].bwd(pl, NULL, y, NULL, NULL, NULL, D, 0, D, 0, D);
+            bwd(pl, NULL, y, NULL, NULL, NULL, D, 0, D, 0, D);
             for (size_t i = 0; i < N; i++) { const double e = fabs(y[i] - (double)R * x[i]) / (double)R; if (e > worst_b) worst_b = e; }
             for (size_t i = N; i < N + 8; i++) if (y[i] != GUARD) { printf("R=%d count=%zu: bwd wrote past the legs\n", R, D); fails++; break; }
             _aligned_free(x); _aligned_free(y); _aligned_free(pl);
@@ -71,6 +90,11 @@ int main(void)
         if (!ok) fails++;
         printf("R=%-2d fwd max err %.1e  roundtrip max err %.1e  %s\n", R, worst_f, worst_b, ok ? "ok" : "*** FAIL ***");
     }
-    printf("%s\n", fails ? "FAILURES" : "ALL PASS");
+    if (nabsent)
+        printf("%d of %d radices absent at %s: not gated\n", nabsent, nk, VFFT_IL_ISA_NAME);
+    if (nabsent == nk)
+        printf("no r1c kernel at %s: nothing gated\n", VFFT_IL_ISA_NAME);
+    else
+        printf("%s\n", fails ? "FAILURES" : "ALL PASS");
     return fails ? 1 : 0;
 }

@@ -21,11 +21,14 @@
  * At T > 1 a pow2 cell runs this walk, not its fused codelet: the fusion is
  * worth 0-3% above 2048, the threads are worth multiples.
  *
- * Column ranges are cut at multiples of 4 (every kind's `count % 4 == 0`);
- * an empty range does nothing. The plane offset is computed once by the
- * caller and shared: the threads write disjoint spans of the plan's one
- * plane. Nesting is forbidden by the pool's law: this runs on the caller
- * thread of a plan whose own nthreads > 1, never from a worker.
+ * Column ranges are cut at multiples of VFFT_IL_VW, the column kinds' step
+ * (4 at avx2, 8 at avx512: a kernel runs whole VFFT_IL_VW-column iterations
+ * and does nothing with a shorter rest), so every range is whole iterations;
+ * every column count is a multiple of VFFT_IL_VW (ztt.h _ztt_create's laws),
+ * so the ranges cover it. An empty range does nothing. The plane offset is
+ * computed once by the caller and shared: the threads write disjoint spans
+ * of the plan's one plane. Nesting is forbidden by the pool's law: this runs
+ * on the caller thread of a plan whose own nthreads > 1, never from a worker.
  *
  * Included by vfft.c ONLY (it pulls support/threads.h, whose pool state is
  * per translation unit — a bench that included it would own a second pool). */
@@ -118,17 +121,19 @@ static void _ztt_mt_tramp(void *v)
 /* ── the three dispatch shapes ──────────────────────────────────────────── */
 
 /* a COLUMN stage: count columns from base pointers, both edges advancing one
- * complex per column, the stream one record group per column quad */
+ * complex per column, the stream twrec doubles per column quad (a record
+ * group covers VFFT_IL_VW columns: a cut at a multiple of VFFT_IL_VW starts
+ * on one) */
 static inline void _ztt_mt_columns(int T, vfft_ztt_kfn fn, const double *zin, double *zout, int oshift,
                                    const double *tw, const double *tw_im, int twrec,
                                    size_t Ls, size_t OLs, size_t count, const size_t *rb)
 {
     _ztt_mt_arg a[THREAD_POOL_MAX_DISPATCH];
-    const size_t nq = count / 4;
+    const size_t ni = count / VFFT_IL_VW;   /* kernel iterations */
     int w;
     for (w = 0; w < T; w++)
     {
-        const size_t lo = 4 * (nq * (size_t)w / (size_t)T), hi = 4 * (nq * (size_t)(w + 1) / (size_t)T);
+        const size_t lo = VFFT_IL_VW * (ni * (size_t)w / (size_t)T), hi = VFFT_IL_VW * (ni * (size_t)(w + 1) / (size_t)T);
         memset(&a[w], 0, sizeof a[w]);
         a[w].kind = 0; a[w].fn = fn;
         a[w].zin = zin + 2 * lo; a[w].zout = oshift ? zout + 2 * lo : zout;   /* the ingest stores at rb[c]*R0, absolute */
@@ -157,16 +162,16 @@ static inline void _ztt_mt_groups(int T, vfft_ztt_kfn fn, double *base, size_t p
     thread_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
 }
 
-/* the plain untiled last stage: N/R groups of R, 4 per kernel iteration */
+/* the plain untiled last stage: N/R groups of R, VFFT_IL_VW per kernel iteration */
 static inline void _ztt_mt_tld(int T, vfft_ztt_kfn fn, const double *zin, double *zout,
                                const double *tw, size_t R, size_t ngroups)
 {
     _ztt_mt_arg a[THREAD_POOL_MAX_DISPATCH];
-    const size_t nq = ngroups / 4;
+    const size_t ni = ngroups / VFFT_IL_VW;   /* kernel iterations */
     int w;
     for (w = 0; w < T; w++)
     {
-        const size_t lo = 4 * (nq * (size_t)w / (size_t)T), hi = 4 * (nq * (size_t)(w + 1) / (size_t)T);
+        const size_t lo = VFFT_IL_VW * (ni * (size_t)w / (size_t)T), hi = VFFT_IL_VW * (ni * (size_t)(w + 1) / (size_t)T);
         memset(&a[w], 0, sizeof a[w]);
         a[w].kind = 0; a[w].fn = fn;
         a[w].zin = zin + 2 * R * lo; a[w].zout = zout + 2 * R * lo;

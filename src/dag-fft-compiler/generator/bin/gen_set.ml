@@ -2,9 +2,18 @@
  *
  * Walks Coverage (the single source of truth) and emits every codelet
  * in-process via Gen_main.run, one warm process for the whole tree
- * instead of 753 forks. Per-codelet stdout is captured by dup2-ing the
- * target file over fd 1 around the run; provenance stamps carry the
- * LOGICAL per-codelet command via Emit_render.provenance_argv.
+ * instead of 753 forks. Per-codelet stdout is captured by dup2-ing a
+ * temporary file (the target's name + ".tmp") over fd 1 around the run;
+ * provenance stamps carry the LOGICAL per-codelet command via
+ * Emit_render.provenance_argv.
+ *
+ * A codelet lands under its name only whole: the temporary file is renamed
+ * onto the target once the emitter returns with output, and removed when it
+ * refuses, so a run never leaves an empty or partial codelet behind (an
+ * existing target is kept as it was). The first refusal stops the run
+ * (FAIL on stderr, exit 1); the files emitted before it are complete. A
+ * cell the generator cannot emit at a zil ISA is declared absent in
+ * Corpus.zil_isa_gap and never reaches emit_one.
  *
  * Usage:
  *   gen_set.exe [--root DIR] [quadrant ...]      (default: all)
@@ -23,17 +32,26 @@ let rec mkdir_p (dir : string) : unit =
 
 let emit_one (path : string) (argv_tail : string list) : unit =
   let argv = Array.of_list (("gen_radix.exe" :: argv_tail) @ [ "--emit-c" ]) in
+  let tmp = path ^ ".tmp" in
   flush stdout;
-  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o644 in
+  let fd = Unix.openfile tmp [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o644 in
   let saved = Unix.dup Unix.stdout in
   Unix.dup2 fd Unix.stdout;
   Unix.close fd;
-  Fun.protect
-    ~finally:(fun () ->
-      flush stdout;
-      Unix.dup2 saved Unix.stdout;
-      Unix.close saved)
-    (fun () -> Gen_main.run argv)
+  (try
+     Fun.protect
+       ~finally:(fun () ->
+         flush stdout;
+         Unix.dup2 saved Unix.stdout;
+         Unix.close saved)
+       (fun () -> Gen_main.run argv);
+     if (Unix.stat tmp).Unix.st_size = 0 then failwith "gen_set: the emitter wrote nothing"
+   with
+   | e ->
+     (try Sys.remove tmp with
+      | Sys_error _ -> ());
+     raise e);
+  Unix.rename tmp path
 ;;
 
 let () =

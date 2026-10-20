@@ -4,7 +4,13 @@
  * R8 must be BIT-IDENTICAL (the tangent rewrite at radix 8 is exact: only the
  * sqrt(1/2) folds change, by +-1 FMAs); R16 within 1e-13 relative.
  * Counts cover the 2-column wide path (2,4,6) and the odd tail (3,5).
- * Build: python build.py --src benches/tangent_bwd_gate.c   (the codelet library links both) */
+ * The classic kernels are the build's ISA's (VFFT_IL_SYM, declared by the
+ * registry); the tangent twins are built outside the corpus (design D3) and
+ * exist at avx2 only: VFFT_IL_AVX2_ONLY names them (il_isa.h), 0 at avx512,
+ * where each row is reported and not gated. The records below are therefore
+ * avx2's VTW2.
+ * Build: python gauntlet/build.py --compile --src src/tools/gates/tangent_bwd_gate.c   (the codelet library links both;
+ *        VFFT_ISA=avx512 builds it at avx512) */
 #include <immintrin.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,13 +18,14 @@
 #include <complex.h>
 #include <stdint.h>
 #include <malloc.h>
+#include "il_isa.h"   /* the IL registry at the build's ISA: VFFT_IL_SYM, VFFT_IL_AVX2_ONLY */
 #define K(n) void n(const double*,const double*,double*,double*,const double*, \
                     const double*,size_t,size_t,size_t,size_t,size_t)
-K(radix8_z_t2t_bwd_avx2);   K(radix8_z_t2ttan_bwd_avx2);
-K(radix8_z_n1_bwd_avx2);   K(radix8_z_n1tan_bwd_avx2);
-K(radix16_z_t2t_bwd_avx2);  K(radix16_z_t2ttan_bwd_avx2);
-K(radix16_z_n1_bwd_avx2);  K(radix16_z_n1tan_bwd_avx2);
-K(radix32_z_n1b216_bwd_avx2); K(radix32_z_n1btan216_bwd_avx2);
+K(radix8_z_t2ttan_bwd_avx2);
+K(radix8_z_n1tan_bwd_avx2);
+K(radix16_z_t2ttan_bwd_avx2);
+K(radix16_z_n1tan_bwd_avx2);
+K(radix32_z_n1btan216_bwd_avx2);
 typedef void (*krn)(const double*,const double*,double*,double*,const double*,
                     const double*,size_t,size_t,size_t,size_t,size_t);
 typedef double _Complex cx;
@@ -58,15 +65,21 @@ static double cmp(krn a, krn b, int R, int cols, int mid, int *bit){
 }
 int main(void){
     struct { const char *nm; krn a, b; int R, mid; double tol; } t[] = {
-        { "radix8  t2t bwd (mid)  ", radix8_z_t2t_bwd_avx2,  radix8_z_t2ttan_bwd_avx2,  8,  1, 0.0   },
-        { "radix8  n1  bwd (leaf) ", radix8_z_n1_bwd_avx2,  radix8_z_n1tan_bwd_avx2,  8,  0, 0.0   },
-        { "radix16 t2t bwd (mid)  ", radix16_z_t2t_bwd_avx2, radix16_z_t2ttan_bwd_avx2, 16, 1, 1e-13 },
-        { "radix16 n1  bwd (leaf) ", radix16_z_n1_bwd_avx2, radix16_z_n1tan_bwd_avx2, 16, 0, 1e-13 },
-        { "radix32 n1  bwd (leaf) ", radix32_z_n1b216_bwd_avx2, radix32_z_n1btan216_bwd_avx2, 32, 0, 1e-13 }, /* the tangent 2.16 vs the classic blocked 2.16 */
+        { "radix8  t2t bwd (mid)  ", VFFT_IL_SYM(radix8_z_t2t_bwd),  VFFT_IL_AVX2_ONLY(radix8_z_t2ttan_bwd),  8,  1, 0.0   },
+        { "radix8  n1  bwd (leaf) ", VFFT_IL_SYM(radix8_z_n1_bwd),  VFFT_IL_AVX2_ONLY(radix8_z_n1tan_bwd),  8,  0, 0.0   },
+        { "radix16 t2t bwd (mid)  ", VFFT_IL_SYM(radix16_z_t2t_bwd), VFFT_IL_AVX2_ONLY(radix16_z_t2ttan_bwd), 16, 1, 1e-13 },
+        { "radix16 n1  bwd (leaf) ", VFFT_IL_SYM(radix16_z_n1_bwd), VFFT_IL_AVX2_ONLY(radix16_z_n1tan_bwd), 16, 0, 1e-13 },
+        { "radix32 n1  bwd (leaf) ", VFFT_IL_SYM(radix32_z_n1b216_bwd), VFFT_IL_AVX2_ONLY(radix32_z_n1btan216_bwd), 32, 0, 1e-13 }, /* the tangent 2.16 vs the classic blocked 2.16 */
     };
     static const int counts[] = { 2, 4, 6, 3, 5, 32 };
-    int fails = 0;
-    for (size_t i = 0; i < sizeof t / sizeof t[0]; i++) {
+    const int nt = (int)(sizeof t / sizeof t[0]);
+    int fails = 0, nabsent = 0;
+    for (int i = 0; i < nt; i++) {
+        if (!t[i].b) {
+            printf("%s absent at %s: not gated\n", t[i].nm, VFFT_IL_ISA_NAME);
+            nabsent++;
+            continue;
+        }
         printf("%s", t[i].nm);
         for (size_t c = 0; c < sizeof counts / sizeof counts[0]; c++) {
             int bit; double e = cmp(t[i].a, t[i].b, t[i].R, counts[c], t[i].mid, &bit);
@@ -75,6 +88,10 @@ int main(void){
             if (!ok) { printf("(FAIL)"); fails++; }
         }
         printf("\n");
+    }
+    if (nabsent == nt) {
+        printf("=== no tangent backward twin at %s: nothing gated ===\n", VFFT_IL_ISA_NAME);
+        return 0;
     }
     printf("=== %s ===\n", fails ? "FAIL" : "ALL PASS");
     return fails != 0;

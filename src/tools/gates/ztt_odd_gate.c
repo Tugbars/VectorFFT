@@ -25,6 +25,14 @@
  *   the scrambled plans roundtrip, and the rows the race banked say
  *   il_route=ztt with an odd radix in il_ztt= — the cascade banks nothing.
  *
+ * THE BUILD'S ISA. The registry is ztt.h's (vfft_ztt_cells, the build's
+ * ISA). An avx512 row may carry ONE order class (the other's drivers are 0):
+ * the class it lacks is reported and not gated. An odd chain whose natural or
+ * plain class the 8-lane laws refuse (ztt.h's create, VFFT_IL_VW == 8) has no
+ * plan of that class at avx512: its creates are checked against the law, and
+ * the chain is reported and not gated. At avx2 every row carries both classes
+ * and every chain meets the laws.
+ *
  * Build: python build.py --compile --vfft --src benches/ztt_odd_gate.c
  * Run:   ztt_odd_gate.exe [--wisdir <scratch dir with the wisdom2_*.txt copies>] */
 #include <math.h>
@@ -100,14 +108,38 @@ static void chain_str(const int *ch, int nf, char *buf)
 
 static const size_t LADDER[4] = { 512, 1024, 2048, 3072 };
 
+/* the registry row carries the order class's fused drivers (an avx512 row may
+ * carry one class only; ztt.h's create reads the same fields) */
+static int cell_has_class(const vfft_ztt_cell_t *c, int scr)
+{
+    return scr ? (c->fwd_scr && c->bwd_scr)
+               : (c->fwd_dest && c->fwd_plane && c->bwd_dest && c->bwd_plane);
+}
+
+/* THE LANE LAWS of the build's ISA, as ztt.h's create states them: at 8
+ * lanes every chain needs (N / R0) % 8 == 0, a natural chain R0 % 8 == 0 and
+ * a plain chain R_last % 8 == 0 and (N / R_last) % 8 == 0; at 4 lanes every
+ * chain of the grammar meets them */
+static int lane_law_admits(long N, const int *chain, int nf, int scr)
+{
+#if VFFT_IL_VW == 8
+    if ((N / chain[0]) % VFFT_IL_VW) return 0;
+    if (!scr) return chain[0] % VFFT_IL_VW == 0;
+    return chain[nf - 1] % VFFT_IL_VW == 0 && (N / chain[nf - 1]) % VFFT_IL_VW == 0;
+#else
+    (void)N; (void)chain; (void)nf; (void)scr;
+    return 1;
+#endif
+}
+
 /* ── pass 1: staged == fused at every registry cell ─────────────────────── */
 static int staged_pass(void)
 {
-    int cells = 0, runs = 0, fails0 = g_fail;
+    int cells = 0, runs = 0, absent = 0, fails0 = g_fail;
     printf("STAGED == FUSED (every registry cell x class x direction x placement x width)\n");
-    for (int i = 0; i < VFFT_ZTT_NCELLS_AVX2; i++)
+    for (int i = 0; i < VFFT_ZTT_NCELLS; i++)
     {
-        const vfft_ztt_cell_t *c = &vfft_ztt_cells_avx2[i];
+        const vfft_ztt_cell_t *c = &vfft_ztt_cells[i];
         const long N = c->n;
         double *x = (double *)vfft_aligned_alloc((size_t)2 * N * sizeof(double));
         double *a = (double *)vfft_aligned_alloc((size_t)2 * N * sizeof(double));
@@ -117,6 +149,8 @@ static int staged_pass(void)
         fill(x, N, (unsigned)i + 7u);
         cells++;
         for (int scr = 0; scr < 2; scr++)
+        {
+            if (!cell_has_class(c, scr)) { absent++; continue; }   /* the row lacks this class at this ISA */
             for (int ti = -1; ti < 4; ti++)
             {
                 const size_t tile = ti < 0 ? 0 : LADDER[ti];
@@ -154,8 +188,11 @@ static int staged_pass(void)
                 vfft_ztt_destroy(pf);
                 vfft_ztt_destroy(ps);
             }
+        }
         vfft_aligned_free(x); vfft_aligned_free(a); vfft_aligned_free(b);
     }
+    if (absent)
+        printf("  %d of %d (cell, class) pairs carry no fused drivers at %s: not gated\n", absent, 2 * cells, VFFT_IL_ISA_NAME);
     printf("  %d cells, %d executions, %d failures\n\n", cells, runs, g_fail - fails0);
     return g_fail == fails0;
 }
@@ -185,13 +222,31 @@ static const odd_cell_t ODD[] = {
 static int odd_pass(void)
 {
     const int ncell = (int)(sizeof ODD / sizeof ODD[0]);
-    int fails0 = g_fail;
+    int fails0 = g_fail, nlaw = 0;
     printf("THE ODD CELLS (%d chains)\n", ncell);
     printf("  %-8s %-18s %10s %10s %10s %10s  %s\n", "N", "chain", "nat err", "rt oop", "rt ip", "plain ord", "tiles");
     for (int i = 0; i < ncell; i++)
     {
         const odd_cell_t *c = &ODD[i];
         const long N = c->N;
+        const int law_n = lane_law_admits(N, c->chain, c->nf, 0), law_p = lane_law_admits(N, c->chain, c->nf, 1);
+        if (!law_n || !law_p)
+        {   /* a class the lane laws refuse has no plan at this ISA, and the natural plan is
+             * the plain class's reference: the creates must answer as the law does, and
+             * the chain is not gated */
+            char rs[64];
+            vfft_ztt_plan_t *qn = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, 0);
+            vfft_ztt_plan_t *qp = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, 1);
+            chain_str(c->chain, c->nf, rs);
+            CHECK(!qn == !law_n && !qp == !law_p, "N=%ld %s: create (natural %p, plain %p) disagrees with the %d-lane laws",
+                  N, rs, (void *)qn, (void *)qp, VFFT_IL_VW);
+            printf("  %-8ld %-18s %s refused by the %d-lane laws at %s: not gated\n", N, rs,
+                   (!law_n && !law_p) ? "both classes" : !law_n ? "natural" : "plain", VFFT_IL_VW, VFFT_IL_ISA_NAME);
+            vfft_ztt_destroy(qn);
+            vfft_ztt_destroy(qp);
+            nlaw++;
+            continue;
+        }
         const size_t nb = (size_t)2 * N * sizeof(double);
         double *x = (double *)vfft_aligned_alloc(nb);
         double *ref = (double *)vfft_aligned_alloc(nb);
@@ -315,6 +370,8 @@ static int odd_pass(void)
         CHECK(!vfft_ztt_odd_band(2048) && !vfft_ztt_odd_band(1536) && !vfft_ztt_odd_band(5632) && vfft_ztt_odd_band(2160) && vfft_ztt_odd_band(259200),
               "odd band membership");
     }
+    if (nlaw)
+        printf("  %d of %d chains refused by the %d-lane laws at %s: not gated\n", nlaw, ncell, VFFT_IL_VW, VFFT_IL_ISA_NAME);
     printf("  %d failures\n\n", g_fail - fails0);
     return g_fail == fails0;
 }

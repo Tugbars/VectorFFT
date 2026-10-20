@@ -22,16 +22,19 @@
  * tail arm and the new factored body are independent changes that must
  * compose.
  *
- * Build (from src/tools/gates):
- *   gcc -O3 -mavx2 -mfma -march=native -o odd_ct_gate.exe odd_ct_gate.c \
- *       oc_off_9.c oc_on_9.c oc_off_15.c oc_on_15.c oc_off_21.c oc_on_21.c \
- *       oc_off_25.c oc_on_25.c oc_off_27.c oc_on_27.c -lm
+ * The kernels are the build's ISA's (il_isa.h: VFFT_IL_SYM, declared by the
+ * registry); both kinds exist at every radix below at avx2 and avx512.
+ *
+ * Build (from the repo root):
+ *   python gauntlet/build.py --compile --src src/tools/gates/odd_ct_gate.c
+ *   (VFFT_ISA=avx512 for the avx512 kernels)
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
+#include "il_isa.h"   /* the IL registry at the build's ISA: VFFT_IL_SYM and the kernels' declarations */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -40,15 +43,6 @@
 typedef void (*kfn)(const double *, const double *, double *, double *,
                     const double *, const double *,
                     size_t, size_t, size_t, size_t, size_t);
-
-#define DECL(R)                                                               \
-  void radix##R##_z_n1t_fwd_avx2(const double *, const double *, double *,     \
-      double *, const double *, const double *,                                \
-      size_t, size_t, size_t, size_t, size_t);                                 \
-  void radix##R##_z_n1t_ct_fwd_avx2(const double *, const double *, double *,  \
-      double *, const double *, const double *,                                \
-      size_t, size_t, size_t, size_t, size_t);
-DECL(15) DECL(21) DECL(25) DECL(27)   /* no DECL(9): radix 9 has no _ct kernel */
 
 static uint64_t lcg = 0x243F6A8885A308D3ull;
 static double rnd(void)
@@ -137,10 +131,10 @@ int main(void)
      * nothing and _ct measured 0.89-0.94x. Its forward cells were removed
      * from the corpus, so the arm would not link. The radices below are
      * exactly those whose monolithic form spills (16.5% .. 39.3%). */
-    arm(15, radix15_z_n1t_fwd_avx2, radix15_z_n1t_ct_fwd_avx2);
-    arm(21, radix21_z_n1t_fwd_avx2, radix21_z_n1t_ct_fwd_avx2);
-    arm(25, radix25_z_n1t_fwd_avx2, radix25_z_n1t_ct_fwd_avx2);
-    arm(27, radix27_z_n1t_fwd_avx2, radix27_z_n1t_ct_fwd_avx2);
+    arm(15, VFFT_IL_SYM(radix15_z_n1t_fwd), VFFT_IL_SYM(radix15_z_n1t_ct_fwd));
+    arm(21, VFFT_IL_SYM(radix21_z_n1t_fwd), VFFT_IL_SYM(radix21_z_n1t_ct_fwd));
+    arm(25, VFFT_IL_SYM(radix25_z_n1t_fwd), VFFT_IL_SYM(radix25_z_n1t_ct_fwd));
+    arm(27, VFFT_IL_SYM(radix27_z_n1t_fwd), VFFT_IL_SYM(radix27_z_n1t_ct_fwd));
     printf("\n%s\n", g_fail ? "*** ODD-CT: INCORRECT ***"
                             : "odd-CT: factored form is correct at every radix and count");
     return g_fail;

@@ -1,8 +1,9 @@
 /* ztt_gate.c — ZTURN-T (oop/ztt.h, route VFFT_K1_IL_ZTT = 9; 2026-09-09):
  * the engine on EVERY registry cell, and its front-door replay.
  *
- * ENGINE pass, per registry cell (ztt_registry_avx2.h: every {4,8} chain
- * with product N, 16 <= N <= VFFT_ZTT_MAX_N = 262144; 223 cells at avx2):
+ * ENGINE pass, per registry cell (ztt_registry_<isa>.h, the build's ISA:
+ * every {4,8} chain with product N, 16 <= N <= VFFT_ZTT_MAX_N = 262144,
+ * that the ISA's lane laws admit; 223 cells at avx2, 159 at avx512):
  *   1. create (vfft_ztt_create_chain) — the validator is the law, a refusal
  *      is a FAIL here because the registry says the cell exists;
  *   2. OOP forward (the `dest` driver: the pipeline runs in zout) against an
@@ -30,6 +31,12 @@
  *   scrambled route is not ztt FAILS (the band's scrambled writer is the plain
  *   ZTURN-T, design_contracts.md 8b), and vfft_execute's forward, backward and
  *   in-place forward are asserted BITWISE the direct plain engine.
+ *
+ * THE BUILD'S ISA. The cells are ztt.h's (vfft_ztt_cells). An avx512 row may
+ * carry ONE order class (the other's drivers are 0): the class it lacks is
+ * reported and not gated, and a pow2 N with no cell of a class (16 and 32 at
+ * avx512) is reported and not gated in that class's passes. At avx2 every N
+ * has cells and every row carries both classes.
  *
  * Run:   ztt_gate.exe --wisdir <scratch dir>
  * Build: python gauntlet/build.py --compile --src src/tools/gates/ztt_gate.c --vfft */
@@ -81,18 +88,34 @@ static void fill(double *x, int N, unsigned seed)
     for (int i = 0; i < 2 * N; i++) x[i] = (double)rand() / RAND_MAX - 0.5;
 }
 
+/* the registry row carries the order class's fused drivers (an avx512 row may
+ * carry one class only; ztt.h's create reads the same fields) */
+static int cell_has_class(const vfft_ztt_cell_t *c, int scr)
+{
+    return scr ? (c->fwd_scr && c->bwd_scr)
+               : (c->fwd_dest && c->fwd_plane && c->bwd_dest && c->bwd_plane);
+}
+/* the registry's first row at N carrying the class, NULL when none does */
+static const vfft_ztt_cell_t *first_cell(int N, int scr)
+{
+    for (int i = 0; i < VFFT_ZTT_NCELLS; i++)
+        if (vfft_ztt_cells[i].n == N && cell_has_class(&vfft_ztt_cells[i], scr)) return &vfft_ztt_cells[i];
+    return NULL;
+}
+
 /* ── the engine on every registry cell ── */
 static int engine_pass(void)
 {
-    int fails = 0;
-    printf("=== ENGINE: every registry cell (%d), dest + plane drivers, both directions ===\n", VFFT_ZTT_NCELLS_AVX2);
+    int fails = 0, absent = 0;
+    printf("=== ENGINE: every registry cell (%d), dest + plane drivers, both directions ===\n", VFFT_ZTT_NCELLS);
     printf("%-16s %9s %9s %6s %9s  %s\n", "cell", "fwd err", "rt err", "ip==", "ip rt", "verdict");
-    for (int ci = 0; ci < VFFT_ZTT_NCELLS_AVX2; ci++)
+    for (int ci = 0; ci < VFFT_ZTT_NCELLS; ci++)
     {
-        const vfft_ztt_cell_t *c = &vfft_ztt_cells_avx2[ci];
+        const vfft_ztt_cell_t *c = &vfft_ztt_cells[ci];
         const int N = c->n;
         char tag[32]; int off = snprintf(tag, sizeof tag, "%d=", N);
         for (int i = 0; i < c->nf; i++) off += snprintf(tag + off, sizeof tag - off, "%s%d", i ? "." : "", c->chain[i]);
+        if (!cell_has_class(c, 0)) { absent++; continue; }   /* the row lacks the natural class at this ISA */
         vfft_ztt_plan_t *p = vfft_ztt_create_chain(N, c->chain, c->nf);
         if (!p) { printf("%-16s create REFUSED  FAIL\n", tag); fails++; continue; }
         double *x = calloc(2 * (size_t)N, 8), *y = calloc(2 * (size_t)N, 8), *r = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8);
@@ -133,6 +156,8 @@ static int engine_pass(void)
         vfft_ztt_destroy(p);
         free(x); free(y); free(r); free(z);
     }
+    if (absent)
+        printf("%d of %d cells carry no natural drivers at %s: not gated\n", absent, VFFT_ZTT_NCELLS, VFFT_IL_ISA_NAME);
     return fails;
 }
 
@@ -140,9 +165,11 @@ static int engine_pass(void)
  * docs/design/ztt_scrambled_design.md) on every registry cell. Per cell:
  *   G0  the plan's permutation equals an INDEPENDENT derivation — the
  *       in-place Sande-Tukey position digitrev(k) over the chain, then the
- *       last stage's unpack-only lane order inside its 4-column span;
+ *       last stage's unpack-only lane order inside its VFFT_IL_VW-column span
+ *       (the evens of the span first, then the odds);
  *   G1  out[perm(k)] == the NATURAL plan's X[k] on the same input (exact
  *       order; the twiddle side differs, so a tolerance, never a multiset);
+ *       not checked on a row that carries no natural drivers (avx512);
  *   G1i in place (zin == zout) BITWISE the out-of-place forward — the plain
  *       codelets are one function for both placements;
  *   G2  matched roundtrip bwd(fwd(x)) == N * x;  G2i in-place bwd bitwise;
@@ -150,42 +177,56 @@ static int engine_pass(void)
  *       (the plain tile law: the last mid's block, vfft_ztt_tile_legal_ord). ── */
 static long plain_perm_ref(long k, const int *chain, int nf)
 {
+    /* the position of column c inside the span: the evens first, then the odds */
+#if VFFT_IL_VW == 8
+    static const long sig[8] = { 0, 4, 1, 5, 2, 6, 3, 7 };
+#else
     static const long sig[4] = { 0, 2, 1, 3 };
-    const long R = chain[nf - 1];
+#endif
+    const long R = chain[nf - 1], VW = VFFT_IL_VW;
     const long ic = _ztt_digitrev(k, chain, nf);
     const long col = ic / R, p = ic % R;
-    return R * (col & ~3L) + 4 * p + sig[col & 3];
+    return R * (col & ~(VW - 1)) + VW * p + sig[col & (VW - 1)];
 }
 static int plain_pass(void)
 {
-    int fails = 0;
+    int fails = 0, absent = 0;
     printf("\n=== PLAIN (scrambled order): every registry cell — perm, exact order vs natural, in place bitwise, roundtrip, tiles ===\n");
     printf("%-16s %5s %9s %6s %9s %6s  %s\n", "cell", "perm", "order", "ip==", "rt err", "iprt", "verdict");
-    for (int ci = 0; ci < VFFT_ZTT_NCELLS_AVX2; ci++)
+    for (int ci = 0; ci < VFFT_ZTT_NCELLS; ci++)
     {
-        const vfft_ztt_cell_t *c = &vfft_ztt_cells_avx2[ci];
+        const vfft_ztt_cell_t *c = &vfft_ztt_cells[ci];
         const int N = c->n;
         char tag[32]; int off = snprintf(tag, sizeof tag, "%d=", N);
         for (int i = 0; i < c->nf; i++) off += snprintf(tag + off, sizeof tag - off, "%s%d", i ? "." : "", c->chain[i]);
+        if (!cell_has_class(c, 1)) { absent++; continue; }   /* the row lacks the plain class at this ISA */
+        const int nat = cell_has_class(c, 0);                /* G1's reference: none on a plain-only row */
         vfft_ztt_plan_t *pp = vfft_ztt_create_chain_ord(N, c->chain, c->nf, 1);
-        vfft_ztt_plan_t *pn = vfft_ztt_create_chain(N, c->chain, c->nf);
-        if (!pp || !pn) { printf("%-16s create REFUSED  FAIL\n", tag); fails++; if (pp) vfft_ztt_destroy(pp); if (pn) vfft_ztt_destroy(pn); continue; }
+        vfft_ztt_plan_t *pn = nat ? vfft_ztt_create_chain(N, c->chain, c->nf) : NULL;
+        if (!pp || (nat && !pn)) { printf("%-16s create REFUSED  FAIL\n", tag); fails++; if (pp) vfft_ztt_destroy(pp); if (pn) vfft_ztt_destroy(pn); continue; }
         double *x = calloc(2 * (size_t)N, 8), *y = calloc(2 * (size_t)N, 8), *yn = calloc(2 * (size_t)N, 8);
         double *r = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8);
         fill(x, N, 4321u + (unsigned)N * 3u + (unsigned)ci);
         long pbad = 0;
         for (long k = 0; k < N; k++) if ((long)vfft_ztt_perm(pp, k) != plain_perm_ref(k, c->chain, c->nf)) pbad++;
         vfft_ztt_execute_fwd(pp, x, y);
-        vfft_ztt_execute_fwd(pn, x, yn);
         double eo = 0.0, mx = 0.0;
-        for (int j = 0; j < 2 * N; j++) if (fabs(yn[j]) > mx) mx = fabs(yn[j]);
-        for (long k = 0; k < N; k++)
+        char ord[24];
+        if (pn)
         {
-            const size_t ia = vfft_ztt_perm(pp, k);
-            const double d = fabs(y[2 * ia] - yn[2 * k]) + fabs(y[2 * ia + 1] - yn[2 * k + 1]);
-            if (d > eo) eo = d;
+            vfft_ztt_execute_fwd(pn, x, yn);
+            for (int j = 0; j < 2 * N; j++) if (fabs(yn[j]) > mx) mx = fabs(yn[j]);
+            for (long k = 0; k < N; k++)
+            {
+                const size_t ia = vfft_ztt_perm(pp, k);
+                const double d = fabs(y[2 * ia] - yn[2 * k]) + fabs(y[2 * ia + 1] - yn[2 * k + 1]);
+                if (d > eo) eo = d;
+            }
+            eo = mx > 0 ? eo / mx : eo;
+            snprintf(ord, sizeof ord, "%9.1e", eo);
         }
-        eo = mx > 0 ? eo / mx : eo;
+        else
+            snprintf(ord, sizeof ord, "%9s", "absent");
         memcpy(z, x, 2 * (size_t)N * 8);
         vfft_ztt_execute_fwd(pp, z, z);
         const int ipbit = memcmp(z, y, 2 * (size_t)N * 8) == 0;
@@ -207,13 +248,15 @@ static int plain_pass(void)
             if (memcmp(z, r, 2 * (size_t)N * 8) != 0) tbad++;
         }
         vfft_ztt_set_tile(pp, 0);
-        const int ok = pbad == 0 && eo < TOL && ipbit && er < TOL && iprbit && tbad == 0;
-        printf("%-16s %5s %9.1e %6s %9.1e %6s  tiles %d/%d bits  %s\n", tag, pbad ? "BAD" : "ok", eo,
+        const int ok = pbad == 0 && (!pn || eo < TOL) && ipbit && er < TOL && iprbit && tbad == 0;
+        printf("%-16s %5s %s %6s %9.1e %6s  tiles %d/%d bits  %s\n", tag, pbad ? "BAD" : "ok", ord,
                ipbit ? "bits" : "DIFF", er, iprbit ? "bits" : "DIFF", ntile - tbad, ntile, ok ? "PASS" : "FAIL");
         if (!ok) fails++;
         vfft_ztt_destroy(pp); vfft_ztt_destroy(pn);
         free(x); free(y); free(yn); free(r); free(z);
     }
+    if (absent)
+        printf("%d of %d cells carry no plain drivers at %s: not gated\n", absent, VFFT_ZTT_NCELLS, VFFT_IL_ISA_NAME);
     return fails;
 }
 
@@ -395,6 +438,11 @@ static int frontdoor_pass(const char *wisdir)
     for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
     {
         char route[24]; int chain[7], nf = 0, tile = 0;
+        if (!first_cell(N, 1))
+        {   /* no plain ZTURN-T cell at N at this ISA: nothing of this pass to assert */
+            printf("%-6d no plain ZTURN-T cell at %s: not gated\n", N, VFFT_IL_ISA_NAME);
+            continue;
+        }
         vfft_plan h = mk_ord(W, N, 0, VFFT_ORDER_SCRAMBLED);
         if (!h) { printf("%-6d create FAILED  FAIL\n", N); fails++; continue; }
         scr_route_of_store(wisdir, N, route, sizeof route, chain, &nf, &tile);
@@ -465,9 +513,7 @@ static int seeded_pass(const char *wisdir)
         fprintf(f, "@vw2 1.2\n");
         for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
         {
-            const vfft_ztt_cell_t *c = NULL;
-            for (int i = 0; i < VFFT_ZTT_NCELLS_AVX2 && !c; i++)
-                if (vfft_ztt_cells_avx2[i].n == N) c = &vfft_ztt_cells_avx2[i];
+            const vfft_ztt_cell_t *c = first_cell(N, 0);
             if (!c) continue;
             fprintf(f, "@cell t=c2c n=%d q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=ztt il_ztt=", N);
             for (int i = 0; i < c->nf; i++) fprintf(f, "%s%d", i ? "." : "", c->chain[i]);
@@ -485,10 +531,12 @@ static int seeded_pass(const char *wisdir)
     printf("%-6s %-14s %s\n", "N", "seeded chain", "verdict");
     for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
     {
-        const vfft_ztt_cell_t *c = NULL;
-        for (int i = 0; i < VFFT_ZTT_NCELLS_AVX2 && !c; i++)
-            if (vfft_ztt_cells_avx2[i].n == N) c = &vfft_ztt_cells_avx2[i];
-        if (!c) continue;
+        const vfft_ztt_cell_t *c = first_cell(N, 0);
+        if (!c)
+        {   /* no natural ZTURN-T cell at N at this ISA: no row was seeded */
+            printf("%-6d no natural ZTURN-T cell at %s: not gated\n", N, VFFT_IL_ISA_NAME);
+            continue;
+        }
         char chs[48]; int off = 0;
         for (int i = 0; i < c->nf; i++) off += snprintf(chs + off, sizeof chs - off, "%s%d", i ? "." : "", c->chain[i]);
         vfft_ztt_plan_t *p = vfft_ztt_create_chain(N, c->chain, c->nf);

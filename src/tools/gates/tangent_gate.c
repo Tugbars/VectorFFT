@@ -2,15 +2,19 @@
  * (src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/). Conventions:
  *   MID fwd : Y[o] = sum_l W_R^{ol} . w512^{lk} . x_l      (pre-twiddle)
  *   LEAF    : Y[o] = sum_l W_R^{ol} x_l, stored corner-turned (no table)
+ * The tangent codelets are built outside the corpus (design D3) and exist at
+ * avx2 only: VFFT_IL_AVX2_ONLY names them (il_isa.h), 0 at avx512, where each
+ * is reported and not gated. The records below are therefore avx2's VTW2.
  * Build (from the repo root):
- *   gcc -O2 -static -o tangent_gate src/tools/gates/tangent_gate.c \
- *       src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/*.c -lm
+ *   python gauntlet/build.py --compile --src src/tools/gates/tangent_gate.c
+ *   (VFFT_ISA=avx512 builds it at avx512)
  */
 #include <immintrin.h>
 #include <stdio.h>
 #include <math.h>
 #include <complex.h>
 #include <stdint.h>
+#include "il_isa.h"   /* the build's ISA: VFFT_IL_AVX2_ONLY, VFFT_IL_ISA_NAME */
 
 #define K(n) void n(const double*,const double*,double*,double*,const double*, \
                     const double*,size_t,size_t,size_t,size_t,size_t)
@@ -87,23 +91,37 @@ static double gate_leaf(krn fn, int R, int cols){
 }
 
 int main(void){
-    struct { const char *nm; double e; } r[5];
+    struct { const char *nm; krn k; double e; } r[5];
     r[0].nm = "radix8_z_t2tan_fwd       (R8  mid,  bit-identical)   ";
-    r[0].e  = gate_mid(radix8_z_t2tan_fwd_avx2, 8, 32, -1.0);
+    r[0].k  = VFFT_IL_AVX2_ONLY(radix8_z_t2tan_fwd);
+    r[0].e  = r[0].k ? gate_mid(r[0].k, 8, 32, -1.0) : 0.0;
     r[1].nm = "radix8_z_n1ttan_fwd      (R8  leaf, bit-identical)   ";
-    r[1].e  = gate_leaf(radix8_z_n1ttan_fwd_avx2, 8, 16);
+    r[1].k  = VFFT_IL_AVX2_ONLY(radix8_z_n1ttan_fwd);
+    r[1].e  = r[1].k ? gate_leaf(r[1].k, 8, 16) : 0.0;
     r[2].nm = "radix16_z_t2tan_fwd      (R16 mid,  wing full-kernel)";
-    r[2].e  = gate_mid(radix16_z_t2tan_fwd_avx2, 16, 32, -1.0);
+    r[2].k  = VFFT_IL_AVX2_ONLY(radix16_z_t2tan_fwd);
+    r[2].e  = r[2].k ? gate_mid(r[2].k, 16, 32, -1.0) : 0.0;
     r[3].nm = "radix16_z_n1ttan_fwd     (R16 leaf, corner-turn)     ";
-    r[3].e  = gate_leaf(radix16_z_n1ttan_fwd_avx2, 16, 16);
+    r[3].k  = VFFT_IL_AVX2_ONLY(radix16_z_n1ttan_fwd);
+    r[3].e  = r[3].k ? gate_leaf(r[3].k, 16, 16) : 0.0;
     r[4].nm = "radix32_z_t2bw32_fwd     (R32 mid,  wing32 2.16)     ";
-    r[4].e  = gate_mid(radix32_z_t2bw32_fwd_avx2, 32, 16, -1.0);
+    r[4].k  = VFFT_IL_AVX2_ONLY(radix32_z_t2bw32_fwd);
+    r[4].e  = r[4].k ? gate_mid(r[4].k, 32, 16, -1.0) : 0.0;
 
-    int ok = 1;
+    int ok = 1, nabsent = 0;
     for(int i=0;i<5;i++){
+        if(!r[i].k){
+            printf("%s  absent at %s: not gated\n", r[i].nm, VFFT_IL_ISA_NAME);
+            nabsent++;
+            continue;
+        }
         int pass = r[i].e < 1e-10;
         printf("%s  %.3e  %s\n", r[i].nm, r[i].e, pass ? "CORRECT" : "*** WRONG ***");
         ok &= pass;
+    }
+    if(nabsent == 5){
+        printf("\nno tangent codelet at %s: nothing gated\n", VFFT_IL_ISA_NAME);
+        return 0;
     }
     printf("\n%s\n", ok ? "ALL 5 SHIPPED TANGENT CODELETS GATED CORRECT"
                         : "GATE FAILURE - DO NOT SHIP");

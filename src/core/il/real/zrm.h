@@ -48,11 +48,15 @@ static inline vfft_oop11_fn vfft_zrm_fn(int N, int bwd)
     VFFT_IL_RN1_PAIR_RADICES(C)
 #undef C
 #endif
-#ifdef VFFT_IL_RN1B48_PAIR_RADICES
-    case 32: return bwd ? VFFT_IL_SYM(radix32_z_rn1b48_bwd) : VFFT_IL_SYM(radix32_z_rn1b48_fwd);   /* the blocked 4x8 body */
+#ifdef VFFT_IL_RN1B48_PAIR_RADICES    /* 32: the blocked 4x8 body */
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_rn1b48_bwd) : VFFT_IL_SYM(radix##R##_z_rn1b48_fwd);
+    VFFT_IL_RN1B48_PAIR_RADICES(C)
+#undef C
 #endif
-#ifdef VFFT_IL_RN1B444_PAIR_RADICES
-    case 64: return bwd ? VFFT_IL_SYM(radix64_z_rn1b444_bwd) : VFFT_IL_SYM(radix64_z_rn1b444_fwd); /* the blocked 4x4x4 body */
+#ifdef VFFT_IL_RN1B444_PAIR_RADICES   /* 64: the blocked 4x4x4 body */
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_rn1b444_bwd) : VFFT_IL_SYM(radix##R##_z_rn1b444_fwd);
+    VFFT_IL_RN1B444_PAIR_RADICES(C)
+#undef C
 #endif
     default: return 0;
     }

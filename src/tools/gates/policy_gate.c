@@ -23,8 +23,8 @@
 #include "wisdom2.h"
 #include "il/rank1/ztt.h"
 #include "il/rank1/k1_fourstep_band.h"
-#include "ztt_registry_avx2.h"   /* ground truth for ZTURN-T's band */
-#include "il_registry_avx2.h"    /* ground truth for the chain radices (the prime cell's admission) */
+#include "il_isa.h"              /* ground truth for the chain radices (the prime cell's admission): the IL registry at the build's ISA */
+#include VFFT_ZTT_REGISTRY_H     /* ground truth for ZTURN-T's band, at the build's ISA (ztt.h names its cells vfft_ztt_cells) */
 #include "il/planning/policy_il.h"
 
 static int g_fail = 0;
@@ -86,8 +86,8 @@ static int _ref_bench_direct_cell(int N)
 static int _ref_ztt_registry_has(int N)
 {
     int i;
-    for (i = 0; i < VFFT_ZTT_NCELLS_AVX2; i++)
-        if (vfft_ztt_cells_avx2[i].n == N) return 1;
+    for (i = 0; i < VFFT_ZTT_NCELLS; i++)
+        if (vfft_ztt_cells[i].n == N) return 1;
     return 0;
 }
 /* ── L1/L9 reference: `_k1_il_plan_race`'s own gate as it stood before
