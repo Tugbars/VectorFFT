@@ -2399,6 +2399,12 @@ zil/avx512/rows/radix8_z_t2tr_bwd_avx512.c	genset	IDENTICAL	-
 zil/avx512/rows/radix8_z_t2trtan_bwd_avx512.c	genset	IDENTICAL	-
 zil/avx512/rows/radix9_z_n1ccs_avx512.c	genset	IDENTICAL	-
 zil/avx512/rows/radix9_z_n1ccs_bwd_avx512.c	genset	IDENTICAL	-
+zil/avx512/shared/col/blocked/radix128_z_n1cb448_avx512.c	genset	IDENTICAL	-
+zil/avx512/shared/col/blocked/radix128_z_n1cb448_bwd_avx512.c	genset	IDENTICAL	-
+zil/avx512/shared/col/blocked/radix128_z_n1cb816_avx512.c	genset	IDENTICAL	-
+zil/avx512/shared/col/blocked/radix128_z_n1cb816_bwd_avx512.c	genset	IDENTICAL	-
+zil/avx512/shared/col/blocked/radix16_z_t2cb44_avx512.c	genset	IDENTICAL	-
+zil/avx512/shared/col/blocked/radix16_z_t2cb44_bwd_avx512.c	genset	IDENTICAL	-
 zil/avx512/shared/col/blocked/radix32_z_n1cb48_avx512.c	genset	IDENTICAL	-
 zil/avx512/shared/col/blocked/radix32_z_n1cb48_bwd_avx512.c	genset	IDENTICAL	-
 zil/avx512/shared/col/blocked/radix32_z_n1cb84_avx512.c	genset	IDENTICAL	-
@@ -2431,8 +2437,6 @@ zil/avx512/shared/col/radix15_z_t2c_avx512.c	genset	IDENTICAL	-
 zil/avx512/shared/col/radix15_z_t2c_bwd_avx512.c	genset	IDENTICAL	-
 zil/avx512/shared/col/radix16_z_n1c_avx512.c	genset	IDENTICAL	-
 zil/avx512/shared/col/radix16_z_n1c_bwd_avx512.c	genset	IDENTICAL	-
-zil/avx512/shared/col/radix16_z_t2c_avx512.c	genset	IDENTICAL	-
-zil/avx512/shared/col/radix16_z_t2c_bwd_avx512.c	genset	IDENTICAL	-
 zil/avx512/shared/col/radix17_z_n1c_avx512.c	genset	IDENTICAL	-
 zil/avx512/shared/col/radix17_z_n1c_bwd_avx512.c	genset	IDENTICAL	-
 zil/avx512/shared/col/radix17_z_t2c_avx512.c	genset	IDENTICAL	-

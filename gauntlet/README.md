@@ -142,6 +142,7 @@ With a comparator, the report says which library answered.
 - `bench_1d_vs_fftw.c` -- a standalone FFTW bench; the gauntlet's FFTW comparator is the bench's `--cmp fftw` arm
 - `recal_1d_probe.c` -- the calibrator (one front-door create; recalibrate re-races; `--2d N1 N2` for a shape)
 - `k1_fwd_ref_probe.c` -- the forward reference check and the precision record (`verify`)
+- `half_store_bench.c`, `half_store_bench.sh` -- does AVX-512 want half-store twins of the forward column leaf (the AVX2 tree's `shared/col/half/`)? The shipped AVX-512 leaf with its plane stores as one 512-bit store, two 256-bit halves and four 128-bit quarters, checked bitwise against each other, then timed as the 2D real r2c column pass runs it at its odd pitch; `./gauntlet/half_store_bench.sh` on an AVX-512 machine (`--quick`: one cell, 2 rounds), results in `results/half_store_<cpu folder>_<date>/`
 - `build.py` -- the gcc build harness (`src/tools/gates/run_gates.py` builds the gates with it too)
 - `results/<run>/` -- cells.txt, store/, calibrate.log, gauntlet.csv, control.csv, verify.csv, gflops.csv, run.log, report.md
 - `kfr_arm.c/.h`, `ref_fftw.h`, `bench_scope.h` -- the KFR arm, the run-time FFTW binding, the gauntlet's switches (`VFFT_BENCH_GUARD`, `VFFT_PCORE_MASK`) onto the library's measurement scope (`vfft.h`: the pin, the SMT-sibling guard, the priority, the machine's measurement lock)

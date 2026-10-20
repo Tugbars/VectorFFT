@@ -63,11 +63,16 @@
  *      counts toward the kind's worst error.
  *
  * TWIN_TOL (8 * DBL_EPSILON, 1.8e-15). Both ISAs evaluate the same DAG on the
- * same twiddles (vtw_avx512.h: every angle is the AVX2 builder's), so most
- * kinds match bitwise; where an emitted body contracts a multiply-add into an
- * FMA at one width and not the other, an element moves by an ulp or two of
- * the largest output. The bound sits above the observed differences and far
- * below what a wrong twiddle, leg or lane gives (1e-3 and up).
+ * same twiddles (vtw_avx512.h: every angle is the AVX2 builder's), so 15796
+ * of the 16827 kernel cases match bitwise, the ZTURN-T stage kernels and
+ * fused drivers all of theirs. The other kernel cases differ by at most
+ * 4.7e-16 (2.1 DBL_EPSILON), and they are exactly two groups: radix 5 and
+ * 10 at every count (n1, n1c, n1t, t2, t2t, t2tg, t2c, t2cp, t2cs: the avx2
+ * files carry the older radix-5 FMA arithmetic, decision D0), and the
+ * blocked kernels (n1b*, n1cb*, n1tb*, t2b*, t2bt*, t2cb*) at the counts that
+ * end in a tail (the avx2 tail re-runs the blocked passes, the avx512 tail is
+ * the monolithic DAG). A wrong twiddle, leg, lane, layout or permutation
+ * moves the result by 0.7 and more.
  *
  * RUNS ONLY WHERE AVX-512 RUNS: a host with avx512f, avx512dq and avx512vl,
  * or Intel SDE emulating one (exact AVX-512 semantics, 10-100x slower; for
@@ -540,6 +545,8 @@ extern const twin_side_t *twin_side_avx512(void);
 
 #define TWIN_TOL (8.0 * DBL_EPSILON)
 #define GUARD 64                      /* doubles of guard band on each side */
+#define TGUARD 2048                   /* doubles of POISON after a table: a whole record set past
+                                       * its end (radix 64: 63 x 16) reads NaN, not unmapped memory */
 #define CANARY_BITS 0x7ff8dead5eedbeefULL   /* output prefill */
 #define POISON_BITS 0x7ff80bad0bad0badULL   /* outside an input's footprint, around a table */
 #define TWIN_MAXFAIL 6                /* FAIL lines printed per kind */
@@ -570,8 +577,8 @@ typedef struct { double *base; const double *p; } t_table_t;
 static t_table_t t_guarded(const double *src, size_t nd)
 {
     t_table_t t;
-    double *a = t_alloc(nd + 2 * GUARD, &t.base);
-    t_fill(a, nd + 2 * GUARD, POISON_BITS);
+    double *a = t_alloc(GUARD + nd + TGUARD, &t.base);
+    t_fill(a, GUARD + nd + TGUARD, POISON_BITS);
     if (src && nd) memcpy(a + GUARD, src, nd * sizeof(double));
     t.p = a + GUARD;
     return t;
@@ -762,9 +769,12 @@ static int run_case(const t_case_t *c, t_stat_t *st, const char *label)
     if (bad[0] || bad[1] || !(rel <= TWIN_TOL)) {
         fail = 1;
         st->fails++;
-        if (st->printed++ < TWIN_MAXFAIL)
-            printf("  FAIL %s: %s%s%s%s rel %.2e\n", label, why[0], bad[0] && bad[1] ? "; " : "",
-                   why[1], bad[0] || bad[1] ? ";" : "", rel);
+        if (st->printed++ < TWIN_MAXFAIL) {
+            if (bad[0] || bad[1])
+                printf("  FAIL %s: %s%s%s\n", label, why[0], bad[0] && bad[1] ? "; " : "", why[1]);
+            else
+                printf("  FAIL %s: avx512 != avx2, rel %.2e > %.1e\n", label, rel, TWIN_TOL);
+        }
     } else if (bitwise) {
         st->bitwise++;
     }
@@ -1275,7 +1285,11 @@ static void driver_pass(int ztt_max)
             for (isa = 0; isa < 2; isa++) {
                 if (!S[isa]->ztt(c5->n, c5->chain, c5->nf, scr, 0, &z[isa])) {
                     ok = 0;
-                    if (isa) S[0]->ztt_free(&z[0]);
+                    if (isa) {
+                        t_free(tw[0][0].base);
+                        t_free(tw[0][1].base);
+                        S[0]->ztt_free(&z[0]);
+                    }
                     break;
                 }
                 tw[isa][0] = t_guarded(z[isa].tw, z[isa].ntw);
@@ -1395,12 +1409,13 @@ int main(int argc, char **argv)
     kernel_pass(only);
     if (want("ztt", only)) driver_pass(ztt_max);
     if (g_fail_kernels || g_fail_drivers) {
-        printf("TWIN GATE: *** FAIL *** %d kernels, %d driver cells (the FAIL lines above)\n",
+        printf("TWIN GATE *** FAIL ***: %d kernels, %d driver cells (the FAIL lines above)\n",
                g_fail_kernels, g_fail_drivers);
         return 1;
     }
-    printf("TWIN GATE: avx512 == avx2 on %d kernels (%d cases) and %d drivers (%d cases), %d bitwise, "
-           "worst %.2e: ALL PASS\n", g_kernels, g_cases, g_drivers, g_dcases, g_bitwise, g_worst);
+    printf("TWIN GATE ALL PASS: avx512 == avx2, %d kernels (%d cases), %d drivers (%d cases), "
+           "worst %.1e\n", g_kernels, g_cases, g_drivers, g_dcases, g_worst);
+    printf("  %d of the %d cases bitwise\n", g_bitwise, g_cases + g_dcases);
     return 0;
 }
 #endif /* VFFT_TWIN_SIDE */

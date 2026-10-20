@@ -205,9 +205,45 @@ ARGSTYLE = {
     "zttr_mt_gate":            ("bare", False),  # COLD: ZTT-r's threaded arms bitwise against its serial run through the door, T=8
     "zrf_mt_gate":             ("bare", False),  # COLD: the real flat DIT's threaded arms bitwise against its serial run, T=8
     "real_door_gate":          ("bare", False),  # COLD: the real door's pick (raced, replayed) against the pinned incumbent at every real cell
+    # every zil kernel and ZTURN-T fused driver both ISAs list, avx512 against avx2 (twin_gate.c): no store
+    "twin_gate":               ("none", False),
 }
 
 TEXTUAL = {"sp_ccol_decode_gate"}       # #includes vfft.c; must NOT add --vfft
+
+# Gates with their own build script beside them: twin_gate links BOTH ISAs' codelet
+# libraries, which no single gauntlet/build.py run does (it builds one VFFT_ISA).
+OWN_BUILD = {"twin_gate": "twin_gate_build.py"}
+
+# Gates that execute AVX-512 code. On a host without AVX-512 they run under Intel SDE
+# (exact AVX-512 semantics, 10-100x slower: correctness only, never a timing); with
+# neither, the gate FAILs, saying so.
+NEEDS_AVX512 = {"twin_gate"}
+SDE_CANDIDATES = [
+    r"C:\sde\sde-external-10.13.1-2026-07-28-win\sde-external-10.13.1-2026-07-28-win\sde.exe",
+]
+
+
+def host_avx512():
+    """avx512f on this CPU (twin_gate itself checks avx512dq and avx512vl too)."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            return bool(ctypes.WinDLL("kernel32").IsProcessorFeaturePresent(41))   # PF_AVX512F_INSTRUCTIONS_AVAILABLE
+        except Exception:
+            return False
+    try:
+        with open("/proc/cpuinfo") as f:
+            return "avx512f" in f.read()
+    except OSError:
+        return False
+
+
+def find_sde():
+    for cand in SDE_CANDIDATES + [shutil.which("sde64"), shutil.which("sde")]:
+        if cand and os.path.isfile(cand):
+            return cand
+    return None
 
 # Wall-clock budget overrides, seconds (see run()). Only gates whose honest
 # runtime does not fit the flat seeded/cold split belong here.
@@ -218,11 +254,16 @@ BUDGET_OVERRIDE = {
     "odd_partner_cells_gate":  900,    # 20 cells x (correctness + A/B build pair) and wisdom_write=0: it cannot seed itself, so it recalibrates every run (464 s measured uncapped, 2026-09-02)
     "flatdit_gate":            1800,   # cold flat-chain races at 8 odd N x 2 classes x 2 placements + T=8: 636-1000 s measured 2026-09-23; 900 killed it mid-cell
     "rader_gate":              1800,   # cold: the column cells under the pin (every create races the engine), the planner's picks, and section M's six cold T=8 creates at 2^17..2^18 points; 900 killed it in section M (2026-10-14)
+    "twin_gate":               1800,   # under SDE on the i9: the 718 kernels 123 s, the drivers to N = 65536 61 s; the 131072 and 262144 cells, estimated a few minutes more (2026-10-20)
 }
 
 
 def build(src, name):
     """Discover the build mode. -> mode string, or None if unbuildable."""
+    if name in OWN_BUILD:
+        r = subprocess.run([sys.executable, os.path.join(HERE, OWN_BUILD[name])],
+                           cwd=ROOT, capture_output=True, text=True)
+        return "own" if r.returncode == 0 else None
     modes = [("textual", ["--compile"])] if name in TEXTUAL else [
         ("standalone", ["--compile"]), ("vfft", ["--vfft", "--compile"])]
     for label, flags in modes:
@@ -249,6 +290,11 @@ def run(name, workdir):
         argv += ["--wisdir", scratch]
     elif style == "bare":
         argv += [scratch]
+    if name in NEEDS_AVX512 and not host_avx512():
+        sde = find_sde()
+        if not sde:
+            return False, "no AVX-512 on this host and no Intel SDE (run_gates.py SDE_CANDIDATES)"
+        argv = [sde, "-spr", "--"] + argv
 
     # 300s, not 900: with a SEEDED dir a gate replays banked wisdom and finishes
     # in seconds. A gate that needs minutes is recalibrating, which means either
