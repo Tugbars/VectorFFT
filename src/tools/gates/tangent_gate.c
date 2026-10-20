@@ -3,8 +3,9 @@
  *   MID fwd : Y[o] = sum_l W_R^{ol} . w512^{lk} . x_l      (pre-twiddle)
  *   LEAF    : Y[o] = sum_l W_R^{ol} x_l, stored corner-turned (no table)
  * The tangent codelets are built outside the corpus (design D3) and exist at
- * avx2 only: VFFT_IL_AVX2_ONLY names them (il_isa.h), 0 at avx512, where each
- * is reported and not gated. The records below are therefore avx2's VTW2.
+ * avx2 only: VFFT_IL_AVX2_ONLY names them (il_isa.h), 0 at avx512, where that
+ * declaration makes each absent: reported, not gated. An absent codelet at
+ * avx2 is WRONG. The records below are therefore avx2's VTW2.
  * Build (from the repo root):
  *   python gauntlet/build.py --compile --src src/tools/gates/tangent_gate.c
  *   (VFFT_ISA=avx512 builds it at avx512)
@@ -111,8 +112,13 @@ int main(void){
     int ok = 1, nabsent = 0;
     for(int i=0;i<5;i++){
         if(!r[i].k){
-            printf("%s  absent at %s: not gated\n", r[i].nm, VFFT_IL_ISA_NAME);
+#if defined(VFFT_BUILD_ISA_AVX512)
+            printf("%s  declared absent at %s (VFFT_IL_AVX2_ONLY, design D3): not gated\n", r[i].nm, VFFT_IL_ISA_NAME);
             nabsent++;
+#else
+            printf("%s  absent at %s  *** WRONG ***\n", r[i].nm, VFFT_IL_ISA_NAME);
+            ok = 0;
+#endif
             continue;
         }
         int pass = r[i].e < 1e-10;
@@ -120,7 +126,7 @@ int main(void){
         ok &= pass;
     }
     if(nabsent == 5){
-        printf("\nno tangent codelet at %s: nothing gated\n", VFFT_IL_ISA_NAME);
+        printf("\nno tangent codelet at %s: nothing gated, every codelet declared absent\n", VFFT_IL_ISA_NAME);
         return 0;
     }
     printf("\n%s\n", ok ? "ALL 5 SHIPPED TANGENT CODELETS GATED CORRECT"

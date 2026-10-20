@@ -7,8 +7,8 @@
  * The classic kernels are the build's ISA's (VFFT_IL_SYM, declared by the
  * registry); the tangent twins are built outside the corpus (design D3) and
  * exist at avx2 only: VFFT_IL_AVX2_ONLY names them (il_isa.h), 0 at avx512,
- * where each row is reported and not gated. The records below are therefore
- * avx2's VTW2.
+ * where that declaration makes each row absent: reported, not gated. An
+ * absent twin at avx2 FAILS. The records below are therefore avx2's VTW2.
  * Build: python gauntlet/build.py --compile --src src/tools/gates/tangent_bwd_gate.c   (the codelet library links both;
  *        VFFT_ISA=avx512 builds it at avx512) */
 #include <immintrin.h>
@@ -76,8 +76,13 @@ int main(void){
     int fails = 0, nabsent = 0;
     for (int i = 0; i < nt; i++) {
         if (!t[i].b) {
-            printf("%s absent at %s: not gated\n", t[i].nm, VFFT_IL_ISA_NAME);
+#if defined(VFFT_BUILD_ISA_AVX512)
+            printf("%s declared absent at %s (VFFT_IL_AVX2_ONLY, design D3): not gated\n", t[i].nm, VFFT_IL_ISA_NAME);
             nabsent++;
+#else
+            printf("%s absent at %s (FAIL)\n", t[i].nm, VFFT_IL_ISA_NAME);
+            fails++;
+#endif
             continue;
         }
         printf("%s", t[i].nm);
@@ -90,7 +95,7 @@ int main(void){
         printf("\n");
     }
     if (nabsent == nt) {
-        printf("=== no tangent backward twin at %s: nothing gated ===\n", VFFT_IL_ISA_NAME);
+        printf("=== no tangent backward twin at %s: nothing gated, every twin declared absent ===\n", VFFT_IL_ISA_NAME);
         return 0;
     }
     printf("=== %s ===\n", fails ? "FAIL" : "ALL PASS");

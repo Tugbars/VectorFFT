@@ -3,14 +3,18 @@
  * Walks Coverage (the single source of truth) and emits every codelet
  * in-process via Gen_main.run, one warm process for the whole tree
  * instead of 753 forks. Per-codelet stdout is captured by dup2-ing a
- * temporary file (the target's name + ".tmp") over fd 1 around the run;
- * provenance stamps carry the LOGICAL per-codelet command via
- * Emit_render.provenance_argv.
+ * temporary file (the target's name + ".tmp", in the target's folder, or in
+ * its nearest existing parent while that folder does not exist yet) over
+ * fd 1 around the run; provenance stamps carry the LOGICAL per-codelet
+ * command via Emit_render.provenance_argv.
  *
  * A codelet lands under its name only whole: the temporary file is renamed
  * onto the target once the emitter returns with output, and removed when it
  * refuses, so a run never leaves an empty or partial codelet behind (an
- * existing target is kept as it was). The first refusal stops the run
+ * existing target is kept as it was). A folder is created only when its
+ * first codelet lands, so a refusal never leaves an empty folder behind
+ * either (CMakeLists.txt refuses a codelet folder that holds no .c file;
+ * an existing folder is kept as it was). The first refusal stops the run
  * (FAIL on stderr, exit 1); the files emitted before it are complete. A
  * cell the generator cannot emit at a zil ISA is declared absent in
  * Corpus.zil_isa_gap and never reaches emit_one.
@@ -30,9 +34,15 @@ let rec mkdir_p (dir : string) : unit =
     | Unix.Unix_error (Unix.EEXIST, _, _) -> ())
 ;;
 
+(* the deepest folder on the way to [dir] that exists ("." and "/" always do) *)
+let rec existing_dir (dir : string) : string =
+  if Sys.file_exists dir then dir else existing_dir (Filename.dirname dir)
+;;
+
 let emit_one (path : string) (argv_tail : string list) : unit =
   let argv = Array.of_list (("gen_radix.exe" :: argv_tail) @ [ "--emit-c" ]) in
-  let tmp = path ^ ".tmp" in
+  let dir = Filename.dirname path in
+  let tmp = Filename.concat (existing_dir dir) (Filename.basename path ^ ".tmp") in
   flush stdout;
   let fd = Unix.openfile tmp [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o644 in
   let saved = Unix.dup Unix.stdout in
@@ -51,6 +61,7 @@ let emit_one (path : string) (argv_tail : string list) : unit =
      (try Sys.remove tmp with
       | Sys_error _ -> ());
      raise e);
+  mkdir_p dir;
   Unix.rename tmp path
 ;;
 
@@ -82,7 +93,6 @@ let () =
          (fun (name, tail) ->
             (* the folder follows the file's kind (2026-09-24): Corpus.dir_of_file *)
             let dir = Filename.concat !root (Corpus.dir_of_file q name) in
-            mkdir_p dir;
             let path = Filename.concat dir name in
             (try emit_one path tail with
              | e ->

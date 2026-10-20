@@ -26,12 +26,15 @@
  *   il_route=ztt with an odd radix in il_ztt= — the cascade banks nothing.
  *
  * THE BUILD'S ISA. The registry is ztt.h's (vfft_ztt_cells, the build's
- * ISA). An avx512 row may carry ONE order class (the other's drivers are 0):
- * the class it lacks is reported and not gated. An odd chain whose natural or
- * plain class the 8-lane laws refuse (ztt.h's create, VFFT_IL_VW == 8) has no
- * plan of that class at avx512: its creates are checked against the law, and
- * the chain is reported and not gated. At avx2 every row carries both classes
- * and every chain meets the laws.
+ * ISA). An avx512 row may carry ONE order class (the other's drivers are 0)
+ * where the 8-lane laws refuse the other for its chain: that class is
+ * reported and not gated; a class missing where the laws admit it FAILS (so
+ * at avx2, where every row carries both, any missing class FAILS). An odd
+ * chain whose natural or plain class the 8-lane laws refuse (ztt.h's create,
+ * VFFT_IL_VW == 8) has no plan of that class at avx512: the refused class's
+ * create is checked against the law and the class is reported and not gated,
+ * while the admitted class is gated on its own (the plain order against the
+ * DFT when the natural is refused). At avx2 every chain meets the laws.
  *
  * Build: python build.py --compile --vfft --src benches/ztt_odd_gate.c
  * Run:   ztt_odd_gate.exe [--wisdir <scratch dir with the wisdom2_*.txt copies>] */
@@ -135,7 +138,7 @@ static int lane_law_admits(long N, const int *chain, int nf, int scr)
 /* ── pass 1: staged == fused at every registry cell ─────────────────────── */
 static int staged_pass(void)
 {
-    int cells = 0, runs = 0, absent = 0, fails0 = g_fail;
+    int cells = 0, runs = 0, refused = 0, fails0 = g_fail;
     printf("STAGED == FUSED (every registry cell x class x direction x placement x width)\n");
     for (int i = 0; i < VFFT_ZTT_NCELLS; i++)
     {
@@ -150,7 +153,13 @@ static int staged_pass(void)
         cells++;
         for (int scr = 0; scr < 2; scr++)
         {
-            if (!cell_has_class(c, scr)) { absent++; continue; }   /* the row lacks this class at this ISA */
+            if (!cell_has_class(c, scr))
+            {   /* the row lacks this class: declared only where the lane laws refuse it */
+                CHECK(!lane_law_admits(N, c->chain, c->nf, scr), "N=%ld %s scr=%d: no fused drivers where the %d-lane laws admit them",
+                      N, cs, scr, VFFT_IL_VW);
+                refused++;
+                continue;
+            }
             for (int ti = -1; ti < 4; ti++)
             {
                 const size_t tile = ti < 0 ? 0 : LADDER[ti];
@@ -191,8 +200,8 @@ static int staged_pass(void)
         }
         vfft_aligned_free(x); vfft_aligned_free(a); vfft_aligned_free(b);
     }
-    if (absent)
-        printf("  %d of %d (cell, class) pairs carry no fused drivers at %s: not gated\n", absent, 2 * cells, VFFT_IL_ISA_NAME);
+    if (refused)
+        printf("  %d of %d (cell, class) pairs refused by the %d-lane laws at %s: not gated\n", refused, 2 * cells, VFFT_IL_VW, VFFT_IL_ISA_NAME);
     printf("  %d cells, %d executions, %d failures\n\n", cells, runs, g_fail - fails0);
     return g_fail == fails0;
 }
@@ -230,22 +239,23 @@ static int odd_pass(void)
         const odd_cell_t *c = &ODD[i];
         const long N = c->N;
         const int law_n = lane_law_admits(N, c->chain, c->nf, 0), law_p = lane_law_admits(N, c->chain, c->nf, 1);
+        char cs[64], tiles[64] = "";
+        chain_str(c->chain, c->nf, cs);
         if (!law_n || !law_p)
-        {   /* a class the lane laws refuse has no plan at this ISA, and the natural plan is
-             * the plain class's reference: the creates must answer as the law does, and
-             * the chain is not gated */
-            char rs[64];
-            vfft_ztt_plan_t *qn = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, 0);
-            vfft_ztt_plan_t *qp = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, 1);
-            chain_str(c->chain, c->nf, rs);
-            CHECK(!qn == !law_n && !qp == !law_p, "N=%ld %s: create (natural %p, plain %p) disagrees with the %d-lane laws",
-                  N, rs, (void *)qn, (void *)qp, VFFT_IL_VW);
-            printf("  %-8ld %-18s %s refused by the %d-lane laws at %s: not gated\n", N, rs,
-                   (!law_n && !law_p) ? "both classes" : !law_n ? "natural" : "plain", VFFT_IL_VW, VFFT_IL_ISA_NAME);
+        {   /* a class the lane laws refuse has no plan at this ISA: its create must answer
+             * as the law does, and it is not gated; an admitted class is gated below on
+             * its own (the plain order against the DFT when the natural is refused) */
+            vfft_ztt_plan_t *qn = law_n ? NULL : vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, 0);
+            vfft_ztt_plan_t *qp = law_p ? NULL : vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, 1);
+            CHECK(!qn && !qp, "N=%ld %s: a create the %d-lane laws refuse built a plan (natural %p, plain %p)",
+                  N, cs, VFFT_IL_VW, (void *)qn, (void *)qp);
+            printf("  %-8ld %-18s %s refused by the %d-lane laws at %s: not gated%s\n", N, cs,
+                   (!law_n && !law_p) ? "both classes" : !law_n ? "natural" : "plain", VFFT_IL_VW, VFFT_IL_ISA_NAME,
+                   (!law_n && !law_p) ? "" : !law_n ? " (plain gated below)" : " (natural gated below)");
             vfft_ztt_destroy(qn);
             vfft_ztt_destroy(qp);
-            nlaw++;
-            continue;
+            nlaw += !law_n + !law_p;
+            if (!law_n && !law_p) continue;
         }
         const size_t nb = (size_t)2 * N * sizeof(double);
         double *x = (double *)vfft_aligned_alloc(nb);
@@ -255,70 +265,76 @@ static int odd_pass(void)
         double *pl = (double *)vfft_aligned_alloc(nb);
         double *t1 = (double *)vfft_aligned_alloc(nb);
         double *t2 = (double *)vfft_aligned_alloc(nb + 64);
-        vfft_ztt_plan_t *pn, *pp;
-        char cs[64], tiles[64] = "";
+        vfft_ztt_plan_t *pn = NULL, *pp = NULL;
         double e_nat = -1, e_rt = -1, e_rti = -1, e_ord = -1;
         int tl = 0;
-        chain_str(c->chain, c->nf, cs);
         fill(x, N, (unsigned)N);
         CHECK(vfft_ztt_odd_band(c->N), "N=%ld: not in the odd band", N);
-        pn = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, 0);
-        pp = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, 1);
-        CHECK(pn && pp, "N=%ld %s: create (natural %p, plain %p)", N, cs, (void *)pn, (void *)pp);
-        if (!pn || !pp) { vfft_ztt_destroy(pn); vfft_ztt_destroy(pp); continue; }
-        CHECK(pn->staged && pp->staged, "N=%ld %s: not staged", N, cs);
+        if (law_n) pn = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, 0);
+        if (law_p) pp = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, 1);
+        CHECK((pn || !law_n) && (pp || !law_p), "N=%ld %s: create (natural %p, plain %p)", N, cs, (void *)pn, (void *)pp);
+        if ((law_n && !pn) || (law_p && !pp)) { vfft_ztt_destroy(pn); vfft_ztt_destroy(pp); continue; }
+        CHECK((!pn || pn->staged) && (!pp || pp->staged), "N=%ld %s: not staged", N, cs);
 
         /* natural: exact, in place bitwise, roundtrip */
         ref_dft(x, 1, ref, N, 0);
-        vfft_ztt_execute_fwd(pn, x, nat);
-        e_nat = relerr(nat, ref, N, 1.0);
-        CHECK(e_nat < 1e-12, "N=%ld %s natural fwd vs DFT: relerr %.3e", N, cs, e_nat);
-        memcpy(nat_ip, x, nb);
-        vfft_ztt_bind(pn, 1);
-        vfft_ztt_execute_fwd(pn, nat_ip, nat_ip);
-        CHECK(memcmp(nat, nat_ip, nb) == 0, "N=%ld %s natural in place != out of place", N, cs);
-        vfft_ztt_bind(pn, 0);
-        vfft_ztt_execute_bwd(pn, nat, t1);
-        e_rt = relerr(t1, x, N, (double)N);
-        CHECK(e_rt < 1e-12, "N=%ld %s natural roundtrip oop: relerr %.3e", N, cs, e_rt);
-        memcpy(t2, nat, nb);
-        vfft_ztt_bind(pn, 1);
-        vfft_ztt_execute_bwd(pn, t2, t2);
-        e_rti = relerr(t2, x, N, (double)N);
-        CHECK(e_rti < 1e-12, "N=%ld %s natural roundtrip in place: relerr %.3e", N, cs, e_rti);
-        vfft_ztt_bind(pn, 0);
-
-        /* plain: the order against the natural, in place bitwise, roundtrip */
-        vfft_ztt_execute_fwd(pp, x, pl);
+        if (pn)
         {
-            double m = 0, mx = 0;
-            for (long k = 0; k < N; k++)
-            {
-                const size_t i2 = vfft_ztt_perm(pp, k);
-                const double dr = fabs(pl[2 * i2] - nat[2 * k]), di = fabs(pl[2 * i2 + 1] - nat[2 * k + 1]);
-                if (dr > m) m = dr;
-                if (di > m) m = di;
-                if (fabs(nat[2 * k]) > mx) mx = fabs(nat[2 * k]);
-                if (fabs(nat[2 * k + 1]) > mx) mx = fabs(nat[2 * k + 1]);
-            }
-            e_ord = m / mx;
-            CHECK(e_ord < 1e-12, "N=%ld %s plain order vs natural: relerr %.3e", N, cs, e_ord);
+            vfft_ztt_execute_fwd(pn, x, nat);
+            e_nat = relerr(nat, ref, N, 1.0);
+            CHECK(e_nat < 1e-12, "N=%ld %s natural fwd vs DFT: relerr %.3e", N, cs, e_nat);
+            memcpy(nat_ip, x, nb);
+            vfft_ztt_bind(pn, 1);
+            vfft_ztt_execute_fwd(pn, nat_ip, nat_ip);
+            CHECK(memcmp(nat, nat_ip, nb) == 0, "N=%ld %s natural in place != out of place", N, cs);
+            vfft_ztt_bind(pn, 0);
+            vfft_ztt_execute_bwd(pn, nat, t1);
+            e_rt = relerr(t1, x, N, (double)N);
+            CHECK(e_rt < 1e-12, "N=%ld %s natural roundtrip oop: relerr %.3e", N, cs, e_rt);
+            memcpy(t2, nat, nb);
+            vfft_ztt_bind(pn, 1);
+            vfft_ztt_execute_bwd(pn, t2, t2);
+            e_rti = relerr(t2, x, N, (double)N);
+            CHECK(e_rti < 1e-12, "N=%ld %s natural roundtrip in place: relerr %.3e", N, cs, e_rti);
+            vfft_ztt_bind(pn, 0);
         }
-        memcpy(t1, x, nb);
-        vfft_ztt_execute_fwd(pp, t1, t1);
-        CHECK(memcmp(pl, t1, nb) == 0, "N=%ld %s plain in place != out of place", N, cs);
-        vfft_ztt_execute_bwd(pp, pl, t1);
-        CHECK(relerr(t1, x, N, (double)N) < 1e-12, "N=%ld %s plain roundtrip oop", N, cs);
-        memcpy(t2, pl, nb);
-        vfft_ztt_execute_bwd(pp, t2, t2);
-        CHECK(memcmp(t1, t2, nb) == 0, "N=%ld %s plain backward in place != out of place", N, cs);
 
-        /* tiles: every legal ladder width bitwise the untiled, both classes, both directions */
+        /* plain: the order against the natural (against the DFT where the lane laws
+         * refuse the natural), in place bitwise, roundtrip */
+        if (pp)
+        {
+            const double *on = pn ? nat : ref;
+            vfft_ztt_execute_fwd(pp, x, pl);
+            {
+                double m = 0, mx = 0;
+                for (long k = 0; k < N; k++)
+                {
+                    const size_t i2 = vfft_ztt_perm(pp, k);
+                    const double dr = fabs(pl[2 * i2] - on[2 * k]), di = fabs(pl[2 * i2 + 1] - on[2 * k + 1]);
+                    if (dr > m) m = dr;
+                    if (di > m) m = di;
+                    if (fabs(on[2 * k]) > mx) mx = fabs(on[2 * k]);
+                    if (fabs(on[2 * k + 1]) > mx) mx = fabs(on[2 * k + 1]);
+                }
+                e_ord = m / mx;
+                CHECK(e_ord < 1e-12, "N=%ld %s plain order vs %s: relerr %.3e", N, cs, pn ? "natural" : "the DFT", e_ord);
+            }
+            memcpy(t1, x, nb);
+            vfft_ztt_execute_fwd(pp, t1, t1);
+            CHECK(memcmp(pl, t1, nb) == 0, "N=%ld %s plain in place != out of place", N, cs);
+            vfft_ztt_execute_bwd(pp, pl, t1);
+            CHECK(relerr(t1, x, N, (double)N) < 1e-12, "N=%ld %s plain roundtrip oop", N, cs);
+            memcpy(t2, pl, nb);
+            vfft_ztt_execute_bwd(pp, t2, t2);
+            CHECK(memcmp(t1, t2, nb) == 0, "N=%ld %s plain backward in place != out of place", N, cs);
+        }
+
+        /* tiles: every legal ladder width bitwise the untiled, each gated class, both directions */
         for (int ti = 0; ti < 4; ti++)
         {
             const size_t tile = LADDER[ti];
-            int ln = vfft_ztt_tile_legal_ord(c->N, c->chain, c->nf, tile, 0);
-            int lp = vfft_ztt_tile_legal_ord(c->N, c->chain, c->nf, tile, 1);
+            int ln = pn && vfft_ztt_tile_legal_ord(c->N, c->chain, c->nf, tile, 0);
+            int lp = pp && vfft_ztt_tile_legal_ord(c->N, c->chain, c->nf, tile, 1);
             if (ln)
             {
                 vfft_ztt_set_tile(pn, tile);
@@ -348,13 +364,37 @@ static int odd_pass(void)
         for (int o = 1; o < 4; o++)
         {
             double *d = t2 + 2 * o;
-            vfft_ztt_execute_fwd(pn, x, d);
-            CHECK(memcmp(d, nat, nb) == 0, "N=%ld %s natural fwd at +%d B != aligned", N, cs, 16 * o);
-            vfft_ztt_execute_fwd(pp, x, d);
-            CHECK(memcmp(d, pl, nb) == 0, "N=%ld %s plain fwd at +%d B != aligned", N, cs, 16 * o);
+            if (pn)
+            {
+                vfft_ztt_execute_fwd(pn, x, d);
+                CHECK(memcmp(d, nat, nb) == 0, "N=%ld %s natural fwd at +%d B != aligned", N, cs, 16 * o);
+            }
+            if (pp)
+            {
+                vfft_ztt_execute_fwd(pp, x, d);
+                CHECK(memcmp(d, pl, nb) == 0, "N=%ld %s plain fwd at +%d B != aligned", N, cs, 16 * o);
+            }
         }
 
-        printf("  %-8ld %-18s %10.2e %10.2e %10.2e %10.2e  %s\n", N, cs, e_nat, e_rt, e_rti, e_ord, tiles[0] ? tiles : "(untiled only)");
+        {   /* a class the lane laws refuse reads "refused" in its columns */
+            char en[16], er[16], ei[16], eo[16];
+            if (pn)
+            {
+                snprintf(en, sizeof en, "%10.2e", e_nat);
+                snprintf(er, sizeof er, "%10.2e", e_rt);
+                snprintf(ei, sizeof ei, "%10.2e", e_rti);
+            }
+            else
+            {
+                snprintf(en, sizeof en, "%10s", "refused");
+                strcpy(er, en);
+                strcpy(ei, en);
+            }
+            if (pp) snprintf(eo, sizeof eo, "%10.2e", e_ord);
+            else snprintf(eo, sizeof eo, "%10s", "refused");
+            printf("  %-8ld %-18s %s %s %s %s  %s%s\n", N, cs, en, er, ei, eo, tiles[0] ? tiles : "(untiled only)",
+                   (pp && !pn) ? "  (plain order vs the DFT)" : "");
+        }
         vfft_ztt_destroy(pn);
         vfft_ztt_destroy(pp);
         vfft_aligned_free(x); vfft_aligned_free(ref); vfft_aligned_free(nat); vfft_aligned_free(nat_ip);
@@ -371,7 +411,7 @@ static int odd_pass(void)
               "odd band membership");
     }
     if (nlaw)
-        printf("  %d of %d chains refused by the %d-lane laws at %s: not gated\n", nlaw, ncell, VFFT_IL_VW, VFFT_IL_ISA_NAME);
+        printf("  %d of %d (chain, class) pairs refused by the %d-lane laws at %s: not gated\n", nlaw, 2 * ncell, VFFT_IL_VW, VFFT_IL_ISA_NAME);
     printf("  %d failures\n\n", g_fail - fails0);
     return g_fail == fails0;
 }

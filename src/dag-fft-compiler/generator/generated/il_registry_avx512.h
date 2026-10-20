@@ -1031,8 +1031,8 @@ VFFT_IL_DECL(radix15_z_tmgd_fwd_avx512)
  *   4  codelet_zsplit: t0tp/tld radix 4 is not a whole number of 8-lane blocks (law: R % VW == 0)
  */
 /* zil-pure-avx512: 238 cells DECLARED ABSENT at avx512:
+ *   32  codelet_cil: --cil-st128 renders at 256 bits, the halves of a column pair (AVX2 only)
  *   38  no 512-bit edge yet: codelet_cil renders the Hermitian edge (--cil-t2csgh / --cil-t2csght) at 256 / 128 bits only
- *   32  no 512-bit edge yet: codelet_cil renders the half stores (--cil-st128) at 256 bits, the halves of a column pair
  *   68  no 512-bit edge yet: cx_render renders the real mono's real-lane and Hermitian loads and real-lane store at 256 / 128 bits only
  *   100  no 512-bit edge yet: real_il emits the real pair, real flat leaf and real rows kinds for the 256-bit ISA only
  */

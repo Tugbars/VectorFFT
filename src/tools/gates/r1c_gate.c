@@ -9,8 +9,10 @@
  * The second half of block 0 (doubles D..2D) is never written: checked.
  * The kernels link as their own objects (each file declares its own static
  * constants). They are the build's ISA's (il_isa.h): each radix resolves
- * through the registry's R1C list, and a radix the registry does not list is
- * absent at that ISA: reported, not gated.
+ * through the registry's R1C list. An absent radix FAILS, except at avx512
+ * where the registry declares the kind absent (its R1C list defined and empty:
+ * the DECLARED ABSENT block, Corpus.zil_isa_gap): reported, not gated. At avx2
+ * no kind is declared absent, so every absent radix FAILS.
  * Build: python gauntlet/build.py --compile --src src/tools/gates/r1c_gate.c (VFFT_ISA=avx512 for the avx512 kernels) */
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +38,21 @@ static fn11 r1c_fn(int R, int bwd)
     }
 }
 
+/* the kind is declared absent at the build's ISA: the registry defines its list
+ * and leaves it empty (il_registry_<isa>.h: "every kind of the union over ISAs
+ * is defined (empty = absent at this ISA)"); at avx2 the corpus is whole
+ * (CMakeLists.txt's VFFT_ABSENT_avx2 is empty) and nothing is declared */
+static int declared_absent(void)
+{
+#if defined(VFFT_BUILD_ISA_AVX512)
+#define C(n) + 1
+    return 0 VFFT_IL_R1C_PAIR_RADICES(C) == 0;
+#undef C
+#else
+    return 0;
+#endif
+}
+
 int main(void)
 {
     static const int counts[] = { 1, 2, 3, 4, 5, 7, 9, 15 };
@@ -51,7 +68,13 @@ int main(void)
         double worst_f = 0, worst_b = 0;
         if (!fwd || !bwd)
         {
-            printf("R=%-2d absent at %s: not gated\n", R, VFFT_IL_ISA_NAME);
+            if (!declared_absent())
+            {   /* a radix the registry dropped from a kind it lists at this ISA */
+                printf("R=%-2d absent at %s, not declared absent there  *** FAIL ***\n", R, VFFT_IL_ISA_NAME);
+                fails++;
+                continue;
+            }
+            printf("R=%-2d declared absent at %s: not gated\n", R, VFFT_IL_ISA_NAME);
             nabsent++;
             continue;
         }
@@ -91,9 +114,11 @@ int main(void)
         printf("R=%-2d fwd max err %.1e  roundtrip max err %.1e  %s\n", R, worst_f, worst_b, ok ? "ok" : "*** FAIL ***");
     }
     if (nabsent)
-        printf("%d of %d radices absent at %s: not gated\n", nabsent, nk, VFFT_IL_ISA_NAME);
+        printf("%d of %d radices declared absent at %s: not gated\n", nabsent, nk, VFFT_IL_ISA_NAME);
     if (nabsent == nk)
-        printf("no r1c kernel at %s: nothing gated\n", VFFT_IL_ISA_NAME);
+        printf("no r1c kernel at %s: nothing gated, every radix declared absent\n", VFFT_IL_ISA_NAME);
+    else if (nabsent && !fails)
+        printf("ALL PASS on the %d radices present at %s (%d declared absent, not gated)\n", nk - nabsent, VFFT_IL_ISA_NAME, nabsent);
     else
         printf("%s\n", fails ? "FAILURES" : "ALL PASS");
     return fails ? 1 : 0;

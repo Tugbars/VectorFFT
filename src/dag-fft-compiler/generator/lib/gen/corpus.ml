@@ -2616,8 +2616,13 @@ let isa_vw (isa : string) : int =
 
 let zil_isa_gap ~(isa : string) (c : Codelet.t) : string option =
   (* every zil cell the emitters refuse at this width, each with the refusal
-     it restates. ONE is a law: the ZTURN-T lane lattices t0tp/tld write or
-     read R-runs as whole blocks, so R % VW == 0 (cascade_z.ml refuses it).
+     it restates. TWO are absent by design:
+       - a law: the ZTURN-T lane lattices t0tp/tld write or read R-runs as
+         whole blocks, so R % VW == 0 (cascade_z.ml refuses it);
+       - AVX2 only: the n1c column leaf's half stores n1ch and n1cb48h /
+         n1cb84h / n1cb88h store each 256-bit column pair as its two 128-bit
+         halves (c2c_il.ml refuses --cil-st128 at any other width;
+         codelets/zil/avx2/shared/col/half/README.md).
      The others are absent PENDING their wider edges, not by law; each
      emitter renders the edge at 256 bits (and 128 for its narrow arms) only:
        - the real mono rn1, rn1b48, rn1b444: the real-lane and Hermitian loads
@@ -2626,9 +2631,7 @@ let zil_isa_gap ~(isa : string) (c : Codelet.t) : string option =
          rows r2zr (real_il.ml);
        - the real flat DIT's Hermitian last stage t2csgh / t2csght
          (c2c_il.ml; a wider vector would take the plain column-stride edge,
-         the legs above R/2 past the half spectrum with no mirror);
-       - the n1c column leaf's 128-bit half stores n1ch and n1cb48h / n1cb84h
-         / n1cb88h (c2c_il.ml, --cil-st128).
+         the legs above R/2 past the half spectrum with no mirror).
      Every other zil kind is emitted at both widths. *)
   let vw = isa_vw isa in
   let pending why = Some (Printf.sprintf "no %d-bit edge yet: %s" (64 * vw) why) in
@@ -2642,7 +2645,7 @@ let zil_isa_gap ~(isa : string) (c : Codelet.t) : string option =
   | Codelet.Cil { herm = true; _ } when vw > 4 ->
     pending "codelet_cil renders the Hermitian edge (--cil-t2csgh / --cil-t2csght) at 256 / 128 bits only"
   | Codelet.Cil { st128 = true; _ } when vw <> 4 ->
-    pending "codelet_cil renders the half stores (--cil-st128) at 256 bits, the halves of a column pair"
+    Some "codelet_cil: --cil-st128 renders at 256 bits, the halves of a column pair (AVX2 only)"
   | _ -> None
 ;;
 

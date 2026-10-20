@@ -33,10 +33,16 @@
  *   in-place forward are asserted BITWISE the direct plain engine.
  *
  * THE BUILD'S ISA. The cells are ztt.h's (vfft_ztt_cells). An avx512 row may
- * carry ONE order class (the other's drivers are 0): the class it lacks is
- * reported and not gated, and a pow2 N with no cell of a class (16 and 32 at
- * avx512) is reported and not gated in that class's passes. At avx2 every N
- * has cells and every row carries both classes.
+ * carry ONE order class (the other's drivers are 0) where the 8-lane laws
+ * refuse the other for its chain: that class is reported and not gated, and
+ * on a plain-only row G1's reference is the natural plan on another chain at
+ * N. A class missing where the laws admit it FAILS, so at avx2, where every
+ * row carries both classes, any missing class FAILS. A pow2 N where the laws
+ * admit no chain of a class (16 and 32 at avx512, zil_avx512_design.md D8)
+ * is a KNOWN GAP of that class's front-door or seeded pass: printed where met,
+ * listed again before the verdict and counted apart from the failures; the
+ * exit status is 1 for a failure only. A pow2 N with no cell of a class the
+ * laws admit there FAILS.
  *
  * Run:   ztt_gate.exe --wisdir <scratch dir>
  * Build: python gauntlet/build.py --compile --src src/tools/gates/ztt_gate.c --vfft */
@@ -103,10 +109,55 @@ static const vfft_ztt_cell_t *first_cell(int N, int scr)
     return NULL;
 }
 
+/* THE LANE LAWS of the build's ISA, as ztt.h's create states them (the generator
+ * refuses a class's drivers under the same laws): at 8 lanes every chain needs
+ * (N / R0) % 8 == 0, a natural chain R0 % 8 == 0 and a plain chain
+ * R_last % 8 == 0 and (N / R_last) % 8 == 0; at 4 lanes every chain of the
+ * grammar meets them */
+static int lane_law_admits(long N, const int *chain, int nf, int scr)
+{
+#if VFFT_IL_VW == 8
+    if ((N / chain[0]) % VFFT_IL_VW) return 0;
+    if (!scr) return chain[0] % VFFT_IL_VW == 0;
+    return chain[nf - 1] % VFFT_IL_VW == 0 && (N / chain[nf - 1]) % VFFT_IL_VW == 0;
+#else
+    (void)N; (void)chain; (void)nf; (void)scr;
+    return 1;
+#endif
+}
+/* 1 when some {4,8} chain with product N (2..VFFT_ZTT_MAX_NF stages) meets the
+ * lane laws for the class */
+static int law_admits_a_chain(long N, int scr)
+{
+    int ch[VFFT_ZTT_MAX_NF];
+    for (int nf = 2; nf <= VFFT_ZTT_MAX_NF; nf++)
+        for (long m = 0; m < (1L << nf); m++)   /* bit s of m: stage s is radix 8, else 4 */
+        {
+            long prod = 1;
+            for (int s = 0; s < nf; s++) { ch[s] = ((m >> s) & 1) ? 8 : 4; prod *= ch[s]; }
+            if (prod == N && lane_law_admits(N, ch, nf, scr)) return 1;
+        }
+    return 0;
+}
+
+/* THE KNOWN GAPS: a pow2 N where the lane laws admit no chain of a class, so
+ * ZTURN-T has no plan of that class there at this ISA (16 and 32 at avx512:
+ * zil_avx512_design.md D8, open until ZTURN-T serves them). Printed where met,
+ * listed again before the verdict, and never in the exit status. */
+#define MAX_GAPS 16
+static char g_gap[MAX_GAPS][256];
+static int g_ngap = 0;
+static void known_gap(int N, const char *what)
+{
+    printf("%-6d KNOWN GAP: %s\n", N, what);
+    if (g_ngap < MAX_GAPS) snprintf(g_gap[g_ngap], sizeof g_gap[0], "N=%d: %s", N, what);
+    g_ngap++;
+}
+
 /* ── the engine on every registry cell ── */
 static int engine_pass(void)
 {
-    int fails = 0, absent = 0;
+    int fails = 0, refused = 0;
     printf("=== ENGINE: every registry cell (%d), dest + plane drivers, both directions ===\n", VFFT_ZTT_NCELLS);
     printf("%-16s %9s %9s %6s %9s  %s\n", "cell", "fwd err", "rt err", "ip==", "ip rt", "verdict");
     for (int ci = 0; ci < VFFT_ZTT_NCELLS; ci++)
@@ -115,7 +166,16 @@ static int engine_pass(void)
         const int N = c->n;
         char tag[32]; int off = snprintf(tag, sizeof tag, "%d=", N);
         for (int i = 0; i < c->nf; i++) off += snprintf(tag + off, sizeof tag - off, "%s%d", i ? "." : "", c->chain[i]);
-        if (!cell_has_class(c, 0)) { absent++; continue; }   /* the row lacks the natural class at this ISA */
+        if (!cell_has_class(c, 0))
+        {   /* the row lacks the natural class: declared only where the lane laws refuse it */
+            if (lane_law_admits(N, c->chain, c->nf, 0))
+            {
+                printf("%-16s no natural drivers where the %d-lane laws admit them  FAIL\n", tag, VFFT_IL_VW);
+                fails++;
+            }
+            else refused++;
+            continue;
+        }
         vfft_ztt_plan_t *p = vfft_ztt_create_chain(N, c->chain, c->nf);
         if (!p) { printf("%-16s create REFUSED  FAIL\n", tag); fails++; continue; }
         double *x = calloc(2 * (size_t)N, 8), *y = calloc(2 * (size_t)N, 8), *r = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8);
@@ -156,8 +216,8 @@ static int engine_pass(void)
         vfft_ztt_destroy(p);
         free(x); free(y); free(r); free(z);
     }
-    if (absent)
-        printf("%d of %d cells carry no natural drivers at %s: not gated\n", absent, VFFT_ZTT_NCELLS, VFFT_IL_ISA_NAME);
+    if (refused)
+        printf("%d of %d cells: natural refused by the %d-lane laws at %s, not gated\n", refused, VFFT_ZTT_NCELLS, VFFT_IL_VW, VFFT_IL_ISA_NAME);
     return fails;
 }
 
@@ -169,7 +229,10 @@ static int engine_pass(void)
  *       (the evens of the span first, then the odds);
  *   G1  out[perm(k)] == the NATURAL plan's X[k] on the same input (exact
  *       order; the twiddle side differs, so a tolerance, never a multiset);
- *       not checked on a row that carries no natural drivers (avx512);
+ *       on a row that carries no natural drivers (avx512) the natural plan
+ *       on the registry's first chain at N that carries them (every chain
+ *       computes the same X[k]), and with none at N the independent DFT at
+ *       sampled bins;
  *   G1i in place (zin == zout) BITWISE the out-of-place forward — the plain
  *       codelets are one function for both placements;
  *   G2  matched roundtrip bwd(fwd(x)) == N * x;  G2i in-place bwd bitwise;
@@ -190,7 +253,7 @@ static long plain_perm_ref(long k, const int *chain, int nf)
 }
 static int plain_pass(void)
 {
-    int fails = 0, absent = 0;
+    int fails = 0, refused = 0;
     printf("\n=== PLAIN (scrambled order): every registry cell — perm, exact order vs natural, in place bitwise, roundtrip, tiles ===\n");
     printf("%-16s %5s %9s %6s %9s %6s  %s\n", "cell", "perm", "order", "ip==", "rt err", "iprt", "verdict");
     for (int ci = 0; ci < VFFT_ZTT_NCELLS; ci++)
@@ -199,11 +262,23 @@ static int plain_pass(void)
         const int N = c->n;
         char tag[32]; int off = snprintf(tag, sizeof tag, "%d=", N);
         for (int i = 0; i < c->nf; i++) off += snprintf(tag + off, sizeof tag - off, "%s%d", i ? "." : "", c->chain[i]);
-        if (!cell_has_class(c, 1)) { absent++; continue; }   /* the row lacks the plain class at this ISA */
-        const int nat = cell_has_class(c, 0);                /* G1's reference: none on a plain-only row */
+        if (!cell_has_class(c, 1))
+        {   /* the row lacks the plain class: declared only where the lane laws refuse it */
+            if (lane_law_admits(N, c->chain, c->nf, 1))
+            {
+                printf("%-16s no plain drivers where the %d-lane laws admit them  FAIL\n", tag, VFFT_IL_VW);
+                fails++;
+            }
+            else refused++;
+            continue;
+        }
+        /* G1's reference: the natural plan on the row's chain; on a plain-only row
+         * the natural plan on the first chain at N carrying the class; with none at
+         * N (pn == NULL), the independent DFT at sampled bins */
+        const vfft_ztt_cell_t *nc = cell_has_class(c, 0) ? c : first_cell(N, 0);
         vfft_ztt_plan_t *pp = vfft_ztt_create_chain_ord(N, c->chain, c->nf, 1);
-        vfft_ztt_plan_t *pn = nat ? vfft_ztt_create_chain(N, c->chain, c->nf) : NULL;
-        if (!pp || (nat && !pn)) { printf("%-16s create REFUSED  FAIL\n", tag); fails++; if (pp) vfft_ztt_destroy(pp); if (pn) vfft_ztt_destroy(pn); continue; }
+        vfft_ztt_plan_t *pn = nc ? vfft_ztt_create_chain(N, nc->chain, nc->nf) : NULL;
+        if (!pp || (nc && !pn)) { printf("%-16s create REFUSED  FAIL\n", tag); fails++; if (pp) vfft_ztt_destroy(pp); if (pn) vfft_ztt_destroy(pn); continue; }
         double *x = calloc(2 * (size_t)N, 8), *y = calloc(2 * (size_t)N, 8), *yn = calloc(2 * (size_t)N, 8);
         double *r = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8);
         fill(x, N, 4321u + (unsigned)N * 3u + (unsigned)ci);
@@ -211,7 +286,7 @@ static int plain_pass(void)
         for (long k = 0; k < N; k++) if ((long)vfft_ztt_perm(pp, k) != plain_perm_ref(k, c->chain, c->nf)) pbad++;
         vfft_ztt_execute_fwd(pp, x, y);
         double eo = 0.0, mx = 0.0;
-        char ord[24];
+        char ref[64] = "";   /* where G1's reference came from, when not the row's own natural plan */
         if (pn)
         {
             vfft_ztt_execute_fwd(pn, x, yn);
@@ -223,10 +298,23 @@ static int plain_pass(void)
                 if (d > eo) eo = d;
             }
             eo = mx > 0 ? eo / mx : eo;
-            snprintf(ord, sizeof ord, "%9.1e", eo);
+            if (nc != c)
+            {
+                int o = snprintf(ref, sizeof ref, "  (order vs natural %d=", N);
+                for (int i = 0; i < nc->nf; i++) o += snprintf(ref + o, sizeof ref - o, "%s%d", i ? "." : "", nc->chain[i]);
+                snprintf(ref + o, sizeof ref - o, ")");
+            }
         }
         else
-            snprintf(ord, sizeof ord, "%9s", "absent");
+        {   /* out[perm(k)] read back into natural order, against the DFT */
+            for (long k = 0; k < N; k++)
+            {
+                const size_t ia = vfft_ztt_perm(pp, k);
+                yn[2 * k] = y[2 * ia]; yn[2 * k + 1] = y[2 * ia + 1];
+            }
+            eo = spot_err(x, yn, N);
+            snprintf(ref, sizeof ref, "  (order vs the DFT at sampled bins)");
+        }
         memcpy(z, x, 2 * (size_t)N * 8);
         vfft_ztt_execute_fwd(pp, z, z);
         const int ipbit = memcmp(z, y, 2 * (size_t)N * 8) == 0;
@@ -248,15 +336,15 @@ static int plain_pass(void)
             if (memcmp(z, r, 2 * (size_t)N * 8) != 0) tbad++;
         }
         vfft_ztt_set_tile(pp, 0);
-        const int ok = pbad == 0 && (!pn || eo < TOL) && ipbit && er < TOL && iprbit && tbad == 0;
-        printf("%-16s %5s %s %6s %9.1e %6s  tiles %d/%d bits  %s\n", tag, pbad ? "BAD" : "ok", ord,
-               ipbit ? "bits" : "DIFF", er, iprbit ? "bits" : "DIFF", ntile - tbad, ntile, ok ? "PASS" : "FAIL");
+        const int ok = pbad == 0 && eo < TOL && ipbit && er < TOL && iprbit && tbad == 0;
+        printf("%-16s %5s %9.1e %6s %9.1e %6s  tiles %d/%d bits  %s%s\n", tag, pbad ? "BAD" : "ok", eo,
+               ipbit ? "bits" : "DIFF", er, iprbit ? "bits" : "DIFF", ntile - tbad, ntile, ok ? "PASS" : "FAIL", ref);
         if (!ok) fails++;
         vfft_ztt_destroy(pp); vfft_ztt_destroy(pn);
         free(x); free(y); free(yn); free(r); free(z);
     }
-    if (absent)
-        printf("%d of %d cells carry no plain drivers at %s: not gated\n", absent, VFFT_ZTT_NCELLS, VFFT_IL_ISA_NAME);
+    if (refused)
+        printf("%d of %d cells: plain refused by the %d-lane laws at %s, not gated\n", refused, VFFT_ZTT_NCELLS, VFFT_IL_VW, VFFT_IL_ISA_NAME);
     return fails;
 }
 
@@ -439,8 +527,24 @@ static int frontdoor_pass(const char *wisdir)
     {
         char route[24]; int chain[7], nf = 0, tile = 0;
         if (!first_cell(N, 1))
-        {   /* no plain ZTURN-T cell at N at this ISA: nothing of this pass to assert */
-            printf("%-6d no plain ZTURN-T cell at %s: not gated\n", N, VFFT_IL_ISA_NAME);
+        {   /* no plain ZTURN-T cell at N: a KNOWN GAP where the lane laws admit no
+             * plain chain at N, a FAIL where they admit one; the gap's line says
+             * what the door builds instead */
+            if (law_admits_a_chain(N, 1))
+            {
+                printf("%-6d no plain ZTURN-T cell where the %d-lane laws admit a chain  FAIL\n", N, VFFT_IL_VW);
+                fails++;
+                continue;
+            }
+            char what[224];
+            vfft_plan h = mk_ord(W, N, 0, VFFT_ORDER_SCRAMBLED);
+            if (h) scr_route_of_store(wisdir, N, route, sizeof route, chain, &nf, &tile);
+            snprintf(what, sizeof what, "scrambled front door: no plain ZTURN-T cell at %s, no chain meets the %d-lane laws "
+                     "(design_contracts.md 8b, zil_avx512_design.md D8); the door %s%s%s",
+                     VFFT_IL_ISA_NAME, VFFT_IL_VW, h ? "builds a plan (banked ord=scr route " : "builds no plan",
+                     h ? route : "", h ? ")" : "");
+            known_gap(N, what);
+            if (h) vfft_destroy(h);
             continue;
         }
         vfft_plan h = mk_ord(W, N, 0, VFFT_ORDER_SCRAMBLED);
@@ -533,8 +637,20 @@ static int seeded_pass(const char *wisdir)
     {
         const vfft_ztt_cell_t *c = first_cell(N, 0);
         if (!c)
-        {   /* no natural ZTURN-T cell at N at this ISA: no row was seeded */
-            printf("%-6d no natural ZTURN-T cell at %s: not gated\n", N, VFFT_IL_ISA_NAME);
+        {   /* no natural ZTURN-T cell at N, so no row was seeded: a KNOWN GAP where the
+             * lane laws admit no natural chain at N, a FAIL where they admit one */
+            if (law_admits_a_chain(N, 0))
+            {
+                printf("%-6d no natural ZTURN-T cell where the %d-lane laws admit a chain  FAIL\n", N, VFFT_IL_VW);
+                fails++;
+            }
+            else
+            {
+                char what[224];
+                snprintf(what, sizeof what, "seeded replay: no natural ZTURN-T cell at %s, no chain meets the %d-lane laws "
+                         "(zil_avx512_design.md D8); no row seeded", VFFT_IL_ISA_NAME, VFFT_IL_VW);
+                known_gap(N, what);
+            }
             continue;
         }
         char chs[48]; int off = 0;
@@ -592,6 +708,14 @@ int main(int argc, char **argv)
     fails += plain_pass();
     fails += seeded_pass(wisdir);
     fails += frontdoor_pass(wisdir);
-    printf("\n=== %s ===\n", fails ? "*** FAIL ***" : "ALL PASS");
+    if (g_ngap)
+    {   /* the known gaps again, apart from the verdict: not gated, and not in the exit status */
+        printf("\n=== KNOWN GAPS at %s (%d): not gated ===\n", VFFT_IL_ISA_NAME, g_ngap);
+        for (int i = 0; i < g_ngap && i < MAX_GAPS; i++) printf("  %s\n", g_gap[i]);
+    }
+    if (fails || !g_ngap)
+        printf("\n=== %s ===\n", fails ? "*** FAIL ***" : "ALL PASS");
+    else
+        printf("\n=== PASS WITH %d KNOWN GAPS at %s (listed above; not gated) ===\n", g_ngap, VFFT_IL_ISA_NAME);
     return fails ? 1 : 0;
 }

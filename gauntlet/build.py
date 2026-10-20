@@ -41,6 +41,12 @@ DAG_GEN      = DAG / 'generator' / 'generated'   # generated registry + the FROZ
 WISDOM       = ROOT / 'src' / 'wisdom'           # the wisdom2 store's ROOT: one folder per CPU, the library picks its own
 DAG_ISA      = os.environ.get('VFFT_ISA', 'avx2')  # avx2 | avx512
 DAG_CODELETS = DAG / 'codelets' / 'inplace' / DAG_ISA
+# The ISA flags of the codelet library and the drivers, placed after -march=native
+# as CMakeLists.txt places _isa_clamp: avx512 adds CMake's avx512 set (_arch:
+# -mavx512f -mavx512dq; -mfma is in both flag lists already), so an avx512 build
+# is AVX-512 code on any host and runs on an AVX-512 CPU only; avx2 masks AVX-512
+# out (the ISA CLAMP, build_cmd). Native tuning is kept at both.
+DAG_ISA_FLAGS = ['-mavx512f', '-mavx512dq'] if DAG_ISA == 'avx512' else ['-mno-avx512f']
 
 
 def dag_codelet_srcs() -> list[str]:
@@ -236,13 +242,14 @@ def dag_codelet_lib(tc) -> str | None:
     objdir.mkdir(parents=True, exist_ok=True)
     lib = objdir / 'libdagcodelets.a'
 
-    # the ISA CLAMP (see build_cmd) applies to the codelet LIBRARY too: without
-    # it an avx2 lib built on an AVX-512 host (-march=native) is compiled with
+    # the ISA flags (DAG_ISA_FLAGS, see build_cmd) apply to the codelet LIBRARY
+    # too, as CMake's VFFT_CODE_FLAGS carry them. Without the CLAMP an avx2 lib
+    # built on an AVX-512 host (-march=native) is compiled with
     # EVEX encodings and ymm16-31 -- it SIGILLs on an AVX2-only CPU and hides
     # the 16-register pressure the avx2 kernels were scheduled for (measured
     # 2026-09-26: radix16_z_t2cs_avx2, 0 spills vs 35 at x86-64-v3).
     cflags = ['-O3', '-mavx2', '-mfma', '-march=native',
-              *(['-mno-avx512f'] if DAG_ISA != 'avx512' else []),
+              *DAG_ISA_FLAGS,
               '-fpermissive', '-w']
     if os.environ.get('VFFT_ASAN'):
         cflags += ['-fsanitize=address', '-g', '-fno-omit-frame-pointer']
@@ -554,15 +561,20 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
              # the repository's own FFTW, the comparator's default (ref_fftw.h; Windows x64)
              *(['-DVFFT_FFTW_BUNDLED_DLL="%s"' % (HERE / 'fftw' / 'libfftw3-3.dll').as_posix()]
                if tc['is_windows'] else []),
-             # ── ISA CLAMP. registry.h and a dozen dispatch sites (executor.h,
-             # oop_leaf_registry.h, il_prime.h, …) key on __AVX512F__, while the
-             # codelet LIBRARY is built per VFFT_ISA. On a CPU whose
-             # -march=native implies AVX-512 (Zen 4+), an avx2 codelet lib +
-             # avx512 dispatch = undefined radix*_avx512 references at link.
-             # The lib is the source of truth: mask AVX-512 out of the compiler
-             # ISA surface unless VFFT_ISA=avx512 (native tuning is kept;
-             # -mno-avx512f is a no-op on CPUs without AVX-512).
-             *(['-mno-avx512f'] if DAG_ISA != 'avx512' else []),
+             # ── ISA FLAGS (DAG_ISA_FLAGS). registry.h and a dozen dispatch sites
+             # (executor.h, oop_leaf_registry.h, il_prime.h, …) key on __AVX512F__,
+             # while the codelet LIBRARY is built per VFFT_ISA. The lib is the
+             # source of truth: the compiler's ISA surface follows VFFT_ISA, not
+             # the host (native tuning is kept).
+             #   avx2, the ISA CLAMP: on a CPU whose -march=native implies AVX-512
+             #   (Zen 4+), an avx2 codelet lib + avx512 dispatch = undefined
+             #   radix*_avx512 references at link (-mno-avx512f is a no-op on
+             #   CPUs without AVX-512).
+             #   avx512, CMake's avx512 set: on a host without AVX-512,
+             #   -march=native alone compiles the driver as AVX2, and avx2
+             #   dispatch + an avx512 codelet lib = undefined *_avx2 references
+             #   at link.
+             *DAG_ISA_FLAGS,
              '-Wno-overflow', '-Wno-implicit-function-declaration',
              '-Wno-unused-function', '-Wno-unknown-argument',
              '-Wno-incompatible-pointer-types',  # gcc-15: dag codelets' aligned-store casts

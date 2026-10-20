@@ -42,27 +42,33 @@ The fused codelets stay the pow2 solution's serial form and nothing else.
 ## Units and cuts, per stage
 
 Every kernel takes `(zin, zin2, zout, zout2, tw, tw_im, Ls, Gs, OLs, OGs,
-count)` with the group loop inside, group pitch `2·R·Ls`, and a column
-quad's twiddle record at `tw + (k/4)(R-1)·8`. A thread's range `[lo, hi)`
-of units becomes one call with shifted pointers and a shorter count:
+count)` with the group loop inside and group pitch `2·R·Ls`. Its column
+step is `VFFT_IL_VW`, the build's ISA width (4 at avx2, 8 at avx512): it
+runs whole `VFFT_IL_VW`-column iterations and does nothing with a shorter
+rest. The twiddle stream holds `(R-1)·8` doubles per four columns, so the
+record group of a column `k` that is a multiple of `VFFT_IL_VW` sits at
+`tw + (k/4)(R-1)·8`. A thread's range `[lo, hi)` of units becomes one call
+with shifted pointers and a shorter count:
 
 | stage (natural) | unit | how the call shifts for `[lo, hi)` | contract |
 | --- | --- | --- | --- |
-| ingest `t0tp` | column | `zin + 2·lo`, `rb + lo`, `count = hi-lo`; the plane base unchanged (stores go to `rb[c]·R0`, absolute) | `lo, hi` multiples of 4 |
+| ingest `t0tp` | column | `zin + 2·lo`, `rb + lo`, `count = hi-lo`; the plane base unchanged (stores go to `rb[c]·R0`, absolute) | `lo, hi` multiples of `VFFT_IL_VW` |
 | tiled prefix | tile | tiles `[lo, hi)`: each tile's mids run on one thread as today (`B = W + t·tile·2`) | none |
 | sweeping mid `tmg` | group | `B = W + lo·2·R·L`, `Gs = hi-lo`; the stream is group-invariant | none |
-| terminator `tlf`/`tlfi` | column | `W + 2·lo`, `zout + 2·lo`, `tw + (lo/4)(R-1)·8`, `count = hi-lo` | multiples of 4 |
+| terminator `tlf`/`tlfi` | column | `W + 2·lo`, `zout + 2·lo`, `tw + (lo/4)(R-1)·8`, `count = hi-lo` | multiples of `VFFT_IL_VW` |
 
 | stage (plain) | unit | shift | contract |
 | --- | --- | --- | --- |
-| stage 0 `t0d` | column | `zin + 2·lo`, `zout + 2·lo`, `tw + (lo/4)(R-1)·8`, `count = hi-lo` (legs at stride `Len_1` from the shifted base; block-split stores at `p·Ls + k`, disjoint per column) | multiples of 4 |
+| stage 0 `t0d` | column | `zin + 2·lo`, `zout + 2·lo`, `tw + (lo/4)(R-1)·8`, `count = hi-lo` (legs at stride `Len_1` from the shifted base; block-split stores at `p·Ls + k`, disjoint per column) | multiples of `VFFT_IL_VW` |
 | sweeping mid `tmgd`/`tmgb` | group | as natural | none |
 | per-block suffix (mids + `tld`) | block | blocks `[lo, hi)`, each block's suffix on one thread | none |
-| untiled `tld`/`tldb` | group of R | `zout + 2·R·lo` (both pointers), `count = hi-lo` | multiples of 4 |
-| backward `tlfb` | column | as the natural terminator, in place | multiples of 4 |
+| untiled `tld`/`tldb` | group of R | `zout + 2·R·lo` (both pointers), `count = hi-lo` | multiples of `VFFT_IL_VW` |
+| backward `tlfb` | column | as the natural terminator, in place | multiples of `VFFT_IL_VW` |
 
-Column cuts round to multiples of 4 (the kinds' `count % 4 == 0`); a
-thread whose range is empty does nothing. The plane offset
+Column cuts round to multiples of `VFFT_IL_VW`, so every range is whole
+kernel iterations; every column count is a multiple of `VFFT_IL_VW` by
+`_ztt_create`'s laws (`ztt.h`), so the ranges cover it. A thread whose
+range is empty does nothing. The plane offset
 (`_ztt_plane_for`) is computed once by the caller and passed to every
 thread: the plane is one buffer per plan and the threads write disjoint
 spans of it. No per-thread scratch exists or is needed. Nothing here is

@@ -77,7 +77,7 @@ int main(void)
             for (int ti = -1; ti < 4; ti++)
             {
                 const size_t tile = ti < 0 ? 0 : LADDER[ti];
-                long cruns = 0, cdecl = 0, f0 = g_fail;
+                long cruns = 0, cdeclined = 0, f0 = g_fail;
                 if (tile && !vfft_ztt_tile_legal_ord(c->N, c->chain, c->nf, tile, scr)) continue;
                 for (int ip = 0; ip < 2; ip++)
                     for (int bwd = 0; bwd < 2; bwd++)
@@ -99,7 +99,7 @@ int main(void)
                                 memset(ym, 0, nb);
                                 rc = vfft__ztt_mt_probe(c->N, c->chain, c->nf, scr, ip, tile, TS[tI], arm, bwd, x, ym);
                                 CHECK(rc >= 0, "N=%ld %s scr=%d tile=%zu T=%d arm=%d: probe refused", N, cs, scr, tile, TS[tI], arm);
-                                if (rc <= 0) { cdecl++; continue; }
+                                if (rc <= 0) { cdeclined++; continue; }
                                 cruns++;
                                 CHECK(vfft_ztt_mt_passes() == e0 + 1, "N=%ld %s: threaded execute not counted", N, cs);
                                 CHECK(memcmp(ym, ys, nb) == 0, "N=%ld %s scr=%d tile=%zu ip=%d %s T=%d arm=%d: MT != ST",
@@ -121,8 +121,8 @@ int main(void)
                         }
                     }
                 }
-                runs += cruns; declined += cdecl;
-                printf("  %-8ld %-16s %-4d %-6zu %-9ld %-9ld %s\n", N, cs, scr, tile, cruns, cdecl, g_fail == f0 ? "ok" : "*** FAIL ***");
+                runs += cruns; declined += cdeclined;
+                printf("  %-8ld %-16s %-4d %-6zu %-9ld %-9ld %s\n", N, cs, scr, tile, cruns, cdeclined, g_fail == f0 ? "ok" : "*** FAIL ***");
             }
         vfft_aligned_free(x); vfft_aligned_free(ys); vfft_aligned_free(ym); vfft_aligned_free(rt);
     }

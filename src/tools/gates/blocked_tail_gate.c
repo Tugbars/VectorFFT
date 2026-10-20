@@ -33,7 +33,8 @@
  * THE BUILD'S ISA (il_isa.h). The corpus kernels are VFFT_IL_SYM's, declared
  * by the registry. The r32 2.16 leaf and the tangent / wing32 forms are built
  * outside the corpus (design D3) and exist at avx2 only: VFFT_IL_AVX2_ONLY
- * names them, 0 at avx512, where their arms are reported and not gated. The
+ * names them, 0 at avx512, where that declaration makes their arms absent:
+ * reported, not gated. An absent form at avx2 is NOT CORRECT. The
  * twiddle table is sized by the build's record (VFFT_IL_TWREC doubles per
  * VFFT_IL_TWPER columns).
  *
@@ -139,14 +140,20 @@ static void arm(const char *what, int R, kfn blk, kfn mono, int inplace,
 }
 
 /* one blocked form at every count 1..9; a form absent at the build's ISA
- * (blk == 0) is reported and not gated */
+ * (blk == 0) is reported and not gated at avx512, where VFFT_IL_AVX2_ONLY
+ * declares it absent, and NOT CORRECT at avx2 */
 static int g_absent = 0;
 static void arms(const char *what, int R, kfn blk, kfn mono, int inplace)
 {
     size_t c;
     if (!blk) {
-        printf("  %-18s absent at %s: not gated\n", what, VFFT_IL_ISA_NAME);
+#if defined(VFFT_BUILD_ISA_AVX512)
+        printf("  %-18s declared absent at %s (VFFT_IL_AVX2_ONLY, design D3): not gated\n", what, VFFT_IL_ISA_NAME);
         g_absent++;
+#else
+        printf("  %-18s absent at %s  *** FAIL ***\n", what, VFFT_IL_ISA_NAME);
+        g_fail = 1;
+#endif
         return;
     }
     for (c = 1; c <= 9; c++)
@@ -186,7 +193,7 @@ int main(void)
     arms("r32 wing M128", 32, VFFT_IL_AVX2_ONLY(radix32_z_t2bw32m128_fwd),
          VFFT_IL_SYM(radix32_z_t2_fwd), 1);
     if (g_absent)
-        printf("\n%d of 9 blocked forms absent at %s: not gated\n", g_absent, VFFT_IL_ISA_NAME);
+        printf("\n%d of 9 blocked forms declared absent at %s: not gated\n", g_absent, VFFT_IL_ISA_NAME);
     if (g_absent && !g_fail)
         printf("\nBLOCKED TAIL: correct at every count 1..9 on every blocked form present at %s\n",
                VFFT_IL_ISA_NAME);
