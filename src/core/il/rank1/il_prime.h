@@ -339,8 +339,24 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
         }
     }
     /* kernels (rader.h convention): fwd perm = ginvpow, sign -1;
-     * bwd perm = gpow, sign +1; FFT_{N-1}, 1/(N-1) baked. */
-    for (int d = 0; d < 2; d++) {
+     * bwd perm = gpow, sign +1; FFT_{N-1}, 1/(N-1) baked. Up to N - 1 =
+     * 2^22 (the long-double tables' memory) both from one DFT in extended
+     * precision (dft_ld.h), each entry rounded once, in the inner's own
+     * order (read back from the labelled sequence whose DFT is the ramp);
+     * above it by the inner's double transform. */
+    int exact = 0;
+    if (nm1 <= (1 << 22))
+    {
+        int *pos = (int *)malloc((size_t)nm1 * sizeof(int));
+        vfft_rader_label(nm1, p->za);
+        _ilprime_inner_fwd(&p->inner, p->za, p->zb);
+        if (pos && vfft_rader_positions(nm1, p->zb, pos))
+            exact = vfft_rader_kernels_ld(nm1, p->gpow, N, pos, p->omf, p->omb);
+        else
+            fprintf(stderr, "[rd-exact] prime %d: the inner's order did not read back; the double kernel instead\n", N);
+        free(pos);
+    }
+    for (int d = 0; !exact && d < 2; d++) {
         const int *perm = d ? p->gpow : p->ginvpow;
         double sign = d ? 1.0 : -1.0;
         double *om = d ? p->omb : p->omf;
@@ -353,17 +369,6 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
         _ilprime_inner_fwd(&p->inner, p->za, p->zb);
         double inv = 1.0 / (double)nm1;
         for (int i = 0; i < 2 * nm1; i++) om[i] = p->zb[i] * inv;
-    }
-    if (nm1 <= (1 << 22) && getenv("VFFT_RD_EXACT_KERNEL"))
-    {   /* (b), under test: the kernels in extended precision (dft_ld.h), in the inner's own order */
-        int *pos = (int *)malloc((size_t)nm1 * sizeof(int));
-        vfft_rader_label(nm1, p->za);
-        _ilprime_inner_fwd(&p->inner, p->za, p->zb);
-        if (pos && vfft_rader_positions(nm1, p->zb, pos))
-            (void)vfft_rader_kernels_ld(nm1, p->gpow, N, pos, p->omf, p->omb);   /* both from one DFT */
-        else
-            fprintf(stderr, "[rd-exact] prime %d: the inner's order did not read back; the double kernel stays\n", N);
-        free(pos);
     }
     return p;
 }

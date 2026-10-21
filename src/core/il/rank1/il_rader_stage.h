@@ -428,7 +428,22 @@ static vfft_ilrd_t *_ilrd_create(int pr, size_t D, size_t L, size_t nb, int dept
             }
             rd->nest = one;
         }
-        for (d = 0; d < 2; d++) {
+        /* up to M = 2^22 (the long-double tables' memory) both kernels from one
+         * DFT in extended precision (dft_ld.h), each entry rounded once, in the
+         * chain's comb order (read back from the labelled sequence whose DFT is
+         * the ramp); above it by the chain's double transform */
+        int exact = 0;
+        if (M <= (1 << 22)) {
+            int *pos = (int *)malloc((size_t)M * sizeof(int));
+            vfft_rader_label(M, za);
+            _ilrd_inner_run(rd, za, 1, 1, 0, 0);
+            if (pos && vfft_rader_positions(M, za, pos))
+                exact = vfft_rader_kernels_ld(M, rd->gpow, pr, pos, rd->omf, rd->omb);
+            else
+                fprintf(stderr, "[rd-exact] leaf %d: the chain's order did not read back; the double kernel instead\n", pr);
+            free(pos);
+        }
+        for (d = 0; !exact && d < 2; d++) {
             const int *perm = d ? rd->gpow : rd->ginvpow;
             const double sign = d ? 1.0 : -1.0, inv = 1.0 / (double)M;
             double *om = d ? rd->omb : rd->omf;
@@ -439,17 +454,6 @@ static vfft_ilrd_t *_ilrd_create(int pr, size_t D, size_t L, size_t nb, int dept
             }
             _ilrd_inner_run(rd, za, 1, 1, 0, 0);
             for (m = 0; m < 2 * M; m++) om[m] = za[m] * inv;
-        }
-        if (M <= (1 << 22) && getenv("VFFT_RD_EXACT_KERNEL"))
-        {   /* (b), under test: the kernels in extended precision (dft_ld.h), in the chain's comb order */
-            int *pos = (int *)malloc((size_t)M * sizeof(int));
-            vfft_rader_label(M, za);
-            _ilrd_inner_run(rd, za, 1, 1, 0, 0);
-            if (pos && vfft_rader_positions(M, za, pos))
-                (void)vfft_rader_kernels_ld(M, rd->gpow, pr, pos, rd->omf, rd->omb);   /* both from one DFT */
-            else
-                fprintf(stderr, "[rd-exact] leaf %d: the chain's order did not read back; the double kernel stays\n", pr);
-            free(pos);
         }
         rd->nest = serving;
         if (one) _ilrd_free(one);

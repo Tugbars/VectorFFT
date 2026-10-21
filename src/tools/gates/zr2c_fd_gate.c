@@ -5,10 +5,11 @@
  *   - R2C fwd + C2R bwd, INTERLEAVED CCE, OOP and IN-PLACE, both routes
  *     (VFFT_ZR2C_ROUTE=0 OOP-IL child / =1 NAT-IP cascade child), K=1,
  *     N in {512, 2048, 4096}.
- *   - REGRESSION smokes: the lane-major K=4 interleaved r2c is REFUSED at
- *     create (owner 2026-10-14, field trial V02: the split engines that
- *     served it staged every slab through one scratch), and the odd-N (510)
- *     interleaved r2c OOP is served by the zr2c branch.
+ *   - REGRESSION smokes: the lane-major K=4 interleaved r2c (the default R2C
+ *     batch geometry) is served by the lane-major engine, route lm, and
+ *     correct (field trial V02: the split engines that once served it staged
+ *     every slab through one scratch), and the odd-N (510) interleaved r2c
+ *     OOP is served by the zr2c branch.
  *   - The in-place plane contract: 2*(N/2+1) doubles, MKL convention.
  *
  * Wisdom: argv[1] = wisdom DIR (default ../../src/dag-fft-compiler/generator/
@@ -188,11 +189,15 @@ static void run_cell(int N, int route)
 /* regression smokes: the paths the zr2c branch must NOT have disturbed */
 static void run_regressions(void)
 {
-    /* K=4 interleaved r2c OOP — the split-interior CCE path (K>1 keeps it) */
+    /* K=4 interleaved r2c OOP in the default batch geometry, lane-major for
+     * R2C (vfft.h batch_geom: x[e K + t] in, bins z[2 (f K + t)] out): served
+     * by the lane-major engine (route lm). Any other route is the split
+     * engines staging every slab through one scratch again (field trial V02). */
     {
         const int N = 512, half = N/2; const size_t K = 4;
         double *x  = malloc(8*(size_t)N*K);
-        double *X  = malloc(8*((size_t)N+2)*K);
+        double *X  = malloc(16*(size_t)(half+1)*K);
+        double *xt = malloc(8*(size_t)N);
         double *Xr = malloc(8*(size_t)(half+1)), *Xi = malloc(8*(size_t)(half+1));
         for (size_t i = 0; i < (size_t)N*K; i++) x[i] = rnd();
         vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
@@ -201,15 +206,32 @@ static void run_regressions(void)
         cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom_dir = g_W;
         /* measurement gate: banks must persist */
         vfft_plan p = vfft_create(&cfg);
-        /* the lane-major interleaved real batch is REFUSED at create (owner
-         * 2026-10-14, field trial V02; vfft.h batch_geom): the refusal is the
-         * contract until the native engine exists. A plan here would be the
-         * split-staged path serving the lane-major geometry again. */
-        printf("  %-38s N=%-6d %s\n", "REGRESSION r2c K=4 lane-major", N,
-               p ? "SERVED    *** FAIL -- refused by ruling (V02) ***" : "refused   OK");
-        if (p) { g_fail = 1; vfft_destroy(p); }
-        (void)half;
-        free(x); free(X); free(Xr); free(Xi);
+        if (!p) {
+            printf("  %-38s N=%-6d %s\n", "REGRESSION r2c K=4 lane-major", N,
+                   "REFUSED   *** FAIL -- the lane-major engine serves it ***");
+            g_fail = 1;
+        } else {
+            const char *route = vfft_plan_route(p);
+            memset(X, 0, 16*(size_t)(half+1)*K);
+            vfft_execute(p, VFFT_FORWARD, x, X);
+            double w = 0, xm = 0;
+            for (size_t t = 0; t < K; t++) {
+                for (int e = 0; e < N; e++) xt[e] = x[(size_t)e*K + t];
+                naive_real_dft(xt, N, Xr, Xi);
+                for (int f = 0; f <= half; f++) {
+                    double a = fabs(Xr[f]) + fabs(Xi[f]); if (a > xm) xm = a;
+                    double dr = fabs(X[2*((size_t)f*K + t)]   - Xr[f]);
+                    double di = fabs(X[2*((size_t)f*K + t)+1] - Xi[f]);
+                    if (dr > w) w = dr; if (di > w) w = di; }
+            }
+            judge("REGRESSION r2c K=4 lane-major", N, w/xm, 1e-9);
+            const int lm = strcmp(route, "lm") == 0;
+            printf("  %-38s N=%-6d %s\n", "REGRESSION r2c K=4 lane-major route", N,
+                   lm ? "lm        OK" : "*** FAIL -- not the lane-major engine ***");
+            if (!lm) { printf("    route: %s\n", route); g_fail = 1; }
+            vfft_destroy(p);
+        }
+        free(x); free(X); free(xt); free(Xr); free(Xi);
     }
     /* N=510: EVEN non-pow2 -> the zr2c branch legitimately serves it
      * (child c2c at the ODD half 255) — covers the odd-half child. The

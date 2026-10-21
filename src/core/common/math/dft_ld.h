@@ -6,8 +6,9 @@
  * level's three passes of rounding). Here the same DFT runs in long double and each entry is rounded
  * once to double.
  *
- * The transform: Cooley-Tukey (decimation in time) over the length's prime factors up to 64, a factor's
- * butterflies by the definition (O(n r) per level); a remaining part whose every factor is above 64 by the
+ * The transform: Cooley-Tukey (decimation in time) by radix 4 where 4 divides the length, else over its
+ * prime factors up to 64: radix 2 and 4 by their butterflies, a larger factor's by the definition (O(n r)
+ * per level); a remaining part whose every factor is above 64 by the
  * definition up to 256 points, else by Bluestein over a radix-2 transform of a power of two; every
  * twiddle and chirp from tw_exact.h's fold, kept in long double. O(n log n) except the definition's small
  * pieces; memory a few arrays of n long double complex. Create-time only: nothing here runs on an
@@ -151,11 +152,27 @@ static inline long long _vfft_ld_spf(long long n)
     return n;
 }
 
-/* y[k] = sum_j x[j xs] e^(sign 2 pi i j k / n), k < n; tw = e^(2 pi i j / tn), j < tn, n divides tn */
-static inline int _vfft_ld_rec(long long n, const vfft_cld_t *x, long long xs, vfft_cld_t *y, int sign,
-                               const vfft_cld_t *tw, long long tn)
+/* the radix of a level: 4 where 4 divides n, else the smallest prime factor */
+static inline long long _vfft_ld_radix(long long n)
 {
-    const long long st = tn / n, r = _vfft_ld_spf(n);
+    return n % 4 == 0 ? 4 : _vfft_ld_spf(n);
+}
+
+/* one level's twiddles: e^(2 pi i e / n) = w[e st], e < n */
+typedef struct
+{
+    const vfft_cld_t *w;
+    long long st;
+} _vfft_ld_lvl_t;
+
+/* y[k] = sum_j x[j xs] e^(sign 2 pi i j k / n), k < n; L = this level's twiddles, L + 1 the next level's.
+ * Radix 2 and 4 combine by their butterflies, the others by the definition. A twiddle index q k stays
+ * below n (q < r, k < n / r). */
+static inline int _vfft_ld_rec(long long n, const vfft_cld_t *x, long long xs, vfft_cld_t *y, int sign,
+                               const _vfft_ld_lvl_t *L)
+{
+    const vfft_cld_t *tw = L->w;
+    const long long st = L->st, r = _vfft_ld_radix(n);
     long long m, q, k, s;
     vfft_cld_t t[64];
     if (n == 1)
@@ -186,13 +203,52 @@ static inline int _vfft_ld_rec(long long n, const vfft_cld_t *x, long long xs, v
     }
     m = n / r;
     for (q = 0; q < r; q++)
-        if (!_vfft_ld_rec(m, x + q * xs, xs * r, y + q * m, sign, tw, tn))
+        if (!_vfft_ld_rec(m, x + q * xs, xs * r, y + q * m, sign, L + 1))
             return 0;
+    if (r == 2)
+    {   /* X[k] = Y_0[k] + w_n^k Y_1[k], X[k + m] = Y_0[k] - w_n^k Y_1[k] */
+        for (k = 0; k < m; k++)
+        {
+            const long double wr = tw[k * st].re, wi = sign * tw[k * st].im;
+            vfft_cld_t *u = &y[k], *v = &y[k + m];
+            const long double tr = v->re * wr - v->im * wi, ti = v->re * wi + v->im * wr;
+            v->re = u->re - tr;
+            v->im = u->im - ti;
+            u->re += tr;
+            u->im += ti;
+        }
+        return 1;
+    }
+    if (r == 4)
+    {   /* t_q = w_n^(q k) Y_q[k]; X[k + s m] = sum_q t_q (sign i)^(q s) */
+        for (k = 0; k < m; k++)
+        {
+            long double ar, ai, br, bi, cr, ci, dr, di;
+            t[0] = y[k];
+            for (q = 1; q < 4; q++)
+            {
+                const long long e = q * k;
+                const long double wr = tw[e * st].re, wi = sign * tw[e * st].im;
+                const vfft_cld_t yq = y[q * m + k];
+                t[q].re = yq.re * wr - yq.im * wi;
+                t[q].im = yq.re * wi + yq.im * wr;
+            }
+            ar = t[0].re + t[2].re; ai = t[0].im + t[2].im;
+            br = t[0].re - t[2].re; bi = t[0].im - t[2].im;
+            cr = t[1].re + t[3].re; ci = t[1].im + t[3].im;
+            dr = t[1].re - t[3].re; di = t[1].im - t[3].im;   /* (sign i) d = (-sign di, sign dr) */
+            y[k].re = ar + cr;             y[k].im = ai + ci;
+            y[k + 2 * m].re = ar - cr;     y[k + 2 * m].im = ai - ci;
+            y[k + m].re = br - sign * di;  y[k + m].im = bi + sign * dr;
+            y[k + 3 * m].re = br + sign * di; y[k + 3 * m].im = bi - sign * dr;
+        }
+        return 1;
+    }
     for (k = 0; k < m; k++)
     {   /* X[k + s m] = sum_q (w_n^(q k) Y_q[k]) w_r^(q s) */
         for (q = 0; q < r; q++)
         {
-            const long long e = (q * k) % n;
+            const long long e = q * k;
             const long double wr = tw[e * st].re, wi = sign * tw[e * st].im;
             const vfft_cld_t yq = y[q * m + k];
             t[q].re = yq.re * wr - yq.im * wi;
@@ -215,15 +271,48 @@ static inline int _vfft_ld_rec(long long n, const vfft_cld_t *x, long long xs, v
     return 1;
 }
 
+/* the levels up to this many points read a contiguous copy of their twiddles (at most twice this many
+ * entries in all); the larger levels stride the top table */
+#define VFFT_DFT_LD_LVL_MAX 65536
+
 /* X[k] = sum_j x[j] e^(sign 2 pi i j k / n), in long double; 0 when memory runs out */
 static inline int vfft_dft_ld(long long n, const vfft_cld_t *x, vfft_cld_t *X, int sign)
 {
-    vfft_cld_t *tw = (vfft_cld_t *)malloc((size_t)n * sizeof(vfft_cld_t));
-    int ok;
+    _vfft_ld_lvl_t L[64];
+    long long sz[64], c = n, tot = 0, off = 0, j;
+    int nl = 0, i, ok;
+    vfft_cld_t *tw = (vfft_cld_t *)malloc((size_t)n * sizeof(vfft_cld_t)), *sub = 0;
     if (!tw)
         return 0;
     vfft_cs2pi_ld_table(n, n, tw);
-    ok = _vfft_ld_rec(n, x, 1, X, sign, tw, n);
+    for (;;)
+    {   /* the levels' lengths, as _vfft_ld_rec divides them */
+        sz[nl++] = c;
+        if (c == 1 || _vfft_ld_radix(c) > 64)
+            break;
+        c /= _vfft_ld_radix(c);
+    }
+    for (i = 1; i < nl; i++)
+        if (sz[i] <= VFFT_DFT_LD_LVL_MAX)
+            tot += sz[i];
+    if (tot)
+        sub = (vfft_cld_t *)malloc((size_t)tot * sizeof(vfft_cld_t));
+    for (i = 0; i < nl; i++)
+        if (i > 0 && sub && sz[i] <= VFFT_DFT_LD_LVL_MAX)
+        {
+            for (j = 0; j < sz[i]; j++)
+                sub[off + j] = tw[j * (n / sz[i])];
+            L[i].w = sub + off;
+            L[i].st = 1;
+            off += sz[i];
+        }
+        else
+        {
+            L[i].w = tw;
+            L[i].st = n / sz[i];
+        }
+    ok = _vfft_ld_rec(n, x, 1, X, sign, L);
+    free(sub);
     free(tw);
     return ok;
 }
