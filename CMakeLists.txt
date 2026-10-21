@@ -24,7 +24,8 @@
 #
 # Toolchains: GCC and Clang (GNU-style front ends; icx in its gcc driver mode too).
 #   The MSVC-style branch below is kept for the gauntlet; MSVC is not supported.
-# ISA override: -DVFFT_ISA=avx2|avx512|auto (default avx2). -DVFFT_NATIVE=ON|OFF.
+# ISA: -DVFFT_ISA=auto|avx2|avx512 (default auto: this machine's, printed at configure;
+#   avx2 with -DVFFT_NATIVE=OFF). -DVFFT_NATIVE=ON|OFF.
 # ============================================================================
 cmake_minimum_required(VERSION 3.18)
 # A parent's ORDINARY variable (set(VFFT_WISDOM ...) before add_subdirectory) is
@@ -53,7 +54,7 @@ endif()
 
 include(GNUInstallDirs)
 
-set(VFFT_ISA "avx2" CACHE STRING "Codelet ISA (avx2/avx512/auto)")
+set(VFFT_ISA "auto" CACHE STRING "Codelet ISA (auto/avx2/avx512): auto = this machine's")
 
 # ── Front-end classification ────────────────────────────────────────────────
 # MSVC is true for cl, clang-cl and icx-cl (MSVC-ABI drivers). Everything else
@@ -129,24 +130,25 @@ set(DAG_CODELETS "${DAG}/codelets")
 # Resolve VFFT_ISA to a CONCRETE codelet ISA. Codelets are pre-generated per ISA
 # (codelets/*/avx2, codelets/*/avx512) — there is no "auto" tree.
 #   - explicit avx2 / avx512  -> trust the user.
-#   - auto (what the CMake Tools extension may hold cached from the old root
-#     CMake) -> DETECT the host: pick avx512 only if the avx512 codelets
-#     exist AND this CPU actually runs AVX-512 (check_c_source_runs compiles an _mm512
-#     op and executes it — it SIGILLs / returns non-zero on a non-AVX-512 CPU). Else avx2.
-if(VFFT_ISA STREQUAL "avx2" OR VFFT_ISA STREQUAL "avx512")
-    # explicit override — leave as-is
-elseif(VFFT_ISA STREQUAL "auto")
-    set(VFFT_ISA "avx2")   # safe fallback (also covers cross-compiling)
-    file(GLOB _a512_probe "${DAG_CODELETS}/inplace/avx512/*.c")
-    if(_a512_probe AND NOT CMAKE_CROSSCOMPILING)
-        if(VFFT_MSVC_STYLE)
-            set(_av512_flag "/arch:AVX512")
-        else()
-            set(_av512_flag "-mavx512f -mavx512dq -mfma")
-        endif()
-        include(CheckCSourceRuns)
-        set(CMAKE_REQUIRED_FLAGS "${_av512_flag}")
-        check_c_source_runs([==[
+#   - auto (the default) -> DETECT the host: pick avx512 only if the avx512 codelets
+#     exist AND this CPU actually runs AVX-512. Else avx2.
+#     With VFFT_NATIVE=OFF (binaries for other machines) auto is avx2: such a build
+#     needs a CPU with AVX2 and FMA only, whatever CPU built it.
+# What this CPU runs is tested whenever the build is not a cross-compile:
+# check_c_source_runs compiles an _mm512 op and executes it (it SIGILLs / returns
+# non-zero on a CPU without AVX-512). auto picks from it, the summary at the end
+# reports it, and an explicit avx512 build on a CPU without AVX-512 is warned.
+set(VFFT_HOST_AVX512 "not tested (cross-compiling)")
+if(NOT CMAKE_CROSSCOMPILING)
+    if(VFFT_MSVC_STYLE)
+        set(_av512_flag "/arch:AVX512")
+    else()
+        set(_av512_flag "-mavx512f -mavx512dq -mfma")
+    endif()
+    include(CheckCSourceRuns)
+    set(CMAKE_REQUIRED_FLAGS "${_av512_flag}")
+    set(CMAKE_REQUIRED_QUIET ON)
+    check_c_source_runs([==[
 #include <immintrin.h>
 int main(void)
 {
@@ -156,16 +158,41 @@ int main(void)
     return out[7] == 2.0 ? 0 : 1;
 }
 ]==] VFFT_HOST_RUNS_AVX512)
-        unset(CMAKE_REQUIRED_FLAGS)
-        if(VFFT_HOST_RUNS_AVX512)
-            set(VFFT_ISA "avx512")
-        endif()
+    unset(CMAKE_REQUIRED_FLAGS)
+    unset(CMAKE_REQUIRED_QUIET)
+    if(VFFT_HOST_RUNS_AVX512)
+        set(VFFT_HOST_AVX512 "yes")
+    else()
+        set(VFFT_HOST_AVX512 "no")
     endif()
-    message(STATUS "VFFT_ISA=auto -> detected ${VFFT_ISA} (host CPU)")
+endif()
+file(GLOB _a512_probe "${DAG_CODELETS}/inplace/avx512/*.c")
+if(VFFT_ISA STREQUAL "avx2" OR VFFT_ISA STREQUAL "avx512")
+    set(_isa_why "set by VFFT_ISA")
+elseif(VFFT_ISA STREQUAL "auto")
+    set(VFFT_ISA "avx2")   # safe fallback (also covers cross-compiling)
+    if(CMAKE_CROSSCOMPILING)
+        set(_isa_why "VFFT_ISA=auto: cross-compiling, the target CPU is not tested")
+    elseif(NOT VFFT_NATIVE)
+        set(_isa_why "VFFT_ISA=auto with VFFT_NATIVE=OFF: built for other machines with AVX2 and FMA")
+    elseif(VFFT_HOST_RUNS_AVX512 AND _a512_probe)
+        set(VFFT_ISA "avx512")
+        set(_isa_why "VFFT_ISA=auto: this CPU runs AVX-512")
+    elseif(VFFT_HOST_RUNS_AVX512)
+        set(_isa_why "VFFT_ISA=auto: this CPU runs AVX-512, but the sources hold no avx512 codelets")
+    else()
+        set(_isa_why "VFFT_ISA=auto: this CPU does not run AVX-512")
+    endif()
 else()
     message(WARNING "unknown VFFT_ISA='${VFFT_ISA}', using avx2")
     set(VFFT_ISA "avx2")
+    set(_isa_why "unknown VFFT_ISA value")
 endif()
+if(VFFT_ISA STREQUAL "avx512" AND VFFT_HOST_AVX512 STREQUAL "no")
+    message(WARNING "VFFT_ISA=avx512 on a CPU that does not run AVX-512: the library and every program "
+                    "built here need AVX-512 and stop with an illegal instruction on this machine.")
+endif()
+message(STATUS "VectorFFT codelet ISA: ${VFFT_ISA} (${_isa_why})")
 
 # ── Recursive core include walk ─────────────────────────────────────────────
 # Core headers cross-include BARE (#include "executor.h"), so every dir that
@@ -284,6 +311,18 @@ else()
         -Wno-unknown-argument -Wno-incompatible-pointer-types -Wno-deprecated-declarations)
     set(VFFT_CODE_FLAGS -O3 ${_arch} ${_native} ${_isa_clamp} -fpermissive -w)
 endif()
+# the CPU the build is for and its instruction-set flags, in words: the summary at the
+# end of the configure and the line each library prints when it is built
+if(VFFT_NATIVE)
+    set(VFFT_TARGET_TXT "this machine's CPU (-march=native): programs may not run on another CPU")
+elseif(VFFT_ISA STREQUAL "avx512")
+    set(VFFT_TARGET_TXT "any x86-64 CPU with AVX-512")
+else()
+    set(VFFT_TARGET_TXT "any x86-64 CPU with AVX2 and FMA")
+endif()
+string(REPLACE ";" " " VFFT_ISA_FLAGS_TXT "${_arch} ${_native} ${_isa_clamp}")
+string(REGEX REPLACE " +" " " VFFT_ISA_FLAGS_TXT "${VFFT_ISA_FLAGS_TXT}")
+string(STRIP "${VFFT_ISA_FLAGS_TXT}" VFFT_ISA_FLAGS_TXT)
 
 # ── Codelet families (inplace=c2c, rfft/c2r=real-FFT, oop=LEAF/BAILEY2,
 #     strided=6a35-45 row engines, zil=interleaved-complex (pure IL + the
@@ -471,6 +510,10 @@ target_link_libraries(vectorfft_vfft PRIVATE Threads::Threads)   # a static arch
 if(NOT VFFT_MSVC_STYLE)
     target_link_libraries(vectorfft_vfft PRIVATE m)
 endif()
+# the build's last word on the library: what was compiled, for which CPU
+add_custom_command(TARGET vectorfft_vfft POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "VectorFFT: built $<TARGET_FILE_NAME:vectorfft_vfft> -- codelet ISA ${VFFT_ISA} (${_ncodelets} codelets, ${VFFT_ISA_FLAGS_TXT}), for ${VFFT_TARGET_TXT}"
+    VERBATIM)
 # A parent project's flags reach these targets as well (CMAKE_C_FLAGS,
 # add_compile_options, CMAKE_COMPILE_WARNING_AS_ERROR): its -Werror would stop
 # vfft.c on three default warnings, its -ffast-math would change the library's
@@ -607,14 +650,91 @@ if(VFFT_BUILD_EXAMPLES)
     add_subdirectory(how-to-use/examples)
 endif()
 
-message(STATUS "")
-message(STATUS "  VectorFFT (dag) — library + examples + gauntlet")
-message(STATUS "  Build:    ${CMAKE_BUILD_TYPE}   Compiler: ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
-message(STATUS "  Front-end: ${CMAKE_C_COMPILER} (MSVC-style=${VFFT_MSVC_STYLE}, ICX=${VFFT_IS_ICX})")
-message(STATUS "  ISA:      ${VFFT_ISA}   native: ${VFFT_NATIVE}   codelets: ${_ncodelets}")
-message(STATUS "  Store:    ${VFFT_LIB_STORE}   (VectorFFT::vfft's compiled root)")
-message(STATUS "  Parts:    examples=${VFFT_BUILD_EXAMPLES} gauntlet=${VFFT_BUILD_GAUNTLET} install=${VFFT_INSTALL}")
-if(VFFT_BUILD_GAUNTLET)
-    message(STATUS "  Gauntlet: cmake --build <build> --target vfft-gauntlet, then python gauntlet/gauntlet.py run --group pow2 --bin-dir <build>/gauntlet")
+# ── The configuration summary: what this configure compiles, for which CPU, where ─
+# the CPU's own name: Windows' registry (CMake 3.24+), Linux's /proc/cpuinfo; CMake's
+# PROCESSOR_DESCRIPTION only where neither is there (it misnames recent CPUs: an
+# i9-14900KF reads "Pentium III (0.25 micron)")
+set(_vfft_cpu "")
+if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+    cmake_host_system_information(RESULT _vfft_cpu QUERY WINDOWS_REGISTRY
+        "HKLM/HARDWARE/DESCRIPTION/System/CentralProcessor/0" VALUE "ProcessorNameString")
+elseif(EXISTS "/proc/cpuinfo")
+    file(STRINGS "/proc/cpuinfo" _vfft_cpu REGEX "^model name" LIMIT_COUNT 1)
+    string(REGEX REPLACE "^model name[ \t]*:[ \t]*" "" _vfft_cpu "${_vfft_cpu}")
 endif()
+if(NOT _vfft_cpu)
+    cmake_host_system_information(RESULT _vfft_cpu QUERY PROCESSOR_DESCRIPTION)
+endif()
+cmake_host_system_information(RESULT _vfft_pcores QUERY NUMBER_OF_PHYSICAL_CORES)
+cmake_host_system_information(RESULT _vfft_lcores QUERY NUMBER_OF_LOGICAL_CORES)
+string(STRIP "${_vfft_cpu}" _vfft_cpu)
+if(CMAKE_BUILD_TYPE)
+    set(_vfft_bt "${CMAKE_BUILD_TYPE}")
+else()
+    set(_vfft_bt "chosen at build time (multi-config generator)")
+endif()
+if(VFFT_MSVC_STYLE)
+    set(_vfft_opt "/O2")
+else()
+    set(_vfft_opt "-O3")
+endif()
+set(_vfft_bar "================================================================================")
+message(STATUS "")
+message(STATUS "${_vfft_bar}")
+message(STATUS " VectorFFT ${PROJECT_VERSION}: configuration summary")
+message(STATUS "${_vfft_bar}")
+message(STATUS " Codelet ISA     ${VFFT_ISA}  (${_isa_why})")
+message(STATUS " Built for       ${VFFT_TARGET_TXT}")
+message(STATUS " This machine    ${_vfft_cpu}, ${_vfft_pcores} cores / ${_vfft_lcores} threads; runs AVX-512: ${VFFT_HOST_AVX512}")
+message(STATUS " Compiler        ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}  (${CMAKE_C_COMPILER})")
+message(STATUS " Build type      ${_vfft_bt}; ${_vfft_opt} ${VFFT_ISA_FLAGS_TXT}")
+message(STATUS " Codelets        ${_ncodelets} files from the ${VFFT_ISA} tree, compiled once for every target")
+message(STATUS " Library         VectorFFT::vfft = ${CMAKE_STATIC_LIBRARY_PREFIX}vfft${CMAKE_STATIC_LIBRARY_SUFFIX}, in ${PROJECT_BINARY_DIR}")
+message(STATUS " Wisdom store    ${VFFT_LIB_STORE}  (compiled into the library)")
+if(NOT VFFT_IS_TOP_LEVEL)
+    message(STATUS " Parts           the library alone (built inside ${CMAKE_PROJECT_NAME})")
+endif()
+if(VFFT_BUILD_EXAMPLES)
+    message(STATUS " Examples        ON: the guide's programs, in ${PROJECT_BINARY_DIR}/how-to-use/examples")
+elseif(VFFT_IS_TOP_LEVEL)
+    message(STATUS " Examples        OFF")
+endif()
+if(VFFT_BUILD_GAUNTLET)
+    message(STATUS " Gauntlet        ON: cmake --build \"${PROJECT_BINARY_DIR}\" --target vfft-gauntlet -> ${PROJECT_BINARY_DIR}/gauntlet")
+    if(VFFT_MKL_FOUND)
+        set(_vfft_mkl_ver "")
+        if(EXISTS "${MKL_INCLUDE_DIR}/mkl_version.h")
+            file(STRINGS "${MKL_INCLUDE_DIR}/mkl_version.h" _vfft_mkl_l
+                 REGEX "^#define[ \t]+__INTEL_MKL(_MINOR|_UPDATE)?__[ \t]+[0-9]+")
+            set(_vfft_mkl_parts)
+            foreach(_x IN LISTS _vfft_mkl_l)
+                string(REGEX REPLACE "^#define[ \t]+__INTEL_MKL(_MINOR|_UPDATE)?__[ \t]+([0-9]+).*" "\\2" _x "${_x}")
+                list(APPEND _vfft_mkl_parts "${_x}")
+            endforeach()
+            string(REPLACE ";" "." _vfft_mkl_ver "${_vfft_mkl_parts}")
+            set(_vfft_mkl_ver "oneMKL ${_vfft_mkl_ver}, ")
+        endif()
+        message(STATUS "   MKL           found: ${_vfft_mkl_ver}${MKL_INCLUDE_DIR}; the MKL arm is built into the bench")
+    else()
+        message(STATUS "   MKL           not found: the tools are built without the MKL comparator")
+    endif()
+    if(WIN32)
+        message(STATUS "   FFTW          loaded when a tool runs: VFFT_FFTW_DLL, else gauntlet/fftw/libfftw3-3.dll")
+    else()
+        message(STATUS "   FFTW          loaded when a tool runs: VFFT_FFTW_DLL, else the system's libfftw3")
+    endif()
+    message(STATUS "   Run           python gauntlet/gauntlet.py run --group pow2 --bin-dir ${PROJECT_BINARY_DIR}/gauntlet")
+elseif(VFFT_IS_TOP_LEVEL)
+    message(STATUS " Gauntlet        OFF")
+endif()
+if(VFFT_INSTALL)
+    message(STATUS " Install         ON: cmake --install \"${PROJECT_BINARY_DIR}\" -> ${CMAKE_INSTALL_PREFIX} (data in ${VFFT_LIB_DATA_DIR})")
+elseif(VFFT_IS_TOP_LEVEL)
+    message(STATUS " Install         OFF")
+endif()
+if(VFFT_IS_TOP_LEVEL)
+    message(STATUS " Build           cmake --build \"${PROJECT_BINARY_DIR}\"")
+endif()
+message(STATUS " Change the ISA  -DVFFT_ISA=auto|avx2|avx512   build for other machines: -DVFFT_NATIVE=OFF")
+message(STATUS "${_vfft_bar}")
 message(STATUS "")

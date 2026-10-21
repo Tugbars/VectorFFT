@@ -56,4 +56,22 @@ if(VFFT_MKL_FOUND)
     endforeach()
 endif()
 
+# each tool's last word when it is built: the codelet ISA, the CPU, its comparator
+foreach(_tool ${VFFT_GAUNTLET_TOOLS})
+    if(_tool STREQUAL "bench_1d_vs_mkl" OR _tool STREQUAL "k1_fwd_ref_probe")
+        if(VFFT_MKL_FOUND)
+            set(_cmp "MKL arm built in; FFTW loaded at run time")
+        else()
+            set(_cmp "no MKL arm (MKL not found); FFTW loaded at run time")
+        endif()
+    elseif(_tool STREQUAL "bench_1d_vs_fftw")
+        set(_cmp "FFTW loaded at run time")
+    else()
+        set(_cmp "no comparator")
+    endif()
+    add_custom_command(TARGET ${_tool} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E echo "VectorFFT gauntlet: built $<TARGET_FILE_NAME:${_tool}> -- codelet ISA ${VFFT_ISA}, for ${VFFT_TARGET_TXT}; ${_cmp}"
+        VERBATIM)
+endforeach()
+
 add_custom_target(vfft-gauntlet DEPENDS ${VFFT_GAUNTLET_TOOLS})
